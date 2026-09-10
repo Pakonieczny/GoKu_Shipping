@@ -1745,7 +1745,57 @@ async function _scanProg(pct, label, detail) {
    each dependency records what was tested, whether it succeeded, how long it took, how many
    rows/items it returned, which fallback was used, and the exact bounded error when it failed.
    The report is live while the background scan runs and remains available after completion. */
-const _SCAN_AUDIT_SCHEMA = 2;
+const _OPPORTUNITY_RESEARCH_SCHEMA = 1;
+const _OPPORTUNITY_RESEARCH_MAX_AGE = 12 * 60 * 60 * 1000;
+function _researchChannel(check) {
+  if (check && ["search", "pmax", "shared"].includes(check.channel)) return check.channel;
+  const id = String(check && check.id || "");
+  if (/^pmax_/.test(id)) return "pmax";
+  if (/^(control_config|occasion_memory|learned_playbook|keyword_|search_|opportunity_|economic_ranking|ads_budget_headroom|store_economics_120d|collection_ads_performance|account_cvr)/.test(id)) return "search";
+  return "shared";
+}
+function _opportunityResearchStatus(r, now = Date.now()) {
+  const audit = r.scanAudit || {}, checks = audit.checks || [];
+  const heartbeat = Number((r.progress || {}).at || audit.updatedAt || audit.startedAt) || 0;
+  const running = !!r.scanning && heartbeat > 0 && now - heartbeat < 15 * 60 * 1000;
+  const out = {};
+  for (const channel of ["search", "pmax"]) {
+    const checkedAt = Number(channel === "pmax" ? r.pmaxAt : r.scannedAt) || null;
+    const version = Number(channel === "pmax" ? r.pmaxResearchVersion : r.searchResearchVersion) || 0;
+    const legacy = !!checkedAt && version !== _OPPORTUNITY_RESEARCH_SCHEMA;
+    const stale = !!checkedAt && (legacy || now - checkedAt >= _OPPORTUNITY_RESEARCH_MAX_AGE || checkedAt > now + 60000);
+    const ownError = channel === "pmax" ? r.pmaxError : (r.lastError || r.error);
+    const currentChecks = checkedAt && Number(audit.startedAt) <= checkedAt && checkedAt - Number(audit.startedAt) < 60 * 60 * 1000
+      ? checks.filter(c => c.id !== "scan_result" && [channel, "shared"].includes(_researchChannel(c))) : [];
+    const partial = currentChecks.some(c => ["warning", "failed"].includes(c.status));
+    const pending = running && (!checkedAt || checkedAt < Number(audit.startedAt || heartbeat));
+    let status, message;
+    if (!!r.scanning && !running && Number(audit.startedAt || heartbeat) > Number(checkedAt || 0)) { status = "error"; message = "The refresh stopped before this research finished. Previous results are retained; refresh research to retry."; }
+    else if (pending) { status = "running"; message = channel === "pmax" ? "Checking product offers and sales evidence." : "Researching inventory-matched keywords and demand."; }
+    else if (stale) { status = "stale"; message = "Refresh research before creating a new draft."; }
+    else if (ownError) { status = "error"; message = "Research needs a refresh. Open details for the unavailable source."; }
+    else if (!checkedAt) { status = "missing"; message = "Refresh research to find new opportunities."; }
+    else if (partial) { status = "partial"; message = "Research refreshed with some sources unavailable. Review the evidence shown."; }
+    else { status = "ready"; message = channel === "pmax" ? "Product research is current; live offers are checked again when creating a draft." : "Search research is current; review measured demand before creating a draft."; }
+    out[channel] = { status, checkedAt, message, stale, legacy };
+  }
+  return out;
+}
+function _pmaxResearchCandidate(state, request, now = Date.now()) {
+  const at = Number(state && state.pmaxAt) || 0;
+  if (!at || now - at >= _OPPORTUNITY_RESEARCH_MAX_AGE || at > now + 60000 ||
+      Number(state.pmaxResearchVersion) !== _OPPORTUNITY_RESEARCH_SCHEMA || state.pmaxError)
+    throw new Error("Refresh product research before creating a new PMax draft.");
+  const label = x => String(x || "").toUpperCase();
+  const candidate = (state.pmaxList || []).find(x => x.handle === request.handle && label(x.feedLabel) === label(request.feedLabel));
+  const allowed = new Set((candidate && candidate.itemIds || []).map(x => String(x).toLowerCase()));
+  const requested = (request.itemIds || []).map(x => String(x).toLowerCase());
+  if (!candidate || !requested.length || requested.some(id => !allowed.has(id)))
+    throw new Error("Select products from the current researched opportunity, or refresh product research.");
+  return candidate;
+}
+
+const _SCAN_AUDIT_SCHEMA = 3;
 const _SCAN_AUDIT_DOC = "opportunityScanAudit"; // separate doc: never competes with the large opportunity payload for Firestore's size ceiling
 function _auditText(v, n = 260) { return v == null ? null : String(v).replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, n); }
 function _auditMeta(v) {
@@ -1773,7 +1823,7 @@ function _auditCounts(a) {
 }
 function _auditPayload(a) {
   const checks = (a.checks || []).slice(-90).map(x => ({
-    id: _auditText(x.id, 90), category: _auditText(x.category, 40), label: _auditText(x.label, 110),
+    id: _auditText(x.id, 90), channel: _researchChannel(x), category: _auditText(x.category, 40), label: _auditText(x.label, 110),
     status: x.status || "queued", startedAt: x.startedAt || null, endedAt: x.endedAt || null,
     tookMs: x.tookMs != null ? Math.max(0, Math.round(Number(x.tookMs) || 0)) : null,
     detail: _auditText(x.detail, 300), source: _auditText(x.source, 100),
@@ -1812,6 +1862,7 @@ async function _auditEvent(a, e) {
   if (!a || !e || !e.id) return;
   let x = _auditFind(a, e.id);
   if (!x) { x = { id: e.id, category: e.category || "scan", label: e.label || e.id, status: "queued", startedAt: e.startedAt || Date.now() }; a.checks.push(x); }
+  if (e.channel) x.channel = e.channel;
   if (e.category) x.category = e.category;
   if (e.label) x.label = e.label;
   if (e.status) x.status = e.status;
@@ -2409,12 +2460,12 @@ async function measure() {
   // 1) ALL campaigns (config only, no date segment) — guarantees brand-new / paused /
   //    zero-impression campaigns are included, which a date-segmented query would drop.
   const base = await gaql(
-    `SELECT campaign.id, campaign.name, campaign.status, campaign.primary_status, campaign.primary_status_reasons, campaign_budget.resource_name, campaign_budget.amount_micros
+    `SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign.primary_status, campaign.primary_status_reasons, campaign_budget.resource_name, campaign_budget.amount_micros
      FROM campaign WHERE campaign.status != 'REMOVED'`);
   const byId = {};
   base.forEach(r => {
     byId[r.campaign.id] = {
-      id: r.campaign.id, name: r.campaign.name, status: r.campaign.status,
+      id: r.campaign.id, name: r.campaign.name, status: r.campaign.status, channel: r.campaign.advertisingChannelType || null,
       primaryStatus: r.campaign.primaryStatus || null,
       primaryStatusReasons: r.campaign.primaryStatusReasons || [],
       budget: fromMicros(r.campaignBudget && r.campaignBudget.amountMicros),
@@ -2809,48 +2860,127 @@ async function pmaxProductPerformance({ days = 90 } = {}) {
 // Shopify attribution; when absent or unauthorized, the existing signals continue.
 async function merchantFreeProductPerformance({days=90}={}){
   const configured=!!String(ENV.GMC_REFRESH_TOKEN||"").trim();
-  if(!configured)return {configured:false,byId:{},rows:[],days:Number(days)||90,at:Date.now(),error:null,pages:0,httpStatuses:[]};
+  const d=Math.max(7,Math.min(365,Number(days)||90)),startedAt=Date.now(),deadline=startedAt+60000;
+  const MAX_PAGES=100,MAX_ATTEMPTS=4,REQUEST_MS=12000;
+  const byId=Object.create(null),httpStatuses=[],attemptLog=[],seenTokens=new Set();
+  let pages=0,attempts=0,receivedRows=0,phase="configuration",lastGoogleStatus=null;
+  const failure=(code)=>{const e=new Error(code);e.reportCode=code;return e;};
+  const messages={
+    DEADLINE:"Google's product report took too long. Refresh product research to try again.",
+    REQUEST_TIMEOUT:"Google's product report timed out. Refresh product research to try again.",
+    TRANSPORT:"Google's product report could not be reached. Refresh product research to try again.",
+    RATE_LIMITED:"Google's product report is temporarily rate limited. Try again shortly.",
+    SERVICE_UNAVAILABLE:"Google's product report is temporarily unavailable. Try again shortly.",
+    ACCESS_REQUIRED:"Google's product report needs its Merchant Center connection checked.",
+    REQUEST_REJECTED:"Google could not accept the product report request. Open research details for the status.",
+    INVALID_RESPONSE:"Google returned an unreadable product report. Refresh product research to try again.",
+    INCOMPLETE_REPORT:"Google's product report was incomplete. No partial report data was used.",
+    SETUP_UNAVAILABLE:"The Merchant Center reporting connection could not be prepared. Try again shortly."
+  };
+  // Bound the caller even when an upstream helper or fetch adapter ignores cancellation.
+  const bounded=async(work,ms,code,onTimeout)=>{
+    if(ms<=0)throw failure("DEADLINE");
+    let timer;
+    try{return await Promise.race([Promise.resolve().then(work),new Promise((_,reject)=>{
+      timer=setTimeout(()=>{if(onTimeout)try{onTimeout();}catch(e){}reject(failure(code));},ms);
+    })]);}finally{clearTimeout(timer);}
+  };
+  const diagnostics=()=>({phase,elapsedMs:Date.now()-startedAt,attempts,pages,receivedRows,
+    lastHttpStatus:httpStatuses.length?httpStatuses[httpStatuses.length-1]:null,
+    googleStatus:lastGoogleStatus,attemptLog:attemptLog.slice(-24)});
+  const result=(extra)=>Object.assign({configured,byId:{},rows:[],days:d,at:Date.now(),
+    error:null,errorCode:null,complete:false,pages,attempts,httpStatuses:httpStatuses.slice(),diagnostics:diagnostics()},extra);
+  if(!configured)return result({errorCode:"NOT_CONFIGURED"});
   try{
-    const token=await mintMerchantToken(), merchantId=await merchantCenterId();
-    const d=Math.max(7,Math.min(365,Number(days)||90));
+    phase="connection";
+    const token=await bounded(()=>mintMerchantToken(),Math.min(REQUEST_MS,deadline-Date.now()),"DEADLINE");
+    const merchantId=await bounded(()=>merchantCenterId(),Math.min(REQUEST_MS,deadline-Date.now()),"DEADLINE");
+    if(!token||!/^\d+$/.test(String(merchantId||"")))throw failure("SETUP_UNAVAILABLE");
     const end=new Date().toISOString().slice(0,10),start=new Date(Date.now()-(d-1)*86400000).toISOString().slice(0,10);
     const query=`SELECT offer_id, title, customer_country_code, product_type_l1, custom_label0, custom_label1, custom_label2, custom_label3, custom_label4, clicks, impressions, conversions, conversion_value, marketing_method FROM product_performance_view WHERE date BETWEEN '${start}' AND '${end}' AND marketing_method = "ORGANIC"`;
-    let pageToken=null;const byId={},httpStatuses=[];let pages=0;
-    do{
-      // pageSize was 100000. The Merchant API caps reports:search at 1000 rows per page, and
-      // asking for a page two orders of magnitude over the cap is a known way to get a
-      // server-side 500 INTERNAL instead of a clean INVALID_ARGUMENT. Page properly instead.
+    let pageToken=null;
+    for(;;){
+      if(Date.now()>=deadline)throw failure("DEADLINE");
+      if(pages>=MAX_PAGES)throw failure("INCOMPLETE_REPORT");
+      // 1,000 is a bounded page choice, not the Merchant API maximum (100,000).
       const body={query,pageSize:1000};if(pageToken)body.pageToken=pageToken;
-      // 500 INTERNAL / 503 / 429 from Google are transient by definition. Previously a single
-      // blip threw, killing the whole merchant report for the run and silently degrading every
-      // opportunity card to the inferred-Shopify fallback. Retry a few times with backoff.
-      let res=null,data={},attempt=0;
-      for(;;){
-        res=await fetch(`https://merchantapi.googleapis.com/reports/v1/accounts/${merchantId}/reports:search`,{method:"POST",headers:{Authorization:"Bearer "+token,"Content-Type":"application/json"},body:JSON.stringify(body)});
-        httpStatuses.push(res.status);
-        data=await res.json().catch(()=>({}));
-        const retryable=res.status===429||res.status===500||res.status===503||res.status===504;
-        if(res.ok||!retryable||attempt>=3)break;
-        await _sleep(600*Math.pow(2,attempt)); attempt++;
+      phase="report";
+      let data=null;
+      for(let attempt=0;attempt<MAX_ATTEMPTS;attempt++){
+        const remaining=deadline-Date.now();if(remaining<=0)throw failure("DEADLINE");
+        const controller=typeof AbortController!=="undefined"?new AbortController():null;
+        let res=null,retryMs=0,problem=null;const requestAt=Date.now();attempts++;
+        try{
+          data=await bounded(async()=>{
+            res=await fetch(`https://merchantapi.googleapis.com/reports/v1/accounts/${merchantId}/reports:search`,{
+              method:"POST",headers:{Authorization:"Bearer "+token,"Content-Type":"application/json"},
+              body:JSON.stringify(body),...(controller?{signal:controller.signal}:{})
+            });
+            httpStatuses.push(res.status);
+            const retryAfter=res.headers&&res.headers.get?res.headers.get("retry-after"):null;
+            if(retryAfter){const seconds=Number(retryAfter);retryMs=Number.isFinite(seconds)?Math.max(0,seconds*1000):Math.max(0,Date.parse(retryAfter)-Date.now())||0;}
+            const response=await res.json().catch(()=>null);
+            const googleStatus=response&&response.error&&response.error.status;
+            lastGoogleStatus=typeof googleStatus==="string"&&/^[A-Z_]{1,48}$/.test(googleStatus)?googleStatus:null;
+            if(!res.ok){
+              throw failure(res.status===429?"RATE_LIMITED":[500,502,503,504].includes(res.status)?"SERVICE_UNAVAILABLE":[401,403].includes(res.status)?"ACCESS_REQUIRED":"REQUEST_REJECTED");
+            }
+            if(!response||typeof response!=="object"||Array.isArray(response)||response.error||
+               (response.results!==undefined&&!Array.isArray(response.results))||
+               (response.nextPageToken!=null&&typeof response.nextPageToken!=="string"))throw failure("INVALID_RESPONSE");
+            return response;
+          },Math.min(REQUEST_MS,remaining),remaining<=REQUEST_MS?"DEADLINE":"REQUEST_TIMEOUT",()=>{if(controller)controller.abort();});
+        }catch(e){
+          const transport=!e.reportCode&&(e.name==="AbortError"||e.name==="FetchError"||e.name==="TypeError"||/^(ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET)$/.test(String(e.code||"")));
+          problem=e.reportCode?e:failure(transport?"TRANSPORT":"INVALID_RESPONSE");
+        }
+        attemptLog.push({page:pages+1,attempt:attempt+1,httpStatus:res?res.status:null,
+          tookMs:Date.now()-requestAt,errorCode:problem?problem.reportCode:null});
+        if(!problem)break;
+        if(!["RATE_LIMITED","SERVICE_UNAVAILABLE","REQUEST_TIMEOUT","TRANSPORT"].includes(problem.reportCode)||attempt===MAX_ATTEMPTS-1)throw problem;
+        const delay=Math.max(600*Math.pow(2,attempt)+Math.floor(Math.random()*250),retryMs);
+        // Honor long retry hints by ending this bounded run, never retrying too early.
+        if(delay>10000||Date.now()+delay+250>=deadline)throw problem;
+        await _sleep(delay);
       }
       pages++;
-      if(!res.ok)throw new Error("[gmc] reports search failed after "+(attempt+1)+" attempt(s): "+JSON.stringify(data).slice(0,500));
-      (data.results||[]).forEach(row=>{
-        const v=row.productPerformanceView||{},id=String(v.offerId||"").trim();if(!id)return;
-        const k=id.toLowerCase(),cv=v.conversionValue||{};
-        const x=byId[k]||(byId[k]={itemId:id,title:v.title||null,countries:new Set(),productType:v.productTypeL1||null,customLabels:[v.customLabel0,v.customLabel1,v.customLabel2,v.customLabel3,v.customLabel4].filter(Boolean),clicks:0,impressions:0,conversions:0,value:0});
+      const rows=data.results||[];receivedRows+=rows.length;
+      for(const row of rows){
+        const v=row&&row.productPerformanceView,id=String(v&&v.offerId||"").trim();
+        if(!v||!id)throw failure("INVALID_RESPONSE");
+        const values=[v.clicks,v.impressions,v.conversions];
+        if(values.some(n=>n!=null&&(!Number.isFinite(Number(n))||Number(n)<0)))throw failure("INVALID_RESPONSE");
+        const k=id.toLowerCase(),cv=v.conversionValue||{},amount=Number(cv.amountMicros||0)/1e6;
+        if(!Number.isFinite(amount))throw failure("INVALID_RESPONSE");
+        const currency=String(cv.currencyCode||"").toUpperCase();
+        const x=byId[k]||(byId[k]={itemId:id,title:v.title||null,countries:new Set(),
+          productType:v.productTypeL1||null,customLabels:[v.customLabel0,v.customLabel1,v.customLabel2,v.customLabel3,v.customLabel4].filter(Boolean),
+          clicks:0,impressions:0,conversions:0,value:0,valueCurrency:"USD",valuesByCurrency:{},unconvertedValueRows:0});
         x.clicks+=Number(v.clicks)||0;x.impressions+=Number(v.impressions)||0;x.conversions+=Number(v.conversions)||0;
-        x.value+=(Number(cv.amountMicros)||0)/1e6;if(v.customerCountryCode)x.countries.add(v.customerCountryCode);
-      });
-      pageToken=data.nextPageToken||null;
-      // Hard page cap. At 1000 rows/page this is 500k offer-rows — far beyond any real catalogue,
-      // so hitting it means a pagination bug, not a big account. Bail rather than loop forever
-      // inside a function with a 13-minute budget.
-      if(pages>=500){pageToken=null;}
-    }while(pageToken);
-    Object.values(byId).forEach(x=>{x.conversions=_r2(x.conversions);x.value=_r2(x.value);x.conversionRate=x.clicks>0?_r2(x.conversions/x.clicks):null;x.countries=[...x.countries];});
-    return {configured:true,byId,rows:Object.values(byId),days:d,at:Date.now(),error:null,pages,httpStatuses};
-  }catch(e){return {configured:true,byId:{},rows:[],days:Number(days)||90,at:Date.now(),error:String(e.message||e).slice(0,240),pages:0,httpStatuses:[]};}
+        // Existing consumers use USD value. Preserve other amounts without adding
+        // unlike currencies or inventing an exchange rate; counts remain usable.
+        if(amount!==0){
+          if(/^[A-Z]{3}$/.test(currency)){x.valuesByCurrency[currency]=(x.valuesByCurrency[currency]||0)+amount;if(currency==="USD")x.value+=amount;}
+          else x.unconvertedValueRows++;
+        }
+        if(v.customerCountryCode)x.countries.add(v.customerCountryCode);
+      }
+      const next=data.nextPageToken||null;if(!next)break;
+      if(seenTokens.has(next)||next===pageToken)throw failure("INCOMPLETE_REPORT");
+      seenTokens.add(next);pageToken=next;
+    }
+    const currencies=new Set();let valueComplete=true;
+    Object.values(byId).forEach(x=>{
+      x.conversions=_r2(x.conversions);x.value=_r2(x.value);x.conversionRate=x.clicks>0?_r2(x.conversions/x.clicks):null;x.countries=[...x.countries];
+      x.currencies=Object.keys(x.valuesByCurrency).sort();x.currencies.forEach(c=>{currencies.add(c);x.valuesByCurrency[c]=_r2(x.valuesByCurrency[c]);});
+      x.valueComplete=x.unconvertedValueRows===0&&x.currencies.every(c=>c==="USD");if(!x.valueComplete)valueComplete=false;
+    });
+    phase="complete";
+    return result({byId,rows:Object.values(byId),complete:true,valueCurrency:"USD",valueComplete,currencies:[...currencies].sort()});
+  }catch(e){
+    const code=e&&e.reportCode||(phase==="connection"?"SETUP_UNAVAILABLE":"INVALID_RESPONSE");
+    return result({error:messages[code]||messages.INVALID_RESPONSE,errorCode:code});
+  }
 }
 
 function _pmaxNorm(s) { return String(s || "").toLowerCase().replace(/&amp;/g, " and ").replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim(); }
@@ -2957,9 +3087,10 @@ function pmaxCandidatesFromSignals({ collections = [], profiles = [], sig30 = nu
       paidPerf.cost=_r2(paidPerf.cost); paidPerf.conversions=_r2(paidPerf.conversions); paidPerf.value=_r2(paidPerf.value);
       paidPerf.roas=paidPerf.cost>0?_r2(paidPerf.value/paidPerf.cost):null;
       const free30Rows=scopedOffers.map(mp=>free30ById[String(mp.itemId).toLowerCase()]).filter(Boolean),free90Rows=scopedOffers.map(mp=>free90ById[String(mp.itemId).toLowerCase()]).filter(Boolean);
-      const sumFree=rows=>rows.reduce((a,x)=>({impressions:a.impressions+(Number(x.impressions)||0),clicks:a.clicks+(Number(x.clicks)||0),conversions:a.conversions+(Number(x.conversions)||0),value:a.value+(Number(x.value)||0)}),{impressions:0,clicks:0,conversions:0,value:0});
+      const sumFree=rows=>rows.reduce((a,x)=>{a.impressions+=Number(x.impressions)||0;a.clicks+=Number(x.clicks)||0;a.conversions+=Number(x.conversions)||0;a.value+=Number(x.value)||0;a.valueComplete=a.valueComplete&&x.valueComplete!==false;Object.entries(x.valuesByCurrency||{}).forEach(([ccy,value])=>{a.valuesByCurrency[ccy]=(a.valuesByCurrency[ccy]||0)+(Number(value)||0);});return a;},{impressions:0,clicks:0,conversions:0,value:0,valueCurrency:"USD",valueComplete:true,valuesByCurrency:{}});
       const free30=sumFree(free30Rows),free90=sumFree(free90Rows);[free30,free90].forEach(x=>{x.conversions=_r2(x.conversions);x.value=_r2(x.value);x.conversionRate=x.clicks>0?_r2(x.conversions/x.clicks):null;});
-      const freePerf={days30:free30,days90:free90,source:(merchantFree30&&merchantFree30.configured)?"Merchant API reports":"Shopify attribution fallback"};
+      free30.available=!!(merchantFree30&&merchantFree30.complete&&!merchantFree30.error);free90.available=!!(merchantFree90&&merchantFree90.complete&&!merchantFree90.error);
+      const freePerf={days30:free30,days90:free90,source:free30.available&&free90.available?"Merchant API reports":free30.available||free90.available?"Merchant API reports (partial periods)":"Shopify attribution fallback"};
       const provenPaid = paidPerf.conversions * 24 + paidPerf.value * .035;
       const provenFree = free30.conversions*42 + free30.value*.06 + free30.clicks*.35 + free90.conversions*12 + free90.value*.012;
       const wastePenalty = paidPerf.conversions === 0 ? Math.min(35, paidPerf.cost * .8) : 0;
@@ -2987,7 +3118,7 @@ function pmaxCandidatesFromSignals({ collections = [], profiles = [], sig30 = nu
       out.push({ handle: coll.handle, collectionTitle: coll.title || p.title, score: Math.round(totalScore * 10) / 10,
         merchantScore: Math.round(merchantProof * breadth * 10) / 10, itemIds,
         productTitles: matches.sort((a,b) => (b.orders-a.orders)||(b.estimatedProfit-a.estimatedProfit)||(b.revenue-a.revenue)).slice(0, 8).map(x => x.title),
-        evidence: matches.slice(0, 8), feedLabel: feedKey || null, confidence,
+        evidence: matches.slice(0, 8), evidenceDays:90, evidenceTotals:{orders:matches.reduce((n,x)=>n+(Number(x.orders)||0),0),revenue:Math.round(evidenceRevenue30d)}, feedLabel: feedKey || null, confidence,
         estimatedProfit30d: Math.round(profitProof), evidenceRevenue30d:Math.round(evidenceRevenue30d),marginRate:_r2(marginRate),breakEvenRoas,recommendedTargetRoas,
         biddingMode:recommendedTargetRoas>0?"MAXIMIZE_CONVERSION_VALUE_TARGET_ROAS":"MAXIMIZE_CONVERSION_VALUE_LEARNING",
         paidPerformance: paidPerf, freePerformance:freePerf,
@@ -3061,13 +3192,13 @@ async function proposePmaxOpportunities({ collections = [], profiles = [], ceili
     detail:!merchantFree30.configured?"Merchant Reports API is not configured.":`${(merchantFree30.rows||[]).length} organic offer row(s) across ${merchantFree30.pages||0} page request(s).`,source:"Merchant Reports product_performance_view",
     httpStatus:(merchantFree30.httpStatuses||[]).slice(-1)[0]||null,error:merchantFree30.error||null,
     fallback:!merchantFree30.configured?"Shopify free-listing attribution is used instead.":(merchantFree30.error?"Continue with Shopify attribution and Google Ads paid-product evidence.":null),
-    meta:{configured:!!merchantFree30.configured,rows:(merchantFree30.rows||[]).length,pages:merchantFree30.pages||0,httpStatuses:merchantFree30.httpStatuses||[],days:30}});
+    meta:{configured:!!merchantFree30.configured,rows:(merchantFree30.rows||[]).length,pages:merchantFree30.pages||0,httpStatuses:merchantFree30.httpStatuses||[],days:30,complete:merchantFree30.complete,errorCode:merchantFree30.errorCode,attempts:merchantFree30.attempts,diagnostics:merchantFree30.diagnostics}});
   const merchant90Status=!merchantFree90.configured?"skipped":(merchantFree90.error?"warning":"ok");
   await emit({id:"pmax_merchant_organic_90d",category:"Merchant API",label:"90-day Merchant organic performance",status:merchant90Status,startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,
     detail:!merchantFree90.configured?"Merchant Reports API is not configured.":`${(merchantFree90.rows||[]).length} organic offer row(s) across ${merchantFree90.pages||0} page request(s).`,source:"Merchant Reports product_performance_view",
     httpStatus:(merchantFree90.httpStatuses||[]).slice(-1)[0]||null,error:merchantFree90.error||null,
     fallback:!merchantFree90.configured?"Shopify free-listing attribution is used instead.":(merchantFree90.error?"Continue with Shopify attribution and Google Ads paid-product evidence.":null),
-    meta:{configured:!!merchantFree90.configured,rows:(merchantFree90.rows||[]).length,pages:merchantFree90.pages||0,httpStatuses:merchantFree90.httpStatuses||[],days:90}});
+    meta:{configured:!!merchantFree90.configured,rows:(merchantFree90.rows||[]).length,pages:merchantFree90.pages||0,httpStatuses:merchantFree90.httpStatuses||[],days:90,complete:merchantFree90.complete,errorCode:merchantFree90.errorCode,attempts:merchantFree90.attempts,diagnostics:merchantFree90.diagnostics}});
   const candidates = pmaxCandidatesFromSignals({ collections, profiles, sig30, sig90, merchant, paid, merchantFree30, merchantFree90 });
   await emit({id:"pmax_candidate_scoring",category:"Ranking",label:"PMax candidate matching and scoring",status:candidates.length?"ok":"warning",startedAt:Date.now(),endedAt:Date.now(),tookMs:0,
     detail:`${candidates.length} market-specific candidate(s) built from ${merchant.length} verified offers.`,source:"Deterministic product/economic scoring",meta:{candidates:candidates.length,merchantOffers:merchant.length}});
@@ -3118,15 +3249,15 @@ Choose 2-3 market-specific, non-overlapping candidates. CA and US feed labels ar
   }
   const list = selected.map(c => {
     const ev = c.evidence || [], merchantEv = ev.filter(x => String(x.source).indexOf("merchant-free") >= 0);
-    const orders = ev.reduce((n,x)=>n+(Number(x.orders)||0),0), revenue = ev.reduce((n,x)=>n+(Number(x.revenue)||0),0);
+    const orders = c.evidenceTotals ? c.evidenceTotals.orders : ev.reduce((n,x)=>n+(Number(x.orders)||0),0), revenue = c.evidenceTotals ? c.evidenceTotals.revenue : ev.reduce((n,x)=>n+(Number(x.revenue)||0),0);
     return { kind:"pmax", collectionTitle:c.collectionTitle, handle:c.handle, rationale:c.rationale, angle:c.angle,
       dailyBudget:c.dailyBudget, days:c.days, types:c.types, itemIds:c.itemIds, productTitles:c.productTitles,
       feedLabel:c.feedLabel||null, score:c.score, merchantScore:c.merchantScore, confidence:c.confidence,
-      opportunityClass:c.opportunityClass, estimatedProfit30d:c.estimatedProfit30d, evidenceRevenue30d:c.evidenceRevenue30d,marginRate:c.marginRate,
+      evidenceDays:90, opportunityClass:c.opportunityClass, estimatedProfit30d:c.estimatedProfit30d, evidenceRevenue30d:c.evidenceRevenue30d,marginRate:c.marginRate,
       breakEvenRoas:c.breakEvenRoas,recommendedTargetRoas:c.recommendedTargetRoas,biddingMode:c.biddingMode,paidPerformance:c.paidPerformance,freePerformance:c.freePerformance,
       offerDetails:c.offerDetails, searchThemes:c.searchThemes||_derivePmaxSearchThemes(c),
-      merchantReportsConfigured:!!merchantFree30.configured,merchantReportWarning:merchantFree30.error||merchantFree90.error||null,
-      organic:{ orders30d:orders, organicRevenue30d:Math.round(revenue), merchantMatchedProducts:merchantEv.length,
+      merchantReportsConfigured:!!merchantFree30.configured,merchantReportWarning:merchantFree30.error||merchantFree90.error||null,merchantReportCode:merchantFree30.errorCode||merchantFree90.errorCode||null,
+      organic:{ evidenceDays:90, matchedProductOrders:orders, matchedProductRevenue:Math.round(revenue), orders30d:orders, organicRevenue30d:Math.round(revenue), merchantMatchedProducts:merchantEv.length,
         merchantOrdersStorewide30d:merchantOrders30, merchantRevenueStorewide30d:merchantRevenue30,
         signalSource:(c.freePerformance&&c.freePerformance.days30&&c.freePerformance.days30.conversions>0)?"Google Merchant API free-listing conversions":(c.merchantScore>0?"Google Merchant Center free-listing sales":"other organic sales fallback") } };
   });
@@ -3604,6 +3735,10 @@ async function pmaxPreviewData({ handle, titles, n } = {}) {
 }
 
 async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, itemIds, productTitles, feedLabel, searchThemes, offerDetails } = {}) {
+  const researchDb = fb();
+  if (!researchDb) throw new Error("Product research is unavailable. Try refreshing research shortly.");
+  const researchDoc = await researchDb.db.collection(COL.state).doc("opportunities").get();
+  _pmaxResearchCandidate(researchDoc.exists ? researchDoc.data() : null, {handle, feedLabel, itemIds});
   const ctrl = await control(), colls = await getCollections({}), coll = colls.find(c => c.handle === handle);
   if (!coll) throw new Error("unknown collection: " + handle);
   const merchantId = await merchantCenterId(); let types = [];
@@ -3621,7 +3756,7 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
     selected=selected.slice(0,30);
   } catch(e){}
   if(!requestedIds.length)throw new Error("Select exact eligible Merchant Center offers before building a campaign.");
-  if(requestedIds.length!==selected.length)throw new Error("None of the selected Merchant Center offers are currently eligible. Re-run Scan for opportunities to refresh the feed scope.");
+  if(requestedIds.length!==selected.length)throw new Error("Some selected Merchant Center offers are no longer eligible. Refresh product research to update the product selection.");
   const exactIds=selected.map(x=>x.itemId), chosenTitles=[...new Set(selected.map(x=>x.title))].slice(0,30);
   const liveDetails=selected.map(x=>({itemId:x.itemId,title:x.title,type1:x.type1||null,type2:x.type2||null,feedLabel:x.feedLabel||liveFeedLabel||null,customLabels:x.customLabels||[]}));
   const themes=(Array.isArray(searchThemes)&&searchThemes.length?searchThemes:_derivePmaxSearchThemes({collectionTitle:coll.title,productTitles:chosenTitles,types})).slice(0,25);
@@ -5467,7 +5602,7 @@ async function scanOpportunities({ force, cacheOnly, runId } = {}) {
   const f = fb(); const ctrl = await control(); let audit = null;
   // Kept outside the Search scan try-block so a later Search failure cannot erase a
   // Merchant Center opportunity scan that already completed successfully.
-  let pmaxList = [], pmaxError = null, pmaxAt = null;
+  let pmaxList = [], pmaxError = null, pmaxAt = null, searchResearchVersion = 0, pmaxResearchVersion = 0;
   if (f && (cacheOnly || !force)) {
     try {
       const [s, aDoc] = await Promise.all([
@@ -5477,11 +5612,12 @@ async function scanOpportunities({ force, cacheOnly, runId } = {}) {
       const latestAudit = aDoc && aDoc.exists ? ((aDoc.data() || {}).scanAudit || null) : null;
       if (s.exists) {
         const x = s.data();
-        if (cacheOnly) return { opportunities: Array.isArray(x.list) ? x.list : [], pmaxList: Array.isArray(x.pmaxList) ? x.pmaxList : [], pmaxError: x.pmaxError || null, pmaxAt: x.pmaxAt || null, scannedAt: x.at || null, scanning: !!x.scanning, lastError: x.lastError || null, lastErrorAt: x.lastErrorAt || null, progress: x.progress || null, scanAudit: latestAudit };
-        const cacheAt=Math.max(Number(x.at)||0,Number(x.pmaxAt)||0);
-        if (cacheAt && (Date.now() - cacheAt) < 12 * 60 * 60 * 1000 && ((Array.isArray(x.list) && x.list.length) || (Array.isArray(x.pmaxList) && x.pmaxList.length))) return { opportunities: Array.isArray(x.list) ? x.list : [], pmaxList: Array.isArray(x.pmaxList) ? x.pmaxList : [], pmaxError: x.pmaxError || null, pmaxAt: x.pmaxAt || null, scannedAt: x.at || null, scanAudit: latestAudit };
-      } else if (cacheOnly) { return { opportunities: [], pmaxList: [], pmaxError: null, pmaxAt: null, scannedAt: null, scanning: false, scanAudit: latestAudit }; }
-    } catch (e) { if (cacheOnly) return { opportunities: [], pmaxList: [], pmaxError: null, pmaxAt: null, scannedAt: null, scanning: false, scanAudit: null }; }
+        searchResearchVersion = Number(x.searchResearchVersion) || 0; pmaxResearchVersion = Number(x.pmaxResearchVersion) || 0;
+        if (cacheOnly) return { searchResearchVersion, pmaxResearchVersion, opportunities: Array.isArray(x.list) ? x.list : [], pmaxList: Array.isArray(x.pmaxList) ? x.pmaxList : [], pmaxError: x.pmaxError || null, pmaxAt: x.pmaxAt || null, scannedAt: x.at || null, scanning: !!x.scanning, lastError: x.lastError || null, lastErrorAt: x.lastErrorAt || null, progress: x.progress || null, scanAudit: latestAudit };
+        const cacheAt=Math.min(Number(x.at)||0,Number(x.pmaxAt)||0);
+        if (searchResearchVersion === _OPPORTUNITY_RESEARCH_SCHEMA && pmaxResearchVersion === _OPPORTUNITY_RESEARCH_SCHEMA && cacheAt && (Date.now() - cacheAt) < 12 * 60 * 60 * 1000 && ((Array.isArray(x.list) && x.list.length) || (Array.isArray(x.pmaxList) && x.pmaxList.length))) return { searchResearchVersion, pmaxResearchVersion, opportunities: Array.isArray(x.list) ? x.list : [], pmaxList: Array.isArray(x.pmaxList) ? x.pmaxList : [], pmaxError: x.pmaxError || null, pmaxAt: x.pmaxAt || null, scannedAt: x.at || null, scanAudit: latestAudit };
+      } else if (cacheOnly) { return { searchResearchVersion, pmaxResearchVersion, opportunities: [], pmaxList: [], pmaxError: null, pmaxAt: null, scannedAt: null, scanning: false, scanAudit: latestAudit }; }
+    } catch (e) { if (cacheOnly) return { searchResearchVersion, pmaxResearchVersion, opportunities: [], pmaxList: [], pmaxError: null, pmaxAt: null, scannedAt: null, scanning: false, scanAudit: null }; }
   }
   // ---- Scan pipeline wrapped so a failure ANYWHERE records WHY (readable via lastError) and ALWAYS
   // clears the scanning flag. Previously the background caller swallowed the error, leaving
@@ -5529,12 +5665,12 @@ async function scanOpportunities({ force, cacheOnly, runId } = {}) {
   await _scanProg(35, "Merchant Center opportunity scan", "matching recent organic sales to live GMC offers");
   let pmaxCrashed = false;
   const pmaxPack = await proposePmaxOpportunities({ collections, profiles: profiles || [], ceiling, onAudit:e=>_auditEvent(audit,e) }).catch(e => { pmaxCrashed = true; return { list: [], error: String(e.message || e).slice(0, 220), at: Date.now() }; });
-  pmaxList = Array.isArray(pmaxPack.list) ? pmaxPack.list : []; pmaxError = pmaxPack.error || null; pmaxAt = pmaxPack.at || Date.now();
+  pmaxList = Array.isArray(pmaxPack.list) ? pmaxPack.list : []; pmaxError = pmaxPack.error || null; pmaxAt = pmaxPack.at || Date.now(); pmaxResearchVersion = _OPPORTUNITY_RESEARCH_SCHEMA;
   await _auditEvent(audit,{id:"pmax_pipeline",category:"PMax",label:"PMax opportunity pipeline",status:pmaxCrashed?"failed":(pmaxError?"warning":"ok"),startedAt:Date.now(),endedAt:Date.now(),tookMs:0,detail:`${pmaxList.length} PMax opportunity/opportunities produced.`,error:pmaxError,meta:{opportunities:pmaxList.length,merchantProducts:pmaxPack.merchantProducts||0,merchantReportsConfigured:!!pmaxPack.merchantReportsConfigured}});
   // Commit the feed result NOW, before the much slower Search reasoning pass. If
   // Search later times out or the background function reaches its platform limit,
   // the completed Merchant scan remains available to the Opportunities tab.
-  if (f) { const saveT=Date.now(); try { await f.db.collection(COL.state).doc("opportunities").set({ pmaxList, pmaxError, pmaxAt }, { merge: true }); await _auditEvent(audit,{id:"pmax_interim_save",category:"Firestore",label:"Immediate PMax result save",status:"ok",startedAt:saveT,endedAt:Date.now(),tookMs:Date.now()-saveT,detail:`Saved ${pmaxList.length} PMax result(s) before the slower Search strategy pass.`}); } catch (e) { await _auditEvent(audit,{id:"pmax_interim_save",category:"Firestore",label:"Immediate PMax result save",status:"warning",startedAt:saveT,endedAt:Date.now(),tookMs:Date.now()-saveT,error:e&&e.message,fallback:"Final save will retry after Search ranking."}); } }
+  if (f) { const saveT=Date.now(); try { await f.db.collection(COL.state).doc("opportunities").set({ pmaxList, pmaxError, pmaxAt, pmaxResearchVersion }, { merge: true }); await _auditEvent(audit,{id:"pmax_interim_save",category:"Firestore",label:"Immediate PMax result save",status:"ok",startedAt:saveT,endedAt:Date.now(),tookMs:Date.now()-saveT,detail:`Saved ${pmaxList.length} PMax result(s) before the slower Search strategy pass.`}); } catch (e) { await _auditEvent(audit,{id:"pmax_interim_save",category:"Firestore",label:"Immediate PMax result save",status:"warning",startedAt:saveT,endedAt:Date.now(),tookMs:Date.now()-saveT,error:e&&e.message,fallback:"Final save will retry after Search ranking."}); } }
   let pbBlock = "";
   const pbT=Date.now();
   try { pbBlock = playbookText(await playbookSlice({ categories: ["keywords", "copy", "negatives", "landingPage", "budget", "structure"] })); await _auditEvent(audit,{id:"learned_playbook",category:"Learning",label:"Learned advertising playbook",status:"ok",startedAt:pbT,endedAt:Date.now(),tookMs:Date.now()-pbT,detail:pbBlock?"Historical lessons included in the strategy prompt.":"No learned lessons were available yet.",source:"Firestore learning memory"}); }
@@ -5601,12 +5737,12 @@ ${pbBlock}Only include opportunities genuinely relevant within ~30 days. Opportu
     if (f) {
       try {
         const s2 = await f.db.collection(COL.state).doc("opportunities").get();
-        if (s2.exists) { const x2 = s2.data(); prevList = Array.isArray(x2.list) ? x2.list : []; prevAt = x2.at || null; }
+        if (s2.exists) { const x2 = s2.data(); prevList = Array.isArray(x2.list) ? x2.list : []; prevAt = x2.at || null; searchResearchVersion = Number(x2.searchResearchVersion) || 0; }
       } catch (e) {}
-      try { await f.db.collection(COL.state).doc("opportunities").set({ pmaxList, pmaxError, pmaxAt, scanning: false, lastError: llmErr || "no Search opportunities returned", lastErrorAt: Date.now(), progress: null }, { merge: true }); } catch (e) {}
+      try { await f.db.collection(COL.state).doc("opportunities").set({ pmaxList, pmaxError, pmaxAt, pmaxResearchVersion, scanning: false, lastError: llmErr || "no Search opportunities returned", lastErrorAt: Date.now(), progress: null }, { merge: true }); } catch (e) {}
     }
     await _auditFinish(audit,pmaxList.length?"partial":"failed",`Search strategy failed: ${llmErr || "no Search opportunities returned"}. ${pmaxList.length} fresh PMax result(s) remain available.`);
-    return { opportunities: prevList, pmaxList, pmaxError, pmaxAt, scannedAt: prevAt, lastError: llmErr || "no Search opportunities returned", lastErrorAt: Date.now(), scanAudit:_auditPayload(audit) };
+    return { searchResearchVersion, pmaxResearchVersion, opportunities: prevList, pmaxList, pmaxError, pmaxAt, scannedAt: prevAt, lastError: llmErr || "no Search opportunities returned", lastErrorAt: Date.now(), scanAudit:_auditPayload(audit) };
   }
   const byTitle0 = {}; collections.forEach(c => byTitle0[c.title.toLowerCase()] = c.handle);
   // PMax opportunities were built independently above from live GMC offers + order signals.
@@ -5725,17 +5861,18 @@ ${pbBlock}Only include opportunities genuinely relevant within ~30 days. Opportu
   // because keywordData/plan bloat the payload), it was previously swallowed — leaving stale data AND a
   // stuck scanning flag. Now a write failure retries with a trimmed payload and is always recorded.
   await _scanProg(96, "Saving " + list.length + " ranked opportunities");
+  searchResearchVersion = _OPPORTUNITY_RESEARCH_SCHEMA;
   const finalAt=Date.now(), saveT=Date.now(); let saveMode="full", saveErr=null;
   await _auditEvent(audit,{id:"firestore_final_save",category:"Firestore",label:"Final opportunity result save",status:"running",startedAt:saveT,detail:`Saving ${list.length} Search and ${pmaxList.length} PMax opportunities.`});
   if (f && (list.length || pmaxList.length)) {
     try {
-      await f.db.collection(COL.state).doc("opportunities").set({ list, pmaxList, pmaxError, pmaxAt, at: finalAt, scanning: false, lastError: null, lastErrorAt: null, progress: null });
+      await f.db.collection(COL.state).doc("opportunities").set({ list, pmaxList, pmaxError, pmaxAt, searchResearchVersion, pmaxResearchVersion, at: finalAt, scanning: false, lastError: null, lastErrorAt: null, progress: null });
       await _auditEvent(audit,{id:"firestore_final_save",category:"Firestore",label:"Final opportunity result save",status:"ok",startedAt:saveT,endedAt:Date.now(),tookMs:Date.now()-saveT,detail:"Full opportunity payload saved and scanning flag cleared.",source:"Firestore"});
     } catch (e) {
       saveMode="trimmed"; saveErr=e&&e.message;
       try {
         const slim = list.map(o => { const c = Object.assign({}, o); delete c.keywordData; return c; });
-        await f.db.collection(COL.state).doc("opportunities").set({ list: slim, pmaxList, pmaxError, pmaxAt, at: finalAt, scanning: false, lastError: "write trimmed (payload too large): " + saveErr, lastErrorAt: Date.now(), progress: null });
+        await f.db.collection(COL.state).doc("opportunities").set({ list: slim, pmaxList, pmaxError, pmaxAt, searchResearchVersion, pmaxResearchVersion, at: finalAt, scanning: false, lastError: "write trimmed (payload too large): " + saveErr, lastErrorAt: Date.now(), progress: null });
         await _auditEvent(audit,{id:"firestore_final_save",category:"Firestore",label:"Final opportunity result save",status:"warning",startedAt:saveT,endedAt:Date.now(),tookMs:Date.now()-saveT,detail:"Saved a reduced payload after the full document exceeded Firestore limits.",source:"Firestore",error:saveErr,fallback:"Per-keyword metric detail was removed; campaign generation data remains."});
       } catch (e2) {
         saveMode="failed"; saveErr=e2&&e2.message;
@@ -5744,23 +5881,23 @@ ${pbBlock}Only include opportunities genuinely relevant within ~30 days. Opportu
       }
     }
   } else if (f) {
-    try { await f.db.collection(COL.state).doc("opportunities").set({ list: [], pmaxList: [], pmaxError, pmaxAt, at: finalAt, scanning: false, lastError: "all Search and PMax opportunities filtered out", lastErrorAt: Date.now(), progress: null }, { merge: true });
+    try { await f.db.collection(COL.state).doc("opportunities").set({ list: [], pmaxList: [], pmaxError, pmaxAt, searchResearchVersion, pmaxResearchVersion, at: finalAt, scanning: false, lastError: "all Search and PMax opportunities filtered out", lastErrorAt: Date.now(), progress: null }, { merge: true });
       await _auditEvent(audit,{id:"firestore_final_save",category:"Firestore",label:"Final opportunity result save",status:"warning",startedAt:saveT,endedAt:Date.now(),tookMs:Date.now()-saveT,detail:"Saved an empty result because every candidate was filtered out.",source:"Firestore"}); }
     catch (e) { saveMode="failed"; saveErr=e&&e.message; await _auditEvent(audit,{id:"firestore_final_save",category:"Firestore",label:"Final opportunity result save",status:"failed",startedAt:saveT,endedAt:Date.now(),tookMs:Date.now()-saveT,error:saveErr}); }
   } else { saveMode="failed"; saveErr="Firestore unavailable"; await _auditEvent(audit,{id:"firestore_final_save",category:"Firestore",label:"Final opportunity result save",status:"failed",startedAt:saveT,endedAt:Date.now(),tookMs:Date.now()-saveT,error:saveErr}); }
   const finalStatus=saveMode==="failed"?"failed":(pmaxError||!list.length||saveMode==="trimmed"?"partial":"success");
   await _auditFinish(audit,finalStatus,`${list.length} Search + ${pmaxList.length} PMax opportunities completed${pmaxError?"; PMax warning: "+pmaxError:""}${saveMode==="trimmed"?"; saved in trimmed mode":""}.`);
-  return { opportunities: list, pmaxList, pmaxError, pmaxAt, scannedAt: finalAt, scanAudit:_auditPayload(audit), lastError:saveMode==="failed"?saveErr:null, lastErrorAt:saveMode==="failed"?Date.now():null };
+  return { searchResearchVersion, pmaxResearchVersion, opportunities: list, pmaxList, pmaxError, pmaxAt, scannedAt: finalAt, scanAudit:_auditPayload(audit), lastError:saveMode==="failed"?saveErr:null, lastErrorAt:saveMode==="failed"?Date.now():null };
   } catch (scanErr) {
     // ANY failure in the scan pipeline: record it (console-readable via lastError) and ALWAYS clear
     // scanning so the UI stops showing stale data. This is the safety net that was missing.
     if (f) { try { await f.db.collection(COL.state).doc("opportunities").set({
-      ...(pmaxAt ? { pmaxList, pmaxError, pmaxAt } : {}), scanning: false,
+      ...(pmaxAt ? { pmaxList, pmaxError, pmaxAt, pmaxResearchVersion } : {}), scanning: false,
       lastError: (scanErr && scanErr.message) || String(scanErr), lastErrorStack: ((scanErr && scanErr.stack) || "").slice(0, 600),
       lastErrorAt: Date.now(), progress: null
     }, { merge: true }); } catch (e) {} }
     await _auditFinish(audit,"failed",`Scan stopped: ${(scanErr && scanErr.message) || String(scanErr)}`);
-    return { opportunities: [], pmaxList, pmaxError, pmaxAt, scannedAt: null, error: (scanErr && scanErr.message) || String(scanErr), scanAudit:audit?_auditPayload(audit):null };
+    return { searchResearchVersion, pmaxResearchVersion, opportunities: [], pmaxList, pmaxError, pmaxAt, scannedAt: null, error: (scanErr && scanErr.message) || String(scanErr), scanAudit:audit?_auditPayload(audit):null };
   }
 }
 
@@ -5788,7 +5925,8 @@ const _CAMP_RANK = { REMOVED: 0, PAUSED: 1, ENABLED: 2 };
 // tag -> { where:"approval"|"campaign", status, approvalId?, campaignId? }
 // A live campaign is ground truth and overrides any approval record for that tag.
 async function takenTags() {
-  const map = {}; const f = fb();
+  const map = {}; const errors = []; const f = fb();
+  if (!f) errors.push("Approval history unavailable.");
   if (f) {
     try {
       const ap = await f.db.collection(COL.approvals).limit(300).get();
@@ -5799,7 +5937,7 @@ async function takenTags() {
         if (!cur || (_AP_RANK[x.status] || 0) >= (_AP_RANK[cur.status] || 0))
           map[tag] = { where: "approval", status: x.status, approvalId: d.id };
       });
-    } catch (e) {}
+    } catch (e) { errors.push("Approval history could not be checked."); }
   }
   try {
     const rows = await gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.primary_status, campaign.primary_status_reasons FROM campaign`);
@@ -5812,7 +5950,8 @@ async function takenTags() {
           primaryStatus: r.campaign.primaryStatus || null, primaryStatusReasons: r.campaign.primaryStatusReasons || [] };
     });
     Object.keys(campMap).forEach(tag => { map[tag] = campMap[tag]; }); // campaigns override approvals
-  } catch (e) {}
+  } catch (e) { errors.push("Live campaign status could not be checked."); }
+  Object.defineProperty(map, "_errors", { value: errors, enumerable: false });
   return map;
 }
 // Opportunities annotated with their current real state, so the UI can split
@@ -5820,7 +5959,7 @@ async function takenTags() {
 async function opportunitiesWithStatus({ force, cacheOnly, runId } = {}) {
   const r = await scanOpportunities({ force, cacheOnly, runId });
   let taken = {}, takenError = null; const takenT=Date.now();
-  try { taken = await takenTags(); } catch (e) { takenError=(e&&e.message)||String(e); }
+  try { taken = await takenTags(); takenError = (taken._errors || []).join(" ") || null; } catch (e) { takenError=(e&&e.message)||String(e); }
   if (force && r.scanAudit) { const a=Object.assign({},r.scanAudit,{checks:Array.isArray(r.scanAudit.checks)?r.scanAudit.checks.slice():[]}); await _auditEvent(a,{id:"campaign_reconciliation",category:"Google Ads API",label:"Approvals and live campaign reconciliation",status:takenError?"warning":"ok",startedAt:takenT,endedAt:Date.now(),tookMs:Date.now()-takenT,detail:takenError?"Could not fully verify whether recommendations are already in use.":`${Object.keys(taken).length} approval/campaign tag(s) reconciled to prevent duplicates.`,source:"Firestore approvals + Google Ads campaigns",error:takenError,fallback:takenError?"Opportunity cards may omit some in-use states until refresh.":null}); r.scanAudit=_auditPayload(a); }
   // Dates are normalized at SERVE time: an opportunity may have been scanned up to 12h ago (or be
   // a stale list kept after a failed re-scan), so clamp startDate to today, recompute daysOut, and
@@ -5856,7 +5995,7 @@ async function opportunitiesWithStatus({ force, cacheOnly, runId } = {}) {
     const tag = _pmaxTag(o.handle,o.feedLabel), legacyTag = _pmaxTag(o.handle,null);
     return Object.assign({}, o, { tag, acted: taken[tag] || taken[legacyTag] || null });
   }).filter(o => !(o.acted && o.acted.where === "campaign" && o.acted.status === "REMOVED"));
-  return { opportunities, pmaxList, pmaxError: r.pmaxError || null, pmaxAt: r.pmaxAt || null,
+  return { researchStatus: _opportunityResearchStatus(r), opportunities, pmaxList, pmaxError: r.pmaxError || null, pmaxAt: r.pmaxAt || null,
     scannedAt: r.scannedAt, scanning: !!r.scanning, taken, lastError: r.lastError || r.error || null,
     lastErrorAt: r.lastErrorAt || null, progress: r.progress || null, scanAudit:r.scanAudit||null,
     reconciliation:{ok:!takenError,takenCount:Object.keys(taken).length,error:takenError}, engineVersion: OPPORTUNITY_ENGINE_VERSION };
@@ -7073,6 +7212,20 @@ async function dashboard() {
     if (rows.length) out.lastMetrics = rows[0].snapshot;
     out.metricsSeries = rows.reverse(); // oldest → newest
   } catch (e) {}
+  // Old metric snapshots did not store channel. Reconcile live configuration so
+  // existing PMax campaigns remain visible independently of research and ad spend.
+  try {
+    const current = await gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign.primary_status, campaign.primary_status_reasons, campaign_budget.resource_name, campaign_budget.amount_micros FROM campaign WHERE campaign.status != 'REMOVED'`);
+    const prior = new Map((out.lastMetrics || []).map(c => [String(c.id), c]));
+    out.lastMetrics = current.map(r => {
+      const c = r.campaign || {}, old = prior.get(String(c.id));
+      return Object.assign({}, old || { metricsUnavailable: true }, { id: c.id, name: c.name, status: c.status,
+        channel: c.advertisingChannelType || null, primaryStatus: c.primaryStatus || null,
+        primaryStatusReasons: c.primaryStatusReasons || [], budget: fromMicros((r.campaignBudget || {}).amountMicros),
+        budgetRes: (r.campaignBudget || {}).resourceName || null });
+    });
+    out.campaignInventory = { ok: true, checkedAt: Date.now() };
+  } catch (e) { out.campaignInventory = { ok: false, message: "Live campaign details could not be refreshed; showing the saved snapshot." }; }
   try { out.conversionHealth = await conversionHealth(); } catch (e) { out.conversionHealth = null; }
   try { out.recentOrders = await recentOrders({ limit: 200 }); } catch (e) { out.recentOrders = []; }
   return out;

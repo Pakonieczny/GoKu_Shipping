@@ -642,6 +642,9 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
 .growthLaneTabs button{font:600 14px var(--sans);color:var(--ink-70);padding:10px 18px;border:1px solid transparent;background:transparent;border-radius:8px;cursor:pointer}
 .growthLaneTabs button[aria-selected="true"]{background:var(--ink);color:var(--paper)}
 #v-bench:not([data-lane="studio"]) #growthStudio,#v-bench:not([data-lane="learning"]) #growthLearning,#v-bench[data-lane="studio"] #growthStore,#v-bench[data-lane="learning"] #growthStore,#v-bench:not([data-lane="product"]) #pmaxSec,#v-bench[data-lane="product"] #oppList,#v-bench[data-lane="product"] #customWrap{display:none!important}
+#v-bench:not([data-lane="search"]) #searchResearchSettings,#v-bench:not([data-lane="product"]) #existingProductCampaigns{display:none!important}
+.researchHealth{margin:0 0 18px;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--card)}.researchHealthHead{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.researchHealthHead h4{font-size:14px;margin:0;flex:1}.researchHealth p{font-size:12px;line-height:1.55;margin:8px 0;color:var(--ink-70);overflow-wrap:anywhere}.researchHealthState{font-size:11px;font-weight:700;padding:4px 9px;border-radius:20px;background:var(--paper-2)}.researchHealthState.ready{color:var(--sage);background:var(--sage-soft)}.researchHealthState.stale,.researchHealthState.partial,.researchHealthState.running{color:#7a5a1d;background:var(--gold-soft)}.researchHealthState.error{color:var(--clay);background:var(--clay-soft)}.researchChecks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:13px 0}.researchCheck{min-width:0;padding:10px;background:var(--card-2);border-radius:8px;font-size:11px}.researchCheck b{display:block;font-size:12px;margin-bottom:3px}.researchCheck span{display:flex;gap:6px;align-items:center;color:var(--ink-70)}.researchTechnical>summary{cursor:pointer;color:var(--ink-45);font-size:11px;padding-top:6px}.researchTechnical .auditRows{margin-top:12px}.researchTechnical .auditMeta{white-space:normal;overflow-wrap:anywhere;max-width:240px}.researchTechnical .auditDetail,.researchTechnical .auditLabel,.pmxEvidenceBody,.pmxRationale{overflow-wrap:anywhere;min-width:0}.researchTechnical .auditRow>div{min-width:0}.researchTechnical pre,.pmxEvidenceBody pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;font:10px/1.5 var(--mono)}.researchTechnical .auditRow{grid-template-columns:22px minmax(140px,1fr) minmax(0,2fr) minmax(90px,.8fr)}.researchNotice{margin:10px 0;padding:10px 12px;background:var(--gold-soft);border-radius:8px;color:#7a5a1d;font-size:12px;line-height:1.5}.existingCampaign{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;padding:17px 18px;border-top:1px solid var(--line-2)}.existingCampaign:first-child{border-top:0}.existingCampaignTitle{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.existingCampaign h4{font-size:16px;margin:0;overflow-wrap:anywhere}.existingCampaignFacts{display:flex;gap:20px;flex-wrap:wrap;margin:12px 0 0}.existingCampaignFacts div{font-size:12px;color:var(--ink-45)}.existingCampaignFacts b{display:block;font:600 18px var(--mono);color:var(--ink);margin-bottom:2px}.existingCampaignActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.existingCampaignNotes{font-size:12px;color:var(--ink-70);line-height:1.5;margin:7px 0 0}.oppStoreStatus{flex-wrap:wrap}.oppStatusDot[data-state="stale"],.oppStatusDot[data-state="partial"],.oppStatusDot[data-state="running"]{background:var(--gold);box-shadow:0 0 0 4px var(--gold-soft)}.oppStatusDot[data-state="error"]{background:var(--clay);box-shadow:0 0 0 4px var(--clay-soft)}.oppStatusDot[data-state="missing"]{background:var(--ink-25);box-shadow:none}
+@media(max-width:760px){.researchChecks{grid-template-columns:1fr}.researchCheck{display:flex;justify-content:space-between;gap:12px}.researchCheck b{margin:0}.researchTechnical .auditRow{grid-template-columns:20px minmax(0,1fr)}.researchTechnical .auditMeta{max-width:none}.existingCampaign{grid-template-columns:1fr;padding:14px 12px}.existingCampaignActions .btn{flex:1}.researchHealth{padding:13px}.existingCampaignFacts{gap:15px}}
 #v-bench .oppZoneNumber,#v-bench .oppZoneBadge,#v-bench .oppStoreHeadText p,#v-bench .oppChannelHeadText .eyebrow,#v-bench .oppChannelHeadText p{display:none}
 #v-bench .oppZone{margin-bottom:22px}#v-bench .oppCardList{max-height:none;overflow:visible;display:grid;gap:18px;padding:18px}#v-bench .oppCard{margin:0;padding:22px;background:var(--card);border-left-width:1px;border-radius:12px}#v-bench .oppCardWhy{font-size:14px;line-height:1.65;max-width:80ch}#v-bench .oppCardMeta{font-size:12px}#v-bench .oppCardMetrics{margin:20px 0;gap:20px}#v-bench .oppCardMetrics b{font-size:17px}#v-bench .oppCardPriority,#v-bench .oppCardBadges{display:none}#v-bench .oppCardTitle h4{font-size:21px}#v-bench .oppCardMetric span{font-size:12px}#v-bench .opDx{flex:1}#v-bench .oppDetailsBody{padding-top:20px}#v-bench .oppToolbox{margin:14px 0}#v-bench .oppStoreHeadText h3{font-size:18px}#v-bench .oppPlaybook{border:0;padding:0}
 progress{display:block;width:100%;height:7px;accent-color:var(--gold);border:0;border-radius:6px;overflow:hidden;margin:12px 0;background:var(--paper-2)}progress::-webkit-progress-bar{background:var(--paper-2)}progress::-webkit-progress-value{background:var(--gold)}progress::-moz-progress-bar{background:var(--gold)}.action-progress{width:70px;flex:0 0 70px;margin:0}.lblock progress{max-width:320px}
@@ -810,10 +813,10 @@ progress{display:block;width:100%;height:7px;accent-color:var(--gold);border:0;b
       </section>
       <section class="oppZone">
         <div class="oppStoreShell">
-          <header class="oppStoreHead"><span class="oppZoneNumber">02</span><div class="oppStoreHeadText"><span class="oppZoneLabel">Store advertising</span><h3>Recommended store campaigns</h3><p>Search and feed ideas ranked from demand, timing, product evidence, and past performance.</p></div><button class="btn gold oppScanAction" id="oppScan">Scan for opportunities</button></header>
+          <header class="oppStoreHead"><span class="oppZoneNumber">02</span><div class="oppStoreHeadText"><span class="oppZoneLabel">Store advertising</span><h3 id="oppChannelTitle">Search opportunities</h3><p>Search and feed ideas ranked from demand, timing, product evidence, and past performance.</p></div><button class="btn gold oppScanAction" id="oppScan" title="Refreshes shared store data, then Product ads and Search research.">Refresh research</button></header>
           <div class="oppStoreStatus"><span class="oppStatusDot"></span><span id="oppMeta">Ready to scan</span></div>
-          <details class="oppToolbox">
-            <summary><span><b>Research settings</b><small>Bidding preference and keyword data health</small></span><span class="oppOptional">Optional</span></summary>
+          <details class="oppToolbox" id="searchResearchSettings">
+            <summary><span><b>Search settings</b><small>Default bidding and Keyword Planner connection</small></span><span class="oppOptional">Optional</span></summary>
             <div class="oppToolBody">
               <div class="oppDefaults"><div class="oppDefault"><span>Default bidding</span><div id="oppBid"></div></div><div class="oppDefault"><span>Keyword data health</span><button class="btn ghost sm" id="kwDiag">Test keyword research</button></div></div>
               <div id="kwDiagPanel" style="display:none;margin-bottom:12px"></div>
@@ -823,7 +826,7 @@ progress{display:block;width:100%;height:7px;accent-color:var(--gold);border:0;b
       <div id="oppErr" style="display:none"></div>
       <div id="scanProg" style="display:none"></div>
       <div id="scanAudit" style="display:none"></div>
-      <div class="oppResultsStage"><div id="oppList"><div class="oppChannel"><div class="oppChannelEmpty"><b>No recommendations loaded yet.</b><br>Run a scan and the strongest opportunities will be organized here by campaign type.</div></div></div></div>
+      <div class="oppResultsStage"><div id="existingProductCampaigns"></div><div id="oppList"><div class="oppChannel"><div class="oppChannelEmpty"><b>No recommendations loaded yet.</b><br>Refresh research to find new opportunities.</div></div></div></div>
       <details class="card oppCustom" id="customWrap">
         <summary><span><b>Build a campaign manually</b><small>Choose any collection and occasion when you already know what you want to promote.</small></span><span class="oppOptional">Optional</span></summary>
         <div class="grid bench" style="margin-top:14px">
@@ -2580,7 +2583,19 @@ async function studioGrowthRun(action,btn){
 }
 
 /* ---- render: opportunities (Unused vs In-use reconciliation) ---- */
-var OPPS=[]; var PMAXOPPS=[]; var PMAXERR=null; var PMAXAT=null; var SCAN_AUDIT=null; var oppLoaded=false; var oppView="unused"; var oppSort="best";
+var OPPS=[]; var PMAXOPPS=[]; var PMAXERR=null; var PMAXAT=null; var OPPSAT=null; var SCAN_AUDIT=null; var RESEARCH_STATUS={}; var OPP_RECONCILIATION=null; var OPP_LAST_ERROR=null; var OPP_SCANNING=false; var OPP_PROGRESS=null; var oppLoaded=false; var oppView="unused"; var oppSort="best";
+function currentResearchChannel(){return (document.getElementById('v-bench')||{}).dataset&&document.getElementById('v-bench').dataset.lane==='product'?'pmax':'search';}
+function updateOpportunityState(r){if(!r)return;OPPS=r.opportunities||[];PMAXOPPS=r.pmaxList||[];PMAXERR=r.pmaxError||null;PMAXAT=r.pmaxAt||null;OPPSAT=r.scannedAt||null;SCAN_AUDIT=r.scanAudit||SCAN_AUDIT;RESEARCH_STATUS=r.researchStatus||{};OPP_RECONCILIATION=r.reconciliation||OPP_RECONCILIATION;OPP_LAST_ERROR=r.lastError||null;OPP_SCANNING=!!r.scanning;OPP_PROGRESS=r.progress||null;}
+function researchState(channel){
+  var supplied=RESEARCH_STATUS[channel];if(supplied)return Object.assign({},supplied,(supplied.legacy||supplied.stale)&&supplied.status!=='running'?{status:'stale'}:{});
+  var at=channel==='pmax'?PMAXAT:OPPSAT,err=channel==='pmax'?PMAXERR:OPP_LAST_ERROR;
+  var legacy=!!(at&&(!SCAN_AUDIT||!/^14\./.test(SCAN_AUDIT.engineVersion||''))),stale=!!(at&&Date.now()-Number(at)>86400000);
+  var status=OPP_SCANNING?'running':legacy||stale?'stale':err?'partial':at?'ready':'missing';
+  return {status:status,checkedAt:at,legacy:legacy,stale:stale,message:legacy?'Saved suggestions need the current research checks. Refresh research before creating a draft.':stale?'These suggestions are more than a day old. Refresh research before creating a draft.':err?'Some source data was unavailable. Review the research details before choosing a test.':at?'Research results are saved. Each new ad still requires creative review.':'Refresh research to check demand and product evidence.'};
+}
+function researchNeedsRefresh(channel){var s=researchState(channel);return !!((OPP_RECONCILIATION&&OPP_RECONCILIATION.ok===false)||s.legacy||s.stale||['stale','missing','error','running'].includes(s.status));}
+function friendlyResearchError(raw){var e=String(raw||'');if(/\b(500|502|503|504)\b|INTERNAL|internal error|unavailable|timed? ?out/i.test(e))return 'Google reporting was temporarily unavailable. Refresh research to retry.';if(/401|403|unauthor|permission|forbidden/i.test(e))return 'Reporting access needs attention. Check the connected account, then refresh research.';if(/429|quota|resource_exhausted|rate.?limit/i.test(e))return 'Google temporarily limited reporting requests. Wait briefly, then refresh research.';return 'This data source could not be verified. Refresh research; technical details are available below.';}
+function researchCheckChannel(x){if(['search','pmax','shared'].includes(x.channel))return x.channel;var id=x.id||'';if(/^pmax_/.test(id))return 'pmax';if(/^(search_|keyword_|occasion_memory|opportunity_conflicts|economic_ranking|collection_ads_performance|account_cvr_model|store_economics_120d|control_config)/.test(id))return 'search';return 'shared';}
 function oppSorters(mode){
   if(mode==="urgent")return function(a,b){var d=(a.o.daysOut||0)-(b.o.daysOut||0); if(d)return d; d=(a.o.durationDays||99)-(b.o.durationDays||99); if(d)return d; return (b.o.score||0)-(a.o.score||0);};
   if(mode==="reach")return function(a,b){return (((b.o.research||{}).searchVolume)||0)-(((a.o.research||{}).searchVolume)||0);};
@@ -2595,24 +2610,11 @@ function oppBidSeg(i){ var smart=oppBidOf(i);
 }
 async function ensureOpportunities(){ if(oppLoaded)return; oppLoaded=true; loadOpportunities(false); }
 var oppPollTimer=null;
-var SCAN_PHASES=[["Profile catalog",35],["AI strategy",56],["Keyword research",82],["Cost & rank",96],["Save",100]];
 function renderScanProg(prog){
-  var el=$("#scanProg"); if(!el) return;
-  var pct=Math.max(1,Math.min(99,(prog&&prog.pct)||1));
-  var label=(prog&&prog.label)||"Queued\u2026";
-  var detail=(prog&&prog.detail)||"";
-  var doneTo=-1; for(var i=0;i<SCAN_PHASES.length;i++){ if(pct>=SCAN_PHASES[i][1]) doneTo=i; }
-  var phases=SCAN_PHASES.map(function(p,i){
-    var st=i<=doneTo?"done":(i===doneTo+1?"active":"todo");
-    var dot=st==="done"?'<span style="color:var(--sage);font-weight:800">\u2713</span>':st==="active"?'<span style="color:var(--gold);font-weight:800;animation:bjPulse 1.1s ease-in-out infinite">\u25CF</span>':'<span style="color:var(--ink-45)">\u25CB</span>';
-    return '<span style="display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:600;color:'+(st==="todo"?"var(--ink-45)":"var(--ink-70)")+'">'+dot+' '+p[0]+'</span>';
-  }).join('<span style="color:var(--line);margin:0 2px">\u2500</span>');
+  var el=$("#scanProg");if(!el)return;OPP_PROGRESS=prog||OPP_PROGRESS;OPP_SCANNING=true;
+  var pct=Number(prog&&prog.pct),hasPct=isFinite(pct)&&pct>0,label=(prog&&prog.label)||"Queued…";
   el.style.display="block";
-  el.innerHTML='<div class="card pad" style="margin-bottom:14px">'+
-    '<div style="display:flex;align-items:baseline;gap:10px"><span class="spin sm gold"></span><b style="font-size:13.5px">'+esc(label)+'</b><span style="flex:1"></span><b class="mono" style="font-size:13px">'+pct+'%</b></div>'+
-    '<div style="height:7px;border-radius:5px;background:var(--paper-2);overflow:hidden;margin:9px 0 7px"><div style="height:100%;width:'+pct+'%;border-radius:5px;background:linear-gradient(90deg,var(--sage),var(--gold));transition:width .6s"></div></div>'+
-    '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center"><span class="muted mono" style="font-size:11px">'+esc(detail)+'</span><span style="display:inline-flex;gap:7px;align-items:center;flex-wrap:wrap">'+phases+'</span></div>'+
-  '</div>';
+  el.innerHTML='<div class="researchHealth" role="status" aria-live="polite"><div class="researchHealthHead"><h4>Refreshing research</h4><span class="researchHealthState running">'+(hasPct?Math.min(99,Math.round(pct))+'%':'In progress')+'</span></div><progress max="100"'+(hasPct?' value="'+Math.min(99,pct)+'"':'')+' aria-label="Overall research refresh"></progress><p>'+esc(label)+'</p><p class="muted">Updates shared store data, then Product ads and Search. Saved results remain visible while research runs.</p></div>';
 }
 function hideScanProg(){ var el=$("#scanProg"); if(el){el.style.display="none";el.innerHTML="";} }
 
@@ -2626,28 +2628,20 @@ function auditStatus(st){
   return {icon:"○",color:"var(--ink-45)",label:"queued"};
 }
 function renderScanAudit(audit,reconciliation){
-  var el=$("#scanAudit");if(!el)return;
-  if(audit)SCAN_AUDIT=audit;
-  var a=SCAN_AUDIT;if(!a){el.style.display="none";el.innerHTML="";return;}
+  var el=$("#scanAudit");if(!el)return;var previousReport=el.querySelector&&el.querySelector(".researchTechnical"),reportWasOpen=!!(previousReport&&previousReport.open);if(audit)SCAN_AUDIT=audit;if(reconciliation)OPP_RECONCILIATION=reconciliation;
+  var a=SCAN_AUDIT||{},channel=currentResearchChannel(),state=researchState(channel),isProduct=channel==='pmax',name=isProduct?'Product ads':'Search';
   var checks=(a.checks||[]).slice();
-  if(reconciliation&&!checks.some(function(x){return x.id==="campaign_reconciliation";}))checks.push({id:"campaign_reconciliation",category:"Google Ads API",label:"Approvals and live campaign reconciliation",status:reconciliation.ok?"ok":"warning",detail:reconciliation.ok?(Number(reconciliation.takenCount||0)+" approval/campaign tag(s) reconciled to prevent duplicates."):"Reconciliation could not be completed.",error:reconciliation.error||null});
-  // Recount from the rows being rendered so a client-added reconciliation check or
-  // an older stored summary can never make the headline totals disagree with the report.
-  var sm={total:checks.length,ok:0,warning:0,failed:0,skipped:0,running:0,queued:0};
-  checks.forEach(function(x){if(sm[x.status]!=null)sm[x.status]++;});
-  var bad=Number(sm.failed||0),warn=Number(sm.warning||0),run=Number(sm.running||0)+Number(sm.queued||0);
-  var state=a.status==="failed"?"Failed":((a.status==="partial"||warn)?"Completed with warnings":(run?"Running":"Verified complete"));
-  var stateColor=a.status==="failed"?"var(--clay)":(a.status==="partial"||warn?"#7a5a1d":run?"var(--gold)":"var(--sage)");
-  var rows=checks.map(function(x){var m=auditStatus(x.status),meta=[];if(x.startedAt)try{meta.push(new Date(x.startedAt).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"}));}catch(e){}if(x.httpStatus!=null)meta.push("HTTP "+x.httpStatus);if(x.tookMs!=null)meta.push(auditTime(x.tookMs));if(x.source)meta.push(x.source);var tech="";if(x.meta){var raw="";try{raw=JSON.stringify(x.meta,null,2).slice(0,6000);}catch(e){}if(raw)tech='<details class="auditData"><summary>technical data</summary><pre>'+esc(raw)+'</pre></details>';}return '<div class="auditRow">'+
-    '<div class="auditIcon" style="color:'+m.color+'">'+m.icon+'</div><div><div class="auditCat">'+esc(x.category||"scan")+'</div><div class="auditLabel">'+esc(x.label||x.id||"check")+'</div></div>'+
-    '<div class="auditDetail">'+esc(x.detail||"")+(x.error?'<div class="auditErr"><b>Error:</b> '+esc(String(x.error).slice(0,420))+'</div>':"")+(x.fallback?'<div class="auditFallback"><b>Fallback:</b> '+esc(String(x.fallback).slice(0,260))+'</div>':"")+tech+'</div>'+
-    '<div class="auditMeta">'+esc(meta.join(" · "))+'</div></div>';}).join("");
-  var totalMs=(a.completedAt||Date.now())-(a.startedAt||Date.now());
-  el.style.display="block";
-  el.innerHTML='<details class="scanAudit" '+((a.status!=="success"||bad||warn||run)?"open":"")+'><summary><span style="width:9px;height:9px;border-radius:50%;background:'+stateColor+';box-shadow:0 0 0 3px color-mix(in srgb,'+stateColor+' 18%,transparent)"></span><span>Scan verification</span><span class="muted" style="font-size:11px;font-weight:500">'+esc(state)+'</span><span style="flex:1"></span><span class="mono muted" style="font-size:10.5px">'+esc(a.engineVersion||"")+(a.engineVersion?' · ':'')+esc((a.runId||"").slice(-18))+(totalMs>0?' · '+auditTime(totalMs):'')+'</span></summary><div class="scanAuditBody">'+
-    '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><div class="auditSummary"><span class="auditChip ok">'+Number(sm.ok||0)+' passed</span><span class="auditChip warn">'+warn+' warnings</span><span class="auditChip fail">'+bad+' failed</span>'+(run?'<span class="auditChip">'+run+' active</span>':'')+'<span class="auditChip">'+checks.length+' checks</span></div><span style="flex:1"></span><button type="button" class="btn ghost sm" id="copyScanAudit" style="padding:4px 10px;font-size:11px">Copy report</button></div>'+
-    '<div class="muted" style="font-size:11.5px;margin-bottom:8px">Every scan dependency, fallback, keyword batch, validation decision and save operation is recorded here. Sensitive credentials and raw prompts are never stored.</div><div class="auditRows">'+rows+'</div></div></details>';
-  var b=$("#copyScanAudit");if(b)b.onclick=function(ev){ev.preventDefault();ev.stopPropagation();var report=Object.assign({},a,{reconciliation:reconciliation||null});var txt=JSON.stringify(report,null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt).then(function(){toast("Scan verification report copied ✓",true);}).catch(function(){toast("Could not copy report");});else toast("Clipboard is unavailable in this browser");};
+  if(OPP_RECONCILIATION){checks=checks.filter(function(x){return x.id!=='campaign_reconciliation';});checks.push({id:'campaign_reconciliation',channel:'shared',category:'Google Ads API',label:'Existing campaign match',status:OPP_RECONCILIATION.ok?'ok':'warning',detail:OPP_RECONCILIATION.ok?'Suggestions matched against existing campaigns and approvals.':'Some existing campaign matches could not be checked.',error:OPP_RECONCILIATION.error||null});}
+  checks=checks.filter(function(x){var c=researchCheckChannel(x);return c===channel||c==='shared';});
+  var names={ready:'Up to date',partial:'Some data unavailable',stale:'Refresh needed',missing:'Not researched',running:'Refreshing',error:'Needs attention'};
+  var stale=state.stale||state.legacy||state.status==='stale';
+  var groups=isProduct?[['Product availability',['pmax_merchant_catalogue']],['Sales evidence',['pmax_store_signals','pmax_merchant_organic_30d']],['Campaign match',['campaign_reconciliation']]]:[['Keyword demand',['keyword_planner_pool','keyword_grounding_summary']],['Catalog & destinations',['collection_profiles','shopify_collections']],['Campaign match',['campaign_reconciliation']]];
+  var tiles=groups.map(function(g){var found=checks.filter(function(x){return g[1].includes(x.id);}),status=!found.length?'queued':found.some(function(x){return x.status==='failed';})?'failed':found.some(function(x){return x.status==='warning';})?'warning':found.some(function(x){return x.status==='running'||x.status==='queued';})?'running':'ok',m=auditStatus(status),label=stale?'Previous scan':status==='ok'?'Checked':status==='warning'?'Partial data':status==='failed'?'Needs attention':status==='running'?'Checking…':'Not checked';return '<div class="researchCheck"><b>'+g[0]+'</b><span><i style="color:'+(stale?'var(--gold)':m.color)+';font-style:normal">'+(stale?'◷':m.icon)+'</i>'+label+'</span></div>';}).join('');
+  var rows=checks.map(function(x){var m=auditStatus(x.status),meta=[];if(x.tookMs!=null)meta.push(auditTime(x.tookMs));if(x.httpStatus!=null)meta.push('HTTP '+x.httpStatus);if(x.source)meta.push(x.source);var tech='';if(x.error||x.fallback||x.meta){var raw='';try{raw=JSON.stringify({error:x.error||undefined,fallback:x.fallback||undefined,data:x.meta||undefined},null,2).slice(0,10000);}catch(e){}if(raw)tech='<details class="auditData"><summary>Request details</summary><pre>'+esc(raw)+'</pre></details>';}return '<div class="auditRow"><div class="auditIcon" style="color:'+m.color+'">'+m.icon+'</div><div><div class="auditCat">'+esc(researchCheckChannel(x)==='shared'?'Shared store check':name)+'</div><div class="auditLabel">'+esc(x.label||x.id||'Check')+'</div></div><div class="auditDetail">'+esc(x.error?friendlyResearchError(x.error):(x.detail||''))+tech+'</div><div class="auditMeta">'+esc(meta.join(' · '))+'</div></div>';}).join('');
+  var stamp=state.checkedAt?new Date(Number(state.checkedAt)).toLocaleString():'';
+  el.style.display='block';
+  el.innerHTML='<section class="researchHealth"><div class="researchHealthHead"><h4>'+name+' research</h4><span class="researchHealthState '+esc(state.status||'missing')+'">'+esc(names[state.status]||'Check results')+'</span></div><p>'+esc(state.message||'Review the source checks before choosing a test.')+'</p>'+((OPP_RECONCILIATION&&OPP_RECONCILIATION.ok===false)?'<div class="researchNotice">Existing campaign matches could not be confirmed. Refresh research before creating another draft.</div>':'')+'<div class="researchChecks">'+tiles+'</div><details class="researchTechnical"'+(reportWasOpen?' open':'')+'><summary>Research details'+(stamp?' · '+esc(stamp):'')+'</summary><p>'+(isProduct?'Product availability, Merchant Center sales evidence and paid product history.':'Search demand, inventory fit and campaign overlap.')+' Shared store checks support both channels. Refresh research updates both.</p>'+(checks.length?'<div class="auditRows">'+rows+'</div>':'<p>No detailed report has been saved for this research.</p>')+'<button type="button" class="btn ghost sm" id="copyScanAudit">Copy technical report</button></details></section>';
+  var b=$("#copyScanAudit");if(b)b.onclick=function(){var txt=JSON.stringify({channel:channel,researchStatus:state,scanAudit:a,reconciliation:OPP_RECONCILIATION},null,2);if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt).then(function(){toast('Technical report copied',true);}).catch(function(){toast('Could not copy report');});else toast('Clipboard is unavailable in this browser');};
 }
 async function loadOpportunities(force){
   var box=$("#oppList"); $("#oppScan").disabled=true;
@@ -2656,15 +2650,15 @@ async function loadOpportunities(force){
   var scanAct=force?actStart("opportunities"):null;
   try{
     var r=await api("opportunities",{force:!!force});
-    OPPS=(r&&r.opportunities)||[]; PMAXOPPS=(r&&r.pmaxList)||[]; PMAXERR=(r&&r.pmaxError)||null; PMAXAT=(r&&r.pmaxAt)||null; SCAN_AUDIT=(r&&r.scanAudit)||SCAN_AUDIT; renderScanAudit(SCAN_AUDIT,r&&r.reconciliation); setOppMeta((r&&r.scannedAt)||(r&&r.pmaxAt));
+    updateOpportunityState(r); renderScanAudit(); setOppMeta();
     var loadErr=r&&r.lastError;if(!force&&loadErr&&(r&&r.pmaxAt)&&(!(r&&r.scannedAt)||(r.pmaxAt>r.scannedAt)))loadErr="Search scan issue \u2014 PMax feed results were still refreshed: "+loadErr;
     oppShowErr(force?null:loadErr,(r&&r.scannedAt)||(r&&r.pmaxAt));
-    if(!force){ renderOpportunities(); $("#oppScan").disabled=false; return; }
+    if(!force&&!(r&&r.scanning)){ renderOpportunities(); $("#oppScan").disabled=false; return; }
     // Forced scan runs in the background (avoids the 60s sync limit). Show any existing
     // results immediately, then poll until a fresher scan lands — or the scan reports failure
     // (the engine now records lastError/lastErrorAt instead of silently keeping stale data).
     var prevAt=(r&&r.scannedAt)||0,prevPmaxAt=(r&&r.pmaxAt)||0;
-    var scanStart=Date.now();
+    var scanStart=force?Date.now():Number((r&&r.scanAudit&&r.scanAudit.startedAt)||Date.now());
     renderScanProg((r&&r.progress)||{pct:1,label:"Queued\u2026",detail:"handing the scan to the background worker"});
     if(OPPS.length||PMAXOPPS.length){ renderOpportunities(); }
     else { box.innerHTML='<div class="empty" style="height:120px"><div class="muted" style="font-size:12.5px">Results appear here the moment the scan lands \u2014 you can leave this tab.</div></div>'; }
@@ -2673,6 +2667,7 @@ async function loadOpportunities(force){
       tries++;
       try{
         var p=await api("opportunities",{cacheOnly:true});
+        updateOpportunityState(p); setOppMeta();
         if(p&&p.scanAudit){SCAN_AUDIT=p.scanAudit;renderScanAudit(SCAN_AUDIT,p.reconciliation);}
         var at=(p&&p.scannedAt)||0,pAt=(p&&p.pmaxAt)||0;
         var errAt=(p&&p.lastErrorAt)||0;
@@ -2681,20 +2676,20 @@ async function loadOpportunities(force){
         // as its own timestamp advances instead of making the operator wait for (or
         // lose it to) a later Search timeout.
         if(pAt>prevPmaxAt){
-          prevPmaxAt=pAt; PMAXOPPS=(p&&p.pmaxList)||[]; PMAXERR=(p&&p.pmaxError)||null; PMAXAT=pAt; setOppMeta(at||pAt); renderOpportunities();
-          toast(PMAXOPPS.length?(PMAXOPPS.length+" PMax feed opportunities ready \u2014 Search scan still running"):"Merchant Center feed scan finished \u2014 no eligible opportunity found",!!PMAXOPPS.length);
+          prevPmaxAt=pAt; setOppMeta(); renderOpportunities();
+          toast(PMAXOPPS.length?(PMAXOPPS.length+" product suggestions saved"+(p&&p.scanning?" · Search research continues":"")):"Product research finished · no new eligible suggestion",!!PMAXOPPS.length);
         }
         if(at>prevAt && !(p&&p.scanning)){
           clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct); hideScanProg();
-          OPPS=(p&&p.opportunities)||[]; PMAXOPPS=(p&&p.pmaxList)||[]; PMAXERR=(p&&p.pmaxError)||null; PMAXAT=(p&&p.pmaxAt)||null; SCAN_AUDIT=(p&&p.scanAudit)||SCAN_AUDIT; renderScanAudit(SCAN_AUDIT,p&&p.reconciliation); setOppMeta(at||pAt);
+          updateOpportunityState(p); renderScanAudit(); setOppMeta();
           oppShowErr(errAt>scanStart?("Search scan issue \u2014 PMax feed results were still refreshed: "+((p&&p.lastError)||"unknown error")):null,at||pAt); renderOpportunities();
-          toast("Re-scanned \u2014 "+OPPS.length+" Search + "+PMAXOPPS.length+" PMax opportunities",true);
+          toast("Research updated · "+OPPS.length+" Search + "+PMAXOPPS.length+" product suggestions",true);
           $("#oppScan").disabled=false;
         } else if(errAt>scanStart && !(p&&p.scanning)){
           // The scan RAN and FAILED. Old results (if any) stay visible, clearly labeled stale,
           // with the engine\u2019s exact error on screen so the cause is never invisible again.
           clearInterval(oppPollTimer); oppPollTimer=null; actEnd(scanAct); hideScanProg(); $("#oppScan").disabled=false;
-          OPPS=(p&&p.opportunities)||[]; PMAXOPPS=(p&&p.pmaxList)||[]; PMAXERR=(p&&p.pmaxError)||null; PMAXAT=(p&&p.pmaxAt)||null; SCAN_AUDIT=(p&&p.scanAudit)||SCAN_AUDIT; renderScanAudit(SCAN_AUDIT,p&&p.reconciliation); setOppMeta(at||pAt); renderOpportunities();
+          updateOpportunityState(p); renderScanAudit(); setOppMeta(); renderOpportunities();
           oppShowErr((p&&p.lastError)||"scan failed", at||pAt);
           toast("Scan failed \u2014 see the notice above the list.");
         } else if(tries>=240){
@@ -2706,19 +2701,19 @@ async function loadOpportunities(force){
     },2500);
   }catch(x){ actEnd(scanAct); box.innerHTML='<div class="empty" style="height:160px"><div>Scan failed.</div><div style="font-size:12px">'+esc(x.message)+'</div></div>'; $("#oppScan").disabled=false; }
 }
-function oppShowErr(err, at){
-  var el=$("#oppErr"); if(!el) return;
-  if(!err){ el.style.display="none"; el.innerHTML=""; return; }
-  var partial=/^Search scan issue/.test(String(err));
-  el.style.display="block";
-  el.innerHTML='<div style="background:var(--clay-soft);border:1px solid var(--clay);border-radius:10px;padding:10px 14px;margin:0 0 12px;font-size:12.5px;line-height:1.6"><b>'+(partial?'Search scan issue':'Last scan failed')+'</b> \u2014 <span class="mono" style="font-size:11.5px">'+esc(String(err).slice(0,240))+'</span><br><span class="muted">'+(partial?'Fresh PMax feed opportunities are shown; Search opportunities may be from the previous scan.':'Showing the previous results'+(at?(" from "+timeago(at)+" ago"):"")+' (dates auto-adjusted to today).')+' Hit \u201cScan for opportunities\u201d to retry.</span></div>';
+function oppShowErr(err,at){
+  var el=$("#oppErr");if(!el)return;var product=currentResearchChannel()==='pmax',issue=product?PMAXERR:err;
+  if(!issue){el.style.display='none';el.innerHTML='';return;}
+  el.style.display='block';el.innerHTML='<div class="researchNotice"><b>'+(product?'Product reporting':'Search research')+' needs attention.</b> '+esc(friendlyResearchError(issue))+'<details class="researchTechnical"><summary>Technical details</summary><pre>'+esc(String(issue).slice(0,10000))+'</pre></details></div>';
 }
-function setOppMeta(scannedAt){
-  var u=OPPS.filter(function(o){return !o.acted;}).length,parts=[];
-  if(OPPS.length)parts.push(u+" Search unused \u00b7 "+(OPPS.length-u)+" in use");
-  if(PMAXOPPS.length)parts.push(PMAXOPPS.length+" PMax");
-  if(scannedAt)parts.push("scanned "+timeago(scannedAt)+" ago");
-  $("#oppMeta").textContent=parts.join(" \u00b7 ");
+function setOppMeta(){
+  var channel=currentResearchChannel(),product=channel==='pmax',s=researchState(channel),list=product?PMAXOPPS:OPPS,u=list.filter(function(o){return !o.acted;}).length,parts=[];
+  if(product){var campaigns=existingProductCampaigns();parts.push(campaigns.filter(function(c){return c.status==='ENABLED';}).length+' enabled campaigns');}
+  parts.push(u+' new '+(u===1?'suggestion':'suggestions'));
+  if(s.checkedAt)parts.push((s.stale||s.legacy?'Research needs refresh · ':'Researched ')+timeago(s.checkedAt)+' ago');else parts.push('Research not yet available');
+  var meta=$("#oppMeta");if(meta)meta.textContent=parts.join(' · ');
+  var dot=document.querySelector('.oppStatusDot');if(dot)dot.dataset.state=s.status||'missing';
+  var title=$("#oppChannelTitle");if(title)title.textContent=product?'Product ads':'Search opportunities';
 }
 function priMeta(p){ return p==="high"?["High priority","var(--gold-soft)","#7a5a1d"]:p==="medium"?["Medium","var(--sage-soft)","#3c5a39"]:["Test","var(--slate-soft)","#33525d"]; }
 function actedBadge(a){
@@ -2754,36 +2749,48 @@ function renderOppBid(){ var ob=$("#oppBid"); if(!ob)return; var smart=bidView()
     [["Manual CPC",0],["Smart",1]].map(function(o){var on=(o[1]===1)===smart;return '<button class="bidSeg" data-smart="'+o[1]+'" title="'+(o[1]?"Smart Bidding \u2014 Google sets bids, no CPC cap":"Manual CPC \u2014 hard per-click cap")+'" style="padding:4px 11px;border:none;border-radius:7px;font-size:11.5px;font-weight:600;cursor:pointer;background:'+(on?"var(--card)":"transparent")+';color:'+(on?"var(--ink)":"var(--ink-45)")+';box-shadow:'+(on?"var(--sh)":"none")+'">'+o[0]+'</button>';}).join("")+'</span>';
   ob.querySelectorAll(".bidSeg").forEach(function(b){ b.onclick=async function(){ var want=this.getAttribute("data-smart")==="1"; if(want===bidView())return; var aid=actStart("setControl",{verb:"Saving bidding strategy"}); try{ await api("setControl",{patch:{smartBidding:want}}); toast(want?"Smart Bidding on \u2014 no CPC cap":"Manual CPC on \u2014 hard per-click cap",!want);}catch(x){toast(x.message);} actEnd(aid); await reload(); renderOpportunities(); }; });
 }
+function existingProductCampaigns(){var by={};((DASH&&DASH.lastMetrics)||[]).forEach(function(c){if(c&&c.channel==='PERFORMANCE_MAX'&&c.status!=='REMOVED'&&c.id)by[String(c.id)]=c;});return Object.keys(by).map(function(id){return by[id];}).sort(function(a,b){return (a.status==='ENABLED'?0:1)-(b.status==='ENABLED'?0:1)||String(a.name||'').localeCompare(String(b.name||''));});}
+function viewOpportunityCampaign(id){cmdMetrics=null;cmdRange={preset:'14d'};cmdRangeLabel='last 14 days';renderCommand();go('command');var row=Array.from(document.querySelectorAll('#snapshot .crow')).find(function(x){return x.dataset.cid===String(id);});if(row){row.scrollIntoView({behavior:'smooth',block:'center'});var detail=document.querySelector('#snapshot .cdet[data-d="'+row.dataset.i+'"]');if(detail)detail.style.display='';row.tabIndex=-1;row.focus({preventScroll:true});}}
+function renderExistingProductCampaigns(){
+  var el=document.getElementById('existingProductCampaigns');if(!el)return;var list=existingProductCampaigns();
+  var head='<section class="oppChannel"><header class="oppChannelHead"><span class="oppChannelIcon">P</span><div class="oppChannelHeadText"><h3>Existing product campaigns</h3></div><span class="oppChannelCount">'+list.length+' campaigns</span></header>';
+  if(!list.length){el.innerHTML=head+'<div class="oppChannelEmpty">'+(DASH?'No product campaigns are present in the current dashboard snapshot.':'Loading existing campaigns…')+'</div></section>';return;}
+  el.innerHTML=head+list.map(function(c){var cv=CV(c),roas=!c.metricsUnavailable&&!c.fxIncomplete&&Number(c.cost)>0?cv.value/Number(c.cost):null,d=campDates(c),budget=Number(c.budget),budgetText=isFinite(budget)&&budget>0?money(budget):'—';return '<article class="existingCampaign"><div><div class="existingCampaignTitle"><h4>'+esc(c.name||'Product campaign')+'</h4>'+statusBadge(c)+'</div><div class="existingCampaignNotes">'+(d.s?esc(d.s+' → '+(d.e||'open ended'))+' · ':'')+esc(d.info||'Schedule not available')+'</div><div class="existingCampaignFacts"><div><b>'+budgetText+'</b>Average daily budget · '+esc((DASH.control||{}).budgetCurrency||DASH.budgetCurrency||'currency unverified')+'</div><div><b>'+(c.metricsUnavailable||c.fxIncomplete?'—':money(Number(c.cost)||0))+'</b>Spend · last 14 days · '+(c.metricsUnavailable?'awaiting data':c.fxIncomplete?'FX unavailable':'USD')+'</div><div><b>'+(c.metricsUnavailable?'—':Number(cv.conv||0).toLocaleString(undefined,{maximumFractionDigits:1}))+'</b>Conversions · '+esc(basisLabel())+'</div><div><b>'+(roas==null?'—':roas.toFixed(1)+'×')+'</b>ROAS</div></div></div><div class="existingCampaignActions"><button class="btn ghost sm" data-product-campaign="'+esc(String(c.id))+'">View performance &amp; ads</button></div></article>';}).join('')+'</section>';
+  el.querySelectorAll('[data-product-campaign]').forEach(function(b){b.onclick=function(){viewOpportunityCampaign(b.dataset.productCampaign);};});
+}
 function pmaxProductChoices(o){var rows=o.offerDetails||[],out=[],seen={};(o.itemIds||[]).forEach(function(itemId){var m=String(itemId).match(/^shopify_[^_]+_(\d+)_/i);if(!m||seen[m[1]])return;seen[m[1]]=true;var row=rows.find(function(x){return x.itemId===itemId;})||{};out.push({id:m[1],title:row.title||(o.productTitles||[])[out.length]||('Product '+m[1])});});return out;}
 function renderPmaxSection(host){
   var old=document.getElementById("pmaxSec");if(old)old.remove();
   if(!host||!host.parentNode)return;
   var insertTop=function(el){host.parentNode.insertBefore(el,host);};
-  if(!PMAXOPPS.length){
+  var fresh=!researchNeedsRefresh("pmax"),available=PMAXOPPS.filter(function(o){return !o.acted;}).length;
+  if(!available){
     var sec0=document.createElement("div");sec0.id="pmaxSec";
-    sec0.innerHTML='<section class="oppChannel"><header class="oppChannelHead"><span class="oppChannelIcon">P</span><div class="oppChannelHeadText"><div class="eyebrow">Product-feed campaigns</div><h3>Performance Max opportunities</h3><p>Merchant Center products with enough evidence to test paid growth.</p></div><span class="oppChannelCount">0 ready</span></header><div class="oppChannelEmpty">'+(PMAXAT?(PMAXERR?('<b>Feed scan needs attention.</b><br>'+esc(PMAXERR)+' Re-run the scan when ready.'):'<b>No eligible feed opportunities this time.</b><br>The latest scan found no Merchant Center products with enough evidence to recommend.'):'<b>No feed scan yet.</b><br>Run a scan to match recent free-listing sales with the live Merchant Center catalogue.')+'</div></section>';
+    sec0.innerHTML='<section class="oppChannel"><header class="oppChannelHead"><span class="oppChannelIcon">P</span><div class="oppChannelHeadText"><div class="eyebrow">Product-feed campaigns</div><h3>New product opportunities</h3><p>Merchant Center products with enough evidence to test paid growth.</p></div><span class="oppChannelCount">0 new</span></header><div class="oppChannelEmpty">'+(PMAXOPPS.length?'All saved suggestions already have a campaign or review draft. See the campaigns above or open Approvals.':PMAXAT?(PMAXERR?('<b>Feed scan needs attention.</b><br>'+esc(friendlyResearchError(PMAXERR))):'<b>No eligible feed opportunities this time.</b><br>The latest scan found no Merchant Center products with enough evidence to recommend.'):'<b>No feed scan yet.</b><br>Refresh research to match recent sales with the live Merchant Center catalogue.')+'</div></section>';
     insertTop(sec0);return;
   }
   var sec=document.createElement("div");sec.id="pmaxSec";
-  var inner='<section class="oppChannel"><header class="oppChannelHead"><span class="oppChannelIcon">P</span><div class="oppChannelHeadText"><div class="eyebrow">Product-feed campaigns</div><h3>Performance Max opportunities</h3><p>Ranked from organic sales and exact Merchant Center offers.</p></div><span class="oppChannelCount">'+PMAXOPPS.length+' ready</span></header><div class="pmxList">';
+  var inner='<section class="oppChannel"><header class="oppChannelHead"><span class="oppChannelIcon">P</span><div class="oppChannelHeadText"><div class="eyebrow">Product-feed campaigns</div><h3>New product opportunities</h3><p>Ranked from organic sales and exact Merchant Center offers.</p></div><span class="oppChannelCount">'+available+' '+(fresh?'new':'saved')+'</span></header><div class="pmxList">';
   PMAXOPPS.forEach(function(o,i){
-    var org=o.organic||{};
+    if(o.acted)return;
+    var org=o.organic||{},evidenceDays=Number(org.evidenceDays||o.evidenceDays||30),matchedOrders=Number(org.matchedProductOrders!=null?org.matchedProductOrders:org.orders30d)||0,matchedRevenue=Number(org.matchedProductRevenue!=null?org.matchedProductRevenue:org.organicRevenue30d)||0;
     var products=(o.productTitles||[]).slice(0,4);
     var free=(o.freePerformance&&o.freePerformance.days30)||null;
     var scope=(o.itemIds&&o.itemIds.length)?(o.itemIds.length+' exact GMC offers'):(o.types&&o.types.length?('product types: '+o.types.join('/')):'feed scope');
     var acted=o.acted||null;
     var state=acted?('<span class="badge2 '+(acted.where==="campaign"?"b-on":"b-pause")+'">'+esc((acted.where==="campaign"?"CAMPAIGN ":"APPROVAL ")+(acted.status||"IN USE"))+'</span>'):'';
-    var disabled=acted?' disabled aria-disabled="true"':'';
-    var buttonText=acted?'Already in use':'Create review draft';
-    inner+='<article class="pmxrow pmxOpportunity"><div class="pmxMain"><div class="pmxTitle"><span class="chip on" style="background:var(--gold-soft);border-color:var(--gold)">PMAX</span>'+(o.feedLabel?'<span class="chip">'+esc(String(o.feedLabel).toUpperCase())+' FEED</span>':'')+'<b>'+esc(o.collectionTitle)+'</b>'+state+'</div><div class="pmxRationale">'+esc(o.rationale||"")+(o.angle?' · <i>'+esc(o.angle)+'</i>':'')+'</div><div class="pmxMetrics"><span class="pmxMetric"><b>'+Number(org.orders30d||0)+'</b> matched orders</span><span class="pmxMetric"><b>$'+Number(org.organicRevenue30d||0).toFixed(0)+'</b> organic revenue</span><span class="pmxMetric"><b>~$'+Number(o.estimatedProfit30d||0).toFixed(0)+'</b> contribution</span><span class="pmxMetric"><b>'+(o.confidence||'—')+'/100</b> confidence</span></div></div>'
+    var disabled=(!fresh||acted)?' disabled aria-disabled="true"':'';
+    var buttonText=acted?'Already in use':fresh?'Create review draft':'Refresh research first';
+    inner+='<article class="pmxrow pmxOpportunity"><div class="pmxMain"><div class="pmxTitle"><span class="chip on" style="background:var(--gold-soft);border-color:var(--gold)">PMAX</span>'+(o.feedLabel?'<span class="chip">'+esc(String(o.feedLabel).toUpperCase())+' FEED</span>':'')+'<b>'+esc(o.collectionTitle)+'</b>'+state+(fresh?'':'<span class="researchHealthState stale">Saved suggestion</span>')+'</div><div class="pmxRationale">'+esc(o.rationale||"")+(o.angle?' · <i>'+esc(o.angle)+'</i>':'')+'</div><div class="pmxMetrics"><span class="pmxMetric"><b>'+matchedOrders+'</b> product orders · '+(org.evidenceDays||o.evidenceDays?evidenceDays+'d':'saved')+'</span><span class="pmxMetric"><b>$'+matchedRevenue.toFixed(0)+'</b> product revenue · '+(org.evidenceDays||o.evidenceDays?evidenceDays+'d':'saved')+' · USD</span><span class="pmxMetric"><b>'+Number((o.itemIds||[]).length)+'</b> matched feed offers</span></div></div>'
       +'<div class="pmxActions"><label class="pmxBudget">$<input type="number" class="pmx-bud" data-i="'+i+'" value="'+(o.dailyBudget||10)+'" min="3" max="30" aria-label="PMax daily budget">/day · '+(o.days||30)+'d</label>'
-      +'<button class="btn ghost sm" onclick="apvOpen(\''+apvEnc(o.handle)+'\',\''+apvEnc(JSON.stringify((o.productTitles||o.itemIds||[]).slice(0,8)))+'\',\''+apvEnc(o.collectionTitle||"")+'\')">Preview ads</button>'
+      +'<button class="btn ghost sm" onclick="apvOpen(\''+apvEnc(o.handle)+'\',\''+apvEnc(JSON.stringify((o.productTitles||o.itemIds||[]).slice(0,8)))+'\',\''+apvEnc(o.collectionTitle||"")+'\')">View source products</button>'
       +'<button class="btn gold sm pmx-gen" data-i="'+i+'"'+disabled+'>'+buttonText+'</button><span class="pmx-msg" data-i="'+i+'" style="font-size:12px;color:var(--ink-45)"></span></div>'
-      +'<details class="pmxEvidence"><summary>Products to feature · select up to 4</summary><div class="pmxEvidenceBody">'+pmaxProductChoices(o).map(function(p,n){return '<label style="display:flex;gap:10px;padding:7px 0"><input type="checkbox" class="pmx-product" data-i="'+i+'" value="'+esc(p.id)+'"'+(n<4?' checked':'')+'> '+esc(p.title)+'</label>';}).join('')+'</div></details>'+'<details class="pmxEvidence"><summary>Why this recommendation</summary><div class="pmxEvidenceBody"><b>Feed scope:</b> '+esc(scope)+' · '+esc(org.signalSource||"organic sales signal")+(o.feedLabel?' · location locked to '+esc(String(o.feedLabel).toUpperCase()):'')+(products.length?'<br><b>Products:</b> '+products.map(esc).join(' · '):'')+((o.searchThemes||[]).length?'<br><b>Search themes:</b> '+o.searchThemes.slice(0,6).map(esc).join(' · '):'')+((free&&(Number(free.conversions||0)>0||Number(free.clicks||0)>0))?'<br><b>Free-listing evidence:</b> '+Number(free.clicks||0)+' clicks · '+Number(free.conversions||0).toFixed(1)+' conversions · $'+Number(free.value||0).toFixed(2)+' value':'')+(o.merchantReportWarning?'<br><span style="color:var(--clay)"><b>Merchant report fallback:</b> '+esc(String(o.merchantReportWarning).slice(0,170))+'</span>':'')+((o.paidPerformance&&o.paidPerformance.cost)?'<br><b>Paid product history:</b> $'+Number(o.paidPerformance.cost).toFixed(2)+' spend · '+Number(o.paidPerformance.conversions||0).toFixed(1)+' conversions · '+(o.paidPerformance.roas!=null?Number(o.paidPerformance.roas).toFixed(1)+'x ROAS':'learning'):'')+'<br><b>Bidding:</b> '+(o.recommendedTargetRoas?('Max conversion value · evidence-gated tROAS '+Number(o.recommendedTargetRoas).toFixed(2)+'x'):'Max conversion value · unconstrained learning')+(o.breakEvenRoas?(' · est. break-even '+Number(o.breakEvenRoas).toFixed(2)+'x'):'')+'</div></details></article>';
+      +'<details class="pmxEvidence"><summary>Products to feature · select up to 4</summary><div class="pmxEvidenceBody">'+pmaxProductChoices(o).map(function(p,n){return '<label style="display:flex;gap:10px;padding:7px 0"><input type="checkbox" class="pmx-product" data-i="'+i+'" value="'+esc(p.id)+'"'+(n<4?' checked':'')+'> '+esc(p.title)+'</label>';}).join('')+'</div></details>'+'<details class="pmxEvidence"><summary>Why this recommendation</summary><div class="pmxEvidenceBody"><b>Feed scope:</b> '+esc(scope)+' · '+esc(org.signalSource||"organic sales signal")+(o.feedLabel?' · location locked to '+esc(String(o.feedLabel).toUpperCase()):'')+(products.length?'<br><b>Products:</b> '+products.map(esc).join(' · '):'')+((o.searchThemes||[]).length?'<br><b>Search themes:</b> '+o.searchThemes.slice(0,6).map(esc).join(' · '):'')+((free&&free.available!==false&&(Number(free.conversions||0)>0||Number(free.clicks||0)>0))?'<br><b>Free-listing evidence · 30d:</b> '+Number(free.clicks||0)+' clicks · '+Number(free.conversions||0).toFixed(1)+' conversions'+(free.valueComplete===false?' · revenue unavailable in one currency':' · $'+Number(free.value||0).toFixed(2)+' '+esc(free.valueCurrency||'USD')+' revenue'):'')+(o.merchantReportWarning?'<div class="researchNotice"><b>Merchant sales report unavailable.</b> '+esc(friendlyResearchError(o.merchantReportWarning))+' These saved figures may use another sales source.<details class="researchTechnical"><summary>Technical details</summary><pre>'+esc(String(o.merchantReportWarning).slice(0,10000))+'</pre></details></div>':'')+((o.paidPerformance&&o.paidPerformance.cost)?'<br><b>Paid product history:</b> $'+Number(o.paidPerformance.cost).toFixed(2)+' spend · '+Number(o.paidPerformance.conversions||0).toFixed(1)+' conversions · '+(o.paidPerformance.roas!=null?Number(o.paidPerformance.roas).toFixed(1)+'x ROAS':'learning'):'')+'<br><b>Bidding:</b> '+(o.recommendedTargetRoas?('Max conversion value · evidence-gated tROAS '+Number(o.recommendedTargetRoas).toFixed(2)+'x'):'Max conversion value · unconstrained learning')+(o.breakEvenRoas?(' · est. break-even '+Number(o.breakEvenRoas).toFixed(2)+'x'):'')+'</div></details></article>';
   });
   sec.innerHTML=inner+'</div></section>';insertTop(sec);
   Array.prototype.forEach.call(sec.querySelectorAll(".pmx-gen:not([disabled])"),function(b){b.onclick=async function(){
     var i=+this.getAttribute("data-i"),o=PMAXOPPS[i],btn=this;
+    if(researchNeedsRefresh("pmax")){toast("Refresh product research before creating a draft.");return;}
     var productIds=Array.from(sec.querySelectorAll('.pmx-product[data-i="'+i+'"]:checked')).map(function(x){return x.value;});
     if(!productIds.length||productIds.length>4){toast('Select one to four products to feature.');return;}
     var chosenOffers=(o.itemIds||[]).filter(function(id){var m=String(id).match(/^shopify_[^_]+_(\d+)_/i);return m&&productIds.includes(m[1]);});
@@ -2791,7 +2798,7 @@ function renderPmaxSection(host){
     var bud=+(sec.querySelector('.pmx-bud[data-i="'+i+'"]')||{}).value||o.dailyBudget||10;
     var msg=sec.querySelector('.pmx-msg[data-i="'+i+'"]');btn.disabled=true;
     var t0=Date.now(),tk=setInterval(function(){if(btn.disabled)btn.textContent="Generating… "+Math.round((Date.now()-t0)/1000)+"s";},1000);
-    var done=function(){clearInterval(tk);btn.disabled=false;btn.textContent="Generate";};
+    var done=function(){clearInterval(tk);btn.disabled=false;btn.textContent="Create review draft";};
     try{
       var genId=String(Date.now())+"-pmx";
       var r=await api("generatePmax",{genId:genId,handle:o.handle,dailyBudget:bud,targetRoas:o.recommendedTargetRoas||0,days:o.days,itemIds:chosenOffers,productTitles:chosenTitles,feedLabel:o.feedLabel||null,searchThemes:o.searchThemes||[],offerDetails:chosenDetails});
@@ -2804,7 +2811,7 @@ function renderPmaxSection(host){
   };});
 }
 function renderOpportunities(){
-  renderOppBid();
+  renderOppBid(); setOppMeta(); renderScanAudit(); renderExistingProductCampaigns(); oppShowErr(OPP_LAST_ERROR);
   var box=$("#oppList");
   setTimeout(function(){
     try{renderPmaxSection(box);}
@@ -2962,7 +2969,7 @@ function oppCard(o,i,ceil){ var pm=priMeta(o.priority);
     '<div class="oppCardHeader"><span class="oppCardPriority" style="background:'+edge+'"></span><div class="oppCardTitle"><h4>'+esc(o.occasion)+'</h4><div class="oppCardMeta"><span>'+esc(o.collectionTitle)+'</span><span class="sep"></span><span class="opWin" data-i="'+i+'">'+winTxt+'</span><span class="sep"></span><span><span class="opDur" data-i="'+i+'">'+o.durationDays+'</span> days</span></div></div><div class="oppCardBadges"><span class="verdict" style="background:'+pm[1]+';color:'+pm[2]+';font-size:9.5px">'+pm[0]+'</span>'+urgPill(o)+kwDot(o)+'</div></div>'+
     '<div class="oppCardWhy">'+esc(o.rationale||"")+'</div>'+
     '<div class="oppCardMetrics"><div class="oppCardMetric"><b class="fBud" data-i="'+i+'">'+money(o.recommendedDailyBudget)+'/day</b><span>Proposed test budget</span></div><div class="oppCardMetric"><b>'+Number((o.eligibility||{}).measuredKeywords||0)+'</b><span>Measured keywords</span></div><div class="oppCardMetric"><b>'+past+'</b><span>Past paid result</span></div><div class="oppCardMetric"><b>'+((o.eligibility||{}).ready?'Ready for a test':'Needs research')+'</b><span>Evidence status</span></div></div>'+
-    '<div class="oppCardActions"><button class="btn gold sm opGen" data-i="'+i+'"'+(!(o.eligibility||{}).ready?' disabled title="Refresh research before creating a draft"':'')+'>Create review draft</button><details class="opDx"><summary>Review &amp; adjust</summary><div class="oppDetailsBody">'+
+    '<div class="oppCardActions"><button class="btn gold sm opGen" data-i="'+i+'"'+(!(o.eligibility||{}).ready||researchNeedsRefresh("search")?' disabled title="Refresh research before creating a draft"':'')+'>Create review draft</button><details class="opDx"><summary>Review &amp; adjust</summary><div class="oppDetailsBody">'+
     '<div class="oppDetailsIntro"><b>Forecasts below are scenarios, not predicted purchases.</b><br>'+(o.audience?(esc(o.audience.buyer||"")+(o.audience.recipient?(' \u2192 '+esc(o.audience.recipient)):'')+' \u00b7 '):'')+'Ranking score '+((o.confidence&&o.confidence.score)||"\u2014")+'/100 \u00b7 score '+(o.score||0)+' \u00b7 past: '+past+'</div>'+
     (o.audience&&o.audience.searchStyle?('<div class="muted" style="font-size:11.5px;margin:0 0 12px">'+(o.audience.motivation?('Motivation: '+esc(o.audience.motivation)+' \u00b7 '):'')+'Searches like: \u201c'+esc(o.audience.searchStyle)+'\u201d</div>'):'')+
 '<div class="grid" style="grid-template-columns:1.4fr 1fr 1fr;gap:16px;align-items:end">'+
@@ -3033,7 +3040,7 @@ async function generateAndWait(params,onTick){
   scheduleReload(); // even on timeout: if the draft lands late, the settle pass surfaces it in Approvals without a manual refresh
   return {ok:false,reason:"Timed out waiting for the generator \u2014 check Approvals in a minute; the draft may still land."};
 }
-async function launchOpp(i,btn){ var o=OPPS[i]; if(!o)return; var scope=$("#oppCards")||document;
+async function launchOpp(i,btn){ var o=OPPS[i]; if(!o)return; if(researchNeedsRefresh('search')||!(o.eligibility||{}).ready){toast('Refresh Search research before creating a draft.');return;} var scope=$("#oppCards")||document;
   var bud=+scope.querySelector('.opBud[data-i="'+i+'"]').value; var msg=scope.querySelector('.opMsg[data-i="'+i+'"]');
   var se=scope.querySelector('.opStart[data-i="'+i+'"]'), ee=scope.querySelector('.opEnd[data-i="'+i+'"]');
   var startDate=se?se.value:(o.startDate||""), endDate=ee?ee.value:(o.endDate||"");
@@ -3222,7 +3229,7 @@ function uiRestore(snap){if(!snap)return;
   document.querySelectorAll(".cdet").forEach(function(r){var k=r.getAttribute("data-cid")||r.getAttribute("data-d");if(k!=null&&snap.cdet[k])r.style.display="";});
   document.querySelectorAll(".draft").forEach(function(d){var ti=d.querySelector(".ti"),isOpen=!!(ti&&snap.drafts[ti.textContent.trim().slice(0,70)]);if(isOpen)setApprovalDetailsOpen(d,true);});
 }
-function renderAll(){var snap=uiSnapshot();renderControlBar();renderCommand();renderSales();renderSalesSummary();renderConvStrip();renderApprovals();renderPerf();renderControls();updateBadges();paintBenchCty();try{renderDiag();}catch(e){}uiRestore(snap);}
+function renderAll(){var snap=uiSnapshot();renderControlBar();renderCommand();renderSales();renderSalesSummary();renderConvStrip();renderApprovals();renderPerf();renderControls();updateBadges();paintBenchCty();renderExistingProductCampaigns();setOppMeta();try{renderDiag();}catch(e){}uiRestore(snap);}
 
 /* ---- stay signed in on this device (localStorage, 30 days) ---- */
 var SESS_KEY="baSess";
@@ -3444,7 +3451,7 @@ function renderCreativeReview(r){
   var revise=document.getElementById('creativeRevise');if(revise)revise.onclick=async function(){var feedback=document.getElementById('creativeFeedback').value.trim();if(!feedback){toast('Describe the changes first.');return;}var done=btnBusy(revise,'Saving direction…');try{var x=await api('creativeRevise',{id:r.id,feedback:feedback});if(x.error)throw new Error(x.error);x=await api('creativePrepare',{id:r.id});if(x.error)throw new Error(x.error);creativePoll=setTimeout(creativeRefresh,1500);}catch(e){toast(e.message);done();}};
 }
 async function publishDraft(id,action,btn){var done=btnBusy(btn,'Publishing…'),aid=actStart('approve',{verb:'Publishing reviewed draft'}),t0=Date.now();try{var r=await api(action,{id:id});if(r.error)throw new Error(r.error);while(Date.now()-t0<150000){await new Promise(function(res){setTimeout(res,2500);});var s=await api('approvalStatus',{id:id});if(s.status==='APPLIED'){toast('Published to Google Ads. New campaigns start paused.',true);return;}if(s.validatedAt&&s.validatedAt>=t0){toast('Validation passed. Dry-run is on; nothing was published.',true);return;}if(s.status==='APPLY_UNKNOWN'||s.error)throw new Error(s.error||'Google’s result needs reconciliation before any retry.');}toast('Publication is still pending. Its saved status will appear in Approvals.');}catch(e){toast(e.message);}finally{actEnd(aid);done();await reload();}}
-function growthLane(lane){var root=document.getElementById('v-bench');root.dataset.lane=lane;root.querySelectorAll('[data-growth-lane]').forEach(function(b){b.setAttribute('aria-selected',String(b.dataset.growthLane===lane));b.tabIndex=b.dataset.growthLane===lane?0:-1;});}
+function growthLane(lane){var root=document.getElementById('v-bench');root.dataset.lane=lane;root.querySelectorAll('[data-growth-lane]').forEach(function(b){b.setAttribute('aria-selected',String(b.dataset.growthLane===lane));b.tabIndex=b.dataset.growthLane===lane?0:-1;});setOppMeta();renderScanAudit();renderExistingProductCampaigns();oppShowErr(OPP_LAST_ERROR);}
 function setupGrowthLanes(){var root=document.getElementById('v-bench'),zones=root.querySelectorAll(':scope > .oppZone');zones[0].id='growthStudio';zones[1].id='growthStore';var learning=document.createElement('section');learning.id='growthLearning';learning.className='card pad';learning.appendChild(document.getElementById('pbCard'));root.appendChild(learning);var history=document.createElement('div');history.className='cr-history';history.innerHTML='<button class="btn ghost sm" id="pbHistory">Version history</button><div id="pbVersions"></div>';learning.appendChild(history);document.getElementById('pbHistory').onclick=loadPlaybookHistory;root.querySelectorAll('[data-growth-lane]').forEach(function(b){b.onclick=function(){growthLane(b.dataset.growthLane);};b.onkeydown=function(e){if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();var all=Array.from(root.querySelectorAll('[data-growth-lane]')),i=all.indexOf(b),next=all[(i+(e.key==='ArrowRight'?1:all.length-1))%all.length];next.click();next.focus();}};});growthLane('search');}
 async function loadPlaybookHistory(){var box=document.getElementById('pbVersions');box.innerHTML='<progress aria-label="Loading learning history"></progress>';try{var r=await api('playbookVersions');if(r.error)throw new Error(r.error);box.innerHTML=(r.items||[]).map(function(v){return '<div class="cr-version"><span><b>Version '+v.version+'</b> · '+v.lessons+' lessons<br>'+esc(v.changeLog||'')+'</span><button class="btn ghost sm" data-restore="'+esc(v.id)+'">Use this guidance</button></div>';}).join('')||'<p>No saved versions yet.</p>';box.querySelectorAll('[data-restore]').forEach(function(b){b.onclick=async function(){var done=btnBusy(b,'Restoring…');try{var x=await api('restorePlaybook',{versionId:b.dataset.restore});if(x.error)throw new Error(x.error);await loadPlaybook();await loadPlaybookHistory();toast('Guidance restored. Future drafts use the restored lessons.',true);}catch(e){toast(e.message);}finally{done();}};});}catch(e){box.textContent=e.message;}}
 setupGrowthLanes();
