@@ -1073,11 +1073,6 @@ async function api(action, extra){
   }
   if(res.status===401){ const e=new Error("401 — wrong passcode"); e.status=401; throw e; }
   if(!res.ok){ const t=await res.text().catch(()=> "");
-    let detail=null;try{detail=JSON.parse(t);}catch(_){}
-    if(detail&&detail.code==="AUTH_NOT_CONFIGURED"){
-      const e=new Error("Sign-in is unavailable because the server passcode is not configured. Set EDIT_PASSCODE for production functions in Netlify, then redeploy.");
-      e.status=res.status;e.code=detail.code;throw e;
-    }
     const e=new Error("HTTP "+res.status+(t?" "+t.slice(0,140):"")); e.status=res.status; e.bodyText=t; throw e; }
   const j = await res.json();
   if(API_MUTATING.has(action) && !(j&&j.error) && j!==false) scheduleReload();
@@ -1137,7 +1132,7 @@ function syncOk(){
 }
 function syncFailed(x){
   var code=(x&&x.status)||0;
-  var permanent=!!SYNC_PERMANENT[code]||(x&&x.code==="AUTH_NOT_CONFIGURED");
+  var permanent=!!SYNC_PERMANENT[code];
   lastSync=Date.now();                 // rule 1 — the clock moves regardless
   var d=$("#connDot"),t=$("#connText");
   if(d)d.style.background="var(--clay)";
@@ -3264,11 +3259,11 @@ async function unlock(e){if(e)e.preventDefault();PASS=(e&&e.__cachedPass)||$("#p
       else if(Date.now()>=syncDueAt()){ reload(); }
     },1000);
   }catch(x){ try{var _p=document.getElementById("pc");
-      if(_p&&x.status===401){_p.value="";_p.focus();
+      if(_p){_p.value="";_p.focus();
         // Fire input so the submit button re-disables — a programmatic value
         // change does not raise the event on its own.
         _p.dispatchEvent(new Event("input",{bubbles:true}));}}catch(_e){}
-    if(x.status===401){sessClear();$("#gateErr").textContent=(e&&e.__cachedPass)?"Saved sign-in expired \u2014 enter the passcode once to refresh it.":"That passcode was not accepted.";}
+    if(x.message.indexOf("401")>=0){sessClear();$("#gateErr").textContent=(e&&e.__cachedPass)?"Saved sign-in expired \u2014 enter the passcode once to refresh it.":"That passcode was not accepted.";}
     /*  A bare "HTTP 403" on the passcode screen reads as "wrong passcode",
         which it never is. Say what it actually means. */
     else if(x.status===403){ $("#gateErr").innerHTML="<b>Not a passcode problem.</b> Netlify refused the request (403). "+

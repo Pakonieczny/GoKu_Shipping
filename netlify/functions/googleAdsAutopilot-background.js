@@ -51,7 +51,7 @@ exports.handler = async (event) => {
   // auth (defence-in-depth)
   let body = {};
   try { body = JSON.parse(event.body || "{}"); } catch {}
-  if (!process.env.EDIT_PASSCODE || body.token !== process.env.EDIT_PASSCODE) {
+  if ((process.env.EDIT_PASSCODE || "") && body.token !== process.env.EDIT_PASSCODE) {
     return { statusCode: 401, headers: CORS, body: JSON.stringify({ error: "unauthorized" }) };
   }
 

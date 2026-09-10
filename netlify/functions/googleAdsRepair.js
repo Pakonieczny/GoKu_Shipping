@@ -261,7 +261,7 @@ exports.handler = async (event) => {
 
   // POST: gate matches the console — required only if EDIT_PASSCODE is set.
   const key = (headers["x-edit-passcode"] || headers["X-Edit-Passcode"] || body.key || "").trim();
-  if (!gate || key !== gate) return json(401, { error: "wrong passcode", editPasscodeSet: true });
+  if (gate && key !== gate) return json(401, { error: "wrong passcode", editPasscodeSet: true });
 
   return json(409, {error:"Legacy campaign creation is retired. Open brites-adwords.html, create a review draft, then review and publish its exact creative."});
 };
