@@ -54,10 +54,11 @@ const CONTROL_BOUNDS = Object.freeze({ nightStartHour: [0, 23], nightEndHour: [0
 function num(v, fb) { const n = Number(v); return Number.isFinite(n) ? n : fb; }
 function clampInt(v, lo, hi, fb) { return Math.min(hi, Math.max(lo, Math.round(num(v, fb)))); }
 
-/** Bounds each variable's values must respect (the dip lane's own bounds). */
+/** Bounds each variable's values must respect (the dip lane's own bounds).
+ *  The copy below is used when this file ships on its own with the runner. */
+const FALLBACK_BOUNDS = Object.freeze({ budgetUsd: [1000, 95000], minTradeUsd: [500, 95000], maxTradeUsd: [500, 95000], dropBps: [30, 1500], dropWindowMin: [3, 120], zMinTenths: [5, 80], noEntryBeforeMin: [0, 180], speedFactorPct: [0, 300], settleBars: [1, 15], stabilitySigmaTenths: [5, 100], retracePct: [10, 150], stopPct: [10, 200], maxHoldMin: [5, 390], cooldownMin: [0, 390], closeBeforeCloseMin: [0, 60] });
 function variableBounds() {
-  const DIP = require("./_investorDipReversal");
-  return DIP.BOUNDS;
+  try { return require("./_investorDipReversal").BOUNDS; } catch (e) { return FALLBACK_BOUNDS; }
 }
 function normalizeControl(raw) {
   const r = raw && typeof raw === "object" ? raw : {};

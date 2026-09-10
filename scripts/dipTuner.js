@@ -22,7 +22,7 @@ const fs = require("fs"), path = require("path"), os = require("os"), zlib = req
 const { Worker } = require("worker_threads");
 const https = require("https"), http = require("http");
 process.env.FIREBASE_PRIVATE_KEY = process.env.FIREBASE_PRIVATE_KEY || "";   // the shared modules must not need Firestore here
-const TUNER = require("../netlify/functions/_investorDipTuner");
+let TUNER; try { TUNER = require("../netlify/functions/_investorDipTuner"); } catch (e) { TUNER = require("./dipTunerDefs"); }   // the standalone bundle ships the defs beside this file
 const E = require("./dipTunerEngine");
 
 const HOME = path.join(os.homedir(), ".investor-ai", "tuner");
