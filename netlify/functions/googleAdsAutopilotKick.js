@@ -115,7 +115,29 @@ async function handleAction(body) {
   const a = body.action;
   const ctrl = await E.control();
   if (a === "dashboard") return await E.dashboard();
-  if (a === "campaignVersions") { try { return await E.campaignVersions({ id: body.id || body.campaignId }); } catch (e) { return { ok: false, error: e.message }; } }
+  if (["adDesignWorkspace", "saveAdDesign", "uploadAdDesignReference", "adDesignProductImages", "adDesignStatus"].includes(a)) {
+    try { return await E[a](body); } catch(e) { return {ok:false,error:e.message}; }
+  }
+  if (a === "startAdDesign") {
+    try {
+      const out=await E.startAdDesign({workspaceId:body.workspaceId,expectedVersion:body.expectedVersion,snapshotHash:body.snapshotHash,retry:!!body.retry});
+      if(out.queued) await dispatchTask("adDesign",{workspaceId:out.workspaceId,jobId:out.jobId});
+      return out;
+    } catch(e) { return {ok:false,error:e.message}; }
+  }
+  if (a === "beginAnalyzeAd") {
+    try {
+      const out=await E.beginAnalyzeAd({campaignId:body.campaignId||body.id,start:body.start,end:body.end,basis:body.basis,expectedVersion:body.expectedVersion,snapshotHash:body.snapshotHash,retry:!!body.retry});
+      if(out.dispatch) await dispatchTask("analyzeAd",{analysisId:out.analysisId});
+      return out;
+    } catch(e) { return {ok:false,error:e.message}; }
+  }
+  if (a === "analyzeAdStatus") { try { return await E.analyzeAdStatus({analysisId:body.analysisId,campaignId:body.campaignId}); } catch(e) { return {ok:false,error:e.message}; } }
+  if (a === "reviewAdVersion") { try { return await E.reviewAdVersion({id:body.id,hash:body.hash}); } catch(e) { return {ok:false,error:e.message}; } }
+  if (a === "adVersionApprovalStatus") { try { return await E.adVersionApprovalStatus({id:body.id}); } catch(e) { return {ok:false,error:e.message}; } }
+  if (a === "campaignVersionDetail") { try { return await E.campaignVersionDetail({id:body.id||body.campaignId,version:body.version}); } catch(e) { return {ok:false,error:e.message}; } }
+  if (a === "createCampaignRestoreDraft") { try { return await E.createCampaignRestoreDraft({id:body.id||body.campaignId,version:body.version,expectedVersion:body.expectedVersion,snapshotHash:body.snapshotHash}); } catch(e) { return {ok:false,error:e.message}; } }
+  if (a === "campaignVersions") { try { return await E.campaignVersions({ id: body.id || body.campaignId, beforeVersion: body.beforeVersion }); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "campaignImprovement") { try { return await E.campaignImprovement({ campaignId: body.campaignId || body.id, start: body.start, end: body.end, force: !!body.force }); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "createImprovementDraft") { try { return await E.createImprovementDraft({ campaignId: body.campaignId || body.id, start: body.start, end: body.end, actionId: body.actionId, reportId: body.reportId }); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "metricsRange") { try { return await E.metricsRange({ start: body.start, end: body.end }); } catch (e) { return { ok: false, error: e.message }; } }

@@ -13,6 +13,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const E = require("./googleAdsAutopilot");
+const fetch = require("node-fetch");
 
 const DEADLINE_MS = 13 * 60 * 1000; // leave headroom under Netlify's 15-min cap
 const startedAt = () => Date.now();
@@ -62,7 +63,7 @@ exports.handler = async (event) => {
     : ["anomaly", "monthly", "conversions", "adjustments", "measure", "mine", "prune", "budgets", "ceiling", "events", "pruneLedger"];
 
   // Draft work and explicit operator publication remain available with scheduled automation off.
-  const MANUAL_OR_DRAFT = new Set(["creativePrepare", "publishApproval", "scanOpportunities", "pmaxGenerate", "pmaxBackfillImages", "pmaxUpgradeAdStrength", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate", "designStudioScan", "designStudioGenerate", "designStudioAnalyze", "designStudioLearn"]); // publishApproval independently enforces exact operator approval
+  const MANUAL_OR_DRAFT = new Set(["adDesign", "analyzeAd", "creativePrepare", "publishApproval", "scanOpportunities", "pmaxGenerate", "pmaxBackfillImages", "pmaxUpgradeAdStrength", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate", "designStudioScan", "designStudioGenerate", "designStudioAnalyze", "designStudioLearn"]); // publishApproval independently enforces exact operator approval
   const allReadOnly = tasks.every(t => MANUAL_OR_DRAFT.has(t));
 
   // HARD KILL SWITCH — blocks anything that could mutate. Read-only analysis still runs.
@@ -96,7 +97,18 @@ exports.handler = async (event) => {
   for (const task of tasks) {
     if (over()) { log.push("time budget reached — deferring rest to next run"); break; }
     try {
-      if (task === "creativePrepare") { result.creativePrepare=await E.prepareCreativeApproval(body.id,{retry:!!body.retry}); }
+      if (task === "analyzeAd") { result.analyzeAd=await E.runAnalyzeAd({analysisId:body.analysisId}); }
+      else if (task === "adDesign") {
+        result.adDesign=await E.runAdDesign({workspaceId:body.workspaceId,jobId:body.jobId});
+        if(result.adDesign.dispatch) {
+          // The service releases its lease only at a saved stage boundary.
+          // Continuing the same job reuses its receipts and completed images.
+          const base=process.env.URL || ("https://"+(process.env.SITE_NAME||"goldenspike")+".netlify.app");
+          const next=await fetch(base+"/.netlify/functions/googleAdsAutopilot-background",{method:"POST",timeout:15000,headers:{"Content-Type":"application/json"},body:JSON.stringify({tasks:["adDesign"],workspaceId:body.workspaceId,jobId:body.jobId,token:process.env.EDIT_PASSCODE||undefined})});
+          if(!next.ok)throw new Error("Design continuation could not be dispatched (HTTP "+next.status+"). Completed work is saved; resume it from Ad Design.");
+        }
+      }
+      else if (task === "creativePrepare") { result.creativePrepare=await E.prepareCreativeApproval(body.id,{retry:!!body.retry}); }
       else if (task === "publishApproval") { result.publishApproval=await E.applyApproval(body.id,ctrl); }
       else if (task === "conversions") { result.conversions = await E.uploadConversions({ ctrl }); }
       else if (task === "scanOpportunities") { const sc = await E.opportunitiesWithStatus({ force: true, runId: body.scanRunId || null }); result.scanOpportunities = { n: (sc.opportunities || []).length, pmax: (sc.pmaxList || []).length, pmaxError: sc.pmaxError || null, runId: body.scanRunId || null, auditStatus: sc.scanAudit && sc.scanAudit.status || null }; }

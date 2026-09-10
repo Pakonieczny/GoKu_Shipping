@@ -28,6 +28,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const fetch = require("node-fetch");
+const versionReviewGate = require("./googleAdsVersionReview");
+const salesEvidenceUtil = require("./googleAdsSalesEvidence");
 
 /* ============================ Firebase (shared) ============================ */
 let _fb = null;
@@ -262,6 +264,7 @@ async function mutate(service, operations, { ctrl, label = "", validateOnly = nu
       (lines ? ` · errors: ${lines}` : "") + " · raw: " + JSON.stringify(data).slice(0, 1200)), {definiteResponse: res.status >= 400 && res.status < 500});
   }
   if(data.partialFailureError)throw new Error("Google reported a partial failure; reconcile before retrying.");
+  if(!vo&&operations.length&&(!Array.isArray(data.results)||data.results.length!==operations.length||data.results.some(r=>!r||!r.resourceName)))throw new Error("Google did not return a complete readable publication result. Reconcile before retrying.");
   if (!vo) { try { await _recordMutationVersions(service, operations, data, label, ledgerId); }
     catch (e) { data.versionWarning = "Google accepted the change, but its version could not be saved."; await ledger({ kind: "versionHistory", ok: false, label, error: String(e.message || e).slice(0, 300) }); } }
   return data;
@@ -316,14 +319,117 @@ async function mutateAll(mutateOperations, { ctrl, label = "", validateOnly = nu
       (lines ? ` · errors: ${lines}` : "") + " · raw: " + JSON.stringify(data).slice(0, 1200)), {definiteResponse: res.status >= 400 && res.status < 500});
   }
   if(data.partialFailureError)throw new Error("Google reported a partial failure; reconcile the campaign before retrying.");
-  if(!vo&&!Array.isArray(data.mutateOperationResponses))throw new Error("Google did not return a readable publication result.");
+  if(!vo&&(!Array.isArray(data.mutateOperationResponses)||data.mutateOperationResponses.length!==mutateOperations.length||data.mutateOperationResponses.some(r=>!r||!Object.values(r).some(v=>v&&v.resourceName))))throw new Error("Google did not return a complete readable publication result. Reconcile before retrying.");
   if (!vo) { try { await _recordMutationVersions(null, mutateOperations, data, label, ledgerId); }
     catch (e) { data.versionWarning = "Google accepted the change, but its version could not be saved."; await ledger({ kind: "versionHistory", ok: false, label, error: String(e.message || e).slice(0, 300) }); } }
   return data;
 }
 
 /* ==================== Persistent campaign / creative versions ==================== */
+const _versionSnapshots = require("./googleAdsVersionSnapshots");
+// GAQL exposes the dimension leaves, not the case_value message itself.
+const _VERSION_LISTING_DIMENSIONS = ["product_brand.value", "product_category.category_id", "product_category.level", "product_channel.channel", "product_condition.condition", "product_custom_attribute.index", "product_custom_attribute.value", "product_item_id.value", "product_type.level", "product_type.value", "retail_filter_bundle.shared_set", "webpage.conditions"].map(field => "asset_group_listing_group_filter.case_value." + field).join(", ");
 function _campaignVersionRef(f, id) { return f.db.collection(COL.state).doc("adVersions").collection("campaigns").doc(String(id)); }
+function _campaignVersionDoc(ref, version) { return ref.collection("versions").doc("v" + String(version).padStart(8, "0")); }
+const _RESTORATION_SCOPE = "Saved Search copy, image links, landing links and keyword selection; Performance Max asset links and product filters. Existing campaign, Search ad and asset group IDs are preserved. Budgets, schedules, Merchant product data and Google's learned bidding state are not rolled back.";
+async function _captureCampaignEditableSnapshot(id) {
+  id = String(id || ""); if (!/^\d+$/.test(id)) throw new Error("Invalid campaign ID.");
+  const rows = await gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type FROM campaign WHERE campaign.id = ${id}`);
+  if (!rows.length) throw new Error("Campaign was not found in this account.");
+  const campaign = rows[0].campaign, channel = campaign.advertisingChannelType, components = Object.fromEntries(_versionSnapshots.COMPONENTS.map(key => [key, []])), warnings = [], completeComponents = {};
+  const filter = `campaign.id = ${id}`, snapshot = { schema: 1, campaignId: id, channel, capturedAt: Date.now(), complete: true, components, warnings, completeComponents };
+  const read = async (key, query, map) => {
+    try {
+      const result = await gaql(query); if (result.length > 1000) throw new Error("More than 1,000 settings exceed the complete snapshot limit.");
+      components[key] = result.map(map).sort((a, b) => String(a.resourceName).localeCompare(String(b.resourceName)));
+      completeComponents[key] = true;
+    } catch (error) { completeComponents[key] = false; snapshot.complete = false; warnings.push(key + ": " + String(error.message || error).slice(0, 240)); }
+  };
+  const jobs = [];
+  if (channel === "SEARCH") {
+    jobs.push(read("searchAds", `SELECT ad_group.resource_name, ad_group_ad.resource_name, ad_group_ad.status, ad_group_ad.ad.resource_name, ad_group_ad.ad.type, ad_group_ad.ad.final_urls, ad_group_ad.ad.final_mobile_urls, ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_search_ad.descriptions, ad_group_ad.ad.responsive_search_ad.path1, ad_group_ad.ad.responsive_search_ad.path2 FROM ad_group_ad WHERE ${filter} AND ad_group_ad.status != 'REMOVED'`, row => {
+      const r = row.adGroupAd || {}, ad = r.ad || {}, rsa = ad.responsiveSearchAd;
+      if (ad.type !== "RESPONSIVE_SEARCH_AD" || !rsa) throw new Error("A non-responsive Search ad cannot be restored with this version format.");
+      const text = list => (list || []).map(x => ({ text: x.text, ...(x.pinnedField && !["UNSPECIFIED", "UNKNOWN"].includes(x.pinnedField) ? { pinnedField: x.pinnedField } : {}) }));
+      return { resourceName: ad.resourceName, adGroupAdResourceName: r.resourceName, adGroup: (row.adGroup || {}).resourceName, status: r.status,
+        finalUrls: ad.finalUrls || [], finalMobileUrls: ad.finalMobileUrls || [], responsiveSearchAd: { headlines: text(rsa.headlines), descriptions: text(rsa.descriptions), path1: rsa.path1 || "", path2: rsa.path2 || "" } };
+    }));
+    jobs.push(read("searchImageLinks", `SELECT ad_group_asset.resource_name, ad_group_asset.ad_group, ad_group_asset.asset, ad_group_asset.field_type, ad_group_asset.status, asset.image_asset.full_size.url FROM ad_group_asset WHERE ${filter} AND ad_group_asset.field_type = 'IMAGE' AND ad_group_asset.status != 'REMOVED'`, row => {const r=row.adGroupAsset||{},image=((row.asset||{}).imageAsset||{}).fullSize||{};return {resourceName:r.resourceName,adGroup:r.adGroup,asset:r.asset,fieldType:r.fieldType,status:r.status||"ENABLED",...(image.url?{imageUrl:image.url}:{})};}));
+    jobs.push(read("keywords", `SELECT ad_group_criterion.resource_name, ad_group_criterion.ad_group, ad_group_criterion.status, ad_group_criterion.negative, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type FROM ad_group_criterion WHERE ${filter} AND ad_group_criterion.type = 'KEYWORD' AND ad_group_criterion.status != 'REMOVED'`, row => {
+      const r = row.adGroupCriterion || {}; return { resourceName: r.resourceName, adGroup: r.adGroup, status: r.status, negative: !!r.negative, keyword: r.keyword };
+    }));
+  } else if (channel === "PERFORMANCE_MAX") {
+    jobs.push(read("assetGroups", `SELECT asset_group.resource_name, asset_group.name, asset_group.status, asset_group.final_urls, asset_group.final_mobile_urls FROM asset_group WHERE ${filter} AND asset_group.status != 'REMOVED'`, row => {
+      const r = row.assetGroup || {}; return { resourceName: r.resourceName, name: r.name, status: r.status, finalUrls: r.finalUrls || [], finalMobileUrls: r.finalMobileUrls || [] };
+    }));
+    jobs.push(read("assetLinks", `SELECT asset_group_asset.resource_name, asset_group_asset.asset_group, asset_group_asset.asset, asset_group_asset.field_type, asset_group_asset.status, asset.text_asset.text, asset.image_asset.full_size.url FROM asset_group_asset WHERE ${filter} AND asset_group.status != 'REMOVED' AND asset_group_asset.status != 'REMOVED'`, row => {
+      const r = row.assetGroupAsset || {}, a = row.asset || {}; return { resourceName: r.resourceName, assetGroup: r.assetGroup, asset: r.asset, fieldType: r.fieldType, status: r.status || "ENABLED", ...(a.textAsset ? { text: a.textAsset.text } : {}), ...(a.imageAsset && a.imageAsset.fullSize && a.imageAsset.fullSize.url ? { imageUrl: a.imageAsset.fullSize.url } : {}) };
+    }));
+    jobs.push(read("listingGroups", `SELECT asset_group_listing_group_filter.resource_name, asset_group_listing_group_filter.asset_group, asset_group_listing_group_filter.type, asset_group_listing_group_filter.listing_source, asset_group_listing_group_filter.parent_listing_group_filter, ${_VERSION_LISTING_DIMENSIONS} FROM asset_group_listing_group_filter WHERE ${filter} AND asset_group.status != 'REMOVED'`, row => {
+      const r = row.assetGroupListingGroupFilter || {}; return { resourceName: r.resourceName, assetGroup: r.assetGroup, type: r.type, listingSource: r.listingSource, parentListingGroupFilter: r.parentListingGroupFilter || null, caseValue: r.caseValue || null };
+    }));
+  } else { snapshot.complete = false; warnings.push("This channel does not support saved creative restoration."); }
+  jobs.push(read("campaignNegatives", `SELECT campaign_criterion.resource_name, campaign_criterion.campaign, campaign_criterion.keyword.text, campaign_criterion.keyword.match_type FROM campaign_criterion WHERE ${filter} AND campaign_criterion.negative = TRUE AND campaign_criterion.type = 'KEYWORD' AND campaign_criterion.status != 'REMOVED'`, row => {
+    const r = row.campaignCriterion || {}; return { resourceName: r.resourceName, campaign: r.campaign, negative: true, keyword: r.keyword };
+  }));
+  await Promise.all(jobs);
+  if (campaign.status === "REMOVED") { snapshot.complete = false; warnings.push("Google has removed this campaign; it cannot be restored under the same ID."); }
+  if (channel === "SEARCH" && completeComponents.searchAds && !components.searchAds.length) { snapshot.complete = false; warnings.push("No active or paused Search ad was available to save."); }
+  if (channel === "PERFORMANCE_MAX" && completeComponents.assetGroups && !components.assetGroups.length) { snapshot.complete = false; warnings.push("No active or paused asset group was available to save."); }
+  if (Buffer.byteLength(JSON.stringify(snapshot), "utf8") > 350000) { snapshot.complete = false; warnings.push("Saved settings exceeded the complete snapshot size limit; restoration is unavailable."); _versionSnapshots.COMPONENTS.forEach(key => { components[key] = []; completeComponents[key] = false; }); }
+  return snapshot;
+}
+function _snapshotVersionFields(snapshot) {
+  return { editableSnapshot: snapshot, snapshotHash: snapshot && snapshot.complete ? _versionSnapshots.snapshotHash(snapshot) : null, ..._versionSnapshots.restorationEligibility(snapshot), restorationScope: _RESTORATION_SCOPE };
+}
+function _snapshotConfirmsMutation(snapshot, ops, real) {
+  if (!snapshot || !snapshot.complete) return false;
+  const c = snapshot.components, rows = _versionSnapshots.COMPONENTS.flatMap(key => c[key] || []);
+  const resolve = value => typeof value === "string" ? real(value) : Array.isArray(value) ? value.map(resolve) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([key, v]) => [key, resolve(v)])) : value;
+  const same = (a, b) => _versionHash(a) === _versionHash(b);
+  return ops.every(({ type, op }) => {
+    if (op.remove) return !rows.some(row => row.resourceName === real(op.remove) || row.adGroupAdResourceName === real(op.remove));
+    const update = op.update && resolve(op.update);
+    if (update) {
+      const row = rows.find(row => row.resourceName === update.resourceName || row.adGroupAdResourceName === update.resourceName);
+      // Budgets and other non-creative resources are outside this saved scope.
+      if (!row) return !/^(?:ads|adOperation|adGroupAds|adGroupAdOperation|assetGroups|assetGroupOperation|assetGroupAssets|assetGroupAssetOperation|adGroupAssets|adGroupAssetOperation|adGroupCriteria|adGroupCriterionOperation)$/.test(type);
+      return Object.keys(update).filter(key => key !== "resourceName").every(key => {
+        if (key === "responsiveSearchAd") return Object.keys(update[key]).every(field => same(row[key] && row[key][field], update[key][field]));
+        return same(row[key], update[key]);
+      });
+    }
+    if (op.create && /assetGroupAssetOperation|^assetGroupAssets$/.test(type)) {
+      const row = resolve(op.create); return c.assetLinks.some(link => link.assetGroup === row.assetGroup && link.asset === row.asset && link.fieldType === row.fieldType);
+    }
+    if(op.create&&/adGroupAssetOperation|^adGroupAssets$/.test(type)){const row=resolve(op.create);return (c.searchImageLinks||[]).some(link=>link.adGroup===row.adGroup&&link.asset===row.asset&&link.fieldType===row.fieldType&&(!row.status||link.status===row.status));}
+    if (op.create && /assetGroupListingGroupFilterOperation|^assetGroupListingGroupFilters$/.test(type)) {
+      const row = resolve(op.create); return c.listingGroups.some(link => link.resourceName === row.resourceName && link.type === row.type && (link.parentListingGroupFilter || null) === (row.parentListingGroupFilter || null) && same(link.caseValue || null, row.caseValue || null));
+    }
+    if (op.create && /adGroupCriterionOperation|^adGroupCriteria$|campaignCriterionOperation|^campaignCriteria$/.test(type) && op.create.keyword) {
+      const row = resolve(op.create); return [...c.keywords, ...c.campaignNegatives].some(link => (link.adGroup || link.campaign) === (row.adGroup || row.campaign) && !!link.negative === !!row.negative && same(link.keyword, row.keyword));
+    }
+    return true;
+  });
+}
+async function _attachCampaignVersionObservation(ref, expectedVersion, observed) {
+  const f = fb(); if (!f) throw new Error("Version history storage is unavailable.");
+  await f.db.runTransaction(async tx => {
+    const latest = await tx.get(ref); if (!latest.exists || Number(latest.data().version) !== Number(expectedVersion)) return;
+    const lease = await tx.get(f.db.collection(COL.state).doc("publicationLease"));
+    if (lease.exists && Number(lease.data().until) > Date.now()) return;
+    const current = latest.data();
+    if (current.snapshotExpectedMutation) {
+      const aliases = new Map(Object.entries(current.snapshotExpectedMutation.aliases || {}));
+      if (!_snapshotConfirmsMutation(observed.snapshot, current.snapshotExpectedMutation.operations || [], value => aliases.get(value) || value)) return;
+    }
+    const patch = { observedFingerprints: { ...current.observedFingerprints, ...observed.fingerprints }, observedAt: Date.now() };
+    // Only the current version may gain a freshly checked snapshot. A previous
+    // fingerprint-only revision is never reconstructed from today's creative.
+    if (observed.snapshot && observed.snapshot.complete && (!current.editableSnapshot || !current.editableSnapshot.complete)) Object.assign(patch, _snapshotVersionFields(observed.snapshot), { snapshotExpectedMutation: null, snapshotWarnings: [] });
+    tx.update(ref, patch); tx.set(_campaignVersionDoc(ref, expectedVersion), patch, { merge: true });
+  });
+}
 function _versionCanonical(value) {
   if (Array.isArray(value)) return value.map(_versionCanonical).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
   if (value && typeof value === "object") return Object.keys(value).sort().reduce((o, k) => { if (value[k] !== undefined) o[k] = _versionCanonical(value[k]); return o; }, {});
@@ -372,6 +478,13 @@ async function _appendCampaignVersion(id, entry, eventId, expectedVersion) {
     const current = await tx.get(ref), seen = await tx.get(ref.collection("events").doc(key));
     if (seen.exists) return current.exists ? current.data() : null;
     const old = current.exists ? current.data() : {};
+    // Read inside the same transaction: a history request may have begun before
+    // publication acquired its lease, then finish after Google changed the ad.
+    // Only the confirmed publication may create that revision while it owns it.
+    if (entry.source === "observed") {
+      const lease = await tx.get(f.db.collection(COL.state).doc("publicationLease"));
+      if (lease.exists && Number(lease.data().until) > Date.now()) return current.exists ? old : null;
+    }
     // An observed state may have been read while a console edit was publishing.
     // Never let that stale observation supersede a newer confirmed mutation.
     if (expectedVersion !== undefined && Number(old.version || 0) !== expectedVersion) return current.exists ? old : null;
@@ -427,9 +540,22 @@ async function _recordMutationVersions(service, inputOps, result, label, eventId
   });
   for (const [id, changes] of byCampaign) {
     const categories = [...new Set(changes.flatMap(c => c.categories))], created = ops.some(x => /campaignOperation|^campaigns$/.test(x.type) && x.op.create && resolve(x.op.create.resourceName).includes(id));
+    let observed = null;
+    try { observed = await _observeCampaignCreative(id); } catch (error) { /* The confirmed publication still gets exactly one revision; missing state is visible. */ }
+    const relevantOps = ops.filter(({ op }) => {
+      const row = op.create || op.update || {}; return [row.campaign, row.adGroup, row.assetGroup, row.resourceName, op.remove].filter(Boolean).some(ref => resolve(ref).includes(id));
+    });
+    const snapshotExpectedMutation = !observed || !_snapshotConfirmsMutation(observed.snapshot, relevantOps, real) ? JSON.parse(JSON.stringify({ operations: relevantOps, aliases: Object.fromEntries(aliases) })) : null;
+    if (observed && snapshotExpectedMutation) {
+      if (observed.snapshot) { observed.snapshot.complete = false; observed.snapshot.warnings.push("Google has accepted the update, but its reported editable settings have not caught up yet."); }
+      observed.fingerprints = null; observed.warnings.push("Open version history again to reconcile the accepted update before another analysis.");
+    }
     await _appendCampaignVersion(id, { source: "console", baseline: false, created, categories,
       summary: (created ? "Campaign published · " : "Updated · ") + categories.join(", "), changes: changes.slice(0, 80),
-      changeCount: changes.length, label: String(label || "").slice(0, 150), verification: "Google accepted the atomic mutation; serving and performance are separate checks." }, eventId ? String(eventId) : require("crypto").randomUUID());
+      changeCount: changes.length, label: String(label || "").slice(0, 150), verification: "Google accepted the atomic mutation; serving and performance are separate checks.",
+      ..._snapshotVersionFields(observed && observed.snapshot), observedFingerprints: observed && observed.fingerprints || null,
+      snapshotExpectedMutation,
+      snapshotWarnings: observed ? observed.warnings : ["The publication was accepted, but current editable settings could not be read. Open version history to reconcile them."] }, eventId ? String(eventId) : require("crypto").randomUUID());
   }
 }
 async function _observeCampaignCreative(id) {
@@ -444,42 +570,109 @@ async function _observeCampaignCreative(id) {
   ] : [
     read("Headlines and descriptions", `SELECT asset_group_asset.resource_name, asset_group_asset.field_type, asset.text_asset.text FROM asset_group_asset WHERE ${filter} AND asset_group_asset.status != 'REMOVED' AND asset_group_asset.field_type IN ('HEADLINE','LONG_HEADLINE','DESCRIPTION','BUSINESS_NAME')`),
     read("Images", `SELECT asset_group_asset.resource_name, asset_group_asset.field_type, asset.resource_name FROM asset_group_asset WHERE ${filter} AND asset_group_asset.status != 'REMOVED' AND asset_group_asset.field_type IN ('MARKETING_IMAGE','SQUARE_MARKETING_IMAGE','PORTRAIT_MARKETING_IMAGE','LOGO','LANDSCAPE_LOGO')`),
-    read("Product choices", `SELECT asset_group_listing_group_filter.resource_name, asset_group_listing_group_filter.type, asset_group_listing_group_filter.case_value FROM asset_group_listing_group_filter WHERE ${filter}`)
+    read("Product choices", `SELECT asset_group_listing_group_filter.resource_name, asset_group_listing_group_filter.type, ${_VERSION_LISTING_DIMENSIONS} FROM asset_group_listing_group_filter WHERE ${filter}`)
   ];
   jobs.push(read("Campaign negatives", `SELECT campaign_criterion.resource_name, campaign_criterion.keyword.text, campaign_criterion.keyword.match_type FROM campaign_criterion WHERE ${filter} AND campaign_criterion.negative = TRUE AND campaign_criterion.type = 'KEYWORD' AND campaign_criterion.status != 'REMOVED'`));
   jobs.push(read("Campaign images and extensions", `SELECT campaign_asset.resource_name, campaign_asset.field_type, asset.text_asset.text, asset.sitelink_asset.link_text, asset.sitelink_asset.description1, asset.sitelink_asset.description2, asset.callout_asset.callout_text FROM campaign_asset WHERE ${filter} AND campaign_asset.status != 'REMOVED'`));
   if (channel === "SEARCH") jobs.push(read("Ad group images and extensions", `SELECT ad_group_asset.resource_name, ad_group_asset.field_type FROM ad_group_asset WHERE ${filter} AND ad_group_asset.status != 'REMOVED'`));
+  let snapshot = null;
+  jobs.push(_captureCampaignEditableSnapshot(id).then(value => { snapshot = value; warnings.push(...value.warnings); }).catch(error => { warnings.push("Editable settings could not be saved: " + String(error.message || error).slice(0, 200)); }));
   await Promise.all(jobs);
   const fingerprints = Object.fromEntries(Object.entries(values).map(([k, v]) => [k, _versionHash(v)]));
-  return { fingerprints, warnings, categories: Object.keys(values), name: row.campaign.name };
+  return { fingerprints, snapshot, warnings, categories: Object.keys(values), name: row.campaign.name };
 }
-async function campaignVersions({ id } = {}) {
+async function campaignVersions({ id, beforeVersion } = {}) {
   id = String(id || ""); if (!/^\d+$/.test(id)) throw new Error("Invalid campaign ID.");
+  if (beforeVersion != null && (!Number.isSafeInteger(Number(beforeVersion)) || Number(beforeVersion) < 1)) throw new Error("Invalid version cursor.");
   const f = fb(); if (!f) throw new Error("Version history storage is unavailable.");
   const ref = _campaignVersionRef(f, id); let snap = await ref.get(), current = snap.exists ? snap.data() : null, warnings = [];
   try {
     const observed = await _observeCampaignCreative(id); warnings = observed.warnings;
     if (!current) {
       current = await _appendCampaignVersion(id, { source: "observed", baseline: true, summary: "Current settings recorded; earlier edit history is unavailable.",
-        categories: observed.categories, changes: [], observedFingerprints: observed.fingerprints, observedAt: Date.now() }, "baseline", 0);
+        categories: observed.categories, changes: [], observedFingerprints: observed.fingerprints, observedAt: Date.now(), ..._snapshotVersionFields(observed.snapshot) }, "baseline", 0);
     } else if (!current.observedFingerprints) {
       // A successful console edit already created its version. Attach the next observed
       // state without inventing another edit for that same publication.
-      await f.db.runTransaction(async tx => { const now = await tx.get(ref); if (now.exists && now.data().version === current.version)
-        tx.update(ref, { observedFingerprints: observed.fingerprints, observedAt: Date.now() }); });
+      await _attachCampaignVersionObservation(ref, current.version, observed);
     } else {
       const changed = Object.keys(observed.fingerprints).filter(k => current.observedFingerprints[k] && current.observedFingerprints[k] !== observed.fingerprints[k]);
+      if (!changed.length && current.snapshotHash && observed.snapshot && observed.snapshot.complete && current.snapshotHash !== _versionSnapshots.snapshotHash(observed.snapshot)) changed.push("Creative settings");
       if (changed.length) current = await _appendCampaignVersion(id, { source: "observed", baseline: false, summary: "Changes detected · " + changed.join(", "),
         categories: changed, changes: changed.map(category => ({ category, summary: "Changed since the last observation; exact edit time and author are unavailable." })),
-        observedFingerprints: { ...current.observedFingerprints, ...observed.fingerprints }, observedAt: Date.now(), changeTimeUnknown: true }, _versionHash([current.version, observed.fingerprints]), current.version);
-      else await f.db.runTransaction(async tx => { const now = await tx.get(ref); if (now.exists && now.data().version === current.version)
-        tx.update(ref, { observedFingerprints: { ...current.observedFingerprints, ...observed.fingerprints }, observedAt: Date.now() }); });
+        observedFingerprints: { ...current.observedFingerprints, ...observed.fingerprints }, observedAt: Date.now(), changeTimeUnknown: true, ..._snapshotVersionFields(observed.snapshot) }, _versionHash([current.version, observed.fingerprints, observed.snapshot && _versionSnapshots.snapshotHash(observed.snapshot)]), current.version);
+      else await _attachCampaignVersionObservation(ref, current.version, observed);
     }
   } catch (e) { if (!current) throw e; warnings.push("Current creative could not be checked; showing recorded versions."); }
   const latest = await ref.get(); if (latest.exists) current = latest.data();
-  const history = await ref.collection("versions").orderBy("version", "desc").limit(30).get();
-  return { ok: true, campaignId: id, currentVersion: current.version, versions: history.docs.map(d => { const { observedFingerprints, ...entry } = d.data(); return entry; }), warnings,
-    coverage: "Campaign-level creative revisions. Console changes are recorded after Google accepts them. Existing campaigns start with an observed baseline. External changes are detected when opened; their exact edit time is unknown. Earlier unrecorded history is not reconstructed." };
+  if (!current) throw new Error("An ad update is being published. Open version history again when publication finishes.");
+  if (current.snapshotExpectedMutation) warnings.push("The accepted update still needs to be confirmed in Google's reported settings. Another analysis or restoration is blocked until that state is verified.");
+  let query = ref.collection("versions").orderBy("version", "desc"); if (beforeVersion != null) query = query.startAfter(Number(beforeVersion));
+  const history = await query.limit(31).get(), page = history.docs.slice(0, 30);
+  return { ok: true, campaignId: id, currentVersion: current.version, currentSnapshotHash: current.snapshotHash || null,
+    versions: page.map(d => { const { observedFingerprints, editableSnapshot, snapshotExpectedMutation, ...entry } = d.data(); return { ...entry, ..._versionSnapshots.restorationEligibility(editableSnapshot), snapshotCapturedAt: editableSnapshot && editableSnapshot.capturedAt || null, restorationScope: _RESTORATION_SCOPE }; }),
+    hasMore: history.docs.length > 30, nextBeforeVersion: history.docs.length > 30 ? page[page.length - 1].data().version : null, warnings,
+    coverage: "Campaign-level creative revisions. Console changes are recorded after Google accepts them. Exact saved settings can be reviewed and restored on the same ads. External changes are detected when opened; their exact edit time is unknown. Earlier unrecorded settings are not reconstructed." };
+}
+async function _verifiedCampaignAnalysisBasis({ campaignId, expectedVersion, snapshotHash } = {}) {
+  campaignId = String(campaignId || ""); if (!/^\d+$/.test(campaignId)) throw new Error("Invalid campaign ID.");
+  await campaignVersions({ id: campaignId });
+  const f = fb(), s = await _campaignVersionRef(f, campaignId).get(), current = s.exists && s.data();
+  if (!current || !current.snapshotHash || !current.editableSnapshot || !current.editableSnapshot.complete) throw new Error("A complete current version could not be captured. Refresh version history before analyzing or restoring this ad.");
+  if (expectedVersion != null && Number(expectedVersion) !== Number(current.version)) throw new Error("This ad changed after you opened it. Refresh and analyze the current version.");
+  if (snapshotHash != null && String(snapshotHash) !== current.snapshotHash) throw new Error("The current ad settings no longer match the selected analysis. Refresh before continuing.");
+  return _guardCampaignVersion({ campaignId, expectedVersion: current.version, snapshotHash: current.snapshotHash });
+}
+async function _guardCampaignVersion({ campaignId, expectedVersion, snapshotHash } = {}) {
+  campaignId = String(campaignId || "");
+  if (!/^\d+$/.test(campaignId) || !Number.isSafeInteger(Number(expectedVersion)) || Number(expectedVersion) < 1 || !/^[a-f0-9]{64}$/.test(String(snapshotHash || ""))) throw new Error("A complete version and settings fingerprint are required for this update.");
+  const f = fb(); if (!f) throw new Error("Version history storage is unavailable.");
+  const ref = _campaignVersionRef(f, campaignId), before = await ref.get();
+  if (!before.exists || Number(before.data().version) !== Number(expectedVersion) || before.data().snapshotHash !== snapshotHash) throw new Error("This ad has a newer version. Analyze it again before approving changes.");
+  const snapshot = await _captureCampaignEditableSnapshot(campaignId);
+  if (!snapshot.complete) throw new Error("Google's current editable settings could not be verified completely. No changes were sent.");
+  if (_versionSnapshots.snapshotHash(snapshot) !== snapshotHash) throw new Error("Google Ads settings changed after this proposal was prepared. Refresh and analyze the ad again; the old proposal was not sent.");
+  const after = await ref.get(); if (!after.exists || Number(after.data().version) !== Number(expectedVersion) || after.data().snapshotHash !== snapshotHash) throw new Error("Another version was recorded during verification. Refresh before continuing.");
+  return { campaignId, version: Number(expectedVersion), snapshotHash, snapshot };
+}
+async function campaignVersionDetail({ id, version } = {}) {
+  id = String(id || ""); version = Number(version);
+  if (!/^\d+$/.test(id) || !Number.isSafeInteger(version) || version < 1) throw new Error("Invalid campaign version.");
+  const latest = await campaignVersions({ id }), f = fb(), saved = await _campaignVersionDoc(_campaignVersionRef(f, id), version).get();
+  if (!saved.exists) throw new Error("This recorded version was not found.");
+  const { editableSnapshot, observedFingerprints, snapshotExpectedMutation, ...entry } = saved.data();
+  let eligibility = _versionSnapshots.restorationEligibility(editableSnapshot);
+  if (eligibility.restorable && version !== latest.currentVersion) {
+    const current = await _campaignVersionRef(f, id).get();
+    try { _versionSnapshots.buildRestoreOperations(current.data().editableSnapshot, editableSnapshot); }
+    catch (error) { eligibility = { restorable: false, restorationReason: error.message }; }
+  }
+  return { ok: true, ...entry, campaignId: id, version, snapshot: editableSnapshot || null, ...eligibility, restorationScope: _RESTORATION_SCOPE,
+    currentVersion: latest.currentVersion, currentSnapshotHash: latest.currentSnapshotHash, warnings: latest.warnings };
+}
+function _buildCampaignRestoreOperations(current, target) { return _versionSnapshots.buildRestoreOperations(current, target); }
+async function createCampaignRestoreDraft({ id, version, expectedVersion, snapshotHash } = {}) {
+  id = String(id || ""); version = Number(version);
+  if (!Number.isSafeInteger(version) || version < 1) throw new Error("Invalid saved version.");
+  const basis = await _verifiedCampaignAnalysisBasis({ campaignId: id, expectedVersion, snapshotHash });
+  if (version >= basis.version) throw new Error("Choose a previous recorded version to restore.");
+  const f = fb(), saved = await _campaignVersionDoc(_campaignVersionRef(f, id), version).get();
+  if (!saved.exists) throw new Error("This recorded version was not found.");
+  const plan = _buildCampaignRestoreOperations(basis.snapshot, saved.data().editableSnapshot);
+  if (!plan.operations.length) throw new Error("The selected version already matches the current editable ad settings.");
+  const assets = [...new Set(plan.operations.map(o => {const operation=o.assetGroupAssetOperation||o.adGroupAssetOperation;return operation&&operation.create&&operation.create.asset;}).filter(Boolean))];
+  if (assets.length) {
+    const rows = await gaql(`SELECT asset.resource_name FROM asset WHERE asset.resource_name IN (${assets.map(ref => "'" + ref + "'").join(",")})`), found = new Set(rows.map(row => (row.asset || {}).resourceName));
+    if (assets.some(ref => !found.has(ref))) throw new Error("A saved creative asset is no longer available in Google Ads. This version cannot be restored exactly.");
+  }
+  const versionChange = { campaignId: id, sourceVersion: basis.version, proposedVersion: basis.version + 1, restoredFromVersion: version, changes: plan.changes, identityPreserved: true,
+    notes: plan.notes, restorationScope: _RESTORATION_SCOPE, merchantChanges: false };
+  const payload = { mutateOperations: plan.operations, versionGuard: { campaignId: id, expectedVersion: basis.version, snapshotHash: basis.snapshotHash }, versionChange,
+    meta: { existingCampaignId: id, operation: "restoreRecordedVersion", restoredFromVersion: version } };
+  if (Buffer.byteLength(JSON.stringify(payload), "utf8") > 700000) throw new Error("This complete restoration is too large for one approval. No partial draft was saved.");
+  const approvalId = await enqueueApproval({ type: "adVersionRestore", summary: `Restore saved v${version} settings on the same ad · v${basis.version} → v${basis.version + 1}`, payload, vetted: false });
+  if (!approvalId) throw new Error("The restoration approval could not be saved.");
+  return { ok: true, approvalId, campaignId: id, versionChange, message: "Restoration is waiting in Approvals. The ad remains on its current version until the reviewed update is accepted by Google." };
 }
 
 /* ============================ Offline conversions ============================ */
@@ -801,7 +994,7 @@ function _orderItem(it) {
   if (!it) return null;
   const title = String(it.title || it.name || "").trim().slice(0, 180);
   if (!title && !it.sku) return null;
-  const qty = Math.max(1, Number(it.qty || it.quantity) || 1);
+  const rawQty=it.qty!=null?it.qty:it.quantity;const qty=rawQty==null?1:Math.max(0,Number(rawQty)||0);
   const unitPrice = Number(it.unitPrice != null ? it.unitPrice : (it.price != null ? it.price : it.unit_price));
   const lineRevenue = Number(it.lineRevenue != null ? it.lineRevenue : (it.line_price != null ? it.line_price : it.discountedTotal));
   const lineDiscount = Number(it.lineDiscount != null ? it.lineDiscount : (it.total_discount != null ? it.total_discount : it.discount));
@@ -846,8 +1039,10 @@ function _paidAttribution(x) {
 }
 function _paidChannel(x){
   if(!_paidAttribution(x))return null;
-  const medium=String(x.medium||"").toLowerCase();
-  return /shopping|pmax|performance/.test(medium)?"pmax":"search";
+  const medium=String(x.medium||"").toLowerCase(),campaign=String(x.campaign||"").toLowerCase();
+  if(/shopping|pmax|performance/.test(medium+" "+campaign))return "pmax";
+  if(/search/.test(medium+" "+campaign))return "search";
+  return null;
 }
 function _merchantOrganic(x) {
   if (!x || _paidAttribution(x)) return false;
@@ -909,6 +1104,7 @@ async function recordOrderEvent(ev) {
     const useItems=items.length?items:((prior&&prior.items)||[]);
     const row = {
       orderId, value: Number(ev.value != null ? ev.value : (prior&&prior.value)) || 0, currency: ev.currency || (prior&&prior.currency) || CURRENCY,
+      financialStatus:ev.financialStatus||(prior&&prior.financialStatus)||null,cancelledAt:ev.cancelledAt||(prior&&prior.cancelledAt)||null,test:ev.test!=null?!!ev.test:!!(prior&&prior.test),
       source: ev.source || (prior&&prior.source) || null, medium: ev.medium || (prior&&prior.medium) || null,
       campaign: ev.campaign || (prior&&prior.campaign) || null,
       hasClickId, captured, reason: captured ? (ev.reason || (prior&&prior.reason) || "captured — Google ad click") : (ev.reason || (prior&&prior.reason) || null),
@@ -932,82 +1128,84 @@ async function recentOrders({ limit = 25 } = {}) {
 // Aggregate store demand, keeping Merchant Center free-listing sales separate from
 // direct/other organic traffic. PMax decisions must weight the feed's own proof first.
 async function storeSignals({ days = 30, max = 1000 } = {}) {
-  const f = fb(); if (!f) return null;
-  days = Math.max(1, Math.min(365, Math.floor(Number(days) || 30)));
-  const now = Date.now(), since = now - days * 86400000;
-  const cap = Math.max(1, Math.min(20000, Math.floor(Number(max) || 1000)));
-  let rows = [];
-  let complete = true;
-  try {
-    const q = await f.db.collection(COL.orderLog).where("ts", ">=", since).where("ts", "<=", now).orderBy("ts", "desc").limit(cap + 1).get();
-    q.forEach(d => { const x = d.data(); if ((x.ts || 0) >= since && (x.ts || 0) <= now) rows.push(x); });
-    complete = rows.length <= cap; rows = rows.slice(0, cap);
-  } catch (e) { return null; }
-  const out = { days, complete, startAt:since, endAt:now, attributionBasis:"Shopify order date", currency:CURRENCY,
-    warning:complete?null:`Only the ${cap} most recent orders were available to this snapshot.`, monetaryComplete:true, excludedCurrencyOrders:0,
-    orders: rows.length, adOrders: 0, searchAdOrders:0, pmaxAdOrders:0, organicOrders: 0, merchantOrganicOrders: 0, otherOrganicOrders: 0,
-    adRevenue: 0, searchAdRevenue:0, pmaxAdRevenue:0, organicRevenue: 0, merchantOrganicRevenue: 0, otherOrganicRevenue: 0,
-    topProducts: [], topOrganicProducts: [], topMerchantProducts: [], topSources: [] };
-  const allProd = {}, organicProd = {}, merchantProd = {}, src = {};
-  rows.forEach(x => {
-    const currencyMatches = String(x.currency || CURRENCY).toUpperCase() === CURRENCY;
-    if (!currencyMatches) { out.monetaryComplete=false; out.excludedCurrencyOrders++; }
-    const v = currencyMatches ? (x.netValue!=null?Math.max(0,Number(x.netValue)||0):(Number(x.value)||0)) : 0; const isAd = _paidAttribution(x); const paidChannel=_paidChannel(x); const isMerchant = _merchantOrganic(x);
-    if (isAd) { out.adOrders++; out.adRevenue += v; if(paidChannel==="pmax"){out.pmaxAdOrders++;out.pmaxAdRevenue+=v;}else{out.searchAdOrders++;out.searchAdRevenue+=v;} }
-    else {
-      out.organicOrders++; out.organicRevenue += v;
-      if (isMerchant) { out.merchantOrganicOrders++; out.merchantOrganicRevenue += v; }
-      else { out.otherOrganicOrders++; out.otherOrganicRevenue += v; }
-    }
-    const rawItems = Array.isArray(x.items) && x.items.length ? x.items : (x.products || []).map(t => ({ title: t, qty: 1 }));
-    const knownLineRevenue = rawItems.reduce((n, it0) => { const it = _orderItem(it0); return n + (it && it.lineRevenue != null ? Math.max(0,Number(it.lineRevenue)-(Number(it.refundedRevenue)||0)) : 0); }, 0);
-    const unknownUnits=Math.max(1,rawItems.reduce((n,it0)=>{const it=_orderItem(it0);if(!it||it.lineRevenue!=null)return n;return n+Math.max(0,(Number(it.qty)||1)-(Number(it.refundedQty)||0));},0));
-    rawItems.forEach(it0 => {
-      const it = _orderItem(it0); if (!it) return;
-      const netQty=Math.max(0,(Number(it.qty)||1)-(Number(it.refundedQty)||0));
-      const allocated = !currencyMatches ? 0 : it.lineRevenue != null
-        ? Math.max(0,Number(it.lineRevenue)-(Number(it.refundedRevenue)||0))
-        : Math.max(0, v - knownLineRevenue) * (Math.max(0,netQty) / unknownUnits);
-      if(allocated<=0&&netQty<=0)return;
-      it.qty=Math.max(1,netQty);
-      _signalProductBucket(allProd, it, allocated, isAd, isMerchant);
-      if (!isAd) _signalProductBucket(organicProd, it, allocated, false, isMerchant);
-      if (isMerchant) _signalProductBucket(merchantProd, it, allocated, false, true);
-    });
-    const sk = ((x.source || "direct") + " / " + (x.medium || "none")).toLowerCase();
-    (src[sk] = src[sk] || { source: sk, orders: 0, revenue: 0, merchantOrganic: 0 }); src[sk].orders++; src[sk].revenue += v; if (isMerchant) src[sk].merchantOrganic++;
-  });
-  const rank = map => Object.values(map).map(p => ({ ...p, revenue: +p.revenue.toFixed(2), estimatedProfit: +p.estimatedProfit.toFixed(2) }))
-    .sort((a, b) => b.orders - a.orders || b.units - a.units || b.revenue - a.revenue).slice(0, 20);
-  ["adRevenue","searchAdRevenue","pmaxAdRevenue","organicRevenue","merchantOrganicRevenue","otherOrganicRevenue"].forEach(k => out[k] = +out[k].toFixed(2));
-  out.topProducts = rank(allProd); out.topOrganicProducts = rank(organicProd); out.topMerchantProducts = rank(merchantProd);
-  out.topSources = Object.values(src).map(s => ({ ...s, revenue: +s.revenue.toFixed(2) })).sort((a, b) => b.orders - a.orders).slice(0, 12);
-  if(!out.monetaryComplete)out.warning=[out.warning,`${out.excludedCurrencyOrders} order(s) in other currencies contribute counts only; their money was excluded.`].filter(Boolean).join(" ");
-  return out;
+  const f=fb();if(!f)return null;
+  days=Math.max(1,Math.min(365,Math.floor(Number(days)||30)));
+  const now=Date.now(),since=now-days*86400000,cap=Math.max(1,Math.min(20000,Math.floor(Number(max)||1000)));
+  let rows=[];
+  try{const q=await f.db.collection(COL.orderLog).where("ts",">=",since).where("ts","<=",now).orderBy("ts","desc").limit(cap+1).get();q.forEach(d=>{const x=d.data();if(Number(x.ts)>=since&&Number(x.ts)<=now)rows.push(x);});}catch(e){return null;}
+  const result=salesEvidenceUtil.aggregateOrderEvidence({rows:rows.slice(0,cap),days,startAt:since,endAt:now,complete:rows.length<=cap,currency:CURRENCY,
+    normalizeItem:_orderItem,marginForText:_marginRateForText,googlePaid:_paidAttribution,merchantOrganic:_merchantOrganic,paidChannel:_paidChannel});
+  try{const h=await f.db.collection(COL.state).doc("orderHistoryBackfill").get();if(h.exists){const x=h.data();result.historicalImport={at:x.at,requestedDays:x.requestedDays,oldestAt:x.oldestAt,complete:x.complete,allOrdersAccess:x.allOrdersAccess,limitation:x.limitation};result.historyCoverage=x.limitation||result.historyCoverage;}}catch(e){}
+  return result;
+}
+
+let _storeSalesRowsCache=null;
+// A single bounded log read feeds 30/90-day demand and monthly history. A short
+// cache avoids repeating 365-day reads for every ad opened in the same worker.
+async function storeSalesEvidence({products=[],includeMerchant=true}={}){
+  const now=Date.now(),cap=5000,since=now-365*86400000,f=fb(),warnings=[];
+  let loaded=_storeSalesRowsCache;
+  if(!loaded||now-loaded.at>5*60000){
+    if(f){try{const q=await f.db.collection(COL.orderLog).where("ts",">=",since).where("ts","<=",now).orderBy("ts","desc").limit(cap+1).get(),rows=[];q.forEach(d=>{const x=d.data();if(Number(x.ts)>=since&&Number(x.ts)<=now)rows.push(x);});loaded={at:now,rows:rows.slice(0,cap),complete:rows.length<=cap};_storeSalesRowsCache=loaded;}catch(e){warnings.push("Shopify order history could not be read: "+_auditText(e&&e.message,180));}}
+    else warnings.push("Shopify order history storage is unavailable.");
+  }
+  if(loaded&&loaded.history===undefined){try{const h=await f.db.collection(COL.state).doc("orderHistoryBackfill").get();loaded.history=h.exists?h.data():null;}catch(e){loaded.history=null;}}
+  const signals={};
+  if(loaded)for(const days of [30,90,365]){const start=now-days*86400000;signals[days]=salesEvidenceUtil.aggregateOrderEvidence({rows:loaded.rows.filter(x=>Number(x.ts)>=start&&Number(x.ts)<=now),days,startAt:start,endAt:now,complete:loaded.complete||!!(loaded.rows.length&&Number(loaded.rows[loaded.rows.length-1].ts)<start),currency:CURRENCY,normalizeItem:_orderItem,marginForText:_marginRateForText,googlePaid:_paidAttribution,merchantOrganic:_merchantOrganic,paidChannel:_paidChannel});}
+  const exactProducts=(Array.isArray(products)?products:[]).filter(p=>p&&(p.itemId||p.offerId||p.productId||p.variantId||p.storeProductId||p.storeVariantId)),seen=new Set(),matched=[];
+  for(const offer of exactProducts){const key=[offer.itemId||offer.offerId||"",offer.productId||"",offer.variantId||"",offer.feedLabel||"",offer.language||""].join("|");if(seen.has(key))continue;seen.add(key);const periods={};for(const days of [30,90])periods["days"+days]=signals[days]?(signals[days].productRows||[]).filter(p=>salesEvidenceUtil.exactProductMatches(offer,p)):[];const history=signals[365]?(signals[365].productRows||[]).filter(p=>salesEvidenceUtil.exactProductMatches(offer,p)):[];matched.push({itemId:offer.itemId||offer.offerId||null,productId:offer.productId||null,variantId:offer.variantId||null,title:offer.title||offer.name||null,feedLabel:offer.feedLabel||null,language:offer.language||null,matchBasis:"Exact Shopify product/variant ID or SKU; no title-only attribution",...periods,monthly:history.map(p=>({productId:p.productId,variantId:p.variantId,name:p.name,months:p.monthly}))});}
+  let free30=null,free90=null;
+  if(includeMerchant){[free30,free90]=await Promise.all([merchantFreeProductPerformance({days:30,preferCache:true}),merchantFreeProductPerformance({days:90,preferCache:true})]);}
+  const merchantMatches=(offer,row)=>{
+    const itemId=String(offer.itemId||offer.offerId||"");
+    if(itemId)return itemId===String(row.itemId||"");
+    const id=v=>String(v||"").replace(/^gid:\/\/shopify\/(?:ProductVariant|Product)\//,"");
+    const parts=String(row.itemId||"").match(/^shopify_[A-Z]{2}_(\d+)_(\d+)$/i);if(!parts)return false;
+    const variant=id(offer.variantId||offer.storeVariantId||offer.shopifyVariantId),product=id(offer.productId||offer.storeProductId||offer.shopifyProductId);
+    return variant?variant===parts[2]:!!product&&product===parts[1];
+  };
+  const compactMerchant=r=>{
+    if(!r)return null;
+    const selected=(r.rows||[]).filter(row=>exactProducts.some(offer=>merchantMatches(offer,row)));
+    return {available:!!r.complete&&!r.error,at:r.at,start:r.start,end:r.end,days:r.days,complete:r.complete,error:r.error,errorCode:r.errorCode,warning:r.warning||null,rows:(r.rows||[]).length,pages:r.pages||0,httpStatuses:r.httpStatuses||[],totals:r.totals||null,valueComplete:r.valueComplete,valuesByCurrency:r.valuesByCurrency||null,attributionBasis:r.attributionBasis,identityCoverage:r.identityCoverage||null,source:"Merchant Center free-listing report",topProducts:(r.rows||[]).slice().sort((a,b)=>(Number(b.conversions)||0)-(Number(a.conversions)||0)||(Number(b.clicks)||0)-(Number(a.clicks)||0)).slice(0,20),selectedProducts:selected.slice(0,100),selectedProductCoverage:{requested:exactProducts.length,matchedOffers:selected.length,included:Math.min(100,selected.length),complete:selected.length<=100,matchBasis:"Exact offer ID or Shopify product/variant ID encoded in the offer ID; no title-only attribution"}};
+  };
+  const history=signals[365];
+  for(const signal of [signals[30],signals[90]])if(signal&&signal.warning)warnings.push(signal.days+"-day orders: "+signal.warning);
+  for(const report of [free30,free90])if(report&&report.error)warnings.push(report.days+"-day Merchant report: "+report.error);
+  warnings.push("Shopify orders and Merchant conversions can overlap; they must not be added together. Unknown attribution is not classified as organic or credited to the ad. Customer motivations are hypotheses unless supported by explicit research.");
+  return {schema:1,available:!!loaded||!!(free30&&free30.complete&&!free30.error)||!!(free90&&free90.complete&&!free90.error),sourceAvailability:{shopify:!!loaded,merchant30:!!(free30&&free30.complete&&!free30.error),merchant90:!!(free90&&free90.complete&&!free90.error)},at:loaded?loaded.at:now,source:"Shopify order log and Merchant Center reports",attributionBasis:"Shopify order date",periods:{days30:salesEvidenceUtil.compactPeriod(signals[30]),days90:salesEvidenceUtil.compactPeriod(signals[90])},products:matched.slice(0,100),productCoverage:{requested:exactProducts.length,included:Math.min(100,matched.length),matched:matched.filter(p=>p.days30.length||p.days90.length).length,complete:matched.length<=100},seasonality:{days:365,months:history?history.monthly:[],complete:!!(history&&history.complete),historyComplete:false,import:loaded&&loaded.history?{at:loaded.history.at,oldestAt:loaded.history.oldestAt,complete:loaded.history.complete,allOrdersAccess:loaded.history.allOrdersAccess,limitation:loaded.history.limitation}:null,coverage:loaded&&loaded.history?loaded.history.limitation:history?history.historyCoverage:"History unavailable",limitation:"Monthly order demand is descriptive. A single partial year cannot establish repeatable seasonality or explain why someone purchased."},merchant:{days30:compactMerchant(free30),days90:compactMerchant(free90)},warnings};
 }
 
 // One-time / on-demand backfill: pull the most recent Shopify orders into the order log so the
 // intelligence panel is populated immediately, without waiting for new webhook orders. Records
 // to the log ONLY (never re-uploads conversions to Google Ads — that would risk double-counting
 // stale/organic data). Idempotent: orders already in the log are skipped.
-async function backfillOrders({ limit = 100 } = {}) {
-  const f = fb(); if (!f) throw new Error("no firestore");
-  const want = Math.min(250, Math.max(1, limit | 0));
-  const FULL = `{ orders(first: ${want}, sortKey: CREATED_AT, reverse: true) { edges { node {
-      id name createdAt
-      totalPriceSet { shopMoney { amount currencyCode } }
-      customAttributes { key value }
-      customerJourneySummary { firstVisit { landingPage utmParameters { source medium campaign } } }
-      lineItems(first: 25) { edges { node { title quantity sku originalUnitPriceSet { shopMoney { amount } } discountedTotalSet { shopMoney { amount } } variant { id } product { id handle } } } } } } } }`;
-  const MIN = `{ orders(first: ${want}, sortKey: CREATED_AT, reverse: true) { edges { node {
-      id name createdAt
-      totalPriceSet { shopMoney { amount currencyCode } }
-      customAttributes { key value }
-      lineItems(first: 25) { edges { node { title quantity sku originalUnitPriceSet { shopMoney { amount } } discountedTotalSet { shopMoney { amount } } variant { id } product { id handle } } } } } } } }`;
-  let d;
-  try { d = await shopifyGql(FULL); }
-  catch (e) { d = await shopifyGql(MIN); } // customer-journey field/scope unavailable → still backfill
-  const edges = (d && d.orders && d.orders.edges) || [];
+async function backfillOrders({ limit = 100, days = 365, pages = 4 } = {}) {
+  const f=fb();if(!f)throw new Error("no firestore");
+  const want=Math.min(150,Math.max(1,limit|0)),requestedDays=Math.max(1,Math.min(365,Number(days)||365)),maxPages=Math.max(1,Math.min(6,Number(pages)||4)),started=Date.now(),deadline=started+60000;
+  const requestedStart=new Date(started-requestedDays*86400000).toISOString().slice(0,10),historyRef=f.db.collection(COL.state).doc("orderHistoryBackfill");
+  let saved=null;try{const snap=await historyRef.get();if(snap.exists)saved=snap.data();}catch(e){}
+  let allOrdersAccess=saved&&Date.now()-Number(saved.scopeCheckedAt)<24*3600000?saved.allOrdersAccess:null,scopeCheckedAt=saved&&saved.scopeCheckedAt||null;
+  if(allOrdersAccess==null){try{const scope=await shopifyGql(`{ currentAppInstallation { accessScopes { handle } } }`);const scopes=scope&&scope.currentAppInstallation&&scope.currentAppInstallation.accessScopes;if(Array.isArray(scopes)){allOrdersAccess=scopes.some(x=>x.handle==="read_all_orders");scopeCheckedAt=Date.now();}}catch(e){}}
+  const buildQuery=(after,journey)=>`{ orders(first: ${want}, ${after?`after: ${JSON.stringify(after)}, `:""}query: "created_at:>=${requestedStart}", sortKey: CREATED_AT, reverse: true) { pageInfo { hasNextPage endCursor } edges { node {
+    id name createdAt displayFinancialStatus cancelledAt test
+    currentTotalPriceSet { shopMoney { amount currencyCode } }
+    totalPriceSet { shopMoney { amount currencyCode } }
+    customAttributes { key value }
+    ${journey?"customerJourneySummary { firstVisit { landingPage utmParameters { source medium campaign } } }":""}
+    lineItems(first: 25) { pageInfo { hasNextPage } edges { node { title quantity currentQuantity sku originalUnitPriceSet { shopMoney { amount } } discountedTotalSet { shopMoney { amount } } variant { id } product { id handle } } } }
+  } } } }`;
+  let journeyAvailable=true,pageCount=0,continuationError=null;
+  const boundedRead=async query=>{let timer;try{return await Promise.race([shopifyGql(query),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error("Shopify order-history page exceeded its deadline.")),Math.max(1,Math.min(15000,deadline-Date.now())));})]);}finally{clearTimeout(timer);}};
+  const pageRead=async after=>{let data;try{data=await boundedRead(buildQuery(after,journeyAvailable));}catch(e){if(!journeyAvailable||Date.now()>=deadline)throw e;journeyAvailable=false;data=await boundedRead(buildQuery(after,false));}if(!data||!data.orders||!Array.isArray(data.orders.edges))throw new Error("Shopify returned an incomplete order-history page.");pageCount++;return data.orders;};
+  const first=await pageRead(null),found=new Map();for(const edge of first.edges)if(edge&&edge.node&&edge.node.id)found.set(edge.node.id,edge);
+  const resumable=!!(saved&&saved.cursor&&Number(saved.requestedDays)===requestedDays&&Date.now()-Number(saved.at)<30*86400000);
+  let cursor=resumable?saved.cursor:first.pageInfo&&first.pageInfo.hasNextPage?first.pageInfo.endCursor:null;
+  let exhausted=!cursor,oldestAt=Number(saved&&saved.oldestAt)||Date.now();
+  while(cursor&&pageCount<maxPages&&Date.now()<deadline){try{const page=await pageRead(cursor);for(const edge of page.edges)if(edge&&edge.node&&edge.node.id)found.set(edge.node.id,edge);const next=page.pageInfo&&page.pageInfo.hasNextPage?page.pageInfo.endCursor:null;if(next&&next===cursor)throw new Error("Shopify repeated the order-history cursor.");cursor=next;exhausted=!next;}catch(e){continuationError=_auditText(e&&e.message,240);break;}}
+  const edges=[...found.values()];for(const edge of edges){const at=Date.parse(edge.node.createdAt);if(Number.isFinite(at))oldestAt=Math.min(oldestAt,at);}
+  const importCoverage={requestedDays,requestedStart,pages:pageCount,cursor:cursor||null,complete:exhausted,allOrdersAccess,scopeCheckedAt,oldestAt,at:Date.now(),journeyAvailable,continuationError,
+    limitation:allOrdersAccess===false?"Shopify grants this connection the latest 60 days of orders. Older saved orders remain usable; a full 365-day import requires read_all_orders access.":allOrdersAccess==null?"Shopify historical order scope could not be verified; saved history may be incomplete.":!exhausted?"Older order history is still importing; the next research refresh resumes its saved cursor.":"The accessible order window was traversed. Webhook and historical gaps cannot be independently ruled out."};
 
   // Index every stored row under EVERY identifier form it carries — the webhook
   // historically keyed rows by Shopify's numeric id while this backfill keyed
@@ -1015,7 +1213,7 @@ async function backfillOrders({ limit = 100 } = {}) {
   // both forms (and merging the pair below) heals that permanently.
   const existing = new Map();
   const _okey = v => String(v == null ? "" : v).trim().replace(/^#/, "").toLowerCase();
-  try { const q = await f.db.collection(COL.orderLog).get(); q.forEach(x => { const o = x.data();
+  try { const q = await f.db.collection(COL.orderLog).where("ts",">=",started-requestedDays*86400000).limit(20000).get(); q.forEach(x => { const o = x.data();
     const entry = { ref: x.ref, data: o };
     [o.orderId, o.orderName, o.orderNumericId].forEach(k => { const kk = _okey(k); if (kk && !existing.has(kk)) existing.set(kk, entry); });
   }); } catch (e) {}
@@ -1061,21 +1259,22 @@ async function backfillOrders({ limit = 100 } = {}) {
       source = source || u.searchParams.get("utm_source"); medium = medium || u.searchParams.get("utm_medium"); campaign = campaign || u.searchParams.get("utm_campaign");
       const mm = (u.pathname || "").match(/\/products\/([^\/?#]+)/); if (mm) handle = mm[1];
     } catch (x) {} }
-    const items = (((n.lineItems && n.lineItems.edges) || []).map(li => { const z = (li && li.node) || {}; const qty=Number(z.quantity)||1;
+    const items = (((n.lineItems && n.lineItems.edges) || []).map(li => { const z = (li && li.node) || {}; const originalQty=Number(z.quantity)||1,qty=z.currentQuantity!=null?Math.max(0,Number(z.currentQuantity)||0):originalQty;
       const unitPrice=Number(z.originalUnitPriceSet&&z.originalUnitPriceSet.shopMoney&&z.originalUnitPriceSet.shopMoney.amount);
       const lineRevenue=Number(z.discountedTotalSet&&z.discountedTotalSet.shopMoney&&z.discountedTotalSet.shopMoney.amount);
       const gross=isFinite(unitPrice)?unitPrice*qty:null;
       return { title:z.title||"",sku:z.sku||null,qty,productId:z.product&&z.product.id?z.product.id:null,variantId:z.variant&&z.variant.id?z.variant.id:null,
-        handle:z.product&&z.product.handle?z.product.handle:null,unitPrice:isFinite(unitPrice)?unitPrice:null,lineRevenue:isFinite(lineRevenue)?lineRevenue:null,
+        handle:z.product&&z.product.handle?z.product.handle:null,unitPrice:isFinite(unitPrice)?unitPrice:null,lineRevenue:qty===originalQty&&isFinite(lineRevenue)?lineRevenue:null,
         lineDiscount:gross!=null&&isFinite(lineRevenue)?Math.max(0,gross-lineRevenue):null }; }).filter(it => it.title || it.sku)).slice(0, 25);
     const itemCount = items.reduce((a, b) => a + (b.qty || 1), 0);
     const clickId = gclid || gbraid || wbraid || null;
     const captured = !!clickId;
     const reason = captured ? "captured — Google ad click (backfill)"
       : (campaign === "sag_organic" ? "organic — free Google listing (sag_organic)"
-         : (source ? `non-ad — ${source}/${medium || "none"}` : "organic / no Google click id"));
+         : (source ? `source — ${source}/${medium || "unknown"}` : "unknown attribution / no Google click id"));
     const row = { orderId, orderName: orderName || null, orderNumericId: numericId || null, value, currency, source: source || null, medium: medium || null, campaign: campaign || null,
       hasClickId: captured, captured, reason, items, itemCount, products: items.map(i => i.title), handle: handle || null,
+      financialStatus:n.displayFinancialStatus||null,cancelledAt:n.cancelledAt||null,test:n.test===true,lineItemsComplete:!(n.lineItems&&n.lineItems.pageInfo&&n.lineItems.pageInfo.hasNextPage),netValue:n.currentTotalPriceSet&&n.currentTotalPriceSet.shopMoney?Math.max(0,Number(n.currentTotalPriceSet.shopMoney.amount)||0):value,
       ts: n.createdAt ? Date.parse(n.createdAt) : Date.now(), backfill: true };
     if (prior) {
       // The older order log stored only titles. Re-reading the same Shopify orders now
@@ -1085,7 +1284,8 @@ async function backfillOrders({ limit = 100 } = {}) {
       const oldItems = Array.isArray(prior.data.items) ? prior.data.items : [];
       const idScore = a => (a || []).reduce((n, it) => n + (it && it.productId ? 2 : 0) + (it && it.variantId ? 2 : 0) + (it && it.sku ? 1 : 0), 0);
       const patch = {};
-      if (idScore(items) > idScore(oldItems)) Object.assign(patch, { items, itemCount, products: row.products, pmaxEnriched: true });
+      for(const field of ["financialStatus","cancelledAt","test","lineItemsComplete","netValue"])if(row[field]!==undefined&&row[field]!==prior.data[field])patch[field]=row[field];
+      if (idScore(items) >= idScore(oldItems)&&JSON.stringify(items)!==JSON.stringify(oldItems)) Object.assign(patch, { items, itemCount, products: row.products, pmaxEnriched: true });
       if (!prior.data.source && row.source) patch.source = row.source;
       if (!prior.data.medium && row.medium) patch.medium = row.medium;
       if (!prior.data.campaign && row.campaign) patch.campaign = row.campaign;
@@ -1115,7 +1315,8 @@ async function backfillOrders({ limit = 100 } = {}) {
     updates.slice(i, i + 400).forEach(u => { batch.set(u.ref, u.patch, { merge: true }); enriched++; });
     await batch.commit();
   }
-  return { ok: true, fetched: edges.length, added, enriched, deduped, skipped: Math.max(0, edges.length - added - enriched - deduped) };
+  await historyRef.set(importCoverage,{merge:true});_storeSalesRowsCache=null;
+  return { ok: true, fetched: edges.length, added, enriched, deduped, skipped: Math.max(0, edges.length - added - enriched - deduped),history:importCoverage };
 }
 
 async function clearOrderLog({ keep = 1000 } = {}) {
@@ -1158,12 +1359,19 @@ async function clearLedger({ keep } = {}) {
   } catch (e) { return { ok: false, deleted, error: e.message }; }
 }
 
-async function enqueueApproval(item) {
+async function enqueueApproval(item, { id, guard } = {}) {
   // item: { type:'creative'|'budget'|'negatives'|'keywords'|'pmax', summary, payload, experimentId, vetted }
   const f = fb(); if (!f) return null;
-  const ref = await f.db.collection(COL.approvals).add({
+  const data = {
     ...item, vetted: needsCreativeReview(item) ? false : !!item.vetted, status: "PENDING", creative: needsCreativeReview(item) ? {schema:1,phase:"not_started"} : null, createdAt: f.FV.serverTimestamp()
-  });
+  };
+  if(id!=null){
+    if(!/^[a-zA-Z0-9_-]{1,160}$/.test(String(id))||!((item.payload||{}).meta||{}).adDesignId)throw new Error("Invalid saved design draft identity.");
+    const ref=f.db.collection(COL.approvals).doc(String(id));
+    await f.db.runTransaction(async tx=>{if(guard)await guard(tx);const prior=await tx.get(ref);if(prior.exists){if(prior.data().type!==item.type||(((prior.data().payload||{}).meta||{}).adDesignId)!==item.payload.meta.adDesignId)throw new Error("This saved draft belongs to another design.");return;}tx.set(ref,data);});
+    return ref.id||String(id);
+  }
+  const ref = await f.db.collection(COL.approvals).add(data);
   return ref.id;
 }
 
@@ -1336,6 +1544,43 @@ async function _dropBadRatioImageAttaches(ops) {
     return { dropped: bad.size };
   } catch (e) { return { dropped: 0, error: String(e && e.message || e).slice(0, 160) }; }
 }
+function _isAdVersionApproval(item) { return versionReviewGate.isVersionApproval(item); }
+async function _guardAdVersionApproval(item) {
+  const p=item.payload||{},basis=await _guardCampaignVersion(p.versionGuard);
+  let savedTarget=null;
+  if(item.type==="adVersionRestore") {
+    const version=Number((p.versionChange||{}).restoredFromVersion);
+    if(!Number.isSafeInteger(version)||version<1||version>=basis.version)throw new Error("Choose an earlier saved version to restore.");
+    const saved=await _campaignVersionDoc(_campaignVersionRef(fb(),basis.campaignId),version).get();
+    if(!saved.exists)throw new Error("The selected saved version is no longer available.");
+    savedTarget=saved.data().editableSnapshot;
+    // Rebuild the plan from authoritative snapshots; never publish altered restore operations.
+    const plan=_buildCampaignRestoreOperations(basis.snapshot,savedTarget);
+    if(creativeHash(plan.operations)!==creativeHash(p.mutateOperations||[]))throw new Error("The restoration no longer matches the exact saved settings. Prepare a new restoration proposal.");
+  }
+  versionReviewGate.assertVersionOperationScope(item,basis.snapshot,CID,savedTarget);
+  return basis;
+}
+async function adVersionApprovalStatus({id}={}) {
+  const f=fb();if(!f)throw new Error("Approval storage is unavailable.");
+  const s=await f.db.collection(COL.approvals).doc(String(id)).get();if(!s.exists)throw new Error("Draft not found.");
+  const item={...s.data(),id:String(id)};versionReviewGate.validateVersionApproval(item,CID);
+  const g=item.payload.versionGuard,latest=await _campaignVersionRef(f,g.campaignId).get(),current=latest.exists?latest.data():null;
+  const reviewHash=creativeHash(item.payload),stale=!!current&&(Number(current.version)!==g.expectedVersion||(current.snapshotHash&&current.snapshotHash!==g.snapshotHash));
+  return {ok:true,id:String(id),item:await _adDesignPreviewApproval(item),reviewHash,currentVersion:current&&current.version||null,stale,reviewed:!!(item.versionReview&&item.versionReview.at&&item.versionReview.payloadHash===reviewHash)};
+}
+async function reviewAdVersion({id,hash}={}) {
+  const f=fb();if(!f)throw new Error("Approval storage is unavailable.");
+  const ref=f.db.collection(COL.approvals).doc(String(id)),saved=await ref.get();if(!saved.exists)throw new Error("Draft not found.");
+  const item=saved.data();versionReviewGate.validateVersionApproval(item,CID);
+  if(!/^[a-f0-9]{64}$/.test(String(hash||""))||creativeHash(item.payload)!==hash)throw new Error("The proposal changed. Review its current contents.");
+  await _guardAdVersionApproval(item);
+  await f.db.runTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists)throw new Error("Draft not found.");const current=s.data();
+    if(current.status!=="PENDING"||creativeHash(current.payload||{})!==hash)throw new Error("This proposal changed or is no longer pending review.");
+    versionReviewGate.validateVersionApproval(current,CID);
+    tx.update(ref,{versionReview:{payloadHash:hash,at:Date.now(),by:"authenticated operator"}});
+  });return {ok:true,id:String(id),reviewHash:hash};
+}
 async function markApprovalApproved(id) {
   const f=fb(),ref=f.db.collection(COL.approvals).doc(String(id));
   await f.db.runTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists)throw new Error("Draft not found.");const it=s.data();
@@ -1344,6 +1589,13 @@ async function markApprovalApproved(id) {
   });return {ok:true,id};
 }
 function _learningPublication(item, result, operations) {
+  if(_isAdVersionApproval(item)) {
+    const p=item.payload||{},g=p.versionGuard||{},a=p.analysis||{};
+    const channel=a.channel==="SEARCH"?"search":a.channel==="PERFORMANCE_MAX"?"pmax":a.channel;
+    return {schema:1,at:Date.now(),campaignIds:[String(g.campaignId)],campaignChannels:["search","pmax"].includes(channel)?{[String(g.campaignId)]:channel}:{},
+      analysisId:a.analysisId||null,sourceVersion:g.expectedVersion,restoredFromVersion:(p.versionChange||{}).restoredFromVersion||null,
+      meaning:"The exact reviewed version update was accepted by Google. Delivery and improved outcomes are measured separately."};
+  }
   const groups = ((item.creative || {}).groups || []).filter(g => g && g.learning && g.learning.schema === 1);
   if (!groups.length) return null;
   const campaignChannels = {}, campaignIds = new Set();
@@ -1371,6 +1623,7 @@ async function applyApproval(id, ctrl) {
   let dispatched=false, publicationResult=null;
   try {
     const p=it.payload||{};
+    if(_isAdVersionApproval(it))await _guardAdVersionApproval(it);
     if((p.meta||{}).budgetCurrency && p.meta.budgetCurrency!==await _accountCurrency())throw new Error("Account currency differs from the reviewed budget. Regenerate the draft.");
     let ops=await materializeReviewedCreative(it);
     const newNames=(ops||[]).map(o=>o.campaignOperation&&o.campaignOperation.create&&o.campaignOperation.create.name).filter(Boolean);
@@ -1387,18 +1640,20 @@ async function applyApproval(id, ctrl) {
       const attachments=ops.filter(o=>o.assetGroupAssetOperation&&o.assetGroupAssetOperation.create),other=ops.filter(o=>!(o.assetGroupAssetOperation&&o.assetGroupAssetOperation.create));
       const grouped=new Map();attachments.forEach(o=>{const k=o.assetGroupAssetOperation.create.assetGroup;if(!grouped.has(k))grouped.set(k,[]);grouped.get(k).push(o);});
       ops=other.concat(...grouped.values());
+      if(_isAdVersionApproval(it)&&!ctrl.dryRun){await mutateAll(ops,{ctrl,validateOnly:true,label:"validate-version:"+id});await _guardAdVersionApproval(it);}
       publicationResult=await mutateAll(ops,{ctrl,label:"reviewed-approval:"+id,onDispatch:()=>{dispatched=true;}});
     } else if(p.service&&p.operations){if(p.service==="campaignBudgets"){
         const rows=await gaql("SELECT campaign_budget.resource_name,campaign_budget.amount_micros FROM campaign WHERE campaign.status = 'ENABLED'"),budgets=new Map();rows.forEach(r=>{const a=r.campaignBudget||{};budgets.set(a.resourceName,fromMicros(a.amountMicros));});
         p.operations.forEach(o=>{if(o.update&&budgets.has(o.update.resourceName))budgets.set(o.update.resourceName,fromMicros(o.update.amountMicros));});
         if([...budgets.values()].reduce((a,b)=>a+b,0)>Number(ctrl.maxDailyBudgetTotal))throw new Error("Budget conditions changed; this proposal would exceed the account ceiling.");
       }
+      if(_isAdVersionApproval(it)&&!ctrl.dryRun){await mutate(p.service,p.operations,{ctrl,validateOnly:true,label:"validate-version:"+id});await _guardAdVersionApproval(it);}
       publicationResult=await mutate(p.service,p.operations,{ctrl,label:"reviewed-approval:"+id,onDispatch:()=>{dispatched=true;}});}
     else throw new Error("The draft contains no publishable operations.");
     const learningPublication=ctrl.dryRun?null:_learningPublication(it,publicationResult,ops);
-    await ref.update({status:ctrl.dryRun?"APPROVED":"APPLIED",appliedAt:ctrl.dryRun?null:f.FV.serverTimestamp(),validatedAt:ctrl.dryRun?Date.now():null,applyAttempt:null,lastError:null,...(learningPublication?{learningPublication}:{})});
+    await ref.update({status:ctrl.dryRun?"APPROVED":"APPLIED",appliedAt:ctrl.dryRun?null:f.FV.serverTimestamp(),validatedAt:ctrl.dryRun?Date.now():null,applyAttempt:null,lastError:null,...(learningPublication?{learningPublication}:{}),...(_isAdVersionApproval(it)?{versionPublication:{campaignId:p.versionGuard.campaignId,sourceVersion:p.versionGuard.expectedVersion,confirmed:!ctrl.dryRun,versionWarning:publicationResult&&publicationResult.versionWarning||null}}:{})});
     if(!ctrl.dryRun)for(const campaignId of (learningPublication&&learningPublication.campaignIds||[]))_invalidateCampaignImprovement(campaignId);
-    return {ok:true,id,status:ctrl.dryRun?"VALIDATED":"APPLIED",dryRun:!!ctrl.dryRun};
+    return {ok:true,id,status:ctrl.dryRun?"VALIDATED":"APPLIED",dryRun:!!ctrl.dryRun,versionWarning:publicationResult&&publicationResult.versionWarning||null};
   } catch(e) {
     const unknown=dispatched&&!ctrl.dryRun&&!e.definiteResponse;
     await ref.update({status:unknown?"APPLY_UNKNOWN":"APPROVED",lastError:String(e.message||e).slice(0,600),applyAttempt:unknown?attempt:null,needsReconciliation:unknown}).catch(()=>{});
@@ -1938,7 +2193,7 @@ async function _scanProg(pct, label, detail) {
    each dependency records what was tested, whether it succeeded, how long it took, how many
    rows/items it returned, which fallback was used, and the exact bounded error when it failed.
    The report is live while the background scan runs and remains available after completion. */
-const _OPPORTUNITY_RESEARCH_SCHEMA = 2;
+const _OPPORTUNITY_RESEARCH_SCHEMA = 3;
 const _OPPORTUNITY_RESEARCH_MAX_AGE = 12 * 60 * 60 * 1000;
 function _researchChannel(check) {
   if (check && ["search", "pmax", "shared"].includes(check.channel)) return check.channel;
@@ -3031,11 +3286,28 @@ async function pmaxProductPerformance({ days = 90 } = {}) {
 // Merchant Reports requires a refresh token authorized for the `content` scope.
 // When configured, Google-reported offer-level organic conversions outrank inferred
 // Shopify attribution; when absent or unauthorized, the existing signals continue.
-async function merchantFreeProductPerformance({days=90}={}){
+const _merchantOrganicCache=new Map();
+async function _readMerchantOrganicCache(days){
+  if(_merchantOrganicCache.has(days))return _merchantOrganicCache.get(days);
+  const f=fb();if(!f)return null;
+  try{const root=await f.db.collection(COL.state).doc("merchantOrganicReport"+days).get();if(!root.exists)return null;const saved=root.data();if(saved.schema!==1||!saved.report||!Number.isInteger(saved.chunks)||saved.chunks<0||saved.chunks>80)return null;
+    const docs=await Promise.all(Array.from({length:saved.chunks},(_,i)=>f.db.collection(COL.state).doc("merchantOrganicReport"+days+"_"+i).get()));
+    if(docs.some(d=>!d.exists||d.data().generation!==saved.generation))return null;
+    const rows=docs.flatMap(d=>d.data().rows||[]);if(rows.length!==saved.rows)return null;const ambiguous=new Set(saved.report.ambiguousOfferIds||[]);const report={...saved.report,rows,byId:Object.fromEntries(rows.filter(x=>!ambiguous.has(String(x.itemId).toLowerCase())).map(x=>[String(x.itemId).toLowerCase(),x])),cached:true};_merchantOrganicCache.set(days,report);return report;
+  }catch(e){return null;}
+}
+async function _saveMerchantOrganicCache(days,report){
+  _merchantOrganicCache.set(days,report);const f=fb();if(!f)return;
+  try{const {byId,rows,...meta}=report,groups=[];let group=[],bytes=0;for(const row of rows){const size=Buffer.byteLength(JSON.stringify(row),"utf8");if(group.length&&(group.length>=150||bytes+size>180000)){groups.push(group);group=[];bytes=0;}group.push(row);bytes+=size;}if(group.length)groups.push(group);if(groups.length>80)return;
+    const generation=String(report.at),batch=f.db.batch();groups.forEach((part,i)=>batch.set(f.db.collection(COL.state).doc("merchantOrganicReport"+days+"_"+i),{generation,rows:part}));batch.set(f.db.collection(COL.state).doc("merchantOrganicReport"+days),{schema:1,generation,rows:rows.length,chunks:groups.length,report:JSON.parse(JSON.stringify(meta))});await batch.commit();
+  }catch(e){/* Live evidence is still valid when its optional shared cache cannot be saved. */}
+}
+async function merchantFreeProductPerformance({days=90,preferCache=false}={}){
   const configured=!!String(ENV.GMC_REFRESH_TOKEN||"").trim();
   const d=Math.max(7,Math.min(365,Number(days)||90)),startedAt=Date.now(),deadline=startedAt+60000;
+  if(preferCache){const saved=await _readMerchantOrganicCache(d);if(saved&&saved.complete&&!saved.error&&Date.now()-saved.at<24*3600000)return {...saved,cached:true};}
   const MAX_PAGES=100,MAX_ATTEMPTS=4,REQUEST_MS=12000;
-  const byId=Object.create(null),httpStatuses=[],attemptLog=[],seenTokens=new Set();
+  const byId=Object.create(null),byExactId=Object.create(null),httpStatuses=[],attemptLog=[],seenTokens=new Set();
   let pages=0,attempts=0,receivedRows=0,phase="configuration",lastGoogleStatus=null,lastGoogleMessage=null,start=null,end=null,dateSelectionTimeZone=null;
   const failure=(code)=>{const e=new Error(code);e.reportCode=code;return e;};
   const messages={
@@ -3135,10 +3407,11 @@ async function merchantFreeProductPerformance({days=90}={}){
         const k=id.toLowerCase(),cv=v.conversionValue||{},amount=Number(cv.amountMicros||0)/1e6;
         if(!Number.isFinite(amount))throw failure("INVALID_RESPONSE");
         const currency=String(cv.currencyCode||"").toUpperCase();
-        const x=byId[k]||(byId[k]={itemId:id,title:v.title||null,countries:new Set(),
+        const x=byExactId[id]||(byExactId[id]={itemId:id,title:v.title||null,countries:new Set(),
           productType:v.productTypeL1||null,customLabels:[v.customLabel0,v.customLabel1,v.customLabel2,v.customLabel3,v.customLabel4].filter(Boolean),
-          clicks:0,impressions:0,conversions:0,value:0,valueCurrency:"USD",valuesByCurrency:{},unconvertedValueRows:0});
+          clicks:0,impressions:0,conversions:0,value:0,valueCurrency:"USD",valuesByCurrency:{},unconvertedValueRows:0,missingValueRows:0});
         x.clicks+=Number(v.clicks)||0;x.impressions+=Number(v.impressions)||0;x.conversions+=Number(v.conversions)||0;
+        if(Number(v.conversions)>0&&(!v.conversionValue||v.conversionValue.amountMicros==null))x.missingValueRows++;
         // Existing consumers use USD value. Preserve other amounts without adding
         // unlike currencies or inventing an exchange rate; counts remain usable.
         if(amount!==0){
@@ -3152,13 +3425,18 @@ async function merchantFreeProductPerformance({days=90}={}){
       seenTokens.add(next);pageToken=next;
     }
     const currencies=new Set();let valueComplete=true;
-    Object.values(byId).forEach(x=>{
+    const totals={clicks:0,impressions:0,conversions:0,value:0,valuesByCurrency:{}};
+    Object.values(byExactId).forEach(x=>{
       x.conversions=_r2(x.conversions);x.value=_r2(x.value);x.conversionRate=null;x.countries=[...x.countries];
       x.currencies=Object.keys(x.valuesByCurrency).sort();x.currencies.forEach(c=>{currencies.add(c);x.valuesByCurrency[c]=_r2(x.valuesByCurrency[c]);});
-      x.valueComplete=x.unconvertedValueRows===0&&x.currencies.every(c=>c==="USD");if(!x.valueComplete)valueComplete=false;
+      x.valueComplete=x.unconvertedValueRows===0&&x.missingValueRows===0&&x.currencies.every(c=>c==="USD");if(!x.valueComplete)valueComplete=false;
+      totals.clicks+=x.clicks;totals.impressions+=x.impressions;totals.conversions+=x.conversions;totals.value+=x.value;for(const [ccy,amount] of Object.entries(x.valuesByCurrency))totals.valuesByCurrency[ccy]=(totals.valuesByCurrency[ccy]||0)+amount;
     });
+    const ambiguousOfferIds=new Set();for(const x of Object.values(byExactId)){const k=String(x.itemId).toLowerCase();if(byId[k]&&byId[k].itemId!==x.itemId)ambiguousOfferIds.add(k);else byId[k]=x;}for(const k of ambiguousOfferIds)delete byId[k];
     phase="complete";
-    return result({byId,rows:Object.values(byId),complete:true,valueCurrency:"USD",valueComplete,currencies:[...currencies].sort(),warning:valueComplete?null:"Non-USD conversion values were excluded from USD ranking; original currencies and conversion counts are retained."});
+    totals.conversions=_r2(totals.conversions);totals.value=valueComplete?_r2(totals.value):null;for(const ccy of Object.keys(totals.valuesByCurrency))totals.valuesByCurrency[ccy]=_r2(totals.valuesByCurrency[ccy]);
+    const output=result({byId,rows:Object.values(byExactId),ambiguousOfferIds:[...ambiguousOfferIds],complete:true,requestSucceeded:true,totals,valuesByCurrency:totals.valuesByCurrency,valueCurrency:"USD",valueComplete,identityCoverage:"Offer-ID totals can span feed labels and languages. Customer country is not the product feed label.",currencies:[...currencies].sort(),warning:valueComplete?null:"The report succeeded. Conversion values remain in their original currencies; conversions, clicks and impressions are available. Non-USD values are not treated as USD."});
+    await _saveMerchantOrganicCache(d,output);return output;
   }catch(e){
     const code=e&&e.reportCode||(phase==="connection"?"SETUP_UNAVAILABLE":"INVALID_RESPONSE");
     return result({error:messages[code]||messages.INVALID_RESPONSE,errorCode:code});
@@ -3198,6 +3476,7 @@ function _pmaxDigits(v) {
 function _pmaxIdentifierMatch(mp, signal) {
   if (!mp || !signal) return false;
   const id = String(mp.itemId || "").toLowerCase();
+  if(signal.itemId)return String(mp.itemId)===String(signal.itemId);
   const sku = String(signal.sku || "").trim().toLowerCase();
   if (sku && sku.length >= 3 && id === sku) return true;
   const ids = _pmaxDigits(id);
@@ -3228,6 +3507,8 @@ function pmaxCandidatesFromSignals({ collections = [], profiles = [], sig30 = nu
   const addSales = (arr, source, mul) => (arr || []).forEach(x => sales.push({ ...x, source,
     weight: (Number(x.orders) || 0) * mul + (Number(x.units) || 0) * mul * .35 +
       (Number(x.revenue) || 0) * mul * .012 + (Number(x.estimatedProfit) || 0) * mul * .025 }));
+  addSales(sig30 && (sig30.productRows||sig30.topProducts), "all-store-orders-30d", 3);
+  addSales(sig90 && (sig90.productRows||sig90.topProducts), "all-store-orders-90d", 1);
   addSales(sig30 && sig30.topMerchantProducts, "merchant-free-30d", 13);
   addSales(sig90 && sig90.topMerchantProducts, "merchant-free-90d", 5.5);
   addSales(sig30 && sig30.topOrganicProducts, "organic-30d", 2.5);
@@ -3240,17 +3521,22 @@ function pmaxCandidatesFromSignals({ collections = [], profiles = [], sig30 = nu
     ["sku","productId","variantId","handle"].forEach(f => { if (!cur[f] && x[f]) cur[f] = x[f]; }); cur.sources.add(x.source); });
   const signalRows = Object.values(dedupSales), paidById = (paid && paid.byId) || {}, free30ById=(merchantFree30&&merchantFree30.byId)||{}, free90ById=(merchantFree90&&merchantFree90.byId)||{};
   const eligible = (merchant || []).filter(_pmaxIsEligible);
+  // Direct Merchant conversions can discover a winner missing from the Shopify
+  // top-seller snapshot. Click-only demand never becomes a fabricated order.
+  for(const mp of eligible){const f30=free30ById[String(mp.itemId).toLowerCase()],f90=free90ById[String(mp.itemId).toLowerCase()];if(!(Number(f30&&f30.conversions)>0||Number(f90&&f90.conversions)>0)||signalRows.some(x=>_pmaxIdentifierMatch(mp,x)))continue;
+    signalRows.push({name:mp.title,itemId:mp.itemId,orders:0,units:0,revenue:0,estimatedProfit:0,orders30d:0,revenue30d:0,profit30d:0,weight:0,sources:new Set(["merchant-reported-conversions"])});
+  }
   const out = [];
   (profiles || []).forEach(p => {
     const coll = cByH[p.handle] || { handle: p.handle, title: p.title }; if (!coll || !coll.handle) return;
     const pp = (p.topProducts || []).length ? p.topProducts : (p.reps || []).map(t => ({ title: String(t).replace(/ \(\d+ sold\)$/i, "") }));
     const matches = []; const offerMap = new Map(), matchedSignals = new Set(); let score = 0, merchantProof = 0, profitProof = 0, profit30d = 0;
     pp.forEach(prod => {
-      let best = null, bestM = 0;
-      signalRows.forEach(s0 => { const knownMismatch=_pmaxDigits(prod.productId).length&&_pmaxDigits(s0.productId).length&&!_pmaxShopifyProductMatch(prod,s0); const m = knownMismatch ? 0 : _pmaxShopifyProductMatch(prod, s0) ? 1 : _pmaxTitleMatch(prod.title, s0.name); if (m > bestM) { bestM = m; best = s0; } });
-      if (!best || bestM < .9 || matchedSignals.has(best)) return;
+      const matching=signalRows.map(best=>{const knownMismatch=_pmaxDigits(prod.productId).length&&_pmaxDigits(best.productId).length&&!_pmaxShopifyProductMatch(prod,best);return {best,bestM:knownMismatch?0:_pmaxShopifyProductMatch(prod,best)?1:_pmaxTitleMatch(prod.title,best.name)};}).filter(x=>x.bestM>=.9&&!matchedSignals.has(x.best));
+      matching.forEach(({best,bestM})=>{
       const offers = eligible.filter(mp => {
         if (_pmaxIdentifierMatch(mp, best)) return true;
+        if(best.itemId)return false;
         // A known different variant must never inherit sales just because its title matches.
         if (_pmaxDigits(mp.itemId).length && (_pmaxDigits(best.variantId).length || _pmaxDigits(best.productId).length)) return false;
         return Math.max(_pmaxTitleMatch(mp.title, prod.title), _pmaxTitleMatch(mp.title, best.name)) >= .9;
@@ -3263,7 +3549,8 @@ function pmaxCandidatesFromSignals({ collections = [], profiles = [], sig30 = nu
       offers.slice(0, 12).forEach(mp => offerMap.set(mp.itemId, mp));
       matches.push({ title: prod.title, soldTitle: best.name, orders: Number(best.orders)||0, units: Number(best.units)||0,
         revenue: Math.round(Number(best.revenue)||0), estimatedProfit: Math.round(Number(best.estimatedProfit)||0),orders30d:best.orders30d,revenue30d:best.revenue30d,
-        source: [...best.sources].join("+"), offers: offers.length });
+        source: [...best.sources].join("+"), offers: offers.length,attributionBasis:"Observed Shopify product demand; only explicit source attribution is organic",merchantReportedOnly:[...best.sources].includes("merchant-reported-conversions") });
+      });
     });
     if (!matches.length || !offerMap.size) return;
     const byLabel = {}; offerMap.forEach(mp => { const k=String(mp.feedLabel||""); (byLabel[k]=byLabel[k]||[]).push(mp); });
@@ -3339,14 +3626,20 @@ function _derivePmaxSearchThemes(candidate) {
   return out.slice(0,10);
 }
 
+function _merchantOrganicDiscoveryIds(merchant,report30,report90){
+  const known=new Set((merchant||[]).map(p=>String(p.itemId||""))),rows=new Map();
+  for(const [report,period] of [[report30,"recent"],[report90,"longer"]]){if(!report||!report.complete||report.error)continue;for(const row of report.rows||[]){const id=String(row.itemId||""),conversions=Number(row.conversions)||0;if(!id||id.length>1024||known.has(id)||conversions<=0)continue;const entry=rows.get(id)||{id,recent:0,longer:0};entry[period]=Math.max(entry[period],conversions);rows.set(id,entry);}}
+  return [...rows.values()].sort((a,b)=>(b.recent*3+Math.max(0,b.longer-b.recent))-(a.recent*3+Math.max(0,a.longer-a.recent))||a.id.localeCompare(b.id)).slice(0,40).map(x=>x.id);
+}
+
 async function proposePmaxOpportunities({ collections = [], profiles = [], ceiling = 100, onAudit = null } = {}) {
   const emit = async e => { if (onAudit) { try { await onAudit(e); } catch (x) {} } };
   // Pull recent Shopify orders before ranking. Existing title-only rows are enriched
   // in place with product/variant IDs, while new webhook orders already contain them.
   // This makes the very first scan useful instead of waiting for future purchases.
   let t = Date.now(), backfill = null;
-  await emit({id:"pmax_shopify_backfill",category:"Shopify",label:"Shopify order backfill/enrichment",status:"running",startedAt:t,detail:"Reading up to 150 recent orders and enriching product/variant identifiers."});
-  try { backfill = await backfillOrders({ limit: 150 }); await emit({id:"pmax_shopify_backfill",category:"Shopify",label:"Shopify order backfill/enrichment",status:"ok",startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,detail:`Fetched ${backfill.fetched||0}; added ${backfill.added||0}; enriched ${backfill.enriched||0}; deduped ${backfill.deduped||0}; skipped ${backfill.skipped||0}.`,source:"Shopify Admin GraphQL + Firestore",meta:backfill}); }
+  await emit({id:"pmax_shopify_backfill",category:"Shopify",label:"Shopify order backfill/enrichment",status:"running",startedAt:t,detail:"Refreshing recent orders and resuming up to four pages of the available 365-day product history."});
+  try { backfill = await backfillOrders({ limit: 150 }); await emit({id:"pmax_shopify_backfill",category:"Shopify",label:"Shopify order backfill/enrichment",status:"ok",startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,detail:`Fetched ${backfill.fetched||0}; added ${backfill.added||0}; enriched ${backfill.enriched||0}. ${backfill.history&&backfill.history.limitation||""}`,source:"Shopify Admin GraphQL + Firestore",meta:backfill}); }
   catch (e) { await emit({id:"pmax_shopify_backfill",category:"Shopify",label:"Shopify order backfill/enrichment",status:"warning",startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,error:e&&e.message,fallback:"Continuing with the existing Firestore order log."}); }
   t = Date.now(); await emit({id:"pmax_store_signals",category:"Store data",label:"30/90-day product sales signals",status:"running",startedAt:t,detail:"Aggregating paid, organic, and Merchant/free-listing product outcomes."});
   const [sig90,sig30] = await Promise.all([storeSignals({ days: 90 }).catch(() => null),storeSignals({ days: 30 }).catch(() => null)]);
@@ -3356,7 +3649,7 @@ async function proposePmaxOpportunities({ collections = [], profiles = [], ceili
     source:"Firestore Shopify order log",fallback:signalsComplete?null:"Only the available periods and verified-currency amounts are used; missing periods are not replaced.",meta:{orders30:sig30&&sig30.orders,orders90:sig90&&sig90.orders,complete30:!!(sig30&&sig30.complete),complete90:!!(sig90&&sig90.complete),warning30:sig30&&sig30.warning,warning90:sig90&&sig90.warning,merchantOrganicOrders30:sig30&&sig30.merchantOrganicOrders,organicRevenue30:sig30&&sig30.organicRevenue,topProducts30:sig30&&sig30.topProducts&&sig30.topProducts.length}});
   let merchant = [], merchantErr = null;
   const lookupSignals = [].concat((sig30&&sig30.topMerchantProducts)||[],(sig90&&sig90.topMerchantProducts)||[],
-    (sig30&&sig30.topOrganicProducts)||[],(sig90&&sig90.topOrganicProducts)||[]).slice(0,60);
+    (sig30&&(sig30.productRows||sig30.topProducts))||[],(sig90&&(sig90.productRows||sig90.topProducts))||[]).filter((x,i,a)=>a.findIndex(y=>(y.variantId||y.sku||y.productId||y.name)===(x.variantId||x.sku||x.productId||x.name))===i).slice(0,100);
   t = Date.now(); await emit({id:"pmax_merchant_catalogue",category:"Google Ads API",label:"Linked Merchant Center catalogue",status:"running",startedAt:t,detail:`Resolving ${lookupSignals.length} recent product signals against live shopping_product offers.`});
   try { merchant = await merchantProducts({ force: true, signals: lookupSignals, titles: lookupSignals.map(x=>x.name).filter(Boolean) });
     const d=merchant._diag||{}; await emit({id:"pmax_merchant_catalogue",category:"Google Ads API",label:"Linked Merchant Center catalogue",status:merchant.length&&d.eligibleProducts>0?((d.errors&&d.errors.length)?"warning":"ok"):"warning",startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,
@@ -3384,34 +3677,46 @@ async function proposePmaxOpportunities({ collections = [], profiles = [], ceili
   await emit({id:"pmax_paid_product_reporting",category:"Google Ads API",label:"90-day paid PMax product performance",status:paid&&paid.complete&&paid.monetaryComplete?"ok":"warning",startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,
     detail:paid.error?"Paid product history could not be loaded.":`${(paid.rows||[]).length} product-performance row(s) returned${paid.start?` for ${paid.start} to ${paid.end}`:""}.`,source:"shopping_performance_view",error:paid&&paid.error||null,
     fallback:paid&&paid.error?"PMax ranking continues without paid offer-level history.":paid.warning||null,meta:{rows:(paid.rows||[]).length,days:paid.days||90,start:paid.start,end:paid.end,timeZone:paid.timeZone,currency:paid.currency,nativeCurrency:paid.nativeCurrency,complete:paid.complete,monetaryComplete:paid.monetaryComplete,attributionBasis:paid.attributionBasis}});
-  const merchant30Status=!merchantFree30.configured?"skipped":(merchantFree30.error||merchantFree30.warning||!merchantFree30.complete?"warning":"ok");
+  const merchant30Status=!merchantFree30.configured?"skipped":(merchantFree30.error||!merchantFree30.complete?"warning":"ok");
   await emit({id:"pmax_merchant_organic_30d",category:"Merchant API",label:"30-day Merchant organic performance",status:merchant30Status,startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,
-    detail:!merchantFree30.configured?"Merchant Reports API is not configured.":`${(merchantFree30.rows||[]).length} organic offer row(s) across ${merchantFree30.pages||0} page request(s).`,source:"Merchant Reports product_performance_view",
+    detail:!merchantFree30.configured?"Merchant Reports API is not configured.":`${(merchantFree30.rows||[]).length} offer rows; ${Number(merchantFree30.totals&&merchantFree30.totals.conversions)||0} reported conversions; ${Number(merchantFree30.totals&&merchantFree30.totals.clicks)||0} clicks across ${merchantFree30.pages||0} pages. These rows are not a count of sales.`,source:"Merchant Reports product_performance_view",
     httpStatus:(merchantFree30.httpStatuses||[]).slice(-1)[0]||null,error:merchantFree30.error||null,
     fallback:!merchantFree30.configured?"Shopify free-listing attribution is used instead.":(merchantFree30.error?"Continue with Shopify attribution and Google Ads paid-product evidence.":merchantFree30.warning||null),
-    meta:{configured:!!merchantFree30.configured,rows:(merchantFree30.rows||[]).length,pages:merchantFree30.pages||0,httpStatuses:merchantFree30.httpStatuses||[],days:30,start:merchantFree30.start,end:merchantFree30.end,timeZone:merchantFree30.timeZone,dateSelectionTimeZone:merchantFree30.dateSelectionTimeZone,reportingCalendar:merchantFree30.reportingCalendar,attributionBasis:merchantFree30.attributionBasis,valueComplete:merchantFree30.valueComplete,complete:merchantFree30.complete,errorCode:merchantFree30.errorCode,attempts:merchantFree30.attempts,diagnostics:merchantFree30.diagnostics}});
-  const merchant90Status=!merchantFree90.configured?"skipped":(merchantFree90.error||merchantFree90.warning||!merchantFree90.complete?"warning":"ok");
+    meta:{configured:!!merchantFree30.configured,rows:(merchantFree30.rows||[]).length,pages:merchantFree30.pages||0,httpStatuses:merchantFree30.httpStatuses||[],days:30,start:merchantFree30.start,end:merchantFree30.end,timeZone:merchantFree30.timeZone,dateSelectionTimeZone:merchantFree30.dateSelectionTimeZone,reportingCalendar:merchantFree30.reportingCalendar,attributionBasis:merchantFree30.attributionBasis,valueComplete:merchantFree30.valueComplete,complete:merchantFree30.complete,errorCode:merchantFree30.errorCode,attempts:merchantFree30.attempts,diagnostics:merchantFree30.diagnostics,totals:merchantFree30.totals,warning:merchantFree30.warning}});
+  const merchant90Status=!merchantFree90.configured?"skipped":(merchantFree90.error||!merchantFree90.complete?"warning":"ok");
   await emit({id:"pmax_merchant_organic_90d",category:"Merchant API",label:"90-day Merchant organic performance",status:merchant90Status,startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,
-    detail:!merchantFree90.configured?"Merchant Reports API is not configured.":`${(merchantFree90.rows||[]).length} organic offer row(s) across ${merchantFree90.pages||0} page request(s).`,source:"Merchant Reports product_performance_view",
+    detail:!merchantFree90.configured?"Merchant Reports API is not configured.":`${(merchantFree90.rows||[]).length} offer rows; ${Number(merchantFree90.totals&&merchantFree90.totals.conversions)||0} reported conversions; ${Number(merchantFree90.totals&&merchantFree90.totals.clicks)||0} clicks across ${merchantFree90.pages||0} pages. These rows are not a count of sales.`,source:"Merchant Reports product_performance_view",
     httpStatus:(merchantFree90.httpStatuses||[]).slice(-1)[0]||null,error:merchantFree90.error||null,
     fallback:!merchantFree90.configured?"Shopify free-listing attribution is used instead.":(merchantFree90.error?"Continue with Shopify attribution and Google Ads paid-product evidence.":merchantFree90.warning||null),
-    meta:{configured:!!merchantFree90.configured,rows:(merchantFree90.rows||[]).length,pages:merchantFree90.pages||0,httpStatuses:merchantFree90.httpStatuses||[],days:90,start:merchantFree90.start,end:merchantFree90.end,timeZone:merchantFree90.timeZone,dateSelectionTimeZone:merchantFree90.dateSelectionTimeZone,reportingCalendar:merchantFree90.reportingCalendar,attributionBasis:merchantFree90.attributionBasis,valueComplete:merchantFree90.valueComplete,complete:merchantFree90.complete,errorCode:merchantFree90.errorCode,attempts:merchantFree90.attempts,diagnostics:merchantFree90.diagnostics}});
+    meta:{configured:!!merchantFree90.configured,rows:(merchantFree90.rows||[]).length,pages:merchantFree90.pages||0,httpStatuses:merchantFree90.httpStatuses||[],days:90,start:merchantFree90.start,end:merchantFree90.end,timeZone:merchantFree90.timeZone,dateSelectionTimeZone:merchantFree90.dateSelectionTimeZone,reportingCalendar:merchantFree90.reportingCalendar,attributionBasis:merchantFree90.attributionBasis,valueComplete:merchantFree90.valueComplete,complete:merchantFree90.complete,errorCode:merchantFree90.errorCode,attempts:merchantFree90.attempts,diagnostics:merchantFree90.diagnostics,totals:merchantFree90.totals,warning:merchantFree90.warning}});
+  // Merchant conversions can reveal products absent from Shopify's recent
+  // snapshot. Resolve those exact IDs before ranking instead of discarding the
+  // successful report merely because the first catalogue lookup never saw them.
+  const organicDiscoveryIds=_merchantOrganicDiscoveryIds(merchant,merchantFree30,merchantFree90);
+  if(organicDiscoveryIds.length){const discoveryAt=Date.now();await emit({id:"pmax_organic_offer_discovery",category:"Merchant API",label:"Verify additional organic sellers",status:"running",startedAt:discoveryAt,detail:`Checking ${organicDiscoveryIds.length} converting offer IDs absent from the initial catalogue.`});
+    try{const extra=await merchantProducts({force:true,itemIds:organicDiscoveryIds}),requested=new Set(organicDiscoveryIds),verified=extra.filter(p=>requested.has(String(p.itemId))&&/^\d+$/.test(String(p.merchantId||""))&&/^[A-Z0-9_-]{1,20}$/.test(String(p.feedLabel||""))),key=p=>[p.merchantId||"",p.feedLabel||"",p.itemId||""].join("|"),merged=new Map(merchant.map(p=>[key(p),p]));verified.forEach(p=>merged.set(key(p),p));merchant=[...merged.values()];
+      await emit({id:"pmax_organic_offer_discovery",category:"Merchant API",label:"Verify additional organic sellers",status:verified.length?"ok":"warning",startedAt:discoveryAt,endedAt:Date.now(),tookMs:Date.now()-discoveryAt,detail:`${verified.length} exact offers with verified Merchant accounts and feed labels added from reported conversions.`,source:"Merchant conversions + Google Ads shopping_product",meta:{requested:organicDiscoveryIds.length,verified:verified.length,eligible:verified.filter(_pmaxIsEligible).length,periods:[30,90],limit:40,requests:extra._diag&&extra._diag.requests||[]}});
+      if(verified.filter(_pmaxIsEligible).length&&!merchantErr)await emit({id:"pmax_merchant_catalogue",category:"Google Ads API",label:"Linked Merchant Center catalogue",status:"ok",startedAt:discoveryAt,endedAt:Date.now(),tookMs:Date.now()-discoveryAt,detail:`${merchant.length} total verified offers; ${merchant.filter(_pmaxIsEligible).length} eligible/in-stock. Includes additional sellers discovered from direct organic conversions.`,source:"Google Ads shopping_product",meta:{merchantOffers:merchant.length,organicDiscoveryOffers:verified.length}});
+    }catch(e){await emit({id:"pmax_organic_offer_discovery",category:"Merchant API",label:"Verify additional organic sellers",status:"warning",startedAt:discoveryAt,endedAt:Date.now(),tookMs:Date.now()-discoveryAt,error:_auditText(e&&e.message,220),detail:"Additional converting offers could not be verified; their performance remains reported but they are not guessed into a new campaign.",source:"Google Ads shopping_product"});}
+  }
   const candidates = pmaxCandidatesFromSignals({ collections, profiles, sig30, sig90, merchant, paid, merchantFree30, merchantFree90 });
   await emit({id:"pmax_candidate_scoring",category:"Ranking",label:"PMax candidate matching and scoring",status:candidates.length?"ok":"warning",startedAt:Date.now(),endedAt:Date.now(),tookMs:0,
     detail:`${candidates.length} market-specific candidate(s) built from ${merchant.length} verified offers.`,source:"Deterministic product/economic scoring",meta:{candidates:candidates.length,merchantOffers:merchant.length}});
   if (!merchant.length) return { list: [], error: merchantErr ? ("Merchant Center catalogue read failed: " + merchantErr) : "The linked Merchant Center catalogue returned no products", at: Date.now() };
   if (!candidates.length) return { list: [], error: "No eligible Merchant Center offers could be matched to recent store sales", at: Date.now() };
-  // When direct Google free-listing sales are identifiable, they are a hard gate,
-  // not merely an AI preference. Other-organic fallback is used only when attribution
-  // contains no direct Merchant/free-listing product proof at all.
-  const proven = candidates.filter(c => Number(c.merchantScore) > 0 || Number(c.freePerformance&&c.freePerformance.days30&&c.freePerformance.days30.conversions)>0 || Number(c.freePerformance&&c.freePerformance.days30&&c.freePerformance.days30.value)>0);
-  const qualified = proven.length ? proven : candidates;
+  // Preserve every qualified source of real product demand. A free-listing winner
+  // must not hide a different product with stronger direct or unknown-source sales.
+  const qualified = candidates;
   let taken = {}; try { taken = await takenTags(); } catch (e) {}
   const unused = qualified.filter(c => !taken[_pmaxTag(c.handle,c.feedLabel)] && !taken[_pmaxTag(c.handle,null)]);
   const pool = (unused.length ? unused : qualified).slice(0, 6);
   const merchantOrders30 = Number(sig30 && sig30.merchantOrganicOrders) || 0;
   const merchantRevenue30 = Math.round(Number(sig30 && sig30.merchantOrganicRevenue) || 0);
   const fallbackOrganic30 = Math.round(Number(sig30 && sig30.organicRevenue) || 0);
+  // Bound individual summaries, never cut serialized JSON between periods.
+  const selectorPeriod=s=>s?{days:s.days,startAt:s.startAt,endAt:s.endAt,currency:s.currency,attributionBasis:s.attributionBasis,complete:s.complete,historyCoverage:s.historyCoverage,warning:s.warning,
+    orders:s.orders,verifiedPurchaseOrders:s.verifiedPurchaseOrders,purchaseStatusUnknownOrders:s.purchaseStatusUnknownOrders,totalRevenue:s.totalRevenue,organicOrders:s.organicOrders,organicRevenue:s.organicRevenue,merchantOrganicOrders:s.merchantOrganicOrders,merchantOrganicRevenue:s.merchantOrganicRevenue,paidOrders:s.paidOrders,paidRevenue:s.paidRevenue,directOrUnknownOrders:s.directOrUnknownOrders,otherNonpaidOrUnknownOrders:s.otherNonpaidOrUnknownOrders,monetaryComplete:s.monetaryComplete,valuesByCurrency:s.valuesByCurrency,
+    topProducts:(s.topProducts||[]).slice(0,8).map(p=>({name:p.name,productId:p.productId,variantId:p.variantId,orders:p.orders,units:p.units,revenue:p.revenue,organic:p.organic,paid:p.paid,directOrUnknown:p.directOrUnknown}))}:null;
   let selected = [], pmaxLearning = null;
   t = Date.now(); await emit({id:"pmax_ai_selector",category:"OpenAI",label:"PMax opportunity selector",status:"running",startedAt:t,detail:`Selecting 2-3 non-overlapping campaigns from ${pool.length} deterministic candidate(s).`});
   try {
@@ -3421,13 +3726,14 @@ async function proposePmaxOpportunities({ collections = [], profiles = [], ceili
       estimatedProfit30d:c.estimatedProfit30d, marginRate:c.marginRate, breakEvenRoas:c.breakEvenRoas, recommendedTargetRoas:c.recommendedTargetRoas,
       paidPerformance:c.paidPerformance, freePerformance:c.freePerformance, opportunityClass:c.opportunityClass }));
     const j = await openaiJSON(`You are selecting tightly scoped Google Merchant Center Performance Max campaigns for Brites Jewelry.
-The goal is to amplify products that ALREADY convert through unpaid Google/free-listing traffic, not to invent broad themes.
+The goal is to advertise products supported by actual store purchase history, including organic and direct sales before they have paid history. Treat all-channel Shopify demand as essential evidence. Keep explicit organic attribution separate from direct/unknown and other paid channels. Merchant clicks and impressions indicate interest, not purchases; reported Merchant conversions can overlap Shopify orders and must not be added to them. Customer motivations remain hypotheses unless supported by research.
 ${playbookText(pmaxBook)}
 These are PMax product/creative observations; never treat search themes as exact-match keywords or Manual CPC controls.
-30-day Merchant/free-listing proof: ${merchantOrders30} orders / $${merchantRevenue30}. Other organic revenue: $${fallbackOrganic30}.
+30-day explicitly attributed Merchant/free-listing orders: ${merchantOrders30}; revenue ${CURRENCY} ${merchantRevenue30}. Verified-organic-attribution revenue ${CURRENCY} ${fallbackOrganic30}. All-channel order history and coverage:
+${JSON.stringify({days30:selectorPeriod(sig30),days90:selectorPeriod(sig90)})}
 Eligible candidates are pre-ranked deterministically from exact Shopify order titles matched to live Merchant Center offer IDs:
 ${JSON.stringify(promptData).slice(0,12000)}
-Choose 2-3 market-specific, non-overlapping candidates. CA and US feed labels are separate valid campaigns; you may choose the same collection once per market when both have eligible offers. Google Merchant API freePerformance is the highest-quality proof, followed by Shopify merchantScore/free-listing attribution, then other organic fallback. Prefer repeated conversions and multiple eligible offers. Do not choose a broad collection over a tighter one with the same winning products. Keep budgets conservative enough to learn but meaningful: $6-$15/day, respecting total ceiling $${ceiling}/day. Return ONLY JSON {"pmax":[{"handle":"exact handle","feedLabel":"exact feedLabel","rationale":"<=150 chars citing products/orders/free-listing proof","dailyBudget":6-15,"days":21-45,"angle":"<=80 chars"}]}.`,
+Choose 2-3 market-specific, non-overlapping candidates. CA and US feed labels are separate valid campaigns; you may choose the same collection once per market when both have eligible offers. Prefer repeated Shopify purchases and separately reported Merchant conversions over clicks. Lack of past ad sales must not exclude a strong organic/direct seller. The same order can appear in Shopify and Merchant attribution. Missing periods and currency values are unknown; do not assume zero sales or calculate a paid ROAS from organic revenue. Prefer multiple eligible offers. Do not choose a broad collection over a tighter one with the same winning products. Keep budgets conservative enough to learn but meaningful: $6-$15/day, respecting total ceiling $${ceiling}/day. Return ONLY JSON {"pmax":[{"handle":"exact handle","feedLabel":"exact feedLabel","rationale":"<=150 chars citing products/orders/free-listing proof","dailyBudget":6-15,"days":21-45,"angle":"<=80 chars"}]}.`,
       { maxTokens: 5000, effort: "medium" });
     selected = (Array.isArray(j && j.pmax) ? j.pmax : []).map(x => {
       const c = pool.find(y => y.handle === x.handle && String(y.feedLabel||"") === String(x.feedLabel||"")); if (!c) return null;
@@ -3441,7 +3747,7 @@ Choose 2-3 market-specific, non-overlapping candidates. CA and US feed labels ar
   if (selected.length < Math.min(2,pool.length)) {
     pmaxLearning = null;
     selected = pool.slice(0,Math.min(3,pool.length)).map((c,i) => Object.assign({},c,{
-      rationale:`${c.productTitles.slice(0,2).join(" + ")} already sell${c.merchantScore>0?" through Google free listings":" organically"}; boost the exact GMC offers.`,
+      rationale:`${c.productTitles.slice(0,2).join(" + ")}: ${c.evidenceTotals&&c.evidenceTotals.orders||0} observed product-order matches; ${Number(c.freePerformance&&c.freePerformance.days30&&c.freePerformance.days30.conversions)||0} separately reported free-listing conversions.`,
       angle:"Scale proven product demand", dailyBudget:Math.max(6,Math.min(18,Math.round(6 + c.confidence/18 + Math.min(4,c.estimatedProfit30d/150)))), days:30,
       searchThemes:_derivePmaxSearchThemes(c)
     }));
@@ -3459,9 +3765,10 @@ Choose 2-3 market-specific, non-overlapping candidates. CA and US feed labels ar
       breakEvenRoas:c.breakEvenRoas,recommendedTargetRoas:c.recommendedTargetRoas,biddingMode:c.biddingMode,paidPerformance:c.paidPerformance,freePerformance:c.freePerformance,
       offerDetails:c.offerDetails, searchThemes:c.searchThemes||_derivePmaxSearchThemes(c),
       merchantReportsConfigured:!!merchantFree30.configured,merchantReportWarning:merchantFree30.error||merchantFree90.error||null,merchantReportCode:merchantFree30.errorCode||merchantFree90.errorCode||null,
+      salesEvidence:{source:"Shopify order log",attributionBasis:"Shopify order date",currency:CURRENCY,days30:salesEvidenceUtil.compactPeriod(sig30),days90:salesEvidenceUtil.compactPeriod(sig90),overlap:"Merchant conversions and Shopify orders are separate, potentially overlapping measures."},
       organic:{ evidenceDays:c.evidenceDays, matchedProductOrders:orders, matchedProductRevenue:Math.round(revenue), orders30d:sig30?Number(c.evidenceTotals&&c.evidenceTotals.orders30d)||0:null, organicRevenue30d:sig30?Number(c.evidenceTotals&&c.evidenceTotals.revenue30d)||0:null, merchantMatchedProducts:merchantEv.length,
         merchantOrdersStorewide30d:merchantOrders30, merchantRevenueStorewide30d:merchantRevenue30,
-        signalSource:(c.freePerformance&&c.freePerformance.days30&&c.freePerformance.days30.conversions>0)?"Google Merchant API free-listing conversions":(c.merchantScore>0?"Google Merchant Center free-listing sales":"other organic sales fallback") } };
+        signalSource:(c.freePerformance&&c.freePerformance.days30&&c.freePerformance.days30.conversions>0)?"Merchant-reported conversions plus Shopify demand (overlapping evidence)":(c.merchantScore>0?"Explicit Shopify free-listing attribution plus all-channel demand":"All-channel Shopify demand; organic attribution is not assumed") } };
   });
   return { list, learning:pmaxLearning, error:null, at:Date.now(), merchantProducts:merchant.length, merchantOrders30, merchantRevenue30,
     paidProductRows:(paid.rows||[]).length, paidPerformanceError:paid.error||null,
@@ -3938,9 +4245,14 @@ async function pmaxPreviewData({ handle, titles, n } = {}) {
   return { pmaxList, collection: { title: coll.title, handle: coll.handle, url: `https://britesjewelry.com/collections/${coll.handle}` }, products: rows };
 }
 
-async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, itemIds, productTitles, feedLabel, searchThemes, offerDetails } = {}) {
+async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, itemIds, productTitles, feedLabel, searchThemes, offerDetails } = {}, design = {}) {
   const researchDb = fb();
   if (!researchDb) throw new Error("Product research is unavailable. Try refreshing research shortly.");
+  if(design.approvalId){
+    if(!/^[a-zA-Z0-9_-]{1,160}$/.test(String(design.approvalId))||!design.designId||!_copyValid(design.reviewedAdCopy,true))throw new Error("The saved design needs valid researched copy and a stable draft identity.");
+    const prior=await researchDb.db.collection(COL.approvals).doc(String(design.approvalId)).get();
+    if(prior.exists){if(prior.data().type!=="pmax"||(((prior.data().payload||{}).meta||{}).adDesignId)!==design.designId)throw new Error("This draft identity belongs to another design.");return {approvalId:String(design.approvalId),cached:true};}
+  }
   const researchDoc = await researchDb.db.collection(COL.state).doc("opportunities").get();
   _pmaxResearchCandidate(researchDoc.exists ? researchDoc.data() : null, {handle, feedLabel, itemIds});
   const ctrl = await control(), colls = await getCollections({}), coll = colls.find(c => c.handle === handle);
@@ -3997,14 +4309,15 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
   // Required text creative — v24 rejects the whole launch without it (see _pmaxAdCopy).
   // The deterministic floor inside _pmaxAdCopy means this can never come back empty.
   let adCopy = null;
-  try { adCopy = await _pmaxAdCopy(coll, { productTitles: chosenTitles }); } catch (e) {}
+  if(design.reviewedAdCopy){if(!_copyValid(design.reviewedAdCopy,true))throw new Error("The researched design copy does not meet Google's text requirements.");adCopy=JSON.parse(JSON.stringify(design.reviewedAdCopy));}
+  else try { adCopy = await _pmaxAdCopy(coll, { productTitles: chosenTitles }); } catch (e) {}
   if (!adCopy) adCopy = _pmaxDeterministicCopy(coll);
   // Two real sibling collections from the curated config → extra sitelinks (real URLs only).
   const relatedCollections = (typeof COLLECTIONS !== "undefined" ? COLLECTIONS : []).filter(c => c && c.handle && c.handle !== handle && c.handle !== "best-sellers").slice(0, 2);
   const built=buildPmaxCampaignOps(coll,{dailyBudget:budget,startDate:start,endDate:end,targetRoas:safeTargetRoas,merchantId,feedLabel:liveFeedLabel,itemIds:exactIds,types,countries,offerDetails:liveDetails,searchThemes:themes,audienceResource,imageAssets,adCopy,relatedCollections});
   const scope=built.scopedItemIds.length?`${built.scopedItemIds.length} proven GMC offers`:(built.scopedTypes.length?built.scopedTypes.join("/"):"all feed products");
   const id=await enqueueApproval({type:"pmax",vetted:false,summary:`PMax · ${coll.title} · $${budget}/day · ${scope} · ${built.assetMode} assets${imageAssets&&imageAssets.square&&imageAssets.square.length?` (${(imageAssets.square||[]).length}sq/${(imageAssets.landscape||[]).length}ls/${(imageAssets.portrait||[]).length}pt custom images)`:""} · ${built.textAssets.headlines}hl/${built.textAssets.longHeadlines}lh/${built.textAssets.descriptions}ds copy · GMC ${merchantId}`,
-    payload:{mutateOperations:built.ops,countries:built.countries,meta:{kind:"pmax",handle,collectionTitle:coll.title,dailyBudget:budget,targetRoas:safeTargetRoas,biddingMode:safeTargetRoas>0?"MAXIMIZE_CONVERSION_VALUE_TARGET_ROAS":"MAXIMIZE_CONVERSION_VALUE_LEARNING",scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,productTitles:chosenTitles,images:imageAssets?(imageAssets.square||[]).length+(imageAssets.landscape||[]).length+(imageAssets.portrait||[]).length:0,textAssets:built.textAssets,assetMode:built.assetMode,merchantId,feedLabel:liveFeedLabel,countries:built.countries,tag:built.tag,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null}}});
+    payload:{mutateOperations:built.ops,countries:built.countries,meta:{kind:"pmax",...(design.designId?{adDesignId:design.designId}:{}),handle,collectionTitle:coll.title,dailyBudget:budget,targetRoas:safeTargetRoas,biddingMode:safeTargetRoas>0?"MAXIMIZE_CONVERSION_VALUE_TARGET_ROAS":"MAXIMIZE_CONVERSION_VALUE_LEARNING",scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,productTitles:chosenTitles,images:imageAssets?(imageAssets.square||[]).length+(imageAssets.landscape||[]).length+(imageAssets.portrait||[]).length:0,textAssets:built.textAssets,assetMode:built.assetMode,merchantId,feedLabel:liveFeedLabel,countries:built.countries,tag:built.tag,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null}}},{id:design.approvalId,guard:design.guard});
   return {approvalId:id,tag:built.tag,scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,products:chosenTitles,assetMode:built.assetMode,textAssets:built.textAssets,countries:built.countries,merchantId,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null};
 }
 
@@ -5732,11 +6045,11 @@ function _profileMatchesProduct(profile, productName) {
   return type&&qual>=1?Math.min(.9,.45+qual*.12):0;
 }
 function collectionEconomics(profile, sig) {
-  const rows=(sig&&sig.topProducts)||[]; let orders=0,revenue=0,profit=0,units=0,matched=0;
-  rows.forEach(x=>{const m=_profileMatchesProduct(profile,x.name);if(m<.45)return;matched++;orders+=Number(x.orders)||0;units+=Number(x.units)||0;revenue+=(Number(x.revenue)||0)*m;profit+=(Number(x.estimatedProfit)||0)*m;});
+  const rows=(sig&&(sig.productRows||sig.topProducts))||[]; let orders=0,revenue=0,profit=0,units=0,matched=0;
+  rows.forEach(x=>{const catalog=(profile&&profile.topProducts)||[];const known=catalog.some(p=>_pmaxShopifyProductMatch(p,x)),m=known?1:catalog.some(p=>p.productId)&&x.productId?0:_profileMatchesProduct(profile,x.name);if(m<.45)return;matched++;orders+=Number(x.orders)||0;units+=Number(x.units)||0;revenue+=(Number(x.revenue)||0)*m;profit+=(Number(x.estimatedProfit)||0)*m;});
   const marginRate=revenue>0?Math.max(.1,Math.min(.95,profit/revenue)):MARGIN_RATES.default;
   return {orders:Math.round(orders),units:Math.round(units),revenue:_r2(revenue),estimatedProfit:_r2(profit),marginRate,
-    aov:orders>0?_r2(revenue/orders):null,matchedProducts:matched,marginSource:revenue>0?"matched Shopify line-item economics":"configurable catalog estimate"};
+    aov:orders>0?_r2(revenue/orders):null,matchedProducts:matched,attributionBasis:"All-channel observed Shopify product orders; not assumed organic or attributable to this ad",currency:sig&&sig.currency||CURRENCY,days:sig&&sig.days||null,complete:!!(sig&&sig.complete),marginSource:revenue>0?"matched Shopify line-item economics":"configurable catalog estimate"};
 }
 async function collectionAdsPerformance({days=120}={}) {
   const out={};
@@ -5882,11 +6195,17 @@ async function scanOpportunities({ force, cacheOnly, runId } = {}) {
   const collBlock = (profiles && profiles.length)
     ? `COLLECTIONS \u2014 each profiled from a STRATIFIED, TYPE-AWARE scan of its real listings (data as of ${_ymd(new Date(profiledAt || Date.now()))}; "top seller" = ${salesBasis || "Shopify best-selling sort"}; refreshed weekly) (50 best-sellers + 20 newest per collection, plus per-type representative variants and descriptions). Each collection line shows: motif inventory with per-motif listing counts \u00b7 listing-tag inventory (the merchant\u2019s own search terms, with counts) \u00b7 personalization options \u00b7 anchors \u00b7 then a "types:" breakdown of every JEWELRY TYPE the collection actually contains (Necklace, Beady Necklace, Hoop/Stud Earrings, Bracelet, Charm Only\u2026) with its share (\u00d7n), price band, and MATERIAL TIERS with real per-tier prices from live variants. Use ALL of it: high-frequency motifs are the collection's identity (head terms); MID-frequency motifs are underexploited long-tail keyword material; the TYPE breakdown tells you which product types to build keywords around and in what proportion \u2014 a collection that is mostly necklaces with some hoop earrings and charm-only listings earns keywords across those types, weighted by share, and NEVER keywords for a type it doesn't contain; MATERIAL TIERS are distinct keyword axes with different buyers and intent ("solid 14k gold X" is a premium keepsake purchase at that tier's real price, "gold filled X" is the affordable tier \u2014 never blur them, never promise a tier, type or price the inventory doesn't show); PERSONALIZATION options (engraving, birthstone, photo\u2026) are high-intent keyword modifiers. Ground every keyword, phrase, audience and fit judgment in this inventory, never in the collection name alone:\n${_profileText(profiles, collections)}`
     : `ALL COLLECTIONS: ${collText}`;
+  const mandatorySales=await storeSalesEvidence({includeMerchant:true}).catch(e=>({available:false,periods:{days30:null,days90:null},seasonality:{months:[],limitation:"Historical sales are unavailable"},merchant:{},warnings:[_auditText(e&&e.message,200)]}));
+  await _auditEvent(audit,{id:"store_sales_history",channel:"shared",category:"Store data",label:"Historical product demand used by both ad channels",status:mandatorySales.available?"ok":"warning",startedAt:Date.now(),endedAt:Date.now(),tookMs:0,detail:mandatorySales.available?"30/90-day order history, source attribution and monthly demand were supplied to the strategist. Missing historical coverage is explicitly labelled.":"Historical sales could not be retrieved; no purchase history is invented.",source:"Shopify order history and Merchant free-listing reports",meta:{at:mandatorySales.at,sourceAvailability:mandatorySales.sourceAvailability,history:mandatorySales.seasonality&&mandatorySales.seasonality.coverage}});
+  const briefPeriod=x=>x?{days:x.days,at:x.at,currency:x.currency,orders:x.orders,verifiedPurchaseOrders:x.verifiedPurchaseOrders,purchaseStatusUnknownOrders:x.purchaseStatusUnknownOrders,organicOrders:x.organicOrders,merchantOrganicOrders:x.merchantOrganicOrders,paidOrders:x.paidOrders,directOrUnknownOrders:x.directOrUnknownOrders,otherNonpaidOrUnknownOrders:x.otherNonpaidOrUnknownOrders,totalRevenue:x.totalRevenue,valuesByCurrency:x.valuesByCurrency,complete:x.complete,historyCoverage:x.historyCoverage,topProducts:(x.topProducts||[]).slice(0,15).map(p=>({name:p.name,productId:p.productId,variantId:p.variantId,orders:p.orders,units:p.units,revenue:p.revenue,organic:p.organic,paid:p.paid,directOrUnknown:p.directOrUnknown}))}:null;
+  const searchSalesBrief={days30:briefPeriod(mandatorySales.periods.days30),days90:briefPeriod(mandatorySales.periods.days90),seasonality:mandatorySales.seasonality,merchant:mandatorySales.merchant,warnings:mandatorySales.warnings};
   const prompt =
 `Today: ${dateStr}. You are the campaign strategist for Brites, a handcrafted personalized charm-jewelry brand (gift/emotion-led). Currency ${ccy}. Total daily ad ceiling ${ccy} ${ceiling}.
 ${convDirective}
 ${collBlock}
 TOP-SELLING PRODUCTS: ${prodText}
+MANDATORY HISTORICAL SALES EVIDENCE: ${JSON.stringify(searchSalesBrief)}
+Use actual all-channel store demand to choose products even when they have no prior advertising sales. Explicit organic attribution, unknown/direct attribution, and other paid sources must stay separate. Merchant clicks/impressions are interest, not sales; Merchant conversion totals may overlap Shopify orders and must not be added to them. Use repeated purchases and recent-versus-longer history to prioritize demand. Partial monthly history is not proof of recurring seasonality. Explain buyer motivations as hypotheses supported by product details or research, never as measured facts.
 PAST OCCASION PERFORMANCE (memory): ${memText}
 Find the 8-12 best advertising OPPORTUNITIES to act on within the NEXT ~30 DAYS. Do NOT suggest anything whose run window starts more than ~30 days from today — near-term relevance only. Cross-reference upcoming calendar / seasonal gifting moments with the collections and best-sellers that fit them and with past performance. For EACH opportunity return:
 - collectionTitle (MUST be exactly one of the collections listed above)
@@ -5955,7 +6274,7 @@ ${pbBlock}Only include opportunities genuinely relevant within ~30 days. Opportu
   let _enabled = ceiling; const budgetT=Date.now(); try { _enabled = await _enabledBudgetTotal(); await _auditEvent(audit,{id:"ads_budget_headroom",category:"Google Ads API",label:"Enabled campaign budget headroom",status:"ok",startedAt:budgetT,endedAt:Date.now(),tookMs:Date.now()-budgetT,detail:`Enabled budgets ${CURRENCY} ${_r2(_enabled)}/day against ceiling ${CURRENCY} ${ceiling}/day.`,source:"Google Ads campaign budgets"}); } catch (e) { await _auditEvent(audit,{id:"ads_budget_headroom",category:"Google Ads API",label:"Enabled campaign budget headroom",status:"warning",startedAt:budgetT,endedAt:Date.now(),tookMs:Date.now()-budgetT,error:e&&e.message,fallback:"Headroom unavailable; hold new spending until it is verified."}); }
   const headroom = Math.max(0, ceiling - _enabled);
   // Real store AOV (from logged Shopify orders) so projected revenue uses YOUR numbers, not a guess.
-  let sig120=null,aov=0; const econT=Date.now(); try { sig120=await storeSignals({days:120}); const rev=(sig120.adRevenue||0)+(sig120.organicRevenue||0); if(sig120.orders>0)aov=_r2(rev/sig120.orders); await _auditEvent(audit,{id:"store_economics_120d",category:"Store data",label:"120-day store economics",status:sig120?"ok":"warning",startedAt:econT,endedAt:Date.now(),tookMs:Date.now()-econT,detail:sig120?`${sig120.orders} orders; measured AOV ${CURRENCY} ${aov||0}.`:"No 120-day order economics available.",source:"Firestore Shopify order log",fallback:sig120?null:"Use conservative account priors."}); } catch(e) { await _auditEvent(audit,{id:"store_economics_120d",category:"Store data",label:"120-day store economics",status:"warning",startedAt:econT,endedAt:Date.now(),tookMs:Date.now()-econT,error:e&&e.message,fallback:"Use conservative account priors."}); }
+  let sig120=null,aov=0; const econT=Date.now(); try { sig120=await storeSignals({days:120}); const rev=sig120.totalRevenue!=null?sig120.totalRevenue:(sig120.adRevenue||0)+(sig120.organicRevenue||0); if(sig120.orders>0)aov=_r2(rev/sig120.orders); await _auditEvent(audit,{id:"store_economics_120d",category:"Store data",label:"120-day store economics",status:sig120?"ok":"warning",startedAt:econT,endedAt:Date.now(),tookMs:Date.now()-econT,detail:sig120?`${sig120.orders} orders; measured AOV ${CURRENCY} ${aov||0}.`:"No 120-day order economics available.",source:"Firestore Shopify order log",fallback:sig120?null:"Use conservative account priors."}); } catch(e) { await _auditEvent(audit,{id:"store_economics_120d",category:"Store data",label:"120-day store economics",status:"warning",startedAt:econT,endedAt:Date.now(),tookMs:Date.now()-econT,error:e&&e.message,fallback:"Use conservative account priors."}); }
   let perfByTag={}; const perfT=Date.now(); try { perfByTag=await collectionAdsPerformance({days:120}); await _auditEvent(audit,{id:"collection_ads_performance",category:"Google Ads API",label:"120-day campaign performance by collection",status:"ok",startedAt:perfT,endedAt:Date.now(),tookMs:Date.now()-perfT,detail:`Performance history mapped to ${Object.keys(perfByTag).length} campaign tag(s).`,source:"Google Ads campaign metrics"}); } catch(e) { await _auditEvent(audit,{id:"collection_ads_performance",category:"Google Ads API",label:"120-day campaign performance by collection",status:"warning",startedAt:perfT,endedAt:Date.now(),tookMs:Date.now()-perfT,error:e&&e.message,fallback:"Rank without collection-specific paid history."}); }
   const profileByHandle={}; ((profiles&&profiles.list)||profiles||[]).forEach(p=>{if(p&&p.handle)profileByHandle[p.handle]=p;});
   // Computed conversion rate (account history shrunk toward the benchmark) — one fetch, used by every plan.
@@ -6014,7 +6333,7 @@ ${pbBlock}Only include opportunities genuinely relevant within ~30 days. Opportu
     const collClicks=Number(perf.search.clicks)||0, collConv=Number(perf.search.conversions)||0;
     const collCvrInfo=collClicks>0?{cvr:Math.max(_CVR_MIN,Math.min(_CVR_MAX,(collConv+baseCvr*100)/(collClicks+100))),source:`collection Search history (${collClicks} clicks, ${_r2(collConv)} conversions) shrunk to account baseline`}:cvrInfo;
     const evidenceScore=Math.max(20,Math.min(96,Math.round(grounded.confidence + Math.min(12,econ.orders*2) + Math.min(10,collConv*3))));
-    const confidence={score:evidenceScore,evidence:{keywords:grounded.evidence,organicOrders:econ.orders,matchedProducts:econ.matchedProducts,searchClicks:collClicks,searchConversions:collConv}};
+    const confidence={score:evidenceScore,evidence:{keywords:grounded.evidence,storeProductOrders:econ.orders,salesAttributionBasis:econ.attributionBasis,matchedProducts:econ.matchedProducts,searchClicks:collClicks,searchConversions:collConv}};
     const peakDate = o.endDate || o.startDate || _nextOccasionPeak(o.occasion);
     const mkt = _mktNorm(o.market);
     // Measured demand (12-mo Keyword Planner series) OVERRIDES the model\u2019s guess; the source
@@ -6306,7 +6625,7 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
   const _geo = (countries && countries.length) ? countries : ((Array.isArray(ctrl.defaultCountries) && ctrl.defaultCountries.length) ? ctrl.defaultCountries : ["2124"]);
   const _seeds = [coll.title, `${coll.title} gift`, `${coll.title} necklace`, (event ? `${coll.title} ${event.label}` : null)].filter(Boolean);
   let _res = null; try { _res = await researchOpportunity(_seeds, _geo); } catch (e) {}
-  let _aov = 0; try { const sig = await storeSignals({ days: 120 }); const rev = (sig.adRevenue || 0) + (sig.organicRevenue || 0); if (sig.orders > 0) _aov = _r2(rev / sig.orders); } catch (e) {}
+  let _aov = 0; try { const sig = await storeSignals({ days: 120 }); const rev = sig.totalRevenue!=null?sig.totalRevenue:(sig.adRevenue || 0) + (sig.organicRevenue || 0); if (sig.orders > 0) _aov = _r2(rev / sig.orders); } catch (e) {}
   let _cvrInfo = null; try { _cvrInfo = await accountCvr(); } catch (e) {}
   const plan = planCampaign({ currency:ctrl.budgetCurrency,nativeToUsd:await _fxRateToUsd(_acctDateYmd(await _accountTz(),0)).catch(()=>null),title: coll.title, occasion: eventLabel, peakDate, ceiling, headroom: Math.max(0, ceiling - _enabled), smartBidding: smart, research: (_res && _res.ok ? _res : null), aov: _aov, cvrInfo: _cvrInfo });
   const dailyBudget = Number(budget) > 0 ? Number(budget) : plan.budget.daily;
@@ -6671,6 +6990,17 @@ function _learningUsage(lesson, approvals = [], research = {}, { recordLimit = 3
   const records = [], drafts = new Set(), published = new Set(), stages = new Set();
   for (const approval of approvals) {
     const approvalId = String(approval.id || ""); if (!approvalId) continue;
+    if (_isAdVersionApproval(approval)) {
+      const applied=_adAnalysisApplications(approval.payload||{}), trace={schema:1,channel:applied.channel,lessonIds:applied.lessons.map(l=>String(l.id)),lessonSnapshots:applied.lessons};
+      if (_learningMatches(lesson,trace)) {
+        const pub=_learningLinkedPublication(approval,trace.channel),isPublished=approval.status==="APPLIED",includedAt=_learningTime(approval.createdAt);
+        records.push({id:"analysis:"+approvalId,stage:"content_change",channel:trace.channel,approvalId,group:"Analyzed ad",approvalStatus:approval.status||"UNKNOWN",
+          playbookVersion:0,includedAt,published:isPublished,campaignIds:isPublished?pub.campaignIds:[],publishedAt:isPublished?pub.at:null,
+          campaignLinkComplete:isPublished&&pub.linkageComplete,newCampaign:false,
+          meaning:isPublished?"The approved content change cites this saved lesson. Subsequent outcomes are observational, not proof of causation.":"The proposed content change cites this saved lesson and awaits approval."});
+        drafts.add(approvalId);if(isPublished)published.add(approvalId);stages.add("content_change");
+      }
+    }
     for (const [index, group] of (((approval.creative || {}).groups) || []).slice(0, 8).entries()) {
       const trace = group.learning;
       if (!_learningMatches(lesson, trace) || trace.stage !== "creative_guidance" || !_learningTime(trace.includedAt)) continue;
@@ -6793,12 +7123,42 @@ function _improvementApplications(applications, playbook, evidence, original, co
   }
   return out;
 }
+function _adAnalysisApplications(payload) {
+  const analysis=payload.analysis||{},channel=analysis.channel==="SEARCH"?"search":analysis.channel==="PERFORMANCE_MAX"?"pmax":analysis.channel;
+  const sources=new Map((analysis.evidence||[]).filter(e=>e&&["available","partial"].includes(e.status)).map(e=>[String(e.id),e]));
+  const savedLessons=new Map((analysis.lessonSnapshots||[]).filter(l=>l&&l.id&&l.rule).map(l=>[String(l.id),l]));
+  const text=value=>value==null?"":typeof value==="string"?value:JSON.stringify(value);
+  const applications=[],lessons=new Map(),changes=[];
+  for(const change of (payload.versionChange||{}).changes||[]) {
+    if(!change||change.executable===false)continue;
+    const before=text(change.before),after=text(change.after),field=change.category||change.field||"Ad content";
+    changes.push({category:field,field,summary:change.summary||field+" · "+String(change.target||"Existing ad"),before:change.before,after:change.after,reason:change.reason});
+    if(before===after)continue;
+    const evidenceIds=[...new Set((change.evidenceIds||[]).map(String).filter(id=>sources.has(id)))];
+    const lessonIds=[...new Set((change.lessonIds||[]).map(String).filter(id=>savedLessons.has(id)))];
+    if(!evidenceIds.length&&!lessonIds.length)continue;
+    lessonIds.forEach(id=>lessons.set(id,savedLessons.get(id)));
+    applications.push({field,before,after,why:String(change.reason||""),lessonId:lessonIds[0]||null,lessonIds,evidenceId:evidenceIds[0]||null,evidenceIds,
+      verification:"The saved recommendation cites these sources and the approved exact change was recorded. Commercial impact is measured separately."});
+  }
+  return {channel,changes,applications,lessons:[...lessons.values()],evidenceContext:{lessons:[...lessons.values()],observations:[...sources.values()].map(e=>({...e,title:e.label||e.title||e.id}))}};
+}
 function _improvementTimeline(approvals,remedies,versions,channel,campaignId,timeZone) {
   const rows=[];
   for(const a of approvals) {
     const p=a.payload||{},pub=_learningLinkedPublication(a,channel),existing=String((p.meta||{}).existingCampaignId||"")===campaignId;
     if(!pub.campaignIds.includes(campaignId)&&!existing)continue;
     const published=a.status==="APPLIED",groups=((a.creative||{}).groups||[]).filter(g=>g.channel===channel);
+    if(_isAdVersionApproval(a)) {
+      const linked=_adAnalysisApplications(p),at=published?pub.at:_learningTime(a.createdAt),restore=a.type==="adVersionRestore";
+      rows.push({id:"approval:"+a.id,approvalId:a.id,analysisId:(p.analysis||{}).analysisId||null,sourceVersion:(p.versionGuard||{}).expectedVersion,
+        restoredFromVersion:(p.versionChange||{}).restoredFromVersion||null,at,date:_learningDateAt(at,timeZone),kind:"approval",title:a.summary||(restore?"Restore recorded ad settings":"Analyzed ad update"),changes:linked.changes,
+        application:published?(linked.applications.length?"applied_learning":"published"):"draft",status:a.status||"UNKNOWN",published,
+        lessonIds:linked.lessons.map(l=>String(l.id)),lessons:linked.lessons,applications:linked.applications,evidenceIds:[...new Set(linked.applications.flatMap(x=>x.evidenceIds))],evidenceContext:linked.evidenceContext,
+        newCampaign:false,changeTimeKnown:published&&!!pub.at,
+        attribution:restore?"Previously saved settings were submitted to the same ad. Later results may differ because demand and auction conditions change.":"Exact reviewed changes are linked to their saved analysis and evidence. Before/after results remain observational."});
+      continue;
+    }
     const lessons=new Map(),applications=[];
     for(const g of groups) {
       const t=g.learning||{};
@@ -6828,7 +7188,7 @@ function _improvementTimeline(approvals,remedies,versions,channel,campaignId,tim
   }
   for(const v of versions) {
     const at=_learningTime(v.updatedAt),same=rows.find(r=>r.published&&r.approvalId&&v.label==="reviewed-approval:"+r.approvalId&&v.source==="console");
-    if(same) {same.version=v.version;same.changes=(v.changes||[]).length?v.changes:same.changes;continue;}
+    if(same) {same.version=v.version;if(!same.changes.length)same.changes=v.changes||[];continue;}
     rows.push({id:"version:"+v.version,version:v.version,at,date:_learningDateAt(at,timeZone),kind:"version",title:v.summary||"Recorded version",changes:v.changes||[],
       application:v.baseline?"baseline":v.changeTimeUnknown?"observed":"published",published:!v.baseline,changeTimeKnown:!v.baseline&&!v.changeTimeUnknown&&!!at,
       lessonIds:[],lessons:[],applications:[],evidenceIds:[],attribution:v.baseline?"An observed baseline, not an earlier known edit.":v.changeTimeUnknown?"A change was detected, but its exact application time is unknown.":"Google accepted this change; no exact learning application was recorded."});
@@ -8144,9 +8504,9 @@ async function dashboard() {
     // Equality-only filter needs no composite index; sort newest-first in memory.
     const ap = await f.db.collection(COL.approvals).where("status", "==", "PENDING").limit(50).get();
     const rows = [];
-    ap.forEach(d => { const x = d.data(); rows.push({ id: d.id, ...x, _ts: x.createdAt && x.createdAt.toMillis ? x.createdAt.toMillis() : 0, createdAt: undefined }); });
+    ap.forEach(d => { const x = d.data(); rows.push({ id: d.id, ...x, _ts: _learningTime(x.createdAt), createdAt: undefined }); });
     rows.sort((a, b) => b._ts - a._ts);
-    rows.slice(0, 25).forEach(r => { delete r._ts; out.pending.push(r); });
+    rows.slice(0, 25).forEach(r => { delete r._ts;if(_isAdVersionApproval(r))r.reviewHash=creativeHash(r.payload||{});out.pending.push(r); });
   } catch (e) {}
   out.stuck = [];
   try {
@@ -8276,6 +8636,7 @@ function _stable(v) {
 }
 function creativeHash(v) { return require("crypto").createHash("sha256").update(JSON.stringify(_stable(v))).digest("hex"); }
 function needsCreativeReview(item) {
+  if(_isAdVersionApproval(item))return false;
   const p=(item||{}).payload||{};
   return !!(p.designStudioSpec || ["creative","pmax","studio"].includes((item||{}).type) || (p.mutateOperations||[]).some(o=>o.assetGroupOperation||o.adGroupAdOperation||o.adOperation));
 }
@@ -8510,37 +8871,172 @@ async function reviewCreativeApproval(id, hash) {
   });return {ok:true,id};
 }
 function assertCreativeReviewed(it) {
+  if(_isAdVersionApproval(it)){versionReviewGate.assertVersionReviewed(it,creativeHash,CID);return;}
   if(!needsCreativeReview(it))return;
   const c=it.creative||{},r=c.review||{};
   if(c.schema!==CREATIVE_SCHEMA||c.engineBuild!==ENGINE_BUILD||!(c.groups||[]).length||c.groups.some(g=>!g.review||!g.review.pass)||c.phase!=="ready"||!r.at||r.payloadHash!==creativeHash(it.payload||{})||r.assetHash!==creativeHash({groups:(c.groups||[]).map(g=>g.assets||{}),logo:c.logo||null}))throw new Error("Open Review creative and approve the current copy and images before publishing.");
 }
-async function _creativeImageOps(pkg) {
-  const ops=[],groups={};let n=-900000;
-  const add=async(a)=>{const b=await _loadCreativeAsset(a),res=`customers/${CID}/assets/${n--}`;ops.push({assetOperation:{create:{resourceName:res,imageAsset:{data:b.toString("base64")}}}});return res;};
-  const logo=pkg.logo?await add(pkg.logo):null;
-  for(const g of pkg.groups.filter(g=>g.channel==="pmax")) {const a={logo,square:[],landscape:[],portrait:[]};for(const shape of ["square","landscape","portrait"]){if(!g.assets[shape])throw new Error("Reviewed image set is incomplete.");a[shape].push(await add(g.assets[shape]));}groups[g.ref]=a;}
-  return {ops,groups};
+async function _creativeImageOps(pkg, existingOps=[]) {
+  const ops=[],groups={},searchGroups={};let n=Math.min(-900000,_tempIdFloor(existingOps));
+  const designed=!!pkg.designWorkspaceId||!!(pkg.designJobs||[]).length;
+  const read=async(a,strict)=>{const b=await _loadCreativeAsset(a);if(strict){
+    if(b.length!==a.bytes||b.length>5*1024*1024)throw new Error("The reviewed generated image file changed or exceeds Google's limit.");
+    const meta=await require("sharp")(b).metadata();if(meta.width!==a.width||meta.height!==a.height)throw new Error("The saved image dimensions differ from the reviewed design.");
+  }return b;};
+  const add=async(a,strict)=>{const b=await read(a,strict),res=`customers/${CID}/assets/${n--}`;ops.push({assetOperation:{create:{resourceName:res,imageAsset:{data:b.toString("base64")}}}});return res;};
+  const logo=pkg.logo?await add(pkg.logo,designed):null;
+  for(const g of (pkg.groups||[]).filter(g=>g.channel==="pmax")) {const a={logo,square:[],landscape:[],portrait:[]};for(const shape of ["square","landscape","portrait"]){if(!(g.assets||{})[shape])throw new Error("Reviewed image set is incomplete.");a[shape].push(await add(g.assets[shape],designed||!!(g.copyReview||{}).researchHash));}groups[g.ref]=a;}
+  for(const g of (pkg.groups||[]).filter(g=>g.channel==="search"&&Object.keys(g.assets||{}).length)) {
+    if(!new RegExp("^customers/"+CID+"/adGroups/-?\\d+$").test(String(g.ref)))throw new Error("The reviewed Search image target is not an ad group in this account.");
+    const a={square:[],landscape:[]};for(const shape of ["square","landscape"]){if(!g.assets[shape])throw new Error("Reviewed Search images are incomplete.");a[shape].push(await add(g.assets[shape],true));}
+    // Search has no portrait image attachment; its saved preview remains part of the review.
+    if(g.assets.portrait)await read(g.assets.portrait,true);
+    searchGroups[g.ref]=a;
+  }
+  return {ops,groups,searchGroups};
 }
 async function materializeReviewedCreative(it) {
   assertCreativeReviewed(it);const p=it.payload||{},c=it.creative||{};
+  if(_isAdVersionApproval(it)&&p.generatedAssets&&p.generatedAssets.length){
+    const ops=[];
+    for(const entry of p.generatedAssets){
+      const bytes=await _loadCreativeAsset(entry.asset);
+      if(bytes.length!==entry.asset.bytes||bytes.length>5*1024*1024)throw new Error("The reviewed generated image file changed or exceeds Google's limit.");
+      const meta=await require("sharp")(bytes).metadata();
+      if(meta.width!==entry.asset.width||meta.height!==entry.asset.height)throw new Error("The saved image dimensions differ from the reviewed design.");
+      ops.push({assetOperation:{create:{resourceName:entry.tempResourceName,imageAsset:{data:bytes.toString("base64")}}}});
+    }
+    return ops.concat(JSON.parse(JSON.stringify(p.mutateOperations||[])));
+  }
   if(!needsCreativeReview(it))return p.mutateOperations||null;
   if(p.designStudioSpec) {const b=await buildDesignStudioPmaxCampaignOps({...p.designStudioSpec,reviewedCreative:c},{ctrl:await control()});return b.ops;}
   if(p.service||!p.mutateOperations)return null;
   const ops=JSON.parse(JSON.stringify(p.mutateOperations));
-  if(!(c.groups||[]).some(g=>g.channel==="pmax"))return ops;
-  const imageBuild=await _creativeImageOps(c),refs=new Set(Object.keys(imageBuild.groups));
-  const clean=ops.filter(o=>!(o.assetGroupAssetOperation&&o.assetGroupAssetOperation.create&&refs.has(o.assetGroupAssetOperation.create.assetGroup)&&["LOGO",...Object.values(_SHAPE_FIELD)].includes(o.assetGroupAssetOperation.create.fieldType)));
+  if(!(c.groups||[]).some(g=>g.channel==="pmax"||g.channel==="search"&&Object.keys(g.assets||{}).length))return ops;
+  const imageBuild=await _creativeImageOps(c,ops),refs=new Set(Object.keys(imageBuild.groups)),searchRefs=new Set(Object.keys(imageBuild.searchGroups));
+  const clean=ops.filter(o=>!(o.assetGroupAssetOperation&&o.assetGroupAssetOperation.create&&refs.has(o.assetGroupAssetOperation.create.assetGroup)&&["LOGO",...Object.values(_SHAPE_FIELD)].includes(o.assetGroupAssetOperation.create.fieldType))&&!(o.adGroupAssetOperation&&o.adGroupAssetOperation.create&&searchRefs.has(o.adGroupAssetOperation.create.adGroup)&&o.adGroupAssetOperation.create.fieldType==="IMAGE"));
   clean.unshift(...imageBuild.ops);
   for(const [ref,a] of Object.entries(imageBuild.groups)) {clean.push({assetGroupAssetOperation:{create:{assetGroup:ref,asset:a.logo,fieldType:"LOGO"}}});for(const [shape,field] of Object.entries(_SHAPE_FIELD))a[shape].forEach(asset=>clean.push({assetGroupAssetOperation:{create:{assetGroup:ref,asset,fieldType:field}}}));}
+  for(const [adGroup,a] of Object.entries(imageBuild.searchGroups))for(const shape of ["square","landscape"])a[shape].forEach(asset=>clean.push({adGroupAssetOperation:{create:{adGroup,asset,fieldType:"IMAGE"}}}));
   return clean;
 }
 
+// Ad Design uses the same authenticated console, saved assets and approval queue.
+let _adDesignEngine=null,_adDesignContextReader=null,_adDesignAdapters=null;
+function _adDesignWorkspaceRef(id){if(!/^[a-zA-Z0-9_-]{1,100}$/.test(String(id||"")))throw new Error("Invalid design workspace.");return fb().db.collection(COL.state).doc("adDesign").collection("workspaces").doc(id);}
+async function _verifyAdDesignContext(workspace){
+  const c=workspace.context||{};if(c.generationAllowed===false)throw new Error("Select an exact researched product offer before generating an ad.");
+  if(c.approvalId){const s=await fb().db.collection(COL.approvals).doc(c.approvalId).get();if(!s.exists||s.data().status!=="PENDING"||(s.data().creativeLease||{}).until>Date.now())throw new Error("This approval is no longer available for design.");if(c.approvalPayloadHash&&creativeHash(s.data().payload||{})!==c.approvalPayloadHash)throw new Error("The approval changed. Refresh its sources before generating another design.");}
+  if(!c.campaignId&&!c.approvalId){
+    const state=await fb().db.collection(COL.state).doc("opportunities").get();
+    _pmaxResearchCandidate(state.exists?state.data():null,c);
+    const ids=[...new Set((c.itemIds||[]).map(String))],live=await merchantProducts({force:true,itemIds:ids});
+    const eligible=new Set(live.filter(p=>_pmaxIsEligible(p)&&(!c.feedLabel||!p.feedLabel||String(c.feedLabel).toUpperCase()===String(p.feedLabel).toUpperCase())).map(p=>String(p.itemId).toLowerCase()));
+    if(ids.some(id=>!eligible.has(id.toLowerCase())))throw new Error("A selected offer is no longer eligible. Refresh product research before generating its design.");
+  }
+}
+async function _adDesignApprovalReview(id){
+  const s=await fb().db.collection(COL.approvals).doc(String(id)).get();if(!s.exists)return {required:false,ready:false,message:"Approval is unavailable."};const item=s.data();
+  if(_isAdVersionApproval(item)){const status=await adVersionApprovalStatus({id});return {required:!status.reviewed,ready:!status.stale,hash:status.reviewHash,reviewed:status.reviewed,status:item.status,action:"reviewAdVersion"};}
+  const c=item.creative||{},hash=creativeHash(item.payload||{}),ready=c.phase==="ready"&&c.payloadHash===hash,reviewed=ready&&(c.review||{}).payloadHash===hash;
+  return {required:!reviewed,ready,hash:ready?hash:null,reviewed:!!reviewed,status:item.status,action:"reviewCreative",message:ready?null:"Finish designing every ad group in this proposal before approving it."};
+}
+async function _adDesignPreviewApproval(item){
+  if(!item.payload||!item.payload.generatedAssets||!item.payload.generatedAssets.length)return item;
+  const copy=JSON.parse(JSON.stringify(item)),urls=new Map();
+  for(const entry of item.payload.generatedAssets)urls.set(entry.asset.path+"|"+entry.asset.hash,await _designEngineAdapters().signAsset(entry.asset));
+  const visit=value=>{if(!value||typeof value!=="object")return;if(value.path&&value.hash&&urls.has(value.path+"|"+value.hash))value.url=urls.get(value.path+"|"+value.hash);Object.values(value).forEach(visit);};visit(copy.payload);
+  return copy;
+}
+function _designEngineAdapters(){if(!_adDesignAdapters){const formats=require("./googleAdsAdDesign").FORMATS;_adDesignAdapters=require("./googleAdsAdDesignAdapters").createAdDesignAdapters({fb,env:ENV,fetch,creativeFetch:_creativeFetch,formats});}return _adDesignAdapters;}
+async function _finishAdDesign({workspaceId,jobId,owner,workspace,group,product,result}){
+  const f=fb(),wsRef=_adDesignWorkspaceRef(workspaceId),context=workspace.context||{};
+  const own=async tx=>{const s=await tx.get(wsRef);if(!s.exists||!(s.data().job)||s.data().job.id!==jobId||s.data().job.owner!==owner||Number(s.data().job.leaseUntil)<Date.now())throw new Error("This design no longer owns its active job. Saved outputs are retained.");return s.data();};
+  if(!_copyValid(result.copy,group.channel==="pmax")||!result.quality||result.quality.pass!==true||result.quality.productFaithful!==true||result.quality.mobileReadable!==true||Number(result.quality.score)<85)throw new Error("This design did not pass product, copy and image quality review.");
+  if(context.campaignId){
+    await _guardCampaignVersion({campaignId:context.campaignId,expectedVersion:workspace.sourceVersion,snapshotHash:workspace.snapshotHash});
+    const payload=require("./googleAdsAdDesign").buildVersionDesignPayload({workspaceId,jobId,workspace,group,product,result,customerId:CID});
+    const applications=result.learningApplications||[],lessons=[...new Map(applications.filter(a=>a.lessonSnapshot).map(a=>[String(a.lessonId),a.lessonSnapshot])).values()];
+    const evidence=((result.evidence||{}).sources||[]).map(s=>({id:s.id,domain:s.domain||s.source||"Research",label:s.label||s.title||s.id,status:s.status,detail:s.detail||"Saved product-specific research",checkedAt:s.checkedAt||result.evidence.researchedAt}));
+    const known=new Set(evidence.filter(s=>s.status==="available").map(s=>s.id));
+    payload.versionChange.changes.forEach(c=>{c.target=group.ref;c.evidenceIds=(result.sourceIds||[]).filter(id=>known.has(id));c.lessonIds=[...new Set(applications.filter(a=>a.field!=="images"&&JSON.stringify(c.after).includes(String(a.after))).map(a=>String(a.lessonId)))];c.executable=true;});
+    payload.analysis={schema:1,analysisId:jobId,model:"gpt-6-astra",channel:group.channel,sourceVersion:workspace.sourceVersion,summary:result.brief.rationale,range:context.range||null,evidence,lessonSnapshots:lessons,limitations:result.evidence&&result.evidence.warnings||[]};
+    const item={type:"adDesignUpdate",summary:"Designed ad update · "+product.title+" · v"+workspace.sourceVersion+" → v"+(workspace.sourceVersion+1),payload,vetted:false,status:"PENDING",creative:null,createdAt:f.FV.serverTimestamp()};
+    versionReviewGate.assertVersionOperationScope(item,workspace.sourceSnapshot,CID);
+    const approvalId="design-"+creativeHash({workspaceId,jobId}).slice(0,48),ref=f.db.collection(COL.approvals).doc(approvalId);
+    await f.db.runTransaction(async tx=>{await own(tx);const prior=await tx.get(ref);if(prior.exists){if((prior.data().payload.adDesign||{}).jobId!==jobId)throw new Error("The approval belongs to another design.");return;}tx.set(ref,item);});
+    return {approvalId};
+  }
+  let approvalId=context.approvalId;
+  if(!approvalId){
+    const selected=(product.offerIds||[product.itemId]).filter(Boolean).filter(id=>(context.itemIds||[]).includes(id));
+    if(!selected.length)throw new Error("Choose a verified offer from this researched opportunity before generating a campaign draft.");
+    const id="design-"+creativeHash({workspaceId,jobId}).slice(0,48);
+    const built=await generatePmaxApproval({...context,itemIds:selected,productTitles:[product.title]}, {reviewedAdCopy:result.copy,approvalId:id,designId:jobId,guard:own});approvalId=built.approvalId;
+  }
+  const ref=f.db.collection(COL.approvals).doc(String(approvalId)),stored=await ref.get();if(!stored.exists)throw new Error("The design approval could not be found.");
+  const item=stored.data(),payload=JSON.parse(JSON.stringify(item.payload||{})),sourceHash=creativeHash(payload),allGroups=_creativeGroups(item);
+  let target=allGroups.find(g=>g.ref===group.ref);if(!target&&allGroups.length===1)target=allGroups[0];
+  if(!target)throw new Error("Choose the exact ad group in this proposal before adding its generated design.");
+  let pkg=item.creative&&item.creative.sourceHash===sourceHash?JSON.parse(JSON.stringify(item.creative)):{schema:CREATIVE_SCHEMA,engineBuild:ENGINE_BUILD,groups:[],sourceHash};
+  if((pkg.designJobs||[]).includes(jobId)){if(pkg.logo)result.logo=pkg.logo;return {approvalId};}
+  const evidence=result.evidence||{},lessons=(result.learningApplications||[]).map(a=>a.lessonSnapshot).filter(Boolean);
+  const completed={...target,copy:result.copy,brief:result.brief,assets:result.assets,review:result.quality,copyReview:{pass:true,provider:"gpt-6-astra",researchHash:evidence.hash},learningApplications:result.learningApplications||[],sourceTitle:product.title,sourceUrl:(product.images||[]).find(x=>x.id===workspace.settings.sourceImageId)?.url||product.url,learning:{schema:1,channel:target.channel,stage:"creative_guidance",includedAt:Date.now(),lessonIds:lessons.map(l=>String(l.id)),lessonSnapshots:lessons}};
+  pkg.groups=(pkg.groups||[]).filter(g=>g.key!==target.key).concat(completed);pkg.groups=allGroups.map(g=>pkg.groups.find(x=>x.key===g.key)).filter(Boolean);
+  const ready=pkg.groups.length===allGroups.length&&pkg.groups.every(g=>g.review&&g.review.pass===true);
+  if(ready){_putCreativeCopy(payload,pkg.groups);if(pkg.groups.some(g=>g.channel==="pmax")&&!pkg.logo){
+    const svg='<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600"><rect width="600" height="600" fill="#fffefb"/><text x="300" y="288" text-anchor="middle" fill="#221f1b" font-family="DejaVu Serif,serif" font-size="78" letter-spacing="7">BRITES</text><text x="300" y="345" text-anchor="middle" fill="#69563b" font-family="DejaVu Sans,sans-serif" font-size="27" letter-spacing="9">JEWELRY</text></svg>';
+    pkg.logo=await _saveCreativeAsset(workspaceId,await require("sharp")(Buffer.from(svg)).jpeg({quality:95}).toBuffer(),"brand_logo",{width:600,height:600,kind:"brand logo"});
+  }}
+  if(pkg.logo)result.logo=pkg.logo;
+  payload.meta={...(payload.meta||{}),adDesignWorkspaceId:workspaceId};pkg={...pkg,schema:CREATIVE_SCHEMA,engineBuild:ENGINE_BUILD,phase:ready?"ready":"paused",progress:{pct:ready?100:Math.round(pkg.groups.length/allGroups.length*90),label:ready?"Every ad group is ready for your exact review":"Design the remaining ad groups to complete this proposal"},sourceHash:creativeHash(payload),payloadHash:ready?creativeHash(payload):null,review:null,designJobs:[...new Set([...(pkg.designJobs||[]),jobId])],designWorkspaceId:workspaceId};
+  await f.db.runTransaction(async tx=>{const currentWorkspace=await own(tx);const latest=await tx.get(ref);if(!latest.exists||latest.data().status!=="PENDING"||(latest.data().creativeLease||{}).until>Date.now()||creativeHash(latest.data().payload||{})!==sourceHash)throw new Error("The approval changed while this design was being saved. Refresh its sources.");if(context.approvalPayloadHash&&context.approvalPayloadHash!==sourceHash)throw new Error("The source approval changed after this design began.");tx.update(ref,{payload,creative:JSON.parse(JSON.stringify(pkg)),vetted:false,status:"PENDING"});tx.update(wsRef,{context:{...currentWorkspace.context,approvalId,approvalPayloadHash:creativeHash(payload)}});});
+  return {approvalId};
+}
+function _designEngine(){
+  if(!_adDesignEngine){
+    _adDesignContextReader=require("./googleAdsAdDesignContext").createAdDesignContext({fb,COL,shopifyGql,verifiedBasis:_verifiedCampaignAnalysisBasis,creativeGroups:_creativeGroups,creativeHash,reportContext:_reportContext,validatedRange:_validatedReportRange});
+    const research=require("./googleAdsAdDesignResearch").createAdDesignResearch({creativeFetch:_creativeFetch,copyValid:_copyValid,dailyStats,gaql,playbookSlice,storeSalesEvidence,conversionHealth,merchantProducts});
+    _adDesignEngine=require("./googleAdsAdDesign").createAdDesignService({fb,COL,env:ENV,control,..._designEngineAdapters(),loadContext:input=>_adDesignContextReader.loadContext(input),verifyBasis:_verifiedCampaignAnalysisBasis,verifyContext:_verifyAdDesignContext,research,saveAsset:_saveCreativeAsset,loadAsset:_loadCreativeAsset,finish:_finishAdDesign,reviewStatus:_adDesignApprovalReview});
+  }return _adDesignEngine;
+}
+async function adDesignWorkspace(input){return _designEngine().workspace(input);}
+async function saveAdDesign(input){return _designEngine().save(input);}
+async function uploadAdDesignReference(input){return _designEngine().upload(input);}
+async function startAdDesign(input){return _designEngine().start(input);}
+async function adDesignStatus(input){return _designEngine().status(input);}
+async function runAdDesign(input){return _designEngine().run(input);}
+async function adDesignProductImages({workspaceId,productId,after}={}){
+  _designEngine();const f=fb(),ref=_adDesignWorkspaceRef(workspaceId),saved=await ref.get();if(!saved.exists)throw new Error("Design workspace was not found.");const w=saved.data(),key=require("crypto").createHash("sha256").update(String(productId)).digest("hex").slice(0,32),pRef=ref.collection("sourceSets").doc(w.sourceSetId).collection("products").doc(key),s=await pRef.get();
+  if(!s.exists)throw new Error("Choose a product from this workspace.");if((w.job||{}).leaseUntil>Date.now())throw new Error("Wait for the current design before loading more source photos.");
+  const prior=s.data();if(after&&after!==prior.nextCursor)throw new Error("The product gallery changed. Refresh its current photos.");
+  const page=await _adDesignContextReader.loadProductImages({productId,after:after||null,all:true});
+  await f.db.runTransaction(async tx=>{const latest=await tx.get(ref),p=await tx.get(pRef);if(!latest.exists||latest.data().sourceSetId!==w.sourceSetId||(latest.data().job||{}).leaseUntil>Date.now()||!p.exists)throw new Error("The source gallery changed while more photos were loading.");const images=[...new Map([...(p.data().images||[]),...(page.images||[])].map(x=>[x.id,x])).values()];tx.set(pRef,{...p.data(),...page,images,error:null},{merge:true});});return adDesignStatus({workspaceId});
+}
+
+// Explicit Analyze Ad requests use a dedicated, version-bound Astra workflow.
+let _adAnalysisEngine = null;
+function _analysisEngine() {
+  if (!_adAnalysisEngine) _adAnalysisEngine = require("./googleAdsAdAnalysis").makeAnalysisEngine({
+    fb, COL, CID, env: ENV, fetch, control, reportContext: _reportContext,
+    validatedRange: _validatedReportRange, verifiedBasis: _verifiedCampaignAnalysisBasis,
+    dailyStats, campaignImprovement, conversionHealth, gaql, merchantProducts, storeSalesEvidence,
+    creativeFetch: _creativeFetch, copyValid: _copyValid, invalidateImprovement: _invalidateCampaignImprovement,
+    inspectMerchant: args => require("./googleAdsMerchantVersion").createMerchantVersionService({fetch,mintMerchantToken,merchantCenterId,env:ENV}).inspect(args)
+  });
+  return _adAnalysisEngine;
+}
+async function beginAnalyzeAd(input) { return _analysisEngine().beginAnalyzeAd(input); }
+async function analyzeAdStatus(input) { return _analysisEngine().analyzeAdStatus(input); }
+async function runAnalyzeAd(input) { return _analysisEngine().runAnalyzeAd(input); }
+
 module.exports = {
+  adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, uploadAdDesignReference, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages,
   reviseCreativeApproval, markApprovalApproved, needsCreativeReview, prepareCreativeApproval, creativeApprovalStatus, reviewCreativeApproval, assertCreativeReviewed, creativeHash,
   COL, V, CID, OPPORTUNITY_ENGINE_VERSION, DESIGN_STUDIO_ENGINE_VERSION, DESIGN_STUDIO_URL,
   control, mintToken, gaql, mutate, mutateAll,
   enqueueConversion, uploadConversions, enqueueConversionAdjustment, uploadConversionAdjustments, recordRefund, conversionHealth, gAdsTime,
-  recordOrderEvent, recentOrders, storeSignals, clearOrderLog, backfillOrders,
+  recordOrderEvent, recentOrders, storeSignals, storeSalesEvidence, clearOrderLog, backfillOrders,
   ledger, clearLedger, enqueueApproval, applyApproval, applyApprovalById: applyApproval, retryStuckApprovals, sanitizeOps,
   generateRSAAssets, buildSearchCampaignOps, buildCampaignAssets, planCampaign, accountCvr, collectionProfiles, productSalesMap, bumpBestSellers, keywordResearch, keywordResearchPool, researchOpportunity, mergeKeywordResearch, keywordDiag, metricsRange, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,
@@ -8552,7 +9048,7 @@ module.exports = {
   loadCalendar, dueEvents,
   measure, pruneAssets, mineSearchTerms, reallocateBudgets, anomalyCheck,
   enforceBudgetCeiling, monthlySpendGuard,
-  dashboard, campaignVersions, campaignImprovement, createImprovementDraft,
+  dashboard, campaignVersions, campaignVersionDetail, createCampaignRestoreDraft, campaignImprovement, createImprovementDraft, beginAnalyzeAd, analyzeAdStatus, runAnalyzeAd,
   fetchDiagnostics, runDiagnostics, getDiagnostics, applyGoogleRecommendation, dismissGoogleRecommendation,
   dailyStats, applyRemedy, remedyHistory, adReviewStatus,
   getPlaybook, learningOverview, playbookSlice, distillLessons, playbookVersions, restorePlaybook, setGenStatus, getGenStatus,
