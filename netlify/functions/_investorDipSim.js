@@ -11,13 +11,14 @@
 const A = require("./_investorAdmin");
 const M = require("./_investorMarket");
 const DIP = require("./_investorDipReversal");
+const BARS = require("./_investorBarStore");
 const crypto = require("crypto");
 
 const VERSION = "dip-sim.v1";
 const COL = "InvestorAI_DipSimulations";
 const SLIPPAGE = 0.0005;          // 5 bps each way
 const FEE_PER_SHARE = 0.005;
-const CHUNK_DAYS = 5;             // trading days fetched per symbol per request
+const CHUNK_DAYS = 10;            // trading days replayed per segment step (one library month covers ~21)
 const MAX_TRADES_STORED = 2500;
 
 function sha(s) { return crypto.createHash("sha256").update(String(s)).digest("hex"); }
@@ -171,7 +172,7 @@ async function advance(D, simId, { budgetMs = 11 * 60000, fetchImpl = globalThis
       const chunk = doc.dates.slice(doc.cursor, doc.cursor + CHUNK_DAYS);
       const barsBySymbolByDate = {};
       for (const symbol of doc.symbols) {
-        try { const byDate = await fetchMinuteBars(symbol, chunk[0], chunk[chunk.length - 1], { fetchImpl }); for (const [date, bars] of Object.entries(byDate)) (barsBySymbolByDate[date] = barsBySymbolByDate[date] || {})[symbol] = bars; }
+        try { const byDate = await BARS.barsFor(D, symbol, chunk[0], chunk[chunk.length - 1], { fetchImpl }); for (const [date, bars] of Object.entries(byDate)) (barsBySymbolByDate[date] = barsBySymbolByDate[date] || {})[symbol] = bars; }
         catch (e) { doc.warnings = (doc.warnings || []).concat([`${symbol} ${chunk[0]}: ${String(e.message).slice(0, 80)}`]).slice(-30); }
       }
       for (const date of chunk) {

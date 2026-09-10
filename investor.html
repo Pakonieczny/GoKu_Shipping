@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-SvmpnUefR2G0L/9uJfGldxNusuri50JHkPKE+mBm4dg='; style-src 'self' 'sha256-GLCzjVsswEblsA79UF0j0YtbA6N7W+gPlkJcclt/pv4='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-vWbvQV3XjG1MyBBbi43FuW2cw+20jwPPjph3UU8Ydlc='; style-src 'self' 'sha256-bj4DZjwDsxYC44LM9zLibXiInrSfOBArO6FUayBKXmw='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -652,6 +652,11 @@ details.fold>summary{list-style:none}details.fold>summary::marker{content:"";dis
 .dipsim.selected{outline:2px solid var(--slate-line)}
 #dipSimDetail .livechart__wrap{height:260px}
 #dipSimDetail .chartwrap canvas{width:100%;height:100%;display:block}
+
+.libbar{display:flex;align-items:center;gap:14px;margin:6px 0 10px}
+.libbar__pct{font-size:26px;font-weight:650;letter-spacing:-.03em;font-variant-numeric:tabular-nums;min-width:64px}
+.libbar__body{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.progress--lib{height:10px}
 @media (prefers-reduced-motion:reduce){.livedot.on{animation:none}.flash-up,.flash-down{animation:none}}
 @media (max-width:640px){.livechart__big{font-size:24px}.livechart__wrap{height:200px}.livechart--nav .livechart__wrap{height:220px}}
 </style>
@@ -794,9 +799,10 @@ details.fold>summary{list-style:none}details.fold>summary::marker{content:"";dis
 </div></details>
 </div>
 <div class="simgroup simgroup--dip" id="simGroupDip"><div class="simgroup__h"><span class="lanetag lane-dip"><svg aria-hidden="true" class="ic sm"><use href="#i-learning"/></svg><span>Dip trader simulation</span></span><span class="tiny muted">Replays the dip rules over past minutes · no AI, no AI cost · uses your current dip settings</span></div>
+<div class="card" id="barLibrary"></div>
 <details class="sim-section" id="simSectionDipSetup" open data-fold="dipSimSetup"><summary><span class="k">SET UP</span><h3>Start a dip simulation</h3><svg aria-hidden="true" class="ic chev"><use href="#i-chevron"/></svg></summary><div class="sim-section-body"><form class="card" id="dipSimForm">
   <div class="sim-selection">
-    <label class="field">Companies to watch<select id="dipSimSource"><option value="shortlist">Latest daily review shortlist (up to 50)</option><option value="run">A saved AI simulation's shortlist…</option><option value="custom">My own list</option></select></label>
+    <label class="field">Companies to watch<select id="dipSimSource"><option value="universe">Every company in the universe (about 300)</option><option value="shortlist">Latest daily review shortlist (up to 50)</option><option value="run">A saved AI simulation's shortlist…</option><option value="custom">My own list</option></select></label>
     <label class="field" id="dipSimRunField" hidden>Saved AI simulation<select id="dipSimRun"></select></label>
     <label class="field" id="dipSimCustomField" hidden>Symbols (comma separated, up to 50)<input type="text" id="dipSimSymbols" placeholder="NVDA, AMD, TSLA …"></label>
     <label class="field">From<input type="date" id="dipSimFrom" required></label>
@@ -1128,7 +1134,7 @@ var ACTION_SPECS = {
   freezeBuys: M(false, true, "version", "confirm_with_reason", true), resumeBuys: M(true, false, "version", "reauth"),
   emergencyStop: M(false, true, "none", "confirm_with_reason", true), resumeSystem: M(true, false, "version", "reauth"),
   activateAccountMode: M(true, false, "version", "reauth"), deactivateAccountMode: M(true, true, "version", "reauth"),
-  setBudget: M(false, false, "version", "confirm"), dipSettingsSave: M(false, false, "none", "none"), dipSimulationStart: M(false, false, "none", "none"), dipSimulationControl: M(false, false, "none", "confirm"), setRiskMandate: M(true, false, "version", "reauth"), setEmergencyRiskPolicy: M(true, false, "preview", "reauth_with_preview"),
+  setBudget: M(false, false, "version", "confirm"), dipSettingsSave: M(false, false, "none", "none"), dipSimulationStart: M(false, false, "none", "none"), dipSimulationControl: M(false, false, "none", "confirm"), barRepositoryBuild: M(false, false, "none", "none"), setRiskMandate: M(true, false, "version", "reauth"), setEmergencyRiskPolicy: M(true, false, "preview", "reauth_with_preview"),
   setMarketConfig: M(true, false, "version", "reauth"), confirmSplit: M(true, false, "version", "reauth"), confirmCashDividend: M(true, false, "version", "reauth"),
   requestAuditExport: M(false, false, "none", "confirm"), createPaperAccount: M(true, false, "absent", "reauth"), previewPaperAccountReset: M(false, false, "none", "none"),
   resetPaperAccount: M(true, false, "preview", "reauth_with_preview"), reconcile: M(false, false, "none", "none"), freezeUniverse: M(true, false, "none", "reauth"),
@@ -1643,7 +1649,7 @@ function startPolling() {
   POLL.quotes = setInterval(function(){ var open = marketOpen(), due = Date.now() - LIVE.quotesAt >= (open ? 4500 : 14500); if (due) pollQuotes(); if(open && drawer.open && drawer.panel==="c-chart" && drawer.days===0 && $("chartAuto").checked && Date.now() - (drawer.intradayAt || 0) >= 14500){drawer.intradayAt = Date.now(); loadCompanyIntraday();} }, 5000);
   POLL.portfolio = setInterval(function () { if (document.hidden || $("app").hidden || route.view !== "portfolio") return; loadPortfolio(); }, 10000);
   POLL.charts = setInterval(holdChartsTick, 5000);
-  POLL.dipsim = setInterval(function () { if (document.hidden || $("app").hidden || route.view !== "simulation") return; var active = DIPSIM.items.some(function (x) { return x.status === "running" || x.status === "queued"; }); if (active || Date.now() - DIPSIM.at > 30000) loadDipSims(); }, 5000);
+  POLL.dipsim = setInterval(function () { if (document.hidden || $("app").hidden || route.view !== "simulation") return; var active = DIPSIM.items.some(function (x) { return x.status === "running" || x.status === "queued"; }); if (active || Date.now() - DIPSIM.at > 30000) loadDipSims(); var lib = BARLIB.data, building = lib && (lib.status === "running" || lib.status === "queued"); if (building || Date.now() - BARLIB.at > 60000) loadBarLibrary(); }, 5000);
   POLL.dip = setInterval(function () { if (document.hidden || $("app").hidden) return; var d = getRes("dip"), on = !!(d && d.settings && d.settings.enabled); if ((route.view === "manager" && (on || Date.now() - (DIPUI.at || 0) > 30000)) || (route.view === "system" && Date.now() - (DIPUI.at || 0) > 30000)) loadDip(); }, 5000);
   POLL.session = setInterval(sessionRefreshTick, 20 * 60 * 1000);
 }
@@ -3133,6 +3139,36 @@ function renderDipSimDetail() {
   setText("dipSimWarn", (d.warningsList || []).length ? "Price data notes: " + d.warningsList.slice(0, 5).join(" · ") : "");
 }
 
+
+/* ── 17e. Historical price library (built once, replayed forever) ──────── */
+var BARLIB = { data: null, at: 0, loading: false, busy: false };
+async function loadBarLibrary(force) {
+  if (BARLIB.loading) return; if (!force && Date.now() - BARLIB.at < 3000) return;
+  BARLIB.loading = true;
+  try { var d = await loadRes("barLib", "barRepositoryStatus", {}); if (d) { BARLIB.data = d; BARLIB.at = Date.now(); } }
+  catch (e) { /* keep the last status */ }
+  finally { BARLIB.loading = false; renderBarLibrary(); }
+}
+async function barLibraryCommand(command) {
+  if (BARLIB.busy) return; BARLIB.busy = true;
+  try { var r = await runMutation({ action: "barRepositoryBuild", params: { command: command }, silent: true, title: "Price library" }); if (r) { toast(command === "start" ? "Building the price library in the background. You can leave this page." : "Library build paused.", { icon: "check" }); await loadBarLibrary(true); } }
+  catch (e) { toast(e.message || "Could not update the library", { icon: "warn" }); }
+  finally { BARLIB.busy = false; }
+}
+function renderBarLibrary() {
+  var host = $("barLibrary"); if (!host) return;
+  var d = BARLIB.data;
+  if (!d) { setChildren(host, [cardHead("Historical price library", "learning"), stateBox("loading", "Checking the price library…")]); return; }
+  var pct = d.total ? Math.min(100, Math.round(d.done / d.total * 100)) : 0, running = d.status === "running" || d.status === "queued", remaining = Math.max(0, d.total - d.done);
+  var etaMin = running && d.ratePerMin ? Math.round(remaining / d.ratePerMin) : null;
+  var statusText = d.status === "complete" ? "Complete · every company, five years, one-minute prices" : running ? (d.current ? "Fetching " + d.current.symbol + " · " + d.current.month : "Starting…") + (etaMin != null ? " · about " + (etaMin > 90 ? Math.round(etaMin / 60) + " h" : etaMin + " min") + " left" : "") : d.status === "paused" ? "Paused · resume any time" : d.status === "failed" ? "Stopped: " + (d.note || "see notes below") : "Not built yet";
+  var fill = el("div", { class: "progress progress--lib" }, el("div", { class: "progress__bar", style: "width:" + Math.max(pct ? 1 : 0, pct) + "%" }));
+  setChildren(host, [el("div", { class: "card__h" }, el("h3", null, icon("learning"), " Historical price library"), el("span", { class: "sub" }, running ? el("span", { class: "livestat" }, liveDot("on"), el("span", { class: "livestat__t", text: "building" })) : el("span", { text: d.updatedAtMs ? "updated " + ageText(new Date(Number(d.updatedAtMs)).toISOString()) : "" }))),
+    el("div", { class: "libbar" }, el("div", { class: "libbar__pct pnl " + (d.status === "complete" ? "up" : ""), text: pct + "%" }), el("div", { class: "libbar__body" }, fill, el("div", { class: "tiny muted", text: fmtInt(d.done) + " of " + fmtInt(d.total) + " company-months · " + d.symbols + " companies × " + d.months + " months (" + d.oldestMonth + " to " + d.newestMonth + ") · " + statusText }))),
+    el("div", { class: "actions" }, running ? actionBtn("Pause", "sm ghost", function () { barLibraryCommand("pause"); }) : actionBtn(d.status === "complete" ? "Refresh newest month" : d.done ? "Resume building" : "Build the library", "sm gold", function () { barLibraryCommand("start"); }), el("span", { class: "tiny muted", text: d.status === "complete" ? "Simulations replay from the library instantly; new months are added as they finish." : "First build takes a couple of hours in the background. Simulations you start before it finishes fetch what they need on the fly and add it to the library." })),
+    d.recentErrors && d.recentErrors.length ? el("div", { class: "tiny muted", text: "Notes: " + d.recentErrors.join(" · ") }) : null]);
+}
+
 /* ── 18. Portfolio view ─────────────────────────────────────────────────── */
 async function loadPortfolio(fresh) {
   if (fresh || !getRes("portfolio")) renderPortfolio(true);
@@ -3546,7 +3582,7 @@ async function loadSimulation(){
  finally{clearTimeout(timer);if(generation===(simUI.generation||0)){simUI.loading=false;simUI.pollController=null;}}
  // A slow detail request must not block updates to the other simulation cards.
  if(simUI.selected)loadSimDetail();
- loadDipSims(); dipSimSourceOptions();
+ loadDipSims(); dipSimSourceOptions(); loadBarLibrary();
 }
 function simPreparationItem(item){
  var stateNames={complete:'Complete',working:'Working',waiting:'Waiting for source',queued:'Queued',starting:'Starting worker',pending:'Not started',failed:'Needs attention',paused:'Paused — saved'};

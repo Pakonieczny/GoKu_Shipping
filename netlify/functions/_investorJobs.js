@@ -76,6 +76,7 @@ const TASKS = Object.freeze({
   execute:             { targetFunction: "investorExecution-background", category: "execute",   heavy: false, engine: "manager" },
   dip_watch:           { targetFunction: "investorDip-background",       category: "event",     heavy: false, engine: "manager" },
   dip_simulation:      { targetFunction: "investorDipSim-background",    category: "event",     heavy: false, engine: "manager" },
+  bar_repository:      { targetFunction: "investorBars-background",      category: "event",     heavy: false, engine: "manager" },
   postclose:           { targetFunction: "investorPostclose-background", category: "postclose", heavy: true,  engine: "manager" },
   archive:             { targetFunction: "investorArchive-background",   category: "postclose", heavy: true,  engine: "manager" },
   audit_export:        { targetFunction: "investorArchive-background",   category: "postclose", heavy: true,  engine: "manager" },

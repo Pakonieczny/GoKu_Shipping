@@ -136,7 +136,7 @@ function controlCapabilities(ctrl, { attested = attestationOk(ctrl), reconciled 
   caps.push(em === "ENGAGED" || em === "RECOVERING" ? on("resumeSystem") : off("resumeSystem", "emergency state is clear"));
   caps.push(mode === "OBSERVE" ? (attested ? on("activateAccountMode") : off("activateAccountMode", "deployed build attestation failing")) : off("activateAccountMode", `account mode is ${mode}`));
   caps.push(mode === "PAPER_AI" ? on("deactivateAccountMode") : off("deactivateAccountMode", `account mode is ${mode}`));
-  for (const a of ["setBudget", "setRiskMandate", "setEmergencyRiskPolicy", "setMarketConfig", "freezeUniverse", "resolveCiks", "reconcile", "requestAuditExport", "createPaperAccount", "previewPaperAccountReset", "dipSettingsSave", "dipSimulationStart", "dipSimulationControl"]) caps.push(on(a));
+  for (const a of ["setBudget", "setRiskMandate", "setEmergencyRiskPolicy", "setMarketConfig", "freezeUniverse", "resolveCiks", "reconcile", "requestAuditExport", "createPaperAccount", "previewPaperAccountReset", "dipSettingsSave", "dipSimulationStart", "dipSimulationControl", "barRepositoryBuild"]) caps.push(on(a));
   caps.push(enabled ? on("resetPaperAccount") : off("resetPaperAccount", "account is in OBSERVE mode"));
   return caps;
 }
@@ -1481,12 +1481,15 @@ const MUTATIONS = {
       symbols = (run && run.shortlist && run.shortlist.symbols) || [];
       source = { kind: "shortlist", date: (ctx.control && ctx.control.lastManagerRunDate) || null, label: "Latest daily review shortlist" };
       if (!symbols.length) throw typed("SEMANTIC_REJECTED", "no completed daily review has saved a shortlist yet");
+    } else if (params.source === "universe") {
+      symbols = require("./_investorBarStore").universeSymbols();
+      source = { kind: "universe", label: `Every company in the universe (${symbols.length})` };
     } else {
       symbols = params.symbols || [];
       source = { kind: "custom", label: "Your list" };
       if (!symbols.length) throw typed("SEMANTIC_REJECTED", "enter at least one symbol");
     }
-    symbols = [...new Set(symbols.map((s) => String(s).toUpperCase()))].slice(0, 50);
+    symbols = [...new Set(symbols.map((s) => String(s).toUpperCase()))].slice(0, params.source === "universe" ? 400 : 50);
     const settings = DIP.normalizeSettings(ctx.control && ctx.control.dip);
     const today = require("./_investorMarket").sessionState(new Date(ctx.nowMs)).date;
     if (params.to >= today) throw typed("SEMANTIC_REJECTED", "the range must end before today; today's bars are still being written");
@@ -1496,6 +1499,18 @@ const MUTATIONS = {
     try { const K = require("./investorKick"); const jref = await D.col(D.COL.jobs).doc(job.jobId).get(); if (K.dispatchJob && jref.exists) await K.dispatchJob(jref.data(), { admin: D, jobs: J }); } catch (e) { /* the kick dispatches it within a minute */ }
     await writeAudit(D, { action: "dipSimulationStart", actorId: ctx.actorId, accountId: ctx.accountId, mutationId: ctx.mutationId, reason: env.auditReason || "dip simulation", after: { simId: doc.simId, symbols: symbols.length, from: params.from, to: params.to }, correlationId: ctx.correlationId, nowMs: ctx.nowMs }).catch(() => {});
     return { data: { simId: doc.simId, symbols, days: doc.dates.length, jobId: job.jobId, note: "replays stored one-minute prices with the current dip settings; no AI is used" } };
+  },
+  /* the historical price library: five years of one-minute bars for every company, built once in the background */
+  async barRepositoryBuild(params, ctx, env) {
+    const D = ctx.admin, BARS = require("./_investorBarStore");
+    if (params.command === "pause") { await BARS.setStatus(D, { status: "paused", note: "paused by " + ctx.actorId }); return { data: await BARS.status(D) }; }
+    const st = await BARS.status(D);
+    await BARS.setStatus(D, { status: st.status === "complete" ? "complete" : "queued", note: null, startedAtMs: st.startedAtMs || ctx.nowMs });
+    const J = jobsFor(D);
+    const job = await J.enqueueOnce({ task: "bar_repository", dedupeId: `library_${Math.floor(ctx.nowMs / 60000)}`, accountId: ctx.accountId, priority: 60, payload: { accountId: ctx.accountId, segment: 0 }, createdBy: `apiV2:${ctx.actorId}` });
+    try { const K = require("./investorKick"); const jref = await D.col(D.COL.jobs).doc(job.jobId).get(); if (K.dispatchJob && jref.exists) await K.dispatchJob(jref.data(), { admin: D, jobs: J }); } catch (e) { /* the kick dispatches it within a minute */ }
+    await writeAudit(D, { action: "barRepositoryBuild", actorId: ctx.actorId, accountId: ctx.accountId, mutationId: ctx.mutationId, reason: env.auditReason || "price library build", after: { jobId: job.jobId }, correlationId: ctx.correlationId, nowMs: ctx.nowMs }).catch(() => {});
+    return { data: { ...(await BARS.status(D)), jobId: job.jobId } };
   },
   async dipSimulationControl(params, ctx) {
     const out = await require("./_investorDipSim").control(ctx.admin, ctx.actorId, params.simId, params.command);
@@ -1730,6 +1745,7 @@ const MUTATIONS = {
 const READS = {
   dipStatus: async ({ ctx }) => ({ data: await require("./_investorDipReversal").status(ctx.admin, ctx.accountId, ctx.control && ctx.control.dip) }),
   dipSimulations: async ({ ctx }) => ({ data: { items: await require("./_investorDipSim").list(ctx.admin, ctx.actorId), asOf: new Date(ctx.nowMs).toISOString() } }),
+  barRepositoryStatus: async ({ ctx }) => ({ data: await require("./_investorBarStore").status(ctx.admin) }),
   dipSimulationDetail: async ({ params, ctx }) => ({ data: await require("./_investorDipSim").detail(ctx.admin, ctx.actorId, params.simId) }),
   paperDecisionSettings:async({ctx})=>{const store=require("./_investorPaperProcess").create({admin:ctx.admin}),settings=await store.settings(),resolved=await store.resolve(settings);return {data:{settings:{companyRange:settings.companyRange,strategyVersionId:settings.strategyVersionId,revision:settings.revision,updatedAtMs:settings.updatedAtMs||null},resolved}};},
   simulationAnalysisOverview:async({params,ctx})=>({data:await require("./_investorSimulationLearning").create({admin:ctx.admin}).view(ctx.actorId,params)}),

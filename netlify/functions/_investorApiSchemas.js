@@ -153,8 +153,10 @@ const ACTIONS_V2 = Object.freeze({
   /* dip-reversal lane (paper only): settings and a live status read */
   dipStatus: read({ ...acct }),
   dipSimulations: read({}),
+  barRepositoryStatus: read({}),
+  barRepositoryBuild: mutation({ command: T.str({ enum: ["start", "pause"] }) }, { concurrency: "none", confirmationKind: "none", required: ["command"] }),
   dipSimulationDetail: read({ simId: T.str({ minLength: 8, maxLength: 64 }) }, { required: ["simId"] }),
-  dipSimulationStart: mutation({ source: T.str({ enum: ["run", "shortlist", "custom"] }), sourceRunId: T.str({ maxLength: 120 }), symbols: T.arr(T.ref("Symbol"), 50), from: T.ref("Date"), to: T.ref("Date") }, { concurrency: "none", confirmationKind: "none", required: ["source", "from", "to"] }),
+  dipSimulationStart: mutation({ source: T.str({ enum: ["run", "shortlist", "custom", "universe"] }), sourceRunId: T.str({ maxLength: 120 }), symbols: T.arr(T.ref("Symbol"), 50), from: T.ref("Date"), to: T.ref("Date") }, { concurrency: "none", confirmationKind: "none", required: ["source", "from", "to"] }),
   dipSimulationControl: mutation({ simId: T.str({ minLength: 8, maxLength: 64 }), command: T.str({ enum: ["cancel", "delete"] }) }, { concurrency: "none", confirmationKind: "confirm", required: ["simId", "command"] }),
   dipSettingsSave: mutation({ enabled: T.bool(), symbols: T.arr(T.ref("Symbol"), 50), watchShortlist: T.bool(), budgetUsd: T.int({ minimum: 1000, maximum: 95000 }), minTradeUsd: T.int({ minimum: 500, maximum: 95000 }), maxTradeUsd: T.int({ minimum: 500, maximum: 95000 }),
     dropBps: T.int({ minimum: 30, maximum: 1500 }), dropWindowMin: T.int({ minimum: 3, maximum: 120 }), zMinTenths: T.int({ minimum: 5, maximum: 80 }), speedFactorPct: T.int({ minimum: 0, maximum: 300 }), settleBars: T.int({ minimum: 1, maximum: 15 }), stabilitySigmaTenths: T.int({ minimum: 5, maximum: 100 }),
