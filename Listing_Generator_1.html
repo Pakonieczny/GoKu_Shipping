@@ -10103,9 +10103,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     const SLOT2_DUPLICATE_PROMPT = 
     `${CHARM_GRAVITY_RULES}
 
-      CHARM SIZE AND CAMERA SCALE
-    Render a recognizable, delicate 10–12 mm pendant, with no fixed pixel cap or extra shrink bias. When the model's chin and collarbone dip are visible, target charm height = chin-to-dip distance / 7 (range 1/6 to 1/8). Scale linearly with camera distance, retaining the same physical size throughout the listing. For product-only scenes, use the template's pendant scale and known physical reference; do not invent a model-feature measurement. Keep source proportions and do not enlarge or shrink for visual emphasis.
-    Keep the camera, crop, model, chain and chain thickness unchanged. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.
+      CHARM SIZE AND CAMERA SCALE — REQUIRED 30% REDUCTION
+    The charm must be visibly 30% smaller in BOTH width and height than the previous baseline. This is a required linear-size correction, not a suggestion or an area reduction. Preserve the source aspect ratio and all design details.
+    For a model with visible chin and collarbone dip, the FINAL charm height is chin-to-dip distance / 10 (the previous distance / 7 baseline multiplied by 0.70). For a product-only scene, or when those landmarks are not visible, use 0.70 times the template placeholder charm's height and preserve the new charm's proportions. Do not invent an anatomical measurement in a product-only scene.
+    Apply this reduction exactly ONCE. The formula above already includes it. A previous-baseline charm 100 pixels tall must now be 70 pixels tall, with its width reduced by the same factor. Do not retain the previous larger size, round the size upward, or enlarge the charm to make it more prominent or easier to read. Verify the final dimensions before returning the image and correct any oversize.
+    Keep the same attachment position, camera, crop, model, chain, chain thickness, props and background. Scale the integrated eyelet with the charm; keep external chain hardware unchanged and visibly connected through that eyelet. Never simulate a smaller charm by zooming out or changing the scene. Keep engraving topology and recognizable source details at the required size.
+    This size rule overrides any conflicting template-size or visual-prominence instruction in this slot; it does not change the product's actual stated dimensions or labels. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.
 
         ENGRAVING STANDARD
     Reproduce every source stroke as a recessed groove, about 0.15–0.2 mm deep, with a crisp inner shadow and opposing highlight. Keep the source line topology and spacing. Never flat ink, pencil marks, raised relief, deep gouges or disappearing scratches.
@@ -10240,9 +10243,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
 
       CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
-    CHARM SIZE AND CAMERA SCALE
-    Render a recognizable, delicate 10–12 mm pendant, with no fixed pixel cap or extra shrink bias. When the model's chin and collarbone dip are visible, target charm height = chin-to-dip distance / 7 (range 1/6 to 1/8). Scale linearly with camera distance, retaining the same physical size throughout the listing. For product-only scenes, use the template's pendant scale and known physical reference; do not invent a model-feature measurement. Keep source proportions and do not enlarge or shrink for visual emphasis.
-    Keep the camera, crop, model, chain and chain thickness unchanged. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.
+    CHARM SIZE AND CAMERA SCALE — REQUIRED 20% REDUCTION
+    The charm must be visibly 20% smaller in BOTH width and height than the previous baseline. This is a required linear-size correction, not a suggestion or an area reduction. Preserve the source aspect ratio and all design details.
+    For a model with visible chin and collarbone dip, the FINAL charm height is chin-to-dip distance / 8.75 (the previous distance / 7 baseline multiplied by 0.80). For a product-only scene, or when those landmarks are not visible, use 0.80 times the template placeholder charm's height and preserve the new charm's proportions. Do not invent an anatomical measurement in a product-only scene.
+    Apply this reduction exactly ONCE. The formula above already includes it. A previous-baseline charm 100 pixels tall must now be 80 pixels tall, with its width reduced by the same factor. Do not retain the previous larger size, round the size upward, or enlarge the charm to make it more prominent or easier to read. Verify the final dimensions before returning the image and correct any oversize.
+    Keep the same attachment position, camera, crop, model, chain, chain thickness, props and background. Scale the integrated eyelet with the charm; keep external chain hardware unchanged and visibly connected through that eyelet. Never simulate a smaller charm by zooming out or changing the scene. Keep engraving topology and recognizable source details at the required size.
+    This size rule overrides any conflicting template-size or visual-prominence instruction in this slot; it does not change the product's actual stated dimensions or labels. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.
 
         ENGRAVING STANDARD
     Reproduce every source stroke as a recessed groove, about 0.15–0.2 mm deep, with a crisp inner shadow and opposing highlight. Keep the source line topology and spacing. Never flat ink, pencil marks, raised relief, deep gouges or disappearing scratches.
@@ -10417,9 +10423,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
 
       CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
-    CHARM SIZE AND CAMERA SCALE
-    Render a recognizable, delicate 10–12 mm pendant, with no fixed pixel cap or extra shrink bias. When the model's chin and collarbone dip are visible, target charm height = chin-to-dip distance / 7 (range 1/6 to 1/8). Scale linearly with camera distance, retaining the same physical size throughout the listing. For product-only scenes, use the template's pendant scale and known physical reference; do not invent a model-feature measurement. Keep source proportions and do not enlarge or shrink for visual emphasis.
-    Keep the camera, crop, model, chain and chain thickness unchanged. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.
+    CHARM SIZE AND CAMERA SCALE — REQUIRED 20% REDUCTION
+    The charm must be visibly 20% smaller in BOTH width and height than the previous baseline. This is a required linear-size correction, not a suggestion or an area reduction. Preserve the source aspect ratio and all design details.
+    For a model with visible chin and collarbone dip, the FINAL charm height is chin-to-dip distance / 8.75 (the previous distance / 7 baseline multiplied by 0.80). For a product-only scene, or when those landmarks are not visible, use 0.80 times the template placeholder charm's height and preserve the new charm's proportions. Do not invent an anatomical measurement in a product-only scene.
+    Apply this reduction exactly ONCE. The formula above already includes it. A previous-baseline charm 100 pixels tall must now be 80 pixels tall, with its width reduced by the same factor. Do not retain the previous larger size, round the size upward, or enlarge the charm to make it more prominent or easier to read. Verify the final dimensions before returning the image and correct any oversize.
+    Keep the same attachment position, camera, crop, model, chain, chain thickness, props and background. Scale the integrated eyelet with the charm; keep external chain hardware unchanged and visibly connected through that eyelet. Never simulate a smaller charm by zooming out or changing the scene. Keep engraving topology and recognizable source details at the required size.
+    This size rule overrides any conflicting template-size or visual-prominence instruction in this slot; it does not change the product's actual stated dimensions or labels. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.
 
         ENGRAVING STANDARD
     Reproduce every source stroke as a recessed groove, about 0.15–0.2 mm deep, with a crisp inner shadow and opposing highlight. Keep the source line topology and spacing. Never flat ink, pencil marks, raised relief, deep gouges or disappearing scratches.
@@ -10486,9 +10495,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     const SLOT7_PROMPT =
     `${CHARM_GRAVITY_RULES}
 
-          CHARM SIZE AND CAMERA SCALE
-    Render a recognizable, delicate 10–12 mm pendant, with no fixed pixel cap or extra shrink bias. When the model's chin and collarbone dip are visible, target charm height = chin-to-dip distance / 7 (range 1/6 to 1/8). Scale linearly with camera distance, retaining the same physical size throughout the listing. For product-only scenes, use the template's pendant scale and known physical reference; do not invent a model-feature measurement. Keep source proportions and do not enlarge or shrink for visual emphasis.
-    Keep the camera, crop, model, chain and chain thickness unchanged. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.
+          CHARM SIZE AND CAMERA SCALE — REQUIRED 20% REDUCTION
+    The charm must be visibly 20% smaller in BOTH width and height than the previous baseline. This is a required linear-size correction, not a suggestion or an area reduction. Preserve the source aspect ratio and all design details.
+    For a model with visible chin and collarbone dip, the FINAL charm height is chin-to-dip distance / 8.75 (the previous distance / 7 baseline multiplied by 0.80). For a product-only scene, or when those landmarks are not visible, use 0.80 times the template placeholder charm's height and preserve the new charm's proportions. Do not invent an anatomical measurement in a product-only scene.
+    Apply this reduction exactly ONCE. The formula above already includes it. A previous-baseline charm 100 pixels tall must now be 80 pixels tall, with its width reduced by the same factor. Do not retain the previous larger size, round the size upward, or enlarge the charm to make it more prominent or easier to read. Verify the final dimensions before returning the image and correct any oversize.
+    Keep the same attachment position, camera, crop, model, chain, chain thickness, props and background. Scale the integrated eyelet with the charm; keep external chain hardware unchanged and visibly connected through that eyelet. Never simulate a smaller charm by zooming out or changing the scene. Keep engraving topology and recognizable source details at the required size.
+    This size rule overrides any conflicting template-size or visual-prominence instruction in this slot; it does not change the product's actual stated dimensions or labels. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.
 
         ENGRAVING STANDARD
     Reproduce every source stroke as a recessed groove, about 0.15–0.2 mm deep, with a crisp inner shadow and opposing highlight. Keep the source line topology and spacing. Never flat ink, pencil marks, raised relief, deep gouges or disappearing scratches.
@@ -10548,9 +10560,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     const REGULAR_SLOT2_DUPLICATE_PROMPT = 
     `${CHARM_GRAVITY_RULES}
 
-      CHARM SIZE AND CAMERA SCALE
-    Render a recognizable, delicate 10–12 mm pendant, with no fixed pixel cap or extra shrink bias. When the model's chin and collarbone dip are visible, target charm height = chin-to-dip distance / 7 (range 1/6 to 1/8). Scale linearly with camera distance, retaining the same physical size throughout the listing. For product-only scenes, use the template's pendant scale and known physical reference; do not invent a model-feature measurement. Keep source proportions and do not enlarge or shrink for visual emphasis.
-    Keep the camera, crop, model, chain and chain thickness unchanged. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.
+      CHARM SIZE AND CAMERA SCALE — REQUIRED 30% REDUCTION
+    The charm must be visibly 30% smaller in BOTH width and height than the previous baseline. This is a required linear-size correction, not a suggestion or an area reduction. Preserve the source aspect ratio and all design details.
+    For a model with visible chin and collarbone dip, the FINAL charm height is chin-to-dip distance / 10 (the previous distance / 7 baseline multiplied by 0.70). For a product-only scene, or when those landmarks are not visible, use 0.70 times the template placeholder charm's height and preserve the new charm's proportions. Do not invent an anatomical measurement in a product-only scene.
+    Apply this reduction exactly ONCE. The formula above already includes it. A previous-baseline charm 100 pixels tall must now be 70 pixels tall, with its width reduced by the same factor. Do not retain the previous larger size, round the size upward, or enlarge the charm to make it more prominent or easier to read. Verify the final dimensions before returning the image and correct any oversize.
+    Keep the same attachment position, camera, crop, model, chain, chain thickness, props and background. Scale the integrated eyelet with the charm; keep external chain hardware unchanged and visibly connected through that eyelet. Never simulate a smaller charm by zooming out or changing the scene. Keep engraving topology and recognizable source details at the required size.
+    This size rule overrides any conflicting template-size or visual-prominence instruction in this slot; it does not change the product's actual stated dimensions or labels. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.
 
         ENGRAVING STANDARD
     Reproduce every source stroke as a recessed groove, about 0.15–0.2 mm deep, with a crisp inner shadow and opposing highlight. Keep the source line topology and spacing. Never flat ink, pencil marks, raised relief, deep gouges or disappearing scratches.
@@ -10684,9 +10699,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
 
       CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
-    CHARM SIZE AND CAMERA SCALE
-    Render a recognizable, delicate 10–12 mm pendant, with no fixed pixel cap or extra shrink bias. When the model's chin and collarbone dip are visible, target charm height = chin-to-dip distance / 7 (range 1/6 to 1/8). Scale linearly with camera distance, retaining the same physical size throughout the listing. For product-only scenes, use the template's pendant scale and known physical reference; do not invent a model-feature measurement. Keep source proportions and do not enlarge or shrink for visual emphasis.
-    Keep the camera, crop, model, chain and chain thickness unchanged. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.
+    CHARM SIZE AND CAMERA SCALE — REQUIRED 20% REDUCTION
+    The charm must be visibly 20% smaller in BOTH width and height than the previous baseline. This is a required linear-size correction, not a suggestion or an area reduction. Preserve the source aspect ratio and all design details.
+    For a model with visible chin and collarbone dip, the FINAL charm height is chin-to-dip distance / 8.75 (the previous distance / 7 baseline multiplied by 0.80). For a product-only scene, or when those landmarks are not visible, use 0.80 times the template placeholder charm's height and preserve the new charm's proportions. Do not invent an anatomical measurement in a product-only scene.
+    Apply this reduction exactly ONCE. The formula above already includes it. A previous-baseline charm 100 pixels tall must now be 80 pixels tall, with its width reduced by the same factor. Do not retain the previous larger size, round the size upward, or enlarge the charm to make it more prominent or easier to read. Verify the final dimensions before returning the image and correct any oversize.
+    Keep the same attachment position, camera, crop, model, chain, chain thickness, props and background. Scale the integrated eyelet with the charm; keep external chain hardware unchanged and visibly connected through that eyelet. Never simulate a smaller charm by zooming out or changing the scene. Keep engraving topology and recognizable source details at the required size.
+    This size rule overrides any conflicting template-size or visual-prominence instruction in this slot; it does not change the product's actual stated dimensions or labels. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.
 
         ENGRAVING STANDARD
     Reproduce every source stroke as a recessed groove, about 0.15–0.2 mm deep, with a crisp inner shadow and opposing highlight. Keep the source line topology and spacing. Never flat ink, pencil marks, raised relief, deep gouges or disappearing scratches.
@@ -10861,9 +10879,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
 
       CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
-    CHARM SIZE AND CAMERA SCALE
-    Render a recognizable, delicate 10–12 mm pendant, with no fixed pixel cap or extra shrink bias. When the model's chin and collarbone dip are visible, target charm height = chin-to-dip distance / 7 (range 1/6 to 1/8). Scale linearly with camera distance, retaining the same physical size throughout the listing. For product-only scenes, use the template's pendant scale and known physical reference; do not invent a model-feature measurement. Keep source proportions and do not enlarge or shrink for visual emphasis.
-    Keep the camera, crop, model, chain and chain thickness unchanged. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.
+    CHARM SIZE AND CAMERA SCALE — REQUIRED 20% REDUCTION
+    The charm must be visibly 20% smaller in BOTH width and height than the previous baseline. This is a required linear-size correction, not a suggestion or an area reduction. Preserve the source aspect ratio and all design details.
+    For a model with visible chin and collarbone dip, the FINAL charm height is chin-to-dip distance / 8.75 (the previous distance / 7 baseline multiplied by 0.80). For a product-only scene, or when those landmarks are not visible, use 0.80 times the template placeholder charm's height and preserve the new charm's proportions. Do not invent an anatomical measurement in a product-only scene.
+    Apply this reduction exactly ONCE. The formula above already includes it. A previous-baseline charm 100 pixels tall must now be 80 pixels tall, with its width reduced by the same factor. Do not retain the previous larger size, round the size upward, or enlarge the charm to make it more prominent or easier to read. Verify the final dimensions before returning the image and correct any oversize.
+    Keep the same attachment position, camera, crop, model, chain, chain thickness, props and background. Scale the integrated eyelet with the charm; keep external chain hardware unchanged and visibly connected through that eyelet. Never simulate a smaller charm by zooming out or changing the scene. Keep engraving topology and recognizable source details at the required size.
+    This size rule overrides any conflicting template-size or visual-prominence instruction in this slot; it does not change the product's actual stated dimensions or labels. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.
 
         ENGRAVING STANDARD
     Reproduce every source stroke as a recessed groove, about 0.15–0.2 mm deep, with a crisp inner shadow and opposing highlight. Keep the source line topology and spacing. Never flat ink, pencil marks, raised relief, deep gouges or disappearing scratches.
@@ -10930,9 +10951,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     const REGULAR_SLOT7_PROMPT =
     `${CHARM_GRAVITY_RULES}
 
-      CHARM SIZE AND CAMERA SCALE
-    Render a recognizable, delicate 10–12 mm pendant, with no fixed pixel cap or extra shrink bias. When the model's chin and collarbone dip are visible, target charm height = chin-to-dip distance / 7 (range 1/6 to 1/8). Scale linearly with camera distance, retaining the same physical size throughout the listing. For product-only scenes, use the template's pendant scale and known physical reference; do not invent a model-feature measurement. Keep source proportions and do not enlarge or shrink for visual emphasis.
-    Keep the camera, crop, model, chain and chain thickness unchanged. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.
+      CHARM SIZE AND CAMERA SCALE — REQUIRED 20% REDUCTION
+    The charm must be visibly 20% smaller in BOTH width and height than the previous baseline. This is a required linear-size correction, not a suggestion or an area reduction. Preserve the source aspect ratio and all design details.
+    For a model with visible chin and collarbone dip, the FINAL charm height is chin-to-dip distance / 8.75 (the previous distance / 7 baseline multiplied by 0.80). For a product-only scene, or when those landmarks are not visible, use 0.80 times the template placeholder charm's height and preserve the new charm's proportions. Do not invent an anatomical measurement in a product-only scene.
+    Apply this reduction exactly ONCE. The formula above already includes it. A previous-baseline charm 100 pixels tall must now be 80 pixels tall, with its width reduced by the same factor. Do not retain the previous larger size, round the size upward, or enlarge the charm to make it more prominent or easier to read. Verify the final dimensions before returning the image and correct any oversize.
+    Keep the same attachment position, camera, crop, model, chain, chain thickness, props and background. Scale the integrated eyelet with the charm; keep external chain hardware unchanged and visibly connected through that eyelet. Never simulate a smaller charm by zooming out or changing the scene. Keep engraving topology and recognizable source details at the required size.
+    This size rule overrides any conflicting template-size or visual-prominence instruction in this slot; it does not change the product's actual stated dimensions or labels. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.
 
         ENGRAVING STANDARD
     Reproduce every source stroke as a recessed groove, about 0.15–0.2 mm deep, with a crisp inner shadow and opposing highlight. Keep the source line topology and spacing. Never flat ink, pencil marks, raised relief, deep gouges or disappearing scratches.
