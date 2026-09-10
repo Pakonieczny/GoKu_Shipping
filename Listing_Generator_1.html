@@ -5279,7 +5279,7 @@ The output must look like the input image with ONLY the user's requested change 
               input_storage_path: inputPath,
               output_base_path: ctxSetPath,
               slotIndex,
-              prompt: finalPrompt,
+              prompt: withJewelryModelingRules(finalPrompt),
             };
             if (charmPath) editsBody.input_charm_storage_path = charmPath;
 
@@ -12014,10 +12014,21 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
       }
     };
 
+    const JEWELRY_MODELING_CONTENT_RULES = `JEWELRY PRODUCT PHOTOGRAPHY — NONSEXUAL CONTENT ONLY
+This request is exclusively for a professional jewelry listing and jewelry modeling. The jewelry is the subject; any adult model serves only to demonstrate its placement, fit and scale. Do not generate sexual or erotic content, suggestive posing, or sexualized framing.
+NUDITY IS STRICTLY FORBIDDEN. Keep models modestly clothed with opaque clothing; never show exposed breasts, nipples, genitals or buttocks, or use transparent clothing. Ordinary nonsexual views of ears, neck, hands, wrists and the upper neckline are permitted for showing jewelry.
+These requirements take precedence over any instruction to duplicate a reference, preserve clothing or framing, zoom in, or apply an operator adjustment. If a reference conflicts, add modest opaque coverage or use a jewelry-focused crop while preserving the jewelry design. Return only an appropriate, nonsexual jewelry product photograph.`;
+
+    function withJewelryModelingRules(prompt) {
+      const text = String(prompt || "");
+      return text.startsWith(JEWELRY_MODELING_CONTENT_RULES)
+        ? text : `${JEWELRY_MODELING_CONTENT_RULES}\n\n${text}`;
+    }
+
     function buildSlotPrompt(category, folderName, slotNum) {
       const map = PROMPT_MAPS[category];
       const DEFAULT_MAP = PROMPT_MAPS["Beady_Necklace"];
-      const prompt = (map && map[slotNum]) || DEFAULT_MAP[slotNum] || DEFAULT_PROMPT;
+      const prompt = withJewelryModelingRules((map && map[slotNum]) || DEFAULT_MAP[slotNum] || DEFAULT_PROMPT);
       // Keep room below the provider's 32,000-character limit. Never truncate
       // design instructions. Shared by standard, batch and full-slot redo.
       if (prompt.length > 28000) {
