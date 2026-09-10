@@ -22,18 +22,8 @@ async function runEvents(ctrl, log) {
   if (!due.length) { log.push("events: none due"); return; }
   for (const d of due) {
     try {
-      const assets = await E.generateRSAAssets(d.coll, d.event);
-      if (!assets) { log.push(`events: ${d.coll.handle}/${d.event.label} — generation rejected (brand-safety/min)`); continue; }
-      const dailyBudget = Number(process.env.GADS_NEW_CAMPAIGN_BUDGET || 8);
-      const { ops, tag } = E.buildSearchCampaignOps(d.coll, d.event, assets, { dailyBudget });
-      // Always queue new campaigns for human go-live (they are created PAUSED anyway).
-      const id = await E.enqueueApproval({
-        type: "creative", vetted: !!ctrl.autoApproveVettedTemplates,
-        summary: `NEW Search campaign “${tag}” for ${d.event.label} (${d.event.daysLeft}d out) — ${assets.headlines.length} headlines, starts PAUSED`,
-        payload: { mutateOperations: ops, finalCollection: d.coll.handle, event: d.event.label },
-        experimentId: tag
-      });
-      log.push(`events: queued campaign ${tag} (approval ${id})`);
+      const out=await E.generateForCollection(d.coll.handle,d.event.label,Number(process.env.GADS_NEW_CAMPAIGN_BUDGET||8),{ctrl});
+      log.push(`events: ${d.coll.handle} — ${out.ok ? "review draft prepared" : (out.reason||"no validated opportunity")}`);
     } catch (e) { log.push(`events: ${d.coll.handle} ERROR ${e.message}`); }
   }
 }
@@ -61,7 +51,7 @@ exports.handler = async (event) => {
   // auth (defence-in-depth)
   let body = {};
   try { body = JSON.parse(event.body || "{}"); } catch {}
-  if ((process.env.EDIT_PASSCODE || "") && body.token !== process.env.EDIT_PASSCODE) {
+  if (!process.env.EDIT_PASSCODE || body.token !== process.env.EDIT_PASSCODE) {
     return { statusCode: 401, headers: CORS, body: JSON.stringify({ error: "unauthorized" }) };
   }
 
@@ -71,9 +61,9 @@ exports.handler = async (event) => {
     ? body.tasks
     : ["anomaly", "monthly", "conversions", "adjustments", "measure", "mine", "prune", "budgets", "ceiling", "events", "pruneLedger"];
 
-  // Read-only tasks (no Google Ads mutations) are allowed even when the kill switch is off.
-  const READONLY = new Set(["scanOpportunities", "pmaxGenerate", "pmaxBackfillImages", "pmaxUpgradeAdStrength", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate", "designStudioScan", "designStudioGenerate", "designStudioAnalyze", "designStudioLearn"]); // drafts/read-only analysis never mutate Google Ads before approval
-  const allReadOnly = tasks.every(t => READONLY.has(t));
+  // Draft work and explicit operator publication remain available with scheduled automation off.
+  const MANUAL_OR_DRAFT = new Set(["creativePrepare", "publishApproval", "scanOpportunities", "pmaxGenerate", "pmaxBackfillImages", "pmaxUpgradeAdStrength", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate", "designStudioScan", "designStudioGenerate", "designStudioAnalyze", "designStudioLearn"]); // publishApproval independently enforces exact operator approval
+  const allReadOnly = tasks.every(t => MANUAL_OR_DRAFT.has(t));
 
   // HARD KILL SWITCH — blocks anything that could mutate. Read-only analysis still runs.
   if (!ctrl.enabled && !allReadOnly) {
@@ -106,7 +96,9 @@ exports.handler = async (event) => {
   for (const task of tasks) {
     if (over()) { log.push("time budget reached — deferring rest to next run"); break; }
     try {
-      if (task === "conversions") { result.conversions = await E.uploadConversions({ ctrl }); }
+      if (task === "creativePrepare") { result.creativePrepare=await E.prepareCreativeApproval(body.id,{retry:!!body.retry}); }
+      else if (task === "publishApproval") { result.publishApproval=await E.applyApproval(body.id,ctrl); }
+      else if (task === "conversions") { result.conversions = await E.uploadConversions({ ctrl }); }
       else if (task === "scanOpportunities") { const sc = await E.opportunitiesWithStatus({ force: true, runId: body.scanRunId || null }); result.scanOpportunities = { n: (sc.opportunities || []).length, pmax: (sc.pmaxList || []).length, pmaxError: sc.pmaxError || null, runId: body.scanRunId || null, auditStatus: sc.scanAudit && sc.scanAudit.status || null }; }
       else if (task === "designStudioScan") {
         const gId = String(body.genId || `studio-scan-${Date.now()}`);
@@ -215,7 +207,12 @@ exports.handler = async (event) => {
         // keep the console waiting. Best-effort.
         try { result.distill = await E.distillLessons(); } catch (e) { result.distill = { error: String(e.message || e).slice(0, 200) }; }
       }
-      else if (task === "distill") { result.distill = await E.distillLessons(); }
+      else if (task === "distill") {
+        const genId=String(body.genId||Date.now());
+        await E.setGenStatus(genId,{phase:"running",kind:"learning",startedAt:Date.now()});
+        try {result.distill=await E.distillLessons();await E.setGenStatus(genId,{phase:"done",ok:true,result:result.distill});}
+        catch(e){await E.setGenStatus(genId,{phase:"done",ok:false,error:e.message});throw e;}
+      }
       else if (task === "generate") {
         // Campaign generation (keyword research + high-effort copy) outruns the
         // 26s gateway, so it runs here; the console polls the status doc.

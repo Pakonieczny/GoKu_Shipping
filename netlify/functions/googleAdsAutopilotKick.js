@@ -56,7 +56,7 @@ const HEADERS = {
 function ok(o) { return { statusCode: 200, headers: HEADERS, body: JSON.stringify(o) }; }
 function authed(event, body) {
   const pass = process.env.EDIT_PASSCODE || "";
-  if (!pass) return true; // if unset, console is open (set EDIT_PASSCODE to lock)
+  if (!pass) return false; // A missing credential must never open campaign controls.
   const h = (event.headers && (event.headers["x-edit-passcode"] || event.headers["X-Edit-Passcode"])) || "";
   return h === pass || (body && body.passcode === pass);
 }
@@ -105,6 +105,11 @@ async function kick() {
 }
 
 /* ------------------------------- POST actions ------------------------------ */
+async function dispatchTask(task, data) {
+  const r=await fetch(baseUrl()+"/.netlify/functions/googleAdsAutopilot-background",{method:"POST",timeout:15000,headers:{"Content-Type":"application/json"},body:JSON.stringify({tasks:[task],...data,token:process.env.EDIT_PASSCODE||undefined})});
+  if(!r.ok)throw new Error("Background dispatch failed: HTTP "+r.status);
+  return {queued:true,...data};
+}
 async function handleAction(body) {
   const f = fb();
   const a = body.action;
@@ -123,8 +128,10 @@ async function handleAction(body) {
   if (a === "setControl") {
     const allow = ["maxDailyBudgetTotal","maxBudgetStepPct","budgetMoveApprovalPct","targetRoas",
                    "minConvForTargetTune","anomalySpendMultiple","autoApproveVettedTemplates","learningCooldownDays",
-                   "defaultCountries","maxMonthlySpend","smartBidding"];
+                   "defaultCountries","maxMonthlySpend","smartBidding","creativeBudgetUsd"];
     const patch = {}; allow.forEach(k => { if (body.patch && body.patch[k] !== undefined) patch[k] = body.patch[k]; });
+    if (patch.autoApproveVettedTemplates !== undefined) patch.autoApproveVettedTemplates = false;
+    if (patch.creativeBudgetUsd !== undefined) patch.creativeBudgetUsd = Math.max(1,Math.min(30,Number(patch.creativeBudgetUsd)||8));
     if (patch.smartBidding !== undefined) patch.smartBidding = !!patch.smartBidding;
     if (patch.defaultCountries !== undefined) {
       patch.defaultCountries = [...new Set((Array.isArray(patch.defaultCountries) ? patch.defaultCountries : [])
@@ -136,12 +143,27 @@ async function handleAction(body) {
     if (f && Object.keys(patch).length) await f.db.collection(E.COL.control).doc("control").set(patch, { merge: true });
     return { patched: patch };
   }
-  if (a === "reject") { if (f) await f.db.collection(E.COL.approvals).doc(body.id).set({ status: "REJECTED" }, { merge: true }); return { id: body.id, status: "REJECTED" }; }
+  if (a === "creativeRevise") return await E.reviseCreativeApproval(body.id,body.feedback);
+  if (a === "creativeStatus") return await E.creativeApprovalStatus(body.id);
+  if (a === "reviewCreative") return await E.reviewCreativeApproval(body.id, body.hash);
+  if (a === "playbookVersions") return await E.playbookVersions();
+  if (a === "restorePlaybook") return await E.restorePlaybook(body.versionId);
+  if (a === "approvalStatus") {
+    const snap=await f.db.collection(E.COL.approvals).doc(String(body.id)).get();
+    if(!snap.exists)throw new Error("Draft not found.");const d=snap.data();
+    return {ok:true,id:body.id,status:d.status,error:d.lastError||null,validatedAt:d.validatedAt||null,startedAt:d.applyStartedAt||null};
+  }
+  if (a === "creativePrepare") return await dispatchTask("creativePrepare", { id:String(body.id), retry:!!body.retry });
+  if (a === "reject") {
+    const ref=f.db.collection(E.COL.approvals).doc(String(body.id));
+    await f.db.runTransaction(async tx=>{const snap=await tx.get(ref);if(!snap.exists)throw new Error("Draft not found.");const d=snap.data();
+      if(!["PENDING","APPROVED"].includes(d.status)||(d.creativeLease&&d.creativeLease.until>Date.now()))throw new Error("This draft has an active or unconfirmed operation. Wait for its result before discarding.");
+      tx.update(ref,{status:"REJECTED"});
+    });return {id:body.id,status:"REJECTED"};
+  }
   if (a === "approve" || a === "apply") {
-    if (!f) return { error: "no firestore" };
-    if (a === "approve") await f.db.collection(E.COL.approvals).doc(body.id).set({ status: "APPROVED" }, { merge: true });
-    try { await E.applyApproval(body.id, ctrl); return { id: body.id, status: "APPLIED", dryRun: !!ctrl.dryRun }; }
-    catch (e) { return { id: body.id, error: e.message }; }
+    if (a === "approve") await E.markApprovalApproved(body.id);
+    return await dispatchTask("publishApproval", { id:String(body.id) });
   }
   if (a === "retryStuck") {
     try { return await E.retryStuckApprovals(ctrl); }
@@ -186,6 +208,7 @@ async function handleAction(body) {
           token: process.env.EDIT_PASSCODE || undefined })
       });
       if (res.status >= 400) return { error: "background dispatch failed: HTTP " + res.status + " — is googleAdsAutopilot-background deployed?" };
+      if (!res.ok) throw new Error("Background dispatch failed: HTTP "+res.status);
       return { queued: true, genId, upstream: res.status };
     } catch (e) { return { error: e.message }; }
   }
@@ -203,6 +226,7 @@ async function handleAction(body) {
           token: process.env.EDIT_PASSCODE || undefined })
       });
       if (res.status >= 400) return { error: "background dispatch failed: HTTP " + res.status + " — is googleAdsAutopilot-background deployed?" };
+      if (!res.ok) throw new Error("Background dispatch failed: HTTP "+res.status);
       return { queued: true, genId, upstream: res.status };
     } catch (e) { return { error: e.message }; }
   }
@@ -227,16 +251,7 @@ async function handleAction(body) {
     catch (e) { return { error: e.message }; }
   }
   if (a === "playbook") { try { return (await E.getPlaybook()) || { empty: true }; } catch (e) { return { error: e.message }; } }
-  if (a === "distill") {
-    // LLM-heavy -> background worker; the console polls the playbook doc.
-    try {
-      const res = await fetch(baseUrl() + "/.netlify/functions/googleAdsAutopilot-background", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tasks: ["distill"], token: process.env.EDIT_PASSCODE || undefined })
-      });
-      return { queued: true, upstream: res.status };
-    } catch (e) { return { error: e.message }; }
-  }
+  if (a === "distill") return await dispatchTask("distill", {genId:String(body.genId||Date.now())});
   if (a === "adReviewStatus") { try { return await E.adReviewStatus({ adIds: body.adIds }); } catch (e) { return { statuses: {}, error: e.message }; } }
   if (a === "remedyHistory") { try { return await E.remedyHistory({ limit: body.limit || 100 }); } catch (e) { return { items: [], error: e.message }; } }
   if (a === "applyRemedy")   { try { return await E.applyRemedy(body.campaignId, body.remedy, { ctrl }); } catch (e) { return { ok: false, error: e.message }; } }
@@ -388,6 +403,7 @@ async function handleAction(body) {
           maxCpc: body.maxCpc, peakDate: body.peakDate, smartBidding: body.smartBidding,
           token: process.env.EDIT_PASSCODE || undefined })
       });
+      if (!res.ok) throw new Error("Background dispatch failed: HTTP "+res.status);
       return { queued: true, genId, upstream: res.status };
     } catch (e) { return { ok: false, reason: e.message }; }
   }
