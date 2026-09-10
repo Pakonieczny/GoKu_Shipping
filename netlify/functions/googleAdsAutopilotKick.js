@@ -454,6 +454,10 @@ async function httpHandler(event) {
 
   // POST → actions (auth required)
   let body = {}; try { body = JSON.parse(event.body || "{}"); } catch {}
+  if (!process.env.EDIT_PASSCODE) return { statusCode: 503, headers: HEADERS, body: JSON.stringify({
+    error: "Operator sign-in is unavailable because the server passcode is not configured. Set EDIT_PASSCODE for production functions in Netlify, then redeploy.",
+    code: "AUTH_NOT_CONFIGURED"
+  }) };
   if (!authed(event, body)) return { statusCode: 401, headers: HEADERS, body: JSON.stringify({ error: "unauthorized" }) };
   try { return ok(await handleAction(body)); }
   catch (e) { return { statusCode: 500, headers: HEADERS, body: JSON.stringify({ error: e.message }) }; }
