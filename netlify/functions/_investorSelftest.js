@@ -5453,6 +5453,37 @@ function runFixtures() {
     return { fake, C, nowMs, run, policy, symbols, S, V2, read, mutate, ctrl, commit };
   }
 
+  cases.push(fixture("saved_plans_keep_ticking_after_policy_constants_change_and_one_bad_plan_does_not_block_the_rest",async()=>{
+    const assert=require('assert/strict'),W=apiWorld(),P=require('./_investorPolicy'),H=require('./_investorSimulationHorizon'),E=require('./_investorExecution'),R=require('./_investorResearchHandoff');
+    const held=W.fake.docs.get(W.C.positions+'/paper-1_BBB');Object.assign(held,{lossBoundaryPriceMicros:'47000000',markMicros:'50000000',stopLossBps:600});
+    const at=W.nowMs,policy=H.policyFor('top1',null,{shared:true}),investment={decision:'PASS',decisionReason:'Missing source support',allocationUsd:0,stopLossBps:300,takeProfitBps:600,conviction:'LOW'};
+    const content={schemaVersion:'simulation-investment-plan.v1',policy,cutoffMs:at-3600000,sessions:H.sessions('2026-09-04'),investments:{CCC:investment},liquidityBySymbol:{CCC:{advMinor:'100000000000'}}},plan={...content,planHash:P.sha256(content)};
+    await W.fake.col(W.C.portfolioPlans).doc('saved_pass').set({...plan,accountId:'paper-1',managerRunId:'original',createdAtMs:at-3600000});
+    const first=await W.mutate('runPaperPurchaseTest',{symbol:'CCC',sourcePlanId:'saved_pass'});assert.equal(first.statusCode,200,JSON.stringify(first.body));
+    const bar={t:new Date(at).toISOString(),o:100,h:101,l:99,c:100,v:1000000},provenance={CCC:{provider:'alpaca',timeframe:'5Min',feed:'delayed_sip'}};
+    await E.tickSharedPaper({admin:W.fake,accountId:'paper-1',control:W.ctrl(),barsBySymbol:{CCC:[bar]},provenanceBySymbol:provenance,nowMs:at+20*60000});
+    assert((await W.fake.col(W.C.positions).doc('paper-1_CCC').get()).data().open,'the test buy filled');
+    const savedId=[...W.fake.docs.keys()].find(k=>k.startsWith(W.C.portfolioPlans+'/shared_'));const saved=W.fake.docs.get(savedId);
+    /* 1. A policy shape today's constants no longer recognise is rejected for a NEW plan but accepted for a SAVED one. */
+    const retired={...saved.policy,cashPolicy:'retired.v0'};
+    assert.throws(()=>R.assertInvestmentAllocations(saved.investments,retired),/SIMULATION_INVESTMENT_POLICY_INVALID/);
+    R.assertInvestmentAllocations(saved.investments,retired,{stored:true});
+    assert.throws(()=>R.assertInvestmentAllocations(saved.investments,{version:'x'},{stored:true}),/SIMULATION_INVESTMENT_POLICY_INVALID/);
+    /* 2. The saved plan's policy is rewritten to that retired shape (hash kept consistent, as a plan saved under older constants would be): its position still ticks. */
+    const {planHash:oldHash,accountId:_a,managerRunId:_m,createdAtMs:_c,...body}=saved;body.policy=retired;const newHash=P.sha256(body);
+    W.fake.docs.set(savedId,{...saved,...body,planHash:newHash});
+    for(const [k,v] of [...W.fake.docs.entries()])if(k.startsWith(W.C.orderSets+'/')&&v.planId==='shared_'+oldHash){W.fake.docs.set(k,{...v,planId:'shared_'+newHash,planHash:newHash});}
+    W.fake.docs.set(W.C.portfolioPlans+'/shared_'+newHash,W.fake.docs.get(savedId));
+    const later={...bar,t:new Date(at+5*60000).toISOString()};
+    const ok=await E.tickSharedPaper({admin:W.fake,accountId:'paper-1',control:W.ctrl(),barsBySymbol:{CCC:[later]},provenanceBySymbol:provenance,nowMs:at+25*60000});
+    assert(ok.plans>=1,'the saved plan was still checked');
+    /* 3. A corrupt saved plan with an open order set is reported, but does not stop the others. */
+    W.fake.docs.set(W.C.portfolioPlans+'/shared_bogus',{schemaVersion:'simulation-investment-plan.v1',policy,cutoffMs:at-3600000,sessions:plan.sessions,investments:{},planHash:'bogus',accountId:'paper-1',managerRunId:'x',createdAtMs:at});
+    W.fake.docs.set(W.C.orderSets+'/shared_bogus_ZZZ',{orderSetId:'shared_bogus_ZZZ',planId:'shared_bogus',planHash:'bogus',accountId:'paper-1',symbol:'ZZZ',coreVersion:policy.coreVersion,closed:false,entered:false,reservedMinor:'0',status:'AWAITING_STRATEGY_ENTRY'});
+    let err=null;try{await E.tickSharedPaper({admin:W.fake,accountId:'paper-1',control:W.ctrl(),barsBySymbol:{CCC:[later]},provenanceBySymbol:provenance,nowMs:at+30*60000});}catch(e){err=e;}
+    assert(err&&err.code==='PAPER_PLAN_TICK_FAILED',err&&err.message);assert.equal(err.failed.length,1);assert.equal(err.failed[0].planId,'shared_bogus');
+    assert((await E.assertConservation('paper-1',{admin:W.fake})).pass);
+  }));
   cases.push(fixture("operator_paper_test_runs_shared_fills_once_and_preserves_ai_pass",async()=>{
     const assert=require('assert/strict'),W=apiWorld(),P=require('./_investorPolicy'),H=require('./_investorSimulationHorizon'),E=require('./_investorExecution');
     const held=W.fake.docs.get(W.C.positions+'/paper-1_BBB');Object.assign(held,{lossBoundaryPriceMicros:'47000000',markMicros:'50000000',stopLossBps:600});

@@ -608,7 +608,8 @@ async function authorizationViews(D, ctrl, { accountId, pointers, orderSets, fil
   }
   return out;
 }
-function holdingView(p, { snap, pointer, env, ctrl, nowMs, trades, reason, dipOpen }) {
+function holdingView(p, { snap, pointer, env, ctrl, nowMs, trades, reason, dipOpen, orderSets }) {
+  const openSet = p.lane !== "dip" && Array.isArray(orderSets) ? orderSets.find((o) => o.symbol === p.symbol && o.coreVersion && !o.closed && o.entered) : null;
   const mark = big(p.markMicros), boundary = p.lossBoundaryPriceMicros ? big(p.lossBoundaryPriceMicros) : null, target = p.takeProfitPriceMicros ? big(p.takeProfitPriceMicros) : null;
   const units = big(p.quantityUnits);
   const forward = boundary && mark > boundary ? (mark - boundary) * units / 10000n : 0n;
@@ -620,6 +621,7 @@ function holdingView(p, { snap, pointer, env, ctrl, nowMs, trades, reason, dipOp
     symbol: p.symbol, sector: p.sector || null, quantity: qty(units), averageCost: p.entryPriceMicros ? price(p.entryPriceMicros) : null, mark: mark > 0n ? price(mark) : null, markAt: isoOf(p.markAt), marketValue: money(p.marketValueMinor), unrealizedPnl: money(p.unrealisedMinor), costBasis: money(p.costBasisMinor || 0),
     weightBps: weightBps(p.marketValueMinor, snap.navMinor), forwardDownside: boundary ? money(forward) : null, stressedDownside: stressed != null ? money(stressed) : null, thesisHealth: (pointer && pointer.thesisHealth) || "UNKNOWN",
     target: target ? price(target) : null, lossBoundary: boundary ? price(boundary) : null, timeExit: pointer && pointer.expiresAtMs ? sessionRef(new Date(Number(pointer.expiresAtMs)).toISOString().slice(0, 10)) : null,
+    timeLimitAt: openSet && Number(openSet.holdingDeadlineMs) ? iso(Number(openSet.holdingDeadlineMs)) : null, holdingSessions: openSet && Number(openSet.holdingSessions) ? Number(openSet.holdingSessions) : null,
     distanceToTargetBps: target && mark > 0n ? bpsOf(mark, target) : null, distanceToBoundaryBps: boundary && mark > 0n ? bpsOf(mark, boundary) : null,
     protection: { state: p.protectionState || (boundary ? "PROTECTED_RTH" : "UNPROTECTED"), coverage: boundary ? "RTH" : "NONE", acknowledged: p.protectionAcknowledged === true, overnight: boundary ? "gap_exposed" : "unprotected" },
     emergencyRank: pointer && pointer.emergencyRank != null ? pointer.emergencyRank : null, emergencyExpiry: iso(pointer && pointer.emergencyExpiresAtMs), labels: [p.engine === "legacy" ? "legacy position" : null, snap.aggregates && snap.aggregates.unprotected && snap.aggregates.unprotected.includes(p.symbol) ? "unprotected" : null, pointer && pointer.status === "ACTION_REQUIRED" ? "action required" : null].filter(Boolean),
@@ -677,7 +679,7 @@ async function readPortfolio({ params, ctx }) {
   const orderSetsById = Object.fromEntries(orderSets.map((o) => [o.orderSetId, o]));
   let dipOpenBySymbol = {};
   try { const ds = await D.col(D.COL.dipState).doc(accountId).get(); dipOpenBySymbol = ds.exists && ds.data().open ? ds.data().open : {}; } catch (e) { dipOpenBySymbol = {}; }
-  const holdings = snap.positions.map((p) => holdingView(p, { snap, pointer: pointerBy.get(p.symbol) || null, env: pointerBy.get(p.symbol) ? envelopesById[pointerBy.get(p.symbol).desiredVersionId] : null, ctrl, nowMs, trades: tradeViews(fills, p.symbol, reasonBySymbol[p.symbol], orderSetsById), reason: reasonBySymbol[p.symbol], dipOpen: dipOpenBySymbol[p.symbol] || null })).sort((a, b) => (a.lane === b.lane ? 0 : a.lane === "ai" ? -1 : 1) || a.symbol.localeCompare(b.symbol));
+  const holdings = snap.positions.map((p) => holdingView(p, { snap, pointer: pointerBy.get(p.symbol) || null, env: pointerBy.get(p.symbol) ? envelopesById[pointerBy.get(p.symbol).desiredVersionId] : null, ctrl, nowMs, trades: tradeViews(fills, p.symbol, reasonBySymbol[p.symbol], orderSetsById), reason: reasonBySymbol[p.symbol], dipOpen: dipOpenBySymbol[p.symbol] || null, orderSets })).sort((a, b) => (a.lane === b.lane ? 0 : a.lane === "ai" ? -1 : 1) || a.symbol.localeCompare(b.symbol));
   const active = pointers.filter((p) => !TERMINAL_POINTER.has(p.status)).sort((a, b) => a.symbol.localeCompare(b.symbol));
   const auths = await authorizationViews(D, ctrl, { accountId, pointers: active, orderSets, fills, envelopesById });
   const working = orderSets.filter((o) => !["CLOSED", "CANCELLED", "FILLED", "COMPLETE", "ENTRY_EXPIRED"].includes(o.status)).sort((a, b) => Number(b.createdAtMs) - Number(a.createdAtMs)).map((o) => orderSetView(o, fills, ctrl));

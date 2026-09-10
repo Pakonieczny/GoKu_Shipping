@@ -139,8 +139,14 @@ function supportedInvestmentPolicy(policy) {
   if(policy?.version==='required-investment.v4'){try{const canonical=require('./_investorSimulationHorizon').policyFor(policy.companyRange,policy.strategy);return C.hash(canonical)===C.hash(policy)?canonical:null;}catch{return null;}}
   return [INVESTMENT_POLICY,DIVERSIFIED_POLICY,...Object.keys(require('./_investorSimulationHorizon').RANGES).map(r=>require('./_investorSimulationHorizon').policyFor(r))].find(p=>policy?.version===p.version&&C.hash(policy)===C.hash(p))||null;
 }
-function assertInvestmentAllocations(investments,policy) {
-  if(!supportedInvestmentPolicy(policy))fail('SIMULATION_INVESTMENT_POLICY_INVALID');
+/** `stored`: the plan was saved earlier and is protected by its planHash, so its
+ *  policy was validated when saved and stays authoritative for that plan even
+ *  after the shared constants (cash policy, risk mandate defaults, versions)
+ *  move on. Recomputing "supported" against today's constants would strand
+ *  every open position the moment a policy constant changed. New plans are
+ *  always checked against today's constants. */
+function assertInvestmentAllocations(investments,policy,{stored=false}={}) {
+  if(stored?!(policy&&typeof policy==='object'&&typeof policy.version==='string'&&Number.isSafeInteger(policy.maxCompanies)):!supportedInvestmentPolicy(policy))fail('SIMULATION_INVESTMENT_POLICY_INVALID');
   const all=Object.values(investments||{}),cashAllowed=policy.minCompanies===0||!!policy.coreVersion;
   if(policy.maxHoldingSessions)all.forEach(r=>require('./_investorSimulationHorizon').validate(r,policy));
   // With a cash-allowed policy every finalist carries an explicit BUY or PASS; PASS rows reserve nothing.

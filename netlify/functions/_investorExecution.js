@@ -605,7 +605,7 @@ async function tickInvestmentPlan({admin=null,accountId,control={},barsBySymbol=
   const plan=ps.data(),{planHash,accountId:unusedAccount,managerRunId,createdAtMs,...content}=plan;
   if(sha(content)!==planHash)throw typed('SIMULATION_PLAN_CORRUPT','Saved investment plan changed');
   if(sha(plan.policy)!==sha(scope.investmentPolicy))throw typed('SIMULATION_INVESTMENT_POLICY_INVALID');
-  require('./_investorResearchHandoff').assertInvestmentAllocations(plan.investments,plan.policy);
+  require('./_investorResearchHandoff').assertInvestmentAllocations(plan.investments,plan.policy,{stored:true});
   const sessionDate=market.nyParts(new Date(plan.cutoffMs)).date,schedule=plan.policy.maxHoldingSessions?require('./_investorSimulationHorizon').sessions(sessionDate):null,spread=BigInt(scope.executionSpreadBps||0),feeMicros=BigInt(scope.feePerShareMicros||0);
   if(schedule&&sha(schedule)!==sha(plan.sessions))throw typed('SIMULATION_PLAN_CORRUPT','Session schedule mismatch');
   let fillCount=0;const unavailable=[];
@@ -770,7 +770,9 @@ async function tickSharedPaper({admin=null,accountId,control={},barsBySymbol={},
  const D=db(admin),active=rows(await D.col(D.COL.orderSets).where('accountId','==',accountId).get()).filter(x=>x.coreVersion&&!x.closed&&(!x.entryExpired||big(x.reservedMinor)>0n)),ids=new Set(active.map(x=>x.planId)),plans=rows(await D.col(D.COL.portfolioPlans).where('accountId','==',accountId).get()).filter(p=>p.policy?.coreVersion&&ids.has('shared_'+p.planHash));
  if((control.accountMode||control.mode)!=='PAPER_AI')return {plans:0};
  let fills=0;const unavailable=[],missingPrices=[];
+ const failed=[];
  for(const p of plans){
+  try{
    const planId='shared_'+p.planHash;
    // Only consolidated, timestamped, completed bars can drive current execution.
    const filtered={};
@@ -786,7 +788,13 @@ async function tickSharedPaper({admin=null,accountId,control={},barsBySymbol={},
        tx.set(D.col(D.COL.accounts).doc(accountId),{balanceCents:balance,balanceRevision:(as.data().balanceRevision||0)+1},{merge:true});tx.set(ref,{entryExpired:true,status:'ENTRY_EXPIRED',reservedMinor:'0',updatedAtMs:nowMs},{merge:true});tx.set(D.col(D.COL.ledger).doc(state.orderSetId+'_release'),{accountId,kind:'SHARED_ENTRY_EXPIRED',legs:[{account:ACCT.CASH,amountCents:amount},{account:ACCT.RESERVED,amountCents:-amount}],postedAtMs:nowMs});
      });
    }
+  }catch(e){
+   // One saved plan must never stop the others from being checked: stops, targets and time limits on every other position still run.
+   if(e.code==='PAPER_HOLD_EXIT_UNAVAILABLE'||e.code==='PAPER_MARKET_DATA_UNAVAILABLE')throw e;
+   failed.push({planId:'shared_'+p.planHash,code:e.code||'PLAN_TICK_FAILED',message:String(e.message||'').slice(0,160)});
+  }
  }
+ if(failed.length)throw typed('PAPER_PLAN_TICK_FAILED',failed.length+' saved plan(s) could not be checked: '+failed.map(f=>f.planId.slice(0,27)+' ('+f.code+')').join(', ')+'. Every other plan was checked normally.',{failed});
  if(unavailable.length)throw typed('PAPER_HOLD_EXIT_UNAVAILABLE',unavailable.join(' '));
  if(missingPrices.length)throw typed('PAPER_MARKET_DATA_UNAVAILABLE','Consolidated five-minute market bars are unavailable for '+[...new Set(missingPrices)].join(', ')+'. Plans and cash are preserved; no prices were invented.');
  return {plans:plans.length,fills,conservation:await assertConservation(accountId,{admin:D})};

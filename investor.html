@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-cCp8xWMi143O1irKI9QHje0FBpSpaUjXpc+1HX5xfhg='; style-src 'self' 'sha256-VcKqr/d/XFPijnGWkopLbFcRJkgK6mUfFm+z/+iym0E='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-8mMIy/4QaduLR7PPbv6BU7TB4L8jXw/uszIwyf/X0ls='; style-src 'self' 'sha256-VcKqr/d/XFPijnGWkopLbFcRJkgK6mUfFm+z/+iym0E='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -3359,7 +3359,7 @@ function renderPortfolio(loading) {
   if (!p) { setChildren($("portfolioSummary"), [cardHead("Portfolio", "portfolio"), slot.error && !loading ? stateBox("failed", "Could not load the portfolio", " — " + slot.error.message, slot.error.code) : stateBox("loading", "Loading the portfolio…")]); return; }
   renderPortfolioSummary(p.summary || {}); if(slot.error)$("portfolioSummary").prepend(stateBox("stale","Holdings could not be refreshed."," Previously loaded information is shown. "+slot.error.message));
   var h = p.holdings; setText("holdingListSub", h ? fmtInt(h.completedCount) + " / " + (h.totalCount == null ? "?" : fmtInt(h.totalCount)) + " · as of " + fmtTime(h.asOf) : "");
-  var holdSig = JSON.stringify((h && h.items || []).map(function (x) { return [x.resourceId, x.resourceVersion, x.quantity, x.averageCost, x.target, x.lossBoundary, x.protection, x.labels, x.thesisHealth, x.availableActions, x.trades, x.reason]; })) + "|" + (h ? h.collectionState : "");
+  var holdSig = JSON.stringify((h && h.items || []).map(function (x) { return [x.resourceId, x.resourceVersion, x.quantity, x.averageCost, x.target, x.lossBoundary, x.protection, x.labels, x.thesisHealth, x.availableActions, x.trades, x.reason, x.timeLimitAt]; })) + "|" + (h ? h.collectionState : "");
   if (holdSig !== LIVE.holdSig || !$("holdingList").children.length) { LIVE.holdSig = holdSig; var items = (h && h.items || []), ai = items.filter(function (x) { return laneOf(x) !== "dip"; }), dp = items.filter(function (x) { return laneOf(x) === "dip"; }); setChildren($("holdingList"), [colStateNode(h, "holdings"), ai.length && dp.length ? el("div", { class: "lanehead lane-ai" }, laneTag("ai"), el("span", { class: "tiny muted", text: ai.length + " held · research-driven, protected by stops" })) : null, ai.map(holdingRow), dp.length ? el("div", { class: "lanehead lane-dip" }, laneTag("dip"), el("span", { class: "tiny muted", text: dp.length + " open · quick trades from the dip trader's own budget" })) : null, dp.map(holdingRow)]); holdChartsMount(); }
   else (h && h.items || []).forEach(function (x) { LIVE.holdings.set(x.symbol, x); });
   applyLiveQuotes();
@@ -3408,7 +3408,7 @@ function holdingRow(h) {
     keyFact("Live price", "price", lc ? usd(lc.price) : (h.mark ? fmtPrice(h.mark) : "—"), lc && liveNum(lc.pnlPct) ? signedPct(lc.pnlPct) + " vs your cost" : "your cost " + (liveNum(cost) ? usd(cost) : "—")),
     keyFact("Sell target", null, liveNum(tgt) ? usd(tgt) : "—", liveNum(tgt) && liveNum(cost) ? signedPct((tgt / cost - 1) * 100) + " · " + signedUsd(upIf) + " if reached" : "no target set", "up"),
     keyFact("Stop (worst case)", null, liveNum(stop) ? usd(stop) : "—", liveNum(stop) && liveNum(cost) ? signedPct((stop / cost - 1) * 100) + " · " + signedUsd(downIf) + " if hit" : "no stop set", "down"),
-    keyFact("Gain / loss", "pnl", lc && liveNum(lc.pnl) ? signedUsd(lc.pnl) + " (" + signedPct(lc.pnlPct) + ")" : fmtMoney(h.unrealizedPnl), "live · " + (lc && liveNum(lc.value) ? usd(lc.value) : fmtMoney(h.marketValue)) + " market value", lc ? toneOf(lc.pnl) : null));
+    keyFact("Gain / loss", "pnl", lc && liveNum(lc.pnl) ? signedUsd(lc.pnl) + " (" + signedPct(lc.pnlPct) + ")" : fmtMoney(h.unrealizedPnl), (h.timeLimitAt ? "sells by " + fmtTime(h.timeLimitAt) + " at the latest · " : "live · ") + (lc && liveNum(lc.value) ? usd(lc.value) : fmtMoney(h.marketValue)) + " market value", lc ? toneOf(lc.pnl) : null));
   if (ts.sells.length) { var ls = ts.sells[ts.sells.length - 1]; keyfacts.appendChild(keyFact("Sold", null, fmtTime(ls.at), fmtQty(ls.quantity) + " sh @ " + fmtPrice(ls.price) + " · " + plainLabel(ls.kind === "target" ? "profit target" : ls.kind === "stop" ? "stop" : "sell"))); }
   var why = isDip ? (e && e.reason) || "Bought after a sharp fall settled; the dip trader sells on a recovery, a break of the low, or a time limit." : h.reason || (e && e.reason);
   var more = detailsNode("More details", [
