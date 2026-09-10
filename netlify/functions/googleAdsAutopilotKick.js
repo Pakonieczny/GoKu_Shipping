@@ -115,7 +115,8 @@ async function handleAction(body) {
   const a = body.action;
   const ctrl = await E.control();
   if (a === "dashboard") return await E.dashboard();
-  if (a === "metricsRange") { try { return await E.metricsRange({ start: body.start, end: body.end }); } catch (e) { return { error: e.message }; } }
+  if (a === "campaignVersions") { try { return await E.campaignVersions({ id: body.id || body.campaignId }); } catch (e) { return { ok: false, error: e.message }; } }
+  if (a === "metricsRange") { try { return await E.metricsRange({ start: body.start, end: body.end }); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "keywordDiag") { try { return await E.keywordDiag({ keyword: body.keyword, geo: body.geo }); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "conversionHealth") { try { return await E.conversionHealth({ force: !!body.force }); } catch (e) { return { error: e.message }; } }
   if (a === "syncConversions") {
@@ -174,7 +175,7 @@ async function handleAction(body) {
     catch (e) { return { ok: false, error: e.message }; }
   }
   // ---- Ad Doctor: Google Ads diagnostics + AI specialist verdicts ----
-  if (a === "dailyStats")    { try { return await E.dailyStats({ start: body.start, end: body.end }); } catch (e) { return { error: e.message }; } }
+  if (a === "dailyStats")    { try { return await E.dailyStats({ start: body.start, end: body.end, campaignId: body.campaignId }); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "diagnostics")    { try { return (await E.getDiagnostics()) || { empty: true }; } catch (e) { return { error: e.message }; } }
   if (a === "runDiagnostics") {
     // Heavy (multi-GAQL + LLM) — runs in the background worker to dodge the
