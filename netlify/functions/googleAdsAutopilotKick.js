@@ -116,6 +116,8 @@ async function handleAction(body) {
   const ctrl = await E.control();
   if (a === "dashboard") return await E.dashboard();
   if (a === "campaignVersions") { try { return await E.campaignVersions({ id: body.id || body.campaignId }); } catch (e) { return { ok: false, error: e.message }; } }
+  if (a === "campaignImprovement") { try { return await E.campaignImprovement({ campaignId: body.campaignId || body.id, start: body.start, end: body.end, force: !!body.force }); } catch (e) { return { ok: false, error: e.message }; } }
+  if (a === "createImprovementDraft") { try { return await E.createImprovementDraft({ campaignId: body.campaignId || body.id, start: body.start, end: body.end, actionId: body.actionId, reportId: body.reportId }); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "metricsRange") { try { return await E.metricsRange({ start: body.start, end: body.end }); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "keywordDiag") { try { return await E.keywordDiag({ keyword: body.keyword, geo: body.geo }); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "conversionHealth") { try { return await E.conversionHealth({ force: !!body.force }); } catch (e) { return { error: e.message }; } }
