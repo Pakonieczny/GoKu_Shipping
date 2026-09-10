@@ -136,7 +136,7 @@ function controlCapabilities(ctrl, { attested = attestationOk(ctrl), reconciled 
   caps.push(em === "ENGAGED" || em === "RECOVERING" ? on("resumeSystem") : off("resumeSystem", "emergency state is clear"));
   caps.push(mode === "OBSERVE" ? (attested ? on("activateAccountMode") : off("activateAccountMode", "deployed build attestation failing")) : off("activateAccountMode", `account mode is ${mode}`));
   caps.push(mode === "PAPER_AI" ? on("deactivateAccountMode") : off("deactivateAccountMode", `account mode is ${mode}`));
-  for (const a of ["setBudget", "setRiskMandate", "setEmergencyRiskPolicy", "setMarketConfig", "freezeUniverse", "resolveCiks", "reconcile", "requestAuditExport", "createPaperAccount", "previewPaperAccountReset", "dipSettingsSave", "dipSimulationStart", "dipSimulationControl", "barRepositoryBuild"]) caps.push(on(a));
+  for (const a of ["setBudget", "setRiskMandate", "setEmergencyRiskPolicy", "setMarketConfig", "freezeUniverse", "resolveCiks", "reconcile", "requestAuditExport", "createPaperAccount", "previewPaperAccountReset", "dipSettingsSave", "dipSimulationStart", "dipSimulationControl", "barRepositoryBuild", "dipTunerSettingsSave", "dipTunerKeyIssue", "dipTunerApply"]) caps.push(on(a));
   caps.push(enabled ? on("resetPaperAccount") : off("resetPaperAccount", "account is in OBSERVE mode"));
   return caps;
 }
@@ -1512,6 +1512,35 @@ const MUTATIONS = {
     await writeAudit(D, { action: "barRepositoryBuild", actorId: ctx.actorId, accountId: ctx.accountId, mutationId: ctx.mutationId, reason: env.auditReason || "price library build", after: { jobId: job.jobId }, correlationId: ctx.correlationId, nowMs: ctx.nowMs }).catch(() => {});
     return { data: { ...(await BARS.status(D)), jobId: job.jobId } };
   },
+  /* the dip-rule tuner: schedule, effort, variables, runner key, apply a winning set */
+  async dipTunerSettingsSave(params, ctx, env) {
+    const D = ctx.admin, TUNER = require("./_investorDipTuner");
+    const prior = await TUNER.readControl(D);
+    const patch = {};
+    for (const k of ["enabled", "autoApply", "nightStartHour", "nightEndHour", "nightEffortPct", "dayEffortPct", "holdoutMonths", "minTrades"]) if (params[k] != null) patch[k] = params[k];
+    if (Array.isArray(params.variables)) { const vars = { ...prior.variables }; for (const v of params.variables) if (vars[v.key]) vars[v.key] = { tune: v.tune != null ? !!v.tune : vars[v.key].tune, values: Array.isArray(v.values) && v.values.length ? v.values : vars[v.key].values }; patch.variables = vars; }
+    const next = TUNER.normalizeControl({ ...prior, ...patch });
+    const out = await TUNER.writeControl(D, { ...next, keyHash: prior.keyHash, keyIssuedAtMs: prior.keyIssuedAtMs, applied: prior.applied }, ctx.nowMs);
+    await writeAudit(D, { action: "dipTunerSettingsSave", actorId: ctx.actorId, accountId: ctx.accountId, mutationId: ctx.mutationId, reason: env.auditReason || "dip tuner settings", after: { enabled: out.enabled, autoApply: out.autoApply, grid: TUNER.gridOf(out).size }, correlationId: ctx.correlationId, nowMs: ctx.nowMs }).catch(() => {});
+    return { data: await TUNER.view(D, ctx.control && ctx.control.dip) };
+  },
+  async dipTunerKeyIssue(params, ctx, env) {
+    const D = ctx.admin, TUNER = require("./_investorDipTuner");
+    const key = TUNER.issueKey();
+    await TUNER.writeControl(D, { keyHash: TUNER.keyHash(key), keyIssuedAtMs: ctx.nowMs }, ctx.nowMs);
+    await writeAudit(D, { action: "dipTunerKeyIssue", actorId: ctx.actorId, accountId: ctx.accountId, mutationId: ctx.mutationId, reason: env.auditReason || "dip tuner runner key", after: { issuedAtMs: ctx.nowMs }, correlationId: ctx.correlationId, nowMs: ctx.nowMs }).catch(() => {});
+    return { data: { key, issuedAtMs: ctx.nowMs, note: "shown once; the console keeps only a hash" } };
+  },
+  async dipTunerApply(params, ctx, env) {
+    const D = ctx.admin, TUNER = require("./_investorDipTuner");
+    const board = await TUNER.readDoc(D, "leaderboard");
+    if (!board || board.specHash !== params.specHash) throw typed("SEMANTIC_REJECTED", "the leaderboard has changed; reload and choose again");
+    const entry = (board.entries || []).find((e) => Number(e.index) === Number(params.index));
+    if (!entry) throw typed("SEMANTIC_REJECTED", "that parameter set is no longer on the leaderboard");
+    const out = await TUNER.applyParams(D, { params: entry.params, source: { specHash: board.specHash, index: entry.index, score: entry.score, rank: entry.rank, how: "manual" }, actorId: ctx.actorId, reason: env.auditReason || "apply tuned dip settings", nowMs: ctx.nowMs });
+    forgetMemo("");
+    return { data: { settings: out.dip, applied: out.applied } };
+  },
   async dipSimulationControl(params, ctx) {
     const out = await require("./_investorDipSim").control(ctx.admin, ctx.actorId, params.simId, params.command);
     return { data: out };
@@ -1746,6 +1775,7 @@ const READS = {
   dipStatus: async ({ ctx }) => ({ data: await require("./_investorDipReversal").status(ctx.admin, ctx.accountId, ctx.control && ctx.control.dip) }),
   dipSimulations: async ({ ctx }) => ({ data: { items: await require("./_investorDipSim").list(ctx.admin, ctx.actorId), asOf: new Date(ctx.nowMs).toISOString() } }),
   barRepositoryStatus: async ({ ctx }) => ({ data: await require("./_investorBarStore").status(ctx.admin) }),
+  dipTunerStatus: async ({ ctx }) => ({ data: await require("./_investorDipTuner").view(ctx.admin, ctx.control && ctx.control.dip) }),
   dipSimulationDetail: async ({ params, ctx }) => ({ data: await require("./_investorDipSim").detail(ctx.admin, ctx.actorId, params.simId) }),
   paperDecisionSettings:async({ctx})=>{const store=require("./_investorPaperProcess").create({admin:ctx.admin}),settings=await store.settings(),resolved=await store.resolve(settings);return {data:{settings:{companyRange:settings.companyRange,strategyVersionId:settings.strategyVersionId,revision:settings.revision,updatedAtMs:settings.updatedAtMs||null},resolved}};},
   simulationAnalysisOverview:async({params,ctx})=>({data:await require("./_investorSimulationLearning").create({admin:ctx.admin}).view(ctx.actorId,params)}),

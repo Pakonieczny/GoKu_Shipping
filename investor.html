@@ -8,7 +8,7 @@
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex,nofollow">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-qUgqnBeaY1YuHhafTy+tJSfJTdwxKgCviU2BdaDszOE='; style-src 'self' 'sha256-+meK0+R8acPPXA6CI4xy4sXsqK5ljlUdpdv17UxFBFY='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-cCp8xWMi143O1irKI9QHje0FBpSpaUjXpc+1HX5xfhg='; style-src 'self' 'sha256-VcKqr/d/XFPijnGWkopLbFcRJkgK6mUfFm+z/+iym0E='; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
 <title>Investor AI — AI Fund Manager</title>
 <style>
 /* ═══ Investor AI — operator console (fund-manager-v1) ═══════════════════════
@@ -644,6 +644,25 @@ details.fold>summary{list-style:none}details.fold>summary::marker{content:"";dis
 
 .simgroup{border:1px solid var(--line);border-left:4px solid var(--gold);border-radius:14px;padding:14px 16px;margin-bottom:18px;background:var(--bg-2)}
 .simgroup--dip{border-left-color:var(--slate)}
+.simgroup--tuner{border-left-color:var(--velvet)}
+.lanetag.lane-tuner{background:rgba(96,64,110,.10);border-color:rgba(96,64,110,.35);color:var(--velvet)}
+.tunegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+.tunegrid .field input,.tunegrid .field select{width:100%}
+.tunevars{display:grid;grid-template-columns:auto minmax(0,1fr) minmax(0,2fr);gap:8px 12px;align-items:center}
+.tunevars .grp{grid-column:1/-1;margin-top:8px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-45)}
+.tunevars input[type=text]{width:100%}
+.tunevars .tv-lbl{font-size:13px}
+.tunevars .tv-lbl .tiny{display:block}
+.tbl td.pset{white-space:normal;min-width:300px}
+.pset{display:flex;flex-wrap:wrap;gap:4px}
+.pset span{font-size:11px;line-height:1.4;padding:2px 7px;border-radius:999px;background:var(--bg-2);border:1px solid var(--line);white-space:nowrap}
+.pset span b{font-weight:650}
+.tbl td .sub2{display:block;font-size:11px;color:var(--ink-45);white-space:nowrap}
+.tbl tr.is-applied td{background:rgba(169,130,63,.08)}
+.keybox{font-family:var(--mono);font-size:12px;background:var(--bg-2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;word-break:break-all;user-select:all}
+.outgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.outgrid .tbl{font-size:12px}
+.outgrid h4{margin:0 0 6px;font-size:13px}
 .simgroup__h{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
 .simgroup .sim-section{margin-bottom:10px}
 .keyfacts--sim .kf__v{font-size:18px}
@@ -820,6 +839,13 @@ details.fold>summary{list-style:none}details.fold>summary::marker{content:"";dis
 <div class="sim-grid" id="dipSimRuns"></div>
 <div class="card" id="dipSimDetail" hidden></div>
 </div></details>
+</div>
+
+<div class="simgroup simgroup--tuner" id="simGroupTuner"><div class="simgroup__h"><span class="lanetag lane-tuner"><svg aria-hidden="true" class="ic sm"><use href="#i-learning"/></svg><span>Dip rule tuner</span></span><span class="tiny muted">Tries every practical variation of the dip rules on five years of prices · runs on your own computer · no AI</span></div>
+<div class="card" id="tunerRunner"></div>
+<details class="sim-section" id="simSectionTunerSetup" open data-fold="tunerSetup"><summary><span class="k">SET UP</span><h3>When it runs and how hard</h3><svg aria-hidden="true" class="ic chev"><use href="#i-chevron"/></svg></summary><div class="sim-section-body"><div class="card" id="tunerSchedule"></div></div></details>
+<details class="sim-section" id="simSectionTunerVars" data-fold="tunerVars"><summary><span class="k">VARIABLES</span><h3>What it is allowed to change</h3><svg aria-hidden="true" class="ic chev"><use href="#i-chevron"/></svg></summary><div class="sim-section-body"><div class="card" id="tunerVariables"></div></div></details>
+<details class="sim-section" id="simSectionTunerBoard" open data-fold="tunerBoard"><summary><span class="k">RESULTS</span><h3>Most successful variations</h3><svg aria-hidden="true" class="ic chev"><use href="#i-chevron"/></svg></summary><div class="sim-section-body"><div class="card" id="tunerBoard"></div><div class="card" id="tunerOutcomes"></div></div></details>
 </div>
 
 </section>
@@ -1138,7 +1164,7 @@ var ACTION_SPECS = {
   freezeBuys: M(false, true, "version", "confirm_with_reason", true), resumeBuys: M(true, false, "version", "reauth"),
   emergencyStop: M(false, true, "none", "confirm_with_reason", true), resumeSystem: M(true, false, "version", "reauth"),
   activateAccountMode: M(true, false, "version", "reauth"), deactivateAccountMode: M(true, true, "version", "reauth"),
-  setBudget: M(false, false, "version", "confirm"), dipSettingsSave: M(false, false, "none", "none"), dipSimulationStart: M(false, false, "none", "none"), dipSimulationControl: M(false, false, "none", "confirm"), barRepositoryBuild: M(false, false, "none", "none"), setRiskMandate: M(true, false, "version", "reauth"), setEmergencyRiskPolicy: M(true, false, "preview", "reauth_with_preview"),
+  setBudget: M(false, false, "version", "confirm"), dipSettingsSave: M(false, false, "none", "none"), dipSimulationStart: M(false, false, "none", "none"), dipSimulationControl: M(false, false, "none", "confirm"), barRepositoryBuild: M(false, false, "none", "none"), dipTunerSettingsSave: M(false, false, "none", "none"), dipTunerKeyIssue: M(false, false, "none", "none"), dipTunerApply: M(false, false, "none", "confirm"), setRiskMandate: M(true, false, "version", "reauth"), setEmergencyRiskPolicy: M(true, false, "preview", "reauth_with_preview"),
   setMarketConfig: M(true, false, "version", "reauth"), confirmSplit: M(true, false, "version", "reauth"), confirmCashDividend: M(true, false, "version", "reauth"),
   requestAuditExport: M(false, false, "none", "confirm"), createPaperAccount: M(true, false, "absent", "reauth"), previewPaperAccountReset: M(false, false, "none", "none"),
   resetPaperAccount: M(true, false, "preview", "reauth_with_preview"), reconcile: M(false, false, "none", "none"), freezeUniverse: M(true, false, "none", "reauth"),
@@ -1654,7 +1680,7 @@ function startPolling() {
   POLL.quotes = setInterval(function(){ var open = marketOpen(), due = Date.now() - LIVE.quotesAt >= (open ? 4500 : 14500); if (due) pollQuotes(); if(open && drawer.open && drawer.panel==="c-chart" && drawer.days===0 && $("chartAuto").checked && Date.now() - (drawer.intradayAt || 0) >= 14500){drawer.intradayAt = Date.now(); loadCompanyIntraday();} }, 5000);
   POLL.portfolio = setInterval(function () { if (document.hidden || $("app").hidden || route.view !== "portfolio") return; loadPortfolio(); }, 10000);
   POLL.charts = setInterval(holdChartsTick, 5000);
-  POLL.dipsim = setInterval(function () { if (document.hidden || $("app").hidden || route.view !== "simulation") return; var active = DIPSIM.items.some(function (x) { return x.status === "running" || x.status === "queued"; }); if (active || Date.now() - DIPSIM.at > 30000) loadDipSims(); var lib = BARLIB.data, building = lib && (lib.status === "running" || lib.status === "queued"); if (building || Date.now() - BARLIB.at > 60000) loadBarLibrary(); }, 5000);
+  POLL.dipsim = setInterval(function () { if (document.hidden || $("app").hidden || route.view !== "simulation") return; var active = DIPSIM.items.some(function (x) { return x.status === "running" || x.status === "queued"; }); if (active || Date.now() - DIPSIM.at > 30000) loadDipSims(); var lib = BARLIB.data, building = lib && (lib.status === "running" || lib.status === "queued"); if (building || Date.now() - BARLIB.at > 60000) loadBarLibrary(); var tr = TUNERUI.data && TUNERUI.data.runner, tuning = tr && tr.online; if (tuning ? Date.now() - TUNERUI.at > 10000 : Date.now() - TUNERUI.at > 60000) loadTuner(); }, 5000);
   POLL.dip = setInterval(function () { if (document.hidden || $("app").hidden) return; var d = getRes("dip"), on = !!(d && d.settings && d.settings.enabled); if ((route.view === "manager" && (on || Date.now() - (DIPUI.at || 0) > 30000)) || (route.view === "system" && Date.now() - (DIPUI.at || 0) > 30000)) loadDip(); }, 5000);
   POLL.session = setInterval(sessionRefreshTick, 20 * 60 * 1000);
 }
@@ -3179,6 +3205,148 @@ function renderBarLibrary() {
     d.recentErrors && d.recentErrors.length ? el("div", { class: "tiny muted", text: "Notes: " + d.recentErrors.join(" · ") }) : null]);
 }
 
+/* ── 17f. Dip rule tuner (runs on the operator's own computer) ──────────── */
+var TUNERUI = { data: null, at: 0, loading: false, key: null, saving: false };
+async function loadTuner(force) {
+  if (TUNERUI.loading) return; if (!force && Date.now() - TUNERUI.at < 3000) return;
+  TUNERUI.loading = true;
+  try { var d = await loadRes("tuner", "dipTunerStatus", {}); if (d) { TUNERUI.data = d; TUNERUI.at = Date.now(); } }
+  catch (e) { /* keep the last view */ }
+  finally { TUNERUI.loading = false; renderTuner(); }
+}
+function renderTuner() { renderTunerRunner(); renderTunerSchedule(); renderTunerVariables(); renderTunerBoard(); renderTunerOutcomes(); }
+function tunerHours(h) { return (h % 12 || 12) + (h < 12 ? " AM" : " PM"); }
+function tunerNum(v, d) { return liveNum(v) ? Number(v).toLocaleString(undefined, { maximumFractionDigits: d == null ? 0 : d }) : "—"; }
+function renderTunerRunner() {
+  var host = $("tunerRunner"); if (!host) return;
+  var d = TUNERUI.data;
+  if (!d) { setChildren(host, [cardHead("Tuner on your computer", "learning"), stateBox("loading", "Checking the tuner…")]); return; }
+  var r = d.runner || {}, c = d.control || {}, online = !!r.online, grid = d.grid || {};
+  var pct = r.gridSize ? Math.min(100, Math.round((r.evaluated || 0) / r.gridSize * 100)) : 0;
+  var head = el("div", { class: "card__h" }, el("h3", null, icon("learning"), " Tuner on your computer"), el("span", { class: "sub" }, online ? el("span", { class: "livestat" }, liveDot("on"), el("span", { class: "livestat__t", text: r.window === "night" ? "running · night effort" : r.window === "day" ? "running · day effort" : "connected · idle" })) : el("span", { text: r.lastSeenMs ? "last seen " + ageText(new Date(Number(r.lastSeenMs)).toISOString()) : "not started yet" })));
+  var kids = [head];
+  if (!c.hasKey || TUNERUI.key) {
+    var cmd = "node scripts/dipTuner.js --site " + location.origin + " --key " + (TUNERUI.key || "<your key>");
+    kids.push(el("div", { class: "explainer" }, el("b", { text: "One-time setup. " }), "The tuner runs on your Mac, not on the site, so it can use every core. In Terminal, inside the project folder, run the command below once; after that " , el("code", { text: "node scripts/dipTuner.js" }), " is enough. Leave the window open; Ctrl-C stops it and it resumes where it left off."));
+    if (TUNERUI.key) kids.push(el("div", { class: "keybox", text: cmd }), el("div", { class: "tiny muted", text: "This key is shown once. Creating another key replaces it." }));
+    else kids.push(el("div", { class: "actions" }, actionBtn("Create runner key", "sm gold", tunerIssueKey)));
+  } else {
+    kids.push(el("div", { class: "libbar" }, el("div", { class: "libbar__pct pnl " + (pct >= 100 ? "up" : ""), text: pct + "%" }), el("div", { class: "libbar__body" }, el("div", { class: "progress progress--lib" }, el("div", { class: "progress__bar" + (pct >= 100 ? " is-done" : ""), style: "width:" + Math.max(pct ? 1 : 0, pct) + "%" })), el("div", { class: "tiny muted", text: tunerNum(r.evaluated) + " of " + tunerNum(r.gridSize || grid.size) + " variations tried · " + (r.phase || (online ? "connected" : "runner not running")) + (r.ratePerHour ? " · " + tunerNum(r.ratePerHour) + " per hour" : "") + (r.etaHours != null && r.etaHours > 0 ? " · about " + (r.etaHours > 48 ? Math.round(r.etaHours / 24) + " days" : r.etaHours + " h") + " left" : "") }))));
+    var ds = r.dataset;
+    var tiles = el("div", { class: "tiles" }, [
+      keyFact("Computer", null, online ? (r.workers || 0) + " of " + (r.cores || "?") + " cores" : "offline", online ? (r.effortPct || 0) + "% effort · " + (r.host || "") : "start it in Terminal: node scripts/dipTuner.js"),
+      keyFact("Prices replayed", null, ds ? tunerNum(ds.symbols) + " companies" : "—", ds ? ds.from + " → " + ds.to + " · " + tunerNum(ds.days) + " trading days" : ""),
+      keyFact("Honest check", null, ds && ds.holdoutFrom ? "from " + ds.holdoutFrom : "—", ds ? "the newest " + tunerNum(ds.testDays) + " days are never tuned on" : ""),
+      keyFact("Best so far", null, r.best && r.best.score != null ? signedUsd(r.best.score, 0) : "—", r.best ? "held-out months " + signedUsd(r.best.test.pnlUsd, 0) + " · " + r.best.train.trades + " trades" : "nothing scored yet", r.best && r.best.score != null ? toneOf(r.best.score) : null)]);
+    kids.push(tiles);
+    if (c.applied) kids.push(el("div", { class: "okline" }, icon("check"), el("span", { text: "Live dip lane uses tuned set #" + c.applied.index + (c.applied.how === "auto" ? " (applied automatically" : " (applied by you") + " " + ageText(new Date(Number(c.applied.atMs)).toISOString()) + ", score " + signedUsd(c.applied.score, 0) + ")" })));
+    kids.push(el("div", { class: "actions" }, actionBtn("New runner key", "sm ghost", tunerIssueKey), el("span", { class: "tiny muted", text: online ? "Everything below updates every 10 seconds while the runner is connected." : "The runner reports here whenever it is running. If it stopped, start it again in Terminal." })));
+  }
+  setChildren(host, kids);
+}
+async function tunerIssueKey() {
+  if (TUNERUI.saving) return; TUNERUI.saving = true;
+  try { var r = await runMutation({ action: "dipTunerKeyIssue", params: {}, silent: true, title: "Create runner key" }); if (r && r.data && r.data.key) { TUNERUI.key = r.data.key; toast("Runner key created. Copy the command now; it is shown once.", { icon: "check" }); await loadTuner(true); } }
+  finally { TUNERUI.saving = false; }
+}
+function renderTunerSchedule() {
+  var host = $("tunerSchedule"); if (!host) return;
+  var d = TUNERUI.data; if (!d) { setChildren(host, [stateBox("loading", "Loading…")]); return; }
+  if (host.dataset.version === String(d.control.version) && host.children.length) return;
+  host.dataset.version = String(d.control.version);
+  var c = d.control;
+  var form = el("form", { class: "stack" });
+  var onoff = el("label", { class: "inline" }, el("input", { type: "checkbox", id: "tnEnabled", checked: !!c.enabled }), el("b", { text: " Let the tuner run (it only works while the runner is open on your computer)" }));
+  var auto = el("label", { class: "inline" }, el("input", { type: "checkbox", id: "tnAuto", checked: !!c.autoApply }), " Apply the most successful variation to the live dip lane automatically (only when it also made money on the held-out months)");
+  var hourSel = function (id, val) { var sel = el("select", { id: id }); for (var h = 0; h < 24; h++) sel.appendChild(el("option", { value: String(h), selected: h === val, text: tunerHours(h) })); return sel; };
+  var pctSel = function (id, val, allowZero) { var sel = el("select", { id: id }); [0, 10, 25, 50, 75, 90, 100].forEach(function (p) { if (!p && !allowZero) return; sel.appendChild(el("option", { value: String(p), selected: p === val, text: p === 0 ? "Off" : p + "% of cores" + (p >= 90 ? " (everything)" : p <= 25 ? " (barely noticeable)" : "") })); }); return sel; };
+  var grid = el("div", { class: "tunegrid" }, [
+    el("label", { class: "field" }, "Night starts", hourSel("tnStart", c.nightStartHour)),
+    el("label", { class: "field" }, "Night ends", hourSel("tnEnd", c.nightEndHour)),
+    el("label", { class: "field" }, "Effort at night", pctSel("tnNight", c.nightEffortPct, false)),
+    el("label", { class: "field" }, "Effort during the day", pctSel("tnDay", c.dayEffortPct, true)),
+    el("label", { class: "field" }, "Months held out for the honest check", el("input", { type: "number", id: "tnHoldout", min: "3", max: "36", step: "1", value: String(c.holdoutMonths) })),
+    el("label", { class: "field" }, "Fewest trades before a set is trusted", el("input", { type: "number", id: "tnMinTrades", min: "10", max: "5000", step: "10", value: String(c.minTrades) }))]);
+  var save = el("button", { type: "submit", class: "btn gold", text: "Save" });
+  form.appendChild(onoff); form.appendChild(auto); form.appendChild(grid); form.appendChild(el("div", { class: "actions" }, save, el("span", { class: "tiny muted", text: "Times follow your computer's clock. 90% at night leaves the Mac responsive; 25% by day stays out of your way." })));
+  form.addEventListener("submit", async function (e) {
+    e.preventDefault(); if (TUNERUI.saving) return; TUNERUI.saving = true; save.disabled = true;
+    try { var r = await runMutation({ action: "dipTunerSettingsSave", params: { enabled: $("tnEnabled").checked, autoApply: $("tnAuto").checked, nightStartHour: Number($("tnStart").value), nightEndHour: Number($("tnEnd").value), nightEffortPct: Number($("tnNight").value), dayEffortPct: Number($("tnDay").value), holdoutMonths: Math.round(Number($("tnHoldout").value) || 12), minTrades: Math.round(Number($("tnMinTrades").value) || 150) }, silent: true, title: "Save tuner schedule" }); if (r && r.data) { TUNERUI.data = r.data; TUNERUI.at = Date.now(); host.dataset.version = ""; toast("Tuner schedule saved. The runner picks it up within a minute.", { icon: "check" }); renderTuner(); } }
+    finally { TUNERUI.saving = false; save.disabled = false; }
+  });
+  setChildren(host, [el("div", { class: "explainer" }, el("b", { text: "How it works. " }), "The runner computes every candidate fall once, then tries each combination of the values below, replaying five years for every company in a second or two per combination. It never tunes on the newest months; those are replayed afterwards as the honest check, so a set that only looks good by luck shows a poor held-out result."), form]);
+}
+function renderTunerVariables() {
+  var host = $("tunerVariables"); if (!host) return;
+  var d = TUNERUI.data; if (!d) { setChildren(host, [stateBox("loading", "Loading…")]); return; }
+  if (host.dataset.version === String(d.control.version) && host.children.length) return;
+  host.dataset.version = String(d.control.version);
+  var form = el("form", { class: "stack" }), box = el("div", { class: "tunevars" }), lastGroup = null;
+  (d.variables || []).forEach(function (v) {
+    if (v.group !== lastGroup) { lastGroup = v.group; box.appendChild(el("div", { class: "grp", text: v.groupLabel })); }
+    box.appendChild(el("input", { type: "checkbox", "data-tune": v.key, checked: v.tune !== false, title: "Try different values for this" }));
+    box.appendChild(el("div", { class: "tv-lbl" }, v.label, el("span", { class: "tiny muted", text: v.unit + (v.live != null ? " · live now: " + v.live : "") })));
+    box.appendChild(el("input", { type: "text", "data-values": v.key, value: (v.values || []).join(", "), placeholder: "values to try, comma separated" }));
+  });
+  var sizeLine = el("div", { class: "small muted", id: "tnGridSize" });
+  var recount = function () { var n = 1; box.querySelectorAll("input[data-tune]").forEach(function (cb) { if (!cb.checked) return; var vals = box.querySelector("input[data-values=\"" + cb.dataset.tune + "\"]").value.split(/[\s,]+/).filter(Boolean); n *= Math.max(1, new Set(vals).size); }); sizeLine.textContent = n.toLocaleString() + " variations in total. A Mac working all night gets through roughly 5,000 to 10,000 an hour, so that is " + (n < 8000 ? "about an hour" : n < 80000 ? "about a night" : n < 800000 ? "a week of nights" : "several weeks of nights") + "."; };
+  box.addEventListener("input", recount); box.addEventListener("change", recount); recount();
+  var save = el("button", { type: "submit", class: "btn", text: "Save variables" });
+  form.appendChild(box); form.appendChild(sizeLine); form.appendChild(el("div", { class: "actions" }, save, el("span", { class: "tiny muted", text: "Unticked variables keep the live setting. Changing this list starts a fresh study; earlier results stay on your computer." })));
+  form.addEventListener("submit", async function (e) {
+    e.preventDefault(); if (TUNERUI.saving) return;
+    var vars = [];
+    box.querySelectorAll("input[data-tune]").forEach(function (cb) { var vals = box.querySelector("input[data-values=\"" + cb.dataset.tune + "\"]").value.split(/[\s,]+/).map(Number).filter(function (x) { return Number.isFinite(x) && x >= 0; }).map(Math.round); vars.push({ key: cb.dataset.tune, tune: cb.checked, values: vals.slice(0, 12) }); });
+    TUNERUI.saving = true; save.disabled = true;
+    try { var r = await runMutation({ action: "dipTunerSettingsSave", params: { variables: vars }, silent: true, title: "Save tuner variables" }); if (r && r.data) { TUNERUI.data = r.data; TUNERUI.at = Date.now(); host.dataset.version = ""; toast("Variables saved: " + (r.data.grid.size || 0).toLocaleString() + " variations.", { icon: "check" }); renderTuner(); } }
+    finally { TUNERUI.saving = false; save.disabled = false; }
+  });
+  setChildren(host, [el("div", { class: "explainer" }, el("b", { text: "Every decision in the chain. " }), "Whether to buy (how big and unusual the fall must be, how long it must settle, when in the day), how much to buy, and when to sell (target, stop, time limit). Tick what may change and list the values worth trying."), form]);
+}
+var TUNER_SHORT = { dropBps: ["Fall", function (v) { return (v / 100).toFixed(2).replace(/0$/, "") + "%"; }], dropWindowMin: ["within", function (v) { return v + " min"; }], zMinTenths: ["z ≥", function (v) { return (v / 10).toFixed(1); }], speedFactorPct: ["speed", function (v) { return v + "%"; }], noEntryBeforeMin: ["open +", function (v) { return v + " min"; }], settleBars: ["settle", function (v) { return v + " bars"; }], stabilitySigmaTenths: ["band", function (v) { return (v / 10).toFixed(1) + "σ"; }], minTradeUsd: ["min", function (v) { return "$" + Math.round(v / 1000) + "k"; }], maxTradeUsd: ["max", function (v) { return "$" + Math.round(v / 1000) + "k"; }], retracePct: ["target", function (v) { return v + "%"; }], stopPct: ["stop", function (v) { return v + "%"; }], maxHoldMin: ["hold", function (v) { return v + " min"; }], cooldownMin: ["pause", function (v) { return v + " min"; }] };
+function tunerParamCell(e, axes) { return el("div", { class: "pset" }, (axes || []).map(function (k) { var sh = TUNER_SHORT[k] || [k, String]; return el("span", null, sh[0] + " ", el("b", { text: sh[1](Number(e.params[k])) })); })); }
+function renderTunerBoard() {
+  var host = $("tunerBoard"); if (!host) return;
+  var d = TUNERUI.data; if (!d) { setChildren(host, [stateBox("loading", "Loading…")]); return; }
+  var b = d.leaderboard, c = d.control;
+  if (!b || !(b.entries || []).length) { setChildren(host, [cardHead("Leaderboard", "learning"), el("div", { class: "muted small", text: "No results yet. The leaderboard fills in as the runner evaluates variations; the first rows usually appear within a few minutes of starting it." })]); return; }
+  var sig = JSON.stringify([b.specHash, b.evaluated, (b.entries || []).slice(0, 30).map(function (e) { return [e.index, e.score]; }), c.applied && c.applied.index]);
+  if (host.dataset.sig === sig) return; host.dataset.sig = sig;
+  var applied = c.applied && c.applied.specHash === b.specHash ? Number(c.applied.index) : null;
+  var rows = (b.entries || []).slice(0, 30);
+  var cols = [
+    { label: "#", num: true, render: function (e) { return el("b", { text: String(e.rank) }); } },
+    { label: "Score", num: true, render: function (e) { return el("span", { class: "pnl " + toneOf(e.score), text: signedUsd(e.score, 0) }); } },
+    { label: "Tuning period", num: true, render: function (e) { return el("span", null, el("span", { class: "pnl " + toneOf(e.train.pnlUsd), text: signedUsd(e.train.pnlUsd, 0) }), el("span", { class: "sub2", text: e.train.trades + " trades · " + e.train.winRatePct + "% win" }), el("span", { class: "sub2", text: "worst dip " + usd(e.train.maxDrawdownUsd, 0) })); } },
+    { label: "Held-out months", num: true, render: function (e) { return el("span", null, el("span", { class: "pnl " + toneOf(e.test.pnlUsd), text: signedUsd(e.test.pnlUsd, 0) }), el("span", { class: "sub2", text: e.test.trades + " trades · " + e.test.winRatePct + "% win" })); } },
+    { label: "Settings", render: function (e) { return tunerParamCell(e, b.axes); } },
+    { label: "", render: function (e) { return applied === Number(e.index) ? badge("In use", "gold", "check") : actionBtn("Use these", "xs", function () { tunerApply(e, b); }); } }];
+  var table = tableNode(cols, rows);
+  table.querySelectorAll("tbody tr").forEach(function (tr, i) { if (applied === Number(rows[i].index)) tr.classList.add("is-applied"); });
+  setChildren(host, [cardHead("Leaderboard", "learning", tunerNum(b.evaluated) + " of " + tunerNum(b.gridSize) + " variations tried" + (b.stale ? " · from an earlier variable list" : "")), el("div", { class: "tiny muted", text: d.scoring }), table]);
+}
+async function tunerApply(e, b) {
+  var r = await runMutation({ action: "dipTunerApply", params: { index: Number(e.index), specHash: String(b.specHash) }, title: "Use tuned settings #" + e.rank, reason: "Copies this variation's values into the live dip lane settings (paper). Score " + signedUsd(e.score, 0) + ", held-out " + signedUsd(e.test.pnlUsd, 0) + "." });
+  if (r) { toast("Dip lane now uses variation #" + e.rank + ".", { icon: "check" }); await loadTuner(true); loadDip(true); }
+}
+function renderTunerOutcomes() {
+  var host = $("tunerOutcomes"); if (!host) return;
+  var d = TUNERUI.data; if (!d) { host.hidden = true; return; }
+  var o = d.outcomes; if (!o || !o.byVariable) { host.hidden = true; return; }
+  host.hidden = false;
+  var sig = JSON.stringify([o.specHash, o.evaluated]); if (host.dataset.sig === sig) return; host.dataset.sig = sig;
+  var cards = Object.keys(o.byVariable).map(function (k) {
+    var v = (d.variables || []).find(function (x) { return x.key === k; }), rowsV = (o.byVariable[k].values || []).filter(function (x) { return x.n; });
+    var best = rowsV.reduce(function (m, x) { return x.avgScore != null && (m == null || x.avgScore > m.avgScore) ? x : m; }, null);
+    return el("div", null, el("h4", { text: (v ? v.label : k) + (v ? " (" + v.unit + ")" : "") }), tableNode([
+      { label: "Value", render: function (x) { return el("b", { text: String(x.value) + (best && best.value === x.value ? " ★" : "") }); } },
+      { label: "Avg score", num: true, render: function (x) { return el("span", { class: "pnl " + toneOf(x.avgScore), text: x.avgScore == null ? "—" : signedUsd(x.avgScore, 0) }); } },
+      { label: "Avg held-out", num: true, render: function (x) { return el("span", { class: "pnl " + toneOf(x.avgTestPnl), text: signedUsd(x.avgTestPnl, 0) }); } },
+      { label: "Tried", num: true, render: function (x) { return tunerNum(x.n); } }], rowsV));
+  });
+  setChildren(host, [cardHead("What each variable did", "learning", "average over every variation tried with that value · ★ best"), el("div", { class: "outgrid" }, cards)]);
+}
+
 /* ── 18. Portfolio view ─────────────────────────────────────────────────── */
 async function loadPortfolio(fresh) {
   if (fresh || !getRes("portfolio")) renderPortfolio(true);
@@ -3592,7 +3760,7 @@ async function loadSimulation(){
  finally{clearTimeout(timer);if(generation===(simUI.generation||0)){simUI.loading=false;simUI.pollController=null;}}
  // A slow detail request must not block updates to the other simulation cards.
  if(simUI.selected)loadSimDetail();
- loadDipSims(); dipSimSourceOptions(); loadBarLibrary();
+ loadDipSims(); dipSimSourceOptions(); loadBarLibrary(); loadTuner();
 }
 function simPreparationItem(item){
  var stateNames={complete:'Complete',working:'Working',waiting:'Waiting for source',queued:'Queued',starting:'Starting worker',pending:'Not started',failed:'Needs attention',paused:'Paused — saved'};
