@@ -115,7 +115,8 @@ async function handleAction(body) {
   const a = body.action;
   const ctrl = await E.control();
   if (a === "dashboard") return await E.dashboard();
-  if (["adDesignWorkspace", "saveAdDesign", "uploadAdDesignReference", "adDesignProductImages", "adDesignStatus"].includes(a)) {
+  if (a === "pmaxRecommendationEvidence") { try { return await E.pmaxRecommendationEvidence(body); } catch(e) { return {ok:false,error:e.message}; } }
+  if (["adDesignWorkspace", "saveAdDesign", "uploadAdDesignReference", "adDesignProductImages", "adDesignGalleryPage", "adDesignStatus"].includes(a)) {
     try { return await E[a](body); } catch(e) { return {ok:false,error:e.message}; }
   }
   if (a === "startAdDesign") {

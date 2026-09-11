@@ -11,7 +11,7 @@ const FORMATS = [
   { key: "landscape", label: "Landscape", width: 1956, height: 1024, requestSize: "1968x1024", fieldType: "MARKETING_IMAGE", required: true },
   { key: "portrait", label: "Portrait", width: 1024, height: 1280, requestSize: "1024x1280", fieldType: "PORTRAIT_MARKETING_IMAGE", required: true }
 ];
-function settingsFor(raw, products, groups, references, formats) {
+function settingsFor(raw, products, groups, references, formats, currentCreative = {}) {
   const settings = raw || {}, product = products.find(row => String(row.id) === String(settings.productId || "")) || (settings.productId ? null : products[0]);
   if (!product) throw new Error("No verified product is available for this design.");
   const group = groups.find(row => row.ref === settings.groupRef) || (settings.groupRef ? null : groups[0]);
@@ -20,15 +20,25 @@ function settingsFor(raw, products, groups, references, formats) {
   if ((group.productIds || []).length && !(group.productIds || []).map(String).includes(String(product.id).split("/").pop())) throw new Error("Choose a product belonging to this ad group's verified selection.");
   if ((group.itemIds || []).length) { const productId = String(product.id).split("/").pop(), allowed = (group.itemIds || []).some(id => String(id) === String(product.itemId || product.offerId || "") || (String(id).match(/^shopify_[^_]+_(\d+)_/i) || [])[1] === productId); if (!allowed) throw new Error("Choose a product included in this asset group's verified product selection."); }
   const uploadedSource = references.find(row => row.id === settings.sourceImageId && row.role === "product" && String(row.productId) === String(product.id));
-  const image = (product.images || []).find(row => row.id === settings.sourceImageId) || uploadedSource || (settings.sourceImageId ? null : (product.images || [])[0]);
+  const image = (product.images || []).find(row => row.id === settings.sourceImageId) || uploadedSource || (settings.sourceImageId ? null : (product.images || [])[0]) || (Array.isArray(settings.selectedImages) ? (product.images || [])[0] || {id:null} : null);
   if (!image) throw new Error("The selected source photograph does not belong to this product.");
+  const currentAssetIds = [...new Set((settings.currentAssetIds || []).map(String))];
+  if (currentAssetIds.some(id=>!(currentCreative.images||[]).some(a=>a.id===id&&a.groupRef===group.ref))) throw new Error("Choose current Google images belonging to this exact ad group.");
   const referenceIds = [...new Set((settings.referenceIds || []).map(String))];
-  if (referenceIds.length > 8 || referenceIds.some(id => !references.some(row => row.id === id))) throw new Error("Choose up to eight saved reference images from this workspace.");
+  if (referenceIds.some(id => !references.some(row => row.id === id))) throw new Error("Choose saved reference images from this workspace.");
+  const chosen = Array.isArray(settings.selectedImages) ? settings.selectedImages : (uploadedSource ? [] : [{ productId: String(product.id), imageId: image.id }]);
+  if (!Array.isArray(settings.selectedImages) && uploadedSource && !referenceIds.includes(uploadedSource.id)) referenceIds.unshift(uploadedSource.id);
+  const selectedImages = [...new Map(chosen.map(row => {
+    const p = products.find(p => String(p.id) === String(row.productId)), photo = p && (p.images || []).find(i => i.id === row.imageId);
+    if (!photo || Array.isArray(p.creativeGroupRefs) && !p.creativeGroupRefs.includes(group.ref) && !(p.eligibleGroupRefs || []).includes(group.ref)) throw new Error("Choose photos from this ad's listings or its saved related products.");
+    return [String(p.id) + ":" + photo.id, { productId: String(p.id), imageId: photo.id }];
+  })).values()];
+  if (Buffer.byteLength(JSON.stringify({selectedImages,referenceIds,currentAssetIds})) > 128000) throw new Error("This selection is too large to save in one design. Split it into separate compositions.");
   const direction = String(settings.direction || "").trim(); if (direction.length > 2400) throw new Error("Keep the art direction under 2,400 characters.");
   const style = {}; for (const key of ["background", "border", "font", "scale"]) style[key] = String((settings.style || {})[key] || ({ background: "warm ivory", border: "none", font: "Montserrat", scale: "product-led" })[key]).slice(0, 100);
   const requested = Array.isArray(settings.formats) ? settings.formats : formats.filter(row => row.required).map(row => row.key);
   if (requested.some(key => !formats.some(row => row.key === key))) throw new Error("Choose supported Google Ads image formats.");
-  return { productId: String(product.id), groupRef: group.ref, sourceImageId: image.id, referenceIds, direction, style,
+  return { productId: String(product.id), groupRef: group.ref, sourceImageId: image.id, selectedImages, referenceIds, currentAssetIds, direction, style,
     formats: [...new Set([...formats.filter(row => row.required).map(row => row.key), ...requested])] };
 }
 function responseText(result) {
@@ -36,6 +46,7 @@ function responseText(result) {
   return (result.output || []).flatMap(row => row.content || []).filter(row => row.type === "output_text").map(row => row.text || "").join("\n");
 }
 function buildVersionDesignPayload({ workspaceId, jobId, workspace, group, product, result, customerId }) {
+  if (result.publication && result.publication.ready === false) throw new Error(result.publication.reason || "Review the destination for these products before creating an approval.");
   const snapshot = workspace.sourceSnapshot, campaignId = String(workspace.context.campaignId || ""), copy = result.copy || {}, components = snapshot && snapshot.components;
   if (!snapshot || !snapshot.complete || String(snapshot.campaignId) !== campaignId || !Number.isSafeInteger(workspace.sourceVersion) || !/^[a-f0-9]{64}$/.test(workspace.snapshotHash || "")) throw new Error("The design must be tied to a complete saved version of this campaign.");
   if (!Array.isArray(copy.headlines) || !Array.isArray(copy.descriptions) || copy.headlines.length < 3 || copy.headlines.length > 15 || copy.descriptions.length < 2 || copy.descriptions.length > 5) throw new Error("The generated copy is incomplete.");
@@ -83,14 +94,14 @@ function buildVersionDesignPayload({ workspaceId, jobId, workspace, group, produ
   const versionChange = { campaignId, sourceVersion: workspace.sourceVersion, proposedVersion: workspace.sourceVersion + 1, changes, identityPreserved: true, notes, merchantChanges: false,
     rationale: result.brief.rationale, hypothesis: result.brief.hypothesis, successMetric: result.brief.successMetric, measurementPlan: result.brief.measurementPlan || null };
   return { mutateOperations: operations, generatedAssets, versionGuard: { campaignId, expectedVersion: workspace.sourceVersion, snapshotHash: workspace.snapshotHash }, versionChange,
-    adDesign: { workspaceId, jobId, productId: String(product.id), sourceImageId: workspace.settings.sourceImageId, settings: workspace.settings, evidenceHash: result.evidence && result.evidence.hash || null, sourceIds: result.sourceIds || [], quality: result.quality, previewOnlyFormats: group.channel === "search" ? ["portrait"] : [], generatedAt: Date.now() },
+    adDesign: { workspaceId, jobId, productId: String(product.id), sourceImageId: workspace.settings.sourceImageId, settings: workspace.settings, evidenceHash: result.evidence && result.evidence.hash || null, sourceIds: result.sourceIds || [], productIds: result.productIds || [String(product.id)], inputCoverage: result.inputCoverage || null, quality: result.quality, previewOnlyFormats: group.channel === "search" ? ["portrait"] : [], generatedAt: Date.now() },
     meta: { existingCampaignId: campaignId, adDesignWorkspaceId: workspaceId, adDesignId: jobId, operation: "reviewedAdDesign" } };
 }
 function createAdDesignService(deps) {
   const f = () => { const value = deps.fb(); if (!value) throw new Error("Ad Design storage is unavailable."); return value; };
   const refFor = id => { if (!token(id)) throw new Error("Invalid design workspace."); return f().db.collection(deps.COL.state).doc("adDesign").collection("workspaces").doc(id); };
   const formats = () => deps.formats || FORMATS;
-  const provider = () => ({ available: !!deps.env.OPENAI_API_KEY, label: "GPT Image 2.5 Sunburst", quality: "high", referenceLimit: 16, formats: formats(), ...deps.provider, model: "gpt-image-2.5-sunburst" });
+  const provider = () => ({ available: !!deps.env.OPENAI_API_KEY, label: "GPT Image 2.5 Sunburst", quality: "high", referenceLimit: 16, selectedPhotoLimit: 144, formats: formats(), ...deps.provider, model: "gpt-image-2.5-sunburst" });
   function settle(job, key, output) {
     const reservations = job.reservations || [], reservation = reservations.find(row => row.requestId === output.requestId) || [...reservations].reverse().find(row => row.key === key && !row.settled);
     if (!reservation) return;
@@ -100,19 +111,20 @@ function createAdDesignService(deps) {
       estimatedUsd: reservation.actualUsd == null ? reservation.reservedUsd : reservation.actualUsd, costEstimated: reservation.actualUsd == null };
     job.usage = (job.usage || []).filter(row => row.requestId !== reservation.requestId).concat(usage);
   }
+  const creativeFor = workspace => deps.currentCreative ? deps.currentCreative(workspace.sourceSnapshot,workspace.context) : workspace.context.currentCreative || {};
   async function read(id) { const s = await refFor(id).get(); if (!s.exists) throw new Error("Ad Design workspace was not found."); return s.data(); }
   async function productsFor(ref, workspace) { if (!workspace) { const s = await ref.get(); workspace = s.exists && s.data(); } if (!workspace || !token(workspace.sourceSetId)) throw new Error("Saved product sources are unavailable."); const result = await ref.collection("sourceSets").doc(workspace.sourceSetId).collection("products").get(); return result.docs.map(row => row.data()).sort((a, b) => (a.position || 0) - (b.position || 0)); }
   async function status({ workspaceId } = {}) {
-    const ref = refFor(workspaceId), workspace = await read(workspaceId), products = await productsFor(ref), job = workspace.job || {}, references = [];
+    const ref = refFor(workspaceId), workspace = await read(workspaceId), products = await productsFor(ref, workspace), job = workspace.job || {}, references = [];
     for (const reference of workspace.references || []) references.push({ ...reference, url: await deps.signAsset(reference.asset) });
     const result = job.result ? clean(job.result) : null;
     if (result) for (const asset of Object.values(result.assets || {})) asset.url = await deps.signAsset(asset);
     if (result && result.logo) result.logo.url = await deps.signAsset(result.logo);
     let hasReceipt = false;
     if (job.inFlight && !active(job)) { const receipt = await ref.collection("outputs").doc(job.id + "_" + job.inFlight.key).get(); hasReceipt = !!(receipt.exists && (receipt.data().stageResult || receipt.data().rawResponse || receipt.data().asset)); }
-    const approvalId = job.approvalId || workspace.context.approvalId || null, review = approvalId && deps.reviewStatus ? await deps.reviewStatus(approvalId) : null;
+    const approvalId = job.result && job.result.publication && job.result.publication.ready === false ? null : job.approvalId || workspace.context.approvalId || null, review = approvalId && deps.reviewStatus ? await deps.reviewStatus(approvalId) : null;
     return { ok: true, workspaceId, sourceVersion: workspace.sourceVersion || null, snapshotHash: workspace.snapshotHash || null,
-      context: workspace.context, products, references, settings: workspace.settings, status: job.phase || "draft", phase: job.phase || "draft",
+      context: {...workspace.context,currentCreative:creativeFor(workspace)}, products, references, settings: workspace.settings, status: job.phase || "draft", phase: job.phase || "draft",
       progress: job.progress || { pct: 0, label: "Choose your product, reference images and direction" }, result,
       approvalId, review, error: job.error || null,
       canRetry: !active(job) && (!job.inFlight || hasReceipt) && ["paused", "needs_attention", "queued", "running"].includes(job.phase), needsNewRequestApproval: !!job.inFlight && !active(job) && !hasReceipt,
@@ -124,7 +136,13 @@ function createAdDesignService(deps) {
     const contextKey = { campaignId: String(input.campaignId || ""), approvalId: String(input.approvalId || ""), handle: String(input.handle || ""), groupRef: String(input.groupRef || ""),
       itemIds: input.campaignId || input.approvalId ? [] : [...new Set((input.itemIds || []).map(String))].sort(), feedLabel: input.campaignId || input.approvalId ? "" : String(input.feedLabel || "").toUpperCase() };
     if (!contextKey.campaignId && !contextKey.approvalId && !contextKey.handle) throw new Error("Open Ad Design from a campaign, draft or product opportunity.");
-    const id = "design_" + sha(JSON.stringify(contextKey)).slice(0, 32), ref = refFor(id), saved = await ref.get();
+    let id = "design_" + sha(JSON.stringify(contextKey)).slice(0, 32), ref = refFor(id), saved = await ref.get();
+    if (saved.exists && input.campaignId && !input.approvalId && !input.force) {
+      const latest = await deps.verifyBasis({campaignId:String(input.campaignId)});
+      if (latest && latest.snapshotHash && (Number(latest.version)!==Number(saved.data().sourceVersion)||latest.snapshotHash!==saved.data().snapshotHash)) {
+        id = "design_" + sha({...contextKey,sourceVersion:latest.version,snapshotHash:latest.snapshotHash}).slice(0,32);ref=refFor(id);saved=await ref.get();
+      }
+    }
     if (saved.exists && !input.force) return status({ workspaceId: id });
     if (saved.exists && (active(saved.data().job) || saved.data().job && saved.data().job.inFlight)) throw new Error("Resolve the current or unconfirmed design request before refreshing its source context.");
     const loaded = await deps.loadContext(input), products = loaded.products || [], groups = loaded.context.groups || [];
@@ -133,7 +151,7 @@ function createAdDesignService(deps) {
     await Promise.all(products.map((product, position) => ref.collection("sourceSets").doc(sourceSetId).collection("products").doc(sha(String(product.id)).slice(0, 32)).set(clean({ ...product, position }))));
     const prior = saved.exists ? saved.data() : null;
     const initialGroup = groups.find(group => group.ref === input.groupRef) || groups[0], initialProduct = products.find(product => (product.images || []).length && (!(initialGroup.productIds || []).length || initialGroup.productIds.map(String).includes(String(product.id).split("/").pop()))) || products.find(product => (product.images || []).length) || products[0];
-    const references = prior && prior.references || [], settings = settingsFor({ productId: initialProduct.id, groupRef: input.groupRef }, products, groups, references, formats());
+    const references = prior && prior.references || [], settings = settingsFor({ productId: initialProduct.id, groupRef: input.groupRef, currentAssetIds:((loaded.context.currentCreative||{}).images||[]).filter(a=>a.groupRef===initialGroup.ref&&!/LOGO/.test(a.fieldType)).map(a=>a.id) }, products, groups, references, formats(),loaded.context.currentCreative);
     await f().db.runTransaction(async tx => { const latest = await tx.get(ref), current = latest.exists ? latest.data() : null;
       if (!!current !== !!prior || current && (Number(current.revision) !== Number(prior.revision) || (current.job && current.job.id || null) !== (prior.job && prior.job.id || null) || active(current.job) || current.job && current.job.inFlight)) throw new Error("The workspace changed while its sources were being refreshed. The current design was preserved.");
       if (current && current.job) tx.set(ref.collection("history").doc(current.job.id), current.job);
@@ -143,10 +161,14 @@ function createAdDesignService(deps) {
     return status({ workspaceId: id });
   }
   async function save(input = {}) {
-    const ref = refFor(input.workspaceId), products = await productsFor(ref);
+    const ref = refFor(input.workspaceId), sourceWorkspace = await read(input.workspaceId), products = await productsFor(ref, sourceWorkspace);
     await f().db.runTransaction(async tx => { const s = await tx.get(ref); if (!s.exists) throw new Error("Workspace was not found."); const value = s.data();
+      if (value.sourceSetId !== sourceWorkspace.sourceSetId) throw new Error("The gallery changed. Reload the workspace before saving these selections.");
       if (active(value.job)) throw new Error("Wait for the current design to finish before changing its direction.");
-      const settings = settingsFor({ ...value.settings, ...input }, products, value.context.groups || [], value.references || [], formats());
+      const incoming = { ...value.settings, ...input };
+      // Older callers select a single photo using sourceImageId. New clients always send the exact multi-selection.
+      if (!Object.prototype.hasOwnProperty.call(input, "selectedImages") && (input.sourceImageId && input.sourceImageId !== value.settings.sourceImageId || input.productId && input.productId !== value.settings.productId)) delete incoming.selectedImages;
+      const settings = settingsFor(incoming, products, value.context.groups || [], value.references || [], formats(), creativeFor(value));
       if (sha(settings) === sha(value.settings)) return;
       if (value.job && value.job.inFlight) throw new Error("The previous paid request has an unconfirmed outcome. Resolve it before changing this workspace.");
       if (value.job) tx.set(ref.collection("history").doc(value.job.id), value.job);
@@ -161,7 +183,7 @@ function createAdDesignService(deps) {
     const normalized = await deps.normalizeUpload(original), id = "ref_" + sha([role, role === "product" ? workspace.settings.productId : null, sha(normalized.bytes.toString("base64"))]).slice(0, 24);
     const asset = await deps.saveAsset(workspaceId, normalized.bytes, id, { width: normalized.width, height: normalized.height, kind: role });
     await f().db.runTransaction(async tx => { const s = await tx.get(ref); if (!s.exists || active(s.data().job) || role === "product" && s.data().settings.productId !== workspace.settings.productId) throw new Error("The workspace changed while the upload was being saved."); const refs = s.data().references || [];
-      if (refs.some(row => row.id === id)) return; if (refs.length >= 12) throw new Error("A workspace can hold up to 12 reference images.");
+      if (refs.some(row => row.id === id)) return; if (Buffer.byteLength(JSON.stringify(refs)) > 128000) throw new Error("This reference collection is too large for one workspace. Start another design to add more uploads.");
       tx.update(ref, { references: refs.concat({ id, fileName: String(fileName || "Reference image").slice(0, 160), role, productId: s.data().settings.productId, asset, uploadedAt: Date.now() }), revision: Number(s.data().revision || 0) + 1, updatedAt: Date.now() });
     }); return { ok: true, workspaceId, id, role, url: await deps.signAsset(asset), asset };
   }
@@ -173,6 +195,10 @@ function createAdDesignService(deps) {
     if (deps.verifyContext) await deps.verifyContext(value);
     if (value.context.campaignId) await deps.verifyBasis({ campaignId: value.context.campaignId, expectedVersion: expectedVersion == null ? value.sourceVersion : Number(expectedVersion), snapshotHash: snapshotHash || value.snapshotHash });
     if (!value.context.campaignId && !value.context.approvalId && !(value.context.itemIds || []).length) throw new Error("Choose a current product opportunity with exact eligible Merchant offers before generating a new campaign draft.");
+    const checked = settingsFor(value.settings, await productsFor(ref, value), value.context.groups || [], value.references || [], formats(), creativeFor(value));
+    if (!checked.selectedImages.length && !checked.referenceIds.length && !checked.currentAssetIds.length) throw new Error("Select at least one product photo or uploaded reference before generating.");
+    if (!checked.selectedImages.length && !checked.referenceIds.some(id=>(value.references||[]).some(r=>r.id===id&&r.role==="product"))) throw new Error("Select a listing photo or product-detail upload to preserve the jewelry's identity. Current ad images and style references guide the composition.");
+    if (checked.selectedImages.length + checked.referenceIds.length + checked.currentAssetIds.length > 144) throw new Error("Up to 144 photos can fit legibly in one composition. Reduce this selection or split it into designs; no generation was charged.");
     let jobId, cached = false;
     await f().db.runTransaction(async tx => { const s = await tx.get(ref); if (!s.exists) throw new Error("Workspace was not found."); const current = s.data(), previous = current.job;
       if (current.revision !== value.revision || sha(current.settings) !== sha(value.settings)) throw new Error("The selected product or design direction changed before generation began. Review it and start again.");
@@ -230,31 +256,64 @@ function createAdDesignService(deps) {
       if (value.context.campaignId) await deps.verifyBasis({ campaignId: value.context.campaignId, expectedVersion: job.sourceVersion, snapshotHash: job.snapshotHash });
       const products = await productsFor(ref), product = products.find(row => String(row.id) === value.settings.productId), group = (value.context.groups || []).find(row => row.ref === value.settings.groupRef);
       if (!product || !group) throw new Error("The selected product or ad group is no longer available.");
-      settingsFor(value.settings, products, value.context.groups || [], value.references || [], formats());
-      const uploadedProducts = (value.references || []).filter(row => row.role === "product" && String(row.productId) === String(product.id));
-      for (const reference of uploadedProducts) product.images.push({ id: reference.id, url: await deps.signAsset(reference.asset), alt: reference.fileName, width: reference.asset.width, height: reference.asset.height, uploadedAsset: reference.asset });
-      const primary = (product.images || []).find(image => image.id === value.settings.sourceImageId);
-      if (!primary) throw new Error("The selected source photograph was not found.");
-      const references = (value.references || []).filter(row => value.settings.referenceIds.includes(row.id) && row.id !== primary.id), limit = Number(provider().referenceLimit) || 16;
-      const productImages = [primary, ...(product.images || []).filter(image => image.id !== primary.id)], selectedImages = productImages.slice(0, Math.max(1, limit - references.length));
-      await progress(4, "Saving the exact source photographs and inspiration");
-      const inputs = selectedImages.map(image => ({ id: image.id, role: "product", url: image.url, asset: image.uploadedAsset || null })).concat(references.map(reference => ({ id: reference.id, role: reference.role, asset: reference.asset })));
+      settingsFor(value.settings, products, value.context.groups || [], value.references || [], formats(), creativeFor(value));
+      const selected = settingsFor(value.settings, products, value.context.groups || [], value.references || [], formats(), creativeFor(value));
+      let inputs = selected.selectedImages.map((choice,index) => {
+        const p = products.find(p => String(p.id) === choice.productId), photo = p.images.find(i => i.id === choice.imageId);
+        return { id: choice.productId + ":" + choice.imageId, label: "P" + (index + 1), productId: choice.productId, imageId: choice.imageId, role: "product", origin: (p.eligibleGroupRefs || []).includes(group.ref) ? "catalog" : "related", title: p.title, url: photo.url };
+      }).concat(selected.referenceIds.map((id,index) => { const r = value.references.find(r => r.id === id); return { id: r.id, label: "U" + (index + 1), productId: r.role === "product" ? r.productId : null, role: r.role, origin: "upload", title: r.fileName, asset: r.asset }; }));
+      inputs = inputs.concat(selected.currentAssetIds.map((id,index)=>{const asset=(creativeFor(value).images||[]).find(a=>a.id===id);return {id:asset.id,label:"A"+(index+1),productId:null,role:"inspiration",origin:"current",title:"Current Google "+asset.fieldType,url:asset.url};}));
+      const legacyPinned = !Array.isArray(value.settings.selectedImages) && job.inputCoverage && job.inputAssets && job.inputAssets.length;
+      if (legacyPinned) {
+        const ordered = [...(job.inputCoverage.sourceImageIds || []), ...(job.inputCoverage.referenceIds || [])];
+        if (!ordered.length || ordered.some(id=>!job.inputAssets.some(a=>a.id===id))) throw new Error("The saved legacy source set is incomplete. Its paid outputs were preserved; save a new design revision to continue.");
+        inputs = ordered.map((id,index)=>{const a=job.inputAssets.find(a=>a.id===id);return {id,label:"P"+(index+1),productId:a.role==="product"?String(product.id):null,role:a.role,origin:"saved",title:product.title,asset:a.asset};});
+      }
+      if (!inputs.length) throw new Error("Select at least one product photo or uploaded reference before generating.");
+      if (!legacyPinned && inputs.length > 144) throw new Error("Up to 144 photos can fit legibly in one composition. Split this selection; no generation was charged.");
+      const selectedProductIds = [...new Set(inputs.filter(i => i.role === "product" && i.productId).map(i => String(i.productId)))];
+      const selectedProducts = selectedProductIds.map(id => products.find(p => String(p.id) === id));
+      if (selectedProducts.some(p => !p)) throw new Error("A selected product is no longer in this workspace. Reload its listing before generating.");
+      const researchProducts = [product, ...selectedProducts.filter(p => String(p.id) !== String(product.id))];
+      await progress(4, "Saving every selected product photo and inspiration image");
       job.inputAssets = job.inputAssets || [];
       for (const [index, input] of inputs.entries()) {
         if (job.inputAssets.some(saved => saved.id === input.id)) continue;
         let asset = input.asset;
         if (!asset) { const original = await deps.sourceBytes(input.url), normalized = await deps.normalizeUpload(original); asset = await deps.saveAsset(workspaceId, normalized.bytes, jobId.replace(/-/g, "") + "_source_" + index, { width: normalized.width, height: normalized.height, kind: "source" }); }
-        job.inputAssets.push({ id: input.id, role: input.role, asset }); await saveJob({});
+        job.inputAssets.push({ id: input.id, label: input.label, productId: input.productId, role: input.role, asset }); await saveJob({});
       }
-      const sourceFiles = await Promise.all(inputs.map(input => deps.loadAsset(job.inputAssets.find(saved => saved.id === input.id).asset)));
-      job.inputCoverage = { availableProductImages: productImages.length, usedProductImages: selectedImages.length, usedInspirationImages: references.length, sourceImageIds: selectedImages.map(image => image.id), referenceIds: references.map(row => row.id), sourceAssets: job.inputAssets.map(input => ({ id: input.id, hash: input.asset.hash })), note: productImages.length > selectedImages.length ? "The full gallery is available. This request uses the selected hero and the remaining photos in listing order within the image provider's reference limit." : "Every available photo of the selected product was included." }; await saveJob({});
+      const selectedSources = inputs.map(({asset,...input}) => input);
+      let sourceFiles;
+      if (legacyPinned) {
+        sourceFiles = await Promise.all(inputs.map(input=>deps.loadAsset(input.asset)));
+      } else if (job.preparedAssets && job.inputCoverage && sha(job.inputCoverage.selectedSourceIds) === sha(inputs.map(i=>i.id))) {
+        sourceFiles = await Promise.all(job.preparedAssets.map(a=>deps.loadAsset(a)));
+      } else {
+        const rawFiles = await Promise.all(inputs.map(input => deps.loadAsset(job.inputAssets.find(saved => saved.id === input.id).asset)));
+        const prepared = deps.prepareReferences ? await deps.prepareReferences({sources:inputs.map((input,index)=>({...input,bytes:rawFiles[index]}))}) : {
+          references:rawFiles, referenceManifest:inputs.map((input,index)=>({index:index+1,kind:"single",cells:[{label:input.label,sourceId:input.id,productId:input.productId,role:input.role,title:input.title}]})), coverage:{complete:true,selectedSourceIds:inputs.map(i=>i.id),selectedSourceCount:inputs.length,preparedReferenceCount:inputs.length}
+        };
+        sourceFiles = prepared.references;
+        if (sourceFiles.length > Number(provider().referenceLimit || 16) || !prepared.coverage.complete || sha(prepared.coverage.selectedSourceIds) !== sha(inputs.map(i=>i.id))) throw new Error("The selected photos could not all be prepared faithfully. Reduce this composition before generating; no AI request was sent.");
+        job.preparedAssets = [];
+        for (const [index, bytes] of sourceFiles.entries()) {
+          const saved = await deps.saveAsset(workspaceId, bytes, jobId.replace(/-/g, "") + "_reference_" + index, {kind:"prepared reference"});
+          job.preparedAssets.push(saved);
+        }
+        job.inputCoverage = {...prepared.coverage,referenceManifest:prepared.referenceManifest,selectedSources,sourceImageIds:selected.selectedImages.map(i=>i.imageId),referenceIds:selected.referenceIds,currentAssetIds:selected.currentAssetIds,
+          usedProductImages:inputs.filter(i=>i.role==="product").length,usedInspirationImages:inputs.filter(i=>i.role==="inspiration").length,
+          sourceAssets:inputs.map(input=>({id:input.id,hash:job.inputAssets.find(a=>a.id===input.id).asset.hash})),
+          note:sourceFiles.length<inputs.length?"Every selection is included in labeled reference sheets; no photos were dropped.":"Every selected photo is included. No unselected photos were added."};
+        await saveJob({});
+      }
       await progress(6, "Researching this product, buyer intent and ad history");
       const savedCopy = await ref.collection("outputs").doc(jobId + "_copy").get();
-      if (!job.evidence || !job.stages.copy && !savedCopy.exists && Date.now() - Number(job.evidence.researchCompletedAt || 0) > 600000) { job.evidence = await deps.research.collect({ campaignId: value.context.campaignId || null, sourceVersion: value.sourceVersion, snapshot: value.sourceSnapshot, range: value.context.range, group, selectedProducts: [product], settings: value.settings, deadlineMs: 90000 }); await saveJob({}); }
+      if (!job.evidence || !job.stages.copy && !savedCopy.exists && Date.now() - Number(job.evidence.researchCompletedAt || 0) > 600000) { job.evidence = await deps.research.collect({ campaignId: value.context.campaignId || null, sourceVersion: value.sourceVersion, snapshot: value.sourceSnapshot, range: value.context.range, group, selectedProducts: researchProducts, ...(legacyPinned?{}:{selectedSources}), settings: value.settings, deadlineMs: 90000 }); await saveJob({}); }
       const copy = await paid("copy", async requestId => {
         const receipt = ref.collection("outputs").doc(jobId + "_copy"), stored = await receipt.get();
         const prior = stored.exists && stored.data().rawResponse;
-        const request = prior ? null : deps.research.buildRequest({ evidence: job.evidence, feedback: value.settings.direction, currentCreative: group.original || {}, style: value.settings.style, sourceImageDataUrl: "data:image/jpeg;base64," + sourceFiles[0].toString("base64"), referenceImages: references.slice(0, 3).map((reference, index) => ({ id: reference.id, dataUrl: "data:image/jpeg;base64," + sourceFiles[selectedImages.length + index].toString("base64") })) });
+        const request = prior ? null : deps.research.buildRequest({ evidence: job.evidence, feedback: value.settings.direction, currentCreative: group.original || {}, style: value.settings.style, sourceImageDataUrl: "data:image/jpeg;base64," + sourceFiles[0].toString("base64"), sourceReferences: sourceFiles.map((bytes,index)=>({dataUrl:"data:image/jpeg;base64,"+bytes.toString("base64"),manifest:job.inputCoverage.referenceManifest&&job.inputCoverage.referenceManifest[index]})) });
         const result = prior || await deps.responses(request, requestId);
         await writeReceipt("copy", { rawResponse: result, receivedAt: Date.now() });
         let output; try { output = deps.research.validateResult({ output: JSON.parse(responseText(result)), evidence: job.evidence, channel: group.channel, group }); }
@@ -270,7 +329,7 @@ function createAdDesignService(deps) {
         const output = await paid("image_" + format.key, async requestId => {
           const receipt = ref.collection("outputs").doc(jobId + "_image_" + format.key), stored = await receipt.get();
           if (stored.exists && stored.data().asset) return stored.data();
-          const image = await deps.generateImage({ requestId, provider: provider(), format, references: sourceFiles, product, brief: copy.brief, imageDirections: copy.imageDirections, settings: value.settings, inputCoverage: job.inputCoverage });
+          const image = await deps.generateImage({ requestId, provider: provider(), format, references: sourceFiles, product, products: researchProducts, referenceManifest: job.inputCoverage.referenceManifest, brief: copy.brief, imageDirections: copy.imageDirections, settings: value.settings, inputCoverage: job.inputCoverage });
           const asset = await deps.saveAsset(workspaceId, image.bytes, jobId.replace(/-/g, "") + "_" + format.key, { width: format.width, height: format.height, kind: format.key, providerModel: provider().model });
           const saved = { asset, usage: image.usage || {}, estimatedUsd: image.estimatedUsd == null ? 1 : image.estimatedUsd, costEstimated: image.costEstimated !== false, providerModel: provider().model };
           await writeReceipt("image_" + format.key, saved); return saved;
@@ -279,14 +338,20 @@ function createAdDesignService(deps) {
       if (Date.now() - started > 620000) { await saveJob({ phase: "paused", leaseUntil: 0, progress: { pct: job.progress.pct, label: "Every format is saved; continuing the quality review" } }); return { ok: true, paused: true, dispatch: true, workspaceId, jobId }; }
       await progress(82, "Checking product fidelity, framing and mobile readability");
       const quality = await paid("quality", async requestId => {
-        const files = await Promise.all(wanted.map(format => deps.loadAsset(job.assets[format.key]))), output = await deps.reviewImages(sourceFiles[0], files, { ...copy.brief, copy: copy.copy, keywords: group.keywords || product.keywords || [], settings: value.settings, product: product.title, inputCoverage: job.inputCoverage }, sourceFiles, requestId);
+        const files = await Promise.all(wanted.map(format => deps.loadAsset(job.assets[format.key]))), output = await deps.reviewImages(sourceFiles[0], files, { ...copy.brief, copy: copy.copy, keywords: group.keywords || product.keywords || [], settings: value.settings, product: product.title, products: researchProducts, inputCoverage: job.inputCoverage }, sourceFiles, requestId);
         await writeReceipt("quality", { stageResult: output, receivedAt: Date.now() });
         return { ...output, estimatedUsd: output.estimatedUsd == null ? 1 : output.estimatedUsd, costEstimated: output.costEstimated !== false };
       });
       if (quality.pass !== true || quality.productFaithful !== true || quality.mobileReadable !== true || Number(quality.score) < 85) throw new Error("The generated design needs changes to product fidelity, framing or mobile clarity before it can enter Approvals.");
-      job.result = { brief: copy.brief, copy: copy.copy, assets: job.assets, evidence: job.evidence, keywords: group.keywords || product.keywords || [], quality, learningApplications: copy.learningApplications || [], sourceIds: copy.sourceIds || [], inputCoverage: job.inputCoverage, designSettings: value.settings, previewOnlyFormats: group.channel === "search" ? ["portrait"] : [] }; await saveJob({});
+      const outside = selectedProducts.filter(p => Array.isArray(p.eligibleGroupRefs) && !p.eligibleGroupRefs.includes(group.ref));
+      const publication = {ready:!outside.length,productIds:selectedProductIds.length?selectedProductIds:[String(product.id)],reason:outside.length?"Design saved. These featured products are outside this ad's verified destination or product selection: "+outside.map(p=>p.title).join(", ")+". Open an ad that includes these products, or use photos from this ad's listings, before submitting it for publication.":null};
+      job.result = { productIds: publication.productIds, publication, brief: copy.brief, copy: copy.copy, assets: job.assets, evidence: job.evidence, keywords: group.keywords || product.keywords || [], quality, learningApplications: copy.learningApplications || [], sourceIds: copy.sourceIds || [], inputCoverage: job.inputCoverage, designSettings: value.settings, previewOnlyFormats: group.channel === "search" ? ["portrait"] : [] }; await saveJob({});
+      if (!publication.ready) {
+        await saveJob({phase:"ready",completedAt:Date.now(),leaseUntil:0,inFlight:null,error:null,progress:{pct:100,label:"Design saved — review its product destination before publication"}});
+        return {ok:true,workspaceId,approvalId:null,publication};
+      }
       await progress(94, "Saving the exact copy and images for your approval");
-      if (!job.approvalId) { const result = await deps.finish({ workspaceId, jobId, owner, workspace: value, group, product, result: job.result }); job.approvalId = result.approvalId; if (!job.approvalId) throw new Error("The finished design could not be added to Approvals."); await saveJob({}); }
+      if (!job.approvalId) { const result = await deps.finish({ workspaceId, jobId, owner, workspace: value, group, product, selectedProducts: selectedProducts.length ? selectedProducts : [product], result: job.result }); job.approvalId = result.approvalId; if (!job.approvalId) throw new Error("The finished design could not be added to Approvals."); await saveJob({}); }
       await saveJob({ phase: "ready", completedAt: Date.now(), leaseUntil: 0, inFlight: null, error: null, progress: { pct: 100, label: "Ready in Approvals — review the exact copy and every image" } });
       return { ok: true, workspaceId, approvalId: job.approvalId };
     } catch (error) {

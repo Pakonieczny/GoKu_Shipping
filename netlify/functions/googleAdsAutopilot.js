@@ -562,7 +562,16 @@ async function _observeCampaignCreative(id) {
   const rows = await gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign_budget.amount_micros FROM campaign WHERE campaign.id = ${id}`);
   if (!rows.length) throw new Error("Campaign was not found in this account.");
   const row = rows[0], channel = row.campaign.advertisingChannelType, values = { "Campaign settings": rows.map(r => r.campaign), Budget: rows.map(r => r.campaignBudget) }, warnings = [];
-  const read = async (category, query) => { try { values[category] = await gaql(query); } catch (e) { warnings.push(category + " could not be observed."); } };
+  const read = async (category, query) => {
+    try { values[category] = await gaql(query); }
+    catch (error) {
+      // Report Google's error category without echoing request details, URLs or
+      // arbitrary network errors. Failed optional observations never overwrite
+      // a previously saved fingerprint with an empty successful response.
+      const codes = [...new Set(String(error && error.message || "").match(/\b[a-z][A-Za-z]*Error=[A-Z][A-Z0-9_]*\b/g) || [])].slice(0, 4);
+      warnings.push(category + " could not be observed." + (codes.length ? " Google Ads: " + codes.join("; ") + "." : ""));
+    }
+  };
   const filter = `campaign.id = ${id}`;
   const jobs = channel === "SEARCH" ? [
     read("Keywords", `SELECT ad_group_criterion.resource_name, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.status FROM ad_group_criterion WHERE ${filter} AND ad_group_criterion.type = 'KEYWORD' AND ad_group_criterion.status != 'REMOVED'`),
@@ -3501,7 +3510,16 @@ function _pmaxTag(handle, feedLabel) {
 // Pure ranking layer: Merchant Center free-listing sales carry the most weight;
 // actual estimated contribution profit and paid product performance refine the order.
 // Output includes exact GMC item IDs, confidence, and waste flags for deterministic scoping.
-function pmaxCandidatesFromSignals({ collections = [], profiles = [], sig30 = null, sig90 = null, merchant = [], paid = null, merchantFree30 = null, merchantFree90 = null } = {}) {
+function _pmaxForecastBaselines(offers,paid){
+  if(!paid||!paid.complete||paid.error)return [];
+  const {paidTotal}=require("../../assets/pmax-recommendation"),types=new Set(offers.map(p=>String(p.type1||"").toLowerCase()).filter(Boolean)),all=paid.rows||Object.values(paid.byId||{}),meta={available:true,currency:paid.currency||"USD",days:paid.days||90,monetaryComplete:true},out=[];
+  const peers=all.filter(p=>types.has(String(p.type1||"").toLowerCase()));
+  if(peers.length)out.push({...paidTotal(peers,meta),scope:"related_product_type",label:"Same product type · paid PMax benchmark",start:paid.start||null,end:paid.end||null});
+  if(all.length)out.push({...paidTotal(all,meta),scope:"account_pmax_products",label:"All reported PMax products · account benchmark",start:paid.start||null,end:paid.end||null});
+  return out;
+}
+
+function pmaxCandidatesFromSignals({ collections = [], profiles = [], sig30 = null, sig90 = null, sig365 = null, merchant = [], paid = null, merchantFree30 = null, merchantFree90 = null } = {}) {
   const cByH = {}; collections.forEach(c => { if (c && c.handle) cByH[c.handle] = c; });
   const sales = [];
   const addSales = (arr, source, mul) => (arr || []).forEach(x => sales.push({ ...x, source,
@@ -3530,7 +3548,7 @@ function pmaxCandidatesFromSignals({ collections = [], profiles = [], sig30 = nu
   (profiles || []).forEach(p => {
     const coll = cByH[p.handle] || { handle: p.handle, title: p.title }; if (!coll || !coll.handle) return;
     const pp = (p.topProducts || []).length ? p.topProducts : (p.reps || []).map(t => ({ title: String(t).replace(/ \(\d+ sold\)$/i, "") }));
-    const matches = []; const offerMap = new Map(), matchedSignals = new Set(); let score = 0, merchantProof = 0, profitProof = 0, profit30d = 0;
+    const allMatches = []; const offerMap = new Map(), matchedSignals = new Set();
     pp.forEach(prod => {
       const matching=signalRows.map(best=>{const knownMismatch=_pmaxDigits(prod.productId).length&&_pmaxDigits(best.productId).length&&!_pmaxShopifyProductMatch(prod,best);return {best,bestM:knownMismatch?0:_pmaxShopifyProductMatch(prod,best)?1:_pmaxTitleMatch(prod.title,best.name)};}).filter(x=>x.bestM>=.9&&!matchedSignals.has(x.best));
       matching.forEach(({best,bestM})=>{
@@ -3544,21 +3562,24 @@ function pmaxCandidatesFromSignals({ collections = [], profiles = [], sig30 = nu
       if(!offers.length)return;
       matchedSignals.add(best);
       const contribution = best.weight * (.55 + bestM * .45) + Math.min(20, Number(prod.sold) || 0);
-      score += contribution; profitProof += Number(best.estimatedProfit) || 0; profit30d += Number(best.profit30d)||0;
-      if ([...best.sources].some(x => x.indexOf("merchant-free") === 0)) merchantProof += contribution;
       offers.slice(0, 12).forEach(mp => offerMap.set(mp.itemId, mp));
-      matches.push({ title: prod.title, soldTitle: best.name, orders: Number(best.orders)||0, units: Number(best.units)||0,
+      allMatches.push({ title: prod.title, productId:best.productId||prod.productId||null,variantId:best.variantId||null,sku:best.sku||null, itemIds:offers.map(mp=>mp.itemId),evidenceId:"demand-"+allMatches.length,weight:contribution,profit30d:best.profit30d||0,monthly:((sig365&&(sig365.productRows||sig365.topProducts))||[]).filter(row=>salesEvidenceUtil.exactProductMatches({productId:best.productId||prod.productId,variantId:best.variantId,itemId:best.itemId||best.sku},row)).flatMap(row=>row.monthly||[]), soldTitle: best.name, orders: Number(best.orders)||0, units: Number(best.units)||0,
         revenue: Math.round(Number(best.revenue)||0), estimatedProfit: Math.round(Number(best.estimatedProfit)||0),orders30d:best.orders30d,revenue30d:best.revenue30d,
         source: [...best.sources].join("+"), offers: offers.length,attributionBasis:"Observed Shopify product demand; only explicit source attribution is organic",merchantReportedOnly:[...best.sources].includes("merchant-reported-conversions") });
       });
     });
-    if (!matches.length || !offerMap.size) return;
+    if (!allMatches.length || !offerMap.size) return;
     const byLabel = {}; offerMap.forEach(mp => { const k=String(mp.feedLabel||""); (byLabel[k]=byLabel[k]||[]).push(mp); });
-    const density = matches.length / Math.max(4, Math.min(20, Number(p.sampled) || pp.length || 4));
     const generic = /all products|catalog|shop all|all jewelry/i.test(String(coll.title || "")) ? .45 : 1;
-    const baseScore = score * (1 + Math.min(.8, density * 4)) * generic;
     Object.keys(byLabel).sort((a,b)=>byLabel[b].length-byLabel[a].length).forEach(feedKey => {
-      const scopedOffers = byLabel[feedKey];
+      // Keep every displayed product, statistic and score within this market's actual offer scope.
+      const scopedOffers = byLabel[feedKey].slice().sort((a,b)=>{
+        const A=paidById[String(a.itemId).toLowerCase()]||{},B=paidById[String(b.itemId).toLowerCase()]||{};
+        return ((Number(B.conversions)||0)*30+(Number(B.value)||0)*.04-(Number(B.conversions)||0?0:(Number(B.cost)||0)))-((Number(A.conversions)||0)*30+(Number(A.value)||0)*.04-(Number(A.conversions)||0?0:(Number(A.cost)||0)));
+      }).slice(0,30);
+      const scopedIds=new Set(scopedOffers.map(mp=>mp.itemId)),matches=allMatches.filter(m=>m.itemIds.some(id=>scopedIds.has(id)));
+      const scopedProfit=matches.reduce((n,m)=>n+(Number(m.estimatedProfit)||0),0),scopedProfit30=matches.reduce((n,m)=>n+(Number(m.profit30d)||0),0),scopedMerchantScore=matches.reduce((n,m)=>n+(String(m.source).includes("merchant-free")?m.weight:0),0);
+      const scopedBaseScore=matches.reduce((n,m)=>n+m.weight,0)*(1+Math.min(.8,matches.length/Math.max(4,Math.min(20,Number(p.sampled)||pp.length||4))*4))*generic;
       const paidRows = scopedOffers.map(mp => paidById[String(mp.itemId).toLowerCase()]).filter(Boolean);
       const paidPerf = paidRows.reduce((a,x) => ({ impressions:a.impressions+x.impressions, clicks:a.clicks+x.clicks,
         cost:a.cost+x.cost, conversions:a.conversions+x.conversions, value:a.value+x.value }), {impressions:0,clicks:0,cost:0,conversions:0,value:0});
@@ -3584,10 +3605,10 @@ function pmaxCandidatesFromSignals({ collections = [], profiles = [], sig30 = nu
         }).map(mp => mp.itemId).slice(0, 30);
       if (!itemIds.length) return;
       const breadth = .9 + Math.min(.25, itemIds.length * .0125);
-      const confidence = Math.max(20, Math.min(99, Math.round(28 + Math.min(30, merchantProof * .7) + Math.min(24, free30.conversions*8+free30.clicks*.08) + Math.min(18, matches.length * 3) + Math.min(22, paidPerf.conversions * 8) + Math.min(10, itemIds.length))));
-      const totalScore = baseScore * breadth + provenFree + provenPaid - wastePenalty + Math.min(30, profitProof * .03);
+      const confidence = Math.max(20, Math.min(99, Math.round(28 + Math.min(30, scopedMerchantScore * .7) + Math.min(24, free30.conversions*8+free30.clicks*.08) + Math.min(18, matches.length * 3) + Math.min(22, paidPerf.conversions * 8) + Math.min(10, itemIds.length))));
+      const totalScore = scopedBaseScore * breadth + provenFree + provenPaid - wastePenalty + Math.min(30, scopedProfit * .03);
       const evidenceRevenue=matches.reduce((n,x)=>n+(Number(x.revenue)||0),0),evidenceRevenue30d=matches.reduce((n,x)=>n+(Number(x.revenue30d)||0),0);
-      const marginRate=evidenceRevenue>0?Math.max(.2,Math.min(.9,profitProof/evidenceRevenue)):.65;
+      const marginRate=evidenceRevenue>0?Math.max(.2,Math.min(.9,scopedProfit/evidenceRevenue)):.65;
       const breakEvenRoas=_r2(1/marginRate);
       // New PMax campaigns learn unconstrained unless the exact products already have
       // enough paid conversion proof to support a defensible tROAS. Never set a target
@@ -3597,14 +3618,17 @@ function pmaxCandidatesFromSignals({ collections = [], profiles = [], sig30 = nu
         recommendedTargetRoas=_r2(Math.min(paidPerf.roas*.95,Math.max(breakEvenRoas*1.15,paidPerf.roas*.80)));
       }
       out.push({ handle: coll.handle, collectionTitle: coll.title || p.title, score: Math.round(totalScore * 10) / 10,
-        merchantScore: Math.round(merchantProof * breadth * 10) / 10, itemIds,
-        productTitles: matches.sort((a,b) => (b.orders-a.orders)||(b.estimatedProfit-a.estimatedProfit)||(b.revenue-a.revenue)).slice(0, 8).map(x => x.title),
-        evidence: matches.slice(0, 8), evidenceDays:sig90?90:30, evidenceTotals:{orders:matches.reduce((n,x)=>n+(Number(x.orders)||0),0),revenue:Math.round(evidenceRevenue),orders30d:matches.reduce((n,x)=>n+(Number(x.orders30d)||0),0),revenue30d:Math.round(evidenceRevenue30d)}, feedLabel: feedKey || null, confidence,
-        estimatedProfit30d: Math.round(profit30d), evidenceRevenue30d:Math.round(evidenceRevenue30d),marginRate:_r2(marginRate),breakEvenRoas,recommendedTargetRoas,
+        merchantScore: Math.round(scopedMerchantScore * breadth * 10) / 10, itemIds,
+        productTitles: [...new Set(matches.sort((a,b) => (b.orders-a.orders)||(b.estimatedProfit-a.estimatedProfit)||(b.revenue-a.revenue)).map(x => x.title))],
+        evidence: matches.slice(0, 8), demandEvidence:matches.map(({weight,...m})=>({...m,itemIds:m.itemIds.filter(id=>scopedIds.has(id))})),recommendationSchema:1,salesCurrency:CURRENCY,demandCoverage:{days30:!!(sig30&&sig30.complete),days90:!!(sig90&&sig90.complete),monetaryComplete:!!(sig30&&sig30.monetaryComplete&&sig90&&sig90.monetaryComplete)},seasonalityCoverage:{days:365,complete:!!(sig365&&sig365.complete&&sig365.historicalImport&&sig365.historicalImport.complete),historyComplete:false,coverage:sig365&&sig365.historyCoverage||"Monthly history is unavailable",startAt:sig365&&sig365.startAt||null,endAt:sig365&&sig365.endAt||null}, evidenceDays:sig90?90:30, evidenceTotals:{orders:matches.reduce((n,x)=>n+(Number(x.orders)||0),0),revenue:Math.round(evidenceRevenue),orders30d:matches.reduce((n,x)=>n+(Number(x.orders30d)||0),0),revenue30d:Math.round(evidenceRevenue30d)}, feedLabel: feedKey || null, confidence,
+        estimatedProfit30d: Math.round(scopedProfit30), evidenceRevenue30d:Math.round(evidenceRevenue30d),marginRate:_r2(marginRate),breakEvenRoas,recommendedTargetRoas,
         biddingMode:recommendedTargetRoas>0?"MAXIMIZE_CONVERSION_VALUE_TARGET_ROAS":"MAXIMIZE_CONVERSION_VALUE_LEARNING",
         paidPerformance: paidPerf, freePerformance:freePerf,
-        opportunityClass: (merchantProof > 0 || free30.conversions > 0 || paidPerf.conversions > 0) ? "scale_proven_winner" : "evergreen_expansion",
-        offerDetails: scopedOffers.filter(mp=>itemIds.includes(mp.itemId)).map(mp=>({itemId:mp.itemId,title:mp.title,type1:mp.type1,type2:mp.type2,feedLabel:mp.feedLabel,customLabels:mp.customLabels||[]})),
+        opportunityClass: (scopedMerchantScore > 0 || free30.conversions > 0 || paidPerf.conversions > 0) ? "scale_proven_winner" : "evergreen_expansion",
+        offerDetails: scopedOffers.filter(mp=>itemIds.includes(mp.itemId)).map(mp=>({itemId:mp.itemId,title:mp.title,productTitle:(matches.find(m=>m.itemIds.includes(mp.itemId))||{}).title||mp.title,productId:(String(mp.itemId).match(/^shopify_[A-Z]{2}_(\d+)_(\d+)$/i)||[])[1]||(matches.find(m=>m.itemIds.includes(mp.itemId))||{}).productId||null,type1:mp.type1||null,type2:mp.type2||null,feedLabel:mp.feedLabel,customLabels:mp.customLabels||[],evidenceIds:matches.filter(m=>m.itemIds.includes(mp.itemId)).map(m=>m.evidenceId),
+          paidPerformance:{...(paidById[String(mp.itemId).toLowerCase()]||{impressions:0,clicks:0,conversions:0,cost:0,value:0,currency:"USD"}),available:paidPerf.available},
+          freePerformance:{days30:{...(free30ById[String(mp.itemId).toLowerCase()]||{impressions:0,clicks:0,conversions:0,value:0,valueComplete:true}),available:free30.available},days90:{...(free90ById[String(mp.itemId).toLowerCase()]||{impressions:0,clicks:0,conversions:0,value:0,valueComplete:true}),available:free90.available}}})),
+        forecastBaselines:_pmaxForecastBaselines(scopedOffers,paid),
         types: (p.typesDetail || []).map(t => t.type || t.t || t.name).filter(Boolean).slice(0, 6) });
     });
   });
@@ -3614,7 +3638,7 @@ function pmaxCandidatesFromSignals({ collections = [], profiles = [], sig30 = nu
     const S = new Set(c.itemIds); const overlap = chosen.some(x => { const X = new Set(x.itemIds); let n=0; S.forEach(id => { if (X.has(id)) n++; }); return n / Math.max(1, Math.min(S.size, X.size)) > .65; });
     if (!overlap) chosen.push(c);
   });
-  return chosen.slice(0, 8);
+  return chosen.slice(0, 8).map((c,i)=>({...c,rankingContext:{rank:i+1,candidateCount:chosen.length,alternative:chosen[i+1]?{title:chosen[i+1].collectionTitle,score:chosen[i+1].score}:null}}));
 }
 
 function _derivePmaxSearchThemes(candidate) {
@@ -3642,7 +3666,7 @@ async function proposePmaxOpportunities({ collections = [], profiles = [], ceili
   try { backfill = await backfillOrders({ limit: 150 }); await emit({id:"pmax_shopify_backfill",category:"Shopify",label:"Shopify order backfill/enrichment",status:"ok",startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,detail:`Fetched ${backfill.fetched||0}; added ${backfill.added||0}; enriched ${backfill.enriched||0}. ${backfill.history&&backfill.history.limitation||""}`,source:"Shopify Admin GraphQL + Firestore",meta:backfill}); }
   catch (e) { await emit({id:"pmax_shopify_backfill",category:"Shopify",label:"Shopify order backfill/enrichment",status:"warning",startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,error:e&&e.message,fallback:"Continuing with the existing Firestore order log."}); }
   t = Date.now(); await emit({id:"pmax_store_signals",category:"Store data",label:"30/90-day product sales signals",status:"running",startedAt:t,detail:"Aggregating paid, organic, and Merchant/free-listing product outcomes."});
-  const [sig90,sig30] = await Promise.all([storeSignals({ days: 90 }).catch(() => null),storeSignals({ days: 30 }).catch(() => null)]);
+  const [sig90,sig30,sig365] = await Promise.all([storeSignals({ days: 90,max:20000 }).catch(() => null),storeSignals({ days: 30,max:20000 }).catch(() => null),storeSignals({days:365,max:20000}).catch(()=>null)]);
   const signalsComplete=!!(sig30&&sig90&&sig30.complete&&sig90.complete&&sig30.monetaryComplete&&sig90.monetaryComplete);
   await emit({id:"pmax_store_signals",category:"Store data",label:"30/90-day product sales signals",status:signalsComplete?"ok":"warning",startedAt:t,endedAt:Date.now(),tookMs:Date.now()-t,
     detail:[sig30?`${sig30.orders} orders in 30d; ${sig30.merchantOrganicOrders} explicitly attributed to free listings.`:"30-day order evidence unavailable.",sig90?`${sig90.orders} orders in 90d.`:"90-day order evidence unavailable."].join(" "),
@@ -3699,7 +3723,7 @@ async function proposePmaxOpportunities({ collections = [], profiles = [], ceili
       if(verified.filter(_pmaxIsEligible).length&&!merchantErr)await emit({id:"pmax_merchant_catalogue",category:"Google Ads API",label:"Linked Merchant Center catalogue",status:"ok",startedAt:discoveryAt,endedAt:Date.now(),tookMs:Date.now()-discoveryAt,detail:`${merchant.length} total verified offers; ${merchant.filter(_pmaxIsEligible).length} eligible/in-stock. Includes additional sellers discovered from direct organic conversions.`,source:"Google Ads shopping_product",meta:{merchantOffers:merchant.length,organicDiscoveryOffers:verified.length}});
     }catch(e){await emit({id:"pmax_organic_offer_discovery",category:"Merchant API",label:"Verify additional organic sellers",status:"warning",startedAt:discoveryAt,endedAt:Date.now(),tookMs:Date.now()-discoveryAt,error:_auditText(e&&e.message,220),detail:"Additional converting offers could not be verified; their performance remains reported but they are not guessed into a new campaign.",source:"Google Ads shopping_product"});}
   }
-  const candidates = pmaxCandidatesFromSignals({ collections, profiles, sig30, sig90, merchant, paid, merchantFree30, merchantFree90 });
+  const candidates = pmaxCandidatesFromSignals({ collections, profiles, sig30, sig90, sig365, merchant, paid, merchantFree30, merchantFree90 });
   await emit({id:"pmax_candidate_scoring",category:"Ranking",label:"PMax candidate matching and scoring",status:candidates.length?"ok":"warning",startedAt:Date.now(),endedAt:Date.now(),tookMs:0,
     detail:`${candidates.length} market-specific candidate(s) built from ${merchant.length} verified offers.`,source:"Deterministic product/economic scoring",meta:{candidates:candidates.length,merchantOffers:merchant.length}});
   if (!merchant.length) return { list: [], error: merchantErr ? ("Merchant Center catalogue read failed: " + merchantErr) : "The linked Merchant Center catalogue returned no products", at: Date.now() };
@@ -3724,7 +3748,7 @@ async function proposePmaxOpportunities({ collections = [], profiles = [], ceili
     const promptData = pool.map(c => ({ handle:c.handle, feedLabel:c.feedLabel, collectionTitle:c.collectionTitle, score:c.score, merchantScore:c.merchantScore,
       itemCount:c.itemIds.length, productTitles:c.productTitles, evidence:c.evidence.slice(0,5), confidence:c.confidence,
       estimatedProfit30d:c.estimatedProfit30d, marginRate:c.marginRate, breakEvenRoas:c.breakEvenRoas, recommendedTargetRoas:c.recommendedTargetRoas,
-      paidPerformance:c.paidPerformance, freePerformance:c.freePerformance, opportunityClass:c.opportunityClass }));
+      paidPerformance:c.paidPerformance, freePerformance:c.freePerformance, opportunityClass:c.opportunityClass, why:require("../../assets/pmax-recommendation").buildRecommendation(c,{dailyBudget:12,days:30}).reasons,seasonality:require("../../assets/pmax-recommendation").buildRecommendation(c,{dailyBudget:12,days:30}).seasonality }));
     const j = await openaiJSON(`You are selecting tightly scoped Google Merchant Center Performance Max campaigns for Brites Jewelry.
 The goal is to advertise products supported by actual store purchase history, including organic and direct sales before they have paid history. Treat all-channel Shopify demand as essential evidence. Keep explicit organic attribution separate from direct/unknown and other paid channels. Merchant clicks and impressions indicate interest, not purchases; reported Merchant conversions can overlap Shopify orders and must not be added to them. Customer motivations remain hypotheses unless supported by research.
 ${playbookText(pmaxBook)}
@@ -3732,7 +3756,7 @@ These are PMax product/creative observations; never treat search themes as exact
 30-day explicitly attributed Merchant/free-listing orders: ${merchantOrders30}; revenue ${CURRENCY} ${merchantRevenue30}. Verified-organic-attribution revenue ${CURRENCY} ${fallbackOrganic30}. All-channel order history and coverage:
 ${JSON.stringify({days30:selectorPeriod(sig30),days90:selectorPeriod(sig90)})}
 Eligible candidates are pre-ranked deterministically from exact Shopify order titles matched to live Merchant Center offer IDs:
-${JSON.stringify(promptData).slice(0,12000)}
+${JSON.stringify(promptData)}
 Choose 2-3 market-specific, non-overlapping candidates. CA and US feed labels are separate valid campaigns; you may choose the same collection once per market when both have eligible offers. Prefer repeated Shopify purchases and separately reported Merchant conversions over clicks. Lack of past ad sales must not exclude a strong organic/direct seller. The same order can appear in Shopify and Merchant attribution. Missing periods and currency values are unknown; do not assume zero sales or calculate a paid ROAS from organic revenue. Prefer multiple eligible offers. Do not choose a broad collection over a tighter one with the same winning products. Keep budgets conservative enough to learn but meaningful: $6-$15/day, respecting total ceiling $${ceiling}/day. Return ONLY JSON {"pmax":[{"handle":"exact handle","feedLabel":"exact feedLabel","rationale":"<=150 chars citing products/orders/free-listing proof","dailyBudget":6-15,"days":21-45,"angle":"<=80 chars"}]}.`,
       { maxTokens: 5000, effort: "medium" });
     selected = (Array.isArray(j && j.pmax) ? j.pmax : []).map(x => {
@@ -3755,6 +3779,7 @@ Choose 2-3 market-specific, non-overlapping candidates. CA and US feed labels ar
   } else {
     await emit({id:"pmax_selector_fallback",category:"Ranking",label:"PMax deterministic fallback",status:"skipped",startedAt:Date.now(),endedAt:Date.now(),tookMs:0,detail:"Not needed; AI selections were valid."});
   }
+  const reportContext=await _reportContext().catch(()=>null),budgetToEvidenceFx=reportContext?await _withTimeout(_fxRateToUsd(reportContext.accountToday),8000,"Current budget exchange rate").catch(()=>null):null;
   const list = selected.map(c => {
     const ev = c.evidence || [], merchantEv = ev.filter(x => String(x.source).indexOf("merchant-free") >= 0);
     const orders = c.evidenceTotals ? c.evidenceTotals.orders : ev.reduce((n,x)=>n+(Number(x.orders)||0),0), revenue = c.evidenceTotals ? c.evidenceTotals.revenue : ev.reduce((n,x)=>n+(Number(x.revenue)||0),0);
@@ -3763,6 +3788,7 @@ Choose 2-3 market-specific, non-overlapping candidates. CA and US feed labels ar
       feedLabel:c.feedLabel||null, score:c.score, merchantScore:c.merchantScore, confidence:c.confidence,
       evidenceDays:c.evidenceDays, opportunityClass:c.opportunityClass, estimatedProfit30d:c.estimatedProfit30d, evidenceRevenue30d:c.evidenceRevenue30d,marginRate:c.marginRate,
       breakEvenRoas:c.breakEvenRoas,recommendedTargetRoas:c.recommendedTargetRoas,biddingMode:c.biddingMode,paidPerformance:c.paidPerformance,freePerformance:c.freePerformance,
+      recommendationSchema:1,recommendationEvidenceAt:Date.now(),budgetCurrency:reportContext&&reportContext.budgetCurrency||CURRENCY,budgetCurrencyVerified:!!reportContext,budgetToEvidenceFx:budgetToEvidenceFx||null,budgetFxDate:reportContext&&reportContext.accountToday||null,salesCurrency:c.salesCurrency,demandEvidence:c.demandEvidence,demandCoverage:c.demandCoverage,seasonalityCoverage:c.seasonalityCoverage,forecastBaselines:c.forecastBaselines,rankingContext:c.rankingContext,
       offerDetails:c.offerDetails, searchThemes:c.searchThemes||_derivePmaxSearchThemes(c),
       merchantReportsConfigured:!!merchantFree30.configured,merchantReportWarning:merchantFree30.error||merchantFree90.error||null,merchantReportCode:merchantFree30.errorCode||merchantFree90.errorCode||null,
       salesEvidence:{source:"Shopify order log",attributionBasis:"Shopify order date",currency:CURRENCY,days30:salesEvidenceUtil.compactPeriod(sig30),days90:salesEvidenceUtil.compactPeriod(sig90),overlap:"Merchant conversions and Shopify orders are separate, potentially overlapping measures."},
@@ -3774,6 +3800,42 @@ Choose 2-3 market-specific, non-overlapping candidates. CA and US feed labels ar
     paidProductRows:(paid.rows||[]).length, paidPerformanceError:paid.error||null,
     merchantReportsConfigured:!!merchantFree30.configured,merchantReportRows30:(merchantFree30.rows||[]).length,
     merchantReportsError:merchantFree30.error||merchantFree90.error||null };
+}
+
+// Refresh the evidence behind a saved recommendation without an AI request or changing an ad.
+async function pmaxRecommendationEvidence({handle,feedLabel}={}){
+  const f=fb();if(!f)throw new Error("Recommendation storage is unavailable.");
+  const doc=await f.db.collection(COL.state).doc("opportunities").get(),saved=(doc.exists&&doc.data().pmaxList||[]).find(c=>String(c.handle)===String(handle)&&String(c.feedLabel||"").toUpperCase()===String(feedLabel||"").toUpperCase());
+  if(!saved)throw new Error("This saved recommendation is no longer available. Refresh product research.");
+  const allowed=new Set((saved.itemIds||[]).map(String));if(!allowed.size)throw new Error("This recommendation has no exact feed offers to research.");
+  // A read-only UI request must complete within the synchronous function window.
+  // Missing optional reports remain explicit instead of blocking every explanation.
+  const optional=(promise,label,fallback)=>_withTimeout(promise,18000,label).catch(e=>typeof fallback==="function"?fallback(e):fallback),unavailable=e=>({complete:false,byId:{},rows:[],error:String(e.message||e).slice(0,180)});
+  const contextRead=_withTimeout(_reportContext(),7000,"Account reporting currency").then(async context=>({...context,budgetToEvidenceFx:await _withTimeout(_fxRateToUsd(context.accountToday),8000,"Current budget exchange rate").catch(()=>null)})).catch(()=>null);
+  const [catalogue,sig30,sig90,sig365,paid,free30,free90,context]=await Promise.all([
+    _withTimeout(merchantProducts({force:true,itemIds:[...allowed]}),18000,"Current Merchant offer verification"),optional(storeSignals({days:30,max:20000}),"30-day product orders",null),optional(storeSignals({days:90,max:20000}),"90-day product orders",null),optional(storeSignals({days:365,max:20000}),"Monthly product history",null),optional(pmaxProductPerformance({days:90}),"Paid product history",unavailable),optional(merchantFreeProductPerformance({days:30}),"30-day free-listing evidence",unavailable),optional(merchantFreeProductPerformance({days:90}),"90-day free-listing evidence",unavailable),contextRead
+  ]);
+  const offers=catalogue.filter(p=>allowed.has(String(p.itemId))&&String(p.feedLabel||"").toUpperCase()===String(saved.feedLabel||"").toUpperCase()&&_pmaxIsEligible(p));
+  if(!offers.length)throw new Error("None of the saved offers could be verified as eligible in this market. Refresh product research before generating this ad.");
+  const key=p=>String(p.variantId||p.sku||p.productId||p.name||""),demand=new Map();
+  for(const offer of offers){for(const row of [...(sig90&&sig90.productRows||[]),...(sig30&&sig30.productRows||[])].filter(p=>salesEvidenceUtil.exactProductMatches(offer,p))){
+    const id=key(row);if(demand.has(id))continue;
+    const r90=(sig90&&sig90.productRows||[]).find(p=>key(p)===id),r30=(sig30&&sig30.productRows||[]).find(p=>key(p)===id),monthly=(sig365&&sig365.productRows||[]).filter(p=>key(p)===id).flatMap(p=>p.monthly||[]),base=r90||r30||row;
+    demand.set(id,{evidenceId:id,title:base.name,productId:base.productId||null,variantId:base.variantId||null,sku:base.sku||null,itemIds:offers.filter(p=>salesEvidenceUtil.exactProductMatches(p,base)).map(p=>p.itemId),orders:Number(base.orders)||0,revenue:Number(base.revenue)||0,orders30d:Number(r30&&r30.orders)||0,revenue30d:Number(r30&&r30.revenue)||0,estimatedProfit:Number(base.estimatedProfit)||0,monthly,source:"All-channel Shopify product orders; explicit attribution remains separate",organicOrders:Number(base.organic)||0,paidOrders:Number(base.paid)||0,directOrUnknownOrders:Number(base.directOrUnknown)||0});
+  }}
+  const demandEvidence=[...demand.values()],{paidTotal}=require("../../assets/pmax-recommendation"),paidMeta={available:!!(paid&&paid.complete&&!paid.error),monetaryComplete:true,currency:"USD",days:paid&&paid.days||90};
+  const freeFor=(r,id)=>({...((r&&r.byId||{})[String(id).toLowerCase()]||{impressions:0,clicks:0,conversions:0,value:0,valueComplete:true}),available:!!(r&&r.complete&&!r.error)});
+  const details=offers.map(p=>{const rows=demandEvidence.filter(r=>r.itemIds.includes(p.itemId)),m=String(p.itemId).match(/^shopify_[A-Z]{2}_(\d+)_(\d+)$/i);return {itemId:p.itemId,title:p.title,productTitle:rows[0]&&rows[0].title||p.title,productId:m?m[1]:rows[0]&&rows[0].productId||null,feedLabel:p.feedLabel,type1:p.type1||null,type2:p.type2||null,customLabels:p.customLabels||[],evidenceIds:rows.map(r=>r.evidenceId),paidPerformance:{...((paid&&paid.byId||{})[String(p.itemId).toLowerCase()]||{impressions:0,clicks:0,conversions:0,cost:0,value:0,currency:"USD"}),available:paidMeta.available},freePerformance:{days30:freeFor(free30,p.itemId),days90:freeFor(free90,p.itemId)}};});
+  const sumFree=period=>details.reduce((a,p)=>{const x=p.freePerformance[period];for(const k of ["impressions","clicks","conversions","value"])a[k]+=(Number(x[k])||0);a.available=a.available&&x.available;a.valueComplete=a.valueComplete&&x.valueComplete!==false;return a;},{impressions:0,clicks:0,conversions:0,value:0,available:true,valueComplete:true,valueCurrency:"USD"});
+  const total=key=>demandEvidence.reduce((n,p)=>n+(Number(p[key])||0),0),paidPerformance=paidTotal(details.map(p=>p.paidPerformance),paidMeta),freePerformance={days30:sumFree("days30"),days90:sumFree("days90")};
+  for(const x of Object.values(freePerformance))if(!x.valueComplete)x.value=null;
+  paidPerformance.roas=paidPerformance.cost>0?paidPerformance.value/paidPerformance.cost:null;
+  const budgetToEvidenceFx=context&&context.budgetToEvidenceFx||null;
+  const candidate={...saved,itemIds:details.map(p=>p.itemId),offerDetails:details,productTitles:[...new Set(details.map(p=>p.productTitle))],recommendationSchema:1,recommendationEvidenceAt:Date.now(),salesCurrency:CURRENCY,budgetCurrency:context&&context.budgetCurrency||null,budgetCurrencyVerified:!!context,budgetToEvidenceFx:budgetToEvidenceFx||null,budgetFxDate:context&&context.accountToday||null,
+    demandEvidence,demandCoverage:{days30:!!(sig30&&sig30.complete),days90:!!(sig90&&sig90.complete),monetaryComplete:!!(sig30&&sig30.monetaryComplete&&sig90&&sig90.monetaryComplete)},seasonalityCoverage:{days:365,complete:!!(sig365&&sig365.complete&&sig365.historicalImport&&sig365.historicalImport.complete),historyComplete:false,coverage:sig365&&sig365.historyCoverage||"Monthly history is unavailable",startAt:sig365&&sig365.startAt||null,endAt:sig365&&sig365.endAt||null},evidenceDays:sig90?90:30,evidenceTotals:{orders:total("orders"),revenue:total("revenue"),orders30d:total("orders30d"),revenue30d:total("revenue30d")},paidPerformance,freePerformance,forecastBaselines:_pmaxForecastBaselines(offers,paid),
+    organic:{...saved.organic,matchedProductOrders:total("orders"),matchedProductRevenue:total("revenue"),orders30d:total("orders30d"),organicRevenue30d:total("revenue30d")},merchantReportWarning:free30&&free30.error||free90&&free90.error||null,rankingContext:null};
+  const recommendation=require("../../assets/pmax-recommendation").buildRecommendation(candidate);candidate.rationale=recommendation.summary;candidate.searchThemes=recommendation.scope.searchThemes;
+  return {candidate,removedItemIds:[...allowed].filter(id=>!candidate.itemIds.includes(id)),at:candidate.recommendationEvidenceAt};
 }
 
 /* ============== AI shot selection for PMax creative (vision) ==============
@@ -3954,7 +4016,7 @@ async function uploadImageAssets(imgs, ctrl) {
 // mutateOperations for a retail Performance Max campaign. Exact Merchant Center
 // item IDs are preferred so the campaign amplifies the products that already sold
 // through free listings. Product-type scoping remains a safe fallback only.
-function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoas, merchantId, feedLabel, itemIds, types, countries, offerDetails, searchThemes, audienceResource, imageAssets, adCopy, relatedCollections } = {}) {
+function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoas, merchantId, feedLabel, itemIds, types, countries, offerDetails, searchThemes, audienceResource, imageAssets, adCopy, relatedCollections, combinedCreativeGroup = false } = {}) {
   const tag=_pmaxTag(coll.handle,feedLabel), bRes=`customers/${CID}/campaignBudgets/-1`, cRes=`customers/${CID}/campaigns/-2`;
   const finalUrl=`https://britesjewelry.com/collections/${coll.handle}`, _sched=_campaignScheduleFields(startDate,endDate), tRoas=Number(targetRoas||ENV.GADS_TARGET_ROAS||0);
   const shoppingSetting={merchantId:Number(merchantId)};if(feedLabel)shoppingSetting.feedLabel=String(feedLabel);
@@ -3971,11 +4033,11 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
       finalUrlSuffix:"utm_source=google&utm_medium=paid_shopping&utm_campaign={campaignid}&utm_content=pmax",
       maximizeConversionValue:tRoas>0?{targetRoas:tRoas}:{},..._sched}}}
   ];
-  const exact=[...new Set((itemIds||[]).map(x=>String(x||"").trim()).filter(Boolean))].slice(0,30);
+  const allExact=[...new Set((itemIds||[]).map(x=>String(x||"").trim()).filter(Boolean))],exact=combinedCreativeGroup?allExact:allExact.slice(0,30);
   const details=(offerDetails||[]).filter(x=>x&&exact.includes(String(x.itemId))).map(x=>Object.assign({},x,{itemId:String(x.itemId)}));
   if(!exact.length)throw new Error("Exact Merchant offer IDs are required for a reviewed product campaign.");
   const grouped={};exact.forEach(itemId=>{const productId=_productIdFromItemId(itemId);if(!productId)throw new Error("Merchant offer has no verifiable Shopify product reference.");(grouped[productId]=grouped[productId]||[]).push(itemId);});
-  const groups=Object.keys(grouped).map(productId=>({productId,label:(details.find(d=>grouped[productId].includes(d.itemId))||{}).title||("Product "+productId),itemIds:grouped[productId]}));
+  const groups=combinedCreativeGroup?[{label:coll.title,itemIds:exact}]:Object.keys(grouped).map(productId=>({productId,label:(details.find(d=>grouped[productId].includes(d.itemId))||{}).title||("Product "+productId),itemIds:grouped[productId]}));
   if(groups.length>4)throw new Error("Select up to four products per creative package. Different products receive their own copy and images.");
   const themes=[...new Set((searchThemes||[]).map(x=>String(x).toLowerCase().replace(/[^a-z0-9 ]+/g," ").replace(/\s+/g," ").trim()).filter(Boolean))].slice(0,25);
   // Campaign-level sitelinks/callouts/structured snippets — same proven machinery the
@@ -3991,14 +4053,15 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
   const textCopy = adCopy || _pmaxDeterministicCopy(coll);
   const textAssets = _buildPmaxTextAssetOps(textCopy, _tempIdFloor(ops));
   ops.unshift(...textAssets.ops);
+  let nextFilterId=-50;
   groups.forEach((g,gi)=>{
     const agId=-(3+gi),agRes=`customers/${CID}/assetGroups/${agId}`;
     ops.push({assetGroupOperation:{create:{resourceName:agRes,campaign:cRes,name:`AG · ${String(g.label).slice(0,60)}`,finalUrls:[finalUrl],status:"ENABLED"}}});
-    const root=`customers/${CID}/assetGroupListingGroupFilters/${agId}~-${50+gi*50}`;
+    const root=`customers/${CID}/assetGroupListingGroupFilters/${agId}~-${-nextFilterId--}`;
     if(g.itemIds.length){
       ops.push({assetGroupListingGroupFilterOperation:{create:{resourceName:root,assetGroup:agRes,type:"SUBDIVISION",listingSource:"SHOPPING"}}});
-      g.itemIds.forEach((id,i)=>ops.push({assetGroupListingGroupFilterOperation:{create:{resourceName:`customers/${CID}/assetGroupListingGroupFilters/${agId}~-${51+gi*50+i}`,assetGroup:agRes,parentListingGroupFilter:root,type:"UNIT_INCLUDED",listingSource:"SHOPPING",caseValue:{productItemId:{value:id}}}}}));
-      ops.push({assetGroupListingGroupFilterOperation:{create:{resourceName:`customers/${CID}/assetGroupListingGroupFilters/${agId}~-${99+gi*50}`,assetGroup:agRes,parentListingGroupFilter:root,type:"UNIT_EXCLUDED",listingSource:"SHOPPING",caseValue:{productItemId:{}}}}});
+      g.itemIds.forEach((id,i)=>ops.push({assetGroupListingGroupFilterOperation:{create:{resourceName:`customers/${CID}/assetGroupListingGroupFilters/${agId}~-${-nextFilterId--}`,assetGroup:agRes,parentListingGroupFilter:root,type:"UNIT_INCLUDED",listingSource:"SHOPPING",caseValue:{productItemId:{value:id}}}}}));
+      ops.push({assetGroupListingGroupFilterOperation:{create:{resourceName:`customers/${CID}/assetGroupListingGroupFilters/${agId}~-${-nextFilterId--}`,assetGroup:agRes,parentListingGroupFilter:root,type:"UNIT_EXCLUDED",listingSource:"SHOPPING",caseValue:{productItemId:{}}}}});
     }else ops.push({assetGroupListingGroupFilterOperation:{create:{resourceName:root,assetGroup:agRes,type:"UNIT_INCLUDED",listingSource:"SHOPPING"}}});
     // Give each coherent product group its own relevant themes. Signals guide learning;
     // they do not restrict PMax reach.
@@ -4262,18 +4325,18 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
   // Validate client-supplied IDs against the current linked catalogue; never create a
   // filter for a stale, disapproved, or unrelated Merchant Center offer.
   let selected = [], liveFeedLabel = feedLabel || null;
-  const requestedIds=[...new Set((itemIds||[]).map(String).filter(Boolean))].slice(0,30);
+  const allRequested=[...new Set((itemIds||[]).map(String).filter(Boolean))],requestedIds=design.combinedCreativeGroup?allRequested:allRequested.slice(0,30);
   try {
     const live=await merchantProducts({ force: true, itemIds: requestedIds, titles: productTitles || [] });
     const allowed=new Set(requestedIds.map(x=>String(x).toLowerCase()));
     selected=live.filter(x=>allowed.has(String(x.itemId||"").toLowerCase())&&_pmaxIsEligible(x));
     if(!liveFeedLabel&&selected[0])liveFeedLabel=selected[0].feedLabel||null;
     if(liveFeedLabel)selected=selected.filter(x=>!x.feedLabel||String(x.feedLabel).toUpperCase()===String(liveFeedLabel).toUpperCase());
-    selected=selected.slice(0,30);
+    if(!design.combinedCreativeGroup)selected=selected.slice(0,30);
   } catch(e){}
   if(!requestedIds.length)throw new Error("Select exact eligible Merchant Center offers before building a campaign.");
   if(requestedIds.length!==selected.length)throw new Error("Some selected Merchant Center offers are no longer eligible. Refresh product research to update the product selection.");
-  const exactIds=selected.map(x=>x.itemId), chosenTitles=[...new Set(selected.map(x=>x.title))].slice(0,30);
+  const exactIds=selected.map(x=>x.itemId), chosenTitles=[...new Set(selected.map(x=>x.title))];
   const liveDetails=selected.map(x=>({itemId:x.itemId,title:x.title,type1:x.type1||null,type2:x.type2||null,feedLabel:x.feedLabel||liveFeedLabel||null,customLabels:x.customLabels||[]}));
   const themes=(Array.isArray(searchThemes)&&searchThemes.length?searchThemes:_derivePmaxSearchThemes({collectionTitle:coll.title,productTitles:chosenTitles,types})).slice(0,25);
   let audienceResource=String(ENV.GADS_PMAX_AUDIENCE_RESOURCE||"").trim()||null;
@@ -4314,7 +4377,7 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
   if (!adCopy) adCopy = _pmaxDeterministicCopy(coll);
   // Two real sibling collections from the curated config → extra sitelinks (real URLs only).
   const relatedCollections = (typeof COLLECTIONS !== "undefined" ? COLLECTIONS : []).filter(c => c && c.handle && c.handle !== handle && c.handle !== "best-sellers").slice(0, 2);
-  const built=buildPmaxCampaignOps(coll,{dailyBudget:budget,startDate:start,endDate:end,targetRoas:safeTargetRoas,merchantId,feedLabel:liveFeedLabel,itemIds:exactIds,types,countries,offerDetails:liveDetails,searchThemes:themes,audienceResource,imageAssets,adCopy,relatedCollections});
+  const built=buildPmaxCampaignOps(coll,{dailyBudget:budget,startDate:start,endDate:end,targetRoas:safeTargetRoas,merchantId,feedLabel:liveFeedLabel,itemIds:exactIds,types,countries,offerDetails:liveDetails,searchThemes:themes,audienceResource,imageAssets,adCopy,relatedCollections,combinedCreativeGroup:!!design.combinedCreativeGroup});
   const scope=built.scopedItemIds.length?`${built.scopedItemIds.length} proven GMC offers`:(built.scopedTypes.length?built.scopedTypes.join("/"):"all feed products");
   const id=await enqueueApproval({type:"pmax",vetted:false,summary:`PMax · ${coll.title} · $${budget}/day · ${scope} · ${built.assetMode} assets${imageAssets&&imageAssets.square&&imageAssets.square.length?` (${(imageAssets.square||[]).length}sq/${(imageAssets.landscape||[]).length}ls/${(imageAssets.portrait||[]).length}pt custom images)`:""} · ${built.textAssets.headlines}hl/${built.textAssets.longHeadlines}lh/${built.textAssets.descriptions}ds copy · GMC ${merchantId}`,
     payload:{mutateOperations:built.ops,countries:built.countries,meta:{kind:"pmax",...(design.designId?{adDesignId:design.designId}:{}),handle,collectionTitle:coll.title,dailyBudget:budget,targetRoas:safeTargetRoas,biddingMode:safeTargetRoas>0?"MAXIMIZE_CONVERSION_VALUE_TARGET_ROAS":"MAXIMIZE_CONVERSION_VALUE_LEARNING",scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,productTitles:chosenTitles,images:imageAssets?(imageAssets.square||[]).length+(imageAssets.landscape||[]).length+(imageAssets.portrait||[]).length:0,textAssets:built.textAssets,assetMode:built.assetMode,merchantId,feedLabel:liveFeedLabel,countries:built.countries,tag:built.tag,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null}}},{id:design.approvalId,guard:design.guard});
@@ -8646,10 +8709,11 @@ function _ownedUrl(raw) {
   return u.toString();
 }
 async function _creativeFetch(raw, image=false) {
-  let url=_ownedUrl(raw),r;
+  const validate=raw=>{if(!image)return _ownedUrl(raw);const url=require("./googleAdsAdDesignContext").currentCreativeUrl(raw);if(!url)throw new Error("The creative image host is not supported.");return url;};
+  let url=validate(raw),r;
   for(let redirects=0;redirects<4;redirects++){
     r=await fetch(url,{timeout:20000,size:image?15000000:2000000,redirect:"manual"});
-    if([301,302,303,307,308].includes(r.status)){url=_ownedUrl(new URL(r.headers.get("location"),url).toString());continue;}
+    if([301,302,303,307,308].includes(r.status)){url=validate(new URL(r.headers.get("location"),url).toString());continue;}
     break;
   }
   if(!r.ok) throw new Error(`Source unavailable (${r.status}): ${new URL(url).pathname}`);
@@ -8949,7 +9013,8 @@ async function _adDesignPreviewApproval(item){
   return copy;
 }
 function _designEngineAdapters(){if(!_adDesignAdapters){const formats=require("./googleAdsAdDesign").FORMATS;_adDesignAdapters=require("./googleAdsAdDesignAdapters").createAdDesignAdapters({fb,env:ENV,fetch,creativeFetch:_creativeFetch,formats});}return _adDesignAdapters;}
-async function _finishAdDesign({workspaceId,jobId,owner,workspace,group,product,result}){
+async function _finishAdDesign({workspaceId,jobId,owner,workspace,group,product,selectedProducts=[product],result}){
+  if(result.publication&&result.publication.ready===false)throw new Error(result.publication.reason||"The product destination needs review before publication.");
   const f=fb(),wsRef=_adDesignWorkspaceRef(workspaceId),context=workspace.context||{};
   const own=async tx=>{const s=await tx.get(wsRef);if(!s.exists||!(s.data().job)||s.data().job.id!==jobId||s.data().job.owner!==owner||Number(s.data().job.leaseUntil)<Date.now())throw new Error("This design no longer owns its active job. Saved outputs are retained.");return s.data();};
   if(!_copyValid(result.copy,group.channel==="pmax")||!result.quality||result.quality.pass!==true||result.quality.productFaithful!==true||result.quality.mobileReadable!==true||Number(result.quality.score)<85)throw new Error("This design did not pass product, copy and image quality review.");
@@ -8969,19 +9034,21 @@ async function _finishAdDesign({workspaceId,jobId,owner,workspace,group,product,
   }
   let approvalId=context.approvalId;
   if(!approvalId){
-    const selected=(product.offerIds||[product.itemId]).filter(Boolean).filter(id=>(context.itemIds||[]).includes(id));
+    const offerGroups=selectedProducts.map(p=>(p.offerIds||[p.itemId]).filter(Boolean).filter(id=>(context.itemIds||[]).includes(id)));
+    if(offerGroups.some(ids=>!ids.length))throw new Error("Every featured product must have a verified offer in this opportunity before creating a draft.");
+    const selected=[...new Set(offerGroups.flat())];
     if(!selected.length)throw new Error("Choose a verified offer from this researched opportunity before generating a campaign draft.");
     const id="design-"+creativeHash({workspaceId,jobId}).slice(0,48);
-    const built=await generatePmaxApproval({...context,itemIds:selected,productTitles:[product.title]}, {reviewedAdCopy:result.copy,approvalId:id,designId:jobId,guard:own});approvalId=built.approvalId;
+    const built=await generatePmaxApproval({...context,itemIds:selected,productTitles:selectedProducts.map(p=>p.title)}, {combinedCreativeGroup:true,reviewedAdCopy:result.copy,approvalId:id,designId:jobId,guard:own});approvalId=built.approvalId;
   }
   const ref=f.db.collection(COL.approvals).doc(String(approvalId)),stored=await ref.get();if(!stored.exists)throw new Error("The design approval could not be found.");
-  const item=stored.data(),payload=JSON.parse(JSON.stringify(item.payload||{})),sourceHash=creativeHash(payload),allGroups=_creativeGroups(item);
+  const item=stored.data(),payload=JSON.parse(JSON.stringify(item.payload||{})),sourceHash=creativeHash(payload),creativeStateHash=creativeHash(item.creative||null),allGroups=_creativeGroups(item);
   let target=allGroups.find(g=>g.ref===group.ref);if(!target&&allGroups.length===1)target=allGroups[0];
   if(!target)throw new Error("Choose the exact ad group in this proposal before adding its generated design.");
   let pkg=item.creative&&item.creative.sourceHash===sourceHash?JSON.parse(JSON.stringify(item.creative)):{schema:CREATIVE_SCHEMA,engineBuild:ENGINE_BUILD,groups:[],sourceHash};
   if((pkg.designJobs||[]).includes(jobId)){if(pkg.logo)result.logo=pkg.logo;return {approvalId};}
   const evidence=result.evidence||{},lessons=(result.learningApplications||[]).map(a=>a.lessonSnapshot).filter(Boolean);
-  const completed={...target,copy:result.copy,brief:result.brief,assets:result.assets,review:result.quality,copyReview:{pass:true,provider:"gpt-6-astra",researchHash:evidence.hash},learningApplications:result.learningApplications||[],sourceTitle:product.title,sourceUrl:(product.images||[]).find(x=>x.id===workspace.settings.sourceImageId)?.url||product.url,learning:{schema:1,channel:target.channel,stage:"creative_guidance",includedAt:Date.now(),lessonIds:lessons.map(l=>String(l.id)),lessonSnapshots:lessons}};
+  const completed={...target,copy:result.copy,brief:result.brief,assets:result.assets,review:result.quality,copyReview:{pass:true,provider:"gpt-6-astra",researchHash:evidence.hash},productIds:result.productIds||selectedProducts.map(p=>String(p.id)),inputCoverage:result.inputCoverage||null,learningApplications:result.learningApplications||[],sourceTitle:product.title,sourceUrl:(product.images||[]).find(x=>x.id===workspace.settings.sourceImageId)?.url||product.url,learning:{schema:1,channel:target.channel,stage:"creative_guidance",includedAt:Date.now(),lessonIds:lessons.map(l=>String(l.id)),lessonSnapshots:lessons}};
   pkg.groups=(pkg.groups||[]).filter(g=>g.key!==target.key).concat(completed);pkg.groups=allGroups.map(g=>pkg.groups.find(x=>x.key===g.key)).filter(Boolean);
   const ready=pkg.groups.length===allGroups.length&&pkg.groups.every(g=>g.review&&g.review.pass===true);
   if(ready){_putCreativeCopy(payload,pkg.groups);if(pkg.groups.some(g=>g.channel==="pmax")&&!pkg.logo){
@@ -8990,14 +9057,14 @@ async function _finishAdDesign({workspaceId,jobId,owner,workspace,group,product,
   }}
   if(pkg.logo)result.logo=pkg.logo;
   payload.meta={...(payload.meta||{}),adDesignWorkspaceId:workspaceId};pkg={...pkg,schema:CREATIVE_SCHEMA,engineBuild:ENGINE_BUILD,phase:ready?"ready":"paused",progress:{pct:ready?100:Math.round(pkg.groups.length/allGroups.length*90),label:ready?"Every ad group is ready for your exact review":"Design the remaining ad groups to complete this proposal"},sourceHash:creativeHash(payload),payloadHash:ready?creativeHash(payload):null,review:null,designJobs:[...new Set([...(pkg.designJobs||[]),jobId])],designWorkspaceId:workspaceId};
-  await f.db.runTransaction(async tx=>{const currentWorkspace=await own(tx);const latest=await tx.get(ref);if(!latest.exists||latest.data().status!=="PENDING"||(latest.data().creativeLease||{}).until>Date.now()||creativeHash(latest.data().payload||{})!==sourceHash)throw new Error("The approval changed while this design was being saved. Refresh its sources.");if(context.approvalPayloadHash&&context.approvalPayloadHash!==sourceHash)throw new Error("The source approval changed after this design began.");tx.update(ref,{payload,creative:JSON.parse(JSON.stringify(pkg)),vetted:false,status:"PENDING"});tx.update(wsRef,{context:{...currentWorkspace.context,approvalId,approvalPayloadHash:creativeHash(payload)}});});
+  await f.db.runTransaction(async tx=>{const currentWorkspace=await own(tx);const latest=await tx.get(ref);if(!latest.exists||latest.data().status!=="PENDING"||(latest.data().creativeLease||{}).until>Date.now()||creativeHash(latest.data().payload||{})!==sourceHash||creativeHash(latest.data().creative||null)!==creativeStateHash)throw new Error("The approval changed while this design was being saved. Refresh its sources.");if(context.approvalPayloadHash&&context.approvalPayloadHash!==sourceHash)throw new Error("The source approval changed after this design began.");tx.update(ref,{payload,creative:JSON.parse(JSON.stringify(pkg)),vetted:false,status:"PENDING"});tx.update(wsRef,{context:{...currentWorkspace.context,approvalId,approvalPayloadHash:creativeHash(payload)}});});
   return {approvalId};
 }
 function _designEngine(){
   if(!_adDesignEngine){
     _adDesignContextReader=require("./googleAdsAdDesignContext").createAdDesignContext({fb,COL,shopifyGql,verifiedBasis:_verifiedCampaignAnalysisBasis,creativeGroups:_creativeGroups,creativeHash,reportContext:_reportContext,validatedRange:_validatedReportRange});
     const research=require("./googleAdsAdDesignResearch").createAdDesignResearch({creativeFetch:_creativeFetch,copyValid:_copyValid,dailyStats,gaql,playbookSlice,storeSalesEvidence,conversionHealth,merchantProducts});
-    _adDesignEngine=require("./googleAdsAdDesign").createAdDesignService({fb,COL,env:ENV,control,..._designEngineAdapters(),loadContext:input=>_adDesignContextReader.loadContext(input),verifyBasis:_verifiedCampaignAnalysisBasis,verifyContext:_verifyAdDesignContext,research,saveAsset:_saveCreativeAsset,loadAsset:_loadCreativeAsset,finish:_finishAdDesign,reviewStatus:_adDesignApprovalReview});
+    _adDesignEngine=require("./googleAdsAdDesign").createAdDesignService({fb,COL,env:ENV,control,..._designEngineAdapters(),loadContext:input=>_adDesignContextReader.loadContext(input),currentCreative:require("./googleAdsAdDesignContext").extractCurrentCreative,verifyBasis:_verifiedCampaignAnalysisBasis,verifyContext:_verifyAdDesignContext,research,saveAsset:_saveCreativeAsset,loadAsset:_loadCreativeAsset,finish:_finishAdDesign,reviewStatus:_adDesignApprovalReview});
   }return _adDesignEngine;
 }
 async function adDesignWorkspace(input){return _designEngine().workspace(input);}
@@ -9006,12 +9073,46 @@ async function uploadAdDesignReference(input){return _designEngine().upload(inpu
 async function startAdDesign(input){return _designEngine().start(input);}
 async function adDesignStatus(input){return _designEngine().status(input);}
 async function runAdDesign(input){return _designEngine().run(input);}
+function _mergeDesignProduct(prior,page){
+  const out={...prior,...page,images:[...new Map([...(prior.images||[]),...(page.images||[])].map(i=>[i.id,i])).values()]};
+  for(const key of ["eligibleGroupRefs","creativeGroupRefs","relatedTo","offerIds"])out[key]=[...new Set([...(prior[key]||[]),...(page[key]||[])])];
+  out.adProduct=out.eligibleGroupRefs.length>0;return out;
+}
+async function adDesignGalleryPage({workspaceId,sourceKey}={}){
+  _designEngine();const f=fb(),ref=_adDesignWorkspaceRef(workspaceId),saved=await ref.get();if(!saved.exists)throw new Error("Design workspace was not found.");const w=saved.data();
+  if((w.job||{}).leaseUntil>Date.now())throw new Error("Wait for the current design before loading more source photos.");
+  const productsRef=ref.collection("sourceSets").doc(w.sourceSetId).collection("products");
+  if(sourceKey==="__initialize"){
+    const rows=await productsRef.get(),products=rows.docs.map(d=>d.data());
+    await f.db.runTransaction(async tx=>{const latest=await tx.get(ref);if(!latest.exists||latest.data().sourceSetId!==w.sourceSetId)throw new Error("The gallery changed while loading its sources.");const current=latest.data();
+      if(!(Number(current.context.gallerySchema)>=2)||!Array.isArray(current.context.gallerySources))tx.update(ref,{context:_adDesignContextReader.upgradeGalleryContext(current.context,products)});
+    });return adDesignStatus({workspaceId});
+  }
+  const source=(w.context.gallerySources||[]).find(s=>s.key===sourceKey);if(!source)throw new Error("Choose a saved gallery source.");if(!source.hasMore)return adDesignStatus({workspaceId});
+  const page=await _adDesignContextReader.loadGalleryPage({source,context:w.context});
+  await f.db.runTransaction(async tx=>{const latest=await tx.get(ref);if(!latest.exists||latest.data().sourceSetId!==w.sourceSetId||(latest.data().job||{}).leaseUntil>Date.now())throw new Error("The gallery changed while more listings were loading.");const current=latest.data(),currentSource=(current.context.gallerySources||[]).find(s=>s.key===sourceKey);
+    if(creativeHash(currentSource||null)!==creativeHash(source))throw new Error("This gallery page changed while loading. Retry to continue from its current position.");
+    const pairs=[];for(const p of page.products||[]){const pr=productsRef.doc(require("crypto").createHash("sha256").update(String(p.id)).digest("hex").slice(0,32));pairs.push({ref:pr,p,saved:await tx.get(pr)});}
+    const context={...current.context,groups:(current.context.groups||[]).map(g=>({...g,productIds:[...(g.productIds||[])]}))},sources=new Map((context.gallerySources||[]).map(s=>[s.key,s]));sources.set(source.key,page.source);
+    for(const extra of page.additionalSources||[])if(!sources.has(extra.key))sources.set(extra.key,extra);
+    let position=(current.productsIds||[]).length;const ids=new Set(current.productsIds||[]);
+    for(const row of pairs){const merged=_mergeDesignProduct(row.saved.exists?row.saved.data():{position:position++},row.p);ids.add(merged.id);
+      context.groups.forEach(g=>{if(merged.eligibleGroupRefs.includes(g.ref))g.productIds=[...new Set([...g.productIds,String(merged.id).split("/").pop()])];});
+      tx.set(row.ref,JSON.parse(JSON.stringify(merged)));
+    }
+    context.gallerySources=[...sources.values()];context.gallerySchema=2;context.warnings=[...new Set([...(context.warnings||[]),...(page.warnings||[])])];
+    tx.update(ref,{context,productsIds:[...ids]});
+  });return adDesignStatus({workspaceId});
+}
 async function adDesignProductImages({workspaceId,productId,after}={}){
   _designEngine();const f=fb(),ref=_adDesignWorkspaceRef(workspaceId),saved=await ref.get();if(!saved.exists)throw new Error("Design workspace was not found.");const w=saved.data(),key=require("crypto").createHash("sha256").update(String(productId)).digest("hex").slice(0,32),pRef=ref.collection("sourceSets").doc(w.sourceSetId).collection("products").doc(key),s=await pRef.get();
   if(!s.exists)throw new Error("Choose a product from this workspace.");if((w.job||{}).leaseUntil>Date.now())throw new Error("Wait for the current design before loading more source photos.");
   const prior=s.data();if(after&&after!==prior.nextCursor)throw new Error("The product gallery changed. Refresh its current photos.");
   const page=await _adDesignContextReader.loadProductImages({productId,after:after||null,all:true});
-  await f.db.runTransaction(async tx=>{const latest=await tx.get(ref),p=await tx.get(pRef);if(!latest.exists||latest.data().sourceSetId!==w.sourceSetId||(latest.data().job||{}).leaseUntil>Date.now()||!p.exists)throw new Error("The source gallery changed while more photos were loading.");const images=[...new Map([...(p.data().images||[]),...(page.images||[])].map(x=>[x.id,x])).values()];tx.set(pRef,{...p.data(),...page,images,error:null},{merge:true});});return adDesignStatus({workspaceId});
+  await f.db.runTransaction(async tx=>{const latest=await tx.get(ref),p=await tx.get(pRef);if(!latest.exists||latest.data().sourceSetId!==w.sourceSetId||(latest.data().job||{}).leaseUntil>Date.now()||!p.exists||p.data().nextCursor!==prior.nextCursor||p.data().checkedAt!==prior.checkedAt)throw new Error("The source gallery changed while more photos were loading.");
+    const merged=_mergeDesignProduct(p.data(),page),context=latest.data().context,sources=new Map((context.gallerySources||[]).map(s=>[s.key,s]));for(const extra of _adDesignContextReader.relatedSources([merged]))if(!sources.has(extra.key))sources.set(extra.key,extra);
+    tx.set(pRef,JSON.parse(JSON.stringify({...merged,error:null})));tx.update(ref,{context:{...context,gallerySources:[...sources.values()]}});
+  });return adDesignStatus({workspaceId});
 }
 
 // Explicit Analyze Ad requests use a dedicated, version-bound Astra workflow.
@@ -9031,7 +9132,7 @@ async function analyzeAdStatus(input) { return _analysisEngine().analyzeAdStatus
 async function runAnalyzeAd(input) { return _analysisEngine().runAnalyzeAd(input); }
 
 module.exports = {
-  adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, uploadAdDesignReference, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages,
+  adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, uploadAdDesignReference, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages, adDesignGalleryPage,
   reviseCreativeApproval, markApprovalApproved, needsCreativeReview, prepareCreativeApproval, creativeApprovalStatus, reviewCreativeApproval, assertCreativeReviewed, creativeHash,
   COL, V, CID, OPPORTUNITY_ENGINE_VERSION, DESIGN_STUDIO_ENGINE_VERSION, DESIGN_STUDIO_URL,
   control, mintToken, gaql, mutate, mutateAll,
@@ -9043,7 +9144,7 @@ module.exports = {
   getCollections, suggestOccasions, recordOccasionUse,
   scanOpportunities, opportunitiesWithStatus, takenTags, releaseOpportunity, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignEndDate, setCampaignBudget, analyzeCampaign,
   scanDesignStudioOpportunity, designStudioOpportunityStatus, generateDesignStudioApprovals, refreshDesignStudioLearning, designStudioPerformance, buildDesignStudioPmaxCampaignOps, buildDesignStudioSearchCampaignOps,
-  generatePmaxApproval, pmaxPreviewData, backfillPmaxCreative, upgradePmaxAdStrength, campaignTimeline, merchantCenterId, merchantProducts, pmaxCandidatesFromSignals, proposePmaxOpportunities, buildPmaxCampaignOps, pmaxProductPerformance, merchantFreeProductPerformance,
+  generatePmaxApproval, pmaxRecommendationEvidence, pmaxPreviewData, backfillPmaxCreative, upgradePmaxAdStrength, campaignTimeline, merchantCenterId, merchantProducts, pmaxCandidatesFromSignals, proposePmaxOpportunities, buildPmaxCampaignOps, pmaxProductPerformance, merchantFreeProductPerformance,
   listCountries, campaignCountries, setCampaignCountries, setApprovalCountries, setApprovalDates,
   loadCalendar, dueEvents,
   measure, pruneAssets, mineSearchTerms, reallocateBudgets, anomalyCheck,
