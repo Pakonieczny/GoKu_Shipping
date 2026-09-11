@@ -55,5 +55,18 @@ const output=bytes=>({data:[{b64_json:bytes.toString('base64')}],model:IMAGE_MOD
  e=adapter();e.D.reply={model:TEXT_MODEL,output_text:JSON.stringify({pass:true,productFaithful:true,mobileReadable:true,score:90,issues:[]}),usage:{input_tokens:1000,output_tokens:100}};await e.A.reviewImages(prepared.references[0],[source],{inputCoverage:{...prepared.coverage,referenceManifest:prepared.referenceManifest}},prepared.references,'all-sources-quality');
  const multiReview=e.calls[0].body.input[0].content;check(multiReview.filter(c=>c.type==='input_image').length===prepared.references.length+1&&multiReview[0].text.includes('product-16:photo'),'quality review sees every prepared source, including later selected products');
  check(e.A.reserveCost({key:'copy',job:{inputCoverage:prepared.coverage}})>1.85&&e.A.reserveCost({key:'quality',job:{inputCoverage:prepared.coverage}})>.65,'composition estimates account for all prepared visual references');
+ // Original-resolution crop geometry, orientation, fidelity and provenance.
+ e=adapter();const full=await sharp({create:{width:4096,height:2048,channels:3,background:'#ff0000'}}).composite([{input:await sharp({create:{width:2048,height:2048,channels:3,background:'#0000ff'}}).png().toBuffer(),left:2048,top:0}]).png().toBuffer();
+ const cropped=await e.A.cropImage(full,'square',{x:.5,y:0,width:.5,height:1}),cropMeta=await sharp(cropped.bytes).metadata(),pixel=await sharp(cropped.bytes).resize(1,1).raw().toBuffer();
+ check(cropMeta.width===2048&&cropMeta.height===2048&&cropped.sourceWidth===4096&&cropped.cropWidth===2048&&!cropped.upscaled,'2K crop extracts original 4096px source, not a preview');
+ check(pixel[2]>245&&pixel[0]<5,'saved crop matches the selected right-hand source pixels');
+ const tight=await e.A.cropImage(full,'square',{x:.5,y:0,width:.125,height:.25});check(tight.upscaled&&tight.cropWidth===512,'tight crop honestly reports enlargement rather than added source detail');
+ for(const format of ['landscape','portrait']){const out=await e.A.cropImage(full,format,null);check(Math.max(out.width,out.height)===2048&&Math.abs(out.crop.width*4096/(out.crop.height*2048)-out.width/out.height)<.001,format+' crop uses a 2K long edge and exact framing');}
+ await assert.rejects(()=>e.A.cropImage(full,'square',{x:.9,y:0,width:.5,height:1}),/inside/);passed++;
+ await assert.rejects(()=>e.A.cropImage(full,'portrait',{x:0,y:0,width:1,height:1}),/aspect ratio/);passed++;
+ const cropRotated=await e.A.cropImage(await sharp({create:{width:1600,height:2400,channels:3,background:'#ffd700'}}).jpeg().withMetadata({orientation:6}).toBuffer(),'landscape');check(cropRotated.sourceWidth===2400&&cropRotated.sourceHeight===1600,'crop coordinates apply after EXIF orientation');
+ const synthetic=await e.A.cropImage(syntheticXmp(await jpeg(2400,2400)),'square');check((await sharp(synthetic.bytes).metadata()).xmp.toString().includes('compositeSynthetic'),'AI provenance survives deterministic cropping');
+ let originalURL;e.D.creativeFetch=async u=>{originalURL=u;return full;};await e.A.fullSourceBytes('https://cdn.shopify.com/photo.png?v=17&width=320&height=320&crop=center');check(originalURL==='https://cdn.shopify.com/photo.png?v=17','full source fetch removes thumbnail transforms and retains version identity');
+
  console.log('PASS '+passed+' Sunburst/Astra request, format, provenance, cost and no-retry checks');
 })().catch(error=>{console.error(error);process.exit(1)});

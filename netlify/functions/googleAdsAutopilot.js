@@ -8777,7 +8777,7 @@ async function _saveCreativeAsset(id, bytes, kind, info={}) {
   const f=fb();if(!f)throw new Error("Creative storage is unavailable.");
   const hash=creativeHash(bytes.toString("base64"));
   const path=`Brites_GAds_Creative/${String(id).replace(/[^a-zA-Z0-9_-]/g,"")}/${kind}-${hash}.jpg`;
-  await f.admin.storage().bucket().file(path).save(bytes,{resumable:false,metadata:{contentType:"image/jpeg",cacheControl:"private,max-age=3600"}});
+  await f.admin.storage().bucket().file(path).save(bytes,{resumable:false,metadata:{contentType:info.mimeType||"image/jpeg",cacheControl:"private,max-age=3600"}});
   return {path,hash,bytes:bytes.length,...info};
 }
 async function _loadCreativeAsset(a) {
@@ -8912,7 +8912,7 @@ Lead with the physical jewellery and its meaning. Premium, inviting, specific, c
 async function creativeApprovalStatus(id) {
   const s=await fb().db.collection(COL.approvals).doc(String(id)).get();if(!s.exists)throw new Error("Draft not found.");
   const it=s.data(),p=JSON.parse(JSON.stringify(it.creative||{phase:"not_started"}));
-  for(const g of p.groups||[])for(const a of Object.values(g.assets||{})) {const [url]=await fb().admin.storage().bucket().file(a.path).getSignedUrl({action:"read",expires:Date.now()+3600000});a.url=url;}
+  for(const g of p.groups||[])for(const a of [...Object.values(g.assets||{}),...Object.values(g.placementAssets||{}).flatMap(v=>Object.values(v))]) {const [url]=await fb().admin.storage().bucket().file(a.path).getSignedUrl({action:"read",expires:Date.now()+3600000});a.url=url;}
   if(p.logo){const [url]=await fb().admin.storage().bucket().file(p.logo.path).getSignedUrl({action:"read",expires:Date.now()+3600000});p.logo.url=url;}
   return {ok:true,id,status:it.status,summary:it.summary,creative:p,leaseUntil:(it.creativeLease||{}).until||0,current:p.payloadHash===creativeHash(it.payload||{})};
 }
@@ -8931,14 +8931,14 @@ async function reviewCreativeApproval(id, hash) {
   await fb().db.runTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists)throw new Error("Draft not found.");const it=s.data(),c=it.creative||{};
     if(it.status!=="PENDING"||c.engineBuild!==ENGINE_BUILD||c.phase!=="ready"||c.payloadHash!==hash||creativeHash(it.payload||{})!==hash)throw new Error("The draft changed or is incomplete. Review the current version.");
     if(!(c.groups||[]).length||c.groups.some(g=>!g.review||g.review.pass!==true))throw new Error("Every group must pass its quality review.");
-    tx.update(ref,{"creative.review":{payloadHash:hash,assetHash:creativeHash({groups:c.groups.map(g=>g.assets||{}),logo:c.logo||null}),at:Date.now(),by:"authenticated operator"}});
+    tx.update(ref,{"creative.review":{payloadHash:hash,assetHash:creativeHash({groups:c.groups.map(g=>g.placementAssets?{assets:g.assets||{},placementAssets:g.placementAssets}:g.assets||{}),logo:c.logo||null}),at:Date.now(),by:"authenticated operator"}});
   });return {ok:true,id};
 }
 function assertCreativeReviewed(it) {
   if(_isAdVersionApproval(it)){versionReviewGate.assertVersionReviewed(it,creativeHash,CID);return;}
   if(!needsCreativeReview(it))return;
   const c=it.creative||{},r=c.review||{};
-  if(c.schema!==CREATIVE_SCHEMA||c.engineBuild!==ENGINE_BUILD||!(c.groups||[]).length||c.groups.some(g=>!g.review||!g.review.pass)||c.phase!=="ready"||!r.at||r.payloadHash!==creativeHash(it.payload||{})||r.assetHash!==creativeHash({groups:(c.groups||[]).map(g=>g.assets||{}),logo:c.logo||null}))throw new Error("Open Review creative and approve the current copy and images before publishing.");
+  if(c.schema!==CREATIVE_SCHEMA||c.engineBuild!==ENGINE_BUILD||!(c.groups||[]).length||c.groups.some(g=>!g.review||!g.review.pass)||c.phase!=="ready"||!r.at||r.payloadHash!==creativeHash(it.payload||{})||r.assetHash!==creativeHash({groups:(c.groups||[]).map(g=>g.placementAssets?{assets:g.assets||{},placementAssets:g.placementAssets}:g.assets||{}),logo:c.logo||null}))throw new Error("Open Review creative and approve the current copy and images before publishing.");
 }
 async function _creativeImageOps(pkg, existingOps=[]) {
   const ops=[],groups={},searchGroups={};let n=Math.min(-900000,_tempIdFloor(existingOps));
@@ -8949,10 +8949,10 @@ async function _creativeImageOps(pkg, existingOps=[]) {
   }return b;};
   const add=async(a,strict)=>{const b=await read(a,strict),res=`customers/${CID}/assets/${n--}`;ops.push({assetOperation:{create:{resourceName:res,imageAsset:{data:b.toString("base64")}}}});return res;};
   const logo=pkg.logo?await add(pkg.logo,designed):null;
-  for(const g of (pkg.groups||[]).filter(g=>g.channel==="pmax")) {const a={logo,square:[],landscape:[],portrait:[]};for(const shape of ["square","landscape","portrait"]){if(!(g.assets||{})[shape])throw new Error("Reviewed image set is incomplete.");a[shape].push(await add(g.assets[shape],designed||!!(g.copyReview||{}).researchHash));}groups[g.ref]=a;}
+  for(const g of (pkg.groups||[]).filter(g=>g.channel==="pmax")) {const a={logo,square:[],landscape:[],portrait:[]};for(const shape of ["square","landscape","portrait"]){if(!(g.assets||{})[shape])throw new Error("Reviewed image set is incomplete.");for(const asset of require("./googleAdsAdDesign").formatAssets(g,shape))a[shape].push(await add(asset,designed||!!(g.copyReview||{}).researchHash));}groups[g.ref]=a;}
   for(const g of (pkg.groups||[]).filter(g=>g.channel==="search"&&Object.keys(g.assets||{}).length)) {
     if(!new RegExp("^customers/"+CID+"/adGroups/-?\\d+$").test(String(g.ref)))throw new Error("The reviewed Search image target is not an ad group in this account.");
-    const a={square:[],landscape:[]};for(const shape of ["square","landscape"]){if(!g.assets[shape])throw new Error("Reviewed Search images are incomplete.");a[shape].push(await add(g.assets[shape],true));}
+    const a={square:[],landscape:[]};for(const shape of ["square","landscape"]){if(!g.assets[shape])throw new Error("Reviewed Search images are incomplete.");for(const asset of require("./googleAdsAdDesign").formatAssets(g,shape))a[shape].push(await add(asset,true));}
     // Search has no portrait image attachment; its saved preview remains part of the review.
     if(g.assets.portrait)await read(g.assets.portrait,true);
     searchGroups[g.ref]=a;
@@ -9048,7 +9048,7 @@ async function _finishAdDesign({workspaceId,jobId,owner,workspace,group,product,
   let pkg=item.creative&&item.creative.sourceHash===sourceHash?JSON.parse(JSON.stringify(item.creative)):{schema:CREATIVE_SCHEMA,engineBuild:ENGINE_BUILD,groups:[],sourceHash};
   if((pkg.designJobs||[]).includes(jobId)){if(pkg.logo)result.logo=pkg.logo;return {approvalId};}
   const evidence=result.evidence||{},lessons=(result.learningApplications||[]).map(a=>a.lessonSnapshot).filter(Boolean);
-  const completed={...target,copy:result.copy,brief:result.brief,assets:result.assets,review:result.quality,copyReview:{pass:true,provider:"gpt-6-astra",researchHash:evidence.hash},productIds:result.productIds||selectedProducts.map(p=>String(p.id)),inputCoverage:result.inputCoverage||null,learningApplications:result.learningApplications||[],sourceTitle:product.title,sourceUrl:(product.images||[]).find(x=>x.id===workspace.settings.sourceImageId)?.url||product.url,learning:{schema:1,channel:target.channel,stage:"creative_guidance",includedAt:Date.now(),lessonIds:lessons.map(l=>String(l.id)),lessonSnapshots:lessons}};
+  const completed={...target,copy:result.copy,brief:result.brief,assets:result.assets,placementAssets:result.placementAssets||null,review:result.quality,copyReview:{pass:true,provider:"gpt-6-astra",researchHash:evidence.hash},productIds:result.productIds||selectedProducts.map(p=>String(p.id)),inputCoverage:result.inputCoverage||null,learningApplications:result.learningApplications||[],sourceTitle:product.title,sourceUrl:(product.images||[]).find(x=>x.id===workspace.settings.sourceImageId)?.url||product.url,learning:{schema:1,channel:target.channel,stage:"creative_guidance",includedAt:Date.now(),lessonIds:lessons.map(l=>String(l.id)),lessonSnapshots:lessons}};
   pkg.groups=(pkg.groups||[]).filter(g=>g.key!==target.key).concat(completed);pkg.groups=allGroups.map(g=>pkg.groups.find(x=>x.key===g.key)).filter(Boolean);
   const ready=pkg.groups.length===allGroups.length&&pkg.groups.every(g=>g.review&&g.review.pass===true);
   if(ready){_putCreativeCopy(payload,pkg.groups);if(pkg.groups.some(g=>g.channel==="pmax")&&!pkg.logo){
@@ -9069,6 +9069,7 @@ function _designEngine(){
 }
 async function adDesignWorkspace(input){return _designEngine().workspace(input);}
 async function saveAdDesign(input){return _designEngine().save(input);}
+async function cropAdDesignImage(input){return _designEngine().crop(input);}
 async function uploadAdDesignReference(input){return _designEngine().upload(input);}
 async function startAdDesign(input){return _designEngine().start(input);}
 async function adDesignStatus(input){return _designEngine().status(input);}
@@ -9132,7 +9133,7 @@ async function analyzeAdStatus(input) { return _analysisEngine().analyzeAdStatus
 async function runAnalyzeAd(input) { return _analysisEngine().runAnalyzeAd(input); }
 
 module.exports = {
-  adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, uploadAdDesignReference, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages, adDesignGalleryPage,
+  adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, cropAdDesignImage, uploadAdDesignReference, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages, adDesignGalleryPage,
   reviseCreativeApproval, markApprovalApproved, needsCreativeReview, prepareCreativeApproval, creativeApprovalStatus, reviewCreativeApproval, assertCreativeReviewed, creativeHash,
   COL, V, CID, OPPORTUNITY_ENGINE_VERSION, DESIGN_STUDIO_ENGINE_VERSION, DESIGN_STUDIO_URL,
   control, mintToken, gaql, mutate, mutateAll,

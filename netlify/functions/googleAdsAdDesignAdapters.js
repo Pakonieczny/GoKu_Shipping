@@ -47,6 +47,28 @@ function createAdDesignAdapters(D){
     return {bytes:m.xmp?attachXmp(out.data,m.xmp):out.data,width:out.info.width,height:out.info.height};
   }
   async function sourceBytes(url){return (await normalizeUpload(await D.creativeFetch(url,true))).bytes;}
+  async function fullSourceBytes(url){
+    const u=new URL(url);
+    if(u.hostname==='cdn.shopify.com')for(const key of ['width','height','crop','pad_color'])u.searchParams.delete(key);
+    return D.creativeFetch(u.href,true);
+  }
+  async function cropImage(bytes,format,rect){
+    const dimensions={square:[2048,2048],landscape:[2048,1072],portrait:[1638,2048]}[format];
+    if(!dimensions)throw new Error('Choose a supported image format.');
+    const image=sharp(bytes,{limitInputPixels:40000000}),meta=await image.metadata();
+    if(!['jpeg','png','webp'].includes(meta.format)||Number(meta.pages||1)>1)throw new Error('Choose a still JPEG, PNG or WebP photo.');
+    // Rotate once, then crop original pixels. No 320px thumbnail or 1600px AI reference enters this path.
+    const oriented=await image.rotate().raw().toBuffer({resolveWithObject:true}),w=oriented.info.width,h=oriented.info.height,ratio=dimensions[0]/dimensions[1];
+    if(!rect){const cw=Math.min(w,h*ratio),ch=cw/ratio;rect={x:(w-cw)/2/w,y:(h-ch)/2/h,width:cw/w,height:ch/h};}
+    if(!['x','y','width','height'].every(k=>typeof rect[k]==='number'&&Number.isFinite(rect[k]))||rect.x<0||rect.y<0||rect.width<=0||rect.height<=0||rect.x+rect.width>1.000001||rect.y+rect.height>1.000001)throw new Error('The crop must stay inside the original image.');
+    if(Math.abs(rect.width*w/(rect.height*h)/ratio-1)>.005)throw new Error('The crop does not match the selected aspect ratio.');
+    const left=Math.round(rect.x*w),top=Math.round(rect.y*h),width=Math.min(w-left,Math.round(rect.width*w)),height=Math.min(h-top,Math.round(rect.height*h));
+    if(width<16||height<16)throw new Error('This crop is too small. Zoom out to preserve usable detail.');
+    const output=await sharp(oriented.data,{raw:oriented.info}).extract({left,top,width,height}).resize(dimensions[0],dimensions[1],{fit:'fill',kernel:'lanczos3'}).flatten({background:'#ffffff'}).jpeg({quality:100,chromaSubsampling:'4:4:4'}).toBuffer();
+    const final=meta.xmp?attachXmp(output,meta.xmp):output;
+    if(final.length>5120000)throw new Error('This maximum-quality crop exceeds Google’s 5 MB image limit. Choose a less detailed crop; the original is retained.');
+    return {bytes:final,width:dimensions[0],height:dimensions[1],crop:rect,sourceWidth:w,sourceHeight:h,cropWidth:width,cropHeight:height,upscaled:width<dimensions[0]||height<dimensions[1],mimeType:'image/'+(meta.format==='jpeg'?'jpeg':meta.format)};
+  }
   async function prepareReferences({sources}={}){
     if(!Array.isArray(sources)||!sources.length)throw new Error('Choose at least one photo for this composition.');
     const ids=new Set(),labels=new Set();
@@ -135,7 +157,7 @@ Compose specifically for ${format.key}, final ${format.width} by ${format.height
   function reserveCost({key,workspace,job}){
     const prepared=Number(job&&job.inputCoverage&&job.inputCoverage.preparedReferenceCount)||0;
     if(key==='copy')return prepared?Math.ceil((1.85+prepared*.08)*100)/100:1.85;
-    if(key==='quality')return prepared?Math.ceil((.65+prepared*.06)*100)/100:.65;
+    if(key==='quality')return Math.ceil((.65+prepared*.06+((job&&job.placements||[]).length?.25:0))*100)/100;
     const format=(D.formats||[]).find(f=>'image_'+f.key===key);if(!format)throw new Error('Unknown paid design stage.');
     const refs=prepared||Math.min(16,Math.max(1,Number(job.inputCoverage&&job.inputCoverage.usedProductImages||16)+Number(job.inputCoverage&&job.inputCoverage.usedInspirationImages||0)));
     // Sunburst output estimate follows OpenAI's published calculator. Reference
@@ -143,6 +165,6 @@ Compose specifically for ${format.key}, final ${format.width} by ${format.height
     // or guaranteed ceiling. Actual usage replaces estimates after confirmation.
     return Math.ceil((imageOutputEstimate(...format.requestSize.split('x').map(Number))*30/1000000*2+refs*.16+.08)*100)/100;
   }
-  return {responses,generateImage,normalizeUpload,sourceBytes,prepareReferences,signAsset,reviewImages,reserveCost};
+  return {responses,generateImage,normalizeUpload,sourceBytes,fullSourceBytes,cropImage,prepareReferences,signAsset,reviewImages,reserveCost};
 }
 module.exports={createAdDesignAdapters,syntheticXmp,imageOutputEstimate,imageCost,textCost,IMAGE_MODEL,TEXT_MODEL};

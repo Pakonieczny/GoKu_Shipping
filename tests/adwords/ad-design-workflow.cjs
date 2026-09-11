@@ -35,4 +35,32 @@ check(currentWorkspace.settings.currentAssetIds.length===1&&currentWorkspace.set
 await assert.rejects(()=>current.svc.save({workspaceId:current.id,currentAssetIds:['untrusted']}),/current Google images/);n++;
 let currentManifest;current.D.generateImage=async arg=>{currentManifest=arg.referenceManifest;return{bytes:Buffer.from('generated-'+arg.format.key)}};const cj=await current.svc.start({workspaceId:current.id});await current.svc.run({workspaceId:current.id,jobId:cj.jobId});check(currentManifest.flatMap(r=>r.cells).some(c=>c.label==='A1'&&c.role==='inspiration'&&c.productId===null),'current Google artwork has no invented product mapping');
 const oldWorkspace=clone(current.f.docs.get(current.p));current.D.verifyBasis=async()=>({version:2,snapshotHash:'b'.repeat(64)});current.D.loadContext=async()=>({context:clone(context),products:[clone(product)],sourceVersion:2,snapshotHash:'b'.repeat(64),snapshot:currentSnapshot});const nextWorkspace=await current.svc.workspace({campaignId:'42'});check(nextWorkspace.workspaceId!==current.id&&nextWorkspace.sourceVersion===2,'opening changed campaign gets current version in a new workspace');check(current.f.docs.get(current.p).job.id===oldWorkspace.job.id,'older paid design is retained when current ad version changes');
-const bad=await setup();bad.D.reviewImages=async()=>({pass:true,productFaithful:false,mobileReadable:true,score:95});const failjob=await bad.svc.start({workspaceId:bad.id});await assert.rejects(()=>bad.svc.run({workspaceId:bad.id,jobId:failjob.jobId}),/product fidelity/);n++;check(bad.calls.finish===0,'unfaithful jewelry never enters approvals');console.log('PASS '+n+' Ad Design upload, source identity, paid-stage reuse, complete formats, exact approvals and quality checks');})().catch(error=>{console.error(error);process.exit(1)});
+const bad=await setup();bad.D.reviewImages=async()=>({pass:true,productFaithful:false,mobileReadable:true,score:95});const failjob=await bad.svc.start({workspaceId:bad.id});await assert.rejects(()=>bad.svc.run({workspaceId:bad.id,jobId:failjob.jobId}),/product fidelity/);n++;check(bad.calls.finish===0,'unfaithful jewelry never enters approvals');const cropEnv=await setup();let originalReads=[],cropReads=[];
+cropEnv.D.fullSourceBytes=async url=>{originalReads.push(url);return Buffer.from('ORIGINAL:'+url);};
+cropEnv.D.cropImage=async(bytes,format,rect)=>{cropReads.push(bytes.toString());const dims={square:[2048,2048],landscape:[2048,1072],portrait:[1638,2048]}[format];return {bytes:Buffer.from('CROP:'+bytes+':'+format+':'+JSON.stringify(rect)),width:dims[0],height:dims[1],crop:rect||{x:0,y:0,width:1,height:1},sourceWidth:4096,sourceHeight:4096,cropWidth:2048,cropHeight:2048,upscaled:false,mimeType:'image/jpeg'};};
+const cropRequest={workspaceId:cropEnv.id,device:'desktop',format:'square',groupRef:refs.group,source:{kind:'product',productId:product.id,imageId:'img1'}};
+const firstCrop=await cropEnv.svc.crop(cropRequest),firstId=firstCrop.placements[0].imageId;
+check(firstCrop.placements.length===1&&firstCrop.imageLibrary[0].asset.width===2048,'accepted crop persists an immutable 2K image and exact desktop slot');
+check(cropEnv.calls.images===0&&cropEnv.calls.responses===0&&cropEnv.calls.finish===0,'cropping creates no AI request or ad publication');
+await assert.rejects(()=>cropEnv.svc.crop({...cropRequest,source:{kind:'product',productId:'other',imageId:'img1'}}),/outside/);n++;
+await assert.rejects(()=>cropEnv.svc.crop({...cropRequest,expectedImageId:null}),/changed while saving/);n++;
+const recrop=await cropEnv.svc.crop({...cropRequest,source:{kind:'library',imageId:firstId},expectedImageId:firstId,rect:{x:.25,y:.25,width:.5,height:.5}});
+check(cropReads.at(-1).startsWith('ORIGINAL:')&&!cropReads.at(-1).includes('CROP:'),'re-editing a saved crop always reads original pixels');
+check(recrop.imageLibrary.length===2,'previous accepted crop is retained after replacement');
+for(const device of ['desktop','mobile'])for(const format of ['square','landscape','portrait']){if(device==='desktop'&&format==='square')continue;await cropEnv.svc.crop({...cropRequest,device,format,rect:device==='mobile'?{x:.1,y:.1,width:.8,height:.8}:null});}
+const allChoices=await cropEnv.svc.status({workspaceId:cropEnv.id});check(allChoices.placements.length===6,'all six format/device choices survive independent saves');
+let reviewedFiles;cropEnv.D.reviewImages=async(source,files)=>{reviewedFiles=files;return {pass:true,productFaithful:true,mobileReadable:true,score:95};};
+const chosenJob=await cropEnv.svc.start({workspaceId:cropEnv.id});await cropEnv.svc.run({workspaceId:cropEnv.id,jobId:chosenJob.jobId});
+check(cropEnv.calls.images===0&&reviewedFiles.length===6,'all chosen crops reach quality review without redundant image generation');
+const chosenStatus=await cropEnv.svc.status({workspaceId:cropEnv.id}),chosenApproval=cropEnv.f.docs.get('Approvals/'+chosenStatus.approvalId);
+check(chosenApproval.payload.generatedAssets.length===6,'publication payload contains both device choices for every image ratio');
+check(chosenApproval.payload.versionChange.notes.some(n=>n.includes('controls device delivery')),'approval explains Google responsive device delivery accurately');
+const retainedJob=cropEnv.f.docs.get(cropEnv.p).job;await cropEnv.svc.crop({...cropRequest,expectedImageId:recrop.placements[0].imageId,remove:true});
+check(cropEnv.f.docs.has(cropEnv.p+'/history/'+retainedJob.id)&&cropEnv.f.docs.get(cropEnv.p).job===null,'changing a reviewed image archives paid work and requires a fresh review');
+check((await cropEnv.svc.status({workspaceId:cropEnv.id})).placements.length===5,'clearing one image does not erase other device or format choices');
+const partialEnv=await setup();partialEnv.D.fullSourceBytes=cropEnv.D.fullSourceBytes;partialEnv.D.cropImage=cropEnv.D.cropImage;
+await partialEnv.svc.crop({...cropRequest,workspaceId:partialEnv.id});const partialJob=await partialEnv.svc.start({workspaceId:partialEnv.id});await partialEnv.svc.run({workspaceId:partialEnv.id,jobId:partialJob.jobId});
+const partialStatus=await partialEnv.svc.status({workspaceId:partialEnv.id});check(partialEnv.calls.images===3&&partialStatus.result.placementAssets.desktop.square.hash!==partialStatus.result.placementAssets.mobile.square.hash,'unassigned mobile receives a generated image while the chosen desktop crop is preserved');
+check(partialStatus.imageLibrary.filter(i=>i.kind==='generated').length===3,'AI-generated originals remain in a separate reusable image library');
+
+console.log('PASS '+n+' Ad Design upload, source identity, paid-stage reuse, complete formats, exact approvals and quality checks');})().catch(error=>{console.error(error);process.exit(1)});

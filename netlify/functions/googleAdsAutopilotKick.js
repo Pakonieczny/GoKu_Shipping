@@ -116,7 +116,7 @@ async function handleAction(body) {
   const ctrl = await E.control();
   if (a === "dashboard") return await E.dashboard();
   if (a === "pmaxRecommendationEvidence") { try { return await E.pmaxRecommendationEvidence(body); } catch(e) { return {ok:false,error:e.message}; } }
-  if (["adDesignWorkspace", "saveAdDesign", "uploadAdDesignReference", "adDesignProductImages", "adDesignGalleryPage", "adDesignStatus"].includes(a)) {
+  if (["adDesignWorkspace", "saveAdDesign", "cropAdDesignImage", "uploadAdDesignReference", "adDesignProductImages", "adDesignGalleryPage", "adDesignStatus"].includes(a)) {
     try { return await E[a](body); } catch(e) { return {ok:false,error:e.message}; }
   }
   if (a === "startAdDesign") {
