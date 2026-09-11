@@ -57,6 +57,19 @@ function settingsFor(raw, products, groups, references, formats, currentCreative
   return { productId: String(product.id), groupRef: group.ref, sourceImageId: image.id, selectedImages, referenceIds, currentAssetIds, direction, style, deviceLinked:settings.deviceLinked!==false,
     formats: [...new Set([...formats.filter(row => row.required).map(row => row.key), ...requested])] };
 }
+function refreshedSettings(raw,fallback,products,groups,references,formats,currentCreative={}){
+  if(!raw)return {settings:settingsFor(fallback,products,groups,references,formats,currentCreative),warnings:[]};
+  const candidate={...raw,productId:fallback.productId,groupRef:fallback.groupRef};
+  try{return {settings:settingsFor(candidate,products,groups,references,formats,currentCreative),warnings:[]};}catch(_){/* Recheck saved source identities against the refreshed catalogue below. */}
+  const primary=products.find(p=>String(p.id)===String(candidate.productId));
+  if(!(primary?.images||[]).some(p=>p.id===candidate.sourceImageId)&&!references.some(r=>r.id===candidate.sourceImageId&&r.role==='product'&&productKey(r.productId)===productKey(candidate.productId)))delete candidate.sourceImageId;
+  if(Array.isArray(candidate.selectedImages))candidate.selectedImages=candidate.selectedImages.flatMap(choice=>{const p=products.find(p=>productKey(p.id)===productKey(choice.productId));return p&&(p.images||[]).some(i=>i.id===choice.imageId)&&(!Array.isArray(p.creativeGroupRefs)||p.creativeGroupRefs.includes(candidate.groupRef)||(p.eligibleGroupRefs||[]).includes(candidate.groupRef))?[{productId:String(p.id),imageId:choice.imageId}]:[];});
+  candidate.referenceIds=(candidate.referenceIds||[]).filter(id=>references.some(r=>r.id===id));
+  candidate.currentAssetIds=(candidate.currentAssetIds||[]).filter(id=>(currentCreative.images||[]).some(a=>a.id===id&&a.groupRef===candidate.groupRef));
+  candidate.formats=(candidate.formats||[]).filter(key=>formats.some(f=>f.key===key));
+  let settings;try{settings=settingsFor(candidate,products,groups,references,formats,currentCreative);}catch(_){settings=settingsFor(fallback,products,groups,references,formats,currentCreative);}
+  return {settings,warnings:['Some previously selected source photos or ad assets are no longer valid for this product and group. Valid selections and saved artwork were retained.']};
+}
 function responseText(result) {
   if (typeof result.output_text === "string") return result.output_text;
   return (result.output || []).flatMap(row => row.content || []).filter(row => row.type === "output_text").map(row => row.text || "").join("\n");
@@ -175,8 +188,9 @@ function createAdDesignService(deps) {
     let hasReceipt = false;
     if (job.inFlight && !active(job)) { const receipt = await ref.collection("outputs").doc(job.id + "_" + job.inFlight.key).get(); hasReceipt = !!(receipt.exists && (receipt.data().stageResult || receipt.data().rawResponse || receipt.data().asset)); }
     const approvalId = job.result && job.result.publication && job.result.publication.ready === false ? null : job.approvalId || workspace.context.approvalId || null, review = approvalId && deps.reviewStatus ? await deps.reviewStatus(approvalId) : null;
+    const gallery=await savedDesignGallery(workspace),imageAccess=deps.imageAccessStatus?deps.imageAccessStatus():null,warnings=[...new Set([...(workspace.context.warnings||[]),...(workspace.refreshWarnings||[]),...(imageAccess?.message?[imageAccess.message]:[])])];
     return { ok: true, workspaceId, revision:Number(workspace.revision||0), sourceVersion: workspace.sourceVersion || null, snapshotHash: workspace.snapshotHash || null,
-      context: {...workspace.context,currentCreative:creativeFor(workspace)}, products, references, imageLibrary, ...await savedDesignGallery(workspace), placements:chosenPlacements(workspace), settings: workspace.settings, messaging, publication:workspace.publication||null, status: job.phase || "draft", phase: job.phase || "draft",
+      context: {...workspace.context,warnings,currentCreative:creativeFor(workspace)}, imageAccess, products, references, imageLibrary, ...gallery, placements:chosenPlacements(workspace), settings: workspace.settings, messaging, publication:workspace.publication||null, status: job.phase || "draft", phase: job.phase || "draft",
       progress: job.progress || { pct: 0, label: "Choose your product, reference images and direction" }, result,
       approvalId, review, error: job.error || null,
       canRetry: !active(job) && (!job.inFlight || hasReceipt) && ["paused", "needs_attention", "queued", "running"].includes(job.phase), needsNewRequestApproval: !!job.inFlight && !active(job) && !hasReceipt,
@@ -184,11 +198,18 @@ function createAdDesignService(deps) {
       controlsMeaning: "Background and scale guide the photograph. Font and border preview the composition; Google chooses responsive typography and layout." };
   }
   async function workspace(input = {}) {
-    if (input.workspaceId) return status({ workspaceId: input.workspaceId });
+    if (input.workspaceId&&!input.force) return status({ workspaceId: input.workspaceId });
+    const existingId=input.workspaceId&&input.force?String(input.workspaceId):null,existing=existingId?await read(existingId):null;
+    if(existing){
+      // A refresh is bound to the saved workspace, including legacy unscoped
+      // and version-derived IDs. Request fields cannot redirect its identity.
+      const context=existing.context||{};
+      input={...context,workspaceId:existingId,force:true,productId:context.scopeProductId||null,selectedProductId:existing.settings.productId,groupRef:(context.groups||[]).length===1?context.groups[0].ref:null};
+    }
     const contextKey = { ...(input.productId?{productId:productKey(input.productId)}:{}), campaignId: String(input.campaignId || ""), approvalId: String(input.approvalId || ""), handle: String(input.handle || ""), groupRef: String(input.groupRef || ""),
       itemIds: input.campaignId || input.approvalId ? [] : [...new Set((input.itemIds || []).map(String))].sort(), feedLabel: input.campaignId || input.approvalId ? "" : String(input.feedLabel || "").toUpperCase() };
     if (!contextKey.campaignId && !contextKey.approvalId && !contextKey.handle) throw new Error("Open Ad Design from a campaign, draft or product opportunity.");
-    let id = "design_" + sha(JSON.stringify(contextKey)).slice(0, 32), ref = refFor(id), saved = await ref.get();
+    let id = existingId||"design_" + sha(JSON.stringify(contextKey)).slice(0, 32), ref = refFor(id), saved = existing?{exists:true,data:()=>existing}:await ref.get();
     if (saved.exists && input.campaignId && !input.approvalId && !input.force) {
       const latest = await deps.verifyBasis({campaignId:String(input.campaignId)});
       if (latest && latest.snapshotHash && (Number(latest.version)!==Number(saved.data().sourceVersion)||latest.snapshotHash!==saved.data().snapshotHash)) {
@@ -206,14 +227,18 @@ function createAdDesignService(deps) {
     const sourceSetId = crypto.randomUUID();
     await Promise.all(products.map((product, position) => ref.collection("sourceSets").doc(sourceSetId).collection("products").doc(sha(String(product.id)).slice(0, 32)).set(clean({ ...product, position }))));
     const prior = saved.exists ? saved.data() : null;
-    const initialGroup = groups.find(group => group.ref === input.groupRef) || groups[0], initialProduct = products.find(product => input.productId&&productKey(product.id)===productKey(input.productId)) || products.find(product => (product.images || []).length && (!(initialGroup.productIds || []).length || initialGroup.productIds.map(String).includes(String(product.id).split("/").pop()))) || products.find(product => (product.images || []).length) || products[0];
-    const references = prior && prior.references || [], settings = settingsFor({ productId: initialProduct.id, groupRef: input.groupRef, currentAssetIds:((loaded.context.currentCreative||{}).images||[]).filter(a=>a.groupRef===initialGroup.ref&&!/LOGO/.test(a.fieldType)).map(a=>a.id) }, products, groups, references, formats(),loaded.context.currentCreative);
+    const initialGroup = groups.find(group => group.ref === (input.groupRef||prior?.settings?.groupRef)) || groups[0], initialProduct = products.find(product => input.productId&&productKey(product.id)===productKey(input.productId)) || products.find(product=>prior?.settings?.groupRef===initialGroup.ref&&productKey(product.id)===productKey(prior.settings.productId)&&(!Array.isArray(product.eligibleGroupRefs)||product.eligibleGroupRefs.includes(initialGroup.ref))) || products.find(product => (product.images || []).length && (!(initialGroup.productIds || []).length || initialGroup.productIds.map(String).includes(String(product.id).split("/").pop()))) || products.find(product => (product.images || []).length) || products[0];
+    const references = prior && prior.references || [],productDesigns=clean(prior?.productDesigns||{}),previousScope=prior?.settings,matchingPrior=previousScope?.groupRef===initialGroup.ref&&productKey(previousScope.productId)===productKey(initialProduct.id);
+    if(previousScope){const key=sha([previousScope.groupRef,previousScope.productId]).slice(0,32),existing=productDesigns[key]||{};productDesigns[key]={...existing,settings:previousScope,messaging:prior.messaging||null,jobId:prior.job?.id||existing.jobId||null};}
+    const cachedScope=matchingPrior?{settings:previousScope,messaging:prior.messaging}:Object.values(productDesigns).find(d=>d.settings?.groupRef===initialGroup.ref&&productKey(d.settings.productId)===productKey(initialProduct.id));
+    const restored=refreshedSettings(cachedScope?.settings,{productId:initialProduct.id,groupRef:initialGroup.ref,currentAssetIds:((loaded.context.currentCreative||{}).images||[]).filter(a=>a.groupRef===initialGroup.ref&&!/LOGO/.test(a.fieldType)).map(a=>a.id)},products,groups,references,formats(),loaded.context.currentCreative),settings=restored.settings;
+    const messaging=cachedScope?.messaging&&cachedScope.messaging.groupRef===settings.groupRef&&productKey(cachedScope.messaging.productId)===productKey(settings.productId)?{...cachedScope.messaging,productId:settings.productId}:null;
     await f().db.runTransaction(async tx => { const latest = await tx.get(ref), current = latest.exists ? latest.data() : null;
       if(current?.editorAI?.id){const ai=await tx.get(ref.collection('editorAIJobs').doc(current.editorAI.id));if(ai.exists&&(ai.data().inFlight||['queued','running'].includes(ai.data().phase)))throw new Error('The AI editor is still using these product sources. Its paid request is preserved.');}
       if (!!current !== !!prior || current && (Number(current.revision) !== Number(prior.revision) || (current.job && current.job.id || null) !== (prior.job && prior.job.id || null) || active(current.job) || current.job && current.job.inFlight)) throw new Error("The workspace changed while its sources were being refreshed. The current design was preserved.");
       if (current && current.job) tx.set(ref.collection("history").doc(current.job.id), current.job);
       tx.set(ref, clean({ schema: 1, workspaceId: id, context: loaded.context, sourceVersion: loaded.sourceVersion || null, snapshotHash: loaded.snapshotHash || null,
-        sourceSnapshot: loaded.snapshot || null, sourceSetId, productsIds: products.map(row => row.id), settings, references, placements:prior&&prior.placements||[], job: null, editorAI:current?.editorAI||null, revision: Number(prior && prior.revision || 0) + 1, createdAt: prior && prior.createdAt || Date.now(), updatedAt: Date.now() }));
+        sourceSnapshot: loaded.snapshot || null, sourceSetId, productsIds: products.map(row => row.id), settings, references, productDesigns, messaging, refreshWarnings:restored.warnings, placements:prior&&prior.placements||[], job: null, editorAI:current?.editorAI||null, revision: Number(prior && prior.revision || 0) + 1, createdAt: prior && prior.createdAt || Date.now(), updatedAt: Date.now() }));
     });
     return status({ workspaceId: id });
   }
@@ -236,7 +261,7 @@ function createAdDesignService(deps) {
       if(!changingProduct&&previousSettings&&sha(generationSettings(settings))===sha(generationSettings(previousSettings))){const job=value.job?{...value.job,settingsHash:sha(settings)}:null;tx.update(ref,{settings,job,revision:Number(value.revision||0)+1,updatedAt:Date.now()});return;}
       if (value.job && value.job.inFlight) throw new Error("The previous paid request has an unconfirmed outcome. Resolve it before changing this workspace.");
       const priorJob=priorDesign&&priorDesign.jobId?await tx.get(ref.collection('history').doc(priorDesign.jobId)):null;
-      const restored=priorJob&&priorJob.exists?priorJob.data():priorDesign&&priorDesign.job||null;
+      const cachedJob=priorJob&&priorJob.exists?priorJob.data():priorDesign&&priorDesign.job||null,restored=cachedJob&&(cachedJob.sourceVersion||null)===(value.sourceVersion||null)&&(cachedJob.snapshotHash||null)===(value.snapshotHash||null)&&cachedJob.settingsHash===sha(settings)?cachedJob:null;
       if (value.job) tx.set(ref.collection("history").doc(value.job.id), value.job);
       if(changingProduct)designs[priorKey]={settings:value.settings,messaging:value.messaging||null,jobId:value.job&&value.job.id||null};
       tx.update(ref, { settings, job: restored?{...restored,settingsHash:sha(settings)}:null,...(changingProduct?{productDesigns:designs,messaging:priorDesign&&priorDesign.messaging||null}:{}), revision: Number(value.revision || 0) + 1, updatedAt: Date.now() });
@@ -261,7 +286,7 @@ function createAdDesignService(deps) {
     const ref=refFor(workspaceId),w=await read(workspaceId);editorScope(w,{productId,groupRef});
     if(!source||!['product','upload','current','library'].includes(source.kind))throw new Error('Choose a photo from this workspace.');
     const id='photo_'+sha([groupRef,productId,source]).slice(0,32),target=ref.collection('editorSources').doc(id),cached=await target.get();
-    if(cached.exists){const row=cached.data();return {ok:true,...row,url:await deps.signAsset(row.asset)};}
+    if(cached.exists){const row=cached.data();return {ok:true,...row,url:await deps.signAsset(row.asset,{required:true})};}
     let bytes,title='Ad photo',productIds=[];
     if(source.kind==='product'){
       const products=await productsFor(ref,w),p=products.find(p=>String(p.id)===String(source.productId)),photo=p&&(p.images||[]).find(i=>i.id===source.imageId);
@@ -284,7 +309,7 @@ function createAdDesignService(deps) {
     const out=await input.rotate().png().toBuffer({resolveWithObject:true});
     const asset=await deps.saveAsset(workspaceId,out.data,id,{width:out.info.width,height:out.info.height,mimeType:'image/png',kind:'editor source'});
     const row={id,groupRef,productId,productIds,title:String(title||'Ad photo').slice(0,200),source,asset,width:out.info.width,height:out.info.height,createdAt:Date.now()};
-    await target.set(clean(row));return {ok:true,...row,url:await deps.signAsset(asset)};
+    await target.set(clean(row));return {ok:true,...row,url:await deps.signAsset(asset,{required:true})};
   }
   function editorScope(w,input){if(String(input.productId)!==String(w.settings.productId)||input.groupRef!==w.settings.groupRef)throw new Error('The advertised product or ad group changed. Reopen the editor for the selected product.');}
   function savedDesignScope(w){
@@ -321,7 +346,7 @@ function createAdDesignService(deps) {
     const targets=await savedDesignTargets(w),results=await Promise.all(targets.map(t=>t.ref.select('id','name','productId','groupRef','artboard','device','asset','thumbnail','createdAt','deletedAt','destination','appearance').get()));
     const ordered=[...new Map(results.flatMap(rows=>rows.docs.map(d=>d.data())).filter(d=>!d.deletedAt&&(!before||d.createdAt<before)).map(d=>[d.id,d])).values()].sort((a,b)=>b.createdAt-a.createdAt||a.id.localeCompare(b.id)),page=ordered.slice(0,60);
     for(const item of page)if(!item.appearance){const found=await savedDesignRecord(w,item.id);if(found?.design.document){item.appearance=appearanceSummary(found.design.document);await found.ref.update({appearance:item.appearance});}}
-    return {savedDesigns:await Promise.all(page.map(async d=>({...d,url:await deps.signAsset(d.asset),thumbnailUrl:await deps.signAsset(d.thumbnail||d.asset)}))),savedDesignCursor:ordered.length>60?page[page.length-1].createdAt:null};
+    return {savedDesigns:await Promise.all(page.map(async d=>({...d,url:await deps.signAsset(d.asset),thumbnailUrl:await deps.signAsset(d.thumbnail||d.asset)}))),savedDesignCursor:ordered.length>60?page[page.length-1].createdAt:null,imageAccess:deps.imageAccessStatus?deps.imageAccessStatus():null};
   }
   async function editorSavedDesigns(input={}){const w=await read(input.workspaceId);editorScope(w,input);return {ok:true,...await savedDesignGallery(w,input.before)};}
   async function editorOpenSavedDesign(input={}){
@@ -329,7 +354,7 @@ function createAdDesignService(deps) {
     const found=await savedDesignRecord(w,input.id),design=found&&found.design;if(!design||design.deletedAt)throw new Error('This saved design was deleted or is no longer available.');
     const sources=[];for(const id of design.sourceIds||[]){const source=await refFor(design.workspaceId).collection('editorSources').doc(id).get();if(!source.exists)throw new Error('A source photo for this design is unavailable.');const p=source.data();
       if(productKey(p.productId)!==productKey(input.productId)||p.groupRef!==found.groupRef)throw new Error('A saved photo belongs to another product or ad.');
-      if(design.workspaceId!==input.workspaceId||p.groupRef!==input.groupRef)await refFor(input.workspaceId).collection('editorSources').doc(id).set({...p,productId:input.productId,groupRef:input.groupRef});sources.push({...p,groupRef:input.groupRef,url:await deps.signAsset(p.asset)});
+      if(design.workspaceId!==input.workspaceId||p.groupRef!==input.groupRef)await refFor(input.workspaceId).collection('editorSources').doc(id).set({...p,productId:input.productId,groupRef:input.groupRef});sources.push({...p,groupRef:input.groupRef,url:await deps.signAsset(p.asset,{required:true})});
     }
     return {ok:true,design,sources};
   }
@@ -398,7 +423,7 @@ function createAdDesignService(deps) {
       progress:stale?{pct:job.progress.pct,label:unknown?'Provider completion is uncertain. The request will not be charged again.':'Saved work is available to resume.'}:job.progress,
       error:job.error||null,canRetry:phase==='needs_attention'&&!unknown,needsNewRequestApproval:false,
       usage:job.usage?[job.usage]:[],cost:{estimatedUsd:job.usage?.estimatedUsd??(job.inFlight?job.reservedUsd:0),costEstimated:job.usage?.costEstimated!==false,reservedUsd:job.reservedUsd||0},
-      result:result?.exists?result.data():null,...(request?.exists?{mode:request.data().mode,selectedLayerId:request.data().selectedLayerId,originalDocument:request.data().document,sources:await Promise.all(request.data().sources.map(async source=>({...source,url:await deps.signAsset(source.asset)})))}:{})};
+      result:result?.exists?result.data():null,...(request?.exists?{mode:request.data().mode,selectedLayerId:request.data().selectedLayerId,originalDocument:request.data().document,sources:await Promise.all(request.data().sources.map(async source=>({...source,url:await deps.signAsset(source.asset)})))}:{}),imageAccess:deps.imageAccessStatus?deps.imageAccessStatus():null};
   }
   async function editorAIResume(input={}){
     const w=await read(input.workspaceId);editorScope(w,input);const target=editorAIRef(input.workspaceId,input.jobId);let queued=false;
@@ -788,4 +813,4 @@ function createAdDesignService(deps) {
   }
   return { workspace, save, upload, crop, start, status, run, editorSource, editorState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorDeleteSavedDesign, deleteGeneratedImage, linkPublishedDesignScopes, linkPublishedWorkspaceGallery, editorAIStart, editorAIStatus, editorAIResume, editorAIRun };
 }
-module.exports = { createAdDesignService, buildVersionDesignPayload, isSharedProductGroup, formatAssets, chosenPlacements, placementMatches, FORMATS, settingsFor, responseText, MAX_UPLOAD };
+module.exports = { createAdDesignService, buildVersionDesignPayload, isSharedProductGroup, formatAssets, chosenPlacements, placementMatches, FORMATS, settingsFor, refreshedSettings, responseText, MAX_UPLOAD };

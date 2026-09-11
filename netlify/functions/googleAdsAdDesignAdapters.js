@@ -2,6 +2,38 @@
 // All paid dispatch/lease/retry decisions belong to googleAdsAdDesign.
 const IMAGE_MODEL='gpt-image-2.5-sunburst',TEXT_MODEL='gpt-6-astra';
 const SYNTHETIC='http://cv.iptc.org/newscodes/digitalsourcetype/compositeSynthetic';
+const CREATIVE_ORIGINS=Object.freeze(['https://britesjewelry.com','https://www.britesjewelry.com','https://goldenspike.app','https://brites-adwords.goldenspike.app']);
+const creativeCorsChecks=new Map();
+function creativeCorsRules(current=[]){
+  if(!Array.isArray(current))throw new Error('The image bucket returned an invalid CORS configuration.');
+  const rules=JSON.parse(JSON.stringify(current)),methods=['GET','HEAD'];
+  // Keep other applications' rules byte-for-byte. Add only missing read access
+  // for the existing Brites origins; this does not grant public object access.
+  const missing=CREATIVE_ORIGINS.filter(origin=>methods.some(method=>!rules.some(rule=>(rule.origin||[]).some(value=>value===origin||value==='*')&&(rule.method||[]).includes(method))));
+  if(missing.length)rules.push({origin:missing,method:methods,responseHeader:['Content-Type','Content-Length','ETag','Cache-Control'],maxAgeSeconds:3600});
+  return {rules,changed:missing.length>0};
+}
+async function ensureCreativeCors(bucket){
+  if(!bucket||!bucket.name||typeof bucket.getMetadata!=='function'||typeof bucket.setMetadata!=='function')throw new Error('The saved-image bucket cannot verify browser read access.');
+  const cached=creativeCorsChecks.get(bucket.name);if(cached&&(cached.promise||cached.until>Date.now()))return cached.promise||cached.value;
+  const entry={promise:null,until:0};creativeCorsChecks.set(bucket.name,entry);
+  entry.promise=(async()=>{
+    for(let attempt=0;attempt<3;attempt++){
+      const [metadata]=await bucket.getMetadata(),plan=creativeCorsRules(metadata.cors||[]);
+      if(!plan.changed)return {ready:true,updated:false};
+      const generation=Number(metadata.metageneration);if(!Number.isSafeInteger(generation)||generation<1)throw new Error('The saved-image bucket has no usable metadata revision.');
+      try{
+        const [updated]=await bucket.setMetadata({cors:plan.rules},{ifMetagenerationMatch:generation});
+        const verified=updated&&Array.isArray(updated.cors)?updated:(await bucket.getMetadata())[0];
+        if(creativeCorsRules(verified.cors||[]).changed)throw new Error('The saved-image browser-access configuration was not retained.');
+        return {ready:true,updated:true};
+      }catch(error){if(Number(error.code)===412&&attempt<2)continue;throw error;}
+    }
+  })();
+  try{entry.value=await entry.promise;entry.until=Date.now()+15*60000;return entry.value;}
+  catch(error){creativeCorsChecks.delete(bucket.name);throw Object.assign(new Error('Saved images need browser read access for the Brites ad editor. The server could not verify or update the bucket CORS rules'+([401,403].includes(Number(error.code))?' (storage.buckets.get and storage.buckets.update are required).':'.')+' Your saved photos and designs are retained.'),{code:'CREATIVE_CORS_CONFIGURATION',cause:error});}
+  finally{entry.promise=null;}
+}
 function roundEven(n){const f=Math.floor(n),r=n-f;return r===.5?(f%2?f+1:f):Math.round(n);}
 function imageOutputEstimate(width,height){const short=roundEven(48*Math.min(width,height)/Math.max(width,height));return Math.ceil(48*short*(2000000+width*height)/4000000);}
 const tokens=n=>typeof n==='number'&&Number.isSafeInteger(n)&&n>=0;
@@ -26,6 +58,8 @@ function syntheticXmp(jpeg,existing){
 }
 function createAdDesignAdapters(D){
   const sharp=D.sharp||require('sharp');
+  let imageAccess={ready:true,message:null},imageAccessFailureAt=0;
+  const imageAccessStatus=()=>({...imageAccess});
   async function post(path,body,requestId,timeout){
     if(!D.env.OPENAI_API_KEY)throw new Error('OpenAI access is not configured for Ad Design.');
     const response=await D.fetch('https://api.openai.com/v1/'+path,{method:'POST',timeout,size:40000000,headers:{'Content-Type':'application/json',Authorization:'Bearer '+D.env.OPENAI_API_KEY,...(requestId?{'X-Client-Request-Id':requestId}:{})},body:JSON.stringify(body)});
@@ -107,9 +141,18 @@ function createAdDesignAdapters(D){
     }
     return {references,referenceManifest,coverage:{selectedSourceIds:[...ids],selectedSourceCount:sources.length,preparedReferenceCount:references.length,complete:true}};
   }
-  async function signAsset(asset){
+  async function signAsset(asset,{required=false}={}){
     if(!asset||!/^Brites_GAds_Creative\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+\.jpg$/.test(asset.path||''))throw new Error('The saved design image is unavailable.');
-    const [url]=await D.fb().admin.storage().bucket().file(asset.path).getSignedUrl({version:'v4',action:'read',expires:Date.now()+60*60000});return url;
+    const bucket=D.fb().admin.storage().bucket();
+    try{
+      if(!imageAccess.ready&&Date.now()-imageAccessFailureAt<10000)throw Object.assign(new Error(imageAccess.message),{code:imageAccess.code});
+      await ensureCreativeCors(bucket);imageAccess={ready:true,message:null};
+    }catch(error){
+      if(error.code!=='CREATIVE_CORS_CONFIGURATION')throw error;
+      imageAccess={ready:false,code:error.code,message:error.message};if(Date.now()-imageAccessFailureAt>=10000)imageAccessFailureAt=Date.now();
+      if(required)throw error;return null;
+    }
+    const [url]=await bucket.file(asset.path).getSignedUrl({version:'v4',action:'read',expires:Date.now()+60*60000});return url;
   }
   async function generateImage({requestId,provider,format,references,product,products,brief,imageDirections,settings,inputCoverage,referenceManifest}){
     if(provider.model!==IMAGE_MODEL)throw new Error('This design requires GPT Image 2.5 Sunburst. No substitute image model was selected.');
@@ -165,6 +208,6 @@ Compose specifically for ${format.key}, final ${format.width} by ${format.height
     // or guaranteed ceiling. Actual usage replaces estimates after confirmation.
     return Math.ceil((imageOutputEstimate(...format.requestSize.split('x').map(Number))*30/1000000*2+refs*.16+.08)*100)/100;
   }
-  return {responses,generateImage,normalizeUpload,sourceBytes,fullSourceBytes,cropImage,prepareReferences,signAsset,reviewImages,reserveCost};
+  return {responses,generateImage,normalizeUpload,sourceBytes,fullSourceBytes,cropImage,prepareReferences,signAsset,imageAccessStatus,reviewImages,reserveCost};
 }
-module.exports={createAdDesignAdapters,syntheticXmp,imageOutputEstimate,imageCost,textCost,IMAGE_MODEL,TEXT_MODEL};
+module.exports={createAdDesignAdapters,syntheticXmp,imageOutputEstimate,imageCost,textCost,IMAGE_MODEL,TEXT_MODEL,ensureCreativeCors,creativeCorsRules,CREATIVE_ORIGINS};

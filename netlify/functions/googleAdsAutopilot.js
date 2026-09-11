@@ -8789,9 +8789,10 @@ function _putCreativeCopy(payload, groups) {
 }
 async function _saveCreativeAsset(id, bytes, kind, info={}) {
   const f=fb();if(!f)throw new Error("Creative storage is unavailable.");
+  const bucket=f.admin.storage().bucket();await require('./googleAdsAdDesignAdapters').ensureCreativeCors(bucket);
   const hash=creativeHash(bytes.toString("base64"));
   const path=`Brites_GAds_Creative/${String(id).replace(/[^a-zA-Z0-9_-]/g,"")}/${kind}-${hash}.jpg`;
-  await f.admin.storage().bucket().file(path).save(bytes,{resumable:false,metadata:{contentType:info.mimeType||"image/jpeg",cacheControl:"private,max-age=3600"}});
+  await bucket.file(path).save(bytes,{resumable:false,metadata:{contentType:info.mimeType||"image/jpeg",cacheControl:"private,max-age=3600"}});
   return {path,hash,bytes:bytes.length,...info};
 }
 async function _deleteCreativeAsset(a) {
@@ -8934,9 +8935,9 @@ Lead with the physical jewellery and its meaning. Premium, inviting, specific, c
 async function creativeApprovalStatus(id) {
   const s=await fb().db.collection(COL.approvals).doc(String(id)).get();if(!s.exists)throw new Error("Draft not found.");
   const it=s.data(),p=JSON.parse(JSON.stringify(it.creative||{phase:"not_started"}));
-  for(const g of p.groups||[])for(const a of [...Object.values(g.assets||{}),...Object.values(g.placementAssets||{}).flatMap(v=>Object.values(v))]) {const [url]=await fb().admin.storage().bucket().file(a.path).getSignedUrl({action:"read",expires:Date.now()+3600000});a.url=url;}
-  if(p.logo){const [url]=await fb().admin.storage().bucket().file(p.logo.path).getSignedUrl({action:"read",expires:Date.now()+3600000});p.logo.url=url;}
-  return {ok:true,id,status:it.status,summary:it.summary,creative:p,leaseUntil:(it.creativeLease||{}).until||0,current:p.payloadHash===creativeHash(it.payload||{})};
+  for(const g of p.groups||[])for(const a of [...Object.values(g.assets||{}),...Object.values(g.placementAssets||{}).flatMap(v=>Object.values(v))])a.url=await _designEngineAdapters().signAsset(a);
+  if(p.logo)p.logo.url=await _designEngineAdapters().signAsset(p.logo);
+  return {ok:true,id,status:it.status,summary:it.summary,creative:p,imageAccess:_designEngineAdapters().imageAccessStatus(),leaseUntil:(it.creativeLease||{}).until||0,current:p.payloadHash===creativeHash(it.payload||{})};
 }
 async function reviseCreativeApproval(id,feedback) {
   feedback=String(feedback||"").trim();if(feedback.length<5||feedback.length>1200)throw new Error("Describe the changes in 5–1200 characters.");

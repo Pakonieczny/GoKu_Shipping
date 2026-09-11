@@ -163,7 +163,11 @@ function createAdDesignContext(D){
     for(const g of groups){const byDestination=destinationProducts.get(g.url)||new Set();g.productIds=g.itemIds.length?[...new Set(g.itemIds.map(offerParts).filter(Boolean).map(x=>x.productId))]:[...new Set([...(g.productIds||[]),...byDestination])];}
     for(const g of groups){const d=destination(g.url);g.requiresProductSplit=!!(campaignId&&!approvalId&&d&&d.kind!=='page'&&(g.channel==='pmax'?g.productIds.length>1:new Set((snapshot?.components?.searchAds||[]).filter(a=>a.adGroup===g.adGroupRef).flatMap(a=>a.finalUrls||[]).map(u=>destination(u)).filter(d=>d?.kind==='product').map(d=>d.handle)).size>1));}
     if(D.gaql)await Promise.all(groups.filter(g=>g.channel==='pmax'&&/^customers\/\d+\/assetGroups\/\d+$/.test(g.ref)).map(async g=>{try{const rows=await D.gaql(`SELECT asset_group_signal.search_theme.text FROM asset_group_signal WHERE asset_group.resource_name = '${g.ref}'`);g.keywords=rows.map(r=>r.assetGroupSignal?.searchTheme?.text).filter(Boolean);}catch(e){warnings.push('Search themes for '+g.name+' are unavailable.');}}));
-    const products=[],allIds=[...ids],pending=allIds.slice(0,12);let index=0;
+    const requestedId=input.productId?productId(input.productId):null,preferredId=productId(input.selectedProductId),selectedId=requestedId||(preferredId&&ids.has(preferredId)?preferredId:null);
+    if(input.productId&&(!requestedId||!ids.has(requestedId)))throw new Error('The selected product is outside this ad’s verified offer or destination scope. Choose a product from the matching gallery.');
+    // Open the explicitly selected verified listing even when it is beyond the
+    // first hydration page. Keep pagination in this same order to avoid skips.
+    const products=[],allIds=selectedId?[selectedId,...[...ids].filter(id=>id!==selectedId)]:[...ids],pending=allIds.slice(0,12);let index=0;
     if(allIds.length>pending.length)gallerySources.unshift({key:'selected_products',type:'productIds',productIds:allIds,offset:pending.length,hasMore:true,label:'Ad listings'});
     const remainingHandles=[...new Set(destinations.filter(d=>d.kind==='product'&&!resolvedHandles.has(d.handle)).map(d=>d.handle))];
     if(remainingHandles.length)gallerySources.push({key:'destination_products',type:'productIds',productHandles:remainingHandles,offset:0,hasMore:true,label:'Ad destination listings'});
