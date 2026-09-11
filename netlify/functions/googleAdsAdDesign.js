@@ -235,6 +235,85 @@ function createAdDesignService(deps) {
       tx.update(ref, { references: refs.concat({ id, fileName: String(fileName || "Reference image").slice(0, 160), role, productId: s.data().settings.productId, asset, originalAsset, uploadedAt: Date.now() }), revision: Number(s.data().revision || 0) + 1, updatedAt: Date.now() });
     }); return { ok: true, workspaceId, id, role, url: await deps.signAsset(asset), asset };
   }
+  // Resolve only saved workspace sources. Originals remain available for crops
+  // and the layer editor; thumbnail and provider reference derivatives are never masters.
+  async function editorSource({workspaceId,productId,groupRef,source}={}) {
+    const ref=refFor(workspaceId),w=await read(workspaceId);editorScope(w,{productId,groupRef});
+    if(!source||!['product','upload','current','library'].includes(source.kind))throw new Error('Choose a photo from this workspace.');
+    const id='photo_'+sha([groupRef,productId,source]).slice(0,32),target=ref.collection('editorSources').doc(id),cached=await target.get();
+    if(cached.exists){const row=cached.data();return {ok:true,...row,url:await deps.signAsset(row.asset)};}
+    let bytes,title='Ad photo',productIds=[];
+    if(source.kind==='product'){
+      const products=await productsFor(ref,w),p=products.find(p=>String(p.id)===String(source.productId)),photo=p&&(p.images||[]).find(i=>i.id===source.imageId);
+      if(!photo||(Array.isArray(p.creativeGroupRefs)?!p.creativeGroupRefs.includes(groupRef)&&!(p.eligibleGroupRefs||[]).includes(groupRef):Array.isArray(p.eligibleGroupRefs)&&!p.eligibleGroupRefs.includes(groupRef)))throw new Error('This photo is outside this ad’s product library.');
+      bytes=await deps.fullSourceBytes(photo.url);title=p.title;productIds=[String(p.id)];
+    }else if(source.kind==='upload'){
+      const p=(w.references||[]).find(p=>p.id===source.imageId);if(!p||p.role==='product'&&productKey(p.productId)!==productKey(productId))throw new Error('This upload belongs to another product.');
+      bytes=await deps.loadAsset(p.originalAsset||p.asset);title=p.fileName;productIds=p.role==='product'?[String(p.productId)]:[];
+    }else if(source.kind==='current'){
+      const p=(creativeFor(w).images||[]).find(p=>p.id===source.imageId&&p.groupRef===groupRef);if(!p)throw new Error('Current ad image was not found in this group.');
+      bytes=await deps.fullSourceBytes(p.url);title=/LOGO/.test(p.fieldType||'')?'Brand logo':'Current ad image';
+    }else{
+      if(!token(source.imageId))throw new Error('Invalid saved image.');const saved=await ref.collection('imageLibrary').doc(source.imageId).get(),p=saved.exists&&saved.data();
+      if(!p||p.groupRef!==groupRef)throw new Error('This saved image belongs to another ad group.');
+      // A chosen crop is intentional; use its complete saved 2K pixels, not its thumbnail.
+      bytes=await deps.loadAsset(p.asset);title=p.title;productIds=p.productIds||[];
+    }
+    const sharp=require('sharp'),input=sharp(bytes,{limitInputPixels:40000000}),meta=await input.metadata();
+    if(!['jpeg','png','webp'].includes(meta.format)||Number(meta.pages||1)>1)throw new Error('Choose a still JPEG, PNG or WebP photo.');
+    const out=await input.rotate().png().toBuffer({resolveWithObject:true});
+    const asset=await deps.saveAsset(workspaceId,out.data,id,{width:out.info.width,height:out.info.height,mimeType:'image/png',kind:'editor source'});
+    const row={id,groupRef,productId,productIds,title:String(title||'Ad photo').slice(0,200),source,asset,width:out.info.width,height:out.info.height,createdAt:Date.now()};
+    await target.set(clean(row));return {ok:true,...row,url:await deps.signAsset(asset)};
+  }
+  function editorScope(w,input){if(String(input.productId)!==String(w.settings.productId)||input.groupRef!==w.settings.groupRef)throw new Error('The advertised product or ad group changed. Reopen the editor for the selected product.');}
+  function editorKey({productId,groupRef,device,artboard}){
+    if(!['shared','desktop','mobile'].includes(device))throw new Error('Choose shared, desktop or mobile artwork.');
+    if(!artboard||!token(artboard.key)||!Number.isInteger(artboard.width)||!Number.isInteger(artboard.height)||Math.min(artboard.width,artboard.height)<32||Math.max(artboard.width,artboard.height)>4096||artboard.width*artboard.height>16777216)throw new Error('Use an artboard between 32 and 4096 pixels per side.');
+    return 'design_'+sha([productId,groupRef,device,artboard.key,artboard.width,artboard.height]).slice(0,32);
+  }
+  function editorDocument(value){
+    if(!value||!Array.isArray(value.objects)||Buffer.byteLength(JSON.stringify(value))>650000)throw new Error('This design is too large to save. Use up to 120 layers with concise text.');
+    const types=new Set(['Rect','Circle','Triangle','Line','Textbox','IText','Text','Image','Group','rect','circle','triangle','line','textbox','i-text','text','image','group','layoutManager','linear','radial','Brightness','Contrast','Saturation','Blur','Grayscale','Sepia','Invert','HueRotation','Gamma','Vibrance','Noise','Pixelate','Resize','Composed']);
+    let count=0;const sourceIds=new Set();
+    const walk=(v,depth=0)=>{if(depth>18)throw new Error('The design has too many nested groups.');if(Array.isArray(v))return v.map(x=>walk(x,depth+1));if(v&&typeof v==='object'){
+      if(v.type&&!types.has(v.type))throw new Error('This design contains an unsupported layer or effect.');
+      if(['Image','image'].includes(v.type)){if(!token(v.sourceKey))throw new Error('Each image needs its saved original source.');sourceIds.add(v.sourceKey);}
+      if(v.type&&types.has(v.type)&&!['linear','radial'].includes(v.type)&&++count>240)throw new Error('Use up to 120 layers and their effects.');
+      return Object.fromEntries(Object.entries(v).filter(([k])=>!['src','crossOrigin','__proto__','constructor','prototype','clipPath','backgroundImage','overlayImage'].includes(k)).map(([k,x])=>[k,walk(x,depth+1)]));
+    }if(typeof v==='number'&&(!Number.isFinite(v)||Math.abs(v)>1000000))throw new Error('A layer contains an invalid size or position.');if(typeof v==='string'&&v.length>18000)throw new Error('A text layer is too long.');return v;};
+    const document=walk(value);if(value.objects.length>120)throw new Error('Use up to 120 layers.');return {document,sourceIds:[...sourceIds]};
+  }
+  async function editorState(input={}){
+    const {workspaceId,productId,groupRef,device='shared',artboard}=input,ref=refFor(workspaceId),w=await read(workspaceId);editorScope(w,input);
+    const rows=await ref.collection('editorDesigns').get(),designs=rows.docs.map(d=>d.data()).filter(d=>d.productId===productId&&d.groupRef===groupRef),id=artboard?editorKey({...input,device}):null;
+    const own=designs.find(d=>d.id===id),shared=artboard&&device!=='shared'?designs.find(d=>d.id===editorKey({...input,device:'shared'})):null,design=own||shared||null;
+    const sources=[];if(design)for(const key of design.sourceIds||[]){const p=await ref.collection('editorSources').doc(key).get();if(!p.exists)throw new Error('A saved design image is unavailable. Your layers are retained.');const photo=p.data();sources.push({...photo,url:await deps.signAsset(photo.asset)});}
+    const exportRows=await ref.collection('editorExports').get(),exports=[];
+    for(const row of exportRows.docs.map(d=>d.data()).filter(e=>e.designId===(design&&design.id||id)).sort((a,b)=>b.createdAt-a.createdAt).slice(0,12))exports.push({...row,url:await deps.signAsset(row.asset),width:row.asset.width,height:row.asset.height});
+    return {ok:true,design:design?{...design,...(!own?{id,revision:0,inheritedFrom:design.id,device}:{})}:null,sources,exports,designs:designs.map(({id,name,device,artboard,revision,updatedAt})=>({id,name,device,artboard,revision,updatedAt}))};
+  }
+  async function editorSave(input={}){
+    const {workspaceId,productId,groupRef,device,artboard,expectedRevision=0}=input,ref=refFor(workspaceId),w=await read(workspaceId);editorScope(w,input);
+    const id=editorKey(input),{document,sourceIds}=editorDocument(input.document),target=ref.collection('editorDesigns').doc(id);
+    for(const key of sourceIds){const row=await ref.collection('editorSources').doc(key).get();if(!row.exists||row.data().groupRef!==groupRef||row.data().productId!==productId)throw new Error('An image belongs to another product’s design. Choose it again from this workspace.');}
+    const data={id,productId,groupRef,device,artboard:{key:artboard.key,width:artboard.width,height:artboard.height},name:String(input.name||'Ad artwork').slice(0,120),document,sourceIds,revision:Number(expectedRevision)+1,updatedAt:Date.now()};
+    await f().db.runTransaction(async tx=>{const current=await tx.get(target),latest=await tx.get(ref);editorScope(latest.data(),input);if(Number(current.exists?current.data().revision:0)!==Number(expectedRevision))throw new Error('This artwork was saved in another window. Your local edits are retained; reopen the saved version before replacing it.');
+      if(current.exists)tx.set(target.collection('versions').doc(String(current.data().revision)),current.data());tx.set(target,clean(data));});
+    return {ok:true,id,revision:data.revision,updatedAt:data.updatedAt};
+  }
+  async function editorExport(input={}){
+    const {workspaceId,format='png',dataBase64,revision,displayOptimized=false}=input,ref=refFor(workspaceId),w=await read(workspaceId);editorScope(w,input);
+    const id=editorKey(input),saved=await ref.collection('editorDesigns').doc(id).get();if(!saved.exists||saved.data().revision!==revision)throw new Error('Save the latest editable artwork before exporting.');
+    if(!['png','jpeg'].includes(format)||typeof dataBase64!=='string'||dataBase64.length>5700000||!/^[A-Za-z0-9+/]*={0,2}$/.test(dataBase64))throw new Error('Export a PNG or JPEG up to 4 MiB.');
+    const bytes=Buffer.from(dataBase64,'base64');if(bytes.length>4*1024*1024)throw new Error('Use an export no larger than 4 MiB. Your editable design is saved.');
+    const sharp=require('sharp'),meta=await sharp(bytes,{limitInputPixels:16777216}).metadata(),board=saved.data().artboard;
+    if(meta.width!==board.width||meta.height!==board.height||meta.format!==format||Number(meta.pages||1)>1)throw new Error('The export must match the saved artboard dimensions and file format exactly.');
+    const maxDisplayBytes=150000;let output=bytes,quality=100;
+    if(displayOptimized&&output.length>maxDisplayBytes){if(format!=='jpeg')throw new Error('Choose JPEG for a smaller Google Display file.');for(const q of [95,90,85,80,75,70,65,60]){output=await sharp(bytes).flatten({background:'#ffffff'}).jpeg({quality:q,chromaSubsampling:'4:4:4'}).toBuffer();quality=q;if(output.length<=maxDisplayBytes)break;}if(output.length>maxDisplayBytes)throw new Error('This design exceeds 150 KB at this size. Simplify the artwork or choose a smaller display size. The full-quality master is saved separately.');}
+    const exportId='artwork_'+sha([id,revision,sha(output.toString('base64'))]).slice(0,32),asset=await deps.saveAsset(workspaceId,output,exportId,{width:meta.width,height:meta.height,mimeType:'image/'+format,kind:'finished display artwork'}),record={id:exportId,designId:id,revision,productId:input.productId,groupRef:input.groupRef,asset,format,bytes:output.length,quality,displayOptimized,createdAt:Date.now()};
+    await ref.collection('editorExports').doc(exportId).set(record);return {ok:true,...record,url:await deps.signAsset(asset),message:'Exact artwork saved. This is a finished display creative; responsive Ads and Merchant photos keep their separate approval workflow.'};
+  }
   async function crop({workspaceId,source,device,format,groupRef,rect=null,expectedImageId=null,remove=false}={}) {
     if(!['desktop','mobile'].includes(device)||!FORMATS.some(f=>f.key===format))throw new Error('Choose a desktop or mobile image format.');
     const ref=refFor(workspaceId),workspace=await read(workspaceId),group=(workspace.context.groups||[]).find(g=>g.ref===groupRef);
@@ -422,7 +501,7 @@ function createAdDesignService(deps) {
         const result = prior || await deps.responses(request, requestId);
         await writeReceipt("copy", { rawResponse: result, receivedAt: Date.now() });
         let output; try { output = deps.research.validateResult({ output: JSON.parse(responseText(result)), evidence: job.evidence, channel: group.channel, group }); }
-        catch (error) { error.definiteResponse = true; throw error; }
+        catch (error) { settle(job, "copy", {requestId,usage:result.usage||{},providerModel:result.model||"gpt-6-astra",estimatedUsd:result.estimatedUsd,costEstimated:result.costEstimated!==false}); await saveJob({inFlight:null}); error.definiteResponse = true; throw error; }
         return { ...output, usage: result.usage || {}, responseId: result.id || null, providerModel: result.model || request && request.model || "gpt-6-astra", estimatedUsd: result.estimatedUsd == null ? 1 : result.estimatedUsd, costEstimated: result.costEstimated !== false };
       });
       if(job.copyOverride)copy={...copy,copy:job.copyOverride};
@@ -482,6 +561,6 @@ function createAdDesignService(deps) {
       await saveJob({ phase: "needs_attention", error: String(error.message || error).slice(0, 900), leaseUntil: 0, progress: { pct: Number(job.progress && job.progress.pct) || 0, label: "Saved work retained — review the unfinished step" } }); throw error;
     }
   }
-  return { workspace, save, upload, crop, start, status, run };
+  return { workspace, save, upload, crop, start, status, run, editorSource, editorState, editorSave, editorExport };
 }
 module.exports = { createAdDesignService, buildVersionDesignPayload, formatAssets, chosenPlacements, placementMatches, FORMATS, settingsFor, responseText, MAX_UPLOAD };

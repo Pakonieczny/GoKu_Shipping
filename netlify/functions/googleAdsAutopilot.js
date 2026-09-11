@@ -9076,6 +9076,10 @@ function _designEngine(){
 async function adDesignWorkspace(input){return _designEngine().workspace(input);}
 async function saveAdDesign(input){return _designEngine().save(input);}
 async function cropAdDesignImage(input){return _designEngine().crop(input);}
+async function adDesignEditorSource(input){return _designEngine().editorSource(input);}
+async function adDesignEditorState(input){return _designEngine().editorState(input);}
+async function saveAdDesignEditor(input){return _designEngine().editorSave(input);}
+async function exportAdDesignEditor(input){return _designEngine().editorExport(input);}
 async function uploadAdDesignReference(input){return _designEngine().upload(input);}
 async function startAdDesign(input){return _designEngine().start(input);}
 async function adDesignStatus(input){return _designEngine().status(input);}
@@ -9293,7 +9297,7 @@ async function analyzeAdStatus(input) { return _analysisEngine().analyzeAdStatus
 async function runAnalyzeAd(input) { return _analysisEngine().runAnalyzeAd(input); }
 
 module.exports = {
-  adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, cropAdDesignImage, uploadAdDesignReference, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages, adDesignGalleryPage, saveAdDesignCopy, adDesignDelivery, prepareAdDesignPublication, publishAdDesignPublication,
+  adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, cropAdDesignImage, adDesignEditorSource, adDesignEditorState, saveAdDesignEditor, exportAdDesignEditor, uploadAdDesignReference, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages, adDesignGalleryPage, saveAdDesignCopy, adDesignDelivery, prepareAdDesignPublication, publishAdDesignPublication,
   reviseCreativeApproval, markApprovalApproved, needsCreativeReview, prepareCreativeApproval, creativeApprovalStatus, reviewCreativeApproval, assertCreativeReviewed, creativeHash,
   COL, V, CID, OPPORTUNITY_ENGINE_VERSION, DESIGN_STUDIO_ENGINE_VERSION, DESIGN_STUDIO_URL,
   control, mintToken, gaql, mutate, mutateAll,
