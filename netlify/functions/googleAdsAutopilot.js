@@ -347,11 +347,11 @@ async function _captureCampaignEditableSnapshot(id) {
   };
   const jobs = [];
   if (channel === "SEARCH") {
-    jobs.push(read("searchAds", `SELECT ad_group.resource_name, ad_group_ad.resource_name, ad_group_ad.status, ad_group_ad.ad.resource_name, ad_group_ad.ad.type, ad_group_ad.ad.final_urls, ad_group_ad.ad.final_mobile_urls, ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_search_ad.descriptions, ad_group_ad.ad.responsive_search_ad.path1, ad_group_ad.ad.responsive_search_ad.path2 FROM ad_group_ad WHERE ${filter} AND ad_group_ad.status != 'REMOVED'`, row => {
+    jobs.push(read("searchAds", `SELECT ad_group.resource_name, ad_group.name, ad_group_ad.resource_name, ad_group_ad.status, ad_group_ad.ad.resource_name, ad_group_ad.ad.type, ad_group_ad.ad.final_urls, ad_group_ad.ad.final_mobile_urls, ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_search_ad.descriptions, ad_group_ad.ad.responsive_search_ad.path1, ad_group_ad.ad.responsive_search_ad.path2 FROM ad_group_ad WHERE ${filter} AND ad_group_ad.status != 'REMOVED'`, row => {
       const r = row.adGroupAd || {}, ad = r.ad || {}, rsa = ad.responsiveSearchAd;
       if (ad.type !== "RESPONSIVE_SEARCH_AD" || !rsa) throw new Error("A non-responsive Search ad cannot be restored with this version format.");
       const text = list => (list || []).map(x => ({ text: x.text, ...(x.pinnedField && !["UNSPECIFIED", "UNKNOWN"].includes(x.pinnedField) ? { pinnedField: x.pinnedField } : {}) }));
-      return { resourceName: ad.resourceName, adGroupAdResourceName: r.resourceName, adGroup: (row.adGroup || {}).resourceName, status: r.status,
+      return { resourceName: ad.resourceName, adGroupAdResourceName: r.resourceName, adGroup: (row.adGroup || {}).resourceName, adGroupName:(row.adGroup||{}).name||null, status: r.status,
         finalUrls: ad.finalUrls || [], finalMobileUrls: ad.finalMobileUrls || [], responsiveSearchAd: { headlines: text(rsa.headlines), descriptions: text(rsa.descriptions), path1: rsa.path1 || "", path2: rsa.path2 || "" } };
     }));
     jobs.push(read("searchImageLinks", `SELECT ad_group_asset.resource_name, ad_group_asset.ad_group, ad_group_asset.asset, ad_group_asset.field_type, ad_group_asset.status, asset.image_asset.full_size.url, asset.image_asset.full_size.width_pixels, asset.image_asset.full_size.height_pixels FROM ad_group_asset WHERE ${filter} AND ad_group_asset.field_type = 'IMAGE' AND ad_group_asset.status != 'REMOVED'`, row => {const r=row.adGroupAsset||{},image=((row.asset||{}).imageAsset||{}).fullSize||{};return {resourceName:r.resourceName,adGroup:r.adGroup,asset:r.asset,fieldType:r.fieldType,status:r.status||"ENABLED",...(image.widthPixels?{width:Number(image.widthPixels),height:Number(image.heightPixels)}:{}),...(image.url?{imageUrl:image.url}:{})};}));
@@ -1634,6 +1634,8 @@ async function applyApproval(id, ctrl) {
   try {
     const p=it.payload||{};
     if(_isAdVersionApproval(it))await _guardAdVersionApproval(it);
+    if(p.groupSplitGuard)await _guardProductGroupSplit(it);
+    if(p.groupActivationGuard)await _guardProductGroupActivation(it);
     if((p.meta||{}).budgetCurrency && p.meta.budgetCurrency!==await _accountCurrency())throw new Error("Account currency differs from the reviewed budget. Regenerate the draft.");
     let ops=await materializeReviewedCreative(it);
     const newNames=(ops||[]).map(o=>o.campaignOperation&&o.campaignOperation.create&&o.campaignOperation.create.name).filter(Boolean);
@@ -1651,6 +1653,8 @@ async function applyApproval(id, ctrl) {
       const grouped=new Map();attachments.forEach(o=>{const k=o.assetGroupAssetOperation.create.assetGroup;if(!grouped.has(k))grouped.set(k,[]);grouped.get(k).push(o);});
       ops=other.concat(...grouped.values());
       if(_isAdVersionApproval(it)&&!ctrl.dryRun){await mutateAll(ops,{ctrl,validateOnly:true,label:"validate-version:"+id});await _guardAdVersionApproval(it);}
+      if(p.groupActivationGuard&&!ctrl.dryRun){await mutateAll(ops,{ctrl,validateOnly:true,label:"validate-product-switch:"+id});await _guardProductGroupActivation(it);}
+      if(p.groupSplitGuard&&!ctrl.dryRun){await mutateAll(ops,{ctrl,validateOnly:true,label:"validate-product-split:"+id});await _guardProductGroupSplit(it);}
       publicationResult=await mutateAll(ops,{ctrl,label:"reviewed-approval:"+id,onDispatch:()=>{dispatched=true;}});
     } else if(p.service&&p.operations){if(p.service==="campaignBudgets"){
         const rows=await gaql("SELECT campaign_budget.resource_name,campaign_budget.amount_micros FROM campaign WHERE campaign.status = 'ENABLED'"),budgets=new Map();rows.forEach(r=>{const a=r.campaignBudget||{};budgets.set(a.resourceName,fromMicros(a.amountMicros));});
@@ -1661,9 +1665,10 @@ async function applyApproval(id, ctrl) {
       publicationResult=await mutate(p.service,p.operations,{ctrl,label:"reviewed-approval:"+id,onDispatch:()=>{dispatched=true;}});}
     else throw new Error("The draft contains no publishable operations.");
     const learningPublication=ctrl.dryRun?null:_learningPublication(it,publicationResult,ops);
-    const assetReceipts=[],publishedCampaignIds=[];
-    if(!ctrl.dryRun)(publicationResult&&publicationResult.mutateOperationResponses||[]).forEach((response,index)=>{const campaign=(response.campaignResult||{}).resourceName;if(campaign)publishedCampaignIds.push(campaign.split('/').pop());const asset=(response.assetResult||{}).resourceName,created=ops&&ops[index]&&ops[index].assetOperation&&ops[index].assetOperation.create,entry=created&&(p.generatedAssets||[]).find(e=>e.tempResourceName===created.resourceName);if(asset&&created&&created.imageAsset&&created.imageAsset.data)assetReceipts.push({resourceName:asset,hash:entry?entry.asset.hash:require('crypto').createHash('sha256').update(Buffer.from(created.imageAsset.data,'base64')).digest('hex'),...(entry?{path:entry.asset.path}:{})});});
-    await ref.update({status:ctrl.dryRun?"APPROVED":"APPLIED",appliedAt:ctrl.dryRun?null:f.FV.serverTimestamp(),validatedAt:ctrl.dryRun?Date.now():null,applyAttempt:null,lastError:null,...(assetReceipts.length?{assetReceipts}:{}),...(publishedCampaignIds.length?{publishedCampaignIds}:{}),...(learningPublication?{learningPublication}:{}),...(_isAdVersionApproval(it)?{versionPublication:{campaignId:p.versionGuard.campaignId,sourceVersion:p.versionGuard.expectedVersion,confirmed:!ctrl.dryRun,versionWarning:publicationResult&&publicationResult.versionWarning||null}}:{})});
+    const assetReceipts=[],publishedCampaignIds=[],groupReceipts=[];
+    if(!ctrl.dryRun)(publicationResult&&publicationResult.mutateOperationResponses||[]).forEach((response,index)=>{const createdGroup=ops&&ops[index]&&(ops[index].assetGroupOperation?.create||ops[index].adGroupOperation?.create),publishedGroup=(response.assetGroupResult||response.adGroupResult||{}).resourceName;if(createdGroup&&publishedGroup&&p.groupSplitGuard){const planned=(p.meta.assetGroups||[]).find(g=>g.ref===createdGroup.resourceName);if(planned)groupReceipts.push({ref:publishedGroup,temporaryRef:planned.ref,productId:planned.productId});}const campaign=(response.campaignResult||{}).resourceName;if(campaign)publishedCampaignIds.push(campaign.split('/').pop());const asset=(response.assetResult||{}).resourceName,created=ops&&ops[index]&&ops[index].assetOperation&&ops[index].assetOperation.create,entry=created&&(p.generatedAssets||[]).find(e=>e.tempResourceName===created.resourceName);if(asset&&created&&created.imageAsset&&created.imageAsset.data)assetReceipts.push({resourceName:asset,hash:entry?entry.asset.hash:require('crypto').createHash('sha256').update(Buffer.from(created.imageAsset.data,'base64')).digest('hex'),...(entry?{path:entry.asset.path}:{})});});
+    await ref.update({status:ctrl.dryRun?"APPROVED":"APPLIED",appliedAt:ctrl.dryRun?null:f.FV.serverTimestamp(),validatedAt:ctrl.dryRun?Date.now():null,applyAttempt:null,lastError:null,...(assetReceipts.length?{assetReceipts}:{}),...(groupReceipts.length?{groupSplitPublication:{groups:groupReceipts,at:Date.now()}}:{}),...(publishedCampaignIds.length?{publishedCampaignIds}:{}),...(learningPublication?{learningPublication}:{}),...(_isAdVersionApproval(it)?{versionPublication:{campaignId:p.versionGuard.campaignId,sourceVersion:p.versionGuard.expectedVersion,confirmed:!ctrl.dryRun,versionWarning:publicationResult&&publicationResult.versionWarning||null}}:{})});
+    if(!ctrl.dryRun&&groupReceipts.length)try{await _designEngine().linkPublishedDesignScopes({campaignId:p.groupSplitGuard.campaignId,sourceGroupRef:p.groupSplitGuard.sourceGroupRef,groups:groupReceipts});}catch(e){await ref.update({designLinkWarning:String(e.message||e).slice(0,250)}).catch(()=>{});}
     if(!ctrl.dryRun)for(const campaignId of (learningPublication&&learningPublication.campaignIds||[]))_invalidateCampaignImprovement(campaignId);
     return {ok:true,id,status:ctrl.dryRun?"VALIDATED":"APPLIED",dryRun:!!ctrl.dryRun,versionWarning:publicationResult&&publicationResult.versionWarning||null};
   } catch(e) {
@@ -4054,12 +4059,15 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
   // Created at the HEAD of the op array \u2014 the exact ordering Google's own PMax samples use
   // (assets first, then budget/campaign/asset groups/links).
   const textCopy = adCopy || _pmaxDeterministicCopy(coll);
-  const textAssets = _buildPmaxTextAssetOps(textCopy, _tempIdFloor(ops));
-  ops.unshift(...textAssets.ops);
+  let textAssets = null;
   let nextFilterId=-50;
   groups.forEach((g,gi)=>{
+    const localCopy=groups.length===1?textCopy:_pmaxDeterministicCopy({title:g.label});
+    textAssets=_buildPmaxTextAssetOps(localCopy,_tempIdFloor(ops));ops.unshift(...textAssets.ops);
+    const productUrl=details.find(d=>g.itemIds.includes(d.itemId)&&require("./googleAdsAdDesignContext").destination(d.url)?.kind==="product")?.url;
+    const groupUrl=productDestination||productUrl||finalUrl;
     const agId=-(3+gi),agRes=`customers/${CID}/assetGroups/${agId}`;
-    ops.push({assetGroupOperation:{create:{resourceName:agRes,campaign:cRes,name:`AG · ${String(g.label).slice(0,60)}`,finalUrls:[finalUrl],status:"ENABLED"}}});
+    ops.push({assetGroupOperation:{create:{resourceName:agRes,campaign:cRes,name:`AG · ${String(g.label).slice(0,60)}`,finalUrls:[groupUrl],status:"ENABLED"}}});
     const root=`customers/${CID}/assetGroupListingGroupFilters/${agId}~-${-nextFilterId--}`;
     if(g.itemIds.length){
       ops.push({assetGroupListingGroupFilterOperation:{create:{resourceName:root,assetGroup:agRes,type:"SUBDIVISION",listingSource:"SHOPPING"}}});
@@ -4069,18 +4077,19 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
     // Give each coherent product group its own relevant themes. Signals guide learning;
     // they do not restrict PMax reach.
     const typeWords=_kwWords(g.label);
-    let local=themes.filter(t=>typeWords.some(w=>t.includes(w))).slice(0,8);if(local.length<3)local=[...new Set(local.concat(themes))].slice(0,8);
+    let local=themes.filter(t=>typeWords.some(w=>t.includes(w))).slice(0,8);if(!local.length)local=[String(g.label).toLowerCase().slice(0,80)];
     local.forEach(text=>ops.push({assetGroupSignalOperation:{create:{assetGroup:agRes,searchTheme:{text}}}}));
     if(audienceResource)ops.push({assetGroupSignalOperation:{create:{assetGroup:agRes,audience:{audience:audienceResource}}}});
     // Supplied creative for small-placement rendering (Display/Discover tiles).
     // Additive: merchant-auto still fills any gap and Google still tests its
     // own auto-generated crops against these — we're giving it better raw
     // material, not removing its ability to choose.
-    if (imageAssets && imageAssets.logo) ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: imageAssets.logo, fieldType: "LOGO" } } });
-    (imageAssets && imageAssets.square || []).slice(0, 4).forEach(res => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: res, fieldType: "SQUARE_MARKETING_IMAGE" } } }));
-    (imageAssets && imageAssets.landscape || []).slice(0, 4).forEach(res => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: res, fieldType: "MARKETING_IMAGE" } } }));
-    (imageAssets && imageAssets.portrait || []).slice(0, 4).forEach(res => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: res, fieldType: "PORTRAIT_MARKETING_IMAGE" } } }));
-    // Required text creative \u2014 same shared assets on every group in this campaign.
+    const localImages=groups.length===1?imageAssets:imageAssets&&imageAssets.byProduct&&imageAssets.byProduct[g.productId];
+    if (localImages && localImages.logo) ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: localImages.logo, fieldType: "LOGO" } } });
+    (localImages && localImages.square || []).slice(0, 4).forEach(res => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: res, fieldType: "SQUARE_MARKETING_IMAGE" } } }));
+    (localImages && localImages.landscape || []).slice(0, 4).forEach(res => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: res, fieldType: "MARKETING_IMAGE" } } }));
+    (localImages && localImages.portrait || []).slice(0, 4).forEach(res => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: res, fieldType: "PORTRAIT_MARKETING_IMAGE" } } }));
+    // Each product group owns separate immutable text assets.
     textAssets.ids.headlines.forEach(a => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: a, fieldType: "HEADLINE" } } }));
     textAssets.ids.longHeadlines.forEach(a => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: a, fieldType: "LONG_HEADLINE" } } }));
     textAssets.ids.descriptions.forEach(a => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: a, fieldType: "DESCRIPTION" } } }));
@@ -4268,7 +4277,7 @@ async function draftPmaxRefresh({campaignIds,assetGroupIds,improvement,onProgres
         const ops=links.filter(x=>kind.includes((x.assetGroupAsset||{}).fieldType)).map(x=>({assetGroupAssetOperation:{remove:x.assetGroupAsset.resourceName}}));
         ops.push({campaignOperation:{update:{resourceName:c.resourceName,assetAutomationSettings:CREATIVE_AUTOMATIONS.map(assetAutomationType=>({assetAutomationType,assetAutomationStatus:"OPTED_OUT"}))},updateMask:"asset_automation_settings"}});
         const copy=field=>links.filter(x=>(x.assetGroupAsset||{}).fieldType===field).map(x=>(x.asset&&x.asset.textAsset||{}).text).filter(Boolean);
-        const reviewGroups=[{key:"g0",ref:g.resourceName,name:g.name,channel:"pmax",url:(g.finalUrls||[])[0],keywords:themes.map(x=>((x.assetGroupSignal||{}).searchTheme||{}).text).filter(Boolean),original:{headlines:copy("HEADLINE"),longHeadlines:copy("LONG_HEADLINE"),descriptions:copy("DESCRIPTION")}}];
+        const reviewGroups=[{key:"g0",ref:g.resourceName,name:g.name,channel:"pmax",url:(g.finalUrls||[])[0],itemIds:ops.filter(x=>x.assetGroupListingGroupFilterOperation&&x.assetGroupListingGroupFilterOperation.create&&x.assetGroupListingGroupFilterOperation.create.assetGroup===g.resourceName&&x.assetGroupListingGroupFilterOperation.create.type==="UNIT_INCLUDED").map(x=>x.assetGroupListingGroupFilterOperation.create.caseValue?.productItemId?.value).filter(Boolean),keywords:themes.map(x=>((x.assetGroupSignal||{}).searchTheme||{}).text).filter(Boolean),original:{headlines:copy("HEADLINE"),longHeadlines:copy("LONG_HEADLINE"),descriptions:copy("DESCRIPTION")}}];
         const id=await enqueueApproval({type:"creative",vetted:false,tag,summary:`Creative refresh · ${c.name} · ${g.name}`,payload:{mutateOperations:ops,reviewGroups,...(improvement?{improvement}:{}),meta:{existingCampaignId:String(c.id),studioSource:studio,sourceProducts,productTitles:sourceProducts.map(x=>x.title),assetGroups:[{name:g.name,itemIds}],landingUrl:(g.finalUrls||[])[0]}}});
         results.push({campaign:c.name,assetGroup:g.name,approvalId:id});queued++;
       } catch(e){results.push({campaign:c.name,assetGroup:g.name,error:String(e.message||e).slice(0,300)});}
@@ -4340,7 +4349,7 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
   if(!requestedIds.length)throw new Error("Select exact eligible Merchant Center offers before building a campaign.");
   if(requestedIds.length!==selected.length)throw new Error("Some selected Merchant Center offers are no longer eligible. Refresh product research to update the product selection.");
   const exactIds=selected.map(x=>x.itemId), chosenTitles=[...new Set(selected.map(x=>x.title))];
-  const liveDetails=selected.map(x=>({itemId:x.itemId,title:x.title,type1:x.type1||null,type2:x.type2||null,feedLabel:x.feedLabel||liveFeedLabel||null,customLabels:x.customLabels||[]}));
+  const liveDetails=selected.map(x=>({itemId:x.itemId,title:x.title,url:x.link||x.url||null,type1:x.type1||null,type2:x.type2||null,feedLabel:x.feedLabel||liveFeedLabel||null,customLabels:x.customLabels||[]}));
   const themes=(Array.isArray(searchThemes)&&searchThemes.length?searchThemes:_derivePmaxSearchThemes({collectionTitle:coll.title,productTitles:chosenTitles,types})).slice(0,25);
   let audienceResource=String(ENV.GADS_PMAX_AUDIENCE_RESOURCE||"").trim()||null;
   if(!audienceResource&&ENV.GADS_PMAX_AUDIENCE_ID)audienceResource=`customers/${CID}/audiences/${String(ENV.GADS_PMAX_AUDIENCE_ID).replace(/\D/g,"")}`;
@@ -4376,7 +4385,7 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
   // The deterministic floor inside _pmaxAdCopy means this can never come back empty.
   let adCopy = null;
   if(design.reviewedAdCopy){if(!_copyValid(design.reviewedAdCopy,true))throw new Error("The researched design copy does not meet Google's text requirements.");adCopy=JSON.parse(JSON.stringify(design.reviewedAdCopy));}
-  else try { adCopy = await _pmaxAdCopy(coll, { productTitles: chosenTitles }); } catch (e) {}
+  else if(new Set(exactIds.map(_productIdFromItemId)).size===1)try { adCopy = await _pmaxAdCopy({ ...coll,title:chosenTitles[0]||coll.title }, { productTitles: chosenTitles }); } catch (e) {}
   if (!adCopy) adCopy = _pmaxDeterministicCopy(coll);
   // Two real sibling collections from the curated config → extra sitelinks (real URLs only).
   const relatedCollections = design.productDestination?[]:(typeof COLLECTIONS !== "undefined" ? COLLECTIONS : []).filter(c => c && c.handle && c.handle !== handle && c.handle !== "best-sellers").slice(0, 2);
@@ -8743,7 +8752,7 @@ function _creativeGroups(item) {
   const groups=ops.filter(o=>o.assetGroupOperation&&o.assetGroupOperation.create).map((o,i)=>{
     const g=o.assetGroupOperation.create;
     const strings=field=>ops.filter(x=>x.assetGroupAssetOperation&&x.assetGroupAssetOperation.create.assetGroup===g.resourceName&&x.assetGroupAssetOperation.create.fieldType===field).map(x=>text[x.assetGroupAssetOperation.create.asset]).filter(Boolean);
-    return {key:"g"+i,ref:g.resourceName,name:g.name,channel:"pmax",url:(g.finalUrls||[])[0],keywords:ops.filter(x=>x.assetGroupSignalOperation&&x.assetGroupSignalOperation.create.assetGroup===g.resourceName&&x.assetGroupSignalOperation.create.searchTheme).map(x=>x.assetGroupSignalOperation.create.searchTheme.text),original:{headlines:strings("HEADLINE"),longHeadlines:strings("LONG_HEADLINE"),descriptions:strings("DESCRIPTION")}};
+    return {key:"g"+i,ref:g.resourceName,name:g.name,channel:"pmax",url:(g.finalUrls||[])[0],itemIds:ops.filter(x=>x.assetGroupListingGroupFilterOperation&&x.assetGroupListingGroupFilterOperation.create&&x.assetGroupListingGroupFilterOperation.create.assetGroup===g.resourceName&&x.assetGroupListingGroupFilterOperation.create.type==="UNIT_INCLUDED").map(x=>x.assetGroupListingGroupFilterOperation.create.caseValue?.productItemId?.value).filter(Boolean),keywords:ops.filter(x=>x.assetGroupSignalOperation&&x.assetGroupSignalOperation.create.assetGroup===g.resourceName&&x.assetGroupSignalOperation.create.searchTheme).map(x=>x.assetGroupSignalOperation.create.searchTheme.text),original:{headlines:strings("HEADLINE"),longHeadlines:strings("LONG_HEADLINE"),descriptions:strings("DESCRIPTION")}};
   });
   ops.forEach((o,i)=>{const a=o.adGroupAdOperation&&o.adGroupAdOperation.create;if(!a||!a.ad||!a.ad.responsiveSearchAd)return;
     const ag=ops.find(x=>x.adGroupOperation&&x.adGroupOperation.create.resourceName===a.adGroup);
@@ -8751,7 +8760,7 @@ function _creativeGroups(item) {
   });
   if(p.service==="ads") (p.operations||[]).forEach(o=>{const a=o.update||o.create;if(a&&a.responsiveSearchAd)groups.push({key:"g"+groups.length,ref:a.resourceName,name:"Search ad refresh",channel:"search",url:m.landingUrl,keywords:m.keywords||[],original:a.responsiveSearchAd});});
   if(!groups.length)throw new Error("This draft has no supported ad groups to review. Regenerate it from its opportunity.");
-  if(groups.length>4)throw new Error("Split this draft into at most four focused intent groups before creative production.");
+  if(groups.length>12)throw new Error("Split this draft into at most twelve product groups before creative production.");
   return groups;
 }
 function _putCreativeCopy(payload, groups) {
@@ -8787,6 +8796,10 @@ async function _saveCreativeAsset(id, bytes, kind, info={}) {
 }
 async function _deleteCreativeAsset(a) {
   if(!a||!/^Brites_GAds_Creative\/[a-zA-Z0-9_-]+\/editor_part_[a-zA-Z0-9_-]+\.jpg$/.test(a.path))throw new Error('Invalid temporary artwork reference.');
+  await fb().admin.storage().bucket().file(a.path).delete({ignoreNotFound:true});
+}
+async function _deleteSavedDesignAsset(a,id) {
+  if(!/^saved_[a-f0-9]{32}$/.test(id)||!a||!new RegExp('^Brites_GAds_Creative/[a-zA-Z0-9_-]+/saved_design_'+id+'(?:_thumb)?-[a-f0-9]+\\.jpg$').test(a.path))throw new Error('Invalid saved design file.');
   await fb().admin.storage().bucket().file(a.path).delete({ignoreNotFound:true});
 }
 async function _loadCreativeAsset(a) {
@@ -8995,12 +9008,38 @@ async function materializeReviewedCreative(it) {
   return clean;
 }
 
+let _groupsService=null;
+function _groupService(){
+  _designEngine();
+  if(!_groupsService)_groupsService=require('./googleAdsGroups').createGroupsService({CID,fb,COL,linkDesignScopes:input=>_designEngine().linkPublishedDesignScopes(input),buildSearch:buildSearchCampaignOps,reportContext:_reportContext,validatedRange:_validatedReportRange,gaql,verifiedBasis:_verifiedCampaignAnalysisBasis,loadContext:input=>_adDesignContextReader.loadContext(input),buildPmax:buildPmaxCampaignOps,enqueueApproval});
+  return _groupsService;
+}
+async function adGroups(input){return _groupService().index(input);}
+async function adGroupDetail(input){return _groupService().detail(input);}
+async function draftAdGroupSplit(input){return _groupService().draftSplit(input);}
+async function draftAdGroupActivation(input){return _groupService().draftActivation(input);}
+async function _guardProductGroupActivation(item){const p=item.payload||{},g=p.groupActivationGuard;if(!g)return;const b=await _groupService().activationBasis(g.splitId);if(b.version!==g.expectedVersion||b.snapshotHash!==g.snapshotHash||creativeHash(b.before)!==creativeHash(g.before)||creativeHash(b.operations)!==creativeHash(p.mutateOperations))throw new Error('The product groups changed. Review a fresh switch before publishing.');}
+async function _guardProductGroupSplit(item){
+  const p=item.payload||{},guard=p.groupSplitGuard;if(!guard)return;
+  const current=await _guardCampaignVersion(guard),groups=p.meta&&p.meta.assetGroups||[];
+  const search=guard.channel==='search';if(!(search?(current.snapshot.components.searchAds||[]).some(a=>a.adGroup===guard.sourceGroupRef):(current.snapshot.components.assetGroups||[]).some(g=>g.resourceName===guard.sourceGroupRef))||groups.length<2)throw new Error('The source group for this split is unavailable.');
+  const sourceOffers=new Set((current.snapshot.components.listingGroups||[]).filter(f=>f.assetGroup===guard.sourceGroupRef&&f.type==='UNIT_INCLUDED').map(f=>f.caseValue&&f.caseValue.productItemId&&f.caseValue.productItemId.value).filter(Boolean));
+  const selected=groups.flatMap(g=>g.itemIds||[]);if(new Set(selected).size!==selected.length||selected.length!==sourceOffers.size||selected.some(x=>!sourceOffers.has(x)))throw new Error('The split must preserve every exact product offer once.');
+  const creates=(p.mutateOperations||[]).filter(o=>search?o.adGroupOperation:o.assetGroupOperation).map(o=>search?o.adGroupOperation:o.assetGroupOperation);
+  if(creates.length!==groups.length||creates.some(o=>!o.create||o.create.status!=='PAUSED'||o.create.campaign!=='customers/'+CID+'/campaigns/'+guard.campaignId))throw new Error('A product split may only create paused groups in its original campaign.');
+  if((p.mutateOperations||[]).some(o=>o.campaignOperation||o.campaignBudgetOperation||o.campaignCriterionOperation))throw new Error('The split cannot change campaign settings or budgets.');
+}
+
 // Ad Design uses the same authenticated console, saved assets and approval queue.
 let _adDesignEngine=null,_adDesignContextReader=null,_adDesignAdapters=null;
+async function _findLegacyEditorWorkspaces({campaignId,groupRef,workspaceId}){
+  const q=await fb().db.collection(COL.state).doc('adDesign').collection('workspaces').where('context.campaignId','==',campaignId).select('context.groups','updatedAt').limit(100).get();
+  return q.docs.filter(d=>d.id!==workspaceId&&(d.data().context?.groups||[]).some(g=>g.ref===groupRef)).sort((a,b)=>(b.data().updatedAt||0)-(a.data().updatedAt||0)).slice(0,12).map(d=>d.id);
+}
 function _adDesignWorkspaceRef(id){if(!/^[a-zA-Z0-9_-]{1,100}$/.test(String(id||"")))throw new Error("Invalid design workspace.");return fb().db.collection(COL.state).doc("adDesign").collection("workspaces").doc(id);}
 async function _verifyAdDesignContext(workspace){
   const c=workspace.context||{};if(c.generationAllowed===false)throw new Error("Select an exact researched product offer before generating an ad.");
-  if(c.approvalId){const s=await fb().db.collection(COL.approvals).doc(c.approvalId).get();if(!s.exists||s.data().status!=="PENDING"||(s.data().creativeLease||{}).until>Date.now())throw new Error("This approval is no longer available for design.");if(c.approvalPayloadHash&&creativeHash(s.data().payload||{})!==c.approvalPayloadHash)throw new Error("The approval changed. Refresh its sources before generating another design.");}
+  if(c.approvalId){const s=await fb().db.collection(COL.approvals).doc(c.approvalId).get();if(!s.exists||s.data().status!=="PENDING"||(s.data().creativeLease||{}).until>Date.now())throw new Error("This approval is no longer available for design.");if(c.approvalPayloadHash&&creativeHash(s.data().payload||{})!==c.approvalPayloadHash)throw new Error("The approval changed. Refresh its sources before generating another design.");if(s.data().payload?.groupSplitGuard)await _guardProductGroupSplit(s.data());}
   if(!c.campaignId&&!c.approvalId){
     const state=await fb().db.collection(COL.state).doc("opportunities").get();
     _pmaxResearchCandidate(state.exists?state.data():null,c);
@@ -9028,7 +9067,7 @@ async function _finishAdDesign({workspaceId,jobId,owner,workspace,group,product,
   const f=fb(),wsRef=_adDesignWorkspaceRef(workspaceId),context=workspace.context||{};
   const own=async tx=>{const s=await tx.get(wsRef);if(!s.exists||!(s.data().job)||s.data().job.id!==jobId||s.data().job.owner!==owner||Number(s.data().job.leaseUntil)<Date.now())throw new Error("This design no longer owns its active job. Saved outputs are retained.");return s.data();};
   if(!_copyValid(result.copy,group.channel==="pmax")||!result.quality||result.quality.pass!==true||result.quality.productFaithful!==true||result.quality.mobileReadable!==true||Number(result.quality.score)<85)throw new Error("This design did not pass product, copy and image quality review.");
-  if(context.campaignId){
+  if(context.campaignId&&!context.draftGroups){
     await _guardCampaignVersion({campaignId:context.campaignId,expectedVersion:workspace.sourceVersion,snapshotHash:workspace.snapshotHash});
     const payload=require("./googleAdsAdDesign").buildVersionDesignPayload({workspaceId,jobId,workspace,group,product,result,customerId:CID});
     const applications=result.learningApplications||[],lessons=[...new Map(applications.filter(a=>a.lessonSnapshot).map(a=>[String(a.lessonId),a.lessonSnapshot])).values()];
@@ -9072,9 +9111,9 @@ async function _finishAdDesign({workspaceId,jobId,owner,workspace,group,product,
 }
 function _designEngine(){
   if(!_adDesignEngine){
-    _adDesignContextReader=require("./googleAdsAdDesignContext").createAdDesignContext({fb,COL,shopifyGql,verifiedBasis:_verifiedCampaignAnalysisBasis,creativeGroups:_creativeGroups,creativeHash,reportContext:_reportContext,validatedRange:_validatedReportRange});
+    _adDesignContextReader=require("./googleAdsAdDesignContext").createAdDesignContext({fb,COL,shopifyGql,gaql,verifiedBasis:_verifiedCampaignAnalysisBasis,creativeGroups:_creativeGroups,creativeHash,reportContext:_reportContext,validatedRange:_validatedReportRange});
     const research=require("./googleAdsAdDesignResearch").createAdDesignResearch({creativeFetch:_creativeFetch,copyValid:_copyValid,dailyStats,gaql,playbookSlice,storeSalesEvidence,conversionHealth,merchantProducts});
-    _adDesignEngine=require("./googleAdsAdDesign").createAdDesignService({fb,COL,env:ENV,control,..._designEngineAdapters(),loadContext:input=>_adDesignContextReader.loadContext(input),currentCreative:require("./googleAdsAdDesignContext").extractCurrentCreative,verifyBasis:_verifiedCampaignAnalysisBasis,verifyContext:_verifyAdDesignContext,research,saveAsset:_saveCreativeAsset,loadAsset:_loadCreativeAsset,deleteAsset:_deleteCreativeAsset,finish:_finishAdDesign,reviewStatus:_adDesignApprovalReview});
+    _adDesignEngine=require("./googleAdsAdDesign").createAdDesignService({fb,COL,env:ENV,control,..._designEngineAdapters(),loadContext:input=>_adDesignContextReader.loadContext(input),currentCreative:require("./googleAdsAdDesignContext").extractCurrentCreative,verifyBasis:_verifiedCampaignAnalysisBasis,verifyContext:_verifyAdDesignContext,findLegacyEditorWorkspaces:_findLegacyEditorWorkspaces,research,saveAsset:_saveCreativeAsset,loadAsset:_loadCreativeAsset,deleteAsset:_deleteCreativeAsset,deleteSavedDesignAsset:_deleteSavedDesignAsset,finish:_finishAdDesign,reviewStatus:_adDesignApprovalReview});
   }return _adDesignEngine;
 }
 async function adDesignWorkspace(input){return _designEngine().workspace(input);}
@@ -9084,6 +9123,9 @@ async function adDesignEditorSource(input){return _designEngine().editorSource(i
 async function adDesignEditorState(input){return _designEngine().editorState(input);}
 async function saveAdDesignEditor(input){return _designEngine().editorSave(input);}
 async function exportAdDesignEditor(input){return _designEngine().editorExport(input);}
+async function adDesignSavedDesigns(input){return _designEngine().editorSavedDesigns(input);}
+async function openAdDesignSavedDesign(input){return _designEngine().editorOpenSavedDesign(input);}
+async function deleteAdDesignSavedDesign(input){return _designEngine().editorDeleteSavedDesign(input);}
 async function adDesignGooglePreview({workspaceId,productId,groupRef}={}){
   const saved=await _adDesignWorkspaceRef(workspaceId).get();if(!saved.exists)throw new Error('Design workspace was not found.');const w=saved.data();
   if(String(productId)!==String(w.settings.productId)||groupRef!==w.settings.groupRef)throw new Error('The product or ad group changed. Request a new preview for the selected group.');
@@ -9111,6 +9153,7 @@ async function _adDesignPublicationContext(workspaceId){
   if(w.job&&(w.job.inFlight||w.job.leaseUntil>Date.now()))throw new Error('Wait for the image or messaging request to finish before publishing.');
   const rows=await ref.collection('sourceSets').doc(w.sourceSetId).collection('products').get(),products=rows.docs.map(d=>d.data()),product=products.find(p=>String(p.id)===String(w.settings.productId)),group=(w.context.groups||[]).find(g=>g.ref===w.settings.groupRef);
   if(!product||!group)throw new Error('Choose the product and ad group before publishing.');
+  group.requiresProductSplit=require('./googleAdsAdDesign').isSharedProductGroup(w,group);
   return {ref,w,products,product,group};
 }
 async function saveAdDesignCopy({workspaceId,copy,expectedRevision}={}){
@@ -9199,7 +9242,7 @@ async function adDesignDelivery({workspaceId,start,end}={}){
     note:'Group totals include all assets. Individual image outcomes can overlap when images and text serve together. Compare like periods; do not add asset conversions or interpret them as isolated image lift. Google does not expose separate Merchant Center traffic for each product image.'};
 }
 async function prepareAdDesignPublication({workspaceId,target='ads',formats=[],includeCopy=false,offerId=null,merchantIdentity=null}={}){
-  const {ref,w,products,product,group}=await _adDesignPublicationContext(workspaceId),selection={formats:[...new Set(formats)].sort(),copy:includeCopy===true};
+  const {ref,w,products,product,group}=await _adDesignPublicationContext(workspaceId);if(w.context.draftGroups)throw new Error('Review and create all product groups together in Approvals.');if(target==='ads'&&group.requiresProductSplit)throw new Error('Split this shared group into product groups before publishing product-specific assets. Your design stays saved.');const selection={formats:[...new Set(formats)].sort(),copy:includeCopy===true};
   if(!['ads','merchant'].includes(target)||selection.formats.some(k=>!['square','landscape','portrait'].includes(k))||!selection.copy&&!selection.formats.length)throw new Error('Select an image format or messaging to update.');
   const design=require('./googleAdsAdDesign'),result=JSON.parse(JSON.stringify(w.job&&w.job.result||{})),placements=design.chosenPlacements(w),assets={desktop:{},mobile:{}};
   for(const device of ['desktop','mobile'])for(const format of selection.formats){const chosen=placements.find(p=>p.device===device&&p.format===format),asset=chosen&&chosen.asset||(result.placementAssets||{})[device]&&result.placementAssets[device][format]||(result.assets||{})[format];if(!asset)throw new Error('Save or generate the '+format+' image before approving it.');
@@ -9323,7 +9366,8 @@ async function analyzeAdStatus(input) { return _analysisEngine().analyzeAdStatus
 async function runAnalyzeAd(input) { return _analysisEngine().runAnalyzeAd(input); }
 
 module.exports = {
-  adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, cropAdDesignImage, adDesignEditorSource, adDesignEditorState, saveAdDesignEditor, exportAdDesignEditor, adDesignGooglePreview, uploadAdDesignReference, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages, adDesignGalleryPage, saveAdDesignCopy, adDesignDelivery, prepareAdDesignPublication, publishAdDesignPublication,
+  adGroups, adGroupDetail, draftAdGroupSplit, draftAdGroupActivation,
+  adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, cropAdDesignImage, adDesignEditorSource, adDesignEditorState, saveAdDesignEditor, exportAdDesignEditor, adDesignSavedDesigns, openAdDesignSavedDesign, deleteAdDesignSavedDesign, adDesignGooglePreview, uploadAdDesignReference, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages, adDesignGalleryPage, saveAdDesignCopy, adDesignDelivery, prepareAdDesignPublication, publishAdDesignPublication,
   reviseCreativeApproval, markApprovalApproved, needsCreativeReview, prepareCreativeApproval, creativeApprovalStatus, reviewCreativeApproval, assertCreativeReviewed, creativeHash,
   COL, V, CID, OPPORTUNITY_ENGINE_VERSION, DESIGN_STUDIO_ENGINE_VERSION, DESIGN_STUDIO_URL,
   control, mintToken, gaql, mutate, mutateAll,

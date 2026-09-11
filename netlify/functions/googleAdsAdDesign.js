@@ -7,6 +7,13 @@ const token = value => /^[a-zA-Z0-9_-]{1,100}$/.test(String(value || ""));
 const active = job => job && Number(job.leaseUntil) > Date.now() && ["queued", "running"].includes(job.phase);
 const MAX_UPLOAD = 4 * 1024 * 1024;
 const productKey = id => String(id || '').split('/').pop();
+function isSharedProductGroup(workspace, group) {
+  if (group.requiresProductSplit) return true;
+  const {offerParts, destination}=require('./googleAdsAdDesignContext'),parts=workspace.sourceSnapshot?.components||{};
+  if(group.channel==='pmax')return new Set([...(group.productIds||[]).map(productKey),...(parts.listingGroups||[]).filter(f=>f.assetGroup===group.ref&&f.type==='UNIT_INCLUDED').map(f=>offerParts(f.caseValue?.productItemId?.value)?.productId)].filter(Boolean)).size>1;
+  const own=(parts.searchAds||[]).find(a=>a.resourceName===group.ref),parent=group.adGroupRef||own?.adGroup;
+  return !!parent&&new Set((parts.searchAds||[]).filter(a=>a.adGroup===parent).flatMap(a=>a.finalUrls||[]).map(destination).filter(d=>d?.kind==='product').map(d=>d.handle)).size>1;
+}
 function placementMatches(p, settings){return p.groupRef===settings.groupRef && (!p.productId && !(p.productIds||[]).length || productKey(p.productId||(p.productIds||[])[0])===productKey(settings.productId));}
 function chosenPlacements(workspace){
   const rows=(workspace.placements||[]).filter(p=>placementMatches(p,workspace.settings));
@@ -111,6 +118,7 @@ function buildVersionDesignPayload({ workspaceId, jobId, workspace, group, produ
     notes.push("Google keeps the existing campaign and asset-group IDs. New immutable image/text assets are linked in the same approved update; Merchant feed product photos stay unchanged.");
   } else throw new Error("Choose a Search ad or Performance Max asset group.");
   if(result.placementAssets)notes.push('Desktop and mobile choices are saved separately in this design. Google receives their distinct approved assets in the responsive asset pool and controls device delivery.');
+  if(isSharedProductGroup(workspace,group))throw new Error('Split the shared group before publishing this product design.');
   const versionChange = { campaignId, sourceVersion: workspace.sourceVersion, proposedVersion: workspace.sourceVersion + 1, changes, identityPreserved: true, notes, merchantChanges: false,
     rationale: result.brief.rationale, hypothesis: result.brief.hypothesis, successMetric: result.brief.successMetric, measurementPlan: result.brief.measurementPlan || null };
   return { mutateOperations: operations, generatedAssets, versionGuard: { campaignId, expectedVersion: workspace.sourceVersion, snapshotHash: workspace.snapshotHash }, versionChange,
@@ -162,7 +170,7 @@ function createAdDesignService(deps) {
     if (job.inFlight && !active(job)) { const receipt = await ref.collection("outputs").doc(job.id + "_" + job.inFlight.key).get(); hasReceipt = !!(receipt.exists && (receipt.data().stageResult || receipt.data().rawResponse || receipt.data().asset)); }
     const approvalId = job.result && job.result.publication && job.result.publication.ready === false ? null : job.approvalId || workspace.context.approvalId || null, review = approvalId && deps.reviewStatus ? await deps.reviewStatus(approvalId) : null;
     return { ok: true, workspaceId, revision:Number(workspace.revision||0), sourceVersion: workspace.sourceVersion || null, snapshotHash: workspace.snapshotHash || null,
-      context: {...workspace.context,currentCreative:creativeFor(workspace)}, products, references, imageLibrary, placements:chosenPlacements(workspace), settings: workspace.settings, messaging, publication:workspace.publication||null, status: job.phase || "draft", phase: job.phase || "draft",
+      context: {...workspace.context,currentCreative:creativeFor(workspace)}, products, references, imageLibrary, ...await savedDesignGallery(workspace), placements:chosenPlacements(workspace), settings: workspace.settings, messaging, publication:workspace.publication||null, status: job.phase || "draft", phase: job.phase || "draft",
       progress: job.progress || { pct: 0, label: "Choose your product, reference images and direction" }, result,
       approvalId, review, error: job.error || null,
       canRetry: !active(job) && (!job.inFlight || hasReceipt) && ["paused", "needs_attention", "queued", "running"].includes(job.phase), needsNewRequestApproval: !!job.inFlight && !active(job) && !hasReceipt,
@@ -171,7 +179,7 @@ function createAdDesignService(deps) {
   }
   async function workspace(input = {}) {
     if (input.workspaceId) return status({ workspaceId: input.workspaceId });
-    const contextKey = { campaignId: String(input.campaignId || ""), approvalId: String(input.approvalId || ""), handle: String(input.handle || ""), groupRef: String(input.groupRef || ""),
+    const contextKey = { ...(input.productId?{productId:productKey(input.productId)}:{}), campaignId: String(input.campaignId || ""), approvalId: String(input.approvalId || ""), handle: String(input.handle || ""), groupRef: String(input.groupRef || ""),
       itemIds: input.campaignId || input.approvalId ? [] : [...new Set((input.itemIds || []).map(String))].sort(), feedLabel: input.campaignId || input.approvalId ? "" : String(input.feedLabel || "").toUpperCase() };
     if (!contextKey.campaignId && !contextKey.approvalId && !contextKey.handle) throw new Error("Open Ad Design from a campaign, draft or product opportunity.");
     let id = "design_" + sha(JSON.stringify(contextKey)).slice(0, 32), ref = refFor(id), saved = await ref.get();
@@ -185,10 +193,13 @@ function createAdDesignService(deps) {
     if (saved.exists && (active(saved.data().job) || saved.data().job && saved.data().job.inFlight)) throw new Error("Resolve the current or unconfirmed design request before refreshing its source context.");
     const loaded = await deps.loadContext(input), products = loaded.products || [], groups = loaded.context.groups || [];
     if (!products.length) throw new Error("No verified product photographs were found for this context.");
+    if(input.productId&&!products.some(p=>productKey(p.id)===productKey(input.productId)))throw new Error("This product is outside the selected group. Choose its own workspace.");
+    loaded.context.scopeProductId=input.productId||null;
+    if(input.productId&&input.campaignId&&deps.findLegacyEditorWorkspaces)loaded.context.legacyEditorWorkspaceIds=await deps.findLegacyEditorWorkspaces({campaignId:String(input.campaignId),groupRef:input.groupRef,workspaceId:id});
     const sourceSetId = crypto.randomUUID();
     await Promise.all(products.map((product, position) => ref.collection("sourceSets").doc(sourceSetId).collection("products").doc(sha(String(product.id)).slice(0, 32)).set(clean({ ...product, position }))));
     const prior = saved.exists ? saved.data() : null;
-    const initialGroup = groups.find(group => group.ref === input.groupRef) || groups[0], initialProduct = products.find(product => (product.images || []).length && (!(initialGroup.productIds || []).length || initialGroup.productIds.map(String).includes(String(product.id).split("/").pop()))) || products.find(product => (product.images || []).length) || products[0];
+    const initialGroup = groups.find(group => group.ref === input.groupRef) || groups[0], initialProduct = products.find(product => input.productId&&productKey(product.id)===productKey(input.productId)) || products.find(product => (product.images || []).length && (!(initialGroup.productIds || []).length || initialGroup.productIds.map(String).includes(String(product.id).split("/").pop()))) || products.find(product => (product.images || []).length) || products[0];
     const references = prior && prior.references || [], settings = settingsFor({ productId: initialProduct.id, groupRef: input.groupRef, currentAssetIds:((loaded.context.currentCreative||{}).images||[]).filter(a=>a.groupRef===initialGroup.ref&&!/LOGO/.test(a.fieldType)).map(a=>a.id) }, products, groups, references, formats(),loaded.context.currentCreative);
     await f().db.runTransaction(async tx => { const latest = await tx.get(ref), current = latest.exists ? latest.data() : null;
       if (!!current !== !!prior || current && (Number(current.revision) !== Number(prior.revision) || (current.job && current.job.id || null) !== (prior.job && prior.job.id || null) || active(current.job) || current.job && current.job.inFlight)) throw new Error("The workspace changed while its sources were being refreshed. The current design was preserved.");
@@ -203,6 +214,7 @@ function createAdDesignService(deps) {
     await f().db.runTransaction(async tx => { const s = await tx.get(ref); if (!s.exists) throw new Error("Workspace was not found."); const value = s.data();
       if (value.sourceSetId !== sourceWorkspace.sourceSetId) throw new Error("The gallery changed. Reload the workspace before saving these selections.");
       if (active(value.job)) throw new Error("Wait for the current design to finish before changing its direction.");
+      if(value.context.scopeProductId&&input.productId&&productKey(value.context.scopeProductId)!==productKey(input.productId))throw new Error("Open the selected product’s own workspace.");
       const changingProduct=!!(input.productId&&productKey(input.productId)!==productKey(value.settings.productId)||input.groupRef&&input.groupRef!==value.settings.groupRef),designs=value.productDesigns||{},priorKey=sha([value.settings.groupRef,value.settings.productId]).slice(0,32),nextKey=sha([input.groupRef||value.settings.groupRef,String(input.productId||value.settings.productId)]).slice(0,32);
       const priorDesign=changingProduct&&designs[nextKey];
       const incoming = changingProduct?{...(priorDesign&&priorDesign.settings||{}),productId:input.productId||value.settings.productId,groupRef:input.groupRef||value.settings.groupRef,deviceLinked:priorDesign?priorDesign.settings.deviceLinked!==false:value.settings.deviceLinked!==false}:{ ...value.settings, ...input };
@@ -267,6 +279,43 @@ function createAdDesignService(deps) {
     await target.set(clean(row));return {ok:true,...row,url:await deps.signAsset(asset)};
   }
   function editorScope(w,input){if(String(input.productId)!==String(w.settings.productId)||input.groupRef!==w.settings.groupRef)throw new Error('The advertised product or ad group changed. Reopen the editor for the selected product.');}
+  function savedDesignScope(w){
+    const context=w.context||{},owner=context.campaignId?'campaign:'+context.campaignId:context.approvalId?'approval:'+context.approvalId:'collection:'+context.handle;
+    return f().db.collection(deps.COL.state).doc('adDesignSaved').collection('scopes').doc(sha([owner,w.settings.groupRef,productKey(w.settings.productId)]).slice(0,40));
+  }
+  function savedDesignsRef(w){return savedDesignScope(w).collection('designs');}
+  async function savedDesignTargets(w){const scope=savedDesignScope(w),meta=await scope.get(),aliases=meta.exists&&meta.data().sourceGroups||[];return [{ref:savedDesignsRef(w),groupRef:w.settings.groupRef},...aliases.filter(g=>typeof g==='string'&&g!==w.settings.groupRef).slice(0,12).map(groupRef=>({groupRef,ref:savedDesignsRef({...w,settings:{...w.settings,groupRef}})}))];}
+  async function savedDesignRecord(w,id){for(const target of await savedDesignTargets(w)){const row=await target.ref.doc(id).get();if(row.exists)return {design:row.data(),ref:target.ref.doc(id),groupRef:target.groupRef};}return null;}
+  // Called internally only after Google's complete publication receipt establishes
+  // the real group IDs. The same saved design can follow its product to a new group;
+  // deleting that design removes it from every linked view, without duplicating bytes.
+  async function linkPublishedDesignScopes({campaignId,groups,sourceGroupRef}){
+    for(const g of groups||[]){const w={context:{campaignId},settings:{productId:g.productId,groupRef:g.ref}},ref=savedDesignScope(w),row=await ref.get(),old=row.exists&&row.data().sourceGroups||[],sourceGroups=[...new Set([...old,sourceGroupRef,g.temporaryRef].filter(Boolean))];if(JSON.stringify(old)!==JSON.stringify(sourceGroups))await ref.set({sourceGroups,productId:g.productId,groupRef:g.ref,campaignId});}
+    return {ok:true};
+  }
+  async function savedDesignGallery(w,before){
+    const targets=await savedDesignTargets(w),results=await Promise.all(targets.map(t=>t.ref.select('id','name','productId','groupRef','artboard','device','asset','thumbnail','createdAt','deletedAt','destination').get()));
+    const ordered=[...new Map(results.flatMap(rows=>rows.docs.map(d=>d.data())).filter(d=>!d.deletedAt&&(!before||d.createdAt<before)).map(d=>[d.id,d])).values()].sort((a,b)=>b.createdAt-a.createdAt||a.id.localeCompare(b.id)),page=ordered.slice(0,60);
+    return {savedDesigns:await Promise.all(page.map(async d=>({...d,url:await deps.signAsset(d.asset),thumbnailUrl:await deps.signAsset(d.thumbnail||d.asset)}))),savedDesignCursor:ordered.length>60?page[page.length-1].createdAt:null};
+  }
+  async function editorSavedDesigns(input={}){const w=await read(input.workspaceId);editorScope(w,input);return {ok:true,...await savedDesignGallery(w,input.before)};}
+  async function editorOpenSavedDesign(input={}){
+    const w=await read(input.workspaceId);editorScope(w,input);if(!token(input.id))throw new Error('Choose a saved design.');
+    const found=await savedDesignRecord(w,input.id),design=found&&found.design;if(!design||design.deletedAt)throw new Error('This saved design was deleted or is no longer available.');
+    const sources=[];for(const id of design.sourceIds||[]){const source=await refFor(design.workspaceId).collection('editorSources').doc(id).get();if(!source.exists)throw new Error('A source photo for this design is unavailable.');const p=source.data();
+      if(productKey(p.productId)!==productKey(input.productId)||p.groupRef!==found.groupRef)throw new Error('A saved photo belongs to another product or ad.');
+      if(design.workspaceId!==input.workspaceId||p.groupRef!==input.groupRef)await refFor(input.workspaceId).collection('editorSources').doc(id).set({...p,productId:input.productId,groupRef:input.groupRef});sources.push({...p,groupRef:input.groupRef,url:await deps.signAsset(p.asset)});
+    }
+    return {ok:true,design,sources};
+  }
+  async function editorDeleteSavedDesign(input={}){
+    const w=await read(input.workspaceId);editorScope(w,input);if(!token(input.id))throw new Error('Choose a saved design.');const found=await savedDesignRecord(w,input.id);if(!found)throw new Error('This saved design is unavailable.');const target=found.ref;let design;
+    await f().db.runTransaction(async tx=>{const latest=await tx.get(refFor(input.workspaceId)),row=await tx.get(target);editorScope(latest.data(),input);if(!row.exists)throw new Error('This saved design is unavailable.');design=row.data();tx.set(target,{...design,deletedAt:design.deletedAt||Date.now()});});
+    // Sources can be shared by other editable designs, so only this copy's
+    // uniquely named finished raster and thumbnail are removed.
+    if(deps.deleteSavedDesignAsset)await Promise.all([design.asset,design.thumbnail].filter(Boolean).map(a=>deps.deleteSavedDesignAsset(a,input.id)));
+    await target.set({id:design.id,name:design.name,createdAt:design.createdAt,deletedAt:Date.now()});return {ok:true,id:input.id};
+  }
   function editorKey({productId,groupRef,device,artboard}){
     if(!['shared','desktop','mobile'].includes(device))throw new Error('Choose shared, desktop or mobile artwork.');
     if(!artboard||!token(artboard.key)||!Number.isInteger(artboard.width)||!Number.isInteger(artboard.height)||Math.min(artboard.width,artboard.height)<32||Math.max(artboard.width,artboard.height)>4096||artboard.width*artboard.height>16777216)throw new Error('Use an artboard between 32 and 4096 pixels per side.');
@@ -287,11 +336,16 @@ function createAdDesignService(deps) {
   async function editorState(input={}){
     const {workspaceId,productId,groupRef,device='shared',artboard}=input,ref=refFor(workspaceId),w=await read(workspaceId);editorScope(w,input);
     const rows=await ref.collection('editorDesigns').get(),designs=rows.docs.map(d=>d.data()).filter(d=>d.productId===productId&&d.groupRef===groupRef),id=artboard?editorKey({...input,device}):null;
+    if(!designs.some(d=>d.id===id))for(const legacyId of w.context.legacyEditorWorkspaceIds||[]){
+      const legacy=await refFor(legacyId).collection('editorDesigns').get();
+      for(const row of legacy.docs.map(d=>d.data()).filter(d=>productKey(d.productId)===productKey(productId)&&d.groupRef===groupRef))if(!designs.some(d=>d.id===row.id))designs.push({...row,revision:0,inheritedFrom:row.id,legacyWorkspaceId:legacyId});
+      if(designs.some(d=>d.id===id))break;
+    }
     const own=designs.find(d=>d.id===id),shared=artboard&&device!=='shared'?designs.find(d=>d.id===editorKey({...input,device:'shared'})):null,design=own||shared||null;
-    const sources=[];if(design)for(const key of design.sourceIds||[]){const p=await ref.collection('editorSources').doc(key).get();if(!p.exists)throw new Error('A saved design image is unavailable. Your layers are retained.');const photo=p.data();sources.push({...photo,url:await deps.signAsset(photo.asset)});}
+    const sources=[];if(design)for(const key of design.sourceIds||[]){const p=await (design.legacyWorkspaceId?refFor(design.legacyWorkspaceId):ref).collection('editorSources').doc(key).get();if(!p.exists)throw new Error('A saved design image is unavailable. Your layers are retained.');const photo=p.data();if(productKey(photo.productId)!==productKey(productId)||photo.groupRef!==groupRef)throw new Error('The saved source belongs to another product or group.');if(design.legacyWorkspaceId)await ref.collection('editorSources').doc(key).set({...photo,productId});sources.push({...photo,url:await deps.signAsset(photo.asset)});}
     const exportRows=await ref.collection('editorExports').get(),exports=[];
-    for(const row of exportRows.docs.map(d=>d.data()).filter(e=>e.designId===(design&&design.id||id)).sort((a,b)=>b.createdAt-a.createdAt).slice(0,12))exports.push({...row,url:await deps.signAsset(row.asset),width:row.asset.width,height:row.asset.height});
-    return {ok:true,design:design?{...design,...(!own?{id,revision:0,inheritedFrom:design.id,device}:{})}:null,sources,exports,designs:designs.map(({id,name,device,artboard,revision,updatedAt})=>({id,name,device,artboard,revision,updatedAt}))};
+    for(const row of exportRows.docs.map(d=>d.data()).filter(e=>!e.saveDesignId&&e.designId===(design&&design.id||id)).sort((a,b)=>b.createdAt-a.createdAt).slice(0,12))exports.push({...row,url:await deps.signAsset(row.asset),width:row.asset.width,height:row.asset.height});
+    return {ok:true,...await savedDesignGallery(w),design:design?{...design,...(!own?{id,revision:0,inheritedFrom:design.id,device}:{})}:null,sources,exports,designs:designs.map(({id,name,device,artboard,revision,updatedAt})=>({id,name,device,artboard,revision,updatedAt}))};
   }
   async function editorSave(input={}){
     const {workspaceId,productId,groupRef,device,artboard,expectedRevision=0}=input,ref=refFor(workspaceId),w=await read(workspaceId);editorScope(w,input);
@@ -303,8 +357,11 @@ function createAdDesignService(deps) {
     return {ok:true,id,revision:data.revision,updatedAt:data.updatedAt};
   }
   async function editorExport(input={}){
-    const {workspaceId,format='png',dataBase64,revision,displayOptimized=false}=input,ref=refFor(workspaceId),w=await read(workspaceId);editorScope(w,input);
+    const {workspaceId,format='png',dataBase64,revision,displayOptimized=false,saveDesignId=null}=input,ref=refFor(workspaceId),w=await read(workspaceId);editorScope(w,input);
     const id=editorKey(input),saved=await ref.collection('editorDesigns').doc(id).get();if(!saved.exists||saved.data().revision!==revision)throw new Error('Save the latest editable artwork before exporting.');
+    if(saveDesignId&&!/^saved_[a-f0-9]{32}$/.test(saveDesignId))throw new Error('Invalid saved design copy.');
+    if(saveDesignId&&(format!=='png'||displayOptimized))throw new Error('Saved designs retain a lossless PNG master.');
+    if(saveDesignId){const prior=await savedDesignsRef(w).doc(saveDesignId).get();if(prior.exists&&prior.data().deletedAt)throw new Error('This design copy was deleted. Save a new copy.');}
     if(!['png','jpeg'].includes(format))throw new Error('Export a PNG or JPEG.');
     const chunkBytes=1536*1024,maxBytes=80*1024*1024,uploads=ref.collection('editorExportUploads');let bytes,uploadRef,upload;
     const digest=b=>crypto.createHash('sha256').update(b).digest('hex');
@@ -313,20 +370,20 @@ function createAdDesignService(deps) {
     if(input.phase==='start'){
       if(!Number.isInteger(input.bytes)||input.bytes<1||input.bytes>maxBytes||!/^[a-f0-9]{64}$/.test(input.sha256||''))throw new Error('Use a PNG or JPEG no larger than 80 MiB.');
       // A retry of the same saved raster resumes its immutable, hashed parts.
-      const uploadId='export_'+sha([id,revision,format,!!displayOptimized,input.bytes,input.sha256]).slice(0,40),target=uploads.doc(uploadId),previous=await target.get();
+      const uploadId='export_'+sha([id,revision,format,!!displayOptimized,input.bytes,input.sha256,saveDesignId]).slice(0,40),target=uploads.doc(uploadId),previous=await target.get();
       if(previous.exists&&previous.data().expiresAt>Date.now()){
         if(previous.data().exportId){const done=await ref.collection('editorExports').doc(previous.data().exportId).get();if(done.exists)return {ok:true,...done.data(),url:await deps.signAsset(done.data().asset)};}
         const received=await target.collection('parts').get();return {ok:true,uploadId,chunkBytes,received:received.docs.map(d=>d.data().index)};
       }
       if(previous.exists)await clearParts(target);
       const old=await uploads.get();for(const row of old.docs.filter(d=>d.data().expiresAt<Date.now()&&!d.data().cleanedAt).slice(0,8)){try{await clearParts(uploads.doc(row.id));await uploads.doc(row.id).set({cleanedAt:Date.now()},{merge:true});}catch(_){/* Retry cleanup on the next export. */}}
-      await target.set({id:uploadId,designId:id,revision,format,displayOptimized:!!displayOptimized,bytes:input.bytes,sha256:input.sha256,chunkBytes,parts:Math.ceil(input.bytes/chunkBytes),expiresAt:Date.now()+24*60*60*1000});
+      await target.set({id:uploadId,designId:id,revision,format,displayOptimized:!!displayOptimized,saveDesignId,bytes:input.bytes,sha256:input.sha256,chunkBytes,parts:Math.ceil(input.bytes/chunkBytes),expiresAt:Date.now()+24*60*60*1000});
       return {ok:true,uploadId,chunkBytes};
     }
     if(input.phase){
       if(!['chunk','complete'].includes(input.phase)||!/^export_[a-f0-9]{40}$/.test(input.uploadId||''))throw new Error('Invalid artwork upload session.');
       uploadRef=uploads.doc(input.uploadId);const row=await uploadRef.get();upload=row.exists&&row.data();
-      if(!upload||upload.designId!==id||upload.revision!==revision||upload.format!==format||upload.displayOptimized!==!!displayOptimized||upload.expiresAt<Date.now())throw new Error('This artwork upload expired or belongs to a different design. Export again.');
+      if(!upload||upload.designId!==id||upload.revision!==revision||(upload.saveDesignId||null)!==saveDesignId||upload.format!==format||upload.displayOptimized!==!!displayOptimized||upload.expiresAt<Date.now())throw new Error('This artwork upload expired or belongs to a different design. Export again.');
       if(upload.exportId){const complete=await ref.collection('editorExports').doc(upload.exportId).get();if(complete.exists){const record=complete.data();return {ok:true,...record,url:await deps.signAsset(record.asset)};}}
       if(input.phase==='chunk'){
         if(!Number.isInteger(input.index)||input.index<0||input.index>=upload.parts)throw new Error('Invalid artwork part number.');
@@ -346,9 +403,10 @@ function createAdDesignService(deps) {
     if(meta.width!==board.width||meta.height!==board.height||meta.format!==format||Number(meta.pages||1)>1)throw new Error('The export must match the saved artboard dimensions and file format exactly.');
     const maxDisplayBytes=150000;let output=bytes,quality=100;
     if(displayOptimized&&output.length>maxDisplayBytes){if(format!=='jpeg')throw new Error('Choose JPEG for a smaller Google Display file.');for(const q of [95,90,85,80,75,70,65,60]){output=await sharp(bytes).flatten({background:'#ffffff'}).jpeg({quality:q,chromaSubsampling:'4:4:4'}).toBuffer();quality=q;if(output.length<=maxDisplayBytes)break;}if(output.length>maxDisplayBytes)throw new Error('This design exceeds 150 KB at this size. Simplify the artwork or choose a smaller display size. Editable layers are saved. Uncheck optimization to export the full-quality master.');}
-    const exportId='artwork_'+sha([id,revision,sha(output.toString('base64'))]).slice(0,32),asset=await deps.saveAsset(workspaceId,output,exportId,{width:meta.width,height:meta.height,mimeType:'image/'+format,kind:'finished display artwork'}),record={id:exportId,designId:id,revision,productId:input.productId,groupRef:input.groupRef,asset,format,bytes:output.length,quality,displayOptimized,createdAt:Date.now()};
+    const exportId=saveDesignId||'artwork_'+sha([id,revision,sha(output.toString('base64'))]).slice(0,32),asset=await deps.saveAsset(workspaceId,output,saveDesignId?'saved_design_'+saveDesignId:exportId,{width:meta.width,height:meta.height,mimeType:'image/'+format,kind:'finished display artwork'}),record={id:exportId,designId:id,revision,productId:input.productId,groupRef:input.groupRef,asset,format,bytes:output.length,quality,displayOptimized,saveDesignId,createdAt:Date.now()};
+    let copyRecord=null;if(saveDesignId){const data=saved.data(),thumb=await sharp(bytes).resize({width:360,height:360,fit:"inside",withoutEnlargement:true}).png().toBuffer(),thumbnail=await deps.saveAsset(workspaceId,thumb,"saved_design_"+saveDesignId+"_thumb",{mimeType:"image/png",kind:"saved design thumbnail"});copyRecord={...data,id:saveDesignId,workspaceId,asset,thumbnail,createdAt:Date.now(),destination:(w.context.groups||[]).find(g=>g.ref===input.groupRef)?.url||""};}
     // Recheck the scope/revision after rendering or assembling the upload.
-    await f().db.runTransaction(async tx=>{const latest=await tx.get(ref),design=await tx.get(ref.collection('editorDesigns').doc(id));editorScope(latest.data(),input);if(!design.exists||design.data().revision!==revision)throw new Error('The design changed during export. Export the latest saved artwork.');tx.set(ref.collection('editorExports').doc(exportId),record);if(uploadRef)tx.set(uploadRef,{exportId},{merge:true});});
+    await f().db.runTransaction(async tx=>{const latest=await tx.get(ref),design=await tx.get(ref.collection('editorDesigns').doc(id));editorScope(latest.data(),input);if(!design.exists||design.data().revision!==revision)throw new Error('The design changed during export. Export the latest saved artwork.');tx.set(ref.collection('editorExports').doc(exportId),record);if(copyRecord)tx.set(savedDesignsRef(w).doc(saveDesignId),clean(copyRecord));if(uploadRef)tx.set(uploadRef,{exportId},{merge:true});});
     if(uploadRef)try{await clearParts(uploadRef);await uploadRef.set({cleanedAt:Date.now()},{merge:true});}catch(_){/* Saved artwork is intact; expired-part cleanup will retry. */}
     return {ok:true,...record,url:await deps.signAsset(asset),message:'Exact artwork saved. This is a finished display creative; responsive Ads and Merchant photos keep their separate approval workflow.'};
   }
@@ -584,7 +642,8 @@ function createAdDesignService(deps) {
       if (quality.pass !== true || quality.productFaithful !== true || quality.mobileReadable !== true || Number(quality.score) < 85) throw new Error("The generated design needs changes to product fidelity, framing or mobile clarity before it can enter Approvals.");
       const singleProductDestination=!value.context.campaignId&&!value.context.approvalId||/\/products\//.test(group.url||'');
       const outside = selectedProducts.filter(p => Array.isArray(p.eligibleGroupRefs) && !p.eligibleGroupRefs.includes(group.ref)||singleProductDestination&&String(p.id)!==String(product.id));
-      const publication = {ready:!outside.length,productIds:selectedProductIds.length?selectedProductIds:[String(product.id)],reason:outside.length?"Design saved. These featured products are outside this ad's verified destination or product selection: "+outside.map(p=>p.title).join(", ")+". Open an ad that includes these products, or use photos from this ad's listings, before submitting it for publication.":null};
+      group.requiresProductSplit=isSharedProductGroup(value,group);
+      const publication = {ready:!outside.length&&!group.requiresProductSplit,productIds:selectedProductIds.length?selectedProductIds:[String(product.id)],reason:group.requiresProductSplit?"Design saved. Split the shared group into product groups before publishing this listing’s assets.":outside.length?"Design saved. These featured products are outside this ad's verified destination or product selection: "+outside.map(p=>p.title).join(", ")+". Open an ad that includes these products, or use photos from this ad's listings, before submitting it for publication.":null};
       job.result = { productIds: publication.productIds, publication, brief: copy.brief, copy: copy.copy, assets: job.assets, placementAssets:job.placementAssets, evidence: job.evidence, keywords: group.keywords || product.keywords || [], quality, learningApplications: copy.learningApplications || [], sourceIds: copy.sourceIds || [], inputCoverage: job.inputCoverage, designSettings: value.settings, previewOnlyFormats: group.channel === "search" ? ["portrait"] : [] }; await saveJob({});
       if (!publication.ready) {
         await saveJob({phase:"ready",completedAt:Date.now(),leaseUntil:0,inFlight:null,error:null,progress:{pct:100,label:"Design saved — review its product destination before publication"}});
@@ -599,6 +658,6 @@ function createAdDesignService(deps) {
       await saveJob({ phase: "needs_attention", error: String(error.message || error).slice(0, 900), leaseUntil: 0, progress: { pct: Number(job.progress && job.progress.pct) || 0, label: "Saved work retained — review the unfinished step" } }); throw error;
     }
   }
-  return { workspace, save, upload, crop, start, status, run, editorSource, editorState, editorSave, editorExport };
+  return { workspace, save, upload, crop, start, status, run, editorSource, editorState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorDeleteSavedDesign, linkPublishedDesignScopes };
 }
-module.exports = { createAdDesignService, buildVersionDesignPayload, formatAssets, chosenPlacements, placementMatches, FORMATS, settingsFor, responseText, MAX_UPLOAD };
+module.exports = { createAdDesignService, buildVersionDesignPayload, isSharedProductGroup, formatAssets, chosenPlacements, placementMatches, FORMATS, settingsFor, responseText, MAX_UPLOAD };
