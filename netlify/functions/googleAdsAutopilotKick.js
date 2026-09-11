@@ -126,6 +126,16 @@ async function handleAction(body) {
       return out;
     } catch(e) { return {ok:false,error:e.message}; }
   }
+  if (a === 'adDesignEditorAIStatus') {
+    try { return await E.adDesignEditorAIStatus(body); } catch(e) { return {ok:false,error:e.message}; }
+  }
+  if (a === 'startAdDesignEditorAI' || a === 'resumeAdDesignEditorAI') {
+    try {
+      const out=await E[a](body);
+      if(out.queued)await dispatchTask('adDesignEditorAI',{workspaceId:out.workspaceId,jobId:out.jobId});
+      return out;
+    } catch(e) { return {ok:false,error:e.message}; }
+  }
   if (a === "beginAnalyzeAd") {
     try {
       const out=await E.beginAnalyzeAd({campaignId:body.campaignId||body.id,start:body.start,end:body.end,basis:body.basis,expectedVersion:body.expectedVersion,snapshotHash:body.snapshotHash,retry:!!body.retry});
