@@ -9137,7 +9137,7 @@ async function adDesignGooglePreview({workspaceId,productId,groupRef}={}){
   if(String(productId)!==String(w.settings.productId)||groupRef!==w.settings.groupRef)throw new Error('The product or ad group changed. Request a new preview for the selected group.');
   const group=(w.context.groups||[]).find(g=>g.ref===groupRef),match=/^customers\/(\d+)\/assetGroups\/(\d+)$/.exec(groupRef||'');
   const note='Google renders combinations from assets currently attached to this asset group. Unsent Creative Studio artwork and unapproved workspace edits are not included. Previews illustrate possible placements; they do not guarantee every impression.';
-  if(!group||group.channel!=='pmax'||!match)return {ok:true,supported:false,adsUrl:'https://ads.google.com/aw/ads',message:'A shareable Google preview requires an existing Performance Max asset group. For uploaded Display artwork, export a listed fixed size and preview the uploaded image in Google Ads before saving the ad.'};
+  if(!group||group.channel!=='pmax'||!match)return {ok:true,supported:false,scope:'unsupported',embeddable:false,message:'Google-rendered previews require an existing Performance Max asset group with linked assets. Google’s API does not offer native Responsive Search or Responsive Display previews. Compare your current artwork and local layouts in this workspace.'};
   if(match[1]!==String(CID)||!/^\d+$/.test(String(w.context.campaignId||'')))throw new Error('The asset group is not in this connected Google Ads campaign.');
   const groups=await gaql("SELECT asset_group.resource_name, campaign.id FROM asset_group WHERE asset_group.resource_name = '"+groupRef+"' AND campaign.id = "+w.context.campaignId+" AND asset_group.status != 'REMOVED'");
   if(!groups.some(r=>r.assetGroup?.resourceName===groupRef&&String(r.campaign?.id)===String(w.context.campaignId)))throw new Error('This asset group is no longer available in the selected campaign. Refresh sources.');
@@ -9146,8 +9146,8 @@ async function adDesignGooglePreview({workspaceId,productId,groupRef}={}){
   if(!response.ok)throw new Error('Google could not generate this preview: '+_gadsErrorSummary(data));
   const row=legacy?(data.responses||[]).find(r=>String(r.assetGroupIdentifier?.assetGroupId)===match[2]):(data.result?.previews||[]).find(r=>r.assetGroup===groupRef),result=legacy?row?.shareablePreviewResult:row;
   const url=result?.uiPreviewResult?.shareablePreviewUrl||result?.shareablePreviewUrl;let parsed;try{parsed=new URL(url);}catch(_){}
-  if(!parsed||parsed.protocol!=='https:'||!(parsed.hostname==='google.com'||parsed.hostname.endsWith('.google.com')))throw new Error('Google returned no usable preview for this group. Open the asset group in Google Ads and choose Assets → Share preview.');
-  return {ok:true,supported:true,url,expiresAt:result.expirationDateTime||null,generatedAt:Date.now(),groupRef,groupName:group.name,scope:'current_google_assets',includesEditorArtwork:false,message:note};
+  if(!parsed||parsed.protocol!=='https:'||!(parsed.hostname==='google.com'||parsed.hostname.endsWith('.google.com')))throw new Error('Google returned no usable preview for this group. Confirm the group has linked image and text assets, then request the preview again.');
+  return {ok:true,supported:true,url,expiresAt:result.expirationDateTime||null,generatedAt:Date.now(),groupRef,groupName:group.name,scope:'current_google_assets',embeddable:false,includesEditorArtwork:false,message:note};
 }
 async function uploadAdDesignReference(input){return _designEngine().upload(input);}
 async function startAdDesign(input){return _designEngine().start(input);}
