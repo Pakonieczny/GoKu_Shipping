@@ -1371,6 +1371,7 @@ async function clearLedger({ keep } = {}) {
 async function enqueueApproval(item, { id, guard } = {}) {
   // item: { type:'creative'|'budget'|'negatives'|'keywords'|'pmax', summary, payload, experimentId, vetted }
   const f = fb(); if (!f) return null;
+  const tag=approvalTag(item);if(tag)await _assertOpportunityNotDeleted(item.type==='pmax'?'pmax':'search',tag);
   const data = {
     ...item, vetted: needsCreativeReview(item) ? false : !!item.vetted, status: "PENDING", creative: needsCreativeReview(item) ? {schema:1,phase:"not_started"} : null, createdAt: f.FV.serverTimestamp()
   };
@@ -1633,6 +1634,8 @@ async function applyApproval(id, ctrl) {
   let dispatched=false, publicationResult=null;
   try {
     const p=it.payload||{};
+    if(it.archivedAt||it.deletedAt)throw new Error('This proposed ad was deleted.');
+    const deleted=await _deletedCampaignIds();for(const campaignId of deleted)if(_approvalForCampaign(it,campaignId))throw new Error('This campaign was deleted.');
     if(_isAdVersionApproval(it))await _guardAdVersionApproval(it);
     if(p.groupSplitGuard)await _guardProductGroupSplit(it);
     if(p.groupActivationGuard)await _guardProductGroupActivation(it);
@@ -3017,7 +3020,8 @@ async function metricsRange({ start, end } = {}) {
   }
   if (!scheduleAvailable) warnings.push("Campaign schedules could not be refreshed. Performance dates remain the selected reporting range.");
   const activeInRange = new Set(report.rows.filter(r => { const m = r.metrics || {}; return [m.impressions, m.clicks, m.costMicros, m.conversions, m.conversionsValue, m.conversionsByConversionDate, m.conversionsValueByConversionDate].some(v => Number(v) !== 0 && Number.isFinite(Number(v))); }).map(r => String((r.campaign || {}).id)));
-  const snapshot = Object.values(byId).filter(c => c.status !== "REMOVED" || activeInRange.has(c.id)); snapshot.forEach(c => c.opportunityLane = _campaignOpportunityLane(c));
+  const deleted=await _deletedCampaignIds();
+  const snapshot = Object.values(byId).filter(c => !deleted.has(c.id)&&(c.status !== "REMOVED" || activeInRange.has(c.id))); snapshot.forEach(c => c.opportunityLane = _campaignOpportunityLane(c));
   await _attachCampaignVersions(snapshot);
   return { ok: true, snapshot, range, ...context, currency: fx.currency, fxIncomplete: fx.fxIncomplete, cdAvailable: report.cd, scheduleAvailable, includesRemovedWithActivity: true, warnings };
 }
@@ -4321,6 +4325,7 @@ async function pmaxPreviewData({ handle, titles, n } = {}) {
 }
 
 async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, itemIds, productTitles, feedLabel, searchThemes, offerDetails } = {}, design = {}) {
+  await _assertOpportunityNotDeleted('pmax',_pmaxTag(handle,feedLabel));
   const researchDb = fb();
   if (!researchDb) throw new Error("Product research is unavailable. Try refreshing research shortly.");
   if(design.approvalId){
@@ -5712,11 +5717,88 @@ Return ONLY JSON: {"occasions":[{"label":"","daysOut":<int>,"recommendation":"pu
 }
 
 /* ===================== Manual campaign enable / pause ===================== */
+// Deletion removes active records, never their evidence. Existing version,
+// metrics, approval, workspace, asset and paid-output documents remain in place.
+function _adArchive(){const f=fb();if(!f)throw new Error('Firebase history storage is unavailable.');return f.db.collection(COL.state).doc('adArchive');}
+async function _deletedCampaignIds(){if(!fb())return new Set();const q=await _adArchive().collection('campaigns').where('status','==','REMOVED').get();return new Set(q.docs.map(d=>d.id));}
+async function _assertCampaignNotDeleted(id){if(!id)return;const s=await _adArchive().collection('campaigns').doc(String(id)).get();if(s.exists&&['DELETING','REMOVE_UNKNOWN','REMOVED'].includes(s.data().status))throw new Error('This campaign is being deleted or has been deleted. Its history is preserved.');}
+function _approvalForCampaign(item,id,name){
+  const p=item.payload||{},refs=[item.campaignId,p.campaignId,p.meta?.existingCampaignId,p.versionGuard?.campaignId,p.groupSplitGuard?.campaignId,p.groupActivationGuard?.campaignId,...(item.publishedCampaignIds||[]),...(item.learningPublication?.campaignIds||[])];
+  if(refs.some(x=>String(x||'')===id))return true;
+  const visit=x=>typeof x==='string'?x===`customers/${CID}/campaigns/${id}`:!!x&&typeof x==='object'&&Object.values(x).some(visit);
+  return visit(p)||!!name&&approvalTag(item)===String(name).replace(/^BA · /,'');
+}
+async function deleteCampaign({id}={}, {ctrl}={}){
+  id=String(id||'');if(!/^\d+$/.test(id))throw new Error('Invalid campaign ID.');ctrl=ctrl||await control();
+  const f=fb(),archive=_adArchive().collection('campaigns').doc(id),resourceName=`customers/${CID}/campaigns/${id}`;
+  // Dry run validates the same remove operation without hiding or archiving an active ad.
+  if(ctrl.dryRun){await mutate('campaigns',[{remove:resourceName}],{ctrl,label:'validate-delete:'+id});return {ok:true,id,status:'REMOVED',dryRun:true};}
+  const owner=require('crypto').randomUUID(),lock=f.db.collection(COL.state).doc('publicationLease');
+  await f.db.runTransaction(async tx=>{const lease=await tx.get(lock);if(lease.exists&&lease.data().until>Date.now())throw new Error('Another publication or deletion is running. Wait for its saved result.');tx.set(lock,{owner,until:Date.now()+600000});});
+  let dispatched=false,confirmed=false;
+  try{
+    const prior=await archive.get();if(prior.exists&&prior.data().status==='REMOVED')return {ok:true,id,status:'REMOVED',dryRun:false,cached:true};
+    const rows=await gaql(`SELECT campaign.id, campaign.resource_name, campaign.name, campaign.status, campaign.advertising_channel_type, campaign.bidding_strategy_type, campaign.start_date_time, campaign.end_date_time, campaign_budget.resource_name, campaign_budget.amount_micros FROM campaign WHERE campaign.id = ${id}`),campaign=rows[0]?.campaign;
+    if(!campaign)throw new Error('Campaign was not found in this Google Ads account.');
+    const [approvals,workspaces]=await Promise.all([f.db.collection(COL.approvals).get(),f.db.collection(COL.state).doc('adDesign').collection('workspaces').where('context.campaignId','==',id).get()]);
+    const related=approvals.docs.filter(d=>_approvalForCampaign(d.data(),id,campaign.name));
+    if(related.some(d=>['APPLYING','APPLY_UNKNOWN'].includes(d.data().status)||(d.data().creativeLease?.until||0)>Date.now()))throw new Error('A related ad operation is running or unconfirmed. Resolve its saved result before deleting the campaign.');
+    if(campaign.status!=='REMOVED'){
+      const snapshot=await _captureCampaignEditableSnapshot(id);
+      if(!snapshot.complete)throw new Error('The complete current campaign could not be archived. Nothing was deleted. '+(snapshot.warnings||[]).join(' ').slice(0,350));
+      // Keep each full document separately to avoid the archive document size limit.
+      await archive.collection('evidence').doc('beforeRemoval').set({snapshot,configuration:rows[0],savedAt:Date.now()});
+      const report=await _reportContext(),history=await _gaqlBothBases(extra=>`SELECT campaign.id, segments.date, metrics.cost_micros, metrics.conversions, metrics.conversions_value, metrics.clicks, metrics.impressions${extra} FROM campaign WHERE campaign.id = ${id} AND segments.date BETWEEN '2000-01-01' AND '${report.accountToday}'`);
+      for(let i=0;i<history.rows.length;i+=350){const batch=f.db.batch();for(const row of history.rows.slice(i,i+350)){const date=_dateOnly(row.segments?.date);if(!date)throw new Error('A historical reporting date could not be archived. Nothing was deleted.');batch.set(archive.collection('dailyMetrics').doc(date),{...row,currency:report.budgetCurrency,capturedAt:Date.now()});}await batch.commit();}
+      await archive.set({id,resourceName,name:campaign.name,status:'DELETING',requestedAt:prior.data()?.requestedAt||Date.now(),historyPreserved:true,metricsDays:history.rows.length,metricsCurrency:report.budgetCurrency,versionHistoryPath:_campaignVersionRef(f,id).path,metricsCollection:COL.metrics,approvalIds:related.map(d=>d.id),workspaceIds:workspaces.docs.map(d=>d.id),historyNote:'All recorded versions, metrics, approvals, workspaces and paid outputs are retained. Earlier unrecorded edits cannot be reconstructed.'},{merge:true});
+    }else{
+      confirmed=true;
+      await archive.set({id,resourceName,name:campaign.name,status:'DELETING',historyPreserved:true,googleRemovalConfirmedAt:Date.now()},{merge:true});
+    }
+    // Archive originals before changing active statuses. Never remove an asset file.
+    // The activity ledger is periodically pruned. Freeze its available account
+    // context too, including events whose old records did not carry campaign IDs.
+    const activity=await f.db.collection(COL.ledger).get();
+    for(let i=0;i<activity.docs.length;i+=350){const batch=f.db.batch();for(const d of activity.docs.slice(i,i+350))batch.set(archive.collection('activityContext').doc(d.id),{original:d.data(),sourcePath:d.ref.path});await batch.commit();}
+    for(const d of related){const original=archive.collection('approvals').doc(d.id);if(!(await original.get()).exists)await original.set({original:d.data(),sourcePath:d.ref.path,savedAt:Date.now()});}
+    for(const d of workspaces.docs)await archive.collection('workspaces').doc(d.id).set({sourcePath:d.ref.path,savedAt:Date.now(),historyRetainedInPlace:true});
+    if(!confirmed){const receipt=await mutate('campaigns',[{remove:resourceName}],{ctrl,label:'delete-campaign:'+id,onDispatch:()=>{dispatched=true;}});confirmed=true;await archive.set({googleRemovalConfirmedAt:Date.now(),removalReceipt:receipt},{merge:true});}
+    for(const d of related)await d.ref.update({archivedAt:Date.now(),archivedCampaignId:id,...(['PENDING','APPROVED'].includes(d.data().status)?{status:'REJECTED',priorStatus:d.data().status,rejectionReason:'Campaign deleted'}:{})});
+    for(const d of workspaces.docs)await d.ref.update({archivedAt:Date.now(),archivedCampaignId:id});
+    await archive.set({status:'REMOVED',deletedAt:Date.now(),error:null},{merge:true});
+    _invalidateCampaignImprovement(id);
+    return {ok:true,id,status:'REMOVED',dryRun:false,historyPreserved:true};
+  }catch(error){await archive.set({id,status:confirmed||dispatched&&!error.definiteResponse?'REMOVE_UNKNOWN':'DELETE_FAILED',error:String(error.message||error).slice(0,600),updatedAt:Date.now()},{merge:true}).catch(()=>{});throw error;}
+  finally{await f.db.runTransaction(async tx=>{const lease=await tx.get(lock);if(lease.exists&&lease.data().owner===owner)tx.delete(lock);});}
+}
+function _opportunityArchiveId(channel,tag){return creativeHash([channel,tag]).slice(0,48);}
+async function _deletedOpportunityTags(){const rows=await _adArchive().collection('opportunities').get();return new Set(rows.docs.map(d=>d.data().channel+'|'+d.data().tag));}
+async function _assertOpportunityNotDeleted(channel,tag){const s=await _adArchive().collection('opportunities').doc(_opportunityArchiveId(channel,tag)).get();if(s.exists)throw new Error('This proposed ad was deleted. Choose another opportunity.');}
+async function deleteOpportunity({channel,tag}={}){
+  if(!['search','pmax'].includes(channel)||typeof tag!=='string'||!tag||tag.length>240)throw new Error('Choose a valid proposed ad.');
+  const ref=_adArchive().collection('opportunities').doc(_opportunityArchiveId(channel,tag)),prior=await ref.get();if(prior.exists)return {ok:true,channel,tag,cached:true};
+  const state=await fb().db.collection(COL.state).doc('opportunities').get(),data=state.exists?state.data():{},list=channel==='pmax'?data.pmaxList:data.list;
+  const opportunity=(list||[]).find(o=>(channel==='pmax'?_pmaxTag(o.handle,o.feedLabel):oppTag(o.collectionHandle,o.occasion))===tag);
+  if(!opportunity)throw new Error('This proposed ad is no longer in the saved opportunities. Refresh the list.');
+  const used=(await takenTags())[tag];if(used&&used.status!=='REMOVED')throw new Error('This opportunity already has an ad or review draft. Delete it from that card.');
+  await ref.set({channel,tag,opportunity,deletedAt:Date.now(),sourceScanAt:(channel==='pmax'?data.pmaxAt:data.at)||null,historyPreserved:true});
+  return {ok:true,channel,tag,historyPreserved:true};
+}
+async function deleteProposedAd({id}={}){
+  if(!/^[a-zA-Z0-9_-]{1,150}$/.test(String(id||'')))throw new Error('Invalid proposed ad.');
+  const f=fb(),ref=f.db.collection(COL.approvals).doc(String(id)),archive=_adArchive().collection('proposals').doc(String(id));
+  await f.db.runTransaction(async tx=>{const snap=await tx.get(ref),old=await tx.get(archive);if(!snap.exists)throw new Error('Draft not found.');const d=snap.data();if(old.exists&&d.status==='REJECTED')return;
+    if(!['PENDING','APPROVED'].includes(d.status)||(d.creativeLease?.until||0)>Date.now())throw new Error('This draft has an active or unconfirmed operation. Wait for its result before deleting.');
+    tx.set(archive,{original:d,sourcePath:ref.path,deletedAt:Date.now(),historyPreserved:true});tx.update(ref,{status:'REJECTED',deletedAt:Date.now(),priorStatus:d.status});
+  });return {ok:true,id,status:'REJECTED',historyPreserved:true};
+}
 // Flip a single campaign ENABLED/PAUSED. Same update+updateMask shape as the
 // (working) budget reallocation path, on the campaigns service. Honors dry-run.
 async function setCampaignStatus(campaignId, status, { ctrl } = {}) {
   ctrl = ctrl || (await control());
   status = String(status || "").toUpperCase();
+  if(status==='REMOVED')return deleteCampaign({id:campaignId},{ctrl});
+  await _assertCampaignNotDeleted(campaignId);
   if (status !== "ENABLED" && status !== "PAUSED" && status !== "REMOVED") throw new Error("status must be ENABLED, PAUSED, or REMOVED");
   const id = String(campaignId).replace(/\D/g, "");
   if (!id) throw new Error("missing campaign id");
@@ -6559,6 +6641,7 @@ async function takenTags() {
 // "unused" from "already acted on" and never re-suggest a taken campaign.
 async function opportunitiesWithStatus({ force, cacheOnly, runId } = {}) {
   const r = await scanOpportunities({ force, cacheOnly, runId });
+  const deleted=await _deletedOpportunityTags();
   let taken = {}, takenError = null; const takenT=Date.now();
   try { taken = await takenTags(); takenError = (taken._errors || []).join(" ") || null; } catch (e) { takenError=(e&&e.message)||String(e); }
   if (force && r.scanAudit) { const a=Object.assign({},r.scanAudit,{checks:Array.isArray(r.scanAudit.checks)?r.scanAudit.checks.slice():[]}); await _auditEvent(a,{id:"campaign_reconciliation",category:"Google Ads API",label:"Approvals and live campaign reconciliation",status:takenError?"warning":"ok",startedAt:takenT,endedAt:Date.now(),tookMs:Date.now()-takenT,detail:takenError?"Could not fully verify whether recommendations are already in use.":`${Object.keys(taken).length} approval/campaign tag(s) reconciled to prevent duplicates.`,source:"Firestore approvals + Google Ads campaigns",error:takenError,fallback:takenError?"Opportunity cards may omit some in-use states until refresh.":null}); r.scanAudit=_auditPayload(a); }
@@ -6590,12 +6673,12 @@ async function opportunitiesWithStatus({ force, cacheOnly, runId } = {}) {
   // Expired windows are dead; archived campaigns are terminal: drop both from every list
   // (not "in use", not re-suggested as "unused"). Live/paused/approval states stay,
   // shown with their actual status.
-  .filter(o => !o._expired)
+  .filter(o => !o._expired&&!deleted.has('search|'+o.tag))
   .filter(o => !(o.acted && o.acted.where === "campaign" && o.acted.status === "REMOVED"));
   const pmaxList = (r.pmaxList || []).map(o => {
     const tag = _pmaxTag(o.handle,o.feedLabel), legacyTag = _pmaxTag(o.handle,null);
     return Object.assign({}, o, { tag, acted: taken[tag] || taken[legacyTag] || null });
-  }).filter(o => !(o.acted && o.acted.where === "campaign" && o.acted.status === "REMOVED"));
+  }).filter(o => !deleted.has('pmax|'+o.tag)&&!(o.acted && o.acted.where === "campaign" && o.acted.status === "REMOVED"));
   return { researchStatus: _opportunityResearchStatus(r), opportunities, pmaxList, pmaxError: r.pmaxError || null, pmaxAt: r.pmaxAt || null,
     scannedAt: r.scannedAt, scanning: !!r.scanning, taken, lastError: r.lastError || r.error || null,
     lastErrorAt: r.lastErrorAt || null, progress: r.progress || null, scanAudit:r.scanAudit||null,
@@ -8618,6 +8701,10 @@ async function dashboard() {
     await _attachCampaignVersions(out.lastMetrics);
     out.campaignInventory = { ok: true, checkedAt: Date.now() };
   } catch (e) { out.campaignInventory = { ok: false, message: "Live campaign details could not be refreshed; showing the saved snapshot." }; }
+  const deleted=await _deletedCampaignIds();out.deletedCampaignIds=[...deleted];
+  out.lastMetrics=(out.lastMetrics||[]).filter(c=>!deleted.has(String(c.id)));
+  out.metricsSeries=out.metricsSeries.map(row=>({...row,snapshot:(row.snapshot||[]).filter(c=>!deleted.has(String(c.id)))}));
+  out.pending=out.pending.filter(x=>!x.archivedAt&&!x.deletedAt);
   try { out.conversionHealth = await conversionHealth(); } catch (e) { out.conversionHealth = null; }
   try { out.recentOrders = await recentOrders({ limit: 200 }); } catch (e) { out.recentOrders = []; }
   return out;
@@ -9015,8 +9102,8 @@ function _groupService(){
   if(!_groupsService)_groupsService=require('./googleAdsGroups').createGroupsService({CID,fb,COL,linkDesignScopes:input=>_designEngine().linkPublishedDesignScopes(input),buildSearch:buildSearchCampaignOps,reportContext:_reportContext,validatedRange:_validatedReportRange,gaql,verifiedBasis:_verifiedCampaignAnalysisBasis,loadContext:input=>_adDesignContextReader.loadContext(input),buildPmax:buildPmaxCampaignOps,enqueueApproval});
   return _groupsService;
 }
-async function adGroups(input){return _groupService().index(input);}
-async function adGroupDetail(input){return _groupService().detail(input);}
+async function adGroups(input){const out=await _groupService().index(input),deleted=await _deletedCampaignIds();out.groups=(out.groups||[]).filter(g=>!deleted.has(String(g.campaignId)));return out;}
+async function adGroupDetail(input){await _assertCampaignNotDeleted(input.campaignId);return _groupService().detail(input);}
 async function draftAdGroupSplit(input){return _groupService().draftSplit(input);}
 async function draftAdGroupActivation(input){return _groupService().draftActivation(input);}
 async function _guardProductGroupActivation(item){const p=item.payload||{},g=p.groupActivationGuard;if(!g)return;const b=await _groupService().activationBasis(g.splitId);if(b.version!==g.expectedVersion||b.snapshotHash!==g.snapshotHash||creativeHash(b.before)!==creativeHash(g.before)||creativeHash(b.operations)!==creativeHash(p.mutateOperations))throw new Error('The product groups changed. Review a fresh switch before publishing.');}
@@ -9039,12 +9126,18 @@ async function _findLegacyEditorWorkspaces({campaignId,groupRef,workspaceId}){
 }
 function _adDesignWorkspaceRef(id){if(!/^[a-zA-Z0-9_-]{1,100}$/.test(String(id||"")))throw new Error("Invalid design workspace.");return fb().db.collection(COL.state).doc("adDesign").collection("workspaces").doc(id);}
 async function _verifyAdDesignContext(workspace){
+  if(workspace.archivedAt)throw new Error('This ad was deleted. Its design history is preserved.');
   const c=workspace.context||{};if(c.generationAllowed===false)throw new Error("Select an exact researched product offer before generating an ad.");
+  if(c.campaignId)await _assertCampaignNotDeleted(c.campaignId);
   if(c.approvalId){const s=await fb().db.collection(COL.approvals).doc(c.approvalId).get();if(!s.exists||s.data().status!=="PENDING"||(s.data().creativeLease||{}).until>Date.now())throw new Error("This approval is no longer available for design.");if(c.approvalPayloadHash&&creativeHash(s.data().payload||{})!==c.approvalPayloadHash)throw new Error("The approval changed. Refresh its sources before generating another design.");if(s.data().payload?.groupSplitGuard)await _guardProductGroupSplit(s.data());}
   if(!c.campaignId&&!c.approvalId){
-    const state=await fb().db.collection(COL.state).doc("opportunities").get();
-    _pmaxResearchCandidate(state.exists?state.data():null,c);
-    const ids=[...new Set((c.itemIds||[]).map(String))],live=await merchantProducts({force:true,itemIds:ids});
+    await _assertOpportunityNotDeleted('pmax',_pmaxTag(c.handle,c.feedLabel));
+    // Draft research and canvas editing do not create a campaign. The researched
+    // opportunity gate remains in generatePmaxApproval, when a campaign is built.
+    // Verify the saved exact offers here so old or unrelated feed IDs cannot be used.
+    const ids=[...new Set((c.itemIds||[]).map(String))];
+    if(!ids.length)throw new Error("Choose a verified product offer before researching this design.");
+    const live=await merchantProducts({force:true,itemIds:ids});
     const eligible=new Set(live.filter(p=>_pmaxIsEligible(p)&&(!c.feedLabel||!p.feedLabel||String(c.feedLabel).toUpperCase()===String(p.feedLabel).toUpperCase())).map(p=>String(p.itemId).toLowerCase()));
     if(ids.some(id=>!eligible.has(id.toLowerCase())))throw new Error("A selected offer is no longer eligible. Refresh product research before generating its design.");
   }
@@ -9117,7 +9210,7 @@ function _designEngine(){
     _adDesignEngine=require("./googleAdsAdDesign").createAdDesignService({fb,COL,env:ENV,control,..._designEngineAdapters(),loadContext:input=>_adDesignContextReader.loadContext(input),currentCreative:require("./googleAdsAdDesignContext").extractCurrentCreative,verifyBasis:_verifiedCampaignAnalysisBasis,verifyContext:_verifyAdDesignContext,findLegacyEditorWorkspaces:_findLegacyEditorWorkspaces,research,saveAsset:_saveCreativeAsset,loadAsset:_loadCreativeAsset,deleteAsset:_deleteCreativeAsset,deleteSavedDesignAsset:_deleteSavedDesignAsset,finish:_finishAdDesign,reviewStatus:_adDesignApprovalReview});
   }return _adDesignEngine;
 }
-async function adDesignWorkspace(input){return _designEngine().workspace(input);}
+async function adDesignWorkspace(input){if(input.campaignId)await _assertCampaignNotDeleted(input.campaignId);return _designEngine().workspace(input);}
 async function saveAdDesign(input){return _designEngine().save(input);}
 async function cropAdDesignImage(input){return _designEngine().crop(input);}
 async function adDesignEditorSource(input){return _designEngine().editorSource(input);}
@@ -9387,7 +9480,7 @@ module.exports = {
   generateRSAAssets, buildSearchCampaignOps, buildCampaignAssets, planCampaign, accountCvr, collectionProfiles, productSalesMap, bumpBestSellers, keywordResearch, keywordResearchPool, researchOpportunity, mergeKeywordResearch, keywordDiag, metricsRange, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
-  scanOpportunities, opportunitiesWithStatus, takenTags, releaseOpportunity, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignEndDate, setCampaignBudget, analyzeCampaign,
+  deleteCampaign, deleteOpportunity, deleteProposedAd, scanOpportunities, opportunitiesWithStatus, takenTags, releaseOpportunity, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignEndDate, setCampaignBudget, analyzeCampaign,
   scanDesignStudioOpportunity, designStudioOpportunityStatus, generateDesignStudioApprovals, refreshDesignStudioLearning, designStudioPerformance, buildDesignStudioPmaxCampaignOps, buildDesignStudioSearchCampaignOps,
   generatePmaxApproval, pmaxRecommendationEvidence, pmaxPreviewData, backfillPmaxCreative, upgradePmaxAdStrength, campaignTimeline, merchantCenterId, merchantProducts, pmaxCandidatesFromSignals, proposePmaxOpportunities, buildPmaxCampaignOps, pmaxProductPerformance, merchantFreeProductPerformance,
   listCountries, campaignCountries, setCampaignCountries, setApprovalCountries, setApprovalDates,

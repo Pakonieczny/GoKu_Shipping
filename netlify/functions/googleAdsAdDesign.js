@@ -154,6 +154,7 @@ function createAdDesignService(deps) {
   }
   const creativeFor = workspace => deps.currentCreative ? deps.currentCreative(workspace.sourceSnapshot,workspace.context) : workspace.context.currentCreative || {};
   async function read(id) { const ref=refFor(id),s = await ref.get(); if (!s.exists) throw new Error("Ad Design workspace was not found."); const value=s.data();
+    if(value.archivedAt)throw new Error('This ad was deleted. Its saved design history is preserved.');
     // This precise legacy error was thrown by buildRequest before responses().
     // Recover it without pretending an unknown network request was uncharged.
     if(value.job&&value.job.inFlight&&value.job.inFlight.key==='copy'&&value.job.error==='Product research exceeds the bounded copy allowance; narrow the selected products.'){
@@ -190,7 +191,7 @@ function createAdDesignService(deps) {
     const approvalId = job.result && job.result.publication && job.result.publication.ready === false ? null : job.approvalId || workspace.context.approvalId || null, review = approvalId && deps.reviewStatus ? await deps.reviewStatus(approvalId) : null;
     const gallery=await savedDesignGallery(workspace),imageAccess=deps.imageAccessStatus?deps.imageAccessStatus():null,warnings=[...new Set([...(workspace.context.warnings||[]),...(workspace.refreshWarnings||[]),...(imageAccess?.message?[imageAccess.message]:[])])];
     return { ok: true, workspaceId, revision:Number(workspace.revision||0), sourceVersion: workspace.sourceVersion || null, snapshotHash: workspace.snapshotHash || null,
-      context: {...workspace.context,warnings,currentCreative:creativeFor(workspace)}, imageAccess, products, references, imageLibrary, ...gallery, placements:chosenPlacements(workspace), settings: workspace.settings, messaging, publication:workspace.publication||null, status: job.phase || "draft", phase: job.phase || "draft",
+      context: {...workspace.context,warnings,currentCreative:creativeFor(workspace)}, imageAccess, products, references, imageLibrary, ...gallery, placements:chosenPlacements(workspace), settings: workspace.settings, messaging, jobMode:job.mode||null, publication:workspace.publication||null, status: job.phase || "draft", phase: job.phase || "draft",
       progress: job.progress || { pct: 0, label: "Choose your product, reference images and direction" }, result,
       approvalId, review, error: job.error || null,
       canRetry: !active(job) && (!job.inFlight || hasReceipt) && ["paused", "needs_attention", "queued", "running"].includes(job.phase), needsNewRequestApproval: !!job.inFlight && !active(job) && !hasReceipt,

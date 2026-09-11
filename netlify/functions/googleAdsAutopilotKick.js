@@ -191,12 +191,10 @@ async function handleAction(body) {
   }
   if (a === "creativePrepare") return await dispatchTask("creativePrepare", { id:String(body.id), retry:!!body.retry });
   if (a === "reject") {
-    const ref=f.db.collection(E.COL.approvals).doc(String(body.id));
-    await f.db.runTransaction(async tx=>{const snap=await tx.get(ref);if(!snap.exists)throw new Error("Draft not found.");const d=snap.data();
-      if(!["PENDING","APPROVED"].includes(d.status)||(d.creativeLease&&d.creativeLease.until>Date.now()))throw new Error("This draft has an active or unconfirmed operation. Wait for its result before discarding.");
-      tx.update(ref,{status:"REJECTED"});
-    });return {id:body.id,status:"REJECTED"};
+    return E.deleteProposedAd({id:body.id});
   }
+  if(a==='deleteCampaign')return E.deleteCampaign({id:body.id},{ctrl});
+  if(a==='deleteOpportunity')return E.deleteOpportunity({channel:body.channel,tag:body.tag});
   if (a === "approve" || a === "apply") {
     if (a === "approve") await E.markApprovalApproved(body.id);
     return await dispatchTask("publishApproval", { id:String(body.id) });
