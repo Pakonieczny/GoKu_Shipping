@@ -305,14 +305,52 @@ function createAdDesignService(deps) {
   async function editorExport(input={}){
     const {workspaceId,format='png',dataBase64,revision,displayOptimized=false}=input,ref=refFor(workspaceId),w=await read(workspaceId);editorScope(w,input);
     const id=editorKey(input),saved=await ref.collection('editorDesigns').doc(id).get();if(!saved.exists||saved.data().revision!==revision)throw new Error('Save the latest editable artwork before exporting.');
-    if(!['png','jpeg'].includes(format)||typeof dataBase64!=='string'||dataBase64.length>5700000||!/^[A-Za-z0-9+/]*={0,2}$/.test(dataBase64))throw new Error('Export a PNG or JPEG up to 4 MiB.');
-    const bytes=Buffer.from(dataBase64,'base64');if(bytes.length>4*1024*1024)throw new Error('Use an export no larger than 4 MiB. Your editable design is saved.');
+    if(!['png','jpeg'].includes(format))throw new Error('Export a PNG or JPEG.');
+    const chunkBytes=1536*1024,maxBytes=80*1024*1024,uploads=ref.collection('editorExportUploads');let bytes,uploadRef,upload;
+    const digest=b=>crypto.createHash('sha256').update(b).digest('hex');
+    const decode=(value,limit)=>{if(typeof value!=='string'||!value.length||value.length>Math.ceil(limit/3)*4||value.length%4||!/^[A-Za-z0-9+/]*={0,2}$/.test(value))throw new Error('The artwork upload is incomplete or invalid. Retry the export.');const b=Buffer.from(value,'base64');if(b.length>limit||b.toString('base64')!==value)throw new Error('Invalid artwork upload size.');return b;};
+    const clearParts=async target=>{const parts=await target.collection('parts').get();if(deps.deleteAsset)await Promise.all(parts.docs.map(p=>deps.deleteAsset(p.data().asset)));await f().db.runTransaction(async tx=>{for(const p of parts.docs)tx.delete(target.collection('parts').doc(p.id));});};
+    if(input.phase==='start'){
+      if(!Number.isInteger(input.bytes)||input.bytes<1||input.bytes>maxBytes||!/^[a-f0-9]{64}$/.test(input.sha256||''))throw new Error('Use a PNG or JPEG no larger than 80 MiB.');
+      // A retry of the same saved raster resumes its immutable, hashed parts.
+      const uploadId='export_'+sha([id,revision,format,!!displayOptimized,input.bytes,input.sha256]).slice(0,40),target=uploads.doc(uploadId),previous=await target.get();
+      if(previous.exists&&previous.data().expiresAt>Date.now()){
+        if(previous.data().exportId){const done=await ref.collection('editorExports').doc(previous.data().exportId).get();if(done.exists)return {ok:true,...done.data(),url:await deps.signAsset(done.data().asset)};}
+        const received=await target.collection('parts').get();return {ok:true,uploadId,chunkBytes,received:received.docs.map(d=>d.data().index)};
+      }
+      if(previous.exists)await clearParts(target);
+      const old=await uploads.get();for(const row of old.docs.filter(d=>d.data().expiresAt<Date.now()&&!d.data().cleanedAt).slice(0,8)){try{await clearParts(uploads.doc(row.id));await uploads.doc(row.id).set({cleanedAt:Date.now()},{merge:true});}catch(_){/* Retry cleanup on the next export. */}}
+      await target.set({id:uploadId,designId:id,revision,format,displayOptimized:!!displayOptimized,bytes:input.bytes,sha256:input.sha256,chunkBytes,parts:Math.ceil(input.bytes/chunkBytes),expiresAt:Date.now()+24*60*60*1000});
+      return {ok:true,uploadId,chunkBytes};
+    }
+    if(input.phase){
+      if(!['chunk','complete'].includes(input.phase)||!/^export_[a-f0-9]{40}$/.test(input.uploadId||''))throw new Error('Invalid artwork upload session.');
+      uploadRef=uploads.doc(input.uploadId);const row=await uploadRef.get();upload=row.exists&&row.data();
+      if(!upload||upload.designId!==id||upload.revision!==revision||upload.format!==format||upload.displayOptimized!==!!displayOptimized||upload.expiresAt<Date.now())throw new Error('This artwork upload expired or belongs to a different design. Export again.');
+      if(upload.exportId){const complete=await ref.collection('editorExports').doc(upload.exportId).get();if(complete.exists){const record=complete.data();return {ok:true,...record,url:await deps.signAsset(record.asset)};}}
+      if(input.phase==='chunk'){
+        if(!Number.isInteger(input.index)||input.index<0||input.index>=upload.parts)throw new Error('Invalid artwork part number.');
+        const part=decode(dataBase64,chunkBytes),expected=Math.min(chunkBytes,upload.bytes-input.index*chunkBytes);if(part.length!==expected)throw new Error('The artwork part has an incorrect size. Retry this export.');
+        const target=uploadRef.collection('parts').doc(String(input.index)),hash=digest(part),previous=await target.get();
+        if(previous.exists&&previous.data().sha256===hash)return {ok:true,index:input.index,bytes:part.length};
+        if(previous.exists&&!upload.cleanedAt)throw new Error('The artwork changed during upload. Export the saved design again.');
+        const asset=await deps.saveAsset(workspaceId,part,'editor_part_'+input.uploadId+'_'+input.index,{mimeType:'application/octet-stream',kind:'temporary artwork upload'});
+        await target.set({index:input.index,sha256:hash,asset});return {ok:true,index:input.index,bytes:part.length};
+      }
+      const rows=await uploadRef.collection('parts').get(),parts=rows.docs.map(d=>d.data()).sort((a,b)=>a.index-b.index);
+      if(parts.length!==upload.parts||parts.some((p,i)=>p.index!==i))throw new Error('Some artwork parts have not arrived. Retry the export to resume the upload.');
+      bytes=Buffer.concat(await Promise.all(parts.map(async p=>{const b=await deps.loadAsset(p.asset);if(digest(b)!==p.sha256)throw new Error('An artwork part failed verification. Export again.');return b;})));
+      if(bytes.length!==upload.bytes||digest(bytes)!==upload.sha256)throw new Error('The artwork failed file verification. Your editable layers are saved. Export again.');
+    }else bytes=decode(dataBase64,4*1024*1024);
     const sharp=require('sharp'),meta=await sharp(bytes,{limitInputPixels:16777216}).metadata(),board=saved.data().artboard;
     if(meta.width!==board.width||meta.height!==board.height||meta.format!==format||Number(meta.pages||1)>1)throw new Error('The export must match the saved artboard dimensions and file format exactly.');
     const maxDisplayBytes=150000;let output=bytes,quality=100;
-    if(displayOptimized&&output.length>maxDisplayBytes){if(format!=='jpeg')throw new Error('Choose JPEG for a smaller Google Display file.');for(const q of [95,90,85,80,75,70,65,60]){output=await sharp(bytes).flatten({background:'#ffffff'}).jpeg({quality:q,chromaSubsampling:'4:4:4'}).toBuffer();quality=q;if(output.length<=maxDisplayBytes)break;}if(output.length>maxDisplayBytes)throw new Error('This design exceeds 150 KB at this size. Simplify the artwork or choose a smaller display size. The full-quality master is saved separately.');}
+    if(displayOptimized&&output.length>maxDisplayBytes){if(format!=='jpeg')throw new Error('Choose JPEG for a smaller Google Display file.');for(const q of [95,90,85,80,75,70,65,60]){output=await sharp(bytes).flatten({background:'#ffffff'}).jpeg({quality:q,chromaSubsampling:'4:4:4'}).toBuffer();quality=q;if(output.length<=maxDisplayBytes)break;}if(output.length>maxDisplayBytes)throw new Error('This design exceeds 150 KB at this size. Simplify the artwork or choose a smaller display size. Editable layers are saved. Uncheck optimization to export the full-quality master.');}
     const exportId='artwork_'+sha([id,revision,sha(output.toString('base64'))]).slice(0,32),asset=await deps.saveAsset(workspaceId,output,exportId,{width:meta.width,height:meta.height,mimeType:'image/'+format,kind:'finished display artwork'}),record={id:exportId,designId:id,revision,productId:input.productId,groupRef:input.groupRef,asset,format,bytes:output.length,quality,displayOptimized,createdAt:Date.now()};
-    await ref.collection('editorExports').doc(exportId).set(record);return {ok:true,...record,url:await deps.signAsset(asset),message:'Exact artwork saved. This is a finished display creative; responsive Ads and Merchant photos keep their separate approval workflow.'};
+    // Recheck the scope/revision after rendering or assembling the upload.
+    await f().db.runTransaction(async tx=>{const latest=await tx.get(ref),design=await tx.get(ref.collection('editorDesigns').doc(id));editorScope(latest.data(),input);if(!design.exists||design.data().revision!==revision)throw new Error('The design changed during export. Export the latest saved artwork.');tx.set(ref.collection('editorExports').doc(exportId),record);if(uploadRef)tx.set(uploadRef,{exportId},{merge:true});});
+    if(uploadRef)try{await clearParts(uploadRef);await uploadRef.set({cleanedAt:Date.now()},{merge:true});}catch(_){/* Saved artwork is intact; expired-part cleanup will retry. */}
+    return {ok:true,...record,url:await deps.signAsset(asset),message:'Exact artwork saved. This is a finished display creative; responsive Ads and Merchant photos keep their separate approval workflow.'};
   }
   async function crop({workspaceId,source,device,format,groupRef,rect=null,expectedImageId=null,remove=false}={}) {
     if(!['desktop','mobile'].includes(device)||!FORMATS.some(f=>f.key===format))throw new Error('Choose a desktop or mobile image format.');

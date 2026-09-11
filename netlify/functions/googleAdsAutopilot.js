@@ -8785,6 +8785,10 @@ async function _saveCreativeAsset(id, bytes, kind, info={}) {
   await f.admin.storage().bucket().file(path).save(bytes,{resumable:false,metadata:{contentType:info.mimeType||"image/jpeg",cacheControl:"private,max-age=3600"}});
   return {path,hash,bytes:bytes.length,...info};
 }
+async function _deleteCreativeAsset(a) {
+  if(!a||!/^Brites_GAds_Creative\/[a-zA-Z0-9_-]+\/editor_part_[a-zA-Z0-9_-]+\.jpg$/.test(a.path))throw new Error('Invalid temporary artwork reference.');
+  await fb().admin.storage().bucket().file(a.path).delete({ignoreNotFound:true});
+}
 async function _loadCreativeAsset(a) {
   if(!a||!/^Brites_GAds_Creative\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+\.jpg$/.test(a.path))throw new Error("Invalid creative asset reference.");
   const [b]=await fb().admin.storage().bucket().file(a.path).download();
@@ -9070,7 +9074,7 @@ function _designEngine(){
   if(!_adDesignEngine){
     _adDesignContextReader=require("./googleAdsAdDesignContext").createAdDesignContext({fb,COL,shopifyGql,verifiedBasis:_verifiedCampaignAnalysisBasis,creativeGroups:_creativeGroups,creativeHash,reportContext:_reportContext,validatedRange:_validatedReportRange});
     const research=require("./googleAdsAdDesignResearch").createAdDesignResearch({creativeFetch:_creativeFetch,copyValid:_copyValid,dailyStats,gaql,playbookSlice,storeSalesEvidence,conversionHealth,merchantProducts});
-    _adDesignEngine=require("./googleAdsAdDesign").createAdDesignService({fb,COL,env:ENV,control,..._designEngineAdapters(),loadContext:input=>_adDesignContextReader.loadContext(input),currentCreative:require("./googleAdsAdDesignContext").extractCurrentCreative,verifyBasis:_verifiedCampaignAnalysisBasis,verifyContext:_verifyAdDesignContext,research,saveAsset:_saveCreativeAsset,loadAsset:_loadCreativeAsset,finish:_finishAdDesign,reviewStatus:_adDesignApprovalReview});
+    _adDesignEngine=require("./googleAdsAdDesign").createAdDesignService({fb,COL,env:ENV,control,..._designEngineAdapters(),loadContext:input=>_adDesignContextReader.loadContext(input),currentCreative:require("./googleAdsAdDesignContext").extractCurrentCreative,verifyBasis:_verifiedCampaignAnalysisBasis,verifyContext:_verifyAdDesignContext,research,saveAsset:_saveCreativeAsset,loadAsset:_loadCreativeAsset,deleteAsset:_deleteCreativeAsset,finish:_finishAdDesign,reviewStatus:_adDesignApprovalReview});
   }return _adDesignEngine;
 }
 async function adDesignWorkspace(input){return _designEngine().workspace(input);}
@@ -9080,6 +9084,23 @@ async function adDesignEditorSource(input){return _designEngine().editorSource(i
 async function adDesignEditorState(input){return _designEngine().editorState(input);}
 async function saveAdDesignEditor(input){return _designEngine().editorSave(input);}
 async function exportAdDesignEditor(input){return _designEngine().editorExport(input);}
+async function adDesignGooglePreview({workspaceId,productId,groupRef}={}){
+  const saved=await _adDesignWorkspaceRef(workspaceId).get();if(!saved.exists)throw new Error('Design workspace was not found.');const w=saved.data();
+  if(String(productId)!==String(w.settings.productId)||groupRef!==w.settings.groupRef)throw new Error('The product or ad group changed. Request a new preview for the selected group.');
+  const group=(w.context.groups||[]).find(g=>g.ref===groupRef),match=/^customers\/(\d+)\/assetGroups\/(\d+)$/.exec(groupRef||'');
+  const note='Google renders combinations from assets currently attached to this asset group. Unsent Creative Studio artwork and unapproved workspace edits are not included. Previews illustrate possible placements; they do not guarantee every impression.';
+  if(!group||group.channel!=='pmax'||!match)return {ok:true,supported:false,adsUrl:'https://ads.google.com/aw/ads',message:'A shareable Google preview requires an existing Performance Max asset group. For uploaded Display artwork, export a listed fixed size and preview the uploaded image in Google Ads before saving the ad.'};
+  if(match[1]!==String(CID)||!/^\d+$/.test(String(w.context.campaignId||'')))throw new Error('The asset group is not in this connected Google Ads campaign.');
+  const groups=await gaql("SELECT asset_group.resource_name, campaign.id FROM asset_group WHERE asset_group.resource_name = '"+groupRef+"' AND campaign.id = "+w.context.campaignId+" AND asset_group.status != 'REMOVED'");
+  if(!groups.some(r=>r.assetGroup?.resourceName===groupRef&&String(r.campaign?.id)===String(w.context.campaignId)))throw new Error('This asset group is no longer available in the selected campaign. Refresh sources.');
+  const legacy=Number(V.replace(/^v/,''))<24,body=legacy?{shareablePreviews:[{assetGroupIdentifier:{assetGroupId:match[2]},previewType:'UI_PREVIEW'}]}:{operation:{shareablePreviews:[{assetGroup:groupRef,previewType:'UI_PREVIEW'}]}};
+  const response=await fetch(`${BASE}/customers/${CID}:generateShareablePreviews`,{method:'POST',headers:adsHeaders(await mintToken()),body:JSON.stringify(body)}),data=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error('Google could not generate this preview: '+_gadsErrorSummary(data));
+  const row=legacy?(data.responses||[]).find(r=>String(r.assetGroupIdentifier?.assetGroupId)===match[2]):(data.result?.previews||[]).find(r=>r.assetGroup===groupRef),result=legacy?row?.shareablePreviewResult:row;
+  const url=result?.uiPreviewResult?.shareablePreviewUrl||result?.shareablePreviewUrl;let parsed;try{parsed=new URL(url);}catch(_){}
+  if(!parsed||parsed.protocol!=='https:'||!(parsed.hostname==='google.com'||parsed.hostname.endsWith('.google.com')))throw new Error('Google returned no usable preview for this group. Open the asset group in Google Ads and choose Assets → Share preview.');
+  return {ok:true,supported:true,url,expiresAt:result.expirationDateTime||null,generatedAt:Date.now(),groupRef,groupName:group.name,scope:'current_google_assets',includesEditorArtwork:false,message:note};
+}
 async function uploadAdDesignReference(input){return _designEngine().upload(input);}
 async function startAdDesign(input){return _designEngine().start(input);}
 async function adDesignStatus(input){return _designEngine().status(input);}
@@ -9302,7 +9323,7 @@ async function analyzeAdStatus(input) { return _analysisEngine().analyzeAdStatus
 async function runAnalyzeAd(input) { return _analysisEngine().runAnalyzeAd(input); }
 
 module.exports = {
-  adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, cropAdDesignImage, adDesignEditorSource, adDesignEditorState, saveAdDesignEditor, exportAdDesignEditor, uploadAdDesignReference, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages, adDesignGalleryPage, saveAdDesignCopy, adDesignDelivery, prepareAdDesignPublication, publishAdDesignPublication,
+  adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, cropAdDesignImage, adDesignEditorSource, adDesignEditorState, saveAdDesignEditor, exportAdDesignEditor, adDesignGooglePreview, uploadAdDesignReference, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages, adDesignGalleryPage, saveAdDesignCopy, adDesignDelivery, prepareAdDesignPublication, publishAdDesignPublication,
   reviseCreativeApproval, markApprovalApproved, needsCreativeReview, prepareCreativeApproval, creativeApprovalStatus, reviewCreativeApproval, assertCreativeReviewed, creativeHash,
   COL, V, CID, OPPORTUNITY_ENGINE_VERSION, DESIGN_STUDIO_ENGINE_VERSION, DESIGN_STUDIO_URL,
   control, mintToken, gaql, mutate, mutateAll,
