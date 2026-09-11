@@ -223,22 +223,72 @@ function _gadsErrorSummary(data) {
   if (found.length) return found.slice(0, 4).join(" | ");
   return [root.status, root.message].filter(Boolean).join(": ") || JSON.stringify(data || {}).slice(0, 500);
 }
-async function gaql(query) {
-  const token = await mintToken();
-  const out = [];
-  let pageToken = undefined;
-  do {
-    const res = await fetch(`${BASE}/customers/${CID}/googleAds:search`, {
-      method: "POST",
-      headers: adsHeaders(token),
-      body: JSON.stringify(pageToken ? { query, pageToken } : { query })
+// Google quotas outlive a serverless worker. Share the retry deadline and verified
+// Merchant account identity across workers, without caching mutable eligibility.
+let _gadsReadCache = { at: 0, data: {} }, _gadsReadLoad = null;
+const _gadsReads = new Map();
+function _gadsReadRef() { const f = fb(); return f && CID ? f.db.collection(COL.state).doc('googleAdsRead_' + CID) : null; }
+async function _gadsReadState() {
+  if (Date.now() - _gadsReadCache.at < 15000) return _gadsReadCache.data;
+  if (!_gadsReadLoad) _gadsReadLoad = (async () => {
+    try { const ref = _gadsReadRef(), s = ref && await ref.get(), saved = s && s.exists && s.data();
+      if (saved && saved.customerId === CID) _gadsReadCache.data = { ..._gadsReadCache.data, ...saved, retryAt: Math.max(Number(_gadsReadCache.data.retryAt) || 0, Number(saved.retryAt) || 0) };
+    } catch (_) { /* Keep this worker's known cooldown if storage is unavailable. */ }
+    _gadsReadCache.at = Date.now(); return _gadsReadCache.data;
+  })().finally(() => { _gadsReadLoad = null; });
+  return _gadsReadLoad;
+}
+async function _saveGadsReadState(patch) {
+  _gadsReadCache = { at: Date.now(), data: { ..._gadsReadCache.data, ...patch, customerId: CID, retryAt: Math.max(Number(_gadsReadCache.data.retryAt) || 0, Number(patch.retryAt) || 0) } };
+  try { const ref = _gadsReadRef(); if (!ref) return;
+    const shared = await fb().db.runTransaction(async tx => { const s = await tx.get(ref), prior = s.exists && s.data().customerId === CID ? s.data() : {};
+      const next = { ...patch, customerId: CID, retryAt: Math.max(Number(prior.retryAt) || 0, Number(_gadsReadCache.data.retryAt) || 0) };
+      tx.set(ref, next, { merge: true }); return next;
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error("[gads] search failed: " + _gadsErrorSummary(data));
-    (data.results || []).forEach(r => out.push(r));
-    pageToken = data.nextPageToken;
-  } while (pageToken);
-  return out;
+    _gadsReadCache.data.retryAt = Math.max(Number(_gadsReadCache.data.retryAt) || 0, shared.retryAt);
+  } catch (_) { /* A successful identity lookup or quota response remains usable locally. */ }
+}
+function _gadsQuotaError(retryAt) {
+  const seconds = Math.max(1, Math.ceil((retryAt - Date.now()) / 1000));
+  return Object.assign(new Error('Google Ads request quota is temporarily exhausted. Retry in ' + seconds + ' seconds (after ' + new Date(retryAt).toISOString() + '). Saved drafts are retained.'), { code: 'GADS_QUOTA_EXHAUSTED', retryAt, retryAfterSeconds: seconds });
+}
+function _isGadsQuotaError(error) { return error && (error.code === 'GADS_QUOTA_EXHAUSTED' || /quotaError=RESOURCE_(?:TEMPORARILY_)?EXHAUSTED|\bRESOURCE_EXHAUSTED\b/.test(String(error.message || error))); }
+function _gadsQuotaDeadline(data, res) {
+  const root = data && data.error || {}, summary = _gadsErrorSummary(data);
+  if (!(res.status === 429 || root.status === 'RESOURCE_EXHAUSTED' || /quotaError=RESOURCE_(?:TEMPORARILY_)?EXHAUSTED/.test(summary))) return null;
+  const delays = [], seconds = v => { const n = typeof v === 'object' && v ? Number(v.seconds || 0) + Number(v.nanos || 0) / 1e9 : Number(String(v || '').replace(/s$/, '')); if (Number.isFinite(n) && n > 0) delays.push(n); };
+  for (const d of root.details || []) {
+    seconds(d.retryDelay);
+    for (const e of d.errors || d.googleAdsFailure && d.googleAdsFailure.errors || []) seconds(e.details && e.details.quotaErrorDetails && e.details.quotaErrorDetails.retryDelay);
+  }
+  const match = summary.match(/retry (?:in|after)\s+(\d+(?:\.\d+)?)\s*(?:seconds?|s)\b/i); if (match) seconds(match[1]);
+  const header = res.headers && res.headers.get && res.headers.get('retry-after');
+  if (header) { if (/^\d+(?:\.\d+)?$/.test(header)) seconds(header); else seconds((Date.parse(header) - Date.now()) / 1000); }
+  // Do not retry inside a request or shorten a retry delay explicitly supplied by Google.
+  return Date.now() + Math.ceil((delays.length ? Math.max(...delays) : 60) * 1000);
+}
+async function _assertGadsReadAllowed() { const state = await _gadsReadState(); if (Number(state.retryAt) > Date.now()) throw _gadsQuotaError(state.retryAt); }
+async function gaql(query) {
+  if (_gadsReads.has(query)) return _gadsReads.get(query);
+  const request = (async () => {
+    await _assertGadsReadAllowed();
+    const token = await mintToken(), out = []; let pageToken;
+    do {
+      await _assertGadsReadAllowed();
+      const res = await fetch(`${BASE}/customers/${CID}/googleAds:search`, {
+        method: 'POST', headers: adsHeaders(token), body: JSON.stringify(pageToken ? { query, pageToken } : { query })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { const retryAt = _gadsQuotaDeadline(data, res);
+        if (retryAt) { await _saveGadsReadState({ retryAt, quotaObservedAt: Date.now() }); throw _gadsQuotaError(_gadsReadCache.data.retryAt); }
+        throw new Error('[gads] search failed: ' + _gadsErrorSummary(data));
+      }
+      (data.results || []).forEach(r => out.push(r)); pageToken = data.nextPageToken;
+    } while (pageToken);
+    return out;
+  })();
+  _gadsReads.set(query, request);
+  try { return await request; } finally { if (_gadsReads.get(query) === request) _gadsReads.delete(query); }
 }
 
 /* ============================ Mutations (gated) ============================ */
@@ -3057,7 +3107,7 @@ async function pruneAssets({ ctrl, minImpr = 500 } = {}) {
    Organic signal comes from our own Shopify order log (those organic sales ARE
    the free-listing conversions); scoping uses the canonical product types from
    the collection profiler via listing-group filters. */
-let _mcCache = null;
+let _mcCache = null, _mcLookup = null;
 let _merchantProductsCache = new Map();
 async function merchantCenterId() {
   if (_mcCache) return _mcCache;
@@ -3068,6 +3118,15 @@ async function merchantCenterId() {
   const envId = String(ENV.GMC_MERCHANT_ID || ENV.MERCHANT_CENTER_ID || "").replace(/\D/g, "");
   if (envId) { _mcCache = envId; return _mcCache; }
 
+  const saved = await _gadsReadState();
+  if (/^\d+$/.test(String(saved.merchantId || ''))) { _mcCache = String(saved.merchantId); return _mcCache; }
+  if (!_mcLookup) _mcLookup = _discoverMerchantCenterId().finally(() => { _mcLookup = null; });
+  return _mcLookup;
+}
+async function _discoverMerchantCenterId() {
+  await _assertGadsReadAllowed();
+  const remember = async id => { _mcCache = id; await _saveGadsReadState({ merchantId: id, merchantVerifiedAt: Date.now() }); return id; };
+
   const attempts = [];
   try {
     const rows = await gaql(`SELECT campaign.shopping_setting.merchant_id
@@ -3076,8 +3135,8 @@ async function merchantCenterId() {
       LIMIT 1`);
     const id = rows.map(r => r.campaign && r.campaign.shoppingSetting && r.campaign.shoppingSetting.merchantId)
       .map(v => String(v || "").replace(/\D/g, "")).find(Boolean);
-    if (id) { _mcCache = id; return _mcCache; }
-  } catch (e) { attempts.push("campaign shopping setting: " + String(e.message || e)); }
+    if (id) return await remember(id);
+  } catch (e) { if (_isGadsQuotaError(e)) throw e; attempts.push("campaign shopping setting: " + String(e.message || e)); }
 
   try {
     const rows = await gaql(`SELECT shopping_product.merchant_center_id
@@ -3085,9 +3144,10 @@ async function merchantCenterId() {
       LIMIT 1`);
     const id = rows.map(r => r.shoppingProduct && r.shoppingProduct.merchantCenterId)
       .map(v => String(v || "").replace(/\D/g, "")).find(Boolean);
-    if (id) { _mcCache = id; return _mcCache; }
-  } catch (e) { attempts.push("shopping product catalogue: " + String(e.message || e)); }
+    if (id) return await remember(id);
+  } catch (e) { if (_isGadsQuotaError(e)) throw e; attempts.push("shopping product catalogue: " + String(e.message || e)); }
 
+  if (attempts.length) throw new Error('Merchant Center discovery could not be completed. The account configuration could not be verified. ' + attempts.join(' | ').slice(0, 500));
   throw new Error("No Merchant Center ID could be discovered from a retail campaign or the linked product catalogue. Set GMC_MERCHANT_ID to the numeric Merchant Center account ID. " + attempts.join(" | ").slice(0, 500));
 }
 
@@ -3147,6 +3207,7 @@ async function _merchantGaql(filter, limit = null) {
   const tail = ` FROM shopping_product${filter ? ` WHERE ${filter}` : ""}${limit ? ` LIMIT ${limit}` : ""}`;
   try { const rows = await gaql(`SELECT ${_MERCHANT_SELECT}${tail}`); rows._queryMode = "enriched"; return rows; }
   catch (richErr) {
+    if (_isGadsQuotaError(richErr)) throw richErr;
     // A newly introduced or account-incompatible enrichment field must never
     // take the whole opportunity scan down. The core current-state fields are
     // sufficient to validate exact offers and build a safe PMax product tree.
@@ -3159,7 +3220,7 @@ async function merchantProducts({ force = false, itemIds = [], signals = [], tit
   if (!plan.itemIds.length && !plan.titles.length) return [];
   const key = JSON.stringify([plan.itemIds.slice().sort(), plan.titles.slice().sort()]);
   const cached = _merchantProductsCache.get(key);
-  if (!force && cached && Date.now() - cached.at < 30 * 60 * 1000) return cached.list;
+  if (!force && cached && Date.now() - cached.at < 30 * 60 * 1000) { const list = cached.list.slice(); list._diag = { ...cached.list._diag, fromCache: true }; return list; }
   const merchantId = await merchantCenterId(), found = new Map(), errors = [], requests = [], successfulQueries = { n: 0 }, queryModes = { enriched: 0, coreFallback: 0 }, queryKinds = { exact: 0, feed: 0, account: 0 };
   const noteRequest = (kind, scope, requested, rows, err) => {
     const mode = rows && rows._queryMode || null;
@@ -3185,7 +3246,7 @@ async function merchantProducts({ force = false, itemIds = [], signals = [], tit
     try {
       const rows = await _merchantGaql(`shopping_product.merchant_center_id = ${String(merchantId).replace(/\D/g, "")} AND shopping_product.item_id IN (${part.map(_gaqlString).join(",")})`);
       absorb(rows, "exact"); noteRequest("exact", "offer-ID batch " + exactBatchNo, part.length, rows, null);
-    } catch (e) { errors.push(String(e.message || e)); noteRequest("exact", "offer-ID batch " + exactBatchNo, part.length, null, e); }
+    } catch (e) { if (_isGadsQuotaError(e)) throw e; errors.push(String(e.message || e)); noteRequest("exact", "offer-ID batch " + exactBatchNo, part.length, null, e); }
   }
   const wantedIds = new Set(plan.itemIds.map(x => String(x).toLowerCase()));
   const wantedTitles = plan.titles.map(_pmaxNorm).filter(Boolean);
@@ -3211,7 +3272,7 @@ async function merchantProducts({ force = false, itemIds = [], signals = [], tit
           const titleMatch = wantedTitles.some(t => _pmaxTitleMatch(row.title, t) >= .9);
           if (idMatch || titleMatch) found.set(row.itemId.toLowerCase(), row);
         });
-      } catch (e) { errors.push(String(e.message || e)); noteRequest("feed", "feed label " + label, 1, null, e); }
+      } catch (e) { if (_isGadsQuotaError(e)) throw e; errors.push(String(e.message || e)); noteRequest("feed", "feed label " + label, 1, null, e); }
     }
   }
   // 3) Last-resort account-scope read for nonstandard feed labels. Keep it bounded
@@ -3225,7 +3286,7 @@ async function merchantProducts({ force = false, itemIds = [], signals = [], tit
         const row = _merchantProductRow(r.shoppingProduct || {}, merchantId); if (!row) return;
         if (wantedIds.has(row.itemId.toLowerCase()) || wantedTitles.some(t => _pmaxTitleMatch(row.title, t) >= .9)) found.set(row.itemId.toLowerCase(), row);
       });
-    } catch (e) { errors.push(String(e.message || e)); noteRequest("account", "account-wide bounded fallback", 1, null, e); }
+    } catch (e) { if (_isGadsQuotaError(e)) throw e; errors.push(String(e.message || e)); noteRequest("account", "account-wide bounded fallback", 1, null, e); }
   }
   const list = [...found.values()];
   // Why-not-eligible visibility: when GMC shows "Approved" but the Ads-side
@@ -3237,7 +3298,7 @@ async function merchantProducts({ force = false, itemIds = [], signals = [], tit
     statusBreakdown[st] = (statusBreakdown[st] || 0) + 1;
     availabilityBreakdown[av] = (availabilityBreakdown[av] || 0) + 1;
   });
-  list._diag = { merchantId, requestedOfferIds: plan.itemIds.length, requestedTitles: plan.titles.length,
+  list._diag = { merchantId, checkedAt: Date.now(), fromCache: false, requestedOfferIds: plan.itemIds.length, requestedTitles: plan.titles.length,
     successfulQueries: successfulQueries.n, queryKinds, queryModes, requests: requests.slice(0, 30), matchedProducts: list.length,
     eligibleProducts: list.filter(_pmaxIsEligible).length, statusBreakdown, availabilityBreakdown,
     offerSample: list.slice(0, 8).map(p => ({ itemId: p.itemId, feedLabel: p.feedLabel || null, status: p.status || null, availability: p.availability || null, issues: (p.issues || []).slice(0, 2), title: String(p.title || "").slice(0, 40) })),
@@ -9132,14 +9193,12 @@ async function _verifyAdDesignContext(workspace){
   if(c.approvalId){const s=await fb().db.collection(COL.approvals).doc(c.approvalId).get();if(!s.exists||s.data().status!=="PENDING"||(s.data().creativeLease||{}).until>Date.now())throw new Error("This approval is no longer available for design.");if(c.approvalPayloadHash&&creativeHash(s.data().payload||{})!==c.approvalPayloadHash)throw new Error("The approval changed. Refresh its sources before generating another design.");if(s.data().payload?.groupSplitGuard)await _guardProductGroupSplit(s.data());}
   if(!c.campaignId&&!c.approvalId){
     await _assertOpportunityNotDeleted('pmax',_pmaxTag(c.handle,c.feedLabel));
-    // Draft research and canvas editing do not create a campaign. The researched
-    // opportunity gate remains in generatePmaxApproval, when a campaign is built.
-    // Verify the saved exact offers here so old or unrelated feed IDs cannot be used.
+    // Draft research uses the saved exact product/source bindings and verifies
+    // its current owned listing in research.collect. Live Merchant eligibility
+    // is optional evidence here; generatePmaxApproval and publication keep their
+    // current eligibility gates. Google downtime must not prevent writing a draft.
     const ids=[...new Set((c.itemIds||[]).map(String))];
     if(!ids.length)throw new Error("Choose a verified product offer before researching this design.");
-    const live=await merchantProducts({force:true,itemIds:ids});
-    const eligible=new Set(live.filter(p=>_pmaxIsEligible(p)&&(!c.feedLabel||!p.feedLabel||String(c.feedLabel).toUpperCase()===String(p.feedLabel).toUpperCase())).map(p=>String(p.itemId).toLowerCase()));
-    if(ids.some(id=>!eligible.has(id.toLowerCase())))throw new Error("A selected offer is no longer eligible. Refresh product research before generating its design.");
   }
 }
 async function _adDesignApprovalReview(id){

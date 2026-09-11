@@ -200,8 +200,8 @@ function createAdDesignResearch(D){
         return null;
       })
     ]);
-    const offers=products.map(p=>p.offerId).filter(Boolean);
-    const merchant=await read('merchant','Merchant Center','Current exact-offer eligibility',async()=>offers.length&&D.merchantProducts?D.merchantProducts({itemIds:offers,force:true}):null);
+    const offers=[...new Set(productInput.flatMap(p=>[p.offerId,p.itemId,...(p.offerIds||[])]).filter(Boolean).map(String))];
+    const merchant=await read('merchant','Merchant Center','Recent exact-offer eligibility',async()=>offers.length&&D.merchantProducts?D.merchantProducts({itemIds:offers}):null);
     if(assetOutcomes&&assetOutcomes.length)warnings.push('One converting ad can credit each participating asset. Asset reports use click date and cannot be added together or treated as isolated image lift; exact photo identity must be verified before linking an old asset outcome to the selected source.');
     if(!primaryKeywords.length)warnings.push('No explicit keywords were supplied; Astra must ground buyer intent in the exact product, current destination and observed queries.');
     if(!performance)warnings.push('A matched paid group baseline is unavailable; no measured paid uplift can be asserted.');
