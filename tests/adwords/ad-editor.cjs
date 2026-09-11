@@ -16,6 +16,14 @@ snap=editor.snapBounds(rect(174,270),[rect(187,70,333)],board,.5);check(snap.dx=
 snap=editor.snapBounds(rect(174,270),[rect(187,70,333)],board,2);check(snap.dx===0,'zooming in does not retain an oversized scene-pixel attraction radius');
 snap=editor.snapBounds(rect(290,210),[rect(137,210),rect(449,210)],board,1);check(snap.dx===3&&snap.guides.some(g=>g.kind==='spacing'&&g.segments.every(([a,b])=>b-a===56)),'equal gaps are measured between neighboring layers');
 snap=editor.snapBounds(rect(103,278),[],board,1);check(Math.abs(snap.dx+.6)<.001&&snap.guides.some(g=>g.label==='Safe margin'),'visible safe margins are real snap targets');
+const cropBounds={width:1200,height:900},cropBox={x:200,y:200,width:400,height:300};
+for(const ratio of [0,1,1.91,.8])for(const handle of ['nw','n','ne','e','se','s','sw','w','move'])for(const delta of [-2000,30,2000]){
+ const start=editor.cropFit(cropBox,cropBounds,ratio),r=editor.cropResize(start,handle,delta,-delta,cropBounds,ratio);
+ assert(r.x>=0&&r.y>=0&&r.width>0&&r.height>0&&r.x+r.width<=1200.00001&&r.y+r.height<=900.00001,handle+' stays inside original pixels');
+ if(ratio)assert(Math.abs(r.width/r.height-ratio)<.00001,handle+' preserves its selected ratio');
+}
+check(true,'all eight crop handles and movement preserve source bounds and locked ratios');
+assert.deepEqual(editor.cropResize(cropBox,'se',120,80,cropBounds),{x:200,y:200,width:520,height:380});checks++;
 (async()=>{
   // Optional DOM/canvas integration harness. It executes the actual Fabric build,
   // editor controls and raster export using a test DOM, without accessing Google.
@@ -36,6 +44,21 @@ snap=editor.snapBounds(rect(103,278),[],board,1);check(Math.abs(snap.dx+.6)<.001
     await e.restore(preserved);e.canvas.discardActiveObject();
     const thumb=w.document.createElement('img');thumb.src='data:image/png;base64,aW52YWxpZA==';e.dialog.appendChild(thumb);e.bindPhotoImage(thumb,{url:photoUrl,title:'Fallback photo'});await thumb.onerror();check(thumb.src===photoUrl,'a failed thumbnail automatically retries the original photo');thumb.remove();
     const image=e.canvas.getObjects().find(o=>o.type==='image');check(image&&image.getElement().naturalWidth===2300,'real original photo loads into the canvas at full pixel resolution');e.canvas.setActiveObject(image);e.property(image,'fx_brightness','.1','range');e.property(image,'sourceWidth',String(image.width-200),'number');e.property(image,'cropX','100','number');e.changed();check(image.filters.length===1&&image.cropX===100,'photo effects and crop operate on the actual original image');
+    const tick=()=>new Promise(resolve=>setTimeout(resolve,10));
+    const cropPromise=w.BritesAdEditor.crop({url:photoUrl,ratioKey:'free',rect:{x:.1,y:.1,width:.5,height:.5}}),crop=w.document.querySelector('.bc-dialog'),stage=crop.querySelector('.bc-stage'),cropSelection=crop.querySelector('.bc-selection');
+    stage.getBoundingClientRect=()=>({left:0,top:0,width:230,height:170});
+    for(let tries=0;crop.querySelector('[data-crop-apply]').disabled&&tries<100;tries++)await tick();
+    check(!crop.querySelector('[data-crop-apply]').disabled&&crop.querySelectorAll('[data-crop-handle]').length===8,'crop opens with the original image and eight usable resize handles');
+    const pointer=(target,type,x,y)=>stage['on'+type]({target,button:0,pointerId:1,clientX:x,clientY:y,preventDefault(){}});
+    pointer(cropSelection,'pointerdown',40,40);pointer(stage,'pointermove',60,50);pointer(stage,'pointerup',60,50);
+    check(Math.abs(parseFloat(cropSelection.style.left)-(430/2300*100))<.001,'dragging the crop selection moves it in original image pixels');
+    pointer(crop.querySelector('[data-crop-handle=se]'),'pointerdown',150,100);pointer(stage,'pointermove',170,110);pointer(stage,'pointerup',170,110);
+    check(Math.abs(parseFloat(cropSelection.style.width)-(1350/2300*100))<.001,'corner resize changes the selected source region without moving the image');
+    const ratioControl=crop.querySelector('[data-crop-ratio]');ratioControl.value='portrait';ratioControl.dispatchEvent(new w.Event('change',{bubbles:true}));cropSelection.dispatchEvent(new w.KeyboardEvent('keydown',{key:'ArrowRight',shiftKey:true,bubbles:true}));crop.querySelector('[data-crop-apply]').click();
+    const cropResult=await cropPromise;check(Math.abs(cropResult.pixels.width/cropResult.pixels.height-1638/2048)<.00001&&cropResult.ratioKey==='portrait'&&!w.document.querySelector('.bc-dialog'),'Apply returns the exact selected ratio and closes the crop');
+    image.set({angle:24,flipX:true});const pixel={x:700,y:650},pixelPosition=o=>w.fabric.util.transformPoint(new w.fabric.Point(pixel.x-o.cropX-o.width/2,pixel.y-o.cropY-o.height/2),o.calcTransformMatrix()),beforeCrop=pixelPosition(image);w.BritesAdEditor.cropLayer(image,cropResult.rect,w.fabric);const afterCrop=pixelPosition(image);
+    check(beforeCrop.distanceFrom(afterCrop)<.00001&&image.angle===24&&image.flipX,'cropping a rotated or flipped layer retains its scale and the scene position of original pixels');
+    const beforeCancel=JSON.stringify(e.document()),cancelled=w.BritesAdEditor.crop({url:photoUrl});w.document.querySelector('[data-crop-cancel]').click();check(await cancelled===null&&JSON.stringify(e.document())===beforeCancel,'Cancel leaves every editable layer unchanged');
     await e.action('add-text');const t=e.canvas.getActiveObject();e.property(t,'text','A thoughtful duck gift','text');e.property(t,'fontSize','74','number');e.property(t,'textFill','#884422','color');e.changed();check(t.text==='A thoughtful duck gift'&&t.fontSize===74&&t.fill==='#884422','text controls affect actual Fabric objects');
     await e.action('duplicate');check(e.canvas.getActiveObject().text===t.text&&e.canvas.getObjects().filter(o=>o.text===t.text).length===2,'duplicate retains text formatting');await e.action('undo');check(e.canvas.getObjects().filter(o=>o.text===t.text).length===1,'undo restores the prior layer document');await e.action('redo');check(e.canvas.getObjects().filter(o=>o.text===t.text).length===2,'redo restores the duplicated layer');
     await e.action('add-button');let button=e.canvas.getActiveObject();e.property(button,'text','Choose your charm','text');e.property(button,'fill','#113355','color');e.property(button,'radius','18','number');check(button.getObjects()[1].text==='Choose your charm'&&button.getObjects()[0].fill==='#113355','button label, fill and corners update the composed CTA');const buttonFont=button.getObjects()[1].fontSize;e.property(button,'widthPixels','800','number');check(button.getObjects()[1].fontSize===buttonFont&&button.getObjects()[0].width===800,'button width reflows its label without stretching the font');
