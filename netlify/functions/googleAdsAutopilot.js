@@ -9102,16 +9102,35 @@ async function _designMerchantRequest(path,method='GET',body=null){
   const data=await response.json().catch(()=>null);if(!response.ok||!data){const error=new Error('Merchant Center '+(data&&data.error&&data.error.message||'returned HTTP '+response.status));if(method==='PATCH'&&(response.status>=500||!data))error.writeOutcome='unknown';throw error;}return data;
 }
 async function _prepareDesignMerchant(product,w,asset,format,selectedOfferId){
-  const offers=(product.offerIds||[product.itemId]).filter(Boolean),merchantId=await merchantCenterId(),offerId=selectedOfferId||offers.find(id=>(w.context.itemIds||[]).includes(id))||product.itemId||offers[0];
-  if(!offers.includes(offerId))throw new Error('Choose a verified Merchant variant belonging to this product.');
-  if(!offerId)throw new Error('This product has no exact Merchant offer. Open its listing in Merchant Center first.');
-  const feedLabel=w.context.feedLabel||(String(offerId).match(/^shopify_([^_]+)_/i)||[])[1],contentLanguage=product.language||'en';
-  if(!feedLabel||!/^[a-z]{2}$/.test(contentLanguage))throw new Error('The exact Merchant market and language are unavailable.');
-  const identity={merchantId:String(merchantId),offerId,contentLanguage,feedLabel:String(feedLabel).toUpperCase()},encoded=Buffer.from([contentLanguage,identity.feedLabel,offerId].join('~')).toString('base64url'),name='accounts/'+merchantId+'/products/'+encoded;
+  const offers=(product.offerIds||[product.itemId]).filter(Boolean),merchantId=String(await merchantCenterId()),selected=selectedOfferId||offers.find(id=>(w.context.itemIds||[]).includes(id))||product.itemId||offers[0];
+  if(!selected)throw new Error('This product has no exact Merchant offer. Open its listing in Merchant Center first.');
+  if(!offers.includes(selected))throw new Error('Choose a verified Merchant variant belonging to this product.');
+  if(!/^\d+$/.test(merchantId))throw new Error('The linked Merchant Center account could not be verified.');
+  // Ads normalizes offer casing; a Shopify market prefix is not a feed label.
+  // Resolve the current inventory identity, then verify the processed resource.
+  // https://developers.google.com/merchant/api/guides/reports/query-language
+  const pattern='(?i)^'+String(selected).replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'$',query='SELECT id, channel, offer_id, language_code, feed_label FROM product_view WHERE offer_id REGEXP_MATCH '+_gaqlString(pattern)+' AND channel = \'ONLINE\'',found=new Map();
+  let pageToken=null;
+  for(let page=0;page<5;page++){
+    const report=await _designMerchantRequest('reports/v1/accounts/'+merchantId+'/reports:search','POST',{query,pageSize:100,...(pageToken?{pageToken}:{})});
+    for(const row of report.results||[]){const p=row.productView||{};
+      if(p.channel!=='ONLINE'||String(p.offerId||'').toLowerCase()!==String(selected).toLowerCase()||!p.id)continue;
+      if(w.context.feedLabel&&p.feedLabel!==w.context.feedLabel||product.language&&p.languageCode!==product.language)continue;
+      if(!/^[a-z]{2}$/.test(p.languageCode||'')||!/^[A-Z0-9_-]{1,20}$/.test(p.feedLabel||''))throw new Error('The exact Merchant market and language are unavailable.');
+      found.set(JSON.stringify([p.languageCode,p.feedLabel,p.offerId]),{merchantId,offerId:p.offerId,contentLanguage:p.languageCode,feedLabel:p.feedLabel});
+    }
+    pageToken=report.nextPageToken||null;if(!pageToken)break;
+  }
+  if(pageToken)throw new Error('Merchant Center returned an incomplete variant lookup. Retry before approving this photo.');
+  if(!found.size)throw new Error('This variant is no longer in the selected Merchant inventory. Refresh the ad sources or check this exact variant in Merchant Center.');
+  if(found.size!==1)throw new Error('This variant appears in multiple Merchant feeds or languages. Select its exact market before approving a photo update.');
+  const identity=[...found.values()][0],{offerId,contentLanguage}=identity,encoded=Buffer.from([contentLanguage,identity.feedLabel,offerId].join('~')).toString('base64url'),name='accounts/'+merchantId+'/products/'+encoded;
   const current=await _designMerchantRequest('products/v1/'+name);
-  if(current.offerId!==offerId||current.feedLabel!==identity.feedLabel||current.contentLanguage!==contentLanguage)throw new Error('The Merchant product identity does not match this design.');
+  if(current.offerId!==offerId||current.feedLabel!==identity.feedLabel||current.contentLanguage!==contentLanguage||current.legacyLocal===true)throw new Error('The Merchant product identity does not match this design.');
+  if(current.archived)throw new Error('This Merchant product is archived. Restore it in its owning feed before updating the photo.');
   if(!new RegExp('^accounts/'+merchantId+'/dataSources/\\d+$').test(current.dataSource||''))throw new Error('The owning Merchant feed could not be verified.');
   const source=await _designMerchantRequest('datasources/v1/'+current.dataSource);
+  if(source.name!==current.dataSource)throw new Error('The owning Merchant feed changed. Refresh its sources before updating the photo.');
   if(source.input!=='API')throw new Error('This product is managed by '+(source.displayName||'its source feed')+'. Update that source; Merchant Center does not accept direct image edits for this feed type.');
   const field=format==='square'?'imageLink':'additionalImageLinks',before=(current.productAttributes||{})[field]||null;
   if(field==='additionalImageLinks'&&(before||[]).length>=10)throw new Error('This product already has ten additional images. Manage its existing images in the owning feed before adding another.');
@@ -9193,7 +9212,7 @@ async function prepareAdDesignPublication({workspaceId,target='ads',formats=[],i
     if(ap&&ap.exists){const a=ap.data();if(a.status!=='PENDING'&&!(a.status==='APPROVED'&&!a.needsReconciliation&&!a.applyAttempt&&(a.validatedAt||prior.exists&&prior.data().status==='FAILED')))throw new Error('This proposal is already being published. Refresh its status.');if(!approvalItem&&creativeHash(a.payload)!==prepared.reviewHash)throw new Error('The complete proposal changed. Prepare it again.');}
     if(approvalItem)tx.set(apRef,approvalItem);tx.set(pubRef,JSON.parse(JSON.stringify(prepared)));
   });
-  return {ok:true,...prepared,merchant:merchant?{field:merchant.field,offerId:merchant.identity.offerId,productTitle:merchant.productTitle,source:merchant.sourceName}:null,images:previewImages,copy:selection.copy?result.copy:null,newAd:!w.context.campaignId&&target==='ads',newCampaign,message:target==='merchant'?'This changes the product photo in its existing feed. It remains free of promotional text, logos and borders. The owning store feed may resync its original image.':'Only the selected images and messaging shown here will be updated. Google selects responsive combinations and controls delivery.'};
+  return {ok:true,...prepared,merchant:merchant?{field:merchant.field,offerId:merchant.identity.offerId,feedLabel:merchant.identity.feedLabel,contentLanguage:merchant.identity.contentLanguage,productTitle:merchant.productTitle,source:merchant.sourceName}:null,images:previewImages,copy:selection.copy?result.copy:null,newAd:!w.context.campaignId&&target==='ads',newCampaign,message:target==='merchant'?'This changes the product photo in its existing feed. It remains free of promotional text, logos and borders. The owning store feed may resync its original image.':'Only the selected images and messaging shown here will be updated. Google selects responsive combinations and controls delivery.'};
 }
 async function publishAdDesignPublication({workspaceId,id,hash,confirmed=false}={}){
   if(!confirmed||!/^publish_[a-f0-9]{32}$/.test(String(id||'')))throw new Error('Review and confirm this exact update first.');
