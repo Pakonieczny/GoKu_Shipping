@@ -354,7 +354,7 @@ async function _captureCampaignEditableSnapshot(id) {
       return { resourceName: ad.resourceName, adGroupAdResourceName: r.resourceName, adGroup: (row.adGroup || {}).resourceName, status: r.status,
         finalUrls: ad.finalUrls || [], finalMobileUrls: ad.finalMobileUrls || [], responsiveSearchAd: { headlines: text(rsa.headlines), descriptions: text(rsa.descriptions), path1: rsa.path1 || "", path2: rsa.path2 || "" } };
     }));
-    jobs.push(read("searchImageLinks", `SELECT ad_group_asset.resource_name, ad_group_asset.ad_group, ad_group_asset.asset, ad_group_asset.field_type, ad_group_asset.status, asset.image_asset.full_size.url FROM ad_group_asset WHERE ${filter} AND ad_group_asset.field_type = 'IMAGE' AND ad_group_asset.status != 'REMOVED'`, row => {const r=row.adGroupAsset||{},image=((row.asset||{}).imageAsset||{}).fullSize||{};return {resourceName:r.resourceName,adGroup:r.adGroup,asset:r.asset,fieldType:r.fieldType,status:r.status||"ENABLED",...(image.url?{imageUrl:image.url}:{})};}));
+    jobs.push(read("searchImageLinks", `SELECT ad_group_asset.resource_name, ad_group_asset.ad_group, ad_group_asset.asset, ad_group_asset.field_type, ad_group_asset.status, asset.image_asset.full_size.url, asset.image_asset.full_size.width_pixels, asset.image_asset.full_size.height_pixels FROM ad_group_asset WHERE ${filter} AND ad_group_asset.field_type = 'IMAGE' AND ad_group_asset.status != 'REMOVED'`, row => {const r=row.adGroupAsset||{},image=((row.asset||{}).imageAsset||{}).fullSize||{};return {resourceName:r.resourceName,adGroup:r.adGroup,asset:r.asset,fieldType:r.fieldType,status:r.status||"ENABLED",...(image.widthPixels?{width:Number(image.widthPixels),height:Number(image.heightPixels)}:{}),...(image.url?{imageUrl:image.url}:{})};}));
     jobs.push(read("keywords", `SELECT ad_group_criterion.resource_name, ad_group_criterion.ad_group, ad_group_criterion.status, ad_group_criterion.negative, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type FROM ad_group_criterion WHERE ${filter} AND ad_group_criterion.type = 'KEYWORD' AND ad_group_criterion.status != 'REMOVED'`, row => {
       const r = row.adGroupCriterion || {}; return { resourceName: r.resourceName, adGroup: r.adGroup, status: r.status, negative: !!r.negative, keyword: r.keyword };
     }));
@@ -1590,10 +1590,11 @@ async function reviewAdVersion({id,hash}={}) {
     tx.update(ref,{versionReview:{payloadHash:hash,at:Date.now(),by:"authenticated operator"}});
   });return {ok:true,id:String(id),reviewHash:hash};
 }
-async function markApprovalApproved(id) {
+async function markApprovalApproved(id, expectedReview = {}) {
   const f=fb(),ref=f.db.collection(COL.approvals).doc(String(id));
   await f.db.runTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists)throw new Error("Draft not found.");const it=s.data();
     if(it.status!=="PENDING"||(it.creativeLease&&it.creativeLease.until>Date.now()))throw new Error("This draft is not available for approval yet.");
+    if(expectedReview.hash&&creativeHash(it.payload||{})!==expectedReview.hash||expectedReview.assetHash&&_creativeAssetHash(it.creative||{})!==expectedReview.assetHash)throw new Error('The reviewed images or messages changed. Prepare this update again.');
     assertCreativeReviewed(it);tx.update(ref,{status:"APPROVED",approvedAt:Date.now(),lastError:null});
   });return {ok:true,id};
 }
@@ -1660,7 +1661,9 @@ async function applyApproval(id, ctrl) {
       publicationResult=await mutate(p.service,p.operations,{ctrl,label:"reviewed-approval:"+id,onDispatch:()=>{dispatched=true;}});}
     else throw new Error("The draft contains no publishable operations.");
     const learningPublication=ctrl.dryRun?null:_learningPublication(it,publicationResult,ops);
-    await ref.update({status:ctrl.dryRun?"APPROVED":"APPLIED",appliedAt:ctrl.dryRun?null:f.FV.serverTimestamp(),validatedAt:ctrl.dryRun?Date.now():null,applyAttempt:null,lastError:null,...(learningPublication?{learningPublication}:{}),...(_isAdVersionApproval(it)?{versionPublication:{campaignId:p.versionGuard.campaignId,sourceVersion:p.versionGuard.expectedVersion,confirmed:!ctrl.dryRun,versionWarning:publicationResult&&publicationResult.versionWarning||null}}:{})});
+    const assetReceipts=[],publishedCampaignIds=[];
+    if(!ctrl.dryRun)(publicationResult&&publicationResult.mutateOperationResponses||[]).forEach((response,index)=>{const campaign=(response.campaignResult||{}).resourceName;if(campaign)publishedCampaignIds.push(campaign.split('/').pop());const asset=(response.assetResult||{}).resourceName,created=ops&&ops[index]&&ops[index].assetOperation&&ops[index].assetOperation.create,entry=created&&(p.generatedAssets||[]).find(e=>e.tempResourceName===created.resourceName);if(asset&&created&&created.imageAsset&&created.imageAsset.data)assetReceipts.push({resourceName:asset,hash:entry?entry.asset.hash:require('crypto').createHash('sha256').update(Buffer.from(created.imageAsset.data,'base64')).digest('hex'),...(entry?{path:entry.asset.path}:{})});});
+    await ref.update({status:ctrl.dryRun?"APPROVED":"APPLIED",appliedAt:ctrl.dryRun?null:f.FV.serverTimestamp(),validatedAt:ctrl.dryRun?Date.now():null,applyAttempt:null,lastError:null,...(assetReceipts.length?{assetReceipts}:{}),...(publishedCampaignIds.length?{publishedCampaignIds}:{}),...(learningPublication?{learningPublication}:{}),...(_isAdVersionApproval(it)?{versionPublication:{campaignId:p.versionGuard.campaignId,sourceVersion:p.versionGuard.expectedVersion,confirmed:!ctrl.dryRun,versionWarning:publicationResult&&publicationResult.versionWarning||null}}:{})});
     if(!ctrl.dryRun)for(const campaignId of (learningPublication&&learningPublication.campaignIds||[]))_invalidateCampaignImprovement(campaignId);
     return {ok:true,id,status:ctrl.dryRun?"VALIDATED":"APPLIED",dryRun:!!ctrl.dryRun,versionWarning:publicationResult&&publicationResult.versionWarning||null};
   } catch(e) {
@@ -2662,7 +2665,7 @@ function buildCampaignAssets(coll, finalUrl, cRes, extras) {
   extras = extras || {};
   const ASSET = n => `customers/${CID}/assets/${n}`; const ops = []; let an = -10;
   const short = _clip(coll.title, 16);
-  const sitelinks = [
+  const sitelinks = extras.productOnly ? [] : [
     { linkText: _clip("Shop " + short, 25), d1: "Browse the full collection", d2: "Personalized, made to order", url: finalUrl },
     { linkText: "Best Sellers", d1: "Our most-loved pieces", d2: "Top customer favorites", url: "https://britesjewelry.com/collections/best-sellers" }
   ];
@@ -4016,9 +4019,9 @@ async function uploadImageAssets(imgs, ctrl) {
 // mutateOperations for a retail Performance Max campaign. Exact Merchant Center
 // item IDs are preferred so the campaign amplifies the products that already sold
 // through free listings. Product-type scoping remains a safe fallback only.
-function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoas, merchantId, feedLabel, itemIds, types, countries, offerDetails, searchThemes, audienceResource, imageAssets, adCopy, relatedCollections, combinedCreativeGroup = false } = {}) {
-  const tag=_pmaxTag(coll.handle,feedLabel), bRes=`customers/${CID}/campaignBudgets/-1`, cRes=`customers/${CID}/campaigns/-2`;
-  const finalUrl=`https://britesjewelry.com/collections/${coll.handle}`, _sched=_campaignScheduleFields(startDate,endDate), tRoas=Number(targetRoas||ENV.GADS_TARGET_ROAS||0);
+function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoas, merchantId, feedLabel, itemIds, types, countries, offerDetails, searchThemes, audienceResource, imageAssets, adCopy, relatedCollections, combinedCreativeGroup = false, productDestination = null, productTitle = null } = {}) {
+  const tag=_pmaxTag(coll.handle+(productDestination?'-'+creativeHash(productDestination).slice(0,8):''),feedLabel), bRes=`customers/${CID}/campaignBudgets/-1`, cRes=`customers/${CID}/campaigns/-2`;
+  const finalUrl=productDestination||`https://britesjewelry.com/collections/${coll.handle}`, _sched=_campaignScheduleFields(startDate,endDate), tRoas=Number(targetRoas||ENV.GADS_TARGET_ROAS||0);
   const shoppingSetting={merchantId:Number(merchantId)};if(feedLabel)shoppingSetting.feedLabel=String(feedLabel);
   const ops=[
     {campaignBudgetOperation:{create:{resourceName:bRes,name:`BA · ${tag} · ${Date.now()}`,amountMicros:micros(dailyBudget),deliveryMethod:"STANDARD",explicitlyShared:false}}},
@@ -4037,14 +4040,14 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
   const details=(offerDetails||[]).filter(x=>x&&exact.includes(String(x.itemId))).map(x=>Object.assign({},x,{itemId:String(x.itemId)}));
   if(!exact.length)throw new Error("Exact Merchant offer IDs are required for a reviewed product campaign.");
   const grouped={};exact.forEach(itemId=>{const productId=_productIdFromItemId(itemId);if(!productId)throw new Error("Merchant offer has no verifiable Shopify product reference.");(grouped[productId]=grouped[productId]||[]).push(itemId);});
-  const groups=combinedCreativeGroup?[{label:coll.title,itemIds:exact}]:Object.keys(grouped).map(productId=>({productId,label:(details.find(d=>grouped[productId].includes(d.itemId))||{}).title||("Product "+productId),itemIds:grouped[productId]}));
+  const groups=combinedCreativeGroup?[{label:productTitle||coll.title,itemIds:exact}]:Object.keys(grouped).map(productId=>({productId,label:(details.find(d=>grouped[productId].includes(d.itemId))||{}).title||("Product "+productId),itemIds:grouped[productId]}));
   if(groups.length>4)throw new Error("Select up to four products per creative package. Different products receive their own copy and images.");
   const themes=[...new Set((searchThemes||[]).map(x=>String(x).toLowerCase().replace(/[^a-z0-9 ]+/g," ").replace(/\s+/g," ").trim()).filter(Boolean))].slice(0,25);
   // Campaign-level sitelinks/callouts/structured snippets — same proven machinery the
   // Search builder uses (real collection URLs only). Sitelinks are a scored ad-strength
   // component PMax previews flag as missing without them. Temp IDs -10.. (its own range,
   // clear of groups -3.., filters ~-50.., and text assets at the floor).
-  const cla = buildCampaignAssets(coll, finalUrl, cRes, { relatedCollections: relatedCollections || [], snippetTypes: groups.map(g => g.label) });
+  const cla = buildCampaignAssets(coll, finalUrl, cRes, { relatedCollections: relatedCollections || [], snippetTypes: groups.map(g => g.label), productOnly:!!productDestination });
   ops.push(...cla.ops);
   // v24 rejects the whole mutate if any asset group lacks headline/long-headline/description
   // assets \u2014 build them once (temp resource names, atomic) and attach to every group below.
@@ -4376,8 +4379,10 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
   else try { adCopy = await _pmaxAdCopy(coll, { productTitles: chosenTitles }); } catch (e) {}
   if (!adCopy) adCopy = _pmaxDeterministicCopy(coll);
   // Two real sibling collections from the curated config → extra sitelinks (real URLs only).
-  const relatedCollections = (typeof COLLECTIONS !== "undefined" ? COLLECTIONS : []).filter(c => c && c.handle && c.handle !== handle && c.handle !== "best-sellers").slice(0, 2);
-  const built=buildPmaxCampaignOps(coll,{dailyBudget:budget,startDate:start,endDate:end,targetRoas:safeTargetRoas,merchantId,feedLabel:liveFeedLabel,itemIds:exactIds,types,countries,offerDetails:liveDetails,searchThemes:themes,audienceResource,imageAssets,adCopy,relatedCollections,combinedCreativeGroup:!!design.combinedCreativeGroup});
+  const relatedCollections = design.productDestination?[]:(typeof COLLECTIONS !== "undefined" ? COLLECTIONS : []).filter(c => c && c.handle && c.handle !== handle && c.handle !== "best-sellers").slice(0, 2);
+  const destination=design.productDestination?require('./googleAdsAdDesignContext').destination(design.productDestination):null;
+  if(design.productDestination&&(!destination||destination.kind!=='product'))throw new Error('The design requires its exact product destination.');
+  const built=buildPmaxCampaignOps(coll,{productDestination:destination&&destination.url,productTitle:design.productTitle,dailyBudget:budget,startDate:start,endDate:end,targetRoas:safeTargetRoas,merchantId,feedLabel:liveFeedLabel,itemIds:exactIds,types,countries,offerDetails:liveDetails,searchThemes:themes,audienceResource,imageAssets,adCopy,relatedCollections,combinedCreativeGroup:!!design.combinedCreativeGroup});
   const scope=built.scopedItemIds.length?`${built.scopedItemIds.length} proven GMC offers`:(built.scopedTypes.length?built.scopedTypes.join("/"):"all feed products");
   const id=await enqueueApproval({type:"pmax",vetted:false,summary:`PMax · ${coll.title} · $${budget}/day · ${scope} · ${built.assetMode} assets${imageAssets&&imageAssets.square&&imageAssets.square.length?` (${(imageAssets.square||[]).length}sq/${(imageAssets.landscape||[]).length}ls/${(imageAssets.portrait||[]).length}pt custom images)`:""} · ${built.textAssets.headlines}hl/${built.textAssets.longHeadlines}lh/${built.textAssets.descriptions}ds copy · GMC ${merchantId}`,
     payload:{mutateOperations:built.ops,countries:built.countries,meta:{kind:"pmax",...(design.designId?{adDesignId:design.designId}:{}),handle,collectionTitle:coll.title,dailyBudget:budget,targetRoas:safeTargetRoas,biddingMode:safeTargetRoas>0?"MAXIMIZE_CONVERSION_VALUE_TARGET_ROAS":"MAXIMIZE_CONVERSION_VALUE_LEARNING",scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,productTitles:chosenTitles,images:imageAssets?(imageAssets.square||[]).length+(imageAssets.landscape||[]).length+(imageAssets.portrait||[]).length:0,textAssets:built.textAssets,assetMode:built.assetMode,merchantId,feedLabel:liveFeedLabel,countries:built.countries,tag:built.tag,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null}}},{id:design.approvalId,guard:design.guard});
@@ -8926,6 +8931,7 @@ async function reviseCreativeApproval(id,feedback) {
     tx.update(ref,{creative:{schema:CREATIVE_SCHEMA,revision,phase:"not_started",sourceHash:creativeHash(it.payload||{}),groups:[],imageSpendUsd:Number(old.imageSpendUsd)||0,imageRequests:Number(old.imageRequests)||0,feedback,review:null}});
   });return {ok:true,id};
 }
+function _creativeAssetHash(c){return creativeHash({groups:(c.groups||[]).map(g=>g.placementAssets?{assets:g.assets||{},placementAssets:g.placementAssets}:g.assets||{}),logo:c.logo||null});}
 async function reviewCreativeApproval(id, hash) {
   const ref=fb().db.collection(COL.approvals).doc(String(id));
   await fb().db.runTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists)throw new Error("Draft not found.");const it=s.data(),c=it.creative||{};
@@ -9039,7 +9045,7 @@ async function _finishAdDesign({workspaceId,jobId,owner,workspace,group,product,
     const selected=[...new Set(offerGroups.flat())];
     if(!selected.length)throw new Error("Choose a verified offer from this researched opportunity before generating a campaign draft.");
     const id="design-"+creativeHash({workspaceId,jobId}).slice(0,48);
-    const built=await generatePmaxApproval({...context,itemIds:selected,productTitles:selectedProducts.map(p=>p.title)}, {combinedCreativeGroup:true,reviewedAdCopy:result.copy,approvalId:id,designId:jobId,guard:own});approvalId=built.approvalId;
+    const built=await generatePmaxApproval({...context,itemIds:selected,productTitles:selectedProducts.map(p=>p.title)}, {combinedCreativeGroup:true,productDestination:product.url,productTitle:product.title,reviewedAdCopy:result.copy,approvalId:id,designId:jobId,guard:own});approvalId=built.approvalId;
   }
   const ref=f.db.collection(COL.approvals).doc(String(approvalId)),stored=await ref.get();if(!stored.exists)throw new Error("The design approval could not be found.");
   const item=stored.data(),payload=JSON.parse(JSON.stringify(item.payload||{})),sourceHash=creativeHash(payload),creativeStateHash=creativeHash(item.creative||null),allGroups=_creativeGroups(item);
@@ -9074,6 +9080,136 @@ async function uploadAdDesignReference(input){return _designEngine().upload(inpu
 async function startAdDesign(input){return _designEngine().start(input);}
 async function adDesignStatus(input){return _designEngine().status(input);}
 async function runAdDesign(input){return _designEngine().run(input);}
+function _adDesignSelectionHash(w){return creativeHash({productId:w.settings.productId,groupRef:w.settings.groupRef,placements:require('./googleAdsAdDesign').chosenPlacements(w),messaging:w.messaging||null,jobId:w.job&&w.job.id||null,result:w.job&&w.job.result||null});}
+async function _adDesignPublicationContext(workspaceId){
+  const ref=_adDesignWorkspaceRef(workspaceId),s=await ref.get();if(!s.exists)throw new Error('Design workspace was not found.');const w=s.data();
+  if(w.job&&(w.job.inFlight||w.job.leaseUntil>Date.now()))throw new Error('Wait for the image or messaging request to finish before publishing.');
+  const rows=await ref.collection('sourceSets').doc(w.sourceSetId).collection('products').get(),products=rows.docs.map(d=>d.data()),product=products.find(p=>String(p.id)===String(w.settings.productId)),group=(w.context.groups||[]).find(g=>g.ref===w.settings.groupRef);
+  if(!product||!group)throw new Error('Choose the product and ad group before publishing.');
+  return {ref,w,products,product,group};
+}
+async function saveAdDesignCopy({workspaceId,copy,expectedRevision}={}){
+  const {ref,w,product,group}=await _adDesignPublicationContext(workspaceId);
+  if(!copy||!['headlines','longHeadlines','descriptions'].every(k=>Array.isArray(copy[k])&&copy[k].every(v=>typeof v==='string')))throw new Error('Enter headlines and descriptions as separate lines.');
+  const clean={headlines:copy.headlines.map(v=>v.trim()).filter(Boolean),longHeadlines:copy.longHeadlines.map(v=>v.trim()).filter(Boolean),descriptions:copy.descriptions.map(v=>v.trim()).filter(Boolean)};
+  if(!_copyValid(clean,group.channel==='pmax'))throw new Error('Check the headline and description lengths and minimum counts. Each line must meet this ad type’s requirements.');
+  await fb().db.runTransaction(async tx=>{const current=await tx.get(ref);if(Number(current.data().revision||0)!==Number(expectedRevision)||_adDesignSelectionHash(current.data())!==_adDesignSelectionHash(w))throw new Error('This design changed. Reload its messaging before saving.');tx.update(ref,{messaging:{copy:clean,productId:product.id,groupRef:group.ref,edited:true,researchedAt:w.messaging&&w.messaging.researchedAt||null,evidenceHash:w.messaging&&w.messaging.evidenceHash||null,updatedAt:Date.now()},revision:Number(w.revision||0)+1});});
+  return adDesignStatus({workspaceId});
+}
+async function _designMerchantRequest(path,method='GET',body=null){
+  const token=await mintMerchantToken();if(!token)throw new Error('Connect Merchant Center before updating its product images.');
+  let response;try{response=await fetch('https://merchantapi.googleapis.com/'+path,{method,timeout:18000,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});}catch(e){if(method==='PATCH')e.writeOutcome='unknown';throw e;}
+  const data=await response.json().catch(()=>null);if(!response.ok||!data){const error=new Error('Merchant Center '+(data&&data.error&&data.error.message||'returned HTTP '+response.status));if(method==='PATCH'&&(response.status>=500||!data))error.writeOutcome='unknown';throw error;}return data;
+}
+async function _prepareDesignMerchant(product,w,asset,format,selectedOfferId){
+  const offers=(product.offerIds||[product.itemId]).filter(Boolean),merchantId=await merchantCenterId(),offerId=selectedOfferId||offers.find(id=>(w.context.itemIds||[]).includes(id))||product.itemId||offers[0];
+  if(!offers.includes(offerId))throw new Error('Choose a verified Merchant variant belonging to this product.');
+  if(!offerId)throw new Error('This product has no exact Merchant offer. Open its listing in Merchant Center first.');
+  const feedLabel=w.context.feedLabel||(String(offerId).match(/^shopify_([^_]+)_/i)||[])[1],contentLanguage=product.language||'en';
+  if(!feedLabel||!/^[a-z]{2}$/.test(contentLanguage))throw new Error('The exact Merchant market and language are unavailable.');
+  const identity={merchantId:String(merchantId),offerId,contentLanguage,feedLabel:String(feedLabel).toUpperCase()},encoded=Buffer.from([contentLanguage,identity.feedLabel,offerId].join('~')).toString('base64url'),name='accounts/'+merchantId+'/products/'+encoded;
+  const current=await _designMerchantRequest('products/v1/'+name);
+  if(current.offerId!==offerId||current.feedLabel!==identity.feedLabel||current.contentLanguage!==contentLanguage)throw new Error('The Merchant product identity does not match this design.');
+  if(!new RegExp('^accounts/'+merchantId+'/dataSources/\\d+$').test(current.dataSource||''))throw new Error('The owning Merchant feed could not be verified.');
+  const source=await _designMerchantRequest('datasources/v1/'+current.dataSource);
+  if(source.input!=='API')throw new Error('This product is managed by '+(source.displayName||'its source feed')+'. Update that source; Merchant Center does not accept direct image edits for this feed type.');
+  const field=format==='square'?'imageLink':'additionalImageLinks',before=(current.productAttributes||{})[field]||null;
+  if(field==='additionalImageLinks'&&(before||[]).length>=10)throw new Error('This product already has ten additional images. Manage its existing images in the owning feed before adding another.');
+  const plan={identity,productName:name,inputName:name.replace('/products/','/productInputs/'),dataSource:current.dataSource,sourceName:source.displayName||'API product feed',sourceHash:creativeHash(source),asset,field,before,format,productTitle:(current.productAttributes||{}).title||product.title};
+  return {...plan,reviewHash:creativeHash(plan)};
+}
+async function _publishDesignMerchant(plan){
+  const copy={...plan};delete copy.reviewHash;if(creativeHash(copy)!==plan.reviewHash)throw new Error('The reviewed Merchant image plan changed.');
+  const [current,source]=await Promise.all([_designMerchantRequest('products/v1/'+plan.productName),_designMerchantRequest('datasources/v1/'+plan.dataSource)]);
+  if(current.dataSource!==plan.dataSource||creativeHash(source)!==plan.sourceHash||creativeHash((current.productAttributes||{})[plan.field]||null)!==creativeHash(plan.before))throw new Error('The Merchant product or its owning feed changed. Review this photo update again.');
+  await _loadCreativeAsset(plan.asset);
+  if((await control()).dryRun)return {status:'VALIDATED',provider:'merchant',dryRun:true};
+  // Publish only this approved immutable artwork with a durable image URL.
+  const bucket=fb().admin.storage().bucket(),file=bucket.file(plan.asset.path),[meta]=await file.getMetadata(),downloadToken=meta.metadata&&meta.metadata.firebaseStorageDownloadTokens||require('crypto').randomUUID();
+  await file.setMetadata({cacheControl:'public,max-age=31536000,immutable',metadata:{...(meta.metadata||{}),firebaseStorageDownloadTokens:downloadToken}});
+  const url='https://firebasestorage.googleapis.com/v0/b/'+encodeURIComponent(bucket.name)+'/o/'+encodeURIComponent(plan.asset.path)+'?alt=media&token='+encodeURIComponent(downloadToken.split(',')[0]),value=plan.field==='imageLink'?url:[...(plan.before||[]),url];
+  const query=new URLSearchParams({dataSource:plan.dataSource,updateMask:'productAttributes.'+plan.field});
+  const result=await _designMerchantRequest('products/v1/'+plan.inputName+'?'+query,'PATCH',{name:plan.inputName,productAttributes:{[plan.field]:value}});
+  if(result.offerId!==plan.identity.offerId||result.contentLanguage!==plan.identity.contentLanguage||result.feedLabel!==plan.identity.feedLabel||creativeHash((result.productAttributes||{})[plan.field])!==creativeHash(value))throw Object.assign(new Error('Google responded, but the exact updated image could not be confirmed. Check Merchant Center before retrying.'),{writeOutcome:'unknown'});
+  return {status:'APPLIED',provider:'merchant',inputConfirmed:true,processedStatus:'pending',field:plan.field,identity:plan.identity,productName:plan.productName,imageUrl:url,message:'Merchant Center accepted the product image. Processing and policy review may take several minutes.'};
+}
+async function adDesignDelivery({workspaceId,start,end}={}){
+  const {w,group}=await _adDesignPublicationContext(workspaceId),campaignId=String(w.context.campaignId||'');
+  const receipts=await _adDesignWorkspaceRef(workspaceId).collection('publications').get(),publications=receipts.docs.map(d=>({id:d.id,...d.data()})).filter(p=>p.productId===w.settings.productId&&p.groupRef===group.ref).sort((a,b)=>b.createdAt-a.createdAt);
+  const safePublications=publications.map(p=>({id:p.id,target:p.target,status:p.status,formats:p.selection&&p.selection.formats||[],copy:!!(p.selection||{}).copy,at:p.confirmedAt||p.createdAt,error:p.error||null,message:p.message||null}));
+  if(!campaignId)return {ok:true,rows:[],publications:safePublications,available:false,reason:'Image metrics begin after this ad is published and receives impressions.',checkedAt:Date.now()};
+  const ctx=await _reportContext(),range=_validatedReportRange({start,end},ctx.accountToday,30),dates=`segments.date BETWEEN '${range.start}' AND '${range.end}'`,filter=`campaign.id = ${campaignId}`;
+  let rows;
+  if(group.channel==='pmax')rows=await gaql(`SELECT campaign.id, asset_group.id, asset_group_asset.resource_name, asset_group_asset.asset, asset_group_asset.field_type, asset_group_asset.primary_status, asset_group_asset.primary_status_reasons, asset_group_asset.status, asset.resource_name, asset.image_asset.full_size.url, metrics.impressions, metrics.clicks, metrics.ctr, metrics.conversions, metrics.conversions_value, metrics.cost_micros FROM asset_group_asset WHERE ${filter} AND asset_group_asset.asset_group = ${_gaqlString(group.ref)} AND asset_group_asset.status != 'REMOVED' AND ${dates}`);
+  else {const ad=(w.sourceSnapshot.components.searchAds||[]).find(a=>a.resourceName===group.ref);if(!ad)throw new Error('The Search ad group could not be verified.');rows=await gaql(`SELECT campaign.id, ad_group.id, ad_group_asset.resource_name, ad_group_asset.asset, ad_group_asset.field_type, ad_group_asset.status, asset.resource_name, asset.image_asset.full_size.url, metrics.impressions, metrics.clicks, metrics.ctr, metrics.conversions, metrics.conversions_value, metrics.cost_micros FROM ad_group_asset WHERE ${filter} AND ad_group_asset.ad_group = ${_gaqlString(ad.adGroup)} AND ad_group_asset.field_type = 'IMAGE' AND ad_group_asset.status != 'REMOVED' AND ${dates}`);}
+  const mapped=[];for(const publication of publications.filter(p=>p.approvalId)){const saved=await fb().db.collection(COL.approvals).doc(publication.approvalId).get();if(saved.exists)mapped.push(...(saved.data().assetReceipts||[]));}
+  return {ok:true,available:true,range,currency:ctx.budgetCurrency,timeZone:ctx.accountTimezone,basis:'Google Ads interaction date',scope:group.channel==='search'?'Ad group image assets; shared by ads in this group':'This asset group',checkedAt:Date.now(),publications:safePublications,
+    rows:rows.filter(r=>(r.asset||{}).imageAsset).map(r=>{const a=r.asset||{},link=r.assetGroupAsset||r.adGroupAsset||{},m=r.metrics||{},receipt=mapped.find(p=>p.resourceName===a.resourceName);return {assetId:a.resourceName,url:((a.imageAsset||{}).fullSize||{}).url||null,hash:receipt&&receipt.hash||null,fieldType:link.fieldType,status:link.primaryStatus||link.status||'UNKNOWN',reasons:link.primaryStatusReasons||[],impressions:Number(m.impressions)||0,clicks:Number(m.clicks)||0,ctr:m.ctr==null?(Number(m.impressions)>0?Number(m.clicks)/Number(m.impressions):null):Number(m.ctr),conversions:Number(m.conversions)||0,value:Number(m.conversionsValue)||0,cost:fromMicros(m.costMicros)};}),
+    note:'Asset outcomes overlap when images and text serve together. Compare like periods; do not add asset conversions or interpret them as isolated image lift. Google does not expose separate Merchant Center traffic for each product image.'};
+}
+async function prepareAdDesignPublication({workspaceId,target='ads',formats=[],includeCopy=false,offerId=null}={}){
+  const {ref,w,products,product,group}=await _adDesignPublicationContext(workspaceId),selection={formats:[...new Set(formats)].sort(),copy:includeCopy===true};
+  if(!['ads','merchant'].includes(target)||selection.formats.some(k=>!['square','landscape','portrait'].includes(k))||!selection.copy&&!selection.formats.length)throw new Error('Select an image format or messaging to update.');
+  const design=require('./googleAdsAdDesign'),result=JSON.parse(JSON.stringify(w.job&&w.job.result||{})),placements=design.chosenPlacements(w),assets={desktop:{},mobile:{}};
+  for(const device of ['desktop','mobile'])for(const format of selection.formats){const chosen=placements.find(p=>p.device===device&&p.format===format),asset=chosen&&chosen.asset||(result.placementAssets||{})[device]&&result.placementAssets[device][format]||(result.assets||{})[format];if(!asset)throw new Error('Save or generate the '+format+' image before approving it.');
+    const pictured=chosen?chosen.productIds||[]:result.productIds||[product.id],singleProduct=!w.context.campaignId||/\/products\//.test(group.url||'');
+    if(pictured.some(id=>singleProduct?String(id)!==String(product.id):!products.some(p=>String(p.id)===String(id)&&(!Array.isArray(p.eligibleGroupRefs)||p.eligibleGroupRefs.includes(group.ref)))))throw new Error('This image includes another product. Use a design whose destination sells every pictured item.');
+    const bytes=await _loadCreativeAsset(asset),meta=await require('sharp')(bytes).metadata();if(bytes.length!==asset.bytes||meta.width!==asset.width||meta.height!==asset.height)throw new Error('A saved image changed. Save its crop again before approving.');assets[device][format]=asset;}
+  result.placementAssets=assets;result.assets=assets.desktop;result.copy=w.messaging&&w.messaging.copy||result.copy||{};result.brief=result.brief||{rationale:'Operator reviewed the exact product image and destination.',hypothesis:'Improve product clarity',successMetric:'qualified_clicks'};
+  result.quality=result.quality||{operatorReviewRequired:true};result.productIds=[product.id];
+  const sourceHash=_adDesignSelectionHash(w),id='publish_'+creativeHash({sourceHash,target,selection,sourceVersion:w.sourceVersion,offerId:target==='merchant'?offerId:null}).slice(0,32),pubRef=ref.collection('publications').doc(id),existing=await pubRef.get();
+  if(existing.exists&&['APPLIED','APPLYING','UNKNOWN'].includes(existing.data().status))return {ok:true,id,status:existing.data().status,message:existing.data().message||'This exact update has already been submitted. Refresh its status.'};
+  let approvalId=null,payload=null,merchant=null,newCampaign=null,logo=null,approvalItem=null,assetReviewHash=null;
+  if(target==='merchant'){
+    if(selection.copy||selection.formats.length!==1)throw new Error('Merchant Center accepts a product photo separately from advertising copy. Choose one image format.');
+    const chosen=placements.find(p=>p.device==='desktop'&&p.format===selection.formats[0]);if(!chosen||(chosen.productIds||[]).length!==1||String(chosen.productIds[0])!==String(product.id))throw new Error('Save a photo of this exact product before updating its Merchant Center image.');
+    merchant=await _prepareDesignMerchant(product,w,assets.desktop[selection.formats[0]],selection.formats[0],offerId);
+  }else if(w.context.campaignId){
+    await _guardCampaignVersion({campaignId:w.context.campaignId,expectedVersion:w.sourceVersion,snapshotHash:w.snapshotHash});
+    payload=design.buildVersionDesignPayload({workspaceId,jobId:id,workspace:w,group,product,result,customerId:CID,selection});approvalId='design-'+id;
+    const item={type:'adDesignUpdate',summary:'Update '+product.title+' · '+[...selection.formats,selection.copy?'messaging':''].filter(Boolean).join(', '),payload,vetted:false,status:'PENDING',createdAt:fb().FV.serverTimestamp()};
+    versionReviewGate.assertVersionOperationScope(item,w.sourceSnapshot,CID);
+    approvalItem=item;
+  }else{
+    // Google requires the complete minimum asset set for a new ad group.
+    if(!w.job||w.job.phase!=='ready'||!w.job.approvalId||w.job.result.copyOnly)throw new Error('Prepare the complete design first. A new ad needs all required image formats and messaging before its first publication.');
+    if(selection.formats.length!==3||!selection.copy)throw new Error('Publish the complete first ad below. After it exists, you can update each image format independently.');
+    approvalId=w.job.approvalId;const review=await _adDesignApprovalReview(approvalId);if(!review.ready)throw new Error(review.message||'The complete ad is not ready for publication.');
+    const approval=await fb().db.collection(COL.approvals).doc(approvalId).get(),item=approval.data();payload=item.payload;
+    const preparedGroups=(item.creative||{}).groups||[];
+    if(preparedGroups.length!==1||selection.formats.some(format=>creativeHash(design.formatAssets(preparedGroups[0],format).map(a=>a.hash).sort())!==creativeHash(design.formatAssets(result,format).map(a=>a.hash).sort()))||creativeHash(preparedGroups[0].copy)!==creativeHash(result.copy))throw new Error('This proposal includes another design or changed images. Prepare this product as its own complete ad first.');
+    logo=(item.creative||{}).logo||null;
+    assetReviewHash=_creativeAssetHash(item.creative||{});
+    const campaign=(payload.mutateOperations||[]).find(op=>op.campaignOperation&&op.campaignOperation.create),budget=(payload.mutateOperations||[]).find(op=>op.campaignBudgetOperation&&op.campaignBudgetOperation.create);
+    if(campaign)newCampaign={name:campaign.campaignOperation.create.name,status:campaign.campaignOperation.create.status,dailyBudget:budget?fromMicros(budget.campaignBudgetOperation.create.amountMicros):null,currency:(await _reportContext()).budgetCurrency};
+    if(w.messaging&&creativeHash(w.messaging.copy)!==creativeHash(w.job.result.copy))throw new Error('Messaging changed after this new ad was prepared. Prepare chosen images again to include the edited copy in its complete review.');
+  }
+  const previewImages=[];for(const format of selection.formats)for(const asset of design.formatAssets(result,format))previewImages.push({format,width:asset.width,height:asset.height,url:await _designEngineAdapters().signAsset(asset),hash:asset.hash});
+  if(logo){await _loadCreativeAsset(logo);previewImages.push({format:'brand logo',width:logo.width,height:logo.height,url:await _designEngineAdapters().signAsset(logo),hash:logo.hash});}
+  const prepared={id,target,status:'PENDING',sourceHash,selection,productId:product.id,groupRef:group.ref,productTitle:product.title,destination:target==='merchant'?product.url:w.context.campaignId?group.url:product.url,approvalId,reviewHash:payload?creativeHash(payload):merchant.reviewHash,assetReviewHash,merchant,createdAt:Date.now()};
+  await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),prior=await tx.get(pubRef),apRef=approvalId?fb().db.collection(COL.approvals).doc(approvalId):null,ap=apRef?await tx.get(apRef):null;
+    if(_adDesignSelectionHash(current.data())!==sourceHash||current.data().job&&(current.data().job.inFlight||current.data().job.leaseUntil>Date.now()))throw new Error('This design changed while preparing. Review the current images again.');
+    if(prior.exists&&['APPLIED','APPLYING','UNKNOWN'].includes(prior.data().status))throw new Error('This update has already been submitted. Refresh its status.');
+    if(ap&&ap.exists){const a=ap.data();if(a.status!=='PENDING'&&!(a.status==='APPROVED'&&!a.needsReconciliation&&!a.applyAttempt&&(a.validatedAt||prior.exists&&prior.data().status==='FAILED')))throw new Error('This proposal is already being published. Refresh its status.');if(!approvalItem&&creativeHash(a.payload)!==prepared.reviewHash)throw new Error('The complete proposal changed. Prepare it again.');}
+    if(approvalItem)tx.set(apRef,approvalItem);tx.set(pubRef,JSON.parse(JSON.stringify(prepared)));
+  });
+  return {ok:true,...prepared,merchant:merchant?{field:merchant.field,offerId:merchant.identity.offerId,productTitle:merchant.productTitle,source:merchant.sourceName}:null,images:previewImages,copy:selection.copy?result.copy:null,newAd:!w.context.campaignId&&target==='ads',newCampaign,message:target==='merchant'?'This changes the product photo in its existing feed. It remains free of promotional text, logos and borders. The owning store feed may resync its original image.':'Only the selected images and messaging shown here will be updated. Google selects responsive combinations and controls delivery.'};
+}
+async function publishAdDesignPublication({workspaceId,id,hash,confirmed=false}={}){
+  if(!confirmed||!/^publish_[a-f0-9]{32}$/.test(String(id||'')))throw new Error('Review and confirm this exact update first.');
+  const {ref,w}=await _adDesignPublicationContext(workspaceId),pubRef=ref.collection('publications').doc(id);let p;
+  await fb().db.runTransaction(async tx=>{const s=await tx.get(pubRef),live=await tx.get(ref);if(!s.exists)throw new Error('The prepared update was not found.');p=s.data();if(p.reviewHash!==hash||p.sourceHash!==_adDesignSelectionHash(live.data()))throw new Error('The design changed after preparation. Review the current images and text again.');if(p.status!=='PENDING')throw new Error('This update was already submitted. Refresh its status before another attempt.');tx.update(pubRef,{status:'APPLYING',startedAt:Date.now()});});
+  let result;
+  try{
+    if(p.target==='merchant')result=await _publishDesignMerchant(p.merchant);
+    else{const review=await _adDesignApprovalReview(p.approvalId);if(review.hash!==p.reviewHash)throw new Error('The Google proposal changed. Prepare it again.');if(!review.reviewed){if(review.action==='reviewAdVersion')await reviewAdVersion({id:p.approvalId,hash:p.reviewHash});else await reviewCreativeApproval(p.approvalId,p.reviewHash);}const currentApproval=await fb().db.collection(COL.approvals).doc(p.approvalId).get();if(p.assetReviewHash&&_creativeAssetHash(currentApproval.data().creative||{})!==p.assetReviewHash)throw new Error('The reviewed artwork changed. Prepare it again.');if(currentApproval.data().status==='PENDING')await markApprovalApproved(p.approvalId,{hash:p.reviewHash,assetHash:p.assetReviewHash});result=await applyApproval(p.approvalId,await control());}
+    const applied=result.status==='APPLIED',message=applied?'✓ Google accepted the update. Review and serving eligibility are checked separately.':'Google validated the update in dry-run mode; it has not been published.';
+    await pubRef.update({status:applied?'APPLIED':'VALIDATED',confirmedAt:Date.now(),message,result:JSON.parse(JSON.stringify(result))});
+    let versionWarning=null,publishedCampaignId=null;
+    if(applied&&p.target==='ads')try{const ap=await fb().db.collection(COL.approvals).doc(p.approvalId).get(),campaignId=w.context.campaignId||(ap.data().publishedCampaignIds||[])[0]||((ap.data().learningPublication||{}).campaignIds||[])[0];publishedCampaignId=campaignId||null;if(campaignId){const basis=await _verifiedCampaignAnalysisBasis({campaignId});if(w.context.campaignId)await ref.update({sourceVersion:basis.version,snapshotHash:basis.snapshotHash,sourceSnapshot:basis.snapshot,publication:{id,target:p.target,status:'APPLIED',confirmedAt:Date.now()}});else await ref.update({publication:{id,target:p.target,status:'APPLIED',campaignId,confirmedAt:Date.now()}});}}catch(e){versionWarning='Google accepted the update, but its new version could not yet be read. Refresh sources before another update.';}
+    return {ok:true,id,status:applied?'APPLIED':'VALIDATED',message,versionWarning,publishedCampaignId,newAd:!w.context.campaignId&&p.target==='ads'};
+  }catch(e){let unknown=e.writeOutcome==='unknown';if(p.target==='ads'){const a=await fb().db.collection(COL.approvals).doc(p.approvalId).get();unknown=a.exists&&['APPLY_UNKNOWN','APPLYING','APPLIED'].includes(a.data().status);}await pubRef.update({status:unknown?'UNKNOWN':'FAILED',error:String(e.message).slice(0,700)});throw e;}
+}
 function _mergeDesignProduct(prior,page){
   const out={...prior,...page,images:[...new Map([...(prior.images||[]),...(page.images||[])].map(i=>[i.id,i])).values()]};
   for(const key of ["eligibleGroupRefs","creativeGroupRefs","relatedTo","offerIds"])out[key]=[...new Set([...(prior[key]||[]),...(page[key]||[])])];
@@ -9133,7 +9269,7 @@ async function analyzeAdStatus(input) { return _analysisEngine().analyzeAdStatus
 async function runAnalyzeAd(input) { return _analysisEngine().runAnalyzeAd(input); }
 
 module.exports = {
-  adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, cropAdDesignImage, uploadAdDesignReference, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages, adDesignGalleryPage,
+  adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, cropAdDesignImage, uploadAdDesignReference, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages, adDesignGalleryPage, saveAdDesignCopy, adDesignDelivery, prepareAdDesignPublication, publishAdDesignPublication,
   reviseCreativeApproval, markApprovalApproved, needsCreativeReview, prepareCreativeApproval, creativeApprovalStatus, reviewCreativeApproval, assertCreativeReviewed, creativeHash,
   COL, V, CID, OPPORTUNITY_ENGINE_VERSION, DESIGN_STUDIO_ENGINE_VERSION, DESIGN_STUDIO_URL,
   control, mintToken, gaql, mutate, mutateAll,

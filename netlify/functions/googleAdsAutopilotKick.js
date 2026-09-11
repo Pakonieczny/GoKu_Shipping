@@ -116,12 +116,12 @@ async function handleAction(body) {
   const ctrl = await E.control();
   if (a === "dashboard") return await E.dashboard();
   if (a === "pmaxRecommendationEvidence") { try { return await E.pmaxRecommendationEvidence(body); } catch(e) { return {ok:false,error:e.message}; } }
-  if (["adDesignWorkspace", "saveAdDesign", "cropAdDesignImage", "uploadAdDesignReference", "adDesignProductImages", "adDesignGalleryPage", "adDesignStatus"].includes(a)) {
+  if (["adDesignWorkspace", "saveAdDesign", "cropAdDesignImage", "uploadAdDesignReference", "adDesignProductImages", "adDesignGalleryPage", "adDesignStatus", "saveAdDesignCopy", "adDesignDelivery", "prepareAdDesignPublication", "publishAdDesignPublication"].includes(a)) {
     try { return await E[a](body); } catch(e) { return {ok:false,error:e.message}; }
   }
   if (a === "startAdDesign") {
     try {
-      const out=await E.startAdDesign({workspaceId:body.workspaceId,expectedVersion:body.expectedVersion,snapshotHash:body.snapshotHash,retry:!!body.retry});
+      const out=await E.startAdDesign({workspaceId:body.workspaceId,expectedVersion:body.expectedVersion,snapshotHash:body.snapshotHash,retry:!!body.retry,mode:body.mode||'design',newRequest:!!body.newRequest});
       if(out.queued) await dispatchTask("adDesign",{workspaceId:out.workspaceId,jobId:out.jobId});
       return out;
     } catch(e) { return {ok:false,error:e.message}; }
