@@ -9101,7 +9101,7 @@ async function _designMerchantRequest(path,method='GET',body=null){
   let response;try{response=await fetch('https://merchantapi.googleapis.com/'+path,{method,timeout:18000,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});}catch(e){if(method==='PATCH')e.writeOutcome='unknown';throw e;}
   const data=await response.json().catch(()=>null);if(!response.ok||!data){const error=new Error('Merchant Center '+(data&&data.error&&data.error.message||'returned HTTP '+response.status));if(method==='PATCH'&&(response.status>=500||!data))error.writeOutcome='unknown';throw error;}return data;
 }
-async function _prepareDesignMerchant(product,w,asset,format,selectedOfferId){
+async function _prepareDesignMerchant(product,w,asset,format,selectedOfferId,selectedIdentity=null){
   const offers=(product.offerIds||[product.itemId]).filter(Boolean),merchantId=String(await merchantCenterId()),selected=selectedOfferId||offers.find(id=>(w.context.itemIds||[]).includes(id))||product.itemId||offers[0];
   if(!selected)throw new Error('This product has no exact Merchant offer. Open its listing in Merchant Center first.');
   if(!offers.includes(selected))throw new Error('Choose a verified Merchant variant belonging to this product.');
@@ -9123,8 +9123,10 @@ async function _prepareDesignMerchant(product,w,asset,format,selectedOfferId){
   }
   if(pageToken)throw new Error('Merchant Center returned an incomplete variant lookup. Retry before approving this photo.');
   if(!found.size)throw new Error('This variant is no longer in the selected Merchant inventory. Refresh the ad sources or check this exact variant in Merchant Center.');
-  if(found.size!==1)throw new Error('This variant appears in multiple Merchant feeds or languages. Select its exact market before approving a photo update.');
-  const identity=[...found.values()][0],{offerId,contentLanguage}=identity,encoded=Buffer.from([contentLanguage,identity.feedLabel,offerId].join('~')).toString('base64url'),name='accounts/'+merchantId+'/products/'+encoded;
+  const identities=[...found.values()].sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))),identity=selectedIdentity?identities.find(i=>['offerId','contentLanguage','feedLabel'].every(k=>i[k]===selectedIdentity[k])):identities.length===1?identities[0]:null;
+  if(selectedIdentity&&!identity)throw new Error('The selected Merchant feed or language no longer matches this product. Reload its available variants.');
+  if(!identity)return {requiresIdentity:true,identities,selectedOfferId:selected};
+  const {offerId,contentLanguage}=identity,encoded=Buffer.from([contentLanguage,identity.feedLabel,offerId].join('~')).toString('base64url'),name='accounts/'+merchantId+'/products/'+encoded;
   const current=await _designMerchantRequest('products/v1/'+name);
   if(current.offerId!==offerId||current.feedLabel!==identity.feedLabel||current.contentLanguage!==contentLanguage||current.legacyLocal===true)throw new Error('The Merchant product identity does not match this design.');
   if(current.archived)throw new Error('This Merchant product is archived. Restore it in its owning feed before updating the photo.');
@@ -9166,7 +9168,7 @@ async function adDesignDelivery({workspaceId,start,end}={}){
     rows:rows.filter(r=>(r.asset||{}).imageAsset).map(r=>{const a=r.asset||{},link=r.assetGroupAsset||r.adGroupAsset||{},m=r.metrics||{},receipt=mapped.find(p=>p.resourceName===a.resourceName);return {assetId:a.resourceName,url:((a.imageAsset||{}).fullSize||{}).url||null,hash:receipt&&receipt.hash||null,fieldType:link.fieldType,status:link.primaryStatus||link.status||'UNKNOWN',reasons:link.primaryStatusReasons||[],impressions:Number(m.impressions)||0,clicks:Number(m.clicks)||0,ctr:m.ctr==null?(Number(m.impressions)>0?Number(m.clicks)/Number(m.impressions):null):Number(m.ctr),conversions:Number(m.conversions)||0,value:Number(m.conversionsValue)||0,cost:fromMicros(m.costMicros)};}),
     note:'Asset outcomes overlap when images and text serve together. Compare like periods; do not add asset conversions or interpret them as isolated image lift. Google does not expose separate Merchant Center traffic for each product image.'};
 }
-async function prepareAdDesignPublication({workspaceId,target='ads',formats=[],includeCopy=false,offerId=null}={}){
+async function prepareAdDesignPublication({workspaceId,target='ads',formats=[],includeCopy=false,offerId=null,merchantIdentity=null}={}){
   const {ref,w,products,product,group}=await _adDesignPublicationContext(workspaceId),selection={formats:[...new Set(formats)].sort(),copy:includeCopy===true};
   if(!['ads','merchant'].includes(target)||selection.formats.some(k=>!['square','landscape','portrait'].includes(k))||!selection.copy&&!selection.formats.length)throw new Error('Select an image format or messaging to update.');
   const design=require('./googleAdsAdDesign'),result=JSON.parse(JSON.stringify(w.job&&w.job.result||{})),placements=design.chosenPlacements(w),assets={desktop:{},mobile:{}};
@@ -9176,13 +9178,16 @@ async function prepareAdDesignPublication({workspaceId,target='ads',formats=[],i
     const bytes=await _loadCreativeAsset(asset),meta=await require('sharp')(bytes).metadata();if(bytes.length!==asset.bytes||meta.width!==asset.width||meta.height!==asset.height)throw new Error('A saved image changed. Save its crop again before approving.');assets[device][format]=asset;}
   result.placementAssets=assets;result.assets=assets.desktop;result.copy=w.messaging&&w.messaging.copy||result.copy||{};result.brief=result.brief||{rationale:'Operator reviewed the exact product image and destination.',hypothesis:'Improve product clarity',successMetric:'qualified_clicks'};
   result.quality=result.quality||{operatorReviewRequired:true};result.productIds=[product.id];
-  const sourceHash=_adDesignSelectionHash(w),id='publish_'+creativeHash({sourceHash,target,selection,sourceVersion:w.sourceVersion,offerId:target==='merchant'?offerId:null}).slice(0,32),pubRef=ref.collection('publications').doc(id),existing=await pubRef.get();
-  if(existing.exists&&['APPLIED','APPLYING','UNKNOWN'].includes(existing.data().status))return {ok:true,id,status:existing.data().status,message:existing.data().message||'This exact update has already been submitted. Refresh its status.'};
+  const sourceHash=_adDesignSelectionHash(w);let id='publish_'+creativeHash({sourceHash,target,selection,sourceVersion:w.sourceVersion,offerId:target==='merchant'?offerId:null}).slice(0,32),pubRef=ref.collection('publications').doc(id),existing=await pubRef.get();
+  if(target!=='merchant'&&existing.exists&&['APPLIED','APPLYING','UNKNOWN'].includes(existing.data().status))return {ok:true,id,status:existing.data().status,message:existing.data().message||'This exact update has already been submitted. Refresh its status.'};
   let approvalId=null,payload=null,merchant=null,newCampaign=null,logo=null,approvalItem=null,assetReviewHash=null;
   if(target==='merchant'){
     if(selection.copy||selection.formats.length!==1)throw new Error('Merchant Center accepts a product photo separately from advertising copy. Choose one image format.');
     const chosen=placements.find(p=>p.device==='desktop'&&p.format===selection.formats[0]);if(!chosen||(chosen.productIds||[]).length!==1||String(chosen.productIds[0])!==String(product.id))throw new Error('Save a photo of this exact product before updating its Merchant Center image.');
-    merchant=await _prepareDesignMerchant(product,w,assets.desktop[selection.formats[0]],selection.formats[0],offerId);
+    merchant=await _prepareDesignMerchant(product,w,assets.desktop[selection.formats[0]],selection.formats[0],offerId,merchantIdentity);
+    if(merchant.requiresIdentity)return {ok:true,status:'CHOOSE_MERCHANT_VARIANT',productId:product.id,groupRef:group.ref,offerId:merchant.selectedOfferId,identities:merchant.identities,message:'Choose the Merchant feed and language for this exact variant, then select Update Merchant photo again.'};
+    id='publish_'+creativeHash({sourceHash,target,selection,sourceVersion:w.sourceVersion,merchantIdentity:merchant.identity}).slice(0,32);pubRef=ref.collection('publications').doc(id);existing=await pubRef.get();
+    if(existing.exists&&['APPLIED','APPLYING','UNKNOWN'].includes(existing.data().status))return {ok:true,id,status:existing.data().status,message:existing.data().message||'This exact update has already been submitted. Refresh its status.'};
   }else if(w.context.campaignId){
     await _guardCampaignVersion({campaignId:w.context.campaignId,expectedVersion:w.sourceVersion,snapshotHash:w.snapshotHash});
     payload=design.buildVersionDesignPayload({workspaceId,jobId:id,workspace:w,group,product,result,customerId:CID,selection});approvalId='design-'+id;
