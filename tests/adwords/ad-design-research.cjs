@@ -73,5 +73,17 @@ function result(){return {brief:{buyer:'A gift buyer looking for a monogram neck
  ok(e.sources.some(s=>s.id==='merchant'&&s.status==='unavailable'&&s.detail.includes('quota')),'quota is identified as unavailable Merchant evidence');ok(e.sources.some(s=>s.id==='product:10'&&s.status==='available'),'current product page still verified');ok(e.sources.some(s=>s.id==='storeSales'&&s.status==='available'),'saved store outcomes survive Google downtime');eq(e.sourceBindings.primaryProductId,'10');eq(e.sourceBindings.landingUrl,product.url);eq(e.decisionRules.primaryKpi,'qualified_clicks','unavailable tracking does not assert measured purchases');
  request=f.api.buildRequest({evidence:e});ok(request.input[0].content[0].text.includes('sterling silver'),'exact listing facts reach the copy request');ok(request.input[0].content[0].text.includes('Retry in 8365 seconds'),'provider request records the missing Google coverage');
  f=fixture({dependencies:{creativeFetch:async()=>{throw Error('Store offline');},merchantProducts:async()=>{throw quota;}}});await assert.rejects(()=>f.api.collect(input),/current destination could not be researched/);checks++;
+
+ // Actual browser failures: semicolon-separated names and operator art direction.
+ const {applyEditorPlan}=require(root+'/netlify/functions/googleAdsAdDesignResearch');
+ const editorEvidence={sources:[{id:'product:10',status:'available',data:{title:'Gold Peach Fruit Charm',description:'Choose a Peach Charm.'}}],warnings:[],sourceBindings:{landingUrl:product.url}};
+ const editorRequest={productId:'10',groupRef:group.ref,mode:'design',artboard:{width:1000,height:1000},document:{objects:[]}};
+ const editorOutput={productId:'10',groupRef:group.ref,changes:[],additions:[],removeLayerIds:[],layerOrder:[],alternatives:[],factClaims:[{claim:'Peach Charm; Peach Fruit Charm',quote:'Gold Peach Fruit Charm',sourceId:'product:10'}],sourceIds:['product:10'],limitations:[]};
+ ok(applyEditorPlan({output:editorOutput,request:editorRequest,evidence:editorEvidence}),'several exact supported names may share an evidence entry');
+ const falseNames=clone(editorOutput);falseNames.factClaims[0].claim+='; Waterproof';assert.throws(()=>applyEditorPlan({output:falseNames,request:editorRequest,evidence:editorEvidence}),/not found/);checks++;
+ f=fixture();e=await f.api.collect({...input,selectedProducts:[product],selectedSources:[{id:'photo-1',role:'product',productId:'10',label:'P1',title:product.title}],settings:{direction:'Use the selected charm-only photo as the physical reference; leave calm negative space.'}});
+ const directed=result();Object.assign(directed.brief,{productIds:['10'],sourceImageIds:['photo-1']});directed.sourceIds.push('composition');directed.imageDirections.forEach(d=>d.sourceIds.push('composition'));directed.factClaims.push({claim:'Use the selected charm-only photo as the physical reference; leave calm negative space.',quote:'Use the selected charm-only photo as the physical reference; leave calm negative space.',sourceId:'composition',productId:'10'});
+ eq(f.api.validateResult({output:directed,evidence:e,channel:'search',group}).factClaims.length,1,'exact non-copy operator directions are not treated as product claims');
+ directed.factClaims.at(-1).claim='Waterproof for life';assert.throws(()=>f.api.validateResult({output:directed,evidence:e,channel:'search',group}),/not bound/);checks++;
  console.log('Ad Design research checks passed: '+checks);
 })().catch(e=>{console.error(e);process.exit(1)});
