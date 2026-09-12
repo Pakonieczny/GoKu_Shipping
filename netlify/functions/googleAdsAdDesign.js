@@ -526,7 +526,7 @@ function createAdDesignService(deps) {
     const paid=async(key,pct,label,perform)=>{
       const saved=await target.collection('data').doc(key).get();if(saved.exists)return saved.data();
       if(job.inFlight)throw new Error('The '+key+' request has no confirmed receipt. Its request ID is saved; no replacement was charged.');
-      const estimate=await deps.reserveCost({key:/^scene_\d+$/.test(key)?'image_'+(key==='scene_0'?plan.masterFormat:plan.alternateFormat):'quality',workspace:w,job:{inputCoverage:{preparedReferenceCount:refs.length,usedProductImages:refs.length}}});
+      const estimate=await deps.reserveCost({key:/^scene_(?:\d+|repair)$/.test(key)?'image_'+(key==='scene_0'||key==='scene_repair'?plan.masterFormat:plan.alternateFormat):'quality',workspace:w,job:{inputCoverage:{preparedReferenceCount:refs.length,usedProductImages:refs.length}}});
       const reservedUsd=Number(typeof estimate==='object'?estimate.reservedUsd:estimate),spent=stageUsage.reduce((n,u)=>n+(Number(u.estimatedUsd)||0),0),ctrl=await deps.control();
       if(!Number.isFinite(reservedUsd)||spent+reservedUsd>Math.max(1,Math.min(30,Number(ctrl.creativeBudgetUsd)||8)))throw new Error('The remaining creative allowance cannot cover the next image step. Completed research and images are saved.');
       await verify();const requestId=crypto.randomUUID();await save({reservedUsd,inFlight:{key,requestId,at:Date.now()},progress:{pct,label}});
@@ -551,6 +551,26 @@ function createAdDesignService(deps) {
       quality=await paid('scene_quality',82,'Checking product fidelity and mobile clarity',async requestId=>deps.reviewImages(refs[0],files,{rationale:plan.rationale,copy:{headlines:[plan.copy.headline,plan.copy.shortHeadline],descriptions:[plan.copy.description]},keywords:product.keywords||[],product:{id:product.id,title:product.title},inputCoverage:{usedProductImages:refs.length}},refs,requestId,{...(raw.exists?{rawResponse:raw.data().response}:{}),onResponse:response=>saveData('scene_quality_response',{response})}));
     }
     await recordCost('scene_quality',quality);
+    if(quality.productFaithful!==true||quality.mobileReadable===false){
+      // One bounded corrective image, with every paid response retained. The
+      // first reference remains the authority for this variant's construction.
+      const detailRefs=[...refs];
+      for(const photo of (product.images||[]).slice(0,3)){
+        if(detailRefs.length>=5||!deps.fullSourceBytes||!photo.url)break;
+        try{const b=await deps.fullSourceBytes(photo.url);detailRefs.push(await require('sharp')(b).resize({width:1600,height:1600,fit:'inside',withoutEnlargement:true}).jpeg({quality:92}).toBuffer());}catch(_){}
+      }
+      const repair=await paid('scene_repair',84,'Correcting the scene using the product-detail review',async requestId=>{
+        const format=FORMATS.find(f=>f.key===plan.masterFormat),correction='Correct these specific issues: '+(quality.issues||[]).join(' ')+' The FIRST reference defines the selected jewelry, metal and construction. Other listing views only clarify physical details; do not mix variants. Preserve the fine chain links, bead stations, attachment ring and engraving exactly. Do not reveal a clasp or unseen hardware unless clearly present in a reference. Favor a new close product setting or cropped adult-model scene that shows the same verified parts as the original. Make the pendant prominent and readable on a 360px mobile preview. Do not lay out an entire necklace if its unseen construction would have to be invented.';
+        const generated=await deps.generateImage({requestId,provider:provider(),format,references:detailRefs,product,products:[product],brief:{buyer:plan.rationale,visualDirection:correction},imageDirections:[{concept:'Faithful corrected product scene',composition:correction}],settings:{...w.settings,direction:request.instruction+'\n'+correction},inputCoverage:{usedProductImages:detailRefs.length,preparedReferenceCount:detailRefs.length}});
+        const asset=await deps.saveAsset(workspaceId,generated.bytes,jobId+'_scene_repair',{width:format.width,height:format.height,mimeType:'image/jpeg',digitalSourceType:generated.digitalSourceType||null});return {...generated,bytes:undefined,asset};
+      });
+      await recordCost('scene_repair',repair);
+      const sourceId='scene_'+sha([workspaceId,jobId,'scene_repair']).slice(0,40),id='generated_'+sha(repair.asset.path).slice(0,32),source={id:sourceId,productId:request.productId,groupRef:request.groupRef,title:product.title+' · corrected AI scene',width:repair.asset.width,height:repair.asset.height,asset:repair.asset,source:{kind:'library',imageId:id}},image={id,kind:'generated',format:plan.masterFormat,productIds:[request.productId],ownerProductId:request.productId,groupRef:request.groupRef,title:product.title,asset:repair.asset,createdAt:repair.receivedAt||Date.now(),jobId};
+      await ref.collection('editorSources').doc(sourceId).set(clean(source));await ref.collection('imageLibrary').doc(id).set(clean(image));await archiveGenerated(w,image);
+      sources.splice(0,sources.length,source);images.splice(0,images.length,{id:sourceId,width:source.width,height:source.height,focalX:.5,focalY:.5,forFamilies:[]});files.splice(0,files.length,await deps.loadAsset(repair.asset));
+      const raw=await target.collection('data').doc('scene_repair_quality_response').get();if(job.inFlight?.key==='scene_repair_quality'&&raw.exists)await save({inFlight:null});
+      quality=await paid('scene_repair_quality',88,'Checking the corrected jewelry and mobile framing',async requestId=>deps.reviewImages(refs[0],files,{rationale:plan.rationale,copy:{headlines:[plan.copy.headline],descriptions:[plan.copy.description]},keywords:product.keywords||[],product:{id:product.id,title:product.title},inputCoverage:{usedProductImages:detailRefs.length}},detailRefs,requestId,{...(raw.exists?{rawResponse:raw.data().response}:{}),onResponse:response=>saveData('scene_repair_quality_response',{response})}));await recordCost('scene_repair_quality',quality);
+    }
     if(quality.productFaithful!==true)throw new Error('The generated photo needs product-fidelity review: '+(quality.issues||[]).join(' '));
     await save({progress:{pct:91,label:'Adapting photo crops, headlines and buttons across 23 sizes'}});
     const publicationImages=[];
