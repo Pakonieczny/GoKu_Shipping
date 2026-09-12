@@ -180,7 +180,7 @@ Compose specifically for ${format.key}, final ${format.width} by ${format.height
     const bytes=syntheticXmp(out.data,meta.xmp);if(bytes.length>5*1024*1024)throw new Error('The generated format exceeds Google’s 5 MB limit.');
     const cost=imageCost(data.usage);return {bytes,usage:data.usage||{},providerModel:data.model||IMAGE_MODEL,...(cost==null?{}:{estimatedUsd:cost}),costEstimated:cost==null,digitalSourceType:SYNTHETIC};
   }
-  async function reviewImages(source,files,brief,catalogReferences,requestId){
+  async function reviewImages(source,files,brief,catalogReferences,requestId,recovery={}){
     const schema={type:'object',additionalProperties:false,properties:{pass:{type:'boolean'},productFaithful:{type:'boolean'},mobileReadable:{type:'boolean'},score:{type:'number'},issues:{type:'array',items:{type:'string'}}},required:['pass','productFaithful','mobileReadable','score','issues']};
     const manifest=brief&&brief.inputCoverage&&brief.inputCoverage.referenceManifest,multi=Array.isArray(manifest)&&manifest.length>0;
     if(multi&&(!catalogReferences||manifest.length!==catalogReferences.length))throw new Error('Quality review requires every saved composition reference.');
@@ -193,14 +193,15 @@ Compose specifically for ${format.key}, final ${format.width} by ${format.height
     const productCount=Math.max(1,Number(brief&&brief.inputCoverage&&brief.inputCoverage.usedProductImages)||1);
     if(!multi)(catalogReferences||[]).slice(1,Math.min(productCount,3)).forEach((b,i)=>content.push({type:'input_text',text:'ADDITIONAL VERIFIED PRODUCT VIEW '+(i+1)},{type:'input_image',image_url:'data:image/jpeg;base64,'+b.toString('base64'),detail:'high'}));
     files.forEach((b,i)=>content.push({type:'input_text',text:'FINAL '+(i+1)},{type:'input_image',image_url:'data:image/jpeg;base64,'+b.toString('base64'),detail:'high'}));
-    const data=await responses({model:TEXT_MODEL,store:false,reasoning:{effort:'high'},max_output_tokens:3000,input:[{role:'user',content}],text:{format:{type:'json_schema',name:'ad_design_quality',strict:true,schema}}},requestId);
-    const text=typeof data.output_text==='string'?data.output_text:(data.output||[]).flatMap(x=>x.content||[]).filter(x=>x.type==='output_text').map(x=>x.text).join('');const result=JSON.parse(text);
+    const data=recovery.rawResponse||await responses({model:TEXT_MODEL,store:false,reasoning:{effort:'high'},max_output_tokens:12000,input:[{role:'user',content}],text:{format:{type:'json_schema',name:'ad_design_quality',strict:true,schema}}},requestId);
+    if(!recovery.rawResponse&&recovery.onResponse)await recovery.onResponse(data);
+    const result=require('./googleAdsAdDesignResearch').parseResponse(data);
     return {...result,pass:result.pass===true&&result.productFaithful===true&&result.mobileReadable===true&&Number(result.score)>=85,usage:data.usage||{},providerModel:data.model||TEXT_MODEL,...(data.estimatedUsd==null?{}:{estimatedUsd:data.estimatedUsd}),costEstimated:data.costEstimated!==false};
   }
   function reserveCost({key,workspace,job}){
     const prepared=Number(job&&job.inputCoverage&&job.inputCoverage.preparedReferenceCount)||0;
     if(key==='copy'||key==='copy_repair')return Math.ceil((2.30+prepared*.08)*100)/100;
-    if(key==='quality')return Math.ceil((.65+prepared*.06+((job&&job.placements||[]).length?.25:0))*100)/100;
+    if(key==='quality'||key==='quality_repair')return Math.ceil((2.30+prepared*.06+((job&&job.placements||[]).length?.25:0))*100)/100;
     const format=(D.formats||[]).find(f=>'image_'+f.key===key);if(!format)throw new Error('Unknown paid design stage.');
     const refs=prepared||Math.min(16,Math.max(1,Number(job.inputCoverage&&job.inputCoverage.usedProductImages||16)+Number(job.inputCoverage&&job.inputCoverage.usedInspirationImages||0)));
     // Sunburst output estimate follows OpenAI's published calculator. Reference

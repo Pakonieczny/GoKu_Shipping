@@ -833,12 +833,16 @@ function createAdDesignService(deps) {
       }
       if (Date.now() - started > 620000) { await saveJob({ phase: "paused", leaseUntil: 0, progress: { pct: job.progress.pct, label: "Every format is saved; continuing the quality review" } }); return { ok: true, paused: true, dispatch: true, workspaceId, jobId }; }
       await progress(82, "Checking product fidelity, framing and mobile readability");
-      const quality = await paid("quality", async requestId => {
+      const readQuality = key => paid(key, async requestId => {
         const finalAssets=[...new Map(Object.values(job.placementAssets).flatMap(assets=>Object.values(assets)).map(a=>[a.hash,a])).values()];
-        const files = await Promise.all(finalAssets.map(asset => deps.loadAsset(asset))), output = await deps.reviewImages(sourceFiles[0], files, { ...copy.brief, copy: copy.copy, keywords: group.keywords || product.keywords || [], settings: value.settings, product: product.title, products: researchProducts, placementAssets:job.placementAssets, inputCoverage: job.inputCoverage }, sourceFiles, requestId);
-        await writeReceipt("quality", { stageResult: output, receivedAt: Date.now() });
+        const stored=await ref.collection('outputs').doc(jobId+'_'+key).get();let response=stored.exists&&stored.data().rawResponse,output;
+        const files = await Promise.all(finalAssets.map(asset => deps.loadAsset(asset)));
+        try{output=await deps.reviewImages(sourceFiles[0], files, { ...copy.brief, copy: copy.copy, keywords: group.keywords || product.keywords || [], settings: value.settings, product: product.title, products: researchProducts, placementAssets:job.placementAssets, inputCoverage: job.inputCoverage }, sourceFiles, requestId,{rawResponse:response,onResponse:async raw=>{response=raw;await writeReceipt(key,{rawResponse:raw,receivedAt:Date.now()});}});}
+        catch(error){if(response){settle(job,key,{requestId,usage:response.usage||{},providerModel:response.model||'gpt-6-astra',estimatedUsd:response.estimatedUsd,costEstimated:response.costEstimated!==false});await saveJob({inFlight:null});error.definiteResponse=true;}throw error;}
+        await writeReceipt(key, { stageResult: output, receivedAt: Date.now() });
         return { ...output, estimatedUsd: output.estimatedUsd == null ? 1 : output.estimatedUsd, costEstimated: output.costEstimated !== false };
       });
+      let quality;try{quality=await readQuality('quality');}catch(error){if(!['AI_OUTPUT_INCOMPLETE','AI_OUTPUT_INVALID'].includes(error.code))throw error;await progress(85,'Completing the saved artwork quality review');quality=await readQuality('quality_repair');}
       if (quality.pass !== true || quality.productFaithful !== true || quality.mobileReadable !== true || Number(quality.score) < 85) throw new Error("The generated design needs changes to product fidelity, framing or mobile clarity before it can enter Approvals.");
       const singleProductDestination=!value.context.campaignId&&!value.context.approvalId||/\/products\//.test(group.url||'');
       const outside = selectedProducts.filter(p => Array.isArray(p.eligibleGroupRefs) && !p.eligibleGroupRefs.includes(group.ref)||singleProductDestination&&String(p.id)!==String(product.id));

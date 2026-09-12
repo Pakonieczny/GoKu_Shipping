@@ -175,4 +175,15 @@ const oldDraft=await studio.svc.editorState({...scope,workspaceId:'recovered_wor
   assert.equal(e.calls.images,0);assert.equal(e.calls.finish,0);check(true,failure+': bounded response recovery');
  }
 
+for(const twice of [false,true]){
+ const e=await setup();e.D.reviewImages=async(source,files,brief,refs,id,recovery)=>{
+  let raw=recovery.rawResponse;if(!raw){e.calls.quality++;raw={model:'gpt-6-astra',status:twice||e.calls.quality===1?'incomplete':'completed',incomplete_details:{reason:'max_output_tokens'},output_text:JSON.stringify({pass:true,productFaithful:true,mobileReadable:true,score:95}),usage:{input_tokens:100,output_tokens:100},estimatedUsd:.05,costEstimated:false};await recovery.onResponse(raw);}
+  return {...require('../../netlify/functions/googleAdsAdDesignResearch').parseResponse(raw),estimatedUsd:.05};
+ };
+ const q=await e.svc.start({workspaceId:e.id});if(twice){await assert.rejects(()=>e.svc.run({workspaceId:e.id,jobId:q.jobId}));await e.svc.start({workspaceId:e.id});await assert.rejects(()=>e.svc.run({workspaceId:e.id,jobId:q.jobId}));}else await e.svc.run({workspaceId:e.id,jobId:q.jobId});
+ check(e.calls.quality===2&&e.calls.images===3,'quality completion recovery is bounded and retains every generated image');
+ check(e.f.docs.get(e.p+'/outputs/'+q.jobId+'_quality').rawResponse.status==='incomplete','incomplete quality receipt remains auditable');
+ check(e.f.docs.get(e.p).job.phase===(twice?'needs_attention':'ready'),'quality recovery completes or preserves an actionable failure');
+}
+
 console.log('PASS '+n+' Ad Design upload, source identity, paid-stage reuse, complete formats, exact approvals and quality checks');})().catch(error=>{console.error(error);process.exit(1)});
