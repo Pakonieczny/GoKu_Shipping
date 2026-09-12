@@ -2305,7 +2305,7 @@ function _pmaxResearchCandidate(state, request, now = Date.now()) {
   const at = Number(state && state.pmaxAt) || 0;
   if (!at || now - at >= _OPPORTUNITY_RESEARCH_MAX_AGE || at > now + 60000 ||
       Number(state.pmaxResearchVersion) !== _OPPORTUNITY_RESEARCH_SCHEMA || state.pmaxError)
-    throw new Error("Refresh product research before creating a new PMax draft.");
+    throw Object.assign(new Error("Refresh product research before creating a new PMax draft."),{code:'PMAX_RESEARCH_STALE'});
   const label = x => String(x || "").toUpperCase();
   const candidate = (state.pmaxList || []).find(x => x.handle === request.handle && label(x.feedLabel) === label(request.feedLabel));
   const allowed = new Set((candidate && candidate.itemIds || []).map(x => String(x).toLowerCase()));

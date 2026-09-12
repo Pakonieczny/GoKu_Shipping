@@ -854,9 +854,18 @@ function createAdDesignService(deps) {
         return {ok:true,workspaceId,approvalId:null,publication};
       }
       await progress(94, "Saving the exact copy and images for your approval");
-      if (!job.approvalId) { const result = await deps.finish({ workspaceId, jobId, owner, workspace: value, group, product, selectedProducts: [product], result: job.result }); job.approvalId = result.approvalId; if (!job.approvalId) throw new Error("The finished design could not be added to Approvals."); await saveJob({}); }
+      if (!job.approvalId) {
+        try{const result = await deps.finish({ workspaceId, jobId, owner, workspace: value, group, product, selectedProducts: [product], result: job.result });job.approvalId=result.approvalId;if(!job.approvalId)throw new Error("The finished design could not be added to Approvals.");}
+        catch(error){
+          // Creative research has completed. An expired campaign-opportunity
+          // check blocks publication, not access to the paid finished artwork.
+          if(error.code!=='PMAX_RESEARCH_STALE')throw error;
+          job.result.publication={...publication,ready:false,reason:'Artwork and messaging are saved. Generate Opportunities to refresh campaign research before publishing this new ad.'};
+        }
+        await saveJob({});
+      }
       await ref.update({messaging:{copy:copy.copy,productId:value.settings.productId,groupRef:group.ref,researchedAt:Date.now(),evidenceHash:job.evidence.hash,edited:!!job.copyOverride}});
-      await saveJob({ phase: "ready", completedAt: Date.now(), leaseUntil: 0, inFlight: null, error: null, progress: { pct: 100, label: "Ready in Approvals — review the exact copy and every image" } });
+      await saveJob({ phase: "ready", completedAt: Date.now(), leaseUntil: 0, inFlight: null, error: null, progress: { pct: 100, label: job.approvalId?"Ready in Approvals — review the exact copy and every image":"Artwork and messaging saved — review all three formats" } });
       return { ok: true, workspaceId, approvalId: job.approvalId };
     } catch (error) {
       await saveJob({ phase: "needs_attention", error: String(error.message || error).slice(0, 900), leaseUntil: 0, progress: { pct: Number(job.progress && job.progress.pct) || 0, label: "Saved work retained — review the unfinished step" } }); throw error;

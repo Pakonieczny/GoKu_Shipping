@@ -186,4 +186,6 @@ for(const twice of [false,true]){
  check(e.f.docs.get(e.p).job.phase===(twice?'needs_attention':'ready'),'quality recovery completes or preserves an actionable failure');
 }
 
+const stalePublication=await setup();stalePublication.D.finish=async()=>{throw Object.assign(Error('Refresh product research before creating a new PMax draft.'),{code:'PMAX_RESEARCH_STALE'});};const staleRun=await stalePublication.svc.start({workspaceId:stalePublication.id});await stalePublication.svc.run({workspaceId:stalePublication.id,jobId:staleRun.jobId});const finishedDraft=stalePublication.f.docs.get(stalePublication.p);check(finishedDraft.job.phase==='ready'&&!finishedDraft.job.error&&Object.keys(finishedDraft.job.result.assets).length===3,'expired campaign research does not fail completed paid artwork');check(finishedDraft.job.result.publication.ready===false&&!finishedDraft.job.approvalId&&finishedDraft.messaging.copy.headlines.length>0,'fresh campaign research remains required for publication while messaging is usable');
+
 console.log('PASS '+n+' Ad Design upload, source identity, paid-stage reuse, complete formats, exact approvals and quality checks');})().catch(error=>{console.error(error);process.exit(1)});
