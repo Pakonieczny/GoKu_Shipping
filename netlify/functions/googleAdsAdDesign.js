@@ -262,7 +262,7 @@ function createAdDesignService(deps) {
       if(!changingProduct&&previousSettings&&sha(generationSettings(settings))===sha(generationSettings(previousSettings))){const job=value.job?{...value.job,settingsHash:sha(settings)}:null;tx.update(ref,{settings,job,revision:Number(value.revision||0)+1,updatedAt:Date.now()});return;}
       if (value.job && value.job.inFlight) throw new Error("The previous paid request has an unconfirmed outcome. Resolve it before changing this workspace.");
       const priorJob=priorDesign&&priorDesign.jobId?await tx.get(ref.collection('history').doc(priorDesign.jobId)):null;
-      const cachedJob=priorJob&&priorJob.exists?priorJob.data():priorDesign&&priorDesign.job||null,restored=cachedJob&&(cachedJob.sourceVersion||null)===(value.sourceVersion||null)&&(cachedJob.snapshotHash||null)===(value.snapshotHash||null)&&cachedJob.settingsHash===sha(settings)?cachedJob:null;
+      const cachedJob=priorJob&&priorJob.exists?priorJob.data():priorDesign&&priorDesign.job||null,restored=cachedJob&&!cachedJob.resetAt&&!(value.lastFailureResetAt>=Number(cachedJob.updatedAt||cachedJob.createdAt||0)&&!cachedJob.inFlight&&['needs_attention','paused','queued','running'].includes(cachedJob.phase))&&(cachedJob.sourceVersion||null)===(value.sourceVersion||null)&&(cachedJob.snapshotHash||null)===(value.snapshotHash||null)&&cachedJob.settingsHash===sha(settings)?cachedJob:null;
       if (value.job) tx.set(ref.collection("history").doc(value.job.id), value.job);
       if(changingProduct)designs[priorKey]={settings:value.settings,messaging:value.messaging||null,jobId:value.job&&value.job.id||null};
       tx.update(ref, { settings, job: restored?{...restored,settingsHash:sha(settings)}:null,...(changingProduct?{productDesigns:designs,messaging:priorDesign&&priorDesign.messaging||null}:{}), revision: Number(value.revision || 0) + 1, updatedAt: Date.now() });
@@ -619,7 +619,8 @@ function createAdDesignService(deps) {
     for(const ref of refs){
       const outcome=await f().db.runTransaction(async tx=>{
         const row=await tx.get(ref);if(!row.exists||row.data().archivedAt)return 0;const w=row.data(),job=w.job;
-        if(!job||job.phase!=='needs_attention'||Number(job.updatedAt||job.createdAt||0)>cutoff||active(job))return 0;
+        const stale=job&&['paused','queued','running'].includes(job.phase)&&!active(job)&&now-Number(job.updatedAt||job.createdAt||0)>120000;
+        if(!job||job.phase!=='needs_attention'&&!stale||Number(job.updatedAt||job.createdAt||0)>cutoff||active(job)){tx.update(ref,{lastFailureResetAt:cutoff});return 0;}
         if(job.inFlight){const receipt=await tx.get(ref.collection('outputs').doc(job.id+'_'+job.inFlight.key)),r=receipt.exists&&receipt.data();if(!r||!r.rawResponse&&!r.stageResult&&!r.asset)return -1;}
         // Keep legacy paid images visible even if their job predates the gallery.
         const images=[];for(const [format,asset]of Object.entries(job.assets||{})){if((job.placements||[]).some(p=>p.asset.hash===asset.hash))continue;const id='generated_'+sha(asset.path).slice(0,32),target=ref.collection('imageLibrary').doc(id),existing=await tx.get(target);if(!existing.exists)images.push({target,data:{id,kind:'generated',groupRef:w.settings.groupRef,format,title:'Saved AI image',productIds:job.result&&job.result.productIds||[String(w.settings.productId)],asset,createdAt:job.completedAt||job.createdAt||now,jobId:job.id}});}
@@ -627,10 +628,11 @@ function createAdDesignService(deps) {
         tx.update(ref,{job:null,revision:Number(w.revision||0)+1,updatedAt:now,lastFailureResetAt:now});return 1;
       });
       if(outcome===1){resetJobs++;resetWorkspaceIds.push(ref.id);}else if(outcome===-1)unconfirmed++;
-      const failed=await ref.collection('editorAIJobs').where('phase','==','needs_attention').get();
+      const failed=await ref.collection('editorAIJobs').where('phase','in',['needs_attention','queued','running']).get();
       for(const candidate of failed.docs){const result=await f().db.runTransaction(async tx=>{
         const row=await tx.get(candidate.ref),workspace=await tx.get(ref);if(!row.exists||!workspace.exists||workspace.data().archivedAt)return 0;const job=row.data();
-        if(job.phase!=='needs_attention'||job.resetAt||Number(job.updatedAt||job.createdAt||0)>cutoff)return 0;
+        const stale=['queued','running'].includes(job.phase)&&Number(job.leaseUntil||0)<now&&now-Number(job.updatedAt||job.createdAt||0)>120000;
+        if(job.phase!=='needs_attention'&&!stale||job.resetAt||Number(job.updatedAt||job.createdAt||0)>cutoff||active(job))return 0;
         if(job.inFlight){const receipt=await tx.get(candidate.ref.collection('data').doc('response'));if(!receipt.exists)return -1;}
         tx.set(candidate.ref.collection('data').doc('reset'),clean({job,resetAt:now,reason:'Operator reset failed AI state'}));
         tx.update(candidate.ref,{phase:'dismissed',resetAt:now,error:null,owner:null,leaseUntil:0,inFlight:null,updatedAt:now});
