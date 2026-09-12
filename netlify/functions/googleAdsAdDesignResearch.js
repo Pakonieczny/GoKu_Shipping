@@ -166,10 +166,10 @@ function applyEditorPlan({output,request,evidence,sources=[]}){
   if(!output.sourceIds.includes(required)||output.sourceIds.some(id=>!available.has(id)))fail('the design must cite this exact product and available sources.');
   const alternatives=output.alternatives.map(a=>{const o=byId.get(a.layerId);if(!o||!textual(o)||locked(o)||request.mode==='text'&&a.layerId!==request.selectedLayerId||typeof a.text!=='string'||!a.text.trim()||a.text.length>180||/[<>]/.test(a.text))fail('an alternative does not target an editable text layer.');changedText.push(a.text);return {layerId:a.layerId,text:a.text.trim(),role:str(a.role,50),rationale:str(a.rationale,400)};});
   if(changedText.length&&!output.factClaims.length)fail('the copy lacks its supporting product facts.');
-  for(const claim of output.factClaims){const source=available.get(claim.sourceId);if(!source||!['product:'+request.productId,'landing'].includes(claim.sourceId))fail('the claim “'+str(claim.claim,150)+'” cites a different or unavailable product source.');if(!quotedClaimSupported(claim.claim,claim.quote,source.data))fail('the claim “'+str(claim.claim,150)+'” with quote “'+str(claim.quote,200)+'” is not found in '+claim.sourceId+'.');}
-  const productCorpus=norm(JSON.stringify(available.get(required)?.data||{})),allCopy=norm(changedText.join(' '));
+  for(const claim of output.factClaims){const source=available.get(claim.sourceId);if(!source||!['product:'+request.productId,'landing'].includes(claim.sourceId))fail('the claim “'+str(claim.claim,150)+'” cites a different or unavailable product source.');if(!str(claim.claim)||!str(claim.quote)||!norm(JSON.stringify(source.data)).includes(norm(claim.quote)))fail('the claim “'+str(claim.claim,150)+'” with quote “'+str(claim.quote,200)+'” is not found in '+claim.sourceId+'.');}
+  const productCorpus=norm(JSON.stringify(available.get(required)?.data||{})),allCopy=norm([...changedText,...output.factClaims.map(c=>c.claim)].join(' '));
   for(const phrase of ['sterling silver','solid gold','gold filled','14k','18k','nickel free','hypoallergenic','waterproof','handcrafted','handmade','free shipping','free returns','guaranteed'])if(allCopy.includes(phrase)&&!productCorpus.includes(phrase))fail('unverified selling claim: '+phrase+'.');
-  if(changedText.some(t=>/(?:[$£€]\s*\d|\d\s*%|\b(?:sale|discount|best seller|bestseller|only \d+ left|limited time|reviews)\b)/i.test(t)))fail('prices, promotions, scarcity or social-proof claims require separate operator review.');
+  if([...changedText,...output.factClaims.map(c=>c.claim)].some(t=>/(?:[$£€]\s*\d|\d\s*%|\b(?:sale|discount|best seller|bestseller|only \d+ left|limited time|reviews)\b)/i.test(t)))fail('prices, promotions, scarcity or social-proof claims require separate operator review.');
   return {document,alternatives,rationale:str(output.rationale,1800),sourceIds:output.sourceIds,evidenceHash:evidence.hash,productId:request.productId,groupRef:request.groupRef,destination:evidence.sourceBindings.landingUrl,artboard:request.artboard,device:request.device,limitations:[...new Set([...(evidence.warnings||[]),...output.limitations.map(v=>str(v,500))])]};
 }
 compositionSchema.properties.brief.properties.productIds=strings;
@@ -349,9 +349,10 @@ FRESH RESEARCH PACKAGE: ${JSON.stringify(requestEvidence)}`;
       let sourceId=citations.canonical(f.sourceId),source=sources.get(sourceId);const quote=str(f.quote,450),claim=str(f.claim,250);
       if(!source&&sourceId.startsWith('product:')){const pid=productIdFor(sourceId.slice(8));if(pid){sourceId='product:'+pid;source=sources.get(sourceId);}}
       if(!source||!quote||!claim)throw new Error('A factual claim is missing its verified source quote. Saved messaging is retained.');
-      // Recover older responses that filed an exact operator composition
-      // instruction as a fact. It is not advertising copy or product evidence.
-      if(sourceId==='composition'&&quotedClaimSupported(claim,quote,source.data?.instructions||'')&&!rows.some(row=>norm(row).includes(norm(claim))))return null;
+      // Older receipts mixed research observations and art direction into facts.
+      // Retain their raw audit evidence without treating operational metrics or
+      // operator instructions as claims about the advertised product.
+      if(sourceId!=='landing'&&!sourceId.startsWith('product:')&&quotedClaimSupported(claim,quote,sourceId==='composition'?source.data?.instructions||'':source.data)&&!rows.some(row=>norm(row).includes(norm(claim))))return null;
       let pid='';
       if(multi){
         const declared=String(f.productId||''),declaredId=declared?productIdFor(declared):null;
