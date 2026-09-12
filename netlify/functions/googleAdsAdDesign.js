@@ -422,7 +422,7 @@ function createAdDesignService(deps) {
     const result=job.phase==='ready'?await target.collection('data').doc('result').get():null;
     return {ok:true,workspaceId:input.workspaceId,jobId:job.id,requestId:job.requestId,inputHash:job.inputHash,scope:job.scope,phase,
       progress:stale?{pct:job.progress.pct,label:unknown?'Provider completion is uncertain. The request will not be charged again.':'Saved work is available to resume.'}:job.progress,
-      error:job.error||null,canRetry:phase==='needs_attention'&&!unknown,needsNewRequestApproval:false,
+      error:job.error||null,canRetry:phase==='needs_attention'&&!unknown,hasSavedResponse:receipt.exists,needsNewRequestApproval:false,
       usage:job.usage?[job.usage]:[],cost:{estimatedUsd:job.usage?.estimatedUsd??(job.inFlight?job.reservedUsd:0),costEstimated:job.usage?.costEstimated!==false,reservedUsd:job.reservedUsd||0},
       result:result?.exists?result.data():null,...(request?.exists?{mode:request.data().mode,selectedLayerId:request.data().selectedLayerId,originalDocument:request.data().document,sources:await Promise.all(request.data().sources.map(async source=>({...source,url:await deps.signAsset(source.asset)})))}:{}),imageAccess:deps.imageAccessStatus?deps.imageAccessStatus():null};
   }
