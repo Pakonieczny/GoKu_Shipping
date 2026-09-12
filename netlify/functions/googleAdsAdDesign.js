@@ -14,6 +14,14 @@ function isSharedProductGroup(workspace, group) {
   const own=(parts.searchAds||[]).find(a=>a.resourceName===group.ref),parent=group.adGroupRef||own?.adGroup;
   return !!parent&&new Set((parts.searchAds||[]).filter(a=>a.adGroup===parent).flatMap(a=>a.finalUrls||[]).map(destination).filter(d=>d?.kind==='product').map(d=>d.handle)).size>1;
 }
+// Opportunity themes describe the whole proposed assortment. They are not
+// measured keywords for this individual product; retain them in the source
+// snapshot, while researching this listing from its own keywords and facts.
+function researchGroupFor(workspace, group, product) {
+  return !workspace.context.campaignId || isSharedProductGroup(workspace, group)
+    ? {...group,url:product.url,keywords:product.keywords||[]}
+    : group;
+}
 function placementMatches(p, settings){return p.groupRef===settings.groupRef && (!p.productId && !(p.productIds||[]).length || productKey(p.productId||(p.productIds||[])[0])===productKey(settings.productId));}
 function chosenPlacements(workspace){
   const rows=(workspace.placements||[]).filter(p=>placementMatches(p,workspace.settings));
@@ -475,7 +483,7 @@ function createAdDesignService(deps) {
         await save({progress:{pct:12,label:'Researching this listing, keywords, brand and group outcomes'}});
         if(!evidence||Date.now()-evidence.researchCompletedAt>600000){
           const primaryImages=product.images||[];if(!primaryImages.length)throw new Error('The product listing has no verified source photograph.');
-          const researchGroup=!w.context.campaignId?{...group,url:product.url}:group;
+          const researchGroup=researchGroupFor(w,group,product);
           evidence=await deps.research.collect({campaignId:w.context.campaignId||null,sourceVersion:w.sourceVersion,snapshot:w.sourceSnapshot,range:w.context.range,group:researchGroup,selectedProducts:[product],settings:{...w.settings,productId:product.id,sourceImageId:primaryImages.some(p=>p.id===w.settings.sourceImageId)?w.settings.sourceImageId:primaryImages[0].id},deadlineMs:90000});
           await saveData('evidence',evidence);
         }
@@ -742,7 +750,7 @@ function createAdDesignService(deps) {
       // advertised listings must get their own design and destination.
       const unrelated=selectedProducts.filter(p=>productKey(p.id)!==productKey(product.id)&&!(p.relatedTo||[]).some(id=>productKey(id)===productKey(product.id))&&!(product.relatedTo||[]).some(id=>productKey(id)===productKey(p.id)));
       if(unrelated.length)throw new Error('These selected products need separate ads and destinations: '+unrelated.map(p=>p.title).join(', ')+'. Choose photos for '+product.title+' or its matching set.');
-      const researchGroup=!value.context.campaignId?{...group,url:product.url}:group;
+      const researchGroup=researchGroupFor(value,group,product);
       await progress(4, "Saving every selected product photo and inspiration image");
       job.inputAssets = job.inputAssets || [];
       for (const [index, input] of inputs.entries()) {
@@ -803,7 +811,7 @@ function createAdDesignService(deps) {
       }
       if(job.copyOverride)copy={...copy,copy:job.copyOverride};
       if(job.mode==='copy'){
-        job.result={copyOnly:true,copy:copy.copy,brief:copy.brief,evidence:job.evidence,keywords:group.keywords||[],sourceIds:copy.sourceIds,productIds:[String(product.id)]};
+        job.result={copyOnly:true,copy:copy.copy,brief:copy.brief,evidence:job.evidence,keywords:researchGroup.keywords||[],sourceIds:copy.sourceIds,productIds:[String(product.id)]};
         await saveJob({phase:'ready',completedAt:Date.now(),leaseUntil:0,inFlight:null,error:null,progress:{pct:100,label:'Messaging researched and saved. Review it with each image, then approve the update here.'}});
         await ref.update({messaging:{copy:copy.copy,productId:value.settings.productId,groupRef:group.ref,researchedAt:Date.now(),evidenceHash:job.evidence.hash,edited:false}});
         return {ok:true,workspaceId,copyOnly:true};
@@ -834,22 +842,26 @@ function createAdDesignService(deps) {
       }
       if (Date.now() - started > 620000) { await saveJob({ phase: "paused", leaseUntil: 0, progress: { pct: job.progress.pct, label: "Every format is saved; continuing the quality review" } }); return { ok: true, paused: true, dispatch: true, workspaceId, jobId }; }
       await progress(82, "Checking product fidelity, framing and mobile readability");
+      // Re-review old paid artwork only when its research inherited a different
+      // keyword scope. Keep the original review and every paid image receipt.
+      const correctedScope=sha(job.evidence.group?.keywords||[])!==sha(researchGroup.keywords||[]);
+      const qualityKey=correctedScope?'quality_scope_'+sha({productId:product.id,keywords:researchGroup.keywords||[]}).slice(0,16):'quality';
       const readQuality = key => paid(key, async requestId => {
         const finalAssets=[...new Map(Object.values(job.placementAssets).flatMap(assets=>Object.values(assets)).map(a=>[a.hash,a])).values()];
         const stored=await ref.collection('outputs').doc(jobId+'_'+key).get();let response=stored.exists&&stored.data().rawResponse,output;
         const files = await Promise.all(finalAssets.map(asset => deps.loadAsset(asset)));
-        try{output=await deps.reviewImages(sourceFiles[0], files, { ...copy.brief, copy: copy.copy, keywords: group.keywords || product.keywords || [], settings: value.settings, product: product.title, products: researchProducts, placementAssets:job.placementAssets, inputCoverage: job.inputCoverage }, sourceFiles, requestId,{rawResponse:response,onResponse:async raw=>{response=raw;await writeReceipt(key,{rawResponse:raw,receivedAt:Date.now()});}});}
+        try{output=await deps.reviewImages(sourceFiles[0], files, { ...copy.brief, copy: copy.copy, keywords: researchGroup.keywords || [], settings: value.settings, product: product.title, products: researchProducts, placementAssets:job.placementAssets, inputCoverage: job.inputCoverage }, sourceFiles, requestId,{rawResponse:response,onResponse:async raw=>{response=raw;await writeReceipt(key,{rawResponse:raw,receivedAt:Date.now()});}});}
         catch(error){if(response){settle(job,key,{requestId,usage:response.usage||{},providerModel:response.model||'gpt-6-astra',estimatedUsd:response.estimatedUsd,costEstimated:response.costEstimated!==false});await saveJob({inFlight:null});error.definiteResponse=true;}throw error;}
         await writeReceipt(key, { stageResult: output, receivedAt: Date.now() });
         return { ...output, estimatedUsd: output.estimatedUsd == null ? 1 : output.estimatedUsd, costEstimated: output.costEstimated !== false };
       });
-      let quality;try{quality=await readQuality('quality');}catch(error){if(!['AI_OUTPUT_INCOMPLETE','AI_OUTPUT_INVALID'].includes(error.code))throw error;await progress(85,'Completing the saved artwork quality review');quality=await readQuality('quality_repair');}
+      let quality;try{quality=await readQuality(qualityKey);}catch(error){if(!['AI_OUTPUT_INCOMPLETE','AI_OUTPUT_INVALID'].includes(error.code))throw error;await progress(85,'Completing the saved artwork quality review');quality=await readQuality(qualityKey+'_repair');}
       if (quality.pass !== true || quality.productFaithful !== true || quality.mobileReadable !== true || Number(quality.score) < 85) throw new Error("Artwork quality review: "+Number(quality.score)+"/100. "+(quality.issues||[]).map(issue=>String(issue)).join(' ').slice(0,740)+" Saved images are retained.");
       const singleProductDestination=!value.context.campaignId&&!value.context.approvalId||/\/products\//.test(group.url||'');
       const outside = selectedProducts.filter(p => Array.isArray(p.eligibleGroupRefs) && !p.eligibleGroupRefs.includes(group.ref)||singleProductDestination&&String(p.id)!==String(product.id));
       group.requiresProductSplit=isSharedProductGroup(value,group);
       const publication = {ready:!outside.length&&!group.requiresProductSplit,productIds:selectedProductIds.length?selectedProductIds:[String(product.id)],reason:group.requiresProductSplit?"Design saved. Split the shared group into product groups before publishing this listing’s assets.":outside.length?"Design saved. These featured products are outside this ad's verified destination or product selection: "+outside.map(p=>p.title).join(", ")+". Open an ad that includes these products, or use photos from this ad's listings, before submitting it for publication.":null};
-      job.result = { productIds: publication.productIds, publication, brief: copy.brief, copy: copy.copy, assets: job.assets, placementAssets:job.placementAssets, evidence: job.evidence, keywords: group.keywords || product.keywords || [], quality, learningApplications: copy.learningApplications || [], sourceIds: copy.sourceIds || [], inputCoverage: job.inputCoverage, designSettings: value.settings, previewOnlyFormats: group.channel === "search" ? ["portrait"] : [] }; await saveJob({});
+      job.result = { productIds: publication.productIds, publication, brief: copy.brief, copy: copy.copy, assets: job.assets, placementAssets:job.placementAssets, evidence: job.evidence, keywords: researchGroup.keywords || [], quality, learningApplications: copy.learningApplications || [], sourceIds: copy.sourceIds || [], inputCoverage: job.inputCoverage, designSettings: value.settings, previewOnlyFormats: group.channel === "search" ? ["portrait"] : [] }; await saveJob({});
       if (!publication.ready) {
         await saveJob({phase:"ready",completedAt:Date.now(),leaseUntil:0,inFlight:null,error:null,progress:{pct:100,label:"Design saved — review its product destination before publication"}});
         return {ok:true,workspaceId,approvalId:null,publication};
@@ -874,4 +886,4 @@ function createAdDesignService(deps) {
   }
   return { workspace, save, upload, crop, start, status, run, resetFailures, editorSource, editorState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorDeleteSavedDesign, deleteGeneratedImage, linkPublishedDesignScopes, linkPublishedWorkspaceGallery, editorAIStart, editorAIStatus, editorAIResume, editorAIRun };
 }
-module.exports = { createAdDesignService, buildVersionDesignPayload, isSharedProductGroup, formatAssets, chosenPlacements, placementMatches, FORMATS, settingsFor, refreshedSettings, responseText, MAX_UPLOAD };
+module.exports = { createAdDesignService, buildVersionDesignPayload, isSharedProductGroup, researchGroupFor, formatAssets, chosenPlacements, placementMatches, FORMATS, settingsFor, refreshedSettings, responseText, MAX_UPLOAD };
