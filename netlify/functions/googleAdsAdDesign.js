@@ -475,7 +475,8 @@ function createAdDesignService(deps) {
         await save({progress:{pct:12,label:'Researching this listing, keywords, brand and group outcomes'}});
         if(!evidence||Date.now()-evidence.researchCompletedAt>600000){
           const primaryImages=product.images||[];if(!primaryImages.length)throw new Error('The product listing has no verified source photograph.');
-          evidence=await deps.research.collect({campaignId:w.context.campaignId||null,sourceVersion:w.sourceVersion,snapshot:w.sourceSnapshot,range:w.context.range,group,selectedProducts:[product],settings:{...w.settings,productId:product.id,sourceImageId:primaryImages.some(p=>p.id===w.settings.sourceImageId)?w.settings.sourceImageId:primaryImages[0].id},deadlineMs:90000});
+          const researchGroup=!w.context.campaignId?{...group,url:product.url}:group;
+          evidence=await deps.research.collect({campaignId:w.context.campaignId||null,sourceVersion:w.sourceVersion,snapshot:w.sourceSnapshot,range:w.context.range,group:researchGroup,selectedProducts:[product],settings:{...w.settings,productId:product.id,sourceImageId:primaryImages.some(p=>p.id===w.settings.sourceImageId)?w.settings.sourceImageId:primaryImages[0].id},deadlineMs:90000});
           await saveData('evidence',evidence);
         }
         await save({progress:{pct:36,label:'Preparing the current canvas and its unchanged original photographs'}});

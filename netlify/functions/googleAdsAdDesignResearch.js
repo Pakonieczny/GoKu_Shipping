@@ -352,7 +352,7 @@ FRESH RESEARCH PACKAGE: ${JSON.stringify(requestEvidence)}`;
       // Older receipts mixed research observations and art direction into facts.
       // Retain their raw audit evidence without treating operational metrics or
       // operator instructions as claims about the advertised product.
-      if(sourceId!=='landing'&&!sourceId.startsWith('product:')&&quotedClaimSupported(claim,quote,sourceId==='composition'?source.data?.instructions||'':source.data)&&!rows.some(row=>norm(row).includes(norm(claim))))return null;
+      if(sourceId!=='landing'&&!sourceId.startsWith('product:'))return null;
       let pid='';
       if(multi){
         const declared=String(f.productId||''),declaredId=declared?productIdFor(declared):null;
