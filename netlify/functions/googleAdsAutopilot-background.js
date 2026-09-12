@@ -15,6 +15,13 @@
 const E = require("./googleAdsAutopilot");
 const fetch = require("node-fetch");
 
+
+async function continueMotion(next){
+ const base=process.env.URL||('https://'+(process.env.SITE_NAME||'goldenspike')+'.netlify.app');
+ const r=await fetch(base+'/.netlify/functions/googleAdsAutopilot-background',{method:'POST',timeout:15000,headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['adDesignMotion'],workspaceId:next.workspaceId,jobId:next.jobId,token:process.env.EDIT_PASSCODE||undefined})});
+ if(!r.ok)throw Error('Animation is saved; reopen Animated ads to resume dispatch.');
+}
+
 const DEADLINE_MS = 13 * 60 * 1000; // leave headroom under Netlify's 15-min cap
 const startedAt = () => Date.now();
 
@@ -63,7 +70,7 @@ exports.handler = async (event) => {
     : ["anomaly", "monthly", "conversions", "adjustments", "measure", "mine", "prune", "budgets", "ceiling", "events", "pruneLedger"];
 
   // Draft work and explicit operator publication remain available with scheduled automation off.
-  const MANUAL_OR_DRAFT = new Set(["adDesignEditorAI", "adDesign", "analyzeAd", "creativePrepare", "publishApproval", "scanOpportunities", "pmaxGenerate", "pmaxBackfillImages", "pmaxUpgradeAdStrength", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate", "designStudioScan", "designStudioGenerate", "designStudioAnalyze", "designStudioLearn"]); // publishApproval independently enforces exact operator approval
+  const MANUAL_OR_DRAFT = new Set(["adDesignMotion", "adDesignEditorAI", "adDesign", "analyzeAd", "creativePrepare", "publishApproval", "scanOpportunities", "pmaxGenerate", "pmaxBackfillImages", "pmaxUpgradeAdStrength", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate", "designStudioScan", "designStudioGenerate", "designStudioAnalyze", "designStudioLearn"]); // publishApproval independently enforces exact operator approval
   const allReadOnly = tasks.every(t => MANUAL_OR_DRAFT.has(t));
 
   // HARD KILL SWITCH — blocks anything that could mutate. Read-only analysis still runs.
@@ -98,7 +105,15 @@ exports.handler = async (event) => {
     if (over()) { log.push("time budget reached — deferring rest to next run"); break; }
     try {
       if (task === "analyzeAd") { result.analyzeAd=await E.runAnalyzeAd({analysisId:body.analysisId}); }
-      else if (task === 'adDesignEditorAI') { result.adDesignEditorAI=await E.runAdDesignEditorAI({workspaceId:body.workspaceId,jobId:body.jobId}); }
+      else if (task === 'adDesignEditorAI') {
+        result.adDesignEditorAI=await E.runAdDesignEditorAI({workspaceId:body.workspaceId,jobId:body.jobId});
+        if(result.adDesignEditorAI.includeAnimation){
+          // Animation has its own saved state; a video issue never rolls back the static design.
+          try{const next=await E.startAdDesignMotion({workspaceId:body.workspaceId,editorJobId:body.jobId,fromEditorWorker:true});if(next.queued)await continueMotion(next);}
+          catch(e){log.push('Animation could not start: '+e.message);}
+        }
+      }
+      else if (task === 'adDesignMotion') {result.adDesignMotion=await E.runAdDesignMotion({workspaceId:body.workspaceId,jobId:body.jobId});if(result.adDesignMotion.continue)await continueMotion(result.adDesignMotion);} 
       else if (task === "adDesign") {
         result.adDesign=await E.runAdDesign({workspaceId:body.workspaceId,jobId:body.jobId});
         if(result.adDesign.dispatch) {

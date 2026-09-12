@@ -20,7 +20,8 @@
     "@google-cloud/storage": "^7.16.0",
     "sharp": "^0.33.5",
     "jszip": "^3.10.1",
-    "@resvg/resvg-js": "^2.6.2"
+    "@resvg/resvg-js": "^2.6.2",
+    "@ffmpeg-installer/ffmpeg": "1.1.0"
   },
   "devDependencies": {
     "vite": "^5.0.0"
