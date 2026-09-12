@@ -844,7 +844,7 @@ function createAdDesignService(deps) {
         return { ...output, estimatedUsd: output.estimatedUsd == null ? 1 : output.estimatedUsd, costEstimated: output.costEstimated !== false };
       });
       let quality;try{quality=await readQuality('quality');}catch(error){if(!['AI_OUTPUT_INCOMPLETE','AI_OUTPUT_INVALID'].includes(error.code))throw error;await progress(85,'Completing the saved artwork quality review');quality=await readQuality('quality_repair');}
-      if (quality.pass !== true || quality.productFaithful !== true || quality.mobileReadable !== true || Number(quality.score) < 85) throw new Error("The generated design needs changes to product fidelity, framing or mobile clarity before it can enter Approvals.");
+      if (quality.pass !== true || quality.productFaithful !== true || quality.mobileReadable !== true || Number(quality.score) < 85) throw new Error("Artwork quality review: "+Number(quality.score)+"/100. "+(quality.issues||[]).map(issue=>String(issue)).join(' ').slice(0,740)+" Saved images are retained.");
       const singleProductDestination=!value.context.campaignId&&!value.context.approvalId||/\/products\//.test(group.url||'');
       const outside = selectedProducts.filter(p => Array.isArray(p.eligibleGroupRefs) && !p.eligibleGroupRefs.includes(group.ref)||singleProductDestination&&String(p.id)!==String(product.id));
       group.requiresProductSplit=isSharedProductGroup(value,group);
