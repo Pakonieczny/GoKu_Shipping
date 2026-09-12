@@ -776,17 +776,28 @@ function createAdDesignService(deps) {
       const savedCopy = await ref.collection("outputs").doc(jobId + "_copy").get();
       if (!job.evidence || !job.stages.copy && !savedCopy.exists && Date.now() - Number(job.evidence.researchCompletedAt || 0) > 600000) { job.evidence = await deps.research.collect({ campaignId: value.context.campaignId || null, sourceVersion: value.sourceVersion, snapshot: value.sourceSnapshot, range: value.context.range, group:researchGroup, selectedProducts: researchProducts, ...(legacyPinned?{}:{selectedSources}), settings: value.settings, deadlineMs: 90000 }); await saveJob({}); }
       // Construct and validate locally before reserving a paid request.
-      const preparedCopyRequest=job.stages.copy||savedCopy.exists&&(savedCopy.data().rawResponse||savedCopy.data().stageResult)?null:deps.research.buildRequest({evidence:job.evidence,feedback:value.settings.direction,currentCreative:group.original||{},style:value.settings.style,sourceImageDataUrl:'data:image/jpeg;base64,'+sourceFiles[0].toString('base64'),sourceReferences:sourceFiles.map((bytes,index)=>({dataUrl:'data:image/jpeg;base64,'+bytes.toString('base64'),manifest:job.inputCoverage.referenceManifest&&job.inputCoverage.referenceManifest[index]}))});
-      let copy = await paid("copy", async requestId => {
-        const receipt = ref.collection("outputs").doc(jobId + "_copy"), stored = await receipt.get();
-        const prior = stored.exists && stored.data().rawResponse;
-        const request = prior ? null : preparedCopyRequest;
-        const result = prior || await deps.responses(request, requestId);
-        await writeReceipt("copy", { rawResponse: result, receivedAt: Date.now() });
-        let output; try { output = deps.research.validateResult({ output: JSON.parse(responseText(result)), evidence: job.evidence, channel: group.channel, group }); }
-        catch (error) { settle(job, "copy", {requestId,usage:result.usage||{},providerModel:result.model||"gpt-6-astra",estimatedUsd:result.estimatedUsd,costEstimated:result.costEstimated!==false}); await saveJob({inFlight:null}); error.definiteResponse = true; throw error; }
-        return { ...output, usage: result.usage || {}, responseId: result.id || null, providerModel: result.model || request && request.model || "gpt-6-astra", estimatedUsd: result.estimatedUsd == null ? 1 : result.estimatedUsd, costEstimated: result.costEstimated !== false };
-      });
+      const buildCopyRequest=recovering=>deps.research.buildRequest({evidence:job.evidence,mode:job.mode,recovering,feedback:value.settings.direction,currentCreative:group.original||{},style:value.settings.style,sourceImageDataUrl:'data:image/jpeg;base64,'+sourceFiles[0].toString('base64'),sourceReferences:sourceFiles.map((bytes,index)=>({dataUrl:'data:image/jpeg;base64,'+bytes.toString('base64'),manifest:job.inputCoverage.referenceManifest&&job.inputCoverage.referenceManifest[index]}))});
+      const readCopy=async(key,recovering)=>{
+        const saved=await ref.collection("outputs").doc(jobId+"_"+key).get();
+        const request=job.stages[key]||saved.exists&&(saved.data().rawResponse||saved.data().stageResult)?null:buildCopyRequest(recovering);
+        return paid(key,async requestId=>{
+          const stored=await ref.collection("outputs").doc(jobId+"_"+key).get(),prior=stored.exists&&stored.data().rawResponse;
+          const result=prior||await deps.responses(request,requestId);
+          if(!prior)await writeReceipt(key,{rawResponse:result,receivedAt:Date.now()});
+          let output;try{output=deps.research.validateResult({output:require('./googleAdsAdDesignResearch').parseResponse(result),evidence:job.evidence,channel:group.channel,group,mode:job.mode});}
+          catch(error){settle(job,key,{requestId,usage:result.usage||{},providerModel:result.model||"gpt-6-astra",estimatedUsd:result.estimatedUsd,costEstimated:result.costEstimated!==false});await saveJob({inFlight:null});error.definiteResponse=true;throw error;}
+          return {...output,usage:result.usage||{},responseId:result.id||null,providerModel:result.model||request&&request.model||"gpt-6-astra",estimatedUsd:result.estimatedUsd==null?1:result.estimatedUsd,costEstimated:result.costEstimated!==false};
+        });
+      };
+      let copy;
+      try{copy=await readCopy("copy",false);}
+      catch(error){
+        if(!['AI_OUTPUT_INCOMPLETE','AI_OUTPUT_INVALID'].includes(error.code))throw error;
+        // Exactly one durable recovery stage, charged within the existing job
+        // allowance. Resuming reuses its receipt; it never loops into new calls.
+        await progress(12,"Completing an interrupted AI answer from the saved product research");
+        copy=await readCopy("copy_repair",true);
+      }
       if(job.copyOverride)copy={...copy,copy:job.copyOverride};
       if(job.mode==='copy'){
         job.result={copyOnly:true,copy:copy.copy,brief:copy.brief,evidence:job.evidence,keywords:group.keywords||[],sourceIds:copy.sourceIds,productIds:[String(product.id)]};

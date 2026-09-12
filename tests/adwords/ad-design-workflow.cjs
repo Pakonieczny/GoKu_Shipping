@@ -157,4 +157,22 @@ const linkedScope={...scope,workspaceId:nextId,groupRef:migratedWorkspace.settin
 check((await studio.svc.editorOpenSavedDesign({...linkedScope,id:copy2})).sources.every(s=>s.groupRef===migratedWorkspace.settings.groupRef),'linked design reopens with sources bound to its new group');
 const recovered=clone(fork);recovered.context.legacyEditorWorkspaceIds=[studio.id];studio.f.docs.set('State/adDesign/workspaces/recovered_workspace',recovered);
 const oldDraft=await studio.svc.editorState({...scope,workspaceId:'recovered_workspace'});check(oldDraft.design.revision===0&&oldDraft.design.document.objects[1].objects[1].text==='Shop now','old Save Draft layers remain available in the new product/group workspace');
+ for(const failure of ['truncated','malformed','twice','unknown','budget','refusal']){
+  const e=await setup(),requests=[],raw=[];let collects=0;const collect=e.D.research.collect;e.D.research.collect=async x=>{collects++;return collect(x)};e.D.research.buildRequest=x=>{requests.push(x);return {model:'gpt-6-astra'}};
+  e.D.responses=async()=>{e.calls.responses++;if(failure==='unknown')throw Error('network timeout');const r={model:'gpt-6-astra',id:'r'+e.calls.responses,status:'completed',output_text:JSON.stringify(concept),usage:{input_tokens:100,output_tokens:300},estimatedUsd:.05,costEstimated:false};if(e.calls.responses===1||failure==='twice'){r.output_text='{"copy":{"headlines":["unfinished';if(failure==='truncated'||failure==='twice'){r.status='incomplete';r.incomplete_details={reason:'max_output_tokens'}}if(failure==='refusal'){delete r.output_text;r.output=[{content:[{type:'refusal',refusal:'declined'}]}]}}raw.push(JSON.parse(JSON.stringify(r)));return r};
+  if(failure==='budget'){e.D.reserveCost=async()=>({reservedUsd:1});e.D.control=async()=>({creativeBudgetUsd:1});}
+  const q=await e.svc.start({workspaceId:e.id,mode:'copy'});let err;try{await e.svc.run({workspaceId:e.id,jobId:q.jobId})}catch(x){err=x}
+  const job=e.f.docs.get(e.p).job;
+  if(['truncated','malformed'].includes(failure)){
+   assert(!err,err?.message);assert.equal(job.phase,'ready');assert.equal(e.calls.responses,2);assert.equal(collects,1);assert.equal(job.usage.length,2);assert.equal(job.requests,2);assert.equal(job.reservations.reduce((s,r)=>s+r.actualUsd,0),.1);assert.deepEqual(job.result.copy,concept.copy);assert(requests[1].recovering);assert.equal(requests[1].mode,'copy');
+   for(const [i,key]of ['copy','copy_repair'].entries())assert.deepEqual(e.f.docs.get(e.p+'/outputs/'+q.jobId+'_'+key).rawResponse,raw[i]);
+   await e.svc.run({workspaceId:e.id,jobId:q.jobId});assert.equal(e.calls.responses,2);
+  }else{
+   assert(err);assert.equal(job.phase,'needs_attention');assert.equal(e.calls.responses,failure==='twice'?2:1);
+   if(failure==='twice'){await e.svc.start({workspaceId:e.id,mode:'copy'});await assert.rejects(()=>e.svc.run({workspaceId:e.id,jobId:q.jobId}));assert.equal(e.calls.responses,2);assert.equal(e.f.docs.get(e.p).job.usage.length,2)}
+   if(failure==='unknown')assert(job.inFlight);
+  }
+  assert.equal(e.calls.images,0);assert.equal(e.calls.finish,0);check(true,failure+': bounded response recovery');
+ }
+
 console.log('PASS '+n+' Ad Design upload, source identity, paid-stage reuse, complete formats, exact approvals and quality checks');})().catch(error=>{console.error(error);process.exit(1)});
