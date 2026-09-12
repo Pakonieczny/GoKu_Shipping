@@ -415,6 +415,7 @@ function createAdDesignService(deps) {
     if(input.jobId)target=editorAIRef(input.workspaceId,input.jobId);
     else{const key=editorKey(input),rows=await refFor(input.workspaceId).collection('editorAIJobs').where('designKey','==',key).get(),latest=rows.docs.map(d=>({ref:d.ref,...d.data()})).sort((a,b)=>b.createdAt-a.createdAt)[0];if(!latest)return {ok:true,jobId:null,phase:'idle',result:null};target=latest.ref;}
     const row=await target.get();if(!row.exists)throw new Error('The saved AI request was not found.');const job=row.data();editorScope(w,job.scope);
+    if(job.resetAt||job.phase==='dismissed')return {ok:true,jobId:null,phase:'idle',reset:true,result:null};
     if(input.artboard&&job.designKey!==editorKey(input))throw new Error('This AI result belongs to another artboard.');
     const receipt=await target.collection('data').doc('response').get(),stale=['queued','running'].includes(job.phase)&&job.leaseUntil<Date.now()&&Date.now()-job.updatedAt>30000;
     const phase=stale?'needs_attention':job.phase,unknown=!!job.inFlight&&!receipt.exists;
@@ -429,6 +430,7 @@ function createAdDesignService(deps) {
   async function editorAIResume(input={}){
     const w=await read(input.workspaceId);editorScope(w,input);const target=editorAIRef(input.workspaceId,input.jobId);let queued=false;
     await f().db.runTransaction(async tx=>{const row=await tx.get(target),receipt=await tx.get(target.collection('data').doc('response'));if(!row.exists)throw new Error('The AI request was not found.');const job=row.data();editorScope(w,job.scope);
+      if(job.resetAt||job.phase==='dismissed')throw new Error('This failed AI job was reset. Start a new design when ready.');
       if(job.phase==='ready'||job.phase==='running'&&job.leaseUntil>Date.now())return;
       if(job.inFlight&&!receipt.exists)throw new Error('The provider may have completed this paid request. Automatic replacement is blocked to prevent another charge. Its original request ID is retained.');
       queued=true;tx.update(target,{phase:'queued',owner:null,leaseUntil:0,error:null,updatedAt:Date.now(),progress:{pct:job.progress.pct,label:receipt.exists?'Reopening the already paid design response':'Resuming saved product research'}});
@@ -460,7 +462,7 @@ function createAdDesignService(deps) {
   }
   async function editorAIRun({workspaceId,jobId}={}){
     const ref=refFor(workspaceId),target=editorAIRef(workspaceId,jobId),owner=crypto.randomUUID();let job,request,w;
-    await f().db.runTransaction(async tx=>{const row=await tx.get(target),workspace=await tx.get(ref),input=await tx.get(target.collection('data').doc('request'));if(!row.exists||!input.exists||!workspace.exists)throw new Error('AI design context is unavailable.');job=row.data();w=workspace.data();request=input.data();editorScope(w,job.scope);if(job.phase==='ready'||job.phase==='running'&&job.leaseUntil>Date.now())return;job={...job,phase:'running',owner,leaseUntil:Date.now()+8*60000,updatedAt:Date.now()};tx.update(target,job);});
+    await f().db.runTransaction(async tx=>{const row=await tx.get(target),workspace=await tx.get(ref),input=await tx.get(target.collection('data').doc('request'));if(!row.exists||!input.exists||!workspace.exists)throw new Error('AI design context is unavailable.');job=row.data();w=workspace.data();request=input.data();editorScope(w,job.scope);if(job.resetAt||job.phase==='dismissed'||job.phase==='ready'||job.phase==='running'&&job.leaseUntil>Date.now())return;job={...job,phase:'running',owner,leaseUntil:Date.now()+8*60000,updatedAt:Date.now()};tx.update(target,job);});
     if(job.owner!==owner)return {ok:true,cached:true};
     const save=async patch=>{Object.assign(job,patch,{updatedAt:Date.now()});await f().db.runTransaction(async tx=>{const row=await tx.get(target);if(row.data()?.owner!==owner)throw new Error('AI design worker ownership changed.');tx.update(target,clean(job));});};
     const saveData=async(key,data)=>f().db.runTransaction(async tx=>{const row=await tx.get(target);if(row.data()?.owner!==owner)throw new Error('AI design worker ownership changed before saving its output.');tx.set(target.collection('data').doc(key),clean(data));});
@@ -605,6 +607,37 @@ function createAdDesignService(deps) {
       tx.update(ref,{placements,job:null,revision:Number(latest.revision||0)+1,updatedAt:Date.now()});
     });
     return status({workspaceId});
+  }
+  async function resetFailures({workspaceId,all=false,cursor,before}={}){
+    const now=Date.now(),cutoff=before==null?now:Number(before);
+    if(!Number.isFinite(cutoff)||cutoff<=0||cutoff>now+1000)throw new Error('Invalid reset time.');
+    if(!workspaceId&&!all)throw new Error('Choose a workspace or all failed AI jobs.');
+    let refs,nextCursor=null;
+    if(workspaceId)refs=[refFor(workspaceId)];
+    else{let query=f().db.collection(deps.COL.state).doc('adDesign').collection('workspaces').orderBy('__name__').limit(12);if(cursor){if(!token(cursor))throw new Error('Invalid reset cursor.');query=query.startAfter(cursor);}const page=await query.get();refs=page.docs.map(d=>d.ref);if(page.docs.length===12)nextCursor=page.docs[page.docs.length-1].id;}
+    let resetJobs=0,resetEditorJobs=0,unconfirmed=0;const resetWorkspaceIds=[],resetEditorJobIds=[];
+    for(const ref of refs){
+      const outcome=await f().db.runTransaction(async tx=>{
+        const row=await tx.get(ref);if(!row.exists||row.data().archivedAt)return 0;const w=row.data(),job=w.job;
+        if(!job||job.phase!=='needs_attention'||Number(job.updatedAt||job.createdAt||0)>cutoff||active(job))return 0;
+        if(job.inFlight){const receipt=await tx.get(ref.collection('outputs').doc(job.id+'_'+job.inFlight.key)),r=receipt.exists&&receipt.data();if(!r||!r.rawResponse&&!r.stageResult&&!r.asset)return -1;}
+        // Keep legacy paid images visible even if their job predates the gallery.
+        const images=[];for(const [format,asset]of Object.entries(job.assets||{})){if((job.placements||[]).some(p=>p.asset.hash===asset.hash))continue;const id='generated_'+sha(asset.path).slice(0,32),target=ref.collection('imageLibrary').doc(id),existing=await tx.get(target);if(!existing.exists)images.push({target,data:{id,kind:'generated',groupRef:w.settings.groupRef,format,title:'Saved AI image',productIds:job.result&&job.result.productIds||[String(w.settings.productId)],asset,createdAt:job.completedAt||job.createdAt||now,jobId:job.id}});}
+        tx.set(ref.collection('history').doc(job.id),clean({...job,resetAt:now,resetReason:'Operator reset failed AI state'}));for(const image of images)tx.set(image.target,clean(image.data));
+        tx.update(ref,{job:null,revision:Number(w.revision||0)+1,updatedAt:now,lastFailureResetAt:now});return 1;
+      });
+      if(outcome===1){resetJobs++;resetWorkspaceIds.push(ref.id);}else if(outcome===-1)unconfirmed++;
+      const failed=await ref.collection('editorAIJobs').where('phase','==','needs_attention').get();
+      for(const candidate of failed.docs){const result=await f().db.runTransaction(async tx=>{
+        const row=await tx.get(candidate.ref),workspace=await tx.get(ref);if(!row.exists||!workspace.exists||workspace.data().archivedAt)return 0;const job=row.data();
+        if(job.phase!=='needs_attention'||job.resetAt||Number(job.updatedAt||job.createdAt||0)>cutoff)return 0;
+        if(job.inFlight){const receipt=await tx.get(candidate.ref.collection('data').doc('response'));if(!receipt.exists)return -1;}
+        tx.set(candidate.ref.collection('data').doc('reset'),clean({job,resetAt:now,reason:'Operator reset failed AI state'}));
+        tx.update(candidate.ref,{phase:'dismissed',resetAt:now,error:null,owner:null,leaseUntil:0,inFlight:null,updatedAt:now});
+        if(workspace.data().editorAI?.id===job.id)tx.update(ref,{editorAI:null});return 1;
+      });if(result===1){resetEditorJobs++;resetEditorJobIds.push(candidate.id);}else if(result===-1)unconfirmed++;}
+    }
+    return {ok:true,resetJobs,resetEditorJobs,unconfirmed,resetWorkspaceIds:[...new Set(resetWorkspaceIds)],resetEditorJobIds,before:cutoff,nextCursor};
   }
   async function start({ workspaceId, expectedVersion, snapshotHash, retry = false, mode='design', newRequest=false } = {}) {
     if(!['copy','design','image'].includes(mode))throw new Error('Choose image generation or messaging research.');
@@ -812,6 +845,6 @@ function createAdDesignService(deps) {
       await saveJob({ phase: "needs_attention", error: String(error.message || error).slice(0, 900), leaseUntil: 0, progress: { pct: Number(job.progress && job.progress.pct) || 0, label: "Saved work retained — review the unfinished step" } }); throw error;
     }
   }
-  return { workspace, save, upload, crop, start, status, run, editorSource, editorState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorDeleteSavedDesign, deleteGeneratedImage, linkPublishedDesignScopes, linkPublishedWorkspaceGallery, editorAIStart, editorAIStatus, editorAIResume, editorAIRun };
+  return { workspace, save, upload, crop, start, status, run, resetFailures, editorSource, editorState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorDeleteSavedDesign, deleteGeneratedImage, linkPublishedDesignScopes, linkPublishedWorkspaceGallery, editorAIStart, editorAIStatus, editorAIResume, editorAIRun };
 }
 module.exports = { createAdDesignService, buildVersionDesignPayload, isSharedProductGroup, formatAssets, chosenPlacements, placementMatches, FORMATS, settingsFor, refreshedSettings, responseText, MAX_UPLOAD };
