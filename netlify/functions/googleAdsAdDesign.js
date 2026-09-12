@@ -8,6 +8,7 @@ const active = job => job && Number(job.leaseUntil) > Date.now() && ["queued", "
 const MAX_UPLOAD = 4 * 1024 * 1024;
 const productKey = id => String(id || '').split('/').pop();
 function isSharedProductGroup(workspace, group) {
+  if (!workspace.context?.campaignId) return false;
   if (group.requiresProductSplit) return true;
   const {offerParts, destination}=require('./googleAdsAdDesignContext'),parts=workspace.sourceSnapshot?.components||{};
   if(group.channel==='pmax')return new Set([...(group.productIds||[]).map(productKey),...(parts.listingGroups||[]).filter(f=>f.assetGroup===group.ref&&f.type==='UNIT_INCLUDED').map(f=>offerParts(f.caseValue?.productItemId?.value)?.productId)].filter(Boolean)).size>1;
@@ -200,6 +201,7 @@ function createAdDesignService(deps) {
     const gallery=await savedDesignGallery(workspace),imageAccess=deps.imageAccessStatus?deps.imageAccessStatus():null,warnings=[...new Set([...(workspace.context.warnings||[]),...(workspace.refreshWarnings||[]),...(imageAccess?.message?[imageAccess.message]:[])])];
     return { ok: true, workspaceId, revision:Number(workspace.revision||0), sourceVersion: workspace.sourceVersion || null, snapshotHash: workspace.snapshotHash || null,
       context: {...workspace.context,warnings,currentCreative:creativeFor(workspace)}, imageAccess, products, references, imageLibrary, ...gallery, placements:chosenPlacements(workspace), settings: workspace.settings, messaging, jobMode:job.mode||null, publication:workspace.publication||null, status: job.phase || "draft", phase: job.phase || "draft",
+      jobId:job.id||null,startedAt:job.createdAt||null,updatedAt:job.updatedAt||null,completedStages:Object.keys(job.stages||{}),
       progress: job.progress || { pct: 0, label: "Choose your product, reference images and direction" }, result,
       approvalId, review, error: job.error || null,
       canRetry: !active(job) && (!job.inFlight || hasReceipt) && ["paused", "needs_attention", "queued", "running"].includes(job.phase), needsNewRequestApproval: !!job.inFlight && !active(job) && !hasReceipt,
@@ -430,6 +432,7 @@ function createAdDesignService(deps) {
     const request=input.includeOriginal?await target.collection('data').doc('request').get():null;
     const result=job.phase==='ready'?await target.collection('data').doc('result').get():null;
     return {ok:true,workspaceId:input.workspaceId,jobId:job.id,requestId:job.requestId,inputHash:job.inputHash,scope:job.scope,phase,
+      startedAt:job.createdAt,updatedAt:job.updatedAt,
       progress:stale?{pct:job.progress.pct,label:unknown?'Provider completion is uncertain. The request will not be charged again.':'Saved work is available to resume.'}:job.progress,
       error:job.error||null,canRetry:phase==='needs_attention'&&!unknown,hasSavedResponse:receipt.exists,needsNewRequestApproval:false,
       usage:job.usage?[job.usage]:[],cost:{estimatedUsd:job.usage?.estimatedUsd??(job.inFlight?job.reservedUsd:0),costEstimated:job.usage?.costEstimated!==false,reservedUsd:job.reservedUsd||0},
@@ -786,6 +789,7 @@ function createAdDesignService(deps) {
       await progress(6, "Researching this product, buyer intent and ad history");
       const savedCopy = await ref.collection("outputs").doc(jobId + "_copy").get();
       if (!job.evidence || !job.stages.copy && !savedCopy.exists && Date.now() - Number(job.evidence.researchCompletedAt || 0) > 600000) { job.evidence = await deps.research.collect({ campaignId: value.context.campaignId || null, sourceVersion: value.sourceVersion, snapshot: value.sourceSnapshot, range: value.context.range, group:researchGroup, selectedProducts: researchProducts, ...(legacyPinned?{}:{selectedSources}), settings: value.settings, deadlineMs: 90000 }); await saveJob({}); }
+      await progress(14, "Product research saved; writing tailored headlines and descriptions");
       // Construct and validate locally before reserving a paid request.
       const buildCopyRequest=recovering=>deps.research.buildRequest({evidence:job.evidence,mode:job.mode,recovering,feedback:value.settings.direction,currentCreative:group.original||{},style:value.settings.style,sourceImageDataUrl:'data:image/jpeg;base64,'+sourceFiles[0].toString('base64'),sourceReferences:sourceFiles.map((bytes,index)=>({dataUrl:'data:image/jpeg;base64,'+bytes.toString('base64'),manifest:job.inputCoverage.referenceManifest&&job.inputCoverage.referenceManifest[index]}))});
       const readCopy=async(key,recovering)=>{
@@ -838,7 +842,7 @@ function createAdDesignService(deps) {
         job.assets[format.key] = desktop?desktop.asset:output.asset;
         job.placementAssets.desktop[format.key]=desktop?desktop.asset:output.asset;
         job.placementAssets.mobile[format.key]=mobile?mobile.asset:output.asset;
-        await saveJob({});
+        await progress(30+Math.floor((i+1)/wanted.length*45), format.label+" image saved; "+(i+1)+" of "+wanted.length+" formats complete");
       }
       if (Date.now() - started > 620000) { await saveJob({ phase: "paused", leaseUntil: 0, progress: { pct: job.progress.pct, label: "Every format is saved; continuing the quality review" } }); return { ok: true, paused: true, dispatch: true, workspaceId, jobId }; }
       await progress(82, "Checking product fidelity, framing and mobile readability");
