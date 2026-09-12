@@ -428,22 +428,24 @@ function createAdDesignService(deps) {
     if(job.resetAt||job.phase==='dismissed')return {ok:true,jobId:null,phase:'idle',reset:true,result:null};
     if(input.artboard&&job.designKey!==editorKey(input))throw new Error('This AI result belongs to another artboard.');
     const receipt=await target.collection('data').doc('response').get(),stale=['queued','running'].includes(job.phase)&&job.leaseUntil<Date.now()&&Date.now()-job.updatedAt>30000;
-    const phase=stale?'needs_attention':job.phase,unknown=!!job.inFlight&&!receipt.exists;
+    const flightReceipt=job.inFlight?.key?await target.collection('data').doc(job.inFlight.key==='scene_quality'?'scene_quality_response':job.inFlight.key).get():receipt;
+    const phase=stale?'needs_attention':job.phase,unknown=!!job.inFlight&&!flightReceipt.exists;
     const request=input.includeOriginal?await target.collection('data').doc('request').get():null;
     const result=job.phase==='ready'?await target.collection('data').doc('result').get():null;
     return {ok:true,workspaceId:input.workspaceId,jobId:job.id,requestId:job.requestId,inputHash:job.inputHash,scope:job.scope,phase,
       startedAt:job.createdAt,updatedAt:job.updatedAt,
       progress:stale?{pct:job.progress.pct,label:unknown?'Provider completion is uncertain. The request will not be charged again.':'Saved work is available to resume.'}:job.progress,
       error:job.error||null,canRetry:phase==='needs_attention'&&!unknown,hasSavedResponse:receipt.exists,needsNewRequestApproval:false,
-      usage:job.usage?[job.usage]:[],cost:{estimatedUsd:job.usage?.estimatedUsd??(job.inFlight?job.reservedUsd:0),costEstimated:job.usage?.costEstimated!==false,reservedUsd:job.reservedUsd||0},
-      result:result?.exists?result.data():null,...(request?.exists?{mode:request.data().mode,selectedLayerId:request.data().selectedLayerId,originalDocument:request.data().document,sources:await Promise.all(request.data().sources.map(async source=>({...source,url:await deps.signAsset(source.asset)})))}:{}),imageAccess:deps.imageAccessStatus?deps.imageAccessStatus():null};
+      usage:job.stageUsage|| (job.usage?[job.usage]:[]),cost:{estimatedUsd:job.stageUsage?job.stageUsage.reduce((n,u)=>n+(Number(u.estimatedUsd)||0),0):job.usage?.estimatedUsd??(job.inFlight?job.reservedUsd:0),costEstimated:job.stageUsage?job.stageUsage.some(u=>u.costEstimated!==false):job.usage?.costEstimated!==false,reservedUsd:job.reservedUsd||0},
+      result:result?.exists?{...result.data(),sources:await Promise.all((result.data().sources||[]).map(async source=>({...source,url:await deps.signAsset(source.asset)})))}:null,...(request?.exists?{mode:request.data().mode,selectedLayerId:request.data().selectedLayerId,originalDocument:request.data().document,sources:await Promise.all(request.data().sources.map(async source=>({...source,url:await deps.signAsset(source.asset)})))}:{}),imageAccess:deps.imageAccessStatus?deps.imageAccessStatus():null};
   }
   async function editorAIResume(input={}){
     const w=await read(input.workspaceId);editorScope(w,input);const target=editorAIRef(input.workspaceId,input.jobId);let queued=false;
     await f().db.runTransaction(async tx=>{const row=await tx.get(target),receipt=await tx.get(target.collection('data').doc('response'));if(!row.exists)throw new Error('The AI request was not found.');const job=row.data();editorScope(w,job.scope);
       if(job.resetAt||job.phase==='dismissed')throw new Error('This failed AI job was reset. Start a new design when ready.');
       if(job.phase==='ready'||job.phase==='running'&&job.leaseUntil>Date.now())return;
-      if(job.inFlight&&!receipt.exists)throw new Error('The provider may have completed this paid request. Automatic replacement is blocked to prevent another charge. Its original request ID is retained.');
+      const flightReceipt=job.inFlight?.key?await tx.get(target.collection('data').doc(job.inFlight.key==='scene_quality'?'scene_quality_response':job.inFlight.key)):receipt;
+      if(job.inFlight&&!flightReceipt.exists)throw new Error('The provider may have completed this paid request. Automatic replacement is blocked to prevent another charge. Its original request ID is retained.');
       queued=true;tx.update(target,{phase:'queued',owner:null,leaseUntil:0,error:null,updatedAt:Date.now(),progress:{pct:job.progress.pct,label:receipt.exists?'Reopening the already paid design response':'Resuming saved product research'}});
     });return {ok:true,workspaceId:input.workspaceId,jobId:input.jobId,queued};
   }
@@ -459,7 +461,7 @@ function createAdDesignService(deps) {
     if(sourceIds.length>16)throw new Error('This AI design can visually inspect up to 16 original photo sources in one request.');
     if(typeof input.screenshotDataUrl!=='string'||!/^data:image\/(?:jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(input.screenshotDataUrl)||input.screenshotDataUrl.length>4000000)throw new Error('A current JPEG or PNG artboard preview is required.');
     const sources=[];for(const id of sourceIds){const row=await ref.collection('editorSources').doc(id).get();if(!row.exists||row.data().groupRef!==groupRef||String(row.data().productId)!==String(productId))throw new Error('An original photo is outside this product and ad group.');sources.push(row.data());}
-    const request={productId:String(productId),groupRef,device,artboard:{key:artboard.key,width:artboard.width,height:artboard.height},document,mode:input.mode,selectedLayerId:String(input.selectedLayerId||''),instruction:String(input.instruction||'').slice(0,2400)},inputHash=sha(request),id='eai_'+sha([designKey,input.requestId]).slice(0,40),target=editorAIRef(workspaceId,id),prior=await target.get();
+    const request={productId:String(productId),groupRef,device,artboard:{key:artboard.key,width:artboard.width,height:artboard.height},document,mode:input.mode,responsive:input.mode==='design'&&input.generateScene===true,selectedLayerId:String(input.selectedLayerId||''),instruction:String(input.instruction||'').slice(0,2400)},inputHash=sha(request),id='eai_'+sha([designKey,input.requestId]).slice(0,40),target=editorAIRef(workspaceId,id),prior=await target.get();
     if(prior.exists){if(prior.data().inputHash!==inputHash)throw new Error('This AI request ID belongs to a different canvas. Resume its saved result or start a new request.');return editorAIResume({...input,jobId:id});}
     const image=Buffer.from(input.screenshotDataUrl.split(',')[1],'base64'),sharp=require('sharp'),meta=await sharp(image,{limitInputPixels:17000000}).metadata();
     if(!['jpeg','png'].includes(meta.format)||Number(meta.pages||1)>1||Math.abs(meta.width/meta.height-artboard.width/artboard.height)>.02)throw new Error('The preview does not match this artboard’s aspect ratio.');
@@ -468,14 +470,14 @@ function createAdDesignService(deps) {
     await f().db.runTransaction(async tx=>{const latest=await tx.get(ref),exists=await tx.get(target);editorScope(latest.data(),input);if(latest.data().sourceSetId!==w.sourceSetId)throw new Error('The product sources changed. Reopen the editor.');if(exists.exists){if(exists.data().inputHash!==inputHash)throw new Error('AI request ID conflict.');cached=true;return;}
       const pointer=latest.data().editorAI;if(pointer?.id){const running=await tx.get(editorAIRef(workspaceId,pointer.id));if(running.exists){const j=running.data();if(j.phase!=='ready'&&(j.phase==='queued'||j.phase==='running'&&j.leaseUntil>Date.now()||j.inFlight))throw new Error('An earlier AI design request is unfinished. Reopen or resume its saved result before starting another paid request.');}}
       const now=Date.now();tx.set(target,{id,requestId:input.requestId,inputHash,designKey,scope,sourceSetId:w.sourceSetId,sourceVersion:w.sourceVersion||null,snapshotHash:w.snapshotHash||null,phase:'queued',owner:null,leaseUntil:0,createdAt:now,updatedAt:now,progress:{pct:4,label:'Current artwork and exact product context saved'},inFlight:null,reservedUsd:0});
-      tx.set(target.collection('data').doc('request'),clean({...request,previewAsset:asset,sources}));tx.update(ref,{editorAI:{id,designKey,at:now}});
+      tx.set(target.collection('data').doc('request'),clean({...request,previewAsset:asset,sources,publicationBaseline:sha({placements:chosenPlacements(w),messaging:w.messaging||null})}));tx.update(ref,{editorAI:{id,designKey,at:now}});
     });return {ok:true,workspaceId,jobId:id,queued:!cached,inputHash};
   }
   async function editorAIRun({workspaceId,jobId}={}){
     const ref=refFor(workspaceId),target=editorAIRef(workspaceId,jobId),owner=crypto.randomUUID();let job,request,w;
     await f().db.runTransaction(async tx=>{const row=await tx.get(target),workspace=await tx.get(ref),input=await tx.get(target.collection('data').doc('request'));if(!row.exists||!input.exists||!workspace.exists)throw new Error('AI design context is unavailable.');job=row.data();w=workspace.data();request=input.data();editorScope(w,job.scope);if(job.resetAt||job.phase==='dismissed'||job.phase==='ready'||job.phase==='running'&&job.leaseUntil>Date.now())return;job={...job,phase:'running',owner,leaseUntil:Date.now()+8*60000,updatedAt:Date.now()};tx.update(target,job);});
     if(job.owner!==owner)return {ok:true,cached:true};
-    const save=async patch=>{Object.assign(job,patch,{updatedAt:Date.now()});await f().db.runTransaction(async tx=>{const row=await tx.get(target);if(row.data()?.owner!==owner)throw new Error('AI design worker ownership changed.');tx.update(target,clean(job));});};
+    const save=async patch=>{Object.assign(job,patch,{updatedAt:Date.now(),...(patch.phase==='ready'||patch.phase==='needs_attention'?{}:{leaseUntil:Date.now()+8*60000})});await f().db.runTransaction(async tx=>{const row=await tx.get(target);if(row.data()?.owner!==owner)throw new Error('AI design worker ownership changed.');tx.update(target,clean(job));});};
     const saveData=async(key,data)=>f().db.runTransaction(async tx=>{const row=await tx.get(target);if(row.data()?.owner!==owner)throw new Error('AI design worker ownership changed before saving its output.');tx.set(target.collection('data').doc(key),clean(data));});
     const verify=async()=>{const current=await read(workspaceId);editorScope(current,job.scope);if(current.sourceSetId!==job.sourceSetId||(current.snapshotHash||null)!==job.snapshotHash||(current.sourceVersion||null)!==job.sourceVersion)throw new Error('Product or campaign evidence changed. The saved AI result cannot replace this draft.');};
     try{
@@ -492,29 +494,95 @@ function createAdDesignService(deps) {
         }
         await save({progress:{pct:36,label:'Preparing the current canvas and its unchanged original photographs'}});
         const originals=[];for(const source of request.sources){const bytes=await deps.loadAsset(source.asset),normalized=await require('sharp')(bytes,{limitInputPixels:40000000}).resize({width:1280,height:1280,fit:'inside',withoutEnlargement:true}).flatten({background:'#ffffff'}).jpeg({quality:86}).toBuffer();originals.push({...source,dataUrl:'data:image/jpeg;base64,'+normalized.toString('base64')});}
-        const screenshot=await deps.loadAsset(request.previewAsset),prepared=require('./googleAdsAdDesignResearch').buildEditorRequest({evidence,request,screenshotDataUrl:'data:image/jpeg;base64,'+screenshot.toString('base64'),sources:originals});
+        const screenshot=await deps.loadAsset(request.previewAsset),prepared=require('./googleAdsAdDesignResearch')[request.responsive?'buildResponsiveRequest':'buildEditorRequest']({evidence,request,screenshotDataUrl:'data:image/jpeg;base64,'+screenshot.toString('base64'),sources:originals});
         const quote=await deps.reserveCost({key:'copy',workspace:w,job:{inputCoverage:{preparedReferenceCount:originals.length+1}}}),textBytes=prepared.input.reduce((n,row)=>n+Buffer.byteLength(typeof row.content==='string'?row.content:row.content.filter(c=>c.type==='input_text').map(c=>c.text).join('\n')),0);
         // UTF-8 bytes bound text-token count conservatively; use the adapter's
         // higher context rates, the actual output limit and a vision allowance.
         const boundedReserve=Math.ceil((textBytes*20/1000000+prepared.max_output_tokens*75/1000000+(originals.length+1)*.12)*100)/100,reserve=Math.max(Number(typeof quote==='object'?quote.reservedUsd:quote),boundedReserve),ctrl=await deps.control(),allowance=Math.max(1,Math.min(30,Number(ctrl.creativeBudgetUsd)||8));
         if(!Number.isFinite(reserve)||reserve<=0||reserve>allowance)throw new Error('The configured creative allowance cannot cover this bounded AI design request.');
         await verify();if(deps.verifyContext)await deps.verifyContext(w);
-        const requestId=crypto.randomUUID();await save({reservedUsd:reserve,inFlight:{requestId,at:Date.now()},progress:{pct:52,label:'Astra is inspecting the ad and designing tailored copy, typography and layout'}});
+        const requestId=crypto.randomUUID();await save({reservedUsd:reserve,textReservedUsd:reserve,inFlight:{requestId,key:'response',at:Date.now()},progress:{pct:36,label:request.responsive?'Planning a new photographic scene and layouts across all ad formats':'Astra is inspecting the ad and designing tailored copy, typography and layout'}});
         const response=await deps.responses(prepared,requestId);
         // Write the provider receipt before parsing or validation. A reload or
         // interrupted worker can use this response without a second API charge.
         await saveData('response',{response,requestId,receivedAt:Date.now()});responseRow=await target.collection('data').doc('response').get();
       }
       if(!evidence)throw new Error('The saved response is missing its original evidence.');
-      const response=responseRow.data().response,actual=Number(response.estimatedUsd),usage={requestId:responseRow.data().requestId,providerModel:response.model||'gpt-6-astra',usage:response.usage||{},estimatedUsd:response.costEstimated===false&&Number.isFinite(actual)&&actual>=0?actual:job.reservedUsd,costEstimated:response.costEstimated!==false,at:Date.now()};
-      await save({usage,inFlight:null,progress:{pct:86,label:'Checking product claims, editable layers, photo integrity and placement'}});
-      const research=require('./googleAdsAdDesignResearch'),output=research.parseResponse(response),result=research.applyEditorPlan({output,request,evidence,sources:request.sources});editorDocument(result.document);await verify();
+      const response=responseRow.data().response,actual=Number(response.estimatedUsd),usage={requestId:responseRow.data().requestId,providerModel:response.model||'gpt-6-astra',usage:response.usage||{},estimatedUsd:response.costEstimated===false&&Number.isFinite(actual)&&actual>=0?actual:(job.textReservedUsd||job.reservedUsd),costEstimated:response.costEstimated!==false,at:Date.now()};
+      await save({usage,inFlight:job.inFlight?.key&&job.inFlight.key!=='response'?job.inFlight:null,progress:{pct:request.responsive?48:86,label:request.responsive?'Scene and messaging planned; preparing new product photography':'Checking product claims, editable layers, photo integrity and placement'}});
+      const research=require('./googleAdsAdDesignResearch'),output=research.parseResponse(response),result=request.responsive?await responsiveEditorResult({workspaceId,jobId,job,request,evidence,output,target,ref,w,save,saveData,verify,usage}):research.applyEditorPlan({output,request,evidence,sources:request.sources});editorDocument(result.document);await verify();
       await saveData('result',result);await save({phase:'ready',leaseUntil:0,completedAt:Date.now(),error:null,progress:{pct:100,label:'Tailored design is ready to apply to this artboard'}});
       return {ok:true,workspaceId,jobId};
     }catch(error){
       if(error.notDispatched||error.definiteResponse){job.inFlight=null;if(!job.usage)job.usage={estimatedUsd:0,costEstimated:!!error.definiteResponse,usage:{},at:Date.now()};}
       await save({phase:'needs_attention',leaseUntil:0,error:String(error.message||error).slice(0,700),progress:{pct:job.progress.pct,label:job.inFlight?'Paid request needs reconciliation; it will not run again automatically':'Saved design needs attention; completed work is retained'}});return {ok:false,workspaceId,jobId,error:job.error};
     }
+  }
+  async function responsiveEditorResult({workspaceId,jobId,job,request,evidence,output,target,ref,w,save,saveData,verify,usage}){
+    const research=require('./googleAdsAdDesignResearch'),plan=research.validateResponsivePlan({output,request,evidence}),responsive=require('../../brites-ad-responsive'),products=await productsFor(ref,w),product=products.find(p=>String(p.id)===request.productId);
+    if(!product)throw new Error('The exact product source is no longer available.');
+    const refs=await Promise.all(request.sources.map(s=>deps.loadAsset(s.asset))),images=[],sources=[],files=[];
+    const stageUsage=job.stageUsage||[{...usage,key:'response'}];await save({stageUsage});
+    const paid=async(key,pct,label,perform)=>{
+      const saved=await target.collection('data').doc(key).get();if(saved.exists)return saved.data();
+      if(job.inFlight)throw new Error('The '+key+' request has no confirmed receipt. Its request ID is saved; no replacement was charged.');
+      const estimate=await deps.reserveCost({key:/^scene_\d+$/.test(key)?'image_'+(key==='scene_0'?plan.masterFormat:plan.alternateFormat):'quality',workspace:w,job:{inputCoverage:{preparedReferenceCount:refs.length,usedProductImages:refs.length}}});
+      const reservedUsd=Number(typeof estimate==='object'?estimate.reservedUsd:estimate),spent=stageUsage.reduce((n,u)=>n+(Number(u.estimatedUsd)||0),0),ctrl=await deps.control();
+      if(!Number.isFinite(reservedUsd)||spent+reservedUsd>Math.max(1,Math.min(30,Number(ctrl.creativeBudgetUsd)||8)))throw new Error('The remaining creative allowance cannot cover the next image step. Completed research and images are saved.');
+      await verify();const requestId=crypto.randomUUID();await save({reservedUsd,inFlight:{key,requestId,at:Date.now()},progress:{pct,label}});
+      const result=await perform(requestId);await saveData(key,{...result,requestId,reservedUsd,receivedAt:Date.now()});return {...result,requestId,reservedUsd};
+    };
+    const recordCost=async(key,row)=>{if(!stageUsage.some(u=>u.key===key)){stageUsage.push({key,requestId:row.requestId,providerModel:row.providerModel||row.model,usage:row.usage||{},estimatedUsd:row.costEstimated===false&&Number.isFinite(row.estimatedUsd)?row.estimatedUsd:row.reservedUsd,costEstimated:row.costEstimated!==false,at:Date.now()});}await save({stageUsage,inFlight:job.inFlight?.key&&job.inFlight.key!==key?job.inFlight:null});};
+    for(let i=0;i<(plan.alternateNeeded?2:1);i++){
+      const key='scene_'+i,shape=i?plan.alternateFormat:plan.masterFormat,format=FORMATS.find(f=>f.key===shape),direction=plan.imageDirections[i]||plan.imageDirections[0];
+      const row=await paid(key,50+i*17,i?'Generating an alternate view because '+plan.alternateReason:'Generating a new '+shape+' product scene',async requestId=>{
+        const generated=await deps.generateImage({requestId,provider:provider(),format,references:refs,product,products:[product],brief:{buyer:plan.rationale,visualDirection:direction.concept},imageDirections:[direction],settings:{...w.settings,direction:request.instruction+'\nGenerate a genuinely new setting and photograph; do not keep the old model crop. '+direction.composition},inputCoverage:{usedProductImages:refs.length,preparedReferenceCount:refs.length}});
+        const asset=await deps.saveAsset(workspaceId,generated.bytes,jobId+'_'+key,{width:format.width,height:format.height,mimeType:'image/jpeg',digitalSourceType:generated.digitalSourceType||null});
+        return {...generated,bytes:undefined,asset};
+      });
+      await recordCost(key,row);const asset=row.asset,id='generated_'+sha(asset.path).slice(0,32),sourceId='scene_'+sha([workspaceId,jobId,key]).slice(0,40),source={id:sourceId,productId:request.productId,groupRef:request.groupRef,title:product.title+' · AI scene',width:asset.width,height:asset.height,asset,source:{kind:'library',imageId:id}};
+      await ref.collection('editorSources').doc(sourceId).set(clean(source));const image={id,kind:'generated',format:shape,productIds:[request.productId],ownerProductId:request.productId,groupRef:request.groupRef,title:product.title,asset,createdAt:row.receivedAt||Date.now(),jobId};await ref.collection('imageLibrary').doc(id).set(clean(image));await archiveGenerated(w,image);
+      sources.push(source);images.push({id:sourceId,width:asset.width,height:asset.height,focalX:.5,focalY:.5,forFamilies:i?[shape,shape==='portrait'?'skyscraper':'banner']:[]});files.push(await deps.loadAsset(asset));
+    }
+    let qualityRow=await target.collection('data').doc('scene_quality').get(),quality=qualityRow.exists?qualityRow.data():null;
+    if(!quality){
+      const raw=await target.collection('data').doc('scene_quality_response').get();
+      if(job.inFlight&&job.inFlight.key==='scene_quality'&&raw.exists)await save({inFlight:null});
+      quality=await paid('scene_quality',82,'Checking product fidelity and mobile clarity',async requestId=>deps.reviewImages(refs[0],files,{rationale:plan.rationale,copy:{headlines:[plan.copy.headline,plan.copy.shortHeadline],descriptions:[plan.copy.description]},keywords:product.keywords||[],product:{id:product.id,title:product.title},inputCoverage:{usedProductImages:refs.length}},refs,requestId,{...(raw.exists?{rawResponse:raw.data().response}:{}),onResponse:response=>saveData('scene_quality_response',{response})}));
+    }
+    await recordCost('scene_quality',quality);
+    if(quality.productFaithful!==true)throw new Error('The generated photo needs product-fidelity review: '+(quality.issues||[]).join(' '));
+    await save({progress:{pct:91,label:'Adapting photo crops, headlines and buttons across 23 sizes'}});
+    const publicationImages=[];
+    for(const board of responsive.boards.slice(0,3)){
+      const chosen=responsive.selectImage(plan,images,board),source=sources.find(s=>s.id===chosen.id),key='crop_'+board.key;
+      let stored=await target.collection('data').doc(key).get(),row=stored.exists?stored.data():null;
+      if(!row){const cropped=await deps.cropImage(await deps.loadAsset(source.asset),board.key,null),asset=await deps.saveAsset(workspaceId,cropped.bytes,jobId+'_'+key,{width:cropped.width,height:cropped.height,mimeType:'image/jpeg',kind:'clean AI product photograph'});row={id:'generated_'+sha(asset.path).slice(0,32),kind:'generated',format:board.key,productIds:[request.productId],ownerProductId:request.productId,groupRef:request.groupRef,title:product.title,asset,originalAsset:source.asset,jobId,createdAt:Date.now()};await saveData(key,row);}
+      await ref.collection('imageLibrary').doc(row.id).set(clean(row));await archiveGenerated(w,row);publicationImages.push(row);
+    }
+    const chosen=responsive.selectImage(plan,images,request.artboard),document=responsive.document(plan,chosen,request.artboard,request.device==='desktop'?'desktop':'mobile'),locked=o=>o.locked||(o.objects||[]).some(locked);
+    // Locked layers remain byte-identical on the active board; originals and every paid scene remain archived.
+    document.objects.push(...request.document.objects.filter(locked));
+    return {document,productId:request.productId,groupRef:request.groupRef,device:request.device,artboard:request.artboard,destination:product.url,sources,publicationImages,nativeCopy:plan.nativeCopy,responsive:{plan,images,boards:responsive.boards,variants:responsive.variants},alternatives:[],rationale:plan.rationale+' '+(plan.alternateNeeded?'Two photographic views support different framing needs.':'One new photograph is reused across the formats to avoid unnecessary generation charges.'),sourceIds:plan.sourceIds,evidenceHash:evidence.hash,quality,limitations:[...(plan.limitations||[]),...(evidence.warnings||[]),...(quality.pass?[]:quality.issues||[])]};
+  }
+  async function editorAIApply(input={}){
+    const ref=refFor(input.workspaceId),w=await read(input.workspaceId);editorScope(w,input);
+    const target=editorAIRef(input.workspaceId,input.jobId);
+    await f().db.runTransaction(async tx=>{
+      const current=await tx.get(ref),jobRow=await tx.get(target),resultRow=await tx.get(target.collection('data').doc('result')),requestRow=await tx.get(target.collection('data').doc('request'));
+      if(!jobRow.exists||jobRow.data().phase!=='ready'||!resultRow.exists||!requestRow.exists)throw new Error('The new scene is not ready to apply.');
+      const job=jobRow.data(),result=resultRow.data(),request=requestRow.data(),latest=current.data();editorScope(latest,job.scope);if(job.resetAt)throw new Error('This AI result was reset.');
+      if(job.nativeAppliedAt)return;
+      if(!request.responsive||!Array.isArray(result.publicationImages)||result.publicationImages.length!==3)throw new Error('This result has no complete set of photographic assets.');
+      if(request.publicationBaseline!==sha({placements:chosenPlacements(latest),messaging:latest.messaging||null}))throw new Error('The saved images or messaging changed while AI was working. Your current choices are retained.');
+      if(latest.job&&(active(latest.job)||latest.job.inFlight))throw new Error('Another design is still updating this ad.');
+      const placements=(latest.placements||[]).filter(p=>!placementMatches(p,latest.settings));
+      for(const image of result.publicationImages)for(const device of ['desktop','mobile'])placements.push({groupRef:request.groupRef,productId:request.productId,device,format:image.format,imageId:image.id,asset:image.asset,productIds:[request.productId],artwork:false,rootSource:{kind:'library',imageId:image.id}});
+      tx.set(ref.collection('history').doc(job.id+'_before_scene'),clean({placements:latest.placements||[],messaging:latest.messaging||null,job:latest.job||null,createdAt:Date.now()}));
+      tx.update(ref,{placements,messaging:{copy:result.nativeCopy,productId:request.productId,groupRef:request.groupRef,researchedAt:Date.now(),evidenceHash:result.evidenceHash,edited:false},job:null,revision:Number(latest.revision||0)+1,updatedAt:Date.now()});
+      tx.update(target,{nativeAppliedAt:Date.now()});
+    });
+    return {ok:true};
   }
   async function editorExport(input={}){
     const {workspaceId,format='png',dataBase64,revision,displayOptimized=false,saveDesignId=null}=input,ref=refFor(workspaceId),w=await read(workspaceId);editorScope(w,input);
@@ -645,7 +713,7 @@ function createAdDesignService(deps) {
         const row=await tx.get(candidate.ref),workspace=await tx.get(ref);if(!row.exists||!workspace.exists||workspace.data().archivedAt)return 0;const job=row.data();
         const stale=['queued','running'].includes(job.phase)&&Number(job.leaseUntil||0)<now&&now-Number(job.updatedAt||job.createdAt||0)>120000;
         if(job.phase!=='needs_attention'&&!stale||job.resetAt||Number(job.updatedAt||job.createdAt||0)>cutoff||active(job))return 0;
-        if(job.inFlight){const receipt=await tx.get(candidate.ref.collection('data').doc('response'));if(!receipt.exists)return -1;}
+        if(job.inFlight){const receipt=await tx.get(candidate.ref.collection('data').doc(job.inFlight.key==='scene_quality'?'scene_quality_response':job.inFlight.key||'response'));if(!receipt.exists)return -1;}
         tx.set(candidate.ref.collection('data').doc('reset'),clean({job,resetAt:now,reason:'Operator reset failed AI state'}));
         tx.update(candidate.ref,{phase:'dismissed',resetAt:now,error:null,owner:null,leaseUntil:0,inFlight:null,updatedAt:now});
         if(workspace.data().editorAI?.id===job.id)tx.update(ref,{editorAI:null});return 1;
@@ -888,6 +956,6 @@ function createAdDesignService(deps) {
       await saveJob({ phase: "needs_attention", error: String(error.message || error).slice(0, 900), leaseUntil: 0, progress: { pct: Number(job.progress && job.progress.pct) || 0, label: "Saved work retained — review the unfinished step" } }); throw error;
     }
   }
-  return { workspace, save, upload, crop, start, status, run, resetFailures, editorSource, editorState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorDeleteSavedDesign, deleteGeneratedImage, linkPublishedDesignScopes, linkPublishedWorkspaceGallery, editorAIStart, editorAIStatus, editorAIResume, editorAIRun };
+  return { workspace, save, upload, crop, start, status, run, resetFailures, editorSource, editorState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorDeleteSavedDesign, deleteGeneratedImage, linkPublishedDesignScopes, linkPublishedWorkspaceGallery, editorAIStart, editorAIStatus, editorAIResume, editorAIRun, editorAIApply };
 }
 module.exports = { createAdDesignService, buildVersionDesignPayload, isSharedProductGroup, researchGroupFor, formatAssets, chosenPlacements, placementMatches, FORMATS, settingsFor, refreshedSettings, responseText, MAX_UPLOAD };
