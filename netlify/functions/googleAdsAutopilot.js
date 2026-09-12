@@ -1705,6 +1705,7 @@ async function applyApproval(id, ctrl) {
       const attachments=ops.filter(o=>o.assetGroupAssetOperation&&o.assetGroupAssetOperation.create),other=ops.filter(o=>!(o.assetGroupAssetOperation&&o.assetGroupAssetOperation.create));
       const grouped=new Map();attachments.forEach(o=>{const k=o.assetGroupAssetOperation.create.assetGroup;if(!grouped.has(k))grouped.set(k,[]);grouped.get(k).push(o);});
       ops=other.concat(...grouped.values());
+      if(newNames.length&&!ctrl.dryRun)await mutateAll(ops,{ctrl,validateOnly:true,label:"validate-new-campaign:"+id});
       if(_isAdVersionApproval(it)&&!ctrl.dryRun){await mutateAll(ops,{ctrl,validateOnly:true,label:"validate-version:"+id});await _guardAdVersionApproval(it);}
       if(p.groupActivationGuard&&!ctrl.dryRun){await mutateAll(ops,{ctrl,validateOnly:true,label:"validate-product-switch:"+id});await _guardProductGroupActivation(it);}
       if(p.groupSplitGuard&&!ctrl.dryRun){await mutateAll(ops,{ctrl,validateOnly:true,label:"validate-product-split:"+id});await _guardProductGroupSplit(it);}
@@ -9125,7 +9126,7 @@ async function _creativeImageOps(pkg, existingOps=[]) {
     if(b.length!==a.bytes||b.length>5*1024*1024)throw new Error("The reviewed generated image file changed or exceeds Google's limit.");
     const meta=await require("sharp")(b).metadata();if(meta.width!==a.width||meta.height!==a.height)throw new Error("The saved image dimensions differ from the reviewed design.");
   }return b;};
-  const add=async(a,strict)=>{const b=await read(a,strict),res=`customers/${CID}/assets/${n--}`;ops.push({assetOperation:{create:{resourceName:res,imageAsset:{data:b.toString("base64")}}}});return res;};
+  const add=async(a,strict)=>{const b=await read(a,strict),res=`customers/${CID}/assets/${n--}`;ops.push({assetOperation:{create:{resourceName:res,name:("Brites reviewed "+(a.width||0)+"x"+(a.height||0)+" "+a.hash.slice(0,20)),imageAsset:{data:b.toString("base64")}}}});return res;};
   const logo=pkg.logo?await add(pkg.logo,designed):null;
   for(const g of (pkg.groups||[]).filter(g=>g.channel==="pmax")) {const a={logo,square:[],landscape:[],portrait:[]};for(const shape of ["square","landscape","portrait"]){if(!(g.assets||{})[shape])throw new Error("Reviewed image set is incomplete.");for(const asset of require("./googleAdsAdDesign").formatAssets(g,shape))a[shape].push(await add(asset,designed||!!(g.copyReview||{}).researchHash));}groups[g.ref]=a;}
   for(const g of (pkg.groups||[]).filter(g=>g.channel==="search"&&Object.keys(g.assets||{}).length)) {
@@ -9146,7 +9147,7 @@ async function materializeReviewedCreative(it) {
       if(bytes.length!==entry.asset.bytes||bytes.length>5*1024*1024)throw new Error("The reviewed generated image file changed or exceeds Google's limit.");
       const meta=await require("sharp")(bytes).metadata();
       if(meta.width!==entry.asset.width||meta.height!==entry.asset.height)throw new Error("The saved image dimensions differ from the reviewed design.");
-      ops.push({assetOperation:{create:{resourceName:entry.tempResourceName,imageAsset:{data:bytes.toString("base64")}}}});
+      ops.push({assetOperation:{create:{resourceName:entry.tempResourceName,name:("Brites reviewed "+entry.asset.width+"x"+entry.asset.height+" "+entry.asset.hash.slice(0,20)),imageAsset:{data:bytes.toString("base64")}}}});
     }
     return ops.concat(JSON.parse(JSON.stringify(p.mutateOperations||[])));
   }
