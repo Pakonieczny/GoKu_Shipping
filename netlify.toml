@@ -6,7 +6,7 @@
   # @google-cloud/firestore is external because it loads gRPC .proto files
   # through dynamic requires that esbuild cannot follow. Bundled, the
   # Investor_AI functions deploy clean and fail at runtime.
-  external_node_modules = ["sharp", "@resvg/resvg-js", "@google-cloud/firestore", "@ffmpeg-installer/ffmpeg"]
+  external_node_modules = ["sharp", "@resvg/resvg-js", "@google-cloud/firestore"]
   # Asset bundling: every file matching these patterns gets copied into
   # the bundle directory of every function, alongside the bundled .js.
   # Functions reference these via path.join(__dirname, "...") at runtime.
@@ -23,6 +23,15 @@
     # Without this line the first cycle dies with MODULE_NOT_FOUND.
     "investor/**"
   ]
+
+# FFmpeg is a large native executable. Only functions importing the ad engine
+# need it; a global external duplicates it across every application function.
+[functions."googleAds*"]
+  external_node_modules = ["@ffmpeg-installer/ffmpeg"]
+
+# This webhook also imports the shared ad engine for conversion recording.
+[functions."shopifyOrderWebhook"]
+  external_node_modules = ["@ffmpeg-installer/ffmpeg"]
 
 # ─── M3: Etsy receipts sync — REMOVED 2026-05-21 ─────────────────────────
 # The etsyMailSyncCron schedule was permanently removed. The cron drove
@@ -495,4 +504,3 @@
 [functions."investor*"]
   node_bundler = "zisi"
   included_files = ["investor.html", "netlify/functions/*investor*.js"]
-
