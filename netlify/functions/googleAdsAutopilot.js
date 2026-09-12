@@ -998,11 +998,11 @@ async function uploadConversionAdjustments({ ctrl, limit = 500 } = {}) {
 async function conversionHealth({ force } = {}) {
   const f = fb();
   if (f && !force) {
-    try { const s = await f.db.collection(COL.state).doc("conv_health").get(); if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 15 * 60 * 1000 && x.data) return x.data; } } catch (e) {}
+    try { const s = await f.db.collection(COL.state).doc("conv_health").get(); if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 15 * 60 * 1000 && x.data && x.data.schemaVersion === 2) return x.data; } } catch (e) {}
   }
   const out = { status: "UNKNOWN", actionConfigured: !!ENV.GADS_CONVERSION_ACTION, actionId: ENV.GADS_CONVERSION_ACTION || null,
     actions: [], recentConversions: null, queueDepth: null, adjQueueDepth: null, lastUpload: null,
-    healthy: false, validated: false, reasons: [], at: Date.now() };
+    healthy: false, validated: false, reasons: [], schemaVersion: 2, at: Date.now() };
   try {
     const r = await gaql(`SELECT customer.conversion_tracking_setting.conversion_tracking_status FROM customer`);
     const cs = r[0] && r[0].customer && r[0].customer.conversionTrackingSetting;
@@ -1031,14 +1031,20 @@ async function conversionHealth({ force } = {}) {
       if (out.failedCount > 0) out.reasons.push(out.failedCount + " sale(s) rejected by Google Ads on upload — see Sales → conversion status");
     } catch (e) {}
     try { const q = await f.db.collection(COL.convAdj).where("uploaded", "==", false).limit(500).get(); out.adjQueueDepth = q.size; } catch (e) {}
-    try { const lg = await f.db.collection(COL.ledger).orderBy("at", "desc").limit(50).get(); let found = null; lg.forEach(d => { const x = d.data(); if (!found && x.kind === "uploadConversions") found = { at: x.at && x.at.toMillis ? x.at.toMillis() : null, count: x.count, ok: x.ok }; }); out.lastUpload = found; } catch (e) {}
+    try { const lg = await f.db.collection(COL.ledger).orderBy("at", "desc").limit(50).get(); let found = null; lg.forEach(d => { const x = d.data(); if (!found && x.kind === "uploadConversions") found = { at: x.at && x.at.toMillis ? x.at.toMillis() : null, count: x.accepted == null ? x.count : x.accepted, ok: x.ok, validateOnly: !!x.validateOnly }; }); out.lastUpload = found; } catch (e) {}
   }
-  const enabledAction = out.actions.some(a => a.status === "ENABLED");
-  out.healthy = !!(out.actionConfigured && enabledAction && out.status && out.status !== "NOT_CONVERSION_TRACKED" && out.status !== "UNKNOWN");
-  out.validated = !!(out.healthy && Number(out.recentConversions) > 0);
+  const configuredId = String(out.actionId || "").split("/").pop();
+  out.configuredAction = out.actions.find(a => a.id === configuredId) || null;
+  const enabledAction = !!(out.configuredAction && out.configuredAction.status === "ENABLED");
+  const importAction = !!(out.configuredAction && out.configuredAction.type === "UPLOAD_CLICKS");
+  out.healthy = !!(out.actionConfigured && enabledAction && importAction && out.status && out.status !== "NOT_CONVERSION_TRACKED" && out.status !== "UNKNOWN");
+  // Account-wide conversions may come from Shopify's browser tag or another
+  // action. They do not prove this server-side upload pipeline is working.
+  out.validated = !!(out.healthy && out.lastUpload && out.lastUpload.ok && !out.lastUpload.validateOnly && out.lastUpload.count > 0 && !out.failedCount);
   if (!out.actionConfigured) out.reasons.push("GADS_CONVERSION_ACTION env var is not set");
-  if (!enabledAction && out.actions.length === 0) out.reasons.push("no conversion actions found in the Google Ads account");
-  else if (!enabledAction) out.reasons.push("no ENABLED conversion action (create/enable an Import 'from clicks' action)");
+  if (out.actionConfigured && !out.configuredAction) out.reasons.push("The configured conversion action was not found in this account.");
+  else if (out.configuredAction && !enabledAction) out.reasons.push("The configured conversion action is not enabled.");
+  if (out.configuredAction && !importAction) out.reasons.push("The configured action must use UPLOAD_CLICKS for server-side click imports; its current type is " + out.configuredAction.type + ".");
   if (out.status === "NOT_CONVERSION_TRACKED") out.reasons.push("account status is NOT_CONVERSION_TRACKED");
   if (out.healthy && Number(out.recentConversions) === 0) out.reasons.push("tracking is configured but no conversions recorded in 30d yet");
   if (f) { try { await f.db.collection(COL.state).doc("conv_health").set({ data: out, at: Date.now() }); } catch (e) {} }
