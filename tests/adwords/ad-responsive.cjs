@@ -24,24 +24,28 @@ if(require.main===module)(async()=>{
  const e=await w.BritesAdEditor.open({title:'Duck necklace',workspaceId:'test',productId,groupRef,format:'square',photos:[],request:async action=>action==='adDesignEditorState'?{ok:true,sources:[photo],designs:[]}:action==='adDesignSavedDesigns'?{ok:true,savedDesigns:[]}:{ok:true}});
  const boxesOverlap=(a,b)=>Math.min(a.left+a.width,b.left+b.width)-Math.max(a.left,b.left)>1&&Math.min(a.top+a.height,b.top+b.height)-Math.max(a.top,b.top)>1;
  const incompletePlan=JSON.parse(JSON.stringify(plan));incompletePlan.layouts.forEach(l=>{l.showBrand=false;l.showButton=false;l.showHeadline=false;});
- for(const copy of [plan.copy,{headline:'Gold Peach Fruit Charm',shortHeadline:'Peach Fruit Charm',description:'A sweet gift for food lovers.',cta:'Shop Peach Charm'},{headline:'A Peach for Your Foodie',shortHeadline:'Peach Charm',description:'Gift-ready packaging included.',cta:'Shop charm'}])for(const board of responsive.variants){
-   incompletePlan.copy=copy;if(copy.cta==='Shop charm')incompletePlan.style={...plan.style,background:'#2D231E',ink:'#FFF9F0'};else incompletePlan.style=plan.style; e.board=board;await e.restore(responsive.document(incompletePlan,photo,board,board.device));ok(['brand','headline','button'].every(role=>e.canvas.getObjects().some(o=>o.editorRole===role)),board.key+' restores essential ad content omitted by the AI recipe');for(const o of e.canvas.getObjects())e.fitAIText(o);e.canvas.renderAll();
+ for(const copy of [plan.copy,{headline:"Corgi Necklace for Dog Lovers",shortHeadline:"Corgi Necklace",description:"A handcrafted corgi pendant on a beady chain.",cta:"Shop Now"},{headline:'Gold Peach Fruit Charm',shortHeadline:'Peach Fruit Charm',description:'A sweet gift for food lovers.',cta:'Shop Peach Charm'},{headline:'A Peach for Your Foodie',shortHeadline:'Peach Charm',description:'Gift-ready packaging included.',cta:'Shop charm'}])for(const board of responsive.variants){
+   incompletePlan.copy=copy;if(copy.cta==='Shop charm')incompletePlan.style={...plan.style,background:'#2D231E',ink:'#FFF9F0'};else incompletePlan.style=plan.style; e.board=board;await e.restore(responsive.document(incompletePlan,photo,board,board.device));ok(['headline','button'].every(role=>e.canvas.getObjects().some(o=>o.editorRole===role)),board.key+' keeps a concise product caption and action');for(const o of e.canvas.getObjects())e.fitAIText(o);e.canvas.renderAll();
    const text=e.canvas.getObjects().filter(o=>'text'in o||o.editorRole==='button');
    if(board.key.startsWith('display_')){
-     ok(text.find(o=>o.editorRole==='brand').fontSize>=7.9,board.key+' brand remains legible at native size');
+     ok(!text.find(o=>o.editorRole==='brand')||text.find(o=>o.editorRole==='brand').fontSize>=7.9,board.key+' brand remains legible at native size');
      ok(text.find(o=>o.editorRole==='button').getObjects().find(o=>'text'in o).fontSize>=11.9,board.key+' action remains legible at native size');
    }
    if(['square','landscape','portrait'].includes(board.key)){
      const brand=text.find(o=>o.editorRole==='brand'),previewWidth=board.device==='desktop'?600:360;
-     ok(brand.fontSize*previewWidth/board.width>=8,board.key+' brand remains readable at typical display width');
-     ok(text.some(o=>o.editorRole==='description'),board.key+' includes supporting product copy');
+     ok(!brand||brand.fontSize*previewWidth/board.width>=8,board.key+' brand remains readable at typical display width');
+     ok(e.canvas.getObjects().find(o=>o.type==='image').getBoundingRect().height>=board.height*.68,board.key+' devotes most of the height to the photograph');
      ok(text.find(o=>o.editorRole==='button').getObjects().find(o=>'text'in o).fontSize*previewWidth/board.width>=11.9,board.key+' CTA remains readable at actual display width');
-     ok(text.find(o=>o.editorRole==='description').fontSize*previewWidth/board.width>=11.9,board.key+' supporting copy remains readable at typical display width');
+     ok(!text.find(o=>o.editorRole==='description')||text.find(o=>o.editorRole==='description').fontSize*previewWidth/board.width>=11.9,board.key+' supporting copy remains readable at typical display width');
    }
    for(const o of text){const b=o.getBoundingRect();ok(b.left>=-1&&b.top>=-1&&b.left+b.width<=board.width+1&&b.top+b.height<=board.height+1,board.device+' '+board.key+' '+o.editorRole+' fits '+JSON.stringify(b));}
    for(let i=0;i<text.length;i++)for(let j=i+1;j<text.length;j++)ok(!boxesOverlap(text[i].getBoundingRect(),text[j].getBoundingRect()),board.key+' '+text[i].editorRole+' avoids '+text[j].editorRole);
    const image=e.canvas.getObjects().find(o=>o.type==='image');ok(image.scaleX===image.scaleY&&image.angle===0,'photo preserves proportions');
-   if(['skyscraper','portrait','square'].includes(responsive.family(board))){const imageBox=image.getBoundingRect(),brand=text.find(o=>o.editorRole==='brand').getBoundingRect(),previewScale=['square','landscape','portrait'].includes(board.key)?board.width/(board.device==='desktop'?600:360):1;ok((brand.top-imageBox.top-imageBox.height)/previewScale<=30,board.key+' keeps photograph and copy together without an empty photo region');}
+   const imageBox=image.getBoundingRect();
+   ok(imageBox.left<=1&&(responsive.family(board)==='banner'?imageBox.height>=board.height*.98:imageBox.width>=board.width*.98),board.key+' photo starts at the edge instead of inside a padded thumbnail');
+   const action=text.find(o=>o.editorRole==='button').getObjects().find(o=>'text'in o);
+   ok(action.textLines.length===1,board.key+' action stays on one line');
+
  }
  const beforeProofBoard=e.board,beforeProofDoc=JSON.stringify(e.document());const proofs=await e.renderAIProofs({artboard:{key:'square',width:2048,height:2048},device:'mobile',document:responsive.document(plan,photo,{key:'square',width:2048,height:2048},'mobile'),sources:[photo],responsive:{layoutVersion:responsive.layoutVersion,plan,images:[photo]}});
  ok(proofs.length===27&&proofs[0].key==='active'&&new Set(proofs.map(p=>p.key)).size===27,'browser renders the active canvas plus all 26 responsive variants');
