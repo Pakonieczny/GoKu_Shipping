@@ -9700,12 +9700,18 @@ async function prepareAdDesignPublication({workspaceId,target='ads',formats=[],i
   }
   const previewImages=[];for(const format of selection.formats)for(const asset of design.formatAssets(result,format))previewImages.push({format,width:asset.width,height:asset.height,url:await _designEngineAdapters().signAsset(asset),hash:asset.hash});
   if(logo){await _loadCreativeAsset(logo);previewImages.push({format:'brand logo',width:logo.width,height:logo.height,url:await _designEngineAdapters().signAsset(logo),hash:logo.hash});}
+  let designReview=null;
+  if(target==='ads'){
+    const layouts=await _designEngine().editorAIStatus({workspaceId,productId:product.id,groupRef:group.ref,allSizes:true});
+    designReview={workspaceId,productId:product.id,groupRef:group.ref,productTitle:product.title,destination:w.context.campaignId?group.url:product.url,formats:selection.formats,copy:selection.copy?result.copy:null,newCampaign,layoutReview:layouts.jobId&&layouts.reviewVersion?{jobId:layouts.jobId,reviewVersion:layouts.reviewVersion}:null};
+    if(approvalItem)approvalItem.designReview=designReview;
+  }
   const prepared={id,target,status:'PENDING',sourceHash,selection,productId:product.id,groupRef:group.ref,productTitle:product.title,destination:target==='merchant'||selection.destination?product.url:w.context.campaignId?group.url:product.url,approvalId,reviewHash:payload?creativeHash(payload):merchant.reviewHash,assetReviewHash,merchant,createdAt:Date.now()};
   await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),prior=await tx.get(pubRef),apRef=approvalId?fb().db.collection(COL.approvals).doc(approvalId):null,ap=apRef?await tx.get(apRef):null;
     if(_adDesignSelectionHash(current.data())!==sourceHash||current.data().job&&(current.data().job.inFlight||current.data().job.leaseUntil>Date.now()))throw new Error('This design changed while preparing. Review the current images again.');
     if(prior.exists&&['APPLIED','APPLYING','UNKNOWN'].includes(prior.data().status))throw new Error('This update has already been submitted. Refresh its status.');
     if(ap&&ap.exists){const a=ap.data();if(a.status!=='PENDING'&&!(a.status==='APPROVED'&&!a.needsReconciliation&&!a.applyAttempt&&(a.validatedAt||prior.exists&&prior.data().status==='FAILED')))throw new Error('This proposal is already being published. Refresh its status.');if(!approvalItem&&creativeHash(a.payload)!==prepared.reviewHash)throw new Error('The complete proposal changed. Prepare it again.');}
-    if(approvalItem)tx.set(apRef,approvalItem);tx.set(pubRef,JSON.parse(JSON.stringify(prepared)));
+    if(approvalItem)tx.set(apRef,approvalItem);else if(apRef&&designReview)tx.update(apRef,{designReview});tx.set(pubRef,JSON.parse(JSON.stringify(prepared)));
   });
   return {ok:true,...prepared,merchant:merchant?{field:merchant.field,offerId:merchant.identity.offerId,feedLabel:merchant.identity.feedLabel,contentLanguage:merchant.identity.contentLanguage,productTitle:merchant.productTitle,source:merchant.sourceName}:null,images:previewImages,copy:selection.copy?result.copy:null,newAd:!w.context.campaignId&&target==='ads',newCampaign,message:selection.destination?'Update only this asset group’s desktop and mobile destination to the verified product listing. Campaign URL expansion and inherited assets are separate settings.':target==='merchant'?'This changes the product photo in its existing feed. It remains free of promotional text, logos and borders. The owning store feed may resync its original image.':'Only the selected images and messaging shown here will be updated. Google selects responsive combinations and controls delivery.'};
 }
