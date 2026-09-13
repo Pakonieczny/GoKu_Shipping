@@ -405,6 +405,19 @@ function createAdDesignService(deps) {
     }if(typeof v==='number'&&(!Number.isFinite(v)||Math.abs(v)>1000000))throw new Error('A layer contains an invalid size or position.');if(typeof v==='string'&&v.length>18000)throw new Error('A text layer is too long.');return v;};
     const document=walk(value);if(value.objects.length>120)throw new Error('Use up to 120 layers.');return {document,sourceIds:[...sourceIds]};
   }
+  async function appliedResponsive(w,input){
+    const refs=[refFor(input.workspaceId)],campaign=String(w.context?.campaignId||w.sourceSnapshot?.campaignId||'');
+    for(const id of [...new Set(w.context?.legacyEditorWorkspaceIds||[])].slice(0,12)){
+      if(!campaign||id===input.workspaceId||!token(id))continue;
+      const ref=refFor(id),row=await ref.get(),prior=row.exists?row.data():null;
+      if(prior&&!prior.archivedAt&&String(prior.context?.campaignId||prior.sourceSnapshot?.campaignId||'')===campaign&&(prior.context?.groups||[]).some(g=>g.ref===input.groupRef))refs.push(ref);
+    }
+    for(const ref of refs){
+      const rows=await ref.collection('editorAIJobs').get(),jobs=rows.docs.map(d=>d.data()).filter(j=>j.phase==='ready'&&j.nativeAppliedAt&&!j.resetAt&&productKey(j.scope?.productId)===productKey(input.productId)&&j.scope?.groupRef===input.groupRef).sort((a,b)=>b.nativeAppliedAt-a.nativeAppliedAt);
+      for(const job of jobs){const row=await ref.collection('editorAIJobs').doc(job.id).collection('data').doc('result').get(),result=row.exists?row.data():null;if(result?.responsive)return {ref,job,result};}
+    }
+    return null;
+  }
   async function editorState(input={}){
     const {workspaceId,productId,groupRef,device='shared',artboard}=input,ref=refFor(workspaceId),w=await read(workspaceId);editorScope(w,input);
     const rows=await ref.collection('editorDesigns').get(),designs=rows.docs.map(d=>d.data()).filter(d=>d.productId===productId&&d.groupRef===groupRef),id=artboard?editorKey({...input,device}):null;
@@ -417,10 +430,10 @@ function createAdDesignService(deps) {
     // Rebuild missing artboards from the already-paid, applied semantic plan.
     // An explicit saved design always wins; no saved layers are overwritten.
     if(!design&&artboard&&require('../../brites-ad-responsive').boards.some(b=>b.key===artboard.key&&b.width===artboard.width&&b.height===artboard.height)){
-      const jobs=await ref.collection('editorAIJobs').get(),job=jobs.docs.map(d=>d.data()).filter(j=>j.phase==='ready'&&j.nativeAppliedAt&&!j.resetAt&&j.scope.productId===productId&&j.scope.groupRef===groupRef).sort((a,b)=>b.nativeAppliedAt-a.nativeAppliedAt)[0];
-      if(job){const saved=await ref.collection('editorAIJobs').doc(job.id).collection('data').doc('result').get(),result=saved.exists?saved.data():null;
+      const applied=await appliedResponsive(w,input);
+      if(applied){const {job,result}=applied;
         if(result?.responsive){const engine=require('../../brites-ad-responsive'),{plan,images}=result.responsive,document=engine.document(plan,engine.selectImage(plan,images,artboard),artboard,device==='desktop'?'desktop':'mobile');
-          design={id,productId,groupRef,device,artboard,name:(result.sources?.[0]?.title||'Product ad')+' · '+artboard.key,document,sourceIds:editorDocument(document).sourceIds,revision:0,inheritedFrom:job.id,responsiveDraft:true};
+          design={id,productId,groupRef,device,artboard,name:(result.sources?.[0]?.title||'Product ad')+' · '+artboard.key,document,sourceIds:editorDocument(document).sourceIds,revision:0,inheritedFrom:job.id,responsiveDraft:true,...(applied.ref.id!==workspaceId?{legacyWorkspaceId:applied.ref.id}:{})};
         }
       }
     }
@@ -431,10 +444,14 @@ function createAdDesignService(deps) {
   }
   async function editorResponsiveState(input={}){
     const w=await read(input.workspaceId);editorScope(w,input);editorKey(input);
-    const ref=refFor(input.workspaceId),rows=await ref.collection('editorAIJobs').get(),job=rows.docs.map(d=>d.data()).filter(j=>j.phase==='ready'&&j.nativeAppliedAt&&!j.resetAt&&j.scope.productId===input.productId&&j.scope.groupRef===input.groupRef).sort((a,b)=>b.nativeAppliedAt-a.nativeAppliedAt)[0];
-    if(!job)throw new Error('No applied AI layout is saved for this product and group.');
-    const row=await ref.collection('editorAIJobs').doc(job.id).collection('data').doc('result').get(),result=row.exists?row.data():null;
-    if(!result?.responsive)throw new Error('The saved AI result has no responsive layout.');
+    const applied=await appliedResponsive(w,input);if(!applied)throw new Error('No applied AI layout is saved for this product and group.');const {job,result}=applied;
+    if(applied.ref.id!==input.workspaceId)for(const source of result.sources){
+      const row=await applied.ref.collection('editorSources').doc(source.id).get(),photo=row.exists?row.data():null;
+      if(!photo||productKey(photo.productId)!==productKey(input.productId)||photo.groupRef!==input.groupRef||photo.asset?.hash!==source.asset?.hash)throw new Error('A saved AI photo does not match this product and group.');
+      const target=refFor(input.workspaceId).collection('editorSources').doc(source.id),existing=await target.get();
+      if(existing.exists&&(existing.data().asset?.hash!==photo.asset.hash||productKey(existing.data().productId)!==productKey(input.productId)||existing.data().groupRef!==input.groupRef))throw new Error('A current source differs from the saved AI photo.');
+      if(!existing.exists)await target.set({...photo,productId:input.productId});
+    }
     const engine=require('../../brites-ad-responsive'),{plan,images}=result.responsive,document=engine.document(plan,engine.selectImage(plan,images,input.artboard),input.artboard,input.device==='desktop'?'desktop':'mobile');
     return {ok:true,jobId:job.id,document,sources:await Promise.all(result.sources.map(async source=>({...source,url:await deps.signAsset(source.asset)})))};
   }
