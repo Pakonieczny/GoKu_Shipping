@@ -20,6 +20,11 @@ if(require.main===module)(async()=>{
  for(const board of responsive.variants){
    e.board=board;await e.restore(responsive.document(incompletePlan,photo,board,board.device));ok(['brand','headline','button'].every(role=>e.canvas.getObjects().some(o=>o.editorRole===role)),board.key+' restores essential ad content omitted by the AI recipe');for(const o of e.canvas.getObjects())e.fitAIText(o);e.canvas.renderAll();
    const text=e.canvas.getObjects().filter(o=>'text'in o||o.editorRole==='button');
+   if(['square','landscape','portrait'].includes(board.key)){
+     const brand=text.find(o=>o.editorRole==='brand'),previewWidth=board.key==='landscape'?600:300;
+     ok(brand.fontSize*previewWidth/board.width>=8,board.key+' brand remains readable at typical display width');
+     ok(text.some(o=>o.editorRole==='description'),board.key+' includes supporting product copy');
+   }
    for(const o of text){const b=o.getBoundingRect();ok(b.left>=-1&&b.top>=-1&&b.left+b.width<=board.width+1&&b.top+b.height<=board.height+1,board.device+' '+board.key+' '+o.editorRole+' fits '+JSON.stringify(b));}
    for(let i=0;i<text.length;i++)for(let j=i+1;j<text.length;j++)ok(!boxesOverlap(text[i].getBoundingRect(),text[j].getBoundingRect()),board.key+' '+text[i].editorRole+' avoids '+text[j].editorRole);
    const image=e.canvas.getObjects().find(o=>o.type==='image');ok(image.scaleX===image.scaleY&&image.angle===0,'photo preserves proportions');

@@ -16,7 +16,7 @@
     const scale=Math.max(photo.width/image.width,photo.height/image.height)*clamp(layout.zoom||1,1,1.35),cropWidth=photo.width/scale,cropHeight=photo.height/scale;
     objects.push(base('product_scene','photo',{type:'Image',sourceKey:image.id,left:photo.left,top:photo.top,width:cropWidth,height:cropHeight,cropX:clamp(layout.focalX??image.focalX??.5,0,1)*(image.width-cropWidth),cropY:clamp(layout.focalY??image.focalY??.5,0,1)*(image.height-cropHeight),scaleX:scale,scaleY:scale}));
     const align=layout.textAlign==='center'?'center':'left';
-    function text(id,value,x,y,width,height,size,role,font=style.bodyFont){if(role==='description'&&layout.showDescription===false)return;objects.push(base(id,role,{type:'Textbox',text:value,left:x,top:y,width,height,aiBoxHeight:height,fontFamily:font,fontSize:size,fontWeight:role==='headline'?'700':'400',fill:style.ink,lineHeight:1.08,charSpacing:role==='brand'?100:0,textAlign:align}));}
+    function text(id,value,x,y,width,height,size,role,font=style.bodyFont){if(!value)return;objects.push(base(id,role,{type:'Textbox',text:value,left:x,top:y,width,height,aiBoxHeight:height,fontFamily:font,fontSize:size,fontWeight:role==='headline'?'700':'400',fill:style.ink,lineHeight:1.08,charSpacing:role==='brand'?100:0,textAlign:align}));}
     function button(x,y,width,height){objects.push(base('cta','button',{type:'Group',left:x,top:y,width,height,buttonPadding:width*.06,objects:[{type:'Rect',originX:'left',originY:'top',left:-width/2,top:-height/2,width,height,fill:style.accent,strokeWidth:0,rx:height*.13,ry:height*.13},{type:'Textbox',originX:'center',originY:'center',left:0,top:0,width:width*.88,height:height*.45,text:copy.cta,fontFamily:style.bodyFont,fontWeight:'700',fontSize:Math.max(8,Math.min(height*.36,width*.11)),fill:style.buttonInk,textAlign:'center',lineHeight:1}]}));}
     if(banner){
       const bw=Math.min(W*.2,Math.max(90,H*1.9)),bh=Math.max(22,Math.min(H*.58,48)),tw=area.width-bw-margin;
@@ -25,8 +25,8 @@
       if(H<90)text('brand','BRITES JEWELRY',area.left,H*.65,tw,H*.22,Math.max(7,H*.16),'brand');
       button(W-margin-bw,(H-bh)/2,bw,bh);
     }else{
-      const brandSize=Math.max(8,Math.min(min*.018,area.height*.075)),headSize=Math.max(12,Math.min(area.width*(narrow?.12:.09),area.height*.18)),descSize=Math.max(9,Math.min(area.width*.045,area.height*.07));
-      text('brand','BRITES JEWELRY',area.left,area.top,area.width,area.height*.08,brandSize,'brand');
+      const brandSize=Math.max(8,Math.min(min*.03,area.height*.1)),headSize=Math.max(12,Math.min(area.width*(narrow?.12:.09),area.height*.18)),descSize=Math.max(9,Math.min(area.width*.045,area.height*.07));
+      text('brand','BRITES JEWELRY',area.left,area.top,area.width,area.height*.12,brandSize,'brand');
       text('headline',narrow?copy.shortHeadline:copy.headline,area.left,area.top+area.height*.15,area.width,area.height*.34,headSize,'headline',style.headlineFont);
       if(area.height>85)text('description',copy.description,area.left,area.top+area.height*.54,area.width,area.height*.2,descSize,'description');
       const bw=Math.min(area.width,Math.max(area.width*(narrow?.95:.78),80)),bh=Math.min(area.height*.18,Math.max(24,min*.085)),x=align==='center'?area.left+(area.width-bw)/2:area.left;button(x,area.top+area.height-bh,bw,bh);
