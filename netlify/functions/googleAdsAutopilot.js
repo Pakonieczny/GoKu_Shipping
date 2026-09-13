@@ -9680,8 +9680,13 @@ async function prepareAdDesignPublication({workspaceId,target='ads',formats=[],i
     const layouts=await _designEngine().editorAIStatus({workspaceId,productId:product.id,groupRef:group.ref,allSizes:true});
     const designReview={workspaceId,productId:product.id,groupRef:group.ref,productTitle:product.title,destination:w.context.campaignId?group.url:product.url,formats:selection.formats,copy:result.copy,context:w.context,layoutReview:layouts.jobId&&layouts.reviewVersion?{jobId:layouts.jobId,reviewVersion:layouts.reviewVersion}:null};
     const reviewHash=creativeHash({sourceHash,designReview}),approvalId='design-review-'+reviewHash.slice(0,32),apRef=fb().db.collection(COL.approvals).doc(approvalId);
-    await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),prior=await tx.get(apRef);if(_adDesignSelectionHash(current.data())!==sourceHash||creativeHash(current.data().context)!==creativeHash(w.context))throw new Error('The ad changed while sending it to Approval. Try again.');if(prior.exists){if(prior.data().status!=='PENDING')throw new Error('This exact ad has already been reviewed. Check its saved status.');return;}tx.set(apRef,{type:'adDesignSubmission',summary:'Complete ad · '+product.title,status:'PENDING',vetted:false,createdAt:fb().FV.serverTimestamp(),reviewHash,sourceHash,designReview,payload:{adDesign:{workspaceId,productId:product.id,groupRef:group.ref},meta:{existingCampaignId:w.context.campaignId||null}}});});
-    return {ok:true,status:'PENDING',approvalId,reviewHash,message:'Complete ad saved in Approval.'};
+    const outcome=await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),prior=await tx.get(apRef);if(_adDesignSelectionHash(current.data())!==sourceHash||creativeHash(current.data().context)!==creativeHash(w.context))throw new Error('The ad changed while sending it to Approval. Try again.');
+      if(prior.exists){const saved=prior.data();if(saved.status==='PENDING'&&!saved.deletedAt&&!saved.archivedAt)return {status:'PENDING',message:'This ad is already in Approval.'};
+        if(saved.status!=='REJECTED'||saved.applyAttempt||saved.needsReconciliation)return {status:saved.status||'UNKNOWN',message:saved.status==='APPLIED'?'This ad has already been published. Its saved publication is unchanged.':'This ad already has a publication or review in progress. Its saved status is '+(saved.status||'unknown')+'.'};
+        tx.set(apRef.collection('submissionHistory').doc(String(Date.now())),saved);
+      }
+      tx.set(apRef,{type:'adDesignSubmission',summary:'Complete ad · '+product.title,status:'PENDING',vetted:false,createdAt:fb().FV.serverTimestamp(),reviewHash,sourceHash,designReview,payload:{adDesign:{workspaceId,productId:product.id,groupRef:group.ref},meta:{existingCampaignId:w.context.campaignId||null}}});return {status:'PENDING',message:prior.exists?'Ad returned to Approval. Previous review history preserved.':'Complete ad saved in Approval.'};});
+    return {ok:true,...outcome,approvalId,reviewHash};
   }
   let approvalId=null,payload=null,merchant=null,newCampaign=null,logo=null,approvalItem=null,assetReviewHash=null;
   if(target==='merchant'){
