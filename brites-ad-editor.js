@@ -301,19 +301,31 @@
       const state=await this.request('adDesignEditorAIStatus',{...run.scope,jobId:run.jobId,includeReview:true});
       if(!Array.isArray(state.reviewProofs)||!state.reviewProofs.length)throw Error('No saved review images are available for this design yet.');
       const panel=documentElement('dialog');panel.setAttribute('aria-label','Reviewed ad layouts');panel.style.cssText='width:min(1100px,95vw);max-height:90vh;overflow:auto;background:#fff;color:#201d19;padding:24px;border:0;border-radius:12px';
-      panel.innerHTML='<button data-close>Close reviewed ads</button><h2>Reviewed ad layouts</h2><p>These are the exact saved pictures used in the complete-ad review. Opening them does not create a new AI charge.</p><div data-proof-grid style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px">'+state.reviewProofs.map(p=>'<figure><img alt="Reviewed '+esc(p.key)+'" src="'+esc(p.url)+'" style="max-width:100%;max-height:550px;object-fit:contain"><figcaption>'+esc(p.key)+' · '+p.width+' × '+p.height+'</figcaption></figure>').join('')+'</div>';
-      if(state.candidate){const b=documentElement('button');b.textContent='Preview current rendering';b.onclick=async()=>{b.disabled=true;try{const proofs=await this.renderAIProofs(state.candidate);panel.querySelector('[data-proof-grid]').innerHTML=proofs.map(p=>'<figure><img alt="Current '+esc(p.key)+'" src="data:image/jpeg;base64,'+p.dataBase64+'" style="max-width:100%;max-height:550px;object-fit:contain"><figcaption>'+esc(p.key)+'</figcaption></figure>').join('');}catch(e){b.textContent=e.message;}finally{b.disabled=false;}};panel.insertBefore(b,panel.querySelector('[data-proof-grid]'));}
+      panel.innerHTML='<button data-close>Close reviewed ads</button><h2>Reviewed ad layouts</h2><p data-proof-description>These are the exact saved pictures used in the complete-ad review. Opening them does not create a new AI charge.</p><div data-proof-grid style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px">'+state.reviewProofs.map(p=>'<figure><img crossorigin="anonymous" alt="Reviewed '+esc(p.key)+'" src="'+esc(p.url)+'" style="max-width:100%;max-height:550px;object-fit:contain"><figcaption>'+esc(p.key)+' · '+p.width+' × '+p.height+'</figcaption></figure>').join('')+'</div>';
+      if(state.candidate){const b=documentElement('button');b.textContent='Preview current rendering';b.onclick=async()=>{b.disabled=true;try{const proofs=await this.renderAIProofs(state.candidate);panel.querySelector('[data-proof-description]').textContent='Fresh rendering of the saved recipe. These previews have not received a new AI score.';panel.querySelector('[data-proof-grid]').innerHTML=proofs.map(p=>'<figure><img alt="Current '+esc(p.key)+'" src="data:image/jpeg;base64,'+p.dataBase64+'" style="max-width:100%;max-height:550px;object-fit:contain"><figcaption>'+esc(p.key)+'</figcaption></figure>').join('');}catch(e){b.textContent=e.message;}finally{b.disabled=false;}};panel.insertBefore(b,panel.querySelector('[data-proof-grid]'));}
       document.body.append(panel);panel.querySelector('[data-close]').onclick=()=>{panel.close();panel.remove();};panel.addEventListener('cancel',()=>panel.remove());panel.showModal();
     }
     async renderAIProofs(candidate){
       const engine=root.BritesAdResponsive;if(!engine)throw Error('Refresh to render the saved ad layouts.');
       if(candidate.responsive.layoutVersion!==engine.layoutVersion)throw Error('Refresh the editor to render the current saved layout version. No new image request was sent.');
-      candidate.sources.forEach(s=>this.sources.set(s.id,s));
+      const proofSources=[...new Map([...this.sources,...candidate.sources.map(s=>[s.id,s])]).values()];
       const boards=[{...candidate.artboard,key:'active',device:candidate.device,document:candidate.document},...engine.variants],active=this.board,proofs=[];
       try{for(const b of boards){
         this.board=b;const doc=b.document||engine.document(candidate.responsive.plan,engine.selectImage(candidate.responsive.plan,candidate.responsive.images,b),b,b.device);
         await this.loadFonts(doc);const out=new this.F.StaticCanvas(documentElement('canvas'),{width:b.width,height:b.height,enableRetinaScaling:false});
-        try{await out.loadFromJSON(withSources(doc,[...this.sources.values()]));for(const o of out.getObjects())this.fitAIText(o);out.renderAll();proofs.push({key:b.key==='active'?'active':b.device+'_'+b.key,width:b.width,height:b.height,dataBase64:out.toDataURL({format:'jpeg',quality:.8,multiplier:Math.min(1,960/Math.max(b.width,b.height)),enableRetinaScaling:false}).split(',')[1]});}finally{await out.dispose();}
+        try{
+          await out.loadFromJSON(withSources(doc,proofSources));
+          const photos=out.getObjects().filter(o=>o.type==='image');
+          if(!photos.length)throw Error('The '+b.key+' proof has no product photograph. Saved work is retained; no review was charged.');
+          for(const photo of photos){const el=photo.getElement();if(el.decode)await el.decode();if(!(el.naturalWidth||el.width)||!(el.naturalHeight||el.height))throw Error('The product photograph has not loaded. Reopen the saved review to retry without a new AI charge.');photo.set({objectCaching:false});photo.setCoords();}
+          for(const o of out.getObjects())this.fitAIText(o);
+          out.renderAll();const multiplier=Math.min(1,960/Math.max(b.width,b.height)),raster=out.toCanvasElement(multiplier),pixels=raster.getContext('2d').getImageData(0,0,raster.width,raster.height).data;
+          const visibility=photos.map(o=>o.visible);let background;
+          try{photos.forEach(o=>o.set('visible',false));out.renderAll();const blank=out.toCanvasElement(multiplier);background=blank.getContext('2d').getImageData(0,0,blank.width,blank.height).data;}finally{photos.forEach((o,i)=>o.set('visible',visibility[i]));out.renderAll();}
+          let visibleSamples=0,totalSamples=0;for(let i=0;i<pixels.length;i+=16){totalSamples++;if(Math.abs(pixels[i]-background[i])+Math.abs(pixels[i+1]-background[i+1])+Math.abs(pixels[i+2]-background[i+2])>24)visibleSamples++;}
+          if(visibleSamples<Math.max(8,totalSamples*.005))throw Error('The product photograph is not visible in the '+b.key+' export. Saved images and copy are retained; no review was charged.');
+          proofs.push({key:b.key==='active'?'active':b.device+'_'+b.key,width:b.width,height:b.height,dataBase64:raster.toDataURL('image/jpeg',.8).split(',')[1],renderCheck:{version:1,visiblePhotoFraction:visibleSamples/totalSamples}});
+        }finally{await out.dispose();}
       }}finally{this.board=active;}
       return proofs;
     }

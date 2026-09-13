@@ -492,11 +492,10 @@ function createAdDesignService(deps) {
     const request=input.includeOriginal?await target.collection('data').doc('request').get():null;
     const candidate=(phase==='awaiting_review'||input.includeReview)?await target.collection('data').doc('candidate').get():null;
     const result=job.phase==='ready'?await target.collection('data').doc('result').get():null;
-    let weightedReview=await target.collection('data').doc('ad_quality_v3').get();
-    if(!weightedReview.exists)weightedReview=await target.collection('data').doc('ad_quality_v2').get();
-    if(!weightedReview.exists)weightedReview=await target.collection('data').doc('ad_quality_v1').get();
+    let weightedReview,reviewVersion;
+    for(const version of [4,3,2,1]){weightedReview=await target.collection('data').doc('ad_quality_v'+version).get();if(weightedReview.exists){reviewVersion=version;break;}}
     const correctedReview=await target.collection('data').doc('scene_repair_quality').get(),initialReview=correctedReview.exists?null:await target.collection('data').doc('scene_quality').get(),review=weightedReview.exists?weightedReview.data():correctedReview.exists?correctedReview.data():initialReview?.exists?initialReview.data():null;
-    let reviewProofs=[];if(input.includeReview){for(const key of ['ad_proofs_v3','ad_proofs_v2','ad_proofs_v1']){const p=await target.collection('data').doc(key).get();if(p.exists){reviewProofs=await Promise.all(p.data().images.map(async image=>({key:image.key,width:image.width,height:image.height,url:await deps.signAsset(image.asset)})));break;}}}
+    let reviewProofs=[];if(input.includeReview&&reviewVersion){const p=await target.collection('data').doc('ad_proofs_v'+reviewVersion).get();if(p.exists&&Array.isArray(p.data().images)&&(!review.proofHash||review.proofHash===p.data().proofHash))reviewProofs=await Promise.all(p.data().images.map(async image=>({key:image.key,width:image.width,height:image.height,url:await deps.signAsset(image.asset)})));}
     const quality=review?{rubric:review.rubric||null,scores:review.scores||null,weights:review.weights||null,claimsSupported:review.claimsSupported===true,score:Number.isFinite(review.score)?review.score:null,pass:review.pass===true,productFaithful:review.productFaithful===true,mobileReadable:review.mobileReadable===true,issues:(review.issues||[]).map(issue=>String(issue).slice(0,2000)).slice(0,20)}:null;
     return {ok:true,workspaceId:input.workspaceId,jobId:job.id,requestId:job.requestId,inputHash:job.inputHash,scope:job.scope,phase,
       startedAt:job.createdAt,updatedAt:job.updatedAt,
@@ -509,7 +508,7 @@ function createAdDesignService(deps) {
   async function editorAIResume(input={}){
     const w=await read(input.workspaceId);editorScope(w,input);const target=editorAIRef(input.workspaceId,input.jobId);let queued=false;
     if(input.reviewProofs){
-      const current=await target.get(),candidateRow=await target.collection('data').doc('candidate').get(),existing=await target.collection('data').doc('ad_proofs_v3').get();
+      const current=await target.get(),candidateRow=await target.collection('data').doc('candidate').get(),existing=await target.collection('data').doc('ad_proofs_v4').get();
       if(!current.exists||current.data().resetAt||!candidateRow.exists)throw new Error('The saved ad layouts are unavailable.');
       editorScope(w,current.data().scope);const candidate=candidateRow.data();
       if(input.candidateHash!==candidate.candidateHash)throw new Error('The ad layouts changed before review. Reopen the saved design.');
@@ -522,17 +521,18 @@ function createAdDesignService(deps) {
         for(let i=0;i<expected.length;i++){
           const p=input.reviewProofs[i],b=expected[i];
           if(p.key!==b.key||p.width!==b.width||p.height!==b.height||typeof p.dataBase64!=='string'||p.dataBase64.length>400000||!/^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(p.dataBase64))throw new Error('A rendered ad proof is missing or belongs to another format.');
+          if(p.renderCheck?.version!==1||!Number.isFinite(p.renderCheck.visiblePhotoFraction)||p.renderCheck.visiblePhotoFraction<.005||p.renderCheck.visiblePhotoFraction>1)throw new Error('Verify visible product photography in every rendered proof before review.');
           const bytes=Buffer.from(p.dataBase64,'base64'),meta=await require('sharp')(bytes,{limitInputPixels:1000000}).metadata(),scale=Math.min(1,960/Math.max(b.width,b.height));
           if(meta.format!=='jpeg'||Math.abs(meta.width-b.width*scale)>1||Math.abs(meta.height-b.height*scale)>1)throw new Error('A rendered proof has unexpected pixel dimensions.');
           const asset=await deps.saveAsset(input.workspaceId,bytes,input.jobId+'_proof_'+sha([input.candidateHash,p.key,sha(bytes)]).slice(0,32),{width:meta.width,height:meta.height,mimeType:'image/jpeg',kind:'Complete ad review proof'});
           const displayWidth=b.key.includes('display_')?b.width:b.device==='desktop'?Math.min(600,b.width):Math.min(360,b.width);
-          images.push({key:p.key,width:b.width,height:b.height,displayWidth,displayHeight:Math.round(displayWidth*b.height/b.width),asset});
+          images.push({key:p.key,width:b.width,height:b.height,displayWidth,displayHeight:Math.round(displayWidth*b.height/b.width),renderCheck:p.renderCheck,asset});
         }
         const proof={candidateHash:input.candidateHash,images,proofHash:sha(images),createdAt:Date.now()};
-        await f().db.runTransaction(async tx=>{const row=await tx.get(target),saved=await tx.get(target.collection('data').doc('ad_proofs_v3')),c=await tx.get(target.collection('data').doc('candidate'));
+        await f().db.runTransaction(async tx=>{const row=await tx.get(target),saved=await tx.get(target.collection('data').doc('ad_proofs_v4')),c=await tx.get(target.collection('data').doc('candidate'));
           if(row.data()?.resetAt||c.data()?.candidateHash!==input.candidateHash)throw new Error('The saved design changed during proof upload.');
           if(saved.exists){if(saved.data().candidateHash!==input.candidateHash)throw new Error('Different review proofs are already saved.');return;}
-          tx.set(target.collection('data').doc('ad_proofs_v3'),clean(proof));
+          tx.set(target.collection('data').doc('ad_proofs_v4'),clean(proof));
         });
       }
     }
@@ -692,9 +692,9 @@ function createAdDesignService(deps) {
     // Locked layers remain byte-identical on the active board; originals and every paid scene remain archived.
     document.objects.push(...request.document.objects.filter(locked));
     const candidate={document,productId:request.productId,groupRef:request.groupRef,device:request.device,artboard:request.artboard,destination:product.url,sources,publicationImages,nativeCopy:plan.nativeCopy,responsive:{layoutVersion:responsive.layoutVersion,plan,images,boards:responsive.boards,variants:responsive.variants},alternatives:[],rationale:plan.rationale+' '+(plan.alternateNeeded?'Two photographic views support different framing needs.':'One new photograph is reused across the formats to avoid unnecessary generation charges.'),sourceIds:plan.sourceIds,evidenceHash:evidence.hash,limitations:[...(plan.limitations||[]),...(evidence.warnings||[])]};
-    const rubric=require('./googleAdsAdQuality'),candidateHash=sha(candidate),proofRow=await target.collection('data').doc('ad_proofs_v3').get();
+    const rubric=require('./googleAdsAdQuality'),candidateHash=sha(candidate),proofRow=await target.collection('data').doc('ad_proofs_v4').get();
     if(!proofRow.exists||proofRow.data().candidateHash!==candidateHash)return {...candidate,candidateHash,reviewPending:true};
-    const proof=proofRow.data(),key='ad_quality_v3',raw=await target.collection('data').doc(key+'_response').get();
+    const proof=proofRow.data(),key='ad_quality_v4',raw=await target.collection('data').doc(key+'_response').get();
     if(raw.exists&&(raw.data().candidateHash!==candidateHash||raw.data().proofHash!==proof.proofHash))throw new Error('The saved review response belongs to different ad proofs.');
     if(job.inFlight?.key===key&&raw.exists)await save({inFlight:null});
     const quality=await paid(key,95,'Reviewing messaging, layout, relevance and visual appeal',async requestId=>({...await deps.reviewImages(refs[0],await Promise.all(proof.images.map(p=>deps.loadAsset(p.asset))),{
