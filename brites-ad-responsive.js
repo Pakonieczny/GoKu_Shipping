@@ -40,11 +40,22 @@
       const small=Math.min(frame.width,frame.height)<=100,padding=small?1.22:narrow?1.35:1.62;
       const cover=Math.max(frame.width/image.width,frame.height/image.height);
       const safeWidth=image.width/image.height>1.3?image.width*.30:image.width;
-      const scale=valid?Math.max(cover,Math.min(frame.width/(image.width*focus.width*padding),frame.height/(image.height*focus.height*padding))):Math.min(cover,frame.width/safeWidth);
+      const desired=valid?Math.min(frame.width/(image.width*focus.width*padding),frame.height/(image.height*focus.height*padding)):cover;
+      const maximum=valid?Math.min(frame.width/(image.width*focus.width*1.08),frame.height/(image.height*focus.height*1.08)):cover;
+      const scale=valid?Math.min(maximum,Math.max(cover,desired)):Math.min(cover,frame.width/safeWidth);
       const cw=Math.min(image.width,frame.width/scale),ch=Math.min(image.height,frame.height/scale);
       const cx=clamp(valid?image.width*(focus.x+focus.width/2)-cw/2:(image.width-cw)/2,0,image.width-cw),cy=clamp(valid?image.height*(focus.y+focus.height/2)-ch/2:(image.height-ch)/2,0,image.height-ch);
       const placed={left:frame.left+(frame.width-cw*scale)/2,top:frame.top+(frame.height-ch*scale)/2,width:cw*scale,height:ch*scale};
       objects.unshift(base('product_scene','photo',{type:'Image',sourceKey:image.id,left:placed.left,top:placed.top,width:cw,height:ch,cropX:cx,cropY:cy,scaleX:scale,scaleY:scale}));
+      if(valid&&placed.height<frame.height-1&&style.treatment==='soft-fade'){
+        // Extend the photographic atmosphere through tall placements without
+        // enlarging the foreground beyond the complete product's safe crop.
+        const quietWidth=Math.max(1,image.width*focus.x*.8),atmosphereScale=Math.max(frame.width/quietWidth,frame.height/image.height),bw=frame.width/atmosphereScale,bh=frame.height/atmosphereScale;
+        objects.unshift(base('photo_atmosphere','shape',{type:'Image',sourceKey:image.id,left:frame.left,top:frame.top,width:bw,height:bh,cropX:0,cropY:0,scaleX:atmosphereScale,scaleY:atmosphereScale,opacity:.65,filters:[{type:'Blur',blur:.18}]}));
+        const rgb=style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)).join(','),edge=Math.min(32,placed.height*.14);
+        for(const top of [true,false])objects.push(base('photo_feather_'+top,'shape',{type:'Rect',left:placed.left,top:top?placed.top:placed.top+placed.height-edge,width:placed.width,height:edge,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:0,y2:1},colorStops:[{offset:0,color:'rgba('+rgb+','+(top?1:0)+')'},{offset:1,color:'rgba('+rgb+','+(top?0:1)+')'}]}}));
+      }
+
       return placed;
     }
     function softFade(){

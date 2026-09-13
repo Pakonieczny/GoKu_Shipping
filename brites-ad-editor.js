@@ -312,21 +312,46 @@
         state.reviewProofs=saved?.design?await this.renderSavedProofs(saved):[];fallback=true;
       }
       const panel=documentElement('dialog');panel.setAttribute('aria-label',fallback?'Saved ad layouts':'Reviewed ad layouts');panel.style.cssText='width:min(1100px,95vw);max-height:90vh;overflow:auto;background:#fff;color:#201d19;padding:24px;border:0;border-radius:12px';
-      panel.innerHTML='<button data-close>'+ (fallback?'Close previews':'Close reviewed ads') +'</button><h2>'+(fallback?'All ad sizes':'Reviewed ad layouts')+'</h2><p data-proof-description>'+(fallback?'Previews from your saved artwork. Sizes without a saved layout are fitted proportionally; these previews are not a new AI review. No AI charge.':'These are the exact saved pictures used in the complete-ad review. Opening them does not create a new AI charge.')+'</p><div data-proof-grid style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px">'+state.reviewProofs.map(p=>'<figure><img crossorigin="anonymous" alt="'+(fallback?'Saved ':'Reviewed ')+esc(p.key)+'" src="'+esc(p.url)+'" style="max-width:100%;max-height:550px;object-fit:contain"><figcaption>'+esc(p.key)+' · '+p.width+' × '+p.height+'</figcaption></figure>').join('')+'</div>';
+      panel.innerHTML='<button data-close>'+ (fallback?'Close previews':'Close reviewed ads') +'</button><h2>'+(fallback?'All ad sizes':'Reviewed ad layouts')+'</h2><p data-proof-description>'+(fallback?'Your saved photograph, messaging and colors, rearranged for each size. These previews are not a new AI review. No AI charge.':'These are the exact saved pictures used in the complete-ad review. Opening them does not create a new AI charge.')+'</p><div data-proof-grid style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px">'+state.reviewProofs.map(p=>'<figure><img crossorigin="anonymous" alt="'+(fallback?'Saved ':'Reviewed ')+esc(p.key)+'" src="'+esc(p.url)+'" style="max-width:100%;max-height:550px;object-fit:contain"><figcaption>'+esc(p.key)+' · '+p.width+' × '+p.height+'</figcaption></figure>').join('')+'</div>';
       if(!state.reviewProofs.length)panel.querySelector('[data-proof-description]').textContent='Save a design first to preview its ad sizes. Your current artwork is unchanged.';
       if(state.candidate&&!this.input().reviewVersion){const b=documentElement('button');b.textContent='Preview current rendering';b.onclick=async()=>{b.disabled=true;try{const proofs=await this.renderAIProofs(state.candidate);panel.querySelector('[data-proof-description]').textContent='Fresh rendering of the saved recipe. These previews have not received a new AI score.';panel.querySelector('[data-proof-grid]').innerHTML=proofs.map(p=>'<figure><img alt="Current '+esc(p.key)+'" src="data:image/jpeg;base64,'+p.dataBase64+'" style="max-width:100%;max-height:550px;object-fit:contain"><figcaption>'+esc(p.key)+'</figcaption></figure>').join('');}catch(e){b.textContent=e.message;}finally{b.disabled=false;}};panel.insertBefore(b,panel.querySelector('[data-proof-grid]'));}
       if(!this.input().reviewVersion&&state.candidate?.responsive&&root.BritesAdResponsive&&state.candidate.responsive.layoutVersion!==root.BritesAdResponsive.layoutVersion){const b=documentElement('button');b.textContent='Preview updated template';b.onclick=async()=>{b.disabled=true;try{const engine=root.BritesAdResponsive,old=state.candidate,plan={...old.responsive.plan,style:{...old.responsive.plan.style,treatment:'soft-fade'}},candidate={...old,document:engine.document(plan,engine.selectImage(old.responsive.plan,old.responsive.images,old.artboard),old.artboard,old.device==='desktop'?'desktop':'mobile'),responsive:{...old.responsive,plan,layoutVersion:engine.layoutVersion,documents:undefined,variants:engine.variants}};const locked=o=>o.locked||(o.objects||[]).some(locked);candidate.document.objects.push(...old.document.objects.filter(locked));const proofs=await this.renderAIProofs(candidate);panel.querySelector('[data-proof-description]').textContent='Unreviewed preview of the updated template using saved photography and copy. No new AI charge. Your saved design and score are unchanged.';panel.querySelector('[data-proof-grid]').innerHTML=proofs.map(p=>'<figure><img alt="Updated '+esc(p.key)+'" src="data:image/jpeg;base64,'+p.dataBase64+'" style="max-width:100%;max-height:550px;object-fit:contain"><figcaption>'+esc(p.key)+'</figcaption></figure>').join('');}catch(e){b.textContent=e.message;}finally{b.disabled=false;}};panel.insertBefore(b,panel.querySelector('[data-proof-grid]'));}
       document.body.append(panel);panel.querySelector('[data-close]').onclick=()=>{panel.close();panel.remove();};panel.addEventListener('cancel',()=>panel.remove());panel.showModal();
     }
-    async renderSavedProofs({design,sources,previewDocuments=[]}){
-      const rows=[{device:design.device,artboard:design.artboard,document:design.document},...previewDocuments],proofs=[];
+    async savedResponsiveRecipe({design,sources}){
+      const layers=design.document.objects||[],photos=layers.filter(o=>String(o.type).toLowerCase()==='image').sort((a,b)=>b.width*b.height*(b.scaleX||1)*(b.scaleY||1)-a.width*a.height*(a.scaleX||1)*(a.scaleY||1)),photo=photos[0];
+      if(!photo)throw Error('This saved design needs an editable product photograph to adapt its layouts.');
+      const source=sources.find(s=>s.id===photo.sourceKey);if(!source)throw Error('The original product photograph is unavailable.');
+      const texts=layers.filter(o=>'text'in o),headline=texts.find(o=>o.editorRole==='headline')||texts.find(o=>!/BRITES/i.test(o.text)),description=texts.find(o=>o.editorRole==='description'||/support|description/i.test(o.name||'')),brand=texts.find(o=>o.editorRole==='brand'||/BRITES/i.test(o.text)),cta=layers.find(o=>o.editorRole==='button'||/cta|button/i.test(o.name||'')),label=cta?.objects?.find(o=>'text'in o),shape=cta?.objects?.find(o=>String(o.type).toLowerCase()==='rect');
+      const title=String(headline?.text||design.name?.split('·')[0]||'Discover your favorite').trim(),short=title.split(/\n/).filter(Boolean).pop(),hex=(v,f)=>/^#[a-f0-9]{6}$/i.test(v||'')?v:f;
+      const image={...source,width:source.width||photo.width,height:source.height||photo.height};
+      if(!image.focus)image.focus=await this.locateSavedProduct(image,photo,texts,design.artboard);
+      const plan={copy:{headline:title.replace(/\s+/g,' '),shortHeadline:short.length<=30?short:title.split(/\s+/).slice(-3).join(' '),description:description?.text||'',cta:label?.text||'Shop now'},style:{treatment:'soft-fade',background:hex(design.document.background,'#fffaf2'),ink:hex(headline?.fill,'#34281e'),accent:hex(shape?.fill,'#4b3825'),buttonInk:hex(label?.fill,'#fffaf2'),headlineFont:headline?.fontFamily||'Georgia',bodyFont:description?.fontFamily||brand?.fontFamily||'Arial'},layouts:[]};
+      return {plan,image};
+    }
+    async locateSavedProduct(source,photo,texts,board){
+      // Recover a focal region from the original photograph, not the flattened ad.
+      // Exclude the old copy column, then find a separate foreground component;
+      // edge-connected scenery (cloth/background) cannot become the product.
+      const F=this.F,image=await F.FabricImage.fromURL(source.url,{crossOrigin:'anonymous'}),el=image.getElement(),width=el.naturalWidth||el.width,height=el.naturalHeight||el.height;
+      source.width=width;source.height=height;const factor=Math.min(1,384/Math.max(width,height)),w=Math.round(width*factor),h=Math.round(height*factor),canvas=documentElement('canvas');canvas.width=w;canvas.height=h;const ctx=canvas.getContext('2d');ctx.drawImage(el,0,0,w,h);const pixels=ctx.getImageData(0,0,w,h).data;
+      const right=Math.max(0,...texts.map(o=>(o.left||0)+(o.width||0)*(o.scaleX||1))),copyLeft=board.width/board.height>1.3&&right<board.width*.63;
+      const rx=copyLeft?clamp(((right-(photo.left||0))/(photo.scaleX||1)+(photo.cropX||0))/width,0,.72):0,roi={x:Math.floor(rx*w),y:0,width:w-Math.floor(rx*w),height:h};
+      const bins=new Map();for(let y=0;y<h;y+=2)for(let x=0;x<w;x+=2){const i=(y*w+x)*4,key=[pixels[i]>>4,pixels[i+1]>>4,pixels[i+2]>>4].join(',');bins.set(key,(bins.get(key)||0)+1);}const bg=[...bins].sort((a,b)=>b[1]-a[1])[0][0].split(',').map(v=>Number(v)*16+8),mask=new Uint8Array(w*h),seen=new Uint8Array(w*h);
+      for(let y=0;y<h;y++)for(let x=roi.x;x<w;x++){const i=(y*w+x)*4,dist=Math.abs(pixels[i]-bg[0])+Math.abs(pixels[i+1]-bg[1])+Math.abs(pixels[i+2]-bg[2]);if(dist>105&&pixels[i+3]>128)mask[y*w+x]=1;}
+      const candidates=[];for(let y=1;y<h-1;y++)for(let x=roi.x+1;x<w-1;x++){const seed=y*w+x;if(!mask[seed]||seen[seed])continue;const queue=[seed];seen[seed]=1;let n=0,minX=x,maxX=x,minY=y,maxY=y,edge=false;for(let q=0;q<queue.length;q++){const at=queue[q],px=at%w,py=Math.floor(at/w);n++;minX=Math.min(minX,px);maxX=Math.max(maxX,px);minY=Math.min(minY,py);maxY=Math.max(maxY,py);if(px<=roi.x+1||px>=w-2||py<=1||py>=h-2)edge=true;for(const [dx,dy]of [[1,0],[-1,0],[0,1],[0,-1]]){const nx=px+dx,ny=py+dy,ni=ny*w+nx;if(nx>=roi.x&&nx<w&&ny>=0&&ny<h&&!seen[ni]&&mask[ni]){seen[ni]=1;queue.push(ni);}}}if(!edge&&n>w*h*.002&&maxX-minX>4&&maxY-minY>4)candidates.push({n,minX,maxX,minY,maxY});}
+      image.dispose();const best=candidates.sort((a,b)=>b.n-a.n)[0];
+      if(best){const pad=Math.max(3,Math.round(Math.max(best.maxX-best.minX,best.maxY-best.minY)*.06)),x=Math.max(0,best.minX-pad),y=Math.max(0,best.minY-pad);return {x:x/w,y:y/h,width:(Math.min(w,best.maxX+pad)-x)/w,height:(Math.min(h,best.maxY+pad)-y)/h};}
+      // With no isolated foreground, keep the full original photo region rather
+      // than inventing detail. Its layers still reflow and fill each placement.
+      return {x:rx,y:0,width:1-rx,height:1};
+    }
+    async renderSavedProofs(saved){
+      const {design,sources}=saved,recipe=await this.savedResponsiveRecipe(saved),proofs=[];
       for(const board of [{...design.artboard,key:'active',device:design.device},...root.BritesAdResponsive.variants]){
-        const exact=rows.find(r=>(r.device===board.device||r.device==='shared')&&r.artboard.width===board.width&&r.artboard.height===board.height);
-        const row=exact||rows.filter(r=>r.device===board.device||r.device==='shared').sort((a,b)=>Math.abs(Math.log(a.artboard.width/a.artboard.height/(board.width/board.height)))-Math.abs(Math.log(b.artboard.width/b.artboard.height/(board.width/board.height))))[0]||rows[0];
-        const doc=clone(row.document),scale=Math.min(board.width/row.artboard.width,board.height/row.artboard.height),dx=(board.width-row.artboard.width*scale)/2,dy=(board.height-row.artboard.height*scale)/2;
-        for(const o of doc.objects||[]){o.left=(o.left||0)*scale+dx;o.top=(o.top||0)*scale+dy;o.scaleX=(o.scaleX??1)*scale;o.scaleY=(o.scaleY??1)*scale;}
+        const original=board.width===design.artboard.width&&board.height===design.artboard.height,doc=original?clone(design.document):root.BritesAdResponsive.document(recipe.plan,recipe.image,board,board.device==='desktop'?'desktop':'mobile');
         await this.loadFonts(doc);const canvas=new this.F.StaticCanvas(documentElement('canvas'),{width:board.width,height:board.height,enableRetinaScaling:false});
-        try{await canvas.loadFromJSON(withSources(doc,sources));canvas.renderAll();proofs.push({key:board.key==='active'?'active':board.device+'_'+board.key,width:board.width,height:board.height,url:canvas.toDataURL({format:'jpeg',quality:.86,multiplier:Math.min(1,960/Math.max(board.width,board.height))})});}finally{await canvas.dispose();}
+        try{await canvas.loadFromJSON(withSources(doc,sources));if(!original)for(const o of canvas.getObjects())this.fitAIText(o,board);canvas.renderAll();proofs.push({key:board.key==='active'?'active':board.device+'_'+board.key,width:board.width,height:board.height,url:canvas.toDataURL({format:'jpeg',quality:.86,multiplier:Math.min(1,960/Math.max(board.width,board.height))})});}finally{await canvas.dispose();}
       }
       return proofs;
     }
@@ -566,13 +591,14 @@
     return preview.reviewProofsPanel();
   };
   api.previewSaved=async ({design,sources,previewDocuments=[]})=>{
-    const previews={};
+    const previews={},helper=Object.create(Editor.prototype);helper.F=root.fabric;let recipe;
     for(const device of ['desktop','mobile'])for(const board of FORMATS.filter(b=>['square','landscape','portrait'].includes(b.key))){
       const row=previewDocuments.find(r=>r.device===device&&r.artboard.key===board.key)||previewDocuments.find(r=>r.device==='shared'&&r.artboard.key===board.key);
-      const doc=board.key===design.artboard.key&&(design.device==='shared'||design.device===device)?design.document:row?.document||adapt(design.document,design.artboard,board);
+      let doc=board.key===design.artboard.key&&(design.device==='shared'||design.device===device)?design.document:row?.document;
+      if(!doc){if(root.BritesAdResponsive&&(design.document.objects||[]).some(o=>String(o.type).toLowerCase()==='image')){recipe=recipe||await helper.savedResponsiveRecipe({design,sources});doc=root.BritesAdResponsive.document(recipe.plan,recipe.image,board,device);}else doc=adapt(design.document,design.artboard,board);}
       await Editor.prototype.loadFonts.call({},doc);
       const canvas=new root.fabric.StaticCanvas(documentElement('canvas'),{width:board.width,height:board.height,enableRetinaScaling:false});
-      try{await canvas.loadFromJSON(withSources(doc,sources));canvas.renderAll();previews[device+'|'+board.key]={url:canvas.toDataURL({format:'png',multiplier:Math.min(1,900/board.width),enableRetinaScaling:false}),width:board.width,height:board.height};}finally{await canvas.dispose();}
+      try{await canvas.loadFromJSON(withSources(doc,sources));if(recipe)for(const o of canvas.getObjects())helper.fitAIText(o,board);canvas.renderAll();previews[device+'|'+board.key]={url:canvas.toDataURL({format:'png',multiplier:Math.min(1,900/board.width),enableRetinaScaling:false}),width:board.width,height:board.height};}finally{await canvas.dispose();}
     }
     return previews;
   };
