@@ -13,6 +13,8 @@
   const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const clamp=(n,a,b)=>Math.max(a,Math.min(b,Number(n)||0));
   function withoutUrls(document){const visit=v=>Array.isArray(v)?v.map(visit):v&&typeof v==='object'?Object.fromEntries(Object.entries(v).filter(([k])=>!['src','crossOrigin'].includes(k)).map(([k,x])=>[k,visit(x)])):v;return visit(document);}
+  // Storage may reorder object properties; array/layer order and every value remain significant.
+  function documentFingerprint(doc){const sort=v=>Array.isArray(v)?v.map(sort):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,sort(v[k])])):v;return JSON.stringify(sort(withoutUrls(doc)));}
   function withSources(document,sources){const byId=new Map(sources.map(p=>[p.id,p]));const visit=v=>{if(Array.isArray(v))return v.map(visit);if(!v||typeof v!=='object')return v;const o=Object.fromEntries(Object.entries(v).map(([k,x])=>[k,visit(x)]));if(['Image','image'].includes(o.type)){const p=byId.get(o.sourceKey);if(!p||!p.url)throw Error('An original image is unavailable. Reload this design to refresh its source.');o.src=p.url;o.crossOrigin='anonymous';}return o;};return visit(clone(document));}
   function adapt(document,from,to){const d=clone(document),sx=to.width/from.width,sy=to.height/from.height;for(const o of d.objects||[]){o.left=(Number(o.left)||0)*sx;o.top=(Number(o.top)||0)*sy;o.scaleX=(o.scaleX==null?1:o.scaleX)*Math.min(sx,sy);o.scaleY=(o.scaleY==null?1:o.scaleY)*Math.min(sx,sy);}return d;}
   function imageCors(url){try{const host=new URL(url).hostname;return host==='cdn.shopify.com'||host==='storage.googleapis.com'||host==='firebasestorage.googleapis.com'||host.endsWith('.storage.googleapis.com');}catch(_){return false;}}
@@ -119,7 +121,7 @@
     key(){return [this.device,this.board.key,this.board.width,this.board.height].join('|');}
     input(){return {productId:this.options.productId,groupRef:this.options.groupRef,device:this.device,artboard:{key:this.board.key,width:this.board.width,height:this.board.height}};}
     async request(action,input){const result=await this.options.request(action,input);const savedJobStatus=action==='adDesignEditorAIStatus'&&result&&result.ok===true;if(!result||result.ok===false||result.error&&!savedJobStatus)throw Error(result&&result.error||'The artwork could not be saved.');return result;}
-    status(message,kind='',pct){clearTimeout(this.statusTimer);const el=this.q('.bae-status');el.hidden=false;if(kind!=='busy'&&kind!=='error')this.statusTimer=setTimeout(()=>{if(el.isConnected)el.hidden=true;},3500);el.dataset.error=String(kind==='error');el.dataset.success=String(kind==='success');this.q('[data-status]').textContent=message;this.q('[data-recovery]').hidden=kind!=='error';const saved=this.aiRuns.get(this.key());this.q('[data-ai-recovery]').hidden=!(kind==='error'&&saved&&!saved.applied&&(saved.hasSavedResponse||saved.result));const recovery=this.q('[data-ai-recovery]'),replace=saved?.result&&JSON.stringify(this.document())!==saved.fingerprint;recovery.dataset.action=replace?'ai-restore-apply':'ai-resume';recovery.textContent=replace?'Use reviewed design':saved?.result?'Apply saved result':'Resume saved design';const p=this.q('[data-progress]');p.hidden=kind!=='busy';if(pct==null)p.removeAttribute('value');else p.value=pct;}
+    status(message,kind='',pct){clearTimeout(this.statusTimer);const el=this.q('.bae-status');el.hidden=false;if(kind!=='busy'&&kind!=='error')this.statusTimer=setTimeout(()=>{if(el.isConnected)el.hidden=true;},3500);el.dataset.error=String(kind==='error');el.dataset.success=String(kind==='success');this.q('[data-status]').textContent=message;this.q('[data-recovery]').hidden=kind!=='error';const saved=this.aiRuns.get(this.key());this.q('[data-ai-recovery]').hidden=!(kind==='error'&&saved&&!saved.applied&&(saved.hasSavedResponse||saved.result));const recovery=this.q('[data-ai-recovery]'),replace=saved?.result&&documentFingerprint(this.document())!==documentFingerprint(saved.original);recovery.dataset.action=replace?'ai-restore-apply':'ai-resume';recovery.textContent=replace?'Use reviewed design':saved?.result?'Apply saved result':'Resume saved design';const p=this.q('[data-progress]');p.hidden=kind!=='busy';if(pct==null)p.removeAttribute('value');else p.value=pct;}
     async task(label,fn){if(this.busy)return;this.busy=true;this.dialog.setAttribute('aria-busy','true');this.q('.bae-work').classList.add('bae-busy');this.q('.bae-work').inert=true;this.syncButtons();this.status(label,'busy');try{return await fn();}catch(e){this.status(e.message||String(e),'error');}finally{this.busy=false;if(this.disposed)return;if(!this.q('[data-progress]').hidden)this.q('.bae-status').hidden=true;this.dialog.removeAttribute('aria-busy');this.q('.bae-work').classList.remove('bae-busy');this.q('.bae-work').inert=false;this.syncButtons();}}
     async open(){styles();const d=document.createElement('dialog');d.className='bae';d.setAttribute('aria-label','Brites professional ad editor');this.dialog=d;d.innerHTML=`
       <header class="bae-header"><div class="bae-title"><small>BRITES · CREATIVE STUDIO</small><input data-name aria-label="Artwork name" maxlength="120" value="${esc(this.name)}"><p><a href="${esc(this.options.destination)}" target="_blank" rel="noopener">Product destination ↗</a></p></div><div class="bae-actions"><small data-save-state>Unsaved draft</small><button data-action="ai-review-proofs">Preview all sizes</button><button data-action="save">Save Design</button><button class="bae-primary" data-action="export-panel">Export artwork</button><button data-action="close">Done</button></div></header>
@@ -271,7 +273,7 @@
       if(run.applied){const result=run.result||{};return '<p><b>✓ '+(run.mode==='text'?'Text updated':'Design applied')+'</b></p>'+spend+review+'<p class="bae-help">'+esc(result.rationale||'Every layer is editable. Use Undo to restore the previous design.')+'</p>'+(result.alternatives?.length?'<details><summary>More messaging options</summary>'+result.alternatives.map((a,i)=>'<button class="bae-copy-card" data-action="ai-alternative-'+i+'" title="'+esc(a.rationale||'Apply this wording')+'">'+esc(a.text)+'</button>').join('')+'</details>':'')+(result.limitations?.length?'<details><summary>Research notes</summary><p class="bae-help">'+result.limitations.map(esc).join('<br>')+'</p></details>':'')+'<p class="bae-help">Review your design, then Save Design. Undo restores the previous layout.</p>';}
       const progress=run.progress||{pct:0,label:'Preparing your ad…'},steps=run.mode==='text'?[[0,'Capture artwork'],[12,'Research listing'],[36,'Write messaging'],[90,'Check text'],[100,'Apply']]:[[0,'Capture artwork'],[12,'Research listing'],[36,'Plan scenes'],[50,'Generate photo'],[82,'Adapt sizes'],[92,'Review complete ads'],[100,'Apply']],current=steps.reduce((n,row,i)=>progress.pct>=row[0]?i:n,0),seconds=Math.max(0,Math.floor((Date.now()-(run.attemptStartedAt||run.startedAt||Date.now()))/1000)),elapsed=seconds>=60?Math.floor(seconds/60)+'m '+seconds%60+'s':seconds+'s';
       const stages='<ol class="bae-ai-steps" aria-label="AI design stages">'+steps.map((row,i)=>'<li data-state="'+(i<current?'complete':i===current?'active':'waiting')+'">'+(i<current?'✓ ':i===current?'◌ ':'')+row[1]+'</li>').join('')+'</ol><small>Elapsed '+elapsed+' · Completed work is saved</small>';
-      return '<p><b>'+esc(run.error?'Design paused':progress.label)+'</b></p><progress max="100" value="'+clamp(progress.pct,0,100)+'" aria-label="AI design progress"></progress>'+stages+spend+review+(run.error?'<p class="bae-help">'+esc(run.error)+'</p><button data-action="'+(run.result&&JSON.stringify(this.document())!==run.fingerprint?'ai-restore-apply':'ai-resume')+'">'+(run.result?(JSON.stringify(this.document())!==run.fingerprint?'Use reviewed design':'Apply saved result'):run.hasSavedResponse?'Resume saved design':'Check saved progress')+'</button>'+(run.hasSavedResponse?'<p class="bae-help">Your AI response is saved. Resuming reuses saved images and copy. Any new complete-ad review uses the remaining review allowance.</p>':'')+(run.original&&JSON.stringify(this.document())!==run.fingerprint?'<button class="bae-link" data-action="ai-restore">Restore captured draft</button>':'')+(run.result||run.canDismiss?'<button class="bae-link" data-action="ai-dismiss">'+(run.canDismiss?'Reset failed AI':'Keep current design')+'</button>':''):'')+'<small>Listing → visual design → check &amp; apply</small>';
+      return '<p><b>'+esc(run.error?'Design paused':progress.label)+'</b></p><progress max="100" value="'+clamp(progress.pct,0,100)+'" aria-label="AI design progress"></progress>'+stages+spend+review+(run.error?'<p class="bae-help">'+esc(run.error)+'</p><button data-action="'+(run.result&&documentFingerprint(this.document())!==documentFingerprint(run.original)?'ai-restore-apply':'ai-resume')+'">'+(run.result?(documentFingerprint(this.document())!==documentFingerprint(run.original)?'Use reviewed design':'Apply saved result'):run.hasSavedResponse?'Resume saved design':'Check saved progress')+'</button>'+(run.hasSavedResponse?'<p class="bae-help">Your AI response is saved. Resuming reuses saved images and copy. Any new complete-ad review uses the remaining review allowance.</p>':'')+(run.original&&documentFingerprint(this.document())!==documentFingerprint(run.original)?'<button class="bae-link" data-action="ai-restore">Restore captured draft</button>':'')+(run.result||run.canDismiss?'<button class="bae-link" data-action="ai-dismiss">'+(run.canDismiss?'Reset failed AI':'Keep current design')+'</button>':''):'')+'<small>Listing → visual design → check &amp; apply</small>';
     }
     aiReceiptKey(key=this.key()){return 'brites-editor-ai-receipt|'+(this.options.workspaceId||'')+'|'+this.options.productId+'|'+this.options.groupRef+'|'+key;}
     rememberAI(run){try{localStorage.setItem(this.aiReceiptKey(run.key),run.jobId);}catch{}}
@@ -310,16 +312,16 @@
       const engine=root.BritesAdResponsive;if(!engine)throw Error('Refresh to render the saved ad layouts.');
       if(!candidate.responsive.documents&&candidate.responsive.layoutVersion!==engine.layoutVersion)throw Error('Refresh the editor to render the current saved layout version. No new image request was sent.');
       const proofSources=[...new Map([...this.sources,...candidate.sources.map(s=>[s.id,s])]).values()];
-      const boards=[{...candidate.artboard,key:'active',device:candidate.device,document:candidate.document},...(candidate.responsive.variants||engine.variants)],active=this.board,proofs=[];
-      try{for(const b of boards){
-        this.board=b;const frozen=candidate.responsive.documents?.find(d=>d.key===b.key&&d.device===b.device&&d.width===b.width&&d.height===b.height),doc=b.document||frozen?.document||engine.document(candidate.responsive.plan,engine.selectImage(candidate.responsive.plan,candidate.responsive.images,b),b,b.device);
+      const boards=[{...candidate.artboard,key:'active',device:candidate.device,document:candidate.document},...(candidate.responsive.variants||engine.variants)],proofs=[];
+      for(const b of boards){
+        const frozen=candidate.responsive.documents?.find(d=>d.key===b.key&&d.device===b.device&&d.width===b.width&&d.height===b.height),doc=b.document||frozen?.document||engine.document(candidate.responsive.plan,engine.selectImage(candidate.responsive.plan,candidate.responsive.images,b),b,b.device);
         await this.loadFonts(doc);const out=new this.F.StaticCanvas(documentElement('canvas'),{width:b.width,height:b.height,enableRetinaScaling:false});
         try{
           await out.loadFromJSON(withSources(doc,proofSources));
           const photos=out.getObjects().filter(o=>o.type==='image');
           if(!photos.length)throw Error('The '+b.key+' proof has no product photograph. Saved work is retained; no review was charged.');
           for(const photo of photos){const el=photo.getElement();if(el.decode)await el.decode();if(!(el.naturalWidth||el.width)||!(el.naturalHeight||el.height))throw Error('The product photograph has not loaded. Reopen the saved review to retry without a new AI charge.');photo.set({objectCaching:false});photo.setCoords();}
-          for(const o of out.getObjects())this.fitAIText(o);
+          for(const o of out.getObjects())this.fitAIText(o,b);
           out.renderAll();const multiplier=Math.min(1,960/Math.max(b.width,b.height)),raster=out.toCanvasElement(multiplier),pixels=raster.getContext('2d').getImageData(0,0,raster.width,raster.height).data;
           const visibility=photos.map(o=>o.visible);let background;
           try{photos.forEach(o=>o.set('visible',false));out.renderAll();const blank=out.toCanvasElement(multiplier);background=blank.getContext('2d').getImageData(0,0,blank.width,blank.height).data;}finally{photos.forEach((o,i)=>o.set('visible',visibility[i]));out.renderAll();}
@@ -327,7 +329,7 @@
           if(visibleSamples<Math.max(8,totalSamples*.005))throw Error('The product photograph is not visible in the '+b.key+' export. Saved images and copy are retained; no review was charged.');
           proofs.push({key:b.key==='active'?'active':b.device+'_'+b.key,width:b.width,height:b.height,dataBase64:raster.toDataURL('image/jpeg',.8).split(',')[1],renderCheck:{version:1,visiblePhotoFraction:visibleSamples/totalSamples}});
         }finally{await out.dispose();}
-      }}finally{this.board=active;}
+      }
       return proofs;
     }
     async chooseAI(){const animated=await root.BritesAdMotion.choose();if(animated===null)return;this.includeAnimation=animated;return this.task('Preparing product-specific design…',()=>this.startAI('design'));}
@@ -385,7 +387,7 @@
     }
     async applyAI(run){
       if(this.disposed||this.key()!==run.key||JSON.stringify(this.input())!==JSON.stringify(run.scope))throw Error('This result belongs to another artboard. Open its original size and device to apply it.');
-      if(JSON.stringify(this.document())!==run.fingerprint)throw Error('A different draft is open. Use reviewed design to apply the saved result; your current draft stays in Undo.');
+      if(documentFingerprint(this.document())!==documentFingerprint(run.original))throw Error('A different draft is open. Use reviewed design to apply the saved result; your current draft stays in Undo.');
       const result=run.result;
       (result?.sources||[]).forEach(source=>this.sources.set(source.id,source));
       if(!result?.document||result.productId!==this.options.productId||result.groupRef!==this.options.groupRef||result.device!==this.device||result.artboard?.key!==this.board.key||result.artboard?.width!==this.board.width||result.artboard?.height!==this.board.height)throw Error('The AI result does not match this product, ad group and artboard.');
@@ -410,7 +412,7 @@
         }
         checkCanvas.renderAll();checked=withoutUrls(checkCanvas.toObject(EXTRA));
       }finally{await checkCanvas.dispose();}
-      if(this.disposed||this.key()!==run.key||JSON.stringify(this.input())!==JSON.stringify(run.scope)||JSON.stringify(this.document())!==run.fingerprint)throw Error('The artwork changed while checking the AI result. Your current design is retained.');
+      if(this.disposed||this.key()!==run.key||JSON.stringify(this.input())!==JSON.stringify(run.scope)||documentFingerprint(this.document())!==documentFingerprint(run.original))throw Error('The artwork changed while checking the AI result. Your current design is retained.');
       const variants=result.responsive?await this.prepareResponsiveDrafts(result):[];
       if(result.responsive)await this.request('applyAdDesignEditorScene',{...run.scope,jobId:run.jobId});
       const oldHistory=this.history.slice(),oldIndex=this.historyIndex,oldDirty=this.dirty;
@@ -424,17 +426,17 @@
     }
     async prepareResponsiveDrafts(result){
       const engine=root.BritesAdResponsive;if(!engine)throw Error('Responsive layouts could not load. Refresh to apply this saved result.');
-      const {plan,images}=result.responsive,variants=[...(result.responsive.variants||engine.variants),...engine.boards.map(b=>({...b,device:'shared'}))],out=[],activeBoard=this.board;
+      const {plan,images}=result.responsive,variants=[...(result.responsive.variants||engine.variants),...engine.boards.map(b=>({...b,device:'shared'}))],out=[];
       for(const board of variants){
         const key=[board.device,board.key,board.width,board.height].join('|');if(key===this.key())continue;
         const previous=this.drafts.get(key),saved=(this.savedDesigns||[]).find(d=>d.device===board.device&&d.artboard?.key===board.key&&d.artboard?.width===board.width&&d.artboard?.height===board.height);
         const doc=engine.document(plan,engine.selectImage(plan,images,board),board,board.device),canvas=new this.F.StaticCanvas(documentElement('canvas'),{width:board.width,height:board.height,enableRetinaScaling:false});let checked;
-        try{this.board=board;await this.loadFonts(doc);await canvas.loadFromJSON(withSources(doc,[...this.sources.values()]));for(const o of canvas.getObjects())this.fitAIText(o);canvas.renderAll();checked=withoutUrls(canvas.toObject(EXTRA));}finally{this.board=activeBoard;await canvas.dispose();}
+        try{await this.loadFonts(doc);await canvas.loadFromJSON(withSources(doc,[...this.sources.values()]));for(const o of canvas.getObjects())this.fitAIText(o,board);canvas.renderAll();checked=withoutUrls(canvas.toObject(EXTRA));}finally{await canvas.dispose();}
         const history=previous?.history?.slice()||[];history.push(JSON.stringify(checked));out.push([key,{document:checked,name:this.options.title+' · '+board.device+' · '+board.width+' × '+board.height,revision:previous?.revision??saved?.revision??0,dirty:true,history,historyIndex:history.length-1}]);
       }
       return out;
     }
-    fitAIText(o){
+    fitAIText(o,board=this.board){
       if(o.locked)return;
       if(o.editorRole==='button'&&o.getObjects){
         const shape=o.getObjects()[0],t=o.getObjects().find(x=>'text'in x);if(!shape||!t)return;
@@ -443,9 +445,9 @@
         if(t.height>shape.height*.9||t.calcTextWidth()>t.width*1.03)throw Error('The suggested button wording does not fit. Your previous design is retained.');
         t.setPositionByOrigin(shape.getRelativeCenterPoint(),'center','center');o.triggerLayout();o.setCoords();
       }else if('text'in o){
-        const maxHeight=Math.max(6,Math.min(Number(o.aiBoxHeight)||Infinity,this.board.height-Math.max(0,o.top)));
+        const maxHeight=Math.max(6,Math.min(Number(o.aiBoxHeight)||Infinity,board.height-Math.max(0,o.top)));
         for(let n=0;n<35;n++){o.initDimensions?.();if(o.getScaledHeight()<=maxHeight&&o.calcTextWidth()<=o.width)break;o.set('fontSize',Math.max(6,o.fontSize*.92));}o.setCoords();
-      }else if(o.getObjects){for(const child of o.getObjects())this.fitAIText(child);o.triggerLayout();o.setCoords();}
+      }else if(o.getObjects){for(const child of o.getObjects())this.fitAIText(child,board);o.triggerLayout();o.setCoords();}
     }
     async applyAIAlternative(index){
       const run=this.aiRuns.get(this.key()),a=run?.result?.alternatives?.[index];if(!a)return;

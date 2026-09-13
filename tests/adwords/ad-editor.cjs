@@ -84,6 +84,18 @@ assert.deepEqual(editor.cropResize(cropBox,'se',120,80,cropBounds),{x:200,y:200,
     await e.action('undo');check(JSON.stringify(e.document())===newer,'one Undo restores the newer draft instead of the old capture');
     e.canvas.getObjects().find(o=>'text'in o).locked=true;const lockedDraft=JSON.stringify(e.document());await assert.rejects(()=>e.restoreCapturedAI(true),/Unlock/);check(JSON.stringify(e.document())===lockedDraft,'recovery preserves newly locked layers');
     e.aiRuns.delete(e.key());await e.restore(beforeRecovery);e.snapshot();
+    const liveBoard=e.board,liveScope=JSON.stringify(e.input()),liveArtwork=JSON.stringify(e.document()),loadFonts=e.loadFonts,oldEngine=w.BritesAdResponsive;
+    let stableDuringProof=true;
+    e.loadFonts=async function(doc){await Promise.resolve();stableDuringProof&&=this.board===liveBoard&&JSON.stringify(this.input())===liveScope;return loadFonts.call(this,doc);};
+    w.BritesAdResponsive={layoutVersion:1,variants:[]};
+    const proofDoc=e.document(),tinyDoc=JSON.parse(JSON.stringify(proofDoc));for(const o of tinyDoc.objects){o.left*=.04;o.top*=.04;o.scaleX*=.04;o.scaleY*=.04;}
+    const proofs=await e.renderAIProofs({artboard:{...liveBoard},device:e.device,document:proofDoc,sources:[photo],responsive:{layoutVersion:1,variants:[{key:'tiny',device:'mobile',width:300,height:100}],documents:[{key:'tiny',device:'mobile',width:300,height:100,document:tinyDoc}]}});
+    check(proofs.length===2&&stableDuringProof&&JSON.stringify(e.document())===liveArtwork,'asynchronous size proofs never change the active editor scope or artwork');
+    e.loadFonts=loadFonts;w.BritesAdResponsive=oldEngine;
+    const reorder=v=>Array.isArray(v)?v.map(reorder):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).reverse().map(k=>[k,reorder(v[k])])):v;
+    const orderedCapture=e.document(),orderedRun={...recoveredRun,original:reorder(orderedCapture),fingerprint:JSON.stringify(reorder(orderedCapture)),applied:false};
+    await e.applyAI(orderedRun);check(e.canvas.getObjects().some(o=>o.text==='Reviewed necklace'),'storage property reordering does not falsely reject an unchanged draft');
+    await e.restore(beforeRecovery);e.snapshot();
     check(e.q('[data-action="ai-review-proofs"]').textContent==='Preview all sizes','persistent gallery button is outside transient AI feedback');
     await w.BritesAdEditor.openAllSizes({scope:{workspaceId:'test',productId:'11',groupRef:'group'},request:async(action,input)=>{check(action==='adDesignEditorAIStatus'&&input.includeReview&&input.allSizes,'standalone gallery only reads saved review');return {reviewProofs:[{key:'desktop_square',url:photoUrl,width:2048,height:2048}]};}});
     const gallery=w.document.querySelector('dialog[aria-label="Reviewed ad layouts"]');check(!!gallery&&gallery.querySelectorAll('figure').length===1,'main-window preview opens the gallery without another editor');gallery.querySelector('[data-close]').click();

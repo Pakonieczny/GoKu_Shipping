@@ -8,6 +8,8 @@ if(require.main===module)(async()=>{
  const evidence={hash:'facts',sourceBindings:{landingUrl:'https://britesjewelry.com/products/duck'},sources:[{id:'product:'+productId,status:'available',data:{title:'Duck necklace',description:'Duck pendant necklace'}}],warnings:[]};
  research.validateResponsivePlan({output:plan,request:{productId,groupRef},evidence});ok(true,'fact-grounded recipe validates');
  assert.throws(()=>research.validateResponsivePlan({output:{...plan,productId:'wrong'},request:{productId,groupRef},evidence}),/changed its product/);checks++;
+ const longOnly=JSON.parse(JSON.stringify(plan));longOnly.nativeCopy.headlines=['Explore Duck Jewelry','Brites Duck Necklace','Choose Your Duck Necklace','A Little Duck, Close to You','Discover Duck Necklaces'];
+ const compactPlan=research.validateResponsivePlan({output:longOnly,request:{productId,groupRef},evidence});ok(compactPlan.nativeCopy.headlines.some(t=>t.length<=15),'generated native copy always includes a compact headline');ok(longOnly.nativeCopy.headlines.length===5,'validation does not mutate the provider response');
  ok(responsive.boards.length===23&&responsive.variants.filter(b=>b.device==='mobile').length>=6,'mobile and desktop coverage');
  // Narrow formats must retain a central charm with breathing room even when
  // a saved recipe requests its maximum zoom. Geometry bounds alone miss this.
