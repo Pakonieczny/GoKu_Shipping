@@ -9235,6 +9235,7 @@ function _groupService(){
 }
 async function adGroups(input){const out=await _groupService().index(input),deleted=await _deletedCampaignIds();out.groups=(out.groups||[]).filter(g=>!deleted.has(String(g.campaignId)));return out;}
 async function adGroupDetail(input){await _assertCampaignNotDeleted(input.campaignId);return _groupService().detail(input);}
+async function adDesignSavedWorkspaces(input={}){return require('./googleAdsGroups').savedWorkspaces({db:fb().db,stateCollection:COL.state,after:input.after,deletedCampaignIds:await _deletedCampaignIds()});}
 async function draftAdGroupSplit(input){return _groupService().draftSplit(input);}
 async function draftAdGroupActivation(input){return _groupService().draftActivation(input);}
 async function _guardProductGroupActivation(item){const p=item.payload||{},g=p.groupActivationGuard;if(!g)return;const b=await _groupService().activationBasis(g.splitId);if(b.version!==g.expectedVersion||b.snapshotHash!==g.snapshotHash||creativeHash(b.before)!==creativeHash(g.before)||creativeHash(b.operations)!==creativeHash(p.mutateOperations))throw new Error('The product groups changed. Review a fresh switch before publishing.');}
@@ -9783,7 +9784,7 @@ async function analyzeAdStatus(input) { return _analysisEngine().analyzeAdStatus
 async function runAnalyzeAd(input) { return _analysisEngine().runAnalyzeAd(input); }
 
 module.exports = {
-  adGroups, adGroupDetail, draftAdGroupSplit, draftAdGroupActivation,
+  adGroups, adGroupDetail, adDesignSavedWorkspaces, draftAdGroupSplit, draftAdGroupActivation,
   startAdMotionPublication, runAdMotionPublication, verifyAdMotionPublication, startAdDesignMotion, adDesignMotionStatus, runAdDesignMotion, adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, cropAdDesignImage, adDesignEditorSource, adDesignEditorState, adDesignResponsiveState, saveAdDesignEditor, startAdDesignEditorAI, adDesignEditorAIStatus, resumeAdDesignEditorAI, applyAdDesignEditorScene, runAdDesignEditorAI, exportAdDesignEditor, adDesignSavedDesigns, openAdDesignSavedDesign, deleteAdDesignSavedDesign, deleteAdDesignGeneratedImage, adDesignGooglePreview, uploadAdDesignReference, resetAdDesignFailures, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages, adDesignGalleryPage, saveAdDesignCopy, adDesignDelivery, prepareAdDesignPublication, publishAdDesignPublication,
   reviseCreativeApproval, markApprovalApproved, needsCreativeReview, prepareCreativeApproval, creativeApprovalStatus, reviewCreativeApproval, assertCreativeReviewed, creativeHash,
   COL, V, CID, OPPORTUNITY_ENGINE_VERSION, DESIGN_STUDIO_ENGINE_VERSION, DESIGN_STUDIO_URL,

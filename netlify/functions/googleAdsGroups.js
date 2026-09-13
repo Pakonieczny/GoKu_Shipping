@@ -6,6 +6,24 @@ const unique = rows => [...new Set(rows.filter(Boolean))];
 const id = value => { const s=String(value||''); if(!/^\d+$/.test(s))throw Error('Choose a campaign.'); return s; };
 const totals = m => ({impressions:Number(m.impressions||0),clicks:Number(m.clicks||0),spend:Number(m.costMicros||0)/1e6,conversions:Number(m.conversions||0),value:Number(m.conversionsValue||0)});
 const ownRef = (value,cid) => {if(!new RegExp('^customers/'+cid+'/(assetGroups|adGroups)/\\d+$').test(String(value)))throw Error('Choose a group in this account.');return value;};
+// Saved work is browsable even while Google reporting or quota is unavailable.
+// This catalog conveys no permission to publish or freshness of Google settings.
+async function savedWorkspaces({db,stateCollection,after,deletedCampaignIds=new Set()}) {
+  if(after!=null&&!/^[a-zA-Z0-9_-]{1,100}$/.test(String(after)))throw Error('Invalid saved-design page.');
+  let query=db.collection(stateCollection).doc('adDesign').collection('workspaces')
+    .select('context','settings','updatedAt','createdAt','archivedAt','sourceSetId','sourceVersion')
+    .orderBy('__name__').limit(51);
+  if(after)query=query.startAfter(after);
+  const result=await query.get(),page=result.docs.slice(0,50),workspaces=[];
+  for(const doc of page){
+    const w=doc.data(),c=w.context||{},g=(c.groups||[]).find(g=>g.ref===w.settings?.groupRef);
+    if(w.archivedAt||deletedCampaignIds.has(String(c.campaignId))||!w.sourceSetId||!g)continue;
+    workspaces.push({workspaceId:doc.id,name:g.name||'Saved ad',productId:w.settings?.productId||null,
+      campaignId:c.campaignId||null,groupRef:g.ref,sourceVersion:w.sourceVersion||null,
+      updatedAt:w.updatedAt||w.createdAt||null});
+  }
+  return {ok:true,workspaces,nextCursor:result.docs.length>50?page[page.length-1].id:null};
+}
 function mapping(group, filters, ads) {
   const urls=group.channel==='pmax'?group.urls:unique(ads.filter(a=>a.adGroup===group.ref).flatMap(a=>a.finalUrls||[]));
   const relevant=filters.filter(f=>f.assetGroup===group.ref),leaves=relevant.filter(f=>f.type==='UNIT_INCLUDED');
@@ -133,4 +151,4 @@ function createGroupsService(D){
   }
   return {index,detail,draftSplit,activationBasis,draftActivation};
 }
-module.exports={createGroupsService,mapping,totals};
+module.exports={createGroupsService,mapping,totals,savedWorkspaces};
