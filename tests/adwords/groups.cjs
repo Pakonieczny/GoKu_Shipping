@@ -14,6 +14,12 @@ const D={CID:'123',reportContext:async()=>({budgetCurrency:'CAD',accountToday:'2
  const {isSharedProductGroup}=require('../../netlify/functions/googleAdsAdDesign');
  check(isSharedProductGroup({sourceSnapshot:snapshot},{ref,channel:'pmax'}),'legacy saved workspaces still detect a shared PMax pool from its source snapshot');
  check(isSharedProductGroup({sourceSnapshot:{components:{searchAds:[{resourceName:'ad1',adGroup:search,finalUrls:['https://britesjewelry.com/products/duck']},{resourceName:'ad2',adGroup:search,finalUrls:['https://britesjewelry.com/products/fox']}]}}},{ref:'ad1',channel:'search'}),'legacy Search ad workspaces detect unrelated sibling destinations');
+ const viewApi=createGroupsService({...D,verifiedBasis:async()=>{throw Error('Incomplete version');},readSnapshot:async()=>({...snapshot,complete:false,warnings:['listingGroups: provider rejected field']}),loadContext:async()=>{throw Error('Incomplete version');}});
+ const view=await viewApi.detail({campaignId:'42',groupRef:ref});
+ check(view.ok&&view.copy[0].headlines.includes('Shared headline'),'available copy remains readable when the full snapshot fails');
+ check(!view.splitAvailable&&!view.snapshotHash&&!view.sourceVersion,'partial views cannot authorize modifications');
+ check(view.warnings.some(w=>w.includes('provider rejected field')),'the underlying snapshot failure is visible');
+ await assert.rejects(()=>viewApi.draftSplit({campaignId:'42',groupRef:ref}),/split|verified|listing/i);n++;
  const api=createGroupsService(D),index=await api.index();check(index.groups.length===3,'Search ad groups and PMax asset groups are both listed');
  const group=index.groups.find(g=>g.ref===ref);check(group.mapping.status==='mixed'&&group.mapping.productIds.join(',')==='10,20','exact Merchant offers reveal mixed product listings');
  check(group.metrics.spend===12&&group.metrics.impressions===1200&&index.currency==='CAD','group report keeps native currency and exact group metrics');check(index.groups.find(g=>g.ref===other).metrics.spend===0,'a group without impressions is a genuine zero only after a successful report');

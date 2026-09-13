@@ -158,7 +158,7 @@ async function handleAction(body) {
   if (a === "keywordDiag") { try { return await E.keywordDiag({ keyword: body.keyword, geo: body.geo }); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "conversionHealth") { try { return await E.conversionHealth({ force: !!body.force }); } catch (e) { return { error: e.message }; } }
   if (a === "syncConversions") {
-    try { const up = await E.uploadConversions({ ctrl }); const adj = await E.uploadConversionAdjustments({ ctrl }); const health = await E.conversionHealth({ force: true }); return { ok: true, uploaded: up, adjustments: adj, health }; }
+    try { const up = await E.uploadConversions({ ctrl, retryRejected: body.retryRejected === true }); const adj = await E.uploadConversionAdjustments({ ctrl }); const health = await E.conversionHealth({ force: true }); return { ok: true, uploaded: up, adjustments: adj, health }; }
     catch (e) { return { ok: false, error: e.message }; }
   }
   if (a === "kill")   { if (f) await f.db.collection(E.COL.control).doc("control").set({ enabled: false }, { merge: true }); return { enabled: false }; }

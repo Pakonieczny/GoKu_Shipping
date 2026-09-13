@@ -262,6 +262,7 @@
     "googleAdsAdDesignResearch.js",
     "googleAdsAdMotion.js",
     "googleAdsAutopilot.js",
+    "googleAdsDataManager.js",
     "googleAdsGeminiVideo.js",
     "googleAdsGroups.js",
     "googleAdsMerchantVersion.js",

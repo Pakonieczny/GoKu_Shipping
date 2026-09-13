@@ -796,7 +796,16 @@ function _pickClickId(x) {
 
 const CONV_MAX_ATTEMPTS = 5;
 
-async function uploadConversions({ ctrl, limit = 500 } = {}) {
+let _dataManagerService = null;
+function dataManagerService() {
+  if (!_dataManagerService) _dataManagerService = require("./googleAdsDataManager").createDataManager({ env: ENV, fetch, fb, COL, ledger });
+  return _dataManagerService;
+}
+async function uploadConversions(options = {}) {
+  if (ENV.GADS_CONVERSION_UPLOAD_API === "legacy") return uploadLegacyConversions(options);
+  return dataManagerService().run({ ...options, ctrl: options.ctrl || await control() });
+}
+async function uploadLegacyConversions({ ctrl, limit = 500 } = {}) {
   ctrl = ctrl || (await control());
   const f = fb(); if (!f) return { uploaded: 0 };
   const action = ENV.GADS_CONVERSION_ACTION; // customers/CID/conversionActions/NNN
@@ -998,11 +1007,11 @@ async function uploadConversionAdjustments({ ctrl, limit = 500 } = {}) {
 async function conversionHealth({ force } = {}) {
   const f = fb();
   if (f && !force) {
-    try { const s = await f.db.collection(COL.state).doc("conv_health").get(); if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 15 * 60 * 1000 && x.data && x.data.schemaVersion === 2) return x.data; } } catch (e) {}
+    try { const s = await f.db.collection(COL.state).doc("conv_health").get(); if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 15 * 60 * 1000 && x.data && x.data.schemaVersion === 3) return x.data; } } catch (e) {}
   }
   const out = { status: "UNKNOWN", actionConfigured: !!ENV.GADS_CONVERSION_ACTION, actionId: ENV.GADS_CONVERSION_ACTION || null,
     actions: [], recentConversions: null, queueDepth: null, adjQueueDepth: null, lastUpload: null,
-    healthy: false, validated: false, reasons: [], schemaVersion: 2, at: Date.now() };
+    healthy: false, validated: false, reasons: [], schemaVersion: 3, at: Date.now() };
   try {
     const r = await gaql(`SELECT customer.conversion_tracking_setting.conversion_tracking_status FROM customer`);
     const cs = r[0] && r[0].customer && r[0].customer.conversionTrackingSetting;
@@ -1041,6 +1050,16 @@ async function conversionHealth({ force } = {}) {
   // Account-wide conversions may come from Shopify's browser tag or another
   // action. They do not prove this server-side upload pipeline is working.
   out.validated = !!(out.healthy && out.lastUpload && out.lastUpload.ok && !out.lastUpload.validateOnly && out.lastUpload.count > 0 && !out.failedCount);
+  if (ENV.GADS_CONVERSION_UPLOAD_API !== "legacy") {
+    try {
+      out.dataManager = await dataManagerService().health();
+      out.healthy = out.healthy && out.dataManager.configured;
+      out.validated = !!(out.healthy && out.dataManager.confirmed > 0 && !out.failedCount && !out.dataManager.unknown);
+      if (!out.dataManager.configured) out.reasons.push("Google requires Data Manager authorization for conversion uploads. Connect its dedicated OAuth scope before syncing orders.");
+      if (out.dataManager.processing) out.reasons.push(out.dataManager.processing + " conversion(s) submitted to Google Data Manager; asynchronous processing is still pending.");
+      if (out.dataManager.unknown) out.reasons.push(out.dataManager.unknown + " upload outcome(s) need reconciliation before retrying.");
+    } catch (error) { out.healthy = false; out.validated = false; out.reasons.push("Data Manager status: " + error.message); }
+  }
   if (!out.actionConfigured) out.reasons.push("GADS_CONVERSION_ACTION env var is not set");
   if (out.actionConfigured && !out.configuredAction) out.reasons.push("The configured conversion action was not found in this account.");
   else if (out.configuredAction && !enabledAction) out.reasons.push("The configured conversion action is not enabled.");
@@ -9173,7 +9192,7 @@ async function materializeReviewedCreative(it) {
 let _groupsService=null;
 function _groupService(){
   _designEngine();
-  if(!_groupsService)_groupsService=require('./googleAdsGroups').createGroupsService({CID,fb,COL,linkDesignScopes:input=>_designEngine().linkPublishedDesignScopes(input),buildSearch:buildSearchCampaignOps,reportContext:_reportContext,validatedRange:_validatedReportRange,gaql,verifiedBasis:_verifiedCampaignAnalysisBasis,loadContext:input=>_adDesignContextReader.loadContext(input),buildPmax:buildPmaxCampaignOps,enqueueApproval});
+  if(!_groupsService)_groupsService=require('./googleAdsGroups').createGroupsService({CID,fb,COL,linkDesignScopes:input=>_designEngine().linkPublishedDesignScopes(input),buildSearch:buildSearchCampaignOps,reportContext:_reportContext,validatedRange:_validatedReportRange,gaql,verifiedBasis:_verifiedCampaignAnalysisBasis,readSnapshot:_captureCampaignEditableSnapshot,loadContext:input=>_adDesignContextReader.loadContext(input),buildPmax:buildPmaxCampaignOps,enqueueApproval});
   return _groupsService;
 }
 async function adGroups(input){const out=await _groupService().index(input),deleted=await _deletedCampaignIds();out.groups=(out.groups||[]).filter(g=>!deleted.has(String(g.campaignId)));return out;}

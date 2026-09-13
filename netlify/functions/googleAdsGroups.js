@@ -42,13 +42,24 @@ function createGroupsService(D){
   }
   async function detail(input={}){
     const campaignId=id(input.campaignId),ref=ownRef(input.groupRef,D.CID),report=await index({...input,campaignId}),group=report.groups.find(g=>g.ref===ref);if(!group)throw Error('The group is outside the selected campaign.');
-    const basis=await D.verifiedBasis({campaignId}),c=basis.snapshot.components||{},warnings=[...report.warnings];
-    const searchAds=(c.searchAds||[]).filter(a=>a.adGroup===ref),links=(group.channel==='pmax'?c.assetLinks:c.searchImageLinks||[]).filter(a=>group.channel==='pmax'?a.assetGroup===ref:a.adGroup===ref);
+    const warnings=[...report.warnings];let basis;
+    try { basis=await D.verifiedBasis({campaignId}); }
+    catch(error) {
+      if(!D.readSnapshot)throw error;
+      const snapshot=await D.readSnapshot(campaignId);
+      if(!snapshot||snapshot.campaignId!==campaignId)throw error;
+      basis={snapshot,version:null,snapshotHash:null};
+      warnings.push('Viewing current available settings only. Changes and restoration remain blocked until the complete version is verified.',error.message,...(snapshot.warnings||[]));
+    }
+    const c=basis.snapshot.components||{};
+    const searchAds=(c.searchAds||[]).filter(a=>a.adGroup===ref),links=(group.channel==='pmax'?c.assetLinks||[]:c.searchImageLinks||[]).filter(a=>group.channel==='pmax'?a.assetGroup===ref:a.adGroup===ref);
     let keywords=group.channel==='search'?(c.keywords||[]).filter(k=>k.adGroup===ref).map(k=>({text:k.keyword?.text,matchType:k.keyword?.matchType,status:k.status,negative:!!k.negative})):[];
     let keywordStatus='available';if(group.channel==='pmax')try{const rows=await D.gaql(`SELECT asset_group_signal.search_theme.text FROM asset_group_signal WHERE asset_group.resource_name = '${ref}'`);keywords=rows.map(r=>({text:r.assetGroupSignal?.searchTheme?.text})).filter(k=>k.text);}catch(e){keywordStatus='unavailable';warnings.push('Search themes: '+e.message);}
     const creativeRef=group.channel==='pmax'?ref:searchAds.find(a=>a.status==='ENABLED')?.resourceName||searchAds[0]?.resourceName;
     const creativeRefs=group.channel==='pmax'?[ref]:searchAds.map(a=>a.resourceName);
-    const context=creativeRef?await D.loadContext({campaignId,...(group.channel==='pmax'||creativeRefs.length===1?{groupRef:creativeRef}:{})}):null;
+    let context=null;
+    if(creativeRef)try{context=await D.loadContext({campaignId,...(group.channel==='pmax'||creativeRefs.length===1?{groupRef:creativeRef}:{})});}
+    catch(error){if(basis.version)throw error;warnings.push('Product design context is unavailable until the full campaign snapshot is verified: '+error.message);}
     const products=(context?.products||[]).filter(p=>(p.eligibleGroupRefs||[]).some(r=>creativeRefs.includes(r))).map(p=>({id:p.id,title:p.title,url:p.url,handle:p.handle,offerIds:p.offerIds||[p.itemId].filter(Boolean),image:p.images?.[0]?.url||null,description:p.description||''}));
     const mapped=mapping(group,c.listingGroups||[],searchAds);if(group.channel==='search'&&group.mapping.status==='mixed')mapped.status='mixed';
     const strings=type=>links.filter(l=>l.fieldType===type&&l.text).map(l=>l.text);
@@ -56,7 +67,7 @@ function createGroupsService(D){
     const images=links.filter(a=>a.imageUrl).map(a=>({asset:a.asset,url:a.imageUrl,fieldType:a.fieldType}));
     const scopedProducts=unique([...(mapped.productIds||[]),...products.map(p=>productId(p.id))]);
     const exactScope=group.channel==='pmax'?mapped.exactOfferScope:mapped.handles.length>1&&mapped.urls.every(url=>destination(url)?.kind==='product')&&mapped.handles.every(h=>products.some(p=>destination(p.url)?.handle===h));
-    const splitAvailable=basis.snapshot.complete&&scopedProducts.length>1&&scopedProducts.length<=12&&exactScope&&products.length===scopedProducts.length;
+    const splitAvailable=!!basis.version&&!!basis.snapshotHash&&basis.snapshot.complete&&scopedProducts.length>1&&scopedProducts.length<=12&&exactScope&&products.length===scopedProducts.length;
     let splitProposals=[];if(D.fb&&D.COL){try{const saved=await D.fb().db.collection(D.COL.approvals).where('payload.meta.existingCampaignId','==',campaignId).limit(100).get();const owned=saved.docs.map(x=>({id:x.id,...x.data()}));for(const x of owned.filter(x=>x.status==='APPLIED'&&x.groupSplitPublication?.groups.some(g=>g.ref===ref))){if(D.linkDesignScopes)await D.linkDesignScopes({campaignId,sourceGroupRef:x.payload.groupSplitGuard.sourceGroupRef,groups:x.groupSplitPublication.groups});}splitProposals=owned.filter(x=>x.payload?.groupSplitGuard?.sourceGroupRef===ref&&['PENDING','APPROVED','APPLIED'].includes(x.status)).map(x=>({id:x.id,status:x.status,groups:x.payload.meta.assetGroups,publication:x.groupSplitPublication||null}));}catch(e){warnings.push('Saved splits: '+e.message);}}
     return {ok:true,group:{...group,mapping:mapped},products,copy,splitProposals,images,keywords,keywordStatus,creativeRef,range:report.range,currency:report.currency,timeZone:report.timeZone,basis:report.basis,warnings,sourceVersion:basis.version,snapshotHash:basis.snapshotHash,splitAvailable,splitReason:splitAvailable?null:group.channel==='search'?'Search groups can be split after each destination has a verified product and keyword plan.':!mapped.exactOfferScope?'Review exact Merchant offers before splitting a broad product filter.':products.length!==scopedProducts.length?'Load every linked listing before preparing a split.':scopedProducts.length>12?'Split this group in batches of up to 12 listings.':null};
   }
