@@ -55,6 +55,16 @@ if(require.main===module)(async()=>{
    ok(action.textLines.length===1,board.key+' action stays on one line');
 
  }
+ const fadePlan={...plan,style:{...plan.style,treatment:'soft-fade'},copy:{headline:'Sweet on Peach Charm',shortHeadline:'Peach Charm',description:'A gift for food lovers.',cta:'Shop Peach Charm'}};let fades=0;
+ for(const board of responsive.variants){e.board=board;await e.restore(responsive.document(fadePlan,photo,board,board.device));for(const o of e.canvas.getObjects())e.fitAIText(o);const fade=e.canvas.getObjects().find(o=>o.id==='ai_image_fade');if(!fade)continue;fades++;
+   const im=e.canvas.getObjects().find(o=>o.type==='image'),bounds=im.getBoundingRect(),subject={left:(photo.focus.x*photo.width-im.cropX)*im.scaleX,top:(photo.focus.y*photo.height-im.cropY)*im.scaleY,width:photo.focus.width*photo.width*im.scaleX,height:photo.focus.height*photo.height*im.scaleY};
+   ok(Math.abs(bounds.width-board.width)<1&&Math.abs(bounds.height-board.height)<1,'soft fade photograph fills '+board.key);
+   const text=e.canvas.getObjects().filter(o=>'text'in o||o.editorRole==='button');for(const o of text){const b=o.getBoundingRect();ok(!boxesOverlap(b,subject),'overlay does not cover product '+board.key);ok(b.left>=-1&&b.top>=-1&&b.left+b.width<=board.width+1&&b.top+b.height<=board.height+1,'overlay stays on artboard '+board.key);}
+   for(let i=0;i<text.length;i++)for(let j=i+1;j<text.length;j++)ok(!boxesOverlap(text[i].getBoundingRect(),text[j].getBoundingRect()),'soft fade text and CTA do not overlap '+board.key);
+   ok(fade.fill.colorStops.some(s=>s.opacity===0)&&fade.fill.colorStops.some(s=>s.opacity===1),'fade remains editable and smoothly transparent');
+ }
+ ok(fades>=6,'soft fade is the practical default across master formats');
+ const noFocus=responsive.document(fadePlan,{...photo,focus:null},{key:'square',width:2048,height:2048},'mobile');ok(!noFocus.objects.some(o=>o.id==='ai_image_fade'),'unlocated products retain safe framing instead of speculative overlays');
  const focused={id:'focus',width:1956,height:1024,focus:{x:.45,y:.70,width:.06,height:.16}};
  const small=responsive.document(plan,focused,{key:'display_300x50',width:300,height:50},'mobile').objects[0],large=responsive.document(plan,focused,{key:'square',width:2048,height:2048},'mobile').objects[0];
  ok(small.height<large.height,'small placements use a tighter source crop around the charm');

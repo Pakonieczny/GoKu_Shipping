@@ -8,11 +8,18 @@
   function selectImage(plan,images,board){const f=family(board);return images.find(i=>i.forFamilies?.includes(f))||images[0];}
   // Design at the actual viewing width, then export at the requested resolution.
   // A 2048px master must not turn a 36px CTA into a 6px mobile label.
-  const layoutVersion=11;
+  const layoutVersion=12;
   function document(plan,image,board,device="mobile"){
     const master=['square','landscape','portrait'].includes(board.key),factor=master?board.width/Math.min(board.width,device==='desktop'?600:360):1;
     const W=board.width/factor,H=board.height/factor,f=family(board),layout=(plan.layouts||[]).find(l=>l.family===f&&l.device===device)||(plan.layouts||[]).find(l=>l.family===f)||{},style={...plan.style},copy=plan.copy;
-    const rgb=style.background.match(/[a-f0-9]{2}/gi)?.map(x=>parseInt(x,16));if(rgb&&rgb[0]<90&&rgb[0]>=rgb[1]&&rgb[1]>=rgb[2])Object.assign(style,{background:'#F5F0E8',ink:'#34281E',accent:'#4B3825',buttonInk:'#FFF9F0',headlineFont:'Georgia'});
+    const rgb=style.background.match(/[a-f0-9]{2}/gi)?.map(x=>parseInt(x,16));if(style.treatment!=='soft-fade'&&rgb&&rgb[0]<90&&rgb[0]>=rgb[1]&&rgb[1]>=rgb[2])Object.assign(style,{background:'#F5F0E8',ink:'#34281E',accent:'#4B3825',buttonInk:'#FFF9F0',headlineFont:'Georgia'});
+    if(style.treatment==='soft-fade'){
+      const luminance=hex=>hex.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((n,v,i)=>n+v*[.2126,.7152,.0722][i],0);
+      const contrast=(a,b)=>(Math.max(luminance(a),luminance(b))+.05)/(Math.min(luminance(a),luminance(b))+.05);
+      // Preserve the chosen hue while making typography readable over its tonal fade.
+      const readable=(color,bg)=>{if(contrast(color,bg)>=4.5)return color;const rgb=color.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)),toward=luminance(bg)>.18?0:255;for(let n=1;n<=20;n++){const c='#'+rgb.map(v=>Math.round(v+(toward-v)*n/20).toString(16).padStart(2,'0')).join('');if(contrast(c,bg)>=4.5)return c;}return toward?'#ffffff':'#000000';};
+      style.ink=readable(style.ink,style.background);style.buttonInk=readable(style.buttonInk,style.accent);
+    }
     const base=(id,role,extra)=>({id:'ai_'+id,name:id,editorRole:role,originX:'left',originY:'top',angle:0,opacity:1,scaleX:1,scaleY:1,strokeWidth:0,...extra});
     const objects=[],margin=Math.max(3,Math.min(8,Math.min(W,H)*.03)),banner=f==='banner',narrow=f==='skyscraper';
     const typeScale=Math.max(1,Math.min(1.35,W/440)),description=copy.description.startsWith(copy.shortHeadline+'. ')?copy.description.slice(copy.shortHeadline.length+2):copy.description;
@@ -40,8 +47,37 @@
       objects.unshift(base('product_scene','photo',{type:'Image',sourceKey:image.id,left:placed.left,top:placed.top,width:cw,height:ch,cropX:cx,cropY:cy,scaleX:scale,scaleY:scale}));
       return placed;
     }
+    function softFade(){
+      const focus=image.focus,side=W/H>=1.3&&W>=300&&H>=160;
+      if(style.treatment!=='soft-fade'||banner||(!side&&!(W>=240&&H>=280||narrow&&W>=120&&H>=400))||!focus||!['x','y','width','height'].every(k=>Number.isFinite(focus[k]))||focus.width<=0||focus.height<=0)return false;
+      const pad=Math.max(6,Math.min(22,W*.045)),gap=Math.max(5,Math.min(12,H*.025));
+      const bw=Math.min(side?W*.42:W*.36,Math.max(96,copy.cta.length*7+20)),bh=Math.min(44,Math.max(32,H*.1));
+      const row=!side&&W>=320,tw=side?W*.47-pad*2:row?W-bw-pad*3:W-pad*2;
+      let headline=W<320?copy.shortHeadline:copy.headline,hs=side?Math.min(36,Math.max(22,W*.055)):Math.min(30,Math.max(19,W*.065));
+      if(lines(headline,tw,hs)>3)headline=copy.shortHeadline;
+      hs=Math.min(hs,tw/(Math.max(...headline.split(/\s+/).map(w=>w.length))*.67));
+      const hh=lines(headline,tw,hs)*hs*1.24,brand=W>=320,brandH=brand?16:0,bodySize=side?Math.min(18,W*.03):14;
+      const bodyH=lines(description,tw,bodySize)*bodySize*1.3,body=side&&bodyH<=H*.17&&brandH+hh+bodyH+bh+gap*4<H*.86;
+      const total=brandH+(brand?gap:0)+hh+(body?bodyH+gap:0)+(row?0:bh+gap),top=side?Math.max(pad,(H-total)/2):H-pad-Math.max(total,row?bh:0);
+      if(!side&&top<H*.55)return false;
+      const region=side?{left:W*.55,top:pad,width:W*.45-pad,height:H-pad*2}:{left:pad,top:pad,width:W-pad*2,height:top-pad*2};
+      const scale=Math.max(W/image.width,H/image.height,Math.min(region.width/(image.width*focus.width*1.22),region.height/(image.height*focus.height*1.22)));
+      const cw=W/scale,ch=H/scale,cx=clamp(image.width*(focus.x+focus.width/2)-(region.left+region.width/2)/scale,0,image.width-cw),cy=clamp(image.height*(focus.y+focus.height/2)-(region.top+region.height/2)/scale,0,image.height-ch);
+      const subject={left:(image.width*focus.x-cx)*scale,top:(image.height*focus.y-cy)*scale,width:image.width*focus.width*scale,height:image.height*focus.height*scale};
+      if(subject.left<region.left||subject.top<region.top||subject.left+subject.width>region.left+region.width||subject.top+subject.height>region.top+region.height)return false;
+      objects.push(base('product_scene','photo',{type:'Image',sourceKey:image.id,left:0,top:0,width:cw,height:ch,cropX:cx,cropY:cy,scaleX:scale,scaleY:scale}));
+      const stops=side?[[0,1],[.40,.98],[.55,0],[1,0]]:[[0,0],[Math.max(0,(subject.top+subject.height)/H),0],[top/H,.98],[1,1]];
+      objects.push(base('image_fade','shape',{type:'Rect',left:0,top:0,width:W,height:H,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:side?1:0,y2:side?0:1},colorStops:stops.map(([offset,opacity])=>({offset,color:style.background,opacity}))}}));
+      let y=top;if(brand){text('brand','BRITES JEWELRY',pad,y,tw,brandH,12,'brand');y+=brandH+gap;}
+      text('headline',headline,pad,y,tw,hh,hs,'headline',style.headlineFont);y+=hh+gap;
+      if(body){text('description',description,pad,y,tw,bodyH,bodySize,'description');y+=bodyH+gap;}
+      button(row?W-pad-bw:pad,row?H-pad-bh:y,Math.min(bw,tw),bh,copy.cta,Math.min(17,bh*.4));
+      return true;
+    }
     const compactHeadline=copy.shortHeadline;
-    if(banner){
+    if(softFade()){
+      // The photograph fills the artboard; the editable fade protects only the copy.
+    }else if(banner){
       const bw=Math.min(W*.26,Math.max(72,H*1.65)),bh=H<=60?H-6:Math.min(90,H*.72),bs=Math.min(28,Math.max(15,bh*.38));
       const pw=Math.min(W*.30,H*1.45),tx=pw+margin,tw=W-tx-bw-margin*3;
       photograph({left:0,top:0,width:pw,height:H});
