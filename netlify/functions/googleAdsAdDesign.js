@@ -91,6 +91,14 @@ function formatAssets(result,key){
   if(!assets.length&&result.assets&&result.assets[key])assets.push(result.assets[key]);
   return [...new Map(assets.map(a=>[a.hash,a])).values()];
 }
+function orderAssetGroupMutations(operations){
+  const groupOf=operation=>{const a=operation.assetGroupAssetOperation;if(!a)return null;if(a.create)return a.create.assetGroup;const match=/^(customers\/\d+)\/assetGroupAssets\/(\d+)~/.exec(a.remove||a.update?.resourceName||'');return match?match[1]+'/assetGroups/'+match[2]:null;};
+  const added=new Set(operations.filter(o=>o.assetGroupAssetOperation?.create).map(groupOf)),groups=new Map(),other=[];
+  for(const operation of operations){const group=groupOf(operation);if(group&&added.has(group)){if(!groups.has(group))groups.set(group,[]);groups.get(group).push(operation);}else other.push(operation);}
+  // Keep removals and additions for each replacement together, after asset
+  // creation. Splitting them lets Google validate an incomplete temporary set.
+  return other.concat(...groups.values());
+}
 function buildVersionDesignPayload({ workspaceId, jobId, workspace, group, product, result, customerId, selection={formats:FORMATS.map(f=>f.key),copy:true} }) {
   if(!Array.isArray(selection.formats)||selection.formats.some(k=>!FORMATS.some(f=>f.key===k))||!selection.formats.length&&!selection.copy)throw new Error('Choose an image format or messaging to approve.');
   if (result.publication && result.publication.ready === false) throw new Error(result.publication.reason || "Review the destination for these products before creating an approval.");
@@ -405,11 +413,30 @@ function createAdDesignService(deps) {
       for(const row of legacy.docs.map(d=>d.data()).filter(d=>productKey(d.productId)===productKey(productId)&&d.groupRef===groupRef))if(!designs.some(d=>d.id===row.id))designs.push({...row,revision:0,inheritedFrom:row.id,legacyWorkspaceId:legacyId});
       if(designs.some(d=>d.id===id))break;
     }
-    const own=designs.find(d=>d.id===id),shared=artboard&&device!=='shared'?designs.find(d=>d.id===editorKey({...input,device:'shared'})):null,design=own||shared||null;
+    const own=designs.find(d=>d.id===id),shared=artboard&&device!=='shared'?designs.find(d=>d.id===editorKey({...input,device:'shared'})):null;let design=own||shared||null;
+    // Rebuild missing artboards from the already-paid, applied semantic plan.
+    // An explicit saved design always wins; no saved layers are overwritten.
+    if(!design&&artboard&&require('../../brites-ad-responsive').boards.some(b=>b.key===artboard.key&&b.width===artboard.width&&b.height===artboard.height)){
+      const jobs=await ref.collection('editorAIJobs').get(),job=jobs.docs.map(d=>d.data()).filter(j=>j.phase==='ready'&&j.nativeAppliedAt&&!j.resetAt&&j.scope.productId===productId&&j.scope.groupRef===groupRef).sort((a,b)=>b.nativeAppliedAt-a.nativeAppliedAt)[0];
+      if(job){const saved=await ref.collection('editorAIJobs').doc(job.id).collection('data').doc('result').get(),result=saved.exists?saved.data():null;
+        if(result?.responsive){const engine=require('../../brites-ad-responsive'),{plan,images}=result.responsive,document=engine.document(plan,engine.selectImage(plan,images,artboard),artboard,device==='desktop'?'desktop':'mobile');
+          design={id,productId,groupRef,device,artboard,name:(result.sources?.[0]?.title||'Product ad')+' · '+artboard.key,document,sourceIds:editorDocument(document).sourceIds,revision:0,inheritedFrom:job.id,responsiveDraft:true};
+        }
+      }
+    }
     const sources=[];if(design)for(const key of design.sourceIds||[]){const p=await (design.legacyWorkspaceId?refFor(design.legacyWorkspaceId):ref).collection('editorSources').doc(key).get();if(!p.exists)throw new Error('A saved design image is unavailable. Your layers are retained.');const photo=p.data();if(productKey(photo.productId)!==productKey(productId)||photo.groupRef!==groupRef)throw new Error('The saved source belongs to another product or group.');if(design.legacyWorkspaceId)await ref.collection('editorSources').doc(key).set({...photo,productId});sources.push({...photo,url:await deps.signAsset(photo.asset)});}
     const exportRows=await ref.collection('editorExports').get(),exports=[];
     for(const row of exportRows.docs.map(d=>d.data()).filter(e=>!e.saveDesignId&&e.designId===(design&&design.id||id)).sort((a,b)=>b.createdAt-a.createdAt).slice(0,12))exports.push({...row,url:await deps.signAsset(row.asset),width:row.asset.width,height:row.asset.height});
     return {ok:true,...await savedDesignGallery(w),design:design?{...design,...(!own?{id,revision:0,inheritedFrom:design.id,device}:{})}:null,sources,exports,designs:designs.map(({id,name,device,artboard,revision,updatedAt})=>({id,name,device,artboard,revision,updatedAt}))};
+  }
+  async function editorResponsiveState(input={}){
+    const w=await read(input.workspaceId);editorScope(w,input);editorKey(input);
+    const ref=refFor(input.workspaceId),rows=await ref.collection('editorAIJobs').get(),job=rows.docs.map(d=>d.data()).filter(j=>j.phase==='ready'&&j.nativeAppliedAt&&!j.resetAt&&j.scope.productId===input.productId&&j.scope.groupRef===input.groupRef).sort((a,b)=>b.nativeAppliedAt-a.nativeAppliedAt)[0];
+    if(!job)throw new Error('No applied AI layout is saved for this product and group.');
+    const row=await ref.collection('editorAIJobs').doc(job.id).collection('data').doc('result').get(),result=row.exists?row.data():null;
+    if(!result?.responsive)throw new Error('The saved AI result has no responsive layout.');
+    const engine=require('../../brites-ad-responsive'),{plan,images}=result.responsive,document=engine.document(plan,engine.selectImage(plan,images,input.artboard),input.artboard,input.device==='desktop'?'desktop':'mobile');
+    return {ok:true,jobId:job.id,document,sources:await Promise.all(result.sources.map(async source=>({...source,url:await deps.signAsset(source.asset)})))};
   }
   async function editorSave(input={}){
     const {workspaceId,productId,groupRef,device,artboard,expectedRevision=0}=input,ref=refFor(workspaceId),w=await read(workspaceId);editorScope(w,input);
@@ -554,7 +581,7 @@ function createAdDesignService(deps) {
       quality=await paid('scene_quality',82,'Checking product fidelity and mobile clarity',async requestId=>deps.reviewImages(refs[0],files,{rationale:plan.rationale,copy:{headlines:[plan.copy.headline,plan.copy.shortHeadline],descriptions:[plan.copy.description]},keywords:product.keywords||[],product:{id:product.id,title:product.title},inputCoverage:{usedProductImages:refs.length}},refs,requestId,{...(raw.exists?{rawResponse:raw.data().response}:{}),onResponse:response=>saveData('scene_quality_response',{response})}));
     }
     await recordCost('scene_quality',quality);
-    if(quality.productFaithful!==true||quality.mobileReadable===false){
+    if(quality.productFaithful!==true||quality.mobileReadable===false||quality.pass!==true){
       // One bounded corrective image, with every paid response retained. The
       // first reference remains the authority for this variant's construction.
       const detailRefs=[...refs];
@@ -574,7 +601,7 @@ function createAdDesignService(deps) {
       const raw=await target.collection('data').doc('scene_repair_quality_response').get();if(job.inFlight?.key==='scene_repair_quality'&&raw.exists)await save({inFlight:null});
       quality=await paid('scene_repair_quality',88,'Checking the corrected jewelry and mobile framing',async requestId=>deps.reviewImages(refs[0],files,{rationale:plan.rationale,copy:{headlines:[plan.copy.headline],descriptions:[plan.copy.description]},keywords:product.keywords||[],product:{id:product.id,title:product.title},inputCoverage:{usedProductImages:detailRefs.length}},detailRefs,requestId,{...(raw.exists?{rawResponse:raw.data().response}:{}),onResponse:response=>saveData('scene_repair_quality_response',{response})}));await recordCost('scene_repair_quality',quality);
     }
-    if(quality.productFaithful!==true)throw new Error('The generated photo needs product-fidelity review: '+(quality.issues||[]).join(' '));
+    if(quality.productFaithful!==true||quality.pass!==true)throw new Error('The generated photo needs quality review: '+(quality.issues||[]).join(' '));
     await save({progress:{pct:91,label:'Adapting photo crops, headlines and buttons across 23 sizes'}});
     const publicationImages=[];
     for(const board of responsive.boards.slice(0,3)){
@@ -979,6 +1006,6 @@ function createAdDesignService(deps) {
       await saveJob({ phase: "needs_attention", error: String(error.message || error).slice(0, 900), leaseUntil: 0, progress: { pct: Number(job.progress && job.progress.pct) || 0, label: "Saved work retained — review the unfinished step" } }); throw error;
     }
   }
-  return { workspace, save, upload, crop, start, status, run, resetFailures, editorSource, editorState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorDeleteSavedDesign, deleteGeneratedImage, linkPublishedDesignScopes, linkPublishedWorkspaceGallery, editorAIStart, editorAIStatus, editorAIResume, editorAIRun, editorAIApply };
+  return { workspace, save, upload, crop, start, status, run, resetFailures, editorSource, editorState, editorResponsiveState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorDeleteSavedDesign, deleteGeneratedImage, linkPublishedDesignScopes, linkPublishedWorkspaceGallery, editorAIStart, editorAIStatus, editorAIResume, editorAIRun, editorAIApply };
 }
-module.exports = { createAdDesignService, buildVersionDesignPayload, isSharedProductGroup, researchGroupFor, formatAssets, chosenPlacements, placementMatches, FORMATS, settingsFor, refreshedSettings, responseText, MAX_UPLOAD };
+module.exports = { orderAssetGroupMutations, createAdDesignService, buildVersionDesignPayload, isSharedProductGroup, researchGroupFor, formatAssets, chosenPlacements, placementMatches, FORMATS, settingsFor, refreshedSettings, responseText, MAX_UPLOAD };

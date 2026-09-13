@@ -70,7 +70,7 @@ exports.handler = async (event) => {
     : ["anomaly", "monthly", "conversions", "adjustments", "measure", "mine", "prune", "budgets", "ceiling", "events", "pruneLedger"];
 
   // Draft work and explicit operator publication remain available with scheduled automation off.
-  const MANUAL_OR_DRAFT = new Set(["adDesignMotion", "adDesignEditorAI", "adDesign", "analyzeAd", "creativePrepare", "publishApproval", "scanOpportunities", "pmaxGenerate", "pmaxBackfillImages", "pmaxUpgradeAdStrength", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate", "designStudioScan", "designStudioGenerate", "designStudioAnalyze", "designStudioLearn"]); // publishApproval independently enforces exact operator approval
+  const MANUAL_OR_DRAFT = new Set(["adMotionPublication", "adDesignMotion", "adDesignEditorAI", "adDesign", "analyzeAd", "creativePrepare", "publishApproval", "scanOpportunities", "pmaxGenerate", "pmaxBackfillImages", "pmaxUpgradeAdStrength", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate", "designStudioScan", "designStudioGenerate", "designStudioAnalyze", "designStudioLearn"]); // publishApproval independently enforces exact operator approval
   const allReadOnly = tasks.every(t => MANUAL_OR_DRAFT.has(t));
 
   // HARD KILL SWITCH — blocks anything that could mutate. Read-only analysis still runs.
@@ -113,6 +113,7 @@ exports.handler = async (event) => {
           catch(e){log.push('Animation could not start: '+e.message);}
         }
       }
+      else if (task === 'adMotionPublication') {result.adMotionPublication=await E.runAdMotionPublication({workspaceId:body.workspaceId,jobId:body.jobId,productId:body.productId,groupRef:body.groupRef});}
       else if (task === 'adDesignMotion') {result.adDesignMotion=await E.runAdDesignMotion({workspaceId:body.workspaceId,jobId:body.jobId});if(result.adDesignMotion.continue)await continueMotion(result.adDesignMotion);} 
       else if (task === "adDesign") {
         result.adDesign=await E.runAdDesign({workspaceId:body.workspaceId,jobId:body.jobId});

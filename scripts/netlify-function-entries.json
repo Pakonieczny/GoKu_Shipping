@@ -266,9 +266,11 @@
     "googleAdsGeminiVideo.js",
     "googleAdsGroups.js",
     "googleAdsMerchantVersion.js",
+    "googleAdsMotionPublication.js",
     "googleAdsSalesEvidence.js",
     "googleAdsVersionReview.js",
     "googleAdsVersionSnapshots.js",
+    "googleAdsVideoUpload.js",
     "index.js",
     "usps.js"
   ]

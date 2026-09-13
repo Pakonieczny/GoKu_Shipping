@@ -1749,9 +1749,7 @@ async function applyApproval(id, ctrl) {
     // Preserve every approved byte and group. No late generic-copy injection,
     // auto-crop substitution or silent image dropping after the visual review.
     if(ops){
-      const attachments=ops.filter(o=>o.assetGroupAssetOperation&&o.assetGroupAssetOperation.create),other=ops.filter(o=>!(o.assetGroupAssetOperation&&o.assetGroupAssetOperation.create));
-      const grouped=new Map();attachments.forEach(o=>{const k=o.assetGroupAssetOperation.create.assetGroup;if(!grouped.has(k))grouped.set(k,[]);grouped.get(k).push(o);});
-      ops=other.concat(...grouped.values());
+      ops=require('./googleAdsAdDesign').orderAssetGroupMutations(ops);
       if(newNames.length&&!ctrl.dryRun)await mutateAll(ops,{ctrl,validateOnly:true,label:"validate-new-campaign:"+id});
       if(_isAdVersionApproval(it)&&!ctrl.dryRun){await mutateAll(ops,{ctrl,validateOnly:true,label:"validate-version:"+id});await _guardAdVersionApproval(it);}
       if(p.groupActivationGuard&&!ctrl.dryRun){await mutateAll(ops,{ctrl,validateOnly:true,label:"validate-product-switch:"+id});await _guardProductGroupActivation(it);}
@@ -9328,6 +9326,7 @@ async function saveAdDesign(input){return _designEngine().save(input);}
 async function cropAdDesignImage(input){return _designEngine().crop(input);}
 async function adDesignEditorSource(input){return _designEngine().editorSource(input);}
 async function adDesignEditorState(input){return _designEngine().editorState(input);}
+async function adDesignResponsiveState(input){return _designEngine().editorResponsiveState(input);}
 async function saveAdDesignEditor(input){return _designEngine().editorSave(input);}
 async function startAdDesignEditorAI(input){return _designEngine().editorAIStart(input);}
 async function adDesignEditorAIStatus(input){return _designEngine().editorAIStatus(input);}
@@ -9345,12 +9344,62 @@ function _motionEngine(){
   videoRequest:provider.request,videoContent:provider.content,
   saveVideo:async(id,bytes,kind,info={})=>{if(!/^[a-zA-Z0-9_-]+$/.test(id)||!/^[a-zA-Z0-9_-]+$/.test(kind))throw Error('Invalid video storage key.');const hash=creativeHash(bytes.toString('base64')),ext=info.mimeType==='image/jpeg'?'jpg':'mp4',path=`Brites_GAds_Motion/${id}/${kind}-${hash}.${ext}`,bucket=fb().admin.storage().bucket();await require('./googleAdsAdDesignAdapters').ensureCreativeCors(bucket);await bucket.file(path).save(bytes,{resumable:false,metadata:{contentType:info.mimeType||'video/mp4',cacheControl:'private,max-age=3600'}});return {path,hash,bytes:bytes.length,...info};},
   loadVideo:async a=>{if(!valid(a))throw Error('Invalid saved video.');const [bytes]=await fb().admin.storage().bucket().file(a.path).download();if(creativeHash(bytes.toString('base64'))!==a.hash)throw Error('The saved video changed.');return bytes;},
-  signVideo:async a=>{if(!valid(a))throw Error('Invalid video preview.');const [url]=await fb().admin.storage().bucket().file(a.path).getSignedUrl({action:'read',expires:Date.now()+6*3600000});return url;}
+  signVideo:async a=>{if(!valid(a))throw Error('Invalid video preview.');const [url]=await fb().admin.storage().bucket().file(a.path).getSignedUrl({version:'v4',action:'read',expires:Date.now()+6*3600000});return url;}
  });return _adMotionEngine;
 }
 async function startAdDesignMotion(input){return _motionEngine().start(input);}
 async function adDesignMotionStatus(input){return _motionEngine().status(input);}
 async function runAdDesignMotion(input){return _motionEngine().run(input);}
+
+let _motionPublicationEngine;
+function _motionPublication(){
+ if(_motionPublicationEngine)return _motionPublicationEngine;
+ _motionEngine();
+ const context=async workspaceId=>{const ref=_adDesignWorkspaceRef(workspaceId),s=await ref.get();if(!s.exists)throw Error('Design workspace was not found.');return {ref,w:s.data()};};
+ const assertTarget=async job=>{
+  if(!new RegExp('^customers/'+CID+'/assetGroups/\\d+$').test(job.groupRef)||!/^\d+$/.test(String(job.productId)))throw Error('Choose a product-specific Performance Max group.');
+  const {w,product,group}=await _adDesignPublicationContext(job.workspaceId);
+  if(w.archivedAt||String(product.id)!==String(job.productId)||group.ref!==job.groupRef||product.url!==job.destination||group.requiresProductSplit)throw Error('The product or group changed; refresh and review again.');
+  const ref=_gaqlString(job.groupRef),[groups,filters]=await Promise.all([
+   gaql(`SELECT campaign.id, campaign.status, asset_group.resource_name, asset_group.status, asset_group.final_urls FROM asset_group WHERE asset_group.resource_name = ${ref}`),
+   gaql(`SELECT asset_group_listing_group_filter.type, asset_group_listing_group_filter.case_value.product_item_id.value FROM asset_group_listing_group_filter WHERE asset_group_listing_group_filter.asset_group = ${ref}`)
+  ]);
+  const g=groups[0];if(groups.length!==1||String(g.campaign?.id)!==String(w.context.campaignId)||g.campaign?.status!=='PAUSED'||g.assetGroup?.status==='REMOVED'||g.assetGroup?.finalUrls?.length!==1||g.assetGroup.finalUrls[0]!==job.destination)throw Error('Video publication requires the exact product destination in a paused campaign.');
+  const rules=filters.map(r=>r.assetGroupListingGroupFilter),included=rules.filter(r=>r.type==='UNIT_INCLUDED');
+  if(rules.length!==3||included.length!==1||!new RegExp('^shopify_[a-z]{2}_'+job.productId+'_\\d+$','i').test(included[0].caseValue?.productItemId?.value||'')||rules.filter(r=>r.type==='SUBDIVISION').length!==1||rules.filter(r=>r.type==='UNIT_EXCLUDED'&&!r.caseValue?.productItemId?.value).length!==1)throw Error('Google product filters must isolate this exact product before video publication.');
+  return g;
+ };
+ const upload=require('./googleAdsVideoUpload').createVideoUpload({fetch,headers:async()=>adsHeaders(await mintToken()),customerId:CID,version:V});
+ _motionPublicationEngine=require('./googleAdsMotionPublication').createPublicationService({fb,context,assertTarget,...upload,
+  loadVideo:async a=>{if(!/^Brites_GAds_Motion\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+\.mp4$/.test(a.path||''))throw Error('Invalid saved video.');const [bytes]=await fb().admin.storage().bucket().file(a.path).download();if(creativeHash(bytes.toString('base64'))!==a.hash)throw Error('The reviewed video changed.');return bytes;},
+  uploadState:async resourceName=>{if(!new RegExp('^customers/'+CID+'/youTubeVideoUploads/\\d+$').test(resourceName))throw Error('Invalid Google upload receipt.');const rows=await gaql(`SELECT you_tube_video_upload.resource_name, you_tube_video_upload.video_id, you_tube_video_upload.state FROM you_tube_video_upload WHERE you_tube_video_upload.resource_name = ${_gaqlString(resourceName)}`);return rows[0]?.youTubeVideoUpload;},
+  attach:async(job,videos)=>{
+   await assertTarget(job);
+   const existing=await gaql(`SELECT asset_group_asset.resource_name, asset_group_asset.status, asset_group_asset.field_type, asset.youtube_video_asset.youtube_video_id FROM asset_group_asset WHERE asset_group_asset.asset_group = ${_gaqlString(job.groupRef)} AND asset_group_asset.field_type = 'YOUTUBE_VIDEO' AND asset_group_asset.status != 'REMOVED'`);
+   const missing=videos.filter(v=>!existing.some(r=>r.asset?.youtubeVideoAsset?.youtubeVideoId===v.videoId));
+   if(existing.length+missing.length>15)throw Error('This group already has videos. Review its fifteen-video limit before adding these three formats.');
+   if(!missing.length)return {reconciled:true};
+   const ops=missing.flatMap((v,i)=>{const asset=`customers/${CID}/assets/${-9000-i}`;return [{assetOperation:{create:{resourceName:asset,name:job.title.slice(0,80)+' '+v.key,youtubeVideoAsset:{youtubeVideoId:v.videoId}}}},{assetGroupAssetOperation:{create:{assetGroup:job.groupRef,asset,fieldType:'YOUTUBE_VIDEO'}}}];});
+   const ordered=require('./googleAdsAdDesign').orderAssetGroupMutations(ops);
+   await mutateAll(ordered,{validateOnly:true,label:'Validate reviewed product videos'});
+   await assertTarget(job);
+   return mutateAll(ordered,{validateOnly:false,label:'Attach reviewed product videos '+job.id});
+  },
+  verify:async(job,videos)=>{
+   const ref=_gaqlString(job.groupRef),[rows,groups,metrics]=await Promise.all([
+    gaql(`SELECT asset_group_asset.resource_name, asset_group_asset.status, asset_group_asset.field_type, asset_group_asset.primary_status, asset_group_asset.primary_status_reasons, asset_group_asset.policy_summary.approval_status, asset_group_asset.policy_summary.review_status, asset_group_asset.policy_summary.policy_topic_entries, asset.youtube_video_asset.youtube_video_id FROM asset_group_asset WHERE asset_group_asset.asset_group = ${ref} AND asset_group_asset.field_type = 'YOUTUBE_VIDEO' AND asset_group_asset.status != 'REMOVED'`),
+    gaql(`SELECT campaign.status, asset_group.resource_name, asset_group.status, asset_group.primary_status, asset_group.final_urls FROM asset_group WHERE asset_group.resource_name = ${ref}`),
+    gaql(`SELECT asset_group_asset.resource_name, asset_group_asset.field_type, asset.youtube_video_asset.youtube_video_id, metrics.impressions FROM asset_group_asset WHERE asset_group_asset.asset_group = ${ref} AND asset_group_asset.field_type = 'YOUTUBE_VIDEO' AND segments.date DURING LAST_30_DAYS`)
+   ]);
+   const assets=videos.map(v=>{const r=rows.find(r=>r.asset?.youtubeVideoAsset?.youtubeVideoId===v.videoId),l=r?.assetGroupAsset;return {key:v.key,videoId:v.videoId,linked:!!l,resourceName:l?.resourceName||null,primaryStatus:l?.primaryStatus||null,reasons:l?.primaryStatusReasons||[],policy:l?.policySummary||null,impressions:metrics.filter(m=>m.asset?.youtubeVideoAsset?.youtubeVideoId===v.videoId).reduce((n,m)=>n+Number(m.metrics?.impressions||0),0)};});
+   return {checkedAt:Date.now(),campaignStatus:groups[0]?.campaign?.status||null,groupStatus:groups[0]?.assetGroup?.primaryStatus||null,destinationMatches:groups[0]?.assetGroup?.finalUrls?.length===1&&groups[0].assetGroup.finalUrls[0]===job.destination,assets,allLinked:assets.every(a=>a.linked),policyApproved:assets.every(a=>a.linked&&a.policy?.approvalStatus==='APPROVED'),allVideosHaveImpressions:assets.every(a=>a.impressions>0),note:'Google selects formats and native controls by placement. Device labels do not force delivery; policy approval does not guarantee impressions.'};
+  }
+ });return _motionPublicationEngine;
+}
+async function startAdMotionPublication(input){return _motionPublication().start(input);}
+async function runAdMotionPublication(input){return _motionPublication().run(input);}
+async function verifyAdMotionPublication(input){return _motionPublication().verify(input);}
+
 async function exportAdDesignEditor(input){return _designEngine().editorExport(input);}
 async function adDesignSavedDesigns(input){return _designEngine().editorSavedDesigns(input);}
 async function openAdDesignSavedDesign(input){return _designEngine().editorOpenSavedDesign(input);}
@@ -9698,7 +9747,7 @@ async function runAnalyzeAd(input) { return _analysisEngine().runAnalyzeAd(input
 
 module.exports = {
   adGroups, adGroupDetail, draftAdGroupSplit, draftAdGroupActivation,
-  startAdDesignMotion, adDesignMotionStatus, runAdDesignMotion, adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, cropAdDesignImage, adDesignEditorSource, adDesignEditorState, saveAdDesignEditor, startAdDesignEditorAI, adDesignEditorAIStatus, resumeAdDesignEditorAI, applyAdDesignEditorScene, runAdDesignEditorAI, exportAdDesignEditor, adDesignSavedDesigns, openAdDesignSavedDesign, deleteAdDesignSavedDesign, deleteAdDesignGeneratedImage, adDesignGooglePreview, uploadAdDesignReference, resetAdDesignFailures, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages, adDesignGalleryPage, saveAdDesignCopy, adDesignDelivery, prepareAdDesignPublication, publishAdDesignPublication,
+  startAdMotionPublication, runAdMotionPublication, verifyAdMotionPublication, startAdDesignMotion, adDesignMotionStatus, runAdDesignMotion, adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, cropAdDesignImage, adDesignEditorSource, adDesignEditorState, adDesignResponsiveState, saveAdDesignEditor, startAdDesignEditorAI, adDesignEditorAIStatus, resumeAdDesignEditorAI, applyAdDesignEditorScene, runAdDesignEditorAI, exportAdDesignEditor, adDesignSavedDesigns, openAdDesignSavedDesign, deleteAdDesignSavedDesign, deleteAdDesignGeneratedImage, adDesignGooglePreview, uploadAdDesignReference, resetAdDesignFailures, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages, adDesignGalleryPage, saveAdDesignCopy, adDesignDelivery, prepareAdDesignPublication, publishAdDesignPublication,
   reviseCreativeApproval, markApprovalApproved, needsCreativeReview, prepareCreativeApproval, creativeApprovalStatus, reviewCreativeApproval, assertCreativeReviewed, creativeHash,
   COL, V, CID, OPPORTUNITY_ENGINE_VERSION, DESIGN_STUDIO_ENGINE_VERSION, DESIGN_STUDIO_URL,
   control, mintToken, gaql, mutate, mutateAll,

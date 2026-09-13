@@ -116,7 +116,7 @@ async function handleAction(body) {
   const ctrl = await E.control();
   if (a === "dashboard") return await E.dashboard();
   if (a === "pmaxRecommendationEvidence") { try { return await E.pmaxRecommendationEvidence(body); } catch(e) { return {ok:false,error:e.message}; } }
-  if (["adGroups", "adGroupDetail", "draftAdGroupSplit", "draftAdGroupActivation", "adDesignWorkspace", "saveAdDesign", "cropAdDesignImage", "adDesignEditorSource", "adDesignEditorState", "adDesignMotionStatus", "saveAdDesignEditor", "applyAdDesignEditorScene", "exportAdDesignEditor", "adDesignSavedDesigns", "openAdDesignSavedDesign", "deleteAdDesignSavedDesign", "deleteAdDesignGeneratedImage", "adDesignGooglePreview", "uploadAdDesignReference", "adDesignProductImages", "adDesignGalleryPage", "adDesignStatus", "resetAdDesignFailures", "saveAdDesignCopy", "adDesignDelivery", "prepareAdDesignPublication", "publishAdDesignPublication"].includes(a)) {
+  if (["adGroups", "adGroupDetail", "draftAdGroupSplit", "draftAdGroupActivation", "adDesignWorkspace", "saveAdDesign", "cropAdDesignImage", "adDesignEditorSource", "adDesignEditorState", "adDesignResponsiveState", "adDesignMotionStatus", "verifyAdMotionPublication", "saveAdDesignEditor", "applyAdDesignEditorScene", "exportAdDesignEditor", "adDesignSavedDesigns", "openAdDesignSavedDesign", "deleteAdDesignSavedDesign", "deleteAdDesignGeneratedImage", "adDesignGooglePreview", "uploadAdDesignReference", "adDesignProductImages", "adDesignGalleryPage", "adDesignStatus", "resetAdDesignFailures", "saveAdDesignCopy", "adDesignDelivery", "prepareAdDesignPublication", "publishAdDesignPublication"].includes(a)) {
     try { return await E[a](body); } catch(e) { return {ok:false,error:e.message}; }
   }
   if (a === "startAdDesign") {
@@ -125,6 +125,9 @@ async function handleAction(body) {
       if(out.queued) await dispatchTask("adDesign",{workspaceId:out.workspaceId,jobId:out.jobId});
       return out;
     } catch(e) { return {ok:false,error:e.message}; }
+  }
+  if (a === 'startAdMotionPublication') {
+    try {const out=await E.startAdMotionPublication(body);if(out.queued)await dispatchTask('adMotionPublication',{workspaceId:out.workspaceId,jobId:out.jobId,productId:out.productId,groupRef:out.groupRef});return out;}catch(e){return {ok:false,error:e.message};}
   }
   if (a === 'startAdDesignMotion') {
     try { const out=await E.startAdDesignMotion({...body,fromEditorWorker:false});if(out.queued)await dispatchTask('adDesignMotion',{workspaceId:out.workspaceId,jobId:out.jobId});return out; } catch(e){return {ok:false,error:e.message};}
