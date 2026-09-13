@@ -454,7 +454,15 @@ function _snapshotConfirmsMutation(snapshot, ops, real) {
     }
     if(op.create&&/adGroupAssetOperation|^adGroupAssets$/.test(type)){const row=resolve(op.create);return (c.searchImageLinks||[]).some(link=>link.adGroup===row.adGroup&&link.asset===row.asset&&link.fieldType===row.fieldType&&(!row.status||link.status===row.status));}
     if (op.create && /assetGroupListingGroupFilterOperation|^assetGroupListingGroupFilters$/.test(type)) {
-      const row = resolve(op.create); return c.listingGroups.some(link => link.resourceName === row.resourceName && link.type === row.type && (link.parentListingGroupFilter || null) === (row.parentListingGroupFilter || null) && same(link.caseValue || null, row.caseValue || null));
+      // Google reports Shopify offer prefixes/country codes in lowercase.
+      // Preserve the recorded payload and numeric product/variant identity;
+      // normalize only this known Shopify ID shape for receipt comparison.
+      const rule = value => {
+        const item = value && value.productItemId && value.productItemId.value;
+        return typeof item === 'string' && /^shopify_[a-z]{2}_\d+_\d+$/i.test(item)
+          ? { ...value, productItemId: { ...value.productItemId, value: item.toLowerCase() } } : value || null;
+      };
+      const row = resolve(op.create); return c.listingGroups.some(link => link.resourceName === row.resourceName && link.assetGroup === row.assetGroup && link.type === row.type && link.listingSource === row.listingSource && (link.parentListingGroupFilter || null) === (row.parentListingGroupFilter || null) && same(rule(link.caseValue), rule(row.caseValue)));
     }
     if (op.create && /adGroupCriterionOperation|^adGroupCriteria$|campaignCriterionOperation|^campaignCriteria$/.test(type) && op.create.keyword) {
       const row = resolve(op.create); return [...c.keywords, ...c.campaignNegatives].some(link => (link.adGroup || link.campaign) === (row.adGroup || row.campaign) && !!link.negative === !!row.negative && same(link.keyword, row.keyword));
@@ -632,7 +640,7 @@ async function _observeCampaignCreative(id) {
     read("Product choices", `SELECT asset_group_listing_group_filter.resource_name, asset_group_listing_group_filter.type, ${_VERSION_LISTING_DIMENSIONS} FROM asset_group_listing_group_filter WHERE ${filter}`)
   ];
   jobs.push(read("Campaign negatives", `SELECT campaign_criterion.resource_name, campaign_criterion.keyword.text, campaign_criterion.keyword.match_type FROM campaign_criterion WHERE ${filter} AND campaign_criterion.negative = TRUE AND campaign_criterion.type = 'KEYWORD' AND campaign_criterion.status != 'REMOVED'`));
-  jobs.push(read("Campaign images and extensions", `SELECT campaign_asset.resource_name, campaign_asset.field_type, asset.text_asset.text, asset.sitelink_asset.link_text, asset.sitelink_asset.description1, asset.sitelink_asset.description2, asset.callout_asset.callout_text FROM campaign_asset WHERE ${filter} AND campaign_asset.status != 'REMOVED'`));
+  jobs.push(read("Campaign images and extensions", `SELECT campaign.id, campaign_asset.resource_name, campaign_asset.field_type, campaign_asset.status, asset.text_asset.text, asset.sitelink_asset.link_text, asset.sitelink_asset.description1, asset.sitelink_asset.description2, asset.callout_asset.callout_text FROM campaign_asset WHERE ${filter} AND campaign_asset.status != 'REMOVED'`));
   if (channel === "SEARCH") jobs.push(read("Ad group images and extensions", `SELECT ad_group_asset.resource_name, ad_group_asset.field_type FROM ad_group_asset WHERE ${filter} AND ad_group_asset.status != 'REMOVED'`));
   let snapshot = null;
   jobs.push(_captureCampaignEditableSnapshot(id).then(value => { snapshot = value; warnings.push(...value.warnings); }).catch(error => { warnings.push("Editable settings could not be saved: " + String(error.message || error).slice(0, 200)); }));
@@ -647,6 +655,20 @@ async function campaignVersions({ id, beforeVersion } = {}) {
   const ref = _campaignVersionRef(f, id); let snap = await ref.get(), current = snap.exists ? snap.data() : null, warnings = [];
   try {
     const observed = await _observeCampaignCreative(id); warnings = observed.warnings;
+    if (current && current.snapshotExpectedMutation && observed.snapshot && observed.snapshot.complete) {
+      const pending = current.snapshotExpectedMutation, aliases = new Map(Object.entries(pending.aliases || {}));
+      const real = value => aliases.get(value) || value;
+      const missing = (pending.operations || []).filter(op => !_snapshotConfirmsMutation(observed.snapshot, [op], real));
+      for (const { type, op } of missing.slice(0, 8)) {
+        const expected = op.create || op.update || {}, target = real(expected.resourceName || op.remove || expected.assetGroup || expected.adGroup || '');
+        let detail = '';
+        if (/assetGroupListingGroupFilterOperation|^assetGroupListingGroupFilters$/.test(type)) {
+          const reported = observed.snapshot.components.listingGroups.find(row => row.resourceName === target);
+          detail = reported ? ' Expected rule ' + JSON.stringify(expected.caseValue || null) + '; reported rule ' + JSON.stringify(reported.caseValue || null) + '.' : ' The rule is not present in the current report.';
+        }
+        warnings.push('Publication reconciliation: ' + type + ' ' + target + ' is not confirmed.' + detail);
+      }
+    }
     if (!current) {
       current = await _appendCampaignVersion(id, { source: "observed", baseline: true, summary: "Current settings recorded; earlier edit history is unavailable.",
         categories: observed.categories, changes: [], observedFingerprints: observed.fingerprints, observedAt: Date.now(), ..._snapshotVersionFields(observed.snapshot) }, "baseline", 0);
@@ -675,9 +697,9 @@ async function campaignVersions({ id, beforeVersion } = {}) {
 }
 async function _verifiedCampaignAnalysisBasis({ campaignId, expectedVersion, snapshotHash } = {}) {
   campaignId = String(campaignId || ""); if (!/^\d+$/.test(campaignId)) throw new Error("Invalid campaign ID.");
-  await campaignVersions({ id: campaignId });
+  const history = await campaignVersions({ id: campaignId });
   const f = fb(), s = await _campaignVersionRef(f, campaignId).get(), current = s.exists && s.data();
-  if (!current || !current.snapshotHash || !current.editableSnapshot || !current.editableSnapshot.complete) throw new Error("A complete current version could not be captured. Refresh version history before analyzing or restoring this ad.");
+  if (!current || !current.snapshotHash || !current.editableSnapshot || !current.editableSnapshot.complete) throw new Error("A complete current version could not be captured. Refresh version history before analyzing or restoring this ad." + (history.warnings.length ? ' ' + history.warnings.join(' ').slice(0, 1600) : ''));
   if (expectedVersion != null && Number(expectedVersion) !== Number(current.version)) throw new Error("This ad changed after you opened it. Refresh and analyze the current version.");
   if (snapshotHash != null && String(snapshotHash) !== current.snapshotHash) throw new Error("The current ad settings no longer match the selected analysis. Refresh before continuing.");
   return _guardCampaignVersion({ campaignId, expectedVersion: current.version, snapshotHash: current.snapshotHash });
