@@ -8,7 +8,7 @@
   function selectImage(plan,images,board){const f=family(board);return images.find(i=>i.forFamilies?.includes(f))||images[0];}
   // Design at the actual viewing width, then export at the requested resolution.
   // A 2048px master must not turn a 36px CTA into a 6px mobile label.
-  const layoutVersion=10;
+  const layoutVersion=11;
   function document(plan,image,board,device="mobile"){
     const master=['square','landscape','portrait'].includes(board.key),factor=master?board.width/Math.min(board.width,device==='desktop'?600:360):1;
     const W=board.width/factor,H=board.height/factor,f=family(board),layout=(plan.layouts||[]).find(l=>l.family===f&&l.device===device)||(plan.layouts||[]).find(l=>l.family===f)||{},style={...plan.style},copy=plan.copy;
@@ -30,7 +30,7 @@
     // Legacy unlocated photographs keep their conservative framing until located.
     function photograph(frame){
       const focus=image.focus,valid=focus&&['x','y','width','height'].every(k=>Number.isFinite(focus[k]))&&focus.width>0&&focus.height>0;
-      const small=Math.min(frame.width,frame.height)<=100,padding=small?1.22:1.62;
+      const small=Math.min(frame.width,frame.height)<=100,padding=small?1.22:narrow?1.35:1.62;
       const cover=Math.max(frame.width/image.width,frame.height/image.height);
       const safeWidth=image.width/image.height>1.3?image.width*.30:image.width;
       const scale=valid?Math.max(cover,Math.min(frame.width/(image.width*focus.width*padding),frame.height/(image.height*focus.height*padding))):Math.min(cover,frame.width/safeWidth);
