@@ -61,8 +61,9 @@ if(require.main===module)(async()=>{
    ok(Math.abs(bounds.width-board.width)<1&&Math.abs(bounds.height-board.height)<1,'soft fade photograph fills '+board.key);
    const text=e.canvas.getObjects().filter(o=>'text'in o||o.editorRole==='button');for(const o of text){const b=o.getBoundingRect();ok(!boxesOverlap(b,subject),'overlay does not cover product '+board.key);ok(b.left>=-1&&b.top>=-1&&b.left+b.width<=board.width+1&&b.top+b.height<=board.height+1,'overlay stays on artboard '+board.key);}
    for(let i=0;i<text.length;i++)for(let j=i+1;j<text.length;j++)ok(!boxesOverlap(text[i].getBoundingRect(),text[j].getBoundingRect()),'soft fade text and CTA do not overlap '+board.key);
-   ok(fade.fill.colorStops.some(s=>s.opacity===0)&&fade.fill.colorStops.some(s=>s.opacity===1),'fade remains editable and smoothly transparent');
+   ok(fade.fill.colorStops.some(s=>new w.fabric.Color(s.color).getAlpha()===0)&&fade.fill.colorStops.some(s=>new w.fabric.Color(s.color).getAlpha()===1),'fade remains editable and smoothly transparent');
  }
+ const fadeProofs=await e.renderAIProofs({artboard:{key:'square',width:2048,height:2048},device:'mobile',document:responsive.document(fadePlan,photo,{key:'square',width:2048,height:2048},'mobile'),sources:[photo],responsive:{layoutVersion:responsive.layoutVersion,plan:fadePlan,images:[photo]}});ok(fadeProofs.length===27,'fade proofs retain visible photograph pixels in every size');
  ok(fades>=6,'soft fade is the practical default across master formats');
  const noFocus=responsive.document(fadePlan,{...photo,focus:null},{key:'square',width:2048,height:2048},'mobile');ok(!noFocus.objects.some(o=>o.id==='ai_image_fade'),'unlocated products retain safe framing instead of speculative overlays');
  const focused={id:'focus',width:1956,height:1024,focus:{x:.45,y:.70,width:.06,height:.16}};
