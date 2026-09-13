@@ -67,14 +67,29 @@ function createGroupsService(D){
     const images=links.filter(a=>a.imageUrl).map(a=>({asset:a.asset,url:a.imageUrl,fieldType:a.fieldType}));
     const scopedProducts=unique([...(mapped.productIds||[]),...products.map(p=>productId(p.id))]);
     const exactScope=group.channel==='pmax'?mapped.exactOfferScope:mapped.handles.length>1&&mapped.urls.every(url=>destination(url)?.kind==='product')&&mapped.handles.every(h=>products.some(p=>destination(p.url)?.handle===h));
-    const splitAvailable=!!basis.version&&!!basis.snapshotHash&&basis.snapshot.complete&&scopedProducts.length>1&&scopedProducts.length<=12&&exactScope&&products.length===scopedProducts.length;
+    const missingListings=products.filter(p=>destination(p.url)?.kind!=='product'||!p.title||/^Product \d+$/i.test(p.title));
+    const splitAvailable=!!basis.version&&!!basis.snapshotHash&&basis.snapshot.complete&&scopedProducts.length>1&&scopedProducts.length<=12&&exactScope&&products.length===scopedProducts.length&&!missingListings.length;
     let splitProposals=[];if(D.fb&&D.COL){try{const saved=await D.fb().db.collection(D.COL.approvals).where('payload.meta.existingCampaignId','==',campaignId).limit(100).get();const owned=saved.docs.map(x=>({id:x.id,...x.data()}));for(const x of owned.filter(x=>x.status==='APPLIED'&&x.groupSplitPublication?.groups.some(g=>g.ref===ref))){if(D.linkDesignScopes)await D.linkDesignScopes({campaignId,sourceGroupRef:x.payload.groupSplitGuard.sourceGroupRef,groups:x.groupSplitPublication.groups});}splitProposals=owned.filter(x=>x.payload?.groupSplitGuard?.sourceGroupRef===ref&&['PENDING','APPROVED','APPLIED'].includes(x.status)).map(x=>({id:x.id,status:x.status,groups:x.payload.meta.assetGroups,publication:x.groupSplitPublication||null}));}catch(e){warnings.push('Saved splits: '+e.message);}}
-    return {ok:true,group:{...group,mapping:mapped},products,copy,splitProposals,images,keywords,keywordStatus,creativeRef,range:report.range,currency:report.currency,timeZone:report.timeZone,basis:report.basis,warnings,sourceVersion:basis.version,snapshotHash:basis.snapshotHash,splitAvailable,splitReason:splitAvailable?null:group.channel==='search'?'Search groups can be split after each destination has a verified product and keyword plan.':!mapped.exactOfferScope?'Review exact Merchant offers before splitting a broad product filter.':products.length!==scopedProducts.length?'Load every linked listing before preparing a split.':scopedProducts.length>12?'Split this group in batches of up to 12 listings.':null};
+    return {ok:true,group:{...group,mapping:mapped},products,copy,splitProposals,images,keywords,keywordStatus,creativeRef,range:report.range,currency:report.currency,timeZone:report.timeZone,basis:report.basis,warnings,sourceVersion:basis.version,snapshotHash:basis.snapshotHash,splitAvailable,splitReason:splitAvailable?null:missingListings.length?'Restore a verified listing title and product destination for '+missingListings.map(p=>p.title||productId(p.id)).join(', ')+'. No substitute product will be used.':group.channel==='search'?'Search groups can be split after each destination has a verified product and keyword plan.':!mapped.exactOfferScope?'Review exact Merchant offers before splitting a broad product filter.':products.length!==scopedProducts.length?'Load every linked listing before preparing a split.':scopedProducts.length>12?'Split this group in batches of up to 12 listings.':null};
   }
   async function draftSplit(input={}){
     const d=await detail({...input,force:true});if(!d.splitAvailable)throw Error(d.splitReason||'This group does not need a product split.');
     if(input.snapshotHash!==d.snapshotHash||input.expectedVersion!==d.sourceVersion)throw Error('The group changed. Refresh before preparing its split.');
     const existing=(d.splitProposals||[]).find(p=>['PENDING','APPROVED','APPLIED'].includes(p.status));if(existing)return {ok:true,approvalId:existing.id,groups:existing.groups,source:d.group,cached:true};
+    // A previously deleted/rejected proposal is immutable history. An explicit
+    // new preparation gets a new identity instead of reporting a closed ID saved.
+    let designId=hash([d.group.ref,d.snapshotHash,'split']).slice(0,32);
+    if(D.fb&&D.COL){
+      for(let attempt=0;attempt<10;attempt++){
+        const prior=await D.fb().db.collection(D.COL.approvals).doc('split-'+designId).get();
+        if(!prior.exists)break;const row=prior.data();
+        if(row.payload?.groupSplitGuard?.sourceGroupRef!==d.group.ref)throw Error('The existing split identity does not match this group.');
+        if(!row.deletedAt&&!row.archivedAt&&['PENDING','APPROVED','APPLIED'].includes(row.status))return {ok:true,approvalId:prior.id,groups:row.payload.meta.assetGroups,source:d.group,cached:true};
+        if(!['REJECTED','CANCELLED'].includes(row.status)&&!row.deletedAt&&!row.archivedAt)throw Error('Reconcile the previous product split before preparing another.');
+        if(attempt===9)throw Error('Too many closed split versions. Review their history before preparing another.');
+        designId=hash([designId,row.status,row.deletedAt||row.archivedAt||null,'new review']).slice(0,32);
+      }
+    }
     const source=d.group,ops=[],groups=[];let n=0;
     for(const p of d.products){
       const offers=source.mapping.itemIds.filter(x=>offerParts(x)?.productId===productId(p.id));if(source.channel==='pmax'&&!offers.length)throw Error('A product has no exact offer in this group.');
@@ -84,7 +99,7 @@ function createGroupsService(D){
       const part=remap(built.ops.filter(o=>['assetOperation','assetGroupOperation','assetGroupAssetOperation','assetGroupListingGroupFilterOperation','assetGroupSignalOperation','adGroupOperation','adGroupAdOperation','adGroupCriterionOperation'].includes(Object.keys(o)[0])));
       const g=source.channel==='pmax'?part.find(o=>o.assetGroupOperation)?.assetGroupOperation.create:part.find(o=>o.adGroupOperation)?.adGroupOperation.create;if(!g)throw Error('Product group could not be prepared.');g.campaign='customers/'+D.CID+'/campaigns/'+source.campaignId;g.status='PAUSED';g.name=('Product · '+p.title).slice(0,128);ops.push(...part);groups.push({name:g.name,ref:g.resourceName,productId:p.id,itemIds:offers,url:p.url});n++;
     }
-    const meta={channel:source.channel,kind:'productGroupSplit',operation:'productGroupSplit',existingCampaignId:source.campaignId,sourceGroupRef:source.ref,sourceGroupName:source.name,sourceVersion:d.sourceVersion,snapshotHash:d.snapshotHash,assetGroups:groups,productTitles:d.products.map(p=>p.title),sourceProducts:undefined,adDesignId:hash([source.ref,d.snapshotHash,'split']).slice(0,32)};
+    const meta={channel:source.channel,kind:'productGroupSplit',operation:'productGroupSplit',existingCampaignId:source.campaignId,sourceGroupRef:source.ref,sourceGroupName:source.name,sourceVersion:d.sourceVersion,snapshotHash:d.snapshotHash,assetGroups:groups,productTitles:d.products.map(p=>p.title),sourceProducts:undefined,adDesignId:designId};
     delete meta.sourceProducts;
     const approvalId=await D.enqueueApproval({type:source.channel==='pmax'?'pmax':'creative',summary:'Split '+source.name+' into '+groups.length+' product groups',payload:{mutateOperations:ops,meta,groupSplitGuard:{campaignId:source.campaignId,expectedVersion:d.sourceVersion,snapshotHash:d.snapshotHash,sourceGroupRef:source.ref,channel:source.channel},countries:[]}}, {id:'split-'+meta.adDesignId});
     return {ok:true,approvalId,groups,source,summary:'New groups start paused. The current group and campaign budget stay unchanged.'};

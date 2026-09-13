@@ -25,9 +25,18 @@ const D={CID:'123',reportContext:async()=>({budgetCurrency:'CAD',accountToday:'2
  check(group.metrics.spend===12&&group.metrics.impressions===1200&&index.currency==='CAD','group report keeps native currency and exact group metrics');check(index.groups.find(g=>g.ref===other).metrics.spend===0,'a group without impressions is a genuine zero only after a successful report');
  metricFailure=true;const failed=await api.index({force:true});check(failed.groups.find(g=>g.ref===ref).metrics===null,'failed metrics never fall back to campaign totals or zero');metricFailure=false;
  const detail=await api.detail({campaignId:'42',groupRef:ref,force:true});check(detail.products.length===2&&detail.splitAvailable,'verified mixed group offers a reviewed split');check(detail.copy[0].headlines.length===1&&detail.keywords[0].text==='necklace gifts','current messaging and search themes are scoped to this group');
+ const missingApi=createGroupsService({...D,loadContext:async()=>({products:[products[0],{...products[1],title:'Product 20',url:''}]})});
+ const missing=await missingApi.detail({campaignId:'42',groupRef:ref});check(!missing.splitAvailable&&missing.splitReason.includes('Product 20'),'unresolved listing cannot masquerade as verified split');
+ await assert.rejects(()=>missingApi.draftSplit({campaignId:'42',groupRef:ref,expectedVersion:3,snapshotHash:'a'.repeat(64)}),/verified listing/);n++;
  await assert.rejects(()=>api.detail({campaignId:'42',groupRef:'customers/999/assetGroups/7'}),/account/);n++;
  await assert.rejects(()=>api.draftSplit({campaignId:'42',groupRef:ref,expectedVersion:2,snapshotHash:'a'.repeat(64)}),/changed/);n++;
  const split=await api.draftSplit({campaignId:'42',groupRef:ref,expectedVersion:3,snapshotHash:'a'.repeat(64)});check(split.groups.length===2&&draft.payload.groupSplitGuard.sourceGroupRef===ref,'split proposal retains the current source guard');
+ const originalDraft=clone(draft),oldId='split-'+draft.payload.meta.adDesignId;let replacementId;
+ const closed={status:'REJECTED',deletedAt:1,payload:clone(draft.payload)};
+ const closedStore={where:()=>({limit:()=>({get:async()=>({docs:[]})})}),doc:id=>({get:async()=>({exists:id===oldId,id,data:()=>closed})})};
+ const closedApi=createGroupsService({...D,COL:{approvals:'Approvals'},fb:()=>({db:{collection:()=>closedStore}}),enqueueApproval:async(item,{id})=>{replacementId=id;draft=item;return id;}});
+ await closedApi.draftSplit({campaignId:'42',groupRef:ref,expectedVersion:3,snapshotHash:'a'.repeat(64)});check(replacementId!==oldId&&closed.status==='REJECTED'&&closed.deletedAt===1,'explicit new split preserves closed history and creates a reviewable identity');
+ const stableId=replacementId;await closedApi.draftSplit({campaignId:'42',groupRef:ref,expectedVersion:3,snapshotHash:'a'.repeat(64)});check(replacementId===stableId,'concurrent repeated preparation remains idempotent');draft=originalDraft;
  const ops=draft.payload.mutateOperations,groups=ops.filter(o=>o.assetGroupOperation).map(o=>o.assetGroupOperation.create);check(groups.every(g=>g.campaign==='customers/123/campaigns/42'&&g.status==='PAUSED'),'new groups start paused inside the same campaign');check(!ops.some(o=>o.campaignOperation||o.campaignBudgetOperation),'split proposal cannot change campaign budget or the old group');
  check(groups[0].finalUrls[0]!==groups[1].finalUrls[0],'every split group uses its own product listing');
  const texts=groups.map(g=>ops.filter(o=>o.assetGroupAssetOperation?.create.assetGroup===g.resourceName).map(o=>o.assetGroupAssetOperation.create.asset));check(!texts[0].some(a=>texts[1].includes(a)),'product groups never share their editable text assets');
