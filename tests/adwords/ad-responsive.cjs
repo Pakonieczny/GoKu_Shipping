@@ -64,10 +64,11 @@ if(require.main===module)(async()=>{
  }
 
 
- for(const board of [{key:'display_160x600',width:160,height:600},{key:'display_300x1050',width:300,height:1050},{key:'display_250x360',width:250,height:360},{key:'display_240x400',width:240,height:400}]){
+ for(const board of [{key:'display_120x600',width:120,height:600},{key:'display_160x600',width:160,height:600},{key:'display_300x1050',width:300,height:1050},{key:'display_250x360',width:250,height:360},{key:'display_240x400',width:240,height:400}]){
    const im={id:'peach',width:2048,height:1072,focus:{x:.539,y:.199,width:.258,height:.682}},d=responsive.document(fadePlan,im,board,'desktop'),p=d.objects.find(o=>o.editorRole==='photo'),t=d.objects.find(o=>o.editorRole==='headline'),b=d.objects.find(o=>o.editorRole==='button');
    const bottom=p.top+(im.height*(im.focus.y+im.focus.height)-p.cropY)*p.scaleY;
    ok(t.top-bottom<60,'portrait copy stays close to the product '+board.key);
+   if(board.height/board.width>2){const subjectTop=p.top+(im.height*im.focus.y-p.cropY)*p.scaleY;ok(subjectTop<=15,'tall charm starts near the top edge '+board.key);ok(b.width*b.scaleX>=board.width*.88,'tall action spans the available width '+board.key);}
    ok(t.textAlign==='center'&&Math.abs(b.left+b.width*b.scaleX/2-board.width/2)<1,'portrait title and button share the product centerline '+board.key);
    ok(b.width*b.scaleX>=board.width*.4,'portrait CTA has a substantial readable width '+board.key);
  }
