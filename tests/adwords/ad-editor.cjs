@@ -71,6 +71,17 @@ assert.deepEqual(editor.cropResize(cropBox,'se',120,80,cropBounds),{x:200,y:200,
     const realRequest=e.options.request,parts=new Map(),payload=Buffer.alloc(5*1024*1024,123).toString('base64');let retries=0,completed=false;
     e.options.request=async(action,input)=>{if(action!=='exportAdDesignEditor')return realRequest(action,input);if(input.phase==='start'){check(input.bytes===5*1024*1024&&/^[a-f0-9]{64}$/.test(input.sha256),'large export begins with exact byte length and SHA-256');return {ok:true,uploadId:'upload',chunkBytes:1536*1024};}if(input.phase==='chunk'){if(input.index===1&&!retries++)throw Error('Temporary connection loss');parts.set(input.index,input.dataBase64);return {ok:true};}if(input.phase==='complete'){completed=true;return {ok:true,url:'https://example.test/large.png'};}throw Error('Large export must not use a single request');};
     await e.uploadExport(payload,'png',false);check(completed&&retries===2&&[...parts].sort((a,b)=>a[0]-b[0]).map(p=>p[1]).join('')===payload,'large PNG upload retries a failed part and preserves every original byte');check([...parts.values()].every(p=>p.length<=2*1024*1024),'each upload stays safely below the function request limit');e.options.request=realRequest;
+    e.canvas.discardActiveObject();const beforeRecovery=e.document(),capture=JSON.parse(JSON.stringify(beforeRecovery));
+    const edited=e.canvas.getObjects().find(o=>'text'in o);edited.set('text','My newer draft');e.markDirty();e.snapshot();const newer=JSON.stringify(e.document());
+    const reviewed=JSON.parse(JSON.stringify(capture));reviewed.objects.find(o=>'text'in o).text='Reviewed necklace';
+    const recoveredRun={key:e.key(),scope:e.input(),original:capture,fingerprint:JSON.stringify(capture),mode:'design',jobId:'saved-reviewed',result:{document:reviewed,productId:'11',groupRef:'group',device:e.device,artboard:{...e.board},sources:[photo]},error:'Different draft'};
+    e.aiRuns.set(e.key(),recoveredRun);const beforeRequests=requests.length;
+    await assert.rejects(()=>e.applyAI(recoveredRun),/different draft/i);check(JSON.stringify(e.document())===newer,'automatic apply still protects newer artwork');
+    check(e.aiFeedback(recoveredRun).includes('ai-restore-apply')&&e.aiFeedback(recoveredRun).includes('Use reviewed design'),'conflict offers a direct saved-result recovery action');
+    await e.action('ai-restore-apply');check(recoveredRun.applied&&e.canvas.getObjects().some(o=>o.text==='Reviewed necklace'),'explicit recovery applies the already-reviewed result');check(requests.length===beforeRequests,'recovery never generates or reviews again');
+    await e.action('undo');check(JSON.stringify(e.document())===newer,'one Undo restores the newer draft instead of the old capture');
+    e.canvas.getObjects().find(o=>'text'in o).locked=true;const lockedDraft=JSON.stringify(e.document());await assert.rejects(()=>e.restoreCapturedAI(true),/Unlock/);check(JSON.stringify(e.document())===lockedDraft,'recovery preserves newly locked layers');
+    e.aiRuns.delete(e.key());await e.restore(beforeRecovery);e.snapshot();
     check(e.filename('json').endsWith('.json'),'recovery files have the correct editable JSON extension');
     await e.openSavedDesign(firstCopy);check(e.canvas.getObjects().some(o=>o.type==='group'&&o.getObjects().some(x=>x.text==='Choose your charm')),'saved design reopens with editable button layers');await e.action('save');await e.dispose();dom.window.close();
   }
