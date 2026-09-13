@@ -298,6 +298,7 @@
     }
     async renderAIProofs(candidate){
       const engine=root.BritesAdResponsive;if(!engine)throw Error('Refresh to render the saved ad layouts.');
+      if(candidate.responsive.layoutVersion!==engine.layoutVersion)throw Error('Refresh the editor to render the current saved layout version. No new image request was sent.');
       candidate.sources.forEach(s=>this.sources.set(s.id,s));
       const boards=[{...candidate.artboard,key:'active',device:candidate.device,document:candidate.document},...engine.variants],active=this.board,proofs=[];
       try{for(const b of boards){

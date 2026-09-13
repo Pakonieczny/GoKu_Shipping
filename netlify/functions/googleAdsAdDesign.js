@@ -487,12 +487,13 @@ function createAdDesignService(deps) {
     if(job.resetAt||job.phase==='dismissed')return {ok:true,jobId:null,phase:'idle',reset:true,result:null};
     if(input.artboard&&job.designKey!==editorKey(input))throw new Error('This AI result belongs to another artboard.');
     const receipt=await target.collection('data').doc('response').get(),stale=['queued','running'].includes(job.phase)&&job.leaseUntil<Date.now()&&Date.now()-job.updatedAt>30000;
-    const flightReceipt=job.inFlight?.key?await target.collection('data').doc(/(?:quality|quality_v1)$/.test(job.inFlight.key)?job.inFlight.key+'_response':job.inFlight.key).get():receipt;
+    const flightReceipt=job.inFlight?.key?await target.collection('data').doc(/(?:quality|quality_v\d+)$/.test(job.inFlight.key)?job.inFlight.key+'_response':job.inFlight.key).get():receipt;
     const phase=stale?'needs_attention':job.phase,unknown=!!job.inFlight&&!flightReceipt.exists;
     const request=input.includeOriginal?await target.collection('data').doc('request').get():null;
     const candidate=phase==='awaiting_review'?await target.collection('data').doc('candidate').get():null;
     const result=job.phase==='ready'?await target.collection('data').doc('result').get():null;
-    const weightedReview=await target.collection('data').doc('ad_quality_v1').get();
+    let weightedReview=await target.collection('data').doc('ad_quality_v2').get();
+    if(!weightedReview.exists)weightedReview=await target.collection('data').doc('ad_quality_v1').get();
     const correctedReview=await target.collection('data').doc('scene_repair_quality').get(),initialReview=correctedReview.exists?null:await target.collection('data').doc('scene_quality').get(),review=weightedReview.exists?weightedReview.data():correctedReview.exists?correctedReview.data():initialReview?.exists?initialReview.data():null;
     const quality=review?{rubric:review.rubric||null,scores:review.scores||null,weights:review.weights||null,claimsSupported:review.claimsSupported===true,score:Number.isFinite(review.score)?review.score:null,pass:review.pass===true,productFaithful:review.productFaithful===true,mobileReadable:review.mobileReadable===true,issues:(review.issues||[]).map(issue=>String(issue).slice(0,2000)).slice(0,20)}:null;
     return {ok:true,workspaceId:input.workspaceId,jobId:job.id,requestId:job.requestId,inputHash:job.inputHash,scope:job.scope,phase,
@@ -506,7 +507,7 @@ function createAdDesignService(deps) {
   async function editorAIResume(input={}){
     const w=await read(input.workspaceId);editorScope(w,input);const target=editorAIRef(input.workspaceId,input.jobId);let queued=false;
     if(input.reviewProofs){
-      const current=await target.get(),candidateRow=await target.collection('data').doc('candidate').get(),existing=await target.collection('data').doc('ad_proofs_v1').get();
+      const current=await target.get(),candidateRow=await target.collection('data').doc('candidate').get(),existing=await target.collection('data').doc('ad_proofs_v2').get();
       if(!current.exists||current.data().resetAt||!candidateRow.exists)throw new Error('The saved ad layouts are unavailable.');
       editorScope(w,current.data().scope);const candidate=candidateRow.data();
       if(input.candidateHash!==candidate.candidateHash)throw new Error('The ad layouts changed before review. Reopen the saved design.');
@@ -526,17 +527,17 @@ function createAdDesignService(deps) {
           images.push({key:p.key,width:b.width,height:b.height,displayWidth,displayHeight:Math.round(displayWidth*b.height/b.width),asset});
         }
         const proof={candidateHash:input.candidateHash,images,proofHash:sha(images),createdAt:Date.now()};
-        await f().db.runTransaction(async tx=>{const row=await tx.get(target),saved=await tx.get(target.collection('data').doc('ad_proofs_v1')),c=await tx.get(target.collection('data').doc('candidate'));
+        await f().db.runTransaction(async tx=>{const row=await tx.get(target),saved=await tx.get(target.collection('data').doc('ad_proofs_v2')),c=await tx.get(target.collection('data').doc('candidate'));
           if(row.data()?.resetAt||c.data()?.candidateHash!==input.candidateHash)throw new Error('The saved design changed during proof upload.');
           if(saved.exists){if(saved.data().candidateHash!==input.candidateHash)throw new Error('Different review proofs are already saved.');return;}
-          tx.set(target.collection('data').doc('ad_proofs_v1'),clean(proof));
+          tx.set(target.collection('data').doc('ad_proofs_v2'),clean(proof));
         });
       }
     }
     await f().db.runTransaction(async tx=>{const row=await tx.get(target),receipt=await tx.get(target.collection('data').doc('response'));if(!row.exists)throw new Error('The AI request was not found.');const job=row.data();editorScope(w,job.scope);
       if(job.resetAt||job.phase==='dismissed')throw new Error('This failed AI job was reset. Start a new design when ready.');
       if(job.phase==='ready'||job.phase==='running'&&job.leaseUntil>Date.now())return;
-      const flightReceipt=job.inFlight?.key?await tx.get(target.collection('data').doc(/(?:quality|quality_v1)$/.test(job.inFlight.key)?job.inFlight.key+'_response':job.inFlight.key)):receipt;
+      const flightReceipt=job.inFlight?.key?await tx.get(target.collection('data').doc(/(?:quality|quality_v\d+)$/.test(job.inFlight.key)?job.inFlight.key+'_response':job.inFlight.key)):receipt;
       if(job.inFlight&&!flightReceipt.exists)throw new Error('The provider may have completed this paid request. Automatic replacement is blocked to prevent another charge. Its original request ID is retained.');
       queued=true;tx.update(target,{phase:'queued',owner:null,leaseUntil:0,error:null,updatedAt:Date.now(),progress:{pct:job.progress.pct,label:receipt.exists?'Reopening the already paid design response':'Resuming saved product research'}});
     });return {ok:true,workspaceId:input.workspaceId,jobId:input.jobId,queued};
@@ -669,10 +670,10 @@ function createAdDesignService(deps) {
     const chosen=responsive.selectImage(plan,images,request.artboard),document=responsive.document(plan,chosen,request.artboard,request.device==='desktop'?'desktop':'mobile'),locked=o=>o.locked||(o.objects||[]).some(locked);
     // Locked layers remain byte-identical on the active board; originals and every paid scene remain archived.
     document.objects.push(...request.document.objects.filter(locked));
-    const candidate={document,productId:request.productId,groupRef:request.groupRef,device:request.device,artboard:request.artboard,destination:product.url,sources,publicationImages,nativeCopy:plan.nativeCopy,responsive:{plan,images,boards:responsive.boards,variants:responsive.variants},alternatives:[],rationale:plan.rationale+' '+(plan.alternateNeeded?'Two photographic views support different framing needs.':'One new photograph is reused across the formats to avoid unnecessary generation charges.'),sourceIds:plan.sourceIds,evidenceHash:evidence.hash,limitations:[...(plan.limitations||[]),...(evidence.warnings||[])]};
-    const rubric=require('./googleAdsAdQuality'),candidateHash=sha(candidate),proofRow=await target.collection('data').doc('ad_proofs_v1').get();
+    const candidate={document,productId:request.productId,groupRef:request.groupRef,device:request.device,artboard:request.artboard,destination:product.url,sources,publicationImages,nativeCopy:plan.nativeCopy,responsive:{layoutVersion:responsive.layoutVersion,plan,images,boards:responsive.boards,variants:responsive.variants},alternatives:[],rationale:plan.rationale+' '+(plan.alternateNeeded?'Two photographic views support different framing needs.':'One new photograph is reused across the formats to avoid unnecessary generation charges.'),sourceIds:plan.sourceIds,evidenceHash:evidence.hash,limitations:[...(plan.limitations||[]),...(evidence.warnings||[])]};
+    const rubric=require('./googleAdsAdQuality'),candidateHash=sha(candidate),proofRow=await target.collection('data').doc('ad_proofs_v2').get();
     if(!proofRow.exists||proofRow.data().candidateHash!==candidateHash)return {...candidate,candidateHash,reviewPending:true};
-    const proof=proofRow.data(),key='ad_quality_v1',raw=await target.collection('data').doc(key+'_response').get();
+    const proof=proofRow.data(),key='ad_quality_v2',raw=await target.collection('data').doc(key+'_response').get();
     if(raw.exists&&(raw.data().candidateHash!==candidateHash||raw.data().proofHash!==proof.proofHash))throw new Error('The saved review response belongs to different ad proofs.');
     if(job.inFlight?.key===key&&raw.exists)await save({inFlight:null});
     const quality=await paid(key,95,'Reviewing messaging, layout, relevance and visual appeal',async requestId=>({...await deps.reviewImages(refs[0],await Promise.all(proof.images.map(p=>deps.loadAsset(p.asset))),{
@@ -834,7 +835,7 @@ function createAdDesignService(deps) {
         const row=await tx.get(candidate.ref),workspace=await tx.get(ref);if(!row.exists||!workspace.exists||workspace.data().archivedAt)return 0;const job=row.data();
         const stale=['queued','running'].includes(job.phase)&&Number(job.leaseUntil||0)<now&&now-Number(job.updatedAt||job.createdAt||0)>120000;
         if(job.phase!=='needs_attention'&&!stale||job.resetAt||Number(job.updatedAt||job.createdAt||0)>cutoff||active(job))return 0;
-        if(job.inFlight){const receipt=await tx.get(candidate.ref.collection('data').doc(/(?:quality|quality_v1)$/.test(job.inFlight.key)?job.inFlight.key+'_response':job.inFlight.key||'response'));if(!receipt.exists)return -1;}
+        if(job.inFlight){const receipt=await tx.get(candidate.ref.collection('data').doc(/(?:quality|quality_v\d+)$/.test(job.inFlight.key)?job.inFlight.key+'_response':job.inFlight.key||'response'));if(!receipt.exists)return -1;}
         tx.set(candidate.ref.collection('data').doc('reset'),clean({job,resetAt:now,reason:'Operator reset failed AI state'}));
         tx.update(candidate.ref,{phase:'dismissed',resetAt:now,error:null,owner:null,leaseUntil:0,inFlight:null,updatedAt:now});
         if(workspace.data().editorAI?.id===job.id)tx.update(ref,{editorAI:null});return 1;
