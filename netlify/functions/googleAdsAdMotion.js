@@ -76,7 +76,7 @@ function createMotionService(D){
     const quality=await D.reviewImages(refs[0],frames,{copy:job.plan.nativeCopy,keywords:[],product:job.title,inputCoverage:{usedProductImages:refs.length},motionReview:'These are opening, middle and closing frames of six device/ratio variants. Check the entire jewelry stays visible and physically consistent. Camera motion may change perspective, never identity.'},refs,job.inFlight.requestId,{...(prior.exists?{rawResponse:prior.data().response}:{}),onResponse:response=>receipt.set({response,at:Date.now()})});
     await save({quality,inFlight:null,estimatedUsd:2*SECONDS*OUTPUT_USD_PER_SECOND+(Number(quality.estimatedUsd)||0)});
    }
-   if(!job.quality.productFaithful)throw new Error('Animated jewelry needs review: '+(job.quality.issues||[]).join(' '));
+   if(job.quality.productFaithful!==true||job.quality.pass!==true)throw new Error('Animated jewelry needs review: '+(job.quality.issues||[]).join(' '));
    await save({phase:'ready',leaseUntil:0,completedAt:Date.now(),error:null,progress:{pct:100,label:'Six animated variants ready to review'}});return {ok:true,workspaceId:job.workspaceId,jobId:job.id};
   }catch(e){await save({phase:'needs_attention',leaseUntil:0,error:String(e.message||e).slice(0,800),...(e.definiteResponse?{inFlight:null}:{}),progress:{pct:job.progress?.pct||0,label:'Animation paused; saved images and completed video work retained'}});return {ok:false,error:e.message};}
  }

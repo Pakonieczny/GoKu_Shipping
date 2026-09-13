@@ -1185,7 +1185,7 @@ async function recentOrders({ limit = 25 } = {}) {
   const f = fb(); if (!f) return [];
   try {
     const q = await f.db.collection(COL.orderLog).orderBy("ts", "desc").limit(Math.min(250, limit)).get();
-    const out = []; q.forEach(d => { const x = d.data(); out.push({ id: d.id, orderId: x.orderId, value: x.value, currency: x.currency, source: x.source, medium: x.medium, campaign: x.campaign, captured: x.captured, hasClickId: x.hasClickId, reason: x.reason, items: x.items || ((x.products || []).map(t => ({ title: t, qty: 1 }))), itemCount: x.itemCount != null ? x.itemCount : ((x.products || []).length), handle: x.handle, ts: x.ts }); });
+    const out = []; q.forEach(d => { const x = d.data(); out.push({ id: d.id, orderId: x.orderId, orderNumericId: x.orderNumericId, value: x.value, netValue: x.netValue, financialStatus: x.financialStatus, cancelledAt: x.cancelledAt, test: x.test, currency: x.currency, source: x.source, medium: x.medium, campaign: x.campaign, captured: x.captured, hasClickId: x.hasClickId, reason: x.reason, items: x.items || ((x.products || []).map(t => ({ title: t, qty: 1 }))), itemCount: x.itemCount != null ? x.itemCount : ((x.products || []).length), handle: x.handle, ts: x.ts }); });
     return out;
   } catch (e) { return []; }
 }
@@ -9359,6 +9359,33 @@ async function _designMerchantRequest(path,method='GET',body=null){
   let response;try{response=await fetch('https://merchantapi.googleapis.com/'+path,{method,timeout:18000,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});}catch(e){if(method==='PATCH')e.writeOutcome='unknown';throw e;}
   const data=await response.json().catch(()=>null);if(!response.ok||!data){const error=new Error('Merchant Center '+(data&&data.error&&data.error.message||'returned HTTP '+response.status));if(method==='PATCH'&&(response.status>=500||!data))error.writeOutcome='unknown';throw error;}return data;
 }
+function _designMerchantIdentityMatches(resource,identity,kind='products'){
+  const raw=[identity.contentLanguage,identity.feedLabel,identity.offerId].join('~'),prefix='accounts/'+identity.merchantId+'/'+kind+'/';
+  return !!resource&&resource.offerId===identity.offerId&&resource.contentLanguage===identity.contentLanguage&&resource.feedLabel===identity.feedLabel&&resource.legacyLocal!==true&&[prefix+raw,prefix+Buffer.from(raw).toString('base64url')].includes(resource.name);
+}
+function _assertDesignMerchantSource(source,identity){
+  if(source.input!=='API'||!source.primaryProductDataSource)throw new Error('This product is not in a primary API feed. Update the photo in its owning source and let that source sync.');
+  const primary=source.primaryProductDataSource,refs=primary.defaultRule?.takeFromDataSources;
+  if(primary.legacyLocal===true||primary.feedLabel&&primary.feedLabel!==identity.feedLabel||primary.contentLanguage&&primary.contentLanguage!==identity.contentLanguage)throw new Error('The owning Merchant feed does not match this product market and language.');
+  // ProductInput.patch changes raw input. A merged processed image list must
+  // never become the replacement input for an unrelated supplemental source.
+  // https://developers.google.com/merchant/api/reference/rest/datasources_v1/accounts.dataSources
+  if(primary.defaultRule&&(!Array.isArray(refs)||!refs.length||refs.some(r=>!r||r.self!==true||r.supplementalDataSourceName||r.primaryDataSourceName)))throw new Error('This Merchant feed combines or overrides product data. Update the image in the owning source so supplemental feed images are preserved.');
+}
+async function _prepareMerchantPhoto(workspaceId,ref,chosen,format,product){
+  const saved=chosen.imageId?await ref.collection('imageLibrary').doc(chosen.imageId).get():null,photo=saved?.exists?saved.data():null;
+  if(photo&&(!Array.isArray(photo.productIds)||photo.productIds.length!==1||String(photo.productIds[0])!==String(product.id)))throw new Error('This saved Merchant photo belongs to another product. Save a crop of the selected product.');
+  if(!photo||photo.kind!=='crop'||photo.groupRef!==chosen.groupRef||photo.asset?.hash!==chosen.asset?.hash||!photo.originalAsset||!photo.crop)throw new Error('The original pixels for this Merchant photo are unavailable. Open the source product photo and save its crop again.');
+  let original;try{original=await _loadCreativeAsset(photo.originalAsset);}catch(e){throw new Error('The original Merchant photo is unavailable or changed. Save a new crop from its source photo before publishing.');}
+  const out=await _designEngineAdapters().cropImage(original,format,photo.crop,{withoutEnlargement:true});
+  if(out.upscaled)throw new Error('Merchant Center needs a crop at its original resolution. Choose a larger original photo.');
+  const hash=creativeHash(out.bytes.toString('base64')),asset={path:'Brites_GAds_Creative/'+String(workspaceId).replace(/[^a-zA-Z0-9_-]/g,'')+'/merchant_'+format+'-'+hash+'.jpg',hash,bytes:out.bytes.length,width:out.width,height:out.height,kind:'Merchant product photo',mimeType:'image/jpeg'};
+  // A repeated review must preserve the download token on an already published
+  // immutable image. Never replace its storage metadata with a fresh save.
+  try{await _loadCreativeAsset(asset);return asset;}catch(e){if(Number(e.code)!==404)throw e;}
+  try{await fb().admin.storage().bucket().file(asset.path).save(out.bytes,{resumable:false,preconditionOpts:{ifGenerationMatch:0},metadata:{contentType:'image/jpeg',cacheControl:'private,max-age=3600'}});}catch(e){if(Number(e.code)!==412)throw e;await _loadCreativeAsset(asset);}
+  return asset;
+}
 async function _prepareDesignMerchant(product,w,asset,format,selectedOfferId,selectedIdentity=null){
   const offers=(product.offerIds||[product.itemId]).filter(Boolean),merchantId=String(await merchantCenterId()),selected=selectedOfferId||offers.find(id=>(w.context.itemIds||[]).includes(id))||product.itemId||offers[0];
   if(!selected)throw new Error('This product has no exact Merchant offer. Open its listing in Merchant Center first.');
@@ -9386,12 +9413,12 @@ async function _prepareDesignMerchant(product,w,asset,format,selectedOfferId,sel
   if(!identity)return {requiresIdentity:true,identities,selectedOfferId:selected};
   const {offerId,contentLanguage}=identity,encoded=Buffer.from([contentLanguage,identity.feedLabel,offerId].join('~')).toString('base64url'),name='accounts/'+merchantId+'/products/'+encoded;
   const current=await _designMerchantRequest('products/v1/'+name);
-  if(current.offerId!==offerId||current.feedLabel!==identity.feedLabel||current.contentLanguage!==contentLanguage||current.legacyLocal===true)throw new Error('The Merchant product identity does not match this design.');
+  if(!_designMerchantIdentityMatches(current,identity))throw new Error('The Merchant product identity does not match this design.');
   if(current.archived)throw new Error('This Merchant product is archived. Restore it in its owning feed before updating the photo.');
   if(!new RegExp('^accounts/'+merchantId+'/dataSources/\\d+$').test(current.dataSource||''))throw new Error('The owning Merchant feed could not be verified.');
   const source=await _designMerchantRequest('datasources/v1/'+current.dataSource);
   if(source.name!==current.dataSource)throw new Error('The owning Merchant feed changed. Refresh its sources before updating the photo.');
-  if(source.input!=='API')throw new Error('This product is managed by '+(source.displayName||'its source feed')+'. Update that source; Merchant Center does not accept direct image edits for this feed type.');
+  _assertDesignMerchantSource(source,identity);
   const field=format==='square'?'imageLink':'additionalImageLinks',before=(current.productAttributes||{})[field]||null;
   if(field==='additionalImageLinks'&&(before||[]).length>=10)throw new Error('This product already has ten additional images. Manage its existing images in the owning feed before adding another.');
   const plan={identity,productName:name,inputName:name.replace('/products/','/productInputs/'),dataSource:current.dataSource,sourceName:source.displayName||'API product feed',sourceHash:creativeHash(source),asset,field,before,format,productTitle:(current.productAttributes||{}).title||product.title};
@@ -9400,7 +9427,8 @@ async function _prepareDesignMerchant(product,w,asset,format,selectedOfferId,sel
 async function _publishDesignMerchant(plan){
   const copy={...plan};delete copy.reviewHash;if(creativeHash(copy)!==plan.reviewHash)throw new Error('The reviewed Merchant image plan changed.');
   const [current,source]=await Promise.all([_designMerchantRequest('products/v1/'+plan.productName),_designMerchantRequest('datasources/v1/'+plan.dataSource)]);
-  if(current.dataSource!==plan.dataSource||creativeHash(source)!==plan.sourceHash||creativeHash((current.productAttributes||{})[plan.field]||null)!==creativeHash(plan.before))throw new Error('The Merchant product or its owning feed changed. Review this photo update again.');
+  if(!_designMerchantIdentityMatches(current,plan.identity)||current.archived||source.name!==plan.dataSource||current.dataSource!==plan.dataSource||creativeHash(source)!==plan.sourceHash||creativeHash((current.productAttributes||{})[plan.field]||null)!==creativeHash(plan.before))throw new Error('The Merchant product or its owning feed changed. Review this photo update again.');
+  _assertDesignMerchantSource(source,plan.identity);
   await _loadCreativeAsset(plan.asset);
   if((await control()).dryRun)return {status:'VALIDATED',provider:'merchant',dryRun:true};
   // Publish only this approved immutable artwork with a durable image URL.
@@ -9409,7 +9437,7 @@ async function _publishDesignMerchant(plan){
   const url='https://firebasestorage.googleapis.com/v0/b/'+encodeURIComponent(bucket.name)+'/o/'+encodeURIComponent(plan.asset.path)+'?alt=media&token='+encodeURIComponent(downloadToken.split(',')[0]),value=plan.field==='imageLink'?url:[...(plan.before||[]),url];
   const query=new URLSearchParams({dataSource:plan.dataSource,updateMask:'productAttributes.'+plan.field});
   const result=await _designMerchantRequest('products/v1/'+plan.inputName+'?'+query,'PATCH',{name:plan.inputName,productAttributes:{[plan.field]:value}});
-  if(result.offerId!==plan.identity.offerId||result.contentLanguage!==plan.identity.contentLanguage||result.feedLabel!==plan.identity.feedLabel||creativeHash((result.productAttributes||{})[plan.field])!==creativeHash(value))throw Object.assign(new Error('Google responded, but the exact updated image could not be confirmed. Check Merchant Center before retrying.'),{writeOutcome:'unknown'});
+  if(!_designMerchantIdentityMatches(result,plan.identity,'productInputs')||creativeHash((result.productAttributes||{})[plan.field])!==creativeHash(value))throw Object.assign(new Error('Google responded, but the exact updated image could not be confirmed. Check Merchant Center before retrying.'),{writeOutcome:'unknown'});
   return {status:'APPLIED',provider:'merchant',inputConfirmed:true,processedStatus:'pending',field:plan.field,identity:plan.identity,productName:plan.productName,imageUrl:url,message:'Merchant Center accepted the product image. Processing and policy review may take several minutes.'};
 }
 async function _verifyPublishedAd(campaignId,group,product,approval){
@@ -9420,21 +9448,31 @@ async function _verifyPublishedAd(campaignId,group,product,approval){
     gaql(`SELECT asset_group_listing_group_filter.type, asset_group_listing_group_filter.case_value.product_item_id.value FROM asset_group_listing_group_filter WHERE asset_group_listing_group_filter.asset_group = ${ref}`)
   ]);
   const current=groups[0]||{},assets=links.map(r=>({resourceName:r.asset?.resourceName,fieldType:r.assetGroupAsset?.fieldType||'',primaryStatus:r.assetGroupAsset?.primaryStatus||null,approvalStatus:r.assetGroupAsset?.policySummary?.approvalStatus||null,reviewStatus:r.assetGroupAsset?.policySummary?.reviewStatus||null,text:r.asset?.textAsset?.text||null,callToAction:r.asset?.callToActionAsset?.callToAction||null,width:Number(r.asset?.imageAsset?.fullSize?.widthPixels)||null,height:Number(r.asset?.imageAsset?.fullSize?.heightPixels)||null})),searchThemes=signals.map(r=>r.assetGroupSignal?.searchTheme?.text).filter(Boolean),itemIds=filters.filter(r=>r.assetGroupListingGroupFilter?.type==='UNIT_INCLUDED').map(r=>r.assetGroupListingGroupFilter?.caseValue?.productItemId?.value).filter(Boolean);
-  const expected=(approval?.creative?.groups||[]).find(g=>g.ref===group.ref)||(approval?.creative?.groups||[])[0],issues=[],destination=current.assetGroup?.finalUrls?.[0]||null,callToAction=assets.find(a=>a.fieldType==='CALL_TO_ACTION_SELECTION')?.callToAction||null;
+  const creativeGroups=approval?.creative?.groups||[],expected=creativeGroups.find(g=>g.ref===group.ref)||(creativeGroups.length===1?creativeGroups[0]:null),issues=[],destination=current.assetGroup?.finalUrls?.[0]||null,callToAction=assets.find(a=>a.fieldType==='CALL_TO_ACTION_SELECTION')?.callToAction||null;
+  const operations=approval?.payload?.mutateOperations||[],creates=new Map(operations.filter(o=>o.assetOperation?.create).map(o=>[o.assetOperation.create.resourceName,o.assetOperation.create])),attachments=operations.map(o=>o.assetGroupAssetOperation?.create).filter(a=>a?.assetGroup===group.ref),savedAssets=new Map((approval?.payload?.generatedAssets||[]).map(a=>[a.tempResourceName,a.asset]));
+  const update=approval?.type==='adDesignUpdate',verifiedAssetResourceNames=[];
+  if(!expected&&!update)issues.push('The exact reviewed creative is unavailable; upload contents cannot be fully verified.');
+  if(update&&!attachments.length)issues.push('The reviewed update has no verifiable attachments for this Google group.');
   if(!groups.length)issues.push('The uploaded group is not visible in Google yet.');
   if(destination!==product.url&&destination!==group.url)issues.push('The Google destination does not match this product ad.');
   if(callToAction!=='SHOP_NOW')issues.push('The native Shop now action is not confirmed.');
   const mapping={square:'SQUARE_MARKETING_IMAGE',landscape:'MARKETING_IMAGE',portrait:'PORTRAIT_MARKETING_IMAGE'};
   for(const [format,field]of Object.entries(mapping)){
-    const wanted=expected?require('./googleAdsAdDesign').formatAssets(expected,format):[];
-    if(!assets.some(a=>a.fieldType===field))issues.push(format+' image is not linked in Google.');
-    for(const image of wanted){const receipts=approval.assetReceipts||[];let receipt=receipts.find(r=>r.hash===image.hash);if(!receipt){const bytes=await _loadCreativeAsset(image),legacyHash=require('crypto').createHash('sha256').update(bytes).digest('hex');receipt=receipts.find(r=>r.hash===legacyHash);}if(!receipt||!assets.some(a=>a.resourceName===receipt.resourceName&&a.fieldType===field&&a.width===image.width&&a.height===image.height))issues.push('The exact '+format+' upload is not confirmed.');}
+    const reviewedLinks=attachments.filter(a=>a.fieldType===field),wanted=update?reviewedLinks.map(a=>savedAssets.get(a.asset)).filter(Boolean):expected?require('./googleAdsAdDesign').formatAssets(expected,format):[];
+    if(update&&reviewedLinks.length!==wanted.length)issues.push('The reviewed '+format+' image identity is unavailable.');
+    if(!assets.some(a=>a.fieldType===field)&&(!update||reviewedLinks.length))issues.push(format+' image is not linked in Google.');
+    for(const image of wanted){const receipts=approval.assetReceipts||[];let receipt=receipts.find(r=>r.hash===image.hash);if(!receipt){const bytes=await _loadCreativeAsset(image),legacyHash=require('crypto').createHash('sha256').update(bytes).digest('hex');receipt=receipts.find(r=>r.hash===legacyHash);}if(!receipt||!assets.some(a=>a.resourceName===receipt.resourceName&&a.fieldType===field&&a.width===image.width&&a.height===image.height))issues.push('The exact '+format+' upload is not confirmed.');else verifiedAssetResourceNames.push(receipt.resourceName);}
   }
-  if(expected)for(const [key,field]of Object.entries({headlines:'HEADLINE',longHeadlines:'LONG_HEADLINE',descriptions:'DESCRIPTION'}))for(const text of expected.copy?.[key]||[])if(!assets.some(a=>a.fieldType===field&&a.text===text))issues.push('A saved '+key+' asset is not yet linked in Google.');
+  for(const [key,field]of Object.entries({headlines:'HEADLINE',longHeadlines:'LONG_HEADLINE',descriptions:'DESCRIPTION'})){
+    const reviewedLinks=attachments.filter(a=>a.fieldType===field),texts=update?reviewedLinks.map(a=>creates.get(a.asset)?.textAsset?.text).filter(Boolean):expected?.copy?.[key]||[];
+    if(update&&reviewedLinks.length!==texts.length)issues.push('The reviewed '+key+' identity is unavailable.');
+    for(const text of texts)if(!assets.some(a=>a.fieldType===field&&a.text===text))issues.push('A saved '+key+' asset is not yet linked in Google.');
+    if(texts.length&&assets.some(a=>a.fieldType===field&&!texts.includes(a.text)))issues.push('Google still has '+key+' outside the reviewed messaging.');
+  }
   const requested=approval?.payload?.meta?.itemIds||[],themes=approval?.payload?.meta?.searchThemes||[];
   if(requested.length&&(requested.some(id=>!itemIds.some(i=>i.toLowerCase()===id.toLowerCase()))||itemIds.some(id=>!requested.some(i=>i.toLowerCase()===id.toLowerCase()))))issues.push('Google product filters differ from the reviewed offers.');
   if(themes.some(t=>!searchThemes.includes(t)))issues.push('A reviewed search theme is not yet visible in Google.');
-  return {checkedAt:Date.now(),campaignId,groupRef:group.ref,campaignStatus:current.campaign?.status||null,groupStatus:current.assetGroup?.primaryStatus||current.assetGroup?.status||null,merchant:current.campaign?.shoppingSetting||null,destination,callToAction,searchThemes,itemIds,assets,matches:issues.length===0,issues,policyApproved:assets.length>0&&assets.every(a=>['APPROVED','APPROVED_LIMITED'].includes(a.approvalStatus)),servingConfirmed:false};
+  return {checkedAt:Date.now(),campaignId,groupRef:group.ref,campaignStatus:current.campaign?.status||null,groupStatus:current.assetGroup?.primaryStatus||current.assetGroup?.status||null,merchant:current.campaign?.shoppingSetting||null,destination,callToAction,searchThemes,itemIds,assets,verifiedAssetResourceNames:[...new Set(verifiedAssetResourceNames)],matches:issues.length===0,issues,policyApproved:assets.length>0&&assets.every(a=>['APPROVED','APPROVED_LIMITED'].includes(a.approvalStatus)),servingConfirmed:false};
 }
 async function adDesignDelivery({workspaceId,start,end}={}){
   let {w,group,product}=await _adDesignPublicationContext(workspaceId),campaignId=String(w.context.campaignId||'');
@@ -9459,7 +9497,21 @@ async function adDesignDelivery({workspaceId,start,end}={}){
   try{deviceRows=await gaql(imageQuery.replace('SELECT ','SELECT segments.device, '));if(deviceRows.some(r=>!r.segments||!r.segments.device))throw new Error('Device dimension missing');deviceAvailable=true;}catch(e){deviceRows=[];deviceError='Google device metrics are unavailable for this image report.';}
   const mapped=[];for(const publication of publications.filter(p=>p.approvalId)){const saved=await fb().db.collection(COL.approvals).doc(publication.approvalId).get();if(saved.exists)mapped.push(...(saved.data().assetReceipts||[]));}
   const deviceMetrics=deviceRows.filter(r=>(r.asset||{}).imageAsset).map(r=>{const a=r.asset,link=r.assetGroupAsset||r.adGroupAsset||{},receipt=mapped.find(p=>p.resourceName===a.resourceName);return {assetId:a.resourceName,url:a.imageAsset.fullSize?.url||null,hash:receipt?.hash||null,fieldType:link.fieldType,device:String(r.segments.device).toLowerCase(),...metricNumbers(r.metrics||{})};});
-  if(verification)verification.servingConfirmed=!!(totals&&totals.impressions>0);
+  if(verification){
+    verification.groupHasImpressions=!!(totals&&totals.impressions>0);
+    verification.servingNote='Group totals can include earlier ads. Serving of this exact update is not confirmed yet.';
+    const confirmedAt=Number(applied?.confirmedAt),known=new Set(verification.verifiedAssetResourceNames||[]);
+    if(verification.matches&&known.size&&Number.isFinite(confirmedAt)&&confirmedAt>0){
+      // Daily reporting cannot separate impressions before and after a same-day
+      // edit. Check the exact uploaded image identities on later account days.
+      const parts=new Intl.DateTimeFormat('en-CA',{timeZone:ctx.accountTimezone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(confirmedAt)),part=t=>parts.find(p=>p.type===t).value,publicationDay=part('year')+'-'+part('month')+'-'+part('day'),nextDay=new Date(Date.parse(publicationDay)+86400000).toISOString().slice(0,10),since=range.start>nextDay?range.start:nextDay;
+      if(since<=range.end)try{
+        const servingRows=await gaql(imageQuery.replace(dates,`segments.date BETWEEN '${since}' AND '${range.end}'`));
+        verification.servingConfirmed=servingRows.some(r=>known.has(r.asset?.resourceName)&&Number(r.metrics?.impressions)>0);
+        verification.servingNote=verification.servingConfirmed?'Google reports impressions for an exact uploaded image after this update. This does not prove every asset combination served.':'No impressions for the exact uploaded images were returned after the update.';
+      }catch(e){verification.servingNote='The exact uploaded-image serving check is temporarily unavailable.';}
+    }
+  }
   return {ok:true,available:true,verification,verificationError,metricsError,deviceAvailable,deviceError,deviceRows:deviceMetrics,totals,totalsError,range,currency:ctx.budgetCurrency,timeZone:ctx.accountTimezone,basis:'Google Ads interaction date',scope:group.channel==='search'?'Ad group image assets; shared by ads in this group':'This asset group',checkedAt:Date.now(),publications:safePublications,
     rows:rows.filter(r=>(r.asset||{}).imageAsset).map(r=>{const a=r.asset||{},link=r.assetGroupAsset||r.adGroupAsset||{},m=r.metrics||{},receipt=mapped.find(p=>p.resourceName===a.resourceName);return {assetId:a.resourceName,url:((a.imageAsset||{}).fullSize||{}).url||null,hash:receipt&&receipt.hash||null,fieldType:link.fieldType,status:link.primaryStatus||link.status||'UNKNOWN',reasons:link.primaryStatusReasons||[],impressions:Number(m.impressions)||0,clicks:Number(m.clicks)||0,ctr:m.ctr==null?(Number(m.impressions)>0?Number(m.clicks)/Number(m.impressions):null):Number(m.ctr),conversions:Number(m.conversions)||0,value:Number(m.conversionsValue)||0,cost:fromMicros(m.costMicros)};}),
     note:'Group totals include all assets. Individual image outcomes can overlap when images and text serve together. Compare like periods; do not add asset conversions or interpret them as isolated image lift. Google does not expose separate Merchant Center traffic for each product image.'};
@@ -9482,7 +9534,7 @@ async function _prepareFirstAdDesignApproval({workspaceId,w,product,group,result
 }
 async function prepareAdDesignPublication({workspaceId,target='ads',formats=[],includeCopy=false,offerId=null,merchantIdentity=null}={}){
   const {ref,w,products,product,group}=await _adDesignPublicationContext(workspaceId);if(w.context.draftGroups)throw new Error('Review and create all product groups together in Approvals.');if(target==='ads'&&group.requiresProductSplit)throw new Error('Split this shared group into product groups before publishing product-specific assets. Your design stays saved.');const selection={formats:[...new Set(formats)].sort(),copy:includeCopy===true};
-  if(target==='ads'&&!w.context.campaignId){const prior=await ref.collection('publications').get();const applied=prior.docs.map(d=>d.data()).find(p=>p.target==='ads'&&p.status==='APPLIED'&&p.productId===product.id&&p.groupRef===group.ref);if(applied)return {ok:true,status:'APPLIED',publishedCampaignId:applied.publishedCampaignId||w.publication?.campaignId,message:'This product ad is already published. Open its Google campaign in the app to update it.'};}
+  if(target==='ads'&&!w.context.campaignId){const prior=await ref.collection('publications').get();const applied=prior.docs.map(d=>({id:d.id,...d.data()})).find(p=>p.target==='ads'&&p.status==='APPLIED'&&p.productId===product.id&&p.groupRef===group.ref);if(applied){const campaignId=String(applied.publishedCampaignId||(w.publication?.productId===product.id&&w.publication?.groupRef===group.ref?w.publication.campaignId:'')||'');let publication=null;if(/^\d+$/.test(campaignId)){publication={id:applied.id||null,target:'ads',status:'APPLIED',campaignId,productId:product.id,groupRef:group.ref,confirmedAt:applied.confirmedAt||applied.createdAt||null};await fb().db.runTransaction(async tx=>{const latest=await tx.get(ref);if(latest.data().settings.productId===product.id&&latest.data().settings.groupRef===group.ref)tx.update(ref,{publication});});}return {ok:true,status:'APPLIED',publishedCampaignId:campaignId||null,publication,message:'This product ad is already published. Open its Google campaign in the app to update it.'};}}
   if(!['ads','merchant'].includes(target)||selection.formats.some(k=>!['square','landscape','portrait'].includes(k))||!selection.copy&&!selection.formats.length)throw new Error('Select an image format or messaging to update.');
   const design=require('./googleAdsAdDesign'),result=JSON.parse(JSON.stringify(w.job&&w.job.result||{})),placements=design.chosenPlacements(w),assets={desktop:{},mobile:{}};
   for(const device of ['desktop','mobile'])for(const format of selection.formats){const chosen=placements.find(p=>p.device===device&&p.format===format),asset=chosen&&chosen.asset||(result.placementAssets||{})[device]&&result.placementAssets[device][format]||(result.assets||{})[format];if(!asset)throw new Error('Save or generate the '+format+' image before approving it.');
@@ -9499,6 +9551,7 @@ async function prepareAdDesignPublication({workspaceId,target='ads',formats=[],i
     if(selection.copy||selection.formats.length!==1)throw new Error('Merchant Center accepts a product photo separately from advertising copy. Choose one image format.');
     const chosen=placements.find(p=>p.device==='desktop'&&p.format===selection.formats[0]);if(!chosen||(chosen.productIds||[]).length!==1||String(chosen.productIds[0])!==String(product.id))throw new Error('Save a photo of this exact product before updating its Merchant Center image.');
     if(chosen.artwork)throw new Error('Use a product photo for Merchant Center. Saved ad designs belong in the ad image previews.');
+    const merchantPhoto=await _prepareMerchantPhoto(workspaceId,ref,chosen,selection.formats[0],product);assets.desktop[selection.formats[0]]=merchantPhoto;assets.mobile[selection.formats[0]]=merchantPhoto;
     merchant=await _prepareDesignMerchant(product,w,assets.desktop[selection.formats[0]],selection.formats[0],offerId,merchantIdentity);
     if(merchant.requiresIdentity)return {ok:true,status:'CHOOSE_MERCHANT_VARIANT',productId:product.id,groupRef:group.ref,offerId:merchant.selectedOfferId,identities:merchant.identities,message:'Choose the Merchant feed and language for this exact variant, then select Update Merchant photo again.'};
     id='publish_'+creativeHash({sourceHash,target,selection,sourceVersion:w.sourceVersion,merchantIdentity:merchant.identity}).slice(0,32);pubRef=ref.collection('publications').doc(id);existing=await pubRef.get();

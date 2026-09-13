@@ -8,9 +8,12 @@ const active = job => job && Number(job.leaseUntil) > Date.now() && ["queued", "
 const MAX_UPLOAD = 4 * 1024 * 1024;
 const productKey = id => String(id || '').split('/').pop();
 function isSharedProductGroup(workspace, group) {
-  if (!workspace.context?.campaignId) return false;
-  if (group.requiresProductSplit) return true;
   const {offerParts, destination}=require('./googleAdsAdDesignContext'),parts=workspace.sourceSnapshot?.components||{};
+  // Older saved workspaces predate context.campaignId. Their provider snapshot
+  // still identifies an existing pool; new opportunities have no such identity.
+  const existing=workspace.context?.campaignId||workspace.sourceSnapshot?.campaignId||/^customers\/\d+\/(?:assetGroups|adGroups|ads|adGroupAds)\/\d/.test(group.ref||'')||(parts.listingGroups||[]).some(f=>group.ref&&f.assetGroup===group.ref)||(parts.searchAds||[]).some(a=>group.ref&&a.resourceName===group.ref||group.adGroupRef&&a.adGroup===group.adGroupRef);
+  if (!existing) return false;
+  if (group.requiresProductSplit) return true;
   if(group.channel==='pmax')return new Set([...(group.productIds||[]).map(productKey),...(parts.listingGroups||[]).filter(f=>f.assetGroup===group.ref&&f.type==='UNIT_INCLUDED').map(f=>offerParts(f.caseValue?.productItemId?.value)?.productId)].filter(Boolean)).size>1;
   const own=(parts.searchAds||[]).find(a=>a.resourceName===group.ref),parent=group.adGroupRef||own?.adGroup;
   return !!parent&&new Set((parts.searchAds||[]).filter(a=>a.adGroup===parent).flatMap(a=>a.finalUrls||[]).map(destination).filter(d=>d?.kind==='product').map(d=>d.handle)).size>1;
@@ -19,7 +22,7 @@ function isSharedProductGroup(workspace, group) {
 // measured keywords for this individual product; retain them in the source
 // snapshot, while researching this listing from its own keywords and facts.
 function researchGroupFor(workspace, group, product) {
-  return !workspace.context.campaignId || isSharedProductGroup(workspace, group)
+  return !workspace.context?.campaignId || isSharedProductGroup(workspace, group)
     ? {...group,url:product.url,keywords:product.keywords||[]}
     : group;
 }
@@ -690,7 +693,7 @@ function createAdDesignService(deps) {
         const photo=saved.data();originalAsset=photo.originalAsset||photo.asset;bytes=await deps.loadAsset(originalAsset);productIds=photo.productIds||[];title=photo.title;rootSource=photo.rootSource||source;artwork=photo.artwork===true;
       }
       const out=await deps.cropImage(bytes,format,rect),id='crop_'+sha([groupRef,workspace.settings.productId,format,sha(bytes.toString('base64')),out.crop,artwork]).slice(0,32);
-      if(!originalAsset)originalAsset=await deps.saveAsset(workspaceId,bytes,'original_'+sha(bytes.toString('base64')).slice(0,24),{kind:'crop original',mimeType:out.mimeType});
+      if(!originalAsset)originalAsset=await deps.saveAsset(workspaceId,bytes,'original_'+sha(bytes.toString('base64')).slice(0,24),{kind:'crop original',mimeType:out.originalMimeType||out.mimeType});
       const asset=await deps.saveAsset(workspaceId,out.bytes,id,{width:out.width,height:out.height,kind:format});
       record={id,kind:'crop',groupRef,format,title:title||'Ad image',productIds,rootSource,artwork,asset,originalAsset,crop:out.crop,sourceWidth:out.sourceWidth,sourceHeight:out.sourceHeight,cropWidth:out.cropWidth,cropHeight:out.cropHeight,upscaled:out.upscaled,createdAt:Date.now()};
     }

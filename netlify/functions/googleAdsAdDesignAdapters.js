@@ -86,7 +86,7 @@ function createAdDesignAdapters(D){
     if(u.hostname==='cdn.shopify.com')for(const key of ['width','height','crop','pad_color'])u.searchParams.delete(key);
     return D.creativeFetch(u.href,true);
   }
-  async function cropImage(bytes,format,rect){
+  async function cropImage(bytes,format,rect,{withoutEnlargement=false}={}){
     const dimensions={square:[2048,2048],landscape:[2048,1072],portrait:[1638,2048]}[format];
     if(!dimensions)throw new Error('Choose a supported image format.');
     const image=sharp(bytes,{limitInputPixels:40000000}),meta=await image.metadata();
@@ -98,10 +98,13 @@ function createAdDesignAdapters(D){
     if(Math.abs(rect.width*w/(rect.height*h)/ratio-1)>.005)throw new Error('The crop does not match the selected aspect ratio.');
     const left=Math.round(rect.x*w),top=Math.round(rect.y*h),width=Math.min(w-left,Math.round(rect.width*w)),height=Math.min(h-top,Math.round(rect.height*h));
     if(width<16||height<16)throw new Error('This crop is too small. Zoom out to preserve usable detail.');
-    const output=await sharp(oriented.data,{raw:oriented.info}).extract({left,top,width,height}).resize(dimensions[0],dimensions[1],{fit:'fill',kernel:'lanczos3'}).flatten({background:'#ffffff'}).jpeg({quality:100,chromaSubsampling:'4:4:4'}).toBuffer();
+    const scale=withoutEnlargement?Math.min(1,width/dimensions[0],height/dimensions[1]):1,outputWidth=Math.min(dimensions[0],Math.max(1,Math.floor(dimensions[0]*scale))),outputHeight=Math.min(dimensions[1],Math.max(1,Math.floor(dimensions[1]*scale)));
+    let pipeline=sharp(oriented.data,{raw:oriented.info}).extract({left,top,width,height});
+    if(width!==outputWidth||height!==outputHeight)pipeline=pipeline.resize(outputWidth,outputHeight,{fit:'fill',kernel:'lanczos3'});
+    const output=await pipeline.flatten({background:'#ffffff'}).jpeg({quality:100,chromaSubsampling:'4:4:4'}).toBuffer();
     const final=meta.xmp?attachXmp(output,meta.xmp):output;
     if(final.length>5120000)throw new Error('This maximum-quality crop exceeds Google’s 5 MB image limit. Choose a less detailed crop; the original is retained.');
-    return {bytes:final,width:dimensions[0],height:dimensions[1],crop:rect,sourceWidth:w,sourceHeight:h,cropWidth:width,cropHeight:height,upscaled:width<dimensions[0]||height<dimensions[1],mimeType:'image/'+(meta.format==='jpeg'?'jpeg':meta.format)};
+    return {bytes:final,width:outputWidth,height:outputHeight,crop:rect,sourceWidth:w,sourceHeight:h,cropWidth:width,cropHeight:height,upscaled:width<outputWidth||height<outputHeight,mimeType:'image/jpeg',originalMimeType:'image/'+(meta.format==='jpeg'?'jpeg':meta.format)};
   }
   async function prepareReferences({sources}={}){
     if(!Array.isArray(sources)||!sources.length)throw new Error('Choose at least one photo for this composition.');
