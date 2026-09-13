@@ -8,7 +8,7 @@
   function selectImage(plan,images,board){const f=family(board);return images.find(i=>i.forFamilies?.includes(f))||images[0];}
   // Design at the actual viewing width, then export at the requested resolution.
   // A 2048px master must not turn a 36px CTA into a 6px mobile label.
-  const layoutVersion=13;
+  const layoutVersion=14;
   function document(plan,image,board,device="mobile"){
     const master=['square','landscape','portrait'].includes(board.key),factor=master?board.width/Math.min(board.width,device==='desktop'?600:360):1;
     const W=board.width/factor,H=board.height/factor,f=family(board),layout=(plan.layouts||[]).find(l=>l.family===f&&l.device===device)||(plan.layouts||[]).find(l=>l.family===f)||{},style={...plan.style},copy=plan.copy;
@@ -62,27 +62,29 @@
       const focus=image.focus,side=W/H>=1.3&&W>=300&&H>=160;
       if(style.treatment!=='soft-fade'||banner||(!side&&!(W>=240&&H>=280||narrow&&W>=120&&H>=400))||!focus||!['x','y','width','height'].every(k=>Number.isFinite(focus[k]))||focus.width<=0||focus.height<=0)return false;
       const pad=Math.max(6,Math.min(22,W*.045)),gap=Math.max(5,Math.min(12,H*.025));
-      const bw=Math.min(side?W*.42:W*.36,Math.max(96,copy.cta.length*7+20)),bh=Math.min(44,Math.max(32,H*.1));
-      const row=!side&&W>=320,tw=side?W*.47-pad*2:row?W-bw-pad*3:W-pad*2;
-      let headline=W<320?copy.shortHeadline:copy.headline,hs=side?Math.min(36,Math.max(22,W*.055)):Math.min(30,Math.max(19,W*.065));
+      const bw=Math.min(side?W*.42:W*.66,Math.max(96,copy.cta.length*7+20)),bh=Math.min(44,Math.max(32,H*.1));
+      const row=false,tw=side?W*.47-pad*2:row?W-bw-pad*3:W-pad*2;
+      let headline=!side||W<320?copy.shortHeadline:copy.headline,hs=side?Math.min(36,Math.max(22,W*.055)):Math.min(30,Math.max(21,W*.085));
       if(lines(headline,tw,hs)>3)headline=copy.shortHeadline;
       hs=Math.min(hs,tw/(Math.max(...headline.split(/\s+/).map(w=>w.length))*.67));
       const hh=lines(headline,tw,hs)*hs*1.24,brand=W>=320,brandH=brand?16:0,bodySize=side?Math.min(18,W*.03):14;
       const bodyH=lines(description,tw,bodySize)*bodySize*1.3,body=side&&bodyH<=H*.17&&brandH+hh+bodyH+bh+gap*4<H*.86;
-      const total=brandH+(brand?gap:0)+hh+(body?bodyH+gap:0)+(row?0:bh+gap),top=side?Math.max(pad,(H-total)/2):H-pad-Math.max(total,row?bh:0);
+      const total=brandH+(brand?gap:0)+hh+(body?bodyH+gap:0)+(row?0:bh+gap);let top=side?Math.max(pad,(H-total)/2):H-pad-Math.max(total,row?bh:0);
       if(!side&&top<H*.55)return false;
       const region=side?{left:W*.55,top:pad,width:W*.45-pad,height:H-pad*2}:{left:pad,top:pad,width:W-pad*2,height:top-pad*2};
-      const scale=Math.max(W/image.width,side?H/image.height:0,Math.min(region.width/(image.width*focus.width*1.22),region.height/(image.height*focus.height*1.22)));
+      const scale=Math.max(W/image.width,side?H/image.height:0,Math.min(region.width/(image.width*focus.width*(narrow?1.08:1.16)),region.height/(image.height*focus.height*1.16)));
       const cw=W/scale,ch=Math.min(image.height,(side?H:top)/scale),cx=clamp(image.width*(focus.x+focus.width/2)-(region.left+region.width/2)/scale,0,image.width-cw),cy=clamp(image.height*(focus.y+focus.height/2)-(region.top+region.height/2)/scale,0,image.height-ch);
       const subject={left:(image.width*focus.x-cx)*scale,top:(image.height*focus.y-cy)*scale,width:image.width*focus.width*scale,height:image.height*focus.height*scale};
       if(subject.left<region.left||subject.top<region.top||subject.left+subject.width>region.left+region.width||subject.top+subject.height>region.top+region.height)return false;
-      objects.push(base('product_scene','photo',{type:'Image',sourceKey:image.id,left:0,top:0,width:cw,height:ch,cropX:cx,cropY:cy,scaleX:scale,scaleY:scale}));
-      const stops=side?[[0,1],[.40,.98],[.55,0],[1,0]]:[[0,0],[Math.max(0,(subject.top+subject.height)/H),0],[Math.min(top/H,ch*scale/H),1],[1,1]];
+      let photoTop=0;if(narrow){top=subject.top+subject.height+gap*2;photoTop=Math.max(0,(H-top-total-pad)/2);top+=photoTop;subject.top+=photoTop;}
+      objects.push(base('product_scene','photo',{type:'Image',sourceKey:image.id,left:0,top:photoTop,width:cw,height:ch,cropX:cx,cropY:cy,scaleX:scale,scaleY:scale}));
+      const stops=side?[[0,1],[.40,.98],[.55,0],[1,0]]:[...(photoTop>0?[[0,1],[photoTop/H,1],[(photoTop+Math.min(40,Math.max(1,subject.top-photoTop)))/H,0]]:[[0,0]]),[Math.max(0,(subject.top+subject.height)/H),0],[Math.min(top/H,(photoTop+ch*scale)/H),1],[1,1]];
       objects.push(base('image_fade','shape',{type:'Rect',left:0,top:0,width:W,height:H,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:side?1:0,y2:side?0:1},colorStops:stops.map(([offset,opacity])=>({offset,color:'rgba('+style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)).join(',')+','+opacity+')'}))}}));
       let y=top;if(brand){text('brand','BRITES JEWELRY',pad,y,tw,brandH,12,'brand');y+=brandH+gap;}
       text('headline',headline,pad,y,tw,hh,hs,'headline',style.headlineFont);y+=hh+gap;
       if(body){text('description',description,pad,y,tw,bodyH,bodySize,'description');y+=bodyH+gap;}
-      button(row?W-pad-bw:pad,row?H-pad-bh:y,Math.min(bw,tw),bh,copy.cta,Math.min(17,bh*.4));
+      button(side?pad:(W-Math.min(bw,tw))/2,y,Math.min(bw,tw),bh,copy.cta,Math.min(17,bh*.4));
+      if(!side)for(const o of objects)if('text'in o)o.textAlign='center';
       return true;
     }
     const compactHeadline=copy.shortHeadline;
