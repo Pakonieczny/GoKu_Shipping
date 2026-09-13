@@ -16,8 +16,9 @@ if(require.main===module)(async()=>{
  const url='data:image/jpeg;base64,'+(await sharp({create:{width:1600,height:1000,channels:3,background:'#b49b74'}}).jpeg().toBuffer()).toString('base64'),photo={id:'photo',url,width:1600,height:1000};
  const e=await w.BritesAdEditor.open({title:'Duck necklace',workspaceId:'test',productId,groupRef,format:'square',photos:[],request:async action=>action==='adDesignEditorState'?{ok:true,sources:[photo],designs:[]}:action==='adDesignSavedDesigns'?{ok:true,savedDesigns:[]}:{ok:true}});
  const boxesOverlap=(a,b)=>Math.min(a.left+a.width,b.left+b.width)-Math.max(a.left,b.left)>1&&Math.min(a.top+a.height,b.top+b.height)-Math.max(a.top,b.top)>1;
+ const incompletePlan=JSON.parse(JSON.stringify(plan));incompletePlan.layouts.forEach(l=>{l.showBrand=false;l.showButton=false;l.showHeadline=false;});
  for(const board of responsive.variants){
-   e.board=board;await e.restore(responsive.document(plan,photo,board,board.device));for(const o of e.canvas.getObjects())e.fitAIText(o);e.canvas.renderAll();
+   e.board=board;await e.restore(responsive.document(incompletePlan,photo,board,board.device));ok(['brand','headline','button'].every(role=>e.canvas.getObjects().some(o=>o.editorRole===role)),board.key+' restores essential ad content omitted by the AI recipe');for(const o of e.canvas.getObjects())e.fitAIText(o);e.canvas.renderAll();
    const text=e.canvas.getObjects().filter(o=>'text'in o||o.editorRole==='button');
    for(const o of text){const b=o.getBoundingRect();ok(b.left>=-1&&b.top>=-1&&b.left+b.width<=board.width+1&&b.top+b.height<=board.height+1,board.device+' '+board.key+' '+o.editorRole+' fits '+JSON.stringify(b));}
    for(let i=0;i<text.length;i++)for(let j=i+1;j<text.length;j++)ok(!boxesOverlap(text[i].getBoundingRect(),text[j].getBoundingRect()),board.key+' '+text[i].editorRole+' avoids '+text[j].editorRole);
