@@ -487,25 +487,56 @@ function createAdDesignService(deps) {
     if(job.resetAt||job.phase==='dismissed')return {ok:true,jobId:null,phase:'idle',reset:true,result:null};
     if(input.artboard&&job.designKey!==editorKey(input))throw new Error('This AI result belongs to another artboard.');
     const receipt=await target.collection('data').doc('response').get(),stale=['queued','running'].includes(job.phase)&&job.leaseUntil<Date.now()&&Date.now()-job.updatedAt>30000;
-    const flightReceipt=job.inFlight?.key?await target.collection('data').doc(job.inFlight.key==='scene_quality'?'scene_quality_response':job.inFlight.key).get():receipt;
+    const flightReceipt=job.inFlight?.key?await target.collection('data').doc(/(?:quality|quality_v1)$/.test(job.inFlight.key)?job.inFlight.key+'_response':job.inFlight.key).get():receipt;
     const phase=stale?'needs_attention':job.phase,unknown=!!job.inFlight&&!flightReceipt.exists;
     const request=input.includeOriginal?await target.collection('data').doc('request').get():null;
+    const candidate=phase==='awaiting_review'?await target.collection('data').doc('candidate').get():null;
     const result=job.phase==='ready'?await target.collection('data').doc('result').get():null;
-    const correctedReview=await target.collection('data').doc('scene_repair_quality').get(),initialReview=correctedReview.exists?null:await target.collection('data').doc('scene_quality').get(),review=correctedReview.exists?correctedReview.data():initialReview?.exists?initialReview.data():null;
-    const quality=review?{score:Number.isFinite(review.score)?review.score:null,pass:review.pass===true,productFaithful:review.productFaithful===true,mobileReadable:review.mobileReadable===true,issues:(review.issues||[]).map(issue=>String(issue).slice(0,2000)).slice(0,20)}:null;
+    const weightedReview=await target.collection('data').doc('ad_quality_v1').get();
+    const correctedReview=await target.collection('data').doc('scene_repair_quality').get(),initialReview=correctedReview.exists?null:await target.collection('data').doc('scene_quality').get(),review=weightedReview.exists?weightedReview.data():correctedReview.exists?correctedReview.data():initialReview?.exists?initialReview.data():null;
+    const quality=review?{rubric:review.rubric||null,scores:review.scores||null,weights:review.weights||null,claimsSupported:review.claimsSupported===true,score:Number.isFinite(review.score)?review.score:null,pass:review.pass===true,productFaithful:review.productFaithful===true,mobileReadable:review.mobileReadable===true,issues:(review.issues||[]).map(issue=>String(issue).slice(0,2000)).slice(0,20)}:null;
     return {ok:true,workspaceId:input.workspaceId,jobId:job.id,requestId:job.requestId,inputHash:job.inputHash,scope:job.scope,phase,
       startedAt:job.createdAt,updatedAt:job.updatedAt,
       progress:stale?{pct:job.progress.pct,label:unknown?'Provider completion is uncertain. The request will not be charged again.':'Saved work is available to resume.'}:job.progress,
       error:job.error||null,quality,qualityTarget:97,canRetry:phase==='needs_attention'&&!unknown,hasSavedResponse:receipt.exists,needsNewRequestApproval:false,
       usage:job.stageUsage|| (job.usage?[job.usage]:[]),cost:{estimatedUsd:job.stageUsage?job.stageUsage.reduce((n,u)=>n+(Number(u.estimatedUsd)||0),0):job.usage?.estimatedUsd??(job.inFlight?job.reservedUsd:0),costEstimated:job.stageUsage?job.stageUsage.some(u=>u.costEstimated!==false):job.usage?.costEstimated!==false,reservedUsd:job.reservedUsd||0},
+      candidate:candidate?.exists?{...candidate.data(),sources:await Promise.all(candidate.data().sources.map(async source=>({...source,url:await deps.signAsset(source.asset)})))}:null,
       result:result?.exists?{...result.data(),sources:await Promise.all((result.data().sources||[]).map(async source=>({...source,url:await deps.signAsset(source.asset)})))}:null,...(request?.exists?{mode:request.data().mode,selectedLayerId:request.data().selectedLayerId,originalDocument:request.data().document,sources:await Promise.all(request.data().sources.map(async source=>({...source,url:await deps.signAsset(source.asset)})))}:{}),imageAccess:deps.imageAccessStatus?deps.imageAccessStatus():null};
   }
   async function editorAIResume(input={}){
     const w=await read(input.workspaceId);editorScope(w,input);const target=editorAIRef(input.workspaceId,input.jobId);let queued=false;
+    if(input.reviewProofs){
+      const current=await target.get(),candidateRow=await target.collection('data').doc('candidate').get(),existing=await target.collection('data').doc('ad_proofs_v1').get();
+      if(!current.exists||current.data().resetAt||!candidateRow.exists)throw new Error('The saved ad layouts are unavailable.');
+      editorScope(w,current.data().scope);const candidate=candidateRow.data();
+      if(input.candidateHash!==candidate.candidateHash)throw new Error('The ad layouts changed before review. Reopen the saved design.');
+      if(existing.exists){if(existing.data().candidateHash!==input.candidateHash)throw new Error('A different set of layouts already has a saved review.');}
+      else{
+        if(current.data().phase!=='awaiting_review')throw new Error('This design is not waiting for rendered ad proofs.');
+        const expected=[{...candidate.artboard,key:'active',device:candidate.device},...require('../../brites-ad-responsive').variants.map(b=>({...b,key:b.device+'_'+b.key}))];
+        if(!Array.isArray(input.reviewProofs)||input.reviewProofs.length!==expected.length||JSON.stringify(input.reviewProofs).length>4000000)throw new Error('Supply the complete bounded set of rendered ad layouts.');
+        const images=[];
+        for(let i=0;i<expected.length;i++){
+          const p=input.reviewProofs[i],b=expected[i];
+          if(p.key!==b.key||p.width!==b.width||p.height!==b.height||typeof p.dataBase64!=='string'||p.dataBase64.length>400000||!/^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(p.dataBase64))throw new Error('A rendered ad proof is missing or belongs to another format.');
+          const bytes=Buffer.from(p.dataBase64,'base64'),meta=await require('sharp')(bytes,{limitInputPixels:1000000}).metadata(),scale=Math.min(1,960/Math.max(b.width,b.height));
+          if(meta.format!=='jpeg'||Math.abs(meta.width-b.width*scale)>1||Math.abs(meta.height-b.height*scale)>1)throw new Error('A rendered proof has unexpected pixel dimensions.');
+          const asset=await deps.saveAsset(input.workspaceId,bytes,input.jobId+'_proof_'+sha([input.candidateHash,p.key,sha(bytes)]).slice(0,32),{width:meta.width,height:meta.height,mimeType:'image/jpeg',kind:'Complete ad review proof'});
+          const displayWidth=b.key.includes('display_')?b.width:b.device==='desktop'?Math.min(600,b.width):Math.min(360,b.width);
+          images.push({key:p.key,width:b.width,height:b.height,displayWidth,displayHeight:Math.round(displayWidth*b.height/b.width),asset});
+        }
+        const proof={candidateHash:input.candidateHash,images,proofHash:sha(images),createdAt:Date.now()};
+        await f().db.runTransaction(async tx=>{const row=await tx.get(target),saved=await tx.get(target.collection('data').doc('ad_proofs_v1')),c=await tx.get(target.collection('data').doc('candidate'));
+          if(row.data()?.resetAt||c.data()?.candidateHash!==input.candidateHash)throw new Error('The saved design changed during proof upload.');
+          if(saved.exists){if(saved.data().candidateHash!==input.candidateHash)throw new Error('Different review proofs are already saved.');return;}
+          tx.set(target.collection('data').doc('ad_proofs_v1'),clean(proof));
+        });
+      }
+    }
     await f().db.runTransaction(async tx=>{const row=await tx.get(target),receipt=await tx.get(target.collection('data').doc('response'));if(!row.exists)throw new Error('The AI request was not found.');const job=row.data();editorScope(w,job.scope);
       if(job.resetAt||job.phase==='dismissed')throw new Error('This failed AI job was reset. Start a new design when ready.');
       if(job.phase==='ready'||job.phase==='running'&&job.leaseUntil>Date.now())return;
-      const flightReceipt=job.inFlight?.key?await tx.get(target.collection('data').doc(job.inFlight.key==='scene_quality'?'scene_quality_response':job.inFlight.key)):receipt;
+      const flightReceipt=job.inFlight?.key?await tx.get(target.collection('data').doc(/(?:quality|quality_v1)$/.test(job.inFlight.key)?job.inFlight.key+'_response':job.inFlight.key)):receipt;
       if(job.inFlight&&!flightReceipt.exists)throw new Error('The provider may have completed this paid request. Automatic replacement is blocked to prevent another charge. Its original request ID is retained.');
       queued=true;tx.update(target,{phase:'queued',owner:null,leaseUntil:0,error:null,updatedAt:Date.now(),progress:{pct:job.progress.pct,label:receipt.exists?'Reopening the already paid design response':'Resuming saved product research'}});
     });return {ok:true,workspaceId:input.workspaceId,jobId:input.jobId,queued};
@@ -584,6 +615,7 @@ function createAdDesignService(deps) {
       const response=responseRow.data().response,actual=Number(response.estimatedUsd),usage={requestId:responseRow.data().requestId,providerModel:response.model||'gpt-6-astra',usage:response.usage||{},estimatedUsd:response.costEstimated===false&&Number.isFinite(actual)&&actual>=0?actual:(job.textReservedUsd||job.reservedUsd),costEstimated:response.costEstimated!==false,at:Date.now()};
       await save({usage,inFlight:job.inFlight?.key&&job.inFlight.key!=='response'?job.inFlight:null,progress:{pct:request.responsive?48:86,label:request.responsive?'Scene and messaging planned; preparing new product photography':'Checking product claims, editable layers, photo integrity and placement'}});
       const research=require('./googleAdsAdDesignResearch'),output=research.parseResponse(response),result=request.responsive?await responsiveEditorResult({workspaceId,jobId,job,request,evidence,output,target,ref,w,save,saveData,verify,usage}):research.applyEditorPlan({output,request,evidence,sources:request.sources});editorDocument(result.document);await verify();
+      if(result.reviewPending){await saveData('candidate',result);await save({phase:'awaiting_review',leaseUntil:0,error:null,progress:{pct:92,label:'Rendering the complete ad layouts for weighted review'}});return {ok:true,workspaceId,jobId};}
       await saveData('result',result);await save({phase:'ready',leaseUntil:0,completedAt:Date.now(),error:null,progress:{pct:100,label:'Tailored design is ready to apply to this artboard'}});
       return {ok:true,workspaceId,jobId,includeAnimation:request.includeAnimation===true};
     }catch(error){
@@ -617,34 +649,15 @@ function createAdDesignService(deps) {
       await ref.collection('editorSources').doc(sourceId).set(clean(source));const image={id,kind:'generated',format:shape,productIds:[request.productId],ownerProductId:request.productId,groupRef:request.groupRef,title:product.title,asset,createdAt:row.receivedAt||Date.now(),jobId};await ref.collection('imageLibrary').doc(id).set(clean(image));await archiveGenerated(w,image);
       sources.push(source);images.push({id:sourceId,width:asset.width,height:asset.height,focalX:.5,focalY:.5,forFamilies:i?[shape,shape==='portrait'?'skyscraper':'banner']:[]});files.push(await deps.loadAsset(asset));
     }
-    let qualityRow=await target.collection('data').doc('scene_quality').get(),quality=qualityRow.exists?qualityRow.data():null;
-    if(!quality){
-      const raw=await target.collection('data').doc('scene_quality_response').get();
-      if(job.inFlight&&job.inFlight.key==='scene_quality'&&raw.exists)await save({inFlight:null});
-      quality=await paid('scene_quality',82,'Checking product fidelity and mobile clarity',async requestId=>deps.reviewImages(refs[0],files,{reviewType:'product_photograph',rationale:plan.rationale,copy:{headlines:[plan.copy.headline,plan.copy.shortHeadline],descriptions:[plan.copy.description]},keywords:product.keywords||[],product:{id:product.id,title:product.title},inputCoverage:{usedProductImages:refs.length}},refs,requestId,{...(raw.exists?{rawResponse:raw.data().response}:{}),onResponse:response=>saveData('scene_quality_response',{response})}));
+    // Reuse a saved correction if one was already purchased under the former
+    // detail-heavy rubric. New runs go straight to complete-ad review.
+    const repaired=await target.collection('data').doc('scene_repair').get();
+    if(repaired.exists){
+      const repair=repaired.data();await recordCost('scene_repair',repair);
+      const sourceId='scene_'+sha([workspaceId,jobId,'scene_repair']).slice(0,40),source={id:sourceId,productId:request.productId,groupRef:request.groupRef,title:product.title+' · saved corrected scene',width:repair.asset.width,height:repair.asset.height,asset:repair.asset,source:{kind:'library',imageId:'generated_'+sha(repair.asset.path).slice(0,32)}};
+      await ref.collection('editorSources').doc(sourceId).set(clean(source));
+      sources.splice(0,sources.length,source);images.splice(0,images.length,{id:sourceId,width:source.width,height:source.height,focalX:.5,focalY:.5,forFamilies:[]});
     }
-    await recordCost('scene_quality',quality);
-    if(quality.productFaithful!==true||quality.mobileReadable!==true||quality.pass!==true||!Number.isFinite(quality.score)||quality.score<97||quality.score>100){
-      // One bounded corrective image, with every paid response retained. The
-      // first reference remains the authority for this variant's construction.
-      const detailRefs=[...refs];
-      for(const photo of (product.images||[]).slice(0,3)){
-        if(detailRefs.length>=5||!deps.fullSourceBytes||!photo.url)break;
-        try{const b=await deps.fullSourceBytes(photo.url);detailRefs.push(await require('sharp')(b).resize({width:1600,height:1600,fit:'inside',withoutEnlargement:true}).jpeg({quality:92}).toBuffer());}catch(_){}
-      }
-      const repair=await paid('scene_repair',84,'Correcting the scene using the product-detail review',async requestId=>{
-        const format=FORMATS.find(f=>f.key===plan.masterFormat),correction='Correct these specific issues: '+(quality.issues||[]).join(' ')+' The FIRST reference defines the selected jewelry, metal and construction. Other listing views only clarify physical details; do not mix variants. Preserve the fine chain links, bead stations, attachment ring and engraving exactly. Do not reveal a clasp or unseen hardware unless clearly present in a reference. Favor a new close product setting or cropped adult-model scene that shows the same verified parts as the original. Make the pendant prominent and readable on a 360px mobile preview. Do not lay out an entire necklace if its unseen construction would have to be invented.';
-        const generated=await deps.generateImage({requestId,provider:provider(),format,references:detailRefs,product,products:[product],brief:{buyer:plan.rationale,visualDirection:correction},imageDirections:[{concept:'Faithful corrected product scene',composition:correction}],settings:{...w.settings,direction:request.instruction+'\n'+correction},inputCoverage:{usedProductImages:detailRefs.length,preparedReferenceCount:detailRefs.length}});
-        const asset=await deps.saveAsset(workspaceId,generated.bytes,jobId+'_scene_repair',{width:format.width,height:format.height,mimeType:'image/jpeg',digitalSourceType:generated.digitalSourceType||null});return {...generated,bytes:undefined,asset};
-      });
-      await recordCost('scene_repair',repair);
-      const sourceId='scene_'+sha([workspaceId,jobId,'scene_repair']).slice(0,40),id='generated_'+sha(repair.asset.path).slice(0,32),source={id:sourceId,productId:request.productId,groupRef:request.groupRef,title:product.title+' · corrected AI scene',width:repair.asset.width,height:repair.asset.height,asset:repair.asset,source:{kind:'library',imageId:id}},image={id,kind:'generated',format:plan.masterFormat,productIds:[request.productId],ownerProductId:request.productId,groupRef:request.groupRef,title:product.title,asset:repair.asset,createdAt:repair.receivedAt||Date.now(),jobId};
-      await ref.collection('editorSources').doc(sourceId).set(clean(source));await ref.collection('imageLibrary').doc(id).set(clean(image));await archiveGenerated(w,image);
-      sources.splice(0,sources.length,source);images.splice(0,images.length,{id:sourceId,width:source.width,height:source.height,focalX:.5,focalY:.5,forFamilies:[]});files.splice(0,files.length,await deps.loadAsset(repair.asset));
-      const raw=await target.collection('data').doc('scene_repair_quality_response').get();if(job.inFlight?.key==='scene_repair_quality'&&raw.exists)await save({inFlight:null});
-      quality=await paid('scene_repair_quality',88,'Checking the corrected jewelry and mobile framing',async requestId=>deps.reviewImages(refs[0],files,{reviewType:'product_photograph',rationale:plan.rationale,copy:{headlines:[plan.copy.headline],descriptions:[plan.copy.description]},keywords:product.keywords||[],product:{id:product.id,title:product.title},inputCoverage:{usedProductImages:detailRefs.length}},detailRefs,requestId,{...(raw.exists?{rawResponse:raw.data().response}:{}),onResponse:response=>saveData('scene_repair_quality_response',{response})}));await recordCost('scene_repair_quality',quality);
-    }
-    if(quality.productFaithful!==true||quality.mobileReadable!==true||quality.pass!==true||!Number.isFinite(quality.score)||quality.score<97||quality.score>100)throw new Error('The generated photo has not met the 97/100 quality target: '+(quality.issues||[]).join(' '));
     await save({progress:{pct:91,label:'Adapting photo crops, headlines and buttons across 23 sizes'}});
     const publicationImages=[];
     for(const board of responsive.boards.slice(0,3)){
@@ -656,7 +669,22 @@ function createAdDesignService(deps) {
     const chosen=responsive.selectImage(plan,images,request.artboard),document=responsive.document(plan,chosen,request.artboard,request.device==='desktop'?'desktop':'mobile'),locked=o=>o.locked||(o.objects||[]).some(locked);
     // Locked layers remain byte-identical on the active board; originals and every paid scene remain archived.
     document.objects.push(...request.document.objects.filter(locked));
-    return {document,productId:request.productId,groupRef:request.groupRef,device:request.device,artboard:request.artboard,destination:product.url,sources,publicationImages,nativeCopy:plan.nativeCopy,responsive:{plan,images,boards:responsive.boards,variants:responsive.variants},alternatives:[],rationale:plan.rationale+' '+(plan.alternateNeeded?'Two photographic views support different framing needs.':'One new photograph is reused across the formats to avoid unnecessary generation charges.'),sourceIds:plan.sourceIds,evidenceHash:evidence.hash,quality,limitations:[...(plan.limitations||[]),...(evidence.warnings||[]),...(quality.pass?[]:quality.issues||[])]};
+    const candidate={document,productId:request.productId,groupRef:request.groupRef,device:request.device,artboard:request.artboard,destination:product.url,sources,publicationImages,nativeCopy:plan.nativeCopy,responsive:{plan,images,boards:responsive.boards,variants:responsive.variants},alternatives:[],rationale:plan.rationale+' '+(plan.alternateNeeded?'Two photographic views support different framing needs.':'One new photograph is reused across the formats to avoid unnecessary generation charges.'),sourceIds:plan.sourceIds,evidenceHash:evidence.hash,limitations:[...(plan.limitations||[]),...(evidence.warnings||[])]};
+    const rubric=require('./googleAdsAdQuality'),candidateHash=sha(candidate),proofRow=await target.collection('data').doc('ad_proofs_v1').get();
+    if(!proofRow.exists||proofRow.data().candidateHash!==candidateHash)return {...candidate,candidateHash,reviewPending:true};
+    const proof=proofRow.data(),key='ad_quality_v1',raw=await target.collection('data').doc(key+'_response').get();
+    if(raw.exists&&(raw.data().candidateHash!==candidateHash||raw.data().proofHash!==proof.proofHash))throw new Error('The saved review response belongs to different ad proofs.');
+    if(job.inFlight?.key===key&&raw.exists)await save({inFlight:null});
+    const quality=await paid(key,95,'Reviewing messaging, layout, relevance and visual appeal',async requestId=>({...await deps.reviewImages(refs[0],await Promise.all(proof.images.map(p=>deps.loadAsset(p.asset))),{
+      reviewType:'complete_ad',rubric:rubric.RUBRIC,copy:plan.copy,nativeCopy:plan.nativeCopy,product:{id:product.id,title:product.title,url:product.url},
+      research:{sources:evidence.sources,limitations:evidence.warnings},inputCoverage:{usedProductImages:refs.length},
+      renderedFormats:proof.images.map(({key,width,height,displayWidth,displayHeight})=>({key,width,height,displayWidth,displayHeight})),
+      placementNote:'These are actual browser-rendered editable compositions. Google responsive ads combine separate clean photos and native text dynamically; these proofs are not guaranteed Google placements.'
+    },refs,requestId,{...(raw.exists?{rawResponse:raw.data().response}:{}),onResponse:response=>saveData(key+'_response',{response,candidateHash,proofHash:proof.proofHash})}),candidateHash,proofHash:proof.proofHash}));
+    if(quality.candidateHash!==candidateHash||quality.proofHash!==proof.proofHash)throw new Error('The saved quality score belongs to different ad proofs.');
+    await recordCost(key,quality);
+    if(!quality.pass||!Number.isFinite(quality.score)||quality.score<97)throw new Error('The complete ad scored '+quality.score+'/100 under the messaging-led rubric: '+(quality.issues||[]).join(' '));
+    return {...candidate,quality,candidateHash,proofHash:proof.proofHash};
   }
   async function editorAIApply(input={}){
     const ref=refFor(input.workspaceId),w=await read(input.workspaceId);editorScope(w,input);
@@ -806,7 +834,7 @@ function createAdDesignService(deps) {
         const row=await tx.get(candidate.ref),workspace=await tx.get(ref);if(!row.exists||!workspace.exists||workspace.data().archivedAt)return 0;const job=row.data();
         const stale=['queued','running'].includes(job.phase)&&Number(job.leaseUntil||0)<now&&now-Number(job.updatedAt||job.createdAt||0)>120000;
         if(job.phase!=='needs_attention'&&!stale||job.resetAt||Number(job.updatedAt||job.createdAt||0)>cutoff||active(job))return 0;
-        if(job.inFlight){const receipt=await tx.get(candidate.ref.collection('data').doc(job.inFlight.key==='scene_quality'?'scene_quality_response':job.inFlight.key||'response'));if(!receipt.exists)return -1;}
+        if(job.inFlight){const receipt=await tx.get(candidate.ref.collection('data').doc(/(?:quality|quality_v1)$/.test(job.inFlight.key)?job.inFlight.key+'_response':job.inFlight.key||'response'));if(!receipt.exists)return -1;}
         tx.set(candidate.ref.collection('data').doc('reset'),clean({job,resetAt:now,reason:'Operator reset failed AI state'}));
         tx.update(candidate.ref,{phase:'dismissed',resetAt:now,error:null,owner:null,leaseUntil:0,inFlight:null,updatedAt:now});
         if(workspace.data().editorAI?.id===job.id)tx.update(ref,{editorAI:null});return 1;

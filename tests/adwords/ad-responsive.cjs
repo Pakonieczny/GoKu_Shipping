@@ -41,5 +41,9 @@ if(require.main===module)(async()=>{
    for(let i=0;i<text.length;i++)for(let j=i+1;j<text.length;j++)ok(!boxesOverlap(text[i].getBoundingRect(),text[j].getBoundingRect()),board.key+' '+text[i].editorRole+' avoids '+text[j].editorRole);
    const image=e.canvas.getObjects().find(o=>o.type==='image');ok(image.scaleX===image.scaleY&&image.angle===0,'photo preserves proportions');
  }
+ const beforeProofBoard=e.board,beforeProofDoc=JSON.stringify(e.document());const proofs=await e.renderAIProofs({artboard:{key:'square',width:2048,height:2048},device:'mobile',document:responsive.document(plan,photo,{key:'square',width:2048,height:2048},'mobile'),sources:[photo],responsive:{plan,images:[photo]}});
+ ok(proofs.length===27&&proofs[0].key==='active'&&new Set(proofs.map(p=>p.key)).size===27,'browser renders the active canvas plus all 26 responsive variants');
+ ok(e.board===beforeProofBoard&&JSON.stringify(e.document())===beforeProofDoc,'rendering quality proofs does not modify editable artwork');
+ const proofMeta=await sharp(Buffer.from(proofs[0].dataBase64,'base64')).metadata();ok(proofMeta.width===960&&proofMeta.height===960&&proofMeta.format==='jpeg','review uses actual bounded browser pixels');
  await e.dispose();dom.window.close();console.log('PASS '+checks+' responsive photo, mobile layout, typography and product scope checks');
 })().catch(e=>{console.error(e.stack);process.exitCode=1});
