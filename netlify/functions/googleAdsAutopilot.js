@@ -1047,11 +1047,11 @@ async function uploadConversionAdjustments({ ctrl, limit = 500 } = {}) {
 async function conversionHealth({ force } = {}) {
   const f = fb();
   if (f && !force) {
-    try { const s = await f.db.collection(COL.state).doc("conv_health").get(); if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 15 * 60 * 1000 && x.data && x.data.schemaVersion === 3) return x.data; } } catch (e) {}
+    try { const s = await f.db.collection(COL.state).doc("conv_health").get(); if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 15 * 60 * 1000 && x.data && x.data.schemaVersion === 4) return x.data; } } catch (e) {}
   }
   const out = { status: "UNKNOWN", actionConfigured: !!ENV.GADS_CONVERSION_ACTION, actionId: ENV.GADS_CONVERSION_ACTION || null,
-    actions: [], recentConversions: null, queueDepth: null, adjQueueDepth: null, lastUpload: null,
-    healthy: false, validated: false, reasons: [], schemaVersion: 3, at: Date.now() };
+    actions: [], actionsChecked: false, recentConversions: null, queueDepth: null, adjQueueDepth: null, lastUpload: null,
+    healthy: false, validated: false, reasons: [], schemaVersion: 4, at: Date.now() };
   try {
     const r = await gaql(`SELECT customer.conversion_tracking_setting.conversion_tracking_status FROM customer`);
     const cs = r[0] && r[0].customer && r[0].customer.conversionTrackingSetting;
@@ -1059,7 +1059,7 @@ async function conversionHealth({ force } = {}) {
   } catch (e) { out.reasons.push("status check failed: " + String(e.message).slice(0, 70)); }
   try {
     const rows = await gaql(`SELECT conversion_action.id, conversion_action.name, conversion_action.status, conversion_action.type, conversion_action.category FROM conversion_action`);
-    out.actions = rows.map(r => ({ id: String(r.conversionAction.id), name: r.conversionAction.name, status: r.conversionAction.status, type: r.conversionAction.type, category: r.conversionAction.category }));
+    out.actionsChecked = true; out.actions = rows.map(r => ({ id: String(r.conversionAction.id), name: r.conversionAction.name, status: r.conversionAction.status, type: r.conversionAction.type, category: r.conversionAction.category }));
   } catch (e) { out.reasons.push("conversion-action list failed: " + String(e.message).slice(0, 70)); }
   try {
     const tz = await _accountTz();
@@ -1101,7 +1101,7 @@ async function conversionHealth({ force } = {}) {
     } catch (error) { out.healthy = false; out.validated = false; out.reasons.push("Data Manager status: " + error.message); }
   }
   if (!out.actionConfigured) out.reasons.push("GADS_CONVERSION_ACTION env var is not set");
-  if (out.actionConfigured && !out.configuredAction) out.reasons.push("The configured conversion action was not found in this account.");
+  if (out.actionConfigured && out.actionsChecked && !out.configuredAction) out.reasons.push("The configured conversion action was not found in this account.");
   else if (out.configuredAction && !enabledAction) out.reasons.push("The configured conversion action is not enabled.");
   if (out.configuredAction && !importAction) out.reasons.push("The configured action must use UPLOAD_CLICKS for server-side click imports; its current type is " + out.configuredAction.type + ".");
   if (out.status === "NOT_CONVERSION_TRACKED") out.reasons.push("account status is NOT_CONVERSION_TRACKED");
