@@ -9455,8 +9455,8 @@ async function _adDesignPublicationContext(workspaceId){
   if(w.job&&(w.job.inFlight||w.job.leaseUntil>Date.now()))throw new Error('Wait for the image or messaging request to finish before publishing.');
   const rows=await ref.collection('sourceSets').doc(w.sourceSetId).collection('products').get(),products=rows.docs.map(d=>d.data()),product=products.find(p=>String(p.id)===String(w.settings.productId)),group=(w.context.groups||[]).find(g=>g.ref===w.settings.groupRef);
   if(!product||!group)throw new Error('Choose the product and ad group before publishing.');
-  group.requiresProductSplit=require('./googleAdsAdDesign').isSharedProductGroup(w,group);
-  return {ref,w,products,product,group};
+  const scopedGroup={...group,requiresProductSplit:require('./googleAdsAdDesign').isSharedProductGroup(w,group)};
+  return {ref,w,products,product,group:scopedGroup};
 }
 async function saveAdDesignCopy({workspaceId,copy,expectedRevision}={}){
   const {ref,w,product,group}=await _adDesignPublicationContext(workspaceId);
