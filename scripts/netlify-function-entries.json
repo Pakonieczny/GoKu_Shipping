@@ -260,6 +260,7 @@
     "googleAdsAdDesignAdapters.js",
     "googleAdsAdDesignContext.js",
     "googleAdsAdDesignResearch.js",
+    "googleAdsAdKeywordResearch.js",
     "googleAdsAdMotion.js",
     "googleAdsAutopilot.js",
     "googleAdsDataManager.js",
