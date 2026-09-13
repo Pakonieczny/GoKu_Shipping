@@ -8,9 +8,9 @@
   function selectImage(plan,images,board){const f=family(board);return images.find(i=>i.forFamilies?.includes(f))||images[0];}
   // Design at the actual viewing width, then export at the requested resolution.
   // A 2048px master must not turn a 36px CTA into a 6px mobile label.
-  const layoutVersion=15;
+  const layoutVersion=16;
   function document(plan,image,board,device="mobile"){
-    const master=['square','landscape','portrait'].includes(board.key),factor=master?board.width/Math.min(board.width,device==='desktop'?600:360):1;
+    const master=['square','landscape','portrait'].includes(board.key),factor=master?board.width/Math.min(board.width,plan.style.preserveSavedStyle?360:device==='desktop'?600:360):1;
     const W=board.width/factor,H=board.height/factor,f=family(board),layout=(plan.layouts||[]).find(l=>l.family===f&&l.device===device)||(plan.layouts||[]).find(l=>l.family===f)||{},style={...plan.style},copy=plan.copy;
     const rgb=style.background.match(/[a-f0-9]{2}/gi)?.map(x=>parseInt(x,16));if(style.treatment!=='soft-fade'&&rgb&&rgb[0]<90&&rgb[0]>=rgb[1]&&rgb[1]>=rgb[2])Object.assign(style,{background:'#F5F0E8',ink:'#34281E',accent:'#4B3825',buttonInk:'#FFF9F0',headlineFont:'Georgia'});
     if(style.treatment==='soft-fade'){
@@ -24,13 +24,13 @@
     const objects=[],margin=Math.max(3,Math.min(8,Math.min(W,H)*.03)),banner=f==='banner',narrow=f==='skyscraper';
     const typeScale=Math.max(1,Math.min(1.35,W/440)),description=copy.description.startsWith(copy.shortHeadline+'. ')?copy.description.slice(copy.shortHeadline.length+2):copy.description;
     const lineHeight=1.08;
-    function lines(value,width,size){return Math.max(1,String(value).split(/\s+/).reduce((a,word)=>{const n=word.length*size*.58;if(a.used&&a.used+size*.3+n>width){a.count++;a.used=n;}else a.used+=n+size*.3;return a;},{count:1,used:0}).count);}
-    function text(id,value,x,y,width,height,size,role,font=style.bodyFont){if(value)objects.push(base(id,role,{type:'Textbox',text:value,left:x,top:y,width,height,aiBoxHeight:height,fontFamily:font,fontSize:size,fontWeight:role==='headline'?'700':'400',fill:style.ink,lineHeight,charSpacing:role==='brand'?35:0,textAlign:'left'}));}
+    function lines(value,width,size){return String(value).split(/\n/).reduce((sum,line)=>sum+Math.max(1,line.split(/\s+/).reduce((a,word)=>{const n=word.length*size*.58;if(a.used&&a.used+size*.3+n>width){a.count++;a.used=n;}else a.used+=n+size*.3;return a;},{count:1,used:0}).count),0);}
+    function text(id,value,x,y,width,height,size,role,font=style.bodyFont){if(value)objects.push(base(id,role,{type:'Textbox',text:value,left:x,top:y,width,height,aiBoxHeight:height,fontFamily:font,fontSize:size,fontWeight:role==='headline'?(style.headlineWeight||'700'):(style.bodyWeight||'400'),fill:style.ink,lineHeight,charSpacing:role==='brand'?35:0,textAlign:'left'}));}
     function button(x,y,width,height,label=copy.cta,size=14){
       // Select a short action before fitting; never squeeze a two-line label into a small banner.
       if(label.length*size*.65+12>width)label='Shop now';
       if(label.length*size*.65+12>width)label='Shop';
-      objects.push(base('cta','button',{type:'Group',left:x,top:y,width,height,buttonPadding:4,objects:[{type:'Rect',originX:'left',originY:'top',left:-width/2,top:-height/2,width,height,fill:style.accent,strokeWidth:0,rx:3,ry:3},{type:'Textbox',originX:'center',originY:'center',left:0,top:0,width:width-8,height:16,text:label,fontFamily:style.bodyFont,fontWeight:'700',fontSize:size,fill:style.buttonInk,textAlign:'center',lineHeight:1}]}));
+      objects.push(base('cta','button',{type:'Group',left:x,top:y,width,height,buttonPadding:4,objects:[{type:'Rect',originX:'left',originY:'top',left:-width/2,top:-height/2,width,height,fill:style.accent,strokeWidth:0,rx:style.preserveSavedStyle?height*style.buttonRadius:3,ry:style.preserveSavedStyle?height*style.buttonRadius:3},{type:'Textbox',originX:'center',originY:'center',left:0,top:0,width:width-8,height:16,text:label,fontFamily:style.buttonFont||style.bodyFont,fontWeight:style.buttonWeight||'700',fontSize:size,fill:style.buttonInk,textAlign:'center',lineHeight:1}]}));
     }
     // Frame the located charm, not the full chain or photograph. Small placements
     // receive tighter crops; larger ones retain a little photographic context.
@@ -62,29 +62,30 @@
       const focus=image.focus,side=W/H>=1.3&&W>=300&&H>=160;
       if(style.treatment!=='soft-fade'||banner||(!side&&!(W>=240&&H>=280||narrow&&W>=120&&H>=400))||!focus||!['x','y','width','height'].every(k=>Number.isFinite(focus[k]))||focus.width<=0||focus.height<=0)return false;
       const pad=Math.max(6,Math.min(22,W*.045)),gap=Math.max(5,Math.min(12,H*.025));
-      const bw=narrow?W-pad*2:Math.min(side?W*.42:W*.66,Math.max(96,copy.cta.length*7+20)),bh=Math.min(44,Math.max(32,H*.1));
+      const bw=narrow?W-pad*2:Math.min(side?W*.42:W*.66,Math.max(96,copy.cta.length*(style.preserveSavedStyle?9:7)+24)),bh=Math.min(44,Math.max(32,H*.1));
       const row=false,tw=side?W*.47-pad*2:row?W-bw-pad*3:W-pad*2;
-      let headline=!side||W<320?copy.shortHeadline:copy.headline,hs=side?Math.min(36,Math.max(22,W*.055)):Math.min(narrow?40:30,Math.max(21,W*(narrow?.12:.085)));
+      let headline=(style.preserveSavedStyle&&!narrow&&W>=320)||side&&W>=320?copy.headline:copy.shortHeadline,hs=side?Math.min(36,Math.max(22,W*.055)):Math.min(narrow?40:30,Math.max(21,W*(narrow?.12:.085)));
       if(lines(headline,tw,hs)>3)headline=copy.shortHeadline;
       hs=Math.min(hs,tw/(Math.max(...headline.split(/\s+/).map(w=>w.length))*.67));
       const hh=lines(headline,tw,hs)*hs*1.24,brand=W>=320,brandH=brand?16:0,bodySize=side?Math.min(18,W*.03):14;
-      const bodyH=lines(description,tw,bodySize)*bodySize*1.3,body=side&&bodyH<=H*.17&&brandH+hh+bodyH+bh+gap*4<H*.86;
+      const bodyH=lines(description,tw,bodySize)*bodySize*1.3,body=(side||style.preserveSavedStyle&&!narrow&&H>=400)&&bodyH<=H*.17&&brandH+hh+bodyH+bh+gap*4<H*.86;
       const total=brandH+(brand?gap:0)+hh+(body?bodyH+gap:0)+(row?0:bh+gap);let top=side?Math.max(pad,(H-total)/2):H-pad-Math.max(total,row?bh:0);
-      if(!side&&top<H*.55)return false;
+      if(!side&&top<H*.50)return false;
       const region=side?{left:W*.55,top:pad,width:W*.45-pad,height:H-pad*2}:{left:pad,top:pad,width:W-pad*2,height:top-pad*2};
       const scale=Math.max(W/image.width,side?H/image.height:0,Math.min(region.width/(image.width*focus.width*(narrow?1.08:1.16)),region.height/(image.height*focus.height*1.16)));
       const cw=W/scale;let ch=Math.min(image.height,(side?H:top)/scale),cx=clamp(image.width*(focus.x+focus.width/2)-(region.left+region.width/2)/scale,0,image.width-cw),cy=clamp(image.height*(focus.y+focus.height/2)-(region.top+region.height/2)/scale,0,image.height-ch);
       const subject={left:(image.width*focus.x-cx)*scale,top:(image.height*focus.y-cy)*scale,width:image.width*focus.width*scale,height:image.height*focus.height*scale};
       if(subject.left<region.left||subject.top<region.top||subject.left+subject.width>region.left+region.width||subject.top+subject.height>region.top+region.height)return false;
       const photoTop=0;if(narrow){cy=clamp(cy+(subject.top-pad)/scale,0,image.height);subject.top=(image.height*focus.y-cy)*scale;top=subject.top+subject.height+gap*2;ch=Math.min(image.height-cy,top/scale);}
+      if(style.preserveSavedStyle&&!narrow)ch=Math.min(image.height-cy,H/scale);
       objects.push(base('product_scene','photo',{type:'Image',sourceKey:image.id,left:0,top:photoTop,width:cw,height:ch,cropX:cx,cropY:cy,scaleX:scale,scaleY:scale}));
-      const stops=side?[[0,1],[.40,.98],[.55,0],[1,0]]:[...(photoTop>0?[[0,1],[photoTop/H,1],[(photoTop+Math.min(40,Math.max(1,subject.top-photoTop)))/H,0]]:[[0,0]]),[Math.max(0,(subject.top+subject.height)/H),0],[Math.min(top/H,(photoTop+ch*scale)/H),1],[1,1]];
+      const stops=side?[[0,1],[.40,.98],[.55,0],[1,0]]:[...(photoTop>0?[[0,1],[photoTop/H,1],[(photoTop+Math.min(40,Math.max(1,subject.top-photoTop)))/H,0]]:[[0,0]]),[Math.max(0,(subject.top+subject.height)/H),0],[Math.min((top+(style.preserveSavedStyle&&!narrow?total*.75:0))/H,(photoTop+ch*scale)/H),1],[1,1]];
       objects.push(base('image_fade','shape',{type:'Rect',left:0,top:0,width:W,height:H,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:side?1:0,y2:side?0:1},colorStops:stops.map(([offset,opacity])=>({offset,color:'rgba('+style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)).join(',')+','+opacity+')'}))}}));
       let y=top;if(brand){text('brand','BRITES JEWELRY',pad,y,tw,brandH,12,'brand');y+=brandH+gap;}
       text('headline',headline,pad,y,tw,hh,hs,'headline',style.headlineFont);y+=hh+gap;
       if(body){text('description',description,pad,y,tw,bodyH,bodySize,'description');y+=bodyH+gap;}
-      button(side?pad:(W-Math.min(bw,tw))/2,y,Math.min(bw,tw),bh,copy.cta,Math.min(17,bh*.4));
-      if(!side)for(const o of objects)if('text'in o)o.textAlign='center';
+      button(side||style.preserveSavedStyle&&!narrow?pad:(W-Math.min(bw,tw))/2,y,Math.min(bw,tw),bh,copy.cta,Math.min(17,bh*.4));
+      if(!side&&(!style.preserveSavedStyle||narrow))for(const o of objects)if('text'in o)o.textAlign='center';
       return true;
     }
     const compactHeadline=copy.shortHeadline;

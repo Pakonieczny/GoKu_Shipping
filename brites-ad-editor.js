@@ -326,7 +326,7 @@
       const title=String(headline?.text||design.name?.split('·')[0]||'Discover your favorite').trim(),short=title.split(/\n/).filter(Boolean).pop(),hex=(v,f)=>/^#[a-f0-9]{6}$/i.test(v||'')?v:f;
       const image={...source,width:source.width||photo.width,height:source.height||photo.height};
       if(!image.focus)image.focus=await this.locateSavedProduct(image,photo,texts,design.artboard);
-      const plan={copy:{headline:title.replace(/\s+/g,' '),shortHeadline:short.length<=30?short:title.split(/\s+/).slice(-3).join(' '),description:description?.text||'',cta:label?.text||'Shop now'},style:{treatment:'soft-fade',background:hex(design.document.background,'#fffaf2'),ink:hex(headline?.fill,'#34281e'),accent:hex(shape?.fill,'#4b3825'),buttonInk:hex(label?.fill,'#fffaf2'),headlineFont:headline?.fontFamily||'Georgia',bodyFont:description?.fontFamily||brand?.fontFamily||'Arial'},layouts:[]};
+      const plan={copy:{headline:title,shortHeadline:short.length<=30?short:title.split(/\s+/).slice(-3).join(' '),description:description?.text||'',cta:label?.text||'Shop now'},style:{treatment:'soft-fade',preserveSavedStyle:true,headlineWeight:headline?.fontWeight||'400',bodyWeight:description?.fontWeight||'400',buttonWeight:label?.fontWeight||'600',buttonFont:label?.fontFamily||'Arial',buttonRadius:Math.min(.2,(shape?.rx||0)/(shape?.height||1)),background:hex(design.document.background,'#fffaf2'),ink:hex(headline?.fill,'#34281e'),accent:hex(shape?.fill,'#4b3825'),buttonInk:hex(label?.fill,'#fffaf2'),headlineFont:headline?.fontFamily||'Georgia',bodyFont:description?.fontFamily||brand?.fontFamily||'Arial'},layouts:[]};
       return {plan,image};
     }
     async locateSavedProduct(source,photo,texts,board){
