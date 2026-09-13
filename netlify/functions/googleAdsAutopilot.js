@@ -9377,7 +9377,8 @@ function _motionPublication(){
  _motionEngine();
  const context=async workspaceId=>{const ref=_adDesignWorkspaceRef(workspaceId),s=await ref.get();if(!s.exists)throw Error('Design workspace was not found.');return {ref,w:s.data()};};
  const assertTarget=async job=>{
-  if(!new RegExp('^customers/'+CID+'/assetGroups/\\d+$').test(job.groupRef)||!/^\d+$/.test(String(job.productId)))throw Error('Choose a product-specific Performance Max group.');
+  const productId=String(job.productId||'').match(/^(?:gid:\/\/shopify\/Product\/)?(\d+)$/)?.[1];
+  if(!new RegExp('^customers/'+CID+'/assetGroups/\\d+$').test(job.groupRef)||!productId)throw Error('Choose a product-specific Performance Max group.');
   const {w,product,group}=await _adDesignPublicationContext(job.workspaceId);
   if(w.archivedAt||String(product.id)!==String(job.productId)||group.ref!==job.groupRef||product.url!==job.destination||group.requiresProductSplit)throw Error('The product or group changed; refresh and review again.');
   const ref=_gaqlString(job.groupRef),[groups,filters]=await Promise.all([
@@ -9386,7 +9387,7 @@ function _motionPublication(){
   ]);
   const g=groups[0];if(groups.length!==1||String(g.campaign?.id)!==String(w.context.campaignId)||g.campaign?.status!=='PAUSED'||g.assetGroup?.status==='REMOVED'||g.assetGroup?.finalUrls?.length!==1||g.assetGroup.finalUrls[0]!==job.destination)throw Error('Video publication requires the exact product destination in a paused campaign.');
   const rules=filters.map(r=>r.assetGroupListingGroupFilter),included=rules.filter(r=>r.type==='UNIT_INCLUDED');
-  if(rules.length!==3||included.length!==1||!new RegExp('^shopify_[a-z]{2}_'+job.productId+'_\\d+$','i').test(included[0].caseValue?.productItemId?.value||'')||rules.filter(r=>r.type==='SUBDIVISION').length!==1||rules.filter(r=>r.type==='UNIT_EXCLUDED'&&!r.caseValue?.productItemId?.value).length!==1)throw Error('Google product filters must isolate this exact product before video publication.');
+  if(rules.length!==3||included.length!==1||!new RegExp('^shopify_[a-z]{2}_'+productId+'_\\d+$','i').test(included[0].caseValue?.productItemId?.value||'')||rules.filter(r=>r.type==='SUBDIVISION').length!==1||rules.filter(r=>r.type==='UNIT_EXCLUDED'&&!r.caseValue?.productItemId?.value).length!==1)throw Error('Google product filters must isolate this exact product before video publication.');
   return g;
  };
  const upload=require('./googleAdsVideoUpload').createVideoUpload({fetch,headers:async()=>adsHeaders(await mintToken()),customerId:CID,version:V});

@@ -12,6 +12,20 @@ async function setup(){
  return {ref,job,scope,calls,D,service:createPublicationService(D)};
 }
 (async()=>{
+ const engine=fs.readFileSync(path.join(__dirname,'../../netlify/functions/googleAdsAutopilot.js'),'utf8');
+ const start=engine.indexOf(' const assertTarget=async job=>{',engine.indexOf('function _motionPublication()'));
+ let liveProduct='gid://shopify/Product/123',liveStatus='PAUSED',liveOffer='shopify_us_123_456';
+ const liveJob={workspaceId:'design_test',productId:liveProduct,groupRef:'customers/1/assetGroups/2',destination:'https://example.test/peach'};
+ const liveCheck=vm.runInNewContext(engine.slice(start,engine.indexOf('\n const upload=',start))+';assertTarget',{CID:'1',_gaqlString:x=>JSON.stringify(x),_adDesignPublicationContext:async()=>({w:{context:{campaignId:'42'}},product:{id:liveProduct,url:liveJob.destination},group:{ref:liveJob.groupRef}}),gaql:async q=>q.includes('FROM asset_group_listing_group_filter')?[
+   {assetGroupListingGroupFilter:{type:'SUBDIVISION'}},{assetGroupListingGroupFilter:{type:'UNIT_INCLUDED',caseValue:{productItemId:{value:liveOffer}}}},{assetGroupListingGroupFilter:{type:'UNIT_EXCLUDED'}}
+ ]:[{campaign:{id:'42',status:liveStatus},assetGroup:{status:'ENABLED',finalUrls:[liveJob.destination]}}]});
+ await liveCheck(liveJob);ok(true,'actual production guard accepts Shopify Product GID');
+ liveProduct='123';await liveCheck({...liveJob,productId:'123'});ok(true,'actual production guard accepts numeric product ID');liveProduct=liveJob.productId;
+ liveOffer='shopify_us_999_456';await assert.rejects(()=>liveCheck(liveJob),/filters/);checks++;liveOffer='shopify_us_123_456';
+ liveStatus='ENABLED';await assert.rejects(()=>liveCheck(liveJob),/paused campaign/);checks++;liveStatus='PAUSED';
+ await assert.rejects(()=>liveCheck({...liveJob,productId:'gid://shopify/ProductVariant/123'}),/product-specific/);checks++;
+ await assert.rejects(()=>liveCheck({...liveJob,groupRef:'customers/9/assetGroups/2'}),/product-specific/);checks++;
+ await assert.rejects(()=>liveCheck({...liveJob,destination:'https://example.test/other'}),/changed/);checks++;
  const e=await setup();await e.service.start({...e.scope,reviewHash:reviewHash(e.job)});ok((await e.service.run(e.scope)).attached,'processed videos attached');
  await e.service.start({...e.scope,reviewHash:reviewHash(e.job)});await e.service.run(e.scope);ok(e.calls.start===3&&e.calls.finish===3&&e.calls.attach===1,'repeat approval does not duplicate uploads or attachment');
  const verified=await e.service.verify(e.scope);ok(!verified.publication.verification.policyApproved&&!verified.publication.verification.allVideosHaveImpressions,'upload acceptance never implies policy or serving');
