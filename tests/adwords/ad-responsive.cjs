@@ -67,11 +67,15 @@ if(require.main===module)(async()=>{
  for(const board of [{key:'display_120x600',width:120,height:600},{key:'display_160x600',width:160,height:600},{key:'display_300x1050',width:300,height:1050},{key:'display_250x360',width:250,height:360},{key:'display_240x400',width:240,height:400}]){
    const im={id:'peach',width:2048,height:1072,focus:{x:.539,y:.199,width:.258,height:.682}},d=responsive.document(fadePlan,im,board,'desktop'),p=d.objects.find(o=>o.editorRole==='photo'),t=d.objects.find(o=>o.editorRole==='headline'),b=d.objects.find(o=>o.editorRole==='button');
    const bottom=p.top+(im.height*(im.focus.y+im.focus.height)-p.cropY)*p.scaleY;
-   ok(t.top-bottom<60,'portrait copy stays close to the product '+board.key);
-   if(board.height/board.width>2){const subjectTop=p.top+(im.height*im.focus.y-p.cropY)*p.scaleY;ok(subjectTop<=15,'tall charm starts near the top edge '+board.key);ok(b.width*b.scaleX>=board.width*.88,'tall action spans the available width '+board.key);}
+   if(board.height/board.width<=2)ok(t.top-bottom<60,'portrait copy stays close to the product '+board.key);
+   if(board.height/board.width>2){ok(t.top>=board.height*2/3,'tall messaging stays in lower third '+board.key);ok(b.top+b.height*b.scaleY>=board.height-15,'tall action anchors to the bottom '+board.key);ok(b.width*b.scaleX>=board.width*.88,'tall action spans the available width '+board.key);ok(p.top>=0&&bottom<=board.height*2/3+1,'entire charm stays in upper two thirds '+board.key);}
    ok(t.textAlign==='center'&&Math.abs(b.left+b.width*b.scaleX/2-board.width/2)<1,'portrait title and button share the product centerline '+board.key);
    ok(b.width*b.scaleX>=board.width*.4,'portrait CTA has a substantial readable width '+board.key);
  }
+
+ for(const board of [{key:'display_250x250',width:250,height:250},{key:'display_300x250',width:300,height:250}]){const d=responsive.document(fadePlan,photo,board,'desktop');ok(d.objects.some(o=>o.id==='ai_photo_caption_fade'),'compact fallback has a photographic fade '+board.key);}
+ const marginDoc=responsive.document(fadePlan,{id:'wide-focus',width:1000,height:1000,focus:{x:.1,y:.1,width:.8,height:.8}},{key:'landscape',width:2048,height:1072},'desktop');
+ ok(marginDoc.objects.some(o=>o.id==='ai_scene_extension'&&Math.abs(o.width*o.scaleX-2048)<1),'landscape photo region fills its side margins with the original scene');
  for(const board of responsive.variants){e.board=board;await e.restore(responsive.document(fadePlan,photo,board,board.device));for(const o of e.canvas.getObjects())e.fitAIText(o);const fade=e.canvas.getObjects().find(o=>o.id==='ai_image_fade');if(!fade)continue;fades++;
    const im=e.canvas.getObjects().find(o=>o.type==='image'),bounds=im.getBoundingRect(),subject={left:(photo.focus.x*photo.width-im.cropX)*im.scaleX,top:im.top+(photo.focus.y*photo.height-im.cropY)*im.scaleY,width:photo.focus.width*photo.width*im.scaleX,height:photo.focus.height*photo.height*im.scaleY};
    ok(Math.abs(bounds.width-board.width)<1&&(Math.abs(bounds.height-board.height)<1||fade.fill.coords.y2===1&&fade.fill.colorStops.some(s=>new w.fabric.Color(s.color).getAlpha()===1&&s.offset*board.height<=bounds.top+bounds.height+1)),'soft fade fills the width and conceals the photo edge '+board.key);

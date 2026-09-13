@@ -8,7 +8,7 @@
   function selectImage(plan,images,board){const f=family(board);return images.find(i=>i.forFamilies?.includes(f))||images[0];}
   // Design at the actual viewing width, then export at the requested resolution.
   // A 2048px master must not turn a 36px CTA into a 6px mobile label.
-  const layoutVersion=16;
+  const layoutVersion=17;
   function document(plan,image,board,device="mobile"){
     const master=['square','landscape','portrait'].includes(board.key),factor=master?board.width/Math.min(board.width,plan.style.preserveSavedStyle?360:device==='desktop'?600:360):1;
     const W=board.width/factor,H=board.height/factor,f=family(board),layout=(plan.layouts||[]).find(l=>l.family===f&&l.device===device)||(plan.layouts||[]).find(l=>l.family===f)||{},style={...plan.style},copy=plan.copy;
@@ -50,13 +50,28 @@
       if(valid&&placed.height<frame.height-1&&style.treatment==='soft-fade'){
         // Extend the photographic atmosphere through tall placements without
         // enlarging the foreground beyond the complete product's safe crop.
-        const quietWidth=Math.max(1,image.width*focus.x*.8),atmosphereScale=Math.max(frame.width/quietWidth,frame.height/image.height),bw=frame.width/atmosphereScale,bh=frame.height/atmosphereScale;
-        objects.unshift(base('photo_atmosphere','shape',{type:'Image',sourceKey:image.id,left:frame.left,top:frame.top,width:bw,height:bh,cropX:0,cropY:0,scaleX:atmosphereScale,scaleY:atmosphereScale,opacity:.65,filters:[{type:'Blur',blur:.18}]}));
         const rgb=style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)).join(','),edge=Math.min(32,placed.height*.14);
         for(const top of [true,false])objects.push(base('photo_feather_'+top,'shape',{type:'Rect',left:placed.left,top:top?placed.top:placed.top+placed.height-edge,width:placed.width,height:edge,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:0,y2:1},colorStops:[{offset:0,color:'rgba('+rgb+','+(top?1:0)+')'},{offset:1,color:'rgba('+rgb+','+(top?0:1)+')'}]}}));
+        for(const top of [true,false]){const height=Math.min(edge*2,top?placed.top-frame.top:frame.top+frame.height-placed.top-placed.height);if(height>0)objects.push(base('scene_join_'+top,'shape',{type:'Rect',left:frame.left,top:top?placed.top-height:placed.top+placed.height,width:frame.width,height,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:0,y2:1},colorStops:[{offset:0,color:'rgba('+rgb+','+(top?0:1)+')'},{offset:1,color:'rgba('+rgb+','+(top?1:0)+')'}]}}));}
+
       }
 
+      // Fill uncovered photo space from a product-free patch of the same scene.
+      // This retains surface texture without stretching or repeating the charm.
+      if(valid&&(placed.width<frame.width-1||placed.height<frame.height-1)){
+        const patches=[{x:0,y:0,w:focus.x*image.width,h:image.height},{x:(focus.x+focus.width)*image.width,y:0,w:(1-focus.x-focus.width)*image.width,h:image.height},{x:0,y:0,w:image.width,h:focus.y*image.height},{x:0,y:(focus.y+focus.height)*image.height,w:image.width,h:(1-focus.y-focus.height)*image.height}].filter(p=>p.w>2&&p.h>2).sort((a,b)=>b.w*b.h-a.w*a.h),patch=patches[0];
+        if(patch){const s=Math.max(frame.width/patch.w,frame.height/patch.h);objects.unshift(base('scene_extension','shape',{type:'Image',sourceKey:image.id,left:frame.left,top:frame.top,width:frame.width/s,height:frame.height/s,cropX:patch.x,cropY:patch.y,scaleX:s,scaleY:s,filters:[{type:'Blur',blur:.12}]}));}
+      }
       return placed;
+    }
+    function bottomFade(y,height){const rgb=style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)).join(',');objects.push(base('photo_caption_fade','shape',{type:'Rect',left:0,top:y,width:W,height,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:0,y2:1},colorStops:[{offset:0,color:'rgba('+rgb+',0)'},{offset:.55,color:'rgba('+rgb+',.4)'},{offset:1,color:'rgba('+rgb+',1)'}]}}));}
+    function tallLayout(){
+      if(!narrow)return false;
+      const pad=Math.max(5,Math.min(12,W*.04)),photoHeight=H*2/3,actionHeight=Math.min(52,Math.max(36,W*.24)),titleSize=Math.min(38,Math.max(21,W*.12));
+      photograph({left:0,top:0,width:W,height:photoHeight});bottomFade(photoHeight-Math.min(35,W*.2),Math.min(35,W*.2));
+      const titleWidth=W-pad*2,titleHeight=lines(copy.shortHeadline,titleWidth,titleSize)*titleSize*1.24;
+      text('headline',copy.shortHeadline,pad,photoHeight+Math.max(12,(H-photoHeight-actionHeight-titleHeight-pad*3)/2),titleWidth,titleHeight,titleSize,'headline',style.headlineFont);
+      objects[objects.length-1].textAlign='center';button(pad,H-pad-actionHeight,W-pad*2,actionHeight,copy.cta,Math.min(18,actionHeight*.4));return true;
     }
     function softFade(){
       const focus=image.focus,side=W/H>=1.3&&W>=300&&H>=160;
@@ -89,7 +104,9 @@
       return true;
     }
     const compactHeadline=copy.shortHeadline;
-    if(softFade()){
+    if(tallLayout()){
+      // Fixed upper image region and lower messaging region for skyscrapers.
+    }else if(softFade()){
       // The photograph fills the artboard; the editable fade protects only the copy.
     }else if(banner){
       const bw=Math.min(W*.26,Math.max(72,H*1.65)),bh=H<=60?H-6:Math.min(90,H*.72),bs=Math.min(28,Math.max(15,bh*.38));
@@ -120,6 +137,7 @@
       const dh=lines(description,fullWidth,13*typeScale)*17*typeScale;
       const benefit=W>=360&&H>=400&&minimal+dh+5<=H*.22;
       const footer=minimal+(benefit?dh+5:0),photo=photograph({left:0,top:0,width:W,height:H-footer});
+      if(style.treatment==='soft-fade'){const fadeHeight=Math.min(30,(H-footer)*.16);bottomFade(H-footer-fadeHeight,fadeHeight);}
       // The caption and action occupy one footer, including tall placements.
       let y=H-footer+margin;
       if(brand){text('brand','BRITES JEWELRY',margin,y,tw,brandHeight,12*typeScale,'brand');y+=brandHeight;}
