@@ -1,4 +1,8 @@
 [build]
+  # The shared apps and viewer output are committed static assets. Do not let
+  # framework detection run the separate Cherry source build for every release.
+  command = ""
+  publish = "."
   functions = "netlify/functions"
 
 [functions]
