@@ -45,6 +45,7 @@ if(require.main===module)(async()=>{
  const beforeProofBoard=e.board,beforeProofDoc=JSON.stringify(e.document());const proofs=await e.renderAIProofs({artboard:{key:'square',width:2048,height:2048},device:'mobile',document:responsive.document(plan,photo,{key:'square',width:2048,height:2048},'mobile'),sources:[photo],responsive:{layoutVersion:responsive.layoutVersion,plan,images:[photo]}});
  ok(proofs.length===27&&proofs[0].key==='active'&&new Set(proofs.map(p=>p.key)).size===27,'browser renders the active canvas plus all 26 responsive variants');
  ok(e.board===beforeProofBoard&&JSON.stringify(e.document())===beforeProofDoc,'rendering quality proofs does not modify editable artwork');
+ for(const p of proofs){const {data,info}=await sharp(Buffer.from(p.dataBase64,'base64')).raw().toBuffer({resolveWithObject:true});let photoPixels=0;for(let i=0;i<data.length;i+=info.channels)if(Math.abs(data[i]-180)<12&&Math.abs(data[i+1]-155)<12&&Math.abs(data[i+2]-116)<12)photoPixels++;ok(photoPixels>info.width*info.height*.01,p.key+' includes photograph pixels');}
  const proofMeta=await sharp(Buffer.from(proofs[0].dataBase64,'base64')).metadata();ok(proofMeta.width===960&&proofMeta.height===960&&proofMeta.format==='jpeg','review uses actual bounded browser pixels');
  await e.dispose();dom.window.close();console.log('PASS '+checks+' responsive photo, mobile layout, typography and product scope checks');
 })().catch(e=>{console.error(e.stack);process.exitCode=1});

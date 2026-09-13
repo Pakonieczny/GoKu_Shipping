@@ -490,17 +490,18 @@ function createAdDesignService(deps) {
     const flightReceipt=job.inFlight?.key?await target.collection('data').doc(/(?:quality|quality_v\d+|copy_refine_v3)$/.test(job.inFlight.key)?job.inFlight.key+'_response':job.inFlight.key).get():receipt;
     const phase=stale?'needs_attention':job.phase,unknown=!!job.inFlight&&!flightReceipt.exists;
     const request=input.includeOriginal?await target.collection('data').doc('request').get():null;
-    const candidate=phase==='awaiting_review'?await target.collection('data').doc('candidate').get():null;
+    const candidate=(phase==='awaiting_review'||input.includeReview)?await target.collection('data').doc('candidate').get():null;
     const result=job.phase==='ready'?await target.collection('data').doc('result').get():null;
     let weightedReview=await target.collection('data').doc('ad_quality_v3').get();
     if(!weightedReview.exists)weightedReview=await target.collection('data').doc('ad_quality_v2').get();
     if(!weightedReview.exists)weightedReview=await target.collection('data').doc('ad_quality_v1').get();
     const correctedReview=await target.collection('data').doc('scene_repair_quality').get(),initialReview=correctedReview.exists?null:await target.collection('data').doc('scene_quality').get(),review=weightedReview.exists?weightedReview.data():correctedReview.exists?correctedReview.data():initialReview?.exists?initialReview.data():null;
+    let reviewProofs=[];if(input.includeReview){for(const key of ['ad_proofs_v3','ad_proofs_v2','ad_proofs_v1']){const p=await target.collection('data').doc(key).get();if(p.exists){reviewProofs=await Promise.all(p.data().images.map(async image=>({key:image.key,width:image.width,height:image.height,url:await deps.signAsset(image.asset)})));break;}}}
     const quality=review?{rubric:review.rubric||null,scores:review.scores||null,weights:review.weights||null,claimsSupported:review.claimsSupported===true,score:Number.isFinite(review.score)?review.score:null,pass:review.pass===true,productFaithful:review.productFaithful===true,mobileReadable:review.mobileReadable===true,issues:(review.issues||[]).map(issue=>String(issue).slice(0,2000)).slice(0,20)}:null;
     return {ok:true,workspaceId:input.workspaceId,jobId:job.id,requestId:job.requestId,inputHash:job.inputHash,scope:job.scope,phase,
       startedAt:job.createdAt,updatedAt:job.updatedAt,
       progress:stale?{pct:job.progress.pct,label:unknown?'Provider completion is uncertain. The request will not be charged again.':'Saved work is available to resume.'}:job.progress,
-      error:job.error||null,quality,qualityTarget:97,canRetry:phase==='needs_attention'&&!unknown,hasSavedResponse:receipt.exists,needsNewRequestApproval:false,
+      error:job.error||null,quality,reviewProofs,qualityTarget:97,canRetry:phase==='needs_attention'&&!unknown,hasSavedResponse:receipt.exists,needsNewRequestApproval:false,
       usage:job.stageUsage|| (job.usage?[job.usage]:[]),cost:{estimatedUsd:job.stageUsage?job.stageUsage.reduce((n,u)=>n+(Number(u.estimatedUsd)||0),0):job.usage?.estimatedUsd??(job.inFlight?job.reservedUsd:0),costEstimated:job.stageUsage?job.stageUsage.some(u=>u.costEstimated!==false):job.usage?.costEstimated!==false,reservedUsd:job.reservedUsd||0},
       candidate:candidate?.exists?{...candidate.data(),sources:await Promise.all(candidate.data().sources.map(async source=>({...source,url:await deps.signAsset(source.asset)})))}:null,
       result:result?.exists?{...result.data(),sources:await Promise.all((result.data().sources||[]).map(async source=>({...source,url:await deps.signAsset(source.asset)})))}:null,...(request?.exists?{mode:request.data().mode,selectedLayerId:request.data().selectedLayerId,originalDocument:request.data().document,sources:await Promise.all(request.data().sources.map(async source=>({...source,url:await deps.signAsset(source.asset)})))}:{}),imageAccess:deps.imageAccessStatus?deps.imageAccessStatus():null};
