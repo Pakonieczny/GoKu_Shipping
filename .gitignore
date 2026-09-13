@@ -2,3 +2,6 @@ netlify/functions/secrets/
 *PrivateKey*
 node_modules/
 package-lock.json
+
+.netlify/
+public-site/

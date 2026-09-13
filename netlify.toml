@@ -1,8 +1,7 @@
 [build]
-  # The shared apps and viewer output are committed static assets. Do not let
-  # framework detection run the separate Cherry source build for every release.
-  command = ""
-  publish = "."
+  # Publish only the reviewed public asset manifest; functions are bundled separately.
+  command = "node scripts/build-public.cjs"
+  publish = "public-site"
   functions = "netlify/functions"
 
 [functions]
