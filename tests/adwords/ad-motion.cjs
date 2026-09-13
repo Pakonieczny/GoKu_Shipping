@@ -38,6 +38,14 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
  ok(!photoStatus.canRepair&&!photoStatus.canPhotoMotion,'completed photograph does not offer another paid repair');
  await rejected.service.run({workspaceId:'design_test',jobId:photoStart.jobId});
  ok(rejected.calls.create===4&&JSON.stringify((await repairedRef.get()).data())===beforePhoto,'repeat execution preserves previous videos and costs');
+ const photoRef=rejected.ref.collection('motionJobs').doc(photoStart.jobId);await photoRef.update({phase:'needs_attention',quality:{pass:false,productFaithful:true,score:72,issues:['Too much empty space']}});
+ const widePhoto=await rejected.service.status({workspaceId:'design_test',...rejected.scope,jobId:photoStart.jobId});ok(widePhoto.canPhotoMotion&&!widePhoto.canRepair,'failed photograph framing offers one crop correction without generative repair');
+ const closeInput={workspaceId:'design_test',...rejected.scope,photoMotionOf:photoStart.jobId,repairReviewHash:widePhoto.repairReviewHash},closeStart=await rejected.service.start(closeInput);
+ ok((await rejected.service.start(closeInput)).jobId===closeStart.jobId,'closer framing is idempotent');
+ ok((await rejected.service.run({workspaceId:'design_test',jobId:closeStart.jobId})).ok&&rejected.calls.create===4,'closer framing does not call the video provider');
+ const closeRef=rejected.ref.collection('motionJobs').doc(closeStart.jobId);await closeRef.update({phase:'needs_attention',quality:{pass:false,score:80,issues:['Still needs art direction']}});
+ const closeStatus=await rejected.service.status({workspaceId:'design_test',...rejected.scope,jobId:closeStart.jobId});ok(closeStatus.motionMode==='photograph-close'&&!closeStatus.canPhotoMotion&&!closeStatus.canRepair,'failed closer crops cannot launch an unbounded retry chain');
+ await assert.rejects(()=>rejected.service.start({...closeInput,photoMotionOf:closeStart.jobId,repairReviewHash:closeStatus.repairReviewHash}),/completed animation review/);n++;
  const current=await setup(),prior=await setup();await current.ref.update({context:{campaignId:'42',groups:[{ref:'g'}]}});await prior.ref.update({context:{campaignId:'42',groups:[{ref:'g'}]}});
  const oldStart=await prior.service.start({workspaceId:'design_test',...prior.scope});await prior.service.run({workspaceId:'design_test',jobId:oldStart.jobId});
  current.D.relatedContexts=async()=>[{ref:prior.ref,w:(await prior.ref.get()).data()}];

@@ -7,13 +7,15 @@ async function ffmpeg(args){try{return await execFile(binary(),['-hide_banner','
 function cropFilter(width,height,zoom=1){const z=Math.max(1,Math.min(1.08,Number(zoom)||1));return `scale=${Math.ceil(width*z/2)*2}:${Math.ceil(height*z/2)*2}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1,fps=24`;}
 async function renderVariants(bytes,orientation,plan={}){
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'brites-motion-'));try{
-  const photoMotion=plan.motionMode==='photograph',input=path.join(dir,photoMotion?'source.jpg':'source.mp4');await fs.writeFile(input,bytes);const out=[];
+  const photoMotion=String(plan.motionMode||'').startsWith('photograph'),closeFrame=plan.motionMode==='photograph-close',input=path.join(dir,photoMotion?'source.jpg':'source.mp4');await fs.writeFile(input,bytes);const out=[];
   for(const device of ['mobile','desktop'])for(const format of policy.video.formats){
    if((format.key==='portrait'?'portrait':format.key==='landscape'?'landscape':device==='mobile'?'portrait':'landscape')!==orientation)continue;
    const layout=(plan.layouts||[]).find(l=>l.device===device&&l.family===format.key),name=device+'_'+format.key,file=path.join(dir,name+'.mp4'),zoom=Math.min(1.08,Number(layout?.zoom)||1); // Reframing never sacrifices product identity for arbitrary zoom.
    // Preserve the complete still, including edge details, during the 2% push.
    // Padding absorbs the movement; no generated frames can invent jewelry.
-   const filter=photoMotion?`scale=${Math.floor(format.width*.95/2)*2}:${Math.floor(format.height*.95/2)*2}:force_original_aspect_ratio=decrease,pad=${format.width}:${format.height}:(ow-iw)/2:(oh-ih)/2:color=0xf7f2ea,zoompan=z='1+0.02*on/239':x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2':d=240:s=${format.width}x${format.height}:fps=24,setsar=1`:cropFilter(format.width,format.height,zoom)+',tpad=stop_mode=clone:stop_duration=10';
+   const inset=closeFrame?({portrait:1.08,square:1.25,landscape:1.4}[format.key]):1;
+   const closeFilter=`scale=${Math.ceil(format.width*inset/2)*2}:${Math.ceil(format.height*inset/2)*2}:force_original_aspect_ratio=increase,crop=${format.width}:${format.height},zoompan=z='1+0.02*on/239':x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2':d=240:s=${format.width}x${format.height}:fps=24,setsar=1`;
+   const filter=closeFrame?closeFilter:photoMotion?`scale=${Math.floor(format.width*.95/2)*2}:${Math.floor(format.height*.95/2)*2}:force_original_aspect_ratio=decrease,pad=${format.width}:${format.height}:(ow-iw)/2:(oh-ih)/2:color=0xf7f2ea,zoompan=z='1+0.02*on/239':x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2':d=240:s=${format.width}x${format.height}:fps=24,setsar=1`:cropFilter(format.width,format.height,zoom)+',tpad=stop_mode=clone:stop_duration=10';
    await ffmpeg(['-y','-i',input,'-vf',filter,'-t',String(SECONDS),'-an','-c:v','libx264','-preset','veryfast','-crf','20','-pix_fmt','yuv420p','-movflags','+faststart','-metadata','comment='+(photoMotion?'Photograph motion':'AI-generated product video')+'; Brites Jewelry',file]);
    const video=await fs.readFile(file);if(video.length>MAX_BYTES)throw new Error('The rendered clip exceeds the bounded video size.');
    const frames=[];for(const second of [.5,5,9.5]){const frame=path.join(dir,name+'_'+second+'.jpg');await ffmpeg(['-y','-ss',String(second),'-i',file,'-frames:v','1','-vf','scale=640:640:force_original_aspect_ratio=decrease',frame]);frames.push(await fs.readFile(frame));}
@@ -55,10 +57,10 @@ function createMotionService(D){
   const target=jobs(ref).doc('motion_'+hash('photograph:'+input.photoMotionOf).slice(0,40));
   await D.fb().db.runTransaction(async tx=>{
    const current=await tx.get(ref),source=await tx.get(jobs(ref).doc(input.photoMotionOf)),existing=await tx.get(target);scope(current.data(),input);if(!source.exists)throw Error('The original animation was not found.');const parent=source.data();scope(current.data(),parent);
-   if(parent.resetAt||parent.motionMode==='photograph'||parent.phase!=='needs_attention'||!parent.quality||parent.quality.pass===true||parent.inFlight||parent.leaseUntil>Date.now())throw Error('Photograph motion requires a completed animation review needing correction.');
+   if(parent.resetAt||parent.motionMode==='photograph-close'||parent.phase!=='needs_attention'||!parent.quality||parent.quality.pass===true||parent.inFlight||parent.leaseUntil>Date.now())throw Error('Photograph motion requires a completed animation review needing correction.');
    if(input.repairReviewHash!==hash({id:parent.id,quality:parent.quality}))throw Error('The animation review changed. Refresh first.');if(existing.exists)return;
    if(!parent.sourceImages?.length)throw Error('The saved product photographs are missing.');
-   tx.set(target,{...clone(parent),id:target.id,photoMotionOf:parent.id,motionMode:'photograph',provider:'saved-photograph',createdAt:Date.now(),updatedAt:Date.now(),phase:'queued',owner:null,leaseUntil:0,inFlight:null,masters:{},variants:[],quality:null,publication:null,error:null,estimatedUsd:0,progress:{pct:0,label:'Preparing motion from the saved photograph'}});
+   tx.set(target,{...clone(parent),id:target.id,photoMotionOf:parent.id,motionMode:parent.motionMode==='photograph'?'photograph-close':'photograph',provider:'saved-photograph',createdAt:Date.now(),updatedAt:Date.now(),phase:'queued',owner:null,leaseUntil:0,inFlight:null,masters:{},variants:[],quality:null,publication:null,error:null,estimatedUsd:0,progress:{pct:0,label:'Preparing motion from the saved photograph'}});
   });return {ok:true,workspaceId:input.workspaceId,jobId:target.id,queued:true};
  }
  async function status(input){
@@ -78,7 +80,7 @@ function createMotionService(D){
    job=candidates.sort((a,b)=>b.createdAt-a.createdAt)[0];if(job)workspaceId=job.workspaceId;
   }
   if(!job||job.resetAt)return {ok:true,phase:'idle',variants:[],formats:policy.video.formats};scope(w,job);
-  return {ok:true,workspaceId,fromEarlierVersion:workspaceId!==input.workspaceId,jobId:job.id,phase:job.phase,error:job.error,startedAt:job.createdAt,progress:job.progress,estimatedUsd:job.estimatedUsd,costEstimated:true,canResume:job.phase!=='ready'&&!job.quality&&(!job.inFlight||job.inFlight.key==='quality'),quality:job.quality||null,motionMode:job.motionMode||'generated',canPhotoMotion:job.motionMode!=='photograph'&&job.phase==='needs_attention'&&!!job.quality&&job.quality.pass!==true&&!job.inFlight,canRepair:job.motionMode!=='photograph'&&!job.repairOf&&job.phase==='needs_attention'&&!!job.quality&&job.quality.pass!==true&&!job.inFlight,repairReviewHash:job.quality?hash({id:job.id,quality:job.quality}):null,repairOf:job.repairOf||null,publication:require('./googleAdsMotionPublication').safePublication(job.publication),reviewHash:job.phase==='ready'?require('./googleAdsMotionPublication').reviewHash(job):null,formats:policy.video.formats,variants:await Promise.all((job.variants||[]).map(async v=>({...v,url:await D.signVideo(v.asset),posterUrl:v.poster?await D.signVideo(v.poster):null}))),masterProgress:Object.entries(job.masters||{}).map(([format,m])=>({format,status:m.status,progress:m.progress||0}))};
+  return {ok:true,workspaceId,fromEarlierVersion:workspaceId!==input.workspaceId,jobId:job.id,phase:job.phase,error:job.error,startedAt:job.createdAt,progress:job.progress,estimatedUsd:job.estimatedUsd,costEstimated:true,canResume:job.phase!=='ready'&&!job.quality&&(!job.inFlight||job.inFlight.key==='quality'),quality:job.quality||null,motionMode:job.motionMode||'generated',canPhotoMotion:job.motionMode!=='photograph-close'&&job.phase==='needs_attention'&&!!job.quality&&job.quality.pass!==true&&!job.inFlight,canRepair:!String(job.motionMode||'').startsWith('photograph')&&!job.repairOf&&job.phase==='needs_attention'&&!!job.quality&&job.quality.pass!==true&&!job.inFlight,repairReviewHash:job.quality?hash({id:job.id,quality:job.quality}):null,repairOf:job.repairOf||null,publication:require('./googleAdsMotionPublication').safePublication(job.publication),reviewHash:job.phase==='ready'?require('./googleAdsMotionPublication').reviewHash(job):null,formats:policy.video.formats,variants:await Promise.all((job.variants||[]).map(async v=>({...v,url:await D.signVideo(v.asset),posterUrl:v.poster?await D.signVideo(v.poster):null}))),masterProgress:Object.entries(job.masters||{}).map(([format,m])=>({format,status:m.status,progress:m.progress||0}))};
  }
  async function run(input){
   const {ref,w}=await D.context(input.workspaceId),target=jobs(ref).doc(input.jobId),owner=crypto.randomUUID();let job;
@@ -87,7 +89,7 @@ function createMotionService(D){
   const save=async patch=>{Object.assign(job,patch,{updatedAt:Date.now()});await D.fb().db.runTransaction(async tx=>{const current=await tx.get(target);if(current.data()?.owner!==owner||current.data()?.resetAt)throw new Error('The animated job was reset or changed.');tx.update(target,clone(job));});};
   try{
    const sourceFor=orientation=>job.sourceImages.find(s=>orientation==='portrait'?s.height>s.width:s.width>s.height)||job.sourceImages[0];
-   if(job.motionMode==='photograph'){
+   if(String(job.motionMode||'').startsWith('photograph')){
     for(const orientation of ['portrait','landscape'])job.masters[orientation]={id:'photograph_'+orientation,status:'completed',progress:100,source:sourceFor(orientation).asset};
     await save({masters:job.masters});
    }
@@ -110,10 +112,10 @@ function createMotionService(D){
     if(Object.values(job.masters).some(m=>m.status!=='completed'))await new Promise(r=>setTimeout(r,15000));
    }
    for(const [orientation,m]of Object.entries(job.masters)){
-    if(job.motionMode!=='photograph'&&!m.asset){const bytes=await D.videoContent(m.output);m.asset=await D.saveVideo(job.workspaceId,bytes,job.id+'_'+orientation,{mimeType:'video/mp4',seconds:SECONDS,...Object.fromEntries(m.size.split('x').map((v,i)=>[i?'height':'width',Number(v)]))});await save({masters:job.masters});}
+    if(!String(job.motionMode||'').startsWith('photograph')&&!m.asset){const bytes=await D.videoContent(m.output);m.asset=await D.saveVideo(job.workspaceId,bytes,job.id+'_'+orientation,{mimeType:'video/mp4',seconds:SECONDS,...Object.fromEntries(m.size.split('x').map((v,i)=>[i?'height':'width',Number(v)]))});await save({masters:job.masters});}
     if(job.variants.filter(v=>v.master===orientation).length===3)continue;
     await save({progress:{pct:orientation==='portrait'?68:77,label:'Rendering '+orientation+' crops for mobile and desktop'}});
-    const variants=await (D.renderVariants||renderVariants)(job.motionMode==='photograph'?await D.loadAsset(m.source):await D.loadVideo(m.asset),orientation,{...job.plan,motionMode:job.motionMode});
+    const variants=await (D.renderVariants||renderVariants)(String(job.motionMode||'').startsWith('photograph')?await D.loadAsset(m.source):await D.loadVideo(m.asset),orientation,{...job.plan,motionMode:job.motionMode});
     for(const v of variants){if(job.variants.some(x=>x.key===v.key))continue;const asset=await D.saveVideo(job.workspaceId,v.bytes,job.id+'_'+v.key,{mimeType:'video/mp4',width:v.width,height:v.height,seconds:v.seconds}),poster=await D.saveVideo(job.workspaceId,v.frames[0],job.id+'_'+v.key+'_poster',{mimeType:'image/jpeg'}),frames=[];for(let i=0;i<v.frames.length;i++)frames.push(await D.saveVideo(job.workspaceId,v.frames[i],job.id+'_'+v.key+'_frame'+i,{mimeType:'image/jpeg'}));job.variants.push({key:v.key,device:v.device,format:v.format,width:v.width,height:v.height,seconds:v.seconds,master:orientation,asset,poster,frames});await save({variants:job.variants});}
    }
    if(!job.quality){
@@ -122,7 +124,7 @@ function createMotionService(D){
     await save({progress:{pct:90,label:'Checking jewelry identity, motion and all six exports'},inFlight:{key:'quality',requestId:job.inFlight?.requestId||crypto.randomUUID()}});
     const refs=await Promise.all(job.originalSources.map(s=>D.loadAsset(s.asset))),frames=await Promise.all(job.variants.flatMap(v=>v.frames).map(a=>D.loadVideo(a)));
     const quality=await D.reviewImages(refs[0],frames,{copy:job.plan.nativeCopy,keywords:[],product:job.title,inputCoverage:{usedProductImages:refs.length},motionReview:'These are opening, middle and closing frames of six device/ratio variants. Check the entire jewelry stays visible and physically consistent. Camera motion may change perspective, never identity.'},refs,job.inFlight.requestId,{...(prior.exists?{rawResponse:prior.data().response}:{}),onResponse:response=>receipt.set({response,at:Date.now()})});
-    await save({quality,inFlight:null,estimatedUsd:(job.motionMode==='photograph'?0:2*SECONDS*OUTPUT_USD_PER_SECOND)+(Number(quality.estimatedUsd)||0)});
+    await save({quality,inFlight:null,estimatedUsd:(String(job.motionMode||'').startsWith('photograph')?0:2*SECONDS*OUTPUT_USD_PER_SECOND)+(Number(quality.estimatedUsd)||0)});
    }
    if(job.quality.productFaithful!==true||job.quality.pass!==true)throw new Error('Animated jewelry needs review: '+(job.quality.issues||[]).join(' '));
    await save({phase:'ready',leaseUntil:0,completedAt:Date.now(),error:null,progress:{pct:100,label:'Six animated variants ready to review'}});return {ok:true,workspaceId:job.workspaceId,jobId:job.id};

@@ -2,9 +2,11 @@ const assert=require('node:assert/strict'),sharp=require('sharp');
 const {renderVariants}=require('../../netlify/functions/googleAdsAdMotion');
 (async()=>{
  const svg=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><rect width="800" height="600" fill="white"/><rect width="24" height="24" fill="red"/><rect x="776" width="24" height="24" fill="lime"/><rect y="576" width="24" height="24" fill="blue"/><rect x="776" y="576" width="24" height="24" fill="yellow"/></svg>');
- const source=await sharp(svg).jpeg({quality:100}).toBuffer();let checks=0;
+ const centered=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><rect width="800" height="600" fill="white"/><rect x="300" y="180" width="24" height="24" fill="red"/><rect x="476" y="180" width="24" height="24" fill="lime"/><rect x="300" y="396" width="24" height="24" fill="blue"/><rect x="476" y="396" width="24" height="24" fill="yellow"/></svg>');let checks=0;
+ for(const motionMode of ['photograph','photograph-close']){
+ const source=await sharp(motionMode==='photograph'?svg:centered).jpeg({quality:100}).toBuffer();
  for(const orientation of ['portrait','landscape']){
-  const variants=await renderVariants(source,orientation,{motionMode:'photograph'});assert.equal(variants.length,3);checks++;
+  const variants=await renderVariants(source,orientation,{motionMode});assert.equal(variants.length,3);checks++;
   for(const v of variants){
    assert(v.bytes.length>1000&&v.seconds===10&&v.frames.length===3);checks++;
    for(const frame of v.frames){
@@ -13,6 +15,6 @@ const {renderVariants}=require('../../netlify/functions/googleAdsAdMotion');
     assert(counts.every(n=>n>=12),v.key+' preserves all four photograph corners throughout motion: '+counts);checks++;
    }
   }
- }
+ }}
  console.log('PASS '+checks+' actual photograph video renders and edge preservation checks');
 })().catch(e=>{console.error(e.stack);process.exitCode=1});
