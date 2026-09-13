@@ -25,7 +25,7 @@
       if(H<90)text('brand','BRITES JEWELRY',area.left,H*.65,tw,H*.22,Math.max(7,H*.16),'brand');
       button(W-margin-bw,(H-bh)/2,bw,bh);
     }else{
-      const brandSize=Math.max(8,Math.min(min*.03,area.height*.1)),headSize=Math.max(12,Math.min(area.width*(narrow?.12:.09),area.height*.18)),descSize=Math.max(9,Math.min(area.width*.045,area.height*.07));
+      const brandSize=Math.max(8,Math.min(min*.03,area.height*.1)),headSize=Math.max(12,Math.min(area.width*(narrow?.12:.09),area.height*.18)),descSize=Math.max(9,Math.min(area.width*.045,area.height*.1));
       text('brand','BRITES JEWELRY',area.left,area.top,area.width,area.height*.12,brandSize,'brand');
       text('headline',narrow?copy.shortHeadline:copy.headline,area.left,area.top+area.height*.15,area.width,area.height*.34,headSize,'headline',style.headlineFont);
       if(area.height>85)text('description',copy.description,area.left,area.top+area.height*.54,area.width,area.height*.2,descSize,'description');

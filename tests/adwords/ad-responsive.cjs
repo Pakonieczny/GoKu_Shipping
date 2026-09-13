@@ -24,6 +24,7 @@ if(require.main===module)(async()=>{
      const brand=text.find(o=>o.editorRole==='brand'),previewWidth=board.key==='landscape'?600:300;
      ok(brand.fontSize*previewWidth/board.width>=8,board.key+' brand remains readable at typical display width');
      ok(text.some(o=>o.editorRole==='description'),board.key+' includes supporting product copy');
+     ok(text.find(o=>o.editorRole==='description').fontSize*previewWidth/board.width>=8,board.key+' supporting copy remains readable at typical display width');
    }
    for(const o of text){const b=o.getBoundingRect();ok(b.left>=-1&&b.top>=-1&&b.left+b.width<=board.width+1&&b.top+b.height<=board.height+1,board.device+' '+board.key+' '+o.editorRole+' fits '+JSON.stringify(b));}
    for(let i=0;i<text.length;i++)for(let j=i+1;j<text.length;j++)ok(!boxesOverlap(text[i].getBoundingRect(),text[j].getBoundingRect()),board.key+' '+text[i].editorRole+' avoids '+text[j].editorRole);

@@ -9587,7 +9587,19 @@ async function _verifyPublishedAd(campaignId,group,product,approval){
 }
 async function adDesignDelivery({workspaceId,start,end}={}){
   let {w,group,product}=await _adDesignPublicationContext(workspaceId),campaignId=String(w.context.campaignId||'');
-  const receipts=await _adDesignWorkspaceRef(workspaceId).collection('publications').get(),publications=receipts.docs.map(d=>({id:d.id,...d.data()})).filter(p=>p.productId===w.settings.productId&&p.groupRef===group.ref).sort((a,b)=>b.createdAt-a.createdAt);
+  const receipts=await _adDesignWorkspaceRef(workspaceId).collection('publications').get(),publications=receipts.docs.map(d=>({id:d.id,...d.data(),workspaceId})).filter(p=>String(p.productId)===String(w.settings.productId)&&p.groupRef===group.ref);
+  // Publication creates a new version. Keep the original Google receipts and
+  // image identities available for current policy and serving verification.
+  if(campaignId){
+    const ids=await _findLegacyEditorWorkspaces({campaignId,groupRef:group.ref,workspaceId});
+    for(const id of ids){
+      const priorRef=_adDesignWorkspaceRef(id),prior=await priorRef.get();if(!prior.exists)continue;const value=prior.data();
+      if(value.archivedAt||String(value.context?.campaignId)!==campaignId||String(value.settings?.productId)!==String(w.settings.productId)||value.settings?.groupRef!==group.ref)continue;
+      const saved=await priorRef.collection('publications').get();
+      for(const doc of saved.docs){const p=doc.data();if(String(p.productId)===String(w.settings.productId)&&p.groupRef===group.ref)publications.push({id:doc.id,...p,workspaceId:id});}
+    }
+  }
+  publications.sort((a,b)=>(b.confirmedAt||b.createdAt||0)-(a.confirmedAt||a.createdAt||0));
   const safePublications=publications.map(p=>({id:p.id,target:p.target,status:p.status,formats:p.selection&&p.selection.formats||[],copy:!!(p.selection||{}).copy,at:p.confirmedAt||p.createdAt,error:p.error||null,message:p.message||null}));
   const applied=publications.find(p=>p.target==='ads'&&p.status==='APPLIED');
   if(!campaignId&&applied){campaignId=String(applied.publishedCampaignId||((w.publication||{}).productId===product.id?w.publication.campaignId:'')||'');if(campaignId){const rows=await gaql('SELECT asset_group.resource_name, asset_group.final_urls FROM asset_group WHERE campaign.id = '+campaignId+" AND asset_group.status != 'REMOVED'");const hit=rows.find(r=>(r.assetGroup?.finalUrls||[]).includes(product.url));if(hit)group={...group,ref:hit.assetGroup.resourceName,url:product.url};else campaignId='';}}
