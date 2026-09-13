@@ -491,10 +491,12 @@ function createAdDesignService(deps) {
     const phase=stale?'needs_attention':job.phase,unknown=!!job.inFlight&&!flightReceipt.exists;
     const request=input.includeOriginal?await target.collection('data').doc('request').get():null;
     const result=job.phase==='ready'?await target.collection('data').doc('result').get():null;
+    const correctedReview=await target.collection('data').doc('scene_repair_quality').get(),initialReview=correctedReview.exists?null:await target.collection('data').doc('scene_quality').get(),review=correctedReview.exists?correctedReview.data():initialReview?.exists?initialReview.data():null;
+    const quality=review?{score:Number.isFinite(review.score)?review.score:null,pass:review.pass===true,productFaithful:review.productFaithful===true,mobileReadable:review.mobileReadable===true,issues:(review.issues||[]).map(issue=>String(issue).slice(0,2000)).slice(0,20)}:null;
     return {ok:true,workspaceId:input.workspaceId,jobId:job.id,requestId:job.requestId,inputHash:job.inputHash,scope:job.scope,phase,
       startedAt:job.createdAt,updatedAt:job.updatedAt,
       progress:stale?{pct:job.progress.pct,label:unknown?'Provider completion is uncertain. The request will not be charged again.':'Saved work is available to resume.'}:job.progress,
-      error:job.error||null,canRetry:phase==='needs_attention'&&!unknown,hasSavedResponse:receipt.exists,needsNewRequestApproval:false,
+      error:job.error||null,quality,qualityTarget:97,canRetry:phase==='needs_attention'&&!unknown,hasSavedResponse:receipt.exists,needsNewRequestApproval:false,
       usage:job.stageUsage|| (job.usage?[job.usage]:[]),cost:{estimatedUsd:job.stageUsage?job.stageUsage.reduce((n,u)=>n+(Number(u.estimatedUsd)||0),0):job.usage?.estimatedUsd??(job.inFlight?job.reservedUsd:0),costEstimated:job.stageUsage?job.stageUsage.some(u=>u.costEstimated!==false):job.usage?.costEstimated!==false,reservedUsd:job.reservedUsd||0},
       result:result?.exists?{...result.data(),sources:await Promise.all((result.data().sources||[]).map(async source=>({...source,url:await deps.signAsset(source.asset)})))}:null,...(request?.exists?{mode:request.data().mode,selectedLayerId:request.data().selectedLayerId,originalDocument:request.data().document,sources:await Promise.all(request.data().sources.map(async source=>({...source,url:await deps.signAsset(source.asset)})))}:{}),imageAccess:deps.imageAccessStatus?deps.imageAccessStatus():null};
   }
@@ -522,6 +524,18 @@ function createAdDesignService(deps) {
     const sources=[];for(const id of sourceIds){const row=await ref.collection('editorSources').doc(id).get();if(!row.exists||row.data().groupRef!==groupRef||String(row.data().productId)!==String(productId))throw new Error('An original photo is outside this product and ad group.');sources.push(row.data());}
     const request={productId:String(productId),groupRef,device,artboard:{key:artboard.key,width:artboard.width,height:artboard.height},document,mode:input.mode,responsive:input.mode==='design'&&input.generateScene===true,includeAnimation:input.mode==='design'&&input.includeAnimation===true,selectedLayerId:String(input.selectedLayerId||''),instruction:String(input.instruction||'').slice(0,2400)},inputHash=sha(request),id='eai_'+sha([designKey,input.requestId]).slice(0,40),target=editorAIRef(workspaceId,id),prior=await target.get();
     if(prior.exists){if(prior.data().inputHash!==inputHash)throw new Error('This AI request ID belongs to a different canvas. Resume its saved result or start a new request.');return editorAIResume({...input,jobId:id});}
+    // Pin physical identity to a verified listing photo, never a prior generated ad.
+    // Existing jobs keep their immutable reference bytes and paid responses.
+    if(request.responsive){
+      const identity=sources.filter(s=>s.source?.kind==='product'&&productKey(s.source.productId)===productKey(productId));
+      if(!identity.length){
+        const product=(await productsFor(ref,w)).find(p=>String(p.id)===String(productId)),photos=product?.images||[],photo=photos.find(p=>p.id===w.settings?.sourceImageId)||photos[0];
+        if(!photo)throw new Error('Choose a verified listing photograph before generating a new product scene.');
+        const original=await editorSource({workspaceId,productId,groupRef,source:{kind:'product',productId:String(productId),imageId:photo.id}});
+        const {url,...pinned}=original;identity.push(pinned);
+      }
+      request.identitySources=identity;request.referencePolicy='verified-product-v1';
+    }
     const image=Buffer.from(input.screenshotDataUrl.split(',')[1],'base64'),sharp=require('sharp'),meta=await sharp(image,{limitInputPixels:17000000}).metadata();
     if(!['jpeg','png'].includes(meta.format)||Number(meta.pages||1)>1||Math.abs(meta.width/meta.height-artboard.width/artboard.height)>.02)throw new Error('The preview does not match this artboard’s aspect ratio.');
     const preview=await sharp(image).resize({width:1280,height:1280,fit:'inside',withoutEnlargement:true}).flatten({background:'#ffffff'}).jpeg({quality:88}).toBuffer();
@@ -552,7 +566,7 @@ function createAdDesignService(deps) {
           await saveData('evidence',evidence);
         }
         await save({progress:{pct:36,label:'Preparing the current canvas and its unchanged original photographs'}});
-        const originals=[];for(const source of request.sources){const bytes=await deps.loadAsset(source.asset),normalized=await require('sharp')(bytes,{limitInputPixels:40000000}).resize({width:1280,height:1280,fit:'inside',withoutEnlargement:true}).flatten({background:'#ffffff'}).jpeg({quality:86}).toBuffer();originals.push({...source,dataUrl:'data:image/jpeg;base64,'+normalized.toString('base64')});}
+        const originals=[];for(const source of request.identitySources||request.sources){const bytes=await deps.loadAsset(source.asset),normalized=await require('sharp')(bytes,{limitInputPixels:40000000}).resize({width:1280,height:1280,fit:'inside',withoutEnlargement:true}).flatten({background:'#ffffff'}).jpeg({quality:86}).toBuffer();originals.push({...source,dataUrl:'data:image/jpeg;base64,'+normalized.toString('base64')});}
         const screenshot=await deps.loadAsset(request.previewAsset),prepared=require('./googleAdsAdDesignResearch')[request.responsive?'buildResponsiveRequest':'buildEditorRequest']({evidence,request,screenshotDataUrl:'data:image/jpeg;base64,'+screenshot.toString('base64'),sources:originals});
         const quote=await deps.reserveCost({key:'copy',workspace:w,job:{inputCoverage:{preparedReferenceCount:originals.length+1}}}),textBytes=prepared.input.reduce((n,row)=>n+Buffer.byteLength(typeof row.content==='string'?row.content:row.content.filter(c=>c.type==='input_text').map(c=>c.text).join('\n')),0);
         // UTF-8 bytes bound text-token count conservatively; use the adapter's
@@ -580,7 +594,7 @@ function createAdDesignService(deps) {
   async function responsiveEditorResult({workspaceId,jobId,job,request,evidence,output,target,ref,w,save,saveData,verify,usage}){
     const research=require('./googleAdsAdDesignResearch'),plan=research.validateResponsivePlan({output,request,evidence}),responsive=require('../../brites-ad-responsive'),products=await productsFor(ref,w),product=products.find(p=>String(p.id)===request.productId);
     if(!product)throw new Error('The exact product source is no longer available.');
-    const refs=await Promise.all(request.sources.map(s=>deps.loadAsset(s.asset))),images=[],sources=[],files=[];
+    const refs=await Promise.all((request.identitySources||request.sources).map(s=>deps.loadAsset(s.asset))),images=[],sources=[],files=[];
     const stageUsage=job.stageUsage||[{...usage,key:'response'}];await save({stageUsage});
     const paid=async(key,pct,label,perform)=>{
       const saved=await target.collection('data').doc(key).get();if(saved.exists)return saved.data();
@@ -607,7 +621,7 @@ function createAdDesignService(deps) {
     if(!quality){
       const raw=await target.collection('data').doc('scene_quality_response').get();
       if(job.inFlight&&job.inFlight.key==='scene_quality'&&raw.exists)await save({inFlight:null});
-      quality=await paid('scene_quality',82,'Checking product fidelity and mobile clarity',async requestId=>deps.reviewImages(refs[0],files,{rationale:plan.rationale,copy:{headlines:[plan.copy.headline,plan.copy.shortHeadline],descriptions:[plan.copy.description]},keywords:product.keywords||[],product:{id:product.id,title:product.title},inputCoverage:{usedProductImages:refs.length}},refs,requestId,{...(raw.exists?{rawResponse:raw.data().response}:{}),onResponse:response=>saveData('scene_quality_response',{response})}));
+      quality=await paid('scene_quality',82,'Checking product fidelity and mobile clarity',async requestId=>deps.reviewImages(refs[0],files,{reviewType:'product_photograph',rationale:plan.rationale,copy:{headlines:[plan.copy.headline,plan.copy.shortHeadline],descriptions:[plan.copy.description]},keywords:product.keywords||[],product:{id:product.id,title:product.title},inputCoverage:{usedProductImages:refs.length}},refs,requestId,{...(raw.exists?{rawResponse:raw.data().response}:{}),onResponse:response=>saveData('scene_quality_response',{response})}));
     }
     await recordCost('scene_quality',quality);
     if(quality.productFaithful!==true||quality.mobileReadable!==true||quality.pass!==true||!Number.isFinite(quality.score)||quality.score<97||quality.score>100){
@@ -628,7 +642,7 @@ function createAdDesignService(deps) {
       await ref.collection('editorSources').doc(sourceId).set(clean(source));await ref.collection('imageLibrary').doc(id).set(clean(image));await archiveGenerated(w,image);
       sources.splice(0,sources.length,source);images.splice(0,images.length,{id:sourceId,width:source.width,height:source.height,focalX:.5,focalY:.5,forFamilies:[]});files.splice(0,files.length,await deps.loadAsset(repair.asset));
       const raw=await target.collection('data').doc('scene_repair_quality_response').get();if(job.inFlight?.key==='scene_repair_quality'&&raw.exists)await save({inFlight:null});
-      quality=await paid('scene_repair_quality',88,'Checking the corrected jewelry and mobile framing',async requestId=>deps.reviewImages(refs[0],files,{rationale:plan.rationale,copy:{headlines:[plan.copy.headline],descriptions:[plan.copy.description]},keywords:product.keywords||[],product:{id:product.id,title:product.title},inputCoverage:{usedProductImages:detailRefs.length}},detailRefs,requestId,{...(raw.exists?{rawResponse:raw.data().response}:{}),onResponse:response=>saveData('scene_repair_quality_response',{response})}));await recordCost('scene_repair_quality',quality);
+      quality=await paid('scene_repair_quality',88,'Checking the corrected jewelry and mobile framing',async requestId=>deps.reviewImages(refs[0],files,{reviewType:'product_photograph',rationale:plan.rationale,copy:{headlines:[plan.copy.headline],descriptions:[plan.copy.description]},keywords:product.keywords||[],product:{id:product.id,title:product.title},inputCoverage:{usedProductImages:detailRefs.length}},detailRefs,requestId,{...(raw.exists?{rawResponse:raw.data().response}:{}),onResponse:response=>saveData('scene_repair_quality_response',{response})}));await recordCost('scene_repair_quality',quality);
     }
     if(quality.productFaithful!==true||quality.mobileReadable!==true||quality.pass!==true||!Number.isFinite(quality.score)||quality.score<97||quality.score>100)throw new Error('The generated photo has not met the 97/100 quality target: '+(quality.issues||[]).join(' '));
     await save({progress:{pct:91,label:'Adapting photo crops, headlines and buttons across 23 sizes'}});
