@@ -20,7 +20,7 @@ if(require.main===module)(async()=>{
  const dom=new JSDOM('<body></body>',{pretendToBeVisual:true,runScripts:'outside-only',resources:'usable',url:'https://example.test'}),w=dom.window;
  w.ResizeObserver=class{observe(){}disconnect(){}};w.HTMLDialogElement.prototype.showModal=function(){this.open=true};w.HTMLDialogElement.prototype.close=function(){this.open=false};
  for(const file of ['vendor/fabric-7.4.0.min.js','brites-ad-responsive.js','brites-ad-editor.js'])w.eval(fs.readFileSync(root+'/'+file,'utf8'));
- const url='data:image/jpeg;base64,'+(await sharp({create:{width:1600,height:1000,channels:3,background:'#b49b74'}}).jpeg().toBuffer()).toString('base64'),photo={id:'photo',url,width:1600,height:1000};
+ const url='data:image/jpeg;base64,'+(await sharp({create:{width:1600,height:1000,channels:3,background:'#b49b74'}}).jpeg().toBuffer()).toString('base64'),photo={id:'photo',url,width:1600,height:1000,focus:{x:.47,y:.69,width:.06,height:.16}};
  const e=await w.BritesAdEditor.open({title:'Duck necklace',workspaceId:'test',productId,groupRef,format:'square',photos:[],request:async action=>action==='adDesignEditorState'?{ok:true,sources:[photo],designs:[]}:action==='adDesignSavedDesigns'?{ok:true,savedDesigns:[]}:{ok:true}});
  const boxesOverlap=(a,b)=>Math.min(a.left+a.width,b.left+b.width)-Math.max(a.left,b.left)>1&&Math.min(a.top+a.height,b.top+b.height)-Math.max(a.top,b.top)>1;
  const incompletePlan=JSON.parse(JSON.stringify(plan));incompletePlan.layouts.forEach(l=>{l.showBrand=false;l.showButton=false;l.showHeadline=false;});
@@ -43,10 +43,21 @@ if(require.main===module)(async()=>{
    const image=e.canvas.getObjects().find(o=>o.type==='image');ok(image.scaleX===image.scaleY&&image.angle===0,'photo preserves proportions');
    const imageBox=image.getBoundingRect();
    ok(imageBox.left<=1&&(responsive.family(board)==='banner'?imageBox.height>=board.height*.98:imageBox.width>=board.width*.98),board.key+' photo starts at the edge instead of inside a padded thumbnail');
+   // The full charm remains inside every crop, including its off-center position.
+   const fx=photo.focus.x*photo.width,fy=photo.focus.y*photo.height,fw=photo.focus.width*photo.width,fh=photo.focus.height*photo.height;
+   ok(image.cropX<=fx&&image.cropY<=fy&&image.cropX+image.width>=fx+fw&&image.cropY+image.height>=fy+fh,board.key+' keeps the complete located charm visible');
+   ok(Math.max(fw*image.scaleX/imageBox.width,fh*image.scaleY/imageBox.height)>=.59,board.key+' gives the charm a dominant share of the image frame');
+   ok(imageBox.top<=1,board.key+' removes the empty band above the photograph');
    const action=text.find(o=>o.editorRole==='button').getObjects().find(o=>'text'in o);
    ok(action.textLines.length===1,board.key+' action stays on one line');
 
  }
+ const focused={id:'focus',width:1956,height:1024,focus:{x:.45,y:.70,width:.06,height:.16}};
+ const small=responsive.document(plan,focused,{key:'display_300x50',width:300,height:50},'mobile').objects[0],large=responsive.document(plan,focused,{key:'square',width:2048,height:2048},'mobile').objects[0];
+ ok(small.height<large.height,'small placements use a tighter source crop around the charm');
+ assert.throws(()=>research.validateSubjectFocus({x:.95,y:.8,width:.1,height:.1,confident:true}),/reliably/);checks++;
+ assert.throws(()=>research.validateSubjectFocus({x:.45,y:.7,width:.06,height:.16,confident:false}),/reliably/);checks++;
+ ok(research.buildSubjectFocusRequest({imageDataUrl:'data:image/jpeg;base64,test',product:{title:'Corgi necklace'}}).text.format.name==='brites_subject_focus','focus analysis has its own structured response rather than a guessed center');
  const beforeProofBoard=e.board,beforeProofDoc=JSON.stringify(e.document());const proofs=await e.renderAIProofs({artboard:{key:'square',width:2048,height:2048},device:'mobile',document:responsive.document(plan,photo,{key:'square',width:2048,height:2048},'mobile'),sources:[photo],responsive:{layoutVersion:responsive.layoutVersion,plan,images:[photo]}});
  ok(proofs.length===27&&proofs[0].key==='active'&&new Set(proofs.map(p=>p.key)).size===27,'browser renders the active canvas plus all 26 responsive variants');
  ok(e.board===beforeProofBoard&&JSON.stringify(e.document())===beforeProofDoc,'rendering quality proofs does not modify editable artwork');

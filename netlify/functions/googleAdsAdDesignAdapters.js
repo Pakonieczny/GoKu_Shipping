@@ -205,6 +205,7 @@ Compose specifically for ${format.key}, final ${format.width} by ${format.height
   }
   function reserveCost({key,workspace,job}){
     const prepared=Number(job&&job.inputCoverage&&job.inputCoverage.preparedReferenceCount)||0;
+    if(key==='subject_focus')return .45;
     if(key==='copy'||key==='copy_repair')return Math.ceil((2.30+prepared*.08)*100)/100;
     if(key==='quality'||key==='quality_repair'||/^quality_scope_[a-f0-9]{16}(_repair)?$/.test(key))return Math.ceil((2.30+prepared*.06+((job&&job.placements||[]).length?.25:0))*100)/100;
     const format=(D.formats||[]).find(f=>'image_'+f.key===key);if(!format)throw new Error('Unknown paid design stage.');
