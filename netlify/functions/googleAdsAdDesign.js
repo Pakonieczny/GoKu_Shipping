@@ -501,7 +501,7 @@ function createAdDesignService(deps) {
     const candidate=(phase==='awaiting_review'||input.includeReview)?await target.collection('data').doc('candidate').get():null;
     const result=job.phase==='ready'?await target.collection('data').doc('result').get():null;
     let weightedReview,reviewVersion;
-    for(const version of [6,5,4,3,2,1]){weightedReview=await target.collection('data').doc('ad_quality_v'+version).get();if(weightedReview.exists){reviewVersion=version;break;}}
+    for(const version of [7,6,5,4,3,2,1]){weightedReview=await target.collection('data').doc('ad_quality_v'+version).get();if(weightedReview.exists){reviewVersion=version;break;}}
     const correctedReview=await target.collection('data').doc('scene_repair_quality').get(),initialReview=correctedReview.exists?null:await target.collection('data').doc('scene_quality').get(),review=weightedReview.exists?weightedReview.data():correctedReview.exists?correctedReview.data():initialReview?.exists?initialReview.data():null;
     let reviewProofs=[];if(input.includeReview&&reviewVersion){const p=await target.collection('data').doc('ad_proofs_v'+reviewVersion).get();if(p.exists&&Array.isArray(p.data().images)&&(!review.proofHash||review.proofHash===p.data().proofHash))reviewProofs=await Promise.all(p.data().images.map(async image=>({key:image.key,width:image.width,height:image.height,url:await deps.signAsset(image.asset)})));}
     const quality=review?{rubric:review.rubric||null,scores:review.scores||null,weights:review.weights||null,claimsSupported:review.claimsSupported===true,score:Number.isFinite(review.score)?review.score:null,pass:review.pass===true,productFaithful:review.productFaithful===true,mobileReadable:review.mobileReadable===true,issues:(review.issues||[]).map(issue=>String(issue).slice(0,2000)).slice(0,20)}:null;
@@ -516,7 +516,7 @@ function createAdDesignService(deps) {
   async function editorAIResume(input={}){
     const w=await read(input.workspaceId);editorScope(w,input);const target=editorAIRef(input.workspaceId,input.jobId);let queued=false;
     if(input.reviewProofs){
-      const current=await target.get(),candidateRow=await target.collection('data').doc('candidate').get(),existing=await target.collection('data').doc('ad_proofs_v6').get();
+      const current=await target.get(),candidateRow=await target.collection('data').doc('candidate').get(),existing=await target.collection('data').doc('ad_proofs_v7').get();
       if(!current.exists||current.data().resetAt||!candidateRow.exists)throw new Error('The saved ad layouts are unavailable.');
       editorScope(w,current.data().scope);const candidate=candidateRow.data();
       if(input.candidateHash!==candidate.candidateHash)throw new Error('The ad layouts changed before review. Reopen the saved design.');
@@ -537,10 +537,10 @@ function createAdDesignService(deps) {
           images.push({key:p.key,width:b.width,height:b.height,displayWidth,displayHeight:Math.round(displayWidth*b.height/b.width),renderCheck:p.renderCheck,asset});
         }
         const proof={candidateHash:input.candidateHash,images,proofHash:sha(images),createdAt:Date.now()};
-        await f().db.runTransaction(async tx=>{const row=await tx.get(target),saved=await tx.get(target.collection('data').doc('ad_proofs_v6')),c=await tx.get(target.collection('data').doc('candidate'));
+        await f().db.runTransaction(async tx=>{const row=await tx.get(target),saved=await tx.get(target.collection('data').doc('ad_proofs_v7')),c=await tx.get(target.collection('data').doc('candidate'));
           if(row.data()?.resetAt||c.data()?.candidateHash!==input.candidateHash)throw new Error('The saved design changed during proof upload.');
           if(saved.exists){if(saved.data().candidateHash!==input.candidateHash)throw new Error('Different review proofs are already saved.');return;}
-          tx.set(target.collection('data').doc('ad_proofs_v6'),clean(proof));
+          tx.set(target.collection('data').doc('ad_proofs_v7'),clean(proof));
         });
       }
     }
@@ -703,9 +703,9 @@ function createAdDesignService(deps) {
     // Locked layers remain byte-identical on the active board; originals and every paid scene remain archived.
     document.objects.push(...request.document.objects.filter(locked));
     const candidate={document,productId:request.productId,groupRef:request.groupRef,device:request.device,artboard:request.artboard,destination:product.url,sources,publicationImages,nativeCopy:plan.nativeCopy,responsive:{layoutVersion:responsive.layoutVersion,plan,images,boards:responsive.boards,variants:responsive.variants,documents:responsive.variants.map(b=>({key:b.key,device:b.device,width:b.width,height:b.height,document:responsive.document(plan,responsive.selectImage(plan,images,b),b,b.device)}))},alternatives:[],rationale:plan.rationale+' '+(plan.alternateNeeded?'Two photographic views support different framing needs.':'One new photograph is reused across the formats to avoid unnecessary generation charges.'),sourceIds:plan.sourceIds,evidenceHash:evidence.hash,limitations:[...(plan.limitations||[]),...(evidence.warnings||[])]};
-    const rubric=require('./googleAdsAdQuality'),candidateHash=sha(candidate),proofRow=await target.collection('data').doc('ad_proofs_v6').get();
+    const rubric=require('./googleAdsAdQuality'),candidateHash=sha(candidate),proofRow=await target.collection('data').doc('ad_proofs_v7').get();
     if(!proofRow.exists||proofRow.data().candidateHash!==candidateHash)return {...candidate,candidateHash,reviewPending:true};
-    const proof=proofRow.data(),key='ad_quality_v6',raw=await target.collection('data').doc(key+'_response').get();
+    const proof=proofRow.data(),key='ad_quality_v7',raw=await target.collection('data').doc(key+'_response').get();
     if(raw.exists&&(raw.data().candidateHash!==candidateHash||raw.data().proofHash!==proof.proofHash))throw new Error('The saved review response belongs to different ad proofs.');
     if(job.inFlight?.key===key&&raw.exists)await save({inFlight:null});
     const quality=await paid(key,95,'Reviewing messaging, layout, relevance and visual appeal',async requestId=>({...await deps.reviewImages(refs[0],await Promise.all(proof.images.map(p=>deps.loadAsset(p.asset))),{

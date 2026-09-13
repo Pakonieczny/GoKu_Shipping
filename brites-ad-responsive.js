@@ -8,13 +8,13 @@
   function selectImage(plan,images,board){const f=family(board);return images.find(i=>i.forFamilies?.includes(f))||images[0];}
   // Design at the actual viewing width, then export at the requested resolution.
   // A 2048px master must not turn a 36px CTA into a 6px mobile label.
-  const layoutVersion=6;
+  const layoutVersion=7;
   function document(plan,image,board,device="mobile"){
     const master=['square','landscape','portrait'].includes(board.key),factor=master?board.width/Math.min(board.width,device==='desktop'?600:360):1;
     const W=board.width/factor,H=board.height/factor,f=family(board),layout=(plan.layouts||[]).find(l=>l.family===f&&l.device===device)||(plan.layouts||[]).find(l=>l.family===f)||{},style={...plan.style},copy=plan.copy;
     const rgb=style.background.match(/[a-f0-9]{2}/gi)?.map(x=>parseInt(x,16));if(rgb&&rgb[0]<90&&rgb[0]>=rgb[1]&&rgb[1]>=rgb[2])Object.assign(style,{background:'#F5F0E8',ink:'#34281E',accent:'#4B3825',buttonInk:'#FFF9F0',headlineFont:'Georgia'});
     const base=(id,role,extra)=>({id:'ai_'+id,name:id,editorRole:role,originX:'left',originY:'top',angle:0,opacity:1,scaleX:1,scaleY:1,strokeWidth:0,...extra});
-    const objects=[],margin=Math.max(6,Math.min(W,H)*.045),banner=f==='banner',narrow=f==='skyscraper',horizontal=f==='landscape';let photo,area;
+    const objects=[],margin=Math.max(6,Math.min(W,H)*.045),banner=f==='banner',narrow=f==='skyscraper',horizontal=f==='landscape'||H<=300&&W/H>=.9&&W/H<=1.3;let photo,area;
     // A wider master reserves its central third for the complete product.
     // Retain that region plus margin and the full height, including rings/chains.
     const cropWidth=image.width/image.height>1.3?image.width*.42:image.width,cropHeight=image.height;
@@ -24,7 +24,7 @@
     function text(id,value,x,y,width,height,size,role,font=style.bodyFont){if(value)objects.push(base(id,role,{type:'Textbox',text:value,left:x,top:y,width,height,aiBoxHeight:height,fontFamily:font,fontSize:size,fontWeight:role==='headline'?'700':'400',fill:style.ink,lineHeight,charSpacing:role==='brand'?60:0,textAlign:layout.textAlign==='center'?'center':'left'}));}
     function button(x,y,width,height,label=copy.cta){objects.push(base('cta','button',{type:'Group',left:x,top:y,width,height,buttonPadding:6,objects:[{type:'Rect',originX:'left',originY:'top',left:-width/2,top:-height/2,width,height,fill:style.accent,strokeWidth:0,rx:4,ry:4},{type:'Textbox',originX:'center',originY:'center',left:0,top:0,width:width-12,height:16,text:label,fontFamily:style.bodyFont,fontWeight:'700',fontSize:13,fill:style.buttonInk,textAlign:'center',lineHeight:1}]}));}
     if(banner){
-      const bw=H<90?76:Math.min(148,Math.max(108,W*.16)),bh=Math.min(H-12,38),pw=Math.min(H*1.12,W*.26),available=W-pw-bw-margin*4;
+      const bw=H<90?88:Math.min(148,Math.max(108,W*.16)),bh=Math.min(H-12,38),pw=Math.min(H*1.12,W*.26),available=W-pw-bw-margin*4;
       const roomy=H>=120&&available>=240,hook=roomy||W>=700,headline=hook?copy.headline:copy.shortHeadline,hs=H<90?14:Math.min(30,H*.22);
       const tw=Math.min(available,Math.max(140,headline.length*hs*.62,roomy?description.length*7.3:0)),groupWidth=pw+tw+bw+margin*3,start=(W-groupWidth)/2;
       photo={left:start,top:4,width:pw-margin,height:H-8};
