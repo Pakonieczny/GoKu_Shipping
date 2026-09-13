@@ -9335,7 +9335,8 @@ async function _finishAdDesign({workspaceId,jobId,owner,workspace,group,product,
 function _designEngine(){
   if(!_adDesignEngine){
     _adDesignContextReader=require("./googleAdsAdDesignContext").createAdDesignContext({fb,COL,shopifyGql,gaql,verifiedBasis:_verifiedCampaignAnalysisBasis,creativeGroups:_creativeGroups,creativeHash,reportContext:_reportContext,validatedRange:_validatedReportRange});
-    const research=require("./googleAdsAdDesignResearch").createAdDesignResearch({creativeFetch:_creativeFetch,copyValid:_copyValid,dailyStats,gaql,playbookSlice,storeSalesEvidence,conversionHealth,merchantProducts});
+    const keywordEvidence=require("./googleAdsAdKeywordResearch").createKeywordEvidence({gaql,keywordResearch,cacheGet:_kwCacheGet,cacheSet:_kwCacheSet});
+    const research=require("./googleAdsAdDesignResearch").createAdDesignResearch({creativeFetch:_creativeFetch,copyValid:_copyValid,dailyStats,gaql,playbookSlice,storeSalesEvidence,conversionHealth,merchantProducts,keywordEvidence});
     _adDesignEngine=require("./googleAdsAdDesign").createAdDesignService({fb,COL,env:ENV,control,..._designEngineAdapters(),loadContext:input=>_adDesignContextReader.loadContext(input),currentCreative:require("./googleAdsAdDesignContext").extractCurrentCreative,verifyBasis:_verifiedCampaignAnalysisBasis,verifyContext:_verifyAdDesignContext,findLegacyEditorWorkspaces:_findLegacyEditorWorkspaces,research,saveAsset:_saveCreativeAsset,loadAsset:_loadCreativeAsset,deleteAsset:_deleteCreativeAsset,deleteSavedDesignAsset:_deleteSavedDesignAsset,finish:_finishAdDesign,reviewStatus:_adDesignApprovalReview});
   }return _adDesignEngine;
 }

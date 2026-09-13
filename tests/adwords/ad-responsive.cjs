@@ -9,6 +9,13 @@ if(require.main===module)(async()=>{
  research.validateResponsivePlan({output:plan,request:{productId,groupRef},evidence});ok(true,'fact-grounded recipe validates');
  assert.throws(()=>research.validateResponsivePlan({output:{...plan,productId:'wrong'},request:{productId,groupRef},evidence}),/changed its product/);checks++;
  ok(responsive.boards.length===23&&responsive.variants.filter(b=>b.device==='mobile').length>=6,'mobile and desktop coverage');
+ // Narrow formats must retain a central charm with breathing room even when
+ // a saved recipe requests its maximum zoom. Geometry bounds alone miss this.
+ for(const board of responsive.boards.filter(b=>responsive.family(b)==='skyscraper')){
+   const zoomed=JSON.parse(JSON.stringify(plan));zoomed.layouts.forEach(l=>{l.zoom=1.35;});
+   const p=responsive.document(zoomed,{id:'hero',width:1956,height:1024},board,'desktop').objects[0];
+   ok(p.cropX<=1956*.36&&p.cropX+p.width>=1956*.64,board.key+' keeps the central jewelry silhouette and margin');
+ }
  const {JSDOM}=require(process.env.BRITES_EDITOR_DOM_RUNTIME?path.join(process.env.BRITES_EDITOR_DOM_RUNTIME,'jsdom'):'jsdom');
  const dom=new JSDOM('<body></body>',{pretendToBeVisual:true,runScripts:'outside-only',resources:'usable',url:'https://example.test'}),w=dom.window;
  w.ResizeObserver=class{observe(){}disconnect(){}};w.HTMLDialogElement.prototype.showModal=function(){this.open=true};w.HTMLDialogElement.prototype.close=function(){this.open=false};

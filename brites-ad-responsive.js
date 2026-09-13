@@ -12,7 +12,7 @@
     const objects=[],min=Math.min(W,H),margin=Math.max(5,min*.055),horizontal=f==='landscape',banner=f==='banner',narrow=f==='skyscraper';let photo,area;
     if(banner){photo={left:0,top:0,width:W*.22,height:H};area={left:photo.width+margin,top:margin,width:W-photo.width-margin*2,height:H-margin*2};}
     else if(horizontal){const width=W*clamp(layout.photoFraction||.53,.42,.62),right=layout.photoSide==='right';photo={left:right?W-width:0,top:0,width,height:H};area={left:right?margin:width+margin,top:margin,width:W-width-margin*2,height:H-margin*2};}
-    else{const desired=H*clamp(layout.photoFraction||(narrow?.49:.57),.4,.65),height=W<=336?Math.min(desired,H-margin*2-Math.min(H*.45,110)):desired;photo={left:0,top:0,width:W,height};area={left:margin,top:height+margin,width:W-margin*2,height:H-height-margin*2};}
+    else{const desired=Math.min(H*clamp(layout.photoFraction||(narrow?.49:.57),.4,.65),narrow?W*1.6/clamp(layout.zoom||1,1,1.35):Infinity),height=W<=336?Math.min(desired,H-margin*2-Math.min(H*.45,110)):desired;photo={left:0,top:0,width:W,height};area={left:margin,top:height+margin,width:W-margin*2,height:H-height-margin*2};}
     const scale=Math.max(photo.width/image.width,photo.height/image.height)*clamp(layout.zoom||1,1,1.35),cropWidth=photo.width/scale,cropHeight=photo.height/scale;
     objects.push(base('product_scene','photo',{type:'Image',sourceKey:image.id,left:photo.left,top:photo.top,width:cropWidth,height:cropHeight,cropX:clamp(layout.focalX??image.focalX??.5,0,1)*(image.width-cropWidth),cropY:clamp(layout.focalY??image.focalY??.5,0,1)*(image.height-cropHeight),scaleX:scale,scaleY:scale}));
     const align=layout.textAlign==='center'?'center':'left';

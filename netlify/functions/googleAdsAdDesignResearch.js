@@ -291,7 +291,8 @@ function createAdDesignResearch(D){
         if(channel==='pmax'&&/^customers\/\d+\/assetGroups\/\d+$/.test(group.ref||''))return D.gaql(`SELECT asset_group_asset.resource_name, asset_group_asset.field_type, asset_group_asset.primary_status, asset.resource_name, asset.text_asset.text, asset.image_asset.full_size.url, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value FROM asset_group_asset WHERE ${filter} AND asset_group_asset.asset_group = '${group.ref}'${dates} ORDER BY metrics.clicks DESC LIMIT 80`);
         if(channel==='search'&&/^customers\/\d+\/ads\/\d+$/.test(group.ref||''))return D.gaql(`SELECT ad_group_ad_asset_view.resource_name, ad_group_ad_asset_view.field_type, ad_group_ad_asset_view.enabled, asset.resource_name, asset.text_asset.text, asset.image_asset.full_size.url, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value FROM ad_group_ad_asset_view WHERE ${filter} AND ad_group_ad.ad.resource_name = '${group.ref}'${dates} ORDER BY metrics.clicks DESC LIMIT 80`);
         return null;
-      })
+      }),
+      read('keywordDemand','Google Keyword Planner','Product-specific historical search demand',async()=>D.keywordEvidence&&primary?D.keywordEvidence({campaignId,product:primary,keywords:primaryKeywords}):null)
     ]);
     const offers=[...new Set(productInput.flatMap(p=>[p.offerId,p.itemId,...(p.offerIds||[])]).filter(Boolean).map(String))];
     const merchant=await read('merchant','Merchant Center','Recent exact-offer eligibility',async()=>offers.length&&D.merchantProducts?D.merchantProducts({itemIds:offers}):null);
