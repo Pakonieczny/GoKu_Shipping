@@ -27,6 +27,21 @@ async function approve(e){await e.E.reviewAdVersion({id:'design1',hash:e.E.creat
  e=await setup();await approve(e);e.ref().payload.generatedAssets[0].asset.hash='f'.repeat(64);await assert.rejects(()=>e.E.applyApproval('design1',{dryRun:false}),/Review and approve/);check(e.state().writes===0,'approval binds the generated image hash');
  e=await setup();const saved={type:'pmax',status:'PENDING',payload:{meta:{adDesignId:'job1'}}};e.f.docs.set('Brites_GAds_Approvals/draft1',saved);e.bind({control:async()=>{throw Error('Cached design performed new work');}});const cached=await e.E.generatePmaxApproval({handle:'ducks'},{approvalId:'draft1',designId:'job1',reviewedAdCopy:copy});check(cached.cached&&cached.approvalId==='draft1','same job returns saved draft before research or paid copy');await assert.rejects(()=>e.E.generatePmaxApproval({handle:'ducks'},{approvalId:'draft1',designId:'other-job',reviewedAdCopy:copy}),/belongs to another design/);check(true,'different job cannot claim existing draft');
  const expected=[{type:'assetGroupAssetOperation',op:{create:{assetGroup:group,asset:temp,fieldType:'SQUARE_MARKETING_IMAGE'}}}],real=r=>r===temp?'customers/123/assets/900':r,accepted=clone(snapshot);check(!e.get('_snapshotConfirmsMutation')(snapshot,expected,real),'lagged provider snapshot cannot confirm new image');accepted.components.assetLinks.push({resourceName:'customers/123/assetGroupAssets/7~900~SQUARE_MARKETING_IMAGE',assetGroup:group,asset:'customers/123/assets/900',fieldType:'SQUARE_MARKETING_IMAGE'});check(e.get('_snapshotConfirmsMutation')(accepted,expected,real),'confirmed returned asset identity reconciles image version');
+ const confirms=e.get('_snapshotConfirmsMutation'),link=accepted.components.assetLinks[0],remove={type:'assetGroupAssetOperation',op:{remove:link.resourceName}},recreated=[remove,...expected];
+ check(confirms(accepted,recreated,real),'Google deduplicated asset re-add confirms the final requested link');
+ check(confirms(accepted,[remove],real,recreated),'individual reconciliation diagnostics retain the complete publication context');
+ check(!confirms(accepted,[remove],real),'a removal without a later re-add must actually disappear');
+ check(!confirms(accepted,[...expected,remove],real),'an earlier creation does not excuse a final removal');
+ check(!confirms(accepted,[...recreated,remove],real),'a later removal still requires absence');
+ check(!confirms(accepted,recreated,x=>x),'unresolved temporary asset identity cannot confirm a re-add');
+ for(const change of [{assetGroup:'customers/123/assetGroups/8'},{asset:'customers/123/assets/901'},{fieldType:'HEADLINE'},{status:'PAUSED'}]){
+   const altered=[remove,{type:'assetGroupAssets',op:{create:{...expected[0].op.create,...change}}}];
+   check(!confirms(accepted,altered,real),'different group, asset, field or status cannot excuse a retained link');
+ }
+ const enabled=clone(accepted);enabled.components.assetLinks[0].status='ENABLED';
+ const requestedStatus=[remove,{type:'assetGroupAssets',op:{create:{...expected[0].op.create,status:'ENABLED'}}}];
+ check(confirms(enabled,requestedStatus,real),'explicit status on a re-added link must match Google readback');
+ check(!confirms({...accepted,complete:false},recreated,real),'deduplication never bypasses the complete snapshot requirement');
  e=await setup();const w={context:{handle:'ducks',itemIds:['shopify_US_1_2'],feedLabel:'US'},settings:{productId:'1',groupRef:'opportunity:ducks'},placements:[],job:{id:'copy-later',phase:'ready',result:{copyOnly:true}},messaging:{copy,evidenceHash:'research'}};const ws=e.f.db.collection('workspaces').doc('one');await ws.set(w);let preparedInput;
  e.bind({_adDesignWorkspaceRef:()=>ws,_saveCreativeAsset:async()=>e.asset,generatePmaxApproval:async(input,design)=>{preparedInput=input;await e.f.db.collection('Brites_GAds_Approvals').doc(design.approvalId).set({type:'pmax',status:'PENDING',payload:{meta:{adDesignId:design.designId},mutateOperations:[{assetGroupOperation:{create:{resourceName:'customers/123/assetGroups/-3',name:'Peach',finalUrls:['https://example.test/duck']}}}]}});return{approvalId:design.approvalId};}});
  const sourceHash=e.get('_adDesignSelectionHash')(w),savedResult={copy,assets:{square:e.asset,landscape:e.asset,portrait:e.asset},placementAssets:{desktop:{square:e.asset,landscape:e.asset,portrait:e.asset}},brief:{}};

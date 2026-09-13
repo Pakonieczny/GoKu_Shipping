@@ -432,13 +432,31 @@ async function _captureCampaignEditableSnapshot(id) {
 function _snapshotVersionFields(snapshot) {
   return { editableSnapshot: snapshot, snapshotHash: snapshot && snapshot.complete ? _versionSnapshots.snapshotHash(snapshot) : null, ..._versionSnapshots.restorationEligibility(snapshot), restorationScope: _RESTORATION_SCOPE };
 }
-function _snapshotConfirmsMutation(snapshot, ops, real) {
+function _snapshotConfirmsMutation(snapshot, ops, real, finalOps = ops) {
   if (!snapshot || !snapshot.complete) return false;
   const c = snapshot.components, rows = _versionSnapshots.COMPONENTS.flatMap(key => c[key] || []);
   const resolve = value => typeof value === "string" ? real(value) : Array.isArray(value) ? value.map(resolve) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([key, v]) => [key, resolve(v)])) : value;
   const same = (a, b) => _versionHash(a) === _versionHash(b);
-  return ops.every(({ type, op }) => {
-    if (op.remove) return !rows.some(row => row.resourceName === real(op.remove) || row.adGroupAdResourceName === real(op.remove));
+  const assetGroupLink = type => /^(?:assetGroupAssetOperation|assetGroupAssets)$/.test(type);
+  const sameLink = (a, b) => a.assetGroup === b.assetGroup && a.asset === b.asset && a.fieldType === b.fieldType;
+  return ops.every(entry => {
+    const { type, op } = entry;
+    if (op.remove) {
+      const removed = real(op.remove), present = rows.find(row => row.resourceName === removed || row.adGroupAdResourceName === removed);
+      if (!present) return true;
+      if (!assetGroupLink(type)) return false;
+      // Google deduplicates identical asset content, so re-adding an unchanged
+      // headline can restore the same link ID. Confirm the final requested link,
+      // including status, rather than requiring an intermediate removal to persist.
+      const index = finalOps.indexOf(entry);
+      if (index < 0) return false;
+      const last = finalOps.slice(index + 1).filter(next => assetGroupLink(next.type) && (
+        next.op.remove && real(next.op.remove) === removed || next.op.create && sameLink(resolve(next.op.create), present)
+      )).at(-1);
+      if (!last || !last.op.create) return false;
+      const requested = resolve(last.op.create);
+      return !requested.status || requested.status === present.status;
+    }
     const update = op.update && resolve(op.update);
     if (update) {
       const row = rows.find(row => row.resourceName === update.resourceName || row.adGroupAdResourceName === update.resourceName);
@@ -450,7 +468,7 @@ function _snapshotConfirmsMutation(snapshot, ops, real) {
       });
     }
     if (op.create && /assetGroupAssetOperation|^assetGroupAssets$/.test(type)) {
-      const row = resolve(op.create); return c.assetLinks.some(link => link.assetGroup === row.assetGroup && link.asset === row.asset && link.fieldType === row.fieldType);
+      const row = resolve(op.create); return c.assetLinks.some(link => sameLink(link, row) && (!row.status || link.status === row.status));
     }
     if(op.create&&/adGroupAssetOperation|^adGroupAssets$/.test(type)){const row=resolve(op.create);return (c.searchImageLinks||[]).some(link=>link.adGroup===row.adGroup&&link.asset===row.asset&&link.fieldType===row.fieldType&&(!row.status||link.status===row.status));}
     if (op.create && /assetGroupListingGroupFilterOperation|^assetGroupListingGroupFilters$/.test(type)) {
@@ -658,7 +676,7 @@ async function campaignVersions({ id, beforeVersion } = {}) {
     if (current && current.snapshotExpectedMutation && observed.snapshot && observed.snapshot.complete) {
       const pending = current.snapshotExpectedMutation, aliases = new Map(Object.entries(pending.aliases || {}));
       const real = value => aliases.get(value) || value;
-      const missing = (pending.operations || []).filter(op => !_snapshotConfirmsMutation(observed.snapshot, [op], real));
+      const missing = (pending.operations || []).filter(op => !_snapshotConfirmsMutation(observed.snapshot, [op], real, pending.operations));
       for (const { type, op } of missing.slice(0, 8)) {
         const expected = op.create || op.update || {}, target = real(expected.resourceName || op.remove || expected.assetGroup || expected.adGroup || '');
         let detail = '';
