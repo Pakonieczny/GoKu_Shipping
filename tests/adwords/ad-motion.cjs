@@ -22,5 +22,25 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
  rejected.D.reviewImages=async()=>({productFaithful:true,pass:true,score:92,issues:[]});ok((await rejected.service.run({workspaceId:'design_test',jobId:repair.jobId})).ok,'repair can pass a fresh quality review');ok(rejected.calls.create===4,'one repair generates exactly two additional masters');await rejected.service.run({workspaceId:'design_test',jobId:repair.jobId});ok(rejected.calls.create===4,'completed repair never charges twice');
  const repairStatus=await rejected.service.status({workspaceId:'design_test',...rejected.scope,jobId:repair.jobId});ok(repairStatus.repairOf===failed.jobId&&!repairStatus.canRepair&&repairStatus.variants.length===6,'repaired job stays linked to original and cannot trigger unbounded retries');
  const repairedRef=rejected.ref.collection('motionJobs').doc(repair.jobId);await repairedRef.update({phase:'needs_attention',quality:{pass:false,issues:['Still failed']}});const second=await rejected.service.status({workspaceId:'design_test',...rejected.scope,jobId:repair.jobId});await assert.rejects(()=>rejected.service.start({...repairInput,repairOf:repair.jobId,repairReviewHash:second.repairReviewHash}),/bounded repair/);n++;
- console.log('PASS '+n+' Gemini request, durable generation, device variants and recovery checks');
+ const current=await setup(),prior=await setup();await current.ref.update({context:{campaignId:'42',groups:[{ref:'g'}]}});await prior.ref.update({context:{campaignId:'42',groups:[{ref:'g'}]}});
+ const oldStart=await prior.service.start({workspaceId:'design_test',...prior.scope});await prior.service.run({workspaceId:'design_test',jobId:oldStart.jobId});
+ current.D.relatedContexts=async()=>[{ref:prior.ref,w:(await prior.ref.get()).data()}];
+ const recovered=await current.service.status({workspaceId:'new_version',...current.scope});
+ ok(recovered.jobId===oldStart.jobId&&recovered.workspaceId==='design_test'&&recovered.fromEarlierVersion&&recovered.variants.length===6,'new ad version reads paid films from their original owning workspace');
+ ok(current.calls.create===0&&current.calls.review===0,'recovering a previous-version animation makes no paid requests');
+ const priorDoc=(await prior.ref.get()).data();
+ for(const patch of [{context:{campaignId:'other'}},{settings:{productId:'other',groupRef:'g'}},{settings:{productId:'p',groupRef:'other'}},{archivedAt:1}]){
+  await prior.ref.set({...priorDoc,...patch});ok((await current.service.status({workspaceId:'new_version',...current.scope})).phase==='idle','other campaign, product, group or archived workspace cannot supply a film');
+ }
+ await prior.ref.set(priorDoc);ok((await current.service.status({workspaceId:'new_version',...current.scope,jobId:oldStart.jobId})).phase==='idle','explicit missing job IDs are not silently redirected to another workspace');
+ const {JSDOM}=require('jsdom'),dom=new JSDOM('<div id="motion"></div>',{runScripts:'outside-only',url:'https://example.test'}),win=dom.window,requests=[];
+ win.HTMLDialogElement.prototype.showModal=function(){this.open=true;};win.HTMLDialogElement.prototype.close=function(){this.open=false;};win.setTimeout=()=>0;win.eval(fs.readFileSync(path.join(__dirname,'../../brites-ad-motion.js'),'utf8'));
+ win.BritesAdMotion.mount(win.document.getElementById('motion'),{scope:{workspaceId:'new_version',...current.scope},request:async(action,payload)=>{requests.push({action,payload});return {...recovered,canRepair:true,quality:{pass:false,score:77,issues:['Preserve the exact leaf']},repairReviewHash:'review'};}});
+ await new Promise(resolve=>setImmediate(resolve));
+ ok(win.document.querySelector('video').getAttribute('crossorigin')==='anonymous','saved animation player requests CORS before loading the video');
+ ok(win.document.querySelector('[data-detail]').textContent.includes('earlier ad version'),'animation provenance is visible to the operator');
+ win.document.querySelector('[data-repair]').click();await [...win.document.querySelectorAll('dialog button')].find(b=>b.textContent==='Approve one animation repair').onclick();
+ ok(requests.find(r=>r.action==='startAdDesignMotion').payload.workspaceId==='design_test','repair addresses the original saved job rather than the new version');
+ ok(requests.filter(r=>r.action==='adDesignMotionStatus').every(r=>r.payload.workspaceId==='new_version'),'status remains bound to the currently selected product workspace');
+ win.close();console.log('PASS '+n+' Gemini request, durable generation, device variants and recovery checks');
 })().catch(e=>{console.error(e.stack);process.exitCode=1});

@@ -41,11 +41,23 @@ function createMotionService(D){
   });return {ok:true,workspaceId:input.workspaceId,jobId:id,queued:true};
  }
  async function status(input){
-  const {ref,w}=await D.context(input.workspaceId);scope(w,input);let job;
+  const {ref,w}=await D.context(input.workspaceId);scope(w,input);let job,workspaceId=input.workspaceId;
   if(input.jobId){const s=await jobs(ref).doc(input.jobId).get();job=s.exists?s.data():null;}
   else{const rows=await jobs(ref).get();job=rows.docs.map(d=>d.data()).filter(j=>j.productId===input.productId&&j.groupRef===input.groupRef&&!j.resetAt).sort((a,b)=>b.createdAt-a.createdAt)[0];}
+  // A Google publication creates a new design version. Its existing paid films
+  // remain owned by their original workspace; discover them without copying
+  // jobs, losing provider receipts, or starting another generation.
+  if(!job&&!input.jobId&&D.relatedContexts&&w.context?.campaignId){
+   const candidates=[];
+   for(const prior of await D.relatedContexts(w,input.workspaceId)){
+    if(prior.w.archivedAt||String(prior.w.context?.campaignId)!==String(w.context.campaignId)||String(prior.w.settings?.productId)!==String(input.productId)||prior.w.settings?.groupRef!==input.groupRef)continue;
+    const rows=await jobs(prior.ref).get();
+    for(const row of rows.docs){const j=row.data();if(!j.resetAt&&j.workspaceId===prior.ref.id&&String(j.productId)===String(input.productId)&&j.groupRef===input.groupRef)candidates.push(j);}
+   }
+   job=candidates.sort((a,b)=>b.createdAt-a.createdAt)[0];if(job)workspaceId=job.workspaceId;
+  }
   if(!job||job.resetAt)return {ok:true,phase:'idle',variants:[],formats:policy.video.formats};scope(w,job);
-  return {ok:true,jobId:job.id,phase:job.phase,error:job.error,startedAt:job.createdAt,progress:job.progress,estimatedUsd:job.estimatedUsd,costEstimated:true,canResume:job.phase!=='ready'&&!job.quality&&(!job.inFlight||job.inFlight.key==='quality'),quality:job.quality||null,canRepair:!job.repairOf&&job.phase==='needs_attention'&&!!job.quality&&job.quality.pass!==true&&!job.inFlight,repairReviewHash:job.quality?hash({id:job.id,quality:job.quality}):null,repairOf:job.repairOf||null,publication:require('./googleAdsMotionPublication').safePublication(job.publication),reviewHash:job.phase==='ready'?require('./googleAdsMotionPublication').reviewHash(job):null,formats:policy.video.formats,variants:await Promise.all((job.variants||[]).map(async v=>({...v,url:await D.signVideo(v.asset),posterUrl:v.poster?await D.signVideo(v.poster):null}))),masterProgress:Object.entries(job.masters||{}).map(([format,m])=>({format,status:m.status,progress:m.progress||0}))};
+  return {ok:true,workspaceId,fromEarlierVersion:workspaceId!==input.workspaceId,jobId:job.id,phase:job.phase,error:job.error,startedAt:job.createdAt,progress:job.progress,estimatedUsd:job.estimatedUsd,costEstimated:true,canResume:job.phase!=='ready'&&!job.quality&&(!job.inFlight||job.inFlight.key==='quality'),quality:job.quality||null,canRepair:!job.repairOf&&job.phase==='needs_attention'&&!!job.quality&&job.quality.pass!==true&&!job.inFlight,repairReviewHash:job.quality?hash({id:job.id,quality:job.quality}):null,repairOf:job.repairOf||null,publication:require('./googleAdsMotionPublication').safePublication(job.publication),reviewHash:job.phase==='ready'?require('./googleAdsMotionPublication').reviewHash(job):null,formats:policy.video.formats,variants:await Promise.all((job.variants||[]).map(async v=>({...v,url:await D.signVideo(v.asset),posterUrl:v.poster?await D.signVideo(v.poster):null}))),masterProgress:Object.entries(job.masters||{}).map(([format,m])=>({format,status:m.status,progress:m.progress||0}))};
  }
  async function run(input){
   const {ref,w}=await D.context(input.workspaceId),target=jobs(ref).doc(input.jobId),owner=crypto.randomUUID();let job;

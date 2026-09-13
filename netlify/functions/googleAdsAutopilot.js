@@ -9358,6 +9358,7 @@ function _motionEngine(){
  const valid=a=>a&&/^Brites_GAds_Motion\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+\.(mp4|jpg)$/.test(a.path);
  _adMotionEngine=require('./googleAdsAdMotion').createMotionService({fb,
   context:async workspaceId=>{const ref=_adDesignWorkspaceRef(workspaceId),snap=await ref.get();if(!snap.exists)throw Error('Design workspace was not found.');const w=snap.data(),rows=await ref.collection('sourceSets').doc(w.sourceSetId).collection('products').get(),products=rows.docs.map(d=>d.data());return {ref,w,products,product:products.find(p=>String(p.id)===String(w.settings.productId)),group:(w.context.groups||[]).find(g=>g.ref===w.settings.groupRef)};},
+  relatedContexts:async(w,workspaceId)=>{const ids=await _findLegacyEditorWorkspaces({campaignId:String(w.context.campaignId),groupRef:w.settings.groupRef,workspaceId});const rows=await Promise.all(ids.map(id=>_adDesignWorkspaceRef(id).get()));return rows.filter(s=>s.exists).map(s=>({ref:s.ref,w:s.data()}));},
   loadAsset:_loadCreativeAsset,reviewImages:_designEngineAdapters().reviewImages,
   videoRequest:provider.request,videoContent:provider.content,
   saveVideo:async(id,bytes,kind,info={})=>{if(!/^[a-zA-Z0-9_-]+$/.test(id)||!/^[a-zA-Z0-9_-]+$/.test(kind))throw Error('Invalid video storage key.');const hash=creativeHash(bytes.toString('base64')),ext=info.mimeType==='image/jpeg'?'jpg':'mp4',path=`Brites_GAds_Motion/${id}/${kind}-${hash}.${ext}`,bucket=fb().admin.storage().bucket();await require('./googleAdsAdDesignAdapters').ensureCreativeCors(bucket);await bucket.file(path).save(bytes,{resumable:false,metadata:{contentType:info.mimeType||'video/mp4',cacheControl:'private,max-age=3600'}});return {path,hash,bytes:bytes.length,...info};},
@@ -9458,7 +9459,9 @@ async function saveAdDesignCopy({workspaceId,copy,expectedRevision}={}){
   const {ref,w,product,group}=await _adDesignPublicationContext(workspaceId);
   if(!copy||!['headlines','longHeadlines','descriptions'].every(k=>Array.isArray(copy[k])&&copy[k].every(v=>typeof v==='string')))throw new Error('Enter headlines and descriptions as separate lines.');
   const clean={headlines:copy.headlines.map(v=>v.trim()).filter(Boolean),longHeadlines:copy.longHeadlines.map(v=>v.trim()).filter(Boolean),descriptions:copy.descriptions.map(v=>v.trim()).filter(Boolean)};
-  if(!_copyValid(clean,group.channel==='pmax'))throw new Error('Check the headline and description lengths and minimum counts. Each line must meet this ad type’s requirements.');
+  if(group.channel==='pmax'&&!clean.headlines.some(t=>t.length<=15))throw new Error('Add at least one short headline of 15 characters or fewer for compact Google placements.');
+  if(group.channel==='pmax'&&!clean.descriptions.some(t=>t.length<=60))throw new Error('Add at least one short description of 60 characters or fewer for compact Google placements.');
+  if(!_copyValid(clean,group.channel==='pmax'))throw new Error('Check text lengths, counts, duplicate headlines and unsupported claims such as free shipping or returns.');
   await fb().db.runTransaction(async tx=>{const current=await tx.get(ref);if(Number(current.data().revision||0)!==Number(expectedRevision)||_adDesignSelectionHash(current.data())!==_adDesignSelectionHash(w))throw new Error('This design changed. Reload its messaging before saving.');tx.update(ref,{messaging:{copy:clean,productId:product.id,groupRef:group.ref,edited:true,researchedAt:w.messaging&&w.messaging.researchedAt||null,evidenceHash:w.messaging&&w.messaging.evidenceHash||null,updatedAt:Date.now()},revision:Number(w.revision||0)+1});});
   return adDesignStatus({workspaceId});
 }
