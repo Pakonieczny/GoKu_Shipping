@@ -272,7 +272,7 @@ function createAdDesignResearch(D){
     const dates=validRange?` AND segments.date BETWEEN '${range.start}' AND '${range.end}'`:'';
     const pageLimit=composition?Math.max(600,Math.min(7000,Math.floor(24000/(products.length+1)))):14000;
     const page=await read('landing','Owned landing page','Current destination content',async()=>{const body=readable(await D.creativeFetch(landingUrl)).slice(0,pageLimit);if(body.length<100)throw new Error('The destination has insufficient readable product evidence.');return {url:landingUrl,text:body};});
-    if(!page)throw new Error('The current destination could not be researched. No generic copy was generated.');
+    if(!page){const reason=sources.find(s=>s.id==='landing')?.detail;throw new Error('The current destination could not be researched'+(reason?' ('+reason+')':'')+'. No generic copy was generated.');}
     await Promise.all(products.map(p=>read('product:'+p.id,'Shopify product','Exact product '+p.title,async()=>{
       if(!p.url)throw new Error('The selected product has no verified store URL.');const body=p.url===landingUrl?page.text:readable(await D.creativeFetch(p.url)).slice(0,pageLimit);if(body.length<100)throw new Error('This product page has insufficient readable evidence.');return {id:p.id,title:p.title,url:p.url,description:p.description,pageText:body,images:p.images};
     })));
