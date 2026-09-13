@@ -8,7 +8,7 @@
   function selectImage(plan,images,board){const f=family(board);return images.find(i=>i.forFamilies?.includes(f))||images[0];}
   // Design at the actual viewing width, then export at the requested resolution.
   // A 2048px master must not turn a 36px CTA into a 6px mobile label.
-  const layoutVersion=12;
+  const layoutVersion=13;
   function document(plan,image,board,device="mobile"){
     const master=['square','landscape','portrait'].includes(board.key),factor=master?board.width/Math.min(board.width,device==='desktop'?600:360):1;
     const W=board.width/factor,H=board.height/factor,f=family(board),layout=(plan.layouts||[]).find(l=>l.family===f&&l.device===device)||(plan.layouts||[]).find(l=>l.family===f)||{},style={...plan.style},copy=plan.copy;
@@ -72,12 +72,12 @@
       const total=brandH+(brand?gap:0)+hh+(body?bodyH+gap:0)+(row?0:bh+gap),top=side?Math.max(pad,(H-total)/2):H-pad-Math.max(total,row?bh:0);
       if(!side&&top<H*.55)return false;
       const region=side?{left:W*.55,top:pad,width:W*.45-pad,height:H-pad*2}:{left:pad,top:pad,width:W-pad*2,height:top-pad*2};
-      const scale=Math.max(W/image.width,H/image.height,Math.min(region.width/(image.width*focus.width*1.22),region.height/(image.height*focus.height*1.22)));
-      const cw=W/scale,ch=H/scale,cx=clamp(image.width*(focus.x+focus.width/2)-(region.left+region.width/2)/scale,0,image.width-cw),cy=clamp(image.height*(focus.y+focus.height/2)-(region.top+region.height/2)/scale,0,image.height-ch);
+      const scale=Math.max(W/image.width,side?H/image.height:0,Math.min(region.width/(image.width*focus.width*1.22),region.height/(image.height*focus.height*1.22)));
+      const cw=W/scale,ch=Math.min(image.height,(side?H:top)/scale),cx=clamp(image.width*(focus.x+focus.width/2)-(region.left+region.width/2)/scale,0,image.width-cw),cy=clamp(image.height*(focus.y+focus.height/2)-(region.top+region.height/2)/scale,0,image.height-ch);
       const subject={left:(image.width*focus.x-cx)*scale,top:(image.height*focus.y-cy)*scale,width:image.width*focus.width*scale,height:image.height*focus.height*scale};
       if(subject.left<region.left||subject.top<region.top||subject.left+subject.width>region.left+region.width||subject.top+subject.height>region.top+region.height)return false;
       objects.push(base('product_scene','photo',{type:'Image',sourceKey:image.id,left:0,top:0,width:cw,height:ch,cropX:cx,cropY:cy,scaleX:scale,scaleY:scale}));
-      const stops=side?[[0,1],[.40,.98],[.55,0],[1,0]]:[[0,0],[Math.max(0,(subject.top+subject.height)/H),0],[top/H,.98],[1,1]];
+      const stops=side?[[0,1],[.40,.98],[.55,0],[1,0]]:[[0,0],[Math.max(0,(subject.top+subject.height)/H),0],[Math.min(top/H,ch*scale/H),1],[1,1]];
       objects.push(base('image_fade','shape',{type:'Rect',left:0,top:0,width:W,height:H,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:side?1:0,y2:side?0:1},colorStops:stops.map(([offset,opacity])=>({offset,color:'rgba('+style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)).join(',')+','+opacity+')'}))}}));
       let y=top;if(brand){text('brand','BRITES JEWELRY',pad,y,tw,brandH,12,'brand');y+=brandH+gap;}
       text('headline',headline,pad,y,tw,hh,hs,'headline',style.headlineFont);y+=hh+gap;

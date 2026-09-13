@@ -56,9 +56,16 @@ if(require.main===module)(async()=>{
 
  }
  const fadePlan={...plan,style:{...plan.style,treatment:'soft-fade'},copy:{headline:'Sweet on Peach Charm',shortHeadline:'Peach Charm',description:'A gift for food lovers.',cta:'Shop Peach Charm'}};let fades=0;
+ for(const device of ['mobile','desktop'])for(const board of [{key:'square',width:2048,height:2048},{key:'portrait',width:1638,height:2048}]){
+   const doc=responsive.document(fadePlan,{id:'peach',width:2048,height:1072,focus:{x:.539,y:.199,width:.258,height:.682}},board,device),fade=doc.objects.find(o=>o.id==='ai_image_fade'),photo=doc.objects.find(o=>o.editorRole==='photo');
+   ok(!!fade,device+' '+board.key+' keeps a vertical fade for a wide source photograph instead of falling back to a footer');
+   ok(fade.fill.coords.x2===0&&fade.fill.coords.y2===1,'portrait fade runs downward');
+   ok(fade.fill.colorStops.some(s=>s.color.endsWith(',1)')&&s.offset*board.height<=photo.height*photo.scaleY+.01),'fade becomes opaque before the photograph ends, preventing a hard boundary');
+ }
+
  for(const board of responsive.variants){e.board=board;await e.restore(responsive.document(fadePlan,photo,board,board.device));for(const o of e.canvas.getObjects())e.fitAIText(o);const fade=e.canvas.getObjects().find(o=>o.id==='ai_image_fade');if(!fade)continue;fades++;
    const im=e.canvas.getObjects().find(o=>o.type==='image'),bounds=im.getBoundingRect(),subject={left:(photo.focus.x*photo.width-im.cropX)*im.scaleX,top:(photo.focus.y*photo.height-im.cropY)*im.scaleY,width:photo.focus.width*photo.width*im.scaleX,height:photo.focus.height*photo.height*im.scaleY};
-   ok(Math.abs(bounds.width-board.width)<1&&Math.abs(bounds.height-board.height)<1,'soft fade photograph fills '+board.key);
+   ok(Math.abs(bounds.width-board.width)<1&&(Math.abs(bounds.height-board.height)<1||fade.fill.coords.y2===1&&fade.fill.colorStops.some(s=>new w.fabric.Color(s.color).getAlpha()===1&&s.offset*board.height<=bounds.height+1)),'soft fade fills the width and conceals the photo edge '+board.key);
    const text=e.canvas.getObjects().filter(o=>'text'in o||o.editorRole==='button');for(const o of text){const b=o.getBoundingRect();ok(!boxesOverlap(b,subject),'overlay does not cover product '+board.key);ok(b.left>=-1&&b.top>=-1&&b.left+b.width<=board.width+1&&b.top+b.height<=board.height+1,'overlay stays on artboard '+board.key);}
    for(let i=0;i<text.length;i++)for(let j=i+1;j<text.length;j++)ok(!boxesOverlap(text[i].getBoundingRect(),text[j].getBoundingRect()),'soft fade text and CTA do not overlap '+board.key);
    ok(fade.fill.colorStops.some(s=>new w.fabric.Color(s.color).getAlpha()===0)&&fade.fill.colorStops.some(s=>new w.fabric.Color(s.color).getAlpha()===1),'fade remains editable and smoothly transparent');
