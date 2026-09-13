@@ -20,6 +20,10 @@ if(require.main===module)(async()=>{
  for(const board of responsive.variants){
    e.board=board;await e.restore(responsive.document(incompletePlan,photo,board,board.device));ok(['brand','headline','button'].every(role=>e.canvas.getObjects().some(o=>o.editorRole===role)),board.key+' restores essential ad content omitted by the AI recipe');for(const o of e.canvas.getObjects())e.fitAIText(o);e.canvas.renderAll();
    const text=e.canvas.getObjects().filter(o=>'text'in o||o.editorRole==='button');
+   if(board.key.startsWith('display_')){
+     ok(text.find(o=>o.editorRole==='brand').fontSize>=7.9,board.key+' brand remains legible at native size');
+     ok(text.find(o=>o.editorRole==='button').getObjects().find(o=>'text'in o).fontSize>=7.9,board.key+' action remains legible at native size');
+   }
    if(['square','landscape','portrait'].includes(board.key)){
      const brand=text.find(o=>o.editorRole==='brand'),previewWidth=board.key==='landscape'?600:300;
      ok(brand.fontSize*previewWidth/board.width>=8,board.key+' brand remains readable at typical display width');

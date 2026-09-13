@@ -12,7 +12,7 @@
     const objects=[],min=Math.min(W,H),margin=Math.max(5,min*.055),horizontal=f==='landscape',banner=f==='banner',narrow=f==='skyscraper';let photo,area;
     if(banner){photo={left:0,top:0,width:W*.22,height:H};area={left:photo.width+margin,top:margin,width:W-photo.width-margin*2,height:H-margin*2};}
     else if(horizontal){const width=W*clamp(layout.photoFraction||.53,.42,.62),right=layout.photoSide==='right';photo={left:right?W-width:0,top:0,width,height:H};area={left:right?margin:width+margin,top:margin,width:W-width-margin*2,height:H-margin*2};}
-    else{const height=H*clamp(layout.photoFraction||(narrow?.49:.57),.4,.65);photo={left:0,top:0,width:W,height};area={left:margin,top:height+margin,width:W-margin*2,height:H-height-margin*2};}
+    else{const desired=H*clamp(layout.photoFraction||(narrow?.49:.57),.4,.65),height=W<=336?Math.min(desired,H-margin*2-Math.min(H*.45,110)):desired;photo={left:0,top:0,width:W,height};area={left:margin,top:height+margin,width:W-margin*2,height:H-height-margin*2};}
     const scale=Math.max(photo.width/image.width,photo.height/image.height)*clamp(layout.zoom||1,1,1.35),cropWidth=photo.width/scale,cropHeight=photo.height/scale;
     objects.push(base('product_scene','photo',{type:'Image',sourceKey:image.id,left:photo.left,top:photo.top,width:cropWidth,height:cropHeight,cropX:clamp(layout.focalX??image.focalX??.5,0,1)*(image.width-cropWidth),cropY:clamp(layout.focalY??image.focalY??.5,0,1)*(image.height-cropHeight),scaleX:scale,scaleY:scale}));
     const align=layout.textAlign==='center'?'center':'left';
@@ -26,10 +26,10 @@
       button(W-margin-bw,(H-bh)/2,bw,bh);
     }else{
       const brandSize=Math.max(8,Math.min(min*.03,area.height*.1)),headSize=Math.max(12,Math.min(area.width*(narrow?.12:.09),area.height*.18)),descSize=Math.max(9,Math.min(area.width*.045,area.height*.1));
-      text('brand','BRITES JEWELRY',area.left,area.top,area.width,area.height*.12,brandSize,'brand');
+      text('brand','BRITES JEWELRY',area.left,area.top,area.width,Math.max(11,area.height*.12),brandSize,'brand');
       text('headline',narrow?copy.shortHeadline:copy.headline,area.left,area.top+area.height*.15,area.width,area.height*.34,headSize,'headline',style.headlineFont);
-      if(area.height>85)text('description',copy.description,area.left,area.top+area.height*.54,area.width,area.height*.2,descSize,'description');
-      const bw=Math.min(area.width,Math.max(area.width*(narrow?.95:.78),80)),bh=Math.min(area.height*.18,Math.max(24,min*.085)),x=align==='center'?area.left+(area.width-bw)/2:area.left;button(x,area.top+area.height-bh,bw,bh);
+      if(area.height>110)text('description',copy.description,area.left,area.top+area.height*.54,area.width,area.height*.2,descSize,'description');
+      const bw=Math.min(area.width,Math.max(area.width*(narrow?.95:.78),80)),bh=Math.max(22,Math.min(area.height*.18,Math.max(24,min*.085))),x=align==='center'?area.left+(area.width-bw)/2:area.left;button(x,area.top+area.height-bh,bw,bh);
     }
     return {version:'7.4.0',background:style.background,objects};
   }
