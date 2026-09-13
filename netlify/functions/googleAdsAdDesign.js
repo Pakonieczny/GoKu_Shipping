@@ -100,13 +100,25 @@ function orderAssetGroupMutations(operations){
   return other.concat(...groups.values());
 }
 function buildVersionDesignPayload({ workspaceId, jobId, workspace, group, product, result, customerId, selection={formats:FORMATS.map(f=>f.key),copy:true} }) {
-  if(!Array.isArray(selection.formats)||selection.formats.some(k=>!FORMATS.some(f=>f.key===k))||!selection.formats.length&&!selection.copy)throw new Error('Choose an image format or messaging to approve.');
+  if(!Array.isArray(selection.formats)||selection.formats.some(k=>!FORMATS.some(f=>f.key===k))||!selection.formats.length&&!selection.copy&&!selection.destination)throw new Error('Choose an image format, messaging or product destination to approve.');
   if (result.publication && result.publication.ready === false) throw new Error(result.publication.reason || "Review the destination for these products before creating an approval.");
   const snapshot = workspace.sourceSnapshot, campaignId = String(workspace.context.campaignId || ""), copy = result.copy || {}, components = snapshot && snapshot.components;
   if (!snapshot || !snapshot.complete || String(snapshot.campaignId) !== campaignId || !Number.isSafeInteger(workspace.sourceVersion) || !/^[a-f0-9]{64}$/.test(workspace.snapshotHash || "")) throw new Error("The design must be tied to a complete saved version of this campaign.");
   if (selection.copy&&(!Array.isArray(copy.headlines) || !Array.isArray(copy.descriptions) || copy.headlines.length < 3 || copy.headlines.length > 15 || copy.descriptions.length < 2 || copy.descriptions.length > 5)) throw new Error("The generated copy is incomplete.");
   if (selection.copy&&(copy.headlines.some(text => typeof text !== "string" || !text.trim() || text.length > 30) || copy.descriptions.some(text => typeof text !== "string" || !text.trim() || text.length > 90))) throw new Error("The generated copy does not meet Google Ads text limits.");
   const prefix = "customers/" + customerId + "/", operations = [], generatedAssets = [], changes = [], notes = []; let nextText = -970001, nextImage = -980001;
+  if(selection.destination){
+    const {destination,offerParts}=require('./googleAdsAdDesignContext'),url=destination(product.url),prior=(components.assetGroups||[]).find(g=>g.resourceName===group.ref),filters=(components.listingGroups||[]).filter(f=>f.assetGroup===group.ref),included=filters.filter(f=>f.type==='UNIT_INCLUDED');
+    if(group.channel!=='pmax'||!prior||!String(group.ref).startsWith(prefix+'assetGroups/')||url?.kind!=='product'||isSharedProductGroup(workspace,group))throw new Error('Choose a verified single-product Performance Max group before changing its destination.');
+    // Only a complete root partition with exact offers for this product can
+    // authorize a collection-to-product change. Broad filters are insufficient.
+    const roots=filters.filter(f=>f.type==='SUBDIVISION'&&!f.parentListingGroupFilter),root=roots[0],excluded=filters.filter(f=>f.type==='UNIT_EXCLUDED');
+    if(roots.length!==1||!String(root?.resourceName||'').startsWith(prefix+'assetGroupListingGroupFilters/'+String(group.ref).split('/').pop()+'~')||!included.length||excluded.length!==1||filters.length!==included.length+2||excluded[0].parentListingGroupFilter!==root.resourceName||Object.keys(excluded[0].caseValue||{}).some(k=>k!=='productItemId')||Object.keys(excluded[0].caseValue?.productItemId||{}).length||included.some(f=>f.parentListingGroupFilter!==root.resourceName||offerParts(f.caseValue?.productItemId?.value)?.productId!==productKey(product.id)))throw new Error('Verify exact Merchant offer filters for this product before changing its destination.');
+    if(JSON.stringify(prior.finalUrls||[])===JSON.stringify([url.url])&&!(prior.finalMobileUrls||[]).length)throw new Error('Google already uses this exact product destination.');
+    operations.push({assetGroupOperation:{update:{resourceName:group.ref,finalUrls:[url.url],finalMobileUrls:[]},updateMask:'final_urls,final_mobile_urls'}});
+    changes.push({category:'Product destination',target:group.ref,field:'finalUrls',before:{finalUrls:prior.finalUrls||[],finalMobileUrls:prior.finalMobileUrls||[]},after:{finalUrls:[url.url],finalMobileUrls:[]},reason:'Send this exact product group to its verified product listing on desktop and mobile.'});
+    notes.push('The group destination is the reviewed product page. Campaign URL expansion and inherited assets are separate settings; this change does not guarantee a fixed Google layout.');
+  }
   const imageDescriptor = (key,chosen) => {
     const asset = chosen || result.assets && result.assets[key];
     if (!asset || !/^Brites_GAds_Creative\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+\.jpg$/.test(asset.path || "") || !/^[a-f0-9]{64}$/.test(asset.hash || "") || !Number.isFinite(asset.width) || !Number.isFinite(asset.height) || asset.width < 1 || asset.height < 1 || Number(asset.bytes) <= 0 || Number(asset.bytes) > 5120000) throw new Error("Every required image format must be saved and verified before a version proposal is created.");
