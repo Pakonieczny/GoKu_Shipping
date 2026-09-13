@@ -7,7 +7,7 @@ let checks=0;function ok(value,message){assert(value,message);checks++;}
 async function setup(){
  const f=ctx.mem(),workspace=f.db.collection('Workspace').doc('design_test'),scope={workspaceId:'design_test',productId:'123',groupRef:'customers/1/assetGroups/2',jobId:'motion_'+'a'.repeat(40)};
  await workspace.set({settings:{productId:scope.productId,groupRef:scope.groupRef}});
- const job={id:scope.jobId,...scope,title:'Peach charm',destination:'https://example.test/peach',phase:'ready',quality:{pass:true,productFaithful:true},variants:['mobile_portrait','mobile_square','desktop_landscape'].map(key=>({key,format:key.split('_')[1],seconds:10,asset:{path:key,hash:key}}))},ref=workspace.collection('motionJobs').doc(job.id);await ref.set(job);
+ const job={id:scope.jobId,...scope,title:'Peach charm',destination:'https://example.test/peach',phase:'ready',quality:{pass:true,productFaithful:true,mobileReadable:true,score:98},variants:['mobile_portrait','mobile_square','desktop_landscape'].map(key=>({key,format:key.split('_')[1],seconds:10,asset:{path:key,hash:key}}))},ref=workspace.collection('motionJobs').doc(job.id);await ref.set(job);
  const calls={start:0,finish:0,attach:0},D={fb:()=>f,context:async()=>({ref:workspace,w:(await workspace.get()).data()}),assertTarget:async()=>{},loadVideo:async()=>Buffer.from('video'),startUpload:async()=>({url:'https://googleads.googleapis.com/upload/'+(++calls.start)}),queryUpload:async()=>({offset:0}),finishUpload:async()=>({resourceName:'customers/1/youTubeVideoUploads/'+(++calls.finish)}),uploadState:async resourceName=>({resourceName,state:'PROCESSED',videoId:'abcdefghij'+resourceName.slice(-1)}),attach:async()=>{calls.attach++;return {accepted:true};},verify:async()=>({policyApproved:false,allVideosHaveImpressions:false})};
  return {ref,job,scope,calls,D,service:createPublicationService(D)};
 }
@@ -30,6 +30,7 @@ async function setup(){
  await e.service.start({...e.scope,reviewHash:reviewHash(e.job)});await e.service.run(e.scope);ok(e.calls.start===3&&e.calls.finish===3&&e.calls.attach===1,'repeat approval does not duplicate uploads or attachment');
  const verified=await e.service.verify(e.scope);ok(!verified.publication.verification.policyApproved&&!verified.publication.verification.allVideosHaveImpressions,'upload acceptance never implies policy or serving');
  const safe=safePublication((await e.ref.get()).data().publication);ok(!JSON.stringify(safe).includes('sessionUrl')&&!JSON.stringify(safe).includes('reviewHash'),'private resumable sessions excluded from status');
+ for(const score of [94,96,null,101]){const low=await setup();await low.ref.update({quality:{pass:true,productFaithful:true,mobileReadable:true,score}});await assert.rejects(()=>low.service.start({...low.scope,reviewHash:reviewHash(low.job)}),/97\/100/);checks++;}
  const q=await setup();await q.ref.update({quality:{pass:false,productFaithful:true}});await assert.rejects(()=>q.service.start({...q.scope,reviewHash:reviewHash(q.job)}),/quality/);checks++;
  await assert.rejects(()=>e.service.start({...e.scope,reviewHash:'stale'}),/Review/);checks++;
  await assert.rejects(()=>e.service.start({...e.scope,productId:'456',reviewHash:reviewHash(e.job)}),/changed/);checks++;
@@ -43,3 +44,4 @@ async function setup(){
  await upload.finishUpload('https://googleads.googleapis.com/upload/1',Buffer.from('abc'),2);ok(sent.options.headers['X-Goog-Upload-Offset']==='2'&&sent.options.body.toString()==='abc','resumes from confirmed offset');
  console.log('PASS '+checks+' video upload, review scope, duplicate prevention, processing and policy checks');
 })().catch(e=>{console.error(e.stack);process.exitCode=1});
+

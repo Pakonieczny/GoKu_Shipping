@@ -42,6 +42,8 @@ const output=bytes=>({data:[{b64_json:bytes.toString('base64')}],model:IMAGE_MOD
  e=adapter();e.D.reply={model:TEXT_MODEL,output_text:JSON.stringify({pass:true,productFaithful:true,mobileReadable:true,score:84,issues:[]}),usage:{input_tokens:1000,output_tokens:100}};const qa=await e.A.reviewImages(source,[source],{copy:{headlines:['Duck necklace']},keywords:['duck necklace'],inputCoverage:{usedProductImages:2}},[source,Buffer.from('second product view'),Buffer.from('inspiration')],'quality-request'),qaRequest=e.calls[0].body;
  check(qa.pass===false&&qaRequest.model===TEXT_MODEL&&qaRequest.max_output_tokens===12000&&qaRequest.reasoning.effort==='high','Astra QA enforces independent quality threshold');
  const content=qaRequest.input[0].content;check(content.filter(x=>x.type==='input_image').length===3&&!JSON.stringify(content).includes(Buffer.from('inspiration').toString('base64')),'QA includes verified alternative product view and excludes inspiration');
+ for(const score of [85,94,96,97,100,101,null,'99']){const expected=typeof score==='number'&&score>=97&&score<=100,raw={model:TEXT_MODEL,output_text:JSON.stringify({pass:true,productFaithful:true,mobileReadable:true,score,issues:[]})};const before=e.calls.length,r=await e.A.reviewImages(source,[source],{},[],'saved-quality',{rawResponse:raw});check(r.pass===expected,'97-point gate handles '+JSON.stringify(score));check(e.calls.length===before,'threshold check reuses saved paid response');}
+ check(content[0].text.includes('never a requested rating')&&content[0].text.includes('concrete corrections'),'review forbids score inflation and requests actionable findings');
  check(content[0].text.includes('duck necklace')&&e.calls[0].headers['X-Client-Request-Id']==='quality-request','actual keywords/copy and request identity reach quality review');
  const reserve=e.A.reserveCost({key:'image_square',job:{inputCoverage:{usedProductImages:1,usedInspirationImages:8}},workspace:{}});check(reserve===1.63,'image reservation uses calculator plus explicit reference planning allowance');check(e.A.reserveCost({key:'copy'})===2.30&&e.A.reserveCost({key:'copy_repair'})===2.30&&e.A.reserveCost({key:'quality'})===2.30,'text stages reserve before dispatch');
  let qualityReceipt;const incomplete={model:TEXT_MODEL,status:'incomplete',incomplete_details:{reason:'max_output_tokens'},output_text:'{"pass":',usage:{input_tokens:100,output_tokens:12000}};
@@ -75,3 +77,4 @@ const output=bytes=>({data:[{b64_json:bytes.toString('base64')}],model:IMAGE_MOD
 
  console.log('PASS '+passed+' Sunburst/Astra request, format, provenance, cost and no-retry checks');
 })().catch(error=>{console.error(error);process.exit(1)});
+

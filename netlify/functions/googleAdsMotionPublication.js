@@ -38,6 +38,7 @@ function createPublicationService(D) {
   async function start(input) {
     const {ref, job} = await context(input), expectedHash = reviewHash(job);
     if (input.reviewHash !== expectedHash) throw Error('Review the current video files before publishing.');
+    if(job.publication?.phase!=='attached'&&(!Number.isFinite(job.quality?.score)||job.quality.score<97||job.quality.score>100||job.quality.mobileReadable!==true))throw Error('The saved animation has not met the 97/100 quality target. Improve the product scene before a new Google upload.');
     await D.assertTarget(job);
     await D.fb().db.runTransaction(async tx => {
       const row = await tx.get(ref), current = row.data();
@@ -124,3 +125,4 @@ function createPublicationService(D) {
   return {start, run, verify};
 }
 module.exports = {createPublicationService, reviewHash, safePublication, uploadUrl, selection};
+

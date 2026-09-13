@@ -610,7 +610,7 @@ function createAdDesignService(deps) {
       quality=await paid('scene_quality',82,'Checking product fidelity and mobile clarity',async requestId=>deps.reviewImages(refs[0],files,{rationale:plan.rationale,copy:{headlines:[plan.copy.headline,plan.copy.shortHeadline],descriptions:[plan.copy.description]},keywords:product.keywords||[],product:{id:product.id,title:product.title},inputCoverage:{usedProductImages:refs.length}},refs,requestId,{...(raw.exists?{rawResponse:raw.data().response}:{}),onResponse:response=>saveData('scene_quality_response',{response})}));
     }
     await recordCost('scene_quality',quality);
-    if(quality.productFaithful!==true||quality.mobileReadable===false||quality.pass!==true){
+    if(quality.productFaithful!==true||quality.mobileReadable!==true||quality.pass!==true||!Number.isFinite(quality.score)||quality.score<97||quality.score>100){
       // One bounded corrective image, with every paid response retained. The
       // first reference remains the authority for this variant's construction.
       const detailRefs=[...refs];
@@ -630,7 +630,7 @@ function createAdDesignService(deps) {
       const raw=await target.collection('data').doc('scene_repair_quality_response').get();if(job.inFlight?.key==='scene_repair_quality'&&raw.exists)await save({inFlight:null});
       quality=await paid('scene_repair_quality',88,'Checking the corrected jewelry and mobile framing',async requestId=>deps.reviewImages(refs[0],files,{rationale:plan.rationale,copy:{headlines:[plan.copy.headline],descriptions:[plan.copy.description]},keywords:product.keywords||[],product:{id:product.id,title:product.title},inputCoverage:{usedProductImages:detailRefs.length}},detailRefs,requestId,{...(raw.exists?{rawResponse:raw.data().response}:{}),onResponse:response=>saveData('scene_repair_quality_response',{response})}));await recordCost('scene_repair_quality',quality);
     }
-    if(quality.productFaithful!==true||quality.pass!==true)throw new Error('The generated photo needs quality review: '+(quality.issues||[]).join(' '));
+    if(quality.productFaithful!==true||quality.mobileReadable!==true||quality.pass!==true||!Number.isFinite(quality.score)||quality.score<97||quality.score>100)throw new Error('The generated photo has not met the 97/100 quality target: '+(quality.issues||[]).join(' '));
     await save({progress:{pct:91,label:'Adapting photo crops, headlines and buttons across 23 sizes'}});
     const publicationImages=[];
     for(const board of responsive.boards.slice(0,3)){
@@ -1007,7 +1007,7 @@ function createAdDesignService(deps) {
         return { ...output, estimatedUsd: output.estimatedUsd == null ? 1 : output.estimatedUsd, costEstimated: output.costEstimated !== false };
       });
       let quality;try{quality=await readQuality(qualityKey);}catch(error){if(!['AI_OUTPUT_INCOMPLETE','AI_OUTPUT_INVALID'].includes(error.code))throw error;await progress(85,'Completing the saved artwork quality review');quality=await readQuality(qualityKey+'_repair');}
-      if (quality.pass !== true || quality.productFaithful !== true || quality.mobileReadable !== true || Number(quality.score) < 85) throw new Error("Artwork quality review: "+Number(quality.score)+"/100. "+(quality.issues||[]).map(issue=>String(issue)).join(' ').slice(0,740)+" Saved images are retained.");
+      if (quality.pass !== true || quality.productFaithful !== true || quality.mobileReadable !== true || !Number.isFinite(quality.score) || quality.score < 97 || quality.score > 100) throw new Error("Artwork quality review: "+Number(quality.score)+"/100. "+(quality.issues||[]).map(issue=>String(issue)).join(' ').slice(0,740)+" Saved images are retained.");
       const singleProductDestination=!value.context.campaignId&&!value.context.approvalId||/\/products\//.test(group.url||'');
       const outside = selectedProducts.filter(p => Array.isArray(p.eligibleGroupRefs) && !p.eligibleGroupRefs.includes(group.ref)||singleProductDestination&&String(p.id)!==String(product.id));
       group.requiresProductSplit=isSharedProductGroup(value,group);
@@ -1038,3 +1038,4 @@ function createAdDesignService(deps) {
   return { workspace, save, upload, crop, start, status, run, resetFailures, editorSource, editorState, editorResponsiveState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorDeleteSavedDesign, deleteGeneratedImage, linkPublishedDesignScopes, linkPublishedWorkspaceGallery, editorAIStart, editorAIStatus, editorAIResume, editorAIRun, editorAIApply };
 }
 module.exports = { orderAssetGroupMutations, createAdDesignService, buildVersionDesignPayload, isSharedProductGroup, researchGroupFor, formatAssets, chosenPlacements, placementMatches, FORMATS, settingsFor, refreshedSettings, responseText, MAX_UPLOAD };
+
