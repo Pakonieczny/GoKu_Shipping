@@ -8,13 +8,13 @@
   function selectImage(plan,images,board){const f=family(board);return images.find(i=>i.forFamilies?.includes(f))||images[0];}
   // Design at the actual viewing width, then export at the requested resolution.
   // A 2048px master must not turn a 36px CTA into a 6px mobile label.
-  const layoutVersion=9;
+  const layoutVersion=10;
   function document(plan,image,board,device="mobile"){
     const master=['square','landscape','portrait'].includes(board.key),factor=master?board.width/Math.min(board.width,device==='desktop'?600:360):1;
     const W=board.width/factor,H=board.height/factor,f=family(board),layout=(plan.layouts||[]).find(l=>l.family===f&&l.device===device)||(plan.layouts||[]).find(l=>l.family===f)||{},style={...plan.style},copy=plan.copy;
     const rgb=style.background.match(/[a-f0-9]{2}/gi)?.map(x=>parseInt(x,16));if(rgb&&rgb[0]<90&&rgb[0]>=rgb[1]&&rgb[1]>=rgb[2])Object.assign(style,{background:'#F5F0E8',ink:'#34281E',accent:'#4B3825',buttonInk:'#FFF9F0',headlineFont:'Georgia'});
     const base=(id,role,extra)=>({id:'ai_'+id,name:id,editorRole:role,originX:'left',originY:'top',angle:0,opacity:1,scaleX:1,scaleY:1,strokeWidth:0,...extra});
-    const objects=[],margin=Math.max(3,Math.min(W,H)*.018),banner=f==='banner',narrow=f==='skyscraper';
+    const objects=[],margin=Math.max(3,Math.min(8,Math.min(W,H)*.03)),banner=f==='banner',narrow=f==='skyscraper';
     const typeScale=Math.max(1,Math.min(1.35,W/440)),description=copy.description.startsWith(copy.shortHeadline+'. ')?copy.description.slice(copy.shortHeadline.length+2):copy.description;
     const lineHeight=1.08;
     function lines(value,width,size){return Math.max(1,String(value).split(/\s+/).reduce((a,word)=>{const n=word.length*size*.58;if(a.used&&a.used+size*.3+n>width){a.count++;a.used=n;}else a.used+=n+size*.3;return a;},{count:1,used:0}).count);}
@@ -40,7 +40,7 @@
       objects.unshift(base('product_scene','photo',{type:'Image',sourceKey:image.id,left:placed.left,top:placed.top,width:cw,height:ch,cropX:cx,cropY:cy,scaleX:scale,scaleY:scale}));
       return placed;
     }
-    const compactHeadline=copy.shortHeadline.replace(/\b(?:pendant|necklace|charm|jewelry|earrings)\b/gi,'').replace(/\s+/g,' ').trim()||copy.shortHeadline;
+    const compactHeadline=copy.shortHeadline;
     if(banner){
       const bw=Math.min(W*.26,Math.max(72,H*1.65)),bh=H<=60?H-6:Math.min(90,H*.72),bs=Math.min(28,Math.max(15,bh*.38));
       const pw=Math.min(W*.30,H*1.45),tx=pw+margin,tw=W-tx-bw-margin*3;
@@ -73,7 +73,7 @@
       // The caption and action occupy one footer, including tall placements.
       let y=H-footer+margin;
       if(brand){text('brand','BRITES JEWELRY',margin,y,tw,brandHeight,12*typeScale,'brand');y+=brandHeight;}
-      text('headline',headline,margin,y,tw,hh,hs,'headline',style.headlineFont);
+      text('headline',headline,margin,rowFits?H-footer+margin+(Math.max(brandHeight+hh,bh)-brandHeight-hh)/2+brandHeight:y,tw,hh,hs,'headline',style.headlineFont);
       const actionY=rowFits?H-footer+margin+(Math.max(brandHeight+hh,bh)-bh)/2:y+hh+5;
       button(rowFits?W-bw-margin:margin,actionY,rowFits?bw:Math.min(fullWidth,Math.max(100,copy.cta.length*8+12)),bh,copy.cta,14*typeScale);
       if(benefit)text('description',description,margin,H-margin-dh,fullWidth,dh,13*typeScale,'description');
