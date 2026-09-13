@@ -430,6 +430,14 @@ function createAdDesignService(deps) {
     }
     return null;
   }
+  function savedResponsiveDocument(result,artboard,device){
+    const targetDevice=device==='desktop'?'desktop':'mobile',saved=result.responsive.documents?.find(d=>d.key===artboard.key&&d.device===targetDevice&&d.width===artboard.width&&d.height===artboard.height);
+    if(saved)return JSON.parse(JSON.stringify(saved.document));
+    if(result.artboard?.key===artboard.key&&result.artboard.width===artboard.width&&result.artboard.height===artboard.height&&(result.device==='desktop'?'desktop':'mobile')===targetDevice)return JSON.parse(JSON.stringify(result.document));
+    const engine=require('../../brites-ad-responsive');
+    if(result.responsive.layoutVersion!==engine.layoutVersion)throw new Error('This ad used an older template. Open its saved design to keep the original artwork; a new layout requires a separate review.');
+    const {plan,images}=result.responsive;return engine.document(plan,engine.selectImage(plan,images,artboard),artboard,targetDevice);
+  }
   async function editorState(input={}){
     const {workspaceId,productId,groupRef,device='shared',artboard}=input,ref=refFor(workspaceId),w=await read(workspaceId);editorScope(w,input);
     const rows=await ref.collection('editorDesigns').get(),designs=rows.docs.map(d=>d.data()).filter(d=>d.productId===productId&&d.groupRef===groupRef),id=artboard?editorKey({...input,device}):null;
@@ -444,7 +452,7 @@ function createAdDesignService(deps) {
     if(!design&&artboard&&require('../../brites-ad-responsive').boards.some(b=>b.key===artboard.key&&b.width===artboard.width&&b.height===artboard.height)){
       const applied=await appliedResponsive(w,input);
       if(applied){const {job,result}=applied;
-        if(result?.responsive){const engine=require('../../brites-ad-responsive'),{plan,images}=result.responsive,document=engine.document(plan,engine.selectImage(plan,images,artboard),artboard,device==='desktop'?'desktop':'mobile');
+        if(result?.responsive){const document=savedResponsiveDocument(result,artboard,device);
           design={id,productId,groupRef,device,artboard,name:(result.sources?.[0]?.title||'Product ad')+' · '+artboard.key,document,sourceIds:editorDocument(document).sourceIds,revision:0,inheritedFrom:job.id,responsiveDraft:true,...(applied.ref.id!==workspaceId?{legacyWorkspaceId:applied.ref.id}:{})};
         }
       }
@@ -464,7 +472,7 @@ function createAdDesignService(deps) {
       if(existing.exists&&(existing.data().asset?.hash!==photo.asset.hash||productKey(existing.data().productId)!==productKey(input.productId)||existing.data().groupRef!==input.groupRef))throw new Error('A current source differs from the saved AI photo.');
       if(!existing.exists)await target.set({...photo,productId:input.productId});
     }
-    const engine=require('../../brites-ad-responsive'),{plan,images}=result.responsive,document=engine.document(plan,engine.selectImage(plan,images,input.artboard),input.artboard,input.device==='desktop'?'desktop':'mobile');
+    const document=savedResponsiveDocument(result,input.artboard,input.device);
     return {ok:true,jobId:job.id,document,sources:await Promise.all(result.sources.map(async source=>({...source,url:await deps.signAsset(source.asset)})))};
   }
   async function editorSave(input={}){
@@ -694,7 +702,7 @@ function createAdDesignService(deps) {
     const chosen=responsive.selectImage(plan,images,request.artboard),document=responsive.document(plan,chosen,request.artboard,request.device==='desktop'?'desktop':'mobile'),locked=o=>o.locked||(o.objects||[]).some(locked);
     // Locked layers remain byte-identical on the active board; originals and every paid scene remain archived.
     document.objects.push(...request.document.objects.filter(locked));
-    const candidate={document,productId:request.productId,groupRef:request.groupRef,device:request.device,artboard:request.artboard,destination:product.url,sources,publicationImages,nativeCopy:plan.nativeCopy,responsive:{layoutVersion:responsive.layoutVersion,plan,images,boards:responsive.boards,variants:responsive.variants},alternatives:[],rationale:plan.rationale+' '+(plan.alternateNeeded?'Two photographic views support different framing needs.':'One new photograph is reused across the formats to avoid unnecessary generation charges.'),sourceIds:plan.sourceIds,evidenceHash:evidence.hash,limitations:[...(plan.limitations||[]),...(evidence.warnings||[])]};
+    const candidate={document,productId:request.productId,groupRef:request.groupRef,device:request.device,artboard:request.artboard,destination:product.url,sources,publicationImages,nativeCopy:plan.nativeCopy,responsive:{layoutVersion:responsive.layoutVersion,plan,images,boards:responsive.boards,variants:responsive.variants,documents:responsive.variants.map(b=>({key:b.key,device:b.device,width:b.width,height:b.height,document:responsive.document(plan,responsive.selectImage(plan,images,b),b,b.device)}))},alternatives:[],rationale:plan.rationale+' '+(plan.alternateNeeded?'Two photographic views support different framing needs.':'One new photograph is reused across the formats to avoid unnecessary generation charges.'),sourceIds:plan.sourceIds,evidenceHash:evidence.hash,limitations:[...(plan.limitations||[]),...(evidence.warnings||[])]};
     const rubric=require('./googleAdsAdQuality'),candidateHash=sha(candidate),proofRow=await target.collection('data').doc('ad_proofs_v5').get();
     if(!proofRow.exists||proofRow.data().candidateHash!==candidateHash)return {...candidate,candidateHash,reviewPending:true};
     const proof=proofRow.data(),key='ad_quality_v5',raw=await target.collection('data').doc(key+'_response').get();

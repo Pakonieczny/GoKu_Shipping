@@ -307,11 +307,11 @@
     }
     async renderAIProofs(candidate){
       const engine=root.BritesAdResponsive;if(!engine)throw Error('Refresh to render the saved ad layouts.');
-      if(candidate.responsive.layoutVersion!==engine.layoutVersion)throw Error('Refresh the editor to render the current saved layout version. No new image request was sent.');
+      if(!candidate.responsive.documents&&candidate.responsive.layoutVersion!==engine.layoutVersion)throw Error('Refresh the editor to render the current saved layout version. No new image request was sent.');
       const proofSources=[...new Map([...this.sources,...candidate.sources.map(s=>[s.id,s])]).values()];
-      const boards=[{...candidate.artboard,key:'active',device:candidate.device,document:candidate.document},...engine.variants],active=this.board,proofs=[];
+      const boards=[{...candidate.artboard,key:'active',device:candidate.device,document:candidate.document},...(candidate.responsive.variants||engine.variants)],active=this.board,proofs=[];
       try{for(const b of boards){
-        this.board=b;const doc=b.document||engine.document(candidate.responsive.plan,engine.selectImage(candidate.responsive.plan,candidate.responsive.images,b),b,b.device);
+        this.board=b;const frozen=candidate.responsive.documents?.find(d=>d.key===b.key&&d.device===b.device&&d.width===b.width&&d.height===b.height),doc=b.document||frozen?.document||engine.document(candidate.responsive.plan,engine.selectImage(candidate.responsive.plan,candidate.responsive.images,b),b,b.device);
         await this.loadFonts(doc);const out=new this.F.StaticCanvas(documentElement('canvas'),{width:b.width,height:b.height,enableRetinaScaling:false});
         try{
           await out.loadFromJSON(withSources(doc,proofSources));
