@@ -126,3 +126,8 @@ assert.deepEqual(editor.cropResize(cropBox,'se',120,80,cropBounds),{x:200,y:200,
   }
   console.log('PASS '+checks+' professional editor source, layout, save and export checks');
 })().catch(e=>{console.error(e.stack||e);process.exitCode=1;});
+
+const identityIssue='Exact-product integrity needs correction: '+ 'The attachment geometry drifts. '.repeat(12);
+const identityReview=editor.reviewSummary({score:94,pass:false,issues:[identityIssue]});
+check(identityReview.issues[0]===identityIssue.trim(),'review retains complete identity findings');
+check(identityReview.suggestions[0].includes('Replace the inaccurate source footage'),'identity failures are not misrepresented as crop fixes');
