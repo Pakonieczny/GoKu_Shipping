@@ -138,7 +138,7 @@ function createMotionService(D){
   const {ref,w}=await D.context(input.workspaceId),target=jobs(ref).doc(input.jobId),owner=crypto.randomUUID();let job;
   await D.fb().db.runTransaction(async tx=>{const row=await tx.get(target);if(!row.exists)throw new Error('The animated request was not found.');job=row.data();if(w.archivedAt)throw Error('This ad was deleted.');if(job.resetAt||job.phase==='ready'||job.quality||job.leaseUntil>Date.now())return;job={...job,owner,leaseUntil:Date.now()+13*60000,phase:'running',updatedAt:Date.now(),error:null};tx.update(target,job);});
   if(!job||job.owner!==owner)return {ok:true,cached:true};
-  const save=async patch=>{Object.assign(job,patch,{updatedAt:Date.now()});await D.fb().db.runTransaction(async tx=>{const current=await tx.get(target);if(current.data()?.owner!==owner||current.data()?.resetAt)throw new Error('The animated job was reset or changed.');tx.update(target,clone(job));});};
+  const save=async patch=>{if(patch.progress)patch.progress.pct=Math.max(Number(job.progress?.pct)||0,Number(patch.progress.pct)||0);Object.assign(job,patch,{updatedAt:Date.now()});await D.fb().db.runTransaction(async tx=>{const current=await tx.get(target);if(current.data()?.owner!==owner||current.data()?.resetAt)throw new Error('The animated job was reset or changed.');tx.update(target,clone(job));});};
   const workerDeadline=Date.now()+9*60000;
   const continueSaved=async()=>{await save({phase:'queued',leaseUntil:0});return {ok:true,continue:true,workspaceId:job.workspaceId,jobId:job.id};};
   try{

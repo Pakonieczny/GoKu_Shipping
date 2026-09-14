@@ -6,6 +6,7 @@ check(review.tone==='green'&&review.score===93.2&&review.complete,'saved set sco
 check(review.categories.length===5&&review.synopsis==='Focus on layout.'&&review.suggestions.length===1,'review provides concise category feedback and relevant suggestions');
 check(editor.reviewSummary({score:91.9}).tone==='orange'&&editor.reviewSummary({score:79}).tone==='red','score colors distinguish below-target and low reviews');
 check(editor.reviewSummary(null).score===null&&editor.reviewSummary(null).tone==='neutral','missing review does not appear as zero or a passing score');
+check(editor.reviewSummary({score:84},97).synopsis.includes('needs changes'),'legacy score cannot imply passing categories');
 check(editor.reviewSummary({score:0}).score===0,'valid zero score remains visible');
 check(!editor.reviewSummary({rubric:'product-detail-v1',score:95}).complete,'earlier photograph score is not labeled a complete set review');
 const original={version:'7.4.0',objects:[{type:'Group',left:80,top:40,scaleX:1,scaleY:1,objects:[{type:'Image',sourceKey:'source_1',src:'https://expired.example/image',crossOrigin:'anonymous'},{type:'Textbox',text:'Duck necklace',fontFamily:'Georgia'}]}]};
