@@ -57,7 +57,7 @@ if(require.main===module)(async()=>{
    ok(!action||action.textLines.length===1,board.key+' action stays on one line');
 
  }
- const fadePlan={...plan,style:{...plan.style,treatment:'soft-fade'},copy:{headline:'Sweet on Peach Charm',shortHeadline:'Peach Charm',description:'A gift for food lovers.',cta:'Shop Peach Charm'}};let fades=0;
+ const fadePlan={...plan,style:{...plan.style,treatment:'soft-fade',atmospheric:false},copy:{headline:'Sweet on Peach Charm',shortHeadline:'Peach Charm',description:'A gift for food lovers.',cta:'Shop Peach Charm'}};let fades=0;
  for(const device of ['mobile','desktop'])for(const board of [{key:'square',width:2048,height:2048},{key:'portrait',width:1638,height:2048}]){
    const doc=responsive.document(fadePlan,{id:'peach',width:2048,height:1072,focus:{x:.539,y:.199,width:.258,height:.682}},board,device),fade=doc.objects.find(o=>o.id==='ai_image_fade'),photo=doc.objects.find(o=>o.editorRole==='photo');
    ok(!!fade,device+' '+board.key+' keeps a vertical fade for a wide source photograph instead of falling back to a footer');

@@ -275,7 +275,7 @@
       c.getActiveObject()?.setCoords();this.changed();}
     aiPanel(textAvailable=false){
       const run=this.aiRuns.get(this.key()),pending=run&&!run.applied&&!run.abandoned;
-      return '<section class="bae-ai"><div class="bae-tool-buttons"><button class="bae-primary" data-action="ai-design"'+(pending?' disabled':'')+'>✦ AI Design</button>'+(textAvailable?'<button data-action="ai-text"'+(pending?' disabled':'')+'>AI Text</button>':'')+'</div><p class="bae-help">'+esc(this.options.title)+' · '+esc(this.board.label||this.board.key)+' · '+esc(this.device==='shared'?'Desktop + Mobile':this.device)+'</p><details><summary>Art direction <small>optional</small></summary><textarea data-ai-direction aria-label="Optional AI art direction" maxlength="1200" placeholder="For example: understated, warm ivory, focus on the pendant">'+esc(this.aiDirection||'')+'</textarea><p class="bae-help">AI Design generates a new product scene, then tailors mobile and desktop layouts. One scene is reused where possible; at most one alternate view is generated. Locked layers stay fixed.</p></details><div data-ai-feedback aria-live="polite">'+this.aiFeedback(run)+'</div></section>';
+      return '<section class="bae-ai"><div class="bae-tool-buttons"><button class="bae-primary" data-action="ai-design"'+(pending?' disabled':'')+'>✦ AI Design</button>'+(textAvailable?'<button data-action="ai-text"'+(pending?' disabled':'')+'>AI Text</button>':'')+'</div><p class="bae-help">'+esc(this.options.title)+' · '+esc(this.board.label||this.board.key)+' · '+esc(this.device==='shared'?'Desktop + Mobile':this.device)+'</p><details><summary>Art direction <small>optional</small></summary><textarea data-ai-direction aria-label="Optional AI art direction" maxlength="1200" placeholder="For example: understated, warm ivory, focus on the pendant">'+esc(this.aiDirection||'')+'</textarea><p class="bae-help">AI Design creates five coordinated scenes for different ad shapes, with an extra slim scene when needed. Compatible sizes share a scene. Your layout rules and locked layers stay fixed; each step uses the configured creative allowance.</p></details><div data-ai-feedback aria-live="polite">'+this.aiFeedback(run)+'</div></section>';
     }
     aiFeedback(run){
       if(!run)return '';
@@ -350,7 +350,7 @@
       document.body.append(panel);panel.querySelector('[data-close]').onclick=()=>{panel.close();panel.remove();};panel.addEventListener('cancel',()=>panel.remove());panel.showModal();
     }
     async savedResponsiveRecipe({design,sources}){
-      const layers=design.document.objects||[],photos=layers.filter(o=>String(o.type).toLowerCase()==='image'&&!root.BritesBrandAssets?.get(o.sourceKey)).sort((a,b)=>b.width*b.height*(b.scaleX||1)*(b.scaleY||1)-a.width*a.height*(a.scaleX||1)*(a.scaleY||1)),photo=photos[0];
+      const layers=design.document.objects||[],photos=layers.filter(o=>String(o.type).toLowerCase()==='image'&&o.editorRole!=='shape'&&!root.BritesBrandAssets?.get(o.sourceKey)).sort((a,b)=>b.width*b.height*(b.scaleX||1)*(b.scaleY||1)-a.width*a.height*(a.scaleX||1)*(a.scaleY||1)),photo=photos[0];
       if(!photo)throw Error('This saved design needs an editable product photograph to adapt its layouts.');
       const source=sources.find(s=>s.id===photo.sourceKey);if(!source)throw Error('The original product photograph is unavailable.');
       const texts=layers.filter(o=>'text'in o),headline=texts.find(o=>o.editorRole==='headline')||texts.find(o=>!/BRITES/i.test(o.text)),description=texts.find(o=>o.editorRole==='description'||/support|description/i.test(o.name||'')),brand=texts.find(o=>o.editorRole==='brand'||/BRITES/i.test(o.text)),cta=layers.find(o=>o.editorRole==='button'||/cta|button/i.test(o.name||'')),label=cta?.objects?.find(o=>'text'in o),shape=cta?.objects?.find(o=>String(o.type).toLowerCase()==='rect');
@@ -396,10 +396,14 @@
         await this.loadFonts(doc);const out=new this.F.StaticCanvas(documentElement('canvas'),{width:b.width,height:b.height,enableRetinaScaling:false});
         try{
           await out.loadFromJSON(withSources(doc,proofSources));
-          const photos=out.getObjects().filter(o=>o.type==='image'&&!root.BritesBrandAssets?.get(o.sourceKey));
+          const photos=out.getObjects().filter(o=>o.type==='image'&&o.editorRole!=='shape'&&!root.BritesBrandAssets?.get(o.sourceKey));
           if(!photos.length)throw Error('The '+b.key+' proof has no product photograph. Saved work is retained; no review was charged.');
           for(const photo of photos){const el=photo.getElement();if(el.decode)await el.decode();if(!(el.naturalWidth||el.width)||!(el.naturalHeight||el.height))throw Error('The product photograph has not loaded. Reopen the saved review to retry without a new AI charge.');photo.set({objectCaching:false});photo.setCoords();}
           for(const o of out.getObjects())this.fitAIText(o,b);
+          if(doc.sceneFit?.subject){const n=doc.sceneFit.subject,subject={left:n.x*b.width,top:n.y*b.height,width:n.w*b.width,height:n.h*b.height};
+            if(subject.left<-.5||subject.top<-.5||subject.left+subject.width>b.width+.5||subject.top+subject.height>b.height+.5)throw Error('The complete jewelry must remain inside '+b.key+'. Saved images are retained.');
+            for(const o of out.getObjects().filter(o=>['headline','description','brand','button'].includes(o.editorRole))){const r=o.getBoundingRect();if(Math.min(r.left+r.width,subject.left+subject.width)-Math.max(r.left,subject.left)>.5&&Math.min(r.top+r.height,subject.top+subject.height)-Math.max(r.top,subject.top)>.5)throw Error('Messaging overlaps the protected jewelry in '+b.key+'. Reframe this scene without shrinking the text.');}
+          }
           out.renderAll();const multiplier=preview?previewRasterScale(b):Math.min(1,960/Math.max(b.width,b.height)),raster=out.toCanvasElement(multiplier),pixels=raster.getContext('2d').getImageData(0,0,raster.width,raster.height).data;
           const visibility=photos.map(o=>o.visible);let background;
           try{photos.forEach(o=>o.set('visible',false));out.renderAll();const blank=out.toCanvasElement(multiplier);background=blank.getContext('2d').getImageData(0,0,blank.width,blank.height).data;}finally{photos.forEach((o,i)=>o.set('visible',visibility[i]));out.renderAll();}
@@ -435,7 +439,7 @@
           const started=await this.request('startAdDesignEditorAI',{...run.scope,requestId:run.requestId,mode:run.mode,generateScene:run.mode==='design',includeAnimation:run.includeAnimation===true,document:run.original,screenshotDataUrl:run.screenshotDataUrl,selectedLayerId:run.selectedLayerId,instruction:run.instruction});
           if(!started.jobId)throw Error('The design request did not return a saved job. Check saved progress to reconnect.');run.jobId=started.jobId;
         }
-        const deadline=Date.now()+14*60*1000;let failures=0;
+        const deadline=Date.now()+30*60*1000;let failures=0;
         while(!run.result){
           if(this.disposed)return;
           let status;try{status=await this.request('adDesignEditorAIStatus',{...run.scope,jobId:run.jobId});failures=0;}catch(e){if(++failures>2)throw e;run.progress={...run.progress,label:'Reconnecting to your saved design…'};this.updateAI(run);await new Promise(r=>setTimeout(r,2500));continue;}

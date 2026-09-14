@@ -16,10 +16,10 @@ const E = require("./googleAdsAutopilot");
 const fetch = require("node-fetch");
 
 
-async function continueMotion(next){
+async function continueMotion(next,task='adDesignMotion'){
  const base=process.env.URL||('https://'+(process.env.SITE_NAME||'goldenspike')+'.netlify.app');
- const r=await fetch(base+'/.netlify/functions/googleAdsAutopilot-background',{method:'POST',timeout:15000,headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:['adDesignMotion'],workspaceId:next.workspaceId,jobId:next.jobId,token:process.env.EDIT_PASSCODE||undefined})});
- if(!r.ok)throw Error('Animation is saved; reopen Animated ads to resume dispatch.');
+ const r=await fetch(base+'/.netlify/functions/googleAdsAutopilot-background',{method:'POST',timeout:15000,headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:[task],workspaceId:next.workspaceId,jobId:next.jobId,token:process.env.EDIT_PASSCODE||undefined})});
+ if(!r.ok)throw Error(task==='adDesignEditorAI'?'The scenes are saved; reopen AI Design to resume dispatch.':'Animation is saved; reopen Animated ads to resume dispatch.');
 }
 
 const DEADLINE_MS = 13 * 60 * 1000; // leave headroom under Netlify's 15-min cap
@@ -108,6 +108,7 @@ exports.handler = async (event) => {
       else if (task === "analyzeAd") { result.analyzeAd=await E.runAnalyzeAd({analysisId:body.analysisId}); }
       else if (task === 'adDesignEditorAI') {
         result.adDesignEditorAI=await E.runAdDesignEditorAI({workspaceId:body.workspaceId,jobId:body.jobId});
+        if(result.adDesignEditorAI.continue)await continueMotion(result.adDesignEditorAI,'adDesignEditorAI');
         if(result.adDesignEditorAI.includeAnimation){
           // Animation has its own saved state; a video issue never rolls back the static design.
           try{const next=await E.startAdDesignMotion({workspaceId:body.workspaceId,editorJobId:body.jobId,fromEditorWorker:true});if(next.queued)await continueMotion(next);}

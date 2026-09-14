@@ -5,11 +5,72 @@
   const display=[[200,200],[240,400],[250,250],[250,360],[300,250],[336,280],[580,400],[120,600],[160,600],[300,600],[300,1050],[468,60],[728,90],[930,180],[970,90],[970,250],[980,120],[300,50],[320,50],[320,100]];
   const boards=core.concat(display.map(([w,h])=>['display_'+w+'x'+h,w,h])).map(([key,width,height])=>({key,width,height}));
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,Number(v)||0)),family=b=>b.width/b.height>3?'banner':b.width/b.height<.5?'skyscraper':b.width/b.height>1.3?'landscape':b.width/b.height<.9?'portrait':'square';
-  function selectImage(plan,images,board){const f=family(board);return images.find(i=>i.forFamilies?.includes(f))||images[0];}
+  function selectImage(plan,images,board){const f=family(board);return images.find(i=>i.forBoards?.includes(board.key))||images.find(i=>i.forFamilies?.includes(f))||images[0];}
   // Design at the actual viewing width, then export at the requested resolution.
   // A 2048px master must not turn a 36px CTA into a 6px mobile label.
-  const layoutVersion=27;
+  const layoutVersion=28;
   const brands=typeof module==='object'&&module.exports?require('./brites-brand-assets'):root.BritesBrandAssets;
+  // The scene catalog matches meaningful crop families rather than charging for
+  // every output size. Slim skyscrapers may receive an extra composition.
+  const sceneCatalog=[
+    {key:'landscape',format:{key:'landscape',width:2048,height:1072,requestSize:'2064x1088'},families:['landscape'],boards:[],direction:'Product on the right, within x 0.55–0.93 and y 0.08–0.92. The left 46 percent is continuous quiet photographic surface for the existing centered brand, title and action.'},
+    {key:'square',format:{key:'square',width:2048,height:2048,requestSize:'2048x2048'},families:['square'],boards:[],direction:'Complete product centered horizontally within x 0.30–0.70 and y 0.04–0.42, occupying at most 38 percent of source height. The renderer zooms this into a dominant product view; this extra scene area is essential for both square and 300x250/336x280 crops. Keep the remaining lower surface quiet and continuous for captions. No separate footer.'},
+    {key:'portrait',format:{key:'portrait',width:1638,height:2048,requestSize:'1648x2048'},families:['portrait'],boards:[],direction:'Complete product in the upper 58 percent, centered horizontally, with the lower third quiet for the existing brand, product name and action. Protect a 4:5 crop as well as 3:5; do not place props behind the captions.'},
+    {key:'tall',format:{key:'portrait',width:1024,height:3072,requestSize:'1024x3072'},families:['skyscraper'],boards:[],direction:'A deliberate tall photograph. Keep the entire jewelry in x 0.27–0.73, y 0.18–0.60 so narrow horizontal crops retain the product. Lower third is an uninterrupted surface for the existing centered copy stack. Use lighting and scene depth rather than large props to fill the tall image.'},
+    {key:'banner',format:{key:'landscape',width:3072,height:1024,requestSize:'3072x1024'},families:['banner'],boards:[],direction:'Close jewelry view in the left third, with uninterrupted calm surface and matching illumination extending right. A product-free right-side surface supplies the tonal continuation for ultra-wide banners. Avoid horizontal seams, horizon lines or props in that continuation.'},
+    {key:'slim',format:{key:'portrait',width:1024,height:3072,requestSize:'1024x3072'},families:[],boards:['display_120x600','display_160x600'],direction:'Dedicated slim crop. Keep complete jewelry including hardware in the central 42 percent of the source width and upper 60 percent of height. Keep the lower third quiet and continuous. This scene is specifically for 1:5 and 4:15 banners.'}
+  ];
+  function cleanCrop(image,board){
+    const ratio=board.width/board.height,w=image.width,h=image.height,cw=Math.min(w,h*ratio),ch=cw/ratio,f=image.focus;
+    let x=(w-cw)/2,y=(h-ch)/2;
+    if(f){
+      const gap=Math.min(cw,ch)*.02,fx=f.x*w,fy=f.y*h,fr=(f.x+f.width)*w,fb=(f.y+f.height)*h;
+      if(fr-fx>cw||fb-fy>ch)throw Error('The '+board.key+' scene cannot retain the complete product. Use its dedicated composition.');
+      const origin=(start,end,size,total)=>{const lo=Math.max(0,end-size),hi=Math.min(total-size,start),pLo=Math.max(0,end+gap-size),pHi=Math.min(total-size,start-gap);return clamp((start+end-size)/2,pLo<=pHi?pLo:lo,pLo<=pHi?pHi:hi);};
+      x=origin(fx,fr,cw,w);y=origin(fy,fb,ch,h);
+    }
+    return {x:x/w,y:y/h,width:cw/w,height:ch/h};
+  }
+  function atmosphericScene(objects,image,W,H,style,board){
+    const p=objects.find(o=>o.editorRole==='photo'),f=image.focus;
+    if(!p||!f||!['x','y','width','height'].every(k=>Number.isFinite(f[k]))||f.width<=0||f.height<=0)return {mode:'legacy',reason:'Product localization is required before extending the scene.'};
+    const s=p.scaleX,subject={x:p.left+(f.x*image.width-(p.cropX||0))*s,y:p.top+(f.y*image.height-(p.cropY||0))*s,w:f.width*image.width*s,h:f.height*image.height*s};
+    const layers=objects.filter(o=>['headline','description','brand','button'].includes(o.editorRole)),box=o=>({x:o.left,y:o.top,w:o.width*(o.scaleX||1),h:o.height*(o.scaleY||1)}),boxes=layers.map(box);
+    const left=Math.min(...boxes.map(b=>b.x)),right=Math.max(...boxes.map(b=>b.x+b.w)),top=Math.min(...boxes.map(b=>b.y));
+    const gap=Math.max(1,Math.min(W,H)*.005),axis=right<=subject.x-gap?'left':left>=subject.x+subject.w+gap?'right':top>=subject.y+subject.h+gap?'bottom':null;
+    if(!axis)return {mode:'legacy',reason:'The protected product and the messaging region need separate space.'};
+    const rgb=style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16));
+    // Choose opacity against both black and white underlying pixels, rather than
+    // assuming that a light scene will always stay light under every letter.
+    const lum=a=>a.map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((n,v,i)=>n+v*[.2126,.7152,.0722][i],0),ink=lum(style.ink.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)));
+    let opacity=.90;for(;opacity<1;opacity+=.005){if([0,255].every(v=>{const b=lum(rgb.map(c=>c*opacity+v*(1-opacity)));return (Math.max(ink,b)+.05)/(Math.min(ink,b)+.05)>=4.5;}))break;}opacity=Math.min(1,opacity);
+    const span=axis==='bottom'?H:W,start=axis==='left'?right:axis==='right'?subject.x+subject.w+gap:subject.y+subject.h+gap,end=axis==='left'?subject.x-gap:axis==='right'?left:top;
+    const stops=axis==='left'?[[0,opacity],[start/span,opacity],[end/span,0],[1,0]]:[[0,0],[start/span,0],[end/span,opacity],[1,Math.min(1,opacity+.02)]];
+    // Prefer one complete photographic plane at the already-approved crop/scale.
+    // Expanding the viewport never changes the jewelry's position or size.
+    const vx=p.left-(p.cropX||0)*s,vy=p.top-(p.cropY||0)*s,x=Math.max(0,vx),y=Math.max(0,vy),r=Math.min(W,vx+image.width*s),b=Math.min(H,vy+image.height*s);
+    const expanded={...p,left:x,top:y,cropX:(x-vx)/s,cropY:(y-vy)/s,width:(r-x)/s,height:(b-y)/s};
+    // Continuations may only join beneath the protected messaging wash. An
+    // uncovered edge in the clear product region needs a dedicated photograph,
+    // not an obvious patched seam. Saved artwork keeps its earlier safe layout.
+    const washAt=t=>{if(t<=stops[1][0])return stops[1][1];if(t>=stops[2][0])return stops[2][1];const u=(t-stops[1][0])/(stops[2][0]-stops[1][0]);return stops[1][1]+(stops[2][1]-stops[1][1])*(u*u*(3-2*u));};
+    if((x>.01&&(axis!=='left'||washAt(x/W)<.88))||(r<W-.01&&(axis!=='right'||washAt(r/W)<.88))||y>.01||(b<H-.01&&(axis!=='bottom'||washAt(b/H)<.88)))return {mode:'legacy',reason:'This saved photo needs a dedicated '+family(board)+' scene to extend cleanly without a visible join.'};
+    let background=null,mode='native';
+    if(x>.01||y>.01||r<W-.01||b<H-.01){
+      // Old photographs and ratios wider than the provider's 3:1 limit need a
+      // quiet continuation. Sample only a product-free source region; never
+      // stretch, clone or blur the jewelry to manufacture a background.
+      const pad=.02,fx=Math.max(0,f.x-pad),fy=Math.max(0,f.y-pad),fr=Math.min(1,f.x+f.width+pad),fb=Math.min(1,f.y+f.height+pad);
+      const patches=[{x:0,y:0,w:fx,h:1},{x:fr,y:0,w:1-fr,h:1},{x:0,y:0,w:1,h:fy},{x:0,y:fb,w:1,h:1-fb}].filter(a=>a.w>.025&&a.h>.025).sort((a,b)=>b.w*b.h-a.w*a.h),a=patches[0];
+      if(!a)return {mode:'legacy',reason:'No product-free photographic surface is available for this crop.'};
+      const sw=a.w*image.width,sh=a.h*image.height,scale=Math.max(W/sw,H/sh);
+      background={...p,id:'ai_atmosphere_surface',name:'Continuous photographic surface',editorRole:'shape',left:0,top:0,width:W/scale,height:H/scale,cropX:a.x*image.width+(sw-W/scale)/2,cropY:a.y*image.height+(sh-H/scale)/2,scaleX:scale,scaleY:scale,filters:[]};mode='continued';
+    }
+    const fade={id:'ai_atmosphere_fade',name:'Protective translucent fade',editorRole:'shape',type:'Rect',originX:'left',originY:'top',left:0,top:0,width:W,height:H,scaleX:1,scaleY:1,strokeWidth:0,opacity:1,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:axis==='bottom'?0:1,y2:axis==='bottom'?1:0},colorStops:stops.flatMap((point,i)=>i===1?[point,...[.2,.4,.6,.8].map(t=>[point[0]+(stops[2][0]-point[0])*t,point[1]+(stops[2][1]-point[1])*(t*t*(3-2*t))])]:[point]).map(([offset,a])=>({offset:Math.max(0,Math.min(1,offset)),color:'rgba('+rgb.join(',')+','+a+')'}))}};
+    objects.splice(0,objects.length,...(background?[background]:[]),expanded,fade,...layers);
+    return {mode,axis,subject:{x:subject.x/W,y:subject.y/H,w:subject.w/W,h:subject.h/H},opacity,sourceKey:image.id,reason:mode==='continued'?'A protected product-free surface continues the saved scene.':null};
+  }
+
   function document(plan,image,board,device="mobile"){
     const master=['square','landscape','portrait'].includes(board.key),factor=master?board.width/Math.min(board.width,360):1;
     const W=board.width/factor,H=board.height/factor,f=family(board),layout=(plan.layouts||[]).find(l=>l.family===f&&l.device===device)||(plan.layouts||[]).find(l=>l.family===f)||{},style={...plan.style},copy=plan.copy;
@@ -185,13 +246,14 @@
       if(benefit)text('description',description,margin,H-margin-dh,fullWidth,dh,13*typeScale,'description');
     }
     function upscale(o){if(o.type==='Image'){o.left*=factor;o.top*=factor;o.scaleX*=factor;o.scaleY*=factor;return;}for(const k of ['left','top','width','height','fontSize','aiBoxHeight','buttonPadding','rx','ry'])if(typeof o[k]==='number')o[k]*=factor;(o.objects||[]).forEach(upscale);}
+    const sceneFit=style.treatment==='soft-fade'&&style.atmospheric!==false?atmosphericScene(objects,image,W,H,style,board):null;
     objects.forEach(upscale);
-    return {version:'7.4.0',background:style.background,objects};
+    return {version:'7.4.0',background:style.background,objects,...(sceneFit?{sceneFit}: {})};
   }
   const variants=boards.flatMap(b=>['square','landscape','portrait'].includes(b.key)?['mobile','desktop'].map(device=>({...b,device})):[{...b,device:b.height<=100&&b.width<=320?'mobile':'desktop'}]);
-  const rules={version:1,priorities:['complete recognizable product','official brand lockup','product name','optional action and supporting copy'],brand:{iconHeight:32,compactBannerIconHeight:36,minimumWordmarkWidth:80,minimumTextSize:14,narrowTextSize:12,alignment:'Center icon and business name together as one lockup; never center the text independently of its icon.'},type:{bannerHeadlineMinimum:16,headlineMinimum:20,supportMinimum:14,maximumFontFamilies:2},button:{height:34,maximumWidth:128,fontSize:14,alignment:'centered beneath the headline within the copy region'},spacing:{minimumGap:3,preferredGap:8,skyscraper:'Use 10–30px gaps and scale the brand, heading and action to occupy the lower third; do not leave a tiny centered cluster'},sizeOverrides:{landscape:'Center the complete brand, headline and action group vertically; use a restrained 108px action and leave visible space around the charm.',skyscraper:'Leave roughly 6 percent space on each horizontal side of the located jewelry.',display_580x400:'Omit supporting copy. Large product headline, visible brand and action in the left region.',display_300x1050:'48px brand icon, up to 44px headline, 48px-high action with 20px label; keep brand-to-title gap at most 24px and title-to-action gap at most 20px as one centered lower-third stack.',display_160x600:'36px brand icon, readable headline, 36px action and balanced vertical gaps.',desktopBanners:'For 728x90, 970x90 and 980x120, reserve a 14–18px inset after the photograph; preserve headline size and the product-first hierarchy.',display_970x250:'Up to 64px headline, 36px business name and 120px brand icon; use the available banner height'},protection:['Whole jewelry including attachment hardware stays visible','No logo, copy or fade may cover the located product','No distortion or invented jewelry details','No microtext or arbitrary shrinking to fit','High-density PNG previews; exact-size upload and historical review pixels remain separate'],creativeFreedom:['Product-specific scene, venue, props and lighting','Photography and safe focal positioning','Supported product-specific messaging within text limits','Coordinated brand palette with readable contrast','Up to two coherent font families','Subtle decorative treatments in empty space']};
+  const rules={version:2,atmosphere:'Continuous edge-to-edge photography beneath a progressive translucent wash. Preserve the existing brand, headline, action positions and complete product. Derive the wash from measured product and copy bounds; opacity must protect at least 4.5:1 text contrast. Use dedicated ratio compositions before resorting to product-free surface continuation. No solid footer, repeated jewelry or distorted product.',priorities:['complete recognizable product','official brand lockup','product name','optional action and supporting copy'],brand:{iconHeight:32,compactBannerIconHeight:36,minimumWordmarkWidth:80,minimumTextSize:14,narrowTextSize:12,alignment:'Center icon and business name together as one lockup; never center the text independently of its icon.'},type:{bannerHeadlineMinimum:16,headlineMinimum:20,supportMinimum:14,maximumFontFamilies:2},button:{height:34,maximumWidth:128,fontSize:14,alignment:'centered beneath the headline within the copy region'},spacing:{minimumGap:3,preferredGap:8,skyscraper:'Use 10–30px gaps and scale the brand, heading and action to occupy the lower third; do not leave a tiny centered cluster'},sizeOverrides:{landscape:'Center the complete brand, headline and action group vertically; use a restrained 108px action and leave visible space around the charm.',skyscraper:'Leave roughly 6 percent space on each horizontal side of the located jewelry.',display_580x400:'Omit supporting copy. Large product headline, visible brand and action in the left region.',display_300x1050:'48px brand icon, up to 44px headline, 48px-high action with 20px label; keep brand-to-title gap at most 24px and title-to-action gap at most 20px as one centered lower-third stack.',display_160x600:'36px brand icon, readable headline, 36px action and balanced vertical gaps.',desktopBanners:'For 728x90, 970x90 and 980x120, reserve a 14–18px inset after the photograph; preserve headline size and the product-first hierarchy.',display_970x250:'Up to 64px headline, 36px business name and 120px brand icon; use the available banner height'},protection:['Whole jewelry including attachment hardware stays visible','No logo, copy or fade may cover the located product','No distortion or invented jewelry details','No microtext or arbitrary shrinking to fit','High-density PNG previews; exact-size upload and historical review pixels remain separate'],creativeFreedom:['Product-specific scene, venue, props and lighting','Photography and safe focal positioning','Supported product-specific messaging within text limits','Coordinated brand palette with readable contrast','Up to two coherent font families','Subtle decorative treatments in empty space']};
   const baseLayouts=boards.map(b=>({...b,family:family(b),composition:family(b)==='banner'?'edge product / centered message / dedicated logo':family(b)==='landscape'?'product beside a centered copy block':'product above a centered brand / headline / action stack',drawnAction:family(b)!=='banner'&&!(b.width<=280&&b.height<=280)}));
   const videoLayouts=[{key:'portrait',width:720,height:1280},{key:'square',width:720,height:720},{key:'landscape',width:1280,height:720}].map(b=>({...b,logo:{x:.065,y:.055,width:176,persistent:true},text:'Three distinct saved messages: hook, product, action. Only text transitions.',wash:'Persistent throughout; never covers protected jewelry.',composition:b.key==='portrait'?'product lower-middle, messaging above':'product toward right, messaging in measured free space'}));
   function baseLayout(board){return baseLayouts.find(b=>b.width===board.width&&b.height===board.height)||{...board,family:family(board),composition:'Adapt the nearest base without breaking shared ground rules'};}
-  const api={layoutVersion,boards,variants,family,selectImage,document,rules,baseLayouts,videoLayouts,baseLayout};if(typeof module==='object'&&module.exports)module.exports=api;else root.BritesAdResponsive=api;
+  const api={layoutVersion,sceneCatalog,cleanCrop,atmosphericScene,boards,variants,family,selectImage,document,rules,baseLayouts,videoLayouts,baseLayout};if(typeof module==='object'&&module.exports)module.exports=api;else root.BritesAdResponsive=api;
 })(typeof window==='object'?window:globalThis);

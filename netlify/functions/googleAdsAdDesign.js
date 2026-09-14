@@ -600,7 +600,7 @@ function createAdDesignService(deps) {
     const ref=refFor(workspaceId),target=editorAIRef(workspaceId,jobId),owner=crypto.randomUUID();let job,request,w;
     await f().db.runTransaction(async tx=>{const row=await tx.get(target),workspace=await tx.get(ref),input=await tx.get(target.collection('data').doc('request'));if(!row.exists||!input.exists||!workspace.exists)throw new Error('AI design context is unavailable.');job=row.data();w=workspace.data();request=input.data();editorScope(w,job.scope);if(job.resetAt||job.phase==='dismissed'||job.phase==='ready'||job.phase==='running'&&job.leaseUntil>Date.now())return;job={...job,phase:'running',owner,leaseUntil:Date.now()+8*60000,updatedAt:Date.now()};tx.update(target,job);});
     if(job.owner!==owner)return {ok:true,cached:true};
-    const save=async patch=>{Object.assign(job,patch,{updatedAt:Date.now(),...(['ready','needs_attention','awaiting_review'].includes(patch.phase)?{}:{leaseUntil:Date.now()+8*60000})});await f().db.runTransaction(async tx=>{const row=await tx.get(target);if(row.data()?.owner!==owner)throw new Error('AI design worker ownership changed.');tx.update(target,clean(job));});};
+    const save=async patch=>{if(patch.progress)patch.progress={...patch.progress,pct:Math.max(Number(job.progress?.pct)||0,Number(patch.progress.pct)||0)};Object.assign(job,patch,{updatedAt:Date.now(),...(['ready','needs_attention','awaiting_review','queued'].includes(patch.phase)?{}:{leaseUntil:Date.now()+8*60000})});await f().db.runTransaction(async tx=>{const row=await tx.get(target);if(row.data()?.owner!==owner)throw new Error('AI design worker ownership changed.');tx.update(target,clean(job));});};
     const saveData=async(key,data)=>f().db.runTransaction(async tx=>{const row=await tx.get(target);if(row.data()?.owner!==owner)throw new Error('AI design worker ownership changed before saving its output.');tx.set(target.collection('data').doc(key),clean(data));});
     const verify=async()=>{const current=await read(workspaceId);editorScope(current,job.scope);if(current.sourceSetId!==job.sourceSetId||(current.snapshotHash||null)!==job.snapshotHash||(current.sourceVersion||null)!==job.sourceVersion)throw new Error('Product or campaign evidence changed. The saved AI result cannot replace this draft.');};
     try{
@@ -624,7 +624,7 @@ function createAdDesignService(deps) {
         const boundedReserve=Math.ceil((textBytes*20/1000000+prepared.max_output_tokens*75/1000000+(originals.length+1)*.12)*100)/100,reserve=Math.max(Number(typeof quote==='object'?quote.reservedUsd:quote),boundedReserve),ctrl=await deps.control(),allowance=Math.max(1,Math.min(30,Number(ctrl.creativeBudgetUsd)||8));
         if(!Number.isFinite(reserve)||reserve<=0||reserve>allowance)throw new Error('The configured creative allowance cannot cover this bounded AI design request.');
         await verify();if(deps.verifyContext)await deps.verifyContext(w);
-        const requestId=crypto.randomUUID();await save({reservedUsd:reserve,textReservedUsd:reserve,inFlight:{requestId,key:'response',at:Date.now()},progress:{pct:36,label:request.responsive?'Planning a new photographic scene and layouts across all ad formats':'Astra is inspecting the ad and designing tailored copy, typography and layout'}});
+        const requestId=crypto.randomUUID();await save({reservedUsd:reserve,textReservedUsd:reserve,inFlight:{requestId,key:'response',at:Date.now()},progress:{pct:36,label:request.responsive?'Planning coordinated photographs for each ad shape':'Astra is inspecting the ad and designing tailored copy, typography and layout'}});
         const response=await deps.responses(prepared,requestId);
         // Write the provider receipt before parsing or validation. A reload or
         // interrupted worker can use this response without a second API charge.
@@ -633,7 +633,9 @@ function createAdDesignService(deps) {
       if(!evidence)throw new Error('The saved response is missing its original evidence.');
       const response=responseRow.data().response,actual=Number(response.estimatedUsd),usage={requestId:responseRow.data().requestId,providerModel:response.model||'gpt-6-astra',usage:response.usage||{},estimatedUsd:response.costEstimated===false&&Number.isFinite(actual)&&actual>=0?actual:(job.textReservedUsd||job.reservedUsd),costEstimated:response.costEstimated!==false,at:Date.now()};
       await save({usage,inFlight:job.inFlight?.key&&job.inFlight.key!=='response'?job.inFlight:null,progress:{pct:request.responsive?48:86,label:request.responsive?'Scene and messaging planned; preparing new product photography':'Checking product claims, editable layers, photo integrity and placement'}});
-      const research=require('./googleAdsAdDesignResearch'),output=research.parseResponse(response),result=request.responsive?await responsiveEditorResult({workspaceId,jobId,job,request,evidence,output,target,ref,w,save,saveData,verify,usage}):research.applyEditorPlan({output,request,evidence,sources:request.sources});editorDocument(result.document);await verify();
+      const research=require('./googleAdsAdDesignResearch'),output=research.parseResponse(response),result=request.responsive?await responsiveEditorResult({workspaceId,jobId,job,request,evidence,output,target,ref,w,save,saveData,verify,usage}):research.applyEditorPlan({output,request,evidence,sources:request.sources});
+      if(result.continue){await save({phase:'queued',leaseUntil:0,error:null});return {ok:true,continue:true,workspaceId,jobId};}
+      editorDocument(result.document);await verify();
       if(result.reviewPending){await saveData('candidate',result);await save({phase:'awaiting_review',leaseUntil:0,error:null,progress:{pct:92,label:'Rendering the complete ad layouts for weighted review'}});return {ok:true,workspaceId,jobId};}
       await saveData('result',result);await save({phase:'ready',leaseUntil:0,completedAt:Date.now(),error:null,progress:{pct:100,label:'Tailored design is ready to apply to this artboard'}});
       return {ok:true,workspaceId,jobId,includeAnimation:request.includeAnimation===true};
@@ -643,14 +645,16 @@ function createAdDesignService(deps) {
     }
   }
   async function responsiveEditorResult({workspaceId,jobId,job,request,evidence,output,target,ref,w,save,saveData,verify,usage}){
+    const sceneDeadline=Date.now()+4*60000;
     const research=require('./googleAdsAdDesignResearch');let plan=research.validateResponsivePlan({output,request,evidence});const responsive=require('../../brites-ad-responsive'),products=await productsFor(ref,w),product=products.find(p=>String(p.id)===request.productId);
     if(!product)throw new Error('The exact product source is no longer available.');
     const refs=await Promise.all((request.identitySources||request.sources).map(s=>deps.loadAsset(s.asset))),images=[],sources=[],files=[];
+    const sceneSpecs=plan.scenePlans?.map(scene=>({...responsive.sceneCatalog.find(s=>s.key===scene.key),...scene}))||Array.from({length:plan.alternateNeeded?2:1},(_,i)=>({key:String(i),format:FORMATS.find(f=>f.key===(i?plan.alternateFormat:plan.masterFormat)),direction:plan.imageDirections[i]||plan.imageDirections[0],families:i?[plan.alternateFormat,plan.alternateFormat==='portrait'?'skyscraper':'banner']:[],boards:[]}));
     const stageUsage=job.stageUsage||[{...usage,key:'response'}];await save({stageUsage});
     const paid=async(key,pct,label,perform,reserveOverride=0)=>{
       const saved=await target.collection('data').doc(key).get();if(saved.exists)return saved.data();
       if(job.inFlight)throw new Error('The '+key+' request has no confirmed receipt. Its request ID is saved; no replacement was charged.');
-      const estimate=await deps.reserveCost({key:key.startsWith('subject_focus_')?'subject_focus':/^scene_(?:\d+|repair)$/.test(key)?'image_'+(key==='scene_0'||key==='scene_repair'?plan.masterFormat:plan.alternateFormat):'quality',workspace:w,job:{inputCoverage:{preparedReferenceCount:refs.length,usedProductImages:refs.length}}});
+      const sceneSpec=sceneSpecs.find(s=>'scene_'+s.key===key||'scene_'+s.key+'_fit_repair'===key),estimate=await deps.reserveCost({key:key.startsWith('subject_focus_')?'subject_focus':sceneSpec?'image_'+sceneSpec.format.key:/^scene_(?:\d+|repair)$/.test(key)?'image_'+(key==='scene_0'||key==='scene_repair'?plan.masterFormat:plan.alternateFormat):'quality',format:sceneSpec?.format,workspace:w,job:{inputCoverage:{preparedReferenceCount:refs.length,usedProductImages:refs.length}}});
       const reservedUsd=Math.max(reserveOverride,Number(typeof estimate==='object'?estimate.reservedUsd:estimate)),spent=stageUsage.reduce((n,u)=>n+(Number(u.estimatedUsd)||0),0),ctrl=await deps.control();
       if(!Number.isFinite(reservedUsd)||spent+reservedUsd>Math.max(1,Math.min(30,Number(ctrl.creativeBudgetUsd)||8)))throw new Error('The remaining creative allowance cannot cover the next image step. Completed research and images are saved.');
       await verify();const requestId=crypto.randomUUID();await save({reservedUsd,inFlight:{key,requestId,at:Date.now()},progress:{pct,label}});
@@ -676,19 +680,20 @@ function createAdDesignService(deps) {
         return {plan:revision,model:response.model,usage:response.usage,estimatedUsd:response.estimatedUsd,costEstimated:response.costEstimated};
       },reserve);
       await recordCost(key,revised);
-      plan={...revised.plan,masterFormat:plan.masterFormat,alternateNeeded:plan.alternateNeeded,alternateFormat:plan.alternateFormat,alternateReason:plan.alternateReason,imageDirections:plan.imageDirections};
+      plan={...revised.plan,masterFormat:plan.masterFormat,alternateNeeded:plan.alternateNeeded,alternateFormat:plan.alternateFormat,alternateReason:plan.alternateReason,imageDirections:plan.imageDirections,scenePlans:plan.scenePlans};
     }
     }
-    for(let i=0;i<(plan.alternateNeeded?2:1);i++){
-      const key='scene_'+i,shape=i?plan.alternateFormat:plan.masterFormat,format=FORMATS.find(f=>f.key===shape),direction=plan.imageDirections[i]||plan.imageDirections[0];
-      const row=await paid(key,50+i*17,i?'Generating an alternate view because '+plan.alternateReason:'Generating a new '+shape+' product scene',async requestId=>{
-        const generated=await deps.generateImage({requestId,provider:provider(),format,references:refs,product,products:[product],brief:{buyer:plan.rationale,visualDirection:direction.concept},imageDirections:[direction],settings:{...w.settings,direction:request.instruction+'\nGenerate a genuinely new setting and photograph; do not keep the old model crop. '+direction.composition},inputCoverage:{usedProductImages:refs.length,preparedReferenceCount:refs.length}});
+    for(let i=0;i<sceneSpecs.length;i++){
+      const spec=sceneSpecs[i],repairSaved=plan.scenePlans?await target.collection('data').doc('scene_'+spec.key+'_fit_repair').get():null,key='scene_'+spec.key+(repairSaved?.exists?'_fit_repair':''),shape=spec.format.key,format=spec.format,direction=spec.direction;
+      const row=await paid(key,50+Math.round(i*32/sceneSpecs.length),'Creating '+(i+1)+' of '+sceneSpecs.length+' aspect-aware product scenes',async requestId=>{
+        const generated=await deps.generateImage({requestId,provider:provider(),format,references:refs,product,products:[product],brief:{buyer:plan.rationale,visualDirection:direction.concept},imageDirections:[direction],settings:{...w.settings,direction:request.instruction+'\nGenerate a new composition preserving the exact product. '+(plan.scenePlans?responsive.sceneCatalog.find(s=>s.key===spec.key).direction+' ': '')+direction.composition},inputCoverage:{usedProductImages:refs.length,preparedReferenceCount:refs.length}});
         const asset=await deps.saveAsset(workspaceId,generated.bytes,jobId+'_'+key,{width:format.width,height:format.height,mimeType:'image/jpeg',digitalSourceType:generated.digitalSourceType||null});
         return {...generated,bytes:undefined,asset};
       });
-      await recordCost(key,row);const asset=row.asset,id='generated_'+sha(asset.path).slice(0,32),sourceId='scene_'+sha([workspaceId,jobId,key]).slice(0,40),source={id:sourceId,productId:request.productId,groupRef:request.groupRef,title:product.title+' · AI scene',width:asset.width,height:asset.height,asset,source:{kind:'library',imageId:id}};
+      await recordCost(key,row);const asset=row.asset,id='generated_'+sha(asset.path).slice(0,32),sourceId='scene_'+sha([workspaceId,jobId,key]).slice(0,40),source={id:sourceId,productId:request.productId,groupRef:request.groupRef,title:product.title+' · '+spec.key+' scene',width:asset.width,height:asset.height,asset,source:{kind:'library',imageId:id}};
       await ref.collection('editorSources').doc(sourceId).set(clean(source));const image={id,kind:'generated',format:shape,productIds:[request.productId],ownerProductId:request.productId,groupRef:request.groupRef,title:product.title,asset,createdAt:row.receivedAt||Date.now(),jobId};await ref.collection('imageLibrary').doc(id).set(clean(image));await archiveGenerated(w,image);
-      sources.push(source);images.push({id:sourceId,width:asset.width,height:asset.height,focalX:.5,focalY:.5,forFamilies:i?[shape,shape==='portrait'?'skyscraper':'banner']:[]});files.push(await deps.loadAsset(asset));
+      sources.push(source);images.push({id:sourceId,width:asset.width,height:asset.height,focalX:.5,focalY:.5,forFamilies:spec.families,forBoards:spec.boards,sceneKey:spec.key});files.push(await deps.loadAsset(asset));
+      if(Date.now()>sceneDeadline)return {continue:true};
     }
     // Reuse a saved correction if one was already purchased under the former
     // detail-heavy rubric. New runs go straight to complete-ad review.
@@ -708,27 +713,41 @@ function createAdDesignService(deps) {
         await recordCost(key,{...response,requestId:raw.exists?raw.data().requestId:requestId,reservedUsd:.45});
         return {focus:research.validateSubjectFocus(research.parseResponse(response)),model:response.model,usage:response.usage,estimatedUsd:response.estimatedUsd,costEstimated:response.costEstimated};
       });
-      await recordCost(key,located);image.focus=located.focus;
+      await recordCost(key,located);image.focus=located.focus;source.focus=located.focus;await ref.collection('editorSources').doc(source.id).set(clean(source));
+      if(Date.now()>sceneDeadline)return {continue:true};
+    }
+    if(plan.scenePlans){
+      const checks=[{...request.artboard,device:request.device==='desktop'?'desktop':'mobile'},...responsive.variants].map(board=>{const image=responsive.selectImage(plan,images,board);return {board,image,fit:responsive.document(plan,image,board,board.device).sceneFit};}),bad=checks.filter(c=>c.fit?.mode==='legacy');
+      if(bad.length){
+        const image=bad[0].image,spec=sceneSpecs.find(s=>s.key===image.sceneKey),key='scene_'+spec.key+'_fit_repair',prior=await target.collection('data').doc(key).get();
+        if(prior.exists)throw Error('The '+bad.filter(c=>c.image.id===image.id).map(c=>c.board.key).join(', ')+' composition still needs more continuous scene area. Both photographs are saved; no replacement or review will run automatically.');
+        const affected=bad.filter(c=>c.image.id===image.id).map(c=>({format:c.board.key,width:c.board.width,height:c.board.height,reason:c.fit.reason}));
+        const row=await paid(key,90,'Refining the '+spec.key+' scene to fit its assigned ad sizes',async requestId=>{
+          const direction={...spec.direction,composition:spec.direction.composition+' '+responsive.sceneCatalog.find(s=>s.key===spec.key).direction+' The previous composition did not leave enough continuous photographic context. Pull the camera back to provide more empty scene around the exact product; the renderer will retain the approved final product size. Do not enlarge or reposition the text. Previous product bounds and failed crops: '+JSON.stringify({focus:image.focus,affected})};
+          const generated=await deps.generateImage({requestId,provider:provider(),format:spec.format,references:refs,product,products:[product],brief:{buyer:plan.rationale,visualDirection:spec.direction.concept},imageDirections:[direction],settings:{...w.settings,direction:request.instruction+' Preserve the exact original jewelry and the same palette, lighting and scene concept. '+direction.composition},inputCoverage:{usedProductImages:refs.length,preparedReferenceCount:refs.length}});
+          const asset=await deps.saveAsset(workspaceId,generated.bytes,jobId+'_'+key,{width:spec.format.width,height:spec.format.height,mimeType:'image/jpeg',digitalSourceType:generated.digitalSourceType||null});return {...generated,bytes:undefined,asset};
+        });await recordCost(key,row);return {continue:true};
+      }
     }
     await save({progress:{pct:91,label:'Adapting photo crops, headlines and buttons across 23 sizes'}});
     const publicationImages=[];
     for(const board of responsive.boards.slice(0,3)){
       const chosen=responsive.selectImage(plan,images,board),source=sources.find(s=>s.id===chosen.id),key='crop_'+board.key;
       let stored=await target.collection('data').doc(key).get(),row=stored.exists?stored.data():null;
-      if(!row){const cropped=await deps.cropImage(await deps.loadAsset(source.asset),board.key,null),asset=await deps.saveAsset(workspaceId,cropped.bytes,jobId+'_'+key,{width:cropped.width,height:cropped.height,mimeType:'image/jpeg',kind:'clean AI product photograph'});row={id:'generated_'+sha(asset.path).slice(0,32),kind:'generated',format:board.key,productIds:[request.productId],ownerProductId:request.productId,groupRef:request.groupRef,title:product.title,asset,originalAsset:source.asset,jobId,createdAt:Date.now()};await saveData(key,row);}
+      if(!row){const cropped=await deps.cropImage(await deps.loadAsset(source.asset),board.key,responsive.cleanCrop(chosen,board)),asset=await deps.saveAsset(workspaceId,cropped.bytes,jobId+'_'+key,{width:cropped.width,height:cropped.height,mimeType:'image/jpeg',kind:'clean AI product photograph'});row={id:'generated_'+sha(asset.path).slice(0,32),kind:'generated',format:board.key,productIds:[request.productId],ownerProductId:request.productId,groupRef:request.groupRef,title:product.title,asset,originalAsset:source.asset,jobId,createdAt:Date.now()};await saveData(key,row);}
       await ref.collection('imageLibrary').doc(row.id).set(clean(row));await archiveGenerated(w,row);publicationImages.push(row);
     }
     const chosen=responsive.selectImage(plan,images,request.artboard),document=responsive.document(plan,chosen,request.artboard,request.device==='desktop'?'desktop':'mobile'),locked=o=>o.locked||(o.objects||[]).some(locked);
     // Locked layers remain byte-identical on the active board; originals and every paid scene remain archived.
     document.objects.push(...request.document.objects.filter(locked));
-    const candidate={document,productId:request.productId,groupRef:request.groupRef,device:request.device,artboard:request.artboard,destination:product.url,sources,publicationImages,nativeCopy:plan.nativeCopy,responsive:{layoutVersion:responsive.layoutVersion,plan,images,boards:responsive.boards,variants:responsive.variants,documents:responsive.variants.map(b=>({key:b.key,device:b.device,width:b.width,height:b.height,document:responsive.document(plan,responsive.selectImage(plan,images,b),b,b.device)}))},alternatives:[],rationale:plan.rationale+' '+(plan.alternateNeeded?'Two photographic views support different framing needs.':'One new photograph is reused across the formats to avoid unnecessary generation charges.'),sourceIds:plan.sourceIds,evidenceHash:evidence.hash,limitations:[...(plan.limitations||[]),...(evidence.warnings||[])]};
+    const candidate={document,productId:request.productId,groupRef:request.groupRef,device:request.device,artboard:request.artboard,destination:product.url,sources,publicationImages,nativeCopy:plan.nativeCopy,responsive:{layoutVersion:responsive.layoutVersion,plan,images,boards:responsive.boards,variants:responsive.variants,documents:responsive.variants.map(b=>({key:b.key,device:b.device,width:b.width,height:b.height,document:responsive.document(plan,responsive.selectImage(plan,images,b),b,b.device)}))},alternatives:[],rationale:plan.rationale+' '+sceneSpecs.length+' saved scene(s) reused across compatible ad sizes.',sourceIds:plan.sourceIds,evidenceHash:evidence.hash,limitations:[...(plan.limitations||[]),...(evidence.warnings||[])]};
     const rubric=require('./googleAdsAdQuality'),candidateHash=sha(candidate),proofRow=await target.collection('data').doc('ad_proofs_v11').get();
     if(!proofRow.exists||proofRow.data().candidateHash!==candidateHash)return {...candidate,candidateHash,reviewPending:true};
     const proof=proofRow.data(),key='ad_quality_v11',raw=await target.collection('data').doc(key+'_response').get();
     if(raw.exists&&(raw.data().candidateHash!==candidateHash||raw.data().proofHash!==proof.proofHash))throw new Error('The saved review response belongs to different ad proofs.');
     if(job.inFlight?.key===key&&raw.exists)await save({inFlight:null});
     const quality=await paid(key,95,'Reviewing messaging, layout, relevance and visual appeal',async requestId=>({...await deps.reviewImages(refs[0],await Promise.all(proof.images.map(p=>deps.loadAsset(p.asset))),{
-      reviewType:'complete_ad',rubric:rubric.RUBRIC,copy:plan.copy,nativeCopy:plan.nativeCopy,product:{id:product.id,title:product.title,url:product.url},
+      reviewType:'complete_ad',rubric:rubric.RUBRIC,copy:plan.copy,nativeCopy:plan.nativeCopy,compositionRules:{treatment:plan.style.treatment,scenes:sceneSpecs.map(s=>s.key),requirements:'The photograph fills each ad. A progressive translucent wash protects the existing copy. Check every size for photographic seams, texture or props competing with text, readable branding, unchanged complete jewelry, no duplicated product, and no fade over the product. Judge actual native display size. Do not deduct merely because the layout uses restrained supporting copy.'},product:{id:product.id,title:product.title,url:product.url},
       research:{sources:evidence.sources,limitations:evidence.warnings},inputCoverage:{usedProductImages:refs.length},
       renderedFormats:proof.images.map(({key,width,height,displayWidth,displayHeight})=>({key,width,height,displayWidth,displayHeight})),
       placementNote:'These are actual browser-rendered editable compositions. Google responsive ads combine separate clean photos and native text dynamically; these proofs are not guaranteed Google placements.'
