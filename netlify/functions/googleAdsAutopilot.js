@@ -9361,7 +9361,7 @@ function _motionEngine(){
  _adMotionEngine=require('./googleAdsAdMotion').createMotionService({fb,
   context:async workspaceId=>{const ref=_adDesignWorkspaceRef(workspaceId),snap=await ref.get();if(!snap.exists)throw Error('Design workspace was not found.');const w=snap.data(),rows=await ref.collection('sourceSets').doc(w.sourceSetId).collection('products').get(),products=rows.docs.map(d=>d.data());return {ref,w,products,product:products.find(p=>String(p.id)===String(w.settings.productId)),group:(w.context.groups||[]).find(g=>g.ref===w.settings.groupRef)};},
   relatedContexts:async(w,workspaceId)=>{const ids=await _findLegacyEditorWorkspaces({campaignId:String(w.context.campaignId),groupRef:w.settings.groupRef,workspaceId});const rows=await Promise.all(ids.map(id=>_adDesignWorkspaceRef(id).get()));return rows.filter(s=>s.exists).map(s=>({ref:s.ref,w:s.data()}));},
-  loadAsset:_loadCreativeAsset,reviewImages:_designEngineAdapters().reviewImages,
+  loadAsset:_loadCreativeAsset,reviewImages:_designEngineAdapters().reviewImages,planMotion:_designEngineAdapters().responses,
   videoRequest:provider.request,videoContent:provider.content,
   saveVideo:async(id,bytes,kind,info={})=>{if(!/^[a-zA-Z0-9_-]+$/.test(id)||!/^[a-zA-Z0-9_-]+$/.test(kind))throw Error('Invalid video storage key.');const hash=creativeHash(bytes.toString('base64')),ext=info.mimeType==='image/jpeg'?'jpg':'mp4',path=`Brites_GAds_Motion/${id}/${kind}-${hash}.${ext}`,bucket=fb().admin.storage().bucket();await require('./googleAdsAdDesignAdapters').ensureCreativeCors(bucket);await bucket.file(path).save(bytes,{resumable:false,metadata:{contentType:info.mimeType||'video/mp4',cacheControl:'private,max-age=3600'}});return {path,hash,bytes:bytes.length,...info};},
   loadVideo:async a=>{if(!valid(a))throw Error('Invalid saved video.');const [bytes]=await fb().admin.storage().bucket().file(a.path).download();if(creativeHash(bytes.toString('base64'))!==a.hash)throw Error('The saved video changed.');return bytes;},
@@ -9389,10 +9389,23 @@ function _motionPublication(){
   const g=groups[0];if(groups.length!==1||String(g.campaign?.id)!==String(w.context.campaignId)||g.campaign?.status!=='PAUSED'||g.assetGroup?.status==='REMOVED'||g.assetGroup?.finalUrls?.length!==1||g.assetGroup.finalUrls[0]!==job.destination)throw Error('Video publication requires the exact product destination in a paused campaign.');
   const rules=filters.map(r=>r.assetGroupListingGroupFilter),included=rules.filter(r=>r.type==='UNIT_INCLUDED');
   if(rules.length!==3||included.length!==1||!new RegExp('^shopify_[a-z]{2}_'+productId+'_\\d+$','i').test(included[0].caseValue?.productItemId?.value||'')||rules.filter(r=>r.type==='SUBDIVISION').length!==1||rules.filter(r=>r.type==='UNIT_EXCLUDED'&&!r.caseValue?.productItemId?.value).length!==1)throw Error('Google product filters must isolate this exact product before video publication.');
+  if(job.pipelineVersion>=2){
+   const native=await gaql(`SELECT asset_group_asset.field_type, asset.text_asset.text, asset.call_to_action_asset.call_to_action FROM asset_group_asset WHERE asset_group_asset.asset_group = ${ref} AND asset_group_asset.status = 'ENABLED' AND asset_group_asset.field_type IN ('HEADLINE','LONG_HEADLINE','DESCRIPTION','CALL_TO_ACTION_SELECTION')`);
+   const compatibility=require('./googleAdsMotionPublication').nativeCompatibility(job,native);
+   if(!compatibility.copyMatches||!compatibility.shopNowLinked)throw Error('Publish the matching reviewed static messaging and native Shop now action to this product group before attaching its videos.');
+  }
   return g;
  };
  const upload=require('./googleAdsVideoUpload').createVideoUpload({fetch,headers:async()=>adsHeaders(await mintToken()),customerId:CID,version:V});
  _motionPublicationEngine=require('./googleAdsMotionPublication').createPublicationService({fb,context,assertTarget,...upload,
+  prepareMerchant:async(job,videos)=>{
+   const {w,product}=await _adDesignPublicationContext(job.workspaceId);
+   if(String(product.id)!==String(job.productId)||product.url!==job.destination)throw Error('The video product destination changed.');
+   const plan=await _prepareDesignMerchant(product,w,null,'video');if(plan.requiresIdentity)return plan;
+   const videoLinks=videos.map(v=>{if(!/^[a-zA-Z0-9_-]{11}$/.test(v.videoId||'')||v.state!=='PROCESSED')throw Error('The exact uploaded video is not ready.');return 'https://www.youtube.com/watch?v='+v.videoId;});
+   if(new Set([...(plan.before||[]),...videoLinks]).size>10)throw Error('Merchant Center allows up to ten product videos. Manage existing videos before adding this set.');
+   const value={...plan,videoLinks};delete value.reviewHash;return {...value,reviewHash:creativeHash(value)};
+  },publishMerchant:_publishDesignMerchant,
   loadVideo:async a=>{if(!/^Brites_GAds_Motion\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+\.mp4$/.test(a.path||''))throw Error('Invalid saved video.');const [bytes]=await fb().admin.storage().bucket().file(a.path).download();if(creativeHash(bytes.toString('base64'))!==a.hash)throw Error('The reviewed video changed.');return bytes;},
   uploadState:async resourceName=>{if(!new RegExp('^customers/'+CID+'/youTubeVideoUploads/\\d+$').test(resourceName))throw Error('Invalid Google upload receipt.');const rows=await gaql(`SELECT you_tube_video_upload.resource_name, you_tube_video_upload.video_id, you_tube_video_upload.state FROM you_tube_video_upload WHERE you_tube_video_upload.resource_name = ${_gaqlString(resourceName)}`);return rows[0]?.youTubeVideoUpload;},
   attach:async(job,videos)=>{
@@ -9418,7 +9431,7 @@ function _motionPublication(){
   }
  });return _motionPublicationEngine;
 }
-async function startAdMotionPublication(input){return _motionPublication().start(input);}
+async function startAdMotionPublication(input){if(input.target==='merchant')return input.merchantReviewHash?_motionPublication().publishMerchant(input):_motionPublication().prepareMerchant(input);return _motionPublication().start(input);}
 async function runAdMotionPublication(input){return _motionPublication().run(input);}
 async function verifyAdMotionPublication(input){return _motionPublication().verify(input);}
 
@@ -9533,26 +9546,32 @@ async function _prepareDesignMerchant(product,w,asset,format,selectedOfferId,sel
   const source=await _designMerchantRequest('datasources/v1/'+current.dataSource);
   if(source.name!==current.dataSource)throw new Error('The owning Merchant feed changed. Refresh its sources before updating the photo.');
   _assertDesignMerchantSource(source,identity);
-  const field=format==='square'?'imageLink':'additionalImageLinks',before=(current.productAttributes||{})[field]||null;
+  const field=format==='video'?'videoLinks':format==='square'?'imageLink':'additionalImageLinks',before=(current.productAttributes||{})[field]||null;
   if(field==='additionalImageLinks'&&(before||[]).length>=10)throw new Error('This product already has ten additional images. Manage its existing images in the owning feed before adding another.');
   const plan={identity,productName:name,inputName:name.replace('/products/','/productInputs/'),dataSource:current.dataSource,sourceName:source.displayName||'API product feed',sourceHash:creativeHash(source),asset,field,before,format,productTitle:(current.productAttributes||{}).title||product.title};
   return {...plan,reviewHash:creativeHash(plan)};
 }
 async function _publishDesignMerchant(plan){
-  const copy={...plan};delete copy.reviewHash;if(creativeHash(copy)!==plan.reviewHash)throw new Error('The reviewed Merchant image plan changed.');
+  const copy={...plan};delete copy.reviewHash;if(creativeHash(copy)!==plan.reviewHash)throw new Error('The reviewed Merchant media plan changed.');
   const [current,source]=await Promise.all([_designMerchantRequest('products/v1/'+plan.productName),_designMerchantRequest('datasources/v1/'+plan.dataSource)]);
-  if(!_designMerchantIdentityMatches(current,plan.identity)||current.archived||source.name!==plan.dataSource||current.dataSource!==plan.dataSource||creativeHash(source)!==plan.sourceHash||creativeHash((current.productAttributes||{})[plan.field]||null)!==creativeHash(plan.before))throw new Error('The Merchant product or its owning feed changed. Review this photo update again.');
+  if(!_designMerchantIdentityMatches(current,plan.identity)||current.archived||source.name!==plan.dataSource||current.dataSource!==plan.dataSource||creativeHash(source)!==plan.sourceHash||creativeHash((current.productAttributes||{})[plan.field]||null)!==creativeHash(plan.before))throw new Error('The Merchant product or its owning feed changed. Review this media update again.');
   _assertDesignMerchantSource(source,plan.identity);
-  await _loadCreativeAsset(plan.asset);
+  if(plan.field!=='videoLinks')await _loadCreativeAsset(plan.asset);
   if((await control()).dryRun)return {status:'VALIDATED',provider:'merchant',dryRun:true};
-  // Publish only this approved immutable artwork with a durable image URL.
-  const bucket=fb().admin.storage().bucket(),file=bucket.file(plan.asset.path),[meta]=await file.getMetadata(),downloadToken=meta.metadata&&meta.metadata.firebaseStorageDownloadTokens||require('crypto').randomUUID();
-  await file.setMetadata({cacheControl:'public,max-age=31536000,immutable',metadata:{...(meta.metadata||{}),firebaseStorageDownloadTokens:downloadToken}});
-  const url='https://firebasestorage.googleapis.com/v0/b/'+encodeURIComponent(bucket.name)+'/o/'+encodeURIComponent(plan.asset.path)+'?alt=media&token='+encodeURIComponent(downloadToken.split(',')[0]),value=plan.field==='imageLink'?url:[...(plan.before||[]),url];
+  let url=null,value;
+  if(plan.field==='videoLinks'){
+    if(!Array.isArray(plan.videoLinks)||plan.videoLinks.length!==3||plan.videoLinks.some(v=>!/^https:\/\/www\.youtube\.com\/watch\?v=[a-zA-Z0-9_-]{11}$/.test(v)))throw Error('Invalid reviewed video links.');
+    value=[...new Set([...(plan.before||[]),...plan.videoLinks])];if(value.length>10)throw Error('The Merchant video limit would be exceeded.');
+  }else{
+    // Publish only the approved immutable artwork with a durable image URL.
+    const bucket=fb().admin.storage().bucket(),file=bucket.file(plan.asset.path),[meta]=await file.getMetadata(),downloadToken=meta.metadata&&meta.metadata.firebaseStorageDownloadTokens||require('crypto').randomUUID();
+    await file.setMetadata({cacheControl:'public,max-age=31536000,immutable',metadata:{...(meta.metadata||{}),firebaseStorageDownloadTokens:downloadToken}});
+    url='https://firebasestorage.googleapis.com/v0/b/'+encodeURIComponent(bucket.name)+'/o/'+encodeURIComponent(plan.asset.path)+'?alt=media&token='+encodeURIComponent(downloadToken.split(',')[0]);value=plan.field==='imageLink'?url:[...(plan.before||[]),url];
+  }
   const query=new URLSearchParams({dataSource:plan.dataSource,updateMask:'productAttributes.'+plan.field});
   const result=await _designMerchantRequest('products/v1/'+plan.inputName+'?'+query,'PATCH',{name:plan.inputName,productAttributes:{[plan.field]:value}});
-  if(!_designMerchantIdentityMatches(result,plan.identity,'productInputs')||creativeHash((result.productAttributes||{})[plan.field])!==creativeHash(value))throw Object.assign(new Error('Google responded, but the exact updated image could not be confirmed. Check Merchant Center before retrying.'),{writeOutcome:'unknown'});
-  return {status:'APPLIED',provider:'merchant',inputConfirmed:true,processedStatus:'pending',field:plan.field,identity:plan.identity,productName:plan.productName,imageUrl:url,message:'Merchant Center accepted the product image. Processing and policy review may take several minutes.'};
+  if(!_designMerchantIdentityMatches(result,plan.identity,'productInputs')||creativeHash((result.productAttributes||{})[plan.field])!==creativeHash(value))throw Object.assign(new Error('Google responded, but the exact media update could not be confirmed. Check Merchant Center before retrying.'),{writeOutcome:'unknown'});
+  return {status:'APPLIED',provider:'merchant',inputConfirmed:true,processedStatus:'pending',field:plan.field,identity:plan.identity,productName:plan.productName,imageUrl:url,message:plan.field==='videoLinks'?'Merchant Center accepted the product video links. Video policy review and serving remain pending.':'Merchant Center accepted the product image. Processing and policy review may take several minutes.'};
 }
 async function _verifyPublishedAd(campaignId,group,product,approval){
   const ref=_gaqlString(group.ref),[groups,links,signals,filters]=await Promise.all([

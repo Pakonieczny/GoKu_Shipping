@@ -317,11 +317,9 @@
     }
     async reviewSummaryPanel(){
       const scope=this.input(),key=this.key(),state=this.setReviewState?.quality?this.setReviewState:await this.request('adDesignEditorAIStatus',{...scope,allSizes:true});if(this.disposed||this.key()!==key)return;this.updateReviewScore(state);
-      const m=reviewSummary(state.quality,state.qualityTarget||92),panel=documentElement('dialog');panel.setAttribute('aria-label','Ad set review');panel.style.cssText='width:min(620px,94vw);max-height:85vh;overflow:auto;background:#fffdf9;color:#29231d;padding:24px;border:1px solid #ded5c8;border-radius:12px;font:15px/1.5 Arial,sans-serif';
-      const items=values=>'<ul style="padding-left:20px;margin:8px 0 18px">'+values.map(v=>'<li>'+esc(v)+'</li>').join('')+'</ul>';
-      panel.innerHTML='<button data-close style="float:right">Close review</button><h2 style="margin:0 0 8px">Ad set review</h2><p><strong style="font-size:30px">'+(m.score===null?'Not scored':esc(Math.round(m.score*10)/10)+'/100')+'</strong> · Target '+m.target+'</p><p>'+esc(m.synopsis)+'</p><p style="font-size:12px;color:#6b6357">'+(m.score===null?'Run AI Design to create a reviewed set.':(m.complete?'Last reviewed set':'Earlier photograph review')+' · Later edits and updated templates are not included in this score.')+'</p>'+(m.categories.length?'<dl style="display:grid;grid-template-columns:1fr auto;gap:8px 16px">'+m.categories.map(c=>'<dt>'+esc(c.label)+'</dt><dd style="margin:0;font-weight:700">'+c.score+'/100</dd>').join('')+'</dl>':'')+(m.score!==null?'<h3 style="font-size:16px;margin-bottom:4px">Key issues</h3>'+items(m.issues.length?m.issues:['No issues flagged in this review.'])+'<h3 style="font-size:16px;margin-bottom:4px">Suggestions</h3>'+items(m.suggestions.length?m.suggestions:['Keep the current design; check all sizes before approval.']):'')+'<button data-sizes>Preview all sizes</button>';
-      document.body.append(panel);const close=()=>{panel.close();panel.remove();this.q('[data-review-score]')?.focus();};panel.querySelector('[data-close]').onclick=close;panel.addEventListener('cancel',()=>panel.remove());panel.querySelector('[data-sizes]').onclick=()=>{close();this.task('Opening the saved ad review…',()=>this.reviewProofsPanel());};panel.showModal();
+      return api.openReview({scope,request:(a,b)=>this.options.request(a,b),staticState:state,onStaticSizes:()=>this.reviewProofsPanel()});
     }
+
     async reviewProofsPanel(){
       const run=this.aiRuns.get(this.key());
       const state=await this.request('adDesignEditorAIStatus',{...(run?.scope||this.input()),...(run?.jobId?{jobId:run.jobId}:{}),includeReview:true,allSizes:true});
@@ -615,6 +613,21 @@
     const preview=Object.create(Editor.prototype);Object.assign(preview,{F:root.fabric,aiRuns:new Map(),sources:new Map(),board:{width:2048,height:2048},key:()=>'',input:()=>scope,request});
     return preview.reviewProofsPanel();
   };
+  api.openReview=async ({scope,request,staticState,animatedState,onStaticSizes,onAnimatedSizes})=>{
+    const panel=documentElement('dialog');panel.setAttribute('aria-label','Ad set review');panel.style.cssText='width:min(780px,94vw);max-height:85vh;overflow:auto;background:#fffdf9;color:#29231d;padding:24px;border:1px solid #ded5c8;border-radius:12px;font:15px/1.5 Arial,sans-serif';
+    panel.innerHTML='<button data-close style="float:right">Close review</button><h2>Ad set review</h2><p>Static and animated ads · one scoring framework</p><p style="font-size:12px">Messaging 30% · Layout 25% · Relevance 20% · Visual appeal 20% · Product recognition 5%. Later edits are not included in saved scores. Google approval and serving are checked separately.</p><section data-static><h3>Static ads</h3><p>Loading saved review…</p></section><section data-animated><h3>Animated ads</h3><p>Loading saved review…</p></section>';
+    const close=()=>{panel.close();panel.remove();};panel.querySelector('[data-close]').onclick=close;panel.addEventListener('cancel',()=>panel.remove());document.body.append(panel);panel.showModal();
+    function draw(kind,state){
+      if(!panel.isConnected)return;const section=panel.querySelector('[data-'+kind+']'),animated=kind==='animated',m=reviewSummary(state?.quality,state?.qualityTarget||92),legacy=m.score!==null&&!m.complete;
+      section.style.cssText='border-top:1px solid #ded5c8;margin-top:20px;padding-top:12px';
+      const list=values=>'<ul>'+values.map(v=>'<li>'+esc(v)+'</li>').join('')+'</ul>';
+      section.innerHTML='<h3>'+ (animated?'Animated ads':'Static ads')+'</h3><p><strong style="font-size:28px">'+(m.score===null?'Not scored':m.score+'/100')+'</strong> · Target '+m.target+'</p><p>'+esc(m.synopsis)+'</p>'+(legacy?'<p>Earlier '+(animated?'sampled-frame':'photograph')+' review · uses the former rubric and is not comparable with the complete-ad score.</p>':'')+(m.categories.length?'<dl style="display:grid;grid-template-columns:1fr auto;gap:6px">'+m.categories.map(c=>'<dt>'+esc(c.label)+'</dt><dd>'+c.score+'/100</dd>').join('')+'</dl>':'')+(m.score!==null?'<h4>Key issues</h4>'+list(m.issues.length?m.issues:['No issues flagged in this review.'])+'<h4>Suggestions</h4>'+list(m.suggestions.length?m.suggestions:['Inspect every size before approval.']):'')+(animated?'<p>Review samples the final captioned clips. Play each full video to assess continuous movement.</p>':'')+(state?.error?'<p>'+esc(state.error)+'</p>':'')+'<button data-preview>'+ (animated?'Preview animated sizes':'Preview all sizes')+'</button>';
+      section.querySelector('[data-preview]').onclick=async()=>{try{if(animated){if(onAnimatedSizes)await onAnimatedSizes();else root.BritesAdMotion.openAllSizes({scope,request,status:state});}else if(onStaticSizes){close();await onStaticSizes();}else{close();await api.openAllSizes({scope,request});}}catch(e){const p=documentElement('p');p.textContent=e.message;section.append(p);}};
+    }
+    await Promise.allSettled([['static',staticState,'adDesignEditorAIStatus'],['animated',animatedState,'adDesignMotionStatus']].map(async([kind,state,action])=>{try{draw(kind,state||await request(action,{...scope,...(kind==='static'?{allSizes:true}:{})}));}catch(e){draw(kind,{error:'Saved review could not load: '+e.message});}}));
+    return panel;
+  };
+
   api.previewSaved=async ({design,sources,previewDocuments=[]})=>{
     const previews={},helper=Object.create(Editor.prototype);helper.F=root.fabric;let recipe;
     for(const device of ['desktop','mobile'])for(const board of FORMATS.filter(b=>['square','landscape','portrait'].includes(b.key))){

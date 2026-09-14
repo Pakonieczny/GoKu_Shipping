@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const digest = value => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const clone = value => JSON.parse(JSON.stringify(value));
+const rubric=require('./googleAdsAdQuality');
 const KEYS = ['mobile_portrait', 'mobile_square', 'desktop_landscape'];
 function selection(job) {
   if (job.phase !== 'ready' || job.quality?.pass !== true || job.quality?.productFaithful !== true) throw Error('The animation must pass its jewelry quality review before Google publication.');
@@ -11,12 +12,18 @@ function selection(job) {
   return variants;
 }
 function reviewHash(job) {
-  return digest({jobId:job.id, productId:job.productId, groupRef:job.groupRef, destination:job.destination, variants:selection(job).map(v => ({key:v.key, asset:v.asset}))});
+  return digest({jobId:job.id, productId:job.productId, groupRef:job.groupRef, destination:job.destination, ...(job.pipelineVersion>=2?{quality:job.quality,copy:job.plan?.copy,nativeCopy:job.plan?.nativeCopy}:{}), variants:selection(job).map(v => ({key:v.key, asset:v.asset}))});
+}
+function nativeCompatibility(job,rows){
+  const copy=job.plan?.nativeCopy||{},types={headlines:'HEADLINE',longHeadlines:'LONG_HEADLINE',descriptions:'DESCRIPTION'};
+  const copyMatches=Object.entries(types).every(([key,type])=>Array.isArray(copy[key])&&copy[key].length>0&&JSON.stringify([...new Set(copy[key])].sort())===JSON.stringify([...new Set(rows.filter(r=>r.assetGroupAsset?.fieldType===type).map(r=>r.asset?.textAsset?.text).filter(Boolean))].sort()));
+  return {copyMatches,shopNowLinked:rows.some(r=>r.assetGroupAsset?.fieldType==='CALL_TO_ACTION_SELECTION'&&r.asset?.callToActionAsset?.callToAction==='SHOP_NOW')};
 }
 function safePublication(p) {
   if (!p) return null;
   return {phase:p.phase, error:p.error || null, updatedAt:p.updatedAt, attachedAt:p.attachedAt || null,
     videos:(p.videos || []).map(v => ({key:v.key, state:v.state, resourceName:v.resourceName || null, videoId:v.videoId || null})),
+    merchant:p.merchant?{phase:p.merchant.phase,error:p.merchant.error||null,reviewHash:p.merchant.reviewHash,links:p.merchant.plan?.videoLinks||[],identity:p.merchant.plan?.identity||null,source:p.merchant.plan?.sourceName||null}:null,
     verification:p.verification || null};
 }
 function uploadUrl(value) {
@@ -38,7 +45,7 @@ function createPublicationService(D) {
   async function start(input) {
     const {ref, job} = await context(input), expectedHash = reviewHash(job);
     if (input.reviewHash !== expectedHash) throw Error('Review the current video files before publishing.');
-    if(job.publication?.phase!=='attached'&&(!Number.isFinite(job.quality?.score)||job.quality.score<97||job.quality.score>100||job.quality.mobileReadable!==true))throw Error('The saved animation has not met the 97/100 quality target. Improve the product scene before a new Google upload.');
+    if(job.publication?.phase!=='attached'&&(!Number.isFinite(job.quality?.score)||job.quality.score<(job.quality.rubric===rubric.RUBRIC?rubric.TARGET:97)||job.quality.score>100||job.quality.mobileReadable!==true))throw Error('The saved animation has not met its complete-ad quality target. Improve the product scene before a new Google upload.');
     await D.assertTarget(job);
     await D.fb().db.runTransaction(async tx => {
       const row = await tx.get(ref), current = row.data();
@@ -122,7 +129,28 @@ function createPublicationService(D) {
     await ref.update({'publication.verification':verification, 'publication.updatedAt':Date.now()});
     return {ok:true, publication:safePublication({...p, verification})};
   }
-  return {start, run, verify};
+  async function prepareMerchant(input){
+    const {ref,job}=await context(input);selection(job);
+    if(!require('./googleAdsAdMotion').qualityPass(job.quality))throw Error('The video set must pass its saved quality target first.');
+    const p=job.publication;if(p?.phase!=='attached'||p.merchant?.inFlight)throw Error('Finish or reconcile the Google video upload first.');
+    const plan=await D.prepareMerchant(job,p.videos);
+    if(plan.requiresIdentity)throw Error('More than one Merchant market or language matches. Select the exact product feed in the design workspace first.');
+    const merchant={phase:'review',reviewHash:plan.reviewHash,plan,videoReviewHash:p.reviewHash,updatedAt:Date.now()};
+    await D.fb().db.runTransaction(async tx=>{const row=await tx.get(ref),current=row.data();if(current.publication?.reviewHash!==p.reviewHash||current.publication?.merchant?.inFlight||reviewHash(current)!==reviewHash(job))throw Error('The saved videos changed.');tx.update(ref,{'publication.merchant':merchant});});
+    return {ok:true,merchant:safePublication({...p,merchant}).merchant};
+  }
+  async function publishMerchant(input){
+    const {ref,job}=await context(input),m=job.publication?.merchant;
+    if(!require('./googleAdsAdMotion').qualityPass(job.quality))throw Error('The video set must pass its saved quality target first.');
+    if(!m||m.reviewHash!==input.merchantReviewHash||m.videoReviewHash!==reviewHash(job))throw Error('Review the exact Merchant video links first.');
+    if(m.phase==='accepted')return {ok:true,cached:true};
+    if(m.inFlight||m.phase==='blocked')throw Error('The prior Merchant update needs reconciliation before another request.');
+    await D.fb().db.runTransaction(async tx=>{const row=await tx.get(ref),current=row.data();if(!require('./googleAdsAdMotion').qualityPass(current.quality)||current.publication?.phase!=='attached'||current.publication?.merchant?.reviewHash!==m.reviewHash||current.publication?.merchant?.inFlight||current.publication?.merchant?.phase!=='review'||reviewHash(current)!==m.videoReviewHash)throw Error('The Merchant video review changed.');tx.update(ref,{'publication.merchant':{...m,inFlight:true}});});
+    try{const receipt=await D.publishMerchant(m.plan);const merchant={...m,inFlight:false,phase:receipt.status==='VALIDATED'?'validated':'accepted',receipt,updatedAt:Date.now()};await ref.update({'publication.merchant':merchant});return {ok:true,merchant:safePublication({...job.publication,merchant}).merchant};}
+    catch(e){await ref.update({'publication.merchant':{...m,phase:'blocked',inFlight:true,error:String(e.message||e),updatedAt:Date.now()}});throw e;}
+  }
+
+  return {start, run, verify,prepareMerchant,publishMerchant};
 }
-module.exports = {createPublicationService, reviewHash, safePublication, uploadUrl, selection};
+module.exports = {createPublicationService, reviewHash, safePublication, uploadUrl, selection,nativeCompatibility};
 
