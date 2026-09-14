@@ -9796,7 +9796,8 @@ async function publishAdDesignSubmission(input={}){
   if(_adDesignSelectionHash(w)!==item.sourceHash||creativeHash(w.context)!==creativeHash(r.context))throw Error('The ad changed after submission. Send the current complete ad to Approval again.');
   const routing=require('./googleAdsCampaignStyles');
   if(prepareOnly){
-    const choice=routing.selection(input.styles,input.budgets,input.countries),identity=creativeHash({sourceHash:item.sourceHash,choice});
+    if(!input.durations||typeof input.durations!=="object")throw Error("Choose a duration for every selected campaign.");
+    const choice=routing.selection(input.styles,input.budgets,input.countries,input.durations),identity=creativeHash({sourceHash:item.sourceHash,choice});
     if(item.pipelinePlan?.identity===identity)return {ok:true,plan:item.pipelinePlan.summary,planHash:item.pipelinePlan.hash,cached:true};
     const plan=await _prepareCampaignStyles({item,context,choice,identity});
     await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),latest=await tx.get(_adDesignWorkspaceRef(r.workspaceId));if(_adDesignSelectionHash(latest.data())!==item.sourceHash||current.data()?.status!=='PENDING'||current.data().reviewHash!==hash)throw Error('Approval changed while preparing.');tx.update(ref,{pipelinePlan:plan,payload:plan.payload});});
@@ -9869,7 +9870,7 @@ async function _prepareCampaignStyles({item,context,choice,identity}){
     // Keep temporary IDs disjoint between campaign lanes while sharing image assets.
     const offset=(choice.styles.indexOf(style)+1)*10000;
     lane=JSON.parse(JSON.stringify(lane).replace(/(customers\/\d+\/(?:campaigns|campaignBudgets|adGroups|assetGroups|assets)\/)-(\d+)/g,(m,p,n)=>Number(n)>=900000?m:p+'-'+(Number(n)+offset)).replace(/(assetGroupListingGroupFilters\/)-(\d+)~-(\d+)/g,(m,p,a,b)=>p+'-'+(Number(a)+offset)+'~-'+(Number(b)+offset)));
-    const days=Number(w.context.days),endDate=Number.isFinite(days)&&days>0?new Date(Date.parse((report.accountToday||new Date().toISOString().slice(0,10))+'T12:00:00Z')+(Math.ceil(days)-1)*86400000).toISOString().slice(0,10):null;
+    const days=Number(choice.durations?.[style]??w.context.days),endDate=Number.isFinite(days)&&days>0?new Date(Date.parse((report.accountToday||new Date().toISOString().slice(0,10))+'T12:00:00Z')+(Math.ceil(days)-1)*86400000).toISOString().slice(0,10):null;
     Object.assign(lane.find(o=>o.campaignOperation).campaignOperation.create,_campaignScheduleFields(null,endDate),{finalUrlSuffix:'utm_source=google&utm_medium=cpc&utm_campaign={campaignid}&bt_pipeline='+style+'&bt_design='+identity+(style==='pmax'?'':'&bt_group={adgroupid}&bt_ad={creative}')});
     ops.push(...lane);summaries.push({style,name,endDate,dailyBudget:choice.budgets[style],formats:style==='fixed_display'?fixed.map(p=>p.width+'×'+p.height):style==='pmax'?photos.map(p=>p.shape):['square','landscape']});
   }

@@ -16,3 +16,9 @@ assert(orders.includes('$20 CAD')&&orders.includes('$30 USD'));assert(orders.inc
 assert(!/api\(/.test(html.slice(html.indexOf('function campaignPipeline('),html.indexOf('function renderCommand(){'))));
 for(const m of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)){if(m[1].trim())new vm.Script(m[1]);}
 console.log('PASS attribution tags, missing IDs, campaign distinctions, unavailable metrics, currency separation, no added API requests, and inline JavaScript syntax');
+const {selection}=require('../../netlify/functions/googleAdsCampaignStyles');
+const durations=selection(['fixed_display','pmax'],{fixed_display:5,pmax:15},['2840'],{fixed_display:7,pmax:30});
+assert.equal(durations.durations.fixed_display,7);assert.equal(durations.durations.pmax,30);
+assert.equal(selection(['pmax'],{pmax:10},['2840'],{pmax:0}).durations.pmax,0);
+for(const v of [null,'',-1,1.5,366])assert.throws(()=>selection(['pmax'],{pmax:10},['2840'],{pmax:v}),/duration/);
+console.log('PASS independent durations, explicit ongoing campaigns, and invalid duration rejection');

@@ -2,12 +2,13 @@
 const STYLES = ['fixed_display', 'responsive_display', 'pmax'];
 const NAMES = {fixed_display:'Fixed Display',responsive_display:'Responsive Display',pmax:'Performance Max'};
 const FIXED_SIZES = new Set(['200x200','240x400','250x250','250x360','300x250','336x280','580x400','120x600','160x600','300x600','300x1050','468x60','728x90','930x180','970x90','970x250','980x120','300x50','320x50','320x100']);
-function selection(styles,budgets,countries){
+function selection(styles,budgets,countries,durations){
   if(!Array.isArray(styles)||!styles.length||styles.length>3||new Set(styles).size!==styles.length||styles.some(s=>!STYLES.includes(s)))throw Error('Choose one, two or all three campaign styles.');
   const chosen=STYLES.filter(s=>styles.includes(s)),daily={};
   for(const s of chosen){const n=Number(budgets?.[s]);if(!Number.isFinite(n)||n<=0||n>100000||Math.abs(Math.round(n*100)-n*100)>1e-7)throw Error('Enter a positive daily budget with at most two decimal places for '+NAMES[s]+'.');daily[s]=n;}
   if(!Array.isArray(countries)||!countries.length||countries.some(c=>!/^\d{4,10}$/.test(String(c))))throw Error('Choose the target country IDs before preparing these campaigns.');
-  return {styles:chosen,budgets:daily,countries:[...new Set(countries.map(String))].sort(),totalDaily:Math.round(Object.values(daily).reduce((a,b)=>a+b,0)*100)/100};
+  const runDays={}; if(durations!==undefined)for(const style of chosen){const raw=durations[style],n=Number(raw);if(raw===undefined||raw===null||raw===''||!Number.isInteger(n)||n<0||n>365)throw Error('Choose a duration from 1 to 365 days, or Until paused, for '+NAMES[style]+'.');runDays[style]=n;}
+  return {...(durations!==undefined?{durations:runDays}:{}),styles:chosen,budgets:daily,countries:[...new Set(countries.map(String))].sort(),totalDaily:Math.round(Object.values(daily).reduce((a,b)=>a+b,0)*100)/100};
 }
 function fixedProofs(images){
   const found=new Map();
