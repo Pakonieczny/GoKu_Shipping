@@ -76,6 +76,16 @@ if(require.main===module)(async()=>{
  for(const board of [{key:'display_250x250',width:250,height:250},{key:'display_300x250',width:300,height:250}]){const d=responsive.document(fadePlan,photo,board,'desktop');ok(d.objects.some(o=>o.id==='ai_photo_caption_fade'),'compact fallback has a photographic fade '+board.key);}
  const marginDoc=responsive.document(fadePlan,{id:'wide-focus',width:1000,height:1000,focus:{x:.1,y:.1,width:.8,height:.8}},{key:'landscape',width:2048,height:1072},'desktop');
  ok(marginDoc.objects.some(o=>o.id==='ai_scene_extension'&&Math.abs(o.width*o.scaleX-2048)<1),'landscape photo region fills its side margins with the original scene');
+ for(const board of responsive.boards.filter(b=>['square','portrait','landscape'].includes(b.key))){
+   const mobile=responsive.document(fadePlan,photo,board,'mobile'),desktop=responsive.document(fadePlan,photo,board,'desktop');
+   for(const role of ['headline','button']){const a=mobile.objects.find(o=>o.editorRole===role),b=desktop.objects.find(o=>o.editorRole===role);ok(Math.abs(a.scaleX-b.scaleX)<.001&&Math.abs(a.width-b.width)<.001,'master typography has identical device proportions '+board.key+' '+role);}
+   const t=desktop.objects.find(o=>o.editorRole==='headline'),b=desktop.objects.find(o=>o.editorRole==='button'),label=b.objects.find(o=>'text'in o);
+   ok(t.fontSize*t.scaleY/board.width>=20/360,'master headline is at least 5.5 percent of width '+board.key);
+   ok(label.fontSize*b.scaleY/board.width>=12/360&&label.fontSize*b.scaleY/board.width<=18/360,'master CTA type remains in a defined proportional range '+board.key);
+ }
+ const bleedBoard={key:'landscape',width:2048,height:1072},bleed=responsive.document(fadePlan,{id:'scene',width:1536,height:1024,focus:{x:.4,y:.2,width:.3,height:.6}},bleedBoard,'desktop'),bleedPhoto=bleed.objects.find(o=>o.editorRole==='photo');
+ ok(bleedPhoto.left===0&&bleedPhoto.top===0&&Math.abs(bleedPhoto.width*bleedPhoto.scaleX-2048)<1&&Math.abs(bleedPhoto.height*bleedPhoto.scaleY-1072)<1,'landscape original photograph covers the entire artboard');
+ ok(!bleed.objects.some(o=>o.id==='ai_scene_extension'),'full landscape uses no edge strips');
  for(const board of responsive.variants){e.board=board;await e.restore(responsive.document(fadePlan,photo,board,board.device));for(const o of e.canvas.getObjects())e.fitAIText(o);const fade=e.canvas.getObjects().find(o=>o.id==='ai_image_fade');if(!fade)continue;fades++;
    const im=e.canvas.getObjects().find(o=>o.type==='image'),bounds=im.getBoundingRect(),subject={left:(photo.focus.x*photo.width-im.cropX)*im.scaleX,top:im.top+(photo.focus.y*photo.height-im.cropY)*im.scaleY,width:photo.focus.width*photo.width*im.scaleX,height:photo.focus.height*photo.height*im.scaleY};
    ok(Math.abs(bounds.width-board.width)<1&&(Math.abs(bounds.height-board.height)<1||fade.fill.coords.y2===1&&fade.fill.colorStops.some(s=>new w.fabric.Color(s.color).getAlpha()===1&&s.offset*board.height<=bounds.top+bounds.height+1)),'soft fade fills the width and conceals the photo edge '+board.key);

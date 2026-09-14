@@ -8,9 +8,9 @@
   function selectImage(plan,images,board){const f=family(board);return images.find(i=>i.forFamilies?.includes(f))||images[0];}
   // Design at the actual viewing width, then export at the requested resolution.
   // A 2048px master must not turn a 36px CTA into a 6px mobile label.
-  const layoutVersion=17;
+  const layoutVersion=18;
   function document(plan,image,board,device="mobile"){
-    const master=['square','landscape','portrait'].includes(board.key),factor=master?board.width/Math.min(board.width,plan.style.preserveSavedStyle?360:device==='desktop'?600:360):1;
+    const master=['square','landscape','portrait'].includes(board.key),factor=master?board.width/Math.min(board.width,360):1;
     const W=board.width/factor,H=board.height/factor,f=family(board),layout=(plan.layouts||[]).find(l=>l.family===f&&l.device===device)||(plan.layouts||[]).find(l=>l.family===f)||{},style={...plan.style},copy=plan.copy;
     const rgb=style.background.match(/[a-f0-9]{2}/gi)?.map(x=>parseInt(x,16));if(style.treatment!=='soft-fade'&&rgb&&rgb[0]<90&&rgb[0]>=rgb[1]&&rgb[1]>=rgb[2])Object.assign(style,{background:'#F5F0E8',ink:'#34281E',accent:'#4B3825',buttonInk:'#FFF9F0',headlineFont:'Georgia'});
     if(style.treatment==='soft-fade'){
@@ -59,12 +59,24 @@
       // Fill uncovered photo space from a product-free patch of the same scene.
       // This retains surface texture without stretching or repeating the charm.
       if(valid&&(placed.width<frame.width-1||placed.height<frame.height-1)){
-        const patches=[{x:0,y:0,w:focus.x*image.width,h:image.height},{x:(focus.x+focus.width)*image.width,y:0,w:(1-focus.x-focus.width)*image.width,h:image.height},{x:0,y:0,w:image.width,h:focus.y*image.height},{x:0,y:(focus.y+focus.height)*image.height,w:image.width,h:(1-focus.y-focus.height)*image.height}].filter(p=>p.w>2&&p.h>2).sort((a,b)=>b.w*b.h-a.w*a.h),patch=patches[0];
+        const patches=[{x:(focus.x+focus.width)*image.width,y:focus.y*image.height,w:(1-focus.x-focus.width)*image.width,h:focus.height*image.height},{x:0,y:focus.y*image.height,w:focus.x*image.width,h:focus.height*image.height},{x:0,y:(focus.y+focus.height)*image.height,w:image.width,h:(1-focus.y-focus.height)*image.height},{x:0,y:0,w:image.width,h:focus.y*image.height}].filter(p=>p.w>image.width*.025&&p.h>image.height*.025),patch=patches[0];
         if(patch){const s=Math.max(frame.width/patch.w,frame.height/patch.h);objects.unshift(base('scene_extension','shape',{type:'Image',sourceKey:image.id,left:frame.left,top:frame.top,width:frame.width/s,height:frame.height/s,cropX:patch.x,cropY:patch.y,scaleX:s,scaleY:s,filters:[{type:'Blur',blur:.12}]}));}
       }
       return placed;
     }
     function bottomFade(y,height){const rgb=style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)).join(',');objects.push(base('photo_caption_fade','shape',{type:'Rect',left:0,top:y,width:W,height,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:0,y2:1},colorStops:[{offset:0,color:'rgba('+rgb+',0)'},{offset:.55,color:'rgba('+rgb+',.4)'},{offset:1,color:'rgba('+rgb+',1)'}]}}));}
+    function fullBleedLandscape(){
+      if(board.key!=='landscape'||style.treatment!=='soft-fade'||!image.focus)return false;
+      const q=image.focus,scale=Math.max(W/image.width,H/image.height),cw=W/scale,ch=H/scale;
+      const cx=clamp(image.width*(q.x+q.width/2)-cw*.66,0,image.width-cw),cy=clamp(image.height*(q.y+q.height/2)-ch/2,0,image.height-ch);
+      const subject={left:(image.width*q.x-cx)*scale,top:(image.height*q.y-cy)*scale,width:image.width*q.width*scale,height:image.height*q.height*scale},pad=Math.max(6,W*.025),tw=Math.min(W*.44,subject.left-pad*2);
+      if(tw<76||subject.top<0||subject.top+subject.height>H)return false;
+      objects.push(base('product_scene','photo',{type:'Image',sourceKey:image.id,left:0,top:0,width:cw,height:ch,cropX:cx,cropY:cy,scaleX:scale,scaleY:scale}));
+      const rgb=style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)).join(',');
+      objects.push(base('image_fade','shape',{type:'Rect',left:0,top:0,width:W,height:H,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:1,y2:0},colorStops:[{offset:0,color:'rgba('+rgb+',1)'},{offset:Math.max(0,(tw-pad)/W),color:'rgba('+rgb+',.92)'},{offset:subject.left/W,color:'rgba('+rgb+',0)'},{offset:1,color:'rgba('+rgb+',0)'}]}}));
+      const hs=Math.min(30,Math.max(20,W*.055),tw/(Math.max(...copy.shortHeadline.split(/\s+/).map(w=>w.length))*.67)),hh=lines(copy.shortHeadline,tw,hs)*hs*1.24,bh=Math.max(32,Math.min(42,H*.2)),gap=10,y=Math.max(pad,(H-hh-bh-gap)/2);
+      text('headline',copy.shortHeadline,pad,y,tw,hh,hs,'headline',style.headlineFont);button(pad,y+hh+gap,tw,bh,copy.cta,14);return true;
+    }
     function tallLayout(){
       if(!narrow)return false;
       const pad=Math.max(5,Math.min(12,W*.04)),photoHeight=H*2/3,actionHeight=Math.min(52,Math.max(36,W*.24)),titleSize=Math.min(38,Math.max(21,W*.12));
@@ -106,6 +118,8 @@
     const compactHeadline=copy.shortHeadline;
     if(tallLayout()){
       // Fixed upper image region and lower messaging region for skyscrapers.
+    }else if(fullBleedLandscape()){
+      // Use the actual photograph edge to edge, with copy in its quiet side.
     }else if(softFade()){
       // The photograph fills the artboard; the editable fade protects only the copy.
     }else if(banner){
