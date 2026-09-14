@@ -161,6 +161,7 @@ async function handleAction(body) {
   if (a === "metricsRange") { try { return await E.metricsRange({ start: body.start, end: body.end }); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "keywordDiag") { try { return await E.keywordDiag({ keyword: body.keyword, geo: body.geo }); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "conversionHealth") { try { return await E.conversionHealth({ force: !!body.force }); } catch (e) { return { error: e.message }; } }
+  if (a === "saveDataManagerConnection") return await E.saveDataManagerConnection(body.credentials);
   if (a === "syncConversions") {
     try { const up = await E.uploadConversions({ ctrl, retryRejected: body.retryRejected === true }); const adj = await E.uploadConversionAdjustments({ ctrl }); const health = await E.conversionHealth({ force: true }); return { ok: true, uploaded: up, adjustments: adj, health }; }
     catch (e) { return { ok: false, error: e.message }; }

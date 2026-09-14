@@ -3,6 +3,11 @@
 // Google offline-conversion migration. A receipt means queued for processing;
 // only exact-destination diagnostics can mark the original order as uploaded.
 // https://developers.google.com/data-manager/api/devguides/events/google-ads/offline/upgrade/field-mappings
+const crypto = require('node:crypto');
+const CREDENTIAL_DOC = 'config/googleAdsDataManager';
+function credentialKey(env){if(!env.FIREBASE_PRIVATE_KEY)throw Error('Server encryption key unavailable.');return Buffer.from(crypto.hkdfSync('sha256',Buffer.from(env.FIREBASE_PRIVATE_KEY.replace(/\\n/g,'\n')),Buffer.from(env.FIREBASE_PROJECT_ID||''),Buffer.from('Brites Data Manager credentials v1'),32));}
+function sealCredentials(value,env){const iv=crypto.randomBytes(12),cipher=crypto.createCipheriv('aes-256-gcm',credentialKey(env),iv);cipher.setAAD(Buffer.from(CREDENTIAL_DOC));const encrypted=Buffer.concat([cipher.update(JSON.stringify(value),'utf8'),cipher.final()]);return {version:1,iv:iv.toString('base64'),tag:cipher.getAuthTag().toString('base64'),ciphertext:encrypted.toString('base64')};}
+function openCredentials(value,env){if(value?.version!==1)throw Error('Unsupported connection record.');try{const decipher=crypto.createDecipheriv('aes-256-gcm',credentialKey(env),Buffer.from(value.iv,'base64'));decipher.setAAD(Buffer.from(CREDENTIAL_DOC));decipher.setAuthTag(Buffer.from(value.tag,'base64'));return JSON.parse(Buffer.concat([decipher.update(Buffer.from(value.ciphertext,'base64')),decipher.final()]).toString('utf8'));}catch(_){throw Error('Saved connection could not be decrypted. Reconnect after server key rotation.');}}
 const BASE = 'https://datamanager.googleapis.com/v1';
 const SCOPE = 'https://www.googleapis.com/auth/datamanager';
 const MIGRATION_ERROR = /Data Manager API|CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE/i;
@@ -58,20 +63,23 @@ function summarizeDiagnostics(data, target) {
 }
 
 function createDataManager({ env, fetch, fb, COL, ledger, now = Date.now }) {
-  let token = null, expires = 0;
-  const configured = () => !!(env.GADS_DATAMANAGER_REFRESH_TOKEN && (env.GADS_DATAMANAGER_CLIENT_ID || env.GADS_CLIENT_ID) && (env.GADS_DATAMANAGER_CLIENT_SECRET || env.GADS_CLIENT_SECRET));
-  async function mintToken() {
-    if (!configured()) throw Error('Authorize Google Data Manager and configure GADS_DATAMANAGER_REFRESH_TOKEN before uploading conversions.');
+  let token = null, expires = 0, connection = null, loadedAt = 0;
+  const credentials=()=>connection||{refresh:env.GADS_DATAMANAGER_REFRESH_TOKEN,client:env.GADS_DATAMANAGER_CLIENT_ID||env.GADS_CLIENT_ID,secret:env.GADS_DATAMANAGER_CLIENT_SECRET||env.GADS_CLIENT_SECRET};
+  async function loadConnection(){if(configured()&&!connection)return;if(!env.FIREBASE_PRIVATE_KEY||now()-loadedAt<300000)return;const f=fb();if(!f)throw Error('Credential storage unavailable.');const snapshot=await f.db.doc(CREDENTIAL_DOC).get();connection=snapshot.exists?openCredentials(snapshot.data(),env):null;loadedAt=now();}
+  async function saveCredentials(value){const next={client:String(value?.client||'').trim(),secret:String(value?.secret||'').trim(),refresh:String(value?.refresh||'').trim()};if(!next.client.endsWith('.apps.googleusercontent.com')||!next.secret||!next.refresh||Object.values(next).some(v=>v.length>4096))throw Error('Complete all three Google connection fields.');const encrypted=sealCredentials(next,env),f=fb();if(!f)throw Error('Credential storage unavailable.');const prior=connection;connection=next;token=null;expires=0;try{await mintToken(true);await f.db.doc(CREDENTIAL_DOC).set({...encrypted,updatedAt:now(),provider:'google_datamanager'});loadedAt=now();return {ok:true,configured:true,storage:'firebase_encrypted'};}catch(e){connection=prior;token=null;expires=0;throw e;}}
+  const configured = () => !!(credentials().refresh&&credentials().client&&credentials().secret);
+  async function mintToken(requireScope=false) {
+    if (!configured()) throw Error('Connect Google Data Manager in Sales before uploading conversions.');
     if (token && now() < expires - 60000) return token;
     const response = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', timeout: 15000,
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({
-        client_id: env.GADS_DATAMANAGER_CLIENT_ID || env.GADS_CLIENT_ID,
-        client_secret: env.GADS_DATAMANAGER_CLIENT_SECRET || env.GADS_CLIENT_SECRET,
-        refresh_token: env.GADS_DATAMANAGER_REFRESH_TOKEN, grant_type: 'refresh_token'
+        client_id: credentials().client,
+        client_secret: credentials().secret,
+        refresh_token: credentials().refresh, grant_type: 'refresh_token'
       }) });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.access_token) throw Error('Google Data Manager authorization failed. Reconnect its OAuth credentials.');
-    if (data.scope && !String(data.scope).split(/\s+/).includes(SCOPE)) throw Error('The credentials do not include the Google Data Manager scope.');
+    if ((requireScope||data.scope) && !String(data.scope||'').split(/\s+/).includes(SCOPE)) throw Error('The credentials do not include the Google Data Manager scope.');
     token = data.access_token; expires = now() + Number(data.expires_in || 3600) * 1000;
     return token;
   }
@@ -91,9 +99,10 @@ function createDataManager({ env, fetch, fb, COL, ledger, now = Date.now }) {
   const eligibleLegacyFailure = row => row.failed === true && MIGRATION_ERROR.test(row.uploadError || '') && !row.dmState;
   const retryable = row => row.dmState === 'failed' && row.dmDefiniteRejection === true && !row.dmRequestId;
   async function run({ ctrl = {}, limit = 50, retryRejected = false } = {}) {
+    await loadConnection();
     const started = now();
     const result = { transport: 'data_manager', uploaded: 0, submitted: 0, processing: 0, rejected: 0, validated: 0, validateOnly: !!ctrl.dryRun, errors: [] };
-    if (!configured()) return { ...result, blocked: true, error: 'Google requires Data Manager for this conversion integration. Authorize its Data Manager scope and configure the dedicated refresh token.' };
+    if (!configured()) return { ...result, blocked: true, error: 'Google requires Data Manager for this conversion integration. Authorize its Data Manager scope and save the connection in Firebase.' };
     const target = destination(env.GADS_CONVERSION_ACTION, env.GADS_LOGIN_CUSTOMER_ID);
     const f = fb(); if (!f) throw Error('Conversion queue storage is unavailable.');
     // Refresh before claiming any order: a missing/expired credential must not
@@ -178,6 +187,7 @@ function createDataManager({ env, fetch, fb, COL, ledger, now = Date.now }) {
     return result;
   }
   async function health() {
+    await loadConnection();
     const info = { configured: configured(), transport: 'data_manager', processing: 0, unknown: 0, confirmed: 0, retryable: 0, blocked: !configured() };
     const f = fb(); if (!f) return info;
     const queue = f.db.collection(COL.convQueue);
@@ -192,6 +202,6 @@ function createDataManager({ env, fetch, fb, COL, ledger, now = Date.now }) {
     }).length;
     return info;
   }
-  return { run, health, configured };
+  return { run, health, configured, saveCredentials };
 }
-module.exports = { createDataManager, destination, eventFor, summarizeDiagnostics, MIGRATION_ERROR };
+module.exports = { sealCredentials, openCredentials, createDataManager, destination, eventFor, summarizeDiagnostics, MIGRATION_ERROR };

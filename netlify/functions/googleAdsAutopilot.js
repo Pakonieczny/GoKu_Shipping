@@ -841,6 +841,7 @@ function dataManagerService() {
   if (!_dataManagerService) _dataManagerService = require("./googleAdsDataManager").createDataManager({ env: ENV, fetch, fb, COL, ledger });
   return _dataManagerService;
 }
+async function saveDataManagerConnection(credentials){return dataManagerService().saveCredentials(credentials);}
 async function uploadConversions(options = {}) {
   if (ENV.GADS_CONVERSION_UPLOAD_API === "legacy") return uploadLegacyConversions(options);
   return dataManagerService().run({ ...options, ctrl: options.ctrl || await control() });
@@ -9957,7 +9958,7 @@ module.exports = {
   reviseCreativeApproval, markApprovalApproved, needsCreativeReview, prepareCreativeApproval, creativeApprovalStatus, reviewCreativeApproval, assertCreativeReviewed, creativeHash,
   COL, V, CID, OPPORTUNITY_ENGINE_VERSION, DESIGN_STUDIO_ENGINE_VERSION, DESIGN_STUDIO_URL,
   control, mintToken, gaql, mutate, mutateAll,
-  enqueueConversion, uploadConversions, enqueueConversionAdjustment, uploadConversionAdjustments, recordRefund, conversionHealth, gAdsTime,
+  enqueueConversion, saveDataManagerConnection, uploadConversions, enqueueConversionAdjustment, uploadConversionAdjustments, recordRefund, conversionHealth, gAdsTime,
   recordOrderEvent, recentOrders, storeSignals, storeSalesEvidence, clearOrderLog, backfillOrders,
   ledger, clearLedger, enqueueApproval, applyApproval, applyApprovalById: applyApproval, retryStuckApprovals, sanitizeOps,
   generateRSAAssets, buildSearchCampaignOps, buildCampaignAssets, planCampaign, accountCvr, collectionProfiles, productSalesMap, bumpBestSellers, keywordResearch, keywordResearchPool, researchOpportunity, mergeKeywordResearch, keywordDiag, metricsRange, textGuidelinesOp, brandSafe,
