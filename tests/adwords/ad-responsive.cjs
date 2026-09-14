@@ -42,6 +42,7 @@ if(require.main===module)(async()=>{
      if(text.find(o=>o.editorRole==='button'))ok(text.find(o=>o.editorRole==='button').getObjects().find(o=>'text'in o).fontSize*previewWidth/board.width>=11.9,board.key+' CTA remains readable at actual display width');
      ok(!text.find(o=>o.editorRole==='description')||text.find(o=>o.editorRole==='description').fontSize*previewWidth/board.width>=11.9,board.key+' supporting copy remains readable at typical display width');
    }
+   for(const logo of e.canvas.getObjects().filter(o=>String(o.sourceKey||'').startsWith('brites_brand_')))for(const t of text)ok(!boxesOverlap(logo.getBoundingRect(),t.getBoundingRect()),board.key+' visible logo avoids '+t.editorRole);
    for(const o of text){const b=o.getBoundingRect();ok(b.left>=-1&&b.top>=-1&&b.left+b.width<=board.width+1&&b.top+b.height<=board.height+1,board.device+' '+board.key+' '+o.editorRole+' fits '+JSON.stringify(b));}
    for(let i=0;i<text.length;i++)for(let j=i+1;j<text.length;j++)ok(!boxesOverlap(text[i].getBoundingRect(),text[j].getBoundingRect()),board.key+' '+text[i].editorRole+' avoids '+text[j].editorRole);
    const image=e.canvas.getObjects().find(o=>o.type==='image');ok(image.scaleX===image.scaleY&&image.angle===0,'photo preserves proportions');

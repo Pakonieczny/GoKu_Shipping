@@ -8,7 +8,7 @@
   function selectImage(plan,images,board){const f=family(board);return images.find(i=>i.forFamilies?.includes(f))||images[0];}
   // Design at the actual viewing width, then export at the requested resolution.
   // A 2048px master must not turn a 36px CTA into a 6px mobile label.
-  const layoutVersion=20;
+  const layoutVersion=21;
   const brands=typeof module==='object'&&module.exports?require('./brites-brand-assets'):root.BritesBrandAssets;
   function document(plan,image,board,device="mobile"){
     const master=['square','landscape','portrait'].includes(board.key),factor=master?board.width/Math.min(board.width,360):1;
@@ -76,15 +76,15 @@
       const rgb=style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)).join(',');
       objects.push(base('image_fade','shape',{type:'Rect',left:0,top:0,width:W,height:H,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:1,y2:0},colorStops:[{offset:0,color:'rgba('+rgb+',1)'},{offset:Math.max(0,(tw-pad)/W),color:'rgba('+rgb+',.92)'},{offset:subject.left/W,color:'rgba('+rgb+',0)'},{offset:1,color:'rgba('+rgb+',0)'}]}}));
       const hs=Math.min(30,Math.max(20,W*.055),tw/(Math.max(...copy.shortHeadline.split(/\s+/).map(w=>w.length))*.67)),hh=lines(copy.shortHeadline,tw,hs)*hs*1.24,bh=Math.max(32,Math.min(42,H*.2)),gap=10,y=Math.max(pad,(H-hh-bh-gap)/2);
-      text('brand','BRITES JEWELRY',pad,Math.max(3,y-19),tw,17,12,'brand');text('headline',copy.shortHeadline,pad,y,tw,hh,hs,'headline',style.headlineFont);button(pad,y+hh+gap,tw,bh,copy.cta,14);return true;
+      text('brand','BRITES JEWELRY',pad,Math.max(3,y-37),tw,34,14,'brand');text('headline',copy.shortHeadline,pad,y,tw,hh,hs,'headline',style.headlineFont);button(pad,y+hh+gap,tw,bh,copy.cta,14);return true;
     }
     function tallLayout(){
       if(!narrow)return false;
       const pad=Math.max(5,Math.min(12,W*.04)),photoHeight=H*2/3,actionHeight=Math.min(52,Math.max(36,W*.24)),titleSize=Math.min(38,Math.max(21,W*.12));
       photograph({left:0,top:0,width:W,height:photoHeight});bottomFade(photoHeight-Math.min(35,W*.2),Math.min(35,W*.2));
       const titleWidth=W-pad*2,titleHeight=lines(copy.shortHeadline,titleWidth,titleSize)*titleSize*1.24;
-      text('brand','BRITES JEWELRY',pad,photoHeight+3,W-pad*2,16,12,'brand');
-      text('headline',copy.shortHeadline,pad,photoHeight+Math.max(28,(H-photoHeight-actionHeight-titleHeight-pad*3)/2),titleWidth,titleHeight,titleSize,'headline',style.headlineFont);
+      text('brand','BRITES JEWELRY',pad,photoHeight+3,W-pad*2,34,13,'brand');
+      text('headline',copy.shortHeadline,pad,photoHeight+Math.max(42,(H-photoHeight-actionHeight-titleHeight-pad*3)/2),titleWidth,titleHeight,titleSize,'headline',style.headlineFont);
       objects[objects.length-1].textAlign='center';button(pad,H-pad-actionHeight,W-pad*2,actionHeight,copy.cta,Math.min(18,actionHeight*.4));return true;
     }
     function softFade(){
@@ -96,7 +96,7 @@
       let headline=copy.shortHeadline,hs=side?Math.min(36,Math.max(22,W*.055)):Math.min(narrow?40:30,Math.max(21,W*(narrow?.12:.085)));
       if(lines(headline,tw,hs)>3)headline=copy.shortHeadline;
       hs=Math.min(hs,tw/(Math.max(...headline.split(/\s+/).map(w=>w.length))*.67));
-      const hh=lines(headline,tw,hs)*hs*1.24,brand=true,brandH=brand?16:0,bodySize=side?Math.max(14,Math.min(18,W*.03)):14;
+      const hh=lines(headline,tw,hs)*hs*1.24,brand=true,brandH=brand?34:0,bodySize=side?Math.max(14,Math.min(18,W*.03)):14;
       const bodyH=lines(description,tw,bodySize)*bodySize*1.3,body=(side||style.preserveSavedStyle&&!narrow&&H>=400)&&bodyH<=H*.17&&brandH+hh+bodyH+bh+gap*4<H*.86;
       const total=brandH+(brand?gap:0)+hh+(body?bodyH+gap:0)+(row?0:bh+gap);let top=side?Math.max(pad,(H-total)/2):H-pad-Math.max(total,row?bh:0);
       if(!side&&top<H*.50)return false;
@@ -110,7 +110,7 @@
       objects.push(base('product_scene','photo',{type:'Image',sourceKey:image.id,left:0,top:photoTop,width:cw,height:ch,cropX:cx,cropY:cy,scaleX:scale,scaleY:scale}));
       const stops=side?[[0,1],[.40,.98],[.55,0],[1,0]]:[...(photoTop>0?[[0,1],[photoTop/H,1],[(photoTop+Math.min(40,Math.max(1,subject.top-photoTop)))/H,0]]:[[0,0]]),[Math.max(0,(subject.top+subject.height)/H),0],[Math.min((top+(style.preserveSavedStyle&&!narrow?total*.75:0))/H,(photoTop+ch*scale)/H),1],[1,1]];
       objects.push(base('image_fade','shape',{type:'Rect',left:0,top:0,width:W,height:H,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:side?1:0,y2:side?0:1},colorStops:stops.map(([offset,opacity])=>({offset,color:'rgba('+style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)).join(',')+','+opacity+')'}))}}));
-      let y=top;if(brand){text('brand','BRITES JEWELRY',pad,y,tw,brandH,12,'brand');y+=brandH+gap;}
+      let y=top;if(brand){text('brand','BRITES JEWELRY',pad,y,tw,brandH,14,'brand');y+=brandH+gap;}
       text('headline',headline,pad,y,tw,hh,hs,'headline',style.headlineFont);y+=hh+gap;
       if(body){text('description',description,pad,y,tw,bodyH,bodySize,'description');y+=bodyH+gap;}
       button(side||style.preserveSavedStyle&&!narrow?pad:(W-Math.min(bw,tw))/2,y,Math.min(bw,tw),bh,copy.cta,Math.min(17,bh*.4));
@@ -125,15 +125,16 @@
     }else if(softFade()){
       // The photograph fills the artboard; the editable fade protects only the copy.
     }else if(banner){
-      const pw=Math.min(W*.27,H*1.08),tx=pw+Math.max(5,H*.035),right=Math.max(5,H*.035),tw=W-tx-right;
+      const pw=Math.min(W*.27,H*1.08),tx=pw+Math.max(5,H*.035),right=Math.max(5,H*.035);
       photograph({left:0,top:0,width:pw,height:H});
-      const bs=Math.max(12,Math.min(24,H*.15)),icon=brands?.get('brites_brand_icon'),ih=Math.min(32,Math.max(16,H*.26)),iw=ih*789/592;
-      const headline=compactHeadline,hs=Math.max(16,Math.min(H*.38,42,tw/(Math.max(1,headline.length)*.59))),hh=lines(headline,tw,hs)*hs*1.18;
-      const brandH=Math.max(ih,bs*1.3),gap=Math.max(3,H*.045),total=hh+brandH+gap,y=Math.max(2,(H-total)/2);
+      // A dedicated brand column lets the actual icon occupy most of a short
+      // banner's height instead of becoming a tiny inline text decoration.
+      const icon=brands?.get('brites_brand_icon'),ih=Math.min(72,H*.72),iw=ih*789/592,logoGap=Math.max(8,H*.06),tw=W-tx-right-(icon?iw+logoGap:0);
+      const bs=Math.max(13,Math.min(24,H*.15)),headline=compactHeadline,hs=Math.max(16,Math.min(H*.38,42,tw/(Math.max(1,headline.length)*.59))),hh=lines(headline,tw,hs)*hs*1.18;
+      const brandH=bs*1.3,gap=Math.max(3,H*.045),total=hh+brandH+gap,y=Math.max(2,(H-total)/2);
       text('headline',headline,tx,y,tw,hh,hs,'headline',style.headlineFont);
-      const by=y+hh+gap;
-      if(icon)objects.push(base('brand_icon','brand',{type:'Image',sourceKey:icon.id,left:tx,top:by,width:icon.width,height:icon.height,scaleX:iw/icon.width,scaleY:ih/icon.height}));
-      text('brand','Brites Jewelry',tx+(icon?iw+5:0),by+(brandH-bs*1.3)/2,tw-(icon?iw+5:0),bs*1.3,bs,'brand');
+      text('brand','Brites Jewelry',tx,y+hh+gap,tw,brandH,bs,'brand');
+      if(icon)objects.push(base('brand_icon','brand',{type:'Image',sourceKey:icon.id,left:W-right-iw,top:(H-ih)/2,width:icon.width,height:icon.height,scaleX:iw/icon.width,scaleY:ih/icon.height}));
       // The ad itself is clickable. Product identity and branding take precedence
       // over a large button or optional claims in narrow placements.
 
@@ -158,13 +159,13 @@
       if(style.treatment==='soft-fade'){const fadeHeight=Math.min(30,(H-footer)*.16);bottomFade(H-footer-fadeHeight,fadeHeight);}
       // The caption and action occupy one footer, including tall placements.
       let y=H-footer+margin;
-      if(brand){text('brand','BRITES JEWELRY',margin,y,tw,brandHeight,12*typeScale,'brand');y+=brandHeight;}
+      if(brand){text('brand','BRITES JEWELRY',margin,y,tw,brandHeight,14*typeScale,'brand');y+=brandHeight;}
       text('headline',headline,margin,rowFits?H-footer+margin+(Math.max(brandHeight+hh,bh)-brandHeight-hh)/2+brandHeight:y,tw,hh,hs,'headline',style.headlineFont);
       const actionY=rowFits?H-footer+margin+(Math.max(brandHeight+hh,bh)-bh)/2:y+hh+5;
       button(rowFits?W-bw-margin:margin,actionY,rowFits?bw:Math.min(fullWidth,Math.max(100,copy.cta.length*8+12)),bh,copy.cta,14*typeScale);
       if(benefit)text('description',description,margin,H-margin-dh,fullWidth,dh,13*typeScale,'description');
     }
-    if(!objects.some(o=>o.id==='ai_brand_icon'))for(const o of objects.filter(o=>o.editorRole==='brand'&&o.type==='Textbox')){const icon=brands?.get('brites_brand_icon');if(icon&&o.width>140){const h=Math.max(14,o.fontSize*1.2),w=h*icon.width/icon.height;objects.push(base('brand_icon','brand',{type:'Image',sourceKey:icon.id,left:o.left,top:o.top,width:icon.width,height:icon.height,scaleX:h/icon.height,scaleY:h/icon.height}));o.left+=w+5;o.width-=w+5;}}
+    if(!objects.some(o=>o.id==='ai_brand_icon'))for(const o of objects.filter(o=>o.editorRole==='brand'&&o.type==='Textbox')){const icon=brands?.get('brites_brand_icon');if(icon&&o.width>140){const h=32,w=h*icon.width/icon.height;if(o.aiBoxHeight<30){const heading=objects.find(t=>t.editorRole==='headline'&&Math.abs(t.left-o.left)<1&&t.top>=o.top&&t.top<o.top+40);if(heading){heading.left+=w+5;heading.width-=w+5;}}objects.push(base('brand_icon','brand',{type:'Image',sourceKey:icon.id,left:o.left,top:o.top,width:icon.width,height:icon.height,scaleX:h/icon.height,scaleY:h/icon.height}));o.left+=w+5;o.width-=w+5;}}
     function upscale(o){if(o.type==='Image'){o.left*=factor;o.top*=factor;o.scaleX*=factor;o.scaleY*=factor;return;}for(const k of ['left','top','width','height','fontSize','aiBoxHeight','buttonPadding','rx','ry'])if(typeof o[k]==='number')o[k]*=factor;(o.objects||[]).forEach(upscale);}
     objects.forEach(upscale);
     return {version:'7.4.0',background:style.background,objects};
