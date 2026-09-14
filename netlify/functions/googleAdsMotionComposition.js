@@ -1,6 +1,6 @@
 // Full-canvas video compositions. Never trade product visibility for a crop or tiny copy.
 const fs=require('fs/promises'),path=require('path'),{Resvg}=require('@resvg/resvg-js');
-const VERSION=9,TIMES=[.05,.8,1.6,2.4,3.2,4,4.8,5.6,6.4,7.2,8.6,9.9];
+const VERSION=10,TIMES=[.05,.8,1.6,2.4,3.2,4,4.8,5.6,6.4,7.2,8.6,9.9];
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v)),xml=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
 function layoutRequest(job,frames,reference){
  const box={type:'object',additionalProperties:false,properties:{bounds:{type:'array',items:{type:'number',minimum:0,maximum:1},minItems:4,maxItems:4},complete:{type:'boolean'},confidence:{type:'number',minimum:0,maximum:1},note:{type:'string'}},required:['bounds','complete','confidence','note']};
@@ -46,6 +46,7 @@ async function captions(plan,format,beats){
  }
  const branded=plan.renderVersion>=8,brandAssets=require('../../brites-brand-assets'),logo=brandAssets.get('brites_brand_wide'),logoData=branded?brandAssets.dataUrl(logo.id):null;
  const prepared=[];for(const beat of beats){const normal=fit(beat,branded||beat.start===0);if(normal){prepared.push({beat,selected:normal});continue;}
+  if(plan.renderVersion>=10){const selected=fit({...beat,support:''},true);if(!selected)throw Error((format.label||format.key)+' film needs clear space for the saved message without covering jewelry.');prepared.push({beat:{...beat,support:''},selected});continue;}
   // A crowded shot receives sequential editorial messages, never miniature stacked copy.
   const messages=[beat.title];if(beat.support&&beat.support!=='BRITES JEWELRY'&&(beat.start>=7||beat.support.length<=40))messages.push(beat.support);
   const panels=[];for(let i=0;i<messages.length;i++){const simple={...beat,title:messages[i],support:''},selected=fit(simple,branded);if(selected)panels.push({beat:simple,selected});else if(i===0||beat.start>=7)throw Error((format.label||format.key)+' film has insufficient clear space for large, readable messaging without covering the jewelry. Re-run with clear space above the product or beside it.');}
