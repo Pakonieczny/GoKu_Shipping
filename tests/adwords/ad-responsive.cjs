@@ -28,7 +28,7 @@ if(require.main===module)(async()=>{
  const boxesOverlap=(a,b)=>Math.min(a.left+a.width,b.left+b.width)-Math.max(a.left,b.left)>1&&Math.min(a.top+a.height,b.top+b.height)-Math.max(a.top,b.top)>1;
  const incompletePlan=JSON.parse(JSON.stringify(plan));incompletePlan.layouts.forEach(l=>{l.showBrand=false;l.showButton=false;l.showHeadline=false;});
  for(const copy of [plan.copy,{headline:"Corgi Necklace for Dog Lovers",shortHeadline:"Corgi Necklace",description:"A handcrafted corgi pendant on a beady chain.",cta:"Shop Now"},{headline:'Gold Peach Fruit Charm',shortHeadline:'Peach Fruit Charm',description:'A sweet gift for food lovers.',cta:'Shop Peach Charm'},{headline:'A Peach for Your Foodie',shortHeadline:'Peach Charm',description:'Gift-ready packaging included.',cta:'Shop charm'}])for(const board of responsive.variants){
-   incompletePlan.copy=copy;if(copy.cta==='Shop charm')incompletePlan.style={...plan.style,background:'#2D231E',ink:'#FFF9F0'};else incompletePlan.style=plan.style; e.board=board;await e.restore(responsive.document(incompletePlan,photo,board,board.device));ok((responsive.family(board)==='banner'?['headline','brand']:['headline','button']).every(role=>e.canvas.getObjects().some(o=>o.editorRole===role)),board.key+' keeps the required product and brand hierarchy');for(const o of e.canvas.getObjects())e.fitAIText(o);e.canvas.renderAll();
+   incompletePlan.copy=copy;if(copy.cta==='Shop charm')incompletePlan.style={...plan.style,background:'#2D231E',ink:'#FFF9F0'};else incompletePlan.style=plan.style; e.board=board;await e.restore(responsive.document(incompletePlan,photo,board,board.device));ok((responsive.baseLayout(board).drawnAction?['headline','brand','button']:['headline','brand']).every(role=>e.canvas.getObjects().some(o=>o.editorRole===role)),board.key+' keeps the required product and brand hierarchy');for(const o of e.canvas.getObjects())e.fitAIText(o);e.canvas.renderAll();
    ok(e.canvas.getObjects().find(o=>o.editorRole==='headline').text===copy.shortHeadline,board.key+' retains the product type in compact messaging');
    const text=e.canvas.getObjects().filter(o=>'text'in o||o.editorRole==='button');
    if(board.key.startsWith('display_')){
@@ -47,7 +47,7 @@ if(require.main===module)(async()=>{
    for(let i=0;i<text.length;i++)for(let j=i+1;j<text.length;j++)ok(!boxesOverlap(text[i].getBoundingRect(),text[j].getBoundingRect()),board.key+' '+text[i].editorRole+' avoids '+text[j].editorRole);
    const image=e.canvas.getObjects().find(o=>o.type==='image');ok(image.scaleX===image.scaleY&&image.angle===0,'photo preserves proportions');
    const imageBox=image.getBoundingRect();
-   ok(imageBox.left<=1&&(responsive.family(board)==='banner'?imageBox.height>=board.height*.98:imageBox.width>=board.width*.98),board.key+' photo starts at the edge instead of inside a padded thumbnail');
+   ok(board.key==='landscape'?imageBox.left+imageBox.width>=board.width-1&&imageBox.height>=board.height*.98:imageBox.left<=1&&(responsive.family(board)==='banner'?imageBox.height>=board.height*.98:imageBox.width>=board.width*.98),board.key+' product scene reaches its outer edge without an inset thumbnail');
    // The full charm remains inside every crop, including its off-center position.
    const fx=photo.focus.x*photo.width,fy=photo.focus.y*photo.height,fw=photo.focus.width*photo.width,fh=photo.focus.height*photo.height;
    ok(image.cropX<=fx&&image.cropY<=fy&&image.cropX+image.width>=fx+fw&&image.cropY+image.height>=fy+fh,board.key+' keeps the complete located charm visible');
@@ -70,14 +70,14 @@ if(require.main===module)(async()=>{
    const im={id:'peach',width:2048,height:1072,focus:{x:.539,y:.199,width:.258,height:.682}},d=responsive.document(fadePlan,im,board,'desktop'),p=d.objects.find(o=>o.editorRole==='photo'),t=d.objects.find(o=>o.editorRole==='headline'),b=d.objects.find(o=>o.editorRole==='button');
    const bottom=p.top+(im.height*(im.focus.y+im.focus.height)-p.cropY)*p.scaleY;
    if(board.height/board.width<=2)ok(t.top-bottom<60,'portrait copy stays close to the product '+board.key);
-   if(board.height/board.width>2){ok(t.top>=board.height*2/3,'tall messaging stays in lower third '+board.key);ok(b.top+b.height*b.scaleY>=board.height-15,'tall action anchors to the bottom '+board.key);ok(b.width*b.scaleX>=board.width*.88,'tall action spans the available width '+board.key);ok(p.top>=0&&bottom<=board.height*2/3+1,'entire charm stays in upper two thirds '+board.key);}
+   if(board.height/board.width>2){ok(t.top>=board.height*2/3,'tall messaging stays in lower third '+board.key);ok(b.top-(t.top+t.aiBoxHeight)<14,'tall action follows the headline without a large gap '+board.key);ok(b.width*b.scaleX<=128.1&&b.height*b.scaleY===34,'tall action uses the shared button size '+board.key);ok(p.top>=0&&bottom<=board.height*2/3+1,'entire charm stays in upper two thirds '+board.key);}
    ok(t.textAlign==='center'&&Math.abs(b.left+b.width*b.scaleX/2-board.width/2)<1,'portrait title and button share the product centerline '+board.key);
    ok(b.width*b.scaleX>=board.width*.4,'portrait CTA has a substantial readable width '+board.key);
  }
 
  for(const board of [{key:'display_250x250',width:250,height:250},{key:'display_300x250',width:300,height:250}]){const d=responsive.document(fadePlan,photo,board,'desktop');ok(d.objects.some(o=>o.id==='ai_photo_caption_fade'),'compact fallback has a photographic fade '+board.key);}
  const marginDoc=responsive.document(fadePlan,{id:'wide-focus',width:1000,height:1000,focus:{x:.1,y:.1,width:.8,height:.8}},{key:'landscape',width:2048,height:1072},'desktop');
- ok(marginDoc.objects.some(o=>o.id==='ai_scene_extension'&&Math.abs(o.width*o.scaleX-2048)<1),'landscape photo region fills its side margins with the original scene');
+ ok(marginDoc.objects.some(o=>(o.editorRole==='photo'||o.id==='ai_scene_extension')&&Math.abs(o.left+o.width*o.scaleX-2048)<1),'landscape product region reaches the outer edge with no inset margin');
  for(const board of responsive.boards.filter(b=>['square','portrait','landscape'].includes(b.key))){
    const mobile=responsive.document(fadePlan,photo,board,'mobile'),desktop=responsive.document(fadePlan,photo,board,'desktop');
    for(const role of ['headline','button']){const a=mobile.objects.find(o=>o.editorRole===role),b=desktop.objects.find(o=>o.editorRole===role);ok(Math.abs(a.scaleX-b.scaleX)<.001&&Math.abs(a.width-b.width)<.001,'master typography has identical device proportions '+board.key+' '+role);}

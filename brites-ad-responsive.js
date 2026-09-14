@@ -8,7 +8,7 @@
   function selectImage(plan,images,board){const f=family(board);return images.find(i=>i.forFamilies?.includes(f))||images[0];}
   // Design at the actual viewing width, then export at the requested resolution.
   // A 2048px master must not turn a 36px CTA into a 6px mobile label.
-  const layoutVersion=22;
+  const layoutVersion=24;
   const brands=typeof module==='object'&&module.exports?require('./brites-brand-assets'):root.BritesBrandAssets;
   function document(plan,image,board,device="mobile"){
     const master=['square','landscape','portrait'].includes(board.key),factor=master?board.width/Math.min(board.width,360):1;
@@ -22,12 +22,20 @@
       style.ink=readable(style.ink,style.background);style.buttonInk=readable(style.buttonInk,style.accent);
     }
     const base=(id,role,extra)=>({id:'ai_'+id,name:id,editorRole:role,originX:'left',originY:'top',angle:0,opacity:1,scaleX:1,scaleY:1,strokeWidth:0,...extra});
-    const objects=[],margin=Math.max(3,Math.min(8,Math.min(W,H)*.03)),banner=f==='banner',narrow=f==='skyscraper';
+    const objects=[],margin=Math.max(3,Math.min(6,Math.min(W,H)*.03)),banner=f==='banner',narrow=f==='skyscraper';
     const typeScale=Math.max(1,Math.min(1.35,W/440)),description=copy.description.startsWith(copy.shortHeadline+'. ')?copy.description.slice(copy.shortHeadline.length+2):copy.description;
     const lineHeight=1.08;
     function lines(value,width,size){return String(value).split(/\n/).reduce((sum,line)=>sum+Math.max(1,line.split(/\s+/).reduce((a,word)=>{const n=word.length*size*.58;if(a.used&&a.used+size*.3+n>width){a.count++;a.used=n;}else a.used+=n+size*.3;return a;},{count:1,used:0}).count),0);}
     function text(id,value,x,y,width,height,size,role,font=style.bodyFont){if(value)objects.push(base(id,role,{type:'Textbox',text:value,left:x,top:y,width,height,aiBoxHeight:height,fontFamily:font,fontSize:size,fontWeight:role==='headline'?(style.headlineWeight||'700'):(style.bodyWeight||'400'),fill:style.ink,lineHeight,charSpacing:role==='brand'?35:0,textAlign:'left'}));}
+    function brandRow(x,y,width){
+      const icon=brands?.get('brites_brand_icon'),ih=rules.brand.iconHeight,iw=ih*789/592,gap=7,size=width<140?rules.brand.narrowTextSize:rules.brand.minimumTextSize;
+      const single='BRITES JEWELRY',oneWidth=single.length*size*.64,wrapped=iw+gap+oneWidth>width,label=wrapped?'BRITES\nJEWELRY':single,tw=Math.min(width-iw-gap,(wrapped?7:single.length)*size*.64),total=iw+gap+tw,left=x+(width-total)/2;
+      if(icon)objects.push(base('brand_icon','brand',{type:'Image',sourceKey:icon.id,left,top:y,width:icon.width,height:icon.height,scaleX:ih/icon.height,scaleY:ih/icon.height}));
+      const th=wrapped?size*2.3:size*1.3;text('brand',label,left+iw+gap,y+(ih-th)/2,tw,th,size,'brand');
+    }
     function button(x,y,width,height,label=copy.cta,size=14){
+      if(!banner){const nw=Math.min(rules.button.maximumWidth,width);x+=(width-nw)/2;y+=(height-rules.button.height)/2;width=nw;height=rules.button.height;size=rules.button.fontSize;}
+
       // Select a short action before fitting; never squeeze a two-line label into a small banner.
       if(label.length*size*.65+12>width)label='Shop now';
       if(label.length*size*.65+12>width)label='Shop';
@@ -76,16 +84,17 @@
       const rgb=style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)).join(',');
       objects.push(base('image_fade','shape',{type:'Rect',left:0,top:0,width:W,height:H,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:1,y2:0},colorStops:[{offset:0,color:'rgba('+rgb+',1)'},{offset:Math.max(0,(tw-pad)/W),color:'rgba('+rgb+',.92)'},{offset:subject.left/W,color:'rgba('+rgb+',0)'},{offset:1,color:'rgba('+rgb+',0)'}]}}));
       const hs=Math.min(30,Math.max(20,W*.055),tw/(Math.max(...copy.shortHeadline.split(/\s+/).map(w=>w.length))*.67)),hh=lines(copy.shortHeadline,tw,hs)*hs*1.24,bh=Math.max(32,Math.min(42,H*.2)),gap=10,y=Math.max(pad,(H-hh-bh-gap)/2);
-      text('brand','BRITES JEWELRY',pad,Math.max(3,y-37),tw,34,14,'brand');text('headline',copy.shortHeadline,pad,y,tw,hh,hs,'headline',style.headlineFont);button(pad,y+hh+gap,tw,bh,copy.cta,14);return true;
+      brandRow(pad,Math.max(3,y-37),tw);text('headline',copy.shortHeadline,pad,y,tw,hh,hs,'headline',style.headlineFont);objects[objects.length-1].textAlign='center';button(pad,y+hh+gap,tw,bh,copy.cta,14);return true;
     }
     function tallLayout(){
       if(!narrow)return false;
       const pad=Math.max(5,Math.min(12,W*.04)),photoHeight=H*2/3,actionHeight=Math.min(52,Math.max(36,W*.24)),titleSize=Math.min(38,Math.max(21,W*.12));
       photograph({left:0,top:0,width:W,height:photoHeight});bottomFade(photoHeight-Math.min(35,W*.2),Math.min(35,W*.2));
       const titleWidth=W-pad*2,titleHeight=lines(copy.shortHeadline,titleWidth,titleSize)*titleSize*1.24;
-      text('brand','BRITES JEWELRY',pad,photoHeight+3,W-pad*2,34,13,'brand');
-      text('headline',copy.shortHeadline,pad,photoHeight+Math.max(42,(H-photoHeight-actionHeight-titleHeight-pad*3)/2),titleWidth,titleHeight,titleSize,'headline',style.headlineFont);
-      objects[objects.length-1].textAlign='center';button(pad,H-pad-actionHeight,W-pad*2,actionHeight,copy.cta,Math.min(18,actionHeight*.4));return true;
+      const gap=8,blockHeight=32+titleHeight+34+gap*2,y=photoHeight+Math.max(8,(H-photoHeight-blockHeight)/2);
+      brandRow(pad,y,titleWidth);
+      text('headline',copy.shortHeadline,pad,y+32+gap,titleWidth,titleHeight,titleSize,'headline',style.headlineFont);
+      objects[objects.length-1].textAlign='center';button(pad,y+32+gap+titleHeight+gap,titleWidth,34,copy.cta,14);return true;
     }
     function softFade(){
       const focus=image.focus,side=W/H>=1.3&&W>=300&&H>=160;
@@ -110,11 +119,11 @@
       objects.push(base('product_scene','photo',{type:'Image',sourceKey:image.id,left:0,top:photoTop,width:cw,height:ch,cropX:cx,cropY:cy,scaleX:scale,scaleY:scale}));
       const stops=side?[[0,1],[.40,.98],[.55,0],[1,0]]:[...(photoTop>0?[[0,1],[photoTop/H,1],[(photoTop+Math.min(40,Math.max(1,subject.top-photoTop)))/H,0]]:[[0,0]]),[Math.max(0,(subject.top+subject.height)/H),0],[Math.min((top+(style.preserveSavedStyle&&!narrow?total*.75:0))/H,(photoTop+ch*scale)/H),1],[1,1]];
       objects.push(base('image_fade','shape',{type:'Rect',left:0,top:0,width:W,height:H,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:side?1:0,y2:side?0:1},colorStops:stops.map(([offset,opacity])=>({offset,color:'rgba('+style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)).join(',')+','+opacity+')'}))}}));
-      let y=top;if(brand){text('brand','BRITES JEWELRY',pad,y,tw,brandH,14,'brand');y+=brandH+gap;}
+      let y=top;if(brand){brandRow(pad,y,tw);y+=brandH+gap;}
       text('headline',headline,pad,y,tw,hh,hs,'headline',style.headlineFont);y+=hh+gap;
       if(body){text('description',description,pad,y,tw,bodyH,bodySize,'description');y+=bodyH+gap;}
-      button(side||style.preserveSavedStyle&&!narrow?pad:(W-Math.min(bw,tw))/2,y,Math.min(bw,tw),bh,copy.cta,Math.min(17,bh*.4));
-      if(!side&&(!style.preserveSavedStyle||narrow))for(const o of objects)if('text'in o)o.textAlign='center';
+      button(pad,y,tw,bh,copy.cta,14);
+      for(const o of objects)if(o.editorRole==='headline'||o.editorRole==='description')o.textAlign='center';
       return true;
     }
     const compactHeadline=copy.shortHeadline;
@@ -122,6 +131,9 @@
       // Fixed upper image region and lower messaging region for skyscrapers.
     }else if(fullBleedLandscape()){
       // Use the actual photograph edge to edge, with copy in its quiet side.
+    }else if(board.key==='landscape'){
+      const pad=8,tw=W*.46-pad*2,hs=20,hh=lines(copy.shortHeadline,tw,hs)*hs*1.24,gap=6,bh=34,total=32+hh+bh+gap*2,y=(H-total)/2;
+      photograph({left:W*.48,top:0,width:W*.52,height:H});brandRow(pad,y,tw);text('headline',copy.shortHeadline,pad,y+32+gap,tw,hh,hs,'headline',style.headlineFont);objects[objects.length-1].textAlign='center';button(pad,y+32+gap+hh+gap,tw,bh,copy.cta,14);
     }else if(softFade()){
       // The photograph fills the artboard; the editable fade protects only the copy.
     }else if(banner){
@@ -142,9 +154,9 @@
     }else{
       // One compact caption and action share the footer. Optional selling copy
       // is admitted only when it leaves at least three quarters for photography.
-      const bw=Math.min(W*.37,Math.max(92,copy.cta.length*8+12)),bh=36*typeScale;
+      const bw=128,bh=34;
       let tw=W-bw-margin*3,hs=(W<280||H<240?20:24)*typeScale,headline=W<280||H<240?compactHeadline:copy.shortHeadline;
-      const rowFits=!narrow&&tw>=72&&lines(headline,tw,hs)<=2;
+      const rowFits=false,showAction=!(W<=280&&H<=280);
       const fullWidth=W-margin*2;
       if(!rowFits)tw=fullWidth;
       let hh=lines(headline,tw,hs)*hs*1.25;
@@ -152,25 +164,29 @@
       // before choosing the photo frame instead of letting Fabric clip it.
       const longest=Math.max(...headline.split(/\s+/).map(v=>v.length));
       hs=Math.min(hs,tw/(longest*.67));hh=lines(headline,tw,hs)*hs*1.25;
-      const brand=true,brandHeight=17*typeScale;
-      const minimal=(rowFits?Math.max(brandHeight+hh,bh):brandHeight+hh+bh+5)+margin*2;
+      const brand=true,brandHeight=34;
+      const minimal=(rowFits?Math.max(brandHeight+hh,bh):brandHeight+hh+(showAction?bh+3:0))+margin*2;
       const dh=lines(description,fullWidth,13*typeScale)*17*typeScale;
       const benefit=W>=360&&H>=400&&minimal+dh+5<=H*.22;
       const footer=minimal+(benefit?dh+5:0),photo=photograph({left:0,top:0,width:W,height:H-footer});
       if(style.treatment==='soft-fade'){const fadeHeight=Math.min(30,(H-footer)*.16);bottomFade(H-footer-fadeHeight,fadeHeight);}
       // The caption and action occupy one footer, including tall placements.
       let y=H-footer+margin;
-      if(brand){text('brand','BRITES JEWELRY',margin,y,tw,brandHeight,14*typeScale,'brand');y+=brandHeight;}
+      if(brand){brandRow(margin,y,tw);y+=brandHeight;}
       text('headline',headline,margin,rowFits?H-footer+margin+(Math.max(brandHeight+hh,bh)-brandHeight-hh)/2+brandHeight:y,tw,hh,hs,'headline',style.headlineFont);
-      const actionY=rowFits?H-footer+margin+(Math.max(brandHeight+hh,bh)-bh)/2:y+hh+5;
-      button(rowFits?W-bw-margin:margin,actionY,rowFits?bw:Math.min(fullWidth,Math.max(100,copy.cta.length*8+12)),bh,copy.cta,14*typeScale);
+      objects[objects.length-1].textAlign='center';
+      const actionY=rowFits?H-footer+margin+(Math.max(brandHeight+hh,bh)-bh)/2:y+hh+3;
+      if(showAction)button(margin,actionY,fullWidth,bh,copy.cta,14);
       if(benefit)text('description',description,margin,H-margin-dh,fullWidth,dh,13*typeScale,'description');
     }
-    if(!objects.some(o=>o.id==='ai_brand_icon'))for(const o of objects.filter(o=>o.editorRole==='brand'&&o.type==='Textbox')){const icon=brands?.get('brites_brand_icon');if(icon&&o.width>140){const h=32,w=h*icon.width/icon.height;if(o.aiBoxHeight<30){const heading=objects.find(t=>t.editorRole==='headline'&&Math.abs(t.left-o.left)<1&&t.top>=o.top&&t.top<o.top+40);if(heading){heading.left+=w+5;heading.width-=w+5;}}objects.push(base('brand_icon','brand',{type:'Image',sourceKey:icon.id,left:o.left,top:o.top,width:icon.width,height:icon.height,scaleX:h/icon.height,scaleY:h/icon.height}));o.left+=w+5;o.width-=w+5;}}
     function upscale(o){if(o.type==='Image'){o.left*=factor;o.top*=factor;o.scaleX*=factor;o.scaleY*=factor;return;}for(const k of ['left','top','width','height','fontSize','aiBoxHeight','buttonPadding','rx','ry'])if(typeof o[k]==='number')o[k]*=factor;(o.objects||[]).forEach(upscale);}
     objects.forEach(upscale);
     return {version:'7.4.0',background:style.background,objects};
   }
   const variants=boards.flatMap(b=>['square','landscape','portrait'].includes(b.key)?['mobile','desktop'].map(device=>({...b,device})):[{...b,device:b.height<=100&&b.width<=320?'mobile':'desktop'}]);
-  const api={layoutVersion,boards,variants,family,selectImage,document};if(typeof module==='object'&&module.exports)module.exports=api;else root.BritesAdResponsive=api;
+  const rules={version:1,priorities:['complete recognizable product','official brand lockup','product name','optional action and supporting copy'],brand:{iconHeight:32,compactBannerIconHeight:36,minimumWordmarkWidth:80,minimumTextSize:14,narrowTextSize:12,alignment:'Center icon and business name together as one lockup; never center the text independently of its icon.'},type:{bannerHeadlineMinimum:16,headlineMinimum:20,supportMinimum:14,maximumFontFamilies:2},button:{height:34,maximumWidth:128,fontSize:14,alignment:'centered beneath the headline within the copy region'},spacing:{minimumGap:3,preferredGap:8},protection:['Whole jewelry including attachment hardware stays visible','No logo, copy or fade may cover the located product','No distortion or invented jewelry details','No microtext or arbitrary shrinking to fit','High-density PNG previews; exact-size upload and historical review pixels remain separate'],creativeFreedom:['Product-specific scene, venue, props and lighting','Photography and safe focal positioning','Supported product-specific messaging within text limits','Coordinated brand palette with readable contrast','Up to two coherent font families','Subtle decorative treatments in empty space']};
+  const baseLayouts=boards.map(b=>({...b,family:family(b),composition:family(b)==='banner'?'edge product / centered message / dedicated logo':family(b)==='landscape'?'product beside a centered copy block':'product above a centered brand / headline / action stack',drawnAction:family(b)!=='banner'&&!(b.width<=280&&b.height<=280)}));
+  const videoLayouts=[{key:'portrait',width:720,height:1280},{key:'square',width:720,height:720},{key:'landscape',width:1280,height:720}].map(b=>({...b,logo:{x:.065,y:.055,width:176,persistent:true},text:'Three distinct saved messages: hook, product, action. Only text transitions.',wash:'Persistent throughout; never covers protected jewelry.',composition:b.key==='portrait'?'product lower-middle, messaging above':'product toward right, messaging in measured free space'}));
+  function baseLayout(board){return baseLayouts.find(b=>b.width===board.width&&b.height===board.height)||{...board,family:family(board),composition:'Adapt the nearest base without breaking shared ground rules'};}
+  const api={layoutVersion,boards,variants,family,selectImage,document,rules,baseLayouts,videoLayouts,baseLayout};if(typeof module==='object'&&module.exports)module.exports=api;else root.BritesAdResponsive=api;
 })(typeof window==='object'?window:globalThis);
