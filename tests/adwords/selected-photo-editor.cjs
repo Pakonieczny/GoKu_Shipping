@@ -1,0 +1,11 @@
+const fs=require('fs'),assert=require('assert/strict'),{JSDOM}=require('jsdom');
+(async()=>{
+ const dom=new JSDOM('<input data-name><span data-save-state></span>',{runScripts:'outside-only'}),w=dom.window;
+ w.eval(fs.readFileSync('brites-ad-editor.js','utf8').replace('root.BritesAdEditor=api;','root.BritesAdEditor=api;root.TestEditor=Editor;'));
+ const e=Object.create(w.TestEditor.prototype),objects=[],restored=[];e.options={startFromPhoto:true,title:'Peach',initialPhoto:{source:{kind:'product',imageId:'chosen-photo'}}};e.board={width:1000,height:1000,key:'square'};e.sources=new Map();e.drafts=new Map();e.key=()=> 'desktop|square';e.input=()=>({});e.q=s=>w.document.querySelector(s);e.request=async()=>({design:{name:'Old package',revision:7,document:{old:true}},sources:[]});
+ e.canvas={clear:()=>objects.splice(0),add:p=>objects.push(p),requestRenderAll:()=>{}};e.image=async row=>{assert.equal(row.source.imageId,'chosen-photo');return {width:2000,height:1000,scale:1,scaleToWidth(v){this.scale=v/this.width;},scaleToHeight(v){this.scale=v/this.height;},getScaledWidth(){return this.width*this.scale;},getScaledHeight(){return this.height*this.scale;},set(v){Object.assign(this,v);}};};e.restore=async d=>restored.push(d);e.snapshot=e.fit=e.syncButtons=e.renderInspector=()=>{};e.recoverAI=e.refreshReviewScore=()=>{throw Error('Must not restore the old design review into a fresh photo draft');};
+ await e.loadBoard();assert.equal(objects.length,1);assert.equal(objects[0].left,0);assert.equal(objects[0].top,250);assert.equal(restored.length,0);assert(e.dirty);assert.equal(e.revision,7,'retain optimistic save revision; previous saved versions are archived by the backend');
+ await e.loadBoard({fresh:true});assert.deepEqual(restored,[{fresh:true}],'changing boards adapts the new draft instead of loading unrelated saved artwork');
+ const html=fs.readFileSync('brites-adwords.html','utf8');assert(html.includes('startFromPhoto:!!initial'));assert(html.includes('.btn.gold{background:#8d6b2f;border-color:#8d6b2f;color:#fff}'));
+ dom.window.close();console.log('PASS selected photo creates a centered fresh draft, retains save concurrency checks, and does not reload old artwork or scores');
+})().catch(e=>{console.error(e);process.exitCode=1;});
