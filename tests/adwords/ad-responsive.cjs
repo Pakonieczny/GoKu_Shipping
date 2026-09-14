@@ -70,7 +70,7 @@ if(require.main===module)(async()=>{
    const im={id:'peach',width:2048,height:1072,focus:{x:.539,y:.199,width:.258,height:.682}},d=responsive.document(fadePlan,im,board,'desktop'),p=d.objects.find(o=>o.editorRole==='photo'),t=d.objects.find(o=>o.editorRole==='headline'),b=d.objects.find(o=>o.editorRole==='button');
    const bottom=p.top+(im.height*(im.focus.y+im.focus.height)-p.cropY)*p.scaleY;
    if(board.height/board.width<=2)ok(t.top-bottom<60,'portrait copy stays close to the product '+board.key);
-   if(board.height/board.width>2){ok(t.top>=board.height*2/3,'tall messaging stays in lower third '+board.key);ok(b.top-(t.top+t.aiBoxHeight)<14,'tall action follows the headline without a large gap '+board.key);ok(b.width*b.scaleX<=128.1&&b.height*b.scaleY===34,'tall action uses the shared button size '+board.key);ok(p.top>=0&&bottom<=board.height*2/3+1,'entire charm stays in upper two thirds '+board.key);}
+   if(board.height/board.width>2){ok(t.top>=board.height*2/3,'tall messaging stays in lower third '+board.key);ok(b.top-(t.top+t.aiBoxHeight)<=30.1,'tall action follows the headline without a large gap '+board.key);ok(b.width*b.scaleX<=board.width-10&&b.height*b.scaleY>=(board.width>=240?48:36),'tall action scales with available copy space '+board.key);ok(p.top>=0&&bottom<=board.height*2/3+1,'entire charm stays in upper two thirds '+board.key);}
    ok(t.textAlign==='center'&&Math.abs(b.left+b.width*b.scaleX/2-board.width/2)<1,'portrait title and button share the product centerline '+board.key);
    ok(b.width*b.scaleX>=board.width*.4,'portrait CTA has a substantial readable width '+board.key);
  }

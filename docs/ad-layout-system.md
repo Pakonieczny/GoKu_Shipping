@@ -7,8 +7,8 @@ Every supported size has an explicit base in brites-ad-responsive.js. The render
 - Keep the complete, exact jewelry recognizable; preserve all hardware and detail.
 - Keep a tight safe crop and protect the jewelry from text, logos and fades.
 - Treat the official icon and business name as one centered brand lockup.
-- Stack brand, product name and action with deliberate spacing. Tall ads do not pin the button far away from the headline.
-- Use one button treatment: 34px high, up to 128px wide, 14px label at the design viewing scale. Very compact cards and banners omit a drawn button rather than crowding essential identity; the native Google action remains separate.
+- Stack brand, product name and action with deliberate spacing. Tall ads scale the brand, headline and action to the lower-third space, using 10–30px gaps instead of a small cramped cluster.
+- Use a common button style with size-aware geometry: the standard is 34px high, up to 128px wide and a 14px label. Tall 300px ads use a 48px-high, up to 210px-wide button with a 20px label; narrow tall ads use 36px-high actions. The 580×400 side composition uses a 44px-high action and omits supporting copy. Very compact cards and banners omit a drawn button rather than crowding essential identity; the native Google action remains separate.
 - Keep logo artwork visible: 32px icon in standard compact layouts and about 36px in a 50px banner; account for transparent padding. Essential banner copy is at least 14px for the business name and 16px for the product name. Narrow stacks may use a two-line 12px brand name beside the full icon.
 - Ordinary previews are lossless, high-density renders of original assets and editable type. Exact fixed-size uploads and historical review snapshots are separate.
 
@@ -43,6 +43,8 @@ AI chooses product-specific settings, indoor/outdoor locations, complementary pr
 | 300 × 50 | edge product / centered message / dedicated logo | No; native Google action |
 | 320 × 50 | edge product / centered message / dedicated logo | No; native Google action |
 | 320 × 100 | edge product / centered message / dedicated logo | No; native Google action |
+
+The 970×250 banner uses a headline up to 64px, a 36px business name and a 120px icon. Optional copy is omitted before essential elements are reduced.
 
 ## Video bases
 

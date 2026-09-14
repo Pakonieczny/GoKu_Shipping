@@ -8,7 +8,7 @@
   function selectImage(plan,images,board){const f=family(board);return images.find(i=>i.forFamilies?.includes(f))||images[0];}
   // Design at the actual viewing width, then export at the requested resolution.
   // A 2048px master must not turn a 36px CTA into a 6px mobile label.
-  const layoutVersion=24;
+  const layoutVersion=25;
   const brands=typeof module==='object'&&module.exports?require('./brites-brand-assets'):root.BritesBrandAssets;
   function document(plan,image,board,device="mobile"){
     const master=['square','landscape','portrait'].includes(board.key),factor=master?board.width/Math.min(board.width,360):1;
@@ -27,14 +27,14 @@
     const lineHeight=1.08;
     function lines(value,width,size){return String(value).split(/\n/).reduce((sum,line)=>sum+Math.max(1,line.split(/\s+/).reduce((a,word)=>{const n=word.length*size*.58;if(a.used&&a.used+size*.3+n>width){a.count++;a.used=n;}else a.used+=n+size*.3;return a;},{count:1,used:0}).count),0);}
     function text(id,value,x,y,width,height,size,role,font=style.bodyFont){if(value)objects.push(base(id,role,{type:'Textbox',text:value,left:x,top:y,width,height,aiBoxHeight:height,fontFamily:font,fontSize:size,fontWeight:role==='headline'?(style.headlineWeight||'700'):(style.bodyWeight||'400'),fill:style.ink,lineHeight,charSpacing:role==='brand'?35:0,textAlign:'left'}));}
-    function brandRow(x,y,width){
-      const icon=brands?.get('brites_brand_icon'),ih=rules.brand.iconHeight,iw=ih*789/592,gap=7,size=width<140?rules.brand.narrowTextSize:rules.brand.minimumTextSize;
+    function brandRow(x,y,width,options={}){
+      const icon=brands?.get('brites_brand_icon'),ih=options.iconHeight||rules.brand.iconHeight,iw=ih*789/592,gap=7,size=options.fontSize||(width<140?rules.brand.narrowTextSize:rules.brand.minimumTextSize);
       const single='BRITES JEWELRY',oneWidth=single.length*size*.64,wrapped=iw+gap+oneWidth>width,label=wrapped?'BRITES\nJEWELRY':single,tw=Math.min(width-iw-gap,(wrapped?7:single.length)*size*.64),total=iw+gap+tw,left=x+(width-total)/2;
       if(icon)objects.push(base('brand_icon','brand',{type:'Image',sourceKey:icon.id,left,top:y,width:icon.width,height:icon.height,scaleX:ih/icon.height,scaleY:ih/icon.height}));
       const th=wrapped?size*2.3:size*1.3;text('brand',label,left+iw+gap,y+(ih-th)/2,tw,th,size,'brand');
     }
-    function button(x,y,width,height,label=copy.cta,size=14){
-      if(!banner){const nw=Math.min(rules.button.maximumWidth,width);x+=(width-nw)/2;y+=(height-rules.button.height)/2;width=nw;height=rules.button.height;size=rules.button.fontSize;}
+    function button(x,y,width,height,label=copy.cta,size=14,flexible=false){
+      if(!banner&&!flexible){const nw=Math.min(rules.button.maximumWidth,width);x+=(width-nw)/2;y+=(height-rules.button.height)/2;width=nw;height=rules.button.height;size=rules.button.fontSize;}
 
       // Select a short action before fitting; never squeeze a two-line label into a small banner.
       if(label.length*size*.65+12>width)label='Shop now';
@@ -88,25 +88,29 @@
     }
     function tallLayout(){
       if(!narrow)return false;
-      const pad=Math.max(5,Math.min(12,W*.04)),photoHeight=H*2/3,actionHeight=Math.min(52,Math.max(36,W*.24)),titleSize=Math.min(38,Math.max(21,W*.12));
+      const pad=Math.max(5,Math.min(12,W*.04)),photoHeight=H*2/3,available=H-photoHeight;
       photograph({left:0,top:0,width:W,height:photoHeight});bottomFade(photoHeight-Math.min(35,W*.2),Math.min(35,W*.2));
-      const titleWidth=W-pad*2,titleHeight=lines(copy.shortHeadline,titleWidth,titleSize)*titleSize*1.24;
-      const gap=8,blockHeight=32+titleHeight+34+gap*2,y=photoHeight+Math.max(8,(H-photoHeight-blockHeight)/2);
-      brandRow(pad,y,titleWidth);
-      text('headline',copy.shortHeadline,pad,y+32+gap,titleWidth,titleHeight,titleSize,'headline',style.headlineFont);
-      objects[objects.length-1].textAlign='center';button(pad,y+32+gap+titleHeight+gap,titleWidth,34,copy.cta,14);return true;
+      const titleWidth=W-pad*2,brandH=W>=240?48:36,brandSize=W>=240?19:12,buttonH=W>=240?48:36,buttonW=Math.min(titleWidth,W>=240?210:128),buttonSize=W>=240?20:15;
+      let titleSize=Math.min(44,Math.max(22,W*.15));
+      titleSize=Math.min(titleSize,titleWidth/(Math.max(...copy.shortHeadline.split(/\s+/).map(w=>w.length))*.67));
+      while(titleSize>18&&brandH+lines(copy.shortHeadline,titleWidth,titleSize)*titleSize*1.24+buttonH+24>available-16)titleSize-=1;
+      const titleHeight=lines(copy.shortHeadline,titleWidth,titleSize)*titleSize*1.24,gap=Math.max(10,Math.min(30,(available-brandH-titleHeight-buttonH)*.25)),blockHeight=brandH+titleHeight+buttonH+gap*2,y=photoHeight+(available-blockHeight)/2;
+      brandRow(pad,y,titleWidth,{iconHeight:brandH,fontSize:brandSize});
+      text('headline',copy.shortHeadline,pad,y+brandH+gap,titleWidth,titleHeight,titleSize,'headline',style.headlineFont);
+      objects[objects.length-1].textAlign='center';button((W-buttonW)/2,y+brandH+gap+titleHeight+gap,buttonW,buttonH,copy.cta,buttonSize,true);return true;
     }
+
     function softFade(){
       const focus=image.focus,side=W/H>=1.3&&W>=300&&H>=160;
       if(style.treatment!=='soft-fade'||banner||(!side&&!(W>=240&&H>=280||narrow&&W>=120&&H>=400))||!focus||!['x','y','width','height'].every(k=>Number.isFinite(focus[k]))||focus.width<=0||focus.height<=0)return false;
       const pad=Math.max(6,Math.min(22,W*.045)),gap=Math.max(5,Math.min(12,H*.025));
       const bw=narrow?W-pad*2:Math.min(side?W*.42:W*.66,Math.max(96,copy.cta.length*(style.preserveSavedStyle?9:7)+24)),bh=Math.min(44,Math.max(32,H*.1));
       const row=false,tw=side?W*.47-pad*2:row?W-bw-pad*3:W-pad*2;
-      let headline=copy.shortHeadline,hs=side?Math.min(36,Math.max(22,W*.055)):Math.min(narrow?40:30,Math.max(21,W*(narrow?.12:.085)));
+      let headline=copy.shortHeadline,hs=side?Math.min(48,Math.max(28,W*.083)):Math.min(narrow?40:30,Math.max(21,W*(narrow?.12:.085)));
       if(lines(headline,tw,hs)>3)headline=copy.shortHeadline;
       hs=Math.min(hs,tw/(Math.max(...headline.split(/\s+/).map(w=>w.length))*.67));
-      const hh=lines(headline,tw,hs)*hs*1.24,brand=true,brandH=brand?34:0,bodySize=side?Math.max(14,Math.min(18,W*.03)):14;
-      const bodyH=lines(description,tw,bodySize)*bodySize*1.3,body=(side||style.preserveSavedStyle&&!narrow&&H>=400)&&bodyH<=H*.17&&brandH+hh+bodyH+bh+gap*4<H*.86;
+      const hh=lines(headline,tw,hs)*hs*1.24,brand=true,brandH=brand?(side?44:34):0,bodySize=side?Math.max(14,Math.min(18,W*.03)):14;
+      const bodyH=lines(description,tw,bodySize)*bodySize*1.3,body=(!side&&style.preserveSavedStyle&&!narrow&&H>=400)&&bodyH<=H*.17&&brandH+hh+bodyH+bh+gap*4<H*.86;
       const total=brandH+(brand?gap:0)+hh+(body?bodyH+gap:0)+(row?0:bh+gap);let top=side?Math.max(pad,(H-total)/2):H-pad-Math.max(total,row?bh:0);
       if(!side&&top<H*.50)return false;
       const region=side?{left:W*.55,top:pad,width:W*.45-pad,height:H-pad*2}:{left:pad,top:pad,width:W-pad*2,height:top-pad*2};
@@ -119,10 +123,10 @@
       objects.push(base('product_scene','photo',{type:'Image',sourceKey:image.id,left:0,top:photoTop,width:cw,height:ch,cropX:cx,cropY:cy,scaleX:scale,scaleY:scale}));
       const stops=side?[[0,1],[.40,.98],[.55,0],[1,0]]:[...(photoTop>0?[[0,1],[photoTop/H,1],[(photoTop+Math.min(40,Math.max(1,subject.top-photoTop)))/H,0]]:[[0,0]]),[Math.max(0,(subject.top+subject.height)/H),0],[Math.min((top+(style.preserveSavedStyle&&!narrow?total*.75:0))/H,(photoTop+ch*scale)/H),1],[1,1]];
       objects.push(base('image_fade','shape',{type:'Rect',left:0,top:0,width:W,height:H,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:side?1:0,y2:side?0:1},colorStops:stops.map(([offset,opacity])=>({offset,color:'rgba('+style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)).join(',')+','+opacity+')'}))}}));
-      let y=top;if(brand){brandRow(pad,y,tw);y+=brandH+gap;}
+      let y=top;if(brand){brandRow(pad,y,tw,side?{iconHeight:44,fontSize:18}:{});y+=brandH+gap;}
       text('headline',headline,pad,y,tw,hh,hs,'headline',style.headlineFont);y+=hh+gap;
       if(body){text('description',description,pad,y,tw,bodyH,bodySize,'description');y+=bodyH+gap;}
-      button(pad,y,tw,bh,copy.cta,14);
+      if(side)button(pad+(tw-Math.min(172,tw))/2,y,Math.min(172,tw),44,copy.cta,20,true);else button(pad,y,tw,bh,copy.cta,14);
       for(const o of objects)if(o.editorRole==='headline'||o.editorRole==='description')o.textAlign='center';
       return true;
     }
@@ -141,8 +145,8 @@
       photograph({left:0,top:0,width:pw,height:H});
       // A dedicated brand column lets the actual icon occupy most of a short
       // banner's height instead of becoming a tiny inline text decoration.
-      const icon=brands?.get('brites_brand_icon'),ih=H<=60?H*.72:Math.min(W<=320?48:72,H*.65),iw=ih*789/592,logoGap=Math.max(8,H*.06),tw=W-tx-right-(icon?iw+logoGap:0);
-      const bs=Math.max(14,Math.min(26,H*.22)),headline=compactHeadline,hs=Math.max(16,Math.min(H*.38,42,tw/(Math.max(1,headline.length)*.59))),hh=lines(headline,tw,hs)*hs*1.18;
+      const icon=brands?.get('brites_brand_icon'),ih=H<=60?H*.72:Math.min(W<=320?48:120,H*.65),iw=ih*789/592,logoGap=Math.max(8,H*.06),tw=W-tx-right-(icon?iw+logoGap:0);
+      const bs=Math.max(14,Math.min(36,H*.22)),headline=compactHeadline,hs=Math.max(16,Math.min(H*.38,H>=200?64:42,tw/(Math.max(1,headline.length)*.59))),hh=lines(headline,tw,hs)*hs*1.18;
       const brandH=bs*1.3,gap=Math.max(3,H*.045),total=hh+brandH+gap,y=Math.max(2,(H-total)/2);
       text('headline',headline,tx,y,tw,hh,hs,'headline',style.headlineFont);
       text('brand','Brites Jewelry',tx,y+hh+gap,tw,brandH,bs,'brand');
@@ -184,7 +188,7 @@
     return {version:'7.4.0',background:style.background,objects};
   }
   const variants=boards.flatMap(b=>['square','landscape','portrait'].includes(b.key)?['mobile','desktop'].map(device=>({...b,device})):[{...b,device:b.height<=100&&b.width<=320?'mobile':'desktop'}]);
-  const rules={version:1,priorities:['complete recognizable product','official brand lockup','product name','optional action and supporting copy'],brand:{iconHeight:32,compactBannerIconHeight:36,minimumWordmarkWidth:80,minimumTextSize:14,narrowTextSize:12,alignment:'Center icon and business name together as one lockup; never center the text independently of its icon.'},type:{bannerHeadlineMinimum:16,headlineMinimum:20,supportMinimum:14,maximumFontFamilies:2},button:{height:34,maximumWidth:128,fontSize:14,alignment:'centered beneath the headline within the copy region'},spacing:{minimumGap:3,preferredGap:8},protection:['Whole jewelry including attachment hardware stays visible','No logo, copy or fade may cover the located product','No distortion or invented jewelry details','No microtext or arbitrary shrinking to fit','High-density PNG previews; exact-size upload and historical review pixels remain separate'],creativeFreedom:['Product-specific scene, venue, props and lighting','Photography and safe focal positioning','Supported product-specific messaging within text limits','Coordinated brand palette with readable contrast','Up to two coherent font families','Subtle decorative treatments in empty space']};
+  const rules={version:1,priorities:['complete recognizable product','official brand lockup','product name','optional action and supporting copy'],brand:{iconHeight:32,compactBannerIconHeight:36,minimumWordmarkWidth:80,minimumTextSize:14,narrowTextSize:12,alignment:'Center icon and business name together as one lockup; never center the text independently of its icon.'},type:{bannerHeadlineMinimum:16,headlineMinimum:20,supportMinimum:14,maximumFontFamilies:2},button:{height:34,maximumWidth:128,fontSize:14,alignment:'centered beneath the headline within the copy region'},spacing:{minimumGap:3,preferredGap:8,skyscraper:'Use 10–30px gaps and scale the brand, heading and action to occupy the lower third; do not leave a tiny centered cluster'},sizeOverrides:{display_580x400:'Omit supporting copy. Large product headline, visible brand and action in the left region.',display_300x1050:'48px brand icon, up to 44px headline, 48px-high action with 20px label; distribute the lower-third stack.',display_160x600:'36px brand icon, readable headline, 36px action and balanced vertical gaps.',display_970x250:'Up to 64px headline, 36px business name and 120px brand icon; use the available banner height'},protection:['Whole jewelry including attachment hardware stays visible','No logo, copy or fade may cover the located product','No distortion or invented jewelry details','No microtext or arbitrary shrinking to fit','High-density PNG previews; exact-size upload and historical review pixels remain separate'],creativeFreedom:['Product-specific scene, venue, props and lighting','Photography and safe focal positioning','Supported product-specific messaging within text limits','Coordinated brand palette with readable contrast','Up to two coherent font families','Subtle decorative treatments in empty space']};
   const baseLayouts=boards.map(b=>({...b,family:family(b),composition:family(b)==='banner'?'edge product / centered message / dedicated logo':family(b)==='landscape'?'product beside a centered copy block':'product above a centered brand / headline / action stack',drawnAction:family(b)!=='banner'&&!(b.width<=280&&b.height<=280)}));
   const videoLayouts=[{key:'portrait',width:720,height:1280},{key:'square',width:720,height:720},{key:'landscape',width:1280,height:720}].map(b=>({...b,logo:{x:.065,y:.055,width:176,persistent:true},text:'Three distinct saved messages: hook, product, action. Only text transitions.',wash:'Persistent throughout; never covers protected jewelry.',composition:b.key==='portrait'?'product lower-middle, messaging above':'product toward right, messaging in measured free space'}));
   function baseLayout(board){return baseLayouts.find(b=>b.width===board.width&&b.height===board.height)||{...board,family:family(board),composition:'Adapt the nearest base without breaking shared ground rules'};}
