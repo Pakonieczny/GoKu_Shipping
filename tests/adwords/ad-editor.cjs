@@ -1,6 +1,13 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const root=path.resolve(__dirname,'../..'),editor=require(root+'/brites-ad-editor.js');
 let checks=0;const check=(v,m)=>{assert.ok(v,m);checks++};
+const review=editor.reviewSummary({rubric:'complete-ad-v1',score:93.2,scores:{messaging:94,layout:89,relevance:95,visualAppeal:95,productRecognition:95},issues:['Tall formats leave empty margins.']});
+check(review.tone==='green'&&review.score===93.2&&review.complete,'saved set score remains exact and green at target');
+check(review.categories.length===5&&review.synopsis==='Focus on layout.'&&review.suggestions.length===1,'review provides concise category feedback and relevant suggestions');
+check(editor.reviewSummary({score:91.9}).tone==='orange'&&editor.reviewSummary({score:79}).tone==='red','score colors distinguish below-target and low reviews');
+check(editor.reviewSummary(null).score===null&&editor.reviewSummary(null).tone==='neutral','missing review does not appear as zero or a passing score');
+check(editor.reviewSummary({score:0}).score===0,'valid zero score remains visible');
+check(!editor.reviewSummary({rubric:'product-detail-v1',score:95}).complete,'earlier photograph score is not labeled a complete set review');
 const original={version:'7.4.0',objects:[{type:'Group',left:80,top:40,scaleX:1,scaleY:1,objects:[{type:'Image',sourceKey:'source_1',src:'https://expired.example/image',crossOrigin:'anonymous'},{type:'Textbox',text:'Duck necklace',fontFamily:'Georgia'}]}]};
 const saved=editor.withoutUrls(original);check(!JSON.stringify(saved).includes('expired.example'),'editable document keeps source keys rather than expiring image URLs');
 const restored=editor.withSources(saved,[{id:'source_1',url:'https://saved.example/fresh'}]);check(restored.objects[0].objects[0].src==='https://saved.example/fresh','images nested in groups receive refreshed source URLs');
@@ -110,6 +117,9 @@ assert.deepEqual(editor.cropResize(cropBox,'se',120,80,cropBounds),{x:200,y:200,
 
     await w.BritesAdEditor.openAllSizes({scope:{workspaceId:'test',productId:'11',groupRef:'group',savedDesignId:'legacy'},request:async(action,input)=>{legacyActions.push(action);if(action==='adDesignEditorAIStatus')return {ok:true,reviewProofs:[]};assert.equal(action,'openAdDesignSavedDesign');assert.equal(input.id,'legacy');return {design:{device:'shared',artboard:{key:'square',width:2048,height:2048},document:beforeRecovery},sources:[photo]};}});
     const legacyGallery=w.document.querySelector('dialog[aria-label="Saved ad layouts"]');check(legacyGallery?.querySelectorAll('figure').length===27,'older saved artwork previews every size without stored review proofs');check(legacyGallery.textContent.includes('not a new AI review')&&legacyActions.length===2,'legacy preview is labeled honestly and makes no generation requests');legacyGallery.querySelector('[data-close]').click();w.BritesAdResponsive=previousEngine;
+    const reviewRequest=e.options.request;e.options.request=async(action,input)=>{check(action==='adDesignEditorAIStatus'&&input.allSizes,'score button reads the complete saved set without generation');return {quality:{rubric:'complete-ad-v1',score:93.2,scores:{layout:89,messaging:94},issues:['<img src=x onerror=alert(1)> Tiny text in portrait.']},qualityTarget:92};};
+    await e.refreshReviewScore();check(e.q('[data-review-score]').textContent==='Set review · 93.2/100','overall set score is visible without opening the popup');
+    await e.reviewSummaryPanel();const reviewPanel=w.document.querySelector('dialog[aria-label="Ad set review"]');check(reviewPanel&&reviewPanel.textContent.includes('Layout')&&reviewPanel.textContent.includes('Suggestions'),'review popup shows category scores and short suggestions');check(!reviewPanel.querySelector('img')&&reviewPanel.textContent.includes('Later edits'),'review safely escapes issue text and distinguishes later edits');reviewPanel.querySelector('[data-close]').click();e.options.request=reviewRequest;
     check(e.filename('json').endsWith('.json'),'recovery files have the correct editable JSON extension');
     await e.openSavedDesign(firstCopy);check(e.canvas.getObjects().some(o=>o.type==='group'&&o.getObjects().some(x=>x.text==='Choose your charm')),'saved design reopens with editable button layers');await e.action('save');await e.dispose();dom.window.close();
   }
