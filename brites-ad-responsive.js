@@ -8,7 +8,7 @@
   function selectImage(plan,images,board){const f=family(board);return images.find(i=>i.forBoards?.includes(board.key))||images.find(i=>i.forFamilies?.includes(f))||images[0];}
   // Design at the actual viewing width, then export at the requested resolution.
   // A 2048px master must not turn a 36px CTA into a 6px mobile label.
-  const layoutVersion=29;
+  const layoutVersion=30;
   const brands=typeof module==='object'&&module.exports?require('./brites-brand-assets'):root.BritesBrandAssets;
   // The scene catalog matches meaningful crop families rather than charging for
   // every output size. Slim skyscrapers may receive an extra composition.
@@ -54,7 +54,9 @@
     // uncovered edge in the clear product region needs a dedicated photograph,
     // not an obvious patched seam. Saved artwork keeps its earlier safe layout.
     const washAt=t=>{if(t<=stops[1][0])return stops[1][1];if(t>=stops[2][0])return stops[2][1];const u=(t-stops[1][0])/(stops[2][0]-stops[1][0]);return stops[1][1]+(stops[2][1]-stops[1][1])*(u*u*(3-2*u));};
-    if((x>.01&&(axis!=='left'||washAt(x/W)<.88))||(r<W-.01&&(axis!=='right'||washAt(r/W)<.88))||y>.01||(b<H-.01&&(axis!=='bottom'||washAt(b/H)<.88)))return {mode:'legacy',reason:'This saved photo needs a dedicated '+family(board)+' scene to extend cleanly without a visible join.'};
+    const insetBanner=['display_468x60','display_728x90','display_930x180','display_970x90','display_980x120'].includes(board.key)&&axis==='right'&&x<=W*.04&&f.x>.015;
+    const edgeSurface=insetBanner&&x>.01?{...expanded,id:'ai_banner_edge',name:'Photographic edge margin',editorRole:'shape',left:0,width:1,cropX:0,scaleX:x,filters:[]}:null;
+    if((x>.01&&!edgeSurface&&(axis!=='left'||washAt(x/W)<.88))||(r<W-.01&&(axis!=='right'||washAt(r/W)<.88))||y>.01||(b<H-.01&&(axis!=='bottom'||washAt(b/H)<.88)))return {mode:'legacy',reason:'This saved photo needs a dedicated '+family(board)+' scene to extend cleanly without a visible join.'};
     let background=null,mode='native';
     if(x>.01||y>.01||r<W-.01||b<H-.01){
       // Old photographs and ratios wider than the provider's 3:1 limit need a
@@ -67,7 +69,7 @@
       background={...p,id:'ai_atmosphere_surface',name:'Continuous photographic surface',editorRole:'shape',left:0,top:0,width:W/scale,height:H/scale,cropX:a.x*image.width+(sw-W/scale)/2,cropY:a.y*image.height+(sh-H/scale)/2,scaleX:scale,scaleY:scale,filters:[]};mode='continued';
     }
     const fade={id:'ai_atmosphere_fade',name:'Protective translucent fade',editorRole:'shape',type:'Rect',originX:'left',originY:'top',left:0,top:0,width:W,height:H,scaleX:1,scaleY:1,strokeWidth:0,opacity:1,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:axis==='bottom'?0:1,y2:axis==='bottom'?1:0},colorStops:stops.flatMap((point,i)=>i===1?[point,...[.2,.4,.6,.8].map(t=>[point[0]+(stops[2][0]-point[0])*t,point[1]+(stops[2][1]-point[1])*(t*t*(3-2*t))])]:[point]).map(([offset,a])=>({offset:Math.max(0,Math.min(1,offset)),color:'rgba('+rgb.join(',')+','+a+')'}))}};
-    objects.splice(0,objects.length,...(background?[background]:[]),expanded,fade,...layers);
+    objects.splice(0,objects.length,...(background?[background]:[]),...(edgeSurface?[edgeSurface]:[]),expanded,fade,...layers);
     return {mode,axis,subject:{x:subject.x/W,y:subject.y/H,w:subject.w/W,h:subject.h/H},opacity,sourceKey:image.id,reason:mode==='continued'?'A protected product-free surface continues the saved scene.':null};
   }
 
@@ -204,8 +206,9 @@
       // The photograph fills the artboard; the editable fade protects only the copy.
     }else if(banner){
       const inset=['display_728x90','display_970x90','display_980x120'].includes(board.key)?Math.max(14,Math.round(H*.15)):Math.max(5,H*.035);
-      const pw=Math.min(W*.27,H*1.08),tx=pw+inset,right=Math.max(5,H*.035);
-      photograph({left:0,top:0,width:pw,height:H});
+      const outer=['display_468x60','display_728x90','display_930x180','display_970x90','display_980x120'].includes(board.key)?Math.min(W*.035,H*.30):0;
+      const pw=Math.min(W*.27,H*1.08),tx=outer+pw+inset,right=Math.max(5,H*.035,outer);
+      photograph({left:outer,top:0,width:pw,height:H});
       // A dedicated brand column lets the actual icon occupy most of a short
       // banner's height instead of becoming a tiny inline text decoration.
       const icon=brands?.get('brites_brand_icon'),ih=H<=60?H*.72:Math.min(W<=320?48:120,H*.65),iw=ih*789/592,logoGap=Math.max(8,H*.06),tw=W-tx-right-(icon?iw+logoGap:0);
