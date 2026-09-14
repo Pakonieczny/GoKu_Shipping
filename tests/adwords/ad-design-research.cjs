@@ -25,6 +25,13 @@ function result(){return {brief:{buyer:'A gift buyer looking for a monogram neck
 
  let f=fixture(),e=await f.api.collect(input);eq(e.sourceBindings.primaryProductId,'10');eq(e.sourceBindings.sourceImageId,'photo-1');eq(f.salesCalls().length,1,'store sales always included');eq(f.salesCalls()[0].products[0].productId,'10','exact Shopify ID sent');ok(e.sources.some(s=>s.id==='learning'&&s.status==='unavailable'),'empty lessons not treated as available');ok(e.sources.some(s=>s.id==='queries'&&s.status==='unavailable'));eq(e.decisionRules.primaryKpi,'purchase_conversions');
  let request=f.api.buildRequest({evidence:e,currentCreative:group.original});eq(request.model,'gpt-6-astra');eq(request.reasoning.effort,'high');eq(request.text.format.type,'json_schema');eq(request.store,false);eq(request.input[0].content.filter(x=>x.type==='input_image').length,1,'Astra sees exact source photo');ok(request.input[0].content[0].text.includes('sourceBindings.primaryProductId'),'prompt exact binding key');
+ const sceneRequest=require(root+'/netlify/functions/googleAdsAdDesignResearch').buildResponsiveRequest({evidence:e,request:{productId:'10',instruction:'Understated botanical mood'},screenshotDataUrl:'data:image/jpeg;base64,YQ=='});
+ for(const prompt of [request.input[0].content[0].text,sceneRequest.input[0].content]){
+  ok(prompt.includes('Choose a fresh product-specific scene'),'both generation paths direct a fresh product-specific setting');
+  ok(prompt.includes('copy-area fade and CTA as one palette'),'scene and overlay colours are planned together');
+  ok(prompt.includes('Honor explicit operator art direction'),'operator preferences remain authoritative');
+  ok(!prompt.includes('Preferred house style: the approved peach'),'previous product is not the house palette');
+ }
  let approved=f.api.validateResult({output:result(),evidence:e,channel:'search',group});eq(approved.copy.headlines.length,8);eq(approved.imageDirections.length,2);eq(approved.brief.causal,false);eq(approved.imageDirections[0].sourceImageId,'photo-1');
  await f.api.collect(input);eq(f.calls(),2,'fresh destination read every generation');
  const pinnedGroup={...group,original:{headlines:[{text:'Pinned Monogram Necklace',pinnedField:'HEADLINE_1'}]}};assert.throws(()=>f.api.validateResult({output:result(),evidence:e,channel:'search',group:pinnedGroup}),/pinned/);checks++;

@@ -61,7 +61,7 @@ function settingsFor(raw, products, groups, references, formats, currentCreative
   })).values()];
   if (Buffer.byteLength(JSON.stringify({selectedImages,referenceIds,currentAssetIds})) > 128000) throw new Error("This selection is too large to save in one design. Split it into separate compositions.");
   const direction = String(settings.direction || "").trim(); if (direction.length > 2400) throw new Error("Keep the art direction under 2,400 characters.");
-  const style = {}; for (const key of ["background", "border", "font", "scale"]) style[key] = String((settings.style || {})[key] || ({ background: "warm ivory", border: "none", font: "Montserrat", scale: "product-led" })[key]).slice(0, 100);
+  const style = {}; for (const key of ["background", "border", "font", "scale"]) style[key] = String((settings.style || {})[key] || ({ background: "product-led", border: "none", font: "Montserrat", scale: "product-led" })[key]).slice(0, 100);
   for(const [key,fallback] of Object.entries({textColor:'#29231d',borderColor:'#d8cbb8',backgroundColor:'#fffdf9',buttonColor:'#33281f'})){const value=String((settings.style||{})[key]||fallback);style[key]=/^#[a-f0-9]{6}$/i.test(value)?value:fallback;}
   style.textSize=Math.max(16,Math.min(36,Number((settings.style||{}).textSize)||22));style.borderWidth=Math.max(0,Math.min(6,Number((settings.style||{}).borderWidth)||0));style.textPlacement=['above','below','beside'].includes((settings.style||{}).textPlacement)?settings.style.textPlacement:'below';
   const requested = Array.isArray(settings.formats) ? settings.formats : formats.filter(row => row.required).map(row => row.key);
