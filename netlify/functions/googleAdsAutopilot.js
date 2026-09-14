@@ -9630,7 +9630,19 @@ async function _verifyPublishedAd(campaignId,group,product,approval){
   if(themes.some(t=>!searchThemes.includes(t)))issues.push('A reviewed search theme is not yet visible in Google.');
   return {checkedAt:Date.now(),campaignId,groupRef:group.ref,campaignStatus:current.campaign?.status||null,groupStatus:current.assetGroup?.primaryStatus||current.assetGroup?.status||null,merchant:current.campaign?.shoppingSetting||null,destination,callToAction,searchThemes,itemIds,assets,verifiedAssetResourceNames:[...new Set(verifiedAssetResourceNames)],matches:issues.length===0,issues,policyApproved:assets.length>0&&assets.every(a=>['APPROVED','APPROVED_LIMITED'].includes(a.approvalStatus)),servingConfirmed:false};
 }
-async function adDesignDelivery({workspaceId,start,end}={}){
+const _adDeliveryReads=new Map();
+async function adDesignDelivery(input={}){
+  const {workspaceId,start,end}=input,{w}=await _adDesignPublicationContext(workspaceId);
+  const key=require('crypto').createHash('sha256').update(JSON.stringify([workspaceId,w.settings.productId,w.settings.groupRef,start||'',end||'',w.sourceVersion,w.publication||null])).digest('hex');
+  if(_adDeliveryReads.has(key))return _adDeliveryReads.get(key);
+  const pending=(async()=>{const ref=_adDesignWorkspaceRef(workspaceId).collection('readCache').doc('delivery_'+key),cached=await ref.get();
+    if(cached.exists&&Date.now()-Number(cached.data().at)<300000)return {...cached.data().result,cached:true};
+    const result=await _adDesignDeliveryFresh(input);
+    if(JSON.stringify(result).length<700000)await ref.set({at:Date.now(),result});
+    return result;
+  })();_adDeliveryReads.set(key,pending);try{return await pending;}finally{if(_adDeliveryReads.get(key)===pending)_adDeliveryReads.delete(key);}
+}
+async function _adDesignDeliveryFresh({workspaceId,start,end}={}){
   let {w,group,product}=await _adDesignPublicationContext(workspaceId),campaignId=String(w.context.campaignId||'');
   const receipts=await _adDesignWorkspaceRef(workspaceId).collection('publications').get(),publications=receipts.docs.map(d=>({id:d.id,...d.data(),workspaceId})).filter(p=>String(p.productId)===String(w.settings.productId)&&p.groupRef===group.ref);
   // Publication creates a new version. Keep the original Google receipts and

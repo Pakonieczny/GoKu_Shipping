@@ -58,12 +58,16 @@ function syntheticXmp(jpeg,existing){
 }
 function createAdDesignAdapters(D){
   const sharp=D.sharp||require('sharp');
-  let imageAccess={ready:true,message:null},imageAccessFailureAt=0;
+  let imageAccess={ready:true,message:null},imageAccessFailureAt=0,providerRetryAt=0;
+  const cooldownRef=()=>D.fb?.().db?.collection('brites_provider_cooldowns').doc('openai_ad_design');
   const imageAccessStatus=()=>({...imageAccess});
   async function post(path,body,requestId,timeout){
     if(!D.env.OPENAI_API_KEY)throw new Error('OpenAI access is not configured for Ad Design.');
-    const response=await D.fetch('https://api.openai.com/v1/'+path,{method:'POST',timeout,size:40000000,headers:{'Content-Type':'application/json',Authorization:'Bearer '+D.env.OPENAI_API_KEY,...(requestId?{'X-Client-Request-Id':requestId}:{})},body:JSON.stringify(body)});
+    const ref=cooldownRef();if(ref){const saved=await ref.get();providerRetryAt=Math.max(providerRetryAt,Number(saved.exists&&saved.data().retryAt)||0);}
+    if(providerRetryAt>Date.now())throw Object.assign(new Error('The creative provider requested a pause. Check saved progress after '+new Date(providerRetryAt).toISOString()+'. No new AI request was sent.'),{notDispatched:true,retryAt:providerRetryAt});
+    let response;try{response=await D.fetch('https://api.openai.com/v1/'+path,{method:'POST',timeout,size:40000000,headers:{'Content-Type':'application/json',Authorization:'Bearer '+D.env.OPENAI_API_KEY,...(requestId?{'X-Client-Request-Id':requestId}:{})},body:JSON.stringify(body)});}catch(error){throw Object.assign(new Error('The creative provider connection ended without a confirmed response. The request may still have completed; its saved request ID is retained and no automatic replacement will be sent.'),{code:'CREATIVE_OUTCOME_UNKNOWN',cause:error});}
     const data=await response.json().catch(()=>null);
+    if(response.status===429){const header=response.headers?.get?.('retry-after'),seconds=Number(header),until=header&&Number.isFinite(seconds)?Date.now()+seconds*1000:Date.parse(header||'');providerRetryAt=Math.max(providerRetryAt,Number.isFinite(until)?until:Date.now()+60000);if(ref)try{await ref.set({retryAt:providerRetryAt,observedAt:Date.now()},{merge:true});}catch(_){/* Retain local cooldown and the definite provider rejection. */}}
     if(!response.ok)throw Object.assign(new Error('Creative provider request failed: '+String(data&&data.error&&data.error.message||response.status).slice(0,500)),{definiteResponse:response.status>=400&&response.status<500&&response.status!==408});
     if(!data||typeof data!=='object')throw new Error('The creative provider did not return a readable result.');
     return data;

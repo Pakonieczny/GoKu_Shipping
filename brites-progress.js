@@ -7,6 +7,8 @@
   const now=Date.now(),jobs=[...active.values()].filter(j=>now-j.started>=1800);
   if(!jobs.length){notice?.remove();notice=null;return;}
   const host=[...document.querySelectorAll('dialog[open]')].pop()||document.body;
+  // An existing task progress surface owns feedback; do not stack a request toast on it.
+  if([...host.querySelectorAll('progress:not([data-bp-managed] progress)')].some(p=>!p.hidden&&!p.closest('[hidden]')&&p.getClientRects().length)){notice?.remove();notice=null;return;}
   if(!notice){notice=document.createElement('div');notice.className='bp-activity';notice.setAttribute('role','status');notice.setAttribute('data-bp-managed','');notice.innerHTML='<span class="bp-spinner" aria-hidden="true"></span><div><b></b><progress class="bp-track" aria-label="Waiting for a response" hidden></progress><small></small></div>';}
   if(notice.parentNode!==host)host.appendChild(notice);
   const oldest=jobs.reduce((a,b)=>a.started<b.started?a:b),age=now-oldest.started;
