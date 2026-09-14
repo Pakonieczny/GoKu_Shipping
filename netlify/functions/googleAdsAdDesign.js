@@ -727,9 +727,18 @@ function createAdDesignService(deps) {
     }
     if(plan.scenePlans){
       const checks=[{...request.artboard,device:request.device==='desktop'?'desktop':'mobile'},...responsive.variants].map(board=>{const image=responsive.selectImage(plan,images,board);return {board,image,fit:responsive.document(plan,image,board,board.device).sceneFit};}),bad=checks.filter(c=>c.fit?.mode==='legacy');
-      if(bad.length){
-        const image=bad[0].image,spec=sceneSpecs.find(s=>s.key===image.sceneKey),key='scene_'+spec.key+'_fit_repair',prior=await target.collection('data').doc(key).get();
-        if(prior.exists)throw Error('The '+bad.filter(c=>c.image.id===image.id).map(c=>c.board.key).join(', ')+' composition still needs more continuous scene area. Both photographs are saved; no replacement or review will run automatically.');
+      // A continuous photographic plane is a treatment preference, not a reason
+      // to strand a run. The renderer retains its safe original composition when
+      // an extension cannot avoid a seam; complete-ad review still judges it.
+      let pendingFit=null;const retained=[];
+      for(const check of bad){
+        const spec=sceneSpecs.find(s=>s.key===check.image.sceneKey),key='scene_'+spec.key+'_fit_repair';
+        if((await target.collection('data').doc(key).get()).exists)retained.push({format:check.board.key,sourceId:check.image.id,reason:check.fit.reason});
+        else if(!pendingFit)pendingFit={image:check.image,spec,key};
+      }
+      if(retained.length)await saveData('scene_fit_notes',{retainedLayouts:retained,reason:'Saved safe compositions retained after one scene correction; final ad review remains required.'});
+      if(pendingFit){
+        const {image,spec,key}=pendingFit;
         const affected=bad.filter(c=>c.image.id===image.id).map(c=>({format:c.board.key,width:c.board.width,height:c.board.height,reason:c.fit.reason}));
         const row=await paid(key,90,'Refining the '+spec.key+' scene to fit its assigned ad sizes',async requestId=>{
           const direction={...spec.direction,composition:spec.direction.composition+' '+responsive.sceneCatalog.find(s=>s.key===spec.key).direction+' The previous composition did not leave enough continuous photographic context. Pull the camera back to provide more empty scene around the exact product; the renderer will retain the approved final product size. Do not enlarge or reposition the text. Previous product bounds and failed crops: '+JSON.stringify({focus:image.focus,affected})};
