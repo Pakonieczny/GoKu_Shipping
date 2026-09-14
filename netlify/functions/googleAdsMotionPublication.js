@@ -46,6 +46,7 @@ function createPublicationService(D) {
     const {ref, job} = await context(input), expectedHash = reviewHash(job);
     if (input.reviewHash !== expectedHash) throw Error('Review the current video files before publishing.');
     if(job.publication?.phase!=='attached'&&(!Number.isFinite(job.quality?.score)||job.quality.score<(job.quality.rubric===rubric.RUBRIC?rubric.TARGET:97)||job.quality.score>100||job.quality.mobileReadable!==true))throw Error('The saved animation has not met its complete-ad quality target. Improve the product scene before a new Google upload.');
+    if(job.publication?.phase==='attached'||job.publication?.leaseUntil>Date.now()||job.publication?.nextCheckAt>Date.now())return {ok:true,cached:true,queued:false,publication:safePublication(job.publication)};
     await D.assertTarget(job);
     await D.fb().db.runTransaction(async tx => {
       const row = await tx.get(ref), current = row.data();
@@ -61,7 +62,7 @@ function createPublicationService(D) {
     const {ref, job} = await context(input), owner = crypto.randomUUID(); let p;
     await D.fb().db.runTransaction(async tx => {
       const row = await tx.get(ref); p = row.data().publication;
-      if (!p || p.phase === 'blocked' || p.phase === 'attached' || p.leaseUntil > Date.now()) return;
+      if (!p || p.phase === 'blocked' || p.phase === 'attached' || p.leaseUntil > Date.now() || p.nextCheckAt > Date.now()) return;
       if (reviewHash(row.data()) !== p.reviewHash) throw Error('The reviewed animation changed.');
       p = {...p, owner, phase:'uploading', leaseUntil:Date.now()+13*60000, updatedAt:Date.now(), error:null};
       tx.update(ref, {publication:p});
@@ -108,7 +109,7 @@ function createPublicationService(D) {
         if (['FAILED','REJECTED','UNAVAILABLE'].includes(result.state)) throw Error('Google video processing returned '+result.state+' for '+video.key+'.');
       }
       if (p.videos.some(v => v.state !== 'PROCESSED' || !/^[a-zA-Z0-9_-]{11}$/.test(v.videoId || ''))) {
-        await save({phase:'processing', leaseUntil:0}); return {ok:true, processing:true};
+        await save({phase:'processing', nextCheckAt:Date.now()+60000, leaseUntil:0}); return {ok:true, processing:true};
       }
       await D.assertTarget(job);
       // A missing attachment response is never blindly replayed.
@@ -125,10 +126,13 @@ function createPublicationService(D) {
   async function verify(input) {
     const {ref, job} = await context(input), p = job.publication;
     if (!p || p.phase !== 'attached') return {ok:true, publication:safePublication(p)};
-    const verification = await D.verify(job, p.videos);
-    await ref.update({'publication.verification':verification, 'publication.updatedAt':Date.now()});
-    return {ok:true, publication:safePublication({...p, verification})};
+    let acquired=false;
+    await D.fb().db.runTransaction(async tx=>{const current=await tx.get(ref),live=current.data().publication;if(live.verification?.checkedAt>Date.now()-300000||live.verifyLeaseUntil>Date.now())return;tx.update(ref,{'publication.verifyLeaseUntil':Date.now()+120000});acquired=true;});
+    if(!acquired)return {ok:true,cached:true,publication:safePublication((await ref.get()).data().publication)};
+    try{const verification={...await D.verify(job,p.videos),checkedAt:Date.now()};await ref.update({'publication.verification':verification,'publication.updatedAt':Date.now(),'publication.verifyLeaseUntil':0});return {ok:true,publication:safePublication({...p,verification})};}
+    catch(e){await ref.update({'publication.verifyLeaseUntil':Date.now()+60000});throw e;}
   }
+
   async function prepareMerchant(input){
     const {ref,job}=await context(input);selection(job);
     if(!require('./googleAdsAdMotion').qualityPass(job.quality))throw Error('The video set must pass its saved quality target first.');

@@ -1,0 +1,32 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+const R=require('../../netlify/functions/googleAdsCampaignStyles');
+for(const styles of [[],['pmax','pmax'],['search']])assert.throws(()=>R.selection(styles,{pmax:10},['2840']));
+assert.equal(R.selection(R.STYLES,{fixed_display:1.1,responsive_display:2.2,pmax:3.3},['2840']).totalDaily,6.6);
+assert.throws(()=>R.selection(['pmax'],{pmax:NaN},['2840']));
+assert.throws(()=>R.selection(['pmax'],{pmax:10},[]));
+assert.equal(R.fixedProofs([{width:2048,height:2048,asset:{}},{width:300,height:250,asset:{}},{width:300,height:250,asset:{}}]).length,1);
+assert.throws(()=>R.validatePhoto({width:1080,height:1920,bytes:100},'portrait'));
+const fixture=path.join(__dirname,'design-publication.cjs'),source=fs.readFileSync(fixture,'utf8').split('(async()=>{')[0];
+const ctx=vm.createContext({require:require('node:module').createRequire(fixture),__dirname,process,console,Buffer,Date,URL,setTimeout,clearTimeout});
+vm.runInContext(source+'\nthis.factory=engine;this.memoryFactory=memory;',ctx);
+(async()=>{
+ const E=ctx.factory(),f=ctx.memoryFactory(),root=f.db.collection('workspaces').doc('test'),sharp=require('../../node_modules/sharp');
+ const assets={};for(const [shape,width,height] of [['square',600,600],['landscape',1200,628],['portrait',600,750]]){const bytes=await sharp({create:{width,height,channels:3,background:'#ddd'}}).jpeg().toBuffer(),p='Brites_GAds_Creative/test/'+shape+'.jpg';assets[shape]={path:p,width,height,bytes:bytes.length,hash:E.E.creativeHash(bytes.toString('base64'))};f.files.set(p,bytes);}
+ const copy={headlines:['Peach Charm','For Your Favorite Foodie','A Playful Gift'],longHeadlines:['Give a playful peach charm'],descriptions:['Shop the peach charm at Brites Jewelry.','Choose your favorite metal.']},w={context:{itemIds:['shopify_US_1_2'],handle:'charms',feedLabel:'US'},settings:{productId:'1',groupRef:'g'},job:{result:{assets}}};await root.set(w);
+ const item={sourceHash:'source',designReview:{workspaceId:'test',copy,layoutReview:{jobId:'eai_test',reviewVersion:11}}};
+ await root.collection('editorAIJobs').doc('eai_test').collection('data').doc('ad_proofs_v11').set({images:[{width:300,height:250,asset:assets.square},{width:2048,height:2048,asset:assets.square}]});
+ E.bind({fb:()=>f,_adDesignWorkspaceRef:()=>root,_reportContext:async()=>({budgetCurrency:'CAD'}),merchantCenterId:async()=>123,_saveCreativeAsset:async(ws,bytes,name,meta)=>{const p='Brites_GAds_Creative/test/'+name+'.jpg';f.files.set(p,bytes);return {...meta,path:p,bytes:bytes.length,hash:E.E.creativeHash(bytes.toString('base64'))};}});
+ const plan=await E.get('_prepareCampaignStyles')({item,context:{w,product:{id:'1',title:'Peach Charm',url:'https://britesjewelry.com/products/peach',offerIds:['shopify_US_1_2']}},choice:R.selection(R.STYLES,{fixed_display:5,responsive_display:5,pmax:10},['2840']),identity:'a'.repeat(64)});
+ assert.equal(plan.summary.totalDaily,20);assert.equal(plan.summary.campaigns.length,3);
+ const approval={type:'adDesignSubmission',payload:plan.payload,pipelinePlan:plan,pipelineReview:{hash:plan.hash}};
+ E.E.assertCreativeReviewed(approval);assert.throws(()=>E.E.assertCreativeReviewed({...approval,pipelineReview:{hash:'stale'}}));
+ const ops=await E.get('materializeReviewedCreative')(approval),campaigns=ops.filter(o=>o.campaignOperation).map(o=>o.campaignOperation.create);
+ assert.equal(campaigns.length,3);assert(campaigns.every(c=>c.status==='PAUSED'));assert.equal(new Set(campaigns.map(c=>c.resourceName)).size,3);
+ const rda=ops.find(o=>o.adGroupAdOperation?.create.ad.responsiveDisplayAd).adGroupAdOperation.create.ad.responsiveDisplayAd;
+ assert.equal(rda.marketingImages.length,1);assert.equal(rda.squareMarketingImages.length,1);assert(!rda.portraitMarketingImages);assert.equal(rda.controlSpec.enableAutogenVideo,false);
+ assert.equal(ops.filter(o=>o.adGroupAdOperation?.create.ad.imageAd).length,1);
+ const refs=new Set(ops.map(o=>Object.values(o)[0]?.create?.resourceName).filter(Boolean));
+ for(const match of JSON.stringify(ops).matchAll(/customers\/123\/(?:assets|campaigns|campaignBudgets|assetGroups|adGroups)\/-\d+/g))assert(refs.has(match[0]),'unresolved temporary reference '+match[0]);
+ assert(plan.payload.generatedAssets.filter(a=>a.fixed).every(a=>a.asset.bytes<=150*1024&&a.asset.width===300&&a.asset.height===250));
+ console.log('PASS campaign selection, budgets, all three routed builders, fixed-size filtering, disjoint references, frozen approval and image materialization');
+})();

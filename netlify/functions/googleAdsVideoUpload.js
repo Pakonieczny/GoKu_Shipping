@@ -1,9 +1,11 @@
 // REST resumable protocol: https://developers.google.com/google-ads/api/docs/assets/upload-videos
 const {uploadUrl} = require('./googleAdsMotionPublication');
-function createVideoUpload({fetch, headers, customerId, version}) {
+function createVideoUpload({fetch, headers, customerId, version, beforeRequest=async()=>{}, onResponse=async()=>{}}) {
   async function request(url, options) {
+    await beforeRequest();
     const response = await fetch(url, {...options, redirect:'error', timeout:120000});
     const data = await response.json().catch(() => ({}));
+    await onResponse(data,response);
     if (!response.ok) throw Error('Google video upload: '+(data.error?.message || 'HTTP '+response.status));
     return {response, data};
   }

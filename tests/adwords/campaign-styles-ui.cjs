@@ -1,0 +1,11 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict'),{JSDOM}=require('jsdom');
+const html=fs.readFileSync('brites-adwords.html','utf8'),src=html.slice(html.indexOf('function campaignStyleChoices('),html.indexOf('function adApprovalDesignReviewHtml('));
+const dom=new JSDOM('<body></body>'),d=dom.window.document;let requests=0,resolve;
+const c={document:d,elFrom:s=>{const div=d.createElement('div');div.innerHTML=s;return div.firstElementChild;},esc:s=>String(s),adAttr:s=>String(s),adApprovalDesignReviewHtml:()=>'',wireApprovalAllSizes:()=>{},sgCountryText:c=>c.join(', '),btnBusy:b=>{b.disabled=true;return()=>{b.disabled=false;}},api:async()=>{requests++;return await new Promise(r=>resolve=r);},toast:()=>{},reload:async()=>{}};
+vm.createContext(c);vm.runInContext(src,c);
+const card=c.adDesignSubmissionCard({id:'test',summary:'Test'});d.body.append(card);c.wireAdDesignSubmission(card,{id:'test',reviewHash:'h',designReview:{context:{countries:['2840']}}});
+const prepare=card.querySelector('[data-prepare-styles]'),publish=card.querySelector('[data-publish-submission]'),confirm=card.querySelector('[data-submission-confirm]');
+assert.equal(card.querySelectorAll('[data-campaign-style]:checked').length,0);assert(prepare.disabled&&publish.disabled&&confirm.disabled);
+for(const style of ['fixed_display','responsive_display','pmax']){let box=card.querySelector('[data-campaign-style="'+style+'"]');box.checked=true;box.onchange();let input=card.querySelector('[data-style-budget="'+style+'"]');input.value='5';input.oninput();}
+assert(!prepare.disabled);assert(card.querySelector('[data-style-total]').textContent.includes('15.00'));assert.equal(requests,0);
+(async()=>{const pending=prepare.onclick();assert(card.querySelector('fieldset').disabled);resolve({ok:true,planHash:'p',plan:{currency:'CAD',totalDaily:15,campaigns:[],note:'Paused'}});await pending;assert(!confirm.disabled&&publish.disabled);confirm.checked=true;confirm.onchange();assert(!publish.disabled);const box=card.querySelector('[data-campaign-style]');box.checked=false;box.onchange();assert(publish.disabled&&confirm.disabled&&!confirm.checked);assert.equal(requests,1);console.log('PASS required explicit choices, independent budgets, no API on selection, frozen request controls, and invalidated approval after changes');})();

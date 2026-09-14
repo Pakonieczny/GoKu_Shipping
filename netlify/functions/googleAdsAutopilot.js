@@ -1750,6 +1750,7 @@ async function applyApproval(id, ctrl) {
   try {
     const p=it.payload||{};
     if(it.archivedAt||it.deletedAt)throw new Error('This proposed ad was deleted.');
+    if(it.type==='adDesignSubmission'){const w=await _adDesignWorkspaceRef(it.designReview.workspaceId).get();if(!w.exists||_adDesignSelectionHash(w.data())!==it.sourceHash||creativeHash(w.data().context)!==creativeHash(it.designReview.context))throw Error('The design changed after approval. Submit the current version again.');}
     const deleted=await _deletedCampaignIds();for(const campaignId of deleted)if(_approvalForCampaign(it,campaignId))throw new Error('This campaign was deleted.');
     if(_isAdVersionApproval(it))await _guardAdVersionApproval(it);
     if(p.groupSplitGuard)await _guardProductGroupSplit(it);
@@ -9177,6 +9178,7 @@ async function reviewCreativeApproval(id, hash) {
   });return {ok:true,id};
 }
 function assertCreativeReviewed(it) {
+  if(it.type==='adDesignSubmission'){if(!it.pipelinePlan||it.pipelineReview?.hash!==creativeHash(it.payload)||it.pipelinePlan.hash!==it.pipelineReview.hash)throw Error('Review and confirm the selected campaign styles and budgets first.');return;}
   if(_isAdVersionApproval(it)){versionReviewGate.assertVersionReviewed(it,creativeHash,CID);return;}
   if(!needsCreativeReview(it))return;
   const c=it.creative||{},r=c.review||{};
@@ -9203,11 +9205,11 @@ async function _creativeImageOps(pkg, existingOps=[]) {
 }
 async function materializeReviewedCreative(it) {
   assertCreativeReviewed(it);const p=it.payload||{},c=it.creative||{};
-  if(_isAdVersionApproval(it)&&p.generatedAssets&&p.generatedAssets.length){
+  if((_isAdVersionApproval(it)||it.type==='adDesignSubmission')&&p.generatedAssets&&p.generatedAssets.length){
     const ops=[];
     for(const entry of p.generatedAssets){
       const bytes=await _loadCreativeAsset(entry.asset);
-      if(bytes.length!==entry.asset.bytes||bytes.length>5*1024*1024)throw new Error("The reviewed generated image file changed or exceeds Google's limit.");
+      if(bytes.length!==entry.asset.bytes||bytes.length>(entry.fixed?150*1024:5*1024*1024))throw new Error("The reviewed generated image file changed or exceeds Google's limit.");
       const meta=await require("sharp")(bytes).metadata();
       if(meta.width!==entry.asset.width||meta.height!==entry.asset.height)throw new Error("The saved image dimensions differ from the reviewed design.");
       ops.push({assetOperation:{create:{resourceName:entry.tempResourceName,name:("Brites reviewed "+entry.asset.width+"x"+entry.asset.height+" "+entry.asset.hash.slice(0,20)),imageAsset:{data:bytes.toString("base64")}}}});
@@ -9418,7 +9420,7 @@ function _motionPublication(){
   }
   return g;
  };
- const upload=require('./googleAdsVideoUpload').createVideoUpload({fetch,headers:async()=>adsHeaders(await mintToken()),customerId:CID,version:V});
+ const upload=require('./googleAdsVideoUpload').createVideoUpload({fetch,headers:async()=>adsHeaders(await mintToken()),customerId:CID,version:V,beforeRequest:_assertGadsReadAllowed,onResponse:async(data,res)=>{const retryAt=_gadsQuotaDeadline(data,res);if(retryAt){await _saveGadsReadState({retryAt,quotaObservedAt:Date.now()});throw _gadsQuotaError(retryAt);}}});
  _motionPublicationEngine=require('./googleAdsMotionPublication').createPublicationService({fb,context,assertTarget,...upload,
   prepareMerchant:async(job,videos)=>{
    const {w,product}=await _adDesignPublicationContext(job.workspaceId);
@@ -9782,15 +9784,95 @@ async function prepareAdDesignPublication({workspaceId,target='ads',formats=[],i
   });
   return {ok:true,...prepared,merchant:merchant?{field:merchant.field,offerId:merchant.identity.offerId,feedLabel:merchant.identity.feedLabel,contentLanguage:merchant.identity.contentLanguage,productTitle:merchant.productTitle,source:merchant.sourceName}:null,images:previewImages,copy:selection.copy?result.copy:null,newAd:!w.context.campaignId&&target==='ads',newCampaign,message:selection.destination?'Update only this asset group’s desktop and mobile destination to the verified product listing. Campaign URL expansion and inherited assets are separate settings.':target==='merchant'?'This changes the product photo in its existing feed. It remains free of promotional text, logos and borders. The owning store feed may resync its original image.':'Only the selected images and messaging shown here will be updated. Google selects responsive combinations and controls delivery.'};
 }
-async function publishAdDesignSubmission({id,hash,confirmed=false}={}){
-  if(!confirmed||!/^design-review-[a-f0-9]{32}$/.test(String(id||'')))throw new Error('Review and confirm the complete ad first.');
-  const ref=fb().db.collection(COL.approvals).doc(id),row=await ref.get();if(!row.exists)throw new Error('Saved ad review was not found.');const item=row.data(),r=item.designReview;
-  if(item.type!=='adDesignSubmission'||item.status!=='PENDING'||hash!==item.reviewHash)throw new Error('This ad review changed. Reopen Approval.');
-  const {w}=await _adDesignPublicationContext(r.workspaceId);if(_adDesignSelectionHash(w)!==item.sourceHash||creativeHash(w.context)!==creativeHash(r.context))throw new Error('The ad changed after submission. Send the current complete ad to Approval again.');
-  const prepared=await prepareAdDesignPublication({workspaceId:r.workspaceId,target:'ads',formats:r.formats,includeCopy:true});
-  if(prepared.status!=='PENDING')throw new Error(prepared.message||'Check the existing publication status.');
-  const result=await publishAdDesignPublication({workspaceId:r.workspaceId,id:prepared.id,hash:prepared.reviewHash,confirmed:true});
-  await ref.update({status:result.status==='APPLIED'?'APPLIED':'PENDING',publicationId:prepared.id,publicationResult:JSON.parse(JSON.stringify(result))});return result;
+async function publishAdDesignSubmission(input={}){
+  const {id,hash,confirmed=false,prepareOnly=false}=input;
+  if(!/^design-review-[a-f0-9]{32}$/.test(String(id||'')))throw Error('Choose a saved complete-ad approval.');
+  const ref=fb().db.collection(COL.approvals).doc(id),row=await ref.get();if(!row.exists)throw Error('Saved ad review was not found.');
+  const item=row.data(),r=item.designReview;
+  if(item.type!=='adDesignSubmission'||item.status!=='PENDING'||hash!==item.reviewHash)throw Error('This ad review changed. Reopen Approval.');
+  const context=await _adDesignPublicationContext(r.workspaceId),{w,product}=context;
+  if(_adDesignSelectionHash(w)!==item.sourceHash||creativeHash(w.context)!==creativeHash(r.context))throw Error('The ad changed after submission. Send the current complete ad to Approval again.');
+  const routing=require('./googleAdsCampaignStyles');
+  if(prepareOnly){
+    const choice=routing.selection(input.styles,input.budgets,input.countries),identity=creativeHash({sourceHash:item.sourceHash,choice});
+    if(item.pipelinePlan?.identity===identity)return {ok:true,plan:item.pipelinePlan.summary,planHash:item.pipelinePlan.hash,cached:true};
+    const plan=await _prepareCampaignStyles({item,context,choice,identity});
+    await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),latest=await tx.get(_adDesignWorkspaceRef(r.workspaceId));if(_adDesignSelectionHash(latest.data())!==item.sourceHash||current.data()?.status!=='PENDING'||current.data().reviewHash!==hash)throw Error('Approval changed while preparing.');tx.update(ref,{pipelinePlan:plan,payload:plan.payload});});
+    return {ok:true,plan:plan.summary,planHash:plan.hash};
+  }
+  const plan=item.pipelinePlan;
+  if(input.validateOnly===true){
+    if(!plan||input.planHash!==plan.hash||plan.hash!==creativeHash(plan.payload))throw Error('Prepare the selected campaign plan first.');
+    if(plan.validation?.at>Date.now()-300000)return {ok:true,cached:true,message:plan.validation.message};
+    await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),live=current.data();if(live.pipelinePlan?.hash!==plan.hash||live.pipelinePlan?.validationLeaseUntil>Date.now())throw Error('A Google check is already running or cooling down. Wait one minute before checking again.');tx.update(ref,{'pipelinePlan.validationLeaseUntil':Date.now()+60000});});
+    const operations=await materializeReviewedCreative({...item,pipelineReview:{hash:plan.hash}});
+    await mutateAll(require('./googleAdsAdDesign').orderAssetGroupMutations(operations),{validateOnly:true,label:'Check selected campaign styles '+id});
+    const message='Google accepted the campaign structure and assets in validation mode. No campaigns were created. Policy review, billing and actual serving remain separate.';
+    await ref.update({'pipelinePlan.validation':{at:Date.now(),message}});return {ok:true,message};
+  }
+  if(!confirmed||!plan||input.planHash!==plan.hash||plan.hash!==creativeHash(plan.payload))throw Error('Choose campaign styles, review their budgets and confirm the prepared plan first.');
+  if(plan.summary.styles.includes('pmax')){
+    const live=await merchantProducts({force:true,itemIds:plan.payload.meta.itemIds,titles:[product.title]});
+    if(plan.payload.meta.itemIds.some(id=>!live.some(p=>String(p.itemId).toLowerCase()===id.toLowerCase()&&_pmaxIsEligible(p))))throw Error('A selected Merchant product is no longer eligible. Refresh its product status before publishing.');
+  }
+  await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),workspace=await tx.get(_adDesignWorkspaceRef(r.workspaceId));if(current.data()?.status!=='PENDING'||current.data()?.pipelinePlan?.hash!==input.planHash||_adDesignSelectionHash(workspace.data())!==item.sourceHash)throw Error('The reviewed plan changed.');tx.update(ref,{status:'APPROVED',pipelineReview:{hash:plan.hash,at:Date.now()},approvedAt:Date.now()});});
+  const result=await applyApproval(id,await control());
+  return {...result,message:result.status==='APPLIED'?'Selected campaigns were created paused. Google policy review and serving are checked separately.':'Google validated the selected campaigns; dry-run mode kept them unpublished.'};
+}
+async function _prepareCampaignStyles({item,context,choice,identity}){
+  const routing=require('./googleAdsCampaignStyles'),design=require('./googleAdsAdDesign'),{w,product}=context,r=item.designReview,workspaceId=r.workspaceId;
+  const generatedAssets=[],ops=[],summaries=[],placements=design.chosenPlacements(w);let next=-900000;
+  const add=async(asset,shape,fixed=false)=>{routing.validatePhoto && !fixed && routing.validatePhoto(asset,shape);const bytes=await _loadCreativeAsset(asset),meta=await require('sharp')(bytes).metadata();if(bytes.length!==asset.bytes||meta.width!==asset.width||meta.height!==asset.height)throw Error('A reviewed image changed.');const resourceName=`customers/${CID}/assets/${next--}`;generatedAssets.push({tempResourceName:resourceName,asset,fixed});return {resourceName,shape,width:asset.width,height:asset.height};};
+  const photos=[];
+  if(choice.styles.some(s=>s!=='fixed_display'))for(const shape of ['square','landscape',...(choice.styles.includes('pmax')?['portrait']:[])]){
+    const p=placements.find(p=>p.device==='desktop'&&p.format===shape),asset=p?.asset||w.job?.result?.placementAssets?.desktop?.[shape]||w.job?.result?.assets?.[shape];
+    if(p?.artwork)throw Error('Select a clean '+shape+' product photograph for responsive campaigns.');
+    if(p?.productIds?.some(id=>String(id)!==String(product.id)))throw Error('The chosen photo contains another product.');
+    if(!asset&&shape==='portrait')continue;
+    photos.push(await add(asset,shape));
+  }
+  let logo=null;
+  if(photos.length){const bytes=await require('sharp')(Buffer.from(_brandWordmarkSvg())).jpeg({quality:95}).toBuffer();logo=(await add(await _saveCreativeAsset(workspaceId,bytes,'pipeline_logo',{width:600,height:600,kind:'brand logo'}),'logo')).resourceName;}
+  const videoRefs=[],videoLinks=[];
+  if(choice.styles.some(s=>s!=='fixed_display')){
+    const rows=await _adDesignWorkspaceRef(workspaceId).collection('motionJobs').get();
+    const job=rows.docs.map(d=>d.data()).filter(j=>String(j.productId)===String(product.id)&&j.groupRef===r.groupRef&&!j.resetAt).sort((a,b)=>Number(b.createdAt)-Number(a.createdAt))[0];
+    if(job&&job.phase==='ready'&&job.publication?.phase==='attached'&&creativeHash(job.plan?.nativeCopy)===creativeHash(r.copy)&&require('./googleAdsAdMotion').qualityPass(job.quality)&&job.publication.reviewHash===require('./googleAdsMotionPublication').reviewHash(job)){
+      for(const v of job.publication.videos||[]){if(v.state!=='PROCESSED'||!/^[a-zA-Z0-9_-]{11}$/.test(v.videoId||''))continue;const resourceName=`customers/${CID}/assets/${next--}`;ops.push({assetOperation:{create:{resourceName,name:product.title.slice(0,60)+' '+v.key,youtubeVideoAsset:{youtubeVideoId:v.videoId}}}});videoRefs.push(resourceName);videoLinks.push('https://www.youtube.com/watch?v='+v.videoId);}
+    }
+  }
+  const fixed=[];
+  if(choice.styles.includes('fixed_display')){
+    if(!r.layoutReview)throw Error('Save a complete all-size review before publishing fixed Display ads.');
+    const proof=await _adDesignWorkspaceRef(workspaceId).collection('editorAIJobs').doc(r.layoutReview.jobId).collection('data').doc('ad_proofs_v'+r.layoutReview.reviewVersion).get();
+    if(!proof.exists)throw Error('The exact reviewed fixed-size proofs are missing.');
+    for(const image of routing.fixedProofs(proof.data().images)){
+      const source=await _loadCreativeAsset(image.asset);let bytes;
+      for(const quality of [95,90,85,80,75]){bytes=await require('sharp')(source).resize(image.width,image.height,{fit:'fill'}).jpeg({quality,chromaSubsampling:'4:4:4'}).toBuffer();if(bytes.length<=150*1024)break;}
+      if(bytes.length>150*1024)throw Error('The '+image.width+'×'+image.height+' ad exceeds 150 KB. Simplify that layout before publishing.');
+      const asset=await _saveCreativeAsset(workspaceId,bytes,'fixed_'+identity.slice(0,16)+'_'+image.width+'x'+image.height,{width:image.width,height:image.height,kind:'finished display artwork'});
+      fixed.push(await add(asset,null,true));
+    }
+  }
+  const report=await _reportContext(),currency=report.budgetCurrency;
+  let itemIds=[];
+  for(const style of choice.styles){
+    const name='Brites · '+product.title.slice(0,60)+' · '+routing.NAMES[style]+' · '+identity.slice(0,8);let lane;
+    if(style==='pmax'){
+      itemIds=(product.offerIds||[product.itemId]).filter(Boolean).filter(id=>(w.context.itemIds||[]).some(x=>String(x).toLowerCase()===String(id).toLowerCase()));
+      if(!itemIds.length)throw Error('Choose the exact Merchant offers for this product before preparing Performance Max.');
+      const built=buildPmaxCampaignOps({handle:w.context.handle||'product',title:product.title},{dailyBudget:choice.budgets[style],merchantId:await merchantCenterId(),feedLabel:w.context.feedLabel,itemIds,countries:choice.countries,combinedCreativeGroup:true,productDestination:product.url,productTitle:product.title,adCopy:r.copy,imageAssets:{logo,square:photos.filter(p=>p.shape==='square').map(p=>p.resourceName),landscape:photos.filter(p=>p.shape==='landscape').map(p=>p.resourceName),portrait:photos.filter(p=>p.shape==='portrait').map(p=>p.resourceName)}});
+      lane=built.ops;const target=lane.find(o=>o.assetGroupOperation).assetGroupOperation.create.resourceName;videoRefs.forEach(asset=>lane.push({assetGroupAssetOperation:{create:{assetGroup:target,asset,fieldType:'YOUTUBE_VIDEO'}}}));lane.find(o=>o.campaignOperation).campaignOperation.create.name=name;
+    }else lane=routing.displayOps({customerId:CID,style,name,dailyBudget:choice.budgets[style],countries:choice.countries,destination:product.url,images:style==='fixed_display'?fixed:photos,copy:r.copy,logo,videos:videoRefs});
+    // Keep temporary IDs disjoint between campaign lanes while sharing image assets.
+    const offset=(choice.styles.indexOf(style)+1)*10000;
+    lane=JSON.parse(JSON.stringify(lane).replace(/(customers\/\d+\/(?:campaigns|campaignBudgets|adGroups|assetGroups|assets)\/)-(\d+)/g,(m,p,n)=>Number(n)>=900000?m:p+'-'+(Number(n)+offset)).replace(/(assetGroupListingGroupFilters\/)-(\d+)~-(\d+)/g,(m,p,a,b)=>p+'-'+(Number(a)+offset)+'~-'+(Number(b)+offset)));
+    const days=Number(w.context.days),endDate=Number.isFinite(days)&&days>0?new Date(Date.parse((report.accountToday||new Date().toISOString().slice(0,10))+'T12:00:00Z')+(Math.ceil(days)-1)*86400000).toISOString().slice(0,10):null;
+    Object.assign(lane.find(o=>o.campaignOperation).campaignOperation.create,_campaignScheduleFields(null,endDate));
+    ops.push(...lane);summaries.push({style,name,endDate,dailyBudget:choice.budgets[style],formats:style==='fixed_display'?fixed.map(p=>p.width+'×'+p.height):style==='pmax'?photos.map(p=>p.shape):['square','landscape']});
+  }
+  const payload={mutateOperations:ops,generatedAssets,meta:{budgetCurrency:currency,itemIds,adDesignWorkspaceId:workspaceId,campaignStyles:choice.styles}},hash=creativeHash(payload);
+  return {identity,hash,payload,summary:{...choice,currency,campaigns:summaries,videoLinks,videoStatus:videoLinks.length?'Matching reviewed YouTube videos are included.':'No matching completed YouTube upload is available for this design. Video placements are not ready; complete and publish its animation before enabling the campaign.',status:'PAUSED',destination:product.url,note:'Each selected style creates a separate paused campaign with its own budget. Existing campaigns are unchanged. Videos require their own completed upload and attachment review.'}};
 }
 async function publishAdDesignPublication({workspaceId,id,hash,confirmed=false}={}){
   if(!confirmed||!/^publish_[a-f0-9]{32}$/.test(String(id||'')))throw new Error('Review and confirm this exact update first.');
