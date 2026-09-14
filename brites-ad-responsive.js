@@ -8,7 +8,7 @@
   function selectImage(plan,images,board){const f=family(board);return images.find(i=>i.forFamilies?.includes(f))||images[0];}
   // Design at the actual viewing width, then export at the requested resolution.
   // A 2048px master must not turn a 36px CTA into a 6px mobile label.
-  const layoutVersion=19;
+  const layoutVersion=20;
   const brands=typeof module==='object'&&module.exports?require('./brites-brand-assets'):root.BritesBrandAssets;
   function document(plan,image,board,device="mobile"){
     const master=['square','landscape','portrait'].includes(board.key),factor=master?board.width/Math.min(board.width,360):1;
@@ -68,7 +68,7 @@
     function bottomFade(y,height){const rgb=style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)).join(',');objects.push(base('photo_caption_fade','shape',{type:'Rect',left:0,top:y,width:W,height,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:0,y2:1},colorStops:[{offset:0,color:'rgba('+rgb+',0)'},{offset:.55,color:'rgba('+rgb+',.4)'},{offset:1,color:'rgba('+rgb+',1)'}]}}));}
     function fullBleedLandscape(){
       if(board.key!=='landscape'||style.treatment!=='soft-fade'||!image.focus)return false;
-      const q=image.focus,scale=Math.max(W/image.width,H/image.height),cw=W/scale,ch=H/scale;
+      const q=image.focus,scale=Math.max(W/image.width,H/image.height,Math.min(W*.48/(image.width*q.width*1.04),H*.94/(image.height*q.height*1.04))),cw=W/scale,ch=H/scale;
       const cx=clamp(image.width*(q.x+q.width/2)-cw*.66,0,image.width-cw),cy=clamp(image.height*(q.y+q.height/2)-ch/2,0,image.height-ch);
       const subject={left:(image.width*q.x-cx)*scale,top:(image.height*q.y-cy)*scale,width:image.width*q.width*scale,height:image.height*q.height*scale},pad=Math.max(6,W*.025),tw=Math.min(W*.44,subject.left-pad*2);
       if(tw<76||subject.top<0||subject.top+subject.height>H)return false;
@@ -93,15 +93,15 @@
       const pad=Math.max(6,Math.min(22,W*.045)),gap=Math.max(5,Math.min(12,H*.025));
       const bw=narrow?W-pad*2:Math.min(side?W*.42:W*.66,Math.max(96,copy.cta.length*(style.preserveSavedStyle?9:7)+24)),bh=Math.min(44,Math.max(32,H*.1));
       const row=false,tw=side?W*.47-pad*2:row?W-bw-pad*3:W-pad*2;
-      let headline=(style.preserveSavedStyle&&!narrow&&W>=320)||side&&W>=320?copy.headline:copy.shortHeadline,hs=side?Math.min(36,Math.max(22,W*.055)):Math.min(narrow?40:30,Math.max(21,W*(narrow?.12:.085)));
+      let headline=copy.shortHeadline,hs=side?Math.min(36,Math.max(22,W*.055)):Math.min(narrow?40:30,Math.max(21,W*(narrow?.12:.085)));
       if(lines(headline,tw,hs)>3)headline=copy.shortHeadline;
       hs=Math.min(hs,tw/(Math.max(...headline.split(/\s+/).map(w=>w.length))*.67));
-      const hh=lines(headline,tw,hs)*hs*1.24,brand=true,brandH=brand?16:0,bodySize=side?Math.min(18,W*.03):14;
+      const hh=lines(headline,tw,hs)*hs*1.24,brand=true,brandH=brand?16:0,bodySize=side?Math.max(14,Math.min(18,W*.03)):14;
       const bodyH=lines(description,tw,bodySize)*bodySize*1.3,body=(side||style.preserveSavedStyle&&!narrow&&H>=400)&&bodyH<=H*.17&&brandH+hh+bodyH+bh+gap*4<H*.86;
       const total=brandH+(brand?gap:0)+hh+(body?bodyH+gap:0)+(row?0:bh+gap);let top=side?Math.max(pad,(H-total)/2):H-pad-Math.max(total,row?bh:0);
       if(!side&&top<H*.50)return false;
       const region=side?{left:W*.55,top:pad,width:W*.45-pad,height:H-pad*2}:{left:pad,top:pad,width:W-pad*2,height:top-pad*2};
-      const scale=Math.max(W/image.width,side?H/image.height:0,Math.min(region.width/(image.width*focus.width*(narrow?1.08:1.16)),region.height/(image.height*focus.height*1.16)));
+      const scale=Math.max(W/image.width,side?H/image.height:0,Math.min(region.width/(image.width*focus.width*1.04),region.height/(image.height*focus.height*1.04)));
       const cw=W/scale;let ch=Math.min(image.height,(side?H:top)/scale),cx=clamp(image.width*(focus.x+focus.width/2)-(region.left+region.width/2)/scale,0,image.width-cw),cy=clamp(image.height*(focus.y+focus.height/2)-(region.top+region.height/2)/scale,0,image.height-ch);
       const subject={left:(image.width*focus.x-cx)*scale,top:(image.height*focus.y-cy)*scale,width:image.width*focus.width*scale,height:image.height*focus.height*scale};
       if(subject.left<region.left||subject.top<region.top||subject.left+subject.width>region.left+region.width||subject.top+subject.height>region.top+region.height)return false;
