@@ -18,6 +18,7 @@
   notice.querySelector('small').setAttribute('aria-live','off');
   notice.querySelector('small').textContent=duration(age)+' elapsed · '+(age>60000?'Taking longer than usual. Waiting for a response; completion is not confirmed.':'Waiting for the server response');
  }
+ function reset(p){if(!p)return;const key=(p.closest('[id]')?.id||'page')+'|'+p.getAttribute('aria-label');histories.delete(key);delete p._bp;if(p.nextElementSibling?.classList.contains('bp-note'))p.nextElementSibling.hidden=true;}
  function enhance(){
   document.querySelectorAll('progress').forEach(p=>{
    if(p.closest('[data-bp-managed]'))return;
@@ -34,6 +35,6 @@
   for(const [key,h] of histories)if(Date.now()-h.seen>10000)histories.delete(key);
   document.querySelectorAll('.bp-note').forEach(n=>{if(n.previousElementSibling?.tagName!=='PROGRESS')n.remove();else if(n.previousElementSibling.hidden)n.hidden=true;});
  }
- root.BritesProgress={begin,duration};
+ root.BritesProgress={begin,duration,reset};
  setInterval(()=>{render();enhance();},500);
 })(window);
