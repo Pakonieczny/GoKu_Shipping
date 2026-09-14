@@ -700,7 +700,7 @@ function createAdDesignService(deps) {
         return {...generated,bytes:undefined,asset};
       });
       await recordCost(key,row);const asset=row.asset,id='generated_'+sha(asset.path).slice(0,32),sourceId='scene_'+sha([workspaceId,jobId,key]).slice(0,40),source={id:sourceId,productId:request.productId,groupRef:request.groupRef,title:product.title+' · '+spec.key+' scene',width:asset.width,height:asset.height,asset,source:{kind:'library',imageId:id}};
-      await ref.collection('editorSources').doc(sourceId).set(clean(source));const image={id,kind:'generated',format:shape,productIds:[request.productId],ownerProductId:request.productId,groupRef:request.groupRef,title:product.title,asset,createdAt:row.receivedAt||Date.now(),jobId};await ref.collection('imageLibrary').doc(id).set(clean(image));await archiveGenerated(w,image);
+      await ref.collection('editorSources').doc(sourceId).set(clean(source));const image={id,kind:'generated',origin:'ad-package',format:shape,productIds:[request.productId],ownerProductId:request.productId,groupRef:request.groupRef,title:product.title,asset,createdAt:row.receivedAt||Date.now(),jobId};await ref.collection('imageLibrary').doc(id).set(clean(image));await archiveGenerated(w,image);
       sources.push(source);images.push({id:sourceId,width:asset.width,height:asset.height,focalX:.5,focalY:.5,forFamilies:spec.families,forBoards:spec.boards,sceneKey:spec.key});files.push(await deps.loadAsset(asset));
       if(Date.now()>sceneDeadline)return {continue:true};
     }
