@@ -8,7 +8,7 @@
   function selectImage(plan,images,board){const f=family(board);return images.find(i=>i.forFamilies?.includes(f))||images[0];}
   // Design at the actual viewing width, then export at the requested resolution.
   // A 2048px master must not turn a 36px CTA into a 6px mobile label.
-  const layoutVersion=21;
+  const layoutVersion=22;
   const brands=typeof module==='object'&&module.exports?require('./brites-brand-assets'):root.BritesBrandAssets;
   function document(plan,image,board,device="mobile"){
     const master=['square','landscape','portrait'].includes(board.key),factor=master?board.width/Math.min(board.width,360):1;
@@ -129,11 +129,12 @@
       photograph({left:0,top:0,width:pw,height:H});
       // A dedicated brand column lets the actual icon occupy most of a short
       // banner's height instead of becoming a tiny inline text decoration.
-      const icon=brands?.get('brites_brand_icon'),ih=Math.min(72,H*.72),iw=ih*789/592,logoGap=Math.max(8,H*.06),tw=W-tx-right-(icon?iw+logoGap:0);
-      const bs=Math.max(13,Math.min(24,H*.15)),headline=compactHeadline,hs=Math.max(16,Math.min(H*.38,42,tw/(Math.max(1,headline.length)*.59))),hh=lines(headline,tw,hs)*hs*1.18;
+      const icon=brands?.get('brites_brand_icon'),ih=H<=60?H*.72:Math.min(W<=320?48:72,H*.65),iw=ih*789/592,logoGap=Math.max(8,H*.06),tw=W-tx-right-(icon?iw+logoGap:0);
+      const bs=Math.max(14,Math.min(26,H*.22)),headline=compactHeadline,hs=Math.max(16,Math.min(H*.38,42,tw/(Math.max(1,headline.length)*.59))),hh=lines(headline,tw,hs)*hs*1.18;
       const brandH=bs*1.3,gap=Math.max(3,H*.045),total=hh+brandH+gap,y=Math.max(2,(H-total)/2);
       text('headline',headline,tx,y,tw,hh,hs,'headline',style.headlineFont);
       text('brand','Brites Jewelry',tx,y+hh+gap,tw,brandH,bs,'brand');
+      for(const o of objects)if(o.type==='Textbox')o.textAlign='center';
       if(icon)objects.push(base('brand_icon','brand',{type:'Image',sourceKey:icon.id,left:W-right-iw,top:(H-ih)/2,width:icon.width,height:icon.height,scaleX:iw/icon.width,scaleY:ih/icon.height}));
       // The ad itself is clickable. Product identity and branding take precedence
       // over a large button or optional claims in narrow placements.
