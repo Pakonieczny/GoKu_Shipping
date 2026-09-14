@@ -1231,6 +1231,7 @@ async function recordOrderEvent(ev) {
       financialStatus:ev.financialStatus||(prior&&prior.financialStatus)||null,cancelledAt:ev.cancelledAt||(prior&&prior.cancelledAt)||null,test:ev.test!=null?!!ev.test:!!(prior&&prior.test),
       source: ev.source || (prior&&prior.source) || null, medium: ev.medium || (prior&&prior.medium) || null,
       campaign: ev.campaign || (prior&&prior.campaign) || null,
+      ...Object.fromEntries(["campaignId","adGroupId","adId","pipeline","designId"].map(k=>[k,ev[k]||(prior&&prior[k])||null])),
       hasClickId, captured, reason: captured ? (ev.reason || (prior&&prior.reason) || "captured — Google ad click") : (ev.reason || (prior&&prior.reason) || null),
       items:useItems, itemCount:items.length?itemCount:((prior&&prior.itemCount)||itemCount), products:useItems.map(i=>i.title),
       handle: ev.handle || (prior&&prior.handle) || null, at: f.FV.serverTimestamp(), ts: Number((prior&&prior.ts)||ev.ts)||Date.now(), updatedTs:Date.now()
@@ -1244,7 +1245,7 @@ async function recentOrders({ limit = 25 } = {}) {
   const f = fb(); if (!f) return [];
   try {
     const q = await f.db.collection(COL.orderLog).orderBy("ts", "desc").limit(Math.min(250, limit)).get();
-    const out = []; q.forEach(d => { const x = d.data(); out.push({ id: d.id, orderId: x.orderId, orderNumericId: x.orderNumericId, value: x.value, netValue: x.netValue, financialStatus: x.financialStatus, cancelledAt: x.cancelledAt, test: x.test, currency: x.currency, source: x.source, medium: x.medium, campaign: x.campaign, captured: x.captured, hasClickId: x.hasClickId, reason: x.reason, items: x.items || ((x.products || []).map(t => ({ title: t, qty: 1 }))), itemCount: x.itemCount != null ? x.itemCount : ((x.products || []).length), handle: x.handle, ts: x.ts }); });
+    const out = []; q.forEach(d => { const x = d.data(); out.push({ id: d.id, orderId: x.orderId, orderNumericId: x.orderNumericId, value: x.value, netValue: x.netValue, financialStatus: x.financialStatus, cancelledAt: x.cancelledAt, test: x.test, currency: x.currency, source: x.source, medium: x.medium, campaign: x.campaign, campaignId:x.campaignId,adGroupId:x.adGroupId,adId:x.adId,pipeline:x.pipeline,designId:x.designId, captured: x.captured, hasClickId: x.hasClickId, reason: x.reason, items: x.items || ((x.products || []).map(t => ({ title: t, qty: 1 }))), itemCount: x.itemCount != null ? x.itemCount : ((x.products || []).length), handle: x.handle, ts: x.ts }); });
     return out;
   } catch (e) { return []; }
 }
@@ -1397,7 +1398,7 @@ async function backfillOrders({ limit = 100, days = 365, pages = 4 } = {}) {
       : (campaign === "sag_organic" ? "organic — free Google listing (sag_organic)"
          : (source ? `source — ${source}/${medium || "unknown"}` : "unknown attribution / no Google click id"));
     const row = { orderId, orderName: orderName || null, orderNumericId: numericId || null, value, currency, source: source || null, medium: medium || null, campaign: campaign || null,
-      hasClickId: captured, captured, reason, items, itemCount, products: items.map(i => i.title), handle: handle || null,
+      ...require('./googleAdsCampaignStyles').attribution(fv.landingPage,attrs),hasClickId: captured, captured, reason, items, itemCount, products: items.map(i => i.title), handle: handle || null,
       financialStatus:n.displayFinancialStatus||null,cancelledAt:n.cancelledAt||null,test:n.test===true,lineItemsComplete:!(n.lineItems&&n.lineItems.pageInfo&&n.lineItems.pageInfo.hasNextPage),netValue:n.currentTotalPriceSet&&n.currentTotalPriceSet.shopMoney?Math.max(0,Number(n.currentTotalPriceSet.shopMoney.amount)||0):value,
       ts: n.createdAt ? Date.parse(n.createdAt) : Date.now(), backfill: true };
     if (prior) {
@@ -1413,6 +1414,7 @@ async function backfillOrders({ limit = 100, days = 365, pages = 4 } = {}) {
       if (!prior.data.source && row.source) patch.source = row.source;
       if (!prior.data.medium && row.medium) patch.medium = row.medium;
       if (!prior.data.campaign && row.campaign) patch.campaign = row.campaign;
+      for(const field of ["campaignId","adGroupId","adId","pipeline","designId"])if(!prior.data[field]&&row[field])patch[field]=row[field];
       if (!prior.data.handle && row.handle) patch.handle = row.handle;
       if (!_merchantOrganic(prior.data) && _merchantOrganic(row)) Object.assign(patch, { source: row.source, medium: row.medium, campaign: row.campaign, reason: row.reason });
       if (Object.keys(patch).length) updates.push({ ref: prior.ref, patch: Object.assign(patch, { enrichedAt: f.FV.serverTimestamp() }) });
@@ -9868,7 +9870,7 @@ async function _prepareCampaignStyles({item,context,choice,identity}){
     const offset=(choice.styles.indexOf(style)+1)*10000;
     lane=JSON.parse(JSON.stringify(lane).replace(/(customers\/\d+\/(?:campaigns|campaignBudgets|adGroups|assetGroups|assets)\/)-(\d+)/g,(m,p,n)=>Number(n)>=900000?m:p+'-'+(Number(n)+offset)).replace(/(assetGroupListingGroupFilters\/)-(\d+)~-(\d+)/g,(m,p,a,b)=>p+'-'+(Number(a)+offset)+'~-'+(Number(b)+offset)));
     const days=Number(w.context.days),endDate=Number.isFinite(days)&&days>0?new Date(Date.parse((report.accountToday||new Date().toISOString().slice(0,10))+'T12:00:00Z')+(Math.ceil(days)-1)*86400000).toISOString().slice(0,10):null;
-    Object.assign(lane.find(o=>o.campaignOperation).campaignOperation.create,_campaignScheduleFields(null,endDate));
+    Object.assign(lane.find(o=>o.campaignOperation).campaignOperation.create,_campaignScheduleFields(null,endDate),{finalUrlSuffix:'utm_source=google&utm_medium=cpc&utm_campaign={campaignid}&bt_pipeline='+style+'&bt_design='+identity+(style==='pmax'?'':'&bt_group={adgroupid}&bt_ad={creative}')});
     ops.push(...lane);summaries.push({style,name,endDate,dailyBudget:choice.budgets[style],formats:style==='fixed_display'?fixed.map(p=>p.width+'×'+p.height):style==='pmax'?photos.map(p=>p.shape):['square','landscape']});
   }
   const payload={mutateOperations:ops,generatedAssets,meta:{budgetCurrency:currency,itemIds,adDesignWorkspaceId:workspaceId,campaignStyles:choice.styles}},hash=creativeHash(payload);

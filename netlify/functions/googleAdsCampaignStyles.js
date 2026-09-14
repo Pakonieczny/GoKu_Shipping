@@ -35,4 +35,10 @@ function displayOps({customerId,style,name,dailyBudget,countries,destination,ima
   }
   return ops;
 }
-module.exports={STYLES,NAMES,FIXED_SIZES,selection,fixedProofs,validatePhoto,displayOps};
+function attribution(url,attributes=[]){
+  let query;try{query=new URL(url||'', 'https://invalid.example').searchParams;}catch(_){query=new URLSearchParams();}
+  const get=k=>String(attributes.find(a=>String(a.key||a.name).toLowerCase()===k)?.value||query.get(k)||'');
+  const id=k=>/^\d+$/.test(get(k))?get(k):null,style=get('bt_pipeline');
+  return {campaignId:id('utm_campaign'),adGroupId:id('bt_group'),adId:id('bt_ad'),pipeline:STYLES.includes(style)?style:null,designId:/^[a-f0-9]{8,64}$/.test(get('bt_design'))?get('bt_design'):null};
+}
+module.exports={attribution,STYLES,NAMES,FIXED_SIZES,selection,fixedProofs,validatePhoto,displayOps};
