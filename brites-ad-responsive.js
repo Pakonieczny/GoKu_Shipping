@@ -8,7 +8,7 @@
   function selectImage(plan,images,board){const f=family(board);return images.find(i=>i.forBoards?.includes(board.key))||images.find(i=>i.forFamilies?.includes(f))||images[0];}
   // Design at the actual viewing width, then export at the requested resolution.
   // A 2048px master must not turn a 36px CTA into a 6px mobile label.
-  const layoutVersion=30;
+  const layoutVersion=31;
   const brands=typeof module==='object'&&module.exports?require('./brites-brand-assets'):root.BritesBrandAssets;
   // The scene catalog matches meaningful crop families rather than charging for
   // every output size. Slim skyscrapers may receive an extra composition.
@@ -37,7 +37,7 @@
     const s=p.scaleX,subject={x:p.left+(f.x*image.width-(p.cropX||0))*s,y:p.top+(f.y*image.height-(p.cropY||0))*s,w:f.width*image.width*s,h:f.height*image.height*s};
     const layers=objects.filter(o=>['headline','description','brand','button'].includes(o.editorRole)),box=o=>({x:o.left,y:o.top,w:o.width*(o.scaleX||1),h:o.height*(o.scaleY||1)}),boxes=layers.map(box);
     const left=Math.min(...boxes.map(b=>b.x)),right=Math.max(...boxes.map(b=>b.x+b.w)),top=Math.min(...boxes.map(b=>b.y));
-    const gap=Math.max(1,Math.min(W,H)*.005),axis=right<=subject.x-gap?'left':left>=subject.x+subject.w+gap?'right':top>=subject.y+subject.h+gap?'bottom':null;
+    const gap=board.key==='landscape'?W*.025:Math.max(1,Math.min(W,H)*.005),axis=right<=subject.x-gap?'left':left>=subject.x+subject.w+gap?'right':top>=subject.y+subject.h+gap?'bottom':null;
     if(!axis)return {mode:'legacy',reason:'The protected product and the messaging region need separate space.'};
     const rgb=style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16));
     // Choose opacity against both black and white underlying pixels, rather than
@@ -139,8 +139,8 @@
     function bottomFade(y,height){const rgb=style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)).join(',');objects.push(base('photo_caption_fade','shape',{type:'Rect',left:0,top:y,width:W,height,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:0,y2:1},colorStops:[{offset:0,color:'rgba('+rgb+',0)'},{offset:.55,color:'rgba('+rgb+',.4)'},{offset:1,color:'rgba('+rgb+',1)'}]}}));}
     function fullBleedLandscape(){
       if(board.key!=='landscape'||style.treatment!=='soft-fade'||!image.focus)return false;
-      const q=image.focus,scale=Math.max(W/image.width,H/image.height,Math.min(W*.43/(image.width*q.width*1.04),H*.86/(image.height*q.height*1.04))),cw=W/scale,ch=H/scale;
-      const cx=clamp(image.width*(q.x+q.width/2)-cw*.66,0,image.width-cw),cy=clamp(image.height*(q.y+q.height/2)-ch/2,0,image.height-ch);
+      const q=image.focus,scale=Math.max(W/image.width,H/image.height,Math.min(W*.36/(image.width*q.width*1.04),H*.86/(image.height*q.height*1.04))),cw=W/scale,ch=H/scale;
+      const cx=clamp(image.width*(q.x+q.width/2)-cw*.74,0,image.width-cw),cy=clamp(image.height*(q.y+q.height/2)-ch/2,0,image.height-ch);
       const subject={left:(image.width*q.x-cx)*scale,top:(image.height*q.y-cy)*scale,width:image.width*q.width*scale,height:image.height*q.height*scale},pad=Math.max(6,W*.025),tw=Math.min(W*.44,subject.left-pad*2);
       if(tw<76||subject.top<0||subject.top+subject.height>H)return false;
       objects.push(base('product_scene','photo',{type:'Image',sourceKey:image.id,left:0,top:0,width:cw,height:ch,cropX:cx,cropY:cy,scaleX:scale,scaleY:scale}));
