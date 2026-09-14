@@ -262,6 +262,7 @@
     "googleAdsAdDesignResearch.js",
     "googleAdsAdKeywordResearch.js",
     "googleAdsAdMotion.js",
+    "googleAdsEvaluation.js",
     "googleAdsAdQuality.js",
     "googleAdsAutopilot.js",
     "googleAdsDataManager.js",

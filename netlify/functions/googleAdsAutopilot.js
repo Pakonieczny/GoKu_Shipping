@@ -9372,6 +9372,28 @@ async function startAdDesignMotion(input){return _motionEngine().start(input);}
 async function adDesignMotionStatus(input){return _motionEngine().status(input);}
 async function runAdDesignMotion(input){return _motionEngine().run(input);}
 
+function _evaluationEngine(){return require('./googleAdsEvaluation').createEvaluationService({db:()=>fb().db,ref:_adDesignWorkspaceRef,review:_designEngineAdapters().reviewImages,
+ load:async a=>{if(!a?.path?.startsWith('Brites_GAds_Motion/'))return _loadCreativeAsset(a);if(!/^Brites_GAds_Motion\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+\.jpg$/.test(a.path))throw Error('Invalid saved review frame.');const [b]=await fb().admin.storage().bucket().file(a.path).download();if(creativeHash(b.toString('base64'))!==a.hash)throw Error('Saved frame changed.');return b;},
+ source:async input=>{
+  if(!['static','animated'].includes(input.kind))throw Error('Choose static or animated ads.');
+  const state=input.kind==='static'?await adDesignEditorAIStatus({...input,allSizes:true,includeReview:true}):await adDesignMotionStatus(input);
+  if(!state.jobId||!state.quality||['queued','running'].includes(state.phase))throw Error('Wait for a completed saved ad set before evaluating.');
+  const workspaceId=state.workspaceId||input.workspaceId,ref=_adDesignWorkspaceRef(workspaceId);
+  let snapshot;
+  if(input.kind==='static'){
+   const data=ref.collection('editorAIJobs').doc(state.jobId).collection('data'),proof=(await data.doc('ad_proofs_v'+state.reviewVersion).get()).data(),request=(await data.doc('request').get()).data(),candidate=(await data.doc('candidate').get()).data(),evidence=(await data.doc('evidence').get()).data();
+   if(!proof?.images?.length||!request||!candidate)throw Error('Exact saved review images are unavailable. No artwork was regenerated.');
+   snapshot={references:(request.identitySources||request.sources).map(s=>s.asset),files:proof.images.map(p=>p.asset),proofHash:proof.proofHash,candidateHash:proof.candidateHash,brief:{reviewType:'complete_ad',research:evidence||{},copy:candidate.responsive?.plan?.copy||{},nativeCopy:candidate.nativeCopy||{},product:{id:input.productId,title:candidate.sources?.[0]?.title||''},renderedFormats:proof.images.map(({key,width,height,displayWidth,displayHeight})=>({key,width,height,...(displayWidth?{displayWidth,displayHeight}:{})})),placementNote:'Re-evaluate these exact saved final proofs. Do not assume later template edits are present.'}};
+  }else{
+   const j=(await ref.collection('motionJobs').doc(state.jobId).get()).data();if(!j?.variants?.length||!j.originalSources?.length)throw Error('Saved video review frames are unavailable.');
+   snapshot={references:j.originalSources.map(s=>s.asset),files:j.variants.flatMap(v=>v.frames),videoAssets:j.variants.map(v=>v.asset),brief:{reviewType:'complete_ad',copy:j.plan?.nativeCopy||{},product:j.title||'',research:j.research||{},motionReview:'Evaluate the exact saved chronological captioned video frames. Native Google controls supply the clickable action. Do not require a drawn button. A sampled review cannot establish continuous motion or Google approval.',renderedFormats:j.variants.flatMap(v=>v.frames.map((_,i)=>({key:v.key,width:v.width,height:v.height,second:[.3,1.5,3.5,5,7.5,9.5][i]})))}};
+  }
+  return {ref,workspaceId,jobId:state.jobId,snapshot:JSON.parse(JSON.stringify(snapshot))};
+ }});}
+async function startAdEvaluation(input){return _evaluationEngine().start(input);}
+async function adEvaluationStatus(input){return _evaluationEngine().status(input);}
+async function runAdEvaluation(input){return _evaluationEngine().run(input);}
+
 let _motionPublicationEngine;
 function _motionPublication(){
  if(_motionPublicationEngine)return _motionPublicationEngine;
@@ -9834,7 +9856,7 @@ async function runAnalyzeAd(input) { return _analysisEngine().runAnalyzeAd(input
 
 module.exports = {
   adGroups, adGroupDetail, adDesignSavedWorkspaces, draftAdGroupSplit, draftAdGroupActivation,
-  startAdMotionPublication, runAdMotionPublication, verifyAdMotionPublication, startAdDesignMotion, adDesignMotionStatus, runAdDesignMotion, adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, cropAdDesignImage, adDesignEditorSource, adDesignEditorState, adDesignResponsiveState, saveAdDesignEditor, startAdDesignEditorAI, adDesignEditorAIStatus, resumeAdDesignEditorAI, applyAdDesignEditorScene, runAdDesignEditorAI, exportAdDesignEditor, adDesignSavedDesigns, openAdDesignSavedDesign, deleteAdDesignSavedDesign, deleteAdDesignGeneratedImage, adDesignGooglePreview, uploadAdDesignReference, resetAdDesignFailures, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages, adDesignGalleryPage, saveAdDesignCopy, adDesignDelivery, prepareAdDesignPublication, publishAdDesignSubmission, publishAdDesignPublication,
+  startAdEvaluation, adEvaluationStatus, runAdEvaluation, startAdMotionPublication, runAdMotionPublication, verifyAdMotionPublication, startAdDesignMotion, adDesignMotionStatus, runAdDesignMotion, adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, cropAdDesignImage, adDesignEditorSource, adDesignEditorState, adDesignResponsiveState, saveAdDesignEditor, startAdDesignEditorAI, adDesignEditorAIStatus, resumeAdDesignEditorAI, applyAdDesignEditorScene, runAdDesignEditorAI, exportAdDesignEditor, adDesignSavedDesigns, openAdDesignSavedDesign, deleteAdDesignSavedDesign, deleteAdDesignGeneratedImage, adDesignGooglePreview, uploadAdDesignReference, resetAdDesignFailures, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages, adDesignGalleryPage, saveAdDesignCopy, adDesignDelivery, prepareAdDesignPublication, publishAdDesignSubmission, publishAdDesignPublication,
   reviseCreativeApproval, markApprovalApproved, needsCreativeReview, prepareCreativeApproval, creativeApprovalStatus, reviewCreativeApproval, assertCreativeReviewed, creativeHash,
   COL, V, CID, OPPORTUNITY_ENGINE_VERSION, DESIGN_STUDIO_ENGINE_VERSION, DESIGN_STUDIO_URL,
   control, mintToken, gaql, mutate, mutateAll,
