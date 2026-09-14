@@ -457,7 +457,7 @@
         while(!run.result){
           if(this.disposed)return;
           let status;try{status=await this.request('adDesignEditorAIStatus',{...run.scope,jobId:run.jobId});failures=0;}catch(e){if(++failures>2)throw e;run.progress={...run.progress,label:'Reconnecting to your saved design…'};this.updateAI(run);await new Promise(r=>setTimeout(r,Math.min(60000,10000*2**failures)));continue;}
-          run.startedAt=status.startedAt||run.startedAt||Date.now();run.cost=status.cost;run.quality=status.quality;run.hasSavedResponse=status.hasSavedResponse===true;run.canDismiss=status.phase==='needs_attention'&&status.canRetry===true;run.progress=status.progress?{...status.progress,pct:Math.min(91,status.progress.pct)}:run.progress;this.updateAI(run);
+          run.startedAt=status.startedAt||run.startedAt||Date.now();run.cost=status.cost;run.quality=status.quality;run.hasSavedResponse=status.hasSavedResponse===true;run.canDismiss=status.phase==='needs_attention'&&status.canRetry===true;run.progress=status.progress?{...status.progress,pct:Math.min(99,status.progress.pct)}:run.progress;this.updateAI(run);
           if(status.reset&&status.phase==='idle'){this.aiRuns.delete(run.key);this.renderInspector();this.status('Failed AI state reset. Your artwork is unchanged.','success');return;}
           if(status.phase==='awaiting_review'&&status.candidate){run.progress={pct:92,label:'Rendering image + messaging across every ad size…'};this.updateAI(run);const proofs=await this.renderAIProofs(status.candidate);await this.request('resumeAdDesignEditorAI',{...run.scope,jobId:run.jobId,candidateHash:status.candidate.candidateHash,reviewProofs:proofs});continue;}
           if(status.phase==='ready'&&status.result){run.result=status.result;break;}
@@ -466,7 +466,7 @@
           const signature=JSON.stringify([status.phase,status.progress]);unchanged=signature===lastProgress?unchanged+1:0;lastProgress=signature;
           await new Promise(r=>setTimeout(r,document.hidden?60000:Math.min(30000,10000+unchanged*5000)));
         }
-        this.aiWorking=false;this.syncButtons();run.progress={pct:92,label:'Checking fonts, layout and editable layers…'};this.updateAI(run);
+        this.aiWorking=false;this.syncButtons();run.progress={pct:98,label:'Checking fonts, layout and editable layers…'};this.updateAI(run);
         await this.applyAI(run);
         run.applied=true;run.progress={pct:100,label:'Design applied'};delete run.screenshotDataUrl;this.renderInspector();this.status('✓ '+(run.mode==='text'?'Tailored text':'AI design')+' applied. Review it, then Save Design. Undo restores your previous artwork.','success',100);
       }catch(e){run.error=e.message||String(e);if(!this.disposed)this.renderInspector();throw e;}finally{this.aiWorking=false;if(!this.disposed)this.syncButtons();}

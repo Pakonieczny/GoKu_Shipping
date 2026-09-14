@@ -654,7 +654,7 @@ function createAdDesignService(deps) {
       await saveData('result',result);await save({phase:'ready',leaseUntil:0,completedAt:Date.now(),error:null,progress:{pct:100,label:'Tailored design is ready to apply to this artboard'}});
       return {ok:true,workspaceId,jobId,includeAnimation:request.includeAnimation===true};
     }catch(error){
-      if(error.providerPending){await save({phase:'queued',leaseUntil:0,error:null});return {ok:true,continue:true,workspaceId,jobId};}
+      if(error.providerPending){await save({phase:'queued',leaseUntil:0,error:null,progress:{...job.progress,label:job.inFlight?.key?.startsWith('ad_quality_')?'AI review is still processing all ad formats; the same saved request is continuing':job.progress.label}});return {ok:true,continue:true,workspaceId,jobId};}
       if(error.notDispatched||error.definiteResponse){job.inFlight=null;if(!job.usage)job.usage={estimatedUsd:0,costEstimated:!!error.definiteResponse,usage:{},at:Date.now()};}
       await save({phase:'needs_attention',leaseUntil:0,error:String(error.message||error).slice(0,700),progress:{pct:job.progress.pct,label:job.inFlight?'Paid request needs reconciliation; it will not run again automatically':'Saved design needs attention; completed work is retained'}});return {ok:false,workspaceId,jobId,error:job.error};
     }
@@ -772,7 +772,7 @@ function createAdDesignService(deps) {
     if(job.inFlight?.key===key&&raw.exists)await save({inFlight:null});
     const quality=await paid(key,95,'Reviewing messaging, layout, relevance and visual appeal',async requestId=>({...await deps.reviewImages(refs[0],await Promise.all(proof.images.map(p=>deps.loadAsset(p.asset))),{
       reviewType:'complete_ad',rubric:rubric.RUBRIC,copy:plan.copy,nativeCopy:plan.nativeCopy,compositionRules:{treatment:plan.style.treatment,scenes:sceneSpecs.map(s=>s.key),requirements:'The photograph fills each ad. A progressive translucent wash protects the existing copy. Check every size for photographic seams, texture or props competing with text, readable branding, unchanged complete jewelry, no duplicated product, and no fade over the product. Judge actual native display size. Do not deduct merely because the layout uses restrained supporting copy.'},product:{id:product.id,title:product.title,url:product.url},
-      research:{sources:evidence.sources,limitations:evidence.warnings},inputCoverage:{usedProductImages:refs.length},
+      research:{sources:research.compactEvidence(evidence).sources,limitations:evidence.warnings},inputCoverage:{usedProductImages:refs.length},
       renderedFormats:proof.images.map(({key,width,height,displayWidth,displayHeight})=>({key,width,height,displayWidth,displayHeight})),
       placementNote:'These are actual browser-rendered editable compositions. Google responsive ads combine separate clean photos and native text dynamically; these proofs are not guaranteed Google placements.'
     },refs,requestId,{durable:true,...(raw.exists?{rawResponse:raw.data().response}:{}),onResponse:response=>saveData(key+'_response',{response,candidateHash,proofHash:proof.proofHash})}),candidateHash,proofHash:proof.proofHash}));
