@@ -21,6 +21,24 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
  ok((await tr.collection('receipts').get()).docs.length===1,'truncated paid receipt is archived');
  ok(truncated.calls.create===0,'resume itself does not charge');
  ok((await tr.get()).data().inFlight===null,'new text step can run without reusing incomplete response');
+ for(const key of ['quality','layout']){
+  const x=await setup(),a=await x.service.start({workspaceId:'design_test',...x.scope}),r=x.ref.collection('motionJobs').doc(a.jobId);
+  await r.update({phase:'needs_attention',inFlight:{key,requestId:'saved'},compositionBlocked:key==='layout',leaseUntil:0});
+  await r.collection('receipts').doc(key).set({response:{status:'incomplete',incomplete_details:{reason:'max_output_tokens'}}});
+  ok((await x.service.status({workspaceId:'design_test',...x.scope})).canResume,'confirmed truncated '+key+' offers resume');
+  await x.service.start({workspaceId:'design_test',...x.scope,resumeJobId:a.jobId});
+  ok(!(await r.collection('receipts').doc(key).get()).exists,'truncated '+key+' receipt is archived instead of reused');
+ }
+ const discardCase=await setup(),ds=await discardCase.service.start({workspaceId:'design_test',...discardCase.scope}),dr=discardCase.ref.collection('motionJobs').doc(ds.jobId);
+ await dr.update({phase:'needs_attention',inFlight:{requestId:'unknown-paid-request'},masters:{portrait:{id:'saved-video'}}});
+ const discardInput={workspaceId:'design_test',...discardCase.scope,discardJobId:ds.jobId,confirmDiscard:true};
+ await assert.rejects(()=>discardCase.service.start({...discardInput,confirmDiscard:false}),/Confirm/);
+ await assert.rejects(()=>discardCase.service.start({...discardInput,productId:'other'}),/another product/);
+ await discardCase.service.start(discardInput);await discardCase.service.start(discardInput);
+ const discarded=(await dr.get()).data();ok(discarded.resetAt&&discarded.phase==='cancelled'&&discarded.masters.portrait.id==='saved-video'&&discarded.inFlight.requestId==='unknown-paid-request','discard releases attempt while preserving paid evidence');
+ const fresh=await discardCase.service.start({workspaceId:'design_test',...discardCase.scope});
+ ok(fresh.jobId!==ds.jobId&&(await discardCase.service.start({workspaceId:'design_test',...discardCase.scope})).jobId===fresh.jobId,'fresh job after discard is distinct and idempotent');
+ ok(discardCase.calls.create===0,'discard and new job reservation never call the video provider');
  const pinned=await setup(),authority=await sharp({create:{width:100,height:100,channels:3,background:'#ff0000'}}).jpeg().toBuffer(),requestRef=pinned.ref.collection('editorAIJobs').doc(pinned.id).collection('data').doc('request');
  await requestRef.set({sources:[{asset:{path:'earlier-generated-scene'}}],identitySources:[{asset:{path:'verified-catalog-photo'}}]});const oldLoad=pinned.D.loadAsset;pinned.D.loadAsset=async asset=>asset.path==='verified-catalog-photo'?authority:oldLoad(asset);
  const pinnedRequest=pinned.D.videoRequest;pinned.D.videoRequest=async(route,method,body)=>{if(method==='POST'){const {data}=await sharp(Buffer.from(body.input[0].data,'base64')).raw().toBuffer({resolveWithObject:true});ok(data[0]>240&&data[1]<20,'video generation uses original catalog identity pixels');}return pinnedRequest(route,method,body);};

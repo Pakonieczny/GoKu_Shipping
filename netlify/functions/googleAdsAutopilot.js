@@ -7028,10 +7028,10 @@ async function dailyStats({ start, end, campaignId } = {}) {
                  metrics.impressions, metrics.clicks, metrics.cost_micros,
                  metrics.conversions, metrics.conversions_value${extra}
           FROM campaign WHERE ${RANGE} ORDER BY segments.date`),
-    optional("ads", `SELECT campaign.id, ad_group.name, ad_group_ad.ad.id, ad_group_ad.status,
+    optional("ads", `SELECT campaign.id, ad_group.id, ad_group.name, ad_group_ad.ad.final_urls, ad_group_ad.ad.id, ad_group_ad.status,
                  ad_group_ad.ad.responsive_search_ad.headlines,
                  ad_group_ad.ad_strength, ad_group_ad.policy_summary.approval_status,
-                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value
           FROM ad_group_ad WHERE ${RANGE}`),
     optional("keywords", `SELECT campaign.id, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.status,
                  metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
@@ -7105,7 +7105,7 @@ async function dailyStats({ start, end, campaignId } = {}) {
   const adRows = ads.map(r => {
     const m = r.metrics || {}, a = r.adGroupAd || {};
     const hl = ((((a.ad || {}).responsiveSearchAd || {}).headlines) || []).map(h => h.text).filter(Boolean);
-    return { campaignId: String((r.campaign || {}).id), adGroup: (r.adGroup || {}).name || "",
+    return { campaignId: String((r.campaign || {}).id), adGroup: (r.adGroup || {}).name || "", adGroupId:String((r.adGroup||{}).id||""), finalUrls:(a.ad||{}).finalUrls||[], value:m.conversionsValue==null?null:Number(m.conversionsValue),
              adId: String((a.ad || {}).id || ""), headline: hl[0] || "(ad)", headlines: hl.slice(0, 3),
              status: a.status || null, strength: a.adStrength || null, approval: (a.policySummary || {}).approvalStatus || null,
              impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros), conv: +m.conversions || 0 };

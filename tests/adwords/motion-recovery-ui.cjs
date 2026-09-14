@@ -1,0 +1,15 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require('jsdom');
+(async()=>{
+ const dom=new JSDOM('<div id="host"></div>',{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;
+ w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};
+ const timers=[];w.setTimeout=(fn,delay)=>{timers.push({fn,delay});return timers.length;};w.clearTimeout=()=>{};
+ w.eval(fs.readFileSync('brites-ad-motion.js','utf8'));
+ let pending,failDiscard=true;const calls=[],state={ok:true,jobId:'motion_abc',workspaceId:'w',phase:'needs_attention',canResume:true,error:'Output limit',variants:[]};
+ w.BritesAdMotion.mount(w.document.getElementById('host'),{scope:{workspaceId:'w',productId:'p',groupRef:'g'},request:async(a,b)=>{calls.push({a,b});if(a==='startAdDesignMotion')return failDiscard?{ok:false,error:'Temporary failure'}:{ok:true,discarded:true};if(calls.filter(c=>c.a==='adDesignMotionStatus').length===1)return state;return new Promise(r=>pending=r);}});
+ await new Promise(setImmediate);const q=s=>w.document.querySelector(s);
+ assert.equal(q('[data-discard]').hidden,false);assert.equal(q('[data-generate]').textContent,'Resume animation');assert.equal(timers.length,0,'stopped job does not poll');
+ q('[data-refresh]').click();await new Promise(setImmediate);q('[data-discard]').click();let b=q('dialog .bam-primary');await b.onclick();assert.equal(b.disabled,false);assert.equal(q('[data-generate]').textContent,'Resume animation','failed discard keeps job');
+ failDiscard=false;await b.onclick();assert.equal(q('[data-generate]').textContent,'Generate animated ads');assert.equal(q('[data-discard]').hidden,true);
+ pending(state);await new Promise(setImmediate);assert.equal(q('[data-generate]').textContent,'Generate animated ads','late poll cannot restore discarded job');assert.equal(timers.length,0);
+ dom.window.close();console.log('PASS recovery controls, failed discard retry, idle polling and late-response isolation');
+})().catch(e=>{console.error(e);process.exitCode=1;});
