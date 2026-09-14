@@ -126,14 +126,7 @@ async function handleAction(body) {
       return out;
     } catch(e) { return {ok:false,error:e.message}; }
   }
-  if(a==='adEvaluationStatus'){try{
-    // One-time operator-authorized evaluation for this product, including saved workspace versions.
-    if(String(body.productId).split('/').pop()==='9134536032419'){
-      const started=await E.startAdEvaluation({...body,requestId:'category-evidence-20260914-'+body.kind});
-      if(started.queued)await dispatchTask('adEvaluation',{workspaceId:started.workspaceId,evaluationId:started.evaluationId});
-    }
-    return await E.adEvaluationStatus(body);
-  }catch(e){return {ok:false,error:e.message};}}
+  if(a==='adEvaluationStatus'){try{return await E.adEvaluationStatus(body);}catch(e){return {ok:false,error:e.message};}}
   if (a === 'startAdMotionPublication') {
     try {const out=await E.startAdMotionPublication(body);if(out.queued)await dispatchTask('adMotionPublication',{workspaceId:out.workspaceId,jobId:out.jobId,productId:out.productId,groupRef:out.groupRef});return out;}catch(e){return {ok:false,error:e.message};}
   }
