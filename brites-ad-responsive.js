@@ -8,7 +8,7 @@
   function selectImage(plan,images,board){const f=family(board);return images.find(i=>i.forFamilies?.includes(f))||images[0];}
   // Design at the actual viewing width, then export at the requested resolution.
   // A 2048px master must not turn a 36px CTA into a 6px mobile label.
-  const layoutVersion=25;
+  const layoutVersion=26;
   const brands=typeof module==='object'&&module.exports?require('./brites-brand-assets'):root.BritesBrandAssets;
   function document(plan,image,board,device="mobile"){
     const master=['square','landscape','portrait'].includes(board.key),factor=master?board.width/Math.min(board.width,360):1;
@@ -46,11 +46,11 @@
     // Legacy unlocated photographs keep their conservative framing until located.
     function photograph(frame){
       const focus=image.focus,valid=focus&&['x','y','width','height'].every(k=>Number.isFinite(focus[k]))&&focus.width>0&&focus.height>0;
-      const small=Math.min(frame.width,frame.height)<=100,padding=1.025;
+      const small=Math.min(frame.width,frame.height)<=100,padding=narrow||board.key==='landscape'?1.14:1.025;
       const cover=Math.max(frame.width/image.width,frame.height/image.height);
       const safeWidth=image.width/image.height>1.3?image.width*.30:image.width;
       const desired=valid?Math.min(frame.width/(image.width*focus.width*padding),frame.height/(image.height*focus.height*padding)):cover;
-      const maximum=valid?Math.min(frame.width/(image.width*focus.width*1.025),frame.height/(image.height*focus.height*1.025)):cover;
+      const maximum=valid?Math.min(frame.width/(image.width*focus.width*padding),frame.height/(image.height*focus.height*padding)):cover;
       const scale=valid?Math.min(maximum,Math.max(cover,desired)):Math.min(cover,frame.width/safeWidth);
       const cw=Math.min(image.width,frame.width/scale),ch=Math.min(image.height,frame.height/scale);
       const cx=clamp(valid?image.width*(focus.x+focus.width/2)-cw/2:(image.width-cw)/2,0,image.width-cw),cy=clamp(valid?image.height*(focus.y+focus.height/2)-ch/2:(image.height-ch)/2,0,image.height-ch);
@@ -76,15 +76,15 @@
     function bottomFade(y,height){const rgb=style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)).join(',');objects.push(base('photo_caption_fade','shape',{type:'Rect',left:0,top:y,width:W,height,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:0,y2:1},colorStops:[{offset:0,color:'rgba('+rgb+',0)'},{offset:.55,color:'rgba('+rgb+',.4)'},{offset:1,color:'rgba('+rgb+',1)'}]}}));}
     function fullBleedLandscape(){
       if(board.key!=='landscape'||style.treatment!=='soft-fade'||!image.focus)return false;
-      const q=image.focus,scale=Math.max(W/image.width,H/image.height,Math.min(W*.48/(image.width*q.width*1.04),H*.94/(image.height*q.height*1.04))),cw=W/scale,ch=H/scale;
+      const q=image.focus,scale=Math.max(W/image.width,H/image.height,Math.min(W*.43/(image.width*q.width*1.04),H*.86/(image.height*q.height*1.04))),cw=W/scale,ch=H/scale;
       const cx=clamp(image.width*(q.x+q.width/2)-cw*.66,0,image.width-cw),cy=clamp(image.height*(q.y+q.height/2)-ch/2,0,image.height-ch);
       const subject={left:(image.width*q.x-cx)*scale,top:(image.height*q.y-cy)*scale,width:image.width*q.width*scale,height:image.height*q.height*scale},pad=Math.max(6,W*.025),tw=Math.min(W*.44,subject.left-pad*2);
       if(tw<76||subject.top<0||subject.top+subject.height>H)return false;
       objects.push(base('product_scene','photo',{type:'Image',sourceKey:image.id,left:0,top:0,width:cw,height:ch,cropX:cx,cropY:cy,scaleX:scale,scaleY:scale}));
       const rgb=style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)).join(',');
       objects.push(base('image_fade','shape',{type:'Rect',left:0,top:0,width:W,height:H,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:1,y2:0},colorStops:[{offset:0,color:'rgba('+rgb+',1)'},{offset:Math.max(0,(tw-pad)/W),color:'rgba('+rgb+',.92)'},{offset:subject.left/W,color:'rgba('+rgb+',0)'},{offset:1,color:'rgba('+rgb+',0)'}]}}));
-      const hs=Math.min(30,Math.max(20,W*.055),tw/(Math.max(...copy.shortHeadline.split(/\s+/).map(w=>w.length))*.67)),hh=lines(copy.shortHeadline,tw,hs)*hs*1.24,bh=Math.max(32,Math.min(42,H*.2)),gap=10,y=Math.max(pad,(H-hh-bh-gap)/2);
-      brandRow(pad,Math.max(3,y-37),tw);text('headline',copy.shortHeadline,pad,y,tw,hh,hs,'headline',style.headlineFont);objects[objects.length-1].textAlign='center';button(pad,y+hh+gap,tw,bh,copy.cta,14);return true;
+      const hs=Math.min(26,Math.max(20,W*.06),tw/(Math.max(...copy.shortHeadline.split(/\s+/).map(w=>w.length))*.67)),hh=lines(copy.shortHeadline,tw,hs)*hs*1.24,brandH=32,bh=32,gap=10,total=brandH+hh+bh+gap*2,y=(H-total)/2,bw=Math.min(108,tw*.84);
+      brandRow(pad,y,tw);text('headline',copy.shortHeadline,pad,y+brandH+gap,tw,hh,hs,'headline',style.headlineFont);objects[objects.length-1].textAlign='center';button(pad+(tw-bw)/2,y+brandH+gap+hh+gap,bw,bh,copy.cta,14,true);return true;
     }
     function tallLayout(){
       if(!narrow)return false;
@@ -136,8 +136,8 @@
     }else if(fullBleedLandscape()){
       // Use the actual photograph edge to edge, with copy in its quiet side.
     }else if(board.key==='landscape'){
-      const pad=8,tw=W*.46-pad*2,hs=20,hh=lines(copy.shortHeadline,tw,hs)*hs*1.24,gap=6,bh=34,total=32+hh+bh+gap*2,y=(H-total)/2;
-      photograph({left:W*.48,top:0,width:W*.52,height:H});brandRow(pad,y,tw);text('headline',copy.shortHeadline,pad,y+32+gap,tw,hh,hs,'headline',style.headlineFont);objects[objects.length-1].textAlign='center';button(pad,y+32+gap+hh+gap,tw,bh,copy.cta,14);
+      const pad=8,tw=W*.46-pad*2,hs=22,hh=lines(copy.shortHeadline,tw,hs)*hs*1.24,gap=10,bh=32,total=32+hh+bh+gap*2,y=(H-total)/2,bw=Math.min(108,tw*.84);
+      photograph({left:W*.48,top:0,width:W*.52,height:H});brandRow(pad,y,tw);text('headline',copy.shortHeadline,pad,y+32+gap,tw,hh,hs,'headline',style.headlineFont);objects[objects.length-1].textAlign='center';button(pad+(tw-bw)/2,y+32+gap+hh+gap,bw,bh,copy.cta,14,true);
     }else if(softFade()){
       // The photograph fills the artboard; the editable fade protects only the copy.
     }else if(banner){
@@ -188,7 +188,7 @@
     return {version:'7.4.0',background:style.background,objects};
   }
   const variants=boards.flatMap(b=>['square','landscape','portrait'].includes(b.key)?['mobile','desktop'].map(device=>({...b,device})):[{...b,device:b.height<=100&&b.width<=320?'mobile':'desktop'}]);
-  const rules={version:1,priorities:['complete recognizable product','official brand lockup','product name','optional action and supporting copy'],brand:{iconHeight:32,compactBannerIconHeight:36,minimumWordmarkWidth:80,minimumTextSize:14,narrowTextSize:12,alignment:'Center icon and business name together as one lockup; never center the text independently of its icon.'},type:{bannerHeadlineMinimum:16,headlineMinimum:20,supportMinimum:14,maximumFontFamilies:2},button:{height:34,maximumWidth:128,fontSize:14,alignment:'centered beneath the headline within the copy region'},spacing:{minimumGap:3,preferredGap:8,skyscraper:'Use 10–30px gaps and scale the brand, heading and action to occupy the lower third; do not leave a tiny centered cluster'},sizeOverrides:{display_580x400:'Omit supporting copy. Large product headline, visible brand and action in the left region.',display_300x1050:'48px brand icon, up to 44px headline, 48px-high action with 20px label; distribute the lower-third stack.',display_160x600:'36px brand icon, readable headline, 36px action and balanced vertical gaps.',display_970x250:'Up to 64px headline, 36px business name and 120px brand icon; use the available banner height'},protection:['Whole jewelry including attachment hardware stays visible','No logo, copy or fade may cover the located product','No distortion or invented jewelry details','No microtext or arbitrary shrinking to fit','High-density PNG previews; exact-size upload and historical review pixels remain separate'],creativeFreedom:['Product-specific scene, venue, props and lighting','Photography and safe focal positioning','Supported product-specific messaging within text limits','Coordinated brand palette with readable contrast','Up to two coherent font families','Subtle decorative treatments in empty space']};
+  const rules={version:1,priorities:['complete recognizable product','official brand lockup','product name','optional action and supporting copy'],brand:{iconHeight:32,compactBannerIconHeight:36,minimumWordmarkWidth:80,minimumTextSize:14,narrowTextSize:12,alignment:'Center icon and business name together as one lockup; never center the text independently of its icon.'},type:{bannerHeadlineMinimum:16,headlineMinimum:20,supportMinimum:14,maximumFontFamilies:2},button:{height:34,maximumWidth:128,fontSize:14,alignment:'centered beneath the headline within the copy region'},spacing:{minimumGap:3,preferredGap:8,skyscraper:'Use 10–30px gaps and scale the brand, heading and action to occupy the lower third; do not leave a tiny centered cluster'},sizeOverrides:{landscape:'Center the complete brand, headline and action group vertically; use a restrained 108px action and leave visible space around the charm.',skyscraper:'Leave roughly 6 percent space on each horizontal side of the located jewelry.',display_580x400:'Omit supporting copy. Large product headline, visible brand and action in the left region.',display_300x1050:'48px brand icon, up to 44px headline, 48px-high action with 20px label; distribute the lower-third stack.',display_160x600:'36px brand icon, readable headline, 36px action and balanced vertical gaps.',display_970x250:'Up to 64px headline, 36px business name and 120px brand icon; use the available banner height'},protection:['Whole jewelry including attachment hardware stays visible','No logo, copy or fade may cover the located product','No distortion or invented jewelry details','No microtext or arbitrary shrinking to fit','High-density PNG previews; exact-size upload and historical review pixels remain separate'],creativeFreedom:['Product-specific scene, venue, props and lighting','Photography and safe focal positioning','Supported product-specific messaging within text limits','Coordinated brand palette with readable contrast','Up to two coherent font families','Subtle decorative treatments in empty space']};
   const baseLayouts=boards.map(b=>({...b,family:family(b),composition:family(b)==='banner'?'edge product / centered message / dedicated logo':family(b)==='landscape'?'product beside a centered copy block':'product above a centered brand / headline / action stack',drawnAction:family(b)!=='banner'&&!(b.width<=280&&b.height<=280)}));
   const videoLayouts=[{key:'portrait',width:720,height:1280},{key:'square',width:720,height:720},{key:'landscape',width:1280,height:720}].map(b=>({...b,logo:{x:.065,y:.055,width:176,persistent:true},text:'Three distinct saved messages: hook, product, action. Only text transitions.',wash:'Persistent throughout; never covers protected jewelry.',composition:b.key==='portrait'?'product lower-middle, messaging above':'product toward right, messaging in measured free space'}));
   function baseLayout(board){return baseLayouts.find(b=>b.width===board.width&&b.height===board.height)||{...board,family:family(board),composition:'Adapt the nearest base without breaking shared ground rules'};}
