@@ -127,13 +127,10 @@ async function handleAction(body) {
     } catch(e) { return {ok:false,error:e.message}; }
   }
   if(a==='adEvaluationStatus'){try{
-    // Temporary, operator-authorized one-time comparison of the existing saved ads.
-    if(body.workspaceId==='design_b853daad3fd1bade17be7e858ac65b4d'&&String(body.productId)==='9134536032419'){
-      const current=body.kind==='static'?await E.adDesignEditorAIStatus({...body,allSizes:true}):await E.adDesignMotionStatus(body);
-      if(['eai_e58511d562aef0566bf61425981c72305c48edb5','motion_233f59342ac78446a5cf45c7ec881c00991daca8'].includes(current.jobId)){
-        const started=await E.startAdEvaluation({...body,requestId:'category-evidence-20260914-'+body.kind});
-        if(started.queued)await dispatchTask('adEvaluation',{workspaceId:started.workspaceId,evaluationId:started.evaluationId});
-      }
+    // One-time operator-authorized evaluation for this product, including saved workspace versions.
+    if(String(body.productId).split('/').pop()==='9134536032419'){
+      const started=await E.startAdEvaluation({...body,requestId:'category-evidence-20260914-'+body.kind});
+      if(started.queued)await dispatchTask('adEvaluation',{workspaceId:started.workspaceId,evaluationId:started.evaluationId});
     }
     return await E.adEvaluationStatus(body);
   }catch(e){return {ok:false,error:e.message};}}
