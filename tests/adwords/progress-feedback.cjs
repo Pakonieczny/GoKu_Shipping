@@ -1,6 +1,8 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require('jsdom');
 const dom=new JSDOM('<body><section id="work"><progress aria-label="Design" max="100" value="30"></progress></section></body>',{runScripts:'outside-only'}),w=dom.window;let now=10000,tick;
 w.Date.now=()=>now;w.setInterval=fn=>{tick=fn;};w.eval(fs.readFileSync('brites-progress.js','utf8'));
+tick();const meter=w.document.querySelector('.bp-meter');assert.equal(meter.dataset.label,'30%');
+const sample=w.document.querySelector('progress');sample.max=200;sample.value=100;tick();assert.equal(meter.dataset.label,'50%');assert.equal(meter.style.getPropertyValue('--bp-pct'),'50%');sample.value=200;tick();assert.equal(meter.dataset.label,'100%');sample.removeAttribute('value');tick();assert.equal(meter.dataset.label,'Working…');sample.max=100;sample.value=30;
 const end=w.BritesProgress.begin('Opening saved work');tick();assert.equal(w.document.querySelector('.bp-activity'),null);
 now+=2000;tick();assert.match(w.document.querySelector('.bp-activity').textContent,/Opening saved work/);
 const dialog=w.document.createElement('dialog');dialog.setAttribute('open','');w.document.body.append(dialog);tick();assert.ok(dialog.querySelector('.bp-activity'),'activity stays visible in modal top layer');

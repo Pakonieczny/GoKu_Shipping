@@ -21,6 +21,13 @@
  function reset(p){if(!p)return;const key=(p.closest('[id]')?.id||'page')+'|'+p.getAttribute('aria-label');histories.delete(key);delete p._bp;if(p.nextElementSibling?.classList.contains('bp-note'))p.nextElementSibling.hidden=true;}
  function enhance(){
   document.querySelectorAll('progress').forEach(p=>{
+   let meter=p.parentElement;
+   if(!meter.classList.contains('bp-meter')){meter=document.createElement('div');meter.className='bp-meter';p.before(meter);meter.appendChild(p);}
+   meter.hidden=p.hidden||!!meter.parentElement?.closest('[hidden]');
+   p.classList.add('bp-track');
+   const known=p.hasAttribute('value'),percent=Math.max(0,Math.min(100,p.value/(p.max||1)*100));
+   meter.dataset.label=known?Math.round(percent)+'%':'Working…';
+   meter.dataset.determinate=String(known);meter.style.setProperty('--bp-pct',percent+'%');
    if(p.closest('[data-bp-managed]'))return;
    if(p.hidden||p.closest('[hidden]'))return;
    p.classList.add('bp-track');

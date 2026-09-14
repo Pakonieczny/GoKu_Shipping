@@ -8,3 +8,5 @@ for(const title of ['Peach Charm','Peach Fruit Charm','Your Little Duck']){
  }
 }
 console.log('PASS tall headline/action grouping and desktop banner insets without smaller type');
+
+for(const key of ['display_120x600','display_160x600','display_300x600']){const board=R.boards.find(b=>b.key===key),d=R.document({...plan,style:{...plan.style,treatment:'soft-fade'}},image,board,'desktop'),photo=d.objects.find(o=>o.sourceKey==='photo'&&o.editorRole==='photo'),left=photo.left+(image.focus.x*image.width-(photo.cropX||0))*photo.scaleX,right=left+image.focus.width*image.width*photo.scaleX;assert(left>=board.width*.10,key+' left product margin');assert(right<=board.width*.90,key+' right product margin');}
