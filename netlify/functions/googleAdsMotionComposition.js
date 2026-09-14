@@ -1,6 +1,6 @@
 // Full-canvas video compositions. Never trade product visibility for a crop or tiny copy.
 const fs=require('fs/promises'),path=require('path'),{Resvg}=require('@resvg/resvg-js');
-const VERSION=6,TIMES=[.05,.8,1.6,2.4,3.2,4,4.8,5.6,6.4,7.2,8.6,9.9];
+const VERSION=7,TIMES=[.05,.8,1.6,2.4,3.2,4,4.8,5.6,6.4,7.2,8.6,9.9];
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v)),xml=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
 function layoutRequest(job,frames,reference){
  const box={type:'object',additionalProperties:false,properties:{bounds:{type:'array',items:{type:'number',minimum:0,maximum:1},minItems:4,maxItems:4},complete:{type:'boolean'},confidence:{type:'number',minimum:0,maximum:1},note:{type:'string'}},required:['bounds','complete','confidence','note']};
@@ -12,12 +12,13 @@ function validateBounds(value){
   const px=Math.max(.035,b[2]*.12),py=Math.max(.025,b[3]*.12),x=Math.max(0,b[0]-px),y=Math.max(0,b[1]-py);out[orientation]={x,y,w:Math.min(1,b[0]+b[2]+px)-x,h:Math.min(1,b[1]+b[3]+py)-y,note:v.note};
  }return out;
 }
-function geometry(format,subject){
+function geometry(format,subject,sourceOrientation='portrait'){
  if(!subject||['x','y','w','h'].some(k=>!Number.isFinite(subject[k])))throw Error('Measure the saved video framing before composing captions.');
  const crop={x:0,y:0,w:1,h:1};
  if(format.key==='square'){
-  crop.h=9/16;if(subject.h>crop.h)throw Error('The whole jewelry cannot fit a full-canvas square crop. Re-run with a tighter, centered product scene.');
-  const lo=Math.max(0,subject.y+subject.h-crop.h),hi=Math.min(subject.y,1-crop.h);if(lo>hi)throw Error('Square framing would cut the jewelry.');crop.y=clamp(subject.y+subject.h/2-crop.h*.65,lo,hi);
+  const horizontal=sourceOrientation==='landscape',axis=horizontal?'x':'y',extent=horizontal?'w':'h';crop[extent]=9/16;
+  if(subject[extent]>crop[extent])throw Error('The whole jewelry cannot fit a full-canvas square crop. Re-run with a tighter, centered product scene.');
+  const lo=Math.max(0,subject[axis]+subject[extent]-crop[extent]),hi=Math.min(subject[axis],1-crop[extent]);if(lo>hi)throw Error('Square framing would cut the jewelry.');crop[axis]=clamp(subject[axis]+subject[extent]/2-crop[extent]*(horizontal?.68:.65),lo,hi);
  }
  const product={x:(subject.x-crop.x)/crop.w,y:(subject.y-crop.y)/crop.h,w:subject.w/crop.w,h:subject.h/crop.h};
  if(product.x<-.001||product.y<-.001||product.x+product.w>1.001||product.y+product.h>1.001)throw Error('The requested crop would cut the jewelry.');
@@ -29,12 +30,12 @@ function geometry(format,subject){
 let fonts;
 async function fontOptions(){if(fonts)return fonts;const fontFiles=[];for(const name of ['CormorantGaramond.ttf','OpenSans-Regular.ttf','OpenSans-Bold.ttf']){let file;for(const dir of [path.join(__dirname,'fonts'),path.join(process.cwd(),'netlify/production-functions/fonts'),path.join(process.cwd(),'netlify/functions/fonts')]){try{const p=path.join(dir,name);await fs.access(p);file=p;break;}catch{}}if(!file)throw Error('Video caption font is missing: '+name);fontFiles.push(file);}return fonts={font:{fontFiles,loadSystemFonts:false,defaultFontFamily:'Open Sans'}};}
 async function captions(plan,format,beats){
- const W=format.width,H=format.height,g=geometry(format,plan.composition),options=await fontOptions(),style=plan.style||{},color=(v,f)=>/^#[a-f0-9]{6}$/i.test(v||'')?v:f,ink=color(style.ink,'#30291f'),bg=color(style.background,'#fff7ee'),gold=color(style.accent,'#a67c35'),font=/sans|arial|helvetica/i.test(style.headlineFont||'')?'Open Sans':'Cormorant Garamond';
+ const W=format.width,H=format.height,g=geometry(format,plan.composition,plan.sourceOrientation),options=await fontOptions(),style=plan.style||{},color=(v,f)=>/^#[a-f0-9]{6}$/i.test(v||'')?v:f,ink=color(style.ink,'#30291f'),bg=color(style.background,'#fff7ee'),gold=color(style.accent,'#a67c35'),font=/sans|arial|helvetica/i.test(style.headlineFont||'')?'Open Sans':'Cormorant Garamond';
  const widths=new Map();function measure(s,size,family){const key=[s,size,family].join('|');if(!widths.has(key)){const r=new Resvg(`<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="300"><text x="5" y="150" font-family="${family}" font-size="${size}" font-weight="500">${xml(s)}</text></svg>`,options),b=r.getBBox();if(!b?.width)throw Error('Caption font produced no visible text.');widths.set(key,b.width+4);}return widths.get(key);}
  function wrap(s,size,family,width){const lines=[];for(const word of String(s||'').split(/\s+/).filter(Boolean)){if(measure(word,size,family)>width)return null;const prev=lines[lines.length-1];if(prev&&measure(prev+' '+word,size,family)<=width)lines[lines.length-1]+=' '+word;else lines.push(word);}return lines;}
  const startSize={portrait:92,square:72,landscape:80}[format.key],minimum={portrait:68,square:56,landscape:60}[format.key],labelSize=format.key==='landscape'?26:26,supportSize=format.key==='portrait'?34:30;
  function fit(beat,brand){const labelHeight=brand?labelSize+22:0;
-  for(const zone of g.zones)for(let size=startSize;size>=minimum;size-=2){const title=wrap(beat.title,size,font,zone.w),support=beat.support==='BRITES JEWELRY'?[]:wrap(beat.support,supportSize,'Open Sans',zone.w);if(!title||title.length>3||!support||support.length>2)continue;const height=labelHeight+title.length*size*1.02+(support.length?20+support.length*supportSize*1.2:0)+18;if(height<=zone.h)return {zone,size,title,support,height,brand,labelHeight};}return null;
+  for(const zone of g.zones)for(let size=startSize;size>=minimum;size-=2){if(brand&&measure('BRITES JEWELRY',labelSize,'Open Sans')+36>zone.w)continue;const title=wrap(beat.title,size,font,zone.w),support=beat.support==='BRITES JEWELRY'?[]:wrap(beat.support,supportSize,'Open Sans',zone.w);if(!title||title.length>3||!support||support.length>2)continue;const height=labelHeight+title.length*size*1.02+(support.length?20+support.length*supportSize*1.2:0)+18;if(height<=zone.h)return {zone,size,title,support,height,brand,labelHeight};}return null;
  }
  const prepared=[];for(const beat of beats){const normal=fit(beat,beat.start===0);if(normal){prepared.push({beat,selected:normal});continue;}
   // A crowded shot receives sequential editorial messages, never miniature stacked copy.

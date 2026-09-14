@@ -49,6 +49,8 @@ const assets = [
   "brites-ad-editor.js",
   "brites-ad-format-policy.js",
   "brites-ad-motion.js",
+  "brites-progress.js",
+  "brites-progress.css",
   "brites-ad-responsive.js",
   "brites-groups.js",
   "brites-groups.css",
