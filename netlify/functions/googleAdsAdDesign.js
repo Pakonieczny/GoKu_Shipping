@@ -558,11 +558,17 @@ function createAdDesignService(deps) {
         });
       }
     }
+    const stoppedReceipts=(await target.collection('data').get()).docs.filter(row=>['failed','cancelled'].includes(row.data()?.response?.status));
     await f().db.runTransaction(async tx=>{const row=await tx.get(target),receipt=await tx.get(target.collection('data').doc('response'));if(!row.exists)throw new Error('The AI request was not found.');const job=row.data();editorScope(w,job.scope);if(job.scope.productId!==input.productId||job.scope.groupRef!==input.groupRef)throw new Error("This review belongs to another product or ad group.");
       if(job.resetAt||job.phase==='dismissed')throw new Error('This failed AI job was reset. Start a new design when ready.');
       if(job.phase==='ready'||job.phase==='running'&&job.leaseUntil>Date.now())return;
       const flightReceipt=job.inFlight?.key?await tx.get(target.collection('data').doc(/(?:quality|quality_v\d+|copy_refine_v\d+|subject_focus_[a-f0-9]{24})$/.test(job.inFlight.key)?job.inFlight.key+'_response':job.inFlight.key)):receipt;
       if(job.inFlight&&!flightReceipt.exists&&!recoverable)throw new Error('The provider may have completed this paid request. Automatic replacement is blocked to prevent another charge. Its original request ID is retained.');
+      const stopped=await Promise.all(stoppedReceipts.map(async row=>({id:row.id,snapshot:await tx.get(target.collection('data').doc(row.id))})));
+      for(const item of stopped){const saved=item.snapshot;if(!saved.exists||!['failed','cancelled'].includes(saved.data()?.response?.status))continue;
+        tx.set(target.collection('responseHistory').doc(item.id+'_'+Date.now()),{...saved.data(),archivedAt:Date.now(),reason:'Explicit resume after confirmed provider failure'});
+        tx.delete(target.collection('data').doc(item.id));
+      }
       queued=true;tx.update(target,{phase:'queued',owner:null,leaseUntil:0,error:null,updatedAt:Date.now(),progress:{pct:job.progress.pct,label:receipt.exists?'Reopening the already paid design response':'Resuming saved product research'}});
     });return {ok:true,workspaceId:input.workspaceId,jobId:input.jobId,queued};
   }

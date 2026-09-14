@@ -17,6 +17,13 @@ async function setup({generatedSource=false,autoProofs=true}={}){const e=await c
  if(autoProofs)e.svc.editorAIRun=async args=>{let out=await originalRun(args),status=await e.svc.editorAIStatus({...input,jobId:started.jobId});if(status.phase==='awaiting_review'){const c=status.candidate,boards=[{...c.artboard,key:'active'},...require('../../brites-ad-responsive').variants.map(b=>({...b,key:b.device+'_'+b.key}))],proofs=[];for(const b of boards){const scale=Math.min(1,960/Math.max(b.width,b.height));proofs.push({key:b.key,width:b.width,height:b.height,renderCheck:{version:1,visiblePhotoFraction:.3},dataBase64:(await sharp(bytes).resize(Math.round(b.width*scale),Math.round(b.height*scale)).jpeg().toBuffer()).toString('base64')});}await e.svc.editorAIResume({...input,jobId:started.jobId,candidateHash:c.candidateHash,reviewProofs:proofs});out=await originalRun(args);}return out;};
  return {...e,input,jobId:started.jobId};}
 (async()=>{
+ const failedProvider=await setup(),originalResponses=failedProvider.D.responses;let failOnce=true;
+ failedProvider.D.responses=async args=>{if(failOnce){failOnce=false;return {status:'failed',error:{code:'server_error'}};}return originalResponses(args);};
+ await failedProvider.svc.editorAIRun({workspaceId:failedProvider.id,jobId:failedProvider.jobId});
+ await failedProvider.svc.editorAIResume({...failedProvider.input,jobId:failedProvider.jobId});
+ await failedProvider.svc.editorAIRun({workspaceId:failedProvider.id,jobId:failedProvider.jobId});
+ ok((await failedProvider.svc.editorAIStatus({...failedProvider.input,jobId:failedProvider.jobId})).phase==='ready','explicit resume escapes a confirmed failed provider receipt');
+ ok([...failedProvider.f.docs.keys()].some(k=>k.includes('/responseHistory/response_')),'failed provider response is archived');
  const e=await setup();let result=await e.svc.editorAIRun({workspaceId:e.id,jobId:e.jobId});assert(result.ok,result.error);
  ok(e.calls.focus===1,'one saved charm localization supplies every responsive crop');
  const status=await e.svc.editorAIStatus({...e.input,jobId:e.jobId});ok(status.qualityTarget===92&&status.result.quality.score===92,'92-point batch passes through review and apply without the old 97-point gate');ok(status.result.sources[0].url&&status.result.document.objects[0].sourceKey.startsWith('scene_'),'new scene has a durable signed source');ok(e.calls.images===1&&e.calls.responses===1&&e.calls.quality===1,'one master generation reused across all formats');ok(status.result.publicationImages.length===3&&status.result.responsive.variants.length===26,'three clean assets plus device-specific layout coverage');

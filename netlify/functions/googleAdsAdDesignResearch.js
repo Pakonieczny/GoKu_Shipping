@@ -241,7 +241,8 @@ function parseResponse(response){
     const reason=response.incomplete_details&&response.incomplete_details.reason;
     throw fail(reason==='max_output_tokens'?'The AI response reached its output limit before finishing. Saved research and artwork are retained.':'The AI provider returned an unfinished response. Saved research and artwork are retained.',reason==='max_output_tokens'?'AI_OUTPUT_INCOMPLETE':'AI_RESPONSE_STOPPED');
   }
-  if(response&&response.status&&response.status!=='completed')throw fail('The AI provider did not complete this response. Saved work is retained.','AI_RESPONSE_STOPPED');
+  if(response&&['queued','in_progress'].includes(response.status))throw Object.assign(new Error('The AI provider is still working; continuing the saved request.'),{providerPending:true});
+  if(response&&response.status&&response.status!=='completed')throw fail('The AI provider '+(response.status==='cancelled'?'cancelled':'failed')+' this response'+(response.error?.code?' ('+String(response.error.code).replace(/[^a-zA-Z0-9_]/g,'').slice(0,80)+')':'')+'. Saved work is retained. Resume to retry the unfinished step.','AI_RESPONSE_STOPPED');
   const content=typeof response?.output_text==='string'?response.output_text:parts.filter(v=>v.type==='output_text').map(v=>v.text||'').join('');
   try{const parsed=JSON.parse(content);if(!parsed||Array.isArray(parsed)||typeof parsed!=='object')throw Error('Expected an object');return parsed;}
   catch(error){throw fail('The AI returned an incomplete or malformed answer. Saved research and artwork are retained.','AI_OUTPUT_INVALID');}
