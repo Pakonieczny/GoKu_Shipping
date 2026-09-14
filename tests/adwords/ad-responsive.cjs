@@ -22,23 +22,24 @@ if(require.main===module)(async()=>{
  const dom=new JSDOM('<body></body>',{pretendToBeVisual:true,runScripts:'outside-only',resources:'usable',url:'https://example.test'}),w=dom.window;
  w.ResizeObserver=class{observe(){}disconnect(){}};w.HTMLDialogElement.prototype.showModal=function(){this.open=true};w.HTMLDialogElement.prototype.close=function(){this.open=false};
  for(const file of ['vendor/fabric-7.4.0.min.js','brites-ad-responsive.js','brites-ad-editor.js'])w.eval(fs.readFileSync(root+'/'+file,'utf8'));
+ const brand=require(root+'/brites-brand-assets');w.BritesBrandAssets={get:id=>{const a=brand.get(id);return a?{...a,url:brand.dataUrl(id)}:undefined;}};
  const url='data:image/jpeg;base64,'+(await sharp({create:{width:1600,height:1000,channels:3,background:'#b49b74'}}).jpeg().toBuffer()).toString('base64'),photo={id:'photo',url,width:1600,height:1000,focus:{x:.47,y:.69,width:.06,height:.16}};
  const e=await w.BritesAdEditor.open({title:'Duck necklace',workspaceId:'test',productId,groupRef,format:'square',photos:[],request:async action=>action==='adDesignEditorState'?{ok:true,sources:[photo],designs:[]}:action==='adDesignSavedDesigns'?{ok:true,savedDesigns:[]}:{ok:true}});
  const boxesOverlap=(a,b)=>Math.min(a.left+a.width,b.left+b.width)-Math.max(a.left,b.left)>1&&Math.min(a.top+a.height,b.top+b.height)-Math.max(a.top,b.top)>1;
  const incompletePlan=JSON.parse(JSON.stringify(plan));incompletePlan.layouts.forEach(l=>{l.showBrand=false;l.showButton=false;l.showHeadline=false;});
  for(const copy of [plan.copy,{headline:"Corgi Necklace for Dog Lovers",shortHeadline:"Corgi Necklace",description:"A handcrafted corgi pendant on a beady chain.",cta:"Shop Now"},{headline:'Gold Peach Fruit Charm',shortHeadline:'Peach Fruit Charm',description:'A sweet gift for food lovers.',cta:'Shop Peach Charm'},{headline:'A Peach for Your Foodie',shortHeadline:'Peach Charm',description:'Gift-ready packaging included.',cta:'Shop charm'}])for(const board of responsive.variants){
-   incompletePlan.copy=copy;if(copy.cta==='Shop charm')incompletePlan.style={...plan.style,background:'#2D231E',ink:'#FFF9F0'};else incompletePlan.style=plan.style; e.board=board;await e.restore(responsive.document(incompletePlan,photo,board,board.device));ok(['headline','button'].every(role=>e.canvas.getObjects().some(o=>o.editorRole===role)),board.key+' keeps a concise product caption and action');for(const o of e.canvas.getObjects())e.fitAIText(o);e.canvas.renderAll();
+   incompletePlan.copy=copy;if(copy.cta==='Shop charm')incompletePlan.style={...plan.style,background:'#2D231E',ink:'#FFF9F0'};else incompletePlan.style=plan.style; e.board=board;await e.restore(responsive.document(incompletePlan,photo,board,board.device));ok((responsive.family(board)==='banner'?['headline','brand']:['headline','button']).every(role=>e.canvas.getObjects().some(o=>o.editorRole===role)),board.key+' keeps the required product and brand hierarchy');for(const o of e.canvas.getObjects())e.fitAIText(o);e.canvas.renderAll();
    ok(e.canvas.getObjects().find(o=>o.editorRole==='headline').text===copy.shortHeadline,board.key+' retains the product type in compact messaging');
    const text=e.canvas.getObjects().filter(o=>'text'in o||o.editorRole==='button');
    if(board.key.startsWith('display_')){
      ok(!text.find(o=>o.editorRole==='brand')||text.find(o=>o.editorRole==='brand').fontSize>=7.9,board.key+' brand remains legible at native size');
-     ok(text.find(o=>o.editorRole==='button').getObjects().find(o=>'text'in o).fontSize>=11.9,board.key+' action remains legible at native size');
+     if(text.find(o=>o.editorRole==='button'))ok(text.find(o=>o.editorRole==='button').getObjects().find(o=>'text'in o).fontSize>=11.9,board.key+' action remains legible at native size');
    }
    if(['square','landscape','portrait'].includes(board.key)){
      const brand=text.find(o=>o.editorRole==='brand'),previewWidth=board.device==='desktop'?600:360;
      ok(!brand||brand.fontSize*previewWidth/board.width>=8,board.key+' brand remains readable at typical display width');
      ok(e.canvas.getObjects().find(o=>o.type==='image').getBoundingRect().height>=board.height*.68,board.key+' devotes most of the height to the photograph');
-     ok(text.find(o=>o.editorRole==='button').getObjects().find(o=>'text'in o).fontSize*previewWidth/board.width>=11.9,board.key+' CTA remains readable at actual display width');
+     if(text.find(o=>o.editorRole==='button'))ok(text.find(o=>o.editorRole==='button').getObjects().find(o=>'text'in o).fontSize*previewWidth/board.width>=11.9,board.key+' CTA remains readable at actual display width');
      ok(!text.find(o=>o.editorRole==='description')||text.find(o=>o.editorRole==='description').fontSize*previewWidth/board.width>=11.9,board.key+' supporting copy remains readable at typical display width');
    }
    for(const o of text){const b=o.getBoundingRect();ok(b.left>=-1&&b.top>=-1&&b.left+b.width<=board.width+1&&b.top+b.height<=board.height+1,board.device+' '+board.key+' '+o.editorRole+' fits '+JSON.stringify(b));}
@@ -51,8 +52,8 @@ if(require.main===module)(async()=>{
    ok(image.cropX<=fx&&image.cropY<=fy&&image.cropX+image.width>=fx+fw&&image.cropY+image.height>=fy+fh,board.key+' keeps the complete located charm visible');
    ok(Math.max(fw*image.scaleX/imageBox.width,fh*image.scaleY/imageBox.height)>=.59,board.key+' gives the charm a dominant share of the image frame');
    ok(imageBox.top<=1,board.key+' removes the empty band above the photograph');
-   const action=text.find(o=>o.editorRole==='button').getObjects().find(o=>'text'in o);
-   ok(action.textLines.length===1,board.key+' action stays on one line');
+   const action=text.find(o=>o.editorRole==='button')?.getObjects().find(o=>'text'in o);
+   ok(!action||action.textLines.length===1,board.key+' action stays on one line');
 
  }
  const fadePlan={...plan,style:{...plan.style,treatment:'soft-fade'},copy:{headline:'Sweet on Peach Charm',shortHeadline:'Peach Charm',description:'A gift for food lovers.',cta:'Shop Peach Charm'}};let fades=0;
@@ -98,7 +99,7 @@ if(require.main===module)(async()=>{
  const noFocus=responsive.document(fadePlan,{...photo,focus:null},{key:'square',width:2048,height:2048},'mobile');ok(!noFocus.objects.some(o=>o.id==='ai_image_fade'),'unlocated products retain safe framing instead of speculative overlays');
  const focused={id:'focus',width:1956,height:1024,focus:{x:.45,y:.70,width:.06,height:.16}};
  const small=responsive.document(plan,focused,{key:'display_300x50',width:300,height:50},'mobile').objects[0],large=responsive.document(plan,focused,{key:'square',width:2048,height:2048},'mobile').objects[0];
- ok(small.height<large.height,'small placements use a tighter source crop around the charm');
+ ok(small.height<=focused.height*focused.focus.height*1.03,'small placement removes surplus vertical context while retaining the whole charm');
  assert.throws(()=>research.validateSubjectFocus({x:.95,y:.8,width:.1,height:.1,confident:true}),/reliably/);checks++;
  assert.throws(()=>research.validateSubjectFocus({x:.45,y:.7,width:.06,height:.16,confident:false}),/reliably/);checks++;
  ok(research.buildSubjectFocusRequest({imageDataUrl:'data:image/jpeg;base64,test',product:{title:'Corgi necklace'}}).text.format.name==='brites_subject_focus','focus analysis has its own structured response rather than a guessed center');

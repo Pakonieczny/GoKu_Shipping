@@ -419,7 +419,7 @@ function createAdDesignService(deps) {
     let count=0;const sourceIds=new Set();
     const walk=(v,depth=0)=>{if(depth>18)throw new Error('The design has too many nested groups.');if(Array.isArray(v))return v.map(x=>walk(x,depth+1));if(v&&typeof v==='object'){
       if(v.type&&!types.has(v.type))throw new Error('This design contains an unsupported layer or effect.');
-      if(['Image','image'].includes(v.type)){if(!token(v.sourceKey))throw new Error('Each image needs its saved original source.');sourceIds.add(v.sourceKey);}
+      if(['Image','image'].includes(v.type)){if(!token(v.sourceKey))throw new Error('Each image needs its saved original source.');if(!require('../../brites-brand-assets').get(v.sourceKey))sourceIds.add(v.sourceKey);}
       if(v.type&&types.has(v.type)&&!['linear','radial'].includes(v.type)&&++count>240)throw new Error('Use up to 120 layers and their effects.');
       return Object.fromEntries(Object.entries(v).filter(([k])=>!['src','crossOrigin','__proto__','constructor','prototype','clipPath','backgroundImage','overlayImage'].includes(k)).map(([k,x])=>[k,walk(x,depth+1)]));
     }if(typeof v==='number'&&(!Number.isFinite(v)||Math.abs(v)>1000000))throw new Error('A layer contains an invalid size or position.');if(typeof v==='string'&&v.length>18000)throw new Error('A text layer is too long.');return v;};
