@@ -468,7 +468,7 @@
         }
         this.aiWorking=false;this.syncButtons();run.progress={pct:98,label:'Checking fonts, layout and editable layers…'};this.updateAI(run);
         await this.applyAI(run);
-        run.applied=true;run.progress={pct:100,label:'Design applied'};delete run.screenshotDataUrl;this.renderInspector();this.status('✓ '+(run.mode==='text'?'Tailored text':'AI design')+' applied. Review it, then Save Design. Undo restores your previous artwork.','success',100);
+        run.applied=true;run.progress={pct:100,label:'Design applied'};delete run.screenshotDataUrl;this.renderInspector();this.status(run.result?.needsRevision?'Draft opened for editing. Review findings still need correction; campaign assets were not replaced.':'✓ '+(run.mode==='text'?'Tailored text':'AI design')+' applied. Review it, then Save Design. Undo restores your previous artwork.',run.result?.needsRevision?'info':'success',100);
       }catch(e){run.error=e.message||String(e);if(!this.disposed)this.renderInspector();throw e;}finally{this.aiWorking=false;if(!this.disposed)this.syncButtons();}
     }
     async restoreCapturedAI(apply=false){
@@ -511,7 +511,7 @@
       }finally{await checkCanvas.dispose();}
       if(this.disposed||this.key()!==run.key||JSON.stringify(this.input())!==JSON.stringify(run.scope)||documentFingerprint(this.document())!==documentFingerprint(run.original))throw Error('The artwork changed while checking the AI result. Your current design is retained.');
       const variants=result.responsive?await this.prepareResponsiveDrafts(result):[];
-      if(result.responsive)await this.request('applyAdDesignEditorScene',{...run.scope,jobId:run.jobId});
+      if(result.responsive&&!result.needsRevision)await this.request('applyAdDesignEditorScene',{...run.scope,jobId:run.jobId});
       const oldHistory=this.history.slice(),oldIndex=this.historyIndex,oldDirty=this.dirty;
       try{for(const [key,draft]of variants)this.drafts.set(key,draft);await this.restore(checked);this.markDirty();this.snapshot();this.stash();if(this.tab==='layers')this.renderLeft();}
       catch(e){await this.restore(run.original);this.history=oldHistory;this.historyIndex=oldIndex;this.dirty=oldDirty;this.syncButtons();throw e;}

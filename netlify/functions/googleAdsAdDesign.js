@@ -778,8 +778,8 @@ function createAdDesignService(deps) {
     },refs,requestId,{durable:true,...(raw.exists?{rawResponse:raw.data().response}:{}),onResponse:response=>saveData(key+'_response',{response,candidateHash,proofHash:proof.proofHash})}),candidateHash,proofHash:proof.proofHash}));
     if(quality.candidateHash!==candidateHash||quality.proofHash!==proof.proofHash)throw new Error('The saved quality score belongs to different ad proofs.');
     await recordCost(key,quality);
-    if(!quality.pass||!Number.isFinite(quality.score)||quality.score<rubric.TARGET)throw new Error('The complete ad scored '+quality.score+'/100 under the messaging-led rubric: '+(quality.issues||[]).join(' '));
-    return {...candidate,quality,candidateHash,proofHash:proof.proofHash};
+    const needsRevision=!quality.pass||!Number.isFinite(quality.score)||quality.score<rubric.TARGET;
+    return {...candidate,quality,needsRevision,candidateHash,proofHash:proof.proofHash};
   }
   async function editorAIApply(input={}){
     const ref=refFor(input.workspaceId),w=await read(input.workspaceId);editorScope(w,input);
@@ -788,6 +788,7 @@ function createAdDesignService(deps) {
       const current=await tx.get(ref),jobRow=await tx.get(target),resultRow=await tx.get(target.collection('data').doc('result')),requestRow=await tx.get(target.collection('data').doc('request'));
       if(!jobRow.exists||jobRow.data().phase!=='ready'||!resultRow.exists||!requestRow.exists)throw new Error('The new scene is not ready to apply.');
       const job=jobRow.data(),result=resultRow.data(),request=requestRow.data(),latest=current.data();editorScope(latest,job.scope);if(job.resetAt)throw new Error('This AI result was reset.');
+      if(result.needsRevision)throw new Error('This draft still needs corrections before replacing campaign assets. Its review findings remain available in the editor.');
       if(job.nativeAppliedAt)return;
       if(!request.responsive||!Array.isArray(result.publicationImages)||result.publicationImages.length!==3)throw new Error('This result has no complete set of photographic assets.');
       if(request.publicationBaseline!==sha({placements:chosenPlacements(latest),messaging:latest.messaging||null}))throw new Error('The saved images or messaging changed while AI was working. Your current choices are retained.');
