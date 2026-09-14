@@ -702,6 +702,7 @@ progress{display:block;width:100%;height:7px;accent-color:var(--gold);border:0;b
 @media(max-width:600px){.adDesignSelectionActions{gap:8px}.adDesignSelectionActions .btn{flex:1 1 auto}.adDesignSelectedPreview>img{max-height:70vh}}
 .adDesignInspectAnchor{position:absolute;left:0;top:0;width:100%;aspect-ratio:1;pointer-events:none;z-index:2}.adDesignInspect{position:absolute;right:6px;bottom:6px;top:auto;padding:0;min-width:0;min-height:0;box-sizing:border-box;pointer-events:auto;width:24px;height:24px;display:grid;place-items:center;background:#fffaf2;color:#33291d;border:1px solid #d7c9b5;border-radius:50%;font-size:24px;cursor:pointer}.adDesignInspect:hover,.adDesignInspect:focus-visible{background:#efe5d5;outline:2px solid #8d6b2f;outline-offset:2px}.adDesignImageDialog{max-width:min(94vw,1000px);border:1px solid #ded3c3;border-radius:16px;padding:18px;background:#fffaf2}.adDesignImageDialog::backdrop{background:#0009}.adDesignImageDialog>img{display:block;max-width:100%;max-height:78vh;margin:auto;object-fit:contain}.adDesignImageDialog>button{float:right}.adDesignSelectActions>span{font-size:11px;color:#716859}
 .adDesignPreviewHeader{display:flex;align-items:flex-start;gap:18px;border-bottom:1px solid var(--line);flex-wrap:wrap}.adDesignPreviewHeader h3{flex:1 1 160px;min-width:0;font-size:16px;line-height:20px;margin:0;padding:0 0 12px;overflow-wrap:anywhere}.adDesignPreviewHeader>.adDesignImageTabs{margin:0;border-bottom:0;flex-shrink:0}.adDesignPreviewHeader>.adDesignImageTabs button{padding:0 12px 12px;font-size:13px;line-height:18px}.adDesignCornerFeedback{position:fixed;right:24px;bottom:20px;z-index:20;width:min(360px,calc(100vw - 40px));max-height:40vh;overflow:auto;border-radius:12px;background:#fffaf2;border:1px solid #dfd1bd;box-shadow:0 8px 28px #33221120;font-size:12px}.adDesignCornerNotice{padding:12px 38px 12px 14px;line-height:1.5}.adDesignCornerNotice button{position:absolute;right:8px;top:7px;background:transparent;border:0;color:#514533;font-size:20px;cursor:pointer}.adDesignCornerFeedback .adDesignProgress{margin:0;padding:12px;background:transparent;border:0}.adDesignCornerFeedback .adDesignProgress p{font-size:12px;margin:7px 0}
+.adDesignPackageLine{display:flex;align-items:center;gap:8px;white-space:nowrap;margin:4px 0 10px;font-size:14px}.adDesignPackageDot{width:7px;height:7px;border-radius:50%;background:#398b5b;flex:none;animation:adPackagePulse 3.6s ease-in-out infinite}@keyframes adPackagePulse{0%,100%{opacity:.65;box-shadow:0 0 0 0 #398b5b12}50%{opacity:1;box-shadow:0 0 0 3px #398b5b0d}}@media(prefers-reduced-motion:reduce){.adDesignPackageDot{animation:none}}
 </style>
 <link rel="stylesheet" href="/brites-groups.css?v=20260911-2">
 </head>
@@ -3802,18 +3803,8 @@ async function openAdDesignProfessional(s,savedDesignId){if(!s||s.editorLoading)
   });
 }catch(e){if(AD_DESIGN===s){s.error=e.message;renderAdDesign();}}finally{if(AD_DESIGN===s){s.editorLoading=false;renderAdDesign();}}}
 function adDesignSelectionSummary(s,source){
-  var saved=s.selectedSavedDesign,record=source&&source.record||{},kind=source&&source.source&&source.source.kind;
-  var title=source&&source.title||'Choose an image',detail='Select a thumbnail from the image repository to preview it here.';
-  if(source){
-    if(source.savedPreview&&saved){detail='Saved design package · '+(saved.designCount||1)+' saved layouts'+(saved.sourceCount?' · '+saved.sourceCount+' source images':'')+'. Includes branding and messaging. Preview all sizes shows the complete ad set for mobile and desktop.';}
-    else if(record.artwork)detail='Saved ad design · Includes artwork, branding and messaging.';
-    else if(kind==='upload')detail='Uploaded image · Source photograph for your ad designs.';
-    else if(record.kind==='generated'||s.imageTab==='generated')detail='AI-generated image · Source photograph for your ad designs.';
-    else if(source.current)detail='Current Google asset · Source image used by this ad group.';
-    else detail='Source image · Product photograph for your ad designs.';
-    if(source.width&&source.height)detail+=' '+source.width+' × '+source.height+' pixels.';
-  }
-  return source&&source.savedPreview?'<div class="adDesignSelectionSummary"><p>'+esc(detail)+'</p></div>':'';
+  if(!source||!source.savedPreview)return '';
+  return '<div class="adDesignSelectionSummary"><p class="adDesignPackageLine"><span class="adDesignPackageDot" aria-hidden="true"></span>27 ad formats</p></div>';
 }
 function adDesignPreviewHtml(s){
   var mediaTabs='<div class="adDesignImageTabs" role="tablist" aria-label="Ad media"><button role="tab" data-design-media="static" aria-selected="'+(s.mediaKind!=="animated")+'">Static ads</button><button role="tab" data-design-media="animated" aria-selected="'+(s.mediaKind==="animated")+'">Animated ads</button></div>';
