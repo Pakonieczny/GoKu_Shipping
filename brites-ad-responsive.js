@@ -8,7 +8,7 @@
   function selectImage(plan,images,board){const f=family(board);return images.find(i=>i.forBoards?.includes(board.key))||images.find(i=>i.forFamilies?.includes(f))||images[0];}
   // Design at the actual viewing width, then export at the requested resolution.
   // A 2048px master must not turn a 36px CTA into a 6px mobile label.
-  const layoutVersion=31;
+  const layoutVersion=32;
   const brands=typeof module==='object'&&module.exports?require('./brites-brand-assets'):root.BritesBrandAssets;
   // The scene catalog matches meaningful crop families rather than charging for
   // every output size. Slim skyscrapers may receive an extra composition.
@@ -45,7 +45,10 @@
     const lum=a=>a.map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((n,v,i)=>n+v*[.2126,.7152,.0722][i],0),ink=lum(style.ink.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)));
     let opacity=.90;for(;opacity<1;opacity+=.005){if([0,255].every(v=>{const b=lum(rgb.map(c=>c*opacity+v*(1-opacity)));return (Math.max(ink,b)+.05)/(Math.min(ink,b)+.05)>=4.5;}))break;}opacity=Math.min(1,opacity);
     const span=axis==='bottom'?H:W,start=axis==='left'?right:axis==='right'?subject.x+subject.w+gap:subject.y+subject.h+gap,end=axis==='left'?subject.x-gap:axis==='right'?left:top;
-    const stops=axis==='left'?[[0,opacity],[start/span,opacity],[end/span,0],[1,0]]:[[0,0],[start/span,0],[end/span,opacity],[1,Math.min(1,opacity+.02)]];
+    let stops=axis==='left'?[[0,opacity],[start/span,opacity],[end/span,0],[1,0]]:[[0,0],[start/span,0],[end/span,opacity],[1,Math.min(1,opacity+.02)]];
+    // Keep the actual scene visible through the lower copy area; opacity builds
+    // gradually after the protected jewelry and does not form an opaque footer.
+    if(axis==='bottom')stops=[[0,0],[start/span,0],[1,.82],[1,.82]];
     // Prefer one complete photographic plane at the already-approved crop/scale.
     // Expanding the viewport never changes the jewelry's position or size.
     const vx=p.left-(p.cropX||0)*s,vy=p.top-(p.cropY||0)*s,x=Math.max(0,vx),y=Math.max(0,vy),r=Math.min(W,vx+image.width*s),b=Math.min(H,vy+image.height*s);
@@ -82,7 +85,7 @@
       const contrast=(a,b)=>(Math.max(luminance(a),luminance(b))+.05)/(Math.min(luminance(a),luminance(b))+.05);
       // Preserve the chosen hue while making typography readable over its tonal fade.
       const readable=(color,bg)=>{if(contrast(color,bg)>=4.5)return color;const rgb=color.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)),toward=luminance(bg)>.18?0:255;for(let n=1;n<=20;n++){const c='#'+rgb.map(v=>Math.round(v+(toward-v)*n/20).toString(16).padStart(2,'0')).join('');if(contrast(c,bg)>=4.5)return c;}return toward?'#ffffff':'#000000';};
-      style.ink=readable(style.ink,style.background);style.buttonInk=readable(style.buttonInk,style.accent);
+      style.ink=readable('#292b2a',style.background);style.buttonInk=readable(style.buttonInk,style.accent);
     }
     const base=(id,role,extra)=>({id:'ai_'+id,name:id,editorRole:role,originX:'left',originY:'top',angle:0,opacity:1,scaleX:1,scaleY:1,strokeWidth:0,...extra});
     const objects=[],margin=Math.max(3,Math.min(6,Math.min(W,H)*.03)),banner=f==='banner',narrow=f==='skyscraper';
@@ -136,7 +139,7 @@
       }
       return placed;
     }
-    function bottomFade(y,height){const rgb=style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)).join(',');objects.push(base('photo_caption_fade','shape',{type:'Rect',left:0,top:y,width:W,height,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:0,y2:1},colorStops:[{offset:0,color:'rgba('+rgb+',0)'},{offset:.55,color:'rgba('+rgb+',.4)'},{offset:1,color:'rgba('+rgb+',1)'}]}}));}
+    function bottomFade(y,height){const rgb=style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)).join(',');objects.push(base('photo_caption_fade','shape',{type:'Rect',left:0,top:y,width:W,height,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:0,y2:1},colorStops:[{offset:0,color:'rgba('+rgb+',0)'},{offset:.75,color:'rgba('+rgb+',.3)'},{offset:1,color:'rgba('+rgb+',.82)'}]}}));}
     function fullBleedLandscape(){
       if(board.key!=='landscape'||style.treatment!=='soft-fade'||!image.focus)return false;
       const q=image.focus,scale=Math.max(W/image.width,H/image.height,Math.min(W*.36/(image.width*q.width*1.04),H*.86/(image.height*q.height*1.04))),cw=W/scale,ch=H/scale;

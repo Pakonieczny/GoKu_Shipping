@@ -27,6 +27,7 @@ let n=0;const ok=(v,m)=>{assert(v,m);n++};
   const s=d.sceneFit.subject;ok(s.x>=0&&s.y>=0&&s.x+s.w<=1&&s.y+s.h<=1,b.key+' full charm retained');
   const fade=d.objects.find(o=>o.id==='ai_atmosphere_fade'),stops=fade.fill.colorStops.map(c=>({x:c.offset,a:Number(c.color.match(/,([^,]+)\)$/)[1])}));
   const alpha=x=>{for(let i=1;i<stops.length;i++)if(x<=stops[i].x){const a=stops[i-1],b=stops[i];return a.a+(b.a-a.a)*(x-a.x)/(b.x-a.x||1);}return stops.at(-1).a;};
+  if(d.sceneFit.axis==='bottom'){ok(alpha(.75)<.75,b.key+' photography remains visible at three-quarter height');ok(alpha(1)<.9,b.key+' lower fade remains translucent');}
   for(const x of d.sceneFit.axis==='bottom'?[s.y,s.y+s.h]:[s.x,s.x+s.w])ok(alpha(x)<.001,b.key+' fade never crosses jewelry');
   if(bg!==p){const f=photo.focus;ok(bg.cropX+bg.width<=f.x*photo.width||bg.cropX>=(f.x+f.width)*photo.width||bg.cropY+bg.height<=f.y*photo.height||bg.cropY>=(f.y+f.height)*photo.height,b.key+' continuation cannot duplicate jewelry');}
   e.board=b;await e.restore(d);for(const o of e.canvas.getObjects())e.fitAIText(o);e.canvas.renderAll();
