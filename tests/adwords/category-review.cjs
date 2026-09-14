@@ -1,0 +1,15 @@
+const assert=require('node:assert/strict');
+const rubric=require('../../netlify/functions/googleAdsAdQuality');
+const editor=require('../../brites-ad-editor');
+const keys=Object.keys(rubric.WEIGHTS),scores=Object.fromEntries(keys.map(k=>[k,100]));
+const categoryReviews=Object.fromEntries(keys.map(k=>[k,{summary:'No evidenced correction needed.',deductions:[]} ]));
+const input={scores,categoryReviews,productRecognizable:true,claimsSupported:true,mobileReadable:true,issues:[]};
+assert.equal(rubric.normalize(input).score,100);
+scores.messaging=94;categoryReviews.messaging={summary:'The closing action can be clearer.',deductions:[{points:6,reason:'Ambiguous action',evidence:'300×250 closing text says More.',correction:'Use Shop now.',kind:'optional'}]};
+assert.equal(rubric.normalize(input).score,98.2);
+assert.equal(editor.reviewSummary(rubric.normalize(input)).categories[0].review.deductions[0].points,6);
+categoryReviews.messaging.deductions[0].points=5;assert.throws(()=>rubric.normalize(input),/every deducted point/);
+categoryReviews.messaging.deductions[0].points=6;categoryReviews.messaging.deductions[0].evidence='';assert.throws(()=>rubric.normalize(input),/every deducted point/);
+assert.equal(editor.reviewSummary({scores,score:94}).categories[0].review,null);
+assert(rubric.schema.required.includes('categoryReviews'));
+console.log('PASS evidence-backed deductions, exact totals, category summaries and legacy compatibility');
