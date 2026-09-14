@@ -20,7 +20,8 @@
   external_node_modules = ["@resvg/resvg-js"]
 
 [functions."{googleAdsAutopilot-background,googleAdsAutopilotApi,googleAdsAutopilotKick,shopifyOrderWebhook}"]
-  external_node_modules = ["@ffmpeg-installer/ffmpeg"]
+  external_node_modules = ["@ffmpeg-installer/ffmpeg", "@resvg/resvg-js"]
+  included_files = ["netlify/functions/fonts/**", "netlify/production-functions/fonts/**"]
 
 # Keep runtime assets next to the staged entrypoints as well as their original
 # source paths. Imported helpers and scripts retain their existing paths.
