@@ -523,7 +523,7 @@ function createAdDesignService(deps) {
       result:result?.exists?{...result.data(),sources:await Promise.all((result.data().sources||[]).map(async source=>({...source,url:await deps.signAsset(source.asset)})))}:null,...(request?.exists?{mode:request.data().mode,selectedLayerId:request.data().selectedLayerId,originalDocument:request.data().document,sources:await Promise.all(request.data().sources.map(async source=>({...source,url:await deps.signAsset(source.asset)})))}:{}),imageAccess:deps.imageAccessStatus?deps.imageAccessStatus():null};
   }
   async function editorAIResume(input={}){
-    const w=await read(input.workspaceId);editorScope(w,input);const target=editorAIRef(input.workspaceId,input.jobId);let queued=false;
+    const w=await read(input.workspaceId);editorScope(w,input);const target=editorAIRef(input.workspaceId,input.jobId);let queued=false;const recoveryJob=await target.get(),recoverable=!!(recoveryJob.exists&&recoveryJob.data().inFlight&&deps.hasResponse&&await deps.hasResponse(recoveryJob.data().inFlight.requestId));
     if(input.discard===true){
       if(input.confirmDiscard!==true)throw new Error('Confirm discarding this unfinished attempt first.');
       await f().db.runTransaction(async tx=>{const workspace=await tx.get(refFor(input.workspaceId)),row=await tx.get(target);editorScope(workspace.data(),input);if(!row.exists)throw new Error('The unfinished attempt was not found.');const job=row.data();if(job.scope.productId!==input.productId||job.scope.groupRef!==input.groupRef)throw new Error('This attempt belongs to another product or ad group.');if(job.resetAt||job.phase==='dismissed')return;if(job.phase==='ready')throw new Error('This attempt has completed. Its saved result is available; refresh before continuing.');if(workspace.data().editorAI?.id!==input.jobId)throw new Error('The active attempt changed. Check its status before discarding.');const now=Date.now();tx.update(target,{phase:'dismissed',resetAt:now,discardedAt:now,discardedByUser:true,owner:null,leaseUntil:0,error:null,updatedAt:now});tx.update(refFor(input.workspaceId),{editorAI:null});});
@@ -562,7 +562,7 @@ function createAdDesignService(deps) {
       if(job.resetAt||job.phase==='dismissed')throw new Error('This failed AI job was reset. Start a new design when ready.');
       if(job.phase==='ready'||job.phase==='running'&&job.leaseUntil>Date.now())return;
       const flightReceipt=job.inFlight?.key?await tx.get(target.collection('data').doc(/(?:quality|quality_v\d+|copy_refine_v\d+|subject_focus_[a-f0-9]{24})$/.test(job.inFlight.key)?job.inFlight.key+'_response':job.inFlight.key)):receipt;
-      if(job.inFlight&&!flightReceipt.exists)throw new Error('The provider may have completed this paid request. Automatic replacement is blocked to prevent another charge. Its original request ID is retained.');
+      if(job.inFlight&&!flightReceipt.exists&&!recoverable)throw new Error('The provider may have completed this paid request. Automatic replacement is blocked to prevent another charge. Its original request ID is retained.');
       queued=true;tx.update(target,{phase:'queued',owner:null,leaseUntil:0,error:null,updatedAt:Date.now(),progress:{pct:job.progress.pct,label:receipt.exists?'Reopening the already paid design response':'Resuming saved product research'}});
     });return {ok:true,workspaceId:input.workspaceId,jobId:input.jobId,queued};
   }
@@ -610,7 +610,9 @@ function createAdDesignService(deps) {
     const saveData=async(key,data)=>f().db.runTransaction(async tx=>{const row=await tx.get(target);if(row.data()?.owner!==owner)throw new Error('AI design worker ownership changed before saving its output.');tx.set(target.collection('data').doc(key),clean(data));});
     const verify=async()=>{const current=await read(workspaceId);editorScope(current,job.scope);if(current.sourceSetId!==job.sourceSetId||(current.snapshotHash||null)!==job.snapshotHash||(current.sourceVersion||null)!==job.sourceVersion)throw new Error('Product or campaign evidence changed. The saved AI result cannot replace this draft.');};
     try{
-      await verify();let responseRow=await target.collection('data').doc('response').get(),evidenceRow=await target.collection('data').doc('evidence').get(),evidence=evidenceRow.exists?evidenceRow.data():null;
+      await verify();
+      if(job.inFlight&&deps.retrieveResponse){const response=await deps.retrieveResponse(job.inFlight.requestId);if(response){const key=job.inFlight.key==='response'?'response':job.inFlight.key+'_response';const proof=job.inFlight.key.startsWith('ad_quality_v')?await target.collection('data').doc(job.inFlight.key.replace('ad_quality_','ad_proofs_')).get():null;await saveData(key,{response,requestId:job.inFlight.requestId,receivedAt:Date.now(),...(proof?.exists?{candidateHash:proof.data().candidateHash,proofHash:proof.data().proofHash}:{})});}}
+      let responseRow=await target.collection('data').doc('response').get(),evidenceRow=await target.collection('data').doc('evidence').get(),evidence=evidenceRow.exists?evidenceRow.data():null;
       if(!responseRow.exists){
         if(job.inFlight)throw new Error('This paid request has no confirmed receipt. No replacement request was sent.');
         const products=await productsFor(ref,w),product=products.find(p=>String(p.id)===request.productId),group=(w.context.groups||[]).find(g=>g.ref===request.groupRef);if(!product||!group)throw new Error('The exact listing or ad group is unavailable.');
@@ -631,7 +633,7 @@ function createAdDesignService(deps) {
         if(!Number.isFinite(reserve)||reserve<=0||reserve>allowance)throw new Error('The configured creative allowance cannot cover this bounded AI design request.');
         await verify();if(deps.verifyContext)await deps.verifyContext(w);
         const requestId=crypto.randomUUID();await save({reservedUsd:reserve,textReservedUsd:reserve,inFlight:{requestId,key:'response',at:Date.now()},progress:{pct:36,label:request.responsive?'Planning coordinated photographs for each ad shape':'Astra is inspecting the ad and designing tailored copy, typography and layout'}});
-        const response=await deps.responses(prepared,requestId);
+        const response=await deps.responses({...prepared,background:true},requestId);
         // Write the provider receipt before parsing or validation. A reload or
         // interrupted worker can use this response without a second API charge.
         await saveData('response',{response,requestId,receivedAt:Date.now()});responseRow=await target.collection('data').doc('response').get();
@@ -646,6 +648,7 @@ function createAdDesignService(deps) {
       await saveData('result',result);await save({phase:'ready',leaseUntil:0,completedAt:Date.now(),error:null,progress:{pct:100,label:'Tailored design is ready to apply to this artboard'}});
       return {ok:true,workspaceId,jobId,includeAnimation:request.includeAnimation===true};
     }catch(error){
+      if(error.providerPending){await save({phase:'queued',leaseUntil:0,error:null});return {ok:true,continue:true,workspaceId,jobId};}
       if(error.notDispatched||error.definiteResponse){job.inFlight=null;if(!job.usage)job.usage={estimatedUsd:0,costEstimated:!!error.definiteResponse,usage:{},at:Date.now()};}
       await save({phase:'needs_attention',leaseUntil:0,error:String(error.message||error).slice(0,700),progress:{pct:job.progress.pct,label:job.inFlight?'Paid request needs reconciliation; it will not run again automatically':'Saved design needs attention; completed work is retained'}});return {ok:false,workspaceId,jobId,error:job.error};
     }
@@ -679,7 +682,7 @@ function createAdDesignService(deps) {
       const textBytes=Buffer.byteLength(JSON.stringify(prepared.input)),reserve=Math.ceil((textBytes*20/1000000+prepared.max_output_tokens*75/1000000)*100)/100;
       if(job.inFlight?.key===key&&raw.exists)await save({inFlight:null});
       const revised=await paid(key,89,'Improving saved messaging from the complete-ad review',async requestId=>{
-        let response=raw.exists?raw.data().response:await deps.responses(prepared,requestId);
+        let response=raw.exists?raw.data().response:await deps.responses({...prepared,background:true},requestId);
         if(!raw.exists)await saveData(key+'_response',{response,requestId});
         await recordCost(key,{...response,requestId:raw.exists?raw.data().requestId:requestId,reservedUsd:reserve});
         const revision=research.validateResponsivePlan({output:research.parseResponse(response),request,evidence});
@@ -715,7 +718,7 @@ function createAdDesignService(deps) {
       if(job.inFlight?.key===key&&raw.exists)await save({inFlight:null});
       const located=await paid(key,90,'Finding the charm for close, size-aware crops',async requestId=>{
         let response=raw.exists?raw.data().response:null;
-        if(!response){const bytes=await require('sharp')(await deps.loadAsset(source.asset),{limitInputPixels:40000000}).resize({width:1600,height:1600,fit:'inside',withoutEnlargement:true}).jpeg({quality:92}).toBuffer();response=await deps.responses(research.buildSubjectFocusRequest({imageDataUrl:'data:image/jpeg;base64,'+bytes.toString('base64'),product}),requestId);await saveData(key+'_response',{response,requestId});}
+        if(!response){const bytes=await require('sharp')(await deps.loadAsset(source.asset),{limitInputPixels:40000000}).resize({width:1600,height:1600,fit:'inside',withoutEnlargement:true}).jpeg({quality:92}).toBuffer();response=await deps.responses({...research.buildSubjectFocusRequest({imageDataUrl:'data:image/jpeg;base64,'+bytes.toString('base64'),product}),background:true},requestId);await saveData(key+'_response',{response,requestId});}
         await recordCost(key,{...response,requestId:raw.exists?raw.data().requestId:requestId,reservedUsd:.45});
         return {focus:research.validateSubjectFocus(research.parseResponse(response)),model:response.model,usage:response.usage,estimatedUsd:response.estimatedUsd,costEstimated:response.costEstimated};
       });
@@ -757,7 +760,7 @@ function createAdDesignService(deps) {
       research:{sources:evidence.sources,limitations:evidence.warnings},inputCoverage:{usedProductImages:refs.length},
       renderedFormats:proof.images.map(({key,width,height,displayWidth,displayHeight})=>({key,width,height,displayWidth,displayHeight})),
       placementNote:'These are actual browser-rendered editable compositions. Google responsive ads combine separate clean photos and native text dynamically; these proofs are not guaranteed Google placements.'
-    },refs,requestId,{...(raw.exists?{rawResponse:raw.data().response}:{}),onResponse:response=>saveData(key+'_response',{response,candidateHash,proofHash:proof.proofHash})}),candidateHash,proofHash:proof.proofHash}));
+    },refs,requestId,{durable:true,...(raw.exists?{rawResponse:raw.data().response}:{}),onResponse:response=>saveData(key+'_response',{response,candidateHash,proofHash:proof.proofHash})}),candidateHash,proofHash:proof.proofHash}));
     if(quality.candidateHash!==candidateHash||quality.proofHash!==proof.proofHash)throw new Error('The saved quality score belongs to different ad proofs.');
     await recordCost(key,quality);
     if(!quality.pass||!Number.isFinite(quality.score)||quality.score<rubric.TARGET)throw new Error('The complete ad scored '+quality.score+'/100 under the messaging-led rubric: '+(quality.issues||[]).join(' '));
