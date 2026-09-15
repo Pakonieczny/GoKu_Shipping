@@ -15,4 +15,7 @@ assert(rubric.schema.required.includes('categoryReviews'));
 const deduction=rubric.schema.properties.categoryReviews.properties.messaging.properties.deductions.items;assert(deduction.required.includes('formats')&&deduction.properties.formats.type==='array','every deduction names the rendered formats it applies to');
 assert.deepEqual(rubric.deductionFormats(categoryReviews.messaging.deductions[0]),[],'older reviews without a formats list still normalize');
 assert.deepEqual(rubric.deductionFormats({formats:['mobile_square']}),['mobile_square']);
+// A film carrying its own lettering can never pass, whatever it scores.
+const motionSchema=(()=>{const r=rubric.schema;return {...r,properties:{...r.properties,exactProductIdentity:{type:'boolean'},footageLettering:{type:'boolean'}},required:[...r.required,'exactProductIdentity','footageLettering']};})();
+assert(motionSchema.required.includes('footageLettering'),'the animated review must answer whether the footage carries lettering');
 console.log('PASS evidence-backed deductions, exact totals, category summaries and legacy compatibility');
