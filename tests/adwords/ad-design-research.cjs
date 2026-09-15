@@ -13,7 +13,7 @@ function result(){return {brief:{buyer:'A gift buyer looking for a monogram neck
 (async()=>{
  const messageFixture=fixture(),messageEvidence=await messageFixture.api.collect(input),messageRequest=messageFixture.api.buildRequest({evidence:messageEvidence,mode:'copy'});
  eq(messageRequest.text.format.schema.properties.imageDirections.maxItems,0,'messaging does not purchase unused photographic plans');
- eq(messageRequest.max_output_tokens,16000,'completion allowance includes reasoning and output');
+ eq(messageRequest.max_output_tokens,undefined,'no application response token cap');
  const messageOutput=result();messageOutput.imageDirections=[];
  eq(messageFixture.api.validateResult({output:messageOutput,evidence:messageEvidence,channel:'search',group,mode:'copy'}).copy,messageOutput.copy,'complete messaging is valid without image generation directions');
  assert.throws(()=>messageFixture.api.validateResult({output:messageOutput,evidence:messageEvidence,channel:'search',group}),/Two coherent/);

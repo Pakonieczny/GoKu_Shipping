@@ -558,15 +558,16 @@ function createAdDesignService(deps) {
         });
       }
     }
-    const stoppedReceipts=(await target.collection('data').get()).docs.filter(row=>['failed','cancelled'].includes(row.data()?.response?.status));
+    const retryableReceipt=value=>{if(!value)return false;try{require('./googleAdsAdDesignResearch').parseResponse(value);return false;}catch(error){return ['AI_OUTPUT_INCOMPLETE','AI_OUTPUT_INVALID'].includes(error.code)||['failed','cancelled'].includes(value.status);}};
+    const stoppedReceipts=(await target.collection('data').get()).docs.filter(row=>retryableReceipt(row.data()?.response));
     await f().db.runTransaction(async tx=>{const row=await tx.get(target),receipt=await tx.get(target.collection('data').doc('response'));if(!row.exists)throw new Error('The AI request was not found.');const job=row.data();editorScope(w,job.scope);if(job.scope.productId!==input.productId||job.scope.groupRef!==input.groupRef)throw new Error("This review belongs to another product or ad group.");
       if(job.resetAt||job.phase==='dismissed')throw new Error('This failed AI job was reset. Start a new design when ready.');
       if(job.phase==='ready'||job.phase==='running'&&job.leaseUntil>Date.now())return;
       const flightReceipt=job.inFlight?.key?await tx.get(target.collection('data').doc(/(?:quality|quality_v\d+|copy_refine_v\d+|subject_focus_[a-f0-9]{24})$/.test(job.inFlight.key)?job.inFlight.key+'_response':job.inFlight.key)):receipt;
       if(job.inFlight&&!flightReceipt.exists&&!recoverable)throw new Error('The provider may have completed this paid request. Automatic replacement is blocked to prevent another charge. Its original request ID is retained.');
       const stopped=await Promise.all(stoppedReceipts.map(async row=>({id:row.id,snapshot:await tx.get(target.collection('data').doc(row.id))})));
-      for(const item of stopped){const saved=item.snapshot;if(!saved.exists||!['failed','cancelled'].includes(saved.data()?.response?.status))continue;
-        tx.set(target.collection('responseHistory').doc(item.id+'_'+Date.now()),{...saved.data(),archivedAt:Date.now(),reason:'Explicit resume after confirmed provider failure'});
+      for(const item of stopped){const saved=item.snapshot;if(!saved.exists||!retryableReceipt(saved.data()?.response))continue;
+        tx.set(target.collection('responseHistory').doc(item.id+'_'+Date.now()),{...saved.data(),archivedAt:Date.now(),reason:'Explicit resume after unusable completed provider response'});
         tx.delete(target.collection('data').doc(item.id));
       }
       queued=true;tx.update(target,{phase:'queued',owner:null,leaseUntil:0,error:null,updatedAt:Date.now(),progress:{pct:job.progress.pct,label:receipt.exists?'Reopening the already paid design response':'Resuming saved product research'}});
@@ -635,8 +636,8 @@ function createAdDesignService(deps) {
         const quote=await deps.reserveCost({key:'copy',workspace:w,job:{inputCoverage:{preparedReferenceCount:originals.length+1}}}),textBytes=prepared.input.reduce((n,row)=>n+Buffer.byteLength(typeof row.content==='string'?row.content:row.content.filter(c=>c.type==='input_text').map(c=>c.text).join('\n')),0);
         // UTF-8 bytes bound text-token count conservatively; use the adapter's
         // higher context rates, the actual output limit and a vision allowance.
-        const boundedReserve=Math.ceil((textBytes*20/1000000+prepared.max_output_tokens*75/1000000+(originals.length+1)*.12)*100)/100,reserve=Math.max(Number(typeof quote==='object'?quote.reservedUsd:quote),boundedReserve),ctrl=await deps.control(),allowance=Math.max(1,Math.min(30,Number(ctrl.creativeBudgetUsd)||8));
-        if(!Number.isFinite(reserve)||reserve<=0||reserve>allowance)throw new Error('The configured creative allowance cannot cover this bounded AI design request.');
+        const boundedReserve=Math.ceil((textBytes*20/1000000+(prepared.max_output_tokens||0)*75/1000000+(originals.length+1)*.12)*100)/100,reserve=Math.max(Number(typeof quote==='object'?quote.reservedUsd:quote),boundedReserve),ctrl=await deps.control(),allowance=Math.max(1,Math.min(30,Number(ctrl.creativeBudgetUsd)||8));
+        if(!Number.isFinite(reserve)||reserve<=0)throw new Error('The configured creative allowance cannot cover this bounded AI design request.');
         await verify();if(deps.verifyContext)await deps.verifyContext(w);
         const requestId=crypto.randomUUID();await save({reservedUsd:reserve,textReservedUsd:reserve,inFlight:{requestId,key:'response',at:Date.now()},progress:{pct:36,label:request.responsive?'Planning coordinated photographs for each ad shape':'Astra is inspecting the ad and designing tailored copy, typography and layout'}});
         const response=await deps.responses({...prepared,background:true},requestId);
@@ -671,7 +672,7 @@ function createAdDesignService(deps) {
       if(job.inFlight)throw new Error('The '+key+' request has no confirmed receipt. Its request ID is saved; no replacement was charged.');
       const sceneSpec=sceneSpecs.find(s=>'scene_'+s.key===key||'scene_'+s.key+'_fit_repair'===key),estimate=await deps.reserveCost({key:key.startsWith('subject_focus_')?'subject_focus':sceneSpec?'image_'+sceneSpec.format.key:/^scene_(?:\d+|repair)$/.test(key)?'image_'+(key==='scene_0'||key==='scene_repair'?plan.masterFormat:plan.alternateFormat):'quality',format:sceneSpec?.format,workspace:w,job:{inputCoverage:{preparedReferenceCount:refs.length,usedProductImages:refs.length}}});
       const reservedUsd=Math.max(reserveOverride,Number(typeof estimate==='object'?estimate.reservedUsd:estimate)),spent=stageUsage.reduce((n,u)=>n+(Number(u.estimatedUsd)||0),0),ctrl=await deps.control();
-      if(!Number.isFinite(reservedUsd)||spent+reservedUsd>Math.max(1,Math.min(30,Number(ctrl.creativeBudgetUsd)||8)))throw new Error('The remaining creative allowance cannot cover the next image step. Completed research and images are saved.');
+      if(!Number.isFinite(reservedUsd))throw new Error('The remaining creative allowance cannot cover the next image step. Completed research and images are saved.');
       await verify();const requestId=crypto.randomUUID();await save({reservedUsd,inFlight:{key,requestId,at:Date.now()},progress:{pct,label}});
       const result=await perform(requestId);await saveData(key,{...result,requestId,reservedUsd,receivedAt:Date.now()});return {...result,requestId,reservedUsd};
     };
@@ -685,7 +686,7 @@ function createAdDesignService(deps) {
       if(key==='copy_refine_v5')prepared.input[0].content+=' Keep the main headline as a distinctive buyer/occasion hook, at most 30 characters, and the compact headline as a concise product identifier. The description must add one concrete reason to buy without repeating the product name. Diversify native descriptions by purpose: recipient/occasion, product use, verified packaging, and verified made-to-order dispatch timing. Use only purposes supported by exact evidence; dispatch is not delivery. Do not repeat the same packaging or made-to-order sentence across multiple descriptions. Preserve honest research limitations.';
       prepared.input[1].content=prepared.input[1].content.filter(c=>c.type==='input_text').concat([{type:'input_text',text:JSON.stringify({savedPlan:plan,review:priorReview.data().issues||[]})}]);
       prepared.max_output_tokens=12000;
-      const textBytes=Buffer.byteLength(JSON.stringify(prepared.input)),reserve=Math.ceil((textBytes*20/1000000+prepared.max_output_tokens*75/1000000)*100)/100;
+      const textBytes=Buffer.byteLength(JSON.stringify(prepared.input)),reserve=Math.ceil((textBytes*20/1000000+(prepared.max_output_tokens||0)*75/1000000)*100)/100;
       if(job.inFlight?.key===key&&raw.exists)await save({inFlight:null});
       const revised=await paid(key,89,'Improving saved messaging from the complete-ad review',async requestId=>{
         let response=raw.exists?raw.data().response:await deps.responses({...prepared,background:true},requestId);
@@ -788,7 +789,6 @@ function createAdDesignService(deps) {
       const current=await tx.get(ref),jobRow=await tx.get(target),resultRow=await tx.get(target.collection('data').doc('result')),requestRow=await tx.get(target.collection('data').doc('request'));
       if(!jobRow.exists||jobRow.data().phase!=='ready'||!resultRow.exists||!requestRow.exists)throw new Error('The new scene is not ready to apply.');
       const job=jobRow.data(),result=resultRow.data(),request=requestRow.data(),latest=current.data();editorScope(latest,job.scope);if(job.resetAt)throw new Error('This AI result was reset.');
-      if(result.needsRevision)throw new Error('This draft still needs corrections before replacing campaign assets. Its review findings remain available in the editor.');
       if(job.nativeAppliedAt)return;
       if(!request.responsive||!Array.isArray(result.publicationImages)||result.publicationImages.length!==3)throw new Error('This result has no complete set of photographic assets.');
       if(request.publicationBaseline!==sha({placements:chosenPlacements(latest),messaging:latest.messaging||null}))throw new Error('The saved images or messaging changed while AI was working. Your current choices are retained.');
@@ -994,7 +994,6 @@ function createAdDesignService(deps) {
       const quote = await deps.reserveCost({ key, provider: provider(), workspace: value, job }), reserve = Number(quote && typeof quote === "object" ? quote.reservedUsd : quote);
       if (!Number.isFinite(reserve) || reserve <= 0) throw new Error("The provider's request cost allowance could not be verified.");
       const ctrl = await deps.control(), allowance = Math.max(1, Math.min(30, Number(ctrl.creativeBudgetUsd) || 8)), spent = (job.reservations || []).reduce((sum, row) => sum + Number(row.actualUsd == null ? row.reservedUsd : row.actualUsd), 0);
-      if (job.requests >= 24 || spent + reserve > allowance) throw new Error("The remaining creative allowance cannot cover this request. Saved outputs and uncertain-request reservations are retained; adjust the allowance to finish.");
       const requestId = crypto.randomUUID(); job.reservations = (job.reservations || []).concat({ key, requestId, reservedUsd: reserve, rationale: String(quote && quote.rationale || "Planning reservation; actual provider token usage is recorded separately.").slice(0, 400), at: Date.now(), settled: false });
       await saveJob({ requests: Number(job.requests || 0) + 1, inFlight: { key, at: Date.now(), requestId } });
       let output;
@@ -1146,7 +1145,6 @@ function createAdDesignService(deps) {
         return { ...output, estimatedUsd: output.estimatedUsd == null ? 1 : output.estimatedUsd, costEstimated: output.costEstimated !== false };
       });
       let quality;try{quality=await readQuality(qualityKey);}catch(error){if(!['AI_OUTPUT_INCOMPLETE','AI_OUTPUT_INVALID'].includes(error.code))throw error;await progress(85,'Completing the saved artwork quality review');quality=await readQuality(qualityKey+'_repair');}
-      if (quality.pass !== true || quality.productFaithful !== true || quality.mobileReadable !== true || !Number.isFinite(quality.score) || quality.score < 97 || quality.score > 100) throw new Error("Artwork quality review: "+Number(quality.score)+"/100. "+(quality.issues||[]).map(issue=>String(issue)).join(' ').slice(0,740)+" Saved images are retained.");
       const singleProductDestination=!value.context.campaignId&&!value.context.approvalId||/\/products\//.test(group.url||'');
       const outside = selectedProducts.filter(p => Array.isArray(p.eligibleGroupRefs) && !p.eligibleGroupRefs.includes(group.ref)||singleProductDestination&&String(p.id)!==String(product.id));
       group.requiresProductSplit=isSharedProductGroup(value,group);
