@@ -346,7 +346,12 @@ dialog.wide{width:min(980px,95vw)}
       <div class="field"><label>RG 14/20 W × H</label><div class="fieldRow"><input id="stRoseW" type="number" step="0.001" min="0.5"><input id="stRoseH" type="number" step="0.001" min="0.5"></div></div>
     </div>
     <div class="field"><div class="help">The reference box measured 7.125 × 6.03 in (513.03 × 434.19 pt). Change a metal's stock here if it cuts at a different size; the sheet outline in the output follows it.</div></div>
-    <div class="section">Solver</div>
+    <div class="section">Nesting engine</div>
+    <div class="fieldRow">
+      <div class="field"><label>Engine</label><select id="stEngine"><option value="ai">Claude places every charm (AI)</option><option value="solver">Geometric solver (restarts within a time budget)</option></select><div class="help">AI: Claude Opus 5 plans each placement from the rendered sheet, the measuring tool executes it exactly (sliding up to the snap distance if two pieces collide) and reports back; rounds continue until everything is placed or Claude says the sheet is full. No random trials.</div></div>
+      <div class="field"><label>AI rounds · snap (in)</label><div class="fieldRow"><input id="stAiRounds" type="number" min="1" max="30" step="1"><input id="stSnapIn" type="number" min="0" max="1" step="0.05"></div><div class="help">Max planning rounds per sheet, and how far a colliding piece may slide to clear a neighbour.</div></div>
+    </div>
+    <div class="section">Geometry (measuring tool · solver option)</div>
     <div class="fieldRow3">
       <div class="field"><label>Clearance (pt)</label><input id="stClearance" type="number" step="0.05" min="-2" max="12"><div class="help">Gap between silhouettes. <b>Negative = aggressive:</b> outlines may touch and their strokes overlap by up to that much (−0.5 pt ≈ half a 0.87 pt cut line), bodies never more. 0 = touching. 0.33 pt fit the reference sheet; 1.5 pt did not.</div></div>
       <div class="field"><label>Edge inset (pt)</label><input id="stInset" type="number" step="0.1" min="0" max="36"></div>
@@ -414,7 +419,7 @@ const DEFAULTS = {
   rail: "md",
   stock: { gold: [7.125, 6.03], silver: [7.125, 6.03], rose: [7.125, 6.03] },
   clearancePt: -0.5, insetPt: 1.5, angleStep: 30, budgetS: 180, seed: 1, serverAbove: 80,
-  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, v: 2
+  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "ai", aiRounds: 10, snapIn: 0.25, v: 3
 };
 const STOCK_PRESETS = [
   { id: "ref", label: "7.125 × 6.03 in (reference)", w: 7.125, h: 6.03 },
@@ -461,6 +466,7 @@ function loadSettings() {
     const saved = JSON.parse(localStorage.getItem("cn.settings") || "{}");
     // v2: aggressive clearance became the default (shared cut lines); migrate settings saved before that once
     if ((saved.v || 1) < 2) { saved.clearancePt = DEFAULTS.clearancePt; saved.v = 2; }
+    if ((saved.v || 1) < 3) { saved.engine = "ai"; saved.v = 3; }          // v3: Claude places every charm; the solver is an explicit option
     return Object.assign({}, DEFAULTS, saved);
   } catch (_) { return Object.assign({}, DEFAULTS, { v: 2 }); }
 }
@@ -518,7 +524,12 @@ async function uploadBytes(path, bytes, contentType, label) {
 }
 /** Run a Claude job (grouping / layout / name) on the background function and poll for its result.
  *  A high-effort vision call over a whole sheet takes minutes; the synchronous route 504s at ~10 s. */
+let agentCallImpl = null;   // tests inject a planner here; production uses the background Claude job
 async function agentCall(mode, payload, opts = {}) {
+  if (agentCallImpl) return agentCallImpl(mode, payload, opts);
+  return agentCallRemote(mode, payload, opts);
+}
+async function agentCallRemote(mode, payload, opts = {}) {
   const started = performance.now();
   const r = await api("charmNestLibrary", { op: "startAgent", mode, payload, sheetId: opts.sheetId || null, sourceName: opts.sourceName || null }, { label: opts.label || "Starting Claude" });
   const id = r.id; let tick = 0;
@@ -868,7 +879,11 @@ async function reviewLayout(sh, items) {
   sh.aiReview = { state: "running" }; renderCard(sh);
   const evL = agent({ metal: sh.metal }, "claude", `Sent Claude the finished ${labelOf(sh.metal)} sheet and its ${sh.placements.length} placements — asking for anything an operator would reject`, { live: true });
   const byId = new Map(items.map(c => [c.id, c]));
-  const preview = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(sh.outputs.previewPng); });
+  // Claude's copy of the sheet: light background, every cut outline traced in red, numbered
+  const preview = (() => { const cv = document.createElement("canvas"); const st = stockFor(sh.metal); cv.width = 1400; cv.height = Math.round(1400 * st.hPt / st.wPt); sh._forClaude = true; try { paintPreview(cv, sh, true); } finally { sh._forClaude = false; }
+    const ctx = cv.getContext("2d"), k = cv.width / st.wPt; ctx.font = "bold 16px sans-serif";
+    sh.placements.forEach((p, i) => { const t = String(i + 1); const w = ctx.measureText(t).width + 8; ctx.fillStyle = "#b0563f"; ctx.fillRect(p.cxPt * k - w / 2, p.cyPt * k - 10, w, 20); ctx.fillStyle = "#fff"; ctx.fillText(t, p.cxPt * k - w / 2 + 4, p.cyPt * k + 6); });
+    return cv.toDataURL("image/jpeg", 0.86); })();
   const r = await agentCall("layout", {
     sheetName: `${labelOf(sh.metal)} ${sh.sheetId}`, preview,
     placements: sh.placements.map((p, i) => ({ n: i + 1, name: byId.get(p.id)?.name || p.id, wPt: p.wPt, hPt: p.hPt, cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle })),
@@ -876,7 +891,19 @@ async function reviewLayout(sh, items) {
   }, { label: "Claude is inspecting the nested sheet", sheetId: sh.sheetId, onTick: e => { sh.aiReview = { state: "running", elapsed: e }; renderProgress(sh); agentUpdate(evL, { elapsed: e }); } });
   if (r.skipped) { agentUpdate(evL, { live: false, kind: "warn", text: `Sheet inspection skipped — ${r.skipped}` }); sh.aiReview = { skipped: r.skipped }; renderCard(sh); return; }
   agentUpdate(evL, { live: false, kind: r.ok && !(r.issues || []).length ? "ok" : "claude", html: `Claude after <b>${fmt.s(evL.elapsed || 0)}</b>: “${esc(r.summary || "")}”`, reason: r.reasoning || null });
-  for (const i of r.issues || []) agent({ metal: sh.metal }, "warn", `${i.kind}: ${(i.charms || []).join(", ")} — ${i.note} (${i.action}${i.mergeInto ? " into " + i.mergeInto : ""})`);
+  // Measured facts outrank the model's eye: the two verifiers already proved bounds and overlap
+  // at 6 px/pt, and the grouping review already confirmed each charm's identity from the source.
+  const verifiedOk = sh.verification && sh.verification.ok;
+  const confirmed = new Set(items.filter(c => c.reviewVerdict === "complete").map(c => String(c.name || "").toLowerCase()));
+  const kept = [];
+  for (const i of r.issues || []) {
+    const names = (i.charms || []).map(String);
+    if ((i.kind === "outside" || i.kind === "overlap") && verifiedOk) { agent({ metal: sh.metal }, "info", `Overruled Claude's "${i.kind}" on ${names.join(", ")}: both verifiers measured no overlap and nothing outside the sheet at 6 px/pt — the model's pixel estimate was wrong`); continue; }
+    if ((i.action === "merge" || i.action === "exclude") && names.every(n => confirmed.has(n.toLowerCase()))) { agent({ metal: sh.metal }, "info", `Overruled Claude's "${i.kind}" on ${names.join(", ")}: it confirmed this charm complete from the source page before nesting, so it is not a fragment now`); continue; }
+    kept.push(i); agent({ metal: sh.metal }, "warn", `${i.kind}: ${names.join(", ")} — ${i.note} (${i.action}${i.mergeInto ? " into " + i.mergeInto : ""})`);
+  }
+  r.issues = kept; if (!kept.length) r.ok = true;
+  sh.aiReview.issues = kept; sh.aiReview.ok = !kept.length; renderCard(sh);
   sh.aiReview = { state: "done", ok: !!r.ok && !(r.issues || []).length, issues: r.issues || [], summary: r.summary, usage: r.usage };
   log(sh, `Claude review: ${r.summary}`);
   renderCard(sh);
@@ -991,14 +1018,109 @@ function startNest(sh) {
   sh.status = "nesting"; sh.startedAt = performance.now(); sh.placements = []; sh.rejects = []; sh.outputs = null; sh.verification = null; sh.best = null; sh.trials = 0; sh.liveInfo = null; sh.endedBy = null;
   sh.jobId = uid(); sh.stage = "Preparing rotations…"; sh.progress = [0, items.length]; sh.dirty = false;
   log(sh, `nest started · ${items.length} pieces · seed ${S.settings.seed} · clearance ${S.settings.clearancePt} pt`);
-  sh.evNest = agent({ metal: sh.metal }, "nest", `Nesting ${items.length} pieces · seed ${S.settings.seed} · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · up to ${S.settings.budgetS}s`, { live: true });
+  sh.evNest = (S.settings.engine || "ai") === "ai" ? null : agent({ metal: sh.metal }, "nest", `Solver: ${items.length} pieces · seed ${S.settings.seed} · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · up to ${S.settings.budgetS}s`, { live: true });
   renderCard(sh); drawPreview(sh);
   const job = buildJob(sh);
+  if ((S.settings.engine || "ai") === "ai") { startAINest(sh, items).catch(e => finishNest(sh, { error: e.message })); return; }
   const useServer = S.settings.serverAbove > 0 && items.length > S.settings.serverAbove && S.cloud.ok;
   if (useServer) return startServerNest(sh, job);
   ensureWorker(sh).postMessage({ type: "solve", jobId: sh.jobId, job });
 }
-function stopNest(sh) { if (sh.status !== "nesting") return; sh.stage = "Stopping after this piece…"; renderCard(sh); if (sh.serverJob) { api("charmNestLibrary", { op: "stopJob", id: sh.serverJob }).catch(() => {}); } else if (sh.worker) sh.worker.postMessage({ type: "stop", jobId: sh.jobId }); }
+
+/* ═══ 9b · AI nesting: Claude plans every placement, the geometry measures ═══ */
+function aiRenderSheet(sh) {
+  const st = stockFor(sh.metal); const cv = document.createElement("canvas"); cv.width = 1400; cv.height = Math.round(1400 * st.hPt / st.wPt);
+  sh._forClaude = true; try { paintPreview(cv, sh, true); } finally { sh._forClaude = false; }
+  const ctx = cv.getContext("2d"), k = cv.width / st.wPt; ctx.font = "bold 16px sans-serif";
+  sh.placements.forEach((p, i) => { const t = String(i + 1); const w = ctx.measureText(t).width + 8; ctx.fillStyle = "#b0563f"; ctx.fillRect(p.cxPt * k - w / 2, p.cyPt * k - 10, w, 20); ctx.fillStyle = "#fff"; ctx.fillText(t, p.cxPt * k - w / 2 + 4, p.cyPt * k + 6); });
+  return cv.toDataURL("image/jpeg", 0.86);
+}
+/** Top open rectangles: take the largest, mask it, repeat. */
+function aiPockets(grid, n) {
+  const out = []; const free = grid.free.slice();
+  for (let i = 0; i < n; i++) {
+    const p = grid.largestPocket(); if (!p.area || p.w < 8 || p.h < 8) break;
+    out.push({ wIn: p.w / grid.fineRes / 72, hIn: p.h / grid.fineRes / 72, xIn: p.x / grid.fineRes / 72, yIn: p.y / grid.fineRes / 72 });
+    for (let y = p.y; y < p.y + p.h; y++) for (let x = p.x; x < p.x + p.w; x++) grid.free[y * grid.W + x] = 0;
+  }
+  grid.free.set(free); return out;
+}
+async function startAINest(sh, items) {
+  const st = stockFor(sh.metal); const clearance = +S.settings.clearancePt || 0; const inset = +S.settings.insetPt || 0;
+  const Sv = CharmNestSolver; const jobId = sh.jobId;
+  const alive = () => sh.jobId === jobId && sh.status === "nesting";
+  const byId = new Map(items.map(c => [c.id, c]));
+  const grid = Sv.makeSheetGrid({ wPt: st.wPt, hPt: st.hPt, insetPt: inset }, clearance, 2);
+  const variants = new Map();
+  const variantFor = (c, angle) => { const key = c.id + "@" + angle; if (!variants.has(key)) variants.set(key, Sv.prepareVariant({ bits: c.bits, w: c.w, h: c.h, scale: c.scale }, angle, clearance, 2)); return variants.get(key); };
+  const placedCells = () => sh.placements.reduce((n, p) => n + (variantFor(byId.get(p.id), p.angle)?.cells || 0), 0);
+  const info = () => ({ placed: sh.placements.length, total: items.length, freePt2: grid.freeCells() / 4, usablePt2: grid.usableCells / 4, placedPt2: placedCells() / 4, pocket: (() => { const p = grid.largestPocket(); return { wPt: p.w / 2, hPt: p.h / 2, xPt: p.x / 2, yPt: p.y / 2 }; })() });
+  sh.placements = []; sh.rejects = []; sh.stage = "Claude is planning the first placements…"; sh.progressKind = "place"; sh.progress = [0, items.length];
+  // pinned pieces first, exactly where they were
+  for (const c of items) if (c.pinned) { const v = variantFor(c, c.pinned.angle); const r = v && Sv.tryPlace(grid, v, c.pinned.cxPt, c.pinned.cyPt, 0); if (r && r.ok) { Sv.stampVariant(grid, v, r.x, r.y); sh.placements.push({ id: c.id, angle: c.pinned.angle, cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, wPt: v.solid.w / 2, hPt: v.solid.h / 2 }); } }
+  const evPlan = agent({ metal: sh.metal }, "nest", `Claude is nesting ${items.length} charms itself — no solver trials. Each round it sees the sheet, plans moves, the measuring tool executes them exactly.`, { live: true });
+  let feedback = "", rounds = 0, setAside = new Set(), t0 = performance.now(), lastSummary = "";
+  const maxRounds = +S.settings.aiRounds || 10, snapPt = (+S.settings.snapIn || 0) * 72;
+  while (alive() && rounds < maxRounds) {
+    const remaining = items.filter(c => !sh.placements.some(p => p.id === c.id) && !setAside.has(c.id));
+    if (!remaining.length) break;
+    rounds++;
+    sh.stage = `Round ${rounds} · Claude is planning ${remaining.length} remaining piece(s)…`; renderProgress(sh); drawPreview(sh);
+    const evR = agent({ metal: sh.metal }, "claude", `Round ${rounds}: sent Claude the sheet with ${sh.placements.length} placed, ${remaining.length} remaining, the open pockets and last round's feedback`, { live: true });
+    let plan;
+    try {
+      plan = await agentCall("place", {
+        wIn: st.wIn, hIn: st.hIn, insetIn: inset / 72, clearancePt: clearance, round: rounds, maxRounds,
+        sheet: aiRenderSheet(sh), pockets: aiPockets(grid, 6), feedback: feedback || "",
+        placed: sh.placements.map((p, i) => ({ n: i + 1, id: p.id, name: byId.get(p.id)?.name, wIn: p.wPt / 72, hIn: p.hPt / 72, xIn: p.cxPt / 72, yIn: p.cyPt / 72, angle: p.angle })),
+        remaining: remaining.map(c => ({ id: c.id, name: c.name, thumb: c.thumb, wIn: c.widthPt / 72, hIn: c.heightPt / 72, areaIn2: c.areaPt2 / 5184 }))
+      }, { label: `Claude planning round ${rounds}`, sheetId: sh.sheetId, onTick: e => { agentUpdate(evR, { elapsed: e }); sh.stage = `Round ${rounds} · Claude is planning ${remaining.length} remaining piece(s) · ${fmt.s(e)}`; renderProgress(sh); } });
+    } catch (e) { agentUpdate(evR, { live: false, kind: "warn", text: `Round ${rounds}: Claude unavailable — ${e.message}` }); throw e; }
+    if (!alive()) return;
+    if (plan.skipped || plan.error) { agentUpdate(evR, { live: false, kind: "warn", text: `Round ${rounds}: ${plan.skipped || plan.error}` }); throw new Error(plan.skipped || plan.error); }
+    agentUpdate(evR, { live: false, html: `Round ${rounds} · Claude after <b>${fmt.s(evR.elapsed || 0)}</b>: “${esc(plan.summary || "")}” · ${(plan.moves || []).length} move(s)`, reason: plan.reasoning || null });
+    lastSummary = plan.summary || "";
+    const fb = [];
+    for (const m of plan.moves || []) {
+      if (!alive()) return;
+      const c = byId.get(String(m.id)); if (!c) { fb.push(`${m.id}: unknown id — ignored`); continue; }
+      if (sh.placements.some(p => p.id === c.id)) { fb.push(`${c.name}: already placed — ignored (relocations are not supported this round)`); continue; }
+      const angle = ((Math.round(+m.angle || 0) % 360) + 360) % 360;
+      const v = variantFor(c, angle); if (!v) { fb.push(`${c.name}: could not rasterise at ${angle}°`); continue; }
+      const cx = (+m.xIn || 0) * 72, cy = (+m.yIn || 0) * 72;
+      const r = Sv.tryPlace(grid, v, cx, cy, snapPt);
+      if (r.ok) {
+        Sv.stampVariant(grid, v, r.x, r.y);
+        const pl = { id: c.id, angle, cxPt: (r.x + v.solid.cx) / 2, cyPt: (r.y + v.solid.cy) / 2, wPt: v.solid.w / 2, hPt: v.solid.h / 2, why: m.why };
+        sh.placements.push(pl); setAside.delete(c.id);
+        const slid = r.snapped ? ` — slid ${(r.snapped / 72).toFixed(2)} in to clear a neighbour` : "";
+        fb.push(`${c.name}: placed at ${(pl.cxPt / 72).toFixed(2)}, ${(pl.cyPt / 72).toFixed(2)} in, ${angle}°${slid}`);
+        agent({ metal: sh.metal }, "ok", `${c.name} → ${(pl.cxPt / 72).toFixed(2)}, ${(pl.cyPt / 72).toFixed(2)} in @ ${angle}°${slid}`, { reason: m.why ? "Claude: " + m.why : null });
+        sh.stage = `Round ${rounds} · placing Claude's moves · ${c.name} → ${(pl.cxPt / 72).toFixed(2)}, ${(pl.cyPt / 72).toFixed(2)} in @ ${angle}°`;
+        sh.liveInfo = info(); sh.progress = [sh.placements.length, items.length]; computeSaturation(sh); renderProgress(sh); renderSat(sh); drawPreview(sh);
+        await new Promise(res => setTimeout(res, 120));
+      } else {
+        const why = r.off ? "would cross the stock edge" : `overlaps a placed charm by ${(r.overlapPt2 / 5184).toFixed(2)} in² and no free spot within ${(snapPt / 72).toFixed(2)} in`;
+        fb.push(`${c.name}: FAILED at ${(+m.xIn).toFixed(2)}, ${(+m.yIn).toFixed(2)} in, ${angle}° — ${why}`);
+        agent({ metal: sh.metal }, "warn", `${c.name} at ${(+m.xIn).toFixed(2)}, ${(+m.yIn).toFixed(2)} in @ ${angle}°: ${why}`, { reason: m.why ? "Claude: " + m.why : null });
+      }
+    }
+    for (const id of plan.setAside || []) { const c = byId.get(String(id)); if (c && !sh.placements.some(p => p.id === c.id)) { setAside.add(c.id); fb.push(`${c.name}: set aside by you`); } }
+    feedback = fb.join("\n");
+    if (plan.done && !items.some(c => !sh.placements.some(p => p.id === c.id) && !setAside.has(c.id))) break;
+    if (plan.done && (plan.moves || []).length === 0) break;
+  }
+  if (!alive()) return;
+  const remaining = items.filter(c => !sh.placements.some(p => p.id === c.id));
+  agentUpdate(evPlan, { live: false, text: `Claude finished after ${rounds} round(s), ${fmt.s(performance.now() - t0)}: ${sh.placements.length}/${items.length} placed${remaining.length ? ` · not placed: ${remaining.map(c => c.name).join(", ")}` : ""}${lastSummary ? ` · “${lastSummary}”` : ""}` });
+  const inf = info();
+  finishNest(sh, { result: {
+    placements: sh.placements, rejects: remaining.map(c => c.id), density: inf.placedPt2 / inf.usablePt2, freePt2: inf.freePt2, usablePt2: inf.usablePt2, placedPt2: inf.placedPt2, pocket: inf.pocket,
+    endedBy: remaining.length ? (rounds >= maxRounds ? "rounds" : "claude-full") : "complete", trials: rounds, elapsedMs: performance.now() - t0,
+    params: { seed: 0, angles: [...new Set(sh.placements.map(p => p.angle))], clearancePt: clearance, insetPt: inset, fineRes: 2, coarseRes: 0.5, engine: "claude", rounds }
+  } });
+}
+function stopNest(sh) { if (sh.status !== "nesting") return; sh.stage = "Stopping after this piece…"; renderCard(sh); if ((S.settings.engine || "ai") === "ai") { sh.status = "ready"; sh.stage = ""; agent({ metal: sh.metal }, "info", "Stopped by operator"); renderCard(sh); return; } if (sh.serverJob) { api("charmNestLibrary", { op: "stopJob", id: sh.serverJob }).catch(() => {}); } else if (sh.worker) sh.worker.postMessage({ type: "stop", jobId: sh.jobId }); }
 function onWorkerMessage(sh, m) {
   if (m.jobId !== sh.jobId) return;
   const items = activeCharms(sh); const byId = new Map(items.map(c => [c.id, c]));
@@ -1112,7 +1234,7 @@ async function finishNest(sh, { result, error }) {
   pumpNestQueue();
 }
 function pumpNestQueue() { const next = S.nestQueue.shift(); if (next && next.status === "queued") { next.status = "ready"; startNest(next); } }
-const endedText = e => ({ complete: "all pieces placed", budget: "time budget", stopped: "operator stop", trials: "restart cap" }[e] || e);
+const endedText = e => ({ complete: "all pieces placed", budget: "time budget", stopped: "operator stop", trials: "restart cap", rounds: "planning-round cap", "claude-full": "Claude judged the sheet full" }[e] || e);
 function buildReport(sh, result, items) {
   const byId = new Map(items.map(c => [c.id, c])); const st = stockFor(sh.metal);
   return {
@@ -1344,7 +1466,7 @@ function drawPreview(sh) {
 }
 function paintPreview(cv, sh, clean) {
   const ctx = cv.getContext("2d"); const st = stockFor(sh.metal); const k = cv.width / st.wPt;
-  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = "#fffefb"; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = sh._forClaude ? "#ece7dc" : "#fffefb"; ctx.fillRect(0, 0, cv.width, cv.height);
   // inset guide
   const ins = (+S.settings.insetPt || 0) * k;
   ctx.strokeStyle = "rgba(176,86,63,.9)"; ctx.lineWidth = Math.max(1, 0.5 * k); ctx.strokeRect(0.5, 0.5, cv.width - 1, cv.height - 1);
@@ -1367,6 +1489,7 @@ function paintPreview(cv, sh, clean) {
       ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); ctx.fill("nonzero");
     }
     CharmNestPDF.drawSegments(ctx, c.members, tx, k);
+    if (sh._forClaude) { ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); ctx.strokeStyle = "rgba(190,40,40,.9)"; ctx.lineWidth = Math.max(1, 0.6 * k); ctx.stroke(); }
     ctx.restore();
     if (!clean && c.pinned) { ctx.fillStyle = "#caa861"; ctx.beginPath(); ctx.arc(p.cxPt * k, p.cyPt * k, Math.max(3, 2 * k), 0, Math.PI * 2); ctx.fill(); }
   });
@@ -1533,7 +1656,7 @@ function openSettings() {
   $$("#railSeg button").forEach(b => b.classList.toggle("on", b.dataset.v === s.rail));
   for (const m of METALS) { $(`#st${cap(m.key)}W`).value = s.stock[m.key][0]; $(`#st${cap(m.key)}H`).value = s.stock[m.key][1]; }
   $("#stClearance").value = s.clearancePt; $("#stInset").value = s.insetPt; $("#stAngle").value = s.angleStep; $("#stBudget").value = s.budgetS; $("#stSeed").value = s.seed; $("#stServerAbove").value = s.serverAbove;
-  $("#stMinPt").value = s.minPt; $("#stVerifyRes").value = s.verifyRes; $("#stNaming").value = s.naming; $("#stReview").value = s.review || "on"; $("#stNotify").value = s.notify; $("#stSound").value = s.sound;
+  $("#stMinPt").value = s.minPt; $("#stVerifyRes").value = s.verifyRes; $("#stNaming").value = s.naming; $("#stReview").value = s.review || "on"; $("#stEngine").value = s.engine || "ai"; $("#stAiRounds").value = s.aiRounds || 10; $("#stSnapIn").value = s.snapIn == null ? 0.25 : s.snapIn; $("#stNotify").value = s.notify; $("#stSound").value = s.sound;
   openDlg($("#dlgSettings"));
 }
 const cap = s => s[0].toUpperCase() + s.slice(1);
@@ -1542,7 +1665,7 @@ function readSettings() {
   s.rail = $("#railSeg button.on")?.dataset.v || "md";
   for (const m of METALS) s.stock[m.key] = [+$(`#st${cap(m.key)}W`).value || DEFAULTS.stock[m.key][0], +$(`#st${cap(m.key)}H`).value || DEFAULTS.stock[m.key][1]];
   s.clearancePt = Math.max(-2, Math.min(12, +$("#stClearance").value || 0)); s.insetPt = Math.max(0, +$("#stInset").value || 0); s.angleStep = +$("#stAngle").value || 30; s.budgetS = Math.max(10, +$("#stBudget").value || 180); s.seed = Math.max(1, Math.round(+$("#stSeed").value || 1)); s.serverAbove = Math.max(0, +$("#stServerAbove").value || 0);
-  s.minPt = Math.max(1, +$("#stMinPt").value || 6); s.verifyRes = +$("#stVerifyRes").value || 6; s.naming = $("#stNaming").value; s.review = $("#stReview").value; s.notify = $("#stNotify").value; s.sound = $("#stSound").value;
+  s.minPt = Math.max(1, +$("#stMinPt").value || 6); s.verifyRes = +$("#stVerifyRes").value || 6; s.naming = $("#stNaming").value; s.review = $("#stReview").value; s.engine = $("#stEngine").value; s.aiRounds = Math.max(1, Math.min(30, +$("#stAiRounds").value || 10)); s.snapIn = Math.max(0, Math.min(1, +$("#stSnapIn").value || 0)); s.notify = $("#stNotify").value; s.sound = $("#stSound").value;
   saveSettings(); refreshAllCards(); toast("Settings saved", "ok", 1800);
 }
 
@@ -1578,7 +1701,7 @@ async function boot() {
   await gate();
   cloudProbe();
   refreshAllCards(); updateTopSub();
-  window.CN = { S, startNest, intake, api, buildJob, applyGroupingReview, renderOverview };   // for tests and the console
+  window.CN = { S, startNest, intake, api, buildJob, applyGroupingReview, renderOverview, aiRenderSheet, aiPockets, setAgent: fn => { agentCallImpl = fn; } };   // for tests and the console
 }
 boot();
 </script>

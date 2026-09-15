@@ -129,6 +129,10 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   process.env.ANTHROPIC_API_KEY = 'x';
   r = await post(review, { mode: 'grouping', charms: [{ index: 0, thumb: 'data:image/png;base64,iVBORw0KGgo=' }] }); assert.strictEqual(r.status, 400, 'overview required');
   r = await post(review, { mode: 'layout', placements: [] }); assert.strictEqual(r.status, 400, 'preview required');
+  const agentMod = require(path.join(fnDir, '_charmNestAgent.js'));
+  const pr = agentMod.buildRequest('place', { wIn: 7.125, hIn: 6.03, insetIn: 0.02, clearancePt: -0.5, round: 1, maxRounds: 10, sheet: 'data:image/jpeg;base64,/9j/', pockets: [{ wIn: 7, hIn: 6, xIn: 0, yIn: 0 }], placed: [], remaining: [{ id: 'a:0', name: 'compass', thumb: 'data:image/png;base64,iVBORw0KGgo=', wIn: 2.8, hIn: 2.8, areaIn2: 4.1 }] });
+  assert(pr.system && pr.schema && pr.content.length >= 4, 'place request built');
+  assert(agentMod.buildRequest('place', { remaining: [] }).error, 'place needs the sheet image');
   delete process.env.ANTHROPIC_API_KEY;
 
   // ── agent job: startAgent → background (model stubbed) → getAgent ──

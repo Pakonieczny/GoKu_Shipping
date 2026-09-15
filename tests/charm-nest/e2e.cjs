@@ -31,7 +31,29 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   await page.goto(`http://127.0.0.1:${port}/charm-nest-1.html?budget=${process.env.CN_BUDGET || 60}`);
   await page.waitForFunction(() => window.CN && window.CN.S);
   // settings for a fast, deterministic run
-  await page.evaluate(() => { CN.S.settings.budgetS = +(new URLSearchParams(location.search).get("budget")) || 60; CN.S.settings.clearancePt = -0.5; CN.S.settings.angleStep = 30; CN.S.settings.naming = 'off'; });
+  await page.evaluate(() => { CN.S.settings.budgetS = +(new URLSearchParams(location.search).get("budget")) || 60; CN.S.settings.clearancePt = -0.5; CN.S.settings.angleStep = 30; CN.S.settings.naming = 'off'; CN.S.settings.engine = 'solver'; });
+  if (process.env.CN_ENGINE === 'ai') {
+    // Stand-in planner: a row-packer that pretends to be Claude, so the AI loop's mechanics
+    // (moves → exact placement / snap / failure feedback → rounds → outputs) run without the model.
+    await page.evaluate(() => {
+      CN.S.settings.engine = 'ai'; CN.S.settings.aiRounds = 6; CN.S.settings.snapIn = 0.3;
+      CN.setAgent(async (mode, payload) => {
+        if (mode !== 'place') return { skipped: 'stub' };
+        const W = payload.wIn, H = payload.hIn; let x = 0.15, y = 0.15, rowH = 0; const moves = [];
+        const rem = payload.remaining.slice().sort((a, b) => b.areaIn2 - a.areaIn2);
+        for (const c of rem) {
+          const w = c.wIn + 0.02, h = c.hIn + 0.02;
+          if (x + w > W - 0.1) { x = 0.15; y += rowH + 0.02; rowH = 0; }
+          if (y + h > H - 0.1) break;
+          moves.push({ id: c.id, angle: payload.round % 2 ? 0 : 90, xIn: x + w / 2, yIn: y + h / 2, why: 'row packing, largest first' });
+          x += w; rowH = Math.max(rowH, h);
+        }
+        // deliberately collide the first move with something already placed to exercise snap/failure feedback
+        if (payload.placed.length && moves.length) { moves[0].xIn = payload.placed[0].xIn; moves[0].yIn = payload.placed[0].yIn; }
+        return { moves, setAside: [], done: moves.length === 0 || payload.round >= 5, summary: `stub round ${payload.round}: ${moves.length} moves`, reasoning: 'stub planner' };
+      });
+    });
+  }
   if (process.env.CN_STOCK) { // e.g. "4.5x4" — a custom per-metal stock to force an overfilled sheet
     const [w, h] = process.env.CN_STOCK.split('x').map(Number);
     await page.evaluate(([w, h]) => { CN.S.settings.stock.gold = [w, h]; CN.S.stockPreset = 'custom'; document.querySelector('#stockSel').value = 'custom'; }, [w, h]);
@@ -82,6 +104,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   assert(result.hasOutputs, 'outputs written');
   assert(result.verification && result.verification.geom.ok, 'geometry verification passed');
   assert(result.verification.render && result.verification.render.ok, 'render verification passed: ' + JSON.stringify(result.verification.render));
+  if (process.env.CN_ENGINE === 'ai') { const ag = await page.evaluate(() => CN.S.sheets.gold.log.concat([]).length); console.log('ai engine:', result.endedBy, result.trials, 'round(s)', result.placed, 'placed'); assert(result.placed >= 10, 'AI loop placed pieces'); assert(['rounds', 'complete', 'claude-full'].includes(result.endedBy), 'ended by AI loop: ' + result.endedBy); void ag; }
   if (process.env.CN_ALLOW_PARTIAL) console.log('partial allowed:', result.status, result.rejects, 'rejects');
   else { assert.strictEqual(result.rejects, 0, 'all placed'); assert.strictEqual(result.status, 'complete'); }
   // check the written .ai: a PDF with one OCG per charm + sheet, original path count preserved

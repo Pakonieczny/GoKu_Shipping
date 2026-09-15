@@ -590,5 +590,50 @@
 
   function now() { return (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now(); }
 
-  return { solve, verify, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32 };
+  /* ── tools for the AI placer: exact collision grid + one mask per (piece, angle) ── */
+  function makeSheetGrid(sheet, clearancePt, fineRes) {
+    fineRes = fineRes || 2;
+    const FW = Math.round(sheet.wPt * fineRes), FH = Math.round(sheet.hPt * fineRes);
+    const insetPt = sheet.insetPt == null ? 1.5 : +sheet.insetPt;
+    const halfGap = clearancePt >= 0 ? Math.ceil(clearancePt / 2 * fineRes) : 0;
+    const wall = Math.round(insetPt * fineRes) + halfGap;
+    const g = new Grid(FW, FH);
+    for (let y = 0; y < FH; y++) for (let x = 0; x < FW; x++) { if (x < wall || y < wall || x >= FW - wall || y >= FH - wall) g.set(x, y); else g.free[y * FW + x] = 1; }
+    g.buildSAT(); g.fineRes = fineRes; g.usableCells = g.freeCells();
+    return g;
+  }
+  function prepareVariant(piece, angle, clearancePt, fineRes) {
+    fineRes = fineRes || 2;
+    const halfGap = clearancePt >= 0 ? Math.ceil(clearancePt / 2 * fineRes) : 0;
+    const erodeFine = clearancePt < 0 ? Math.round(-clearancePt / 2 * fineRes) : 0;
+    const fine = resample(piece.bits, piece.w, piece.h, piece.scale, fineRes);
+    const rot = rotateBitmap(fine.bits, fine.w, fine.h, ((angle % 360) + 360) % 360);
+    if (!rot.w) return null;
+    const dil = erodeFine ? erode(rot.bits, rot.w, rot.h, erodeFine) : dilate(rot.bits, rot.w, rot.h, halfGap);
+    if (!dil.w || !areaOf(dil.bits)) return null;
+    return { angle, fine: { bits: dil.bits, w: dil.w, h: dil.h, pm: packShifted(dil.bits, dil.w, dil.h) }, solid: { w: rot.w, h: rot.h, cx: rot.cx + halfGap - erodeFine, cy: rot.cy + halfGap - erodeFine }, cells: areaOf(rot.bits) };
+  }
+  /** Try a requested centre (pt, y-down); if it collides, slide to the nearest legal spot within snapPt. */
+  function tryPlace(grid, v, cxPt, cyPt, snapPt) {
+    const res = grid.fineRes;
+    const x0 = Math.round(cxPt * res - v.solid.cx), y0 = Math.round(cyPt * res - v.solid.cy);
+    if (grid.fits(v.fine.pm, x0, y0)) return { ok: true, x: x0, y: y0, snapped: 0 };
+    const R = Math.round((snapPt || 0) * res);
+    let best = null;
+    for (let r = 1; r <= R; r++) {                       // rings outward: nearest legal spot wins
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const d = dx * dx + dy * dy; if (best && d >= best.d) continue;
+        if (grid.fits(v.fine.pm, x0 + dx, y0 + dy)) best = { x: x0 + dx, y: y0 + dy, d };
+      }
+      if (best) break;
+    }
+    if (best) return { ok: true, x: best.x, y: best.y, snapped: Math.sqrt(best.d) / res };
+    // why it failed: off the sheet, or how many cells collide at the requested spot
+    const off = x0 < 0 || y0 < 0 || x0 + v.fine.w > grid.W || y0 + v.fine.h > grid.H;
+    const overlap = off ? null : grid.overlap(v.fine.pm, x0, y0, 1e9);
+    return { ok: false, x: x0, y: y0, off, overlapPt2: overlap == null ? null : overlap / (res * res) };
+  }
+  function stampVariant(grid, v, x, y) { grid.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y); grid.buildSAT(); }
+  return { solve, verify, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, stampVariant };
 });

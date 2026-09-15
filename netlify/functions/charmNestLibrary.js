@@ -171,7 +171,7 @@ async function op_stopJob(b) {
    (images) is passed straight through to the kick so Firestore never stores it. */
 const AGENT = "Charm_Nest_Agent";
 async function op_startAgent(b) {
-  const mode = ["grouping", "layout", "name"].includes(b.mode) ? b.mode : null;
+  const mode = ["grouping", "layout", "name", "place"].includes(b.mode) ? b.mode : null;
   if (!mode || !b.payload) return { error: "mode and payload required" };
   const id = "agent-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   // Background functions accept only a small request body (the images made the
