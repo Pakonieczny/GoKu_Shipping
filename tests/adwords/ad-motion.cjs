@@ -165,7 +165,7 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
   ok(!/Gift-ready packaging/.test(prompt),'no saved ad copy reaches the video model, even via the treatment');
   ok(!/\d+\s?(?:px|pixels)/.test(prompt),'no pixel specification reaches the video model, even via the treatment');
   ok(/no lettering of any kind/.test(prompt),'the film is told its frames carry no lettering at all');
-  ok(/thin, flat, laser-cut sheet metal/.test(prompt)&&/engraving is cut into the metal/.test(prompt),'the film is told the piece is thin flat sheet with engraving cut into it');
+  ok(/flat, laser-cut sheet metal about as thick as a credit card/.test(prompt)&&/one fortieth of the charm's length/.test(prompt)&&/engraving is cut into the metal/.test(prompt),'the film is given a measurable thinness and engraving cut into the metal');
   ok(/RULE 3 - ONE CONTINUOUS TAKE/.test(prompt)&&/No cuts, no jump cuts, no dissolves/.test(prompt),'the film must be one unbroken take');
   ok(/It is not the first frame/.test(prompt)&&/identical from the first frame to the last/.test(prompt),'the reference photo is never the opening frame and the piece is whole throughout');
   const payload=JSON.stringify(motion.motionRequest(job).input[1].content);
