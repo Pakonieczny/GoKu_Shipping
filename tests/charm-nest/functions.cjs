@@ -120,6 +120,15 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   r = await post(name, { charms: [] }); assert.strictEqual(r.status, 400);
   delete process.env.ANTHROPIC_API_KEY;
 
+  // ── AI review guards ──
+  const review = require(path.join(fnDir, 'charmNestReview.js'));
+  delete process.env.ANTHROPIC_API_KEY;
+  r = await post(review, { mode: 'grouping', overview: 'data:image/jpeg;base64,/9j/', charms: [] }); assert.strictEqual(r.status, 200); assert(r.body.skipped, 'no key → skipped');
+  process.env.ANTHROPIC_API_KEY = 'x';
+  r = await post(review, { mode: 'grouping', charms: [{ index: 0, thumb: 'data:image/png;base64,iVBORw0KGgo=' }] }); assert.strictEqual(r.status, 400, 'overview required');
+  r = await post(review, { mode: 'layout', placements: [] }); assert.strictEqual(r.status, 400, 'preview required');
+  delete process.env.ANTHROPIC_API_KEY;
+
   // ── server solver: startJob → background → done ──
   const S = require(path.join(__dirname, '../../charm-nest-solver.js'));
   const pack = bits => { const o = new Uint8Array(Math.ceil(bits.length / 8)); for (let i = 0; i < bits.length; i++) if (bits[i]) o[i >> 3] |= 1 << (i & 7); return o; };

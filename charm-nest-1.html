@@ -340,6 +340,9 @@ dialog.wide{width:min(980px,95vw)}
       <div class="field"><label>Verify resolution (px/pt)</label><select id="stVerifyRes"><option value="4">4</option><option value="6">6</option><option value="8">8</option></select></div>
       <div class="field"><label>Naming (Claude)</label><select id="stNaming"><option value="on">On</option><option value="off">Off</option></select></div>
     </div>
+    <div class="fieldRow">
+      <div class="field"><label>AI review (Claude Opus 5, high effort)</label><select id="stReview"><option value="on">On — review grouping before nesting and the sheet after</option><option value="off">Off — geometry only</option></select><div class="help">Claude looks at the detected charms on your source page and merges fragments back where they belong, then inspects the finished sheet and re-nests once if it finds a problem.</div></div>
+    </div>
     <div class="section">Feedback</div>
     <div class="fieldRow"><div class="field"><label>Desktop notification when a sheet finishes</label><select id="stNotify"><option value="on">On (when tab hidden)</option><option value="off">Off</option></select></div>
     <div class="field"><label>Sound on completion</label><select id="stSound"><option value="on">On</option><option value="off">Off</option></select></div></div>
@@ -389,7 +392,7 @@ const DEFAULTS = {
   rail: "md",
   stock: { gold: [7.125, 6.03], silver: [7.125, 6.03], rose: [7.125, 6.03] },
   clearancePt: -0.5, insetPt: 1.5, angleStep: 30, budgetS: 180, seed: 1, serverAbove: 80,
-  minPt: 6, verifyRes: 6, naming: "on", notify: "on", sound: "on", silhouetteRes: 6, v: 2
+  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, v: 2
 };
 const STOCK_PRESETS = [
   { id: "ref", label: "7.125 × 6.03 in (reference)", w: 7.125, h: 6.03 },
@@ -591,7 +594,9 @@ async function parseSourceFile(src) {
     renderRail();
     // to sheets
     if (src.metal) assignSource(src, src.metal); else { S.unassigned.push(...src.charms); renderRail(); }
-    // library lookup (names from earlier sessions) then Claude naming for the rest — never on the critical path
+    // 1 · Claude reviews the grouping against the source page (merges fragments, drops junk); Nest waits for it
+    if (S.settings.review !== "off" && S.cloud.ok) { try { await reviewGrouping(src); } catch (e) { src.review = { skipped: e.message }; toast(`${src.name}: AI review skipped (${e.message})`, "", 4200); } }
+    // 2 · names (library first, then Claude) — never on the critical path
     nameCharms(src).catch(() => {});
     persistSource(src).catch(e => { src.cloud = { error: e.message }; renderRailRow(src); });
     if (g.frame) toast(`${src.name}: page-sized frame detected and ignored (${g.charms.length} charms)`, "", 2800);
@@ -679,6 +684,116 @@ async function renameCharm(charm, name) {
   for (const src of S.sources) for (const c of src.charms) if (c.hash === charm.hash) { c.name = name; c.slug = name; c.namedBy = "operator"; }
   refreshAllCards();
   if (S.cloud.ok) api("charmNestLibrary", { op: "renameCharm", hash: charm.hash, name }).catch(() => {});
+}
+
+/* ═══ 7b · AI review: Claude judges the grouping and the finished sheet ═══ */
+/** Whole source page with every detected charm boxed and numbered → JPEG data URL. */
+function renderOverview(src, maxW) {
+  const p = src.parsed, W = p.pageW, H = p.pageH, k = Math.min((maxW || 1800) / W, 1400 / H);
+  const cv = document.createElement("canvas"); cv.width = Math.round(W * k); cv.height = Math.round(H * k);
+  const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+  const mb = p.mediaBox; const tx = (x, y) => [(x - mb[0]) * k, (mb[3] - y) * k];
+  CharmNestPDF.drawSegments(ctx, p.segments.concat(p.nested).filter(sg => sg.bbox && sg.kind !== "clip" && sg.kind !== "noop" && !(sg.kind === "xobj" && sg.children && sg.children.length)), tx, k);
+  for (const c of src.charms) {
+    if (c.mergedInto != null) continue;
+    const a = tx(c.bbox[0], c.bbox[3]), b = tx(c.bbox[2], c.bbox[1]);
+    ctx.strokeStyle = "rgba(176,86,63,.9)"; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]); ctx.strokeRect(a[0] - 2, a[1] - 2, b[0] - a[0] + 4, b[1] - a[1] + 4); ctx.setLineDash([]);
+    const label = String(c.index); ctx.font = `bold ${Math.max(11, Math.round(k * 9))}px ${getComputedStyle(document.body).getPropertyValue("--sans")}`;
+    const tw = ctx.measureText(label).width + 8, th = Math.max(14, Math.round(k * 11));
+    ctx.fillStyle = "#b0563f"; ctx.fillRect(a[0] - 2, a[1] - 2 - th, tw, th); ctx.fillStyle = "#fff"; ctx.fillText(label, a[0] + 2, a[1] - 5);
+  }
+  return cv.toDataURL("image/jpeg", 0.86);
+}
+async function reviewGrouping(src) {
+  src.review = { state: "running" }; renderRailRow(src); refreshAllCards();
+  const live = src.charms.filter(c => c.mergedInto == null);
+  const r = await api("charmNestReview", {
+    mode: "grouping", sourceName: src.name, overview: renderOverview(src),
+    charms: live.map(c => ({ index: c.index, thumb: c.thumb, widthPt: +c.widthPt.toFixed(1), heightPt: +c.heightPt.toFixed(1), members: c.members.length }))
+  }, { label: `Claude is reviewing ${live.length} detected charms` });
+  if (r.skipped) { src.review = { skipped: r.skipped }; renderRailRow(src); refreshAllCards(); toast(`${src.name}: AI review skipped — ${r.skipped}`, "", 4200); return; }
+  const applied = await applyGroupingReview(src, r.verdicts || []);
+  src.review = { state: "done", summary: r.summary, realCharmCount: r.realCharmCount, verdicts: r.verdicts, merged: applied.merged, excluded: applied.excluded, multiple: applied.multiple, usage: r.usage };
+  renderRail(); refreshAllCards(); updateTopSub();
+  const parts = [];
+  if (applied.merged.length) parts.push(`merged ${applied.merged.length} fragment${applied.merged.length > 1 ? "s" : ""} back (${applied.merged.map(m => `#${m.from}→#${m.into}`).join(", ")})`);
+  if (applied.excluded.length) parts.push(`excluded ${applied.excluded.length} non-charm`);
+  if (applied.multiple.length) parts.push(`⚠ ${applied.multiple.length} box(es) hold more than one charm — check the report`);
+  toast(`${src.name} · Claude review: ${src.charms.filter(c => c.mergedInto == null && !c.excluded).length} charms${parts.length ? " · " + parts.join(" · ") : " · grouping confirmed"}`, applied.multiple.length ? "" : "ok", 7000);
+}
+/** Apply verdicts: fragments merge into their parent, junk is excluded, silhouettes are re-traced. */
+async function applyGroupingReview(src, verdicts) {
+  const byIndex = new Map(src.charms.map(c => [c.index, c]));
+  const merged = [], excluded = [], multiple = [], touched = new Set();
+  const resolve = i => { let c = byIndex.get(i); let guard = 0; while (c && c.mergedInto != null && guard++ < 20) c = byIndex.get(c.mergedInto); return c; };
+  for (const v of verdicts) {
+    const c = byIndex.get(v.index); if (!c || c.mergedInto != null) continue;
+    c.reviewNote = v.note || ""; c.reviewVerdict = v.verdict;
+    if (v.verdict === "fragment" && v.mergeInto != null && v.mergeInto !== v.index) {
+      const t = resolve(v.mergeInto); if (!t || t === c) continue;
+      mergeCharm(src, c, t); merged.push({ from: c.index, into: t.index }); touched.add(t);
+    } else if (v.verdict === "not_a_charm") { c.excluded = true; c.excludeReason = "Claude: not a charm — " + (v.note || ""); excluded.push(c.index); }
+    else if (v.verdict === "multiple") { c.reviewFlag = "multiple"; multiple.push(c.index); }
+  }
+  if (touched.size) {
+    src.state = "silhouettes"; src.progress = [0, touched.size]; renderRailRow(src);
+    await CharmNestPDF.buildSilhouettes(src.parsed, [...touched], +S.settings.silhouetteRes || 6, (d, t) => { src.progress = [d, t]; renderRailRow(src); });
+    for (const t of touched) if (t.open) { t.open = false; }          // a merge cannot open a closed outline; keep it nestable
+    // duplicate quantities may have changed
+    const byHash = new Map(); for (const c of src.charms) { if (c.mergedInto != null) continue; if (!byHash.has(c.hash)) byHash.set(c.hash, []); byHash.get(c.hash).push(c); }
+    for (const c of src.charms) { if (c.mergedInto != null) continue; const g = byHash.get(c.hash); c.qty = g.length; c.dupOf = g[0] === c ? null : g[0].index; }
+    src.distinct = byHash.size;
+    src.state = "ready";
+  }
+  for (const m of METALS) { const sh = S.sheets[m.key]; if (sh.charms.some(c => c.sourceId === src.id)) sheetDirty(sh); }
+  return { merged, excluded, multiple };
+}
+function mergeCharm(src, frag, target) {
+  for (const m of frag.members) if (!target.members.includes(m)) target.members.push(m);
+  target.topIndices = [...new Set(target.topIndices.concat(frag.topIndices))];
+  target.bbox = [Math.min(target.bbox[0], frag.bbox[0]), Math.min(target.bbox[1], frag.bbox[1]), Math.max(target.bbox[2], frag.bbox[2]), Math.max(target.bbox[3], frag.bbox[3])];
+  frag.mergedInto = target.index; frag.excluded = true;
+  src.charms = src.charms.filter(c => c !== frag);
+  S.unassigned = S.unassigned.filter(c => c !== frag);
+  for (const m of METALS) S.sheets[m.key].charms = S.sheets[m.key].charms.filter(c => c !== frag);
+}
+/** After nesting: Claude inspects the rendered sheet; fixable findings trigger one automatic re-nest. */
+async function reviewLayout(sh, items) {
+  if (S.settings.review === "off" || !S.cloud.ok || !sh.outputs || !sh.outputs.previewPng) return;
+  sh.aiReview = { state: "running" }; renderCard(sh);
+  const byId = new Map(items.map(c => [c.id, c]));
+  const preview = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(sh.outputs.previewPng); });
+  const r = await api("charmNestReview", {
+    mode: "layout", sheetName: `${labelOf(sh.metal)} ${sh.sheetId}`, preview,
+    placements: sh.placements.map((p, i) => ({ n: i + 1, name: byId.get(p.id)?.name || p.id, wPt: p.wPt, hPt: p.hPt, cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle })),
+    rejects: sh.rejects.map(id => byId.get(id)?.name || id).join(", ")
+  }, { label: "Claude is inspecting the nested sheet" });
+  if (r.skipped) { sh.aiReview = { skipped: r.skipped }; renderCard(sh); return; }
+  sh.aiReview = { state: "done", ok: !!r.ok && !(r.issues || []).length, issues: r.issues || [], summary: r.summary, usage: r.usage };
+  log(sh, `Claude review: ${r.summary}`);
+  renderCard(sh);
+  // act on fixable findings, once per sheet
+  sh.aiRounds = sh.aiRounds || 0;
+  const fixable = (r.issues || []).filter(i => (i.action === "merge" && i.mergeInto) || i.action === "exclude");
+  if (fixable.length && sh.aiRounds < 1) {
+    sh.aiRounds++;
+    const byName = new Map(items.map(c => [String(c.name || "").toLowerCase(), c]));
+    const changed = new Set(); const notes = [];
+    for (const i of fixable) {
+      for (const nm of i.charms || []) {
+        const c = byName.get(String(nm).toLowerCase()); if (!c) continue;
+        const src = S.sources.find(x => x.id === c.sourceId); if (!src) continue;
+        if (i.action === "merge") { const t = byName.get(String(i.mergeInto).toLowerCase()); if (!t || t === c || t.sourceId !== c.sourceId) continue; mergeCharm(src, c, t); changed.add(t); notes.push(`${c.name} → ${t.name}`); }
+        else { c.excluded = true; c.excludeReason = "Claude: " + (i.note || "not a charm"); notes.push(`excluded ${c.name}`); }
+      }
+    }
+    if (notes.length) {
+      for (const t of changed) { const src = S.sources.find(x => x.id === t.sourceId); await CharmNestPDF.buildSilhouettes(src.parsed, [t], +S.settings.silhouetteRes || 6); t.open = false; }
+      toast(`${labelOf(sh.metal)} · Claude found: ${r.summary} — ${notes.join(", ")} — re-nesting`, "", 8000);
+      sheetDirty(sh); renderRail(); startNest(sh);
+    }
+  } else if (!fixable.length && r.ok) toast(`${labelOf(sh.metal)} · Claude inspected the sheet: ${r.summary}`, "ok", 5000);
+  else if ((r.issues || []).length) toast(`${labelOf(sh.metal)} · Claude flagged ${r.issues.length} issue(s): ${r.summary}`, "", 8000);
 }
 
 /* ═══ 8 · sheets: state machine per metal ═══════════════════════════════ */
@@ -869,8 +984,9 @@ async function finishNest(sh, { result, error }) {
     $$(".sheetCard").find(el => el.dataset.m === sh.metal)?.classList.add("pulse");
     setTimeout(() => $$(".sheetCard").find(el => el.dataset.m === sh.metal)?.classList.remove("pulse"), 1300);
     if (document.hidden && S.settings.notify === "on" && "Notification" in window && Notification.permission === "granted") { try { new Notification("Charm Nesting Station", { body: msg }); } catch (_) { /* ignore */ } }
-    // 5 · persist everything
+    // 5 · persist everything, then let Claude inspect the finished sheet
     persistSheet(sh, items).catch(e => { toast("Cloud save failed: " + e.message, "bad", 6000); log(sh, "cloud save failed: " + e.message); renderCard(sh); });
+    reviewLayout(sh, items).catch(e => { sh.aiReview = { skipped: e.message }; log(sh, "AI review failed: " + e.message); renderCard(sh); });
   } catch (e) {
     sh.status = "partial"; sh.stage = ""; log(sh, "finish error: " + (e.stack || e)); toast(`${labelOf(sh.metal)}: output failed — ${e.message}`, "bad", 7000); renderCard(sh);
   }
@@ -963,8 +1079,10 @@ function fillSrcRow(el, src) {
   const unN = src.charms.filter(c => !c.metal).length;
   const state = src.state === "queued" ? "waiting to parse" : src.state === "parsing" ? "parsing paths…" : src.state === "silhouettes" ? `tracing silhouettes ${src.progress ? src.progress[0] + "/" + src.progress[1] : ""}` : src.state === "error" ? src.error : `${src.charms.length} charms · ${src.distinct} distinct${src.group && src.group.orphans.length ? ` · ${src.group.orphans.length} loose` : ""}`;
   const cloud = src.cloud ? (src.cloud.error ? `<span style="color:#e8a992">backup failed</span>` : `backed up`) : (S.cloud.ok ? "backing up…" : "");
+  const rv = src.review ? (src.review.state === "running" ? `<span class="spin"></span><span>Claude reviewing…</span>` : src.review.skipped ? `<span>AI review skipped</span>` : `<span style="color:#9ed4ac">Claude ✓ ${src.review.merged.length ? src.review.merged.length + " merged" : "confirmed"}${src.review.multiple.length ? " · ⚠ " + src.review.multiple.length + " to split" : ""}</span>`) : "";
   el.innerHTML = `<div class="srcHead"><span class="srcName" title="${esc(src.folder ? src.folder + "/" : "")}${esc(src.name)}${src.zipName ? " · from " + esc(src.zipName) : ""}">${src.zipName ? "▸ " : ""}${esc(src.name)}</span><span class="srcN">${src.charms.length || ""}</span><button class="srcX" title="Remove">×</button></div>
     <div class="srcState">${["parsing", "silhouettes", "queued"].includes(src.state) ? '<span class="spin"></span>' : ""}<span>${esc(state)}</span>${cloud ? `<span>· ${cloud}</span>` : ""}</div>
+    ${rv ? `<div class="srcState">${rv}</div>` : ""}
     <div class="srcKids">${perMetal.map(x => `<span class="mchip" data-m="${x.m.key}"><i class="sw"></i>${x.m.label} ${x.n}</span>`).join("")}${unN ? `<span class="mchip" data-m="none">⚠ ${unN} unassigned</span>` : ""}${src.state === "ready" ? METALS.map(m => `<button class="mchip" data-m="${m.key}" data-assign="${m.key}" title="Send every charm in this file to ${m.label}" style="cursor:pointer"><i class="sw"></i>→</button>`).join("") : ""}</div>`;
   $(".srcX", el).onclick = () => removeSource(src);
   $$("[data-assign]", el).forEach(b => b.onclick = () => assignSource(src, b.dataset.assign));
@@ -1029,7 +1147,9 @@ function renderCard(sh) {
   const pillMap = { idle: ["neutral", "Idle"], ready: ["info", `Ready · ${items.length}`], queued: ["warn", "Queued"], nesting: ["warn", `<span class="spin"></span>Nesting`], finishing: ["warn", `<span class="spin"></span>Finishing`], complete: ["ok", "Complete"], partial: ["bad", "Partial"] };
   const [k, t] = pillMap[sh.status] || pillMap.idle; q("pill").className = "pill " + k; q("pill").innerHTML = t;
   q("hint").classList.toggle("hidden", items.length > 0 || sh.status !== "idle");
-  q("nest").classList.toggle("hidden", ["nesting", "finishing", "queued"].includes(sh.status)); q("nest").disabled = !items.length;
+  const reviewing = S.sources.some(s => s.review && s.review.state === "running" && s.charms.some(c => c.metal === sh.metal));
+  q("nest").classList.toggle("hidden", ["nesting", "finishing", "queued"].includes(sh.status)); q("nest").disabled = !items.length || reviewing;
+  q("nest").title = reviewing ? "Waiting for Claude's grouping review" : "";
   q("nest").textContent = (sh.status === "complete" || sh.status === "partial") ? (sh.dirty ? "Nest again" : "Re-nest") : "Nest";
   q("stop").classList.toggle("hidden", sh.status !== "nesting");
   q("dl").classList.toggle("hidden", !sh.outputs); q("dl").textContent = sh.verification && !sh.verification.ok ? "Download .ai (flagged)" : "Download .ai";
@@ -1063,7 +1183,11 @@ function renderProgress(sh) {
   const st = q("stage"); const elapsed = sh.startedAt && ["nesting", "finishing"].includes(sh.status) ? fmt.s(performance.now() - sh.startedAt) : (sh.elapsedMs ? fmt.s(sh.elapsedMs) : "");
   const budget = ["nesting"].includes(sh.status) ? ` / ${S.settings.budgetS}s` : "";
   const trials = sh.trials ? ` · ${sh.trials} trial${sh.trials > 1 ? "s" : ""}` : "";
-  st.innerHTML = sh.stage ? `<span class="spin"></span><span>${esc(sh.stage)}</span><span class="r">${elapsed}${budget}${trials}</span>` : (sh.status === "complete" || sh.status === "partial" ? `<span>${esc(endedText(sh.endedBy))} · ${sh.placements.length}/${activeCharms(sh).length} placed${sh.verification ? (sh.verification.ok ? " · verified ✓" : " · ⚠ verification flagged") : ""}</span><span class="r">${elapsed}${trials}</span>` : "");
+  const reviewingSrc = S.sources.find(s => s.review && s.review.state === "running" && s.charms.some(c => c.metal === sh.metal));
+  const ai = sh.aiReview ? (sh.aiReview.state === "running" ? ` · <span class="spin"></span> Claude inspecting` : sh.aiReview.skipped ? "" : sh.aiReview.ok ? " · Claude ✓" : ` · ⚠ Claude: ${sh.aiReview.issues.length} issue(s)`) : "";
+  st.innerHTML = sh.stage ? `<span class="spin"></span><span>${esc(sh.stage)}</span><span class="r">${elapsed}${budget}${trials}</span>`
+    : reviewingSrc ? `<span class="spin"></span><span>Claude is reviewing the ${reviewingSrc.charms.length} charms detected in ${esc(reviewingSrc.name)}…</span>`
+    : (sh.status === "complete" || sh.status === "partial" ? `<span>${esc(endedText(sh.endedBy))} · ${sh.placements.length}/${activeCharms(sh).length} placed${sh.verification ? (sh.verification.ok ? " · verified ✓" : " · ⚠ verification flagged") : ""}${ai}</span><span class="r">${elapsed}${trials}</span>` : "");
   const ov = q("overlay");
   ov.innerHTML = sh.status === "nesting" || sh.status === "finishing" || sh.placements.length ? `<span class="pill neutral">${sh.placements.length}/${activeCharms(sh).length} placed</span>${sh.sat ? `<span class="pill neutral">${fmt.pct(sh.sat.fullPct)} full</span>` : ""}${sh.rejects.length ? `<span class="pill bad">${sh.rejects.length} rejected</span>` : ""}${sh.verification ? (sh.verification.ok ? `<span class="pill ok">verified</span>` : `<span class="pill bad">check report</span>`) : ""}` : "";
 }
@@ -1182,9 +1306,11 @@ function openReport(sh) {
     }
     if (sh.rejects.length) html += `<div class="callout" style="margin-top:8px"><b>${sh.rejects.length} did not fit:</b> ${sh.rejects.map(id => esc(byId.get(id)?.name || id) + ` (${fmt.in(byId.get(id)?.widthPt || 0)} × ${fmt.in(byId.get(id)?.heightPt || 0)})`).join(", ")}. Use “Start a second ${labelOf(sh.metal)} sheet”, tighten the clearance, or pin the largest pieces first.</div>`;
   }
+  if (sh.aiReview && sh.aiReview.state === "done") html += `<div class="callout ${sh.aiReview.ok ? "ok" : ""}" style="margin-top:8px"><b>Claude's inspection of the sheet:</b> ${esc(sh.aiReview.summary || "")}${sh.aiReview.issues.length ? `<ul style="margin:6px 0 0 16px;padding:0">${sh.aiReview.issues.map(i => `<li><b>${esc(i.kind)}</b> · ${esc((i.charms || []).join(", "))} — ${esc(i.note)} <i>(${esc(i.action)}${i.mergeInto ? " into " + esc(i.mergeInto) : ""})</i></li>`).join("")}</ul>` : ""}</div>`;
+  for (const src of srcs) if (src.review && src.review.state === "done") html += `<div class="callout" style="margin-top:8px"><b>Claude's grouping review of ${esc(src.name)}:</b> ${esc(src.review.summary || "")}${src.review.merged.length ? ` · merged ${src.review.merged.map(m => `#${m.from}→#${m.into}`).join(", ")}` : ""}${src.review.excluded.length ? ` · excluded #${src.review.excluded.join(", #")}` : ""}${src.review.multiple.length ? ` · <b style="color:#8a3a26">boxes #${src.review.multiple.join(", #")} hold more than one charm — split them in Illustrator or exclude</b>` : ""}</div>`;
   html += `<div class="section">Detected charms · ${items.length}${srcs.length ? ` from ${srcs.length} file(s)` : ""}</div>`;
   for (const src of srcs) { const g = src.group; html += `<div style="font-size:11.5px;color:var(--ink70);margin:4px 0 8px">${esc(src.name)}: ${src.parsed.counts.paths} paths, ${src.parsed.counts.xobjects} form XObject(s), ${src.parsed.counts.text} text block(s) → ${g.outlineCount} outlines (rule: ${g.rule}${g.mergedCount ? `, ${g.mergedCount} inner closed paths merged as holes/details` : ""})${g.frame ? ", page-sized frame ignored" : ""}${g.orphans.length ? `, <b style="color:#8a3a26">${g.orphans.length} loose element(s) left out</b>` : ""} · page ${fmt.in(src.parsed.pageW)} × ${fmt.in(src.parsed.pageH)}</div>`; }
-  html += `<div class="charmGrid">${items.map((c, i) => { const pl = sh.placements.find(p => p.id === c.id); const n = pl ? sh.placements.indexOf(pl) + 1 : null; return `<div class="charmTile${c.open ? " open" : ""}" data-cid="${c.id}"><img src="${c.thumb}" alt=""><div class="nm" title="${esc(c.name || "")}">${n ? `<span class="mono">${n}</span> · ` : ""}${esc(c.name || "#" + (c.index + 1))}</div><div class="meta">${fmt.in(c.widthPt)} × ${fmt.in(c.heightPt)} · ${Math.round(c.areaPt2)} pt²${c.qty > 1 ? ` · ×${c.qty}` : ""}</div><div class="meta">${c.open ? "OPEN PATH — excluded" : c.excluded ? "excluded" : pl ? `placed ${pl.angle}°` : sh.rejects.includes(c.id) ? "did not fit" : "queued"}${c.pinned ? " · pinned" : ""}</div></div>`; }).join("")}</div>`;
+  html += `<div class="charmGrid">${items.map((c, i) => { const pl = sh.placements.find(p => p.id === c.id); const n = pl ? sh.placements.indexOf(pl) + 1 : null; return `<div class="charmTile${c.open ? " open" : ""}" data-cid="${c.id}"><img src="${c.thumb}" alt=""><div class="nm" title="${esc(c.name || "")}">${n ? `<span class="mono">${n}</span> · ` : ""}${esc(c.name || "#" + (c.index + 1))}</div><div class="meta">${fmt.in(c.widthPt)} × ${fmt.in(c.heightPt)} · ${Math.round(c.areaPt2)} pt²${c.qty > 1 ? ` · ×${c.qty}` : ""}</div><div class="meta">${c.open ? "OPEN PATH — excluded" : c.excluded ? esc(c.excludeReason || "excluded") : pl ? `placed ${pl.angle}°` : sh.rejects.includes(c.id) ? "did not fit" : "queued"}${c.pinned ? " · pinned" : ""}</div>${c.reviewNote ? `<div class="meta" title="${esc(c.reviewNote)}">Claude: ${esc(c.reviewNote.slice(0, 60))}</div>` : ""}</div>`; }).join("")}</div>`;
   if (sh.log.length) html += `<div class="section">Log</div><pre style="font:11px var(--mono);white-space:pre-wrap;color:var(--ink70);max-height:200px;overflow:auto;background:var(--card2);padding:8px;border-radius:8px">${esc(sh.log.slice(-60).join("\n"))}</pre>`;
   $("#rpBody").innerHTML = html;
   $$(".charmTile", $("#rpBody")).forEach(t => t.onclick = () => openCharm(sh, byId.get(t.dataset.cid)));
@@ -1284,7 +1410,7 @@ function openSettings() {
   $$("#railSeg button").forEach(b => b.classList.toggle("on", b.dataset.v === s.rail));
   for (const m of METALS) { $(`#st${cap(m.key)}W`).value = s.stock[m.key][0]; $(`#st${cap(m.key)}H`).value = s.stock[m.key][1]; }
   $("#stClearance").value = s.clearancePt; $("#stInset").value = s.insetPt; $("#stAngle").value = s.angleStep; $("#stBudget").value = s.budgetS; $("#stSeed").value = s.seed; $("#stServerAbove").value = s.serverAbove;
-  $("#stMinPt").value = s.minPt; $("#stVerifyRes").value = s.verifyRes; $("#stNaming").value = s.naming; $("#stNotify").value = s.notify; $("#stSound").value = s.sound;
+  $("#stMinPt").value = s.minPt; $("#stVerifyRes").value = s.verifyRes; $("#stNaming").value = s.naming; $("#stReview").value = s.review || "on"; $("#stNotify").value = s.notify; $("#stSound").value = s.sound;
   openDlg($("#dlgSettings"));
 }
 const cap = s => s[0].toUpperCase() + s.slice(1);
@@ -1293,7 +1419,7 @@ function readSettings() {
   s.rail = $("#railSeg button.on")?.dataset.v || "md";
   for (const m of METALS) s.stock[m.key] = [+$(`#st${cap(m.key)}W`).value || DEFAULTS.stock[m.key][0], +$(`#st${cap(m.key)}H`).value || DEFAULTS.stock[m.key][1]];
   s.clearancePt = Math.max(-2, Math.min(12, +$("#stClearance").value || 0)); s.insetPt = Math.max(0, +$("#stInset").value || 0); s.angleStep = +$("#stAngle").value || 30; s.budgetS = Math.max(10, +$("#stBudget").value || 180); s.seed = Math.max(1, Math.round(+$("#stSeed").value || 1)); s.serverAbove = Math.max(0, +$("#stServerAbove").value || 0);
-  s.minPt = Math.max(1, +$("#stMinPt").value || 6); s.verifyRes = +$("#stVerifyRes").value || 6; s.naming = $("#stNaming").value; s.notify = $("#stNotify").value; s.sound = $("#stSound").value;
+  s.minPt = Math.max(1, +$("#stMinPt").value || 6); s.verifyRes = +$("#stVerifyRes").value || 6; s.naming = $("#stNaming").value; s.review = $("#stReview").value; s.notify = $("#stNotify").value; s.sound = $("#stSound").value;
   saveSettings(); refreshAllCards(); toast("Settings saved", "ok", 1800);
 }
 
@@ -1329,7 +1455,7 @@ async function boot() {
   await gate();
   cloudProbe();
   refreshAllCards(); updateTopSub();
-  window.CN = { S, startNest, intake, api, buildJob };   // for tests and the console
+  window.CN = { S, startNest, intake, api, buildJob, applyGroupingReview, renderOverview };   // for tests and the console
 }
 boot();
 </script>

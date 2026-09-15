@@ -44,6 +44,17 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   assert.strictEqual(src.metal, 'gold', 'routed by file name');
   if (src.open) console.log('open charms', await page.evaluate(() => CN.S.sources[0].charms.filter(c => c.open).map(c => ({ i: c.index, w: +c.widthPt.toFixed(1), h: +c.heightPt.toFixed(1), members: c.members.length, area: +c.areaPt2.toFixed(0), sub: c.outline.subpaths.length }))));
   assert.strictEqual(src.open, 0, 'no open paths');
+  // AI grouping review contract: a "fragment" verdict merges a charm into its parent and re-traces the silhouette
+  const rev = await page.evaluate(async () => {
+    const src = CN.S.sources[0]; const before = src.charms.length; const target = src.charms[0], frag = src.charms[1];
+    const tArea = target.areaPt2, tMembers = target.members.length, fMembers = frag.members.length;
+    const overview = CN.renderOverview(src);
+    const r = await CN.applyGroupingReview(src, [{ index: frag.index, verdict: 'fragment', mergeInto: target.index, note: 'test' }, { index: src.charms[2].index, verdict: 'complete', mergeInto: null, note: '' }]);
+    return { before, after: src.charms.length, merged: r.merged, members: target.members.length, expectMembers: tMembers + fMembers, areaGrew: target.areaPt2 > tArea, sheet: CN.S.sheets.gold.charms.length, overviewBytes: overview.length, hasBits: !!target.bits };
+  });
+  console.log('grouping review', rev);
+  assert.strictEqual(rev.after, rev.before - 1, 'fragment removed'); assert.strictEqual(rev.members, rev.expectMembers, 'members merged'); assert(rev.areaGrew, 'silhouette re-traced'); assert.strictEqual(rev.sheet, rev.after, 'sheet queue updated'); assert(rev.overviewBytes > 20000, 'overview rendered');
+  fx.charms.pop();   // one fewer charm from here on
   const sat = await page.evaluate(() => CN.S.sheets.gold.sat);
   console.log('saturation before nest', { count: sat.count, needed: Math.round(sat.totalNeeded), usable: Math.round(sat.usable), nEst: sat.nEst, rho: sat.rho.rho, recommend: !!sat.recommend });
   await page.screenshot({ path: path.join(tmp, '1-queued.png') });
@@ -82,7 +93,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   await page.click('.sheetCard[data-m=gold] [data-r=report]');
   await page.waitForSelector('#dlgReport[open]');
   const tiles = await page.$$eval('#dlgReport .charmTile', els => els.length);
-  assert.strictEqual(tiles, fx.charms.length, 'report lists every charm');
+  assert.strictEqual(tiles, fx.charms.length, 'report lists every charm (merged fragment gone)');
   await page.screenshot({ path: path.join(tmp, '3-report.png') });
   const bad = errors.filter(e => !/net::ERR|404|Failed to load resource|favicon|functions/.test(e));
   console.log('console issues', bad);
