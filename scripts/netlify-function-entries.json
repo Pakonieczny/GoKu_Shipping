@@ -267,6 +267,7 @@
     "googleAdsAdDesignContext.js",
     "googleAdsAdDesignResearch.js",
     "googleAdsAdFixes.js",
+    "googleAdsAdIdentity.js",
     "googleAdsAdKeywordResearch.js",
     "googleAdsAdMotion.js",
     "googleAdsAdQuality.js",

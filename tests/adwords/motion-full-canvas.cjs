@@ -23,5 +23,17 @@ const {renderVariants,captionLayers}=require('../../netlify/functions/googleAdsA
    for(const sample of samples.slice(1)){let delta=0;for(let i=0;i<sample.length;i++)delta+=Math.abs(sample[i]-samples[0][i]);assert(delta/sample.length<2,'stationary logo and wash must remain visually stable across every text transition');}
    if(process.env.BRITES_MOTION_PROOFS){await fs.mkdir(process.env.BRITES_MOTION_PROOFS,{recursive:true});await fs.writeFile(path.join(process.env.BRITES_MOTION_PROOFS,row.key+'.mp4'),row.bytes);for(let i=0;i<row.frames.length;i++)await fs.writeFile(path.join(process.env.BRITES_MOTION_PROOFS,row.key+'_'+i+'.jpg'),row.frames[i]);}}
  }}finally{await fs.rm(tmp,{recursive:true,force:true});}
- console.log('PASS full-canvas films, measured crops, large type, transitions and protected jewelry in all three ratios');
+ // A band layout must read as light falling away, never as a printed line across the film.
+ {
+  const big={x:.05,y:.05,w:.9,h:.9},f={key:'square',width:720,height:720};
+  const layers=await captionLayers({...plan,composition:big,sourceOrientation:'landscape'},f);
+  assert.equal(layers.mode,'band','an oversized subject falls back to the band layout');
+  const seam=layers.geometry.seam;assert(seam&&seam.edge==='top','the band records which edge meets the film');
+  const base=layers.find(l=>l.persistent);assert(base,'the band layout keeps its persistent brand layer');
+  const {data,info}=await sharp(base.bytes).raw().toBuffer({resolveWithObject:true});
+  const column=Math.round(info.width/2),alpha=y=>data[(y*info.width+column)*4+3];
+  assert(Math.abs(alpha(seam.at)-alpha(seam.at+1))<=8,'the seam never jumps opacity across a single pixel');
+  assert(alpha(seam.at)>200&&alpha(seam.at+90)<80,'the band fades gradually into the film instead of cutting');
+ }
+ console.log('PASS full-canvas films, measured crops, large type, transitions, a blended band seam and protected jewelry in all three ratios');
 })().catch(e=>{console.error(e.stack);process.exitCode=1;});
