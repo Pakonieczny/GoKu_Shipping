@@ -13,7 +13,7 @@ const {renderVariants,captionLayers}=require('../../netlify/functions/googleAdsA
   const input=path.join(tmp,orientation+'.jpg'),source=path.join(tmp,orientation+'.mp4');await fs.writeFile(input,await sharp(Buffer.from(svg)).jpeg().toBuffer());await exec(require('@ffmpeg-installer/ffmpeg').path,['-y','-loop','1','-i',input,'-t','10','-r','24','-pix_fmt','yuv420p',source]);
   for(const f of (orientation==='portrait'?[{key:'portrait',width:720,height:1280}]:[{key:'square',width:720,height:720},{key:'landscape',width:1280,height:720}])){
    const g=geometry(f,subject,orientation),layers=await captionLayers({...plan,composition:subject,sourceOrientation:orientation},f);assert.equal(layers.filter(l=>l.persistent).length,1);assert.deepEqual(layers.filter(l=>!l.persistent).map(l=>l.title),['For your favorite foodie','Peach Charm','Shop now']);for(const layer of layers){
-    if(layer.persistent){assert.equal(layer.logoBox.w,176);assert.equal(layer.logoBox.x,f.width*.065);assert.equal(layer.logoBox.y,f.height*.055);assert.equal(layer.start,0);assert.equal(layer.end,10);}else assert(layer.fontSize>=56,'readable minimum typography');const {data,info}=await sharp(layer.bytes).raw().toBuffer({resolveWithObject:true});
+    if(layer.persistent){assert.equal(layer.logoBox.w,148);assert.equal(layer.logoBox.x,f.width*.055);assert.equal(layer.logoBox.y,f.height*.05);assert.equal(layer.start,0);assert.equal(layer.end,10);}else assert(layer.fontSize>=56,'readable minimum typography');const {data,info}=await sharp(layer.bytes).raw().toBuffer({resolveWithObject:true});
     for(const offset of (layer.persistent?[0]:[0,12]))for(let y=Math.ceil(g.product.y*f.height);y<Math.floor((g.product.y+g.product.h)*f.height);y++)for(let x=Math.ceil(g.product.x*f.width);x<Math.floor((g.product.x+g.product.w)*f.width);x++)assert.equal(data[((y-offset)*info.width+x)*4+3],0,'text, wash and transition never overlap protected jewelry');
    }
   }
@@ -23,6 +23,16 @@ const {renderVariants,captionLayers}=require('../../netlify/functions/googleAdsA
    for(const sample of samples.slice(1)){let delta=0;for(let i=0;i<sample.length;i++)delta+=Math.abs(sample[i]-samples[0][i]);assert(delta/sample.length<2,'stationary logo and wash must remain visually stable across every text transition');}
    if(process.env.BRITES_MOTION_PROOFS){await fs.mkdir(process.env.BRITES_MOTION_PROOFS,{recursive:true});await fs.writeFile(path.join(process.env.BRITES_MOTION_PROOFS,row.key+'.mp4'),row.bytes);for(let i=0;i<row.frames.length;i++)await fs.writeFile(path.join(process.env.BRITES_MOTION_PROOFS,row.key+'_'+i+'.jpg'),row.frames[i]);}}
  }}finally{await fs.rm(tmp,{recursive:true,force:true});}
+ // Messaging sits beside the wordmark, clear of it, so the film keeps its height.
+ {
+  const f={key:'square',width:720,height:720},layers=await captionLayers({...plan,composition:{x:.28,y:.52,w:.44,h:.36},sourceOrientation:'landscape'},f);
+  const logo=layers.find(l=>l.persistent).logoBox,beats=layers.filter(l=>!l.persistent);
+  const beside=beats.filter(l=>l.zone.name==='header');
+  assert(beside.length>=2,'messaging that fits sits beside the wordmark rather than under it');
+  assert(beside.every(l=>l.zone.x>=logo.x+logo.w+36),'messaging beside the wordmark keeps clear separation from it');
+  assert(beside.every(l=>l.zone.y<logo.y+logo.h),'messaging beside the wordmark aligns with it, not below it');
+  assert(beats.every(l=>l.zone.name==='header'||l.zone.y>=logo.y+logo.h),'copy too long to sit beside the wordmark clears it instead of colliding');
+ }
  // A band layout must read as light falling away, never as a printed line across the film.
  {
   const big={x:.05,y:.05,w:.9,h:.9},f={key:'square',width:720,height:720};
@@ -32,8 +42,12 @@ const {renderVariants,captionLayers}=require('../../netlify/functions/googleAdsA
   const base=layers.find(l=>l.persistent);assert(base,'the band layout keeps its persistent brand layer');
   const {data,info}=await sharp(base.bytes).raw().toBuffer({resolveWithObject:true});
   const column=Math.round(info.width/2),alpha=y=>data[(y*info.width+column)*4+3];
+  let fields=0,inside=false;for(let y=0;y<f.height;y++){const a=alpha(y);if(a>6&&!inside){fields++;inside=true;}if(a<=6)inside=false;}
+  assert.equal(fields,1,'the film shows exactly one fading field, never a duplicate');
   assert(Math.abs(alpha(seam.at)-alpha(seam.at+1))<=8,'the seam never jumps opacity across a single pixel');
-  assert(alpha(seam.at)>200&&alpha(seam.at+90)<80,'the band fades gradually into the film instead of cutting');
+  let falling=true;for(let y=1;y<f.height;y++)if(alpha(y)>alpha(y-1)+1)falling=false;
+  assert(falling,'the field only ever fades outward, so it never reads as a second edge');
+  assert(alpha(0)>=230&&alpha(seam.at)>20&&alpha(seam.at)<210,'the join sits part-way down one continuous ramp rather than at a cut');
  }
  console.log('PASS full-canvas films, measured crops, large type, transitions, a blended band seam and protected jewelry in all three ratios');
 })().catch(e=>{console.error(e.stack);process.exitCode=1;});
