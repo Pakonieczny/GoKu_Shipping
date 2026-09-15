@@ -108,7 +108,8 @@ async function callClaudeRaw({
   effort,
   useThinking = true,
   budgetTokens,
-  outputFormat            // structured outputs: {type:"json_schema", schema} → output_config.format
+  outputFormat,           // structured outputs: {type:"json_schema", schema} → output_config.format
+  thinkingDisplay         // "summarized" → thinking: {type:"adaptive", display} (models with adaptive thinking)
 }) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("Missing ANTHROPIC_API_KEY");
@@ -136,6 +137,7 @@ async function callClaudeRaw({
   }
 
   if (outputFormat) body.output_config = Object.assign({}, body.output_config || {}, { format: outputFormat });
+  if (thinkingDisplay && !isOpus47) body.thinking = { type: "adaptive", display: thinkingDisplay };
 
   const headers = {
     "Content-Type"     : "application/json",

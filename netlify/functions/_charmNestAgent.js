@@ -161,14 +161,15 @@ async function run(mode, body) {
   const req = buildRequest(mode, body);
   if (req.error) return { error: req.error };
   try {
-    const res = await anthropic.callClaudeRaw({ model: MODEL, maxTokens: 8000, effort: req.effort, system: [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }], messages: [{ role: "user", content: req.content }], outputFormat: { type: "json_schema", schema: req.schema } });
+    const res = await anthropic.callClaudeRaw({ model: MODEL, maxTokens: 8000, effort: req.effort, system: [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }], messages: [{ role: "user", content: req.content }], outputFormat: { type: "json_schema", schema: req.schema }, thinkingDisplay: "summarized" });
+    const reasoning = (res.content || []).filter(b => b.type === "thinking" && b.thinking).map(b => b.thinking).join("\n").slice(0, 6000);
     if (res.stop_reason === "refusal") return { skipped: "model declined" };
     const text = (res.content || []).filter(b => b.type === "text").map(b => b.text).join("");
     let parsed; try { parsed = JSON.parse(text); } catch (_) { return { skipped: "unparseable model output" }; }
     if (mode === "name") {
       parsed = { charms: (parsed.charms || []).map(x => ({ index: num(x.index), slug: str(x.slug, 60).toLowerCase().replace(/[^a-z0-9\-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || null, label: str(x.label, 120), confidence: Math.max(0, Math.min(1, num(x.confidence))), metal: req.wantMetal && /^(gold|silver|rose)$/.test(x.metal || "") ? x.metal : null })).filter(x => x.slug) };
     }
-    return Object.assign({ mode, model: MODEL, effort: req.effort, usage: res.usage || null }, parsed);
+    return Object.assign({ mode, model: MODEL, effort: req.effort, usage: res.usage || null, reasoning: reasoning || null }, parsed);
   } catch (e) {
     console.error("[charmNestAgent]", mode, e.status || "", e.message);
     return { skipped: `${mode === "name" ? "naming" : "review"} unavailable (${e.status || e.message})` };

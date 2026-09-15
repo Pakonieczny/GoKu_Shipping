@@ -180,6 +180,28 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .shQueue img.pinned{outline:2px solid var(--gold2)}
 .shQueue .more{font-size:10.5px;color:var(--ink45);align-self:center}
 .cloudRow{display:flex;gap:6px;align-items:center;font-size:10.5px;color:var(--ink45);padding:0 14px;margin-top:6px;min-height:14px}
+/* agent activity: what the geometry and Claude are doing, live */
+.shAgent{margin:8px 14px 0;border:1px solid var(--line);border-radius:10px;background:var(--velvet);color:var(--rTxt2);font-size:11.5px;overflow:hidden}
+.shAgent .agHead{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--velvetLine);cursor:pointer;user-select:none}
+.shAgent .agHead .lbl{font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--rTxt3);font-weight:750}
+.shAgent .agHead .now{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--rTxt)}
+.shAgent .agHead .now b{color:var(--gold2);font-weight:650}
+.shAgent .agHead .spin{width:10px;height:10px;border-width:2px;flex-basis:10px;border-color:#4a443b;border-top-color:var(--gold2)}
+.shAgent .agHead .tog{color:var(--rTxt3);font-size:10px;white-space:nowrap;flex:0 0 auto}
+.shAgent .agBody{max-height:220px;overflow:auto;padding:4px 0}
+.shAgent .agBody.off{display:none}
+.shAgent .ag{display:grid;grid-template-columns:44px 14px 1fr;gap:6px;padding:3px 10px;line-height:1.4;align-items:start}
+.shAgent .ag .t{font:10px var(--mono);color:var(--rDim);padding-top:2px}
+.shAgent .ag .i{font-size:11px;text-align:center;padding-top:1px}
+.shAgent .ag .x{min-width:0;word-break:break-word}
+.shAgent .ag.claude .x{color:#e9dfc4}
+.shAgent .ag.claude .i{color:var(--gold2)}
+.shAgent .ag.warn .x{color:#f2c0ad}
+.shAgent .ag.ok .x{color:#9ed4ac}
+.shAgent .ag .x i{color:var(--rTxt3);font-style:normal}
+.shAgent .ag .x .undo{margin-left:6px;border:1px solid #5f5648;background:transparent;color:var(--rTxt2);border-radius:5px;padding:0 6px;font-size:10px;cursor:pointer}
+.shAgent .ag .x .undo:hover{background:#3f382f;color:#fff}
+.shAgent .ag .x .reason{display:block;margin-top:2px;color:var(--rTxt3);font-size:10.5px;white-space:pre-wrap;max-height:120px;overflow:auto;border-left:2px solid #4a443b;padding-left:6px}
 .cloudRow .ok{color:#3c5a39}.cloudRow .bad{color:#8a3a26}
 
 /* ── library ── */
@@ -591,13 +613,18 @@ async function pumpParse() {
 async function parseSourceFile(src) {
   try {
     src.hash = await sha256(src.bytes);
+    const evP = agent({ srcId: src.id }, "geom", `Reading ${src.name}…`, { live: true });
     const parsed = await CharmNestPDF.parseSource(src.bytes, src.name);
     src.parsed = parsed;
+    agentUpdate(evP, { live: false, text: `${src.name}: ${parsed.counts.paths} paths, ${parsed.counts.xobjects} form XObject(s), ${parsed.counts.text} text block(s) on a ${fmt.in(parsed.pageW)} × ${fmt.in(parsed.pageH)} page` });
     const g = CharmNestPDF.groupCharms(parsed, { minPt: +S.settings.minPt || 6 });
     src.group = g;
+    agent({ srcId: src.id }, "geom", `Geometry found ${g.outlineCount} outlines (rule: ${g.rule})${g.mergedCount ? `, folded ${g.mergedCount} inner closed path(s) into their charms as holes/rings` : ""}${g.frame ? ", ignored a page-sized frame" : ""}${g.orphans.length ? `, ${g.orphans.length} loose element(s) belong to no charm` : ""}`, g.orphans.length ? { kind: "warn" } : {});
     if (!g.charms.length) throw new Error(`no charm outlines found (rule: ${g.rule}). Outlines must be closed, stroked, near-black paths.`);
     src.state = "silhouettes"; src.progress = [0, g.charms.length]; renderRail();
-    await CharmNestPDF.buildSilhouettes(parsed, g.charms, +S.settings.silhouetteRes || 6, (d, t) => { src.progress = [d, t]; renderRailRow(src); });
+    const evS = agent({ srcId: src.id }, "geom", `Tracing ${g.charms.length} silhouettes at ${S.settings.silhouetteRes || 6} px/pt`, { live: true });
+    await CharmNestPDF.buildSilhouettes(parsed, g.charms, +S.settings.silhouetteRes || 6, (d, t) => { src.progress = [d, t]; renderRailRow(src); agentUpdate(evS, { text: `Tracing silhouettes · ${d}/${t}` }); });
+    agentUpdate(evS, { live: false, text: `Silhouettes traced · ${g.charms.filter(c => c.open).length ? g.charms.filter(c => c.open).length + " open outline(s) excluded · " : ""}${[...new Set(g.charms.map(c => c.hash))].length} distinct designs among ${g.charms.length}` });
     // duplicate detection by geometry hash → quantity
     const byHash = new Map();
     g.charms.forEach(c => { const k = c.hash; if (!byHash.has(k)) byHash.set(k, []); byHash.get(k).push(c); });
@@ -613,7 +640,8 @@ async function parseSourceFile(src) {
     // to sheets
     if (src.metal) assignSource(src, src.metal); else { S.unassigned.push(...src.charms); renderRail(); }
     // 1 · Claude reviews the grouping against the source page (merges fragments, drops junk); Nest waits for it
-    if (S.settings.review !== "off" && S.cloud.ok) { try { await reviewGrouping(src); } catch (e) { src.review = { skipped: e.message }; toast(`${src.name}: AI review skipped (${e.message})`, "", 4200); } }
+    if (S.settings.review !== "off" && S.cloud.ok) { try { await reviewGrouping(src); } catch (e) { src.review = { skipped: e.message }; agent({ srcId: src.id }, "warn", `Claude's grouping review failed: ${e.message} — continuing on geometry alone`); toast(`${src.name}: AI review skipped (${e.message})`, "", 4200); } }
+    else agent({ srcId: src.id }, "info", S.settings.review === "off" ? "AI review is off in Settings — geometry only" : "Cloud offline — Claude review and naming skipped");
     // 2 · names (library first, then Claude) — never on the critical path
     nameCharms(src).catch(() => {});
     persistSource(src).catch(e => { src.cloud = { error: e.message }; renderRailRow(src); });
@@ -683,15 +711,17 @@ async function nameCharms(src) {
   if (todo.length && S.settings.naming === "on") {
     try {
       src.naming = { state: "running", elapsed: 0 }; renderRailRow(src);
+      const evN = agent({ srcId: src.id }, "claude", `Asked Claude to name ${todo.length} charm(s) for the Illustrator layers`, { live: true });
       const r = await agentCall("name", {
         sourceName: src.name, wantMetal: !src.metal,
         charms: todo.map(c => ({ index: c.index, thumb: c.thumb, widthPt: +c.widthPt.toFixed(1), heightPt: +c.heightPt.toFixed(1), qty: c.qty }))
-      }, { label: `Claude is naming ${todo.length} charms`, sourceName: src.name, onTick: e => { src.naming = { state: "running", elapsed: e }; renderRailRow(src); } });
+      }, { label: `Claude is naming ${todo.length} charms`, sourceName: src.name, onTick: e => { src.naming = { state: "running", elapsed: e }; renderRailRow(src); agentUpdate(evN, { elapsed: e }); } });
       src.naming = { state: "done" };
+      agentUpdate(evN, { live: false, text: r.skipped ? `Naming skipped — ${r.skipped}` : `Claude named them: ${(r.charms || []).map(x => x.slug).join(", ")}`, kind: r.skipped ? "warn" : "claude", reason: r.reasoning || null });
       const by = new Map((r.charms || []).map(x => [x.index, x]));
       for (const c of todo) { const x = by.get(c.index); if (x && x.slug) { c.name = x.slug; c.slug = x.slug; c.label = x.label || null; c.confidence = x.confidence || null; c.namedBy = "claude"; if (x.metal && !c.metal) c.metalHint = x.metal; } }
       if (r.skipped) toast("Naming skipped: " + r.skipped, "", 4000);
-    } catch (e) { src.naming = { state: "skipped" }; toast("Charm naming skipped (" + (e.message || "unavailable") + ") — layers will use file-based names", "", 4200); }
+    } catch (e) { src.naming = { state: "skipped" }; agent({ srcId: src.id }, "warn", `Naming failed: ${e.message} — file-based layer names`); toast("Charm naming skipped (" + (e.message || "unavailable") + ") — layers will use file-based names", "", 4200); }
   }
   // duplicates share the name of their first occurrence
   for (const c of src.charms) if (c.dupOf != null) { const o = src.charms[c.dupOf]; c.name = o.name; c.slug = o.slug; c.label = o.label; c.namedBy = o.namedBy; c.metalHint = o.metalHint; }
@@ -704,6 +734,37 @@ async function renameCharm(charm, name) {
   for (const src of S.sources) for (const c of src.charms) if (c.hash === charm.hash) { c.name = name; c.slug = name; c.namedBy = "operator"; }
   refreshAllCards();
   if (S.cloud.ok) api("charmNestLibrary", { op: "renameCharm", hash: charm.hash, name }).catch(() => {});
+}
+
+/* ═══ 7a · agent activity log — everything the geometry and Claude do, as it happens ═══ */
+const AG = { events: [] };   // {id, t, scope:{srcId|metal}, kind, text, html, live, reason}
+function agent(scope, kind, text, extra) {
+  const ev = Object.assign({ id: uid(), t: Date.now(), scope, kind, text }, extra || {});
+  AG.events.push(ev); if (AG.events.length > 400) AG.events.shift();
+  // the log opens itself the moment Claude or the solver starts working, so the activity is visible without a click
+  for (const m of METALS) if (scopeTouches(scope, m.key)) { const sh = S.sheets[m.key]; if (ev.live && (ev.kind === "claude" || ev.kind === "nest") && sh.agentOpen == null) sh.agentOpen = true; renderAgent(sh); }
+  return ev;
+}
+function agentUpdate(ev, patch) { Object.assign(ev, patch); for (const m of METALS) if (scopeTouches(ev.scope, m.key)) renderAgent(S.sheets[m.key]); }
+function scopeTouches(scope, metal) {
+  if (!scope) return true;
+  if (scope.metal) return scope.metal === metal;
+  if (scope.srcId) { const src = S.sources.find(x => x.id === scope.srcId); return !!src && (src.metal === metal || !src.metal || src.charms.some(c => c.metal === metal)); }
+  return true;
+}
+const AG_ICON = { geom: "▸", claude: "✦", nest: "◆", verify: "✓", cloud: "☁", warn: "⚠", ok: "✓", info: "·" };
+function renderAgent(sh) {
+  const el = sh.el; if (!el) return; const q = r => $(`[data-r="${r}"]`, el);
+  const evs = AG.events.filter(e => scopeTouches(e.scope, sh.metal));
+  const live = evs.filter(e => e.live).pop();
+  const last = evs[evs.length - 1];
+  q("agentNow").innerHTML = live ? `<span class="spin"></span> ${live.html || esc(live.text)}${live.elapsed ? ` <b>${fmt.s(live.elapsed)}</b>` : ""}` : (last ? (last.html || esc(last.text)) : "idle — drop artwork to start");
+  q("agentTog").textContent = sh.agentOpen ? "hide log" : `show log (${evs.length})`;
+  const body = q("agentBody"); body.classList.toggle("off", !sh.agentOpen);
+  if (!sh.agentOpen) return;
+  body.innerHTML = evs.slice(-80).map(e => `<div class="ag ${e.kind}${e.live ? " live" : ""}" data-ev="${e.id}"><span class="t">${new Date(e.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }).slice(0, 8)}</span><span class="i">${AG_ICON[e.kind] || "·"}</span><span class="x">${e.html || esc(e.text)}${e.live && e.elapsed ? ` <i>${fmt.s(e.elapsed)}</i>` : ""}${e.undo ? ` <button class="undo" data-undo="${e.id}">undo</button>` : ""}${e.reason ? `<span class="reason">${esc(e.reason)}</span>` : ""}</span></div>`).join("");
+  $$("[data-undo]", body).forEach(b => b.onclick = ev => { ev.stopPropagation(); const e = AG.events.find(x => x.id === b.dataset.undo); if (e && e.undo) e.undo(); });
+  body.scrollTop = body.scrollHeight;
 }
 
 /* ═══ 7b · AI review: Claude judges the grouping and the finished sheet ═══ */
@@ -727,12 +788,19 @@ function renderOverview(src, maxW) {
 async function reviewGrouping(src) {
   src.review = { state: "running" }; renderRailRow(src); refreshAllCards();
   const live = src.charms.filter(c => c.mergedInto == null);
+  const ev = agent({ srcId: src.id }, "claude", "", { live: true, html: `Sent Claude Opus 5 (high effort) the whole page with <b>${live.length}</b> numbered boxes plus each charm's crop — asking: is each one a complete charm, a fragment, two charms, or not a charm?` });
   const r = await agentCall("grouping", {
     sourceName: src.name, overview: renderOverview(src),
     charms: live.map(c => ({ index: c.index, thumb: c.thumb, widthPt: +c.widthPt.toFixed(1), heightPt: +c.heightPt.toFixed(1), members: c.members.length }))
-  }, { label: `Claude is reviewing ${live.length} detected charms`, sourceName: src.name, onTick: e => { src.review = { state: "running", elapsed: e }; renderRailRow(src); refreshAllCards(); } });
-  if (r.skipped) { src.review = { skipped: r.skipped }; renderRailRow(src); refreshAllCards(); toast(`${src.name}: AI review skipped — ${r.skipped}`, "", 4200); return; }
+  }, { label: `Claude is reviewing ${live.length} detected charms`, sourceName: src.name, onTick: e => { src.review = { state: "running", elapsed: e }; renderRailRow(src); refreshAllCards(); agentUpdate(ev, { elapsed: e }); } });
+  if (r.skipped) { agentUpdate(ev, { live: false, kind: "warn", html: null, text: `Claude review skipped — ${r.skipped}` }); src.review = { skipped: r.skipped }; renderRailRow(src); refreshAllCards(); toast(`${src.name}: AI review skipped — ${r.skipped}`, "", 4200); return; }
+  agentUpdate(ev, { live: false, html: `Claude answered after <b>${fmt.s(ev.elapsed || 0)}</b>: “${esc(r.summary || "")}” · ${r.realCharmCount != null ? r.realCharmCount + " real charms" : ""}${r.usage ? ` · ${r.usage.input_tokens} tokens in` : ""}`, reason: r.reasoning || null });
+  const bad = (r.verdicts || []).filter(v => v.verdict !== "complete");
+  for (const v of bad) agent({ srcId: src.id }, v.verdict === "fragment" ? "claude" : "warn", `#${v.index}: ${v.verdict}${v.mergeInto != null ? ` of #${v.mergeInto}` : ""} — ${v.note || ""}`);
+  agent({ srcId: src.id }, "claude", `${(r.verdicts || []).length - bad.length} charm(s) confirmed complete`);
   const applied = await applyGroupingReview(src, r.verdicts || []);
+  for (const m of applied.merged) { const e2 = agent({ srcId: src.id }, "ok", `Merged #${m.from} into #${m.into} and re-traced its silhouette`); e2.undo = () => unmergeCharm(src, m.from, e2); renderAgent(S.sheets[src.metal || "gold"]); }
+  for (const i of applied.excluded) agent({ srcId: src.id }, "ok", `Excluded #${i} (not a charm)`);
   src.review = { state: "done", summary: r.summary, realCharmCount: r.realCharmCount, verdicts: r.verdicts, merged: applied.merged, excluded: applied.excluded, multiple: applied.multiple, usage: r.usage };
   renderRail(); refreshAllCards(); updateTopSub();
   const parts = [];
@@ -766,9 +834,12 @@ async function applyGroupingReview(src, verdicts) {
     src.state = "ready";
   }
   for (const m of METALS) { const sh = S.sheets[m.key]; if (sh.charms.some(c => c.sourceId === src.id)) sheetDirty(sh); }
+  renderRail();
   return { merged, excluded, multiple };
 }
 function mergeCharm(src, frag, target) {
+  frag._before = { members: target.members.slice(), topIndices: target.topIndices.slice(), bbox: target.bbox.slice() };
+  src.mergedFragments = src.mergedFragments || []; src.mergedFragments.push(frag);
   for (const m of frag.members) if (!target.members.includes(m)) target.members.push(m);
   target.topIndices = [...new Set(target.topIndices.concat(frag.topIndices))];
   target.bbox = [Math.min(target.bbox[0], frag.bbox[0]), Math.min(target.bbox[1], frag.bbox[1]), Math.max(target.bbox[2], frag.bbox[2]), Math.max(target.bbox[3], frag.bbox[3])];
@@ -777,18 +848,34 @@ function mergeCharm(src, frag, target) {
   S.unassigned = S.unassigned.filter(c => c !== frag);
   for (const m of METALS) S.sheets[m.key].charms = S.sheets[m.key].charms.filter(c => c !== frag);
 }
+/** Operator override: put a merged fragment back as its own charm. */
+async function unmergeCharm(src, fragIndex, ev) {
+  const frag = (src.mergedFragments || []).find(f => f.index === fragIndex); if (!frag) return;
+  const target = src.charms.find(c => c.index === frag.mergedInto); if (!target) return;
+  Object.assign(target, frag._before); delete frag._before;
+  frag.mergedInto = null; frag.excluded = false; frag.reviewVerdict = "operator: kept separate";
+  src.mergedFragments = src.mergedFragments.filter(f => f !== frag);
+  src.charms.push(frag); src.charms.sort((a, b) => a.index - b.index);
+  await CharmNestPDF.buildSilhouettes(src.parsed, [target], +S.settings.silhouetteRes || 6);
+  if (src.metal) { frag.metal = src.metal; S.sheets[src.metal].charms.push(frag); sheetDirty(S.sheets[src.metal]); } else { S.unassigned.push(frag); }
+  if (ev) { ev.undo = null; agentUpdate(ev, { kind: "info", text: `Undone by operator: #${frag.index} is its own charm again` }); }
+  renderRail(); refreshAllCards(); updateTopSub();
+}
 /** After nesting: Claude inspects the rendered sheet; fixable findings trigger one automatic re-nest. */
 async function reviewLayout(sh, items) {
   if (S.settings.review === "off" || !S.cloud.ok || !sh.outputs || !sh.outputs.previewPng) return;
   sh.aiReview = { state: "running" }; renderCard(sh);
+  const evL = agent({ metal: sh.metal }, "claude", `Sent Claude the finished ${labelOf(sh.metal)} sheet and its ${sh.placements.length} placements — asking for anything an operator would reject`, { live: true });
   const byId = new Map(items.map(c => [c.id, c]));
   const preview = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(sh.outputs.previewPng); });
   const r = await agentCall("layout", {
     sheetName: `${labelOf(sh.metal)} ${sh.sheetId}`, preview,
     placements: sh.placements.map((p, i) => ({ n: i + 1, name: byId.get(p.id)?.name || p.id, wPt: p.wPt, hPt: p.hPt, cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle })),
     rejects: sh.rejects.map(id => byId.get(id)?.name || id).join(", ")
-  }, { label: "Claude is inspecting the nested sheet", sheetId: sh.sheetId, onTick: e => { sh.aiReview = { state: "running", elapsed: e }; renderProgress(sh); } });
-  if (r.skipped) { sh.aiReview = { skipped: r.skipped }; renderCard(sh); return; }
+  }, { label: "Claude is inspecting the nested sheet", sheetId: sh.sheetId, onTick: e => { sh.aiReview = { state: "running", elapsed: e }; renderProgress(sh); agentUpdate(evL, { elapsed: e }); } });
+  if (r.skipped) { agentUpdate(evL, { live: false, kind: "warn", text: `Sheet inspection skipped — ${r.skipped}` }); sh.aiReview = { skipped: r.skipped }; renderCard(sh); return; }
+  agentUpdate(evL, { live: false, kind: r.ok && !(r.issues || []).length ? "ok" : "claude", html: `Claude after <b>${fmt.s(evL.elapsed || 0)}</b>: “${esc(r.summary || "")}”`, reason: r.reasoning || null });
+  for (const i of r.issues || []) agent({ metal: sh.metal }, "warn", `${i.kind}: ${(i.charms || []).join(", ")} — ${i.note} (${i.action}${i.mergeInto ? " into " + i.mergeInto : ""})`);
   sh.aiReview = { state: "done", ok: !!r.ok && !(r.issues || []).length, issues: r.issues || [], summary: r.summary, usage: r.usage };
   log(sh, `Claude review: ${r.summary}`);
   renderCard(sh);
@@ -809,6 +896,7 @@ async function reviewLayout(sh, items) {
     }
     if (notes.length) {
       for (const t of changed) { const src = S.sources.find(x => x.id === t.sourceId); await CharmNestPDF.buildSilhouettes(src.parsed, [t], +S.settings.silhouetteRes || 6); t.open = false; }
+      agent({ metal: sh.metal }, "ok", `Applied: ${notes.join(", ")} — re-nesting`);
       toast(`${labelOf(sh.metal)} · Claude found: ${r.summary} — ${notes.join(", ")} — re-nesting`, "", 8000);
       sheetDirty(sh); renderRail(); startNest(sh);
     }
@@ -902,6 +990,7 @@ function startNest(sh) {
   sh.status = "nesting"; sh.startedAt = performance.now(); sh.placements = []; sh.rejects = []; sh.outputs = null; sh.verification = null; sh.best = null; sh.trials = 0; sh.liveInfo = null; sh.endedBy = null;
   sh.jobId = uid(); sh.stage = "Preparing rotations…"; sh.progress = [0, items.length]; sh.dirty = false;
   log(sh, `nest started · ${items.length} pieces · seed ${S.settings.seed} · clearance ${S.settings.clearancePt} pt`);
+  sh.evNest = agent({ metal: sh.metal }, "nest", `Nesting ${items.length} pieces · seed ${S.settings.seed} · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · up to ${S.settings.budgetS}s`, { live: true });
   renderCard(sh); drawPreview(sh);
   const job = buildJob(sh);
   const useServer = S.settings.serverAbove > 0 && items.length > S.settings.serverAbove && S.cloud.ok;
@@ -927,7 +1016,7 @@ function onWorkerMessage(sh, m) {
     }
     case "reject": log(sh, `trial ${m.trial + 1}: ${byId.get(m.id)?.name || m.id} did not fit`); break;
     case "trial": { sh.trials = m.summary.trial + 1; if (!m.summary.better) sh.stage = `Trial ${sh.trials} · best so far ${sh.best ? sh.best.placements.length : 0}/${m.summary.total} · ${fmt.s(m.summary.elapsedMs)}`; renderProgress(sh); break; }
-    case "best": { sh.best = m.best; sh.bestTrial = m.summary.trial; sh.placements = m.best.placements; sh.rejects = m.best.rejects.slice(); sh.liveInfo = Object.assign({}, sh.liveInfo || {}, { freePt2: m.best.freePt2, usablePt2: m.best.usablePt2, placedPt2: m.best.placedPt2, pocket: m.best.pocket }); log(sh, `trial ${m.summary.trial + 1}: ${m.best.placements.length}/${m.summary.total} placed · ${fmt.pct(m.best.density)}`); computeSaturation(sh); renderSat(sh); drawPreview(sh); break; }
+    case "best": { if (sh.evNest) agentUpdate(sh.evNest, { text: `Trial ${m.summary.trial + 1}: ${m.best.placements.length}/${m.summary.total} placed at ${fmt.pct(m.best.density)} — best so far`, elapsed: m.summary.elapsedMs }); sh.best = m.best; sh.bestTrial = m.summary.trial; sh.placements = m.best.placements; sh.rejects = m.best.rejects.slice(); sh.liveInfo = Object.assign({}, sh.liveInfo || {}, { freePt2: m.best.freePt2, usablePt2: m.best.usablePt2, placedPt2: m.best.placedPt2, pocket: m.best.pocket }); log(sh, `trial ${m.summary.trial + 1}: ${m.best.placements.length}/${m.summary.total} placed · ${fmt.pct(m.best.density)}`); computeSaturation(sh); renderSat(sh); drawPreview(sh); break; }
     case "done": finishNest(sh, { result: m.result }); break;
     case "error": finishNest(sh, { error: m.message }); break;
     case "verified": sh._geomVerify && sh._geomVerify(m.result); break;
@@ -970,6 +1059,7 @@ async function finishNest(sh, { result, error }) {
   const items = activeCharms(sh); const byId = new Map(items.map(c => [c.id, c]));
   if (error) { sh.status = items.length ? "ready" : "idle"; sh.stage = ""; log(sh, "error: " + error); toast(`${labelOf(sh.metal)}: nesting failed — ${error}`, "bad", 6000); renderCard(sh); pumpNestQueue(); return; }
   sh.status = "finishing"; sh.endedBy = result.endedBy; sh.trials = result.trials; sh.placements = result.placements; sh.rejects = result.rejects.slice();
+  if (sh.evNest) agentUpdate(sh.evNest, { live: false, elapsed: 0, text: `Nest ended by ${endedText(result.endedBy)} after ${result.trials} trial(s), ${fmt.s(result.elapsedMs)}: ${result.placements.length}/${items.length} placed at ${fmt.pct(result.density)}${result.rejects.length ? ` · did not fit: ${result.rejects.map(id => byId.get(id)?.name || id).join(", ")}` : ""}` });
   sh.liveInfo = { freePt2: result.freePt2, usablePt2: result.usablePt2, placedPt2: result.placedPt2, pocket: result.pocket, placed: result.placements.length, total: items.length };
   sh.solveParams = result.params; sh.elapsedMs = result.elapsedMs; sh.density = result.density;
   computeSaturation(sh); drawPreview(sh);
@@ -990,6 +1080,14 @@ async function finishNest(sh, { result, error }) {
     try { await ensurePdfJs(); render = await CharmNestPDF.verifyRendered(aiBytes, { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0, res: +S.settings.verifyRes || 6, erodePt: (+S.settings.clearancePt || 0) < 0 ? Math.round(-S.settings.clearancePt / 2 * 2) / 2 : 0, onProgress: (d, t) => { sh.stage = `Verifying · charm ${d}/${t} re-rendered from the output file`; renderProgress(sh); } }); }
     catch (e) { render = { ok: false, error: e.message }; log(sh, "render verify failed: " + e.message); }
     sh.verification = { geom, render, ok: geom.ok && !!(render && render.ok), minGapPt: geom.minGapPt, minEdgePt: geom.minEdgePt };
+    {
+      const allow = (+S.settings.clearancePt || 0) < 0 ? (-S.settings.clearancePt) + " pt stroke share" : "0";
+      const pairs = geom.overlappingPairs.map(p => p.map(id => (byId.get(id) || {}).name || id).join("↔")).join("; ");
+      const renderMsg = render && !render.ok ? " · render: " + (render.error || (render.overlapPx + " px overlap, " + render.outsidePx + " px outside")) : "";
+      agent({ metal: sh.metal }, sh.verification.ok ? "verify" : "warn", sh.verification.ok
+        ? "Verified twice: geometry at " + geom.res + " px/pt and the written file re-rendered layer by layer — no overlap beyond the allowed " + allow + ", nothing outside the sheet"
+        : "Verification flagged: " + (geom.overlapPx ? geom.overlapPx + " px overlap (" + pairs + ")" : "") + renderMsg);
+    }
     // 3 · report
     const report = buildReport(sh, result, items);
     sh.outputs = { ai: aiBytes, labelled: labelledBytes, report, previewPng: await previewPng(sh) };
@@ -1052,6 +1150,7 @@ async function persistSheet(sh, items) {
   await api("charmNestLibrary", { op: "putCalibration", row: Object.assign({ sheetId: sh.sheetId, metal: sh.metal, clearancePt: +S.settings.clearancePt }, sh.outputs.report.calibration) }, { label: "Saving calibration" });
   S.calibration.push(Object.assign({ sheetId: sh.sheetId }, sh.outputs.report.calibration));
   renderCard(sh);
+  agent({ metal: sh.metal }, "cloud", `Saved to the cloud: .ai, .pdf, labelled proof, report, preview · sheet ${sh.sheetId}`);
   toast(`${labelOf(sh.metal)}: sheet, proof and report saved to the cloud`, "ok", 3000);
 }
 let pdfjsReady = null;
@@ -1131,6 +1230,7 @@ function buildCards() {
       <div class="shSat" data-r="sat"></div>
       <div class="shRejects hidden" data-r="rejects"></div>
       <div class="shQueue" data-r="queue"></div>
+      <div class="shAgent" data-r="agent"><div class="agHead"><span class="lbl">Agent</span><span class="now" data-r="agentNow">idle</span><span class="tog" data-r="agentTog">show log</span></div><div class="agBody off" data-r="agentBody"></div></div>
       <div class="cloudRow" data-r="cloud"></div>
       <div class="shActions">
         <button class="btn gold sm" data-r="nest">Nest</button>
@@ -1155,6 +1255,7 @@ function buildCards() {
       if (e.dataTransfer.files && e.dataTransfer.files.length) intake(e.dataTransfer.files, m.key);
     });
     q("canvas").addEventListener("click", e => onPreviewClick(sh, e));
+    q("agentTog").parentElement.onclick = () => { sh.agentOpen = !sh.agentOpen; renderAgent(sh); };
     renderCard(sh);
   }
 }
@@ -1187,7 +1288,7 @@ function renderCard(sh) {
   // cloud row
   const cl = q("cloud");
   cl.innerHTML = sh.cloud ? `<span class="ok">✓ saved to cloud</span> · <a href="${sh.cloud.ai}" target="_blank" rel="noopener">.ai</a> · <a href="${sh.cloud.labelled}" target="_blank" rel="noopener">proof</a> · <a href="${sh.cloud.report}" target="_blank" rel="noopener">report</a>` : (sh.outputs ? (S.cloud.ok ? "saving to cloud…" : `<span class="bad">not saved — cloud offline</span>`) : (sh.sheetId ? `sheet ${sh.sheetId}` : ""));
-  renderProgress(sh); renderSat(sh); drawPreview(sh);
+  renderProgress(sh); renderSat(sh); drawPreview(sh); renderAgent(sh);
 }
 function renderProgress(sh) {
   const el = sh.el; if (!el) return; const q = r => $(`[data-r="${r}"]`, el);
