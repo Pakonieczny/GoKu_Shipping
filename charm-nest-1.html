@@ -619,7 +619,7 @@ async function parseSourceFile(src) {
     agentUpdate(evP, { live: false, text: `${src.name}: ${parsed.counts.paths} paths, ${parsed.counts.xobjects} form XObject(s), ${parsed.counts.text} text block(s) on a ${fmt.in(parsed.pageW)} × ${fmt.in(parsed.pageH)} page` });
     const g = CharmNestPDF.groupCharms(parsed, { minPt: +S.settings.minPt || 6 });
     src.group = g;
-    agent({ srcId: src.id }, "geom", `Geometry found ${g.outlineCount} outlines (rule: ${g.rule})${g.mergedCount ? `, folded ${g.mergedCount} inner closed path(s) into their charms as holes/rings` : ""}${g.frame ? ", ignored a page-sized frame" : ""}${g.orphans.length ? `, ${g.orphans.length} loose element(s) belong to no charm` : ""}`, g.orphans.length ? { kind: "warn" } : {});
+    agent({ srcId: src.id }, "geom", `Geometry found ${g.outlineCount} outlines (rule: ${g.rule})${g.mergedCount ? `, folded ${g.mergedCount} inner closed path(s) into their charms as holes/rings` : ""}${g.frames && g.frames.length ? `, set aside ${g.frames.length} frame rectangle(s)` : ""}${g.orphans.length ? `, ${g.orphans.length} loose element(s) belong to no charm` : ""}`, g.orphans.length ? { kind: "warn" } : {});
     if (!g.charms.length) throw new Error(`no charm outlines found (rule: ${g.rule}). Outlines must be closed, stroked, near-black paths.`);
     src.state = "silhouettes"; src.progress = [0, g.charms.length]; renderRail();
     const evS = agent({ srcId: src.id }, "geom", `Tracing ${g.charms.length} silhouettes at ${S.settings.silhouetteRes || 6} px/pt`, { live: true });
@@ -772,12 +772,13 @@ function renderAgent(sh) {
 function renderOverview(src, maxW) {
   const p = src.parsed, W = p.pageW, H = p.pageH, k = Math.min((maxW || 1800) / W, 1400 / H);
   const cv = document.createElement("canvas"); cv.width = Math.round(W * k); cv.height = Math.round(H * k);
-  const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+  const ctx = cv.getContext("2d"); ctx.fillStyle = "#ece7dc"; ctx.fillRect(0, 0, cv.width, cv.height);
   const mb = p.mediaBox; const tx = (x, y) => [(x - mb[0]) * k, (mb[3] - y) * k];
   CharmNestPDF.drawSegments(ctx, p.segments.concat(p.nested).filter(sg => sg.bbox && sg.kind !== "clip" && sg.kind !== "noop" && !(sg.kind === "xobj" && sg.children && sg.children.length)), tx, k);
   for (const c of src.charms) {
     if (c.mergedInto != null) continue;
     const a = tx(c.bbox[0], c.bbox[3]), b = tx(c.bbox[2], c.bbox[1]);
+    ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); ctx.strokeStyle = "rgba(190,40,40,.9)"; ctx.lineWidth = Math.max(1, 0.6 * k); ctx.stroke();   // the cut outline, unmistakable
     ctx.strokeStyle = "rgba(176,86,63,.9)"; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]); ctx.strokeRect(a[0] - 2, a[1] - 2, b[0] - a[0] + 4, b[1] - a[1] + 4); ctx.setLineDash([]);
     const label = String(c.index); ctx.font = `bold ${Math.max(11, Math.round(k * 9))}px ${getComputedStyle(document.body).getPropertyValue("--sans")}`;
     const tw = ctx.measureText(label).width + 8, th = Math.max(14, Math.round(k * 11));

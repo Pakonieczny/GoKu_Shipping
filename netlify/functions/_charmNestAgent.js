@@ -20,8 +20,10 @@ const GROUPING_INSTRUCTIONS = `You are the quality reviewer for a laser-cutting 
 The tool reads an Illustrator sheet of loose jewelry charm artwork and splits it into individual charms by geometry. Geometry makes mistakes an operator spots instantly: a jump ring, a badge, an engraved rectangle or a hole outline gets split off as its own "charm"; two charms drawn close together get merged into one; a stray guide or frame is treated as a charm.
 
 You receive:
-1. An overview image of the whole source sheet. Every detected "charm" is boxed and labelled with its number.
-2. One cropped image per detected charm, in number order, with its size in inches.
+1. An overview image of the whole source sheet on a light grey background. Every detected "charm" is boxed and labelled with its number, and each detected CUT OUTLINE is traced in red (the artwork's own outline may be black, grey or WHITE, so trust the red trace to see where the cut line is).
+2. One cropped image per detected charm, in number order, with its size in inches, with the same red cut-outline trace.
+
+A charm whose red outline encloses engraved text (a date, a name) is complete: the text is engraving on it, not a separate piece. Only text with NO red cut outline around it is a fragment.
 
 For every detected charm give a verdict:
 - "complete": this is one whole charm exactly as a customer would receive it (its cut outline plus its engraving, holes and jump ring).
@@ -93,7 +95,7 @@ For every charm, in the order given, return:
 - slug: 2-4 lowercase words joined by hyphens that a person would use to find this exact charm again (e.g. "compass-rose", "police-vest", "axolotl", "celtic-knot", "initial-m", "date-9-26-25"). If the charm carries engraved text, prefer that text in the slug. Never use generic slugs like "charm" or "pendant" alone.
 - label: one short plain-English phrase describing it (max 8 words).
 - confidence: 0 to 1, how sure you are of the identification.
-- metal: only when asked (wantMetal), your best guess of "gold", "silver" or "rose" from any hint in the artwork or file name; otherwise null.
+- metal: only when asked (wantMetal), your best guess of "gold", "silver" or "rose" from any hint in the artwork or file name; otherwise "unknown".
 
 Return one entry per input index, no more and no fewer. Do not invent charms.`;
 
@@ -109,7 +111,7 @@ const NAME_SCHEMA = {
           slug: { type: "string" },
           label: { type: "string" },
           confidence: { type: "number" },
-          metal: { type: ["string", "null"], enum: ["gold", "silver", "rose", null] }
+          metal: { type: "string", enum: ["gold", "silver", "rose", "unknown"] }
         },
         required: ["index", "slug", "label", "confidence", "metal"]
       }
@@ -172,7 +174,8 @@ async function run(mode, body) {
     return Object.assign({ mode, model: MODEL, effort: req.effort, usage: res.usage || null, reasoning: reasoning || null }, parsed);
   } catch (e) {
     console.error("[charmNestAgent]", mode, e.status || "", e.message);
-    return { skipped: `${mode === "name" ? "naming" : "review"} unavailable (${e.status || e.message})` };
+    const detail = (e.data && e.data.error && e.data.error.message) || e.message || "";
+    return { skipped: `${mode === "name" ? "naming" : "review"} unavailable (${e.status ? e.status + " " : ""}${String(detail).slice(0, 200)})` };
   }
 }
 module.exports = { run, buildRequest, MODEL, EFFORT, NAME_EFFORT };

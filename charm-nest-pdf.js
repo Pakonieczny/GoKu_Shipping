@@ -375,9 +375,18 @@
     opts = Object.assign({ minPt: 6, darkMax: 0.35, framePct: 0.8, touchPt: 2.5, nearPt: 6 }, opts || {});
     const pageArea = parsed.pageW * parsed.pageH;
     const all = parsed.segments.concat(parsed.nested);
-    // page-sized paths (a sheet frame drawn into the artwork, any colour) are never charm material
-    const frames = all.filter(s => s.bbox && s.kind === "path" && bbArea(s.bbox) >= pageArea * opts.framePct);
-    const drawable = all.filter(s => s.bbox && s.kind !== "clip" && s.kind !== "noop" && !frames.includes(s) && !(s.kind === "xobj" && s.children && s.children.length));
+    // Frames are never charm material: page-sized paths of any colour, and any closed
+    // rectangle that encloses two or more outline candidates (a sheet box drawn into a
+    // larger artboard). The design document's "never draw the sheet outline into a
+    // silhouette probe" trap — the first live sheet hit it.
+    const preDrawable = all.filter(s => s.bbox && s.kind !== "clip" && s.kind !== "noop" && !(s.kind === "xobj" && s.children && s.children.length));
+    const achromatic0 = c => c && (Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2])) <= 0.15;
+    const cand0 = preDrawable.filter(s => s.kind === "path" && s.stroke && s.closed && achromatic0(s.strokeRGB) && (s.bbox[2] - s.bbox[0]) >= opts.minPt && (s.bbox[3] - s.bbox[1]) >= opts.minPt);
+    const isRectLike = s => s.kind === "path" && s.closed && s.subpaths.length === 1 && s.subpaths[0].filter(x => x[0] !== "h").length <= 5 && !s.subpaths[0].some(x => x[0] === "c");
+    const encloses = (box, s) => s.bbox[0] >= box[0] - 0.5 && s.bbox[1] >= box[1] - 0.5 && s.bbox[2] <= box[2] + 0.5 && s.bbox[3] <= box[3] + 0.5;
+    const frames = preDrawable.filter(s => s.kind === "path" && (bbArea(s.bbox) >= pageArea * opts.framePct ||
+      (isRectLike(s) && cand0.filter(c => c !== s && encloses(s.bbox, c)).length >= 2)));
+    const drawable = preDrawable.filter(s => !frames.includes(s));
     // An outline is a closed, achromatic stroke (black, grey OR white — the reference
     // sheet strokes one charm in white). Coloured strokes are engraving detail.
     const achromatic = c => c && (Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2])) <= 0.15;
@@ -426,6 +435,9 @@
       if (byOutline.has(s)) { byOutline.get(s).members.push(s); continue; }
       if (merged.has(s)) { const c = byOutline.get(merged.get(s)); c.members.push(s); c.bbox = bbUnion(c.bbox, s.bbox); continue; }
       const pts = samples(s, polysCache);
+      // something far bigger than any outline it could belong to is not a detail of it (a guide, a stray frame)
+      const biggestNear = charms.filter(c => bbInter(s.bbox, c.outline.bbox)).reduce((m, c) => Math.max(m, bbArea(c.outline.bbox)), 0);
+      if (bbArea(s.bbox) > 3 * biggestNear && biggestNear > 0) { orphans.push(s); continue; }
       const near = charms.filter(c => bbInter([s.bbox[0] - opts.touchPt, s.bbox[1] - opts.touchPt, s.bbox[2] + opts.touchPt, s.bbox[3] + opts.touchPt], c.outline.bbox));
       let best = null, bestF = 0;
       for (const c of near) { const f = insideFrac(pts, polysOf(c.outline)); if (f > bestF || (f === bestF && f > 0 && best && bbArea(c.outline.bbox) < bbArea(best.outline.bbox))) { best = c; bestF = f; } }
@@ -455,7 +467,7 @@
     for (const c of charms) for (const t of c.topIndices) { const seg = parsed.segments[t]; if (seg && seg.kind === "xobj") { const n = c.members.filter(m => m.parent === t).length; const cur = claim.get(t); if (!cur || n > cur.n) claim.set(t, { c, n }); } }
     for (const c of charms) c.topIndices = c.topIndices.filter(t => { const seg = parsed.segments[t]; return !(seg && seg.kind === "xobj") || claim.get(t).c === c; });
     charms.forEach(c => { c.strokePt = Math.max(0.5, c.outline.lwPt || 0.5); });
-    return { charms, frame, orphans, rule, outlineCount: outlines.length, mergedCount: merged.size };
+    return { charms, frame, frames, orphans, rule, outlineCount: outlines.length, mergedCount: merged.size };
   }
 
   /* ═══ 6 · silhouettes + thumbnails ═════════════════════════════════════ */
@@ -540,14 +552,17 @@
     for (let y = 0; y < h; y++) { const gy = Math.min(G - 1, (y * G / h) | 0); for (let x = 0; x < w; x++) { const g = gy * G + Math.min(G - 1, (x * G / w) | 0); tot[g]++; if (bits[y * w + x]) cnt[g]++; } }
     let s = ""; for (let i = 0; i < G * G; i++) s += cnt[i] * 2 >= tot[i] ? "1" : "0"; return s;
   }
+  /** Thumbnail for the operator and for Claude: light background so white strokes show,
+   *  and the charm's CUT OUTLINE drawn again in red on top so it is unmistakable. */
   async function thumbnail(c, size) {
     const b = c.bbox, pad = 2;
     const w = b[2] - b[0] + pad * 2, h = b[3] - b[1] + pad * 2, s = size / Math.max(w, h);
     const W = Math.max(8, Math.round(w * s)), H = Math.max(8, Math.round(h * s));
     const cv = makeCanvas(W, H), ctx = cv.getContext("2d");
-    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#ece7dc"; ctx.fillRect(0, 0, W, H);
     const tx = (x, y) => [(x - b[0] + pad) * s, (b[3] + pad - y) * s];
     drawSegments(ctx, c.members, tx, s);
+    ctx.beginPath(); pathToCanvas(ctx, c.outline, tx); ctx.strokeStyle = "rgba(190,40,40,.9)"; ctx.lineWidth = Math.max(1, 0.6 * s); ctx.stroke();
     return cv.convertToBlob ? await blobToDataUrl(await cv.convertToBlob({ type: "image/png" })) : cv.toDataURL("image/png");
   }
   /** Draw segments; `solid` paints everything opaque black (for silhouettes) instead of in colour. */
