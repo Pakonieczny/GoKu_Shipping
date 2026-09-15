@@ -54,7 +54,7 @@ The 970×250 banner uses a headline up to 64px, a 36px business name and a 120px
 | square | 720 × 720 | product toward right, messaging in measured free space |
 | landscape | 1280 × 720 | product toward right, messaging in measured free space |
 
-All films retain the actual wordmark at the top-left, 176px wide, and a continuously visible local translucent wash. Only messaging transitions: opening hook, product/benefit, closing action. The three messages come from saved static-ad copy; they are not three repetitions of the same heading. Geometry and review checks protect the jewelry. Google approval and delivery remain separate from local creative quality.
+All films retain the actual wordmark at the top-left, 148px wide, with the messaging set beside it rather than beneath it and separated by about 40px, leaving the height to the jewelry. Each film carries exactly one translucent fading field per edge, ramping evenly from the frame edge to fully transparent and absorbing any band join, so no duplicate fade or hard line can appear. Headlines are set one weight bolder than body copy. Only messaging transitions: opening hook, product/benefit, closing action. The three messages come from saved static-ad copy; they are not three repetitions of the same heading. Geometry and review checks protect the jewelry. Google approval and delivery remain separate from local creative quality.
 
 Landscape masters center the complete brand, headline and action stack vertically, with a restrained button. Narrow tall photographs retain approximately 6% horizontal breathing room on each side of the located jewelry.
 

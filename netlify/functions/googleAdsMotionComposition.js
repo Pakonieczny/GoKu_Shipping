@@ -23,7 +23,7 @@ function resolveBounds(value,orientations=['portrait','landscape']){
  for(const orientation of orientations){try{bounds[orientation]=measured(orientation,value?.[orientation]);}catch(e){bounds[orientation]={...defaultBounds(orientation),assumed:true};notes.push('The jewelry was not located confidently in the '+orientation+' film ('+String(value?.[orientation]?.note||e.message).slice(0,160)+'); captions were kept clear of its directed region instead.');}}
  return {bounds,notes};
 }
-const BAND={square:.36,portrait:.32,landscape:.40};
+const BAND={square:.24,portrait:.22,landscape:.28},LOGO=148;
 function geometry(format,subject,sourceOrientation='portrait',options={}){
  if(!subject||['x','y','w','h'].some(k=>!Number.isFinite(subject[k])))throw Error('Measure the saved video framing before composing captions.');
  const clearance=Number(options.clearance)||0;
@@ -75,18 +75,36 @@ async function captions(plan,format,beats){
 }
 async function composeTier(plan,format,beats,tier,hints){
  const W=format.width,H=format.height,g=geometry(format,plan.composition,plan.sourceOrientation,{mode:tier.mode,clearance:hints.clearance}),options=await fontOptions().catch(e=>{throw Object.assign(e,{fatal:true});}),style=plan.style||{},color=(v,f)=>/^#[a-f0-9]{6}$/i.test(v||'')?v:f,ink=color(style.ink,'#30291f'),bg=color(style.background,'#fff7ee'),gold=color(style.accent,'#a67c35'),font=/sans|arial|helvetica/i.test(style.headlineFont||'')?'Open Sans':'Cormorant Garamond';
- const persistent=plan.renderVersion>=9,logoBox={x:W*.065,y:H*.055,w:176,h:176/1.788},strong=hints.wash==='strong',stops=strong?['.98','.9']:['.94','.76'];
+ const persistent=plan.renderVersion>=9,logoBox={x:W*.055,y:H*.05,w:LOGO,h:LOGO/1.788},strong=hints.wash==='strong';
+ // The field ramps evenly across its whole depth instead of sitting near-solid
+ // and then dropping away, so the join reads as light rather than as an edge.
+ const ramp=(strong?[[0,'1'],[.3,'.93'],[.6,'.74'],[.82,'.42'],[1,'0']]:[[0,'.97'],[.3,'.86'],[.6,'.62'],[.82,'.32'],[1,'0']]).map(([o,a])=>`<stop offset="${o}" stop-color="${bg}" stop-opacity="${a}"/>`).join('');
+ const vertical='x1="0" y1="0" x2="0" y2="1"',header=name=>name==='top'||name==='header';
  if(persistent){
   const p={x:g.product.x*W,y:g.product.y*H,w:g.product.w*W,h:g.product.h*H};
   if(logoBox.x<p.x+p.w&&logoBox.x+logoBox.w>p.x&&logoBox.y<p.y+p.h&&logoBox.y+logoBox.h>p.y)throw Error('The top-left brand area overlaps the jewelry. Reframe with clear space for the logo.');
-  const bottom=logoBox.y+logoBox.h+36;
-  g.zones=g.zones.map(z=>{const y=Math.max(z.y,bottom);return {...z,y,h:Math.max(0,z.y+z.h-y)};});
+  // Messaging sits beside the wordmark, never under it, leaving the height to the jewelry.
+  const gap=Math.round(W*.055),hx=logoBox.x+logoBox.w+gap;
+  // The strip runs from the wordmark down to a clear margin above the jewelry.
+  const beside={name:'header',x:hx,y:logoBox.y,w:W-hx-W*.055,h:Math.max(logoBox.h,p.y-logoBox.y-Math.round(H*.05))};
+  const clear=!(beside.x<p.x+p.w&&beside.x+beside.w>p.x&&beside.y<p.y+p.h&&beside.y+beside.h>p.y);
+  const below=logoBox.y+logoBox.h+36;
+  g.zones=[...(clear&&beside.w>=W*.30?[beside]:[]),...g.zones.map(z=>{const y=Math.max(z.y,below);return {...z,y,h:Math.max(0,z.y+z.h-y)};})];
  }
- const widths=new Map();function measure(s,size,family){const key=[s,size,family].join('|');if(!widths.has(key)){const r=new Resvg(`<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="300"><text x="5" y="150" font-family="${family}" font-size="${size}" font-weight="500">${xml(s)}</text></svg>`,options),b=r.getBBox();if(!b?.width)throw Object.assign(Error('Caption font produced no visible text.'),{fatal:true});widths.set(key,b.width+4);}return widths.get(key);}
+ const widths=new Map();function measure(s,size,family){const key=[s,size,family].join('|');if(!widths.has(key)){const r=new Resvg(`<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="300"><text x="5" y="150" font-family="${family}" font-size="${size}" font-weight="600">${xml(s)}</text></svg>`,options),b=r.getBBox();if(!b?.width)throw Object.assign(Error('Caption font produced no visible text.'),{fatal:true});widths.set(key,b.width+4);}return widths.get(key);}
  function wrap(s,size,family,width,forced){const lines=[];for(const word of String(s||'').split(/\s+/).filter(Boolean)){if(measure(word,size,family)>width){if(!forced)return null;let piece='';for(const ch of word){if(measure(piece+ch,size,family)>width&&piece){lines.push(piece);piece=ch;}else piece+=ch;}if(piece)lines.push(piece);continue;}const prev=lines[lines.length-1];if(prev&&measure(prev+' '+word,size,family)<=width)lines[lines.length-1]+=' '+word;else lines.push(word);}return lines;}
  const sizing=SIZES[tier.sizes]||SIZES.standard,startSize=sizing.start[format.key],minimum=sizing.minimum[format.key],maxLines=sizing.lines,labelSize=26,supportSize=format.key==='landscape'&&plan.renderVersion>=8?50:format.key==='portrait'?34:30;
+ function inZone(zone,beat,brand,labelHeight,oneLine){
+  for(let size=startSize;size>=minimum;size-=2){if(brand&&plan.renderVersion<8&&measure('BRITES JEWELRY',labelSize,'Open Sans')+36>zone.w)continue;const title=wrap(beat.title,size,font,zone.w),support=beat.support==='BRITES JEWELRY'?[]:wrap(beat.support,supportSize,'Open Sans',zone.w);if(!title||title.length>maxLines||!support||support.length>2)continue;
+   if(oneLine&&title.length>1)continue;
+   const height=labelHeight+title.length*size*1.02+(support.length?20+support.length*supportSize*1.2:0)+18;if(height<=zone.h)return {zone,size,title,support,height,brand,labelHeight};}
+  return null;
+ }
  function fit(beat,brand){const labelHeight=brand&&!persistent?(plan.renderVersion>=8?Math.min(220,g.zones[0]?.w||220)/1.788+16:labelSize+22):0;
-  for(const zone of g.zones)for(let size=startSize;size>=minimum;size-=2){if(brand&&plan.renderVersion<8&&measure('BRITES JEWELRY',labelSize,'Open Sans')+36>zone.w)continue;const title=wrap(beat.title,size,font,zone.w),support=beat.support==='BRITES JEWELRY'?[]:wrap(beat.support,supportSize,'Open Sans',zone.w);if(!title||title.length>maxLines||!support||support.length>2)continue;const height=labelHeight+title.length*size*1.02+(support.length?20+support.length*supportSize*1.2:0)+18;if(height<=zone.h)return {zone,size,title,support,height,brand,labelHeight};}
+  // A headline on one line wins first, shrinking to hold it and preferring the
+  // strip beside the wordmark; only copy too long for any zone is allowed to wrap.
+  for(const zone of g.zones){const single=inZone(zone,beat,brand,labelHeight,true);if(single)return single;}
+  for(const zone of g.zones){const wrapped=inZone(zone,beat,brand,labelHeight,false);if(wrapped)return wrapped;}
   if(!tier.forced)return null;
   // Guaranteed placement: smallest type, broken words, and only the lines the zone holds.
   const zone=[...g.zones].sort((a,b)=>b.w*b.h-a.w*a.h)[0];if(!zone)return null;const size=minimum,lines=wrap(beat.title,size,font,zone.w,true)||[beat.title],room=Math.max(1,Math.floor((zone.h-18-labelHeight)/(size*1.02))),title=lines.slice(0,room);
@@ -102,28 +120,30 @@ async function composeTier(plan,format,beats,tier,hints){
   const duration=(beat.end-beat.start)/panels.length;for(let i=0;i<panels.length;i++){panels[i].beat.start=beat.start+i*duration;panels[i].beat.end=beat.start+(i+1)*duration;prepared.push(panels[i]);}
  }
  const layers=[],washes=new Map();layers.geometry=g;layers.truncated=prepared.some(p=>p.selected.truncated);for(const {beat,selected}of prepared){
-  const {zone,size,title,support,height,brand,labelHeight}=selected,x=zone.x,y=zone.name==='top'?zone.y:zone.y+(zone.h-height)/2,baseline=y+labelHeight+size*.8;
-  const rect=zone.name==='top'?{x:0,y:0,w:W,h:y+height+18}:{x:zone.name==='left'?0:x-24,y:0,w:zone.w+zone.x*(zone.name==='left'?1:0)+24,h:H};
+  const {zone,size,title,support,height,brand,labelHeight}=selected,x=zone.x,y=zone.name==='header'?zone.y+Math.max(0,(logoBox.h-height)/2):zone.name==='top'?zone.y:zone.y+(zone.h-height)/2,baseline=y+labelHeight+size*.8;
+  const rect=header(zone.name)?{x:0,y:0,w:W,h:y+height+18}:{x:zone.name==='left'?0:x-24,y:0,w:zone.w+zone.x*(zone.name==='left'?1:0)+24,h:H};
   // Wash is local to copy; its last transparent edge ends before protected jewelry.
-  const gradient=zone.name==='top'?'x1="0" y1="0" x2="0" y2="1"':zone.name==='left'?'x1="0" y1="0" x2="1" y2="0"':'x1="1" y1="0" x2="0" y2="0"';
+  const gradient=header(zone.name)?vertical:zone.name==='left'?'x1="0" y1="0" x2="1" y2="0"':'x1="1" y1="0" x2="0" y2="0"';
   let text=persistent?'':branded&&brand?`<svg x="${x}" y="${y}" width="${Math.min(220,zone.w)}" height="${labelHeight-16}" viewBox="${logo.crop.x} ${logo.crop.y} ${logo.crop.width} ${logo.crop.height}"><image width="${logo.width}" height="${logo.height}" href="${logoData}"/></svg>`:brand?`<text x="${x}" y="${y+labelSize}" font-family="Open Sans" font-size="${labelSize}" letter-spacing="3" fill="${ink}">BRITES JEWELRY</text>`:'';
-  text+=title.map((t,i)=>`<text x="${x}" y="${baseline+i*size*1.02}" font-family="${font}" font-weight="500" font-size="${size}" fill="${ink}">${xml(t)}</text>`).join('');
+  text+=title.map((t,i)=>`<text x="${x}" y="${baseline+i*size*1.02}" font-family="${font}" font-weight="600" font-size="${size}" fill="${ink}">${xml(t)}</text>`).join('');
   const sy=baseline+(title.length-1)*size*1.02+size*.23+24;
   text+=support.map((t,i)=>`<text x="${x}" y="${sy+supportSize+i*supportSize*1.2}" font-family="Open Sans" font-size="${supportSize}" fill="${ink}">${xml(t)}</text>`).join('');
   text+=`<path d="M ${x} ${y+height} h ${Math.min(86,zone.w*.18)}" fill="none" stroke="${gold}" stroke-width="3"/>`;
   if(persistent){const prior=washes.get(zone.name);if(!prior||rect.w*rect.h>prior.rect.w*prior.rect.h)washes.set(zone.name,{rect,gradient});}
-  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><defs><linearGradient id="wash" ${gradient}><stop stop-color="${bg}" stop-opacity="${stops[0]}"/><stop offset=".66" stop-color="${bg}" stop-opacity="${stops[1]}"/><stop offset="1" stop-color="${bg}" stop-opacity="0"/></linearGradient></defs>${persistent?'':`<rect x="${rect.x}" y="${rect.y}" width="${rect.w}" height="${rect.h}" fill="url(#wash)"/>`}${text}</svg>`;
+  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><defs><linearGradient id="wash" ${gradient}>${ramp}</linearGradient></defs>${persistent?'':`<rect x="${rect.x}" y="${rect.y}" width="${rect.w}" height="${rect.h}" fill="url(#wash)"/>`}${text}</svg>`;
   layers.push({...beat,bytes:Buffer.from(new Resvg(svg,options).render().asPng()),fontSize:size,zone,product:g.product});
  }
  if(persistent){
-  const seam=g.seam?(()=>{
-   const depth=Math.round((g.seam.edge==='top'?H:W)*.14),at=g.seam.at;
-   const box=g.seam.edge==='top'?{x:0,y:at,w:W,h:depth}:{x:at,y:0,w:depth,h:H};
-   const dir=g.seam.edge==='top'?'x1="0" y1="0" x2="0" y2="1"':'x1="0" y1="0" x2="1" y2="0"';
-   return `<defs><linearGradient id="seam" ${dir}><stop stop-color="${bg}" stop-opacity="1"/><stop offset=".45" stop-color="${bg}" stop-opacity=".55"/><stop offset="1" stop-color="${bg}" stop-opacity="0"/></linearGradient></defs><rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" fill="url(#seam)"/>`;
-  })():'';
-  const wash=[...washes.values()].map(({rect,gradient},i)=>`<defs><linearGradient id="base${i}" ${gradient}><stop stop-color="${bg}" stop-opacity="${stops[0]}"/><stop offset=".66" stop-color="${bg}" stop-opacity="${stops[1]}"/><stop offset="1" stop-color="${bg}" stop-opacity="0"/></linearGradient></defs><rect x="${rect.x}" y="${rect.y}" width="${rect.w}" height="${rect.h}" fill="url(#base${i})"/>`).join('');
-  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">${seam}${wash}<svg x="${logoBox.x}" y="${logoBox.y}" width="${logoBox.w}" height="${logoBox.h}" viewBox="${logo.crop.x} ${logo.crop.y} ${logo.crop.width} ${logo.crop.height}"><image width="${logo.width}" height="${logo.height}" href="${logoData}"/></svg></svg>`;
+  // A band join is absorbed into the field that already covers that edge, so the
+  // film never shows two fading areas or a line between them.
+  if(g.seam){
+   const reach=g.seam.at+Math.round((g.seam.edge==='top'?H:W)*.14),vertically=g.seam.edge==='top';
+   const covering=[...washes.entries()].filter(([name])=>vertically?header(name):name==='left');
+   if(covering.length)for(const [,field]of covering)field.rect=vertically?{x:0,y:0,w:W,h:Math.max(field.rect.h,reach)}:{x:0,y:0,w:Math.max(field.rect.w,reach),h:H};
+   else washes.set('seam',{rect:vertically?{x:0,y:0,w:W,h:reach}:{x:0,y:0,w:reach,h:H},gradient:vertically?vertical:'x1="0" y1="0" x2="1" y2="0"'});
+  }
+  const wash=[...washes.values()].map(({rect,gradient},i)=>`<defs><linearGradient id="base${i}" ${gradient}>${ramp}</linearGradient></defs><rect x="${rect.x}" y="${rect.y}" width="${rect.w}" height="${rect.h}" fill="url(#base${i})"/>`).join('');
+  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">${wash}<svg x="${logoBox.x}" y="${logoBox.y}" width="${logoBox.w}" height="${logoBox.h}" viewBox="${logo.crop.x} ${logo.crop.y} ${logo.crop.width} ${logo.crop.height}"><image width="${logo.width}" height="${logo.height}" href="${logoData}"/></svg></svg>`;
   layers.unshift({start:0,end:10,persistent:true,logoBox,bytes:Buffer.from(new Resvg(svg,options).render().asPng()),product:g.product});
  }
  return layers;
