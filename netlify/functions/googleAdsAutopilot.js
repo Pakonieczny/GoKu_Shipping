@@ -9354,6 +9354,7 @@ async function adDesignEditorState(input){return _designEngine().editorState(inp
 async function adDesignResponsiveState(input){return _designEngine().editorResponsiveState(input);}
 async function saveAdDesignEditor(input){return _designEngine().editorSave(input);}
 async function startAdDesignEditorAI(input){return _designEngine().editorAIStart(input);}
+async function fixAdDesignEditorAI(input){return _designEngine().editorAIFix(input);}
 async function adDesignEditorAIStatus(input){return _designEngine().editorAIStatus(input);}
 async function resumeAdDesignEditorAI(input){return _designEngine().editorAIResume(input);}
 async function applyAdDesignEditorScene(input){return _designEngine().editorAIApply(input);}
@@ -9954,7 +9955,7 @@ async function runAnalyzeAd(input) { return _analysisEngine().runAnalyzeAd(input
 
 module.exports = {
   adGroups, adGroupDetail, adDesignSavedWorkspaces, draftAdGroupSplit, draftAdGroupActivation,
-  startAdEvaluation, adEvaluationStatus, runAdEvaluation, startAdMotionPublication, runAdMotionPublication, verifyAdMotionPublication, startAdDesignMotion, adDesignMotionStatus, runAdDesignMotion, adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, cropAdDesignImage, adDesignEditorSource, adDesignEditorState, adDesignResponsiveState, saveAdDesignEditor, startAdDesignEditorAI, adDesignEditorAIStatus, resumeAdDesignEditorAI, applyAdDesignEditorScene, runAdDesignEditorAI, exportAdDesignEditor, adDesignSavedDesigns, openAdDesignSavedDesign, deleteAdDesignSavedDesign, deleteAdDesignGeneratedImage, adDesignGooglePreview, uploadAdDesignReference, resetAdDesignFailures, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages, adDesignGalleryPage, saveAdDesignCopy, adDesignDelivery, prepareAdDesignPublication, publishAdDesignSubmission, publishAdDesignPublication,
+  fixAdDesignEditorAI, startAdEvaluation, adEvaluationStatus, runAdEvaluation, startAdMotionPublication, runAdMotionPublication, verifyAdMotionPublication, startAdDesignMotion, adDesignMotionStatus, runAdDesignMotion, adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, cropAdDesignImage, adDesignEditorSource, adDesignEditorState, adDesignResponsiveState, saveAdDesignEditor, startAdDesignEditorAI, adDesignEditorAIStatus, resumeAdDesignEditorAI, applyAdDesignEditorScene, runAdDesignEditorAI, exportAdDesignEditor, adDesignSavedDesigns, openAdDesignSavedDesign, deleteAdDesignSavedDesign, deleteAdDesignGeneratedImage, adDesignGooglePreview, uploadAdDesignReference, resetAdDesignFailures, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages, adDesignGalleryPage, saveAdDesignCopy, adDesignDelivery, prepareAdDesignPublication, publishAdDesignSubmission, publishAdDesignPublication,
   reviseCreativeApproval, markApprovalApproved, needsCreativeReview, prepareCreativeApproval, creativeApprovalStatus, reviewCreativeApproval, assertCreativeReviewed, creativeHash,
   COL, V, CID, OPPORTUNITY_ENGINE_VERSION, DESIGN_STUDIO_ENGINE_VERSION, DESIGN_STUDIO_URL,
   control, mintToken, gaql, mutate, mutateAll,

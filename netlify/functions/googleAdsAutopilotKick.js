@@ -136,7 +136,7 @@ async function handleAction(body) {
   if (a === 'adDesignEditorAIStatus') {
     try { return await E.adDesignEditorAIStatus(body); } catch(e) { return {ok:false,error:e.message}; }
   }
-  if (a === 'startAdDesignEditorAI' || a === 'resumeAdDesignEditorAI') {
+  if (a === 'startAdDesignEditorAI' || a === 'resumeAdDesignEditorAI' || a === 'fixAdDesignEditorAI') {
     try {
       const out=await E[a](body);
       if(out.queued)await dispatchTask('adDesignEditorAI',{workspaceId:out.workspaceId,jobId:out.jobId});

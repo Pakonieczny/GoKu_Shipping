@@ -57,3 +57,9 @@ The 970×250 banner uses a headline up to 64px, a 36px business name and a 120px
 All films retain the actual wordmark at the top-left, 176px wide, and a continuously visible local translucent wash. Only messaging transitions: opening hook, product/benefit, closing action. The three messages come from saved static-ad copy; they are not three repetitions of the same heading. Geometry and review checks protect the jewelry. Google approval and delivery remain separate from local creative quality.
 
 Landscape masters center the complete brand, headline and action stack vertically, with a restrained button. Narrow tall photographs retain approximately 6% horizontal breathing room on each side of the located jewelry.
+
+## Video composition fallbacks and targeted fixes
+
+Full-canvas messaging is the first choice. When the measured jewelry leaves no clear zone, the renderer relaxes type sizes (portrait 48px, square 40px, landscape 44px minimum, four lines), then places the whole film beside a brand band in the ad's background colour (top band for portrait and landscape-sourced square films, left band for landscape and portrait-sourced square films). A film is never stopped for caption space; each fallback is recorded as a composition note for the complete-ad review and the Ad ratings pop-up.
+
+Review findings name the exact rendered formats. From the Ad ratings pop-up each finding can be fixed on its own: captions re-composed, one message revised, or exactly one film master regenerated, with every other film reused as saved. Static findings regenerate one scene photograph or revise the plan without new images.

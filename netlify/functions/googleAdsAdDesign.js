@@ -514,7 +514,8 @@ function createAdDesignService(deps) {
     const correctedReview=await target.collection('data').doc('scene_repair_quality').get(),initialReview=correctedReview.exists?null:await target.collection('data').doc('scene_quality').get(),review=weightedReview.exists?weightedReview.data():correctedReview.exists?correctedReview.data():initialReview?.exists?initialReview.data():null;
     let reviewProofs=[];if(input.includeReview&&reviewVersion){const p=await target.collection('data').doc('ad_proofs_v'+reviewVersion).get();if(p.exists&&Array.isArray(p.data().images)&&(!review.proofHash||review.proofHash===p.data().proofHash))reviewProofs=await Promise.all(p.data().images.map(async image=>({key:image.key,width:image.width,height:image.height,url:await deps.signAsset(image.asset)})));}
     const quality=review?{rubric:review.rubric||null,scores:review.scores||null,weights:review.weights||null,categoryReviews:review.categoryReviews||null,claimsSupported:review.claimsSupported===true,score:Number.isFinite(review.score)?review.score:null,pass:review.pass===true,productFaithful:review.productFaithful===true,mobileReadable:review.mobileReadable===true,issues:(review.issues||[]).map(issue=>String(issue).slice(0,2000)).slice(0,20)}:null;
-    return {ok:true,workspaceId:input.workspaceId,jobId:job.id,requestId:job.requestId,inputHash:job.inputHash,scope:job.scope,phase,
+    const fixOptions=phase==='ready'&&quality?.categoryReviews&&result?.exists?await editorFixOptions(w,target,result.data(),quality,reviewVersion):[];
+    return {ok:true,workspaceId:input.workspaceId,jobId:job.id,requestId:job.requestId,inputHash:job.inputHash,scope:job.scope,phase,fixOf:job.fixOf||null,fixTarget:job.fix?{kind:job.fix.kind,category:job.fix.category,index:job.fix.index,sceneKey:job.fix.sceneKey||null,formats:job.fix.formats||[],label:job.fix.label}:null,canFix:fixOptions.length>0,fixOptions,
       startedAt:job.createdAt,updatedAt:job.updatedAt,
       progress:stale?{pct:job.progress.pct,label:unknown?'Provider completion is uncertain. The request will not be charged again.':'Saved work is available to resume.'}:job.progress,
       error:job.error||null,quality,reviewVersion:reviewVersion||null,reviewProofs,qualityTarget:require('./googleAdsAdQuality').TARGET,canRetry:phase==='needs_attention'&&!unknown,hasSavedResponse:receipt.exists,needsNewRequestApproval:false,
@@ -572,6 +573,42 @@ function createAdDesignService(deps) {
       }
       queued=true;tx.update(target,{phase:'queued',owner:null,leaseUntil:0,error:null,updatedAt:Date.now(),progress:{pct:job.progress.pct,label:receipt.exists?'Reopening the already paid design response':'Resuming saved product research'}});
     });return {ok:true,workspaceId:input.workspaceId,jobId:input.jobId,queued};
+  }
+  // Targeted corrections: one reviewed deduction becomes one bounded job that
+  // regenerates a single scene or revises the plan, reusing every other paid
+  // image, localization and receipt of the reviewed design.
+  async function editorFixOptions(w,target,result,quality,reviewVersion){
+    try{
+      const responsive=require('../../brites-ad-responsive'),plan=result.responsive?.plan,images=result.responsive?.images||[];if(!plan)return [];
+      const proof=reviewVersion?await target.collection('data').doc('ad_proofs_v'+reviewVersion).get():null,formatKeys=proof?.exists?(proof.data().images||[]).map(i=>i.key):[];
+      const boards=[{key:'active',board:result.artboard},...(result.responsive.variants||responsive.variants).map(b=>({key:b.device+'_'+b.key,board:b}))];
+      const sceneFor=key=>{const row=boards.find(b=>b.key===key);if(!row)return null;return responsive.selectImage(plan,images,row.board)?.sceneKey||null;};
+      const usd={};for(const scene of plan.scenePlans||[]){try{const format=FORMATS.find(f=>f.key===responsive.sceneCatalog.find(c=>c.key===scene.key)?.format)||FORMATS.find(f=>f.key===plan.masterFormat);const estimate=await deps.reserveCost({key:'image_'+(format?.key||plan.masterFormat),format,workspace:w,job:{inputCoverage:{preparedReferenceCount:1,usedProductImages:1}}});usd[scene.key]=Number(typeof estimate==='object'?estimate.reservedUsd:estimate)||0;}catch{usd[scene.key]=0;}}
+      return require('./googleAdsAdFixes').options('static',quality,{formatKeys,sceneFor,masterScene:images[0]?.sceneKey||plan.masterFormat,sceneUsd:k=>usd[k]});
+    }catch{return [];}
+  }
+  async function editorAIFix(input={}){
+    const {workspaceId,productId,groupRef}=input,ref=refFor(workspaceId),w=await read(workspaceId);editorScope(w,input);
+    if(!deps.env.OPENAI_API_KEY)throw new Error('OpenAI access is not configured for the AI designer.');
+    const parentRef=editorAIRef(workspaceId,input.jobId),parentRow=await parentRef.get();if(!parentRow.exists)throw new Error('The reviewed design was not found.');const parent=parentRow.data();editorScope(w,parent.scope);
+    if(parent.scope.productId!==String(productId)||parent.scope.groupRef!==groupRef)throw new Error('This review belongs to another product or ad group.');
+    if(parent.resetAt||parent.phase!=='ready')throw new Error('Only a completed, reviewed design can receive a targeted fix.');
+    const status=await editorAIStatus({workspaceId,productId,groupRef,jobId:parent.id,allSizes:true}),category=String(input.fix?.category||''),index=Number(input.fix?.index);
+    if(!status.quality)throw new Error('This design has no saved review to correct.');
+    if(input.reviewHash&&input.reviewHash!==sha({id:parent.id,quality:status.quality}))throw new Error('The design review changed. Refresh before approving a fix.');
+    const plan=(status.fixOptions||[]).find(o=>o.category===category&&o.index===index);if(!plan)throw new Error('That review finding is no longer available.');
+    const id='eai_'+sha([parent.id,'fix',category,index]).slice(0,40),target=editorAIRef(workspaceId,id),requestRow=await parentRef.collection('data').doc('request').get();if(!requestRow.exists)throw new Error('The reviewed design request is unavailable.');
+    const rows=await parentRef.collection('data').get(),skip=/^(candidate|result|ad_proofs_v\d+|ad_quality_v\d+(_response)?|crop_[a-z_]+|scene_fit_notes|scene_repair(_quality)?|scene_quality|copy_refine.*|plan_fix(_response)?|request)$/;
+    const reused=rows.docs.filter(row=>!skip.test(row.id)&&!(plan.kind==='scene'&&(row.id==='scene_'+plan.sceneKey||row.id==='scene_'+plan.sceneKey+'_fit_repair')));
+    let queued=false;
+    await f().db.runTransaction(async tx=>{const latest=await tx.get(ref),exists=await tx.get(target);editorScope(latest.data(),input);if(exists.exists)return;
+      const now=Date.now(),fix={...plan,parentReviewVersion:status.reviewVersion||null};
+      tx.set(target,{id,requestId:'fix_'+id.slice(4,24),inputHash:sha({fixOf:parent.id,category,index}),designKey:parent.designKey,scope:parent.scope,sourceSetId:latest.data().sourceSetId,sourceVersion:latest.data().sourceVersion||null,snapshotHash:latest.data().snapshotHash||null,phase:'queued',owner:null,leaseUntil:0,createdAt:now,updatedAt:now,progress:{pct:4,label:'Targeted correction saved · '+(plan.kind==='scene'?'one scene will be regenerated':'copy and layout plan will be revised')},inFlight:null,reservedUsd:0,stageUsage:[],fixOf:parent.id,fix});
+      tx.set(target.collection('data').doc('request'),clean({...requestRow.data(),fixOf:parent.id,fix,includeAnimation:false,publicationBaseline:sha({placements:chosenPlacements(latest.data()),messaging:latest.data().messaging||null})}));
+      for(const row of reused)tx.set(target.collection('data').doc(row.id),clean({...row.data(),reusedFrom:parent.id}));
+      tx.update(ref,{editorAI:{id,designKey:parent.designKey,at:now}});queued=true;
+    });
+    return {ok:true,workspaceId,jobId:id,queued,fix:plan};
   }
   async function editorAIStart(input={}){
     const {workspaceId,productId,groupRef,device,artboard}=input,ref=refFor(workspaceId),w=await read(workspaceId);editorScope(w,input);const designKey=editorKey(input);
@@ -676,7 +713,7 @@ function createAdDesignService(deps) {
       await verify();const requestId=crypto.randomUUID();await save({reservedUsd,inFlight:{key,requestId,at:Date.now()},progress:{pct,label}});
       const result=await perform(requestId);await saveData(key,{...result,requestId,reservedUsd,receivedAt:Date.now()});return {...result,requestId,reservedUsd};
     };
-    const recordCost=async(key,row)=>{if(!stageUsage.some(u=>u.key===key)){stageUsage.push({key,requestId:row.requestId,providerModel:row.providerModel||row.model,usage:row.usage||{},estimatedUsd:row.costEstimated===false&&Number.isFinite(row.estimatedUsd)?row.estimatedUsd:row.reservedUsd,costEstimated:row.costEstimated!==false,at:Date.now()});}await save({stageUsage,inFlight:job.inFlight?.key&&job.inFlight.key!==key?job.inFlight:null});};
+    const recordCost=async(key,row)=>{if(!row?.reusedFrom&&!stageUsage.some(u=>u.key===key)){stageUsage.push({key,requestId:row.requestId,providerModel:row.providerModel||row.model,usage:row.usage||{},estimatedUsd:row.costEstimated===false&&Number.isFinite(row.estimatedUsd)?row.estimatedUsd:row.reservedUsd,costEstimated:row.costEstimated!==false,at:Date.now()});}await save({stageUsage,inFlight:job.inFlight?.key&&job.inFlight.key!==key?job.inFlight:null});};
     for(const [reviewKey,key] of [['ad_quality_v2','copy_refine_v3'],['ad_quality_v4','copy_refine_v5']]){
     const priorReview=await target.collection('data').doc(reviewKey).get();
     if(priorReview.exists&&priorReview.data().pass!==true){
@@ -699,8 +736,28 @@ function createAdDesignService(deps) {
       plan={...revised.plan,masterFormat:plan.masterFormat,alternateNeeded:plan.alternateNeeded,alternateFormat:plan.alternateFormat,alternateReason:plan.alternateReason,imageDirections:plan.imageDirections,scenePlans:plan.scenePlans};
     }
     }
+    const fix=request.fix||null,fixedDirection=spec=>fix?.kind==='scene'&&fix.sceneKey===spec.key?{...spec.direction,composition:spec.direction.composition+' Correct this reviewed defect without altering the exact product: '+String(fix.correction||'').slice(0,500)+' Evidence: '+String(fix.evidence||'').slice(0,300)}:spec.direction;
+    if(fix?.kind==='plan'){
+      const key='plan_fix',raw=await target.collection('data').doc(key+'_response').get();
+      const prepared=research.buildResponsiveRequest({evidence,request,screenshotDataUrl:'unused',sources:[]});
+      prepared.input[0].content+='\nThis is a targeted correction of ONE reviewed finding in an existing saved design. Change only the copy, style or wording that the finding requires and keep everything else identical: the same product and group scope, the same scene plans, image directions, master format and alternate settings. Do not request new photography. Cite every factual claim from the evidence. Return the same complete recipe schema. Limit description to 65 characters, shortHeadline to 20 characters and CTA to 18 characters.';
+      prepared.input[1].content=prepared.input[1].content.filter(c=>c.type==='input_text').concat([{type:'input_text',text:JSON.stringify({savedPlan:plan,finding:{category:fix.category,reason:fix.reason,evidence:fix.evidence,correction:fix.correction,formats:fix.formats}})}]);
+      prepared.max_output_tokens=12000;
+      const textBytes=Buffer.byteLength(JSON.stringify(prepared.input)),reserve=Math.ceil((textBytes*20/1000000+(prepared.max_output_tokens||0)*75/1000000)*100)/100;
+      if(job.inFlight?.key===key&&raw.exists)await save({inFlight:null});
+      const revised=await paid(key,40,'Revising the copy and layout plan for one reviewed finding',async requestId=>{
+        let response=raw.exists?raw.data().response:await deps.responses({...prepared,background:true},requestId);
+        if(!raw.exists)await saveData(key+'_response',{response,requestId});
+        await recordCost(key,{...response,requestId:raw.exists?raw.data().requestId:requestId,reservedUsd:reserve});
+        const revision=research.validateResponsivePlan({output:research.parseResponse(response),request,evidence});
+        return {plan:revision,model:response.model,usage:response.usage,estimatedUsd:response.estimatedUsd,costEstimated:response.costEstimated};
+      },reserve);
+      await recordCost(key,revised);
+      plan={...revised.plan,masterFormat:plan.masterFormat,alternateNeeded:plan.alternateNeeded,alternateFormat:plan.alternateFormat,alternateReason:plan.alternateReason,imageDirections:plan.imageDirections,scenePlans:plan.scenePlans};
+    }
     for(let i=0;i<sceneSpecs.length;i++){
-      const spec=sceneSpecs[i],repairSaved=plan.scenePlans?await target.collection('data').doc('scene_'+spec.key+'_fit_repair').get():null,key='scene_'+spec.key+(repairSaved?.exists?'_fit_repair':''),shape=spec.format.key,format=spec.format,direction=spec.direction;
+      const spec=sceneSpecs[i],repairSaved=plan.scenePlans?await target.collection('data').doc('scene_'+spec.key+'_fit_repair').get():null,key='scene_'+spec.key+(repairSaved?.exists?'_fit_repair':''),shape=spec.format.key,format=spec.format;
+      const direction=fixedDirection(spec);
       const row=await paid(key,50+Math.round(i*32/sceneSpecs.length),'Creating '+(i+1)+' of '+sceneSpecs.length+' aspect-aware product scenes',async requestId=>{
         const generated=await deps.generateImage({requestId,provider:provider(),format,references:refs,product,products:[product],brief:{buyer:plan.rationale,visualDirection:direction.concept},imageDirections:[direction],settings:{...w.settings,direction:request.instruction+'\nGenerate a new composition preserving the exact product. '+(plan.scenePlans?responsive.sceneCatalog.find(s=>s.key===spec.key).direction+' ': '')+direction.composition},inputCoverage:{usedProductImages:refs.length,preparedReferenceCount:refs.length}});
         const asset=await deps.saveAsset(workspaceId,generated.bytes,jobId+'_'+key,{width:format.width,height:format.height,mimeType:'image/jpeg',digitalSourceType:generated.digitalSourceType||null});
@@ -748,7 +805,7 @@ function createAdDesignService(deps) {
         const {image,spec,key}=pendingFit;
         const affected=bad.filter(c=>c.image.id===image.id).map(c=>({format:c.board.key,width:c.board.width,height:c.board.height,reason:c.fit.reason}));
         const row=await paid(key,90,'Refining the '+spec.key+' scene to fit its assigned ad sizes',async requestId=>{
-          const direction={...spec.direction,composition:spec.direction.composition+' '+responsive.sceneCatalog.find(s=>s.key===spec.key).direction+' The previous composition did not leave enough continuous photographic context. Pull the camera back to provide more empty scene around the exact product; the renderer will retain the approved final product size. Do not enlarge or reposition the text. Previous product bounds and failed crops: '+JSON.stringify({focus:image.focus,affected})};
+          const direction={...fixedDirection(spec),composition:fixedDirection(spec).composition+' '+responsive.sceneCatalog.find(s=>s.key===spec.key).direction+' The previous composition did not leave enough continuous photographic context. Pull the camera back to provide more empty scene around the exact product; the renderer will retain the approved final product size. Do not enlarge or reposition the text. Previous product bounds and failed crops: '+JSON.stringify({focus:image.focus,affected})};
           const generated=await deps.generateImage({requestId,provider:provider(),format:spec.format,references:refs,product,products:[product],brief:{buyer:plan.rationale,visualDirection:spec.direction.concept},imageDirections:[direction],settings:{...w.settings,direction:request.instruction+' Preserve the exact original jewelry and the same palette, lighting and scene concept. '+direction.composition},inputCoverage:{usedProductImages:refs.length,preparedReferenceCount:refs.length}});
           const asset=await deps.saveAsset(workspaceId,generated.bytes,jobId+'_'+key,{width:spec.format.width,height:spec.format.height,mimeType:'image/jpeg',digitalSourceType:generated.digitalSourceType||null});return {...generated,bytes:undefined,asset};
         });await recordCost(key,row);return {continue:true};
@@ -1172,7 +1229,7 @@ function createAdDesignService(deps) {
       await saveJob({ phase: "needs_attention", error: String(error.message || error).slice(0, 900), leaseUntil: 0, progress: { pct: Number(job.progress && job.progress.pct) || 0, label: "Saved work retained — review the unfinished step" } }); throw error;
     }
   }
-  return { workspace, save, upload, crop, start, status, run, resetFailures, editorSource, editorState, editorResponsiveState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorDeleteSavedDesign, deleteGeneratedImage, linkPublishedDesignScopes, linkPublishedWorkspaceGallery, editorAIStart, editorAIStatus, editorAIResume, editorAIRun, editorAIApply };
+  return { workspace, save, upload, crop, start, status, run, resetFailures, editorSource, editorState, editorResponsiveState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorDeleteSavedDesign, deleteGeneratedImage, linkPublishedDesignScopes, linkPublishedWorkspaceGallery, editorAIStart, editorAIStatus, editorAIResume, editorAIRun, editorAIApply, editorAIFix };
 }
 module.exports = { orderAssetGroupMutations, createAdDesignService, buildVersionDesignPayload, isSharedProductGroup, researchGroupFor, formatAssets, chosenPlacements, placementMatches, FORMATS, settingsFor, refreshedSettings, responseText, MAX_UPLOAD };
 

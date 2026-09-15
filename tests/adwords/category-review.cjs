@@ -12,4 +12,7 @@ categoryReviews.messaging.deductions[0].points=5;assert.throws(()=>rubric.normal
 categoryReviews.messaging.deductions[0].points=6;categoryReviews.messaging.deductions[0].evidence='';assert.throws(()=>rubric.normalize(input),/every deducted point/);
 assert.equal(editor.reviewSummary({scores,score:94}).categories[0].review,null);
 assert(rubric.schema.required.includes('categoryReviews'));
+const deduction=rubric.schema.properties.categoryReviews.properties.messaging.properties.deductions.items;assert(deduction.required.includes('formats')&&deduction.properties.formats.type==='array','every deduction names the rendered formats it applies to');
+assert.deepEqual(rubric.deductionFormats(categoryReviews.messaging.deductions[0]),[],'older reviews without a formats list still normalize');
+assert.deepEqual(rubric.deductionFormats({formats:['mobile_square']}),['mobile_square']);
 console.log('PASS evidence-backed deductions, exact totals, category summaries and legacy compatibility');
