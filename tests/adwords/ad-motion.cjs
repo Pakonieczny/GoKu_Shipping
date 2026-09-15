@@ -26,7 +26,7 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
    ok(/RULE 2 - BRIGHT AND CHEERFUL/.test(prompt)&&/Never dark, dim, moody, overcast, gloomy or heavy with shadow/.test(prompt),'the film is required to be bright and cheerful, never gloomy');
    ok(/Never grey, muddy, hazy, foggy, misty, bloomed or milky/.test(prompt)&&/Never quiet it by draining its colour or going dark/.test(prompt),'the scene stays subordinate through craft, not by washing it out or darkening it');
    ok(/Perform the camera approach named in the treatment, not a generic push-in or zoom/.test(prompt)&&/never orbit, spin, rotate or turn the jewelry itself/.test(prompt),'the camera moves through the scene and never around the piece');
-   ok(/overlay colours printed on the finished film afterwards, not a grade for the footage/.test(prompt)&&!/Coordinate every shot with these actual overlay colours/.test(prompt),'the brand palette is an overlay, never a colour grade over the film');ok(body.model===MODEL&&body.background&&body.response_format.aspect_ratio,'exact Gemini interaction request');return {id:'v1_'+calls.create,status:'completed',steps:[{type:'model_output',content:[{type:'video',uri:'https://storage.googleapis.com/video.mp4'}]}]};}throw Error('Unexpected polling of completed result');},videoContent:async()=>{calls.download++;return Buffer.from('mp4')},saveVideo:async(id,b,key,info)=>{blobs.set(key,b);return {path:key,hash:key,...info}},loadVideo:async a=>blobs.get(a.path),signVideo:async a=>'https://example.test/'+a.path,renderVariants:async(b,orientation,plan)=>{calls.render++;return ['mobile','desktop'].flatMap(device=>['portrait','square','landscape'].filter(format=>(!plan?.pipelineVersion||device===(format==='landscape'?'desktop':'mobile'))).filter(format=>(format==='square'?(plan?.squareMaster||(device==='mobile'?'portrait':'landscape')):format)===orientation).map(format=>({key:device+'_'+format,device,format,width:720,height:720,seconds:10,bytes:b,frames:[jpeg,jpeg,jpeg]})))},reviewImages:async()=>{calls.review++;return {productFaithful:true,mobileReadable:true,pass:true,score:98,issues:[]}}};return {f,ref,D,calls,scope,id,service:createMotionService(D)};
+   ok(/composed onto the finished film afterwards in a soft, pale, neutral wash/.test(prompt)&&!/Coordinate every shot with these actual overlay colours/.test(prompt),'the brand palette is described, never handed over as colour codes');ok(body.model===MODEL&&body.background&&body.response_format.aspect_ratio,'exact Gemini interaction request');return {id:'v1_'+calls.create,status:'completed',steps:[{type:'model_output',content:[{type:'video',uri:'https://storage.googleapis.com/video.mp4'}]}]};}throw Error('Unexpected polling of completed result');},videoContent:async()=>{calls.download++;return Buffer.from('mp4')},saveVideo:async(id,b,key,info)=>{blobs.set(key,b);return {path:key,hash:key,...info}},loadVideo:async a=>blobs.get(a.path),signVideo:async a=>'https://example.test/'+a.path,renderVariants:async(b,orientation,plan)=>{calls.render++;return ['mobile','desktop'].flatMap(device=>['portrait','square','landscape'].filter(format=>(!plan?.pipelineVersion||device===(format==='landscape'?'desktop':'mobile'))).filter(format=>(format==='square'?(plan?.squareMaster||(device==='mobile'?'portrait':'landscape')):format)===orientation).map(format=>({key:device+'_'+format,device,format,width:720,height:720,seconds:10,bytes:b,frames:[jpeg,jpeg,jpeg]})))},reviewImages:async()=>{calls.review++;return {productFaithful:true,mobileReadable:true,pass:true,score:98,issues:[]}}};return {f,ref,D,calls,scope,id,service:createMotionService(D)};
 }
 (async()=>{
  const body=requestBody(Buffer.from('image'),'Exact jewelry, subtle camera movement','portrait');ok(body.model==='gemini-omni-1.1-flash'&&body.response_format.aspect_ratio==='9:16','requested model and ratio');ok(!('seconds'in body)&&!('input_reference'in body),'no OpenAI video parameters sent to Gemini');ok(outputVideo({steps:[{type:'user_input',content:[{type:'video',data:'wrong'}]},{type:'model_output',content:[{type:'video',data:'right'}]}]}).data==='right','only generated video returned');
@@ -151,6 +151,27 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
  ok(copyFixes===1&&fx.calls.create===beforeCopy.create&&cpfState.variants.length===3&&cpfJob.plan.copy.headline==='For the foodie who has everything'&&cpfJob.copyFixed,'copy fix revises the message once and re-composes every format without new video');
  await fx.service.run({workspaceId:'design_test',jobId:cpf.jobId});ok(copyFixes===1&&fx.calls.create===beforeCopy.create,'completed fixes never charge twice');
  ok((await fx.service.status({workspaceId:'design_test',...fx.scope})).jobId===cpf.jobId,'the latest fix becomes the current animation');
+ // Nothing the video model could render as text is ever put in front of it.
+ {
+  const motion=require('../../netlify/functions/googleAdsAdMotion');
+  const keys=['rationale','setting','props','lighting','opening','middle','ending','portrait','landscape','identity','limitations'];
+  const poisoned=Object.fromEntries(keys.map(k=>[k,'clean '+k]));
+  poisoned.setting='Riverbank graded #58695F with Open Sans titles reading "Crocodile Charm Pendant" at 44px and 148 pixels of margin';
+  poisoned.camera='Rack focus onto the piece';
+  const job={title:'Crocodile Charm Pendant',plan:{style:{background:'#eef1ec',ink:'#252729',accent:'#a67c35',headlineFont:'Georgia',bodyFont:'Open Sans'},copy:{headline:'Crocodile Charm Pendant',cta:'Shop now'},nativeCopy:{headlines:['Gift-ready packaging included.']}},creativeDirection:poisoned};
+  const prompt=motion.motionPrompt(job,'portrait','');
+  ok(!/#[0-9a-fA-F]{3,8}/.test(prompt),'no colour code reaches the video model, even via the treatment');
+  ok(!/Georgia|Open Sans/.test(prompt),'no font name reaches the video model, even via the treatment');
+  ok(!/Gift-ready packaging/.test(prompt),'no saved ad copy reaches the video model, even via the treatment');
+  ok(!/\d+\s?(?:px|pixels)/.test(prompt),'no pixel specification reaches the video model, even via the treatment');
+  ok(/no lettering of any kind/.test(prompt),'the film is told its frames carry no lettering at all');
+  ok(/thin, flat, laser-cut sheet metal/.test(prompt)&&/engraving is cut into the metal/.test(prompt),'the film is told the piece is thin flat sheet with engraving cut into it');
+  ok(/RULE 3 - ONE CONTINUOUS TAKE/.test(prompt)&&/No cuts, no jump cuts, no dissolves/.test(prompt),'the film must be one unbroken take');
+  ok(/It is not the first frame/.test(prompt)&&/identical from the first frame to the last/.test(prompt),'the reference photo is never the opening frame and the piece is whole throughout');
+  const payload=JSON.stringify(motion.motionRequest(job).input[1].content);
+  ok(!/#eef1ec|#252729|Georgia|Open Sans/.test(payload),'the treatment is not shown the palette, fonts or layout spec either');
+ }
+
  // A film re-reads the operator's framing at generation time, so a crop applied
  // after the static ad was designed reaches the video without re-buying scenes.
  const refresh=await setup(),editorRequest=refresh.ref.collection('editorAIJobs').doc(refresh.id).collection('data').doc('request');
