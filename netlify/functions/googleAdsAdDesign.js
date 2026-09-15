@@ -610,6 +610,18 @@ function createAdDesignService(deps) {
     });
     return {ok:true,workspaceId,jobId:id,queued,fix:plan};
   }
+  const identityDeps=(ref,workspaceId)=>({workspaceId,sha,loadAsset:deps.loadAsset,saveAsset:deps.saveAsset,
+    library:async id=>{const row=await ref.collection('imageLibrary').doc(id).get();return row.exists?row.data():null;}});
+  // A film is a fresh generation, so it re-reads the operator's framing from the
+  // saved canvas instead of inheriting a reference pinned under older rules.
+  // The static job's own request is never rewritten; its paid results stand.
+  async function editorIdentity({workspaceId,jobId}={}){
+    const ref=refFor(workspaceId),target=editorAIRef(workspaceId,jobId),row=await target.collection('data').doc('request').get();
+    if(!row.exists)return null;
+    const request=row.data();if(!Array.isArray(request.sources)||!request.sources.length)return null;
+    const identity=await require('./googleAdsAdIdentity').resolve({sources:request.sources,objects:request.document?.objects||[],productId:request.productId},identityDeps(ref,workspaceId));
+    return identity.length?identity:null;
+  }
   async function editorAIStart(input={}){
     const {workspaceId,productId,groupRef,device,artboard}=input,ref=refFor(workspaceId),w=await read(workspaceId);editorScope(w,input);const designKey=editorKey(input);
     if(!deps.env.OPENAI_API_KEY)throw new Error('OpenAI access is not configured for the AI designer.');
@@ -629,38 +641,14 @@ function createAdDesignService(deps) {
     // reference must show exactly what they framed, never the untrimmed original.
     // Existing jobs keep their immutable reference bytes and paid responses.
     if(request.responsive){
-      const mine=ids=>(ids||[]).some(id=>productKey(id)===productKey(productId));
-      const verified=async source=>{
-        if(source.source?.kind==='product')return productKey(source.source.productId)===productKey(productId);
-        if(source.source?.kind==='upload')return mine(source.productIds);
-        if(source.source?.kind==='library'&&token(source.source.imageId)){
-          const row=await ref.collection('imageLibrary').doc(source.source.imageId).get(),saved=row.exists&&row.data();
-          // Saved crops of a verified photo qualify; generated artwork never does.
-          return !!saved&&saved.kind==='crop'&&saved.artwork!==true&&(mine(saved.productIds)||saved.rootSource?.kind==='product'&&productKey(saved.rootSource.productId)===productKey(productId));
-        }
-        return false;
-      };
-      // A layer cropped on the artboard carries its framing in cropX/cropY/width/height.
-      const framed=async source=>{
-        const layer=objects.find(o=>o.sourceKey===source.id),W=Number(source.width)||0,H=Number(source.height)||0;
-        if(!layer||!W||!H)return source;
-        const x=Math.max(0,Math.round(Number(layer.cropX)||0)),y=Math.max(0,Math.round(Number(layer.cropY)||0));
-        const w=Math.max(1,Math.min(W-x,Math.round(Number(layer.width)||W))),h=Math.max(1,Math.min(H-y,Math.round(Number(layer.height)||H)));
-        if(x<1&&y<1&&w>=W-1&&h>=H-1)return source;
-        const bytes=await deps.loadAsset(source.asset);
-        const out=await require('sharp')(bytes,{limitInputPixels:40000000}).extract({left:x,top:y,width:w,height:h}).png().toBuffer({resolveWithObject:true});
-        const asset=await deps.saveAsset(workspaceId,out.data,source.id+'_framed_'+sha([x,y,w,h]).slice(0,16),{width:out.info.width,height:out.info.height,mimeType:'image/png',kind:'operator-framed identity reference'});
-        return {...source,asset,width:out.info.width,height:out.info.height,framedFrom:source.id,frame:{x,y,width:w,height:h}};
-      };
-      const identity=[];
-      for(const source of sources)if(await verified(source))identity.push(await framed(source));
+      const identity=await require('./googleAdsAdIdentity').resolve({sources,objects,productId},identityDeps(ref,workspaceId));
       if(!identity.length){
         const product=(await productsFor(ref,w)).find(p=>String(p.id)===String(productId)),photos=product?.images||[],photo=photos.find(p=>p.id===w.settings?.sourceImageId)||photos[0];
         if(!photo)throw new Error('Choose a verified listing photograph before generating a new product scene.');
         const original=await editorSource({workspaceId,productId,groupRef,source:{kind:'product',productId:String(productId),imageId:photo.id}});
         const {url,...pinned}=original;identity.push(pinned);
       }
-      request.identitySources=identity;request.referencePolicy='verified-product-v2';
+      request.identitySources=identity;request.referencePolicy=require('./googleAdsAdIdentity').POLICY;
     }
     const image=Buffer.from(input.screenshotDataUrl.split(',')[1],'base64'),sharp=require('sharp'),meta=await sharp(image,{limitInputPixels:17000000}).metadata();
     if(!['jpeg','png'].includes(meta.format)||Number(meta.pages||1)>1||Math.abs(meta.width/meta.height-artboard.width/artboard.height)>.02)throw new Error('The preview does not match this artboard’s aspect ratio.');
@@ -1255,7 +1243,7 @@ function createAdDesignService(deps) {
       await saveJob({ phase: "needs_attention", error: String(error.message || error).slice(0, 900), leaseUntil: 0, progress: { pct: Number(job.progress && job.progress.pct) || 0, label: "Saved work retained — review the unfinished step" } }); throw error;
     }
   }
-  return { workspace, save, upload, crop, start, status, run, resetFailures, editorSource, editorState, editorResponsiveState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorDeleteSavedDesign, deleteGeneratedImage, linkPublishedDesignScopes, linkPublishedWorkspaceGallery, editorAIStart, editorAIStatus, editorAIResume, editorAIRun, editorAIApply, editorAIFix };
+  return { workspace, save, upload, crop, start, status, run, resetFailures, editorSource, editorState, editorResponsiveState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorDeleteSavedDesign, deleteGeneratedImage, linkPublishedDesignScopes, linkPublishedWorkspaceGallery, editorAIStart, editorAIStatus, editorAIResume, editorAIRun, editorAIApply, editorAIFix, editorIdentity };
 }
 module.exports = { orderAssetGroupMutations, createAdDesignService, buildVersionDesignPayload, isSharedProductGroup, researchGroupFor, formatAssets, chosenPlacements, placementMatches, FORMATS, settingsFor, refreshedSettings, responseText, MAX_UPLOAD };
 

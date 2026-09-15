@@ -263,6 +263,7 @@
     "googleAdsAdKeywordResearch.js",
     "googleAdsAdMotion.js",
     "googleAdsAdFixes.js",
+    "googleAdsAdIdentity.js",
     "googleAdsAdQuality.js",
     "googleAdsAutopilot.js",
     "googleAdsCampaignStyles.js",

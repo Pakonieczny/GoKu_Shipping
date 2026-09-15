@@ -142,6 +142,27 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
  ok(copyFixes===1&&fx.calls.create===beforeCopy.create&&cpfState.variants.length===3&&cpfJob.plan.copy.headline==='For the foodie who has everything'&&cpfJob.copyFixed,'copy fix revises the message once and re-composes every format without new video');
  await fx.service.run({workspaceId:'design_test',jobId:cpf.jobId});ok(copyFixes===1&&fx.calls.create===beforeCopy.create,'completed fixes never charge twice');
  ok((await fx.service.status({workspaceId:'design_test',...fx.scope})).jobId===cpf.jobId,'the latest fix becomes the current animation');
+ // A film re-reads the operator's framing at generation time, so a crop applied
+ // after the static ad was designed reaches the video without re-buying scenes.
+ const refresh=await setup(),editorRequest=refresh.ref.collection('editorAIJobs').doc(refresh.id).collection('data').doc('request');
+ await editorRequest.set({sources:[{asset:{path:'photo'}}],identitySources:[{id:'pinned',asset:{path:'uncropped-original'},width:1024,height:1024}]});
+ let identityCalls=0;
+ refresh.D.identityFor=async(workspaceId,jobId)=>{identityCalls++;assert.equal(jobId,refresh.id);return [{id:'pinned',asset:{path:'operator-crop'},width:600,height:500,framedFrom:'pinned',frame:{x:200,y:300,width:600,height:500}}];};
+ const savedRequest=JSON.stringify((await editorRequest.get()).data());
+ const freshFilm=await refresh.service.start({workspaceId:'design_test',...refresh.scope});
+ ok((await refresh.ref.collection('motionJobs').doc(freshFilm.jobId).get()).data().originalSources[0].asset.path==='operator-crop'&&identityCalls===1,'a new film references the operator crop instead of the reference pinned earlier');
+ ok(JSON.stringify((await editorRequest.get()).data())===savedRequest,'re-resolving never rewrites the static job, so its paid results stand');
+ await refresh.service.run({workspaceId:'design_test',jobId:freshFilm.jobId});
+ const finished=await refresh.service.status({workspaceId:'design_test',...refresh.scope});
+ await refresh.ref.collection('motionJobs').doc(freshFilm.jobId).update({originalSources:[{id:'pinned',asset:{path:'uncropped-original'}}]});
+ const reframedRerun=await refresh.service.start({workspaceId:'design_test',...refresh.scope,rerunOf:freshFilm.jobId,repairReviewHash:finished.repairReviewHash});
+ ok((await refresh.ref.collection('motionJobs').doc(reframedRerun.jobId).get()).data().originalSources[0].asset.path==='operator-crop','a re-run re-reads the framing instead of cloning a stale reference');
+ const safe=await setup();
+ await safe.ref.collection('editorAIJobs').doc(safe.id).collection('data').doc('request').set({sources:[{asset:{path:'photo'}}],identitySources:[{id:'pinned',asset:{path:'pinned-original'}}]});
+ safe.D.identityFor=async()=>{throw Error('identity service unavailable')};
+ const safeJob=await safe.service.start({workspaceId:'design_test',...safe.scope});
+ ok((await safe.ref.collection('motionJobs').doc(safeJob.jobId).get()).data().originalSources[0].asset.path==='pinned-original','an unavailable resolver falls back to the pinned reference rather than stopping the film');
+
  win.close();console.log('PASS '+n+' Gemini request, durable generation, device variants and recovery checks');
 })().catch(e=>{console.error(e.stack);process.exitCode=1});
 
