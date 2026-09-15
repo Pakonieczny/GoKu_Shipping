@@ -63,3 +63,9 @@ Landscape masters center the complete brand, headline and action stack verticall
 Full-canvas messaging is the first choice. When the measured jewelry leaves no clear zone, the renderer relaxes type sizes (portrait 48px, square 40px, landscape 44px minimum, four lines), then places the whole film beside a brand band in the ad's background colour (top band for portrait and landscape-sourced square films, left band for landscape and portrait-sourced square films). A film is never stopped for caption space; each fallback is recorded as a composition note for the complete-ad review and the Ad ratings pop-up.
 
 Review findings name the exact rendered formats. From the Ad ratings pop-up each finding can be fixed on its own: captions re-composed, one message revised, or exactly one film master regenerated, with every other film reused as saved. Static findings regenerate one scene photograph or revise the plan without new images.
+
+## Film direction
+
+Each film chooses its own cinematic approach and records it in the saved treatment: a dolly through foreground objects, a rack focus from a story prop to the jewelry, an orbit, a crane-like rise, a hand placing the piece, a held frame while light sweeps across it, or a match on movement. A plain push-in, zoom or highlight pass is not an approach, and two pieces should not move the same way.
+
+Films are bright, sharp and richly coloured, with real specular life on the metal and no haze, fog, bloom or milky flatness. The background stays subordinate through framing, depth of field and contrast placement rather than by draining its colour. A worn shot is decided per piece: necklaces, earrings and bracelets may earn one brief worn moment when the evidence supports it, a charm sold alone usually does not, and most films carry no model. The complete-ad review deducts for a flat or hazy film and for camera work with no idea behind it.
