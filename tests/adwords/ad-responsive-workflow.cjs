@@ -3,15 +3,16 @@ const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path'),asse
 const fixture=path.join(__dirname,'ad-design-workflow.cjs'),source=fs.readFileSync(fixture,'utf8').split('(async()=>{const e=await setup();')[0];
 const ctx=vm.createContext({require:require('node:module').createRequire(fixture),__dirname,process,Buffer,console,Date,setTimeout,clearTimeout});vm.runInContext(source+'\nglobalThis.setupFixture=setup;',ctx);
 const {plan}=require('./ad-responsive.cjs');let n=0;const ok=(v,m)=>{assert(v,m);n++};
-async function setup({generatedSource=false,autoProofs=true}={}){const e=await ctx.setupFixture(),bytes=await sharp({create:{width:1024,height:1024,channels:3,background:'#d1b284'}}).jpeg().toBuffer();e.D.fullSourceBytes=async()=>bytes;
- const source=await e.svc.editorSource({workspaceId:e.id,productId:plan.productId,groupRef:plan.groupRef,source:{kind:'product',productId:plan.productId,imageId:'img1'}});
+async function setup({generatedSource=false,autoProofs=true,layer=null,makeSource=null}={}){const e=await ctx.setupFixture(),bytes=await sharp({create:{width:1024,height:1024,channels:3,background:'#d1b284'}}).jpeg().toBuffer();e.D.fullSourceBytes=async()=>bytes;
+ let source=await e.svc.editorSource({workspaceId:e.id,productId:plan.productId,groupRef:plan.groupRef,source:{kind:'product',productId:plan.productId,imageId:'img1'}});
  e.D.research.collect=async()=>({hash:'facts',researchCompletedAt:Date.now(),sourceBindings:{landingUrl:'https://britesjewelry.com/products/duck'},sources:[{id:'product:'+plan.productId,status:'available',data:{title:'Duck necklace',description:'Duck pendant necklace'}}],warnings:[]});
  e.D.responses=async args=>{if(args.text?.format?.name==='brites_subject_focus'){e.calls.focus=(e.calls.focus||0)+1;return {model:'gpt-6-astra',output_text:JSON.stringify({...({landscape:{x:.58,y:.08,width:.29,height:.8},square:{x:.3,y:.04,width:.4,height:.38},portrait:{x:.28,y:.04,width:.44,height:.5},tall:{x:.29,y:.18,width:.42,height:.42},banner:{x:.04,y:.08,width:.23,height:.84},slim:{x:.29,y:.18,width:.42,height:.42}}[plan.scenePlans?.[e.calls.focus-1]?.key]||{x:.46,y:.65,width:.08,height:.18}),confident:true}),estimatedUsd:.03,costEstimated:false};}e.calls.responses++;return {model:'gpt-6-astra',output_text:JSON.stringify(plan),estimatedUsd:.1,costEstimated:false}};
  e.D.generateImage=async({format})=>{e.calls.images++;return {bytes:await sharp(bytes).resize(format.width,format.height).jpeg().toBuffer(),estimatedUsd:.2,costEstimated:false}};
  e.D.reviewImages=async()=>{e.calls.quality++;return {pass:true,productFaithful:true,mobileReadable:true,score:92,issues:[],estimatedUsd:.1,costEstimated:false}};
  e.D.cropImage=async(bytes,format)=>{const b=require('../../brites-ad-responsive').boards.find(b=>b.key===format);return {bytes:await sharp(bytes).resize(b.width,b.height,{fit:'cover'}).jpeg().toBuffer(),width:b.width,height:b.height}};
+ if(makeSource)source=await makeSource(e,source);
  if(generatedSource){const prior={...source,id:'scene_prior',source:{kind:'library',imageId:'generated_prior'},asset:await e.D.saveAsset(e.id,await sharp({create:{width:1024,height:1024,channels:3,background:'#ff0000'}}).jpeg().toBuffer(),'prior',{width:1024,height:1024})};e.f.docs.set(e.p+'/editorSources/'+prior.id,prior);source.id=prior.id;}
- const input={workspaceId:e.id,productId:plan.productId,groupRef:plan.groupRef,device:'shared',artboard:{key:'square',width:2048,height:2048},requestId:'fixture_new_scene',mode:'design',generateScene:true,document:{objects:[{id:'photo_layer',type:'Image',sourceKey:source.id,left:0,top:0,width:1024,height:1024,scaleX:2,scaleY:2}]},screenshotDataUrl:'data:image/jpeg;base64,'+bytes.toString('base64')};
+ const input={workspaceId:e.id,productId:plan.productId,groupRef:plan.groupRef,device:'shared',artboard:{key:'square',width:2048,height:2048},requestId:'fixture_new_scene',mode:'design',generateScene:true,document:{objects:[{id:'photo_layer',type:'Image',sourceKey:source.id,left:0,top:0,width:1024,height:1024,scaleX:2,scaleY:2,...(layer||{})}]},screenshotDataUrl:'data:image/jpeg;base64,'+bytes.toString('base64')};
  const started=await e.svc.editorAIStart(input);
  const originalRun=e.svc.editorAIRun;
  if(autoProofs)e.svc.editorAIRun=async args=>{let out=await originalRun(args),status=await e.svc.editorAIStatus({...input,jobId:started.jobId});if(status.phase==='awaiting_review'){const c=status.candidate,boards=[{...c.artboard,key:'active'},...require('../../brites-ad-responsive').variants.map(b=>({...b,key:b.device+'_'+b.key}))],proofs=[];for(const b of boards){const scale=Math.min(1,960/Math.max(b.width,b.height));proofs.push({key:b.key,width:b.width,height:b.height,renderCheck:{version:1,visiblePhotoFraction:.3},dataBase64:(await sharp(bytes).resize(Math.round(b.width*scale),Math.round(b.height*scale)).jpeg().toBuffer()).toString('base64')});}await e.svc.editorAIResume({...input,jobId:started.jobId,candidateHash:c.candidateHash,reviewProofs:proofs});out=await originalRun(args);}return out;};
@@ -131,6 +132,44 @@ async function setup({generatedSource=false,autoProofs=true}={}){const e=await c
   if(fixed)ok(state.phase==='ready'&&repair.calls.quality===1,'corrected framing reaches complete-ad review');else {ok(state.phase==='ready'&&repair.calls.quality===1,'a safe retained layout reaches review without a repeated hard stop');ok([...repair.f.docs.entries()].some(([key,value])=>key.endsWith('/data/scene_fit_notes')&&value.retainedLayouts.length),'retained framing limitations remain recorded');}
  }
  const budget=await setup();budget.D.control=async()=>({creativeBudgetUsd:budget.calls.responses?1:30});budget.D.reserveCost=async()=>({reservedUsd:.6});await budget.svc.editorAIRun({workspaceId:budget.id,jobId:budget.jobId});const budgetStatus=await budget.svc.editorAIStatus({...budget.input,jobId:budget.jobId});ok(budgetStatus.phase==='ready','former spending cap does not stop generation');ok(budget.calls.images>=5,'all scenes complete despite former spending cap');
+ // The operator's framing is the product evidence. What they cropped is what the
+ // AI must see, for the static scenes and the films that reuse the same reference.
+ async function referenceSeenBy(options){
+  const e=await setup(options),seen={};
+  const gen=e.D.generateImage;e.D.generateImage=async args=>{seen.generate=args.references[0];return gen(args);};
+  e.D.reviewImages=async(src,files,brief)=>{seen.review=src;e.calls.quality++;return {pass:true,productFaithful:true,mobileReadable:true,score:92,issues:[],estimatedUsd:.1,costEstimated:false};};
+  await e.svc.editorAIRun({workspaceId:e.id,jobId:e.jobId});
+  const state=await e.svc.editorAIStatus({...e.input,jobId:e.jobId});
+  assert.equal(state.phase,'ready',state.error);n++;
+  const job=e.f.docs.get(e.p+'/editorAIJobs/'+e.jobId+'/data/request');
+  return {e,seen,identity:job.identitySources||[],meta:await sharp(seen.generate).metadata(),pixel:(await sharp(seen.generate).raw().toBuffer({resolveWithObject:true})).data};
+ }
+ const uncropped=await referenceSeenBy({});
+ ok(uncropped.meta.width===1024&&uncropped.meta.height===1024,'an untouched listing photo is referenced whole');
+ // Cropping the photo on the artboard must trim the reference to the same frame.
+ const onCanvas=await referenceSeenBy({layer:{cropX:200,cropY:300,width:600,height:500}});
+ ok(onCanvas.meta.width===600&&onCanvas.meta.height===500,'an artboard crop reaches the AI as the cropped frame, not the full original');
+ ok(onCanvas.identity[0].framedFrom&&onCanvas.identity[0].frame.x===200&&onCanvas.identity[0].frame.y===300,'the pinned identity records the exact operator frame');
+ ok(onCanvas.seen.review.equals(onCanvas.seen.generate),'the quality review judges the same cropped reference the scene was generated from');
+ // A saved crop chosen from the repository is that listing photo, trimmed on purpose.
+ const savedCrop=await referenceSeenBy({makeSource:async(e,original)=>{
+  const cropped=await sharp({create:{width:800,height:600,channels:3,background:'#ff0000'}}).jpeg().toBuffer();
+  const asset=await e.D.saveAsset(e.id,cropped,'operator_crop',{width:800,height:600,mimeType:'image/jpeg'});
+  e.f.docs.set(e.p+'/imageLibrary/crop_operator',{id:'crop_operator',kind:'crop',groupRef:plan.groupRef,format:'square',title:'Cropped listing photo',productIds:[plan.productId],rootSource:{kind:'product',productId:plan.productId,imageId:'img1'},artwork:false,asset,createdAt:Date.now()});
+  return e.svc.editorSource({workspaceId:e.id,productId:plan.productId,groupRef:plan.groupRef,source:{kind:'library',imageId:'crop_operator'}});
+ },layer:{width:800,height:600}});
+ ok(savedCrop.meta.width===800&&savedCrop.meta.height===600,'a saved operator crop is referenced at its own size');
+ ok(savedCrop.pixel[0]>240&&savedCrop.pixel[1]<20,'the AI receives the cropped pixels, never the untrimmed listing photo');
+ ok(savedCrop.identity.length===1&&savedCrop.identity[0].source.kind==='library','the crop itself is the pinned identity instead of falling back to the original');
+ // Generated artwork still cannot pose as product identity.
+ const artwork=await setup({makeSource:async(e,original)=>{
+  const asset=await e.D.saveAsset(e.id,await sharp({create:{width:900,height:900,channels:3,background:'#00ff00'}}).jpeg().toBuffer(),'prior_art',{width:900,height:900,mimeType:'image/jpeg'});
+  e.f.docs.set(e.p+'/imageLibrary/crop_artwork',{id:'crop_artwork',kind:'crop',groupRef:plan.groupRef,format:'square',title:'Saved design',productIds:[plan.productId],rootSource:{kind:'savedDesign',imageId:'d1'},artwork:true,asset,createdAt:Date.now()});
+  return e.svc.editorSource({workspaceId:e.id,productId:plan.productId,groupRef:plan.groupRef,source:{kind:'library',imageId:'crop_artwork'}});
+ },layer:{width:900,height:900}});
+ const artworkRequest=artwork.f.docs.get(artwork.p+'/editorAIJobs/'+artwork.jobId+'/data/request');
+ ok(artworkRequest.identitySources.length===1&&artworkRequest.identitySources[0].source.kind==='product','a saved design crop never becomes the product identity');
+
  // Targeted fixes: one reviewed deduction, one bounded correction, every other paid scene reused.
  const reviewWith=(calls)=>async()=>{calls.quality++;return {pass:false,productFaithful:true,mobileReadable:true,score:88,scores:{messaging:90,layout:80,relevance:100,visualAppeal:100,productRecognition:100},categoryReviews:{messaging:{summary:'Hook is generic',deductions:[{points:10,reason:'Generic hook',evidence:'300×250 headline',correction:'Rewrite the headline as a specific gift-occasion hook',kind:'required',formats:[]}]},layout:{summary:'Backdrop busy',deductions:[{points:20,reason:'Busy backdrop competes with the charm',evidence:'desktop_display_300x250 photograph background',correction:'Simplify the photographed backdrop behind the charm',kind:'required',formats:['desktop_display_300x250']}]},relevance:{summary:'ok',deductions:[]},visualAppeal:{summary:'ok',deductions:[]},productRecognition:{summary:'ok',deductions:[]}},issues:['Busy backdrop'],estimatedUsd:.1,costEstimated:false};};
  async function finishFix(e,jobId){let st;for(let i=0;i<4;i++){await e.svc.editorAIRun({workspaceId:e.id,jobId});st=await e.svc.editorAIStatus({...e.input,jobId,allSizes:true});if(st.phase!=='queued')break;}if(st.phase==='awaiting_review'){const c=st.candidate,boards=[{...c.artboard,key:'active'},...engine.variants.map(b=>({...b,key:b.device+'_'+b.key}))],proofs=[];for(const b of boards){const scale=Math.min(1,960/Math.max(b.width,b.height));proofs.push({key:b.key,width:b.width,height:b.height,renderCheck:{version:1,visiblePhotoFraction:.3},dataBase64:(await sharp({create:{width:Math.round(b.width*scale),height:Math.round(b.height*scale),channels:3,background:'#d1b284'}}).jpeg().toBuffer()).toString('base64')});}await e.svc.editorAIResume({...e.input,jobId,candidateHash:c.candidateHash,reviewProofs:proofs});await e.svc.editorAIRun({workspaceId:e.id,jobId});st=await e.svc.editorAIStatus({...e.input,jobId,allSizes:true});}return st;}

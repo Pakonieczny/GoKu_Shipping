@@ -625,16 +625,42 @@ function createAdDesignService(deps) {
     const request={productId:String(productId),groupRef,device,artboard:{key:artboard.key,width:artboard.width,height:artboard.height},document,mode:input.mode,responsive:input.mode==='design'&&input.generateScene===true,includeAnimation:input.mode==='design'&&input.includeAnimation===true,selectedLayerId:String(input.selectedLayerId||''),instruction:String(input.instruction||'').slice(0,2400)},inputHash=sha(request),id='eai_'+sha([designKey,input.requestId]).slice(0,40),target=editorAIRef(workspaceId,id),prior=await target.get();
     if(prior.exists){if(prior.data().inputHash!==inputHash)throw new Error('This AI request ID belongs to a different canvas. Resume its saved result or start a new request.');return editorAIResume({...input,jobId:id});}
     // Pin physical identity to a verified listing photo, never a prior generated ad.
+    // An operator crop of such a photo IS that photo, trimmed on purpose: the
+    // reference must show exactly what they framed, never the untrimmed original.
     // Existing jobs keep their immutable reference bytes and paid responses.
     if(request.responsive){
-      const identity=sources.filter(s=>s.source?.kind==='product'&&productKey(s.source.productId)===productKey(productId));
+      const mine=ids=>(ids||[]).some(id=>productKey(id)===productKey(productId));
+      const verified=async source=>{
+        if(source.source?.kind==='product')return productKey(source.source.productId)===productKey(productId);
+        if(source.source?.kind==='upload')return mine(source.productIds);
+        if(source.source?.kind==='library'&&token(source.source.imageId)){
+          const row=await ref.collection('imageLibrary').doc(source.source.imageId).get(),saved=row.exists&&row.data();
+          // Saved crops of a verified photo qualify; generated artwork never does.
+          return !!saved&&saved.kind==='crop'&&saved.artwork!==true&&(mine(saved.productIds)||saved.rootSource?.kind==='product'&&productKey(saved.rootSource.productId)===productKey(productId));
+        }
+        return false;
+      };
+      // A layer cropped on the artboard carries its framing in cropX/cropY/width/height.
+      const framed=async source=>{
+        const layer=objects.find(o=>o.sourceKey===source.id),W=Number(source.width)||0,H=Number(source.height)||0;
+        if(!layer||!W||!H)return source;
+        const x=Math.max(0,Math.round(Number(layer.cropX)||0)),y=Math.max(0,Math.round(Number(layer.cropY)||0));
+        const w=Math.max(1,Math.min(W-x,Math.round(Number(layer.width)||W))),h=Math.max(1,Math.min(H-y,Math.round(Number(layer.height)||H)));
+        if(x<1&&y<1&&w>=W-1&&h>=H-1)return source;
+        const bytes=await deps.loadAsset(source.asset);
+        const out=await require('sharp')(bytes,{limitInputPixels:40000000}).extract({left:x,top:y,width:w,height:h}).png().toBuffer({resolveWithObject:true});
+        const asset=await deps.saveAsset(workspaceId,out.data,source.id+'_framed_'+sha([x,y,w,h]).slice(0,16),{width:out.info.width,height:out.info.height,mimeType:'image/png',kind:'operator-framed identity reference'});
+        return {...source,asset,width:out.info.width,height:out.info.height,framedFrom:source.id,frame:{x,y,width:w,height:h}};
+      };
+      const identity=[];
+      for(const source of sources)if(await verified(source))identity.push(await framed(source));
       if(!identity.length){
         const product=(await productsFor(ref,w)).find(p=>String(p.id)===String(productId)),photos=product?.images||[],photo=photos.find(p=>p.id===w.settings?.sourceImageId)||photos[0];
         if(!photo)throw new Error('Choose a verified listing photograph before generating a new product scene.');
         const original=await editorSource({workspaceId,productId,groupRef,source:{kind:'product',productId:String(productId),imageId:photo.id}});
         const {url,...pinned}=original;identity.push(pinned);
       }
-      request.identitySources=identity;request.referencePolicy='verified-product-v1';
+      request.identitySources=identity;request.referencePolicy='verified-product-v2';
     }
     const image=Buffer.from(input.screenshotDataUrl.split(',')[1],'base64'),sharp=require('sharp'),meta=await sharp(image,{limitInputPixels:17000000}).metadata();
     if(!['jpeg','png'].includes(meta.format)||Number(meta.pages||1)>1||Math.abs(meta.width/meta.height-artboard.width/artboard.height)>.02)throw new Error('The preview does not match this artboard’s aspect ratio.');
