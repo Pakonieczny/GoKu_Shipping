@@ -142,6 +142,19 @@
     return d;
   }
 
+  /** Disc erosion by r cells (the box shrinks by r on every side). */
+  function erode(bits, w, h, r) {
+    if (r <= 0) return { bits: bits.slice(), w, h };
+    const W = Math.max(1, w - 2 * r), H = Math.max(1, h - 2 * r), out = new Uint8Array(W * H);
+    const offs = [];
+    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (dx * dx + dy * dy <= r * r + r) offs.push([dx, dy]);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      let ok = 1;
+      for (let i = 0; i < offs.length; i++) { const sx = x + r + offs[i][0], sy = y + r + offs[i][1]; if (sx < 0 || sy < 0 || sx >= w || sy >= h || !bits[sy * w + sx]) { ok = 0; break; } }
+      out[y * W + x] = ok;
+    }
+    return { bits: out, w: W, h: H };
+  }
   function areaOf(bits) { let n = 0; for (let i = 0; i < bits.length; i++) n += bits[i]; return n; }
 
   /* ── packed masks: 32 pre-shifted copies ───────────────────────────────── */
@@ -255,7 +268,9 @@
     const fineRes = job.fineRes || 2, coarseRes = job.coarseRes || 0.5;
     const ratio = Math.round(fineRes / coarseRes);
     const angles = (job.angles && job.angles.length ? job.angles : [0]).map(a => ((a % 360) + 360) % 360);
-    const clearancePt = Math.max(0, +job.clearancePt || 0);
+    // Negative clearance = allowed overlap: masks are ERODED by half of it, so two
+    // outlines may touch and their strokes overlap by up to |clearance|, never more.
+    const clearancePt = +job.clearancePt || 0;
     const insetPt = Math.max(0, job.sheet.insetPt == null ? 1.5 : +job.sheet.insetPt);
     const budget = job.timeBudgetMs || 180000;
     const maxTrials = job.maxTrials || 400;
@@ -266,7 +281,8 @@
     /* sheet grids at both levels; the inset band is pre-filled as wall */
     const FW = Math.round(job.sheet.wPt * fineRes), FH = Math.round(job.sheet.hPt * fineRes);
     const CW = Math.ceil(FW / ratio), CH = Math.ceil(FH / ratio);
-    const halfGapFine = Math.ceil(clearancePt / 2 * fineRes);
+    const halfGapFine = clearancePt >= 0 ? Math.ceil(clearancePt / 2 * fineRes) : 0;
+    const erodeFine = clearancePt < 0 ? Math.round(-clearancePt / 2 * fineRes) : 0;
     const wallFine = Math.round(insetPt * fineRes) + halfGapFine;
     const wallCoarse = Math.round(wallFine / ratio);
     const baseFine = new Grid(FW, FH), baseCoarse = new Grid(CW, CH);
@@ -292,14 +308,15 @@
       for (const a of angleSet) {
         const rot = rotateBitmap(fine.bits, fine.w, fine.h, a);
         if (!rot.w) continue;
-        const dil = dilate(rot.bits, rot.w, rot.h, halfGapFine);
+        const dil = erodeFine ? erode(rot.bits, rot.w, rot.h, erodeFine) : dilate(rot.bits, rot.w, rot.h, halfGapFine);
+        if (!dil.w || !areaOf(dil.bits)) continue;
         const rg = ring(dil.bits, dil.w, dil.h, Math.max(2, Math.round(2 * fineRes)));
         // coarse: majority resample of the dilated fine mask
         const co = majority(dil.bits, dil.w, dil.h, ratio);
         variants.push({
           angle: a,
           fine: { bits: dil.bits, w: dil.w, h: dil.h, pm: packShifted(dil.bits, dil.w, dil.h) },
-          solid: { bits: rot.bits, w: rot.w, h: rot.h, cx: rot.cx + halfGapFine, cy: rot.cy + halfGapFine },
+          solid: { bits: rot.bits, w: rot.w, h: rot.h, cx: rot.cx + halfGapFine - erodeFine, cy: rot.cy + halfGapFine - erodeFine },
           ringFine: packShifted(rg.bits, rg.w, rg.h), ringPad: Math.max(2, Math.round(2 * fineRes)),
           coarse: { pm: packShifted(co.bits, co.w, co.h), w: co.w, h: co.h }
         });
@@ -400,6 +417,14 @@
     });
   }
 
+  /** Verification tolerance for a negative clearance, in pixels at `res`: what the
+   *  solver eroded at its own resolution, plus one cell of the solver grid (the
+   *  masks are conservative by up to one fine cell) and one pixel of raster slack. */
+  function erosionPx(clearancePt, res, fineRes) {
+    fineRes = fineRes || 2;
+    const erodeFine = (+clearancePt || 0) < 0 ? Math.round(-clearancePt / 2 * fineRes) : 0;
+    return erodeFine ? Math.ceil((erodeFine + 1) / fineRes * res) + 1 : 0;
+  }
   function pocketPt(coarse, coarseRes) {
     const p = coarse.largestPocket();
     return { wPt: p.w / coarseRes, hPt: p.h / coarseRes, xPt: p.x / coarseRes, yPt: p.y / coarseRes };
@@ -489,8 +514,9 @@
      and the minimum gaps. The browser additionally re-renders the written
      PDF (see charm-nest-pdf.js); this is the geometric half that both the
      browser and the Node fallback share.                                   */
-  function verify(job, placements, res) {
+  function verify(job, placements, res, erodeOverride) {
     res = res || 6;
+    const erodePx = erodeOverride != null ? erodeOverride : erosionPx(job.clearancePt, res, job.fineRes || 2);
     const FW = Math.round(job.sheet.wPt * res), FH = Math.round(job.sheet.hPt * res);
     const ids = new Int16Array(FW * FH).fill(-1);
     const byId = new Map(job.pieces.map(p => [p.id, p]));
@@ -499,7 +525,8 @@
     placements.forEach((pl, i) => {
       const p = byId.get(pl.id); if (!p) return;
       const r = resample(p.bits, p.w, p.h, p.scale, res);
-      const rot = rotateBitmap(r.bits, r.w, r.h, pl.angle);
+      const rot0 = rotateBitmap(r.bits, r.w, r.h, pl.angle);
+      const rot = erodePx ? Object.assign(erode(rot0.bits, rot0.w, rot0.h, erodePx), { cx: rot0.cx - erodePx, cy: rot0.cy - erodePx }) : rot0;
       const x0 = Math.round(pl.cxPt * res - rot.cx), y0 = Math.round(pl.cyPt * res - rot.cy);
       masks.push({ i, id: pl.id, bits: rot.bits, w: rot.w, h: rot.h, x0, y0 });
       for (let y = 0; y < rot.h; y++) for (let x = 0; x < rot.w; x++) if (rot.bits[y * rot.w + x]) {
@@ -563,5 +590,5 @@
 
   function now() { return (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now(); }
 
-  return { solve, verify, rotateBitmap, dilate, ring, resample, packShifted, Grid, rng, popcount32 };
+  return { solve, verify, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32 };
 });

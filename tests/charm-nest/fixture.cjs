@@ -31,7 +31,11 @@ async function build(outPath, count = 18) {
     ops.push(outline(kind, cx, cy, size, num));
     // inner detail: coloured fill, a tiny hole ring, engraved text
     ops.push(`q 0.85 0.72 0.42 rg ${num(cx - size * 0.12)} ${num(cy - size * 0.1)} ${num(size * 0.24)} ${num(size * 0.2)} re f Q`);
-    ops.push(`q 0 0 0 RG 0.5 w ${circle(cx, cy + size * 0.38, size * 0.06, num)} S Q`);
+    // jump ring: a small closed black circle sitting on the body's top edge, like real artwork
+    const top = { heart: 0.39, circle: 0.5, tag: 0.5, star: 0.5, moon: 0.5, shield: 0.4 }[kind] * size;
+    const rx = kind === 'moon' ? cx + size * 0.15 : kind === 'heart' ? cx - size * 0.31 : cx;   // heart: on a lobe, not in the notch
+    const ry = kind === 'heart' ? cy + size * 0.283 + size * 0.05 : cy + top + size * 0.05;
+    ops.push(`q 0 0 0 RG 0.5 w ${circle(rx, ry, size * 0.06, num)} S Q`);
   }
   // one Form XObject with a red stroke — the reference file had exactly this
   const c0 = charms[0];

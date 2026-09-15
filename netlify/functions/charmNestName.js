@@ -5,7 +5,8 @@
  *  for files the filename router could not place.
  *
  *    model        claude-opus-5
- *    effort       low (recognition, not reasoning)
+ *    effort       high (operator request after the first live sheet: low
+ *                 effort named too loosely; CHARM_NEST_NAME_EFFORT overrides)
  *    thinking     default (adaptive) — disabling it can leak tags / misroute
  *    format       output_config.format json_schema → no prose parsing
  *    caching      the instruction block is byte-identical every call and
@@ -22,6 +23,7 @@ const { callClaudeRaw } = require("./_etsyMailAnthropic");
 
 const MODEL = process.env.CHARM_NEST_NAME_MODEL || "claude-opus-5";
 const MAX_CHARMS = 40;
+const EFFORT = /^(low|medium|high|xhigh|max)$/.test(process.env.CHARM_NEST_NAME_EFFORT || "") ? process.env.CHARM_NEST_NAME_EFFORT : "high";
 
 const INSTRUCTIONS = `You name jewelry charm artwork for a laser-cutting operator's Illustrator layers.
 Each image is one charm's vector artwork rendered on white: its cut outline plus engraving details. Charms are small (usually 0.3 to 1.5 inches) and are jewelry pendants: animals, symbols, letters, badges, tools, flowers, celestial shapes, vehicles, hearts, initials, dates, names.
@@ -82,8 +84,8 @@ exports.handler = async (event) => {
   try {
     const res = await callClaudeRaw({
       model: MODEL,
-      maxTokens: 4000,
-      effort: "low",
+      maxTokens: 8000,
+      effort: EFFORT,
       system: [{ type: "text", text: INSTRUCTIONS, cache_control: { type: "ephemeral" } }],
       messages: [{ role: "user", content }],
       outputFormat: { type: "json_schema", schema: SCHEMA }

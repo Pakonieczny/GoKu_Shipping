@@ -210,7 +210,9 @@
             const m = mul(x.matrix || [1, 0, 0, 1, 0, 0], ctm);
             if (x.bbox) seg.bbox = bboxOf([ap(m, x.bbox[0], x.bbox[1]), ap(m, x.bbox[2], x.bbox[1]), ap(m, x.bbox[2], x.bbox[3]), ap(m, x.bbox[0], x.bbox[3])]);
             const sub = interpret(x.bytes, x.resolve || resolve, m, depth + 1, spaces);
-            const kids = sub.segs.concat(sub.inner);
+            // flatten grandchildren too: a form that only invokes another form still carries that form's paths
+            const flat = (list) => list.flatMap(k => k.kind === "xobj" && k.children && k.children.length ? [k].concat(flat(k.children)) : [k]);
+            const kids = flat(sub.segs.concat(sub.inner));
             let bb = null; for (const k of kids) { k.parentTop = true; bb = bbUnion(bb, k.bbox); }
             seg.children = kids; if (bb) seg.bbox = bb;
           }
@@ -321,59 +323,127 @@
   }
 
   /* ═══ 5 · grouping ═════════════════════════════════════════════════════ */
+  /* Geometry helpers: flatten a segment's subpaths to polylines, test points
+     against them (even-odd), and measure point-to-outline distance. Bounding
+     boxes are only a last resort — a small charm parked in the empty corner
+     of a round charm's box is NOT inside it, and a jump ring drawn beside a
+     body IS part of it. */
+  function flatten(seg, steps) {
+    steps = steps || 8; const polys = [];
+    for (const sub of seg.subpaths || []) {
+      let poly = [], cur = null;
+      for (const sg of sub) {
+        if (sg[0] === "m") { if (poly.length > 1) polys.push(poly); poly = [sg[1]]; cur = sg[1]; }
+        else if (sg[0] === "l") { poly.push(sg[1]); cur = sg[1]; }
+        else if (sg[0] === "c" && cur) { const [a, b, c] = [sg[1], sg[2], sg[3]]; for (let i = 1; i <= steps; i++) { const t = i / steps, u = 1 - t; poly.push([u * u * u * cur[0] + 3 * u * u * t * a[0] + 3 * u * t * t * b[0] + t * t * t * c[0], u * u * u * cur[1] + 3 * u * u * t * a[1] + 3 * u * t * t * b[1] + t * t * t * c[1]]); } cur = c; }
+      }
+      if (poly.length > 1) polys.push(poly);
+    }
+    return polys;
+  }
+  function pointInPolys(x, y, polys) { // even-odd across all closed subpaths
+    let inside = false;
+    for (const poly of polys) for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1];
+      if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+  function distToPolys(x, y, polys) {
+    let best = Infinity;
+    for (const poly of polys) for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const ax = poly[j][0], ay = poly[j][1], bx = poly[i][0], by = poly[i][1];
+      const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+      const t = L ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / L)) : 0;
+      const px = ax + t * dx - x, py = ay + t * dy - y; const d = px * px + py * py; if (d < best) best = d;
+    }
+    return Math.sqrt(best);
+  }
+  /** Sample points that represent a segment: its own polyline points, or box corners+centre. */
+  function samples(seg, polysCache) {
+    if (seg.kind === "path") { const polys = polysCache.get(seg) || flatten(seg, 4); polysCache.set(seg, polys); const pts = polys.flat(); if (pts.length > 60) { const step = Math.ceil(pts.length / 60); return pts.filter((_, i) => i % step === 0); } return pts; }
+    const b = seg.bbox; return [[(b[0] + b[2]) / 2, (b[1] + b[3]) / 2], [b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]];
+  }
+  const insideFrac = (pts, polys) => pts.length ? pts.filter(p => pointInPolys(p[0], p[1], polys)).length / pts.length : 0;
+  const minDist = (pts, polys) => { let d = Infinity; for (const p of pts) { const v = distToPolys(p[0], p[1], polys); if (v < d) d = v; } return d; };
+
   /**
-   * opts: { minPt (default 6), darkMax (0.35 luminance), framePct (0.8) }
+   * opts: { minPt (default 6), darkMax (0.35 luminance), framePct (0.8), touchPt (2.5) }
    * A charm = one outline segment + every other segment assigned to it.
    */
   function groupCharms(parsed, opts) {
-    opts = Object.assign({ minPt: 6, darkMax: 0.35, framePct: 0.8 }, opts || {});
+    opts = Object.assign({ minPt: 6, darkMax: 0.35, framePct: 0.8, touchPt: 2.5, nearPt: 6 }, opts || {});
     const pageArea = parsed.pageW * parsed.pageH;
     const all = parsed.segments.concat(parsed.nested);
-    const drawable = all.filter(s => s.bbox && s.kind !== "clip" && s.kind !== "noop" && !(s.kind === "xobj" && s.children && s.children.length));
-    const isOutline = s => s.kind === "path" && s.stroke && s.closed && lum(s.strokeRGB) <= opts.darkMax &&
+    // page-sized paths (a sheet frame drawn into the artwork, any colour) are never charm material
+    const frames = all.filter(s => s.bbox && s.kind === "path" && bbArea(s.bbox) >= pageArea * opts.framePct);
+    const drawable = all.filter(s => s.bbox && s.kind !== "clip" && s.kind !== "noop" && !frames.includes(s) && !(s.kind === "xobj" && s.children && s.children.length));
+    // An outline is a closed, achromatic stroke (black, grey OR white — the reference
+    // sheet strokes one charm in white). Coloured strokes are engraving detail.
+    const achromatic = c => c && (Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2])) <= 0.15;
+    const isOutline = s => s.kind === "path" && s.stroke && s.closed && achromatic(s.strokeRGB) &&
       (s.bbox[2] - s.bbox[0]) >= opts.minPt && (s.bbox[3] - s.bbox[1]) >= opts.minPt;
-    let frame = null;
+    let frame = frames.length ? frames.reduce((a, b) => bbArea(b.bbox) > bbArea(a.bbox) ? b : a) : null;
     let cands = drawable.filter(isOutline);
-    // The sheet rectangle itself, if it was drawn into the artwork
-    for (const s of cands) if (bbArea(s.bbox) >= pageArea * opts.framePct) { if (!frame || bbArea(s.bbox) > bbArea(frame.bbox)) frame = s; }
-    cands = cands.filter(s => s !== frame);
     let rule = "stroked-dark-closed";
-    if (!cands.length) { // fallback: closed filled dark paths not contained by another
+    if (!cands.length) {
       rule = "filled-dark-closed";
-      const filled = drawable.filter(s => s.kind === "path" && s.fill && s.closed && lum(s.fillRGB) <= opts.darkMax && bbArea(s.bbox) < pageArea * opts.framePct && (s.bbox[2] - s.bbox[0]) >= opts.minPt && (s.bbox[3] - s.bbox[1]) >= opts.minPt);
-      cands = filled.filter(s => !filled.some(o => o !== s && bbArea(o.bbox) > bbArea(s.bbox) && bbArea(bbInter(s.bbox, o.bbox) || null) >= 0.98 * bbArea(s.bbox)));
+      cands = drawable.filter(s => s.kind === "path" && s.fill && s.closed && lum(s.fillRGB) <= opts.darkMax && bbArea(s.bbox) < pageArea * opts.framePct && (s.bbox[2] - s.bbox[0]) >= opts.minPt && (s.bbox[3] - s.bbox[1]) >= opts.minPt);
     }
-    // Sub-features (a jump-ring hole drawn as its own closed black circle) merge into their container.
+    const polysCache = new Map();
+    const polysOf = s => { let p = polysCache.get(s); if (!p) { p = flatten(s, 8); polysCache.set(s, p); } return p; };
+    // 1 · outlines vs details: largest first; a candidate geometrically inside an
+    //     accepted outline is a detail (hole, engraving frame, inner ring); a small
+    //     candidate touching an accepted outline's stroke is an attached ring.
     cands.sort((a, b) => bbArea(b.bbox) - bbArea(a.bbox));
     const outlines = [], merged = new Map();
+    const largestArea = cands.length ? bbArea(cands[0].bbox) : 0;
     for (const s of cands) {
-      // fully inside and small → a hole/detail; mostly inside and tiny → the same (a ring on a concave edge)
-      const host = outlines.find(o => { const it = bbInter(s.bbox, o.bbox); if (!it) return false; const f = bbArea(it) / bbArea(s.bbox), q = bbArea(s.bbox) / bbArea(o.bbox); return (f >= 0.95 && q <= 0.4) || (f >= 0.6 && q <= 0.15); });
+      const pts = samples(s, polysCache);
+      let host = null;
+      // innermost container wins: iterate smallest → largest among accepted outlines
+      const byAreaAsc = outlines.slice().sort((a, b) => bbArea(a.bbox) - bbArea(b.bbox));
+      for (const o of byAreaAsc) { if (!bbInter(s.bbox, o.bbox)) continue; if (insideFrac(pts, polysOf(o)) >= 0.6) { host = o; break; } }
+      if (!host) {
+        const small = bbArea(s.bbox) <= 0.12 * largestArea || Math.max(s.bbox[2] - s.bbox[0], s.bbox[3] - s.bbox[1]) <= 30;
+        if (small) {
+          let bestD = Infinity, bestO = null;
+          for (const o of outlines) { const g = Math.max(opts.touchPt, opts.nearPt); const grown = [s.bbox[0] - g, s.bbox[1] - g, s.bbox[2] + g, s.bbox[3] + g]; if (!bbInter(grown, o.bbox)) continue; const d = minDist(pts, polysOf(o)); if (d < bestD) { bestD = d; bestO = o; } }
+          // touching, or within ~2 mm of the stroke (a jump ring drawn a hair off the body)
+          if (bestO && bestD <= Math.max(opts.touchPt, opts.nearPt) + (s.lwPt || 0) / 2 + (bestO.lwPt || 0) / 2) host = bestO;
+        }
+      }
       if (host) merged.set(s, host); else outlines.push(s);
     }
-    // Every other drawable segment goes to the outline it overlaps most; ties → smaller outline.
+    // 2 · every other drawable segment → the outline whose polygon holds most of its
+    //     points; ties → smaller outline; then contact distance; then box overlap;
+    //     then nearest centre within 24 pt; else orphan.
     const charms = outlines.map((o, i) => ({ index: i, outline: o, members: [], bbox: o.bbox.slice(), extras: [] }));
     const byOutline = new Map(charms.map(c => [c.outline, c]));
     const orphans = [];
     for (const s of drawable) {
       if (s === frame) continue;
       if (byOutline.has(s)) { byOutline.get(s).members.push(s); continue; }
-      if (merged.has(s)) { byOutline.get(merged.get(s)).members.push(s); continue; }
-      let best = null, bestR = 0;
-      const a = bbArea(s.bbox);
-      for (const c of charms) {
-        const it = bbInter(s.bbox, c.outline.bbox);
-        let r = 0;
-        if (a <= 1e-6) r = it || (s.bbox[0] >= c.outline.bbox[0] && s.bbox[0] <= c.outline.bbox[2] && s.bbox[1] >= c.outline.bbox[1] && s.bbox[1] <= c.outline.bbox[3]) ? 1 : 0;
-        else r = it ? bbArea(it) / a : 0;
-        if (r > bestR || (r === bestR && r > 0 && best && bbArea(c.outline.bbox) < bbArea(best.outline.bbox))) { best = c; bestR = r; }
+      if (merged.has(s)) { const c = byOutline.get(merged.get(s)); c.members.push(s); c.bbox = bbUnion(c.bbox, s.bbox); continue; }
+      const pts = samples(s, polysCache);
+      const near = charms.filter(c => bbInter([s.bbox[0] - opts.touchPt, s.bbox[1] - opts.touchPt, s.bbox[2] + opts.touchPt, s.bbox[3] + opts.touchPt], c.outline.bbox));
+      let best = null, bestF = 0;
+      for (const c of near) { const f = insideFrac(pts, polysOf(c.outline)); if (f > bestF || (f === bestF && f > 0 && best && bbArea(c.outline.bbox) < bbArea(best.outline.bbox))) { best = c; bestF = f; } }
+      if (!best || bestF < 0.5) {
+        let bestD = Infinity, bestC = null;
+        for (const c of near) { const d = minDist(pts, polysOf(c.outline)); if (d < bestD) { bestD = d; bestC = c; } }
+        if (bestC && bestD <= opts.touchPt + (s.lwPt || 0) / 2) { best = bestC; bestF = 1; }
       }
-      if (best && bestR > 0) { best.members.push(s); best.bbox = bbUnion(best.bbox, s.bbox); continue; }
-      // nothing overlaps: nearest centre within 24 pt, else orphan
+      if (!best || bestF <= 0) {
+        const a = bbArea(s.bbox); let bestR = 0;
+        for (const c of near) { const it = bbInter(s.bbox, c.outline.bbox); const r = it ? (a > 1e-6 ? bbArea(it) / a : 1) : 0; if (r > bestR) { bestR = r; best = c; } }
+        if (bestR <= 0) best = null;
+      }
+      if (best) { best.members.push(s); best.bbox = bbUnion(best.bbox, s.bbox); continue; }
       const cx = (s.bbox[0] + s.bbox[2]) / 2, cy = (s.bbox[1] + s.bbox[3]) / 2;
-      let near = null, nd = 24;
-      for (const c of charms) { const d = Math.hypot(cx - (c.outline.bbox[0] + c.outline.bbox[2]) / 2, cy - (c.outline.bbox[1] + c.outline.bbox[3]) / 2) - Math.hypot(c.outline.bbox[2] - c.outline.bbox[0], c.outline.bbox[3] - c.outline.bbox[1]) / 2; if (d < nd) { nd = d; near = c; } }
-      if (near) { near.members.push(s); near.bbox = bbUnion(near.bbox, s.bbox); near.extras.push(s); } else orphans.push(s);
+      let nearC = null, nd = 24;
+      for (const c of charms) { const d = distToPolys(cx, cy, polysOf(c.outline)); if (d < nd) { nd = d; nearC = c; } }
+      if (nearC) { nearC.members.push(s); nearC.bbox = bbUnion(nearC.bbox, s.bbox); nearC.extras.push(s); } else orphans.push(s);
     }
     // Top-level membership: a nested segment brings its whole Do; a Do goes to the charm holding most of its children
     for (const c of charms) {
@@ -381,7 +451,6 @@
       for (const m of c.members) { const t = m.parent != null ? m.parent : m.index; if (t != null) tops.set(t, (tops.get(t) || 0) + 1); }
       c.topIndices = [...tops.keys()];
     }
-    // resolve contested xobjects (children split across charms) by majority
     const claim = new Map();
     for (const c of charms) for (const t of c.topIndices) { const seg = parsed.segments[t]; if (seg && seg.kind === "xobj") { const n = c.members.filter(m => m.parent === t).length; const cur = claim.get(t); if (!cur || n > cur.n) claim.set(t, { c, n }); } }
     for (const c of charms) c.topIndices = c.topIndices.filter(t => { const seg = parsed.segments[t]; return !(seg && seg.kind === "xobj") || claim.get(t).c === c; });
@@ -441,13 +510,17 @@
       const reached = floodFromBorder(open, w, h);
       const bits = new Uint8Array(w * h); let n = 0, interior = 0;
       for (let i = 0; i < w * h; i++) { if (!reached[i]) { bits[i] = 1; n++; if (open[i]) interior++; } }
-      // union with the ink of every other member (details, holes, text, engraving outside the outline)
+      // Final silhouette: outline + every member (rings, details, text, engraving), flood-filled
+      // together so that a jump ring's hole is solid material — nothing may nest inside a ring —
+      // exactly what the render verifier will see when it floods the written layer.
       const others = c.members.filter(m => m !== o);
       if (others.length) {
-        ctx.clearRect(0, 0, w, h);
-        drawSegments(ctx, others, tx, scale, true);
+        drawSegments(ctx, others, tx, scale, true);           // on top of the stroked/filled outline already drawn
         const img2 = ctx.getImageData(0, 0, w, h).data;
-        for (let i = 0, j = 3; i < w * h; i++, j += 4) if (img2[j] > 40 && !bits[i]) { bits[i] = 1; n++; }
+        const open2 = new Uint8Array(w * h);
+        for (let i = 0, j = 3; i < w * h; i++, j += 4) if (img2[j] <= 40) open2[i] = 1;
+        const reached2 = floodFromBorder(open2, w, h);
+        n = 0; for (let i = 0; i < w * h; i++) { bits[i] = reached2[i] ? 0 : 1; n += bits[i]; }
       }
       c.bits = bits; c.w = w; c.h = h; c.scale = scale;
       c.bboxOuter = [bx0, by0, bx1, by1];
@@ -632,7 +705,8 @@
     const cv = makeCanvas(W, H), ctx = cv.getContext("2d", { willReadFrequently: true });
     const idGrid = new Int16Array(W * H).fill(-1);
     const inset = Math.floor((spec.insetPt || 0) * res * 0.999);
-    let overlapPx = 0, outsidePx = 0; const pairs = new Set(), empty = [];
+    const erodePx = spec.erodePt > 0 ? Math.ceil(spec.erodePt * res) + 1 : 0;   // negative clearance: strokes may overlap this much (+1 px raster slack)
+    let overlapPx = 0, outsidePx = 0; const pairs = new Set(), empty = [], detail = {};
     for (let li = 0; li < charmLayers.length; li++) {
       for (const l of layers) occ.setVisibility(l.id, l.id === charmLayers[li].id);
       ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
@@ -642,17 +716,29 @@
       for (let i = 0, j = 0; i < W * H; i++, j += 4) { if (img[j] + img[j + 1] + img[j + 2] < 720) ink++; else open[i] = 1; }
       if (!ink) { empty.push(charmLayers[li].name); continue; }
       const reached = floodFromBorder(open, W, H);
+      let solid = reached;                                   // 1 = not material
+      if (erodePx) {                                          // shrink the silhouette by erodePx before the overlap test
+        solid = new Uint8Array(W * H);
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+          const i = y * W + x; if (reached[i]) { solid[i] = 1; continue; }
+          let keep = 1;
+          for (let dy = -erodePx; dy <= erodePx && keep; dy++) for (let dx = -erodePx; dx <= erodePx; dx++) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= W || yy >= H || reached[yy * W + xx]) { keep = 0; break; } }
+          if (!keep) solid[i] = 1;
+        }
+      }
       for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
         const i = y * W + x; if (reached[i]) continue;
-        if (x < inset || y < inset || x >= W - inset || y >= H - inset) outsidePx++;
-        if (idGrid[i] >= 0) { overlapPx++; pairs.add(charmLayers[idGrid[i]].name + " ↔ " + charmLayers[li].name); }
+        if (solid[i]) continue;                               // eroded rim: allowed to overlap / enter the inset band
+        if (x < inset || y < inset || x >= W - inset || y >= H - inset) { outsidePx++; }
+        if (idGrid[i] >= 0) { overlapPx++; const key = charmLayers[idGrid[i]].name + " ↔ " + charmLayers[li].name; pairs.add(key); const d = detail[key] || (detail[key] = { px: 0, x0: 1e9, y0: 1e9, x1: -1, y1: -1 }); d.px++; if (x < d.x0) d.x0 = x; if (y < d.y0) d.y0 = y; if (x > d.x1) d.x1 = x; if (y > d.y1) d.y1 = y; }
         idGrid[i] = li;
       }
       if (spec.onProgress) spec.onProgress(li + 1, charmLayers.length);
       await new Promise(r => setTimeout(r, 0));
     }
     try { doc.destroy(); } catch (_) { /* ignore */ }
-    return { ok: overlapPx === 0 && outsidePx === 0 && empty.length === 0, overlapPx, outsidePx, emptyLayers: empty, overlappingPairs: [...pairs], layers: charmLayers.length, res };
+    const overlapDetail = Object.fromEntries(Object.entries(detail).map(([k, d]) => [k, { px: d.px, boxPt: [d.x0, d.y0, d.x1, d.y1].map(v => +(v / res).toFixed(1)) }]));
+    return { ok: overlapPx === 0 && outsidePx === 0 && empty.length === 0, overlapPx, outsidePx, emptyLayers: empty, overlappingPairs: [...pairs], overlapDetail, layers: charmLayers.length, res, erodePx };
   }
 
   root.CharmNestPDF = { parseSource, groupCharms, buildSilhouettes, buildSheet, buildSingleCharm, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawSegments, pathToCanvas };

@@ -16,7 +16,7 @@ function shape(id, kind, wPt, hPt, scale = 6) {
   const pieces = [];
   let r = S.rng(7);
   for (let i = 0; i < 21; i++) pieces.push(shape('c' + i, kinds[i % 4], 55 + r() * 95, 55 + r() * 95));
-  const job = { sheet: { wPt: 513.03, hPt: 434.19, insetPt: 1.5 }, clearancePt: 0.5, angles: [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330], timeBudgetMs: 25000, seed: 3, pieces };
+  const job = { sheet: { wPt: 513.03, hPt: 434.19, insetPt: 1.5 }, clearancePt: -0.5, angles: [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330], timeBudgetMs: 25000, seed: 3, pieces };
   const tot = pieces.reduce((s, p) => s + p.areaPt2, 0);
   console.log('total charm area', tot.toFixed(0), 'pt² of', (513 * 434).toFixed(0), '=', (tot / (513 * 434) * 100).toFixed(1) + '% density needed');
   let placedEvents = 0, trials = 0; const t = Date.now();

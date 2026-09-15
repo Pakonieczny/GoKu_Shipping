@@ -29,7 +29,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   await page.goto(`http://127.0.0.1:${port}/charm-nest-1.html`);
   await page.waitForFunction(() => window.CN && window.CN.S);
   // settings for a fast, deterministic run
-  await page.evaluate(() => { CN.S.settings.budgetS = 60; CN.S.settings.clearancePt = 0.5; CN.S.settings.angleStep = 30; CN.S.settings.naming = 'off'; });
+  await page.evaluate(() => { CN.S.settings.budgetS = 60; CN.S.settings.clearancePt = -0.5; CN.S.settings.angleStep = 30; CN.S.settings.naming = 'off'; });
   if (process.env.CN_STOCK) { // e.g. "4.5x4" — a custom per-metal stock to force an overfilled sheet
     const [w, h] = process.env.CN_STOCK.split('x').map(Number);
     await page.evaluate(([w, h]) => { CN.S.settings.stock.gold = [w, h]; CN.S.stockPreset = 'custom'; document.querySelector('#stockSel').value = 'custom'; }, [w, h]);
@@ -42,6 +42,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   assert.strictEqual(src.state, 'ready', src.error);
   assert.strictEqual(src.charms, fx.charms.length, 'charm count');
   assert.strictEqual(src.metal, 'gold', 'routed by file name');
+  if (src.open) console.log('open charms', await page.evaluate(() => CN.S.sources[0].charms.filter(c => c.open).map(c => ({ i: c.index, w: +c.widthPt.toFixed(1), h: +c.heightPt.toFixed(1), members: c.members.length, area: +c.areaPt2.toFixed(0), sub: c.outline.subpaths.length }))));
   assert.strictEqual(src.open, 0, 'no open paths');
   const sat = await page.evaluate(() => CN.S.sheets.gold.sat);
   console.log('saturation before nest', { count: sat.count, needed: Math.round(sat.totalNeeded), usable: Math.round(sat.usable), nEst: sat.nEst, rho: sat.rho.rho, recommend: !!sat.recommend });
@@ -59,6 +60,10 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   await page.screenshot({ path: path.join(tmp, '2-nested.png') });
   const result = await page.evaluate(() => { const sh = CN.S.sheets.gold; return { status: sh.status, placed: sh.placements.length, rejects: sh.rejects.length, density: sh.density, endedBy: sh.endedBy, trials: sh.trials, verification: sh.verification, sat: { fullPct: sh.sat.fullPct, free: Math.round(sh.sat.freeFact), nEst: sh.sat.nEst, pocket: sh.sat.pocket }, hasOutputs: !!sh.outputs, layers: sh.placements.map(p => p.layerName) }; });
   console.log('result', JSON.stringify(result, null, 1));
+  // true overlap between un-eroded silhouettes (diagnostic for aggressive mode)
+  const trueOv = await page.evaluate(() => new Promise(res => { const sh = CN.S.sheets.gold; const job = CN.buildJob(sh); job.clearancePt = 0; const w = new Worker('charm-nest-worker.js'); w.onmessage = e => { if (e.data.type === 'verified') { res(e.data.result); w.terminate(); } }; w.postMessage({ type: 'verify', jobId: 'x', job, placements: sh.placements, res: 6 }); }));
+  if (result.verification.render && result.verification.render.overlapDetail) { console.log('render overlap detail', JSON.stringify(result.verification.render.overlapDetail)); const pl = await page.evaluate(() => CN.S.sheets.gold.placements.map(p => ({ n: p.layerName, a: p.angle, x: +p.cxPt.toFixed(1), y: +p.cyPt.toFixed(1), w: +p.wPt.toFixed(1), h: +p.hPt.toFixed(1) }))); console.log('placements', JSON.stringify(pl)); }
+  console.log('true overlap (no tolerance):', trueOv.overlapPx, 'px ·', trueOv.overlappingPairs.length, 'pairs · min gap', trueOv.minGapPt, 'pt');
   assert(result.hasOutputs, 'outputs written');
   assert(result.verification && result.verification.geom.ok, 'geometry verification passed');
   assert(result.verification.render && result.verification.render.ok, 'render verification passed: ' + JSON.stringify(result.verification.render));
