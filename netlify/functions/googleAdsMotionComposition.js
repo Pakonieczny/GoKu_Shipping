@@ -54,7 +54,7 @@ function bandGeometry(format,subject,sourceOrientation){
  const product={x:(hx+subject.x*hw)/W,y:(hy+subject.y*hh)/H,w:subject.w*hw/W,h:subject.h*hh/H};
  const zones={top:{x:.065*W,y:.075*H,w:.87*W,h:(product.y-.055-.075)*H},left:{x:.065*W,y:.12*H,w:(product.x-.05-.065)*W,h:.68*H},right:{x:(product.x+product.w+.05)*W,y:.12*H,w:(.935-product.x-product.w-.05)*W,h:.68*H}};
  const order=top?['top','left','right']:['left','top','right'];
- return {mode:'band',crop:{x:0,y:0,w:1,h:1},hero:{x:hx,y:hy,w:hw,h:hh},product,zones:order.map(name=>({...zones[name],name})).filter(z=>z.w>=W*.20&&z.h>=72)};
+ return {mode:'band',seam:top?{edge:'top',at:hy}:{edge:'left',at:hx},crop:{x:0,y:0,w:1,h:1},hero:{x:hx,y:hy,w:hw,h:hh},product,zones:order.map(name=>({...zones[name],name})).filter(z=>z.w>=W*.20&&z.h>=72)};
 }
 let fonts;
 async function fontOptions(){if(fonts)return fonts;const fontFiles=[];for(const name of ['CormorantGaramond.ttf','OpenSans-Regular.ttf','OpenSans-Bold.ttf']){let file;for(const dir of [path.join(__dirname,'fonts'),path.join(process.cwd(),'netlify/production-functions/fonts'),path.join(process.cwd(),'netlify/functions/fonts')]){try{const p=path.join(dir,name);await fs.access(p);file=p;break;}catch{}}if(!file)throw Error('Video caption font is missing: '+name);fontFiles.push(file);}return fonts={font:{fontFiles,loadSystemFonts:false,defaultFontFamily:'Open Sans'}};}
@@ -116,8 +116,14 @@ async function composeTier(plan,format,beats,tier,hints){
   layers.push({...beat,bytes:Buffer.from(new Resvg(svg,options).render().asPng()),fontSize:size,zone,product:g.product});
  }
  if(persistent){
+  const seam=g.seam?(()=>{
+   const depth=Math.round((g.seam.edge==='top'?H:W)*.14),at=g.seam.at;
+   const box=g.seam.edge==='top'?{x:0,y:at,w:W,h:depth}:{x:at,y:0,w:depth,h:H};
+   const dir=g.seam.edge==='top'?'x1="0" y1="0" x2="0" y2="1"':'x1="0" y1="0" x2="1" y2="0"';
+   return `<defs><linearGradient id="seam" ${dir}><stop stop-color="${bg}" stop-opacity="1"/><stop offset=".45" stop-color="${bg}" stop-opacity=".55"/><stop offset="1" stop-color="${bg}" stop-opacity="0"/></linearGradient></defs><rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" fill="url(#seam)"/>`;
+  })():'';
   const wash=[...washes.values()].map(({rect,gradient},i)=>`<defs><linearGradient id="base${i}" ${gradient}><stop stop-color="${bg}" stop-opacity="${stops[0]}"/><stop offset=".66" stop-color="${bg}" stop-opacity="${stops[1]}"/><stop offset="1" stop-color="${bg}" stop-opacity="0"/></linearGradient></defs><rect x="${rect.x}" y="${rect.y}" width="${rect.w}" height="${rect.h}" fill="url(#base${i})"/>`).join('');
-  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">${wash}<svg x="${logoBox.x}" y="${logoBox.y}" width="${logoBox.w}" height="${logoBox.h}" viewBox="${logo.crop.x} ${logo.crop.y} ${logo.crop.width} ${logo.crop.height}"><image width="${logo.width}" height="${logo.height}" href="${logoData}"/></svg></svg>`;
+  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">${seam}${wash}<svg x="${logoBox.x}" y="${logoBox.y}" width="${logoBox.w}" height="${logoBox.h}" viewBox="${logo.crop.x} ${logo.crop.y} ${logo.crop.width} ${logo.crop.height}"><image width="${logo.width}" height="${logo.height}" href="${logoData}"/></svg></svg>`;
   layers.unshift({start:0,end:10,persistent:true,logoBox,bytes:Buffer.from(new Resvg(svg,options).render().asPng()),product:g.product});
  }
  return layers;
