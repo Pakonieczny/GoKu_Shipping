@@ -11,7 +11,9 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
 (async () => {
   const tmp = fs.mkdtempSync(path.join(require('os').tmpdir(), 'cn-'));
   const fixture = path.join(tmp, 'TEST-GF-sheet.ai');
-  const fx = await build(fixture, +process.env.CN_COUNT || 18);
+  let fx;
+  if (process.env.CN_FILE) { fs.copyFileSync(process.env.CN_FILE, fixture); fx = { charms: new Array(+process.env.CN_EXPECT || 21) }; }   // real artwork: expect CN_EXPECT charms
+  else fx = await build(fixture, +process.env.CN_COUNT || 18);
   const server = http.createServer((req, res) => {
     const u = decodeURIComponent(req.url.split('?')[0]);
     if (u.startsWith('/.netlify/functions/')) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end('{"error":"no functions in the test server"}'); }
@@ -26,10 +28,10 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   const errors = [];
   page.on('pageerror', e => errors.push('pageerror: ' + e.message));
   page.on('console', m => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.type() + ': ' + m.text()); });
-  await page.goto(`http://127.0.0.1:${port}/charm-nest-1.html`);
+  await page.goto(`http://127.0.0.1:${port}/charm-nest-1.html?budget=${process.env.CN_BUDGET || 60}`);
   await page.waitForFunction(() => window.CN && window.CN.S);
   // settings for a fast, deterministic run
-  await page.evaluate(() => { CN.S.settings.budgetS = 60; CN.S.settings.clearancePt = -0.5; CN.S.settings.angleStep = 30; CN.S.settings.naming = 'off'; });
+  await page.evaluate(() => { CN.S.settings.budgetS = +(new URLSearchParams(location.search).get("budget")) || 60; CN.S.settings.clearancePt = -0.5; CN.S.settings.angleStep = 30; CN.S.settings.naming = 'off'; });
   if (process.env.CN_STOCK) { // e.g. "4.5x4" — a custom per-metal stock to force an overfilled sheet
     const [w, h] = process.env.CN_STOCK.split('x').map(Number);
     await page.evaluate(([w, h]) => { CN.S.settings.stock.gold = [w, h]; CN.S.stockPreset = 'custom'; document.querySelector('#stockSel').value = 'custom'; }, [w, h]);
@@ -44,6 +46,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   assert.strictEqual(src.metal, 'gold', 'routed by file name');
   if (src.open) console.log('open charms', await page.evaluate(() => CN.S.sources[0].charms.filter(c => c.open).map(c => ({ i: c.index, w: +c.widthPt.toFixed(1), h: +c.heightPt.toFixed(1), members: c.members.length, area: +c.areaPt2.toFixed(0), sub: c.outline.subpaths.length }))));
   assert.strictEqual(src.open, 0, 'no open paths');
+  if (!process.env.CN_FILE) {
   // AI grouping review contract: a "fragment" verdict merges a charm into its parent and re-traces the silhouette
   const rev = await page.evaluate(async () => {
     const src = CN.S.sources[0]; const before = src.charms.length; const target = src.charms[0], frag = src.charms[1];
@@ -55,6 +58,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   console.log('grouping review', rev);
   assert.strictEqual(rev.after, rev.before - 1, 'fragment removed'); assert.strictEqual(rev.members, rev.expectMembers, 'members merged'); assert(rev.areaGrew, 'silhouette re-traced'); assert.strictEqual(rev.sheet, rev.after, 'sheet queue updated'); assert(rev.overviewBytes > 20000, 'overview rendered');
   fx.charms.pop();   // one fewer charm from here on
+  }
   const sat = await page.evaluate(() => CN.S.sheets.gold.sat);
   console.log('saturation before nest', { count: sat.count, needed: Math.round(sat.totalNeeded), usable: Math.round(sat.usable), nEst: sat.nEst, rho: sat.rho.rho, recommend: !!sat.recommend });
   await page.screenshot({ path: path.join(tmp, '1-queued.png') });
@@ -62,7 +66,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   await page.click('.sheetCard[data-m=gold] [data-r=nest]');
   await page.waitForFunction(() => CN.S.sheets.gold.status === 'nesting' || ['complete', 'partial'].includes(CN.S.sheets.gold.status));
   let lastPlaced = -1, t0 = Date.now();
-  while (Date.now() - t0 < 150000) {
+  while (Date.now() - t0 < 400000) {
     const st = await page.evaluate(() => ({ status: CN.S.sheets.gold.status, placed: CN.S.sheets.gold.placements.length, stage: CN.S.sheets.gold.stage, trials: CN.S.sheets.gold.trials }));
     if (st.placed !== lastPlaced) { lastPlaced = st.placed; console.log(' ', st.status, st.placed, 'placed ·', st.stage); }
     if (['complete', 'partial'].includes(st.status)) break;

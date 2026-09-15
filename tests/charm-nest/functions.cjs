@@ -129,6 +129,21 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   r = await post(review, { mode: 'layout', placements: [] }); assert.strictEqual(r.status, 400, 'preview required');
   delete process.env.ANTHROPIC_API_KEY;
 
+  // ── agent job: startAgent → background (model stubbed) → getAgent ──
+  const agentBg = require(path.join(fnDir, 'charmNestAgent-background.js'));
+  const anthro = require(path.join(fnDir, '_etsyMailAnthropic.js'));
+  const realCall = anthro.callClaudeRaw;
+  anthro.callClaudeRaw = async (o) => ({ stop_reason: 'end_turn', usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: 'text', text: JSON.stringify(o.output_config || o.outputFormat ? { verdicts: [{ index: 0, verdict: 'complete', mergeInto: null, note: '' }], realCharmCount: 1, summary: 'one charm, fine' } : {}) }] });
+  process.env.ANTHROPIC_API_KEY = 'x';
+  r = await post(lib, { op: 'startAgent', mode: 'grouping', payload: { sourceName: 't', overview: 'data:image/jpeg;base64,/9j/', charms: [{ index: 0, thumb: 'data:image/png;base64,iVBORw0KGgo=' }] } });
+  assert(r.body.id, 'agent id: ' + JSON.stringify(r.body));
+  const agentId = r.body.id;
+  const bgr = await agentBg.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify({ id: agentId, mode: 'grouping', payload: { sourceName: 't', overview: 'data:image/jpeg;base64,/9j/', charms: [{ index: 0, thumb: 'data:image/png;base64,iVBORw0KGgo=' }] } }) });
+  assert.strictEqual(bgr.statusCode, 200);
+  r = await post(lib, { op: 'getAgent', id: agentId });
+  assert.strictEqual(r.body.job.status, 'done'); assert.strictEqual(r.body.job.result.realCharmCount, 1, JSON.stringify(r.body.job));
+  anthro.callClaudeRaw = realCall; delete process.env.ANTHROPIC_API_KEY;
+
   // ── server solver: startJob → background → done ──
   const S = require(path.join(__dirname, '../../charm-nest-solver.js'));
   const pack = bits => { const o = new Uint8Array(Math.ceil(bits.length / 8)); for (let i = 0; i < bits.length; i++) if (bits[i]) o[i >> 3] |= 1 << (i & 7); return o; };

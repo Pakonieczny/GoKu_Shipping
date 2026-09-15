@@ -1,0 +1,177 @@
+/*  netlify/functions/_charmNestAgent.js
+ *  The model side of the Charm Nesting Station (Claude Opus 5, high effort,
+ *  adaptive thinking, structured output): grouping review, sheet inspection
+ *  and charm naming. Shared by the synchronous endpoints (charmNestReview,
+ *  charmNestName — fine for tiny inputs) and by charmNestAgent-background,
+ *  which the page actually uses: a high-effort vision call over a whole sheet
+ *  takes far longer than Netlify's ~10 s synchronous limit (it 504'd on the
+ *  first live sheet), so the page starts a job and polls Charm_Nest_Agent.  */
+"use strict";
+const { str, num } = require("./_charmNestAuth");
+const anthropic = require("./_etsyMailAnthropic");   // referenced through the module so tests can stub callClaudeRaw
+
+const MODEL = process.env.CHARM_NEST_NAME_MODEL || "claude-opus-5";
+const EFFORT = /^(low|medium|high|xhigh|max)$/.test(process.env.CHARM_NEST_REVIEW_EFFORT || "") ? process.env.CHARM_NEST_REVIEW_EFFORT : "high";
+const NAME_EFFORT = /^(low|medium|high|xhigh|max)$/.test(process.env.CHARM_NEST_NAME_EFFORT || "") ? process.env.CHARM_NEST_NAME_EFFORT : "high";
+const MAX_CHARMS = 60;
+
+const GROUPING_INSTRUCTIONS = `You are the quality reviewer for a laser-cutting operator's charm-nesting tool.
+
+The tool reads an Illustrator sheet of loose jewelry charm artwork and splits it into individual charms by geometry. Geometry makes mistakes an operator spots instantly: a jump ring, a badge, an engraved rectangle or a hole outline gets split off as its own "charm"; two charms drawn close together get merged into one; a stray guide or frame is treated as a charm.
+
+You receive:
+1. An overview image of the whole source sheet. Every detected "charm" is boxed and labelled with its number.
+2. One cropped image per detected charm, in number order, with its size in inches.
+
+For every detected charm give a verdict:
+- "complete": this is one whole charm exactly as a customer would receive it (its cut outline plus its engraving, holes and jump ring).
+- "fragment": this is only a PIECE of a charm (a ring, hole, badge, panel, text, inner detail) that belongs to another detected charm. Set mergeInto to that charm's number — the charm it visibly sits on or touches in the overview. If its parent is not among the detected charms, use null.
+- "multiple": this box contains two or more separate charms.
+- "not_a_charm": a frame, guide, page border, stray mark or empty box.
+
+Be decisive and specific. Jewelry charms are typically 0.3–1.6 inches; a "charm" under 0.25 inch that is a plain ring or rectangle is almost always a fragment. Use the overview to see what touches what. In summary, say in one sentence how many real charms the sheet holds and what you corrected.`;
+
+const GROUPING_SCHEMA = {
+  type: "object", additionalProperties: false,
+  properties: {
+    verdicts: {
+      type: "array",
+      items: {
+        type: "object", additionalProperties: false,
+        properties: {
+          index: { type: "integer" },
+          verdict: { type: "string", enum: ["complete", "fragment", "multiple", "not_a_charm"] },
+          mergeInto: { type: ["integer", "null"] },
+          note: { type: "string" }
+        },
+        required: ["index", "verdict", "mergeInto", "note"]
+      }
+    },
+    realCharmCount: { type: "integer" },
+    summary: { type: "string" }
+  },
+  required: ["verdicts", "realCharmCount", "summary"]
+};
+
+const LAYOUT_INSTRUCTIONS = `You are the final inspector of a nested charm sheet before it goes to the laser.
+
+You receive the rendered sheet (the red rectangle is the stock edge) and the list of placed charms with their positions. The nesting algorithm guarantees no two silhouettes overlap beyond the allowed stroke tolerance, but it cannot judge what a charm IS. Look for what an operator would reject:
+- a piece that is clearly a fragment of another charm placed on its own (a lone ring, a lone badge or panel, text without its charm)
+- a charm that looks incomplete (missing its ring or a panel that appears elsewhere)
+- anything visibly overlapping, cut off by the sheet edge, or mirrored/unreadable engraved text
+- anything that is not a charm at all
+
+Report only real problems. If the sheet is good, say so with ok=true and no issues. For each issue name the charms involved by their listed names and say what to do (merge X into Y, exclude X, re-nest).`;
+
+const LAYOUT_SCHEMA = {
+  type: "object", additionalProperties: false,
+  properties: {
+    ok: { type: "boolean" },
+    issues: {
+      type: "array",
+      items: {
+        type: "object", additionalProperties: false,
+        properties: {
+          kind: { type: "string", enum: ["fragment", "incomplete", "overlap", "outside", "text", "not_a_charm", "other"] },
+          charms: { type: "array", items: { type: "string" } },
+          mergeInto: { type: ["string", "null"] },
+          action: { type: "string", enum: ["merge", "exclude", "renest", "review"] },
+          note: { type: "string" }
+        },
+        required: ["kind", "charms", "mergeInto", "action", "note"]
+      }
+    },
+    summary: { type: "string" }
+  },
+  required: ["ok", "issues", "summary"]
+};
+
+const NAME_INSTRUCTIONS = `You name jewelry charm artwork for a laser-cutting operator's Illustrator layers.
+Each image is one charm's vector artwork rendered on white: its cut outline plus engraving details. Charms are small (usually 0.3 to 1.5 inches) and are jewelry pendants: animals, symbols, letters, badges, tools, flowers, celestial shapes, vehicles, hearts, initials, dates, names.
+
+For every charm, in the order given, return:
+- slug: 2-4 lowercase words joined by hyphens that a person would use to find this exact charm again (e.g. "compass-rose", "police-vest", "axolotl", "celtic-knot", "initial-m", "date-9-26-25"). If the charm carries engraved text, prefer that text in the slug. Never use generic slugs like "charm" or "pendant" alone.
+- label: one short plain-English phrase describing it (max 8 words).
+- confidence: 0 to 1, how sure you are of the identification.
+- metal: only when asked (wantMetal), your best guess of "gold", "silver" or "rose" from any hint in the artwork or file name; otherwise null.
+
+Return one entry per input index, no more and no fewer. Do not invent charms.`;
+
+const NAME_SCHEMA = {
+  type: "object", additionalProperties: false,
+  properties: {
+    charms: {
+      type: "array",
+      items: {
+        type: "object", additionalProperties: false,
+        properties: {
+          index: { type: "integer" },
+          slug: { type: "string" },
+          label: { type: "string" },
+          confidence: { type: "number" },
+          metal: { type: ["string", "null"], enum: ["gold", "silver", "rose", null] }
+        },
+        required: ["index", "slug", "label", "confidence", "metal"]
+      }
+    }
+  },
+  required: ["charms"]
+};
+
+
+function parseDataUrl(u) {
+  const m = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(u || ""));
+  return m ? { type: "image", source: { type: "base64", media_type: m[1], data: m[2] } } : null;
+}
+
+/** Build the request for a mode; returns {error} for bad input. */
+function buildRequest(mode, body) {
+  const content = [];
+  if (mode === "grouping") {
+    const overview = parseDataUrl(body.overview);
+    const charms = (body.charms || []).slice(0, MAX_CHARMS).map(c => ({ index: num(c.index), img: parseDataUrl(c.thumb), widthPt: num(c.widthPt), heightPt: num(c.heightPt), members: num(c.members) })).filter(c => c.img);
+    if (!overview || !charms.length) return { error: "overview and charm thumbnails are required" };
+    content.push({ type: "text", text: `Source file: ${str(body.sourceName, 120) || "(unknown)"}. The geometry detected ${charms.length} charms. Overview of the whole sheet with numbered boxes:` });
+    content.push(overview);
+    for (const c of charms) { content.push({ type: "text", text: `Charm ${c.index} · ${(c.widthPt / 72).toFixed(2)} × ${(c.heightPt / 72).toFixed(2)} in · ${c.members} drawing elements` }); content.push(c.img); }
+    return { system: GROUPING_INSTRUCTIONS, schema: GROUPING_SCHEMA, content, effort: EFFORT };
+  }
+  if (mode === "layout") {
+    const preview = parseDataUrl(body.preview);
+    if (!preview) return { error: "preview image is required" };
+    const list = (body.placements || []).slice(0, 200).map(p => `${str(p.n, 4)}. ${str(p.name, 60)} — ${(num(p.wPt) / 72).toFixed(2)} × ${(num(p.hPt) / 72).toFixed(2)} in at ${(num(p.cxPt) / 72).toFixed(2)}, ${(num(p.cyPt) / 72).toFixed(2)} in from the top-left, ${num(p.angle)}°`).join("\n");
+    content.push({ type: "text", text: `Sheet ${str(body.sheetName, 80)} · ${(body.placements || []).length} charms placed${body.rejects ? ` · ${str(body.rejects, 300)} did not fit` : ""}.\n\nPlaced charms:\n${list}\n\nRendered sheet:` });
+    content.push(preview);
+    return { system: LAYOUT_INSTRUCTIONS, schema: LAYOUT_SCHEMA, content, effort: EFFORT };
+  }
+  if (mode === "name") {
+    const charms = (body.charms || []).slice(0, MAX_CHARMS).map(c => ({ index: num(c.index), img: parseDataUrl(c.thumb), widthPt: num(c.widthPt), heightPt: num(c.heightPt), qty: num(c.qty) || 1 })).filter(c => c.img);
+    if (!charms.length) return { error: "no charm thumbnails" };
+    const wantMetal = !!body.wantMetal;
+    content.push({ type: "text", text: `Source file: ${str(body.sourceName, 120) || "(unknown)"}. wantMetal: ${wantMetal ? "yes" : "no"}. ${charms.length} charms follow, each preceded by its index and size.` });
+    for (const c of charms) { content.push({ type: "text", text: `index ${c.index} · ${(c.widthPt / 72).toFixed(2)} × ${(c.heightPt / 72).toFixed(2)} in${c.qty > 1 ? ` · appears ×${c.qty}` : ""}` }); content.push(c.img); }
+    return { system: NAME_INSTRUCTIONS, schema: NAME_SCHEMA, content, effort: NAME_EFFORT, wantMetal };
+  }
+  return { error: "unknown mode" };
+}
+
+/** Run one mode. Never throws for model trouble: returns {skipped} instead. */
+async function run(mode, body) {
+  if (!process.env.ANTHROPIC_API_KEY) return { skipped: "ANTHROPIC_API_KEY is not set" };
+  const req = buildRequest(mode, body);
+  if (req.error) return { error: req.error };
+  try {
+    const res = await anthropic.callClaudeRaw({ model: MODEL, maxTokens: 8000, effort: req.effort, system: [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }], messages: [{ role: "user", content: req.content }], outputFormat: { type: "json_schema", schema: req.schema } });
+    if (res.stop_reason === "refusal") return { skipped: "model declined" };
+    const text = (res.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+    let parsed; try { parsed = JSON.parse(text); } catch (_) { return { skipped: "unparseable model output" }; }
+    if (mode === "name") {
+      parsed = { charms: (parsed.charms || []).map(x => ({ index: num(x.index), slug: str(x.slug, 60).toLowerCase().replace(/[^a-z0-9\-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || null, label: str(x.label, 120), confidence: Math.max(0, Math.min(1, num(x.confidence))), metal: req.wantMetal && /^(gold|silver|rose)$/.test(x.metal || "") ? x.metal : null })).filter(x => x.slug) };
+    }
+    return Object.assign({ mode, model: MODEL, effort: req.effort, usage: res.usage || null }, parsed);
+  } catch (e) {
+    console.error("[charmNestAgent]", mode, e.status || "", e.message);
+    return { skipped: `${mode === "name" ? "naming" : "review"} unavailable (${e.status || e.message})` };
+  }
+}
+module.exports = { run, buildRequest, MODEL, EFFORT, NAME_EFFORT };

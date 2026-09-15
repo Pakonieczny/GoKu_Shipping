@@ -6,6 +6,7 @@
     "bootstrapOwner.js",
     "britesAuth.js",
     "charmBatchSweepCron.js",
+    "charmNestAgent-background.js",
     "charmNestLibrary.js",
     "charmNestName.js",
     "charmNestOutput.js",
@@ -156,6 +157,7 @@
     "visionWarehouse.js"
   ],
   "modules": [
+    "_charmNestAgent.js",
     "_charmNestAuth.js",
     "_charmNestSolver.js",
     "_etsyApiMeter.js",

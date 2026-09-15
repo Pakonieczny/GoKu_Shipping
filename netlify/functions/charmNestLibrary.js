@@ -167,7 +167,28 @@ async function op_stopJob(b) {
   return { ok: true };
 }
 
-const OPS = { ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, deleteSheet: op_deleteSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob };
+/* Claude jobs (review / naming) run in charmNestAgent-background; the payload
+   (images) is passed straight through to the kick so Firestore never stores it. */
+const AGENT = "Charm_Nest_Agent";
+async function op_startAgent(b) {
+  const mode = ["grouping", "layout", "name"].includes(b.mode) ? b.mode : null;
+  if (!mode || !b.payload) return { error: "mode and payload required" };
+  const id = "agent-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  await db.collection(AGENT).doc(id).set({ id, mode, status: "pending", sheetId: str(b.sheetId, 80), sourceName: str(b.sourceName, 120), createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() });
+  const fetch = require("node-fetch");
+  const base = process.env.URL || process.env.DEPLOY_PRIME_URL || "https://goldenspike.app";
+  const kick = await fetch(`${base}/.netlify/functions/charmNestAgent-background`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, mode, payload: b.payload }) }).catch(err => ({ ok: false, status: 0, statusText: err.message }));
+  if (!kick.ok && kick.status !== 202) { await db.collection(AGENT).doc(id).set({ status: "error", error: `kick failed: ${kick.status} ${kick.statusText || ""}`, updatedAt: FV.serverTimestamp() }, { merge: true }); return { error: `could not start the background job (${kick.status})` }; }
+  return { ok: true, id };
+}
+async function op_getAgent(b) {
+  if (!isId(b.id)) return { error: "bad id" };
+  const s = await db.collection(AGENT).doc(b.id).get();
+  if (!s.exists) return { job: null };
+  const d = s.data(); return { job: { id: d.id, mode: d.mode, status: d.status, error: d.error || null, result: d.result || null, startedAt: ms(d.startedAt), createdAt: ms(d.createdAt) } };
+}
+
+const OPS = { startAgent: op_startAgent, getAgent: op_getAgent, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, deleteSheet: op_deleteSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob };
 
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: require("./_charmNestAuth").CORS, body: "" };
