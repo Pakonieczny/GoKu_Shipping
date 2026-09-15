@@ -11,5 +11,11 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require
  q('[data-refresh]').click();await new Promise(setImmediate);q('[data-discard]').click();let b=q('dialog .bam-primary');await b.onclick();assert.equal(b.disabled,false);assert.equal(q('[data-generate]').textContent,'Resume animation','failed discard keeps job');
  failDiscard=false;await b.onclick();assert.equal(q('[data-generate]').textContent,'Generate animated ads');assert.equal(q('[data-discard]').hidden,true);
  pending(state);await new Promise(setImmediate);assert.equal(q('[data-generate]').textContent,'Generate animated ads','late poll cannot restore discarded job');assert.equal(timers.length,0);
- dom.window.close();console.log('PASS recovery controls, failed discard retry, idle polling and late-response isolation');
+ const auto=new JSDOM('<div id="host"></div>',{runScripts:'outside-only',url:'https://example.test'}),aw=auto.window;aw.HTMLDialogElement.prototype.showModal=function(){this.open=true;};aw.HTMLDialogElement.prototype.close=function(){this.open=false;};aw.setTimeout=()=>0;aw.clearTimeout=()=>{};
+ aw.eval(fs.readFileSync('brites-ad-motion.js','utf8'));const autoCalls=[];
+ aw.BritesAdMotion.mount(aw.document.getElementById('host'),{scope:{workspaceId:'w',productId:'p',groupRef:'g'},request:async(a,b)=>{autoCalls.push({a,b});if(a==='startAdDesignMotion')return {ok:true,jobId:'motion_old',queued:true};return {ok:true,jobId:'motion_old',workspaceId:'w',phase:'needs_attention',canResume:true,autoResume:true,error:'Square film has insufficient clear space',variants:[]};}});
+ await new Promise(setImmediate);await new Promise(setImmediate);
+ assert.equal(autoCalls.filter(c=>c.a==='startAdDesignMotion'&&c.b.resumeJobId==='motion_old').length,1,'a run stopped by an earlier composition rule resumes itself exactly once');
+ auto.window.close();
+ dom.window.close();console.log('PASS recovery controls, failed discard retry, idle polling, late-response isolation and automatic resume');
 })().catch(e=>{console.error(e);process.exitCode=1;});

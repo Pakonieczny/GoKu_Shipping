@@ -3735,7 +3735,11 @@ function adDesignEditing(s){
   if(preview)return {id:selected.id,source:{kind:'savedDesign',imageId:selected.id},url:preview.url,displayUrl:preview.url,title:selected.name,width:preview.width,height:preview.height,savedPreview:true,record:{artwork:true}};
   var slot=adDesignSlotKey(s),choice=(s.editSources||{})[slot],generated=s.imageTab==='generated',record,rows=adDesignGalleryRows(s);
   if(generated){var options=adDesignGenerated(s);record=options.find(function(r){return r.id===(s.generatedChoice||{})[slot];})||options[0];}
-  else {var chosen=choice&&rows.find(function(r){return r.key===choice;});if(chosen)return adDesignRowSource(chosen);record=adDesignAssignedAsset(s);}
+  else {var chosen=choice&&rows.find(function(r){return r.key===choice;});if(chosen)return adDesignRowSource(chosen);
+    // No explicit choice yet: show the first repository thumbnail, never the latest AI design.
+    var first=rows.some(function(r){return r.selected;})?null:rows.find(function(r){return r.allowed;});
+    if(first&&first.saved){var d=first.design;return {id:d.id,source:{kind:'savedDesign',imageId:d.id},url:d.url,displayUrl:d.url,title:d.name,width:d.artboard.width,height:d.artboard.height,savedPreview:true,record:{artwork:true}};}
+    if(first)return adDesignRowSource(first);record=adDesignAssignedAsset(s);}
   if(record)return {id:record.id,source:{kind:'library',imageId:record.id},url:record.originalUrl||record.url,displayUrl:record.url,title:record.title,crop:record.crop,width:record.sourceWidth||(record.asset||{}).width,height:record.sourceHeight||(record.asset||{}).height,record:record};
   if(generated)return null;
   var current=adDesignCurrentAsset(s),row=current&&rows.find(function(r){return r.current&&r.imageId===adDesignImageId(current);});
