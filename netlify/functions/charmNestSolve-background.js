@@ -33,8 +33,12 @@ exports.handler = async (event) => {
   if (snap.data().status === "running" || snap.data().status === "done") return { statusCode: 200, body: "already handled" };
   await ref.set({ status: "running", startedAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() }, { merge: true });
 
-  const pieces = job.pieces.map(p => ({ id: String(p.id), w: p.w | 0, h: p.h | 0, scale: +p.scale || 6, bits: new Uint8Array(Buffer.from(String(p.bits || ""), "base64")), areaPt2: +p.areaPt2 || 0, pinned: p.pinned || null }))
-    .filter(p => p.w > 0 && p.h > 0 && p.bits.length === p.w * p.h);
+  const pieces = job.pieces.map(p => {
+    const raw = new Uint8Array(Buffer.from(String(p.bits || ""), "base64"));
+    const n = (p.w | 0) * (p.h | 0);
+    const bits = p.packed ? unpackBits(raw, n) : raw;
+    return { id: String(p.id), w: p.w | 0, h: p.h | 0, scale: +p.scale || 6, bits, areaPt2: +p.areaPt2 || 0, pinned: p.pinned || null };
+  }).filter(p => p.w > 0 && p.h > 0 && p.bits.length === p.w * p.h);
   const solverJob = Object.assign({}, job, { pieces, timeBudgetMs: Math.min(+job.timeBudgetMs || 180000, MAX_BUDGET_MS) });
 
   let stop = false, lastWrite = 0, lastCheck = 0, best = null, trials = 0;
@@ -64,6 +68,7 @@ exports.handler = async (event) => {
   return { statusCode: 200, body: "ok" };
 };
 
+function unpackBits(buf, n) { const out = new Uint8Array(n); for (let i = 0; i < n; i++) out[i] = (buf[i >> 3] >> (i & 7)) & 1; return out; }
 function slimBest(b) {
   return { placements: (b.placements || []).map(p => ({ id: p.id, angle: p.angle, cxPt: +p.cxPt.toFixed(3), cyPt: +p.cyPt.toFixed(3), xPt: +p.xPt.toFixed(3), yPt: +p.yPt.toFixed(3), wPt: +p.wPt.toFixed(2), hPt: +p.hPt.toFixed(2) })), rejects: b.rejects || [], density: b.density, freePt2: b.freePt2, usablePt2: b.usablePt2, placedPt2: b.placedPt2, pocket: b.pocket || null, trial: b.trial };
 }

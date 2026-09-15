@@ -485,6 +485,7 @@ async function uploadBytes(path, bytes, contentType, label) {
   }
 }
 function toBase64(bytes) { return new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(",")[1]); fr.onerror = rej; fr.readAsDataURL(bytes instanceof Blob ? bytes : new Blob([bytes])); }); }
+function packBits(bits) { const out = new Uint8Array(Math.ceil(bits.length / 8)); for (let i = 0; i < bits.length; i++) if (bits[i]) out[i >> 3] |= 1 << (i & 7); return out; }
 function dataUrlToBytes(u) { const b = atob(u.split(",")[1]); const a = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); return a; }
 
 /* ═══ 4 · sign-in gate (authGate contract) ══════════════════════════════ */
@@ -793,8 +794,11 @@ function onWorkerMessage(sh, m) {
 async function startServerNest(sh, job) {
   try {
     sh.stage = "Sending to the server solver…"; renderCard(sh);
-    const pieces = await Promise.all(job.pieces.map(async p => Object.assign({}, p, { bits: await toBase64(p.bits) })));
+    // 1 bit per cell, base64 — an 80-piece sheet is ~2 MB instead of ~20 MB
+    const pieces = await Promise.all(job.pieces.map(async p => Object.assign({}, p, { packed: true, bits: await toBase64(packBits(p.bits)) })));
     const payload = Object.assign({}, job, { pieces });
+    const size = JSON.stringify(payload).length;
+    if (size > 5 * 1024 * 1024) throw new Error(`job payload is ${(size / 1048576).toFixed(1)} MB — over the function limit`);
     const r = await api("charmNestLibrary", { op: "startJob", sheetId: sh.sheetId, job: payload }, { label: "Starting server solve" });
     sh.serverJob = r.id; $("#railSolver").textContent = "solver: server";
     const poll = async () => {

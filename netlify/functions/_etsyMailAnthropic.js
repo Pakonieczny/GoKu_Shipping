@@ -350,20 +350,6 @@ async function runToolLoop({
   };
 }
 
-module.exports = {
-  callClaudeRaw,
-  runToolLoop,
-  isClaudeOverloadError,
-  buildSystemBlocks,
-  sleep,
-  // v5.0 — shared context-fetcher + investigation protocol used by every
-  // AI component in EtsyMail (classifier, sales agent, draft-reply,
-  // design dispatch). Implementations live at the bottom of this file.
-  fetchClassificationContext,
-  formatContextForPrompt,
-  INVESTIGATION_PROTOCOL_TEXT,
-  INVESTIGATION_JSON_SCHEMA,
-};
 
 // ════════════════════════════════════════════════════════════════════════
 //  v5.0 — Shared classification context + investigation protocol
@@ -728,3 +714,21 @@ function formatContextForPrompt(ctx) {
   lines.push("═══ END THREAD CONTEXT ═══");
   return lines.join("\n");
 }
+
+// Exports live at the very end: INVESTIGATION_PROTOCOL_TEXT / _JSON_SCHEMA are
+// `const`s declared above, and referencing them before that line threw a
+// ReferenceError on require.
+module.exports = {
+  callClaudeRaw,
+  runToolLoop,
+  isClaudeOverloadError,
+  buildSystemBlocks,
+  sleep,
+  // v5.0 — shared context-fetcher + investigation protocol used by every
+  // AI component in EtsyMail (classifier, sales agent, draft-reply,
+  // design dispatch). Implementations live at the bottom of this file.
+  fetchClassificationContext,
+  formatContextForPrompt,
+  INVESTIGATION_PROTOCOL_TEXT,
+  INVESTIGATION_JSON_SCHEMA,
+};
