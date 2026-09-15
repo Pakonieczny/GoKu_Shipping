@@ -56,6 +56,7 @@ const CORS_ORIGINS = [
   "https://design-message.goldenspike.app",
   "https://design-message-1.goldenspike.app",
   "https://game-generator-1.goldenspike.app",
+  "https://brites-charm-sorter.goldenspike.app", // charm nesting station — direct signed-URL uploads of .ai/.pdf/.png/.json
   "http://localhost:8888"
 ];
 

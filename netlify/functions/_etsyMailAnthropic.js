@@ -107,7 +107,8 @@ async function callClaudeRaw({
   tools,
   effort,
   useThinking = true,
-  budgetTokens
+  budgetTokens,
+  outputFormat            // structured outputs: {type:"json_schema", schema} → output_config.format
 }) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("Missing ANTHROPIC_API_KEY");
@@ -133,6 +134,8 @@ async function callClaudeRaw({
     if (budgetTokens) body.thinking = { type: "enabled", budget_tokens: budgetTokens };
     if (effort)       body.output_config = { effort };
   }
+
+  if (outputFormat) body.output_config = Object.assign({}, body.output_config || {}, { format: outputFormat });
 
   const headers = {
     "Content-Type"     : "application/json",

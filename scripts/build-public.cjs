@@ -20,6 +20,7 @@ const assets = [
   "assembly-scan-4.html",
   "brites-adwords.html",
   "brites-vfx.html",
+  "charm-nest-1.html",
   "design-1.html",
   "design-message-1.html",
   "design-message.html",
@@ -74,6 +75,13 @@ const assets = [
   "lib/jsQR.js",
   "lib/qrcode.min.js",
   "vendor/fabric-7.4.0.min.js",
+  "charm-nest-solver.js",
+  "charm-nest-worker.js",
+  "charm-nest-pdf.js",
+  "vendor/jszip-3.10.1.min.js",
+  "vendor/pdf-lib-1.17.1.min.js",
+  "vendor/pdfjs-4.10.38/pdf.min.mjs",
+  "vendor/pdfjs-4.10.38/pdf.worker.min.mjs",
   "shopify/assets/brites-custom-studio.js"
 ];
 fs.rmSync(output, { recursive: true, force: true });

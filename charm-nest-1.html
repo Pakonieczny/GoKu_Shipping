@@ -1,0 +1,1326 @@
+<!doctype html>
+<html lang="en" data-rail="md">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Brites · Charm Nesting Station 1</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%20100%22%3E%3Crect%20width%3D%22100%22%20height%3D%22100%22%20rx%3D%2220%22%20fill%3D%22%23221f1b%22%2F%3E%3Crect%20x%3D%2216%22%20y%3D%2216%22%20width%3D%2230%22%20height%3D%2230%22%20rx%3D%226%22%20fill%3D%22%23c8a24e%22%2F%3E%3Crect%20x%3D%2254%22%20y%3D%2216%22%20width%3D%2230%22%20height%3D%2230%22%20rx%3D%226%22%20fill%3D%22%238d95a0%22%2F%3E%3Crect%20x%3D%2216%22%20y%3D%2254%22%20width%3D%2230%22%20height%3D%2230%22%20rx%3D%226%22%20fill%3D%22%23c08578%22%2F%3E%3Ccircle%20cx%3D%2269%22%20cy%3D%2269%22%20r%3D%2214%22%20fill%3D%22none%22%20stroke%3D%22%23caa861%22%20stroke-width%3D%226%22%2F%3E%3C%2Fsvg%3E">
+<meta name="theme-color" content="#221f1b">
+<link rel="stylesheet" href="brites-progress.css">
+<style>
+/* ═══ BRITES DESIGN SYSTEM — tokens copied verbatim from design-1.html ═══ */
+:root{
+  --paper:#f3f0ea;--paper2:#ebe5d9;--card:#fffefb;--card2:#faf7f1;
+  --ink:#1c1a17;--ink70:#5b554c;--ink45:#938c80;--ink25:#c4bdb0;
+  --line:#e4ddd0;--line2:#efe9dd;--velvet:#221f1b;--velvet2:#2d2924;--velvetLine:#3b362f;
+  --gold:#a9823f;--gold2:#caa861;--goldSoft:#f0e6cd;--goldLine:#e3d3a6;
+  --sage:#5f7a5b;--sageSoft:#e7eddf;--clay:#b0563f;--claySoft:#f4e3dc;
+  --slate:#4a6b78;--slateSoft:#e1ebee;
+  --serif:'Hoefler Text','Iowan Old Style',Georgia,serif;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,system-ui,sans-serif;
+  --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  --r:14px;--rsm:9px;
+  --sh:0 1px 2px rgba(30,26,20,.04),0 9px 28px rgba(30,26,20,.06);
+  --m-gold:#c8a24e;--m-silver:#8d95a0;--m-rose:#c08578;
+  --railW:344px;--railPad:13px;
+  --rTxt:#f6f1e6;--rTxt2:#cdc4b2;--rTxt3:#ada393;--rDim:#7d7466;--rLine:rgba(246,241,230,.085);
+  --hdrFont:9.5px;--rowFont:12px;--rowPad:7px;
+}
+html[data-rail=sm]{--railW:284px;--railPad:9px;--hdrFont:8.5px;--rowFont:11.5px;--rowPad:4px}
+html[data-rail=md]{--railW:344px;--railPad:13px;--hdrFont:9.5px;--rowFont:12px;--rowPad:7px}
+html[data-rail=lg]{--railW:428px;--railPad:17px;--hdrFont:11px;--rowFont:14px;--rowPad:10px}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--paper);color:var(--ink);font:14px/1.45 var(--sans);-webkit-font-smoothing:antialiased;overflow:hidden}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.hidden{display:none!important}
+:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--ink25);border-radius:9px;border:3px solid transparent;background-clip:content-box}
+.rail ::-webkit-scrollbar-thumb{background:#4a443b;background-clip:content-box}
+
+/* ── shell ── */
+.app{display:grid;grid-template-columns:var(--railW) minmax(0,1fr);height:100vh;transition:grid-template-columns .18s ease}
+.app.railOff{--railW:0px}
+.rail{background:var(--velvet);color:#e9e3d7;display:flex;flex-direction:column;overflow:hidden;min-width:0;border-right:1px solid var(--velvetLine)}
+.app.railOff .rail{visibility:hidden}
+.main{min-width:0;display:flex;flex-direction:column;overflow:hidden}
+.brand{padding:calc(var(--railPad) + 2px) var(--railPad);border-bottom:1px solid var(--velvetLine);flex:0 0 auto;display:flex;align-items:center;gap:8px}
+.brand .logo{font:19px var(--serif);color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.brand .logo b{color:var(--gold2);font-weight:400}
+.brand .tag{margin-top:3px;font-size:9.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--rTxt3)}
+html[data-rail=sm] .brand .tag{display:none}
+.railStatus{margin:11px var(--railPad) 0;padding:9px 11px;border:1px solid var(--velvetLine);border-radius:11px;background:var(--velvet2);display:flex;align-items:center;gap:9px;font-size:11.5px;color:var(--rTxt2);flex:0 0 auto;min-width:0}
+.railStatus .t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ink45);flex:0 0 auto}
+.dot.ok{background:var(--sage);box-shadow:0 0 0 3px rgba(95,122,91,.18)}
+.dot.warn{background:var(--gold2);box-shadow:0 0 0 3px rgba(202,168,97,.16)}
+.dot.bad{background:var(--clay);box-shadow:0 0 0 3px rgba(176,86,63,.18)}
+.railActions{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:11px var(--railPad) 6px;flex:0 0 auto}
+.railActions .wide{grid-column:1/-1}
+.queueHead{padding:9px var(--railPad) 7px;border-top:1px solid var(--velvetLine);display:flex;align-items:center;gap:8px;color:var(--rTxt3);font-size:var(--hdrFont);letter-spacing:.12em;text-transform:uppercase;font-weight:750;flex:0 0 auto;margin-top:6px}
+.queueHead .qhCount{margin-left:auto;font-family:var(--mono);letter-spacing:0;font-size:calc(var(--hdrFont) + 2px);color:var(--rTxt);font-weight:700}
+.railScroll{flex:1 1 auto;overflow:auto;min-height:0;padding:0 0 12px}
+.srcRow{margin:4px var(--railPad) 0;border:1px solid var(--velvetLine);background:var(--velvet2);border-radius:9px;padding:var(--rowPad) 9px;font-size:var(--rowFont)}
+.srcRow .srcHead{display:flex;align-items:center;gap:7px;min-width:0}
+.srcRow .srcName{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--rTxt)}
+.srcRow .srcN{font-family:var(--mono);color:var(--rTxt2);font-size:calc(var(--rowFont) - 1px)}
+.srcRow .srcKids{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
+.srcRow .srcState{font-size:10px;color:var(--rTxt3);margin-top:3px;display:flex;align-items:center;gap:6px}
+.srcRow .srcState .spin{width:10px;height:10px;border-width:2px;flex-basis:10px}
+.srcRow .srcX{border:0;background:transparent;color:var(--rTxt3);font-size:15px;line-height:1;padding:0 2px;border-radius:5px}
+.srcRow .srcX:hover{background:#3f382f;color:#fff}
+.mchip{display:inline-flex;align-items:center;gap:5px;border:1px solid #4a4239;background:#2a2621;color:var(--rTxt2);border-radius:20px;padding:2px 8px;font-size:10.5px;font-weight:700;white-space:nowrap}
+.mchip .sw{width:7px;height:7px;border-radius:2px;background:var(--ink45)}
+.mchip[data-m=gold] .sw{background:var(--m-gold)}.mchip[data-m=silver] .sw{background:var(--m-silver)}.mchip[data-m=rose] .sw{background:var(--m-rose)}
+.mchip[data-m=none]{border-style:dashed;color:#e8a992;border-color:#7a4c3d}
+.unRow{margin:4px var(--railPad) 0;border:1px dashed #7a4c3d;background:#2f2420;border-radius:9px;padding:var(--rowPad) 9px;font-size:var(--rowFont);display:flex;align-items:center;gap:8px;cursor:grab}
+.unRow:active{cursor:grabbing}
+.unRow img{width:28px;height:28px;object-fit:contain;background:#fff;border-radius:5px;flex:0 0 auto}
+.unRow .unName{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--rTxt)}
+.unRow .unBtns{display:flex;gap:3px}
+.unRow .unBtns button{width:22px;height:22px;border:1px solid #4a4239;background:#2a2621;border-radius:6px;padding:0;display:grid;place-items:center}
+.unRow .unBtns button i{width:9px;height:9px;border-radius:2px;display:block}
+.unRow .unBtns button:hover{background:#3f382f}
+.unHint{margin:6px var(--railPad) 0;font-size:10.5px;color:var(--rTxt3);line-height:1.45}
+.railFoot{padding:9px var(--railPad);border-top:1px solid var(--velvetLine);font-size:10.5px;color:var(--rTxt3);display:flex;gap:8px;align-items:center;flex:0 0 auto}
+.railFoot .spacer{flex:1}
+.railFoot .k{font-family:var(--mono);color:var(--rTxt2)}
+
+/* ── topbar ── */
+.topbar{flex:0 0 auto;background:rgba(243,240,234,.92);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:9px 16px;display:flex;align-items:center;gap:9px;flex-wrap:nowrap;z-index:30}
+.navBtn{width:36px;height:36px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);font-size:17px;display:grid;place-items:center;flex:0 0 auto}
+.navBtn:hover{background:var(--card2)}
+.topTitle{min-width:0;flex:1 1 auto}
+.topTitle h1{font:18px var(--serif);font-weight:500;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.topTitle .sub{font-size:11px;color:var(--ink45);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.spacer{flex:1 1 auto;min-width:6px}
+.modeSeg{display:flex;border:1px solid var(--line);border-radius:999px;background:var(--card2);padding:3px;gap:2px;flex:0 0 auto}
+.modeSeg button{border:0;background:transparent;border-radius:999px;padding:7px 15px;font-size:12.5px;font-weight:700;color:var(--ink70);white-space:nowrap;display:flex;align-items:center;gap:6px}
+.modeSeg button:hover{color:var(--ink)}
+.modeSeg button.on{background:var(--velvet);color:#fff}
+.btn{border:1px solid var(--ink);background:var(--ink);color:#fff;border-radius:9px;padding:8px 13px;font-weight:650;transition:opacity .15s,transform .08s;white-space:nowrap}
+.btn:hover{opacity:.9}.btn:active{transform:translateY(1px)}
+.btn:disabled{opacity:.45;cursor:default;transform:none}
+.btn.ghost{background:transparent;color:var(--ink);border-color:var(--line)}
+.btn.ghost:hover{background:var(--card2)}
+.btn.gold{background:var(--gold);border-color:var(--gold);color:#2a2013}
+.btn.sage{background:var(--sage);border-color:var(--sage);color:#fff}
+.btn.danger{background:var(--clay);border-color:var(--clay);color:#fff}
+.btn.velvet{background:var(--velvet);border-color:var(--velvet);color:#fff}
+.btn.sm{padding:6px 10px;font-size:12px}
+.btn.xs{padding:4px 8px;font-size:11px}
+.btn .spin{width:12px;height:12px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;display:inline-block;vertical-align:-2px;margin-right:6px}
+.btn.ghost .spin,.btn.gold .spin{border-color:rgba(0,0,0,.2);border-top-color:currentColor}
+@keyframes spin{to{transform:rotate(360deg)}}
+.pill{font-size:11px;font-weight:700;padding:5px 10px;border-radius:30px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.pill.neutral{background:var(--paper2);color:var(--ink70)}
+.pill.ok{background:var(--sageSoft);color:#3c5a39}
+.pill.warn{background:var(--goldSoft);color:#7a5a1d}
+.pill.bad{background:var(--claySoft);color:#8a3a26}
+.pill.info{background:var(--slateSoft);color:#33525d}
+.pill .spin{width:10px;height:10px;border:2px solid rgba(0,0,0,.15);border-top-color:currentColor;border-radius:50%;animation:spin .7s linear infinite}
+.topbar .btn,.topbar .navBtn{flex:0 0 auto}
+select.topSel{border:1px solid var(--line);background:var(--card);border-radius:9px;padding:7px 9px;font-size:12.5px}
+
+/* ── sheets grid ── */
+.stage{flex:1 1 auto;min-height:0;overflow:auto;padding:16px}
+.sheets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:start}
+@media (max-width:1380px){.sheets{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:900px){.sheets{grid-template-columns:1fr}}
+.sheetCard{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh);display:flex;flex-direction:column;min-width:0;position:relative;--accent:var(--ink25);border-top:4px solid var(--accent);transition:box-shadow .15s,outline-color .15s;outline:2px solid transparent;outline-offset:2px}
+.sheetCard[data-m=gold]{--accent:var(--m-gold)}.sheetCard[data-m=silver]{--accent:var(--m-silver)}.sheetCard[data-m=rose]{--accent:var(--m-rose)}
+.sheetCard.dragOver{outline-color:var(--accent);box-shadow:0 0 0 6px color-mix(in srgb,var(--accent) 18%,transparent),var(--sh)}
+.sheetCard.pulse{animation:pulse 1.1s ease}
+@keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 55%,transparent)}100%{box-shadow:0 0 0 22px transparent}}
+.shHead{display:flex;align-items:center;gap:9px;padding:11px 14px 8px;min-width:0}
+.shHead .sw{width:12px;height:12px;border-radius:3px;background:var(--accent);flex:0 0 auto}
+.shHead .name{font:17px var(--serif);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.shHead .stock{font-size:11px;color:var(--ink45);font-family:var(--mono);white-space:nowrap}
+.shHead .pill{margin-left:auto}
+.shPreviewWrap{position:relative;margin:0 14px;border:1px solid var(--line);border-radius:10px;background:var(--card2);overflow:hidden;aspect-ratio:var(--ar,513/434)}
+.shPreviewWrap canvas{display:block;width:100%;height:100%}
+.shPreviewWrap .dropHint{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--ink45);font-size:12.5px;text-align:center;padding:20px;pointer-events:none}
+.shPreviewWrap .dropHint b{font:20px var(--serif);color:var(--ink70);font-weight:400}
+.shPreviewWrap .dropHint .k{font-size:11px}
+.shPreviewWrap .shOverlay{position:absolute;left:8px;bottom:6px;display:flex;gap:5px;flex-wrap:wrap;pointer-events:none}
+.shPreviewWrap .shOverlay .pill{box-shadow:0 1px 3px rgba(0,0,0,.08);font-size:10.5px;padding:3px 8px}
+.shPreviewWrap .hint{position:absolute;right:8px;bottom:6px;font-size:10px;color:var(--ink45);background:rgba(255,254,251,.85);padding:2px 6px;border-radius:6px;pointer-events:none}
+.shProg{padding:4px 14px 0}
+.shProg progress{margin:6px 0 0}
+.shProg .bp-note{margin:2px 0 0}
+.shStage{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink70);min-height:18px;padding:5px 14px 0}
+.shStage .spin{width:11px;height:11px;border-width:2px;flex-basis:11px}
+.shStage .r{margin-left:auto;font-family:var(--mono);color:var(--ink45);font-size:10.5px;white-space:nowrap}
+.shSat{margin:8px 14px 0;border:1px solid var(--line);border-radius:10px;background:var(--card2);padding:9px 11px;display:grid;gap:3px}
+.shSat .fact{display:flex;align-items:baseline;gap:8px;font-size:12.5px}
+.shSat .fact b{font:700 20px var(--mono);letter-spacing:-.01em}
+.shSat .fact .free{color:var(--ink70);font-family:var(--mono);font-size:11.5px}
+.shSat .bar{height:6px;border-radius:9px;background:var(--paper2);overflow:hidden;position:relative;margin:2px 0 3px}
+.shSat .bar i{position:absolute;left:0;top:0;bottom:0;background:var(--accent);border-radius:9px;transition:width .3s}
+.shSat .bar em{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink45);opacity:.6}
+.shSat .est{font-size:11.5px;color:var(--ink45);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.shSat .est .lbl{font-size:9px;letter-spacing:.1em;text-transform:uppercase;border:1px solid var(--line);border-radius:5px;padding:1px 5px;color:var(--ink45)}
+.shSat .est b{color:var(--ink70);font-weight:650}
+.shSat .warn{font-size:11.5px;color:#8a3a26;background:var(--claySoft);border-radius:7px;padding:5px 8px;line-height:1.4;margin-top:2px}
+.shSat .warn b{font-weight:700}
+.shSat .good{font-size:11.5px;color:#3c5a39;background:var(--sageSoft);border-radius:7px;padding:5px 8px;margin-top:2px}
+.shActions{display:flex;gap:7px;padding:10px 14px 13px;flex-wrap:wrap;align-items:center}
+.shActions .right{margin-left:auto;display:flex;gap:6px}
+.shRejects{margin:0 14px;border:1px dashed var(--clay);border-radius:9px;background:var(--claySoft);padding:8px 10px;font-size:11.5px;color:#8a3a26;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.shRejects .thumbs{display:flex;gap:4px}
+.shRejects img{width:26px;height:26px;background:#fff;border-radius:4px;object-fit:contain;border:1px solid #e3c8bf}
+.shQueue{display:flex;gap:4px;flex-wrap:wrap;padding:0 14px;margin-top:8px}
+.shQueue img{width:30px;height:30px;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:6px;cursor:pointer;transition:transform .1s}
+.shQueue img:hover{transform:scale(1.35);z-index:2;box-shadow:var(--sh)}
+.shQueue img.placed{border-color:var(--sage)}
+.shQueue img.rejected{border-color:var(--clay);opacity:.7}
+.shQueue img.pinned{outline:2px solid var(--gold2)}
+.shQueue .more{font-size:10.5px;color:var(--ink45);align-self:center}
+.cloudRow{display:flex;gap:6px;align-items:center;font-size:10.5px;color:var(--ink45);padding:0 14px;margin-top:6px;min-height:14px}
+.cloudRow .ok{color:#3c5a39}.cloudRow .bad{color:#8a3a26}
+
+/* ── library ── */
+.lib{display:flex;flex-direction:column;gap:12px}
+.libBar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.libBar input[type=search]{border:1px solid var(--line);background:var(--card);border-radius:9px;padding:8px 11px;min-width:220px}
+.libBar input[type=date]{border:1px solid var(--line);background:var(--card);border-radius:9px;padding:7px 9px;font-size:12.5px}
+.fchip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--card2);color:var(--ink70);border-radius:20px;padding:5px 11px;font-size:11px;font-weight:700;white-space:nowrap}
+.fchip .sw{width:7px;height:7px;border-radius:2px;background:var(--ink25)}
+.fchip[data-m=gold] .sw{background:var(--m-gold)}.fchip[data-m=silver] .sw{background:var(--m-silver)}.fchip[data-m=rose] .sw{background:var(--m-rose)}
+.fchip.on{background:var(--velvet);border-color:var(--velvet);color:#fff}
+.dayHead{font:15px var(--serif);color:var(--ink70);margin:6px 0 -4px;display:flex;align-items:center;gap:10px}
+.dayHead .n{font:11px var(--mono);color:var(--ink45)}
+.libGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.libCard{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);padding:10px 12px;display:grid;gap:6px;--accent:var(--ink25);border-left:5px solid var(--accent);cursor:pointer;min-width:0}
+.libCard[data-m=gold]{--accent:var(--m-gold)}.libCard[data-m=silver]{--accent:var(--m-silver)}.libCard[data-m=rose]{--accent:var(--m-rose)}
+.libCard:hover{outline:2px solid var(--accent);outline-offset:1px}
+.libCard .h{display:flex;align-items:center;gap:8px;min-width:0}
+.libCard .h .nm{font:600 13px var(--sans);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.libCard .h .tm{margin-left:auto;font:10.5px var(--mono);color:var(--ink45)}
+.libCard img.pv{width:100%;aspect-ratio:513/434;object-fit:contain;background:var(--card2);border:1px solid var(--line2);border-radius:8px}
+.libCard .m{display:flex;gap:8px;font-size:11px;color:var(--ink70);flex-wrap:wrap}
+.libCard .m b{font-family:var(--mono);font-weight:700;color:var(--ink)}
+.libEmpty{padding:40px;text-align:center;color:var(--ink45);font-size:13px}
+.charmGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.charmTile{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:8px;display:grid;gap:5px;text-align:center;min-width:0}
+.charmTile img{width:100%;aspect-ratio:1;object-fit:contain;background:#fff;border-radius:6px}
+.charmTile .nm{font-size:12px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.charmTile .meta{font:10.5px var(--mono);color:var(--ink45)}
+.charmTile.open{border-color:var(--clay);background:var(--claySoft)}
+.charmTile input{border:1px solid var(--line);border-radius:7px;padding:4px 6px;font-size:12px;width:100%}
+
+/* ── toasts, dialogs ── */
+.toasts{position:fixed;right:18px;bottom:18px;z-index:300;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toast{background:var(--velvet);color:#f4ecdc;border:1px solid var(--velvetLine);border-radius:11px;padding:10px 14px;box-shadow:0 10px 30px rgba(0,0,0,.24);max-width:380px;display:flex;gap:9px;align-items:flex-start;font-size:12.5px;animation:tin .18s ease;pointer-events:auto}
+@keyframes tin{from{opacity:0;transform:translateY(8px)}}
+.toast .d{width:8px;height:8px;border-radius:50%;background:var(--gold2);margin-top:4px;flex:0 0 auto}
+.toast.ok .d{background:#8ab083}.toast.bad .d{background:#d6755d}
+dialog{border:0;padding:0;border-radius:15px;box-shadow:0 24px 80px rgba(0,0,0,.32);background:var(--card);color:var(--ink);max-height:min(88vh,940px);width:min(560px,94vw);overflow:hidden}
+dialog::backdrop{background:rgba(20,18,15,.52)}
+dialog.wide{width:min(980px,95vw)}
+.dlg{display:flex;flex-direction:column;max-height:min(88vh,940px)}
+.dlgHead{padding:15px 18px;border-bottom:1px solid var(--line);flex:0 0 auto;display:flex;align-items:center;gap:12px}
+.dlgHead h3{margin:0;font:20px var(--serif);font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dlgHead .right{margin-left:auto;display:flex;gap:8px;align-items:center;flex:0 0 auto}
+.dlgBody{padding:16px 18px;overflow:auto}
+.dlgFoot{padding:11px 18px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px;background:var(--card2);flex:0 0 auto;align-items:center}
+.dlgFoot .left{margin-right:auto;display:flex;gap:8px;align-items:center}
+.field{display:grid;gap:4px;margin-bottom:12px}
+.field label{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink45);font-weight:700}
+.field input,.field select{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--card);width:100%}
+.field .help{font-size:11px;color:var(--ink45);line-height:1.4}
+.fieldRow{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fieldRow3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.seg button{border:0;background:var(--card);padding:6px 12px;font-size:12px;font-weight:650;color:var(--ink70)}
+.seg button.on{background:var(--velvet);color:#fff}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:12.5px}
+.kv dt{color:var(--ink45)}.kv dd{margin:0;font-family:var(--mono)}
+.section{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink45);font-weight:750;margin:14px 0 8px;display:flex;align-items:center;gap:8px}
+.section:after{content:"";flex:1;height:1px;background:var(--line)}
+.callout{border-left:3px solid var(--gold2);background:var(--goldSoft);padding:8px 10px;border-radius:6px;font-size:12px;line-height:1.45}
+.callout.bad{border-color:var(--clay);background:var(--claySoft)}
+.callout.ok{border-color:var(--sage);background:var(--sageSoft)}
+.signin{position:fixed;inset:0;background:var(--paper);z-index:200;display:grid;place-items:center}
+.signin .box{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:var(--sh);padding:26px 28px;width:min(380px,92vw);display:grid;gap:12px}
+.signin h2{margin:0;font:24px var(--serif);font-weight:500}
+.signin input{border:1px solid var(--line);border-radius:9px;padding:10px 12px}
+.signin .err{color:#8a3a26;font-size:12px;min-height:16px}
+.dropAll{position:fixed;inset:0;z-index:150;background:rgba(34,31,27,.55);color:#fff;display:none;place-items:center;font:22px var(--serif);pointer-events:none}
+.dropAll.on{display:grid}
+.dropAll span{background:var(--velvet);border:2px dashed var(--gold2);border-radius:16px;padding:22px 34px}
+@media (prefers-reduced-motion:reduce){.sheetCard.pulse{animation:none}}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <aside class="rail">
+    <div class="brand">
+      <div><div class="logo">Brites <b>Charm Nest</b></div><div class="tag">Nesting station · 1</div></div>
+    </div>
+    <div class="railStatus" id="cloudStatus"><span class="dot" id="cloudDot"></span><span class="t" id="cloudText">Checking cloud…</span></div>
+    <div class="railActions">
+      <button class="btn gold wide" id="btnPick">＋ Add .ai / .pdf / .zip</button>
+      <button class="btn ghost sm" id="btnNestAll" style="color:#fff;border-color:#4a4239">Nest all ready</button>
+      <button class="btn ghost sm" id="btnClearAll" style="color:#fff;border-color:#4a4239">Clear queues</button>
+    </div>
+    <div class="queueHead">Sources <span class="qhCount" id="srcCount">0</span></div>
+    <div class="railScroll" id="railScroll">
+      <div id="srcList"></div>
+      <div class="queueHead" style="border-top:0">Unassigned <span class="qhCount" id="unCount">0</span></div>
+      <div id="unList"></div>
+      <div class="unHint" id="unHint">Files whose name does not say GF / SS / RG land here. Drag one onto a sheet, or use the metal buttons.</div>
+    </div>
+    <div class="railFoot"><span id="railCores"></span><span class="spacer"></span><span class="k" id="railSolver">solver: browser</span></div>
+    <input type="file" id="fileInput" multiple accept=".ai,.pdf,.zip,application/pdf,application/zip,application/postscript" class="hidden">
+  </aside>
+  <main class="main">
+    <div class="topbar">
+      <button class="navBtn" id="btnRail" title="Toggle queue">☰</button>
+      <div class="modeSeg"><button class="on" data-mode="nest">Nest</button><button data-mode="library">Library</button><button data-mode="charms">Charms</button></div>
+      <div class="topTitle"><h1>Charm Nesting Station 1</h1><div class="sub" id="topSub">3 sheets · 0 charms queued</div></div>
+      <div class="spacer"></div>
+      <select class="topSel" id="stockSel" title="Stock preset for all three sheets"></select>
+      <button class="btn ghost sm" id="btnSettings">⚙ Settings</button>
+    </div>
+    <div class="stage" id="stage">
+      <div class="sheets" id="sheets"></div>
+      <div class="lib hidden" id="libView">
+        <div class="libBar">
+          <input type="search" id="libSearch" placeholder="Search sheets · charm names, file names, dates">
+          <button class="fchip on" data-m="all">All metals</button>
+          <button class="fchip" data-m="gold"><i class="sw"></i>GF 14/20</button>
+          <button class="fchip" data-m="silver"><i class="sw"></i>SS</button>
+          <button class="fchip" data-m="rose"><i class="sw"></i>RG 14/20</button>
+          <input type="date" id="libFrom" title="From"><input type="date" id="libTo" title="To">
+          <button class="btn ghost sm" id="libRefresh">Refresh</button>
+          <span class="pill neutral" id="libCount"></span>
+        </div>
+        <div id="libBody"><div class="libEmpty">Loading sheets…</div></div>
+      </div>
+      <div class="lib hidden" id="charmsView">
+        <div class="libBar"><input type="search" id="charmSearch" placeholder="Search charms by name"><button class="btn ghost sm" id="charmRefresh">Refresh</button><span class="pill neutral" id="charmCount"></span></div>
+        <div id="charmsBody" class="charmGrid"></div>
+      </div>
+    </div>
+  </main>
+</div>
+<div class="dropAll" id="dropAll"><span>Drop to route by file name · drop on a sheet to choose the metal</span></div>
+<div class="toasts" id="toasts"></div>
+
+<!-- ═══ Settings ═══ -->
+<dialog id="dlgSettings"><form class="dlg" method="dialog">
+  <div class="dlgHead"><h3>Settings</h3><div class="right"><button class="btn ghost xs" type="button" id="btnResetSettings">Reset defaults</button></div></div>
+  <div class="dlgBody">
+    <div class="section">Display</div>
+    <div class="field"><label>Rail density</label><div class="seg" id="railSeg"><button type="button" data-v="sm">Compact</button><button type="button" data-v="md">Normal</button><button type="button" data-v="lg">Large</button></div></div>
+    <div class="section">Stock (per metal, inches)</div>
+    <div class="fieldRow3">
+      <div class="field"><label>GF 14/20 W × H</label><div class="fieldRow"><input id="stGoldW" type="number" step="0.001" min="0.5"><input id="stGoldH" type="number" step="0.001" min="0.5"></div></div>
+      <div class="field"><label>SS W × H</label><div class="fieldRow"><input id="stSilverW" type="number" step="0.001" min="0.5"><input id="stSilverH" type="number" step="0.001" min="0.5"></div></div>
+      <div class="field"><label>RG 14/20 W × H</label><div class="fieldRow"><input id="stRoseW" type="number" step="0.001" min="0.5"><input id="stRoseH" type="number" step="0.001" min="0.5"></div></div>
+    </div>
+    <div class="field"><div class="help">The reference box measured 7.125 × 6.03 in (513.03 × 434.19 pt). Change a metal's stock here if it cuts at a different size; the sheet outline in the output follows it.</div></div>
+    <div class="section">Solver</div>
+    <div class="fieldRow3">
+      <div class="field"><label>Clearance (pt)</label><input id="stClearance" type="number" step="0.05" min="0" max="12"><div class="help">Minimum gap between silhouettes. 0.33 pt fit the reference sheet; 1.5 pt did not.</div></div>
+      <div class="field"><label>Edge inset (pt)</label><input id="stInset" type="number" step="0.1" min="0" max="36"></div>
+      <div class="field"><label>Angle step (°)</label><select id="stAngle"><option value="90">90 (4 angles)</option><option value="45">45 (8)</option><option value="30">30 (12)</option><option value="15">15 (24)</option></select></div>
+    </div>
+    <div class="fieldRow3">
+      <div class="field"><label>Time budget (s)</label><input id="stBudget" type="number" step="5" min="10" max="900"></div>
+      <div class="field"><label>Seed</label><input id="stSeed" type="number" step="1" min="1"><div class="help">Same seed + same queue = same layout.</div></div>
+      <div class="field"><label>Server fallback above</label><input id="stServerAbove" type="number" step="1" min="0"><div class="help">Pieces. 0 = never use the server solver.</div></div>
+    </div>
+    <div class="fieldRow3">
+      <div class="field"><label>Outline min size (pt)</label><input id="stMinPt" type="number" step="0.5" min="1"></div>
+      <div class="field"><label>Verify resolution (px/pt)</label><select id="stVerifyRes"><option value="4">4</option><option value="6">6</option><option value="8">8</option></select></div>
+      <div class="field"><label>Naming (Claude)</label><select id="stNaming"><option value="on">On</option><option value="off">Off</option></select></div>
+    </div>
+    <div class="section">Feedback</div>
+    <div class="fieldRow"><div class="field"><label>Desktop notification when a sheet finishes</label><select id="stNotify"><option value="on">On (when tab hidden)</option><option value="off">Off</option></select></div>
+    <div class="field"><label>Sound on completion</label><select id="stSound"><option value="on">On</option><option value="off">Off</option></select></div></div>
+  </div>
+  <div class="dlgFoot"><div class="left"><span class="pill neutral" id="stSaved">saved locally</span></div><button class="btn ghost" value="cancel">Close</button><button class="btn gold" id="btnSaveSettings" value="save">Save</button></div>
+</form></dialog>
+
+<!-- ═══ Sheet report / contact sheet ═══ -->
+<dialog id="dlgReport" class="wide"><div class="dlg">
+  <div class="dlgHead"><h3 id="rpTitle">Sheet report</h3><div class="right"><button class="btn ghost xs" id="rpDownloadJson">report.json</button><button class="btn ghost xs" id="rpClose">Close</button></div></div>
+  <div class="dlgBody" id="rpBody"></div>
+</div></dialog>
+
+<!-- ═══ Library sheet drawer ═══ -->
+<dialog id="dlgSheet" class="wide"><div class="dlg">
+  <div class="dlgHead"><h3 id="lsTitle">Sheet</h3><div class="right"><button class="btn ghost xs" id="lsClose">Close</button></div></div>
+  <div class="dlgBody" id="lsBody"></div>
+  <div class="dlgFoot"><div class="left"><button class="btn ghost sm" id="lsDelete">Archive sheet</button></div><button class="btn ghost sm" id="lsDownloads">Download outputs</button><button class="btn gold sm" id="lsRestore">Restore into card</button></div>
+</div></dialog>
+
+<div class="signin hidden" id="signin"><form class="box" id="signinForm">
+  <h2>Charm Nesting Station</h2>
+  <div style="font-size:12.5px;color:var(--ink70)">Enter the operator passcode to open the console.</div>
+  <input id="signinPc" type="password" placeholder="Passcode" autocomplete="current-password" autofocus>
+  <div class="err" id="signinErr"></div>
+  <button class="btn gold" type="submit">Sign in</button>
+</form></div>
+
+<script src="vendor/jszip-3.10.1.min.js"></script>
+<script src="vendor/pdf-lib-1.17.1.min.js"></script>
+<script src="brites-progress.js"></script>
+<script src="charm-nest-solver.js"></script>
+<script src="charm-nest-pdf.js"></script>
+<script>
+/* ═════════════════════════════════════════════════════════════════════════
+   CHARM NESTING STATION 1 — application
+   ═════════════════════════════════════════════════════════════════════════ */
+"use strict";
+const FN = window.location.origin + "/.netlify/functions";
+const PT_PER_IN = 72;
+const METALS = [
+  { key: "gold",   label: "GF 14/20", long: "Gold filled",      color: "#c8a24e" },
+  { key: "silver", label: "SS",       long: "Sterling silver",  color: "#8d95a0" },
+  { key: "rose",   label: "RG 14/20", long: "Rose gold filled", color: "#c08578" }
+];
+const DEFAULTS = {
+  rail: "md",
+  stock: { gold: [7.125, 6.03], silver: [7.125, 6.03], rose: [7.125, 6.03] },
+  clearancePt: 0.5, insetPt: 1.5, angleStep: 30, budgetS: 180, seed: 1, serverAbove: 80,
+  minPt: 6, verifyRes: 6, naming: "on", notify: "on", sound: "on", silhouetteRes: 6
+};
+const STOCK_PRESETS = [
+  { id: "ref", label: "7.125 × 6.03 in (reference)", w: 7.125, h: 6.03 },
+  { id: "6x6", label: "6 × 6 in", w: 6, h: 6 },
+  { id: "8x6", label: "8 × 6 in", w: 8, h: 6 },
+  { id: "12x6", label: "12 × 6 in", w: 12, h: 6 },
+  { id: "custom", label: "Per-metal (Settings)", w: 0, h: 0 }
+];
+const $  = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+const fmt = { pct: v => Math.round(v * 100) + "%", pt2: v => Math.round(v).toLocaleString() + " pt²", in: v => (v / PT_PER_IN).toFixed(2) + " in", mm: v => (v / PT_PER_IN * 25.4).toFixed(1) + " mm", s: ms => ms < 60000 ? Math.round(ms / 1000) + "s" : Math.floor(ms / 60000) + "m " + Math.round(ms % 60000 / 1000) + "s" };
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const uid = () => Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
+const today = () => new Date().toISOString().slice(0, 10);
+
+/* ═══ 1 · tiny UI kit ═══════════════════════════════════════════════════ */
+function toast(msg, kind = "", ms = 3600) {
+  const host = $("#toasts"); if (!host) return;
+  const el = document.createElement("div"); el.className = "toast" + (kind ? " " + kind : "");
+  el.innerHTML = `<span class="d"></span><span></span>`; el.lastElementChild.textContent = String(msg);
+  host.appendChild(el);
+  setTimeout(() => { el.style.opacity = "0"; el.style.transition = "opacity .2s"; }, ms);
+  setTimeout(() => el.remove(), ms + 250);
+}
+function openDlg(el) { if (!el) return; if (!el.open) { try { el.showModal(); } catch (_) { el.setAttribute("open", ""); } } }
+function closeDlg(el) { if (!el) return; try { el.close(); } catch (_) { el.removeAttribute("open"); } }
+function download(bytes, name, type) {
+  const blob = bytes instanceof Blob ? bytes : new Blob([bytes], { type: type || "application/octet-stream" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+}
+function ding() {
+  if (S.settings.sound !== "on") return;
+  try { const ac = new (window.AudioContext || window.webkitAudioContext)(); const o = ac.createOscillator(), g = ac.createGain(); o.frequency.value = 880; o.type = "sine"; g.gain.value = 0.0001; o.connect(g); g.connect(ac.destination); o.start(); g.gain.exponentialRampToValueAtTime(0.08, ac.currentTime + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + 0.5); o.stop(ac.currentTime + 0.55); } catch (_) { /* no audio */ }
+}
+
+/* ═══ 2 · settings ══════════════════════════════════════════════════════ */
+const S = {
+  settings: loadSettings(), passcode: sessionStorage.getItem("cn.passcode") || "", cloud: { ok: null, locked: false, msg: "" },
+  sources: [], unassigned: [], sheets: {}, mode: "nest", calibration: [], library: { rows: [], metal: "all", q: "" }, nestQueue: [], stockPreset: localStorage.getItem("cn.stock") || "ref"
+};
+function loadSettings() { try { return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem("cn.settings") || "{}")); } catch (_) { return Object.assign({}, DEFAULTS); } }
+function saveSettings() { localStorage.setItem("cn.settings", JSON.stringify(S.settings)); document.documentElement.dataset.rail = S.settings.rail; }
+function stockFor(metal) {
+  const p = STOCK_PRESETS.find(p => p.id === S.stockPreset);
+  const inches = (p && p.id !== "custom") ? [p.w, p.h] : (S.settings.stock[metal] || DEFAULTS.stock[metal]);
+  return { wIn: inches[0], hIn: inches[1], wPt: inches[0] * PT_PER_IN, hPt: inches[1] * PT_PER_IN };
+}
+function angleSet() { const st = +S.settings.angleStep || 30; const a = []; for (let d = 0; d < 360; d += st) a.push(d); return a; }
+
+/* ═══ 3 · cloud client ══════════════════════════════════════════════════ */
+async function api(fn, body, opts = {}) {
+  const headers = { "Content-Type": "application/json" };
+  if (S.passcode) headers["X-Edit-Passcode"] = S.passcode;
+  const done = window.BritesProgress ? BritesProgress.begin(opts.label || "Talking to the cloud") : () => {};
+  try {
+    const res = await fetch(`${FN}/${fn}`, { method: "POST", headers, body: JSON.stringify(body || {}) });
+    const txt = await res.text(); let data = null; try { data = JSON.parse(txt); } catch (_) { data = { error: txt.slice(0, 200) }; }
+    if (res.status === 401) { S.cloud.locked = true; throw Object.assign(new Error("unauthorized"), { status: 401 }); }
+    if (!res.ok) throw Object.assign(new Error((data && data.error) || `HTTP ${res.status}`), { status: res.status, data });
+    return data;
+  } finally { done(); }
+}
+async function cloudProbe() {
+  const dot = $("#cloudDot"), txt = $("#cloudText");
+  try {
+    const r = await api("charmNestLibrary", { op: "ping" }, { label: "Checking cloud" });
+    S.cloud.ok = true; S.cloud.msg = `Cloud ok · ${r.sheets || 0} sheets · ${r.charms || 0} charms`;
+    dot.className = "dot ok"; txt.textContent = S.cloud.msg;
+    if (r.calibration) S.calibration = r.calibration;
+    $("#railSolver").textContent = "solver: browser" + (S.settings.serverAbove > 0 ? ` · server above ${S.settings.serverAbove}` : "");
+  } catch (e) {
+    S.cloud.ok = false; S.cloud.msg = e.status === 401 ? "Sign-in required" : "Cloud offline — nesting works, nothing is saved";
+    dot.className = e.status === 401 ? "dot warn" : "dot bad"; txt.textContent = S.cloud.msg;
+  }
+  refreshAllCards();
+}
+/** Upload bytes to Storage: signed URL first, base64 through the function as fallback. */
+async function uploadBytes(path, bytes, contentType, label) {
+  if (!S.cloud.ok) throw new Error("cloud offline");
+  const signed = await api("charmNestOutput", { op: "sign", path, contentType }, { label: label || "Preparing upload" });
+  try {
+    const put = await fetch(signed.uploadUrl, { method: "PUT", headers: signed.headers || { "Content-Type": contentType }, body: bytes });
+    if (!put.ok) throw new Error("PUT " + put.status);
+    const fin = await api("charmNestOutput", { op: "finalize", path: signed.path, token: signed.token, contentType }, { label: "Finalising upload" });
+    return { path: fin.path, url: fin.url, bytes: bytes.byteLength || bytes.size || 0 };
+  } catch (e) {
+    const size = bytes.byteLength || bytes.size || 0;
+    if (size > 4.5 * 1024 * 1024) throw new Error(`direct upload failed (${e.message}) and the file is too large for the fallback route (${(size / 1048576).toFixed(1)} MB)`);
+    const b64 = await toBase64(bytes);
+    const r = await api("charmNestOutput", { op: "put", path, contentType, base64: b64 }, { label: label || "Uploading" });
+    return { path: r.path, url: r.url, bytes: size };
+  }
+}
+function toBase64(bytes) { return new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(",")[1]); fr.onerror = rej; fr.readAsDataURL(bytes instanceof Blob ? bytes : new Blob([bytes])); }); }
+function dataUrlToBytes(u) { const b = atob(u.split(",")[1]); const a = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) a[i] = b.charCodeAt(i); return a; }
+
+/* ═══ 4 · sign-in gate (authGate contract) ══════════════════════════════ */
+async function gate() {
+  try {
+    const r = await fetch(`${FN}/authGate`, { cache: "no-store" }).then(r => r.json());
+    if (!r.locked) return true;
+  } catch (_) { return true; }               // no function → open (local dev)
+  if (S.passcode) { try { const r = await fetch(`${FN}/authGate`, { method: "POST", headers: { "X-Edit-Passcode": S.passcode, "Content-Type": "application/json" }, body: JSON.stringify({ app: "charm-nest-1" }) }); if (r.ok) return true; } catch (_) { /* fall through */ } }
+  return new Promise(resolve => {
+    const box = $("#signin"); box.classList.remove("hidden");
+    $("#signinForm").onsubmit = async (e) => {
+      e.preventDefault(); const pc = $("#signinPc").value.trim(); $("#signinErr").textContent = "";
+      try {
+        const r = await fetch(`${FN}/authGate`, { method: "POST", headers: { "X-Edit-Passcode": pc, "Content-Type": "application/json" }, body: JSON.stringify({ app: "charm-nest-1", passcode: pc }) });
+        if (!r.ok) { $("#signinErr").textContent = "That passcode was not accepted."; return; }
+        S.passcode = pc; sessionStorage.setItem("cn.passcode", pc); box.classList.add("hidden"); resolve(true);
+      } catch (err) { $("#signinErr").textContent = "Could not reach the sign-in service."; }
+    };
+  });
+}
+
+/* ═══ 5 · filename routing ══════════════════════════════════════════════ */
+function routeByName(name, folder) {
+  const n = (folder ? folder + "/" : "") + name;
+  const s = n.toLowerCase().replace(/[_\s]+/g, "-");
+  const has = re => re.test(s);
+  if (has(/(^|[^a-z])(gf|gold-?filled|14\/?20-?g|gf-?1420)([^a-z]|$)/)) return "gold";
+  if (has(/(^|[^a-z])(rg|rose|rose-?gold|14\/?20-?r|rg-?1420)([^a-z]|$)/)) return "rose";
+  if (has(/(^|[^a-z])(ss|sterling|silver|925)([^a-z]|$)/)) return "silver";
+  return null;
+}
+
+/* ═══ 6 · sources & intake ══════════════════════════════════════════════ */
+async function intake(files, targetMetal) {
+  const list = Array.from(files || []);
+  if (!list.length) return;
+  const expanded = [];
+  for (const f of list) {
+    const name = f.name || "file";
+    if (/\.zip$/i.test(name)) {
+      try {
+        const zip = await JSZip.loadAsync(f);
+        const entries = Object.values(zip.files).filter(e => !e.dir && !/(^|\/)__MACOSX\//.test(e.name) && !/(^|\/)\./.test(e.name));
+        let n = 0;
+        for (const e of entries) {
+          if (!/\.(ai|pdf)$/i.test(e.name)) continue;
+          const bytes = new Uint8Array(await e.async("uint8array"));
+          const folder = e.name.includes("/") ? e.name.slice(0, e.name.lastIndexOf("/")) : "";
+          expanded.push({ name: e.name.split("/").pop(), folder, bytes, zipName: name }); n++;
+        }
+        if (!n) toast(`${name}: no .ai or .pdf inside`, "bad");
+      } catch (e) { toast(`${name}: could not open zip (${e.message})`, "bad"); }
+    } else if (/\.(ai|pdf)$/i.test(name) || /pdf|postscript|illustrator/.test(f.type)) {
+      expanded.push({ name, folder: "", bytes: new Uint8Array(await f.arrayBuffer()) });
+    } else toast(`${name}: only .ai, .pdf and .zip are accepted`, "bad");
+  }
+  for (const e of expanded) {
+    const metal = targetMetal || routeByName(e.name, e.folder) || null;
+    const src = { id: uid(), name: e.name, zipName: e.zipName || null, folder: e.folder, bytes: e.bytes, metal, state: "queued", charms: [], error: null, hash: null, cloud: null };
+    S.sources.push(src);
+  }
+  renderRail(); updateTopSub();
+  pumpParse();
+}
+let parsing = 0;
+async function pumpParse() {
+  while (parsing < 2) {
+    const next = S.sources.find(s => s.state === "queued");
+    if (!next) break;
+    parsing++; next.state = "parsing"; renderRail();
+    parseSourceFile(next).finally(() => { parsing--; renderRail(); pumpParse(); });
+  }
+}
+async function parseSourceFile(src) {
+  try {
+    src.hash = await sha256(src.bytes);
+    const parsed = await CharmNestPDF.parseSource(src.bytes, src.name);
+    src.parsed = parsed;
+    const g = CharmNestPDF.groupCharms(parsed, { minPt: +S.settings.minPt || 6 });
+    src.group = g;
+    if (!g.charms.length) throw new Error(`no charm outlines found (rule: ${g.rule}). Outlines must be closed, stroked, near-black paths.`);
+    src.state = "silhouettes"; src.progress = [0, g.charms.length]; renderRail();
+    await CharmNestPDF.buildSilhouettes(parsed, g.charms, +S.settings.silhouetteRes || 6, (d, t) => { src.progress = [d, t]; renderRailRow(src); });
+    // duplicate detection by geometry hash → quantity
+    const byHash = new Map();
+    g.charms.forEach(c => { const k = c.hash; if (!byHash.has(k)) byHash.set(k, []); byHash.get(k).push(c); });
+    src.charms = g.charms.map((c, i) => Object.assign(c, {
+      id: src.id + ":" + i, sourceId: src.id, sourceName: src.name, index: i,
+      name: null, slug: null, label: null, confidence: null, namedBy: null,
+      qty: byHash.get(c.hash).length, dupOf: byHash.get(c.hash)[0] === c ? null : byHash.get(c.hash)[0].index,
+      metalHint: null, pinned: null, excluded: !!c.open, cloud: null
+    }));
+    src.distinct = byHash.size;
+    src.state = "ready";
+    renderRail();
+    // to sheets
+    if (src.metal) assignSource(src, src.metal); else { S.unassigned.push(...src.charms); renderRail(); }
+    // library lookup (names from earlier sessions) then Claude naming for the rest — never on the critical path
+    nameCharms(src).catch(() => {});
+    persistSource(src).catch(e => { src.cloud = { error: e.message }; renderRailRow(src); });
+    if (g.frame) toast(`${src.name}: page-sized frame detected and ignored (${g.charms.length} charms)`, "", 2800);
+    if (g.orphans.length) toast(`${src.name}: ${g.orphans.length} loose element(s) belong to no charm and were left out — see the report`, "", 4200);
+    const open = src.charms.filter(c => c.open).length;
+    if (open) toast(`${src.name}: ${open} outline(s) are not closed and were excluded — see the report`, "bad", 5000);
+  } catch (e) {
+    src.state = "error"; src.error = e.message || String(e);
+    toast(src.error, "bad", 6000);
+  }
+  renderRail(); updateTopSub();
+}
+async function sha256(bytes) { try { const h = await crypto.subtle.digest("SHA-256", bytes); return Array.from(new Uint8Array(h)).map(b => b.toString(16).padStart(2, "0")).join(""); } catch (_) { return uid(); } }
+function assignSource(src, metal) {
+  src.metal = metal;
+  S.unassigned = S.unassigned.filter(c => c.sourceId !== src.id);
+  const sh = S.sheets[metal];
+  for (const c of src.charms) if (!sh.charms.includes(c)) { c.metal = metal; sh.charms.push(c); }
+  sheetDirty(sh); renderRail(); updateTopSub();
+}
+function assignCharm(charm, metal) {
+  S.unassigned = S.unassigned.filter(c => c !== charm);
+  for (const m of METALS) S.sheets[m.key].charms = S.sheets[m.key].charms.filter(c => c !== charm);
+  charm.metal = metal; S.sheets[metal].charms.push(charm);
+  sheetDirty(S.sheets[metal]); renderRail(); updateTopSub();
+}
+function removeSource(src) {
+  S.sources = S.sources.filter(s => s !== src);
+  S.unassigned = S.unassigned.filter(c => c.sourceId !== src.id);
+  for (const m of METALS) { const sh = S.sheets[m.key]; const before = sh.charms.length; sh.charms = sh.charms.filter(c => c.sourceId !== src.id); if (sh.charms.length !== before) sheetDirty(sh); }
+  renderRail(); updateTopSub();
+}
+async function persistSource(src) {
+  if (!S.cloud.ok) return;
+  const day = today();
+  const up = await uploadBytes(`charmnest/sources/${day}/${src.hash.slice(0, 12)}-${safeName(src.name)}`, src.bytes, "application/pdf", "Backing up " + src.name);
+  src.cloud = { path: up.path, url: up.url };
+  // per-charm permanent copies: one .ai and a thumbnail per distinct charm
+  const records = [];
+  for (const c of src.charms) {
+    if (c.dupOf != null) continue;
+    try {
+      const single = await CharmNestPDF.buildSingleCharm(c, src.parsed);
+      const ai = await uploadBytes(`charmnest/charms/${c.hash}.ai`, single, "application/pdf", "Saving charm " + (c.name || c.index + 1));
+      const png = await uploadBytes(`charmnest/charms/${c.hash}.png`, dataUrlToBytes(c.thumb), "image/png");
+      c.cloud = { ai: ai.url, aiPath: ai.path, png: png.url, pngPath: png.path };
+      records.push({ hash: c.hash, name: c.name, slug: c.slug, label: c.label, confidence: c.confidence, namedBy: c.namedBy, metalHint: c.metal || c.metalHint || null,
+        areaPt2: c.areaPt2, widthPt: c.widthPt, heightPt: c.heightPt, thumbUrl: png.url, aiUrl: ai.url, aiPath: ai.path, sourceName: src.name, sourcePath: up.path, open: !!c.open });
+    } catch (e) { console.warn("charm backup failed", e); }
+  }
+  if (records.length) await api("charmNestLibrary", { op: "putCharms", charms: records }, { label: "Saving charm library" });
+  renderRailRow(src);
+}
+const safeName = s => String(s).replace(/[^\w.\-]+/g, "_").slice(0, 80);
+
+/* ═══ 7 · naming (library first, then Claude Opus 5) ════════════════════ */
+async function nameCharms(src) {
+  const fallback = c => { if (!c.name) { c.name = `${src.name.replace(/\.(ai|pdf)$/i, "")}-${String(c.index + 1).padStart(2, "0")}`; c.namedBy = "fallback"; } };
+  if (!S.cloud.ok) { src.charms.forEach(fallback); refreshAllCards(); return; }
+  try {
+    const hashes = [...new Set(src.charms.map(c => c.hash))];
+    const lib = await api("charmNestLibrary", { op: "lookupCharms", hashes }, { label: "Checking charm library" });
+    for (const c of src.charms) { const r = lib.charms && lib.charms[c.hash]; if (r && r.name) { c.name = r.name; c.slug = r.slug || null; c.label = r.label || null; c.namedBy = r.namedBy || "library"; c.confidence = r.confidence || null; if (!c.metal && r.metalHint) c.metalHint = r.metalHint; } }
+  } catch (e) { /* library unreachable → fall through to naming */ }
+  const todo = src.charms.filter(c => !c.name && c.dupOf == null);
+  if (todo.length && S.settings.naming === "on") {
+    try {
+      const r = await api("charmNestName", {
+        sourceName: src.name, wantMetal: !src.metal,
+        charms: todo.map(c => ({ index: c.index, thumb: c.thumb, widthPt: +c.widthPt.toFixed(1), heightPt: +c.heightPt.toFixed(1), qty: c.qty }))
+      }, { label: "Naming charms" });
+      const by = new Map((r.charms || []).map(x => [x.index, x]));
+      for (const c of todo) { const x = by.get(c.index); if (x && x.slug) { c.name = x.slug; c.slug = x.slug; c.label = x.label || null; c.confidence = x.confidence || null; c.namedBy = "claude"; if (x.metal && !c.metal) c.metalHint = x.metal; } }
+      if (r.skipped) toast("Naming skipped: " + r.skipped, "", 4000);
+    } catch (e) { toast("Charm naming skipped (" + (e.message || "unavailable") + ") — layers will use file-based names", "", 4200); }
+  }
+  // duplicates share the name of their first occurrence
+  for (const c of src.charms) if (c.dupOf != null) { const o = src.charms[c.dupOf]; c.name = o.name; c.slug = o.slug; c.label = o.label; c.namedBy = o.namedBy; c.metalHint = o.metalHint; }
+  src.charms.forEach(fallback);
+  renderRail(); refreshAllCards();
+  if (S.cloud.ok) api("charmNestLibrary", { op: "putCharms", charms: src.charms.filter(c => c.dupOf == null).map(c => ({ hash: c.hash, name: c.name, slug: c.slug, label: c.label, confidence: c.confidence, namedBy: c.namedBy, metalHint: c.metal || c.metalHint || null, areaPt2: c.areaPt2, widthPt: c.widthPt, heightPt: c.heightPt, sourceName: src.name })) }).catch(() => {});
+}
+async function renameCharm(charm, name) {
+  name = String(name || "").trim(); if (!name) return;
+  for (const src of S.sources) for (const c of src.charms) if (c.hash === charm.hash) { c.name = name; c.slug = name; c.namedBy = "operator"; }
+  refreshAllCards();
+  if (S.cloud.ok) api("charmNestLibrary", { op: "renameCharm", hash: charm.hash, name }).catch(() => {});
+}
+
+/* ═══ 8 · sheets: state machine per metal ═══════════════════════════════ */
+function makeSheet(metal) {
+  return { metal, sheetId: null, charms: [], status: "idle", worker: null, jobId: null, layout: null, placements: [], rejects: [], sat: null, progress: null, stage: "", outputs: null, verification: null, startedAt: 0, endedBy: null, trials: 0, best: null, dirty: true, log: [], liveInfo: null, serverJob: null };
+}
+function sheetDirty(sh) { sh.dirty = true; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
+function activeCharms(sh) { return sh.charms.filter(c => !c.excluded); }
+function inflatedArea(c) { const g = (+S.settings.clearancePt || 0) / 2; return c.areaPt2 + g * 2 * (c.widthPt + c.heightPt) + Math.PI * g * g; } // silhouette grown by half the clearance
+function usableArea(sh) { const st = stockFor(sh.metal), ins = (+S.settings.insetPt || 0) + (+S.settings.clearancePt || 0) / 2; return Math.max(0, st.wPt - 2 * ins) * Math.max(0, st.hPt - 2 * ins); }
+/** ρ_target: 25th percentile of achieved densities among the nearest shape-mix neighbours; seed 0.70. */
+function rhoTarget(sh) {
+  const items = activeCharms(sh); const sig = shapeSignature(items);
+  const rows = S.calibration || [];
+  if (!rows.length || !items.length) return { rho: 0.70, lo: 0.62, hi: 0.74, n: 0 };
+  const scored = rows.map(r => ({ r, d: Math.abs(Math.log((r.count || 1) / (sig.count || 1))) + Math.abs((r.cv || 0) - sig.cv) * 2 + Math.abs((r.largestFrac || 0) - sig.largestFrac) * 4 })).sort((a, b) => a.d - b.d).slice(0, 12);
+  const d = scored.map(s => s.r.density).filter(x => x > 0).sort((a, b) => a - b);
+  if (d.length < 3) return { rho: 0.70, lo: 0.62, hi: 0.74, n: d.length };
+  const q = p => d[Math.min(d.length - 1, Math.floor(p * (d.length - 1)))];
+  return { rho: q(0.25), lo: q(0.10), hi: q(0.50), n: d.length };
+}
+function shapeSignature(items) {
+  const a = items.map(inflatedArea); const n = a.length; if (!n) return { count: 0, cv: 0, largestFrac: 0 };
+  const mean = a.reduce((s, v) => s + v, 0) / n, sd = Math.sqrt(a.reduce((s, v) => s + (v - mean) ** 2, 0) / n);
+  return { count: n, cv: mean ? sd / mean : 0, largestFrac: Math.max(...a) / a.reduce((s, v) => s + v, 0) };
+}
+function computeSaturation(sh) {
+  const usable = usableArea(sh), items = activeCharms(sh), rt = rhoTarget(sh);
+  const live = sh.liveInfo;                                   // from the worker, when a nest is running or done
+  const placedIds = new Set(sh.placements.map(p => p.id));
+  const placedArea = live ? live.placedPt2 : 0;
+  const queuedArea = items.filter(c => !placedIds.has(c.id)).reduce((s, c) => s + inflatedArea(c), 0);
+  const totalNeeded = items.reduce((s, c) => s + inflatedArea(c), 0);
+  const freeFact = live ? live.freePt2 : usable;
+  const fullPct = live ? Math.min(1, 1 - live.freePt2 / (live.usablePt2 || usable)) : 0;
+  const capacity = usable * rt.rho - (live ? placedArea : 0);
+  const remaining = items.filter(c => !placedIds.has(c.id));
+  const meanA = (remaining.length ? remaining : items).reduce((s, c) => s + inflatedArea(c), 0) / Math.max(1, (remaining.length ? remaining : items).length);
+  let nEst = meanA > 0 ? Math.floor(capacity / meanA) : 0, lo = meanA > 0 ? Math.floor((usable * rt.lo - placedArea) / meanA) : 0, hi = meanA > 0 ? Math.floor((usable * rt.hi - placedArea) / meanA) : 0;
+  nEst = Math.max(0, nEst); lo = Math.max(0, Math.min(lo, nEst)); hi = Math.max(nEst, hi);
+  const saturated = sh.rejects.length >= 2 || (sh.status === "partial" && sh.rejects.length > 0);
+  if (saturated) { nEst = 0; lo = 0; hi = 0; }
+  // will the queue fit? (before nesting: honest estimate against ρ_target)
+  const over = totalNeeded - usable * rt.rho;
+  let recommend = null;
+  if (!live && over > 0 && items.length) {
+    const sorted = items.slice().sort((a, b) => inflatedArea(b) - inflatedArea(a));
+    let acc = 0, n = 0; for (const c of sorted) { acc += inflatedArea(c); n++; if (acc >= over) break; }
+    // what could take the largest piece's place: the headroom left once only the largest is removed
+    const swapArea = usable * rt.rho - (totalNeeded - inflatedArea(sorted[0]));
+    recommend = { overPt2: over, removeN: n, removeNames: sorted.slice(0, n).map(c => c.name || `#${c.index + 1}`), swapArea, largest: sorted[0] };
+  }
+  const pocket = live && live.pocket ? live.pocket : null;
+  sh.sat = { usable, fullPct, freeFact, placedArea, queuedArea, totalNeeded, nEst, lo, hi, rho: rt, saturated, recommend, pocket, count: items.length, placed: placedIds.size };
+  return sh.sat;
+}
+
+/* ═══ 9 · nesting ═══════════════════════════════════════════════════════ */
+function ensureWorker(sh) {
+  if (sh.worker) return sh.worker;
+  const w = new Worker("charm-nest-worker.js");
+  w.onmessage = e => onWorkerMessage(sh, e.data);
+  w.onerror = e => { log(sh, "worker error: " + e.message); finishNest(sh, { error: e.message }); };
+  sh.worker = w; return w;
+}
+function log(sh, msg) { sh.log.push(`${new Date().toLocaleTimeString()} ${msg}`); if (sh.log.length > 200) sh.log.shift(); }
+function buildJob(sh) {
+  const st = stockFor(sh.metal);
+  const items = activeCharms(sh);
+  return {
+    sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0 },
+    clearancePt: +S.settings.clearancePt || 0, angles: angleSet(), fineRes: 2, coarseRes: 0.5,
+    timeBudgetMs: (+S.settings.budgetS || 180) * 1000, maxTrials: 600, seed: +S.settings.seed || 1,
+    pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
+  };
+}
+function startNest(sh) {
+  if (["nesting", "finishing"].includes(sh.status)) return;
+  const items = activeCharms(sh);
+  if (!items.length) { toast(`${labelOf(sh.metal)}: nothing to nest`, ""); return; }
+  const cores = navigator.hardwareConcurrency || 2;
+  const running = Object.values(S.sheets).filter(s => s.status === "nesting").length;
+  if (cores < 4 && running >= 1) { if (!S.nestQueue.includes(sh)) S.nestQueue.push(sh); sh.status = "queued"; sh.stage = `Queued — waiting for ${labelOf(Object.values(S.sheets).find(s => s.status === "nesting").metal)}`; renderCard(sh); return; }
+  if (S.settings.notify === "on" && "Notification" in window && Notification.permission === "default") Notification.requestPermission().catch(() => {});
+  sh.sheetId = sh.sheetId && sh.status !== "complete" && sh.status !== "partial" ? sh.sheetId : `${sh.metal}-${Date.now().toString(36)}`;
+  sh.status = "nesting"; sh.startedAt = performance.now(); sh.placements = []; sh.rejects = []; sh.outputs = null; sh.verification = null; sh.best = null; sh.trials = 0; sh.liveInfo = null; sh.endedBy = null;
+  sh.jobId = uid(); sh.stage = "Preparing rotations…"; sh.progress = [0, items.length]; sh.dirty = false;
+  log(sh, `nest started · ${items.length} pieces · seed ${S.settings.seed} · clearance ${S.settings.clearancePt} pt`);
+  renderCard(sh); drawPreview(sh);
+  const job = buildJob(sh);
+  const useServer = S.settings.serverAbove > 0 && items.length > S.settings.serverAbove && S.cloud.ok;
+  if (useServer) return startServerNest(sh, job);
+  ensureWorker(sh).postMessage({ type: "solve", jobId: sh.jobId, job });
+}
+function stopNest(sh) { if (sh.status !== "nesting") return; sh.stage = "Stopping after this piece…"; renderCard(sh); if (sh.serverJob) { api("charmNestLibrary", { op: "stopJob", id: sh.serverJob }).catch(() => {}); } else if (sh.worker) sh.worker.postMessage({ type: "stop", jobId: sh.jobId }); }
+function onWorkerMessage(sh, m) {
+  if (m.jobId !== sh.jobId) return;
+  const items = activeCharms(sh); const byId = new Map(items.map(c => [c.id, c]));
+  switch (m.type) {
+    case "stage": if (m.stage === "prepare") { sh.stage = `Preparing rotations · ${m.done}/${m.total}`; sh.progress = [m.done, m.total]; sh.progressKind = "prepare"; renderProgress(sh); } break;
+    case "placed": {
+      sh.progressKind = "place";
+      sh.liveInfo = m.info;
+      if (m.info.trial === (sh.bestTrial ?? 0) || !sh.best) { sh.livePlacements = sh.livePlacements || []; if (m.info.placed === 1) sh.livePlacements = []; sh.livePlacements.push(m.placement); }
+      if (!sh.best || m.info.trial === sh.liveTrial) { /* current trial draws live */ }
+      if (sh.liveTrial !== m.info.trial) { sh.liveTrial = m.info.trial; sh.livePlacements = [m.placement]; }
+      sh.placements = sh.best && sh.best.placements.length > sh.livePlacements.length ? sh.best.placements : sh.livePlacements;
+      sh.progress = [Math.max(m.info.placed, sh.best ? sh.best.placements.length : 0), m.info.total];
+      sh.stage = `Trial ${m.info.trial + 1} · placing ${byId.get(m.placement.id)?.name || m.placement.id} · ${m.info.placed}/${m.info.total}`;
+      computeSaturation(sh); renderProgress(sh); renderSat(sh); drawPreview(sh); break;
+    }
+    case "reject": log(sh, `trial ${m.trial + 1}: ${byId.get(m.id)?.name || m.id} did not fit`); break;
+    case "trial": { sh.trials = m.summary.trial + 1; if (!m.summary.better) sh.stage = `Trial ${sh.trials} · best so far ${sh.best ? sh.best.placements.length : 0}/${m.summary.total} · ${fmt.s(m.summary.elapsedMs)}`; renderProgress(sh); break; }
+    case "best": { sh.best = m.best; sh.bestTrial = m.summary.trial; sh.placements = m.best.placements; sh.rejects = m.best.rejects.slice(); sh.liveInfo = Object.assign({}, sh.liveInfo || {}, { freePt2: m.best.freePt2, usablePt2: m.best.usablePt2, placedPt2: m.best.placedPt2, pocket: m.best.pocket }); log(sh, `trial ${m.summary.trial + 1}: ${m.best.placements.length}/${m.summary.total} placed · ${fmt.pct(m.best.density)}`); computeSaturation(sh); renderSat(sh); drawPreview(sh); break; }
+    case "done": finishNest(sh, { result: m.result }); break;
+    case "error": finishNest(sh, { error: m.message }); break;
+    case "verified": sh._geomVerify && sh._geomVerify(m.result); break;
+  }
+}
+async function startServerNest(sh, job) {
+  try {
+    sh.stage = "Sending to the server solver…"; renderCard(sh);
+    const pieces = await Promise.all(job.pieces.map(async p => Object.assign({}, p, { bits: await toBase64(p.bits) })));
+    const payload = Object.assign({}, job, { pieces });
+    const r = await api("charmNestLibrary", { op: "startJob", sheetId: sh.sheetId, job: payload }, { label: "Starting server solve" });
+    sh.serverJob = r.id; $("#railSolver").textContent = "solver: server";
+    const poll = async () => {
+      if (sh.status !== "nesting" || sh.serverJob !== r.id) return;
+      try {
+        const j = await api("charmNestLibrary", { op: "getJob", id: r.id });
+        if (j.job) {
+          const st = j.job; sh.trials = st.trials || 0;
+          if (st.best) { sh.best = st.best; sh.placements = st.best.placements; sh.rejects = st.best.rejects || []; sh.liveInfo = { freePt2: st.best.freePt2, usablePt2: st.best.usablePt2, placedPt2: st.best.placedPt2, pocket: st.best.pocket, placed: st.best.placements.length, total: job.pieces.length }; }
+          sh.progress = [sh.placements.length, job.pieces.length]; sh.progressKind = "place";
+          sh.stage = st.status === "running" ? `Server · trial ${sh.trials} · ${sh.placements.length}/${job.pieces.length}` : `Server · ${st.status}`;
+          computeSaturation(sh); renderProgress(sh); renderSat(sh); drawPreview(sh);
+          if (st.status === "done" && st.result) { sh.serverJob = null; return finishNest(sh, { result: st.result }); }
+          if (st.status === "error") { sh.serverJob = null; return finishNest(sh, { error: st.error || "server solver failed" }); }
+        }
+      } catch (e) { log(sh, "poll: " + e.message); }
+      setTimeout(poll, 2500);
+    };
+    setTimeout(poll, 2500);
+  } catch (e) {
+    toast("Server solver unavailable — nesting in the browser instead", "", 4000);
+    sh.serverJob = null; ensureWorker(sh).postMessage({ type: "solve", jobId: sh.jobId, job });
+  }
+}
+
+async function finishNest(sh, { result, error }) {
+  const items = activeCharms(sh); const byId = new Map(items.map(c => [c.id, c]));
+  if (error) { sh.status = items.length ? "ready" : "idle"; sh.stage = ""; log(sh, "error: " + error); toast(`${labelOf(sh.metal)}: nesting failed — ${error}`, "bad", 6000); renderCard(sh); pumpNestQueue(); return; }
+  sh.status = "finishing"; sh.endedBy = result.endedBy; sh.trials = result.trials; sh.placements = result.placements; sh.rejects = result.rejects.slice();
+  sh.liveInfo = { freePt2: result.freePt2, usablePt2: result.usablePt2, placedPt2: result.placedPt2, pocket: result.pocket, placed: result.placements.length, total: items.length };
+  sh.solveParams = result.params; sh.elapsedMs = result.elapsedMs; sh.density = result.density;
+  computeSaturation(sh); drawPreview(sh);
+  const st = stockFor(sh.metal);
+  try {
+    // 1 · write the sheet
+    sh.stage = "Writing .ai…"; sh.progressKind = "finish"; sh.progress = [0, 4]; renderCard(sh);
+    const sources = new Map(); for (const p of sh.placements) { const c = byId.get(p.id); if (c && !sources.has(c.sourceId)) sources.set(c.sourceId, S.sources.find(s => s.id === c.sourceId).parsed); }
+    const specBase = { sheet: { wPt: st.wPt, hPt: st.hPt, strokeRGB: [1, 0, 0], strokePt: 0.5 }, placements: sh.placements.map(p => ({ charm: byId.get(p.id), angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt })), sources, title: `${labelOf(sh.metal)} sheet ${sh.sheetId}`, meta: { sheetId: sh.sheetId, metal: sh.metal, seed: result.params.seed, clearancePt: result.params.clearancePt } };
+    const aiBytes = await CharmNestPDF.buildSheet(specBase);
+    sh.placements.forEach((p, i) => { p.layerName = specBase.placements[i].layerName; p.name = byId.get(p.id)?.name; });
+    sh.progress = [1, 4]; sh.stage = "Writing labelled proof…"; renderProgress(sh);
+    const labelledBytes = await CharmNestPDF.buildSheet(Object.assign({}, specBase, { labelled: true, placements: specBase.placements.map(p => Object.assign({}, p)) }));
+    // 2 · verify — geometry (worker) and render (pdf.js), independently of the solver
+    sh.stage = "Verifying · re-rendering each charm alone…"; sh.progress = [2, 4]; renderProgress(sh);
+    const geom = await new Promise(res => { sh._geomVerify = res; ensureWorker(sh).postMessage({ type: "verify", jobId: sh.jobId, job: buildJob(sh), placements: sh.placements, res: +S.settings.verifyRes || 6 }); });
+    let render = null;
+    try { await ensurePdfJs(); render = await CharmNestPDF.verifyRendered(aiBytes, { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0, res: +S.settings.verifyRes || 6, onProgress: (d, t) => { sh.stage = `Verifying · charm ${d}/${t} re-rendered from the output file`; renderProgress(sh); } }); }
+    catch (e) { render = { ok: false, error: e.message }; log(sh, "render verify failed: " + e.message); }
+    sh.verification = { geom, render, ok: geom.ok && !!(render && render.ok), minGapPt: geom.minGapPt, minEdgePt: geom.minEdgePt };
+    // 3 · report
+    const report = buildReport(sh, result, items);
+    sh.outputs = { ai: aiBytes, labelled: labelledBytes, report, previewPng: await previewPng(sh) };
+    sh.progress = [3, 4]; sh.stage = "Saving to the cloud…"; renderProgress(sh);
+    const allPlaced = sh.rejects.length === 0;
+    sh.status = allPlaced && sh.verification.ok ? "complete" : "partial";
+    sh.stage = ""; sh.progress = [4, 4];
+    renderCard(sh); drawPreview(sh);
+    // 4 · announce
+    const msg = `${labelOf(sh.metal)} · sheet ${allPlaced ? "complete" : "partial"} — ${sh.placements.length} of ${items.length} placed, ${fmt.pct(sh.sat ? sh.sat.fullPct : sh.density)} full` + (sh.verification.ok ? "" : " · verification flagged, see report") + ` · ended by: ${endedText(sh.endedBy)}`;
+    toast(msg, allPlaced && sh.verification.ok ? "ok" : "", 6500); ding();
+    $$(".sheetCard").find(el => el.dataset.m === sh.metal)?.classList.add("pulse");
+    setTimeout(() => $$(".sheetCard").find(el => el.dataset.m === sh.metal)?.classList.remove("pulse"), 1300);
+    if (document.hidden && S.settings.notify === "on" && "Notification" in window && Notification.permission === "granted") { try { new Notification("Charm Nesting Station", { body: msg }); } catch (_) { /* ignore */ } }
+    // 5 · persist everything
+    persistSheet(sh, items).catch(e => { toast("Cloud save failed: " + e.message, "bad", 6000); log(sh, "cloud save failed: " + e.message); renderCard(sh); });
+  } catch (e) {
+    sh.status = "partial"; sh.stage = ""; log(sh, "finish error: " + (e.stack || e)); toast(`${labelOf(sh.metal)}: output failed — ${e.message}`, "bad", 7000); renderCard(sh);
+  }
+  pumpNestQueue();
+}
+function pumpNestQueue() { const next = S.nestQueue.shift(); if (next && next.status === "queued") { next.status = "ready"; startNest(next); } }
+const endedText = e => ({ complete: "all pieces placed", budget: "time budget", stopped: "operator stop", trials: "restart cap" }[e] || e);
+function buildReport(sh, result, items) {
+  const byId = new Map(items.map(c => [c.id, c])); const st = stockFor(sh.metal);
+  return {
+    version: 1, sheetId: sh.sheetId, metal: sh.metal, metalLabel: labelOf(sh.metal), createdAt: new Date().toISOString(),
+    stock: { wIn: st.wIn, hIn: st.hIn, wPt: st.wPt, hPt: st.hPt }, params: result.params, endedBy: result.endedBy, trials: result.trials, elapsedMs: Math.round(result.elapsedMs),
+    density: +result.density.toFixed(4), usablePt2: Math.round(result.usablePt2), freePt2: Math.round(result.freePt2), placedPt2: Math.round(result.placedPt2), pocket: result.pocket,
+    placements: sh.placements.map((p, i) => ({ n: i + 1, id: p.id, layer: p.layerName, name: byId.get(p.id)?.name, hash: byId.get(p.id)?.hash, source: byId.get(p.id)?.sourceName, index: byId.get(p.id)?.index, angle: p.angle, cxPt: +p.cxPt.toFixed(3), cyPt: +p.cyPt.toFixed(3), wPt: +p.wPt.toFixed(2), hPt: +p.hPt.toFixed(2), areaPt2: +(byId.get(p.id)?.areaPt2 || 0).toFixed(1) })),
+    rejects: sh.rejects.map(id => ({ id, name: byId.get(id)?.name, source: byId.get(id)?.sourceName, index: byId.get(id)?.index, areaPt2: +(byId.get(id)?.areaPt2 || 0).toFixed(1), widthPt: +(byId.get(id)?.widthPt || 0).toFixed(1), heightPt: +(byId.get(id)?.heightPt || 0).toFixed(1) })),
+    excluded: sh.charms.filter(c => c.excluded).map(c => ({ id: c.id, name: c.name, reason: c.open ? "open path" : "excluded by operator" })),
+    verification: sh.verification, charms: items.map(c => ({ id: c.id, name: c.name, hash: c.hash, qty: c.qty, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), namedBy: c.namedBy, confidence: c.confidence })),
+    calibration: Object.assign({ density: +result.density.toFixed(4), placedAll: sh.rejects.length === 0 }, shapeSignature(items)),
+    log: sh.log.slice()
+  };
+}
+async function persistSheet(sh, items) {
+  if (!S.cloud.ok) return;
+  const day = today(), base = `charmnest/sheets/${day}/${sh.sheetId}`;
+  const ai = await uploadBytes(`${base}/${sh.sheetId}.ai`, sh.outputs.ai, "application/pdf", "Saving sheet .ai");
+  const pdf = await uploadBytes(`${base}/${sh.sheetId}.pdf`, sh.outputs.ai, "application/pdf", "Saving sheet .pdf");
+  const lab = await uploadBytes(`${base}/${sh.sheetId}_labelled.pdf`, sh.outputs.labelled, "application/pdf", "Saving labelled proof");
+  const rep = await uploadBytes(`${base}/nest-report.json`, new TextEncoder().encode(JSON.stringify(sh.outputs.report, null, 1)), "application/json", "Saving report");
+  const pv = sh.outputs.previewPng ? await uploadBytes(`${base}/preview.png`, sh.outputs.previewPng, "image/png", "Saving preview") : null;
+  sh.cloud = { ai: ai.url, pdf: pdf.url, labelled: lab.url, report: rep.url, preview: pv && pv.url };
+  const byId = new Map(items.map(c => [c.id, c]));
+  const doc = {
+    id: sh.sheetId, metal: sh.metal, metalLabel: labelOf(sh.metal), day, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, elapsedMs: Math.round(sh.elapsedMs || 0),
+    stock: sh.outputs.report.stock, params: sh.solveParams, density: sh.density, freePt2: Math.round(sh.liveInfo.freePt2), usablePt2: Math.round(sh.liveInfo.usablePt2), pocket: sh.liveInfo.pocket,
+    charmCount: items.length, placedCount: sh.placements.length, rejectCount: sh.rejects.length, verification: { ok: !!sh.verification.ok, minGapPt: sh.verification.minGapPt, minEdgePt: sh.verification.minEdgePt, render: sh.verification.render && { ok: sh.verification.render.ok, overlapPx: sh.verification.render.overlapPx, outsidePx: sh.verification.render.outsidePx, error: sh.verification.render.error || null } },
+    outputs: { ai: { path: ai.path, url: ai.url }, pdf: { path: pdf.path, url: pdf.url }, labelled: { path: lab.path, url: lab.url }, report: { path: rep.path, url: rep.url }, preview: pv ? { path: pv.path, url: pv.url } : null },
+    sources: [...new Set(items.map(c => c.sourceId))].map(id => { const s = S.sources.find(x => x.id === id); return s ? { id: s.id, name: s.name, zipName: s.zipName, hash: s.hash, bytes: s.bytes.length, path: s.cloud && s.cloud.path, url: s.cloud && s.cloud.url } : null; }).filter(Boolean),
+    charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, excluded: !!c.excluded })),
+    placements: sh.outputs.report.placements, rejects: sh.outputs.report.rejects,
+    names: items.map(c => c.name).filter(Boolean).join(" ")
+  };
+  await api("charmNestLibrary", { op: "putSheet", sheet: doc }, { label: "Saving sheet record" });
+  await api("charmNestLibrary", { op: "putCalibration", row: Object.assign({ sheetId: sh.sheetId, metal: sh.metal, clearancePt: +S.settings.clearancePt }, sh.outputs.report.calibration) }, { label: "Saving calibration" });
+  S.calibration.push(Object.assign({ sheetId: sh.sheetId }, sh.outputs.report.calibration));
+  renderCard(sh);
+  toast(`${labelOf(sh.metal)}: sheet, proof and report saved to the cloud`, "ok", 3000);
+}
+let pdfjsReady = null;
+function ensurePdfJs() {
+  if (!pdfjsReady) pdfjsReady = import("./vendor/pdfjs-4.10.38/pdf.min.mjs").then(m => { m.GlobalWorkerOptions.workerSrc = new URL("vendor/pdfjs-4.10.38/pdf.worker.min.mjs", location.href).href; window.pdfjsLib = m; return m; });
+  return pdfjsReady;
+}
+async function previewPng(sh) {
+  try { const cv = document.createElement("canvas"); const st = stockFor(sh.metal); cv.width = 1026; cv.height = Math.round(1026 * st.hPt / st.wPt); paintPreview(cv, sh, true); const blob = await new Promise(r => cv.toBlob(r, "image/png")); return blob; } catch (_) { return null; }
+}
+function startSecondSheet(sh) {
+  const items = activeCharms(sh); const rejects = new Set(sh.rejects);
+  const keep = items.filter(c => rejects.has(c.id));
+  if (!keep.length) return;
+  sh.charms = keep; sh.sheetId = null; sh.best = null; sh.liveInfo = null; sh.placements = []; sh.rejects = []; sh.outputs = null; sh.verification = null; sh.status = "ready"; sh.stage = ""; sh.progress = null; sh.log = [];
+  keep.forEach(c => { c.pinned = null; });
+  computeSaturation(sh); renderCard(sh); drawPreview(sh); renderRail();
+  toast(`${labelOf(sh.metal)}: ${keep.length} reject(s) queued on a fresh sheet — the finished sheet stays in the Library`, "ok", 4200);
+  startNest(sh);
+}
+
+/* ═══ 10 · rendering: rail ══════════════════════════════════════════════ */
+const labelOf = m => (METALS.find(x => x.key === m) || {}).label || m;
+function renderRail() {
+  const host = $("#srcList"); host.innerHTML = "";
+  for (const src of S.sources) host.appendChild(srcRowEl(src));
+  $("#srcCount").textContent = S.sources.length;
+  const un = $("#unList"); un.innerHTML = "";
+  for (const c of S.unassigned) {
+    const row = document.createElement("div"); row.className = "unRow"; row.draggable = true;
+    row.innerHTML = `<img src="${c.thumb}" alt=""><span class="unName" title="${esc(c.sourceName)}">${esc(c.name || `#${c.index + 1}`)}${c.metalHint ? ` <span class="mchip" data-m="${c.metalHint}" title="suggested"><i class="sw"></i>${esc(labelOf(c.metalHint))}?</span>` : ""}</span><span class="unBtns">${METALS.map(m => `<button title="${m.label}" data-m="${m.key}"><i style="background:${m.color}"></i></button>`).join("")}</span>`;
+    row.addEventListener("dragstart", e => { e.dataTransfer.setData("text/charm", c.id); e.dataTransfer.effectAllowed = "move"; });
+    $$("button", row).forEach(b => b.onclick = () => assignCharm(c, b.dataset.m));
+    un.appendChild(row);
+  }
+  $("#unCount").textContent = S.unassigned.length;
+  $("#unHint").classList.toggle("hidden", S.unassigned.length > 0);
+}
+function srcRowEl(src) {
+  const el = document.createElement("div"); el.className = "srcRow"; el.dataset.id = src.id; fillSrcRow(el, src); return el;
+}
+function renderRailRow(src) { const el = $(`.srcRow[data-id="${src.id}"]`); if (el) fillSrcRow(el, src); }
+function fillSrcRow(el, src) {
+  const perMetal = METALS.map(m => ({ m, n: src.charms.filter(c => c.metal === m.key).length })).filter(x => x.n);
+  const unN = src.charms.filter(c => !c.metal).length;
+  const state = src.state === "queued" ? "waiting to parse" : src.state === "parsing" ? "parsing paths…" : src.state === "silhouettes" ? `tracing silhouettes ${src.progress ? src.progress[0] + "/" + src.progress[1] : ""}` : src.state === "error" ? src.error : `${src.charms.length} charms · ${src.distinct} distinct${src.group && src.group.orphans.length ? ` · ${src.group.orphans.length} loose` : ""}`;
+  const cloud = src.cloud ? (src.cloud.error ? `<span style="color:#e8a992">backup failed</span>` : `backed up`) : (S.cloud.ok ? "backing up…" : "");
+  el.innerHTML = `<div class="srcHead"><span class="srcName" title="${esc(src.folder ? src.folder + "/" : "")}${esc(src.name)}${src.zipName ? " · from " + esc(src.zipName) : ""}">${src.zipName ? "▸ " : ""}${esc(src.name)}</span><span class="srcN">${src.charms.length || ""}</span><button class="srcX" title="Remove">×</button></div>
+    <div class="srcState">${["parsing", "silhouettes", "queued"].includes(src.state) ? '<span class="spin"></span>' : ""}<span>${esc(state)}</span>${cloud ? `<span>· ${cloud}</span>` : ""}</div>
+    <div class="srcKids">${perMetal.map(x => `<span class="mchip" data-m="${x.m.key}"><i class="sw"></i>${x.m.label} ${x.n}</span>`).join("")}${unN ? `<span class="mchip" data-m="none">⚠ ${unN} unassigned</span>` : ""}${src.state === "ready" ? METALS.map(m => `<button class="mchip" data-m="${m.key}" data-assign="${m.key}" title="Send every charm in this file to ${m.label}" style="cursor:pointer"><i class="sw"></i>→</button>`).join("") : ""}</div>`;
+  $(".srcX", el).onclick = () => removeSource(src);
+  $$("[data-assign]", el).forEach(b => b.onclick = () => assignSource(src, b.dataset.assign));
+}
+function updateTopSub() {
+  const total = METALS.reduce((n, m) => n + activeCharms(S.sheets[m.key]).length, 0);
+  const running = Object.values(S.sheets).filter(s => s.status === "nesting").length;
+  $("#topSub").textContent = `3 sheets · ${total} charms queued${S.unassigned.length ? ` · ${S.unassigned.length} unassigned` : ""}${running ? ` · ${running} nesting` : ""}`;
+  document.title = (running ? "⏳ " : "") + "Brites · Charm Nesting Station 1";
+}
+
+/* ═══ 11 · rendering: sheet cards ═══════════════════════════════════════ */
+function buildCards() {
+  const host = $("#sheets"); host.innerHTML = "";
+  for (const m of METALS) {
+    const sh = S.sheets[m.key]; const st = stockFor(m.key);
+    const el = document.createElement("section"); el.className = "sheetCard"; el.dataset.m = m.key; el.style.setProperty("--ar", `${st.wPt}/${st.hPt}`);
+    el.innerHTML = `
+      <div class="shHead"><span class="sw"></span><span class="name">${m.label}</span><span class="stock" data-r="stock"></span><span class="pill neutral" data-r="pill">Idle</span></div>
+      <div class="shPreviewWrap"><canvas data-r="canvas"></canvas>
+        <div class="dropHint" data-r="hint"><b>Drop ${m.label} artwork here</b><span>.ai · .pdf · .zip — anything dropped on this card belongs to ${m.long.toLowerCase()}</span><span class="k">or drop on the queue to route by file name</span></div>
+        <div class="shOverlay" data-r="overlay"></div><div class="hint" data-r="canvasHint"></div></div>
+      <div class="shStage" data-r="stage"></div>
+      <div class="shProg"><progress data-r="prog" aria-label="${m.label} nesting progress" max="1" hidden></progress></div>
+      <div class="shSat" data-r="sat"></div>
+      <div class="shRejects hidden" data-r="rejects"></div>
+      <div class="shQueue" data-r="queue"></div>
+      <div class="cloudRow" data-r="cloud"></div>
+      <div class="shActions">
+        <button class="btn gold sm" data-r="nest">Nest</button>
+        <button class="btn danger sm hidden" data-r="stop">Stop</button>
+        <button class="btn sage sm hidden" data-r="dl">Download .ai</button>
+        <button class="btn ghost xs" data-r="report">Report</button>
+        <div class="right"><button class="btn ghost xs hidden" data-r="second">Start a second ${m.label} sheet</button><button class="btn ghost xs" data-r="clear">Clear</button></div>
+      </div>`;
+    host.appendChild(el); sh.el = el;
+    const q = r => $(`[data-r="${r}"]`, el);
+    q("nest").onclick = () => startNest(sh); q("stop").onclick = () => stopNest(sh);
+    q("dl").onclick = () => downloadOutputs(sh); q("report").onclick = () => openReport(sh);
+    q("second").onclick = () => startSecondSheet(sh);
+    q("clear").onclick = () => { if (sh.status === "nesting") stopNest(sh); sh.charms.forEach(c => { c.metal = null; }); sh.charms = []; sh.sheetId = null; sh.log = []; sheetDirty(sh); renderRail(); updateTopSub(); };
+    // drag & drop on the card
+    ["dragenter", "dragover"].forEach(ev => el.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); el.classList.add("dragOver"); e.dataTransfer.dropEffect = "copy"; }));
+    ["dragleave", "drop"].forEach(ev => el.addEventListener(ev, e => { el.classList.remove("dragOver"); }));
+    el.addEventListener("drop", e => {
+      e.preventDefault(); e.stopPropagation(); $("#dropAll").classList.remove("on");
+      const cid = e.dataTransfer.getData("text/charm");
+      if (cid) { const c = S.unassigned.find(x => x.id === cid) || allCharms().find(x => x.id === cid); if (c) assignCharm(c, m.key); return; }
+      if (e.dataTransfer.files && e.dataTransfer.files.length) intake(e.dataTransfer.files, m.key);
+    });
+    q("canvas").addEventListener("click", e => onPreviewClick(sh, e));
+    renderCard(sh);
+  }
+}
+const allCharms = () => S.sources.flatMap(s => s.charms);
+function refreshAllCards() { for (const m of METALS) { computeSaturation(S.sheets[m.key]); renderCard(S.sheets[m.key]); } }
+function renderCard(sh) {
+  const el = sh.el; if (!el) return; const q = r => $(`[data-r="${r}"]`, el); const st = stockFor(sh.metal);
+  el.style.setProperty("--ar", `${st.wPt}/${st.hPt}`);
+  q("stock").textContent = `${st.wIn} × ${st.hIn} in`;
+  const items = activeCharms(sh);
+  const pillMap = { idle: ["neutral", "Idle"], ready: ["info", `Ready · ${items.length}`], queued: ["warn", "Queued"], nesting: ["warn", `<span class="spin"></span>Nesting`], finishing: ["warn", `<span class="spin"></span>Finishing`], complete: ["ok", "Complete"], partial: ["bad", "Partial"] };
+  const [k, t] = pillMap[sh.status] || pillMap.idle; q("pill").className = "pill " + k; q("pill").innerHTML = t;
+  q("hint").classList.toggle("hidden", items.length > 0 || sh.status !== "idle");
+  q("nest").classList.toggle("hidden", ["nesting", "finishing", "queued"].includes(sh.status)); q("nest").disabled = !items.length;
+  q("nest").textContent = (sh.status === "complete" || sh.status === "partial") ? (sh.dirty ? "Nest again" : "Re-nest") : "Nest";
+  q("stop").classList.toggle("hidden", sh.status !== "nesting");
+  q("dl").classList.toggle("hidden", !sh.outputs); q("dl").textContent = sh.verification && !sh.verification.ok ? "Download .ai (flagged)" : "Download .ai";
+  q("second").classList.toggle("hidden", !(sh.status === "partial" && sh.rejects.length));
+  q("clear").disabled = !sh.charms.length;
+  // rejects tray
+  const rj = q("rejects"); const byId = new Map(sh.charms.map(c => [c.id, c]));
+  if ((sh.status === "partial" || sh.status === "complete") && sh.rejects.length) { rj.classList.remove("hidden"); rj.innerHTML = `<b>${sh.rejects.length} need another sheet</b><span class="thumbs">${sh.rejects.slice(0, 8).map(id => `<img src="${byId.get(id)?.thumb || ""}" title="${esc(byId.get(id)?.name || id)}">`).join("")}</span><span>${sh.rejects.map(id => esc(byId.get(id)?.name || id)).slice(0, 4).join(", ")}${sh.rejects.length > 4 ? "…" : ""}</span>`; }
+  else rj.classList.add("hidden");
+  // queue thumbnails
+  const placed = new Set(sh.placements.map(p => p.id)), rejected = new Set(sh.rejects);
+  q("queue").innerHTML = sh.charms.slice(0, 60).map(c => `<img src="${c.thumb}" title="${esc(c.name || "#" + (c.index + 1))} · ${fmt.in(c.widthPt)} × ${fmt.in(c.heightPt)}${c.qty > 1 ? " · ×" + c.qty : ""}${c.excluded ? " · EXCLUDED (open path)" : ""}" data-cid="${c.id}" class="${placed.has(c.id) ? "placed" : rejected.has(c.id) ? "rejected" : ""}${c.pinned ? " pinned" : ""}" style="${c.excluded ? "opacity:.35;border-style:dashed" : ""}">`).join("") + (sh.charms.length > 60 ? `<span class="more">+${sh.charms.length - 60} more</span>` : "");
+  $$("img[data-cid]", q("queue")).forEach(img => img.onclick = () => openCharm(sh, byId.get(img.dataset.cid)));
+  // cloud row
+  const cl = q("cloud");
+  cl.innerHTML = sh.cloud ? `<span class="ok">✓ saved to cloud</span> · <a href="${sh.cloud.ai}" target="_blank" rel="noopener">.ai</a> · <a href="${sh.cloud.labelled}" target="_blank" rel="noopener">proof</a> · <a href="${sh.cloud.report}" target="_blank" rel="noopener">report</a>` : (sh.outputs ? (S.cloud.ok ? "saving to cloud…" : `<span class="bad">not saved — cloud offline</span>`) : (sh.sheetId ? `sheet ${sh.sheetId}` : ""));
+  renderProgress(sh); renderSat(sh); drawPreview(sh);
+}
+function renderProgress(sh) {
+  const el = sh.el; if (!el) return; const q = r => $(`[data-r="${r}"]`, el);
+  const p = q("prog");
+  const showing = ["nesting", "finishing", "queued"].includes(sh.status);
+  if (!showing || !sh.progress) { p.hidden = true; if (p.parentElement.classList.contains("bp-meter")) p.parentElement.hidden = true; }
+  else {
+    p.hidden = false; if (p.parentElement.classList.contains("bp-meter")) p.parentElement.hidden = false;
+    // Percentages come only from completed work: pieces placed / pieces queued (or prep pieces, or finish steps).
+    p.max = Math.max(1, sh.progress[1]); p.value = Math.min(sh.progress[0], sh.progress[1]);
+    p.setAttribute("value", p.value);
+    if (p.parentElement.classList.contains("bp-meter")) { const pct = Math.round(p.value / p.max * 100); p.parentElement.dataset.label = sh.progressKind === "prepare" ? `preparing ${pct}%` : sh.progressKind === "finish" ? `finishing ${pct}%` : `${p.value}/${p.max} placed · ${pct}%`; p.parentElement.style.setProperty("--bp-pct", pct + "%"); p.parentElement.dataset.determinate = "true"; }
+  }
+  const st = q("stage"); const elapsed = sh.startedAt && ["nesting", "finishing"].includes(sh.status) ? fmt.s(performance.now() - sh.startedAt) : (sh.elapsedMs ? fmt.s(sh.elapsedMs) : "");
+  const budget = ["nesting"].includes(sh.status) ? ` / ${S.settings.budgetS}s` : "";
+  const trials = sh.trials ? ` · ${sh.trials} trial${sh.trials > 1 ? "s" : ""}` : "";
+  st.innerHTML = sh.stage ? `<span class="spin"></span><span>${esc(sh.stage)}</span><span class="r">${elapsed}${budget}${trials}</span>` : (sh.status === "complete" || sh.status === "partial" ? `<span>${esc(endedText(sh.endedBy))} · ${sh.placements.length}/${activeCharms(sh).length} placed${sh.verification ? (sh.verification.ok ? " · verified ✓" : " · ⚠ verification flagged") : ""}</span><span class="r">${elapsed}${trials}</span>` : "");
+  const ov = q("overlay");
+  ov.innerHTML = sh.status === "nesting" || sh.status === "finishing" || sh.placements.length ? `<span class="pill neutral">${sh.placements.length}/${activeCharms(sh).length} placed</span>${sh.sat ? `<span class="pill neutral">${fmt.pct(sh.sat.fullPct)} full</span>` : ""}${sh.rejects.length ? `<span class="pill bad">${sh.rejects.length} rejected</span>` : ""}${sh.verification ? (sh.verification.ok ? `<span class="pill ok">verified</span>` : `<span class="pill bad">check report</span>`) : ""}` : "";
+}
+function renderSat(sh) {
+  const el = sh.el; if (!el) return; const box = $(`[data-r="sat"]`, el); const s = sh.sat || computeSaturation(sh);
+  if (!activeCharms(sh).length) { box.innerHTML = `<div class="fact"><b>0%</b><span class="free">${fmt.pt2(s.usable)} usable · ${fmt.in(stockFor(sh.metal).wPt)} × ${fmt.in(stockFor(sh.metal).hPt)}</span></div><div class="bar"><i style="width:0"></i></div><div class="est"><span class="lbl">estimate</span>drop charms to see how many fit</div>`; return; }
+  const live = !!sh.liveInfo;
+  const needPct = Math.min(1.6, s.totalNeeded / s.usable);
+  const fact = live ? `<div class="fact"><b>${fmt.pct(s.fullPct)}</b><span>full</span><span class="free">· ${fmt.pt2(s.freeFact)} free</span></div><div class="bar"><i style="width:${Math.round(s.fullPct * 100)}%"></i><em style="left:${Math.round(s.rho.rho * 100)}%" title="ρ target"></em></div>`
+    : `<div class="fact"><b>${fmt.pct(Math.min(1, s.totalNeeded / s.usable))}</b><span>of the sheet needed</span><span class="free">· ${s.count} charms · ${fmt.pt2(s.totalNeeded)} incl. clearance</span></div><div class="bar"><i style="width:${Math.round(Math.min(1, needPct) * 100)}%;${needPct > s.rho.rho ? "background:var(--clay)" : ""}"></i><em style="left:${Math.round(s.rho.rho * 100)}%" title="ρ target — the density the solver can reach for this shape mix"></em></div>`;
+  let est;
+  if (s.saturated) est = `<div class="est"><span class="lbl">estimate</span><b>sheet is saturated</b> · ${sh.rejects.length} could not be placed</div>`;
+  else est = `<div class="est"><span class="lbl">estimate</span>≈ <b>${s.nEst} more fit</b> (${s.lo}–${s.hi}) · ρ<sub>target</sub> ${fmt.pct(s.rho.rho)}${s.rho.n ? ` from ${s.rho.n} past sheets` : " (seed)"}</div>`;
+  let extra = "";
+  if (s.pocket && s.pocket.wPt > 4 && s.pocket.hPt > 4) extra += `<div class="est"><span class="lbl">open pocket</span>largest empty rectangle ≈ <b>${fmt.in(s.pocket.wPt)} × ${fmt.in(s.pocket.hPt)}</b> (${fmt.mm(s.pocket.wPt)} × ${fmt.mm(s.pocket.hPt)}) — a charm up to that size still fits</div>`;
+  if (s.recommend) {
+    const r = s.recommend; const side = Math.sqrt(Math.max(0, r.swapArea)); const L = r.largest;
+    const swap = r.swapArea > 0 ? ` Or swap the largest, ${esc(L.name || "#" + (L.index + 1))} (${fmt.in(L.widthPt)} × ${fmt.in(L.heightPt)}), for a charm up to about <b>${fmt.in(side)} × ${fmt.in(side)}</b> (${fmt.mm(side)} sq).` : "";
+    extra += `<div class="warn"><b>Too much for one sheet</b> — over by ≈ ${fmt.pt2(r.overPt2)} at ρ ${fmt.pct(s.rho.rho)}. Remove the ${r.removeN} largest (${esc(r.removeNames.join(", "))}) and the rest should fit.${swap} Or nest anyway — rejects go straight to a second sheet.</div>`;
+  } else if (!live && s.count) extra += `<div class="good">Fits comfortably: ${fmt.pt2(Math.max(0, s.usable * s.rho.rho - s.totalNeeded))} of headroom at ρ ${fmt.pct(s.rho.rho)}.</div>`;
+  box.innerHTML = fact + est + extra;
+}
+
+/* ═══ 12 · preview canvas ═══════════════════════════════════════════════ */
+function drawPreview(sh) {
+  const cv = sh.el && $(`[data-r="canvas"]`, sh.el); if (!cv) return;
+  const wrap = cv.parentElement; const w = Math.max(10, Math.round(wrap.clientWidth * devicePixelRatio)); const st = stockFor(sh.metal);
+  const h = Math.round(w * st.hPt / st.wPt); if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  paintPreview(cv, sh, false);
+  const hint = $(`[data-r="canvasHint"]`, sh.el); hint.textContent = sh.placements.length ? "click a charm to inspect · pin" : "";
+}
+function paintPreview(cv, sh, clean) {
+  const ctx = cv.getContext("2d"); const st = stockFor(sh.metal); const k = cv.width / st.wPt;
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = "#fffefb"; ctx.fillRect(0, 0, cv.width, cv.height);
+  // inset guide
+  const ins = (+S.settings.insetPt || 0) * k;
+  ctx.strokeStyle = "rgba(176,86,63,.9)"; ctx.lineWidth = Math.max(1, 0.5 * k); ctx.strokeRect(0.5, 0.5, cv.width - 1, cv.height - 1);
+  if (!clean) { ctx.setLineDash([4, 4]); ctx.strokeStyle = "rgba(147,140,128,.35)"; ctx.lineWidth = 1; ctx.strokeRect(ins, ins, cv.width - 2 * ins, cv.height - 2 * ins); ctx.setLineDash([]); }
+  const byId = new Map(sh.charms.map(c => [c.id, c]));
+  const sel = sh.selected;
+  if (!clean && !sh.placements.length && sh.charms.length) {
+    const n = activeCharms(sh).length; ctx.fillStyle = "rgba(147,140,128,.9)"; ctx.textAlign = "center"; ctx.font = `${Math.round(cv.width / 26)}px ${getComputedStyle(document.body).getPropertyValue("--serif")}`;
+    ctx.fillText(sh.status === "nesting" ? "Preparing…" : `${n} charm${n === 1 ? "" : "s"} queued`, cv.width / 2, cv.height / 2 - cv.width / 60);
+    ctx.font = `${Math.round(cv.width / 44)}px ${getComputedStyle(document.body).getPropertyValue("--sans")}`; ctx.fillStyle = "rgba(147,140,128,.75)";
+    ctx.fillText(sh.status === "nesting" ? "rotations and masks" : "press Nest to fill this sheet", cv.width / 2, cv.height / 2 + cv.width / 40);
+  }
+  sh.placements.forEach((p, i) => {
+    const c = byId.get(p.id); if (!c) return;
+    ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180);
+    const cx = c.centerPt[0], cy = c.centerPt[1];
+    const tx = (x, y) => [(x - cx) * k, (cy - y) * k];
+    if (!clean) { // faint silhouette
+      ctx.fillStyle = sel === c.id ? "rgba(202,168,97,.35)" : "rgba(200,162,78,.10)";
+      ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); ctx.fill("nonzero");
+    }
+    CharmNestPDF.drawSegments(ctx, c.members, tx, k);
+    ctx.restore();
+    if (!clean && c.pinned) { ctx.fillStyle = "#caa861"; ctx.beginPath(); ctx.arc(p.cxPt * k, p.cyPt * k, Math.max(3, 2 * k), 0, Math.PI * 2); ctx.fill(); }
+  });
+  // largest open pocket
+  if (!clean && sh.sat && sh.sat.pocket && sh.liveInfo && sh.sat.pocket.wPt > 6) { const p = sh.sat.pocket; ctx.setLineDash([3, 3]); ctx.strokeStyle = "rgba(95,122,91,.6)"; ctx.lineWidth = 1; ctx.strokeRect(p.xPt * k, p.yPt * k, p.wPt * k, p.hPt * k); ctx.setLineDash([]); }
+}
+function onPreviewClick(sh, e) {
+  if (!sh.placements.length) return;
+  const cv = e.currentTarget, r = cv.getBoundingClientRect(); const st = stockFor(sh.metal);
+  const x = (e.clientX - r.left) / r.width * st.wPt, y = (e.clientY - r.top) / r.height * st.hPt;
+  let best = null, bd = Infinity;
+  for (const p of sh.placements) { const d = Math.hypot(p.cxPt - x, p.cyPt - y); if (d < bd && d < Math.max(p.wPt, p.hPt)) { bd = d; best = p; } }
+  if (!best) return;
+  const c = sh.charms.find(c => c.id === best.id); sh.selected = c.id; drawPreview(sh); openCharm(sh, c, best);
+}
+
+/* ═══ 13 · dialogs: charm inspector, report ═════════════════════════════ */
+function openCharm(sh, c, placement) {
+  if (!c) return;
+  const pl = placement || sh.placements.find(p => p.id === c.id);
+  const dlg = $("#dlgReport"); $("#rpTitle").textContent = c.name || `Charm #${c.index + 1}`;
+  $("#rpDownloadJson").classList.add("hidden");
+  $("#rpBody").innerHTML = `
+    <div style="display:grid;grid-template-columns:200px 1fr;gap:18px;align-items:start">
+      <img src="${c.thumb}" style="width:200px;aspect-ratio:1;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:10px">
+      <div>
+        <div class="field"><label>Layer name</label><input id="ciName" value="${esc(c.name || "")}"><div class="help">${c.namedBy === "claude" ? `Named by Claude${c.confidence ? ` (${Math.round(c.confidence * 100)}% sure)` : ""}${c.label ? ` — “${esc(c.label)}”` : ""}` : c.namedBy === "operator" ? "Named by an operator" : c.namedBy === "library" ? "From the charm library" : "File-based name"}. Renames are remembered for this artwork.</div></div>
+        <dl class="kv"><dt>Source</dt><dd>${esc(c.sourceName)} · #${c.index + 1}</dd><dt>Size</dt><dd>${fmt.in(c.widthPt)} × ${fmt.in(c.heightPt)} (${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)})</dd><dt>Silhouette</dt><dd>${fmt.pt2(c.areaPt2)} · ${c.members.length} elements${c.qty > 1 ? ` · ×${c.qty} on this file` : ""}</dd><dt>Geometry hash</dt><dd>${c.hash}</dd>${pl ? `<dt>Placed</dt><dd>${pl.angle}° at ${fmt.in(pl.cxPt)}, ${fmt.in(pl.cyPt)} from top-left</dd>` : ""}${c.open ? `<dt>Status</dt><dd style="color:#8a3a26">open path — excluded from nesting</dd>` : ""}</dl>
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+          ${pl ? `<button class="btn ghost sm" id="ciPin">${c.pinned ? "Unpin" : "Pin here"}</button>` : ""}
+          <button class="btn ghost sm" id="ciExclude">${c.excluded ? "Include in nest" : "Exclude from nest"}</button>
+          <button class="btn ghost sm" id="ciSingle">Download this charm as .ai</button>
+          ${METALS.filter(m => m.key !== sh.metal).map(m => `<button class="btn ghost sm" data-move="${m.key}">Move to ${m.label}</button>`).join("")}
+        </div>
+        <div class="help" style="margin-top:8px;font-size:11px;color:var(--ink45)">Pin locks this charm at its current position and angle; the next nest places everything else around it.</div>
+      </div></div>`;
+  $("#ciName").onchange = e => renameCharm(c, e.target.value);
+  const pin = $("#ciPin"); if (pin) pin.onclick = () => { c.pinned = c.pinned ? null : { cxPt: pl.cxPt, cyPt: pl.cyPt, angle: pl.angle }; closeDlg(dlg); renderCard(sh); toast(c.pinned ? `${c.name}: pinned — Re-nest places the others around it` : `${c.name}: unpinned`, ""); };
+  $("#ciExclude").onclick = () => { c.excluded = !c.excluded; closeDlg(dlg); sheetDirty(sh); };
+  $("#ciSingle").onclick = async () => { const src = S.sources.find(s => s.id === c.sourceId); const b = await CharmNestPDF.buildSingleCharm(c, src.parsed); download(b, `${safeName(c.name || "charm")}.ai`, "application/pdf"); };
+  $$("[data-move]", $("#rpBody")).forEach(b => b.onclick = () => { closeDlg(dlg); assignCharm(c, b.dataset.move); });
+  openDlg(dlg);
+}
+function openReport(sh) {
+  const items = sh.charms; const dlg = $("#dlgReport");
+  $("#rpTitle").textContent = `${labelOf(sh.metal)} · ${sh.sheetId || "sheet"} · report`;
+  $("#rpDownloadJson").classList.toggle("hidden", !sh.outputs);
+  $("#rpDownloadJson").onclick = () => download(new TextEncoder().encode(JSON.stringify(sh.outputs.report, null, 2)), `${sh.sheetId}-nest-report.json`, "application/json");
+  const v = sh.verification, s = sh.sat || computeSaturation(sh), st = stockFor(sh.metal);
+  const byId = new Map(items.map(c => [c.id, c]));
+  const srcs = [...new Set(items.map(c => c.sourceId))].map(id => S.sources.find(x => x.id === id)).filter(Boolean);
+  let html = "";
+  if (sh.outputs) {
+    html += `<div class="section">Result</div><dl class="kv">
+      <dt>Placed</dt><dd>${sh.placements.length} of ${activeCharms(sh).length} · ${fmt.pct(sh.density || 0)} density · ended by ${esc(endedText(sh.endedBy))} after ${sh.trials} trial(s), ${fmt.s(sh.elapsedMs || 0)}</dd>
+      <dt>Seed · angles · clearance</dt><dd>${sh.solveParams.seed} · ${sh.solveParams.angles.length} angles (${S.settings.angleStep}° step) · ${sh.solveParams.clearancePt} pt · inset ${sh.solveParams.insetPt} pt</dd>
+      <dt>Free area</dt><dd>${fmt.pt2(s.freeFact)} of ${fmt.pt2(s.usable)} usable · largest open pocket ${s.pocket ? `${fmt.in(s.pocket.wPt)} × ${fmt.in(s.pocket.hPt)}` : "—"}</dd></dl>`;
+    if (v) {
+      html += `<div class="callout ${v.ok ? "ok" : "bad"}"><b>Verification ${v.ok ? "passed" : "FLAGGED"}</b> — geometry re-rasterised at ${v.geom.res} px/pt: ${v.geom.overlapPx} overlapping px, ${v.geom.outsidePx} px outside the sheet, tightest charm-to-charm gap ${v.minGapPt == null ? "—" : v.minGapPt + " pt"}, tightest charm-to-edge ${v.minEdgePt == null ? "—" : v.minEdgePt + " pt"}.${v.geom.overlappingPairs.length ? ` Overlapping: ${v.geom.overlappingPairs.map(p => p.map(id => byId.get(id)?.name || id).join(" ↔ ")).join("; ")}.` : ""}<br>Output file re-rendered layer by layer (pdf.js): ${v.render ? (v.render.error ? `could not run — ${esc(v.render.error)}` : `${v.render.layers} layers · ${v.render.overlapPx} overlapping px · ${v.render.outsidePx} px outside${v.render.emptyLayers && v.render.emptyLayers.length ? ` · empty layers: ${esc(v.render.emptyLayers.join(", "))}` : ""}${v.render.overlappingPairs.length ? ` · ${esc(v.render.overlappingPairs.join("; "))}` : ""}`) : "not run"}.</div>`;
+    }
+    if (sh.rejects.length) html += `<div class="callout" style="margin-top:8px"><b>${sh.rejects.length} did not fit:</b> ${sh.rejects.map(id => esc(byId.get(id)?.name || id) + ` (${fmt.in(byId.get(id)?.widthPt || 0)} × ${fmt.in(byId.get(id)?.heightPt || 0)})`).join(", ")}. Use “Start a second ${labelOf(sh.metal)} sheet”, tighten the clearance, or pin the largest pieces first.</div>`;
+  }
+  html += `<div class="section">Detected charms · ${items.length}${srcs.length ? ` from ${srcs.length} file(s)` : ""}</div>`;
+  for (const src of srcs) { const g = src.group; html += `<div style="font-size:11.5px;color:var(--ink70);margin:4px 0 8px">${esc(src.name)}: ${src.parsed.counts.paths} paths, ${src.parsed.counts.xobjects} form XObject(s), ${src.parsed.counts.text} text block(s) → ${g.outlineCount} outlines (rule: ${g.rule}${g.mergedCount ? `, ${g.mergedCount} inner closed paths merged as holes/details` : ""})${g.frame ? ", page-sized frame ignored" : ""}${g.orphans.length ? `, <b style="color:#8a3a26">${g.orphans.length} loose element(s) left out</b>` : ""} · page ${fmt.in(src.parsed.pageW)} × ${fmt.in(src.parsed.pageH)}</div>`; }
+  html += `<div class="charmGrid">${items.map((c, i) => { const pl = sh.placements.find(p => p.id === c.id); const n = pl ? sh.placements.indexOf(pl) + 1 : null; return `<div class="charmTile${c.open ? " open" : ""}" data-cid="${c.id}"><img src="${c.thumb}" alt=""><div class="nm" title="${esc(c.name || "")}">${n ? `<span class="mono">${n}</span> · ` : ""}${esc(c.name || "#" + (c.index + 1))}</div><div class="meta">${fmt.in(c.widthPt)} × ${fmt.in(c.heightPt)} · ${Math.round(c.areaPt2)} pt²${c.qty > 1 ? ` · ×${c.qty}` : ""}</div><div class="meta">${c.open ? "OPEN PATH — excluded" : c.excluded ? "excluded" : pl ? `placed ${pl.angle}°` : sh.rejects.includes(c.id) ? "did not fit" : "queued"}${c.pinned ? " · pinned" : ""}</div></div>`; }).join("")}</div>`;
+  if (sh.log.length) html += `<div class="section">Log</div><pre style="font:11px var(--mono);white-space:pre-wrap;color:var(--ink70);max-height:200px;overflow:auto;background:var(--card2);padding:8px;border-radius:8px">${esc(sh.log.slice(-60).join("\n"))}</pre>`;
+  $("#rpBody").innerHTML = html;
+  $$(".charmTile", $("#rpBody")).forEach(t => t.onclick = () => openCharm(sh, byId.get(t.dataset.cid)));
+  openDlg(dlg);
+}
+function downloadOutputs(sh) {
+  if (!sh.outputs) return;
+  const base = `${labelOf(sh.metal).replace(/[\s/]/g, "")}_${sh.sheetId}`;
+  download(sh.outputs.ai, `${base}.ai`, "application/pdf");
+  setTimeout(() => download(sh.outputs.labelled, `${base}_labelled.pdf`, "application/pdf"), 350);
+  setTimeout(() => download(new TextEncoder().encode(JSON.stringify(sh.outputs.report, null, 2)), `${base}_nest-report.json`, "application/json"), 700);
+  toast("Downloading .ai, labelled proof and nest-report.json", "ok");
+}
+
+/* ═══ 14 · library (recovery) & charms views ════════════════════════════ */
+async function loadLibrary() {
+  const body = $("#libBody"); body.innerHTML = `<div class="libEmpty">Loading sheets…</div>`;
+  if (!S.cloud.ok) { body.innerHTML = `<div class="libEmpty">Cloud offline — the library needs the Netlify functions.</div>`; return; }
+  try {
+    const r = await api("charmNestLibrary", { op: "listSheets", metal: S.library.metal === "all" ? null : S.library.metal, from: $("#libFrom").value || null, to: $("#libTo").value || null, limit: 300 }, { label: "Loading library" });
+    S.library.rows = r.sheets || []; renderLibrary();
+  } catch (e) { body.innerHTML = `<div class="libEmpty">Could not load: ${esc(e.message)}</div>`; }
+}
+function renderLibrary() {
+  const q = ($("#libSearch").value || "").trim().toLowerCase();
+  const rows = S.library.rows.filter(r => !q || `${r.id} ${r.metalLabel} ${r.day} ${r.names || ""} ${(r.sources || []).map(s => s.name).join(" ")}`.toLowerCase().includes(q));
+  $("#libCount").textContent = `${rows.length} sheet${rows.length === 1 ? "" : "s"}`;
+  const body = $("#libBody"); if (!rows.length) { body.innerHTML = `<div class="libEmpty">No sheets match.</div>`; return; }
+  const byDay = new Map(); for (const r of rows) { if (!byDay.has(r.day)) byDay.set(r.day, []); byDay.get(r.day).push(r); }
+  body.innerHTML = [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([day, list]) => `<div class="dayHead">${new Date(day + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" })}<span class="n">${list.length}</span></div><div class="libGrid">${list.map(r => `<div class="libCard" data-m="${r.metal}" data-id="${r.id}"><div class="h"><span class="nm">${esc(r.metalLabel)} · ${esc(r.id)}</span><span class="tm">${r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span></div>${r.preview ? `<img class="pv" src="${r.preview}" loading="lazy" alt="">` : ""}<div class="m"><span><b>${r.placedCount}</b>/${r.charmCount} placed</span><span><b>${Math.round((r.density || 0) * 100)}%</b> full</span><span><b>${Math.round((r.freePt2 || 0)).toLocaleString()}</b> pt² free</span><span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span>${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`).join("")}</div>`).join("");
+  $$(".libCard", body).forEach(el => el.onclick = () => openLibrarySheet(el.dataset.id));
+}
+async function openLibrarySheet(id) {
+  const dlg = $("#dlgSheet"); $("#lsTitle").textContent = id; $("#lsBody").innerHTML = `<div class="libEmpty">Loading…</div>`; openDlg(dlg);
+  try {
+    const r = await api("charmNestLibrary", { op: "getSheet", id }, { label: "Loading sheet" }); const d = r.sheet; if (!d) throw new Error("not found");
+    $("#lsTitle").textContent = `${d.metalLabel} · ${d.id} · ${d.day}`;
+    $("#lsBody").innerHTML = `
+      <div style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:16px;align-items:start">
+        <div>${d.outputs && d.outputs.preview ? `<img src="${d.outputs.preview.url}" style="width:100%;border:1px solid var(--line);border-radius:10px;background:#fff">` : `<div class="libEmpty">no preview</div>`}</div>
+        <div><dl class="kv"><dt>Status</dt><dd>${esc(d.status)} · ${esc(endedText(d.endedBy))}</dd><dt>Placed</dt><dd>${d.placedCount} / ${d.charmCount}${d.rejectCount ? ` · ${d.rejectCount} rejected` : ""}</dd><dt>Density</dt><dd>${Math.round((d.density || 0) * 100)}% · ${(d.freePt2 || 0).toLocaleString()} pt² free</dd><dt>Stock</dt><dd>${d.stock ? `${d.stock.wIn} × ${d.stock.hIn} in` : "—"}</dd><dt>Seed · clearance</dt><dd>${d.params ? `${d.params.seed} · ${d.params.clearancePt} pt · ${d.params.angles.length} angles` : "—"}</dd><dt>Verification</dt><dd>${d.verification ? (d.verification.ok ? "passed" : "flagged") + (d.verification.minGapPt != null ? ` · min gap ${d.verification.minGapPt} pt` : "") : "—"}</dd><dt>Sources</dt><dd>${(d.sources || []).map(s => s.url ? `<a href="${s.url}" target="_blank" rel="noopener">${esc(s.name)}</a>` : esc(s.name)).join(", ") || "—"}</dd></dl>
+        <div class="section">Outputs</div><div style="display:flex;gap:6px;flex-wrap:wrap">${d.outputs ? ["ai", "pdf", "labelled", "report"].filter(k => d.outputs[k]).map(k => `<a class="btn ghost xs" href="${d.outputs[k].url}" target="_blank" rel="noopener">${k === "labelled" ? "labelled proof" : k === "report" ? "nest-report.json" : "." + k}</a>`).join("") : "none"}</div></div></div>
+      <div class="section">Charms · ${(d.charms || []).length}</div>
+      <div class="charmGrid">${(d.charms || []).map(c => `<div class="charmTile">${c.thumbUrl ? `<img src="${c.thumbUrl}" loading="lazy" alt="">` : ""}<div class="nm">${esc(c.name || "#" + (c.index + 1))}</div><div class="meta">${fmt.in(c.widthPt)} × ${fmt.in(c.heightPt)}${c.qty > 1 ? ` · ×${c.qty}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("")}</div>`;
+    $("#lsDownloads").onclick = () => { if (!d.outputs) return; ["ai", "labelled", "report"].forEach((k, i) => d.outputs[k] && setTimeout(() => window.open(d.outputs[k].url, "_blank"), i * 300)); };
+    $("#lsRestore").onclick = () => restoreSheet(d);
+    $("#lsDelete").onclick = async () => { if (!confirm(`Archive sheet ${d.id}? Files stay in storage; it just leaves the list.`)) return; await api("charmNestLibrary", { op: "deleteSheet", id: d.id }); closeDlg(dlg); loadLibrary(); };
+  } catch (e) { $("#lsBody").innerHTML = `<div class="libEmpty">${esc(e.message)}</div>`; }
+}
+/** Bring a saved sheet back into its card: re-fetch the sources, re-parse, re-apply the saved placements as pins. */
+async function restoreSheet(d) {
+  closeDlg($("#dlgSheet")); setMode("nest");
+  const sh = S.sheets[d.metal]; if (!sh) return;
+  if (sh.status === "nesting") { toast(`${labelOf(d.metal)} is nesting — stop it first`, "bad"); return; }
+  toast(`Restoring ${d.id} into ${labelOf(d.metal)}…`, "");
+  sh.charms = []; sh.sheetId = d.id; sheetDirty(sh);
+  const files = [];
+  for (const s of d.sources || []) {
+    if (!s.url) { toast(`${s.name}: source file was never backed up`, "bad"); continue; }
+    try { const b = await fetch(s.url).then(r => r.arrayBuffer()); files.push(new File([b], s.name, { type: "application/pdf" })); } catch (e) { toast(`${s.name}: download failed`, "bad"); }
+  }
+  const before = new Set(S.sources.map(s => s.id));
+  await intake(files, d.metal);
+  // wait for parsing, then re-apply the recorded placements as pins
+  const wait = () => new Promise(res => { const t = setInterval(() => { if (S.sources.filter(s => !before.has(s.id)).every(s => s.state === "ready" || s.state === "error")) { clearInterval(t); res(); } }, 300); });
+  await wait();
+  const newSrcs = S.sources.filter(s => !before.has(s.id));
+  let pinned = 0;
+  for (const p of d.placements || []) {
+    const c = newSrcs.flatMap(s => s.charms).find(c => c.hash === p.hash && !c.pinned && c.sourceName === p.source) || newSrcs.flatMap(s => s.charms).find(c => c.hash === p.hash && !c.pinned);
+    if (c) { c.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle }; if (p.name) c.name = p.name; pinned++; }
+  }
+  sh.placements = (d.placements || []).map(p => { const c = sh.charms.find(c => c.pinned && Math.abs(c.pinned.cxPt - p.cxPt) < 0.01 && Math.abs(c.pinned.cyPt - p.cyPt) < 0.01); return c ? { id: c.id, angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, wPt: p.wPt, hPt: p.hPt, layerName: p.layer } : null; }).filter(Boolean);
+  sh.liveInfo = { freePt2: d.freePt2, usablePt2: d.usablePt2, placedPt2: (d.usablePt2 || 0) - (d.freePt2 || 0), pocket: d.pocket, placed: sh.placements.length, total: sh.charms.length };
+  sh.status = "ready"; computeSaturation(sh); renderCard(sh); drawPreview(sh); renderRail();
+  toast(`${d.id} restored · ${pinned} charm(s) pinned at their cut positions · add more and Nest, or Re-nest freely after unpinning`, "ok", 6000);
+}
+async function loadCharms() {
+  const body = $("#charmsBody"); body.innerHTML = `<div class="libEmpty">Loading charms…</div>`;
+  if (!S.cloud.ok) { body.innerHTML = `<div class="libEmpty">Cloud offline.</div>`; return; }
+  try {
+    const r = await api("charmNestLibrary", { op: "listCharms", q: ($("#charmSearch").value || "").trim(), limit: 400 }, { label: "Loading charms" });
+    const rows = r.charms || []; $("#charmCount").textContent = `${rows.length} charm${rows.length === 1 ? "" : "s"}`;
+    body.innerHTML = rows.length ? rows.map(c => `<div class="charmTile" data-h="${c.hash}">${c.thumbUrl ? `<img src="${c.thumbUrl}" loading="lazy" alt="">` : ""}<input value="${esc(c.name || "")}" title="rename"><div class="meta">${c.widthPt ? `${fmt.in(c.widthPt)} × ${fmt.in(c.heightPt)}` : ""}${c.timesUsed ? ` · used ×${c.timesUsed}` : ""}${c.metalHint ? ` · ${esc(labelOf(c.metalHint))}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("") : `<div class="libEmpty">No charms yet.</div>`;
+    $$(".charmTile input", body).forEach(inp => inp.onchange = () => api("charmNestLibrary", { op: "renameCharm", hash: inp.closest(".charmTile").dataset.h, name: inp.value.trim() }).then(() => toast("Renamed", "ok")).catch(e => toast(e.message, "bad")));
+  } catch (e) { body.innerHTML = `<div class="libEmpty">${esc(e.message)}</div>`; }
+}
+function setMode(mode) {
+  S.mode = mode; $$(".modeSeg button").forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
+  $("#sheets").classList.toggle("hidden", mode !== "nest"); $("#libView").classList.toggle("hidden", mode !== "library"); $("#charmsView").classList.toggle("hidden", mode !== "charms");
+  if (mode === "library") loadLibrary(); if (mode === "charms") loadCharms();
+}
+
+/* ═══ 15 · settings dialog ══════════════════════════════════════════════ */
+function openSettings() {
+  const s = S.settings;
+  $$("#railSeg button").forEach(b => b.classList.toggle("on", b.dataset.v === s.rail));
+  for (const m of METALS) { $(`#st${cap(m.key)}W`).value = s.stock[m.key][0]; $(`#st${cap(m.key)}H`).value = s.stock[m.key][1]; }
+  $("#stClearance").value = s.clearancePt; $("#stInset").value = s.insetPt; $("#stAngle").value = s.angleStep; $("#stBudget").value = s.budgetS; $("#stSeed").value = s.seed; $("#stServerAbove").value = s.serverAbove;
+  $("#stMinPt").value = s.minPt; $("#stVerifyRes").value = s.verifyRes; $("#stNaming").value = s.naming; $("#stNotify").value = s.notify; $("#stSound").value = s.sound;
+  openDlg($("#dlgSettings"));
+}
+const cap = s => s[0].toUpperCase() + s.slice(1);
+function readSettings() {
+  const s = S.settings;
+  s.rail = $("#railSeg button.on")?.dataset.v || "md";
+  for (const m of METALS) s.stock[m.key] = [+$(`#st${cap(m.key)}W`).value || DEFAULTS.stock[m.key][0], +$(`#st${cap(m.key)}H`).value || DEFAULTS.stock[m.key][1]];
+  s.clearancePt = Math.max(0, +$("#stClearance").value || 0); s.insetPt = Math.max(0, +$("#stInset").value || 0); s.angleStep = +$("#stAngle").value || 30; s.budgetS = Math.max(10, +$("#stBudget").value || 180); s.seed = Math.max(1, Math.round(+$("#stSeed").value || 1)); s.serverAbove = Math.max(0, +$("#stServerAbove").value || 0);
+  s.minPt = Math.max(1, +$("#stMinPt").value || 6); s.verifyRes = +$("#stVerifyRes").value || 6; s.naming = $("#stNaming").value; s.notify = $("#stNotify").value; s.sound = $("#stSound").value;
+  saveSettings(); refreshAllCards(); toast("Settings saved", "ok", 1800);
+}
+
+/* ═══ 16 · boot ═════════════════════════════════════════════════════════ */
+async function boot() {
+  document.documentElement.dataset.rail = S.settings.rail;
+  for (const m of METALS) S.sheets[m.key] = makeSheet(m.key);
+  const sel = $("#stockSel"); sel.innerHTML = STOCK_PRESETS.map(p => `<option value="${p.id}">${p.label}</option>`).join(""); sel.value = S.stockPreset;
+  sel.onchange = () => { S.stockPreset = sel.value; localStorage.setItem("cn.stock", sel.value); for (const m of METALS) sheetDirty(S.sheets[m.key]); };
+  buildCards();
+  $("#railCores").textContent = `${navigator.hardwareConcurrency || "?"} cores${(navigator.hardwareConcurrency || 4) < 4 ? " · sheets nest one at a time" : " · 3 sheets in parallel"}`;
+  $("#btnRail").onclick = () => $("#app").classList.toggle("railOff");
+  $("#btnPick").onclick = () => $("#fileInput").click();
+  $("#fileInput").onchange = e => { intake(e.target.files); e.target.value = ""; };
+  $("#btnNestAll").onclick = () => METALS.forEach(m => { const sh = S.sheets[m.key]; if (activeCharms(sh).length && !["nesting", "finishing"].includes(sh.status)) startNest(sh); });
+  $("#btnClearAll").onclick = () => { if (!confirm("Clear every queue and source? Nothing in the cloud is touched.")) return; Object.values(S.sheets).forEach(sh => { if (sh.status === "nesting") stopNest(sh); sh.charms = []; sh.sheetId = null; sheetDirty(sh); }); S.sources = []; S.unassigned = []; renderRail(); updateTopSub(); };
+  $("#btnSettings").onclick = openSettings; $("#btnSaveSettings").onclick = e => { e.preventDefault(); readSettings(); closeDlg($("#dlgSettings")); };
+  $("#btnResetSettings").onclick = () => { S.settings = Object.assign({}, DEFAULTS, { stock: JSON.parse(JSON.stringify(DEFAULTS.stock)) }); saveSettings(); openSettings(); };
+  $$("#railSeg button").forEach(b => b.onclick = () => { $$("#railSeg button").forEach(x => x.classList.toggle("on", x === b)); document.documentElement.dataset.rail = b.dataset.v; });
+  $$(".modeSeg button").forEach(b => b.onclick = () => setMode(b.dataset.mode));
+  $("#rpClose").onclick = () => closeDlg($("#dlgReport")); $("#lsClose").onclick = () => closeDlg($("#dlgSheet"));
+  $$("#libView .fchip").forEach(b => b.onclick = () => { $$("#libView .fchip").forEach(x => x.classList.toggle("on", x === b)); S.library.metal = b.dataset.m; loadLibrary(); });
+  $("#libSearch").oninput = renderLibrary; $("#libRefresh").onclick = loadLibrary; $("#libFrom").onchange = loadLibrary; $("#libTo").onchange = loadLibrary;
+  $("#charmRefresh").onclick = loadCharms; $("#charmSearch").onchange = loadCharms;
+  // page-level drop: route by name; rail drop = same
+  let dragDepth = 0;
+  document.addEventListener("dragenter", e => { if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files")) { dragDepth++; $("#dropAll").classList.add("on"); } });
+  document.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; $("#dropAll").classList.remove("on"); } });
+  document.addEventListener("dragover", e => e.preventDefault());
+  document.addEventListener("drop", e => { e.preventDefault(); dragDepth = 0; $("#dropAll").classList.remove("on"); if (e.dataTransfer.files && e.dataTransfer.files.length) intake(e.dataTransfer.files, null); });
+  window.addEventListener("resize", () => METALS.forEach(m => drawPreview(S.sheets[m.key])));
+  setInterval(() => { for (const m of METALS) { const sh = S.sheets[m.key]; if (["nesting", "finishing"].includes(sh.status)) renderProgress(sh); } }, 1000);
+  await gate();
+  cloudProbe();
+  refreshAllCards(); updateTopSub();
+  window.CN = { S, startNest, intake, api };   // for tests and the console
+}
+boot();
+</script>
+</body>
+</html>
