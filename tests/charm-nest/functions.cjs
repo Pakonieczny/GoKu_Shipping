@@ -48,6 +48,8 @@ const bucket = {
     return {
       async save(buf, opts) { blobs.set(p, { buf, meta: { contentType: opts.contentType, size: buf.length, metadata: (opts.metadata && opts.metadata.metadata) || {} } }); },
       async exists() { return [blobs.has(p)]; },
+      async download() { return [blobs.get(p).buf]; },
+      async delete() { blobs.delete(p); },
       async getMetadata() { const b = blobs.get(p); return [{ contentType: b.meta.contentType, size: b.meta.size, metadata: b.meta.metadata }]; },
       async setMetadata(m) { const b = blobs.get(p) || { buf: Buffer.alloc(0), meta: { metadata: {} } }; if (m.contentType) b.meta.contentType = m.contentType; Object.assign(b.meta.metadata, m.metadata || {}); blobs.set(p, b); },
       async getSignedUrl(o) { return ['https://storage.example/' + p + '?sig=' + o.action]; }
@@ -138,10 +140,12 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   r = await post(lib, { op: 'startAgent', mode: 'grouping', payload: { sourceName: 't', overview: 'data:image/jpeg;base64,/9j/', charms: [{ index: 0, thumb: 'data:image/png;base64,iVBORw0KGgo=' }] } });
   assert(r.body.id, 'agent id: ' + JSON.stringify(r.body));
   const agentId = r.body.id;
-  const bgr = await agentBg.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify({ id: agentId, mode: 'grouping', payload: { sourceName: 't', overview: 'data:image/jpeg;base64,/9j/', charms: [{ index: 0, thumb: 'data:image/png;base64,iVBORw0KGgo=' }] } }) });
+  assert(blobs.has('charmnest/agent/' + agentId + '.json'), 'payload parked in storage');
+  const bgr = await agentBg.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify({ id: agentId, mode: 'grouping' }) });
   assert.strictEqual(bgr.statusCode, 200);
   r = await post(lib, { op: 'getAgent', id: agentId });
   assert.strictEqual(r.body.job.status, 'done'); assert.strictEqual(r.body.job.result.realCharmCount, 1, JSON.stringify(r.body.job));
+  assert(!blobs.has('charmnest/agent/' + agentId + '.json'), 'parked payload cleaned up');
   anthro.callClaudeRaw = realCall; delete process.env.ANTHROPIC_API_KEY;
 
   // ── server solver: startJob → background → done ──

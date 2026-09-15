@@ -174,10 +174,14 @@ async function op_startAgent(b) {
   const mode = ["grouping", "layout", "name"].includes(b.mode) ? b.mode : null;
   if (!mode || !b.payload) return { error: "mode and payload required" };
   const id = "agent-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  await db.collection(AGENT).doc(id).set({ id, mode, status: "pending", sheetId: str(b.sheetId, 80), sourceName: str(b.sourceName, 120), createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() });
+  // Background functions accept only a small request body (the images made the
+  // kick 413), so the payload is parked in Storage and the job reads it back.
+  const payloadPath = `charmnest/agent/${id}.json`;
+  await admin.storage().bucket().file(payloadPath).save(Buffer.from(JSON.stringify(b.payload)), { resumable: false, contentType: "application/json", metadata: { cacheControl: "no-store" } });
+  await db.collection(AGENT).doc(id).set({ id, mode, status: "pending", payloadPath, sheetId: str(b.sheetId, 80), sourceName: str(b.sourceName, 120), createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() });
   const fetch = require("node-fetch");
   const base = process.env.URL || process.env.DEPLOY_PRIME_URL || "https://goldenspike.app";
-  const kick = await fetch(`${base}/.netlify/functions/charmNestAgent-background`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, mode, payload: b.payload }) }).catch(err => ({ ok: false, status: 0, statusText: err.message }));
+  const kick = await fetch(`${base}/.netlify/functions/charmNestAgent-background`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, mode }) }).catch(err => ({ ok: false, status: 0, statusText: err.message }));
   if (!kick.ok && kick.status !== 202) { await db.collection(AGENT).doc(id).set({ status: "error", error: `kick failed: ${kick.status} ${kick.statusText || ""}`, updatedAt: FV.serverTimestamp() }, { merge: true }); return { error: `could not start the background job (${kick.status})` }; }
   return { ok: true, id };
 }
