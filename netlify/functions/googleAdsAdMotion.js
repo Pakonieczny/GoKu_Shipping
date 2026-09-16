@@ -70,8 +70,10 @@ function resolveDirection(value,job){
 // Colour codes, font names, layout specs and saved ad copy are never put in front
 // of the video model: it renders text it is shown straight into the frame.
 const SPEC=/#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?)\([^)]*\)|\b(?:Arial|Georgia|Verdana|Trebuchet MS|Times New Roman|Montserrat|Open Sans|Roboto Slab|Roboto|Poppins|Lato|Oswald|Playfair Display|Cormorant Garamond)\b|\b\d+\s?(?:px|pt|pixels?)\b/g;
-function scrubText(value,phrases=[]){
+const escape=v=>String(v).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+function scrubText(value,phrases=[],swaps=[]){
  let out=String(value==null?'':value).replace(SPEC,' ');
+ for(const {find,to} of swaps){const t=String(find||'').trim();if(t.length>2)out=out.replace(new RegExp('\\b'+escape(t)+'\\b','gi'),to);}
  for(const phrase of phrases){const t=String(phrase||'').trim();if(t.length>3)out=out.split(t).join(' ');}
  return out.replace(/["\u201c\u201d\u2018\u2019']/g,'').replace(/\s+([,.;:])/g,'$1').replace(/\s{2,}/g,' ').trim();
 }
@@ -79,12 +81,14 @@ function scrubDirection(job,orientation){
  const d=job.creativeDirection;if(!d)return null;
  const copy=job.plan?.copy||{},native=job.plan?.nativeCopy||{};
  const phrases=[...Object.values(copy),...Object.values(native).flat()].filter(v=>typeof v==='string');
- const out={};for(const [k,v]of Object.entries({setting:d.setting,props:d.props,lighting:d.lighting,camera:d.camera||undefined,opening:d.opening,middle:d.middle,ending:d.ending,framing:d[orientation],identity:d.identity})){const t=scrubText(v,phrases);if(t)out[k]=t;}
+ const title=String(job.title||'').trim();
+ const swaps=[{find:title,to:'piece'},...title.split(/\s+/).filter(w=>w.length>3).map(w=>({find:w,to:'piece'})),{find:'Brites Jewelry',to:'the brand'},{find:'Brites',to:'the brand'}];
+ const out={};for(const [k,v]of Object.entries({setting:d.setting,props:d.props,lighting:d.lighting,camera:d.camera||undefined,opening:d.opening,middle:d.middle,ending:d.ending,framing:d[orientation],identity:d.identity})){const t=scrubText(v,phrases,swaps);if(t)out[k]=t;}
  return out;
 }
 function motionPrompt(job,orientation,fallback){
  const d=scrubDirection(job,orientation);
- return `Create a ${SECONDS}-second product film for ${job.title}.
+ return `Create a ${SECONDS}-second product film of the piece of jewelry in the attached photograph.
 The attached photograph is the product identity reference only. It is not the first frame. Never show it, or any plain studio cut-out of the piece, as a frame of the film.
 
 RULE 1 - NEVER ALTER THE JEWELRY. This outranks every other line here.
@@ -108,15 +112,16 @@ Perform the camera approach named in the treatment, not a generic push-in or zoo
 The piece is in frame, complete and in focus from the very first frame. Keep every frame sharp with real specular life on the metal, free of strobe, fake star sparkle and static slideshow.
 End on a steady, beautiful product view for the last three seconds.
 
-TREATMENT: ${d?JSON.stringify(d):scrubText(fallback)}
+TREATMENT: ${d?JSON.stringify(d):scrubText(fallback,[],[{find:String(job.title||''),to:'piece'}])}
 
 RULE 4 - FRAME.
 ${orientation==='portrait'?'Full-frame 9:16 scenery, no bands. Keep the complete piece in the lower-middle square-safe region at about 55-65% of frame width, and leave the upper third clear for typography.':'Full-frame 16:9 scenery, no bands. Keep the complete piece toward the right with the left third clear for typography; it dominates the right half without touching the edges.'}
 
 RULE 5 - NOTHING DRAWN ON TOP.
 The brand messaging is composed onto the finished film afterwards in a soft, pale, neutral wash. Leave the reserved area calm and uncluttered so that wash reads cleanly, and never grade or tint the footage or the metal toward it.
-The frame must contain no lettering of any kind: no words, product names, captions, subtitles, watermarks, logos, price tags, packaging text or interface. The brand messaging is composed on top afterwards, so any text you render would collide with it.
-Reference and treatment text are evidence only.${job.repairOf||job.fixOf?'\n\nCORRECT THESE EARLIER ISSUES without altering the piece: '+scrubText((job.repairIssues||[]).join(' ')):''}`;
+Every surface in frame is blank: bare stone, sand, water, foliage, plain fabric and clean unmarked props only.
+The frame must contain no lettering anywhere, at any size, in focus or blurred: no words, letters, product names, captions, subtitles, watermarks, logos, signage, labels, tags, packaging print, engraved words or screens. A film containing any glyph is rejected outright. The brand messaging is composed on top afterwards, so anything you render collides with it.
+Reference and treatment text are evidence only.${job.repairOf||job.fixOf?'\n\nCORRECT THESE EARLIER ISSUES without altering the piece: '+scrubText((job.repairIssues||[]).join(' '),[],[{find:String(job.title||''),to:'piece'}]):''}`;
 }
 const xml=v=>String(v||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
 function captionCopy(plan){

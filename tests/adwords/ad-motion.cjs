@@ -163,11 +163,14 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
   ok(!/#[0-9a-fA-F]{3,8}/.test(prompt),'no colour code reaches the video model, even via the treatment');
   ok(!/Georgia|Open Sans/.test(prompt),'no font name reaches the video model, even via the treatment');
   ok(!/Gift-ready packaging/.test(prompt),'no saved ad copy reaches the video model, even via the treatment');
+  ok(!/Crocodile|Pendant|Brites/i.test(prompt),'the product name and brand never reach the video model, which renders names it is given');
+  ok(/Every surface in frame is blank/.test(prompt)&&/A film containing any glyph is rejected outright/.test(prompt),'the scene is defined positively as textless, not only forbidden text');
   ok(!/\d+\s?(?:px|pixels)/.test(prompt),'no pixel specification reaches the video model, even via the treatment');
-  ok(/no lettering of any kind/.test(prompt),'the film is told its frames carry no lettering at all');
+  ok(/no lettering anywhere, at any size, in focus or blurred/.test(prompt),'the film is told its frames carry no lettering at all');
   ok(/flat, laser-cut sheet metal about as thick as a credit card/.test(prompt)&&/one fortieth of the charm's length/.test(prompt)&&/engraving is cut into the metal/.test(prompt),'the film is given a measurable thinness and engraving cut into the metal');
   ok(/RULE 3 - ONE CONTINUOUS TAKE/.test(prompt)&&/No cuts, no jump cuts, no dissolves/.test(prompt),'the film must be one unbroken take');
   ok(/It is not the first frame/.test(prompt)&&/identical from the first frame to the last/.test(prompt),'the reference photo is never the opening frame and the piece is whole throughout');
+  ok(motion.scrubDirection({title:'Crocodile Charm Pendant',plan:{},creativeDirection:Object.fromEntries(keys.map(k=>[k,'The Crocodile Charm Pendant by Brites on a stone']))},'portrait').setting==='The piece by the brand on a stone','the product name is swapped for a neutral word rather than left as a renderable token');
   const payload=JSON.stringify(motion.motionRequest(job).input[1].content);
   ok(!/#eef1ec|#252729|Georgia|Open Sans/.test(payload),'the treatment is not shown the palette, fonts or layout spec either');
  }
