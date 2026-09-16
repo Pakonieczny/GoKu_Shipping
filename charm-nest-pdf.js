@@ -717,7 +717,7 @@
   /**
    * spec = {
    *   sheet: { wPt, hPt, name, strokeRGB },
-   *   placements: [{ charm, angle, cxPt, cyPt }],      cx/cy = sheet pt, y-down
+   *   placements: [{ charm, angle, cxPt, cyPt, scale? }], cx/cy = sheet pt, y-down; scale = uniform shrink about the charm centre (1 = as drawn)
    *   sources: Map(sourceId → parsed),
    *   labelled: bool, title, meta: { … copied into the Info dict }
    * }
@@ -771,8 +771,8 @@
       const xobj = out.context.flateStream(bytes, { Type: "XObject", Subtype: "Form", BBox: bb, Matrix: [1, 0, 0, 1, 0, 0], Resources: src.resRef });
       const xref = out.context.register(xobj);
       const key = page.node.newXObject("Charm" + i, xref);
-      // T(centre on sheet, y-up) · R(−θ) · T(−source centre)
-      const th = -pl.angle * Math.PI / 180, cs = Math.cos(th), sn = Math.sin(th);
+      // T(centre on sheet, y-up) · S(scale) · R(−θ) · T(−source centre)
+      const sc = pl.scale || 1, th = -pl.angle * Math.PI / 180, cs = Math.cos(th) * sc, sn = Math.sin(th) * sc;
       const ox = pl.cxPt, oy = spec.sheet.hPt - pl.cyPt, cx = c.centerPt[0], cy = c.centerPt[1];
       const e = ox - (cs * cx - sn * cy), f = oy - (sn * cx + cs * cy);
       page.pushOperators(ocgOps(tag), pushGraphicsState(), concatTransformationMatrix(cs, sn, -sn, cs, e, f), drawObject(key), popGraphicsState(), endMarkedContent());
