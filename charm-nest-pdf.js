@@ -373,7 +373,13 @@
    * A charm = one outline segment + every other segment assigned to it.
    */
   function groupCharms(parsed, opts) {
-    opts = Object.assign({ minPt: 6, darkMax: 0.35, framePct: 0.8, touchPt: 2.5, nearPt: 6 }, opts || {});
+    opts = Object.assign({ minPt: 6, darkMax: 0.35, framePct: 0.8, touchPt: 2.5, nearPt: 6, ringMaxPt: 13 }, opts || {});
+    // Illustrator writes a group's objects contiguously, so the content-stream order is the artist's grouping.
+    // Every drawable gets a stream position; a form's children take their Do's position (kept in child order).
+    const ordOf = new Map();
+    for (const s of parsed.segments) if (s.bbox) ordOf.set(s, s.start);
+    for (const s of parsed.segments) if (s.kind === "xobj" && s.children && s.children.length) { const n = s.children.length; s.children.forEach((k, i) => ordOf.set(k, s.start + (i + 1) / (n + 1))); }
+    const ord = s => (ordOf.has(s) ? ordOf.get(s) : (s.start || 0));
     const pageArea = parsed.pageW * parsed.pageH;
     const all = parsed.segments.concat(parsed.nested);
     // Frames are never charm material: page-sized paths of any colour, and any closed
@@ -382,19 +388,28 @@
     // silhouette probe" trap — the first live sheet hit it.
     const preDrawable = all.filter(s => s.bbox && s.kind !== "clip" && s.kind !== "noop" && !(s.kind === "xobj" && s.children && s.children.length));
     const achromatic0 = c => c && (Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2])) <= 0.15;
-    const cand0 = preDrawable.filter(s => s.kind === "path" && s.stroke && s.closed && achromatic0(s.strokeRGB) && (s.bbox[2] - s.bbox[0]) >= opts.minPt && (s.bbox[3] - s.bbox[1]) >= opts.minPt);
+    // An outline drawn as several open strokes whose ends meet (a bar from a U-shape plus a line) is one closed outline.
+    // Chain single-subpath achromatic open strokes by coincident endpoints; a fully closed chain becomes a synthetic
+    // outline whose real parts stay the charm's members (the writer copies the parts; the synthetic path is geometry only).
+    const chained = chainOpenStrokes(preDrawable.filter(s => s.kind === "path" && s.stroke && !s.closed && achromatic0(s.strokeRGB) && s.subpaths && s.subpaths.length === 1), 1.0);
+    const partOf = new Map(); for (const ch of chained) for (const part of ch.parts) partOf.set(part, ch);
+    const cand0 = preDrawable.concat(chained).filter(s => s.kind === "path" && s.stroke && s.closed && achromatic0(s.strokeRGB) && (s.bbox[2] - s.bbox[0]) >= opts.minPt && (s.bbox[3] - s.bbox[1]) >= opts.minPt);
     const isRectLike = s => s.kind === "path" && s.closed && s.subpaths.length === 1 && s.subpaths[0].filter(x => x[0] !== "h").length <= 5 && !s.subpaths[0].some(x => x[0] === "c");
     const encloses = (box, s) => s.bbox[0] >= box[0] - 0.5 && s.bbox[1] >= box[1] - 0.5 && s.bbox[2] <= box[2] + 0.5 && s.bbox[3] <= box[3] + 0.5;
     const frames = preDrawable.filter(s => s.kind === "path" && (bbArea(s.bbox) >= pageArea * opts.framePct ||
       (isRectLike(s) && cand0.filter(c => c !== s && encloses(s.bbox, c)).length >= 2)));
     const drawable = preDrawable.filter(s => !frames.includes(s));
+    for (const ch of chained) ordOf.set(ch, Math.min(...ch.parts.map(ord)));
+    const drawableWithChains = drawable.concat(chained.filter(ch => !frames.includes(ch)));
     // An outline is a closed, achromatic stroke (black, grey OR white — the reference
     // sheet strokes one charm in white). Coloured strokes are engraving detail.
     const achromatic = c => c && (Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2])) <= 0.15;
-    const isOutline = s => s.kind === "path" && s.stroke && s.closed && achromatic(s.strokeRGB) &&
-      (s.bbox[2] - s.bbox[0]) >= opts.minPt && (s.bbox[3] - s.bbox[1]) >= opts.minPt;
+    // A solid dark shape with no stroke (an anchor, a star) is cut along its fill edge: it is an outline too.
+    // Largest-first containment below turns a dark fill that sits inside a stroked outline back into a detail.
+    const isOutline = s => s.kind === "path" && s.closed && (s.bbox[2] - s.bbox[0]) >= opts.minPt && (s.bbox[3] - s.bbox[1]) >= opts.minPt &&
+      ((s.stroke && achromatic(s.strokeRGB)) || (!s.stroke && s.fill && lum(s.fillRGB) <= opts.darkMax));
     let frame = frames.length ? frames.reduce((a, b) => bbArea(b.bbox) > bbArea(a.bbox) ? b : a) : null;
-    let cands = drawable.filter(isOutline);
+    let cands = drawableWithChains.filter(isOutline);
     let rule = "stroked-dark-closed";
     if (!cands.length) {
       rule = "filled-dark-closed";
@@ -405,7 +420,10 @@
     // 1 · outlines vs details: largest first; a candidate geometrically inside an
     //     accepted outline is a detail (hole, engraving frame, inner ring); a small
     //     candidate touching an accepted outline's stroke is an attached ring.
-    cands.sort((a, b) => bbArea(b.bbox) - bbArea(a.bbox));
+    // stroked outlines first (largest first), then solid dark shapes: a fill only stands alone when no stroked
+    // outline holds or overlaps it (a compass's black fill can spill past its own stroked outline's box)
+    const isFillCand = s => !s.stroke && s.fill;
+    cands.sort((a, b) => (isFillCand(a) - isFillCand(b)) || (bbArea(b.bbox) - bbArea(a.bbox)));
     const outlines = [], merged = new Map();
     const largestArea = cands.length ? bbArea(cands[0].bbox) : 0;
     for (const s of cands) {
@@ -414,15 +432,29 @@
       // innermost container wins: iterate smallest → largest among accepted outlines
       const byAreaAsc = outlines.slice().sort((a, b) => bbArea(a.bbox) - bbArea(b.bbox));
       for (const o of byAreaAsc) { if (!bbInter(s.bbox, o.bbox)) continue; if (insideFrac(pts, polysOf(o)) >= 0.6) { host = o; break; } }
+      if (!host && isFillCand(s)) {
+        // a solid shape overlapping a stroked outline is that charm's fill, not a charm of its own
+        let bestO = null, bestR = 0;
+        for (const o of outlines) { if (isFillCand(o) || !bbInter(s.bbox, o.bbox)) continue; const f = insideFrac(pts, polysOf(o)); if (f > bestR) { bestR = f; bestO = o; } }   // by real containment only: on a dense sheet boxes overlap, shapes do not
+        if (bestO && bestR >= 0.3) host = bestO;
+      }
       if (!host) {
-        const small = bbArea(s.bbox) <= 0.12 * largestArea || Math.max(s.bbox[2] - s.bbox[0], s.bbox[3] - s.bbox[1]) <= 30;
+        // an attached ring: ring-sized, one simple subpath, and written next to its charm in the stream
+        const maxDim = Math.max(s.bbox[2] - s.bbox[0], s.bbox[3] - s.bbox[1]);
+        const ringLike = maxDim <= opts.ringMaxPt && s.subpaths.length === 1 && s.subpaths[0].length <= 20;
+        const small = ringLike && (bbArea(s.bbox) <= 0.12 * largestArea || maxDim <= 30);
         if (small) {
           let bestD = Infinity, bestO = null, secondD = Infinity;
           for (const o of outlines) { const g = Math.max(opts.touchPt, opts.nearPt); const grown = [s.bbox[0] - g, s.bbox[1] - g, s.bbox[2] + g, s.bbox[3] + g]; if (!bbInter(grown, o.bbox)) continue; const d = minDist(pts, polysOf(o)); if (d < bestD) { secondD = bestD; bestD = d; bestO = o; } else if (d < secondD) secondD = d; }
           const touch = opts.touchPt + (s.lwPt || 0) / 2 + ((bestO && bestO.lwPt) || 0) / 2;
           // touching wins outright; a ring that merely floats near two outlines (an already-nested sheet fed back
           // in) attaches only when it is clearly closer to one of them — never to whichever neighbour is a hair nearer
-          if (bestO && (bestD <= touch || (bestD <= Math.max(opts.touchPt, opts.nearPt) + touch && (secondD === Infinity || secondD >= 2 * Math.max(bestD, 0.5))))) host = bestO;
+          if (bestO && (bestD <= touch || (bestD <= Math.max(opts.touchPt, opts.nearPt) + touch && (secondD === Infinity || secondD >= 2 * Math.max(bestD, 0.5))))) {
+            // on a nested sheet a ring can touch a neighbour's charm too: it belongs to the outline it was drawn with
+            const big = cands.filter(c => Math.max(c.bbox[2] - c.bbox[0], c.bbox[3] - c.bbox[1]) > opts.ringMaxPt).sort((a, b) => ord(a) - ord(b));
+            const o = ord(s); let prev = null, next = null; for (const c of big) { if (ord(c) < o) prev = c; else if (!next) next = c; }
+            if (bestO === prev || bestO === next || (!prev && !next)) host = bestO;
+          }
         }
       }
       if (host) merged.set(s, host); else outlines.push(s);
@@ -433,11 +465,27 @@
     const charms = outlines.map((o, i) => ({ index: i, outline: o, members: [], bbox: o.bbox.slice(), extras: [] }));
     const byOutline = new Map(charms.map(c => [c.outline, c]));
     const orphans = [];
+    // stream neighbours: the charms whose outlines were written just before and just after a segment
+    const outlineByOrd = charms.slice().sort((a, b) => ord(a.outline) - ord(b.outline));
+    const streamNeighbours = (s) => { const o = ord(s); let prev = null, next = null; for (const c of outlineByOrd) { if (ord(c.outline) < o) prev = c; else { next = c; break; } } return [prev, next].filter(Boolean); };
+    const relation = (s, pts, c) => { const f = insideFrac(pts, polysOf(c.outline)); if (f >= 0.5) return { f, d: 0 }; const d = minDist(pts, polysOf(c.outline)); return { f, d }; };
     for (const s of drawable) {
       if (s === frame) continue;
       if (byOutline.has(s)) { byOutline.get(s).members.push(s); continue; }
+      if (partOf.has(s)) { const ch = partOf.get(s); const c = byOutline.get(ch) || (merged.has(ch) ? byOutline.get(merged.get(ch)) : null); if (c) { c.members.push(s); c.bbox = bbUnion(c.bbox, s.bbox); continue; } }
       if (merged.has(s)) { const c = byOutline.get(merged.get(s)); c.members.push(s); c.bbox = bbUnion(c.bbox, s.bbox); continue; }
       const pts = samples(s, polysCache);
+      // 2a · the artist's grouping first: a detail belongs to the charm it was drawn with (the outline before or after
+      //      it in the stream) whenever it sits inside or against that outline. Only when neither stream neighbour
+      //      holds it does pure geometry decide — that is what stops a dense sheet's touching charms swapping details.
+      {
+        const nb = streamNeighbours(s).filter(c => bbInter([s.bbox[0] - opts.nearPt, s.bbox[1] - opts.nearPt, s.bbox[2] + opts.nearPt, s.bbox[3] + opts.nearPt], c.outline.bbox));
+        let pick = null, pr = null;
+        for (const c of nb) { const r = relation(s, pts, c); if (!pick || r.f > pr.f || (r.f === pr.f && r.d < pr.d)) { pick = c; pr = r; } }
+        // by containment, or by touch when the detail fits within that outline's box (a 30 mm bar can touch a 13 mm charm; it is not part of it)
+        const fitsIn = (c) => { const b = c.outline.bbox, g = opts.nearPt; return s.bbox[0] >= b[0] - g && s.bbox[1] >= b[1] - g && s.bbox[2] <= b[2] + g && s.bbox[3] <= b[3] + g; };
+        if (pick && (pr.f >= 0.5 || (pr.d <= opts.touchPt + (s.lwPt || 0) / 2 && fitsIn(pick)))) { pick.members.push(s); pick.bbox = bbUnion(pick.bbox, s.bbox); continue; }
+      }
       // something far bigger than any outline it could belong to is not a detail of it (a guide, a stray frame)
       const biggestNear = charms.filter(c => bbInter(s.bbox, c.outline.bbox)).reduce((m, c) => Math.max(m, bbArea(c.outline.bbox)), 0);
       if (bbArea(s.bbox) > 3 * biggestNear && biggestNear > 0) { orphans.push(s); continue; }
@@ -472,6 +520,33 @@
     charms.forEach(c => { c.strokePt = Math.max(0.5, c.outline.lwPt || 0.5); });
     parsed._frames = frames.filter(s => bbArea(s.bbox) < pageArea * opts.framePct);   // drawn plate frames, for detectWorkArea (page-sized ones are not plates)
     return { charms, frame, frames, orphans, rule, outlineCount: outlines.length, mergedCount: merged.size };
+  }
+
+  /** Chain open strokes by coincident endpoints into closed synthetic outlines. */
+  function chainOpenStrokes(segs, tolPt) {
+    const ends = s => { const sub = s.subpaths[0]; const first = sub[0] && sub[0][0] === "m" ? sub[0][1] : null; let last = null; for (const o of sub) { if (o[0] === "m" || o[0] === "l") last = o[1]; else if (o[0] === "c") last = o[3]; } return first && last ? [first, last] : null; };
+    const pts = []; segs.forEach((s, i) => { const e = ends(s); if (!e) return; if (Math.hypot(e[0][0] - e[1][0], e[0][1] - e[1][1]) <= tolPt) return; pts.push({ s, i, k: 0, p: e[0] }, { s, i, k: 1, p: e[1] }); });
+    const mate = new Map();
+    for (const a of pts) { if (mate.has(a)) continue; let best = null, bd = tolPt; for (const b of pts) { if (b.s === a.s || mate.has(b)) continue; const d = Math.hypot(a.p[0] - b.p[0], a.p[1] - b.p[1]); if (d <= bd) { bd = d; best = b; } } if (best) { mate.set(a, best); mate.set(best, a); } }
+    const seen = new Set(), out = [];
+    for (const start of pts) {
+      if (seen.has(start.s) || !mate.has(start)) continue;
+      // walk: leave `start.s` from its other end, cross to the mate, and so on until back at start
+      const parts = [], poly = []; let cur = start.s, enterK = start.k, closed = false; const visited = new Set();
+      while (cur && !visited.has(cur)) {
+        visited.add(cur); parts.push(cur);
+        const flat = flatten(cur, 16)[0] || []; const pl = enterK === 0 ? flat : flat.slice().reverse(); poly.push(...pl);
+        const exit = pts.find(q => q.s === cur && q.k !== enterK); const m = exit && mate.get(exit);
+        if (!m) break; if (m.s === start.s) { closed = true; break; } cur = m.s; enterK = m.k;
+      }
+      if (!closed || parts.length < 2) continue;
+      parts.forEach(pp => seen.add(pp.s || pp));
+      const bb = parts.reduce((a, pp) => bbUnion(a, pp.bbox), null);
+      const sub = poly.map((pt, i) => [i ? "l" : "m", pt]); sub.push(["h"]);
+      out.push({ kind: "path", synthetic: true, parts, stroke: true, fill: false, closed: true, strokeRGB: parts[0].strokeRGB, lwPt: Math.max(...parts.map(pp => pp.lwPt || 0)), paintOp: "S", subpaths: [sub], bbox: bb, start: Math.min(...parts.map(pp => pp.start)), end: Math.max(...parts.map(pp => pp.end)), depth: parts[0].depth, parent: parts[0].parent });
+      parts.forEach(pp => seen.add(pp));
+    }
+    return out;
   }
 
   /* ═══ 5b · work area ═══════════════════════════════════════════════════
@@ -572,7 +647,9 @@
       c.bits = bits; c.w = w; c.h = h; c.scale = scale;
       c.bboxOuter = [bx0, by0, bx1, by1];
       c.areaPt2 = n / (scale * scale);
-      c.open = interior < 0.03 * w * h && inkN > 0;       // fill leaked through a gap → outline is not closed at raster resolution
+      // an outline is open when the border flood leaks into it (little unreached empty interior). A solid shape has
+      // no empty interior at all — it is closed by construction — so the test applies to stroked outlines only.
+      c.open = !o.fill && interior < 0.03 * w * h && inkN > 0;
       c.hash = fnv(signature(bits, w, h) + "|" + Math.round((bx1 - bx0) * 2) + "x" + Math.round((by1 - by0) * 2) + "|" + c.members.length);
       c.thumb = await thumbnail(c, 168);
       c.widthPt = bx1 - bx0; c.heightPt = by1 - by0;

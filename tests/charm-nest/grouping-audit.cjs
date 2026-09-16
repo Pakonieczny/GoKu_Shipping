@@ -1,0 +1,7 @@
+// Usage: node tests/charm-nest/grouping-audit.cjs <file.ai> [more.ai …]
+// How many members sit clearly outside their own charm's outline box (the "scattered bits" symptom), and how many charms
+global.window=global; const L=global.PDFLib=require('/home/user/GoKu_Shipping/vendor/pdf-lib-1.17.1.min.js'); require('/home/user/GoKu_Shipping/charm-nest-pdf.js');
+const fs=require('fs');(async()=>{ for(const f of process.argv.slice(2)){ const p=await CharmNestPDF.parseSource(new Uint8Array(fs.readFileSync(f)),'x'); const g=CharmNestPDF.groupCharms(p,{minPt:6});
+ const pad=1.5*72/25.4; let stray=0, list=[]; for(const c of g.charms){ const b=c.outline.bbox; for(const m of c.members){ if(m===c.outline) continue; const mb=m.bbox; const out=mb[0]<b[0]-pad||mb[1]<b[1]-pad||mb[2]>b[2]+pad||mb[3]>b[3]+pad; if(out){ stray++; if(list.length<5) list.push(`charm ${c.index} member ${m.kind}${m.stroke?'S':''}${m.fill?'F':''} ${((mb[2]-mb[0])*25.4/72).toFixed(1)}x${((mb[3]-mb[1])*25.4/72).toFixed(1)}mm`); } } }
+ const big=g.charms.filter(c=>{const b=c.bbox; return (b[2]-b[0])>(c.outline.bbox[2]-c.outline.bbox[0])*1.6||(b[3]-b[1])>(c.outline.bbox[3]-c.outline.bbox[1])*1.6;}).length;
+ console.log(f.split('/').pop(),'charms',g.charms.length,'merged-as-ring',g.mergedCount,'orphans',g.orphans.length,'stray members',stray,'charms whose extent grew >1.6× (merged neighbours)',big); list.forEach(x=>console.log('   ',x)); } })();

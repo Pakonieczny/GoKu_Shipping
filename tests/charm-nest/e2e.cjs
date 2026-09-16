@@ -54,7 +54,10 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
       });
     });
   }
-  if (process.env.CN_STOCK) { // e.g. "4.5x4" — a custom per-metal stock to force an overfilled sheet
+  // the fixture and the reference files were drawn for the 181 × 153.2 mm sheet; production plates default to A (100 × 50 mm),
+  // so a test sets its own stock unless it wants the plate default explicitly (CN_STOCK=plate)
+  if (!process.env.CN_STOCK) process.env.CN_STOCK = '181x153.2';
+  if (process.env.CN_STOCK && process.env.CN_STOCK !== 'plate') { // e.g. "81x76" mm — a custom per-metal stock to force an overfilled sheet
     const [w, h] = process.env.CN_STOCK.split('x').map(Number);
     await page.evaluate(([w, h]) => { CN.S.settings.stock.gold = [w / 25.4, h / 25.4]; CN.S.stockPreset = 'custom'; document.querySelector('#stockSel').value = 'custom'; }, [w, h]);
   }
@@ -114,7 +117,9 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
     await page.waitForFunction(() => CN.S.sheets.gold.pages.length >= 2 && ['complete', 'partial'].includes(CN.S.sheets.gold.pages[1].status), null, { timeout: 600000 });
     const ov = await page.evaluate(() => { const p = CN.S.sheets.gold; const p2 = p.pages[1]; return { pages: p.pages.length, moved: p.movedOn && p.movedOn.n, rejects1: p.rejects.length, status1: p.status, charms2: p2.charms.length, placed2: p2.placements.length, status2: p2.status, tabs: document.querySelectorAll('.sheetCard[data-m=gold] .shTabs button').length, total: p.pages.reduce((n, x) => n + x.charms.length, 0) }; });
     console.log('overflow', JSON.stringify(ov));
-    assert(ov.pages >= 2 && ov.moved > 0 && ov.rejects1 === 0 && ov.charms2 === ov.moved && ov.tabs === ov.pages && ov.total === fx.charms.length, 'extras moved to sheet 2: ' + JSON.stringify(ov));
+    // overflow may chain (sheet 2 can overflow into sheet 3): what left sheet 1 equals what the later sheets hold
+    const later = await page.evaluate(() => CN.S.sheets.gold.pages.slice(1).reduce((n, x) => n + x.charms.length, 0));
+    assert(ov.pages >= 2 && ov.moved > 0 && ov.rejects1 === 0 && later === ov.moved && ov.tabs === ov.pages && ov.total === fx.charms.length, 'extras moved to later sheets: ' + JSON.stringify(Object.assign(ov, { later })));
     await page.evaluate(() => CN.showPage('gold', 1)); await page.screenshot({ path: path.join(tmp, '2b-sheet2.png') });
     const shown = await page.evaluate(() => CN.S.sheets.gold.pages[1].placements.length);
     assert(shown === ov.placed2 && shown > 0, 'sheet 2 tab shows its own placements');

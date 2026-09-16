@@ -93,3 +93,13 @@ Production uses two plates: **A · 100 × 50 mm** (default) and **B · 100 × 10
 ## Fidelity check
 
 `node tests/charm-nest/fidelity.cjs <source.ai> <sheet.ai>…` compares every drawn path of the source with every drawn path of the written sheets: paint operator, stroke colour, fill colour, line width, closure, subpath and operator counts, and rotation-invariant geometry. A written set is faithful when the only extras are the sheets' own borders.
+
+## Grouping on dense, already-nested sheets
+
+Three rules were added after a 75-piece nested sheet came back with charms merged and details scattered:
+
+- **The artist's order first.** Illustrator writes a group's objects contiguously, so a detail is assigned to the charm whose outline was written just before or just after it in the content stream, provided it sits inside or against that outline and fits within its box. Only when neither stream neighbour holds it does pure geometry decide. This is what stops touching charms on a dense sheet from swapping details.
+- **Rings are ring-shaped and drawn with their charm.** A small closed stroke touching a neighbour is attached as a jump ring only when it is ring-sized (≤ 3.5 mm), a single simple subpath, and adjacent in the stream to the outline it touches. Before this, any small charm that touched a neighbour was swallowed as a "ring".
+- **Outlines that are not one closed stroke.** Open achromatic strokes whose ends meet (a bar drawn as a U plus a line) are chained into one closed outline; the real parts remain the members the writer copies. Solid dark shapes with no stroke (an anchor, a star) are outlines cut along their fill edge, unless they sit inside a stroked outline, in which case they are that charm's fill.
+
+`node tests/charm-nest/grouping-audit.cjs <file.ai>` reports charms, rings, orphans, members lying outside their own outline, and charms whose extent grew past their outline (merged neighbours).
