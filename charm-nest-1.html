@@ -1397,30 +1397,38 @@ async function nextSheetSeq(sh) {
 }
 async function persistSheet(sh, items) {
   if (!S.cloud.ok) return;
-  // the sheet record links to each charm's permanent copy: wait for those uploads first, so no link is missing
-  await Promise.allSettled([...new Set(items.map(c => c.sourceId))].map(id => { const x = S.sources.find(z => z.id === id); return x && x.persisting; }).filter(Boolean));
   const day = today(), name = sh.fileBase || sheetFileBase(sh, sh.page), base = `charmnest/sheets/${day}/${name}`;
-  const ai = await uploadBytes(`${base}/${name}.ai`, sh.outputs.ai, "application/illustrator", "Saving sheet .ai");
-  const pdf = await uploadBytes(`${base}/${name}.pdf`, sh.outputs.ai, "application/pdf", "Saving sheet .pdf");
-  const lab = await uploadBytes(`${base}/${name}_labelled.pdf`, sh.outputs.labelled, "application/pdf", "Saving labelled proof");
-  const rep = await uploadBytes(`${base}/${name}_nest-report.json`, new TextEncoder().encode(JSON.stringify(sh.outputs.report, null, 1)), "application/json", "Saving report");
-  const pv = sh.outputs.previewPng ? await uploadBytes(`${base}/preview.png`, sh.outputs.previewPng, "image/png", "Saving preview") : null;
-  sh.cloud = { ai: ai.url, pdf: pdf.url, labelled: lab.url, report: rep.url, preview: pv && pv.url };
   const byId = new Map(items.map(c => [c.id, c]));
-  const doc = {
-    id: sh.sheetId, metal: sh.metal, metalLabel: sheetName(sh), day, folder: name, fileBase: name, seq: sh.seq || sh.page, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, elapsedMs: Math.round(sh.elapsedMs || 0),
+  const record = (outputs) => ({
+    id: sh.sheetId, metal: sh.metal, metalLabel: sheetName(sh), day, folder: name, fileBase: name, seq: sh.seq || sh.page, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, elapsedMs: Math.round(sh.elapsedMs || 0), totalMs: Math.round(sh.totalMs || 0),
     stock: sh.outputs.report.stock, params: sh.solveParams, density: sh.density, freePt2: Math.round(sh.liveInfo.freePt2), usablePt2: Math.round(sh.liveInfo.usablePt2), pocket: sh.liveInfo.pocket,
-    charmCount: items.length, placedCount: sh.placements.length, rejectCount: (sh.outputs.report.rejects || []).length, page: sh.page, verification: { ok: !!sh.verification.ok, minGapPt: sh.verification.minGapPt, minEdgePt: sh.verification.minEdgePt, render: sh.verification.render && { ok: sh.verification.render.ok, overlapPx: sh.verification.render.overlapPx, outsidePx: sh.verification.render.outsidePx, error: sh.verification.render.error || null } },
-    outputs: { ai: { path: ai.path, url: ai.url }, pdf: { path: pdf.path, url: pdf.url }, labelled: { path: lab.path, url: lab.url }, report: { path: rep.path, url: rep.url }, preview: pv ? { path: pv.path, url: pv.url } : null },
+    charmCount: items.length, placedCount: sh.placements.length, rejectCount: (sh.outputs.report.rejects || []).length, page: sh.page, verification: { ok: !!sh.verification.ok, minGapPt: sh.verification.minGapPt, minEdgePt: sh.verification.minEdgePt, render: sh.verification.render && { ok: sh.verification.render.ok, overlapPx: sh.verification.render.overlapPx, outsidePx: sh.verification.render.outsidePx } },
+    outputs,
     sources: [...new Set(items.map(c => c.sourceId))].map(id => { const s = S.sources.find(x => x.id === id); return s ? { id: s.id, name: s.name, zipName: s.zipName, hash: s.hash, bytes: s.bytes.length, path: s.cloud && s.cloud.path, url: s.cloud && s.cloud.url } : null; }).filter(Boolean),
-    charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded })),
+    charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open })),
     placements: sh.outputs.report.placements, rejects: sh.outputs.report.rejects,
     names: items.map(c => c.name).filter(Boolean).join(" ")
+  });
+  // 1 · the Library record first, so the sheet is on record even if a file upload fails
+  await api("charmNestLibrary", { op: "putSheet", sheet: record(null) }, { label: "Saving sheet record" });
+  // 2 · the files, each retried on its own; a failure is reported, never hidden
+  const up = async (path, bytes, type, label) => { let err = null; for (let t = 0; t < 3; t++) { try { return await uploadBytes(path, bytes, type, label); } catch (e) { err = e; await new Promise(r => setTimeout(r, 1500 * (t + 1))); } } throw err; };
+  const failed = []; const got = async (k, path, bytes, type, label) => { try { const r = await up(path, bytes, type, label); return { path: r.path, url: r.url }; } catch (e) { failed.push(`${k}: ${e.message}`); return null; } };
+  const outputs = {
+    ai: await got("ai", `${base}/${name}.ai`, sh.outputs.ai, "application/illustrator", "Saving sheet .ai"),
+    pdf: await got("pdf", `${base}/${name}.pdf`, sh.outputs.ai, "application/pdf", "Saving sheet .pdf"),
+    labelled: await got("labelled proof", `${base}/${name}_labelled.pdf`, sh.outputs.labelled, "application/pdf", "Saving labelled proof"),
+    report: await got("report", `${base}/${name}_nest-report.json`, new TextEncoder().encode(JSON.stringify(sh.outputs.report, null, 1)), "application/json", "Saving report"),
+    preview: sh.outputs.previewPng ? await got("preview", `${base}/preview.png`, sh.outputs.previewPng, "image/png", "Saving preview") : null
   };
-  await api("charmNestLibrary", { op: "putSheet", sheet: doc }, { label: "Saving sheet record" });
+  sh.cloud = { ai: outputs.ai && outputs.ai.url, pdf: outputs.pdf && outputs.pdf.url, labelled: outputs.labelled && outputs.labelled.url, report: outputs.report && outputs.report.url, preview: outputs.preview && outputs.preview.url };
+  // 3 · charm links: wait for the charms' own permanent copies (started when the file arrived), then complete the record
+  await Promise.allSettled([...new Set(items.map(c => c.sourceId))].map(id => { const x = S.sources.find(z => z.id === id); return x && x.persisting; }).filter(Boolean));
+  await api("charmNestLibrary", { op: "putSheet", sheet: record(outputs) }, { label: "Completing sheet record" });
   await api("charmNestLibrary", { op: "putCalibration", row: Object.assign({ sheetId: sh.sheetId, metal: sh.metal, clearancePt: +S.settings.clearancePt }, sh.outputs.report.calibration) }, { label: "Saving calibration" });
   S.calibration.push(Object.assign({ sheetId: sh.sheetId }, sh.outputs.report.calibration));
   renderCard(sh);
+  if (failed.length) { agent({ metal: sh.metal }, "warn", `Saved the record for ${name}, but these files did not upload: ${failed.join("; ")}`); toast(`${labelOf(sh.metal)}: record saved, ${failed.length} file(s) failed to upload — see the log`, "bad", 6000); return; }
   agent({ metal: sh.metal }, "cloud", `Saved to the cloud in folder ${name}: ${name}.ai, .pdf, labelled proof, report, preview`);
   toast(`${labelOf(sh.metal)}: sheet, proof and report saved to the cloud`, "ok", 3000);
 }
