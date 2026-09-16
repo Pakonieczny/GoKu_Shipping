@@ -2,7 +2,7 @@
 
 Design and implementation document. Status: draft 2, decisions incorporated. Owner: production tooling.
 
-Decisions taken on draft 1: SKU labels are text under each charm · engraving is always on the back · font is Myriad Pro, legible, never inside a cut-out, only on solid material · pieces are engraved one at a time after the sheet is cut · the sorter marks orders design-complete and QR labels are generated and saved with the set of sheets, no longer printed · a quantity of 2 means two identical charms (different text only when the charm type, colour or size differs) · both apps run on the same PC.
+Decisions taken on drafts 1 and 2: SKU labels are text under each charm · a SKU is one design, colour-agnostic; the colour variation only decides which metal card the design goes to · engraving is always on the back · font is Myriad Pro, legible, never inside a cut-out, only on solid material · text is always set at the largest size the space allows, and a person visibly reviews every back placement before it is released · pieces are engraved one at a time after the sheet is cut · the sorter marks orders design-complete and QR labels are generated and saved with the set of sheets, no longer printed · a quantity of 2 means two identical charms · both apps run on the same PC · the station's print button is hidden.
 
 ---
 
@@ -24,7 +24,7 @@ Everything builds on what exists: the sorter's parser (`charm-nest-pdf.js`), sil
 | --- | --- |
 | Order line | One Etsy transaction: order number, SKU, quantity, metal key, personalisation, buyer message |
 | Metal key | `gold`, `silver`, `rose`, `10k`, `14k` as the Design Station classifies them; the sorter maps them to `gold`, `silver`, `rose`, `gold10k`, `gold14k` |
-| Master file | One `.ai` per metal that holds every charm design, each with its SKU as text directly under it |
+| Master file | One `.ai` that holds every charm design, each with its SKU as text directly under it. A SKU is one design regardless of colour; the order's colour variation only decides which metal card it goes to |
 | Master index | The SKU → charm lookup built from a master file |
 | Pool | Extracted charm designs waiting to be nested, one entry per order line and copy |
 | Back pool | The engraving design for each engraved copy, kept with the sheet that holds the front |
@@ -203,7 +203,7 @@ const Bridge = (() => {
 
 ### 4.6 Completion without printing
 
-`proceedToPrint` is split. Its second half becomes `commitCompletion(ids, { labels })`, called by the button after the print handshake (unchanged today) and by `complete.commit` after the sorter has saved the labels. The archived record gains `labels: { setId, folder, files[] }` so the History view can open the saved label sheet. Printing stays available on the station for the transition, and is retired by removing the print button once the sorter path is in daily use.
+`proceedToPrint` is split. Its second half becomes `commitCompletion(ids, { labels })`, called by the button after the print handshake (unchanged today) and by `complete.commit` after the sorter has saved the labels. The archived record gains `labels: { setId, folder, files[] }` so the History view can open the saved label sheet. The station's print button is hidden (`#qrPreviewPrintBtn` and the print route) once the sorter path is live; `design-print-1.html` stays deployed as a fallback that can be re-enabled from Settings.
 
 ```js
 async function commitCompletion(ids, { labels = null } = {}) {
@@ -334,24 +334,23 @@ Runs in the browser for a file up to a few hundred charms, and as `charmMaster-b
 
 1. `parseSource` → `groupCharms` → `labelCharms` → Claude grouping review (fragments merged before indexing) → `buildSilhouettes`.
 2. For every labelled charm: `buildSingleCharm(charm, parsed)` produces a `.ai` whose content stream is the original page with every non-member byte range blanked, so paths, stroke widths, colours and nested forms are the originals. Stored at `charmnest/master/{metal}/{SKU}.ai` with a PNG thumbnail beside it.
-3. Firestore `Charm_Master_Index/{metal}_{SKU}`:
+3. Firestore `Charm_Master_Index/{SKU}`. The index is keyed by SKU alone: a SKU is one design whatever colour it is ordered in. The metal card a copy lands on comes from the order line's metal, never from the master.
 
 ```json
-{ "sku": "BR-CMP-01", "metal": "gold", "masterPath": "charmnest/master/gold/2f8e….ai", "masterHash": "2f8e…", "charmHash": "9ac0…",
+{ "sku": "BR-CMP-01", "masterPath": "charmnest/master/2f8e….ai", "masterHash": "2f8e…", "charmHash": "9ac0…",
   "widthPt": 62.4, "heightPt": 70.1, "areaPt2": 2810, "members": 25, "holes": 1, "engravable": true,
-  "aiPath": "charmnest/master/gold/BR-CMP-01.ai", "thumbPath": "charmnest/master/gold/BR-CMP-01.png", "indexedAt": 1789… }
+  "aiPath": "charmnest/master/BR-CMP-01.ai", "thumbPath": "charmnest/master/BR-CMP-01.png", "indexedAt": 1789… }
 ```
 
-4. `Charm_Master_Files/{metal}` records the master's hash, count, `unlabelled[]`, `orphans[]`, `duplicates[]`. The **Master** tab shows the SKU grid and the leftovers in red; a master with duplicates blocks pool adds for those SKUs until fixed.
-5. `engravable` defaults to `true` when the back mask (6.2) has an inscribed rectangle of at least 6 × 3 mm; the Master tab lets an operator override it per SKU.
+4. `Charm_Master_Files/{masterHash}` records the master's path, count, `unlabelled[]`, `orphans[]`, `duplicates[]`. Several master files may be indexed (one per family, say); a SKU present in two masters is a duplicate and blocks pool adds for that SKU until fixed. The **Master** tab shows the SKU grid and the leftovers in red.
+5. `engravable` defaults to `true` when the back mask (7.2) has an inscribed rectangle of at least 6 × 3 mm; the Master tab lets an operator override it per SKU.
 
 ### 6.4 Pulling a charm for an order line
 
 ```js
 async function poolAdd(row) {
-  const key = `${row.metal}_${row.line.sku.toUpperCase()}`;
-  const ix = await api("charmNestLibrary", { op: "masterGet", key }) ;
-  if (!ix.entry) { row.state = "unmatched"; Unmatched.add(row); agent({ bridge: true }, "warn", `${row.order.receiptId} · ${row.line.sku}: not in the ${labelOf(row.metal)} master`); return; }
+  const ix = await api("charmNestLibrary", { op: "masterGet", sku: row.line.sku.toUpperCase() });   // SKU alone; colour never changes the design
+  if (!ix.entry) { row.state = "unmatched"; Unmatched.add(row); agent({ bridge: true }, "warn", `${row.order.receiptId} · ${row.line.sku}: not in any master file`); return; }
   const bytes = await (await fetch(ix.entry.aiUrl)).arrayBuffer();
   const src = await intakeBytes(new Uint8Array(bytes), `${row.order.receiptId}_${row.line.sku}.ai`, row.metal, { review: false, name: `${row.order.receiptId} · ${row.line.sku}` });
   for (let copy = 1; copy <= row.line.quantity; copy++) {
@@ -367,7 +366,7 @@ async function poolAdd(row) {
 }
 ```
 
-Silhouettes for a master charm are built once at index time and cached by `charmHash`, so a pool add costs a fetch, not a raster. The charm name carries the order number, so the nest report, the labelled proof and the Library all name the order.
+Silhouettes for a master charm are built once at index time and cached by `charmHash`, so a pool add costs a fetch, not a raster. The charm name carries the order number, so the nest report, the labelled proof and the Library all name the order. The same SKU ordered in gold and in silver produces the same design on two different cards.
 
 ## 7. Engraving
 
@@ -432,12 +431,15 @@ function fitText(lines, font, mask, res, opts) {
 
 `inkInsideMask` rasterises the glyph outlines at the verifier's resolution and requires every ink pixel to sit on a `1` in the eroded mask, which is what makes "no engraving inside cut-outs, only on solid material" a hard rule rather than a hope. `largestRectangles` returns axis-aligned rectangles; a second pass tries the same at ±15° and ±30° for charms whose solid area is a diagonal band, keeping a rotated layout only if it gains at least 12% in size, since rotated text reads worse.
 
-**Legibility floor.** Cap height ≥ 1.6 mm and stroke ≥ 0.15 mm at the chosen weight (setting), or the line is not engraved automatically: it goes to the tray with the best achievable size shown, so a person decides to accept a smaller size, shorten the text, or skip.
+**Largest size, always.** The fitter always returns the largest size the solid area allows; the legibility figures (cap height 1.6 mm, stroke 0.15 mm) are not a cut-off but a flag: a placement under them is marked **small** in the review so the reviewer looks harder, and can shorten the text or skip. Nothing is silently dropped for being small.
 
-### 7.4 Verification and review
+### 7.4 Verification, then a person reviews every placement
 
-1. Geometry: the final glyph raster is checked against the eroded back mask (zero ink outside; zero ink in any hole).
-2. Claude sees the rendered back once (mm grid, outline, holes, text) and answers `{ legible: bool, notes }` on readability and taste only. A `false` sends the piece to the tray with the notes; the reviewer never edits the layout itself.
+1. **Geometry.** The final glyph raster is checked against the eroded back mask: zero ink outside it, zero ink in any hole. A failure is a bug, not a review item; it stops the piece.
+2. **Claude's read.** Claude sees the rendered back once (mm grid, outline, holes, text) and answers `{ legible: bool, notes }` on readability and taste only. Its notes are shown to the reviewer; it never edits the layout.
+3. **Visual review, mandatory.** Every back placement is shown to a person before it is released, without exception. The **Engraving** tab's review queue shows one piece at a time: the back at large scale with the mask hatch, the text as it will be cut, the order number, SKU, copy, the customer's original words beside Claude's reading, the size in mm, and the **small** flag when under the legibility figures. Controls: **Approve**, **Nudge** (drag the text block, or arrows in 0.25 mm steps; size follows the new box automatically so it stays the largest that fits), **Resize** (a slider capped at the fitted maximum), **Rewrite lines** (re-split the text; the fitter re-runs), **Skip** (the copy is cut plain and the order is flagged), **Back to tray** (needs a decision on the words). Approve stores `approvedBy` with the employee name and the time; the back file is only written after approval.
+
+A set cannot be completed (8.3) while any of its engraved copies is unreviewed. The review count is on the Live strip ("Engraving review · 3 waiting"), and the Run set flow (10) pauses at step 7 until the queue is empty.
 
 ### 7.5 Back pool files
 
@@ -453,7 +455,7 @@ Firestore `Charm_Pool_Back/{poolId}`:
 { "poolId": "…", "sheetId": "gold-mu3…", "setId": "set-…", "orderId": "3521337740", "sku": "BR-CMP-01", "copy": 1,
   "text": "Anna\n9.26.25", "font": "Myriad Pro", "weight": "Regular", "sizePt": 5.8, "capMm": 1.9,
   "box": { "xPt": 12.1, "yPt": 30.4, "wPt": 38.0, "hPt": 14.2, "angle": 0 }, "aiPath": "…/back/…ai", "pngPath": "…png",
-  "verified": { "ok": true, "res": 6 }, "review": { "legible": true, "notes": "" }, "approvedBy": "auto", "at": 1789… }
+  "verified": { "ok": true, "res": 6 }, "review": { "legible": true, "notes": "" }, "approvedBy": "K. Smith", "approvedAt": 1789…, "nudged": false, "small": false }
 ```
 
 The sheet record gains `backPool: [poolIds]` and `backOutputs: { pieces[], index, report }`, and the Library card shows an **Engraving · n** badge. A re-nest keeps the back files valid because they are tied to the piece, not to its position on the sheet.
@@ -506,7 +508,7 @@ New tabs: **Orders**, **Design Station**, **Master**, **Engraving**. Existing: N
 - **Orders** — 5.1. A **Run set** button starts the autonomous run (10).
 - **Design Station** — the frame and the bridge console (4.7).
 - **Master** — one panel per metal: master file, hash, indexed count, SKU grid with thumbnails and sizes, leftovers in red, per-SKU `engravable` toggle, **Re-index**.
-- **Engraving** — the tray (lines awaiting a decision, each with the customer's words, Claude's reading and questions, the best achievable size), the studio (back view with mask hatch, text, weight, size, box, **Verify**, **Approve**, **Skip**), and the back pool per sheet.
+- **Engraving** — the tray (lines awaiting a decision on the words: the customer's text, Claude's reading and questions), the review queue (every fitted placement, one at a time, 7.4), and the back pool per sheet with each piece's approver.
 - **Live strip** — the last five bridge or engraving events with timestamps, on every tab.
 
 All bridge, master, pool and engraving steps write into the existing agent log with kinds `DS`, `MASTER`, `POOL`, `ENGRAVE`, so the per-card panel and the Log button already show the whole run.
@@ -521,13 +523,14 @@ Run set
   4  saturation check ────────────── 72 % ceiling per metal, overflow sheets planned
   5  ui.select on the station ────── DS shows the same orders selected (locks)  frame: rows turn selected
   6  nest per metal ──────────────── parallel search, verify twice, write, save  cards: as today
-  7  engrave ─────────────────────── back mask, fit, verify, review, back files  tray ← below legibility floor
+  7  engrave ─────────────────────── back mask, fit at largest size, verify     pauses: every placement reviewed by a person
+                                      Claude read, human approve, back files
   8  labels ──────────────────────── complete.preview → render → save            set folder /labels
   9  complete.commit ─────────────── DS: ledger, unlock, chat, archive           frame: rows leave the list
  10  set record ────────────────────  Charm_Nest_Sets complete
 ```
 
-Each step logs before and after, can be paused from the Live strip, and stops the run on any refusal from the station. Steps 5 and 9 are the only ones that change the station; both are visible in the frame as they happen.
+Each step logs before and after, can be paused from the Live strip, and stops the run on any refusal from the station. Step 7 always waits for the review queue to empty. Steps 5 and 9 are the only ones that change the station; both are visible in the frame as they happen.
 
 ## 11. Data model
 
@@ -535,15 +538,15 @@ Each step logs before and after, can be paused from the Live strip, and stops th
 | --- | --- | --- |
 | `Design_Bridge` | sessionId | `sorterClientId, bench, startedAt, endedAt, commands, dropped` |
 | `Design_Bridge/{s}/log` | auto | `t, dir, type, ms, payload` (payload slimmed: ids and counts, never order contents) |
-| `Charm_Master_Files` | metal | `path, hash, charms, unlabelled[], orphans[], duplicates[], indexedAt` |
-| `Charm_Master_Index` | `{metal}_{SKU}` | 6.3 |
+| `Charm_Master_Files` | masterHash | `path, charms, unlabelled[], orphans[], duplicates[], indexedAt` |
+| `Charm_Master_Index` | SKU | 6.3 |
 | `Charm_Pool` | poolId | 6.4 |
 | `Charm_Pool_Back` | poolId | 7.5 |
 | `Charm_Nest_Sets` | setId | 8.1 |
 | `Charm_Nest_Sheets` | (existing) | `+ setId, orders[], poolIds[], backPool[], backOutputs` |
 | `Design_Order_Archive` | (existing) | `+ labels { setId, folder, files[] }` |
 
-Storage: `charmnest/master/{metal}/…`, `charmnest/sets/{day}/{Set-K}/labels/…`, `charmnest/sheets/{day}/{sheet}/back/…`.
+Storage: `charmnest/master/…`, `charmnest/sets/{day}/{Set-K}/labels/…`, `charmnest/sheets/{day}/{sheet}/back/…`.
 
 ## 12. Functions
 
@@ -563,25 +566,26 @@ Manifest: add the two functions to `scripts/netlify-function-entries.json`; `bui
 | `skuPattern` | `^[A-Z]{2,4}-[A-Z0-9]{2,6}(-[A-Z0-9]{1,4})?$` | what counts as a SKU label |
 | `labelGapMm` | 6.4 | how far below an outline a label may sit |
 | `engraveMarginMm` | 0.8 | keep-out from every cut edge and cut-out |
-| `engraveMinCapMm` | 1.6 | legibility floor |
+| `engraveMinCapMm` | 1.6 | below it a placement is flagged **small** in the review (never dropped) |
 | `engraveMaxHeightFrac` | 0.40 | text block height cap as a fraction of the charm |
 | `engraveConfidence` | 0.80 | below it, a person decides |
 | `engraveTryRotated` | on | allow ±15°/±30° layouts when they gain ≥ 12% |
-| `autoCommit` | on | mark orders complete on the station when a set finishes |
+| `autoCommit` | on | mark orders complete on the station when a set finishes and every engraving is approved |
 
 ## 14. Tests
 
 - **Bridge.** Headless Chromium loads the sorter, which frames a local `design-1.html` served on a second port with a stub `firebaseOrders`; asserts `hello`, `orders.snapshot` shape, `ui.select` takes a lock, a wrong-origin message is dropped and counted, `complete.commit` without preview is refused, `complete.commit` with labels removes the rows and writes the ledger.
 - **Labels.** A fixture master with labelled charms (text under, one 8 mm below, one shared between two outlines, one unlabelled, one duplicate, one label string that is not a SKU) → expected `labels`, `unlabelled`, `orphans`, `duplicates`.
 - **Extraction.** The per-SKU `.ai` re-parsed equals the master's charm (same member count, same silhouette hash).
-- **Fit.** Fixture charms with a hole, a thin ring and a diagonal band: text never crosses the eroded mask, the ring returns "no room", the band picks the rotated layout only when it gains ≥ 12%.
+- **Fit.** Fixture charms with a hole, a thin ring and a diagonal band: text never crosses the eroded mask, the ring returns "no room", the band picks the rotated layout only when it gains ≥ 12%, and the returned size is the largest that fits (a size 0.1 pt larger must fail).
+- **Review gate.** A set with one unapproved engraving cannot commit; approving it stores the employee name; a nudge re-fits the size to the new box.
 - **End to end.** The existing sheet e2e extended: two order lines, one engraved, run the set with a stub Claude; expect the back file, `back-index.pdf`, saved labels, and the station rows gone.
 
 ## 15. Implementation plan
 
 1. **Bridge and monitoring** — `Bridge` in `design-1.html`, `commitCompletion` split, `frame-ancestors`, `DesignLink`, the Design Station tab and console, Orders tab with pull. Deliverable: orders pulled and selection driven with both UIs visible.
 2. **Master and pool** — text strings in the interpreter, `labelCharms`, Master tab, index and per-SKU files, `poolAdd`, queue naming by order. Deliverable: a pulled line becomes a queued charm.
-3. **Engraving** — intent classifier, back mask, `fitText` with opentype.js and Myriad Pro, verification, review, back files and index, Engraving tab, Library badge. Deliverable: an engraved line yields verified per-piece back files tied to its sheet.
+3. **Engraving** — intent classifier, back mask, `fitText` with opentype.js and Myriad Pro, verification, Claude's read, the mandatory review queue with nudge and resize, back files and index, Engraving tab, Library badge. Deliverable: an engraved line yields per-piece back files, each approved by a named person, tied to its sheet.
 4. **Sets, labels, completion** — set record, label rendering and saving, `complete.commit`, archive `labels`, Run set. Deliverable: a finished set marks its orders complete with labels saved, nothing printed.
 
 ## 16. Safety rules
@@ -589,12 +593,12 @@ Manifest: add the two functions to `scripts/netlify-function-entries.json`; `bui
 - The station's guards stay under remote control: no completion without a preview of the same orders and a saved label list; locks and undo unchanged.
 - Metal comes from the station's classifier only; a line whose metal has no sorter card is refused, not guessed.
 - Engraving text is the customer's words; Claude may split lines and flag questions, never invent, translate or "improve" them.
-- No text below the legibility floor, outside the eroded mask, or inside a cut-out, ever, without a person's approval.
+- No text outside the eroded mask or inside a cut-out, ever. No back file is written before a person has approved the placement on screen.
 - Master extraction copies bytes; nothing is redrawn.
 - Every automatic step logs before and after it acts; the run stops on the first refusal.
 
-## 17. Open points
+## 17. Resolved on draft 2
 
-1. Colour and size variations: when one SKU comes in sizes, is the size part of the SKU in the master (e.g. `BR-CMP-01-S`) or a separate master row? The label rule handles either; the pool key must match the master.
-2. Charms with no solid area large enough for 1.6 mm text: skip silently or always ask? Draft assumes always ask.
-3. Should the Design Station's own print button be removed once labels are saved by the sorter, or kept for a fallback?
+1. SKUs are colour-agnostic: the index is keyed by SKU alone and the order's colour variation only chooses the metal card.
+2. Text is always fitted at the largest size the space allows, and every placement is reviewed by a person on screen before release; small text is flagged, never dropped.
+3. The Design Station's print button is hidden while a bridge session is active and once the sorter path is live; the print page stays deployed as a fallback.
