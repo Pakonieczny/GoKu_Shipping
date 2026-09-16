@@ -8,7 +8,7 @@ const P = global.CharmNestPDF, G = require(path.join(root, 'charm-nest-geom.js')
 const opentype = require(path.join(root, 'vendor/opentype-1.3.4.min.js'));
 const { buildMaster } = require('./fixture-master.cjs');
 const MM = 25.4 / 72, PT = 72 / 25.4;
-const font = opentype.loadSync(path.join(root, 'netlify/functions/fonts/OpenSans-Regular.ttf'));   // stand-in for Myriad Pro in the tests
+const font = opentype.loadSync(path.join(root, 'vendor/fonts/SourceSans3-Regular.otf'));   // the engraving font the app ships
 const pass = (name) => console.log('  ✓', name);
 
 (async () => {
@@ -89,7 +89,7 @@ const pass = (name) => console.log('  ✓', name);
       const straight = G.fitText(['ANNA'], font, bm, { tryRotated: false, minStrokeMm: 0, minGapMm: 0 }); const rot = G.fitText(['ANNA'], font, bm, { tryRotated: true, angles: [0, 45, -45], minStrokeMm: 0, minGapMm: 0 });
       assert(straight.ok && rot.ok, 'band fits'); assert(rot.angle !== 0 && rot.size > straight.size * 1.12, `the band takes the rotated layout (${rot.angle}°, ${rot.size.toFixed(2)} vs ${straight.size.toFixed(2)})`);
       const tight = G.fitText(['ANNA'], font, bm, { tryRotated: true, angles: [0, 3], rotGain: 0.12, minStrokeMm: 0, minGapMm: 0 }); assert.strictEqual(tight.angle, 0, 'a 3° layout gains under 12 % and is not taken');
-      assert.deepStrictEqual(G.glyphCoverage(font, 'Anna ♥').missing, ['♥'], 'a heart the font lacks is refused');
+      assert.deepStrictEqual(G.glyphCoverage(font, 'Anna ♥ ★').missing, ['★'], 'a star the font lacks is refused; the heart it has is not');
       assert(G.splitVariants(['ANNA 9.26.25']).some(v => v.length === 2 && v[1] === '9.26.25'), 're-split offers name / date');
     }
     pass('fit');

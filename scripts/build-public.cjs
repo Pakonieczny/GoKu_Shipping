@@ -99,8 +99,8 @@ for (const asset of assets) {
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, data);
 }
-// Licensed font files (Myriad Pro for back engraving) live in vendor/fonts/, which is git-ignored: they are copied
-// when the deploy environment provides them and skipped otherwise, so a build never fails on their absence.
+// The engraving fonts (Source Sans 3, SIL Open Font License) live in vendor/fonts/ and are committed; the copy stays
+// optional so a build never fails if the folder is ever emptied on a deploy machine.
 const optionalDirs = ["vendor/fonts"];
 let optional = 0;
 for (const dir of optionalDirs) {

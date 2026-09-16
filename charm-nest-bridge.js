@@ -559,7 +559,8 @@ const Pool = window.Pool = (() => {
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
 const Engrave = window.Engrave = (() => {
   const F_ = B.engrave.fonts;
-  const FONT_FILES = { Regular: "vendor/fonts/MyriadPro-Regular.otf", Semibold: "vendor/fonts/MyriadPro-Semibold.otf" };
+  // Source Sans 3 (Adobe, SIL Open Font License): a humanist sans drawn in the same tradition as Myriad Pro, shipped with the app
+  const FONT_FILES = { Regular: "vendor/fonts/SourceSans3-Regular.otf", Semibold: "vendor/fonts/SourceSans3-Semibold.otf" };
   async function loadFonts() {
     if (F_.ok || F_.loading) return F_.loading || F_;
     F_.loading = (async () => {
@@ -567,9 +568,9 @@ const Engrave = window.Engrave = (() => {
         try { const r = await fetch(path, { cache: "force-cache" }); if (!r.ok) throw new Error(`HTTP ${r.status}`); const buf = await r.arrayBuffer(); if (buf.byteLength < 1000) throw new Error("empty file"); F_[w] = opentype.parse(buf); }
         catch (e) { if (w === "Regular") F_.error = `${path}: ${e.message}`; else F_.semiboldMissing = `${path}: ${e.message}`; }
       }
-      F_.ok = !!F_.Regular; if (!F_.ok) agent({ engrave: true }, "warn", `Myriad Pro is not available (${F_.error}) — engraving cannot be set exactly; place the .otf files in vendor/fonts/`);
-      else agent({ engrave: true }, "ENGRAVE", `Myriad Pro loaded: ${F_.Regular.names.fullName ? Object.values(F_.Regular.names.fullName)[0] : "Regular"}${F_.Semibold ? " + Semibold" : " (Semibold missing — Regular used at every size)"}`);
-      const h = document.getElementById("stFontsHelp"); if (h) h.innerHTML = F_.ok ? `Loaded: ${esc(Object.values(F_.Regular.names.fullName || {})[0] || "Myriad Pro Regular")}${F_.Semibold ? ", " + esc(Object.values(F_.Semibold.names.fullName || {})[0] || "Semibold") : " · Semibold missing"}` : `<span style="color:#8a3a26">Not found: ${esc(F_.error)}</span> — place MyriadPro-Regular.otf and MyriadPro-Semibold.otf in vendor/fonts/`;
+      F_.ok = !!F_.Regular; if (!F_.ok) agent({ engrave: true }, "warn", `Source Sans 3 is not available (${F_.error}) — engraving cannot be set exactly; the .otf files belong in vendor/fonts/`);
+      else agent({ engrave: true }, "ENGRAVE", `Source Sans 3 loaded: ${F_.Regular.names.fullName ? Object.values(F_.Regular.names.fullName)[0] : "Regular"}${F_.Semibold ? " + Semibold" : " (Semibold missing — Regular used at every size)"}`);
+      const h = document.getElementById("stFontsHelp"); if (h) h.innerHTML = F_.ok ? `Loaded: ${esc(Object.values(F_.Regular.names.fullName || {})[0] || "Source Sans 3 Regular")}${F_.Semibold ? ", " + esc(Object.values(F_.Semibold.names.fullName || {})[0] || "Semibold") : " · Semibold missing"}` : `<span style="color:#8a3a26">Not found: ${esc(F_.error)}</span> — SourceSans3-Regular.otf and SourceSans3-Semibold.otf belong in vendor/fonts/`;
     })().finally(() => { F_.loading = null; });
     return F_.loading;
   }
@@ -600,7 +601,7 @@ const Engrave = window.Engrave = (() => {
     const reqBad = job.requests && ((job.requests.side && !["back", "unspecified"].includes(job.requests.side)) || job.requests.font || job.requests.handwriting || job.requests.image);
     if (job.confidence < (+S.settings.engraveConfidence || 0.8)) return toWords(job, `confidence ${Math.round(job.confidence * 100)}% is under ${Math.round((+S.settings.engraveConfidence || 0.8) * 100)}%`);
     if (job.questions.length) return toWords(job, "Claude has questions");
-    if (reqBad) return toWords(job, `the customer asks for ${job.requests.side !== "back" && job.requests.side !== "unspecified" ? "the " + job.requests.side : ""}${job.requests.font ? " font " + job.requests.font : ""}${job.requests.handwriting ? " handwriting" : ""}${job.requests.image ? " an image" : ""} — engraving is back only, Myriad Pro only`);
+    if (reqBad) return toWords(job, `the customer asks for ${job.requests.side !== "back" && job.requests.side !== "unspecified" ? "the " + job.requests.side : ""}${job.requests.font ? " font " + job.requests.font : ""}${job.requests.handwriting ? " handwriting" : ""}${job.requests.image ? " an image" : ""} — engraving is back only, in the house font only`);
     if (!engravable) return toWords(job, `${sp.designSku} is marked not engravable in the Master tab`);
     if (!job.lines.length) return toWords(job, "Claude returned no text");
     return setReady(job);
@@ -609,9 +610,9 @@ const Engrave = window.Engrave = (() => {
   function toWords(job, why) { job.state = "words"; job.reason = why; job.row.engrave = { needed: true, state: "words", text: job.text, approved: false, reason: why }; Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: job.row, job, why }); RunCtl.poke(); return job; }
   async function setReady(job) {
     await loadFonts();
-    if (!F_.ok) { job.state = "blocked"; job.reason = "Myriad Pro font files are missing"; job.row.engrave = { needed: true, state: "blocked", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "fontMissing", key: "eng:" + job.key, row: job.row, job, why: F_.error }); return job; }
+    if (!F_.ok) { job.state = "blocked"; job.reason = "Source Sans 3 font files are missing"; job.row.engrave = { needed: true, state: "blocked", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "fontMissing", key: "eng:" + job.key, row: job.row, job, why: F_.error }); return job; }
     const cov = G.glyphCoverage(F_.Regular, job.lines.join("\n"));
-    if (!cov.ok) { job.state = "words"; job.reason = `characters Myriad Pro lacks: ${cov.missing.join(" ")}`; job.missing = cov.missing; job.row.engrave = { needed: true, state: "words", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "notRepresentable", key: "eng:" + job.key, row: job.row, job, why: job.reason }); return job; }
+    if (!cov.ok) { job.state = "words"; job.reason = `characters Source Sans 3 lacks: ${cov.missing.join(" ")}`; job.missing = cov.missing; job.row.engrave = { needed: true, state: "words", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "notRepresentable", key: "eng:" + job.key, row: job.row, job, why: job.reason }); return job; }
     job.state = "ready"; job.reason = null; job.row.engrave = { needed: true, state: "ready", text: job.text, approved: false }; Review.remove("eng:" + job.key);
     Pool.update(job.copies, { engrave: true }).catch(() => {});
     RunCtl.poke();                                                        // a waiting run fits it now (the classifier answers asynchronously)
@@ -673,7 +674,7 @@ const Engrave = window.Engrave = (() => {
   async function claudeRead(job) {
     if (!S.cloud.ok || !job.fit) return;
     const png = renderBack(job, 700, { grid: true }).toDataURL("image/png");
-    const r = await agentCall("engraveReview", { image: png, order: job.row.order.receiptId, sku: job.row.spec.designSku, text: job.lines.join("\n"), capMm: job.fit.capMm, font: "Myriad Pro", weight: job.fit.weight, angle: job.fit.angle, small: job.fit.small }, { label: `Claude looks at the back of ${job.row.order.receiptId}` });
+    const r = await agentCall("engraveReview", { image: png, order: job.row.order.receiptId, sku: job.row.spec.designSku, text: job.lines.join("\n"), capMm: job.fit.capMm, font: "Source Sans 3", weight: job.fit.weight, angle: job.fit.angle, small: job.fit.small }, { label: `Claude looks at the back of ${job.row.order.receiptId}` });
     if (r.skipped) { job.claude = { skipped: r.skipped }; render(); return; }
     job.claude = { legible: !!r.legible, notes: r.notes || "", concerns: r.concerns || [] };
     agent({ engrave: true }, r.legible ? "ENGRAVE" : "warn", `${job.row.order.receiptId}: Claude ${r.legible ? "reads it fine" : "finds it hard to read"} — ${r.notes}`);
@@ -738,13 +739,13 @@ const Engrave = window.Engrave = (() => {
       sh.backPool = sh.backPool || [];
       for (const poolId of poolIds) {
         const p = B.pool.rows.get(poolId) || {}; const copy = p.copy || 1;
-        const built = await P.buildBackFile({ charm: charm0, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: rel, view: S.settings.backFileView || "asSeenFromBack", title: `${job.row.order.receiptId} · ${job.row.spec.designSku} · back`, meta: { poolId, order: job.row.order.receiptId, sku: job.row.spec.designSku, copy, text: job.text, font: "Myriad Pro", weight: fit.weight, sizePt: fit.size, capMm: fit.capMm, angle: fit.angle, approvedBy: job.approvedBy, approvedAt: job.approvedAt, upAngle: view.upAngle, flipChecks: view.checks } });
+        const built = await P.buildBackFile({ charm: charm0, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: rel, view: S.settings.backFileView || "asSeenFromBack", title: `${job.row.order.receiptId} · ${job.row.spec.designSku} · back`, meta: { poolId, order: job.row.order.receiptId, sku: job.row.spec.designSku, copy, text: job.text, font: "Source Sans 3", weight: fit.weight, sizePt: fit.size, capMm: fit.capMm, angle: fit.angle, approvedBy: job.approvedBy, approvedAt: job.approvedAt, upAngle: view.upAngle, flipChecks: view.checks } });
         const verified = await verifyBackFile(built.bytes, job);                 // 7.4 · flip integrity re-run on the written, re-parsed file
         if (!verified.ok) throw new Error(`the written back file did not re-verify (${verified.why})`);
         const name = `${sh.fileBase}_back_${job.row.order.receiptId}_${job.row.spec.designSku}_${copy}`;
         let ai = null, pngUp = null;
         if (S.cloud.ok && sh.folderPath) { ai = await uploadBytes(`${sh.folderPath}/back/${name}.ai`, built.bytes, "application/illustrator", `Saving back ${copy}`); pngUp = await uploadBytes(`${sh.folderPath}/back/${name}.png`, pngBlob, "image/png"); }
-        const rec = { poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, text: job.text, lines: job.lines, font: "Myriad Pro", weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: job.approvedBy, approvedAt: job.approvedAt, nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: S.settings.backFileView || "asSeenFromBack", reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, pageWPt: built.wPt, pageHPt: built.hPt };
+        const rec = { poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, text: job.text, lines: job.lines, font: "Source Sans 3", weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: job.approvedBy, approvedAt: job.approvedAt, nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: S.settings.backFileView || "asSeenFromBack", reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, pageWPt: built.wPt, pageHPt: built.hPt };
         sh.backPool = sh.backPool.filter(b => b.poolId !== poolId).concat([rec]); job.backs.push(rec);
         if (S.cloud.ok) await api("charmNestLibrary", { op: "backPut", back: rec }).catch(e => agent({ engrave: true }, "warn", `back record: ${e.message}`));
         agent({ metal: sh.metal, engrave: true }, "ENGRAVE", `Back file written and re-verified: ${name}.ai (${built.reference.redrawn ? "cut reference redrawn from the exact transformed paths" : "original cut bytes under the mirror matrix"})`);
@@ -803,7 +804,7 @@ const Engrave = window.Engrave = (() => {
     const v = document.getElementById("engraveView"); if (!v || v.classList.contains("hidden")) return;
     const jobs = [...items().values()].filter(j => j.row.state !== "gone");
     const words = jobs.filter(j => j.state === "words" || j.state === "blocked"), queue = jobs.filter(j => j.state === "review"), done = jobs.filter(j => ["approved", "written", "skipped"].includes(j.state));
-    v.innerHTML = `<div class="ordBar"><span class="pill ${F_.ok ? "ok" : "bad"}">${F_.ok ? "Myriad Pro loaded" : "Myriad Pro missing"}</span><span class="pill warn">${words.length} awaiting words</span><span class="pill info">${queue.length} placements to review</span><span class="pill ok">${done.length} decided</span><span class="spacer"></span><span class="mono" style="font-size:11.5px">reviewer: ${esc(employeeName() || "— set your name in the Design Station tab —")}</span></div>
+    v.innerHTML = `<div class="ordBar"><span class="pill ${F_.ok ? "ok" : "bad"}">${F_.ok ? "Source Sans 3 loaded" : "Source Sans 3 missing"}</span><span class="pill warn">${words.length} awaiting words</span><span class="pill info">${queue.length} placements to review</span><span class="pill ok">${done.length} decided</span><span class="spacer"></span><span class="mono" style="font-size:11.5px">reviewer: ${esc(employeeName() || "— set your name in the Design Station tab —")}</span></div>
       <div class="section">Words awaiting a decision</div><div class="rvList" id="egWords"></div>
       <div class="section">Placement review · one at a time · keys: A approve · S skip · arrows nudge 0.25 mm</div><div class="rvList" id="egQueue"></div>
       <div class="section">Back pool · per sheet</div><div id="egBacks"></div>`;

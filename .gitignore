@@ -7,5 +7,3 @@ package-lock.json
 public-site/
 netlify/production-functions/
 
-# Licensed engraving fonts (Myriad Pro) — provided on the deploy machine, never committed
-vendor/fonts/
