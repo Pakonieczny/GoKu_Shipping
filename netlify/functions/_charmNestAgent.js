@@ -127,7 +127,7 @@ Coordinates: inches, x from the LEFT edge, y from the TOP edge (y grows downward
 
 You receive the rendered sheet (light grey; the outer red rectangle is the stock edge; already-placed charms are drawn with red cut outlines and a number), the list of what is placed, the remaining charms with crops, the largest open pockets the tool measured, and the tool's feedback on your previous moves (placed as asked / slid up to a small distance to clear a neighbour / failed and why).
 
-Think like a nesting expert: biggest pieces first into corners and along edges, long pieces along the sides, rotate pieces so concave shapes interlock (a crescent hugs a circle, a tail tucks into a notch), keep small pieces for the gaps last. Use the pockets list for real free space. Give as many confident moves as you can this round (aim for everything remaining when the sheet is empty), ordered so that each move leaves room for the next; positions must keep the whole charm inside the stock. If a piece cannot fit anywhere, say so in the summary and set it aside rather than forcing it. Set done=true only when every remaining charm has a move in this plan or you are certain nothing more fits.`;
+Think like a nesting expert: biggest pieces first into corners and along edges, long pieces along the sides, rotate pieces so concave shapes interlock (a crescent hugs a circle, a tail tucks into a notch), keep small pieces for the gaps last. Use the pockets list for real free space. Give as many confident moves as you can this round (aim for everything remaining when the sheet is empty), ordered so that each move leaves room for the next; positions must keep the whole charm inside the stock. Keep each "why" under 12 words; keep the whole answer compact — the moves are what matter. If a piece cannot fit anywhere, say so in the summary and set it aside rather than forcing it. Set done=true only when every remaining charm has a move in this plan or you are certain nothing more fits.`;
 
 const PLACE_SCHEMA = {
   type: "object", additionalProperties: false,
@@ -196,11 +196,16 @@ async function run(mode, body) {
   const req = buildRequest(mode, body);
   if (req.error) return { error: req.error };
   try {
-    const res = await anthropic.callClaudeRaw({ model: MODEL, maxTokens: 8000, effort: req.effort, system: [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }], messages: [{ role: "user", content: req.content }], outputFormat: { type: "json_schema", schema: req.schema }, thinkingDisplay: "summarized" });
+    // Thinking tokens count against max_tokens; a placement round reasons at length, so give it room.
+    const res = await anthropic.callClaudeRaw({ model: MODEL, maxTokens: mode === "place" ? 32000 : 16000, effort: req.effort, system: [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }], messages: [{ role: "user", content: req.content }], outputFormat: { type: "json_schema", schema: req.schema }, thinkingDisplay: "summarized" });
     const reasoning = (res.content || []).filter(b => b.type === "thinking" && b.thinking).map(b => b.thinking).join("\n").slice(0, 6000);
     if (res.stop_reason === "refusal") return { skipped: "model declined" };
     const text = (res.content || []).filter(b => b.type === "text").map(b => b.text).join("");
-    let parsed; try { parsed = JSON.parse(text); } catch (_) { return { skipped: "unparseable model output" }; }
+    let parsed; try { parsed = JSON.parse(text); } catch (_) {
+      const why = res.stop_reason === "max_tokens" ? "output cut off at the token limit" : `stop_reason ${res.stop_reason}`;
+      console.error("[charmNestAgent] unparseable", mode, why, String(text).slice(0, 300));
+      return { skipped: `unparseable model output (${why}; ${(res.usage && res.usage.output_tokens) || "?"} output tokens; starts: ${JSON.stringify(String(text).slice(0, 120))})`, reasoning: reasoning || null };
+    }
     if (mode === "place") {
     const sheet = parseDataUrl(body.sheet);
     if (!sheet) return { error: "sheet image is required" };
