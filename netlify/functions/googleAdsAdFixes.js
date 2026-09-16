@@ -38,7 +38,7 @@ function classifyAnimated(deduction,ctx={}){
  else if(words(copy,correction)&&!words(scene,correction))kind='copy';
  else if(deduction.category==='layout'&&words(caption,s)&&!words(scene,correction))kind='caption';
  else kind='master';
- const targets=formats.length?formats:kind==='master'?[keys.find(k=>k.endsWith((ctx.squareMaster||'landscape')==='landscape'?'landscape':'portrait'))||keys[0]]:keys;
+ const targets=formats.length?formats:kind==='master'?[keys.find(k=>k.endsWith((ctx.squareMaster||'portrait')==='landscape'?'landscape':'portrait'))||keys[0]]:keys;
  const orientation=kind==='master'?masterFor(targets[0],ctx.squareMaster):null;
  const affected=kind==='master'?keys.filter(k=>masterFor(k,ctx.squareMaster)===orientation):targets;
  const hints=kind==='caption'?captionHints(s):null;
@@ -46,7 +46,8 @@ function classifyAnimated(deduction,ctx={}){
  const label=kind==='copy'?'Fix · revise this message and re-compose the captions (no new video)':kind==='caption'?'Fix · re-compose '+affected.join(', ')+' captions (no new video)':'Fix · regenerate only the '+orientation+' film'+(usd?' ≈ $'+usd.toFixed(2):'')+' · '+affected.join(', ')+' re-composed, the other film kept';
  return {kind,category:deduction.category,index:deduction.index,formats:affected,orientation,hints,estimatedUsd:usd,label,reason:deduction.reason,evidence:deduction.evidence,correction:deduction.correction};
 }
-function masterFor(key,squareMaster){const family=String(key||'').split('_').pop();return family==='landscape'?'landscape':family==='portrait'?'portrait':squareMaster||'landscape';}
+// Square has no film of its own: it is cropped from whichever master the job chose, portrait by default.
+function masterFor(key,squareMaster){const family=String(key||'').split('_').pop();return family==='landscape'?'landscape':family==='portrait'?'portrait':squareMaster||'portrait';}
 function captionHints(s){
  const h={};
  if(/\b(small|tiny|larger|bigger|size|legib\w*|readab\w*|cramp\w*|crowd\w*)\b/.test(s))h.preferBand=true;
