@@ -433,8 +433,8 @@ const METAL_TAG = { gold: "GF", silver: "SS", rose: "RG", gold10k: "10K", gold14
 const DEFAULTS = {
   rail: "md",
   stock: { gold: [100 / 25.4, 50 / 25.4], silver: [100 / 25.4, 50 / 25.4], rose: [100 / 25.4, 50 / 25.4], gold10k: [100 / 25.4, 50 / 25.4], gold14k: [100 / 25.4, 50 / 25.4] },
-  clearancePt: -0.5, insetPt: 1.5, angleStep: 30, budgetS: 180, seed: 1, serverAbove: 80, parallel: 0,
-  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", aiRounds: 10, snapIn: 0.25, maxFill: 0.74, v: 8
+  clearancePt: -0.5, insetPt: 1.5, angleStep: 30, budgetS: 180, seed: 1, serverAbove: 0, parallel: 0,
+  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", aiRounds: 10, snapIn: 0.25, maxFill: 0.74, v: 9
 };
 /* The two plates production actually uses. Sizes are held in mm; `w`/`h` stay in inches for the code that reads them. */
 const STOCK_PRESETS = [
@@ -490,6 +490,7 @@ function loadSettings() {
     if ((saved.v || 1) < 6) { saved.budgetS = 180; saved.parallel = 0; saved.v = 6; }   // v6: parallel searches (all cores but one), 3-minute ceiling
     if ((saved.v || 1) < 7) { saved.maxFill = 0.72; saved.v = 7; }                        // v7: 72 % is the maximum fill of any sheet; the rest goes to the next sheet
     if ((saved.v || 1) < 8) { saved.maxFill = 0.74; saved.v = 8; }                        // v8: 74 % ceiling, measured on the stamped footprint like the readout
+    if ((saved.v || 1) < 9) { saved.serverAbove = 0; saved.v = 9; }                       // v9: the browser solver does every sheet; the server route is off (0) unless set in Settings
     const out = Object.assign({}, DEFAULTS, saved); out.stock = Object.assign({}, DEFAULTS.stock, saved.stock || {}); return out;
   } catch (_) { return Object.assign({}, DEFAULTS, { v: 2 }); }
 }
