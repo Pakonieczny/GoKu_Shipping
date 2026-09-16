@@ -324,7 +324,7 @@
       // footprintCells: what the piece occupies on the sheet grid (its eroded or grown mask) — the same measure the
       // occupancy readout uses, so the fill ceiling and "% full" agree. The solid silhouette (holes filled) stays for reports.
       const footprintCells = variants.length ? Math.min(...variants.map(v => v.cells)) : solidFineCells;
-      prepared.push({ id: p.id, idx: i, areaPt2: p.areaPt2 || (solidFineCells / (fineRes * fineRes)), solidFineCells, footprintCells, variants, pinned: p.pinned || null, meta: p.meta || null });
+      prepared.push({ id: p.id, idx: i, order: p.order || p.id, areaPt2: p.areaPt2 || (solidFineCells / (fineRes * fineRes)), solidFineCells, footprintCells, variants, pinned: p.pinned || null, meta: p.meta || null });
       if (cb.onStage) cb.onStage("prepare", i + 1, pieces.length);
       await yieldNow();
     }
@@ -343,7 +343,7 @@
       const fine = best.grids.fine, coarse = best.grids.coarse;
       const total = prepared.length;
       for (const id of best.rejects.slice()) {
-        const p = prepared.find(x => x.id === id); if (!p || p.pinned) continue;
+        const p = prepared.find(x => x.id === id); if (!p || p.pinned || multi(p)) continue;
         if ((best.placedCells + p.footprintCells) / usableCellsFine > maxFill) continue;
         if (cb.onStage) cb.onStage("finish", best.placements.length, total);
         const variants = p.variants.slice();
@@ -443,6 +443,14 @@
     /* ── trials ─────────────────────────────────────────────────────────── */
     let best = null, trials = 0, endedBy = "budget", failStreak = 0, lastRejects = [];
     const byAreaDesc = prepared.slice().sort((a, b) => b.areaPt2 - a.areaPt2);
+    // orders: pieces sharing `order` travel together — a sheet never holds part of a multi-piece order
+    const orderSize = new Map(); for (const p of prepared) orderSize.set(p.order, (orderSize.get(p.order) || 0) + 1);
+    const multi = (p) => (orderSize.get(p.order) || 1) > 1;
+    const rebuildGrids = (rec) => {
+      const fine = baseFine.clone(), coarse = baseCoarse.clone();
+      for (const r of rec) { fine.stamp(r.v.fine.bits, r.v.fine.w, r.v.fine.h, r.x, r.y); for (let yy = 0; yy < r.v.fine.h; yy++) for (let xx = 0; xx < r.v.fine.w; xx++) if (r.v.fine.bits[yy * r.v.fine.w + xx]) { const gx = Math.floor((r.x + xx) / ratio), gy = Math.floor((r.y + yy) / ratio); if (gx >= 0 && gy >= 0 && gx < coarse.W && gy < coarse.H) coarse.set(gx, gy); } }
+      coarse.buildSAT(); return { fine, coarse };
+    };
     while (trials < maxTrials) {
       if (stopped()) { endedBy = cb.shouldStop && cb.shouldStop() ? "stopped" : "budget"; break; }
       const trial = trials++;
@@ -455,17 +463,31 @@
       const gravW = trial === 0 ? 0.35 : 0.1 + random() * 0.8;
       const noise = trial === 0 ? 0 : random() * 0.15;
       const cornerX = trial === 0 ? 0 : (random() < 0.7 ? 0 : 1), cornerY = trial === 0 ? 0 : (random() < 0.7 ? 0 : 1);
-      const fine = baseFine.clone(), coarse = baseCoarse.clone();
-      const placements = [], rejects = [], capped = [], placedRec = [];
+      let fine = baseFine.clone(), coarse = baseCoarse.clone();
+      let placements = [], placedRec = []; const rejects = [], capped = [];
       let placedCells = 0;
+      const deadOrders = new Set();
+      // a piece of a multi-piece order failed: the order leaves this sheet whole — its placed siblings are lifted back off
+      const dropOrder = (p, why) => {
+        if (!multi(p)) return;
+        deadOrders.add(p.order);
+        const lifted = placedRec.filter(r => r.p.order === p.order);
+        if (!lifted.length) return;
+        placedRec = placedRec.filter(r => r.p.order !== p.order);
+        placements = placements.filter(pl => !lifted.some(r => r.p.id === pl.id));
+        for (const r of lifted) { placedCells -= r.v.cells; rejects.push(r.p.id); if (why === "cap") capped.push(r.p.id); if (cb.onReject) cb.onReject(r.p.id, trial, "order"); }
+        ({ fine, coarse } = rebuildGrids(placedRec));
+      };
 
       for (let pi = 0; pi < pinnedFirst.length; pi++) {
         const p = pinnedFirst[pi];
         if (stopped()) break;
         let bestPos = null;
+        if (deadOrders.has(p.order)) { rejects.push(p.id); if (capped.some(id => prepared.find(x => x.id === id && x.order === p.order))) capped.push(p.id); if (cb.onReject) cb.onReject(p.id, trial, "order"); continue; }
         if (!p.pinned && (placedCells + p.footprintCells) / usableCellsFine > maxFill) {
           rejects.push(p.id); capped.push(p.id);
           if (cb.onReject) cb.onReject(p.id, trial, "cap");
+          dropOrder(p, "cap");
           await yieldNow(); continue;
         }
         if (p.pinned) {
@@ -478,6 +500,7 @@
         if (!bestPos) {
           rejects.push(p.id);
           if (cb.onReject) cb.onReject(p.id, trial, "nofit");
+          dropOrder(p, "nofit");
         } else {
           const { v, x, y } = bestPos;
           fine.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y);
@@ -546,6 +569,21 @@
     if (best && best.grids) delete best.grids;
     if (best && best.rec) delete best.rec;
     if (!best) best = { placements: [], rejects: prepared.map(p => p.id), density: 0, trial: -1, usablePt2: usableCellsFine / (fineRes * fineRes), freePt2: usableCellsFine / (fineRes * fineRes), placedPt2: 0, pocket: pocketPt(baseCoarse, coarseRes) };
+    // safety: no sheet holds part of a multi-piece order — any order with a rejected piece leaves whole
+    {
+      const rej = new Set(best.rejects || []); const badOrders = new Set();
+      for (const id of rej) { const p = prepared.find(x => x.id === id); if (p && multi(p)) badOrders.add(p.order); }
+      if (badOrders.size) {
+        const lifted = best.placements.filter(pl => { const p = prepared.find(x => x.id === pl.id); return p && badOrders.has(p.order); });
+        if (lifted.length) {
+          best.placements = best.placements.filter(pl => !lifted.includes(pl));
+          best.rejects = (best.rejects || []).concat(lifted.map(pl => pl.id));
+          const cells = lifted.reduce((n, pl) => { const p = prepared.find(x => x.id === pl.id); return n + (p ? p.footprintCells : 0); }, 0);
+          best.placedCells = Math.max(0, (best.placedCells || 0) - cells); best.placedPt2 = best.placedCells / (fineRes * fineRes); best.density = best.placedCells / usableCellsFine;
+          best.liftedForOrders = lifted.map(pl => pl.id);
+        }
+      }
+    }
     // what the pieces the ceiling held back would add, so the console can say the arithmetic plainly
     const cappedPt2 = (best.capped || []).reduce((n, id) => { const p = prepared.find(x => x.id === id); return n + (p ? p.footprintCells / (fineRes * fineRes) : 0); }, 0);
     return Object.assign({}, best, {

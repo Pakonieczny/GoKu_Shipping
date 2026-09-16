@@ -27,5 +27,18 @@ function shape(id, kind, wPt, hPt, scale = 6) {
   assert(v.ok, 'verifier found overlap/outside');
   assert(v.minGapPt >= job.clearancePt - 0.2, 'gap below clearance: ' + v.minGapPt);
   assert(res.placements.length >= 15, 'too few placed');
+  // orders travel whole: a small sheet, three 2-piece orders and singles; whatever is rejected is whole orders only
+  {
+    const ps = [];
+    for (let i = 0; i < 6; i++) ps.push(Object.assign(shape('o' + i, 'rect', 90, 90), { order: 'order' + (i >> 1) }));
+    for (let i = 0; i < 6; i++) ps.push(Object.assign(shape('s' + i, 'ellipse', 70, 70), { order: 's' + i }));
+    const j2 = { sheet: { wPt: 300, hPt: 200, insetPt: 1.5 }, clearancePt: 0, angles: [0, 90], timeBudgetMs: 6000, seed: 1, pieces: ps, maxFill: 0.74 };
+    const r2 = await S.solve(j2, {});
+    const placed = new Set(r2.placements.map(p => p.id));
+    for (let k = 0; k < 3; k++) { const a = placed.has('o' + (2 * k)), b = placed.has('o' + (2 * k + 1)); assert(a === b, `order${k} split: ${a}/${b}`); }
+    assert(r2.rejects.length > 0, 'the small sheet should reject something');
+    console.log('orders whole', r2.placements.length + '/' + ps.length, 'rejects', r2.rejects.join(','), 'endedBy', r2.endedBy);
+    assert(S.verify(j2, r2.placements, 6).ok, 'order test overlap');
+  }
   console.log('OK');
 })().catch(e => { console.error(e); process.exit(1); });

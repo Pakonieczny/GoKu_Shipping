@@ -111,3 +111,11 @@ The fill ceiling and the card's "% full" are measured on the same thing: the foo
 ## Post-nest 2.5 % shrink ("Optimizing charms")
 
 The solver works with every charm at its drawn size. Once the layout is assembled, the finish starts with a visible **Optimizing charms** stage in the progress bar: each placed charm gets `scale = CHARM_SCALE` (0.975, `charm-nest-1.html`), the writer scales its form about its own centre (placement matrix = scale · rotation), and the preview draws it the same way. Positions and angles are untouched; the shrink afterwards is what makes minor overlaps disappear. The agent log records "Optimized: N charms shrunk 2.5 %", and the e2e test reads the written .ai and checks every charm's matrix carries that scale.
+
+## Orders travel whole
+
+A multi-piece order is never split across sheets. Each charm carries an `order` id: when the source file keeps more than one Illustrator layer, every layer is one order (the sorter bridge will pass order ids directly); a single-layer file is single-piece orders. The solver places pieces of an order together and, if any piece of an order cannot go on the sheet (ceiling or no fit), lifts its placed siblings back off so the whole order moves to the next sheet; its targeted finish pass only ever adds single pieces, and the result is checked once more before the sheet is written (`keepOrdersWhole`). The overflow log names the orders moved. Covered by the "orders whole" case in `tests/charm-nest/solver.cjs`.
+
+## Library sets
+
+The sheets of one run (one drop of files: same `runId`, or for older records the same day and source files) are one **set** in the Library. A set shows as a stacked deck with a "Set · N sheets" tag; hovering (or tapping the deck) fans the sheets out in order after a short delay, each card sliding in with a stagger; × or Escape closes a pinned fan.

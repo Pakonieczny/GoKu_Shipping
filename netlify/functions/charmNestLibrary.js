@@ -46,7 +46,7 @@ function slim(d) {
     charmCount: num(d.charmCount), placedCount: num(d.placedCount), rejectCount: num(d.rejectCount), density: num(d.density), freePt2: num(d.freePt2),
     verification: d.verification ? { ok: !!d.verification.ok } : null,
     preview: d.outputs && d.outputs.preview ? d.outputs.preview.url : null,
-    names: str(d.names, 2000), sources: (d.sources || []).map(s => ({ name: s.name })),
+    names: str(d.names, 2000), sources: (d.sources || []).map(s => ({ name: s.name, hash: s.hash || null })), runId: d.runId || null, page: num(d.page) || 1,
     updatedAt: ms(d.updatedAt), createdAt: ms(d.createdAt)
   };
 }

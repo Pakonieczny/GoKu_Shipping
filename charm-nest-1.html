@@ -233,6 +233,27 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .libCard .m{display:flex;gap:8px;font-size:11px;color:var(--ink70);flex-wrap:wrap}
 .libCard .m b{font-family:var(--mono);font-weight:700;color:var(--ink)}
 .libEmpty{padding:40px;text-align:center;color:var(--ink45);font-size:13px}
+/* Sheet sets: the sheets of one run (same day, same source files) sit as one stacked deck; hovering fans them out */
+.libGrid{position:relative;padding-top:14px}
+.libSet{position:relative;min-width:0}
+.setDeck{position:relative;cursor:pointer;isolation:isolate}
+.setDeck .ghost{position:absolute;inset:0;background:var(--card);border:1px solid var(--line);border-left:5px solid var(--accent,var(--ink25));border-radius:12px;box-shadow:var(--sh);z-index:-1;opacity:calc(1 - var(--k)*.22);transform:translate(calc(var(--k)*6px),calc(var(--k)*-6px));transition:transform .45s cubic-bezier(.2,.8,.2,1) calc(var(--k)*40ms)}
+.setDeck[data-m=gold] .ghost{--accent:var(--m-gold)}.setDeck[data-m=silver] .ghost{--accent:var(--m-silver)}.setDeck[data-m=rose] .ghost{--accent:var(--m-rose)}.setDeck[data-m=gold10k] .ghost{--accent:var(--m-gold10k)}.setDeck[data-m=gold14k] .ghost{--accent:var(--m-gold14k)}
+.libSet:hover .setDeck .ghost,.libSet.open .setDeck .ghost{transform:translate(calc(var(--k)*11px),calc(var(--k)*-11px))}
+.setDeck .libCard{cursor:pointer}
+.setDeck .libCard:hover{outline:none}
+.setTag{position:absolute;top:-9px;left:12px;z-index:2;display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:20px;background:var(--velvet);color:#e9e3d7;font:700 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;box-shadow:0 2px 8px rgba(30,26,20,.18);pointer-events:none}
+.setTag .dot{width:6px;height:6px;background:var(--accent,#caa861)}
+.setTag .hint{opacity:.7;font-weight:500;letter-spacing:0;text-transform:none}
+.setFan{position:absolute;left:0;top:-10px;z-index:8;display:flex;flex-wrap:wrap;gap:12px;padding:38px 12px 12px;background:var(--card2);border:1px solid var(--line);border-radius:16px;box-shadow:0 2px 6px rgba(30,26,20,.06),0 24px 60px rgba(30,26,20,.18);opacity:0;pointer-events:none;transform:translateY(8px) scale(.985);transform-origin:top left;transition:opacity .28s ease,transform .38s cubic-bezier(.2,.8,.2,1);transition-delay:0s}
+.libSet:hover .setFan,.libSet.open .setFan{opacity:1;pointer-events:auto;transform:none;transition-delay:.26s}
+.setFan .fanHead{position:absolute;top:10px;left:14px;right:14px;display:flex;align-items:center;gap:10px;font:600 12.5px var(--sans);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.setFan .fanHead .n{font:11px var(--mono);color:var(--ink45)}
+.setFan .fanHead .x{margin-left:auto;border:0;background:transparent;color:var(--ink45);font-size:15px;line-height:1;cursor:pointer;border-radius:5px;padding:0 4px}
+.setFan .libCard{flex:0 0 260px;opacity:0;transform:translateX(-22px) scale(.96);transition:transform .42s cubic-bezier(.2,.8,.2,1),opacity .32s ease,outline-color .15s;transition-delay:0s}
+.libSet:hover .setFan .libCard,.libSet.open .setFan .libCard{opacity:1;transform:none;transition-delay:calc(.26s + var(--i)*70ms)}
+.setFan .libCard .h .pg{flex:0 0 auto;font:700 10px var(--mono);color:var(--ink70);background:var(--paper2);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+@media (prefers-reduced-motion:reduce){.setFan,.setFan .libCard,.setDeck .ghost{transition:none!important}}
 .charmGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
 .charmTile{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:8px;display:grid;gap:5px;text-align:center;min-width:0}
 .charmTile img{width:100%;aspect-ratio:1;object-fit:contain;background:#fff;border-radius:6px}
@@ -610,6 +631,7 @@ function routeByName(name, folder) {
 async function intake(files, targetMetal) {
   const list = Array.from(files || []);
   if (!list.length) return;
+  const runId = uid();   // one drop = one run: every sheet it produces, across metals and overflow pages, is one set in the Library
   const expanded = [];
   for (const f of list) {
     const name = f.name || "file";
@@ -632,7 +654,7 @@ async function intake(files, targetMetal) {
   }
   for (const e of expanded) {
     const metal = targetMetal || routeByName(e.name, e.folder) || null;
-    const src = { id: uid(), name: e.name, zipName: e.zipName || null, folder: e.folder, bytes: e.bytes, metal, state: "queued", charms: [], error: null, hash: null, cloud: null, t0: performance.now() };
+    const src = { id: uid(), runId, name: e.name, zipName: e.zipName || null, folder: e.folder, bytes: e.bytes, metal, state: "queued", charms: [], error: null, hash: null, cloud: null, t0: performance.now() };
     S.sources.push(src);
   }
   renderRail(); updateTopSub();
@@ -680,6 +702,12 @@ async function parseSourceFile(src) {
       metalHint: null, pinned: null, excluded: !!c.open, cloud: null
     }));
     src.distinct = byHash.size;
+    // orders: when the file keeps more than one Illustrator layer, each layer is one order (its charms are nested on the same sheet, always);
+    // a single-layer file is single-piece orders — one charm each. The sorter bridge will pass order ids directly.
+    const layers = new Set(src.charms.map(c => c.layer).filter(Boolean));
+    src.charms.forEach(c => { c.order = layers.size > 1 && c.layer ? `${src.id}/${c.layer}` : c.id; });
+    src.orders = layers.size > 1 ? layers.size : src.charms.length;
+    if (layers.size > 1) agent({ srcId: src.id }, "info", `${layers.size} layers in the file → ${layers.size} orders; a multi-piece order is never split across sheets`);
     src.state = "ready";
     renderRail();
     // to sheets
@@ -708,6 +736,7 @@ function assignSource(src, metal) {
   src.metal = metal;
   S.unassigned = S.unassigned.filter(c => c.sourceId !== src.id);
   const sh = activePage(metal);
+  if (!sh.runId) sh.runId = src.runId || null;
   for (const c of src.charms) if (!sh.charms.includes(c)) { c.metal = metal; sh.charms.push(c); }
   sheetDirty(sh); renderRail(); updateTopSub();
   if (wasUnassigned && src.state === "ready") autoNest(metal);   // an operator routed a file by hand: carry on without another click
@@ -986,7 +1015,7 @@ async function reviewLayout(sh, items) {
 
 /* ═══ 8 · sheets: state machine per metal ═══════════════════════════════ */
 function makeSheet(metal, page) {
-  return { metal, page: page || 1, sheetId: null, charms: [], status: "idle", worker: null, jobId: null, layout: null, placements: [], rejects: [], sat: null, progress: null, stage: "", outputs: null, verification: null, startedAt: 0, endedBy: null, trials: 0, best: null, dirty: true, log: [], liveInfo: null, serverJob: null };
+  return { metal, page: page || 1, runId: null, sheetId: null, charms: [], status: "idle", worker: null, jobId: null, layout: null, placements: [], rejects: [], sat: null, progress: null, stage: "", outputs: null, verification: null, startedAt: 0, endedBy: null, trials: 0, best: null, dirty: true, log: [], liveInfo: null, serverJob: null };
 }
 function sheetDirty(sh) { sh.dirty = true; sh.movedOn = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
 function activeCharms(sh) { return sh.charms.filter(c => !c.excluded); }
@@ -995,7 +1024,7 @@ const pagesOf = metal => S.sheets[metal].pages;
 const allSheets = () => METALS.flatMap(m => pagesOf(m.key));
 const activePage = metal => { const p = S.sheets[metal]; return p.pages[p.active] || p; };
 const sheetName = sh => `${labelOf(sh.metal)}${pagesOf(sh.metal).length > 1 || sh.page > 1 ? ` · sheet ${sh.page}` : ""}`;
-function addPage(metal) { const prim = S.sheets[metal]; const pg = makeSheet(metal, prim.pages.length + 1); prim.pages.push(pg); return pg; }
+function addPage(metal) { const prim = S.sheets[metal]; const pg = makeSheet(metal, prim.pages.length + 1); pg.runId = prim.runId || activePage(metal).runId || null; prim.pages.push(pg); return pg; }
 function showPage(metal, idx) {
   const prim = S.sheets[metal]; idx = Math.max(0, Math.min(prim.pages.length - 1, idx));
   for (const pg of prim.pages) pg.el = null;
@@ -1009,6 +1038,21 @@ function removePage(pg) {
   showPage(pg.metal, Math.min(i, prim.pages.length - 1) );
 }
 /** Whatever did not fit moves on to the next sheet of the same metal, which then nests on its own. */
+/** A multi-piece order is never split across sheets: if any of its pieces was held back, the whole order goes to the next sheet. */
+function keepOrdersWhole(sh, byId) {
+  const orderOf = id => { const c = byId.get(id); return c ? (c.order || c.id) : id; };
+  const bad = new Set(sh.rejects.map(orderOf));
+  const lifted = sh.placements.filter(p => bad.has(orderOf(p.id)));
+  if (!lifted.length) return;
+  sh.placements = sh.placements.filter(p => !lifted.includes(p));
+  sh.rejects.push(...lifted.map(p => p.id));
+  agent({ metal: sh.metal }, "nest", `Orders kept whole: ${lifted.length} placed piece(s) of ${new Set(lifted.map(p => orderOf(p.id))).size} order(s) lifted off — the order moves to the next sheet as one`);
+}
+function orderSummary(charms) {
+  const by = new Map(); for (const c of charms) { const k = c.order || c.id; by.set(k, (by.get(k) || 0) + 1); }
+  const multi = [...by.values()].filter(n => n > 1).length;
+  return { orders: by.size, multi, text: `${by.size} order(s)${multi ? `, ${multi} multi-piece` : ""}` };
+}
 function overflowToNextSheet(sh) {
   const ids = new Set(sh.rejects); if (!ids.size) return null;
   const moving = sh.charms.filter(c => ids.has(c.id));
@@ -1021,7 +1065,7 @@ function overflowToNextSheet(sh) {
   moving.forEach(c => { c.pinned = null; c.metal = sh.metal; next.charms.push(c); });
   sh.movedOn.page = next.page;
   computeSaturation(sh); computeSaturation(next); renderCard(sh);
-  agent({ metal: sh.metal }, "nest", `Sheet ${sh.page} is full at its ${fmt.pct(+S.settings.maxFill || 0.74)} ceiling — ${moving.length} charm(s) moved to sheet ${next.page}: ${sh.movedOn.names.slice(0, 6).join(", ")}${moving.length > 6 ? "…" : ""}`);
+  agent({ metal: sh.metal }, "nest", `Sheet ${sh.page} is full at its ${fmt.pct(+S.settings.maxFill || 0.74)} ceiling — ${moving.length} charm(s) in ${orderSummary(moving).text} moved whole to sheet ${next.page}: ${sh.movedOn.names.slice(0, 6).join(", ")}${moving.length > 6 ? "…" : ""}`);
   toast(`${labelOf(sh.metal)}: ${moving.length} charm(s) moved to sheet ${next.page} — nesting it now`, "ok", 4200);
   renderRail(); updateTopSub();
   startNest(next);
@@ -1106,7 +1150,7 @@ function buildJob(sh) {
     sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0 },
     clearancePt: +S.settings.clearancePt || 0, angles: angleSet(), fineRes: 2, coarseRes: 0.5,
     timeBudgetMs: (+S.settings.budgetS || 180) * 1000, maxTrials: 2000, seed: +S.settings.seed || 1, maxFill: +S.settings.maxFill || 0.74,
-    pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
+    pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
   };
 }
 function startNest(sh) {
@@ -1333,6 +1377,7 @@ async function finishNest(sh, { result, error }) {
   const items = activeCharms(sh); const byId = new Map(items.map(c => [c.id, c]));
   if (error) { sh.status = items.length ? "ready" : "idle"; sh.stage = ""; log(sh, "error: " + error); toast(`${labelOf(sh.metal)}: nesting failed — ${error}`, "bad", 6000); renderCard(sh); pumpNestQueue(); return; }
   sh.status = "finishing"; sh.endedBy = result.endedBy; sh.trials = result.trials; sh.placements = result.placements; sh.rejects = result.rejects.slice(); sh.livePlacements = [];
+  keepOrdersWhole(sh, byId);
   if (sh.evSearch && sh.evSearch.live) agentUpdate(sh.evSearch, { live: false, elapsed: 0, html: null, text: `Search ended after ${result.trials} trial(s): ${endedText(result.endedBy)}` });
   if (sh.evNest) agentUpdate(sh.evNest, { live: false, elapsed: 0, text: `Nest ended by ${endedText(result.endedBy)} after ${result.trials} trial(s), ${fmt.s(result.elapsedMs)}: ${result.placements.length}/${items.length} placed at ${fmt.pct(result.density)}${result.rejects.length ? ` · did not fit: ${result.rejects.map(id => byId.get(id)?.name || id).join(", ")}` : ""}` });
   sh.liveInfo = { freePt2: result.freePt2, usablePt2: result.usablePt2, placedPt2: result.placedPt2, pocket: result.pocket, placed: result.placements.length, total: items.length };
@@ -1416,7 +1461,7 @@ function buildReport(sh, result, items) {
     placements: sh.placements.map((p, i) => ({ n: i + 1, id: p.id, layer: p.layerName, name: byId.get(p.id)?.name, hash: byId.get(p.id)?.hash, source: byId.get(p.id)?.sourceName, index: byId.get(p.id)?.index, angle: p.angle, cxPt: +p.cxPt.toFixed(3), cyPt: +p.cyPt.toFixed(3), wPt: +p.wPt.toFixed(2), hPt: +p.hPt.toFixed(2), areaPt2: +(byId.get(p.id)?.areaPt2 || 0).toFixed(1) })),
     rejects: sh.rejects.map(id => ({ id, name: byId.get(id)?.name, source: byId.get(id)?.sourceName, index: byId.get(id)?.index, areaPt2: +(byId.get(id)?.areaPt2 || 0).toFixed(1), widthPt: +(byId.get(id)?.widthPt || 0).toFixed(1), heightPt: +(byId.get(id)?.heightPt || 0).toFixed(1) })),
     excluded: sh.charms.filter(c => c.excluded).map(c => ({ id: c.id, name: c.name, reason: c.open ? "open path" : "excluded by operator" })),
-    verification: sh.verification, charms: items.map(c => ({ id: c.id, name: c.name, hash: c.hash, qty: c.qty, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), namedBy: c.namedBy, confidence: c.confidence })),
+    verification: sh.verification, charms: items.map(c => ({ id: c.id, name: c.name, hash: c.hash, qty: c.qty, order: c.order || c.id, layer: c.layer || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), namedBy: c.namedBy, confidence: c.confidence })),
     calibration: Object.assign({ density: +result.density.toFixed(4), placedAll: sh.rejects.length === 0 }, shapeSignature(items)),
     log: sh.log.slice()
   };
@@ -1435,12 +1480,12 @@ async function persistSheet(sh, items) {
   const day = today(), name = sh.fileBase || sheetFileBase(sh, sh.page), base = `charmnest/sheets/${day}/${name}`;
   const byId = new Map(items.map(c => [c.id, c]));
   const record = (outputs) => ({
-    id: sh.sheetId, metal: sh.metal, metalLabel: sheetName(sh), day, folder: name, fileBase: name, seq: sh.seq || sh.page, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, elapsedMs: Math.round(sh.elapsedMs || 0), totalMs: Math.round(sh.totalMs || 0),
+    id: sh.sheetId, metal: sh.metal, metalLabel: sheetName(sh), day, folder: name, fileBase: name, seq: sh.seq || sh.page, runId: sh.runId || null, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, elapsedMs: Math.round(sh.elapsedMs || 0), totalMs: Math.round(sh.totalMs || 0),
     stock: sh.outputs.report.stock, params: sh.solveParams, density: sh.density, freePt2: Math.round(sh.liveInfo.freePt2), usablePt2: Math.round(sh.liveInfo.usablePt2), pocket: sh.liveInfo.pocket,
     charmCount: items.length, placedCount: sh.placements.length, rejectCount: (sh.outputs.report.rejects || []).length, page: sh.page, verification: { ok: !!sh.verification.ok, minGapPt: sh.verification.minGapPt, minEdgePt: sh.verification.minEdgePt, render: sh.verification.render && { ok: sh.verification.render.ok, overlapPx: sh.verification.render.overlapPx, outsidePx: sh.verification.render.outsidePx } },
     outputs,
     sources: [...new Set(items.map(c => c.sourceId))].map(id => { const s = S.sources.find(x => x.id === id); return s ? { id: s.id, name: s.name, zipName: s.zipName, hash: s.hash, bytes: s.bytes.length, path: s.cloud && s.cloud.path, url: s.cloud && s.cloud.url } : null; }).filter(Boolean),
-    charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open })),
+    charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, order: c.order || c.id, layer: c.layer || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open })),
     placements: sh.outputs.report.placements, rejects: sh.outputs.report.rejects,
     names: items.map(c => c.name).filter(Boolean).join(" ")
   });
@@ -1829,9 +1874,42 @@ function renderLibrary() {
   const rows = S.library.rows.filter(r => !q || `${r.id} ${r.folder || ""} ${r.metalLabel} ${r.day} ${r.names || ""} ${(r.sources || []).map(s => s.name).join(" ")}`.toLowerCase().includes(q));
   $("#libCount").textContent = `${rows.length} sheet${rows.length === 1 ? "" : "s"}`;
   const body = $("#libBody"); if (!rows.length) { body.innerHTML = `<div class="libEmpty">No sheets match.</div>`; return; }
+  const card = (r, i) => `<div class="libCard" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}"><div class="h">${i != null && r._inFan ? `<span class="pg">${r.page || 1}</span>` : ""}<span class="nm">${r.folder ? esc(r.folder) : esc(r.metalLabel) + " · " + esc(r.id)}</span><span class="tm">${r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span></div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${r.preview}" loading="lazy" alt="">` : `<div class="pv ph">${r.saving ? "saving files…" : "no preview"}</div>`}<div class="m"><span><b>${r.placedCount}</b>/${r.charmCount} placed</span><span><b>${Math.round((r.density || 0) * 100)}%</b> full</span><span><b>${fmt.area(r.freePt2 || 0)}</b> free</span><span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span>${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`;
+  // a set = the sheets of one run: same day and the same source files (runId when the record has one)
+  const setKey = r => r.runId ? `run:${r.runId}` : `${r.day}|${(r.sources || []).map(x => x.hash || x.name).sort().join("+")}`;
   const byDay = new Map(); for (const r of rows) { if (!byDay.has(r.day)) byDay.set(r.day, []); byDay.get(r.day).push(r); }
-  body.innerHTML = [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([day, list]) => `<div class="dayHead">${new Date(day + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" })}<span class="n">${list.length}</span></div><div class="libGrid">${list.map(r => `<div class="libCard" data-m="${r.metal}" data-id="${r.id}"><div class="h"><span class="nm">${r.folder ? esc(r.folder) : esc(r.metalLabel) + " · " + esc(r.id)}</span><span class="tm">${r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span></div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${r.preview}" loading="lazy" alt="">` : `<div class="pv ph">${r.saving ? "saving files…" : "no preview"}</div>`}<div class="m"><span><b>${r.placedCount}</b>/${r.charmCount} placed</span><span><b>${Math.round((r.density || 0) * 100)}%</b> full</span><span><b>${fmt.area(r.freePt2 || 0)}</b> free</span><span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span>${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`).join("")}</div>`).join("");
-  $$(".libCard", body).forEach(el => el.onclick = () => openLibrarySheet(el.dataset.id));
+  body.innerHTML = [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([day, list]) => {
+    const sets = new Map(); for (const r of list) { const k = setKey(r); if (!sets.has(k)) sets.set(k, []); sets.get(k).push(r); }
+    const items = [...sets.values()].map(g => {
+      g.sort((a, b) => (a.page || 1) - (b.page || 1) || (a.createdAt || 0) - (b.createdAt || 0));
+      if (g.length === 1) return card(g[0], 0);
+      const lead = g[0], metals = [...new Set(g.map(r => r.metalLabel))], charms = g.reduce((n, r) => n + (r.charmCount || 0), 0);
+      const files = g.map(r => r.folder || r.id);
+      return `<div class="libSet" data-n="${g.length}" tabindex="0" aria-label="Set of ${g.length} sheets">
+        <div class="setDeck" data-m="${lead.metal}"><span class="setTag"><span class="dot"></span>Set · ${g.length} sheets <span class="hint">· hover ▸</span></span>${g.slice(1).map((_, k) => `<div class="ghost" style="--k:${k + 1}"></div>`).join("")}${card(lead, 0)}</div>
+        <div class="setFan" style="--n:${g.length}"><div class="fanHead"><span>Set of ${g.length} sheets · ${esc(metals.join(", "))} · ${charms} charms</span><span class="n">${esc(files.join(" · "))}</span><button class="x" title="Close" aria-label="Close">×</button></div>${g.map((r, i) => card(Object.assign({}, r, { _inFan: true }), i)).join("")}</div>
+      </div>`;
+    });
+    return `<div class="dayHead">${new Date(day + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" })}<span class="n">${list.length} sheet${list.length === 1 ? "" : "s"}${sets.size !== list.length ? ` · ${[...sets.values()].filter(g => g.length > 1).length} set${[...sets.values()].filter(g => g.length > 1).length === 1 ? "" : "s"}` : ""}</span></div><div class="libGrid">${items.join("")}</div>`;
+  }).join("");
+  $$(".libCard", body).forEach(el => el.onclick = (e) => { e.stopPropagation(); openLibrarySheet(el.dataset.id); });
+  $$(".libSet", body).forEach(set => {
+    const fan = $(".setFan", set), grid = set.closest(".libGrid");
+    const place = () => {   // the fan opens over the grid, never past its right edge
+      const n = +set.dataset.n, want = Math.min(n * 272 + 20, grid.clientWidth);
+      fan.style.width = want + "px";
+      const over = set.offsetLeft + want - grid.clientWidth;
+      fan.style.left = (over > 0 ? -over : 0) + "px";
+    };
+    set.addEventListener("mouseenter", place); set.addEventListener("focus", place);
+    const deck = $(".setDeck", set);
+    // the deck's lead card opens the set (a tap on touch screens); the × pins it closed again
+    $(".setDeck .libCard", set).onclick = (e) => { e.stopPropagation(); place(); set.classList.toggle("open"); };
+    $(".setFan .x", set).onclick = (e) => { e.stopPropagation(); set.classList.remove("open"); set.blur(); };
+    set.addEventListener("keydown", e => { if (e.key === "Escape") set.classList.remove("open"); if (e.key === "Enter") { place(); set.classList.toggle("open"); } });
+    void deck;
+  });
+  document.addEventListener("click", e => { if (!e.target.closest(".libSet")) $$(".libSet.open", body).forEach(x => x.classList.remove("open")); }, { once: true });
 }
 async function openLibrarySheet(id) {
   const dlg = $("#dlgSheet"); $("#lsTitle").textContent = id; $("#lsBody").innerHTML = `<div class="libEmpty">Loading…</div>`; openDlg(dlg);
@@ -1950,7 +2028,7 @@ async function boot() {
   await gate();
   cloudProbe();
   refreshAllCards(); updateTopSub();
-  window.CN = { S, AG, showPage, startNest, intake, api, buildJob, applyGroupingReview, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; } };   // for tests and the console
+  window.CN = { S, AG, showPage, startNest, intake, api, buildJob, setMode, renderLibrary, applyGroupingReview, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; } };   // for tests and the console
 }
 boot();
 </script>

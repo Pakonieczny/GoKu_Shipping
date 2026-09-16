@@ -113,9 +113,12 @@
    * Top-level segments get byte ranges; nested (form XObject) paths are
    * returned in `inner` with `parent` = the index of their Do segment.
    */
-  function interpret(bytes, resolve, ctm0, depth, spacesIn) {
+  function interpret(bytes, resolve, ctm0, depth, spacesIn, layersIn) {
     const ins = lex(bytes);
     const segs = [], inner = [];
+    const layerNames = layersIn || {}; const mc = [];   // marked-content stack: the innermost /OC layer name applies to every segment
+    const curLayer = () => { for (let k = mc.length - 1; k >= 0; k--) if (mc[k]) return mc[k]; return null; };
+    const push = (list, seg) => { seg.layer = curLayer(); list.push(seg); };
     let ctm = ctm0.slice(), stack = [];
     let fill = [0, 0, 0], stroke = [0, 0, 0], lw = 1, fillSpace = "DeviceGray", strokeSpace = "DeviceGray";
     const spaces = spacesIn || {};
@@ -158,6 +161,9 @@
           path.cur = { segs: [["m", a], ["l", b], ["l", c], ["l", d], ["h"]], first: a, last: a, closed: true, rect: true };
           path.sub.push(path.cur); addPt(a); addPt(b); addPt(c); addPt(d); break;
         }
+        case "BDC": { const tag = args[0] && args[0].name, pr = args[1]; const key = pr && pr.name; mc.push(tag === "OC" && key ? (layerNames[key] || key) : (pr && pr.dict && pr.dict.Title ? String(pr.dict.Title.str || pr.dict.Title) : null)); break; }
+        case "BMC": mc.push(null); break;
+        case "EMC": mc.pop(); break;
         case "W": case "W*": pendingClip = true; break;
         // ── painting ──
         case "S": case "s": case "f": case "F": case "f*": case "B": case "B*": case "b": case "b*": case "n": {
@@ -175,7 +181,7 @@
           };
           if (pendingClip) clipBox = bbox;
           if (seg.kind === "clip") { seg.clipBox = bbox; }
-          (depth === 0 ? segs : inner).push(seg);
+          push(depth === 0 ? segs : inner, seg);
           path = null; pathStart = -1; pendingClip = false; break;
         }
         // ── text ──
@@ -194,23 +200,24 @@
         case "ET": {
           if (inText) {
             const bbox = bboxOf(textPts);
-            (depth === 0 ? segs : inner).push({ kind: "text", start: textStart, end: ins[i].end, bbox, chars: textChars, fillRGB: fill.slice(), depth });
+            push(depth === 0 ? segs : inner, { kind: "text", start: textStart, end: ins[i].end, bbox, chars: textChars, fillRGB: fill.slice(), depth });
           }
           inText = false; break;
         }
-        case "BI": (depth === 0 ? segs : inner).push({ kind: "image", start: ins[i].start, end: ins[i].end, bbox: bboxOf([ap(ctm, 0, 0), ap(ctm, 1, 0), ap(ctm, 1, 1), ap(ctm, 0, 1)]), depth }); break;
-        case "sh": (depth === 0 ? segs : inner).push({ kind: "shading", start: ins[i].start, end: ins[i].end, bbox: clipBox, depth }); break;
+        case "BI": push(depth === 0 ? segs : inner, { kind: "image", start: ins[i].start, end: ins[i].end, bbox: bboxOf([ap(ctm, 0, 0), ap(ctm, 1, 0), ap(ctm, 1, 1), ap(ctm, 0, 1)]), depth }); break;
+        case "sh": push(depth === 0 ? segs : inner, { kind: "shading", start: ins[i].start, end: ins[i].end, bbox: clipBox, depth }); break;
         case "Do": {
           const name = args[0] && args[0].name;
           const x = resolve && name ? resolve(name) : null;
-          const seg = { kind: "xobj", start: ins[i].start, end: ins[i].end, name, bbox: null, depth, children: [] };
+          const seg = { kind: "xobj", start: ins[i].start, end: ins[i].end, name, bbox: null, depth, children: [], layer: curLayer() };
           if (x && x.subtype === "Image") {
             seg.bbox = bboxOf([ap(ctm, 0, 0), ap(ctm, 1, 0), ap(ctm, 1, 1), ap(ctm, 0, 1)]);
           } else if (x && x.subtype === "Form" && x.bytes && depth < 6) {
             const m = mul(x.matrix || [1, 0, 0, 1, 0, 0], ctm);
             if (x.bbox) seg.bbox = bboxOf([ap(m, x.bbox[0], x.bbox[1]), ap(m, x.bbox[2], x.bbox[1]), ap(m, x.bbox[2], x.bbox[3]), ap(m, x.bbox[0], x.bbox[3])]);
             // a form's own colour spaces (a Separation "All" cut line, say) must not fall back to the page's
-            const sub = interpret(x.bytes, x.resolve || resolve, m, depth + 1, x.spaces || spaces);
+            const sub = interpret(x.bytes, x.resolve || resolve, m, depth + 1, x.spaces || spaces, x.layers || layerNames);
+            for (const k of sub.segs.concat(sub.inner)) if (!k.layer) k.layer = seg.layer;
             // flatten grandchildren too: a form that only invokes another form still carries that form's paths
             const flat = (list) => list.flatMap(k => k.kind === "xobj" && k.children && k.children.length ? [k].concat(flat(k.children)) : [k]);
             const kids = flat(sub.segs.concat(sub.inner));
@@ -255,6 +262,12 @@
     const cache = new Map();
     const lookupDict = (d, key) => { if (!(d instanceof PDFDict)) return null; const v = d.get(PDFName.of(key)); return v ? doc.context.lookup(v) : null; };
     const spaces = {};
+    // Illustrator layers: /OC /MC0 BDC … EMC, where Properties/MC0 is an OCG with a /Name
+    const layers = {};
+    const propDict = lookupDict(resources, "Properties");
+    if (propDict instanceof PDFDict) for (const [k, v] of propDict.entries()) {
+      try { const g = doc.context.lookup(v); const nm = g && g.get ? doc.context.lookup(g.get(PDFName.of("Name"))) : null; layers[k.decodeText()] = nm && nm.decodeText ? nm.decodeText() : k.decodeText(); } catch (_) { layers[k.decodeText()] = k.decodeText(); }
+    }
     const csDict = lookupDict(resources, "ColorSpace");
     if (csDict instanceof PDFDict) for (const [k, v] of csDict.entries()) {
       const cs = doc.context.lookup(v); const arr = cs && cs.asArray ? cs.asArray() : null;
@@ -274,13 +287,13 @@
             out.bbox = numsOf(doc.context.lookup(x.dict.get(PDFName.of("BBox"))));
             out.matrix = numsOf(doc.context.lookup(x.dict.get(PDFName.of("Matrix"))));
             const r = doc.context.lookup(x.dict.get(PDFName.of("Resources")));
-            if (r) { const sub = makeResolver(doc, r); out.resolve = sub.resolve; out.spaces = sub.spaces; }
+            if (r) { const sub = makeResolver(doc, r); out.resolve = sub.resolve; out.spaces = sub.spaces; out.layers = sub.layers; }
           }
         }
       } catch (_) { out = null; }
       cache.set(name, out); return out;
     };
-    return { resolve, spaces };
+    return { resolve, spaces, layers };
   }
 
   function isPdfBytes(bytes) {
@@ -307,8 +320,8 @@
     const ab = (() => { try { return page.getArtBox(); } catch (_) { return null; } })();
     const content = pageContentBytes(doc, page);
     const resNode = page.node.Resources();
-    const { resolve, spaces } = makeResolver(doc, resNode);
-    const { segs, inner } = interpret(content, resolve, [1, 0, 0, 1, 0, 0], 0, spaces);
+    const { resolve, spaces, layers } = makeResolver(doc, resNode);
+    const { segs, inner } = interpret(content, resolve, [1, 0, 0, 1, 0, 0], 0, spaces, layers);
     segs.forEach((s, i) => { s.index = i; });
     // Flatten form children for detection/grouping with a pointer to their top-level segment
     const nested = [];
@@ -462,7 +475,7 @@
     // 2 · every other drawable segment → the outline whose polygon holds most of its
     //     points; ties → smaller outline; then contact distance; then box overlap;
     //     then nearest centre within 24 pt; else orphan.
-    const charms = outlines.map((o, i) => ({ index: i, outline: o, members: [], bbox: o.bbox.slice(), extras: [] }));
+    const charms = outlines.map((o, i) => ({ index: i, outline: o, members: [], bbox: o.bbox.slice(), extras: [], layer: o.layer || null }));
     const byOutline = new Map(charms.map(c => [c.outline, c]));
     const orphans = [];
     // stream neighbours: the charms whose outlines were written just before and just after a segment
