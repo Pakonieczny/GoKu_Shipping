@@ -28,10 +28,10 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   const errors = [];
   page.on('pageerror', e => errors.push('pageerror: ' + e.message));
   page.on('console', m => { if (m.type() === 'error' || m.type() === 'warning') errors.push(m.type() + ': ' + m.text()); });
-  await page.goto(`http://127.0.0.1:${port}/charm-nest-1.html?budget=${process.env.CN_BUDGET || 60}`);
+  await page.goto(`http://127.0.0.1:${port}/charm-nest-1.html?budget=${process.env.CN_BUDGET || 60}${process.env.CN_FILE ? '&auto=1' : ''}`);   // real artwork runs hands-off from the drop, as in production
   await page.waitForFunction(() => window.CN && window.CN.S);
   // settings for a fast, deterministic run
-  await page.evaluate(() => { CN.S.settings.budgetS = +(new URLSearchParams(location.search).get("budget")) || 60; CN.S.settings.clearancePt = -0.5; CN.S.settings.angleStep = 30; CN.S.settings.naming = 'off'; CN.S.settings.engine = 'solver'; });
+  await page.evaluate(() => { CN.S.settings.budgetS = +(new URLSearchParams(location.search).get("budget")) || 60; CN.S.settings.clearancePt = -0.5; CN.S.settings.angleStep = 30; CN.S.settings.naming = 'off'; CN.S.settings.engine = 'solver'; if (!new URLSearchParams(location.search).get('auto')) CN.S.settings.autoNest = 'off'; });
   if (process.env.CN_ENGINE === 'ai') {
     // Stand-in planner: a row-packer that pretends to be Claude, so the AI loop's mechanics
     // (moves → exact placement / snap / failure feedback → rounds → outputs) run without the model.
@@ -86,7 +86,9 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   console.log('saturation before nest', { count: sat.count, needed: Math.round(sat.totalNeeded), usable: Math.round(sat.usable), nEst: sat.nEst, rho: sat.rho.rho, recommend: !!sat.recommend });
   await page.screenshot({ path: path.join(tmp, '1-queued.png') });
   // nest
-  await page.click('.sheetCard[data-m=gold] [data-r=nest]');
+  // in production the drop starts the nest by itself; the button is only for a sheet still waiting
+  const already = await page.evaluate(() => CN.S.sheets.gold.status !== 'ready');
+  if (already) console.log('nest started on its own from the drop'); else await page.click('.sheetCard[data-m=gold] [data-r=nest]');
   await page.waitForFunction(() => CN.S.sheets.gold.status === 'nesting' || ['complete', 'partial'].includes(CN.S.sheets.gold.status));
   let lastPlaced = -1, t0 = Date.now();
   while (Date.now() - t0 < 700000) {

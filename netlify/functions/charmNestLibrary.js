@@ -117,7 +117,7 @@ async function op_listSheets(b) {
   if (b.to && /^\d{4}-\d{2}-\d{2}$/.test(b.to)) q = q.where("day", "<=", b.to);
   const snap = await q.limit(limit).get();
   let rows = snap.docs.map(d => d.data()).filter(d => !d.archived);
-  if (b.metal && /^(gold|silver|rose)$/.test(b.metal)) rows = rows.filter(d => d.metal === b.metal);
+  if (b.metal && /^(gold|silver|rose|gold10k|gold14k)$/.test(b.metal)) rows = rows.filter(d => d.metal === b.metal);
   rows.sort((x, y) => (ms(y.updatedAt) || 0) - (ms(x.updatedAt) || 0));
   return { sheets: rows.map(slim) };
 }

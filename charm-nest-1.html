@@ -21,7 +21,7 @@
   --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
   --r:14px;--rsm:9px;
   --sh:0 1px 2px rgba(30,26,20,.04),0 9px 28px rgba(30,26,20,.06);
-  --m-gold:#c8a24e;--m-silver:#8d95a0;--m-rose:#c08578;
+  --m-gold:#c8a24e;--m-silver:#8d95a0;--m-rose:#c08578;--m-gold10k:#b08d2a;--m-gold14k:#d9b545;
   --railW:344px;--railPad:13px;
   --rTxt:#f6f1e6;--rTxt2:#cdc4b2;--rTxt3:#ada393;--rDim:#7d7466;--rLine:rgba(246,241,230,.085);
   --hdrFont:9.5px;--rowFont:12px;--rowPad:7px;
@@ -74,7 +74,7 @@ html[data-rail=sm] .brand .tag{display:none}
 .srcRow .srcX:hover{background:#3f382f;color:#fff}
 .mchip{display:inline-flex;align-items:center;gap:5px;border:1px solid #4a4239;background:#2a2621;color:var(--rTxt2);border-radius:20px;padding:2px 8px;font-size:10.5px;font-weight:700;white-space:nowrap}
 .mchip .sw{width:7px;height:7px;border-radius:2px;background:var(--ink45)}
-.mchip[data-m=gold] .sw{background:var(--m-gold)}.mchip[data-m=silver] .sw{background:var(--m-silver)}.mchip[data-m=rose] .sw{background:var(--m-rose)}
+.mchip[data-m=gold] .sw{background:var(--m-gold)}.mchip[data-m=silver] .sw{background:var(--m-silver)}.mchip[data-m=rose] .sw{background:var(--m-rose)}.mchip[data-m=gold10k] .sw{background:var(--m-gold10k)}.mchip[data-m=gold14k] .sw{background:var(--m-gold14k)}
 .mchip[data-m=none]{border-style:dashed;color:#e8a992;border-color:#7a4c3d}
 .unRow{margin:4px var(--railPad) 0;border:1px dashed #7a4c3d;background:#2f2420;border-radius:9px;padding:var(--rowPad) 9px;font-size:var(--rowFont);display:flex;align-items:center;gap:8px;cursor:grab}
 .unRow:active{cursor:grabbing}
@@ -127,11 +127,11 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 
 /* ── sheets grid ── */
 .stage{flex:1 1 auto;min-height:0;overflow:auto;padding:16px}
-.sheets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:start}
+.sheets{display:grid;grid-template-columns:repeat(auto-fill,minmax(400px,1fr));gap:16px;align-items:start}
 @media (max-width:1380px){.sheets{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:900px){.sheets{grid-template-columns:1fr}}
 .sheetCard{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh);display:flex;flex-direction:column;min-width:0;position:relative;--accent:var(--ink25);border-top:4px solid var(--accent);transition:box-shadow .15s,outline-color .15s;outline:2px solid transparent;outline-offset:2px}
-.sheetCard[data-m=gold]{--accent:var(--m-gold)}.sheetCard[data-m=silver]{--accent:var(--m-silver)}.sheetCard[data-m=rose]{--accent:var(--m-rose)}
+.sheetCard[data-m=gold]{--accent:var(--m-gold)}.sheetCard[data-m=silver]{--accent:var(--m-silver)}.sheetCard[data-m=rose]{--accent:var(--m-rose)}.sheetCard[data-m=gold10k]{--accent:var(--m-gold10k)}.sheetCard[data-m=gold14k]{--accent:var(--m-gold14k)}
 .sheetCard.dragOver{outline-color:var(--accent);box-shadow:0 0 0 6px color-mix(in srgb,var(--accent) 18%,transparent),var(--sh)}
 .sheetCard.pulse{animation:pulse 1.1s ease}
 @keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 55%,transparent)}100%{box-shadow:0 0 0 22px transparent}}
@@ -186,7 +186,8 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .shQueue .more{font-size:10.5px;color:var(--ink45);align-self:center}
 .cloudRow{display:flex;gap:6px;align-items:center;font-size:10.5px;color:var(--ink45);padding:0 14px;margin-top:6px;min-height:14px}
 /* agent activity: what the geometry and Claude are doing, live */
-.shAgent{margin:8px 14px 0;border:1px solid var(--line);border-radius:10px;background:var(--velvet);color:var(--rTxt2);font-size:11.5px;overflow:hidden}
+.shAgent{display:none;margin:8px 14px 0;border:1px solid var(--line);border-radius:10px;background:var(--velvet);color:var(--rTxt2);font-size:11.5px;overflow:hidden}
+.shAgent.show{display:block}
 .shAgent .agHead{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--velvetLine);cursor:pointer;user-select:none}
 .shAgent .agHead .lbl{font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--rTxt3);font-weight:750}
 .shAgent .agHead .now{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--rTxt)}
@@ -216,13 +217,13 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .libBar input[type=date]{border:1px solid var(--line);background:var(--card);border-radius:9px;padding:7px 9px;font-size:12.5px}
 .fchip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--card2);color:var(--ink70);border-radius:20px;padding:5px 11px;font-size:11px;font-weight:700;white-space:nowrap}
 .fchip .sw{width:7px;height:7px;border-radius:2px;background:var(--ink25)}
-.fchip[data-m=gold] .sw{background:var(--m-gold)}.fchip[data-m=silver] .sw{background:var(--m-silver)}.fchip[data-m=rose] .sw{background:var(--m-rose)}
+.fchip[data-m=gold] .sw{background:var(--m-gold)}.fchip[data-m=silver] .sw{background:var(--m-silver)}.fchip[data-m=rose] .sw{background:var(--m-rose)}.fchip[data-m=gold10k] .sw{background:var(--m-gold10k)}.fchip[data-m=gold14k] .sw{background:var(--m-gold14k)}
 .fchip.on{background:var(--velvet);border-color:var(--velvet);color:#fff}
 .dayHead{font:15px var(--serif);color:var(--ink70);margin:6px 0 -4px;display:flex;align-items:center;gap:10px}
 .dayHead .n{font:11px var(--mono);color:var(--ink45)}
 .libGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
 .libCard{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);padding:10px 12px;display:grid;gap:6px;--accent:var(--ink25);border-left:5px solid var(--accent);cursor:pointer;min-width:0}
-.libCard[data-m=gold]{--accent:var(--m-gold)}.libCard[data-m=silver]{--accent:var(--m-silver)}.libCard[data-m=rose]{--accent:var(--m-rose)}
+.libCard[data-m=gold]{--accent:var(--m-gold)}.libCard[data-m=silver]{--accent:var(--m-silver)}.libCard[data-m=rose]{--accent:var(--m-rose)}.libCard[data-m=gold10k]{--accent:var(--m-gold10k)}.libCard[data-m=gold14k]{--accent:var(--m-gold14k)}
 .libCard:hover{outline:2px solid var(--accent);outline-offset:1px}
 .libCard .h{display:flex;align-items:center;gap:8px;min-width:0}
 .libCard .h .nm{font:600 13px var(--sans);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -322,6 +323,8 @@ dialog.wide{width:min(980px,95vw)}
           <button class="fchip" data-m="gold"><i class="sw"></i>GF 14/20</button>
           <button class="fchip" data-m="silver"><i class="sw"></i>SS</button>
           <button class="fchip" data-m="rose"><i class="sw"></i>RG 14/20</button>
+          <button class="fchip" data-m="gold10k"><i class="sw"></i>10K Gold</button>
+          <button class="fchip" data-m="gold14k"><i class="sw"></i>14K Gold</button>
           <input type="date" id="libFrom" title="From"><input type="date" id="libTo" title="To">
           <button class="btn ghost sm" id="libRefresh">Refresh</button>
           <span class="pill neutral" id="libCount"></span>
@@ -349,6 +352,8 @@ dialog.wide{width:min(980px,95vw)}
       <div class="field"><label>GF 14/20 W × H</label><div class="fieldRow"><input id="stGoldW" type="number" step="0.1" min="10"><input id="stGoldH" type="number" step="0.1" min="10"></div></div>
       <div class="field"><label>SS W × H</label><div class="fieldRow"><input id="stSilverW" type="number" step="0.1" min="10"><input id="stSilverH" type="number" step="0.1" min="10"></div></div>
       <div class="field"><label>RG 14/20 W × H</label><div class="fieldRow"><input id="stRoseW" type="number" step="0.1" min="10"><input id="stRoseH" type="number" step="0.1" min="10"></div></div>
+      <div class="field"><label>10K Gold W × H</label><div class="fieldRow"><input id="stGold10kW" type="number" step="0.1" min="10"><input id="stGold10kH" type="number" step="0.1" min="10"></div></div>
+      <div class="field"><label>14K Gold W × H</label><div class="fieldRow"><input id="stGold14kW" type="number" step="0.1" min="10"><input id="stGold14kH" type="number" step="0.1" min="10"></div></div>
     </div>
     <div class="field"><div class="help">The reference box measured 181.0 × 153.2 mm (513.03 × 434.19 pt). Change a metal's stock here if it cuts at a different size; the sheet outline in the output follows it.</div></div>
     <div class="section">Nesting engine</div>
@@ -418,11 +423,15 @@ const PT_PER_IN = 72;
 const METALS = [
   { key: "gold",   label: "GF 14/20", long: "Gold filled",      color: "#c8a24e" },
   { key: "silver", label: "SS",       long: "Sterling silver",  color: "#8d95a0" },
-  { key: "rose",   label: "RG 14/20", long: "Rose gold filled", color: "#c08578" }
+  { key: "rose",   label: "RG 14/20", long: "Rose gold filled", color: "#c08578" },
+  { key: "gold10k", label: "10K Gold", long: "10K solid gold",  color: "#b08d2a" },
+  { key: "gold14k", label: "14K Gold", long: "14K solid gold",  color: "#d9b545" }
 ];
+/* file and folder tags per metal ("/" cannot appear in a file or folder name) */
+const METAL_TAG = { gold: "GF-14-20", silver: "SS", rose: "RG-14-20", gold10k: "10K-Gold", gold14k: "14K-Gold" };
 const DEFAULTS = {
   rail: "md",
-  stock: { gold: [7.125, 6.03], silver: [7.125, 6.03], rose: [7.125, 6.03] },
+  stock: { gold: [7.125, 6.03], silver: [7.125, 6.03], rose: [7.125, 6.03], gold10k: [7.125, 6.03], gold14k: [7.125, 6.03] },
   clearancePt: -0.5, insetPt: 1.5, angleStep: 30, budgetS: 180, seed: 1, serverAbove: 80, parallel: 0,
   minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", aiRounds: 10, snapIn: 0.25, maxFill: 0.72, v: 7
 };
@@ -479,7 +488,7 @@ function loadSettings() {
     if ((saved.v || 1) < 5) { saved.engine = "solver"; saved.budgetS = 600; saved.maxFill = 0.75; saved.v = 5; }
     if ((saved.v || 1) < 6) { saved.budgetS = 180; saved.parallel = 0; saved.v = 6; }   // v6: parallel searches (all cores but one), 3-minute ceiling
     if ((saved.v || 1) < 7) { saved.maxFill = 0.72; saved.v = 7; }                        // v7: 72 % is the maximum fill of any sheet; the rest goes to the next sheet
-    return Object.assign({}, DEFAULTS, saved);
+    const out = Object.assign({}, DEFAULTS, saved); out.stock = Object.assign({}, DEFAULTS.stock, saved.stock || {}); return out;
   } catch (_) { return Object.assign({}, DEFAULTS, { v: 2 }); }
 }
 function saveSettings() { localStorage.setItem("cn.settings", JSON.stringify(S.settings)); document.documentElement.dataset.rail = S.settings.rail; }
@@ -586,6 +595,8 @@ function routeByName(name, folder) {
   const n = (folder ? folder + "/" : "") + name;
   const s = n.toLowerCase().replace(/[_\s]+/g, "-");
   const has = re => re.test(s);
+  if (has(/(^|[^a-z0-9])(10-?k|10-?kt|10k-?gold|solid-?10k)([^a-z]|$)/)) return "gold10k";
+  if (has(/(^|[^a-z0-9])(14-?k|14-?kt|14k-?gold|solid-?14k)([^a-z0-9]|$)/) && !has(/14\/?20/)) return "gold14k";
   if (has(/(^|[^a-z])(gf|gold-?filled|14\/?20-?g|gf-?1420)([^a-z]|$)/)) return "gold";
   if (has(/(^|[^a-z])(rg|rose|rose-?gold|14\/?20-?r|rg-?1420)([^a-z]|$)/)) return "rose";
   if (has(/(^|[^a-z])(ss|sterling|silver|925)([^a-z]|$)/)) return "silver";
@@ -618,7 +629,7 @@ async function intake(files, targetMetal) {
   }
   for (const e of expanded) {
     const metal = targetMetal || routeByName(e.name, e.folder) || null;
-    const src = { id: uid(), name: e.name, zipName: e.zipName || null, folder: e.folder, bytes: e.bytes, metal, state: "queued", charms: [], error: null, hash: null, cloud: null };
+    const src = { id: uid(), name: e.name, zipName: e.zipName || null, folder: e.folder, bytes: e.bytes, metal, state: "queued", charms: [], error: null, hash: null, cloud: null, t0: performance.now() };
     S.sources.push(src);
   }
   renderRail(); updateTopSub();
@@ -667,6 +678,8 @@ async function parseSourceFile(src) {
     else agent({ srcId: src.id }, "info", S.settings.review === "off" ? "AI review is off in Settings — geometry only" : "Cloud offline — Claude review and naming skipped");
     // 2 · names (library first, then Claude) — never on the critical path
     nameCharms(src).catch(() => {});
+    // 3 · the process runs on its own from here: nest the sheet this file landed on
+    autoNest(src.metal);
     persistSource(src).catch(e => { src.cloud = { error: e.message }; renderRailRow(src); });
     if (g.frame) toast(`${src.name}: page-sized frame detected and ignored (${g.charms.length} charms)`, "", 2800);
     if (g.orphans.length) toast(`${src.name}: ${g.orphans.length} loose element(s) belong to no charm and were left out — see the report`, "", 4200);
@@ -680,11 +693,21 @@ async function parseSourceFile(src) {
 }
 async function sha256(bytes) { try { const h = await crypto.subtle.digest("SHA-256", bytes); return Array.from(new Uint8Array(h)).map(b => b.toString(16).padStart(2, "0")).join(""); } catch (_) { return uid(); } }
 function assignSource(src, metal) {
+  const wasUnassigned = !src.metal;
   src.metal = metal;
   S.unassigned = S.unassigned.filter(c => c.sourceId !== src.id);
-  const sh = S.sheets[metal];
+  const sh = activePage(metal);
   for (const c of src.charms) if (!sh.charms.includes(c)) { c.metal = metal; sh.charms.push(c); }
   sheetDirty(sh); renderRail(); updateTopSub();
+  if (wasUnassigned && src.state === "ready") autoNest(metal);   // an operator routed a file by hand: carry on without another click
+}
+/** Start nesting a metal's sheet as soon as every file for it is parsed and reviewed. */
+function autoNest(metal) {
+  if (!metal || S.settings.autoNest === "off") return;
+  const busy = S.sources.some(x => !["ready", "error"].includes(x.state) || (x.review && x.review.state === "running"));
+  if (busy) return;   // the last file to finish will start it
+  const sh = activePage(metal);
+  if (sh.status === "ready" && activeCharms(sh).length) startNest(sh);
 }
 function assignCharm(charm, metal) {
   S.unassigned = S.unassigned.filter(c => c !== charm);
@@ -765,7 +788,7 @@ function agent(scope, kind, text, extra) {
   const ev = Object.assign({ id: uid(), t: Date.now(), scope, kind, text }, extra || {});
   AG.events.push(ev); if (AG.events.length > 400) AG.events.shift();
   // the log opens itself the moment Claude or the solver starts working, so the activity is visible without a click
-  for (const m of METALS) if (scopeTouches(scope, m.key)) { const sh = S.sheets[m.key]; if (ev.live && (ev.kind === "claude" || ev.kind === "nest") && sh.agentOpen == null) sh.agentOpen = true; renderAgent(sh); }
+  for (const m of METALS) if (scopeTouches(scope, m.key)) { const sh = S.sheets[m.key]; renderAgent(sh); }
   return ev;
 }
 function agentUpdate(ev, patch) { Object.assign(ev, patch); for (const m of METALS) if (scopeTouches(ev.scope, m.key)) renderAgent(S.sheets[m.key]); }
@@ -778,6 +801,8 @@ function scopeTouches(scope, metal) {
 const AG_ICON = { geom: "▸", claude: "✦", nest: "◆", verify: "✓", cloud: "☁", warn: "⚠", ok: "✓", info: "·" };
 function renderAgent(sh) {
   const el = sh.el; if (!el) return; const q = r => $(`[data-r="${r}"]`, el);
+  q("agent").classList.toggle("show", !!sh.agentShow); q("logBtn").textContent = sh.agentShow ? "Hide log" : "Log";
+  if (!sh.agentShow) return;
   const evs = AG.events.filter(e => scopeTouches(e.scope, sh.metal));
   const live = evs.filter(e => e.live).pop();
   const last = evs[evs.length - 1];
@@ -1054,6 +1079,8 @@ function ensureWorkers(sh, n) {
   sh.worker = sh.workers[0];
   return sh.workers;
 }
+/** When the first file behind this sheet arrived — the clock the operator cares about starts there. */
+function sheetT0(sh) { const ids = new Set(sh.charms.map(c => c.sourceId)); const t = S.sources.filter(x => ids.has(x.id) && x.t0).map(x => x.t0); return t.length ? Math.min(...t) : (sh.startedAt || performance.now()); }
 function log(sh, msg) { sh.log.push(`${new Date().toLocaleTimeString()} ${msg}`); if (sh.log.length > 200) sh.log.shift(); }
 function buildJob(sh) {
   const st = stockFor(sh.metal);
@@ -1292,7 +1319,7 @@ async function finishNest(sh, { result, error }) {
   if (sh.evSearch && sh.evSearch.live) agentUpdate(sh.evSearch, { live: false, elapsed: 0, html: null, text: `Search ended after ${result.trials} trial(s): ${endedText(result.endedBy)}` });
   if (sh.evNest) agentUpdate(sh.evNest, { live: false, elapsed: 0, text: `Nest ended by ${endedText(result.endedBy)} after ${result.trials} trial(s), ${fmt.s(result.elapsedMs)}: ${result.placements.length}/${items.length} placed at ${fmt.pct(result.density)}${result.rejects.length ? ` · did not fit: ${result.rejects.map(id => byId.get(id)?.name || id).join(", ")}` : ""}` });
   sh.liveInfo = { freePt2: result.freePt2, usablePt2: result.usablePt2, placedPt2: result.placedPt2, pocket: result.pocket, placed: result.placements.length, total: items.length };
-  sh.solveParams = result.params; sh.elapsedMs = result.elapsedMs; sh.density = result.density;
+  sh.solveParams = result.params; sh.elapsedMs = result.elapsedMs; sh.density = result.density; sh.t0 = sheetT0(sh);
   computeSaturation(sh); drawPreview(sh);
   const st = stockFor(sh.metal);
   try {
@@ -1323,9 +1350,10 @@ async function finishNest(sh, { result, error }) {
     const report = buildReport(sh, result, items);
     sh.outputs = { ai: aiBytes, labelled: labelledBytes, report, previewPng: await previewPng(sh) };
     sh.progress = [3, 4]; sh.stage = "Saving to the cloud…"; renderProgress(sh);
+    sh.seq = await nextSheetSeq(sh); sh.fileBase = sheetFileBase(sh, sh.seq);
     const allPlaced = sh.rejects.length === 0;
     sh.status = allPlaced && sh.verification.ok ? "complete" : "partial";
-    sh.stage = ""; sh.progress = [4, 4];
+    sh.stage = ""; sh.progress = [4, 4]; sh.totalMs = performance.now() - sh.t0;   // file in → sheet written and verified, Claude's review included
     renderCard(sh); drawPreview(sh);
     // 4 · announce
     const msg = `${sheetName(sh)} · ${allPlaced ? "sheet complete" : "sheet full"} — ${sh.placements.length} of ${items.length} placed, ${fmt.pct(sh.sat ? sh.sat.fullPct : sh.density)} full` + (sh.verification.ok ? "" : " · verification flagged, see report") + (allPlaced ? ` · ended by: ${endedText(sh.endedBy)}` : ` · the other ${sh.rejects.length} move to sheet ${sh.page + 1}`);
@@ -1358,18 +1386,27 @@ function buildReport(sh, result, items) {
     log: sh.log.slice()
   };
 }
+/** "GF-14-20_Mar.22.26_56-Charms_Sheet-2": metal tag, date, charms on the sheet, sheet number for that metal on that day. */
+const dateTag = (d = new Date()) => `${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getMonth()]}.${String(d.getDate()).padStart(2, "0")}.${String(d.getFullYear()).slice(-2)}`;
+function sheetFileBase(sh, seq) { return `${METAL_TAG[sh.metal] || sh.metal}_${dateTag()}_${sh.placements.length}-Charms_Sheet-${seq}`; }
+/** Sheet number for this metal today: one more than what the cloud already holds (falls back to the tab number offline). */
+async function nextSheetSeq(sh) {
+  const day = today();
+  try { if (S.cloud.ok) { const r = await api("charmNestLibrary", { op: "listSheets", from: day, to: day, metal: sh.metal, limit: 500 }, { label: "Numbering the sheet" }); return (r.sheets || []).filter(x => x.id !== sh.sheetId).length + 1; } } catch (_) { /* offline */ }
+  return sh.page;
+}
 async function persistSheet(sh, items) {
   if (!S.cloud.ok) return;
-  const day = today(), base = `charmnest/sheets/${day}/${sh.sheetId}`;
-  const ai = await uploadBytes(`${base}/${sh.sheetId}.ai`, sh.outputs.ai, "application/pdf", "Saving sheet .ai");
-  const pdf = await uploadBytes(`${base}/${sh.sheetId}.pdf`, sh.outputs.ai, "application/pdf", "Saving sheet .pdf");
-  const lab = await uploadBytes(`${base}/${sh.sheetId}_labelled.pdf`, sh.outputs.labelled, "application/pdf", "Saving labelled proof");
-  const rep = await uploadBytes(`${base}/nest-report.json`, new TextEncoder().encode(JSON.stringify(sh.outputs.report, null, 1)), "application/json", "Saving report");
+  const day = today(), name = sh.fileBase || sheetFileBase(sh, sh.page), base = `charmnest/sheets/${day}/${name}`;
+  const ai = await uploadBytes(`${base}/${name}.ai`, sh.outputs.ai, "application/pdf", "Saving sheet .ai");
+  const pdf = await uploadBytes(`${base}/${name}.pdf`, sh.outputs.ai, "application/pdf", "Saving sheet .pdf");
+  const lab = await uploadBytes(`${base}/${name}_labelled.pdf`, sh.outputs.labelled, "application/pdf", "Saving labelled proof");
+  const rep = await uploadBytes(`${base}/${name}_nest-report.json`, new TextEncoder().encode(JSON.stringify(sh.outputs.report, null, 1)), "application/json", "Saving report");
   const pv = sh.outputs.previewPng ? await uploadBytes(`${base}/preview.png`, sh.outputs.previewPng, "image/png", "Saving preview") : null;
   sh.cloud = { ai: ai.url, pdf: pdf.url, labelled: lab.url, report: rep.url, preview: pv && pv.url };
   const byId = new Map(items.map(c => [c.id, c]));
   const doc = {
-    id: sh.sheetId, metal: sh.metal, metalLabel: sheetName(sh), day, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, elapsedMs: Math.round(sh.elapsedMs || 0),
+    id: sh.sheetId, metal: sh.metal, metalLabel: sheetName(sh), day, folder: name, fileBase: name, seq: sh.seq || sh.page, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, elapsedMs: Math.round(sh.elapsedMs || 0),
     stock: sh.outputs.report.stock, params: sh.solveParams, density: sh.density, freePt2: Math.round(sh.liveInfo.freePt2), usablePt2: Math.round(sh.liveInfo.usablePt2), pocket: sh.liveInfo.pocket,
     charmCount: items.length, placedCount: sh.placements.length, rejectCount: (sh.outputs.report.rejects || []).length, page: sh.page, verification: { ok: !!sh.verification.ok, minGapPt: sh.verification.minGapPt, minEdgePt: sh.verification.minEdgePt, render: sh.verification.render && { ok: sh.verification.render.ok, overlapPx: sh.verification.render.overlapPx, outsidePx: sh.verification.render.outsidePx, error: sh.verification.render.error || null } },
     outputs: { ai: { path: ai.path, url: ai.url }, pdf: { path: pdf.path, url: pdf.url }, labelled: { path: lab.path, url: lab.url }, report: { path: rep.path, url: rep.url }, preview: pv ? { path: pv.path, url: pv.url } : null },
@@ -1382,7 +1419,7 @@ async function persistSheet(sh, items) {
   await api("charmNestLibrary", { op: "putCalibration", row: Object.assign({ sheetId: sh.sheetId, metal: sh.metal, clearancePt: +S.settings.clearancePt }, sh.outputs.report.calibration) }, { label: "Saving calibration" });
   S.calibration.push(Object.assign({ sheetId: sh.sheetId }, sh.outputs.report.calibration));
   renderCard(sh);
-  agent({ metal: sh.metal }, "cloud", `Saved to the cloud: .ai, .pdf, labelled proof, report, preview · sheet ${sh.sheetId}`);
+  agent({ metal: sh.metal }, "cloud", `Saved to the cloud in folder ${name}: ${name}.ai, .pdf, labelled proof, report, preview`);
   toast(`${labelOf(sh.metal)}: sheet, proof and report saved to the cloud`, "ok", 3000);
 }
 let pdfjsReady = null;
@@ -1460,6 +1497,7 @@ function buildCards() {
         <button class="btn danger sm hidden" data-r="stop">Stop</button>
         <button class="btn sage sm hidden" data-r="dl">Download .ai</button>
         <button class="btn ghost xs" data-r="report">Report</button>
+        <button class="btn ghost xs" data-r="logBtn" title="Show what the agent did, step by step">Log</button>
         <div class="right"><button class="btn ghost xs hidden" data-r="second">Move the rest to the next sheet</button><button class="btn ghost xs" data-r="clear">Clear</button></div>
       </div>`;
     host.appendChild(el); sh.el = el; sh.cardEl = el;
@@ -1478,7 +1516,8 @@ function buildCards() {
       if (e.dataTransfer.files && e.dataTransfer.files.length) intake(e.dataTransfer.files, m.key);
     });
     q("canvas").addEventListener("click", e => onPreviewClick(cur(), e));
-    q("agentTog").parentElement.onclick = () => { sh.agentOpen = !sh.agentOpen; renderAgent(sh); };
+    q("agentTog").parentElement.onclick = () => { const pg = cur(); pg.agentOpen = !pg.agentOpen; renderAgent(pg); };
+    q("logBtn").onclick = () => { const pg = cur(); pg.agentShow = !pg.agentShow; if (pg.agentShow && pg.agentOpen == null) pg.agentOpen = true; renderAgent(pg); };
     renderCard(sh);
   }
 }
@@ -1525,7 +1564,8 @@ function renderCard(sh) {
   $$("img[data-cid]", q("queue")).forEach(img => img.onclick = () => openCharm(sh, byId.get(img.dataset.cid)));
   // cloud row
   const cl = q("cloud");
-  cl.innerHTML = sh.cloud ? `<span class="ok">✓ saved to cloud</span> · <a href="${sh.cloud.ai}" target="_blank" rel="noopener">.ai</a> · <a href="${sh.cloud.labelled}" target="_blank" rel="noopener">proof</a> · <a href="${sh.cloud.report}" target="_blank" rel="noopener">report</a>` : (sh.outputs ? (S.cloud.ok ? "saving to cloud…" : `<span class="bad">not saved — cloud offline</span>`) : (sh.sheetId ? `sheet ${sh.sheetId}` : ""));
+  cl.innerHTML = sh.outputs && !sh.cloud && !S.cloud.ok ? `<span class="bad">not saved — cloud offline</span>` : "";
+  cl.classList.toggle("hidden", !cl.innerHTML);
   renderProgress(sh); renderSat(sh); drawPreview(sh); renderAgent(sh);
 }
 function renderProgress(sh) {
@@ -1540,11 +1580,11 @@ function renderProgress(sh) {
     p.setAttribute("value", p.value);
     if (p.parentElement.classList.contains("bp-meter")) { const pct = Math.round(p.value / p.max * 100); p.parentElement.dataset.label = sh.progressKind === "prepare" ? `preparing ${pct}%` : sh.progressKind === "finish" ? `finishing ${pct}%` : `${p.value}/${p.max} placed · ${pct}%`; p.parentElement.style.setProperty("--bp-pct", pct + "%"); p.parentElement.dataset.determinate = "true"; }
   }
-  const st = q("stage"); const elapsed = sh.startedAt && ["nesting", "finishing"].includes(sh.status) ? fmt.s(performance.now() - sh.startedAt) : (sh.elapsedMs ? fmt.s(sh.elapsedMs) : "");
+  const st = q("stage"); const elapsed = ["nesting", "finishing"].includes(sh.status) ? fmt.s(performance.now() - sheetT0(sh)) + " total" : (sh.totalMs ? `${fmt.s(sh.totalMs)} total · nest ${fmt.s(sh.elapsedMs || 0)}` : (sh.elapsedMs ? fmt.s(sh.elapsedMs) : ""));
   const budget = sh.status === "nesting" ? ((S.settings.engine || "solver") === "ai" ? ` · round ${sh.aiRound || 1}/${S.settings.aiRounds || 10}` : ` / ${S.settings.budgetS}s`) : "";
   const trials = sh.trials ? ((S.settings.engine || "solver") === "ai" && !sh.solveParams?.seed ? ` · ${sh.trials} round${sh.trials > 1 ? "s" : ""}` : ` · ${sh.trials} trial${sh.trials > 1 ? "s" : ""}`) : "";
   const reviewingSrc = S.sources.find(s => s.review && s.review.state === "running" && s.charms.some(c => c.metal === sh.metal));
-  const ai = sh.aiReview ? (sh.aiReview.state === "running" ? ` · <span class="spin"></span> Claude inspecting · ${fmt.s(sh.aiReview.elapsed || 0)}` : sh.aiReview.skipped ? "" : sh.aiReview.ok ? " · Claude ✓" : ` · ⚠ Claude: ${sh.aiReview.issues.length} issue(s)`) : "";
+  const ai = "";
   st.innerHTML = sh.stage ? `<span class="spin"></span><span>${esc(sh.stage)}</span><span class="r">${elapsed}${budget}${trials}</span>`
     : reviewingSrc ? `<span class="spin"></span><span>Claude is reviewing the ${reviewingSrc.charms.length} charms detected in ${esc(reviewingSrc.name)} — high effort, usually 1–3 minutes</span><span class="r">${fmt.s(reviewingSrc.review.elapsed || 0)}</span>`
     : (sh.status === "complete" || sh.status === "partial" ? `<span>${esc(endedText(sh.endedBy))} · ${sh.placements.length}/${activeCharms(sh).length} placed${sh.verification ? (sh.verification.ok ? " · verified ✓" : " · ⚠ verification flagged") : ""}${ai}</span><span class="r">${elapsed}${trials}</span>` : "");
@@ -1716,7 +1756,7 @@ function openReport(sh) {
 }
 function downloadOutputs(sh) {
   if (!sh.outputs) return;
-  const base = `${labelOf(sh.metal).replace(/[\s/]/g, "")}_${sh.sheetId}`;
+  const base = sh.fileBase || sheetFileBase(sh, sh.page);
   download(sh.outputs.ai, `${base}.ai`, "application/pdf");
   setTimeout(() => download(sh.outputs.labelled, `${base}_labelled.pdf`, "application/pdf"), 350);
   setTimeout(() => download(new TextEncoder().encode(JSON.stringify(sh.outputs.report, null, 2)), `${base}_nest-report.json`, "application/json"), 700);
@@ -1738,7 +1778,7 @@ function renderLibrary() {
   $("#libCount").textContent = `${rows.length} sheet${rows.length === 1 ? "" : "s"}`;
   const body = $("#libBody"); if (!rows.length) { body.innerHTML = `<div class="libEmpty">No sheets match.</div>`; return; }
   const byDay = new Map(); for (const r of rows) { if (!byDay.has(r.day)) byDay.set(r.day, []); byDay.get(r.day).push(r); }
-  body.innerHTML = [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([day, list]) => `<div class="dayHead">${new Date(day + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" })}<span class="n">${list.length}</span></div><div class="libGrid">${list.map(r => `<div class="libCard" data-m="${r.metal}" data-id="${r.id}"><div class="h"><span class="nm">${esc(r.metalLabel)} · ${esc(r.id)}</span><span class="tm">${r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span></div>${r.preview ? `<img class="pv" src="${r.preview}" loading="lazy" alt="">` : ""}<div class="m"><span><b>${r.placedCount}</b>/${r.charmCount} placed</span><span><b>${Math.round((r.density || 0) * 100)}%</b> full</span><span><b>${fmt.area(r.freePt2 || 0)}</b> free</span><span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span>${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`).join("")}</div>`).join("");
+  body.innerHTML = [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([day, list]) => `<div class="dayHead">${new Date(day + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" })}<span class="n">${list.length}</span></div><div class="libGrid">${list.map(r => `<div class="libCard" data-m="${r.metal}" data-id="${r.id}"><div class="h"><span class="nm">${esc(r.metalLabel)} · ${esc(r.id)}</span><span class="tm">${r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span></div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${r.preview}" loading="lazy" alt="">` : ""}<div class="m"><span><b>${r.placedCount}</b>/${r.charmCount} placed</span><span><b>${Math.round((r.density || 0) * 100)}%</b> full</span><span><b>${fmt.area(r.freePt2 || 0)}</b> free</span><span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span>${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`).join("")}</div>`).join("");
   $$(".libCard", body).forEach(el => el.onclick = () => openLibrarySheet(el.dataset.id));
 }
 async function openLibrarySheet(id) {
@@ -1748,11 +1788,11 @@ async function openLibrarySheet(id) {
     $("#lsTitle").textContent = `${d.metalLabel} · ${d.id} · ${d.day}`;
     $("#lsBody").innerHTML = `
       <div style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:16px;align-items:start">
-        <div>${d.outputs && d.outputs.preview ? `<img src="${d.outputs.preview.url}" style="width:100%;border:1px solid var(--line);border-radius:10px;background:#fff">` : `<div class="libEmpty">no preview</div>`}</div>
+        <div>${d.outputs && d.outputs.preview ? `<img crossorigin="anonymous" src="${d.outputs.preview.url}" style="width:100%;border:1px solid var(--line);border-radius:10px;background:#fff">` : `<div class="libEmpty">no preview</div>`}</div>
         <div><dl class="kv"><dt>Status</dt><dd>${esc(d.status)} · ${esc(endedText(d.endedBy))}</dd><dt>Placed</dt><dd>${d.placedCount} / ${d.charmCount}${d.rejectCount ? ` · ${d.rejectCount} rejected` : ""}</dd><dt>Density</dt><dd>${Math.round((d.density || 0) * 100)}% · ${fmt.area(d.freePt2 || 0)} free</dd><dt>Stock</dt><dd>${d.stock ? `${fmt.mm(d.stock.wIn * PT_PER_IN)} × ${fmt.mm(d.stock.hIn * PT_PER_IN)}` : "—"}</dd><dt>Seed · clearance</dt><dd>${d.params ? `${d.params.seed} · ${fmt.mm(d.params.clearancePt)} · ${d.params.angles.length} angles` : "—"}</dd><dt>Verification</dt><dd>${d.verification ? (d.verification.ok ? "passed" : "flagged") + (d.verification.minGapPt != null ? ` · min gap ${fmt.mm(d.verification.minGapPt)}` : "") : "—"}</dd><dt>Sources</dt><dd>${(d.sources || []).map(s => s.url ? `<a href="${s.url}" target="_blank" rel="noopener">${esc(s.name)}</a>` : esc(s.name)).join(", ") || "—"}</dd></dl>
         <div class="section">Outputs</div><div style="display:flex;gap:6px;flex-wrap:wrap">${d.outputs ? ["ai", "pdf", "labelled", "report"].filter(k => d.outputs[k]).map(k => `<a class="btn ghost xs" href="${d.outputs[k].url}" target="_blank" rel="noopener">${k === "labelled" ? "labelled proof" : k === "report" ? "nest-report.json" : "." + k}</a>`).join("") : "none"}</div></div></div>
       <div class="section">Charms · ${(d.charms || []).length}</div>
-      <div class="charmGrid">${(d.charms || []).map(c => `<div class="charmTile">${c.thumbUrl ? `<img src="${c.thumbUrl}" loading="lazy" alt="">` : ""}<div class="nm">${esc(c.name || "#" + (c.index + 1))}</div><div class="meta">${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}${c.qty > 1 ? ` · ×${c.qty}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("")}</div>`;
+      <div class="charmGrid">${(d.charms || []).map(c => `<div class="charmTile">${c.thumbUrl ? `<img crossorigin="anonymous" src="${c.thumbUrl}" loading="lazy" alt="">` : ""}<div class="nm">${esc(c.name || "#" + (c.index + 1))}</div><div class="meta">${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}${c.qty > 1 ? ` · ×${c.qty}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("")}</div>`;
     $("#lsDownloads").onclick = () => { if (!d.outputs) return; ["ai", "labelled", "report"].forEach((k, i) => d.outputs[k] && setTimeout(() => window.open(d.outputs[k].url, "_blank"), i * 300)); };
     $("#lsRestore").onclick = () => restoreSheet(d);
     $("#lsDelete").onclick = async () => { if (!confirm(`Archive sheet ${d.id}? Files stay in storage; it just leaves the list.`)) return; await api("charmNestLibrary", { op: "deleteSheet", id: d.id }); closeDlg(dlg); loadLibrary(); };
@@ -1792,7 +1832,7 @@ async function loadCharms() {
   try {
     const r = await api("charmNestLibrary", { op: "listCharms", q: ($("#charmSearch").value || "").trim(), limit: 400 }, { label: "Loading charms" });
     const rows = r.charms || []; $("#charmCount").textContent = `${rows.length} charm${rows.length === 1 ? "" : "s"}`;
-    body.innerHTML = rows.length ? rows.map(c => `<div class="charmTile" data-h="${c.hash}">${c.thumbUrl ? `<img src="${c.thumbUrl}" loading="lazy" alt="">` : ""}<input value="${esc(c.name || "")}" title="rename"><div class="meta">${c.widthPt ? `${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}` : ""}${c.timesUsed ? ` · used ×${c.timesUsed}` : ""}${c.metalHint ? ` · ${esc(labelOf(c.metalHint))}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("") : `<div class="libEmpty">No charms yet.</div>`;
+    body.innerHTML = rows.length ? rows.map(c => `<div class="charmTile" data-h="${c.hash}">${c.thumbUrl ? `<img crossorigin="anonymous" src="${c.thumbUrl}" loading="lazy" alt="">` : ""}<input value="${esc(c.name || "")}" title="rename"><div class="meta">${c.widthPt ? `${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}` : ""}${c.timesUsed ? ` · used ×${c.timesUsed}` : ""}${c.metalHint ? ` · ${esc(labelOf(c.metalHint))}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("") : `<div class="libEmpty">No charms yet.</div>`;
     $$(".charmTile input", body).forEach(inp => inp.onchange = () => api("charmNestLibrary", { op: "renameCharm", hash: inp.closest(".charmTile").dataset.h, name: inp.value.trim() }).then(() => toast("Renamed", "ok")).catch(e => toast(e.message, "bad")));
   } catch (e) { body.innerHTML = `<div class="libEmpty">${esc(e.message)}</div>`; }
 }
@@ -1828,7 +1868,7 @@ async function boot() {
   const sel = $("#stockSel"); sel.innerHTML = STOCK_PRESETS.map(p => `<option value="${p.id}">${p.label}</option>`).join(""); sel.value = S.stockPreset;
   sel.onchange = () => { S.stockPreset = sel.value; localStorage.setItem("cn.stock", sel.value); for (const sh of allSheets()) sheetDirty(sh); };
   buildCards();
-  $("#railCores").textContent = `${navigator.hardwareConcurrency || "?"} cores${(navigator.hardwareConcurrency || 4) < 4 ? " · sheets nest one at a time" : " · 3 sheets in parallel"}`;
+  $("#railCores").textContent = `${navigator.hardwareConcurrency || "?"} cores${(navigator.hardwareConcurrency || 4) < 4 ? " · sheets nest one at a time" : ` · ${METALS.length} sheets in parallel`}`;
   $("#btnRail").onclick = () => $("#app").classList.toggle("railOff");
   $("#btnPick").onclick = () => $("#fileInput").click();
   $("#fileInput").onchange = e => { intake(e.target.files); e.target.value = ""; };

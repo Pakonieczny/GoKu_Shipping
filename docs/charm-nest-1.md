@@ -2,7 +2,7 @@
 
 Production URL: `https://brites-charm-sorter.goldenspike.app` (redirect in `netlify.toml` → `/charm-nest-1.html`).
 
-Takes loose charm artwork — `.ai` (PDF-compatible), `.pdf`, or a `.zip` of them — and nests every charm onto one fixed sheet per metal (GF 14/20, SS, RG 14/20) with no overlaps, then writes a production `.ai` per sheet with one Illustrator layer per charm. Everything uploaded and everything produced gets a permanent copy in Firebase.
+Takes loose charm artwork — `.ai` (PDF-compatible), `.pdf`, or a `.zip` of them — and nests every charm onto fixed sheets per metal (GF 14/20, SS, RG 14/20, 10K solid gold, 14K solid gold) with no overlaps, then writes a production `.ai` per sheet with one Illustrator layer per charm. Everything uploaded and everything produced gets a permanent copy in Firebase.
 
 ## Files
 
@@ -73,3 +73,11 @@ Stock size per metal (defaults to the 181.0 × 153.2 mm reference), machine kerf
 ## Units and preview
 
 Every measurement in the console is metric: charm sizes, pockets, free area (mm²), stock, clearance and inset (Settings inputs are in mm; the stored values stay in the file's points and inches). Each sheet preview carries millimetre rulers along its top and left edges. The preview draws every member path of a charm in its file colour; a cut line stroked in white (or in a Separation "All" registration colour, which the parser now resolves through the form's own colour-space resources) is shown in ink, and the metal tint is punched out inside every inner cut line so hoop holes read as holes. The written `.ai` is untouched original path data either way.
+
+## Hands-off run, timing, log
+
+Dropping a file starts the whole process: parse → group → Claude grouping review → nest → verify → write → save, with no separate "Nest" click (the button remains for re-nesting). A file routed by hand from Unassigned starts the same way. The time shown on the card runs from the moment the file arrived to the moment the sheet is written and verified, Claude's review included ("2m 41s total · nest 8s"). The agent log is hidden behind the small **Log** button on each card.
+
+## Cloud folders
+
+Each finished sheet is saved in its own folder, `charmnest/sheets/<yyyy-mm-dd>/<name>/`, where `<name>` is `<metal tag>_<Mon.DD.YY>_<N>-Charms_Sheet-<K>` — for example `GF-14-20_Mar.22.26_56-Charms_Sheet-2`. K is the sheet number for that metal on that day (one more than the cloud already holds). The `.ai`, `.pdf`, `_labelled.pdf` and `_nest-report.json` inside carry the same name, and so does the download. A "/" cannot appear in a file or folder name, so GF 14/20 is tagged `GF-14-20` and RG 14/20 `RG-14-20`; the other tags are `SS`, `10K-Gold` and `14K-Gold`. File-name routing recognises `10k`/`14k` for the solid golds (`14/20` still means gold filled).
