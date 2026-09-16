@@ -91,7 +91,10 @@ function projectCatalogRow(listing) {
     shop_section_id: listing.shop_section_id == null ? null : listing.shop_section_id,
     last_modified_timestamp:
       listing.last_modified_timestamp ?? listing.updated_timestamp ?? listing.state_timestamp ?? null,
-    image: (primary && (primary.url_570xN || primary.url_fullxfull)) || "",
+    // The console zooms these up to 8x, so it takes the largest size Etsy
+    // offers rather than the 570px display size. Cards lazy-load, so only the
+    // images actually on screen are ever fetched.
+    image: (primary && (primary.url_fullxfull || primary.url_570xN)) || "",
     sku
   };
 }

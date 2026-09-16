@@ -104,7 +104,6 @@
     /* ── Results grid ─────────────────────────────────────────────────────── */
     .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(260px,1fr)); gap:12px; padding:12px; }
     .card { background:var(--card); border:1px solid var(--line); border-radius:14px; overflow:hidden; display:flex; flex-direction:column; content-visibility:auto; contain-intrinsic-size: 420px; }
-    .card.selected { outline:2px solid var(--good); outline-offset:-1px; }
 
     /* ── Image box: click-to-zoom, drag-to-pan, rule-of-thirds grid ───────
        Ported from the batch-review console's .rv-box, which in turn came from
@@ -147,19 +146,23 @@
       background-repeat: no-repeat;
     }
 
-    .selectBox { width:18px; height:18px; accent-color:var(--good); cursor:pointer; }
 
     .meta { padding:10px 12px 12px; display:flex; flex-direction:column; gap:8px; }
-    .title { font-size:13.5px; line-height:1.3; color:#fafafa; font-weight:600; }
+    /* One line only: the full title is in the tooltip and in the search index,
+       so the card shows just enough to identify the piece. */
+    .title {
+      font-size:13.5px; line-height:1.3; color:#fafafa; font-weight:600;
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    }
 
     /* ── The SKU line ─────────────────────────────────────────────────────
        The one value this console exists to read and set, so it is the biggest
        thing on the card after the picture. Clicking it edits in place; there is
        no separate edit button. */
     .skuline { display:flex; align-items:center; gap:8px; min-height:34px; }
-    .skulabel { font-size:15px; font-weight:800; color:#8f8f8f; letter-spacing:.02em; flex:0 0 auto; }
+    .skulabel { font-size:15px; font-weight:500; color:#8f8f8f; letter-spacing:.02em; flex:0 0 auto; }
     .skuvalue {
-      font-size:17px; font-weight:800; color:#fafafa; letter-spacing:.01em;
+      font-size:17px; font-weight:500; color:#fafafa; letter-spacing:.01em;
       background:transparent; border:1px dashed transparent; border-radius:7px;
       padding:3px 7px; margin-left:-7px; cursor:text; text-align:left;
       font-family:inherit; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
@@ -169,7 +172,7 @@
     .skuinput {
       flex:1 1 auto; min-width:0; background:#181818; color:#fafafa;
       border:1px solid var(--accent); border-radius:7px; padding:5px 8px;
-      font-size:16px; font-weight:800; font-family:inherit; letter-spacing:.01em;
+      font-size:16px; font-weight:500; font-family:inherit; letter-spacing:.01em;
     }
     .skuinput:focus { outline:none; }
 
@@ -180,6 +183,9 @@
       display:inline-flex; align-items:center; justify-content:center;
     }
     .iconbtn.save { background:var(--good); color:#fff; }
+    .iconbtn.copy { background:#2a2a2a; color:#bdbdbd; }
+    .iconbtn.copy:hover { background:#383838; color:#fff; }
+    .iconbtn.copy.done { background:var(--good); color:#fff; }
     .iconbtn.cancel { background:#333; color:#ccc; }
     .iconbtn:disabled { opacity:.55; cursor:default; }
 
@@ -253,7 +259,7 @@
    Shown in the header and quoted in any sync failure, so a stale tab running
    against newer functions is identifiable from a screenshot instead of
    guessed at. */
-const BUILD = "2026-09-16g";
+const BUILD = "2026-09-16h";
 
 /* The section shortcuts, exactly as specified — not every section the shop
    has. Etsy returns dozens (Zodiac / Birth Flower, Handwriting Jewelry, Evil
@@ -588,7 +594,18 @@ function pickPrimaryImage(images){
   const best = images.find(x => x && x.is_primary) ||
                [...images].sort((a,b) => (a?.rank ?? 999) - (b?.rank ?? 999))[0] ||
                images[0];
-  return best?.url_570xN || best?.url_fullxfull || "";
+  return best?.url_fullxfull || best?.url_570xN || "";
+}
+
+/* Rows synced before the size bump hold a 570px URL. Etsy's CDN names the
+   sizes in the filename, so the full-size variant of an already-cached URL is
+   derivable without a resync — worth it, because rebuilding the catalog to
+   improve pictures would cost ~57 API calls. Strictly the known pattern only,
+   and the card falls back to the stored URL if the guess 404s. */
+const ETSY_570 = /\/il_570xN\./;
+function upgradeImageUrl(url){
+  const u = String(url || "");
+  return ETSY_570.test(u) ? u.replace(ETSY_570, "/il_fullxfull.") : u;
 }
 
 function skusFromInventory(inventory){
@@ -712,14 +729,13 @@ function parseQuery(rawQuery){
   return { skuOnly, terms: q ? q.split(" ").filter(Boolean) : [] };
 }
 
-function searchCatalog(rows, rawQuery, { sectionId, missingSkuOnly, hideDone, doneSet }){
+function searchCatalog(rows, rawQuery, { sectionId, missingSkuOnly }){
   const { skuOnly, terms } = parseQuery(rawQuery);
   const out = [];
 
   for (const r of rows){
     if (sectionId !== null && r.section_id !== sectionId) continue;
     if (missingSkuOnly && r.sku) continue;
-    if (hideDone && doneSet.has(String(r.listing_id))) continue;
 
     const hay = skuOnly ? (r.qsku || "") : r.q;
     if (!terms.length){
@@ -919,22 +935,6 @@ async function syncCatalog(mode = "incremental", onProgress = () => {}){
   }
 }
 
-/** ============ Selection persistence ============ */
-const SELECT_KEY = "sku_selected_ids_v1";
-/* IDs are normalized to strings: they arrive as numbers from Etsy and come
-   back from JSON unchanged, but a mixed set silently loses checkmarks. */
-function loadSelectedSet(){
-  try {
-    const raw = JSON.parse(localStorage.getItem(SELECT_KEY) || "[]");
-    return new Set((Array.isArray(raw) ? raw : []).map(String));
-  }
-  catch { return new Set(); }
-}
-function saveSelectedSet(set){
-  try { localStorage.setItem(SELECT_KEY, JSON.stringify([...set])); } catch (_) {}
-}
-let selectedSet = loadSelectedSet();
-
 /** ============ Image zoom ==================================================
  *
  * Ported from the batch-review console's attachPreviewBoxListeners(), which
@@ -1108,7 +1108,6 @@ let results = [];              // current filtered+ranked rows
 let rendered = 0;              // how many of them are in the DOM
 let sectionId = null;          // null = every section
 let missingSkuOnly = false;
-let hideDone = false;
 let quotaRemaining = null;     // from the free usage endpoint, if verified
 
 function setStatus(text, kind){
@@ -1234,8 +1233,6 @@ function renderChips(){
 
   chip("Missing SKU", null, missingSkuOnly,
     () => { missingSkuOnly = !missingSkuOnly; renderChips(); applyFilters(); }, "flag");
-  chip("Hide \u2713 done", null, hideDone,
-    () => { hideDone = !hideDone; renderChips(); applyFilters(); }, "flag");
 }
 
 /** ============ Rendering (infinite scroll) ============ */
@@ -1345,6 +1342,27 @@ function buildSkuLine(card, r, terms){
       else value.textContent = "— none —";
       value.addEventListener("click", () => { mode = "editing"; draft = r.sku || ""; primeProductId().catch(() => {}); paint(); });
       line.appendChild(value);
+
+      if (r.sku){
+        const copy = document.createElement("button");
+        copy.type = "button";
+        copy.className = "iconbtn copy grow";
+        copy.dataset.role = "sku-copy";
+        copy.title = "Copy this SKU";
+        copy.textContent = "\u29c9";
+        copy.addEventListener("click", async (ev) => {
+          ev.stopPropagation();                       // copying is not editing
+          const ok = await copyText(r.sku);
+          copy.textContent = ok ? "\u2713" : "\u2715";
+          copy.classList.toggle("done", ok);
+          setTimeout(() => {
+            copy.textContent = "\u29c9";
+            copy.classList.remove("done");
+          }, 1100);
+        });
+        line.appendChild(copy);
+      }
+
       card.classList.remove("pending");
       return;
     }
@@ -1425,6 +1443,30 @@ function buildSkuLine(card, r, terms){
   return line;
 }
 
+/* navigator.clipboard needs a secure context, which this origin is, but it
+   still rejects when the document is not focused or permission is refused —
+   so a textarea + execCommand stands behind it. */
+async function copyText(text){
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (_) { /* fall through */ }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return ok;
+  } catch (_) { return false; }
+}
+
 function repaintGenerateButton(card, r){
   const gen = card.querySelector('[data-role="gen-btn"]');
   if (!gen) return;
@@ -1444,7 +1486,16 @@ function buildCard(r, terms){
   img.alt = r.title || "Listing image";
   img.loading = "lazy";
   img.decoding = "async";
-  img.src = r.image || "";
+  const upgraded = upgradeImageUrl(r.image);
+  if (upgraded !== r.image){
+    // One retry at the stored size if the derived full-size URL does not exist.
+    img.addEventListener("error", () => {
+      if (img.dataset.fellBack) return;
+      img.dataset.fellBack = "1";
+      img.src = r.image || "";
+    }, { once: true });
+  }
+  img.src = upgraded || "";
   wrap.appendChild(img);
   attachZoom(wrap, img);
   card.appendChild(wrap);
@@ -1454,40 +1505,20 @@ function buildCard(r, terms){
 
   const title = document.createElement("div");
   title.className = "title";
+  title.title = r.title || "";            // the full title, since the line clips
   highlightInto(title, r.title || "(untitled)", terms);
   meta.appendChild(title);
 
   const skuLine = buildSkuLine(card, r, terms);
   meta.appendChild(skuLine);
 
-  /* One row: done, id, price, section, Generate. */
+  /* One row: section, then Generate. The listing id, price and done-checkbox
+     were removed at the operator's request — the id and price are not part of
+     the SKU task, and with the checkbox gone the "Hide done" chip it fed has
+     gone too. The stored selections are left untouched in localStorage, so
+     nothing is lost if the feature comes back. */
   const row = document.createElement("div");
   row.className = "row";
-
-  const cb = document.createElement("input");
-  cb.type = "checkbox";
-  cb.className = "selectBox";
-  cb.title = "Mark as done";
-  cb.checked = selectedSet.has(String(r.listing_id));
-  cb.addEventListener("change", () => {
-    if (cb.checked){ selectedSet.add(String(r.listing_id)); card.classList.add("selected"); }
-    else { selectedSet.delete(String(r.listing_id)); card.classList.remove("selected"); }
-    saveSelectedSet(selectedSet);
-  });
-  row.appendChild(cb);
-
-  const idPill = document.createElement("span");
-  idPill.className = "pill";
-  idPill.textContent = `#${r.listing_id}`;
-  row.appendChild(idPill);
-
-  const priceText = formatPrice(r.price);
-  if (priceText){
-    const p = document.createElement("span");
-    p.className = "pill";
-    p.textContent = priceText;
-    row.appendChild(p);
-  }
 
   const sect = sectionTitle(r.section_id);
   if (sect){
@@ -1511,8 +1542,6 @@ function buildCard(r, terms){
   card.appendChild(meta);
 
   repaintGenerateButton(card, r);
-  if (cb.checked) card.classList.add("selected");
-
   return card;
 }
 
@@ -1541,9 +1570,7 @@ function updateEndcap(){
 
 function applyFilters(){
   currentTerms = parseQuery(searchInput.value).terms;
-  results = searchCatalog(Catalog.rows, searchInput.value, {
-    sectionId, missingSkuOnly, hideDone, doneSet: selectedSet
-  });
+  results = searchCatalog(Catalog.rows, searchInput.value, { sectionId, missingSkuOnly });
 
   listContainer.innerHTML = "";
   rendered = 0;

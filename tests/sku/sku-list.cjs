@@ -625,8 +625,7 @@ test('Exactly the five named section shortcuts are shown, in order', async reg =
   const { app } = await bootMixed(reg);
   const labels = app.chips().map(c => c.label).filter(Boolean);
   assert.deepEqual(labels, [
-    'All6', 'NECKLACES1', 'EARRINGS1', 'CHARMS1', 'BRACELETS1', 'RINGS1',
-    'Missing SKU', 'Hide ✓ done',
+    'All6', 'NECKLACES1', 'EARRINGS1', 'CHARMS1', 'BRACELETS1', 'RINGS1', 'Missing SKU',
   ]);
 });
 
@@ -654,8 +653,7 @@ test('REGRESSION: the shop\'s other sections get no chip', async reg => {
       'unexpected chip containing "' + unwanted + '": ' + labels.join(' | '));
   }
   assert.deepEqual(labels, [
-    'All8', 'NECKLACES1', 'EARRINGS1', 'CHARMS1', 'BRACELETS1', 'RINGS1',
-    'Missing SKU', 'Hide ✓ done',
+    'All8', 'NECKLACES1', 'EARRINGS1', 'CHARMS1', 'BRACELETS1', 'RINGS1', 'Missing SKU',
   ]);
 
   // Those listings are still in the catalog and still findable.
@@ -669,7 +667,7 @@ test('A named section the shop does not have is skipped, not shown dead', async 
   const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
   await app.domReady();
   const labels = app.chips().map(c => c.label).filter(Boolean);
-  assert.deepEqual(labels, ['All6', 'NECKLACES1', 'EARRINGS1', 'Missing SKU', 'Hide ✓ done']);
+  assert.deepEqual(labels, ['All6', 'NECKLACES1', 'EARRINGS1', 'Missing SKU']);
 });
 
 test('Section titles are matched case-insensitively', async reg => {
@@ -716,7 +714,7 @@ test('Without the sections call there are no section chips, and All still works'
   reg.push(app);
   await app.domReady();
   const labels = app.chips().map(c => c.label).filter(Boolean);
-  assert.deepEqual(labels, ['All6', 'Missing SKU', 'Hide ✓ done'],
+  assert.deepEqual(labels, ['All6', 'Missing SKU'],
     'no id-labelled placeholders — a chip is only ever one of the five names');
   assert.equal(app.cards().length, 6, 'the catalog is unaffected');
 });
@@ -782,32 +780,6 @@ test('"Missing SKU" finds exactly the listings that need work', async reg => {
   assert.deepEqual(app.cardIds().sort(), [100002, 100005]);
 });
 
-test('"Hide ✓ done" respects the persisted checkmarks', async reg => {
-  const shop = fakeShop(mixedShop());
-  const app = createApp({
-    storage: { ...freshTokens(), sku_selected_ids_v1: JSON.stringify(['100001', '100003']) },
-    fetchImpl: shop.impl,
-  });
-  reg.push(app);
-  await app.domReady();
-  await app.chips().find(c => c.label === 'Hide ✓ done').el.dispatch('click');
-  assert.ok(!app.cardIds().includes(100001));
-  assert.ok(!app.cardIds().includes(100003));
-  assert.equal(app.cards().length, 4);
-});
-
-test('REGRESSION: checkmarks saved as numbers still register', async reg => {
-  const shop = fakeShop(mixedShop());
-  const app = createApp({
-    storage: { ...freshTokens(), sku_selected_ids_v1: JSON.stringify([100001]) },
-    fetchImpl: shop.impl,
-  });
-  reg.push(app);
-  await app.domReady();
-  const card = app.els.listContainer.querySelector('.card[data-listing-id="100001"]');
-  assert.equal(card.querySelector('.selectBox').checked, true);
-});
-
 /* ── 6 · Infinite scroll ──────────────────────────────────────────────── */
 
 section('Infinite scroll');
@@ -852,6 +824,110 @@ test('There are no pagination controls left', async reg => {
   }
 });
 
+test('The card shows a section and Generate — no id, price or checkbox', async reg => {
+  const shop = fakeShop([listing(100001, { title: 'Gold Charm', shop_section_id: 11 })], { sections: SECTIONS });
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
+  await app.domReady();
+  const card = app.cards()[0];
+  const text = card.textContent;
+  assert.ok(!text.includes('#100001'), 'the listing id is gone');
+  assert.ok(!text.includes('19.99'), 'the price is gone');
+  assert.equal(card.querySelectorAll('.selectBox').length, 0, 'the done checkbox is gone');
+});
+
+test('The title is clipped to one line, with the whole of it in the tooltip', async reg => {
+  const long = 'Reader Book Pendant Necklace: Sterling Silver, Gold Filled, 14K Solid Gold Literary Charm Jewelry Gift';
+  const shop = fakeShop([listing(1, { title: long })]);
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
+  await app.domReady();
+  const title = app.cards()[0].querySelector('.title');
+  assert.equal(title.textContent, long, 'the text is all there — CSS does the clipping');
+  assert.equal(title.title, long, 'and the tooltip carries it in full');
+
+  const html = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', '..', 'SKU_List_V1.html'), 'utf8');
+  const rule = html.slice(html.indexOf('    .title {'), html.indexOf('/* ── The SKU line'));
+  assert.ok(rule.includes('white-space:nowrap'), 'one line');
+  assert.ok(rule.includes('text-overflow:ellipsis'), 'clipped with an ellipsis');
+});
+
+test('The SKU label and value are no longer heavy-weight', async reg => {
+  const html = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', '..', 'SKU_List_V1.html'), 'utf8');
+  const block = html.slice(html.indexOf('.skulabel'), html.indexOf('.iconbtn {'));
+  const weights = block.match(/font-weight:\d+/g) || [];
+  assert.ok(!weights.some(w => Number(w.split(':')[1]) >= 800), 'still bold-heavy: ' + weights.join(', '));
+  assert.ok(block.includes('font-size:15px'), 'the label keeps its size');
+  assert.ok(block.includes('font-size:17px'), 'and so does the value');
+});
+
+test('The SKU can be copied, with feedback', async reg => {
+  const { app } = skuShop(reg, { startingSku: 'Reader_97110' });
+  await app.domReady();
+  const card = app.cards()[0];
+  const copy = card.querySelector('[data-role="sku-copy"]');
+  assert.ok(copy, 'there is a copy button');
+
+  await copy.dispatch('click');
+  assert.deepEqual(app.clipboard, ['Reader_97110'], 'the SKU alone, no label');
+  assert.ok(copy.classList.contains('done'), 'and it acknowledges the copy');
+});
+
+test('Copying does not open the editor', async reg => {
+  const { app } = skuShop(reg, { startingSku: 'A' });
+  await app.domReady();
+  const card = app.cards()[0];
+  await card.querySelector('[data-role="sku-copy"]').dispatch('click');
+  assert.equal(card.querySelector('.skuinput'), null, 'still in reading mode');
+});
+
+test('A refused clipboard falls back to the older copy path', async reg => {
+  const { app } = skuShop(reg, { startingSku: 'FALLBACK_ME', clipboardFails: true });
+  await app.domReady();
+  await app.cards()[0].querySelector('[data-role="sku-copy"]').dispatch('click');
+  assert.deepEqual(app.clipboard, ['FALLBACK_ME'], 'still copied');
+  assert.ok(app.execCommands.includes('copy'), 'via execCommand');
+});
+
+test('A listing with no SKU has nothing to copy', async reg => {
+  const { app } = skuShop(reg);
+  await app.domReady();
+  assert.equal(app.cards()[0].querySelector('[data-role="sku-copy"]'), null);
+});
+
+test('Images are taken at full size, and cached 570px URLs are upgraded', async reg => {
+  const app = createApp(); reg.push(app);
+  const { upgradeImageUrl, pickPrimaryImage } = app.api;
+
+  assert.equal(pickPrimaryImage([{ rank: 1, url_570xN: 'small', url_fullxfull: 'big' }]), 'big',
+    'the largest size Etsy offers, since these get zoomed to 8x');
+
+  const cached = 'https://i.etsystatic.com/12345678/r/il/abc/999/il_570xN.999_ab1c.jpg';
+  assert.equal(upgradeImageUrl(cached),
+    'https://i.etsystatic.com/12345678/r/il/abc/999/il_fullxfull.999_ab1c.jpg',
+    'a row synced before the bump is upgraded without a resync');
+
+  for (const untouched of [
+    'https://i.etsystatic.com/1/il_fullxfull.9.jpg',
+    'https://example.com/il_570xN_not_a_path.jpg',
+    '',
+  ]) assert.equal(upgradeImageUrl(untouched), untouched, 'left alone: ' + untouched);
+});
+
+test('An upgraded image that 404s falls back to the stored URL, once', async reg => {
+  const stored = 'https://i.etsystatic.com/1/r/il/a/2/il_570xN.2_x.jpg';
+  const rows = [listing(1, { images: [{ rank: 1, url_570xN: stored }] })];
+  const shop = fakeShop(rows, { serveFullShape: true });
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
+  await app.domReady();
+  const img = app.cards()[0].querySelector('.thumb');
+  assert.ok(img.src.includes('il_fullxfull.'), 'tries full size first');
+  await img.dispatch('error');
+  assert.equal(img.src, stored, 'falls back');
+  await img.dispatch('error');
+  assert.equal(img.src, stored, 'and does not loop');
+});
+
 test('The pills and Generate sit on one row', async reg => {
   const shop = fakeShop([listing(100001, { title: 'Gold Charm', shop_section_id: 11 })], { sections: SECTIONS });
   const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
@@ -860,8 +936,7 @@ test('The pills and Generate sit on one row', async reg => {
   const rows = card.querySelectorAll('.row');
   assert.equal(rows.length, 1, 'one row, not a stack of them');
   const kinds = rows[0].children.map(c => c.className.split(' ')[0]);
-  assert.deepEqual(kinds, ['selectBox', 'pill', 'pill', 'pill', 'btn'],
-    'checkbox, id, price, section, Generate — all on the one line');
+  assert.deepEqual(kinds, ['pill', 'btn'], 'section and Generate, on the one line');
   assert.ok(rows[0].querySelector('.grow'), 'Generate is pushed to the end');
 });
 
@@ -1068,7 +1143,7 @@ function skuShop(reg, opts = {}) {
     inventory: { products: [{ product_id: 5, sku: opts.startingSku ?? '' }] },
   })];
   const shop = fakeShop(rows, { rest });
-  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl });
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl, clipboardFails: opts.clipboardFails });
   reg.push(app);
   return { app, shop, put: () => put, detailCalls: () => detailCalls };
 }

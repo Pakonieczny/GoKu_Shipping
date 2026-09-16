@@ -133,7 +133,7 @@ class Element {
   removeEventListener(type, fn) { this.listeners[type] = (this.listeners[type] || []).filter(f => f !== fn); }
   async dispatch(type, ev = {}) {
     const fns = [...(this.listeners[type] || [])];
-    for (const fn of fns) await fn.call(this, { type, preventDefault() {}, ...ev });
+    for (const fn of fns) await fn.call(this, { type, preventDefault() {}, stopPropagation() {}, ...ev });
   }
   setAttribute(name, value) {
     if (name.startsWith('data-')) this.dataset[camel(name.slice(5))] = String(value);
@@ -143,8 +143,9 @@ class Element {
     const v = name.startsWith('data-') ? this.dataset[camel(name.slice(5))] : this[name];
     return v === undefined ? null : String(v);
   }
-  click() { const fns = [...(this.listeners.click || [])]; return Promise.all(fns.map(fn => fn.call(this, { type: 'click', preventDefault() {} }))); }
-  select() {}
+  click() { const fns = [...(this.listeners.click || [])]; return Promise.all(fns.map(fn => fn.call(this, { type: 'click', preventDefault() {}, stopPropagation() {} }))); }
+  // Selecting text implies the element is what a copy command would read.
+  select() { if (this.ownerDocument) this.ownerDocument.activeElement = this; }
   focus() { if (this.ownerDocument) this.ownerDocument.activeElement = this; }
   getBoundingClientRect() {
     const w = this.clientWidth || 100, h = this.clientHeight || 100;
@@ -178,7 +179,7 @@ const EXPORTS = [
   'fetchListingPage', 'fetchSections', 'runSync', 'rebuildCatalog',
   // view
   'applyFilters', 'renderMore', 'renderChips', 'renderMeters', 'formatPrice', 'highlightInto',
-  'loadSelectedSet', 'makeSkuFrom', 'buildSkuLine', 'saveSkuUpdates',
+  'makeSkuFrom', 'buildSkuLine', 'saveSkuUpdates', 'upgradeImageUrl', 'copyText',
   'fetchInventoryDetail', 'cardFor', 'refreshQuota',
 ];
 
@@ -226,8 +227,16 @@ function createApp(opts = {}) {
     createDocumentFragment() { const f = new Element('#fragment', document); f.isFragment = true; return f; },
     getElementById(id) { return doc.byId.get(id) || null; },
     addEventListener(t, fn) { (doc.listeners[t] ||= []).push(fn); },
+    execCommand(name) {
+      execCommands.push(name);
+      if (name === 'copy' && document.activeElement && document.activeElement.value !== undefined) {
+        clipboard.push(String(document.activeElement.value));
+        return true;
+      }
+      return false;
+    },
     async dispatch(type, ev = {}) {
-      for (const fn of [...(doc.listeners[type] || [])]) await fn({ type, preventDefault() {}, ...ev });
+      for (const fn of [...(doc.listeners[type] || [])]) await fn({ type, preventDefault() {}, stopPropagation() {}, ...ev });
     },
   };
   const mk = (tag, id, extra = {}) => {
@@ -288,8 +297,22 @@ function createApp(opts = {}) {
     disconnect() {}
   }
 
+  /* Clipboard: the page calls the bare `navigator` global. opts.clipboardFails
+     forces the execCommand fallback so both paths are reachable. */
+  const clipboard = [];
+  const navigator = {
+    clipboard: {
+      async writeText(text) {
+        if (opts.clipboardFails) throw new Error('denied');
+        clipboard.push(String(text));
+      },
+    },
+  };
+  const execCommands = [];
+
   const window = {
     location,
+    navigator,
     innerHeight: 900,
     scrollY: 0,
     scrollTo() {},
@@ -300,7 +323,7 @@ function createApp(opts = {}) {
   const factory = new Function(
     'window', 'document', 'location', 'history', 'localStorage', 'sessionStorage',
     'fetch', 'alert', 'confirm', 'console', 'setTimeout', 'clearTimeout', 'IntersectionObserver',
-    'ResizeObserver',
+    'ResizeObserver', 'navigator',
     `${body}\nreturn { ${EXPORTS.join(', ')} };`
   );
   const api = factory(
@@ -308,12 +331,13 @@ function createApp(opts = {}) {
     fetchStub,
     msg => alerts.push(String(msg)),
     msg => { confirms.push(String(msg)); return opts.confirm !== false; },
-    consoleStub, setTimeoutStub, clearTimeoutStub, IntersectionObserverStub, ResizeObserverStub
+    consoleStub, setTimeoutStub, clearTimeoutStub, IntersectionObserverStub, ResizeObserverStub,
+    navigator
   );
 
   return {
     api, els, document, window, location, history, localStorage, sessionStorage,
-    navigations, alerts, confirms, warnings, errors, fetchCalls,
+    navigations, alerts, confirms, warnings, errors, fetchCalls, clipboard, execCommands,
     status: () => els.authStatus.textContent,
     cards: () => els.listContainer.querySelectorAll('.card'),
     cardIds: () => els.listContainer.querySelectorAll('.card').map(c => Number(c.dataset.listingId)),

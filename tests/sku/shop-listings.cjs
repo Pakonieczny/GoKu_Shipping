@@ -134,7 +134,8 @@ test('A projected row carries exactly the fields the catalog needs', async () =>
   assert.deepEqual(Object.keys(row).sort(),
     ['image', 'last_modified_timestamp', 'listing_id', 'price', 'shop_section_id', 'sku', 'title']);
   assert.equal(row.listing_id, 881234);
-  assert.equal(row.image, 'https://i.etsystatic.com/881234/0/il_570xN.jpg', 'rank 0 wins, display size');
+  assert.equal(row.image, 'https://i.etsystatic.com/881234/0/il_fullxfull.jpg',
+    'rank 0 wins, at the largest size — these get zoomed up to 8x');
   assert.equal(row.sku, 'Gold_1234', 'first non-empty variant SKU');
   assert.equal(row.shop_section_id, 11);
   assert.equal(row.last_modified_timestamp, 1700000000);
@@ -179,6 +180,12 @@ test('Paging, sorting and the call count are unaffected', async () => {
 
 /* ── projection edge cases ────────────────────────────────────────────── */
 
+test('The 570px size is still accepted when a listing has no full-size URL', async () => {
+  serve([{ listing_id: 7, title: 'T', images: [{ rank: 0, url_570xN: 'only570' }], inventory: { products: [] } }]);
+  const row = JSON.parse((await call('limit=100&projection=catalog&includes=Images,Inventory')).body).results[0];
+  assert.equal(row.image, 'only570');
+});
+
 test('A listing with no images, no SKU and no section projects cleanly', async () => {
   serve([{ listing_id: 5, title: 'Bare', price: null, images: [], inventory: { products: [{ product_id: 1, sku: '' }] } }]);
   const res = await call('limit=100&projection=catalog&includes=Images,Inventory');
@@ -192,7 +199,7 @@ test('A listing with no images, no SKU and no section projects cleanly', async (
 test('is_primary beats rank, and a later variant supplies the SKU', async () => {
   serve([{
     listing_id: 6, title: 'T',
-    images: [{ rank: 0, url_570xN: 'first' }, { is_primary: true, rank: 4, url_570xN: 'primary' }],
+    images: [{ rank: 0, url_fullxfull: 'first' }, { is_primary: true, rank: 4, url_fullxfull: 'primary' }],
     inventory: { products: [{ sku: '   ' }, { sku: ' Later_SKU ' }] },
   }]);
   const row = JSON.parse((await call('limit=100&projection=catalog&includes=Images,Inventory')).body).results[0];
