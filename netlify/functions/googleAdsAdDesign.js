@@ -1230,6 +1230,9 @@ function createAdDesignService(deps) {
         return { ...output, estimatedUsd: output.estimatedUsd == null ? 1 : output.estimatedUsd, costEstimated: output.costEstimated !== false };
       });
       let quality;try{quality=await readQuality(qualityKey);}catch(error){if(!['AI_OUTPUT_INCOMPLETE','AI_OUTPUT_INVALID'].includes(error.code))throw error;await progress(85,'Completing the saved artwork quality review');quality=await readQuality(qualityKey+'_repair');}
+      // A review reporting unfaithful jewelry or unreadable copy never reaches Approvals,
+      // whatever else it reports. The publication gate downstream is a second line, not the first.
+      if(quality.pass!==true||quality.productFaithful!==true||quality.mobileReadable!==true)throw new Error('Artwork quality review did not pass (score '+(Number.isFinite(quality.score)?quality.score:'not calculated')+'/'+require('./googleAdsAdQuality').TARGET+'). '+[].concat(quality.issues||[]).join(' ').slice(0,600));
       const singleProductDestination=!value.context.campaignId&&!value.context.approvalId||/\/products\//.test(group.url||'');
       const outside = selectedProducts.filter(p => Array.isArray(p.eligibleGroupRefs) && !p.eligibleGroupRefs.includes(group.ref)||singleProductDestination&&String(p.id)!==String(product.id));
       group.requiresProductSplit=isSharedProductGroup(value,group);

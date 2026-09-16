@@ -28,6 +28,8 @@
     "three": "0.186.0"
   },
   "devDependencies": {
+    "canvas": "^3.2.3",
+    "jsdom": "^30.0.1",
     "vite": "^5.0.0"
   },
   "keywords": [],

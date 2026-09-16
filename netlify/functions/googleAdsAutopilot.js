@@ -9639,6 +9639,16 @@ async function _verifyPublishedAd(campaignId,group,product,approval){
   if(themes.some(t=>!searchThemes.includes(t)))issues.push('A reviewed search theme is not yet visible in Google.');
   return {checkedAt:Date.now(),campaignId,groupRef:group.ref,campaignStatus:current.campaign?.status||null,groupStatus:current.assetGroup?.primaryStatus||current.assetGroup?.status||null,merchant:current.campaign?.shoppingSetting||null,destination,callToAction,searchThemes,itemIds,assets,verifiedAssetResourceNames:[...new Set(verifiedAssetResourceNames)],matches:issues.length===0,issues,policyApproved:assets.length>0&&assets.every(a=>['APPROVED','APPROVED_LIMITED'].includes(a.approvalStatus)),servingConfirmed:false};
 }
+// Google reports a statistic against an asset, never against an aspect ratio.
+// The ratio is recovered from the asset's own pixel dimensions so results can
+// be compared shape by shape. An asset Google returned without dimensions is
+// left unshaped rather than guessed from its field type.
+function _assetShape(asset){
+  const full=((asset||{}).imageAsset||{}).fullSize||{};
+  const shape=require('../../brites-ad-format-policy').shapeFor(full.widthPixels,full.heightPixels);
+  return shape?{width:shape.width,height:shape.height,ratio:shape.ratio,shape:shape.shape,orientation:shape.orientation}
+              :{width:null,height:null,ratio:null,shape:null,orientation:null};
+}
 const _adDeliveryReads=new Map();
 async function adDesignDelivery(input={}){
   const {workspaceId,start,end}=input,{w}=await _adDesignPublicationContext(workspaceId);
@@ -9674,8 +9684,8 @@ async function _adDesignDeliveryFresh({workspaceId,start,end}={}){
   const ctx=await _reportContext(),range=_validatedReportRange({start,end},ctx.accountToday,30),dates=`segments.date BETWEEN '${range.start}' AND '${range.end}'`,filter=`campaign.id = ${campaignId}`;
   let rows=[],imageQuery,metricsError=null,totalResource='asset_group',totalRef=group.ref;
   try{
-  if(group.channel==='pmax')rows=await gaql(imageQuery=`SELECT campaign.id, asset_group.id, asset_group_asset.resource_name, asset_group_asset.asset, asset_group_asset.field_type, asset_group_asset.primary_status, asset_group_asset.primary_status_reasons, asset_group_asset.status, asset.resource_name, asset.image_asset.full_size.url, metrics.impressions, metrics.clicks, metrics.ctr, metrics.conversions, metrics.conversions_value, metrics.cost_micros FROM asset_group_asset WHERE ${filter} AND asset_group_asset.asset_group = ${_gaqlString(group.ref)} AND asset_group_asset.status != 'REMOVED' AND ${dates}`);
-  else {const ad=(w.sourceSnapshot.components.searchAds||[]).find(a=>a.resourceName===group.ref);if(!ad)throw new Error('The Search ad group could not be verified.');totalResource='ad_group';totalRef=ad.adGroup;rows=await gaql(imageQuery=`SELECT campaign.id, ad_group.id, ad_group_asset.resource_name, ad_group_asset.asset, ad_group_asset.field_type, ad_group_asset.status, asset.resource_name, asset.image_asset.full_size.url, metrics.impressions, metrics.clicks, metrics.ctr, metrics.conversions, metrics.conversions_value, metrics.cost_micros FROM ad_group_asset WHERE ${filter} AND ad_group_asset.ad_group = ${_gaqlString(ad.adGroup)} AND ad_group_asset.field_type = 'IMAGE' AND ad_group_asset.status != 'REMOVED' AND ${dates}`);}
+  if(group.channel==='pmax')rows=await gaql(imageQuery=`SELECT campaign.id, asset_group.id, asset_group_asset.resource_name, asset_group_asset.asset, asset_group_asset.field_type, asset_group_asset.primary_status, asset_group_asset.primary_status_reasons, asset_group_asset.status, asset.resource_name, asset.image_asset.full_size.url, asset.image_asset.full_size.width_pixels, asset.image_asset.full_size.height_pixels, metrics.impressions, metrics.clicks, metrics.ctr, metrics.conversions, metrics.conversions_value, metrics.cost_micros FROM asset_group_asset WHERE ${filter} AND asset_group_asset.asset_group = ${_gaqlString(group.ref)} AND asset_group_asset.status != 'REMOVED' AND ${dates}`);
+  else {const ad=(w.sourceSnapshot.components.searchAds||[]).find(a=>a.resourceName===group.ref);if(!ad)throw new Error('The Search ad group could not be verified.');totalResource='ad_group';totalRef=ad.adGroup;rows=await gaql(imageQuery=`SELECT campaign.id, ad_group.id, ad_group_asset.resource_name, ad_group_asset.asset, ad_group_asset.field_type, ad_group_asset.status, asset.resource_name, asset.image_asset.full_size.url, asset.image_asset.full_size.width_pixels, asset.image_asset.full_size.height_pixels, metrics.impressions, metrics.clicks, metrics.ctr, metrics.conversions, metrics.conversions_value, metrics.cost_micros FROM ad_group_asset WHERE ${filter} AND ad_group_asset.ad_group = ${_gaqlString(ad.adGroup)} AND ad_group_asset.field_type = 'IMAGE' AND ad_group_asset.status != 'REMOVED' AND ${dates}`);}
   }catch(e){metricsError='Image performance is not available yet: '+e.message;}
   // Group totals are a separate report. Image-attributed metrics overlap and must never be summed into totals.
   let totals=null,totalsError=null;
@@ -9685,7 +9695,7 @@ async function _adDesignDeliveryFresh({workspaceId,start,end}={}){
   let deviceRows=[],deviceAvailable=false,deviceError=null;
   try{deviceRows=await gaql(imageQuery.replace('SELECT ','SELECT segments.device, '));if(deviceRows.some(r=>!r.segments||!r.segments.device))throw new Error('Device dimension missing');deviceAvailable=true;}catch(e){deviceRows=[];deviceError='Google device metrics are unavailable for this image report.';}
   const mapped=[];for(const publication of publications.filter(p=>p.approvalId)){const saved=await fb().db.collection(COL.approvals).doc(publication.approvalId).get();if(saved.exists)mapped.push(...(saved.data().assetReceipts||[]));}
-  const deviceMetrics=deviceRows.filter(r=>(r.asset||{}).imageAsset).map(r=>{const a=r.asset,link=r.assetGroupAsset||r.adGroupAsset||{},receipt=mapped.find(p=>p.resourceName===a.resourceName);return {assetId:a.resourceName,url:a.imageAsset.fullSize?.url||null,hash:receipt?.hash||null,fieldType:link.fieldType,device:String(r.segments.device).toLowerCase(),...metricNumbers(r.metrics||{})};});
+  const deviceMetrics=deviceRows.filter(r=>(r.asset||{}).imageAsset).map(r=>{const a=r.asset,link=r.assetGroupAsset||r.adGroupAsset||{},receipt=mapped.find(p=>p.resourceName===a.resourceName);return {assetId:a.resourceName,url:a.imageAsset.fullSize?.url||null,hash:receipt?.hash||null,fieldType:link.fieldType,device:String(r.segments.device).toLowerCase(),..._assetShape(a),...metricNumbers(r.metrics||{})};});
   if(verification){
     verification.groupHasImpressions=!!(totals&&totals.impressions>0);
     verification.servingNote='Group totals can include earlier ads. Serving of this exact update is not confirmed yet.';
@@ -9702,7 +9712,7 @@ async function _adDesignDeliveryFresh({workspaceId,start,end}={}){
     }
   }
   return {ok:true,available:true,verification,verificationError,metricsError,deviceAvailable,deviceError,deviceRows:deviceMetrics,totals,totalsError,range,currency:ctx.budgetCurrency,timeZone:ctx.accountTimezone,basis:'Google Ads interaction date',scope:group.channel==='search'?'Ad group image assets; shared by ads in this group':'This asset group',checkedAt:Date.now(),publications:safePublications,
-    rows:rows.filter(r=>(r.asset||{}).imageAsset).map(r=>{const a=r.asset||{},link=r.assetGroupAsset||r.adGroupAsset||{},m=r.metrics||{},receipt=mapped.find(p=>p.resourceName===a.resourceName);return {assetId:a.resourceName,url:((a.imageAsset||{}).fullSize||{}).url||null,hash:receipt&&receipt.hash||null,fieldType:link.fieldType,status:link.primaryStatus||link.status||'UNKNOWN',reasons:link.primaryStatusReasons||[],impressions:Number(m.impressions)||0,clicks:Number(m.clicks)||0,ctr:m.ctr==null?(Number(m.impressions)>0?Number(m.clicks)/Number(m.impressions):null):Number(m.ctr),conversions:Number(m.conversions)||0,value:Number(m.conversionsValue)||0,cost:fromMicros(m.costMicros)};}),
+    rows:rows.filter(r=>(r.asset||{}).imageAsset).map(r=>{const a=r.asset||{},link=r.assetGroupAsset||r.adGroupAsset||{},m=r.metrics||{},receipt=mapped.find(p=>p.resourceName===a.resourceName);return {assetId:a.resourceName,url:((a.imageAsset||{}).fullSize||{}).url||null,hash:receipt&&receipt.hash||null,fieldType:link.fieldType,..._assetShape(a),status:link.primaryStatus||link.status||'UNKNOWN',reasons:link.primaryStatusReasons||[],impressions:Number(m.impressions)||0,clicks:Number(m.clicks)||0,ctr:m.ctr==null?(Number(m.impressions)>0?Number(m.clicks)/Number(m.impressions):null):Number(m.ctr),conversions:Number(m.conversions)||0,value:Number(m.conversionsValue)||0,cost:fromMicros(m.costMicros)};}),
     note:'Group totals include all assets. Individual image outcomes can overlap when images and text serve together. Compare like periods; do not add asset conversions or interpret them as isolated image lift. Google does not expose separate Merchant Center traffic for each product image.'};
 }
 async function _prepareFirstAdDesignApproval({workspaceId,w,product,group,result,id,sourceHash}){
