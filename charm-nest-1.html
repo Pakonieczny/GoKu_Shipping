@@ -428,7 +428,7 @@ const METALS = [
   { key: "gold14k", label: "14K Gold", long: "14K solid gold",  color: "#d9b545" }
 ];
 /* file and folder tags per metal ("/" cannot appear in a file or folder name) */
-const METAL_TAG = { gold: "GF-14-20", silver: "SS", rose: "RG-14-20", gold10k: "10K-Gold", gold14k: "14K-Gold" };
+const METAL_TAG = { gold: "GF", silver: "SS", rose: "RG", gold10k: "10K", gold14k: "14K" };
 const DEFAULTS = {
   rail: "md",
   stock: { gold: [7.125, 6.03], silver: [7.125, 6.03], rose: [7.125, 6.03], gold10k: [7.125, 6.03], gold14k: [7.125, 6.03] },
@@ -1386,9 +1386,9 @@ function buildReport(sh, result, items) {
     log: sh.log.slice()
   };
 }
-/** "GF-14-20_Mar.22.26_56-Charms_Sheet-2": metal tag, date, charms on the sheet, sheet number for that metal on that day. */
+/** "GF_Mar.22.26_Set-2": metal tag, date, and the set number for that metal on that day. */
 const dateTag = (d = new Date()) => `${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getMonth()]}.${String(d.getDate()).padStart(2, "0")}.${String(d.getFullYear()).slice(-2)}`;
-function sheetFileBase(sh, seq) { return `${METAL_TAG[sh.metal] || sh.metal}_${dateTag()}_${sh.placements.length}-Charms_Sheet-${seq}`; }
+function sheetFileBase(sh, seq) { return `${METAL_TAG[sh.metal] || sh.metal}_${dateTag()}_Set-${seq}`; }
 /** Sheet number for this metal today: one more than what the cloud already holds (falls back to the tab number offline). */
 async function nextSheetSeq(sh) {
   const day = today();
