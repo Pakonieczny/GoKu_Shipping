@@ -126,7 +126,26 @@ async function op_getSheet(b) {
   const s = await db.collection(SHEETS).doc(b.id).get();
   if (!s.exists) return { sheet: null };
   const d = s.data(); d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt);
+  await refreshLinks(d);
   return { sheet: d };
+}
+/** Links in a sheet record are rebuilt from the objects' current download tokens (older records may carry a token
+ *  that a later re-upload replaced). Charm links missing at save time are filled from the charm library. */
+async function refreshLinks(d) {
+  const bucket = admin.storage().bucket();
+  const urlFor = async (path) => {
+    if (!path) return null;
+    try { const file = bucket.file(path); const [meta] = await file.getMetadata(); let t = meta.metadata && meta.metadata.firebaseStorageDownloadTokens; if (!t) return null; t = String(t).split(",")[0];
+      return "https://firebasestorage.googleapis.com/v0/b/" + encodeURIComponent(bucket.name) + "/o/" + encodeURIComponent(path) + "?alt=media&token=" + encodeURIComponent(t); } catch (_) { return null; }
+  };
+  const jobs = [];
+  for (const k of ["ai", "pdf", "labelled", "report", "preview"]) { const o = d.outputs && d.outputs[k]; if (o && o.path) jobs.push(urlFor(o.path).then(u => { if (u) o.url = u; })); }
+  for (const c of d.charms || []) {
+    const pngPath = c.pngPath || (c.hash ? "charmnest/charms/" + c.hash + ".png" : null), aiPath = c.aiPath || (c.hash ? "charmnest/charms/" + c.hash + ".ai" : null);
+    jobs.push(urlFor(pngPath).then(u => { if (u) c.thumbUrl = u; }));
+    jobs.push(urlFor(aiPath).then(u => { if (u) c.aiUrl = u; }));
+  }
+  await Promise.all(jobs);
 }
 async function op_deleteSheet(b) {
   if (!isId(b.id)) return { error: "bad id" };

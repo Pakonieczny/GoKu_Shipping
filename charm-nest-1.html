@@ -680,7 +680,7 @@ async function parseSourceFile(src) {
     nameCharms(src).catch(() => {});
     // 3 · the process runs on its own from here: nest the sheet this file landed on
     autoNest(src.metal);
-    persistSource(src).catch(e => { src.cloud = { error: e.message }; renderRailRow(src); });
+    src.persisting = persistSource(src).catch(e => { src.cloud = { error: e.message }; renderRailRow(src); });
     if (g.frame) toast(`${src.name}: page-sized frame detected and ignored (${g.charms.length} charms)`, "", 2800);
     if (g.orphans.length) toast(`${src.name}: ${g.orphans.length} loose element(s) belong to no charm and were left out — see the report`, "", 4200);
     const open = src.charms.filter(c => c.open).length;
@@ -1397,6 +1397,8 @@ async function nextSheetSeq(sh) {
 }
 async function persistSheet(sh, items) {
   if (!S.cloud.ok) return;
+  // the sheet record links to each charm's permanent copy: wait for those uploads first, so no link is missing
+  await Promise.allSettled([...new Set(items.map(c => c.sourceId))].map(id => { const x = S.sources.find(z => z.id === id); return x && x.persisting; }).filter(Boolean));
   const day = today(), name = sh.fileBase || sheetFileBase(sh, sh.page), base = `charmnest/sheets/${day}/${name}`;
   const ai = await uploadBytes(`${base}/${name}.ai`, sh.outputs.ai, "application/pdf", "Saving sheet .ai");
   const pdf = await uploadBytes(`${base}/${name}.pdf`, sh.outputs.ai, "application/pdf", "Saving sheet .pdf");
@@ -1411,7 +1413,7 @@ async function persistSheet(sh, items) {
     charmCount: items.length, placedCount: sh.placements.length, rejectCount: (sh.outputs.report.rejects || []).length, page: sh.page, verification: { ok: !!sh.verification.ok, minGapPt: sh.verification.minGapPt, minEdgePt: sh.verification.minEdgePt, render: sh.verification.render && { ok: sh.verification.render.ok, overlapPx: sh.verification.render.overlapPx, outsidePx: sh.verification.render.outsidePx, error: sh.verification.render.error || null } },
     outputs: { ai: { path: ai.path, url: ai.url }, pdf: { path: pdf.path, url: pdf.url }, labelled: { path: lab.path, url: lab.url }, report: { path: rep.path, url: rep.url }, preview: pv ? { path: pv.path, url: pv.url } : null },
     sources: [...new Set(items.map(c => c.sourceId))].map(id => { const s = S.sources.find(x => x.id === id); return s ? { id: s.id, name: s.name, zipName: s.zipName, hash: s.hash, bytes: s.bytes.length, path: s.cloud && s.cloud.path, url: s.cloud && s.cloud.url } : null; }).filter(Boolean),
-    charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, excluded: !!c.excluded })),
+    charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded })),
     placements: sh.outputs.report.placements, rejects: sh.outputs.report.rejects,
     names: items.map(c => c.name).filter(Boolean).join(" ")
   };

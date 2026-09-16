@@ -30,6 +30,10 @@ const ALLOWED_TYPES = new Set(["application/pdf", "application/postscript", "app
 function firebaseDownloadUrl(bucketName, storagePath, token) {
   return "https://firebasestorage.googleapis.com/v0/b/" + encodeURIComponent(bucketName) + "/o/" + encodeURIComponent(storagePath) + "?alt=media&token=" + encodeURIComponent(token);
 }
+/** The token already on an object, if any — never rotated, so every stored link to the path stays valid. */
+async function existingToken(file) {
+  try { const [meta] = await file.getMetadata(); const t = meta && meta.metadata && meta.metadata.firebaseStorageDownloadTokens; return t ? String(t).split(",")[0] : null; } catch (_) { return null; }
+}
 const newToken = () => (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex"));
 const contentTypeOf = t => { t = str(t, 80).toLowerCase(); return ALLOWED_TYPES.has(t) ? t : "application/octet-stream"; };
 
@@ -49,7 +53,7 @@ async function op_put(b) {
   if (!base64) return { error: "no data" };
   const buf = Buffer.from(base64, "base64");
   if (!buf.length) return { error: "empty body" };
-  const token = newToken();
+  const token = (await existingToken(bucket.file(path))) || newToken();
   await bucket.file(path).save(buf, { resumable: false, contentType, metadata: { cacheControl: "public, max-age=31536000", metadata: { firebaseStorageDownloadTokens: token, uploadedBy: "charm-nest-1" } } });
   return { ok: true, path, url: firebaseDownloadUrl(bucket.name, path, token), bytes: buf.length };
 }
@@ -65,7 +69,7 @@ async function op_url(b) {
 async function op_finalize(b) {
   const path = safePath(b.path); const file = bucket.file(path);
   const [exists] = await file.exists(); if (!exists) return { error: "upload not found" };
-  const token = str(b.token, 80) || newToken();
+  const token = (await existingToken(file)) || str(b.token, 80) || newToken();
   await file.setMetadata({ contentType: contentTypeOf(b.contentType), metadata: { firebaseStorageDownloadTokens: token, uploadedBy: "charm-nest-1" } });
   return { ok: true, path, url: firebaseDownloadUrl(bucket.name, path, token) };
 }
