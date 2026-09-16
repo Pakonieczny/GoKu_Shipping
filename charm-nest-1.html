@@ -1327,6 +1327,11 @@ async function finishNest(sh, { result, error }) {
   if (sh.evSearch && sh.evSearch.live) agentUpdate(sh.evSearch, { live: false, elapsed: 0, html: null, text: `Search ended after ${result.trials} trial(s): ${endedText(result.endedBy)}` });
   if (sh.evNest) agentUpdate(sh.evNest, { live: false, elapsed: 0, text: `Nest ended by ${endedText(result.endedBy)} after ${result.trials} trial(s), ${fmt.s(result.elapsedMs)}: ${result.placements.length}/${items.length} placed at ${fmt.pct(result.density)}${result.rejects.length ? ` · did not fit: ${result.rejects.map(id => byId.get(id)?.name || id).join(", ")}` : ""}` });
   sh.liveInfo = { freePt2: result.freePt2, usablePt2: result.usablePt2, placedPt2: result.placedPt2, pocket: result.pocket, placed: result.placements.length, total: items.length };
+  if (result.endedBy === "cap" && result.rejects.length && result.usablePt2) {
+    // the ceiling is arithmetic, not luck: the held-back pieces would push the total past it in any arrangement
+    const would = (result.placedPt2 + (result.cappedPt2 || 0)) / result.usablePt2, cap = result.params.maxFill || 0.72;
+    agent({ metal: sh.metal }, "warn", `Ceiling: ${result.placements.length} placed fill ${fmt.pct(result.density)}; the remaining ${result.rejects.length} (${result.rejects.map(id => byId.get(id)?.name || id).join(", ")}) would bring the sheet to ${(would * 100).toFixed(1)}%, over the ${fmt.pct(cap)} maximum. No arrangement changes that total — more trials cannot help. Raise the ceiling in Settings to ${Math.ceil(would * 100)}% to fit them here, or let them go to the next sheet.`);
+  }
   sh.solveParams = result.params; sh.elapsedMs = result.elapsedMs; sh.density = result.density; sh.t0 = sheetT0(sh);
   computeSaturation(sh); drawPreview(sh);
   const st = stockFor(sh.metal);

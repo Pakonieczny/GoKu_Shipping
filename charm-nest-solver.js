@@ -546,8 +546,10 @@
     if (best && best.grids) delete best.grids;
     if (best && best.rec) delete best.rec;
     if (!best) best = { placements: [], rejects: prepared.map(p => p.id), density: 0, trial: -1, usablePt2: usableCellsFine / (fineRes * fineRes), freePt2: usableCellsFine / (fineRes * fineRes), placedPt2: 0, pocket: pocketPt(baseCoarse, coarseRes) };
+    // what the pieces the ceiling held back would add, so the console can say the arithmetic plainly
+    const cappedPt2 = (best.capped || []).reduce((n, id) => { const p = prepared.find(x => x.id === id); return n + (p ? p.footprintCells / (fineRes * fineRes) : 0); }, 0);
     return Object.assign({}, best, {
-      endedBy, trials, elapsedMs: now() - t0,
+      endedBy, trials, elapsedMs: now() - t0, cappedPt2,
       params: { seed: job.seed == null ? 1 : job.seed, angles, clearancePt, insetPt, fineRes, coarseRes, maxFill, pieceOrder: byAreaDesc.map(p => p.id) }
     });
   }
