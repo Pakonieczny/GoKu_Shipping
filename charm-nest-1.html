@@ -1131,21 +1131,36 @@ function onWorkerMessage(sh, m) {
   if (m.jobId !== sh.jobId) return;
   const items = activeCharms(sh); const byId = new Map(items.map(c => [c.id, c]));
   switch (m.type) {
-    case "stage": if (m.stage === "prepare") { sh.stage = `Preparing rotations · ${m.done}/${m.total}`; sh.progress = [m.done, m.total]; sh.progressKind = "prepare"; renderProgress(sh); } break;
     case "placed": {
       sh.progressKind = "place";
-      sh.liveInfo = m.info;
-      if (m.info.trial === (sh.bestTrial ?? 0) || !sh.best) { sh.livePlacements = sh.livePlacements || []; if (m.info.placed === 1) sh.livePlacements = []; sh.livePlacements.push(m.placement); }
-      if (!sh.best || m.info.trial === sh.liveTrial) { /* current trial draws live */ }
-      if (sh.liveTrial !== m.info.trial) { sh.liveTrial = m.info.trial; sh.livePlacements = [m.placement]; }
-      sh.placements = sh.best && sh.best.placements.length > sh.livePlacements.length ? sh.best.placements : sh.livePlacements;
+      // the current trial's pieces land as ghosts over the best layout; the readout follows what is drawn solid
+      if (sh.liveTrial !== m.info.trial) { sh.liveTrial = m.info.trial; sh.livePlacements = []; }
+      if (m.info.finishing) { sh.livePlacements = []; sh.placements = sh.best ? sh.best.placements : []; }
+      else sh.livePlacements.push(m.placement);
+      if (!sh.best) { sh.placements = sh.livePlacements; sh.liveInfo = m.info; }
+      else { sh.placements = sh.best.placements; sh.liveInfo = sh.bestInfo || sh.liveInfo; }
       sh.progress = [Math.max(m.info.placed, sh.best ? sh.best.placements.length : 0), m.info.total];
-      sh.stage = `Trial ${m.info.trial + 1} · placing ${byId.get(m.placement.id)?.name || m.placement.id} · ${m.info.placed}/${m.info.total}`;
+      sh.stage = m.info.finishing ? `Targeted 5° push · ${byId.get(m.placement.id)?.name || m.placement.id} landed · ${m.info.placed}/${m.info.total}` : `Trial ${m.info.trial + 1} · placing ${byId.get(m.placement.id)?.name || m.placement.id} · ${m.info.placed}/${m.info.total}${sh.best ? ` · best ${sh.best.placements.length}/${m.info.total}` : ""}`;
       computeSaturation(sh); renderProgress(sh); renderSat(sh); drawPreview(sh); break;
     }
+    case "stage": if (m.stage === "finish") { agent({ metal: sh.metal }, "nest", `Best layout is ${m.total - m.done} short — targeted search at 5° steps for the missing piece(s) into that layout`); } else if (m.stage === "prepare") { sh.stage = `Preparing rotations · ${m.done}/${m.total}`; sh.progress = [m.done, m.total]; sh.progressKind = "prepare"; renderProgress(sh); } break;
     case "reject": log(sh, `trial ${m.trial + 1}: ${byId.get(m.id)?.name || m.id} ${m.reason === "cap" ? "held back by the fill ceiling" : "did not fit"}`); break;
-    case "trial": { sh.trials = m.summary.trial + 1; if (!m.summary.better) sh.stage = `Trial ${sh.trials} · best so far ${sh.best ? sh.best.placements.length : 0}/${m.summary.total} · ${fmt.s(m.summary.elapsedMs)}`; renderProgress(sh); break; }
-    case "best": { if (sh.evNest) agentUpdate(sh.evNest, { text: `Trial ${m.summary.trial + 1}: ${m.best.placements.length}/${m.summary.total} placed at ${fmt.pct(m.best.density)} — best so far`, elapsed: m.summary.elapsedMs }); sh.best = m.best; sh.bestTrial = m.summary.trial; sh.placements = m.best.placements; sh.rejects = m.best.rejects.slice(); sh.liveInfo = Object.assign({}, sh.liveInfo || {}, { freePt2: m.best.freePt2, usablePt2: m.best.usablePt2, placedPt2: m.best.placedPt2, pocket: m.best.pocket }); log(sh, `trial ${m.summary.trial + 1}: ${m.best.placements.length}/${m.summary.total} placed · ${fmt.pct(m.best.density)}`); computeSaturation(sh); renderSat(sh); drawPreview(sh); break; }
+    case "trial": {
+      sh.trials = m.summary.trial + 1;
+      if (!m.summary.better) sh.stage = `Trial ${sh.trials} · best so far ${sh.best ? sh.best.placements.length : 0}/${m.summary.total} · ${fmt.s(m.summary.elapsedMs)}`;
+      // one live line that ticks with every trial, so the search is visible even when no trial beats the best
+      if (!sh.evSearch || !sh.evSearch.live) sh.evSearch = agent({ metal: sh.metal }, "nest", "", { live: true });
+      agentUpdate(sh.evSearch, { elapsed: m.summary.elapsedMs, html: `Searching · trial ${sh.trials} ${m.summary.better ? "<b>improved</b>" : "did not beat"} the best (${sh.best ? sh.best.placements.length : 0}/${m.summary.total} at ${fmt.pct(sh.best ? sh.best.density : 0)}) — this trial ${m.summary.placed}/${m.summary.total}${m.summary.rejects && m.summary.rejects.length ? `, no room for ${m.summary.rejects.map(id => byId.get(id)?.name || id).join(", ")}` : ""} · new order and angles next` });
+      renderProgress(sh); break;
+    }
+    case "best": {
+      if (sh.evNest) agentUpdate(sh.evNest, { text: `Trial ${m.summary.trial + 1}: ${m.best.placements.length}/${m.summary.total} placed at ${fmt.pct(m.best.density)} — best so far`, elapsed: m.summary.elapsedMs });
+      sh.best = m.best; sh.bestTrial = m.summary.trial; sh.placements = m.best.placements; sh.rejects = m.best.rejects.slice(); sh.livePlacements = [];
+      sh.bestInfo = { freePt2: m.best.freePt2, usablePt2: m.best.usablePt2, placedPt2: m.best.placedPt2, pocket: m.best.pocket, placed: m.best.placements.length, total: m.summary.total };
+      sh.liveInfo = sh.bestInfo;
+      log(sh, `trial ${m.summary.trial + 1}: ${m.best.placements.length}/${m.summary.total} placed · ${fmt.pct(m.best.density)}`);
+      computeSaturation(sh); renderSat(sh); drawPreview(sh); break;
+    }
     case "done": finishNest(sh, { result: m.result }); break;
     case "error": finishNest(sh, { error: m.message }); break;
     case "verified": sh._geomVerify && sh._geomVerify(m.result); break;
@@ -1187,7 +1202,8 @@ async function startServerNest(sh, job) {
 async function finishNest(sh, { result, error }) {
   const items = activeCharms(sh); const byId = new Map(items.map(c => [c.id, c]));
   if (error) { sh.status = items.length ? "ready" : "idle"; sh.stage = ""; log(sh, "error: " + error); toast(`${labelOf(sh.metal)}: nesting failed — ${error}`, "bad", 6000); renderCard(sh); pumpNestQueue(); return; }
-  sh.status = "finishing"; sh.endedBy = result.endedBy; sh.trials = result.trials; sh.placements = result.placements; sh.rejects = result.rejects.slice();
+  sh.status = "finishing"; sh.endedBy = result.endedBy; sh.trials = result.trials; sh.placements = result.placements; sh.rejects = result.rejects.slice(); sh.livePlacements = [];
+  if (sh.evSearch && sh.evSearch.live) agentUpdate(sh.evSearch, { live: false, elapsed: 0, html: null, text: `Search ended after ${result.trials} trial(s): ${endedText(result.endedBy)}` });
   if (sh.evNest) agentUpdate(sh.evNest, { live: false, elapsed: 0, text: `Nest ended by ${endedText(result.endedBy)} after ${result.trials} trial(s), ${fmt.s(result.elapsedMs)}: ${result.placements.length}/${items.length} placed at ${fmt.pct(result.density)}${result.rejects.length ? ` · did not fit: ${result.rejects.map(id => byId.get(id)?.name || id).join(", ")}` : ""}` });
   sh.liveInfo = { freePt2: result.freePt2, usablePt2: result.usablePt2, placedPt2: result.placedPt2, pocket: result.pocket, placed: result.placements.length, total: items.length };
   sh.solveParams = result.params; sh.elapsedMs = result.elapsedMs; sh.density = result.density;
@@ -1500,6 +1516,19 @@ function paintPreview(cv, sh, clean) {
     ctx.restore();
     if (!clean && c.pinned) { ctx.fillStyle = "#caa861"; ctx.beginPath(); ctx.arc(p.cxPt * k, p.cyPt * k, Math.max(3, 2 * k), 0, Math.PI * 2); ctx.fill(); }
   });
+  // the trial in progress: ghost outlines over the best layout, so the search is visible
+  if (!clean && sh.status === "nesting" && sh.best && sh.livePlacements && sh.livePlacements.length) {
+    ctx.save(); ctx.globalAlpha = 0.45;
+    for (const p of sh.livePlacements) {
+      const c = byId.get(p.id); if (!c) continue;
+      ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180);
+      const tx = (x, y) => [(x - c.centerPt[0]) * k, (c.centerPt[1] - y) * k];
+      ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); ctx.fillStyle = "rgba(74,107,120,.18)"; ctx.fill("nonzero"); ctx.strokeStyle = "rgba(74,107,120,.9)"; ctx.lineWidth = 1; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
+      ctx.restore();
+    }
+    ctx.restore();
+    const hint = $(`[data-r="canvasHint"]`, sh.el); if (hint) hint.textContent = `ghosts = trial ${(sh.liveTrial || 0) + 1} in progress · solid = best so far`;
+  }
   // largest open pocket
   if (!clean && sh.sat && sh.sat.pocket && sh.liveInfo && sh.sat.pocket.wPt > 6) { const p = sh.sat.pocket; ctx.setLineDash([3, 3]); ctx.strokeStyle = "rgba(95,122,91,.6)"; ctx.lineWidth = 1; ctx.strokeRect(p.xPt * k, p.yPt * k, p.wPt * k, p.hPt * k); ctx.setLineDash([]); }
 }

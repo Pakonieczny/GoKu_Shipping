@@ -416,10 +416,12 @@
       if (!host) {
         const small = bbArea(s.bbox) <= 0.12 * largestArea || Math.max(s.bbox[2] - s.bbox[0], s.bbox[3] - s.bbox[1]) <= 30;
         if (small) {
-          let bestD = Infinity, bestO = null;
-          for (const o of outlines) { const g = Math.max(opts.touchPt, opts.nearPt); const grown = [s.bbox[0] - g, s.bbox[1] - g, s.bbox[2] + g, s.bbox[3] + g]; if (!bbInter(grown, o.bbox)) continue; const d = minDist(pts, polysOf(o)); if (d < bestD) { bestD = d; bestO = o; } }
-          // touching, or within ~2 mm of the stroke (a jump ring drawn a hair off the body)
-          if (bestO && bestD <= Math.max(opts.touchPt, opts.nearPt) + (s.lwPt || 0) / 2 + (bestO.lwPt || 0) / 2) host = bestO;
+          let bestD = Infinity, bestO = null, secondD = Infinity;
+          for (const o of outlines) { const g = Math.max(opts.touchPt, opts.nearPt); const grown = [s.bbox[0] - g, s.bbox[1] - g, s.bbox[2] + g, s.bbox[3] + g]; if (!bbInter(grown, o.bbox)) continue; const d = minDist(pts, polysOf(o)); if (d < bestD) { secondD = bestD; bestD = d; bestO = o; } else if (d < secondD) secondD = d; }
+          const touch = opts.touchPt + (s.lwPt || 0) / 2 + ((bestO && bestO.lwPt) || 0) / 2;
+          // touching wins outright; a ring that merely floats near two outlines (an already-nested sheet fed back
+          // in) attaches only when it is clearly closer to one of them — never to whichever neighbour is a hair nearer
+          if (bestO && (bestD <= touch || (bestD <= Math.max(opts.touchPt, opts.nearPt) + touch && (secondD === Infinity || secondD >= 2 * Math.max(bestD, 0.5))))) host = bestO;
         }
       }
       if (host) merged.set(s, host); else outlines.push(s);
