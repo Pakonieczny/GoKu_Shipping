@@ -819,6 +819,166 @@ test('The result meter tracks what is shown against what matched', async reg => 
   assert.match(app.meters().result, /showing 300 of 300/);
 });
 
+/* ── 6b · Image zoom ──────────────────────────────────────────────────── */
+
+section('Image zoom (click-to-zoom, ported)');
+
+async function oneCard(reg) {
+  const shop = fakeShop([listing(424242)]);
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl });
+  reg.push(app);
+  await app.domReady();
+  const card = app.cards()[0];
+  const { box, img } = app.layout(card, 300);
+  await img.dispatch('load');
+  return { app, card, box, img };
+}
+
+/* A click at (x,y) inside a 300x300 box whose top-left is the origin. */
+const clickAt = (box, x, y) => box.dispatch('click', { clientX: x, clientY: y });
+
+test('REGRESSION: nothing listens for wheel, so the page scrolls over images', async reg => {
+  // The old pinch/scroll zoom called preventDefault on wheel, which froze the
+  // page whenever the pointer sat over a picture — and in an infinitely
+  // scrolling grid of pictures that is most of the window.
+  const { app, box, img } = await oneCard(reg);
+  assert.equal(app.hasListener(box, 'wheel'), false, 'no wheel handler on the image box');
+  assert.equal(app.hasListener(img, 'wheel'), false, 'nor on the image');
+  const html = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', '..', 'SKU_List_V1.html'), 'utf8');
+  assert.ok(!/addEventListener\(\s*["']wheel["']/.test(html), 'and none anywhere in the page');
+});
+
+test('An untouched image sits at scale 1 with no offset', async reg => {
+  const { app, card } = await oneCard(reg);
+  assert.deepEqual(app.zoomState(card), { scale: 1, x: 0, y: 0 });
+});
+
+test('A click zooms in and centres the clicked point', async reg => {
+  const { app, card, box } = await oneCard(reg);
+  // Click at (225, 150): 75px right of centre, vertically centred.
+  await clickAt(box, 225, 150);
+  const z = app.zoomState(card);
+  assert.ok(z.scale > 1, 'zoomed in, got ' + z.scale);
+  assert.ok(z.x < 0, 'panned left to bring the clicked point to centre, got ' + z.x);
+  assert.equal(z.y, 0, 'no vertical movement for a vertically centred click');
+  assert.equal(app.transform(card), `scale(${z.scale}) translate(${z.x}px, ${z.y}px)`);
+});
+
+test('Clicking dead centre zooms without panning', async reg => {
+  const { app, card, box } = await oneCard(reg);
+  await clickAt(box, 150, 150);
+  const z = app.zoomState(card);
+  // s1 = max(DESIRED 1.33, s0 * 1.5, needX, needY). From rest the 1.5x step
+  // wins, so DESIRED is a floor rather than the first stop.
+  assert.equal(z.scale, 1.5);
+  assert.deepEqual([z.x, z.y], [0, 0]);
+});
+
+test('Successive clicks keep zooming, then snap back to 1', async reg => {
+  const { app, card, box } = await oneCard(reg);
+  await clickAt(box, 150, 150);
+  const first = app.zoomState(card).scale;
+  await clickAt(box, 150, 150);
+  const second = app.zoomState(card).scale;
+  assert.ok(second > first, `${first} -> ${second}`);
+
+  // Clicking the same spot once the step would barely move returns to 1.
+  let guard = 0, z = app.zoomState(card);
+  while (z.scale !== 1 && guard++ < 12){ await clickAt(box, 150, 150); z = app.zoomState(card); }
+  assert.equal(z.scale, 1, 'came back to unzoomed within ' + guard + ' clicks');
+  assert.deepEqual([z.x, z.y], [0, 0], 'and the framing resets with it');
+});
+
+test('Zoom never exceeds the source\'s MAX_SCALE of 8', async reg => {
+  const { app, card, box } = await oneCard(reg);
+  for (let i = 0; i < 30; i++) await clickAt(box, 299, 299);   // hard into the corner
+  assert.ok(app.zoomState(card).scale <= 8, 'got ' + app.zoomState(card).scale);
+});
+
+test('Dragging pans only once zoomed in', async reg => {
+  const { app, card, box } = await oneCard(reg);
+
+  await box.dispatch('mousedown', { clientX: 150, clientY: 150 });
+  await box.dispatch('mousemove', { clientX: 120, clientY: 150 });
+  assert.deepEqual(app.zoomState(card), { scale: 1, x: 0, y: 0 }, 'no pan at scale 1');
+  await box.dispatch('mouseup', {});
+
+  await clickAt(box, 150, 150);
+  const before = app.zoomState(card);
+  await box.dispatch('mousedown', { clientX: 150, clientY: 150 });
+  await box.dispatch('mousemove', { clientX: 130, clientY: 140 });
+  const after = app.zoomState(card);
+  assert.notDeepEqual([after.x, after.y], [before.x, before.y], 'panned while zoomed');
+  assert.equal(after.scale, before.scale, 'panning does not change the zoom');
+  await box.dispatch('mouseup', {});
+});
+
+test('Pan movement is damped by half, as in the source', async reg => {
+  const { app, card, box } = await oneCard(reg);
+  await clickAt(box, 150, 150);              // scale 1.33, offsets 0
+  await box.dispatch('mousedown', { clientX: 150, clientY: 150 });
+  await box.dispatch('mousemove', { clientX: 170, clientY: 150 });   // +20px
+  const z = app.zoomState(card);
+  assert.ok(Math.abs(z.x - 10) < 0.001, 'a 20px drag moves 10 units, got ' + z.x);
+});
+
+test('A drag is not mistaken for a click', async reg => {
+  const { app, card, box } = await oneCard(reg);
+  await clickAt(box, 150, 150);
+  const scaleAfterZoom = app.zoomState(card).scale;
+
+  await box.dispatch('mousedown', { clientX: 150, clientY: 150 });
+  await box.dispatch('mousemove', { clientX: 190, clientY: 150 });  // past dragThreshold
+  await box.dispatch('mouseup', {});
+  await clickAt(box, 190, 150);   // the click the browser fires after a drag
+  assert.equal(app.zoomState(card).scale, scaleAfterZoom, 'the drag-click did not re-zoom');
+});
+
+test('Panning is clamped so the image cannot be dragged out of its box', async reg => {
+  const { app, card, box } = await oneCard(reg);
+  await clickAt(box, 150, 150);                    // scale 1.33
+  await box.dispatch('mousedown', { clientX: 150, clientY: 150 });
+  for (let i = 0; i < 40; i++) await box.dispatch('mousemove', { clientX: 150 + i * 40, clientY: 150 });
+  await box.dispatch('mouseup', {});
+  const z = app.zoomState(card);
+  // maxX = (300*1.33 - 300) / 2 / 1.33
+  const maxX = (300 * z.scale - 300) / 2 / z.scale;
+  assert.ok(z.x <= maxX + 0.001, `${z.x} exceeds the clamp ${maxX}`);
+});
+
+test('A relayout re-clamps without changing the zoom', async reg => {
+  const { app, card, box } = await oneCard(reg);
+  await clickAt(box, 220, 150);
+  const before = app.zoomState(card);
+  await app.resize();
+  const after = app.zoomState(card);
+  assert.equal(after.scale, before.scale, 'ResizeObserver must not alter the zoom level');
+});
+
+test('Zoom applies before layout without destroying the framing', async reg => {
+  // The first click can land before the browser has laid the image out.
+  const shop = fakeShop([listing(9)]);
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
+  await app.domReady();
+  const card = app.cards()[0];
+  const box = card.querySelector('.thumb-wrap');    // deliberately NOT laid out
+  await clickAt(box, 80, 80);
+  const z = app.zoomState(card);
+  assert.ok(Number.isFinite(z.scale) && Number.isFinite(z.x) && Number.isFinite(z.y),
+    'no NaN transform: ' + JSON.stringify(z));
+});
+
+test('Every image carries the rule-of-thirds grid', async reg => {
+  const html = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', '..', 'SKU_List_V1.html'), 'utf8');
+  const rule = html.slice(html.indexOf('.thumb-wrap::after'), html.indexOf('.selectBox'));
+  assert.ok(rule.includes('pointer-events:none'), 'the grid must not swallow clicks');
+  assert.equal((rule.match(/linear-gradient/g) || []).length, 4, 'four hairlines');
+  assert.ok(rule.includes('33.333% 0, 66.666% 0, 0 33.333%, 0 66.666%'), 'on the thirds');
+  assert.ok(rule.includes('rgba(255,255,255,.18)'), '18% white, as in the source');
+});
+
 /* ── 7 · SKU write paths ──────────────────────────────────────────────── */
 
 section('SKU write paths');
