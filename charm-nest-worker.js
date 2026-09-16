@@ -28,7 +28,7 @@ self.onmessage = async (e) => {
   try {
     const result = await CharmNestSolver.solve(m.job, {
       shouldStop: () => state.stop,
-      onStage: (stage, done, total, extra) => post({ type: "stage", stage, done, total, extra: extra || null }),
+      onStage: (stage, done, total) => post({ type: "stage", stage, done, total }),
       onPlaced: (placement, info) => post({ type: "placed", placement, info }),
       onReject: (id, trial, reason) => post({ type: "reject", id, trial, reason }),
       onTrial: (summary) => post({ type: "trial", summary }),

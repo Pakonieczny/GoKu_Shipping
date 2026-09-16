@@ -67,7 +67,7 @@ Rail density, per-metal stock, clearance, edge inset, angle step, time budget, s
 
 ## Open questions carried from the design document
 
-Stock size per metal (plate A, 100 × 50 mm, is the default; plate B is 100 × 100 mm), machine kerf (clearance default 0: outlines may touch, never overlap; raise to a positive value for a guaranteed gap), whether small charms may nest inside jump rings (no — holes are solid), legacy `.ai` files (rejected with instructions), grain/orientation constraints (free rotation assumed; angle step is a setting).
+Stock size per metal (plate A, 100 × 50 mm, is the default; plate B is 100 × 100 mm), machine kerf (clearance default −0.18 mm, i.e. shared cut lines; raise to a positive value for a guaranteed gap), whether small charms may nest inside jump rings (no — holes are solid), legacy `.ai` files (rejected with instructions), grain/orientation constraints (free rotation assumed; angle step is a setting).
 
 
 ## Units and preview
@@ -107,9 +107,3 @@ Three rules were added after a 75-piece nested sheet came back with charms merge
 ## One fill measure
 
 The fill ceiling and the card's "% full" are measured on the same thing: the footprint each piece stamps on the sheet grid (its silhouette eroded by a negative clearance or grown by a positive one). Before this, the ceiling counted solid silhouettes with holes filled while the readout counted stamped footprint, so a sheet could stop "at the 72 % ceiling" while the card read 64 %. Reports still carry the solid silhouette area per charm.
-
-## Touching only, and the optimization pass
-
-Clearance defaults to 0: cut lines may meet, never overlap. The verifier checks the written file at 6 px/pt with one pixel of raster slack for position rounding, which is under 0.06 mm.
-
-When the last one or two pieces still have no home after the targeted 5° push and the ruin-and-recreate repair, and at least 40 % of the time budget is spent, the solver runs one **optimization pass** on that layout: the missing piece may be drawn up to 3 % smaller (99 %, 98 %, 97 % tried in turn), on at most 5 % of the sheet's charms (one charm minimum). Placed pieces are never changed. A scaled placement is written with the scale in its layer's transform, verified at that scale, drawn smaller in the preview, recorded in the report (`scale`), and announced in the log. The pass runs once per best layout and never as the first resort, so shrinking stays the exception.
