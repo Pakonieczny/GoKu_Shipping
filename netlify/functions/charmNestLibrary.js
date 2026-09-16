@@ -147,10 +147,19 @@ async function refreshLinks(d) {
   }
   await Promise.all(jobs);
 }
+/** Permanent delete of a sheet record and its output files, behind a passcode. Charm library copies are shared and stay. */
+const DELETE_CODE = process.env.CHARM_NEST_DELETE_CODE || "975311";
 async function op_deleteSheet(b) {
   if (!isId(b.id)) return { error: "bad id" };
-  await db.collection(SHEETS).doc(b.id).set({ archived: true, archivedAt: FV.serverTimestamp() }, { merge: true });
-  return { ok: true };
+  if (String(b.code || "") !== DELETE_CODE) return { error: "wrong passcode", status: 403 };
+  const ref = db.collection(SHEETS).doc(b.id); const snap = await ref.get();
+  if (snap.exists) {
+    const d = snap.data(); const bucket = admin.storage().bucket();
+    const paths = ["ai", "pdf", "labelled", "report", "preview"].map(k => d.outputs && d.outputs[k] && d.outputs[k].path).filter(Boolean);
+    await Promise.all(paths.map(p => bucket.file(p).delete().catch(() => {})));
+    await ref.delete();
+  }
+  return { ok: true, deleted: snap.exists };
 }
 async function op_putCalibration(b) {
   const r = b.row || {};
@@ -221,7 +230,7 @@ exports.handler = async (event) => {
   if (!fn) return json(400, { error: "unknown op", ops: Object.keys(OPS) });
   try {
     const out = await fn(body);
-    return json(out && out.error ? 400 : 200, out);
+    return json(out && out.error ? (out.status || 400) : 200, out);
   } catch (e) {
     console.error("[charmNestLibrary]", body.op, e);
     return json(500, { error: e.message || String(e) });

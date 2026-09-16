@@ -81,3 +81,7 @@ Dropping a file starts the whole process: parse → group → Claude grouping re
 ## Cloud folders
 
 Each finished sheet is saved in its own folder, `charmnest/sheets/<yyyy-mm-dd>/<name>/`, where `<name>` is `<metal tag>_<Mon.DD.YY>_<N>-Charms_Sheet-<K>` — for example `GF-14-20_Mar.22.26_56-Charms_Sheet-2`. K is the sheet number for that metal on that day (one more than the cloud already holds). The `.ai`, `.pdf`, `_labelled.pdf` and `_nest-report.json` inside carry the same name, and so does the download. A "/" cannot appear in a file or folder name, so GF 14/20 is tagged `GF-14-20` and RG 14/20 `RG-14-20`; the other tags are `SS`, `10K-Gold` and `14K-Gold`. File-name routing recognises `10k`/`14k` for the solid golds (`14/20` still means gold filled).
+
+## Deleting a sheet from the Library
+
+"Delete sheet" in a Library record removes the record and its output files permanently after a passcode prompt. The passcode is checked on the server (`CHARM_NEST_DELETE_CODE`, default 975311); a wrong code deletes nothing. Charm library copies are shared between sheets and stay. Links in a record are rebuilt from the objects' current download tokens when it is opened, and .ai files carry the Illustrator MIME type so browsers keep the .ai extension.

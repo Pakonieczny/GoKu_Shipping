@@ -397,7 +397,7 @@ dialog.wide{width:min(980px,95vw)}
 <dialog id="dlgSheet" class="wide"><div class="dlg">
   <div class="dlgHead"><h3 id="lsTitle">Sheet</h3><div class="right"><button class="btn ghost xs" id="lsClose">Close</button></div></div>
   <div class="dlgBody" id="lsBody"></div>
-  <div class="dlgFoot"><div class="left"><button class="btn ghost sm" id="lsDelete">Archive sheet</button></div><button class="btn ghost sm" id="lsDownloads">Download outputs</button><button class="btn gold sm" id="lsRestore">Restore into card</button></div>
+  <div class="dlgFoot"><div class="left"><button class="btn danger sm" id="lsDelete">Delete sheet</button></div><button class="btn ghost sm" id="lsDownloads">Download outputs</button><button class="btn gold sm" id="lsRestore">Restore into card</button></div>
 </div></dialog>
 
 <div class="signin hidden" id="signin"><form class="box" id="signinForm">
@@ -1797,7 +1797,12 @@ async function openLibrarySheet(id) {
       <div class="charmGrid">${(d.charms || []).map(c => `<div class="charmTile">${c.thumbUrl ? `<img crossorigin="anonymous" src="${c.thumbUrl}" loading="lazy" alt="">` : ""}<div class="nm">${esc(c.name || "#" + (c.index + 1))}</div><div class="meta">${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}${c.qty > 1 ? ` · ×${c.qty}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("")}</div>`;
     $("#lsDownloads").onclick = () => { if (!d.outputs) return; ["ai", "labelled", "report"].forEach((k, i) => d.outputs[k] && setTimeout(() => window.open(d.outputs[k].url, "_blank"), i * 300)); };
     $("#lsRestore").onclick = () => restoreSheet(d);
-    $("#lsDelete").onclick = async () => { if (!confirm(`Archive sheet ${d.id}? Files stay in storage; it just leaves the list.`)) return; await api("charmNestLibrary", { op: "deleteSheet", id: d.id }); closeDlg(dlg); loadLibrary(); };
+    $("#lsDelete").onclick = async () => {
+      const code = prompt(`Delete sheet ${d.folder || d.id} permanently — its record, .ai, proof, report and preview? Enter the passcode to confirm.`);
+      if (code == null) return;
+      try { await api("charmNestLibrary", { op: "deleteSheet", id: d.id, code: String(code).trim() }, { label: "Deleting sheet" }); toast(`Sheet ${d.folder || d.id} deleted`, "ok"); closeDlg(dlg); loadLibrary(); }
+      catch (e) { toast(e.status === 403 ? "Wrong passcode — nothing was deleted" : "Delete failed: " + e.message, "bad", 5000); }
+    };
   } catch (e) { $("#lsBody").innerHTML = `<div class="libEmpty">${esc(e.message)}</div>`; }
 }
 /** Bring a saved sheet back into its card: re-fetch the sources, re-parse, re-apply the saved placements as pins. */
