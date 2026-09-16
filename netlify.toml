@@ -211,9 +211,22 @@
     Expires = "0"
 
 # The SKU console talks to Netlify functions whose request contract changes with
-# it — the catalog projection is the current example: a cached page that does not
-# ask for it walks straight into the 6 MB function response cap. Always
-# revalidate so a browser can never run an older console against newer functions.
+# it — the catalog projection is the current example: a page that does not ask
+# for it walks into the 6 MB function response cap.
+#
+# CAVEAT, verified against production 2026-09-16: this rule only covers the
+# apex path. Netlify matches header rules against the REQUEST path, and
+# sku.goldenspike.app/ is a rewrite (status 200) to /SKU_List_V1.html, so the
+# request path is "/" and this block does not apply there. Confirmed live:
+# /investor.html returns no-store (no rewrite in front of it) while
+# sku.goldenspike.app/ returns Netlify's default. The same is true of the
+# etsy-pricing.html rule below.
+#
+# The default Netlify serves — "public, max-age=0, must-revalidate" — already
+# forces the browser to revalidate before reusing a cached copy, so a reload
+# cannot serve a stale console. A rule that actually covered the subdomain root
+# would have to match "/", which is the apex site's index.html and belongs to a
+# different application, so it is deliberately not done here.
 [[headers]]
   for = "/SKU_List_V1.html"
   [headers.values]
