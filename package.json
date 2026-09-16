@@ -8,7 +8,8 @@
     "build": "vite build --config cherry-viewer/vite.config.js && cp cherry-viewer/_redirects cherry-viewer-dist/_redirects",
     "test:charm-nest": "node tests/charm-nest/solver.cjs && node tests/charm-nest/functions.cjs",
     "test:sku": "node tests/sku/sku-list.cjs && node tests/sku/exchange-token.cjs && node tests/sku/update-inventory.cjs && node tests/sku/shop-listings.cjs",
-    "test:charm-nest:e2e": "node tests/charm-nest/e2e.cjs"
+    "test:charm-nest:e2e": "node tests/charm-nest/e2e.cjs",
+    "test:charm-nest:bridge": "node tests/charm-nest/bridge-units.cjs && node tests/charm-nest/bridge.cjs"
   },
   "dependencies": {
     "ajv": "8.17.1",

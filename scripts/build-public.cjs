@@ -78,6 +78,10 @@ const assets = [
   "charm-nest-solver.js",
   "charm-nest-worker.js",
   "charm-nest-pdf.js",
+  "charm-nest-geom.js",
+  "charm-nest-orders.js",
+  "charm-nest-bridge.js",
+  "vendor/opentype-1.3.4.min.js",
   "vendor/jszip-3.10.1.min.js",
   "vendor/pdf-lib-1.17.1.min.js",
   "vendor/pdfjs-4.10.38/pdf.min.mjs",
@@ -95,4 +99,19 @@ for (const asset of assets) {
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, data);
 }
-console.log(`Prepared ${assets.length} public assets; server sources and configuration excluded.`);
+// Licensed font files (Myriad Pro for back engraving) live in vendor/fonts/, which is git-ignored: they are copied
+// when the deploy environment provides them and skipped otherwise, so a build never fails on their absence.
+const optionalDirs = ["vendor/fonts"];
+let optional = 0;
+for (const dir of optionalDirs) {
+  const src = path.join(root, dir);
+  if (!fs.existsSync(src)) continue;
+  for (const name of fs.readdirSync(src)) {
+    if (!/\.(otf|ttf)$/i.test(name)) continue;
+    const target = path.join(output, dir, name);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(path.join(src, name), target);
+    optional++;
+  }
+}
+console.log(`Prepared ${assets.length} public assets (+${optional} optional font files); server sources and configuration excluded.`);

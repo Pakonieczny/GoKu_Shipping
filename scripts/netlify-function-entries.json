@@ -6,6 +6,8 @@
     "bootstrapOwner.js",
     "britesAuth.js",
     "charmBatchSweepCron.js",
+    "charmEngrave-background.js",
+    "charmMaster-background.js",
     "charmNestAgent-background.js",
     "charmNestLibrary.js",
     "charmNestName.js",
@@ -159,6 +161,8 @@
   "modules": [
     "_charmNestAgent.js",
     "_charmNestAuth.js",
+    "_charmNestMaster.js",
+    "_charmNestPdf.js",
     "_charmNestSolver.js",
     "_etsyApiMeter.js",
     "_etsyApiUsage.js",

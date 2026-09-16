@@ -140,6 +140,31 @@ const PLACE_SCHEMA = {
   required: ["moves", "setAside", "done", "summary"]
 };
 
+
+/* ═══ bridge modes (design §7.1, §7.4, §6.3 item 8) ═══════════════════════ */
+const ENGRAVE_INTENT_INSTRUCTIONS = `You read one Etsy order line for a jewelry engraver and decide, from the customer's own words only, whether the charm is to be engraved and with exactly what text.
+
+You receive: the personalisation field (what the customer typed in the listing's engraving box), the buyer's message on the order, a staff note written by the shop (which OVERRIDES anything the customer wrote when they conflict), and the last internal staff messages about the order. You also receive whether the charm's design can take engraving at all.
+
+Rules, without exception:
+- engrave=true when the personalisation is non-empty, or when the message/note plainly asks for engraving. Otherwise engrave=false.
+- text is the customer's words VERBATIM: same spelling, same capitalisation, same punctuation, same symbols. Never invent, translate, correct, expand, abbreviate or "improve" anything. A staff note that gives the text wins over the Etsy field.
+- Split lines ONLY at the customer's own line breaks, or between a name and a date. Nothing else. Use "\\n" between lines.
+- Engraving is always on the BACK in the shop's standard font. If the customer asks for the front, a particular font, their own handwriting, an image or symbol drawn, say so in requests (side "front", font name, handwriting true, image true) — the shop decides, you never do.
+- Anything ambiguous — two candidate texts, a request you cannot resolve, a date whose format is unclear, "same as last time", a note that contradicts the field — goes into questions, one short question each, and lowers confidence.
+- source names where the text came from: personalization | buyerMessage | staffNote | messages | none. sourceQuote is the exact fragment you took it from.
+- confidence is your certainty that text is exactly what the customer wants engraved, 0 to 1.`;
+const ENGRAVE_INTENT_SCHEMA = { type: "object", additionalProperties: false, properties: {
+  engrave: { type: "boolean" }, text: { type: "string" }, source: { type: "string", enum: ["personalization", "buyerMessage", "staffNote", "messages", "none"] }, sourceQuote: { type: "string" },
+  requests: { type: "object", additionalProperties: false, properties: { side: { type: "string", enum: ["back", "front", "both", "unspecified"] }, font: { type: ["string", "null"] }, handwriting: { type: "boolean" }, image: { type: "boolean" } }, required: ["side", "font", "handwriting", "image"] },
+  questions: { type: "array", items: { type: "string" } }, confidence: { type: "number" } }, required: ["engrave", "text", "source", "sourceQuote", "requests", "questions", "confidence"] };
+
+const ENGRAVE_REVIEW_INSTRUCTIONS = `You look at the rendered BACK of one jewelry charm with engraving text already placed by a measuring tool. The image shows a millimetre grid, the charm's cut outline and cut-outs (holes), and the text as it will be engraved. The tool has already PROVEN that no ink touches a cut edge or a hole and that the text is the largest size that fits; do not re-judge geometry. Judge readability and taste only: is the text legible at this size, does the placement look right on the piece, is anything awkward (a line breaking oddly, text crowding a hole, an orientation that reads wrong for a pendant). Answer legible true/false and one or two plain sentences of notes for the person who approves it.`;
+const ENGRAVE_REVIEW_SCHEMA = { type: "object", additionalProperties: false, properties: { legible: { type: "boolean" }, notes: { type: "string" }, concerns: { type: "array", items: { type: "string", enum: ["small", "crowded", "odd-break", "orientation", "placement", "other"] } } }, required: ["legible", "notes", "concerns"] };
+
+const LABEL_READ_INSTRUCTIONS = `Each image is the strip directly BELOW one charm in a jewelry master Illustrator file, where the artist wrote the charm's SKU as text (sometimes converted to outlines). Read the SKU exactly. A SKU looks like two to four capital letters, a hyphen, two to six letters or digits, optionally another hyphen and one to four more (for example BR-CMP-01 or BRT-HRT-12-A); it may be followed by a size after a middle dot or a space (BR-CMP-01 · S). Return the SKU in capitals with no spaces, the size if one is written, and your confidence 0 to 1. If the strip holds no SKU or you cannot read it with certainty, return sku "" and a low confidence — never guess a character.`;
+const LABEL_READ_SCHEMA = { type: "object", additionalProperties: false, properties: { reads: { type: "array", items: { type: "object", additionalProperties: false, properties: { index: { type: "integer" }, sku: { type: "string" }, size: { type: ["string", "null"] }, confidence: { type: "number" } }, required: ["index", "sku", "size", "confidence"] } } }, required: ["reads"] };
+
 function parseDataUrl(u) {
   const m = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String(u || ""));
   return m ? { type: "image", source: { type: "base64", media_type: m[1], data: m[2] } } : null;
@@ -179,6 +204,30 @@ function buildRequest(mode, body) {
     for (const c of remaining) { content.push({ type: "text", text: `id ${c.id} · ${c.name} · ${c.wIn.toFixed(2)} × ${c.hIn.toFixed(2)} in at 0° · solid ${c.areaIn2.toFixed(2)} in²` }); content.push(c.img); }
     return { system: PLACE_INSTRUCTIONS, schema: PLACE_SCHEMA, content, effort: EFFORT };
   }
+  if (mode === "engraveIntent") {
+    const lines = [];
+    lines.push(`Order ${str(body.order, 40)} · SKU ${str(body.sku, 40) || "(none)"} · ${str(body.title, 160)} · form: ${str(body.form, 40) || "unknown"} · quantity ${num(body.quantity) || 1}`);
+    lines.push(`Design can take engraving: ${body.engravable === false ? "NO — the shop will decide what to do" : "yes"}`);
+    lines.push(`Personalisation field: ${JSON.stringify((body.personalization || []).map(x => str(x, 400)))}`);
+    lines.push(`Buyer message on the order: ${JSON.stringify(str(body.buyerMessage, 2000))}`);
+    lines.push(`Staff note (overrides the customer's text): ${JSON.stringify(str(body.staffNote, 2000))}`);
+    lines.push(`Internal staff messages, oldest first: ${JSON.stringify((body.messages || []).slice(-5).map(m => ({ who: str(m.senderName, 60), text: str(m.text, 400) })))}`);
+    content.push({ type: "text", text: lines.join("\n") });
+    return { system: ENGRAVE_INTENT_INSTRUCTIONS, schema: ENGRAVE_INTENT_SCHEMA, content, effort: EFFORT };
+  }
+  if (mode === "engraveReview") {
+    const img = parseDataUrl(body.image); if (!img) return { error: "back image is required" };
+    content.push({ type: "text", text: `Order ${str(body.order, 40)} · SKU ${str(body.sku, 40)} · text ${JSON.stringify(str(body.text, 400))} · cap height ${num(body.capMm).toFixed(2)} mm · font ${str(body.font, 40)} ${str(body.weight, 20)} · angle ${num(body.angle)}°${body.small ? " · flagged SMALL by the tool" : ""}. Rendered back with a 1 mm grid:` });
+    content.push(img);
+    return { system: ENGRAVE_REVIEW_INSTRUCTIONS, schema: ENGRAVE_REVIEW_SCHEMA, content, effort: EFFORT };
+  }
+  if (mode === "labelRead") {
+    const strips = (body.strips || []).slice(0, MAX_CHARMS).map(c => ({ index: num(c.index), img: parseDataUrl(c.image) })).filter(c => c.img);
+    if (!strips.length) return { error: "no strips" };
+    content.push({ type: "text", text: `Master file: ${str(body.sourceName, 120) || "(unknown)"}. ${strips.length} strips follow, each preceded by its charm index.` });
+    for (const c of strips) { content.push({ type: "text", text: `charm index ${c.index}` }); content.push(c.img); }
+    return { system: LABEL_READ_INSTRUCTIONS, schema: LABEL_READ_SCHEMA, content, effort: EFFORT };
+  }
   if (mode === "name") {
     const charms = (body.charms || []).slice(0, MAX_CHARMS).map(c => ({ index: num(c.index), img: parseDataUrl(c.thumb), widthPt: num(c.widthPt), heightPt: num(c.heightPt), qty: num(c.qty) || 1 })).filter(c => c.img);
     if (!charms.length) return { error: "no charm thumbnails" };
@@ -197,7 +246,7 @@ async function run(mode, body) {
   if (req.error) return { error: req.error };
   try {
     // Thinking tokens count against max_tokens; a placement round reasons at length, so give it room.
-    const res = await anthropic.callClaudeRaw({ model: MODEL, maxTokens: mode === "place" ? 32000 : 16000, effort: req.effort, system: [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }], messages: [{ role: "user", content: req.content }], outputFormat: { type: "json_schema", schema: req.schema }, thinkingDisplay: "summarized" });
+    const res = await anthropic.callClaudeRaw({ model: MODEL, maxTokens: mode === "place" ? 32000 : mode === "engraveIntent" ? 8000 : 16000, effort: req.effort, system: [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }], messages: [{ role: "user", content: req.content }], outputFormat: { type: "json_schema", schema: req.schema }, thinkingDisplay: "summarized" });
     const reasoning = (res.content || []).filter(b => b.type === "thinking" && b.thinking).map(b => b.thinking).join("\n").slice(0, 6000);
     if (res.stop_reason === "refusal") return { skipped: "model declined" };
     const text = (res.content || []).filter(b => b.type === "text").map(b => b.text).join("");
@@ -206,14 +255,21 @@ async function run(mode, body) {
       console.error("[charmNestAgent] unparseable", mode, why, String(text).slice(0, 300));
       return { skipped: `unparseable model output (${why}; ${(res.usage && res.usage.output_tokens) || "?"} output tokens; starts: ${JSON.stringify(String(text).slice(0, 120))})`, reasoning: reasoning || null };
     }
-  if (mode === "name") {
+  if (mode === "labelRead") {
+      const pat = /^[A-Z]{2,4}-[A-Z0-9]{2,6}(-[A-Z0-9]{1,4})?$/;
+      parsed = { reads: (parsed.reads || []).map(x => { const sku = str(x.sku, 40).toUpperCase().replace(/\s+/g, ""); return { index: num(x.index), sku: pat.test(sku) ? sku : "", size: x.size ? str(x.size, 4).toUpperCase() : null, confidence: pat.test(sku) ? Math.max(0, Math.min(1, num(x.confidence))) : 0 }; }) };
+    }
+    if (mode === "engraveIntent") {
+      parsed.text = str(parsed.text, 400); parsed.confidence = Math.max(0, Math.min(1, num(parsed.confidence))); parsed.questions = (parsed.questions || []).map(q => str(q, 300)).filter(Boolean);
+    }
+    if (mode === "name") {
       parsed = { charms: (parsed.charms || []).map(x => ({ index: num(x.index), slug: str(x.slug, 60).toLowerCase().replace(/[^a-z0-9\-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || null, label: str(x.label, 120), confidence: Math.max(0, Math.min(1, num(x.confidence))), metal: req.wantMetal && /^(gold|silver|rose)$/.test(x.metal || "") ? x.metal : null })).filter(x => x.slug) };
     }
     return Object.assign({ mode, model: MODEL, effort: req.effort, usage: res.usage || null, reasoning: reasoning || null }, parsed);
   } catch (e) {
     console.error("[charmNestAgent]", mode, e.status || "", e.message);
     const detail = (e.data && e.data.error && e.data.error.message) || e.message || "";
-    return { skipped: `${mode === "name" ? "naming" : "review"} unavailable (${e.status ? e.status + " " : ""}${String(detail).slice(0, 200)})` };
+    return { skipped: `${mode === "name" ? "naming" : /^engrave/.test(mode) ? "engraving classifier" : "review"} unavailable (${e.status ? e.status + " " : ""}${String(detail).slice(0, 200)})` };
   }
 }
 module.exports = { run, buildRequest, MODEL, EFFORT, NAME_EFFORT };
