@@ -42,7 +42,7 @@ const ms = v => (v && v.toMillis ? v.toMillis() : (typeof v === "number" ? v : n
 
 function slim(d) {
   return {
-    id: d.id, metal: d.metal, metalLabel: d.metalLabel, day: d.day, status: d.status, endedBy: d.endedBy,
+    id: d.id, folder: d.folder || null, metal: d.metal, metalLabel: d.metalLabel, day: d.day, status: d.status, endedBy: d.endedBy,
     charmCount: num(d.charmCount), placedCount: num(d.placedCount), rejectCount: num(d.rejectCount), density: num(d.density), freePt2: num(d.freePt2),
     verification: d.verification ? { ok: !!d.verification.ok } : null,
     preview: d.outputs && d.outputs.preview ? d.outputs.preview.url : null,

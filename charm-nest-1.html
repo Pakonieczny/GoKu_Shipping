@@ -1776,18 +1776,18 @@ async function loadLibrary() {
 }
 function renderLibrary() {
   const q = ($("#libSearch").value || "").trim().toLowerCase();
-  const rows = S.library.rows.filter(r => !q || `${r.id} ${r.metalLabel} ${r.day} ${r.names || ""} ${(r.sources || []).map(s => s.name).join(" ")}`.toLowerCase().includes(q));
+  const rows = S.library.rows.filter(r => !q || `${r.id} ${r.folder || ""} ${r.metalLabel} ${r.day} ${r.names || ""} ${(r.sources || []).map(s => s.name).join(" ")}`.toLowerCase().includes(q));
   $("#libCount").textContent = `${rows.length} sheet${rows.length === 1 ? "" : "s"}`;
   const body = $("#libBody"); if (!rows.length) { body.innerHTML = `<div class="libEmpty">No sheets match.</div>`; return; }
   const byDay = new Map(); for (const r of rows) { if (!byDay.has(r.day)) byDay.set(r.day, []); byDay.get(r.day).push(r); }
-  body.innerHTML = [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([day, list]) => `<div class="dayHead">${new Date(day + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" })}<span class="n">${list.length}</span></div><div class="libGrid">${list.map(r => `<div class="libCard" data-m="${r.metal}" data-id="${r.id}"><div class="h"><span class="nm">${esc(r.metalLabel)} · ${esc(r.id)}</span><span class="tm">${r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span></div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${r.preview}" loading="lazy" alt="">` : ""}<div class="m"><span><b>${r.placedCount}</b>/${r.charmCount} placed</span><span><b>${Math.round((r.density || 0) * 100)}%</b> full</span><span><b>${fmt.area(r.freePt2 || 0)}</b> free</span><span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span>${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`).join("")}</div>`).join("");
+  body.innerHTML = [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([day, list]) => `<div class="dayHead">${new Date(day + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" })}<span class="n">${list.length}</span></div><div class="libGrid">${list.map(r => `<div class="libCard" data-m="${r.metal}" data-id="${r.id}"><div class="h"><span class="nm">${esc(r.metalLabel)} · ${esc(r.folder || r.id)}</span><span class="tm">${r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span></div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${r.preview}" loading="lazy" alt="">` : ""}<div class="m"><span><b>${r.placedCount}</b>/${r.charmCount} placed</span><span><b>${Math.round((r.density || 0) * 100)}%</b> full</span><span><b>${fmt.area(r.freePt2 || 0)}</b> free</span><span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span>${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`).join("")}</div>`).join("");
   $$(".libCard", body).forEach(el => el.onclick = () => openLibrarySheet(el.dataset.id));
 }
 async function openLibrarySheet(id) {
   const dlg = $("#dlgSheet"); $("#lsTitle").textContent = id; $("#lsBody").innerHTML = `<div class="libEmpty">Loading…</div>`; openDlg(dlg);
   try {
     const r = await api("charmNestLibrary", { op: "getSheet", id }, { label: "Loading sheet" }); const d = r.sheet; if (!d) throw new Error("not found");
-    $("#lsTitle").textContent = `${d.metalLabel} · ${d.id} · ${d.day}`;
+    $("#lsTitle").textContent = d.folder ? `${d.folder}` : `${d.metalLabel} · ${d.id} · ${d.day}`;
     $("#lsBody").innerHTML = `
       <div style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:16px;align-items:start">
         <div>${d.outputs && d.outputs.preview ? `<img crossorigin="anonymous" src="${d.outputs.preview.url}" style="width:100%;border:1px solid var(--line);border-radius:10px;background:#fff">` : `<div class="libEmpty">no preview</div>`}</div>
@@ -1810,7 +1810,7 @@ async function restoreSheet(d) {
   closeDlg($("#dlgSheet")); setMode("nest");
   const sh = S.sheets[d.metal]; if (!sh) return;
   if (sh.status === "nesting") { toast(`${labelOf(d.metal)} is nesting — stop it first`, "bad"); return; }
-  toast(`Restoring ${d.id} into ${labelOf(d.metal)}…`, "");
+  toast(`Restoring ${d.folder || d.id} into ${labelOf(d.metal)}…`, "");
   sh.charms = []; sh.sheetId = d.id; sheetDirty(sh);
   const files = [];
   for (const s of d.sources || []) {
@@ -1831,7 +1831,7 @@ async function restoreSheet(d) {
   sh.placements = (d.placements || []).map(p => { const c = sh.charms.find(c => c.pinned && Math.abs(c.pinned.cxPt - p.cxPt) < 0.01 && Math.abs(c.pinned.cyPt - p.cyPt) < 0.01); return c ? { id: c.id, angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, wPt: p.wPt, hPt: p.hPt, layerName: p.layer } : null; }).filter(Boolean);
   sh.liveInfo = { freePt2: d.freePt2, usablePt2: d.usablePt2, placedPt2: (d.usablePt2 || 0) - (d.freePt2 || 0), pocket: d.pocket, placed: sh.placements.length, total: sh.charms.length };
   sh.status = "ready"; computeSaturation(sh); renderCard(sh); drawPreview(sh); renderRail();
-  toast(`${d.id} restored · ${pinned} charm(s) pinned at their cut positions · add more and Nest, or Re-nest freely after unpinning`, "ok", 6000);
+  toast(`${d.folder || d.id} restored · ${pinned} charm(s) pinned at their cut positions · add more and Nest, or Re-nest freely after unpinning`, "ok", 6000);
 }
 async function loadCharms() {
   const body = $("#charmsBody"); body.innerHTML = `<div class="libEmpty">Loading charms…</div>`;
