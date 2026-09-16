@@ -206,20 +206,6 @@ async function run(mode, body) {
       console.error("[charmNestAgent] unparseable", mode, why, String(text).slice(0, 300));
       return { skipped: `unparseable model output (${why}; ${(res.usage && res.usage.output_tokens) || "?"} output tokens; starts: ${JSON.stringify(String(text).slice(0, 120))})`, reasoning: reasoning || null };
     }
-    if (mode === "place") {
-    const sheet = parseDataUrl(body.sheet);
-    if (!sheet) return { error: "sheet image is required" };
-    const remaining = (body.remaining || []).slice(0, MAX_CHARMS).map(c => ({ id: str(c.id, 80), img: parseDataUrl(c.thumb), wIn: num(c.wIn), hIn: num(c.hIn), areaIn2: num(c.areaIn2), name: str(c.name, 60) })).filter(c => c.img);
-    if (!remaining.length) return { error: "no remaining charms" };
-    const placed = (body.placed || []).slice(0, 200).map(p => `#${str(p.n, 4)} ${str(p.name, 60)} (id ${str(p.id, 80)}) — ${num(p.wIn).toFixed(2)}×${num(p.hIn).toFixed(2)} in footprint, centre ${num(p.xIn).toFixed(2)}, ${num(p.yIn).toFixed(2)} in, ${num(p.angle)}°`).join("\n") || "(nothing placed yet)";
-    const pockets = (body.pockets || []).slice(0, 8).map(k => `${num(k.wIn).toFixed(2)} × ${num(k.hIn).toFixed(2)} in open rectangle with its top-left at ${num(k.xIn).toFixed(2)}, ${num(k.yIn).toFixed(2)} in`).join("\n") || "(none measured)";
-    const feedback = str(body.feedback, 4000) || "(first round)";
-    content.push({ type: "text", text: `Sheet: ${num(body.wIn).toFixed(3)} × ${num(body.hIn).toFixed(3)} in, stock edge inset ${num(body.insetIn).toFixed(3)} in, clearance ${num(body.clearancePt).toFixed(2)} pt (negative = cut lines may share). Round ${num(body.round)} of ${num(body.maxRounds)}.\n\nPlaced so far:\n${placed}\n\nLargest open pockets now:\n${pockets}\n\nFeedback on your last moves:\n${feedback}\n\nRendered sheet:` });
-    content.push(sheet);
-    content.push({ type: "text", text: `Remaining charms (${remaining.length}), each with its crop:` });
-    for (const c of remaining) { content.push({ type: "text", text: `id ${c.id} · ${c.name} · ${c.wIn.toFixed(2)} × ${c.hIn.toFixed(2)} in at 0° · solid ${c.areaIn2.toFixed(2)} in²` }); content.push(c.img); }
-    return { system: PLACE_INSTRUCTIONS, schema: PLACE_SCHEMA, content, effort: EFFORT };
-  }
   if (mode === "name") {
       parsed = { charms: (parsed.charms || []).map(x => ({ index: num(x.index), slug: str(x.slug, 60).toLowerCase().replace(/[^a-z0-9\-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || null, label: str(x.label, 120), confidence: Math.max(0, Math.min(1, num(x.confidence))), metal: req.wantMetal && /^(gold|silver|rose)$/.test(x.metal || "") ? x.metal : null })).filter(x => x.slug) };
     }

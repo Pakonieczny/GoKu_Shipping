@@ -1064,7 +1064,7 @@ async function startAINest(sh, items) {
   while (alive() && rounds < maxRounds) {
     const remaining = items.filter(c => !sh.placements.some(p => p.id === c.id) && !setAside.has(c.id));
     if (!remaining.length) break;
-    rounds++;
+    rounds++; sh.aiRound = rounds;
     sh.stage = `Round ${rounds} · Claude is planning ${remaining.length} remaining piece(s)…`; renderProgress(sh); drawPreview(sh);
     const evR = agent({ metal: sh.metal }, "claude", `Round ${rounds}: sent Claude the sheet with ${sh.placements.length} placed, ${remaining.length} remaining, the open pockets and last round's feedback`, { live: true });
     let plan;
@@ -1426,8 +1426,8 @@ function renderProgress(sh) {
     if (p.parentElement.classList.contains("bp-meter")) { const pct = Math.round(p.value / p.max * 100); p.parentElement.dataset.label = sh.progressKind === "prepare" ? `preparing ${pct}%` : sh.progressKind === "finish" ? `finishing ${pct}%` : `${p.value}/${p.max} placed · ${pct}%`; p.parentElement.style.setProperty("--bp-pct", pct + "%"); p.parentElement.dataset.determinate = "true"; }
   }
   const st = q("stage"); const elapsed = sh.startedAt && ["nesting", "finishing"].includes(sh.status) ? fmt.s(performance.now() - sh.startedAt) : (sh.elapsedMs ? fmt.s(sh.elapsedMs) : "");
-  const budget = ["nesting"].includes(sh.status) ? ` / ${S.settings.budgetS}s` : "";
-  const trials = sh.trials ? ` · ${sh.trials} trial${sh.trials > 1 ? "s" : ""}` : "";
+  const budget = sh.status === "nesting" ? ((S.settings.engine || "ai") === "ai" ? ` · round ${sh.aiRound || 1}/${S.settings.aiRounds || 10}` : ` / ${S.settings.budgetS}s`) : "";
+  const trials = sh.trials ? ((S.settings.engine || "ai") === "ai" && !sh.solveParams?.seed ? ` · ${sh.trials} round${sh.trials > 1 ? "s" : ""}` : ` · ${sh.trials} trial${sh.trials > 1 ? "s" : ""}`) : "";
   const reviewingSrc = S.sources.find(s => s.review && s.review.state === "running" && s.charms.some(c => c.metal === sh.metal));
   const ai = sh.aiReview ? (sh.aiReview.state === "running" ? ` · <span class="spin"></span> Claude inspecting · ${fmt.s(sh.aiReview.elapsed || 0)}` : sh.aiReview.skipped ? "" : sh.aiReview.ok ? " · Claude ✓" : ` · ⚠ Claude: ${sh.aiReview.issues.length} issue(s)`) : "";
   st.innerHTML = sh.stage ? `<span class="spin"></span><span>${esc(sh.stage)}</span><span class="r">${elapsed}${budget}${trials}</span>`
@@ -1475,9 +1475,10 @@ function paintPreview(cv, sh, clean) {
   const sel = sh.selected;
   if (!clean && !sh.placements.length && sh.charms.length) {
     const n = activeCharms(sh).length; ctx.fillStyle = "rgba(147,140,128,.9)"; ctx.textAlign = "center"; ctx.font = `${Math.round(cv.width / 26)}px ${getComputedStyle(document.body).getPropertyValue("--serif")}`;
-    ctx.fillText(sh.status === "nesting" ? "Preparing…" : `${n} charm${n === 1 ? "" : "s"} queued`, cv.width / 2, cv.height / 2 - cv.width / 60);
+    const ai = (S.settings.engine || "ai") === "ai";
+    ctx.fillText(sh.status === "nesting" ? (ai ? `Claude is planning round ${sh.aiRound || 1}` : "Preparing…") : `${n} charm${n === 1 ? "" : "s"} queued`, cv.width / 2, cv.height / 2 - cv.width / 60);
     ctx.font = `${Math.round(cv.width / 44)}px ${getComputedStyle(document.body).getPropertyValue("--sans")}`; ctx.fillStyle = "rgba(147,140,128,.75)";
-    ctx.fillText(sh.status === "nesting" ? "rotations and masks" : "press Nest to fill this sheet", cv.width / 2, cv.height / 2 + cv.width / 40);
+    ctx.fillText(sh.status === "nesting" ? (ai ? "its moves will land here one by one" : "rotations and masks") : "press Nest to fill this sheet", cv.width / 2, cv.height / 2 + cv.width / 40);
   }
   sh.placements.forEach((p, i) => {
     const c = byId.get(p.id); if (!c) return;
