@@ -24,6 +24,14 @@ function resolveBounds(value,orientations=['portrait','landscape']){
  return {bounds,notes};
 }
 const BAND={square:.24,portrait:.22,landscape:.28},LOGO=148;
+// Every format keeps at least one place to put a message. A crowded frame is a
+// review finding, never a reason to abandon the film.
+function usable(zones,W,H){
+ const fits=zones.filter(z=>z.w>=W*.20&&z.h>=72);
+ if(fits.length)return fits;
+ const fallback=[{name:'top',x:.065*W,y:.075*H,w:.87*W,h:Math.max(120,H*.22),crowded:true}];
+ fallback.crowded=true;return fallback;
+}
 function geometry(format,subject,sourceOrientation='portrait',options={}){
  if(!subject||['x','y','w','h'].some(k=>!Number.isFinite(subject[k])))throw Error('Measure the saved video framing before composing captions.');
  const clearance=Number(options.clearance)||0;
@@ -40,21 +48,33 @@ function geometry(format,subject,sourceOrientation='portrait',options={}){
  const W=format.width,H=format.height;
  const zones={top:{x:.065*W,y:.075*H,w:.87*W,h:(product.y-.055-.075)*H},left:{x:.065*W,y:.12*H,w:(product.x-.05-.065)*W,h:.68*H},right:{x:(product.x+product.w+.05)*W,y:.12*H,w:(.935-product.x-product.w-.05)*W,h:.68*H}};
  const order=format.key==='landscape'?['left','right','top']:['top','left','right'];
- return {mode:'full',crop,product,zones:order.map(name=>({...zones[name],name})).filter(z=>z.w>=W*.20&&z.h>=72)};
+ return {mode:'full',crop,product,zones:usable(order.map(name=>({...zones[name],name})),W,H)};
 }
 // Band fallback: the whole film is scaled beside a reserved brand band, so a
 // large product never loses a caption or a crop. It costs nothing and is
 // reviewed like every other composition.
 function bandGeometry(format,subject,sourceOrientation){
  const W=format.width,H=format.height,srcW=sourceOrientation==='landscape'?1280:720,srcH=sourceOrientation==='landscape'?720:1280;
- const top=format.key==='portrait'||(format.key==='square'&&sourceOrientation==='landscape'),band=BAND[format.key]||.34,even=n=>Math.max(0,Math.floor(n/2)*2),size=n=>Math.max(2,even(n));
- let scale,hw,hh,hx,hy;
- if(top){scale=Math.min(W/srcW,H*(1-band)/srcH);hw=size(srcW*scale);hh=size(srcH*scale);hx=even((W-hw)/2);hy=H-hh;}
- else{scale=Math.min(W*(1-band)/srcW,H/srcH);hw=size(srcW*scale);hh=size(srcH*scale);hx=W-hw;hy=even((H-hh)/2);}
- const product={x:(hx+subject.x*hw)/W,y:(hy+subject.y*hh)/H,w:subject.w*hw/W,h:subject.h*hh/H};
+ const top=format.key==='portrait'||(format.key==='square'&&sourceOrientation==='landscape'),even=n=>Math.max(2,Math.floor(n/2)*2);
+ // Exactly one band, on one edge. The film covers the whole of the rest edge to
+ // edge, so no strip can appear on any other side. Scaling the film to fit left
+ // pad on three sides, which read as a broken border.
+ const wanted=BAND[format.key]||.24,clamp2=(v,a,b)=>Math.min(Math.max(v,a),Math.max(a,b));
+ // Where the source shape already leaves room, that gap becomes the band and the
+ // film is never cropped. Otherwise the band is cropped back from the film, only
+ // as far as the jewelry allows.
+ const natural=top?W*srcH/srcW:H*srcW/srcH,room=top?H:W;
+ const share=natural<=room?(room-natural)/room:clamp2(wanted,0,1-Math.min(1,(top?subject.h:subject.w)+.06));
+ const hero=top?{x:0,w:W,h:even(H-Math.round(H*share))}:{y:0,h:H,w:even(W-Math.round(W*share))};
+ if(top){hero.y=H-hero.h;}else{hero.x=W-hero.w;}
+ const A=hero.w/hero.h,S=srcW/srcH,cw=S>A?A/S:1,ch=S>A?1:S/A;
+ const cx=clamp2(subject.x+subject.w/2-cw/2,0,1-cw),cy=clamp2(subject.y+subject.h/2-ch/2,0,1-ch);
+ const crop={x:cx,y:cy,w:cw,h:ch};
+ const product={x:(hero.x+((subject.x-cx)/cw)*hero.w)/W,y:(hero.y+((subject.y-cy)/ch)*hero.h)/H,w:(subject.w/cw)*hero.w/W,h:(subject.h/ch)*hero.h/H};
+ const hx=hero.x,hy=hero.y,hw=hero.w,hh=hero.h;
  const zones={top:{x:.065*W,y:.075*H,w:.87*W,h:(product.y-.055-.075)*H},left:{x:.065*W,y:.12*H,w:(product.x-.05-.065)*W,h:.68*H},right:{x:(product.x+product.w+.05)*W,y:.12*H,w:(.935-product.x-product.w-.05)*W,h:.68*H}};
  const order=top?['top','left','right']:['left','top','right'];
- return {mode:'band',seam:top?{edge:'top',at:hy}:{edge:'left',at:hx},crop:{x:0,y:0,w:1,h:1},hero:{x:hx,y:hy,w:hw,h:hh},product,zones:order.map(name=>({...zones[name],name})).filter(z=>z.w>=W*.20&&z.h>=72)};
+ return {mode:'band',seam:top?{edge:'top',at:hy}:{edge:'left',at:hx},crop,hero:{x:hx,y:hy,w:hw,h:hh},product,zones:usable(order.map(name=>({...zones[name],name})),W,H)};
 }
 let fonts;
 async function fontOptions(){if(fonts)return fonts;const fontFiles=[];for(const name of ['CormorantGaramond.ttf','OpenSans-Regular.ttf','OpenSans-Bold.ttf']){let file;for(const dir of [path.join(__dirname,'fonts'),path.join(process.cwd(),'netlify/production-functions/fonts'),path.join(process.cwd(),'netlify/functions/fonts')]){try{const p=path.join(dir,name);await fs.access(p);file=p;break;}catch{}}if(!file)throw Error('Video caption font is missing: '+name);fontFiles.push(file);}return fonts={font:{fontFiles,loadSystemFonts:false,defaultFontFamily:'Open Sans'}};}
@@ -75,14 +95,23 @@ async function captions(plan,format,beats){
 }
 async function composeTier(plan,format,beats,tier,hints){
  const W=format.width,H=format.height,g=geometry(format,plan.composition,plan.sourceOrientation,{mode:tier.mode,clearance:hints.clearance}),options=await fontOptions().catch(e=>{throw Object.assign(e,{fatal:true});}),style=plan.style||{},color=(v,f)=>/^#[a-f0-9]{6}$/i.test(v||'')?v:f,ink=color(style.ink,'#30291f'),bg=color(style.background,'#fff7ee'),gold=color(style.accent,'#a67c35'),font=/sans|arial|helvetica/i.test(style.headlineFont||'')?'Open Sans':'Cormorant Garamond';
- const persistent=plan.renderVersion>=9,logoBox={x:W*.055,y:H*.05,w:LOGO,h:LOGO/1.788},strong=hints.wash==='strong';
+ const persistent=plan.renderVersion>=9,logoBox={x:W*.055,y:H*.05,w:LOGO,h:LOGO/1.788},strong=hints.wash==='strong',notes=[];
  // The field ramps evenly across its whole depth instead of sitting near-solid
  // and then dropping away, so the join reads as light rather than as an edge.
  const ramp=(strong?[[0,'1'],[.3,'.93'],[.6,'.74'],[.82,'.42'],[1,'0']]:[[0,'.97'],[.3,'.86'],[.6,'.62'],[.82,'.32'],[1,'0']]).map(([o,a])=>`<stop offset="${o}" stop-color="${bg}" stop-opacity="${a}"/>`).join('');
  const vertical='x1="0" y1="0" x2="0" y2="1"',header=name=>name==='top'||name==='header';
  if(persistent){
   const p={x:g.product.x*W,y:g.product.y*H,w:g.product.w*W,h:g.product.h*H};
-  if(logoBox.x<p.x+p.w&&logoBox.x+logoBox.w>p.x&&logoBox.y<p.y+p.h&&logoBox.y+logoBox.h>p.y)throw Error('The top-left brand area overlaps the jewelry. Reframe with clear space for the logo.');
+  const hits=box=>box.x<p.x+p.w&&box.x+box.w>p.x&&box.y<p.y+p.h&&box.y+box.h>p.y;
+  // The wordmark belongs top-left. When the jewelry reaches that corner, move it to
+  // the clearest corner instead of stopping the film, and say so.
+  if(g.zones.crowded||g.zones[0]?.crowded)notes.push('The jewelry fills this format, so its message sits over part of the piece; a reframed film would give the message clear space.');
+  if(hits(logoBox)){
+   const margin={x:W*.055,y:H*.05},corners=[{x:W-margin.x-logoBox.w,y:logoBox.y,at:'top right'},{x:logoBox.x,y:H-margin.y-logoBox.h,at:'bottom left'},{x:W-margin.x-logoBox.w,y:H-margin.y-logoBox.h,at:'bottom right'}];
+   const clear=corners.find(c=>!hits({...c,w:logoBox.w,h:logoBox.h}));
+   if(clear){logoBox.x=clear.x;logoBox.y=clear.y;notes.push('The jewelry reaches the top-left corner, so the wordmark sits '+clear.at+' in this format.');}
+   else notes.push('The jewelry fills the frame, so the wordmark overlaps it in this format; a reframed film would correct that.');
+  }
   // Messaging sits beside the wordmark, never under it, leaving the height to the jewelry.
   const gap=Math.round(W*.055),hx=logoBox.x+logoBox.w+gap;
   // The strip runs from the wordmark down to a clear margin above the jewelry.
@@ -119,7 +148,7 @@ async function composeTier(plan,format,beats,tier,hints){
   if(!panels.length)throw Error('The '+format.key+' scene needs more clear space for readable messaging.');
   const duration=(beat.end-beat.start)/panels.length;for(let i=0;i<panels.length;i++){panels[i].beat.start=beat.start+i*duration;panels[i].beat.end=beat.start+(i+1)*duration;prepared.push(panels[i]);}
  }
- const layers=[],washes=new Map();layers.geometry=g;layers.truncated=prepared.some(p=>p.selected.truncated);for(const {beat,selected}of prepared){
+ const layers=[],washes=new Map();layers.geometry=g;layers.notes=notes;layers.truncated=prepared.some(p=>p.selected.truncated);for(const {beat,selected}of prepared){
   const {zone,size,title,support,height,brand,labelHeight}=selected,x=zone.x,y=zone.name==='header'?zone.y+Math.max(0,(logoBox.h-height)/2):zone.name==='top'?zone.y:zone.y+(zone.h-height)/2,baseline=y+labelHeight+size*.8;
   const rect=header(zone.name)?{x:0,y:0,w:W,h:y+height+18}:{x:zone.name==='left'?0:x-24,y:0,w:zone.w+zone.x*(zone.name==='left'?1:0)+24,h:H};
   // Wash is local to copy; its last transparent edge ends before protected jewelry.

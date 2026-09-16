@@ -165,6 +165,7 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
   ok(!/Gift-ready packaging/.test(prompt),'no saved ad copy reaches the video model, even via the treatment');
   ok(!/Crocodile|Pendant|Brites/i.test(prompt),'the product name and brand never reach the video model, which renders names it is given');
   ok(/Every surface in frame is blank/.test(prompt)&&/A film containing any glyph is rejected outright/.test(prompt),'the scene is defined positively as textless, not only forbidden text');
+  ok(/The scenery reaches all four edges/.test(prompt)&&/No black bars, no letterboxing, no pillarboxing, no vignette/.test(prompt),'the footage may never frame itself with bars or a border');
   ok(!/\d+\s?(?:px|pixels)/.test(prompt),'no pixel specification reaches the video model, even via the treatment');
   ok(/no lettering anywhere, at any size, in focus or blurred/.test(prompt),'the film is told its frames carry no lettering at all');
   ok(/flat, laser-cut sheet metal about as thick as a credit card/.test(prompt)&&/one fortieth of the charm's length/.test(prompt)&&/engraving is cut into the metal/.test(prompt),'the film is given a measurable thinness and engraving cut into the metal');

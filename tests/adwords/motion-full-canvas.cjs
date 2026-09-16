@@ -33,6 +33,15 @@ const {renderVariants,captionLayers}=require('../../netlify/functions/googleAdsA
   assert(beside.every(l=>l.zone.y<logo.y+logo.h),'messaging beside the wordmark aligns with it, not below it');
   assert(beats.every(l=>l.zone.name==='header'||l.zone.y>=logo.y+logo.h),'copy too long to sit beside the wordmark clears it instead of colliding');
  }
+ // A band sits on exactly one edge; the film fills the rest of the canvas.
+ for(const [f,src] of [[{key:'landscape',width:1280,height:720},'landscape'],[{key:'portrait',width:720,height:1280},'portrait'],[{key:'square',width:720,height:720},'landscape'],[{key:'square',width:720,height:720},'portrait']]){
+  const g=geometry(f,{x:.05,y:.05,w:.9,h:.9},src,{mode:'band'}),h=g.hero;
+  const strips=[h.y>0,h.x>0,h.x+h.w<f.width,h.y+h.h<f.height].filter(Boolean).length;
+  assert(strips<=1,f.key+' from '+src+' must leave at most one band, never a border on several sides');
+  if(strips===1)assert(g.seam&&(g.seam.edge==='top'?h.y>0:h.x>0),'the single band is the recorded seam edge');
+  const p=g.product;
+  assert(p.x>=-0.002&&p.y>=-0.002&&p.x+p.w<=1.002&&p.y+p.h<=1.002,'the band layout never crops the jewelry out of frame');
+ }
  // A band layout must read as light falling away, never as a printed line across the film.
  {
   const big={x:.05,y:.05,w:.9,h:.9},f={key:'square',width:720,height:720};
