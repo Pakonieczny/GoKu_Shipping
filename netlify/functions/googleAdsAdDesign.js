@@ -495,6 +495,14 @@ function createAdDesignService(deps) {
   // AI edits have their own immutable input and durable receipts. They never
   // replace saved artwork, change workspace messaging, or publish to Google.
   const editorAIRef=(workspaceId,id)=>{if(!/^eai_[a-f0-9]{40}$/.test(String(id||'')))throw new Error('Invalid AI design request.');return refFor(workspaceId).collection('editorAIJobs').doc(id);};
+  // The Static + Animated handoff writes its outcome here so the browser can show
+  // the animated run, or say why there is not one, instead of finishing silently.
+  async function recordAnimationHandoff({workspaceId,jobId,motionJobId=null,queued=false,error=null}){
+    const target=editorAIRef(workspaceId,jobId),row=await target.get();
+    if(!row.exists)return {ok:false,error:'The static job was not found.'};
+    await target.update({animation:clean({requestedAt:row.data().animation?.requestedAt||Date.now(),motionJobId,queued:queued===true,error:error?String(error).slice(0,700):null,at:Date.now()})});
+    return {ok:true,workspaceId,jobId,motionJobId,queued:queued===true,error};
+  }
   async function editorAIStatus(input={}){
     const w=await read(input.workspaceId);editorScope(w,input);let target;
     if(input.activeAttempt){const id=w.editorAI?.id;if(!id)return {ok:true,jobId:null};const row=await editorAIRef(input.workspaceId,id).get(),job=row.exists?row.data():null;if(!job||job.resetAt||['dismissed','ready'].includes(job.phase))return {ok:true,jobId:null};if(job.scope.productId!==input.productId||job.scope.groupRef!==input.groupRef)throw new Error('The unfinished attempt belongs to another product or ad group. Open that workspace to discard it.');return {ok:true,jobId:id,phase:job.phase,unconfirmed:!!job.inFlight};}
@@ -507,6 +515,9 @@ function createAdDesignService(deps) {
     const flightReceipt=job.inFlight?.key?await target.collection('data').doc(/(?:quality|quality_v\d+|copy_refine_v\d+|subject_focus_[a-f0-9]{24})$/.test(job.inFlight.key)?job.inFlight.key+'_response':job.inFlight.key).get():receipt;
     const phase=stale?'needs_attention':job.phase,unknown=!!job.inFlight&&!flightReceipt.exists;
     const request=input.includeOriginal?await target.collection('data').doc('request').get():null;
+    // The browser needs to know an animated run was asked for even before the
+    // static job hands it over, so it can show the second progress bar.
+    const requestRow=(request?.exists?request.data():(await target.collection('data').doc('request').get()).data())||null;
     const candidate=(phase==='awaiting_review'||input.includeReview)?await target.collection('data').doc('candidate').get():null;
     const result=job.phase==='ready'?await target.collection('data').doc('result').get():null;
     let weightedReview,reviewVersion;
@@ -515,7 +526,7 @@ function createAdDesignService(deps) {
     let reviewProofs=[];if(input.includeReview&&reviewVersion){const p=await target.collection('data').doc('ad_proofs_v'+reviewVersion).get();if(p.exists&&Array.isArray(p.data().images)&&(!review.proofHash||review.proofHash===p.data().proofHash))reviewProofs=await Promise.all(p.data().images.map(async image=>({key:image.key,width:image.width,height:image.height,url:await deps.signAsset(image.asset)})));}
     const quality=review?{rubric:review.rubric||null,scores:review.scores||null,weights:review.weights||null,categoryReviews:review.categoryReviews||null,claimsSupported:review.claimsSupported===true,score:Number.isFinite(review.score)?review.score:null,pass:review.pass===true,productFaithful:review.productFaithful===true,mobileReadable:review.mobileReadable===true,issues:(review.issues||[]).map(issue=>String(issue).slice(0,2000)).slice(0,20)}:null;
     const fixOptions=phase==='ready'&&quality?.categoryReviews&&result?.exists?await editorFixOptions(w,target,result.data(),quality,reviewVersion):[];
-    return {ok:true,workspaceId:input.workspaceId,jobId:job.id,requestId:job.requestId,inputHash:job.inputHash,scope:job.scope,phase,fixOf:job.fixOf||null,fixTarget:job.fix?{kind:job.fix.kind,category:job.fix.category,index:job.fix.index,sceneKey:job.fix.sceneKey||null,formats:job.fix.formats||[],label:job.fix.label}:null,canFix:fixOptions.length>0,fixOptions,
+    return {ok:true,workspaceId:input.workspaceId,jobId:job.id,requestId:job.requestId,inputHash:job.inputHash,scope:job.scope,phase,animation:job.animation||null,includeAnimation:requestRow?.includeAnimation===true,fixOf:job.fixOf||null,fixTarget:job.fix?{kind:job.fix.kind,category:job.fix.category,index:job.fix.index,sceneKey:job.fix.sceneKey||null,formats:job.fix.formats||[],label:job.fix.label}:null,canFix:fixOptions.length>0,fixOptions,
       startedAt:job.createdAt,updatedAt:job.updatedAt,
       progress:stale?{pct:job.progress.pct,label:unknown?'Provider completion is uncertain. The request will not be charged again.':'Saved work is available to resume.'}:job.progress,
       error:job.error||null,quality,reviewVersion:reviewVersion||null,reviewProofs,qualityTarget:require('./googleAdsAdQuality').TARGET,canRetry:phase==='needs_attention'&&!unknown,hasSavedResponse:receipt.exists,needsNewRequestApproval:false,
@@ -712,7 +723,10 @@ function createAdDesignService(deps) {
     }
   }
   async function responsiveEditorResult({workspaceId,jobId,job,request,evidence,output,target,ref,w,save,saveData,verify,usage}){
-    const sceneDeadline=Date.now()+4*60000;
+    // Each handover ends the invocation and the next one pays a cold start and
+    // re-reads every saved stage before it can do new work, so the run stays in
+    // one invocation wherever it fits. The lease is 8 minutes; stop short of it.
+    const sceneDeadline=Date.now()+(Number(deps.stageBudgetMs)||7*60000);
     const research=require('./googleAdsAdDesignResearch');let plan=research.validateResponsivePlan({output,request,evidence});const responsive=require('../../brites-ad-responsive'),products=await productsFor(ref,w),product=products.find(p=>String(p.id)===request.productId);
     if(!product)throw new Error('The exact product source is no longer available.');
     const refs=await Promise.all((request.identitySources||request.sources).map(s=>deps.loadAsset(s.asset))),images=[],sources=[],files=[];
@@ -1243,7 +1257,7 @@ function createAdDesignService(deps) {
       await saveJob({ phase: "needs_attention", error: String(error.message || error).slice(0, 900), leaseUntil: 0, progress: { pct: Number(job.progress && job.progress.pct) || 0, label: "Saved work retained — review the unfinished step" } }); throw error;
     }
   }
-  return { workspace, save, upload, crop, start, status, run, resetFailures, editorSource, editorState, editorResponsiveState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorDeleteSavedDesign, deleteGeneratedImage, linkPublishedDesignScopes, linkPublishedWorkspaceGallery, editorAIStart, editorAIStatus, editorAIResume, editorAIRun, editorAIApply, editorAIFix, editorIdentity };
+  return { workspace, save, upload, crop, start, status, run, resetFailures, editorSource, editorState, editorResponsiveState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorDeleteSavedDesign, deleteGeneratedImage, linkPublishedDesignScopes, linkPublishedWorkspaceGallery, editorAIStart, editorAIStatus, editorAIResume, editorAIRun, editorAIApply, editorAIFix, editorIdentity, recordAnimationHandoff };
 }
 module.exports = { orderAssetGroupMutations, createAdDesignService, buildVersionDesignPayload, isSharedProductGroup, researchGroupFor, formatAssets, chosenPlacements, placementMatches, FORMATS, settingsFor, refreshedSettings, responseText, MAX_UPLOAD };
 
