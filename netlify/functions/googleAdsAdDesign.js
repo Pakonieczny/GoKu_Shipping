@@ -1079,6 +1079,10 @@ function createAdDesignService(deps) {
       const quote = await deps.reserveCost({ key, provider: provider(), workspace: value, job }), reserve = Number(quote && typeof quote === "object" ? quote.reservedUsd : quote);
       if (!Number.isFinite(reserve) || reserve <= 0) throw new Error("The provider's request cost allowance could not be verified.");
       const ctrl = await deps.control(), allowance = Math.max(1, Math.min(30, Number(ctrl.creativeBudgetUsd) || 8)), spent = (job.reservations || []).reduce((sum, row) => sum + Number(row.actualUsd == null ? row.reservedUsd : row.actualUsd), 0);
+      // allowance and spent were computed and never compared, so a retry could
+      // dispatch past the budget. An unsettled reservation is still money at
+      // risk: count it at its reserved amount until the provider settles it.
+      if (spent + reserve > allowance) throw new Error("The remaining creative allowance cannot cover this request: $" + spent.toFixed(2) + " of a $" + allowance.toFixed(2) + " allowance is already reserved and this step needs $" + reserve.toFixed(2) + ". Completed work is saved.");
       const requestId = crypto.randomUUID(); job.reservations = (job.reservations || []).concat({ key, requestId, reservedUsd: reserve, rationale: String(quote && quote.rationale || "Planning reservation; actual provider token usage is recorded separately.").slice(0, 400), at: Date.now(), settled: false });
       await saveJob({ requests: Number(job.requests || 0) + 1, inFlight: { key, at: Date.now(), requestId } });
       let output;
