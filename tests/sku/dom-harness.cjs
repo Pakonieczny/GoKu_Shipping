@@ -122,6 +122,14 @@ class Element {
     const fns = [...(this.listeners[type] || [])];
     for (const fn of fns) await fn.call(this, { type, preventDefault() {}, ...ev });
   }
+  setAttribute(name, value) {
+    if (name.startsWith('data-')) this.dataset[camel(name.slice(5))] = String(value);
+    else this[name] = String(value);
+  }
+  getAttribute(name) {
+    const v = name.startsWith('data-') ? this.dataset[camel(name.slice(5))] : this[name];
+    return v === undefined ? null : String(v);
+  }
   select() {}
   focus() { if (this.ownerDocument) this.ownerDocument.activeElement = this; }
   getBoundingClientRect() { return { left: 0, top: 0, width: 100, height: 100, bottom: this._bottom ?? 100 }; }

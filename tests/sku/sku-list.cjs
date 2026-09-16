@@ -93,7 +93,23 @@ function fakeShop(rows, opts = {}) {
       calls.offsets.push(offset);
       const limit = Number(q.get('limit'));
       const all = snapshot();
-      return { body: { count: all.length, results: all.slice(offset, offset + limit), etsy_call_count: 1 } };
+      let rows = all.slice(offset, offset + limit);
+      // Mirror etsyShopListingsProxy's catalog projection, including the
+      // _meta.projection the client uses to tell whether it was applied.
+      let projection = 'full';
+      if (q.get('projection') === 'catalog' && !opts.serveFullShape) {
+        projection = 'catalog';
+        rows = rows.map(x => ({
+          listing_id: x.listing_id,
+          title: x.title,
+          price: x.price,
+          shop_section_id: x.shop_section_id ?? null,
+          last_modified_timestamp: x.last_modified_timestamp ?? null,
+          image: (x.images || []).slice().sort((a, b) => a.rank - b.rank)[0]?.url_570xN || '',
+          sku: (x.inventory?.products || []).map(p => (p.sku || '').trim()).find(Boolean) || '',
+        }));
+      }
+      return { body: { count: all.length, results: rows, _meta: { projection }, etsy_call_count: 1 } };
     }
     if (opts.rest) return opts.rest(url, init);
     throw new Error('unexpected fetch: ' + url);
@@ -252,7 +268,7 @@ test('A cold start walks the whole shop at 100 listings per call', async reg => 
   assert.equal(shop.calls.pages, 6, '550 listings = ceil(550/100) = 6 calls');
   assert.deepEqual(shop.calls.offsets, [0, 100, 200, 300, 400, 500]);
   assert.equal(app.api.Catalog.rows.length, 550);
-  const q = paramsOf(app.fetchCalls.find(c => c.url.includes('etsyShopListingsProxy')).url);
+  const q = paramsOf(app.fetchCalls.find(c => c.url.includes('etsyShopListingsProxy') && !c.url.includes('sections')).url);
   assert.equal(q.get('limit'), '100', 'always the maximum page size');
   assert.equal(q.get('includes'), 'Images,Inventory', 'images and SKUs inline — no per-listing calls');
   assert.equal(q.get('sort_on'), 'updated');
@@ -264,6 +280,69 @@ test('The projected cost for the real ~5,600-listing shop is ~57 calls', async r
   await app.domReady();
   assert.equal(app.api.Catalog.rows.length, 5627);
   assert.equal(shop.calls.pages, 57, 'one-off 57 calls, ~1.6% of a 3,500/day budget');
+});
+
+test('The catalog read asks for the server-side projection', async reg => {
+  const shop = fakeShop(shopOf(10));
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
+  await app.domReady();
+  const q = paramsOf(app.fetchCalls.find(c => c.url.includes('etsyShopListingsProxy') && !c.url.includes('sections')).url);
+  assert.equal(q.get('projection'), 'catalog',
+    'without this the function response exceeds Netlify\'s 6 MB cap');
+  assert.equal(q.get('includes'), 'Images,Inventory', 'the server still needs both to project from');
+});
+
+test('REGRESSION: an oversized page shrinks the page size instead of failing the sync', async reg => {
+  // Function.ResponseSizeTooLarge — Response payload size exceeded maximum
+  // allowed payload size (6291556 bytes).
+  const rows = shopOf(120);
+  const base = fakeShop(rows);
+  let refusedLimits = [];
+  const app = createApp({
+    storage: freshTokens(),
+    fetchImpl: async (url, init) => {
+      if (url.includes('etsyShopListingsProxy') && !url.includes('sections')) {
+        const limit = Number(paramsOf(url).get('limit'));
+        if (limit > 50) {
+          refusedLimits.push(limit);
+          return { status: 502, body: '{"errorType":"Function.ResponseSizeTooLarge","errorMessage":"Response payload size exceeded maximum allowed payload size (6291556 bytes)."}' };
+        }
+      }
+      return base.impl(url, init);
+    },
+  });
+  reg.push(app);
+  await app.domReady();
+
+  assert.deepEqual(refusedLimits, [100], 'the 100-listing page was refused once');
+  assert.equal(app.api.Catalog.rows.length, 120, 'the sync completed at the smaller page size');
+  assert.ok(!app.status().includes('Sync failed'), 'and did not surface as a failure: ' + app.status());
+});
+
+test('A deploy that does not project is detected and the page size drops', async reg => {
+  // An older function build answers without projecting. Full listings are
+  // orders of magnitude larger, so marching on at 100 a page walks straight
+  // into the 6 MB cap; the console drops to a size that still fits.
+  const shop = fakeShop(shopOf(40), { serveFullShape: true });
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
+  await app.domReady();
+  const limits = app.fetchCalls
+    .filter(c => c.url.includes('etsyShopListingsProxy') && !c.url.includes('sections'))
+    .map(c => Number(paramsOf(c.url).get('limit')));
+  assert.equal(limits[0], 100, 'the first call still tries the cheap page size');
+  assert.ok(limits.slice(1).every(l => l === 10), 'every call after the detection is small: ' + limits);
+  assert.equal(app.api.Catalog.rows.length, 40, 'and the catalog still completes');
+});
+
+test('A page that is too large even at the floor fails loudly', async reg => {
+  const app = createApp({
+    storage: freshTokens(),
+    fetchImpl: async () => ({ status: 502, body: '{"errorType":"Function.ResponseSizeTooLarge","errorMessage":"Response payload size exceeded maximum allowed payload size (6291556 bytes)."}' }),
+  });
+  reg.push(app);
+  await app.domReady();
+  assert.match(app.status(), /Sync failed/, 'not silently swallowed');
+  assert.match(app.status(), /build \d{4}-\d{2}-\d{2}/, 'names the console build for diagnosis');
 });
 
 test('Searching the built catalog costs ZERO further API calls', async reg => {
@@ -500,14 +579,132 @@ test('Search stays correct after a SKU is written', async reg => {
 
 section('Section quick-filters');
 
-test('Chips are built from the shop\'s own sections with local counts', async reg => {
+test('Exactly the five named section shortcuts are shown, in order', async reg => {
   const { app } = await bootMixed(reg);
-  const labels = app.chips().map(c => c.label);
-  assert.deepEqual(labels.slice(0, 7), [
-    'All6', 'NECKLACES1', 'EARRINGS1', 'CHARMS1', 'BRACELETS1', 'RINGS1', 'No section1',
+  const labels = app.chips().map(c => c.label).filter(Boolean);
+  assert.deepEqual(labels, [
+    'All6', 'NECKLACES1', 'EARRINGS1', 'CHARMS1', 'BRACELETS1', 'RINGS1',
+    'Missing SKU', 'Hide ✓ done',
   ]);
-  assert.ok(labels.includes('Missing SKU'));
-  assert.ok(labels.includes('Hide ✓ done'));
+});
+
+test('REGRESSION: the shop\'s other sections get no chip', async reg => {
+  // Etsy returns dozens of sections. Rendering them all buried the five that
+  // were asked for and pushed the row off the screen.
+  const extras = [
+    ...SECTIONS,
+    { shop_section_id: 66, title: 'Zodiac / Birth Flower', active_listing_count: 14 },
+    { shop_section_id: 77, title: 'Handwriting Jewelry', active_listing_count: 11 },
+    { shop_section_id: 88, title: 'Evil Eye Jewelry', active_listing_count: 9 },
+  ];
+  const rows = [
+    ...mixedShop(),
+    listing(200001, { title: 'Aries Birth Flower Necklace', shop_section_id: 66 }),
+    listing(200002, { title: 'Evil Eye Charm', shop_section_id: 88 }),
+  ];
+  const shop = fakeShop(rows, { sections: extras });
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
+  await app.domReady();
+
+  const labels = app.chips().map(c => c.label).filter(Boolean);
+  for (const unwanted of ['Zodiac', 'Handwriting', 'Evil Eye', 'No section', 'Section ']) {
+    assert.ok(!labels.some(l => l.includes(unwanted)),
+      'unexpected chip containing "' + unwanted + '": ' + labels.join(' | '));
+  }
+  assert.deepEqual(labels, [
+    'All8', 'NECKLACES1', 'EARRINGS1', 'CHARMS1', 'BRACELETS1', 'RINGS1',
+    'Missing SKU', 'Hide ✓ done',
+  ]);
+
+  // Those listings are still in the catalog and still findable.
+  assert.equal(app.api.Catalog.rows.length, 8);
+  await app.type('evil eye');
+  assert.deepEqual(app.cardIds(), [200002], 'searchable, just not chipped');
+});
+
+test('A named section the shop does not have is skipped, not shown dead', async reg => {
+  const shop = fakeShop(mixedShop(), { sections: SECTIONS.slice(0, 2) });  // only NECKLACES, EARRINGS
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
+  await app.domReady();
+  const labels = app.chips().map(c => c.label).filter(Boolean);
+  assert.deepEqual(labels, ['All6', 'NECKLACES1', 'EARRINGS1', 'Missing SKU', 'Hide ✓ done']);
+});
+
+test('Section titles are matched case-insensitively', async reg => {
+  const lower = SECTIONS.map(s => ({ ...s, title: s.title.toLowerCase() }));
+  const shop = fakeShop(mixedShop(), { sections: lower });
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
+  await app.domReady();
+  const labels = app.chips().map(c => c.label).filter(Boolean);
+  assert.deepEqual(labels.slice(1, 6),
+    ['necklaces1', 'earrings1', 'charms1', 'bracelets1', 'rings1'],
+    'shown with Etsy\'s own capitalisation, matched regardless of it');
+});
+
+test('REGRESSION: section chips appear even when the catalog sync fails', async reg => {
+  // A sync that died partway used to leave the operator with no section
+  // shortcuts at all, because sections were fetched as a tail of a SUCCESSFUL
+  // walk. They are the console's primary navigation and load on their own now.
+  const app = createApp({
+    storage: freshTokens(),
+    fetchImpl: async (url) => {
+      if (url.includes('etsyApiUsage')) return { body: { ok: true, verified: true, etsy_remaining_today: 100 } };
+      if (url.includes('mode=sections')) return { body: { results: SECTIONS, etsy_call_count: 1 } };
+      return { status: 502, body: '{"errorType":"Function.ResponseSizeTooLarge"}' };
+    },
+  });
+  reg.push(app);
+  await app.domReady();
+
+  assert.match(app.status(), /Sync failed/, 'the sync really did fail');
+  const labels = app.chips().map(c => c.label).filter(Boolean);
+  for (const name of ['NECKLACES', 'EARRINGS', 'CHARMS', 'BRACELETS', 'RINGS']) {
+    assert.ok(labels.some(l => l.startsWith(name)), 'missing chip: ' + name + ' — got ' + labels.join(' | '));
+  }
+});
+
+test('Without the sections call there are no section chips, and All still works', async reg => {
+  const app = createApp({
+    storage: freshTokens(),
+    fetchImpl: async (url, init) => {
+      if (url.includes('mode=sections')) return { status: 500, body: { error: 'nope' } };
+      return fakeShop(mixedShop()).impl(url, init);
+    },
+  });
+  reg.push(app);
+  await app.domReady();
+  const labels = app.chips().map(c => c.label).filter(Boolean);
+  assert.deepEqual(labels, ['All6', 'Missing SKU', 'Hide ✓ done'],
+    'no id-labelled placeholders — a chip is only ever one of the five names');
+  assert.equal(app.cards().length, 6, 'the catalog is unaffected');
+});
+
+test('Every chip reports its own pressed state for assistive tech', async reg => {
+  const { app } = await bootMixed(reg);
+  const earrings = app.chips().find(c => c.label.startsWith('EARRINGS'));
+  assert.equal(earrings.el.getAttribute('aria-pressed'), 'false');
+  await earrings.el.dispatch('click');
+  const after = app.chips().find(c => c.label.startsWith('EARRINGS'));
+  assert.equal(after.el.getAttribute('aria-pressed'), 'true');
+  assert.ok(after.on, 'and is visibly selected');
+  assert.ok(!app.chips()[0].on, 'while All is no longer selected');
+});
+
+test('Exactly one section chip is selected at a time', async reg => {
+  const { app } = await bootMixed(reg);
+  await app.chips().find(c => c.label.startsWith('CHARMS')).el.dispatch('click');
+  const on = app.chips().filter(c => c.on && !c.label.includes('Missing') && !c.label.includes('Hide'));
+  assert.equal(on.length, 1, 'selected: ' + on.map(c => c.label).join(', '));
+  assert.ok(on[0].label.startsWith('CHARMS'));
+});
+
+test('The state filters are independent of the section selection', async reg => {
+  const { app } = await bootMixed(reg);
+  await app.chips().find(c => c.label.startsWith('EARRINGS')).el.dispatch('click');
+  await app.chips().find(c => c.label === 'Missing SKU').el.dispatch('click');
+  assert.ok(app.chips().find(c => c.label.startsWith('EARRINGS')).on, 'section stays selected');
+  assert.ok(app.chips().find(c => c.label === 'Missing SKU').on);
+  assert.deepEqual(app.cardIds(), [100002], 'earrings AND missing a SKU');
 });
 
 test('Selecting a section filters locally and costs no API calls', async reg => {
@@ -527,12 +724,6 @@ test('A section narrows the search rather than replacing it', async reg => {
     'three gold titles plus one gold SKU');
   await app.chips().find(c => c.label.startsWith('RINGS')).el.dispatch('click');
   assert.deepEqual(app.cardIds(), [100004], 'gold AND rings');
-});
-
-test('"No section" isolates listings Etsy has not filed', async reg => {
-  const { app } = await bootMixed(reg);
-  await app.chips().find(c => c.label.startsWith('No section')).el.dispatch('click');
-  assert.deepEqual(app.cardIds(), [100006]);
 });
 
 test('"All" returns to the whole catalog', async reg => {
@@ -811,6 +1002,29 @@ test('toRecord keeps only what search and the card need', async reg => {
   assert.equal(r.sku, 'Gold_1234');
   assert.equal(r.section_id, 11);
   assert.equal(r.q, 'gold charm gold 1234 881234', 'search key is precomputed once');
+});
+
+test('toRecord reads the projected row and a full Etsy listing alike', async reg => {
+  const app = createApp(); reg.push(app);
+  const projected = app.api.toRecord({
+    listing_id: 881234, title: 'Gold Charm',
+    price: { amount: 1999, divisor: 100, currency_code: 'USD' },
+    shop_section_id: 11, last_modified_timestamp: 1700000000,
+    image: 'https://img/p.jpg', sku: 'Gold_1234',
+  });
+  const full = app.api.toRecord(listing(881234, { title: 'Gold Charm' }));
+  assert.equal(projected.sku, 'Gold_1234');
+  assert.equal(projected.image, 'https://img/p.jpg');
+  assert.equal(projected.q, full.q, 'the same search key either way');
+  assert.equal(projected.section_id, full.section_id);
+  assert.equal(projected.updated, full.updated);
+});
+
+test('An empty projected SKU is honoured, not re-derived', async reg => {
+  const app = createApp(); reg.push(app);
+  const r = app.api.toRecord({ listing_id: 1, title: 'T', sku: '', image: '' });
+  assert.equal(r.sku, '');
+  assert.equal(r.image, '');
 });
 
 test('listingUpdatedAt accepts whichever timestamp Etsy sent', async reg => {
