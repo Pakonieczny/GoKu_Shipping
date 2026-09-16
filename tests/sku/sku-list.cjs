@@ -93,7 +93,20 @@ function fakeShop(rows, opts = {}) {
       calls.offsets.push(offset);
       const limit = Number(q.get('limit'));
       const all = snapshot();
-      return { body: { count: all.length, results: all.slice(offset, offset + limit), etsy_call_count: 1 } };
+      let rows = all.slice(offset, offset + limit);
+      // Mirror etsyShopListingsProxy's catalog projection.
+      if (q.get('projection') === 'catalog' && !opts.serveFullShape) {
+        rows = rows.map(x => ({
+          listing_id: x.listing_id,
+          title: x.title,
+          price: x.price,
+          shop_section_id: x.shop_section_id ?? null,
+          last_modified_timestamp: x.last_modified_timestamp ?? null,
+          image: (x.images || []).slice().sort((a, b) => a.rank - b.rank)[0]?.url_570xN || '',
+          sku: (x.inventory?.products || []).map(p => (p.sku || '').trim()).find(Boolean) || '',
+        }));
+      }
+      return { body: { count: all.length, results: rows, etsy_call_count: 1 } };
     }
     if (opts.rest) return opts.rest(url, init);
     throw new Error('unexpected fetch: ' + url);
@@ -264,6 +277,53 @@ test('The projected cost for the real ~5,600-listing shop is ~57 calls', async r
   await app.domReady();
   assert.equal(app.api.Catalog.rows.length, 5627);
   assert.equal(shop.calls.pages, 57, 'one-off 57 calls, ~1.6% of a 3,500/day budget');
+});
+
+test('The catalog read asks for the server-side projection', async reg => {
+  const shop = fakeShop(shopOf(10));
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
+  await app.domReady();
+  const q = paramsOf(app.fetchCalls.find(c => c.url.includes('etsyShopListingsProxy')).url);
+  assert.equal(q.get('projection'), 'catalog',
+    'without this the function response exceeds Netlify\'s 6 MB cap');
+  assert.equal(q.get('includes'), 'Images,Inventory', 'the server still needs both to project from');
+});
+
+test('REGRESSION: an oversized page shrinks the page size instead of failing the sync', async reg => {
+  // Function.ResponseSizeTooLarge — Response payload size exceeded maximum
+  // allowed payload size (6291556 bytes).
+  const rows = shopOf(120);
+  const base = fakeShop(rows);
+  let refusedLimits = [];
+  const app = createApp({
+    storage: freshTokens(),
+    fetchImpl: async (url, init) => {
+      if (url.includes('etsyShopListingsProxy') && !url.includes('sections')) {
+        const limit = Number(paramsOf(url).get('limit'));
+        if (limit > 50) {
+          refusedLimits.push(limit);
+          return { status: 502, body: '{"errorType":"Function.ResponseSizeTooLarge","errorMessage":"Response payload size exceeded maximum allowed payload size (6291556 bytes)."}' };
+        }
+      }
+      return base.impl(url, init);
+    },
+  });
+  reg.push(app);
+  await app.domReady();
+
+  assert.deepEqual(refusedLimits, [100], 'the 100-listing page was refused once');
+  assert.equal(app.api.Catalog.rows.length, 120, 'the sync completed at the smaller page size');
+  assert.ok(!app.status().includes('Sync failed'), 'and did not surface as a failure: ' + app.status());
+});
+
+test('A page that is too large even at the floor fails loudly', async reg => {
+  const app = createApp({
+    storage: freshTokens(),
+    fetchImpl: async () => ({ status: 502, body: '{"errorType":"Function.ResponseSizeTooLarge","errorMessage":"Response payload size exceeded maximum allowed payload size (6291556 bytes)."}' }),
+  });
+  reg.push(app);
+  await app.domReady();
+  assert.match(app.status(), /Sync failed/, 'not silently swallowed');
 });
 
 test('Searching the built catalog costs ZERO further API calls', async reg => {
@@ -811,6 +871,29 @@ test('toRecord keeps only what search and the card need', async reg => {
   assert.equal(r.sku, 'Gold_1234');
   assert.equal(r.section_id, 11);
   assert.equal(r.q, 'gold charm gold 1234 881234', 'search key is precomputed once');
+});
+
+test('toRecord reads the projected row and a full Etsy listing alike', async reg => {
+  const app = createApp(); reg.push(app);
+  const projected = app.api.toRecord({
+    listing_id: 881234, title: 'Gold Charm',
+    price: { amount: 1999, divisor: 100, currency_code: 'USD' },
+    shop_section_id: 11, last_modified_timestamp: 1700000000,
+    image: 'https://img/p.jpg', sku: 'Gold_1234',
+  });
+  const full = app.api.toRecord(listing(881234, { title: 'Gold Charm' }));
+  assert.equal(projected.sku, 'Gold_1234');
+  assert.equal(projected.image, 'https://img/p.jpg');
+  assert.equal(projected.q, full.q, 'the same search key either way');
+  assert.equal(projected.section_id, full.section_id);
+  assert.equal(projected.updated, full.updated);
+});
+
+test('An empty projected SKU is honoured, not re-derived', async reg => {
+  const app = createApp(); reg.push(app);
+  const r = app.api.toRecord({ listing_id: 1, title: 'T', sku: '', image: '' });
+  assert.equal(r.sku, '');
+  assert.equal(r.image, '');
 });
 
 test('listingUpdatedAt accepts whichever timestamp Etsy sent', async reg => {

@@ -53,6 +53,49 @@ function titleMatches(title, query, mode) {
   return words.every(word => normalizedTitle.includes(word));
 }
 
+/* ── Catalog projection ──────────────────────────────────────────────────
+   A page of 100 listings requested with includes=Images,Inventory is enormous:
+   every image in every size, every variant's offerings and property values,
+   plus each listing's full description. Netlify caps a function response at
+   6 MB and such a page blows straight through it:
+
+     Function.ResponseSizeTooLarge — Response payload size exceeded maximum
+     allowed payload size (6291556 bytes).
+
+   projection=catalog reduces each listing to the handful of fields a catalog
+   index needs — about 250 bytes instead of tens of kilobytes — so the same
+   100-listing page comes back well inside the cap. Etsy still sends the full
+   payload and the call still costs exactly one API call; only what crosses the
+   function boundary shrinks.
+
+   This is opt-in and touches nothing else: without the parameter the endpoint
+   returns Etsy's payload verbatim, exactly as the Pricing Console expects. */
+function projectCatalogRow(listing) {
+  const images = Array.isArray(listing.images) ? listing.images : [];
+  const primary = images.find(i => i && i.is_primary) ||
+                  [...images].sort((a, b) => (a?.rank ?? 999) - (b?.rank ?? 999))[0] ||
+                  images[0] || null;
+
+  const products = listing.inventory && Array.isArray(listing.inventory.products)
+    ? listing.inventory.products : [];
+  let sku = "";
+  for (const p of products) {
+    const s = String((p && p.sku) || "").trim();
+    if (s) { sku = s; break; }
+  }
+
+  return {
+    listing_id: listing.listing_id,
+    title: listing.title || "",
+    price: listing.price || null,
+    shop_section_id: listing.shop_section_id == null ? null : listing.shop_section_id,
+    last_modified_timestamp:
+      listing.last_modified_timestamp ?? listing.updated_timestamp ?? listing.state_timestamp ?? null,
+    image: (primary && (primary.url_570xN || primary.url_fullxfull)) || "",
+    sku
+  };
+}
+
 function allowedIncludes(raw) {
   return String(raw || "Images")
     .split(",")
@@ -223,7 +266,12 @@ exports.handler = async function handler(event) {
     }
 
     const { resp, payload } = await fetchEtsy(`${endpoint}?${params.toString()}`, headers, ctx);
+    const projection = String(q.projection || "").trim().toLowerCase();
+
     if (resp.ok && payload && typeof payload === "object") {
+      if (projection === "catalog" && Array.isArray(payload.results)) {
+        payload.results = payload.results.map(projectCatalogRow);
+      }
       payload._meta = {
         source: "etsy-live",
         limit,
@@ -231,6 +279,7 @@ exports.handler = async function handler(event) {
         state,
         section_id: sectionId ? Number(sectionId) : null,
         includes,
+        projection: projection === "catalog" ? "catalog" : "full",
         shop_id: Number(shopId)
       };
     }

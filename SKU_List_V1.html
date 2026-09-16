@@ -472,14 +472,17 @@ function listingUpdatedAt(x){
 /* The stored shape. Deliberately small — 5,600 of these sit in memory and in
    IndexedDB — and it carries its own precomputed search key. */
 function toRecord(x){
-  const skus = skusFromInventory(x.inventory);
   const title = String(x.title || "");
-  const sku = skus.length ? skus[0] : "";
+  // The catalog projection sends `image` and `sku` already reduced; a full
+  // Etsy listing (the fallback path, and older cached responses) still carries
+  // the raw images array and inventory document.
+  const sku = typeof x.sku === "string" ? x.sku : (skusFromInventory(x.inventory)[0] || "");
+  const image = typeof x.image === "string" ? x.image : pickPrimaryImage(x.images);
   return {
     listing_id: Number(x.listing_id),
     title,
     sku,
-    image: pickPrimaryImage(x.images),
+    image,
     price: x.price || null,
     section_id: x.shop_section_id == null ? null : Number(x.shop_section_id),
     updated: listingUpdatedAt(x),
@@ -611,12 +614,21 @@ function countCalls(payload){
   return Number.isFinite(n) ? n : 0;
 }
 
-async function fetchListingPage(offset, { sortByUpdated = true } = {}){
+/* A function response is capped at 6 MB. projection=catalog keeps a
+   100-listing page at roughly 25 KB by reducing each listing server-side to
+   the fields the index needs, so the cap is never approached — see
+   projectCatalogRow in etsyShopListingsProxy.js. */
+function isPayloadTooLarge(status, text){
+  return status === 502 && /ResponseSizeTooLarge|payload size/i.test(String(text || ""));
+}
+
+async function fetchListingPage(offset, { sortByUpdated = true, limit = PAGE } = {}){
   const qs = new URLSearchParams({
-    limit: String(PAGE),
+    limit: String(limit),
     offset: String(offset),
     state: "active",
-    includes: "Images,Inventory"
+    includes: "Images,Inventory",
+    projection: "catalog"
   });
   if (sortByUpdated){ qs.set("sort_on", "updated"); qs.set("sort_order", "desc"); }
 
@@ -625,7 +637,11 @@ async function fetchListingPage(offset, { sortByUpdated = true } = {}){
   let js = {};
   try { js = JSON.parse(text); } catch { js = { error: text.slice(0, 300) }; }
   countCalls(js);
-  if (!r.ok) throw new Error(`Etsy listings read failed (HTTP ${r.status}): ${js.error || text.slice(0,200)}`);
+  if (!r.ok){
+    const err = new Error(`Etsy listings read failed (HTTP ${r.status}): ${js.error || text.slice(0,200)}`);
+    err.tooLarge = isPayloadTooLarge(r.status, text);
+    throw err;
+  }
   return {
     results: Array.isArray(js.results) ? js.results : [],
     total: Number(js.count) || null
@@ -659,9 +675,25 @@ async function syncCatalog(mode = "incremental", onProgress = () => {}){
   const doIncremental = mode === "incremental" && since > 0 && Catalog.rows.length > 0;
 
   let offset = 0, seen = 0, added = 0, pages = 0, total = null, stopped = "";
+  // Shrinks if a page ever comes back over the function's response cap — with
+  // the catalog projection it never should, but a shop full of unusually large
+  // listings, or an older deploy without the projection, degrades to smaller
+  // pages instead of failing the whole sync.
+  let pageSize = PAGE;
   try {
     for (;;){
-      const { results, total: t } = await fetchListingPage(offset, { sortByUpdated: true });
+      let results, t;
+      try {
+        ({ results, total: t } = await fetchListingPage(offset, { sortByUpdated: true, limit: pageSize }));
+      } catch (e){
+        if (e && e.tooLarge && pageSize > 10){
+          pageSize = Math.max(10, Math.floor(pageSize / 2));
+          console.warn("Listing page too large; retrying at " + pageSize + " per page");
+          pages++;                       // the failed attempt still cost a call
+          continue;
+        }
+        throw e;
+      }
       if (t != null) total = t;
       pages++;
       if (!results.length){ stopped = "end"; break; }
@@ -683,8 +715,8 @@ async function syncCatalog(mode = "incremental", onProgress = () => {}){
         if (newest && newest <= since){ stopped = "caught-up"; break; }
       }
 
-      if (results.length < PAGE){ stopped = "end"; break; }
-      offset += PAGE;
+      if (results.length < pageSize){ stopped = "end"; break; }
+      offset += pageSize;
       if (offset > 20000){ stopped = "guard"; break; }   // never loop forever
     }
 
