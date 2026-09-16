@@ -177,6 +177,7 @@
     "_etsyMailTracking.js",
     "_etsyMailTrackingRender.js",
     "_etsyPricingScheme.js",
+    "_googleApiKeys.js",
     "_googleConnections.js",
     "_investorAdmin.js",
     "_investorAlerts.js",

@@ -108,17 +108,15 @@ These are probed, so the report already says whether the credentials reach them.
 
 ## API version
 
-`GADS_API_VERSION` selects the Google Ads API version. The code default is now
-**v25**; an environment variable of the same name overrides it, and reverting is
-that one variable.
+`GADS_API_VERSION` selects the Google Ads API version and the code default is
+**v24**, which Google supports until roughly May 2027. This is a deliberate
+choice to stay on a proven version, not an oversight.
 
-Google serves several versions at once and sunsets each roughly a year after
-release. The checker probes the configured version and its neighbours, and its
-schema section introspects **every field the catalog queries** — all of them, not
-a sample — against the configured version and against each other served version.
-A readiness row therefore says either "all N queried fields exist in vNN, safe to
-move" or names the exact fields that would break. Move only on a green readiness
-row.
+The checker still probes the versions Google serves and introspects **every
+field the catalog queries** — all of them, not a sample — against the configured
+version and each other served version. A readiness row therefore says either
+"all N queried fields exist in vNN" or names the exact fields that would break.
+Move only on a green readiness row, and only when there is a reason to move.
 
 ## Creative requirements checked against Google's published specs
 
@@ -137,24 +135,35 @@ preference.
 
 Sources are recorded in `brites-ad-format-policy.js`.
 
+## Where credentials live
+
+Netlify environment variables are a limited resource on this site, so Google
+**API keys** live in Firestore at `config/googleApiKeys`:
+
+```
+config/googleApiKeys  →  { "youtubeApiKey": "AIza..." }
+```
+
+An environment variable of the same upper-snake name still wins when set, so
+nothing already configured changes. A key stored here is only as safe as the
+restrictions set on it in Cloud Console: restrict every key to the single API it
+serves. Genuinely secret values — OAuth refresh tokens, service-account keys —
+do not belong in this document and stay in their own records.
+
+An API key authenticates **only** APIs that accept one. It does not cover
+Merchant API, which requires OAuth user consent (`GMC_REFRESH_TOKEN` carrying
+`https://www.googleapis.com/auth/content`), nor the Google Ads API, which
+requires OAuth plus a developer token.
+
 ## What must be enabled in Google Cloud Console
 
 These cannot be done from code. In the Cloud project that owns the OAuth client:
 
-| API to enable | Needed for |
+| API to enable | Credential it uses |
 |---|---|
-| Google Ads API | already in use |
-| Merchant API | Merchant Center products, reports and health |
-| YouTube Data API v3 | video processing state (`YOUTUBE_API_KEY`) |
-| Data Manager API | offline conversion upload |
+| Google Ads API | OAuth refresh token + developer token (already configured) |
+| Merchant API | OAuth refresh token, scope `.../auth/content` |
+| YouTube Data API v3 | API key in `config/googleApiKeys.youtubeApiKey` |
+| Data Manager API | its own sealed record |
 
-Credentials to add:
-
-- **`YOUTUBE_API_KEY`** — an API key restricted to YouTube Data API v3. No OAuth
-  consent is required because the uploads are unlisted.
-- **`GMC_REFRESH_TOKEN`** — a refresh token carrying
-  `https://www.googleapis.com/auth/content`, if Merchant calls are to run under
-  their own credential rather than the Ads one.
-
-The connections check reports each of these as missing until they are set, so
-the report is the checklist.
+The connections check names each missing piece, so the report is the checklist.
