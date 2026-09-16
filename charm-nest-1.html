@@ -434,7 +434,7 @@ const DEFAULTS = {
   rail: "md",
   stock: { gold: [100 / 25.4, 50 / 25.4], silver: [100 / 25.4, 50 / 25.4], rose: [100 / 25.4, 50 / 25.4], gold10k: [100 / 25.4, 50 / 25.4], gold14k: [100 / 25.4, 50 / 25.4] },
   clearancePt: -0.5, insetPt: 1.5, angleStep: 30, budgetS: 180, seed: 1, serverAbove: 0, parallel: 0,
-  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", aiRounds: 10, snapIn: 0.25, maxFill: 0.74, v: 9
+  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", aiRounds: 10, snapIn: 0.25, maxFill: 0.75, v: 10
 };
 /* The two plates production actually uses. Sizes are held in mm; `w`/`h` stay in inches for the code that reads them. */
 const STOCK_PRESETS = [
@@ -490,7 +490,8 @@ function loadSettings() {
     if ((saved.v || 1) < 6) { saved.budgetS = 180; saved.parallel = 0; saved.v = 6; }   // v6: parallel searches (all cores but one), 3-minute ceiling
     if ((saved.v || 1) < 7) { saved.maxFill = 0.72; saved.v = 7; }                        // v7: 72 % is the maximum fill of any sheet; the rest goes to the next sheet
     if ((saved.v || 1) < 8) { saved.maxFill = 0.74; saved.v = 8; }                        // v8: 74 % ceiling, measured on the stamped footprint like the readout
-    if ((saved.v || 1) < 9) { saved.serverAbove = 0; saved.v = 9; }                       // v9: no charm-count maximum — the browser solver takes every sheet and fills it up to the ceiling
+    if ((saved.v || 1) < 9) { saved.serverAbove = 0; saved.v = 9; }
+    if ((saved.v || 1) < 10) { saved.maxFill = 0.75; saved.v = 10; }                     // v10: 75 % ceiling                       // v9: no charm-count maximum — the browser solver takes every sheet and fills it up to the ceiling
     const out = Object.assign({}, DEFAULTS, saved); out.stock = Object.assign({}, DEFAULTS.stock, saved.stock || {}); return out;
   } catch (_) { return Object.assign({}, DEFAULTS, { v: 2 }); }
 }
@@ -1017,7 +1018,7 @@ function overflowToNextSheet(sh) {
   moving.forEach(c => { c.pinned = null; c.metal = sh.metal; next.charms.push(c); });
   sh.movedOn.page = next.page;
   computeSaturation(sh); computeSaturation(next); renderCard(sh);
-  agent({ metal: sh.metal }, "nest", `Sheet ${sh.page} is full at its ${fmt.pct(+S.settings.maxFill || 0.74)} ceiling — ${moving.length} charm(s) moved to sheet ${next.page}: ${sh.movedOn.names.slice(0, 6).join(", ")}${moving.length > 6 ? "…" : ""}`);
+  agent({ metal: sh.metal }, "nest", `Sheet ${sh.page} is full at its ${fmt.pct(+S.settings.maxFill || 0.75)} ceiling — ${moving.length} charm(s) moved to sheet ${next.page}: ${sh.movedOn.names.slice(0, 6).join(", ")}${moving.length > 6 ? "…" : ""}`);
   toast(`${labelOf(sh.metal)}: ${moving.length} charm(s) moved to sheet ${next.page} — nesting it now`, "ok", 4200);
   renderRail(); updateTopSub();
   startNest(next);
@@ -1050,7 +1051,7 @@ function computeSaturation(sh) {
   const totalNeeded = items.reduce((s, c) => s + inflatedArea(c), 0);
   const freeFact = live ? live.freePt2 : usable;
   const fullPct = live ? Math.min(1, 1 - live.freePt2 / (live.usablePt2 || usable)) : 0;
-  const cap = +S.settings.maxFill || 0.74;
+  const cap = +S.settings.maxFill || 0.75;
   const rho = Math.min(rt.rho, cap);                       // never estimate past the ceiling
   const capacity = usable * rho - (live ? placedArea : 0);
   const remaining = items.filter(c => !placedIds.has(c.id));
@@ -1099,7 +1100,7 @@ function buildJob(sh) {
   return {
     sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0 },
     clearancePt: +S.settings.clearancePt || 0, angles: angleSet(), fineRes: 2, coarseRes: 0.5,
-    timeBudgetMs: (+S.settings.budgetS || 180) * 1000, maxTrials: 2000, seed: +S.settings.seed || 1, maxFill: +S.settings.maxFill || 0.74,
+    timeBudgetMs: (+S.settings.budgetS || 180) * 1000, maxTrials: 2000, seed: +S.settings.seed || 1, maxFill: +S.settings.maxFill || 0.75,
     pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
   };
 }
@@ -1332,7 +1333,7 @@ async function finishNest(sh, { result, error }) {
   sh.liveInfo = { freePt2: result.freePt2, usablePt2: result.usablePt2, placedPt2: result.placedPt2, pocket: result.pocket, placed: result.placements.length, total: items.length };
   if (result.endedBy === "cap" && result.rejects.length && result.usablePt2) {
     // the ceiling is arithmetic, not luck: the held-back pieces would push the total past it in any arrangement
-    const would = (result.placedPt2 + (result.cappedPt2 || 0)) / result.usablePt2, cap = result.params.maxFill || 0.74;
+    const would = (result.placedPt2 + (result.cappedPt2 || 0)) / result.usablePt2, cap = result.params.maxFill || 0.75;
     agent({ metal: sh.metal }, "warn", `Ceiling: ${result.placements.length} placed fill ${fmt.pct(result.density)}; the remaining ${result.rejects.length} (${result.rejects.map(id => byId.get(id)?.name || id).join(", ")}) would bring the sheet to ${(would * 100).toFixed(1)}%, over the ${fmt.pct(cap)} maximum. No arrangement changes that total — more trials cannot help. Raise the ceiling in Settings to ${Math.ceil(would * 100)}% to fit them here, or let them go to the next sheet.`);
   }
   sh.solveParams = result.params; sh.elapsedMs = result.elapsedMs; sh.density = result.density; sh.t0 = sheetT0(sh);
@@ -1884,7 +1885,7 @@ function openSettings() {
   $$("#railSeg button").forEach(b => b.classList.toggle("on", b.dataset.v === s.rail));
   for (const m of METALS) { $(`#st${cap(m.key)}W`).value = +(s.stock[m.key][0] * 25.4).toFixed(1); $(`#st${cap(m.key)}H`).value = +(s.stock[m.key][1] * 25.4).toFixed(1); }   // shown in mm, stored in inches
   $("#stClearance").value = +(s.clearancePt * MM_PER_PT).toFixed(2); $("#stInset").value = +(s.insetPt * MM_PER_PT).toFixed(2);   // shown in mm, stored in pt $("#stAngle").value = s.angleStep; $("#stBudget").value = s.budgetS; $("#stParallel").value = s.parallel || 0; $("#stSeed").value = s.seed; $("#stServerAbove").value = s.serverAbove;
-  $("#stMinPt").value = s.minPt; $("#stVerifyRes").value = s.verifyRes; $("#stNaming").value = s.naming; $("#stReview").value = s.review || "on"; $("#stEngine").value = s.engine || "solver"; $("#stMaxFill").value = Math.round((s.maxFill || 0.74) * 100); $("#stAiRounds").value = s.aiRounds || 10; $("#stSnapIn").value = +(((s.snapIn == null ? 0.25 : s.snapIn) * 25.4).toFixed(1)); $("#stNotify").value = s.notify; $("#stSound").value = s.sound;
+  $("#stMinPt").value = s.minPt; $("#stVerifyRes").value = s.verifyRes; $("#stNaming").value = s.naming; $("#stReview").value = s.review || "on"; $("#stEngine").value = s.engine || "solver"; $("#stMaxFill").value = Math.round((s.maxFill || 0.75) * 100); $("#stAiRounds").value = s.aiRounds || 10; $("#stSnapIn").value = +(((s.snapIn == null ? 0.25 : s.snapIn) * 25.4).toFixed(1)); $("#stNotify").value = s.notify; $("#stSound").value = s.sound;
   openDlg($("#dlgSettings"));
 }
 const cap = s => s[0].toUpperCase() + s.slice(1);
