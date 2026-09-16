@@ -326,6 +326,50 @@
       await yieldNow();
     }
 
+    const maxFill = job.maxFill > 0 && job.maxFill < 1 ? job.maxFill : 1;   // hard ceiling on fill (solid cells / usable cells)
+
+    /* ── finishing push ─────────────────────────────────────────────────────
+       A layout one or two pieces short gets a targeted search for exactly those
+       pieces, at 5° steps, into that layout — instead of hoping a further blind
+       restart lands the gap. Runs on every new best that qualifies; if it fails,
+       the restarts simply continue.                                             */
+    async function finishPush(best) {
+      if (!best || !best.rejects.length || best.rejects.length > 2 || !best.grids || best.pushed) return;
+      if (cb.shouldStop && cb.shouldStop()) return;
+      best.pushed = true;
+      const fine = best.grids.fine, coarse = best.grids.coarse;
+      const total = prepared.length;
+      for (const id of best.rejects.slice()) {
+        const p = prepared.find(x => x.id === id); if (!p || p.pinned) continue;
+        if ((best.placedCells + p.solidFineCells) / usableCellsFine > maxFill) continue;
+        if (cb.onStage) cb.onStage("finish", best.placements.length, total);
+        const variants = p.variants.slice();
+        const fineBase = resample(pieces[p.idx].bits, pieces[p.idx].w, pieces[p.idx].h, pieces[p.idx].scale, fineRes);
+        for (let a = 0; a < 360; a += 5) {
+          if (angles.includes(a)) continue;
+          const rot = rotateBitmap(fineBase.bits, fineBase.w, fineBase.h, a); if (!rot.w) continue;
+          const dil = erodeFine ? erode(rot.bits, rot.w, rot.h, erodeFine) : dilate(rot.bits, rot.w, rot.h, halfGapFine);
+          if (!dil.w || !areaOf(dil.bits)) continue;
+          const rg = ring(dil.bits, dil.w, dil.h, Math.max(2, Math.round(2 * fineRes)));
+          const co = majority(dil.bits, dil.w, dil.h, ratio);
+          variants.push({ angle: a, fine: { bits: dil.bits, w: dil.w, h: dil.h, pm: packShifted(dil.bits, dil.w, dil.h) }, solid: { bits: rot.bits, w: rot.w, h: rot.h, cx: rot.cx + halfGapFine - erodeFine, cy: rot.cy + halfGapFine - erodeFine }, ringFine: packShifted(rg.bits, rg.w, rg.h), ringPad: Math.max(2, Math.round(2 * fineRes)), coarse: { pm: packShifted(co.bits, co.w, co.h), w: co.w, h: co.h } });
+        }
+        const pos = search({ variants }, fine, coarse, ratio, 0.35, 0, random, 0, 0);
+        if (!pos) continue;
+        const { v, x, y } = pos;
+        fine.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y);
+        for (let r = 0; r < v.fine.h; r++) for (let c = 0; c < v.fine.w; c++) if (v.fine.bits[r * v.fine.w + c]) { const gx = Math.floor((x + c) / ratio), gy = Math.floor((y + r) / ratio); if (gx >= 0 && gy >= 0 && gx < coarse.W && gy < coarse.H) coarse.set(gx, gy); }
+        coarse.buildSAT();
+        const pl = { id, angle: v.angle, cxPt: (x + v.solid.cx) / fineRes, cyPt: (y + v.solid.cy) / fineRes, xPt: (x + (v.fine.w - v.solid.w) / 2) / fineRes, yPt: (y + (v.fine.h - v.solid.h) / 2) / fineRes, wPt: v.solid.w / fineRes, hPt: v.solid.h / fineRes, contact: pos.contact || 0, finishing: true };
+        best.placements.push(pl); best.rejects = best.rejects.filter(r => r !== id);
+        best.placedCells += p.solidFineCells; best.placedPt2 = best.placedCells / (fineRes * fineRes);
+        best.density = best.placedCells / usableCellsFine; best.freePt2 = fine.freeCells() / (fineRes * fineRes); best.pocket = pocketPt(coarse, coarseRes);
+        if (cb.onPlaced) cb.onPlaced(pl, { trial: best.trial, placed: best.placements.length, total, freePt2: best.freePt2, usablePt2: usableCellsFine / (fineRes * fineRes), placedPt2: best.placedPt2, pocket: best.pocket, finishing: true });
+        if (cb.onBest) cb.onBest(best, { trial: best.trial, placed: best.placements.length, total, rejects: best.rejects, density: best.density, elapsedMs: now() - t0, finishing: true });
+        await yieldNow();
+      }
+    }
+
     /* ── trials ─────────────────────────────────────────────────────────── */
     let best = null, trials = 0, endedBy = "budget", failStreak = 0;
     const byAreaDesc = prepared.slice().sort((a, b) => b.areaPt2 - a.areaPt2);
@@ -340,13 +384,18 @@
       const noise = trial === 0 ? 0 : random() * 0.15;
       const cornerX = trial === 0 ? 0 : (random() < 0.7 ? 0 : 1), cornerY = trial === 0 ? 0 : (random() < 0.7 ? 0 : 1);
       const fine = baseFine.clone(), coarse = baseCoarse.clone();
-      const placements = [], rejects = [];
+      const placements = [], rejects = [], capped = [];
       let placedCells = 0;
 
       for (let pi = 0; pi < pinnedFirst.length; pi++) {
         const p = pinnedFirst[pi];
         if (stopped()) break;
         let bestPos = null;
+        if (!p.pinned && (placedCells + p.solidFineCells) / usableCellsFine > maxFill) {
+          rejects.push(p.id); capped.push(p.id);
+          if (cb.onReject) cb.onReject(p.id, trial, "cap");
+          await yieldNow(); continue;
+        }
         if (p.pinned) {
           const v = p.variants[0];
           const x = Math.round(p.pinned.cxPt * fineRes - v.solid.cx), y = Math.round(p.pinned.cyPt * fineRes - v.solid.cy);
@@ -356,7 +405,7 @@
         }
         if (!bestPos) {
           rejects.push(p.id);
-          if (cb.onReject) cb.onReject(p.id, trial);
+          if (cb.onReject) cb.onReject(p.id, trial, "nofit");
         } else {
           const { v, x, y } = bestPos;
           fine.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y);
@@ -400,20 +449,24 @@
         (placements.length === best.placements.length && compactness(placements) < compactness(best.placements));
       if (better) {
         failStreak = 0;
-        best = { placements, rejects, density: summary.density, trial, usablePt2: usableCellsFine / (fineRes * fineRes),
-          freePt2: fine.freeCells() / (fineRes * fineRes), placedPt2: placedCells / (fineRes * fineRes),
-          pocket: pocketPt(coarse, coarseRes) };
+        best = { placements, rejects, capped: capped.slice(), density: summary.density, trial, usablePt2: usableCellsFine / (fineRes * fineRes),
+          freePt2: fine.freeCells() / (fineRes * fineRes), placedPt2: placedCells / (fineRes * fineRes), placedCells,
+          pocket: pocketPt(coarse, coarseRes), grids: { fine, coarse } };
         if (cb.onBest) cb.onBest(best, summary);
+        // one or two short (and not because of the cap): targeted push into this very layout
+        if (rejects.length && rejects.length <= 2 && rejects.every(id => !capped.includes(id))) await finishPush(best);
       } else failStreak++;
       if (cb.onTrial) cb.onTrial(Object.assign({ better }, summary));
-      if (placements.length === pinnedFirst.length) { endedBy = "complete"; break; }
+      if (best && best.placements.length === pinnedFirst.length) { endedBy = "complete"; break; }
+      if (best && best.rejects.length && best.rejects.every(id => best.capped.includes(id))) { endedBy = "cap"; break; }   // only the ceiling holds pieces back
       await yieldNow();
     }
     if (trials >= maxTrials && endedBy === "budget") endedBy = "trials";
+    if (best && best.grids) delete best.grids;
     if (!best) best = { placements: [], rejects: prepared.map(p => p.id), density: 0, trial: -1, usablePt2: usableCellsFine / (fineRes * fineRes), freePt2: usableCellsFine / (fineRes * fineRes), placedPt2: 0, pocket: pocketPt(baseCoarse, coarseRes) };
     return Object.assign({}, best, {
       endedBy, trials, elapsedMs: now() - t0,
-      params: { seed: job.seed == null ? 1 : job.seed, angles, clearancePt, insetPt, fineRes, coarseRes, pieceOrder: byAreaDesc.map(p => p.id) }
+      params: { seed: job.seed == null ? 1 : job.seed, angles, clearancePt, insetPt, fineRes, coarseRes, maxFill, pieceOrder: byAreaDesc.map(p => p.id) }
     });
   }
 

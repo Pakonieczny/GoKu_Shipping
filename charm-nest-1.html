@@ -348,8 +348,8 @@ dialog.wide{width:min(980px,95vw)}
     <div class="field"><div class="help">The reference box measured 7.125 × 6.03 in (513.03 × 434.19 pt). Change a metal's stock here if it cuts at a different size; the sheet outline in the output follows it.</div></div>
     <div class="section">Nesting engine</div>
     <div class="fieldRow">
-      <div class="field"><label>Engine</label><select id="stEngine"><option value="ai">Claude places every charm (AI)</option><option value="solver">Geometric solver (restarts within a time budget)</option></select><div class="help">AI: Claude Opus 5 plans each placement from the rendered sheet, the measuring tool executes it exactly (sliding up to the snap distance if two pieces collide) and reports back; rounds continue until everything is placed or Claude says the sheet is full. No random trials.</div></div>
-      <div class="field"><label>AI rounds · snap (in)</label><div class="fieldRow"><input id="stAiRounds" type="number" min="1" max="30" step="1"><input id="stSnapIn" type="number" min="0" max="1" step="0.05"></div><div class="help">Max planning rounds per sheet, and how far a colliding piece may slide to clear a neighbour.</div></div>
+      <div class="field"><label>Engine</label><select id="stEngine"><option value="solver">Claude-reviewed geometric nesting (the process that produced 21/21 at 71%)</option><option value="ai">Claude places every charm itself (experimental — reached 55%)</option></select><div class="help">Recommended: Claude judges the grouping from the source page, the geometry places the pieces (contact-scored, restarting until every piece is placed, with a targeted 5° push for the last one or two), two verifiers check the result, Claude inspects the finished sheet.</div></div>
+      <div class="field"><label>Fill ceiling (%) · AI rounds · snap (in)</label><div class="fieldRow3"><input id="stMaxFill" type="number" min="30" max="100" step="1"><input id="stAiRounds" type="number" min="1" max="30" step="1"><input id="stSnapIn" type="number" min="0" max="1" step="0.05"></div><div class="help">The sheet is never filled past the ceiling; pieces that would cross it wait for a second sheet. Rounds and snap apply to the experimental engine only.</div></div>
     </div>
     <div class="section">Geometry (measuring tool · solver option)</div>
     <div class="fieldRow3">
@@ -358,7 +358,7 @@ dialog.wide{width:min(980px,95vw)}
       <div class="field"><label>Angle step (°)</label><select id="stAngle"><option value="90">90 (4 angles)</option><option value="45">45 (8)</option><option value="30">30 (12)</option><option value="15">15 (24)</option></select></div>
     </div>
     <div class="fieldRow3">
-      <div class="field"><label>Time budget (s)</label><input id="stBudget" type="number" step="5" min="10" max="900"></div>
+      <div class="field"><label>Time ceiling (s)</label><input id="stBudget" type="number" step="5" min="10" max="900"><div class="help">The solver stops the moment every piece is placed; this only caps a sheet that cannot be completed.</div></div>
       <div class="field"><label>Seed</label><input id="stSeed" type="number" step="1" min="1"><div class="help">Same seed + same queue = same layout.</div></div>
       <div class="field"><label>Server fallback above</label><input id="stServerAbove" type="number" step="1" min="0"><div class="help">Pieces. 0 = never use the server solver.</div></div>
     </div>
@@ -418,8 +418,8 @@ const METALS = [
 const DEFAULTS = {
   rail: "md",
   stock: { gold: [7.125, 6.03], silver: [7.125, 6.03], rose: [7.125, 6.03] },
-  clearancePt: -0.5, insetPt: 1.5, angleStep: 30, budgetS: 180, seed: 1, serverAbove: 80,
-  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "ai", aiRounds: 10, snapIn: 0.25, v: 3
+  clearancePt: -0.5, insetPt: 1.5, angleStep: 30, budgetS: 600, seed: 1, serverAbove: 80,
+  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", aiRounds: 10, snapIn: 0.25, maxFill: 0.75, v: 5
 };
 const STOCK_PRESETS = [
   { id: "ref", label: "7.125 × 6.03 in (reference)", w: 7.125, h: 6.03 },
@@ -466,7 +466,11 @@ function loadSettings() {
     const saved = JSON.parse(localStorage.getItem("cn.settings") || "{}");
     // v2: aggressive clearance became the default (shared cut lines); migrate settings saved before that once
     if ((saved.v || 1) < 2) { saved.clearancePt = DEFAULTS.clearancePt; saved.v = 2; }
-    if ((saved.v || 1) < 3) { saved.engine = "ai"; saved.v = 3; }          // v3: Claude places every charm; the solver is an explicit option
+    if ((saved.v || 1) < 3) { saved.engine = "ai"; saved.v = 3; }
+    // v5: back to the process that produced 21/21 at 71% — Claude reviews the grouping, the geometry
+    // places until the sheet is complete (the clock is only a ceiling), verifiers check, Claude inspects.
+    // 75% is a hard ceiling on fill.
+    if ((saved.v || 1) < 5) { saved.engine = "solver"; saved.budgetS = 600; saved.maxFill = 0.75; saved.v = 5; }
     return Object.assign({}, DEFAULTS, saved);
   } catch (_) { return Object.assign({}, DEFAULTS, { v: 2 }); }
 }
@@ -965,25 +969,27 @@ function computeSaturation(sh) {
   const totalNeeded = items.reduce((s, c) => s + inflatedArea(c), 0);
   const freeFact = live ? live.freePt2 : usable;
   const fullPct = live ? Math.min(1, 1 - live.freePt2 / (live.usablePt2 || usable)) : 0;
-  const capacity = usable * rt.rho - (live ? placedArea : 0);
+  const cap = +S.settings.maxFill || 0.75;
+  const rho = Math.min(rt.rho, cap);                       // never estimate past the ceiling
+  const capacity = usable * rho - (live ? placedArea : 0);
   const remaining = items.filter(c => !placedIds.has(c.id));
   const meanA = (remaining.length ? remaining : items).reduce((s, c) => s + inflatedArea(c), 0) / Math.max(1, (remaining.length ? remaining : items).length);
-  let nEst = meanA > 0 ? Math.floor(capacity / meanA) : 0, lo = meanA > 0 ? Math.floor((usable * rt.lo - placedArea) / meanA) : 0, hi = meanA > 0 ? Math.floor((usable * rt.hi - placedArea) / meanA) : 0;
+  let nEst = meanA > 0 ? Math.floor(capacity / meanA) : 0, lo = meanA > 0 ? Math.floor((usable * Math.min(rt.lo, cap) - placedArea) / meanA) : 0, hi = meanA > 0 ? Math.floor((usable * Math.min(rt.hi, cap) - placedArea) / meanA) : 0;
   nEst = Math.max(0, nEst); lo = Math.max(0, Math.min(lo, nEst)); hi = Math.max(nEst, hi);
   const saturated = sh.rejects.length >= 2 || (sh.status === "partial" && sh.rejects.length > 0);
   if (saturated) { nEst = 0; lo = 0; hi = 0; }
   // will the queue fit? (before nesting: honest estimate against ρ_target)
-  const over = totalNeeded - usable * rt.rho;
+  const over = totalNeeded - usable * cap;                  // the ceiling is the line, not the estimate
   let recommend = null;
   if (!live && over > 0 && items.length) {
     const sorted = items.slice().sort((a, b) => inflatedArea(b) - inflatedArea(a));
     let acc = 0, n = 0; for (const c of sorted) { acc += inflatedArea(c); n++; if (acc >= over) break; }
     // what could take the largest piece's place: the headroom left once only the largest is removed
-    const swapArea = usable * rt.rho - (totalNeeded - inflatedArea(sorted[0]));
+    const swapArea = usable * cap - (totalNeeded - inflatedArea(sorted[0]));
     recommend = { overPt2: over, removeN: n, removeNames: sorted.slice(0, n).map(c => c.name || `#${c.index + 1}`), swapArea, largest: sorted[0] };
   }
   const pocket = live && live.pocket ? live.pocket : null;
-  sh.sat = { usable, fullPct, freeFact, placedArea, queuedArea, totalNeeded, nEst, lo, hi, rho: rt, saturated, recommend, pocket, count: items.length, placed: placedIds.size };
+  sh.sat = { usable, fullPct, freeFact, placedArea, queuedArea, totalNeeded, nEst, lo, hi, rho: Object.assign({}, rt, { rho, cap }), saturated, recommend, pocket, count: items.length, placed: placedIds.size };
   return sh.sat;
 }
 
@@ -1002,7 +1008,7 @@ function buildJob(sh) {
   return {
     sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0 },
     clearancePt: +S.settings.clearancePt || 0, angles: angleSet(), fineRes: 2, coarseRes: 0.5,
-    timeBudgetMs: (+S.settings.budgetS || 180) * 1000, maxTrials: 600, seed: +S.settings.seed || 1,
+    timeBudgetMs: (+S.settings.budgetS || 600) * 1000, maxTrials: 2000, seed: +S.settings.seed || 1, maxFill: +S.settings.maxFill || 0.75,
     pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
   };
 }
@@ -1018,10 +1024,10 @@ function startNest(sh) {
   sh.status = "nesting"; sh.startedAt = performance.now(); sh.placements = []; sh.rejects = []; sh.outputs = null; sh.verification = null; sh.best = null; sh.trials = 0; sh.liveInfo = null; sh.endedBy = null;
   sh.jobId = uid(); sh.stage = "Preparing rotations…"; sh.progress = [0, items.length]; sh.dirty = false;
   log(sh, `nest started · ${items.length} pieces · seed ${S.settings.seed} · clearance ${S.settings.clearancePt} pt`);
-  sh.evNest = (S.settings.engine || "ai") === "ai" ? null : agent({ metal: sh.metal }, "nest", `Solver: ${items.length} pieces · seed ${S.settings.seed} · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · up to ${S.settings.budgetS}s`, { live: true });
+  sh.evNest = (S.settings.engine || "solver") === "ai" ? null : agent({ metal: sh.metal }, "nest", `Solver: ${items.length} pieces · seed ${S.settings.seed} · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · up to ${S.settings.budgetS}s`, { live: true });
   renderCard(sh); drawPreview(sh);
   const job = buildJob(sh);
-  if ((S.settings.engine || "ai") === "ai") { startAINest(sh, items).catch(e => finishNest(sh, { error: e.message })); return; }
+  if ((S.settings.engine || "solver") === "ai") { startAINest(sh, items).catch(e => finishNest(sh, { error: e.message })); return; }
   const useServer = S.settings.serverAbove > 0 && items.length > S.settings.serverAbove && S.cloud.ok;
   if (useServer) return startServerNest(sh, job);
   ensureWorker(sh).postMessage({ type: "solve", jobId: sh.jobId, job });
@@ -1120,7 +1126,7 @@ async function startAINest(sh, items) {
     params: { seed: 0, angles: [...new Set(sh.placements.map(p => p.angle))], clearancePt: clearance, insetPt: inset, fineRes: 2, coarseRes: 0.5, engine: "claude", rounds }
   } });
 }
-function stopNest(sh) { if (sh.status !== "nesting") return; sh.stage = "Stopping after this piece…"; renderCard(sh); if ((S.settings.engine || "ai") === "ai") { sh.status = "ready"; sh.stage = ""; agent({ metal: sh.metal }, "info", "Stopped by operator"); renderCard(sh); return; } if (sh.serverJob) { api("charmNestLibrary", { op: "stopJob", id: sh.serverJob }).catch(() => {}); } else if (sh.worker) sh.worker.postMessage({ type: "stop", jobId: sh.jobId }); }
+function stopNest(sh) { if (sh.status !== "nesting") return; sh.stage = "Stopping after this piece…"; renderCard(sh); if ((S.settings.engine || "solver") === "ai") { sh.status = "ready"; sh.stage = ""; agent({ metal: sh.metal }, "info", "Stopped by operator"); renderCard(sh); return; } if (sh.serverJob) { api("charmNestLibrary", { op: "stopJob", id: sh.serverJob }).catch(() => {}); } else if (sh.worker) sh.worker.postMessage({ type: "stop", jobId: sh.jobId }); }
 function onWorkerMessage(sh, m) {
   if (m.jobId !== sh.jobId) return;
   const items = activeCharms(sh); const byId = new Map(items.map(c => [c.id, c]));
@@ -1137,7 +1143,7 @@ function onWorkerMessage(sh, m) {
       sh.stage = `Trial ${m.info.trial + 1} · placing ${byId.get(m.placement.id)?.name || m.placement.id} · ${m.info.placed}/${m.info.total}`;
       computeSaturation(sh); renderProgress(sh); renderSat(sh); drawPreview(sh); break;
     }
-    case "reject": log(sh, `trial ${m.trial + 1}: ${byId.get(m.id)?.name || m.id} did not fit`); break;
+    case "reject": log(sh, `trial ${m.trial + 1}: ${byId.get(m.id)?.name || m.id} ${m.reason === "cap" ? "held back by the fill ceiling" : "did not fit"}`); break;
     case "trial": { sh.trials = m.summary.trial + 1; if (!m.summary.better) sh.stage = `Trial ${sh.trials} · best so far ${sh.best ? sh.best.placements.length : 0}/${m.summary.total} · ${fmt.s(m.summary.elapsedMs)}`; renderProgress(sh); break; }
     case "best": { if (sh.evNest) agentUpdate(sh.evNest, { text: `Trial ${m.summary.trial + 1}: ${m.best.placements.length}/${m.summary.total} placed at ${fmt.pct(m.best.density)} — best so far`, elapsed: m.summary.elapsedMs }); sh.best = m.best; sh.bestTrial = m.summary.trial; sh.placements = m.best.placements; sh.rejects = m.best.rejects.slice(); sh.liveInfo = Object.assign({}, sh.liveInfo || {}, { freePt2: m.best.freePt2, usablePt2: m.best.usablePt2, placedPt2: m.best.placedPt2, pocket: m.best.pocket }); log(sh, `trial ${m.summary.trial + 1}: ${m.best.placements.length}/${m.summary.total} placed · ${fmt.pct(m.best.density)}`); computeSaturation(sh); renderSat(sh); drawPreview(sh); break; }
     case "done": finishNest(sh, { result: m.result }); break;
@@ -1234,7 +1240,7 @@ async function finishNest(sh, { result, error }) {
   pumpNestQueue();
 }
 function pumpNestQueue() { const next = S.nestQueue.shift(); if (next && next.status === "queued") { next.status = "ready"; startNest(next); } }
-const endedText = e => ({ complete: "all pieces placed", budget: "time budget", stopped: "operator stop", trials: "restart cap", rounds: "planning-round cap", "claude-full": "Claude judged the sheet full" }[e] || e);
+const endedText = e => ({ complete: "all pieces placed", budget: "time ceiling", stopped: "operator stop", trials: "restart cap", cap: "fill ceiling reached", rounds: "planning-round cap", "claude-full": "Claude judged the sheet full" }[e] || e);
 function buildReport(sh, result, items) {
   const byId = new Map(items.map(c => [c.id, c])); const st = stockFor(sh.metal);
   return {
@@ -1402,7 +1408,7 @@ function renderCard(sh) {
   q("clear").disabled = !sh.charms.length;
   // rejects tray
   const rj = q("rejects"); const byId = new Map(sh.charms.map(c => [c.id, c]));
-  if ((sh.status === "partial" || sh.status === "complete") && sh.rejects.length) { rj.classList.remove("hidden"); rj.innerHTML = `<b>${sh.rejects.length} need another sheet</b><span class="thumbs">${sh.rejects.slice(0, 8).map(id => `<img src="${byId.get(id)?.thumb || ""}" title="${esc(byId.get(id)?.name || id)}">`).join("")}</span><span>${sh.rejects.map(id => esc(byId.get(id)?.name || id)).slice(0, 4).join(", ")}${sh.rejects.length > 4 ? "…" : ""}</span>`; }
+  if ((sh.status === "partial" || sh.status === "complete") && sh.rejects.length) { rj.classList.remove("hidden"); rj.innerHTML = `<b>${sh.rejects.length} need another sheet${sh.endedBy === "cap" ? " (held back by the fill ceiling)" : ""}</b><span class="thumbs">${sh.rejects.slice(0, 8).map(id => `<img src="${byId.get(id)?.thumb || ""}" title="${esc(byId.get(id)?.name || id)}">`).join("")}</span><span>${sh.rejects.map(id => esc(byId.get(id)?.name || id)).slice(0, 4).join(", ")}${sh.rejects.length > 4 ? "…" : ""}</span>`; }
   else rj.classList.add("hidden");
   // queue thumbnails
   const placed = new Set(sh.placements.map(p => p.id)), rejected = new Set(sh.rejects);
@@ -1426,8 +1432,8 @@ function renderProgress(sh) {
     if (p.parentElement.classList.contains("bp-meter")) { const pct = Math.round(p.value / p.max * 100); p.parentElement.dataset.label = sh.progressKind === "prepare" ? `preparing ${pct}%` : sh.progressKind === "finish" ? `finishing ${pct}%` : `${p.value}/${p.max} placed · ${pct}%`; p.parentElement.style.setProperty("--bp-pct", pct + "%"); p.parentElement.dataset.determinate = "true"; }
   }
   const st = q("stage"); const elapsed = sh.startedAt && ["nesting", "finishing"].includes(sh.status) ? fmt.s(performance.now() - sh.startedAt) : (sh.elapsedMs ? fmt.s(sh.elapsedMs) : "");
-  const budget = sh.status === "nesting" ? ((S.settings.engine || "ai") === "ai" ? ` · round ${sh.aiRound || 1}/${S.settings.aiRounds || 10}` : ` / ${S.settings.budgetS}s`) : "";
-  const trials = sh.trials ? ((S.settings.engine || "ai") === "ai" && !sh.solveParams?.seed ? ` · ${sh.trials} round${sh.trials > 1 ? "s" : ""}` : ` · ${sh.trials} trial${sh.trials > 1 ? "s" : ""}`) : "";
+  const budget = sh.status === "nesting" ? ((S.settings.engine || "solver") === "ai" ? ` · round ${sh.aiRound || 1}/${S.settings.aiRounds || 10}` : ` / ${S.settings.budgetS}s`) : "";
+  const trials = sh.trials ? ((S.settings.engine || "solver") === "ai" && !sh.solveParams?.seed ? ` · ${sh.trials} round${sh.trials > 1 ? "s" : ""}` : ` · ${sh.trials} trial${sh.trials > 1 ? "s" : ""}`) : "";
   const reviewingSrc = S.sources.find(s => s.review && s.review.state === "running" && s.charms.some(c => c.metal === sh.metal));
   const ai = sh.aiReview ? (sh.aiReview.state === "running" ? ` · <span class="spin"></span> Claude inspecting · ${fmt.s(sh.aiReview.elapsed || 0)}` : sh.aiReview.skipped ? "" : sh.aiReview.ok ? " · Claude ✓" : ` · ⚠ Claude: ${sh.aiReview.issues.length} issue(s)`) : "";
   st.innerHTML = sh.stage ? `<span class="spin"></span><span>${esc(sh.stage)}</span><span class="r">${elapsed}${budget}${trials}</span>`
@@ -1441,18 +1447,18 @@ function renderSat(sh) {
   if (!activeCharms(sh).length) { box.innerHTML = `<div class="fact"><b>0%</b><span class="free">${fmt.pt2(s.usable)} usable · ${fmt.in(stockFor(sh.metal).wPt)} × ${fmt.in(stockFor(sh.metal).hPt)}</span></div><div class="bar"><i style="width:0"></i></div><div class="est"><span class="lbl">estimate</span>drop charms to see how many fit</div>`; return; }
   const live = !!sh.liveInfo;
   const needPct = Math.min(1.6, s.totalNeeded / s.usable);
-  const fact = live ? `<div class="fact"><b>${fmt.pct(s.fullPct)}</b><span>full</span><span class="free">· ${fmt.pt2(s.freeFact)} free</span></div><div class="bar"><i style="width:${Math.round(s.fullPct * 100)}%"></i><em style="left:${Math.round(s.rho.rho * 100)}%" title="ρ target"></em></div>`
-    : `<div class="fact"><b>${fmt.pct(Math.min(1, s.totalNeeded / s.usable))}</b><span>of the sheet needed</span><span class="free">· ${s.count} charms · ${fmt.pt2(s.totalNeeded)} incl. clearance</span></div><div class="bar"><i style="width:${Math.round(Math.min(1, needPct) * 100)}%;${needPct > s.rho.rho ? "background:var(--clay)" : ""}"></i><em style="left:${Math.round(s.rho.rho * 100)}%" title="ρ target — the density the solver can reach for this shape mix"></em></div>`;
+  const fact = live ? `<div class="fact"><b>${fmt.pct(s.fullPct)}</b><span>full</span><span class="free">· ${fmt.pt2(s.freeFact)} free</span></div><div class="bar"><i style="width:${Math.round(s.fullPct * 100)}%"></i><em style="left:${Math.round(s.rho.cap * 100)}%" title="fill ceiling"></em></div>`
+    : `<div class="fact"><b>${fmt.pct(Math.min(1, s.totalNeeded / s.usable))}</b><span>of the sheet needed</span><span class="free">· ${s.count} charms · ${fmt.pt2(s.totalNeeded)} incl. clearance</span></div><div class="bar"><i style="width:${Math.round(Math.min(1, needPct) * 100)}%;${needPct > s.rho.rho ? "background:var(--clay)" : ""}"></i><em style="left:${Math.round(s.rho.cap * 100)}%" title="fill ceiling"></em></div>`;
   let est;
   if (s.saturated) est = `<div class="est"><span class="lbl">estimate</span><b>sheet is saturated</b> · ${sh.rejects.length} could not be placed</div>`;
-  else est = `<div class="est"><span class="lbl">estimate</span>≈ <b>${s.nEst} more fit</b> (${s.lo}–${s.hi}) · ρ<sub>target</sub> ${fmt.pct(s.rho.rho)}${s.rho.n ? ` from ${s.rho.n} past sheets` : " (seed)"}</div>`;
+  else est = `<div class="est"><span class="lbl">estimate</span>≈ <b>${s.nEst} more fit</b> (${s.lo}–${s.hi}) under the ${fmt.pct(s.rho.cap)} ceiling · reachable density ${fmt.pct(s.rho.rho)}${s.rho.n ? ` from ${s.rho.n} past sheets` : ""}</div>`;
   let extra = "";
   if (s.pocket && s.pocket.wPt > 4 && s.pocket.hPt > 4) extra += `<div class="est"><span class="lbl">open pocket</span>largest empty rectangle ≈ <b>${fmt.in(s.pocket.wPt)} × ${fmt.in(s.pocket.hPt)}</b> (${fmt.mm(s.pocket.wPt)} × ${fmt.mm(s.pocket.hPt)}) — a charm up to that size still fits</div>`;
   if (s.recommend) {
     const r = s.recommend; const side = Math.sqrt(Math.max(0, r.swapArea)); const L = r.largest;
     const swap = r.swapArea > 0 ? ` Or swap the largest, ${esc(L.name || "#" + (L.index + 1))} (${fmt.in(L.widthPt)} × ${fmt.in(L.heightPt)}), for a charm up to about <b>${fmt.in(side)} × ${fmt.in(side)}</b> (${fmt.mm(side)} sq).` : "";
-    extra += `<div class="warn"><b>Too much for one sheet</b> — over by ≈ ${fmt.pt2(r.overPt2)} at ρ ${fmt.pct(s.rho.rho)}. Remove the ${r.removeN} largest (${esc(r.removeNames.join(", "))}) and the rest should fit.${swap} Or nest anyway — rejects go straight to a second sheet.</div>`;
-  } else if (!live && s.count) extra += `<div class="good">Fits comfortably: ${fmt.pt2(Math.max(0, s.usable * s.rho.rho - s.totalNeeded))} of headroom at ρ ${fmt.pct(s.rho.rho)}.</div>`;
+    extra += `<div class="warn"><b>Over the ${fmt.pct(s.rho.cap)} ceiling</b> — the queue would fill ${fmt.pct(s.totalNeeded / s.usable)}, ≈ ${fmt.pt2(r.overPt2)} too much. Hold back the ${r.removeN} largest (${esc(r.removeNames.join(", "))}) and the rest stays under the line.${swap} Or nest anyway — whatever would cross the ceiling waits for a second sheet.</div>`;
+  } else if (!live && s.count) extra += `<div class="good">All ${s.count} placed would fill <b>${fmt.pct(s.totalNeeded / s.usable)}</b> of the usable sheet — under the ${fmt.pct(s.rho.cap)} ceiling with ${fmt.pt2(Math.max(0, s.usable * s.rho.cap - s.totalNeeded))} to spare.</div>`;
   box.innerHTML = fact + est + extra;
 }
 
@@ -1475,7 +1481,7 @@ function paintPreview(cv, sh, clean) {
   const sel = sh.selected;
   if (!clean && !sh.placements.length && sh.charms.length) {
     const n = activeCharms(sh).length; ctx.fillStyle = "rgba(147,140,128,.9)"; ctx.textAlign = "center"; ctx.font = `${Math.round(cv.width / 26)}px ${getComputedStyle(document.body).getPropertyValue("--serif")}`;
-    const ai = (S.settings.engine || "ai") === "ai";
+    const ai = (S.settings.engine || "solver") === "ai";
     ctx.fillText(sh.status === "nesting" ? (ai ? `Claude is planning round ${sh.aiRound || 1}` : "Preparing…") : `${n} charm${n === 1 ? "" : "s"} queued`, cv.width / 2, cv.height / 2 - cv.width / 60);
     ctx.font = `${Math.round(cv.width / 44)}px ${getComputedStyle(document.body).getPropertyValue("--sans")}`; ctx.fillStyle = "rgba(147,140,128,.75)";
     ctx.fillText(sh.status === "nesting" ? (ai ? "its moves will land here one by one" : "rotations and masks") : "press Nest to fill this sheet", cv.width / 2, cv.height / 2 + cv.width / 40);
@@ -1657,7 +1663,7 @@ function openSettings() {
   $$("#railSeg button").forEach(b => b.classList.toggle("on", b.dataset.v === s.rail));
   for (const m of METALS) { $(`#st${cap(m.key)}W`).value = s.stock[m.key][0]; $(`#st${cap(m.key)}H`).value = s.stock[m.key][1]; }
   $("#stClearance").value = s.clearancePt; $("#stInset").value = s.insetPt; $("#stAngle").value = s.angleStep; $("#stBudget").value = s.budgetS; $("#stSeed").value = s.seed; $("#stServerAbove").value = s.serverAbove;
-  $("#stMinPt").value = s.minPt; $("#stVerifyRes").value = s.verifyRes; $("#stNaming").value = s.naming; $("#stReview").value = s.review || "on"; $("#stEngine").value = s.engine || "ai"; $("#stAiRounds").value = s.aiRounds || 10; $("#stSnapIn").value = s.snapIn == null ? 0.25 : s.snapIn; $("#stNotify").value = s.notify; $("#stSound").value = s.sound;
+  $("#stMinPt").value = s.minPt; $("#stVerifyRes").value = s.verifyRes; $("#stNaming").value = s.naming; $("#stReview").value = s.review || "on"; $("#stEngine").value = s.engine || "solver"; $("#stMaxFill").value = Math.round((s.maxFill || 0.75) * 100); $("#stAiRounds").value = s.aiRounds || 10; $("#stSnapIn").value = s.snapIn == null ? 0.25 : s.snapIn; $("#stNotify").value = s.notify; $("#stSound").value = s.sound;
   openDlg($("#dlgSettings"));
 }
 const cap = s => s[0].toUpperCase() + s.slice(1);
@@ -1666,7 +1672,7 @@ function readSettings() {
   s.rail = $("#railSeg button.on")?.dataset.v || "md";
   for (const m of METALS) s.stock[m.key] = [+$(`#st${cap(m.key)}W`).value || DEFAULTS.stock[m.key][0], +$(`#st${cap(m.key)}H`).value || DEFAULTS.stock[m.key][1]];
   s.clearancePt = Math.max(-2, Math.min(12, +$("#stClearance").value || 0)); s.insetPt = Math.max(0, +$("#stInset").value || 0); s.angleStep = +$("#stAngle").value || 30; s.budgetS = Math.max(10, +$("#stBudget").value || 180); s.seed = Math.max(1, Math.round(+$("#stSeed").value || 1)); s.serverAbove = Math.max(0, +$("#stServerAbove").value || 0);
-  s.minPt = Math.max(1, +$("#stMinPt").value || 6); s.verifyRes = +$("#stVerifyRes").value || 6; s.naming = $("#stNaming").value; s.review = $("#stReview").value; s.engine = $("#stEngine").value; s.aiRounds = Math.max(1, Math.min(30, +$("#stAiRounds").value || 10)); s.snapIn = Math.max(0, Math.min(1, +$("#stSnapIn").value || 0)); s.notify = $("#stNotify").value; s.sound = $("#stSound").value;
+  s.minPt = Math.max(1, +$("#stMinPt").value || 6); s.verifyRes = +$("#stVerifyRes").value || 6; s.naming = $("#stNaming").value; s.review = $("#stReview").value; s.engine = $("#stEngine").value; s.maxFill = Math.max(0.3, Math.min(1, (+$("#stMaxFill").value || 75) / 100)); s.aiRounds = Math.max(1, Math.min(30, +$("#stAiRounds").value || 10)); s.snapIn = Math.max(0, Math.min(1, +$("#stSnapIn").value || 0)); s.notify = $("#stNotify").value; s.sound = $("#stSound").value;
   saveSettings(); refreshAllCards(); toast("Settings saved", "ok", 1800);
 }
 

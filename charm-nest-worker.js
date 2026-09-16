@@ -30,7 +30,7 @@ self.onmessage = async (e) => {
       shouldStop: () => state.stop,
       onStage: (stage, done, total) => post({ type: "stage", stage, done, total }),
       onPlaced: (placement, info) => post({ type: "placed", placement, info }),
-      onReject: (id, trial) => post({ type: "reject", id, trial }),
+      onReject: (id, trial, reason) => post({ type: "reject", id, trial, reason }),
       onTrial: (summary) => post({ type: "trial", summary }),
       onBest: (best, summary) => post({ type: "best", best, summary })
     });
