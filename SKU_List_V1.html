@@ -38,17 +38,42 @@
     .search .hint { position:absolute; right:10px; top:50%; transform:translateY(-50%); color:var(--dim2); font-size:11px; pointer-events:none; }
     .search .clear { position:absolute; right:8px; top:50%; transform:translateY(-50%); background:#2a2a2a; border:0; color:var(--dim); border-radius:6px; padding:3px 7px; cursor:pointer; font-size:12px; display:none; }
 
-    /* ── Section / filter chips ─────────────────────────────────────────── */
-    .chip {
-      background:#1a1a1a; border:1px solid var(--line2); color:var(--dim);
-      border-radius:999px; padding:6px 12px; cursor:pointer; font-size:12.5px;
-      display:inline-flex; align-items:center; gap:7px; white-space:nowrap;
+    /* ── Section / filter chips ───────────────────────────────────────────
+       This row is the console's primary navigation, so the targets are sized
+       for repeated use, not for decoration: 40px tall clears the ~44px touch
+       guidance at a comfortable density, and the selected chip is filled
+       rather than merely outlined so the active section is readable at a
+       glance from across a desk. The row scrolls sideways rather than
+       wrapping, which keeps the header a fixed height and stops the grid
+       jumping when a filter changes. */
+    .chiprow {
+      display:flex; gap:8px; align-items:center; padding:0 12px 10px;
+      overflow-x:auto; overflow-y:hidden; scrollbar-width:thin;
     }
-    .chip .n { color:var(--dim2); font-variant-numeric:tabular-nums; font-size:11.5px; }
-    .chip:hover { border-color:#3a3a3a; color:var(--text); }
-    .chip.on { background:#0d3b34; border-color:#00695c; color:#d7fff6; }
-    .chip.on .n { color:#8fdccd; }
-    .chip.flag.on { background:#3a2200; border-color:var(--warn); color:#ffd9b3; }
+    .chiprow::-webkit-scrollbar { height:6px; }
+    .chiprow::-webkit-scrollbar-thumb { background:#2e2e2e; border-radius:3px; }
+
+    .chip {
+      background:#1b1b1b; border:1px solid #333; color:#d6d6d6;
+      border-radius:999px; padding:0 16px; height:40px; cursor:pointer;
+      font-size:14px; font-weight:600; letter-spacing:.2px;
+      display:inline-flex; align-items:center; gap:8px; white-space:nowrap; flex:0 0 auto;
+      transition: background .12s, border-color .12s, color .12s;
+    }
+    .chip .n {
+      color:#9a9a9a; font-variant-numeric:tabular-nums; font-size:12.5px; font-weight:600;
+      background:#242424; border-radius:999px; padding:2px 8px; min-width:30px; text-align:center;
+    }
+    .chip:hover { background:#232323; border-color:#454545; color:#fff; }
+    .chip:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+
+    .chip.on { background:#00695c; border-color:#26a69a; color:#fff; }
+    .chip.on .n { background:#00897b; color:#e0f2f1; }
+    .chip.flag.on { background:#bf4a00; border-color:#ff8f3f; color:#fff; }
+    .chip.flag.on .n { background:#e2681a; color:#fff3e6; }
+
+    /* Separates the shop's own sections from the two state filters. */
+    .chipsep { flex:0 0 auto; width:1px; height:26px; background:#333; margin:0 4px; }
 
     .status { font-size:12px; color:#9ad; white-space:nowrap; }
     .status.bad { color:#ff8a80; }
@@ -112,8 +137,9 @@
       <button id="syncBtn" class="btn secondary" title="Fetch listings changed since the last sync · Shift-click to rebuild the whole catalog">Sync</button>
       <button id="connectEtsyBtn" class="btn">Connect Etsy</button>
       <span id="authStatus" class="status">Not connected</span>
+      <span class="meter" id="buildStamp" title="Console build — quote this if something misbehaves"></span>
     </div>
-    <div class="bar bar2" id="chipRow"></div>
+    <div class="chiprow" id="chipRow"></div>
     <div class="syncbar"><i id="syncProgress"></i></div>
   </header>
 
@@ -123,6 +149,11 @@
 
 <script>
 /** ============ Hard domain binding ============ */
+/* Bumped whenever this console changes in a way that matters operationally.
+   Shown in the header and quoted in any sync failure, so a stale tab running
+   against newer functions is identifiable from a screenshot instead of
+   guessed at. */
+const BUILD = "2026-09-16d";
 const ORIGIN = "https://sku.goldenspike.app";
 const functionsBaseUrl = ORIGIN + "/.netlify/functions";
 
@@ -644,8 +675,26 @@ async function fetchListingPage(offset, { sortByUpdated = true, limit = PAGE } =
   }
   return {
     results: Array.isArray(js.results) ? js.results : [],
-    total: Number(js.count) || null
+    total: Number(js.count) || null,
+    projection: (js._meta && js._meta.projection) || "full"
   };
+}
+
+/* Section chips are the console's primary navigation, so they are loaded
+   independently of the catalog walk: a sync that fails partway used to leave
+   the operator with no section shortcuts at all. One call, cached thereafter. */
+async function ensureSections(){
+  if (Catalog.sections.length || !getAccessToken()) return Catalog.sections;
+  try {
+    const sections = await fetchSections();
+    if (sections.length){
+      Catalog.sections = sections;
+      await Catalog.store.setMeta("sections", sections);
+    }
+  } catch (e){
+    console.warn("Could not load shop sections", e);
+  }
+  return Catalog.sections;
 }
 
 async function fetchSections(){
@@ -682,9 +731,17 @@ async function syncCatalog(mode = "incremental", onProgress = () => {}){
   let pageSize = PAGE;
   try {
     for (;;){
-      let results, t;
+      let results, t, projection;
       try {
-        ({ results, total: t } = await fetchListingPage(offset, { sortByUpdated: true, limit: pageSize }));
+        ({ results, total: t, projection } = await fetchListingPage(offset, { sortByUpdated: true, limit: pageSize }));
+        // The server answered without projecting (an older deploy, or an Etsy
+        // response it could not project). Full listings are orders of magnitude
+        // larger, so drop to a page size that still fits the 6 MB cap rather
+        // than marching into a failure on the next page.
+        if (projection !== "catalog" && pageSize > 10){
+          pageSize = 10;
+          console.warn("Server did not apply the catalog projection (" + projection + "); using " + pageSize + " per page");
+        }
       } catch (e){
         if (e && e.tooLarge && pageSize > 10){
           pageSize = Math.max(10, Math.floor(pageSize / 2));
@@ -884,6 +941,7 @@ function renderChips(){
     const b = document.createElement("button");
     b.className = "chip" + (on ? " on" : "") + (extraClass ? " " + extraClass : "");
     b.type = "button";
+    b.setAttribute("aria-pressed", on ? "true" : "false");
     b.append(document.createTextNode(label));
     if (count != null){
       const n = document.createElement("span");
@@ -896,19 +954,32 @@ function renderChips(){
     return b;
   };
 
-  chip("All", Catalog.rows.length, sectionId === null, () => { sectionId = null; renderChips(); applyFilters(); });
+  chip("All", Catalog.rows.length, sectionId === null,
+    () => { sectionId = null; renderChips(); applyFilters(); });
 
-  // Sections in Etsy's own order, so the chips read like the shop does.
-  for (const s of Catalog.sections){
-    const local = counts.get(s.shop_section_id) || 0;
-    chip(s.title, local, sectionId === s.shop_section_id,
-      () => { sectionId = s.shop_section_id; renderChips(); applyFilters(); });
+  /* Etsy's own sections, in Etsy's order. If the sections call has not landed
+     yet, fall back to whatever section ids the catalog itself contains, so the
+     shortcuts exist even before — or without — that call. */
+  const known = Catalog.sections.length
+    ? Catalog.sections
+    : [...counts.keys()].sort((a, b) => (counts.get(b) || 0) - (counts.get(a) || 0))
+        .map(id => ({ shop_section_id: id, title: "Section " + id }));
+
+  for (const sec of known){
+    const local = counts.get(sec.shop_section_id) || 0;
+    chip(sec.title, local, sectionId === sec.shop_section_id,
+      () => { sectionId = sec.shop_section_id; renderChips(); applyFilters(); });
   }
-  if (none) chip("No section", none, sectionId === -1, () => { sectionId = -1; renderChips(); applyFilters(); });
+  if (none) chip("No section", none, sectionId === -1,
+    () => { sectionId = -1; renderChips(); applyFilters(); });
+
+  const sep = document.createElement("span");
+  sep.className = "chipsep";
+  chipRow.appendChild(sep);
 
   chip("Missing SKU", null, missingSkuOnly,
     () => { missingSkuOnly = !missingSkuOnly; renderChips(); applyFilters(); }, "flag");
-  chip("Hide ✓ done", null, hideDone,
+  chip("Hide \u2713 done", null, hideDone,
     () => { hideDone = !hideDone; renderChips(); applyFilters(); }, "flag");
 }
 
@@ -1286,13 +1357,6 @@ async function runSync(mode){
     });
     if (res && res.skipped) return;
 
-    if (!Catalog.sections.length){
-      const sections = await fetchSections();
-      if (sections.length){
-        Catalog.sections = sections;
-        await Catalog.store.setMeta("sections", sections);
-      }
-    }
     renderChips();
     applyFilters();
     setStatus(res.full
@@ -1300,7 +1364,7 @@ async function runSync(mode){
       : `Up to date · ${res.added} new · ${res.pages} call${res.pages === 1 ? "" : "s"}`, "ok");
   } catch (e){
     console.error("Sync failed", e);
-    setStatus("Sync failed: " + e.message, "bad");
+    setStatus(`Sync failed (build ${BUILD}): ` + e.message, "bad");
   } finally {
     setSyncProgress(0);
     syncBtn.disabled = false;
@@ -1421,10 +1485,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     console.warn("Catalog persistence unavailable:", Catalog.store.reason);
   }
 
+  const stamp = document.getElementById("buildStamp");
+  if (stamp) stamp.textContent = BUILD;
   searchInput.focus();
 
   if (getAccessToken()){
     refreshQuota();
+    await ensureSections();
+    renderChips();
     // A cold catalog builds itself; a warm one only asks for what changed.
     await runSync(Catalog.rows.length ? "incremental" : "full");
   }

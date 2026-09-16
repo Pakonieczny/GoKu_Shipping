@@ -94,8 +94,11 @@ function fakeShop(rows, opts = {}) {
       const limit = Number(q.get('limit'));
       const all = snapshot();
       let rows = all.slice(offset, offset + limit);
-      // Mirror etsyShopListingsProxy's catalog projection.
+      // Mirror etsyShopListingsProxy's catalog projection, including the
+      // _meta.projection the client uses to tell whether it was applied.
+      let projection = 'full';
       if (q.get('projection') === 'catalog' && !opts.serveFullShape) {
+        projection = 'catalog';
         rows = rows.map(x => ({
           listing_id: x.listing_id,
           title: x.title,
@@ -106,7 +109,7 @@ function fakeShop(rows, opts = {}) {
           sku: (x.inventory?.products || []).map(p => (p.sku || '').trim()).find(Boolean) || '',
         }));
       }
-      return { body: { count: all.length, results: rows, etsy_call_count: 1 } };
+      return { body: { count: all.length, results: rows, _meta: { projection }, etsy_call_count: 1 } };
     }
     if (opts.rest) return opts.rest(url, init);
     throw new Error('unexpected fetch: ' + url);
@@ -265,7 +268,7 @@ test('A cold start walks the whole shop at 100 listings per call', async reg => 
   assert.equal(shop.calls.pages, 6, '550 listings = ceil(550/100) = 6 calls');
   assert.deepEqual(shop.calls.offsets, [0, 100, 200, 300, 400, 500]);
   assert.equal(app.api.Catalog.rows.length, 550);
-  const q = paramsOf(app.fetchCalls.find(c => c.url.includes('etsyShopListingsProxy')).url);
+  const q = paramsOf(app.fetchCalls.find(c => c.url.includes('etsyShopListingsProxy') && !c.url.includes('sections')).url);
   assert.equal(q.get('limit'), '100', 'always the maximum page size');
   assert.equal(q.get('includes'), 'Images,Inventory', 'images and SKUs inline — no per-listing calls');
   assert.equal(q.get('sort_on'), 'updated');
@@ -283,7 +286,7 @@ test('The catalog read asks for the server-side projection', async reg => {
   const shop = fakeShop(shopOf(10));
   const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
   await app.domReady();
-  const q = paramsOf(app.fetchCalls.find(c => c.url.includes('etsyShopListingsProxy')).url);
+  const q = paramsOf(app.fetchCalls.find(c => c.url.includes('etsyShopListingsProxy') && !c.url.includes('sections')).url);
   assert.equal(q.get('projection'), 'catalog',
     'without this the function response exceeds Netlify\'s 6 MB cap');
   assert.equal(q.get('includes'), 'Images,Inventory', 'the server still needs both to project from');
@@ -316,6 +319,21 @@ test('REGRESSION: an oversized page shrinks the page size instead of failing the
   assert.ok(!app.status().includes('Sync failed'), 'and did not surface as a failure: ' + app.status());
 });
 
+test('A deploy that does not project is detected and the page size drops', async reg => {
+  // An older function build answers without projecting. Full listings are
+  // orders of magnitude larger, so marching on at 100 a page walks straight
+  // into the 6 MB cap; the console drops to a size that still fits.
+  const shop = fakeShop(shopOf(40), { serveFullShape: true });
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
+  await app.domReady();
+  const limits = app.fetchCalls
+    .filter(c => c.url.includes('etsyShopListingsProxy') && !c.url.includes('sections'))
+    .map(c => Number(paramsOf(c.url).get('limit')));
+  assert.equal(limits[0], 100, 'the first call still tries the cheap page size');
+  assert.ok(limits.slice(1).every(l => l === 10), 'every call after the detection is small: ' + limits);
+  assert.equal(app.api.Catalog.rows.length, 40, 'and the catalog still completes');
+});
+
 test('A page that is too large even at the floor fails loudly', async reg => {
   const app = createApp({
     storage: freshTokens(),
@@ -324,6 +342,7 @@ test('A page that is too large even at the floor fails loudly', async reg => {
   reg.push(app);
   await app.domReady();
   assert.match(app.status(), /Sync failed/, 'not silently swallowed');
+  assert.match(app.status(), /build \d{4}-\d{2}-\d{2}/, 'names the console build for diagnosis');
 });
 
 test('Searching the built catalog costs ZERO further API calls', async reg => {
@@ -562,12 +581,77 @@ section('Section quick-filters');
 
 test('Chips are built from the shop\'s own sections with local counts', async reg => {
   const { app } = await bootMixed(reg);
-  const labels = app.chips().map(c => c.label);
+  const labels = app.chips().map(c => c.label).filter(Boolean);
   assert.deepEqual(labels.slice(0, 7), [
     'All6', 'NECKLACES1', 'EARRINGS1', 'CHARMS1', 'BRACELETS1', 'RINGS1', 'No section1',
   ]);
   assert.ok(labels.includes('Missing SKU'));
   assert.ok(labels.includes('Hide ✓ done'));
+});
+
+test('REGRESSION: section chips appear even when the catalog sync fails', async reg => {
+  // A sync that died partway used to leave the operator with no section
+  // shortcuts at all, because sections were fetched as a tail of a SUCCESSFUL
+  // walk. They are the console's primary navigation and load on their own now.
+  const app = createApp({
+    storage: freshTokens(),
+    fetchImpl: async (url) => {
+      if (url.includes('etsyApiUsage')) return { body: { ok: true, verified: true, etsy_remaining_today: 100 } };
+      if (url.includes('mode=sections')) return { body: { results: SECTIONS, etsy_call_count: 1 } };
+      return { status: 502, body: '{"errorType":"Function.ResponseSizeTooLarge"}' };
+    },
+  });
+  reg.push(app);
+  await app.domReady();
+
+  assert.match(app.status(), /Sync failed/, 'the sync really did fail');
+  const labels = app.chips().map(c => c.label);
+  for (const name of ['NECKLACES', 'EARRINGS', 'CHARMS', 'BRACELETS', 'RINGS']) {
+    assert.ok(labels.some(l => l.startsWith(name)), 'missing chip: ' + name + ' — got ' + labels.join(' | '));
+  }
+});
+
+test('Without the sections call, chips still appear from the catalog itself', async reg => {
+  const app = createApp({
+    storage: freshTokens(),
+    fetchImpl: async (url, init) => {
+      if (url.includes('mode=sections')) return { status: 500, body: { error: 'nope' } };
+      return fakeShop(mixedShop()).impl(url, init);
+    },
+  });
+  reg.push(app);
+  await app.domReady();
+  const labels = app.chips().map(c => c.label);
+  assert.ok(labels.some(l => l.startsWith('Section 11')), 'fell back to section ids: ' + labels.join(' | '));
+  assert.ok(labels.some(l => l.startsWith('No section')));
+});
+
+test('Every chip reports its own pressed state for assistive tech', async reg => {
+  const { app } = await bootMixed(reg);
+  const earrings = app.chips().find(c => c.label.startsWith('EARRINGS'));
+  assert.equal(earrings.el.getAttribute('aria-pressed'), 'false');
+  await earrings.el.dispatch('click');
+  const after = app.chips().find(c => c.label.startsWith('EARRINGS'));
+  assert.equal(after.el.getAttribute('aria-pressed'), 'true');
+  assert.ok(after.on, 'and is visibly selected');
+  assert.ok(!app.chips()[0].on, 'while All is no longer selected');
+});
+
+test('Exactly one section chip is selected at a time', async reg => {
+  const { app } = await bootMixed(reg);
+  await app.chips().find(c => c.label.startsWith('CHARMS')).el.dispatch('click');
+  const on = app.chips().filter(c => c.on && !c.label.includes('Missing') && !c.label.includes('Hide'));
+  assert.equal(on.length, 1, 'selected: ' + on.map(c => c.label).join(', '));
+  assert.ok(on[0].label.startsWith('CHARMS'));
+});
+
+test('The state filters are independent of the section selection', async reg => {
+  const { app } = await bootMixed(reg);
+  await app.chips().find(c => c.label.startsWith('EARRINGS')).el.dispatch('click');
+  await app.chips().find(c => c.label === 'Missing SKU').el.dispatch('click');
+  assert.ok(app.chips().find(c => c.label.startsWith('EARRINGS')).on, 'section stays selected');
+  assert.ok(app.chips().find(c => c.label === 'Missing SKU').on);
+  assert.deepEqual(app.cardIds(), [100002], 'earrings AND missing a SKU');
 });
 
 test('Selecting a section filters locally and costs no API calls', async reg => {

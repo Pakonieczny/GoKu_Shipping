@@ -268,20 +268,42 @@ exports.handler = async function handler(event) {
     const { resp, payload } = await fetchEtsy(`${endpoint}?${params.toString()}`, headers, ctx);
     const projection = String(q.projection || "").trim().toLowerCase();
 
+    const meta = {
+      source: "etsy-live",
+      limit,
+      offset,
+      state,
+      section_id: sectionId ? Number(sectionId) : null,
+      includes,
+      shop_id: Number(shopId)
+    };
+
+    /* A catalog response is BUILT, never spread from Etsy's payload. Spreading
+       would carry every other top-level field through and leave the response
+       size at the mercy of whatever Etsy chose to include — which is how a page
+       broke the 6 MB function cap in the first place. Constructing it from a
+       fixed set of projected fields makes the size a function of the row count
+       alone (~306 bytes a listing), whatever the listings contain.
+
+       _meta.projection reports what actually happened, not what was asked for,
+       so a client can tell it is talking to a deploy that did not project and
+       react instead of failing on the response size. */
+    if (resp.ok && projection === "catalog") {
+      const rows = Array.isArray(payload && payload.results) ? payload.results : null;
+      return json(resp.status, {
+        count: Number(payload && payload.count) || (rows ? rows.length : 0),
+        results: rows ? rows.map(projectCatalogRow) : [],
+        _meta: {
+          ...meta,
+          projection: rows ? "catalog" : "none",
+          ...(rows ? {} : { projection_error: "Etsy response had no results array" })
+        },
+        etsy_call_count: ctx.calls
+      });
+    }
+
     if (resp.ok && payload && typeof payload === "object") {
-      if (projection === "catalog" && Array.isArray(payload.results)) {
-        payload.results = payload.results.map(projectCatalogRow);
-      }
-      payload._meta = {
-        source: "etsy-live",
-        limit,
-        offset,
-        state,
-        section_id: sectionId ? Number(sectionId) : null,
-        includes,
-        projection: projection === "catalog" ? "catalog" : "full",
-        shop_id: Number(shopId)
-      };
+      payload._meta = { ...meta, projection: "full" };
     }
     return json(resp.status, { ...payload, etsy_call_count: ctx.calls });
   } catch (err) {
