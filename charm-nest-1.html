@@ -358,7 +358,7 @@ dialog.wide{width:min(980px,95vw)}
       <div class="field"><label>Angle step (°)</label><select id="stAngle"><option value="90">90 (4 angles)</option><option value="45">45 (8)</option><option value="30">30 (12)</option><option value="15">15 (24)</option></select></div>
     </div>
     <div class="fieldRow3">
-      <div class="field"><label>Time ceiling (s)</label><input id="stBudget" type="number" step="5" min="10" max="900"><div class="help">The solver stops the moment every piece is placed; this only caps a sheet that cannot be completed.</div></div>
+      <div class="field"><label>Time ceiling (s) · parallel searches</label><div class="fieldRow"><input id="stBudget" type="number" step="5" min="10" max="900"><input id="stParallel" type="number" step="1" min="0" max="16"></div><div class="help">Several searches run at once on different seeds; the first to complete the sheet wins and stops the rest. 0 = all cores but one. The ceiling only caps a sheet that cannot be completed.</div></div>
       <div class="field"><label>Seed</label><input id="stSeed" type="number" step="1" min="1"><div class="help">Same seed + same queue = same layout.</div></div>
       <div class="field"><label>Server fallback above</label><input id="stServerAbove" type="number" step="1" min="0"><div class="help">Pieces. 0 = never use the server solver.</div></div>
     </div>
@@ -418,7 +418,7 @@ const METALS = [
 const DEFAULTS = {
   rail: "md",
   stock: { gold: [7.125, 6.03], silver: [7.125, 6.03], rose: [7.125, 6.03] },
-  clearancePt: -0.5, insetPt: 1.5, angleStep: 30, budgetS: 600, seed: 1, serverAbove: 80,
+  clearancePt: -0.5, insetPt: 1.5, angleStep: 30, budgetS: 180, seed: 1, serverAbove: 80, parallel: 0,
   minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", aiRounds: 10, snapIn: 0.25, maxFill: 0.75, v: 5
 };
 const STOCK_PRESETS = [
@@ -471,6 +471,7 @@ function loadSettings() {
     // places until the sheet is complete (the clock is only a ceiling), verifiers check, Claude inspects.
     // 75% is a hard ceiling on fill.
     if ((saved.v || 1) < 5) { saved.engine = "solver"; saved.budgetS = 600; saved.maxFill = 0.75; saved.v = 5; }
+    if ((saved.v || 1) < 6) { saved.budgetS = 180; saved.parallel = 0; saved.v = 6; }   // v6: parallel searches (all cores but one), 3-minute ceiling
     return Object.assign({}, DEFAULTS, saved);
   } catch (_) { return Object.assign({}, DEFAULTS, { v: 2 }); }
 }
@@ -994,12 +995,20 @@ function computeSaturation(sh) {
 }
 
 /* ═══ 9 · nesting ═══════════════════════════════════════════════════════ */
-function ensureWorker(sh) {
-  if (sh.worker) return sh.worker;
-  const w = new Worker("charm-nest-worker.js");
-  w.onmessage = e => onWorkerMessage(sh, e.data);
-  w.onerror = e => { log(sh, "worker error: " + e.message); finishNest(sh, { error: e.message }); };
-  sh.worker = w; return w;
+function parallelCount() { const want = +S.settings.parallel || 0; const cores = navigator.hardwareConcurrency || 2; return Math.max(1, Math.min(16, want || Math.max(1, cores - 1))); }
+function ensureWorker(sh) { return ensureWorkers(sh, 1)[0]; }
+/** A pool of identical workers; each search runs on its own seed. */
+function ensureWorkers(sh, n) {
+  sh.workers = sh.workers || [];
+  while (sh.workers.length < n) {
+    const idx = sh.workers.length;
+    const w = new Worker("charm-nest-worker.js");
+    w.onmessage = e => onWorkerMessage(sh, e.data, idx);
+    w.onerror = e => { log(sh, `worker ${idx} error: ` + e.message); if (idx === 0) finishNest(sh, { error: e.message }); };
+    sh.workers.push(w);
+  }
+  sh.worker = sh.workers[0];
+  return sh.workers;
 }
 function log(sh, msg) { sh.log.push(`${new Date().toLocaleTimeString()} ${msg}`); if (sh.log.length > 200) sh.log.shift(); }
 function buildJob(sh) {
@@ -1008,7 +1017,7 @@ function buildJob(sh) {
   return {
     sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0 },
     clearancePt: +S.settings.clearancePt || 0, angles: angleSet(), fineRes: 2, coarseRes: 0.5,
-    timeBudgetMs: (+S.settings.budgetS || 600) * 1000, maxTrials: 2000, seed: +S.settings.seed || 1, maxFill: +S.settings.maxFill || 0.75,
+    timeBudgetMs: (+S.settings.budgetS || 180) * 1000, maxTrials: 2000, seed: +S.settings.seed || 1, maxFill: +S.settings.maxFill || 0.75,
     pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
   };
 }
@@ -1030,7 +1039,11 @@ function startNest(sh) {
   if ((S.settings.engine || "solver") === "ai") { startAINest(sh, items).catch(e => finishNest(sh, { error: e.message })); return; }
   const useServer = S.settings.serverAbove > 0 && items.length > S.settings.serverAbove && S.cloud.ok;
   if (useServer) return startServerNest(sh, job);
-  ensureWorker(sh).postMessage({ type: "solve", jobId: sh.jobId, job });
+  const n = parallelCount();
+  const workers = ensureWorkers(sh, n);
+  sh.pool = { n, done: 0, results: [], trials: new Array(n).fill(0), winner: null };
+  if (sh.evNest) agentUpdate(sh.evNest, { text: `${n} parallel search${n > 1 ? "es" : ""} on seeds ${job.seed}–${job.seed + n - 1} · ${items.length} pieces · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · the first to complete the sheet stops the rest · ceiling ${S.settings.budgetS}s` });
+  workers.forEach((w, i) => w.postMessage({ type: "solve", jobId: sh.jobId + ":" + i, job: Object.assign({}, job, { seed: job.seed + i }) }));
 }
 
 /* ═══ 9b · AI nesting: Claude plans every placement, the geometry measures ═══ */
@@ -1126,10 +1139,34 @@ async function startAINest(sh, items) {
     params: { seed: 0, angles: [...new Set(sh.placements.map(p => p.angle))], clearancePt: clearance, insetPt: inset, fineRes: 2, coarseRes: 0.5, engine: "claude", rounds }
   } });
 }
-function stopNest(sh) { if (sh.status !== "nesting") return; sh.stage = "Stopping after this piece…"; renderCard(sh); if ((S.settings.engine || "solver") === "ai") { sh.status = "ready"; sh.stage = ""; agent({ metal: sh.metal }, "info", "Stopped by operator"); renderCard(sh); return; } if (sh.serverJob) { api("charmNestLibrary", { op: "stopJob", id: sh.serverJob }).catch(() => {}); } else if (sh.worker) sh.worker.postMessage({ type: "stop", jobId: sh.jobId }); }
-function onWorkerMessage(sh, m) {
-  if (m.jobId !== sh.jobId) return;
+function stopNest(sh) { if (sh.status !== "nesting") return; sh.stage = "Stopping after this piece…"; renderCard(sh); if ((S.settings.engine || "solver") === "ai") { sh.status = "ready"; sh.stage = ""; agent({ metal: sh.metal }, "info", "Stopped by operator"); renderCard(sh); return; } if (sh.serverJob) { api("charmNestLibrary", { op: "stopJob", id: sh.serverJob }).catch(() => {}); } else (sh.workers || []).forEach((w, i) => w.postMessage({ type: "stop", jobId: sh.jobId + ":" + i })); }
+function onWorkerMessage(sh, m, idx) {
+  const base = String(m.jobId || "").split(":")[0];
+  if (base !== sh.jobId) return;
   const items = activeCharms(sh); const byId = new Map(items.map(c => [c.id, c]));
+  const pool = sh.pool || { n: 1, done: 0, results: [], trials: [0], winner: null };
+  const leader = pool.winner != null ? pool.winner : (sh.bestWorker != null ? sh.bestWorker : 0);   // whose trial is drawn as ghosts
+  if (m.type === "placed" && idx !== leader) return;
+  if (m.type === "stage" && m.stage === "prepare" && idx !== 0) return;
+  if (m.type === "trial") { pool.trials[idx] = m.summary.trial + 1; m.summary = Object.assign({}, m.summary, { trial: pool.trials.reduce((a, b) => a + b, 0) - 1, worker: idx }); }
+  if (m.type === "best") {
+    const cur = sh.best; const better = !cur || m.best.placements.length > cur.placements.length || (m.best.placements.length === cur.placements.length && m.best.density > cur.density);
+    if (!better) { if (idx === leader) { sh.livePlacements = []; } return; }
+    sh.bestWorker = idx; m.summary = Object.assign({}, m.summary, { trial: pool.trials.reduce((a, b) => a + b, 0) - 1, worker: idx });
+  }
+  if (m.type === "done") {
+    pool.done++; pool.results[idx] = m.result;
+    const complete = m.result && m.result.rejects.length === 0 && m.result.placements.length === items.length;
+    if (complete && pool.winner == null) { pool.winner = idx; (sh.workers || []).forEach((w, i) => { if (i !== idx) w.postMessage({ type: "stop", jobId: sh.jobId + ":" + i }); }); }
+    if (!(complete && pool.winner === idx) && pool.done < pool.n) return;          // wait for the rest (or the winner)
+    if (pool.winner != null && pool.winner !== idx && pool.done < pool.n) return;
+    const results = pool.results.filter(Boolean);
+    const pick = results.reduce((a, b) => !a ? b : (b.placements.length > a.placements.length || (b.placements.length === a.placements.length && b.density > a.density)) ? b : a, null);
+    const total = pool.trials.reduce((a, b) => a + b, 0);
+    m = { type: "done", jobId: sh.jobId, result: Object.assign({}, pick, { trials: total, workers: pool.n, winner: pool.winner }) };
+    agent({ metal: sh.metal }, "nest", pool.winner != null ? `Search ${pool.winner + 1} (seed ${(+S.settings.seed || 1) + pool.winner}) completed the sheet first — the other ${pool.n - 1} were stopped · ${total} trials in total` : `All ${pool.n} searches reached the ceiling · best ${pick.placements.length}/${items.length} · ${total} trials in total`);
+  }
+  if (m.type === "error" && idx !== 0 && pool.n > 1) { log(sh, `worker ${idx}: ${m.message}`); pool.done++; return; }
   switch (m.type) {
     case "placed": {
       sh.progressKind = "place";
@@ -1143,18 +1180,19 @@ function onWorkerMessage(sh, m) {
       sh.stage = m.info.finishing ? `Targeted 5° push · ${byId.get(m.placement.id)?.name || m.placement.id} landed · ${m.info.placed}/${m.info.total}` : `Trial ${m.info.trial + 1} · placing ${byId.get(m.placement.id)?.name || m.placement.id} · ${m.info.placed}/${m.info.total}${sh.best ? ` · best ${sh.best.placements.length}/${m.info.total}` : ""}`;
       computeSaturation(sh); renderProgress(sh); renderSat(sh); drawPreview(sh); break;
     }
-    case "stage": if (m.stage === "finish") { agent({ metal: sh.metal }, "nest", `Best layout is ${m.total - m.done} short — targeted search at 5° steps for the missing piece(s) into that layout`); } else if (m.stage === "prepare") { sh.stage = `Preparing rotations · ${m.done}/${m.total}`; sh.progress = [m.done, m.total]; sh.progressKind = "prepare"; renderProgress(sh); } break;
+    case "stage": if (m.stage === "finish") { agent({ metal: sh.metal }, "nest", `Best layout is ${m.total - m.done} short — targeted search at 5° steps for the missing piece(s) into that layout`); } else if (m.stage === "repair") { if (m.done === 0) agent({ metal: sh.metal }, "nest", `Restarts stalled — repairing the best layout instead: pulling out the pieces around its largest gap and re-inserting them with the missing piece at 15° steps (${m.total} attempts)`); sh.stage = `Repairing the best layout · attempt ${m.done}/${m.total}`; renderProgress(sh); } else if (m.stage === "prepare") { sh.stage = `Preparing rotations · ${m.done}/${m.total}`; sh.progress = [m.done, m.total]; sh.progressKind = "prepare"; renderProgress(sh); } break;
     case "reject": log(sh, `trial ${m.trial + 1}: ${byId.get(m.id)?.name || m.id} ${m.reason === "cap" ? "held back by the fill ceiling" : "did not fit"}`); break;
     case "trial": {
       sh.trials = m.summary.trial + 1;
       if (!m.summary.better) sh.stage = `Trial ${sh.trials} · best so far ${sh.best ? sh.best.placements.length : 0}/${m.summary.total} · ${fmt.s(m.summary.elapsedMs)}`;
       // one live line that ticks with every trial, so the search is visible even when no trial beats the best
       if (!sh.evSearch || !sh.evSearch.live) sh.evSearch = agent({ metal: sh.metal }, "nest", "", { live: true });
-      agentUpdate(sh.evSearch, { elapsed: m.summary.elapsedMs, html: `Searching · trial ${sh.trials} ${m.summary.better ? "<b>improved</b>" : "did not beat"} the best (${sh.best ? sh.best.placements.length : 0}/${m.summary.total} at ${fmt.pct(sh.best ? sh.best.density : 0)}) — this trial ${m.summary.placed}/${m.summary.total}${m.summary.rejects && m.summary.rejects.length ? `, no room for ${m.summary.rejects.map(id => byId.get(id)?.name || id).join(", ")}` : ""} · new order and angles next` });
+      agentUpdate(sh.evSearch, { elapsed: m.summary.elapsedMs, html: `Searching on ${(sh.pool && sh.pool.n) || 1} worker(s) · trial ${sh.trials}${m.summary.worker != null && sh.pool && sh.pool.n > 1 ? ` (search ${m.summary.worker + 1})` : ""} ${m.summary.better ? "<b>improved</b>" : "did not beat"} the best (${sh.best ? sh.best.placements.length : 0}/${m.summary.total} at ${fmt.pct(sh.best ? sh.best.density : 0)}) — this trial ${m.summary.placed}/${m.summary.total}${m.summary.rejects && m.summary.rejects.length ? `, no room for ${m.summary.rejects.map(id => byId.get(id)?.name || id).join(", ")}` : ""} · new order and angles next` });
       renderProgress(sh); break;
     }
     case "best": {
-      if (sh.evNest) agentUpdate(sh.evNest, { text: `Trial ${m.summary.trial + 1}: ${m.best.placements.length}/${m.summary.total} placed at ${fmt.pct(m.best.density)} — best so far`, elapsed: m.summary.elapsedMs });
+      if (m.summary.repaired) agent({ metal: sh.metal }, "ok", `Repair worked: removed ${m.summary.removed} piece(s) around the gap and re-inserted them with the missing one — ${m.best.placements.length}/${m.summary.total} placed at ${fmt.pct(m.best.density)}`);
+      else if (sh.evNest) agentUpdate(sh.evNest, { text: `Trial ${m.summary.trial + 1}: ${m.best.placements.length}/${m.summary.total} placed at ${fmt.pct(m.best.density)} — best so far`, elapsed: m.summary.elapsedMs });
       sh.best = m.best; sh.bestTrial = m.summary.trial; sh.placements = m.best.placements; sh.rejects = m.best.rejects.slice(); sh.livePlacements = [];
       sh.bestInfo = { freePt2: m.best.freePt2, usablePt2: m.best.usablePt2, placedPt2: m.best.placedPt2, pocket: m.best.pocket, placed: m.best.placements.length, total: m.summary.total };
       sh.liveInfo = sh.bestInfo;
@@ -1691,7 +1729,7 @@ function openSettings() {
   const s = S.settings;
   $$("#railSeg button").forEach(b => b.classList.toggle("on", b.dataset.v === s.rail));
   for (const m of METALS) { $(`#st${cap(m.key)}W`).value = s.stock[m.key][0]; $(`#st${cap(m.key)}H`).value = s.stock[m.key][1]; }
-  $("#stClearance").value = s.clearancePt; $("#stInset").value = s.insetPt; $("#stAngle").value = s.angleStep; $("#stBudget").value = s.budgetS; $("#stSeed").value = s.seed; $("#stServerAbove").value = s.serverAbove;
+  $("#stClearance").value = s.clearancePt; $("#stInset").value = s.insetPt; $("#stAngle").value = s.angleStep; $("#stBudget").value = s.budgetS; $("#stParallel").value = s.parallel || 0; $("#stSeed").value = s.seed; $("#stServerAbove").value = s.serverAbove;
   $("#stMinPt").value = s.minPt; $("#stVerifyRes").value = s.verifyRes; $("#stNaming").value = s.naming; $("#stReview").value = s.review || "on"; $("#stEngine").value = s.engine || "solver"; $("#stMaxFill").value = Math.round((s.maxFill || 0.75) * 100); $("#stAiRounds").value = s.aiRounds || 10; $("#stSnapIn").value = s.snapIn == null ? 0.25 : s.snapIn; $("#stNotify").value = s.notify; $("#stSound").value = s.sound;
   openDlg($("#dlgSettings"));
 }
@@ -1700,7 +1738,7 @@ function readSettings() {
   const s = S.settings;
   s.rail = $("#railSeg button.on")?.dataset.v || "md";
   for (const m of METALS) s.stock[m.key] = [+$(`#st${cap(m.key)}W`).value || DEFAULTS.stock[m.key][0], +$(`#st${cap(m.key)}H`).value || DEFAULTS.stock[m.key][1]];
-  s.clearancePt = Math.max(-2, Math.min(12, +$("#stClearance").value || 0)); s.insetPt = Math.max(0, +$("#stInset").value || 0); s.angleStep = +$("#stAngle").value || 30; s.budgetS = Math.max(10, +$("#stBudget").value || 180); s.seed = Math.max(1, Math.round(+$("#stSeed").value || 1)); s.serverAbove = Math.max(0, +$("#stServerAbove").value || 0);
+  s.clearancePt = Math.max(-2, Math.min(12, +$("#stClearance").value || 0)); s.insetPt = Math.max(0, +$("#stInset").value || 0); s.angleStep = +$("#stAngle").value || 30; s.budgetS = Math.max(10, +$("#stBudget").value || 180); s.parallel = Math.max(0, Math.min(16, Math.round(+$("#stParallel").value || 0))); s.seed = Math.max(1, Math.round(+$("#stSeed").value || 1)); s.serverAbove = Math.max(0, +$("#stServerAbove").value || 0);
   s.minPt = Math.max(1, +$("#stMinPt").value || 6); s.verifyRes = +$("#stVerifyRes").value || 6; s.naming = $("#stNaming").value; s.review = $("#stReview").value; s.engine = $("#stEngine").value; s.maxFill = Math.max(0.3, Math.min(1, (+$("#stMaxFill").value || 75) / 100)); s.aiRounds = Math.max(1, Math.min(30, +$("#stAiRounds").value || 10)); s.snapIn = Math.max(0, Math.min(1, +$("#stSnapIn").value || 0)); s.notify = $("#stNotify").value; s.sound = $("#stSound").value;
   saveSettings(); refreshAllCards(); toast("Settings saved", "ok", 1800);
 }

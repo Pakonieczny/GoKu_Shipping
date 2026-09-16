@@ -370,21 +370,90 @@
       }
     }
 
+    /* ── ruin & recreate ─────────────────────────────────────────────────────
+       Repair the best layout instead of discarding it: pull out the pieces around
+       its largest gap (or a random neighbourhood), then re-insert them together
+       with the missing pieces, missing pieces first, at 15° steps. Deterministic
+       given the seed. Invoked when restarts stall and the best is a few short.  */
+    async function ruinRecreate(best, attempts) {
+      if (!best || !best.rec || !best.rejects.length || best.rejects.length > 3) return false;
+      const total = prepared.length;
+      const angles15 = []; for (let a = 0; a < 360; a += 15) angles15.push(a);
+      const variantsFor = (p, list) => {
+        if (!p._v15) { p._v15 = new Map(); for (const v of p.variants) p._v15.set(v.angle, v); }
+        const out = [];
+        for (const a of list) {
+          if (!p._v15.has(a)) {
+            const fb = resample(pieces[p.idx].bits, pieces[p.idx].w, pieces[p.idx].h, pieces[p.idx].scale, fineRes);
+            const rot = rotateBitmap(fb.bits, fb.w, fb.h, a); if (!rot.w) { p._v15.set(a, null); continue; }
+            const dil = erodeFine ? erode(rot.bits, rot.w, rot.h, erodeFine) : dilate(rot.bits, rot.w, rot.h, halfGapFine);
+            if (!dil.w || !areaOf(dil.bits)) { p._v15.set(a, null); continue; }
+            const rg = ring(dil.bits, dil.w, dil.h, Math.max(2, Math.round(2 * fineRes)));
+            const co = majority(dil.bits, dil.w, dil.h, ratio);
+            p._v15.set(a, { angle: a, fine: { bits: dil.bits, w: dil.w, h: dil.h, pm: packShifted(dil.bits, dil.w, dil.h) }, solid: { bits: rot.bits, w: rot.w, h: rot.h, cx: rot.cx + halfGapFine - erodeFine, cy: rot.cy + halfGapFine - erodeFine }, ringFine: packShifted(rg.bits, rg.w, rg.h), ringPad: Math.max(2, Math.round(2 * fineRes)), coarse: { pm: packShifted(co.bits, co.w, co.h), w: co.w, h: co.h } });
+          }
+          const v = p._v15.get(a); if (v) out.push(v);
+        }
+        return out;
+      };
+      for (let att = 0; att < attempts; att++) {
+        if (cb.shouldStop && cb.shouldStop()) return false;
+        // choose the neighbourhood: around the largest gap on even attempts, around a random piece on odd ones
+        const rec = best.rec;
+        let anchor;
+        if (att % 2 === 0) { const pk = best.grids.coarse.largestPocket(); anchor = { x: (pk.x + pk.w / 2) * ratio, y: (pk.y + pk.h / 2) * ratio }; }
+        else { const r = rec[Math.floor(random() * rec.length)]; anchor = { x: r.x + r.v.fine.w / 2, y: r.y + r.v.fine.h / 2 }; }
+        const k = 2 + Math.floor(random() * 3);                       // remove 2–4 pieces
+        const byDist = rec.slice().sort((a, b) => Math.hypot(a.x + a.v.fine.w / 2 - anchor.x, a.y + a.v.fine.h / 2 - anchor.y) - Math.hypot(b.x + b.v.fine.w / 2 - anchor.x, b.y + b.v.fine.h / 2 - anchor.y));
+        const removed = byDist.slice(0, k).filter(r => !r.p.pinned);
+        const keep = rec.filter(r => !removed.includes(r));
+        // rebuild grids from the kept pieces
+        const fine = baseFine.clone(), coarse = baseCoarse.clone();
+        for (const r of keep) { fine.stamp(r.v.fine.bits, r.v.fine.w, r.v.fine.h, r.x, r.y); for (let yy = 0; yy < r.v.fine.h; yy++) for (let xx = 0; xx < r.v.fine.w; xx++) if (r.v.fine.bits[yy * r.v.fine.w + xx]) { const gx = Math.floor((r.x + xx) / ratio), gy = Math.floor((r.y + yy) / ratio); if (gx >= 0 && gy >= 0 && gx < coarse.W && gy < coarse.H) coarse.set(gx, gy); } }
+        coarse.buildSAT();
+        // re-insert: missing pieces first, then the removed ones, largest first, at 15° steps
+        const missing = best.rejects.map(id => prepared.find(x => x.id === id)).filter(Boolean);
+        const queue = missing.concat(removed.map(r => r.p).sort((a, b) => b.areaPt2 - a.areaPt2));
+        const newRec = keep.slice(); let ok = true;
+        for (const p of queue) {
+          const pos = search({ variants: variantsFor(p, angles15) }, fine, coarse, ratio, 0.35, 0.02, random, 0, 0);
+          if (!pos) { ok = false; break; }
+          const { v, x, y } = pos;
+          fine.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y);
+          for (let yy = 0; yy < v.fine.h; yy++) for (let xx = 0; xx < v.fine.w; xx++) if (v.fine.bits[yy * v.fine.w + xx]) { const gx = Math.floor((x + xx) / ratio), gy = Math.floor((y + yy) / ratio); if (gx >= 0 && gy >= 0 && gx < coarse.W && gy < coarse.H) coarse.set(gx, gy); }
+          coarse.buildSAT();
+          newRec.push({ p, v, x, y });
+        }
+        if (cb.onStage) cb.onStage("repair", att + 1, attempts);
+        await yieldNow();
+        if (!ok) continue;
+        // success: everything placed — rebuild the public layout from newRec
+        const placements = newRec.map(r => ({ id: r.p.id, angle: r.v.angle, cxPt: (r.x + r.v.solid.cx) / fineRes, cyPt: (r.y + r.v.solid.cy) / fineRes, xPt: (r.x + (r.v.fine.w - r.v.solid.w) / 2) / fineRes, yPt: (r.y + (r.v.fine.h - r.v.solid.h) / 2) / fineRes, wPt: r.v.solid.w / fineRes, hPt: r.v.solid.h / fineRes, repaired: true }));
+        const placedCells = newRec.reduce((n, r) => n + r.p.solidFineCells, 0);
+        Object.assign(best, { placements, rejects: [], capped: [], density: placedCells / usableCellsFine, placedCells, placedPt2: placedCells / (fineRes * fineRes), freePt2: fine.freeCells() / (fineRes * fineRes), pocket: pocketPt(coarse, coarseRes), grids: { fine, coarse }, rec: newRec, repaired: true });
+        if (cb.onBest) cb.onBest(best, { trial: best.trial, placed: placements.length, total, rejects: [], density: best.density, elapsedMs: now() - t0, repaired: true, removed: removed.length });
+        return true;
+      }
+      return false;
+    }
+
     /* ── trials ─────────────────────────────────────────────────────────── */
-    let best = null, trials = 0, endedBy = "budget", failStreak = 0;
+    let best = null, trials = 0, endedBy = "budget", failStreak = 0, lastRejects = [];
     const byAreaDesc = prepared.slice().sort((a, b) => b.areaPt2 - a.areaPt2);
     while (trials < maxTrials) {
       if (stopped()) { endedBy = cb.shouldStop && cb.shouldStop() ? "stopped" : "budget"; break; }
       const trial = trials++;
       // ordering: trial 0 = pure largest-first; later trials add noise growing with the streak
       const sigma = trial === 0 ? 0 : Math.min(0.6, 0.15 + 0.05 * Math.min(failStreak, 8));
-      const order = byAreaDesc.map(p => ({ p, k: p.areaPt2 * (1 + sigma * (random() * 2 - 1)) })).sort((a, b) => b.k - a.k).map(o => o.p);
+      // pieces the previous trial could not place go first (most of the time), so the layout is built around them
+      const front = trial > 0 && lastRejects.length && random() < 0.75 ? new Set(lastRejects) : new Set();
+      const order = byAreaDesc.map(p => ({ p, k: (front.has(p.id) ? 1e9 : 0) + p.areaPt2 * (1 + sigma * (random() * 2 - 1)) })).sort((a, b) => b.k - a.k).map(o => o.p);
       const pinnedFirst = order.filter(p => p.pinned).concat(order.filter(p => !p.pinned));
       const gravW = trial === 0 ? 0.35 : 0.1 + random() * 0.8;
       const noise = trial === 0 ? 0 : random() * 0.15;
       const cornerX = trial === 0 ? 0 : (random() < 0.7 ? 0 : 1), cornerY = trial === 0 ? 0 : (random() < 0.7 ? 0 : 1);
       const fine = baseFine.clone(), coarse = baseCoarse.clone();
-      const placements = [], rejects = [], capped = [];
+      const placements = [], rejects = [], capped = [], placedRec = [];
       let placedCells = 0;
 
       for (let pi = 0; pi < pinnedFirst.length; pi++) {
@@ -418,6 +487,7 @@
           void cx0; void cy0;
           coarse.buildSAT();
           placedCells += p.solidFineCells;
+          placedRec.push({ p, v, x, y });
           const pl = {
             id: p.id, angle: v.angle,
             cxPt: (x + v.solid.cx) / fineRes, cyPt: (y + v.solid.cy) / fineRes,   // rotation centre, sheet pt, y-down
@@ -440,6 +510,7 @@
         await yieldNow();
       }
 
+      lastRejects = rejects.filter(id => !capped.includes(id));
       const summary = {
         trial, placed: placements.length, total: pinnedFirst.length, rejects,
         density: placedCells / usableCellsFine,
@@ -451,18 +522,26 @@
         failStreak = 0;
         best = { placements, rejects, capped: capped.slice(), density: summary.density, trial, usablePt2: usableCellsFine / (fineRes * fineRes),
           freePt2: fine.freeCells() / (fineRes * fineRes), placedPt2: placedCells / (fineRes * fineRes), placedCells,
-          pocket: pocketPt(coarse, coarseRes), grids: { fine, coarse } };
+          pocket: pocketPt(coarse, coarseRes), grids: { fine, coarse }, rec: placedRec.slice() };
         if (cb.onBest) cb.onBest(best, summary);
         // one or two short (and not because of the cap): targeted push into this very layout
         if (rejects.length && rejects.length <= 2 && rejects.every(id => !capped.includes(id))) await finishPush(best);
       } else failStreak++;
       if (cb.onTrial) cb.onTrial(Object.assign({ better }, summary));
       if (best && best.placements.length === pinnedFirst.length) { endedBy = "complete"; break; }
+      // restarts stalling while the best is a few short → repair the best layout instead
+      if (best && best.rejects.length && best.rejects.length <= 3 && failStreak >= 4 && !best.rejects.every(id => best.capped.includes(id))) {
+        failStreak = 0;
+        if (cb.onStage) cb.onStage("repair", 0, 6);
+        const fixed = await ruinRecreate(best, 6);
+        if (fixed && best.placements.length === pinnedFirst.length) { endedBy = "complete"; break; }
+      }
       if (best && best.rejects.length && best.rejects.every(id => best.capped.includes(id))) { endedBy = "cap"; break; }   // only the ceiling holds pieces back
       await yieldNow();
     }
     if (trials >= maxTrials && endedBy === "budget") endedBy = "trials";
     if (best && best.grids) delete best.grids;
+    if (best && best.rec) delete best.rec;
     if (!best) best = { placements: [], rejects: prepared.map(p => p.id), density: 0, trial: -1, usablePt2: usableCellsFine / (fineRes * fineRes), freePt2: usableCellsFine / (fineRes * fineRes), placedPt2: 0, pocket: pocketPt(baseCoarse, coarseRes) };
     return Object.assign({}, best, {
       endedBy, trials, elapsedMs: now() - t0,

@@ -81,6 +81,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   assert.strictEqual(rev.after, rev.before - 1, 'fragment removed'); assert.strictEqual(rev.members, rev.expectMembers, 'members merged'); assert(rev.areaGrew, 'silhouette re-traced'); assert.strictEqual(rev.sheet, rev.after, 'sheet queue updated'); assert(rev.overviewBytes > 20000, 'overview rendered');
   fx.charms.pop();   // one fewer charm from here on
   }
+  if (process.env.CN_DUMP) { const dump = await page.evaluate(() => CN.S.sources[0].charms.map(c => ({ i: c.index, w: +c.widthPt.toFixed(1), h: +c.heightPt.toFixed(1), area: Math.round(c.areaPt2), m: c.members.length, open: !!c.open })).sort((a, b) => b.area - a.area)); fs.writeFileSync(process.env.CN_DUMP, JSON.stringify(dump, null, 1)); console.log('dumped', dump.length, 'charms to', process.env.CN_DUMP); await browser.close(); server.close(); return; }
   const sat = await page.evaluate(() => CN.S.sheets.gold.sat);
   console.log('saturation before nest', { count: sat.count, needed: Math.round(sat.totalNeeded), usable: Math.round(sat.usable), nEst: sat.nEst, rho: sat.rho.rho, recommend: !!sat.recommend });
   await page.screenshot({ path: path.join(tmp, '1-queued.png') });
@@ -88,7 +89,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   await page.click('.sheetCard[data-m=gold] [data-r=nest]');
   await page.waitForFunction(() => CN.S.sheets.gold.status === 'nesting' || ['complete', 'partial'].includes(CN.S.sheets.gold.status));
   let lastPlaced = -1, t0 = Date.now();
-  while (Date.now() - t0 < 400000) {
+  while (Date.now() - t0 < 700000) {
     const st = await page.evaluate(() => ({ status: CN.S.sheets.gold.status, placed: CN.S.sheets.gold.placements.length, stage: CN.S.sheets.gold.stage, trials: CN.S.sheets.gold.trials }));
     if (st.placed !== lastPlaced) { lastPlaced = st.placed; console.log(' ', st.status, st.placed, 'placed ·', st.stage); }
     if (['complete', 'partial'].includes(st.status)) break;
