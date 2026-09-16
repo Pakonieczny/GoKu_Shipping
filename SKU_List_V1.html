@@ -153,7 +153,16 @@
    Shown in the header and quoted in any sync failure, so a stale tab running
    against newer functions is identifiable from a screenshot instead of
    guessed at. */
-const BUILD = "2026-09-16d";
+const BUILD = "2026-09-16e";
+
+/* The section shortcuts, exactly as specified — not every section the shop
+   has. Etsy returns dozens (Zodiac / Birth Flower, Handwriting Jewelry, Evil
+   Eye Jewelry and so on); rendering them all buried the five that matter and
+   pushed the row off the screen. Listings in other sections are still in the
+   catalog, still searchable, and still reachable under "All" — they just do not
+   get a chip. Edit this list to change the shortcuts; order here is the order
+   on screen, and matching is case-insensitive against Etsy's section titles. */
+const SECTION_CHIPS = ["NECKLACES", "EARRINGS", "CHARMS", "BRACELETS", "RINGS"];
 const ORIGIN = "https://sku.goldenspike.app";
 const functionsBaseUrl = ORIGIN + "/.netlify/functions";
 
@@ -935,7 +944,7 @@ function sectionCounts(){
 
 function renderChips(){
   chipRow.innerHTML = "";
-  const { counts, none } = sectionCounts();
+  const { counts } = sectionCounts();
 
   const chip = (label, count, on, onClick, extraClass) => {
     const b = document.createElement("button");
@@ -957,21 +966,17 @@ function renderChips(){
   chip("All", Catalog.rows.length, sectionId === null,
     () => { sectionId = null; renderChips(); applyFilters(); });
 
-  /* Etsy's own sections, in Etsy's order. If the sections call has not landed
-     yet, fall back to whatever section ids the catalog itself contains, so the
-     shortcuts exist even before — or without — that call. */
-  const known = Catalog.sections.length
-    ? Catalog.sections
-    : [...counts.keys()].sort((a, b) => (counts.get(b) || 0) - (counts.get(a) || 0))
-        .map(id => ({ shop_section_id: id, title: "Section " + id }));
-
-  for (const sec of known){
-    const local = counts.get(sec.shop_section_id) || 0;
-    chip(sec.title, local, sectionId === sec.shop_section_id,
+  /* Only the shortcuts named in SECTION_CHIPS, in that order. A name with no
+     matching section in the shop is simply skipped rather than shown dead. */
+  const byName = new Map(
+    Catalog.sections.map(sec => [String(sec.title || "").trim().toLowerCase(), sec])
+  );
+  for (const wanted of SECTION_CHIPS){
+    const sec = byName.get(wanted.trim().toLowerCase());
+    if (!sec) continue;
+    chip(sec.title, counts.get(sec.shop_section_id) || 0, sectionId === sec.shop_section_id,
       () => { sectionId = sec.shop_section_id; renderChips(); applyFilters(); });
   }
-  if (none) chip("No section", none, sectionId === -1,
-    () => { sectionId = -1; renderChips(); applyFilters(); });
 
   const sep = document.createElement("span");
   sep.className = "chipsep";
@@ -1151,11 +1156,8 @@ function updateEndcap(){
 function applyFilters(){
   currentTerms = normalizeText(searchInput.value).split(" ").filter(Boolean);
   results = searchCatalog(Catalog.rows, searchInput.value, {
-    sectionId: sectionId === -1 ? null : sectionId,
-    missingSkuOnly, hideDone, doneSet: selectedSet
+    sectionId, missingSkuOnly, hideDone, doneSet: selectedSet
   });
-  // "No section" is its own pseudo-section.
-  if (sectionId === -1) results = results.filter(r => r.section_id == null);
 
   listContainer.innerHTML = "";
   rendered = 0;

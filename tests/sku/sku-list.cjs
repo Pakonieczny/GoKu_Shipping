@@ -579,14 +579,66 @@ test('Search stays correct after a SKU is written', async reg => {
 
 section('Section quick-filters');
 
-test('Chips are built from the shop\'s own sections with local counts', async reg => {
+test('Exactly the five named section shortcuts are shown, in order', async reg => {
   const { app } = await bootMixed(reg);
   const labels = app.chips().map(c => c.label).filter(Boolean);
-  assert.deepEqual(labels.slice(0, 7), [
-    'All6', 'NECKLACES1', 'EARRINGS1', 'CHARMS1', 'BRACELETS1', 'RINGS1', 'No section1',
+  assert.deepEqual(labels, [
+    'All6', 'NECKLACES1', 'EARRINGS1', 'CHARMS1', 'BRACELETS1', 'RINGS1',
+    'Missing SKU', 'Hide ✓ done',
   ]);
-  assert.ok(labels.includes('Missing SKU'));
-  assert.ok(labels.includes('Hide ✓ done'));
+});
+
+test('REGRESSION: the shop\'s other sections get no chip', async reg => {
+  // Etsy returns dozens of sections. Rendering them all buried the five that
+  // were asked for and pushed the row off the screen.
+  const extras = [
+    ...SECTIONS,
+    { shop_section_id: 66, title: 'Zodiac / Birth Flower', active_listing_count: 14 },
+    { shop_section_id: 77, title: 'Handwriting Jewelry', active_listing_count: 11 },
+    { shop_section_id: 88, title: 'Evil Eye Jewelry', active_listing_count: 9 },
+  ];
+  const rows = [
+    ...mixedShop(),
+    listing(200001, { title: 'Aries Birth Flower Necklace', shop_section_id: 66 }),
+    listing(200002, { title: 'Evil Eye Charm', shop_section_id: 88 }),
+  ];
+  const shop = fakeShop(rows, { sections: extras });
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
+  await app.domReady();
+
+  const labels = app.chips().map(c => c.label).filter(Boolean);
+  for (const unwanted of ['Zodiac', 'Handwriting', 'Evil Eye', 'No section', 'Section ']) {
+    assert.ok(!labels.some(l => l.includes(unwanted)),
+      'unexpected chip containing "' + unwanted + '": ' + labels.join(' | '));
+  }
+  assert.deepEqual(labels, [
+    'All8', 'NECKLACES1', 'EARRINGS1', 'CHARMS1', 'BRACELETS1', 'RINGS1',
+    'Missing SKU', 'Hide ✓ done',
+  ]);
+
+  // Those listings are still in the catalog and still findable.
+  assert.equal(app.api.Catalog.rows.length, 8);
+  await app.type('evil eye');
+  assert.deepEqual(app.cardIds(), [200002], 'searchable, just not chipped');
+});
+
+test('A named section the shop does not have is skipped, not shown dead', async reg => {
+  const shop = fakeShop(mixedShop(), { sections: SECTIONS.slice(0, 2) });  // only NECKLACES, EARRINGS
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
+  await app.domReady();
+  const labels = app.chips().map(c => c.label).filter(Boolean);
+  assert.deepEqual(labels, ['All6', 'NECKLACES1', 'EARRINGS1', 'Missing SKU', 'Hide ✓ done']);
+});
+
+test('Section titles are matched case-insensitively', async reg => {
+  const lower = SECTIONS.map(s => ({ ...s, title: s.title.toLowerCase() }));
+  const shop = fakeShop(mixedShop(), { sections: lower });
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
+  await app.domReady();
+  const labels = app.chips().map(c => c.label).filter(Boolean);
+  assert.deepEqual(labels.slice(1, 6),
+    ['necklaces1', 'earrings1', 'charms1', 'bracelets1', 'rings1'],
+    'shown with Etsy\'s own capitalisation, matched regardless of it');
 });
 
 test('REGRESSION: section chips appear even when the catalog sync fails', async reg => {
@@ -605,13 +657,13 @@ test('REGRESSION: section chips appear even when the catalog sync fails', async 
   await app.domReady();
 
   assert.match(app.status(), /Sync failed/, 'the sync really did fail');
-  const labels = app.chips().map(c => c.label);
+  const labels = app.chips().map(c => c.label).filter(Boolean);
   for (const name of ['NECKLACES', 'EARRINGS', 'CHARMS', 'BRACELETS', 'RINGS']) {
     assert.ok(labels.some(l => l.startsWith(name)), 'missing chip: ' + name + ' — got ' + labels.join(' | '));
   }
 });
 
-test('Without the sections call, chips still appear from the catalog itself', async reg => {
+test('Without the sections call there are no section chips, and All still works', async reg => {
   const app = createApp({
     storage: freshTokens(),
     fetchImpl: async (url, init) => {
@@ -621,9 +673,10 @@ test('Without the sections call, chips still appear from the catalog itself', as
   });
   reg.push(app);
   await app.domReady();
-  const labels = app.chips().map(c => c.label);
-  assert.ok(labels.some(l => l.startsWith('Section 11')), 'fell back to section ids: ' + labels.join(' | '));
-  assert.ok(labels.some(l => l.startsWith('No section')));
+  const labels = app.chips().map(c => c.label).filter(Boolean);
+  assert.deepEqual(labels, ['All6', 'Missing SKU', 'Hide ✓ done'],
+    'no id-labelled placeholders — a chip is only ever one of the five names');
+  assert.equal(app.cards().length, 6, 'the catalog is unaffected');
 });
 
 test('Every chip reports its own pressed state for assistive tech', async reg => {
@@ -671,12 +724,6 @@ test('A section narrows the search rather than replacing it', async reg => {
     'three gold titles plus one gold SKU');
   await app.chips().find(c => c.label.startsWith('RINGS')).el.dispatch('click');
   assert.deepEqual(app.cardIds(), [100004], 'gold AND rings');
-});
-
-test('"No section" isolates listings Etsy has not filed', async reg => {
-  const { app } = await bootMixed(reg);
-  await app.chips().find(c => c.label.startsWith('No section')).el.dispatch('click');
-  assert.deepEqual(app.cardIds(), [100006]);
 });
 
 test('"All" returns to the whole catalog', async reg => {
