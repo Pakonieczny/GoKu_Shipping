@@ -732,7 +732,7 @@ async function persistSource(src) {
     if (c.dupOf != null) continue;
     try {
       const single = await CharmNestPDF.buildSingleCharm(c, src.parsed);
-      const ai = await uploadBytes(`charmnest/charms/${c.hash}.ai`, single, "application/pdf", "Saving charm " + (c.name || c.index + 1));
+      const ai = await uploadBytes(`charmnest/charms/${c.hash}.ai`, single, "application/illustrator", "Saving charm " + (c.name || c.index + 1));
       const png = await uploadBytes(`charmnest/charms/${c.hash}.png`, dataUrlToBytes(c.thumb), "image/png");
       c.cloud = { ai: ai.url, aiPath: ai.path, png: png.url, pngPath: png.path };
       records.push({ hash: c.hash, name: c.name, slug: c.slug, label: c.label, confidence: c.confidence, namedBy: c.namedBy, metalHint: c.metal || c.metalHint || null,
@@ -1400,7 +1400,7 @@ async function persistSheet(sh, items) {
   // the sheet record links to each charm's permanent copy: wait for those uploads first, so no link is missing
   await Promise.allSettled([...new Set(items.map(c => c.sourceId))].map(id => { const x = S.sources.find(z => z.id === id); return x && x.persisting; }).filter(Boolean));
   const day = today(), name = sh.fileBase || sheetFileBase(sh, sh.page), base = `charmnest/sheets/${day}/${name}`;
-  const ai = await uploadBytes(`${base}/${name}.ai`, sh.outputs.ai, "application/pdf", "Saving sheet .ai");
+  const ai = await uploadBytes(`${base}/${name}.ai`, sh.outputs.ai, "application/illustrator", "Saving sheet .ai");
   const pdf = await uploadBytes(`${base}/${name}.pdf`, sh.outputs.ai, "application/pdf", "Saving sheet .pdf");
   const lab = await uploadBytes(`${base}/${name}_labelled.pdf`, sh.outputs.labelled, "application/pdf", "Saving labelled proof");
   const rep = await uploadBytes(`${base}/${name}_nest-report.json`, new TextEncoder().encode(JSON.stringify(sh.outputs.report, null, 1)), "application/json", "Saving report");
@@ -1723,7 +1723,7 @@ function openCharm(sh, c, placement) {
   $("#ciName").onchange = e => renameCharm(c, e.target.value);
   const pin = $("#ciPin"); if (pin) pin.onclick = () => { c.pinned = c.pinned ? null : { cxPt: pl.cxPt, cyPt: pl.cyPt, angle: pl.angle }; closeDlg(dlg); renderCard(sh); toast(c.pinned ? `${c.name}: pinned — Re-nest places the others around it` : `${c.name}: unpinned`, ""); };
   $("#ciExclude").onclick = () => { c.excluded = !c.excluded; closeDlg(dlg); sheetDirty(sh); };
-  $("#ciSingle").onclick = async () => { const src = S.sources.find(s => s.id === c.sourceId); const b = await CharmNestPDF.buildSingleCharm(c, src.parsed); download(b, `${safeName(c.name || "charm")}.ai`, "application/pdf"); };
+  $("#ciSingle").onclick = async () => { const src = S.sources.find(s => s.id === c.sourceId); const b = await CharmNestPDF.buildSingleCharm(c, src.parsed); download(b, `${safeName(c.name || "charm")}.ai`, "application/illustrator"); };
   $$("[data-move]", $("#rpBody")).forEach(b => b.onclick = () => { closeDlg(dlg); assignCharm(c, b.dataset.move); });
   openDlg(dlg);
 }
@@ -1759,7 +1759,7 @@ function openReport(sh) {
 function downloadOutputs(sh) {
   if (!sh.outputs) return;
   const base = sh.fileBase || sheetFileBase(sh, sh.page);
-  download(sh.outputs.ai, `${base}.ai`, "application/pdf");
+  download(sh.outputs.ai, `${base}.ai`, "application/illustrator");   // an .ai MIME, so no browser renames the file to .pdf
   setTimeout(() => download(sh.outputs.labelled, `${base}_labelled.pdf`, "application/pdf"), 350);
   setTimeout(() => download(new TextEncoder().encode(JSON.stringify(sh.outputs.report, null, 2)), `${base}_nest-report.json`, "application/json"), 700);
   toast("Downloading .ai, labelled proof and nest-report.json", "ok");
