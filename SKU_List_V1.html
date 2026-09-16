@@ -14,6 +14,15 @@
     .btn.active { background:#00695c; }
     .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px,1fr)); gap:12px; padding:16px; }
     .card { background:#121212; border:1px solid #222; border-radius:14px; overflow:hidden; display:flex; flex-direction:column; }
+
+    /* image frame: fixed square so every card matches and zoom stays clipped */
+    .thumb-wrap{
+      position:relative;
+      width:100%;
+      aspect-ratio: 1 / 1;
+      overflow:hidden;
+      background:#151515;
+    }
     /* base image state: fit fully, not cropped; start at scale(1) */
     .thumb{
       width:100%;
@@ -21,6 +30,7 @@
       object-fit: contain;           /* was cover (appears “zoomed”) */
       background:#151515;
       user-select:none;
+      display:block;
       transform: scale(1);           /* explicit baseline */
       transform-origin: var(--ox, 50%) var(--oy, 50%);
       transition: transform .05s linear;
@@ -45,11 +55,14 @@
     .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
     .pill { font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #2a2a2a; color:#cfcfcf; }
     .status { margin-left:auto; font-size:12px; color:#9ad; }
+    .status.bad { color:#ff8a80; }
+    .status.ok  { color:#7ddf8a; }
     footer { position: sticky; bottom:0; background:#111; border-top:1px solid #222; padding:10px 16px; display:flex; gap:8px; align-items:center; }
     .pagebox { margin-left:auto; color:#aaa; }
     input[type="number"]{ background:#181818; color:#ddd; border:1px solid #2a2a2a; border-radius:8px; padding:8px; width:90px;}
     .search { flex: 1; }
     .search input { width:100%; background:#181818; color:#ddd; border:1px solid #2a2a2a; border-radius:8px; padding:10px 12px; }
+    .notice { margin:16px; padding:12px 14px; border:1px solid #2a2a2a; border-radius:12px; background:#141414; color:#ddd; font-size:13px; }
   </style>
 </head>
 <body>
@@ -87,6 +100,11 @@
 const ORIGIN = "https://sku.goldenspike.app";
 const functionsBaseUrl = ORIGIN + "/.netlify/functions";
 
+/* PKCE and tokens live in this origin's localStorage, and Etsy always returns
+   to ORIGIN. Opening this page from any other origin therefore cannot complete
+   a sign-in — startOAuth bounces to ORIGIN first. */
+const ON_ORIGIN = (typeof location !== "undefined") && location.origin === ORIGIN;
+
 /** ============ Token storage ============ */
 const TOKEN_KEYS = {
   access : "access_token",
@@ -99,8 +117,11 @@ function setTokens(tok){
   if (!tok) return;
   if (tok.access_token)  localStorage.setItem(TOKEN_KEYS.access, tok.access_token);
   if (tok.refresh_token) localStorage.setItem(TOKEN_KEYS.refresh, tok.refresh_token);
-  if (tok.expires_in)    localStorage.setItem(TOKEN_KEYS.exp, tok.expires_in);
-  if (tok.issued_at)     localStorage.setItem(TOKEN_KEYS.iat, tok.issued_at);
+  if (tok.expires_in)    localStorage.setItem(TOKEN_KEYS.exp, String(tok.expires_in));
+  if (tok.issued_at)     localStorage.setItem(TOKEN_KEYS.iat, String(tok.issued_at));
+}
+function clearTokens(){
+  Object.values(TOKEN_KEYS).forEach(k => { try { localStorage.removeItem(k); } catch (_) {} });
 }
 function getAccessToken(){ return localStorage.getItem(TOKEN_KEYS.access) || ""; }
 function getRefreshToken(){ return localStorage.getItem(TOKEN_KEYS.refresh) || ""; }
@@ -112,6 +133,7 @@ function secondsUntilExpiry(){
   const now = Math.floor(Date.now()/1000);
   return (iat + exp) - now;
 }
+function tokenIsFresh(){ return !!getAccessToken() && secondsUntilExpiry() > 60; }
 
 let __refreshTimer = null;
 function scheduleTokenRefresh(){
@@ -120,23 +142,41 @@ function scheduleTokenRefresh(){
   __refreshTimer = setTimeout(refreshAccessToken, sec*1000);
 }
 
-async function refreshAccessToken(){
-  const refresh_token = getRefreshToken();
-  if (!refresh_token) return;
-  const r = await fetch(`${functionsBaseUrl}/refreshEtsyToken`, {
-    method: "POST",
-    headers: { "Content-Type":"application/json" },
-    body: JSON.stringify({ refresh_token })
-  });
-  const data = await r.json();
-  if (r.ok){
-    const issued_at = Math.floor(Date.now()/1000);
-    setTokens({ ...data, issued_at });
-    scheduleTokenRefresh();
-    setAuthBadge();
-  } else {
-    console.warn("Refresh failed", data);
-  }
+/* One in-flight refresh at a time: a page load can race the scheduled timer
+   and a 401 retry, and Etsy rotates the refresh token on every exchange —
+   two concurrent refreshes would invalidate each other. */
+let __refreshPromise = null;
+function refreshAccessToken(){
+  if (__refreshPromise) return __refreshPromise;
+  __refreshPromise = (async () => {
+    const refresh_token = getRefreshToken();
+    if (!refresh_token) return false;
+    try {
+      const r = await fetch(`${functionsBaseUrl}/refreshEtsyToken`, {
+        method: "POST",
+        headers: { "Content-Type":"application/json" },
+        body: JSON.stringify({ refresh_token })
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data.access_token){
+        const issued_at = Number(data.issued_at) || Math.floor(Date.now()/1000);
+        setTokens({ ...data, issued_at });
+        scheduleTokenRefresh();
+        setAuthBadge();
+        return true;
+      }
+      console.warn("Refresh failed", data);
+      // A rejected refresh token is dead for good — drop it so the UI asks
+      // for a fresh sign-in instead of retrying a token Etsy will never accept.
+      if (data && data.error === "invalid_grant") clearTokens();
+      setAuthBadge();
+      return false;
+    } catch (e){
+      console.warn("Refresh request failed", e);
+      return false;
+    } finally { __refreshPromise = null; }
+  })();
+  return __refreshPromise;
 }
 
 /** ============ OAuth helpers (match design.html pattern) ============ */
@@ -153,20 +193,69 @@ async function generateCodeChallenge(codeVerifier){
   return b64.replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
 }
 
+/* ── PKCE verifier store ─────────────────────────────────────────────────
+   Etsy echoes our `state` back on the callback, so the verifier is stored
+   UNDER that state instead of in one shared slot.
+
+   This is the fix for `invalid_grant: code_verifier is invalid`. With a single
+   slot, any second authorize request — a stale tab, a double click on Connect,
+   or a reconnect firing while you were mid-login — overwrote the verifier, and
+   the code that eventually came back was then checked against the wrong one.
+   Keyed by state, each callback finds the verifier that actually generated its
+   challenge. Entries expire after 15 minutes.                              */
+const PKCE_KEY   = "etsy_pkce_v2";
+const LEGACY_KEY = "etsy_code_verifier";
+
+function stashVerifier(state, verifier){
+  let m = {};
+  try { m = JSON.parse(localStorage.getItem(PKCE_KEY) || "{}"); } catch (_) {}
+  if (!m || typeof m !== "object") m = {};
+  const now = Date.now();
+  Object.keys(m).forEach(k => { if (now - (m[k] && m[k].at || 0) > 15*60*1000) delete m[k]; });
+  m[state] = { v: verifier, at: now };
+  try { localStorage.setItem(PKCE_KEY, JSON.stringify(m)); } catch (_) {}
+  try { localStorage.setItem(LEGACY_KEY, verifier); } catch (_) {}   // legacy fallback
+}
+
+function takeVerifier(state){
+  let m = {};
+  try { m = JSON.parse(localStorage.getItem(PKCE_KEY) || "{}"); } catch (_) {}
+  if (!m || typeof m !== "object") m = {};
+  if (state && m[state] && m[state].v) return m[state].v;
+  // No state match: fall back to the most recent verifier we issued.
+  const newest = Object.values(m).sort((a,b) => (b.at||0) - (a.at||0))[0];
+  return (newest && newest.v) || localStorage.getItem(LEGACY_KEY) || "";
+}
+
+function dropVerifier(state){
+  let m = {};
+  try { m = JSON.parse(localStorage.getItem(PKCE_KEY) || "{}"); } catch (_) {}
+  if (m && typeof m === "object" && state && m[state]){
+    delete m[state];
+    try { localStorage.setItem(PKCE_KEY, JSON.stringify(m)); } catch (_) {}
+  }
+}
+
 let __oauthInFlight = false;
 async function startOAuth(reason = "manual"){
   if (__oauthInFlight) return;
   __oauthInFlight = true;
   try {
+    // Etsy returns to ORIGIN, so the verifier has to be written there.
+    if (!ON_ORIGIN){
+      window.location.href = ORIGIN + "/?connect=1";
+      return;
+    }
+
     const codeVerifier = generateRandomString(64);
-    localStorage.setItem("etsy_code_verifier", codeVerifier);
+    const state        = `sku_${Date.now()}_${generateRandomString(8)}_${reason}`;
+    stashVerifier(state, codeVerifier);
     const codeChallenge = await generateCodeChallenge(codeVerifier);
 
     // Same CLIENT_ID style as design.html
     const CLIENT_ID  = "k75zdspz4r99txpqdji7i2em";
     const redirectUri = ORIGIN; // Etsy returns to https://sku.goldenspike.app
     const scope      = "listings_w listings_r transactions_r transactions_w";
-    const state      = `reconnect_${Date.now()}_${reason}`;
 
     const etsyAuthUrl =
       "https://www.etsy.com/oauth/connect?response_type=code" +
@@ -181,25 +270,45 @@ async function startOAuth(reason = "manual"){
   } catch (e) {
     console.error("OAuth boot failed:", e);
     __oauthInFlight = false;
+    setStatus("Could not start Etsy sign-in", "bad");
   }
 }
 
 /** ============ API wrapper ============ */
+/* Refreshes a stale token before the call, and once more if Etsy still
+   answers 401 — an expired access token used to surface as a bare
+   "Error loading listings: 401" with no way out but a full reconnect. */
 async function apiFetch(path, init={}){
-  const headers = new Headers(init.headers || {});
-  const tok = getAccessToken();
-  if (tok) headers.set("Access-Token", tok);
-  return fetch(`${functionsBaseUrl}${path}`, { ...init, headers });
+  if (!tokenIsFresh() && getRefreshToken()) await refreshAccessToken();
+
+  const send = () => {
+    const headers = new Headers(init.headers || {});
+    const tok = getAccessToken();
+    if (tok) headers.set("Access-Token", tok);
+    return fetch(`${functionsBaseUrl}${path}`, { ...init, headers });
+  };
+
+  let r = await send();
+  if (r.status === 401 && getRefreshToken()){
+    const ok = await refreshAccessToken();
+    if (ok) r = await send();
+  }
+  return r;
 }
 
 /** ============ Selection persistence ============ */
 const SELECT_KEY = "sku_selected_ids_v1";
+/* IDs are normalized to strings: they arrive as numbers from Etsy and come
+   back from JSON unchanged, but a mixed set silently loses checkmarks. */
 function loadSelectedSet(){
-  try { return new Set(JSON.parse(localStorage.getItem(SELECT_KEY) || "[]")); }
+  try {
+    const raw = JSON.parse(localStorage.getItem(SELECT_KEY) || "[]");
+    return new Set((Array.isArray(raw) ? raw : []).map(String));
+  }
   catch { return new Set(); }
 }
 function saveSelectedSet(set){
-  localStorage.setItem(SELECT_KEY, JSON.stringify([...set]));
+  try { localStorage.setItem(SELECT_KEY, JSON.stringify([...set])); } catch (_) {}
 }
 let selectedSet = loadSelectedSet();
 
@@ -253,9 +362,27 @@ const goBtn         = document.getElementById("goBtn");
 let page = 1;
 let lastBatch = [];
 let filterIncompleteOnly = false; // show ONLY items without the green checkmark
+let loading = false;
+
+function setStatus(text, kind){
+  if (!authStatusEl) return;
+  authStatusEl.textContent = text;
+  authStatusEl.className = "status" + (kind ? " " + kind : "");
+}
 
 function setAuthBadge(){
-  authStatusEl.textContent = getAccessToken() ? "Connected" : "Not connected";
+  if (getAccessToken()) setStatus(tokenIsFresh() ? "Connected" : "Reconnecting…", tokenIsFresh() ? "ok" : "");
+  else if (getRefreshToken()) setStatus("Reconnecting…", "");
+  else if (!ON_ORIGIN) setStatus("Open " + ORIGIN + " to sign in", "bad");
+  else setStatus("Not connected", "");
+}
+
+function showNotice(msg){
+  listContainer.innerHTML = "";
+  const box = document.createElement("div");
+  box.className = "notice";
+  box.textContent = msg;
+  listContainer.appendChild(box);
 }
 
 function titlePassesFilter(t){
@@ -264,12 +391,22 @@ function titlePassesFilter(t){
   return String(t||"").toLowerCase().includes(q);
 }
 
+function formatPrice(price){
+  if (!price) return "";
+  const amount  = Number(price.amount);
+  const divisor = Number(price.divisor) || 100;   // Etsy Money objects carry their own divisor
+  if (!Number.isFinite(amount)) return "";
+  return `${(amount / divisor).toFixed(2)} ${price.currency_code || ""}`.trim();
+}
+
 function renderListings(items){
   listContainer.innerHTML = "";
-  for (const it of items){
+  let shown = 0;
+  for (const it of (Array.isArray(items) ? items : [])){
     if (!titlePassesFilter(it.title)) continue;
     // If filtering, hide anything already “checked/complete”
-    if (filterIncompleteOnly && selectedSet.has(it.listing_id)) continue;
+    if (filterIncompleteOnly && selectedSet.has(String(it.listing_id))) continue;
+    shown++;
 
     // ——— image + zoom wrapper ———
     const wrap = document.createElement("div");
@@ -278,6 +415,7 @@ function renderListings(items){
     const img = document.createElement("img");
     img.className = "thumb";
     img.alt = it.title || "Listing image";
+    img.loading = "lazy";
     img.src = it.primary_image || "";
     wrap.appendChild(img);
     attachZoom(wrap, img);
@@ -298,19 +436,19 @@ function renderListings(items){
     const row = document.createElement("div");
     row.className = "row";
 
-    // ——— new: persistent selection checkbox ———
+    // ——— persistent selection checkbox ———
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.className = "selectBox";
     cb.title = "Select listing";
-    cb.checked = selectedSet.has(it.listing_id);
+    cb.checked = selectedSet.has(String(it.listing_id));
     cb.addEventListener("change", () => {
       const cardEl = cb.closest(".card");
       if (cb.checked){
-        selectedSet.add(it.listing_id);
+        selectedSet.add(String(it.listing_id));
         if (cardEl) cardEl.classList.add("selected");
       } else {
-        selectedSet.delete(it.listing_id);
+        selectedSet.delete(String(it.listing_id));
         if (cardEl) cardEl.classList.remove("selected");
       }
       saveSelectedSet(selectedSet);
@@ -321,12 +459,13 @@ function renderListings(items){
     idPill.className = "pill";
     idPill.textContent = `#${it.listing_id}`;
 
+    const priceText = formatPrice(it.price);
     const pricePill = document.createElement("span");
     pricePill.className = "pill";
-    if (it.price) pricePill.textContent = `${it.price.amount/100} ${it.price.currency_code}`;
+    pricePill.textContent = priceText;
 
     row.appendChild(idPill);
-    if (it.price) row.appendChild(pricePill);
+    if (priceText) row.appendChild(pricePill);
 
     // 🔹 Edit SKUs button
     const editBtn = document.createElement("button");
@@ -371,12 +510,17 @@ function renderListings(items){
 
     listContainer.appendChild(card);
   }
+
+  if (!shown && Array.isArray(items) && items.length){
+    showNotice("No listings on this page match the current filters.");
+  }
+  return shown;
 }
 
 // ───────────────────── SKU Editor helpers ─────────────────────
 async function fetchInventoryDetail(listingId){
   const r = await apiFetch(`/etsyListingInventoryDetailProxy?listingId=${encodeURIComponent(listingId)}`);
-  if (!r.ok) throw new Error(`Failed to fetch inventory ${listingId}`);
+  if (!r.ok) throw new Error(`Failed to fetch inventory ${listingId} (HTTP ${r.status})`);
   const js = await r.json();
   return Array.isArray(js.products) ? js.products : [];
 }
@@ -435,7 +579,12 @@ function buildSkuEditorDom(listing, products){
   save.textContent = "Save";
   save.addEventListener("click", async () => {
     const el = editor.querySelector(".skuInput");
-    const item = { product_id: Number(el.dataset.productId), sku: el.value.trim() };
+    const productId = Number(el.dataset.productId);
+    if (!Number.isFinite(productId) || !productId){
+      alert("This listing has no Variant 1 product to write to.");
+      return;
+    }
+    const item = { product_id: productId, sku: el.value.trim() };
     save.disabled = true;
     try {
       const ok = await saveSkuUpdates(listing.listing_id, [item]); // only Variant 1
@@ -444,7 +593,7 @@ function buildSkuEditorDom(listing, products){
         listing.skus = [item.sku].filter(Boolean);
         const skuLine = card.querySelector(".sku");
         const firstSku = (Array.isArray(listing.skus) && listing.skus.length) ? listing.skus[0] : "";
-        skuLine.textContent = firstSku ? `SKU: ${firstSku} (Variant 1)` : "SKU: —";
+        if (skuLine) skuLine.textContent = firstSku ? `SKU: ${firstSku} (Variant 1)` : "SKU: —";
         // Reset Generate button color if SKU now exists
         const genBtn = card.querySelector('[data-role="gen-btn"]');
         if (genBtn) genBtn.style.background = firstSku ? "" : "OrangeRed";
@@ -504,17 +653,31 @@ function makeSkuFrom(title, listingId){
   return `${pretty}_${last4}`;
 }
 
+/* Pick the listing's primary image out of an Etsy images array. */
+function pickPrimaryImage(images){
+  if (!Array.isArray(images) || !images.length) return "";
+  const best = images.find(x => x && x.is_primary) ||
+               [...images].sort((a,b) => (a?.rank ?? 999) - (b?.rank ?? 999))[0] ||
+               images[0];
+  return best?.url_fullxfull || best?.url_570xN || "";
+}
+
+/* Pull Variant 1's SKU out of an inlined inventory document. */
+function skusFromInventory(inventory){
+  const products = inventory && Array.isArray(inventory.products) ? inventory.products : [];
+  const out = [];
+  for (const p of products){
+    const sku = String(p?.sku || "").trim();
+    if (sku) out.push(sku);
+  }
+  return out;
+}
+
 async function fetchPrimaryImage(listingId){
   const r = await apiFetch(`/etsyListingImagesProxy?listingId=${encodeURIComponent(listingId)}`);
   if (!r.ok) return "";
   const js = await r.json();
-  let best = null;
-  if (Array.isArray(js.results) && js.results.length){
-    best = js.results.find(x => x.is_primary) ||
-           js.results.sort((a,b) => (a.rank||999) - (b.rank||999))[0] ||
-           js.results[0];
-  }
-  return best?.url_fullxfull || best?.url_570xN || "";
+  return pickPrimaryImage(js.results);
 }
 
 async function fetchSkus(listingId){
@@ -524,64 +687,109 @@ async function fetchSkus(listingId){
   return js.skus || [];
 }
 
-async function* pLimit(iterable, concurrency=6, worker){
-  const queue = [...iterable]; const running = new Set();
+/* Bounded-concurrency worker. A failing item resolves to null rather than
+   rejecting: one dead listing must not abort the whole page, and an
+   unobserved rejection from a sibling promise used to surface as an
+   uncaught error. */
+async function pLimit(iterable, concurrency=6, worker){
+  const queue = [...iterable];
+  const running = new Set();
+  const done = [];
+  const start = (item) => {
+    const p = Promise.resolve()
+      .then(() => worker(item))
+      .catch(err => { console.warn("Listing enrichment failed", err); return null; })
+      .finally(() => running.delete(p));
+    running.add(p);
+    return p;
+  };
   while (queue.length || running.size){
-    while (queue.length && running.size < concurrency){
-      const item = queue.shift();
-      const p = Promise.resolve(worker(item)).finally(()=>running.delete(p));
-      running.add(p);
-    }
-    if (running.size) yield await Promise.race(running);
+    while (queue.length && running.size < concurrency) start(queue.shift());
+    if (running.size) done.push(await Promise.race(running));
   }
+  return done;
 }
 
 async function loadPage(p=1){
+  if (loading) return;
   const limit = Math.min(100, Math.max(1, Number(pageSizeEl.value||100)));
   const offset = (p-1) * limit;
-  pageNumEl.textContent = String(p);
 
-  const token = getAccessToken();
-  if (!token){
-    listContainer.innerHTML = `<div class="card"><div class="meta"><div class="title">Please connect Etsy first.</div></div></div>`;
+  if (!getAccessToken() && !getRefreshToken()){
+    showNotice("Please connect Etsy first.");
     return;
   }
 
-  const r = await apiFetch(`/etsyShopListingsProxy?limit=${limit}&offset=${offset}&state=active`);
-  if (!r.ok){
-    const t = await r.text();
-    listContainer.innerHTML = `<div class="card"><div class="meta"><div class="title">Error loading listings: ${r.status}</div><div class="sku">${t}</div></div></div>`;
-    return;
+  loading = true;
+  refreshBtn.disabled = true;
+  try {
+    showNotice("Loading listings…");
+
+    // One call returns titles, prices, images AND inventory. Per-listing image
+    // and inventory reads below are a fallback only — at 100 listings a page
+    // they cost 200 extra Etsy calls and used to run every single refresh.
+    const r = await apiFetch(
+      `/etsyShopListingsProxy?limit=${limit}&offset=${offset}&state=active&includes=Images,Inventory`
+    );
+    if (!r.ok){
+      const t = await r.text();
+      listContainer.innerHTML = "";
+      const card = document.createElement("div");
+      card.className = "card";
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const title = document.createElement("div");
+      title.className = "title";
+      title.textContent = `Error loading listings: ${r.status}`;
+      const detail = document.createElement("div");
+      detail.className = "sku";
+      detail.textContent = t;
+      meta.appendChild(title); meta.appendChild(detail);
+      card.appendChild(meta);
+      listContainer.appendChild(card);
+      return;
+    }
+    const js = await r.json();
+    const raw = Array.isArray(js.results) ? js.results : (Array.isArray(js) ? js : []);
+
+    const base = raw.map(x => ({
+      listing_id: x.listing_id,
+      title     : x.title,
+      price     : x.price,
+      primary_image: pickPrimaryImage(x.images),
+      skus: skusFromInventory(x.inventory).slice(0, 1) // Variant 1 only
+    }));
+
+    // Fill only what the bulk call could not supply.
+    const needsDetail = base.filter(item => !item.primary_image || !item.skus.length);
+    if (needsDetail.length){
+      await pLimit(needsDetail, 6, async (item) => {
+        const [img, skus] = await Promise.all([
+          item.primary_image ? item.primary_image : fetchPrimaryImage(item.listing_id),
+          item.skus.length   ? item.skus          : fetchSkus(item.listing_id)
+        ]);
+        item.primary_image = img || "";
+        item.skus = (skus || []).slice(0, 1);
+        return item;
+      });
+    }
+
+    lastBatch = base;
+    if (!base.length) showNotice("No listings found on this page.");
+    else renderListings(lastBatch);
+
+    page = p;
+    pageNumEl.textContent = String(p);
+    prevBtn.disabled = p <= 1;
+    nextBtn.disabled = raw.length < limit;
+  } catch (e){
+    console.error("loadPage failed", e);
+    showNotice("Could not load listings: " + e.message);
+  } finally {
+    loading = false;
+    refreshBtn.disabled = false;
+    setAuthBadge();
   }
-  const js = await r.json();
-  const raw = Array.isArray(js.results) ? js.results : (Array.isArray(js) ? js : []);
-
-  const base = raw.map(x => ({
-    listing_id: x.listing_id,
-    title     : x.title,
-    price     : x.price,
-    primary_image: "",
-    skus: []
-  }));
-
-  const jobs = base.map(item => item);
-  for await (const done of pLimit(jobs, 6, async (item) => {
-    const [img, skus] = await Promise.all([
-      fetchPrimaryImage(item.listing_id),
-      fetchSkus(item.listing_id)
-    ]);
-    item.primary_image = img;
-    item.skus = (skus || []).slice(0, 1); // Variant 1 only
-    return item;
-  })) {
-    // no-op; iteration fills in place
-  }
-
-  lastBatch = base;
-  renderListings(lastBatch);
-
-  prevBtn.disabled = p <= 1;
-  nextBtn.disabled = raw.length < limit;
 }
 
 async function generateAndSaveSku(listing, btn){
@@ -613,13 +821,12 @@ async function generateAndSaveSku(listing, btn){
 }
 
 /** ============ Boot ============ */
-function setAuthBadge(){ authStatusEl.textContent = getAccessToken() ? "Connected" : "Not connected"; }
-
-document.addEventListener("DOMContentLoaded", async () => {
-  // Handle OAuth returns
+/* Returns what the OAuth return handler did, so the boot path (and tests)
+   can tell a completed sign-in from a failed one. */
+function bootOAuth(){
   const url = new URLSearchParams(location.search);
 
-  // If we already have tokens in the URL (server redirect), store and clean URL
+  // 1) Server redirect already carrying tokens → store and clean the URL.
   const access_token  = url.get("access_token");
   const refresh_token = url.get("refresh_token");
   const expires_in    = url.get("expires_in");
@@ -627,28 +834,66 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (access_token && refresh_token && expires_in && issued_at){
     setTokens({ access_token, refresh_token, expires_in, issued_at });
     history.replaceState({}, "", ORIGIN + location.pathname); // clean query
-  } else {
-    // Standard OAuth code return → pass code to the server for exchange
-    const code = url.get("code");
-    if (code){
-      const v = localStorage.getItem("etsy_code_verifier");
-      if (v){
-        const qs = new URLSearchParams({ code, code_verifier: v, redirect_domain: "sku" });
-        window.location.href = ORIGIN + "/.netlify/functions/exchangeToken?" + qs.toString();
-        return;
-      } else {
-        console.error("No code verifier found in localStorage.");
-      }
-    }
+    setStatus("Connected", "ok");
+    return "tokens";
   }
 
-  setAuthBadge();
+  // 2) Etsy declined or errored.
+  const err = url.get("error");
+  if (err){
+    history.replaceState({}, "", ORIGIN + location.pathname);
+    setStatus("Etsy sign-in failed", "bad");
+    console.error("Etsy OAuth error:", err, url.get("error_description") || "");
+    return "error";
+  }
+
+  // 3) Standard OAuth code return → hand the code to the server for exchange.
+  const code = url.get("code");
+  if (code){
+    const state = url.get("state") || "";
+    const v = takeVerifier(state);
+
+    // An authorization code is single-use. A reload or a back-navigation on
+    // this URL replays it and Etsy rejects the second attempt.
+    let lastCode = null;
+    try { lastCode = sessionStorage.getItem("etsy_last_code"); } catch (_) {}
+    if (lastCode === code){
+      history.replaceState({}, "", ORIGIN + location.pathname);
+      setStatus("Sign-in link already used", "bad");
+      return "replay";
+    }
+
+    if (v){
+      try { sessionStorage.setItem("etsy_last_code", code); } catch (_) {}
+      dropVerifier(state);
+      const qs = new URLSearchParams({ code, code_verifier: v, redirect_domain: "sku" });
+      window.location.href = ORIGIN + "/.netlify/functions/exchangeToken?" + qs.toString();
+      return "exchange";
+    }
+
+    console.error("OAuth callback arrived with no stored code_verifier.", { state });
+    history.replaceState({}, "", ORIGIN + location.pathname);
+    setStatus("Sign-in did not complete — press Connect Etsy", "bad");
+    return "no-verifier";
+  }
+
+  // 4) Nothing OAuth-shaped in the URL.
+  if (url.get("connect") === "1"){
+    history.replaceState({}, "", ORIGIN + location.pathname);
+    return "connect";
+  }
+  return "none";
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  const outcome = bootOAuth();
+  if (outcome === "exchange") return;   // navigating away to the token exchange
 
   document.getElementById("connectEtsyBtn").addEventListener("click", () => startOAuth("button"));
   document.getElementById("refreshBtn").addEventListener("click", () => loadPage(page));
-  document.getElementById("prevBtn").addEventListener("click", () => { if (page>1){ page--; loadPage(page);} });
-  document.getElementById("nextBtn").addEventListener("click", () => { page++; loadPage(page); });
-  document.getElementById("pageSize").addEventListener("change", () => { page = 1; loadPage(page); });
+  document.getElementById("prevBtn").addEventListener("click", () => { if (page>1) return loadPage(page-1); });
+  document.getElementById("nextBtn").addEventListener("click", () => loadPage(page+1));
+  document.getElementById("pageSize").addEventListener("change", () => loadPage(1));
   document.getElementById("searchInput").addEventListener("input", () => renderListings(lastBatch));
 
   // Toggle: show only items WITHOUT green checkmark (unchecked)
@@ -658,18 +903,21 @@ document.addEventListener("DOMContentLoaded", async () => {
     renderListings(lastBatch);
   });
   // Jump to page (button + Enter key)
-  goBtn.addEventListener("click", () => {
-    const n = Math.max(1, Number(pageJumpEl.value || 1));
-    page = n; loadPage(page);
-  });
-  pageJumpEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      const n = Math.max(1, Number(pageJumpEl.value || 1));
-      page = n; loadPage(page);
-    }
-  });
+  const jump = () => loadPage(Math.max(1, Number(pageJumpEl.value || 1)));
+  goBtn.addEventListener("click", jump);
+  pageJumpEl.addEventListener("keydown", (e) => { if (e.key === "Enter") return jump(); });
 
-  if (getAccessToken()) loadPage(1);
+  if (outcome === "connect"){ await startOAuth("cross-origin"); return; }
+
+  // Token lifecycle: an expired access token is refreshed before the first
+  // read instead of surfacing as a 401 wall.
+  if (getAccessToken() && tokenIsFresh()) scheduleTokenRefresh();
+  else if (getRefreshToken()) await refreshAccessToken();
+
+  setAuthBadge();
+
+  if (getAccessToken()) await loadPage(1);
+  else showNotice("Please connect Etsy first.");
 });
 </script>
 </body>
