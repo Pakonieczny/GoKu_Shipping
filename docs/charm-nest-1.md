@@ -88,7 +88,7 @@ Each finished sheet is saved in its own folder, `charmnest/sheets/<yyyy-mm-dd>/<
 
 ## Plates and the work area
 
-Production uses two plates: **A · 100 × 50 mm** (default) and **B · 100 × 100 mm**; the stock selector offers only these plus the per-metal custom size. On import the sorter reads the work area from the file: a drawn plate frame if there is one, otherwise the artboard if it is plate-sized, otherwise the tight extent of the largest block of charms (charms within 20 pt of one another). The result is logged ("the block of 34 nested charms measures 98.8 × 48.4 mm — plate A") and the stock selector switches to the matching plate; a block that matches neither plate is flagged. Charm sizes are always read from the file's own points, never scaled.
+Production uses two plates: **A · 100 × 50 mm** (default) and **B · 100 × 100 mm**; the stock selector offers only these plus the per-metal custom size. On import the sorter reads the work area from the file: a drawn plate frame if there is one, otherwise the artboard if it is plate-sized, otherwise the tight extent of the largest block of charms (charms within 20 pt of one another). The measurement is logged; the plate itself is always the operator's selection (A by default) and is never switched by a file. Charm sizes are always read from the file's own points, never scaled.
 
 ## Fidelity check
 
