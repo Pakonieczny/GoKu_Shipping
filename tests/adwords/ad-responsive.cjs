@@ -47,7 +47,12 @@ if(require.main===module)(async()=>{
    for(let i=0;i<text.length;i++)for(let j=i+1;j<text.length;j++)ok(!boxesOverlap(text[i].getBoundingRect(),text[j].getBoundingRect()),board.key+' '+text[i].editorRole+' avoids '+text[j].editorRole);
    const image=e.canvas.getObjects().find(o=>o.type==='image');ok(image.scaleX===image.scaleY&&image.angle===0,'photo preserves proportions');
    const imageBox=image.getBoundingRect();
-   ok(board.key==='landscape'?imageBox.left+imageBox.width>=board.width-1&&imageBox.height>=board.height*.98:imageBox.left<=1&&(responsive.family(board)==='banner'?imageBox.height>=board.height*.98:imageBox.width>=board.width*.98),board.key+' product scene reaches its outer edge without an inset thumbnail');
+   // Five wide banners deliberately hold a photographic edge margin, so the
+   // photograph starts there rather than at zero. Every other board bleeds to
+   // its edge. The margin is read from the layout module, never restated here.
+   const edgeMargin=responsive.family(board)==='banner'?responsive.bannerEdgeMargin(board):0;
+   ok(board.key==='landscape'?imageBox.left+imageBox.width>=board.width-1&&imageBox.height>=board.height*.98:imageBox.left<=edgeMargin+1&&(responsive.family(board)==='banner'?imageBox.height>=board.height*.98:imageBox.width>=board.width*.98),board.key+' product scene reaches its outer edge without an inset thumbnail');
+   if(edgeMargin>0)ok(imageBox.left>=edgeMargin-1,board.key+' keeps its intended photographic edge margin');
    // The full charm remains inside every crop, including its off-center position.
    const fx=photo.focus.x*photo.width,fy=photo.focus.y*photo.height,fw=photo.focus.width*photo.width,fh=photo.focus.height*photo.height;
    ok(image.cropX<=fx&&image.cropY<=fy&&image.cropX+image.width>=fx+fw&&image.cropY+image.height>=fy+fh,board.key+' keeps the complete located charm visible');

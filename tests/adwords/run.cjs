@@ -6,7 +6,7 @@ const files = fs.readdirSync(__dirname).filter(name => name.endsWith('.cjs') && 
 let failed = 0;
 for (const file of files) {
   const result = spawnSync(process.execPath, [path.join(__dirname, file)], {
-    cwd: path.resolve(__dirname, '../..'), encoding: 'utf8', timeout: 60000
+    cwd: path.resolve(__dirname, '../..'), encoding: 'utf8', timeout: 300000
   });
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);

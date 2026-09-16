@@ -1,10 +1,13 @@
 // Verify the official preview request and its scope without contacting Google.
+// Pin the API version so this asserts the request shape rather than whichever
+// version happens to be the current default. googleConnectionsCheck verifies
+// the configured version and every field it must still serve.
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),assert=require('node:assert/strict');
 const file=path.resolve(__dirname,'../../netlify/functions/googleAdsAutopilot.js'),realRequire=require('node:module').createRequire(file);
 const groupRef='customers/123/assetGroups/7',workspace={settings:{productId:'11',groupRef},context:{campaignId:'42',groups:[{ref:groupRef,channel:'pmax',name:'Necklaces'}]}};
 let calls=[],response={result:{previews:[{assetGroup:groupRef,expirationDateTime:'2026-10-01T12:00:00Z',uiPreviewResult:{shareablePreviewUrl:'https://ads.google.com/aw/preview/example'}}]}},ok=true;
 const fetch=async(url,input)=>{calls.push({url,...input,body:JSON.parse(input.body)});return {ok,json:async()=>response};};
-const context=vm.createContext({module:{exports:{}},exports:{},require:n=>n==='node-fetch'?fetch:realRequire(n),process:{env:{GADS_CUSTOMER_ID:'123'}},console,Buffer,Date,Intl,Map,Set,URL,URLSearchParams,setTimeout,clearTimeout});vm.runInContext(fs.readFileSync(file,'utf8'),context);
+const context=vm.createContext({module:{exports:{}},exports:{},require:n=>n==='node-fetch'?fetch:realRequire(n),process:{env:{GADS_CUSTOMER_ID:'123',GADS_API_VERSION:'v24'}},console,Buffer,Date,Intl,Map,Set,URL,URLSearchParams,setTimeout,clearTimeout});vm.runInContext(fs.readFileSync(file,'utf8'),context);
 context.fixture={ref:{get:async()=>({exists:true,data:()=>workspace})},gaql:async query=>{assert(query.includes("asset_group.resource_name = '"+groupRef+"'")&&query.includes('campaign.id = 42'));return [{assetGroup:{resourceName:groupRef},campaign:{id:'42'}}];}};
 vm.runInContext('_adDesignWorkspaceRef=()=>fixture.ref;gaql=fixture.gaql;mintToken=async()=>"fixture"',context);
 const preview=context.module.exports.adDesignGooglePreview,input={workspaceId:'work',productId:'11',groupRef};let checks=0;

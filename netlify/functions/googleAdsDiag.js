@@ -14,7 +14,7 @@
 
 const fetch = require("node-fetch");
 const ENV = process.env;
-const V = ENV.GADS_API_VERSION || "v24";
+const V = ENV.GADS_API_VERSION || "v25";
 const CID = (ENV.GADS_CUSTOMER_ID || "").replace(/\D/g, "");
 const LOGIN = (ENV.GADS_LOGIN_CUSTOMER_ID || "").replace(/\D/g, "");
 

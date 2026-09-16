@@ -24,7 +24,7 @@ const fetch = require("node-fetch");
 const C = require("./_googleConnections");
 const ENV = process.env;
 
-const V = ENV.GADS_API_VERSION || "v24";
+const V = ENV.GADS_API_VERSION || "v25";
 const CID = (ENV.GADS_CUSTOMER_ID || "").replace(/\D/g, "");
 const LOGIN = (ENV.GADS_LOGIN_CUSTOMER_ID || "").replace(/\D/g, "");
 const MERCHANT = String(ENV.GMC_MERCHANT_ID || ENV.MERCHANT_CENTER_ID || "").replace(/\D/g, "");
@@ -56,8 +56,8 @@ function adsHeaders(token, customerId) {
   return h;
 }
 
-async function adsPost(token, path, body) {
-  const res = await fetch("https://googleads.googleapis.com/" + V + "/" + path, {
+async function adsPost(token, path, body, version) {
+  const res = await fetch("https://googleads.googleapis.com/" + (version || V) + "/" + path, {
     method: "POST", timeout: TIMEOUT, headers: adsHeaders(token), body: JSON.stringify(body)
   });
   const data = await res.json().catch(() => ({}));
@@ -86,7 +86,7 @@ function credentialSection() {
 // ── 2. Google Ads reach and API version currency ────────────────────────────
 async function adsAccessSection(token) {
   const rows = [];
-  if (!token) return { title: "Google Ads · access", rows: [C.skip("access", "no access token was minted")] };
+  if (!token) return { title: "Google Ads · access", rows: [C.skip("access", "no access token was minted")], served: [] };
 
   try {
     const res = await fetch("https://googleads.googleapis.com/" + V + "/customers:listAccessibleCustomers", {
@@ -123,7 +123,7 @@ async function adsAccessSection(token) {
     ? C.warn("API version currency", "configured " + V + "; Google also serves " + served.join(", ") + ". Newer versions carry later sunset dates — move GADS_API_VERSION to " + newest + " once its fields are confirmed below.")
     : served.length ? C.ok("API version currency", "configured " + V + " is the newest version answering for this account")
       : C.fail("API version currency", "no probed version answered"));
-  return { title: "Google Ads · access", rows };
+  return { title: "Google Ads · access", rows, served };
 }
 
 
@@ -165,39 +165,66 @@ async function adsResourceSection(token) {
   return { title: "Google Ads · reporting resources", note: "Each row is the smallest query that proves the resource is readable. Rows marked “available, not yet used” are Google capabilities this application does not call yet.", rows };
 }
 
-// ── 4. Schema introspection: does the field exist, and what may it join? ────
-async function adsSchemaSection(token) {
+// ── 4. Schema: does every field this application queries still exist? ───────
+// A version bump is only safe if all of them do, so the whole set is
+// introspected in batches rather than a sample.
+async function fieldMap(token, version, names) {
+  const found = new Map();
+  for (let i = 0; i < names.length; i += 50) {
+    const chunk = names.slice(i, i + 50);
+    const { res, data } = await adsPost(token, "googleAdsFields:search", {
+      query: "SELECT name, category, selectable, data_type, selectable_with WHERE name IN (" + chunk.map(n => "'" + n + "'").join(",") + ")"
+    }, version);
+    if (!res.ok) throw new Error(res.status + " — " + (C.adsErrorCode(data) || JSON.stringify(data).slice(0, 160)));
+    for (const r of data.results || []) found.set(r.name, r);
+  }
+  return found;
+}
+
+async function adsSchemaSection(token, served) {
   if (!token) return { title: "Google Ads · field schema", rows: [C.skip("schema", "no access token")] };
-  const rows = [];
-  const deviceJoins = new Set();
+  const rows = [], names = C.allQueriedFields();
+  let current = null;
+  try { current = await fieldMap(token, V, names); }
+  catch (e) { return { title: "Google Ads · field schema", rows: [C.fail("field introspection", e.message, { remedy: C.remedyFor(e.message) })] }; }
 
-  await inBatches(C.ADS_FIELDS, 4, async f => {
-    try {
-      const { res, data } = await adsPost(token, "googleAdsFields:search", {
-        query: "SELECT name, category, selectable, filterable, data_type, selectable_with WHERE name = '" + f.field + "'"
-      });
-      const found = ((data.results || [])[0]) || null;
-      if (!res.ok) { rows.push(C.fail(f.field, res.status + " — " + JSON.stringify(data).slice(0, 160), { why: f.why })); return; }
-      if (!found) { rows.push(C.fail(f.field, "not present in " + V + " — any query using it will fail", { why: f.why })); return; }
-      if (f.field === "segments.device") (found.selectableWith || []).forEach(n => deviceJoins.add(n));
-      rows.push(found.selectable
-        ? C.ok(f.field, found.category + " · " + found.dataType + " · selectable", { why: f.why })
+  const missing = names.filter(n => !current.has(n));
+  const unselectable = names.filter(n => current.has(n) && !current.get(n).selectable);
+  rows.push(missing.length
+    ? C.fail("fields present in " + V, missing.length + " of " + names.length + " missing: " + missing.join(", "))
+    : C.ok("fields present in " + V, "all " + names.length + " queried fields exist"));
+  if (unselectable.length) rows.push(C.warn("fields selectable in " + V, "present but not selectable: " + unselectable.join(", ")));
+
+  // Named fields the operator asked about keep their own row and explanation.
+  for (const f of C.ADS_FIELDS) {
+    const found = current.get(f.field);
+    rows.push(!found ? C.fail(f.field, "not present in " + V, { why: f.why })
+      : found.selectable ? C.ok(f.field, found.category + " · " + found.dataType + " · selectable", { why: f.why })
         : C.warn(f.field, "exists but is not selectable in " + V, { why: f.why }));
-    } catch (e) { rows.push(C.fail(f.field, e.message, { why: f.why })); }
-  });
+  }
 
-  // The operator's question is "can I split this statistic by mobile versus
-  // desktop?". Google answers it here, per resource, for this exact version.
+  // "Can I split this statistic by mobile versus desktop?" answered per resource.
+  const deviceJoins = new Set((current.get("segments.device") || {}).selectableWith || []);
   if (deviceJoins.size) {
     for (const resource of C.DEVICE_SPLIT_WANTED) {
       rows.push(deviceJoins.has(resource)
         ? C.ok("device split · " + resource, "segments.device is selectable with " + resource)
         : C.warn("device split · " + resource, "Google does not allow segments.device on " + resource + " in " + V + ". A mobile/desktop split of this statistic is not available from the API — report it at a level that does support it rather than estimating."));
     }
-  } else {
-    rows.push(C.skip("device split", "segments.device could not be introspected, so its joins are unknown"));
+  } else rows.push(C.skip("device split", "segments.device could not be introspected, so its joins are unknown"));
+
+  // Readiness of every other version Google serves, so a bump is provable.
+  for (const version of (served || []).filter(v => v !== V)) {
+    try {
+      const other = await fieldMap(token, version, names);
+      const gone = names.filter(n => !other.has(n));
+      rows.push(gone.length
+        ? C.warn(version + " readiness", gone.length + " field(s) this application queries do not exist in " + version + ": " + gone.join(", ") + ". Do not set GADS_API_VERSION to " + version + " until these are replaced.")
+        : C.ok(version + " readiness", "all " + names.length + " queried fields exist in " + version + " — GADS_API_VERSION can be set to " + version + " safely"));
+    } catch (e) { rows.push(C.warn(version + " readiness", "could not be checked: " + e.message)); }
   }
-  return { title: "Google Ads · field schema", note: "GoogleAdsFieldService answers for the live account in " + V + ". This is how a field removed by a version bump is caught before it breaks a report.", rows };
+
+  return { title: "Google Ads · field schema", note: "GoogleAdsFieldService answers for the live account. Every field the catalog queries is checked, in the configured version and in every other version Google serves.", rows };
 }
 
 // ── 5. Write capability, without writing ────────────────────────────────────
@@ -322,10 +349,11 @@ async function run(options) {
   sections[0].rows.push(token ? C.ok("OAuth token exchange", "minted an access token")
     : C.fail("OAuth token exchange", tokenError, { remedy: C.remedyFor(tokenError) }));
 
-  sections.push(await adsAccessSection(token));
+  const access = await adsAccessSection(token);
+  sections.push(access);
   sections.push(await scopeSection(token));
   sections.push(await adsResourceSection(token));
-  sections.push(await adsSchemaSection(token));
+  sections.push(await adsSchemaSection(token, access.served));
   sections.push(await adsWriteSection(token, options.write));
   sections.push(await merchantSection());
   sections.push(await otherGoogleSection());

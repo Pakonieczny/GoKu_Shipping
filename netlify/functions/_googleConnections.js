@@ -233,6 +233,21 @@ const REQUIRED_VIDEO_FORMATS = [
   { key: "portrait", ratio: 9 / 16, minSeconds: 10, why: "Shorts and vertical feeds. Omitting it removes vertical inventory entirely." }
 ];
 
+// Every field name a query selects. A version bump is only safe if all of them
+// still exist, so the checker introspects the set rather than a sample.
+function fieldsIn(query) {
+  const select = String(query || "").replace(/\s+/g, " ").match(/^SELECT (.+?) FROM /i);
+  if (!select) return [];
+  return select[1].split(",").map(s => s.trim()).filter(s => /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/.test(s));
+}
+
+// Every field the catalog depends on, deduplicated.
+function allQueriedFields() {
+  const set = new Set(ADS_FIELDS.map(f => f.field));
+  for (const probe of ADS_RESOURCES) for (const field of fieldsIn(probe.query)) set.add(field);
+  return [...set].sort();
+}
+
 // ── Result shaping ──────────────────────────────────────────────────────────
 function row(name, status, detail, extra) {
   return Object.assign({ name: name, status: status, detail: String(detail == null ? "" : detail).slice(0, 600) }, extra || {});
@@ -283,5 +298,5 @@ function remedyFor(detail) {
 module.exports = {
   ADS_RESOURCES, ADS_FIELDS, DEVICE_SPLIT_WANTED, MERCHANT_PROBES, MERCHANT_REPORT_VIEWS, OTHER_HOSTS, REQUIRED_SCOPES,
   REQUIRED_IMAGE_FORMATS, REQUIRED_VIDEO_FORMATS,
-  row, ok, fail, warn, skip, summarize, adsErrorCode, remedyFor, RECENT
+  row, ok, fail, warn, skip, summarize, adsErrorCode, remedyFor, RECENT, fieldsIn, allQueriedFields
 };

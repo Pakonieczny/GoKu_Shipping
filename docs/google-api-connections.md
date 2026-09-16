@@ -98,13 +98,17 @@ the checker reports the scope as missing until then.
 
 ## API version
 
-`GADS_API_VERSION` selects the Google Ads API version and defaults to `v24`.
+`GADS_API_VERSION` selects the Google Ads API version. The code default is now
+**v25**; an environment variable of the same name overrides it, and reverting is
+that one variable.
+
 Google serves several versions at once and sunsets each roughly a year after
-release. The checker probes the configured version and its next two neighbours,
-reports which ones answer, and recommends the newest — a version bump is an
-environment-variable change, not a code change. Before bumping, re-run the
-checker: its schema section proves every field the application queries still
-exists in the new version.
+release. The checker probes the configured version and its neighbours, and its
+schema section introspects **every field the catalog queries** — all of them, not
+a sample — against the configured version and against each other served version.
+A readiness row therefore says either "all N queried fields exist in vNN, safe to
+move" or names the exact fields that would break. Move only on a green readiness
+row.
 
 ## Creative requirements checked against Google's published specs
 

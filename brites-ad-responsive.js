@@ -5,6 +5,12 @@
   const display=[[200,200],[240,400],[250,250],[250,360],[300,250],[336,280],[580,400],[120,600],[160,600],[300,600],[300,1050],[468,60],[728,90],[930,180],[970,90],[970,250],[980,120],[300,50],[320,50],[320,100]];
   const boards=core.concat(display.map(([w,h])=>['display_'+w+'x'+h,w,h])).map(([key,width,height])=>({key,width,height}));
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,Number(v)||0)),family=b=>b.width/b.height>3?'banner':b.width/b.height<.5?'skyscraper':b.width/b.height>1.3?'landscape':b.width/b.height<.9?'portrait':'square';
+  // Five wide banners keep a deliberate photographic edge margin rather than
+  // bleeding the product to the frame; the atmospheric path fills that strip
+  // with a dedicated edge column. The base layout, the atmospheric scene and
+  // the layout tests all read this one rule so they cannot drift apart.
+  const BANNER_EDGE_BOARDS=['display_468x60','display_728x90','display_930x180','display_970x90','display_980x120'];
+  const bannerEdgeMargin=board=>BANNER_EDGE_BOARDS.includes(board.key)?Math.min(board.width*.035,board.height*.30):0;
   function selectImage(plan,images,board){const f=family(board);return images.find(i=>i.forBoards?.includes(board.key))||images.find(i=>i.forFamilies?.includes(f))||images[0];}
   // Design at the actual viewing width, then export at the requested resolution.
   // A 2048px master must not turn a 36px CTA into a 6px mobile label.
@@ -57,7 +63,7 @@
     // uncovered edge in the clear product region needs a dedicated photograph,
     // not an obvious patched seam. Saved artwork keeps its earlier safe layout.
     const washAt=t=>{if(t<=stops[1][0])return stops[1][1];if(t>=stops[2][0])return stops[2][1];const u=(t-stops[1][0])/(stops[2][0]-stops[1][0]);return stops[1][1]+(stops[2][1]-stops[1][1])*(u*u*(3-2*u));};
-    const insetBanner=['display_468x60','display_728x90','display_930x180','display_970x90','display_980x120'].includes(board.key)&&axis==='right'&&x<=W*.04&&f.x>.015;
+    const insetBanner=bannerEdgeMargin(board)>0&&axis==='right'&&x<=W*.04&&f.x>.015;
     const edgeSurface=insetBanner&&x>.01?{...expanded,id:'ai_banner_edge',name:'Photographic edge margin',editorRole:'shape',left:0,width:1,cropX:0,scaleX:x,filters:[]}:null;
     if((x>.01&&!edgeSurface&&(axis!=='left'||washAt(x/W)<.88))||(r<W-.01&&(axis!=='right'||washAt(r/W)<.88))||y>.01||(b<H-.01&&(axis!=='bottom'||washAt(b/H)<.88)))return {mode:'legacy',reason:'This saved photo needs a dedicated '+family(board)+' scene to extend cleanly without a visible join.'};
     let background=null,mode='native';
@@ -209,7 +215,7 @@
       // The photograph fills the artboard; the editable fade protects only the copy.
     }else if(banner){
       const inset=['display_728x90','display_970x90','display_980x120'].includes(board.key)?Math.max(14,Math.round(H*.15)):Math.max(5,H*.035);
-      const outer=['display_468x60','display_728x90','display_930x180','display_970x90','display_980x120'].includes(board.key)?Math.min(W*.035,H*.30):0;
+      const outer=bannerEdgeMargin(board);
       const pw=Math.min(W*.27,H*1.08),tx=outer+pw+inset,right=Math.max(5,H*.035,outer);
       photograph({left:outer,top:0,width:pw,height:H});
       // A dedicated brand column lets the actual icon occupy most of a short
@@ -262,5 +268,5 @@
   const baseLayouts=boards.map(b=>({...b,family:family(b),composition:family(b)==='banner'?'edge product / centered message / dedicated logo':family(b)==='landscape'?'product beside a centered copy block':'product above a centered brand / headline / action stack',drawnAction:family(b)!=='banner'&&!(b.width<=280&&b.height<=280)}));
   const videoLayouts=[{key:'portrait',width:720,height:1280},{key:'square',width:720,height:720},{key:'landscape',width:1280,height:720}].map(b=>({...b,logo:{x:.055,y:.05,width:148,persistent:true},text:'Three distinct saved messages: hook, product, action. Only text transitions.',wash:'Persistent throughout; never covers protected jewelry.',composition:b.key==='portrait'?'product lower-middle, messaging above':'product toward right, messaging in measured free space'}));
   function baseLayout(board){return baseLayouts.find(b=>b.width===board.width&&b.height===board.height)||{...board,family:family(board),composition:'Adapt the nearest base without breaking shared ground rules'};}
-  const api={layoutVersion,sceneCatalog,cleanCrop,atmosphericScene,boards,variants,family,selectImage,document,rules,baseLayouts,videoLayouts,baseLayout};if(typeof module==='object'&&module.exports)module.exports=api;else root.BritesAdResponsive=api;
+  const api={layoutVersion,sceneCatalog,cleanCrop,atmosphericScene,boards,variants,family,bannerEdgeMargin,selectImage,document,rules,baseLayouts,videoLayouts,baseLayout};if(typeof module==='object'&&module.exports)module.exports=api;else root.BritesAdResponsive=api;
 })(typeof window==='object'?window:globalThis);

@@ -82,11 +82,20 @@ const stub = async (url, options) => {
   calls.push(String(url));
   const reply = (status, body) => ({ ok: status < 400, status, json: async () => body, headers: { get: () => null } });
   if (/oauth2\.googleapis\.com/.test(url)) return reply(200, { access_token: 'test-token', expires_in: 3600 });
-  if (/listAccessibleCustomers/.test(url)) return reply(200, { resourceNames: ['customers/1234567890'] });
+  // v24 and v25 are served; v26 is not, so exactly one other version is probed.
+  if (/listAccessibleCustomers/.test(url)) return /\/v26\//.test(url) ? reply(404, {}) : reply(200, { resourceNames: ['customers/1234567890'] });
   if (/googleAdsFields:search/.test(url)) {
-    const q = JSON.parse(options.body).query;
-    if (/segments\.device/.test(q)) return reply(200, { results: [{ name: 'segments.device', category: 'SEGMENT', dataType: 'ENUM', selectable: true, selectableWith: ['campaign', 'shopping_performance_view'] }] });
-    return reply(200, { results: [{ name: 'x', category: 'METRIC', dataType: 'DOUBLE', selectable: true }] });
+    // Answer for every name the batch asked about, so a missing field is a real
+    // absence rather than an artefact of the stub. v25 has dropped one field.
+    const asked = [...JSON.parse(options.body).query.matchAll(/'([a-z0-9_.]+)'/g)].map(m => m[1]);
+    const dropped = /\/v25\//.test(url) ? 'metrics.video_views' : null;
+    return reply(200, {
+      results: asked.filter(n => n !== dropped).map(name => ({
+        name, category: name.startsWith('metrics.') ? 'METRIC' : name.startsWith('segments.') ? 'SEGMENT' : 'ATTRIBUTE',
+        dataType: 'DOUBLE', selectable: true,
+        ...(name === 'segments.device' ? { selectableWith: ['campaign', 'shopping_performance_view'] } : {})
+      }))
+    });
   }
   if (/googleAds:search/.test(url)) {
     // One wired resource and one unwired capability both refused, so the row
@@ -118,6 +127,20 @@ delete process.env.GMC_REFRESH_TOKEN; delete process.env.GEMINI_API_KEY; delete 
   check(/USER_PERMISSION_DENIED/.test(byName('video').detail) && byName('video').remedy, 'a Google error becomes a readable row with a remedy');
   check(byName('device split · shopping_performance_view').status === 'ok', 'device segmentation is confirmed where Google allows it');
   check(byName('device split · asset_group_asset').status === 'warn', 'device segmentation is reported unavailable where Google does not allow it');
+  // Every field the catalog queries is introspected, not a sample.
+  const names = C.allQueriedFields();
+  check(names.length > 50 && names.includes('asset.image_asset.full_size.width_pixels') && names.includes('segments.device'),
+    'the queried field set is derived from the probe queries themselves');
+  check(byName('fields present in v24').status === 'ok' && byName('fields present in v24').detail.includes(String(names.length)),
+    'every queried field is confirmed present in the configured version');
+
+  // A version that dropped a field this application queries must not be
+  // recommended, and must name what would break.
+  const readiness = byName('v25 readiness');
+  check(readiness && readiness.status === 'warn', 'a version missing a queried field is not reported as safe to move to');
+  check(/metrics\.video_views/.test(readiness.detail), 'the readiness row names the exact field that would break');
+  check(!byName('v26 readiness'), 'a version Google does not serve is not probed');
+
   check(byName('validateOnly mutate').status === 'skipped', 'the write probe is opt-in and skipped by default');
   check(byName('merchant').status === 'skipped' && result.summary.allGreen === false, 'a missing Merchant credential is skipped, and the run is not green');
   check(rows.every(r => ['ok', 'FAIL', 'warn', 'skipped'].includes(r.status)), 'every row carries a known status');

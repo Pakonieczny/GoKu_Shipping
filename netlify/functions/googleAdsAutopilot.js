@@ -63,7 +63,7 @@ const COL = {
 
 /* ============================ Config / control ============================ */
 const ENV = process.env;
-const V          = ENV.GADS_API_VERSION || "v24";
+const V          = ENV.GADS_API_VERSION || "v25";
 const BASE       = `https://googleads.googleapis.com/${V}`;
 const CID        = (ENV.GADS_CUSTOMER_ID || "").replace(/\D/g, "");        // Brites account
 const LOGIN_CID  = (ENV.GADS_LOGIN_CUSTOMER_ID || CID).replace(/\D/g, ""); // manager (MCC)
