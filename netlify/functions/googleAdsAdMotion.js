@@ -254,7 +254,7 @@ function createMotionService(D){
  // review receipts that the deduction does not name are reused as saved.
  function fixOptions(job){
   if(!job.quality?.categoryReviews)return [];
-  return require('./googleAdsAdFixes').options('animated',job.quality,{formatKeys:(job.variants||[]).map(v=>v.key),squareMaster:job.squareMaster||'landscape',masterUsd:SECONDS*OUTPUT_USD_PER_SECOND});
+  return require('./googleAdsAdFixes').options('animated',job.quality,{formatKeys:(job.variants||[]).map(v=>v.key),squareMaster:job.squareMaster||'portrait',masterUsd:SECONDS*OUTPUT_USD_PER_SECOND});
  }
  async function fix(input){
   const {ref,w}=await D.context(input.workspaceId);scope(w,input);if(!/^motion_[a-f0-9]{40}$/.test(input.fixOf||''))throw Error('Choose the reviewed animation to correct.');
@@ -383,9 +383,14 @@ function createMotionService(D){
    }
    if(job.renderVersion>=7&&!String(job.motionMode||'').startsWith('photograph')&&!job.squareMaster){
     // Prefer the master whose square keeps the full canvas; a band layout is the safe fallback, never a stop.
+    // Portrait is the better square by construction: cropping it keeps the full
+    // width, so the piece stays centred with open space above for the message.
+    // Cropping landscape keeps the full height and leaves the piece pushed to
+    // the side it was staged on, with the message squeezed in beside it. So
+    // landscape carries a penalty and wins only when portrait composes worse.
     const format=policy.video.formats.find(f=>f.key==='square'),ranked=[];
-    for(const orientation of ['landscape','portrait']){if(!job.masters[orientation])continue;try{const layers=await captionLayers({...job.plan,renderVersion:job.renderVersion,captionHints:job.captionHints,composition:job.composition[orientation],sourceOrientation:orientation},format);ranked.push({orientation,rank:(layers.mode==='band'?10:0)+(layers.tier?.sizes==='relaxed'?1:0)+(layers.tier?.forced?5:0)});}catch(e){if(e.fatal)throw e;ranked.push({orientation,rank:99,error:e.message});}}
-    const best=ranked.sort((a,b)=>a.rank-b.rank)[0]||{orientation:'landscape'};
+    for(const orientation of ['portrait','landscape']){if(!job.masters[orientation])continue;try{const layers=await captionLayers({...job.plan,renderVersion:job.renderVersion,captionHints:job.captionHints,composition:job.composition[orientation],sourceOrientation:orientation},format);ranked.push({orientation,rank:(layers.mode==='band'?10:0)+(layers.tier?.sizes==='relaxed'?1:0)+(layers.tier?.forced?5:0)+(orientation==='landscape'?2:0)});}catch(e){if(e.fatal)throw e;ranked.push({orientation,rank:99,error:e.message});}}
+    const best=ranked.sort((a,b)=>a.rank-b.rank)[0]||{orientation:'portrait'};
     await save({squareMaster:best.orientation,...(best.rank>=10?{compositionNotes:[...(job.compositionNotes||[]),'The square film uses a brand band beside the '+best.orientation+' film because neither film left clear space for full-canvas messaging.']}:{})});
    }
    if(job.fixTarget?.kind==='copy'&&!job.copyFixed){

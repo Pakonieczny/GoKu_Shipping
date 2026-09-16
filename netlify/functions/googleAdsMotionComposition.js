@@ -33,7 +33,15 @@ function tighten(crop,subject,target=.55){
  const k=Math.min(1,Math.max(floor,Math.max(kx,ky)));
  if(!(k>0)||k>=.999)return crop;
  const w=crop.w*k,h=crop.h*k;
- return {...crop,w,h,x:clamp(subject.x+subject.w/2-w/2,0,1-w),y:clamp(subject.y+subject.h/2-h/2,0,1-h)};
+ // Zoom about where the piece already sits in the crop instead of centring on
+ // it: the caller placed it off-centre on purpose to reserve the caption area,
+ // and centring here would close that space in every format.
+ const cx=subject.x+subject.w/2,cy=subject.y+subject.h/2;
+ const fx=Math.min(1,Math.max(0,(cx-crop.x)/crop.w)),fy=Math.min(1,Math.max(0,(cy-crop.y)/crop.h));
+ // Still never cut the piece: hold the crop over it if the offset would clip.
+ const x=clamp(clamp(cx-w*fx,cx+subject.w/2-w,cx-subject.w/2),0,1-w);
+ const y=clamp(clamp(cy-h*fy,cy+subject.h/2-h,cy-subject.h/2),0,1-h);
+ return {...crop,w,h,x,y};
 }
 // Every format keeps at least one place to put a message. A crowded frame is a
 // review finding, never a reason to abandon the film.
