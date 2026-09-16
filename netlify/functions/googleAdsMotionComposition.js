@@ -24,6 +24,17 @@ function resolveBounds(value,orientations=['portrait','landscape']){
  return {bounds,notes};
 }
 const BAND={square:.24,portrait:.22,landscape:.28},LOGO=148;
+// Close the crop in until the piece fills a good share of the film, so a source
+// photo shot with a lot of empty room around it does not become a distant view.
+// It only ever tightens, and never past the margin that keeps the piece whole.
+function tighten(crop,subject,target=.55){
+ const kx=(subject.w/target)/crop.w,ky=(subject.h/target)/crop.h;
+ const floor=Math.max((subject.w+.06)/crop.w,(subject.h+.06)/crop.h);
+ const k=Math.min(1,Math.max(floor,Math.max(kx,ky)));
+ if(!(k>0)||k>=.999)return crop;
+ const w=crop.w*k,h=crop.h*k;
+ return {...crop,w,h,x:clamp(subject.x+subject.w/2-w/2,0,1-w),y:clamp(subject.y+subject.h/2-h/2,0,1-h)};
+}
 // Every format keeps at least one place to put a message. A crowded frame is a
 // review finding, never a reason to abandon the film.
 function usable(zones,W,H){
@@ -43,7 +54,8 @@ function geometry(format,subject,sourceOrientation='portrait',options={}){
   if(subject[extent]>crop[extent])throw Error('The whole jewelry cannot fit a full-canvas square crop. Re-run with a tighter, centered product scene.');
   const lo=Math.max(0,subject[axis]+subject[extent]-crop[extent]),hi=Math.min(subject[axis],1-crop[extent]);if(lo>hi)throw Error('Square framing would cut the jewelry.');crop[axis]=clamp(subject[axis]+subject[extent]/2-crop[extent]*(horizontal?.68:.65),lo,hi);
  }
- const product={x:(subject.x-crop.x)/crop.w,y:(subject.y-crop.y)/crop.h,w:subject.w/crop.w,h:subject.h/crop.h};
+ const framed=tighten(crop,subject),product={x:(subject.x-framed.x)/framed.w,y:(subject.y-framed.y)/framed.h,w:subject.w/framed.w,h:subject.h/framed.h};
+ Object.assign(crop,framed);
  if(product.x<-.001||product.y<-.001||product.x+product.w>1.001||product.y+product.h>1.001)throw Error('The requested crop would cut the jewelry.');
  const W=format.width,H=format.height;
  const zones={top:{x:.065*W,y:.075*H,w:.87*W,h:(product.y-.055-.075)*H},left:{x:.065*W,y:.12*H,w:(product.x-.05-.065)*W,h:.68*H},right:{x:(product.x+product.w+.05)*W,y:.12*H,w:(.935-product.x-product.w-.05)*W,h:.68*H}};
@@ -68,9 +80,8 @@ function bandGeometry(format,subject,sourceOrientation){
  const hero=top?{x:0,w:W,h:even(H-Math.round(H*share))}:{y:0,h:H,w:even(W-Math.round(W*share))};
  if(top){hero.y=H-hero.h;}else{hero.x=W-hero.w;}
  const A=hero.w/hero.h,S=srcW/srcH,cw=S>A?A/S:1,ch=S>A?1:S/A;
- const cx=clamp2(subject.x+subject.w/2-cw/2,0,1-cw),cy=clamp2(subject.y+subject.h/2-ch/2,0,1-ch);
- const crop={x:cx,y:cy,w:cw,h:ch};
- const product={x:(hero.x+((subject.x-cx)/cw)*hero.w)/W,y:(hero.y+((subject.y-cy)/ch)*hero.h)/H,w:(subject.w/cw)*hero.w/W,h:(subject.h/ch)*hero.h/H};
+ const crop=tighten({x:clamp2(subject.x+subject.w/2-cw/2,0,1-cw),y:clamp2(subject.y+subject.h/2-ch/2,0,1-ch),w:cw,h:ch},subject);
+ const product={x:(hero.x+((subject.x-crop.x)/crop.w)*hero.w)/W,y:(hero.y+((subject.y-crop.y)/crop.h)*hero.h)/H,w:(subject.w/crop.w)*hero.w/W,h:(subject.h/crop.h)*hero.h/H};
  const hx=hero.x,hy=hero.y,hw=hero.w,hh=hero.h;
  const zones={top:{x:.065*W,y:.075*H,w:.87*W,h:(product.y-.055-.075)*H},left:{x:.065*W,y:.12*H,w:(product.x-.05-.065)*W,h:.68*H},right:{x:(product.x+product.w+.05)*W,y:.12*H,w:(.935-product.x-product.w-.05)*W,h:.68*H}};
  const order=top?['top','left','right']:['left','top','right'];
@@ -96,9 +107,16 @@ async function captions(plan,format,beats){
 async function composeTier(plan,format,beats,tier,hints){
  const W=format.width,H=format.height,g=geometry(format,plan.composition,plan.sourceOrientation,{mode:tier.mode,clearance:hints.clearance}),options=await fontOptions().catch(e=>{throw Object.assign(e,{fatal:true});}),style=plan.style||{},color=(v,f)=>/^#[a-f0-9]{6}$/i.test(v||'')?v:f,ink=color(style.ink,'#30291f'),bg=color(style.background,'#fff7ee'),gold=color(style.accent,'#a67c35'),font=/sans|arial|helvetica/i.test(style.headlineFont||'')?'Open Sans':'Cormorant Garamond';
  const persistent=plan.renderVersion>=9,logoBox={x:W*.055,y:H*.05,w:LOGO,h:LOGO/1.788},strong=hints.wash==='strong',notes=[];
- // The field ramps evenly across its whole depth instead of sitting near-solid
- // and then dropping away, so the join reads as light rather than as an edge.
- const ramp=(strong?[[0,'1'],[.3,'.93'],[.6,'.74'],[.82,'.42'],[1,'0']]:[[0,'.97'],[.3,'.86'],[.6,'.62'],[.82,'.32'],[1,'0']]).map(([o,a])=>`<stop offset="${o}" stop-color="${bg}" stop-opacity="${a}"/>`).join('');
+ // The field fades out across its whole depth rather than stopping abruptly, so
+ // it reads as light falling away instead of as a drawn edge.
+ const stops=strong?[[0,'1'],[.3,'.93'],[.6,'.74'],[.82,'.42'],[1,'0']]:[[0,'.97'],[.3,'.86'],[.6,'.62'],[.82,'.32'],[1,'0']];
+ const gradientStops=hold=>{
+  // Below a solid band the field must start at full strength exactly where the
+  // band ends, otherwise the join reads as a cut.
+  const list=hold>0&&hold<1?[[0,'1'],[hold,'1'],...stops.slice(1).map(([o,a])=>[hold+(1-hold)*o,a])]:stops;
+  return list.map(([o,a])=>`<stop offset="${Math.round(o*1000)/1000}" stop-color="${bg}" stop-opacity="${a}"/>`).join('');
+ };
+ const ramp=gradientStops(0);
  const vertical='x1="0" y1="0" x2="0" y2="1"',header=name=>name==='top'||name==='header';
  if(persistent){
   const p={x:g.product.x*W,y:g.product.y*H,w:g.product.w*W,h:g.product.h*H};
@@ -168,10 +186,10 @@ async function composeTier(plan,format,beats,tier,hints){
   if(g.seam){
    const reach=g.seam.at+Math.round((g.seam.edge==='top'?H:W)*.14),vertically=g.seam.edge==='top';
    const covering=[...washes.entries()].filter(([name])=>vertically?header(name):name==='left');
-   if(covering.length)for(const [,field]of covering)field.rect=vertically?{x:0,y:0,w:W,h:Math.max(field.rect.h,reach)}:{x:0,y:0,w:Math.max(field.rect.w,reach),h:H};
-   else washes.set('seam',{rect:vertically?{x:0,y:0,w:W,h:reach}:{x:0,y:0,w:reach,h:H},gradient:vertically?vertical:'x1="0" y1="0" x2="1" y2="0"'});
+   if(covering.length)for(const [,field]of covering){const span=Math.max(vertically?field.rect.h:field.rect.w,reach);field.rect=vertically?{x:0,y:0,w:W,h:span}:{x:0,y:0,w:span,h:H};field.hold=g.seam.at/span;}
+   else washes.set('seam',{rect:vertically?{x:0,y:0,w:W,h:reach}:{x:0,y:0,w:reach,h:H},gradient:vertically?vertical:'x1="0" y1="0" x2="1" y2="0"',hold:g.seam.at/reach});
   }
-  const wash=[...washes.values()].map(({rect,gradient},i)=>`<defs><linearGradient id="base${i}" ${gradient}>${ramp}</linearGradient></defs><rect x="${rect.x}" y="${rect.y}" width="${rect.w}" height="${rect.h}" fill="url(#base${i})"/>`).join('');
+  const wash=[...washes.values()].map(({rect,gradient,hold},i)=>`<defs><linearGradient id="base${i}" ${gradient}>${gradientStops(hold||0)}</linearGradient></defs><rect x="${rect.x}" y="${rect.y}" width="${rect.w}" height="${rect.h}" fill="url(#base${i})"/>`).join('');
   const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">${wash}<svg x="${logoBox.x}" y="${logoBox.y}" width="${logoBox.w}" height="${logoBox.h}" viewBox="${logo.crop.x} ${logo.crop.y} ${logo.crop.width} ${logo.crop.height}"><image width="${logo.width}" height="${logo.height}" href="${logoData}"/></svg></svg>`;
   layers.unshift({start:0,end:10,persistent:true,logoBox,bytes:Buffer.from(new Resvg(svg,options).render().asPng()),product:g.product});
  }

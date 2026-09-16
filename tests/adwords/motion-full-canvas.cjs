@@ -42,6 +42,16 @@ const {renderVariants,captionLayers}=require('../../netlify/functions/googleAdsA
   const p=g.product;
   assert(p.x>=-0.002&&p.y>=-0.002&&p.x+p.w<=1.002&&p.y+p.h<=1.002,'the band layout never crops the jewelry out of frame');
  }
+ // A small subject is framed in close, so no format ever renders the piece as a
+ // distant speck just because its source photo left a lot of room around it.
+ for(const src of ['portrait','landscape'])for(const f of [{key:'square',width:720,height:720},{key:'portrait',width:720,height:1280},{key:'landscape',width:1280,height:720}])for(const mode of ['full','band']){
+  const subject={x:.36,y:.40,w:.28,h:.20},g=geometry(f,subject,src,{mode});
+  // Measured against the film itself, so a reserved brand band is not mistaken for distance.
+  const film=g.hero?{w:g.hero.w/f.width,h:g.hero.h/f.height}:{w:1,h:1};
+  const fill=Math.max(g.product.w/film.w,g.product.h/film.h);
+  assert(fill>=.5,f.key+' from '+src+' in '+mode+' mode must frame a small piece close, not leave it distant: filled '+fill.toFixed(2));
+  assert(g.product.x>=-.002&&g.product.y>=-.002&&g.product.x+g.product.w<=1.002&&g.product.y+g.product.h<=1.002,'framing close never cuts the jewelry');
+ }
  // A band layout must read as light falling away, never as a printed line across the film.
  {
   const big={x:.05,y:.05,w:.9,h:.9},f={key:'square',width:720,height:720};
@@ -56,7 +66,12 @@ const {renderVariants,captionLayers}=require('../../netlify/functions/googleAdsA
   assert(Math.abs(alpha(seam.at)-alpha(seam.at+1))<=8,'the seam never jumps opacity across a single pixel');
   let falling=true;for(let y=1;y<f.height;y++)if(alpha(y)>alpha(y-1)+1)falling=false;
   assert(falling,'the field only ever fades outward, so it never reads as a second edge');
-  assert(alpha(0)>=230&&alpha(seam.at)>20&&alpha(seam.at)<210,'the join sits part-way down one continuous ramp rather than at a cut');
+  // The band itself is solid brand colour, so the field must still be solid where
+  // the band ends and only fade past it; a ramp that has already thinned at the
+  // seam leaves a visible step between the two.
+  assert(alpha(0)>=250&&alpha(seam.at)>=250,'the field stays solid down to the band edge, so the two meet without a step');
+  const past=Math.min(f.height-1,seam.at+Math.round(f.height*.14));
+  assert(alpha(past)<=30,'the field has faded away by the far edge of its reach');
  }
  console.log('PASS full-canvas films, measured crops, large type, transitions, a blended band seam and protected jewelry in all three ratios');
 })().catch(e=>{console.error(e.stack);process.exitCode=1;});

@@ -168,7 +168,8 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
   ok(/The scenery reaches all four edges/.test(prompt)&&/No black bars, no letterboxing, no pillarboxing, no vignette/.test(prompt),'the footage may never frame itself with bars or a border');
   ok(!/\d+\s?(?:px|pixels)/.test(prompt),'no pixel specification reaches the video model, even via the treatment');
   ok(/no lettering anywhere, at any size, in focus or blurred/.test(prompt),'the film is told its frames carry no lettering at all');
-  ok(/flat, laser-cut sheet metal about as thick as a credit card/.test(prompt)&&/one fortieth of the charm's length/.test(prompt)&&/engraving is cut into the metal/.test(prompt),'the film is given a measurable thinness and engraving cut into the metal');
+  ok(/flat stamped sheet/.test(prompt)&&/thin drawn line, never a visible band, wall or rim of metal/.test(prompt)&&/lit and shaded side, it is too thick/.test(prompt)&&/engraving is cut into the metal/.test(prompt),'the film judges thinness by a single visible criterion and keeps engraving cut into the metal');
+  ok(/45-55% of frame height/.test(prompt)||/55-65% of frame width/.test(prompt),'the film is told how large the piece should sit in frame, so it is never shot distant');
   ok(/RULE 3 - ONE CONTINUOUS TAKE/.test(prompt)&&/No cuts, no jump cuts, no dissolves/.test(prompt),'the film must be one unbroken take');
   ok(/It is not the first frame/.test(prompt)&&/identical from the first frame to the last/.test(prompt),'the reference photo is never the opening frame and the piece is whole throughout');
   ok(motion.scrubDirection({title:'Crocodile Charm Pendant',plan:{},creativeDirection:Object.fromEntries(keys.map(k=>[k,'The Crocodile Charm Pendant by Brites on a stone']))},'portrait').setting==='The piece by the brand on a stone','the product name is swapped for a neutral word rather than left as a renderable token');
