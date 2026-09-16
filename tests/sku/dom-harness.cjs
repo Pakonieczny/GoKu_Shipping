@@ -5,6 +5,13 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+/* A comma is a selector LIST in CSS (match any), not a compound (match all).
+   Treating "a, b" as one compound silently matched nothing, which made correct
+   page code look broken here. */
+function parseSelectorList(sel) {
+  return String(sel).split(',').map(part => parseSelector(part)).filter(Boolean);
+}
+
 function parseSelector(sel) {
   const s = sel.trim();
   const out = { tag: null, id: null, classes: [], attrs: [] };
@@ -101,7 +108,9 @@ class Element {
   removeChild(child) { this.children = this.children.filter(c => c !== child); child.parentNode = null; }
   remove() { if (this.parentNode) this.parentNode.removeChild(this); }
   matches(sel) {
-    const p = parseSelector(sel);
+    return parseSelectorList(sel).some(p => this._matchesOne(p));
+  }
+  _matchesOne(p) {
     if (p.tag && this.tagName.toLowerCase() !== p.tag) return false;
     if (p.id && this.id !== p.id) return false;
     if (p.classes.some(c => !this.classList.contains(c))) return false;
@@ -134,6 +143,7 @@ class Element {
     const v = name.startsWith('data-') ? this.dataset[camel(name.slice(5))] : this[name];
     return v === undefined ? null : String(v);
   }
+  click() { const fns = [...(this.listeners.click || [])]; return Promise.all(fns.map(fn => fn.call(this, { type: 'click', preventDefault() {} }))); }
   select() {}
   focus() { if (this.ownerDocument) this.ownerDocument.activeElement = this; }
   getBoundingClientRect() {
@@ -168,7 +178,7 @@ const EXPORTS = [
   'fetchListingPage', 'fetchSections', 'runSync', 'rebuildCatalog',
   // view
   'applyFilters', 'renderMore', 'renderChips', 'renderMeters', 'formatPrice', 'highlightInto',
-  'loadSelectedSet', 'makeSkuFrom', 'openSkuEditor', 'generateAndSaveSku', 'saveSkuUpdates',
+  'loadSelectedSet', 'makeSkuFrom', 'buildSkuLine', 'saveSkuUpdates',
   'fetchInventoryDetail', 'cardFor', 'refreshQuota',
 ];
 
@@ -363,4 +373,4 @@ function normalizeResponse(res) {
   };
 }
 
-module.exports = { createApp, Element, parseSelector };
+module.exports = { createApp, Element, parseSelector, parseSelectorList };

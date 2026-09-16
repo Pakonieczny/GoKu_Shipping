@@ -149,14 +149,68 @@
 
     .selectBox { width:18px; height:18px; accent-color:var(--good); cursor:pointer; }
 
-    .meta { padding:10px 12px 12px; display:flex; flex-direction:column; gap:6px; }
+    .meta { padding:10px 12px 12px; display:flex; flex-direction:column; gap:8px; }
     .title { font-size:13.5px; line-height:1.3; color:#fafafa; font-weight:600; }
-    .sku { font-size:12px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .sku.none { color:#ff9e80; }
-    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-    .pill { font-size:11.5px; padding:3px 8px; border-radius:999px; border:1px solid var(--line2); color:#cfcfcf; }
-    .pill.sect { border-color:#2b3a52; color:#9fc0ea; }
+
+    /* ── The SKU line ─────────────────────────────────────────────────────
+       The one value this console exists to read and set, so it is the biggest
+       thing on the card after the picture. Clicking it edits in place; there is
+       no separate edit button. */
+    .skuline { display:flex; align-items:center; gap:8px; min-height:34px; }
+    .skulabel { font-size:15px; font-weight:800; color:#8f8f8f; letter-spacing:.02em; flex:0 0 auto; }
+    .skuvalue {
+      font-size:17px; font-weight:800; color:#fafafa; letter-spacing:.01em;
+      background:transparent; border:1px dashed transparent; border-radius:7px;
+      padding:3px 7px; margin-left:-7px; cursor:text; text-align:left;
+      font-family:inherit; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    }
+    .skuvalue:hover { border-color:#3d3d3d; background:#171717; }
+    .skuvalue.none { color:#ff9e80; font-weight:700; }
+    .skuinput {
+      flex:1 1 auto; min-width:0; background:#181818; color:#fafafa;
+      border:1px solid var(--accent); border-radius:7px; padding:5px 8px;
+      font-size:16px; font-weight:800; font-family:inherit; letter-spacing:.01em;
+    }
+    .skuinput:focus { outline:none; }
+
+    /* Save / cancel sit inside the SKU line so the whole interaction is one row. */
+    .iconbtn {
+      flex:0 0 auto; border:0; border-radius:7px; cursor:pointer;
+      width:32px; height:30px; font-size:14px; font-weight:800; line-height:1;
+      display:inline-flex; align-items:center; justify-content:center;
+    }
+    .iconbtn.save { background:var(--good); color:#fff; }
+    .iconbtn.cancel { background:#333; color:#ccc; }
+    .iconbtn:disabled { opacity:.55; cursor:default; }
+
+    /* Unsaved-generated marker: an amber dot and one word. A generated SKU is
+       only a proposal until it is saved, and refreshing loses it. */
+    .unsaved {
+      flex:0 0 auto; display:inline-flex; align-items:center; gap:5px;
+      font-size:11px; font-weight:800; color:#ffb74d; letter-spacing:.04em; text-transform:uppercase;
+    }
+    .unsaved::before {
+      content:""; width:7px; height:7px; border-radius:50%; background:#ffb74d;
+      box-shadow:0 0 0 3px rgba(255,183,77,.16);
+    }
+    .card.pending { outline:2px solid #ffb74d; outline-offset:-1px; }
+
+    /* One row: state, identity, section, action. Nothing wraps to a second
+       line at the card widths this grid produces. */
+    .row { display:flex; gap:7px; align-items:center; flex-wrap:wrap; }
+    .row .grow { margin-left:auto; }
+    .pill { font-size:11.5px; padding:3px 8px; border-radius:999px; border:1px solid var(--line2); color:#cfcfcf; white-space:nowrap; }
+    .pill.sect { border-color:#2b3a52; color:#9fc0ea; max-width:42%; overflow:hidden; text-overflow:ellipsis; }
+    .btn.tiny { padding:6px 11px; font-size:12px; border-radius:7px; }
     mark { background:#4a3d00; color:#ffe89a; border-radius:2px; padding:0 1px; }
+
+    /* Spinner for the moment a write is in flight. */
+    .spin {
+      display:inline-block; width:13px; height:13px; border-radius:50%;
+      border:2px solid rgba(255,255,255,.35); border-top-color:#fff;
+      animation: spin .6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
     input[type="text"]{ background:#181818; color:#ddd; border:1px solid var(--line2); border-radius:8px; padding:8px; }
 
@@ -173,7 +227,7 @@
       <div class="search">
         <span class="mag">⌕</span>
         <input id="searchInput" type="text" autocomplete="off" spellcheck="false"
-               placeholder="Search all listings by title, SKU or listing ID…" />
+               placeholder="Search every listing — title, SKU or ID.  Try sku: to match SKUs only" />
         <span class="hint" id="searchHint">/</span>
         <button class="clear" id="searchClear" title="Clear (Esc)">✕</button>
       </div>
@@ -199,7 +253,7 @@
    Shown in the header and quoted in any sync failure, so a stale tab running
    against newer functions is identifiable from a screenshot instead of
    guessed at. */
-const BUILD = "2026-09-16f";
+const BUILD = "2026-09-16g";
 
 /* The section shortcuts, exactly as specified — not every section the shop
    has. Etsy returns dozens (Zodiac / Birth Flower, Handwriting Jewelry, Evil
@@ -572,8 +626,10 @@ function toRecord(x){
     price: x.price || null,
     section_id: x.shop_section_id == null ? null : Number(x.shop_section_id),
     updated: listingUpdatedAt(x),
-    // search key: title + SKU + id, normalized once
-    q: normalizeText(title + " " + sku + " " + x.listing_id)
+    // Search keys, normalized once at ingest: `q` is everything, `qsku` is the
+    // SKU alone so "sku:" can narrow to it without re-normalizing per keystroke.
+    q: normalizeText(title + " " + sku + " " + x.listing_id),
+    qsku: normalizeText(sku)
   };
 }
 
@@ -624,6 +680,7 @@ const Catalog = {
     if (!row) return;
     row.sku = sku;
     row.q = normalizeText(row.title + " " + sku + " " + row.listing_id);
+    row.qsku = normalizeText(sku);
     await this.store.putMany([row]);
   },
 
@@ -641,9 +698,22 @@ const Catalog = {
  * top. Ranking puts whole-word and prefix hits above mid-word ones, which is
  * what makes typing "gold" feel like it found the right things first.
  */
+/* "sku:" narrows the search to the SKU field alone. Without it a query still
+   matches SKUs — they are part of every row's search key — but a short code
+   like "108" drowns in title matches, and this is the escape hatch for that.
+   The matched text is highlighted on the card either way, so it is always
+   visible WHY a row is in the results. */
+const SKU_PREFIX = /^\s*sku\s*:\s*/i;
+
+function parseQuery(rawQuery){
+  const raw = String(rawQuery || "");
+  const skuOnly = SKU_PREFIX.test(raw);
+  const q = normalizeText(skuOnly ? raw.replace(SKU_PREFIX, "") : raw);
+  return { skuOnly, terms: q ? q.split(" ").filter(Boolean) : [] };
+}
+
 function searchCatalog(rows, rawQuery, { sectionId, missingSkuOnly, hideDone, doneSet }){
-  const q = normalizeText(rawQuery);
-  const terms = q ? q.split(" ").filter(Boolean) : [];
+  const { skuOnly, terms } = parseQuery(rawQuery);
   const out = [];
 
   for (const r of rows){
@@ -651,15 +721,20 @@ function searchCatalog(rows, rawQuery, { sectionId, missingSkuOnly, hideDone, do
     if (missingSkuOnly && r.sku) continue;
     if (hideDone && doneSet.has(String(r.listing_id))) continue;
 
-    if (!terms.length){ out.push({ r, score: 0 }); continue; }
+    const hay = skuOnly ? (r.qsku || "") : r.q;
+    if (!terms.length){
+      if (skuOnly && !hay) continue;       // "sku:" alone lists everything that has one
+      out.push({ r, score: 0 });
+      continue;
+    }
 
     let score = 0, ok = true;
     for (const t of terms){
-      const at = r.q.indexOf(t);
+      const at = hay.indexOf(t);
       if (at === -1){ ok = false; break; }
       // 0 = starts the record, 1 = starts a word, 2 = mid-word
       if (at === 0) score += 0;
-      else if (r.q[at-1] === " ") score += 1;
+      else if (hay[at-1] === " ") score += 1;
       else score += 2;
     }
     if (!ok) continue;
@@ -1210,6 +1285,153 @@ function highlightInto(el, text, terms){
   if (cursor < text.length) el.appendChild(document.createTextNode(text.slice(cursor)));
 }
 
+/* ── The SKU line ──────────────────────────────────────────────────────────
+ *
+ * One control, three states:
+ *
+ *   reading   the SKU as large bold text; clicking it starts editing
+ *   editing   an input with save and cancel, opened INSTANTLY from the cached
+ *             value — the product_id needed for the write is fetched in the
+ *             background, so the Etsy round trip no longer sits between the
+ *             click and the cursor
+ *   pending   a generated SKU that is only a proposal: amber dot, the word
+ *             UNSAVED, and an outlined card until it is saved or discarded
+ *
+ * Generate never writes. It fills the field and leaves it pending, so a
+ * generated value that is not saved is simply gone on refresh — which is what
+ * the marker warns about.
+ */
+function buildSkuLine(card, r, terms){
+  const line = document.createElement("div");
+  line.className = "skuline";
+  line.dataset.role = "sku-line";
+
+  const label = document.createElement("span");
+  label.className = "skulabel";
+  label.textContent = "SKU";
+  line.appendChild(label);
+
+  /* The product_id is only needed to WRITE. Fetching it is what made the old
+     Edit button take seconds, so it is started in the background the moment
+     editing begins and awaited only at save time. */
+  let productIdPromise = null;
+  const primeProductId = () => {
+    if (!productIdPromise){
+      productIdPromise = fetchInventoryDetail(r.listing_id)
+        .then(products => {
+          const p0 = (Array.isArray(products) && products.length) ? products[0] : null;
+          if (!p0 || p0.product_id == null) throw new Error("This listing has no Variant 1 to write to");
+          return Number(p0.product_id);
+        })
+        .catch(err => { productIdPromise = null; throw err; })
+        .finally(renderMeters);
+    }
+    return productIdPromise;
+  };
+
+  let mode = "reading";     // reading | editing | pending
+  let draft = r.sku || "";
+
+  function paint(){
+    [...line.querySelectorAll(".skuvalue, .skuinput, .iconbtn, .unsaved")].forEach(el => el.remove());
+
+    if (mode === "reading"){
+      const value = document.createElement("button");
+      value.type = "button";
+      value.className = "skuvalue" + (r.sku ? "" : " none");
+      value.dataset.role = "sku-value";
+      value.title = "Click to edit this SKU";
+      if (r.sku) highlightInto(value, r.sku, terms);
+      else value.textContent = "— none —";
+      value.addEventListener("click", () => { mode = "editing"; draft = r.sku || ""; primeProductId().catch(() => {}); paint(); });
+      line.appendChild(value);
+      card.classList.remove("pending");
+      return;
+    }
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "skuinput";
+    input.maxLength = 64;
+    input.value = draft;
+    input.addEventListener("input", () => { draft = input.value; });
+    line.appendChild(input);
+
+    if (mode === "pending"){
+      const flag = document.createElement("span");
+      flag.className = "unsaved";
+      flag.dataset.role = "unsaved";
+      flag.textContent = "Unsaved";
+      flag.title = "Generated but not written to Etsy — it is lost on refresh until you save";
+      line.appendChild(flag);
+      card.classList.add("pending");
+    } else {
+      card.classList.remove("pending");
+    }
+
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "iconbtn save";
+    save.dataset.role = "sku-save";
+    save.title = "Save to Etsy";
+    save.textContent = "\u2713";
+
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "iconbtn cancel";
+    cancel.dataset.role = "sku-cancel";
+    cancel.title = "Discard";
+    cancel.textContent = "\u2715";
+    cancel.addEventListener("click", () => { mode = "reading"; draft = r.sku || ""; paint(); });
+
+    save.addEventListener("click", async () => {
+      const wanted = String(draft || "").trim();
+      save.disabled = true; cancel.disabled = true;
+      save.textContent = "";
+      save.appendChild(Object.assign(document.createElement("span"), { className: "spin" }));
+      try {
+        const productId = await primeProductId();
+        if (await saveSkuUpdates(r.listing_id, [{ product_id: productId, sku: wanted }])){
+          r.sku = wanted;
+          await Catalog.setSku(r.listing_id, wanted);
+          mode = "reading";
+          paint();
+          repaintGenerateButton(card, r);
+        }
+      } catch (e){
+        alert("Could not save the SKU: " + e.message);
+      } finally {
+        save.disabled = false; cancel.disabled = false;
+        save.textContent = "\u2713";
+        renderMeters();
+      }
+    });
+
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") return save.click();
+      if (ev.key === "Escape") return cancel.click();
+    });
+
+    line.appendChild(save);
+    line.appendChild(cancel);
+    input.focus();
+  }
+
+  /* Generate hands the line a proposal; it does not write. */
+  line.proposeSku = (value) => { mode = "pending"; draft = value; primeProductId().catch(() => {}); paint(); };
+  line.currentMode = () => mode;
+
+  paint();
+  return line;
+}
+
+function repaintGenerateButton(card, r){
+  const gen = card.querySelector('[data-role="gen-btn"]');
+  if (!gen) return;
+  gen.style.background = r.sku ? "" : "OrangeRed";
+  gen.title = r.sku ? "Replace this SKU with a generated one" : "No SKU yet \u2014 click Generate";
+}
+
 function buildCard(r, terms){
   const card = document.createElement("div");
   card.className = "card";
@@ -1233,11 +1455,12 @@ function buildCard(r, terms){
   const title = document.createElement("div");
   title.className = "title";
   highlightInto(title, r.title || "(untitled)", terms);
+  meta.appendChild(title);
 
-  const sku = document.createElement("div");
-  sku.className = "sku" + (r.sku ? "" : " none");
-  sku.textContent = r.sku ? `SKU: ${r.sku} (Variant 1)` : "SKU: — none";
+  const skuLine = buildSkuLine(card, r, terms);
+  meta.appendChild(skuLine);
 
+  /* One row: done, id, price, section, Generate. */
   const row = document.createElement("div");
   row.className = "row";
 
@@ -1268,39 +1491,27 @@ function buildCard(r, terms){
 
   const sect = sectionTitle(r.section_id);
   if (sect){
-    const s = document.createElement("span");
-    s.className = "pill sect";
-    s.textContent = sect;
-    row.appendChild(s);
+    const sp = document.createElement("span");
+    sp.className = "pill sect";
+    sp.textContent = sect;
+    row.appendChild(sp);
   }
 
-  const editBtn = document.createElement("button");
-  editBtn.className = "btn secondary";
-  editBtn.textContent = "Edit SKU";
-  editBtn.style.marginLeft = "auto";
-  editBtn.addEventListener("click", () => openSkuEditor(r));
-  row.appendChild(editBtn);
-
   const genBtn = document.createElement("button");
-  genBtn.className = "btn";
+  genBtn.type = "button";
+  genBtn.className = "btn tiny grow";
   genBtn.textContent = "Generate";
   genBtn.dataset.role = "gen-btn";
-  if (!r.sku){ genBtn.style.background = "OrangeRed"; genBtn.title = "No SKU yet — click Generate"; }
-  genBtn.addEventListener("click", () => generateAndSaveSku(r, genBtn));
+  genBtn.addEventListener("click", () => {
+    skuLine.proposeSku(makeSkuFrom(r.title || "", r.listing_id));
+  });
   row.appendChild(genBtn);
 
-  meta.appendChild(title);
-  meta.appendChild(sku);
   meta.appendChild(row);
   card.appendChild(meta);
 
+  repaintGenerateButton(card, r);
   if (cb.checked) card.classList.add("selected");
-
-  const editor = document.createElement("div");
-  editor.className = "meta";
-  editor.style.display = "none";
-  editor.dataset.role = "sku-editor";
-  card.appendChild(editor);
 
   return card;
 }
@@ -1329,7 +1540,7 @@ function updateEndcap(){
 }
 
 function applyFilters(){
-  currentTerms = normalizeText(searchInput.value).split(" ").filter(Boolean);
+  currentTerms = parseQuery(searchInput.value).terms;
   results = searchCatalog(Catalog.rows, searchInput.value, {
     sectionId, missingSkuOnly, hideDone, doneSet: selectedSet
   });
@@ -1388,126 +1599,12 @@ function cardFor(listingId){
 
 /* Repaints one card in place after a SKU write — no refetch, no re-render of
    the grid, so the user's scroll position survives. */
-async function applySkuToCard(row, sku){
-  row.sku = sku;
-  await Catalog.setSku(row.listing_id, sku);
-  const card = cardFor(row.listing_id);
-  if (!card) return;
-  const skuLine = card.querySelector(".sku");
-  if (skuLine){
-    skuLine.textContent = sku ? `SKU: ${sku} (Variant 1)` : "SKU: — none";
-    skuLine.className = "sku" + (sku ? "" : " none");
-  }
-  const genBtn = card.querySelector('[data-role="gen-btn"]');
-  if (genBtn) genBtn.style.background = sku ? "" : "OrangeRed";
-}
-
-function buildSkuEditorDom(row, products){
-  const card = cardFor(row.listing_id);
-  const editor = card?.querySelector('[data-role="sku-editor"]');
-  if (!editor) return;
-  editor.innerHTML = "";
-
-  const hdr = document.createElement("div");
-  hdr.className = "title";
-  hdr.textContent = "Edit SKU (Variant 1)";
-  editor.appendChild(hdr);
-
-  const p = (Array.isArray(products) && products.length) ? products[0] : { product_id: null, sku: "" };
-
-  const line = document.createElement("div");
-  line.className = "row";
-  const tag = document.createElement("span");
-  tag.className = "pill";
-  tag.textContent = "Variant 1";
-  line.appendChild(tag);
-
-  const input = document.createElement("input");
-  input.type = "text";
-  input.value = p.sku || "";
-  input.placeholder = "SKU";
-  input.style.flex = "1";
-  input.dataset.productId = p.product_id != null ? String(p.product_id) : "";
-  input.className = "skuInput";
-  input.maxLength = 64;
-  line.appendChild(input);
-  editor.appendChild(line);
-
-  const actions = document.createElement("div");
-  actions.className = "row";
-
-  const cancel = document.createElement("button");
-  cancel.className = "btn secondary";
-  cancel.textContent = "Cancel";
-  cancel.addEventListener("click", () => { editor.style.display = "none"; });
-
-  const save = document.createElement("button");
-  save.className = "btn";
-  save.textContent = "Save";
-  save.addEventListener("click", async () => {
-    const el = editor.querySelector(".skuInput");
-    const productId = Number(el.dataset.productId);
-    if (!Number.isFinite(productId) || !productId){
-      alert("This listing has no Variant 1 product to write to.");
-      return;
-    }
-    save.disabled = true;
-    try {
-      const sku = el.value.trim();
-      if (await saveSkuUpdates(row.listing_id, [{ product_id: productId, sku }])){
-        await applySkuToCard(row, sku);
-        editor.style.display = "none";
-      }
-    } catch (e){
-      alert("Failed to update SKU: " + e.message);
-    } finally {
-      save.disabled = false;
-      renderMeters();
-    }
-  });
-
-  actions.appendChild(cancel);
-  actions.appendChild(save);
-  editor.appendChild(actions);
-}
-
-async function openSkuEditor(row){
-  try {
-    const products = await fetchInventoryDetail(row.listing_id);
-    buildSkuEditorDom(row, products);
-    const editor = cardFor(row.listing_id)?.querySelector('[data-role="sku-editor"]');
-    if (editor) editor.style.display = "block";
-  } catch (e){
-    alert("Could not open SKU editor: " + e.message);
-  } finally {
-    renderMeters();
-  }
-}
-
 function makeSkuFrom(title, listingId){
   const last4 = String(listingId).slice(-4);
   const firstWordMatch = String(title || "").match(/[A-Za-z0-9]+/);
   const raw = firstWordMatch ? firstWordMatch[0] : "SKU";
   const pretty = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
   return `${pretty}_${last4}`;
-}
-
-async function generateAndSaveSku(row, btn){
-  try {
-    btn.disabled = true;
-    const computedSku = makeSkuFrom(row.title || "", row.listing_id);
-    const products = await fetchInventoryDetail(row.listing_id);
-    const p0 = (Array.isArray(products) && products.length) ? products[0] : null;
-    if (!p0 || p0.product_id == null) throw new Error("Missing Variant 1");
-    if (await saveSkuUpdates(row.listing_id, [{ product_id: Number(p0.product_id), sku: computedSku }])){
-      await applySkuToCard(row, computedSku);
-    }
-  } catch (e){
-    alert("Generate failed: " + e.message);
-  } finally {
-    btn.disabled = false;
-    renderMeters();
-  }
 }
 
 /** ============ Sync driver ============ */
