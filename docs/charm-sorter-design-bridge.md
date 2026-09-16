@@ -1,8 +1,8 @@
 # Charm Sorter ⇄ Design Station bridge
 
-Design and implementation document. Status: draft 2, decisions incorporated. Owner: production tooling.
+Design and implementation document. Status: draft 4. Owner: production tooling.
 
-Decisions taken on drafts 1 and 2: SKU labels are text under each charm · a SKU is one design, colour-agnostic; the colour variation only decides which metal card the design goes to · engraving is always on the back · font is Myriad Pro, legible, never inside a cut-out, only on solid material · text is always set at the largest size the space allows, and a person visibly reviews every back placement before it is released · pieces are engraved one at a time after the sheet is cut · the sorter marks orders design-complete and QR labels are generated and saved with the set of sheets, no longer printed · a quantity of 2 means two identical charms · both apps run on the same PC · the station's print button is hidden.
+Decisions taken on drafts 1–3: SKU labels are text under each charm · the SKU identifies the charm design only; the material comes from the listing's Metal/Colour option and every other feature (earring, necklace, charm only, chain, size) from the other options, all read from the Etsy API · engraving is always on the back, in Myriad Pro, only on solid material, never in a cut-out · text is set at the largest size the space allows and every placement is reviewed on screen by a human employee (any employee, name recorded) · anything not exactly representable is set aside for review with the problem and quick fixes shown · the back is produced by an actual, verified 180° flip about the vertical axis, with front-only engraving detail hidden and only cut geometry visible · one QR label per sheet, sheets travel in sets, and a set (one date, one run, all materials) is one folder with one numbering · an order with any unresolved line is held whole · the sorter marks orders design-complete; nothing is printed · the station's print button is hidden · during a run the sorter only *claims* orders on the station; the real lock is taken at commit.
 
 ---
 
@@ -14,7 +14,8 @@ The Charm Nesting Station ("the sorter", `charm-nest-1.html`) becomes the master
 2. drives any Design Station action (select, filter, open an item, complete) and shows it happening live in both consoles;
 3. finds each ordered SKU in a master Illustrator file, lifts that charm out with every layer, path, colour and dimension intact, and drops it into a pool of designs ready to nest;
 4. for any line that needs back engraving, shows the charm's back (a 180° turn about its vertical axis), has Claude read the customer's request, sets the text in Myriad Pro in the best place and size on solid material, and keeps the result in a separate pool tied to the sheet the order is on;
-5. when a set of sheets is finished, generates the bench QR labels into the sheet folder and marks the orders design-complete on the Design Station.
+5. when a set of sheets is finished, generates one QR label per sheet into the set folder and marks the orders design-complete on the Design Station;
+6. keeps every sheet of a run together as a set, one folder and one set number across materials, so mixed orders travel as one.
 
 Everything builds on what exists: the sorter's parser (`charm-nest-pdf.js`), silhouettes, parallel nesting, twin verification, per-sheet cloud folders and agent log; the Design Station's single metal classifier, attention flags, selection locks, completion ledger and archive; one shared Firestore project.
 
@@ -22,13 +23,16 @@ Everything builds on what exists: the sorter's parser (`charm-nest-pdf.js`), sil
 
 | Term | Meaning |
 | --- | --- |
-| Order line | One Etsy transaction: order number, SKU, quantity, metal key, personalisation, buyer message |
-| Metal key | `gold`, `silver`, `rose`, `10k`, `14k` as the Design Station classifies them; the sorter maps them to `gold`, `silver`, `rose`, `gold10k`, `gold14k` |
-| Master file | One `.ai` that holds every charm design, each with its SKU as text directly under it. A SKU is one design regardless of colour; the order's colour variation only decides which metal card it goes to |
+| Order line | One Etsy transaction: order number, SKU, quantity, the chosen options, personalisation, buyer message |
+| Line spec | The sorter's normalised reading of a line (5.2): design SKU, material, form, size, chain, engraving text, sources |
+| Material | The metal the charm is cut from, from the listing's Metal/Colour option through the station's classifier: `gold`, `silver`, `rose`, `10k`, `14k` → sorter cards `gold`, `silver`, `rose`, `gold10k`, `gold14k` |
+| Master file | One `.ai` holding every charm design, each with its SKU as text directly under it. A SKU is one design; material never changes the design |
 | Master index | The SKU → charm lookup built from a master file |
-| Pool | Extracted charm designs waiting to be nested, one entry per order line and copy |
+| Pool | Extracted charm designs waiting to be nested, one entry per order line and copy, keyed deterministically |
 | Back pool | The engraving design for each engraved copy, kept with the sheet that holds the front |
-| Set | The group of sheets produced from one pull of orders (one or more sheets per metal) |
+| Set | Everything produced by one run on one date: every sheet of every material, its labels, its back files, its manifest. Sheets in a set travel together |
+| Run | One execution of the pipeline, with a persistent record that can be resumed |
+| Claim | A light mark on the station that the sorter is working an order; a **lock** is the station's existing "being worked on at another station" state, taken only at commit |
 | Bridge | The command and event channel between the two apps |
 
 ## 3. Architecture
@@ -83,11 +87,13 @@ Every command gets exactly one `ack`, zero or more `progress`, and one `done` or
 
 | Command | Arguments | Effect in the station | `done.result` |
 | --- | --- | --- | --- |
-| `hello` | `sorterClientId` | Opens the session, shows the banner | `{ bench, version, employee, counts, filters, selection }` |
-| `orders.snapshot` | `{ metals?, onlyAttention?, hydrate: true }` | Every open order with hydrated lines; missing details fetched through the station's paced Etsy queue with progress | `{ orders: Order[] }` (4.4) |
+| `hello` | `sorterClientId, runId` | Opens the session, shows the banner, releases locks left by a previous sorter nonce | `{ bench, version, employee, counts, filters, selection, etsy: { signedIn, expiresAt }, storage }` |
+| `ping` | — | heartbeat every 5 s; three misses mark the station down | `pong` |
+| `claim` / `unclaim` | `{ receiptIds[] }` | gold dot on the station: "in a sorter run"; other benches keep notes and chat | `{ claimed[] }` |
+| `orders.snapshot` | `{ metals?, onlyAttention?, hydrate: true }` | Every open order with hydrated lines; missing details fetched through the station's paced Etsy queue with progress; never loads images | `{ total, hydrated, orders: Order[] }` (4.4) |
 | `orders.detail` | `{ receiptId }` | One order | `{ order }` |
 | `orders.watch` | `{ on }` | Emit `orders.changed` after each station refresh | — |
-| `ui.select` / `ui.deselect` | `{ receiptIds[] }` | `selectRow` / `deselectRow` on each row (takes or releases the realtime lock) | `{ selected[] }` |
+| `ui.select` / `ui.deselect` | `{ receiptIds[] }` | `selectRow` / `deselectRow` on each row (takes or releases the realtime lock); per-line outcome, never all-or-nothing | `{ selected[], refused: [{ id, reason }] }` |
 | `ui.filter` | subset of the station's `F` model | Sets chips and re-applies | `{ filters }` |
 | `ui.openItem` | `{ transactionId }` | `openListingModal` | `{ item }` |
 | `ui.closeModal` | — | closes any open dialog | — |
@@ -95,7 +101,7 @@ Every command gets exactly one `ack`, zero or more `progress`, and one `done` or
 | `notes.set` | `{ receiptId, text }` | staff note, as the modal does | — |
 | `chat.post` | `{ receiptId, text }` | internal Brites message, sender "Charm Sorter" | — |
 | `complete.preview` | `{ receiptIds[] }` | bucketing, QR preview modal, nothing written | `{ jobs[], skipped[], stale[], solid[], mixedTarget }` |
-| `complete.commit` | `{ receiptIds[], labels: { setId, folder, files[] } }` | Marks complete **without printing**: ledger, unlock, "DESIGNED :)" chat, archive; records where the labels were saved | `{ completed[] }` |
+| `complete.commit` | `{ receiptIds[], labels: { setId, folder, files[] }, runId }` | Marks complete **without printing**: ledger, unlock, "DESIGNED :)" chat, archive; records where the labels were saved; idempotent per `runId` | `{ completed[], refused: [{ id, reason }] }` |
 | `complete.undo` | — | `handleUndoComplete` | — |
 | `release` | — | ends remote mode | — |
 
@@ -109,12 +115,12 @@ Guards enforced by the station whatever the driver: `complete.commit` requires a
 
 ```json
 {
-  "receiptId": "3521337740", "shipBy": 1789200000, "buyer": { "name": "A. Smith", "country": "US" },
+  "receiptId": "3521337740", "shipBy": 1789200000, "updateTs": 1789100000, "buyer": { "name": "A. Smith", "country": "US" },
   "attention": true, "staffNote": "", "hasMessages": false, "lockedBy": null,
   "lines": [{
     "transactionId": "4412778001", "listingId": "1718…", "sku": "BR-CMP-01", "title": "Compass charm necklace",
     "quantity": 2, "metalKey": "gold", "metalLabel": "Gold",
-    "personalization": ["ANNA 9.26.25"], "buyerMessage": "please engrave on the back",
+    "personalization": ["ANNA 9.26.25"], "buyerMessage": "please engrave on the back", "staffNote": "", "messages": [],
     "variations": [{ "name": "Metal", "value": "14k Gold Filled" }, { "name": "Size", "value": "Small" }]
   }]
 }
@@ -273,17 +279,48 @@ The **Design Station** tab holds the frame at full height and, beside it, the co
 ```js
 const Orders = {
   rows: [], stale: false,
-  async pull() {
+  async pull(run) {
     const r = await DesignLink.call("orders.snapshot", { hydrate: true }, { onProgress: p => agentLive("Pulling orders", p.text, p.done, p.total) });
-    this.rows = r.orders.flatMap(o => o.lines.map(l => ({ order: o, line: l, metal: METAL_FROM_DS[l.metalKey] || null, state: "pulled", engrave: null, poolIds: [] })));
+    if (r.hydrated < r.total) throw new Error(`only ${r.hydrated} of ${r.total} orders could be read from Etsy — sign in at the Design Station and pull again`);
+    this.rows = r.orders.flatMap(o => o.lines.map(l => ({ order: o, line: l, spec: null, state: "pulled", claimedBy: null, poolIds: [] })));
+    for (const row of this.rows) row.spec = interpretLine(row.order, row.line);            // 5.2, deterministic
+    await api("charmNestLibrary", { op: "runPut", run: Object.assign(run, { step: "pulled", lines: this.rows.map(lineRecord) }) });
     this.stale = false; renderOrders();
-    agent({ bridge: true }, "DS", `Pulled ${r.orders.length} orders · ${this.rows.length} lines · ${this.rows.filter(x => x.order.attention).length} with instructions`);
   }
 };
-const METAL_FROM_DS = { gold: "gold", silver: "silver", rose: "rose", "10k": "gold10k", "14k": "gold14k" };
 ```
 
-The Orders tab lists lines grouped by metal card: order number, SKU, title, quantity, ship-by, `!` attention flag with the personalisation and buyer message shown inline (never hidden behind a click, for the same reason the Design Station flags them), engraving state, pool state. Buttons: **Pull open orders**, **Add to pool** (selected or all), **Show in Design Station** (`ui.scrollTo` + `ui.openItem`), **Note** (`notes.set`).
+`orders.snapshot` returns `{ total, hydrated, tokenExpiresAt, orders }`. A shortfall is a stop. The Orders tab lists lines grouped by material card: order number, SKU, form, size, quantity, ship-by, the `!` attention flag with the personalisation, buyer message and staff note shown inline, engraving state, pool state, and the line's `update_timestamp`.
+
+### 5.2 Reading a line: the line spec
+
+Everything about a line is available from the Etsy API and is read deterministically. Claude reads free text only (7.1); it never decides material, form or size.
+
+| Field | Source | Rule |
+| --- | --- | --- |
+| `designSku` | transaction `sku` (fallback `Charm_Sku_Aliases/{listingId}`) | identifies the charm design in the master; nothing else |
+| `material` | the station's `metalKeyForTx` (Metal/Colour option first, then other options, then title) | single source of truth; a line with no material or `SOLID_UNKNOWN` is held (5.4) |
+| `form` | options named Style / Type / Product (values such as "Necklace", "Earrings", "Charm only") mapped through `Charm_Option_Map` | unmapped value → held |
+| `size` | option named Size / Length when the SKU's master entry has `sizes[]` | size is not in the SKU; the master may carry one design per size (6.3) |
+| `chain` | option named Chain / Length | informational; carried to the report |
+| `quantity` | transaction | one copy each, identical |
+| `personalization[]` | the station's lifted personalisation field | verbatim |
+| `buyerMessage`, `staffNote`, `messages[]` | receipt, `Brites_Orders` staff note, last five Brites messages | inputs to 7.1; staff note overrides Etsy text |
+| `updateTs` | receipt `update_timestamp` | re-validated before engraving and before commit (10.3) |
+
+`Charm_Option_Map/{listingId or "*"}` maps an option name and value to a spec field and value; the map is learned once per new value in the **Needs mapping** tray and applied automatically afterwards. Nothing free-text ever sets a spec field.
+
+### 5.3 Lines that are not charms
+
+Chains, extenders, packaging and other SKUs with no design are listed in `Charm_Sku_NoDesign` (patterns and explicit SKUs) and skipped with a count in the log. A line in the Unmatched tray can be moved to that list with one click and never returns.
+
+### 5.4 Holding an order
+
+An order is committed only when every line is one of: nested and written; nested, written and engraving approved; on the no-design list. Any other line holds the whole order: it stays open on the station, its pieces are still cut if already nested (the sheet report marks them "order held"), and the Orders tab shows **Held: which line, why, and the fix**. Held orders are re-evaluated at every resume.
+
+### 5.5 Claims, not locks
+
+At pull the sorter writes a claim on the station (`rtLockIds` with `claimedBy: "sorter"`, shown on the station as a gold dot, not the red lock) so the other bench sees the orders are in a run but can still add notes and messages. The real lock (`ui.select`) is taken only in half B, immediately before `complete.preview`.
 
 ## 6. Master file and SKU lookup
 
@@ -344,6 +381,11 @@ Runs in the browser for a file up to a few hundred charms, and as `charmMaster-b
 
 4. `Charm_Master_Files/{masterHash}` records the master's path, count, `unlabelled[]`, `orphans[]`, `duplicates[]`. Several master files may be indexed (one per family, say); a SKU present in two masters is a duplicate and blocks pool adds for that SKU until fixed. The **Master** tab shows the SKU grid and the leftovers in red.
 5. `engravable` defaults to `true` when the back mask (7.2) has an inscribed rectangle of at least 6 × 3 mm; the Master tab lets an operator override it per SKU.
+6. **Sizes.** A SKU sold in several sizes has one master design per size, labelled `BR-CMP-01 · S`, `BR-CMP-01 · M` (the label rule accepts a size suffix after a middle dot or a space); the index entry then carries `sizes: { S: {…}, M: {…} }` and a line's `size` selects one. A sized line whose SKU has no matching size design is held.
+7. **Up.** `upAngle` is the direction from the outline's centroid to its hanging hole (the smallest cut-out nearest the outline edge; the ring merged by review counts). No hole → the master's drawn orientation. Editable per SKU; used by 7.3 for text baselines and by 7.6 for jig orientation.
+8. **Outlined labels.** When a master has no text objects (labels converted to outlines) or a text uses a CID font without `ToUnicode`, the strip under each charm is rendered and Claude reads it with a strict SKU-pattern schema and a confidence; any read under 0.95 goes to the Master tab with the crop beside the charm. A person confirms every vision-read label once; it is then stored and never re-read.
+9. **Scale check.** The Master tab flags any charm outside the shop's size range (setting) and any SKU whose size moved more than 5% on re-index.
+10. **Master validation.** An open outline, a detached ring not merged by review, or a SKU present in two masters blocks that SKU with the reason shown; nothing is indexed silently.
 
 ### 6.4 Pulling a charm for an order line
 
@@ -370,140 +412,183 @@ Silhouettes for a master charm are built once at index time and cached by `charm
 
 ## 7. Engraving
 
-### 7.1 Which lines are engraved
+### 7.1 Which lines are engraved, and what the text is
 
-Engraving is always on the back. A line is engraved when:
-
-- its personalisation is non-empty (the station has already cleared "Not requested"), or
-- Claude finds an engraving request in the buyer message with `confidence ≥ 0.8`.
-
-Classification uses the `charmNestAgent-background` pattern with a strict schema. Prompt input: personalisation, buyer message, listing title, SKU, whether the SKU is engravable, the house rule "engraving is always on the back". Output:
+Engraving is always on the back. A line is engraved when its personalisation is non-empty, or when Claude finds an engraving request in the buyer message, staff note or Brites messages with `confidence ≥ 0.8`. Classification runs through `charmNestAgent-background` with a strict schema:
 
 ```json
-{ "engrave": true, "text": "Anna\n9.26.25", "source": "personalization", "notes": "date kept as written", "confidence": 0.97, "questions": [] }
+{ "engrave": true, "text": "Anna\n9.26.25", "source": "staffNote", "sourceQuote": "customer phoned: spell it ANNE", "requests": { "side": "back", "font": null, "handwriting": false, "image": false },
+  "questions": [], "confidence": 0.97 }
 ```
 
-Rules in the prompt: never invent text; keep the customer's spelling, capitalisation and punctuation; split into lines only at the customer's own breaks or between a name and a date; put anything ambiguous into `questions` rather than guessing. A result with `confidence < 0.8`, a non-empty `questions`, or `engrave: true` on a SKU marked not engravable goes to the **Engraving** tray for a person. Every copy of a line receives the same text (decision 6).
+Rules in the prompt: the text is the customer's words verbatim; a staff note overrides Etsy text; never invent, translate or improve; split lines only at the customer's breaks or between a name and a date; anything ambiguous goes into `questions`. Any of `confidence < 0.8`, non-empty `questions`, a `requests` field other than back/null/false, or a SKU marked not engravable sends the line to the review panel (11) with the reason. Every copy of a line gets the same text.
 
-### 7.2 The back
+**Exactness.** Only what Myriad Pro can set exactly is set. Before fitting, every character is checked against the font's glyph coverage. A character the font lacks (a heart, emoji, Cyrillic, CJK, an unusual symbol) is never substituted, drawn or approximated: the line goes to the review panel naming the characters, with quick fixes (spell the symbol as a word, message the customer through the station chat, engrave the rest, skip engraving).
 
-The back is the front mirrored across the charm's vertical axis (a 180° rotation about Y). Nothing is redrawn: the same member paths are drawn through the matrix `[-1 0 0 1 2·cx 0]` where `cx` is the outline's horizontal centre in file units. The back mask is built from the same raster the sorter already uses:
+### 7.2 The back: an actual flip, verified
+
+The back view is produced by transforming the charm's real geometry, never by drawing anything new, and every step is checked. Claude has no part in this; it only reviews the result in 7.5.
+
+```
+FRONT (as in the master, y-up file units)
+  ├─ cut geometry  = outline + every inner closed achromatic stroke (cut-outs)      → visible from the back, mirrored
+  └─ front detail  = fills, coloured strokes, open strokes, text, images            → invisible from the back, dropped
+STEP 1  classify each member: cut or front-detail (the same rule the sorter uses to find cut lines)
+STEP 2  build the front silhouette F at 6 px/pt with holes open (holesSolid:false)
+STEP 3  mirror: matrix M = [-1 0 0 1 (2·cx) 0] with cx = outline centre; apply M to every cut member's points and control points
+STEP 4  build the back silhouette B from the mirrored cut geometry at the same resolution
+STEP 5  verify B == flipX(F) pixel for pixel (allow ≤ 0.05 % differing pixels from anti-aliasing); verify each hole's mirrored centroid
+        lands on a hole in B; verify area(B) == area(F) within 0.1 %; verify no front-detail member survived
+STEP 6  orient: rotate the whole back view so upAngle points up (the hanging hole at the top)
+STEP 7  record { cx, M, checks } on the piece; a failed check stops the piece with the diff image attached
+```
 
 ```js
-/** Solid material on the back, at res px/pt: outline flood, holes removed, then eroded by the engraving margin. */
-function backMask(charm, res, marginPt) {
-  const front = rasterSilhouette(charm, res, { holesSolid: false });        // 1 = outline interior, holes 0
-  const mirrored = flipX(front);                                            // column i ↔ width-1-i
-  return erode(mirrored, Math.round(marginPt * res));                       // separable min filter
+function backView(charm, res = 6) {
+  const cut = charm.members.filter(m => m === charm.outline || isCutLine(m));                   // STEP 1
+  const dropped = charm.members.length - cut.length;
+  const F = rasterSilhouette(charm, res, { holesSolid: false });                                  // STEP 2
+  const cx = (charm.outline.bbox[0] + charm.outline.bbox[2]) / 2;
+  const M = [-1, 0, 0, 1, 2 * cx, 0];
+  const mirrored = cut.map(m => transformSegment(m, M));                                          // STEP 3 — points and Bézier handles alike
+  const B = rasterSilhouetteFrom(mirrored, res, { holesSolid: false });                          // STEP 4
+  const checks = {                                                                                // STEP 5
+    pixels: diffFraction(B, flipX(F)) <= 0.0005,
+    holes: holesOf(charm).every(h => B.at(mirrorX(h.cx, cx), h.cy) === 0),
+    area: Math.abs(area(B) - area(F)) / area(F) <= 0.001,
+    detailDropped: dropped === charm.members.length - cut.length
+  };
+  if (!Object.values(checks).every(Boolean)) throw new BackViewError(checks, { F, B });
+  const up = charm.upAngle || 90;                                                                 // STEP 6
+  return { members: mirrored.map(m => rotateSegment(m, 90 - up, centreOf(charm))), mask: rotateMask(B, 90 - up), cx, M, checks };
 }
 ```
 
-`holesSolid: false` is the one difference from the nesting silhouette (which fills holes so nothing nests inside a jump ring): here a hole is a cut-out and must never receive engraving. The margin (setting `engraveMarginMm`, default 0.8 mm) keeps text off the cut edge on all sides, including the edge of every cut-out. The preview draws the back with the outline, the holes, the front detail at 25% opacity, the eroded mask as a faint hatch, and the text box.
+`isCutLine` is the sorter's existing rule: a closed path with an achromatic stroke. Blue and red fills and strokes (the engraving detail the sorter draws on the front) are front-only and are dropped. The reviewer sees the front and the back side by side, the back with only the outline and the cut-outs, so a wrong classification is visible before any text is placed.
 
-### 7.3 Text: Myriad Pro, legible, best fit
+### 7.3 Text: Myriad Pro, largest legible size on solid material
 
-Claude decides what the text says (7.1). Where it goes and how big it is are computed, never guessed.
+The back mask is the mirrored, oriented silhouette with holes open, eroded by the engraving margin (`engraveMarginMm`, default 0.8 mm) so text keeps off every cut edge and every cut-out. Any engraver keep-out drawn on a `BACK KEEP-OUT` layer in the master is subtracted too.
 
-**Font.** Myriad Pro Regular and Semibold `.otf` files are loaded from `vendor/fonts/` (Adobe fonts licensed with the shop's Illustrator seat; they are not redistributable, so the folder is excluded from the public build allowlist and the files are read only by the sorter). Text is converted to outlines with `opentype.js` (vendored, `vendor/opentype-1.3.4.min.js`), so every output file carries paths and no font reference.
-
-**Fit.** For each candidate rectangle from the mask, binary-search the point size:
+Font files: Myriad Pro Regular and Semibold `.otf` in `vendor/fonts/` (licensed with the shop's Illustrator seat, excluded from the public build). Text becomes outlines through `opentype.js`, so the output carries paths, never a font reference.
 
 ```js
 function fitText(lines, font, mask, res, opts) {
-  opts = Object.assign({ minCapMm: 1.6, maxHeightFrac: 0.4, lineGap: 0.18, minStrokeMm: 0.15 }, opts || {});
+  opts = Object.assign({ minCapMm: 1.6, maxHeightFrac: 0.4, lineGap: 0.18, minStrokeMm: 0.15, minGapMm: 0.12, tryRotated: true }, opts || {});
   const rects = largestRectangles(mask, 6);                                  // the sorter's pocket finder, top 6 by area
   const capPerEm = font.tables.os2.sCapHeight / font.unitsPerEm;
   let best = null;
-  for (const r of rects) {
+  for (const r of rects) for (const angle of (opts.tryRotated ? [0, 15, -15, 30, -30] : [0])) {
     let lo = 1, hi = Math.min(r.hPt, opts.maxHeightFrac * mask.hPt), size = 0;
     while (hi - lo > 0.05) {
-      const mid = (lo + hi) / 2, layout = layoutLines(lines, font, mid, opts.lineGap);
-      if (layout.wPt <= r.wPt && layout.hPt <= r.hPt && inkInsideMask(layout, r, mask, res)) { size = mid; lo = mid; } else hi = mid;
+      const mid = (lo + hi) / 2, layout = layoutLines(lines, font, mid, opts.lineGap, angle);
+      if (layout.fitsIn(r) && inkInsideMask(layout, mask, res) && strokeOk(layout, font, opts)) { size = mid; lo = mid; } else hi = mid;
     }
-    const capMm = size * capPerEm * MM_PER_PT;
-    if (size && capMm >= opts.minCapMm && (!best || size > best.size + 0.01 || (Math.abs(size - best.size) <= 0.01 && centreDist(r, mask) < centreDist(best.rect, mask)))) best = { size, rect: r, layout: layoutLines(lines, font, size, opts.lineGap) };
+    const gain = best ? (size - best.size) / best.size : Infinity;
+    if (size && (!best || (angle === 0 ? size > best.size + 0.01 : gain >= 0.12))) best = { size, rect: r, angle, layout: layoutLines(lines, font, size, opts.lineGap, angle) };
   }
-  if (!best) return { ok: false, reason: `no room for ${lines.length} line(s) at ${opts.minCapMm} mm cap height` };
-  best.weight = best.size * capPerEm * MM_PER_PT < 2.2 ? "Semibold" : "Regular";   // small text is set heavier so it survives the engraver
-  return Object.assign({ ok: true }, best);
+  if (!best) return { ok: false, reason: `no solid area for ${lines.length} line(s)` };
+  const capMm = best.size * capPerEm * MM_PER_PT;
+  best.weight = capMm < 2.2 ? "Semibold" : "Regular";
+  best.small = capMm < opts.minCapMm;                                        // flagged in review, never dropped
+  return Object.assign({ ok: true, capMm }, best);
 }
 ```
 
-`inkInsideMask` rasterises the glyph outlines at the verifier's resolution and requires every ink pixel to sit on a `1` in the eroded mask, which is what makes "no engraving inside cut-outs, only on solid material" a hard rule rather than a hope. `largestRectangles` returns axis-aligned rectangles; a second pass tries the same at ±15° and ±30° for charms whose solid area is a diagonal band, keeping a rotated layout only if it gains at least 12% in size, since rotated text reads worse.
+`inkInsideMask` rasterises the glyph outlines at the verifier's resolution and requires every ink pixel to sit on a `1` of the eroded mask, which makes "only on solid material, never inside a cut-out" a hard check. `strokeOk` measures the thinnest stem and the smallest inter-stroke gap at the candidate size against the engraver's limits (settings from a test coupon). The fitter always returns the largest size that passes; under the legibility figures the placement is flagged **small**, never dropped.
 
-**Largest size, always.** The fitter always returns the largest size the solid area allows; the legibility figures (cap height 1.6 mm, stroke 0.15 mm) are not a cut-off but a flag: a placement under them is marked **small** in the review so the reviewer looks harder, and can shorten the text or skip. Nothing is silently dropped for being small.
+### 7.4 Verification
 
-### 7.4 Verification, then a person reviews every placement
+1. **Geometry.** Final glyph raster against the eroded back mask: zero ink outside, zero ink in any hole. A failure stops the piece; it is a bug, not a review item.
+2. **Flip integrity.** The 7.2 checks are re-run on the final piece file after it is written and re-parsed (the same twin-verification habit the sorter uses for sheets).
+3. **Claude's read.** Claude sees the rendered back once (mm grid, outline, holes, text) and answers `{ legible, notes }` on readability and taste only; its notes go to the reviewer.
 
-1. **Geometry.** The final glyph raster is checked against the eroded back mask: zero ink outside it, zero ink in any hole. A failure is a bug, not a review item; it stops the piece.
-2. **Claude's read.** Claude sees the rendered back once (mm grid, outline, holes, text) and answers `{ legible: bool, notes }` on readability and taste only. Its notes are shown to the reviewer; it never edits the layout.
-3. **Visual review, mandatory.** Every back placement is shown to a person before it is released, without exception. The **Engraving** tab's review queue shows one piece at a time: the back at large scale with the mask hatch, the text as it will be cut, the order number, SKU, copy, the customer's original words beside Claude's reading, the size in mm, and the **small** flag when under the legibility figures. Controls: **Approve**, **Nudge** (drag the text block, or arrows in 0.25 mm steps; size follows the new box automatically so it stays the largest that fits), **Resize** (a slider capped at the fitted maximum), **Rewrite lines** (re-split the text; the fitter re-runs), **Skip** (the copy is cut plain and the order is flagged), **Back to tray** (needs a decision on the words). Approve stores `approvedBy` with the employee name and the time; the back file is only written after approval.
+### 7.5 A human reviews every placement
 
-A set cannot be completed (8.3) while any of its engraved copies is unreviewed. The review count is on the Live strip ("Engraving review · 3 waiting"), and the Run set flow (10) pauses at step 7 until the queue is empty.
+Every back placement is shown to a person before it is released, without exception. Any employee may review; the name from the station's `employee_name` is required and recorded. The review panel (11) shows one distinct placement at a time (identical copies of one line are reviewed once and the count shown): the front and the back side by side, the back at large scale with the mask hatch, the text as it will be cut, the order, SKU, form, size, copy count, the customer's words beside Claude's reading and the staff note, the size in mm, the **small** flag, and Claude's notes. Controls: **Approve**, **Nudge** (drag or 0.25 mm arrows; size re-fits to the new box), **Resize** (slider capped at the fitted maximum), **Re-split lines** (the fitter re-runs), **Skip** (cut plain, order flagged), **Send back** (a decision on the words is needed). Keyboard: A, S, arrows. The back file is only written after approval; approval stores `approvedBy` and `approvedAt`. A set cannot be committed while any engraving in it is unreviewed.
 
-### 7.5 Back pool files
+### 7.6 Back files, one per piece
 
-Pieces are engraved one at a time after the sheet is cut, so the deliverable is one file per engraved piece, plus an index.
+Pieces are engraved one at a time after the sheet is cut. Inside the sheet's folder (8.2):
 
-- `charmnest/sheets/{day}/{sheet}/back/{sheet}_back_{order}_{SKU}_{copy}.ai`: the charm's back, mirrored member paths at the front's own orientation and scale (not the nested rotation, since the piece is handled loose), one layer `CUT OUTLINE (reference)` with the mirrored outline and holes, one layer `ENGRAVE` with the text as filled paths, and the page sized to the charm plus 5 mm. Written with the existing `buildSingleCharm` extended by `extraLayers` that append a second content stream.
-- `back-index.pdf`: a contact sheet of every engraved piece on the sheet, thumbnail, order, SKU, copy, text and size, for the engraver's bench.
-- `back-report.json`: `[{ poolId, order, sku, copy, text, font, weight, sizePt, capMm, box, verified, reviewedBy }]`.
+- `back/{sheetName}_back_{order}_{SKU}_{copy}.ai`: page sized to the charm plus 5 mm, oriented hoop-up; layer `CUT OUTLINE (reference)` with the mirrored outline and cut-outs; layer `ENGRAVE` with the text as filled paths. Produced from the same layout in the orientation the engraver's software expects (`backFileView` setting: `asSeenFromBack` or `frontCoordinates`, decided by one test piece per engraver and stored per engraver).
+- `back/back-index.pdf`: a contact sheet of every engraved piece with thumbnail, order, SKU, copy, text, size, approver.
+- `back/back-report.json`: `[{ poolId, order, sku, copy, text, font, weight, sizePt, capMm, box, angle, flipChecks, verified, review, approvedBy, approvedAt }]`.
 
-Firestore `Charm_Pool_Back/{poolId}`:
-
-```json
-{ "poolId": "…", "sheetId": "gold-mu3…", "setId": "set-…", "orderId": "3521337740", "sku": "BR-CMP-01", "copy": 1,
-  "text": "Anna\n9.26.25", "font": "Myriad Pro", "weight": "Regular", "sizePt": 5.8, "capMm": 1.9,
-  "box": { "xPt": 12.1, "yPt": 30.4, "wPt": 38.0, "hPt": 14.2, "angle": 0 }, "aiPath": "…/back/…ai", "pngPath": "…png",
-  "verified": { "ok": true, "res": 6 }, "review": { "legible": true, "notes": "" }, "approvedBy": "K. Smith", "approvedAt": 1789…, "nudged": false, "small": false }
-```
-
-The sheet record gains `backPool: [poolIds]` and `backOutputs: { pieces[], index, report }`, and the Library card shows an **Engraving · n** badge. A re-nest keeps the back files valid because they are tied to the piece, not to its position on the sheet.
+`Charm_Pool_Back/{poolId}` holds the same fields plus `sheetId` and `setId`. The sheet record gains `backPool[]` and `backOutputs`; the Library shows **Engraving · n**.
 
 ## 8. Sets, labels and completion
 
-### 8.1 A set
+### 8.1 A set is the unit that travels
 
-One pull of orders produces one **set**: every sheet nested from that pool, across metals, with overflow sheets included. `Charm_Nest_Sets/{setId}` = `{ setId, day, orders[], sheetIds[], labels, status, createdAt }`. The set folder is `charmnest/sets/{day}/{Set-K}/` with the sheet folders linked from the set record (sheets keep their existing folders).
+Mixed orders (a gold piece and a silver piece on one order) mean sheets of different materials must stay together through production. One run on one date produces one set; the set number is per date across all materials, and every sheet, label, back file and folder in it carries the same set number.
 
-### 8.2 QR labels are generated and saved, not printed
+```
+charmnest/sets/2026-09-16/Set-3/
+  set.json                                   ← manifest: orders, lines, which sheet each copy is on, labels, backs, run id, approvals
+  GF_Sep.16.26_Set-3_Sheet-1/
+    GF_Sep.16.26_Set-3_Sheet-1.ai            ← the cut file (untouched original paths, one layer per charm named by order · SKU)
+    GF_Sep.16.26_Set-3_Sheet-1.pdf
+    GF_Sep.16.26_Set-3_Sheet-1_labelled.pdf  ← proof with order numbers on the pieces
+    GF_Sep.16.26_Set-3_Sheet-1_nest-report.json
+    GF_Sep.16.26_Set-3_Sheet-1_label.png     ← the QR label for THIS sheet (8.3)
+    preview.png
+    back/…                                   ← 7.6
+  GF_Sep.16.26_Set-3_Sheet-2/                ← overflow of the same material
+  SS_Sep.16.26_Set-3_Sheet-1/
+  labels/
+    Set-3_labels.pdf                         ← every sheet label of the set, one page each, in sheet order
+  Set-3_manifest.pdf                         ← human sheet: orders ↔ sheets, held orders, engraving counts
+```
 
-The label content stays exactly what the Design Station produces (one label per bench, base-36 payload, ECC M, 145 × 145 pt, same positions), so the sort scanner keeps working unchanged. The sorter asks the station for the buckets and renders them itself:
+Naming: `{MaterialTag}_{Mon.DD.YY}_Set-{K}_Sheet-{n}`, with `K` the set number for that date (allocated in a Firestore transaction, never by counting on the client) and `n` the sheet index within that material in that set. The current sorter numbers per material per day (`GF_Sep.16.26_Set-1`); this changes to per-date numbering shared across materials, so a gold sheet and a silver sheet of the same run read as `…_Set-3_…` on both. One local clock (`localDay()`) decides both the folder date and the name date.
+
+`Charm_Nest_Sets/{setId}` = `{ setId, runId, day, seq: K, materials[], sheetIds[], orders: { [receiptId]: { lines: [{ transactionId, copies: [{ copy, sheetId, poolId, backPoolId }] }], held: null | reason } }, labels, status, createdAt, committedAt }`.
+
+The Library gets a **Sets** view: one card per set with its sheets side by side, held orders, engraving count and label thumbnails; opening a sheet still works as today.
+
+### 8.2 The sheet record
+
+`Charm_Nest_Sheets` gains `setId`, `setSeq`, `sheetIndex`, `orders[]`, `poolIds[]`, `backPool[]`, `backOutputs`, `label`. The sorter's existing per-sheet folder logic moves under the set folder; overflow sheets are numbered within the material.
+
+### 8.3 One QR label per sheet, saved with the set
+
+A label lists every order with a piece on that sheet; an order with pieces on two sheets appears on both labels. The payload format is unchanged (`B36|{material}|id.id.…`, ECC M, 145 × 145 pt, the same positions), so the sort scanner keeps working; the station's bucketing is no longer used for labels (it still validates `complete.preview`).
 
 ```js
-async function saveLabelsForSet(set) {
-  const p = await DesignLink.call("complete.preview", { receiptIds: set.orders });            // station bucketing, one order → one label
-  const doc = await PDFLib.PDFDocument.create(); const files = [];
-  for (const job of p.jobs) {
-    const png = await qrPng(job.payload, "M", 1024);                                          // qrcodejs, as design-print-1
-    const page = doc.addPage([145, 145]); const img = await doc.embedPng(png);
-    page.drawImage(img, { x: 3, y: 145 - 3 - 85, width: 85, height: 85 });
-    page.drawText(job.label, { x: 1, y: 145 - 93 - 9, size: 9, font: await doc.embedFont(PDFLib.StandardFonts.HelveticaBold) });
-    page.drawText("Notes:", { x: 92, y: 145 - 0.5 - 9, size: 9, font: await doc.embedFont(PDFLib.StandardFonts.HelveticaBold) });
-    files.push(await uploadBytes(`${set.folder}/labels/${set.name}_label_${job.metal}_${job.partIndex}of${job.partTotal}.png`, png, "image/png"));
+async function saveSheetLabel(sheet, set) {
+  const ids = [...new Set(sheet.placements.map(p => byId.get(p.id).order.receiptId))];
+  const parts = safeChunks(ids, sheet.metalKeyDS, 1000, 50, 8);                                   // same chunker as the station
+  const files = [];
+  for (const [i, slice] of parts.entries()) {
+    const payload = encodeOrderList(slice, sheet.metalKeyDS);
+    const label = `${METAL_TAG[sheet.metal]} · ${set.name} · Sheet ${sheet.sheetIndex}${parts.length > 1 ? ` [${i + 1}/${parts.length}]` : ""} · ${slice.length} orders`;
+    const png = await renderLabelPng(payload, label);                                              // 145×145 pt geometry, qrcodejs, ECC M
+    files.push(await uploadBytes(`${sheet.folder}/${sheet.name}_label${parts.length > 1 ? `_${i + 1}of${parts.length}` : ""}.png`, png, "image/png"));
   }
-  const pdf = await uploadBytes(`${set.folder}/labels/${set.name}_labels.pdf`, await doc.save(), "application/pdf");
-  return { setId: set.setId, folder: `${set.folder}/labels`, files: files.map(f => f.path).concat(pdf.path), jobs: p.jobs };
+  return files;
 }
 ```
 
-The label PDF is one page per label exactly as the print page laid it out, so if a label is ever needed on paper it prints from the Library with no other change.
+`labels/Set-K_labels.pdf` collects every sheet label of the set, one page each, for printing from the Library if paper is wanted; the Library also shows a label full-screen for a camera to read.
 
-### 8.3 Marking the orders complete
+### 8.4 Marking the orders complete
 
-After every sheet of the set is written, verified and saved, and its labels are saved:
+After every sheet in the set is written, verified and saved, every engraving in it approved, and every label saved:
 
 ```js
-const labels = await saveLabelsForSet(set);
-await DesignLink.call("complete.commit", { receiptIds: set.orders, labels });
-await api("charmNestLibrary", { op: "setUpdate", setId: set.setId, patch: { labels, status: "complete" } });
+const committable = Object.entries(set.orders).filter(([, o]) => !o.held).map(([id]) => id);
+await DesignLink.call("ui.select", { receiptIds: committable });                                   // the real lock, only now
+const preview = await DesignLink.call("complete.preview", { receiptIds: committable });
+const r = await DesignLink.call("complete.commit", { receiptIds: committable, labels: { setId: set.setId, folder: `${set.folder}/labels`, files: set.labelFiles } });
+await api("charmNestLibrary", { op: "setUpdate", setId: set.setId, patch: { status: r.refused.length ? "complete-with-holds" : "complete", committed: r.completed, refused: r.refused, committedAt: Date.now() } });
 ```
 
-The station runs `commitCompletion`: ledger, unlock, "DESIGNED :)" in each order's chat, archive with the label folder. Orders whose lines went to the Unmatched or Engraving trays are excluded from `set.orders` and stay open on the station, flagged in the sorter, until resolved.
+The station runs `commitCompletion`: ledger, unlock, "DESIGNED :)" in each order's chat, archive with `labels`, `setId` and `completedBy: "sorter"`. Held and refused orders stay open on the station and are listed on the set with their reasons.
 
 ## 9. Sorter UI
 
-New tabs: **Orders**, **Design Station**, **Master**, **Engraving**. Existing: Nest, Library, Charms.
+New tabs: **Orders**, **Design Station**, **Master**, **Review** (11), **Sets** (in Library). Existing: Nest, Library, Charms.
 
 - **Orders** — 5.1. A **Run set** button starts the autonomous run (10).
 - **Design Station** — the frame and the bridge console (4.7).
@@ -513,42 +598,75 @@ New tabs: **Orders**, **Design Station**, **Master**, **Engraving**. Existing: N
 
 All bridge, master, pool and engraving steps write into the existing agent log with kinds `DS`, `MASTER`, `POOL`, `ENGRAVE`, so the per-card panel and the Log button already show the whole run.
 
-## 10. The autonomous run
+## 10. The run
+
+### 10.1 Two halves and a record
 
 ```
-Run set
-  1  orders.snapshot ─────────────── DS: pull, hydrate                          live: "Pulled 41 orders · 63 lines"
-  2  classify engraving ──────────── Claude, per line with instructions         tray ← low confidence
-  3  poolAdd per line ────────────── master lookup, copies, queues per metal    tray ← unmatched SKU
-  4  saturation check ────────────── 72 % ceiling per metal, overflow sheets planned
-  5  ui.select on the station ────── DS shows the same orders selected (locks)  frame: rows turn selected
-  6  nest per metal ──────────────── parallel search, verify twice, write, save  cards: as today
-  7  engrave ─────────────────────── back mask, fit at largest size, verify     pauses: every placement reviewed by a person
-                                      Claude read, human approve, back files
-  8  labels ──────────────────────── complete.preview → render → save            set folder /labels
-  9  complete.commit ─────────────── DS: ledger, unlock, chat, archive           frame: rows leave the list
- 10  set record ────────────────────  Charm_Nest_Sets complete
+HALF A · produce                                              HALF B · release
+ 1 pull + interpret ─ Etsy via the station; line specs           7 engrave ─ flip, fit, verify; REVIEW QUEUE (human)
+ 2 claim ──────────── gold dot on the station                    8 re-validate orders (10.3)
+ 3 pool ───────────── master lookup, copies; trays               9 labels ─ one per sheet, set PDF
+ 4 plan ───────────── 72 % ceiling, overflow sheets              10 lock + preview + commit on the station
+ 5 nest ───────────── per material, verify twice, write, save    11 set complete; claims released
+ 6 checkpoint ─────── set "awaiting review"
 ```
 
-Each step logs before and after, can be paused from the Live strip, and stops the run on any refusal from the station. Step 7 always waits for the review queue to empty. Steps 5 and 9 are the only ones that change the station; both are visible in the frame as they happen.
+`Charm_Nest_Runs/{runId}` = `{ runId, setId, day, step, startedAt, updatedAt, lines: { [lineKey]: { state, poolIds, reason } }, sheets: { [sheetId]: state }, holds, errors, resumable: true }`, written before and after every step. Pool ids are deterministic (`${receiptId}_${transactionId}_${copy}`), so a retried step never duplicates. **Resume run** picks up at the recorded step; a line claimed by a live run is skipped by another run.
 
-## 11. Data model
+### 10.2 What stops a run
+
+Any of: a hydration shortfall, the station down (heartbeat), cloud offline, a sheet that is not complete and verified for a reason other than overflow, a flip check failure, a refused command. The run banner names the cause and the fix; nothing is committed.
+
+### 10.3 Re-validation
+
+Before engraving and again before commit, every order's `update_timestamp` is re-read through `orders.detail`. A changed order re-runs interpretation and classification and invalidates any fitted or approved placement (the reviewer sees old and new text side by side). A vanished order (shipped, cancelled, refunded) is dropped from the set with a red line and its pieces are marked "order gone" on the sheet report.
+
+### 10.4 Undo
+
+**Undo set** runs `complete.undo` on the station, sets the set back to "awaiting review", pool lines back to "written", and keeps every file.
+
+## 11. The review panel
+
+One panel for everything a person must decide, with the problem stated and the fixes one click away. Every item shows: what was identified, the evidence (crop, text, source quote), why it stopped, and the quick fixes. Items, in the order they appear in a run:
+
+| Item | Identified as | Evidence shown | Quick fixes |
+| --- | --- | --- | --- |
+| Needs material | no material, or "solid" with no karat | the option values, the title | pick a material (writes a staff note and re-classifies) · skip line · hold order |
+| Needs mapping | an option value with no `Charm_Option_Map` entry | option name and value, listing | map to form/size/chain once (remembered) · not relevant (ignored for this listing) |
+| Unmatched SKU | no master entry for the SKU | SKU, title, Etsy image | pick the charm from the master grid (alias remembered) · no design (remembered) · hold |
+| Missing size | sized line, master has no design for that size | size value, sizes available | pick an available size · hold |
+| Oversize | charm cannot fit the sheet under the ceiling | sizes | different stock · hold |
+| Engraving words | low confidence, questions, request for front/font/handwriting/image | customer's words, staff note, messages, Claude's reading and questions | confirm text · edit text (recorded as staff decision) · message customer (opens station chat with a draft) · no engraving |
+| Not representable | characters Myriad Pro lacks | the characters highlighted in the text | replace with a word · drop the character · message customer · no engraving |
+| Flip check failed | back silhouette does not equal the mirrored front | front, back, diff image, which check failed | re-run · mark SKU not engravable · hold |
+| Placement review | every fitted placement | front and back side by side, mask hatch, text, size, small flag, Claude's notes | approve · nudge · resize · re-split · skip · send back |
+| Order changed | Etsy update after pull | old and new text or options | accept new (re-fit) · hold |
+| Held order | any line unresolved | the line and its reason | jump to that item |
+
+The panel is the sorter's **Review** tab; its count is on the Live strip and the run banner, and a desktop notification fires when the run needs a person.
+
+## 12. Data model
 
 | Collection | Key | Fields |
 | --- | --- | --- |
 | `Design_Bridge` | sessionId | `sorterClientId, bench, startedAt, endedAt, commands, dropped` |
-| `Design_Bridge/{s}/log` | auto | `t, dir, type, ms, payload` (payload slimmed: ids and counts, never order contents) |
-| `Charm_Master_Files` | masterHash | `path, charms, unlabelled[], orphans[], duplicates[], indexedAt` |
-| `Charm_Master_Index` | SKU | 6.3 |
-| `Charm_Pool` | poolId | 6.4 |
-| `Charm_Pool_Back` | poolId | 7.5 |
+| `Design_Bridge/{s}/log` | auto | `t, dir, type, ms, payload` (ids and counts only) |
+| `Charm_Nest_Runs` | runId | 10.1 |
 | `Charm_Nest_Sets` | setId | 8.1 |
-| `Charm_Nest_Sheets` | (existing) | `+ setId, orders[], poolIds[], backPool[], backOutputs` |
-| `Design_Order_Archive` | (existing) | `+ labels { setId, folder, files[] }` |
+| `Charm_Master_Files` | masterHash | `path, charms, unlabelled[], orphans[], duplicates[], visionReads[], indexedAt` |
+| `Charm_Master_Index` | SKU | 6.3, plus `sizes{}`, `upAngle`, `backKeepOut[]`, `engravable` |
+| `Charm_Sku_Aliases` | listingId | `sku` (learned in review) |
+| `Charm_Sku_NoDesign` | auto | `pattern` or `sku` |
+| `Charm_Option_Map` | listingId or `*` | `{ optionName: { value: { field, value } } }` |
+| `Charm_Pool` | `${receiptId}_${transactionId}_${copy}` | `runId, setId, sheetId, sku, material, size, form, spec, charmHash, masterHash, engrave, state` |
+| `Charm_Pool_Back` | poolId | 7.6 |
+| `Charm_Nest_Sheets` | (existing) | 8.2 |
+| `Design_Order_Archive` | (existing) | `+ labels, setId, sheetIds, backCount, completedBy` |
 
-Storage: `charmnest/master/…`, `charmnest/sets/{day}/{Set-K}/labels/…`, `charmnest/sheets/{day}/{sheet}/back/…`.
+Storage: `charmnest/master/…`, `charmnest/sets/{day}/Set-K/…` (8.1). Firestore rules: every `Charm_*`, `Charm_Nest_*` and `Design_Bridge` collection denies client writes; all writes go through the functions. Retention: pool working files 90 days; masters, sets, sheets, backs and labels kept.
 
-## 12. Functions
+## 13. Functions
 
 | Function | Kind | Ops or purpose |
 | --- | --- | --- |
@@ -559,7 +677,7 @@ Storage: `charmnest/master/…`, `charmnest/sets/{day}/{Set-K}/labels/…`, `cha
 
 Manifest: add the two functions to `scripts/netlify-function-entries.json`; `build-public.cjs` allowlist gains `vendor/opentype-1.3.4.min.js` and excludes `vendor/fonts/`.
 
-## 13. Settings (sorter)
+## 14. Settings (sorter)
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -571,34 +689,44 @@ Manifest: add the two functions to `scripts/netlify-function-entries.json`; `bui
 | `engraveConfidence` | 0.80 | below it, a person decides |
 | `engraveTryRotated` | on | allow ±15°/±30° layouts when they gain ≥ 12% |
 | `autoCommit` | on | mark orders complete on the station when a set finishes and every engraving is approved |
+| `backFileView` | per engraver | `asSeenFromBack` or `frontCoordinates`, settled by one test piece |
+| `engraveMinGapMm` / `engraveMinStrokeMm` | 0.12 / 0.15 | engraver limits from a test coupon |
+| `heartbeatS` | 5 | station heartbeat; three misses mark it down |
 
-## 14. Tests
+## 15. Tests
 
-- **Bridge.** Headless Chromium loads the sorter, which frames a local `design-1.html` served on a second port with a stub `firebaseOrders`; asserts `hello`, `orders.snapshot` shape, `ui.select` takes a lock, a wrong-origin message is dropped and counted, `complete.commit` without preview is refused, `complete.commit` with labels removes the rows and writes the ledger.
-- **Labels.** A fixture master with labelled charms (text under, one 8 mm below, one shared between two outlines, one unlabelled, one duplicate, one label string that is not a SKU) → expected `labels`, `unlabelled`, `orphans`, `duplicates`.
-- **Extraction.** The per-SKU `.ai` re-parsed equals the master's charm (same member count, same silhouette hash).
-- **Fit.** Fixture charms with a hole, a thin ring and a diagonal band: text never crosses the eroded mask, the ring returns "no room", the band picks the rotated layout only when it gains ≥ 12%, and the returned size is the largest that fits (a size 0.1 pt larger must fail).
-- **Review gate.** A set with one unapproved engraving cannot commit; approving it stores the employee name; a nudge re-fits the size to the new box.
-- **End to end.** The existing sheet e2e extended: two order lines, one engraved, run the set with a stub Claude; expect the back file, `back-index.pdf`, saved labels, and the station rows gone.
+- **Bridge.** Headless Chromium loads the sorter framing a local `design-1.html` with a stub `firebaseOrders`; asserts `hello`, `orders.snapshot` shape and shortfall reporting, claim then lock, a wrong-origin message dropped and counted, `complete.commit` without preview refused, `complete.commit` with labels removing rows and writing the ledger, heartbeat loss and re-`hello` after a frame reload.
+- **Interpretation.** Fixture orders covering every option pattern (necklace, earrings, charm only, sizes, chain), a missing SKU resolved by alias, a no-design chain line, "Rose Quartz" not classified as rose, a staff note overriding Etsy text.
+- **Labels in the master.** Text under, 8 mm below, shared between two outlines, unlabelled, duplicate, size suffix, and an outlined-text master read through the vision fallback.
+- **Extraction.** The per-SKU `.ai` re-parsed equals the master's charm (member count, silhouette hash).
+- **Flip.** Asymmetric fixture charms with off-centre holes: every 7.2 check passes on a correct flip and fails on a deliberately wrong one (unmirrored, hole shifted, a fill left in).
+- **Fit.** A hole, a thin ring, a diagonal band: text never crosses the eroded mask, the ring returns "no room", the band takes the rotated layout only at ≥ 12% gain, the size is the largest that fits (0.1 pt more must fail), a heart character is refused.
+- **Review gate.** A set with one unapproved engraving cannot commit; approval stores the name; a nudge re-fits.
+- **Run.** Resume after a simulated crash at every step; two runs contending for one line; an order changed between pull and commit invalidates its approval; a held order is not committed while its sheet mates are.
+- **Sets.** A mixed gold-and-silver order lands on two sheets with the same set number and appears on both labels; folder and file names agree on the date across midnight.
 
-## 15. Implementation plan
+## 16. Implementation plan
 
 1. **Bridge and monitoring** — `Bridge` in `design-1.html`, `commitCompletion` split, `frame-ancestors`, `DesignLink`, the Design Station tab and console, Orders tab with pull. Deliverable: orders pulled and selection driven with both UIs visible.
 2. **Master and pool** — text strings in the interpreter, `labelCharms`, Master tab, index and per-SKU files, `poolAdd`, queue naming by order. Deliverable: a pulled line becomes a queued charm.
 3. **Engraving** — intent classifier, back mask, `fitText` with opentype.js and Myriad Pro, verification, Claude's read, the mandatory review queue with nudge and resize, back files and index, Engraving tab, Library badge. Deliverable: an engraved line yields per-piece back files, each approved by a named person, tied to its sheet.
-4. **Sets, labels, completion** — set record, label rendering and saving, `complete.commit`, archive `labels`, Run set. Deliverable: a finished set marks its orders complete with labels saved, nothing printed.
+4. **Sets, labels, completion** — run record and resume, set folder and per-date numbering, per-sheet labels and set PDF, re-validation, held orders, `complete.commit`, archive `labels`, Undo set. Deliverable: a finished set marks its committable orders complete with labels saved, nothing printed.
+5. **Review panel and hardening** — the Review tab with every item type and its quick fixes, option maps, aliases, no-design list, heartbeat, veil, release on unload, Firestore rules, retention.
 
-## 16. Safety rules
+## 17. Safety rules
 
-- The station's guards stay under remote control: no completion without a preview of the same orders and a saved label list; locks and undo unchanged.
-- Metal comes from the station's classifier only; a line whose metal has no sorter card is refused, not guessed.
-- Engraving text is the customer's words; Claude may split lines and flag questions, never invent, translate or "improve" them.
-- No text outside the eroded mask or inside a cut-out, ever. No back file is written before a person has approved the placement on screen.
+- The station's guards stay under remote control: no completion without a preview of the same orders and a saved label list; locks, claims and undo unchanged.
+- Material, form and size come from Etsy options through deterministic maps; Claude reads free text only.
+- Engraving text is the customer's words (staff note first); Claude may split lines and raise questions, never invent, translate or improve. Characters the font lacks are refused to review, never approximated.
+- The back is an actual, checked flip of the cut geometry; front-only detail never appears on a back file; a failed check stops the piece.
+- No text outside the eroded mask or inside a cut-out, ever. No back file is written before a human has approved the placement on screen.
+- An order with any unresolved line is held whole; nothing is committed for it.
 - Master extraction copies bytes; nothing is redrawn.
-- Every automatic step logs before and after it acts; the run stops on the first refusal.
+- Every automatic step logs before and after it acts and is recorded in the run; the run stops on the first refusal and resumes from the record.
 
-## 17. Resolved on draft 2
+## 18. Decisions log
 
-1. SKUs are colour-agnostic: the index is keyed by SKU alone and the order's colour variation only chooses the metal card.
-2. Text is always fitted at the largest size the space allows, and every placement is reviewed by a person on screen before release; small text is flagged, never dropped.
-3. The Design Station's print button is hidden while a bridge session is active and once the sorter path is live; the print page stays deployed as a fallback.
+- Draft 1 → 2: labels under charms; back engraving; Myriad Pro; per-piece engraving; sorter completes orders and saves labels; identical copies; same PC.
+- Draft 2 → 3: SKUs colour-agnostic; largest size with mandatory visual review; print button hidden.
+- Draft 3 → 4 (from the plan review): claims during the run, lock at commit · SKU is the design only, material and every other feature from Etsy options via deterministic maps · nothing not exactly representable is engraved, review panel with problem and quick fixes · the flip is real and verified step by step, front detail hidden · one label per sheet, sheets travel in sets with one set number per date across materials and one folder per set · orders held whole · any human employee may approve, name recorded · persistent run record, re-validation of orders, BOM and no-design lists, outlined-label fallback, up-angle, glyph coverage, engraver file orientation setting.
+
