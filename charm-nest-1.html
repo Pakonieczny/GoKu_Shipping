@@ -490,7 +490,7 @@ function loadSettings() {
     if ((saved.v || 1) < 6) { saved.budgetS = 180; saved.parallel = 0; saved.v = 6; }   // v6: parallel searches (all cores but one), 3-minute ceiling
     if ((saved.v || 1) < 7) { saved.maxFill = 0.72; saved.v = 7; }                        // v7: 72 % is the maximum fill of any sheet; the rest goes to the next sheet
     if ((saved.v || 1) < 8) { saved.maxFill = 0.74; saved.v = 8; }                        // v8: 74 % ceiling, measured on the stamped footprint like the readout
-    if ((saved.v || 1) < 9) { saved.serverAbove = 0; saved.v = 9; }                       // v9: the browser solver does every sheet; the server route is off (0) unless set in Settings
+    if ((saved.v || 1) < 9) { saved.serverAbove = 0; saved.v = 9; }                       // v9: no charm-count maximum — the browser solver takes every sheet and fills it up to the ceiling
     const out = Object.assign({}, DEFAULTS, saved); out.stock = Object.assign({}, DEFAULTS.stock, saved.stock || {}); return out;
   } catch (_) { return Object.assign({}, DEFAULTS, { v: 2 }); }
 }
