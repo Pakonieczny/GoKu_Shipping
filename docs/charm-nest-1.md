@@ -108,6 +108,6 @@ Three rules were added after a 75-piece nested sheet came back with charms merge
 
 The fill ceiling and the card's "% full" are measured on the same thing: the footprint each piece stamps on the sheet grid (its silhouette eroded by a negative clearance or grown by a positive one). Before this, the ceiling counted solid silhouettes with holes filled while the readout counted stamped footprint, so a sheet could stop "at the 72 % ceiling" while the card read 64 %. Reports still carry the solid silhouette area per charm.
 
-## Post-nest 1.5 % shrink
+## Post-nest 2 % shrink
 
-The solver works with every charm at its drawn size. Once the layout is assembled, the writer and the preview draw each charm at 98.5 % of that size, scaled about its own centre (`CHARM_SCALE` in `charm-nest-1.html`; the placement matrix is scale · rotation). Positions and angles are untouched; the shrink afterwards is what makes minor overlaps between neighbours disappear.
+The solver works with every charm at its drawn size. Once the layout is assembled, the writer and the preview draw each charm at 98 % of that size, scaled about its own centre (`CHARM_SCALE` in `charm-nest-1.html`; the placement matrix is scale · rotation). Positions and angles are untouched; the shrink afterwards is what makes minor overlaps between neighbours disappear.

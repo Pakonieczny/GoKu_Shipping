@@ -1093,8 +1093,8 @@ function ensureWorkers(sh, n) {
 /** When the first file behind this sheet arrived — the clock the operator cares about starts there. */
 function sheetT0(sh) { const ids = new Set(sh.charms.map(c => c.sourceId)); const t = S.sources.filter(x => ids.has(x.id) && x.t0).map(x => x.t0); return t.length ? Math.min(...t) : (sh.startedAt || performance.now()); }
 function log(sh, msg) { sh.log.push(`${new Date().toLocaleTimeString()} ${msg}`); if (sh.log.length > 200) sh.log.shift(); }
-/** After nesting, every charm is written and previewed 1.5 % smaller than drawn, scaled about its own centre: the layout is solved at full size and the shrink afterwards makes minor overlaps disappear. */
-const CHARM_SCALE = 0.985;
+/** After nesting, every charm is written and previewed 2 % smaller than drawn, scaled about its own centre: the layout is solved at full size and the shrink afterwards makes minor overlaps disappear. */
+const CHARM_SCALE = 0.98;
 function buildJob(sh) {
   const st = stockFor(sh.metal);
   const items = activeCharms(sh);
