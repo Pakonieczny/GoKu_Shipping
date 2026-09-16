@@ -81,18 +81,22 @@ A section that could not be read is recorded as unavailable with its reason and
 never counted as healthy — an unread question stays open rather than becoming a
 clean bill of health.
 
-## YouTube video state
+## YouTube video state — optional
 
-Google Ads reports that a video asset is attached and serving. It does not
-report that YouTube rejected the video for a copyright claim, never finished
-transcoding it, or made it unembeddable — and an ad carrying such a video earns
-nothing while still looking healthy in Ads.
+Nothing in the ad pipeline needs this. Films are uploaded through Google Ads'
+own resumable endpoint; Google Ads reports the upload state in
+`you_tube_video_upload.state` and whether the asset may serve in
+`asset_group_asset.primary_status`. Animated ads generate, upload, attach,
+publish and report without a YouTube credential.
 
-`_youtubeVideos.js` reads that state for every `YOUTUBE_VIDEO` asset on the
-account and reports each film as serviceable or not, with the reason. Because
-the uploads are created UNLISTED, a plain **API key** resolves them; no OAuth
-consent is needed. Set `YOUTUBE_API_KEY` and the connections check switches
-from a warning to a real probe.
+`_youtubeVideos.js` adds only the YouTube side that Google Ads does not
+mirror: a Content ID rejection, a privacy change made in YouTube Studio, an
+unembeddable flag, and the exact transcode state. It is read by
+`googleConnectionsCheck` and by nothing else.
+
+Set `config/googleApiKeys.youtubeApiKey` to switch that row from "optional,
+not configured" to a real probe. Leave it unset and the row stays grey rather
+than warning, because an unconfigured optional capability is not a defect.
 
 ## Google Ads capabilities still available but not wired up
 

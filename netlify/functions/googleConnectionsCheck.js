@@ -291,7 +291,7 @@ async function otherGoogleSection(token) {
   if (youtube.error && !youtube.key) {
     rows.push(C.skip("YouTube Data API", "the key store could not be read: " + youtube.error));
   } else if (!youtube.key) {
-    rows.push(C.warn("YouTube Data API", "no key. Add youtubeApiKey to Firestore " + require("./_googleApiKeys").DOC_PATH + ". Without it a failed transcode or a copyright rejection stays invisible while Google Ads still reports the asset as attached."));
+    rows.push(C.skip("YouTube Data API", "optional, not configured. Films upload through Google Ads, which reports their upload state and serving eligibility on its own; this key would only add YouTube-side detail such as a copyright rejection or a privacy change made in YouTube Studio. Add youtubeApiKey to Firestore " + require("./_googleApiKeys").DOC_PATH + " if that is ever wanted."));
   } else if (!token || !/^\d{10}$/.test(CID)) {
     rows.push(C.skip("YouTube Data API", "a key is configured (" + youtube.source + "), but the video IDs come from Google Ads and those credentials are unavailable"));
   } else {
