@@ -62,7 +62,39 @@ configured API version and reports a row per resource. Where Google does not
 allow a mobile/desktop split, the honest answer is to report that statistic at a
 level that does support it, not to estimate one.
 
-## Google Ads capabilities that are available but not wired up
+## Merchant Center health
+
+`googleMerchantHealth` answers what the connections check only proves reachable:
+
+```
+https://goldenspike.app/.netlify/functions/googleMerchantHealth
+https://goldenspike.app/.netlify/functions/googleMerchantHealth?format=json
+```
+
+It reports account issues separated into blocking and advisory, **the exact
+offer IDs that cannot serve and why**, whether Google's own record of the
+account relationships names the advertising account, whether an active
+conversion source exists for the store, shipping and return-policy coverage,
+feed ownership, promotions and automatic crawling.
+
+A section that could not be read is recorded as unavailable with its reason and
+never counted as healthy — an unread question stays open rather than becoming a
+clean bill of health.
+
+## YouTube video state
+
+Google Ads reports that a video asset is attached and serving. It does not
+report that YouTube rejected the video for a copyright claim, never finished
+transcoding it, or made it unembeddable — and an ad carrying such a video earns
+nothing while still looking healthy in Ads.
+
+`_youtubeVideos.js` reads that state for every `YOUTUBE_VIDEO` asset on the
+account and reports each film as serviceable or not, with the reason. Because
+the uploads are created UNLISTED, a plain **API key** resolves them; no OAuth
+consent is needed. Set `YOUTUBE_API_KEY` and the connections check switches
+from a warning to a real probe.
+
+## Google Ads capabilities still available but not wired up
 
 | Resource | What it would add |
 |---|---|
@@ -70,31 +102,9 @@ level that does support it, not to estimate one.
 | `asset_group_top_combination_view` | Which asset combinations Google actually assembled and served together. |
 | `detail_placement_view` | The exact YouTube channels, videos, apps and sites the ads appeared on. |
 | `campaign_asset_set` | Asset sets (business locations, page feeds) bound to a campaign. |
-| `product_link` | The Google Ads ↔ Merchant Center link itself, read from the Ads side. |
+| `product_link` | The Google Ads to Merchant Center link, read from the Ads side. |
 
-## Merchant Center capabilities that are available but not wired up
-
-| Sub-API | What it would add |
-|---|---|
-| `conversionSources` | Google's record of which site sends Merchant conversions — the Shopify conversion link. |
-| `accountRelationships`, `accountServices` | Which Google Ads accounts this Merchant account is joined to, and under what service agreement. |
-| `accountIssues`, per-offer `item_issues` | Account and offer blockers. A disapproved offer silently earns nothing. |
-| `promotions` | Sale messaging on Shopping surfaces. |
-| `onlineReturnPolicies`, `shippingSettings` | Settings that decide whether an offer can serve at all. |
-| `autofeedSettings` | Whether Google is crawling the Shopify store directly as a feed source. |
-
-These are probed, so the report already says whether the credentials would reach
-them today. Wiring each one into the product is separate work.
-
-## Known gap that needs a credential
-
-**YouTube Data API.** Videos are uploaded through Google Ads' resumable endpoint
-and their processing state is read back from `you_tube_video_upload`, so a film
-that failed to transcode is visible. What is *not* available is the YouTube side:
-public metadata, thumbnails and YouTube-native analytics. There is no credential
-for it at all. To enable it, grant this OAuth client
-`https://www.googleapis.com/auth/youtube.readonly` and store the refresh token;
-the checker reports the scope as missing until then.
+These are probed, so the report already says whether the credentials reach them.
 
 ## API version
 
@@ -126,3 +136,25 @@ so the checker treats a missing vertical master as a failure rather than a
 preference.
 
 Sources are recorded in `brites-ad-format-policy.js`.
+
+## What must be enabled in Google Cloud Console
+
+These cannot be done from code. In the Cloud project that owns the OAuth client:
+
+| API to enable | Needed for |
+|---|---|
+| Google Ads API | already in use |
+| Merchant API | Merchant Center products, reports and health |
+| YouTube Data API v3 | video processing state (`YOUTUBE_API_KEY`) |
+| Data Manager API | offline conversion upload |
+
+Credentials to add:
+
+- **`YOUTUBE_API_KEY`** — an API key restricted to YouTube Data API v3. No OAuth
+  consent is required because the uploads are unlisted.
+- **`GMC_REFRESH_TOKEN`** — a refresh token carrying
+  `https://www.googleapis.com/auth/content`, if Merchant calls are to run under
+  their own credential rather than the Ads one.
+
+The connections check reports each of these as missing until they are set, so
+the report is the checklist.

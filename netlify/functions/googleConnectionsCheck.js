@@ -269,7 +269,7 @@ async function merchantSection() {
 }
 
 // ── 7. Everything else Google ───────────────────────────────────────────────
-async function otherGoogleSection() {
+async function otherGoogleSection(token) {
   const rows = [];
   if (present("GEMINI_API_KEY")) {
     try {
@@ -284,11 +284,27 @@ async function otherGoogleSection() {
     } catch (e) { rows.push(C.fail("Gemini models", e.message)); }
   } else rows.push(C.skip("Gemini models", "GEMINI_API_KEY is not set"));
 
-  // The YouTube Data API is the one Google surface in this catalog with no
-  // credential at all: videos are uploaded through Google Ads and never read back.
-  rows.push(present("YOUTUBE_API_KEY") || present("YOUTUBE_REFRESH_TOKEN")
-    ? C.ok("YouTube Data API", "a credential is configured")
-    : C.warn("YouTube Data API", "no credential. Uploaded videos' YouTube-side processing state, thumbnail and public metadata cannot be read. Google Ads reports serving; it does not report a failed YouTube transcode."));
+  // Google Ads reports a video asset as attached and serving. It does not report
+  // that YouTube rejected, failed to process, or unpublished the same video.
+  if (!present("YOUTUBE_API_KEY")) {
+    rows.push(C.warn("YouTube Data API", "no YOUTUBE_API_KEY. Uploaded videos' YouTube-side processing state cannot be read, so a failed transcode or a copyright rejection stays invisible while Google Ads still reports the asset as attached."));
+  } else if (!token || !/^\d{10}$/.test(CID)) {
+    rows.push(C.skip("YouTube Data API", "a key is configured, but the video IDs come from Google Ads and those credentials are unavailable"));
+  } else {
+    try {
+      const { data } = await adsPost(token, "customers/" + CID + "/googleAds:search", {
+        query: "SELECT asset.youtube_video_asset.youtube_video_id FROM asset WHERE asset.type = 'YOUTUBE_VIDEO' LIMIT 50", pageSize: 50
+      });
+      const ids = (data.results || []).map(r => (((r.asset || {}).youtubeVideoAsset || {}).youtubeVideoId)).filter(Boolean);
+      if (!ids.length) rows.push(C.ok("YouTube Data API", "key configured; this account has no YouTube video asset to check"));
+      else {
+        const state = await require("./_youtubeVideos").videoStatus({ fetch, apiKey: ENV.YOUTUBE_API_KEY, videoIds: ids });
+        rows.push(state.unserviceable || state.missing.length
+          ? C.fail("YouTube Data API", state.detail + " · " + state.videos.filter(v => !v.serviceable).map(v => v.id + ": " + v.problems.join("; ")).join(" | ").slice(0, 300))
+          : C.ok("YouTube Data API", state.detail));
+      }
+    } catch (e) { rows.push(C.fail("YouTube Data API", e.message)); }
+  }
 
   // Offline conversions: the app's own record, then the Ads-side destination.
   try {
@@ -356,7 +372,7 @@ async function run(options) {
   sections.push(await adsSchemaSection(token, access.served));
   sections.push(await adsWriteSection(token, options.write));
   sections.push(await merchantSection());
-  sections.push(await otherGoogleSection());
+  sections.push(await otherGoogleSection(token));
   sections.push(formatSection());
 
   return { checkedAt: new Date().toISOString(), apiVersion: V, customerId: CID || null, merchantId: MERCHANT || null, summary: C.summarize(sections), sections };

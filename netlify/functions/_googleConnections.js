@@ -169,24 +169,24 @@ const MERCHANT_PROBES = [
   { key: "report_product_performance", used: true, method: "POST", path: a => "reports/v1/accounts/" + a + "/reports:search",
     body: { query: "SELECT offer_id, clicks, impressions, conversions, conversion_value FROM product_performance_view WHERE date DURING LAST_7_DAYS LIMIT 1", pageSize: 1 },
     why: "Free and paid results per offer, the Merchant side of the Shopify join." },
-  { key: "accountIssues", used: false, method: "GET", path: a => "accounts/v1/accounts/" + a + "/issues",
+  { key: "accountIssues", used: true, method: "GET", path: a => "accounts/v1/accounts/" + a + "/issues",
     why: "Account-level blockers that stop products serving. Not surfaced in the app today." },
-  { key: "productIssues", used: false, method: "POST", path: a => "reports/v1/accounts/" + a + "/reports:search",
+  { key: "productIssues", used: true, method: "POST", path: a => "reports/v1/accounts/" + a + "/reports:search",
     body: { query: "SELECT offer_id, item_issues FROM product_view WHERE item_issues IS NOT NULL LIMIT 5", pageSize: 5 },
     why: "Per-offer disapprovals. A disapproved offer silently earns nothing." },
-  { key: "conversionSources", used: false, method: "GET", path: a => "conversions/v1/accounts/" + a + "/conversionSources?pageSize=25",
+  { key: "conversionSources", used: true, method: "GET", path: a => "conversions/v1/accounts/" + a + "/conversionSources?pageSize=25",
     why: "THE SHOPIFY CONVERSION LINK. Google's record of which site sends Merchant conversions." },
-  { key: "accountRelationships", used: false, method: "GET", path: a => "accounts/v1/accounts/" + a + "/relationships",
+  { key: "accountRelationships", used: true, method: "GET", path: a => "accounts/v1/accounts/" + a + "/relationships",
     why: "Which Google Ads accounts this Merchant account is joined to." },
-  { key: "accountServices", used: false, method: "GET", path: a => "accounts/v1/accounts/" + a + "/services",
+  { key: "accountServices", used: true, method: "GET", path: a => "accounts/v1/accounts/" + a + "/services",
     why: "The service agreements behind those links, including campaign management." },
-  { key: "promotions", used: false, method: "GET", path: a => "promotions/v1/accounts/" + a + "/promotions?pageSize=1",
+  { key: "promotions", used: true, method: "GET", path: a => "promotions/v1/accounts/" + a + "/promotions?pageSize=1",
     why: "Merchant promotions. Never used, so sale messaging never reaches Shopping surfaces." },
-  { key: "onlineReturnPolicies", used: false, method: "GET", path: a => "accounts/v1/accounts/" + a + "/onlineReturnPolicies?pageSize=1",
+  { key: "onlineReturnPolicies", used: true, method: "GET", path: a => "accounts/v1/accounts/" + a + "/onlineReturnPolicies?pageSize=1",
     why: "Return policy shown beside the offer; affects Shopping eligibility." },
-  { key: "shippingSettings", used: false, method: "GET", path: a => "accounts/v1/accounts/" + a + "/shippingSettings",
+  { key: "shippingSettings", used: true, method: "GET", path: a => "accounts/v1/accounts/" + a + "/shippingSettings",
     why: "Shipping settings that decide whether an offer can serve at all." },
-  { key: "autofeedSettings", used: false, method: "GET", path: a => "accounts/v1/accounts/" + a + "/autofeedSettings",
+  { key: "autofeedSettings", used: true, method: "GET", path: a => "accounts/v1/accounts/" + a + "/autofeedSettings",
     why: "Whether Google is crawling the Shopify store directly as a feed source." }
 ];
 
@@ -205,7 +205,7 @@ const OTHER_HOSTS = [
   { key: "storage", host: "storage.googleapis.com", used: true, why: "Creative asset storage." },
   { key: "firebasestorage", host: "firebasestorage.googleapis.com", used: true, why: "Saved design and creative bytes." },
   { key: "visionWarehouse", host: "warehouse-visionai.googleapis.com", used: true, why: "Vision AI Warehouse, used by visionWarehouse.js for image indexing and search." },
-  { key: "youtube", host: "youtube.googleapis.com", used: false, why: "YouTube Data API. Videos are uploaded through Google Ads but their YouTube-side processing state, thumbnail and public metadata are never read." }
+  { key: "youtube", host: "youtube.googleapis.com", used: true, why: "YouTube Data API. Reads the processing, privacy and embeddability state of the videos uploaded through Google Ads, which Google Ads itself does not report." }
 ];
 
 // OAuth scopes decide which of the hosts above a refresh token may actually
