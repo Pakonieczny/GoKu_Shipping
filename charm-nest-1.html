@@ -1023,7 +1023,7 @@ function overflowToNextSheet(sh) {
   startNest(next);
   return next;
 }
-function inflatedArea(c) { const g = (+S.settings.clearancePt || 0) / 2, k = CHARM_SCALE; return c.areaPt2 * k * k + g * 2 * (c.widthPt + c.heightPt) * k + Math.PI * g * g; } // silhouette grown by half the clearance
+function inflatedArea(c) { const g = (+S.settings.clearancePt || 0) / 2; return c.areaPt2 + g * 2 * (c.widthPt + c.heightPt) + Math.PI * g * g; } // silhouette grown by half the clearance
 function usableArea(sh) { const st = stockFor(sh.metal), ins = (+S.settings.insetPt || 0) + Math.max(0, +S.settings.clearancePt || 0) / 2; return Math.max(0, st.wPt - 2 * ins) * Math.max(0, st.hPt - 2 * ins); }
 /** ρ_target: 25th percentile of achieved densities among the nearest shape-mix neighbours; seed 0.70. */
 function rhoTarget(sh) {
@@ -1093,8 +1093,8 @@ function ensureWorkers(sh, n) {
 /** When the first file behind this sheet arrived — the clock the operator cares about starts there. */
 function sheetT0(sh) { const ids = new Set(sh.charms.map(c => c.sourceId)); const t = S.sources.filter(x => ids.has(x.id) && x.t0).map(x => x.t0); return t.length ? Math.min(...t) : (sh.startedAt || performance.now()); }
 function log(sh, msg) { sh.log.push(`${new Date().toLocaleTimeString()} ${msg}`); if (sh.log.length > 200) sh.log.shift(); }
-/** Every charm is nested, written and previewed 3.5 % smaller than drawn: a uniform shrink that removes minor overlaps between neighbours. */
-const CHARM_SCALE = 0.965;
+/** After nesting, every charm is written and previewed 1.5 % smaller than drawn, scaled about its own centre: the layout is solved at full size and the shrink afterwards makes minor overlaps disappear. */
+const CHARM_SCALE = 0.985;
 function buildJob(sh) {
   const st = stockFor(sh.metal);
   const items = activeCharms(sh);
@@ -1102,7 +1102,7 @@ function buildJob(sh) {
     sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0 },
     clearancePt: +S.settings.clearancePt || 0, angles: angleSet(), fineRes: 2, coarseRes: 0.5,
     timeBudgetMs: (+S.settings.budgetS || 180) * 1000, maxTrials: 2000, seed: +S.settings.seed || 1, maxFill: +S.settings.maxFill || 0.74,
-    pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale / CHARM_SCALE, bits: c.bits, areaPt2: c.areaPt2 * CHARM_SCALE * CHARM_SCALE, pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
+    pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
   };
 }
 function startNest(sh) {
@@ -1156,7 +1156,7 @@ async function startAINest(sh, items) {
   const byId = new Map(items.map(c => [c.id, c]));
   const grid = Sv.makeSheetGrid({ wPt: st.wPt, hPt: st.hPt, insetPt: inset }, clearance, 2);
   const variants = new Map();
-  const variantFor = (c, angle) => { const key = c.id + "@" + angle; if (!variants.has(key)) variants.set(key, Sv.prepareVariant({ bits: c.bits, w: c.w, h: c.h, scale: c.scale / CHARM_SCALE }, angle, clearance, 2)); return variants.get(key); };
+  const variantFor = (c, angle) => { const key = c.id + "@" + angle; if (!variants.has(key)) variants.set(key, Sv.prepareVariant({ bits: c.bits, w: c.w, h: c.h, scale: c.scale }, angle, clearance, 2)); return variants.get(key); };
   const placedCells = () => sh.placements.reduce((n, p) => n + (variantFor(byId.get(p.id), p.angle)?.cells || 0), 0);
   const info = () => ({ placed: sh.placements.length, total: items.length, freePt2: grid.freeCells() / 4, usablePt2: grid.usableCells / 4, placedPt2: placedCells() / 4, pocket: (() => { const p = grid.largestPocket(); return { wPt: p.w / 2, hPt: p.h / 2, xPt: p.x / 2, yPt: p.y / 2 }; })() });
   sh.placements = []; sh.rejects = []; sh.stage = "Claude is planning the first placements…"; sh.progressKind = "place"; sh.progress = [0, items.length];
