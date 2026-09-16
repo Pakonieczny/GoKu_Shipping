@@ -490,6 +490,48 @@ test('SKU and listing id are searchable alongside the title', async reg => {
   assert.deepEqual(app.cardIds(), [100004]);
 });
 
+test('A SKU search shows WHY the row matched, by highlighting the SKU', async reg => {
+  const rows = [listing(111, { title: 'Player Sports Pendant', inventory: { products: [{ product_id: 1, sku: 'BASKETBALL' }] } })];
+  const shop = fakeShop(rows);
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
+  await app.domReady();
+  await app.type('basketball');
+  const value = app.cards()[0].querySelector('[data-role="sku-value"]');
+  assert.equal(value.textContent, 'BASKETBALL', 'the SKU reads unchanged');
+  assert.equal(value.querySelectorAll('mark').length, 1, 'and the match is marked');
+});
+
+test('"sku:" narrows the search to SKUs alone', async reg => {
+  const rows = [
+    listing(1, { title: 'Basketball Charm Necklace', inventory: { products: [{ product_id: 1, sku: 'BB_0001' }] } }),
+    listing(2, { title: 'Player Sports Pendant', inventory: { products: [{ product_id: 2, sku: 'BASKETBALL' }] } }),
+  ];
+  const shop = fakeShop(rows);
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
+  await app.domReady();
+
+  await app.type('basketball');
+  assert.deepEqual(app.cardIds().sort(), [1, 2], 'a plain search matches title AND sku');
+
+  await app.type('sku:basketball');
+  assert.deepEqual(app.cardIds(), [2], 'the prefix drops the title-only match');
+
+  await app.type('SKU: basketball');
+  assert.deepEqual(app.cardIds(), [2], 'case and spacing around the prefix do not matter');
+});
+
+test('"sku:" alone lists every listing that has one', async reg => {
+  const rows = [
+    listing(1, { inventory: { products: [{ product_id: 1, sku: 'HAS_ONE' }] } }),
+    listing(2, { inventory: { products: [{ product_id: 2, sku: '' }] } }),
+  ];
+  const shop = fakeShop(rows);
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
+  await app.domReady();
+  await app.type('sku:');
+  assert.deepEqual(app.cardIds(), [1]);
+});
+
 test('Word-start matches rank above mid-word ones', async reg => {
   const rows = [
     listing(1, { title: 'Reengraved Charm' }),       // "gra" mid-word
@@ -583,8 +625,7 @@ test('Exactly the five named section shortcuts are shown, in order', async reg =
   const { app } = await bootMixed(reg);
   const labels = app.chips().map(c => c.label).filter(Boolean);
   assert.deepEqual(labels, [
-    'All6', 'NECKLACES1', 'EARRINGS1', 'CHARMS1', 'BRACELETS1', 'RINGS1',
-    'Missing SKU', 'Hide ✓ done',
+    'All6', 'NECKLACES1', 'EARRINGS1', 'CHARMS1', 'BRACELETS1', 'RINGS1', 'Missing SKU',
   ]);
 });
 
@@ -612,8 +653,7 @@ test('REGRESSION: the shop\'s other sections get no chip', async reg => {
       'unexpected chip containing "' + unwanted + '": ' + labels.join(' | '));
   }
   assert.deepEqual(labels, [
-    'All8', 'NECKLACES1', 'EARRINGS1', 'CHARMS1', 'BRACELETS1', 'RINGS1',
-    'Missing SKU', 'Hide ✓ done',
+    'All8', 'NECKLACES1', 'EARRINGS1', 'CHARMS1', 'BRACELETS1', 'RINGS1', 'Missing SKU',
   ]);
 
   // Those listings are still in the catalog and still findable.
@@ -627,7 +667,7 @@ test('A named section the shop does not have is skipped, not shown dead', async 
   const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
   await app.domReady();
   const labels = app.chips().map(c => c.label).filter(Boolean);
-  assert.deepEqual(labels, ['All6', 'NECKLACES1', 'EARRINGS1', 'Missing SKU', 'Hide ✓ done']);
+  assert.deepEqual(labels, ['All6', 'NECKLACES1', 'EARRINGS1', 'Missing SKU']);
 });
 
 test('Section titles are matched case-insensitively', async reg => {
@@ -674,7 +714,7 @@ test('Without the sections call there are no section chips, and All still works'
   reg.push(app);
   await app.domReady();
   const labels = app.chips().map(c => c.label).filter(Boolean);
-  assert.deepEqual(labels, ['All6', 'Missing SKU', 'Hide ✓ done'],
+  assert.deepEqual(labels, ['All6', 'Missing SKU'],
     'no id-labelled placeholders — a chip is only ever one of the five names');
   assert.equal(app.cards().length, 6, 'the catalog is unaffected');
 });
@@ -740,32 +780,6 @@ test('"Missing SKU" finds exactly the listings that need work', async reg => {
   assert.deepEqual(app.cardIds().sort(), [100002, 100005]);
 });
 
-test('"Hide ✓ done" respects the persisted checkmarks', async reg => {
-  const shop = fakeShop(mixedShop());
-  const app = createApp({
-    storage: { ...freshTokens(), sku_selected_ids_v1: JSON.stringify(['100001', '100003']) },
-    fetchImpl: shop.impl,
-  });
-  reg.push(app);
-  await app.domReady();
-  await app.chips().find(c => c.label === 'Hide ✓ done').el.dispatch('click');
-  assert.ok(!app.cardIds().includes(100001));
-  assert.ok(!app.cardIds().includes(100003));
-  assert.equal(app.cards().length, 4);
-});
-
-test('REGRESSION: checkmarks saved as numbers still register', async reg => {
-  const shop = fakeShop(mixedShop());
-  const app = createApp({
-    storage: { ...freshTokens(), sku_selected_ids_v1: JSON.stringify([100001]) },
-    fetchImpl: shop.impl,
-  });
-  reg.push(app);
-  await app.domReady();
-  const card = app.els.listContainer.querySelector('.card[data-listing-id="100001"]');
-  assert.equal(card.querySelector('.selectBox').checked, true);
-});
-
 /* ── 6 · Infinite scroll ──────────────────────────────────────────────── */
 
 section('Infinite scroll');
@@ -810,6 +824,130 @@ test('There are no pagination controls left', async reg => {
   }
 });
 
+test('The card shows a section and Generate — no id, price or checkbox', async reg => {
+  const shop = fakeShop([listing(100001, { title: 'Gold Charm', shop_section_id: 11 })], { sections: SECTIONS });
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
+  await app.domReady();
+  const card = app.cards()[0];
+  const text = card.textContent;
+  assert.ok(!text.includes('#100001'), 'the listing id is gone');
+  assert.ok(!text.includes('19.99'), 'the price is gone');
+  assert.equal(card.querySelectorAll('.selectBox').length, 0, 'the done checkbox is gone');
+});
+
+test('The title is clipped to one line, with the whole of it in the tooltip', async reg => {
+  const long = 'Reader Book Pendant Necklace: Sterling Silver, Gold Filled, 14K Solid Gold Literary Charm Jewelry Gift';
+  const shop = fakeShop([listing(1, { title: long })]);
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
+  await app.domReady();
+  const title = app.cards()[0].querySelector('.title');
+  assert.equal(title.textContent, long, 'the text is all there — CSS does the clipping');
+  assert.equal(title.title, long, 'and the tooltip carries it in full');
+
+  const html = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', '..', 'SKU_List_V1.html'), 'utf8');
+  const rule = html.slice(html.indexOf('    .title {'), html.indexOf('/* ── The SKU line'));
+  assert.ok(rule.includes('white-space:nowrap'), 'one line');
+  assert.ok(rule.includes('text-overflow:ellipsis'), 'clipped with an ellipsis');
+});
+
+test('The SKU label and value are no longer heavy-weight', async reg => {
+  const html = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', '..', 'SKU_List_V1.html'), 'utf8');
+  const block = html.slice(html.indexOf('.skulabel'), html.indexOf('.iconbtn {'));
+  const weights = block.match(/font-weight:\d+/g) || [];
+  assert.ok(!weights.some(w => Number(w.split(':')[1]) >= 800), 'still bold-heavy: ' + weights.join(', '));
+  assert.ok(block.includes('font-size:15px'), 'the label keeps its size');
+  assert.ok(block.includes('font-size:17px'), 'and so does the value');
+});
+
+test('The SKU can be copied, with feedback', async reg => {
+  const { app } = skuShop(reg, { startingSku: 'Reader_97110' });
+  await app.domReady();
+  const card = app.cards()[0];
+  const copy = card.querySelector('[data-role="sku-copy"]');
+  assert.ok(copy, 'there is a copy button');
+
+  await copy.dispatch('click');
+  assert.deepEqual(app.clipboard, ['Reader_97110'], 'the SKU alone, no label');
+  assert.ok(copy.classList.contains('done'), 'and it acknowledges the copy');
+});
+
+test('Copying does not open the editor', async reg => {
+  const { app } = skuShop(reg, { startingSku: 'A' });
+  await app.domReady();
+  const card = app.cards()[0];
+  await card.querySelector('[data-role="sku-copy"]').dispatch('click');
+  assert.equal(card.querySelector('.skuinput'), null, 'still in reading mode');
+});
+
+test('A refused clipboard falls back to the older copy path', async reg => {
+  const { app } = skuShop(reg, { startingSku: 'FALLBACK_ME', clipboardFails: true });
+  await app.domReady();
+  await app.cards()[0].querySelector('[data-role="sku-copy"]').dispatch('click');
+  assert.deepEqual(app.clipboard, ['FALLBACK_ME'], 'still copied');
+  assert.ok(app.execCommands.includes('copy'), 'via execCommand');
+});
+
+test('A listing with no SKU has nothing to copy', async reg => {
+  const { app } = skuShop(reg);
+  await app.domReady();
+  assert.equal(app.cards()[0].querySelector('[data-role="sku-copy"]'), null);
+});
+
+test('Images are taken at full size, and cached 570px URLs are upgraded', async reg => {
+  const app = createApp(); reg.push(app);
+  const { upgradeImageUrl, pickPrimaryImage } = app.api;
+
+  assert.equal(pickPrimaryImage([{ rank: 1, url_570xN: 'small', url_fullxfull: 'big' }]), 'big',
+    'the largest size Etsy offers, since these get zoomed to 8x');
+
+  const cached = 'https://i.etsystatic.com/12345678/r/il/abc/999/il_570xN.999_ab1c.jpg';
+  assert.equal(upgradeImageUrl(cached),
+    'https://i.etsystatic.com/12345678/r/il/abc/999/il_fullxfull.999_ab1c.jpg',
+    'a row synced before the bump is upgraded without a resync');
+
+  for (const untouched of [
+    'https://i.etsystatic.com/1/il_fullxfull.9.jpg',
+    'https://example.com/il_570xN_not_a_path.jpg',
+    '',
+  ]) assert.equal(upgradeImageUrl(untouched), untouched, 'left alone: ' + untouched);
+});
+
+test('An upgraded image that 404s falls back to the stored URL, once', async reg => {
+  const stored = 'https://i.etsystatic.com/1/r/il/a/2/il_570xN.2_x.jpg';
+  const rows = [listing(1, { images: [{ rank: 1, url_570xN: stored }] })];
+  const shop = fakeShop(rows, { serveFullShape: true });
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
+  await app.domReady();
+  const img = app.cards()[0].querySelector('.thumb');
+  assert.ok(img.src.includes('il_fullxfull.'), 'tries full size first');
+  await img.dispatch('error');
+  assert.equal(img.src, stored, 'falls back');
+  await img.dispatch('error');
+  assert.equal(img.src, stored, 'and does not loop');
+});
+
+test('The pills and Generate sit on one row', async reg => {
+  const shop = fakeShop([listing(100001, { title: 'Gold Charm', shop_section_id: 11 })], { sections: SECTIONS });
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
+  await app.domReady();
+  const card = app.cards()[0];
+  const rows = card.querySelectorAll('.row');
+  assert.equal(rows.length, 1, 'one row, not a stack of them');
+  const kinds = rows[0].children.map(c => c.className.split(' ')[0]);
+  assert.deepEqual(kinds, ['pill', 'btn'], 'section and Generate, on the one line');
+  assert.ok(rows[0].querySelector('.grow'), 'Generate is pushed to the end');
+});
+
+test('The SKU line is its own row, above the pills', async reg => {
+  const shop = fakeShop([listing(100001)]);
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
+  await app.domReady();
+  const meta = app.cards()[0].querySelector('.meta');
+  assert.deepEqual(meta.children.map(c => c.className.split(' ')[0]), ['title', 'skuline', 'row']);
+});
+
 test('The result meter tracks what is shown against what matched', async reg => {
   const shop = fakeShop(shopOf(300));
   const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
@@ -819,103 +957,426 @@ test('The result meter tracks what is shown against what matched', async reg => 
   assert.match(app.meters().result, /showing 300 of 300/);
 });
 
-/* ── 7 · SKU write paths ──────────────────────────────────────────────── */
+/* ── 6b · Image zoom ──────────────────────────────────────────────────── */
 
-section('SKU write paths');
+section('Image zoom (click-to-zoom, ported)');
 
-function writableShop(reg, inventory = [{ product_id: 5, sku: '' }]) {
-  let put = null;
-  const rest = async (url, init) => {
-    if (url.includes('InventoryDetailProxy')) return { body: { products: inventory, etsy_call_count: 1 } };
-    if (url.includes('UpdateListingInventoryProxy')) { put = JSON.parse(init.body); return { body: { ok: true, etsy_call_count: 2 } }; }
-    throw new Error('unexpected ' + url);
-  };
-  const rows = [listing(447788, { title: 'Ruby drop earrings', inventory: { products: [{ product_id: 5, sku: '' }] } })];
-  const shop = fakeShop(rows, { rest });
+async function oneCard(reg) {
+  const shop = fakeShop([listing(424242)]);
   const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl });
   reg.push(app);
-  return { app, shop, put: () => put };
-}
-
-test('Generate derives the SKU from the title and writes Variant 1', async reg => {
-  const { app, put } = writableShop(reg);
   await app.domReady();
   const card = app.cards()[0];
-  const gen = card.querySelector('[data-role="gen-btn"]');
-  await gen.dispatch('click');
+  const { box, img } = app.layout(card, 300);
+  await img.dispatch('load');
+  return { app, card, box, img };
+}
 
-  assert.deepEqual(put(), { listing_id: 447788, items: [{ product_id: 5, sku: 'Ruby_7788' }] });
-  assert.equal(card.querySelector('.sku').textContent, 'SKU: Ruby_7788 (Variant 1)');
-  assert.equal(gen.style.background, '');
-  assert.equal(app.alerts.length, 0);
+/* A click at (x,y) inside a 300x300 box whose top-left is the origin. */
+const clickAt = (box, x, y) => box.dispatch('click', { clientX: x, clientY: y });
+
+test('REGRESSION: nothing listens for wheel, so the page scrolls over images', async reg => {
+  // The old pinch/scroll zoom called preventDefault on wheel, which froze the
+  // page whenever the pointer sat over a picture — and in an infinitely
+  // scrolling grid of pictures that is most of the window.
+  const { app, box, img } = await oneCard(reg);
+  assert.equal(app.hasListener(box, 'wheel'), false, 'no wheel handler on the image box');
+  assert.equal(app.hasListener(img, 'wheel'), false, 'nor on the image');
+  const html = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', '..', 'SKU_List_V1.html'), 'utf8');
+  assert.ok(!/addEventListener\(\s*["']wheel["']/.test(html), 'and none anywhere in the page');
 });
 
-test('A written SKU updates the local catalog, not just the card', async reg => {
-  const { app } = writableShop(reg);
+test('An untouched image sits at scale 1 with no offset', async reg => {
+  const { app, card } = await oneCard(reg);
+  assert.deepEqual(app.zoomState(card), { scale: 1, x: 0, y: 0 });
+});
+
+test('A click zooms in and centres the clicked point', async reg => {
+  const { app, card, box } = await oneCard(reg);
+  // Click at (225, 150): 75px right of centre, vertically centred.
+  await clickAt(box, 225, 150);
+  const z = app.zoomState(card);
+  assert.ok(z.scale > 1, 'zoomed in, got ' + z.scale);
+  assert.ok(z.x < 0, 'panned left to bring the clicked point to centre, got ' + z.x);
+  assert.equal(z.y, 0, 'no vertical movement for a vertically centred click');
+  assert.equal(app.transform(card), `scale(${z.scale}) translate(${z.x}px, ${z.y}px)`);
+});
+
+test('Clicking dead centre zooms without panning', async reg => {
+  const { app, card, box } = await oneCard(reg);
+  await clickAt(box, 150, 150);
+  const z = app.zoomState(card);
+  // s1 = max(DESIRED 1.33, s0 * 1.5, needX, needY). From rest the 1.5x step
+  // wins, so DESIRED is a floor rather than the first stop.
+  assert.equal(z.scale, 1.5);
+  assert.deepEqual([z.x, z.y], [0, 0]);
+});
+
+test('Successive clicks keep zooming, then snap back to 1', async reg => {
+  const { app, card, box } = await oneCard(reg);
+  await clickAt(box, 150, 150);
+  const first = app.zoomState(card).scale;
+  await clickAt(box, 150, 150);
+  const second = app.zoomState(card).scale;
+  assert.ok(second > first, `${first} -> ${second}`);
+
+  // Clicking the same spot once the step would barely move returns to 1.
+  let guard = 0, z = app.zoomState(card);
+  while (z.scale !== 1 && guard++ < 12){ await clickAt(box, 150, 150); z = app.zoomState(card); }
+  assert.equal(z.scale, 1, 'came back to unzoomed within ' + guard + ' clicks');
+  assert.deepEqual([z.x, z.y], [0, 0], 'and the framing resets with it');
+});
+
+test('Zoom never exceeds the source\'s MAX_SCALE of 8', async reg => {
+  const { app, card, box } = await oneCard(reg);
+  for (let i = 0; i < 30; i++) await clickAt(box, 299, 299);   // hard into the corner
+  assert.ok(app.zoomState(card).scale <= 8, 'got ' + app.zoomState(card).scale);
+});
+
+test('Dragging pans only once zoomed in', async reg => {
+  const { app, card, box } = await oneCard(reg);
+
+  await box.dispatch('mousedown', { clientX: 150, clientY: 150 });
+  await box.dispatch('mousemove', { clientX: 120, clientY: 150 });
+  assert.deepEqual(app.zoomState(card), { scale: 1, x: 0, y: 0 }, 'no pan at scale 1');
+  await box.dispatch('mouseup', {});
+
+  await clickAt(box, 150, 150);
+  const before = app.zoomState(card);
+  await box.dispatch('mousedown', { clientX: 150, clientY: 150 });
+  await box.dispatch('mousemove', { clientX: 130, clientY: 140 });
+  const after = app.zoomState(card);
+  assert.notDeepEqual([after.x, after.y], [before.x, before.y], 'panned while zoomed');
+  assert.equal(after.scale, before.scale, 'panning does not change the zoom');
+  await box.dispatch('mouseup', {});
+});
+
+test('Pan movement is damped by half, as in the source', async reg => {
+  const { app, card, box } = await oneCard(reg);
+  await clickAt(box, 150, 150);              // scale 1.33, offsets 0
+  await box.dispatch('mousedown', { clientX: 150, clientY: 150 });
+  await box.dispatch('mousemove', { clientX: 170, clientY: 150 });   // +20px
+  const z = app.zoomState(card);
+  assert.ok(Math.abs(z.x - 10) < 0.001, 'a 20px drag moves 10 units, got ' + z.x);
+});
+
+test('A drag is not mistaken for a click', async reg => {
+  const { app, card, box } = await oneCard(reg);
+  await clickAt(box, 150, 150);
+  const scaleAfterZoom = app.zoomState(card).scale;
+
+  await box.dispatch('mousedown', { clientX: 150, clientY: 150 });
+  await box.dispatch('mousemove', { clientX: 190, clientY: 150 });  // past dragThreshold
+  await box.dispatch('mouseup', {});
+  await clickAt(box, 190, 150);   // the click the browser fires after a drag
+  assert.equal(app.zoomState(card).scale, scaleAfterZoom, 'the drag-click did not re-zoom');
+});
+
+test('Panning is clamped so the image cannot be dragged out of its box', async reg => {
+  const { app, card, box } = await oneCard(reg);
+  await clickAt(box, 150, 150);                    // scale 1.33
+  await box.dispatch('mousedown', { clientX: 150, clientY: 150 });
+  for (let i = 0; i < 40; i++) await box.dispatch('mousemove', { clientX: 150 + i * 40, clientY: 150 });
+  await box.dispatch('mouseup', {});
+  const z = app.zoomState(card);
+  // maxX = (300*1.33 - 300) / 2 / 1.33
+  const maxX = (300 * z.scale - 300) / 2 / z.scale;
+  assert.ok(z.x <= maxX + 0.001, `${z.x} exceeds the clamp ${maxX}`);
+});
+
+test('A relayout re-clamps without changing the zoom', async reg => {
+  const { app, card, box } = await oneCard(reg);
+  await clickAt(box, 220, 150);
+  const before = app.zoomState(card);
+  await app.resize();
+  const after = app.zoomState(card);
+  assert.equal(after.scale, before.scale, 'ResizeObserver must not alter the zoom level');
+});
+
+test('Zoom applies before layout without destroying the framing', async reg => {
+  // The first click can land before the browser has laid the image out.
+  const shop = fakeShop([listing(9)]);
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
   await app.domReady();
-  await app.cards()[0].querySelector('[data-role="gen-btn"]').dispatch('click');
-  assert.equal(app.api.Catalog.byId.get(447788).sku, 'Ruby_7788');
+  const card = app.cards()[0];
+  const box = card.querySelector('.thumb-wrap');    // deliberately NOT laid out
+  await clickAt(box, 80, 80);
+  const z = app.zoomState(card);
+  assert.ok(Number.isFinite(z.scale) && Number.isFinite(z.x) && Number.isFinite(z.y),
+    'no NaN transform: ' + JSON.stringify(z));
 });
 
-test('makeSkuFrom normalizes the first word and the id tail', async reg => {
-  const app = createApp(); reg.push(app);
-  const { makeSkuFrom } = app.api;
-  assert.equal(makeSkuFrom('gold NECKLACE', 1234567890), 'Gold_7890');
-  assert.equal(makeSkuFrom('14k solid chain', 987654), '14k_7654');
-  assert.equal(makeSkuFrom('', 1111), 'Sku_1111');
+test('Every image carries the rule-of-thirds grid', async reg => {
+  const html = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', '..', 'SKU_List_V1.html'), 'utf8');
+  const rule = html.slice(html.indexOf('.thumb-wrap::after'), html.indexOf('.selectBox'));
+  assert.ok(rule.includes('pointer-events:none'), 'the grid must not swallow clicks');
+  assert.equal((rule.match(/linear-gradient/g) || []).length, 4, 'four hairlines');
+  assert.ok(rule.includes('33.333% 0, 66.666% 0, 0 33.333%, 0 66.666%'), 'on the thirds');
+  assert.ok(rule.includes('rgba(255,255,255,.18)'), '18% white, as in the source');
 });
 
-test('Generate surfaces a write failure and re-enables the button', async reg => {
-  const rows = [listing(600, { inventory: { products: [{ product_id: 7, sku: '' }] } })];
+/* ── 7 · SKU write paths ──────────────────────────────────────────────── */
+
+section('SKU line — inline edit, generate, save');
+
+function skuShop(reg, opts = {}) {
+  let put = null, detailCalls = 0;
+  const inventory = opts.inventory || [{ product_id: 5, sku: opts.startingSku ?? '' }];
+  const rest = async (url, init) => {
+    if (url.includes('InventoryDetailProxy')) {
+      detailCalls++;
+      if (opts.detailFails) return { status: 500, body: { error: 'inventory unavailable' } };
+      if (opts.detailDelay) await new Promise(r => setTimeout(r, opts.detailDelay));
+      return { body: { products: inventory, etsy_call_count: 1 } };
+    }
+    if (url.includes('UpdateListingInventoryProxy')) {
+      if (opts.writeFails) return { status: 409, body: { code: 'STALE_INVENTORY' } };
+      put = JSON.parse(init.body);
+      return { body: { ok: true, etsy_call_count: 2 } };
+    }
+    throw new Error('unexpected ' + url);
+  };
+  const rows = [listing(447788, {
+    title: 'Ruby drop earrings',
+    inventory: { products: [{ product_id: 5, sku: opts.startingSku ?? '' }] },
+  })];
+  const shop = fakeShop(rows, { rest });
+  const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl, clipboardFails: opts.clipboardFails });
+  reg.push(app);
+  return { app, shop, put: () => put, detailCalls: () => detailCalls };
+}
+
+const skuValue  = card => card.querySelector('[data-role="sku-value"]');
+const skuInput  = card => card.querySelector('.skuinput');
+const skuSave   = card => card.querySelector('[data-role="sku-save"]');
+const skuCancel = card => card.querySelector('[data-role="sku-cancel"]');
+const unsaved   = card => card.querySelector('[data-role="unsaved"]');
+const genBtn    = card => card.querySelector('[data-role="gen-btn"]');
+
+test('The SKU reads as one bold value, with no "(Variant 1)" noise', async reg => {
+  const { app } = skuShop(reg, { startingSku: 'BASKETBALL' });
+  await app.domReady();
+  const card = app.cards()[0];
+  assert.equal(skuValue(card).textContent, 'BASKETBALL');
+  assert.equal(card.querySelector('.skulabel').textContent, 'SKU');
+  const html = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', '..', 'SKU_List_V1.html'), 'utf8');
+  assert.ok(!html.includes('(Variant 1)'), 'the phrase is gone from the page entirely');
+});
+
+test('A listing with no SKU says so, and Generate is flagged', async reg => {
+  const { app } = skuShop(reg);
+  await app.domReady();
+  const card = app.cards()[0];
+  assert.equal(skuValue(card).textContent, '— none —');
+  assert.ok(skuValue(card).classList.contains('none'));
+  assert.equal(genBtn(card).style.background, 'OrangeRed');
+});
+
+test('REGRESSION: clicking the SKU opens the editor with no Etsy round trip', async reg => {
+  // The old Edit SKU button fetched inventory before it could show anything,
+  // which is the multi-second delay. The cached value opens instantly and the
+  // product_id needed to WRITE is fetched in the background.
+  const { app, detailCalls } = skuShop(reg, { startingSku: 'OLD_SKU', detailDelay: 5000 });
+  await app.domReady();
+  const card = app.cards()[0];
+
+  await skuValue(card).dispatch('click');          // resolves without awaiting the fetch
+  assert.ok(skuInput(card), 'the input is already there');
+  assert.equal(skuInput(card).value, 'OLD_SKU', 'prefilled from the local catalog');
+  assert.equal(app.document.activeElement, skuInput(card), 'and focused, ready to type');
+});
+
+test('There is no separate Edit SKU button any more', async reg => {
+  const { app } = skuShop(reg, { startingSku: 'A' });
+  await app.domReady();
+  const labels = app.cards()[0].querySelectorAll('button').map(b => b.textContent);
+  assert.ok(!labels.includes('Edit SKU'), 'got ' + labels.join(' | '));
+  assert.ok(labels.includes('Generate'));
+});
+
+test('Editing and saving writes to Etsy and updates the catalog', async reg => {
+  const { app, put } = skuShop(reg, { startingSku: 'OLD', inventory: [{ product_id: 21, sku: 'OLD' }] });
+  await app.domReady();
+  const card = app.cards()[0];
+
+  await skuValue(card).dispatch('click');
+  skuInput(card).value = '  Custom_ABC  ';
+  await skuInput(card).dispatch('input');
+  await skuSave(card).dispatch('click');
+
+  assert.deepEqual(put(), { listing_id: 447788, items: [{ product_id: 21, sku: 'Custom_ABC' }] });
+  assert.equal(skuValue(card).textContent, 'Custom_ABC', 'back to reading, showing the new value');
+  assert.equal(app.api.Catalog.byId.get(447788).sku, 'Custom_ABC', 'and the catalog agrees');
+});
+
+test('Cancel discards the edit', async reg => {
+  const { app, put } = skuShop(reg, { startingSku: 'KEEP' });
+  await app.domReady();
+  const card = app.cards()[0];
+  await skuValue(card).dispatch('click');
+  skuInput(card).value = 'THROWN_AWAY';
+  await skuInput(card).dispatch('input');
+  await skuCancel(card).dispatch('click');
+  assert.equal(put(), null, 'nothing written');
+  assert.equal(skuValue(card).textContent, 'KEEP');
+});
+
+test('Enter saves and Escape cancels', async reg => {
+  const { app, put } = skuShop(reg, { startingSku: 'A' });
+  await app.domReady();
+  let card = app.cards()[0];
+
+  await skuValue(card).dispatch('click');
+  skuInput(card).value = 'VIA_ENTER';
+  await skuInput(card).dispatch('input');
+  await skuInput(card).dispatch('keydown', { key: 'Enter' });
+  assert.equal(put().items[0].sku, 'VIA_ENTER');
+
+  await skuValue(card).dispatch('click');
+  skuInput(card).value = 'NOPE';
+  await skuInput(card).dispatch('input');
+  await skuInput(card).dispatch('keydown', { key: 'Escape' });
+  assert.equal(skuValue(card).textContent, 'VIA_ENTER', 'unchanged');
+});
+
+test('A save in flight shows a spinner and locks the buttons', async reg => {
+  let release;
+  const gate = new Promise(r => { release = r; });
+  const rows = [listing(447788, { inventory: { products: [{ product_id: 5, sku: '' }] } })];
   const shop = fakeShop(rows, {
     rest: async (url) => {
-      if (url.includes('InventoryDetailProxy')) return { body: { products: [{ product_id: 7, sku: '' }] } };
-      return { status: 409, body: { code: 'STALE_INVENTORY' } };
+      if (url.includes('InventoryDetailProxy')) return { body: { products: [{ product_id: 5, sku: '' }] } };
+      await gate;
+      return { body: { ok: true, etsy_call_count: 2 } };
     },
   });
   const app = createApp({ storage: freshTokens(), fetchImpl: shop.impl }); reg.push(app);
   await app.domReady();
-  const gen = app.cards()[0].querySelector('[data-role="gen-btn"]');
-  await gen.dispatch('click');
-  assert.match(app.alerts[0], /Generate failed.*409.*STALE_INVENTORY/s);
-  assert.equal(gen.disabled, false);
+  const card = app.cards()[0];
+
+  await skuValue(card).dispatch('click');
+  skuInput(card).value = 'X';
+  await skuInput(card).dispatch('input');
+  const saving = skuSave(card).dispatch('click');
+
+  await new Promise(r => setTimeout(r, 5));
+  assert.ok(card.querySelector('.spin'), 'a spinner is visible while the write is in flight');
+  assert.equal(skuSave(card).disabled, true);
+  assert.equal(skuCancel(card).disabled, true);
+
+  release();
+  await saving;
+  assert.ok(!card.querySelector('.spin'), 'and gone once it lands');
 });
 
-test('Edit SKU opens, saves, and repaints the card in place', async reg => {
-  const { app, put } = writableShop(reg, [{ product_id: 21, sku: 'Existing_1' }]);
+test('Generate proposes a SKU but does NOT write it', async reg => {
+  const { app, put } = skuShop(reg);
   await app.domReady();
   const card = app.cards()[0];
-  await card.querySelector('.btn.secondary').dispatch('click');
 
-  const editor = card.querySelector('[data-role="sku-editor"]');
-  assert.equal(editor.style.display, 'block');
-  const input = editor.querySelector('.skuInput');
-  assert.equal(input.value, 'Existing_1', 'prefilled from live inventory');
-
-  input.value = '  Custom_ABC  ';
-  await editor.querySelectorAll('button').find(b => b.textContent === 'Save').dispatch('click');
-  assert.deepEqual(put(), { listing_id: 447788, items: [{ product_id: 21, sku: 'Custom_ABC' }] });
-  assert.equal(card.querySelector('.sku').textContent, 'SKU: Custom_ABC (Variant 1)');
-  assert.equal(editor.style.display, 'none');
+  await genBtn(card).dispatch('click');
+  assert.equal(put(), null, 'Generate never writes on its own');
+  assert.equal(skuInput(card).value, 'Ruby_7788', 'derived from the title');
+  assert.ok(unsaved(card), 'and is marked unsaved');
+  assert.equal(unsaved(card).textContent, 'Unsaved');
+  assert.ok(card.classList.contains('pending'), 'the whole card is flagged');
 });
 
-test('Saving a SKU for a listing with no product_id is refused client-side', async reg => {
-  const { app } = writableShop(reg, [{ sku: 'A' }]);
+test('A generated SKU only goes live once saved', async reg => {
+  const { app, put } = skuShop(reg);
   await app.domReady();
   const card = app.cards()[0];
-  await card.querySelector('.btn.secondary').dispatch('click');
-  const editor = card.querySelector('[data-role="sku-editor"]');
-  await editor.querySelectorAll('button').find(b => b.textContent === 'Save').dispatch('click');
+
+  await genBtn(card).dispatch('click');
+  await skuSave(card).dispatch('click');
+
+  assert.deepEqual(put(), { listing_id: 447788, items: [{ product_id: 5, sku: 'Ruby_7788' }] });
+  assert.ok(!card.classList.contains('pending'), 'no longer pending');
+  assert.equal(unsaved(card), null, 'the marker is gone');
+  assert.equal(skuValue(card).textContent, 'Ruby_7788');
+  assert.equal(genBtn(card).style.background, '', 'and the warning colour clears');
+});
+
+test('REGRESSION: an unsaved generated SKU is lost on refresh, as the marker warns', async reg => {
+  const { app } = skuShop(reg);
+  await app.domReady();
+  const card = app.cards()[0];
+  await genBtn(card).dispatch('click');
+  assert.equal(skuInput(card).value, 'Ruby_7788');
+
+  // Nothing was written, so nothing reached the catalog...
+  assert.equal(app.api.Catalog.byId.get(447788).sku, '', 'the catalog is untouched');
+  // ...and a re-render (what a refresh or a filter change does) drops it.
+  await app.type('ruby');
+  assert.equal(skuValue(app.cards()[0]).textContent, '— none —');
+});
+
+test('A generated SKU can be edited before saving', async reg => {
+  const { app, put } = skuShop(reg);
+  await app.domReady();
+  const card = app.cards()[0];
+  await genBtn(card).dispatch('click');
+  skuInput(card).value = 'Ruby_7788_B';
+  await skuInput(card).dispatch('input');
+  await skuSave(card).dispatch('click');
+  assert.equal(put().items[0].sku, 'Ruby_7788_B');
+});
+
+test('Cancelling a generated SKU restores the previous value', async reg => {
+  const { app, put } = skuShop(reg, { startingSku: 'ORIGINAL' });
+  await app.domReady();
+  const card = app.cards()[0];
+  await genBtn(card).dispatch('click');
+  assert.ok(card.classList.contains('pending'));
+  await skuCancel(card).dispatch('click');
+  assert.equal(put(), null);
+  assert.equal(skuValue(card).textContent, 'ORIGINAL');
+  assert.ok(!card.classList.contains('pending'));
+});
+
+test('A failed write is reported and the buttons come back', async reg => {
+  const { app } = skuShop(reg, { writeFails: true });
+  await app.domReady();
+  const card = app.cards()[0];
+  await genBtn(card).dispatch('click');
+  await skuSave(card).dispatch('click');
+  assert.match(app.alerts[0], /Could not save the SKU.*409/s);
+  assert.equal(skuSave(card).disabled, false, 'retryable');
+  assert.ok(card.classList.contains('pending'), 'still unsaved, still flagged');
+});
+
+test('A listing with no Variant 1 fails at save time, not at click time', async reg => {
+  const { app } = skuShop(reg, { inventory: [] });
+  await app.domReady();
+  const card = app.cards()[0];
+  await skuValue(card).dispatch('click');
+  assert.ok(skuInput(card), 'the editor still opened instantly');
+  await skuSave(card).dispatch('click');
   assert.match(app.alerts[0], /no Variant 1/i);
 });
 
+test('An inventory read failure surfaces only when a save needs it', async reg => {
+  const { app } = skuShop(reg, { detailFails: true, startingSku: 'A' });
+  await app.domReady();
+  const card = app.cards()[0];
+  await skuValue(card).dispatch('click');
+  assert.equal(app.alerts.length, 0, 'opening the editor does not alert');
+  await skuSave(card).dispatch('click');
+  assert.match(app.alerts[0], /Could not save the SKU/);
+});
+
 test('SKU writes are counted against the daily API total', async reg => {
-  const { app } = writableShop(reg);
+  const { app } = skuShop(reg);
   await app.domReady();
   const before = app.api.Budget.read();
-  await app.cards()[0].querySelector('[data-role="gen-btn"]').dispatch('click');
+  await genBtn(card_of(app)).dispatch('click');
+  await skuSave(card_of(app)).dispatch('click');
   assert.equal(app.api.Budget.read(), before + 3, '1 inventory read + 2 for the write');
 });
+function card_of(app) { return app.cards()[0]; }
 
 /* ── 8 · Catalog rebuild + drift ──────────────────────────────────────── */
 
@@ -997,11 +1458,13 @@ section('Helpers');
 test('toRecord keeps only what search and the card need', async reg => {
   const app = createApp(); reg.push(app);
   const r = app.api.toRecord(listing(881234, { title: 'Gold Charm' }));
-  assert.deepEqual(Object.keys(r).sort(), ['image', 'listing_id', 'price', 'q', 'section_id', 'sku', 'title', 'updated']);
+  assert.deepEqual(Object.keys(r).sort(),
+    ['image', 'listing_id', 'price', 'q', 'qsku', 'section_id', 'sku', 'title', 'updated']);
   assert.equal(r.image, 'https://img/881234-a.jpg', 'rank 1 wins');
   assert.equal(r.sku, 'Gold_1234');
   assert.equal(r.section_id, 11);
   assert.equal(r.q, 'gold charm gold 1234 881234', 'search key is precomputed once');
+  assert.equal(r.qsku, 'gold 1234', 'and a SKU-only key alongside it');
 });
 
 test('toRecord reads the projected row and a full Etsy listing alike', async reg => {

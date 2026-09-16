@@ -2,8 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Etsy Listings</title>
+  <title>Brites · SKU Lookup</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- ══ Tab icon ═══════════════════════════════════════════════════════
+       Same shape as every other console here: a 100x100 rounded square in
+       #221f1b with a #caa861 glyph, an alternate PNG for browsers that will
+       not take an SVG favicon, and a 180px apple-touch-icon. The glyph is a
+       barcode under a magnifier — looking up a listing by its SKU, which is
+       what this console does. -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%20100%22%3E%20%3Crect%20width%3D%22100%22%20height%3D%22100%22%20rx%3D%2220%22%20fill%3D%22%23221f1b%22%2F%3E%20%3Crect%20x%3D%2220%22%20y%3D%2219%22%20width%3D%228%22%20height%3D%2230%22%20rx%3D%223%22%20fill%3D%22%23caa861%22%2F%3E%20%3Crect%20x%3D%2233%22%20y%3D%2219%22%20width%3D%225%22%20height%3D%2230%22%20rx%3D%222.5%22%20fill%3D%22%23caa861%22%2F%3E%20%3Crect%20x%3D%2243%22%20y%3D%2219%22%20width%3D%229%22%20height%3D%2230%22%20rx%3D%223%22%20fill%3D%22%23caa861%22%2F%3E%20%3Crect%20x%3D%2257%22%20y%3D%2219%22%20width%3D%225%22%20height%3D%2230%22%20rx%3D%222.5%22%20fill%3D%22%23caa861%22%2F%3E%20%3Ccircle%20cx%3D%2258%22%20cy%3D%2262%22%20r%3D%2220%22%20fill%3D%22none%22%20stroke%3D%22%23221f1b%22%20stroke-width%3D%2214%22%2F%3E%20%3Cpath%20d%3D%22M72%2076%20L89%2090%22%20stroke%3D%22%23221f1b%22%20stroke-width%3D%2216%22%20stroke-linecap%3D%22round%22%2F%3E%20%3Cpath%20d%3D%22M72%2076%20L89%2090%22%20stroke%3D%22%23caa861%22%20stroke-width%3D%2210%22%20stroke-linecap%3D%22round%22%2F%3E%20%3Ccircle%20cx%3D%2258%22%20cy%3D%2262%22%20r%3D%2220%22%20fill%3D%22none%22%20stroke%3D%22%23caa861%22%20stroke-width%3D%228%22%2F%3E%20%3C%2Fsvg%3E">
+  <link rel="alternate icon" type="image/png" sizes="32x32" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAABmJLR0QA/wD/AP+gvaeTAAAEY0lEQVRYhe2XXWxTZRjHf+/pabd16+laxhjrPrqOua18DfkQhsSpCBIE7jSRkLBI4kfUYPRGY4iaaKLoDTciwTi9MyExEgIXhAsjBhfRIWYMZGO0brBus1u7du3anvN60QITu7m6MW7835zkPB////vkOe/zHMEkuN2VWxUpXwC5ASgFBHMDA7gBnFak6ZNuv7/zlkGkid35ikwcBbF7jginQ1JI8UaPv+8QgAnAabe2zRN5mlOwzeHQBkdGx86LWnfFk1LKU/NEPhkTqjR5TQ67dhBouA8CVAOZp4Bsvg/kaQi2KUBJNtuapaV8+vYjvPT0MgC8HgcfvLKe/DyVwgKVj17bwJEDLTSvLAPgmS1LaN3ZmKuECgVQsllW1ZfgsOXx0PJFANSUa3gqNBbY86kqs1FVZkMrtLCqYSEAjR4Hy+ocuQpQspLPJ/4XoM4muPuPEOcuDgBw9JsutCLz/AiYSOi899lPRGMpmpvK2L6pmsIClfG4Tq83TPvFAL/7Ru+NgNhEilBEp3VXA80rFyPuGldej4PtD1dz4cowR451EgxPTJtvyh7QDQmAlJkn0NsXJpUyePfFtWxsukM+MDxOZ0+Q/kCEjDtN9SW8//J6Fi0omFaA8FS7ZDZD9WIbux6todsf4uRZH6XOAuIJnf3PrsBb6wTg0rUR2o534b8ZodhmIaVLrPlm9jz1AGuXlgLQF4jy5qFzJFNGNhppchRr72SzhCIJ2n8LcNUfAiAaS9FUX8LOlhoAfr40xIdtHYxmShxP6CSSBtFYkh8vDuCw5eGp0NCKLETGk7fz3I2cPsPH1lUA6T44fKwTQ896KqSEtuOXGR6NA/D4OteUOWcsQBECryd91Z7vHGIsmpjWP5kyONtxEwDXoiKKbZbZCSiymjGraff+wciMYvoCd/yc9vzZCZjcRLeE/BvMqilr/H8SEJtIEc6Uvd49g6knobGmGEh/0kMj8dkJgHTnAyytdVJXXTyt7/I6J81N6V2hsydIfCI1ewEnvvdhGBIhYP/uFSwusWb127iyjLf2rUE1pdOf+O76lDmnvAeyYSyaQAiBt9aJNV+lZU05ZlUhGkuR0g1KnVZaVpezZ0c96qQ+sRVa+KVrKGsfCE+1SyeHSggBe3c0snVj5UxDAOgfinLwiw4G/hyf/Fo3OezaPgT2XJJduDKMf2AMt0vDZv3nCA6G4nx9uhuzqlDqTM8CrdDCpgfL6e0PMxiM3XINCE+V6zCC53M6TgZCgNulUVdpp8hqIRpPcL1/jKu+EIaUmBRB664GNq+/Uy1DN/j82y7OtPcDHBNLKitrDcW4BGS/quYAWzZUsndHPUqmKVO6pPXAGZJJ/QlTMBwecRTbgiC23ysBPX1hLl8fZXXDQiwWE4PBGKd+8MWu+W48d3udqK2qeFUK+TGQ+141Qzi1PJbVLaDj8rARiemtPb3+r/62zyypKvMaQn0d5GbARebndQ5gAAGB/FVKpV0XyS99vkAvwF9jsIxhB9LOoQAAAABJRU5ErkJggg==">
+  <link rel="apple-touch-icon" sizes="180x180" href="data:image/png;base64,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">
+  <meta name="theme-color" content="#221f1b">
   <style>
     :root{
       --bg:#0a0a0a; --panel:#111; --card:#121212; --line:#222; --line2:#2a2a2a;
@@ -94,23 +104,119 @@
     /* ── Results grid ─────────────────────────────────────────────────────── */
     .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(260px,1fr)); gap:12px; padding:12px; }
     .card { background:var(--card); border:1px solid var(--line); border-radius:14px; overflow:hidden; display:flex; flex-direction:column; content-visibility:auto; contain-intrinsic-size: 420px; }
-    .card.selected { outline:2px solid var(--good); outline-offset:-1px; }
 
-    .thumb-wrap{ position:relative; width:100%; aspect-ratio:1/1; overflow:hidden; background:#151515; }
-    .thumb{
-      width:100%; height:100%; object-fit:contain; background:#151515; user-select:none; display:block;
-      transform:scale(1); transform-origin: var(--ox,50%) var(--oy,50%); transition:transform .05s linear;
+    /* ── Image box: click-to-zoom, drag-to-pan, rule-of-thirds grid ───────
+       Ported from the batch-review console's .rv-box, which in turn came from
+       Listing_Generator_1's .slotPrev. The box model is load-bearing: the pan
+       clamp in attachPreviewBoxListeners assumes object-fit:contain, no
+       absolute centring, and transform-origin at the centre. The .3s
+       transition is what makes click-to-zoom glide rather than snap.
+
+       touch-action is deliberately NOT set to none here, unlike the source.
+       The source needed it because it handled pinch; this console does not,
+       and pinning it would stop a finger scrolling the page over an image —
+       the same complaint that removed the wheel handler. */
+    .thumb-wrap{
+      position:relative; width:100%; aspect-ratio:1/1; overflow:hidden;
+      background:#151515; cursor:grab;
     }
-    .selectBox { width:18px; height:18px; accent-color:var(--good); cursor:pointer; }
+    .thumb{
+      width:100%; height:100%; object-fit:contain; display:block;
+      transform-origin:center center; transition:transform .3s ease; cursor:grab;
+      user-select:none; -webkit-user-drag:none;
+    }
+    .thumb:active{ cursor:grabbing; }
 
-    .meta { padding:10px 12px 12px; display:flex; flex-direction:column; gap:6px; }
-    .title { font-size:13.5px; line-height:1.3; color:#fafafa; font-weight:600; }
-    .sku { font-size:12px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .sku.none { color:#ff9e80; }
-    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-    .pill { font-size:11.5px; padding:3px 8px; border-radius:999px; border:1px solid var(--line2); color:#cfcfcf; }
-    .pill.sect { border-color:#2b3a52; color:#9fc0ea; }
+    /* Rule-of-thirds overlay — the exact pattern from the source's
+       .rv-box::after. Permanent: four 1px hairlines at 18% white on the
+       thirds, above the image, click-through. */
+    .thumb-wrap::after{
+      content:"";
+      position:absolute;
+      inset:0;
+      pointer-events:none;
+      z-index:700;
+      background-image:
+        linear-gradient(to right, rgba(255,255,255,.18), rgba(255,255,255,.18)),
+        linear-gradient(to right, rgba(255,255,255,.18), rgba(255,255,255,.18)),
+        linear-gradient(to bottom, rgba(255,255,255,.18), rgba(255,255,255,.18)),
+        linear-gradient(to bottom, rgba(255,255,255,.18), rgba(255,255,255,.18));
+      background-size: 1px 100%, 1px 100%, 100% 1px, 100% 1px;
+      background-position: 33.333% 0, 66.666% 0, 0 33.333%, 0 66.666%;
+      background-repeat: no-repeat;
+    }
+
+
+    .meta { padding:10px 12px 12px; display:flex; flex-direction:column; gap:8px; }
+    /* One line only: the full title is in the tooltip and in the search index,
+       so the card shows just enough to identify the piece. */
+    .title {
+      font-size:13.5px; line-height:1.3; color:#fafafa; font-weight:600;
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    }
+
+    /* ── The SKU line ─────────────────────────────────────────────────────
+       The one value this console exists to read and set, so it is the biggest
+       thing on the card after the picture. Clicking it edits in place; there is
+       no separate edit button. */
+    .skuline { display:flex; align-items:center; gap:8px; min-height:34px; }
+    .skulabel { font-size:15px; font-weight:500; color:#8f8f8f; letter-spacing:.02em; flex:0 0 auto; }
+    .skuvalue {
+      font-size:17px; font-weight:500; color:#fafafa; letter-spacing:.01em;
+      background:transparent; border:1px dashed transparent; border-radius:7px;
+      padding:3px 7px; margin-left:-7px; cursor:text; text-align:left;
+      font-family:inherit; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    }
+    .skuvalue:hover { border-color:#3d3d3d; background:#171717; }
+    .skuvalue.none { color:#ff9e80; font-weight:700; }
+    .skuinput {
+      flex:1 1 auto; min-width:0; background:#181818; color:#fafafa;
+      border:1px solid var(--accent); border-radius:7px; padding:5px 8px;
+      font-size:16px; font-weight:500; font-family:inherit; letter-spacing:.01em;
+    }
+    .skuinput:focus { outline:none; }
+
+    /* Save / cancel sit inside the SKU line so the whole interaction is one row. */
+    .iconbtn {
+      flex:0 0 auto; border:0; border-radius:7px; cursor:pointer;
+      width:32px; height:30px; font-size:14px; font-weight:800; line-height:1;
+      display:inline-flex; align-items:center; justify-content:center;
+    }
+    .iconbtn.save { background:var(--good); color:#fff; }
+    .iconbtn.copy { background:#2a2a2a; color:#bdbdbd; }
+    .iconbtn.copy:hover { background:#383838; color:#fff; }
+    .iconbtn.copy.done { background:var(--good); color:#fff; }
+    .iconbtn.cancel { background:#333; color:#ccc; }
+    .iconbtn:disabled { opacity:.55; cursor:default; }
+
+    /* Unsaved-generated marker: an amber dot and one word. A generated SKU is
+       only a proposal until it is saved, and refreshing loses it. */
+    .unsaved {
+      flex:0 0 auto; display:inline-flex; align-items:center; gap:5px;
+      font-size:11px; font-weight:800; color:#ffb74d; letter-spacing:.04em; text-transform:uppercase;
+    }
+    .unsaved::before {
+      content:""; width:7px; height:7px; border-radius:50%; background:#ffb74d;
+      box-shadow:0 0 0 3px rgba(255,183,77,.16);
+    }
+    .card.pending { outline:2px solid #ffb74d; outline-offset:-1px; }
+
+    /* One row: state, identity, section, action. Nothing wraps to a second
+       line at the card widths this grid produces. */
+    .row { display:flex; gap:7px; align-items:center; flex-wrap:wrap; }
+    .row .grow { margin-left:auto; }
+    .pill { font-size:11.5px; padding:3px 8px; border-radius:999px; border:1px solid var(--line2); color:#cfcfcf; white-space:nowrap; }
+    .pill.sect { border-color:#2b3a52; color:#9fc0ea; max-width:42%; overflow:hidden; text-overflow:ellipsis; }
+    .btn.tiny { padding:6px 11px; font-size:12px; border-radius:7px; }
     mark { background:#4a3d00; color:#ffe89a; border-radius:2px; padding:0 1px; }
+
+    /* Spinner for the moment a write is in flight. */
+    .spin {
+      display:inline-block; width:13px; height:13px; border-radius:50%;
+      border:2px solid rgba(255,255,255,.35); border-top-color:#fff;
+      animation: spin .6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
     input[type="text"]{ background:#181818; color:#ddd; border:1px solid var(--line2); border-radius:8px; padding:8px; }
 
@@ -127,7 +233,7 @@
       <div class="search">
         <span class="mag">⌕</span>
         <input id="searchInput" type="text" autocomplete="off" spellcheck="false"
-               placeholder="Search all listings by title, SKU or listing ID…" />
+               placeholder="Search every listing — title, SKU or ID.  Try sku: to match SKUs only" />
         <span class="hint" id="searchHint">/</span>
         <button class="clear" id="searchClear" title="Clear (Esc)">✕</button>
       </div>
@@ -153,7 +259,7 @@
    Shown in the header and quoted in any sync failure, so a stale tab running
    against newer functions is identifiable from a screenshot instead of
    guessed at. */
-const BUILD = "2026-09-16e";
+const BUILD = "2026-09-16h";
 
 /* The section shortcuts, exactly as specified — not every section the shop
    has. Etsy returns dozens (Zodiac / Birth Flower, Handwriting Jewelry, Evil
@@ -488,7 +594,18 @@ function pickPrimaryImage(images){
   const best = images.find(x => x && x.is_primary) ||
                [...images].sort((a,b) => (a?.rank ?? 999) - (b?.rank ?? 999))[0] ||
                images[0];
-  return best?.url_570xN || best?.url_fullxfull || "";
+  return best?.url_fullxfull || best?.url_570xN || "";
+}
+
+/* Rows synced before the size bump hold a 570px URL. Etsy's CDN names the
+   sizes in the filename, so the full-size variant of an already-cached URL is
+   derivable without a resync — worth it, because rebuilding the catalog to
+   improve pictures would cost ~57 API calls. Strictly the known pattern only,
+   and the card falls back to the stored URL if the guess 404s. */
+const ETSY_570 = /\/il_570xN\./;
+function upgradeImageUrl(url){
+  const u = String(url || "");
+  return ETSY_570.test(u) ? u.replace(ETSY_570, "/il_fullxfull.") : u;
 }
 
 function skusFromInventory(inventory){
@@ -526,8 +643,10 @@ function toRecord(x){
     price: x.price || null,
     section_id: x.shop_section_id == null ? null : Number(x.shop_section_id),
     updated: listingUpdatedAt(x),
-    // search key: title + SKU + id, normalized once
-    q: normalizeText(title + " " + sku + " " + x.listing_id)
+    // Search keys, normalized once at ingest: `q` is everything, `qsku` is the
+    // SKU alone so "sku:" can narrow to it without re-normalizing per keystroke.
+    q: normalizeText(title + " " + sku + " " + x.listing_id),
+    qsku: normalizeText(sku)
   };
 }
 
@@ -578,6 +697,7 @@ const Catalog = {
     if (!row) return;
     row.sku = sku;
     row.q = normalizeText(row.title + " " + sku + " " + row.listing_id);
+    row.qsku = normalizeText(sku);
     await this.store.putMany([row]);
   },
 
@@ -595,25 +715,42 @@ const Catalog = {
  * top. Ranking puts whole-word and prefix hits above mid-word ones, which is
  * what makes typing "gold" feel like it found the right things first.
  */
-function searchCatalog(rows, rawQuery, { sectionId, missingSkuOnly, hideDone, doneSet }){
-  const q = normalizeText(rawQuery);
-  const terms = q ? q.split(" ").filter(Boolean) : [];
+/* "sku:" narrows the search to the SKU field alone. Without it a query still
+   matches SKUs — they are part of every row's search key — but a short code
+   like "108" drowns in title matches, and this is the escape hatch for that.
+   The matched text is highlighted on the card either way, so it is always
+   visible WHY a row is in the results. */
+const SKU_PREFIX = /^\s*sku\s*:\s*/i;
+
+function parseQuery(rawQuery){
+  const raw = String(rawQuery || "");
+  const skuOnly = SKU_PREFIX.test(raw);
+  const q = normalizeText(skuOnly ? raw.replace(SKU_PREFIX, "") : raw);
+  return { skuOnly, terms: q ? q.split(" ").filter(Boolean) : [] };
+}
+
+function searchCatalog(rows, rawQuery, { sectionId, missingSkuOnly }){
+  const { skuOnly, terms } = parseQuery(rawQuery);
   const out = [];
 
   for (const r of rows){
     if (sectionId !== null && r.section_id !== sectionId) continue;
     if (missingSkuOnly && r.sku) continue;
-    if (hideDone && doneSet.has(String(r.listing_id))) continue;
 
-    if (!terms.length){ out.push({ r, score: 0 }); continue; }
+    const hay = skuOnly ? (r.qsku || "") : r.q;
+    if (!terms.length){
+      if (skuOnly && !hay) continue;       // "sku:" alone lists everything that has one
+      out.push({ r, score: 0 });
+      continue;
+    }
 
     let score = 0, ok = true;
     for (const t of terms){
-      const at = r.q.indexOf(t);
+      const at = hay.indexOf(t);
       if (at === -1){ ok = false; break; }
       // 0 = starts the record, 1 = starts a word, 2 = mid-word
       if (at === 0) score += 0;
-      else if (r.q[at-1] === " ") score += 1;
+      else if (hay[at-1] === " ") score += 1;
       else score += 2;
     }
     if (!ok) continue;
@@ -798,44 +935,157 @@ async function syncCatalog(mode = "incremental", onProgress = () => {}){
   }
 }
 
-/** ============ Selection persistence ============ */
-const SELECT_KEY = "sku_selected_ids_v1";
-/* IDs are normalized to strings: they arrive as numbers from Etsy and come
-   back from JSON unchanged, but a mixed set silently loses checkmarks. */
-function loadSelectedSet(){
-  try {
-    const raw = JSON.parse(localStorage.getItem(SELECT_KEY) || "[]");
-    return new Set((Array.isArray(raw) ? raw : []).map(String));
-  }
-  catch { return new Set(); }
-}
-function saveSelectedSet(set){
-  try { localStorage.setItem(SELECT_KEY, JSON.stringify([...set])); } catch (_) {}
-}
-let selectedSet = loadSelectedSet();
+/** ============ Image zoom ==================================================
+ *
+ * Ported from the batch-review console's attachPreviewBoxListeners(), which
+ * took it verbatim from Listing_Generator_1. Same transform order
+ * `scale(S) translate(X,Y)` — offsets are pre-scale units, which is why they
+ * are divided by scale when clamping — same MAX_SCALE 8, same 0.5-damped drag,
+ * same click-to-zoom-at-point maths, same ResizeObserver re-clamp.
+ *
+ * TWO DELIBERATE OMISSIONS, both because this console is not that one:
+ *
+ *  1. No wheel handler. The source zooms on scroll with preventDefault, which
+ *     is exactly why the page would not scroll while the pointer sat over a
+ *     picture — and with an infinitely scrolling grid of them, that is most of
+ *     the window. Removing it is the point of the change; click-to-zoom
+ *     replaces it.
+ *  2. No persistZoom. The source saved framing per slot into its batch
+ *     document because the framing is baked into the uploaded photo. Here a
+ *     card is just a view of a catalog row and is rebuilt as the grid scrolls,
+ *     so there is nothing to persist and nothing to persist it to.
+ */
+function attachZoom(box, img){
+  const MAX_SCALE = 8, dragThreshold = 3;
+  img.dataset.scale = 1; img.dataset.offsetX = 0; img.dataset.offsetY = 0;
 
-/** ============ Image zoom helpers ============ */
-function attachZoom(wrap, img){
-  let scale = 1;
-  const MIN = 1, MAX = 5, STEP = 0.2;
-  const reset = () => {
-    scale = 1;
-    img.style.transform = "scale(1)";
-    img.style.setProperty("--ox", "50%");
-    img.style.setProperty("--oy", "50%");
-  };
-  reset();
-  img.addEventListener("load", reset, { once: true });
-  wrap.addEventListener("wheel", (e) => {
-    e.preventDefault();
-    const rect = wrap.getBoundingClientRect();
-    img.style.setProperty("--ox", ((e.clientX - rect.left) / rect.width) * 100 + "%");
-    img.style.setProperty("--oy", ((e.clientY - rect.top) / rect.height) * 100 + "%");
-    const delta = e.deltaY < 0 ? STEP : -STEP;
-    scale = Math.min(MAX, Math.max(MIN, +(scale + delta).toFixed(2)));
-    img.style.transform = `scale(${scale})`;
-  }, { passive: false });
-  wrap.addEventListener("dblclick", reset);
+  function clampAndApply(im, scale, offX, offY){
+    const viewportW = box.clientWidth;
+    const viewportH = box.clientHeight;
+    const baseW = im.clientWidth;
+    const baseH = im.clientHeight;
+
+    /* A zero dimension means "cannot clamp yet", not "clamp to nothing" — the
+       first call can land before the browser has laid the image out. Apply the
+       transform faithfully and let the load / ResizeObserver pass re-clamp once
+       real geometry exists. */
+    if (!viewportW || !viewportH || !baseW || !baseH){
+      im.dataset.scale = scale; im.dataset.offsetX = offX; im.dataset.offsetY = offY;
+      im.style.transform = `scale(${scale}) translate(${offX}px, ${offY}px)`;
+      return;
+    }
+
+    const scaledW = baseW * scale;
+    const scaledH = baseH * scale;
+
+    const maxX = Math.max(0, (scaledW - viewportW) / 2 / scale);
+    const maxY = Math.max(0, (scaledH - viewportH) / 2 / scale);
+
+    offX = Math.max(-maxX, Math.min(maxX, offX));
+    offY = Math.max(-maxY, Math.min(maxY, offY));
+
+    im.dataset.scale = scale;
+    im.dataset.offsetX = offX;
+    im.dataset.offsetY = offY;
+    im.style.transform = `scale(${scale}) translate(${offX}px, ${offY}px)`;
+  }
+
+  const reclamp = () => clampAndApply(img,
+    parseFloat(img.dataset.scale) || 1,
+    parseFloat(img.dataset.offsetX) || 0,
+    parseFloat(img.dataset.offsetY) || 0);
+
+  img.addEventListener("load", reclamp, { once: true });
+
+  if (typeof ResizeObserver !== "undefined"){
+    const ro = new ResizeObserver(() => {
+      const im = box.querySelector("img");
+      if (im) clampAndApply(im, parseFloat(im.dataset.scale) || 1,
+                            parseFloat(im.dataset.offsetX) || 0,
+                            parseFloat(im.dataset.offsetY) || 0);
+    });
+    ro.observe(box);
+  }
+
+  let isDragging = false, isMouseDown = false;
+  let dragStartX = 0, dragStartY = 0, lastX = 0, lastY = 0;
+
+  box.addEventListener("mousedown", function (ev){
+    const im = box.querySelector("img");
+    if (!im) return;
+    const scaleNow = parseFloat(im.dataset.scale) || 1;
+    if (scaleNow <= 1) return;              // nothing to pan until zoomed in
+    ev.preventDefault();
+    isMouseDown = true;
+    isDragging = false;
+    dragStartX = ev.clientX; dragStartY = ev.clientY;
+    lastX = ev.clientX; lastY = ev.clientY;
+  });
+
+  box.addEventListener("mousemove", function (ev){
+    if (!isMouseDown) return;
+    ev.preventDefault();
+    const dxAll = Math.abs(ev.clientX - dragStartX);
+    const dyAll = Math.abs(ev.clientY - dragStartY);
+    if (dxAll > dragThreshold || dyAll > dragThreshold) isDragging = true;
+
+    const im = box.querySelector("img");
+    if (!im) return;
+    const scaleNow = parseFloat(im.dataset.scale) || 1;
+    let offX = parseFloat(im.dataset.offsetX) || 0;
+    let offY = parseFloat(im.dataset.offsetY) || 0;
+    const dx = (ev.clientX - lastX) * 0.5;
+    const dy = (ev.clientY - lastY) * 0.5;
+    offX += dx; offY += dy;
+    clampAndApply(im, scaleNow, offX, offY);
+    lastX = ev.clientX; lastY = ev.clientY;
+  });
+
+  const endPan = () => { isMouseDown = false; };
+  box.addEventListener("mouseup", endPan);
+  box.addEventListener("mouseleave", endPan);
+
+  box.addEventListener("click", function (ev){
+    if (isDragging){ isDragging = false; return; }   // a pan is not a click
+    const im = box.querySelector("img");
+    if (!im) return;
+
+    const s0    = parseFloat(im.dataset.scale)   || 1;
+    const offX0 = parseFloat(im.dataset.offsetX) || 0;
+    const offY0 = parseFloat(im.dataset.offsetY) || 0;
+
+    const rect = box.getBoundingClientRect();
+    const cx = rect.left + box.clientWidth  / 2;
+    const cy = rect.top  + box.clientHeight / 2;
+    const dx_screen = ev.clientX - cx;
+    const dy_screen = ev.clientY - cy;
+
+    const px = dx_screen / s0 - offX0;
+    const py = dy_screen / s0 - offY0;
+
+    let targetOffX = -px;
+    let targetOffY = -py;
+
+    const halfW = (im.clientWidth  || 120) / 2;
+    const halfH = (im.clientHeight || 120) / 2;
+    function requiredScaleFor(delta, half){
+      const ratio = Math.abs(delta) / half;
+      if (ratio >= 1) return Infinity;
+      return 1 / (1 - ratio);
+    }
+    const needX = requiredScaleFor(targetOffX, halfW);
+    const needY = requiredScaleFor(targetOffY, halfH);
+
+    const DESIRED = 1.33;
+    let s1 = Math.max(DESIRED, s0 * 1.5, needX, needY);
+    if (!Number.isFinite(s1)) s1 = MAX_SCALE;
+    if (s1 > MAX_SCALE) s1 = MAX_SCALE;
+
+    if (s0 > 1.2 && Math.abs(s1 - s0) < 0.5) s1 = 1;   // click again to come back
+
+    if (s1 === 1){ targetOffX = 0; targetOffY = 0; }
+    clampAndApply(im, s1, targetOffX, targetOffY);
+  });
 }
 
 /** ============ Elements ============ */
@@ -858,7 +1108,6 @@ let results = [];              // current filtered+ranked rows
 let rendered = 0;              // how many of them are in the DOM
 let sectionId = null;          // null = every section
 let missingSkuOnly = false;
-let hideDone = false;
 let quotaRemaining = null;     // from the free usage endpoint, if verified
 
 function setStatus(text, kind){
@@ -984,8 +1233,6 @@ function renderChips(){
 
   chip("Missing SKU", null, missingSkuOnly,
     () => { missingSkuOnly = !missingSkuOnly; renderChips(); applyFilters(); }, "flag");
-  chip("Hide \u2713 done", null, hideDone,
-    () => { hideDone = !hideDone; renderChips(); applyFilters(); }, "flag");
 }
 
 /** ============ Rendering (infinite scroll) ============ */
@@ -1035,6 +1282,198 @@ function highlightInto(el, text, terms){
   if (cursor < text.length) el.appendChild(document.createTextNode(text.slice(cursor)));
 }
 
+/* ── The SKU line ──────────────────────────────────────────────────────────
+ *
+ * One control, three states:
+ *
+ *   reading   the SKU as large bold text; clicking it starts editing
+ *   editing   an input with save and cancel, opened INSTANTLY from the cached
+ *             value — the product_id needed for the write is fetched in the
+ *             background, so the Etsy round trip no longer sits between the
+ *             click and the cursor
+ *   pending   a generated SKU that is only a proposal: amber dot, the word
+ *             UNSAVED, and an outlined card until it is saved or discarded
+ *
+ * Generate never writes. It fills the field and leaves it pending, so a
+ * generated value that is not saved is simply gone on refresh — which is what
+ * the marker warns about.
+ */
+function buildSkuLine(card, r, terms){
+  const line = document.createElement("div");
+  line.className = "skuline";
+  line.dataset.role = "sku-line";
+
+  const label = document.createElement("span");
+  label.className = "skulabel";
+  label.textContent = "SKU";
+  line.appendChild(label);
+
+  /* The product_id is only needed to WRITE. Fetching it is what made the old
+     Edit button take seconds, so it is started in the background the moment
+     editing begins and awaited only at save time. */
+  let productIdPromise = null;
+  const primeProductId = () => {
+    if (!productIdPromise){
+      productIdPromise = fetchInventoryDetail(r.listing_id)
+        .then(products => {
+          const p0 = (Array.isArray(products) && products.length) ? products[0] : null;
+          if (!p0 || p0.product_id == null) throw new Error("This listing has no Variant 1 to write to");
+          return Number(p0.product_id);
+        })
+        .catch(err => { productIdPromise = null; throw err; })
+        .finally(renderMeters);
+    }
+    return productIdPromise;
+  };
+
+  let mode = "reading";     // reading | editing | pending
+  let draft = r.sku || "";
+
+  function paint(){
+    [...line.querySelectorAll(".skuvalue, .skuinput, .iconbtn, .unsaved")].forEach(el => el.remove());
+
+    if (mode === "reading"){
+      const value = document.createElement("button");
+      value.type = "button";
+      value.className = "skuvalue" + (r.sku ? "" : " none");
+      value.dataset.role = "sku-value";
+      value.title = "Click to edit this SKU";
+      if (r.sku) highlightInto(value, r.sku, terms);
+      else value.textContent = "— none —";
+      value.addEventListener("click", () => { mode = "editing"; draft = r.sku || ""; primeProductId().catch(() => {}); paint(); });
+      line.appendChild(value);
+
+      if (r.sku){
+        const copy = document.createElement("button");
+        copy.type = "button";
+        copy.className = "iconbtn copy grow";
+        copy.dataset.role = "sku-copy";
+        copy.title = "Copy this SKU";
+        copy.textContent = "\u29c9";
+        copy.addEventListener("click", async (ev) => {
+          ev.stopPropagation();                       // copying is not editing
+          const ok = await copyText(r.sku);
+          copy.textContent = ok ? "\u2713" : "\u2715";
+          copy.classList.toggle("done", ok);
+          setTimeout(() => {
+            copy.textContent = "\u29c9";
+            copy.classList.remove("done");
+          }, 1100);
+        });
+        line.appendChild(copy);
+      }
+
+      card.classList.remove("pending");
+      return;
+    }
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "skuinput";
+    input.maxLength = 64;
+    input.value = draft;
+    input.addEventListener("input", () => { draft = input.value; });
+    line.appendChild(input);
+
+    if (mode === "pending"){
+      const flag = document.createElement("span");
+      flag.className = "unsaved";
+      flag.dataset.role = "unsaved";
+      flag.textContent = "Unsaved";
+      flag.title = "Generated but not written to Etsy — it is lost on refresh until you save";
+      line.appendChild(flag);
+      card.classList.add("pending");
+    } else {
+      card.classList.remove("pending");
+    }
+
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "iconbtn save";
+    save.dataset.role = "sku-save";
+    save.title = "Save to Etsy";
+    save.textContent = "\u2713";
+
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "iconbtn cancel";
+    cancel.dataset.role = "sku-cancel";
+    cancel.title = "Discard";
+    cancel.textContent = "\u2715";
+    cancel.addEventListener("click", () => { mode = "reading"; draft = r.sku || ""; paint(); });
+
+    save.addEventListener("click", async () => {
+      const wanted = String(draft || "").trim();
+      save.disabled = true; cancel.disabled = true;
+      save.textContent = "";
+      save.appendChild(Object.assign(document.createElement("span"), { className: "spin" }));
+      try {
+        const productId = await primeProductId();
+        if (await saveSkuUpdates(r.listing_id, [{ product_id: productId, sku: wanted }])){
+          r.sku = wanted;
+          await Catalog.setSku(r.listing_id, wanted);
+          mode = "reading";
+          paint();
+          repaintGenerateButton(card, r);
+        }
+      } catch (e){
+        alert("Could not save the SKU: " + e.message);
+      } finally {
+        save.disabled = false; cancel.disabled = false;
+        save.textContent = "\u2713";
+        renderMeters();
+      }
+    });
+
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") return save.click();
+      if (ev.key === "Escape") return cancel.click();
+    });
+
+    line.appendChild(save);
+    line.appendChild(cancel);
+    input.focus();
+  }
+
+  /* Generate hands the line a proposal; it does not write. */
+  line.proposeSku = (value) => { mode = "pending"; draft = value; primeProductId().catch(() => {}); paint(); };
+  line.currentMode = () => mode;
+
+  paint();
+  return line;
+}
+
+/* navigator.clipboard needs a secure context, which this origin is, but it
+   still rejects when the document is not focused or permission is refused —
+   so a textarea + execCommand stands behind it. */
+async function copyText(text){
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (_) { /* fall through */ }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return ok;
+  } catch (_) { return false; }
+}
+
+function repaintGenerateButton(card, r){
+  const gen = card.querySelector('[data-role="gen-btn"]');
+  if (!gen) return;
+  gen.style.background = r.sku ? "" : "OrangeRed";
+  gen.title = r.sku ? "Replace this SKU with a generated one" : "No SKU yet \u2014 click Generate";
+}
+
 function buildCard(r, terms){
   const card = document.createElement("div");
   card.className = "card";
@@ -1047,7 +1486,16 @@ function buildCard(r, terms){
   img.alt = r.title || "Listing image";
   img.loading = "lazy";
   img.decoding = "async";
-  img.src = r.image || "";
+  const upgraded = upgradeImageUrl(r.image);
+  if (upgraded !== r.image){
+    // One retry at the stored size if the derived full-size URL does not exist.
+    img.addEventListener("error", () => {
+      if (img.dataset.fellBack) return;
+      img.dataset.fellBack = "1";
+      img.src = r.image || "";
+    }, { once: true });
+  }
+  img.src = upgraded || "";
   wrap.appendChild(img);
   attachZoom(wrap, img);
   card.appendChild(wrap);
@@ -1057,76 +1505,43 @@ function buildCard(r, terms){
 
   const title = document.createElement("div");
   title.className = "title";
+  title.title = r.title || "";            // the full title, since the line clips
   highlightInto(title, r.title || "(untitled)", terms);
+  meta.appendChild(title);
 
-  const sku = document.createElement("div");
-  sku.className = "sku" + (r.sku ? "" : " none");
-  sku.textContent = r.sku ? `SKU: ${r.sku} (Variant 1)` : "SKU: — none";
+  const skuLine = buildSkuLine(card, r, terms);
+  meta.appendChild(skuLine);
 
+  /* One row: section, then Generate. The listing id, price and done-checkbox
+     were removed at the operator's request — the id and price are not part of
+     the SKU task, and with the checkbox gone the "Hide done" chip it fed has
+     gone too. The stored selections are left untouched in localStorage, so
+     nothing is lost if the feature comes back. */
   const row = document.createElement("div");
   row.className = "row";
 
-  const cb = document.createElement("input");
-  cb.type = "checkbox";
-  cb.className = "selectBox";
-  cb.title = "Mark as done";
-  cb.checked = selectedSet.has(String(r.listing_id));
-  cb.addEventListener("change", () => {
-    if (cb.checked){ selectedSet.add(String(r.listing_id)); card.classList.add("selected"); }
-    else { selectedSet.delete(String(r.listing_id)); card.classList.remove("selected"); }
-    saveSelectedSet(selectedSet);
-  });
-  row.appendChild(cb);
-
-  const idPill = document.createElement("span");
-  idPill.className = "pill";
-  idPill.textContent = `#${r.listing_id}`;
-  row.appendChild(idPill);
-
-  const priceText = formatPrice(r.price);
-  if (priceText){
-    const p = document.createElement("span");
-    p.className = "pill";
-    p.textContent = priceText;
-    row.appendChild(p);
-  }
-
   const sect = sectionTitle(r.section_id);
   if (sect){
-    const s = document.createElement("span");
-    s.className = "pill sect";
-    s.textContent = sect;
-    row.appendChild(s);
+    const sp = document.createElement("span");
+    sp.className = "pill sect";
+    sp.textContent = sect;
+    row.appendChild(sp);
   }
 
-  const editBtn = document.createElement("button");
-  editBtn.className = "btn secondary";
-  editBtn.textContent = "Edit SKU";
-  editBtn.style.marginLeft = "auto";
-  editBtn.addEventListener("click", () => openSkuEditor(r));
-  row.appendChild(editBtn);
-
   const genBtn = document.createElement("button");
-  genBtn.className = "btn";
+  genBtn.type = "button";
+  genBtn.className = "btn tiny grow";
   genBtn.textContent = "Generate";
   genBtn.dataset.role = "gen-btn";
-  if (!r.sku){ genBtn.style.background = "OrangeRed"; genBtn.title = "No SKU yet — click Generate"; }
-  genBtn.addEventListener("click", () => generateAndSaveSku(r, genBtn));
+  genBtn.addEventListener("click", () => {
+    skuLine.proposeSku(makeSkuFrom(r.title || "", r.listing_id));
+  });
   row.appendChild(genBtn);
 
-  meta.appendChild(title);
-  meta.appendChild(sku);
   meta.appendChild(row);
   card.appendChild(meta);
 
-  if (cb.checked) card.classList.add("selected");
-
-  const editor = document.createElement("div");
-  editor.className = "meta";
-  editor.style.display = "none";
-  editor.dataset.role = "sku-editor";
-  card.appendChild(editor);
-
+  repaintGenerateButton(card, r);
   return card;
 }
 
@@ -1154,10 +1569,8 @@ function updateEndcap(){
 }
 
 function applyFilters(){
-  currentTerms = normalizeText(searchInput.value).split(" ").filter(Boolean);
-  results = searchCatalog(Catalog.rows, searchInput.value, {
-    sectionId, missingSkuOnly, hideDone, doneSet: selectedSet
-  });
+  currentTerms = parseQuery(searchInput.value).terms;
+  results = searchCatalog(Catalog.rows, searchInput.value, { sectionId, missingSkuOnly });
 
   listContainer.innerHTML = "";
   rendered = 0;
@@ -1213,126 +1626,12 @@ function cardFor(listingId){
 
 /* Repaints one card in place after a SKU write — no refetch, no re-render of
    the grid, so the user's scroll position survives. */
-async function applySkuToCard(row, sku){
-  row.sku = sku;
-  await Catalog.setSku(row.listing_id, sku);
-  const card = cardFor(row.listing_id);
-  if (!card) return;
-  const skuLine = card.querySelector(".sku");
-  if (skuLine){
-    skuLine.textContent = sku ? `SKU: ${sku} (Variant 1)` : "SKU: — none";
-    skuLine.className = "sku" + (sku ? "" : " none");
-  }
-  const genBtn = card.querySelector('[data-role="gen-btn"]');
-  if (genBtn) genBtn.style.background = sku ? "" : "OrangeRed";
-}
-
-function buildSkuEditorDom(row, products){
-  const card = cardFor(row.listing_id);
-  const editor = card?.querySelector('[data-role="sku-editor"]');
-  if (!editor) return;
-  editor.innerHTML = "";
-
-  const hdr = document.createElement("div");
-  hdr.className = "title";
-  hdr.textContent = "Edit SKU (Variant 1)";
-  editor.appendChild(hdr);
-
-  const p = (Array.isArray(products) && products.length) ? products[0] : { product_id: null, sku: "" };
-
-  const line = document.createElement("div");
-  line.className = "row";
-  const tag = document.createElement("span");
-  tag.className = "pill";
-  tag.textContent = "Variant 1";
-  line.appendChild(tag);
-
-  const input = document.createElement("input");
-  input.type = "text";
-  input.value = p.sku || "";
-  input.placeholder = "SKU";
-  input.style.flex = "1";
-  input.dataset.productId = p.product_id != null ? String(p.product_id) : "";
-  input.className = "skuInput";
-  input.maxLength = 64;
-  line.appendChild(input);
-  editor.appendChild(line);
-
-  const actions = document.createElement("div");
-  actions.className = "row";
-
-  const cancel = document.createElement("button");
-  cancel.className = "btn secondary";
-  cancel.textContent = "Cancel";
-  cancel.addEventListener("click", () => { editor.style.display = "none"; });
-
-  const save = document.createElement("button");
-  save.className = "btn";
-  save.textContent = "Save";
-  save.addEventListener("click", async () => {
-    const el = editor.querySelector(".skuInput");
-    const productId = Number(el.dataset.productId);
-    if (!Number.isFinite(productId) || !productId){
-      alert("This listing has no Variant 1 product to write to.");
-      return;
-    }
-    save.disabled = true;
-    try {
-      const sku = el.value.trim();
-      if (await saveSkuUpdates(row.listing_id, [{ product_id: productId, sku }])){
-        await applySkuToCard(row, sku);
-        editor.style.display = "none";
-      }
-    } catch (e){
-      alert("Failed to update SKU: " + e.message);
-    } finally {
-      save.disabled = false;
-      renderMeters();
-    }
-  });
-
-  actions.appendChild(cancel);
-  actions.appendChild(save);
-  editor.appendChild(actions);
-}
-
-async function openSkuEditor(row){
-  try {
-    const products = await fetchInventoryDetail(row.listing_id);
-    buildSkuEditorDom(row, products);
-    const editor = cardFor(row.listing_id)?.querySelector('[data-role="sku-editor"]');
-    if (editor) editor.style.display = "block";
-  } catch (e){
-    alert("Could not open SKU editor: " + e.message);
-  } finally {
-    renderMeters();
-  }
-}
-
 function makeSkuFrom(title, listingId){
   const last4 = String(listingId).slice(-4);
   const firstWordMatch = String(title || "").match(/[A-Za-z0-9]+/);
   const raw = firstWordMatch ? firstWordMatch[0] : "SKU";
   const pretty = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
   return `${pretty}_${last4}`;
-}
-
-async function generateAndSaveSku(row, btn){
-  try {
-    btn.disabled = true;
-    const computedSku = makeSkuFrom(row.title || "", row.listing_id);
-    const products = await fetchInventoryDetail(row.listing_id);
-    const p0 = (Array.isArray(products) && products.length) ? products[0] : null;
-    if (!p0 || p0.product_id == null) throw new Error("Missing Variant 1");
-    if (await saveSkuUpdates(row.listing_id, [{ product_id: Number(p0.product_id), sku: computedSku }])){
-      await applySkuToCard(row, computedSku);
-    }
-  } catch (e){
-    alert("Generate failed: " + e.message);
-  } finally {
-    btn.disabled = false;
-    renderMeters();
-  }
 }
 
 /** ============ Sync driver ============ */

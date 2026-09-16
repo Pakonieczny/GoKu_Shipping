@@ -5,6 +5,13 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+/* A comma is a selector LIST in CSS (match any), not a compound (match all).
+   Treating "a, b" as one compound silently matched nothing, which made correct
+   page code look broken here. */
+function parseSelectorList(sel) {
+  return String(sel).split(',').map(part => parseSelector(part)).filter(Boolean);
+}
+
 function parseSelector(sel) {
   const s = sel.trim();
   const out = { tag: null, id: null, classes: [], attrs: [] };
@@ -66,6 +73,10 @@ class Element {
     this.checked = false;
     this.value = '';
     this.disabled = false;
+    // Layout is opt-in: 0 means "not laid out yet", which is exactly what the
+    // zoom code treats as "cannot clamp yet".
+    this.clientWidth = 0;
+    this.clientHeight = 0;
   }
   get textContent() {
     if (this.children.length) return this.children.map(c => c.textContent).join('');
@@ -97,7 +108,9 @@ class Element {
   removeChild(child) { this.children = this.children.filter(c => c !== child); child.parentNode = null; }
   remove() { if (this.parentNode) this.parentNode.removeChild(this); }
   matches(sel) {
-    const p = parseSelector(sel);
+    return parseSelectorList(sel).some(p => this._matchesOne(p));
+  }
+  _matchesOne(p) {
     if (p.tag && this.tagName.toLowerCase() !== p.tag) return false;
     if (p.id && this.id !== p.id) return false;
     if (p.classes.some(c => !this.classList.contains(c))) return false;
@@ -120,7 +133,7 @@ class Element {
   removeEventListener(type, fn) { this.listeners[type] = (this.listeners[type] || []).filter(f => f !== fn); }
   async dispatch(type, ev = {}) {
     const fns = [...(this.listeners[type] || [])];
-    for (const fn of fns) await fn.call(this, { type, preventDefault() {}, ...ev });
+    for (const fn of fns) await fn.call(this, { type, preventDefault() {}, stopPropagation() {}, ...ev });
   }
   setAttribute(name, value) {
     if (name.startsWith('data-')) this.dataset[camel(name.slice(5))] = String(value);
@@ -130,9 +143,15 @@ class Element {
     const v = name.startsWith('data-') ? this.dataset[camel(name.slice(5))] : this[name];
     return v === undefined ? null : String(v);
   }
-  select() {}
+  click() { const fns = [...(this.listeners.click || [])]; return Promise.all(fns.map(fn => fn.call(this, { type: 'click', preventDefault() {}, stopPropagation() {} }))); }
+  // Selecting text implies the element is what a copy command would read.
+  select() { if (this.ownerDocument) this.ownerDocument.activeElement = this; }
   focus() { if (this.ownerDocument) this.ownerDocument.activeElement = this; }
-  getBoundingClientRect() { return { left: 0, top: 0, width: 100, height: 100, bottom: this._bottom ?? 100 }; }
+  getBoundingClientRect() {
+    const w = this.clientWidth || 100, h = this.clientHeight || 100;
+    const left = this._left ?? 0, top = this._top ?? 0;
+    return { left, top, width: w, height: h, right: left + w, bottom: this._bottom ?? (top + h) };
+  }
 }
 
 function makeStorage() {
@@ -160,7 +179,7 @@ const EXPORTS = [
   'fetchListingPage', 'fetchSections', 'runSync', 'rebuildCatalog',
   // view
   'applyFilters', 'renderMore', 'renderChips', 'renderMeters', 'formatPrice', 'highlightInto',
-  'loadSelectedSet', 'makeSkuFrom', 'openSkuEditor', 'generateAndSaveSku', 'saveSkuUpdates',
+  'makeSkuFrom', 'buildSkuLine', 'saveSkuUpdates', 'upgradeImageUrl', 'copyText',
   'fetchInventoryDetail', 'cardFor', 'refreshQuota',
 ];
 
@@ -208,8 +227,16 @@ function createApp(opts = {}) {
     createDocumentFragment() { const f = new Element('#fragment', document); f.isFragment = true; return f; },
     getElementById(id) { return doc.byId.get(id) || null; },
     addEventListener(t, fn) { (doc.listeners[t] ||= []).push(fn); },
+    execCommand(name) {
+      execCommands.push(name);
+      if (name === 'copy' && document.activeElement && document.activeElement.value !== undefined) {
+        clipboard.push(String(document.activeElement.value));
+        return true;
+      }
+      return false;
+    },
     async dispatch(type, ev = {}) {
-      for (const fn of [...(doc.listeners[type] || [])]) await fn({ type, preventDefault() {}, ...ev });
+      for (const fn of [...(doc.listeners[type] || [])]) await fn({ type, preventDefault() {}, stopPropagation() {}, ...ev });
     },
   };
   const mk = (tag, id, extra = {}) => {
@@ -262,8 +289,30 @@ function createApp(opts = {}) {
     disconnect() {}
   }
 
+  // Records observed elements so a test can fire a re-measure.
+  const resizeObserved = [];
+  class ResizeObserverStub {
+    constructor(cb) { this.cb = cb; }
+    observe(el) { resizeObserved.push({ el, cb: this.cb }); }
+    disconnect() {}
+  }
+
+  /* Clipboard: the page calls the bare `navigator` global. opts.clipboardFails
+     forces the execCommand fallback so both paths are reachable. */
+  const clipboard = [];
+  const navigator = {
+    clipboard: {
+      async writeText(text) {
+        if (opts.clipboardFails) throw new Error('denied');
+        clipboard.push(String(text));
+      },
+    },
+  };
+  const execCommands = [];
+
   const window = {
     location,
+    navigator,
     innerHeight: 900,
     scrollY: 0,
     scrollTo() {},
@@ -274,6 +323,7 @@ function createApp(opts = {}) {
   const factory = new Function(
     'window', 'document', 'location', 'history', 'localStorage', 'sessionStorage',
     'fetch', 'alert', 'confirm', 'console', 'setTimeout', 'clearTimeout', 'IntersectionObserver',
+    'ResizeObserver', 'navigator',
     `${body}\nreturn { ${EXPORTS.join(', ')} };`
   );
   const api = factory(
@@ -281,12 +331,13 @@ function createApp(opts = {}) {
     fetchStub,
     msg => alerts.push(String(msg)),
     msg => { confirms.push(String(msg)); return opts.confirm !== false; },
-    consoleStub, setTimeoutStub, clearTimeoutStub, IntersectionObserverStub
+    consoleStub, setTimeoutStub, clearTimeoutStub, IntersectionObserverStub, ResizeObserverStub,
+    navigator
   );
 
   return {
     api, els, document, window, location, history, localStorage, sessionStorage,
-    navigations, alerts, confirms, warnings, errors, fetchCalls,
+    navigations, alerts, confirms, warnings, errors, fetchCalls, clipboard, execCommands,
     status: () => els.authStatus.textContent,
     cards: () => els.listContainer.querySelectorAll('.card'),
     cardIds: () => els.listContainer.querySelectorAll('.card').map(c => Number(c.dataset.listingId)),
@@ -306,6 +357,28 @@ function createApp(opts = {}) {
       }
     },
     async type(text) { els.searchInput.value = text; await els.searchInput.dispatch('input'); },
+    /** Give a card's image box real geometry, as a browser would after layout. */
+    layout(card, size = 300) {
+      const box = card.querySelector('.thumb-wrap');
+      const img = card.querySelector('.thumb');
+      box.clientWidth = box.clientHeight = size;
+      img.clientWidth = img.clientHeight = size;
+      return { box, img };
+    },
+    /** Fire every registered ResizeObserver, as a relayout would. */
+    async resize() { for (const { el, cb } of resizeObserved) await cb([{ target: el }]); },
+    /** The transform currently applied to a card's image. */
+    transform(card) { return card.querySelector('.thumb').style.transform || ''; },
+    zoomState(card) {
+      const img = card.querySelector('.thumb');
+      return {
+        scale: parseFloat(img.dataset.scale),
+        x: parseFloat(img.dataset.offsetX),
+        y: parseFloat(img.dataset.offsetY),
+      };
+    },
+    /** Does this element have a listener of this type at all? */
+    hasListener(el, type) { return (el.listeners[type] || []).length > 0; },
     async domReady() { for (const fn of doc.listeners.DOMContentLoaded || []) await fn(); },
     cleanup() { timers.forEach(t => clearTimeout(t)); timers.clear(); },
   };
@@ -324,4 +397,4 @@ function normalizeResponse(res) {
   };
 }
 
-module.exports = { createApp, Element, parseSelector };
+module.exports = { createApp, Element, parseSelector, parseSelectorList };
