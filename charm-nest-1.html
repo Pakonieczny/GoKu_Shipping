@@ -1626,7 +1626,11 @@ function renderSat(sh) {
 /* ═══ 12 · preview canvas ═══════════════════════════════════════════════ */
 function drawPreview(sh) {
   const cv = sh.el && $(`[data-r="canvas"]`, sh.el); if (!cv) return;
-  const wrap = cv.parentElement; const w = Math.max(10, Math.round(wrap.clientWidth * devicePixelRatio)); const st = stockFor(sh.metal);
+  const wrap = cv.parentElement; const st = stockFor(sh.metal);
+  // a card that is not laid out yet (view switch, collapsed rail, first paint) has no width: a bitmap drawn at that
+  // size would be stretched to a blur later. Wait for a real width instead.
+  if (wrap.clientWidth < 40) { if (!sh._redrawPending) { sh._redrawPending = true; requestAnimationFrame(() => { sh._redrawPending = false; if (sh.el) drawPreview(sh); }); } return; }
+  const w = Math.round(wrap.clientWidth * devicePixelRatio);
   const R = Math.round(Math.max(14 * devicePixelRatio, w * 0.042));                  // mm rulers along the top and the left
   const h = R + Math.round((w - R) * st.hPt / st.wPt); if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
   wrap.style.aspectRatio = `${w}/${h}`;
@@ -1855,7 +1859,7 @@ async function loadCharms() {
 }
 function setMode(mode) {
   S.mode = mode; $$(".modeSeg button").forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
-  $("#sheets").classList.toggle("hidden", mode !== "nest"); $("#libView").classList.toggle("hidden", mode !== "library"); $("#charmsView").classList.toggle("hidden", mode !== "charms");
+  $("#sheets").classList.toggle("hidden", mode !== "nest"); if (mode === "nest") requestAnimationFrame(() => METALS.forEach(m => drawPreview(activePage(m.key)))); $("#libView").classList.toggle("hidden", mode !== "library"); $("#charmsView").classList.toggle("hidden", mode !== "charms");
   if (mode === "library") loadLibrary(); if (mode === "charms") loadCharms();
 }
 
