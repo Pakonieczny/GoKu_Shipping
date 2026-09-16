@@ -103,3 +103,7 @@ Three rules were added after a 75-piece nested sheet came back with charms merge
 - **Outlines that are not one closed stroke.** Open achromatic strokes whose ends meet (a bar drawn as a U plus a line) are chained into one closed outline; the real parts remain the members the writer copies. Solid dark shapes with no stroke (an anchor, a star) are outlines cut along their fill edge, unless they sit inside a stroked outline, in which case they are that charm's fill.
 
 `node tests/charm-nest/grouping-audit.cjs <file.ai>` reports charms, rings, orphans, members lying outside their own outline, and charms whose extent grew past their outline (merged neighbours).
+
+## One fill measure
+
+The fill ceiling and the card's "% full" are measured on the same thing: the footprint each piece stamps on the sheet grid (its silhouette eroded by a negative clearance or grown by a positive one). Before this, the ceiling counted solid silhouettes with holes filled while the readout counted stamped footprint, so a sheet could stop "at the 72 % ceiling" while the card read 64 %. Reports still carry the solid silhouette area per charm.

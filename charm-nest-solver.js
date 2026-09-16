@@ -315,13 +315,16 @@
         const co = majority(dil.bits, dil.w, dil.h, ratio);
         variants.push({
           angle: a,
-          fine: { bits: dil.bits, w: dil.w, h: dil.h, pm: packShifted(dil.bits, dil.w, dil.h) },
+          fine: { bits: dil.bits, w: dil.w, h: dil.h, pm: packShifted(dil.bits, dil.w, dil.h) }, cells: areaOf(dil.bits),
           solid: { bits: rot.bits, w: rot.w, h: rot.h, cx: rot.cx + halfGapFine - erodeFine, cy: rot.cy + halfGapFine - erodeFine },
           ringFine: packShifted(rg.bits, rg.w, rg.h), ringPad: Math.max(2, Math.round(2 * fineRes)),
           coarse: { pm: packShifted(co.bits, co.w, co.h), w: co.w, h: co.h }
         });
       }
-      prepared.push({ id: p.id, idx: i, areaPt2: p.areaPt2 || (solidFineCells / (fineRes * fineRes)), solidFineCells, variants, pinned: p.pinned || null, meta: p.meta || null });
+      // footprintCells: what the piece occupies on the sheet grid (its eroded or grown mask) — the same measure the
+      // occupancy readout uses, so the fill ceiling and "% full" agree. The solid silhouette (holes filled) stays for reports.
+      const footprintCells = variants.length ? Math.min(...variants.map(v => v.cells)) : solidFineCells;
+      prepared.push({ id: p.id, idx: i, areaPt2: p.areaPt2 || (solidFineCells / (fineRes * fineRes)), solidFineCells, footprintCells, variants, pinned: p.pinned || null, meta: p.meta || null });
       if (cb.onStage) cb.onStage("prepare", i + 1, pieces.length);
       await yieldNow();
     }
@@ -341,7 +344,7 @@
       const total = prepared.length;
       for (const id of best.rejects.slice()) {
         const p = prepared.find(x => x.id === id); if (!p || p.pinned) continue;
-        if ((best.placedCells + p.solidFineCells) / usableCellsFine > maxFill) continue;
+        if ((best.placedCells + p.footprintCells) / usableCellsFine > maxFill) continue;
         if (cb.onStage) cb.onStage("finish", best.placements.length, total);
         const variants = p.variants.slice();
         const fineBase = resample(pieces[p.idx].bits, pieces[p.idx].w, pieces[p.idx].h, pieces[p.idx].scale, fineRes);
@@ -362,7 +365,7 @@
         coarse.buildSAT();
         const pl = { id, angle: v.angle, cxPt: (x + v.solid.cx) / fineRes, cyPt: (y + v.solid.cy) / fineRes, xPt: (x + (v.fine.w - v.solid.w) / 2) / fineRes, yPt: (y + (v.fine.h - v.solid.h) / 2) / fineRes, wPt: v.solid.w / fineRes, hPt: v.solid.h / fineRes, contact: pos.contact || 0, finishing: true };
         best.placements.push(pl); best.rejects = best.rejects.filter(r => r !== id);
-        best.placedCells += p.solidFineCells; best.placedPt2 = best.placedCells / (fineRes * fineRes);
+        best.placedCells += v.cells; best.placedPt2 = best.placedCells / (fineRes * fineRes);
         best.density = best.placedCells / usableCellsFine; best.freePt2 = fine.freeCells() / (fineRes * fineRes); best.pocket = pocketPt(coarse, coarseRes);
         if (cb.onPlaced) cb.onPlaced(pl, { trial: best.trial, placed: best.placements.length, total, freePt2: best.freePt2, usablePt2: usableCellsFine / (fineRes * fineRes), placedPt2: best.placedPt2, pocket: best.pocket, finishing: true });
         if (cb.onBest) cb.onBest(best, { trial: best.trial, placed: best.placements.length, total, rejects: best.rejects, density: best.density, elapsedMs: now() - t0, finishing: true });
@@ -429,7 +432,7 @@
         if (!ok) continue;
         // success: everything placed — rebuild the public layout from newRec
         const placements = newRec.map(r => ({ id: r.p.id, angle: r.v.angle, cxPt: (r.x + r.v.solid.cx) / fineRes, cyPt: (r.y + r.v.solid.cy) / fineRes, xPt: (r.x + (r.v.fine.w - r.v.solid.w) / 2) / fineRes, yPt: (r.y + (r.v.fine.h - r.v.solid.h) / 2) / fineRes, wPt: r.v.solid.w / fineRes, hPt: r.v.solid.h / fineRes, repaired: true }));
-        const placedCells = newRec.reduce((n, r) => n + r.p.solidFineCells, 0);
+        const placedCells = newRec.reduce((n, r) => n + r.v.cells, 0);
         Object.assign(best, { placements, rejects: [], capped: [], density: placedCells / usableCellsFine, placedCells, placedPt2: placedCells / (fineRes * fineRes), freePt2: fine.freeCells() / (fineRes * fineRes), pocket: pocketPt(coarse, coarseRes), grids: { fine, coarse }, rec: newRec, repaired: true });
         if (cb.onBest) cb.onBest(best, { trial: best.trial, placed: placements.length, total, rejects: [], density: best.density, elapsedMs: now() - t0, repaired: true, removed: removed.length });
         return true;
@@ -460,7 +463,7 @@
         const p = pinnedFirst[pi];
         if (stopped()) break;
         let bestPos = null;
-        if (!p.pinned && (placedCells + p.solidFineCells) / usableCellsFine > maxFill) {
+        if (!p.pinned && (placedCells + p.footprintCells) / usableCellsFine > maxFill) {
           rejects.push(p.id); capped.push(p.id);
           if (cb.onReject) cb.onReject(p.id, trial, "cap");
           await yieldNow(); continue;
@@ -486,7 +489,7 @@
           }
           void cx0; void cy0;
           coarse.buildSAT();
-          placedCells += p.solidFineCells;
+          placedCells += v.cells;
           placedRec.push({ p, v, x, y });
           const pl = {
             id: p.id, angle: v.angle,
