@@ -635,5 +635,52 @@
     return { ok: false, x: x0, y: y0, off, overlapPt2: overlap == null ? null : overlap / (res * res) };
   }
   function stampVariant(grid, v, x, y) { grid.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y); grid.buildSAT(); }
-  return { solve, verify, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, stampVariant };
+  /** Coarse copy of a fine grid (any occupied fine cell → occupied coarse cell). */
+  function coarseFromFine(fine, ratio) {
+    const CW = Math.ceil(fine.W / ratio), CH = Math.ceil(fine.H / ratio), g = new Grid(CW, CH);
+    for (let y = 0; y < fine.H; y++) for (let x = 0; x < fine.W; x++) { if (fine.get(x, y)) g.set(Math.floor(x / ratio), Math.floor(y / ratio)); }
+    for (let y = 0; y < CH; y++) for (let x = 0; x < CW; x++) if (!g.get(x, y)) g.free[y * CW + x] = 1;
+    g.buildSAT(); return g;
+  }
+  /** Measurement for the AI placer: the tightest legal spot for a piece at each angle, best first.
+   *  One exhaustive evaluation of the current sheet per angle — a ruler, not a trial. */
+  function bestSpots(fine, variantsByAngle, K, opts) {
+    opts = opts || {}; const ratio = opts.ratio || 4, res = fine.fineRes;
+    const coarse = coarseFromFine(fine, ratio);
+    const out = [];
+    for (const v of variantsByAngle) {
+      if (!v) continue;
+      const ringR = Math.max(2, Math.round(2 * res));
+      const rg = ring(v.fine.bits, v.fine.w, v.fine.h, ringR);
+      const co = majority(v.fine.bits, v.fine.w, v.fine.h, ratio);
+      const pv = { angle: v.angle, fine: v.fine, solid: v.solid, ringFine: packShifted(rg.bits, rg.w, rg.h), ringPad: ringR, coarse: { pm: packShifted(co.bits, co.w, co.h), w: co.w, h: co.h } };
+      const pos = search({ variants: [pv] }, fine, coarse, ratio, 0.35, 0, () => 0.5, 0, 0);
+      if (pos) out.push({ angle: v.angle, x: pos.x, y: pos.y, cxPt: (pos.x + v.solid.cx) / res, cyPt: (pos.y + v.solid.cy) / res, contact: pos.contact || 0 });
+    }
+    out.sort((a, b) => b.contact - a.contact);
+    return out.slice(0, K || 3);
+  }
+  /** Within snapPt of the requested centre, the legal spot with the most contact (tight, and close to what was asked). */
+  function tryPlaceTight(grid, v, cxPt, cyPt, snapPt) {
+    const res = grid.fineRes;
+    const x0 = Math.round(cxPt * res - v.solid.cx), y0 = Math.round(cyPt * res - v.solid.cy);
+    const R = Math.round((snapPt || 0) * res);
+    const ringR = Math.max(2, Math.round(2 * res));
+    if (!v._ring) { const rg = ring(v.fine.bits, v.fine.w, v.fine.h, ringR); v._ring = packShifted(rg.bits, rg.w, rg.h); }
+    const rc = Math.max(1, v._ring.cells);
+    let best = null;
+    for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+      const d2 = dx * dx + dy * dy; if (d2 > R * R) continue;
+      const x = x0 + dx, y = y0 + dy;
+      if (!grid.fits(v.fine.pm, x, y)) continue;
+      const contact = grid.overlap(v._ring, x - ringR, y - ringR, 1e9) / rc;
+      const score = contact - 0.15 * Math.sqrt(d2) / Math.max(1, R);
+      if (!best || score > best.score) best = { x, y, score, contact, d: Math.sqrt(d2) };
+    }
+    if (best) return { ok: true, x: best.x, y: best.y, snapped: best.d / res, contact: best.contact };
+    const off = x0 < 0 || y0 < 0 || x0 + v.fine.w > grid.W || y0 + v.fine.h > grid.H;
+    const overlap = off ? null : grid.overlap(v.fine.pm, x0, y0, 1e9);
+    return { ok: false, x: x0, y: y0, off, overlapPt2: overlap == null ? null : overlap / (res * res) };
+  }
+  return { solve, verify, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine };
 });
