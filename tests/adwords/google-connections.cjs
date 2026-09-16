@@ -40,8 +40,14 @@ check(C.ADS_RESOURCES.every(r => r.why && r.family) && C.MERCHANT_PROBES.every(p
   'every probe records why the connection matters');
 
 // 5. The statistics the operator asked for are introspected by name.
-for (const field of ['segments.device', 'asset.image_asset.full_size.width_pixels', 'asset.image_asset.full_size.height_pixels', 'metrics.video_views'])
+for (const field of ['segments.device', 'asset.image_asset.full_size.width_pixels', 'asset.image_asset.full_size.height_pixels', 'metrics.video_quartile_p100_rate'])
   check(C.ADS_FIELDS.some(f => f.field === field), 'schema check covers ' + field);
+
+// The live field catalog reports no metrics.video_views in this API version.
+// Requesting it would fail the whole video read, so nothing may ask for it.
+const everyQuery = C.ADS_RESOURCES.map(r => r.query).join(' ') + ' ' + require('fs').readFileSync(path.join(FN, 'googleAdsAdAnalysis.js'), 'utf8');
+check(!/metrics\.video_views/.test(everyQuery), 'no query requests metrics.video_views, which this API version does not have');
+check(!C.ADS_RESOURCES.some(r => /you_tube_video_upload\.status/.test(r.query)), 'the upload resource is read by its real field, state, not status');
 
 // 6. The published Google requirements match the gate that actually blocks a
 //    publication, so the report can never disagree with the enforcement.
@@ -88,7 +94,7 @@ const stub = async (url, options) => {
     // Answer for every name the batch asked about, so a missing field is a real
     // absence rather than an artefact of the stub. v25 has dropped one field.
     const asked = [...JSON.parse(options.body).query.matchAll(/'([a-z0-9_.]+)'/g)].map(m => m[1]);
-    const dropped = /\/v25\//.test(url) ? 'metrics.video_views' : null;
+    const dropped = /\/v25\//.test(url) ? 'metrics.video_quartile_p100_rate' : null;
     return reply(200, {
       results: asked.filter(n => n !== dropped).map(name => ({
         name, category: name.startsWith('metrics.') ? 'METRIC' : name.startsWith('segments.') ? 'SEGMENT' : 'ATTRIBUTE',
@@ -138,7 +144,7 @@ delete process.env.GMC_REFRESH_TOKEN; delete process.env.GEMINI_API_KEY; delete 
   // recommended, and must name what would break.
   const readiness = byName('v25 readiness');
   check(readiness && readiness.status === 'warn', 'a version missing a queried field is not reported as safe to move to');
-  check(/metrics\.video_views/.test(readiness.detail), 'the readiness row names the exact field that would break');
+  check(/metrics\.video_quartile_p100_rate/.test(readiness.detail), 'the readiness row names the exact field that would break');
   check(!byName('v26 readiness'), 'a version Google does not serve is not probed');
 
   check(byName('validateOnly mutate').status === 'skipped', 'the write probe is opt-in and skipped by default');

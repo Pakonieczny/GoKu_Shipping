@@ -109,13 +109,13 @@ const ADS_RESOURCES = [
     query: "SELECT recommendation.type, recommendation.resource_name FROM recommendation LIMIT 1",
     why: "Google's own optimization recommendations." },
   { resource: "you_tube_video_upload", used: true, family: "video",
-    query: "SELECT you_tube_video_upload.resource_name, you_tube_video_upload.video_id, you_tube_video_upload.status FROM you_tube_video_upload LIMIT 5",
+    query: "SELECT you_tube_video_upload.resource_name, you_tube_video_upload.video_id, you_tube_video_upload.state FROM you_tube_video_upload LIMIT 5",
     why: "Videos this app uploaded to YouTube through Google Ads, and their processing status." },
 
   // ── Available, not yet wired ──────────────────────────────────────────────
   { resource: "video", used: true, family: "video",
-    query: "SELECT video.id, video.title, video.duration_millis, metrics.impressions, metrics.video_views, metrics.video_quartile_p25_rate, metrics.video_quartile_p50_rate, metrics.video_quartile_p75_rate, metrics.video_quartile_p100_rate FROM video WHERE " + RECENT + " LIMIT 10",
-    why: "Per-video statistics: views, view rate, watch-through quartiles and duration, read by the campaign analysis." },
+    query: "SELECT video.id, video.title, video.duration_millis, metrics.impressions, metrics.video_quartile_p25_rate, metrics.video_quartile_p50_rate, metrics.video_quartile_p75_rate, metrics.video_quartile_p100_rate FROM video WHERE " + RECENT + " LIMIT 10",
+    why: "Per-video statistics: watch-through quartiles and duration, read by the campaign analysis. metrics.video_views does not exist in this API version." },
   { resource: "asset_field_type_view", used: false, family: "creative",
     query: "SELECT asset_field_type_view.field_type, metrics.impressions, metrics.clicks, metrics.conversions FROM asset_field_type_view WHERE " + RECENT + " LIMIT 5",
     why: "Results grouped by the slot an asset filled (MARKETING_IMAGE, SQUARE_MARKETING_IMAGE, PORTRAIT_MARKETING_IMAGE, YOUTUBE_VIDEO, LOGO) — the closest Google gets to per-shape reporting." },
@@ -148,7 +148,6 @@ const ADS_FIELDS = [
   { field: "asset_group_asset.primary_status", why: "Whether Google is actually able to serve this asset." },
   { field: "metrics.impressions", why: "Baseline delivery." },
   { field: "metrics.conversions_value", why: "Attributed revenue." },
-  { field: "metrics.video_views", why: "Video views — required before any video statistic can be reported." },
   { field: "metrics.video_quartile_p100_rate", why: "Watch-through rate; proves video reporting depth is available." }
 ];
 

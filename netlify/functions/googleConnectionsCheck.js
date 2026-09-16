@@ -120,7 +120,7 @@ async function adsAccessSection(token) {
   }
   const newest = served[served.length - 1];
   rows.push(newest && newest !== V
-    ? C.warn("API version currency", "configured " + V + "; Google also serves " + served.join(", ") + ". Newer versions carry later sunset dates — move GADS_API_VERSION to " + newest + " once its fields are confirmed below.")
+    ? C.ok("API version currency", "configured " + V + "; Google also serves " + served.join(", ") + ". v24 is supported into 2027, so this is a deliberate choice — the readiness row below says whether a move would be safe.")
     : served.length ? C.ok("API version currency", "configured " + V + " is the newest version answering for this account")
       : C.fail("API version currency", "no probed version answered"));
   return { title: "Google Ads · access", rows, served };
@@ -151,7 +151,7 @@ async function adsResourceSection(token) {
   if (!token || !/^\d{10}$/.test(CID)) return { title: "Google Ads · reporting resources", rows: [C.skip("resources", "no usable Ads credentials")] };
   const rows = await inBatches(C.ADS_RESOURCES, 4, async probe => {
     try {
-      const { res, data } = await adsPost(token, "customers/" + CID + "/googleAds:search", { query: probe.query, pageSize: 50 });
+      const { res, data } = await adsPost(token, "customers/" + CID + "/googleAds:search", { query: probe.query });
       if (res.ok) {
         const n = (data.results || []).length;
         return C.ok(probe.resource, (probe.used ? "" : "available, not yet used · ") + n + " row(s) returned", { used: probe.used, family: probe.family, why: probe.why, rows: n });
@@ -172,11 +172,14 @@ async function fieldMap(token, version, names) {
   const found = new Map();
   for (let i = 0; i < names.length; i += 50) {
     const chunk = names.slice(i, i + 50);
-    const { res, data } = await adsPost(token, "googleAdsFields:search", {
-      query: "SELECT name, category, selectable, data_type, selectable_with WHERE name IN (" + chunk.map(n => "'" + n + "'").join(",") + ")"
-    }, version);
-    if (!res.ok) throw new Error(res.status + " — " + (C.adsErrorCode(data) || JSON.stringify(data).slice(0, 160)));
-    for (const r of data.results || []) found.set(r.name, r);
+    const query = "SELECT name, category, selectable, data_type, selectable_with WHERE name IN (" + chunk.map(n => "'" + n + "'").join(",") + ")";
+    let pageToken = null;
+    do {
+      const { res, data } = await adsPost(token, "googleAdsFields:search", { query, ...(pageToken ? { pageToken } : {}) }, version);
+      if (!res.ok) throw new Error(res.status + " — " + (C.adsErrorCode(data) || JSON.stringify(data).slice(0, 160)));
+      for (const r of data.results || []) found.set(r.name, r);
+      pageToken = data.nextPageToken || null;
+    } while (pageToken);
   }
   return found;
 }
@@ -190,9 +193,17 @@ async function adsSchemaSection(token, served) {
 
   const missing = names.filter(n => !current.has(n));
   const unselectable = names.filter(n => current.has(n) && !current.get(n).selectable);
-  rows.push(missing.length
-    ? C.fail("fields present in " + V, missing.length + " of " + names.length + " missing: " + missing.join(", "))
-    : C.ok("fields present in " + V, "all " + names.length + " queried fields exist"));
+  if (missing.length) {
+    rows.push(C.fail("fields present in " + V, missing.length + " of " + names.length + " missing: " + missing.join(", ")));
+    for (const name of missing.slice(0, 6)) {
+      const prefix = name.split(".").slice(0, -1).join(".") + "." + name.split(".").pop().split("_")[0];
+      try {
+        const { res, data } = await adsPost(token, "googleAdsFields:search", { query: "SELECT name WHERE name LIKE '" + prefix + "%'" }, V);
+        const near = res.ok ? (data.results || []).map(r => r.name).slice(0, 12) : [];
+        rows.push(C.warn("alternatives for " + name, near.length ? V + " offers: " + near.join(", ") : "no similarly named field exists in " + V));
+      } catch (e) { rows.push(C.warn("alternatives for " + name, "could not be looked up: " + e.message)); }
+    }
+  } else rows.push(C.ok("fields present in " + V, "all " + names.length + " queried fields exist"));
   if (unselectable.length) rows.push(C.warn("fields selectable in " + V, "present but not selectable: " + unselectable.join(", ")));
 
   // Named fields the operator asked about keep their own row and explanation.
@@ -242,7 +253,7 @@ async function adsWriteSection(token, enabled) {
 }
 
 // ── 6. Merchant Center ──────────────────────────────────────────────────────
-async function merchantSection() {
+async function merchantSection(adsToken) {
   const rows = [];
   let token = null;
   if (!present("GMC_REFRESH_TOKEN")) return { title: "Merchant Center", rows: [C.skip("merchant", "GMC_REFRESH_TOKEN is not set — no Merchant call can be attempted")] };
@@ -250,11 +261,24 @@ async function merchantSection() {
     token = await mintToken(ENV.GMC_CLIENT_ID || ENV.GADS_CLIENT_ID || "", ENV.GMC_CLIENT_SECRET || ENV.GADS_CLIENT_SECRET || "", ENV.GMC_REFRESH_TOKEN);
     rows.push(C.ok("merchant OAuth", "minted an access token"));
   } catch (e) { return { title: "Merchant Center", rows: [C.fail("merchant OAuth", e.message, { remedy: C.remedyFor(e.message) })] }; }
-  if (!MERCHANT) { rows.push(C.warn("merchant account", "no GMC_MERCHANT_ID — set it to probe the account's sub-APIs")); return { title: "Merchant Center", rows }; }
+  let account = MERCHANT;
+  if (!account && adsToken && /^\d{10}$/.test(CID)) {
+    try {
+      const { res, data } = await adsPost(adsToken, "customers/" + CID + "/googleAds:search", {
+        query: "SELECT campaign.shopping_setting.merchant_id FROM campaign WHERE campaign.status != 'REMOVED' LIMIT 200"
+      });
+      const ids = res.ok ? [...new Set((data.results || []).map(r => String((((r.campaign || {}).shoppingSetting || {}).merchantId) || "")).filter(Boolean))] : [];
+      // More than one linked account is not a thing to guess between.
+      if (ids.length === 1) { account = ids[0]; rows.push(C.ok("merchant account", ids[0] + " — discovered from a linked shopping campaign, no environment variable needed")); }
+      else if (ids.length > 1) rows.push(C.warn("merchant account", "campaigns link " + ids.length + " Merchant accounts (" + ids.join(", ") + "); set GMC_MERCHANT_ID to choose one"));
+      else rows.push(C.warn("merchant account", "no shopping campaign names a Merchant account, and GMC_MERCHANT_ID is not set"));
+    } catch (e) { rows.push(C.warn("merchant account", "discovery failed: " + e.message)); }
+  } else if (!account) rows.push(C.warn("merchant account", "no GMC_MERCHANT_ID, and Google Ads credentials were unavailable to discover it"));
+  if (!account) return { title: "Merchant Center", rows };
 
   const probed = await inBatches(C.MERCHANT_PROBES, 3, async probe => {
     try {
-      const res = await fetch("https://merchantapi.googleapis.com/" + probe.path(MERCHANT), {
+      const res = await fetch("https://merchantapi.googleapis.com/" + probe.path(account), {
         method: probe.method, timeout: TIMEOUT,
         headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
         ...(probe.body ? { body: JSON.stringify(probe.body) } : {})
@@ -297,7 +321,7 @@ async function otherGoogleSection(token) {
   } else {
     try {
       const { data } = await adsPost(token, "customers/" + CID + "/googleAds:search", {
-        query: "SELECT asset.youtube_video_asset.youtube_video_id FROM asset WHERE asset.type = 'YOUTUBE_VIDEO' LIMIT 50", pageSize: 50
+        query: "SELECT asset.youtube_video_asset.youtube_video_id FROM asset WHERE asset.type = 'YOUTUBE_VIDEO' LIMIT 50"
       });
       const ids = (data.results || []).map(r => (((r.asset || {}).youtubeVideoAsset || {}).youtubeVideoId)).filter(Boolean);
       if (!ids.length) rows.push(C.ok("YouTube Data API", "key read from " + youtube.source + "; this account has no YouTube video asset to check"));
@@ -320,18 +344,27 @@ async function otherGoogleSection(token) {
     ? C.ok("conversion action configured", ENV.GADS_CONVERSION_ACTION)
     : C.warn("conversion action configured", "GADS_CONVERSION_ACTION is not set — offline uploads have no destination"));
 
-  if (present("SHOPIFY_STORE")) {
+  if (!present("SHOPIFY_STORE")) rows.push(C.skip("Shopify shop", "SHOPIFY_STORE is not set"));
+  else if (!present("SHOPIFY_CLIENT_ID") || !present("SHOPIFY_CLIENT_SECRET")) rows.push(C.warn("Shopify shop", "SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET are required for the client-credentials grant the engine uses"));
+  else {
     const store = ENV.SHOPIFY_STORE, api = ENV.SHOPIFY_API_VERSION || "2025-10";
-    const token = ENV.SHOPIFY_ACCESS_TOKEN || ENV.SHOPIFY_ADMIN_TOKEN || "";
-    if (!token) rows.push(C.skip("Shopify shop", "no Shopify admin token in this environment"));
-    else try {
-      const res = await fetch("https://" + store + "/admin/api/" + api + "/shop.json", { timeout: TIMEOUT, headers: { "X-Shopify-Access-Token": token } });
-      const data = await res.json().catch(() => ({}));
-      rows.push(res.ok
-        ? C.ok("Shopify shop", (data.shop || {}).myshopify_domain + " · " + (data.shop || {}).currency)
-        : C.fail("Shopify shop", res.status + " — " + JSON.stringify(data).slice(0, 160)));
+    try {
+      const auth = await fetch("https://" + store + "/admin/oauth/access_token", {
+        method: "POST", timeout: TIMEOUT, headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ grant_type: "client_credentials", client_id: ENV.SHOPIFY_CLIENT_ID, client_secret: ENV.SHOPIFY_CLIENT_SECRET })
+      });
+      const granted = await auth.json().catch(() => ({}));
+      if (!auth.ok || !granted.access_token) rows.push(C.fail("Shopify token", auth.status + " — " + (granted.error_description || granted.error || "the client-credentials grant was refused")));
+      else {
+        rows.push(C.ok("Shopify token", "client-credentials grant accepted"));
+        const res = await fetch("https://" + store + "/admin/api/" + api + "/shop.json", { timeout: TIMEOUT, headers: { "X-Shopify-Access-Token": granted.access_token } });
+        const data = await res.json().catch(() => ({}));
+        rows.push(res.ok
+          ? C.ok("Shopify shop", ((data.shop || {}).myshopify_domain || store) + " · " + ((data.shop || {}).currency || ""))
+          : C.fail("Shopify shop", res.status + " — " + JSON.stringify(data).slice(0, 160)));
+      }
     } catch (e) { rows.push(C.fail("Shopify shop", e.message)); }
-  } else rows.push(C.skip("Shopify shop", "SHOPIFY_STORE is not set"));
+  }
 
   return { title: "Other Google services and the store", rows };
 }
@@ -375,7 +408,7 @@ async function run(options) {
   sections.push(await adsResourceSection(token));
   sections.push(await adsSchemaSection(token, access.served));
   sections.push(await adsWriteSection(token, options.write));
-  sections.push(await merchantSection());
+  sections.push(await merchantSection(token));
   sections.push(await otherGoogleSection(token));
   sections.push(formatSection());
 

@@ -13,9 +13,12 @@ const check = (cond, name) => { assert.ok(cond, name); passed++; console.log('PA
 const read = analysis.slice(analysis.indexOf("read('video'"), analysis.indexOf("read('video'") + 900);
 check(read.length > 100, 'the analysis performs a video read');
 check(/FROM video\b/.test(read), 'the read queries the video resource');
-for (const metric of ['metrics.video_views', 'metrics.video_view_rate', 'metrics.video_quartile_p25_rate',
-  'metrics.video_quartile_p50_rate', 'metrics.video_quartile_p75_rate', 'metrics.video_quartile_p100_rate'])
+for (const metric of ['metrics.video_quartile_p25_rate', 'metrics.video_quartile_p50_rate',
+  'metrics.video_quartile_p75_rate', 'metrics.video_quartile_p100_rate'])
   check(read.includes(metric), 'the read requests ' + metric);
+// The live field catalog has no metrics.video_views in this API version.
+// Asking for it would fail the entire read, losing the quartiles as well.
+check(!/metrics\.video_views|metrics\.video_view_rate/.test(read), 'the read does not request a video metric this API version lacks');
 for (const attribute of ['video.id', 'video.title', 'video.duration_millis'])
   check(read.includes(attribute), 'the read identifies the video by ' + attribute);
 check(/metrics\.conversions,\s*metrics\.conversions_value/.test(read), 'video outcomes are reported beside conversions and value');
@@ -41,7 +44,7 @@ check(/FROM you_tube_video_upload/.test(autopilot), 'the YouTube upload status i
 //    reporting failure is reported as a failure and not as an unused capability.
 const probe = C.ADS_RESOURCES.find(r => r.resource === 'video');
 check(probe && probe.used === true, 'the catalog records video as a connection in use');
-check(probe.query.includes('metrics.video_views') && probe.query.includes('metrics.video_quartile_p100_rate'),
+check(probe.query.includes('metrics.video_quartile_p100_rate') && !probe.query.includes('metrics.video_views'),
   'the video connection probe verifies the same statistics the analysis depends on');
 check(C.ADS_RESOURCES.some(r => r.resource === 'you_tube_video_upload' && r.used === true),
   'the catalog verifies the YouTube upload connection too');
