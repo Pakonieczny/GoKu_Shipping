@@ -5,95 +5,121 @@
   <title>Etsy Listings</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; background:#0a0a0a; color:#eee;}
-    header { position: sticky; top:0; background:#111; border-bottom:1px solid #222; padding:10px 16px; display:flex; gap:8px; align-items:center; z-index:10;}
-    .btn { background:#2962ff; color:#fff; border:0; border-radius:8px; padding:10px 14px; cursor:pointer; font-weight:600;}
-    .btn:disabled { opacity:.6; cursor:default;}
+    :root{
+      --bg:#0a0a0a; --panel:#111; --card:#121212; --line:#222; --line2:#2a2a2a;
+      --text:#eee; --dim:#bbb; --dim2:#8f8f8f; --accent:#2962ff; --good:#2e7d32; --warn:#e65100;
+      --hdr: 108px;                      /* sticky header height, kept in sync below */
+    }
+    *{ box-sizing:border-box; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin:0; background:var(--bg); color:var(--text); }
+
+    /* ── Sticky command bar ───────────────────────────────────────────────
+       Two fixed rows. Search sits on row 1 at full width because it is the
+       highest-frequency control; section chips sit on row 2 where they can be
+       hit without leaving the pointer's path to the grid. Nothing below the
+       header ever reflows the header, so the search box never moves under the
+       cursor mid-typing. */
+    header { position:sticky; top:0; z-index:20; background:var(--panel); border-bottom:1px solid var(--line); }
+    .bar { display:flex; gap:8px; align-items:center; padding:8px 12px; }
+    .bar2 { padding-top:0; flex-wrap:wrap; }
+
+    .btn { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:9px 13px; cursor:pointer; font-weight:600; font-size:13px; white-space:nowrap; }
+    .btn:disabled { opacity:.5; cursor:default; }
     .btn.secondary { background:#333; }
-    /* toggle state for filter button */
-    .btn.active { background:#00695c; }
-    .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px,1fr)); gap:12px; padding:16px; }
-    .card { background:#121212; border:1px solid #222; border-radius:14px; overflow:hidden; display:flex; flex-direction:column; }
+    .btn.ghost { background:transparent; border:1px solid var(--line2); color:var(--dim); }
 
-    /* image frame: fixed square so every card matches and zoom stays clipped */
-    .thumb-wrap{
-      position:relative;
-      width:100%;
-      aspect-ratio: 1 / 1;
-      overflow:hidden;
-      background:#151515;
+    .search { flex:1; position:relative; min-width:200px; }
+    .search input {
+      width:100%; background:#181818; color:var(--text); border:1px solid var(--line2);
+      border-radius:10px; padding:11px 84px 11px 38px; font-size:15px;
     }
-    /* base image state: fit fully, not cropped; start at scale(1) */
-    .thumb{
-      width:100%;
-      height:100%;
-      object-fit: contain;           /* was cover (appears “zoomed”) */
-      background:#151515;
-      user-select:none;
-      display:block;
-      transform: scale(1);           /* explicit baseline */
-      transform-origin: var(--ox, 50%) var(--oy, 50%);
-      transition: transform .05s linear;
-    }
+    .search input:focus { outline:none; border-color:var(--accent); }
+    .search .mag { position:absolute; left:13px; top:50%; transform:translateY(-50%); color:var(--dim2); font-size:14px; pointer-events:none; }
+    .search .hint { position:absolute; right:10px; top:50%; transform:translateY(-50%); color:var(--dim2); font-size:11px; pointer-events:none; }
+    .search .clear { position:absolute; right:8px; top:50%; transform:translateY(-50%); background:#2a2a2a; border:0; color:var(--dim); border-radius:6px; padding:3px 7px; cursor:pointer; font-size:12px; display:none; }
 
-    /* green checkmark box */
-    .selectBox {
-      width: 18px;
-      height: 18px;
-      accent-color: #2e7d32; /* modern browsers: green check */
-      cursor: pointer;
+    /* ── Section / filter chips ─────────────────────────────────────────── */
+    .chip {
+      background:#1a1a1a; border:1px solid var(--line2); color:var(--dim);
+      border-radius:999px; padding:6px 12px; cursor:pointer; font-size:12.5px;
+      display:inline-flex; align-items:center; gap:7px; white-space:nowrap;
     }
+    .chip .n { color:var(--dim2); font-variant-numeric:tabular-nums; font-size:11.5px; }
+    .chip:hover { border-color:#3a3a3a; color:var(--text); }
+    .chip.on { background:#0d3b34; border-color:#00695c; color:#d7fff6; }
+    .chip.on .n { color:#8fdccd; }
+    .chip.flag.on { background:#3a2200; border-color:var(--warn); color:#ffd9b3; }
 
-    /* selected card highlight */
-    .card.selected {
-      outline: 2px solid #2e7d32;
-      outline-offset: -1px;
-    }
-    .meta { padding:12px; display:flex; flex-direction:column; gap:6px; }
-    .title { font-size:14px; line-height:1.3; color:#fafafa; font-weight:600; }
-    .sku { font-size:12px; color:#bbb; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-    .pill { font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #2a2a2a; color:#cfcfcf; }
-    .status { margin-left:auto; font-size:12px; color:#9ad; }
+    .status { font-size:12px; color:#9ad; white-space:nowrap; }
     .status.bad { color:#ff8a80; }
     .status.ok  { color:#7ddf8a; }
-    footer { position: sticky; bottom:0; background:#111; border-top:1px solid #222; padding:10px 16px; display:flex; gap:8px; align-items:center; }
-    .pagebox { margin-left:auto; color:#aaa; }
-    input[type="number"]{ background:#181818; color:#ddd; border:1px solid #2a2a2a; border-radius:8px; padding:8px; width:90px;}
-    .search { flex: 1; }
-    .search input { width:100%; background:#181818; color:#ddd; border:1px solid #2a2a2a; border-radius:8px; padding:10px 12px; }
-    .notice { margin:16px; padding:12px 14px; border:1px solid #2a2a2a; border-radius:12px; background:#141414; color:#ddd; font-size:13px; }
+
+    /* Live counters: catalog size, result count, API spend. Tabular figures so
+       the numbers do not jitter as they tick during a sync. */
+    .meter { font-size:11.5px; color:var(--dim2); white-space:nowrap; font-variant-numeric:tabular-nums; }
+    .meter b { color:var(--dim); font-weight:600; }
+    .meter.warn b { color:#ffb74d; }
+    .meter.bad b { color:#ff8a80; }
+
+    /* Sync progress: a hairline under the header, so a background refresh
+       never pushes the grid down. */
+    .syncbar { height:2px; background:transparent; }
+    .syncbar > i { display:block; height:100%; width:0%; background:var(--accent); transition:width .2s linear; }
+
+    /* ── Results grid ─────────────────────────────────────────────────────── */
+    .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(260px,1fr)); gap:12px; padding:12px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:14px; overflow:hidden; display:flex; flex-direction:column; content-visibility:auto; contain-intrinsic-size: 420px; }
+    .card.selected { outline:2px solid var(--good); outline-offset:-1px; }
+
+    .thumb-wrap{ position:relative; width:100%; aspect-ratio:1/1; overflow:hidden; background:#151515; }
+    .thumb{
+      width:100%; height:100%; object-fit:contain; background:#151515; user-select:none; display:block;
+      transform:scale(1); transform-origin: var(--ox,50%) var(--oy,50%); transition:transform .05s linear;
+    }
+    .selectBox { width:18px; height:18px; accent-color:var(--good); cursor:pointer; }
+
+    .meta { padding:10px 12px 12px; display:flex; flex-direction:column; gap:6px; }
+    .title { font-size:13.5px; line-height:1.3; color:#fafafa; font-weight:600; }
+    .sku { font-size:12px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .sku.none { color:#ff9e80; }
+    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .pill { font-size:11.5px; padding:3px 8px; border-radius:999px; border:1px solid var(--line2); color:#cfcfcf; }
+    .pill.sect { border-color:#2b3a52; color:#9fc0ea; }
+    mark { background:#4a3d00; color:#ffe89a; border-radius:2px; padding:0 1px; }
+
+    input[type="text"]{ background:#181818; color:#ddd; border:1px solid var(--line2); border-radius:8px; padding:8px; }
+
+    .notice { margin:14px 12px; padding:14px 16px; border:1px solid var(--line2); border-radius:12px; background:#141414; color:var(--dim); font-size:13px; line-height:1.5; }
+    .notice b { color:var(--text); }
+    .sentinel { height:1px; }
+    .endcap { padding:18px 12px 40px; text-align:center; color:var(--dim2); font-size:12px; }
   </style>
 </head>
 <body>
 
   <header>
-    <button id="connectEtsyBtn" class="btn">Connect Etsy</button>
-    <button id="refreshBtn" class="btn secondary">Refresh</button>
-
-    <button id="filterCompleteBtn" class="btn secondary" title="Show only items without the green checkmark">Filter Complete</button>
-
-    <div class="search">
-      <input id="searchInput" placeholder="Filter by title… (client-side)" />
+    <div class="bar">
+      <div class="search">
+        <span class="mag">⌕</span>
+        <input id="searchInput" type="text" autocomplete="off" spellcheck="false"
+               placeholder="Search all listings by title, SKU or listing ID…" />
+        <span class="hint" id="searchHint">/</span>
+        <button class="clear" id="searchClear" title="Clear (Esc)">✕</button>
+      </div>
+      <span class="meter" id="resultMeter"></span>
+      <span class="meter" id="catalogMeter"></span>
+      <span class="meter" id="apiMeter" title="Etsy API calls — this console today, and the key's remaining daily quota"></span>
+      <button id="syncBtn" class="btn secondary" title="Fetch listings changed since the last sync · Shift-click to rebuild the whole catalog">Sync</button>
+      <button id="connectEtsyBtn" class="btn">Connect Etsy</button>
+      <span id="authStatus" class="status">Not connected</span>
     </div>
-
-    <span id="authStatus" class="status">Not connected</span>
+    <div class="bar bar2" id="chipRow"></div>
+    <div class="syncbar"><i id="syncProgress"></i></div>
   </header>
 
   <main id="listContainer" class="grid" aria-live="polite"></main>
-
-  <footer>
-    <button id="prevBtn" class="btn secondary">Prev</button>
-    <button id="nextBtn" class="btn">Next</button>
-    <span class="pagebox">
-      Page <span id="pageNum">1</span>
-      &nbsp;•&nbsp; Page size
-      <input id="pageSize" type="number" min="1" max="100" value="100" />
-      &nbsp;•&nbsp; Go to
-      <input id="pageJump" type="number" min="1" placeholder="Page" />
-      <button id="goBtn" class="btn secondary">Go</button>
-    </span>
-  </footer>
+  <div id="sentinel" class="sentinel"></div>
+  <div id="endcap" class="endcap"></div>
 
 <script>
 /** ============ Hard domain binding ============ */
@@ -296,6 +322,384 @@ async function apiFetch(path, init={}){
   return r;
 }
 
+
+/** ============ Local catalog store ==========================================
+ *
+ * WHY A LOCAL CATALOG
+ * The shop holds ~5,600 active listings and the Etsy key allows ~3,500 calls a
+ * day, most of it already spent by production. Searching the shop by calling
+ * Etsy per keystroke — or even per search — is not affordable: Etsy's own
+ * title search costs one call per 100 candidates scanned, so a single broad
+ * query can burn dozens of calls and still only look at part of the shop.
+ *
+ * Instead the console keeps a local mirror of the catalog. Building it costs
+ * one page of 100 listings per call — about 57 calls for the whole shop, a
+ * one-off ~1.6% of the daily budget — and every search after that is a local
+ * scan costing ZERO calls and completing in single-digit milliseconds. The
+ * bulk read asks for Images and Inventory inline, so one call per page brings
+ * back titles, thumbnails, prices, SKUs and section ids together.
+ *
+ * Keeping it current costs 1-2 calls: listings are re-read newest-modified
+ * first and the walk stops at the first page that is entirely older than the
+ * last sync.
+ *
+ * STORAGE lives in IndexedDB — a few MB of records is far past what
+ * localStorage holds. If IndexedDB is unavailable (private windows, blocked
+ * site data) the same interface falls back to memory: the console still works
+ * for the session, it just rebuilds the catalog next time.
+ */
+const DB_NAME = "sku_catalog_v1";
+const STORE_LISTINGS = "listings";
+const STORE_META = "meta";
+
+function memoryStore(reason){
+  const rows = new Map();
+  const meta = new Map();
+  return {
+    kind: "memory", reason,
+    async getAll(){ return [...rows.values()]; },
+    async putMany(list){ for (const r of list) rows.set(String(r.listing_id), r); },
+    async deleteMany(ids){ for (const id of ids) rows.delete(String(id)); },
+    async clear(){ rows.clear(); },
+    async getMeta(k){ return meta.has(k) ? meta.get(k) : null; },
+    async setMeta(k, v){ meta.set(k, v); }
+  };
+}
+
+function openCatalogStore(){
+  return new Promise(resolve => {
+    let idb = null;
+    try { idb = typeof indexedDB !== "undefined" ? indexedDB : null; } catch (_) {}
+    if (!idb) return resolve(memoryStore("IndexedDB is unavailable in this browser context"));
+
+    let req;
+    try { req = idb.open(DB_NAME, 1); }
+    catch (e) { return resolve(memoryStore("IndexedDB could not be opened: " + e.message)); }
+
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE_LISTINGS)) db.createObjectStore(STORE_LISTINGS, { keyPath: "listing_id" });
+      if (!db.objectStoreNames.contains(STORE_META)) db.createObjectStore(STORE_META);
+    };
+    req.onerror = () => resolve(memoryStore("IndexedDB was blocked: " + (req.error && req.error.message || "unknown")));
+    req.onsuccess = () => {
+      const db = req.result;
+      const tx = (store, mode) => db.transaction(store, mode).objectStore(store);
+      const done = t => new Promise((res, rej) => { t.oncomplete = () => res(); t.onerror = () => rej(t.error); t.onabort = () => rej(t.error); });
+      resolve({
+        kind: "indexeddb", reason: "",
+        getAll(){
+          return new Promise((res, rej) => {
+            const r = tx(STORE_LISTINGS, "readonly").getAll();
+            r.onsuccess = () => res(r.result || []);
+            r.onerror = () => rej(r.error);
+          });
+        },
+        putMany(list){
+          const t = db.transaction(STORE_LISTINGS, "readwrite");
+          const os = t.objectStore(STORE_LISTINGS);
+          for (const row of list) os.put(row);
+          return done(t);
+        },
+        deleteMany(ids){
+          const t = db.transaction(STORE_LISTINGS, "readwrite");
+          const os = t.objectStore(STORE_LISTINGS);
+          for (const id of ids) os.delete(Number(id));
+          return done(t);
+        },
+        clear(){
+          const t = db.transaction(STORE_LISTINGS, "readwrite");
+          t.objectStore(STORE_LISTINGS).clear();
+          return done(t);
+        },
+        getMeta(k){
+          return new Promise((res, rej) => {
+            const r = tx(STORE_META, "readonly").get(k);
+            r.onsuccess = () => res(r.result === undefined ? null : r.result);
+            r.onerror = () => rej(r.error);
+          });
+        },
+        setMeta(k, v){
+          const t = db.transaction(STORE_META, "readwrite");
+          t.objectStore(STORE_META).put(v, k);
+          return done(t);
+        }
+      });
+    };
+  });
+}
+
+/** ============ Catalog + search index ====================================== */
+
+/* Fold case and accents and strip punctuation so "14K Gold-Filled" matches a
+   query of "14k gold filled". Computed once per listing at ingest, not per
+   keystroke — this is what keeps a 5,600-row scan under a frame. */
+function normalizeText(v){
+  return String(v == null ? "" : v)
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function pickPrimaryImage(images){
+  if (!Array.isArray(images) || !images.length) return "";
+  const best = images.find(x => x && x.is_primary) ||
+               [...images].sort((a,b) => (a?.rank ?? 999) - (b?.rank ?? 999))[0] ||
+               images[0];
+  return best?.url_570xN || best?.url_fullxfull || "";
+}
+
+function skusFromInventory(inventory){
+  const products = inventory && Array.isArray(inventory.products) ? inventory.products : [];
+  const out = [];
+  for (const p of products){
+    const sku = String(p?.sku || "").trim();
+    if (sku) out.push(sku);
+  }
+  return out;
+}
+
+/* Etsy's field name for "when did this listing last change" differs by
+   endpoint and by the legacy flag, so take whichever arrived. */
+function listingUpdatedAt(x){
+  const v = x?.last_modified_timestamp ?? x?.updated_timestamp ?? x?.state_timestamp ?? x?.original_creation_timestamp;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/* The stored shape. Deliberately small — 5,600 of these sit in memory and in
+   IndexedDB — and it carries its own precomputed search key. */
+function toRecord(x){
+  const skus = skusFromInventory(x.inventory);
+  const title = String(x.title || "");
+  const sku = skus.length ? skus[0] : "";
+  return {
+    listing_id: Number(x.listing_id),
+    title,
+    sku,
+    image: pickPrimaryImage(x.images),
+    price: x.price || null,
+    section_id: x.shop_section_id == null ? null : Number(x.shop_section_id),
+    updated: listingUpdatedAt(x),
+    // search key: title + SKU + id, normalized once
+    q: normalizeText(title + " " + sku + " " + x.listing_id)
+  };
+}
+
+const Catalog = {
+  rows: [],
+  byId: new Map(),
+  store: null,
+  sections: [],          // [{ shop_section_id, title, active_listing_count }]
+  lastSync: 0,
+  shopCount: null,       // Etsy's own active count, for drift detection
+
+  async open(){
+    this.store = await openCatalogStore();
+    const [rows, sections, lastSync, shopCount] = await Promise.all([
+      this.store.getAll(),
+      this.store.getMeta("sections"),
+      this.store.getMeta("lastSync"),
+      this.store.getMeta("shopCount")
+    ]);
+    this.rows = Array.isArray(rows) ? rows : [];
+    this.sections = Array.isArray(sections) ? sections : [];
+    this.lastSync = Number(lastSync) || 0;
+    this.shopCount = shopCount == null ? null : Number(shopCount);
+    this.reindex();
+    return this;
+  },
+
+  reindex(){
+    this.byId = new Map(this.rows.map(r => [r.listing_id, r]));
+  },
+
+  async upsert(records){
+    if (!records.length) return 0;
+    let added = 0;
+    for (const r of records){
+      const prev = this.byId.get(r.listing_id);
+      if (prev) Object.assign(prev, r);
+      else { this.rows.push(r); this.byId.set(r.listing_id, r); added++; }
+    }
+    await this.store.putMany(records.map(r => this.byId.get(r.listing_id)));
+    return added;
+  },
+
+  /* Patch one row after a SKU write so search and the "missing SKU" filter
+     stay truthful without another Etsy read. */
+  async setSku(listingId, sku){
+    const row = this.byId.get(Number(listingId));
+    if (!row) return;
+    row.sku = sku;
+    row.q = normalizeText(row.title + " " + sku + " " + row.listing_id);
+    await this.store.putMany([row]);
+  },
+
+  async reset(){
+    this.rows = []; this.byId = new Map(); this.lastSync = 0;
+    await this.store.clear();
+    await this.store.setMeta("lastSync", 0);
+  }
+};
+
+/** ============ Search ======================================================
+ *
+ * A linear scan over ~5,600 precomputed strings runs in ~2-4ms, so there is no
+ * debounce and no worker: every keystroke re-filters and re-renders from the
+ * top. Ranking puts whole-word and prefix hits above mid-word ones, which is
+ * what makes typing "gold" feel like it found the right things first.
+ */
+function searchCatalog(rows, rawQuery, { sectionId, missingSkuOnly, hideDone, doneSet }){
+  const q = normalizeText(rawQuery);
+  const terms = q ? q.split(" ").filter(Boolean) : [];
+  const out = [];
+
+  for (const r of rows){
+    if (sectionId !== null && r.section_id !== sectionId) continue;
+    if (missingSkuOnly && r.sku) continue;
+    if (hideDone && doneSet.has(String(r.listing_id))) continue;
+
+    if (!terms.length){ out.push({ r, score: 0 }); continue; }
+
+    let score = 0, ok = true;
+    for (const t of terms){
+      const at = r.q.indexOf(t);
+      if (at === -1){ ok = false; break; }
+      // 0 = starts the record, 1 = starts a word, 2 = mid-word
+      if (at === 0) score += 0;
+      else if (r.q[at-1] === " ") score += 1;
+      else score += 2;
+    }
+    if (!ok) continue;
+    out.push({ r, score });
+  }
+
+  // Stable-ish ordering: best match first, then newest-modified, so an empty
+  // query shows recently touched listings rather than an arbitrary slice.
+  out.sort((a,b) => (a.score - b.score) || (b.r.updated - a.r.updated));
+  return out.map(x => x.r);
+}
+
+/** ============ Sync engine =================================================
+ *
+ * Every response from the proxy reports `etsy_call_count` — a real count from
+ * the server, not an estimate — so the console can show exactly what it spent.
+ */
+const PAGE = 100;              // Etsy's maximum page size: fewest calls per listing
+const Budget = {
+  KEY: "sku_api_spend_v1",
+  today(){ return new Date().toISOString().slice(0,10); },
+  read(){
+    try {
+      const j = JSON.parse(localStorage.getItem(this.KEY) || "{}");
+      return (j && j.day === this.today()) ? Number(j.n) || 0 : 0;
+    } catch { return 0; }
+  },
+  add(n){
+    const total = this.read() + (Number(n) || 0);
+    try { localStorage.setItem(this.KEY, JSON.stringify({ day: this.today(), n: total })); } catch (_) {}
+    return total;
+  }
+};
+
+function countCalls(payload){
+  const n = Number(payload && payload.etsy_call_count);
+  if (Number.isFinite(n) && n > 0) Budget.add(n);
+  return Number.isFinite(n) ? n : 0;
+}
+
+async function fetchListingPage(offset, { sortByUpdated = true } = {}){
+  const qs = new URLSearchParams({
+    limit: String(PAGE),
+    offset: String(offset),
+    state: "active",
+    includes: "Images,Inventory"
+  });
+  if (sortByUpdated){ qs.set("sort_on", "updated"); qs.set("sort_order", "desc"); }
+
+  const r = await apiFetch(`/etsyShopListingsProxy?${qs.toString()}`);
+  const text = await r.text();
+  let js = {};
+  try { js = JSON.parse(text); } catch { js = { error: text.slice(0, 300) }; }
+  countCalls(js);
+  if (!r.ok) throw new Error(`Etsy listings read failed (HTTP ${r.status}): ${js.error || text.slice(0,200)}`);
+  return {
+    results: Array.isArray(js.results) ? js.results : [],
+    total: Number(js.count) || null
+  };
+}
+
+async function fetchSections(){
+  const r = await apiFetch(`/etsyShopListingsProxy?mode=sections`);
+  const js = await r.json().catch(() => ({}));
+  countCalls(js);
+  if (!r.ok) return [];
+  const rows = Array.isArray(js.results) ? js.results : [];
+  return rows.map(s => ({
+    shop_section_id: Number(s.shop_section_id),
+    title: String(s.title || "Untitled"),
+    active_listing_count: Number(s.active_listing_count) || 0
+  }));
+}
+
+let __syncing = false;
+/**
+ * mode "full"        — walk the whole shop (~57 calls at 5,600 listings).
+ * mode "incremental" — walk newest-modified first and stop at the first page
+ *                      entirely older than the last sync (usually 1 call).
+ */
+async function syncCatalog(mode = "incremental", onProgress = () => {}){
+  if (__syncing) return { skipped: true };
+  __syncing = true;
+  const startedAt = Date.now();
+  const since = Catalog.lastSync;
+  const doIncremental = mode === "incremental" && since > 0 && Catalog.rows.length > 0;
+
+  let offset = 0, seen = 0, added = 0, pages = 0, total = null, stopped = "";
+  try {
+    for (;;){
+      const { results, total: t } = await fetchListingPage(offset, { sortByUpdated: true });
+      if (t != null) total = t;
+      pages++;
+      if (!results.length){ stopped = "end"; break; }
+
+      const records = results.map(toRecord);
+      added += await Catalog.upsert(records);
+      seen += records.length;
+
+      onProgress({
+        seen, added, pages,
+        total: doIncremental ? null : total,
+        catalog: Catalog.rows.length
+      });
+
+      if (doIncremental){
+        // Newest-modified first: once a whole page predates the last sync,
+        // everything after it does too.
+        const newest = Math.max(...records.map(r => r.updated), 0);
+        if (newest && newest <= since){ stopped = "caught-up"; break; }
+      }
+
+      if (results.length < PAGE){ stopped = "end"; break; }
+      offset += PAGE;
+      if (offset > 20000){ stopped = "guard"; break; }   // never loop forever
+    }
+
+    Catalog.lastSync = Math.floor(startedAt / 1000);
+    await Catalog.store.setMeta("lastSync", Catalog.lastSync);
+    if (total != null){
+      Catalog.shopCount = total;
+      await Catalog.store.setMeta("shopCount", total);
+    }
+    return { seen, added, pages, total, stopped, full: !doIncremental };
+  } finally {
+    __syncing = false;
+  }
+}
+
 /** ============ Selection persistence ============ */
 const SELECT_KEY = "sku_selected_ids_v1";
 /* IDs are normalized to strings: they arrive as numbers from Etsy and come
@@ -316,60 +720,54 @@ let selectedSet = loadSelectedSet();
 function attachZoom(wrap, img){
   let scale = 1;
   const MIN = 1, MAX = 5, STEP = 0.2;
-
   const reset = () => {
     scale = 1;
     img.style.transform = "scale(1)";
     img.style.setProperty("--ox", "50%");
     img.style.setProperty("--oy", "50%");
   };
-
-  // ensure pristine state immediately and whenever the image source finishes loading
   reset();
   img.addEventListener("load", reset, { once: true });
-
   wrap.addEventListener("wheel", (e) => {
     e.preventDefault();
     const rect = wrap.getBoundingClientRect();
-    const ox = ((e.clientX - rect.left) / rect.width) * 100;
-    const oy = ((e.clientY - rect.top)  / rect.height) * 100;
-    img.style.setProperty("--ox", ox + "%");
-    img.style.setProperty("--oy", oy + "%");
-
+    img.style.setProperty("--ox", ((e.clientX - rect.left) / rect.width) * 100 + "%");
+    img.style.setProperty("--oy", ((e.clientY - rect.top) / rect.height) * 100 + "%");
     const delta = e.deltaY < 0 ? STEP : -STEP;
     scale = Math.min(MAX, Math.max(MIN, +(scale + delta).toFixed(2)));
     img.style.transform = `scale(${scale})`;
   }, { passive: false });
-
-  // quick reset to baseline
   wrap.addEventListener("dblclick", reset);
 }
 
-/** ============ Listings UI ============ */
+/** ============ Elements ============ */
 const listContainer = document.getElementById("listContainer");
-const pageNumEl     = document.getElementById("pageNum");
-const pageSizeEl    = document.getElementById("pageSize");
 const searchInput   = document.getElementById("searchInput");
+const searchClear   = document.getElementById("searchClear");
 const authStatusEl  = document.getElementById("authStatus");
-const prevBtn       = document.getElementById("prevBtn");
-const nextBtn       = document.getElementById("nextBtn");
-const refreshBtn    = document.getElementById("refreshBtn");
-const connectBtn    = document.getElementById("connectEtsyBtn");
-const filterCompleteBtn = document.getElementById("filterCompleteBtn");
-const pageJumpEl    = document.getElementById("pageJump");
-const goBtn         = document.getElementById("goBtn");
+const chipRow       = document.getElementById("chipRow");
+const resultMeter   = document.getElementById("resultMeter");
+const catalogMeter  = document.getElementById("catalogMeter");
+const apiMeter      = document.getElementById("apiMeter");
+const syncBtn       = document.getElementById("syncBtn");
+const syncProgress  = document.getElementById("syncProgress");
+const sentinel      = document.getElementById("sentinel");
+const endcap        = document.getElementById("endcap");
 
-let page = 1;
-let lastBatch = [];
-let filterIncompleteOnly = false; // show ONLY items without the green checkmark
-let loading = false;
+/** ============ View state ============ */
+const CHUNK = 60;              // cards appended per scroll step
+let results = [];              // current filtered+ranked rows
+let rendered = 0;              // how many of them are in the DOM
+let sectionId = null;          // null = every section
+let missingSkuOnly = false;
+let hideDone = false;
+let quotaRemaining = null;     // from the free usage endpoint, if verified
 
 function setStatus(text, kind){
   if (!authStatusEl) return;
   authStatusEl.textContent = text;
   authStatusEl.className = "status" + (kind ? " " + kind : "");
 }
-
 function setAuthBadge(){
   if (getAccessToken()) setStatus(tokenIsFresh() ? "Connected" : "Reconnecting…", tokenIsFresh() ? "ok" : "");
   else if (getRefreshToken()) setStatus("Reconnecting…", "");
@@ -377,161 +775,355 @@ function setAuthBadge(){
   else setStatus("Not connected", "");
 }
 
-function showNotice(msg){
+function showNotice(html){
   listContainer.innerHTML = "";
   const box = document.createElement("div");
   box.className = "notice";
-  box.textContent = msg;
+  if (typeof html === "string") box.textContent = html;
+  else box.appendChild(html);
   listContainer.appendChild(box);
 }
 
-function titlePassesFilter(t){
-  const q = searchInput.value.trim().toLowerCase();
-  if (!q) return true;
-  return String(t||"").toLowerCase().includes(q);
+/** ============ Meters ============ */
+function renderMeters(){
+  resultMeter.innerHTML = "";
+  const shown = Math.min(rendered, results.length);
+  resultMeter.append(
+    document.createTextNode("showing "),
+    Object.assign(document.createElement("b"), { textContent: String(shown) }),
+    document.createTextNode(" of "),
+    Object.assign(document.createElement("b"), { textContent: String(results.length) })
+  );
+
+  catalogMeter.innerHTML = "";
+  const drift = Catalog.shopCount != null && Catalog.rows.length !== Catalog.shopCount;
+  catalogMeter.className = "meter" + (drift ? " warn" : "");
+  catalogMeter.append(
+    document.createTextNode("catalog "),
+    Object.assign(document.createElement("b"), { textContent: String(Catalog.rows.length) }),
+    document.createTextNode(Catalog.shopCount != null ? ` / ${Catalog.shopCount} live` : "")
+  );
+  catalogMeter.title = Catalog.lastSync
+    ? "Last synced " + new Date(Catalog.lastSync * 1000).toLocaleString() +
+      (drift ? " — count differs from Etsy's; a full resync will reconcile it" : "")
+    : "Not synced yet";
+
+  const spent = Budget.read();
+  apiMeter.innerHTML = "";
+  const low = quotaRemaining != null && quotaRemaining < 300;
+  apiMeter.className = "meter" + (low ? " bad" : "");
+  apiMeter.append(
+    document.createTextNode("api "),
+    Object.assign(document.createElement("b"), { textContent: String(spent) }),
+    document.createTextNode(quotaRemaining != null ? ` · ${quotaRemaining} left on key` : " today")
+  );
 }
 
+/* The usage endpoint is free — it reads counters that real calls already
+   wrote and never touches Etsy — so polling it costs nothing. The remaining
+   quota it reports comes from Etsy's own response headers and is shared by
+   every app on the key, which is exactly the number worth watching here. */
+async function refreshQuota(){
+  try {
+    const r = await fetch(`${functionsBaseUrl}/etsyApiUsage?app=sku-console`);
+    const js = await r.json();
+    quotaRemaining = (js && js.verified && js.etsy_remaining_today != null)
+      ? Number(js.etsy_remaining_today) : null;
+  } catch (_) { quotaRemaining = null; }
+  renderMeters();
+}
+
+/** ============ Chips ============ */
+function sectionCounts(){
+  const counts = new Map();
+  let none = 0;
+  for (const r of Catalog.rows){
+    if (r.section_id == null) none++;
+    else counts.set(r.section_id, (counts.get(r.section_id) || 0) + 1);
+  }
+  return { counts, none };
+}
+
+function renderChips(){
+  chipRow.innerHTML = "";
+  const { counts, none } = sectionCounts();
+
+  const chip = (label, count, on, onClick, extraClass) => {
+    const b = document.createElement("button");
+    b.className = "chip" + (on ? " on" : "") + (extraClass ? " " + extraClass : "");
+    b.type = "button";
+    b.append(document.createTextNode(label));
+    if (count != null){
+      const n = document.createElement("span");
+      n.className = "n";
+      n.textContent = String(count);
+      b.appendChild(n);
+    }
+    b.addEventListener("click", onClick);
+    chipRow.appendChild(b);
+    return b;
+  };
+
+  chip("All", Catalog.rows.length, sectionId === null, () => { sectionId = null; renderChips(); applyFilters(); });
+
+  // Sections in Etsy's own order, so the chips read like the shop does.
+  for (const s of Catalog.sections){
+    const local = counts.get(s.shop_section_id) || 0;
+    chip(s.title, local, sectionId === s.shop_section_id,
+      () => { sectionId = s.shop_section_id; renderChips(); applyFilters(); });
+  }
+  if (none) chip("No section", none, sectionId === -1, () => { sectionId = -1; renderChips(); applyFilters(); });
+
+  chip("Missing SKU", null, missingSkuOnly,
+    () => { missingSkuOnly = !missingSkuOnly; renderChips(); applyFilters(); }, "flag");
+  chip("Hide ✓ done", null, hideDone,
+    () => { hideDone = !hideDone; renderChips(); applyFilters(); }, "flag");
+}
+
+/** ============ Rendering (infinite scroll) ============ */
 function formatPrice(price){
   if (!price) return "";
   const amount  = Number(price.amount);
-  const divisor = Number(price.divisor) || 100;   // Etsy Money objects carry their own divisor
+  const divisor = Number(price.divisor) || 100;
   if (!Number.isFinite(amount)) return "";
   return `${(amount / divisor).toFixed(2)} ${price.currency_code || ""}`.trim();
 }
 
-function renderListings(items){
-  listContainer.innerHTML = "";
-  let shown = 0;
-  for (const it of (Array.isArray(items) ? items : [])){
-    if (!titlePassesFilter(it.title)) continue;
-    // If filtering, hide anything already “checked/complete”
-    if (filterIncompleteOnly && selectedSet.has(String(it.listing_id))) continue;
-    shown++;
+const sectionTitle = id => (Catalog.sections.find(s => s.shop_section_id === id) || {}).title || "";
 
-    // ——— image + zoom wrapper ———
-    const wrap = document.createElement("div");
-    wrap.className = "thumb-wrap";
+/* Highlights the matched terms. Matching itself is fold-insensitive (see
+   normalizeText), but the highlight only marks terms that appear literally in
+   the title — a fold-only match such as "rose" against "Rosé" still lists the
+   listing, it just is not underlined. Built from text nodes, never parsed
+   HTML: the title is shop data. */
+function highlightInto(el, text, terms){
+  el.textContent = "";
+  if (!terms.length){ el.textContent = text; return; }
 
-    const img = document.createElement("img");
-    img.className = "thumb";
-    img.alt = it.title || "Listing image";
-    img.loading = "lazy";
-    img.src = it.primary_image || "";
-    wrap.appendChild(img);
-    attachZoom(wrap, img);
+  const hay = text.toLowerCase();
+  const spans = [];
+  for (const t of terms){
+    let from = 0, at;
+    while ((at = hay.indexOf(t, from)) !== -1){ spans.push([at, at + t.length]); from = at + t.length; }
+  }
+  if (!spans.length){ el.textContent = text; return; }
 
-    // ——— meta block ———
-    const meta = document.createElement("div");
-    meta.className = "meta";
-
-    const title = document.createElement("div");
-    title.className = "title";
-    title.textContent = it.title || "(untitled)";
-
-    const sku = document.createElement("div");
-    sku.className = "sku";
-    const firstSku = (Array.isArray(it.skus) && it.skus.length) ? it.skus[0] : "";
-    sku.textContent = firstSku ? `SKU: ${firstSku} (Variant 1)` : "SKU: —";
-
-    const row = document.createElement("div");
-    row.className = "row";
-
-    // ——— persistent selection checkbox ———
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.className = "selectBox";
-    cb.title = "Select listing";
-    cb.checked = selectedSet.has(String(it.listing_id));
-    cb.addEventListener("change", () => {
-      const cardEl = cb.closest(".card");
-      if (cb.checked){
-        selectedSet.add(String(it.listing_id));
-        if (cardEl) cardEl.classList.add("selected");
-      } else {
-        selectedSet.delete(String(it.listing_id));
-        if (cardEl) cardEl.classList.remove("selected");
-      }
-      saveSelectedSet(selectedSet);
-    });
-    row.appendChild(cb);
-
-    const idPill = document.createElement("span");
-    idPill.className = "pill";
-    idPill.textContent = `#${it.listing_id}`;
-
-    const priceText = formatPrice(it.price);
-    const pricePill = document.createElement("span");
-    pricePill.className = "pill";
-    pricePill.textContent = priceText;
-
-    row.appendChild(idPill);
-    if (priceText) row.appendChild(pricePill);
-
-    // 🔹 Edit SKUs button
-    const editBtn = document.createElement("button");
-    editBtn.className = "btn secondary";
-    editBtn.textContent = "Edit SKUs";
-    editBtn.style.marginLeft = "auto";
-    editBtn.addEventListener("click", () => openSkuEditor(it));
-    row.appendChild(editBtn);
-
-    // 🔹 Generate button
-    const genBtn = document.createElement("button");
-    genBtn.className = "btn";
-    genBtn.textContent = "Generate";
-    genBtn.dataset.role = "gen-btn";
-    genBtn.addEventListener("click", () => generateAndSaveSku(it, genBtn));
-    row.appendChild(genBtn);
-
-    if (!firstSku) {
-      genBtn.style.background = "OrangeRed";
-      genBtn.title = "No SKU yet — click Generate";
-    }
-
-    meta.appendChild(title);
-    meta.appendChild(sku);
-    meta.appendChild(row);
-
-    // ——— card assembly ———
-    const card = document.createElement("div");
-    card.className = "card";
-    card.appendChild(wrap);   // ⟵ replaced: was card.appendChild(img)
-    card.appendChild(meta);
-
-    // selected highlight on initial render
-    if (cb.checked) card.classList.add("selected");
-
-    // 🔹 SKU editor container (hidden until opened)
-    const editor = document.createElement("div");
-    editor.className = "meta";
-    editor.style.display = "none";
-    editor.dataset.role = "sku-editor";
-    card.appendChild(editor);
-
-    listContainer.appendChild(card);
+  spans.sort((a,b) => a[0] - b[0]);
+  const merged = [spans[0]];
+  for (const [a,b] of spans.slice(1)){
+    const last = merged[merged.length - 1];
+    if (a <= last[1]) last[1] = Math.max(last[1], b);
+    else merged.push([a,b]);
   }
 
-  if (!shown && Array.isArray(items) && items.length){
-    showNotice("No listings on this page match the current filters.");
+  let cursor = 0;
+  for (const [a,b] of merged){
+    if (a > cursor) el.appendChild(document.createTextNode(text.slice(cursor, a)));
+    const m = document.createElement("mark");
+    m.textContent = text.slice(a, b);
+    el.appendChild(m);
+    cursor = b;
   }
-  return shown;
+  if (cursor < text.length) el.appendChild(document.createTextNode(text.slice(cursor)));
 }
 
-// ───────────────────── SKU Editor helpers ─────────────────────
+function buildCard(r, terms){
+  const card = document.createElement("div");
+  card.className = "card";
+  card.dataset.listingId = String(r.listing_id);
+
+  const wrap = document.createElement("div");
+  wrap.className = "thumb-wrap";
+  const img = document.createElement("img");
+  img.className = "thumb";
+  img.alt = r.title || "Listing image";
+  img.loading = "lazy";
+  img.decoding = "async";
+  img.src = r.image || "";
+  wrap.appendChild(img);
+  attachZoom(wrap, img);
+  card.appendChild(wrap);
+
+  const meta = document.createElement("div");
+  meta.className = "meta";
+
+  const title = document.createElement("div");
+  title.className = "title";
+  highlightInto(title, r.title || "(untitled)", terms);
+
+  const sku = document.createElement("div");
+  sku.className = "sku" + (r.sku ? "" : " none");
+  sku.textContent = r.sku ? `SKU: ${r.sku} (Variant 1)` : "SKU: — none";
+
+  const row = document.createElement("div");
+  row.className = "row";
+
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.className = "selectBox";
+  cb.title = "Mark as done";
+  cb.checked = selectedSet.has(String(r.listing_id));
+  cb.addEventListener("change", () => {
+    if (cb.checked){ selectedSet.add(String(r.listing_id)); card.classList.add("selected"); }
+    else { selectedSet.delete(String(r.listing_id)); card.classList.remove("selected"); }
+    saveSelectedSet(selectedSet);
+  });
+  row.appendChild(cb);
+
+  const idPill = document.createElement("span");
+  idPill.className = "pill";
+  idPill.textContent = `#${r.listing_id}`;
+  row.appendChild(idPill);
+
+  const priceText = formatPrice(r.price);
+  if (priceText){
+    const p = document.createElement("span");
+    p.className = "pill";
+    p.textContent = priceText;
+    row.appendChild(p);
+  }
+
+  const sect = sectionTitle(r.section_id);
+  if (sect){
+    const s = document.createElement("span");
+    s.className = "pill sect";
+    s.textContent = sect;
+    row.appendChild(s);
+  }
+
+  const editBtn = document.createElement("button");
+  editBtn.className = "btn secondary";
+  editBtn.textContent = "Edit SKU";
+  editBtn.style.marginLeft = "auto";
+  editBtn.addEventListener("click", () => openSkuEditor(r));
+  row.appendChild(editBtn);
+
+  const genBtn = document.createElement("button");
+  genBtn.className = "btn";
+  genBtn.textContent = "Generate";
+  genBtn.dataset.role = "gen-btn";
+  if (!r.sku){ genBtn.style.background = "OrangeRed"; genBtn.title = "No SKU yet — click Generate"; }
+  genBtn.addEventListener("click", () => generateAndSaveSku(r, genBtn));
+  row.appendChild(genBtn);
+
+  meta.appendChild(title);
+  meta.appendChild(sku);
+  meta.appendChild(row);
+  card.appendChild(meta);
+
+  if (cb.checked) card.classList.add("selected");
+
+  const editor = document.createElement("div");
+  editor.className = "meta";
+  editor.style.display = "none";
+  editor.dataset.role = "sku-editor";
+  card.appendChild(editor);
+
+  return card;
+}
+
+let currentTerms = [];
+
+/* Appends the next slice. Called on filter change and by the scroll sentinel;
+   the DOM only ever holds what has actually been scrolled to. */
+function renderMore(){
+  if (rendered >= results.length) return 0;
+  const slice = results.slice(rendered, rendered + CHUNK);
+  const frag = document.createDocumentFragment();
+  for (const r of slice) frag.appendChild(buildCard(r, currentTerms));
+  listContainer.appendChild(frag);
+  rendered += slice.length;
+  renderMeters();
+  updateEndcap();
+  return slice.length;
+}
+
+function updateEndcap(){
+  if (!results.length){ endcap.textContent = ""; return; }
+  endcap.textContent = rendered >= results.length
+    ? `— end of ${results.length} listing${results.length === 1 ? "" : "s"} —`
+    : "Loading more…";
+}
+
+function applyFilters(){
+  currentTerms = normalizeText(searchInput.value).split(" ").filter(Boolean);
+  results = searchCatalog(Catalog.rows, searchInput.value, {
+    sectionId: sectionId === -1 ? null : sectionId,
+    missingSkuOnly, hideDone, doneSet: selectedSet
+  });
+  // "No section" is its own pseudo-section.
+  if (sectionId === -1) results = results.filter(r => r.section_id == null);
+
+  listContainer.innerHTML = "";
+  rendered = 0;
+  searchClear.style.display = searchInput.value ? "block" : "none";
+  document.getElementById("searchHint").style.display = searchInput.value ? "none" : "block";
+
+  if (!Catalog.rows.length){
+    showNotice(getAccessToken()
+      ? "Building the local catalog from Etsy — about one call per 100 listings, once. Every search after that runs locally and costs no API calls."
+      : "Connect Etsy to begin.");
+    renderMeters();
+    endcap.textContent = "";
+    return;
+  }
+  if (!results.length){
+    showNotice("No listings match these filters.");
+    renderMeters();
+    endcap.textContent = "";
+    return;
+  }
+  renderMore();
+  // Fill the first screen even on a tall display.
+  if (rendered < results.length && listContainer.getBoundingClientRect().bottom < (window.innerHeight || 900)) renderMore();
+  window.scrollTo({ top: 0 });
+}
+
+/** ============ SKU write paths ============ */
 async function fetchInventoryDetail(listingId){
   const r = await apiFetch(`/etsyListingInventoryDetailProxy?listingId=${encodeURIComponent(listingId)}`);
+  const js = await r.json().catch(() => ({}));
+  countCalls(js);
   if (!r.ok) throw new Error(`Failed to fetch inventory ${listingId} (HTTP ${r.status})`);
-  const js = await r.json();
   return Array.isArray(js.products) ? js.products : [];
 }
 
-function findCardFor(listingId){
-  return [...listContainer.querySelectorAll(".card")]
-    .find(c => c.querySelector(".pill")?.textContent === `#${listingId}`);
+async function saveSkuUpdates(listingId, items){
+  const r = await apiFetch(`/etsyUpdateListingInventoryProxy`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ listing_id: Number(listingId), items })
+  });
+  const text = await r.text();
+  let js = {};
+  try { js = JSON.parse(text); } catch { js = {}; }
+  countCalls(js);
+  if (!r.ok) throw new Error(`HTTP ${r.status}: ${text}`);
+  return !!js.ok;
 }
 
-function buildSkuEditorDom(listing, products){
-  const card   = findCardFor(listing.listing_id);
+function cardFor(listingId){
+  return listContainer.querySelector(`.card[data-listing-id="${listingId}"]`);
+}
+
+/* Repaints one card in place after a SKU write — no refetch, no re-render of
+   the grid, so the user's scroll position survives. */
+async function applySkuToCard(row, sku){
+  row.sku = sku;
+  await Catalog.setSku(row.listing_id, sku);
+  const card = cardFor(row.listing_id);
+  if (!card) return;
+  const skuLine = card.querySelector(".sku");
+  if (skuLine){
+    skuLine.textContent = sku ? `SKU: ${sku} (Variant 1)` : "SKU: — none";
+    skuLine.className = "sku" + (sku ? "" : " none");
+  }
+  const genBtn = card.querySelector('[data-role="gen-btn"]');
+  if (genBtn) genBtn.style.background = sku ? "" : "OrangeRed";
+}
+
+function buildSkuEditorDom(row, products){
+  const card = cardFor(row.listing_id);
   const editor = card?.querySelector('[data-role="sku-editor"]');
   if (!editor) return;
   editor.innerHTML = "";
@@ -541,30 +1133,25 @@ function buildSkuEditorDom(listing, products){
   hdr.textContent = "Edit SKU (Variant 1)";
   editor.appendChild(hdr);
 
-  // Use only the first product (Variant 1)
   const p = (Array.isArray(products) && products.length) ? products[0] : { product_id: null, sku: "" };
 
-  const row = document.createElement("div");
-  row.className = "row";
-  row.style.gap = "6px";
-  row.style.alignItems = "center";
-
+  const line = document.createElement("div");
+  line.className = "row";
   const tag = document.createElement("span");
   tag.className = "pill";
   tag.textContent = "Variant 1";
-  row.appendChild(tag);
+  line.appendChild(tag);
 
   const input = document.createElement("input");
-  input.type  = "text";
+  input.type = "text";
   input.value = p.sku || "";
   input.placeholder = "SKU";
   input.style.flex = "1";
   input.dataset.productId = p.product_id != null ? String(p.product_id) : "";
   input.className = "skuInput";
   input.maxLength = 64;
-  row.appendChild(input);
-
-  editor.appendChild(row);
+  line.appendChild(input);
+  editor.appendChild(line);
 
   const actions = document.createElement("div");
   actions.className = "row";
@@ -572,7 +1159,7 @@ function buildSkuEditorDom(listing, products){
   const cancel = document.createElement("button");
   cancel.className = "btn secondary";
   cancel.textContent = "Cancel";
-  cancel.addEventListener("click", () => editor.style.display = "none");
+  cancel.addEventListener("click", () => { editor.style.display = "none"; });
 
   const save = document.createElement("button");
   save.className = "btn";
@@ -584,25 +1171,18 @@ function buildSkuEditorDom(listing, products){
       alert("This listing has no Variant 1 product to write to.");
       return;
     }
-    const item = { product_id: productId, sku: el.value.trim() };
     save.disabled = true;
     try {
-      const ok = await saveSkuUpdates(listing.listing_id, [item]); // only Variant 1
-      if (ok){
-        // Update visible SKU line on card
-        listing.skus = [item.sku].filter(Boolean);
-        const skuLine = card.querySelector(".sku");
-        const firstSku = (Array.isArray(listing.skus) && listing.skus.length) ? listing.skus[0] : "";
-        if (skuLine) skuLine.textContent = firstSku ? `SKU: ${firstSku} (Variant 1)` : "SKU: —";
-        // Reset Generate button color if SKU now exists
-        const genBtn = card.querySelector('[data-role="gen-btn"]');
-        if (genBtn) genBtn.style.background = firstSku ? "" : "OrangeRed";
+      const sku = el.value.trim();
+      if (await saveSkuUpdates(row.listing_id, [{ product_id: productId, sku }])){
+        await applySkuToCard(row, sku);
         editor.style.display = "none";
       }
     } catch (e){
-      alert("Failed to update SKUs: " + e.message);
+      alert("Failed to update SKU: " + e.message);
     } finally {
       save.disabled = false;
+      renderMeters();
     }
   });
 
@@ -611,38 +1191,17 @@ function buildSkuEditorDom(listing, products){
   editor.appendChild(actions);
 }
 
-async function openSkuEditor(listing){
+async function openSkuEditor(row){
   try {
-    const products = await fetchInventoryDetail(listing.listing_id);
-    buildSkuEditorDom(listing, products);
-    const card = findCardFor(listing.listing_id);
-    const editor = card?.querySelector('[data-role="sku-editor"]');
+    const products = await fetchInventoryDetail(row.listing_id);
+    buildSkuEditorDom(row, products);
+    const editor = cardFor(row.listing_id)?.querySelector('[data-role="sku-editor"]');
     if (editor) editor.style.display = "block";
   } catch (e){
     alert("Could not open SKU editor: " + e.message);
+  } finally {
+    renderMeters();
   }
-}
-
-async function saveSkuUpdates(listingId, items){
-  const r = await apiFetch(`/etsyUpdateListingInventoryProxy`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ listing_id: Number(listingId), items })
-  });
-  if (!r.ok){
-    const t = await r.text();
-    throw new Error(`HTTP ${r.status}: ${t}`);
-  }
-  const js = await r.json();
-  return !!js.ok;
-}
-
-async function fetchListingDescription(listingId){
-  const r = await apiFetch(`/etsyListingGetProxy?listingId=${encodeURIComponent(listingId)}`);
-  if (!r.ok) return "";
-  const js = await r.json();
-  // Etsy may return description as a long string; guard just in case
-  return typeof js.description === "string" ? js.description : "";
 }
 
 function makeSkuFrom(title, listingId){
@@ -653,192 +1212,86 @@ function makeSkuFrom(title, listingId){
   return `${pretty}_${last4}`;
 }
 
-/* Pick the listing's primary image out of an Etsy images array. */
-function pickPrimaryImage(images){
-  if (!Array.isArray(images) || !images.length) return "";
-  const best = images.find(x => x && x.is_primary) ||
-               [...images].sort((a,b) => (a?.rank ?? 999) - (b?.rank ?? 999))[0] ||
-               images[0];
-  return best?.url_fullxfull || best?.url_570xN || "";
-}
-
-/* Pull Variant 1's SKU out of an inlined inventory document. */
-function skusFromInventory(inventory){
-  const products = inventory && Array.isArray(inventory.products) ? inventory.products : [];
-  const out = [];
-  for (const p of products){
-    const sku = String(p?.sku || "").trim();
-    if (sku) out.push(sku);
-  }
-  return out;
-}
-
-async function fetchPrimaryImage(listingId){
-  const r = await apiFetch(`/etsyListingImagesProxy?listingId=${encodeURIComponent(listingId)}`);
-  if (!r.ok) return "";
-  const js = await r.json();
-  return pickPrimaryImage(js.results);
-}
-
-async function fetchSkus(listingId){
-  const r = await apiFetch(`/etsyListingInventoryProxy?listingId=${encodeURIComponent(listingId)}`);
-  if (!r.ok) return [];
-  const js = await r.json();
-  return js.skus || [];
-}
-
-/* Bounded-concurrency worker. A failing item resolves to null rather than
-   rejecting: one dead listing must not abort the whole page, and an
-   unobserved rejection from a sibling promise used to surface as an
-   uncaught error. */
-async function pLimit(iterable, concurrency=6, worker){
-  const queue = [...iterable];
-  const running = new Set();
-  const done = [];
-  const start = (item) => {
-    const p = Promise.resolve()
-      .then(() => worker(item))
-      .catch(err => { console.warn("Listing enrichment failed", err); return null; })
-      .finally(() => running.delete(p));
-    running.add(p);
-    return p;
-  };
-  while (queue.length || running.size){
-    while (queue.length && running.size < concurrency) start(queue.shift());
-    if (running.size) done.push(await Promise.race(running));
-  }
-  return done;
-}
-
-async function loadPage(p=1){
-  if (loading) return;
-  const limit = Math.min(100, Math.max(1, Number(pageSizeEl.value||100)));
-  const offset = (p-1) * limit;
-
-  if (!getAccessToken() && !getRefreshToken()){
-    showNotice("Please connect Etsy first.");
-    return;
-  }
-
-  loading = true;
-  refreshBtn.disabled = true;
-  try {
-    showNotice("Loading listings…");
-
-    // One call returns titles, prices, images AND inventory. Per-listing image
-    // and inventory reads below are a fallback only — at 100 listings a page
-    // they cost 200 extra Etsy calls and used to run every single refresh.
-    const r = await apiFetch(
-      `/etsyShopListingsProxy?limit=${limit}&offset=${offset}&state=active&includes=Images,Inventory`
-    );
-    if (!r.ok){
-      const t = await r.text();
-      listContainer.innerHTML = "";
-      const card = document.createElement("div");
-      card.className = "card";
-      const meta = document.createElement("div");
-      meta.className = "meta";
-      const title = document.createElement("div");
-      title.className = "title";
-      title.textContent = `Error loading listings: ${r.status}`;
-      const detail = document.createElement("div");
-      detail.className = "sku";
-      detail.textContent = t;
-      meta.appendChild(title); meta.appendChild(detail);
-      card.appendChild(meta);
-      listContainer.appendChild(card);
-      return;
-    }
-    const js = await r.json();
-    const raw = Array.isArray(js.results) ? js.results : (Array.isArray(js) ? js : []);
-
-    const base = raw.map(x => ({
-      listing_id: x.listing_id,
-      title     : x.title,
-      price     : x.price,
-      primary_image: pickPrimaryImage(x.images),
-      skus: skusFromInventory(x.inventory).slice(0, 1) // Variant 1 only
-    }));
-
-    // Fill only what the bulk call could not supply.
-    const needsDetail = base.filter(item => !item.primary_image || !item.skus.length);
-    if (needsDetail.length){
-      await pLimit(needsDetail, 6, async (item) => {
-        const [img, skus] = await Promise.all([
-          item.primary_image ? item.primary_image : fetchPrimaryImage(item.listing_id),
-          item.skus.length   ? item.skus          : fetchSkus(item.listing_id)
-        ]);
-        item.primary_image = img || "";
-        item.skus = (skus || []).slice(0, 1);
-        return item;
-      });
-    }
-
-    lastBatch = base;
-    if (!base.length) showNotice("No listings found on this page.");
-    else renderListings(lastBatch);
-
-    page = p;
-    pageNumEl.textContent = String(p);
-    prevBtn.disabled = p <= 1;
-    nextBtn.disabled = raw.length < limit;
-  } catch (e){
-    console.error("loadPage failed", e);
-    showNotice("Could not load listings: " + e.message);
-  } finally {
-    loading = false;
-    refreshBtn.disabled = false;
-    setAuthBadge();
-  }
-}
-
-async function generateAndSaveSku(listing, btn){
+async function generateAndSaveSku(row, btn){
   try {
     btn.disabled = true;
-    // 1) Build SKU from TITLE ONLY
-    const computedSku = makeSkuFrom(listing.title || "", listing.listing_id);
-
-    // 2) Get Variant 1 product_id
-    const products = await fetchInventoryDetail(listing.listing_id);
+    const computedSku = makeSkuFrom(row.title || "", row.listing_id);
+    const products = await fetchInventoryDetail(row.listing_id);
     const p0 = (Array.isArray(products) && products.length) ? products[0] : null;
     if (!p0 || p0.product_id == null) throw new Error("Missing Variant 1");
-
-    // 3) Save (server enforces consistency across all variants)
-    const ok = await saveSkuUpdates(listing.listing_id, [{ product_id: Number(p0.product_id), sku: computedSku }]);
-    if (ok){
-      listing.skus = [computedSku];
-      const card = findCardFor(listing.listing_id);
-      const skuLine = card?.querySelector(".sku");
-      if (skuLine) skuLine.textContent = `SKU: ${computedSku} (Variant 1)`;
-      // Remove warning color now that SKU exists
-      if (btn) btn.style.background = "";
+    if (await saveSkuUpdates(row.listing_id, [{ product_id: Number(p0.product_id), sku: computedSku }])){
+      await applySkuToCard(row, computedSku);
     }
   } catch (e){
     alert("Generate failed: " + e.message);
   } finally {
     btn.disabled = false;
+    renderMeters();
+  }
+}
+
+/** ============ Sync driver ============ */
+function setSyncProgress(pct){
+  syncProgress.style.width = (pct == null ? 0 : Math.max(0, Math.min(100, pct))) + "%";
+}
+
+async function runSync(mode){
+  if (!getAccessToken()){ setStatus("Connect Etsy first", "bad"); return; }
+  syncBtn.disabled = true;
+  const wasEmpty = !Catalog.rows.length;
+  const label = syncBtn.textContent;
+  try {
+    syncBtn.textContent = "Syncing…";
+    const res = await syncCatalog(mode, ({ seen, total, pages }) => {
+      setSyncProgress(total ? (seen / total) * 100 : null);
+      syncBtn.textContent = `Syncing ${seen}…`;
+      renderMeters();
+      // Let the operator start working while a first full build is still running.
+      if (wasEmpty && pages % 5 === 0 && !searchInput.value && !window.scrollY){
+        renderChips();
+        applyFilters();
+      }
+    });
+    if (res && res.skipped) return;
+
+    if (!Catalog.sections.length){
+      const sections = await fetchSections();
+      if (sections.length){
+        Catalog.sections = sections;
+        await Catalog.store.setMeta("sections", sections);
+      }
+    }
+    renderChips();
+    applyFilters();
+    setStatus(res.full
+      ? `Catalog built · ${res.seen} listings · ${res.pages} calls`
+      : `Up to date · ${res.added} new · ${res.pages} call${res.pages === 1 ? "" : "s"}`, "ok");
+  } catch (e){
+    console.error("Sync failed", e);
+    setStatus("Sync failed: " + e.message, "bad");
+  } finally {
+    setSyncProgress(0);
+    syncBtn.disabled = false;
+    syncBtn.textContent = label;
+    renderMeters();
   }
 }
 
 /** ============ Boot ============ */
-/* Returns what the OAuth return handler did, so the boot path (and tests)
-   can tell a completed sign-in from a failed one. */
 function bootOAuth(){
   const url = new URLSearchParams(location.search);
 
-  // 1) Server redirect already carrying tokens → store and clean the URL.
   const access_token  = url.get("access_token");
   const refresh_token = url.get("refresh_token");
   const expires_in    = url.get("expires_in");
   const issued_at     = url.get("issued_at");
   if (access_token && refresh_token && expires_in && issued_at){
     setTokens({ access_token, refresh_token, expires_in, issued_at });
-    history.replaceState({}, "", ORIGIN + location.pathname); // clean query
+    history.replaceState({}, "", ORIGIN + location.pathname);
     setStatus("Connected", "ok");
     return "tokens";
   }
 
-  // 2) Etsy declined or errored.
   const err = url.get("error");
   if (err){
     history.replaceState({}, "", ORIGIN + location.pathname);
@@ -847,14 +1300,11 @@ function bootOAuth(){
     return "error";
   }
 
-  // 3) Standard OAuth code return → hand the code to the server for exchange.
   const code = url.get("code");
   if (code){
     const state = url.get("state") || "";
     const v = takeVerifier(state);
 
-    // An authorization code is single-use. A reload or a back-navigation on
-    // this URL replays it and Etsy rejects the second attempt.
     let lastCode = null;
     try { lastCode = sessionStorage.getItem("etsy_last_code"); } catch (_) {}
     if (lastCode === code){
@@ -862,7 +1312,6 @@ function bootOAuth(){
       setStatus("Sign-in link already used", "bad");
       return "replay";
     }
-
     if (v){
       try { sessionStorage.setItem("etsy_last_code", code); } catch (_) {}
       dropVerifier(state);
@@ -870,14 +1319,12 @@ function bootOAuth(){
       window.location.href = ORIGIN + "/.netlify/functions/exchangeToken?" + qs.toString();
       return "exchange";
     }
-
     console.error("OAuth callback arrived with no stored code_verifier.", { state });
     history.replaceState({}, "", ORIGIN + location.pathname);
     setStatus("Sign-in did not complete — press Connect Etsy", "bad");
     return "no-verifier";
   }
 
-  // 4) Nothing OAuth-shaped in the URL.
   if (url.get("connect") === "1"){
     history.replaceState({}, "", ORIGIN + location.pathname);
     return "connect";
@@ -885,40 +1332,80 @@ function bootOAuth(){
   return "none";
 }
 
+function wireScrolling(){
+  if (typeof IntersectionObserver === "function"){
+    new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting)) renderMore();
+    }, { rootMargin: "1200px 0px" }).observe(sentinel);
+  } else {
+    // Older engines: fall back to a scroll listener with the same trigger point.
+    window.addEventListener("scroll", () => {
+      if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 1200) renderMore();
+    }, { passive: true });
+  }
+}
+
+function wireSearch(){
+  // No debounce: the scan is local and takes a couple of milliseconds, so the
+  // grid updates within the same frame as the keystroke.
+  searchInput.addEventListener("input", applyFilters);
+  searchClear.addEventListener("click", () => { searchInput.value = ""; applyFilters(); searchInput.focus(); });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "/" && document.activeElement !== searchInput){
+      e.preventDefault(); searchInput.focus(); searchInput.select();
+    } else if (e.key === "Escape" && document.activeElement === searchInput){
+      searchInput.value = ""; applyFilters();
+    }
+  });
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   const outcome = bootOAuth();
-  if (outcome === "exchange") return;   // navigating away to the token exchange
+  if (outcome === "exchange") return;
 
   document.getElementById("connectEtsyBtn").addEventListener("click", () => startOAuth("button"));
-  document.getElementById("refreshBtn").addEventListener("click", () => loadPage(page));
-  document.getElementById("prevBtn").addEventListener("click", () => { if (page>1) return loadPage(page-1); });
-  document.getElementById("nextBtn").addEventListener("click", () => loadPage(page+1));
-  document.getElementById("pageSize").addEventListener("change", () => loadPage(1));
-  document.getElementById("searchInput").addEventListener("input", () => renderListings(lastBatch));
+  // Plain click = "what changed since last time" (1-2 calls). Shift-click (or
+  // right-click) forces a full rebuild — the escape hatch for when the catalog
+  // and Etsy's own count have drifted apart, since deletions are invisible to
+  // an incremental walk.
+  syncBtn.addEventListener("click", (e) => e.shiftKey ? rebuildCatalog() : runSync("incremental"));
+  syncBtn.addEventListener("contextmenu", (e) => { e.preventDefault(); rebuildCatalog(); });
+  wireSearch();
+  wireScrolling();
 
-  // Toggle: show only items WITHOUT green checkmark (unchecked)
-  filterCompleteBtn.addEventListener("click", () => {
-    filterIncompleteOnly = !filterIncompleteOnly;
-    filterCompleteBtn.classList.toggle("active", filterIncompleteOnly);
-    renderListings(lastBatch);
-  });
-  // Jump to page (button + Enter key)
-  const jump = () => loadPage(Math.max(1, Number(pageJumpEl.value || 1)));
-  goBtn.addEventListener("click", jump);
-  pageJumpEl.addEventListener("keydown", (e) => { if (e.key === "Enter") return jump(); });
+  await Catalog.open();
+  renderChips();
+  applyFilters();
+  renderMeters();
 
   if (outcome === "connect"){ await startOAuth("cross-origin"); return; }
 
-  // Token lifecycle: an expired access token is refreshed before the first
-  // read instead of surfacing as a 401 wall.
   if (getAccessToken() && tokenIsFresh()) scheduleTokenRefresh();
   else if (getRefreshToken()) await refreshAccessToken();
-
   setAuthBadge();
 
-  if (getAccessToken()) await loadPage(1);
-  else showNotice("Please connect Etsy first.");
+  if (Catalog.store.kind === "memory"){
+    console.warn("Catalog persistence unavailable:", Catalog.store.reason);
+  }
+
+  searchInput.focus();
+
+  if (getAccessToken()){
+    refreshQuota();
+    // A cold catalog builds itself; a warm one only asks for what changed.
+    await runSync(Catalog.rows.length ? "incremental" : "full");
+  }
 });
+
+async function rebuildCatalog(){
+  if (!confirm("Rebuild the whole local catalog from Etsy?\n\nThis re-reads every active listing — about " +
+               Math.ceil((Catalog.shopCount || Catalog.rows.length || 5600) / PAGE) +
+               " Etsy API calls. Use this when the catalog count has drifted from the live count.")) return;
+  await Catalog.reset();
+  applyFilters();
+  await runSync("full");
+}
 </script>
 </body>
 </html>
