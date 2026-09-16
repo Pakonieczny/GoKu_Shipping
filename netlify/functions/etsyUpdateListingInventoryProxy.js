@@ -235,6 +235,44 @@ function sanitizeForPut(inventory, onProperty, fallbackReadinessId) {
   };
 }
 
+/* Etsy rejects a PUT whose *_on_property fields reference a partial set of the
+   listing's variation properties once ANY of those fields references them all:
+
+     price_on_property: unsupported number of property IDs. Supports only zero
+     or all 2 variation properties, as at least one `*_on_property` field is
+     linked to all 2 properties.
+
+   Etsy's GET happily returns such a document — listings edited in Etsy's own
+   UI can end up with, say, price_on_property on both properties and
+   sku_on_property on one — so echoing the GET straight back, which is exactly
+   what a SKU-only write does, fails on those listings.
+
+   Normalizing UP to the full property list is the value-preserving repair:
+   every product already carries its own price, quantity and SKU in the
+   products array, so widening the "varies by" declaration changes no value.
+   Dropping to [] would instead collapse every product onto the first one's
+   price and quantity. Fields already at zero are left alone — "zero or all"
+   is what Etsy accepts — and a listing whose fields are all partial is left
+   untouched, since Etsy only enforces this once one field references all. */
+function normalizeOnProperty(inv, propIds) {
+  const total = propIds.length;
+  const fields = ["price_on_property", "quantity_on_property", "sku_on_property"];
+  const current = {};
+  for (const f of fields) {
+    current[f] = (Array.isArray(inv[f]) ? inv[f] : []).map(Number).filter(Number.isFinite);
+  }
+  if (!total) return current;
+
+  const anyFull = fields.some(f => current[f].length === total);
+  if (!anyFull) return current;
+
+  for (const f of fields) {
+    const len = current[f].length;
+    if (len > 0 && len < total) current[f] = [...propIds];
+  }
+  return current;
+}
+
 /* ---------- Legacy mode (SKU console) ---------- */
 // Returns { statusCode, payload } (unwrapped — no etsy_call_count here) so
 // the handler can attach the shared ctx.calls tally via respond() the same
@@ -273,6 +311,8 @@ async function legacySkuUpdate(listingId, items, headers, ctx) {
     }) : []
   }));
 
+  const onProperty = normalizeOnProperty(inv, productPropertyOrder(inv));
+
   const putUrl = `https://openapi.etsy.com/v3/application/listings/${listingId}/inventory`;
   ctx.calls++;
   const putResp = await etsyFetch(putUrl, {
@@ -280,9 +320,9 @@ async function legacySkuUpdate(listingId, items, headers, ctx) {
     headers,
     body: JSON.stringify({
       products,
-      price_on_property: inv.price_on_property || [],
-      quantity_on_property: inv.quantity_on_property || [],
-      sku_on_property: inv.sku_on_property || []
+      price_on_property: onProperty.price_on_property,
+      quantity_on_property: onProperty.quantity_on_property,
+      sku_on_property: onProperty.sku_on_property
     })
   }, { bucket: "etsy-listing-console" });
   const result = await parseJson(putResp);
