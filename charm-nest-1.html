@@ -739,17 +739,21 @@ async function persistSource(src) {
   src.cloud = { path: up.path, url: up.url };
   // per-charm permanent copies: one .ai and a thumbnail per distinct charm
   const records = [];
-  for (const c of src.charms) {
-    if (c.dupOf != null) continue;
+  const one = async (c) => {
     try {
       const single = await CharmNestPDF.buildSingleCharm(c, src.parsed);
-      const ai = await uploadBytes(`charmnest/charms/${c.hash}.ai`, single, "application/illustrator", "Saving charm " + (c.name || c.index + 1));
-      const png = await uploadBytes(`charmnest/charms/${c.hash}.png`, dataUrlToBytes(c.thumb), "image/png");
+      const [ai, png] = await Promise.all([
+        uploadBytes(`charmnest/charms/${c.hash}.ai`, single, "application/illustrator", "Saving charm " + (c.name || c.index + 1)),
+        uploadBytes(`charmnest/charms/${c.hash}.png`, dataUrlToBytes(c.thumb), "image/png")
+      ]);
       c.cloud = { ai: ai.url, aiPath: ai.path, png: png.url, pngPath: png.path };
       records.push({ hash: c.hash, name: c.name, slug: c.slug, label: c.label, confidence: c.confidence, namedBy: c.namedBy, metalHint: c.metal || c.metalHint || null,
         areaPt2: c.areaPt2, widthPt: c.widthPt, heightPt: c.heightPt, thumbUrl: png.url, aiUrl: ai.url, aiPath: ai.path, sourceName: src.name, sourcePath: up.path, open: !!c.open });
     } catch (e) { console.warn("charm backup failed", e); }
-  }
+  };
+  // four charms at a time: 80 charms used to take minutes one by one
+  const queue = src.charms.filter(c => c.dupOf == null);
+  await Promise.all(Array.from({ length: 4 }, async () => { while (queue.length) await one(queue.shift()); }));
   if (records.length) await api("charmNestLibrary", { op: "putCharms", charms: records }, { label: "Saving charm library" });
   renderRailRow(src);
 }
@@ -1344,13 +1348,18 @@ async function finishNest(sh, { result, error }) {
     // 1 · write the sheet
     // 0 · optimize: every assembled charm is scaled about its own centre so minor overlaps disappear
     const shrinkPct = ((1 - CHARM_SCALE) * 100).toFixed(1).replace(/\.0$/, "");
-    sh.stage = `Optimizing charms · shrinking ${sh.placements.length} by ${shrinkPct}% about their centres…`; sh.progressKind = "finish"; sh.progress = [0, 5]; renderCard(sh);
-    await new Promise(r => setTimeout(r, 400));
-    sh.placements.forEach(p => { p.scale = CHARM_SCALE; });
-    sh.optimized = { count: sh.placements.length, scale: CHARM_SCALE };
+    sh.progressKind = "optimize"; sh.progress = [0, sh.placements.length]; sh.stage = `Optimizing charms · shrinking each of ${sh.placements.length} by ${shrinkPct}% about its own centre…`; renderCard(sh);
+    const optT0 = performance.now(), optStep = Math.max(12, Math.min(60, 2500 / Math.max(1, sh.placements.length)));   // the pass is watchable: ~2.5 s in all, the preview shrinking charm by charm
+    for (let i = 0; i < sh.placements.length; i++) {
+      sh.placements[i].scale = CHARM_SCALE; sh.progress = [i + 1, sh.placements.length];
+      sh.stage = `Optimizing charms · ${i + 1}/${sh.placements.length} shrunk ${shrinkPct}% about its centre`;
+      renderProgress(sh); drawPreview(sh);
+      await new Promise(r => setTimeout(r, optStep));
+    }
+    sh.optimized = { count: sh.placements.length, scale: CHARM_SCALE, ms: Math.round(performance.now() - optT0) };
     agent({ metal: sh.metal }, "ok", `Optimized: ${sh.placements.length} charms shrunk ${shrinkPct}% about their centres (positions and angles unchanged)`);
     // 1 · write the sheet
-    sh.stage = "Writing .ai…"; sh.progress = [1, 5]; renderProgress(sh);
+    sh.stage = "Writing .ai…"; sh.progressKind = "finish"; sh.progress = [1, 5]; renderProgress(sh);
     const sources = new Map(); for (const p of sh.placements) { const c = byId.get(p.id); if (c && !sources.has(c.sourceId)) sources.set(c.sourceId, S.sources.find(s => s.id === c.sourceId).parsed); }
     const specBase = { sheet: { wPt: st.wPt, hPt: st.hPt, strokeRGB: [1, 0, 0], strokePt: 0.5 }, placements: sh.placements.map(p => ({ charm: byId.get(p.id), angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, scale: p.scale || 1 })), sources, title: `${labelOf(sh.metal)} sheet ${sh.sheetId}`, meta: { sheetId: sh.sheetId, metal: sh.metal, seed: result.params.seed, clearancePt: result.params.clearancePt, charmScale: CHARM_SCALE } };
     const aiBytes = await CharmNestPDF.buildSheet(specBase);
@@ -1448,10 +1457,12 @@ async function persistSheet(sh, items) {
     preview: sh.outputs.previewPng ? await got("preview", `${base}/preview.png`, sh.outputs.previewPng, "image/png", "Saving preview") : null
   };
   sh.cloud = { ai: outputs.ai && outputs.ai.url, pdf: outputs.pdf && outputs.pdf.url, labelled: outputs.labelled && outputs.labelled.url, report: outputs.report && outputs.report.url, preview: outputs.preview && outputs.preview.url };
-  // 3 · charm links: wait for the charms' own permanent copies (started when the file arrived), then complete the record
-  await Promise.allSettled([...new Set(items.map(c => c.sourceId))].map(id => { const x = S.sources.find(z => z.id === id); return x && x.persisting; }).filter(Boolean));
+  // 3 · the record is complete as soon as the sheet's own files are up: the Library shows it now, not after the charm backups
   await api("charmNestLibrary", { op: "putSheet", sheet: Object.assign(record(outputs), { saving: false }) }, { label: "Completing sheet record" });
   if (S.mode === "library") loadLibrary();   // the list is open: show the finished record
+  // 4 · charm links: once the charms' own permanent copies (started when the file arrived) are done, refresh the record with their links
+  const pending = [...new Set(items.map(c => c.sourceId))].map(id => { const x = S.sources.find(z => z.id === id); return x && x.persisting; }).filter(Boolean);
+  if (pending.length) Promise.allSettled(pending).then(() => api("charmNestLibrary", { op: "putSheet", sheet: Object.assign(record(outputs), { saving: false }) }, { label: "Linking charm copies" })).catch(e => console.warn("charm links", e));
   await api("charmNestLibrary", { op: "putCalibration", row: Object.assign({ sheetId: sh.sheetId, metal: sh.metal, clearancePt: +S.settings.clearancePt }, sh.outputs.report.calibration) }, { label: "Saving calibration" });
   S.calibration.push(Object.assign({ sheetId: sh.sheetId }, sh.outputs.report.calibration));
   renderCard(sh);
@@ -1615,9 +1626,9 @@ function renderProgress(sh) {
     // Percentages come only from completed work: pieces placed / pieces queued (or prep pieces, or finish steps).
     p.max = Math.max(1, sh.progress[1]); p.value = Math.min(sh.progress[0], sh.progress[1]);
     p.setAttribute("value", p.value);
-    if (p.parentElement.classList.contains("bp-meter")) { const pct = Math.round(p.value / p.max * 100); p.parentElement.dataset.label = sh.progressKind === "prepare" ? `preparing ${pct}%` : sh.progressKind === "finish" ? `finishing ${pct}%` : `${p.value}/${p.max} placed · ${pct}%`; p.parentElement.style.setProperty("--bp-pct", pct + "%"); p.parentElement.dataset.determinate = "true"; }
+    if (p.parentElement.classList.contains("bp-meter")) { const pct = Math.round(p.value / p.max * 100); p.parentElement.dataset.label = sh.progressKind === "prepare" ? `preparing ${pct}%` : sh.progressKind === "optimize" ? `optimizing charms ${p.value}/${p.max}` : sh.progressKind === "finish" ? `finishing ${pct}%` : `${p.value}/${p.max} placed · ${pct}%`; p.parentElement.style.setProperty("--bp-pct", pct + "%"); p.parentElement.dataset.determinate = "true"; }
   }
-  const st = q("stage"); const elapsed = ["nesting", "finishing"].includes(sh.status) ? fmt.s(performance.now() - sheetT0(sh)) + " total" : (sh.totalMs ? `${fmt.s(sh.totalMs)} total · nest ${fmt.s(sh.elapsedMs || 0)}` : (sh.elapsedMs ? fmt.s(sh.elapsedMs) : ""));
+  const st = q("stage"); const elapsed = ["nesting", "finishing"].includes(sh.status) ? fmt.s(performance.now() - sheetT0(sh)) + " total" : (sh.totalMs ? `${fmt.s(sh.totalMs)} total · nest ${fmt.s(sh.elapsedMs || 0)}${sh.optimized ? ` · charms shrunk ${((1 - sh.optimized.scale) * 100).toFixed(1).replace(/\.0$/, "")}%` : ""}` : (sh.elapsedMs ? fmt.s(sh.elapsedMs) : ""));
   const budget = sh.status === "nesting" ? ((S.settings.engine || "solver") === "ai" ? ` · round ${sh.aiRound || 1}/${S.settings.aiRounds || 10}` : ` / ${S.settings.budgetS}s`) : "";
   const trials = sh.trials ? ((S.settings.engine || "solver") === "ai" && !sh.solveParams?.seed ? ` · ${sh.trials} round${sh.trials > 1 ? "s" : ""}` : ` · ${sh.trials} trial${sh.trials > 1 ? "s" : ""}`) : "";
   const reviewingSrc = S.sources.find(s => s.review && s.review.state === "running" && s.charms.some(c => c.metal === sh.metal));
