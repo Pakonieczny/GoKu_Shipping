@@ -209,7 +209,8 @@
           } else if (x && x.subtype === "Form" && x.bytes && depth < 6) {
             const m = mul(x.matrix || [1, 0, 0, 1, 0, 0], ctm);
             if (x.bbox) seg.bbox = bboxOf([ap(m, x.bbox[0], x.bbox[1]), ap(m, x.bbox[2], x.bbox[1]), ap(m, x.bbox[2], x.bbox[3]), ap(m, x.bbox[0], x.bbox[3])]);
-            const sub = interpret(x.bytes, x.resolve || resolve, m, depth + 1, spaces);
+            // a form's own colour spaces (a Separation "All" cut line, say) must not fall back to the page's
+            const sub = interpret(x.bytes, x.resolve || resolve, m, depth + 1, x.spaces || spaces);
             // flatten grandchildren too: a form that only invokes another form still carries that form's paths
             const flat = (list) => list.flatMap(k => k.kind === "xobj" && k.children && k.children.length ? [k].concat(flat(k.children)) : [k]);
             const kids = flat(sub.segs.concat(sub.inner));
@@ -273,7 +274,7 @@
             out.bbox = numsOf(doc.context.lookup(x.dict.get(PDFName.of("BBox"))));
             out.matrix = numsOf(doc.context.lookup(x.dict.get(PDFName.of("Matrix"))));
             const r = doc.context.lookup(x.dict.get(PDFName.of("Resources")));
-            if (r) out.resolve = makeResolver(doc, r).resolve;
+            if (r) { const sub = makeResolver(doc, r); out.resolve = sub.resolve; out.spaces = sub.spaces; }
           }
         }
       } catch (_) { out = null; }
@@ -573,7 +574,7 @@
       if (seg.kind === "path") {
         ctx.beginPath(); pathToCanvas(ctx, seg, tx);
         if (seg.fill) { ctx.fillStyle = solid ? "#000" : css(seg.fillRGB); ctx.fill(seg.paintOp.endsWith("*") ? "evenodd" : "nonzero"); }
-        if (seg.stroke) { ctx.strokeStyle = solid ? "#000" : css(seg.strokeRGB); ctx.lineWidth = Math.max(solid ? 1.5 : 0.6, (seg.lwPt || 0.5) * s); ctx.stroke(); }
+        if (seg.stroke) { ctx.strokeStyle = solid ? "#000" : (isPaperWhite(seg.strokeRGB) ? "#2a2724" : css(seg.strokeRGB)); ctx.lineWidth = Math.max(solid ? 1.5 : 0.6, (seg.lwPt || 0.5) * s); ctx.stroke(); }
       } else if (seg.bbox) {
         const a = tx(seg.bbox[0], seg.bbox[3]), b2 = tx(seg.bbox[2], seg.bbox[1]);
         ctx.fillStyle = solid ? "#000" : seg.kind === "text" ? "rgba(80,80,80,.55)" : "rgba(120,120,160,.25)";
@@ -581,6 +582,8 @@
       }
     }
   }
+  // a white-stroked cut line is invisible on a white preview; it is still a cut line, so it is shown in ink
+  const isPaperWhite = c => c && Math.min(c[0] || 0, c[1] || 0, c[2] || 0) >= 0.92;
   const css = c => `rgb(${Math.round((c[0] || 0) * 255)},${Math.round((c[1] || 0) * 255)},${Math.round((c[2] || 0) * 255)})`;
   const blobToDataUrl = blob => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
 

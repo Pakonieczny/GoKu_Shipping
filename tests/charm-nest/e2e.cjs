@@ -106,7 +106,18 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   assert(result.verification && result.verification.geom.ok, 'geometry verification passed');
   assert(result.verification.render && result.verification.render.ok, 'render verification passed: ' + JSON.stringify(result.verification.render));
   if (process.env.CN_ENGINE === 'ai') { const ag = await page.evaluate(() => CN.S.sheets.gold.log.concat([]).length); console.log('ai engine:', result.endedBy, result.trials, 'round(s)', result.placed, 'placed'); assert(result.placed >= 10, 'AI loop placed pieces'); assert(['rounds', 'complete', 'claude-full'].includes(result.endedBy), 'ended by AI loop: ' + result.endedBy); void ag; }
-  if (process.env.CN_ALLOW_PARTIAL) console.log('partial allowed:', result.status, result.rejects, 'rejects');
+  if (process.env.CN_ALLOW_PARTIAL) {
+    console.log('partial allowed:', result.status, result.rejects, 'rejects');
+    // overflow: what did not fit moved to sheet 2 of the same metal, which nests on its own and shows in a tab
+    await page.waitForFunction(() => CN.S.sheets.gold.pages.length >= 2 && ['complete', 'partial'].includes(CN.S.sheets.gold.pages[1].status), null, { timeout: 600000 });
+    const ov = await page.evaluate(() => { const p = CN.S.sheets.gold; const p2 = p.pages[1]; return { pages: p.pages.length, moved: p.movedOn && p.movedOn.n, rejects1: p.rejects.length, status1: p.status, charms2: p2.charms.length, placed2: p2.placements.length, status2: p2.status, tabs: document.querySelectorAll('.sheetCard[data-m=gold] .shTabs button').length, total: p.pages.reduce((n, x) => n + x.charms.length, 0) }; });
+    console.log('overflow', JSON.stringify(ov));
+    assert(ov.pages >= 2 && ov.moved > 0 && ov.rejects1 === 0 && ov.charms2 === ov.moved && ov.tabs === ov.pages && ov.total === fx.charms.length, 'extras moved to sheet 2: ' + JSON.stringify(ov));
+    await page.evaluate(() => CN.showPage('gold', 1)); await page.screenshot({ path: path.join(tmp, '2b-sheet2.png') });
+    const shown = await page.evaluate(() => CN.S.sheets.gold.pages[1].placements.length);
+    assert(shown === ov.placed2 && shown > 0, 'sheet 2 tab shows its own placements');
+    await page.evaluate(() => CN.showPage('gold', 0));
+  }
   else { assert.strictEqual(result.rejects, 0, 'all placed'); assert.strictEqual(result.status, 'complete'); }
   // check the written .ai: a PDF with one OCG per charm + sheet, original path count preserved
   const ai = await page.evaluate(() => Array.from(CN.S.sheets.gold.outputs.ai));
@@ -121,7 +132,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   await page.click('.sheetCard[data-m=gold] [data-r=report]');
   await page.waitForSelector('#dlgReport[open]');
   const tiles = await page.$$eval('#dlgReport .charmTile', els => els.length);
-  assert.strictEqual(tiles, fx.charms.length, 'report lists every charm (merged fragment gone)');
+  assert.strictEqual(tiles, process.env.CN_ALLOW_PARTIAL ? result.placed : fx.charms.length, 'report lists every charm (merged fragment gone)');
   await page.screenshot({ path: path.join(tmp, '3-report.png') });
   const bad = errors.filter(e => !/net::ERR|404|Failed to load resource|favicon|functions/.test(e));
   console.log('console issues', bad);
@@ -129,7 +140,8 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   // the finish must run exactly once, and no post-nest inspection may run
   const finishes = await page.evaluate(() => { const t = CN.AG.events.map(e => e.text || '').filter(Boolean); return { won: t.filter(x => /completed the sheet first|reached the ceiling/.test(x)).length, verified: t.filter(x => /^Verified twice/.test(x)).length, inspect: t.filter(x => /inspecting|Sent Claude the finished/.test(x)).length, ended: t.filter(x => /^Search ended/.test(x)).length }; });
   console.log('finish events', JSON.stringify(finishes));
-  assert(finishes.won <= 1 && finishes.verified === 1 && finishes.inspect === 0 && finishes.ended <= 1, 'single finish per job: ' + JSON.stringify(finishes));
+  const sheetsDone = await page.evaluate(() => CN.S.sheets.gold.pages.filter(p => ['complete', 'partial'].includes(p.status)).length);
+  assert(finishes.won <= sheetsDone && finishes.verified === sheetsDone && finishes.inspect === 0 && finishes.ended <= sheetsDone, 'single finish per sheet: ' + JSON.stringify(finishes) + ' for ' + sheetsDone + ' sheet(s)');
   console.log('artifacts in', tmp);
   await browser.close(); server.close();
   console.log('E2E OK');
