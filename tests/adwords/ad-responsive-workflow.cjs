@@ -115,7 +115,12 @@ async function setup({generatedSource=false,autoProofs=true,layer=null,makeSourc
   plan.scenePlans=engine.sceneCatalog.slice(0,count).map(s=>({key:s.key,reason:'Distinct crop for '+s.key,direction:{...plan.imageDirections[0],composition:s.direction}}));
   const multi=await setup(),formats=[],gen=multi.D.generateImage;multi.D.generateImage=async args=>{formats.push(args.format.requestSize);return gen(args);};
   let resumed=false;
-  if(count===6){const realNow=Date.now,started=realNow();multi.D.generateImage=async args=>{const out=await gen(args);formats.push(args.format.requestSize);Date.now=()=>started+5*60000;return out;};try{const first=await multi.svc.editorAIRun({workspaceId:multi.id,jobId:multi.jobId});ok(first.continue&&multi.calls.images===1,'long scene run yields after a saved receipt');ok(multi.f.docs.get(multi.p+'/editorAIJobs/'+multi.jobId).leaseUntil===0,'continuation releases worker lease');}finally{Date.now=realNow;multi.D.generateImage=async args=>{formats.push(args.format.requestSize);return gen(args);};}resumed=true;}
+  if(count===6){const realNow=Date.now,started=realNow();
+  // The stage budget is the worker's, not a fixed wall-clock number: set it here
+  // so the test proves the yield happens when the budget is spent, whatever the
+  // production budget is tuned to.
+  multi.D.stageBudgetMs=60000;
+  multi.D.generateImage=async args=>{const out=await gen(args);formats.push(args.format.requestSize);Date.now=()=>started+90000;return out;};try{const first=await multi.svc.editorAIRun({workspaceId:multi.id,jobId:multi.jobId});ok(first.continue&&multi.calls.images===1,'long scene run yields after a saved receipt');ok(multi.f.docs.get(multi.p+'/editorAIJobs/'+multi.jobId).leaseUntil===0,'continuation releases worker lease');}finally{Date.now=realNow;delete multi.D.stageBudgetMs;multi.D.generateImage=async args=>{formats.push(args.format.requestSize);return gen(args);};}resumed=true;}
   await multi.svc.editorAIRun({workspaceId:multi.id,jobId:multi.jobId});
   const done=await multi.svc.editorAIStatus({...multi.input,jobId:multi.jobId});assert.equal(done.phase,'ready',done.error);n++;
   ok(multi.calls.images===count&&multi.calls.focus===count,'every '+count+'-scene source is generated and localized once');

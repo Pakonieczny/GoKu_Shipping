@@ -2,6 +2,9 @@
 // All paid dispatch/lease/retry decisions belong to googleAdsAdDesign.
 const IMAGE_MODEL='gpt-image-2.5-sunburst',TEXT_MODEL='gpt-6-astra';
 const SYNTHETIC='http://cv.iptc.org/newscodes/digitalsourcetype/compositeSynthetic';
+// A submitted response is polled on a ramp and waited out for most of one
+// worker invocation; abandoning it early only buys a cold start and a re-read.
+const POLL_STEPS=Object.freeze([2000,3000,5000,8000,12000,15000]),POLL_WINDOW_MS=7*60000;
 const CREATIVE_ORIGINS=Object.freeze(['https://britesjewelry.com','https://www.britesjewelry.com','https://goldenspike.app','https://brites-adwords.goldenspike.app']);
 const creativeCorsChecks=new Map();
 function creativeCorsRules(current=[]){
@@ -79,14 +82,21 @@ function createAdDesignAdapters(D){
   async function retrieveResponse(requestId){
     const ref=responseRef(requestId);if(!ref)return null;const saved=await ref.get();if(!saved.exists||!saved.data().responseId)return null;
     const id=saved.data().responseId;if(!/^resp_[a-zA-Z0-9_-]+$/.test(id))throw Error('Invalid saved provider response ID.');
-    const deadline=Date.now()+(D.responsePollWindowMs??120000);let data;
+    // Waiting out the whole window here is far cheaper than giving up: handing
+    // back a pending response ends the invocation, and the next one pays a cold
+    // start and re-reads every saved stage before it can wait again.
+    const deadline=Date.now()+(D.responsePollWindowMs??POLL_WINDOW_MS);let data;
+    // Short waits first, so a response that lands in a few seconds is collected
+    // in a few seconds; long jobs settle onto the cap.
+    const wait=ms=>(D.sleep||(t=>new Promise(r=>setTimeout(r,t))))(ms);
+    let attempt=0;const nextDelay=()=>POLL_STEPS[Math.min(attempt++,POLL_STEPS.length-1)];
     do{
-      if(providerRetryAt>Date.now()){await (D.sleep||(ms=>new Promise(r=>setTimeout(r,ms))))(Math.min(30000,providerRetryAt-Date.now()));throw pendingResponse();}
-      let reply;try{reply=await D.fetch('https://api.openai.com/v1/responses/'+encodeURIComponent(id),{method:'GET',timeout:30000,size:40000000,headers:{Authorization:'Bearer '+D.env.OPENAI_API_KEY}});data=await reply.json();}catch(_){await (D.sleep||(ms=>new Promise(r=>setTimeout(r,ms))))(15000);throw pendingResponse();}
-      if(!reply.ok){if(reply.status===429){const sec=Number(reply.headers?.get?.('retry-after'));providerRetryAt=Date.now()+(sec>0?sec*1000:60000);}if(reply.status===404)throw Error('The saved provider response is no longer available. No replacement request was sent.');await (D.sleep||(ms=>new Promise(r=>setTimeout(r,ms))))(15000);throw pendingResponse();}
+      if(providerRetryAt>Date.now()){await wait(Math.min(30000,providerRetryAt-Date.now()));throw pendingResponse();}
+      let reply;try{reply=await D.fetch('https://api.openai.com/v1/responses/'+encodeURIComponent(id),{method:'GET',timeout:30000,size:40000000,headers:{Authorization:'Bearer '+D.env.OPENAI_API_KEY}});data=await reply.json();}catch(_){await wait(15000);throw pendingResponse();}
+      if(!reply.ok){if(reply.status===429){const sec=Number(reply.headers?.get?.('retry-after'));providerRetryAt=Date.now()+(sec>0?sec*1000:60000);}if(reply.status===404)throw Error('The saved provider response is no longer available. No replacement request was sent.');await wait(15000);throw pendingResponse();}
       if(!['queued','in_progress'].includes(data.status))return pricedResponse(data);
       if(Date.now()>=deadline)break;
-      await (D.sleep|| (ms=>new Promise(r=>setTimeout(r,ms))))(15000);
+      await wait(Math.min(nextDelay(),Math.max(0,deadline-Date.now())));
     }while(Date.now()<deadline);
     throw pendingResponse();
   }

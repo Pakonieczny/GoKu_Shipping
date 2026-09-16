@@ -111,8 +111,17 @@ exports.handler = async (event) => {
         if(result.adDesignEditorAI.continue)await continueMotion(result.adDesignEditorAI,'adDesignEditorAI');
         if(result.adDesignEditorAI.includeAnimation){
           // Animation has its own saved state; a video issue never rolls back the static design.
-          try{const next=await E.startAdDesignMotion({workspaceId:body.workspaceId,editorJobId:body.jobId,fromEditorWorker:true});if(next.queued)await continueMotion(next);}
-          catch(e){log.push('Animation could not start: '+e.message);}
+          // Whatever happens is recorded on the static job: a silent failure here is
+          // why a Static + Animated run could finish with no film and no explanation.
+          try{
+            const next=await E.startAdDesignMotion({workspaceId:body.workspaceId,editorJobId:body.jobId,fromEditorWorker:true});
+            await E.recordAnimationHandoff({workspaceId:body.workspaceId,jobId:body.jobId,motionJobId:next.jobId||null,queued:next.queued===true});
+            if(next.queued)await continueMotion(next);
+          }
+          catch(e){
+            log.push('Animation could not start: '+e.message);
+            try{await E.recordAnimationHandoff({workspaceId:body.workspaceId,jobId:body.jobId,error:String(e.message||e)});}catch{}
+          }
         }
       }
       else if (task === 'adMotionPublication') {result.adMotionPublication=await E.runAdMotionPublication({workspaceId:body.workspaceId,jobId:body.jobId,productId:body.productId,groupRef:body.groupRef});}
