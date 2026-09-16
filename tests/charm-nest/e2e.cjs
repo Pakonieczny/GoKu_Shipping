@@ -135,6 +135,15 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   const ocgs = ocp.lookup(PDFLib.PDFName.of('OCGs')).asArray();
   console.log('output', aiBytes.length, 'bytes ·', ocgs.length, 'layers ·', doc.getPageCount(), 'page');
   assert.strictEqual(ocgs.length, result.placed + 1, 'one layer per charm + sheet');
+  // the optimizing stage ran: every charm was placed with its post-nest scale and the page matrices carry it
+  const opt = await page.evaluate(() => { const sh = CN.S.sheets.gold; return { optimized: sh.optimized, scales: sh.placements.map(p => p.scale), stageSeen: (sh.log || []).some(l => /Optimizing charms|Optimized:/.test(l)) || CN.AG.events.some(e => /Optimized:/.test(e.text || '')) }; });
+  assert(opt.stageSeen && opt.optimized && opt.optimized.count === result.placed && opt.scales.every(v => Math.abs(v - opt.optimized.scale) < 1e-9), 'every placement carries the optimized scale: ' + JSON.stringify(opt));
+  const pageObj = doc.getPage(0); const contents = pageObj.node.Contents(); const streams = contents instanceof PDFLib.PDFArray ? contents.asArray().map(r => doc.context.lookup(r)) : [contents];
+  const text = streams.map(st => Buffer.from(st instanceof PDFLib.PDFRawStream ? PDFLib.decodePDFRawStream(st).decode() : st.getContents()).toString('latin1')).join('\n');
+  const cms = [...text.matchAll(/([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+) cm/g)].map(m => Math.sqrt(Math.abs(+m[1] * +m[4] - +m[2] * +m[3])));
+  const charmCms = cms.filter(k => Math.abs(k - 1) > 1e-6);
+  console.log('optimizing stage', JSON.stringify({ optimized: opt.optimized, stageSeen: opt.stageSeen, matrices: cms.length, scaled: charmCms.length, scale: charmCms[0] }));
+  assert(charmCms.length === result.placed && charmCms.every(k => Math.abs(k - opt.optimized.scale) < 1e-3), 'each charm matrix in the .ai is scaled by ' + opt.optimized.scale);
   // report dialog opens and lists every charm
   await page.click('.sheetCard[data-m=gold] [data-r=report]');
   await page.waitForSelector('#dlgReport[open]');

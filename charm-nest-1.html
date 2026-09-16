@@ -1093,8 +1093,8 @@ function ensureWorkers(sh, n) {
 /** When the first file behind this sheet arrived — the clock the operator cares about starts there. */
 function sheetT0(sh) { const ids = new Set(sh.charms.map(c => c.sourceId)); const t = S.sources.filter(x => ids.has(x.id) && x.t0).map(x => x.t0); return t.length ? Math.min(...t) : (sh.startedAt || performance.now()); }
 function log(sh, msg) { sh.log.push(`${new Date().toLocaleTimeString()} ${msg}`); if (sh.log.length > 200) sh.log.shift(); }
-/** After nesting, every charm is written and previewed 2 % smaller than drawn, scaled about its own centre: the layout is solved at full size and the shrink afterwards makes minor overlaps disappear. */
-const CHARM_SCALE = 0.98;
+/** After nesting, every charm is written and previewed 2.5 % smaller than drawn, scaled about its own centre: the layout is solved at full size and the shrink afterwards makes minor overlaps disappear. */
+const CHARM_SCALE = 0.975;
 function buildJob(sh) {
   const st = stockFor(sh.metal);
   const items = activeCharms(sh);
@@ -1342,15 +1342,23 @@ async function finishNest(sh, { result, error }) {
   const st = stockFor(sh.metal);
   try {
     // 1 · write the sheet
-    sh.stage = "Writing .ai…"; sh.progressKind = "finish"; sh.progress = [0, 4]; renderCard(sh);
+    // 0 · optimize: every assembled charm is scaled about its own centre so minor overlaps disappear
+    const shrinkPct = ((1 - CHARM_SCALE) * 100).toFixed(1).replace(/\.0$/, "");
+    sh.stage = `Optimizing charms · shrinking ${sh.placements.length} by ${shrinkPct}% about their centres…`; sh.progressKind = "finish"; sh.progress = [0, 5]; renderCard(sh);
+    await new Promise(r => setTimeout(r, 400));
+    sh.placements.forEach(p => { p.scale = CHARM_SCALE; });
+    sh.optimized = { count: sh.placements.length, scale: CHARM_SCALE };
+    agent({ metal: sh.metal }, "ok", `Optimized: ${sh.placements.length} charms shrunk ${shrinkPct}% about their centres (positions and angles unchanged)`);
+    // 1 · write the sheet
+    sh.stage = "Writing .ai…"; sh.progress = [1, 5]; renderProgress(sh);
     const sources = new Map(); for (const p of sh.placements) { const c = byId.get(p.id); if (c && !sources.has(c.sourceId)) sources.set(c.sourceId, S.sources.find(s => s.id === c.sourceId).parsed); }
-    const specBase = { sheet: { wPt: st.wPt, hPt: st.hPt, strokeRGB: [1, 0, 0], strokePt: 0.5 }, placements: sh.placements.map(p => ({ charm: byId.get(p.id), angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, scale: CHARM_SCALE })), sources, title: `${labelOf(sh.metal)} sheet ${sh.sheetId}`, meta: { sheetId: sh.sheetId, metal: sh.metal, seed: result.params.seed, clearancePt: result.params.clearancePt } };
+    const specBase = { sheet: { wPt: st.wPt, hPt: st.hPt, strokeRGB: [1, 0, 0], strokePt: 0.5 }, placements: sh.placements.map(p => ({ charm: byId.get(p.id), angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, scale: p.scale || 1 })), sources, title: `${labelOf(sh.metal)} sheet ${sh.sheetId}`, meta: { sheetId: sh.sheetId, metal: sh.metal, seed: result.params.seed, clearancePt: result.params.clearancePt, charmScale: CHARM_SCALE } };
     const aiBytes = await CharmNestPDF.buildSheet(specBase);
     sh.placements.forEach((p, i) => { p.layerName = specBase.placements[i].layerName; p.name = byId.get(p.id)?.name; });
-    sh.progress = [1, 4]; sh.stage = "Writing labelled proof…"; renderProgress(sh);
+    sh.progress = [2, 5]; sh.stage = "Writing labelled proof…"; renderProgress(sh);
     const labelledBytes = await CharmNestPDF.buildSheet(Object.assign({}, specBase, { labelled: true, placements: specBase.placements.map(p => Object.assign({}, p)) }));
     // 2 · verify — geometry (worker) and render (pdf.js), independently of the solver
-    sh.stage = "Verifying · re-rendering each charm alone…"; sh.progress = [2, 4]; renderProgress(sh);
+    sh.stage = "Verifying · re-rendering each charm alone…"; sh.progress = [3, 5]; renderProgress(sh);
     const geom = await new Promise(res => { sh._geomVerify = res; ensureWorker(sh).postMessage({ type: "verify", jobId: sh.jobId, job: buildJob(sh), placements: sh.placements, res: +S.settings.verifyRes || 6 }); });
     let render = null;
     try { await ensurePdfJs(); render = await CharmNestPDF.verifyRendered(aiBytes, { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0, res: +S.settings.verifyRes || 6, erodePt: (+S.settings.clearancePt || 0) < 0 ? Math.round(-S.settings.clearancePt / 2 * 2) / 2 : 0, onProgress: (d, t) => { sh.stage = `Verifying · charm ${d}/${t} re-rendered from the output file`; renderProgress(sh); } }); }
@@ -1367,11 +1375,11 @@ async function finishNest(sh, { result, error }) {
     // 3 · report
     const report = buildReport(sh, result, items);
     sh.outputs = { ai: aiBytes, labelled: labelledBytes, report, previewPng: await previewPng(sh) };
-    sh.progress = [3, 4]; sh.stage = "Saving to the cloud…"; renderProgress(sh);
+    sh.progress = [4, 5]; sh.stage = "Saving to the cloud…"; renderProgress(sh);
     sh.seq = await nextSheetSeq(sh); sh.fileBase = sheetFileBase(sh, sh.seq);
     const allPlaced = sh.rejects.length === 0;
     sh.status = allPlaced && sh.verification.ok ? "complete" : "partial";
-    sh.stage = ""; sh.progress = [4, 4]; sh.totalMs = performance.now() - sh.t0;   // file in → sheet written and verified, Claude's review included
+    sh.stage = ""; sh.progress = [5, 5]; sh.totalMs = performance.now() - sh.t0;   // file in → sheet written and verified, Claude's review included
     renderCard(sh); drawPreview(sh);
     // 4 · announce
     const msg = `${sheetName(sh)} · ${allPlaced ? "sheet complete" : "sheet full"} — ${sh.placements.length} of ${items.length} placed, ${fmt.pct(sh.sat ? sh.sat.fullPct : sh.density)} full` + (sh.verification.ok ? "" : " · verification flagged, see report") + (allPlaced ? ` · ended by: ${endedText(sh.endedBy)}` : ` · the other ${sh.rejects.length} move to sheet ${sh.page + 1}`);
@@ -1675,7 +1683,7 @@ function paintPreview(cv, sh, clean, R) {
   }
   sh.placements.forEach((p, i) => {
     const c = byId.get(p.id); if (!c) return;
-    ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180); ctx.scale(CHARM_SCALE, CHARM_SCALE);
+    ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180); if (p.scale) ctx.scale(p.scale, p.scale);
     const cx = c.centerPt[0], cy = c.centerPt[1];
     const tx = (x, y) => [(x - cx) * k, (cy - y) * k];
     if (!clean) { // faint tint of the metal that will be cut: the outline minus every inner cut line (hoop holes, cut-outs)
@@ -1692,7 +1700,7 @@ function paintPreview(cv, sh, clean, R) {
     ctx.save(); ctx.globalAlpha = 0.45;
     for (const p of sh.livePlacements) {
       const c = byId.get(p.id); if (!c) continue;
-      ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180); ctx.scale(CHARM_SCALE, CHARM_SCALE);
+      ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180);
       const tx = (x, y) => [(x - c.centerPt[0]) * k, (c.centerPt[1] - y) * k];
       ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); ctx.fillStyle = "rgba(74,107,120,.18)"; ctx.fill("nonzero"); ctx.strokeStyle = "rgba(74,107,120,.9)"; ctx.lineWidth = 1; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
       ctx.restore();
