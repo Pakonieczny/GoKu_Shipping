@@ -14,7 +14,8 @@ function docRef(coll, id) {
   return {
     id, path: key,
     async get() { const d = store.get(key); return { exists: !!d, id, data: () => (d ? { ...d } : undefined) }; },
-    async set(data, opts) { const cur = (opts && opts.merge && store.get(key)) || {}; store.set(key, applyValues({ ...cur }, data)); }
+    async set(data, opts) { const cur = (opts && opts.merge && store.get(key)) || {}; store.set(key, applyValues({ ...cur }, data)); },
+    async delete() { store.delete(key); }
   };
 }
 function query(coll, filters = [], order = null, lim = 0) {
@@ -101,7 +102,7 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   r = await post(lib, { op: 'listSheets', metal: 'gold' }); assert.strictEqual(r.body.sheets.length, 1); assert.strictEqual(r.body.sheets[0].preview, 'u');
   r = await post(lib, { op: 'listSheets', from: '2026-09-15' }); assert.strictEqual(r.body.sheets.length, 1);
   r = await post(lib, { op: 'getSheet', id: 'gold-abc123' }); assert.strictEqual(r.body.sheet.names, 'compass rose axolotl');
-  r = await post(lib, { op: 'deleteSheet', id: 'silver-def456' }); r = await post(lib, { op: 'listSheets' }); assert.strictEqual(r.body.sheets.length, 1, 'archived sheet hidden');
+  r = await post(lib, { op: 'deleteSheet', id: 'silver-def456', code: '000000' }); assert.strictEqual(r.status, 403, 'wrong passcode refused'); r = await post(lib, { op: 'deleteSheet', id: 'silver-def456', code: '975311' }); r = await post(lib, { op: 'listSheets' }); assert.strictEqual(r.body.sheets.length, 1, 'deleted sheet gone');
   r = await post(lib, { op: 'putCalibration', row: { sheetId: 'gold-abc123', metal: 'gold', count: 21, cv: 0.4, largestFrac: 0.12, density: 0.713, placedAll: true } }); assert.strictEqual(r.status, 200);
   r = await post(lib, { op: 'ping' }); assert.strictEqual(r.body.sheets, 1); assert.strictEqual(r.body.calibration.length, 1);
 

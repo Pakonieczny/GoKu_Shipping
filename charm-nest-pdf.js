@@ -470,7 +470,39 @@
     for (const c of charms) for (const t of c.topIndices) { const seg = parsed.segments[t]; if (seg && seg.kind === "xobj") { const n = c.members.filter(m => m.parent === t).length; const cur = claim.get(t); if (!cur || n > cur.n) claim.set(t, { c, n }); } }
     for (const c of charms) c.topIndices = c.topIndices.filter(t => { const seg = parsed.segments[t]; return !(seg && seg.kind === "xobj") || claim.get(t).c === c; });
     charms.forEach(c => { c.strokePt = Math.max(0.5, c.outline.lwPt || 0.5); });
+    parsed._frames = frames.filter(s => bbArea(s.bbox) < pageArea * opts.framePct);   // drawn plate frames, for detectWorkArea (page-sized ones are not plates)
     return { charms, frame, frames, orphans, rule, outlineCount: outlines.length, mergedCount: merged.size };
+  }
+
+  /* ═══ 5b · work area ═══════════════════════════════════════════════════
+     The plate the charms were laid out on. Priority: a drawn frame (a rectangle enclosing ≥ 2 charms), then the
+     artboard if it is plate-sized, then the tight extent of the largest cluster of charms (charms within `gapPt`
+     of one another). Matched to the given plates with a tolerance, since a nested block never fills its plate exactly. */
+  function detectWorkArea(parsed, charms, plates, opts) {
+    opts = Object.assign({ gapPt: 20, tolMm: 6 }, opts || {});
+    const MM = 25.4 / 72;
+    const matchPlate = (wPt, hPt) => {
+      let best = null;
+      for (const p of plates || []) { const dw = Math.abs(wPt * MM - p.wMm), dh = Math.abs(hPt * MM - p.hMm); const fits = wPt * MM <= p.wMm + opts.tolMm && hPt * MM <= p.hMm + opts.tolMm; const score = dw + dh; if (fits && (!best || score < best.score)) best = { id: p.id, wMm: p.wMm, hMm: p.hMm, score }; }
+      // a block must fill most of the plate it is matched to, or it is just a few charms and tells us nothing
+      if (best && (wPt * MM) * (hPt * MM) < 0.5 * best.wMm * best.hMm) best = null;
+      return best;
+    };
+    const frames = (parsed._frames || []);
+    if (frames.length) { const f = frames[0].bbox; const w = f[2] - f[0], h = f[3] - f[1]; return { source: "frame", wPt: w, hPt: h, bbox: f, count: charms.length, match: matchPlate(w, h), outside: 0 }; }
+    const ab = matchPlate(parsed.pageW, parsed.pageH);
+    if (ab) return { source: "artboard", wPt: parsed.pageW, hPt: parsed.pageH, bbox: [0, 0, parsed.pageW, parsed.pageH], count: charms.length, match: ab, outside: 0 };
+    // clusters by bbox proximity (single-link)
+    const n = charms.length, parent = charms.map((_, i) => i);
+    const find = i => parent[i] === i ? i : (parent[i] = find(parent[i]));
+    const near = (a, b, g) => !(a[2] + g < b[0] || b[2] + g < a[0] || a[3] + g < b[1] || b[3] + g < a[1]);
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) if (near(charms[i].bbox, charms[j].bbox, opts.gapPt)) parent[find(i)] = find(j);
+    const groups = new Map(); charms.forEach((c, i) => { const r = find(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(c); });
+    let best = null;
+    for (const list of groups.values()) { const bb = list.reduce((a, c) => a ? [Math.min(a[0], c.bbox[0]), Math.min(a[1], c.bbox[1]), Math.max(a[2], c.bbox[2]), Math.max(a[3], c.bbox[3])] : c.bbox.slice(), null); const area = (bb[2] - bb[0]) * (bb[3] - bb[1]); if (!best || area > best.area) best = { bb, list, area }; }
+    if (!best) return { source: "none", wPt: parsed.pageW, hPt: parsed.pageH, bbox: [0, 0, parsed.pageW, parsed.pageH], count: 0, match: null, outside: 0 };
+    const w = best.bb[2] - best.bb[0], h = best.bb[3] - best.bb[1];
+    return { source: "cluster", wPt: w, hPt: h, bbox: best.bb, count: best.list.length, match: matchPlate(w, h), outside: n - best.list.length };
   }
 
   /* ═══ 6 · silhouettes + thumbnails ═════════════════════════════════════ */
@@ -761,5 +793,5 @@
     return { ok: overlapPx === 0 && outsidePx === 0 && empty.length === 0, overlapPx, outsidePx, emptyLayers: empty, overlappingPairs: [...pairs], overlapDetail, layers: charmLayers.length, res, erodePx };
   }
 
-  root.CharmNestPDF = { parseSource, groupCharms, buildSilhouettes, buildSheet, buildSingleCharm, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawSegments, pathToCanvas };
+  root.CharmNestPDF = { parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawSegments, pathToCanvas };
 })(typeof window !== "undefined" ? window : self);

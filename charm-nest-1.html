@@ -432,17 +432,17 @@ const METALS = [
 const METAL_TAG = { gold: "GF", silver: "SS", rose: "RG", gold10k: "10K", gold14k: "14K" };
 const DEFAULTS = {
   rail: "md",
-  stock: { gold: [7.125, 6.03], silver: [7.125, 6.03], rose: [7.125, 6.03], gold10k: [7.125, 6.03], gold14k: [7.125, 6.03] },
+  stock: { gold: [100 / 25.4, 50 / 25.4], silver: [100 / 25.4, 50 / 25.4], rose: [100 / 25.4, 50 / 25.4], gold10k: [100 / 25.4, 50 / 25.4], gold14k: [100 / 25.4, 50 / 25.4] },
   clearancePt: -0.5, insetPt: 1.5, angleStep: 30, budgetS: 180, seed: 1, serverAbove: 80, parallel: 0,
   minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", aiRounds: 10, snapIn: 0.25, maxFill: 0.72, v: 7
 };
+/* The two plates production actually uses. Sizes are held in mm; `w`/`h` stay in inches for the code that reads them. */
 const STOCK_PRESETS = [
-  { id: "ref", label: "181.0 × 153.2 mm (reference)", w: 7.125, h: 6.03 },
-  { id: "6x6", label: "152.4 × 152.4 mm", w: 6, h: 6 },
-  { id: "8x6", label: "203.2 × 152.4 mm", w: 8, h: 6 },
-  { id: "12x6", label: "304.8 × 152.4 mm", w: 12, h: 6 },
+  { id: "A", label: "A · 100 × 50 mm (default)", mm: [100, 50], w: 100 / 25.4, h: 50 / 25.4 },
+  { id: "B", label: "B · 100 × 100 mm", mm: [100, 100], w: 100 / 25.4, h: 100 / 25.4 },
   { id: "custom", label: "Per-metal (Settings)", w: 0, h: 0 }
 ];
+const DEFAULT_STOCK = "A";
 const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const MM_PER_PT = 25.4 / PT_PER_IN;
@@ -475,7 +475,7 @@ function ding() {
 /* ═══ 2 · settings ══════════════════════════════════════════════════════ */
 const S = {
   settings: loadSettings(), passcode: sessionStorage.getItem("cn.passcode") || "", cloud: { ok: null, locked: false, msg: "" },
-  sources: [], unassigned: [], sheets: {}, mode: "nest", calibration: [], library: { rows: [], metal: "all", q: "" }, nestQueue: [], stockPreset: localStorage.getItem("cn.stock") || "ref"
+  sources: [], unassigned: [], sheets: {}, mode: "nest", calibration: [], library: { rows: [], metal: "all", q: "" }, nestQueue: [], stockPreset: (v => STOCK_PRESETS.some(p => p.id === v) ? v : DEFAULT_STOCK)(localStorage.getItem("cn.stock"))
 };
 function loadSettings() {
   try {
@@ -654,6 +654,13 @@ async function parseSourceFile(src) {
     agentUpdate(evP, { live: false, text: `${src.name}: ${parsed.counts.paths} paths, ${parsed.counts.xobjects} form XObject(s), ${parsed.counts.text} text block(s) on a ${fmt.mm(parsed.pageW)} × ${fmt.mm(parsed.pageH)} page` });
     const g = CharmNestPDF.groupCharms(parsed, { minPt: +S.settings.minPt || 6 });
     src.group = g;
+    // The work area is the plate the charms were laid out on. A file rarely draws it: read it from the nested block
+    // of charms (the artboard is usually the whole canvas) and match it to the plates we cut.
+    src.workArea = CharmNestPDF.detectWorkArea(parsed, g.charms, STOCK_PRESETS.filter(p => p.mm).map(p => ({ id: p.id, wMm: p.mm[0], hMm: p.mm[1] })));
+    { const w = src.workArea; const f = v => (v * MM_PER_PT).toFixed(1);
+      agent({ srcId: src.id }, w.match ? "ok" : "warn", `Work area read from the file: ${w.source === "frame" ? "a drawn frame" : w.source === "artboard" ? "the artboard" : `the block of ${w.count} nested charms`} measures ${f(w.wPt)} × ${f(w.hPt)} mm` + (w.match ? ` — plate ${w.match.id} (${w.match.wMm} × ${w.match.hMm} mm)${w.outside ? ` · ${w.outside} charm(s) sit outside it` : ""}` : ` — matches neither plate A (100 × 50) nor B (100 × 100); charms keep their true sizes, check the stock selector`));
+      if (w.match && S.stockPreset !== w.match.id && S.stockPreset !== "custom") { S.stockPreset = w.match.id; localStorage.setItem("cn.stock", w.match.id); const sel = $("#stockSel"); if (sel) sel.value = w.match.id; for (const sh of allSheets()) sheetDirty(sh); agent({ srcId: src.id }, "info", `Stock switched to plate ${w.match.id} to match the file`); }
+    }
     agent({ srcId: src.id }, "geom", `Geometry found ${g.outlineCount} outlines (rule: ${g.rule})${g.mergedCount ? `, folded ${g.mergedCount} inner closed path(s) into their charms as holes/rings` : ""}${g.frames && g.frames.length ? `, set aside ${g.frames.length} frame rectangle(s)` : ""}${g.orphans.length ? `, ${g.orphans.length} loose element(s) belong to no charm` : ""}`, g.orphans.length ? { kind: "warn" } : {});
     if (!g.charms.length) throw new Error(`no charm outlines found (rule: ${g.rule}). Outlines must be closed, stroked, near-black paths.`);
     src.state = "silhouettes"; src.progress = [0, g.charms.length]; renderRail();

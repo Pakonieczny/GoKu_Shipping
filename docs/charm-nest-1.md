@@ -67,7 +67,7 @@ Rail density, per-metal stock, clearance, edge inset, angle step, time budget, s
 
 ## Open questions carried from the design document
 
-Stock size per metal (defaults to the 181.0 × 153.2 mm reference), machine kerf (clearance default −0.18 mm, i.e. shared cut lines; raise to a positive value for a guaranteed gap), whether small charms may nest inside jump rings (no — holes are solid), legacy `.ai` files (rejected with instructions), grain/orientation constraints (free rotation assumed; angle step is a setting).
+Stock size per metal (plate A, 100 × 50 mm, is the default; plate B is 100 × 100 mm), machine kerf (clearance default −0.18 mm, i.e. shared cut lines; raise to a positive value for a guaranteed gap), whether small charms may nest inside jump rings (no — holes are solid), legacy `.ai` files (rejected with instructions), grain/orientation constraints (free rotation assumed; angle step is a setting).
 
 
 ## Units and preview
@@ -85,3 +85,11 @@ Each finished sheet is saved in its own folder, `charmnest/sheets/<yyyy-mm-dd>/<
 ## Deleting a sheet from the Library
 
 "Delete sheet" in a Library record removes the record and its output files permanently after a passcode prompt. The passcode is checked on the server (`CHARM_NEST_DELETE_CODE`, default 975311); a wrong code deletes nothing. Charm library copies are shared between sheets and stay. Links in a record are rebuilt from the objects' current download tokens when it is opened, and .ai files carry the Illustrator MIME type so browsers keep the .ai extension.
+
+## Plates and the work area
+
+Production uses two plates: **A · 100 × 50 mm** (default) and **B · 100 × 100 mm**; the stock selector offers only these plus the per-metal custom size. On import the sorter reads the work area from the file: a drawn plate frame if there is one, otherwise the artboard if it is plate-sized, otherwise the tight extent of the largest block of charms (charms within 20 pt of one another). The result is logged ("the block of 34 nested charms measures 98.8 × 48.4 mm — plate A") and the stock selector switches to the matching plate; a block that matches neither plate is flagged. Charm sizes are always read from the file's own points, never scaled.
+
+## Fidelity check
+
+`node tests/charm-nest/fidelity.cjs <source.ai> <sheet.ai>…` compares every drawn path of the source with every drawn path of the written sheets: paint operator, stroke colour, fill colour, line width, closure, subpath and operator counts, and rotation-invariant geometry. A written set is faithful when the only extras are the sheets' own borders.

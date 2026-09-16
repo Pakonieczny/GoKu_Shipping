@@ -56,7 +56,7 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   }
   if (process.env.CN_STOCK) { // e.g. "4.5x4" — a custom per-metal stock to force an overfilled sheet
     const [w, h] = process.env.CN_STOCK.split('x').map(Number);
-    await page.evaluate(([w, h]) => { CN.S.settings.stock.gold = [w, h]; CN.S.stockPreset = 'custom'; document.querySelector('#stockSel').value = 'custom'; }, [w, h]);
+    await page.evaluate(([w, h]) => { CN.S.settings.stock.gold = [w / 25.4, h / 25.4]; CN.S.stockPreset = 'custom'; document.querySelector('#stockSel').value = 'custom'; }, [w, h]);
   }
   // drop the fixture on the GF card via the hidden file input, then assign to gold
   await page.setInputFiles('#fileInput', fixture);
