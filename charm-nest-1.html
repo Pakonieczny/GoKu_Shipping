@@ -878,7 +878,7 @@ async function unmergeCharm(src, fragIndex, ev) {
   if (ev) { ev.undo = null; agentUpdate(ev, { kind: "info", text: `Undone by operator: #${frag.index} is its own charm again` }); }
   renderRail(); refreshAllCards(); updateTopSub();
 }
-/** After nesting: Claude inspects the rendered sheet; fixable findings trigger one automatic re-nest. */
+/** Optional, not part of the loop: Claude inspects a finished sheet (kept for the console; `CN.reviewLayout(metal)`). */
 async function reviewLayout(sh, items) {
   if (S.settings.review === "off" || !S.cloud.ok || !sh.outputs || !sh.outputs.previewPng) return;
   sh.aiReview = { state: "running" }; renderCard(sh);
@@ -1145,9 +1145,10 @@ function onWorkerMessage(sh, m, idx) {
   if (base !== sh.jobId) return;
   const items = activeCharms(sh); const byId = new Map(items.map(c => [c.id, c]));
   const pool = sh.pool || { n: 1, done: 0, results: [], trials: [0], winner: null };
+  if (pool.finished) { if (m.type === "verified") sh._geomVerify && sh._geomVerify(m.result); return; }   // the sheet is done — late messages from stopped searches are dropped
   const leader = pool.winner != null ? pool.winner : (sh.bestWorker != null ? sh.bestWorker : 0);   // whose trial is drawn as ghosts
   if (m.type === "placed" && idx !== leader) return;
-  if (m.type === "stage" && m.stage === "prepare" && idx !== 0) return;
+  if (m.type === "stage" && (m.stage === "prepare" ? idx !== 0 : idx !== leader)) return;   // one voice for the pool: only the leading search narrates
   if (m.type === "trial") { pool.trials[idx] = m.summary.trial + 1; m.summary = Object.assign({}, m.summary, { trial: pool.trials.reduce((a, b) => a + b, 0) - 1, worker: idx }); }
   if (m.type === "best") {
     const cur = sh.best; const better = !cur || m.best.placements.length > cur.placements.length || (m.best.placements.length === cur.placements.length && m.best.density > cur.density);
@@ -1163,10 +1164,12 @@ function onWorkerMessage(sh, m, idx) {
     const results = pool.results.filter(Boolean);
     const pick = results.reduce((a, b) => !a ? b : (b.placements.length > a.placements.length || (b.placements.length === a.placements.length && b.density > a.density)) ? b : a, null);
     const total = pool.trials.reduce((a, b) => a + b, 0);
+    pool.finished = true;   // exactly one finish per job
     m = { type: "done", jobId: sh.jobId, result: Object.assign({}, pick, { trials: total, workers: pool.n, winner: pool.winner }) };
     agent({ metal: sh.metal }, "nest", pool.winner != null ? `Search ${pool.winner + 1} (seed ${(+S.settings.seed || 1) + pool.winner}) completed the sheet first — the other ${pool.n - 1} were stopped · ${total} trials in total` : `All ${pool.n} searches reached the ceiling · best ${pick.placements.length}/${items.length} · ${total} trials in total`);
   }
   if (m.type === "error" && idx !== 0 && pool.n > 1) { log(sh, `worker ${idx}: ${m.message}`); pool.done++; return; }
+  if (m.type === "error") pool.finished = true;
   switch (m.type) {
     case "placed": {
       sh.progressKind = "place";
@@ -1285,9 +1288,8 @@ async function finishNest(sh, { result, error }) {
     $$(".sheetCard").find(el => el.dataset.m === sh.metal)?.classList.add("pulse");
     setTimeout(() => $$(".sheetCard").find(el => el.dataset.m === sh.metal)?.classList.remove("pulse"), 1300);
     if (document.hidden && S.settings.notify === "on" && "Notification" in window && Notification.permission === "granted") { try { new Notification("Charm Nesting Station", { body: msg }); } catch (_) { /* ignore */ } }
-    // 5 · persist everything, then let Claude inspect the finished sheet
+    // 5 · persist everything. The two verifiers above are the acceptance test; no further inspection runs.
     persistSheet(sh, items).catch(e => { toast("Cloud save failed: " + e.message, "bad", 6000); log(sh, "cloud save failed: " + e.message); renderCard(sh); });
-    reviewLayout(sh, items).catch(e => { sh.aiReview = { skipped: e.message }; log(sh, "AI review failed: " + e.message); renderCard(sh); });
   } catch (e) {
     sh.status = "partial"; sh.stage = ""; log(sh, "finish error: " + (e.stack || e)); toast(`${labelOf(sh.metal)}: output failed — ${e.message}`, "bad", 7000); renderCard(sh);
   }
@@ -1775,7 +1777,7 @@ async function boot() {
   await gate();
   cloudProbe();
   refreshAllCards(); updateTopSub();
-  window.CN = { S, startNest, intake, api, buildJob, applyGroupingReview, renderOverview, aiRenderSheet, aiPockets, setAgent: fn => { agentCallImpl = fn; } };   // for tests and the console
+  window.CN = { S, AG, startNest, intake, api, buildJob, applyGroupingReview, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; } };   // for tests and the console
 }
 boot();
 </script>

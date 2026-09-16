@@ -126,6 +126,10 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/jav
   const bad = errors.filter(e => !/net::ERR|404|Failed to load resource|favicon|functions/.test(e));
   console.log('console issues', bad);
   assert.strictEqual(bad.length, 0, 'no page errors');
+  // the finish must run exactly once, and no post-nest inspection may run
+  const finishes = await page.evaluate(() => { const t = CN.AG.events.map(e => e.text || '').filter(Boolean); return { won: t.filter(x => /completed the sheet first|reached the ceiling/.test(x)).length, verified: t.filter(x => /^Verified twice/.test(x)).length, inspect: t.filter(x => /inspecting|Sent Claude the finished/.test(x)).length, ended: t.filter(x => /^Search ended/.test(x)).length }; });
+  console.log('finish events', JSON.stringify(finishes));
+  assert(finishes.won <= 1 && finishes.verified === 1 && finishes.inspect === 0 && finishes.ended <= 1, 'single finish per job: ' + JSON.stringify(finishes));
   console.log('artifacts in', tmp);
   await browser.close(); server.close();
   console.log('E2E OK');
