@@ -373,6 +373,62 @@
       }
     }
 
+    /* ── optimization pass ──────────────────────────────────────────────────────
+       Last resort for the final one or two pieces, never the norm: a piece that
+       still has no home after the targeted push and the repair may be drawn up
+       to 3 % smaller, on at most 5 % of the sheet's charms (one charm minimum).
+       It runs once per best layout, only when the search is struggling (the
+       repair has failed and a good share of the time budget is spent), and only
+       shrinks the missing piece itself — never the pieces already placed. */
+    const shrinkAllowance = Math.max(1, Math.floor(job.pieces.length * (job.shrinkFrac == null ? 0.05 : job.shrinkFrac)));
+    const shrinkMax = job.shrinkMax == null ? 0.03 : job.shrinkMax;
+    let shrunkCount = 0;
+    async function shrinkPush(best) {
+      if (!best || !best.rejects.length || best.rejects.length > 2 || !best.grids || best.shrunkTried || shrinkMax <= 0) return false;
+      if (cb.shouldStop && cb.shouldStop()) return false;
+      best.shrunkTried = true;
+      const fine = best.grids.fine, coarse = best.grids.coarse, total = prepared.length;
+      let any = false;
+      for (const id of best.rejects.slice()) {
+        if (shrunkCount >= shrinkAllowance) break;
+        const p = prepared.find(x => x.id === id); if (!p || p.pinned) continue;
+        if ((best.placedCells + p.footprintCells) / usableCellsFine > maxFill) continue;
+        const src = pieces[p.idx];
+        let placed = false;
+        for (const scale of [0.99, 0.98, 0.97].filter(k => k >= 1 - shrinkMax - 1e-9)) {
+          if (cb.onStage) cb.onStage("shrink", best.placements.length, total, { id, scale });
+          // a smaller drawing: the same bitmap read at a higher px/pt
+          const fineBase = resample(src.bits, src.w, src.h, src.scale / scale, fineRes);
+          const variants = [];
+          for (let a = 0; a < 360; a += 5) {
+            const rot = rotateBitmap(fineBase.bits, fineBase.w, fineBase.h, a); if (!rot.w) continue;
+            const dil = erodeFine ? erode(rot.bits, rot.w, rot.h, erodeFine) : dilate(rot.bits, rot.w, rot.h, halfGapFine);
+            if (!dil.w || !areaOf(dil.bits)) continue;
+            const rg = ring(dil.bits, dil.w, dil.h, Math.max(2, Math.round(2 * fineRes)));
+            const co = majority(dil.bits, dil.w, dil.h, ratio);
+            variants.push({ angle: a, fine: { bits: dil.bits, w: dil.w, h: dil.h, pm: packShifted(dil.bits, dil.w, dil.h) }, cells: areaOf(dil.bits), solid: { bits: rot.bits, w: rot.w, h: rot.h, cx: rot.cx + halfGapFine - erodeFine, cy: rot.cy + halfGapFine - erodeFine }, ringFine: packShifted(rg.bits, rg.w, rg.h), ringPad: Math.max(2, Math.round(2 * fineRes)), coarse: { pm: packShifted(co.bits, co.w, co.h), w: co.w, h: co.h } });
+          }
+          const pos = search({ variants }, fine, coarse, ratio, 0.35, 0, random, 0, 0);
+          if (!pos) continue;
+          const { v, x, y } = pos;
+          fine.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y);
+          for (let r = 0; r < v.fine.h; r++) for (let c = 0; c < v.fine.w; c++) if (v.fine.bits[r * v.fine.w + c]) { const gx = Math.floor((x + c) / ratio), gy = Math.floor((y + r) / ratio); if (gx >= 0 && gy >= 0 && gx < coarse.W && gy < coarse.H) coarse.set(gx, gy); }
+          coarse.buildSAT();
+          const pl = { id, angle: v.angle, scale, cxPt: (x + v.solid.cx) / fineRes, cyPt: (y + v.solid.cy) / fineRes, xPt: (x + (v.fine.w - v.solid.w) / 2) / fineRes, yPt: (y + (v.fine.h - v.solid.h) / 2) / fineRes, wPt: v.solid.w / fineRes, hPt: v.solid.h / fineRes, contact: pos.contact || 0 };
+          best.placements.push(pl); best.rejects = best.rejects.filter(r => r !== id);
+          best.placedCells += v.cells; best.placedPt2 = best.placedCells / (fineRes * fineRes);
+          best.density = best.placedCells / usableCellsFine; best.freePt2 = fine.freeCells() / (fineRes * fineRes); best.pocket = pocketPt(coarse, coarseRes);
+          best.shrunk = (best.shrunk || []).concat([{ id, scale }]); shrunkCount++; placed = true; any = true;
+          if (cb.onPlaced) cb.onPlaced(pl, { trial: best.trial, placed: best.placements.length, total, freePt2: best.freePt2, usablePt2: usableCellsFine / (fineRes * fineRes), placedPt2: best.placedPt2, pocket: best.pocket, finishing: true, shrunk: scale });
+          if (cb.onBest) cb.onBest(best, { trial: best.trial, placed: best.placements.length, total, rejects: best.rejects, density: best.density, elapsedMs: now() - t0, finishing: true, shrunk: { id, scale } });
+          await yieldNow();
+          break;
+        }
+        if (!placed) continue;
+      }
+      return any;
+    }
+
     /* ── ruin & recreate ─────────────────────────────────────────────────────
        Repair the best layout instead of discarding it: pull out the pieces around
        its largest gap (or a random neighbourhood), then re-insert them together
@@ -538,6 +594,11 @@
         if (cb.onStage) cb.onStage("repair", 0, 6);
         const fixed = await ruinRecreate(best, 6);
         if (fixed && best.placements.length === pinnedFirst.length) { endedBy = "complete"; break; }
+        // still short after the repair and well into the budget: the sparing optimization pass, once per layout
+        if (!fixed && best.rejects.length && best.rejects.length <= 2 && (now() - t0) >= 0.4 * budget) {
+          const shrunk = await shrinkPush(best);
+          if (shrunk && best.placements.length === pinnedFirst.length) { endedBy = "complete"; break; }
+        }
       }
       if (best && best.rejects.length && best.rejects.every(id => best.capped.includes(id))) { endedBy = "cap"; break; }   // only the ceiling holds pieces back
       await yieldNow();
@@ -549,7 +610,7 @@
     // what the pieces the ceiling held back would add, so the console can say the arithmetic plainly
     const cappedPt2 = (best.capped || []).reduce((n, id) => { const p = prepared.find(x => x.id === id); return n + (p ? p.footprintCells / (fineRes * fineRes) : 0); }, 0);
     return Object.assign({}, best, {
-      endedBy, trials, elapsedMs: now() - t0, cappedPt2,
+      endedBy, trials, elapsedMs: now() - t0, cappedPt2, shrunk: (best && best.shrunk) || [],
       params: { seed: job.seed == null ? 1 : job.seed, angles, clearancePt, insetPt, fineRes, coarseRes, maxFill, pieceOrder: byAreaDesc.map(p => p.id) }
     });
   }
@@ -560,7 +621,7 @@
   function erosionPx(clearancePt, res, fineRes) {
     fineRes = fineRes || 2;
     const erodeFine = (+clearancePt || 0) < 0 ? Math.round(-clearancePt / 2 * fineRes) : 0;
-    return erodeFine ? Math.ceil((erodeFine + 1) / fineRes * res) + 1 : 0;
+    return erodeFine ? Math.ceil((erodeFine + 1) / fineRes * res) + 1 : ((+clearancePt || 0) === 0 ? 1 : 0);
   }
   function pocketPt(coarse, coarseRes) {
     const p = coarse.largestPocket();
@@ -661,7 +722,7 @@
     const masks = [];
     placements.forEach((pl, i) => {
       const p = byId.get(pl.id); if (!p) return;
-      const r = resample(p.bits, p.w, p.h, p.scale, res);
+      const r = resample(p.bits, p.w, p.h, p.scale / (pl.scale || 1), res);   // a shrunk placement is the same drawing read smaller
       const rot0 = rotateBitmap(r.bits, r.w, r.h, pl.angle);
       const rot = erodePx ? Object.assign(erode(rot0.bits, rot0.w, rot0.h, erodePx), { cx: rot0.cx - erodePx, cy: rot0.cy - erodePx }) : rot0;
       const x0 = Math.round(pl.cxPt * res - rot.cx), y0 = Math.round(pl.cyPt * res - rot.cy);

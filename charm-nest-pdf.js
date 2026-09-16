@@ -772,7 +772,9 @@
       const xref = out.context.register(xobj);
       const key = page.node.newXObject("Charm" + i, xref);
       // T(centre on sheet, y-up) · R(−θ) · T(−source centre)
-      const th = -pl.angle * Math.PI / 180, cs = Math.cos(th), sn = Math.sin(th);
+      // T(centre on sheet, y-up) · S(scale) · R(−θ) · T(−source centre); scale is 1 unless the solver's optimization pass drew this piece smaller
+      const sc = pl.scale || 1;
+      const th = -pl.angle * Math.PI / 180, cs = Math.cos(th) * sc, sn = Math.sin(th) * sc;
       const ox = pl.cxPt, oy = spec.sheet.hPt - pl.cyPt, cx = c.centerPt[0], cy = c.centerPt[1];
       const e = ox - (cs * cx - sn * cy), f = oy - (sn * cx + cs * cy);
       page.pushOperators(ocgOps(tag), pushGraphicsState(), concatTransformationMatrix(cs, sn, -sn, cs, e, f), drawObject(key), popGraphicsState(), endMarkedContent());

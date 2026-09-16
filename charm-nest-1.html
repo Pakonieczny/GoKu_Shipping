@@ -364,7 +364,7 @@ dialog.wide{width:min(980px,95vw)}
     </div>
     <div class="section">Geometry (measuring tool · solver option)</div>
     <div class="fieldRow3">
-      <div class="field"><label>Clearance (mm)</label><input id="stClearance" type="number" step="0.01" min="-0.7" max="4.2"><div class="help">Gap between silhouettes. <b>Negative = aggressive:</b> outlines may touch and their strokes overlap by up to that much (−0.18 mm ≈ half a 0.3 mm cut line), bodies never more. 0 = touching. 0.33 pt fit the reference sheet; 1.5 pt did not.</div></div>
+      <div class="field"><label>Clearance (mm)</label><input id="stClearance" type="number" step="0.01" min="-0.7" max="4.2"><div class="help">Gap between silhouettes. <b>0 (default) = touching only:</b> outlines may meet, never overlap. Positive = a guaranteed gap. Negative lets cut lines share up to that much and is not recommended.</div></div>
       <div class="field"><label>Edge inset (mm)</label><input id="stInset" type="number" step="0.1" min="0" max="12.7"></div>
       <div class="field"><label>Angle step (°)</label><select id="stAngle"><option value="90">90 (4 angles)</option><option value="45">45 (8)</option><option value="30">30 (12)</option><option value="15">15 (24)</option></select></div>
     </div>
@@ -433,8 +433,8 @@ const METAL_TAG = { gold: "GF", silver: "SS", rose: "RG", gold10k: "10K", gold14
 const DEFAULTS = {
   rail: "md",
   stock: { gold: [100 / 25.4, 50 / 25.4], silver: [100 / 25.4, 50 / 25.4], rose: [100 / 25.4, 50 / 25.4], gold10k: [100 / 25.4, 50 / 25.4], gold14k: [100 / 25.4, 50 / 25.4] },
-  clearancePt: -0.5, insetPt: 1.5, angleStep: 30, budgetS: 180, seed: 1, serverAbove: 0, parallel: 0,
-  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", aiRounds: 10, snapIn: 0.25, maxFill: 0.74, v: 9
+  clearancePt: 0, insetPt: 1.5, angleStep: 30, budgetS: 180, seed: 1, serverAbove: 0, parallel: 0,
+  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", aiRounds: 10, snapIn: 0.25, maxFill: 0.74, v: 10
 };
 /* The two plates production actually uses. Sizes are held in mm; `w`/`h` stay in inches for the code that reads them. */
 const STOCK_PRESETS = [
@@ -491,6 +491,7 @@ function loadSettings() {
     if ((saved.v || 1) < 7) { saved.maxFill = 0.72; saved.v = 7; }                        // v7: 72 % is the maximum fill of any sheet; the rest goes to the next sheet
     if ((saved.v || 1) < 8) { saved.maxFill = 0.74; saved.v = 8; }                        // v8: 74 % ceiling, measured on the stamped footprint like the readout
     if ((saved.v || 1) < 9) { saved.serverAbove = 0; saved.v = 9; }
+    if ((saved.v || 1) < 10) { saved.clearancePt = 0; saved.v = 10; }                    // v10: touching only — outlines may meet, never overlap
     const out = Object.assign({}, DEFAULTS, saved); out.stock = Object.assign({}, DEFAULTS.stock, saved.stock || {}); return out;
   } catch (_) { return Object.assign({}, DEFAULTS, { v: 2 }); }
 }
@@ -1266,7 +1267,7 @@ function onWorkerMessage(sh, m, idx) {
       sh.stage = m.info.finishing ? `Targeted 5° push · ${byId.get(m.placement.id)?.name || m.placement.id} landed · ${m.info.placed}/${m.info.total}` : `Trial ${m.info.trial + 1} · placing ${byId.get(m.placement.id)?.name || m.placement.id} · ${m.info.placed}/${m.info.total}${sh.best ? ` · best ${sh.best.placements.length}/${m.info.total}` : ""}`;
       computeSaturation(sh); renderProgress(sh); renderSat(sh); drawPreview(sh); break;
     }
-    case "stage": if (m.stage === "finish") { agent({ metal: sh.metal }, "nest", `Best layout is ${m.total - m.done} short — targeted search at 5° steps for the missing piece(s) into that layout`); } else if (m.stage === "repair") { if (m.done === 0) agent({ metal: sh.metal }, "nest", `Restarts stalled — repairing the best layout instead: pulling out the pieces around its largest gap and re-inserting them with the missing piece at 15° steps (${m.total} attempts)`); sh.stage = `Repairing the best layout · attempt ${m.done}/${m.total}`; renderProgress(sh); } else if (m.stage === "prepare") { sh.stage = `Preparing rotations · ${m.done}/${m.total}`; sh.progress = [m.done, m.total]; sh.progressKind = "prepare"; renderProgress(sh); } break;
+    case "stage": if (m.stage === "shrink") { sh.stage = `Optimization pass · trying ${byId.get(m.extra && m.extra.id)?.name || "the missing piece"} at ${Math.round((m.extra ? m.extra.scale : 1) * 100)}%`; renderProgress(sh); } else if (m.stage === "finish") { agent({ metal: sh.metal }, "nest", `Best layout is ${m.total - m.done} short — targeted search at 5° steps for the missing piece(s) into that layout`); } else if (m.stage === "repair") { if (m.done === 0) agent({ metal: sh.metal }, "nest", `Restarts stalled — repairing the best layout instead: pulling out the pieces around its largest gap and re-inserting them with the missing piece at 15° steps (${m.total} attempts)`); sh.stage = `Repairing the best layout · attempt ${m.done}/${m.total}`; renderProgress(sh); } else if (m.stage === "prepare") { sh.stage = `Preparing rotations · ${m.done}/${m.total}`; sh.progress = [m.done, m.total]; sh.progressKind = "prepare"; renderProgress(sh); } break;
     case "reject": log(sh, `trial ${m.trial + 1}: ${byId.get(m.id)?.name || m.id} ${m.reason === "cap" ? "held back by the fill ceiling" : "did not fit"}`); break;
     case "trial": {
       sh.trials = m.summary.trial + 1;
@@ -1336,13 +1337,14 @@ async function finishNest(sh, { result, error }) {
     agent({ metal: sh.metal }, "warn", `Ceiling: ${result.placements.length} placed fill ${fmt.pct(result.density)}; the remaining ${result.rejects.length} (${result.rejects.map(id => byId.get(id)?.name || id).join(", ")}) would bring the sheet to ${(would * 100).toFixed(1)}%, over the ${fmt.pct(cap)} maximum. No arrangement changes that total — more trials cannot help. Raise the ceiling in Settings to ${Math.ceil(would * 100)}% to fit them here, or let them go to the next sheet.`);
   }
   sh.solveParams = result.params; sh.elapsedMs = result.elapsedMs; sh.density = result.density; sh.t0 = sheetT0(sh);
+  if (result.shrunk && result.shrunk.length) agent({ metal: sh.metal }, "warn", `Optimization pass used, sparingly: ${result.shrunk.map(x => `${byId.get(x.id)?.name || x.id} drawn ${Math.round((1 - x.scale) * 100)}% smaller`).join(", ")} — the last piece(s) had no home at full size after the targeted push and the repair (allowance ${Math.max(1, Math.floor(items.length * 0.05))} of ${items.length} charms, up to 3%)`);
   computeSaturation(sh); drawPreview(sh);
   const st = stockFor(sh.metal);
   try {
     // 1 · write the sheet
     sh.stage = "Writing .ai…"; sh.progressKind = "finish"; sh.progress = [0, 4]; renderCard(sh);
     const sources = new Map(); for (const p of sh.placements) { const c = byId.get(p.id); if (c && !sources.has(c.sourceId)) sources.set(c.sourceId, S.sources.find(s => s.id === c.sourceId).parsed); }
-    const specBase = { sheet: { wPt: st.wPt, hPt: st.hPt, strokeRGB: [1, 0, 0], strokePt: 0.5 }, placements: sh.placements.map(p => ({ charm: byId.get(p.id), angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt })), sources, title: `${labelOf(sh.metal)} sheet ${sh.sheetId}`, meta: { sheetId: sh.sheetId, metal: sh.metal, seed: result.params.seed, clearancePt: result.params.clearancePt } };
+    const specBase = { sheet: { wPt: st.wPt, hPt: st.hPt, strokeRGB: [1, 0, 0], strokePt: 0.5 }, placements: sh.placements.map(p => ({ charm: byId.get(p.id), angle: p.angle, scale: p.scale || 1, cxPt: p.cxPt, cyPt: p.cyPt })), sources, title: `${labelOf(sh.metal)} sheet ${sh.sheetId}`, meta: { sheetId: sh.sheetId, metal: sh.metal, seed: result.params.seed, clearancePt: result.params.clearancePt } };
     const aiBytes = await CharmNestPDF.buildSheet(specBase);
     sh.placements.forEach((p, i) => { p.layerName = specBase.placements[i].layerName; p.name = byId.get(p.id)?.name; });
     sh.progress = [1, 4]; sh.stage = "Writing labelled proof…"; renderProgress(sh);
@@ -1394,7 +1396,7 @@ function buildReport(sh, result, items) {
     version: 1, sheetId: sh.sheetId, metal: sh.metal, metalLabel: labelOf(sh.metal), createdAt: new Date().toISOString(),
     stock: { wIn: st.wIn, hIn: st.hIn, wPt: st.wPt, hPt: st.hPt }, params: result.params, endedBy: result.endedBy, trials: result.trials, elapsedMs: Math.round(result.elapsedMs),
     density: +result.density.toFixed(4), usablePt2: Math.round(result.usablePt2), freePt2: Math.round(result.freePt2), placedPt2: Math.round(result.placedPt2), pocket: result.pocket,
-    placements: sh.placements.map((p, i) => ({ n: i + 1, id: p.id, layer: p.layerName, name: byId.get(p.id)?.name, hash: byId.get(p.id)?.hash, source: byId.get(p.id)?.sourceName, index: byId.get(p.id)?.index, angle: p.angle, cxPt: +p.cxPt.toFixed(3), cyPt: +p.cyPt.toFixed(3), wPt: +p.wPt.toFixed(2), hPt: +p.hPt.toFixed(2), areaPt2: +(byId.get(p.id)?.areaPt2 || 0).toFixed(1) })),
+    placements: sh.placements.map((p, i) => ({ n: i + 1, id: p.id, layer: p.layerName, name: byId.get(p.id)?.name, hash: byId.get(p.id)?.hash, source: byId.get(p.id)?.sourceName, index: byId.get(p.id)?.index, angle: p.angle, scale: p.scale || 1, cxPt: +p.cxPt.toFixed(3), cyPt: +p.cyPt.toFixed(3), wPt: +p.wPt.toFixed(2), hPt: +p.hPt.toFixed(2), areaPt2: +(byId.get(p.id)?.areaPt2 || 0).toFixed(1) })),
     rejects: sh.rejects.map(id => ({ id, name: byId.get(id)?.name, source: byId.get(id)?.sourceName, index: byId.get(id)?.index, areaPt2: +(byId.get(id)?.areaPt2 || 0).toFixed(1), widthPt: +(byId.get(id)?.widthPt || 0).toFixed(1), heightPt: +(byId.get(id)?.heightPt || 0).toFixed(1) })),
     excluded: sh.charms.filter(c => c.excluded).map(c => ({ id: c.id, name: c.name, reason: c.open ? "open path" : "excluded by operator" })),
     verification: sh.verification, charms: items.map(c => ({ id: c.id, name: c.name, hash: c.hash, qty: c.qty, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), namedBy: c.namedBy, confidence: c.confidence })),
@@ -1673,7 +1675,7 @@ function paintPreview(cv, sh, clean, R) {
   }
   sh.placements.forEach((p, i) => {
     const c = byId.get(p.id); if (!c) return;
-    ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180);
+    ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180); if (p.scale && p.scale !== 1) ctx.scale(p.scale, p.scale);
     const cx = c.centerPt[0], cy = c.centerPt[1];
     const tx = (x, y) => [(x - cx) * k, (cy - y) * k];
     if (!clean) { // faint tint of the metal that will be cut: the outline minus every inner cut line (hoop holes, cut-outs)
@@ -1690,7 +1692,7 @@ function paintPreview(cv, sh, clean, R) {
     ctx.save(); ctx.globalAlpha = 0.45;
     for (const p of sh.livePlacements) {
       const c = byId.get(p.id); if (!c) continue;
-      ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180);
+      ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180); if (p.scale && p.scale !== 1) ctx.scale(p.scale, p.scale);
       const tx = (x, y) => [(x - c.centerPt[0]) * k, (c.centerPt[1] - y) * k];
       ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); ctx.fillStyle = "rgba(74,107,120,.18)"; ctx.fill("nonzero"); ctx.strokeStyle = "rgba(74,107,120,.9)"; ctx.lineWidth = 1; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
       ctx.restore();
