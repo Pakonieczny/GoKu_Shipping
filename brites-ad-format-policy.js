@@ -39,5 +39,24 @@
   return {ratio:Math.round(ratio*1000)/1000,width:w,height:h,shape:best?best.key:'other',
    orientation:ratio>1.02?'landscape':ratio<0.98?'portrait':'square'};
  };
+
+ policy.videoFieldType='YOUTUBE_VIDEO';
+ policy.fieldTypeFor=function(shape){
+  if(shape==='video')return policy.videoFieldType;
+  for(var i=0;i<policy.images.length;i++)if(policy.images[i].key===shape)return policy.images[i].fieldType;
+  return null;
+ };
+ policy.shapeForFieldType=function(fieldType){
+  var name=String(fieldType||'').toUpperCase();
+  if(name===policy.videoFieldType)return 'video';
+  for(var i=0;i<policy.images.length;i++)if(policy.images[i].fieldType===name)return policy.images[i].key;
+  return null;
+ };
+ // A slot's plain-language name, for a report a person reads.
+ policy.fieldTypeLabel=function(fieldType){
+  var shape=policy.shapeForFieldType(fieldType);
+  var labels={landscape:'Landscape 1.91:1',square:'Square 1:1',portrait:'Portrait 4:5',logo:'Logo 1:1',landscapeLogo:'Landscape logo 4:1',video:'Video'};
+  return shape&&labels[shape]||String(fieldType||'').replace(/_/g,' ').toLowerCase().replace(/^./,function(c){return c.toUpperCase();});
+ };
  if(typeof module==='object'&&module.exports)module.exports=policy;else root.BritesAdFormatPolicy=policy;
 })(typeof window==='object'?window:globalThis);

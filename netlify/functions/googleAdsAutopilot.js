@@ -9692,6 +9692,23 @@ async function _adDesignDeliveryFresh({workspaceId,start,end}={}){
   const metricNumbers=m=>({impressions:Number(m.impressions)||0,clicks:Number(m.clicks)||0,ctr:Number(m.impressions)>0?(Number(m.clicks)||0)/Number(m.impressions):null,conversions:Number(m.conversions)||0,value:Number(m.conversionsValue)||0,cost:fromMicros(m.costMicros)});
   try{const totalRows=await gaql(`SELECT ${totalResource}.resource_name, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value, metrics.cost_micros FROM ${totalResource} WHERE ${filter} AND ${totalResource}.resource_name = ${_gaqlString(totalRef)} AND ${dates}`);if(totalRows.length>1)throw new Error('Unexpected group totals');totals=metricNumbers((totalRows[0]||{}).metrics||{});}
   catch(e){totalsError='Ad group totals could not be loaded. The individual image results are shown below.';}
+  // Google's native per-slot breakdown: which shape earned, not which file.
+  let shapeRows=[],shapeError=null;
+  try{
+    const raw=await gaql(`SELECT asset_field_type_view.field_type, segments.device, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value, metrics.cost_micros FROM asset_field_type_view WHERE ${filter} AND ${dates}`);
+    const policy=require('../../brites-ad-format-policy'),byShape=new Map();
+    for(const row of raw){
+      const fieldType=String((row.assetFieldTypeView||{}).fieldType||''),shape=policy.shapeForFieldType(fieldType);
+      // Text slots share this resource; only shapes belong in a shape report.
+      if(!shape)continue;
+      const device=String((row.segments||{}).device||'UNKNOWN').toLowerCase(),m=row.metrics||{};
+      const key=shape+'|'+device,at=byShape.get(key)||{shape,fieldType,label:policy.fieldTypeLabel(fieldType),device,impressions:0,clicks:0,conversions:0,value:0,cost:0};
+      at.impressions+=Number(m.impressions)||0;at.clicks+=Number(m.clicks)||0;
+      at.conversions+=Number(m.conversions)||0;at.value+=Number(m.conversionsValue)||0;at.cost+=fromMicros(m.costMicros)||0;
+      byShape.set(key,at);
+    }
+    shapeRows=[...byShape.values()].map(r=>({...r,ctr:r.impressions>0?r.clicks/r.impressions:null})).sort((a,b)=>b.impressions-a.impressions);
+  }catch(e){shapeError='Google per-shape results are unavailable: '+e.message;}
   let deviceRows=[],deviceAvailable=false,deviceError=null;
   try{deviceRows=await gaql(imageQuery.replace('SELECT ','SELECT segments.device, '));if(deviceRows.some(r=>!r.segments||!r.segments.device))throw new Error('Device dimension missing');deviceAvailable=true;}catch(e){deviceRows=[];deviceError='Google device metrics are unavailable for this image report.';}
   const mapped=[];for(const publication of publications.filter(p=>p.approvalId)){const saved=await fb().db.collection(COL.approvals).doc(publication.approvalId).get();if(saved.exists)mapped.push(...(saved.data().assetReceipts||[]));}
@@ -9711,9 +9728,9 @@ async function _adDesignDeliveryFresh({workspaceId,start,end}={}){
       }catch(e){verification.servingNote='The exact uploaded-image serving check is temporarily unavailable.';}
     }
   }
-  return {ok:true,available:true,verification,verificationError,metricsError,deviceAvailable,deviceError,deviceRows:deviceMetrics,totals,totalsError,range,currency:ctx.budgetCurrency,timeZone:ctx.accountTimezone,basis:'Google Ads interaction date',scope:group.channel==='search'?'Ad group image assets; shared by ads in this group':'This asset group',checkedAt:Date.now(),publications:safePublications,
+  return {ok:true,available:true,verification,verificationError,metricsError,deviceAvailable,deviceError,deviceRows:deviceMetrics,shapeRows,shapeError,totals,totalsError,range,currency:ctx.budgetCurrency,timeZone:ctx.accountTimezone,basis:'Google Ads interaction date',scope:group.channel==='search'?'Ad group image assets; shared by ads in this group':'This asset group',checkedAt:Date.now(),publications:safePublications,
     rows:rows.filter(r=>(r.asset||{}).imageAsset).map(r=>{const a=r.asset||{},link=r.assetGroupAsset||r.adGroupAsset||{},m=r.metrics||{},receipt=mapped.find(p=>p.resourceName===a.resourceName);return {assetId:a.resourceName,url:((a.imageAsset||{}).fullSize||{}).url||null,hash:receipt&&receipt.hash||null,fieldType:link.fieldType,..._assetShape(a),status:link.primaryStatus||link.status||'UNKNOWN',reasons:link.primaryStatusReasons||[],impressions:Number(m.impressions)||0,clicks:Number(m.clicks)||0,ctr:m.ctr==null?(Number(m.impressions)>0?Number(m.clicks)/Number(m.impressions):null):Number(m.ctr),conversions:Number(m.conversions)||0,value:Number(m.conversionsValue)||0,cost:fromMicros(m.costMicros)};}),
-    note:'Group totals include all assets. Individual image outcomes can overlap when images and text serve together. Compare like periods; do not add asset conversions or interpret them as isolated image lift. Google does not expose separate Merchant Center traffic for each product image.'};
+    shapeNote:'Grouped by the slot each asset filled, which is how Google reports a shape. One impression can combine several assets, so shapes must be compared with each other, never summed into a total.',note:'Group totals include all assets. Individual image outcomes can overlap when images and text serve together. Compare like periods; do not add asset conversions or interpret them as isolated image lift. Google does not expose separate Merchant Center traffic for each product image.'};
 }
 async function _prepareFirstAdDesignApproval({workspaceId,w,product,group,result,id,sourceHash}){
   if(!_copyValid(result.copy,true))throw new Error('Complete the headlines and descriptions before publication.');
