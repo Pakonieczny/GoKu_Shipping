@@ -142,6 +142,29 @@ function indexErrors(pf) {
   return out;
 }
 
+
+// Google no longer allowlists ConversionUploadService for new integrations and
+// refuses its uploads outright. Data Manager is this application's default;
+// GADS_CONVERSION_UPLOAD_API=legacy forces the deprecated path. Which one is
+// actually in use decides whether refused sales are a configuration problem or
+// a credential one, so the report names it rather than leaving it to be guessed.
+async function uploadTransport() {
+  const legacy = ENV.GADS_CONVERSION_UPLOAD_API === 'legacy';
+  const row = { transport: legacy ? 'legacy ConversionUploadService' : 'Data Manager API', legacy };
+  if (legacy) {
+    row.detail = 'GADS_CONVERSION_UPLOAD_API is set to "legacy", so uploads use ConversionUploadService — which Google refuses for accounts not allowlisted for it. Remove that variable, or set it to anything else, to use the Data Manager API this application already supports.';
+    return row;
+  }
+  const health = await require('./googleAdsDataManager')
+    .createDataManager({ env: ENV, fetch: require('node-fetch'), fb: () => ({ db: require('./firebaseAdmin').firestore() }), COL: { convQueue: 'Brites_GAds_ConvQueue' }, ledger: async () => {} })
+    .health();
+  Object.assign(row, health);
+  row.detail = !health.configured
+    ? 'Data Manager is selected but not authorised: connect its own OAuth credentials before any order can upload.'
+    : health.confirmed + ' confirmed upload(s) to the configured conversion action · ' + health.processing + ' processing · ' + health.unknown + ' in an unknown state · ' + health.retryable + ' retryable';
+  return row;
+}
+
 async function run(options) {
   const token = await shopifyToken();
   // Read the queue first: whether orders are arriving decides how an invisible
@@ -163,6 +186,13 @@ async function run(options) {
     if (q.failed) result.summary.blocking.push(q.failed + ' refused conversion upload(s)');
   } else result.summary.unavailable++;
   result.summary.healthy = result.summary.blocking.length === 0 && result.summary.unavailable === 0;
+  try { result.sections.transport = { id: 'transport', label: 'Conversion upload transport', status: 'available', ...await uploadTransport() }; }
+  catch (e) { result.sections.transport = { id: 'transport', label: 'Conversion upload transport', status: 'unavailable', detail: String(e.message || e).slice(0, 240) }; }
+  const t = result.sections.transport;
+  if (t.status === 'available' && (t.legacy || t.configured === false))
+    result.summary.blocking.push(t.legacy ? 'uploads still use the deprecated ConversionUploadService' : 'Data Manager is not authorised');
+  result.summary.healthy = result.summary.blocking.length === 0 && result.summary.unavailable === 0;
+
   if (options && options.diagnose) {
     try { result.sections.refusals = { id: 'refusals', label: 'Why Google refused them', status: 'available', ...await diagnoseRefusals(options.diagnoseLimit) }; }
     catch (e) { result.sections.refusals = { id: 'refusals', label: 'Why Google refused them', status: 'unavailable', detail: String(e.message || e).slice(0, 240) }; }
