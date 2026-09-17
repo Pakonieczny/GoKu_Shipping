@@ -73,7 +73,7 @@ const DesignLink = window.DesignLink = (() => {
     if (st.employee && !B.employee) { B.employee = st.employee; localStorage.setItem("cn.employee", st.employee); }
     S_.veil && S_.veil.classList.add("hidden"); Dock.layout();
     agent({ bridge: true }, "DS", `Session ${S_.nonce.slice(0, 4)} open on ${st.bench} · ${st.counts.open} open orders (${st.counts.hydrated} read) · ${st.selection.length} selected · Etsy ${st.etsy.signedIn ? "signed in" : "NOT signed in"}${st.releasedFromPreviousSession && st.releasedFromPreviousSession.length ? ` · released ${st.releasedFromPreviousSession.length} lock(s) from a previous session` : ""}`);
-    if (!st.etsy.signedIn) toast("The Design Station is not signed in to Etsy — open it in its own tab and press Connect Etsy", "bad", 8000);
+    if (!st.etsy.signedIn) toast("The Design Station is not signed in to Etsy — press Connect Etsy", "bad", 8000);
     startHeartbeat(); renderConsole();
     api("charmNestLibrary", { op: "bridgeLog", session: S_.nonce, rows: [], meta: { sorterClientId: S_.nonce, bench: st.bench, startedAt: Date.now(), version: st.version } }).catch(() => {});
     return st;
@@ -92,6 +92,7 @@ const DesignLink = window.DesignLink = (() => {
   function onMessage(ev) {
     if (ev.origin !== origin()) { S_.dropped++; return; }
     const d = ev.data; if (!d || d.source !== "brites-design") return;
+    if (d.type === "etsy.connected") { onEtsyConnected(d); return; }
     if (d.nonce !== S_.nonce) { S_.dropped++; renderConsole(); return; }
     if (d.id === 0) { onEvent(d); return; }
     const p = S_.pending.get(d.id); if (!p) return;
@@ -100,6 +101,29 @@ const DesignLink = window.DesignLink = (() => {
     clearTimeout(p.t); S_.pending.delete(d.id); if (!p.quiet) S_.replies++;
     if (!p.quiet) logLine("reply", p.type, d.type === "done" ? d.result : { error: d.error }, performance.now() - p.sent, d.type !== "done");
     if (d.type === "done") p.resolve(d.result); else { if (!p.quiet) S_.errors++; p.reject(new Error(d.error || `${p.type} failed`)); }
+  }
+  /* ── Connect Etsy from the sorter. Etsy refuses to load inside a frame, so the station is opened in its own popup on
+        its origin (a click is needed — browsers block popups otherwise); the popup signs in, the token lands in the
+        station origin's storage, the framed copy sees it, the popup reports back and closes, and a run that stopped for
+        the sign-in resumes on its own. ── */
+  let connectWin = null;
+  async function connectEtsy() {
+    if (!S_.frame) { toast("Open the Design Station tab first", "bad"); return null; }
+    if (!S_.control) { try { await open(); } catch (e) { toast("Could not open the session: " + e.message, "bad", 6000); return null; } }
+    const r = await call("etsy.connect", {}, { timeoutMs: 15000 });
+    if (r.signedIn) { toast("The Design Station is already signed in to Etsy", "ok"); return r; }
+    connectWin = window.open(r.url, "britesEtsyConnect", "popup,width=640,height=780");
+    if (!connectWin) { toast("The browser blocked the sign-in window — allow popups for this site and press Connect Etsy again", "bad", 9000); agent({ bridge: true }, "warn", "Connect Etsy: popup blocked"); return r; }
+    agent({ bridge: true }, "DS", `Connect Etsy: the station opened in its own window (${r.url}) — sign in there; the sorter carries on when it reports back`);
+    renderConsole();
+    return r;
+  }
+  async function onEtsyConnected(d) {
+    agent({ bridge: true }, "DS", `Etsy connected at the station${d.etsy && d.etsy.expiresAt ? ` · token to ${new Date(d.etsy.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}`);
+    toast("Design Station signed in to Etsy", "ok");
+    connectWin = null;
+    if (S_.control) { try { const st = await open(); if (st.etsy && st.etsy.signedIn && B.run && B.run.status === "stopped" && /sign/i.test(B.run.stoppedBy || "")) { agent({ run: B.run.runId }, "DS", "Resuming the run now that the station is signed in"); RunCtl.resume(); } } catch (e) { agent({ bridge: true }, "warn", `re-hello after the sign-in failed: ${e.message}`); } }
+    renderConsole();
   }
   let liveEv = null;
   function agentLive(label, text, done, total) {
@@ -119,7 +143,8 @@ const DesignLink = window.DesignLink = (() => {
     else if (d.type === "ui.modal") agent({ bridge: true }, "DS", d.open ? `Station opened item ${d.transactionId} of order ${d.receiptId}` : "Station closed its dialog");
     else if (d.type === "error") agent({ bridge: true }, "warn", `Station reported: ${d.command} — ${d.error}`);
     else if (d.type === "etsy.alarm") { etsyReadout(d); }
-    else if (d.type === "etsy.signin") { agent({ bridge: true }, "warn", "The station needs an Etsy sign-in (do it in its own tab)"); toast("Design Station: sign in to Etsy in its own tab, then pull again", "bad", 8000); if (B.run) RunCtl.stop("the Design Station is not signed in to Etsy", "Open design-1.goldenspike.app in its own tab, press Connect Etsy, then Resume."); }
+    else if (d.type === "etsy.connected") { onEtsyConnected(d); }
+    else if (d.type === "etsy.signin") { agent({ bridge: true }, "warn", "The station needs an Etsy sign-in — press Connect Etsy"); toast("Design Station: press Connect Etsy on the run banner or the Design Station tab", "bad", 8000); if (B.run) RunCtl.stop("the Design Station is not signed in to Etsy", "Press Connect Etsy: the station opens in its own window to sign in, then the run resumes by itself."); }
     else if (d.type === "state" && d.ended) { S_.up = false; S_.control = false; stopHeartbeat(); S_.veil && S_.veil.classList.remove("hidden"); agent({ bridge: true }, "warn", `Station ended the session: ${d.reason}`); if (B.run && B.run.status === "running") RunCtl.stop(`the Design Station ended the session (${d.reason})`, "Press Take control, then Resume."); }
     renderConsole();
   }
@@ -206,11 +231,12 @@ const DesignLink = window.DesignLink = (() => {
     const host = document.getElementById("dsConsole"); if (!host) return;
     const st = S_.state || {};
     const kv = host.querySelector(".kv"); if (kv) kv.innerHTML = `<b>${S_.control ? (S_.up ? "Connected" : "Link down") : "Not in control"}</b> · session <span class="mono">${S_.nonce ? S_.nonce.slice(0, 6) : "—"}</span><br>${S_.count} commands · ${S_.replies} replies · ${S_.errors} errors · ${S_.dropped} dropped · ${S_.pending.size} pending<br>${st.bench ? `bench ${esc(st.bench)} · ${esc(st.version || "")} · employee ${esc(st.employee || "—")}` : ""}<br>${st.etsy ? `Etsy: ${st.etsy.signedIn ? "signed in" + (st.etsy.expiresAt ? ` · token to ${new Date(st.etsy.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "") : "<span style='color:#8a3a26'>NOT signed in</span>"}` : ""}<br>${st.counts ? `${st.counts.open} open · ${st.counts.selected} selected · ${st.counts.claimed} claimed · ${st.counts.locked} locked elsewhere` : ""}<br>Etsy calls: <b>${hourCalls()}</b> this hour of ${etsyCap()} · ${E_.sessionTotal} by this sorter · ${E_.stationTotal} on the station`;
+    const cb = host.querySelector("#dsConnectEtsy"); if (cb) { const signed = !!(st.etsy && st.etsy.signedIn); cb.classList.toggle("gold", !signed); cb.classList.toggle("ghost", signed); cb.textContent = signed ? "Etsy signed in ✓" : "Connect Etsy"; }
     const sw = host.querySelector("#dsControl"); if (sw) { sw.classList.toggle("on", S_.control); sw.textContent = S_.control ? "Release" : "Take control"; }
     const log = host.querySelector(".log"); if (log) { const rows = S_.log.slice(-200); log.innerHTML = rows.map(r => `<div class="row ${r.dir}${r.err ? " err" : ""}"><span class="d">${fmtT(r.t)}</span><span class="ty">${r.dir === "cmd" ? "→" : r.dir === "reply" ? "←" : "·"} ${esc(r.type)}</span><span class="pl">${esc(r.payload ? JSON.stringify(r.payload) : "")}</span><span class="ms">${r.ms != null ? r.ms + "ms" : ""}</span></div>`).join(""); log.scrollTop = log.scrollHeight; }
     const tb = document.getElementById("tabDesignN"); if (tb) tb.textContent = S_.control && !S_.up ? "!" : "";
   }
-  return { mount, open, call, release, ensure, feed, meter, etsyBudgetOk, etsyReadout, etsy: () => ({ hour: hourCalls(), cap: etsyCap(), session: E_.sessionTotal, station: E_.stationTotal, meter: E_.station }), state: () => S_.state, log: S_.log, up: () => S_.up, inControl: () => S_.control, nonce: () => S_.nonce, renderConsole, flushLog, origin, frameUrl, _S: S_, _E: E_ };
+  return { mount, open, call, release, ensure, feed, meter, etsyBudgetOk, etsyReadout, connectEtsy, etsy: () => ({ hour: hourCalls(), cap: etsyCap(), session: E_.sessionTotal, station: E_.stationTotal, meter: E_.station }), state: () => S_.state, log: S_.log, up: () => S_.up, inControl: () => S_.control, nonce: () => S_.nonce, renderConsole, flushLog, origin, frameUrl, _S: S_, _E: E_ };
 })();
 
 /* ── the dock: where the station frame is shown. "full" over the Design Station tab's placeholder, "pip" as a live panel
@@ -274,13 +300,14 @@ const Views = window.Views = (() => {
     v.dataset.built = "1";
     v.innerHTML = `<div class="dsFrameHost"></div>
       <div class="dsConsole" id="dsConsole">
-        <div class="card"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="switchBtn" id="dsControl" type="button">Take control</button><a class="btn ghost xs" id="dsOpenTab" target="_blank" rel="noopener">Open station in a tab</a><button class="btn ghost xs" id="dsReload" type="button">Reload frame</button></div><div class="kv">Not in control</div></div>
+        <div class="card"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="switchBtn" id="dsControl" type="button">Take control</button><a class="btn ghost xs" id="dsOpenTab" target="_blank" rel="noopener">Open station in a tab</a><button class="btn gold xs" id="dsConnectEtsy" type="button" title="Signs the station in to Etsy in its own window; the framed station picks the token up">Connect Etsy</button><button class="btn ghost xs" id="dsReload" type="button">Reload frame</button></div><div class="kv">Not in control</div></div>
         <div class="card" style="gap:4px"><div class="section" style="margin:0 0 4px">Employee</div><div style="display:flex;gap:6px;align-items:center"><span id="dsEmployee" class="mono">${esc(employeeName() || "— not set —")}</span><button class="btn ghost xs" id="dsSetEmployee" type="button">Change</button></div><div class="help" style="font-size:11px;color:var(--ink45)">Recorded with every approval. Any employee may approve.</div></div>
         <div class="log"></div>
       </div>`;
     const host = v.querySelector(".dsFrameHost");
     v.querySelector("#dsOpenTab").href = DesignLink.frameUrl().replace(/\?bridge=1$/, "");
     v.querySelector("#dsControl").onclick = async () => { if (DesignLink.inControl()) await DesignLink.release(); else { try { await DesignLink.ensure(); } catch (e) { toast("Could not open the session: " + e.message, "bad", 6000); } } DesignLink.renderConsole(); };
+    v.querySelector("#dsConnectEtsy").onclick = () => DesignLink.connectEtsy().catch(e => toast(e.message, "bad", 6000));
     v.querySelector("#dsReload").onclick = () => { const f = document.getElementById("dsFrame"); if (f) f.src = DesignLink.frameUrl(); };
     v.querySelector("#dsSetEmployee").onclick = () => { askEmployee(); document.getElementById("dsEmployee").textContent = employeeName() || "— not set —"; };
     return host;
@@ -326,7 +353,7 @@ const Orders = window.Orders = (() => {
     const r = await DesignLink.call("orders.snapshot", { hydrate: true, refresh: true }, { timeoutMs: 20 * 60 * 1000, onProgress: p => { if (p.text) agentLiveLine("Pulling orders", p.text, p.done, p.total); } });
     DesignLink.meter(r, "the pull");
     B.orders.snapshot = { total: r.total, hydrated: r.hydrated, etsy: r.etsy, at: Date.now() };
-    if (r.hydrated < r.total) throw new Error(`only ${r.hydrated} of ${r.total} orders could be read from Etsy — sign in at the Design Station and pull again`);
+    if (r.hydrated < r.total) throw new Error(`only ${r.hydrated} of ${r.total} orders could be read from Etsy — ${r.etsy && !r.etsy.signedIn ? "the station is not signed in: press Connect Etsy" : "check the Design Station and pull again"}`);
     const picked = applyPullRule(r.orders);
     B.orders.filtered = r.orders.length - picked.length;
     B.orders.rows = picked.flatMap(o => o.lines.map(l => ({ key: O.lineKey(o, l), order: o, line: l, spec: null, problems: [], state: "pulled", reason: null, claimedBy: null, poolIds: [], engrave: null, metal: null })));
@@ -1303,9 +1330,9 @@ const RunCtl = window.RunCtl = (() => {
     const why = r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${r.fix ? ` — <span>${esc(r.fix)}</span>` : ""}` : r.status === "review" ? `<b>Waiting for a person:</b> ${reviewN} item(s) in Review` : r.status === "paused" ? (r.awaitCommit ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : `<b>Paused</b> after ${esc(O.RUN_STEPS[idx - 1] || r.step)} — next: ${esc(r.step)}`) : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(r.step)}</b> · half ${O.HALF[r.step]} · ${r.mode}`;
     Dock.schedule();
     h.innerHTML = `<span class="step">run ${esc(r.runId.slice(-8))}</span><span class="steps">${steps}</span><span class="why">${why}${r.setId ? ` · <span class="mono">${esc(r.setId)}</span>` : ""}</span>
-      ${r.status === "paused" && !r.awaitCommit ? `<button class="btn gold sm" id="rbNext">Next step ▶</button>` : ""}${r.status === "paused" && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit">Commit set</button>` : ""}${r.status === "stopped" ? `<button class="btn gold sm" id="rbResume">Resume</button>` : ""}${reviewN ? `<button class="btn ghost sm" id="rbReview">Review (${reviewN})</button>` : ""}${["running", "review", "paused"].includes(r.status) ? `<button class="btn ghost sm" id="rbStop">Stop</button>` : ""}${["complete", "stopped"].includes(r.status) ? `<button class="btn ghost sm" id="rbClear">Clear run</button>` : ""}`;
+      ${r.status === "paused" && !r.awaitCommit ? `<button class="btn gold sm" id="rbNext">Next step ▶</button>` : ""}${r.status === "paused" && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit">Commit set</button>` : ""}${r.status === "stopped" && /sign/i.test(r.stoppedBy || "") ? `<button class="btn gold sm" id="rbConnect">Connect Etsy</button>` : ""}${r.status === "stopped" ? `<button class="btn gold sm" id="rbResume">Resume</button>` : ""}${reviewN ? `<button class="btn ghost sm" id="rbReview">Review (${reviewN})</button>` : ""}${["running", "review", "paused"].includes(r.status) ? `<button class="btn ghost sm" id="rbStop">Stop</button>` : ""}${["complete", "stopped"].includes(r.status) ? `<button class="btn ghost sm" id="rbClear">Clear run</button>` : ""}`;
     const q = id => h.querySelector("#" + id);
-    if (q("rbNext")) q("rbNext").onclick = () => next(); if (q("rbCommit")) q("rbCommit").onclick = () => commitNow(); if (q("rbResume")) q("rbResume").onclick = () => resume(); if (q("rbReview")) q("rbReview").onclick = () => setMode("review"); if (q("rbStop")) q("rbStop").onclick = () => stop("stopped by the operator", "Press Resume to carry on from the recorded step."); if (q("rbClear")) q("rbClear").onclick = () => { if (confirm("Clear the finished run from the cards? Files and records are kept.")) clearRunState(); };
+    if (q("rbConnect")) q("rbConnect").onclick = () => DesignLink.connectEtsy().catch(e => toast(e.message, "bad", 6000)); if (q("rbNext")) q("rbNext").onclick = () => next(); if (q("rbCommit")) q("rbCommit").onclick = () => commitNow(); if (q("rbResume")) q("rbResume").onclick = () => resume(); if (q("rbReview")) q("rbReview").onclick = () => setMode("review"); if (q("rbStop")) q("rbStop").onclick = () => stop("stopped by the operator", "Press Resume to carry on from the recorded step."); if (q("rbClear")) q("rbClear").onclick = () => { if (confirm("Clear the finished run from the cards? Files and records are kept.")) clearRunState(); };
     Orders.render();
   }
   return { start, next, resume, stop, stopIfRunning, poke, save, onSheetDone, pickResume, resumeRun, commitNow, setMode, renderBanner, renderModeBtn, clearRunState, run };
