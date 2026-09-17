@@ -6920,7 +6920,7 @@ const Bridge = (() => {
   function ticker(text) {
     text = String(text || "").trim(); if (!text) return;
     S.ticker.push({ t: Date.now(), text }); if (S.ticker.length > 200) S.ticker.shift();
-    if (active()) { paintBanner(text); emit("activity", { text, t: Date.now() }); }
+    if (active()) { paintBanner(text); emit("activity", { text, t: Date.now() }); if (typeof mirrorOut !== "undefined" && !isMirror && typeof BroadcastChannel !== "undefined") { try { (mirrorOut = mirrorOut || new BroadcastChannel(MIRROR_CH)).postMessage({ banner: text, t: Date.now() }); } catch (_) {} } }
   }
 
   /* ── snapshots of the station's state ── */
@@ -6999,6 +6999,7 @@ const Bridge = (() => {
     /** Move to a control and (optionally) press it. Resolves when the motion is over, so the command acts right after. */
     async function act(role, arg, caption, { click = true, dwell = 0 } = {}) {
       if (!C.enabled) return null;
+      if (typeof mirrorCursor === "function") mirrorCursor(role, arg, caption, { click, dwell });   // the mirror tab moves its pointer too
       const el = ensure(); let target = find(role, arg); let fallback = false;
       // a row hidden behind a collapsed order rail: open the rail the way a person would, then look again
       if (target && !visible(target) && role !== "rail" && typeof setRailOpen === "function" && !SETTINGS.railOpen) { const tg = $("#railToggle"); if (tg) { await act("rail", null, "Open the order list"); setRailOpen(true); await sleep(220); } target = find(role, arg); }
@@ -7257,6 +7258,45 @@ const Bridge = (() => {
     async release() { await Cursor.act("release", null, "Release this station", { click: true }); endSession("released by the sorter"); return {}; }
   };
 
+  /* A tab opened from the sorter's "Open station in a tab" is a mirror of the framed station, not a second station:
+     it runs no command of its own and writes nothing. The framed one broadcasts every command it is asked to perform
+     that only moves the cursor or changes what is on screen, and the mirror performs the same one, so the pointer, the
+     selection and the filters follow along. Anything that writes — a claim, a completion, a note — is never broadcast. */
+  const MIRROR_CH = "brites-design-mirror";
+  const MIRROR_SAFE = new Set(["ui.mode", "ui.select", "ui.filter", "ui.scroll", "ui.focus", "ui.open", "ui.tab", "cursor", "selection", "filters", "orders.check"]);
+  const isMirror = (() => { try { return new URLSearchParams(location.search).get("mirror") === "1"; } catch (_) { return false; } })();
+  let mirrorOut = null;
+  /** The pointer itself is mirrored, whatever command moved it, so a claim or a completion is watched without the
+      mirror performing either. */
+  function mirrorCursor(role, arg, caption, opts) {
+    if (isMirror || typeof BroadcastChannel === "undefined") return;
+    try { (mirrorOut = mirrorOut || new BroadcastChannel(MIRROR_CH)).postMessage({ cursor: { role, arg, caption, opts }, t: Date.now() }); } catch (_) {}
+  }
+  function mirrorBroadcast(type, args) {
+    if (isMirror || typeof BroadcastChannel === "undefined") return;
+    if (!(MIRROR_SAFE.has(type) || String(type).startsWith("ui."))) return;
+    try { (mirrorOut = mirrorOut || new BroadcastChannel(MIRROR_CH)).postMessage({ type, args, t: Date.now() }); } catch (_) {}
+  }
+  function startMirror() {
+    if (!isMirror || typeof BroadcastChannel === "undefined") return;
+    document.documentElement.classList.add("isMirror");
+    const tag = document.createElement("div");
+    tag.textContent = "Mirror · following the station the sorter is driving";
+    tag.style.cssText = "position:fixed;left:50%;transform:translateX(-50%);top:0;z-index:9999;background:#2f2a24;color:#f3ead7;font:12px/1 ui-sans-serif,system-ui;padding:6px 12px;border-radius:0 0 10px 10px;letter-spacing:.02em";
+    document.addEventListener("DOMContentLoaded", () => document.body.appendChild(tag));
+    if (document.readyState !== "loading") document.body.appendChild(tag);
+    const ch = new BroadcastChannel(MIRROR_CH);
+    ch.onmessage = async (e) => {
+      const d = e.data; if (!d) return;
+      if (d.cursor) { try { await Cursor.act(d.cursor.role, d.cursor.arg, d.cursor.caption, d.cursor.opts || {}); } catch (_) {} return; }
+      if (d.banner) { try { paintBanner(d.banner); } catch (_) {} return; }
+      if (!d.type) return;
+      const fn = CMDS[d.type]; if (!fn || !(MIRROR_SAFE.has(d.type) || String(d.type).startsWith("ui."))) return;
+      try { await fn(d.args || {}, () => {}, null); } catch (_) {}
+    };
+  }
+  startMirror();
+
   async function onMessage(ev) {
     const d = ev.data;
     if (!d || typeof d !== "object" || d.source !== "brites-sorter") return;
@@ -7268,6 +7308,7 @@ const Bridge = (() => {
     if (d.type !== "feed.post") { S.count++; S.last = d.type; paintBanner(); }
     if (d.type !== "ping" && d.type !== "feed.post") ticker(`Sorter: ${d.type}${d.args && Array.isArray(d.args.receiptIds) && d.args.receiptIds.length ? " " + d.args.receiptIds.slice(0, 6).join(", ") + (d.args.receiptIds.length > 6 ? "…" : "") : d.args && d.args.receiptId ? " " + d.args.receiptId : ""}`);
     try {
+      mirrorBroadcast(d.type, d.args || {});
       const result = await fn(d.args || {}, (done, total, text) => reply({ id: d.id, type: "progress", done, total, text }), ev);
       reply({ id: d.id, type: "done", result });
     } catch (e) {

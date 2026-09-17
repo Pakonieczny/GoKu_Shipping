@@ -363,7 +363,10 @@ dialog.wide{width:min(980px,95vw)}
 .etsyPill.alarm{background:#5a1f16;border-color:#c0553b;color:#fff;animation:cnPulse 1.2s ease-in-out infinite}
 .etsyPill.alarm b{color:#ffd6c9}
 /* ── Design Station tab ── */
-.dsView{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:12px;height:calc(100vh - 150px);min-height:480px}
+.dsView{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:12px;height:calc(100vh - 150px);min-height:480px;position:relative}
+.dsView.dsWide{grid-template-columns:minmax(0,1fr) 0}
+.dsView.dsWide .dsConsole{display:none}
+.dsWideBtn{position:absolute;top:8px;right:8px;z-index:7}
 .dsView .dsFrameHost{border:1px dashed var(--line);border-radius:12px;background:var(--card2);min-height:0}
 /* the dock: the station frame, full over the tab's placeholder or a live panel in the corner of every other tab */
 #dsDock{position:fixed;z-index:70;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card);box-shadow:var(--sh);display:flex;flex-direction:column}
@@ -398,7 +401,7 @@ dialog.wide{width:min(980px,95vw)}
 .switchBtn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--card2);border-radius:999px;padding:5px 12px;font-weight:700;font-size:12px;cursor:pointer}
 .switchBtn.on{background:var(--sage);border-color:var(--sage);color:#fff}
 /* ── Master tab ── */
-.masterHead{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.masterHead{display:flex;gap:8px;align-items:center;flex-wrap:wrap;position:sticky;top:-16px;z-index:6;background:var(--paper);padding:10px 0 9px;margin:-10px 0 0;box-shadow:0 8px 12px -10px rgba(0,0,0,.35)}
 .masterFile{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);padding:10px 12px;display:grid;gap:8px}
 .masterFile .fh{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12.5px}
 .masterFile .fh b{font:600 13px var(--sans)}
@@ -984,7 +987,12 @@ async function parseSourceFile(src) {
   } finally { if (src.bar) { src.bar.end(); src.bar = null; } }
   renderRail(); updateTopSub();
 }
-async function sha256(bytes) { try { const h = await crypto.subtle.digest("SHA-256", bytes); return Array.from(new Uint8Array(h)).map(b => b.toString(16).padStart(2, "0")).join(""); } catch (_) { return uid(); } }
+async function sha256(bytes) {
+  const buf = bytes instanceof Uint8Array ? bytes : bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null;
+  if (!buf) { console.warn("sha256 was given", Object.prototype.toString.call(bytes), "— using a random id instead"); return uid(); }
+  try { const h = await crypto.subtle.digest("SHA-256", buf); return Array.from(new Uint8Array(h)).map(b => b.toString(16).padStart(2, "0")).join(""); }
+  catch (e) { console.warn("sha256 fell back to a random id:", e); return uid(); }   // a hash that is not a hash is worth saying out loud
+}
 function assignSource(src, metal) {
   const wasUnassigned = !src.metal;
   src.metal = metal;
@@ -1825,7 +1833,7 @@ function fillSrcRow(el, src) {
     ${rv ? `<div class="srcState">${rv}</div>` : ""}
     <div class="srcKids">${perMetal.map(x => `<span class="mchip" data-m="${x.m.key}"><i class="sw"></i>${x.m.label} ${x.n}</span>`).join("")}${src.state === "master" ? `<button class="btn gold xs" data-tolib="1">Index into the charm library</button><button class="btn ghost xs" data-nestanyway="1">Nest these charms anyway</button>` : ""}${unN ? `<span class="mchip" data-m="none">⚠ ${unN} unassigned</span>` : ""}${src.state === "ready" ? METALS.map(m => `<button class="mchip" data-m="${m.key}" data-assign="${m.key}" title="Send every charm in this file to ${m.label}" style="cursor:pointer"><i class="sw"></i>→</button>`).join("") : ""}</div>`;
   $(".srcX", el).onclick = () => removeSource(src);
-  { const b = $("[data-tolib]", el); if (b) b.onclick = () => { const name = src.name, bytes = src.bytes; removeSource(src); CN.setMode("master"); Master.indexFile({ name, bytes }).catch(e => toast(e.message, "bad", 7000)); }; }
+  { const b = $("[data-tolib]", el); if (b) b.onclick = () => { const name = src.name, bytes = src.bytes; removeSource(src); CN.setMode("master"); Master.indexFile({ name, data: bytes }).catch(e => toast(e.message, "bad", 7000)); }; }
   { const b = $("[data-nestanyway]", el); if (b) b.onclick = () => { src.forceNest = true; src.state = "queued"; renderRail(); pumpParse(); }; }
   $$("[data-assign]", el).forEach(b => b.onclick = () => assignSource(src, b.dataset.assign));
 }

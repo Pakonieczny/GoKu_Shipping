@@ -371,6 +371,36 @@ const receipts = [
 
   await page.screenshot({ path: path.join(tmp, 'bridge-final.png') });
   await page.evaluate(() => CN.setMode('library'));
+  // a File in a browser that implements Blob.bytes() must still be read as a file, not as that method (§6.3)
+  {
+    const r = await page.evaluate(async (b64) => {
+      const bin = atob(b64), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+      const f = new File([u8], 'BRITES-bytes-method.ai', { type: 'application/pdf' });
+      if (!('bytes' in f)) Object.defineProperty(f, 'bytes', { value: async () => u8 });   // some browsers have it, some do not
+      try { const job = await Master.indexFile(f); return { ok: true, state: job.state, written: job.written, held: job.held }; }
+      catch (e) { return { ok: false, error: e.message }; }
+    }, require('fs').readFileSync(masterPath).toString('base64'));
+    console.log('File with a bytes() method', JSON.stringify(r));
+    assert(r.ok && r.state === 'done', 'a File is read through arrayBuffer, never through its bytes() method: ' + JSON.stringify(r));
+  }
+
+  // the station opened in a tab is a mirror: it follows the pointer of the one being driven and runs nothing itself
+  {
+    const url = await page.evaluate(() => { CN.setMode('design'); Views.designHost(); return document.querySelector('#dsOpenTab').href; });
+    console.log('mirror url', url);
+    assert(/mirror=1/.test(url), 'the tab link opens a mirror: ' + url);
+    const mirror = await ctx.newPage();
+    await mirror.goto(url);
+    await mirror.waitForFunction(() => document.body && document.body.textContent.includes('Mirror'), null, { timeout: 30000 });
+    // a real command from the sorter moves the driven station's pointer; the mirror must move the same way
+    await page.evaluate(() => DesignLink.call('ui.closeModal', {}).catch(() => {}));
+    await mirror.waitForFunction(() => { const c = document.getElementById('rcCursor'); return c && c.getClientRects().length; }, null, { timeout: 20000 })
+      .catch(async () => { throw new Error('the mirror did not follow the pointer · ' + await mirror.evaluate(() => { const c = document.getElementById('rcCursor'); return c ? c.outerHTML.slice(0, 200) : 'no cursor element'; })); });
+    console.log('mirror followed the pointer');
+    await mirror.close();
+  }
+
+
   const fatal = errors.filter(e => !/favicon|net::ERR|Notification|AudioContext|ResizeObserver|The play\(\)|Failed to load resource/.test(e));
   if (fatal.length) console.log('page errors:\n  ' + fatal.join('\n  '));
   assert.strictEqual(fatal.length, 0, 'no page errors');
