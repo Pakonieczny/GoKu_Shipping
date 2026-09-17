@@ -219,5 +219,15 @@ async function test(name, fn) { try { await fn(); passed++; } catch (error) { co
   ok(!rule.pattern.test('INVALID_ARGUMENT \u00b7 events[0].userData: missing'), 'an unrelated rejection stays parked');
   ok(!/PAYLOAD_REVISION/.test(src), 'no clock decides whether a sale is retried');
 
+  // "Waiting on account access" sends the operator looking for a permission.
+  // A sale held for a retry of a corrected payload is waiting on nothing but
+  // the next scheduled run, and must not be reported as the other thing.
+  ok(/awaitingRetry/.test(src), 'a sale held for a retry is counted separately from one held for access');
+  ok(/if \(correctedRefusal\(x\)\) info\.awaitingRetry\+\+; else info\.awaitingAccess\+\+;/.test(src),
+    'each parked sale is counted under its actual cause, never both');
+  const check = require('node:fs').readFileSync(path.resolve(__dirname, '../../netlify/functions/shopifyAttributionCheck.js'), 'utf8');
+  ok(/awaitingRetry \|\| 0\) \+ ' refused by a payload since corrected/.test(check),
+    'the attribution check says which of the two it is');
+
   console.log(checks + ' Data Manager account-access checks passed.');
 })().catch(e => { console.error(e); process.exitCode = 1; });

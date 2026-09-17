@@ -121,7 +121,9 @@ async function uploadTransport() {
   row.detail = (missing.length ? 'The saved credential is missing ' + missing.join(' and ') + '; Google documents both as required. Re-consent this connection with both. · ' : '') +
     health.confirmed + ' confirmed upload(s) to the configured conversion action · ' +
     health.processing + ' processing · ' + health.unknown + ' in an unknown state · ' +
-    (health.awaitingAccess || 0) + ' waiting on account access · ' + health.retryable + ' retryable';
+    (health.awaitingAccess || 0) + ' waiting on account access · ' +
+    (health.awaitingRetry || 0) + ' refused by a payload since corrected, retrying on the next scheduled upload · ' +
+    health.retryable + ' retryable';
   return row;
 }
 
