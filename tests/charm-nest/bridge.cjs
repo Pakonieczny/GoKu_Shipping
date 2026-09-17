@@ -97,14 +97,27 @@ const receipts = [
   assert(claimedRow && claimedRow.claimed && /Charm Sorter/.test(claimedRow.title), 'the station row shows the claim: ' + JSON.stringify(claimedRow));
   await page.evaluate(() => DesignLink.call('unclaim', { receiptIds: ['3521000001'] }));
 
+  // ── 2b · Connect Etsy from the sorter: Etsy cannot be framed, so the station opens in its own popup on its origin, signs
+  //         in, reports back to its opener and closes; the framed station then reads as signed in ──
+  await frame.evaluate(() => { localStorage.removeItem('access_token'); localStorage.removeItem('refresh_token'); });
+  await page.evaluate(() => DesignLink.open());
+  assert.strictEqual((await page.evaluate(() => DesignLink.state().etsy.signedIn)), false, 'the station reads as signed out');
+  const [popup] = await Promise.all([ctx.waitForEvent('page', { timeout: 15000 }), page.click('#dsConnectEtsy')]);
+  assert(/\/design-1\.html\?connect=1$/.test(popup.url()) && popup.url().startsWith(stationOrigin), 'the popup opens the station on its own origin with connect=1: ' + popup.url());
+  await page.waitForFunction(() => DesignLink.state() && DesignLink.state().etsy.signedIn === true && CN.AG.events.some(e => /Etsy connected at the station/.test(e.text || '')), null, { timeout: 20000 });
+  await page.waitForTimeout(2000);
+  assert(popup.isClosed(), 'the popup closed itself after reporting');
+  assert(await frame.evaluate(() => DesignStation.bridge.cursor.log.some(l => l.role === 'connect')), 'the cursor showed the Connect Etsy button on the framed station');
+  console.log('connect etsy: popup reported back, station signed in again');
   // ── 3 · the whole run in Auto (§9) — it pauses for a person only at the engraving review ──
   await page.evaluate(() => CN.setMode('orders'));
   await page.evaluate(() => RunCtl.setMode('auto'));
   await page.waitForFunction(() => B.run && B.run.status !== undefined, null, { timeout: 10000 });
   // §5.7 · the live view: on any other tab the station frame is a picture-in-picture panel, never re-parented (one hello so far)
   await page.waitForFunction(() => Dock.mode() === 'pip', null, { timeout: 5000 });
+  const hellosAtStart = await page.evaluate(() => DesignLink.log.filter(r => r.dir === 'cmd' && r.type === 'hello').length);
   const dock = await page.evaluate(() => ({ mode: Dock.mode(), visible: !document.getElementById('dsDock').classList.contains('hidden'), scaled: /matrix\(0\./.test(getComputedStyle(document.getElementById('dsFrame')).transform), hellos: DesignLink.log.filter(r => r.dir === 'cmd' && r.type === 'hello').length }));
-  assert(dock.mode === 'pip' && dock.visible && dock.scaled && dock.hellos === 1, 'live panel shown while running on another tab: ' + JSON.stringify(dock));
+  assert(dock.mode === 'pip' && dock.visible && dock.scaled && dock.hellos === hellosAtStart, 'live panel shown while running on another tab: ' + JSON.stringify(dock));
   const approvals = [];
   let t0 = Date.now(), lastStep = '', lastJobs = '', lastDone = '';
   while (Date.now() - t0 < 600000) {
@@ -215,7 +228,7 @@ const receipts = [
 
   await page.evaluate(() => CN.setMode('design')); await page.waitForTimeout(250);
   const full = await page.evaluate(() => { const d = document.getElementById('dsDock').getBoundingClientRect(), h = document.querySelector('.dsFrameHost').getBoundingClientRect(); return { mode: Dock.mode(), fits: Math.abs(d.left - h.left) < 2 && Math.abs(d.width - h.width) < 2 && d.height > 300, hellos: DesignLink.log.filter(r => r.dir === 'cmd' && r.type === 'hello').length }; });
-  assert(full.mode === 'full' && full.fits && full.hellos === 1, 'the Design Station tab shows the same frame full size: ' + JSON.stringify(full));
+  assert(full.mode === 'full' && full.fits && full.hellos === hellosAtStart, 'the Design Station tab shows the same frame full size (no reload across tabs): ' + JSON.stringify(full));
   await page.screenshot({ path: path.join(tmp, 'bridge-design-tab.png') });
   // ── 6 · heartbeat loss and recovery: the frame reloads, the sorter says hello again by itself (§5.6) ──
   const helloBefore = await page.evaluate(() => DesignLink._S.lastHello);
