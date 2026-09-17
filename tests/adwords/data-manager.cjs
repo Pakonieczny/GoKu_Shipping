@@ -206,14 +206,18 @@ async function test(name, fn) { try { await fn(); passed++; } catch (error) { co
   const STALE = 'INVALID_ARGUMENT \u00b7 events.events[0].event_source: Required field is missing.';
   ok(!MIGRATION_PATTERN.test(STALE) && !pattern.test(STALE),
     'the reason those sales now carry qualifies under neither earlier clause, so without a third they never retry');
-  ok(/const supersededPayload = row =>/.test(src) && /supersededPayload\(row\)/.test(src),
-    'a rejection of a payload this version no longer sends is re-examined');
-  const revision = (src.match(/const PAYLOAD_REVISION = Date\.parse\('([^']+)'\);/) || [])[1];
-  ok(revision && Number.isFinite(Date.parse(revision)), 'the revision is pinned to a real date, in one place');
-  const superseded = row => Number(row.dmFailedAt || 0) > 0 && Number(row.dmFailedAt) < Date.parse(revision);
-  ok(superseded({ dmFailedAt: Date.parse(revision) - 1 }), 'a sale refused before the payload was corrected gets one more attempt');
-  ok(!superseded({ dmFailedAt: Date.parse(revision) + 1 }), 'a sale refused by the corrected payload stays parked: that refusal is real');
-  ok(!superseded({}), 'a row with no recorded failure time is not swept up by the date');
+  ok(/const CORRECTED_REFUSALS = /.test(src) && /correctedRefusal\(row\)/.test(src),
+    'a refusal that named a field this version now always supplies is re-examined');
+
+  // The release is decided by rebuilding the event and looking for the field,
+  // not by a date. A clock would have released the wrong rows: these very
+  // sales were refused AFTER the correction shipped, on the same day.
+  const rule = eval('(' + (src.match(/const CORRECTED_REFUSALS = (\[[\s\S]*?\]);/) || [])[1] + ')')[0];
+  ok(rule.pattern.test(STALE), 'it recognises the reason those fifteen sales carry');
+  ok(rule.supplied(built), 'and releases them only because the payload now carries that field');
+  ok(!rule.supplied({}), 'a payload that still omitted it would leave them parked, because re-sending would fail again');
+  ok(!rule.pattern.test('INVALID_ARGUMENT \u00b7 events[0].userData: missing'), 'an unrelated rejection stays parked');
+  ok(!/PAYLOAD_REVISION/.test(src), 'no clock decides whether a sale is retried');
 
   console.log(checks + ' Data Manager account-access checks passed.');
 })().catch(e => { console.error(e); process.exitCode = 1; });

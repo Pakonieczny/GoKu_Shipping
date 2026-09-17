@@ -16,7 +16,11 @@ let grantedScopes = null;
 const MIGRATION_ERROR = /Data Manager API|CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE/i;
 // Google's generic refusal, recorded before its error detail was kept.
 const UNDIAGNOSED_ERROR = /^\s*There was a problem with the request\.?\s*$/i;
-const PAYLOAD_REVISION = Date.parse('2026-09-17T00:00:00Z');
+// A refusal that named a required field missing, which the payload this
+// version builds now always carries. Judged by rebuilding the event and
+// checking the field is there, not by a clock: the sale was refused for a
+// request the application no longer sends.
+const CORRECTED_REFUSALS = [{ pattern: /event_source: Required field is missing/i, supplied: event => !!event.eventSource }];
 const CHECK_DELAY = 30 * 60 * 1000;
 
 function destination(action, login) {
@@ -135,9 +139,15 @@ function errorDetail(data, status) {
   // that was refused is not the payload this version sends. None of these mean
   // the sale is bad, and re-sending is safe because a definite rejection
   // carries no receipt.
-  const supersededPayload = row => Number(row.dmFailedAt || 0) > 0 && Number(row.dmFailedAt) < PAYLOAD_REVISION;
+  const correctedRefusal = row => {
+    const reason = row.uploadError || '';
+    const matched = CORRECTED_REFUSALS.filter(c => c.pattern.test(reason));
+    if (!matched.length) return false;
+    let event; try { event = eventFor(row); } catch (_) { return false; }
+    return matched.every(c => c.supplied(event));
+  };
   const accountLevelRejection = row => row.dmState === 'failed' && row.dmDefiniteRejection === true
-    && !row.dmRequestId && (MIGRATION_ERROR.test(row.uploadError || '') || UNDIAGNOSED_ERROR.test(row.uploadError || '') || supersededPayload(row));
+    && !row.dmRequestId && (MIGRATION_ERROR.test(row.uploadError || '') || UNDIAGNOSED_ERROR.test(row.uploadError || '') || correctedRefusal(row));
   const retryable = row => row.dmState === 'failed' && row.dmDefiniteRejection === true && !row.dmRequestId;
   async function run({ ctrl = {}, limit = 50, retryRejected = false } = {}) {
     await loadConnection();
