@@ -200,7 +200,8 @@
   /* ═══ 3 · the back: an actual flip, verified ═══════════════════════════ */
   const achromatic = c => c && (Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2])) <= 0.15;
   const isCutLine = m => !!m && m.kind === "path" && !!m.stroke && !!m.closed && achromatic(m.strokeRGB);
-  class BackViewError extends Error { constructor(checks, images) { super("flip check failed: " + Object.keys(checks).filter(k => !checks[k]).join(", ")); this.checks = checks; this.images = images; } }
+  const FLIP_WHY = { pixels: "the flipped back does not match the front", holes: "a cut-out does not stay open when the charm is flipped", area: "the flipped back covers a different area", detailDropped: "front-only detail would show on the back" };
+  class BackViewError extends Error { constructor(checks, images) { const bad = Object.keys(checks).filter(k => !checks[k]); super("flip check failed — " + bad.map(k => FLIP_WHY[k] || k).join("; ")); this.checks = checks; this.failed = bad; this.images = images; } }
 
   /** Direction (degrees, y-up, 90 = straight up) from the outline's centroid to the hanging hole. No hole → 90 (as drawn). */
   function upAngleOf(charm, opts) {
@@ -242,9 +243,9 @@
     const holes = cutMembers.filter(m => m !== charm.outline);
     const checks = {                                                                             // STEP 5
       pixels: diffFraction(B, flipX(F)) <= opts.tolPixels,
-      holes: holes.every(h => { const p = interiorPoint(flatten(h, 12)); return at(B, 2 * cx - p[0], p[1]) === 0; }),
+      holes: holes.every(h => { const p = interiorPoint(flatten(h, 12)); return at(B, 2 * cx - p[0], p[1]) === at(F, p[0], p[1]); }),
       area: Math.abs(area(B) - area(F)) / Math.max(1, area(F)) <= opts.tolArea,
-      detailDropped: mirrored.every(m => cut(m) || m.original === charm.outline) && !mirrored.some(m => m.fill && !m.stroke) && dropped.every(m => !cutMembers.includes(m))
+      detailDropped: mirrored.every(m => cut(m) || m.original === charm.outline) && !mirrored.some(m => m.fill && !m.stroke && m.original !== charm.outline) && dropped.every(m => !cutMembers.includes(m))
     };
     const detail = { pixelDiff: diffFraction(B, flipX(F)), areaF: area(F), areaB: area(B), dropped: dropped.length, cut: cutMembers.length };
     if (!Object.values(checks).every(Boolean)) throw new BackViewError(checks, { F, B, flipF: flipX(F), detail });

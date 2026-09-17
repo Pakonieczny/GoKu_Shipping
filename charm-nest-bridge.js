@@ -630,7 +630,7 @@ const Master = window.Master = (() => {
       const reasons = []; if (c.open) reasons.push("open outline");
       let engravable = true, upAngle = null, upSource = "drawn", flipOk = true;
       try { const up = G.upAngleOf(c); upAngle = up.angle; upSource = up.source; const view = G.backView(c, { res: 6, upAngle }); const mask = G.engraveMask(view, { marginMm: +S.settings.engraveMarginMm || 0.8, keepOut: keepOutOf(c) }); const r = G.largestRectangles(mask, 1)[0]; engravable = !!r && ((r.wPt * MM >= 6 && r.hPt * MM >= 3) || (r.wPt * MM >= 3 && r.hPt * MM >= 6)); }
-      catch (e) { flipOk = false; engravable = false; reasons.push("flip check failed: " + e.message); }
+      catch (e) { flipOk = false; engravable = false; reasons.push(e.message); }
       const wMm = c.widthPt * MM, hMm = c.heightPt * MM; const outOfRange = Math.max(wMm, hMm) > (+S.settings.sizeMaxMm || 60) || Math.max(wMm, hMm) < (+S.settings.sizeMinMm || 3);
       entries.push({ sku: c.sku, size: c.skuSize, charmHash: c.hash, widthPt: c.widthPt, heightPt: c.heightPt, areaPt2: c.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: ai && ai.path, aiUrl: ai && ai.url, thumbPath: png && png.path, thumbUrl: png && png.url, open: !!c.open, labelSource: c.labelSource || "text", confidence: c.labelConfidence == null ? null : c.labelConfidence, blocked: reasons.length ? reasons.join("; ") : null, outOfRange, flipOk, backKeepOut: keepOutOf(c).length ? keepOutOf(c).map(m => ({ layer: m.layer })) : null });
       if (reasons.length) blocked.push({ sku: c.sku, reason: reasons.join("; ") }); skus.push(c.sku);
@@ -938,7 +938,7 @@ const Engrave = window.Engrave = (() => {
     let view;
     try { view = G.backView(charm, { res: 6, upAngle: entry.upAngle == null ? undefined : +entry.upAngle }); }
     catch (e) {
-      job.state = "blocked"; job.reason = "flip check failed: " + e.message; job.flipError = e; job.row.engrave.state = "blocked"; job.row.engrave.reason = job.reason;
+      job.state = "blocked"; job.reason = e.message; job.flipError = e; job.row.engrave.state = "blocked"; job.row.engrave.reason = job.reason;
       agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: ${job.reason}`);
       Review.add({ kind: "flipFailed", key: "eng:" + job.key, row: job.row, job, why: job.reason, checks: e.checks, images: e.images });
       RunCtl.stopIfRunning("a back flip failed its checks", "See the Review tab: re-run, mark the SKU not engravable, or hold the order."); return job;
