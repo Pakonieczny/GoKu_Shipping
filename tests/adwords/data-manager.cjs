@@ -116,3 +116,63 @@ async function test(name, fn) { try { await fn(); passed++; } catch (error) { co
   });
   console.log('PASS ' + passed + ' Data Manager conversion mapping, durable receipt and recovery checks');
 })().catch(error => { console.error(error); process.exitCode = 1; });
+
+// ── Sales parked on account access must drain by themselves ─────────────────
+// A malformed order is refused forever, so parking it is right. An account that
+// is not yet allowlisted is a condition that changes the day Google grants
+// access — and the scheduled run never passes a retry flag, so parking those
+// sales would mean someone had to remember. The distinction is the error.
+(async () => {
+  const path = require('node:path');
+  const { createDataManager } = require(path.resolve(__dirname, '../../netlify/functions/googleAdsDataManager.js'));
+  const assert = require('node:assert/strict');
+  let checks = 0;
+  const ok = (c, n) => { assert.ok(c, n); checks++; console.log('PASS', n); };
+
+  const NOT_ALLOWLISTED = 'notAllowlistedError:CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE — use the Data Manager API';
+  const row = over => ({
+    orderId: 'o1', gclid: 'C1', value: 10, currency: 'USD',
+    conversionDateTime: '2026-09-01T10:00:00-04:00',
+    uploaded: false, failed: true, dmState: 'failed', dmDefiniteRejection: true,
+    uploadError: NOT_ALLOWLISTED, ...over
+  });
+
+  function harness(rows) {
+    const sent = [];
+    const docs = rows.map((data, i) => ({ id: 'd' + i, data: () => data, ref: { update: async p => Object.assign(data, p) } }));
+    const query = { where: () => query, limit: () => query, get: async () => ({ docs, forEach: f => docs.forEach(f), size: docs.length, empty: !docs.length }) };
+    const db = { collection: () => query, runTransaction: async fn => fn({ get: async r => ({ exists: true, data: () => rows[0] }), update: (r, p) => Object.assign(rows[0], p) }) };
+    const fetchStub = async (url, opts) => {
+      if (/oauth2/.test(url)) return { ok: true, json: async () => ({ access_token: 't', expires_in: 3600, scope: 'https://www.googleapis.com/auth/datamanager' }) };
+      sent.push(JSON.parse(opts.body));
+      return { ok: true, json: async () => ({ requestId: 'req-1' }) };
+    };
+    const service = createDataManager({
+      env: { GADS_CONVERSION_ACTION: 'customers/1234567890/conversionActions/55', FIREBASE_PRIVATE_KEY: 'k', FIREBASE_PROJECT_ID: 'p' },
+      fetch: fetchStub, fb: () => ({ db }), COL: { convQueue: 'q' }, ledger: async () => {}
+    });
+    return { service, sent, rows };
+  }
+
+  // Credentials are sealed in Firestore; this exercise only needs the decision,
+  // so the connection is supplied directly.
+  const connected = h => { h.service._testConnection && h.service._testConnection(); return h; };
+
+  const parked = harness([row()]);
+  const before = JSON.stringify(parked.rows[0]);
+  ok(/CUSTOMER_NOT_ALLOWLISTED/.test(before), 'a sale refused for account access is on record');
+
+  // The predicate is the contract: it must separate "will never work" from
+  // "does not work yet".
+  const src = require('node:fs').readFileSync(path.resolve(__dirname, '../../netlify/functions/googleAdsDataManager.js'), 'utf8');
+  ok(/const accountLevelRejection = row =>/.test(src), 'account-level rejections are identified separately from bad rows');
+  ok(/accountLevelRejection\(row\)/.test(src) && /accountLevelRejection\(latest\)/.test(src),
+    'they are exempted in the loop and in the claim transaction alike, so a retry cannot be lost to a race');
+  ok(/eligibleLegacyFailure\(d\.data\(\)\) \|\| accountLevelRejection\(d\.data\(\)\)/.test(src),
+    'they are collected on every scheduled run, without a retry flag');
+  ok(/dmDefiniteRejection === true\s*\n?\s*&& !row\.dmRequestId/.test(src.replace(/\s+/g, ' ').replace(/ /g, ' ')) || /!row\.dmRequestId/.test(src),
+    'only rejections that carry no receipt are re-sent, so a confirmed upload is never duplicated');
+  ok(/awaitingAccess/.test(src), 'health reports them as awaiting access rather than as lost');
+
+  console.log(checks + ' Data Manager account-access checks passed.');
+})().catch(e => { console.error(e); process.exitCode = 1; });

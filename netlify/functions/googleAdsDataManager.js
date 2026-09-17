@@ -119,6 +119,12 @@ function errorDetail(data, status) {
     return data;
   }
   const eligibleLegacyFailure = row => row.failed === true && MIGRATION_ERROR.test(row.uploadError || '') && !row.dmState;
+  // Refused because the account is not allowlisted, not because the sale is
+  // bad. It becomes uploadable the moment access is granted, with no flag and
+  // no one remembering, and it is safe to re-send because it never reached
+  // Google: a definite rejection carries no receipt.
+  const accountLevelRejection = row => row.dmState === 'failed' && row.dmDefiniteRejection === true
+    && !row.dmRequestId && MIGRATION_ERROR.test(row.uploadError || '');
   const retryable = row => row.dmState === 'failed' && row.dmDefiniteRejection === true && !row.dmRequestId;
   async function run({ ctrl = {}, limit = 50, retryRejected = false } = {}) {
     await loadConnection();
@@ -133,14 +139,14 @@ function errorDetail(data, status) {
     const pending = await queue.where('uploaded', '==', false).limit(500).get();
     const rejected = await queue.where('failed', '==', true).limit(50).get();
     const docs = new Map(pending.docs.map(d => [d.id, d]));
-    rejected.docs.filter(d => eligibleLegacyFailure(d.data())).forEach(d => docs.set(d.id, d));
+    rejected.docs.filter(d => eligibleLegacyFailure(d.data()) || accountLevelRejection(d.data())).forEach(d => docs.set(d.id, d));
     const rows = [...docs.values()].sort((a, b) => Number(!!b.data().dmRequestId) - Number(!!a.data().dmRequestId));
     const maximum = Math.min(100, Math.max(1, Number(limit) || 50));
     let handled = 0;
     for (const doc of rows) {
       let row = doc.data();
       if (handled >= maximum || now() - started > 120000) break;
-      if (row.dmState === 'submitting' || row.dmState === 'submission_unknown' || (row.dmState === 'failed' && !(retryRejected && retryable(row)))) continue;
+      if (row.dmState === 'submitting' || row.dmState === 'submission_unknown' || (row.dmState === 'failed' && !accountLevelRejection(row) && !(retryRejected && retryable(row)))) continue;
       if (row.dmRequestId) {
         result.processing++;
         if (ctrl.dryRun || now() < Number(row.dmNextCheckAt || 0)) continue;
@@ -164,7 +170,7 @@ function errorDetail(data, status) {
         continue;
       }
       if (row.uploaded && !eligibleLegacyFailure(row)) continue;
-      if (row.failed && !eligibleLegacyFailure(row) && !(retryRejected && retryable(row))) continue;
+      if (row.failed && !eligibleLegacyFailure(row) && !accountLevelRejection(row) && !(retryRejected && retryable(row))) continue;
       let event;
       try { event = eventFor(row); } catch (error) { result.errors.push({ orderId: row.orderId, error: error.message }); continue; }
       handled++;
@@ -177,8 +183,8 @@ function errorDetail(data, status) {
       const claimed = await f.db.runTransaction(async tx => {
         const current = await tx.get(doc.ref); if (!current.exists) return false;
         const latest = current.data();
-        if ((latest.dmState && !(retryRejected && retryable(latest))) || latest.dmRequestId || (latest.uploaded && !eligibleLegacyFailure(latest))) return false;
-        if (latest.failed && !eligibleLegacyFailure(latest) && !(retryRejected && retryable(latest))) return false;
+        if ((latest.dmState && !accountLevelRejection(latest) && !(retryRejected && retryable(latest))) || latest.dmRequestId || (latest.uploaded && !eligibleLegacyFailure(latest))) return false;
+        if (latest.failed && !eligibleLegacyFailure(latest) && !accountLevelRejection(latest) && !(retryRejected && retryable(latest))) return false;
         // Guard changes to original financial data between read and claim.
         if (JSON.stringify(eventFor(latest)) !== JSON.stringify(event)) return false;
         tx.update(doc.ref, { dmState: 'submitting', dmStartedAt: now(), dmDestination: target, uploaded: false });
@@ -210,11 +216,11 @@ function errorDetail(data, status) {
   }
   async function health() {
     await loadConnection();
-    const info = { configured: configured(), transport: 'data_manager', processing: 0, unknown: 0, confirmed: 0, retryable: 0, blocked: !configured() };
+    const info = { configured: configured(), transport: 'data_manager', processing: 0, unknown: 0, confirmed: 0, retryable: 0, awaitingAccess: 0, blocked: !configured() };
     const f = fb(); if (!f) return info;
     const queue = f.db.collection(COL.convQueue);
     const rows = await queue.where('uploaded', '==', false).limit(500).get();
-    rows.forEach(d => { const x = d.data(); if (x.dmRequestId && x.dmState === 'processing') info.processing++; if (['submitting', 'submission_unknown'].includes(x.dmState)) info.unknown++; if (retryable(x)) info.retryable++; });
+    rows.forEach(d => { const x = d.data(); if (x.dmRequestId && x.dmState === 'processing') info.processing++; if (['submitting', 'submission_unknown'].includes(x.dmState)) info.unknown++; if (retryable(x)) info.retryable++; if (accountLevelRejection(x)) info.awaitingAccess++; });
     if (!env.GADS_CONVERSION_ACTION) return { ...info, blocked: true };
     const confirmed = await queue.where('dmState', '==', 'success').limit(50).get();
     const target = destination(env.GADS_CONVERSION_ACTION, env.GADS_LOGIN_CUSTOMER_ID);
