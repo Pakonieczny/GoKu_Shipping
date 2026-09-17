@@ -305,12 +305,14 @@ const Views = window.Views = (() => {
         <div class="card" style="gap:4px"><div class="section" style="margin:0 0 4px">Employee</div><div style="display:flex;gap:6px;align-items:center"><span id="dsEmployee" class="mono">${esc(employeeName() || "— not set —")}</span><button class="btn ghost xs" id="dsSetEmployee" type="button">Change</button></div><div class="help" style="font-size:11px;color:var(--ink45)">Recorded with every approval. Any employee may approve.</div></div>
         <div class="log"></div>
       </div>`;
-    { const wide = localStorage.getItem("cn.dsWide") === "1";
-      v.classList.toggle("dsWide", wide);
-      const btn = document.createElement("button"); btn.type = "button"; btn.className = "btn ghost xs dsWideBtn";
-      const paint = () => { const on = v.classList.contains("dsWide"); btn.textContent = on ? "‹ Show the panel" : "Hide the panel ›"; btn.title = on ? "Bring the controls back" : "Fold the controls away and fill the tab with the station"; };
+    // The fold lives in the panel's own column, never over the station, and the column keeps a strip of itself when
+    // folded so the way back is always on screen.
+    { const console_ = v.querySelector("#dsConsole");
+      const btn = document.createElement("button"); btn.type = "button"; btn.className = "dsFold";
+      const paint = () => { const on = v.classList.contains("dsWide"); btn.textContent = on ? "‹ Panel" : "Hide panel ›"; btn.title = on ? "Bring the controls back" : "Fold the controls away and give the station the whole tab"; btn.setAttribute("aria-expanded", on ? "false" : "true"); };
       btn.onclick = () => { const on = !v.classList.contains("dsWide"); v.classList.toggle("dsWide", on); localStorage.setItem("cn.dsWide", on ? "1" : "0"); paint(); Dock.schedule(); };
-      paint(); v.appendChild(btn); }
+      v.classList.toggle("dsWide", localStorage.getItem("cn.dsWide") === "1");
+      paint(); console_.insertBefore(btn, console_.firstChild); }
     const host = v.querySelector(".dsFrameHost");
     // the tab is a mirror of the station being driven, not a second station: same page, following the same pointer
     v.querySelector("#dsOpenTab").href = DesignLink.frameUrl() + (DesignLink.frameUrl().includes("?") ? "&" : "?") + "mirror=1";

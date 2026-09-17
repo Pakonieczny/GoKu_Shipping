@@ -364,9 +364,11 @@ dialog.wide{width:min(980px,95vw)}
 .etsyPill.alarm b{color:#ffd6c9}
 /* ── Design Station tab ── */
 .dsView{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:12px;height:calc(100vh - 150px);min-height:480px;position:relative}
-.dsView.dsWide{grid-template-columns:minmax(0,1fr) 0}
-.dsView.dsWide .dsConsole{display:none}
-.dsWideBtn{position:absolute;top:8px;right:8px;z-index:7}
+.dsView.dsWide{grid-template-columns:minmax(0,1fr) 30px}
+.dsView.dsWide .dsConsole>*:not(.dsFold){display:none}
+.dsView.dsWide .dsFold{writing-mode:vertical-rl;height:100%;padding:8px 4px;border-radius:9px}
+.dsFold{flex:0 0 auto;align-self:flex-end;font-size:11px;padding:4px 9px;cursor:pointer;border:1px solid var(--line);border-radius:9px;background:var(--card);color:var(--ink)}
+.dsFold:hover{background:var(--paper2)}
 .dsView .dsFrameHost{border:1px dashed var(--line);border-radius:12px;background:var(--card2);min-height:0}
 /* the dock: the station frame, full over the tab's placeholder or a live panel in the corner of every other tab */
 #dsDock{position:fixed;z-index:70;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card);box-shadow:var(--sh);display:flex;flex-direction:column}
