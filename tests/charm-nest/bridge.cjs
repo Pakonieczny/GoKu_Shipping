@@ -172,8 +172,33 @@ const receipts = [
   const feed = await frame.evaluate(() => ({ rows: DesignStation.bridge.state().feed.length, kinds: [...new Set(DesignStation.bridge.state().feed.map(r => r.kind))], shown: !document.getElementById('bridgeFeed').classList.contains('hidden'), now: document.getElementById('bridgeFeedNow').textContent }));
   console.log('station feed', JSON.stringify(feed));
   assert(feed.rows >= 8 && feed.shown && feed.kinds.includes('POOL') && feed.kinds.includes('ENGRAVE') && (feed.kinds.includes('GF') || feed.kinds.includes('SS')), 'the sorter narrated pooling, engraving and nesting on the station banner: ' + JSON.stringify(feed));
+  // Etsy thrift: the whole run costs one list sweep at the pull, one detail read per order for the first hydration, one list
+  // sweep per re-validation (or none within the cooldown) and the station's own archive reads — never a detail read per
+  // order at re-validation, and the sorter's meter agrees with the server's count
+  const etsyCalls = st.calls.filter(c => c.name === 'listOpenOrders' || c.name === 'etsyOrderProxy');
+  const proxies = etsyCalls.filter(c => c.name === 'etsyOrderProxy').length, lists = etsyCalls.filter(c => c.name === 'listOpenOrders').length;
+  const meterLine = await page.evaluate(() => ({ etsy: DesignLink.etsy(), lines: CN.AG.events.filter(e => /^Etsy: /.test(e.text || '')).map(e => e.text) }));
+  console.log('etsy calls', { lists, proxies, meter: meterLine.etsy }, meterLine.lines);
+  console.log('etsy sequence', st.calls.filter(c => c.name === 'listOpenOrders' || c.name === 'etsyOrderProxy').map(c => c.name === 'listOpenOrders' ? 'LIST' : c.q.orderId).join(' '));
+  console.log('revalidation lines', JSON.stringify(await page.evaluate(() => CN.AG.events.filter(e => /Re-validat|open-list|fresh read/.test(e.text || '')).map(e => e.text))));
+  console.log('station hydration', await frame.evaluate(() => ({ cached: DesignStation.cache.detailCache.size, hydrated: DesignStation.state().allOpenReceipts.map(r => [String(r.receipt_id), !!r._hydrated, r._stamp]) })));
+  assert(lists <= 4, 'at most one list sweep per pull and re-validation: ' + lists);
+  assert(proxies <= receipts.length + run.committed.length, `detail reads: first hydration (${receipts.length}) plus the archive (${run.committed.length}) at most, got ${proxies}`);
+  assert(meterLine.lines.some(l => /open-list check/.test(l)), 'the re-validation was metered as an open-list check');
+
   // the archive is written in the background after the commit (the operator is never made to wait for it): allow it a moment
   for (let i = 0; i < 60 && !['3521000001', '3521000002', '3521000003'].every(id => st.doc('Design_Order_Archive', id)); i++) await page.waitForTimeout(250);
+  // both readouts show the station's ledger and it matches what the server actually received (read at one instant,
+  // after the background archive reads have settled and one heartbeat has carried the ledger to the sorter)
+  await page.waitForTimeout(2600);
+  const serverEtsy = st.calls.filter(c => /^(etsy|etsyImages|etsyOrderProxy|listOpenOrders|refreshEtsyToken|exchangeToken)$/.test(c.name)).length;
+  const hud = await frame.evaluate(() => ({ total: +document.getElementById('etsyTotal').textContent, tenMin: +document.getElementById('etsy10m').textContent, today: +document.getElementById('etsyDay').textContent, alarm: document.getElementById('etsyHud').classList.contains('alarm') }));
+  const pill = await page.evaluate(() => ({ text: document.getElementById('etsyPillN').textContent, cls: document.getElementById('etsyPill').className, meter: DesignLink.etsy().meter && { total: DesignLink.etsy().meter.total, last10Min: DesignLink.etsy().meter.last10Min, today: DesignLink.etsy().meter.today } }));
+  console.log('readouts', { server: serverEtsy, hud, pill });
+  assert.strictEqual(hud.total, serverEtsy, 'the station HUD counts exactly the calls the server received');
+  assert(hud.today >= hud.total && hud.tenMin <= hud.total, 'today and 10-minute figures are consistent');
+  assert(pill.meter && pill.meter.total === serverEtsy && pill.meter.today === serverEtsy && pill.text.startsWith('today ' + serverEtsy + ' ·'), 'the sorter pill shows the station ledger: ' + JSON.stringify(pill));
+  assert(!hud.alarm && !/alarm/.test(pill.cls), 'no watchdog alarm on a normal run');
   for (const id of ['3521000001', '3521000002', '3521000003']) {
     assert(st.doc('Design_Completed Orders', id), 'ledger has ' + id);
     const ar = st.doc('Design_Order_Archive', id); assert(ar && ar.labels && ar.setId === set.setId && ar.runId === run.runId, 'archive row carries labels/set/run: ' + JSON.stringify(ar && { labels: !!ar.labels, setId: ar.setId }));
@@ -216,6 +241,25 @@ const receipts = [
   assert(st.blobs.has(`${set.folder}/set.json`), 'files kept after the undo');
   const setRec = st.doc('Charm_Nest_Sets', set.setId); assert(setRec && setRec.status === 'awaiting review', 'set back to awaiting review');
 
+  // ── 7b · the Etsy watchdog: a station that sees one order re-read over and over, or a burst, raises the alarm, brakes
+  //         automatic Etsy work, and tells the sorter — whose pill turns red and whose run stops ──
+  await page.evaluate(() => RunCtl.start({ mode: 'manual' }).catch(() => {}));
+  await page.waitForFunction(() => B.run && B.run.status !== 'complete', null, { timeout: 5000 });
+  const before = await frame2.evaluate(() => ({ total: DesignStation.etsyMeter ? DesignStation.etsyMeter.total : null }));
+  const alarm = await frame2.evaluate(async () => { for (let i = 0; i < 5; i++) await DesignStation.pullEtsyOrderDetails('3521000004'); return { alarm: document.getElementById('etsyHud').classList.contains('alarm'), why: DesignStation.etsyMeterSnapshot().alarm && DesignStation.etsyMeterSnapshot().alarm.why, braked: DesignStation.etsyMeterSnapshot().braked }; });
+  console.log('watchdog', JSON.stringify(alarm), before);
+  assert(alarm.alarm && alarm.braked && /read 5 times/.test(alarm.why), 'the repeated read raised the alarm and the brake: ' + JSON.stringify(alarm));
+  await assert.rejects(page.evaluate(() => DesignLink.call('orders.detail', { receiptId: '3521000004', fresh: true })), /watchdog brake/, 'a fresh read over the bridge is refused during the brake');
+  const chkBrake = await page.evaluate(() => DesignLink.call('orders.check', { receiptIds: ['3521000004'] }).then(r => ({ ok: true, swept: r.swept, calls: r.etsyCalls }), e => ({ ok: false, error: e.message })));
+  assert((!chkBrake.ok && /watchdog brake/.test(chkBrake.error)) || (chkBrake.ok && chkBrake.swept === false && chkBrake.calls === 0), 'during the brake a check is refused or answered from memory at no cost: ' + JSON.stringify(chkBrake));
+  await page.waitForFunction(() => document.getElementById('etsyPill').classList.contains('alarm') && B.run && B.run.status === 'stopped', null, { timeout: 8000 });
+  const stopped = await page.evaluate(() => ({ status: B.run.status, why: B.run.stoppedBy, pill: document.getElementById('etsyPill').className, warned: CN.AG.events.some(e => /Etsy watchdog at the station/.test(e.text || '')) }));
+  assert(/Etsy watchdog/.test(stopped.why) && /alarm/.test(stopped.pill) && stopped.warned, 'the sorter stopped its run on the alarm and shows it: ' + JSON.stringify(stopped));
+  // a person's own Refresh at the station still works during the brake (the brake is for automatic work only)
+  const manual = await frame2.evaluate(async () => { const t0 = DesignStation.etsyMeter.total; await DesignStation.refreshOrders(); return DesignStation.etsyMeter.total - t0; });
+  assert(manual >= 1, 'a manual refresh at the station is not blocked by the brake');
+  await page.evaluate(() => { RunCtl.stop('test over'); RunCtl.clearRunState(); });
+  await page.screenshot({ path: path.join(tmp, 'bridge-watchdog.png') });
   // ── 8 · a second run the same day numbers Set-2 and the released orders can be pulled again ──
   const seq2 = await page.evaluate(async () => { const r = await CN.api('charmNestLibrary', { op: 'setAllocate', day: CharmNestOrders.localDay(), runId: 'run-probe' }); return r.seq; });
   assert.strictEqual(seq2, 2, 'the next set of the day is Set-2');

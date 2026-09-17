@@ -389,6 +389,8 @@ html[data-rail=lg] .railFoot{font-size:13px}
 
 /* ── API meter ────────────────────────────────────────────────────────── */
 .apiMeter{display:flex;align-items:center;gap:9px;padding:6px 11px;border:1px solid var(--line);border-radius:11px;background:var(--card);font-size:11px;color:var(--ink45);flex:0 0 auto}
+.apiMeter.alarm{background:#5a1f16!important;color:#fff!important;border-color:#c0553b!important;animation:bbPulse 1.2s ease-in-out infinite}
+.apiMeter.alarm b{color:#ffd6c9!important}
 .topbar .btn,.topbar .navBtn{flex:0 0 auto}
 .apiMeter b{font:12px var(--mono);color:var(--ink);font-weight:700}
 .apiMeter .sep{width:1px;height:16px;background:var(--line)}
@@ -956,10 +958,12 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
 
       <div class="spacer"></div>
 
-      <div class="apiMeter" id="apiMeter" title="Etsy API calls made by this tab">
+      <div class="apiMeter" id="etsyHud" title="Etsy API calls made by this tab">
         <span>QPS <b id="etsyMaxQps">0</b></span>
         <span class="sep"></span>
         <span>Calls <b id="etsyTotal">0</b></span>
+        <span title="Etsy calls in the current 10-minute window">10m <b id="etsy10m">0</b></span>
+        <span title="Etsy calls today, kept across reloads">Today <b id="etsyDay">0</b></span>
       </div>
 
       <button class="btn ghost sm liveOnly" id="undoCompleteBtn" disabled title="Restore the last printed batch">↩ Undo</button>
@@ -1585,7 +1589,56 @@ function countsAreEmpty(counts) {
 /* ═══ 5 · ETSY REQUEST PIPELINE ══════════════════════════════════════════ */
 
 /* Live call meter for the topbar HUD. */
-const etsyMeter = { total:0, times:[], maxQps:0 };
+const etsyMeter = { total:0, times:[], maxQps:0, minute:[], buckets:{}, byOrder:{}, day:"", dayTotal:0, status429:0, errors:0, lastAt:0, alarm:null, brakeUntil:0 };
+/* ── the Etsy call ledger: every call this page makes is counted at the fetch wrapper (the one place they all pass), kept
+   in 10-minute buckets for the last hour, a per-day total that survives reloads (Etsy's quota is per day), and a watchdog
+   that recognises a burst, a hot 10 minutes, the same order re-read over and over, or a 429 — and puts the brakes on:
+   the bridge's Etsy-touching commands and the background heal passes wait out the brake; a person's own Refresh still
+   works. Limits live in ETSY_GUARD and are deliberately well under Etsy's 10 000/day. ── */
+const ETSY_GUARD = { burstPerMinute: 60, per10Min: 150, sameOrderPer10Min: 4, brakeMs: 5 * 60 * 1000 };
+const ETSY_LS = "designStation.etsyMeter.v1";
+(function loadEtsyDay() { try { const j = JSON.parse(localStorage.getItem(ETSY_LS) || "null"); const today = new Date().toDateString(); if (j && j.day === today) { etsyMeter.day = j.day; etsyMeter.dayTotal = Number(j.dayTotal) || 0; etsyMeter.buckets = j.buckets || {}; } else etsyMeter.day = today; } catch (_) { etsyMeter.day = new Date().toDateString(); } })();
+function etsyBucketKey(t) { return String(Math.floor(t / 600000)); }
+function etsyLast(ms) { const cut = Date.now() - ms; let n = 0; for (const [k, v] of Object.entries(etsyMeter.buckets)) if (Number(k) * 600000 + 600000 > cut) n += v; return n; }
+function etsyLast10() { return etsyMeter.buckets[etsyBucketKey(Date.now())] || 0; }
+function etsyMeterSnapshot() {
+  const now = Date.now(); const cut60 = now - 60000; while (etsyMeter.minute.length && etsyMeter.minute[0] < cut60) etsyMeter.minute.shift();
+  return { total: etsyMeter.total, lastMinute: etsyMeter.minute.length, last10Min: etsyLast10(), lastHour: etsyLast(3600000), today: etsyMeter.dayTotal, maxQps: etsyMeter.maxQps, status429: etsyMeter.status429, errors: etsyMeter.errors, lastAt: etsyMeter.lastAt, alarm: etsyMeter.alarm, braked: etsyMeter.brakeUntil > now, brakeUntil: etsyMeter.brakeUntil, guard: ETSY_GUARD, at: now };
+}
+function etsyBraked() { return etsyMeter.brakeUntil > Date.now(); }
+function etsyAlarm(why) {
+  const now = Date.now(); if (etsyMeter.alarm && now - etsyMeter.alarm.at < 60000) return;
+  etsyMeter.alarm = { why, at: now }; etsyMeter.brakeUntil = now + ETSY_GUARD.brakeMs;
+  console.warn("Etsy watchdog:", why);
+  try { toast(`Etsy watchdog: ${why} — automatic Etsy work paused for ${Math.round(ETSY_GUARD.brakeMs / 60000)} min`, "bad", 10000); } catch (_) {}
+  try { if (typeof Bridge !== "undefined" && Bridge.active()) { Bridge.emit("etsy.alarm", Object.assign({ why }, etsyMeterSnapshot())); Bridge.ticker(`Etsy watchdog: ${why}`); } } catch (_) {}
+  paintEtsyHud();
+}
+function etsyRecord(url) {
+  const now = Date.now(); etsyMeter.total++; etsyMeter.lastAt = now;
+  etsyMeter.times.push(now); const cutoff = now - 1000; while (etsyMeter.times.length && etsyMeter.times[0] < cutoff) etsyMeter.times.shift();
+  if (etsyMeter.times.length > etsyMeter.maxQps) etsyMeter.maxQps = etsyMeter.times.length;
+  etsyMeter.minute.push(now); const cut60 = now - 60000; while (etsyMeter.minute.length && etsyMeter.minute[0] < cut60) etsyMeter.minute.shift();
+  const today = new Date().toDateString(); if (etsyMeter.day !== today) { etsyMeter.day = today; etsyMeter.dayTotal = 0; etsyMeter.buckets = {}; }
+  etsyMeter.dayTotal++;
+  const k = etsyBucketKey(now); etsyMeter.buckets[k] = (etsyMeter.buckets[k] || 0) + 1;
+  for (const bk of Object.keys(etsyMeter.buckets)) if (Number(bk) < Number(k) - 6) delete etsyMeter.buckets[bk];
+  const m = /orderId=(\d+)/.exec(String(url || "")); if (m) { const o = etsyMeter.byOrder[m[1]] = (etsyMeter.byOrder[m[1]] || []).filter(t => t > now - 600000); o.push(now); if (o.length > ETSY_GUARD.sameOrderPer10Min) etsyAlarm(`order ${m[1]} read ${o.length} times in 10 minutes`); }
+  if (etsyMeter.minute.length > ETSY_GUARD.burstPerMinute) etsyAlarm(`${etsyMeter.minute.length} Etsy calls in one minute`);
+  else if (etsyMeter.buckets[k] > ETSY_GUARD.per10Min) etsyAlarm(`${etsyMeter.buckets[k]} Etsy calls in 10 minutes`);
+  try { localStorage.setItem(ETSY_LS, JSON.stringify({ day: etsyMeter.day, dayTotal: etsyMeter.dayTotal, buckets: etsyMeter.buckets })); } catch (_) {}
+  paintEtsyHud();
+}
+function paintEtsyHud() {
+  const a = $("#etsyMaxQps"), b = $("#etsyTotal"), c = $("#etsy10m"), d = $("#etsyDay"), h = $("#etsyHud");
+  if (a) a.textContent = String(etsyMeter.maxQps);
+  if (b) b.textContent = String(etsyMeter.total);
+  if (c) c.textContent = String(etsyLast10());
+  if (d) d.textContent = String(etsyMeter.dayTotal);
+  if (h) { const braked = etsyBraked(); h.classList.toggle("alarm", braked); h.title = braked ? `Etsy watchdog: ${etsyMeter.alarm && etsyMeter.alarm.why} — automatic Etsy work paused until ${new Date(etsyMeter.brakeUntil).toLocaleTimeString()}` : `Etsy calls made by this page: ${etsyMeter.total} this session · ${etsyLast10()} in the current 10-minute window · ${etsyLast(3600000)} in the last hour · ${etsyMeter.dayTotal} today · peak ${etsyMeter.maxQps}/s`; }
+}
+// the 10-minute window rolls on its own even when nothing is being called, and the brake clears itself
+setInterval(paintEtsyHud, 10000);
 (function wrapFetchForMeter() {
   if (window.__etsyFetchWrapped) return;
   window.__etsyFetchWrapped = true;
@@ -1595,21 +1648,12 @@ const etsyMeter = { total:0, times:[], maxQps:0 };
       return /\/\.netlify\/functions\/(etsy|etsyImages|etsyOrderProxy|listOpenOrders|refreshEtsyToken|exchangeToken)\b/i.test(url);
     } catch (_) { return false; }
   };
-  const paint = () => {
-    const a = $("#etsyMaxQps"), b = $("#etsyTotal");
-    if (a) a.textContent = String(etsyMeter.maxQps);
-    if (b) b.textContent = String(etsyMeter.total);
-  };
   const orig = window.fetch;
   window.fetch = function (input, init) {
     if (isEtsyCall(input)) {
-      const now = Date.now();
-      etsyMeter.total++;
-      etsyMeter.times.push(now);
-      const cutoff = now - 1000;
-      while (etsyMeter.times.length && etsyMeter.times[0] < cutoff) etsyMeter.times.shift();
-      if (etsyMeter.times.length > etsyMeter.maxQps) etsyMeter.maxQps = etsyMeter.times.length;
-      paint();
+      etsyRecord((typeof input === "string") ? input : (input && input.url) || "");
+      // the outcome is counted too: a 429 is the strongest signal the watchdog can get
+      return orig.apply(this, arguments).then(resp => { if (resp && resp.status === 429) { etsyMeter.status429++; etsyAlarm("Etsy answered 429 (rate limited)"); } else if (resp && resp.status >= 500) etsyMeter.errors++; return resp; }, err => { etsyMeter.errors++; throw err; });
     }
     return orig.apply(this, arguments);
   };
@@ -2670,6 +2714,7 @@ function decorateReceipt(r) {
 }
 
 /** Load one order's items — memory, then disk, then Etsy. */
+const __hydrateInflight = new Map();   // rid → promise: two askers for one order (a row scrolling into view and the bridge) share one Etsy read
 async function hydrateOrder(rid, { force = false } = {}) {
   rid = String(rid);
   const rec = allOpenReceipts.find(r => String(r.receipt_id) === rid)
@@ -2684,13 +2729,18 @@ async function hydrateOrder(rid, { force = false } = {}) {
       orderCache[rid] = disk.txs.map(t => ({ ...t }));
       return orderCache[rid];
     }
+    if (__hydrateInflight.has(rid)) return __hydrateInflight.get(rid);
   }
 
-  const data = await pullEtsyOrderDetails(rid);
-  const txs  = data?.transactions || [];
-  orderCache[rid] = txs;
-  if (txs.length) cachePut(rid, txs, stamp, data?.receipt);
-  return txs;
+  const p = (async () => {
+    const data = await pullEtsyOrderDetails(rid);
+    const txs  = data?.transactions || [];
+    orderCache[rid] = txs;
+    if (txs.length) cachePut(rid, txs, stamp, data?.receipt);
+    return txs;
+  })();
+  __hydrateInflight.set(rid, p);
+  try { return await p; } finally { if (__hydrateInflight.get(rid) === p) __hydrateInflight.delete(rid); }
 }
 
 /** Fold freshly-loaded items back into a receipt + its row. */
@@ -3154,6 +3204,7 @@ async function buildNewOrderList() {
         decorateReceipt(r);
       });
       allOpenReceipts = raw;
+      Bridge.hooks.swept();
       console.log(`Open orders: ${raw.length} · ${fromCache} from cache · ${needFetch} need a detail call`);
       window.__lastLoadStats = { total: raw.length, fromCache, needFetch };
     } finally { Activity.hide(); __sweepInFlight = Math.max(0, __sweepInFlight - 1); }
@@ -3170,6 +3221,7 @@ async function buildNewOrderList() {
 
 /** Re-fetch items for rows that are rendered but still blank. */
 async function repairMissingReceiptData({ passes = 2, concurrency = 4 } = {}) {
+  if (typeof etsyBraked === "function" && etsyBraked()) return;   // the watchdog brake: no background re-reads
   const myRun = updateRunId;
   for (let pass = 1; pass <= passes; pass++) {
     // Scoped to rows on screen. Sweeping every rendered row would undo the
@@ -3199,6 +3251,7 @@ async function repairMissingReceiptData({ passes = 2, concurrency = 4 } = {}) {
 
 /** Re-derive metals for rendered rows still showing nothing. */
 async function healZeroMetalRows({ passes = 2, concurrency = 4 } = {}) {
+  if (typeof etsyBraked === "function" && etsyBraked()) return;
   const myRun = updateRunId;
   for (let pass = 1; pass <= passes; pass++) {
     const zero = visibleReceiptIds()
@@ -6577,7 +6630,7 @@ function wireQueueScroll() {
 }
 
 /** The Refresh button's sequence: one sweep of Etsy's open list, then locks, heals and the selected previews. */
-async function refreshOrders() {
+async function refreshOrders({ heal = true } = {}) {
   abortAllUpdateWork();
   updateRunId++;
   allOpenReceipts = [];
@@ -6585,7 +6638,7 @@ async function refreshOrders() {
   await restoreCompleted();
   await buildNewOrderList();
   await fetchAllLocksOnce();
-  if (SETTINGS.autoHeal) {
+  if (SETTINGS.autoHeal && heal) {   // the bridge hydrates every order itself, so it asks for no heal passes: one read per order
     await repairMissingReceiptData({ passes:1, concurrency:4 });
     await healZeroMetalRows({ passes:1, concurrency:4 });
   }
@@ -6776,7 +6829,7 @@ const Bridge = (() => {
   // when this page itself is served from loopback, so production never widens the list.
   const LOCAL_RE = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
   const originOk = o => ALLOWED.has(o) || (LOCAL_RE.test(o) && LOCAL_RE.test(location.origin));
-  const S = { nonce: null, origin: null, master: null, count: 0, last: "", dropped: 0, previewed: null, watch: false, ticker: [], feed: [], startedAt: 0, sorterClientId: null, runId: null, down: false, lastPing: 0 };
+  const S = { nonce: null, origin: null, master: null, count: 0, last: "", dropped: 0, previewed: null, watch: false, ticker: [], feed: [], startedAt: 0, sorterClientId: null, runId: null, down: false, lastPing: 0, lastSweepAt: 0 };
   const LSK = { commits: "designStation.bridgeCommits.v1", selected: "designStation.bridgeSelected.v1" };
   const framed = () => { try { return window.self !== window.top; } catch (_) { return true; } };
   const active = () => !!S.master;
@@ -6803,7 +6856,13 @@ const Bridge = (() => {
 
   /* ── snapshots of the station's state ── */
   const employeeName = () => { try { return (localStorage.getItem(LS.employee) || "").trim(); } catch (_) { return ""; } };
-  function etsyState() { const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0); return { signedIn: !!localStorage.getItem(TOKEN_KEYS.access) || !!localStorage.getItem(TOKEN_KEYS.refresh), expiresAt: exp ? exp * 1000 : null, hasRefresh: !!localStorage.getItem(TOKEN_KEYS.refresh) }; }
+  function etsyState() { const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0); return { signedIn: !!localStorage.getItem(TOKEN_KEYS.access) || !!localStorage.getItem(TOKEN_KEYS.refresh), expiresAt: exp ? exp * 1000 : null, hasRefresh: !!localStorage.getItem(TOKEN_KEYS.refresh), calls: etsyMeter.total, maxQps: etsyMeter.maxQps, lastSweepAt: S.lastSweepAt || 0, meter: etsyMeterSnapshot() }; }
+  /* ── Etsy thrift (the sorter is a remote user and gets the same brakes a person does):
+        · a list sweep asked for within SWEEP_MIN_MS of the last one is served from memory, never re-fetched
+        · re-validation is one paged list sweep (orders.check), not one detail call per order
+        · every Etsy-touching reply carries the calls it cost, so the sorter can meter and budget them ── */
+  const SWEEP_MIN_MS = 90 * 1000;
+  const sweptRecently = () => S.lastSweepAt && Date.now() - S.lastSweepAt < SWEEP_MIN_MS && allOpenReceipts.length > 0;
   function filtersForBridge() { return { metals: [...F.metals], completed: F.completed, sel: F.sel, note: F.note, attn: F.attn, msg: F.msg, due: F.due, free: F.free, iAttn: F.iAttn, iMsg: F.iMsg, iMulti: F.iMulti, iNoSku: F.iNoSku, activeMetal, dateDir, orderDir }; }
   function stateSnapshot() {
     const open = allOpenReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
@@ -6936,7 +6995,7 @@ const Bridge = (() => {
       Cursor.reset(); Cursor.act("banner", null, "Charm Sorter connected", { click: false }).catch(() => {});
       return Object.assign(stateSnapshot(), { releasedFromPreviousSession: released });
     },
-    async ping() { S.lastPing = Date.now(); if (S.down) { S.down = false; paintBanner(); } return "pong"; },
+    async ping() { S.lastPing = Date.now(); if (S.down) { S.down = false; paintBanner(); } return { pong: true, etsy: etsyMeterSnapshot() }; },
     async claim(a) {
       const ids = (a.receiptIds || []).map(String); if (!ids.length) return { claimed: [] };
       await cursorRows(ids, "Claim");
@@ -6954,14 +7013,17 @@ const Bridge = (() => {
       return { unclaimed: ids };
     },
     async "orders.snapshot"(a, progress) {
-      if (a.refresh || !allOpenReceipts.length) { progress(0, 0, "Refreshing the open order list from Etsy"); await Cursor.act("refresh", null, "Refresh the order list from Etsy"); await refreshOrders(); }
-      else await Cursor.act("banner", null, "Reading the open orders", { click: false });
+      if (etsyBraked() && (a.refresh || !allOpenReceipts.length)) throw new Error(`Etsy watchdog brake until ${new Date(etsyMeter.brakeUntil).toLocaleTimeString()}: ${etsyMeter.alarm && etsyMeter.alarm.why}`);
+      const calls0 = etsyMeter.total; let refreshSkipped = false;
+      if ((a.refresh && !sweptRecently()) || !allOpenReceipts.length) { progress(0, 0, "Refreshing the open order list from Etsy"); await Cursor.act("refresh", null, "Refresh the order list from Etsy"); await refreshOrders({ heal: false }); }
+      else { refreshSkipped = !!a.refresh; await Cursor.act("banner", null, refreshSkipped ? `Open orders as listed ${Math.round((Date.now() - S.lastSweepAt) / 1000)} s ago (no new Etsy sweep)` : "Reading the open orders", { click: false }); }
       let list = allOpenReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
       if (Array.isArray(a.metals) && a.metals.length) list = list.filter(r => !r._hydrated || METAL_ORDER.some(k => a.metals.includes(k) && r._metalCounts && r._metalCounts[k]));
       if (a.onlyAttention) list = list.filter(r => r._attn);
       const total = list.length;
       if (a.hydrate !== false) {
-        const need = list.filter(r => !r._hydrated || !cacheIsFresh(String(r.receipt_id), r._stamp)).map(r => String(r.receipt_id));
+        const staleInMemory = r => { const rec = detailCache.get(String(r.receipt_id)); return !!(rec && rec.ut && r._stamp && Number(r._stamp) > Number(rec.ut)); };
+        const need = list.filter(r => !r._hydrated || staleInMemory(r)).map(r => String(r.receipt_id));
         let done = 0; const run = makeQueue(4);
         await Promise.all(need.map(rid => run(async () => {
           try { const txs = await hydrateOrder(rid); applyHydration(rid, txs); }
@@ -6975,12 +7037,33 @@ const Bridge = (() => {
       await Promise.all(list.map(r => q(async () => { orders.push(await orderForBridge(r, { withNotes: a.withNotes !== false })); if (++n % 25 === 0) progress(n, list.length, `Collected ${n} of ${list.length}`); })));
       orders.sort((x, y) => (x.shipBy || 0) - (y.shipBy || 0) || x.receiptId.localeCompare(y.receiptId));
       const hydrated = orders.filter(o => o.hydrated).length;
-      return { total, hydrated, tokenExpiresAt: etsyState().expiresAt, etsy: etsyState(), orders };
+      return { total, hydrated, tokenExpiresAt: etsyState().expiresAt, etsy: etsyState(), etsyCalls: etsyMeter.total - calls0, refreshSkipped, orders };
+    },
+    /** One paged list sweep (or the list in memory when swept within the cooldown) answers "is each of these still open,
+        and has Etsy touched it since the pull?" — the cheap re-validation that replaces a detail call per order. */
+    async "orders.check"(a, progress) {
+      const ids = (a.receiptIds || []).map(String); const calls0 = etsyMeter.total; let swept = false;
+      if (!sweptRecently() && etsyBraked()) throw new Error(`Etsy watchdog brake until ${new Date(etsyMeter.brakeUntil).toLocaleTimeString()}: ${etsyMeter.alarm && etsyMeter.alarm.why}`);
+      if (!sweptRecently()) {
+        progress(0, 0, "Checking the open order list on Etsy");
+        await Cursor.act("refresh", null, `Check ${ids.length} order${ids.length === 1 ? "" : "s"} against Etsy's open list`);
+        const raw = await fetchOpenOrdersSequential(n => progress(n, 0, `Listing open orders… ${n}`));
+        const byId = new Map(raw.map(r => [String(r.receipt_id), r]));
+        // stamps are refreshed in place; a receipt whose stamp moved is marked so its next detail read is a real one
+        for (const r of allOpenReceipts) { const nr = byId.get(String(r.receipt_id)); if (!nr) { r._goneFromList = true; continue; } const ns = receiptStamp(nr); if (ns !== r._stamp) { r.update_timestamp = nr.update_timestamp; r._stamp = ns; r._touched = true; } }
+        for (const nr of raw) if (!allOpenReceipts.some(r => String(r.receipt_id) === String(nr.receipt_id))) { decorateReceipt(nr); allOpenReceipts.push(nr); }
+        Bridge.hooks.swept(); swept = true;
+      } else await Cursor.act("banner", null, `Open list checked ${Math.round((Date.now() - S.lastSweepAt) / 1000)} s ago — reused`, { click: false });
+      const out = {};
+      for (const id of ids) { const r = allOpenReceipts.find(x => String(x.receipt_id) === id); out[id] = { open: !!r && !r._goneFromList && !completedOrders.has(id), updateTs: r ? Number(r._stamp || receiptStamp(r)) || 0 : 0, touched: !!(r && r._touched) }; }
+      return { orders: out, swept, sweptAt: S.lastSweepAt, etsyCalls: etsyMeter.total - calls0, etsy: etsyState() };
     },
     async "orders.detail"(a) {
-      const rid = String(a.receiptId || "");
+      const rid = String(a.receiptId || ""); const calls0 = etsyMeter.total;
       let r = allOpenReceipts.find(x => String(x.receipt_id) === rid) || currentReceipts.find(x => String(x.receipt_id) === rid);
       await Cursor.act("row", rid, `Read order ${rid}${a.fresh ? " again from Etsy" : ""}`, { click: false });
+      if (r) r._touched = false;
+      if ((a.fresh || !r) && etsyBraked()) throw new Error(`Etsy watchdog brake until ${new Date(etsyMeter.brakeUntil).toLocaleTimeString()}: ${etsyMeter.alarm && etsyMeter.alarm.why}`);
       if (a.fresh || !r) {
         const data = await pullEtsyOrderDetails(rid);
         if (!data || !data.receipt) return { order: null, gone: true, reason: r ? "Etsy did not return the receipt" : "not in the open list" };
@@ -6989,10 +7072,10 @@ const Bridge = (() => {
         if (r) { Object.assign(r, { update_timestamp: rc.update_timestamp, transactions: rc.transactions, message_from_buyer: rc.message_from_buyer }); decorateReceipt(r); paintRow(rid); }
         notesCache.delete(rid); msgCache.delete(rid);
         const gone = !!rc.is_shipped || (rc.status && /cancel|refund/i.test(String(rc.status)));
-        return { order: await orderForBridge(r || rc), gone, status: String(rc.status || ""), isShipped: !!rc.is_shipped };
+        return { order: await orderForBridge(r || rc), gone, status: String(rc.status || ""), isShipped: !!rc.is_shipped, etsyCalls: etsyMeter.total - calls0 };
       }
       if (!r._hydrated) { const txs = await hydrateOrder(rid); applyHydration(rid, txs); }
-      return { order: await orderForBridge(r), gone: false };
+      return { order: await orderForBridge(r), gone: false, etsyCalls: etsyMeter.total - calls0 };
     },
     async "orders.watch"(a) { S.watch = !!a.on; return { watching: S.watch }; },
     async "ui.select"(a) {
@@ -7127,6 +7210,7 @@ const Bridge = (() => {
     selection() { if (!active()) return; const cur = [...selectedOrders].sort().join(","); if (cur !== lastSel) { lastSel = cur; emit("selection", { selected: [...selectedOrders] }); } const f = JSON.stringify(filtersForBridge()); if (f !== lastFilters) { lastFilters = f; emit("filters", { filters: filtersForBridge() }); } },
     orders() { if (!active()) return; emit("orders.changed", { count: allOpenReceipts.length, open: allOpenReceipts.filter(r => !completedOrders.has(String(r.receipt_id))).length, watching: S.watch }); },
     activity(text) { ticker(text); },
+    swept() { S.lastSweepAt = Date.now(); },
     locks() { if (!active()) return; const cur = JSON.stringify([...rtSelected]); if (cur !== lastLocks) { lastLocks = cur; emit("lock.changed", { locks: Object.fromEntries([...rtSelected].filter(([, o]) => o && o !== RT.clientId)), claims: Object.fromEntries(rtClaims) }); } }
   };
   return { hooks, active, framed, emit, ticker, endSession, state: () => Object.assign({}, S, { master: !!S.master }), snapshot: stateSnapshot, orderForBridge, commands: Object.keys(CMDS), ALLOWED, cursor: Cursor };
@@ -7153,7 +7237,7 @@ window.DesignStation = {
   chat: BritesChat,
   messages: { flags: msgOrderIDs, probed: msgProbed, refresh: refreshMessageFlags, reset: resetMessageFlags },
   sort: () => ({ activeMetal, dateDir, orderDir }),
-  bridge: Bridge, commitCompletion, refreshOrders,
+  bridge: Bridge, commitCompletion, refreshOrders, pullEtsyOrderDetails, etsyMeter, etsyMeterSnapshot,
 };
 
 </script>

@@ -69,7 +69,7 @@ const DesignLink = window.DesignLink = (() => {
     let st;
     try { st = await call("hello", { sorterClientId: S_.nonce, runId: B.run ? B.run.runId : null }, { timeoutMs: 15000 }); }
     catch (e) { if (!/answer in time/.test(e.message)) throw e; agent({ bridge: true }, "warn", "hello unanswered — trying once more"); st = await call("hello", { sorterClientId: S_.nonce, runId: B.run ? B.run.runId : null }, { timeoutMs: 30000 }); }
-    S_.state = st; S_.up = true; S_.misses = 0; S_.lastHello = Date.now();
+    S_.state = st; S_.up = true; S_.misses = 0; S_.lastHello = Date.now(); if (st.etsy && st.etsy.meter) etsyReadout(st.etsy.meter);
     if (st.employee && !B.employee) { B.employee = st.employee; localStorage.setItem("cn.employee", st.employee); }
     S_.veil && S_.veil.classList.add("hidden"); Dock.layout();
     agent({ bridge: true }, "DS", `Session ${S_.nonce.slice(0, 4)} open on ${st.bench} · ${st.counts.open} open orders (${st.counts.hydrated} read) · ${st.selection.length} selected · Etsy ${st.etsy.signedIn ? "signed in" : "NOT signed in"}${st.releasedFromPreviousSession && st.releasedFromPreviousSession.length ? ` · released ${st.releasedFromPreviousSession.length} lock(s) from a previous session` : ""}`);
@@ -118,6 +118,7 @@ const DesignLink = window.DesignLink = (() => {
     else if (d.type === "complete.done") agent({ bridge: true }, "DS", `Station completed ${(d.completed || []).length} order(s)${d.setId ? ` for ${d.setId}` : ""}`);
     else if (d.type === "ui.modal") agent({ bridge: true }, "DS", d.open ? `Station opened item ${d.transactionId} of order ${d.receiptId}` : "Station closed its dialog");
     else if (d.type === "error") agent({ bridge: true }, "warn", `Station reported: ${d.command} — ${d.error}`);
+    else if (d.type === "etsy.alarm") { etsyReadout(d); }
     else if (d.type === "etsy.signin") { agent({ bridge: true }, "warn", "The station needs an Etsy sign-in (do it in its own tab)"); toast("Design Station: sign in to Etsy in its own tab, then pull again", "bad", 8000); if (B.run) RunCtl.stop("the Design Station is not signed in to Etsy", "Open design-1.goldenspike.app in its own tab, press Connect Etsy, then Resume."); }
     else if (d.type === "state" && d.ended) { S_.up = false; S_.control = false; stopHeartbeat(); S_.veil && S_.veil.classList.remove("hidden"); agent({ bridge: true }, "warn", `Station ended the session: ${d.reason}`); if (B.run && B.run.status === "running") RunCtl.stop(`the Design Station ended the session (${d.reason})`, "Press Take control, then Resume."); }
     renderConsole();
@@ -149,12 +150,45 @@ const DesignLink = window.DesignLink = (() => {
     const every = Math.max(2, +S.settings.heartbeatS || 5) * 1000;
     S_.hb = setInterval(async () => {
       if (!S_.control) return;
-      try { await call("ping", {}, { timeoutMs: Math.max(1500, every - 500) }); if (!S_.up) { S_.up = true; agent({ bridge: true }, "DS", "Design Station is back"); } S_.misses = 0; }
+      try { const pong = await call("ping", {}, { timeoutMs: Math.max(1500, every - 500), quiet: true }); if (pong && pong.etsy) etsyReadout(pong.etsy); if (!S_.up) { S_.up = true; agent({ bridge: true }, "DS", "Design Station is back"); } S_.misses = 0; }
       catch (_) { S_.misses++; if (S_.misses >= (+S.settings.heartbeatMiss || 3) && S_.up) { S_.up = false; agent({ bridge: true }, "warn", `Design Station down — ${S_.misses} heartbeats missed`); if (B.run && B.run.status === "running") RunCtl.stop("the Design Station stopped answering the heartbeat", "Check the Design Station tab; when it answers again, press Resume."); } }
       renderConsole(); Dock.schedule();
     }, every);
   }
   function stopHeartbeat() { if (S_.hb) clearInterval(S_.hb); S_.hb = null; }
+  /* ── the Etsy meter and budget: every reply that cost Etsy calls says so; the sorter keeps a rolling hour of them and
+        refuses to start an Etsy-touching step past the cap (Settings → Etsy calls per hour). The station's own brakes
+        (250 ms pacing, 429 backoff, the detail cache, the sweep cooldown) still apply underneath. ── */
+  const E_ = { window: [], sessionTotal: 0, stationTotal: 0, station: null, alarmed: null };
+  /** The station's ledger is the truth (only the station calls Etsy): every ping and every Etsy-touching reply carries it. */
+  function etsyReadout(m) {
+    if (!m) return; E_.station = m; E_.stationTotal = m.total;
+    const el = document.getElementById("etsyPill"), n = document.getElementById("etsyPillN"); if (!el || !n) return;
+    n.textContent = `today ${m.today} · 10m ${m.last10Min} · 1m ${m.lastMinute}`;
+    const hot = m.last10Min >= m.guard.per10Min * 0.7 || m.lastMinute >= m.guard.burstPerMinute * 0.7;
+    el.classList.toggle("alarm", !!m.braked); el.classList.toggle("warn", !m.braked && hot);
+    el.title = m.braked ? `Etsy watchdog at the station: ${m.alarm && m.alarm.why} — automatic Etsy work paused until ${new Date(m.brakeUntil).toLocaleTimeString()}` : `Etsy calls counted by the Design Station: ${m.total} this session · ${m.lastMinute} in the last minute · ${m.last10Min} in the current 10-minute window · ${m.lastHour} in the last hour · ${m.today} today · peak ${m.maxQps}/s · ${m.status429} rate-limit answers. Guard: ${m.guard.burstPerMinute}/min, ${m.guard.per10Min}/10 min, ${m.guard.sameOrderPer10Min} reads of one order/10 min.`;
+    if (m.braked && (!E_.alarmed || E_.alarmed !== m.alarm.at)) { E_.alarmed = m.alarm.at; agent({ bridge: true }, "warn", `Etsy watchdog at the station: ${m.alarm.why} — automatic Etsy work is paused for ${Math.round(m.guard.brakeMs / 60000)} min`); if (B.run && ["running", "paused", "review"].includes(B.run.status)) RunCtl.stop(`Etsy watchdog: ${m.alarm.why}`, `The station paused automatic Etsy work until ${new Date(m.brakeUntil).toLocaleTimeString()}. Check the API meter on both apps, then Resume.`); }
+  }
+  function meter(reply, what) {
+    const n = reply && Number(reply.etsyCalls) || 0;
+    if (reply && reply.etsy && reply.etsy.meter) etsyReadout(reply.etsy.meter);
+    if (reply && reply.etsy && reply.etsy.calls != null) E_.stationTotal = reply.etsy.calls;
+    if (n > 0) { E_.window.push({ t: Date.now(), n }); E_.sessionTotal += n; }
+    const cut = Date.now() - 3600000; while (E_.window.length && E_.window[0].t < cut) E_.window.shift();
+    agent({ bridge: true }, n > 12 ? "warn" : "DS", `Etsy: ${n} call${n === 1 ? "" : "s"} for ${what}${(reply && reply.refreshSkipped) || (reply && reply.swept === false) ? " (open list reused — swept under 90 s ago)" : ""} · ${hourCalls()} this hour · ${E_.stationTotal} this station session`);
+    renderConsole();
+    return n;
+  }
+  const hourCalls = () => E_.window.reduce((a, x) => a + x.n, 0);
+  const etsyCap = () => Math.max(50, +S.settings.etsyHourlyCap || 600);
+  /** Before an Etsy-touching step: false (and a stopped run) when the hour's budget is spent; a warning past 70 %. */
+  function etsyBudgetOk(step) {
+    const used = hourCalls(), cap = etsyCap();
+    if (used >= cap) { const why = `Etsy call budget reached (${used} of ${cap} this hour) before ${step}`; agent({ bridge: true }, "warn", why); toast(why, "bad", 8000); if (B.run && B.run.status === "running") RunCtl.stop(why, `Wait for the hour to roll over or raise the cap in Settings, then Resume.`); return false; }
+    if (used >= cap * 0.7) agent({ bridge: true }, "warn", `Etsy calls at ${used} of ${cap} this hour — ${step} goes ahead, the run stops at the cap`);
+    return true;
+  }
   /* ── the sorter's side of the story, streamed to the station's banner (design §5.7): every agent line and sheet log
         line while in control, coalesced into one quiet post every half second; the station shows the last four. ── */
   const feedQ = []; let feedT = null;
@@ -171,12 +205,12 @@ const DesignLink = window.DesignLink = (() => {
   function renderConsole() {
     const host = document.getElementById("dsConsole"); if (!host) return;
     const st = S_.state || {};
-    const kv = host.querySelector(".kv"); if (kv) kv.innerHTML = `<b>${S_.control ? (S_.up ? "Connected" : "Link down") : "Not in control"}</b> · session <span class="mono">${S_.nonce ? S_.nonce.slice(0, 6) : "—"}</span><br>${S_.count} commands · ${S_.replies} replies · ${S_.errors} errors · ${S_.dropped} dropped · ${S_.pending.size} pending<br>${st.bench ? `bench ${esc(st.bench)} · ${esc(st.version || "")} · employee ${esc(st.employee || "—")}` : ""}<br>${st.etsy ? `Etsy: ${st.etsy.signedIn ? "signed in" + (st.etsy.expiresAt ? ` · token to ${new Date(st.etsy.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "") : "<span style='color:#8a3a26'>NOT signed in</span>"}` : ""}<br>${st.counts ? `${st.counts.open} open · ${st.counts.selected} selected · ${st.counts.claimed} claimed · ${st.counts.locked} locked elsewhere` : ""}`;
+    const kv = host.querySelector(".kv"); if (kv) kv.innerHTML = `<b>${S_.control ? (S_.up ? "Connected" : "Link down") : "Not in control"}</b> · session <span class="mono">${S_.nonce ? S_.nonce.slice(0, 6) : "—"}</span><br>${S_.count} commands · ${S_.replies} replies · ${S_.errors} errors · ${S_.dropped} dropped · ${S_.pending.size} pending<br>${st.bench ? `bench ${esc(st.bench)} · ${esc(st.version || "")} · employee ${esc(st.employee || "—")}` : ""}<br>${st.etsy ? `Etsy: ${st.etsy.signedIn ? "signed in" + (st.etsy.expiresAt ? ` · token to ${new Date(st.etsy.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "") : "<span style='color:#8a3a26'>NOT signed in</span>"}` : ""}<br>${st.counts ? `${st.counts.open} open · ${st.counts.selected} selected · ${st.counts.claimed} claimed · ${st.counts.locked} locked elsewhere` : ""}<br>Etsy calls: <b>${hourCalls()}</b> this hour of ${etsyCap()} · ${E_.sessionTotal} by this sorter · ${E_.stationTotal} on the station`;
     const sw = host.querySelector("#dsControl"); if (sw) { sw.classList.toggle("on", S_.control); sw.textContent = S_.control ? "Release" : "Take control"; }
     const log = host.querySelector(".log"); if (log) { const rows = S_.log.slice(-200); log.innerHTML = rows.map(r => `<div class="row ${r.dir}${r.err ? " err" : ""}"><span class="d">${fmtT(r.t)}</span><span class="ty">${r.dir === "cmd" ? "→" : r.dir === "reply" ? "←" : "·"} ${esc(r.type)}</span><span class="pl">${esc(r.payload ? JSON.stringify(r.payload) : "")}</span><span class="ms">${r.ms != null ? r.ms + "ms" : ""}</span></div>`).join(""); log.scrollTop = log.scrollHeight; }
     const tb = document.getElementById("tabDesignN"); if (tb) tb.textContent = S_.control && !S_.up ? "!" : "";
   }
-  return { mount, open, call, release, ensure, feed, state: () => S_.state, log: S_.log, up: () => S_.up, inControl: () => S_.control, nonce: () => S_.nonce, renderConsole, flushLog, origin, frameUrl, _S: S_ };
+  return { mount, open, call, release, ensure, feed, meter, etsyBudgetOk, etsyReadout, etsy: () => ({ hour: hourCalls(), cap: etsyCap(), session: E_.sessionTotal, station: E_.stationTotal, meter: E_.station }), state: () => S_.state, log: S_.log, up: () => S_.up, inControl: () => S_.control, nonce: () => S_.nonce, renderConsole, flushLog, origin, frameUrl, _S: S_, _E: E_ };
 })();
 
 /* ── the dock: where the station frame is shown. "full" over the Design Station tab's placeholder, "pip" as a live panel
@@ -287,8 +321,10 @@ const Orders = window.Orders = (() => {
   }
   async function pull(run, { silent = false } = {}) {
     await DesignLink.ensure();
+    if (!DesignLink.etsyBudgetOk("the pull")) throw new Error("Etsy call budget reached — the pull was not started");
     await Promise.all([loadMaps(), Master.load()]);
     const r = await DesignLink.call("orders.snapshot", { hydrate: true, refresh: true }, { timeoutMs: 20 * 60 * 1000, onProgress: p => { if (p.text) agentLiveLine("Pulling orders", p.text, p.done, p.total); } });
+    DesignLink.meter(r, "the pull");
     B.orders.snapshot = { total: r.total, hydrated: r.hydrated, etsy: r.etsy, at: Date.now() };
     if (r.hydrated < r.total) throw new Error(`only ${r.hydrated} of ${r.total} orders could be read from Etsy — sign in at the Design Station and pull again`);
     const picked = applyPullRule(r.orders);
@@ -313,11 +349,18 @@ const Orders = window.Orders = (() => {
   async function revalidate(run, why) {
     const orders = [...new Set(rowsOf().map(r => r.order.receiptId))];
     const changed = [], gone = [];
+    if (!DesignLink.etsyBudgetOk(`re-validation ${why}`)) return { changed, gone, skipped: true };
+    // one paged list sweep tells which orders Etsy touched or closed since the pull; only those get a fresh detail read
+    let chk = null;
+    try { chk = await DesignLink.call("orders.check", { receiptIds: orders }, { timeoutMs: 10 * 60 * 1000, onProgress: p => { if (p.text) agentLiveLine("Re-validating orders", p.text, p.done, p.total); } }); DesignLink.meter(chk, `the open-list check ${why}`); }
+    catch (e) { agent({ bridge: true }, "warn", `open-list check failed (${e.message}) — orders are taken as unchanged`); return { changed, gone, failed: true }; }
+    const need = orders.filter(rid => { const c = chk.orders[rid]; const cur = rowsOf().find(r => r.order.receiptId === rid); return !c || !c.open || c.touched || (cur && c.updateTs && c.updateTs !== cur.order.updateTs); });
+    agent({ bridge: true }, "DS", `Re-validation ${why}: ${orders.length} order(s) checked against the open list${chk.swept ? "" : " (list reused)"} · ${need.length} need a fresh read`);
     let done = 0;
-    for (const rid of orders) {
+    for (const rid of need) {
       let d = null;
-      try { d = await DesignLink.call("orders.detail", { receiptId: rid, fresh: true }, { timeoutMs: 60000 }); } catch (e) { agent({ bridge: true }, "warn", `re-validation of ${rid} failed: ${e.message}`); continue; }
-      agentLiveLine("Re-validating orders", `order ${rid}`, ++done, orders.length);
+      try { d = await DesignLink.call("orders.detail", { receiptId: rid, fresh: true }, { timeoutMs: 60000 }); DesignLink.meter(d, `re-reading ${rid}`); } catch (e) { agent({ bridge: true }, "warn", `re-validation of ${rid} failed: ${e.message}`); continue; }
+      agentLiveLine("Re-validating orders", `order ${rid}`, ++done, need.length);
       const rows = rowsOf().filter(r => r.order.receiptId === rid);
       if (!d || !d.order || d.gone) { gone.push(rid); for (const r of rows) { r.state = "gone"; r.reason = d && d.reason ? d.reason : (d && d.isShipped ? "shipped" : d && d.status ? d.status : "no longer open"); } continue; }
       const before = rows[0].order.updateTs;
@@ -1239,7 +1282,7 @@ const RunCtl = window.RunCtl = (() => {
   function onComplete(r) {
     agent({ run: r.runId }, "ok", `Run ${r.runId} complete: ${(r.committed || []).length} order(s) committed · ${Object.keys(r.holds || {}).length} held · ${(r.refused || []).length} refused`);
     toast(`Set complete — ${(r.committed || []).length} order(s) marked design-complete`, "ok", 7000); ding && ding();
-    if (S.settings.runMode === "auto" && +S.settings.autoEvery > 0) { clearTimeout(autoTimer); autoTimer = setTimeout(() => { if (S.settings.runMode === "auto") { clearRunState(); start({ mode: "auto" }); } }, +S.settings.autoEvery * 60000); agent({ bridge: true }, "DS", `Auto: the next run starts in ${S.settings.autoEvery} min`); }
+    if (S.settings.runMode === "auto" && +S.settings.autoEvery > 0) { const every = Math.max(5, +S.settings.autoEvery); clearTimeout(autoTimer); autoTimer = setTimeout(() => { if (S.settings.runMode === "auto") { clearRunState(); start({ mode: "auto" }); } }, every * 60000); agent({ bridge: true }, "DS", `Auto: the next run starts in ${every} min (never under 5, to spare the Etsy API)`); }
   }
   /** After a set is done: clear the cards and pooled lines so the next run starts clean (files and records are kept). */
   function clearRunState() { for (const m of METALS) { const prim = S.sheets[m.key]; if (prim.pages.some(p => p.charms.some(c => c.poolId))) { for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms = pg.charms.filter(c => !c.poolId); pg.sheetId = null; pg.fileBase = null; pg.setId = null; pg.runId = null; } prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim); } } B.orders.rows = []; B.orders.byKey = new Map(); B.engrave.items = new Map(); B.review.items = []; B.pool.rows = new Map(); B.run = null; Orders.render(); Engrave.render(); Review.render(); renderBanner(); renderRail(); updateTopSub(); }
