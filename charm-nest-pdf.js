@@ -260,6 +260,23 @@
 
   /* ═══ 3 · pdf-lib plumbing ═════════════════════════════════════════════ */
   const L = () => root.PDFLib;
+  /** Before a source page is copied into an output: Illustrator's private data (its native document, in 64 KB chunks),
+      the thumbnail and annotations are not drawing and are never copied — a per-SKU file is the charm, not the master. */
+  function stripSourceExtras(doc) {
+    const { PDFName } = L();
+    try { const node = doc.getPages()[0].node; for (const k of ["PieceInfo", "Thumb", "Annots", "Metadata", "AF"]) node.delete(PDFName.of(k)); } catch (_) { /* a page without them */ }
+  }
+  /** pdf-lib writes every object its context holds, reachable or not; after copyPages the copied page's original content
+      stream and anything else no longer referenced would still be written. Delete what the catalog cannot reach. */
+  function pruneUnreachable(doc) {
+    const { PDFDict, PDFArray, PDFRef, PDFStream } = L();
+    const ctx = doc.context, seen = new Set(), stack = [];
+    const push = v => { if (v instanceof PDFRef) { const key = v.toString(); if (!seen.has(key)) { seen.add(key); const o = ctx.lookup(v); if (o) stack.push(o); } } else if (v instanceof PDFDict) { for (const [, val] of v.entries()) push(val); } else if (v instanceof PDFArray) { for (const val of v.asArray()) push(val); } else if (v instanceof PDFStream) push(v.dict); };
+    const t = ctx.trailerInfo; for (const k of ["Root", "Info", "Encrypt", "ID"]) if (t[k]) push(t[k]);
+    while (stack.length) push(stack.pop());
+    let removed = 0; for (const [ref] of ctx.enumerateIndirectObjects()) if (!seen.has(ref.toString())) { ctx.delete(ref); removed++; }
+    return removed;
+  }
 
   function decodeStream(stream) {
     const { decodePDFRawStream, PDFRawStream } = L();
@@ -990,6 +1007,7 @@
     // one copied page per source, so each charm's xobject shares its source resources
     const copies = new Map();
     for (const [sid, parsed] of spec.sources) {
+      stripSourceExtras(parsed.doc);
       const [copied] = await out.copyPages(parsed.doc, [0]);
       const content = pageContentBytes(out, copied);
       const rawRes = copied.node.get(PDFName.of("Resources"));
@@ -1039,6 +1057,7 @@
     out.catalog.set(PDFName.of("OCProperties"), out.context.obj({ OCGs: out.context.obj(ocgRefs), D: out.context.obj({ Order: order, ON: on, BaseState: "ON" }) }));
     void PDFArray;
     if (spec.meta) { try { out.setSubject(JSON.stringify(spec.meta).slice(0, 4000)); } catch (_) { /* ignore */ } }
+    pruneUnreachable(out);
     return await out.save({ useObjectStreams: false });
   }
 
@@ -1102,6 +1121,7 @@
     page.pushOperators(ocgOps("ocCut"), pushGraphicsState());
     if (frontView) page.pushOperators(cm(Mp));
     if (!reference.redrawn) {
+      stripSourceExtras(parsed.doc);
       const [copied] = await out.copyPages(parsed.doc, [0]);
       const content = pageContentBytes(out, copied);
       const rawRes = copied.node.get(PDFName.of("Resources"));
@@ -1148,6 +1168,7 @@
     out.catalog.set(PDFName.of("OCProperties"), out.context.obj({ OCGs: out.context.obj(ocgRefs), D: out.context.obj({ Order: order, ON: on, BaseState: "ON" }) }));
     if (spec.meta) { try { out.setSubject(JSON.stringify(Object.assign({ view: spec.view || "asSeenFromBack", reference }, spec.meta)).slice(0, 4000)); } catch (_) { /* ignore */ } }
     void fill; void rgb;
+    pruneUnreachable(out);
     const bytes = await out.save({ useObjectStreams: false });
     return { bytes, wPt: pw, hPt: ph, reference, glyphCount, frame: { M, R, T, bbox: bb } };
   }
