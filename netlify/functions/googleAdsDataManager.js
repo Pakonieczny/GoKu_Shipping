@@ -44,7 +44,7 @@ function eventFor(row) {
   const kind = ['gclid', 'gbraid', 'wbraid'].find(k => row[k]);
   if (!kind) throw Error('No Google click identifier was captured for this order.');
   const event = { transactionId, eventTimestamp: new Date(raw).toISOString(), conversionValue: value,
-    currency, adIdentifiers: { [kind]: String(row[kind]) } };
+    currency, eventSource: 'WEB', adIdentifiers: { [kind]: String(row[kind]) } };
   const consent = {};
   for (const key of ['adUserData', 'adPersonalization']) {
     if (['GRANTED', 'DENIED'].includes(row.consent?.[key])) consent[key] = row.consent[key];

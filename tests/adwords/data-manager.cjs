@@ -174,6 +174,16 @@ async function test(name, fn) { try { await fn(); passed++; } catch (error) { co
     'only rejections that carry no receipt are re-sent, so a confirmed upload is never duplicated');
   ok(/awaitingAccess/.test(src), 'health reports them as awaiting access rather than as lost');
 
+  // Data Manager requires event_source; the legacy service had no equivalent,
+  // so the migrated payload carried none and Google refused every batch with
+  // "events[0].event_source: Required field is missing."
+  const { eventFor } = require(path.resolve(__dirname, '../../netlify/functions/googleAdsDataManager.js'));
+  const built = eventFor({ conversionDateTime: '2026-09-01T10:00:00-04:00', value: 61, currency: 'USD', orderId: '7026412454051', gclid: 'ABC' });
+  ok(built.eventSource === 'WEB', 'every event declares its source, which Data Manager requires');
+  ok(built.transactionId === '7026412454051' && built.conversionValue === 61 && built.currency === 'USD',
+    'the order, its value and its currency are carried unchanged');
+  ok(built.adIdentifiers.gclid === 'ABC', 'the captured click identifier is carried unchanged');
+
   // The rows this was written for were rejected before the error detail was
   // kept, so their reason is Google's bare generic sentence. If that does not
   // qualify, the drain passes over exactly the backlog it exists to clear.

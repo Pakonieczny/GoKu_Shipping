@@ -173,8 +173,15 @@ function html(r) {
   const rows = Object.values(r.sections).map(sec => {
     const dot = sec.status !== 'available' ? '⚪' : (s.blocking.length && /not installed|never render|missing webhook|refused/.test(sec.detail || '')) ? '🔴' : (sec.problems && sec.problems.length) || (sec.failed) ? '🟡' : '🟢';
     let extra = '';
-    if (sec.topics) extra = '<ul style="margin:6px 0 0;padding-left:18px;font-size:12px;color:#555">' + sec.topics.map(t =>
-      '<li>' + (t.ok ? '🟢' : '🔴') + ' <b>' + esc(t.topic) + '</b> — ' + (t.ok ? 'registered' : 'NOT registered to this app') + '<br><span style="color:#777">' + esc(t.why) + '</span></li>').join('') + '</ul>';
+    if (sec.topics) {
+      // When orders are arriving, a webhook this API cannot see is firing, and
+      // the topic rows must not contradict the heading that says so.
+      const invisibleOnly = /orders are reaching the conversion queue/.test((r.summary.warnings || []).join(' '));
+      extra = '<ul style="margin:6px 0 0;padding-left:18px;font-size:12px;color:#555">' + sec.topics.map(t =>
+        '<li>' + (t.ok ? '🟢' : invisibleOnly ? '🟡' : '🔴') + ' <b>' + esc(t.topic) + '</b> — ' +
+        (t.ok ? 'registered to this app' : invisibleOnly ? 'not visible to this app; one this API cannot see is firing' : 'NOT registered, and no orders are arriving') +
+        '<br><span style="color:#777">' + esc(t.why) + '</span></li>').join('') + '</ul>';
+    }
     if (sec.reasons && sec.reasons.length) extra = '<ul style="margin:6px 0 0;padding-left:18px;font-size:12px;color:#555">' + sec.reasons.map(r =>
       '<li><b>' + r.count + ' sale(s)</b>' + (r.value ? ' worth ' + r.value.toFixed(2) : '') + ' — ' + esc(r.reason) + '<br><span style="color:#777">' + esc((r.orders || []).join(', ')) + '</span></li>').join('') + '</ul>';
     if (sec.samples && sec.samples.length) extra = '<ul style="margin:6px 0 0;padding-left:18px;font-size:12px;color:#555">' + sec.samples.map(x =>
