@@ -174,5 +174,17 @@ async function test(name, fn) { try { await fn(); passed++; } catch (error) { co
     'only rejections that carry no receipt are re-sent, so a confirmed upload is never duplicated');
   ok(/awaitingAccess/.test(src), 'health reports them as awaiting access rather than as lost');
 
+  // The rows this was written for were rejected before the error detail was
+  // kept, so their reason is Google's bare generic sentence. If that does not
+  // qualify, the drain passes over exactly the backlog it exists to clear.
+  ok(/UNDIAGNOSED_ERROR/.test(src), 'a refusal recorded with no diagnostic detail is re-examined rather than parked forever');
+  const undiagnosed = (src.match(/const UNDIAGNOSED_ERROR = (\/[^\n]*\/i);/) || [])[1];
+  ok(undiagnosed, 'the undiagnosed pattern is stated in one place');
+  const pattern = eval(undiagnosed);
+  ok(pattern.test('There was a problem with the request.'), 'it matches the reason those fifteen sales actually carry');
+  ok(!pattern.test('notAllowlistedError:CUSTOMER_NOT_ALLOWLISTED — There was a problem with the request.'),
+    'a refusal that DOES name its cause is judged on that cause, not re-sent as undiagnosed');
+  ok(!pattern.test('INVALID_ARGUMENT · events[0].userData: missing'), 'a specific rejection stays parked');
+
   console.log(checks + ' Data Manager account-access checks passed.');
 })().catch(e => { console.error(e); process.exitCode = 1; });

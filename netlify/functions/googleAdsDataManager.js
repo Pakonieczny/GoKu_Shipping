@@ -14,6 +14,8 @@ const SCOPE = 'https://www.googleapis.com/auth/datamanager';
 const COMPANION_SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
 let grantedScopes = null;
 const MIGRATION_ERROR = /Data Manager API|CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE/i;
+// Google's generic refusal, recorded before its error detail was kept.
+const UNDIAGNOSED_ERROR = /^\s*There was a problem with the request\.?\s*$/i;
 const CHECK_DELAY = 30 * 60 * 1000;
 
 function destination(action, login) {
@@ -128,7 +130,7 @@ function errorDetail(data, status) {
   // no one remembering, and it is safe to re-send because it never reached
   // Google: a definite rejection carries no receipt.
   const accountLevelRejection = row => row.dmState === 'failed' && row.dmDefiniteRejection === true
-    && !row.dmRequestId && MIGRATION_ERROR.test(row.uploadError || '');
+    && !row.dmRequestId && (MIGRATION_ERROR.test(row.uploadError || '') || UNDIAGNOSED_ERROR.test(row.uploadError || ''));
   const retryable = row => row.dmState === 'failed' && row.dmDefiniteRejection === true && !row.dmRequestId;
   async function run({ ctrl = {}, limit = 50, retryRejected = false } = {}) {
     await loadConnection();
