@@ -30,8 +30,18 @@ async function putIndex(db, FV, body) {
   // group sized designs under one SKU
   const bySku = new Map();
   for (const e of entries) { const sku = String(e.sku).toUpperCase(); if (!bySku.has(sku)) bySku.set(sku, []); bySku.get(sku).push(e); }
+  // One read for every SKU, then one batched write: a document at a time was 300 sequential round trips for a batch of
+  // 150 and ran into the function's time limit on a real master, losing records with no error to show for it.
+  const skus = [...bySku.keys()], existing = new Map();
+  for (let i = 0; i < skus.length; i += 200) {
+    const part = skus.slice(i, i + 200);
+    const snaps = await db.getAll(...part.map(s => db.collection(INDEX).doc(s)));
+    snaps.forEach((sn, j) => { if (sn.exists) existing.set(part[j], sn.data()); });
+  }
+  let batch = db.batch(), pending = 0;
+  const flush = async () => { if (pending) { await batch.commit(); batch = db.batch(); pending = 0; } };
   for (const [sku, list] of bySku) {
-    const ref = db.collection(INDEX).doc(sku); const snap = await ref.get(); const ex = snap.exists ? snap.data() : null;
+    const ref = db.collection(INDEX).doc(sku); const ex = existing.get(sku) || null;
     const base = list.find(e => !e.size) || list[0];
     const doc = { sku, masterHash, masterPath: str(body.masterPath, 600), masterName: str(body.masterName, 200), indexedAt: FV.serverTimestamp(), indexedAtMs: Date.now(), hashSource: str(body.hashSource || "browser", 20) };
     const geom = e => ({ charmHash: str(e.charmHash, 80), widthPt: num(e.widthPt), heightPt: num(e.heightPt), areaPt2: num(e.areaPt2), members: num(e.members), holes: num(e.holes), aiPath: str(e.aiPath, 600), thumbPath: str(e.thumbPath, 600), aiUrl: str(e.aiUrl, 900), thumbUrl: str(e.thumbUrl, 900), open: !!e.open, labelSource: str(e.labelSource || "text", 20), confidence: e.confidence == null ? null : num(e.confidence) });
@@ -58,8 +68,10 @@ async function putIndex(db, FV, body) {
     }
     doc.blocked = blocked || FV.delete();
     if (!ex) doc.firstIndexedAt = FV.serverTimestamp();
-    await ref.set(doc, { merge: true }); out.written++;
+    batch.set(ref, doc, { merge: true }); out.written++;
+    if (++pending >= 400) await flush();
   }
+  await flush();
   return out;
 }
 

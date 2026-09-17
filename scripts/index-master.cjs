@@ -142,7 +142,21 @@ async function main(argv, log = console.log) {
     await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterPutFile", file: { masterHash, path: masterUp ? masterUp.path : null, url: masterUp ? masterUp.url : null, name, charms: g.charms.length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: blocked.concat(conflicts.map(b => ({ sku: b.sku, reason: b.reason }))), skus, replaces: o.replaces, indexedBy: "local-indexer" } });
     if (conflicts.length) log(`  ${conflicts.length} SKU(s) also live in another master file — blocked until fixed: ${conflicts.slice(0, 30).map(b => b.sku).join(", ")}`);
     if (sizeMoved.length) log(`  ${sizeMoved.length} SKU(s) changed size by more than 5 % since the last index: ${sizeMoved.slice(0, 30).map(b => b.sku).join(", ")}`);
-    log(`index written: ${written} SKU(s) on ${o.origin} — the Master tab shows them after Reload index`);
+    // read the index back: a batch that times out can answer without having stored everything
+  {
+    const want = [...new Set(entries.map(e => String(e.sku).toUpperCase()))];
+    for (let pass = 1; pass <= 3; pass++) {
+      const have = new Set();
+      for (let i = 0; i < want.length; i += 300) { const r = await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterGetMany", skus: want.slice(i, i + 300) }); for (const k of Object.keys(r.entries || {})) have.add(k); }
+      const missing = want.filter(s => !have.has(s));
+      if (!missing.length) { log(`verified: all ${want.length} SKU(s) are in the index`); break; }
+      log(`  ${missing.length} SKU(s) did not land — writing them again (pass ${pass})`);
+      if (pass === 3) { log(`  still missing: ${missing.slice(0, 40).join(", ")}${missing.length > 40 ? " …" : ""}`); break; }
+      const again = entries.filter(e => missing.includes(String(e.sku).toUpperCase()));
+      for (let i = 0; i < again.length; i += 100) await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterPutIndex", entries: again.slice(i, i + 100), masterHash, masterPath: masterUp ? masterUp.path : null, masterName: name, hashSource: "local", replaces: [] });
+    }
+  }
+  log(`index written: ${written} SKU(s) on ${o.origin} — the Master tab shows them after Reload index`);
   }
   const report = { file: name, bytes: buf.length, masterHash, charms: g.charms.length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked, conflicts, sizeMoved, written, dry: o.dry, seconds: Math.round((Date.now() - t0) / 1000), at: new Date().toISOString() };
   try { fs.writeFileSync(o.file + ".index-report.json", JSON.stringify(report, null, 1)); log(`report: ${o.file}.index-report.json`); } catch (_) {}
