@@ -29,36 +29,37 @@ async function functions(st, name, req, res, base) {
   if (name === 'etsyOrderProxy') { const r = st.receipts.find(x => String(x.receipt_id) === String(q.orderId)); if (!r) return json(res, 404, { error: 'no such receipt' }); return json(res, 200, { receipt: Object.assign({}, r, { transactions: undefined }), transactions: r.transactions }); }
   if (name === 'etsyImages') return json(res, 200, []);
   if (name === 'refreshEtsyToken') return json(res, 200, { access_token: 'tok', refresh_token: 'ref', expires_in: 3600 });
+  const SB = q.sandbox === '1' ? 'Sandbox_' : '';
   if (name === 'firebaseOrders') {
     if (req.method === 'POST') {
-      const RT = 'Design_RealTime_Selected_Orders';
+      const RT = SB + 'Design_RealTime_Selected_Orders';
       if (Array.isArray(body.rtClaimIds)) { body.rtClaimIds.forEach(id => st.put(RT, id, { claimed: true, claimedBy: body.claimedBy || 'sorter', claimRun: body.claimRun || null, at: Date.now() })); return json(res, 200, { success: true, count: body.rtClaimIds.length }); }
       if (Array.isArray(body.rtUnclaimIds)) { body.rtUnclaimIds.forEach(id => st.put(RT, id, { claimed: false, claimedBy: null, at: Date.now() })); return json(res, 200, { success: true }); }
       if (Array.isArray(body.rtLockIds)) { body.rtLockIds.forEach(id => st.put(RT, id, { selected: true, selectedBy: body.clientId, page: body.page, at: Date.now() })); return json(res, 200, { success: true }); }
       if (Array.isArray(body.rtUnlockIds)) { body.rtUnlockIds.forEach(id => st.put(RT, id, { selected: false, selectedBy: null, at: Date.now() })); return json(res, 200, { success: true }); }
-      if (Array.isArray(body.completedIds)) { body.completedIds.forEach(id => st.put('Design_Completed Orders', id, { completed: true, at: Date.now() })); return json(res, 200, { success: true }); }
-      if (Array.isArray(body.uncompleteIds)) { body.uncompleteIds.forEach(id => st.docs.delete('Design_Completed Orders/' + id)); return json(res, 200, { success: true }); }
-      if (typeof body.newMessage === 'string') { const m = st.doc('Brites_Messages', body.orderNumber) || { messages: [] }; m.messages.push({ text: body.newMessage, senderName: body.employeeName || 'Staff', at: Date.now() }); st.put('Brites_Messages', body.orderNumber, m); return json(res, 200, { success: true }); }
-      if (body.staffNote !== undefined) { st.put('Brites_Orders', body.orderNumber, { 'Staff Note': body.staffNote }); return json(res, 200, { success: true }); }
+      if (Array.isArray(body.completedIds)) { body.completedIds.forEach(id => st.put(SB + 'Design_Completed Orders', id, { completed: true, at: Date.now() })); return json(res, 200, { success: true }); }
+      if (Array.isArray(body.uncompleteIds)) { body.uncompleteIds.forEach(id => st.docs.delete(SB + 'Design_Completed Orders/' + id)); return json(res, 200, { success: true }); }
+      if (typeof body.newMessage === 'string') { st.put(SB + 'Brites_Orders', body.orderNumber, { touched: Date.now() }); st.put(SB + 'Brites_Orders/' + body.orderNumber + '/messages', 'm' + Date.now() + Math.random().toString(36).slice(2, 6), { text: body.newMessage, senderName: body.employeeName || 'Staff', at: Date.now() }); return json(res, 200, { success: true }); }
+      if (body.staffNote !== undefined) { st.put(SB + 'Brites_Orders', body.orderNumber, { 'Staff Note': body.staffNote }); return json(res, 200, { success: true }); }
       return json(res, 200, { success: true });
     }
-    const RT = 'Design_RealTime_Selected_Orders';
-    if (q.dcFor != null) return json(res, 200, { success: true, orderNumbers: q.dcFor.split(',').filter(id => st.doc('Design_Completed Orders', id)), now: Date.now() });
-    if (q.staffNotesFor != null) return json(res, 200, { success: true, orderNumbers: q.staffNotesFor.split(',').filter(id => (st.doc('Brites_Orders', id) || {})['Staff Note']), now: Date.now() });
+    const RT = SB + 'Design_RealTime_Selected_Orders'; const DC = SB + 'Design_Completed Orders', BO = SB + 'Brites_Orders';
+    if (q.dcFor != null) return json(res, 200, { success: true, orderNumbers: q.dcFor.split(',').filter(id => st.doc(DC, id)), now: Date.now() });
+    if (q.staffNotesFor != null) return json(res, 200, { success: true, orderNumbers: q.staffNotesFor.split(',').filter(id => (st.doc(BO, id) || {})['Staff Note']), now: Date.now() });
     if (q.rtFor != null) { const locks = {}, claims = {}; q.rtFor.split(',').forEach(id => { const v = st.doc(RT, id); if (v && v.selected) locks[id] = v; if (v && v.claimed) claims[id] = { claimedBy: v.claimedBy, run: v.claimRun }; }); return json(res, 200, { success: true, locks, claims, now: Date.now() }); }
     if (q.rtSince != null) { const since = +q.rtSince; const locks = {}, unlocks = [], claims = {}, unclaims = []; st.list(RT).forEach(v => { if ((v.at || 0) < since) return; if (v.selected === true) locks[v._id] = { selectedBy: v.selectedBy, page: v.page, atMs: v.at }; else if (v.selected === false) unlocks.push(v._id); if (v.claimed === true) claims[v._id] = { claimedBy: v.claimedBy, run: v.claimRun, atMs: v.at }; else if (v.claimed === false) unclaims.push(v._id); }); return json(res, 200, { success: true, locks, unlocks, claims, unclaims, now: Date.now() }); }
     if (q.rt === '1') { const locks = {}, claims = {}; st.list(RT).forEach(v => { if (v.selected) locks[v._id] = v; if (v.claimed) claims[v._id] = { claimedBy: v.claimedBy, run: v.claimRun }; }); return json(res, 200, { success: true, locks, claims }); }
-    if (q.dcSince != null) return json(res, 200, { success: true, orderNumbers: st.list('Design_Completed Orders').filter(v => (v.at || 0) >= +q.dcSince).map(v => v._id), now: Date.now() });
-    if (q.designCompleted === '1') return json(res, 200, { success: true, orderNumbers: st.list('Design_Completed Orders').map(v => v._id) });
-    if (q.staffNotes === '1') return json(res, 200, { success: true, orderNumbers: st.list('Brites_Orders').filter(v => v['Staff Note']).map(v => v._id) });
-    if (q.orderId) { const d = st.doc('Brites_Orders', q.orderId); return json(res, 200, d ? { success: true, data: d } : { success: false, notFound: true }); }
+    if (q.dcSince != null) return json(res, 200, { success: true, orderNumbers: st.list(DC).filter(v => (v.at || 0) >= +q.dcSince).map(v => v._id), now: Date.now() });
+    if (q.designCompleted === '1') return json(res, 200, { success: true, orderNumbers: st.list(DC).map(v => v._id) });
+    if (q.staffNotes === '1') return json(res, 200, { success: true, orderNumbers: st.list(BO).filter(v => v['Staff Note']).map(v => v._id) });
+    if (q.orderId) { const d = st.doc(BO, q.orderId); return json(res, 200, d ? { success: true, data: d } : { success: false, notFound: true }); }
     return json(res, 400, { error: 'unhandled' });
   }
-  if (name === 'designArchive') { if (req.method === 'POST') { (body.orders || []).forEach(o => st.put('Design_Order_Archive', o.receiptId, o)); return json(res, 200, { success: true, saved: (body.orders || []).length }); } if (q.op === 'index') return json(res, 200, { success: true, rows: [], nextCursor: null, now: Date.now() }); if (q.op === 'have') return json(res, 200, { success: true, have: [] }); return json(res, 200, { success: true, rows: [] }); }
+  if (name === 'designArchive') { if (req.method === 'POST') { (body.orders || []).forEach(o => st.put(SB + 'Design_Order_Archive', o.receiptId, o)); return json(res, 200, { success: true, saved: (body.orders || []).length }); } if (q.op === 'index') return json(res, 200, { success: true, rows: [], nextCursor: null, now: Date.now() }); if (q.op === 'have') return json(res, 200, { success: true, have: [] }); return json(res, 200, { success: true, rows: [] }); }
   // ── sorter's functions: the real handlers against an in-memory firebase-admin ──
   if (name === 'etsyApiUsage') return json(res, 200, { verified: false, count: 0, error: 'no counters in the test server' });
   if (name === 'etsyApiProbe') return json(res, 200, { ok: true, verified: true, limitPerDay: 10000, remainingToday: 9990, note: 'test server' });
-  if (name === 'charmNestLibrary' || name === 'charmNestOutput' || name === 'charmNestCheck' || name === 'charmNestAgent-background' || name === 'charmEngrave-background' || name === 'charmMaster-background') {
+  if (name === 'charmNestLibrary' || name === 'charmNestOutput' || name === 'charmNestCheck' || name === 'etsySandbox' || name === 'charmNestAgent-background' || name === 'charmEngrave-background' || name === 'charmMaster-background') {
     const h = st.handlers[name]; if (!h) return json(res, 404, { error: 'no handler' });
     const out = await h.handler({ httpMethod: req.method, headers: Object.fromEntries(Object.entries(req.headers)), body: bodyBuf ? bodyBuf.toString('utf8') : '', queryStringParameters: q });
     res.writeHead(out.statusCode || 200, Object.assign({ 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*' }, out.headers || {})); return res.end(out.body || '');
@@ -112,7 +113,7 @@ async function start(opts = {}) {
     if (req === '@resvg/resvg-js') throw new Error('not installed in the test');
     return realLoad.call(this, req, ...rest);
   };
-  for (const n of ['charmNestLibrary', 'charmNestOutput', 'charmNestCheck', 'charmNestAgent-background', 'charmEngrave-background', 'charmMaster-background']) { delete require.cache[require.resolve(path.join(fnDir, n + '.js'))]; handlers[n] = require(path.join(fnDir, n + '.js')); }
+  for (const n of ['charmNestLibrary', 'charmNestOutput', 'charmNestCheck', 'etsySandbox', 'charmNestAgent-background', 'charmEngrave-background', 'charmMaster-background']) { delete require.cache[require.resolve(path.join(fnDir, n + '.js'))]; handlers[n] = require(path.join(fnDir, n + '.js')); }
   // the model is a stub: answers per mode from opts.agentResults or a sensible default
   const anthro = require(path.join(fnDir, '_etsyMailAnthropic.js'));
   anthro.callClaudeRaw = async (o) => { const sys = (o.system && o.system[0] && o.system[0].text) || ''; const mode = /engraver and decide/.test(sys) ? 'engraveIntent' : /rendered BACK/.test(sys) ? 'engraveReview' : /strip directly BELOW/.test(sys) ? 'labelRead' : /quality reviewer/.test(sys) ? 'grouping' : /final inspector/.test(sys) ? 'layout' : 'name'; const fn = st.agentResults[mode]; const text = JSON.stringify(typeof fn === 'function' ? fn(o) : (fn || defaultAgent(mode, o))); return { stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'text', text }] }; };

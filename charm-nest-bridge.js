@@ -42,7 +42,7 @@ const LiveStrip = window.LiveStrip = (() => {
 const DesignLink = window.DesignLink = (() => {
   const S_ = { frame: null, nonce: null, id: 0, pending: new Map(), state: null, log: [], logBuf: [], up: false, control: false, misses: 0, hb: null, flushT: null, dropped: 0, lastHello: 0, count: 0, replies: 0, errors: 0 };
   const origin = () => (S.settings.dsOrigin || DEFAULTS.dsOrigin).replace(/\/+$/, "");
-  const frameUrl = () => `${origin()}/design-1.html?bridge=1`;
+  const frameUrl = () => `${origin()}/design-1.html?bridge=1${S.settings.sandbox === "on" ? "&sandbox=1" : "&sandbox=0"}`;
   function mount(host) {
     if (S_.frame) return S_.frame;
     // the frame lives in a fixed dock on <body>, never inside a tab: re-parenting an iframe reloads it and would end the
@@ -70,6 +70,7 @@ const DesignLink = window.DesignLink = (() => {
     try { st = await call("hello", { sorterClientId: S_.nonce, runId: B.run ? B.run.runId : null }, { timeoutMs: 15000 }); }
     catch (e) { if (!/answer in time/.test(e.message)) throw e; agent({ bridge: true }, "warn", "hello unanswered — trying once more"); st = await call("hello", { sorterClientId: S_.nonce, runId: B.run ? B.run.runId : null }, { timeoutMs: 30000 }); }
     S_.state = st; S_.up = true; S_.misses = 0; S_.lastHello = Date.now(); if (st.etsy && st.etsy.meter) etsyReadout(st.etsy.meter);
+    if (!!st.sandbox !== (S.settings.sandbox === "on")) { S_.control = false; S_.up = false; const why = `the station is in ${st.sandbox ? "SANDBOX" : "production"} mode but this sorter is in ${S.settings.sandbox === "on" ? "SANDBOX" : "production"} mode`; agent({ bridge: true }, "warn", `Session refused: ${why}`); toast(`Session refused — ${why}. Reload the frame.`, "bad", 9000); throw new Error(why); }
     if (st.employee && !B.employee) { B.employee = st.employee; localStorage.setItem("cn.employee", st.employee); }
     S_.veil && S_.veil.classList.add("hidden"); Dock.layout();
     agent({ bridge: true }, "DS", `Session ${S_.nonce.slice(0, 4)} open on ${st.bench} · ${st.counts.open} open orders (${st.counts.hydrated} read) · ${st.selection.length} selected · Etsy ${st.etsy.signedIn ? "signed in" : "NOT signed in"}${st.releasedFromPreviousSession && st.releasedFromPreviousSession.length ? ` · released ${st.releasedFromPreviousSession.length} lock(s) from a previous session` : ""}`);
@@ -189,7 +190,7 @@ const DesignLink = window.DesignLink = (() => {
   function etsyReadout(m) {
     if (!m) return; E_.station = m; E_.stationTotal = m.total;
     const el = document.getElementById("etsyPill"), n = document.getElementById("etsyPillN"); if (!el || !n) return;
-    n.textContent = `today ${m.today} · 10m ${m.last10Min} · 1m ${m.lastMinute}`;
+    n.textContent = `${S_.state && S_.state.sandbox ? "emulated · " : ""}today ${m.today} · 10m ${m.last10Min} · 1m ${m.lastMinute}`;
     const hot = m.last10Min >= m.guard.per10Min * 0.7 || m.lastMinute >= m.guard.burstPerMinute * 0.7;
     el.classList.toggle("alarm", !!m.braked); el.classList.toggle("warn", !m.braked && hot);
     el.title = m.braked ? `Etsy watchdog at the station: ${m.alarm && m.alarm.why} — automatic Etsy work paused until ${new Date(m.brakeUntil).toLocaleTimeString()}` : `Etsy calls counted by the Design Station: ${m.total} this session · ${m.lastMinute} in the last minute · ${m.last10Min} in the current 10-minute window · ${m.lastHour} in the last hour · ${m.today} today · peak ${m.maxQps}/s · ${m.status429} rate-limit answers. Guard: ${m.guard.burstPerMinute}/min, ${m.guard.per10Min}/10 min, ${m.guard.sameOrderPer10Min} reads of one order/10 min.`;
@@ -426,6 +427,7 @@ const Orders = window.Orders = (() => {
     v.querySelector("#ordPullMode").onchange = e => { S.settings.pullMode = e.target.value; saveSettings(); render(); };
     v.querySelector("#ordDueBy").onchange = e => { S.settings.pullDueBy = e.target.value; saveSettings(); };
     v.querySelector("#ordCount").onchange = e => { S.settings.pullCount = Math.max(1, +e.target.value || 40); saveSettings(); };
+    Sandbox.mountPanel(v);
     v.querySelector("#ordPull").onclick = async () => { try { await pull(null); } catch (e) { toast(e.message, "bad", 7000); agent({ bridge: true }, "warn", e.message); } };
     const rb = v.querySelector("#ordRun"); if (rb) rb.onclick = () => RunCtl.start();
     const rs = v.querySelector("#ordResume"); if (rs) rs.onclick = () => RunCtl.pickResume();
@@ -1428,9 +1430,47 @@ const Review = window.Review = (() => {
   return { items, count, add, remove, render, card, problemText, syncOrderItems, focus, repool };
 })();
 
+/* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
+const Sandbox = window.Sandbox = (() => {
+  const on = () => S.settings.sandbox === "on";
+  let status = null;
+  async function refresh() { if (!S.cloud.ok) return null; try { status = await api("charmNestLibrary", { op: "sandboxStatus" }); } catch (e) { status = { error: e.message }; } render(); return status; }
+  /** One real read of the open orders through the station (production mode), stored as JSON under charmnest/sandbox/. */
+  async function snapshot() {
+    if (on()) throw new Error("switch the sandbox OFF first: the snapshot is taken from the real Etsy through the station");
+    if (!S.cloud.ok) throw new Error("cloud offline");
+    await DesignLink.ensure();
+    if (!DesignLink.etsyBudgetOk("the sandbox snapshot")) throw new Error("Etsy call budget reached");
+    const r = await DesignLink.call("orders.raw", { refresh: true }, { timeoutMs: 20 * 60 * 1000, onProgress: p => { if (p.text) agent({ bridge: true }, "DS", `Snapshot: ${p.text}`); } });
+    DesignLink.meter(r, "the sandbox snapshot");
+    const at = Date.now(); const path = `charmnest/sandbox/orders-${new Date(at).toISOString().replace(/[:.]/g, "-")}.json`;
+    const bytes = new TextEncoder().encode(JSON.stringify({ at, count: r.count, receipts: r.receipts }));
+    const up = await uploadBytes(path, bytes, "application/json", "Saving the sandbox snapshot");
+    const put = await api("charmNestLibrary", { op: "sandboxPut", path: up.path, count: r.count, at, takenBy: employeeName() || "operator" });
+    agent({ bridge: true }, "ok", `Sandbox snapshot: ${r.count} open order(s) copied to ${up.path} (${(bytes.length / 1024).toFixed(0)} KB)`);
+    toast(`Snapshot taken: ${r.count} orders — switch the sandbox ON in Settings to run against it`, "ok", 8000);
+    await refresh(); return put.snapshot;
+  }
+  async function reset() {
+    if (!confirm("Delete every sandbox record (sandbox pools, sets, runs, sheets, locks, ledger, archive)? Files and the snapshot stay. Production data is untouched.")) return;
+    const r = await api("charmNestLibrary", { op: "sandboxReset" }); toast(`Sandbox reset — ${r.deleted} record(s) removed`, "ok"); await refresh();
+  }
+  function mountPanel(v) {
+    let bar = v.querySelector("#sandboxBar"); if (!bar) { bar = document.createElement("div"); bar.id = "sandboxBar"; bar.className = "sandboxBar"; const ob = v.querySelector(".ordBar"); if (ob) ob.insertAdjacentElement("afterend", bar); else v.prepend(bar); }
+    bar.innerHTML = `<b>${on() ? "SANDBOX ON" : "Sandbox off"}</b><span id="sbStatus">${status ? statusText() : "…"}</span><span class="spacer"></span><button class="btn ghost xs" id="sbSnap" type="button" ${on() ? "disabled title=\"switch the sandbox off to take a snapshot from the real Etsy\"" : ""}>Snapshot open orders → sandbox</button><button class="btn ghost xs" id="sbReset" type="button">Reset sandbox records</button><button class="btn ${on() ? "ghost" : "gold"} xs" id="sbToggle" type="button">${on() ? "Switch sandbox OFF" : "Switch sandbox ON"}</button>`;
+    bar.querySelector("#sbSnap").onclick = () => snapshot().catch(e => toast(e.message, "bad", 8000));
+    bar.querySelector("#sbReset").onclick = () => reset().catch(e => toast(e.message, "bad", 8000));
+    bar.querySelector("#sbToggle").onclick = () => { if (!on() && !(status && status.snapshot)) { toast("Take a snapshot first — the sandbox has nothing to serve", "bad", 6000); return; } S.settings.sandbox = on() ? "off" : "on"; saveSettings(); toast(`Sandbox ${on() ? "ON" : "off"} — reloading`, "ok", 3000); setTimeout(() => location.reload(), 600); };
+    if (!status) refresh();
+  }
+  function statusText() { if (!status || status.error) return status && status.error ? `status: ${status.error}` : ""; const sn = status.snapshot; const rec = status.records || {}; return `${sn ? `snapshot of ${sn.count} order(s) taken ${new Date(sn.at).toLocaleString()}${sn.takenBy ? " by " + sn.takenBy : ""}` : "no snapshot yet"} · sandbox records: ${rec.Charm_Pool || 0} pool, ${rec.Charm_Nest_Sets || 0} sets, ${rec.Charm_Nest_Runs || 0} runs, ${rec.Charm_Nest_Sheets || 0} sheets`; }
+  function render() { const el = document.getElementById("sbStatus"); if (el) el.textContent = statusText(); const pill = document.getElementById("sandboxPill"); if (pill) pill.classList.toggle("hidden", !on()); document.documentElement.classList.toggle("sandbox", on()); }
+  return { on, refresh, snapshot, reset, mountPanel, render, status: () => status };
+})();
+
 /* ═══ 25 · boot ═══════════════════════════════════════════════════════════ */
 function bootBridge() {
-  RunCtl.renderModeBtn(); RunCtl.renderBanner(); LiveStrip.render();
+  RunCtl.renderModeBtn(); RunCtl.renderBanner(); LiveStrip.render(); Sandbox.render(); if (Sandbox.on()) agent({ bridge: true }, "warn", "SANDBOX mode: emulated Etsy from the stored snapshot, every record and file goes to sandbox copies");
   document.getElementById("btnRunMode").onclick = () => { const auto = S.settings.runMode !== "auto"; if (auto && !confirm("Auto mode: the sorter connects to the Design Station, pulls the latest orders by the date rule, nests, fits engraving, saves labels and marks the orders complete — stopping only when a person must decide. Turn Auto on?")) return; RunCtl.setMode(auto ? "auto" : "manual"); };
   Orders.loadMaps().catch(() => {}); Master.load().catch(() => {});
   Engrave.loadFonts().catch(() => {});
