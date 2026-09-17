@@ -384,6 +384,24 @@ const receipts = [
     assert(r.ok && r.state === 'done', 'a File is read through arrayBuffer, never through its bytes() method: ' + JSON.stringify(r));
   }
 
+  // the panel folds away and the way back is always on screen, never under the station's own buttons
+  {
+    const fold = await page.evaluate(() => {
+      CN.setMode('design'); Views.designHost();
+      const v = document.getElementById('designView'), b = v.querySelector('.dsFold');
+      const box = () => { const r = b.getBoundingClientRect(); const f = document.querySelector('.dsFrameHost').getBoundingClientRect(); return { w: r.width, h: r.height, overFrame: r.left < f.right - 1 && r.right > f.left + 1 && r.top < f.bottom - 1 && r.bottom > f.top + 1 }; };
+      const open0 = !v.classList.contains('dsWide'); if (!open0) b.click();
+      const asOpen = box();
+      b.click(); const wide = v.classList.contains('dsWide'); const asFolded = box();
+      b.click(); const backOpen = !v.classList.contains('dsWide');
+      return { asOpen, wide, asFolded, backOpen, label: b.textContent };
+    });
+    console.log('fold', JSON.stringify(fold));
+    assert(fold.wide && fold.backOpen, 'the panel folds and comes back');
+    assert(fold.asFolded.w > 0 && fold.asFolded.h > 0, 'the way back is still on screen when folded: ' + JSON.stringify(fold.asFolded));
+    assert(!fold.asOpen.overFrame && !fold.asFolded.overFrame, 'and it never sits on top of the station: ' + JSON.stringify(fold));
+  }
+
   // the station opened in a tab is a mirror: it follows the pointer of the one being driven and runs nothing itself
   {
     const url = await page.evaluate(() => { CN.setMode('design'); Views.designHost(); return document.querySelector('#dsOpenTab').href; });
