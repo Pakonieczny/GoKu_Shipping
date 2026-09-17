@@ -80,21 +80,25 @@ async function productIssues(request, account, limit) {
 }
 
 // Google's own record of which Google Ads accounts this Merchant account serves.
+// Merchant records a relationship per provider — Google Ads, Shopify, Google
+// Shopping — and names the provider, never the advertising customer ID. Matching
+// on digits therefore reported a live, working link as missing. Which Ads
+// account is joined is answered from the Ads side by the product_link resource,
+// not from here.
 async function adsLink(request, account, adsCustomerId) {
   const data = await request('accounts/v1/accounts/' + account + '/relationships', 'GET');
   const links = (data.accountRelationships || []).map(r => ({
-    provider: text(r.provider, 120), displayName: text(r.accountIdAlias || r.providerDisplayName, 120)
+    provider: text(r.provider, 120), displayName: text(r.accountIdAlias || r.providerDisplayName || r.displayName, 120)
   }));
-  const wanted = String(adsCustomerId || '').replace(/\D/g, '');
-  // The relationship names the provider account; match on the digits so a
-  // dashed or prefixed form still resolves.
-  const matched = wanted ? links.some(l => (l.provider + ' ' + l.displayName).replace(/\D/g, '').includes(wanted)) : null;
+  const named = pattern => links.find(l => pattern.test(l.provider) || pattern.test(l.displayName));
+  const googleAds = named(/GOOGLE_ADS|google ads/i), shopify = named(/shopify/i);
   return {
-    links, matchedAdvertiser: matched,
+    links, googleAdsLinked: !!googleAds, shopifyLinked: !!shopify,
     detail: !links.length ? 'Google records no account relationships.'
-      : matched === null ? links.length + ' relationship(s); no Google Ads customer ID was supplied to match against.'
-        : matched ? 'The advertising account ' + wanted + ' is linked.'
-          : 'None of the ' + links.length + ' recorded relationships names the advertising account ' + wanted + '.'
+      : (googleAds ? 'Google Ads is linked' : 'NO Google Ads relationship is recorded') +
+        (shopify ? '; Shopify is linked' : '; no Shopify relationship is recorded') +
+        '. Merchant names the provider, not the advertising customer ID' +
+        (adsCustomerId ? ' — confirm ' + adsCustomerId + ' specifically from the Ads side with the product_link resource.' : '.')
   };
 }
 
@@ -186,7 +190,7 @@ async function merchantHealth(input) {
   if (out.accountIssues.status === 'available' && out.accountIssues.blocking) blocking.push(out.accountIssues.blocking + ' account issue(s)');
   if (out.productIssues.status === 'available' && out.productIssues.disapproved) blocking.push(out.productIssues.disapproved + ' offer(s) that cannot serve');
   if (out.conversionSources.status === 'available' && !out.conversionSources.active) blocking.push('no active conversion source');
-  if (out.adsLink.status === 'available' && out.adsLink.matchedAdvertiser === false) blocking.push('the advertising account is not linked');
+  if (out.adsLink.status === 'available' && out.adsLink.googleAdsLinked === false) blocking.push('no Google Ads relationship is recorded');
 
   return {
     checkedAt: Date.now(), merchantId: account, adsCustomerId: adsCustomerId || null,

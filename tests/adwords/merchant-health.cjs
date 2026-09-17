@@ -21,7 +21,7 @@ function merchantStub(overrides = {}) {
       { productView: { offerId: 'duck-1', title: 'Duck necklace', aggregatedReportingContextStatus: 'ELIGIBLE', itemIssues: [] } },
       { productView: { offerId: 'duck-2', title: 'Duck charm', aggregatedReportingContextStatus: 'NOT_ELIGIBLE_OR_DISAPPROVED', itemIssues: [{ type: { code: 'image_link_broken', description: 'Image cannot be fetched' }, severity: { aggregatedSeverity: 'DISAPPROVED' } }] } }
     ] };
-    if (/\/relationships$/.test(p)) return { accountRelationships: [{ provider: 'accounts/9999999999', providerDisplayName: 'Other advertiser' }] };
+    if (/\/relationships$/.test(p)) return { accountRelationships: [{ provider: 'providers/116881232', providerDisplayName: 'Shopify' }] };
     if (/conversionSources/.test(p)) return { conversionSources: [] };
     if (/shippingSettings$/.test(p)) return { services: [{ serviceName: 'Standard' }] };
     if (/onlineReturnPolicies/.test(p)) return { onlineReturnPolicies: [] };
@@ -42,12 +42,13 @@ function merchantStub(overrides = {}) {
   check(/Image cannot be fetched/.test(JSON.stringify(health.sections.productIssues.offers[0].issues)), 'the reason the offer cannot serve is carried through');
   check(health.sections.productIssues.scanned === 2 && !health.sections.productIssues.offers.some(o => o.offerId === 'duck-1'), 'an eligible offer is not reported as a problem');
   check(health.sections.accountIssues.blocking === 1, 'a blocking account issue is separated from advisory ones');
-  check(health.sections.adsLink.matchedAdvertiser === false, 'a relationship that does not name the advertising account is not counted as linked');
+  check(health.sections.adsLink.googleAdsLinked === false && health.sections.adsLink.shopifyLinked === true,
+    'each provider relationship is judged on its own; a Shopify link is not a Google Ads link');
   check(health.sections.conversionSources.active === 0 && /not reaching Merchant Center/.test(health.sections.conversionSources.detail), 'a missing conversion source is stated plainly');
   check(health.sections.dataSources.sources[0].primary === true, 'feed ownership is reported so a managed source is not overwritten');
 
   const blockers = health.summary.blocking.join(' | ');
-  check(/account issue/.test(blockers) && /cannot serve/.test(blockers) && /conversion source/.test(blockers) && /not linked/.test(blockers),
+  check(/account issue/.test(blockers) && /cannot serve/.test(blockers) && /conversion source/.test(blockers) && /no Google Ads relationship/.test(blockers),
     'every blocker reaches the summary');
   check(health.summary.healthy === false, 'an account with blockers is not reported healthy');
 
@@ -56,12 +57,12 @@ function merchantStub(overrides = {}) {
     request: merchantStub({
       'accounts/v1/accounts/555/issues': { accountIssues: [] },
       'reports/v1/accounts/555/reports:search': { results: [{ productView: { offerId: 'duck-1', aggregatedReportingContextStatus: 'ELIGIBLE', itemIssues: [] } }] },
-      'accounts/v1/accounts/555/relationships': { accountRelationships: [{ provider: 'accounts/1234567890', providerDisplayName: 'Brites' }] },
+      'accounts/v1/accounts/555/relationships': { accountRelationships: [{ provider: 'providers/GOOGLE_ADS', providerDisplayName: 'Google Ads' }] },
       'conversions/v1/accounts/555/conversionSources?pageSize=50': { conversionSources: [{ name: 's', state: 'ACTIVE', merchantCenterDestination: {} }] }
     }).request, merchantId: '555', adsCustomerId: '123-456-7890'
   });
   check(good.summary.healthy === true, 'an account with no blockers and every section read is reported healthy');
-  check(good.sections.adsLink.matchedAdvertiser === true, 'a dashed Google Ads customer ID still matches the recorded link');
+  check(good.sections.adsLink.googleAdsLinked === true, 'the providers/GOOGLE_ADS relationship is recognised as the Google Ads link');
 
   // A section that could not be read leaves its question open rather than
   // implying nothing is wrong.
