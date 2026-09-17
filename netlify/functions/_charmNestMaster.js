@@ -42,7 +42,12 @@ async function putIndex(db, FV, body) {
   const flush = async () => { if (pending) { await batch.commit(); batch = db.batch(); pending = 0; } };
   for (const [sku, list] of bySku) {
     const ref = db.collection(INDEX).doc(sku); const ex = existing.get(sku) || null;
-    const base = list.find(e => !e.size) || list[0];
+    // a stable base whatever order the entries arrived in: the unsized entry, else the smallest size
+    const LADDER = ["XS", "S", "M", "L", "XL"];
+    const base = list.find(e => !e.size) || list.slice().sort((a, b) => {
+      const ia = LADDER.indexOf(String(a.size).toUpperCase()), ib = LADDER.indexOf(String(b.size).toUpperCase());
+      return (ia < 0 ? 9 : ia) - (ib < 0 ? 9 : ib) || String(a.size).localeCompare(String(b.size));
+    })[0];
     const doc = { sku, masterHash, masterPath: str(body.masterPath, 600), masterName: str(body.masterName, 200), indexedAt: FV.serverTimestamp(), indexedAtMs: Date.now(), hashSource: str(body.hashSource || "browser", 20) };
     const geom = e => ({ charmHash: str(e.charmHash, 80), widthPt: num(e.widthPt), heightPt: num(e.heightPt), areaPt2: num(e.areaPt2), members: num(e.members), holes: num(e.holes), aiPath: str(e.aiPath, 600), thumbPath: str(e.thumbPath, 600), aiUrl: str(e.aiUrl, 900), thumbUrl: str(e.thumbUrl, 900), open: !!e.open, labelSource: str(e.labelSource || "text", 20), confidence: e.confidence == null ? null : num(e.confidence) });
     Object.assign(doc, geom(base));
@@ -60,12 +65,12 @@ async function putIndex(db, FV, body) {
       doc.conflict = { with: ex.masterHash, withName: ex.masterName || null, at: Date.now() };
       out.blocked.push({ sku, reason: blocked, with: ex.masterHash });
     } else doc.conflict = FV.delete();
-    // size moved more than 5 % on re-index
-    if (ex && num(ex.widthPt) && num(doc.widthPt)) {
+    // size moved more than 5 % on re-index — only against a different master file; re-writing the same one is not a change
+    if (ex && ex.masterHash && ex.masterHash !== masterHash && num(ex.widthPt) && num(doc.widthPt)) {
       const dw = Math.abs(doc.widthPt - ex.widthPt) / ex.widthPt, dh = Math.abs(doc.heightPt - ex.heightPt) / (ex.heightPt || 1);
       if (dw > 0.05 || dh > 0.05) { doc.sizeMoved = { from: [ex.widthPt, ex.heightPt], to: [doc.widthPt, doc.heightPt], at: Date.now() }; out.sizeMoved.push({ sku, from: [ex.widthPt, ex.heightPt], to: [doc.widthPt, doc.heightPt] }); }
       else doc.sizeMoved = FV.delete();
-    }
+    } else doc.sizeMoved = FV.delete();
     doc.blocked = blocked || FV.delete();
     if (!ex) doc.firstIndexedAt = FV.serverTimestamp();
     batch.set(ref, doc, { merge: true }); out.written++;
