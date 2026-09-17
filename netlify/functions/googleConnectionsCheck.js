@@ -137,21 +137,37 @@ async function scopeSection(token) {
     if (res.ok && typeof data.scope === "string") granted = new Set(data.scope.split(/\s+/).filter(Boolean));
     else return { title: "OAuth scopes", rows: [C.fail("tokeninfo", res.status + " — the granted scopes could not be read")] };
   } catch (e) { return { title: "OAuth scopes", rows: [C.fail("tokeninfo", e.message)] }; }
-  const rows = C.REQUIRED_SCOPES.map(s => granted.has(s.scope)
-    ? C.ok(s.unlocks, "granted · " + s.scope)
-    : C.row(s.unlocks, s.required ? "FAIL" : "warn",
-        "not granted to this refresh token · " + s.scope,
-        { remedy: "Re-consent this OAuth client with " + s.scope + " and store the new refresh token. A missing scope fails at call time, not at consent time." }));
-  rows.push(C.ok("scopes granted", granted.size + " in total"));
-  return { title: "OAuth scopes", note: "The Ads refresh token is checked against every scope this application needs. Merchant Center uses its own token where GMC_REFRESH_TOKEN is set.", rows };
+  const rows = C.REQUIRED_SCOPES.map(s => {
+    if (granted.has(s.scope)) return C.ok(s.unlocks, "granted to the Google Ads token · " + s.scope, { why: s.note });
+    // Absent from THIS token is only a finding for what this token serves.
+    if (s.heldBy === "ads") return C.fail(s.unlocks, "not granted · " + s.scope,
+      { why: s.note, remedy: "Re-consent this OAuth client with " + s.scope + " and store the new refresh token." });
+    if (s.heldBy === "merchant") return present("GMC_REFRESH_TOKEN")
+      ? C.ok(s.unlocks, "held by GMC_REFRESH_TOKEN, a separate grant; the Merchant rows below prove whether it works", { why: s.note })
+      : C.warn(s.unlocks, "GMC_REFRESH_TOKEN is not set", { why: s.note });
+    if (s.heldBy === "notUsed") return C.ok(s.unlocks, "not required — this path uses an API key", { why: s.note });
+    return C.ok(s.unlocks, "held by a separate credential, not by the Google Ads token", { why: s.note });
+  });
+  rows.push(C.ok("scopes on the Google Ads token", granted.size + " in total"));
+  return { title: "OAuth scopes", note: "Each scope is judged against the credential that actually uses it. A scope missing from the Google Ads token is only a defect when the Google Ads token is what needs it.", rows };
 }
 
 // ── 3. Every reporting resource ─────────────────────────────────────────────
 async function adsResourceSection(token) {
   if (!token || !/^\d{10}$/.test(CID)) return { title: "Google Ads · reporting resources", rows: [C.skip("resources", "no usable Ads credentials")] };
+  // campaign_search_term_insight and its kind refuse an account-wide read.
+  let campaignId = null;
+  try {
+    const { res, data } = await adsPost(token, "customers/" + CID + "/googleAds:search", {
+      query: "SELECT campaign.id FROM campaign WHERE campaign.status != 'REMOVED' LIMIT 1"
+    });
+    if (res.ok) campaignId = (((data.results || [])[0] || {}).campaign || {}).id || null;
+  } catch (e) { /* the per-probe row reports it */ }
   const rows = await inBatches(C.ADS_RESOURCES, 4, async probe => {
+    if (probe.needsCampaign && !campaignId) return C.skip(probe.resource, "this resource requires a single campaign and none was readable", { used: probe.used, family: probe.family, why: probe.why });
+    const query = probe.needsCampaign ? probe.query.replace("${CAMPAIGN_ID}", campaignId) : probe.query;
     try {
-      const { res, data } = await adsPost(token, "customers/" + CID + "/googleAds:search", { query: probe.query });
+      const { res, data } = await adsPost(token, "customers/" + CID + "/googleAds:search", { query });
       if (res.ok) {
         const n = (data.results || []).length;
         return C.ok(probe.resource, (probe.used ? "" : "available, not yet used · ") + n + " row(s) returned", { used: probe.used, family: probe.family, why: probe.why, rows: n });
@@ -253,7 +269,7 @@ async function adsWriteSection(token, enabled) {
 }
 
 // ── 6. Merchant Center ──────────────────────────────────────────────────────
-async function merchantSection(adsToken) {
+async function merchantSection(adsToken, report) {
   const rows = [];
   let token = null;
   if (!present("GMC_REFRESH_TOKEN")) return { title: "Merchant Center", rows: [C.skip("merchant", "GMC_REFRESH_TOKEN is not set — no Merchant call can be attempted")] };
@@ -269,7 +285,7 @@ async function merchantSection(adsToken) {
       });
       const ids = res.ok ? [...new Set((data.results || []).map(r => String((((r.campaign || {}).shoppingSetting || {}).merchantId) || "")).filter(Boolean))] : [];
       // More than one linked account is not a thing to guess between.
-      if (ids.length === 1) { account = ids[0]; rows.push(C.ok("merchant account", ids[0] + " — discovered from a linked shopping campaign, no environment variable needed")); }
+      if (ids.length === 1) { account = ids[0]; if (report) report.merchantId = ids[0]; rows.push(C.ok("merchant account", ids[0] + " — discovered from a linked shopping campaign, no environment variable needed")); }
       else if (ids.length > 1) rows.push(C.warn("merchant account", "campaigns link " + ids.length + " Merchant accounts (" + ids.join(", ") + "); set GMC_MERCHANT_ID to choose one"));
       else rows.push(C.warn("merchant account", "no shopping campaign names a Merchant account, and GMC_MERCHANT_ID is not set"));
     } catch (e) { rows.push(C.warn("merchant account", "discovery failed: " + e.message)); }
@@ -394,6 +410,8 @@ function formatSection() {
 // ── Runner ──────────────────────────────────────────────────────────────────
 async function run(options) {
   const sections = [credentialSection()];
+  // Filled in when the Merchant account is discovered rather than configured.
+  const discovered = { merchantId: null };
   let token = null, tokenError = null;
   if (present("GADS_CLIENT_ID") && present("GADS_CLIENT_SECRET") && present("GADS_REFRESH_TOKEN")) {
     try { token = await mintToken(ENV.GADS_CLIENT_ID, ENV.GADS_CLIENT_SECRET, ENV.GADS_REFRESH_TOKEN); }
@@ -408,11 +426,11 @@ async function run(options) {
   sections.push(await adsResourceSection(token));
   sections.push(await adsSchemaSection(token, access.served));
   sections.push(await adsWriteSection(token, options.write));
-  sections.push(await merchantSection(token));
+  sections.push(await merchantSection(token, discovered));
   sections.push(await otherGoogleSection(token));
   sections.push(formatSection());
 
-  return { checkedAt: new Date().toISOString(), apiVersion: V, customerId: CID || null, merchantId: MERCHANT || null, summary: C.summarize(sections), sections };
+  return { checkedAt: new Date().toISOString(), apiVersion: V, customerId: CID || null, merchantId: MERCHANT || discovered.merchantId || null, summary: C.summarize(sections), sections };
 }
 
 function html(result) {

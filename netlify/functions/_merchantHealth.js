@@ -49,7 +49,7 @@ async function productIssues(request, account, limit) {
   let pageToken = null;
   for (let page = 0; page < MAX_PRODUCT_PAGES; page++) {
     const data = await request('reports/v1/accounts/' + account + '/reports:search', 'POST', {
-      query: 'SELECT offer_id, title, aggregated_reporting_context_status, item_issues FROM product_view LIMIT ' + PRODUCT_PAGE,
+      query: 'SELECT id, offer_id, title, aggregated_reporting_context_status, item_issues FROM product_view LIMIT ' + PRODUCT_PAGE,
       pageSize: PRODUCT_PAGE, ...(pageToken ? { pageToken } : {})
     });
     for (const row of data.results || []) rows.push(row.productView || {});

@@ -73,7 +73,8 @@ check(!E.confirm(current, op('adGroupAssetOperation', { remove: image('33').reso
   const captured = await E.capture('42');
   check(captured.complete && captured.completeComponents.searchImageLinks, 'Search snapshot records an explicit successful image-link capture');
   assert.deepEqual(JSON.parse(JSON.stringify(captured.components.searchImageLinks)), base.components.searchImageLinks); count++;
-  check(queries.some(query => query.includes('FROM ad_group_asset WHERE campaign.id = 42') && query.includes("ad_group_asset.field_type = 'IMAGE'") && query.includes("ad_group_asset.status != 'REMOVED'")), 'image source query stays in the selected campaign and excludes removed links');
+  check(queries.some(query => query.includes('FROM ad_group_asset WHERE campaign.id = 42') && query.includes("asset.type = 'IMAGE'") && query.includes("ad_group_asset.status != 'REMOVED'")), 'image source query stays in the selected campaign and excludes removed links');
+  check(!queries.some(query => query.includes("ad_group_asset.field_type = 'IMAGE'")), 'no query filters on an AssetFieldType constant that does not exist');
   E.setGaql(async query => {
     if (query.includes('FROM campaign WHERE')) return [{ campaign: { id: '42', advertisingChannelType: 'SEARCH' } }];
     if (query.includes('FROM ad_group_asset WHERE')) throw new Error('Image source unavailable');

@@ -52,7 +52,7 @@ const ADS_RESOURCES = [
     query: "SELECT asset_group_asset.asset, asset_group_asset.field_type, asset_group_asset.primary_status, asset.image_asset.full_size.width_pixels, asset.image_asset.full_size.height_pixels, metrics.impressions, metrics.clicks, metrics.conversions FROM asset_group_asset WHERE " + RECENT + " LIMIT 1",
     why: "Per-image Performance Max statistics joined to the image's own pixel dimensions." },
   { resource: "ad_group_asset", used: true, family: "creative",
-    query: "SELECT ad_group_asset.asset, ad_group_asset.field_type, ad_group_asset.status FROM ad_group_asset WHERE ad_group_asset.field_type = 'IMAGE' LIMIT 1",
+    query: "SELECT ad_group_asset.asset, ad_group_asset.field_type, ad_group_asset.status FROM ad_group_asset WHERE asset.type = 'IMAGE' LIMIT 1",
     why: "Search image assets that carry their own statistics." },
   { resource: "campaign_asset", used: true, family: "creative",
     query: "SELECT campaign_asset.asset, campaign_asset.field_type, campaign_asset.status FROM campaign_asset LIMIT 1",
@@ -82,7 +82,8 @@ const ADS_RESOURCES = [
     query: "SELECT campaign_search_term_view.search_term, metrics.impressions FROM campaign_search_term_view WHERE " + RECENT + " LIMIT 1",
     why: "Campaign-scoped search terms, including Performance Max." },
   { resource: "campaign_search_term_insight", used: true, family: "demand",
-    query: "SELECT campaign_search_term_insight.category_label, metrics.impressions FROM campaign_search_term_insight WHERE " + RECENT + " LIMIT 1",
+    query: "SELECT campaign_search_term_insight.category_label, metrics.impressions FROM campaign_search_term_insight WHERE campaign_search_term_insight.campaign_id = ${CAMPAIGN_ID} AND " + RECENT + " LIMIT 1",
+    needsCampaign: true,
     why: "Grouped search themes where individual terms are withheld." },
   { resource: "keyword_view", used: true, family: "demand",
     query: "SELECT ad_group_criterion.keyword.text, metrics.impressions FROM keyword_view WHERE " + RECENT + " LIMIT 1",
@@ -171,7 +172,7 @@ const MERCHANT_PROBES = [
   { key: "accountIssues", used: true, method: "GET", path: a => "accounts/v1/accounts/" + a + "/issues",
     why: "Account-level blockers that stop products serving. Not surfaced in the app today." },
   { key: "productIssues", used: true, method: "POST", path: a => "reports/v1/accounts/" + a + "/reports:search",
-    body: { query: "SELECT offer_id, item_issues FROM product_view WHERE item_issues IS NOT NULL LIMIT 5", pageSize: 5 },
+    body: { query: "SELECT id, offer_id, item_issues FROM product_view LIMIT 5", pageSize: 5 },
     why: "Per-offer disapprovals. A disapproved offer silently earns nothing." },
   { key: "conversionSources", used: true, method: "GET", path: a => "conversions/v1/accounts/" + a + "/conversionSources?pageSize=25",
     why: "THE SHOPIFY CONVERSION LINK. Google's record of which site sends Merchant conversions." },
@@ -211,11 +212,16 @@ const OTHER_HOSTS = [
 // reach. A token missing a scope fails at call time, not at consent time, so
 // the granted set is checked directly against tokeninfo.
 const REQUIRED_SCOPES = [
-  { scope: "https://www.googleapis.com/auth/adwords", unlocks: "Google Ads API", required: true },
-  { scope: "https://www.googleapis.com/auth/content", unlocks: "Merchant Center", required: false },
-  { scope: "https://www.googleapis.com/auth/datamanager", unlocks: "offline conversion upload", required: false },
-  { scope: "https://www.googleapis.com/auth/youtube.readonly", unlocks: "YouTube video processing state", required: false },
-  { scope: "https://www.googleapis.com/auth/cloud-platform", unlocks: "Vision AI Warehouse and Cloud Storage", required: false }
+  { scope: "https://www.googleapis.com/auth/adwords", unlocks: "Google Ads API", heldBy: "ads",
+    note: "The Google Ads refresh token must carry this or nothing works." },
+  { scope: "https://www.googleapis.com/auth/content", unlocks: "Merchant Center", heldBy: "merchant",
+    note: "Carried by GMC_REFRESH_TOKEN, a separate grant from the Ads token." },
+  { scope: "https://www.googleapis.com/auth/datamanager", unlocks: "offline conversion upload", heldBy: "dataManager",
+    note: "Held by the Data Manager connection's own client, secret and refresh token, sealed in config/googleAdsDataManager. googleAdsDataManager.js validates this scope itself when it mints a token." },
+  { scope: "https://www.googleapis.com/auth/cloud-platform", unlocks: "Vision AI Warehouse and Cloud Storage", heldBy: "serviceAccount",
+    note: "Requested directly by the Firebase service account through GoogleAuth. A service account names its scopes at token time; there is no user consent grant to check." },
+  { scope: "https://www.googleapis.com/auth/youtube.readonly", unlocks: "YouTube video state", heldBy: "notUsed",
+    note: "Not used. YouTube state is read with an API key because the uploads are unlisted." }
 ];
 
 // ── Google's published creative requirements ────────────────────────────────
