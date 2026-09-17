@@ -49,18 +49,23 @@ const PROD = ['Design_Completed Orders', 'Design_RealTime_Selected_Orders', 'Des
   await page.waitForFunction(() => { const j = [...B.master.jobs.values()][0]; return j && ['done', 'error'].includes(j.state); }, null, { timeout: 120000 });
   await page.evaluate(() => CN.setMode('design')); await page.evaluate(() => DesignLink.ensure());
   assert.strictEqual(await page.evaluate(() => DesignLink.state().sandbox), false, 'production first');
-  const snap = await page.evaluate(() => Sandbox.snapshot());
+  const before = Object.fromEntries(PROD.map(c => [c, st.list(c).length])); const blobsBefore = new Set(st.blobs.keys());
+  // one press does the chain: snapshot (the station is signed in), switch on, reload, pull from the copy
+  await page.evaluate(() => CN.setMode('orders'));
+  await page.click('#sbToggle');
+  await page.waitForFunction(() => CN.S.settings.sandbox === 'on' && B.orders.rows.length > 0, null, { timeout: 120000 }).catch(() => {});
+  const snap = st.doc('Charm_Sandbox', 'current');
   console.log('snapshot', snap);
   assert(snap && snap.count === receipts.length && /^charmnest\/sandbox\//.test(snap.path) && st.blobs.has(snap.path), 'the snapshot holds every open order in a sandbox file');
   const stored = JSON.parse(st.blobs.get(snap.path).buf.toString('utf8'));
   assert(stored.receipts.length === 3 && stored.receipts[1].transactions[0].variations.some(v => /Personalization/.test(v.formatted_name)), 'the snapshot keeps the raw Etsy shape with transactions and variations');
-  assert(st.doc('Charm_Sandbox', 'current') && st.doc('Charm_Sandbox', 'current').path === snap.path, 'the snapshot is recorded');
-  const before = Object.fromEntries(PROD.map(c => [c, st.list(c).length])); const blobsBefore = new Set(st.blobs.keys()); const etsyBefore = st.calls.filter(c => /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$/.test(c.name)).length;
+  const etsyBefore = st.calls.filter(c => /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$/.test(c.name)).length;
   console.log('production counts before', before, 'etsy calls so far', etsyBefore);
 
-  // ── switch the sandbox on (the sorter reloads), the station is framed with ?sandbox=1 ──
-  await page.evaluate(() => { CN.S.settings.sandbox = 'on'; CN.saveSettings(); });
-  await page.reload(); await page.waitForFunction(() => window.CN && window.Sandbox && CN.S.cloud.ok !== null);
+  // ── the press switched the sandbox on, reloaded the sorter and pulled: the station is framed with ?sandbox=1 ──
+  await page.waitForFunction(() => window.CN && window.Sandbox && CN.S.cloud.ok !== null && CN.S.settings.sandbox === 'on');
+  const pulled = await page.evaluate(() => ({ rows: B.orders.rows.length, mode: CN.S.mode }));
+  assert(pulled.rows === 3 && pulled.mode === 'orders', 'after the switch the orders were pulled from the copy by themselves: ' + JSON.stringify(pulled));
   await settle(stationOrigin); await page.evaluate(() => { CN.S.settings.sandbox = 'on'; CN.saveSettings(); Sandbox.render(); });
   await page.evaluate(() => CN.setMode('design')); await page.evaluate(() => DesignLink.ensure());
   const hello = await page.evaluate(() => ({ sandbox: DesignLink.state().sandbox, etsy: DesignLink.state().etsy, pill: !document.getElementById('sandboxPill').classList.contains('hidden'), frame: document.getElementById('dsFrame').src }));
@@ -97,7 +102,7 @@ const PROD = ['Design_Completed Orders', 'Design_RealTime_Selected_Orders', 'Des
   const kinds = [...new Set(sandboxDocs.map(k => k.split('/')[0]))];
   console.log('sandbox collections written', kinds.join(', '));
   for (const need of ['Sandbox_Charm_Pool', 'Sandbox_Charm_Nest_Sets', 'Sandbox_Charm_Nest_Runs', 'Sandbox_Charm_Nest_Sheets', 'Sandbox_Design_Completed Orders', 'Sandbox_Design_RealTime_Selected_Orders']) assert(kinds.includes(need), 'sandbox copy written: ' + need);
-  const newBlobs = [...st.blobs.keys()].filter(k => !blobsBefore.has(k));
+  const newBlobs = [...st.blobs.keys()].filter(k => !blobsBefore.has(k));   // includes the snapshot itself, also under charmnest/sandbox/
   assert(newBlobs.length > 5 && newBlobs.every(k => k.startsWith('charmnest/sandbox/')), 'every new file is under charmnest/sandbox/: ' + newBlobs.filter(k => !k.startsWith('charmnest/sandbox/')).join(','));
   const etsyAfter = st.calls.filter(c => /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$/.test(c.name)).length;
   assert.strictEqual(etsyAfter, etsyBefore, 'no real Etsy function was called during the sandbox run');
