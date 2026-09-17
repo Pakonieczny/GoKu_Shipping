@@ -994,7 +994,10 @@
 
   /** One charm alone on its own artboard (for the permanent per-charm copy). */
   async function buildSingleCharm(charm, parsed) {
-    const pad = charm.strokePt / 2 + 2;
+    // the page around a lone charm is padded by an eighth of its larger side (at least the stroke plus 2 pt): a charm that
+    // filled 80 % of its own page would read as an artboard frame when the per-SKU file is parsed again
+    const bw = charm.bbox[2] - charm.bbox[0], bh = charm.bbox[3] - charm.bbox[1];
+    const pad = Math.max((charm.strokePt || 0.5) / 2 + 2, 0.125 * Math.max(bw, bh));
     const w = charm.bbox[2] - charm.bbox[0] + pad * 2, h = charm.bbox[3] - charm.bbox[1] + pad * 2;
     // the rotation centre normally comes from buildSilhouettes (canvas); without one (server indexing, tests) the bbox centre is the same point
     const c = Object.assign({}, charm, { sourceId: "one", centerPt: charm.centerPt || [(charm.bbox[0] + charm.bbox[2]) / 2, (charm.bbox[1] + charm.bbox[3]) / 2], strokePt: charm.strokePt || Math.max(0.5, charm.outline.lwPt || 0.5) });

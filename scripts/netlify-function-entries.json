@@ -9,6 +9,7 @@
     "charmEngrave-background.js",
     "charmMaster-background.js",
     "charmNestAgent-background.js",
+    "charmNestCheck.js",
     "charmNestLibrary.js",
     "charmNestName.js",
     "charmNestOutput.js",

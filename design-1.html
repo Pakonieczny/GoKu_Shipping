@@ -6993,7 +6993,7 @@ const Bridge = (() => {
       paintBanner(); ticker(`Remote control opened by the Charm Sorter${S.runId ? ` · run ${S.runId}` : ""}`);
       S.feed = []; paintFeed();
       Cursor.reset(); Cursor.act("banner", null, "Charm Sorter connected", { click: false }).catch(() => {});
-      return Object.assign(stateSnapshot(), { releasedFromPreviousSession: released });
+      return Object.assign(stateSnapshot(), { releasedFromPreviousSession: released, commands: Object.keys(CMDS) });
     },
     async ping() { S.lastPing = Date.now(); if (S.down) { S.down = false; paintBanner(); } return { pong: true, etsy: etsyMeterSnapshot() }; },
     async claim(a) {
