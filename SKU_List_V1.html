@@ -208,6 +208,31 @@
     .pill { font-size:11.5px; padding:3px 8px; border-radius:999px; border:1px solid var(--line2); color:#cfcfcf; white-space:nowrap; }
     .pill.sect { border-color:#2b3a52; color:#9fc0ea; max-width:42%; overflow:hidden; text-overflow:ellipsis; }
     .btn.tiny { padding:6px 11px; font-size:12px; border-radius:7px; }
+
+    /* ── Checked box ──────────────────────────────────────────────────────
+       One medium square per card that the operator taps once a listing has
+       been checked. Empty it is just an outline; checked it carries a large
+       green tick that reads from across the desk, which is the whole point —
+       the state has to be legible while scrolling fast. The tick is drawn as
+       an SVG stroke rather than a glyph so its weight does not depend on
+       whichever emoji font the machine happens to have. The state lives in
+       Firestore (see Checked below), so it survives a refresh and follows the
+       operator to another computer. */
+    .checkbox {
+      flex:0 0 auto; width:34px; height:34px; padding:0;
+      display:inline-flex; align-items:center; justify-content:center;
+      background:#181818; border:2px solid #3a3a3a; border-radius:8px;
+      cursor:pointer; transition: background .12s, border-color .12s;
+    }
+    .checkbox:hover { border-color:#5a5a5a; }
+    .checkbox:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+    .checkbox svg { width:28px; height:28px; display:block; opacity:0; transform:scale(.6); transition: opacity .12s, transform .12s; }
+    .checkbox svg path { stroke:#2fd45a; stroke-width:3.4; stroke-linecap:round; stroke-linejoin:round; fill:none; }
+    .checkbox.on { background:rgba(47,212,90,.12); border-color:#2fd45a; }
+    .checkbox.on svg { opacity:1; transform:scale(1); }
+    /* While a write is in flight the box stays usable but shows it is pending. */
+    .checkbox.pending { opacity:.6; }
+    .card.checked { border-color:#2a6b3a; }
     mark { background:#4a3d00; color:#ffe89a; border-radius:2px; padding:0 1px; }
 
     /* Spinner for the moment a write is in flight. */
@@ -253,13 +278,20 @@
   <div id="sentinel" class="sentinel"></div>
   <div id="endcap" class="endcap"></div>
 
+<!-- Firebase (compat build): the checked-state store. Compat is used rather
+     than the modular SDK because the console's own code is a classic script,
+     not a module. -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
 <script>
 /** ============ Hard domain binding ============ */
 /* Bumped whenever this console changes in a way that matters operationally.
    Shown in the header and quoted in any sync failure, so a stale tab running
    against newer functions is identifiable from a screenshot instead of
    guessed at. */
-const BUILD = "2026-09-16h";
+const BUILD = "2026-09-17a";
 
 /* The section shortcuts, exactly as specified — not every section the shop
    has. Etsy returns dozens (Zodiac / Birth Flower, Handwriting Jewelry, Evil
@@ -1088,6 +1120,142 @@ function attachZoom(box, img){
   });
 }
 
+/** ============ Checked state (Firebase) ====================================
+   Which listings have already been checked has to outlive a browser refresh
+   AND follow the operator to a different computer, so the record lives in
+   Firestore — one document per listing under `sku_checked`, keyed by listing
+   id. localStorage is kept as a mirror, not as the record: it paints the
+   right ticks in the first frame (before Firestore has answered, and when the
+   machine is offline) and is overwritten by the server's copy the moment it
+   arrives. A realtime listener keeps two machines looking at the same board in
+   step without a reload.
+
+   Writes are optimistic: the tick flips immediately and the document is sent
+   after. If the send fails the tick is rolled back and the operator is told,
+   because a checkmark that silently did not save is worse than no checkmark.
+*/
+const Checked = (() => {
+  const MIRROR_KEY = "sku_checked_v1";
+  const COLLECTION = "sku_checked";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyBXhQLsYRa4i0bX1TPTRiElF9Zjy5vSHlA",
+    authDomain: "gokudatabase.firebaseapp.com",
+    projectId: "gokudatabase",
+    storageBucket: "gokudatabase.firebasestorage.app",
+    messagingSenderId: "1078662308113",
+    appId: "1:1078662308113:web:41df0e5d229ff2af7a6cb0"
+  };
+
+  let ids = new Set();
+  let db = null;
+  let ready = null;
+
+  function loadMirror(){
+    try { return new Set(JSON.parse(localStorage.getItem(MIRROR_KEY) || "[]").map(String)); }
+    catch { return new Set(); }
+  }
+  function saveMirror(){
+    try { localStorage.setItem(MIRROR_KEY, JSON.stringify([...ids])); } catch (_) {}
+  }
+
+  ids = loadMirror();
+
+  function has(listingId){ return ids.has(String(listingId)); }
+
+  /* Connects, signs in anonymously, takes one full read of the collection and
+     then stays subscribed. Called once at boot; safe to await more than once. */
+  function start(){
+    if (ready) return ready;
+    ready = (async () => {
+      if (typeof firebase === "undefined" || !firebase.initializeApp){
+        console.warn("Firebase SDK unavailable — checkmarks will stay on this machine only.");
+        return false;
+      }
+      try {
+        const app = firebase.apps && firebase.apps.length ? firebase.app() : firebase.initializeApp(firebaseConfig);
+        db = firebase.firestore(app);
+        await firebase.auth().signInAnonymously();
+        db.collection(COLLECTION).onSnapshot(snap => {
+          const next = new Set();
+          snap.forEach(doc => { if (doc.data() && doc.data().checked) next.add(String(doc.id)); });
+          ids = next;
+          saveMirror();
+          repaintChecks();
+        }, err => {
+          console.error("Checked-state listener failed:", err);
+          setStatus("Checkmarks are not syncing — see console", "bad");
+        });
+        return true;
+      } catch (e){
+        console.error("Checked-state store unavailable:", e);
+        setStatus("Checkmarks are not syncing — see console", "bad");
+        return false;
+      }
+    })();
+    return ready;
+  }
+
+  async function set(listingId, on){
+    const id = String(listingId);
+    if (on) ids.add(id); else ids.delete(id);
+    saveMirror();
+    await start();
+    if (!db) throw new Error("No connection to the checkmark store");
+    await db.collection(COLLECTION).doc(id).set({
+      checked: !!on,
+      listing_id: Number(listingId) || id,
+      updated_at: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+  }
+
+  return { has, set, start, get size(){ return ids.size; } };
+})();
+
+/* Pushes the current state onto every card already in the DOM. Cheap enough to
+   run on each snapshot: it touches two classes per rendered card. */
+function repaintChecks(){
+  for (const card of listContainer.querySelectorAll(".card")){
+    const box = card.querySelector('[data-role="check-box"]');
+    if (!box) continue;
+    paintCheck(card, box, Checked.has(card.dataset.listingId));
+  }
+}
+
+function paintCheck(card, box, on){
+  box.classList.toggle("on", !!on);
+  box.setAttribute("aria-checked", on ? "true" : "false");
+  box.title = on ? "Checked — click to clear" : "Mark this listing as checked";
+  card.classList.toggle("checked", !!on);
+}
+
+function buildCheckBox(card, r){
+  const box = document.createElement("button");
+  box.type = "button";
+  box.className = "checkbox";
+  box.dataset.role = "check-box";
+  box.setAttribute("role", "checkbox");
+  box.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12.8 L9.4 18 L20 6.4"/></svg>';
+  paintCheck(card, box, Checked.has(r.listing_id));
+
+  box.addEventListener("click", async () => {
+    const next = !box.classList.contains("on");
+    paintCheck(card, box, next);           // optimistic: the tick is instant
+    box.classList.add("pending");
+    try {
+      await Checked.set(r.listing_id, next);
+    } catch (e){
+      paintCheck(card, box, !next);        // roll back — nothing was stored
+      console.error("Saving the checkmark failed:", e);
+      alert("Could not save that checkmark: " + (e && e.message ? e.message : e));
+    } finally {
+      box.classList.remove("pending");
+    }
+  });
+
+  return box;
+}
+
 /** ============ Elements ============ */
 const listContainer = document.getElementById("listContainer");
 const searchInput   = document.getElementById("searchInput");
@@ -1512,13 +1680,12 @@ function buildCard(r, terms){
   const skuLine = buildSkuLine(card, r, terms);
   meta.appendChild(skuLine);
 
-  /* One row: section, then Generate. The listing id, price and done-checkbox
-     were removed at the operator's request — the id and price are not part of
-     the SKU task, and with the checkbox gone the "Hide done" chip it fed has
-     gone too. The stored selections are left untouched in localStorage, so
-     nothing is lost if the feature comes back. */
+  /* One row: the checked box, the section, then Generate. The listing id and
+     price stay off the card — they are not part of the SKU task. */
   const row = document.createElement("div");
   row.className = "row";
+
+  row.appendChild(buildCheckBox(card, r));
 
   const sect = sectionTitle(r.section_id);
   if (sect){
@@ -1771,6 +1938,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   wireSearch();
   wireScrolling();
 
+  Checked.start();          // connects and subscribes; cards paint from the
+                            // local mirror until the first snapshot lands
   await Catalog.open();
   renderChips();
   applyFilters();
