@@ -351,7 +351,9 @@ const Orders = window.Orders = (() => {
     await DesignLink.ensure();
     if (!DesignLink.etsyBudgetOk("the pull")) throw new Error("Etsy call budget reached — the pull was not started");
     await Promise.all([loadMaps(), Master.load()]);
-    const r = await DesignLink.call("orders.snapshot", { hydrate: true, refresh: true }, { timeoutMs: 20 * 60 * 1000, onProgress: p => { if (p.text) agentLiveLine("Pulling orders", p.text, p.done, p.total); } });
+    const pullBar = window.CNProgress ? CNProgress.start("Pulling orders from Etsy") : null;
+    try {
+    const r = await DesignLink.call("orders.snapshot", { hydrate: true, refresh: true }, { timeoutMs: 20 * 60 * 1000, onProgress: p => { if (pullBar) { if (p.done != null && p.total) pullBar.set(p.done, p.total, p.text || ""); else if (p.text) pullBar.note(p.text); } if (p.text) agentLiveLine("Pulling orders", p.text, p.done, p.total); } });
     DesignLink.meter(r, "the pull");
     B.orders.snapshot = { total: r.total, hydrated: r.hydrated, etsy: r.etsy, at: Date.now() };
     if (r.hydrated < r.total) throw new Error(`only ${r.hydrated} of ${r.total} orders could be read from Etsy — ${r.etsy && !r.etsy.signedIn ? "the station is not signed in: press Connect Etsy" : "check the Design Station and pull again"}`);
@@ -367,6 +369,7 @@ const Orders = window.Orders = (() => {
     if (!silent) toast(`${picked.length} orders · ${B.orders.rows.length} lines pulled from the Design Station`, "ok");
     render();
     return B.orders.rows;
+    } finally { if (pullBar) pullBar.end(); }
   }
   let liveEv = null;
   function agentLiveLine(label, text, done, total) { const html = `<b>${esc(label)}</b> ${esc(text)}${total ? ` <i>${done}/${total}</i>` : ""}`; if (!liveEv || !liveEv.live) liveEv = agent({ bridge: true }, "DS", text, { live: true, html }); else agentUpdate(liveEv, { html, text }); if (total && done >= total) { agentUpdate(liveEv, { live: false }); liveEv = null; } }
@@ -476,9 +479,10 @@ const Master = window.Master = (() => {
     if (!force && Date.now() - B.master.loadedAt < 120000) return B.master.loading || null;
     if (B.master.loading) return B.master.loading;
     B.master.loading = (async () => {
-      const [ix, fl] = await Promise.all([api("charmNestLibrary", { op: "masterList", limit: 3000 }, { label: "Loading the master index" }), api("charmNestLibrary", { op: "masterListFiles" })]);
+      render();
+      const [ix, fl] = await Promise.all([api("charmNestLibrary", { op: "masterList", limit: 3000 }, { label: "Loading the charm library" }), api("charmNestLibrary", { op: "masterListFiles" })]);
       B.master.entries = new Map((ix.entries || []).map(e => [e.sku, e])); B.master.files = fl.files || []; B.master.loadedAt = Date.now();
-    })().finally(() => { B.master.loading = null; });
+    })().finally(() => { B.master.loading = null; render(); });
     return B.master.loading;
   }
   async function fetchEntry(sku) { sku = String(sku || "").toUpperCase(); if (!sku) return null; const r = await api("charmNestLibrary", { op: "masterGet", sku }); if (r.entry) B.master.entries.set(sku, r.entry); return r.entry; }
@@ -534,10 +538,12 @@ const Master = window.Master = (() => {
     const bytes = file.bytes ? file.bytes : new Uint8Array(await file.arrayBuffer());
     const masterHash = await sha256(bytes);
     const job = { name: file.name, masterHash, state: "parsing", t0: performance.now(), log: [] }; B.master.jobs.set(masterHash, job); render();
+    job.bar = window.CNProgress ? CNProgress.start(`Indexing ${file.name}`, { note: `${(bytes.length / 1048576).toFixed(1)} MB · reading` }) : null;
     const say = (kind, text) => { job.log.push(text); agent({ master: masterHash }, kind, `${file.name}: ${text}`); render(); };
     try {
       say("MASTER", "reading…");
       const parsed = await P.parseSource(bytes, file.name);
+      if (job.bar) job.bar.note("finding the charms");
       const g = P.groupCharms(parsed, { minPt: +S.settings.minPt || 6 });
       say("MASTER", `${g.charms.length} charm outline(s), ${parsed.counts.text} text block(s)`);
       // the server route (a background function with about 1 GB) is opt-in by charm count; 0 keeps every master in this tab
@@ -567,7 +573,7 @@ const Master = window.Master = (() => {
       src.charms.forEach((c, i) => Object.assign(c, { id: src.id + ":" + i, sourceId: src.id, sourceName: file.name, index: c.index, name: c.sku || null, excluded: false, cloud: null }));
       job.state = "silhouettes";
       // only the charms that carry a SKU are indexed, so only they are traced: on the real master that is 1,038 of 3,408
-      await P.buildSilhouettes(parsed, g.charms.filter(c => c.mergedInto == null && c.sku && !c.alreadyHeld), +S.settings.silhouetteRes || 6, (d, t) => { job.progress = `silhouettes ${d}/${t}`; if (d % 10 === 0) render(); });
+      await P.buildSilhouettes(parsed, g.charms.filter(c => c.mergedInto == null && c.sku && !c.alreadyHeld), +S.settings.silhouetteRes || 6, (d, t) => { if (job.bar) job.bar.label(`Tracing charms · ${file.name}`).set(d, t); job.progress = `silhouettes ${d}/${t}`; if (d % 10 === 0) render(); });
       // The SKUs are read from the sheet as text, which is quick, so the library is consulted before any work is done:
       // a charm whose SKUs are all held already is left alone. A charm with even one new SKU is rebuilt whole, so all of
       // its SKUs keep sharing one design file, and the master they came from is superseded rather than reported as a clash.
@@ -594,7 +600,7 @@ const Master = window.Master = (() => {
       // read. Only a strip with something drawn in it is sent: a charm with nothing under it is reported, not read.
       job.state = "vision"; job.progress = "looking under the unlabelled charms"; render(); await sleep(0);
       const unlAll = g.charms.filter(c => c.mergedInto == null && !c.sku);
-      let found = await strayInkUnder(parsed, g, unlAll, (+S.settings.labelGapMm || 6.4) * PT, (d, t) => { job.progress = `looking under the unlabelled charms ${d}/${t}`; render(); });
+      let found = await strayInkUnder(parsed, g, unlAll, (+S.settings.labelGapMm || 6.4) * PT, (d, t) => { if (job.bar) job.bar.label(`Looking under the unlabelled charms · ${file.name}`).set(d, t); job.progress = `looking under the unlabelled charms ${d}/${t}`; render(); });
       let unl = found.map(f => f.charm);
       job.vision = [];
       if (unlAll.length > unl.length) say("MASTER", `${unlAll.length - unl.length} unlabelled charm(s) have nothing under them — reported as unlabelled`);
@@ -617,6 +623,7 @@ const Master = window.Master = (() => {
       job.state = "done"; say("ok", `indexed ${job.written} SKU(s)${job.held ? ` · ${job.held} charm(s) were already in the library` : ""}${job.vision.length ? ` · ${job.vision.length} label(s) read by Claude await confirmation` : ""}`);
       render(); return job;
     } catch (e) { job.state = "error"; job.error = e.message; say("warn", `indexing failed: ${e.message}`); render(); throw e; }
+    finally { if (job.bar) { job.bar.end(); job.bar = null; } }
   }
   /** Per labelled charm: the per-SKU .ai + thumbnail, the geometry, the derived flags; then the index and file records. */
   async function writeIndex(job) {
@@ -635,7 +642,7 @@ const Master = window.Master = (() => {
       entries.push({ sku: c.sku, size: c.skuSize, charmHash: c.hash, widthPt: c.widthPt, heightPt: c.heightPt, areaPt2: c.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: ai && ai.path, aiUrl: ai && ai.url, thumbPath: png && png.path, thumbUrl: png && png.url, open: !!c.open, labelSource: c.labelSource || "text", confidence: c.labelConfidence == null ? null : c.labelConfidence, blocked: reasons.length ? reasons.join("; ") : null, outOfRange, flipOk, backKeepOut: keepOutOf(c).length ? keepOutOf(c).map(m => ({ layer: m.layer })) : null });
       if (reasons.length) blocked.push({ sku: c.sku, reason: reasons.join("; ") }); skus.push(c.sku);
       for (const x of c.extraSkus || []) { entries.push(Object.assign({}, entries[entries.length - 1], { sku: x.sku, size: x.size })); skus.push(x.sku); if (reasons.length) blocked.push({ sku: x.sku, reason: reasons.join("; ") }); }   // every further line under the charm: the same design under another SKU
-      job.progress = `written ${++n}/${live.length}`; if (n % 5 === 0) render();
+      job.progress = `written ${++n}/${live.length}`; if (job.bar) job.bar.label(`Writing the charm library · ${job.name}`).set(n, live.length); if (n % 5 === 0) render();
     };
     const queue = live.slice(); await Promise.all(Array.from({ length: 4 }, async () => { while (queue.length) await one(queue.shift()); }));
     // a small ring left loose beside a charm (not merged by grouping or review) blocks that charm
@@ -742,6 +749,7 @@ const Master = window.Master = (() => {
       (rows.length > shown.length ? ` · <b>showing ${shown.length}</b> <button class="btn sm" id="mAll" style="margin-left:6px">Show all ${rows.length}</button>` : "");
     const all = v.querySelector("#mAll"); if (all) all.onclick = () => { showAll = true; render(); };
     const grid = v.querySelector("#mGrid");
+    if (B.master.loading && !B.master.entries.size) { grid.innerHTML = `<div class="libEmpty">Loading the charm library…</div>`; return; }
     grid.innerHTML = shown.map(d => {
       const e = d.head, keys = esc(d.skus.join("|"));
       const blocked = [...new Set(d.list.map(x => x.blocked).filter(Boolean))].join("; ");
@@ -831,7 +839,9 @@ const Pool = window.Pool = (() => {
   async function addAll(run) {
     const rows = Orders.rows().filter(r => r.state === "pulled" || r.state === "held" || r.state === "unmatched" || r.state === "oversize");
     let n = 0;
-    for (const row of rows) { try { await poolAdd(row, run); } catch (e) { row.state = "held"; row.reason = e.message; agent({ pool: true }, "warn", `${row.order.receiptId} · ${row.spec && row.spec.designSku}: ${e.message}`); } if (++n % 5 === 0) { Orders.render(); } }
+    const bar = rows.length && window.CNProgress ? CNProgress.start(`Preparing ${rows.length} order line(s)`, { total: rows.length }) : null;
+    for (const row of rows) { if (bar) bar.set(n, rows.length, row.spec && row.spec.designSku ? String(row.spec.designSku) : ""); try { await poolAdd(row, run); } catch (e) { row.state = "held"; row.reason = e.message; agent({ pool: true }, "warn", `${row.order.receiptId} · ${row.spec && row.spec.designSku}: ${e.message}`); } if (++n % 5 === 0) { Orders.render(); } }
+    if (bar) bar.end();
     Review.syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards();
     if (run) { run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); await RunCtl.save(run); }
     const pooled = rows.filter(r => r.state === "pooled").length;

@@ -110,6 +110,41 @@ const receipts = [
   }
   await page.evaluate(() => { B.master.entries.delete('ZZ-SAME-01'); document.querySelector('#mSearch').value = ''; Master.render(); });
 
+  // every wait shows a bar with a label and, when the work can be counted, a percentage (no silent screens)
+  assert.strictEqual(await page.evaluate(() => typeof window.CNProgress), 'object', 'the progress module is loaded');
+  const seen = await page.evaluate(async () => {
+    const shots = [];
+    const snap = () => {
+      const rows = [...document.querySelectorAll('.cnp .cnpRow')].map(r => ({
+        label: r.querySelector('.cnpLabel').textContent, pct: r.querySelector('.cnpPct').textContent,
+        meta: r.querySelector('.cnpMeta').textContent, width: r.querySelector('.cnpFill').style.width
+      }));
+      if (rows.length) shots.push(rows);
+    };
+    const watch = setInterval(snap, 15);
+    B.master.loadedAt = 0;
+    const p = Master.load(true);
+    snap();                                   // the bar is up before the first await returns, not after a delay
+    await p;
+    clearInterval(watch);
+    return shots.flat();
+  });
+  console.log('progress rows seen', seen.length, JSON.stringify(seen[0] || null));
+  assert(seen.length, 'a bar is shown while the library loads');
+  assert(seen.some(r => /charm library/i.test(r.label)), 'and it names what is loading: ' + JSON.stringify(seen.slice(0, 3)));
+  assert(seen.every(r => r.meta), 'and always shows the time spent');
+  const counted = await page.evaluate(() => {
+    const t = CNProgress.start('Writing the charm library', { total: 200 });
+    t.set(50, 200);
+    const r = document.querySelector('.cnp .cnpRow');
+    const out = { pct: r.querySelector('.cnpPct').textContent, meta: r.querySelector('.cnpMeta').textContent, width: r.querySelector('.cnpFill').style.width };
+    t.end();
+    return { out, left: document.querySelectorAll('.cnp .cnpRow').length };
+  });
+  console.log('counted bar', JSON.stringify(counted));
+  assert(counted.out.pct === '25%' && /^25(\.0)?%$/.test(counted.out.width) && /50 \/ 200/.test(counted.out.meta), 'countable work shows a real percentage: ' + JSON.stringify(counted.out));
+  assert.strictEqual(counted.left, 0, 'the bar goes away when the work ends');
+
   // a master dropped where sheets are nested is offered to the library, not queued as 4 charms to cut (§6.3)
   await page.evaluate(() => CN.setMode('nest'));
   await page.setInputFiles('#fileInput', masterPath);

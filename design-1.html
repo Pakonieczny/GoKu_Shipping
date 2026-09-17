@@ -1175,6 +1175,7 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script src="charm-nest-progress.js"></script>
 <script>
 /* ═══════════════════════════════════════════════════════════════════════════
    BRITES DESIGN STATION
@@ -6689,18 +6690,26 @@ function wireQueueScroll() {
 
 /** The Refresh button's sequence: one sweep of Etsy's open list, then locks, heals and the selected previews. */
 async function refreshOrders({ heal = true } = {}) {
+  const bar = window.CNProgress ? CNProgress.start("Reading the open orders", { note: "asking Etsy" }) : null;
+  try {
   abortAllUpdateWork();
   updateRunId++;
   allOpenReceipts = [];
   resetMessageFlags();          // a manual Refresh re-reads message flags
+  if (bar) bar.note("orders already finished");
   await restoreCompleted();
+  if (bar) bar.note("the open orders");
   await buildNewOrderList();
+  if (bar) bar.note("who is working on what");
   await fetchAllLocksOnce();
   if (SETTINGS.autoHeal && heal) {   // the bridge hydrates every order itself, so it asks for no heal passes: one read per order
+    if (bar) bar.note("filling in what Etsy left out");
     await repairMissingReceiptData({ passes:1, concurrency:4 });
     await healZeroMetalRows({ passes:1, concurrency:4 });
   }
+  if (bar) bar.note("the pictures for the selected orders");
   await ensureSelectedPreviews();
+  } finally { if (bar) bar.end(); }
 }
 
 function wireUI() {
