@@ -640,9 +640,9 @@ const Master = window.Master = (() => {
       job.state = "writing"; job.parsed = parsed; job.charms = g.charms; job.lab = lab; job.src = src;
       await writeIndex(job);
       await load(true);                                                    // the index is reloaded before the job reads "done"
-      job.state = "done"; say("ok", `indexed ${job.written} SKU(s)${job.held ? ` · ${job.held} charm(s) were already in the library` : ""}${job.vision.length ? ` · ${job.vision.length} label(s) read by Claude await confirmation` : ""}`);
+      job.finishedAt = Date.now(); job.state = "done"; say("ok", `indexed ${job.written} SKU(s)${job.held ? ` · ${job.held} charm(s) were already in the library` : ""}${job.vision.length ? ` · ${job.vision.length} label(s) read by Claude await confirmation` : ""}`);
       render(); return job;
-    } catch (e) { job.state = "error"; job.error = e.message; say("warn", `indexing failed: ${e.message}`); render(); throw e; }
+    } catch (e) { job.finishedAt = Date.now(); job.state = "error"; job.error = e.message; say("warn", `indexing failed: ${e.message}`); render(); throw e; }
     finally { if (job.bar) { job.bar.end(); job.bar = null; } }
   }
   /** Per labelled charm: the per-SKU .ai + thumbnail, the geometry, the derived flags; then the index and file records. */
@@ -745,9 +745,38 @@ const Master = window.Master = (() => {
         btn.onclick = async () => { const reads = []; tray.querySelectorAll("input[type=checkbox]").forEach(cb => { if (!cb.checked) return; const i = +cb.dataset.i; const x = pending[i]; const sku = tray.querySelector(`input[data-sku="${i}"]`).value.trim().toUpperCase(); if (!skuRegex().test(sku)) { toast(`${sku || "(empty)"} is not a valid SKU`, "bad"); return; } x.sku = sku; x.size = tray.querySelector(`input[data-size="${i}"]`).value.trim().toUpperCase() || null; reads.push(x); }); if (!reads.length) return; if (!employeeName()) askEmployee(); await confirmVision(job, reads); toast(`${reads.length} label(s) confirmed and indexed`, "ok"); };
         card.append(head, tray, btn);
       }
-      jobs.appendChild(card);
+      // a finished run is a line you can open; only what is still running stays open in front of you
+      if (job.state === "done" || job.state === "error") {
+        const d = el("details", "masterFileRow"), sum = document.createElement("summary");
+        const when = new Date(job.finishedAt || Date.now()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        sum.innerHTML = `<b>${esc(job.name)}</b><span class="hash">${when}</span><span>${job.state === "error" ? "failed" : `${job.written || 0} SKU(s) written`}</span>${job.held ? `<span class="hash">${job.held} already held</span>` : ""}`;
+        d.appendChild(sum); d.appendChild(card); jobs.appendChild(d);
+      } else jobs.appendChild(card);
     }
-    const files = v.querySelector("#mFiles"); files.innerHTML = B.master.files.map(f => `<div class="masterFile"><div class="fh"><b>${esc(f.name || f.masterHash)}</b><span class="hash">${esc((f.masterHash || "").slice(0, 12))}</span><span>${f.labelled || 0} labelled of ${f.charms || 0}</span>${(() => { const n = (c, l) => (c != null ? c : (l || []).length); const u = n(f.unlabelledCount, f.unlabelled), o = n(f.orphanCount, f.orphans), b = n(f.blockedCount, f.blocked); return `${u ? `<span style="color:#8a3a26">${u} unlabelled</span>` : ""}${o ? `<span style="color:#8a3a26">${o} orphan label(s)</span>` : ""}${b ? `<span style="color:#8a3a26">${b} blocked</span>` : ""}`; })()}<span class="hash">${f.indexedAt ? new Date(f.indexedAt).toLocaleString() : ""} · ${esc(f.indexedBy || "")}</span><span class="spacer"></span><button class="btn ghost xs" data-rm="${esc(f.masterHash)}">Remove from index</button></div>${(f.blocked || []).length ? `<div class="leftovers">${f.blocked.map(b => `<div>${esc(b.sku)} — ${esc(b.reason)}</div>`).join("")}</div>` : ""}</div>`).join("");
+    // Indexed files pile up as the sheet is revised. One line each — what it is, when, how much — folded away by date,
+    // with the full report and the remove behind a second fold. Nothing is lost, nothing is in the way.
+    const files = v.querySelector("#mFiles");
+    const byDay = new Map();
+    for (const f of B.master.files) {
+      const at = f.indexedAt ? new Date(f.indexedAt) : null;
+      const day = at ? at.toLocaleDateString() : "no date";
+      if (!byDay.has(day)) byDay.set(day, []);
+      byDay.get(day).push(f);
+    }
+    const days = [...byDay.entries()].sort((a, b) => (byDay.get(b[0])[0].indexedAt || 0) - (byDay.get(a[0])[0].indexedAt || 0));
+    const num = (c, l) => (c != null ? c : (l || []).length);
+    files.innerHTML = days.map(([day, list], di) => {
+      list.sort((a, b) => (b.indexedAt || 0) - (a.indexedAt || 0));
+      const skus = list.reduce((n, f) => n + (f.skus ? f.skus.length : 0), 0);
+      return `<details class="masterDay"${di === 0 ? " open" : ""}><summary>${esc(day)} · ${list.length} file${list.length === 1 ? "" : "s"} · ${skus} SKU line(s)</summary>` +
+        list.map(f => {
+          const at = f.indexedAt ? new Date(f.indexedAt) : null;
+          const u = num(f.unlabelledCount, f.unlabelled), o = num(f.orphanCount, f.orphans), b = num(f.blockedCount, f.blocked);
+          return `<details class="masterFileRow"><summary><b>${esc(f.name || f.masterHash)}</b><span class="hash">${at ? at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span><span>${f.labelled || 0} of ${f.charms || 0} labelled</span>${b ? `<span style="color:#8a3a26">${b} blocked</span>` : ""}</summary>` +
+            `<div class="fh" style="margin:6px 0 4px"><span class="hash">${esc((f.masterHash || "").slice(0, 12))}</span>${u ? `<span style="color:#8a3a26">${u} charm(s) with no SKU under them</span>` : ""}${o ? `<span style="color:#8a3a26">${o} line(s) with no charm above</span>` : ""}<span class="hash">${esc(f.indexedBy || "")}</span></div>` +
+            `<button class="btn ghost xs" data-rm="${esc(f.masterHash || "")}">Remove every SKU from this file</button></details>`;
+        }).join("") + `</details>`;
+    }).join("");
     files.querySelectorAll("[data-rm]").forEach(b => b.onclick = async () => { if (!confirm("Remove every SKU indexed from this master file? Pool adds for them will fail until it is re-indexed.")) return; await api("charmNestLibrary", { op: "masterRemoveFile", masterHash: b.dataset.rm }); await load(true); render(); });
     const q = (v.querySelector("#mSearch").value || "").trim().toUpperCase();
     // One charm is one tile, whatever it is sold as. The same design carries several SKUs (the jewellery it goes into),
