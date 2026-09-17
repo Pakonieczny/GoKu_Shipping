@@ -28,7 +28,7 @@ const V = ENV.GADS_API_VERSION || "v24";
 const CID = (ENV.GADS_CUSTOMER_ID || "").replace(/\D/g, "");
 const LOGIN = (ENV.GADS_LOGIN_CUSTOMER_ID || "").replace(/\D/g, "");
 const MERCHANT = String(ENV.GMC_MERCHANT_ID || ENV.MERCHANT_CENTER_ID || "").replace(/\D/g, "");
-const TIMEOUT = 20000;
+const TIMEOUT = 12000;
 
 const present = k => typeof ENV[k] === "string" && ENV[k].trim().length > 0;
 const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -163,7 +163,7 @@ async function adsResourceSection(token) {
     });
     if (res.ok) campaignId = (((data.results || [])[0] || {}).campaign || {}).id || null;
   } catch (e) { /* the per-probe row reports it */ }
-  const rows = await inBatches(C.ADS_RESOURCES, 4, async probe => {
+  const rows = await inBatches(C.ADS_RESOURCES, 10, async probe => {
     if (probe.needsCampaign && !campaignId) return C.skip(probe.resource, "this resource requires a single campaign and none was readable", { used: probe.used, family: probe.family, why: probe.why });
     const query = probe.needsCampaign ? probe.query.replace("${CAMPAIGN_ID}", campaignId) : probe.query;
     try {
@@ -292,7 +292,7 @@ async function merchantSection(adsToken, report) {
   } else if (!account) rows.push(C.warn("merchant account", "no GMC_MERCHANT_ID, and Google Ads credentials were unavailable to discover it"));
   if (!account) return { title: "Merchant Center", rows };
 
-  const probed = await inBatches(C.MERCHANT_PROBES, 3, async probe => {
+  const probed = await inBatches(C.MERCHANT_PROBES, 7, async probe => {
     try {
       const res = await fetch("https://merchantapi.googleapis.com/" + probe.path(account), {
         method: probe.method, timeout: TIMEOUT,
@@ -422,12 +422,15 @@ async function run(options) {
 
   const access = await adsAccessSection(token);
   sections.push(access);
-  sections.push(await scopeSection(token));
-  sections.push(await adsResourceSection(token));
-  sections.push(await adsSchemaSection(token, access.served));
-  sections.push(await adsWriteSection(token, options.write));
-  sections.push(await merchantSection(token, discovered));
-  sections.push(await otherGoogleSection(token));
+  // Everything below depends only on the token and the served-version list.
+  sections.push(...await Promise.all([
+    scopeSection(token),
+    adsResourceSection(token),
+    adsSchemaSection(token, access.served),
+    adsWriteSection(token, options.write),
+    merchantSection(token, discovered),
+    otherGoogleSection(token)
+  ]));
   sections.push(formatSection());
 
   return { checkedAt: new Date().toISOString(), apiVersion: V, customerId: CID || null, merchantId: MERCHANT || discovered.merchantId || null, summary: C.summarize(sections), sections };
