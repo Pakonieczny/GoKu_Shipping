@@ -485,10 +485,19 @@ const Master = window.Master = (() => {
   /** Render the strip under a charm (for the vision fallback) → PNG data URL. */
   /** The strip a label would occupy: the outline's width (widened 30 %), from its bottom edge down by the label gap. */
   function stripBox(c, gapPt) { const b = c.outline.bbox, w = b[2] - b[0]; return [b[0] - w * 0.3, b[1] - gapPt - 6, b[2] + w * 0.3, b[1] + 2]; }
-  /** Is anything drawn in the strip under this charm that is not the charm itself? */
-  function stripHasInk(parsed, c, gapPt) {
-    const [x0, y0, x1, y1] = stripBox(c, gapPt); const own = new Set(c.members); own.add(c.outline);
-    return parsed.segments.concat(parsed.nested).some(s => s.bbox && (s.kind === "path" || s.kind === "text" || s.kind === "image") && !own.has(s) && !(s.bbox[2] < x0 || s.bbox[0] > x1 || s.bbox[3] < y0 || s.bbox[1] > y1) && s.bbox[3] < c.outline.bbox[1] + 2);
+  /** Which of these charms have something drawn under them that belongs to no charm — outlined label text, most likely.
+      Everything every charm owns is collected once, so a sheet of thousands is a pass over what is left, not over all of it. */
+  async function strayInkUnder(parsed, group, charms, gapPt, onTick) {
+    const owned = new Set();
+    for (const c of group.charms) { owned.add(c.outline); for (const m of c.members) owned.add(m); }
+    const cand = parsed.segments.concat(parsed.nested).filter(s => s.bbox && !owned.has(s) && (s.kind === "path" || s.kind === "text" || s.kind === "image"));
+    const out = [];
+    for (let i = 0; i < charms.length; i++) {
+      const c = charms[i], box = stripBox(c, gapPt), top = c.outline.bbox[1] + 2;
+      for (const sg of cand) { const b = sg.bbox; if (b[2] < box[0] || b[0] > box[2] || b[3] < box[1] || b[1] > box[3] || b[3] >= top) continue; out.push(c); break; }
+      if (onTick && i % 250 === 0) { onTick(i, charms.length, cand.length); await sleep(0); }
+    }
+    return out;
   }
   function stripPng(parsed, c, gapPt) {
     const b = c.outline.bbox, w = b[2] - b[0]; const x0 = b[0] - w * 0.3, x1 = b[2] + w * 0.3, y1 = b[1] + 2, y0 = b[1] - gapPt - 6;
@@ -540,13 +549,15 @@ const Master = window.Master = (() => {
       const liveCount = g.charms.filter(c => c.mergedInto == null).length;
       if (S.settings.review !== "off" && S.cloud.ok && liveCount <= 300) { try { job.state = "review"; render(); await reviewGrouping(src); } catch (e) { say("warn", `Claude grouping review skipped: ${e.message}`); } }
       else if (S.settings.review !== "off" && S.cloud.ok) say("MASTER", `grouping review skipped: ${liveCount} charms is more than one review can hold (300) — the geometry stands, the report lists what to check`);
-      job.state = "vision";
-      // outlined labels: the strip under each unlabelled charm goes to Claude with a strict schema; a person confirms every read
-      // only a strip with something drawn in it goes to Claude: a size variant with nothing under it is reported, not read
+      // outlined labels: the strip under each unlabelled charm goes to Claude with a strict schema; a person confirms every
+      // read. Only a strip with something drawn in it is sent: a charm with nothing under it is reported, not read.
+      job.state = "vision"; job.progress = "looking under the unlabelled charms"; render(); await sleep(0);
       const unlAll = g.charms.filter(c => c.mergedInto == null && !c.sku);
-      const unl = unlAll.filter(c => stripHasInk(parsed, c, (+S.settings.labelGapMm || 6.4) * PT));
+      let unl = await strayInkUnder(parsed, g, unlAll, (+S.settings.labelGapMm || 6.4) * PT, (d, t) => { job.progress = `looking under the unlabelled charms ${d}/${t}`; render(); });
       job.vision = [];
       if (unlAll.length > unl.length) say("MASTER", `${unlAll.length - unl.length} unlabelled charm(s) have nothing under them — reported as unlabelled`);
+      const VISION_MAX = 200;
+      if (unl.length > VISION_MAX) { say("MASTER", `${unl.length} charm(s) have something under them that was not read as text — more than one pass sends to Claude (${VISION_MAX}); they are reported as unlabelled instead`); unl = []; }
       if (unl.length && S.cloud.ok) {
         say("MASTER", `asking Claude to read the strip under ${unl.length} unlabelled charm(s)`);
         const strips = unl.map(c => ({ index: c.index, image: stripPng(parsed, c, (+S.settings.labelGapMm || 6.4) * PT) }));
@@ -584,7 +595,7 @@ const Master = window.Master = (() => {
     };
     const queue = live.slice(); await Promise.all(Array.from({ length: 4 }, async () => { while (queue.length) await one(queue.shift()); }));
     // a small ring left loose beside a charm (not merged by grouping or review) blocks that charm
-    for (const o of job.src.group.orphans || []) { const b = o.bbox; if (!b || o.kind !== "path" || !o.closed) continue; if (Math.max(b[2] - b[0], b[3] - b[1]) > 13) continue; const cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2; for (const c of live) { if (G.distToPolys(cx, cy, G.flatten(c.outline, 8)) <= 3 * PT) { const e = entries.find(x => x.sku === c.sku); if (e && !/detached ring/.test(e.blocked || "")) { e.blocked = (e.blocked ? e.blocked + "; " : "") + "detached ring not merged"; blocked.push({ sku: c.sku, reason: "detached ring not merged" }); } } } }
+    for (const o of job.src.group.orphans || []) { const b = o.bbox; if (!b || o.kind !== "path" || !o.closed) continue; if (Math.max(b[2] - b[0], b[3] - b[1]) > 13) continue; const cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2; for (const c of live) { const ob = c.outline.bbox; if (cx < ob[0] - 4 * PT || cx > ob[2] + 4 * PT || cy < ob[1] - 4 * PT || cy > ob[3] + 4 * PT) continue; if (G.distToPolys(cx, cy, G.flatten(c.outline, 8)) <= 3 * PT) { const e = entries.find(x => x.sku === c.sku); if (e && !/detached ring/.test(e.blocked || "")) { e.blocked = (e.blocked ? e.blocked + "; " : "") + "detached ring not merged"; blocked.push({ sku: c.sku, reason: "detached ring not merged" }); } } } }
     job.entries = entries; job.blocked = blocked; job.written = entries.length;
     if (!S.cloud.ok) return;
     const replaces = B.master.files.filter(f => f.name === name && f.masterHash !== masterHash).map(f => f.masterHash);
@@ -656,7 +667,7 @@ const Master = window.Master = (() => {
     grid.querySelectorAll("[data-up]").forEach(inp => inp.onchange = () => { const v2 = inp.value.trim(); if (v2 === "") return; patch(inp.dataset.up, { upAngle: +v2 }).then(() => toast(`${inp.dataset.up}: up = ${+v2}° (operator)`, "ok")); });
     grid.querySelectorAll("[data-unblock]").forEach(b => b.onclick = () => patch(b.dataset.unblock, { blocked: null }).then(() => toast(`${b.dataset.unblock} unblocked`, "ok")));
   }
-  return { entryFor, thumbOf, fetchEntry, load, indexFile, render, patch, keepOutOf, skuRegex, stripPng };
+  return { entryFor, thumbOf, fetchEntry, load, indexFile, render, patch, keepOutOf, skuRegex, stripPng, strayInkUnder };
 })();
 
 /* ═══ 20 · Pool — one charm per order line and copy ══════════════════════ */
