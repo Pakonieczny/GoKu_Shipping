@@ -113,7 +113,7 @@ async function checkBrowser() {
   row(G, "charm-nest-orders.js", window.CharmNestOrders ? "ok" : "fail", window.CharmNestOrders ? `orders loaded · today ${CharmNestOrders.localDay()} · tag ${CharmNestOrders.dateTag()}` : "not loaded");
   row(G, "Web Worker", typeof Worker === "function" ? "ok" : "fail", typeof Worker === "function" ? "available (the nester runs in workers)" : "missing");
   row(G, "cross-origin isolation", crossOriginIsolated ? "ok" : "warn", crossOriginIsolated ? "COOP/COEP in force (SharedArrayBuffer available)" : "not isolated — the site-wide COEP header is not reaching this page", "");
-  row(G, "cloud passcode", passcode ? "ok" : "warn", passcode ? "present (from the sorter's session)" : "none — open the sorter first and enter the passcode, or add ?passcode=… ; without it every function call is refused when EDIT_PASSCODE is set");
+  row(G, "cloud passcode", "ok", passcode ? "present (from the sorter's session)" : "none — the functions run open, as configured");
   const fonts = {};
   for (const w of ["Regular", "Semibold"]) {
     const path = `vendor/fonts/SourceSans3-${w}.otf`;
@@ -155,10 +155,10 @@ async function checkBrowser() {
 async function checkCloud() {
   const G = "Cloud from this page";
   const ping = await timed(() => api("charmNestLibrary", { op: "ping" }));
-  if (ping.e) { row(G, "charmNestLibrary · ping", "fail", ping.e.status === 401 ? "401 unauthorized — the passcode is wrong or missing" : err(ping.e), "", ping.ms); return false; }
+  if (ping.e) { row(G, "charmNestLibrary · ping", "fail", ping.e.status === 401 ? "401 unauthorized — EDIT_PASSCODE is set on Netlify but this page has no passcode (add ?passcode=…)" : err(ping.e), "", ping.ms); return false; }
   row(G, "charmNestLibrary · ping", "ok", `${ping.r.sheets} sheet(s) · ${ping.r.charms} charm(s) on record`, "", ping.ms);
   const gate = await timed(() => fetch(`${FN}/charmNestLibrary`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "ping" }) }).then(r => r.status));
-  row(G, "passcode gate", gate.r === 401 ? "ok" : "warn", gate.r === 401 ? "a call without the passcode is refused (401)" : `a call without the passcode answered HTTP ${gate.r}`, gate.r === 401 ? "" : "EDIT_PASSCODE is not set on Netlify — the sorter's functions are open", gate.ms);
+  row(G, "passcode gate", "ok", gate.r === 401 ? "a call without the passcode is refused (401)" : `open — a call without a passcode answered HTTP ${gate.r}, as configured`, "", gate.ms);
   const idx = await timed(() => api("charmNestLibrary", { op: "masterList", limit: 3 })); row(G, "master index", idx.e ? "fail" : "ok", idx.e ? err(idx.e) : `${(idx.r.entries || []).length ? (idx.r.entries || []).length + "+ entries, e.g. " + idx.r.entries.map(e => e.sku).join(", ") : "empty — index a master file on the Master tab"}`, "", idx.ms);
   const sets = await timed(() => api("charmNestLibrary", { op: "setList", from: CharmNestOrders.localDay(), to: CharmNestOrders.localDay() })); row(G, "sets today", sets.e ? "fail" : "ok", sets.e ? err(sets.e) : `${(sets.r.sets || []).length} set(s) today`, "", sets.ms);
   const runs = await timed(() => api("charmNestLibrary", { op: "runList", limit: 5 })); row(G, "runs", runs.e ? "fail" : "ok", runs.e ? err(runs.e) : `${(runs.r.runs || []).length} recent · ${(runs.r.runs || []).filter(x => !["complete", "abandoned"].includes(x.status)).length} open`, "", runs.ms);

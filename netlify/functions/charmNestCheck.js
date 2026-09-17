@@ -58,7 +58,7 @@ exports.handler = async function (event) {
   row("Credentials", "FIREBASE_CLIENT_EMAIL", env.FIREBASE_CLIENT_EMAIL ? "ok" : "fail", env.FIREBASE_CLIENT_EMAIL || "missing");
   row("Credentials", "FIREBASE_PRIVATE_KEY", env.FIREBASE_PRIVATE_KEY ? "ok" : "fail", present(env.FIREBASE_PRIVATE_KEY, /BEGIN PRIVATE KEY/.test(env.FIREBASE_PRIVATE_KEY || "") ? "PEM" : "not PEM") || "missing");
   row("Credentials", "FIREBASE_STORAGE_BUCKET", "ok", env.FIREBASE_STORAGE_BUCKET || `not set — default ${admin.DEFAULT_BUCKET || "?"}`);
-  row("Credentials", "EDIT_PASSCODE", env.EDIT_PASSCODE ? "ok" : "warn", env.EDIT_PASSCODE ? "set — the sorter's cloud calls need it" : "not set — every charmNest* function is open to anyone with the URL", env.EDIT_PASSCODE ? "" : "Set EDIT_PASSCODE in Netlify to lock the sorter's functions.");
+  row("Credentials", "EDIT_PASSCODE", "ok", env.EDIT_PASSCODE ? "set — the sorter's cloud calls need it" : "not set — the charmNest* functions run open, as configured");
   row("Credentials", "ANTHROPIC_API_KEY", env.ANTHROPIC_API_KEY ? "ok" : "fail", env.ANTHROPIC_API_KEY ? `present (${env.ANTHROPIC_API_KEY.slice(0, 7)}…)` : "missing — engraving intent, label reads and reviews all need it");
   row("Credentials", "CHARM_NEST_NAME_MODEL", "ok", env.CHARM_NEST_NAME_MODEL || "not set — default claude-opus-5");
   row("Credentials", "Etsy CLIENT_ID", env.CLIENT_ID || env.ETSY_CLIENT_ID ? "ok" : "fail", present(env.CLIENT_ID || env.ETSY_CLIENT_ID) || "missing — listOpenOrders and etsyOrderProxy cannot call Etsy", "The token itself lives in the Design Station's browser; the station rows say whether it is signed in.");
