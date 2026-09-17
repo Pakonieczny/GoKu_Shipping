@@ -56,113 +56,40 @@ async function queueHealth() {
 
 // Why Google refused a sale, asked without uploading anything.
 //
-// A refused row is retried until its attempts are exhausted, and then never
-// again — so the reason it failed is frozen at whatever was recorded at the
-// time, which until recently was Google's generic "There was a problem with the
-// request." validateOnly re-submits the same payload and returns the same
-// per-row errors, recording nothing: Google documents it as non-mutating.
-//
-// Opt-in via ?diagnose=1, because it is still an outbound request per sale.
-const CLICK_ID_ORDER = ['gclid', 'gbraid', 'wbraid'];
-
+// A definitively rejected row is never retried, so its reason is frozen at
+// whatever was recorded when it failed. This re-runs the live transport's own
+// submit path with validateOnly, which builds the identical payload and mutates
+// no record: the dry-run branch validates and moves on without touching the
+// document. Opt-in via ?diagnose=1, because it is still one request per sale.
 async function diagnoseRefusals(limit) {
-  const action = ENV.GADS_CONVERSION_ACTION;
-  if (!action) throw new Error('GADS_CONVERSION_ACTION is not set, so there is no destination to validate against.');
-  const cid = (ENV.GADS_CUSTOMER_ID || '').replace(/\D/g, '');
-  if (!/^\d{10}$/.test(cid)) throw new Error('GADS_CUSTOMER_ID is not a ten-digit account.');
+  if (ENV.GADS_CONVERSION_UPLOAD_API === 'legacy')
+    return { checked: 0, reasons: [], detail: 'Uploads are pinned to the legacy service, which Google refuses for accounts not allowlisted for it. That, not a per-sale fault, is the cause.' };
 
-  const db = require('./firebaseAdmin').firestore();
-  const snap = await db.collection('Brites_GAds_ConvQueue').where('failed', '==', true).limit(limit || 25).get();
-  const rows = [];
-  snap.forEach(d => rows.push(d.data()));
-  if (!rows.length) return { checked: 0, reasons: [], detail: 'No refused conversions are on record.' };
+  const service = require('./googleAdsDataManager').createDataManager({
+    env: ENV, fetch: require('node-fetch'),
+    fb: () => ({ db: require('./firebaseAdmin').firestore() }),
+    COL: { convQueue: 'Brites_GAds_ConvQueue' }, ledger: async () => {}
+  });
+  // dryRun makes every submission validateOnly; retryRejected reaches the rows
+  // that were parked as definitively rejected.
+  const result = await service.run({ ctrl: { dryRun: true }, limit: limit || 25, retryRejected: true });
 
-  const conversions = [], described = [];
-  for (const x of rows) {
-    const kind = CLICK_ID_ORDER.find(k => x[k]);
-    if (!kind) { described.push({ orderId: x.orderId || null, value: x.value ?? null, reason: 'no Google click id was ever captured for this order' }); continue; }
-    const c = { conversionAction: action, conversionDateTime: x.conversionDateTime, conversionValue: x.value, currencyCode: x.currency, orderId: x.orderId || undefined };
-    c[kind] = x[kind];
-    conversions.push(c);
-    described.push({ orderId: x.orderId || null, value: x.value ?? null, clickKind: kind, index: conversions.length - 1 });
-  }
-
-  if (conversions.length) {
-    const auth = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST', timeout: TIMEOUT, headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ client_id: ENV.GADS_CLIENT_ID || '', client_secret: ENV.GADS_CLIENT_SECRET || '', refresh_token: ENV.GADS_REFRESH_TOKEN || '', grant_type: 'refresh_token' })
-    });
-    const token = await auth.json().catch(() => ({}));
-    if (!auth.ok || !token.access_token) throw new Error('Google Ads OAuth: ' + (token.error_description || token.error || auth.status));
-    const headers = { Authorization: 'Bearer ' + token.access_token, 'developer-token': ENV.GADS_DEVELOPER_TOKEN, 'Content-Type': 'application/json' };
-    const login = (ENV.GADS_LOGIN_CUSTOMER_ID || '').replace(/\D/g, '');
-    if (login) headers['login-customer-id'] = login;
-
-    const res = await fetch('https://googleads.googleapis.com/' + (ENV.GADS_API_VERSION || 'v24') + '/customers/' + cid + ':uploadClickConversions', {
-      method: 'POST', timeout: TIMEOUT, headers,
-      body: JSON.stringify({ conversions, partialFailure: true, validateOnly: true })
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error('Google Ads refused the validation itself: HTTP ' + res.status + ' ' + JSON.stringify(data).slice(0, 200));
-    const errors = indexErrors(data.partialFailureError);
-    for (const row of described) {
-      if (row.index == null) continue;
-      row.reason = errors[row.index] || 'accepted on validation — this sale would upload now';
-      delete row.index;
-    }
-  }
-
-  // The same reason repeated fifteen times is one problem, not fifteen.
+  // The same cause repeated fifteen times is one problem, not fifteen.
   const grouped = new Map();
-  for (const row of described) {
-    const key = String(row.reason || 'unknown');
+  for (const e of result.errors || []) {
+    const key = String(e.error || 'unknown');
     const at = grouped.get(key) || { reason: key, count: 0, orders: [], value: 0 };
-    at.count++; at.value += Number(row.value) || 0;
-    if (at.orders.length < 5) at.orders.push(row.orderId);
+    at.count++; if (at.orders.length < 5) at.orders.push(e.orderId);
     grouped.set(key, at);
   }
   const reasons = [...grouped.values()].sort((a, b) => b.count - a.count);
   return {
-    checked: described.length, reasons,
-    detail: reasons.map(r => r.count + '× ' + r.reason).join(' · ').slice(0, 400)
+    checked: (result.validated || 0) + (result.rejected || 0),
+    validated: result.validated || 0, reasons,
+    detail: reasons.length
+      ? reasons.map(r => r.count + '× ' + r.reason).join(' · ').slice(0, 500)
+      : (result.validated || 0) + ' refused sale(s) now validate cleanly and would upload on the next retry.'
   };
-}
-
-// Google's per-row rejections arrive in partialFailureError, addressed by index.
-// The errorCode names the cause; the message beside it is usually generic.
-function indexErrors(pf) {
-  const out = {};
-  for (const d of (pf && pf.details) || []) for (const er of d.errors || []) {
-    const hit = (((er.location || {}).fieldPathElements) || []).find(e => e && e.fieldName === 'conversions' && e.index != null);
-    if (!hit) continue;
-    const code = er.errorCode ? Object.keys(er.errorCode).map(k => k + ':' + er.errorCode[k]).join(',') : '';
-    const message = String(er.message || '').trim();
-    out[Number(hit.index)] = (code && message ? code + ' — ' + message : code || message || 'rejected').slice(0, 300);
-  }
-  return out;
-}
-
-
-// Google no longer allowlists ConversionUploadService for new integrations and
-// refuses its uploads outright. Data Manager is this application's default;
-// GADS_CONVERSION_UPLOAD_API=legacy forces the deprecated path. Which one is
-// actually in use decides whether refused sales are a configuration problem or
-// a credential one, so the report names it rather than leaving it to be guessed.
-async function uploadTransport() {
-  const legacy = ENV.GADS_CONVERSION_UPLOAD_API === 'legacy';
-  const row = { transport: legacy ? 'legacy ConversionUploadService' : 'Data Manager API', legacy };
-  if (legacy) {
-    row.detail = 'GADS_CONVERSION_UPLOAD_API is set to "legacy", so uploads use ConversionUploadService — which Google refuses for accounts not allowlisted for it. Remove that variable, or set it to anything else, to use the Data Manager API this application already supports.';
-    return row;
-  }
-  const health = await require('./googleAdsDataManager')
-    .createDataManager({ env: ENV, fetch: require('node-fetch'), fb: () => ({ db: require('./firebaseAdmin').firestore() }), COL: { convQueue: 'Brites_GAds_ConvQueue' }, ledger: async () => {} })
-    .health();
-  Object.assign(row, health);
-  row.detail = !health.configured
-    ? 'Data Manager is selected but not authorised: connect its own OAuth credentials before any order can upload.'
-    : health.confirmed + ' confirmed upload(s) to the configured conversion action · ' + health.processing + ' processing · ' + health.unknown + ' in an unknown state · ' + health.retryable + ' retryable';
-  return row;
 }
 
 async function run(options) {
