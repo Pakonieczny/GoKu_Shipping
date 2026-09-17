@@ -774,6 +774,8 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
 .bridgeBanner .btn{border-color:#8a6a2a;color:#f6e8c4;background:transparent}
 .bridgeBanner.down{background:linear-gradient(95deg,#4a2418,#6a3222);border-color:#8a3a26}
 .bridgeBanner.down .bbDot{background:var(--clay);animation:none}
+.sandboxBar{background:repeating-linear-gradient(135deg,#7a2a1a 0 14px,#5a1f16 14px 28px);color:#fff;font:700 12px/1.3 var(--mono);letter-spacing:.02em;padding:6px 16px;text-align:center;border-bottom:2px solid #c0553b;z-index:32}
+.sandboxBar.hidden{display:none}
 /* the sorter's own activity, streamed under the banner: what it is doing on its side (pulling, pooling, nesting, fitting,
    labels) so a person at this station sees the whole run, not only the commands that reach this page */
 .bridgeFeed{display:flex;align-items:baseline;gap:10px;padding:4px 16px;background:#1f1a12;color:#d9c9a3;border-bottom:1px solid #4a3a1a;font:11.5px var(--mono);z-index:31;min-width:0}
@@ -944,6 +946,7 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
       <button class="btn ghost xs" id="bridgeRelease" title="End remote control from this station">Release</button>
     </div>
     <div class="bridgeFeed hidden" id="bridgeFeed" role="log" aria-live="polite"><span class="bfLabel">Sorter</span><span class="bfNow" id="bridgeFeedNow"></span><span class="bfHist" id="bridgeFeedHist"></span></div>
+    <div class="sandboxBar hidden" id="sandboxBar">SANDBOX · emulated Etsy from a stored snapshot · every lock, claim, completion, note and archive row goes to sandbox copies · nothing reaches Etsy or a real order</div>
     <header class="topbar">
       <button class="navBtn" id="railToggle" aria-label="Toggle order list" title="Toggle order list (\)">☰</button>
 
@@ -1232,14 +1235,21 @@ const SOLID_UNKNOWN  = "__solid_unknown__";
 const PAGE_SIZE = 100;
 
 const TOKEN_KEYS = { access:"access_token", refresh:"refresh_token", expires:"token_expires_at" };
+/* ── SANDBOX. Opened with ?sandbox=1 (kept for this tab in sessionStorage), this page talks to an emulated Etsy
+   (etsySandbox: a stored snapshot of the shop's open orders, same response shapes) and keeps every lock, claim, ledger
+   entry, note and archive row in Sandbox_-prefixed collections. Its browser storage is namespaced too, so a sandbox
+   session and a production session in the same browser never see each other's ledger or cache. Nothing it does
+   reaches Etsy or a real order. ── */
+const SANDBOX = (() => { try { const q = new URLSearchParams(location.search).get("sandbox"); if (q === "1") sessionStorage.setItem("designStation.sandbox", "1"); if (q === "0") sessionStorage.removeItem("designStation.sandbox"); return sessionStorage.getItem("designStation.sandbox") === "1"; } catch (_) { return false; } })();
+const NS = SANDBOX ? ":sandbox" : "";
 const ETSY_CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
 const ETSY_REDIRECT  = "https://design-1.goldenspike.app";
 const ETSY_SCOPE     = "listings_w listings_r transactions_r transactions_w";
 
 const LS = {
-  selection : "savedSelection",
-  ledger    : "designCompletedLedger.v1",
-  ledgerPurge:"designCompletedLedger.lastPurge",
+  selection : "savedSelection" + NS,
+  ledger    : "designCompletedLedger.v1" + NS,
+  ledgerPurge:"designCompletedLedger.lastPurge" + NS,
   settings  : "designStation.settings.v1",
   verifier  : "etsy_code_verifier",      // legacy single slot, still written
   pkce      : "etsy_pkce_v2",             // { [state]: {v, at} } — see stashVerifier
@@ -1596,7 +1606,7 @@ const etsyMeter = { total:0, times:[], maxQps:0, minute:[], buckets:{}, byOrder:
    the bridge's Etsy-touching commands and the background heal passes wait out the brake; a person's own Refresh still
    works. Limits live in ETSY_GUARD and are deliberately well under Etsy's 10 000/day. ── */
 const ETSY_GUARD = { burstPerMinute: 60, per10Min: 150, sameOrderPer10Min: 4, brakeMs: 5 * 60 * 1000 };
-const ETSY_LS = "designStation.etsyMeter.v1";
+const ETSY_LS = "designStation.etsyMeter.v1" + NS;
 (function loadEtsyDay() { try { const j = JSON.parse(localStorage.getItem(ETSY_LS) || "null"); const today = new Date().toDateString(); if (j && j.day === today) { etsyMeter.day = j.day; etsyMeter.dayTotal = Number(j.dayTotal) || 0; etsyMeter.buckets = j.buckets || {}; } else etsyMeter.day = today; } catch (_) { etsyMeter.day = new Date().toDateString(); } })();
 function etsyBucketKey(t) { return String(Math.floor(t / 600000)); }
 function etsyLast(ms) { const cut = Date.now() - ms; let n = 0; for (const [k, v] of Object.entries(etsyMeter.buckets)) if (Number(k) * 600000 + 600000 > cut) n += v; return n; }
@@ -1649,8 +1659,17 @@ setInterval(paintEtsyHud, 10000);
     } catch (_) { return false; }
   };
   const orig = window.fetch;
+  const sandboxRoute = (input) => {
+    if (!SANDBOX) return input;
+    const url = (typeof input === "string") ? input : (input && input.url) || "";
+    const m = /\/\.netlify\/functions\/(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)(\?[^#]*)?$/i.exec(url);
+    if (m) return url.replace(/\/\.netlify\/functions\/[a-zA-Z]+(\?)?/, (all, q) => `/.netlify/functions/etsySandbox?fn=${m[1]}` + (q ? "&" : ""));
+    if (/\/\.netlify\/functions\/(firebaseOrders|designArchive)\b/.test(url)) return url + (url.includes("?") ? "&" : "?") + "sandbox=1";
+    return input;
+  };
   window.fetch = function (input, init) {
-    if (isEtsyCall(input)) {
+    if (SANDBOX) { const routed = sandboxRoute(input); if (routed !== input) { arguments[0] = routed; input = routed; } }
+    if (isEtsyCall(input) || (SANDBOX && /etsySandbox\?fn=(listOpenOrders|etsyOrderProxy)/.test(String(input)))) {
       etsyRecord((typeof input === "string") ? input : (input && input.url) || "");
       // the outcome is counted too: a 429 is the strongest signal the watchdog can get
       return orig.apply(this, arguments).then(resp => { if (resp && resp.status === 429) { etsyMeter.status429++; etsyAlarm("Etsy answered 429 (rate limited)"); } else if (resp && resp.status >= 500) etsyMeter.errors++; return resp; }, err => { etsyMeter.errors++; throw err; });
@@ -1914,6 +1933,7 @@ async function refreshAccessToken() {
 }
 
 async function ensureFreshToken() {
+  if (SANDBOX) return;
   const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0);
   if (!exp) return;
   if (exp - Math.floor(Date.now() / 1000) <= 120) await refreshAccessToken();
@@ -1965,6 +1985,7 @@ function takeVerifier(state) {
 
 let __oauthInFlight = false;
 async function startOAuth(reason = "auto") {
+  if (SANDBOX) { setConn("ok", "Sandbox — emulated Etsy, no sign-in"); toast("Sandbox: Etsy is emulated from the stored snapshot, no sign-in needed", "ok"); return; }
   if (typeof Bridge !== "undefined" && Bridge.framed()) {
     // Etsy refuses to be framed: the sign-in has to happen in the station's own tab. The token lands in this
     // origin's localStorage and the framed copy picks it up on its next call.
@@ -2105,7 +2126,7 @@ const firebaseConfig = {
 };
 let db = null;
 try {
-  if (window.firebase) {
+  if (window.firebase && !SANDBOX) {   // the sandbox never writes through the client SDK
     if (!firebase.apps?.length) firebase.initializeApp(firebaseConfig);
     db = firebase.firestore();
     firebase.auth().onAuthStateChanged(u => {
@@ -2571,7 +2592,7 @@ function markStaffNoteOrders() {
    else is served from disk, so a reload costs one `listOpenOrders` sweep and
    nothing more.                                                            */
 
-const CACHE_KEY     = "designStation.orders.v2";
+const CACHE_KEY     = "designStation.orders.v2" + NS;
 const CACHE_TTL_MS  = 14 * 864e5;
 const CACHE_MAX     = 1200;
 
@@ -6823,6 +6844,7 @@ async function boot() {
   wireHistory();
   buildSettingsUI();
 
+  if (SANDBOX) { const sb = $("#sandboxBar"); if (sb) sb.classList.remove("hidden"); document.documentElement.classList.add("sandbox"); document.title = "SANDBOX · " + document.title; setConn("ok", "Sandbox — emulated Etsy"); }
   bootOAuth();
   connectForSorterBoot();
   purgeLedger();
@@ -6868,7 +6890,7 @@ const Bridge = (() => {
   const LOCAL_RE = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
   const originOk = o => ALLOWED.has(o) || (LOCAL_RE.test(o) && LOCAL_RE.test(location.origin));
   const S = { nonce: null, origin: null, master: null, count: 0, last: "", dropped: 0, previewed: null, watch: false, ticker: [], feed: [], startedAt: 0, sorterClientId: null, runId: null, down: false, lastPing: 0, lastSweepAt: 0 };
-  const LSK = { commits: "designStation.bridgeCommits.v1", selected: "designStation.bridgeSelected.v1" };
+  const LSK = { commits: "designStation.bridgeCommits.v1" + NS, selected: "designStation.bridgeSelected.v1" + NS };
   const framed = () => { try { return window.self !== window.top; } catch (_) { return true; } };
   const active = () => !!S.master;
   const send = (msg) => { if (!S.master) return; try { S.master.postMessage(Object.assign({ source: "brites-design", nonce: S.nonce }, msg), S.origin); } catch (e) { console.warn("bridge send failed", e); } };
@@ -6894,7 +6916,7 @@ const Bridge = (() => {
 
   /* ── snapshots of the station's state ── */
   const employeeName = () => { try { return (localStorage.getItem(LS.employee) || "").trim(); } catch (_) { return ""; } };
-  function etsyState() { const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0); return { signedIn: !!localStorage.getItem(TOKEN_KEYS.access) || !!localStorage.getItem(TOKEN_KEYS.refresh), expiresAt: exp ? exp * 1000 : null, hasRefresh: !!localStorage.getItem(TOKEN_KEYS.refresh), calls: etsyMeter.total, maxQps: etsyMeter.maxQps, lastSweepAt: S.lastSweepAt || 0, meter: etsyMeterSnapshot() }; }
+  function etsyState() { const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0); return { sandbox: SANDBOX, signedIn: SANDBOX || !!localStorage.getItem(TOKEN_KEYS.access) || !!localStorage.getItem(TOKEN_KEYS.refresh), expiresAt: exp ? exp * 1000 : null, hasRefresh: !!localStorage.getItem(TOKEN_KEYS.refresh), calls: etsyMeter.total, maxQps: etsyMeter.maxQps, lastSweepAt: S.lastSweepAt || 0, meter: etsyMeterSnapshot() }; }
   /* ── Etsy thrift (the sorter is a remote user and gets the same brakes a person does):
         · a list sweep asked for within SWEEP_MIN_MS of the last one is served from memory, never re-fetched
         · re-validation is one paged list sweep (orders.check), not one detail call per order
@@ -6904,7 +6926,7 @@ const Bridge = (() => {
   function filtersForBridge() { return { metals: [...F.metals], completed: F.completed, sel: F.sel, note: F.note, attn: F.attn, msg: F.msg, due: F.due, free: F.free, iAttn: F.iAttn, iMsg: F.iMsg, iMulti: F.iMulti, iNoSku: F.iNoSku, activeMetal, dateDir, orderDir }; }
   function stateSnapshot() {
     const open = allOpenReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
-    return { bench: RT.page, clientId: RT.clientId, version: BRIDGE_BUILD, employee: employeeName(), mode: APP_MODE,
+    return { sandbox: SANDBOX, bench: RT.page, clientId: RT.clientId, version: BRIDGE_BUILD, employee: employeeName(), mode: APP_MODE,
       counts: { open: open.length, hydrated: open.filter(r => r._hydrated).length, selected: selectedOrders.size, completed: completedOrders.size, locked: [...rtSelected.values()].filter(o => o && o !== RT.clientId).length, claimed: rtClaims.size, attention: open.filter(r => r._attn).length },
       filters: filtersForBridge(), selection: [...selectedOrders], etsy: etsyState(), storage: { cachedOrders: detailCache.size }, sweeping: __sweepInFlight > 0, undoing: __undoInFlight > 0, committing: __commitInFlight > 0 };
   }
@@ -7034,6 +7056,16 @@ const Bridge = (() => {
       return Object.assign(stateSnapshot(), { releasedFromPreviousSession: released, commands: Object.keys(CMDS) });
     },
     async ping() { S.lastPing = Date.now(); if (S.down) { S.down = false; paintBanner(); } return { pong: true, etsy: etsyMeterSnapshot() }; },
+    /** The open receipts exactly as Etsy returned them (transactions included), for the sandbox snapshot. */
+    async "orders.raw"(a, progress) {
+      if (a.refresh || !allOpenReceipts.length) { progress(0, 0, "Refreshing the open order list from Etsy"); await refreshOrders({ heal: false }); }
+      const list = allOpenReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
+      const need = list.filter(r => !r._hydrated).map(r => String(r.receipt_id)); let done = 0; const run = makeQueue(4);
+      await Promise.all(need.map(rid => run(async () => { try { const txs = await hydrateOrder(rid); applyHydration(rid, txs); } catch (e) { console.warn("raw hydrate", rid, e); } progress(++done, need.length, `Reading order ${rid}`); })));
+      await Cursor.act("banner", null, `Copying ${list.length} open orders for the sandbox`, { click: false });
+      const receipts = list.map(r => { const o = {}; for (const [k, v] of Object.entries(r)) if (!k.startsWith("_")) o[k] = v; o.transactions = (r.transactions || orderCache[String(r.receipt_id)] || []).map(t => { const c = {}; for (const [k2, v2] of Object.entries(t)) if (!k2.startsWith("_")) c[k2] = v2; return c; }); return o; });
+      return { count: receipts.length, sandbox: SANDBOX, receipts };
+    },
     /** Etsy cannot be signed in from inside a frame: this answers with the popup URL the sorter must open on this origin. */
     async "etsy.connect"() {
       const st = etsyState();

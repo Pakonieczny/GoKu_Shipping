@@ -27,6 +27,7 @@
     "emailCapture.js",
     "essenceProxy-background.js",
     "etsyApiProbe.js",
+    "etsySandbox.js",
     "etsyApiUsage.js",
     "etsyDuplicateListing.js",
     "etsyImages.js",
