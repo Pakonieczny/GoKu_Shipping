@@ -326,12 +326,13 @@ At pull the sorter writes a claim on the station (`rtLockIds` with `claimedBy: "
 
 ### 6.1 The labelling rule
 
-Each charm in a master file has its SKU as a text object directly under it. The rule, precisely:
+Each charm in a master file has its SKUs as a stacked list of text lines directly under it (revised on the real master, September 2026: the shop's SKUs are free text such as `T-Rex_84495` or `Huggie Hoops- Umbrella`, one charm serves several jewellery types and so carries several SKU lines, and the same design is drawn in more than one size). The rule, precisely:
 
-- a text segment whose string matches the SKU pattern (setting, default `^[A-Z]{2,4}-[A-Z0-9]{2,6}(-[A-Z0-9]{1,4})?$`, applied after trimming and upper-casing);
-- whose bounding box **top edge** is at most `labelGapPt` (default 18 pt ≈ 6.4 mm) below the charm outline's bottom edge;
-- whose horizontal centre lies within the outline's horizontal extent widened by 25% on each side;
-- when two outlines qualify, the one whose bottom edge is nearest wins; a label with no qualifying outline and an outline with no label are both reported.
+- a positioned text line whose string matches the SKU pattern (setting, default `^[A-Z0-9][A-Z0-9 _.,'&()+\-]{1,60}$`, applied after trimming and upper-casing; Illustrator writes a whole sheet of labels in one text block, so the parser reads each positioned string as its own line with its own box);
+- the **first** line's top edge is at most `labelGapPt` (default 18 pt ≈ 6.4 mm) below the charm outline's bottom edge, and its horizontal centre lies within the outline's horizontal extent widened by 25% on each side; when two outlines qualify, the one whose bottom edge is nearest wins;
+- every further line that hangs directly under the line before it (within 1.8 line heights, centred with it) belongs to the same charm: each line is one SKU of that charm, all sharing the charm's per-SKU file;
+- only the charm directly above a list owns it: a charm with nothing under it is reported unlabelled (and nothing is sent to Claude for it), a line with no qualifying outline is reported as an orphan;
+- one SKU under several charms is that design in several sizes: the outlines are ranked by size and lettered S/L, S/M/L, XS/S/M/L, XS/S/M/L/XL (a label may also carry its own size after " · "); two of them within 3 % of the same size are a real duplicate, reported, and only the first keeps the SKU.
 
 Labels are never part of the charm: they are excluded from the members before silhouettes are built, so a SKU string can never be cut.
 
@@ -681,7 +682,7 @@ Manifest: add the two functions to `scripts/netlify-function-entries.json`; `bui
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `skuPattern` | `^[A-Z]{2,4}-[A-Z0-9]{2,6}(-[A-Z0-9]{1,4})?$` | what counts as a SKU label |
+| `skuPattern` | `^[A-Z0-9][A-Z0-9 _.,'&()+\-]{1,60}$` | what counts as a SKU label: any one-line free-text SKU, as the shop uses (a saved copy of the older `BR-XXX-NN` default is migrated) |
 | `labelGapMm` | 6.4 | how far below an outline a label may sit |
 | `engraveMarginMm` | 0.8 | keep-out from every cut edge and cut-out |
 | `engraveMinCapMm` | 1.6 | below it a placement is flagged **small** in the review (never dropped) |

@@ -136,6 +136,7 @@
     const spaces = spacesIn || {};
     let path = null, pathStart = -1, pendingClip = false, clipBox = null;
     let inText = false, textStart = -1, tm = null, tlm = null, fontSize = 1, textPts = [], textChars = 0;
+    let textPieces = [], piece = null;
     const startPath = (i) => { if (!path) { path = { sub: [], cur: null, start: null, pts: [] }; pathStart = ins[i].start; } };
     const addPt = (p) => path.pts.push(p);
     for (let i = 0; i < ins.length; i++) {
@@ -197,11 +198,11 @@
           path = null; pathStart = -1; pendingClip = false; break;
         }
         // ── text ──
-        case "BT": inText = true; textStart = ins[i].start; tm = [1, 0, 0, 1, 0, 0]; tlm = tm; textPts = []; textChars = 0; textRaw = ""; textStrs = []; break;
+        case "BT": inText = true; textStart = ins[i].start; tm = [1, 0, 0, 1, 0, 0]; tlm = tm; textPts = []; textChars = 0; textRaw = ""; textStrs = []; textPieces = []; piece = null; break;
         case "Tf": fontSize = Math.abs(+args[1]) || 1; fontName = args[0] && args[0].name || null; break;
-        case "Tm": if (args.length >= 6) { tm = args.slice(0, 6).map(Number); tlm = tm; } break;
-        case "Td": case "TD": tlm = mul([1, 0, 0, 1, +args[0], +args[1]], tlm); tm = tlm; break;
-        case "T*": tlm = mul([1, 0, 0, 1, 0, -fontSize * 1.2], tlm); tm = tlm; break;
+        case "Tm": if (args.length >= 6) { tm = args.slice(0, 6).map(Number); tlm = tm; } piece = null; break;
+        case "Td": case "TD": tlm = mul([1, 0, 0, 1, +args[0], +args[1]], tlm); tm = tlm; piece = null; break;
+        case "T*": tlm = mul([1, 0, 0, 1, 0, -fontSize * 1.2], tlm); tm = tlm; piece = null; break;
         case "Tj": case "TJ": case "'": case "\"": {
           const str = op === "TJ" ? (args[0] && args[0].arr || []).filter(a => a && a.str != null).map(a => a.str).join("") : (args[args.length - 1] && args[args.length - 1].str) || "";
           const font = fontName && fonts[fontName];
@@ -212,14 +213,19 @@
           const p0 = ap(m, 0, 0), p1 = ap(m, Math.max(0.55, wEm) * fontSize, fontSize), pDesc = ap(m, 0, -0.22 * fontSize);
           textPts.push(p0, p1, pDesc); textChars += glyphs;
           textRaw += str; textStrs.push(dec ? dec : { text: null, ok: false });
-          if (op === "'" || op === "\"") { tlm = mul([1, 0, 0, 1, 0, -fontSize * 1.2], tlm); tm = tlm; }
+          // every newly positioned string is its own piece: Illustrator writes a whole sheet of labels in one BT…ET block
+          if (op === "'" || op === "\"") piece = null;
+          if (!piece) { piece = { pts: [], chars: 0, raw: "", strs: [], font: fontName }; textPieces.push(piece); }
+          piece.pts.push(p0, p1, pDesc); piece.chars += glyphs; piece.raw += str; piece.strs.push(dec ? dec : { text: null, ok: false });
+          if (op === "'" || op === "\"") { tlm = mul([1, 0, 0, 1, 0, -fontSize * 1.2], tlm); tm = tlm; piece = null; }
           tm = mul([1, 0, 0, 1, wEm * fontSize, 0], tm); break;
         }
         case "ET": {
           if (inText) {
             const bbox = bboxOf(textPts);
             const decoded = textStrs.every(t => t && t.ok) ? textStrs.map(t => t.text).join("") : null;
-            push(depth === 0 ? segs : inner, { kind: "text", start: textStart, end: ins[i].end, bbox, chars: textChars, fillRGB: fill.slice(), depth, str: decoded, raw: textRaw, font: fontName, undecodable: decoded == null && textChars > 0 });
+            const pieces = textPieces.length > 1 ? textPieces.map(p => { const d = p.strs.every(t => t && t.ok) ? p.strs.map(t => t.text).join("") : null; return { bbox: bboxOf(p.pts), chars: p.chars, str: d, raw: p.raw, font: p.font, undecodable: d == null && p.chars > 0 }; }) : null;
+            push(depth === 0 ? segs : inner, { kind: "text", start: textStart, end: ins[i].end, bbox, chars: textChars, fillRGB: fill.slice(), depth, str: decoded, raw: textRaw, font: fontName, undecodable: decoded == null && textChars > 0, pieces });
           }
           inText = false; break;
         }
@@ -327,12 +333,15 @@
      per glyph and is readable only through /ToUnicode; without one the run is kept raw and flagged `undecodable`, which
      is what sends the master's labels to the vision fallback. Nothing is guessed. */
   const GLYPH_NAMES = { space: " ", hyphen: "-", minus: "-", endash: "–", emdash: "—", period: ".", periodcentered: "·", bullet: "•", middot: "·", underscore: "_", slash: "/", backslash: "\\", colon: ":", semicolon: ";", comma: ",", parenleft: "(", parenright: ")", bracketleft: "[", bracketright: "]", braceleft: "{", braceright: "}", plus: "+", equal: "=", asterisk: "*", numbersign: "#", ampersand: "&", percent: "%", quotesingle: "'", quotedbl: "\"", question: "?", exclam: "!", at: "@", dollar: "$", less: "<", greater: ">", bar: "|", tilde: "~", asciicircum: "^", grave: "`", zero: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9" };
+  const LIGATURES = { fi: "fi", fl: "fl", ff: "ff", ffi: "ffi", ffl: "ffl", f_f: "ff", f_i: "fi", f_l: "fl", f_f_i: "ffi", f_f_l: "ffl", longs: "s", quoteright: "\u2019", quoteleft: "\u2018", quotedblleft: "\u201c", quotedblright: "\u201d", ellipsis: "\u2026", degree: "\u00b0", multiply: "\u00d7", registered: "\u00ae", copyright: "\u00a9", trademark: "\u2122" };
   function glyphNameToChar(name) {
     if (!name) return null;
     if (name.length === 1) return name;
     if (GLYPH_NAMES[name] != null) return GLYPH_NAMES[name];
     let m = /^uni([0-9A-Fa-f]{4})/.exec(name); if (m) return String.fromCharCode(parseInt(m[1], 16));
     m = /^u([0-9A-Fa-f]{4,6})$/.exec(name); if (m) return String.fromCodePoint(parseInt(m[1], 16));
+    if (LIGATURES[name]) return LIGATURES[name];
+    if (/^[A-Za-z](_[A-Za-z])+$/.test(name)) return name.replace(/_/g, "");   // f_f_l and friends: the letters, joined
     return null;                                                  // gXX / cidXX / anything else: unknown on purpose
   }
   /** Parse a ToUnicode CMap (text) → { map: Map(code → string), bytes: 1|2 }. */
@@ -369,7 +378,7 @@
       const e = get(fd, "Encoding");
       if (e instanceof PDFDict) {
         const diff = get(e, "Differences"); const arr = diff && diff.asArray ? diff.asArray() : null;
-        if (arr) { let code = 0; for (const it of arr) { const v = doc.context.lookup(it); if (v && v.asNumber) code = v.asNumber(); else if (v && v.encodedName) { enc[code] = glyphNameToChar(v.encodedName.slice(1)); code++; } } }
+        if (arr) { let code = 0; for (const it of arr) { const v = doc.context.lookup(it); if (v && v.asNumber) code = v.asNumber(); else if (v && v.encodedName) { const ch = glyphNameToChar(v.encodedName.slice(1)); if (ch != null) enc[code] = ch; else if (code < 32 || code > 126) enc[code] = null; code++; } } }
       }
     }
     // widths, in em: simple fonts from /FirstChar + /Widths; composite from the descendant's /W and /DW
@@ -675,12 +684,17 @@
      edge, and whose horizontal centre lies within the outline's horizontal extent widened by `widen` on each side.
      Two qualifying outlines → the nearer bottom edge wins. Labels are never part of the charm: they are dropped from
      every charm's members (and top-level indices) so a SKU string can never be cut or written into a per-SKU file. */
-  const SKU_PATTERN_DEFAULT = /^[A-Z]{2,4}-[A-Z0-9]{2,6}(-[A-Z0-9]{1,4})?$/;
-  /** "BR-CMP-01 · S" → { sku, size } or null. */
+  // The shop's SKUs are free text ("T-Rex_84495", "Huggie Hoops- Umbrella", "Cheer 1 - Megaphone(CHEER)"): a label is any
+  // one-line string of the characters SKUs use, 2–60 long, read in upper case. Anything stricter is a setting (skuPattern).
+  const SKU_PATTERN_DEFAULT = /^[A-Z0-9][A-Z0-9 _.,'&()+\-]{1,60}$/;
+  const SKU_PATTERN_LEGACY = "^[A-Z]{2,4}-[A-Z0-9]{2,6}(-[A-Z0-9]{1,4})?$";
+  /** "BR-CMP-01 · S" → { sku, size } or null. A size rides after " · " (or "•"); with a strict pattern a plain space works too. */
   function parseSkuLabel(str, pattern) {
     pattern = pattern || SKU_PATTERN_DEFAULT;
     const s = String(str == null ? "" : str).replace(/�/g, "").replace(/\s+/g, " ").trim().toUpperCase();
     if (!s) return null;
+    const sep = /^(.+?)\s*[·•]\s*([A-Z0-9]{1,3})$/.exec(s);
+    if (sep && pattern.test(sep[1])) return { sku: sep[1], size: sep[2] };
     if (pattern.test(s)) return { sku: s, size: null };
     const m = /^(.+?)(?:\s*[·•]\s*|\s+)([A-Z0-9]{1,3})$/.exec(s);
     if (m && pattern.test(m[1])) return { sku: m[1], size: m[2] };
@@ -688,39 +702,75 @@
   }
   function labelCharms(parsed, charms, opts) {
     opts = Object.assign({ pattern: SKU_PATTERN_DEFAULT, gapPt: 18, widen: 0.25 }, opts || {});
-    const texts = parsed.segments.concat(parsed.nested).filter(s => s.kind === "text");
+    const runs = parsed.segments.concat(parsed.nested).filter(s => s.kind === "text");
+    // a block that positions several strings is read string by string, each with its own box; the block stays the segment
+    const texts = []; for (const r of runs) { if (r.pieces && r.pieces.length > 1) for (const p of r.pieces) texts.push(Object.assign({}, p, { seg: r })); else texts.push(Object.assign({}, r, { seg: r })); }
     const labels = new Map(), unlabelled = [], orphans = [], duplicates = [], undecodable = [], labelSegs = new Set();
     const live = charms.filter(c => c.mergedInto == null);
-    for (const t of texts) {
+    // The lines under a charm are its SKUs, one per line: the first line sits within gapPt of the outline's bottom edge,
+    // and every further line hangs directly under the line before it (a stacked list). Only the charm directly above the
+    // list owns it; a charm without a list is reported unlabelled, and one SKU under two charms is reported, not shared.
+    const lines = []; for (const t of texts) {
       if (t.undecodable || t.str == null) { if (t.chars > 0) undecodable.push({ bbox: t.bbox, chars: t.chars, font: t.font || null }); continue; }
       const lab = parseSkuLabel(t.str, opts.pattern); if (!lab || !t.bbox) continue;
-      const cx = (t.bbox[0] + t.bbox[2]) / 2, top = t.bbox[3];
+      lines.push({ t, lab, cx: (t.bbox[0] + t.bbox[2]) / 2, top: t.bbox[3], bottom: t.bbox[1], h: Math.max(1, t.bbox[3] - t.bbox[1]) });
+    }
+    lines.sort((a, b) => b.top - a.top);                                 // top of the page first, so a list is met first line first
+    const attached = [];                                                 // { line, charm }
+    const owner = new Map();                                             // "SKU" or "SKU__SIZE" → first charm index
+    const under = (cx, c) => { const b = c.outline.bbox, w = b[2] - b[0]; return cx >= b[0] - w * opts.widen && cx <= b[2] + w * opts.widen; };
+    for (const L of lines) {
       let best = null, bestGap = Infinity;
       for (const c of live) {
-        const b = c.outline.bbox, w = b[2] - b[0];
-        const gap = b[1] - top;                                         // outline bottom (y-up) minus label top
+        const gap = c.outline.bbox[1] - L.top;                          // outline bottom (y-up) minus label top
         if (gap < -1 || gap > opts.gapPt) continue;
-        if (cx < b[0] - w * opts.widen || cx > b[2] + w * opts.widen) continue;
+        if (!under(L.cx, c)) continue;
         if (gap < bestGap) { bestGap = gap; best = c; }
       }
-      if (!best) { orphans.push({ sku: lab.sku, size: lab.size, str: t.str, bbox: t.bbox }); continue; }
-      const prev = labels.get(best.index);
-      if (prev) {                                                        // two labels under one charm: the nearer one stays, both are reported
-        if (prev.gap <= bestGap) { duplicates.push({ sku: lab.sku, size: lab.size, also: prev.sku, charmIndex: best.index }); labelSegs.add(t); continue; }
-        duplicates.push({ sku: prev.sku, size: prev.size, also: lab.sku, charmIndex: best.index });
+      if (!best) {                                                       // no outline right above: a line of a list already attached?
+        let chain = null, chainGap = Infinity;
+        for (const a of attached) { const gap = a.line.bottom - L.top; if (gap < -0.5 * L.h || gap > 1.8 * L.h) continue; if (!under(L.cx, a.charm)) continue; if (Math.abs(a.line.cx - L.cx) > Math.max(a.line.t.bbox[2] - a.line.t.bbox[0], L.t.bbox[2] - L.t.bbox[0])) continue; if (gap < chainGap) { chainGap = gap; chain = a.charm; } }
+        if (!chain) { orphans.push({ sku: L.lab.sku, size: L.lab.size, str: L.t.str, bbox: L.t.bbox }); continue; }
+        best = chain; bestGap = chainGap;
       }
-      labels.set(best.index, { sku: lab.sku, size: lab.size, seg: t, gap: bestGap });
-      best.label = t; best.sku = lab.sku; best.skuSize = lab.size;
+      labelSegs.add(L.t.seg); attached.push({ line: L, charm: best });
+      const key = L.lab.size ? `${L.lab.sku}__${L.lab.size}` : L.lab.sku;
+      if (!owner.has(key)) owner.set(key, []);
+      const prev = labels.get(best.index);
+      if (prev) { if (!prev.extra.some(x => x.sku === L.lab.sku && x.size === L.lab.size)) { const x = { sku: L.lab.sku, size: L.lab.size, str: L.t.str, bbox: L.t.bbox }; prev.extra.push(x); owner.get(key).push({ charm: best, ref: x, primary: false }); } continue; }
+      const l = { sku: L.lab.sku, size: L.lab.size, seg: L.t.seg, gap: bestGap, str: L.t.str, bbox: L.t.bbox, extra: [] };
+      labels.set(best.index, l); owner.get(key).push({ charm: best, ref: l, primary: true });
+      best.label = L.t.seg; best.sku = L.lab.sku; best.skuSize = L.lab.size;
     }
+    // One SKU under several charms is that design in several sizes (the sheet writes no size letters): the outlines are
+    // ranked by size and lettered S/L, S/M/L, XS/S/M/L, XS/S/M/L/XL. Two of them the same size (within 3 %) are a real
+    // duplicate: the first keeps the SKU, the rest are reported. A label that carries its own " · S" keeps it.
+    const LADDER = { 2: ["S", "L"], 3: ["S", "M", "L"], 4: ["XS", "S", "M", "L"], 5: ["XS", "S", "M", "L", "XL"] };
+    const dim = c => { const b = c.outline.bbox; return Math.max(b[2] - b[0], b[3] - b[1]); };
+    const drop = (charm, ref) => { const l = labels.get(charm.index); if (!l) return; if (ref === l) { if (l.extra.length) { const nx = l.extra.shift(); l.sku = nx.sku; l.size = nx.size; l.str = nx.str; l.bbox = nx.bbox; charm.sku = nx.sku; charm.skuSize = nx.size; } else { labels.delete(charm.index); charm.sku = null; charm.skuSize = null; charm.label = null; } } else l.extra = l.extra.filter(x => x !== ref); };
+    for (const [key, uses] of owner) {
+      if (uses.length < 2) continue;
+      const byCharm = new Map(); for (const u of uses) if (!byCharm.has(u.charm.index)) byCharm.set(u.charm.index, u);
+      const list = [...byCharm.values()]; if (list.length < 2) continue;
+      if (uses[0].ref.size) { for (const u of list.slice(1)) { duplicates.push({ sku: u.ref.sku, size: u.ref.size, also: `charm #${list[0].charm.index}`, charmIndex: u.charm.index, firstIndex: list[0].charm.index }); drop(u.charm, u.ref); } continue; }
+      list.sort((a, b) => dim(a.charm) - dim(b.charm));
+      const kept = [list[0]];
+      for (const u of list.slice(1)) { const last = kept[kept.length - 1]; if (dim(u.charm) <= dim(last.charm) * 1.03) { duplicates.push({ sku: u.ref.sku, size: null, also: `charm #${last.charm.index} (same size)`, charmIndex: u.charm.index, firstIndex: last.charm.index }); drop(u.charm, u.ref); } else kept.push(u); }
+      if (kept.length < 2) continue;
+      const letters = LADDER[Math.min(kept.length, 5)];
+      kept.forEach((u, i) => { const size = i < letters.length ? letters[i] : "L" + (i - letters.length + 2); u.ref.size = size; if (u.primary) u.charm.skuSize = size; u.ref.sizeSource = "rank"; });
+      if (kept.length > 5) duplicates.push({ sku: kept[0].ref.sku, size: null, also: `${kept.length} sizes`, charmIndex: kept[5].charm.index, firstIndex: kept[0].charm.index });
+    }
+    for (const [index, l] of labels) { const c = live.find(x => x.index === index); if (c) c.extraSkus = l.extra; }
     // a label text is never charm material, whichever charm the grouping attached it to
-    for (const l of labels.values()) labelSegs.add(l.seg);
     for (const c of charms) {
       const before = c.members.length;
       c.members = c.members.filter(m => !labelSegs.has(m));
       if (c.members.length !== before) { recomputeTopIndices(c, parsed); c.bbox = c.members.reduce((a, m) => bbUnion(a, m.bbox), null) || c.outline.bbox.slice(); }   // the label's box never widens the charm
       if (c.mergedInto == null && !labels.has(c.index)) unlabelled.push(c.index);
     }
-    return { labels, unlabelled, orphans, duplicates, undecodable };
+    let skuCount = 0; for (const l of labels.values()) skuCount += 1 + l.extra.length;
+    return { labels, unlabelled, orphans, duplicates, undecodable, skuCount };
   }
   /** Top-level indices a charm's writer keeps, from its current members (a Do stays while any of its children is a member). */
   function recomputeTopIndices(c, parsed) {
@@ -1163,5 +1213,5 @@
   }
 
   root.CharmNestPDF = { parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawSegments, pathToCanvas,
-    parseSkuLabel, labelCharms, recomputeTopIndices, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, mul, ap, signature, fnv };
+    parseSkuLabel, labelCharms, recomputeTopIndices, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
 })(typeof window !== "undefined" ? window : self);

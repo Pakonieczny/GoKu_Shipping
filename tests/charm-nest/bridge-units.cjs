@@ -44,7 +44,7 @@ const pass = (name) => console.log('  ✓', name);
     const near = (c, m) => Math.abs((c.outline.bbox[0] + c.outline.bbox[2]) / 2 - m.cx) < 2 && Math.abs((c.outline.bbox[1] + c.outline.bbox[3]) / 2 - m.cy) < 4;
     const c3 = g.charms.find(c => near(c, master.charms[2])); assert(lab.unlabelled.includes(c3.index), 'the charm above the too-far label is unlabelled');
     const c4 = g.charms.find(c => near(c, master.charms[3])); assert(lab.unlabelled.includes(c4.index), 'the charm with no label is unlabelled');
-    assert(lab.duplicates.some(d => d.sku === 'BR-DUP-05' || d.also === 'BR-DUP-05'), 'two labels under one charm are reported as a duplicate');
+    assert(bySku.get('BR-TST-05').extra.some(x => x.sku === 'BR-DUP-05') && lab.duplicates.length === 0, 'two stacked lines under one charm are two SKUs of that charm');
     for (const c of g.charms) assert(!c.members.some(m => m.kind === 'text'), 'no label text stays a member of any charm');
     // a label shared between two outlines goes to the nearer bottom edge
     { const t = { kind: 'text', str: 'BR-SHR-01', bbox: [100, 80, 130, 86], chars: 9 }; const fake = { segments: [t], nested: [] }; const near = { index: 0, outline: { bbox: [95, 90, 135, 120] }, members: [] }, far = { index: 1, outline: { bbox: [90, 96, 140, 130] }, members: [] }; const r = P.labelCharms(fake, [far, near], { gapPt: 18 }); assert.strictEqual(r.labels.get(0).sku, 'BR-SHR-01'); assert(!r.labels.has(1)); }
