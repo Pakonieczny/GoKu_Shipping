@@ -92,10 +92,10 @@ exports.handler = async (event) => {
       const reasons = [];
       if (open) reasons.push("open outline");
       if (!flipOk) reasons.push("flip check failed: " + flipWhy);
-      if (lab.duplicates.some(d => d.charmIndex === index)) reasons.push("two labels under one charm");
       entries.push({ sku: l.sku, size: l.size, charmHash, widthPt: sil.bboxOuter[2] - sil.bboxOuter[0], heightPt: sil.bboxOuter[3] - sil.bboxOuter[1], areaPt2: sil.areaPt2, members: c.members.length, holes: CharmNestPDF.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: aiUp.path, aiUrl: aiUp.url, thumbPath: thumb && thumb.path, thumbUrl: thumb && thumb.url, open, labelSource: "text", blocked: reasons.length ? reasons.join("; ") : null });
       if (reasons.length) blocked.push({ sku: l.sku, reason: reasons.join("; ") });
       skus.push(l.sku);
+      for (const x of l.extra || []) { entries.push(Object.assign({}, entries[entries.length - 1], { sku: x.sku, size: x.size })); skus.push(x.sku); if (reasons.length) blocked.push({ sku: x.sku, reason: reasons.join("; ") }); }   // every further line under the charm: the same design under another SKU
       done++; if (done % 5 === 0) await progress("indexing", done, total);
     }
     // a small ring left loose beside a charm (not merged by grouping) blocks that charm: it would be cut without its ring

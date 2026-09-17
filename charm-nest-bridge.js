@@ -480,6 +480,13 @@ const Master = window.Master = (() => {
   async function fetchEntry(sku) { sku = String(sku || "").toUpperCase(); if (!sku) return null; const r = await api("charmNestLibrary", { op: "masterGet", sku }); if (r.entry) B.master.entries.set(sku, r.entry); return r.entry; }
   const skuRegex = () => { try { return new RegExp(S.settings.skuPattern || DEFAULTS.skuPattern); } catch (_) { return P.SKU_PATTERN_DEFAULT; } };
   /** Render the strip under a charm (for the vision fallback) → PNG data URL. */
+  /** The strip a label would occupy: the outline's width (widened 30 %), from its bottom edge down by the label gap. */
+  function stripBox(c, gapPt) { const b = c.outline.bbox, w = b[2] - b[0]; return [b[0] - w * 0.3, b[1] - gapPt - 6, b[2] + w * 0.3, b[1] + 2]; }
+  /** Is anything drawn in the strip under this charm that is not the charm itself? */
+  function stripHasInk(parsed, c, gapPt) {
+    const [x0, y0, x1, y1] = stripBox(c, gapPt); const own = new Set(c.members); own.add(c.outline);
+    return parsed.segments.concat(parsed.nested).some(s => s.bbox && (s.kind === "path" || s.kind === "text" || s.kind === "image") && !own.has(s) && !(s.bbox[2] < x0 || s.bbox[0] > x1 || s.bbox[3] < y0 || s.bbox[1] > y1) && s.bbox[3] < c.outline.bbox[1] + 2);
+  }
   function stripPng(parsed, c, gapPt) {
     const b = c.outline.bbox, w = b[2] - b[0]; const x0 = b[0] - w * 0.3, x1 = b[2] + w * 0.3, y1 = b[1] + 2, y0 = b[1] - gapPt - 6;
     const k = Math.min(6, 900 / (x1 - x0)); const cv = document.createElement("canvas"); cv.width = Math.ceil((x1 - x0) * k); cv.height = Math.ceil((y1 - y0) * k);
@@ -500,7 +507,8 @@ const Master = window.Master = (() => {
       const parsed = await P.parseSource(bytes, file.name);
       const g = P.groupCharms(parsed, { minPt: +S.settings.minPt || 6 });
       say("MASTER", `${g.charms.length} charm outline(s), ${parsed.counts.text} text block(s)`);
-      if (g.charms.length > (+S.settings.masterServerAbove || 300) && S.cloud.ok) {
+      // the server route (a background function with about 1 GB) is opt-in by charm count; 0 keeps every master in this tab
+      if (+S.settings.masterServerAbove > 0 && g.charms.length > +S.settings.masterServerAbove && S.cloud.ok) {
         say("MASTER", `over ${S.settings.masterServerAbove} charms — indexing on the server`);
         const up = await uploadBytes(`charmnest/master/files/${masterHash.slice(0, 12)}-${file.name.replace(/[^\w.\-]+/g, "_")}`, bytes, "application/pdf", "Uploading master");
         const r = await api("charmNestLibrary", { op: "startMaster", path: up.path, name: file.name, opts: { skuPattern: S.settings.skuPattern, labelGapMm: S.settings.labelGapMm, minPt: S.settings.minPt, engraveMarginMm: S.settings.engraveMarginMm, replaces: B.master.files.filter(f => f.name === file.name && f.masterHash !== masterHash).map(f => f.masterHash) } });
@@ -520,17 +528,22 @@ const Master = window.Master = (() => {
         render(); return job;
       }
       const lab = P.labelCharms(parsed, g.charms, { pattern: skuRegex(), gapPt: (+S.settings.labelGapMm || 6.4) * PT, widen: 0.25 });
-      say("MASTER", `${lab.labels.size} labelled · ${lab.unlabelled.length} unlabelled · ${lab.orphans.length} orphan label(s) · ${lab.duplicates.length} duplicate(s)${lab.undecodable.length ? ` · ${lab.undecodable.length} text run(s) unreadable (outlined or CID font without ToUnicode)` : ""}`);
+      say("MASTER", `${lab.labels.size} labelled (${lab.skuCount} SKU line(s)) · ${lab.unlabelled.length} unlabelled · ${lab.orphans.length} orphan label(s) · ${lab.duplicates.length} duplicate(s)${lab.undecodable.length ? ` · ${lab.undecodable.length} text run(s) unreadable (outlined or CID font without ToUnicode)` : ""}`);
       // Claude's grouping review merges fragments before anything is indexed
       const src = { id: "master:" + masterHash.slice(0, 8), name: file.name, bytes, parsed, group: g, charms: g.charms, metal: null, state: "ready", master: true };
       src.charms.forEach((c, i) => Object.assign(c, { id: src.id + ":" + i, sourceId: src.id, sourceName: file.name, index: c.index, name: c.sku || null, excluded: false, cloud: null }));
       job.state = "silhouettes";
       await P.buildSilhouettes(parsed, g.charms, +S.settings.silhouetteRes || 6, (d, t) => { job.progress = `silhouettes ${d}/${t}`; if (d % 10 === 0) render(); });
-      if (S.settings.review !== "off" && S.cloud.ok) { try { job.state = "review"; render(); await reviewGrouping(src); } catch (e) { say("warn", `Claude grouping review skipped: ${e.message}`); } }
+      const liveCount = g.charms.filter(c => c.mergedInto == null).length;
+      if (S.settings.review !== "off" && S.cloud.ok && liveCount <= 300) { try { job.state = "review"; render(); await reviewGrouping(src); } catch (e) { say("warn", `Claude grouping review skipped: ${e.message}`); } }
+      else if (S.settings.review !== "off" && S.cloud.ok) say("MASTER", `grouping review skipped: ${liveCount} charms is more than one review can hold (300) — the geometry stands, the report lists what to check`);
       job.state = "vision";
       // outlined labels: the strip under each unlabelled charm goes to Claude with a strict schema; a person confirms every read
-      const unl = g.charms.filter(c => c.mergedInto == null && !c.sku);
+      // only a strip with something drawn in it goes to Claude: a size variant with nothing under it is reported, not read
+      const unlAll = g.charms.filter(c => c.mergedInto == null && !c.sku);
+      const unl = unlAll.filter(c => stripHasInk(parsed, c, (+S.settings.labelGapMm || 6.4) * PT));
       job.vision = [];
+      if (unlAll.length > unl.length) say("MASTER", `${unlAll.length - unl.length} unlabelled charm(s) have nothing under them — reported as unlabelled`);
       if (unl.length && S.cloud.ok) {
         say("MASTER", `asking Claude to read the strip under ${unl.length} unlabelled charm(s)`);
         const strips = unl.map(c => ({ index: c.index, image: stripPng(parsed, c, (+S.settings.labelGapMm || 6.4) * PT) }));
@@ -556,13 +569,14 @@ const Master = window.Master = (() => {
       const key = c.skuSize ? `${c.sku}__${c.skuSize}` : c.sku;
       let ai = null, png = null;
       if (S.cloud.ok) { const bytes = await P.buildSingleCharm(c, parsed); [ai, png] = await Promise.all([uploadBytes(`charmnest/master/${key}.ai`, bytes, "application/illustrator", `Saving ${key}`), uploadBytes(`charmnest/master/${key}.png`, dataUrlToBytes(c.thumb), "image/png")]); }
-      const reasons = []; if (c.open) reasons.push("open outline"); if (lab.duplicates.some(d => d.charmIndex === c.index)) reasons.push("two labels under one charm");
+      const reasons = []; if (c.open) reasons.push("open outline");
       let engravable = true, upAngle = null, upSource = "drawn", flipOk = true;
       try { const up = G.upAngleOf(c); upAngle = up.angle; upSource = up.source; const view = G.backView(c, { res: 6, upAngle }); const mask = G.engraveMask(view, { marginMm: +S.settings.engraveMarginMm || 0.8, keepOut: keepOutOf(c) }); const r = G.largestRectangles(mask, 1)[0]; engravable = !!r && ((r.wPt * MM >= 6 && r.hPt * MM >= 3) || (r.wPt * MM >= 3 && r.hPt * MM >= 6)); }
       catch (e) { flipOk = false; engravable = false; reasons.push("flip check failed: " + e.message); }
       const wMm = c.widthPt * MM, hMm = c.heightPt * MM; const outOfRange = Math.max(wMm, hMm) > (+S.settings.sizeMaxMm || 60) || Math.max(wMm, hMm) < (+S.settings.sizeMinMm || 3);
       entries.push({ sku: c.sku, size: c.skuSize, charmHash: c.hash, widthPt: c.widthPt, heightPt: c.heightPt, areaPt2: c.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: ai && ai.path, aiUrl: ai && ai.url, thumbPath: png && png.path, thumbUrl: png && png.url, open: !!c.open, labelSource: c.labelSource || "text", confidence: c.labelConfidence == null ? null : c.labelConfidence, blocked: reasons.length ? reasons.join("; ") : null, outOfRange, flipOk, backKeepOut: keepOutOf(c).length ? keepOutOf(c).map(m => ({ layer: m.layer })) : null });
       if (reasons.length) blocked.push({ sku: c.sku, reason: reasons.join("; ") }); skus.push(c.sku);
+      for (const x of c.extraSkus || []) { entries.push(Object.assign({}, entries[entries.length - 1], { sku: x.sku, size: x.size })); skus.push(x.sku); if (reasons.length) blocked.push({ sku: x.sku, reason: reasons.join("; ") }); }   // every further line under the charm: the same design under another SKU
       job.progress = `written ${++n}/${live.length}`; if (n % 5 === 0) render();
     };
     const queue = live.slice(); await Promise.all(Array.from({ length: 4 }, async () => { while (queue.length) await one(queue.shift()); }));

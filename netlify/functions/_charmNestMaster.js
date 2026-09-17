@@ -10,7 +10,7 @@
 const { str, num } = require("./_charmNestAuth");
 
 const INDEX = "Charm_Master_Index", FILES = "Charm_Master_Files";
-const isSku = s => /^[A-Z0-9][A-Z0-9\-]{2,40}$/.test(String(s || ""));
+const isSku = s => /^[A-Z0-9][A-Z0-9 _.,'&()+\-]{1,60}$/.test(String(s || ""));   // free text, as the shop's SKUs are ("T-REX_84495", "HUGGIE HOOPS- UMBRELLA")
 
 function slimEntry(d) {
   if (!d) return null;
