@@ -468,6 +468,7 @@ const Orders = window.Orders = (() => {
 const Master = window.Master = (() => {
   const entryFor = sku => B.master.entries.get(String(sku || "").toUpperCase()) || null;
   let showAll = false;                                              // the grid draws 600 tiles until asked for the rest
+  let reindexAll = false;                                           // by default a SKU the library already holds is left alone
   /** A design drawn only in sizes keeps its picture and file under each size; the entry's own are empty. */
   const thumbOf = e => e.thumbUrl || ((Object.values(e.sizes || {}).find(s => s && s.thumbUrl) || {}).thumbUrl) || "";
   async function load(force) {
@@ -566,7 +567,26 @@ const Master = window.Master = (() => {
       src.charms.forEach((c, i) => Object.assign(c, { id: src.id + ":" + i, sourceId: src.id, sourceName: file.name, index: c.index, name: c.sku || null, excluded: false, cloud: null }));
       job.state = "silhouettes";
       // only the charms that carry a SKU are indexed, so only they are traced: on the real master that is 1,038 of 3,408
-      await P.buildSilhouettes(parsed, g.charms.filter(c => c.mergedInto == null && c.sku), +S.settings.silhouetteRes || 6, (d, t) => { job.progress = `silhouettes ${d}/${t}`; if (d % 10 === 0) render(); });
+      await P.buildSilhouettes(parsed, g.charms.filter(c => c.mergedInto == null && c.sku && !c.alreadyHeld), +S.settings.silhouetteRes || 6, (d, t) => { job.progress = `silhouettes ${d}/${t}`; if (d % 10 === 0) render(); });
+      // The SKUs are read from the sheet as text, which is quick, so the library is consulted before any work is done:
+      // a charm whose SKUs are all held already is left alone. A charm with even one new SKU is rebuilt whole, so all of
+      // its SKUs keep sharing one design file, and the master they came from is superseded rather than reported as a clash.
+      await load(true).catch(() => {});
+      const skusOf = c => [c.sku, ...(c.extraSkus || []).map(x => x.sku)].filter(Boolean).map(x => String(x).toUpperCase());
+      const known = B.master.entries;
+      const labelledCharms = g.charms.filter(c => c.mergedInto == null && c.sku);
+      const supersede = new Set();
+      let held = 0;
+      if (!reindexAll) {
+        for (const c of labelledCharms) {
+          const mine = skusOf(c);
+          if (mine.every(sk => known.has(sk))) { c.alreadyHeld = true; held++; continue; }
+          for (const sk of mine) { const e = known.get(sk); if (e && e.masterHash && e.masterHash !== masterHash) supersede.add(e.masterHash); }
+        }
+      }
+      job.held = held; job.supersede = [...supersede];
+      if (held) say("MASTER", `${held} charm(s) are already in the library and are left as they are · ${labelledCharms.length - held} to index${reindexAll ? "" : " (tick “re-index SKUs already held” to rebuild them all)"}`);
+      if (held === labelledCharms.length) { await load(true); job.state = "done"; job.written = 0; say("ok", `nothing new on this sheet — all ${held} charm(s) are already in the library`); render(); return job; }
       const liveCount = g.charms.filter(c => c.mergedInto == null).length;
       if (S.settings.review !== "off" && S.cloud.ok && liveCount <= 300) { try { job.state = "review"; render(); await reviewGrouping(src); } catch (e) { say("warn", `Claude grouping review skipped: ${e.message}`); } }
       else if (S.settings.review !== "off" && S.cloud.ok) say("MASTER", `grouping review skipped: ${liveCount} charms is more than one review can hold (300) — the geometry stands, the report lists what to check`);
@@ -594,14 +614,14 @@ const Master = window.Master = (() => {
       job.state = "writing"; job.parsed = parsed; job.charms = g.charms; job.lab = lab; job.src = src;
       await writeIndex(job);
       await load(true);                                                    // the index is reloaded before the job reads "done"
-      job.state = "done"; say("ok", `indexed ${job.written} SKU(s)${job.vision.length ? ` · ${job.vision.length} label(s) read by Claude await confirmation` : ""}`);
+      job.state = "done"; say("ok", `indexed ${job.written} SKU(s)${job.held ? ` · ${job.held} charm(s) were already in the library` : ""}${job.vision.length ? ` · ${job.vision.length} label(s) read by Claude await confirmation` : ""}`);
       render(); return job;
     } catch (e) { job.state = "error"; job.error = e.message; say("warn", `indexing failed: ${e.message}`); render(); throw e; }
   }
   /** Per labelled charm: the per-SKU .ai + thumbnail, the geometry, the derived flags; then the index and file records. */
   async function writeIndex(job) {
     const { parsed, charms, lab, masterHash, name } = job; const entries = [], blocked = [], skus = [];
-    const live = charms.filter(c => c.mergedInto == null && c.sku && !c.excluded);
+    const live = charms.filter(c => c.mergedInto == null && c.sku && !c.excluded && !c.alreadyHeld);
     let n = 0;
     const one = async (c) => {
       const key = c.skuSize ? `${c.sku}__${c.skuSize}` : c.sku;
@@ -622,7 +642,7 @@ const Master = window.Master = (() => {
     for (const o of job.src.group.orphans || []) { const b = o.bbox; if (!b || o.kind !== "path" || !o.closed) continue; if (Math.max(b[2] - b[0], b[3] - b[1]) > 13) continue; const cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2; for (const c of live) { const ob = c.outline.bbox; if (cx < ob[0] - 4 * PT || cx > ob[2] + 4 * PT || cy < ob[1] - 4 * PT || cy > ob[3] + 4 * PT) continue; if (G.distToPolys(cx, cy, G.flatten(c.outline, 8)) <= 3 * PT) { const e = entries.find(x => x.sku === c.sku); if (e && !/detached ring/.test(e.blocked || "")) { e.blocked = (e.blocked ? e.blocked + "; " : "") + "detached ring not merged"; blocked.push({ sku: c.sku, reason: "detached ring not merged" }); } } } }
     job.entries = entries; job.blocked = blocked; job.written = entries.length;
     if (!S.cloud.ok) return;
-    const replaces = B.master.files.filter(f => f.name === name && f.masterHash !== masterHash).map(f => f.masterHash);
+    const replaces = [...new Set(B.master.files.filter(f => f.name === name && f.masterHash !== masterHash).map(f => f.masterHash).concat(job.supersede || []))];
     const r = await api("charmNestLibrary", { op: "masterPutIndex", entries, masterHash, masterPath: job.masterPath || null, masterName: name, hashSource: "browser", replaces }, { label: "Writing the master index" });
     job.conflicts = r.blocked || []; job.sizeMoved = r.sizeMoved || [];
     if (job.conflicts.length) agent({ master: masterHash }, "warn", `${name}: ${job.conflicts.length} SKU(s) also live in another master file — blocked until fixed: ${job.conflicts.map(b => b.sku).join(", ")}`);
@@ -658,10 +678,11 @@ const Master = window.Master = (() => {
     const v = document.getElementById("masterView"); if (!v || v.classList.contains("hidden")) return;
     if (!v.dataset.built) {
       v.dataset.built = "1";
-      v.innerHTML = `<div class="masterHead"><button class="btn gold sm" id="mPick">＋ Index a master .ai</button><input type="file" id="mFile" accept=".ai,.pdf" class="hidden"><input type="search" id="mSearch" placeholder="Search SKUs" style="border:1px solid var(--line);border-radius:9px;padding:7px 10px"><button class="btn ghost sm" id="mReload">Reload index</button><span class="pill neutral" id="mCount"></span></div>
+      v.innerHTML = `<div class="masterHead"><button class="btn gold sm" id="mPick">＋ Index a master .ai</button><input type="file" id="mFile" accept=".ai,.pdf" class="hidden"><input type="search" id="mSearch" placeholder="Search SKUs" style="border:1px solid var(--line);border-radius:9px;padding:7px 10px"><button class="btn ghost sm" id="mReload">Reload index</button><label style="display:flex;gap:5px;align-items:center;font-size:11px" title="Off: a SKU the library already holds is left as it is, and only new charms are built. On: every charm on the sheet is rebuilt and rewritten."><input type="checkbox" id="mAllSkus"> re-index SKUs already held</label><span class="pill neutral" id="mCount"></span></div>
         <div class="noteBox">Each charm in a master file has its SKU as text directly under it (within ${S.settings.labelGapMm} mm, centred under the outline). A SKU is one design whatever colour it is ordered in; the material comes from the order. Labels are never part of the charm. Unlabelled charms, orphan labels and duplicates are listed in red; a SKU present in two masters is blocked until fixed.</div>
         <div id="mJobs" style="display:grid;gap:10px"></div><div id="mFiles" style="display:grid;gap:10px"></div><div class="section">Indexed SKUs</div><div class="skuGrid" id="mGrid"></div>`;
       v.querySelector("#mPick").onclick = () => v.querySelector("#mFile").click();
+      { const cb = v.querySelector("#mAllSkus"); cb.checked = reindexAll; cb.onchange = () => { reindexAll = cb.checked; toast(reindexAll ? "every charm on the next sheet will be rebuilt" : "charms already in the library will be skipped", "ok"); }; }
       // the file goes where it is dropped: on this tab it is a master for the library
       ["dragenter", "dragover"].forEach(ev => v.addEventListener(ev, e => { if (!(e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files"))) return; e.preventDefault(); e.stopPropagation(); v.classList.add("dragOver"); e.dataTransfer.dropEffect = "copy"; }));
       ["dragleave", "drop"].forEach(ev => v.addEventListener(ev, () => v.classList.remove("dragOver")));

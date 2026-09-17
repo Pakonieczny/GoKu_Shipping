@@ -31,11 +31,20 @@ const { main } = require('../../scripts/index-master.cjs');
   const files = st.list('Charm_Master_Files'); assert(files.length === 1 && files[0].indexedBy === 'local-indexer' && files[0].charms === 8, 'the file record');
   assert([...st.blobs.keys()].some(k => k.startsWith('charmnest/master/files/')), 'the master itself was stored');
   assert(fs.existsSync(file + '.index-progress.json') && fs.existsSync(file + '.index-report.json'), 'progress and report files written');
-  // resume: everything comes from the progress file, nothing is re-uploaded
+  // the same sheet again: every SKU is already held, so nothing is built and nothing is uploaded
   const blobsBefore = st.blobs.size; const callsBefore = st.calls.length;
-  const again = await main(['node', 'x', file, '--origin', sorterOrigin, '--resume'], log);
-  assert(again.written === 7 && st.blobs.size === blobsBefore, 'a resumed run re-writes the index but re-uploads nothing');
-  assert(!st.calls.slice(callsBefore).some(c => c.name === 'charmNestOutput'), 'no upload calls on resume');
+  const again = await main(['node', 'x', file, '--origin', sorterOrigin], log);
+  assert(again.written === 0 && again.held === 6, 'a sheet whose SKUs are all held indexes nothing: ' + JSON.stringify({ written: again.written, held: again.held }));
+  assert(st.blobs.size === blobsBefore && !st.calls.slice(callsBefore).some(c => c.name === 'charmNestOutput'), 'and uploads nothing');
+  // one new SKU on the sheet: only that charm is built, and it carries its charm's other SKUs with it
+  const holdBack = st.docs.get('Charm_Master_Index/BR-TST-06'); st.docs.delete('Charm_Master_Index/BR-TST-06');
+  const partial = await main(['node', 'x', file, '--origin', sorterOrigin], log);
+  assert(partial.written === 1 && partial.held === 5, 'only the charm with the new SKU is indexed: ' + JSON.stringify({ written: partial.written, held: partial.held }));
+  assert(st.docs.has('Charm_Master_Index/BR-TST-06'), 'the new SKU is in the index');
+  void holdBack;
+  // --all rebuilds the lot
+  const forced = await main(['node', 'x', file, '--origin', sorterOrigin, '--all'], log);
+  assert(forced.written === 7, '--all rewrites every SKU: ' + forced.written);
   void fx;
   console.log('index-master OK ·', ix.length, 'SKUs ·', st.blobs.size, 'files');
   srv.close();

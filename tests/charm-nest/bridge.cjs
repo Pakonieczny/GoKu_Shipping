@@ -69,6 +69,27 @@ const receipts = [
   const ix = st.list('Charm_Master_Index');
   assert(ix.length >= fx.charms.length && ix.every(e => e.aiPath && st.blobs.has(e.aiPath)), 'per-SKU .ai files uploaded: ' + ix.map(e => e.aiPath).join(','));
 
+  // the same sheet again: the SKUs are read, matched against the library and skipped, so nothing is rebuilt (§6.3)
+  const blobsBefore = st.blobs.size;
+  await page.setInputFiles('#mFile', masterPath);
+  await page.waitForFunction(() => [...B.master.jobs.values()].every(j => ['done', 'error'].includes(j.state)) && [...B.master.jobs.values()].some(j => j.held), null, { timeout: 60000 });
+  const second = await page.evaluate(() => { const j = [...B.master.jobs.values()].pop(); return { state: j.state, held: j.held, written: j.written, log: j.log }; });
+  console.log('second pass', JSON.stringify(second));
+  assert.strictEqual(second.state, 'done', 'a sheet with nothing new finishes');
+  assert(second.held === fx.charms.length && !second.written, 'every charm was already held, so none was rebuilt');
+  assert.strictEqual(st.blobs.size, blobsBefore, 'and nothing was uploaded');
+  // drop one SKU from the library and the same sheet rebuilds only that charm
+  await page.evaluate(() => { B.master.entries.delete('BR-TST-03'); });
+  st.docs.delete('Charm_Master_Index/BR-TST-03');
+  await page.evaluate(() => B.master.jobs.clear());
+  await page.setInputFiles('#mFile', masterPath);
+  await page.waitForFunction(() => [...B.master.jobs.values()].some(j => ['done', 'error'].includes(j.state)), null, { timeout: 60000 });
+  const third = await page.evaluate(() => { const j = [...B.master.jobs.values()].pop(); return { state: j.state, held: j.held, written: j.written }; });
+  console.log('one new SKU', JSON.stringify(third));
+  assert(third.state === 'done' && third.written === 1 && third.held === fx.charms.length - 1, 'only the charm with the missing SKU is rebuilt: ' + JSON.stringify(third));
+  assert(st.docs.has('Charm_Master_Index/BR-TST-03'), 'the missing SKU is back in the index');
+  await page.evaluate(() => B.master.jobs.clear());
+
   // the grid is one tile per charm, listing every SKU that charm is sold under, and any of them finds it (§6.3)
   const gridOf = async q => page.evaluate((qq) => {
     document.querySelector('#mSearch').value = qq; Master.render();
