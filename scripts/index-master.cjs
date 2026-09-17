@@ -17,6 +17,8 @@
  *    --upload-master     also store the master file itself under charmnest/master/files/
  *    --replaces HASH     an earlier version of this master to supersede (repeatable)
  *    --resume            continue an interrupted run (progress is kept in <file>.index-progress.json)
+ *  The master library (index and per-SKU files) is one library, read by production and the sandbox alike; it holds
+ *  designs, not orders, so there is no sandbox copy of it.
  *
  *  Output: a report of labelled, unlabelled, orphan and duplicate labels, blocked SKUs, and a JSON next to the file.
  *  ═══════════════════════════════════════════════════════════════════════ */
