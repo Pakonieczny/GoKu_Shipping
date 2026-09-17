@@ -54,4 +54,14 @@ check(/changed:function\(\)\{if\(DASH\)\{renderApprovals\(\);updateBadges\(\);\}
 check(/persist\(\);options\.changed\(\);const seq=\+\+state\.seq;/.test(groups),
   'selecting a group announces the new scope immediately, not only if its detail loads');
 
+// 5. Google repeats UNKNOWN in primaryStatusReasons for reasons the API version
+//    does not name. A status tooltip reading "Campaign paused · unknown ·
+//    unknown" buries the one reason that does say something.
+const reason = new Function('REASON_LABEL', 'return ' + html.match(/function reasonText\(rs\)\{[\s\S]*?\n.*?join\(" \\u00b7 "\);\}/)[0].replace('function reasonText', 'function reasonText') + '; reasonText')({ CAMPAIGN_PAUSED: 'Campaign paused' });
+check(reason(['CAMPAIGN_PAUSED', 'UNKNOWN', 'UNKNOWN']) === 'Campaign paused', 'an unnamed reason is not shown as the word unknown');
+check(reason(['CAMPAIGN_PAUSED', 'CAMPAIGN_PAUSED']) === 'Campaign paused', 'a reason Google repeats is shown once');
+check(reason(['UNKNOWN']) === '', 'a status with nothing but unnamed reasons carries no tooltip at all');
+check(reason(['CAMPAIGN_ENDED']) === 'campaign ended', 'a reason with no label of ours still reaches the operator in Google\'s own words');
+
+
 console.log(passed + ' cross-tab coherence checks passed.');
