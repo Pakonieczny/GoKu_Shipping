@@ -65,13 +65,19 @@ async function queueHealth() {
 
 async function run() {
   const token = await shopifyToken();
+  // Read the queue first: whether orders are arriving decides how an invisible
+  // webhook should be reported.
+  let queue = null;
+  try { queue = await queueHealth(); } catch (e) { queue = { error: String(e.message || e).slice(0, 200) }; }
   const result = await shopifyAttribution({
     request: requestWith(token),
     expectedHost: 'goldenspike.app',
-    expectedVersion: shippedVersion()
+    expectedVersion: shippedVersion(),
+    ordersArriving: !!queue && !queue.error && (queue.pending > 0 || queue.failed > 0)
   });
-  try { result.sections.queue = { id: 'queue', label: 'Conversion upload queue', status: 'available', ...await queueHealth() }; }
-  catch (e) { result.sections.queue = { id: 'queue', label: 'Conversion upload queue', status: 'unavailable', detail: String(e.message || e).slice(0, 200) }; }
+  result.sections.queue = queue && !queue.error
+    ? { id: 'queue', label: 'Conversion upload queue', status: 'available', ...queue }
+    : { id: 'queue', label: 'Conversion upload queue', status: 'unavailable', detail: (queue && queue.error) || 'unavailable' };
   const q = result.sections.queue;
   if (q.status === 'available') {
     q.detail = q.failed ? q.failed + ' sale(s) Google refused and ' + q.pending + ' waiting to upload'

@@ -46,8 +46,11 @@ async function webhooks(request, expectedHost) {
   const missing = rows.filter(r => !r.ok);
   return {
     topics: rows, totalWebhooks: all.length, missing: missing.map(r => r.topic),
+    visibleToThisApp: all.length,
     detail: missing.length
-      ? missing.length + ' required webhook(s) not registered to this app: ' + missing.map(r => r.topic).join(', ')
+      ? missing.length + ' required webhook(s) are not visible to this app' +
+        (all.length === 0 ? ' — and this app owns no webhooks at all, so they were most likely registered by another app or in the admin, where this API cannot see them' : '') +
+        ': ' + missing.map(r => r.topic).join(', ')
       : 'Both required webhooks are registered to this app.'
   };
 }
@@ -91,14 +94,21 @@ async function snippet(request, expectedVersion) {
 
 async function shopifyAttribution(input) {
   const { request, expectedHost, expectedVersion } = input || {};
+  input = input || {};
   if (typeof request !== 'function') throw new Error('A Shopify Admin API request function is required.');
   const out = {};
   await section(out, 'webhooks', 'Order and refund webhooks', () => webhooks(request, expectedHost));
   await section(out, 'snippet', 'Click-id capture snippet', () => snippet(request, expectedVersion));
 
-  const blocking = [];
-  if (out.webhooks.status === 'available' && out.webhooks.missing.length)
-    blocking.push('missing webhook: ' + out.webhooks.missing.join(', '));
+  const blocking = [], warnings = [];
+  // ordersArriving is the caller's evidence that the orders webhook fires at
+  // all, whoever owns it. Without that evidence an invisible webhook is a real
+  // risk; with it, reporting one would send someone chasing a non-problem.
+  if (out.webhooks.status === 'available' && out.webhooks.missing.length) {
+    const invisible = out.webhooks.missing.join(', ');
+    if (input.ordersArriving) warnings.push('required webhook(s) not visible to this app (' + invisible + '), but orders are reaching the conversion queue, so a webhook this API cannot see is firing');
+    else blocking.push('no evidence of webhook: ' + invisible);
+  }
   if (out.snippet.status === 'available' && !out.snippet.present)
     blocking.push('the click-id snippet is not installed');
   if (out.snippet.status === 'available' && out.snippet.rendered === false)
@@ -109,7 +119,7 @@ async function shopifyAttribution(input) {
     checkedAt: Date.now(), sections: out,
     summary: {
       read: Object.keys(out).length - unavailable.length, unavailable: unavailable.length,
-      blocking, warnings: out.snippet.status === 'available' ? out.snippet.problems.filter(p => !/not in the published theme|never renders/.test(p)) : [],
+      blocking, warnings: warnings.concat(out.snippet.status === 'available' ? out.snippet.problems.filter(p => !/not in the published theme|never renders/.test(p)) : []),
       // An unread section leaves the question open; it never reads as healthy.
       healthy: blocking.length === 0 && unavailable.length === 0
     },

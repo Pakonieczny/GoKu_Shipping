@@ -815,7 +815,8 @@ function _pfIndexErrors(pfErr, fieldName) {
       const hit = els.find(e => e && e.fieldName === fieldName && e.index != null);
       if (!hit) continue;
       const code = er.errorCode ? Object.keys(er.errorCode).map(k => k + ":" + er.errorCode[k]).join(",") : "";
-      const msg = String(er.message || code || "rejected").slice(0, 300);
+      const message = String(er.message || "").trim();
+      const msg = String(code && message ? code + " — " + message : code || message || "rejected").slice(0, 300);
       const i = Number(hit.index);
       out[i] = out[i] ? (out[i] + " | " + msg) : msg;
     }

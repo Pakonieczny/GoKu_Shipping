@@ -28,7 +28,7 @@ function store(o = {}) {
     return {};
   };
 }
-const run = o => shopifyAttribution({ request: store(o), expectedHost: 'goldenspike.app', expectedVersion: '2' });
+const run = o => shopifyAttribution({ request: store(o), expectedHost: 'goldenspike.app', expectedVersion: '2', ordersArriving: (o || {}).ordersArriving });
 
 (async () => {
   // 1. A correctly wired store is reported healthy, and only then.
@@ -39,13 +39,24 @@ const run = o => shopifyAttribution({ request: store(o), expectedHost: 'goldensp
   check(good.sections.webhooks.topics.every(t => t.ok), 'both required webhooks are recognised');
 
   // 2. A missing orders webhook stops every conversion, permanently.
-  const noOrders = await run({ webhooks: [{ topic: 'refunds/create', address: 'https://goldenspike.app/x' }] });
+  const noOrders = await run({ webhooks: [{ topic: 'refunds/create', address: 'https://goldenspike.app/x' }], ordersArriving: false });
   check(noOrders.summary.blocking.join(' ').includes('orders/paid'), 'a missing orders/paid webhook is blocking');
   check(noOrders.summary.healthy === false, 'a store missing a required webhook is not healthy');
   for (const t of REQUIRED_TOPICS) check(/Without/.test(t.why), t.topic + ' explains what breaks without it');
 
+  // 2b. Shopify's webhooks.json lists only the webhooks the querying app owns.
+  //     When orders are demonstrably reaching the conversion queue, a webhook
+  //     this API cannot see is firing, and reporting it as missing would send
+  //     someone chasing a problem that does not exist.
+  const invisible = await run({ webhooks: [], ordersArriving: true });
+  check(invisible.summary.blocking.length === 0, 'an invisible webhook is not blocking while orders are arriving');
+  check(invisible.summary.warnings.join(' ').includes('orders are reaching the conversion queue'), 'it is reported as a warning that explains why it is not alarming');
+  check(/another app or in the admin/.test(invisible.sections.webhooks.detail), 'the row explains that this API cannot see another app\'s webhooks');
+  const silent = await run({ webhooks: [], ordersArriving: false });
+  check(silent.summary.blocking.join(' ').includes('no evidence of webhook'), 'with no orders arriving and no visible webhook, it IS blocking');
+
   // 3. A webhook pointing somewhere else is as dead as one not registered.
-  const elsewhere = await run({ webhooks: [{ topic: 'orders/paid', address: 'https://someone-elses-app.example/hook' }, { topic: 'refunds/create', address: 'https://goldenspike.app/x' }] });
+  const elsewhere = await run({ webhooks: [{ topic: 'orders/paid', address: 'https://someone-elses-app.example/hook' }, { topic: 'refunds/create', address: 'https://goldenspike.app/x' }], ordersArriving: false });
   check(elsewhere.summary.blocking.join(' ').includes('orders/paid'), 'a webhook registered to another address is not counted');
   check(elsewhere.sections.webhooks.topics[0].registered === 1 && elsewhere.sections.webhooks.topics[0].addressed === 0, 'the row distinguishes registered from addressed to this app');
 
