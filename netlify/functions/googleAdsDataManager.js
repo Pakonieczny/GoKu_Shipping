@@ -220,8 +220,9 @@ function errorDetail(data, status) {
     result.errors = result.errors.slice(0, 10);
     return result;
   }
-  async function health() {
+  async function health({ probeScopes = false } = {}) {
     await loadConnection();
+    if (probeScopes && configured()) { try { await mintToken(); } catch (error) { /* the rows below report it */ } }
     const info = { configured: configured(), transport: 'data_manager', scopes: grantedScopes, missingScopes: grantedScopes ? [SCOPE, COMPANION_SCOPE].filter(s => !grantedScopes.includes(s)) : null, processing: 0, unknown: 0, confirmed: 0, retryable: 0, awaitingAccess: 0, blocked: !configured() };
     const f = fb(); if (!f) return info;
     const queue = f.db.collection(COL.convQueue);

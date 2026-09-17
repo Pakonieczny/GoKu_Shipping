@@ -108,7 +108,7 @@ async function uploadTransport() {
     env: ENV, fetch: require('node-fetch'),
     fb: () => ({ db: require('./firebaseAdmin').firestore() }),
     COL: { convQueue: 'Brites_GAds_ConvQueue' }, ledger: async () => {}
-  }).health();
+  }).health({ probeScopes: true });
   Object.assign(row, health);
   if (!health.configured) {
     row.detail = 'Data Manager is selected but not authorised: connect its own OAuth credentials before any order can upload.';
@@ -159,6 +159,11 @@ async function run(options) {
     try { result.sections.refusals = { id: 'refusals', label: 'Why Google refused them', status: 'available', ...await diagnoseRefusals(options.diagnoseLimit) }; }
     catch (e) { result.sections.refusals = { id: 'refusals', label: 'Why Google refused them', status: 'unavailable', detail: String(e.message || e).slice(0, 240) }; }
   }
+  const all = Object.values(result.sections);
+  result.summary.sections = all.length;
+  result.summary.unavailable = all.filter(s => s.status !== 'available').length;
+  result.summary.read = all.length - result.summary.unavailable;
+  result.summary.healthy = result.summary.blocking.length === 0 && result.summary.unavailable === 0;
   result.store = STORE;
   return result;
 }
