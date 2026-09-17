@@ -263,6 +263,25 @@
   [headers.values]
     Cache-Control = "max-age=0, no-cache, must-revalidate"
 
+# ─── Charm Sorter ⇄ Design Station bridge — September 2026 ──────────────────
+# The sorter (brites-charm-sorter.goldenspike.app) embeds Design Station 1 in an
+# <iframe> and drives it over postMessage (origin-checked, nonced). Two headers
+# make the embedding legal and nothing else: frame-ancestors names the one
+# origin allowed to frame the station, and Cross-Origin-Resource-Policy lets a
+# document served under the site-wide COEP require-corp be framed cross-origin
+# (same-site is enough: both hosts are *.goldenspike.app). The sorter frames
+# the explicit path /design-1.html rather than the subdomain root, because
+# header rules match the REQUEST path and the root is a rewrite (see the
+# SKU_List_V1 caveat above). Always revalidate, like the sorter page.
+[[headers]]
+  for = "/design-1.html"
+  [headers.values]
+    Content-Security-Policy = "frame-ancestors 'self' https://brites-charm-sorter.goldenspike.app"
+    Cross-Origin-Resource-Policy = "same-site"
+    Cache-Control = "max-age=0, no-cache, no-store, must-revalidate"
+    Pragma = "no-cache"
+    Expires = "0"
+
 # ─── Charm Nesting Station — September 2026 ─────────────────────────────────
 # Serves charm-nest-1.html at its own subdomain. Nesting runs in the browser
 # (Web Workers); the page calls charmNestLibrary / charmNestName /

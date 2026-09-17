@@ -389,6 +389,8 @@ html[data-rail=lg] .railFoot{font-size:13px}
 
 /* ── API meter ────────────────────────────────────────────────────────── */
 .apiMeter{display:flex;align-items:center;gap:9px;padding:6px 11px;border:1px solid var(--line);border-radius:11px;background:var(--card);font-size:11px;color:var(--ink45);flex:0 0 auto}
+.apiMeter.alarm{background:#5a1f16!important;color:#fff!important;border-color:#c0553b!important;animation:bbPulse 1.2s ease-in-out infinite}
+.apiMeter.alarm b{color:#ffd6c9!important}
 .topbar .btn,.topbar .navBtn{flex:0 0 auto}
 .apiMeter b{font:12px var(--mono);color:var(--ink);font-weight:700}
 .apiMeter .sep{width:1px;height:16px;background:var(--line)}
@@ -760,6 +762,45 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
   .topTitle h1,.topTitle .sub{max-width:100%}
 }
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ── Charm Sorter bridge: remote-control banner, ticker, sorter claims (design §3.2, §5.5) ── */
+.bridgeBanner{display:flex;align-items:center;gap:10px;padding:7px 16px;background:linear-gradient(95deg,#3b2e14,#5a4520);color:#f6e8c4;border-bottom:1px solid #7a5a1d;font-size:12.5px;z-index:31;min-width:0}
+.bridgeBanner .bbDot{width:9px;height:9px;border-radius:50%;background:var(--gold2);box-shadow:0 0 0 3px rgba(202,168,97,.25);flex:0 0 auto;animation:bbPulse 1.6s ease-in-out infinite}
+@keyframes bbPulse{50%{box-shadow:0 0 0 6px rgba(202,168,97,.08)}}
+.bridgeBanner .bbText{font-weight:700;white-space:nowrap;flex:0 0 auto}
+.bridgeBanner .bbMeta{font-family:var(--mono);color:#e5d3a1;white-space:nowrap;flex:0 0 auto;font-size:11.5px}
+.bridgeBanner .bbTicker{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#f6e8c4;opacity:.92}
+.bridgeBanner .bbTicker b{color:#fff;font-weight:650}
+.bridgeBanner .btn{border-color:#8a6a2a;color:#f6e8c4;background:transparent}
+.bridgeBanner.down{background:linear-gradient(95deg,#4a2418,#6a3222);border-color:#8a3a26}
+.bridgeBanner.down .bbDot{background:var(--clay);animation:none}
+/* the sorter's own activity, streamed under the banner: what it is doing on its side (pulling, pooling, nesting, fitting,
+   labels) so a person at this station sees the whole run, not only the commands that reach this page */
+.bridgeFeed{display:flex;align-items:baseline;gap:10px;padding:4px 16px;background:#1f1a12;color:#d9c9a3;border-bottom:1px solid #4a3a1a;font:11.5px var(--mono);z-index:31;min-width:0}
+.bridgeFeed .bfLabel{color:#caa861;font-weight:700;flex:0 0 auto}
+.bridgeFeed .bfNow{color:#fff;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;max-width:55%}
+.bridgeFeed .bfHist{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.7}
+.bridgeFeed .bfHist span{margin-right:14px}
+.bridgeFeed .bfHist span b{color:#caa861;font-weight:650}
+/* ── remote cursor: the sorter's hand on this page. A distinct pointer (a spear-tip with a ring) in white with a blue glow,
+   so it can never be mistaken for the person's own cursor; it glides to the control a command acts on, presses it with a
+   ripple, and names the action in a tag. Pointer events pass straight through it. ── */
+#rcCursor{position:fixed;left:0;top:0;z-index:100000;pointer-events:none;width:30px;height:36px;opacity:0;transform:translate(-200px,-200px);transition:transform .34s cubic-bezier(.22,.8,.24,1),opacity .28s ease;filter:drop-shadow(0 0 5px #3b82f6) drop-shadow(0 0 14px rgba(59,130,246,.8))}
+#rcCursor.on{opacity:1}
+#rcCursor.fast{transition-duration:.14s}
+#rcCursor svg{width:30px;height:36px;display:block;transform-origin:3px 3px}
+#rcCursor.click svg{animation:rcPress .22s ease-out}
+#rcCursor .rcTag{position:absolute;left:26px;top:24px;background:#1d4ed8;color:#fff;font:600 11.5px/1.2 var(--mono);padding:3px 8px;border-radius:7px;white-space:nowrap;box-shadow:0 2px 10px rgba(29,78,216,.5);max-width:340px;overflow:hidden;text-overflow:ellipsis}
+#rcCursor .rcTag:empty{display:none}
+.rcRipple{position:fixed;z-index:99999;pointer-events:none;width:16px;height:16px;border-radius:50%;border:2px solid #60a5fa;box-shadow:0 0 14px #3b82f6;transform:translate(-50%,-50%) scale(.4);opacity:.95;animation:rcRipple .6s ease-out forwards}
+.rcTarget{outline:2px solid #3b82f6 !important;outline-offset:2px;box-shadow:0 0 0 4px rgba(59,130,246,.22),0 0 18px rgba(59,130,246,.55) !important;transition:box-shadow .2s,outline-color .2s}
+@keyframes rcPress{0%{transform:scale(1)}45%{transform:scale(.78)}100%{transform:scale(1)}}
+@keyframes rcRipple{to{transform:translate(-50%,-50%) scale(3.2);opacity:0}}
+@media (prefers-reduced-motion:reduce){#rcCursor{transition-duration:.01s}.rcRipple{animation-duration:.2s}}
+.orderRow.claimed .oNum::after{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--gold2);margin-left:6px;vertical-align:1px;box-shadow:0 0 0 2px rgba(202,168,97,.22)}
+.orderRow.claimed{background-color:rgba(202,168,97,.06)}
+.tile.claimed .tOrder::after{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--gold2);margin-left:5px;vertical-align:1px}
+.qrSorterNote{font-size:12px;color:var(--ink70);background:var(--goldSoft);border-left:3px solid var(--gold2);border-radius:6px;padding:8px 10px;margin-bottom:10px;line-height:1.45}
 </style>
 </head>
 <body>
@@ -895,6 +936,14 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
 
   <!-- ══════════════ MAIN ══════════════ -->
   <main class="main">
+    <div class="bridgeBanner hidden" id="bridgeBanner" role="status">
+      <span class="bbDot"></span>
+      <span class="bbText" id="bridgeTitle">Controlled by Charm Sorter</span>
+      <span class="bbMeta" id="bridgeMeta">session — · 0 commands</span>
+      <span class="bbTicker" id="bridgeTicker"></span>
+      <button class="btn ghost xs" id="bridgeRelease" title="End remote control from this station">Release</button>
+    </div>
+    <div class="bridgeFeed hidden" id="bridgeFeed" role="log" aria-live="polite"><span class="bfLabel">Sorter</span><span class="bfNow" id="bridgeFeedNow"></span><span class="bfHist" id="bridgeFeedHist"></span></div>
     <header class="topbar">
       <button class="navBtn" id="railToggle" aria-label="Toggle order list" title="Toggle order list (\)">☰</button>
 
@@ -909,10 +958,12 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
 
       <div class="spacer"></div>
 
-      <div class="apiMeter" id="apiMeter" title="Etsy API calls made by this tab">
+      <div class="apiMeter" id="etsyHud" title="Etsy API calls made by this tab">
         <span>QPS <b id="etsyMaxQps">0</b></span>
         <span class="sep"></span>
         <span>Calls <b id="etsyTotal">0</b></span>
+        <span title="Etsy calls in the current 10-minute window">10m <b id="etsy10m">0</b></span>
+        <span title="Etsy calls today, kept across reloads">Today <b id="etsyDay">0</b></span>
       </div>
 
       <button class="btn ghost sm liveOnly" id="undoCompleteBtn" disabled title="Restore the last printed batch">↩ Undo</button>
@@ -1061,6 +1112,7 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
       <div class="right"><span class="pill neutral" id="qrSummary">—</span></div>
     </div>
     <div class="dlgBody">
+      <div class="qrSorterNote hidden" id="qrSorterNote">Labels are produced and saved by the Charm Sorter, one per sheet, with the set. Nothing is printed from this station; the orders are marked complete when the sorter commits the set. The print route can be re-enabled in Settings.</div>
       <div class="qrNotes hidden" id="qrNotes"></div>
       <div class="qrGrid" id="qrPreviewGrid"></div>
     </div>
@@ -1233,12 +1285,13 @@ const Activity = (() => {
   return {
     show(message) {
       depth++;
+      if (typeof Bridge !== "undefined") Bridge.hooks.activity(message || "Working…");
       const b = box(); if (!b) return;
       txt().textContent = message || "Working…";
       bar().style.width = "0%";
       b.classList.add("show");
     },
-    msg(message) { const t = txt(); if (t) t.textContent = message; },
+    msg(message) { const t = txt(); if (t) t.textContent = message; if (typeof Bridge !== "undefined") Bridge.hooks.activity(message); },
     progress(done, total) {
       const b = bar(); if (!b) return;
       b.style.width = total > 0 ? Math.round((done / total) * 100) + "%" : "0%";
@@ -1286,6 +1339,7 @@ const SETTINGS_DEFAULTS = {
   autoHydrate: true,           // pull an order's items as its row nears the viewport
   bgTopUp    : true,           // then quietly finish the rest so the totals are exact
   autoHeal   : true,           // run the repair/heal passes after a refresh
+  labelsFromSorter: true,      // the Charm Sorter saves one QR label per sheet and commits completions; the print button is hidden
 };
 let SETTINGS = { ...SETTINGS_DEFAULTS };
 
@@ -1535,7 +1589,56 @@ function countsAreEmpty(counts) {
 /* ═══ 5 · ETSY REQUEST PIPELINE ══════════════════════════════════════════ */
 
 /* Live call meter for the topbar HUD. */
-const etsyMeter = { total:0, times:[], maxQps:0 };
+const etsyMeter = { total:0, times:[], maxQps:0, minute:[], buckets:{}, byOrder:{}, day:"", dayTotal:0, status429:0, errors:0, lastAt:0, alarm:null, brakeUntil:0 };
+/* ── the Etsy call ledger: every call this page makes is counted at the fetch wrapper (the one place they all pass), kept
+   in 10-minute buckets for the last hour, a per-day total that survives reloads (Etsy's quota is per day), and a watchdog
+   that recognises a burst, a hot 10 minutes, the same order re-read over and over, or a 429 — and puts the brakes on:
+   the bridge's Etsy-touching commands and the background heal passes wait out the brake; a person's own Refresh still
+   works. Limits live in ETSY_GUARD and are deliberately well under Etsy's 10 000/day. ── */
+const ETSY_GUARD = { burstPerMinute: 60, per10Min: 150, sameOrderPer10Min: 4, brakeMs: 5 * 60 * 1000 };
+const ETSY_LS = "designStation.etsyMeter.v1";
+(function loadEtsyDay() { try { const j = JSON.parse(localStorage.getItem(ETSY_LS) || "null"); const today = new Date().toDateString(); if (j && j.day === today) { etsyMeter.day = j.day; etsyMeter.dayTotal = Number(j.dayTotal) || 0; etsyMeter.buckets = j.buckets || {}; } else etsyMeter.day = today; } catch (_) { etsyMeter.day = new Date().toDateString(); } })();
+function etsyBucketKey(t) { return String(Math.floor(t / 600000)); }
+function etsyLast(ms) { const cut = Date.now() - ms; let n = 0; for (const [k, v] of Object.entries(etsyMeter.buckets)) if (Number(k) * 600000 + 600000 > cut) n += v; return n; }
+function etsyLast10() { return etsyMeter.buckets[etsyBucketKey(Date.now())] || 0; }
+function etsyMeterSnapshot() {
+  const now = Date.now(); const cut60 = now - 60000; while (etsyMeter.minute.length && etsyMeter.minute[0] < cut60) etsyMeter.minute.shift();
+  return { total: etsyMeter.total, lastMinute: etsyMeter.minute.length, last10Min: etsyLast10(), lastHour: etsyLast(3600000), today: etsyMeter.dayTotal, maxQps: etsyMeter.maxQps, status429: etsyMeter.status429, errors: etsyMeter.errors, lastAt: etsyMeter.lastAt, alarm: etsyMeter.alarm, braked: etsyMeter.brakeUntil > now, brakeUntil: etsyMeter.brakeUntil, guard: ETSY_GUARD, at: now };
+}
+function etsyBraked() { return etsyMeter.brakeUntil > Date.now(); }
+function etsyAlarm(why) {
+  const now = Date.now(); if (etsyMeter.alarm && now - etsyMeter.alarm.at < 60000) return;
+  etsyMeter.alarm = { why, at: now }; etsyMeter.brakeUntil = now + ETSY_GUARD.brakeMs;
+  console.warn("Etsy watchdog:", why);
+  try { toast(`Etsy watchdog: ${why} — automatic Etsy work paused for ${Math.round(ETSY_GUARD.brakeMs / 60000)} min`, "bad", 10000); } catch (_) {}
+  try { if (typeof Bridge !== "undefined" && Bridge.active()) { Bridge.emit("etsy.alarm", Object.assign({ why }, etsyMeterSnapshot())); Bridge.ticker(`Etsy watchdog: ${why}`); } } catch (_) {}
+  paintEtsyHud();
+}
+function etsyRecord(url) {
+  const now = Date.now(); etsyMeter.total++; etsyMeter.lastAt = now;
+  etsyMeter.times.push(now); const cutoff = now - 1000; while (etsyMeter.times.length && etsyMeter.times[0] < cutoff) etsyMeter.times.shift();
+  if (etsyMeter.times.length > etsyMeter.maxQps) etsyMeter.maxQps = etsyMeter.times.length;
+  etsyMeter.minute.push(now); const cut60 = now - 60000; while (etsyMeter.minute.length && etsyMeter.minute[0] < cut60) etsyMeter.minute.shift();
+  const today = new Date().toDateString(); if (etsyMeter.day !== today) { etsyMeter.day = today; etsyMeter.dayTotal = 0; etsyMeter.buckets = {}; }
+  etsyMeter.dayTotal++;
+  const k = etsyBucketKey(now); etsyMeter.buckets[k] = (etsyMeter.buckets[k] || 0) + 1;
+  for (const bk of Object.keys(etsyMeter.buckets)) if (Number(bk) < Number(k) - 6) delete etsyMeter.buckets[bk];
+  const m = /orderId=(\d+)/.exec(String(url || "")); if (m) { const o = etsyMeter.byOrder[m[1]] = (etsyMeter.byOrder[m[1]] || []).filter(t => t > now - 600000); o.push(now); if (o.length > ETSY_GUARD.sameOrderPer10Min) etsyAlarm(`order ${m[1]} read ${o.length} times in 10 minutes`); }
+  if (etsyMeter.minute.length > ETSY_GUARD.burstPerMinute) etsyAlarm(`${etsyMeter.minute.length} Etsy calls in one minute`);
+  else if (etsyMeter.buckets[k] > ETSY_GUARD.per10Min) etsyAlarm(`${etsyMeter.buckets[k]} Etsy calls in 10 minutes`);
+  try { localStorage.setItem(ETSY_LS, JSON.stringify({ day: etsyMeter.day, dayTotal: etsyMeter.dayTotal, buckets: etsyMeter.buckets })); } catch (_) {}
+  paintEtsyHud();
+}
+function paintEtsyHud() {
+  const a = $("#etsyMaxQps"), b = $("#etsyTotal"), c = $("#etsy10m"), d = $("#etsyDay"), h = $("#etsyHud");
+  if (a) a.textContent = String(etsyMeter.maxQps);
+  if (b) b.textContent = String(etsyMeter.total);
+  if (c) c.textContent = String(etsyLast10());
+  if (d) d.textContent = String(etsyMeter.dayTotal);
+  if (h) { const braked = etsyBraked(); h.classList.toggle("alarm", braked); h.title = braked ? `Etsy watchdog: ${etsyMeter.alarm && etsyMeter.alarm.why} — automatic Etsy work paused until ${new Date(etsyMeter.brakeUntil).toLocaleTimeString()}` : `Etsy calls made by this page: ${etsyMeter.total} this session · ${etsyLast10()} in the current 10-minute window · ${etsyLast(3600000)} in the last hour · ${etsyMeter.dayTotal} today · peak ${etsyMeter.maxQps}/s`; }
+}
+// the 10-minute window rolls on its own even when nothing is being called, and the brake clears itself
+setInterval(paintEtsyHud, 10000);
 (function wrapFetchForMeter() {
   if (window.__etsyFetchWrapped) return;
   window.__etsyFetchWrapped = true;
@@ -1545,21 +1648,12 @@ const etsyMeter = { total:0, times:[], maxQps:0 };
       return /\/\.netlify\/functions\/(etsy|etsyImages|etsyOrderProxy|listOpenOrders|refreshEtsyToken|exchangeToken)\b/i.test(url);
     } catch (_) { return false; }
   };
-  const paint = () => {
-    const a = $("#etsyMaxQps"), b = $("#etsyTotal");
-    if (a) a.textContent = String(etsyMeter.maxQps);
-    if (b) b.textContent = String(etsyMeter.total);
-  };
   const orig = window.fetch;
   window.fetch = function (input, init) {
     if (isEtsyCall(input)) {
-      const now = Date.now();
-      etsyMeter.total++;
-      etsyMeter.times.push(now);
-      const cutoff = now - 1000;
-      while (etsyMeter.times.length && etsyMeter.times[0] < cutoff) etsyMeter.times.shift();
-      if (etsyMeter.times.length > etsyMeter.maxQps) etsyMeter.maxQps = etsyMeter.times.length;
-      paint();
+      etsyRecord((typeof input === "string") ? input : (input && input.url) || "");
+      // the outcome is counted too: a 429 is the strongest signal the watchdog can get
+      return orig.apply(this, arguments).then(resp => { if (resp && resp.status === 429) { etsyMeter.status429++; etsyAlarm("Etsy answered 429 (rate limited)"); } else if (resp && resp.status >= 500) etsyMeter.errors++; return resp; }, err => { etsyMeter.errors++; throw err; });
     }
     return orig.apply(this, arguments);
   };
@@ -1871,6 +1965,14 @@ function takeVerifier(state) {
 
 let __oauthInFlight = false;
 async function startOAuth(reason = "auto") {
+  if (typeof Bridge !== "undefined" && Bridge.framed()) {
+    // Etsy refuses to be framed: the sign-in has to happen in the station's own tab. The token lands in this
+    // origin's localStorage and the framed copy picks it up on its next call.
+    setConn("bad", "Sign in at the Design Station tab");
+    toast("Etsy sign-in is needed — open design-1.goldenspike.app in its own tab and press Connect Etsy", "bad", 8000);
+    Bridge.emit("etsy.signin", { reason });
+    return;
+  }
   if (__oauthInFlight) return;
   __oauthInFlight = true;
   try {
@@ -1997,6 +2099,7 @@ const RT = {
 };
 
 let rtSelected = new Map();   // receipt_id → owner clientId
+let rtClaims   = new Map();   // receipt_id → { claimedBy, run } — the Charm Sorter's gold dot, never a lock
 let __rtSince    = Date.now() - 5 * 60 * 1000;
 let __rtInflight = null;
 let __rtIdleHits = 0;
@@ -2017,7 +2120,14 @@ function clearLock(id) {
     el.removeAttribute("title");
   });
 }
-function applyAllLocksToDOM() { rtSelected.forEach((owner, id) => paintLock(id, owner)); }
+function applyAllLocksToDOM() { rtSelected.forEach((owner, id) => paintLock(id, owner)); rtClaims.forEach((c, id) => paintClaim(id, true)); }
+function paintClaim(id, on) {
+  $$(`.orderRow[data-receipt='${cssEsc(id)}'], .tile[data-receipt='${cssEsc(id)}']`).forEach(el => {
+    el.classList.toggle("claimed", !!on);
+    const c = rtClaims.get(String(id));
+    if (on && c) el.dataset.claim = `In a Charm Sorter run${c.run ? " · " + c.run : ""}`; else delete el.dataset.claim;
+  });
+}
 
 function cssEsc(v) { return String(v).replace(/['"\\]/g, "\\$&"); }
 
@@ -2093,6 +2203,8 @@ async function fetchAllLocksOnce() {
     const r = await fetch(`${FN}/firebaseOrders?rt=1`);
     const j = await r.json();
     rtSelected = new Map(Object.entries(j.locks || {}).map(([id, doc]) => [id, doc.selectedBy || null]));
+    const prevClaims = rtClaims; rtClaims = new Map(Object.entries(j.claims || {}));
+    prevClaims.forEach((_, id) => { if (!rtClaims.has(id)) paintClaim(id, false); });
     applyAllLocksToDOM();
   } catch (e) { console.warn("hydrate locks failed", e); }
 }
@@ -2115,6 +2227,9 @@ function fetchLocksOnce() {
       (json.unlocks || []).forEach(id => {
         if (rtSelected.has(id)) { rtSelected.delete(id); clearLock(id); changed++; }
       });
+      Object.entries(json.claims || {}).forEach(([id, c]) => { rtClaims.set(id, c); paintClaim(id, true); });
+      (json.unclaims || []).forEach(id => { if (rtClaims.has(id)) { rtClaims.delete(id); paintClaim(id, false); } });
+      if (changed && Bridge.active()) Bridge.hooks.locks();
       __rtSince = Number(json.now) || Date.now();
       __rtIdleHits = changed ? 0 : (__rtIdleHits + 1);
       applyAllLocksToDOM();
@@ -2599,6 +2714,7 @@ function decorateReceipt(r) {
 }
 
 /** Load one order's items — memory, then disk, then Etsy. */
+const __hydrateInflight = new Map();   // rid → promise: two askers for one order (a row scrolling into view and the bridge) share one Etsy read
 async function hydrateOrder(rid, { force = false } = {}) {
   rid = String(rid);
   const rec = allOpenReceipts.find(r => String(r.receipt_id) === rid)
@@ -2613,13 +2729,18 @@ async function hydrateOrder(rid, { force = false } = {}) {
       orderCache[rid] = disk.txs.map(t => ({ ...t }));
       return orderCache[rid];
     }
+    if (__hydrateInflight.has(rid)) return __hydrateInflight.get(rid);
   }
 
-  const data = await pullEtsyOrderDetails(rid);
-  const txs  = data?.transactions || [];
-  orderCache[rid] = txs;
-  if (txs.length) cachePut(rid, txs, stamp, data?.receipt);
-  return txs;
+  const p = (async () => {
+    const data = await pullEtsyOrderDetails(rid);
+    const txs  = data?.transactions || [];
+    orderCache[rid] = txs;
+    if (txs.length) cachePut(rid, txs, stamp, data?.receipt);
+    return txs;
+  })();
+  __hydrateInflight.set(rid, p);
+  try { return await p; } finally { if (__hydrateInflight.get(rid) === p) __hydrateInflight.delete(rid); }
 }
 
 /** Fold freshly-loaded items back into a receipt + its row. */
@@ -2814,6 +2935,7 @@ function paintRow(rid, rowEl, recEl) {
     row.classList.toggle("attn",      !!r._attn);
     const owner = rtSelected.get(rid);
     row.classList.toggle("rtLocked", !!owner && owner !== RT.clientId);
+    row.classList.toggle("claimed", rtClaims.has(rid));
   });
 }
 
@@ -3059,8 +3181,10 @@ function revealOrder(rid, { flash = true } = {}) {
  * Only receipts that are NEW, or that Etsy reports as CHANGED, cost a detail
  * call — and those happen lazily as the operator scrolls.
  */
+let __sweepInFlight = 0;   // an Etsy sweep in progress: the bridge refuses a commit while one runs
 async function buildNewOrderList() {
   if (allOpenReceipts.length === 0) {
+    __sweepInFlight++;
     Activity.show("Loading open Etsy orders…");
     try {
       const raw = await fetchOpenOrdersSequential(n => Activity.msg(`Loading open Etsy orders… ${n}`));
@@ -3080,9 +3204,10 @@ async function buildNewOrderList() {
         decorateReceipt(r);
       });
       allOpenReceipts = raw;
+      Bridge.hooks.swept();
       console.log(`Open orders: ${raw.length} · ${fromCache} from cache · ${needFetch} need a detail call`);
       window.__lastLoadStats = { total: raw.length, fromCache, needFetch };
-    } finally { Activity.hide(); }
+    } finally { Activity.hide(); __sweepInFlight = Math.max(0, __sweepInFlight - 1); }
   }
 
   pruneStaleSelection();
@@ -3090,11 +3215,13 @@ async function buildNewOrderList() {
   await refreshStaffNoteIDs({ mode:"all" });
   markStaffNoteOrders();
   refreshMessageFlags();
+  Bridge.hooks.orders();
   return currentReceipts.length;
 }
 
 /** Re-fetch items for rows that are rendered but still blank. */
 async function repairMissingReceiptData({ passes = 2, concurrency = 4 } = {}) {
+  if (typeof etsyBraked === "function" && etsyBraked()) return;   // the watchdog brake: no background re-reads
   const myRun = updateRunId;
   for (let pass = 1; pass <= passes; pass++) {
     // Scoped to rows on screen. Sweeping every rendered row would undo the
@@ -3124,6 +3251,7 @@ async function repairMissingReceiptData({ passes = 2, concurrency = 4 } = {}) {
 
 /** Re-derive metals for rendered rows still showing nothing. */
 async function healZeroMetalRows({ passes = 2, concurrency = 4 } = {}) {
+  if (typeof etsyBraked === "function" && etsyBraked()) return;
   const myRun = updateRunId;
   for (let pass = 1; pass <= passes; pass++) {
     const zero = visibleReceiptIds()
@@ -3323,6 +3451,7 @@ function makeTile(tx) {
   if (msgOrderIDs.has(String(tx.receipt_id || ""))) tile.classList.add("hasMsg");
   if (completedOrders.has(rid)) tile.classList.add("isDone");
   if (selectedOrders.has(rid))  tile.classList.add("selected");
+  if (rtClaims.has(rid))        tile.classList.add("claimed");
 
   const imgBox = document.createElement("div");
   imgBox.className = "tileImg";
@@ -4180,8 +4309,10 @@ async function handleCompleteClick() {
   showQrPreviewModal(pendingJobs, { skipped, stale, multi, solid, mixedTarget, orders: distinct.size });
 }
 
+let lastPreviewNotes = null;   // what the last preview reported (the bridge returns it with complete.preview)
 function showQrPreviewModal(jobs, notes = {}) {
   const { skipped = [], stale = [], multi = [], solid = [], mixedTarget = {}, orders = 0 } = notes;
+  lastPreviewNotes = { skipped, stale, multi, solid, mixedTarget, orders };
   const grid = $("#qrPreviewGrid");
   grid.innerHTML = "";
 
@@ -4253,6 +4384,8 @@ function showQrPreviewModal(jobs, notes = {}) {
   $("#qrSummary").title = title;
 
   $("#qrPreviewPrintBtn").disabled = !jobs.length;
+  $("#qrPreviewPrintBtn").classList.toggle("hidden", !!SETTINGS.labelsFromSorter);
+  $("#qrSorterNote")?.classList.toggle("hidden", !SETTINGS.labelsFromSorter);
   openDlg($("#qrPreviewModal"));
 }
 
@@ -4271,10 +4404,10 @@ async function resolvePrintPage() {
 }
 
 /** Post "DESIGNED :)" into each order's Brites chat. */
-async function markBritesDesigned(orderIds) {
+async function markBritesDesigned(orderIds, senderName) {
   const ids = Array.from(new Set((orderIds || []).map(String)));
   if (!ids.length) return;
-  const staff = (localStorage.getItem(LS.employee) || "Design").trim();
+  const staff = (senderName || localStorage.getItem(LS.employee) || "Design").trim();
 
   const chunk = (arr, n = 10) => { const o = []; for (let i = 0; i < arr.length; i += n) o.push(arr.slice(i, i + n)); return o; };
   for (const group of chunk(ids, 10)) {
@@ -4408,51 +4541,67 @@ async function proceedToPrint() {
   // De-duped: a mixed-metal order appears on several labels but is one order,
   // so it is completed, unlocked, messaged and archived exactly once.
   const printedIDs = [...new Set(Object.values(lists).flat().map(String))];
-  lastClearedReceipts = [...printedIDs];
-
-  printedIDs.forEach(rid => {
-    removePreviewBoxesForOrder(rid, { force:true });
-    $$(`#newOrderContainer .orderRow[data-receipt='${cssEsc(rid)}']`).forEach(r => r.remove());
-    delete orderCache[rid];
-    selectedOrders.delete(rid);
-    completedOrders.add(rid);
-  });
-
-  allOpenReceipts = allOpenReceipts.filter(r => !printedIDs.includes(String(r.receipt_id)));
-  currentReceipts = currentReceipts.filter(r => !printedIDs.includes(String(r.receipt_id)));
-
-  await persistCompleted(printedIDs);
-  try {
-    await fetch(`${FN}/firebaseOrders`, {
-      method:"POST", headers:{ "Content-Type":"application/json" },
-      body:JSON.stringify({ rtUnlockIds: printedIDs, clientId: RT.clientId })
-    });
-    printedIDs.forEach(id => { rtSelected.delete(id); });
-  } catch (e) { console.warn("Unlock after complete failed:", e); }
-
-  persistSelection();
-  updateCounters();
-  applyMetalFilter();
-  refreshChrome();
+  await commitCompletion(printedIDs, { labels: null, completedBy: null });
   const labelEntries = Object.values(lists).flat().length;
   toast(`${printedIDs.length} order${printedIDs.length !== 1 ? "s" : ""} completed`
         + (labelEntries !== printedIDs.length ? ` · ${labelEntries} label entries` : ""), "ok");
-
-  try { await markBritesDesigned(printedIDs); }
-  catch (e) { console.warn("markBritesDesigned failed:", e); }
-
-  // Archive last and in the background: the operator is already at the printer
-  // and this must never be the thing that delays them.
-  archiveOrders(printedIDs).catch(e => console.warn("archive after print failed", e));
-
   pendingJobs = pendingLists = null;
 }
 
+/**
+ * The second half of a completion, shared by the print button (after the print handshake) and by the Charm
+ * Sorter's complete.commit (after it has saved one QR label per sheet): ledger, unlock, "DESIGNED :)" in each
+ * order's chat, archive — the archived record keeps where the labels were saved (design §4.6).
+ */
+let __commitInFlight = 0;
+async function commitCompletion(ids, { labels = null, setId = null, sheetIds = null, backCount = null, runId = null, completedBy = null } = {}) {
+  const printedIDs = [...new Set((ids || []).map(String))];
+  if (!printedIDs.length) return { completed: [] };
+  __commitInFlight++;
+  try {
+    lastClearedReceipts = [...printedIDs];
+    printedIDs.forEach(rid => {
+      removePreviewBoxesForOrder(rid, { force:true });
+      $$(`#newOrderContainer .orderRow[data-receipt='${cssEsc(rid)}']`).forEach(r => r.remove());
+      delete orderCache[rid];
+      selectedOrders.delete(rid);
+      completedOrders.add(rid);
+    });
+    allOpenReceipts = allOpenReceipts.filter(r => !printedIDs.includes(String(r.receipt_id)));
+    currentReceipts = currentReceipts.filter(r => !printedIDs.includes(String(r.receipt_id)));
+
+    await persistCompleted(printedIDs);
+    try {
+      await fetch(`${FN}/firebaseOrders`, {
+        method:"POST", headers:{ "Content-Type":"application/json" },
+        body:JSON.stringify({ rtUnlockIds: printedIDs, clientId: RT.clientId })
+      });
+      printedIDs.forEach(id => { rtSelected.delete(id); });
+    } catch (e) { console.warn("Unlock after complete failed:", e); }
+
+    persistSelection();
+    updateCounters();
+    applyMetalFilter();
+    refreshChrome();
+
+    try { await markBritesDesigned(printedIDs, completedBy); }
+    catch (e) { console.warn("markBritesDesigned failed:", e); }
+
+    // Archive last and in the background: the operator is already at the printer
+    // and this must never be the thing that delays them.
+    archiveOrders(printedIDs, { completedBy, extra: { labels, setId, sheetIds, backCount, runId } }).catch(e => console.warn("archive after completion failed", e));
+    Bridge.emit("complete.done", { completed: printedIDs, setId, runId });
+    return { completed: printedIDs };
+  } finally { __commitInFlight = Math.max(0, __commitInFlight - 1); }
+}
+
 /** Restore the most recent printed batch. */
+let __undoInFlight = 0;
 async function handleUndoComplete() {
   if (!lastClearedReceipts.length) { toast("Nothing to undo"); return; }
   const ids = [...lastClearedReceipts];
 
+  __undoInFlight++;
   Activity.show(`Restoring ${ids.length} order${ids.length !== 1 ? "s" : ""}…`);
   try {
     for (const rid of ids) {
@@ -4485,7 +4634,7 @@ async function handleUndoComplete() {
     lastClearedReceipts = [];
     refreshChrome();
     toast("Orders restored", "ok");
-  } finally { Activity.hide(); }
+  } finally { Activity.hide(); __undoInFlight = Math.max(0, __undoInFlight - 1); }
 }
 
 /* ═══ 16 · LISTING MODAL ═════════════════════════════════════════════════ */
@@ -4616,6 +4765,7 @@ async function openListingModal(txid) {
   catch (e) { console.warn("BritesChat.open failed", e); }
 
   openDlg($("#listingModal"));
+  Bridge.emit("ui.modal", { open: "listing", transactionId: String(txid), receiptId: rid });
 }
 
 async function toggleSkipOrder() {
@@ -5144,6 +5294,15 @@ const BritesChat = (() => {
   }
 
   return {
+    /** Post one internal message under a given sender name (the Charm Sorter posts as "Charm Sorter"). */
+    async postAs(rid, text, sender) {
+      rid = String(rid || "").trim(); text = String(text || "").trim(); sender = String(sender || "Charm Sorter").trim();
+      if (!rid || !text) throw new Error("receipt and text required");
+      try { await postText(rid, text, sender); }
+      catch (_) { await directWrite(rid, { text, senderName: sender, senderRole: "staff" }); }
+      try { setMessageFlag(rid, true); } catch (_) {}
+      return true;
+    },
     open(rid) {
       wire();
       if (!el.thread) return;
@@ -5508,7 +5667,7 @@ function buildArchiveRecord(rid, data, { completedBy } = {}) {
  * delays the operator, and falls back to the cached copy if Etsy is unreachable
  * — losing detail is better than losing the record.
  */
-async function archiveOrders(ids, { completedBy, quiet = false } = {}) {
+async function archiveOrders(ids, { completedBy, quiet = false, extra = null } = {}) {
   const list = [...new Set((ids || []).map(String))];
   if (!list.length) return { saved: 0 };
 
@@ -5528,6 +5687,7 @@ async function archiveOrders(ids, { completedBy, quiet = false } = {}) {
           data = { receipt: { ...rc, receipt_id: rid }, transactions: orderCache[rid] || [] };
         }
         const rec = buildArchiveRecord(rid, data, { completedBy });
+        if (extra) { for (const [k, v] of Object.entries(extra)) if (v != null) rec[k] = v; }
         // A record with no items, no buyer and no address means the read failed
         // outright. Writing it would poison the archive with an empty document
         // that then looks "already archived" and never gets retried.
@@ -6235,6 +6395,7 @@ function scrollQueue(dir) {
 }
 
 function refreshChrome() {
+  if (typeof Bridge !== "undefined") Bridge.hooks.selection();
   if (APP_MODE === "history") { paintHistHeader(); paintBrandStrip(); return refreshChromeHistory(); }
   const sel  = selectedOrders.size;
   const rowEls  = $$("#newOrderContainer .orderRow");
@@ -6320,6 +6481,7 @@ function buildSettingsUI() {
     { id:"autoHydrate", nm:"Read order details while scrolling", ds:"Pulls each order's items as its row nears the screen, so metal columns fill in as you go. Cached results are reused and never re-fetched.", sw:true },
     { id:"bgTopUp", nm:"Finish reading in the background", ds:"After the visible rows are done, quietly read the rest one at a time so the per-metal order totals and the overdue count are exact. Cached, so it only ever happens once per order.", sw:true },
     { id:"autoHeal", nm:"Repair blank metal counts", ds:"After a refresh, re-read any order whose metal columns came back empty.", sw:true },
+    { id:"labelsFromSorter", nm:"Labels come from the Charm Sorter", ds:"On: the sorter saves one QR label per sheet with the set and marks orders design-complete over the bridge; the Print labels button is hidden here. Off: the old print route (design-print-1.html) is back for this station.", sw:true },
   ];
 
   body.innerHTML = "";
@@ -6467,6 +6629,22 @@ function wireQueueScroll() {
   }, { passive:true });
 }
 
+/** The Refresh button's sequence: one sweep of Etsy's open list, then locks, heals and the selected previews. */
+async function refreshOrders({ heal = true } = {}) {
+  abortAllUpdateWork();
+  updateRunId++;
+  allOpenReceipts = [];
+  resetMessageFlags();          // a manual Refresh re-reads message flags
+  await restoreCompleted();
+  await buildNewOrderList();
+  await fetchAllLocksOnce();
+  if (SETTINGS.autoHeal && heal) {   // the bridge hydrates every order itself, so it asks for no heal passes: one read per order
+    await repairMissingReceiptData({ passes:1, concurrency:4 });
+    await healZeroMetalRows({ passes:1, concurrency:4 });
+  }
+  await ensureSelectedPreviews();
+}
+
 function wireUI() {
   wireQueueScroll();
 
@@ -6487,18 +6665,7 @@ function wireUI() {
     btn.disabled = true;
     btn.innerHTML = `<span class="spin"></span>Loading`;
     try {
-      abortAllUpdateWork();
-      updateRunId++;
-      allOpenReceipts = [];
-      resetMessageFlags();          // a manual Refresh re-reads message flags
-      await restoreCompleted();
-      await buildNewOrderList();
-      await fetchAllLocksOnce();
-      if (SETTINGS.autoHeal) {
-        await repairMissingReceiptData({ passes:1, concurrency:4 });
-        await healZeroMetalRows({ passes:1, concurrency:4 });
-      }
-      await ensureSelectedPreviews();
+      await refreshOrders();
       const st = window.__lastLoadStats;
       toast(st
         ? `${st.total} open orders · ${st.fromCache} served from cache, ${st.needFetch} to read`
@@ -6540,7 +6707,8 @@ function wireUI() {
 
   /* One teardown point for every way the dialog can close — button,
      backdrop, or Esc — so the Firestore listener never leaks. */
-  $("#listingModal")?.addEventListener("close", () => BritesChat.close());
+  $("#listingModal")?.addEventListener("close", () => { BritesChat.close(); Bridge.emit("ui.modal", { open: null }); });
+  $("#bridgeRelease")?.addEventListener("click", () => Bridge.endSession("released at the station"));
 
   $("#settingsBtn")?.addEventListener("click", () => { buildSettingsUI(); openDlg($("#settingsModal")); });
   $("#stClose")?.addEventListener("click", () => closeDlg($("#settingsModal")));
@@ -6643,6 +6811,412 @@ async function boot() {
   });
 }
 
+
+/* ═══ 20 · BRIDGE — remote control by the Charm Sorter ══════════════════
+   The sorter (brites-charm-sorter.goldenspike.app) embeds this page in an <iframe> and drives it with postMessage
+   (design doc §3, §4). Every message carries source + a session nonce and is checked against a fixed origin
+   allow-list; anything else is dropped and counted. Every command gets exactly one ack, zero or more progress
+   messages and one done or error. Commands wrap the functions the buttons call; nothing is duplicated.
+
+   Guards that hold whatever the driver: complete.commit needs a complete.preview of the same ids in this session
+   and a non-empty labels.files list; it is refused while a sweep, an undo or another commit is in flight; the
+   station's own locks, claims and undo are unchanged. Firestore only logs the session (from the sorter's side);
+   it is never in the control path.                                                                              */
+const BRIDGE_BUILD = "design-1 · bridge 1";
+const Bridge = (() => {
+  const ALLOWED = new Set(["https://brites-charm-sorter.goldenspike.app", "https://goldenspike.app", "http://localhost:8888", "http://127.0.0.1:8888"]);
+  // Local development and the browser test bench run both pages on loopback with ephemeral ports; only accept those
+  // when this page itself is served from loopback, so production never widens the list.
+  const LOCAL_RE = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+  const originOk = o => ALLOWED.has(o) || (LOCAL_RE.test(o) && LOCAL_RE.test(location.origin));
+  const S = { nonce: null, origin: null, master: null, count: 0, last: "", dropped: 0, previewed: null, watch: false, ticker: [], feed: [], startedAt: 0, sorterClientId: null, runId: null, down: false, lastPing: 0, lastSweepAt: 0 };
+  const LSK = { commits: "designStation.bridgeCommits.v1", selected: "designStation.bridgeSelected.v1" };
+  const framed = () => { try { return window.self !== window.top; } catch (_) { return true; } };
+  const active = () => !!S.master;
+  const send = (msg) => { if (!S.master) return; try { S.master.postMessage(Object.assign({ source: "brites-design", nonce: S.nonce }, msg), S.origin); } catch (e) { console.warn("bridge send failed", e); } };
+  const emit = (type, payload) => { if (!S.master) return; send(Object.assign({ id: 0, type }, payload || {})); };
+  let lastSel = "", lastLocks = "", lastFilters = "";
+
+  function paintBanner(text) {
+    const b = $("#bridgeBanner"); if (!b) return;
+    b.classList.toggle("hidden", !active());
+    b.classList.toggle("down", S.down);
+    const fd = $("#bridgeFeed"); if (fd) fd.classList.toggle("hidden", !active() || !S.feed.length);
+    const meta = $("#bridgeMeta"); if (meta) meta.textContent = `session ${(S.nonce || "").slice(0, 4)} · ${S.count} command${S.count === 1 ? "" : "s"}${S.last ? ` · last: ${S.last}` : ""}${S.dropped ? ` · ${S.dropped} dropped` : ""}`;
+    const t = $("#bridgeTitle"); if (t) t.textContent = S.down ? "Charm Sorter link lost" : "Controlled by Charm Sorter";
+    if (text != null) { const tk = $("#bridgeTicker"); if (tk) tk.innerHTML = `<b>${esc(text)}</b>`; }
+  }
+  const esc = v => String(v ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  /** The station's own activity ticker: every executed command and every Activity line, mirrored to the sorter. */
+  function ticker(text) {
+    text = String(text || "").trim(); if (!text) return;
+    S.ticker.push({ t: Date.now(), text }); if (S.ticker.length > 200) S.ticker.shift();
+    if (active()) { paintBanner(text); emit("activity", { text, t: Date.now() }); }
+  }
+
+  /* ── snapshots of the station's state ── */
+  const employeeName = () => { try { return (localStorage.getItem(LS.employee) || "").trim(); } catch (_) { return ""; } };
+  function etsyState() { const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0); return { signedIn: !!localStorage.getItem(TOKEN_KEYS.access) || !!localStorage.getItem(TOKEN_KEYS.refresh), expiresAt: exp ? exp * 1000 : null, hasRefresh: !!localStorage.getItem(TOKEN_KEYS.refresh), calls: etsyMeter.total, maxQps: etsyMeter.maxQps, lastSweepAt: S.lastSweepAt || 0, meter: etsyMeterSnapshot() }; }
+  /* ── Etsy thrift (the sorter is a remote user and gets the same brakes a person does):
+        · a list sweep asked for within SWEEP_MIN_MS of the last one is served from memory, never re-fetched
+        · re-validation is one paged list sweep (orders.check), not one detail call per order
+        · every Etsy-touching reply carries the calls it cost, so the sorter can meter and budget them ── */
+  const SWEEP_MIN_MS = 90 * 1000;
+  const sweptRecently = () => S.lastSweepAt && Date.now() - S.lastSweepAt < SWEEP_MIN_MS && allOpenReceipts.length > 0;
+  function filtersForBridge() { return { metals: [...F.metals], completed: F.completed, sel: F.sel, note: F.note, attn: F.attn, msg: F.msg, due: F.due, free: F.free, iAttn: F.iAttn, iMsg: F.iMsg, iMulti: F.iMulti, iNoSku: F.iNoSku, activeMetal, dateDir, orderDir }; }
+  function stateSnapshot() {
+    const open = allOpenReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
+    return { bench: RT.page, clientId: RT.clientId, version: BRIDGE_BUILD, employee: employeeName(), mode: APP_MODE,
+      counts: { open: open.length, hydrated: open.filter(r => r._hydrated).length, selected: selectedOrders.size, completed: completedOrders.size, locked: [...rtSelected.values()].filter(o => o && o !== RT.clientId).length, claimed: rtClaims.size, attention: open.filter(r => r._attn).length },
+      filters: filtersForBridge(), selection: [...selectedOrders], etsy: etsyState(), storage: { cachedOrders: detailCache.size }, sweeping: __sweepInFlight > 0, undoing: __undoInFlight > 0, committing: __commitInFlight > 0 };
+  }
+  const metalOf = tx => { const k = txMetalResolved(tx); return isRealMetal(k) ? k : (k === SOLID_UNKNOWN ? "solid_unknown" : ""); };
+  function lineForBridge(tx, r) {
+    return { transactionId: String(tx.transaction_id), listingId: String(tx.listing_id || ""), sku: String(tx.sku || "").trim(), title: String(tx.title || ""), quantity: Number(tx.quantity) || 1,
+      metalKey: metalOf(tx), metalLabel: metalLabelFor(tx) || "", personalization: Array.isArray(tx.personalization) ? tx.personalization.map(String) : (tx.personalization ? [String(tx.personalization)] : []),
+      buyerMessage: String(tx.message_from_buyer || r.message_from_buyer || ""), expectedShipDate: Number(tx.expected_ship_date) || 0, isPersonalized: !!tx.is_personalized,
+      variations: (tx.variations || []).map(v => ({ name: String(v?.formatted_name || ""), value: String(v?.formatted_value || "").replace(/&quot;/g, '"') })) };
+  }
+  const notesCache = new Map(), msgCache = new Map();
+  async function staffNoteOf(rid) {
+    if (!staffNoteIDs.has(rid)) return "";
+    if (notesCache.has(rid)) return notesCache.get(rid);
+    try { const r = await fetch(`${FN}/firebaseOrders?orderId=${encodeURIComponent(rid)}`); const j = await r.json(); const t = j && j.success && j.data ? String(j.data["Staff Note"] || "") : ""; notesCache.set(rid, t); return t; } catch (_) { return ""; }
+  }
+  async function messagesOf(rid) {
+    if (!db) return [];
+    if (msgCache.has(rid)) return msgCache.get(rid);
+    try {
+      const snap = await db.collection("Brites_Orders").doc(rid).collection("messages").orderBy("timestamp", "desc").limit(5).get();
+      const rows = snap.docs.map(d => { const m = d.data() || {}; const t = m.timestamp; return { senderName: String(m.senderName || "Staff"), text: String(m.text || ""), at: t && t.toMillis ? t.toMillis() : (t && t.seconds ? t.seconds * 1000 : null), imageUrl: m.imageUrl || null }; }).reverse();
+      msgCache.set(rid, rows); if (rows.length) setMessageFlag(rid, true); return rows;
+    } catch (_) { return []; }
+  }
+  async function orderForBridge(r, { withNotes = true } = {}) {
+    const rid = String(r.receipt_id);
+    const txs = Array.isArray(r.transactions) && r.transactions.length ? r.transactions : (orderCache[rid] || []);
+    const [staffNote, messages] = withNotes ? await Promise.all([staffNoteOf(rid), messagesOf(rid)]) : ["", []];
+    const owner = rtSelected.get(rid) || null;
+    return { receiptId: rid, orderNumber: String(r.order_number || rid), shipBy: Number(r._shipTS) || 0, updateTs: Number(r._stamp || receiptStamp(r)) || 0, createTs: Number(r.create_timestamp || 0) || 0,
+      buyer: { name: String(r.name || ""), country: String(r.country_iso || r.country || ""), city: String(r.city || "") }, buyerMessage: String(r.message_from_buyer || ""), isGift: !!r.is_gift, giftMessage: String(r.gift_message || ""),
+      attention: !!r._attn, hydrated: !!r._hydrated, staffNote, hasNote: staffNoteIDs.has(rid), hasMessages: msgOrderIDs.has(rid) || messages.length > 0, messages,
+      lockedBy: owner && owner !== RT.clientId ? owner : null, selectedHere: selectedOrders.has(rid), claimed: rtClaims.get(rid) || null, completed: completedOrders.has(rid),
+      metals: r._metalCounts || {}, lines: txs.map(tx => lineForBridge(tx, r)) };
+  }
+  function itemForBridge(tx) { if (!tx) return null; const rid = String(tx.receipt_id || ""); const r = allOpenReceipts.find(x => String(x.receipt_id) === rid) || currentReceipts.find(x => String(x.receipt_id) === rid) || { receipt_id: rid }; return Object.assign(lineForBridge(tx, r), { receiptId: rid }); }
+  const rowFor = rid => ensureRowRendered(String(rid));
+
+  /* ── idempotent commits per run (survive a reload of this page) ── */
+  const readJson = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || "null") || d; } catch (_) { return d; } };
+  const writeJson = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} };
+  function rememberCommit(runId, ids, result) { const m = readJson(LSK.commits, {}); m[runId] = { ids, result, at: Date.now() }; const keys = Object.keys(m).sort((a, b) => m[a].at - m[b].at); while (keys.length > 60) delete m[keys.shift()]; writeJson(LSK.commits, m); }
+  function priorCommit(runId, ids) { const m = readJson(LSK.commits, {}); const c = m[runId]; if (!c) return null; return ids.every(id => c.ids.includes(id)) ? c.result : null; }
+  function rememberSorterSelection() { writeJson(LSK.selected, { at: Date.now(), ids: [...S.sorterSelected] }); }
+
+  /* ── the remote cursor: every command glides to the control it acts on and presses it, so a person watching this page
+        sees the sorter work the way a colleague would. Targets are looked up by role; anything not on screen falls back to
+        the banner. The log of every motion is kept for the console and the tests. ── */
+  const Cursor = (() => {
+    const C = { el: null, tag: null, x: -200, y: -200, log: [], moves: 0, hideT: null, enabled: !/[?&]cursor=0/.test(location.search), speed: 340 };
+    const SVG = `<svg viewBox="0 0 30 36" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M3 3 L27 15 L17 18.5 L23.5 30 L18.5 32.5 L12 21 L4.5 28.5 Z" fill="#fff" stroke="#1d4ed8" stroke-width="2.2" stroke-linejoin="round"/><circle cx="3.5" cy="3.5" r="2.6" fill="#3b82f6" stroke="#fff" stroke-width="1.2"/></svg>`;
+    function ensure() { if (C.el) return C.el; const el = document.createElement("div"); el.id = "rcCursor"; el.innerHTML = SVG + `<span class="rcTag"></span>`; document.body.appendChild(el); C.el = el; C.tag = el.querySelector(".rcTag"); return el; }
+    const ROLE = {
+      row: a => $(`.orderRow[data-receipt='${cssEsc(String(a))}']`), tile: a => $(`.tile[data-tx='${cssEsc(String(a))}']`) || $(`.tile[data-receipt='${cssEsc(String(a))}']`),
+      complete: () => $("#completeBtn"), print: () => { const b = $("#qrPreviewPrintBtn"); return b && visible(b) ? b : ($("#qrSorterNote") && visible($("#qrSorterNote")) ? $("#qrSorterNote") : $("#qrSummary")); }, cancel: () => $("#qrCancelBtn"), grid: () => $("#qrPreviewGrid"), undo: () => $("#undoCompleteBtn"),
+      refresh: () => [$("#updateOrderListBtn"), $("#stripRefreshBtn"), $("#emptyLoadBtn")].find(visible) || $("#updateOrderListBtn"), rail: () => $("#railToggle"), metals: () => $("#metalBar"), note: () => $("#modalStaffNote"), chat: () => $("#chatInput") || $("#modalChatInput"), banner: () => $("#bridgeBanner"), release: () => $("#bridgeRelease")
+    };
+    const visible = el => { if (!el || !el.isConnected) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    function find(role, arg) { const f = ROLE[role]; return f ? f(arg) : null; };
+    /** Move to a control and (optionally) press it. Resolves when the motion is over, so the command acts right after. */
+    async function act(role, arg, caption, { click = true, dwell = 0 } = {}) {
+      if (!C.enabled) return null;
+      const el = ensure(); let target = find(role, arg); let fallback = false;
+      // a row hidden behind a collapsed order rail: open the rail the way a person would, then look again
+      if (target && !visible(target) && role !== "rail" && typeof setRailOpen === "function" && !SETTINGS.railOpen) { const tg = $("#railToggle"); if (tg) { await act("rail", null, "Open the order list"); setRailOpen(true); await sleep(220); } target = find(role, arg); }
+      if (target && !visible(target)) target = null;
+      if (!target) { target = find("banner"); fallback = true; }
+      if (!target) return null;
+      if (!fallback) { try { const r = target.getBoundingClientRect(); if (r.top < 60 || r.bottom > innerHeight - 20) target.scrollIntoView({ block: "center", behavior: "instant" }); } catch (_) {} }
+      const r = target.getBoundingClientRect();
+      const x = fallback ? Math.min(r.right - 40, r.left + 260) : Math.round(r.left + Math.min(r.width * 0.5, 160)), y = Math.round(r.top + r.height / 2);
+      const dist = Math.hypot(x - C.x, y - C.y); const fast = C.moves > 8 || dist < 40;
+      el.classList.toggle("fast", fast); el.classList.add("on"); el.style.transform = `translate(${x}px,${y}px)`; C.x = x; C.y = y; C.moves++;
+      C.tag.textContent = caption || ""; C.tag.style.transform = x > innerWidth - 360 ? "translateX(calc(-100% - 34px))" : "";
+      await sleep(fast ? 160 : C.speed);
+      if (!fallback) { target.classList.add("rcTarget"); setTimeout(() => target.classList.remove("rcTarget"), 900); }
+      if (click && !fallback) { el.classList.remove("click"); void el.offsetWidth; el.classList.add("click"); const rp = document.createElement("span"); rp.className = "rcRipple"; rp.style.left = x + "px"; rp.style.top = y + "px"; document.body.appendChild(rp); setTimeout(() => rp.remove(), 700); await sleep(fast ? 90 : 190); }
+      if (dwell) await sleep(dwell);
+      C.log.push({ t: Date.now(), role, arg: arg == null ? null : String(arg), caption: caption || "", click: !!click && !fallback, fallback, x, y }); if (C.log.length > 300) C.log.shift();
+      clearTimeout(C.hideT); C.hideT = setTimeout(hide, 7000);
+      return target;
+    }
+    function hide() { if (C.el) { C.el.classList.remove("on"); C.tag.textContent = ""; } C.moves = 0; }
+    function reset() { hide(); C.x = -200; C.y = -200; if (C.el) C.el.style.transform = "translate(-200px,-200px)"; }
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    return { act, hide, reset, log: C.log, state: () => ({ enabled: C.enabled, moves: C.moves, x: C.x, y: C.y, shown: !!(C.el && C.el.classList.contains("on")) }) };
+  })();
+  const idsCaption = (ids, verb) => `${verb} ${ids.length === 1 ? ids[0] : ids.length + " orders"}`;
+  /** Walk a list of rows with the cursor: the first few are pressed one by one, the rest in one sweep with a count. */
+  async function cursorRows(ids, verb, { click = true, max = 6 } = {}) {
+    const onScreen = ids.filter(id => rowFor(id)); let n = 0;
+    for (const id of onScreen) { if (n++ < max) await Cursor.act("row", id, `${verb} ${id}`, { click }); else { await Cursor.act("row", id, `${verb} ${id} (${n} of ${onScreen.length})`, { click: false }); } }
+    if (!onScreen.length) await Cursor.act("banner", null, `${verb} ${ids.length === 1 ? ids[0] : ids.length + " orders"} (no longer listed here)`, { click: false });
+  }
+
+  /** The sorter's activity feed under the banner: newest line in white, the three before it dimmed. */
+  function paintFeed() {
+    const fd = $("#bridgeFeed"); if (!fd) return;
+    fd.classList.toggle("hidden", !active() || !S.feed.length);
+    const rows = S.feed.slice(-4).reverse(); const now = rows[0];
+    $("#bridgeFeedNow").textContent = now ? `${now.kind ? now.kind + " · " : ""}${now.text}` : "";
+    $("#bridgeFeedHist").innerHTML = rows.slice(1).map(r => `<span>${new Date(r.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })} ${r.kind ? `<b>${esc(r.kind)}</b> ` : ""}${esc(r.text)}</span>`).join("");
+  }
+  /* ── commands: (args, progress, ev) => result. Names mirror the buttons an operator would press. ── */
+  const CMDS = {
+    /** The sorter narrates its own side of the run here (pull, pool, nest, fit, labels…); no cursor, no ticker, not counted. */
+    async "feed.post"(a) {
+      const rows = (Array.isArray(a.rows) ? a.rows : []).slice(-20).map(r => ({ t: Number(r.t) || Date.now(), kind: String(r.kind || "").slice(0, 12), text: String(r.text || "").slice(0, 220) })).filter(r => r.text);
+      for (const r of rows) { const last = S.feed[S.feed.length - 1]; if (last && last.text === r.text && last.kind === r.kind) continue; S.feed.push(r); }
+      if (S.feed.length > 80) S.feed.splice(0, S.feed.length - 80);
+      paintFeed(); return { n: S.feed.length };
+    },
+    async hello(a, progress, ev) {
+      // a previous sorter session may have left rows selected (locked) here: release them before anything else
+      const prev = readJson(LSK.selected, null);
+      let released = [];
+      if (prev && Array.isArray(prev.ids) && prev.ids.length && (!S.nonce || S.nonce !== ev.data.nonce)) {
+        for (const rid of prev.ids) { if (selectedOrders.has(String(rid))) { const row = rowFor(rid); if (row) deselectRow(row); else { selectedOrders.delete(String(rid)); rtQueueUnlock(String(rid)); } released.push(String(rid)); } }
+        if (released.length) { persistSelection(); refreshChrome(); }
+      }
+      S.nonce = ev.data.nonce; S.origin = ev.origin; S.master = ev.source; S.startedAt = Date.now(); S.count = 0; S.dropped = 0; S.previewed = null; S.down = false; S.lastPing = Date.now();
+      S.sorterClientId = String(a.sorterClientId || ""); S.runId = a.runId ? String(a.runId) : null; S.sorterSelected = new Set(); rememberSorterSelection();
+      paintBanner(); ticker(`Remote control opened by the Charm Sorter${S.runId ? ` · run ${S.runId}` : ""}`);
+      S.feed = []; paintFeed();
+      Cursor.reset(); Cursor.act("banner", null, "Charm Sorter connected", { click: false }).catch(() => {});
+      return Object.assign(stateSnapshot(), { releasedFromPreviousSession: released, commands: Object.keys(CMDS) });
+    },
+    async ping() { S.lastPing = Date.now(); if (S.down) { S.down = false; paintBanner(); } return { pong: true, etsy: etsyMeterSnapshot() }; },
+    async claim(a) {
+      const ids = (a.receiptIds || []).map(String); if (!ids.length) return { claimed: [] };
+      await cursorRows(ids, "Claim");
+      const r = await fetch(`${FN}/firebaseOrders`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rtClaimIds: ids, claimedBy: "sorter", claimRun: a.runId || S.runId || null }) });
+      if (!r.ok) throw new Error("claim write failed: HTTP " + r.status);
+      ids.forEach(id => { rtClaims.set(id, { claimedBy: "sorter", run: a.runId || S.runId || null, atMs: Date.now() }); paintClaim(id, true); });
+      return { claimed: ids };
+    },
+    async unclaim(a) {
+      const ids = (a.receiptIds || []).map(String); if (!ids.length) return { unclaimed: [] };
+      await cursorRows(ids, "Release claim on", { max: 3 });
+      const r = await fetch(`${FN}/firebaseOrders`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rtUnclaimIds: ids }) });
+      if (!r.ok) throw new Error("unclaim write failed: HTTP " + r.status);
+      ids.forEach(id => { rtClaims.delete(id); paintClaim(id, false); });
+      return { unclaimed: ids };
+    },
+    async "orders.snapshot"(a, progress) {
+      if (etsyBraked() && (a.refresh || !allOpenReceipts.length)) throw new Error(`Etsy watchdog brake until ${new Date(etsyMeter.brakeUntil).toLocaleTimeString()}: ${etsyMeter.alarm && etsyMeter.alarm.why}`);
+      const calls0 = etsyMeter.total; let refreshSkipped = false;
+      if ((a.refresh && !sweptRecently()) || !allOpenReceipts.length) { progress(0, 0, "Refreshing the open order list from Etsy"); await Cursor.act("refresh", null, "Refresh the order list from Etsy"); await refreshOrders({ heal: false }); }
+      else { refreshSkipped = !!a.refresh; await Cursor.act("banner", null, refreshSkipped ? `Open orders as listed ${Math.round((Date.now() - S.lastSweepAt) / 1000)} s ago (no new Etsy sweep)` : "Reading the open orders", { click: false }); }
+      let list = allOpenReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
+      if (Array.isArray(a.metals) && a.metals.length) list = list.filter(r => !r._hydrated || METAL_ORDER.some(k => a.metals.includes(k) && r._metalCounts && r._metalCounts[k]));
+      if (a.onlyAttention) list = list.filter(r => r._attn);
+      const total = list.length;
+      if (a.hydrate !== false) {
+        const staleInMemory = r => { const rec = detailCache.get(String(r.receipt_id)); return !!(rec && rec.ut && r._stamp && Number(r._stamp) > Number(rec.ut)); };
+        const need = list.filter(r => !r._hydrated || staleInMemory(r)).map(r => String(r.receipt_id));
+        let done = 0; const run = makeQueue(4);
+        await Promise.all(need.map(rid => run(async () => {
+          try { const txs = await hydrateOrder(rid); applyHydration(rid, txs); }
+          catch (e) { console.warn("bridge hydrate", rid, e); }
+          progress(++done, need.length, `Reading order ${rid}`);
+        })));
+      }
+      if (Array.isArray(a.metals) && a.metals.length) list = list.filter(r => METAL_ORDER.some(k => a.metals.includes(k) && r._metalCounts && r._metalCounts[k]));
+      progress(0, 0, "Collecting staff notes and messages");
+      const orders = []; const q = makeQueue(6); let n = 0;
+      await Promise.all(list.map(r => q(async () => { orders.push(await orderForBridge(r, { withNotes: a.withNotes !== false })); if (++n % 25 === 0) progress(n, list.length, `Collected ${n} of ${list.length}`); })));
+      orders.sort((x, y) => (x.shipBy || 0) - (y.shipBy || 0) || x.receiptId.localeCompare(y.receiptId));
+      const hydrated = orders.filter(o => o.hydrated).length;
+      return { total, hydrated, tokenExpiresAt: etsyState().expiresAt, etsy: etsyState(), etsyCalls: etsyMeter.total - calls0, refreshSkipped, orders };
+    },
+    /** One paged list sweep (or the list in memory when swept within the cooldown) answers "is each of these still open,
+        and has Etsy touched it since the pull?" — the cheap re-validation that replaces a detail call per order. */
+    async "orders.check"(a, progress) {
+      const ids = (a.receiptIds || []).map(String); const calls0 = etsyMeter.total; let swept = false;
+      if (!sweptRecently() && etsyBraked()) throw new Error(`Etsy watchdog brake until ${new Date(etsyMeter.brakeUntil).toLocaleTimeString()}: ${etsyMeter.alarm && etsyMeter.alarm.why}`);
+      if (!sweptRecently()) {
+        progress(0, 0, "Checking the open order list on Etsy");
+        await Cursor.act("refresh", null, `Check ${ids.length} order${ids.length === 1 ? "" : "s"} against Etsy's open list`);
+        const raw = await fetchOpenOrdersSequential(n => progress(n, 0, `Listing open orders… ${n}`));
+        const byId = new Map(raw.map(r => [String(r.receipt_id), r]));
+        // stamps are refreshed in place; a receipt whose stamp moved is marked so its next detail read is a real one
+        for (const r of allOpenReceipts) { const nr = byId.get(String(r.receipt_id)); if (!nr) { r._goneFromList = true; continue; } const ns = receiptStamp(nr); if (ns !== r._stamp) { r.update_timestamp = nr.update_timestamp; r._stamp = ns; r._touched = true; } }
+        for (const nr of raw) if (!allOpenReceipts.some(r => String(r.receipt_id) === String(nr.receipt_id))) { decorateReceipt(nr); allOpenReceipts.push(nr); }
+        Bridge.hooks.swept(); swept = true;
+      } else await Cursor.act("banner", null, `Open list checked ${Math.round((Date.now() - S.lastSweepAt) / 1000)} s ago — reused`, { click: false });
+      const out = {};
+      for (const id of ids) { const r = allOpenReceipts.find(x => String(x.receipt_id) === id); out[id] = { open: !!r && !r._goneFromList && !completedOrders.has(id), updateTs: r ? Number(r._stamp || receiptStamp(r)) || 0 : 0, touched: !!(r && r._touched) }; }
+      return { orders: out, swept, sweptAt: S.lastSweepAt, etsyCalls: etsyMeter.total - calls0, etsy: etsyState() };
+    },
+    async "orders.detail"(a) {
+      const rid = String(a.receiptId || ""); const calls0 = etsyMeter.total;
+      let r = allOpenReceipts.find(x => String(x.receipt_id) === rid) || currentReceipts.find(x => String(x.receipt_id) === rid);
+      await Cursor.act("row", rid, `Read order ${rid}${a.fresh ? " again from Etsy" : ""}`, { click: false });
+      if (r) r._touched = false;
+      if ((a.fresh || !r) && etsyBraked()) throw new Error(`Etsy watchdog brake until ${new Date(etsyMeter.brakeUntil).toLocaleTimeString()}: ${etsyMeter.alarm && etsyMeter.alarm.why}`);
+      if (a.fresh || !r) {
+        const data = await pullEtsyOrderDetails(rid);
+        if (!data || !data.receipt) return { order: null, gone: true, reason: r ? "Etsy did not return the receipt" : "not in the open list" };
+        const rc = data.receipt; rc.receipt_id = rc.receipt_id || rid; rc.transactions = data.transactions || [];
+        decorateReceipt(rc); orderCache[rid] = rc.transactions; cachePut(rid, rc.transactions, receiptStamp(rc), rc);
+        if (r) { Object.assign(r, { update_timestamp: rc.update_timestamp, transactions: rc.transactions, message_from_buyer: rc.message_from_buyer }); decorateReceipt(r); paintRow(rid); }
+        notesCache.delete(rid); msgCache.delete(rid);
+        const gone = !!rc.is_shipped || (rc.status && /cancel|refund/i.test(String(rc.status)));
+        return { order: await orderForBridge(r || rc), gone, status: String(rc.status || ""), isShipped: !!rc.is_shipped, etsyCalls: etsyMeter.total - calls0 };
+      }
+      if (!r._hydrated) { const txs = await hydrateOrder(rid); applyHydration(rid, txs); }
+      return { order: await orderForBridge(r), gone: false, etsyCalls: etsyMeter.total - calls0 };
+    },
+    async "orders.watch"(a) { S.watch = !!a.on; return { watching: S.watch }; },
+    async "ui.select"(a) {
+      const selected = [], refused = [];
+      for (const id of (a.receiptIds || []).map(String)) {
+        const row = rowFor(id);
+        if (!row) { refused.push({ id, reason: "order is not in the list" }); continue; }
+        if (isLockedElsewhere(id)) { refused.push({ id, reason: "order is locked at another station" }); continue; }
+        if (completedOrders.has(id)) { refused.push({ id, reason: "order is already design-complete" }); continue; }
+        await Cursor.act("row", id, `Select ${id}`);
+        await selectRow(row, { silent: true }); S.sorterSelected.add(id); selected.push(id);
+      }
+      rememberSorterSelection(); flushRtBatch();
+      return { selected, refused, selection: [...selectedOrders] };
+    },
+    async "ui.deselect"(a) {
+      for (const id of (a.receiptIds || []).map(String)) { await Cursor.act("row", id, `Deselect ${id}`); const row = rowFor(id); if (row) deselectRow(row); else if (selectedOrders.has(id)) { selectedOrders.delete(id); rtQueueUnlock(id); } S.sorterSelected.delete(id); }
+      rememberSorterSelection(); persistSelection(); refreshChrome(); flushRtBatch();
+      return { selection: [...selectedOrders] };
+    },
+    async "ui.filter"(a) {
+      await Cursor.act("metals", null, "Set the filters", { click: false });
+      Object.keys(a || {}).forEach(k => { if (k === "metals" && Array.isArray(a.metals)) { const m = a.metals.filter(x => METAL_BY_KEY[x]); F.metals = new Set(m.length ? m : METAL_ORDER); } else if (k === "activeMetal") activeMetal = METAL_BY_KEY[a.activeMetal] ? a.activeMetal : null; else if (k === "dateDir") dateDir = a.dateDir < 0 ? -1 : 1; else if (k in F && typeof F[k] === "boolean") F[k] = !!a[k]; });
+      paintSortHeader(); applyFilters({ rerender: true }); refreshChrome();
+      return { filters: filtersForBridge() };
+    },
+    async "ui.openItem"(a) {
+      const txid = String(a.transactionId || "");
+      if (!itemsByTx.has(txid) && a.receiptId) await ensureTilesFor(String(a.receiptId));
+      if (!itemsByTx.has(txid)) throw new Error(`item ${txid} is not on screen — select its order first`);
+      await Cursor.act("tile", txid, `Open item ${txid}`);
+      await openListingModal(txid);
+      return { item: itemForBridge(itemsByTx.get(txid)) };
+    },
+    async "ui.closeModal"() { await Cursor.act("cancel", null, "Close the dialog"); $$("dialog[open]").forEach(closeDlg); return {}; },
+    async "ui.scrollTo"(a) { const ok = revealOrder(String(a.receiptId)); await Cursor.act("row", String(a.receiptId), `Show ${a.receiptId}`, { click: false }); return { revealed: !!ok }; },
+    async "notes.set"(a) {
+      const rid = String(a.receiptId || ""); const text = String(a.text || "");
+      await Cursor.act($("#modalStaffNote") && $("#modalStaffNote").dataset.rid === rid ? "note" : "row", rid, `Staff note on ${rid}`);
+      const r = await fetch(`${FN}/firebaseOrders`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ orderNumber: rid, staffNote: text }) });
+      if (!r.ok) throw new Error("staff note not saved: HTTP " + r.status);
+      if (text.trim()) staffNoteIDs.add(rid); else staffNoteIDs.delete(rid); notesCache.set(rid, text); markStaffNoteOrders();
+      const note = $("#modalStaffNote"); if (note && note.dataset.rid === rid) note.value = text;
+      return { receiptId: rid, hasNote: !!text.trim() };
+    },
+    async "chat.post"(a) { const rid = String(a.receiptId || ""); await Cursor.act("row", rid, `Post a chat message on ${rid}`); await BritesChat.postAs(rid, String(a.text || ""), a.sender || "Charm Sorter"); msgCache.delete(rid); return { receiptId: rid }; },
+    async "complete.preview"(a) {
+      const ids = (a.receiptIds || []).map(String);
+      if (!ids.length) throw new Error("no orders to preview");
+      const missing = ids.filter(id => !selectedOrders.has(id));
+      if (missing.length) throw new Error(`select the orders first (${missing.length} not selected: ${missing.slice(0, 5).join(", ")})`);
+      // the preview works on the selection: narrow it to exactly these ids for the duration of the preview
+      const others = [...selectedOrders].filter(id => !ids.includes(id));
+      for (const id of others) { const row = rowFor(id); if (row) deselectRow(row); else selectedOrders.delete(id); }
+      await Cursor.act("complete", null, `Generate QR labels for ${ids.length} order${ids.length === 1 ? "" : "s"}`);
+      await handleCompleteClick();
+      await Cursor.act("grid", null, "Preview the label jobs", { click: false, dwell: 250 });
+      const lists = pendingLists || {}, jobs = pendingJobs || [];
+      S.previewed = new Set(Object.values(lists).flat().map(String));
+      return { jobs: jobs.map(j => ({ metal: j.metal, ids: j.ids, payload: j.payload, partIndex: j.partIndex, partTotal: j.partTotal, total: j.total, label: j.label, ecc: j.ecc || "M" })), lists, notes: lastPreviewNotes, previewed: [...S.previewed], deselectedOthers: others };
+    },
+    async "complete.commit"(a) {
+      const ids = (a.receiptIds || []).map(String);
+      if (!ids.length) throw new Error("no orders to commit");
+      if (a.runId) { const prior = priorCommit(String(a.runId), ids); if (prior) { ticker(`commit for run ${a.runId} already done — same result returned`); return Object.assign({}, prior, { idempotent: true }); } }
+      if (!S.previewed || ids.some(id => !S.previewed.has(id))) throw new Error("commit without a preview of the same orders");
+      if (!a.labels || !Array.isArray(a.labels.files) || !a.labels.files.length) throw new Error("no saved labels");
+      if (__sweepInFlight > 0) throw new Error("an Etsy sweep is in flight — try again when the refresh finishes");
+      if (__undoInFlight > 0 || __commitInFlight > 0) throw new Error("another completion or an undo is in flight");
+      const refused = [];
+      const known = knownReceiptIds();
+      const commitIds = ids.filter(id => { if (!known.has(id)) { refused.push({ id, reason: "no longer in the open list" }); return false; } if (isLockedElsewhere(id)) { refused.push({ id, reason: "locked at another station" }); return false; } if (completedOrders.has(id)) { refused.push({ id, reason: "already complete" }); return false; } return true; });
+      await Cursor.act("print", null, `Mark ${commitIds.length} order${commitIds.length === 1 ? "" : "s"} design-complete (labels saved by the sorter)`);
+      closeDlg($("#qrPreviewModal"));
+      let completed = [];
+      if (commitIds.length) { const r = await commitCompletion(commitIds, { labels: a.labels, setId: a.labels.setId || a.setId || null, sheetIds: a.sheetIds || null, backCount: a.backCount == null ? null : a.backCount, runId: a.runId || S.runId || null, completedBy: a.completedBy || "Charm Sorter" }); completed = r.completed; }
+      S.previewed = null; pendingJobs = pendingLists = null; commitIds.forEach(id => S.sorterSelected.delete(id)); rememberSorterSelection();
+      const result = { completed, refused };
+      if (a.runId) rememberCommit(String(a.runId), ids, result);
+      ticker(`${completed.length} order${completed.length === 1 ? "" : "s"} marked design-complete by the sorter${refused.length ? ` · ${refused.length} refused` : ""}`);
+      return result;
+    },
+    async "complete.undo"(a) {
+      if (__commitInFlight > 0) throw new Error("a completion is in flight");
+      // the sorter names the set's orders, so an undo works after this page reloaded (the last-cleared list lives in memory only)
+      const ids = (a && Array.isArray(a.receiptIds) ? a.receiptIds : []).map(String).filter(id => completedOrders.has(id));
+      if (ids.length) lastClearedReceipts = ids;
+      if (!lastClearedReceipts.length) throw new Error("nothing to undo — none of those orders is design-complete here");
+      const undone = [...lastClearedReceipts];
+      await Cursor.act("undo", null, `Undo the completion of ${undone.length} order${undone.length === 1 ? "" : "s"}`);
+      await handleUndoComplete();
+      return { restored: undone, selection: [...selectedOrders] };
+    },
+    async release() { await Cursor.act("release", null, "Release this station", { click: true }); endSession("released by the sorter"); return {}; }
+  };
+
+  async function onMessage(ev) {
+    const d = ev.data;
+    if (!d || typeof d !== "object" || d.source !== "brites-sorter") return;
+    if (!originOk(ev.origin)) { S.dropped++; if (active()) paintBanner(); return; }
+    if (d.type !== "hello" && (!S.master || d.nonce !== S.nonce)) { S.dropped++; if (active()) paintBanner(); return; }
+    const fn = CMDS[d.type]; if (!fn) return;                                   // unknown types are ignored, never executed
+    const reply = (msg) => { try { ev.source.postMessage(Object.assign({ source: "brites-design", nonce: d.type === "hello" ? d.nonce : S.nonce }, msg), ev.origin); } catch (_) {} };
+    reply({ id: d.id, type: "ack" });
+    if (d.type !== "feed.post") { S.count++; S.last = d.type; paintBanner(); }
+    if (d.type !== "ping" && d.type !== "feed.post") ticker(`Sorter: ${d.type}${d.args && Array.isArray(d.args.receiptIds) && d.args.receiptIds.length ? " " + d.args.receiptIds.slice(0, 6).join(", ") + (d.args.receiptIds.length > 6 ? "…" : "") : d.args && d.args.receiptId ? " " + d.args.receiptId : ""}`);
+    try {
+      const result = await fn(d.args || {}, (done, total, text) => reply({ id: d.id, type: "progress", done, total, text }), ev);
+      reply({ id: d.id, type: "done", result });
+    } catch (e) {
+      reply({ id: d.id, type: "error", error: e && e.message || String(e) });
+      ticker(`Sorter command failed: ${d.type} — ${e && e.message || e}`);
+      emit("error", { command: d.type, error: e && e.message || String(e) });
+    }
+  }
+  window.addEventListener("message", onMessage);
+
+  function endSession(reason) {
+    if (!active()) return;
+    ticker(`Remote control ended — ${reason}`);
+    emit("state", { ended: true, reason });
+    S.master = null; S.origin = null; S.previewed = null; S.watch = false; S.down = false;
+    Cursor.reset(); S.feed = []; paintFeed();
+    paintBanner(); toast(`Charm Sorter released this station (${reason})`);
+  }
+  // heartbeat watch: three missed pings (15 s) mark the link down on the banner; a ping brings it back
+  setInterval(() => { if (active() && !S.down && S.lastPing && Date.now() - S.lastPing > 15500) { S.down = true; paintBanner(); ticker("No heartbeat from the sorter for 15 s"); } }, 5000);
+  window.addEventListener("beforeunload", () => { if (active()) emit("state", { unloading: true }); });
+
+  /* the station's own state changes are mirrored to the master as they happen */
+  const hooks = {
+    selection() { if (!active()) return; const cur = [...selectedOrders].sort().join(","); if (cur !== lastSel) { lastSel = cur; emit("selection", { selected: [...selectedOrders] }); } const f = JSON.stringify(filtersForBridge()); if (f !== lastFilters) { lastFilters = f; emit("filters", { filters: filtersForBridge() }); } },
+    orders() { if (!active()) return; emit("orders.changed", { count: allOpenReceipts.length, open: allOpenReceipts.filter(r => !completedOrders.has(String(r.receipt_id))).length, watching: S.watch }); },
+    activity(text) { ticker(text); },
+    swept() { S.lastSweepAt = Date.now(); },
+    locks() { if (!active()) return; const cur = JSON.stringify([...rtSelected]); if (cur !== lastLocks) { lastLocks = cur; emit("lock.changed", { locks: Object.fromEntries([...rtSelected].filter(([, o]) => o && o !== RT.clientId)), claims: Object.fromEntries(rtClaims) }); } }
+  };
+  return { hooks, active, framed, emit, ticker, endSession, state: () => Object.assign({}, S, { master: !!S.master }), snapshot: stateSnapshot, orderForBridge, commands: Object.keys(CMDS), ALLOWED, cursor: Cursor };
+})();
+if (Bridge.framed()) document.documentElement.classList.add("framed");
+
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
 else boot();
 
@@ -6663,6 +7237,7 @@ window.DesignStation = {
   chat: BritesChat,
   messages: { flags: msgOrderIDs, probed: msgProbed, refresh: refreshMessageFlags, reset: resetMessageFlags },
   sort: () => ({ activeMetal, dateDir, orderDir }),
+  bridge: Bridge, commitCompletion, refreshOrders, pullEtsyOrderDetails, etsyMeter, etsyMeterSnapshot,
 };
 
 </script>

@@ -34,18 +34,29 @@
     const num = (s) => { const v = parseFloat(s); return Number.isFinite(v) ? v : 0; };
     function skipWs() { while (i < n && WS.has(bytes[i])) i++; }
     function readName() { let s = ""; i++; while (i < n && isRegular(bytes[i])) s += String.fromCharCode(bytes[i++]); return s.replace(/#([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16))); }
-    function readString() { // (…) with nesting
+    function readString() { // (…) with nesting; escapes decoded, so the result is the string's bytes as latin1 chars
       let depth = 0, s = "";
+      const ESC = { n: 10, r: 13, t: 9, b: 8, f: 12, "(": 40, ")": 41, "\\": 92 };
       for (; i < n; i++) {
         const c = bytes[i];
-        if (c === 0x5C) { i++; s += String.fromCharCode(bytes[i] || 0); continue; }
+        if (c === 0x5C) {
+          i++; const e = bytes[i];
+          if (e === 0x0A || e === 0x0D) { if (e === 0x0D && bytes[i + 1] === 0x0A) i++; continue; }   // line continuation
+          if (e >= 0x30 && e <= 0x37) { let oct = ""; let k = 0; while (k < 3 && bytes[i] >= 0x30 && bytes[i] <= 0x37) { oct += String.fromCharCode(bytes[i]); i++; k++; } i--; s += String.fromCharCode(parseInt(oct, 8) & 255); continue; }
+          const ch = String.fromCharCode(e || 0); s += String.fromCharCode(ESC[ch] != null ? ESC[ch] : (e || 0)); continue;
+        }
         if (c === 0x28) { depth++; if (depth === 1) continue; }
         if (c === 0x29) { depth--; if (depth === 0) { i++; break; } }
         s += String.fromCharCode(c);
       }
       return s;
     }
-    function readHex() { let s = ""; i++; while (i < n && bytes[i] !== 0x3E) { const c = bytes[i++]; if (!WS.has(c)) s += String.fromCharCode(c); } i++; return s; }
+    function readHex() { // <…> → the string's bytes as latin1 chars (same shape as a literal string)
+      let h = ""; i++; while (i < n && bytes[i] !== 0x3E) { const c = bytes[i++]; if (!WS.has(c)) h += String.fromCharCode(c); } i++;
+      if (h.length % 2) h += "0";
+      let s = ""; for (let k = 0; k < h.length; k += 2) { const v = parseInt(h.slice(k, k + 2), 16); s += String.fromCharCode(Number.isFinite(v) ? v : 0); }
+      return s;
+    }
     function readObject() { // returns a JS value for one operand
       skipWs(); if (i >= n) return undefined;
       const c = bytes[i];
@@ -113,9 +124,10 @@
    * Top-level segments get byte ranges; nested (form XObject) paths are
    * returned in `inner` with `parent` = the index of their Do segment.
    */
-  function interpret(bytes, resolve, ctm0, depth, spacesIn, layersIn) {
+  function interpret(bytes, resolve, ctm0, depth, spacesIn, layersIn, fontsIn) {
     const ins = lex(bytes);
     const segs = [], inner = [];
+    const fonts = fontsIn || {}; let fontName = null, textRaw = "", textStrs = [];
     const layerNames = layersIn || {}; const mc = [];   // marked-content stack: the innermost /OC layer name applies to every segment
     const curLayer = () => { for (let k = mc.length - 1; k >= 0; k--) if (mc[k]) return mc[k]; return null; };
     const push = (list, seg) => { seg.layer = curLayer(); list.push(seg); };
@@ -185,22 +197,29 @@
           path = null; pathStart = -1; pendingClip = false; break;
         }
         // ── text ──
-        case "BT": inText = true; textStart = ins[i].start; tm = [1, 0, 0, 1, 0, 0]; tlm = tm; textPts = []; textChars = 0; break;
-        case "Tf": fontSize = Math.abs(+args[1]) || 1; break;
+        case "BT": inText = true; textStart = ins[i].start; tm = [1, 0, 0, 1, 0, 0]; tlm = tm; textPts = []; textChars = 0; textRaw = ""; textStrs = []; break;
+        case "Tf": fontSize = Math.abs(+args[1]) || 1; fontName = args[0] && args[0].name || null; break;
         case "Tm": if (args.length >= 6) { tm = args.slice(0, 6).map(Number); tlm = tm; } break;
         case "Td": case "TD": tlm = mul([1, 0, 0, 1, +args[0], +args[1]], tlm); tm = tlm; break;
         case "T*": tlm = mul([1, 0, 0, 1, 0, -fontSize * 1.2], tlm); tm = tlm; break;
         case "Tj": case "TJ": case "'": case "\"": {
           const str = op === "TJ" ? (args[0] && args[0].arr || []).filter(a => a && a.str != null).map(a => a.str).join("") : (args[args.length - 1] && args[args.length - 1].str) || "";
-          const m = mul(tm, ctm); const sz = fontSize * scaleOf(m) / scaleOf(ctm) * scaleOf(ctm);
-          const p0 = ap(m, 0, 0), p1 = ap(m, Math.max(1, str.length) * fontSize * 0.55, fontSize);
-          textPts.push(p0, p1); textChars += str.length;
-          tm = mul([1, 0, 0, 1, str.length * fontSize * 0.55, 0], tm); void sz; break;
+          const font = fontName && fonts[fontName];
+          const dec = font ? font.decode(str) : null;                          // { text, ok } or null when the font is unknown
+          const glyphs = font && !font.simple ? Math.ceil(str.length / 2) : str.length;
+          const wEm = font && font.widthOf ? font.widthOf(str) : glyphs * 0.55;   // advance in em, from /Widths when the font has them
+          const m = mul(tm, ctm);
+          const p0 = ap(m, 0, 0), p1 = ap(m, Math.max(0.55, wEm) * fontSize, fontSize), pDesc = ap(m, 0, -0.22 * fontSize);
+          textPts.push(p0, p1, pDesc); textChars += glyphs;
+          textRaw += str; textStrs.push(dec ? dec : { text: null, ok: false });
+          if (op === "'" || op === "\"") { tlm = mul([1, 0, 0, 1, 0, -fontSize * 1.2], tlm); tm = tlm; }
+          tm = mul([1, 0, 0, 1, wEm * fontSize, 0], tm); break;
         }
         case "ET": {
           if (inText) {
             const bbox = bboxOf(textPts);
-            push(depth === 0 ? segs : inner, { kind: "text", start: textStart, end: ins[i].end, bbox, chars: textChars, fillRGB: fill.slice(), depth });
+            const decoded = textStrs.every(t => t && t.ok) ? textStrs.map(t => t.text).join("") : null;
+            push(depth === 0 ? segs : inner, { kind: "text", start: textStart, end: ins[i].end, bbox, chars: textChars, fillRGB: fill.slice(), depth, str: decoded, raw: textRaw, font: fontName, undecodable: decoded == null && textChars > 0 });
           }
           inText = false; break;
         }
@@ -216,7 +235,7 @@
             const m = mul(x.matrix || [1, 0, 0, 1, 0, 0], ctm);
             if (x.bbox) seg.bbox = bboxOf([ap(m, x.bbox[0], x.bbox[1]), ap(m, x.bbox[2], x.bbox[1]), ap(m, x.bbox[2], x.bbox[3]), ap(m, x.bbox[0], x.bbox[3])]);
             // a form's own colour spaces (a Separation "All" cut line, say) must not fall back to the page's
-            const sub = interpret(x.bytes, x.resolve || resolve, m, depth + 1, x.spaces || spaces, x.layers || layerNames);
+            const sub = interpret(x.bytes, x.resolve || resolve, m, depth + 1, x.spaces || spaces, x.layers || layerNames, x.fonts || fonts);
             for (const k of sub.segs.concat(sub.inner)) if (!k.layer) k.layer = seg.layer;
             // flatten grandchildren too: a form that only invokes another form still carries that form's paths
             const flat = (list) => list.flatMap(k => k.kind === "xobj" && k.children && k.children.length ? [k].concat(flat(k.children)) : [k]);
@@ -273,6 +292,12 @@
       const cs = doc.context.lookup(v); const arr = cs && cs.asArray ? cs.asArray() : null;
       if (arr && arr[0] && arr[0].encodedName) spaces[k.decodeText()] = arr[0].encodedName.slice(1);
     }
+    // fonts: one decoder per resource name, so a text run's string can be read back (SKU labels under charms)
+    const fonts = {};
+    const fontDict = lookupDict(resources, "Font");
+    if (fontDict instanceof PDFDict) for (const [k, v] of fontDict.entries()) {
+      try { const fd = doc.context.lookup(v); if (fd instanceof PDFDict) fonts[k.decodeText()] = makeFontDecoder(doc, fd); } catch (_) { /* an unreadable font just leaves its text undecoded */ }
+    }
     const resolve = (name) => {
       if (cache.has(name)) return cache.get(name);
       let out = null;
@@ -287,13 +312,94 @@
             out.bbox = numsOf(doc.context.lookup(x.dict.get(PDFName.of("BBox"))));
             out.matrix = numsOf(doc.context.lookup(x.dict.get(PDFName.of("Matrix"))));
             const r = doc.context.lookup(x.dict.get(PDFName.of("Resources")));
-            if (r) { const sub = makeResolver(doc, r); out.resolve = sub.resolve; out.spaces = sub.spaces; out.layers = sub.layers; }
+            if (r) { const sub = makeResolver(doc, r); out.resolve = sub.resolve; out.spaces = sub.spaces; out.layers = sub.layers; out.fonts = sub.fonts; }
           }
         }
       } catch (_) { out = null; }
       cache.set(name, out); return out;
     };
-    return { resolve, spaces, layers };
+    return { resolve, spaces, layers, fonts };
+  }
+
+  /* ═══ 3b · font decoding — text runs back to strings ═══════════════════
+     A simple font (Type1 / TrueType / Type3) is one byte per glyph, read through its /Encoding (a base encoding plus
+     /Differences of glyph names) or its /ToUnicode CMap. A composite font (Type0, what Illustrator writes) is two bytes
+     per glyph and is readable only through /ToUnicode; without one the run is kept raw and flagged `undecodable`, which
+     is what sends the master's labels to the vision fallback. Nothing is guessed. */
+  const GLYPH_NAMES = { space: " ", hyphen: "-", minus: "-", endash: "–", emdash: "—", period: ".", periodcentered: "·", bullet: "•", middot: "·", underscore: "_", slash: "/", backslash: "\\", colon: ":", semicolon: ";", comma: ",", parenleft: "(", parenright: ")", bracketleft: "[", bracketright: "]", braceleft: "{", braceright: "}", plus: "+", equal: "=", asterisk: "*", numbersign: "#", ampersand: "&", percent: "%", quotesingle: "'", quotedbl: "\"", question: "?", exclam: "!", at: "@", dollar: "$", less: "<", greater: ">", bar: "|", tilde: "~", asciicircum: "^", grave: "`", zero: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9" };
+  function glyphNameToChar(name) {
+    if (!name) return null;
+    if (name.length === 1) return name;
+    if (GLYPH_NAMES[name] != null) return GLYPH_NAMES[name];
+    let m = /^uni([0-9A-Fa-f]{4})/.exec(name); if (m) return String.fromCharCode(parseInt(m[1], 16));
+    m = /^u([0-9A-Fa-f]{4,6})$/.exec(name); if (m) return String.fromCodePoint(parseInt(m[1], 16));
+    return null;                                                  // gXX / cidXX / anything else: unknown on purpose
+  }
+  /** Parse a ToUnicode CMap (text) → { map: Map(code → string), bytes: 1|2 }. */
+  function parseCMap(text) {
+    const map = new Map(); let bytes = 0;
+    const hexNum = h => parseInt(h, 16);
+    const utf16 = h => { let s = ""; for (let i = 0; i + 4 <= h.length; i += 4) s += String.fromCharCode(parseInt(h.slice(i, i + 4), 16)); try { return decodeURIComponent(encodeURIComponent(s)); } catch (_) { return s; } };
+    const cs = /begincodespacerange([\s\S]*?)endcodespacerange/g; let m;
+    while ((m = cs.exec(text))) { const hs = m[1].match(/<([0-9A-Fa-f]+)>/g) || []; for (const h of hs) { const L = (h.length - 2) / 2; if (L === 1 || L === 2) { bytes = Math.max(bytes, L); } } }
+    const bc = /beginbfchar([\s\S]*?)endbfchar/g;
+    while ((m = bc.exec(text))) { const hs = m[1].match(/<([0-9A-Fa-f]*)>/g) || []; for (let i = 0; i + 1 < hs.length; i += 2) { const src = hs[i].slice(1, -1), dst = hs[i + 1].slice(1, -1); if (!bytes) bytes = src.length / 2; map.set(hexNum(src), utf16(dst)); } }
+    const br = /beginbfrange([\s\S]*?)endbfrange/g;
+    while ((m = br.exec(text))) {
+      const body = m[1]; const re = /<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(<([0-9A-Fa-f]*)>|\[([^\]]*)\])/g; let r;
+      while ((r = re.exec(body))) {
+        const lo = hexNum(r[1]), hi = hexNum(r[2]); if (!bytes) bytes = r[1].length / 2;
+        if (r[4] != null) { const base = r[4]; const bl = base.length; for (let c = lo; c <= hi && c - lo < 65536; c++) { const last = parseInt(base.slice(bl - 4), 16) + (c - lo); map.set(c, utf16(base.slice(0, bl - 4) + last.toString(16).padStart(4, "0"))); } }
+        else { const arr = (r[5].match(/<([0-9A-Fa-f]*)>/g) || []).map(h => utf16(h.slice(1, -1))); arr.forEach((s, i) => { if (lo + i <= hi) map.set(lo + i, s); }); }
+      }
+    }
+    return { map, bytes: bytes || 1 };
+  }
+  function makeFontDecoder(doc, fd) {
+    const { PDFName, PDFDict } = L();
+    const get = (d, key) => { if (!(d instanceof PDFDict)) return null; const v = d.get(PDFName.of(key)); return v ? doc.context.lookup(v) : null; };
+    const nameOf = v => (v && v.encodedName ? v.encodedName.slice(1) : null);
+    const subtype = nameOf(get(fd, "Subtype")) || "";
+    const simple = subtype !== "Type0";
+    let toUni = null;
+    try { const tu = get(fd, "ToUnicode"); if (tu && (tu.getContents || tu.contents)) toUni = parseCMap(new TextDecoder("latin1").decode(decodeStream(tu))); } catch (_) { toUni = null; }
+    // one-byte encodings: latin1 base, /Differences on top
+    const enc = new Array(256); for (let c = 0; c < 256; c++) enc[c] = String.fromCharCode(c);
+    if (simple) {
+      const e = get(fd, "Encoding");
+      if (e instanceof PDFDict) {
+        const diff = get(e, "Differences"); const arr = diff && diff.asArray ? diff.asArray() : null;
+        if (arr) { let code = 0; for (const it of arr) { const v = doc.context.lookup(it); if (v && v.asNumber) code = v.asNumber(); else if (v && v.encodedName) { enc[code] = glyphNameToChar(v.encodedName.slice(1)); code++; } } }
+      }
+    }
+    // widths, in em: simple fonts from /FirstChar + /Widths; composite from the descendant's /W and /DW
+    let widthOf = null;
+    try {
+      if (simple) {
+        const first = get(fd, "FirstChar"), W = get(fd, "Widths");
+        const warr = W && W.asArray ? W.asArray().map(x => { const v = doc.context.lookup(x); return v && v.asNumber ? v.asNumber() : 0; }) : null;
+        const f0 = first && first.asNumber ? first.asNumber() : 0;
+        if (warr && warr.length) widthOf = s => { let w = 0; for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i) - f0; w += (c >= 0 && c < warr.length && warr[c] ? warr[c] : 500) / 1000; } return w; };
+      } else {
+        const desc = get(fd, "DescendantFonts"); const d0 = desc && desc.asArray ? doc.context.lookup(desc.asArray()[0]) : null;
+        const dw = (get(d0, "DW") || {}).asNumber ? get(d0, "DW").asNumber() : 1000;
+        const Wa = get(d0, "W"); const w = new Map();
+        if (Wa && Wa.asArray) { const a = Wa.asArray().map(x => doc.context.lookup(x)); for (let i = 0; i < a.length;) { const c = a[i] && a[i].asNumber ? a[i].asNumber() : 0; const nx = a[i + 1]; if (nx && nx.asArray) { nx.asArray().forEach((x, j) => { const v = doc.context.lookup(x); w.set(c + j, v && v.asNumber ? v.asNumber() : dw); }); i += 2; } else { const c2 = nx && nx.asNumber ? nx.asNumber() : c; const v = a[i + 2] && a[i + 2].asNumber ? a[i + 2].asNumber() : dw; for (let k = c; k <= c2 && k - c < 65536; k++) w.set(k, v); i += 3; } } }
+        widthOf = s => { let t = 0; for (let i = 0; i + 1 < s.length; i += 2) { const cid = (s.charCodeAt(i) << 8) | s.charCodeAt(i + 1); t += (w.has(cid) ? w.get(cid) : dw) / 1000; } return t; };
+      }
+    } catch (_) { widthOf = null; }
+    function decode(str) {
+      const out = []; let ok = true;
+      if (simple) {
+        for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); const u = toUni && toUni.map.has(c) ? toUni.map.get(c) : enc[c]; if (u == null) { ok = false; out.push("�"); } else out.push(u); }
+      } else {
+        if (!toUni) return { text: null, ok: false };
+        const B = toUni.bytes === 1 ? 1 : 2;
+        for (let i = 0; i + B - 1 < str.length; i += B) { const c = B === 1 ? str.charCodeAt(i) : ((str.charCodeAt(i) << 8) | str.charCodeAt(i + 1)); if (toUni.map.has(c)) out.push(toUni.map.get(c)); else { ok = false; out.push("�"); } }
+      }
+      return { text: out.join(""), ok };
+    }
+    return { simple, subtype, decode, widthOf, hasToUnicode: !!toUni };
   }
 
   function isPdfBytes(bytes) {
@@ -320,8 +426,8 @@
     const ab = (() => { try { return page.getArtBox(); } catch (_) { return null; } })();
     const content = pageContentBytes(doc, page);
     const resNode = page.node.Resources();
-    const { resolve, spaces, layers } = makeResolver(doc, resNode);
-    const { segs, inner } = interpret(content, resolve, [1, 0, 0, 1, 0, 0], 0, spaces, layers);
+    const { resolve, spaces, layers, fonts } = makeResolver(doc, resNode);
+    const { segs, inner } = interpret(content, resolve, [1, 0, 0, 1, 0, 0], 0, spaces, layers, fonts);
     segs.forEach((s, i) => { s.index = i; });
     // Flatten form children for detection/grouping with a pointer to their top-level segment
     const nested = [];
@@ -560,6 +666,81 @@
       parts.forEach(pp => seen.add(pp));
     }
     return out;
+  }
+
+  /* ═══ 5a · SKU labels under charms (master files) ═════════════════════
+     Each charm in a master file has its SKU as a text object directly under it. The rule, precisely (design §6.1):
+     a text segment whose decoded string matches the SKU pattern (after trim + upper-case; an optional size suffix
+     after a middle dot or a space), whose bounding-box TOP edge is at most `gapPt` below the charm outline's bottom
+     edge, and whose horizontal centre lies within the outline's horizontal extent widened by `widen` on each side.
+     Two qualifying outlines → the nearer bottom edge wins. Labels are never part of the charm: they are dropped from
+     every charm's members (and top-level indices) so a SKU string can never be cut or written into a per-SKU file. */
+  const SKU_PATTERN_DEFAULT = /^[A-Z]{2,4}-[A-Z0-9]{2,6}(-[A-Z0-9]{1,4})?$/;
+  /** "BR-CMP-01 · S" → { sku, size } or null. */
+  function parseSkuLabel(str, pattern) {
+    pattern = pattern || SKU_PATTERN_DEFAULT;
+    const s = String(str == null ? "" : str).replace(/�/g, "").replace(/\s+/g, " ").trim().toUpperCase();
+    if (!s) return null;
+    if (pattern.test(s)) return { sku: s, size: null };
+    const m = /^(.+?)(?:\s*[·•]\s*|\s+)([A-Z0-9]{1,3})$/.exec(s);
+    if (m && pattern.test(m[1])) return { sku: m[1], size: m[2] };
+    return null;
+  }
+  function labelCharms(parsed, charms, opts) {
+    opts = Object.assign({ pattern: SKU_PATTERN_DEFAULT, gapPt: 18, widen: 0.25 }, opts || {});
+    const texts = parsed.segments.concat(parsed.nested).filter(s => s.kind === "text");
+    const labels = new Map(), unlabelled = [], orphans = [], duplicates = [], undecodable = [], labelSegs = new Set();
+    const live = charms.filter(c => c.mergedInto == null);
+    for (const t of texts) {
+      if (t.undecodable || t.str == null) { if (t.chars > 0) undecodable.push({ bbox: t.bbox, chars: t.chars, font: t.font || null }); continue; }
+      const lab = parseSkuLabel(t.str, opts.pattern); if (!lab || !t.bbox) continue;
+      const cx = (t.bbox[0] + t.bbox[2]) / 2, top = t.bbox[3];
+      let best = null, bestGap = Infinity;
+      for (const c of live) {
+        const b = c.outline.bbox, w = b[2] - b[0];
+        const gap = b[1] - top;                                         // outline bottom (y-up) minus label top
+        if (gap < -1 || gap > opts.gapPt) continue;
+        if (cx < b[0] - w * opts.widen || cx > b[2] + w * opts.widen) continue;
+        if (gap < bestGap) { bestGap = gap; best = c; }
+      }
+      if (!best) { orphans.push({ sku: lab.sku, size: lab.size, str: t.str, bbox: t.bbox }); continue; }
+      const prev = labels.get(best.index);
+      if (prev) {                                                        // two labels under one charm: the nearer one stays, both are reported
+        if (prev.gap <= bestGap) { duplicates.push({ sku: lab.sku, size: lab.size, also: prev.sku, charmIndex: best.index }); labelSegs.add(t); continue; }
+        duplicates.push({ sku: prev.sku, size: prev.size, also: lab.sku, charmIndex: best.index });
+      }
+      labels.set(best.index, { sku: lab.sku, size: lab.size, seg: t, gap: bestGap });
+      best.label = t; best.sku = lab.sku; best.skuSize = lab.size;
+    }
+    // a label text is never charm material, whichever charm the grouping attached it to
+    for (const l of labels.values()) labelSegs.add(l.seg);
+    for (const c of charms) {
+      const before = c.members.length;
+      c.members = c.members.filter(m => !labelSegs.has(m));
+      if (c.members.length !== before) { recomputeTopIndices(c, parsed); c.bbox = c.members.reduce((a, m) => bbUnion(a, m.bbox), null) || c.outline.bbox.slice(); }   // the label's box never widens the charm
+      if (c.mergedInto == null && !labels.has(c.index)) unlabelled.push(c.index);
+    }
+    return { labels, unlabelled, orphans, duplicates, undecodable };
+  }
+  /** Top-level indices a charm's writer keeps, from its current members (a Do stays while any of its children is a member). */
+  function recomputeTopIndices(c, parsed) {
+    const tops = new Set();
+    for (const m of c.members) { const t = m.parent != null ? m.parent : m.index; if (t != null) tops.add(t); }
+    c.topIndices = (c.topIndices || []).filter(t => tops.has(t)).concat([...tops].filter(t => !(c.topIndices || []).includes(t)));
+    void parsed;
+    return c.topIndices;
+  }
+  /** The sorter's cut-line rule: a closed path with an achromatic stroke. Blue and red strokes/fills are front-only detail. */
+  const achromaticCol = col => col && (Math.max(col[0], col[1], col[2]) - Math.min(col[0], col[1], col[2])) <= 0.15;
+  function isCutLine(m) { return !!m && m.kind === "path" && m.stroke && m.closed && achromaticCol(m.strokeRGB); }
+  /** Inner cut lines of a charm: closed achromatic strokes other than its outline (hoop holes, windows). */
+  function cutLinesOf(c) { return c.members.filter(m => m !== c.outline && isCutLine(m)); }
+  /** A segment with every point and Bézier handle mapped through M (points and control points alike). */
+  function transformSegment(seg, M) {
+    const P = p => ap(M, p[0], p[1]);
+    const subpaths = (seg.subpaths || []).map(sub => sub.map(s => s[0] === "m" || s[0] === "l" ? [s[0], P(s[1])] : s[0] === "c" ? ["c", P(s[1]), P(s[2]), P(s[3])] : s.slice()));
+    const pts = []; for (const sub of subpaths) for (const s of sub) for (let i = 1; i < s.length; i++) pts.push(s[i]);
+    return Object.assign({}, seg, { subpaths, bbox: bboxOf(pts), lwPt: (seg.lwPt || 0) * scaleOf(M), transformed: true, original: seg.original || seg });
   }
 
   /* ═══ 5b · work area ═══════════════════════════════════════════════════
@@ -813,9 +994,13 @@
 
   /** One charm alone on its own artboard (for the permanent per-charm copy). */
   async function buildSingleCharm(charm, parsed) {
-    const pad = charm.strokePt / 2 + 2;
+    // the page around a lone charm is padded by an eighth of its larger side (at least the stroke plus 2 pt): a charm that
+    // filled 80 % of its own page would read as an artboard frame when the per-SKU file is parsed again
+    const bw = charm.bbox[2] - charm.bbox[0], bh = charm.bbox[3] - charm.bbox[1];
+    const pad = Math.max((charm.strokePt || 0.5) / 2 + 2, 0.125 * Math.max(bw, bh));
     const w = charm.bbox[2] - charm.bbox[0] + pad * 2, h = charm.bbox[3] - charm.bbox[1] + pad * 2;
-    const c = Object.assign({}, charm, { sourceId: "one" });
+    // the rotation centre normally comes from buildSilhouettes (canvas); without one (server indexing, tests) the bbox centre is the same point
+    const c = Object.assign({}, charm, { sourceId: "one", centerPt: charm.centerPt || [(charm.bbox[0] + charm.bbox[2]) / 2, (charm.bbox[1] + charm.bbox[3]) / 2], strokePt: charm.strokePt || Math.max(0.5, charm.outline.lwPt || 0.5) });
     return buildSheet({
       sheet: { wPt: w, hPt: h, strokeRGB: [1, 1, 1], strokePt: 0.01 },
       placements: [{ charm: c, angle: 0, cxPt: w / 2, cyPt: h / 2 }],
@@ -823,6 +1008,100 @@
       title: charm.name || charm.slug || "charm"
     });
   }
+
+  /* ═══ 7b · back file: one engraved piece, mirrored, hoop-up ═══════════
+     spec = {
+       charm, parsed, cutMembers: [segments]      the outline + inner cut lines (the sorter's isCutLine rule)
+       cx, cy                                      mirror axis x and rotation centre, source pt
+       angleDeg                                    rotation applied AFTER the mirror, about (cx, cy), CCW y-up
+       padPt                                       page margin around the piece (5 mm by default)
+       glyphs: [{ cmds:[{type:"M"|"L"|"C"|"Q"|"Z", x, y, x1, y1, x2, y2}] }]   text outlines, back-frame pt, origin at (cx, cy), y-up
+       view: "asSeenFromBack" | "frontCoordinates" title, meta
+     }
+     The CUT OUTLINE (reference) layer carries the ORIGINAL cut bytes under a mirror·rotate·translate matrix whenever
+     the cut members are whole top-level segments of the source (nothing redrawn); when a cut line shares a form
+     XObject with front detail, the exact transformed Béziers are written instead and `reference.redrawn` says so.
+     The ENGRAVE layer is the text as filled paths — never a font reference. */
+  async function buildBackFile(spec) {
+    const { PDFDocument, PDFName, PDFString, PDFOperator, PDFOperatorNames, rgb, pushGraphicsState, popGraphicsState, concatTransformationMatrix, drawObject, endMarkedContent, moveTo, lineTo, appendBezierCurve, closePath, fill, setFillingRgbColor, setStrokingRgbColor, setLineWidth, stroke } = L();
+    const c = spec.charm, parsed = spec.parsed, cut = spec.cutMembers, cx = spec.cx, cy = spec.cy, th = (spec.angleDeg || 0) * Math.PI / 180, pad = spec.padPt == null ? 5 / MMPT : spec.padPt;
+    const M = [-1, 0, 0, 1, 2 * cx, 0];
+    const R = [Math.cos(th), Math.sin(th), -Math.sin(th), Math.cos(th), cx - cx * Math.cos(th) + cy * Math.sin(th), cy - cx * Math.sin(th) - cy * Math.cos(th)];
+    const MR = mul(M, R);                                          // mirror first, then rotate
+    const back = cut.map(m => transformSegment(m, MR));
+    const bb = back.reduce((a, s) => bbUnion(a, s.bbox), null) || [cx - 10, cy - 10, cx + 10, cy + 10];
+    const lw = Math.max(...cut.map(m => m.lwPt || 0.5), 0.5);
+    const pw = bb[2] - bb[0] + 2 * pad + lw, ph = bb[3] - bb[1] + 2 * pad + lw;
+    const T = [1, 0, 0, 1, pad + lw / 2 - bb[0], pad + lw / 2 - bb[1]];
+    const out = await PDFDocument.create();
+    out.setTitle(spec.title || "Back"); out.setProducer("Brites Charm Nesting Station"); out.setCreator("Brites Charm Nesting Station");
+    const page = out.addPage([pw, ph]); page.node.normalize();
+    const res = page.node.Resources(); const props = out.context.obj({}); res.set(PDFName.of("Properties"), props);
+    const ocgRefs = [];
+    const addOCG = (name, tag) => { const ocg = out.context.obj({ Type: "OCG", Name: PDFString.of(name) }); const ref = out.context.register(ocg); ocgRefs.push(ref); props.set(PDFName.of(tag), ref); return ref; };
+    const cm = m => concatTransformationMatrix(m[0], m[1], m[2], m[3], m[4], m[5]);
+    const frontView = spec.view === "frontCoordinates";
+    const Mp = [-1, 0, 0, 1, pw, 0];
+    const cutSet = new Set(cut);
+    const topOf = m => (m.parent != null ? m.parent : m.index);
+    const tops = [...new Set(cut.map(topOf).filter(t => t != null))];
+    const shared = c.members.some(m => !cutSet.has(m) && tops.includes(topOf(m)));
+    const reference = { redrawn: shared || cut.some(m => m.synthetic), tops };
+    // 1 · CUT OUTLINE (reference)
+    addOCG("CUT OUTLINE (reference)", "ocCut");
+    page.pushOperators(ocgOps("ocCut"), pushGraphicsState());
+    if (frontView) page.pushOperators(cm(Mp));
+    if (!reference.redrawn) {
+      const [copied] = await out.copyPages(parsed.doc, [0]);
+      const content = pageContentBytes(out, copied);
+      const rawRes = copied.node.get(PDFName.of("Resources"));
+      const { PDFRef, PDFDict } = L();
+      const resRef = rawRes instanceof PDFRef ? rawRes : rawRes instanceof PDFDict ? out.context.register(rawRes) : out.context.register(out.context.obj({}));
+      const bytes = isolate(content, parsed.segments, tops);
+      const srcBB = cut.reduce((a, s) => bbUnion(a, s.bbox), null);
+      const xobj = out.context.flateStream(bytes, { Type: "XObject", Subtype: "Form", BBox: [srcBB[0] - lw, srcBB[1] - lw, srcBB[2] + lw, srcBB[3] + lw], Matrix: [1, 0, 0, 1, 0, 0], Resources: resRef });
+      const key = page.node.newXObject("Cut0", out.context.register(xobj));
+      page.pushOperators(cm(T), cm(R), cm(M), drawObject(key));
+    } else {
+      page.pushOperators(cm(T), setStrokingRgbColor(0, 0, 0));
+      for (const s of back) {
+        page.pushOperators(setLineWidth(s.lwPt || lw));
+        for (const sub of s.subpaths) for (const o of sub) {
+          if (o[0] === "m") page.pushOperators(moveTo(o[1][0], o[1][1]));
+          else if (o[0] === "l") page.pushOperators(lineTo(o[1][0], o[1][1]));
+          else if (o[0] === "c") page.pushOperators(appendBezierCurve(o[1][0], o[1][1], o[2][0], o[2][1], o[3][0], o[3][1]));
+          else if (o[0] === "h") page.pushOperators(closePath());
+        }
+        page.pushOperators(stroke());
+      }
+    }
+    page.pushOperators(popGraphicsState(), endMarkedContent());
+    // 2 · ENGRAVE: text as filled paths in the back frame (origin at the charm centre after mirror + rotation)
+    addOCG("ENGRAVE", "ocEngrave");
+    page.pushOperators(ocgOps("ocEngrave"), pushGraphicsState());
+    if (frontView) page.pushOperators(cm(Mp));
+    page.pushOperators(cm([1, 0, 0, 1, cx + T[4], cy + T[5]]), setFillingRgbColor(0, 0, 0));
+    let glyphCount = 0;
+    for (const g of spec.glyphs || []) {
+      let cur = null, first = null;
+      for (const k of g.cmds) {
+        if (k.type === "M") { page.pushOperators(moveTo(k.x, k.y)); cur = [k.x, k.y]; first = cur; }
+        else if (k.type === "L") { page.pushOperators(lineTo(k.x, k.y)); cur = [k.x, k.y]; }
+        else if (k.type === "C") { page.pushOperators(appendBezierCurve(k.x1, k.y1, k.x2, k.y2, k.x, k.y)); cur = [k.x, k.y]; }
+        else if (k.type === "Q") { const c1 = [cur[0] + 2 / 3 * (k.x1 - cur[0]), cur[1] + 2 / 3 * (k.y1 - cur[1])], c2 = [k.x + 2 / 3 * (k.x1 - k.x), k.y + 2 / 3 * (k.y1 - k.y)]; page.pushOperators(appendBezierCurve(c1[0], c1[1], c2[0], c2[1], k.x, k.y)); cur = [k.x, k.y]; }
+        else if (k.type === "Z") { page.pushOperators(closePath()); cur = first; }
+      }
+      page.pushOperators(PDFOperator.of(PDFOperatorNames.FillNonZero)); glyphCount++;
+    }
+    page.pushOperators(popGraphicsState(), endMarkedContent());
+    const order = out.context.obj(ocgRefs), on = out.context.obj(ocgRefs);
+    out.catalog.set(PDFName.of("OCProperties"), out.context.obj({ OCGs: out.context.obj(ocgRefs), D: out.context.obj({ Order: order, ON: on, BaseState: "ON" }) }));
+    if (spec.meta) { try { out.setSubject(JSON.stringify(Object.assign({ view: spec.view || "asSeenFromBack", reference }, spec.meta)).slice(0, 4000)); } catch (_) { /* ignore */ } }
+    void fill; void rgb;
+    const bytes = await out.save({ useObjectStreams: false });
+    return { bytes, wPt: pw, hPt: ph, reference, glyphCount, frame: { M, R, T, bbox: bb } };
+  }
+  const MMPT = 25.4 / 72;
 
   /* ═══ 8 · render-based verification (pdf.js, optional content) ═════════ */
   /**
@@ -883,5 +1162,6 @@
     return { ok: overlapPx === 0 && outsidePx === 0 && empty.length === 0, overlapPx, outsidePx, emptyLayers: empty, overlappingPairs: [...pairs], overlapDetail, layers: charmLayers.length, res, erodePx };
   }
 
-  root.CharmNestPDF = { parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawSegments, pathToCanvas };
+  root.CharmNestPDF = { parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawSegments, pathToCanvas,
+    parseSkuLabel, labelCharms, recomputeTopIndices, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, mul, ap, signature, fnv };
 })(typeof window !== "undefined" ? window : self);

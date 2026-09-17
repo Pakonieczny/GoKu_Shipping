@@ -27,6 +27,10 @@
  *    putSheet · listSheets · getSheet · deleteSheet
  *    putCalibration · getCalibration
  *    startJob · getJob · stopJob
+ *    + bridge (design doc §13): masterPutIndex · masterGet · masterGetMany · masterList · masterPatch · masterPutFile ·
+ *      masterListFiles · masterRemoveFile · startMaster · poolPut · poolUpdate · poolList · poolGet · backPut · backList ·
+ *      setAllocate · setUpdate · setGet · setList · runPut · runGet · runList · bridgeLog · aliasGet · aliasPut ·
+ *      noDesignGet · noDesignPut · noDesignDelete · optionMapGet · optionMapPut
  *  ═══════════════════════════════════════════════════════════════════════ */
 "use strict";
 const admin = require("./firebaseAdmin");
@@ -47,6 +51,7 @@ function slim(d) {
     verification: d.verification ? { ok: !!d.verification.ok } : null,
     preview: d.outputs && d.outputs.preview ? d.outputs.preview.url : null,
     names: str(d.names, 2000), sources: (d.sources || []).map(s => ({ name: s.name, hash: s.hash || null })), runId: d.runId || null, page: num(d.page) || 1,
+    setId: d.setId || null, setSeq: num(d.setSeq) || null, sheetIndex: num(d.sheetIndex) || null, orders: (d.orders || []).slice(0, 500), backCount: (d.backPool || []).length, label: d.label ? { files: (d.label.files || []).map(f => ({ path: f.path, url: f.url })) } : null,
     updatedAt: ms(d.updatedAt), createdAt: ms(d.createdAt)
   };
 }
@@ -118,6 +123,7 @@ async function op_listSheets(b) {
   const snap = await q.limit(limit).get();
   let rows = snap.docs.map(d => d.data()).filter(d => !d.archived);
   if (b.metal && /^(gold|silver|rose|gold10k|gold14k)$/.test(b.metal)) rows = rows.filter(d => d.metal === b.metal);
+  if (b.setId) rows = rows.filter(d => d.setId === b.setId);
   rows.sort((x, y) => (ms(y.updatedAt) || 0) - (ms(x.updatedAt) || 0));
   return { sheets: rows.map(slim) };
 }
@@ -140,6 +146,9 @@ async function refreshLinks(d) {
   };
   const jobs = [];
   for (const k of ["ai", "pdf", "labelled", "report", "preview"]) { const o = d.outputs && d.outputs[k]; if (o && o.path) jobs.push(urlFor(o.path).then(u => { if (u) o.url = u; })); }
+  for (const f of (d.label && d.label.files) || []) if (f.path) jobs.push(urlFor(f.path).then(u => { if (u) f.url = u; }));
+  for (const k of ["index", "report"]) { const o = d.backOutputs && d.backOutputs[k]; if (o && o.path) jobs.push(urlFor(o.path).then(u => { if (u) o.url = u; })); }
+  for (const bk of d.backPool || []) for (const k of ["ai", "png"]) { const o = bk.outputs && bk.outputs[k]; if (o && o.path) jobs.push(urlFor(o.path).then(u => { if (u) o.url = u; })); }
   for (const c of d.charms || []) {
     const pngPath = c.pngPath || (c.hash ? "charmnest/charms/" + c.hash + ".png" : null), aiPath = c.aiPath || (c.hash ? "charmnest/charms/" + c.hash + ".ai" : null);
     jobs.push(urlFor(pngPath).then(u => { if (u) c.thumbUrl = u; }));
@@ -199,8 +208,9 @@ async function op_stopJob(b) {
    (images) is passed straight through to the kick so Firestore never stores it. */
 const AGENT = "Charm_Nest_Agent";
 async function op_startAgent(b) {
-  const mode = ["grouping", "layout", "name", "place"].includes(b.mode) ? b.mode : null;
+  const mode = ["grouping", "layout", "name", "place", "labelRead", "engraveIntent", "engraveReview"].includes(b.mode) ? b.mode : null;
   if (!mode || !b.payload) return { error: "mode and payload required" };
+  const fnName = /^engrave/.test(mode) ? "charmEngrave-background" : "charmNestAgent-background";
   const id = "agent-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   // Background functions accept only a small request body (the images made the
   // kick 413), so the payload is parked in Storage and the job reads it back.
@@ -209,7 +219,7 @@ async function op_startAgent(b) {
   await db.collection(AGENT).doc(id).set({ id, mode, status: "pending", payloadPath, sheetId: str(b.sheetId, 80), sourceName: str(b.sourceName, 120), createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() });
   const fetch = require("node-fetch");
   const base = process.env.URL || process.env.DEPLOY_PRIME_URL || "https://goldenspike.app";
-  const kick = await fetch(`${base}/.netlify/functions/charmNestAgent-background`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, mode }) }).catch(err => ({ ok: false, status: 0, statusText: err.message }));
+  const kick = await fetch(`${base}/.netlify/functions/${fnName}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, mode }) }).catch(err => ({ ok: false, status: 0, statusText: err.message }));
   if (!kick.ok && kick.status !== 202) { await db.collection(AGENT).doc(id).set({ status: "error", error: `kick failed: ${kick.status} ${kick.statusText || ""}`, updatedAt: FV.serverTimestamp() }, { merge: true }); return { error: `could not start the background job (${kick.status})` }; }
   return { ok: true, id };
 }
@@ -220,8 +230,199 @@ async function op_getAgent(b) {
   const d = s.data(); return { job: { id: d.id, mode: d.mode, status: d.status, error: d.error || null, result: d.result || null, startedAt: ms(d.startedAt), createdAt: ms(d.createdAt) } };
 }
 
-const OPS = { startAgent: op_startAgent, getAgent: op_getAgent, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, deleteSheet: op_deleteSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob };
 
+/* ═══ Charm Sorter ⇄ Design Station bridge — master index, pool, backs, sets, runs, maps (design §12, §13) ═══
+   Every query below is a single-field equality or range, like the rest of this file: no composite indexes. */
+const Master = require("./_charmNestMaster");
+const POOL = "Charm_Pool", BACK = "Charm_Pool_Back", SETS = "Charm_Nest_Sets", COUNTERS = "Charm_Nest_Counters", RUNS = "Charm_Nest_Runs", BRIDGE = "Design_Bridge", ALIASES = "Charm_Sku_Aliases", NODESIGN = "Charm_Sku_NoDesign", OPTMAP = "Charm_Option_Map";
+const isDay = d => /^\d{4}-\d{2}-\d{2}$/.test(String(d || ""));
+const isPoolId = s => /^\d{5,20}_\d{5,20}_\d{1,3}$/.test(String(s || ""));
+const tokenUrl = async (path) => { if (!path) return null; try { const bucket = admin.storage().bucket(); const [meta] = await bucket.file(path).getMetadata(); let t = meta.metadata && meta.metadata.firebaseStorageDownloadTokens; if (!t) return null; t = String(t).split(",")[0]; return "https://firebasestorage.googleapis.com/v0/b/" + encodeURIComponent(bucket.name) + "/o/" + encodeURIComponent(path) + "?alt=media&token=" + encodeURIComponent(t); } catch (_) { return null; } };
+async function withLinks(e) { if (!e) return e; const jobs = []; if (e.aiPath) jobs.push(tokenUrl(e.aiPath).then(u => { if (u) e.aiUrl = u; })); if (e.thumbPath) jobs.push(tokenUrl(e.thumbPath).then(u => { if (u) e.thumbUrl = u; })); for (const s of Object.values(e.sizes || {})) { if (s.aiPath) jobs.push(tokenUrl(s.aiPath).then(u => { if (u) s.aiUrl = u; })); if (s.thumbPath) jobs.push(tokenUrl(s.thumbPath).then(u => { if (u) s.thumbUrl = u; })); } await Promise.all(jobs); return e; }
+
+// ── master index ──
+async function op_masterPutIndex(b) { const r = await Master.putIndex(db, FV, b); return Object.assign({ ok: true }, r); }
+async function op_masterGet(b) {
+  const sku = String(b.sku || "").trim().toUpperCase(); if (!Master.isSku(sku)) return { entry: null, error: "bad sku" };
+  const s = await db.collection(Master.INDEX).doc(sku).get();
+  return { entry: s.exists ? await withLinks(Master.slimEntry(s.data())) : null };
+}
+async function op_masterGetMany(b) {
+  const skus = [...new Set((b.skus || []).map(s => String(s).trim().toUpperCase()).filter(Master.isSku))].slice(0, 300); const out = {};
+  for (let i = 0; i < skus.length; i += 30) { const snaps = await db.getAll(...skus.slice(i, i + 30).map(s => db.collection(Master.INDEX).doc(s))); for (const s of snaps) if (s.exists) out[s.id] = await withLinks(Master.slimEntry(s.data())); }
+  return { entries: out };
+}
+async function op_masterList(b) {
+  const q = str(b.q, 80).toUpperCase(); const limit = Math.min(3000, Math.max(1, num(b.limit) || 1500));
+  const snap = await db.collection(Master.INDEX).limit(limit).get();
+  let rows = snap.docs.map(d => Master.slimEntry(d.data()));
+  if (b.masterHash) rows = rows.filter(r => r.masterHash === b.masterHash);
+  if (q) rows = rows.filter(r => r.sku.includes(q));
+  rows.sort((x, y) => x.sku.localeCompare(y.sku));
+  if (b.links) for (const r of rows) await withLinks(r);
+  return { entries: rows };
+}
+async function op_masterPatch(b) {
+  const sku = String(b.sku || "").trim().toUpperCase(); if (!Master.isSku(sku)) return { error: "bad sku" };
+  const p = b.patch || {}; const doc = { updatedAt: FV.serverTimestamp() };
+  if (typeof p.engravable === "boolean") { doc.engravable = p.engravable; doc.engravableBy = "operator"; }
+  if (p.upAngle != null) { doc.upAngle = num(p.upAngle); doc.upSource = "operator"; }
+  if (Array.isArray(p.backKeepOut)) doc.backKeepOut = p.backKeepOut.slice(0, 50);
+  if (p.blocked === null) { doc.blocked = FV.delete(); doc.conflict = FV.delete(); }
+  if (p.labelSource) doc.labelSource = str(p.labelSource, 20);
+  if (p.confirmedBy) { doc.confirmedBy = str(p.confirmedBy, 80); doc.confirmedAt = FV.serverTimestamp(); }
+  await db.collection(Master.INDEX).doc(sku).set(doc, { merge: true });
+  return { ok: true };
+}
+async function op_masterPutFile(b) { return Master.putFile(db, FV, b); }
+async function op_masterListFiles() { const snap = await db.collection(Master.FILES).limit(200).get(); const rows = snap.docs.map(d => { const r = d.data(); r.indexedAt = ms(r.indexedAt); return r; }); rows.sort((a, b2) => (b2.indexedAt || 0) - (a.indexedAt || 0)); return { files: rows }; }
+async function op_masterRemoveFile(b) {
+  const hash = str(b.masterHash, 80); if (!/^[0-9a-f]{8,64}$/i.test(hash)) return { error: "bad master hash" };
+  const snap = await db.collection(Master.INDEX).limit(3000).get(); let removed = 0;
+  for (const d of snap.docs) if (d.data().masterHash === hash) { await d.ref.delete(); removed++; }
+  await db.collection(Master.FILES).doc(hash).delete().catch(() => {});
+  return { ok: true, removed };
+}
+/** Server-side indexing of a large master already uploaded to Storage: parks a job, kicks charmMaster-background. */
+async function op_startMaster(b) {
+  const path = str(b.path, 600); if (!path.startsWith("charmnest/")) return { error: "bad path" };
+  const id = "master-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  await db.collection(JOBS).doc(id).set({ id, kind: "master", status: "pending", path, name: str(b.name, 200), opts: b.opts || {}, createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() });
+  const fetch = require("node-fetch");
+  const base = process.env.URL || process.env.DEPLOY_PRIME_URL || "https://goldenspike.app";
+  const kick = await fetch(`${base}/.netlify/functions/charmMaster-background`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) }).catch(err => ({ ok: false, status: 0, statusText: err.message }));
+  if (!kick.ok && kick.status !== 202) { await db.collection(JOBS).doc(id).set({ status: "error", error: `kick failed: ${kick.status} ${kick.statusText || ""}`, updatedAt: FV.serverTimestamp() }, { merge: true }); return { error: `could not start the background job (${kick.status})` }; }
+  return { ok: true, id };
+}
+
+// ── pool ──
+async function op_poolPut(b) {
+  const rows = (Array.isArray(b.pools) ? b.pools : [b.pool]).filter(p => p && isPoolId(p.poolId)).slice(0, 400);
+  if (!rows.length) return { error: "no pool rows" };
+  const out = { written: 0, contended: [] };
+  for (const p of rows) {
+    const ref = db.collection(POOL).doc(p.poolId); const ex = await ref.get(); const cur = ex.exists ? ex.data() : null;
+    // two runs contending for one line: a row claimed by a live run (fresh within 24 h, not finished) belongs to that run
+    if (cur && cur.runId && p.runId && cur.runId !== p.runId && !["complete", "abandoned", "committed"].includes(cur.state) && (Date.now() - (ms(cur.updatedAt) || 0)) < 24 * 3600 * 1000) { out.contended.push({ poolId: p.poolId, runId: cur.runId }); continue; }
+    const doc = Object.assign({}, p, { poolId: p.poolId, updatedAt: FV.serverTimestamp() }); if (!cur) doc.createdAt = FV.serverTimestamp();
+    await ref.set(doc, { merge: true }); out.written++;
+  }
+  return Object.assign({ ok: true }, out);
+}
+async function op_poolUpdate(b) {
+  const ids = (Array.isArray(b.poolIds) ? b.poolIds : [b.poolId]).filter(isPoolId).slice(0, 400); if (!ids.length) return { error: "bad pool id" };
+  let batch = db.batch(), n = 0;
+  for (const id of ids) { batch.set(db.collection(POOL).doc(id), Object.assign({}, b.patch || {}, { updatedAt: FV.serverTimestamp() }), { merge: true }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; } }
+  if (n) await batch.commit();
+  return { ok: true, count: ids.length };
+}
+async function op_poolList(b) {
+  let q = db.collection(POOL);
+  if (b.runId) q = q.where("runId", "==", str(b.runId, 80)); else if (b.setId) q = q.where("setId", "==", str(b.setId, 80)); else if (b.sheetId) q = q.where("sheetId", "==", str(b.sheetId, 80)); else if (b.orderId) q = q.where("orderId", "==", str(b.orderId, 40)); else return { error: "runId, setId, sheetId or orderId required" };
+  const snap = await q.limit(Math.min(2000, num(b.limit) || 1000)).get();
+  return { pools: snap.docs.map(d => { const r = d.data(); r.updatedAt = ms(r.updatedAt); r.createdAt = ms(r.createdAt); return r; }) };
+}
+async function op_poolGet(b) {
+  const ids = (b.poolIds || []).filter(isPoolId).slice(0, 300); const out = {};
+  for (let i = 0; i < ids.length; i += 30) { const snaps = await db.getAll(...ids.slice(i, i + 30).map(id => db.collection(POOL).doc(id))); for (const s of snaps) if (s.exists) { const r = s.data(); r.updatedAt = ms(r.updatedAt); out[s.id] = r; } }
+  return { pools: out };
+}
+// ── backs ──
+async function op_backPut(b) {
+  const rows = (Array.isArray(b.backs) ? b.backs : [b.back]).filter(x => x && isPoolId(x.poolId)).slice(0, 400); if (!rows.length) return { error: "no back rows" };
+  let batch = db.batch(), n = 0;
+  for (const x of rows) { batch.set(db.collection(BACK).doc(x.poolId), Object.assign({}, x, { updatedAt: FV.serverTimestamp() }), { merge: true }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; } }
+  if (n) await batch.commit();
+  return { ok: true, count: rows.length };
+}
+async function op_backList(b) {
+  let q = db.collection(BACK);
+  if (b.sheetId) q = q.where("sheetId", "==", str(b.sheetId, 80)); else if (b.setId) q = q.where("setId", "==", str(b.setId, 80)); else if (b.runId) q = q.where("runId", "==", str(b.runId, 80)); else return { error: "sheetId, setId or runId required" };
+  const snap = await q.limit(2000).get();
+  return { backs: snap.docs.map(d => { const r = d.data(); r.updatedAt = ms(r.updatedAt); return r; }) };
+}
+// ── sets: the number is allocated in a transaction, per date, across every material ──
+async function op_setAllocate(b) {
+  const day = str(b.day, 10); if (!isDay(day)) return { error: "bad day" };
+  const runId = str(b.runId, 80);
+  // idempotent per run: a run that already has a set keeps it
+  if (runId) { const ex = await db.collection(SETS).where("runId", "==", runId).limit(1).get(); if (!ex.empty) { const d = ex.docs[0].data(); return { ok: true, setId: d.setId, seq: d.seq, day: d.day, existing: true }; } }
+  const res = await db.runTransaction(async t => {
+    const cref = db.collection(COUNTERS).doc(day); const cs = await t.get(cref);
+    const seq = (cs.exists ? num(cs.data().seq) : 0) + 1;
+    const setId = `set-${day}-${seq}`;
+    t.set(cref, { day, seq, updatedAt: FV.serverTimestamp() }, { merge: true });
+    t.set(db.collection(SETS).doc(setId), { setId, runId: runId || null, day, seq, name: `Set-${seq}`, folder: `charmnest/sets/${day}/Set-${seq}`, materials: [], sheetIds: [], orders: {}, labels: null, status: "open", createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() });
+    return { setId, seq };
+  });
+  return Object.assign({ ok: true, day }, res);
+}
+async function op_setUpdate(b) {
+  const id = str(b.setId, 80); if (!isId(id)) return { error: "bad set id" };
+  await db.collection(SETS).doc(id).set(Object.assign({}, b.patch || {}, { setId: id, updatedAt: FV.serverTimestamp() }), { merge: true });
+  return { ok: true };
+}
+async function op_setGet(b) { const id = str(b.setId, 80); if (!isId(id)) return { error: "bad set id" }; const s = await db.collection(SETS).doc(id).get(); if (!s.exists) return { set: null }; const d = s.data(); d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt); d.committedAt = ms(d.committedAt) || d.committedAt || null; return { set: d }; }
+async function op_setList(b) {
+  let q = db.collection(SETS).orderBy("day", "desc");
+  if (isDay(b.from)) q = q.where("day", ">=", b.from); if (isDay(b.to)) q = q.where("day", "<=", b.to);
+  const snap = await q.limit(Math.min(500, num(b.limit) || 200)).get();
+  const rows = snap.docs.map(d => { const r = d.data(); r.updatedAt = ms(r.updatedAt); r.createdAt = ms(r.createdAt); return r; });
+  if (b.status) return { sets: rows.filter(r => r.status === b.status) };
+  return { sets: rows };
+}
+// ── runs ──
+async function op_runPut(b) {
+  const r = b.run || {}; const id = str(r.runId, 80); if (!isId(id)) return { error: "bad run id" };
+  const doc = Object.assign({}, r, { runId: id, updatedAt: FV.serverTimestamp() });
+  const ref = db.collection(RUNS).doc(id); const ex = await ref.get(); if (!ex.exists) doc.createdAt = FV.serverTimestamp();
+  await ref.set(doc, { merge: !!b.merge });
+  return { ok: true, runId: id };
+}
+async function op_runGet(b) { const id = str(b.runId, 80); if (!isId(id)) return { error: "bad run id" }; const s = await db.collection(RUNS).doc(id).get(); if (!s.exists) return { run: null }; const d = s.data(); d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt); return { run: d }; }
+async function op_runList(b) {
+  const snap = await db.collection(RUNS).orderBy("updatedAt", "desc").limit(Math.min(200, num(b.limit) || 50)).get();
+  let rows = snap.docs.map(d => { const r = d.data(); return { runId: r.runId, setId: r.setId || null, day: r.day, step: r.step, status: r.status, mode: r.mode || null, lines: r.lines ? Object.keys(r.lines).length : 0, holds: r.holds ? Object.keys(r.holds).length : 0, errors: (r.errors || []).length, updatedAt: ms(r.updatedAt), createdAt: ms(r.createdAt), stoppedBy: r.stoppedBy || null }; });
+  if (b.status) rows = rows.filter(r => r.status === b.status);
+  return { runs: rows };
+}
+// ── bridge session log: Design_Bridge/{session} + /log rows (ids and counts only, never order text) ──
+async function op_bridgeLog(b) {
+  const session = str(b.session, 80); if (!/^[\w\-]{6,80}$/.test(session)) return { error: "bad session" };
+  const ref = db.collection(BRIDGE).doc(session);
+  const meta = Object.assign({}, b.meta || {}, { sessionId: session, updatedAt: FV.serverTimestamp() });
+  const rows = (b.rows || []).slice(0, 200);
+  if (rows.length) meta.commands = FV.increment(rows.filter(r => r.dir === "cmd").length);
+  await ref.set(meta, { merge: true });
+  let batch = db.batch(), n = 0;
+  for (const r of rows) { batch.set(ref.collection("log").doc(), { t: num(r.t) || Date.now(), dir: str(r.dir, 10), type: str(r.type, 40), ms: r.ms == null ? null : num(r.ms), payload: r.payload && typeof r.payload === "object" ? r.payload : (r.payload == null ? null : str(r.payload, 400)) }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; } }
+  if (n) await batch.commit();
+  return { ok: true, rows: rows.length };
+}
+// ── learned maps: aliases, no-design list, option maps ──
+async function op_aliasGet() { const snap = await db.collection(ALIASES).limit(3000).get(); const out = {}; snap.docs.forEach(d => { out[d.id] = d.data(); }); return { aliases: out }; }
+async function op_aliasPut(b) { const lid = str(b.listingId, 30).replace(/\D/g, ""); const sku = String(b.sku || "").trim().toUpperCase(); if (!lid || !Master.isSku(sku)) return { error: "listingId and sku required" }; await db.collection(ALIASES).doc(lid).set({ listingId: lid, sku, by: str(b.by || "operator", 80), title: str(b.title, 200), updatedAt: FV.serverTimestamp() }, { merge: true }); return { ok: true }; }
+async function op_noDesignGet() { const snap = await db.collection(NODESIGN).limit(1000).get(); const rows = snap.docs.map(d => Object.assign({ id: d.id }, d.data())); return { list: { patterns: rows.filter(r => r.pattern).map(r => r.pattern), skus: rows.filter(r => r.sku).map(r => r.sku), rows } }; }
+async function op_noDesignPut(b) { const doc = { by: str(b.by || "operator", 80), note: str(b.note, 200), createdAt: FV.serverTimestamp() }; if (b.pattern) { try { new RegExp(String(b.pattern)); } catch (_) { return { error: "bad pattern" }; } doc.pattern = str(b.pattern, 120); } else if (b.sku) doc.sku = String(b.sku).trim().toUpperCase().slice(0, 40); else return { error: "pattern or sku required" }; const ref = await db.collection(NODESIGN).add(doc); return { ok: true, id: ref.id }; }
+async function op_noDesignDelete(b) { if (!isId(b.id)) return { error: "bad id" }; await db.collection(NODESIGN).doc(b.id).delete(); return { ok: true }; }
+async function op_optionMapGet() { const snap = await db.collection(OPTMAP).limit(2000).get(); const out = {}; snap.docs.forEach(d => { out[d.id] = d.data().map || {}; }); return { maps: out }; }
+async function op_optionMapPut(b) {
+  const lid = b.listingId === "*" ? "*" : str(b.listingId, 30).replace(/\D/g, ""); const name = str(b.optionName, 80).toLowerCase().trim(), value = str(b.optionValue, 200).toLowerCase().replace(/\s+/g, " ").trim();
+  if (!lid || !name || !value) return { error: "listingId, optionName and optionValue required" };
+  const m = b.map || {}; const field = ["form", "size", "chain", "ignore"].includes(m.field) ? m.field : null; if (!field) return { error: "map.field must be form, size, chain or ignore" };
+  const ref = db.collection(OPTMAP).doc(lid); const snap = await ref.get(); const cur = snap.exists ? (snap.data().map || {}) : {};
+  cur[name] = cur[name] || {}; cur[name][value] = { field, value: field === "ignore" ? null : str(m.value, 80), by: str(b.by || "operator", 80), at: Date.now() };
+  await ref.set({ listingId: lid, map: cur, updatedAt: FV.serverTimestamp() }, { merge: true });
+  return { ok: true };
+}
+
+const OPS = { startAgent: op_startAgent, getAgent: op_getAgent, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, deleteSheet: op_deleteSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
+  masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, startMaster: op_startMaster,
+  poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backList: op_backList,
+  setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runGet: op_runGet, runList: op_runList, bridgeLog: op_bridgeLog,
+  aliasGet: op_aliasGet, aliasPut: op_aliasPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut };
+
+exports.ops = OPS;   // the connections check runs the same queries the app runs
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: require("./_charmNestAuth").CORS, body: "" };
   const body = event.httpMethod === "GET" ? Object.assign({}, event.queryStringParameters || {}) : parseBody(event);

@@ -204,6 +204,7 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .shAgent .ag.claude .i{color:var(--gold2)}
 .shAgent .ag.warn .x{color:#f2c0ad}
 .shAgent .ag.ok .x{color:#9ed4ac}
+.shAgent .ag.DS .i{color:#a9c8d6}.shAgent .ag.ENGRAVE .i,.shAgent .ag.MASTER .i,.shAgent .ag.POOL .i{color:var(--gold2)}
 .shAgent .ag .x i{color:var(--rTxt3);font-style:normal}
 .shAgent .ag .x .undo{margin-left:6px;border:1px solid #5f5648;background:transparent;color:var(--rTxt2);border-radius:5px;padding:0 6px;font-size:10px;cursor:pointer}
 .shAgent .ag .x .undo:hover{background:#3f382f;color:#fff}
@@ -303,6 +304,159 @@ dialog.wide{width:min(980px,95vw)}
 .dropAll.on{display:grid}
 .dropAll span{background:var(--velvet);border:2px dashed var(--gold2);border-radius:16px;padding:22px 34px}
 @media (prefers-reduced-motion:reduce){.sheetCard.pulse{animation:none}}
+
+/* ── bridge: tabs, live strip, run banner, run mode ── */
+.modeSeg button .cnt{font:700 10px var(--mono);margin-left:5px;background:var(--clay);color:#fff;border-radius:9px;padding:1px 5px;vertical-align:1px;font-style:normal}
+.modeSeg button .cnt:empty{display:none}
+.modeSeg button.on .cnt{background:var(--gold2);color:#2a2013}
+.runMode .sw{width:8px;height:8px;border-radius:50%;background:var(--ink25);display:inline-block;margin-right:6px;vertical-align:0}
+.runMode.auto{background:var(--velvet);color:#fff;border-color:var(--velvet)}
+.runMode.auto .sw{background:var(--sage);box-shadow:0 0 0 3px rgba(95,122,91,.25);animation:bbPulse 1.6s ease-in-out infinite}
+@keyframes bbPulse{50%{box-shadow:0 0 0 6px rgba(95,122,91,.08)}}
+.liveStrip{flex:0 0 auto;background:var(--velvet);color:var(--rTxt2);font:11.5px var(--mono);padding:4px 16px;display:flex;gap:14px;overflow:hidden;white-space:nowrap;border-bottom:1px solid var(--velvetLine);min-height:24px}
+.liveStrip .ls{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.liveStrip .ls b{color:var(--gold2);font-weight:650}
+.liveStrip .ls .t{color:var(--rDim);margin-right:5px}
+.liveStrip .ls .ev{margin-right:16px}
+.runBanner{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:8px 16px;background:var(--goldSoft);border-bottom:1px solid var(--goldLine);font-size:12.5px;flex-wrap:wrap}
+.runBanner.stopped{background:var(--claySoft);border-color:#e3c8bf}
+.runBanner.done{background:var(--sageSoft);border-color:#cfdcc9}
+.runBanner.review{background:var(--slateSoft);border-color:#cbd9de}
+.runBanner .step{font:700 10.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;background:var(--velvet);color:#fff;border-radius:6px;padding:2px 7px}
+.runBanner .why{flex:1 1 auto;min-width:0}
+.runBanner .why b{font-weight:700}
+.runBanner .steps{display:flex;gap:3px}
+.runBanner .steps i{width:9px;height:9px;border-radius:2px;background:var(--ink25);display:block}
+.runBanner .steps i.done{background:var(--sage)}.runBanner .steps i.now{background:var(--gold);animation:bbPulse 1.4s infinite}.runBanner .steps i.stop{background:var(--clay)}
+/* ── Orders tab ── */
+.ordBar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.ordBar input[type=date],.ordBar input[type=number],.ordBar select{border:1px solid var(--line);background:var(--card);border-radius:9px;padding:7px 9px;font-size:12.5px}
+.ordBar input[type=number]{width:74px}
+.ordGroups{display:grid;gap:14px}
+.ordGroup{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);--accent:var(--ink25);border-left:5px solid var(--accent);overflow:hidden}
+.ordGroup[data-m=gold]{--accent:var(--m-gold)}.ordGroup[data-m=silver]{--accent:var(--m-silver)}.ordGroup[data-m=rose]{--accent:var(--m-rose)}.ordGroup[data-m=gold10k]{--accent:var(--m-gold10k)}.ordGroup[data-m=gold14k]{--accent:var(--m-gold14k)}.ordGroup[data-m=none]{--accent:var(--clay)}
+.ordGroup .gh{display:flex;align-items:center;gap:10px;padding:9px 13px;border-bottom:1px solid var(--line2);font:600 13px var(--sans)}
+.ordGroup .gh .n{margin-left:auto;font:11px var(--mono);color:var(--ink45)}
+.ordRow{display:grid;grid-template-columns:110px 118px minmax(0,1fr) 40px 62px 90px 110px 110px;gap:8px;align-items:center;padding:6px 13px;border-bottom:1px solid var(--line2);font-size:12px}
+.ordRow:last-child{border-bottom:0}
+.ordRow.held{background:var(--claySoft)}
+.ordRow.gone{background:#f3e3e3;color:var(--ink45)}
+.ordRow.gone .num{text-decoration:line-through}
+.ordRow .num{font-family:var(--mono);font-weight:700;white-space:nowrap}
+.ordRow .num .attn{color:var(--clay);font-weight:900;margin-left:4px}
+.ordRow .sku{font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ordRow .txt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink70)}
+.ordRow .txt i{font-style:normal;color:var(--ink45);margin-right:4px;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase}
+.ordRow .st{font-size:10.5px;font-weight:700;padding:3px 7px;border-radius:20px;background:var(--paper2);color:var(--ink70);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ordRow .st.ok{background:var(--sageSoft);color:#3c5a39}.ordRow .st.warn{background:var(--goldSoft);color:#7a5a1d}.ordRow .st.bad{background:var(--claySoft);color:#8a3a26}.ordRow .st.info{background:var(--slateSoft);color:#33525d}
+.ordRow .qty{font-family:var(--mono);text-align:center}
+.ordRow .ship{font-family:var(--mono);color:var(--ink70);font-size:11px;white-space:nowrap}
+.ordRow .why{grid-column:1/-1;font-size:11.5px;color:#8a3a26;padding:2px 0 4px 8px;border-left:2px solid var(--clay)}
+.ordRow .why button{margin-left:8px}
+.etsyPill{display:inline-flex;align-items:center;gap:6px;font:11.5px var(--mono);color:var(--ink70);border:1px solid var(--line);border-radius:999px;padding:5px 10px;background:var(--card);white-space:nowrap}
+.etsyPill b{color:var(--ink);font-weight:650}
+.etsyPill.warn{border-color:#b98a3a;color:#7a5a1d}
+.etsyPill.alarm{background:#5a1f16;border-color:#c0553b;color:#fff;animation:cnPulse 1.2s ease-in-out infinite}
+.etsyPill.alarm b{color:#ffd6c9}
+/* ── Design Station tab ── */
+.dsView{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:12px;height:calc(100vh - 150px);min-height:480px}
+.dsView .dsFrameHost{border:1px dashed var(--line);border-radius:12px;background:var(--card2);min-height:0}
+/* the dock: the station frame, full over the tab's placeholder or a live panel in the corner of every other tab */
+#dsDock{position:fixed;z-index:70;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card);box-shadow:var(--sh);display:flex;flex-direction:column}
+#dsDock.hidden{display:none}
+#dsDock.pip{width:480px;height:330px;box-shadow:0 14px 44px rgba(20,16,10,.38);border-color:#8a6a2a}
+#dsDock .dockBar{display:none;align-items:center;gap:8px;padding:5px 10px;background:var(--velvet);color:var(--rTxt2);font:12px var(--mono);cursor:pointer;user-select:none}
+#dsDock.pip .dockBar{display:flex}
+#dsDock .dockBar b{color:#fff;font-weight:650}
+#dsDock .dockBar .dot{width:8px;height:8px;border-radius:50%;background:var(--gold2);box-shadow:0 0 0 3px rgba(202,168,97,.25);animation:cnPulse 1.6s ease-in-out infinite}
+#dsDock.down .dockBar .dot{background:#c0553b;animation:none}
+#dsDock .dockBar .st{color:var(--gold2)}
+#dsDock .dockBar .spacer{flex:1}
+#dsDock .dockBtn{border:1px solid var(--velvetLine,#5a4b33);background:transparent;color:var(--rTxt2);border-radius:6px;padding:2px 8px;font:11.5px var(--mono);cursor:pointer}
+#dsDock .dockBtn:hover{background:rgba(255,255,255,.08);color:#fff}
+#dsDock .dockBody{position:relative;flex:1 1 auto;min-height:0;overflow:hidden;background:#f3f0ea}
+#dsDock iframe{position:absolute;left:0;top:0;border:0;display:block;background:#f3f0ea;transform-origin:0 0}
+#dsDock .veil{position:absolute;inset:0;display:grid;place-items:center;background:rgba(243,240,234,.86);font:16px var(--serif);color:var(--ink70);text-align:center;padding:20px}
+#dsDock .veil.hidden{display:none}
+#dsDockPill{position:fixed;right:16px;bottom:16px;z-index:70;display:flex;align-items:center;gap:8px;border:1px solid #8a6a2a;background:var(--velvet);color:#fff;border-radius:999px;padding:7px 14px;font:12px var(--mono);cursor:pointer;box-shadow:0 8px 24px rgba(20,16,10,.3)}
+#dsDockPill.hidden{display:none}
+#dsDockPill .dot{width:8px;height:8px;border-radius:50%;background:var(--gold2);animation:cnPulse 1.6s ease-in-out infinite}
+@keyframes cnPulse{0%,100%{box-shadow:0 0 0 3px rgba(202,168,97,.25)}50%{box-shadow:0 0 0 6px rgba(202,168,97,.08)}}
+.dsConsole{display:flex;flex-direction:column;gap:8px;min-height:0}
+.dsConsole .card{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);padding:10px 12px;display:grid;gap:6px}
+.dsConsole .kv{font-size:12px}
+.dsConsole .log{flex:1 1 auto;min-height:0;overflow:auto;background:var(--velvet);color:var(--rTxt2);border-radius:12px;padding:6px 0;font:11px var(--mono)}
+.dsConsole .log .row{display:grid;grid-template-columns:58px 44px 1fr 46px;gap:6px;padding:2px 10px;align-items:baseline}
+.dsConsole .log .row .d{color:var(--rDim)}
+.dsConsole .log .row.cmd .ty{color:var(--gold2)}.dsConsole .log .row.reply .ty{color:#9ed4ac}.dsConsole .log .row.reply.err .ty{color:#f2c0ad}.dsConsole .log .row.evt .ty{color:#a9c8d6}
+.dsConsole .log .row .ms{text-align:right;color:var(--rTxt3)}
+.dsConsole .log .row .pl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.switchBtn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--card2);border-radius:999px;padding:5px 12px;font-weight:700;font-size:12px;cursor:pointer}
+.switchBtn.on{background:var(--sage);border-color:var(--sage);color:#fff}
+/* ── Master tab ── */
+.masterHead{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.masterFile{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);padding:10px 12px;display:grid;gap:8px}
+.masterFile .fh{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12.5px}
+.masterFile .fh b{font:600 13px var(--sans)}
+.masterFile .fh .hash{font:10.5px var(--mono);color:var(--ink45)}
+.skuGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:8px}
+.skuTile{border:1px solid var(--line);border-radius:10px;background:var(--card2);padding:7px;display:grid;gap:4px;font-size:11.5px;min-width:0}
+.skuTile img{width:100%;aspect-ratio:1;object-fit:contain;background:#fff;border-radius:6px}
+.skuTile .sku{font:700 12px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.skuTile .meta{font:10.5px var(--mono);color:var(--ink45)}
+.skuTile.blocked{border-color:var(--clay);background:var(--claySoft)}
+.skuTile .bad{color:#8a3a26;font-size:11px}
+.skuTile .row{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+.leftovers{border:1px dashed var(--clay);background:var(--claySoft);border-radius:9px;padding:8px 10px;font-size:12px;color:#8a3a26;display:grid;gap:4px}
+.visionTray{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.visionTray .vt{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:8px;display:grid;grid-template-columns:96px 1fr;gap:8px;align-items:start}
+.visionTray .vt img{width:96px;background:#fff;border:1px solid var(--line2);border-radius:6px}
+.visionTray .vt input{border:1px solid var(--line);border-radius:7px;padding:5px 7px;font:12px var(--mono);width:100%}
+/* ── Engraving tab / review panel ── */
+.rvList{display:grid;gap:10px}
+.rvItem{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);padding:12px 14px;display:grid;gap:8px;--accent:var(--gold2);border-left:5px solid var(--accent)}
+.rvItem[data-kind=placement]{--accent:var(--slate)}.rvItem[data-kind=flipFailed],.rvItem[data-kind=notRepresentable],.rvItem[data-kind=orderChanged]{--accent:var(--clay)}.rvItem[data-kind=heldOrder]{--accent:var(--ink45)}
+.rvItem .rh{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.rvItem .rh .kind{font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase;background:var(--paper2);border-radius:6px;padding:2px 7px}
+.rvItem .rh .ttl{font:600 13.5px var(--sans)}
+.rvItem .rh .sub{font:11px var(--mono);color:var(--ink45)}
+.rvItem .ev{font-size:12.5px;line-height:1.5;color:var(--ink70)}
+.rvItem .ev q{font-family:var(--serif);color:var(--ink);quotes:"\201C" "\201D"}
+.rvItem .ev .lbl{display:inline-block;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);margin-right:6px;min-width:110px}
+.rvItem .ev .miss{background:var(--claySoft);color:#8a3a26;border-radius:4px;padding:0 4px;font-weight:700}
+.rvItem .fixes{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.rvItem .fixes input,.rvItem .fixes select,.rvItem .fixes textarea{border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12.5px;background:var(--card)}
+.rvItem .fixes textarea{width:100%;min-height:54px;font-family:var(--mono)}
+.rvItem .why{font-size:11.5px;color:#8a3a26}
+.placeView{display:grid;grid-template-columns:minmax(200px,1fr) minmax(320px,1.6fr);gap:14px;align-items:start}
+.placeView canvas{width:100%;background:#fff;border:1px solid var(--line);border-radius:10px;display:block}
+.placeView .back canvas{cursor:grab}
+.placeView .back canvas.drag{cursor:grabbing}
+.placeView .meta{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:12px}
+.placeView .meta dt{color:var(--ink45)}.placeView .meta dd{margin:0;font-family:var(--mono)}
+.placeView .ctl{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.placeView .ctl input[type=range]{width:160px}
+.placeView .small{background:var(--goldSoft);color:#7a5a1d;font-weight:700;border-radius:6px;padding:2px 7px;font-size:11px}
+.placeView .claude{border-left:3px solid var(--gold2);background:var(--goldSoft);padding:6px 9px;border-radius:6px;font-size:12px;margin-top:6px}
+.backPool{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
+.backPool .bp{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:8px;font-size:11.5px;display:grid;gap:3px}
+.backPool .bp img{width:100%;background:#fff;border:1px solid var(--line2);border-radius:6px}
+.backPool .bp .t{font:600 12px var(--sans)}
+.backPool .bp .m{font:10.5px var(--mono);color:var(--ink45)}
+/* ── Sets view ── */
+.setCard{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);padding:12px 14px;display:grid;gap:8px}
+.setCard .sh{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.setCard .sh .nm{font:18px var(--serif)}
+.setCard .sheetsRow{display:flex;gap:10px;overflow:auto;padding-bottom:4px}
+.setCard .sheetsRow .libCard{flex:0 0 250px}
+.setCard .labels{display:flex;gap:8px;flex-wrap:wrap}
+.setCard .labels img{width:96px;height:96px;border:1px solid var(--line);border-radius:6px;background:#fff;cursor:zoom-in}
+.setCard .holds{font-size:12px;color:#8a3a26}
+.labelBig{width:min(90vw,90vh);height:min(90vw,90vh);background:#fff;display:block;image-rendering:pixelated}
+.noteBox{background:var(--card2);border:1px solid var(--line);border-radius:9px;padding:8px 10px;font-size:12px;color:var(--ink70);line-height:1.45}
+.tbl{width:100%;border-collapse:collapse;font-size:12px}
+.tbl th{text-align:left;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);padding:4px 6px;border-bottom:1px solid var(--line)}
+.tbl td{padding:4px 6px;border-bottom:1px solid var(--line2);vertical-align:top}
 </style>
 </head>
 <body>
@@ -330,14 +484,23 @@ dialog.wide{width:min(980px,95vw)}
   <main class="main">
     <div class="topbar">
       <button class="navBtn" id="btnRail" title="Toggle queue">☰</button>
-      <div class="modeSeg"><button class="on" data-mode="nest">Nest</button><button data-mode="library">Library</button><button data-mode="charms">Charms</button></div>
+      <div class="modeSeg" id="modeSeg"><button class="on" data-mode="nest">Nest</button><button data-mode="orders">Orders<i class="cnt" id="tabOrdersN"></i></button><button data-mode="design">Design Station<i class="cnt" id="tabDesignN"></i></button><button data-mode="master">Master</button><button data-mode="engrave">Engraving<i class="cnt" id="tabEngraveN"></i></button><button data-mode="review">Review<i class="cnt" id="tabReviewN"></i></button><button data-mode="library">Library</button><button data-mode="charms">Charms</button></div>
       <div class="topTitle"><h1>Charm Nesting Station 1</h1><div class="sub" id="topSub">3 sheets · 0 charms queued</div></div>
       <div class="spacer"></div>
+      <span class="etsyPill" id="etsyPill" title="Etsy API calls, as counted by the Design Station (the only app that calls Etsy); live on every heartbeat">Etsy <b id="etsyPillN">—</b></span>
+      <button class="btn ghost sm runMode" id="btnRunMode" title="Auto: the sorter pulls the latest orders by date and runs the whole process on its own, stopping only for a person. Manual: every step waits for a click."><span class="sw"></span><span id="runModeText">Manual</span></button>
       <select class="topSel" id="stockSel" title="Stock preset for all three sheets"></select>
       <button class="btn ghost sm" id="btnSettings">⚙ Settings</button>
     </div>
+    <div class="liveStrip" id="liveStrip" title="The last bridge and engraving events"><span class="ls" id="liveStripBody">bridge idle</span></div>
+    <div class="runBanner hidden" id="runBanner"></div>
     <div class="stage" id="stage">
       <div class="sheets" id="sheets"></div>
+      <div class="lib hidden" id="ordersView"></div>
+      <div class="lib hidden dsView" id="designView"></div>
+      <div class="lib hidden" id="masterView"></div>
+      <div class="lib hidden" id="engraveView"></div>
+      <div class="lib hidden" id="reviewView"></div>
       <div class="lib hidden" id="libView">
         <div class="libBar">
           <input type="search" id="libSearch" placeholder="Search sheets · charm names, file names, dates">
@@ -350,6 +513,7 @@ dialog.wide{width:min(980px,95vw)}
           <input type="date" id="libFrom" title="From"><input type="date" id="libTo" title="To">
           <button class="btn ghost sm" id="libRefresh">Refresh</button>
           <span class="pill neutral" id="libCount"></span>
+          <span class="seg" id="libKind"><button type="button" class="on" data-k="sheets">Sheets</button><button type="button" data-k="sets">Sets</button></span>
         </div>
         <div id="libBody"><div class="libEmpty">Loading sheets…</div></div>
       </div>
@@ -402,6 +566,34 @@ dialog.wide{width:min(980px,95vw)}
     <div class="fieldRow">
       <div class="field"><label>AI review (Claude Opus 5, high effort)</label><select id="stReview"><option value="on">On — review grouping before nesting and the sheet after</option><option value="off">Off — geometry only</option></select><div class="help">Claude looks at the detected charms on your source page and merges fragments back where they belong, then inspects the finished sheet and re-nests once if it finds a problem.</div></div>
     </div>
+    <div class="section">Design Station bridge, orders, run</div>
+    <div class="fieldRow3">
+      <div class="field"><label>Design Station origin</label><input id="stDsOrigin" type="text" placeholder="https://design-1.goldenspike.app"><div class="help">Framed and driven over postMessage; messages from any other origin are dropped.</div></div>
+      <div class="field"><label>Heartbeat (s) · station down after (misses)</label><div class="fieldRow"><input id="stHeartbeatS" type="number" min="2" max="60" step="1"><input id="stHeartbeatMiss" type="number" min="1" max="10" step="1"></div></div>
+      <div class="field"><label>Auto-commit when a set finishes</label><select id="stAutoCommit"><option value="on">On — mark orders complete on the station once every engraving is approved</option><option value="off">Off — wait for “Commit set”</option></select></div>
+    </div>
+    <div class="fieldRow3">
+      <div class="field"><label>Pull orders</label><select id="stPullMode"><option value="all">Every open order</option><option value="dueBy">Orders due by a date</option><option value="count">The N most urgent by date</option></select><div class="help">Auto mode pulls with this rule at each run; Manual shows the same controls on the Orders tab.</div></div>
+      <div class="field"><label>Due by · N</label><div class="fieldRow"><input id="stPullDueBy" type="date"><input id="stPullCount" type="number" min="1" max="500" step="1"></div></div>
+      <div class="field"><label>Auto: re-run every (min) · 0 = once</label><input id="stAutoEvery" type="number" min="0" max="1440" step="5"><div class="help">In Auto, after a set completes the sorter waits this long, pulls again and runs the next set. Never under 5 minutes.</div></div>
+      <div class="field"><label>Etsy calls per hour (cap)</label><input id="stEtsyCap" type="number" min="50" max="5000" step="50"><div class="help">Every Etsy call the sorter causes at the station is metered. A run stops before a pull or re-validation that would pass this cap. A pull costs one list page per 100 open orders plus one detail read per order Etsy changed; a re-validation costs one list sweep (reused when under 90 s old).</div></div>
+    </div>
+    <div class="section">Master files and engraving</div>
+    <div class="fieldRow3">
+      <div class="field"><label>SKU label pattern</label><input id="stSkuPattern" type="text"><div class="help">What counts as a SKU label under a charm (trimmed, upper-cased; a size suffix after a middle dot or space is allowed).</div></div>
+      <div class="field"><label>Label gap (mm) · master server route above</label><div class="fieldRow"><input id="stLabelGapMm" type="number" min="1" max="30" step="0.1"><input id="stMasterServerAbove" type="number" min="0" max="5000" step="10"></div><div class="help">How far below an outline a label may sit; a master with more charms than this is indexed by the server.</div></div>
+      <div class="field"><label>Charm size range (mm)</label><div class="fieldRow"><input id="stSizeMinMm" type="number" min="1" max="100" step="0.5"><input id="stSizeMaxMm" type="number" min="1" max="200" step="0.5"></div><div class="help">The Master tab flags any charm outside this range.</div></div>
+    </div>
+    <div class="fieldRow3">
+      <div class="field"><label>Engrave margin (mm) · min cap (mm)</label><div class="fieldRow"><input id="stEngraveMarginMm" type="number" min="0" max="5" step="0.05"><input id="stEngraveMinCapMm" type="number" min="0.5" max="10" step="0.1"></div><div class="help">Keep-out from every cut edge and cut-out; below the cap height a placement is flagged small, never dropped.</div></div>
+      <div class="field"><label>Max height (fraction) · confidence</label><div class="fieldRow"><input id="stEngraveMaxHeightFrac" type="number" min="0.1" max="1" step="0.05"><input id="stEngraveConfidence" type="number" min="0" max="1" step="0.05"></div><div class="help">Text block height cap as a fraction of the charm; below the confidence a person decides the words.</div></div>
+      <div class="field"><label>Engraver limits: min gap · min stroke (mm)</label><div class="fieldRow"><input id="stEngraveMinGapMm" type="number" min="0" max="2" step="0.01"><input id="stEngraveMinStrokeMm" type="number" min="0" max="2" step="0.01"></div><div class="help">From a test coupon.</div></div>
+    </div>
+    <div class="fieldRow3">
+      <div class="field"><label>Rotated layouts</label><select id="stEngraveTryRotated"><option value="on">On — ±15° / ±30° when they gain ≥ 12%</option><option value="off">Off</option></select></div>
+      <div class="field"><label>Back file view</label><select id="stBackFileView"><option value="asSeenFromBack">As seen from the back (mirrored, hoop up)</option><option value="frontCoordinates">Front coordinates (the engraver flips)</option></select><div class="help">Settled by one test piece per engraver.</div></div>
+      <div class="field"><label>Font files</label><div class="help" id="stFontsHelp">Source Sans 3 Regular and Semibold (Adobe, SIL Open Font License — a humanist sans in the Myriad Pro tradition), shipped in <span class="mono">vendor/fonts/</span>. Text becomes outlines; the output never references a font.</div></div>
+    </div>
     <div class="section">Feedback</div>
     <div class="fieldRow"><div class="field"><label>Desktop notification when a sheet finishes</label><select id="stNotify"><option value="on">On (when tab hidden)</option><option value="off">Off</option></select></div>
     <div class="field"><label>Sound on completion</label><select id="stSound"><option value="on">On</option><option value="off">Off</option></select></div></div>
@@ -432,9 +624,13 @@ dialog.wide{width:min(980px,95vw)}
 
 <script src="vendor/jszip-3.10.1.min.js"></script>
 <script src="vendor/pdf-lib-1.17.1.min.js"></script>
+<script src="vendor/opentype-1.3.4.min.js"></script>
+<script src="lib/qrcode.min.js"></script>
 <script src="brites-progress.js"></script>
 <script src="charm-nest-solver.js"></script>
 <script src="charm-nest-pdf.js"></script>
+<script src="charm-nest-geom.js"></script>
+<script src="charm-nest-orders.js"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
    CHARM NESTING STATION 1 — application
@@ -455,7 +651,11 @@ const DEFAULTS = {
   rail: "md",
   stock: { gold: [100 / 25.4, 50 / 25.4], silver: [100 / 25.4, 50 / 25.4], rose: [100 / 25.4, 50 / 25.4], gold10k: [100 / 25.4, 50 / 25.4], gold14k: [100 / 25.4, 50 / 25.4] },
   clearancePt: -0.5, insetPt: 1.5, angleStep: 30, budgetS: 180, seed: 1, serverAbove: 0, parallel: 0,
-  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", aiRounds: 10, snapIn: 0.25, maxFill: 0.74, v: 9
+  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", aiRounds: 10, snapIn: 0.25, maxFill: 0.74, v: 10,
+  // Design Station bridge, orders, run (design doc §14)
+  dsOrigin: "https://design-1.goldenspike.app", heartbeatS: 5, heartbeatMiss: 3, autoCommit: "on", runMode: "manual", pullMode: "all", pullDueBy: "", pullCount: 40, autoEvery: 0, etsyHourlyCap: 600,
+  skuPattern: "^[A-Z]{2,4}-[A-Z0-9]{2,6}(-[A-Z0-9]{1,4})?$", labelGapMm: 6.4, masterServerAbove: 300, sizeMinMm: 3, sizeMaxMm: 60,
+  engraveMarginMm: 0.8, engraveMinCapMm: 1.6, engraveMaxHeightFrac: 0.4, engraveConfidence: 0.8, engraveTryRotated: "on", engraveMinGapMm: 0.12, engraveMinStrokeMm: 0.15, backFileView: "asSeenFromBack"
 };
 /* The two plates production actually uses. Sizes are held in mm; `w`/`h` stay in inches for the code that reads them. */
 const STOCK_PRESETS = [
@@ -470,7 +670,7 @@ const MM_PER_PT = 25.4 / PT_PER_IN;
 const fmt = { pct: v => Math.round(v * 100) + "%", area: v => Math.round(v * MM_PER_PT * MM_PER_PT).toLocaleString() + " mm²", mm: v => (v * MM_PER_PT).toFixed(1) + " mm", mmN: v => +(v * MM_PER_PT).toFixed(1), s: ms => ms < 60000 ? Math.round(ms / 1000) + "s" : Math.floor(ms / 60000) + "m " + Math.round(ms % 60000 / 1000) + "s" };
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const uid = () => Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => CharmNestOrders.localDay();   // one local clock decides the folder date and the name date
 
 /* ═══ 1 · tiny UI kit ═══════════════════════════════════════════════════ */
 function toast(msg, kind = "", ms = 3600) {
@@ -496,7 +696,7 @@ function ding() {
 /* ═══ 2 · settings ══════════════════════════════════════════════════════ */
 const S = {
   settings: loadSettings(), passcode: sessionStorage.getItem("cn.passcode") || "", cloud: { ok: null, locked: false, msg: "" },
-  sources: [], unassigned: [], sheets: {}, mode: "nest", calibration: [], library: { rows: [], metal: "all", q: "" }, nestQueue: [], stockPreset: (v => STOCK_PRESETS.some(p => p.id === v) ? v : DEFAULT_STOCK)(localStorage.getItem("cn.stock"))
+  sources: [], poolSources: {}, unassigned: [], sheets: {}, mode: "nest", calibration: [], library: { rows: [], metal: "all", q: "", kind: "sheets" }, nestQueue: [], stockPreset: (v => STOCK_PRESETS.some(p => p.id === v) ? v : DEFAULT_STOCK)(localStorage.getItem("cn.stock"))
 };
 function loadSettings() {
   try {
@@ -512,6 +712,7 @@ function loadSettings() {
     if ((saved.v || 1) < 7) { saved.maxFill = 0.72; saved.v = 7; }                        // v7: 72 % is the maximum fill of any sheet; the rest goes to the next sheet
     if ((saved.v || 1) < 8) { saved.maxFill = 0.74; saved.v = 8; }                        // v8: 74 % ceiling, measured on the stamped footprint like the readout
     if ((saved.v || 1) < 9) { saved.serverAbove = 0; saved.v = 9; }
+    if ((saved.v || 1) < 10) { saved.v = 10; }                                              // v10: bridge settings arrive with their defaults
     const out = Object.assign({}, DEFAULTS, saved); out.stock = Object.assign({}, DEFAULTS.stock, saved.stock || {}); return out;
   } catch (_) { return Object.assign({}, DEFAULTS, { v: 2 }); }
 }
@@ -830,7 +1031,9 @@ async function renameCharm(charm, name) {
 const AG = { events: [] };   // {id, t, scope:{srcId|metal}, kind, text, html, live, reason}
 function agent(scope, kind, text, extra) {
   const ev = Object.assign({ id: uid(), t: Date.now(), scope, kind, text }, extra || {});
-  AG.events.push(ev); if (AG.events.length > 400) AG.events.shift();
+  AG.events.push(ev); if (AG.events.length > 600) AG.events.shift();
+  if (window.LiveStrip && ["DS", "ENGRAVE", "MASTER", "POOL", "warn"].includes(kind)) LiveStrip.push(ev);
+  if (window.DesignLink && DesignLink.feed && ["DS", "ENGRAVE", "MASTER", "POOL", "warn", "ok", "cloud", "info", "claude"].includes(kind)) DesignLink.feed(ev);
   // the log opens itself the moment Claude or the solver starts working, so the activity is visible without a click
   for (const m of METALS) if (scopeTouches(scope, m.key)) { const sh = S.sheets[m.key]; renderAgent(sh); }
   return ev;
@@ -839,10 +1042,10 @@ function agentUpdate(ev, patch) { Object.assign(ev, patch); for (const m of META
 function scopeTouches(scope, metal) {
   if (!scope) return true;
   if (scope.metal) return scope.metal === metal;
-  if (scope.srcId) { const src = S.sources.find(x => x.id === scope.srcId); return !!src && (src.metal === metal || !src.metal || src.charms.some(c => c.metal === metal)); }
-  return true;
+  if (scope.srcId) { const src = sourceOf(scope.srcId); return !!src && (src.metal === metal || !src.metal || src.charms.some(c => c.metal === metal)); }
+  return true;   // master, run and bridge events show on every card's log
 }
-const AG_ICON = { geom: "▸", claude: "✦", nest: "◆", verify: "✓", cloud: "☁", warn: "⚠", ok: "✓", info: "·" };
+const AG_ICON = { geom: "▸", claude: "✦", nest: "◆", verify: "✓", cloud: "☁", warn: "⚠", ok: "✓", info: "·", DS: "⇄", MASTER: "▦", POOL: "▤", ENGRAVE: "✎" };
 function renderAgent(sh) {
   const el = sh.el; if (!el) return; const q = r => $(`[data-r="${r}"]`, el);
   q("agent").classList.toggle("show", !!sh.agentShow); q("logBtn").textContent = sh.agentShow ? "Hide log" : "Log";
@@ -998,13 +1201,13 @@ async function reviewLayout(sh, items) {
     for (const i of fixable) {
       for (const nm of i.charms || []) {
         const c = byName.get(String(nm).toLowerCase()); if (!c) continue;
-        const src = S.sources.find(x => x.id === c.sourceId); if (!src) continue;
+        const src = sourceOf(c.sourceId); if (!src) continue;
         if (i.action === "merge") { const t = byName.get(String(i.mergeInto).toLowerCase()); if (!t || t === c || t.sourceId !== c.sourceId) continue; mergeCharm(src, c, t); changed.add(t); notes.push(`${c.name} → ${t.name}`); }
         else { c.excluded = true; c.excludeReason = "Claude: " + (i.note || "not a charm"); notes.push(`excluded ${c.name}`); }
       }
     }
     if (notes.length) {
-      for (const t of changed) { const src = S.sources.find(x => x.id === t.sourceId); await CharmNestPDF.buildSilhouettes(src.parsed, [t], +S.settings.silhouetteRes || 6); t.open = false; }
+      for (const t of changed) { const src = sourceOf(t.sourceId); await CharmNestPDF.buildSilhouettes(src.parsed, [t], +S.settings.silhouetteRes || 6); t.open = false; }
       agent({ metal: sh.metal }, "ok", `Applied: ${notes.join(", ")} — re-nesting`);
       toast(`${labelOf(sh.metal)} · Claude found: ${r.summary} — ${notes.join(", ")} — re-nesting`, "", 8000);
       sheetDirty(sh); renderRail(); startNest(sh);
@@ -1139,8 +1342,8 @@ function ensureWorkers(sh, n) {
   return sh.workers;
 }
 /** When the first file behind this sheet arrived — the clock the operator cares about starts there. */
-function sheetT0(sh) { const ids = new Set(sh.charms.map(c => c.sourceId)); const t = S.sources.filter(x => ids.has(x.id) && x.t0).map(x => x.t0); return t.length ? Math.min(...t) : (sh.startedAt || performance.now()); }
-function log(sh, msg) { sh.log.push(`${new Date().toLocaleTimeString()} ${msg}`); if (sh.log.length > 200) sh.log.shift(); }
+function sheetT0(sh) { const ids = new Set(sh.charms.map(c => c.sourceId)); const t = S.sources.concat(Object.values(S.poolSources || {})).filter(x => ids.has(x.id) && x.t0).map(x => x.t0); return t.length ? Math.min(...t) : (sh.startedAt || performance.now()); }
+function log(sh, msg) { sh.log.push(`${new Date().toLocaleTimeString()} ${msg}`); if (sh.log.length > 200) sh.log.shift(); if (window.DesignLink && DesignLink.feed) DesignLink.feed({ kind: (METAL_TAG && METAL_TAG[sh.metal]) || sh.metal, text: msg }); }
 /** After nesting, every charm is written and previewed 2.5 % smaller than drawn, scaled about its own centre: the layout is solved at full size and the shrink afterwards makes minor overlaps disappear. */
 const CHARM_SCALE = 0.975;
 function buildJob(sh) {
@@ -1375,7 +1578,7 @@ async function startServerNest(sh, job) {
 
 async function finishNest(sh, { result, error }) {
   const items = activeCharms(sh); const byId = new Map(items.map(c => [c.id, c]));
-  if (error) { sh.status = items.length ? "ready" : "idle"; sh.stage = ""; log(sh, "error: " + error); toast(`${labelOf(sh.metal)}: nesting failed — ${error}`, "bad", 6000); renderCard(sh); pumpNestQueue(); return; }
+  if (error) { sh.status = items.length ? "ready" : "idle"; sh.stage = ""; log(sh, "error: " + error); toast(`${labelOf(sh.metal)}: nesting failed — ${error}`, "bad", 6000); renderCard(sh); pumpNestQueue(); if (window.RunCtl) RunCtl.onSheetDone(sh, new Error(error)); return; }
   sh.status = "finishing"; sh.endedBy = result.endedBy; sh.trials = result.trials; sh.placements = result.placements; sh.rejects = result.rejects.slice(); sh.livePlacements = [];
   keepOrdersWhole(sh, byId);
   if (sh.evSearch && sh.evSearch.live) agentUpdate(sh.evSearch, { live: false, elapsed: 0, html: null, text: `Search ended after ${result.trials} trial(s): ${endedText(result.endedBy)}` });
@@ -1405,7 +1608,7 @@ async function finishNest(sh, { result, error }) {
     agent({ metal: sh.metal }, "ok", `Optimized: ${sh.placements.length} charms shrunk ${shrinkPct}% about their centres (positions and angles unchanged)`);
     // 1 · write the sheet
     sh.stage = "Writing .ai…"; sh.progressKind = "finish"; sh.progress = [1, 5]; renderProgress(sh);
-    const sources = new Map(); for (const p of sh.placements) { const c = byId.get(p.id); if (c && !sources.has(c.sourceId)) sources.set(c.sourceId, S.sources.find(s => s.id === c.sourceId).parsed); }
+    const sources = new Map(); for (const p of sh.placements) { const c = byId.get(p.id); if (c && !sources.has(c.sourceId)) sources.set(c.sourceId, sourceOf(c.sourceId).parsed); }
     const specBase = { sheet: { wPt: st.wPt, hPt: st.hPt, strokeRGB: [1, 0, 0], strokePt: 0.5 }, placements: sh.placements.map(p => ({ charm: byId.get(p.id), angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, scale: p.scale || 1 })), sources, title: `${labelOf(sh.metal)} sheet ${sh.sheetId}`, meta: { sheetId: sh.sheetId, metal: sh.metal, seed: result.params.seed, clearancePt: result.params.clearancePt, charmScale: CHARM_SCALE } };
     const aiBytes = await CharmNestPDF.buildSheet(specBase);
     sh.placements.forEach((p, i) => { p.layerName = specBase.placements[i].layerName; p.name = byId.get(p.id)?.name; });
@@ -1430,7 +1633,7 @@ async function finishNest(sh, { result, error }) {
     const report = buildReport(sh, result, items);
     sh.outputs = { ai: aiBytes, labelled: labelledBytes, report, previewPng: await previewPng(sh) };
     sh.progress = [4, 5]; sh.stage = "Saving to the cloud…"; renderProgress(sh);
-    sh.seq = await nextSheetSeq(sh); sh.fileBase = sheetFileBase(sh, sh.seq);
+    sh.seq = await nextSheetSeq(sh); sh.fileBase = sheetFileBase(sh);
     const allPlaced = sh.rejects.length === 0;
     sh.status = allPlaced && sh.verification.ok ? "complete" : "partial";
     sh.stage = ""; sh.progress = [5, 5]; sh.totalMs = performance.now() - sh.t0;   // file in → sheet written and verified, Claude's review included
@@ -1442,11 +1645,12 @@ async function finishNest(sh, { result, error }) {
     setTimeout(() => $$(".sheetCard").find(el => el.dataset.m === sh.metal)?.classList.remove("pulse"), 1300);
     if (document.hidden && S.settings.notify === "on" && "Notification" in window && Notification.permission === "granted") { try { new Notification("Charm Nesting Station", { body: msg }); } catch (_) { /* ignore */ } }
     // 5 · persist everything. The two verifiers above are the acceptance test; no further inspection runs.
-    persistSheet(sh, items).catch(e => { toast("Cloud save failed: " + e.message, "bad", 6000); log(sh, "cloud save failed: " + e.message); renderCard(sh); });
+    sh.persisted = persistSheet(sh, items).then(() => { if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { toast("Cloud save failed: " + e.message, "bad", 6000); log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, e); });
     // 6 · whatever did not fit under the ceiling goes to the next sheet of this metal, which nests on its own
     if (sh.rejects.length && sh.endedBy !== "stopped") overflowToNextSheet(sh);
   } catch (e) {
     sh.status = "partial"; sh.stage = ""; log(sh, "finish error: " + (e.stack || e)); toast(`${labelOf(sh.metal)}: output failed — ${e.message}`, "bad", 7000); renderCard(sh);
+    if (window.RunCtl) RunCtl.onSheetDone(sh, e);
   }
   pumpNestQueue();
 }
@@ -1466,26 +1670,35 @@ function buildReport(sh, result, items) {
     log: sh.log.slice()
   };
 }
-/** "GF_Mar.22.26_Set-2": metal tag, date, set number for that metal on that day. */
-const dateTag = (d = new Date()) => `${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getMonth()]}.${String(d.getDate()).padStart(2, "0")}.${String(d.getFullYear()).slice(-2)}`;
-function sheetFileBase(sh, seq) { return `${METAL_TAG[sh.metal] || sh.metal}_${dateTag()}_Set-${seq}`; }
-/** Sheet number for this metal today: one more than what the cloud already holds (falls back to the tab number offline). */
+/** "GF_Sep.16.26_Set-3_Sheet-1": metal tag, date, the SET number for that date across every material, the sheet index within
+ *  the material in that set (design §8.1). One run = one set = one folder; a gold sheet and a silver sheet of the same
+ *  run read as …_Set-3_… on both. The set number is allocated in a Firestore transaction, never by counting here. */
+const dateTag = (d = new Date()) => CharmNestOrders.dateTag(d);
+function sheetFileBase(sh) { return CharmNestOrders.sheetName(sh.metal, sh.setDay || today(), sh.seq || 1, sh.sheetIndex || sh.page || 1); }
+/** The sheet's set (allocated once per run) and its index within its material in that set. */
 async function nextSheetSeq(sh) {
-  const day = today();
-  try { if (S.cloud.ok) { const r = await api("charmNestLibrary", { op: "listSheets", from: day, to: day, metal: sh.metal, limit: 500 }, { label: "Numbering the sheet" }); return (r.sheets || []).filter(x => x.id !== sh.sheetId).length + 1; } } catch (_) { /* offline */ }
-  return sh.page;
+  const runKey = sh.runId || (sh.runId = "manual-" + uid());
+  const set = await Sets.ensure(runKey);
+  sh.setId = set.setId; sh.setDay = set.day;
+  const taken = pagesOf(sh.metal).filter(p => p !== sh && p.setId === set.setId && p.sheetIndex).map(p => p.sheetIndex);
+  sh.sheetIndex = sh.sheetIndex && !taken.includes(sh.sheetIndex) ? sh.sheetIndex : (taken.length ? Math.max(...taken) + 1 : 1);
+  return set.seq;
 }
 async function persistSheet(sh, items) {
   if (!S.cloud.ok) return;
-  const day = today(), name = sh.fileBase || sheetFileBase(sh, sh.page), base = `charmnest/sheets/${day}/${name}`;
+  const day = sh.setDay || today(), name = sh.fileBase || sheetFileBase(sh), base = sh.setId ? `${CharmNestOrders.setFolder(day, sh.seq)}/${name}` : `charmnest/sheets/${day}/${name}`;
+  sh.folderPath = base;
   const byId = new Map(items.map(c => [c.id, c]));
   const record = (outputs) => ({
     id: sh.sheetId, metal: sh.metal, metalLabel: sheetName(sh), day, folder: name, fileBase: name, seq: sh.seq || sh.page, runId: sh.runId || null, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, elapsedMs: Math.round(sh.elapsedMs || 0), totalMs: Math.round(sh.totalMs || 0),
     stock: sh.outputs.report.stock, params: sh.solveParams, density: sh.density, freePt2: Math.round(sh.liveInfo.freePt2), usablePt2: Math.round(sh.liveInfo.usablePt2), pocket: sh.liveInfo.pocket,
     charmCount: items.length, placedCount: sh.placements.length, rejectCount: (sh.outputs.report.rejects || []).length, page: sh.page, verification: { ok: !!sh.verification.ok, minGapPt: sh.verification.minGapPt, minEdgePt: sh.verification.minEdgePt, render: sh.verification.render && { ok: sh.verification.render.ok, overlapPx: sh.verification.render.overlapPx, outsidePx: sh.verification.render.outsidePx } },
     outputs,
-    sources: [...new Set(items.map(c => c.sourceId))].map(id => { const s = S.sources.find(x => x.id === id); return s ? { id: s.id, name: s.name, zipName: s.zipName, hash: s.hash, bytes: s.bytes.length, path: s.cloud && s.cloud.path, url: s.cloud && s.cloud.url } : null; }).filter(Boolean),
-    charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, order: c.order || c.id, layer: c.layer || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open })),
+    sources: [...new Set(items.map(c => c.sourceId))].map(id => { const s = sourceOf(id); return s ? { id: s.id, name: s.name, zipName: s.zipName, hash: s.hash, bytes: s.bytes ? s.bytes.length : 0, path: s.cloud && s.cloud.path, url: s.cloud && s.cloud.url, pool: !!s.pool, sku: s.sku || null } : null; }).filter(Boolean),
+    setId: sh.setId || null, setSeq: sh.seq || null, sheetIndex: sh.sheetIndex || null, runId: sh.runId || null,
+    orders: [...new Set(sh.placements.map(p => { const c = byId.get(p.id); return c && c.order ? String(c.order).split("/")[0] : null; }).filter(Boolean))],
+    poolIds: sh.placements.map(p => byId.get(p.id) && byId.get(p.id).poolId).filter(Boolean), backPool: sh.backPool || [], backOutputs: sh.backOutputs || null, label: sh.label || null,
+    charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, order: c.order || c.id, layer: c.layer || null, poolId: c.poolId || null, sku: c.sku || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open })),
     placements: sh.outputs.report.placements, rejects: sh.outputs.report.rejects,
     names: items.map(c => c.name).filter(Boolean).join(" ")
   });
@@ -1506,7 +1719,7 @@ async function persistSheet(sh, items) {
   await api("charmNestLibrary", { op: "putSheet", sheet: Object.assign(record(outputs), { saving: false }) }, { label: "Completing sheet record" });
   if (S.mode === "library") loadLibrary();   // the list is open: show the finished record
   // 4 · charm links: once the charms' own permanent copies (started when the file arrived) are done, refresh the record with their links
-  const pending = [...new Set(items.map(c => c.sourceId))].map(id => { const x = S.sources.find(z => z.id === id); return x && x.persisting; }).filter(Boolean);
+  const pending = [...new Set(items.map(c => c.sourceId))].map(id => { const x = sourceOf(id); return x && x.persisting; }).filter(Boolean);
   if (pending.length) Promise.allSettled(pending).then(() => api("charmNestLibrary", { op: "putSheet", sheet: Object.assign(record(outputs), { saving: false }) }, { label: "Linking charm copies" })).catch(e => console.warn("charm links", e));
   await api("charmNestLibrary", { op: "putCalibration", row: Object.assign({ sheetId: sh.sheetId, metal: sh.metal, clearancePt: +S.settings.clearancePt }, sh.outputs.report.calibration) }, { label: "Saving calibration" });
   S.calibration.push(Object.assign({ sheetId: sh.sheetId }, sh.outputs.report.calibration));
@@ -1514,6 +1727,8 @@ async function persistSheet(sh, items) {
   if (failed.length) { agent({ metal: sh.metal }, "warn", `Saved the record for ${name}, but these files did not upload: ${failed.join("; ")}`); toast(`${labelOf(sh.metal)}: record saved, ${failed.length} file(s) failed to upload — see the log`, "bad", 6000); return; }
   agent({ metal: sh.metal }, "cloud", `Saved to the cloud in folder ${name}: ${name}.ai, .pdf, labelled proof, report, preview`);
   toast(`${labelOf(sh.metal)}: sheet, proof and report saved to the cloud`, "ok", 3000);
+  // the set: one QR label per sheet saved beside it, the set record kept current (design §8.3)
+  if (window.Sets) await Sets.onSheetSaved(sh, items, outputs).catch(e => { agent({ metal: sh.metal }, "warn", `Set bookkeeping failed: ${e.message}`); });
 }
 let pdfjsReady = null;
 function ensurePdfJs() {
@@ -1614,7 +1829,9 @@ function buildCards() {
     renderCard(sh);
   }
 }
-const allCharms = () => S.sources.flatMap(s => s.charms);
+const allCharms = () => S.sources.flatMap(s => s.charms).concat(Object.values(S.poolSources || {}).flatMap(s => s.charms || []));
+/** A charm's source: a dropped file, or a per-SKU master copy fetched for an order line (pool). */
+const sourceOf = id => S.sources.find(s => s.id === id) || (S.poolSources && S.poolSources[id]) || null;
 function clearMetal(metal) {
   const prim = S.sheets[metal];
   for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms.forEach(c => { c.metal = null; }); pg.charms = []; pg.sheetId = null; pg.log = []; if (pg !== prim) { (pg.workers || []).forEach(w => w.terminate()); pg.workers = []; } }
@@ -1818,7 +2035,7 @@ function openCharm(sh, c, placement) {
   $("#ciName").onchange = e => renameCharm(c, e.target.value);
   const pin = $("#ciPin"); if (pin) pin.onclick = () => { c.pinned = c.pinned ? null : { cxPt: pl.cxPt, cyPt: pl.cyPt, angle: pl.angle }; closeDlg(dlg); renderCard(sh); toast(c.pinned ? `${c.name}: pinned — Re-nest places the others around it` : `${c.name}: unpinned`, ""); };
   $("#ciExclude").onclick = () => { c.excluded = !c.excluded; closeDlg(dlg); sheetDirty(sh); };
-  $("#ciSingle").onclick = async () => { const src = S.sources.find(s => s.id === c.sourceId); const b = await CharmNestPDF.buildSingleCharm(c, src.parsed); download(b, `${safeName(c.name || "charm")}.ai`, "application/illustrator"); };
+  $("#ciSingle").onclick = async () => { const src = sourceOf(c.sourceId); const b = await CharmNestPDF.buildSingleCharm(c, src.parsed); download(b, `${safeName(c.name || "charm")}.ai`, "application/illustrator"); };
   $$("[data-move]", $("#rpBody")).forEach(b => b.onclick = () => { closeDlg(dlg); assignCharm(c, b.dataset.move); });
   openDlg(dlg);
 }
@@ -1829,7 +2046,7 @@ function openReport(sh) {
   $("#rpDownloadJson").onclick = () => download(new TextEncoder().encode(JSON.stringify(sh.outputs.report, null, 2)), `${sh.sheetId}-nest-report.json`, "application/json");
   const v = sh.verification, s = sh.sat || computeSaturation(sh), st = stockFor(sh.metal);
   const byId = new Map(items.map(c => [c.id, c]));
-  const srcs = [...new Set(items.map(c => c.sourceId))].map(id => S.sources.find(x => x.id === id)).filter(Boolean);
+  const srcs = [...new Set(items.map(c => c.sourceId))].map(id => sourceOf(id)).filter(Boolean);
   let html = "";
   if (sh.outputs) {
     html += `<div class="section">Result</div><dl class="kv">
@@ -1844,7 +2061,7 @@ function openReport(sh) {
   if (sh.aiReview && sh.aiReview.state === "done") html += `<div class="callout ${sh.aiReview.ok ? "ok" : ""}" style="margin-top:8px"><b>Claude's inspection of the sheet:</b> ${esc(sh.aiReview.summary || "")}${sh.aiReview.issues.length ? `<ul style="margin:6px 0 0 16px;padding:0">${sh.aiReview.issues.map(i => `<li><b>${esc(i.kind)}</b> · ${esc((i.charms || []).join(", "))} — ${esc(i.note)} <i>(${esc(i.action)}${i.mergeInto ? " into " + esc(i.mergeInto) : ""})</i></li>`).join("")}</ul>` : ""}</div>`;
   for (const src of srcs) if (src.review && src.review.state === "done") html += `<div class="callout" style="margin-top:8px"><b>Claude's grouping review of ${esc(src.name)}:</b> ${esc(src.review.summary || "")}${src.review.merged.length ? ` · merged ${src.review.merged.map(m => `#${m.from}→#${m.into}`).join(", ")}` : ""}${src.review.excluded.length ? ` · excluded #${src.review.excluded.join(", #")}` : ""}${src.review.multiple.length ? ` · <b style="color:#8a3a26">boxes #${src.review.multiple.join(", #")} hold more than one charm — split them in Illustrator or exclude</b>` : ""}</div>`;
   html += `<div class="section">Detected charms · ${items.length}${srcs.length ? ` from ${srcs.length} file(s)` : ""}</div>`;
-  for (const src of srcs) { const g = src.group; html += `<div style="font-size:11.5px;color:var(--ink70);margin:4px 0 8px">${esc(src.name)}: ${src.parsed.counts.paths} paths, ${src.parsed.counts.xobjects} form XObject(s), ${src.parsed.counts.text} text block(s) → ${g.outlineCount} outlines (rule: ${g.rule}${g.mergedCount ? `, ${g.mergedCount} inner closed paths merged as holes/details` : ""})${g.frame ? ", page-sized frame ignored" : ""}${g.orphans.length ? `, <b style="color:#8a3a26">${g.orphans.length} loose element(s) left out</b>` : ""} · page ${fmt.mm(src.parsed.pageW)} × ${fmt.mm(src.parsed.pageH)}</div>`; }
+  for (const src of srcs) { const g = src.group; if (!g || !src.parsed) continue; html += `<div style="font-size:11.5px;color:var(--ink70);margin:4px 0 8px">${esc(src.name)}: ${src.parsed.counts.paths} paths, ${src.parsed.counts.xobjects} form XObject(s), ${src.parsed.counts.text} text block(s) → ${g.outlineCount} outlines (rule: ${g.rule}${g.mergedCount ? `, ${g.mergedCount} inner closed paths merged as holes/details` : ""})${g.frame ? ", page-sized frame ignored" : ""}${g.orphans.length ? `, <b style="color:#8a3a26">${g.orphans.length} loose element(s) left out</b>` : ""} · page ${fmt.mm(src.parsed.pageW)} × ${fmt.mm(src.parsed.pageH)}</div>`; }
   html += `<div class="charmGrid">${items.map((c, i) => { const pl = sh.placements.find(p => p.id === c.id); const n = pl ? sh.placements.indexOf(pl) + 1 : null; return `<div class="charmTile${c.open ? " open" : ""}" data-cid="${c.id}"><img src="${c.thumb}" alt=""><div class="nm" title="${esc(c.name || "")}">${n ? `<span class="mono">${n}</span> · ` : ""}${esc(c.name || "#" + (c.index + 1))}</div><div class="meta">${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)} · ${fmt.area(c.areaPt2)}${c.qty > 1 ? ` · ×${c.qty}` : ""}</div><div class="meta">${c.open ? "OPEN PATH — excluded" : c.excluded ? esc(c.excludeReason || "excluded") : pl ? `placed ${pl.angle}°` : sh.rejects.includes(c.id) ? "did not fit" : "queued"}${c.pinned ? " · pinned" : ""}</div>${c.reviewNote ? `<div class="meta" title="${esc(c.reviewNote)}">Claude: ${esc(c.reviewNote.slice(0, 60))}</div>` : ""}</div>`; }).join("")}</div>`;
   if (sh.log.length) html += `<div class="section">Log</div><pre style="font:11px var(--mono);white-space:pre-wrap;color:var(--ink70);max-height:200px;overflow:auto;background:var(--card2);padding:8px;border-radius:8px">${esc(sh.log.slice(-60).join("\n"))}</pre>`;
   $("#rpBody").innerHTML = html;
@@ -1853,7 +2070,7 @@ function openReport(sh) {
 }
 function downloadOutputs(sh) {
   if (!sh.outputs) return;
-  const base = sh.fileBase || sheetFileBase(sh, sh.page);
+  const base = sh.fileBase || sheetFileBase(sh);
   download(sh.outputs.ai, `${base}.ai`, "application/illustrator");   // an .ai MIME, so no browser renames the file to .pdf
   setTimeout(() => download(sh.outputs.labelled, `${base}_labelled.pdf`, "application/pdf"), 350);
   setTimeout(() => download(new TextEncoder().encode(JSON.stringify(sh.outputs.report, null, 2)), `${base}_nest-report.json`, "application/json"), 700);
@@ -1864,6 +2081,7 @@ function downloadOutputs(sh) {
 async function loadLibrary() {
   const body = $("#libBody"); body.innerHTML = `<div class="libEmpty">Loading sheets…</div>`;
   if (!S.cloud.ok) { body.innerHTML = `<div class="libEmpty">Cloud offline — the library needs the Netlify functions.</div>`; return; }
+  if (S.library.kind === "sets" && window.Sets) return Sets.renderLibrary(body);
   try {
     const r = await api("charmNestLibrary", { op: "listSheets", metal: S.library.metal === "all" ? null : S.library.metal, from: $("#libFrom").value || null, to: $("#libTo").value || null, limit: 300 }, { label: "Loading library" });
     S.library.rows = r.sheets || []; renderLibrary();
@@ -1876,7 +2094,7 @@ function renderLibrary() {
   const body = $("#libBody"); if (!rows.length) { body.innerHTML = `<div class="libEmpty">No sheets match.</div>`; return; }
   const card = (r, i) => `<div class="libCard" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}"><div class="h">${i != null && r._inFan ? `<span class="pg">${r.page || 1}</span>` : ""}<span class="nm">${r.folder ? esc(r.folder) : esc(r.metalLabel) + " · " + esc(r.id)}</span><span class="tm">${r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span></div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${r.preview}" loading="lazy" alt="">` : `<div class="pv ph">${r.saving ? "saving files…" : "no preview"}</div>`}<div class="m"><span><b>${r.placedCount}</b>/${r.charmCount} placed</span><span><b>${Math.round((r.density || 0) * 100)}%</b> full</span><span><b>${fmt.area(r.freePt2 || 0)}</b> free</span><span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span>${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`;
   // a set = the sheets of one run: same day and the same source files (runId when the record has one)
-  const setKey = r => r.runId ? `run:${r.runId}` : `${r.day}|${(r.sources || []).map(x => x.hash || x.name).sort().join("+")}`;
+  const setKey = r => r.setId ? `set:${r.setId}` : r.runId ? `run:${r.runId}` : `${r.day}|${(r.sources || []).map(x => x.hash || x.name).sort().join("+")}`;
   const byDay = new Map(); for (const r of rows) { if (!byDay.has(r.day)) byDay.set(r.day, []); byDay.get(r.day).push(r); }
   body.innerHTML = [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([day, list]) => {
     const sets = new Map(); for (const r of list) { const k = setKey(r); if (!sets.has(k)) sets.set(k, []); sets.get(k).push(r); }
@@ -1972,9 +2190,11 @@ async function loadCharms() {
   } catch (e) { body.innerHTML = `<div class="libEmpty">${esc(e.message)}</div>`; }
 }
 function setMode(mode) {
-  S.mode = mode; $$(".modeSeg button").forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
+  S.mode = mode; $$("#modeSeg button").forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
   $("#sheets").classList.toggle("hidden", mode !== "nest"); if (mode === "nest") requestAnimationFrame(() => METALS.forEach(m => drawPreview(activePage(m.key)))); $("#libView").classList.toggle("hidden", mode !== "library"); $("#charmsView").classList.toggle("hidden", mode !== "charms");
+  for (const [m, id] of [["orders", "ordersView"], ["design", "designView"], ["master", "masterView"], ["engrave", "engraveView"], ["review", "reviewView"]]) $("#" + id).classList.toggle("hidden", mode !== m);
   if (mode === "library") loadLibrary(); if (mode === "charms") loadCharms();
+  if (window.Views && Views.onShow) Views.onShow(mode);
 }
 
 /* ═══ 15 · settings dialog ══════════════════════════════════════════════ */
@@ -1983,6 +2203,9 @@ function openSettings() {
   $$("#railSeg button").forEach(b => b.classList.toggle("on", b.dataset.v === s.rail));
   for (const m of METALS) { $(`#st${cap(m.key)}W`).value = +(s.stock[m.key][0] * 25.4).toFixed(1); $(`#st${cap(m.key)}H`).value = +(s.stock[m.key][1] * 25.4).toFixed(1); }   // shown in mm, stored in inches
   $("#stClearance").value = +(s.clearancePt * MM_PER_PT).toFixed(2); $("#stInset").value = +(s.insetPt * MM_PER_PT).toFixed(2);   // shown in mm, stored in pt $("#stAngle").value = s.angleStep; $("#stBudget").value = s.budgetS; $("#stParallel").value = s.parallel || 0; $("#stSeed").value = s.seed; $("#stServerAbove").value = s.serverAbove;
+  $("#stDsOrigin").value = s.dsOrigin || DEFAULTS.dsOrigin; $("#stHeartbeatS").value = s.heartbeatS; $("#stHeartbeatMiss").value = s.heartbeatMiss; $("#stAutoCommit").value = s.autoCommit || "on"; $("#stPullMode").value = s.pullMode || "all"; $("#stPullDueBy").value = s.pullDueBy || ""; $("#stPullCount").value = s.pullCount || 40; $("#stAutoEvery").value = s.autoEvery || 0; $("#stEtsyCap").value = s.etsyHourlyCap || DEFAULTS.etsyHourlyCap;
+  $("#stSkuPattern").value = s.skuPattern || DEFAULTS.skuPattern; $("#stLabelGapMm").value = s.labelGapMm; $("#stMasterServerAbove").value = s.masterServerAbove; $("#stSizeMinMm").value = s.sizeMinMm; $("#stSizeMaxMm").value = s.sizeMaxMm;
+  $("#stEngraveMarginMm").value = s.engraveMarginMm; $("#stEngraveMinCapMm").value = s.engraveMinCapMm; $("#stEngraveMaxHeightFrac").value = s.engraveMaxHeightFrac; $("#stEngraveConfidence").value = s.engraveConfidence; $("#stEngraveMinGapMm").value = s.engraveMinGapMm; $("#stEngraveMinStrokeMm").value = s.engraveMinStrokeMm; $("#stEngraveTryRotated").value = s.engraveTryRotated || "on"; $("#stBackFileView").value = s.backFileView || "asSeenFromBack";
   $("#stMinPt").value = s.minPt; $("#stVerifyRes").value = s.verifyRes; $("#stNaming").value = s.naming; $("#stReview").value = s.review || "on"; $("#stEngine").value = s.engine || "solver"; $("#stMaxFill").value = Math.round((s.maxFill || 0.74) * 100); $("#stAiRounds").value = s.aiRounds || 10; $("#stSnapIn").value = +(((s.snapIn == null ? 0.25 : s.snapIn) * 25.4).toFixed(1)); $("#stNotify").value = s.notify; $("#stSound").value = s.sound;
   openDlg($("#dlgSettings"));
 }
@@ -1992,6 +2215,10 @@ function readSettings() {
   s.rail = $("#railSeg button.on")?.dataset.v || "md";
   for (const m of METALS) s.stock[m.key] = [(+$(`#st${cap(m.key)}W`).value / 25.4) || DEFAULTS.stock[m.key][0], (+$(`#st${cap(m.key)}H`).value / 25.4) || DEFAULTS.stock[m.key][1]];
   s.clearancePt = Math.max(-2, Math.min(12, Math.round((+$("#stClearance").value || 0) / MM_PER_PT * 100) / 100)); s.insetPt = Math.max(0, Math.round((+$("#stInset").value || 0) / MM_PER_PT * 100) / 100); s.angleStep = +$("#stAngle").value || 30; s.budgetS = Math.max(10, +$("#stBudget").value || 180); s.parallel = Math.max(0, Math.min(16, Math.round(+$("#stParallel").value || 0))); s.seed = Math.max(1, Math.round(+$("#stSeed").value || 1)); s.serverAbove = Math.max(0, +$("#stServerAbove").value || 0);
+  s.dsOrigin = ($("#stDsOrigin").value || DEFAULTS.dsOrigin).trim().replace(/\/+$/, ""); s.heartbeatS = Math.max(2, Math.min(60, +$("#stHeartbeatS").value || 5)); s.heartbeatMiss = Math.max(1, Math.min(10, Math.round(+$("#stHeartbeatMiss").value || 3))); s.autoCommit = $("#stAutoCommit").value; s.pullMode = $("#stPullMode").value; s.pullDueBy = $("#stPullDueBy").value || ""; s.pullCount = Math.max(1, Math.min(500, Math.round(+$("#stPullCount").value || 40))); s.autoEvery = Math.max(0, Math.min(1440, Math.round(+$("#stAutoEvery").value || 0))); if (s.autoEvery > 0 && s.autoEvery < 5) s.autoEvery = 5; s.etsyHourlyCap = Math.max(50, Math.min(5000, Math.round(+$("#stEtsyCap").value || 600)));
+  try { new RegExp($("#stSkuPattern").value); s.skuPattern = $("#stSkuPattern").value.trim() || DEFAULTS.skuPattern; } catch (_) { toast("SKU pattern is not a valid regular expression — kept the previous one", "bad"); }
+  s.labelGapMm = Math.max(1, Math.min(30, +$("#stLabelGapMm").value || 6.4)); s.masterServerAbove = Math.max(0, Math.round(+$("#stMasterServerAbove").value || 0)); s.sizeMinMm = Math.max(0.5, +$("#stSizeMinMm").value || 3); s.sizeMaxMm = Math.max(s.sizeMinMm, +$("#stSizeMaxMm").value || 60);
+  s.engraveMarginMm = Math.max(0, Math.min(5, +$("#stEngraveMarginMm").value || 0)); s.engraveMinCapMm = Math.max(0.3, +$("#stEngraveMinCapMm").value || 1.6); s.engraveMaxHeightFrac = Math.max(0.1, Math.min(1, +$("#stEngraveMaxHeightFrac").value || 0.4)); s.engraveConfidence = Math.max(0, Math.min(1, +$("#stEngraveConfidence").value || 0.8)); s.engraveMinGapMm = Math.max(0, +$("#stEngraveMinGapMm").value || 0); s.engraveMinStrokeMm = Math.max(0, +$("#stEngraveMinStrokeMm").value || 0); s.engraveTryRotated = $("#stEngraveTryRotated").value; s.backFileView = $("#stBackFileView").value;
   s.minPt = Math.max(1, +$("#stMinPt").value || 6); s.verifyRes = +$("#stVerifyRes").value || 6; s.naming = $("#stNaming").value; s.review = $("#stReview").value; s.engine = $("#stEngine").value; s.maxFill = Math.max(0.3, Math.min(1, (+$("#stMaxFill").value || 75) / 100)); s.aiRounds = Math.max(1, Math.min(30, +$("#stAiRounds").value || 10)); s.snapIn = Math.max(0, Math.min(1, (+$("#stSnapIn").value || 0) / 25.4)); s.notify = $("#stNotify").value; s.sound = $("#stSound").value;
   saveSettings(); refreshAllCards(); toast("Settings saved", "ok", 1800);
 }
@@ -2012,7 +2239,8 @@ async function boot() {
   $("#btnSettings").onclick = openSettings; $("#btnSaveSettings").onclick = e => { e.preventDefault(); readSettings(); closeDlg($("#dlgSettings")); };
   $("#btnResetSettings").onclick = () => { S.settings = Object.assign({}, DEFAULTS, { stock: JSON.parse(JSON.stringify(DEFAULTS.stock)) }); saveSettings(); openSettings(); };
   $$("#railSeg button").forEach(b => b.onclick = () => { $$("#railSeg button").forEach(x => x.classList.toggle("on", x === b)); document.documentElement.dataset.rail = b.dataset.v; });
-  $$(".modeSeg button").forEach(b => b.onclick = () => setMode(b.dataset.mode));
+  $$("#modeSeg button").forEach(b => b.onclick = () => setMode(b.dataset.mode));
+  $$("#libKind button").forEach(b => b.onclick = () => { $$("#libKind button").forEach(x => x.classList.toggle("on", x === b)); S.library.kind = b.dataset.k; loadLibrary(); });
   $("#rpClose").onclick = () => closeDlg($("#dlgReport")); $("#lsClose").onclick = () => closeDlg($("#dlgSheet"));
   $$("#libView .fchip").forEach(b => b.onclick = () => { $$("#libView .fchip").forEach(x => x.classList.toggle("on", x === b)); S.library.metal = b.dataset.m; loadLibrary(); });
   $("#libSearch").oninput = renderLibrary; $("#libRefresh").onclick = loadLibrary; $("#libFrom").onchange = loadLibrary; $("#libTo").onchange = loadLibrary;
@@ -2028,9 +2256,11 @@ async function boot() {
   await gate();
   cloudProbe();
   refreshAllCards(); updateTopSub();
-  window.CN = { S, AG, showPage, startNest, intake, api, buildJob, setMode, renderLibrary, applyGroupingReview, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; } };   // for tests and the console
+  window.CN = { S, AG, DEFAULTS, METALS, showPage, startNest, intake, api, agent, agentUpdate, agentCall, uploadBytes, buildJob, setMode, renderLibrary, loadLibrary, applyGroupingReview, reviewGrouping, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; },
+    activePage, allSheets, pagesOf, addPage, sheetDirty, activeCharms, renderCard, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log };   // for tests, the console and charm-nest-bridge.js
 }
 boot();
 </script>
+<script src="charm-nest-bridge.js"></script>
 </body>
 </html>

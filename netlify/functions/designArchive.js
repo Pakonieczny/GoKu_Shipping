@@ -50,7 +50,7 @@ const trim = (v, n) => str(v).slice(0, n);
 /** Everything a human might type into the search box, lowercased into one blob. */
 function buildSearchBlob(r) {
   const parts = [
-    r.receiptId, r.orderNumber, r.completedDay, r.completedBy,
+    r.receiptId, r.orderNumber, r.completedDay, r.completedBy, r.setId,
     r.buyer?.name, r.buyer?.email,
     r.ship?.name, r.ship?.first_line, r.ship?.second_line,
     r.ship?.city, r.ship?.state, r.ship?.zip, r.ship?.country,
@@ -83,6 +83,9 @@ function slimRow(d) {
     shipped    : !!d.status?.isShipped,
     tracked    : (d.shipments || []).length > 0,
     search     : d.search || "",
+    setId      : d.setId || "",
+    labels     : d.labels ? (d.labels.files || []).length : 0,
+    by         : d.completedBy || "",
   };
 }
 
@@ -186,6 +189,12 @@ exports.handler = async (event) => {
           raw          : o.raw       || null,
           archivedAt   : now,
         };
+        // Charm Sorter completions: where the labels were saved, which set and sheets, how many backs were engraved
+        if (o.labels && typeof o.labels === "object") record.labels = { setId: str(o.labels.setId), folder: str(o.labels.folder), files: (Array.isArray(o.labels.files) ? o.labels.files : []).slice(0, 50).map(f => (typeof f === "string" ? { path: f } : { path: str(f.path), url: str(f.url), sheet: str(f.sheet) })) };
+        if (o.setId) record.setId = str(o.setId);
+        if (Array.isArray(o.sheetIds)) record.sheetIds = o.sheetIds.map(str).slice(0, 50);
+        if (o.backCount != null) record.backCount = num(o.backCount);
+        if (o.runId) record.runId = str(o.runId);
         record.search = buildSearchBlob(record);
 
         batch.set(db.collection(COLL).doc(receiptId), record, { merge: true });

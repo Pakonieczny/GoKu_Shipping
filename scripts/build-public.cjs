@@ -78,6 +78,11 @@ const assets = [
   "charm-nest-solver.js",
   "charm-nest-worker.js",
   "charm-nest-pdf.js",
+  "charm-nest-geom.js",
+  "charm-nest-orders.js",
+  "charm-nest-bridge.js",
+  "charm-nest-check.html",
+  "vendor/opentype-1.3.4.min.js",
   "vendor/jszip-3.10.1.min.js",
   "vendor/pdf-lib-1.17.1.min.js",
   "vendor/pdfjs-4.10.38/pdf.min.mjs",
@@ -95,4 +100,19 @@ for (const asset of assets) {
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, data);
 }
-console.log(`Prepared ${assets.length} public assets; server sources and configuration excluded.`);
+// The engraving fonts (Source Sans 3, SIL Open Font License) live in vendor/fonts/ and are committed; the copy stays
+// optional so a build never fails if the folder is ever emptied on a deploy machine.
+const optionalDirs = ["vendor/fonts"];
+let optional = 0;
+for (const dir of optionalDirs) {
+  const src = path.join(root, dir);
+  if (!fs.existsSync(src)) continue;
+  for (const name of fs.readdirSync(src)) {
+    if (!/\.(otf|ttf)$/i.test(name)) continue;
+    const target = path.join(output, dir, name);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(path.join(src, name), target);
+    optional++;
+  }
+}
+console.log(`Prepared ${assets.length} public assets (+${optional} optional font files); server sources and configuration excluded.`);
