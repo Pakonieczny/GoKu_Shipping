@@ -1429,7 +1429,12 @@ function wireBigChart(id,points,o){o=o||{};var box=$("#bc-"+id);if(!box)return;v
 /* ---- nav ---- */
 var NAV=[["groups","Products & groups","","◈"],["command","Overview","Account performance","◆"],["sales","Sales","Where your money comes from","◷"],["approvals","Approvals","Drafts waiting for your call","✎"],["bench","Opportunities","AI-found campaigns to launch","⚒"],["controls","Controls","Guardrails & switches","⚙"]];
 function buildNav(){var n=$("#nav");n.innerHTML="";NAV.forEach(function(it){var b=elFrom('<button data-v="'+it[0]+'"><span class="ic" style="font-size:15px">'+it[3]+'</span><span>'+it[1]+'</span></button>');b.onclick=()=>go(it[0]);n.appendChild(b);});updateBadges();}
-function updateBadges(){var b=$('#nav button[data-v="approvals"]');if(!b)return;var x=b.querySelector(".badge");var c=(DASH&&DASH.pending||[]).length;if(c){if(!x){x=elFrom('<span class="badge"></span>');b.appendChild(x);}x.textContent=c;}else if(x)x.remove();}
+// The badge counts exactly what the Approvals tab lists. Counting every
+// draft while the tab shows only the selected product group would have the
+// two disagree about the same fact.
+function pendingInScope(){var all=(DASH&&DASH.pending)||[],scope=window.BritesGroups&&BritesGroups.selection();
+ return scope?all.filter(function(a){return BritesGroups.matchesApproval(a,scope);}):all;}
+function updateBadges(){var b=$('#nav button[data-v="approvals"]');if(!b)return;var x=b.querySelector(".badge");var c=pendingInScope().length;if(c){if(!x){x=elFrom('<span class="badge"></span>');b.appendChild(x);}x.textContent=c;}else if(x)x.remove();}
 function navDrawer(open){document.body.classList[open?"add":"remove"]("navOpen");}
 (function(){var b=document.getElementById("navBurger"),sc=document.getElementById("navScrim");
   if(b)b.onclick=function(){navDrawer(!document.body.classList.contains("navOpen"));};
@@ -1451,7 +1456,17 @@ function CV(o){ if(!o)return {conv:0,value:0};
   return convBasis==="click"
     ? {conv:+o.conv||0, value:+o.value||0}
     : {conv:(o.convCd!=null?+o.convCd:+o.conv)||0, value:(o.valueCd!=null?+o.valueCd:+o.value)||0};}
-function basisLabel(){return convBasis==="click"?"by ad-click date":"by order date";}
+// One name per basis, everywhere. A tab that called the same basis
+// something else would read as a different measurement.
+var BASIS_NAMES={click:"ad-click date",conversion:"conversion date"};
+function basisName(v){return BASIS_NAMES[v||convBasis]||"basis unverified";}
+function basisLabel(){return "by "+basisName();}
+// Every panel that reads convBasis is redrawn together, so no two tabs can
+// show figures on different bases at the same moment.
+function setConvBasis(v){if(!BASIS_NAMES[v]||v===convBasis)return;convBasis=v;
+ if(DASH)renderCommand();
+ try{renderGrowthPerformance();}catch(e){}
+ if(PERF_DIALOG)renderPerformanceDialog();}
 function basisTitle(){return convBasis==="click"
   ? "Sales counted on the day the ad was CLICKED. Matches the Google Ads UI and what Smart Bidding optimises on — daily ROAS is honest, but a sale can appear days before it was placed."
   : "Sales counted on the day the ORDER was placed. Matches Shopify and your Sales tab — but a day's ROAS no longer lines up with the spend that earned it.";}
@@ -1459,10 +1474,10 @@ function basisToggleHtml(){
   var mk=function(v,lab){var on=convBasis===v;return '<button class="btn '+(on?"gold":"ghost")+' sm cbasis" data-b="'+v+'" style="padding:3px 9px;font-size:10.5px">'+lab+'</button>';};
   return '<span title="'+esc(basisTitle())+'" style="display:inline-flex;gap:4px;align-items:center">'
     +'<span class="muted" style="font-size:10px;letter-spacing:.13em;text-transform:uppercase">Count sales</span>'
-    +mk("conversion","order date")+mk("click","click date")+'</span>';}
+    +mk("conversion",basisName("conversion"))+mk("click",basisName("click"))+'</span>';}
 function wireBasisToggle(scope){if(!scope)return;
   Array.prototype.forEach.call(scope.querySelectorAll(".cbasis"),function(b){
-    b.onclick=function(){var v=this.getAttribute("data-b");if(v===convBasis)return;convBasis=v;renderCommand();};});}
+    b.onclick=function(){setConvBasis(this.getAttribute("data-b"));};});}
 
 /* ---- totals ---- */
 function totals(camps){var t={cost:0,conv:0,value:0,clicks:0,impr:0,budget:0};(camps||[]).forEach(function(c){var cv=CV(c);t.cost+=+c.cost||0;t.conv+=cv.conv;t.value+=cv.value;t.clicks+=+c.clicks||0;t.impr+=+c.impr||0;t.budget+=+c.budget||0;});return t;}
@@ -1609,7 +1624,7 @@ function renderSalesSummary(){var el=$("#cmdSales");if(!el)return;var orders=DAS
 function renderConvStrip(){var el=$("#perfConv");if(!el)return;if(!DASH.conversionHealth){el.style.display="none";return;}el.style.display="block";el.innerHTML=convChipHtml(DASH.conversionHealth);}
 var cmdRange={preset:"7d"},cmdMetrics=null,cmdReport=null,cmdRangeLabel="last 7 days",cmdRangeBusy=false,cmdRangeError='',cmdRangeSeq=0;
 async function cmdApplyRange(res,val){cmdRange=Object.assign({},val||cmdRange);var rg=performanceRange(cmdRange),error=performanceValidRange(rg),seq=++cmdRangeSeq;cmdRangeLabel=rg.start+' → '+rg.end;cmdMetrics=null;cmdReport=null;cmdRangeBusy=!error;cmdRangeError=error;DAILY=null;_dailyKey='';renderCommand();if(error)return;
-  try{var r=await api("metricsRange",rg);if(seq!==cmdRangeSeq)return;if(!r||r.error||r.ok===false||!Array.isArray(r.snapshot))throw new Error(r&&r.error||'Performance data could not be verified.');if(r.range&&(r.range.start!==rg.start||r.range.end!==rg.end))throw new Error('The report dates do not match the selected range.');cmdReport=r;cmdMetrics=r.snapshot;if(r.accountTimezone)ACCOUNT_TZ=r.accountTimezone;}
+  try{var r=await api("metricsRange",rg);if(seq!==cmdRangeSeq)return;if(!r||r.error||r.ok===false||!Array.isArray(r.snapshot))throw new Error(r&&r.error||'Performance data could not be verified.');if(r.range&&(r.range.start!==rg.start||r.range.end!==rg.end))throw new Error('The report dates do not match the selected range.');cmdReport=r;cmdMetrics=r.snapshot;applyEndDateOverrides();if(r.accountTimezone)ACCOUNT_TZ=r.accountTimezone;}
   catch(e){if(seq===cmdRangeSeq)cmdRangeError=String(e.message||e);}
   finally{if(seq===cmdRangeSeq){cmdRangeBusy=false;renderCommand();}}
 }
@@ -2380,7 +2395,7 @@ function wireApprovalCardDisclosure(card){
     top.onkeydown=function(e){if(e.key==="Enter"||e.key===" ")toggle(e);};
   }
 }
-function renderApprovals(){var list=$("#apprList");var scope=window.BritesGroups&&BritesGroups.selection();var p=(DASH.pending||[]).filter(function(a){return !scope||BritesGroups.matchesApproval(a,scope);});var stuck=(DASH.stuck||[]).filter(function(a){return !scope||BritesGroups.matchesApproval(a,scope);});
+function renderApprovals(){var list=$("#apprList");var scope=window.BritesGroups&&BritesGroups.selection();var p=pendingInScope();var stuck=(DASH.stuck||[]).filter(function(a){return !scope||BritesGroups.matchesApproval(a,scope);});
   list.innerHTML="";
   if(stuck.length){
     list.appendChild(elFrom('<p class="muted">'+stuck.length+' publication'+(stuck.length===1?'':'s')+' awaiting completion or attention.</p>'));
@@ -2920,9 +2935,9 @@ function performanceMetric(c,key,data){if(!c||!data||c.metricsUnavailable)return
 function performanceValue(v,moneyValue){return v==null?'—':moneyValue?money(v):Number(v).toLocaleString(undefined,{maximumFractionDigits:1});}
 function performanceCards(c,data){var cost=performanceMetric(c,'cost',data),value=performanceMetric(c,'value',data),conv=performanceMetric(c,'conv',data),currency=data&&data.currency||'',roas=cost>0&&value!=null?value/cost:null;return '<div class="gpMetrics"><div><b>'+performanceValue(cost,true)+'</b><span>Spend'+(currency?' · '+esc(currency):'')+'</span></div><div><b>'+performanceValue(value,true)+'</b><span>Conversion value'+(currency?' · '+esc(currency):'')+'</span></div><div><b>'+performanceValue(conv)+'</b><span>Conversions</span></div><div><b>'+(roas==null?'—':roas.toFixed(2)+'×')+'</b><span>ROAS</span></div></div>';}
 function performanceSummary(rows,data){if(!data)return null;var out={cost:0,value:0,conv:0,valueCd:0,convCd:0};Object.keys(out).forEach(function(k){var complete=rows.every(function(c){return !c.metricsUnavailable&&c[k]!=null&&isFinite(Number(c[k]));});out[k]=complete?rows.reduce(function(s,c){return s+Number(c[k]);},0):null;});return out;}
-function performanceControls(key,state){var r=performanceRange(state.range),n=key==='dialog'?'Campaign':performanceLaneName(key),custom=state.range.preset==='custom';return '<div class="gpControls" data-perf-controls="'+key+'"><label>Reporting dates<select aria-label="'+n+' date range" data-perf-preset>'+[['today','Today'],['yday','Yesterday'],['7d','Last 7 days'],['14d','Last 14 days'],['30d','Last 30 days'],['90d','Last 90 days'],['mtd','This month'],['lastmo','Last month'],['ytd','This year'],['custom','Custom dates']].map(function(p){return '<option value="'+p[0]+'"'+(state.range.preset===p[0]?' selected':'')+'>'+p[1]+'</option>';}).join('')+'</select></label><div class="gpCustom"'+(custom?'':' hidden')+'><label>From<input type="date" data-perf-start aria-label="'+n+' start date" value="'+esc(r.start||'')+'" max="'+performanceToday()+'"></label><label>To<input type="date" data-perf-end aria-label="'+n+' end date" value="'+esc(r.end||'')+'" max="'+performanceToday()+'"></label><button class="btn gold sm" data-perf-apply>Apply dates</button></div><label>Count conversions<select data-perf-basis aria-label="'+n+' conversion date basis"><option value="click"'+(convBasis==='click'?' selected':'')+'>Ad-click date</option><option value="conversion"'+(convBasis==='conversion'?' selected':'')+'>Conversion date</option></select></label><button class="btn ghost sm" data-perf-refresh'+(state.busy?' disabled':'')+'>Refresh</button><p class="gpValidation" data-perf-validation role="alert"></p></div>';}
-function wirePerformanceControls(host,key){var s=key==='dialog'?PERF_DIALOG:GROWTH_PERF[key],wrap=host.querySelector('[data-perf-controls="'+key+'"]');if(!wrap||!s)return;var preset=wrap.querySelector('[data-perf-preset]'),apply=function(range){var msg=performanceValidRange(performanceRange(range));wrap.querySelector('[data-perf-validation]').textContent=msg;if(msg)return;s.range=Object.assign({},range);if(key==='dialog')loadPerformanceDialog();else loadGrowthPerformance(key,true);};preset.onchange=function(){if(preset.value==='custom'){wrap.querySelector('.gpCustom').hidden=false;return;}apply({preset:preset.value});};wrap.querySelector('[data-perf-apply]').onclick=function(){apply({preset:'custom',start:wrap.querySelector('[data-perf-start]').value,end:wrap.querySelector('[data-perf-end]').value});};wrap.querySelector('[data-perf-refresh]').onclick=function(){if(key==='dialog')loadPerformanceDialog();else loadGrowthPerformance(key,true);};wrap.querySelector('[data-perf-basis]').onchange=function(){convBasis=this.value;renderGrowthPerformance();if(PERF_DIALOG)renderPerformanceDialog();if(DASH)renderCommand();};}
-function performanceScope(data,range){var r=data&&data.range||performanceRange(range),tz=data&&data.accountTimezone||ACCOUNT_TZ||(DASH&&DASH.accountTimezone)||'America/Toronto',basis=convBasis==='click'?'conversions by ad-click date':'conversions by conversion date';return esc(r.start+' → '+r.end+' · '+tz+' · '+basis)+(data&&data.checkedAt?' · fetched '+esc(timeago(Number(data.checkedAt)))+' ago':'');}
+function performanceControls(key,state){var r=performanceRange(state.range),n=key==='dialog'?'Campaign':performanceLaneName(key),custom=state.range.preset==='custom';return '<div class="gpControls" data-perf-controls="'+key+'"><label>Reporting dates<select aria-label="'+n+' date range" data-perf-preset>'+[['today','Today'],['yday','Yesterday'],['7d','Last 7 days'],['14d','Last 14 days'],['30d','Last 30 days'],['90d','Last 90 days'],['mtd','This month'],['lastmo','Last month'],['ytd','This year'],['custom','Custom dates']].map(function(p){return '<option value="'+p[0]+'"'+(state.range.preset===p[0]?' selected':'')+'>'+p[1]+'</option>';}).join('')+'</select></label><div class="gpCustom"'+(custom?'':' hidden')+'><label>From<input type="date" data-perf-start aria-label="'+n+' start date" value="'+esc(r.start||'')+'" max="'+performanceToday()+'"></label><label>To<input type="date" data-perf-end aria-label="'+n+' end date" value="'+esc(r.end||'')+'" max="'+performanceToday()+'"></label><button class="btn gold sm" data-perf-apply>Apply dates</button></div><label>Count conversions<select data-perf-basis aria-label="'+n+' conversion date basis"><option value="click"'+(convBasis==='click'?' selected':'')+'>'+esc(basisName('click'))+'</option><option value="conversion"'+(convBasis==='conversion'?' selected':'')+'>'+esc(basisName('conversion'))+'</option></select></label><button class="btn ghost sm" data-perf-refresh'+(state.busy?' disabled':'')+'>Refresh</button><p class="gpValidation" data-perf-validation role="alert"></p></div>';}
+function wirePerformanceControls(host,key){var s=key==='dialog'?PERF_DIALOG:GROWTH_PERF[key],wrap=host.querySelector('[data-perf-controls="'+key+'"]');if(!wrap||!s)return;var preset=wrap.querySelector('[data-perf-preset]'),apply=function(range){var msg=performanceValidRange(performanceRange(range));wrap.querySelector('[data-perf-validation]').textContent=msg;if(msg)return;s.range=Object.assign({},range);if(key==='dialog')loadPerformanceDialog();else loadGrowthPerformance(key,true);};preset.onchange=function(){if(preset.value==='custom'){wrap.querySelector('.gpCustom').hidden=false;return;}apply({preset:preset.value});};wrap.querySelector('[data-perf-apply]').onclick=function(){apply({preset:'custom',start:wrap.querySelector('[data-perf-start]').value,end:wrap.querySelector('[data-perf-end]').value});};wrap.querySelector('[data-perf-refresh]').onclick=function(){if(key==='dialog')loadPerformanceDialog();else loadGrowthPerformance(key,true);};wrap.querySelector('[data-perf-basis]').onchange=function(){setConvBasis(this.value);};}
+function performanceScope(data,range){var r=data&&data.range||performanceRange(range),tz=data&&data.accountTimezone||ACCOUNT_TZ||(DASH&&DASH.accountTimezone)||'America/Toronto',basis='conversions '+basisLabel();return esc(r.start+' → '+r.end+' · '+tz+' · '+basis)+(data&&data.checkedAt?' · fetched '+esc(timeago(Number(data.checkedAt)))+' ago':'');}
 function performanceWarnings(data){var w=(data&&data.warnings||[]).map(function(x){return typeof x==='string'?x:x.message||x.reason||'';}).filter(Boolean);if(data&&data.cdAvailable===false&&convBasis==='conversion')w.unshift('Conversion-date reporting is unavailable. Conversion value, conversions and ROAS are hidden; choose Ad-click date to see that basis.');return w.length?'<div class="researchNotice">'+w.map(esc).join('<br>')+'</div>':'';}
 function performanceVersion(c){var cv=typeof c.version==='object'?c.version:c.versionInfo||{},v=c.currentVersion||cv.version||(typeof c.version==='number'?c.version:null),at=c.versionUpdatedAt||cv.updatedAt,summary=c.versionSummary||cv.summary;if(!v)return '<span class="gpVersion">Version history available in campaign details</span>';return '<span class="gpVersion"><b>v'+esc(v)+'</b>'+(at?' · '+esc(new Date(Number(at)).toLocaleDateString()):'')+(summary?' · '+esc(summary):'')+'</span>';}
 function growthLearningHtml(lane,campaignId){var trace=lane==='product'?OPP_LEARNING.pmax:lane==='search'?OPP_LEARNING.search:null,selected=campaignId?[]:(trace&&trace.lessonSnapshots||[]),lessons=PB&&PB.lessons||[],applied=[];
@@ -3489,7 +3504,7 @@ async function livePull(){
     try{ await api("measureNow"); }catch(e){}
     try{ await api("enforceCeiling",{}); }catch(e){}
     try{ var mg=await api("monthlyGuard",{}); if(mg&&mg.tripped){toast("Monthly cap reached \u2014 all campaigns paused",false);} }catch(e){}
-    DASH=await api("dashboard"); renderAll();
+    DASH=await api("dashboard");applyBudgetOverrides();applyEndDateOverrides();renderAll();
     syncOk();
   }catch(x){ syncFailed(x); }
   finally{ livePulling=false; }
@@ -4251,7 +4266,7 @@ document.getElementById('creativeDialog').addEventListener('cancel',creativeClos
 </script>
 <script src="/brites-groups.js?v=20260911-delete"></script>
 <script>
-BritesGroups.init({api:api,dashboard:function(){return DASH;},design:openAdDesign,go:go,reload:reload,toast:toast,currentView:function(){return document.querySelector('.nav button.active')?.dataset.v||'groups';},changed:function(){if(DASH)renderApprovals();}});
+BritesGroups.init({api:api,dashboard:function(){return DASH;},design:openAdDesign,go:go,reload:reload,toast:toast,currentView:function(){return document.querySelector('.nav button.active')?.dataset.v||'groups';},changed:function(){if(DASH){renderApprovals();updateBadges();}}});
 </script>
 </body>
 </html>
