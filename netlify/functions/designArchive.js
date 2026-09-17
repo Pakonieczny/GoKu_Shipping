@@ -30,6 +30,8 @@ const admin = require("./firebaseAdmin");
 const db    = admin.firestore();
 
 const COLL       = "Design_Order_Archive";
+let PREFIX = "";                                   // ?sandbox=1 → Sandbox_Design_Order_Archive
+const col = name => db.collection(PREFIX + name);
 const MAX_PUT    = 50;
 const MAX_INDEX  = 500;
 const MAX_MIRROR = 24;          // images mirrored per request, keeps us inside the timeout
@@ -139,6 +141,7 @@ exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: CORS, body: "ok" };
 
   try {
+    PREFIX = (event.queryStringParameters && event.queryStringParameters.sandbox === "1") || (event.headers && (event.headers["x-sandbox"] === "1" || event.headers["X-Sandbox"] === "1")) ? "Sandbox_" : "";
     /* ─────────────────────────── WRITE ─────────────────────────── */
     if (event.httpMethod === "POST") {
       const body = JSON.parse(event.body || "{}");
@@ -197,7 +200,7 @@ exports.handler = async (event) => {
         if (o.runId) record.runId = str(o.runId);
         record.search = buildSearchBlob(record);
 
-        batch.set(db.collection(COLL).doc(receiptId), record, { merge: true });
+        batch.set(col(COLL).doc(receiptId), record, { merge: true });
       }
 
       await batch.commit();
@@ -212,7 +215,7 @@ exports.handler = async (event) => {
     if (op === "index") {
       const since = num(q.since);
       const limit = Math.min(num(q.limit) || 300, MAX_INDEX);
-      let ref = db.collection(COLL);
+      let ref = col(COLL);
       if (since > 0) ref = ref.where("completedAtMs", ">=", since);
       ref = ref.orderBy("completedAtMs", "asc").limit(limit);
       if (q.cursor) ref = ref.startAfter(num(q.cursor));
@@ -233,7 +236,7 @@ exports.handler = async (event) => {
     if (op === "day") {
       const date = str(q.date).trim();
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return json(400, { error: "date must be YYYY-MM-DD" });
-      const snap = await db.collection(COLL).where("completedDay", "==", date).get();
+      const snap = await col(COLL).where("completedDay", "==", date).get();
       const rows = snap.docs.map(d => d.data()).sort((a, b) => num(b.completedAtMs) - num(a.completedAtMs));
       return json(200, { success: true, date, count: rows.length, rows });
     }
@@ -242,7 +245,7 @@ exports.handler = async (event) => {
     if (op === "days") {
       const from = str(q.from).trim() || "0000-00-00";
       const to   = str(q.to).trim()   || "9999-99-99";
-      const snap = await db.collection(COLL)
+      const snap = await col(COLL)
         .where("completedDay", ">=", from)
         .where("completedDay", "<=", to)
         .select("completedDay")
@@ -258,17 +261,17 @@ exports.handler = async (event) => {
     if (op === "get") {
       const id = str(q.id).trim();
       if (!id) return json(400, { error: "id required" });
-      const doc = await db.collection(COLL).doc(id).get();
+      const doc = await col(COLL).doc(id).get();
       if (!doc.exists) return json(200, { success: false, notFound: true });
       return json(200, { success: true, row: doc.data() });
     }
 
     if (op === "stats") {
       const [oldest, newest] = await Promise.all([
-        db.collection(COLL).orderBy("completedAtMs", "asc").limit(1).get(),
-        db.collection(COLL).orderBy("completedAtMs", "desc").limit(1).get(),
+        col(COLL).orderBy("completedAtMs", "asc").limit(1).get(),
+        col(COLL).orderBy("completedAtMs", "desc").limit(1).get(),
       ]);
-      const count = await db.collection(COLL).count().get().catch(() => null);
+      const count = await col(COLL).count().get().catch(() => null);
       return json(200, {
         success: true,
         total : count ? count.data().count : null,
@@ -282,7 +285,7 @@ exports.handler = async (event) => {
     if (op === "have") {
       const ids = str(q.ids).split(",").map(s => s.trim()).filter(Boolean).slice(0, 200);
       if (!ids.length) return json(200, { success: true, have: [] });
-      const snaps = await db.getAll(...ids.map(id => db.collection(COLL).doc(id)));
+      const snaps = await db.getAll(...ids.map(id => col(COLL).doc(id)));
       return json(200, { success: true, have: snaps.filter(s => s.exists).map(s => s.id) });
     }
 

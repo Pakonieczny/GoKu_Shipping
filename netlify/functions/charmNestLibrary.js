@@ -36,6 +36,12 @@
 const admin = require("./firebaseAdmin");
 const { json, gate, parseBody, str, num } = require("./_charmNestAuth");
 const db = admin.firestore();
+/* ── sandbox: when a request says sandbox:true, the sorter's OWN records (sheets, pools, backs, sets, counters, runs,
+   bridge log) go to Sandbox_-prefixed collections; the master index, the charm library, maps and calibration stay
+   shared and are only read. Set per request; a function instance handles one request at a time. ── */
+let PREFIX = "";
+const SANDBOXED = new Set(["Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Design_Bridge"]);
+const col = name => db.collection(SANDBOXED.has(name) ? PREFIX + name : name);
 const FV = admin.firestore.FieldValue;
 
 const LIB = "Charm_Nest_Library", SHEETS = "Charm_Nest_Sheets", CAL = "Charm_Nest_Calibration", JOBS = "Charm_Nest_Jobs";
@@ -57,7 +63,7 @@ function slim(d) {
 }
 
 async function op_ping() {
-  const [s, c] = await Promise.all([db.collection(SHEETS).where("archived", "==", false).limit(1000).select("id").get(), db.collection(LIB).limit(1000).select("hash").get()]);
+  const [s, c] = await Promise.all([col(SHEETS).where("archived", "==", false).limit(1000).select("id").get(), db.collection(LIB).limit(1000).select("hash").get()]);
   const cal = await db.collection(CAL).orderBy("createdAt", "desc").limit(200).get();
   return { ok: true, sheets: s.size, charms: c.size, calibration: cal.docs.map(d => { const r = d.data(); return { sheetId: r.sheetId, metal: r.metal, count: num(r.count), cv: num(r.cv), largestFrac: num(r.largestFrac), density: num(r.density), placedAll: !!r.placedAll }; }) };
 }
@@ -110,14 +116,14 @@ async function op_putSheet(b) {
   const s = b.sheet || {}; if (!isId(s.id)) return { error: "bad sheet id" };
   const doc = Object.assign({}, s, { id: s.id, archived: false, updatedAt: FV.serverTimestamp() });
   delete doc.log;
-  const ref = db.collection(SHEETS).doc(s.id); const ex = await ref.get();
+  const ref = col(SHEETS).doc(s.id); const ex = await ref.get();
   if (!ex.exists) doc.createdAt = FV.serverTimestamp();
   await ref.set(doc, { merge: true });
   return { ok: true, id: s.id };
 }
 async function op_listSheets(b) {
   const limit = Math.min(500, Math.max(1, num(b.limit) || 300));
-  let q = db.collection(SHEETS).orderBy("day", "desc");
+  let q = col(SHEETS).orderBy("day", "desc");
   if (b.from && /^\d{4}-\d{2}-\d{2}$/.test(b.from)) q = q.where("day", ">=", b.from);
   if (b.to && /^\d{4}-\d{2}-\d{2}$/.test(b.to)) q = q.where("day", "<=", b.to);
   const snap = await q.limit(limit).get();
@@ -129,7 +135,7 @@ async function op_listSheets(b) {
 }
 async function op_getSheet(b) {
   if (!isId(b.id)) return { error: "bad id" };
-  const s = await db.collection(SHEETS).doc(b.id).get();
+  const s = await col(SHEETS).doc(b.id).get();
   if (!s.exists) return { sheet: null };
   const d = s.data(); d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt);
   await refreshLinks(d);
@@ -161,7 +167,7 @@ const DELETE_CODE = process.env.CHARM_NEST_DELETE_CODE || "975311";
 async function op_deleteSheet(b) {
   if (!isId(b.id)) return { error: "bad id" };
   if (String(b.code || "") !== DELETE_CODE) return { error: "wrong passcode", status: 403 };
-  const ref = db.collection(SHEETS).doc(b.id); const snap = await ref.get();
+  const ref = col(SHEETS).doc(b.id); const snap = await ref.get();
   if (snap.exists) {
     const d = snap.data(); const bucket = admin.storage().bucket();
     const paths = ["ai", "pdf", "labelled", "report", "preview"].map(k => d.outputs && d.outputs[k] && d.outputs[k].path).filter(Boolean);
@@ -301,7 +307,7 @@ async function op_poolPut(b) {
   if (!rows.length) return { error: "no pool rows" };
   const out = { written: 0, contended: [] };
   for (const p of rows) {
-    const ref = db.collection(POOL).doc(p.poolId); const ex = await ref.get(); const cur = ex.exists ? ex.data() : null;
+    const ref = col(POOL).doc(p.poolId); const ex = await ref.get(); const cur = ex.exists ? ex.data() : null;
     // two runs contending for one line: a row claimed by a live run (fresh within 24 h, not finished) belongs to that run
     if (cur && cur.runId && p.runId && cur.runId !== p.runId && !["complete", "abandoned", "committed"].includes(cur.state) && (Date.now() - (ms(cur.updatedAt) || 0)) < 24 * 3600 * 1000) { out.contended.push({ poolId: p.poolId, runId: cur.runId }); continue; }
     const doc = Object.assign({}, p, { poolId: p.poolId, updatedAt: FV.serverTimestamp() }); if (!cur) doc.createdAt = FV.serverTimestamp();
@@ -312,31 +318,59 @@ async function op_poolPut(b) {
 async function op_poolUpdate(b) {
   const ids = (Array.isArray(b.poolIds) ? b.poolIds : [b.poolId]).filter(isPoolId).slice(0, 400); if (!ids.length) return { error: "bad pool id" };
   let batch = db.batch(), n = 0;
-  for (const id of ids) { batch.set(db.collection(POOL).doc(id), Object.assign({}, b.patch || {}, { updatedAt: FV.serverTimestamp() }), { merge: true }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; } }
+  for (const id of ids) { batch.set(col(POOL).doc(id), Object.assign({}, b.patch || {}, { updatedAt: FV.serverTimestamp() }), { merge: true }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; } }
   if (n) await batch.commit();
   return { ok: true, count: ids.length };
 }
 async function op_poolList(b) {
-  let q = db.collection(POOL);
+  let q = col(POOL);
   if (b.runId) q = q.where("runId", "==", str(b.runId, 80)); else if (b.setId) q = q.where("setId", "==", str(b.setId, 80)); else if (b.sheetId) q = q.where("sheetId", "==", str(b.sheetId, 80)); else if (b.orderId) q = q.where("orderId", "==", str(b.orderId, 40)); else return { error: "runId, setId, sheetId or orderId required" };
   const snap = await q.limit(Math.min(2000, num(b.limit) || 1000)).get();
   return { pools: snap.docs.map(d => { const r = d.data(); r.updatedAt = ms(r.updatedAt); r.createdAt = ms(r.createdAt); return r; }) };
 }
 async function op_poolGet(b) {
   const ids = (b.poolIds || []).filter(isPoolId).slice(0, 300); const out = {};
-  for (let i = 0; i < ids.length; i += 30) { const snaps = await db.getAll(...ids.slice(i, i + 30).map(id => db.collection(POOL).doc(id))); for (const s of snaps) if (s.exists) { const r = s.data(); r.updatedAt = ms(r.updatedAt); out[s.id] = r; } }
+  for (let i = 0; i < ids.length; i += 30) { const snaps = await db.getAll(...ids.slice(i, i + 30).map(id => col(POOL).doc(id))); for (const s of snaps) if (s.exists) { const r = s.data(); r.updatedAt = ms(r.updatedAt); out[s.id] = r; } }
   return { pools: out };
 }
 // ── backs ──
+/* ── the sandbox snapshot: what the emulated Etsy serves (etsySandbox.js). The sorter uploads the JSON through
+   charmNestOutput and records it here; reset clears the sandbox's own records so a run can start clean. ── */
+const SANDBOX = "Charm_Sandbox";
+async function op_sandboxPut(b) {
+  const path = str(b.path, 300); if (!/^charmnest\/sandbox\//.test(path)) return { error: "the snapshot must live under charmnest/sandbox/" };
+  const [exists] = await admin.storage().bucket().file(path).exists(); if (!exists) return { error: "no such snapshot file: " + path };
+  const doc = { path, count: num(b.count) || 0, at: num(b.at) || Date.now(), takenBy: str(b.takenBy, 80) || null, note: str(b.note, 200) || null, updatedAt: FV.serverTimestamp() };
+  await db.collection(SANDBOX).doc("current").set(doc);
+  return { ok: true, snapshot: doc };
+}
+async function op_sandboxStatus() {
+  const doc = await db.collection(SANDBOX).doc("current").get();
+  const counts = {};
+  for (const name of SANDBOXED) { const s = await db.collection("Sandbox_" + name).limit(500).select().get(); counts[name] = s.size; }
+  return { ok: true, snapshot: doc.exists ? doc.data() : null, records: counts };
+}
+async function op_sandboxReset(b) {
+  let deleted = 0;
+  const names = [...SANDBOXED, "Design_Completed Orders", "Design_RealTime_Selected_Orders", "Design_Order_Archive", "Brites_Orders"];
+  const SUBS = { Design_Bridge: ["log"], Brites_Orders: ["messages"] };   // deleting a document never deletes its subcollections
+  const wipe = async q => { let n = 0; for (;;) { const s = await q.limit(300).get(); if (s.empty) break; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); n += s.size; if (s.size < 300) break; } return n; };
+  for (const name of names) {
+    const coll = db.collection("Sandbox_" + name);
+    for (const sub of SUBS[name] || []) { const parents = await coll.select().get(); for (const d of parents.docs) deleted += await wipe(d.ref.collection(sub)); }
+    deleted += await wipe(coll);
+  }
+  void b; return { ok: true, deleted };
+}
 async function op_backPut(b) {
   const rows = (Array.isArray(b.backs) ? b.backs : [b.back]).filter(x => x && isPoolId(x.poolId)).slice(0, 400); if (!rows.length) return { error: "no back rows" };
   let batch = db.batch(), n = 0;
-  for (const x of rows) { batch.set(db.collection(BACK).doc(x.poolId), Object.assign({}, x, { updatedAt: FV.serverTimestamp() }), { merge: true }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; } }
+  for (const x of rows) { batch.set(col(BACK).doc(x.poolId), Object.assign({}, x, { updatedAt: FV.serverTimestamp() }), { merge: true }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; } }
   if (n) await batch.commit();
   return { ok: true, count: rows.length };
 }
 async function op_backList(b) {
-  let q = db.collection(BACK);
+  let q = col(BACK);
   if (b.sheetId) q = q.where("sheetId", "==", str(b.sheetId, 80)); else if (b.setId) q = q.where("setId", "==", str(b.setId, 80)); else if (b.runId) q = q.where("runId", "==", str(b.runId, 80)); else return { error: "sheetId, setId or runId required" };
   const snap = await q.limit(2000).get();
   return { backs: snap.docs.map(d => { const r = d.data(); r.updatedAt = ms(r.updatedAt); return r; }) };
@@ -346,25 +380,25 @@ async function op_setAllocate(b) {
   const day = str(b.day, 10); if (!isDay(day)) return { error: "bad day" };
   const runId = str(b.runId, 80);
   // idempotent per run: a run that already has a set keeps it
-  if (runId) { const ex = await db.collection(SETS).where("runId", "==", runId).limit(1).get(); if (!ex.empty) { const d = ex.docs[0].data(); return { ok: true, setId: d.setId, seq: d.seq, day: d.day, existing: true }; } }
+  if (runId) { const ex = await col(SETS).where("runId", "==", runId).limit(1).get(); if (!ex.empty) { const d = ex.docs[0].data(); return { ok: true, setId: d.setId, seq: d.seq, day: d.day, existing: true }; } }
   const res = await db.runTransaction(async t => {
-    const cref = db.collection(COUNTERS).doc(day); const cs = await t.get(cref);
+    const cref = col(COUNTERS).doc(day); const cs = await t.get(cref);
     const seq = (cs.exists ? num(cs.data().seq) : 0) + 1;
     const setId = `set-${day}-${seq}`;
     t.set(cref, { day, seq, updatedAt: FV.serverTimestamp() }, { merge: true });
-    t.set(db.collection(SETS).doc(setId), { setId, runId: runId || null, day, seq, name: `Set-${seq}`, folder: `charmnest/sets/${day}/Set-${seq}`, materials: [], sheetIds: [], orders: {}, labels: null, status: "open", createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() });
+    t.set(col(SETS).doc(setId), { setId, runId: runId || null, day, seq, name: `Set-${seq}`, folder: `charmnest/sets/${day}/Set-${seq}`, materials: [], sheetIds: [], orders: {}, labels: null, status: "open", createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() });
     return { setId, seq };
   });
   return Object.assign({ ok: true, day }, res);
 }
 async function op_setUpdate(b) {
   const id = str(b.setId, 80); if (!isId(id)) return { error: "bad set id" };
-  await db.collection(SETS).doc(id).set(Object.assign({}, b.patch || {}, { setId: id, updatedAt: FV.serverTimestamp() }), { merge: true });
+  await col(SETS).doc(id).set(Object.assign({}, b.patch || {}, { setId: id, updatedAt: FV.serverTimestamp() }), { merge: true });
   return { ok: true };
 }
-async function op_setGet(b) { const id = str(b.setId, 80); if (!isId(id)) return { error: "bad set id" }; const s = await db.collection(SETS).doc(id).get(); if (!s.exists) return { set: null }; const d = s.data(); d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt); d.committedAt = ms(d.committedAt) || d.committedAt || null; return { set: d }; }
+async function op_setGet(b) { const id = str(b.setId, 80); if (!isId(id)) return { error: "bad set id" }; const s = await col(SETS).doc(id).get(); if (!s.exists) return { set: null }; const d = s.data(); d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt); d.committedAt = ms(d.committedAt) || d.committedAt || null; return { set: d }; }
 async function op_setList(b) {
-  let q = db.collection(SETS).orderBy("day", "desc");
+  let q = col(SETS).orderBy("day", "desc");
   if (isDay(b.from)) q = q.where("day", ">=", b.from); if (isDay(b.to)) q = q.where("day", "<=", b.to);
   const snap = await q.limit(Math.min(500, num(b.limit) || 200)).get();
   const rows = snap.docs.map(d => { const r = d.data(); r.updatedAt = ms(r.updatedAt); r.createdAt = ms(r.createdAt); return r; });
@@ -375,13 +409,13 @@ async function op_setList(b) {
 async function op_runPut(b) {
   const r = b.run || {}; const id = str(r.runId, 80); if (!isId(id)) return { error: "bad run id" };
   const doc = Object.assign({}, r, { runId: id, updatedAt: FV.serverTimestamp() });
-  const ref = db.collection(RUNS).doc(id); const ex = await ref.get(); if (!ex.exists) doc.createdAt = FV.serverTimestamp();
+  const ref = col(RUNS).doc(id); const ex = await ref.get(); if (!ex.exists) doc.createdAt = FV.serverTimestamp();
   await ref.set(doc, { merge: !!b.merge });
   return { ok: true, runId: id };
 }
-async function op_runGet(b) { const id = str(b.runId, 80); if (!isId(id)) return { error: "bad run id" }; const s = await db.collection(RUNS).doc(id).get(); if (!s.exists) return { run: null }; const d = s.data(); d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt); return { run: d }; }
+async function op_runGet(b) { const id = str(b.runId, 80); if (!isId(id)) return { error: "bad run id" }; const s = await col(RUNS).doc(id).get(); if (!s.exists) return { run: null }; const d = s.data(); d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt); return { run: d }; }
 async function op_runList(b) {
-  const snap = await db.collection(RUNS).orderBy("updatedAt", "desc").limit(Math.min(200, num(b.limit) || 50)).get();
+  const snap = await col(RUNS).orderBy("updatedAt", "desc").limit(Math.min(200, num(b.limit) || 50)).get();
   let rows = snap.docs.map(d => { const r = d.data(); return { runId: r.runId, setId: r.setId || null, day: r.day, step: r.step, status: r.status, mode: r.mode || null, lines: r.lines ? Object.keys(r.lines).length : 0, holds: r.holds ? Object.keys(r.holds).length : 0, errors: (r.errors || []).length, updatedAt: ms(r.updatedAt), createdAt: ms(r.createdAt), stoppedBy: r.stoppedBy || null }; });
   if (b.status) rows = rows.filter(r => r.status === b.status);
   return { runs: rows };
@@ -389,7 +423,7 @@ async function op_runList(b) {
 // ── bridge session log: Design_Bridge/{session} + /log rows (ids and counts only, never order text) ──
 async function op_bridgeLog(b) {
   const session = str(b.session, 80); if (!/^[\w\-]{6,80}$/.test(session)) return { error: "bad session" };
-  const ref = db.collection(BRIDGE).doc(session);
+  const ref = col(BRIDGE).doc(session);
   const meta = Object.assign({}, b.meta || {}, { sessionId: session, updatedAt: FV.serverTimestamp() });
   const rows = (b.rows || []).slice(0, 200);
   if (rows.length) meta.commands = FV.increment(rows.filter(r => r.dir === "cmd").length);
@@ -418,7 +452,7 @@ async function op_optionMapPut(b) {
 
 const OPS = { startAgent: op_startAgent, getAgent: op_getAgent, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, deleteSheet: op_deleteSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, startMaster: op_startMaster,
-  poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backList: op_backList,
+  poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backList: op_backList, sandboxPut: op_sandboxPut, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runGet: op_runGet, runList: op_runList, bridgeLog: op_bridgeLog,
   aliasGet: op_aliasGet, aliasPut: op_aliasPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut };
 
@@ -427,6 +461,7 @@ exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: require("./_charmNestAuth").CORS, body: "" };
   const body = event.httpMethod === "GET" ? Object.assign({}, event.queryStringParameters || {}) : parseBody(event);
   const denied = gate(event, body); if (denied) return denied;
+  PREFIX = body.sandbox === true || body.sandbox === 1 || body.sandbox === "1" ? "Sandbox_" : "";
   const fn = OPS[body.op];
   if (!fn) return json(400, { error: "unknown op", ops: Object.keys(OPS) });
   try {

@@ -4,6 +4,10 @@ const db    = admin.firestore();
 
 const COMPLETED_COLL = "Design_Completed Orders";
 const REALTIME_COLL  = "Design_RealTime_Selected_Orders";
+/* sandbox: ?sandbox=1 keeps every read and write in Sandbox_-prefixed copies of these collections (and of Brites_Orders),
+   so a sorter run against the emulated Etsy never touches a real lock, claim, ledger entry or note */
+let PREFIX = "";
+const col = name => db.collection(PREFIX + name);
 
 /* Global CORS headers */
 const CORS = {
@@ -20,6 +24,7 @@ exports.handler = async (event) => {
 
   try {
     const method = event.httpMethod;
+    PREFIX = (event.queryStringParameters && event.queryStringParameters.sandbox === "1") || (event.headers && (event.headers["x-sandbox"] === "1" || event.headers["X-Sandbox"] === "1")) ? "Sandbox_" : "";
 
     /* ───────────────────────── POST ───────────────────────── */
     if (method === "POST") {
@@ -44,7 +49,7 @@ exports.handler = async (event) => {
       if (Array.isArray(rtClaimIds) && rtClaimIds.length) {
         const batch = db.batch();
         rtClaimIds.map(String).slice(0, 500).forEach((id) => {
-          batch.set(db.collection(REALTIME_COLL).doc(id), { claimed: true, claimedBy: String(claimedBy || "sorter"), claimRun: claimRun ? String(claimRun) : null, claimAt: admin.firestore.FieldValue.serverTimestamp(), at: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+          batch.set(col(REALTIME_COLL).doc(id), { claimed: true, claimedBy: String(claimedBy || "sorter"), claimRun: claimRun ? String(claimRun) : null, claimAt: admin.firestore.FieldValue.serverTimestamp(), at: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
         });
         await batch.commit();
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ success: true, message: "Claimed", count: rtClaimIds.length }) };
@@ -52,7 +57,7 @@ exports.handler = async (event) => {
       if (Array.isArray(rtUnclaimIds) && rtUnclaimIds.length) {
         const batch = db.batch();
         rtUnclaimIds.map(String).slice(0, 500).forEach((id) => {
-          batch.set(db.collection(REALTIME_COLL).doc(id), { claimed: false, claimedBy: null, claimRun: null, at: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+          batch.set(col(REALTIME_COLL).doc(id), { claimed: false, claimedBy: null, claimRun: null, at: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
         });
         await batch.commit();
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ success: true, message: "Unclaimed", count: rtUnclaimIds.length }) };
@@ -63,7 +68,7 @@ exports.handler = async (event) => {
       if (Array.isArray(rtLockIds) && rtLockIds.length) {
         const batch = db.batch();
         rtLockIds.map(String).forEach((id) => {
-          const ref = db.collection(REALTIME_COLL).doc(id);
+          const ref = col(REALTIME_COLL).doc(id);
           batch.set(ref, {
             selected   : true,
             selectedBy : clientId || "server",
@@ -84,7 +89,7 @@ exports.handler = async (event) => {
         const ids = rtUnlockIds.map(String);
         const batch = db.batch();
         ids.forEach((id) => {
-          const ref = db.collection(REALTIME_COLL).doc(id);
+          const ref = col(REALTIME_COLL).doc(id);
           batch.set(ref, {
             selected   : false,
             selectedBy : null,
@@ -122,7 +127,7 @@ exports.handler = async (event) => {
       if (Array.isArray(completedIds) && completedIds.length) {
         const batch = db.batch();
         completedIds.forEach((id) => {
-          const ref = db.collection(COMPLETED_COLL).doc(String(id));
+          const ref = col(COMPLETED_COLL).doc(String(id));
           batch.set(
             ref,
             {
@@ -149,7 +154,7 @@ exports.handler = async (event) => {
       if (Array.isArray(uncompleteIds) && uncompleteIds.length) {
         const batch = db.batch();
         uncompleteIds.forEach((id) => {
-          const ref = db.collection(COMPLETED_COLL).doc(String(id));
+          const ref = col(COMPLETED_COLL).doc(String(id));
           batch.delete(ref);
         });
         await batch.commit();
@@ -174,7 +179,7 @@ exports.handler = async (event) => {
           };
         }
         await db
-          .collection("Brites_Orders")
+          .collection(PREFIX + "Brites_Orders")
           .doc(String(orderNumber))
           .collection("messages")
           .add({
@@ -223,7 +228,7 @@ exports.handler = async (event) => {
       }
 
       await db
-        .collection("Brites_Orders")
+        .collection(PREFIX + "Brites_Orders")
         .doc(String(orderNumber))
         .set(dataToStore, { merge: true });
 
@@ -253,7 +258,7 @@ exports.handler = async (event) => {
         if (!ids.length) {
           return { statusCode: 200, headers: CORS, body: JSON.stringify({ success:true, orderNumbers: [] }) };
         }
-        const refs = ids.map(id => db.collection(COMPLETED_COLL).doc(String(id)));
+        const refs = ids.map(id => col(COMPLETED_COLL).doc(String(id)));
         const snaps = await Promise.all(refs.map(r => r.get()));
         const present = snaps
           .map((snap, i) => (snap.exists ? ids[i] : null))
@@ -270,7 +275,7 @@ exports.handler = async (event) => {
         if (!ids.length) {
           return { statusCode: 200, headers: CORS, body: JSON.stringify({ success:true, orderNumbers: [] }) };
         }
-        const refs = ids.map(id => db.collection("Brites_Orders").doc(String(id)));
+        const refs = ids.map(id => db.collection(PREFIX + "Brites_Orders").doc(String(id)));
         const snaps = await Promise.all(refs.map(r => r.get()));
         const withNotes = snaps
           .map((snap, i) => {
@@ -291,7 +296,7 @@ exports.handler = async (event) => {
         if (!ids.length) {
           return { statusCode: 200, headers: CORS, body: JSON.stringify({ success:true, locks: {} }) };
         }
-        const refs = ids.map(id => db.collection(REALTIME_COLL).doc(String(id)));
+        const refs = ids.map(id => col(REALTIME_COLL).doc(String(id)));
         const snaps = await Promise.all(refs.map(r => r.get()));
         const locks = {}, claims = {};
         snaps.forEach((snap, i) => {
@@ -315,7 +320,7 @@ exports.handler = async (event) => {
           return { statusCode: 400, headers: CORS, body: JSON.stringify({ error:"bad rtSince" }) };
         }
         const sinceTs = admin.firestore.Timestamp.fromMillis(sinceMs);
-        const snap = await db.collection(REALTIME_COLL)
+        const snap = await col(REALTIME_COLL)
           .where("at", ">=", sinceTs)
           .get();
 
@@ -347,10 +352,10 @@ exports.handler = async (event) => {
 
       /* ?rt=1 → current active locks only (selected == true) */
       if (event.queryStringParameters?.rt === "1") {
-        const snap = await db.collection(REALTIME_COLL).where("selected","==",true).get();
+        const snap = await col(REALTIME_COLL).where("selected","==",true).get();
         const locks = {};
         snap.forEach(d => { locks[d.id] = d.data(); });
-        const csnap = await db.collection(REALTIME_COLL).where("claimed","==",true).get();
+        const csnap = await col(REALTIME_COLL).where("claimed","==",true).get();
         const claims = {};
         csnap.forEach(d => { const v = d.data() || {}; claims[d.id] = { claimedBy: v.claimedBy || "sorter", run: v.claimRun || null, atMs: (v.claimAt?.toMillis?.() || 0) }; });
         return {
@@ -367,7 +372,7 @@ exports.handler = async (event) => {
          return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: "bad dcSince" }) };
        }
        const sinceTs = admin.firestore.Timestamp.fromMillis(sinceMs);
-       const snap = await db.collection(COMPLETED_COLL)
+       const snap = await col(COMPLETED_COLL)
          .where("completedAt", ">=", sinceTs)
          .select()
          .get();
@@ -384,7 +389,7 @@ exports.handler = async (event) => {
 
       /* ?designCompleted=1 → list of completed receipt IDs from Design_Completed Orders */
       if (event.queryStringParameters?.designCompleted === "1") {
-        const snap = await db.collection(COMPLETED_COLL).select().get();
+        const snap = await col(COMPLETED_COLL).select().get();
         return {
           statusCode: 200,
           headers: CORS,
@@ -398,7 +403,7 @@ exports.handler = async (event) => {
       /* ?staffNotes=1 → array of order IDs with a Staff Note in Brites_Orders */
       if (event.queryStringParameters?.staffNotes === "1") {
         const snap = await db
-          .collection("Brites_Orders")
+          .collection(PREFIX + "Brites_Orders")
           .where("Staff Note", "!=", "")
           .select()
           .get();
@@ -422,7 +427,7 @@ exports.handler = async (event) => {
         };
       }
 
-      const docSnap = await db.collection("Brites_Orders").doc(String(orderId)).get();
+      const docSnap = await db.collection(PREFIX + "Brites_Orders").doc(String(orderId)).get();
 
       if (!docSnap.exists) {
         return {
