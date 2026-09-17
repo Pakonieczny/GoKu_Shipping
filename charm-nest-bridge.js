@@ -1451,6 +1451,32 @@ const Sandbox = window.Sandbox = (() => {
     toast(`Snapshot taken: ${r.count} orders — switch the sandbox ON in Settings to run against it`, "ok", 8000);
     await refresh(); return put.snapshot;
   }
+  const waitFor = (fn, ms, why) => new Promise((res, rej) => { const t0 = Date.now(); (function tick() { if (fn()) return res(true); if (Date.now() - t0 > ms) return rej(new Error(why)); setTimeout(tick, 500); })(); });
+  /** The whole chain from one press: the station signed in (its own window if needed), the snapshot taken, the sandbox
+      switched on, the sorter reloaded, and the orders pulled from the copy (a run starts by itself in Auto mode). */
+  async function enable() {
+    if (on()) return;
+    if (!(status && status.snapshot)) {
+      toast("No snapshot yet — taking one from Etsy first", "", 5000);
+      await DesignLink.ensure();
+      if (!(DesignLink.state() && DesignLink.state().etsy.signedIn)) {
+        toast("The station is not signed in — Connect Etsy opens in its own window", "", 6000);
+        await DesignLink.connectEtsy();
+        await waitFor(() => DesignLink.state() && DesignLink.state().etsy.signedIn, 4 * 60 * 1000, "the Etsy sign-in did not complete within 4 minutes");
+      }
+      await snapshot();
+    }
+    S.settings.sandbox = "on"; saveSettings();
+    try { sessionStorage.setItem("cn.sandboxAutoPull", "1"); } catch (_) {}
+    toast("Sandbox ON — reloading, then pulling the orders from the copy", "ok", 4000);
+    setTimeout(() => location.reload(), 700);
+  }
+  /** After the reload that switched the sandbox on: straight to the Orders tab and a pull (Auto mode starts its run instead). */
+  function afterReload() {
+    let want = false; try { want = sessionStorage.getItem("cn.sandboxAutoPull") === "1"; sessionStorage.removeItem("cn.sandboxAutoPull"); } catch (_) {}
+    if (!want || !on()) return;
+    setTimeout(async () => { setMode("orders"); if (S.settings.runMode === "auto") { agent({ bridge: true }, "DS", "Sandbox on — Auto mode starts the run"); return; } try { await Orders.pull(null); } catch (e) { toast(e.message, "bad", 8000); } }, 900);
+  }
   async function reset() {
     if (!confirm("Delete every sandbox record (sandbox pools, sets, runs, sheets, locks, ledger, archive)? Files and the snapshot stay. Production data is untouched.")) return;
     const r = await api("charmNestLibrary", { op: "sandboxReset" }); toast(`Sandbox reset — ${r.deleted} record(s) removed`, "ok"); await refresh();
@@ -1460,17 +1486,17 @@ const Sandbox = window.Sandbox = (() => {
     bar.innerHTML = `<b>${on() ? "SANDBOX ON" : "Sandbox off"}</b><span id="sbStatus">${status ? statusText() : "…"}</span><span class="spacer"></span><button class="btn ghost xs" id="sbSnap" type="button" ${on() ? "disabled title=\"switch the sandbox off to take a snapshot from the real Etsy\"" : ""}>Snapshot open orders → sandbox</button><button class="btn ghost xs" id="sbReset" type="button">Reset sandbox records</button><button class="btn ${on() ? "ghost" : "gold"} xs" id="sbToggle" type="button">${on() ? "Switch sandbox OFF" : "Switch sandbox ON"}</button>`;
     bar.querySelector("#sbSnap").onclick = () => snapshot().catch(e => toast(e.message, "bad", 8000));
     bar.querySelector("#sbReset").onclick = () => reset().catch(e => toast(e.message, "bad", 8000));
-    bar.querySelector("#sbToggle").onclick = () => { if (!on() && !(status && status.snapshot)) { toast("Take a snapshot first — the sandbox has nothing to serve", "bad", 6000); return; } S.settings.sandbox = on() ? "off" : "on"; saveSettings(); toast(`Sandbox ${on() ? "ON" : "off"} — reloading`, "ok", 3000); setTimeout(() => location.reload(), 600); };
+    bar.querySelector("#sbToggle").onclick = () => { if (on()) { S.settings.sandbox = "off"; saveSettings(); toast("Sandbox off — reloading", "ok", 3000); setTimeout(() => location.reload(), 600); return; } const b = bar.querySelector("#sbToggle"); b.disabled = true; b.textContent = "Switching on…"; enable().catch(e => { toast(`Sandbox: ${e.message}`, "bad", 9000); agent({ bridge: true }, "warn", `Sandbox switch-on stopped: ${e.message}`); b.disabled = false; b.textContent = "Switch sandbox ON"; }); };
     if (!status) refresh();
   }
   function statusText() { if (!status || status.error) return status && status.error ? `status: ${status.error}` : ""; const sn = status.snapshot; const rec = status.records || {}; return `${sn ? `snapshot of ${sn.count} order(s) taken ${new Date(sn.at).toLocaleString()}${sn.takenBy ? " by " + sn.takenBy : ""}` : "no snapshot yet"} · sandbox records: ${rec.Charm_Pool || 0} pool, ${rec.Charm_Nest_Sets || 0} sets, ${rec.Charm_Nest_Runs || 0} runs, ${rec.Charm_Nest_Sheets || 0} sheets`; }
   function render() { const el = document.getElementById("sbStatus"); if (el) el.textContent = statusText(); const pill = document.getElementById("sandboxPill"); if (pill) pill.classList.toggle("hidden", !on()); document.documentElement.classList.toggle("sandbox", on()); }
-  return { on, refresh, snapshot, reset, mountPanel, render, status: () => status };
+  return { on, refresh, snapshot, enable, afterReload, reset, mountPanel, render, status: () => status };
 })();
 
 /* ═══ 25 · boot ═══════════════════════════════════════════════════════════ */
 function bootBridge() {
-  RunCtl.renderModeBtn(); RunCtl.renderBanner(); LiveStrip.render(); Sandbox.render(); if (Sandbox.on()) agent({ bridge: true }, "warn", "SANDBOX mode: emulated Etsy from the stored snapshot, every record and file goes to sandbox copies");
+  RunCtl.renderModeBtn(); RunCtl.renderBanner(); LiveStrip.render(); Sandbox.render(); Sandbox.afterReload(); if (Sandbox.on()) agent({ bridge: true }, "warn", "SANDBOX mode: emulated Etsy from the stored snapshot, every record and file goes to sandbox copies");
   document.getElementById("btnRunMode").onclick = () => { const auto = S.settings.runMode !== "auto"; if (auto && !confirm("Auto mode: the sorter connects to the Design Station, pulls the latest orders by the date rule, nests, fits engraving, saves labels and marks the orders complete — stopping only when a person must decide. Turn Auto on?")) return; RunCtl.setMode(auto ? "auto" : "manual"); };
   Orders.loadMaps().catch(() => {}); Master.load().catch(() => {});
   Engrave.loadFonts().catch(() => {});
