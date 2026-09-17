@@ -1,6 +1,9 @@
 // Campaign-specific routing. No network, implicit selection, or budget multiplication.
 const STYLES = ['fixed_display', 'responsive_display', 'pmax'];
-const NAMES = {fixed_display:'Fixed Display',responsive_display:'Responsive Display',pmax:'Performance Max'};
+// Names, icons, budget guidance and the settings applied on the operator's
+// behalf all come from the shared vocabulary the console reads too.
+const CAMPAIGN_STYLES = require('../../brites-campaign-styles');
+const NAMES = Object.fromEntries(CAMPAIGN_STYLES.STYLES.map(s => [s.key, s.name]));
 const FIXED_SIZES = new Set(['200x200','240x400','250x250','250x360','300x250','336x280','580x400','120x600','160x600','300x600','300x1050','468x60','728x90','930x180','970x90','970x250','980x120','300x50','320x50','320x100']);
 function selection(styles,budgets,countries,durations){
   if(!Array.isArray(styles)||!styles.length||styles.length>3||new Set(styles).size!==styles.length||styles.some(s=>!STYLES.includes(s)))throw Error('Choose one, two or all three campaign styles.');
@@ -42,4 +45,4 @@ function attribution(url,attributes=[]){
   const id=k=>/^\d+$/.test(get(k))?get(k):null,style=get('bt_pipeline');
   return {campaignId:id('utm_campaign'),adGroupId:id('bt_group'),adId:id('bt_ad'),pipeline:STYLES.includes(style)?style:null,designId:/^[a-f0-9]{8,64}$/.test(get('bt_design'))?get('bt_design'):null};
 }
-module.exports={attribution,STYLES,NAMES,FIXED_SIZES,selection,fixedProofs,validatePhoto,displayOps};
+module.exports={attribution,STYLES,NAMES,CAMPAIGN_STYLES,FIXED_SIZES,selection,fixedProofs,validatePhoto,displayOps};

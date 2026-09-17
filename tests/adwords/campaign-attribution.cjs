@@ -5,7 +5,7 @@ assert.equal(attribution('/?utm_campaign={campaignid}&bt_ad={creative}').adId,nu
 assert.equal(attribution('/?bt_pipeline=search').pipeline,null);
 assert.equal(attribution('/',[{name:'bt_pipeline',value:'pmax'}]).pipeline,'pmax');
 const html=fs.readFileSync('brites-adwords.html','utf8');
-const c={esc:s=>String(s==null?'':s).replace(/</g,'&lt;'),money:n=>'$'+n,convBasis:'conversion',cmdRangeLabel:'Test range',cmdReport:{currency:'USD',budgetCurrency:'CAD'},DASH:{lastMetrics:[],budgetCurrency:'CAD'},basisLabel:()=> 'by order date'};
+const c={BritesCampaignStyles:require('../../brites-campaign-styles'),campaignBadgeHtml:function(x,o){return require('../../brites-campaign-styles').badge(x,o);},campaignStyleIcon:function(k,s){var v=require('../../brites-campaign-styles');return v.iconSvg(v.describe(k).icon,s);},esc:s=>String(s==null?'':s).replace(/</g,'&lt;'),money:n=>'$'+n,convBasis:'conversion',cmdRangeLabel:'Test range',cmdReport:{currency:'USD',budgetCurrency:'CAD'},DASH:{lastMetrics:[],budgetCurrency:'CAD'},basisLabel:()=> 'by order date'};
 vm.createContext(c);vm.runInContext(html.slice(html.indexOf('function campaignPipeline('),html.indexOf('function renderCommand(){')),c);
 assert.equal(c.campaignPipeline({channel:'DISPLAY'}),'Display · format not identified');
 assert.equal(c.campaignPipeline({channel:'SEARCH'}),'Search · text ads');
