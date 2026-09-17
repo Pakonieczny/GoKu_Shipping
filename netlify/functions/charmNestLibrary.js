@@ -268,9 +268,9 @@ async function op_masterGetMany(b) {
 async function op_masterList(b) {
   const q = str(b.q, 80).toUpperCase(); const limit = Math.min(3000, Math.max(1, num(b.limit) || 1500));
   const snap = await db.collection(Master.INDEX).limit(limit).get();
-  let rows = snap.docs.map(d => Master.slimEntry(d.data()));
+  let rows = snap.docs.filter(d => d.data().sku).map(d => Master.slimEntry(d.data()));   // a shell without a SKU (a patch on an unindexed SKU) is not an entry
   if (b.masterHash) rows = rows.filter(r => r.masterHash === b.masterHash);
-  if (q) rows = rows.filter(r => r.sku.includes(q));
+  if (q) rows = rows.filter(r => String(r.sku || "").includes(q));
   rows.sort((x, y) => x.sku.localeCompare(y.sku));
   if (b.links) for (const r of rows) await withLinks(r);
   return { entries: rows };
@@ -284,16 +284,24 @@ async function op_masterPatch(b) {
   if (p.blocked === null) { doc.blocked = FV.delete(); doc.conflict = FV.delete(); }
   if (p.labelSource) doc.labelSource = str(p.labelSource, 20);
   if (p.confirmedBy) { doc.confirmedBy = str(p.confirmedBy, 80); doc.confirmedAt = FV.serverTimestamp(); }
-  await db.collection(Master.INDEX).doc(sku).set(doc, { merge: true });
+  const ref = db.collection(Master.INDEX).doc(sku); if (!(await ref.get()).exists) return { error: "not indexed: " + sku };   // a patch never creates a shell entry
+  await ref.set(doc, { merge: true });
   return { ok: true };
 }
 async function op_masterPutFile(b) { return Master.putFile(db, FV, b); }
 async function op_masterListFiles() { const snap = await db.collection(Master.FILES).limit(200).get(); const rows = snap.docs.map(d => { const r = d.data(); r.indexedAt = ms(r.indexedAt); return r; }); rows.sort((a, b2) => (b2.indexedAt || 0) - (a.indexedAt || 0)); return { files: rows }; }
 async function op_masterRemoveFile(b) {
   const hash = str(b.masterHash, 80); if (!/^[0-9a-f]{8,64}$/i.test(hash)) return { error: "bad master hash" };
-  const snap = await db.collection(Master.INDEX).limit(3000).get(); let removed = 0;
-  for (const d of snap.docs) if (d.data().masterHash === hash) { await d.ref.delete(); removed++; }
+  // the file record first, then the SKUs in batches of 400: one delete at a time ran past the function's time limit on
+  // a real master (1,800 SKUs) and left the index half removed
   await db.collection(Master.FILES).doc(hash).delete().catch(() => {});
+  let removed = 0;
+  for (;;) {
+    const snap = await db.collection(Master.INDEX).where("masterHash", "==", hash).limit(400).get();
+    if (snap.empty) break;
+    const batch = db.batch(); snap.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); removed += snap.size;
+    if (snap.size < 400) break;
+  }
   return { ok: true, removed };
 }
 /** Server-side indexing of a large master already uploaded to Storage: parks a job, kicks charmMaster-background. */

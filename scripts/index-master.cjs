@@ -133,9 +133,10 @@ async function main(argv, log = console.log) {
 
   let conflicts = [], sizeMoved = [], written = 0;
   if (!o.dry) {
+    written = new Set(entries.map(e => String(e.sku).toUpperCase())).size;   // one record per SKU, its sizes inside it
     for (let i = 0; i < entries.length; i += 150) {
       const r = await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterPutIndex", entries: entries.slice(i, i + 150), masterHash, masterPath: masterUp ? masterUp.path : null, masterName: name, hashSource: "local", replaces: i === 0 ? o.replaces : [] });
-      written += r.written || 0; conflicts = conflicts.concat(r.blocked || []); sizeMoved = sizeMoved.concat(r.sizeMoved || []);
+      conflicts = conflicts.concat(r.blocked || []); sizeMoved = sizeMoved.concat(r.sizeMoved || []);
       log(`  index ${Math.min(i + 150, entries.length)}/${entries.length}`);
     }
     await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterPutFile", file: { masterHash, path: masterUp ? masterUp.path : null, url: masterUp ? masterUp.url : null, name, charms: g.charms.length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: blocked.concat(conflicts.map(b => ({ sku: b.sku, reason: b.reason }))), skus, replaces: o.replaces, indexedBy: "local-indexer" } });
