@@ -45,10 +45,13 @@ const DesignLink = window.DesignLink = (() => {
   const frameUrl = () => `${origin()}/design-1.html?bridge=1`;
   function mount(host) {
     if (S_.frame) return S_.frame;
-    const wrap = el("div", "frameWrap");
+    // the frame lives in a fixed dock on <body>, never inside a tab: re-parenting an iframe reloads it and would end the
+    // session, so the dock is laid over the Design Station tab's placeholder when that tab shows and shrinks to a
+    // picture-in-picture panel on every other tab (design §5.7 live view)
+    const dock = Dock.ensure();
     const f = document.createElement("iframe"); f.id = "dsFrame"; f.title = "Design Station 1"; f.allow = "clipboard-read; clipboard-write"; f.src = frameUrl();
     const veil = el("div", "veil", `<div>Design Station<br><span style="font-size:12.5px;color:var(--ink45)">press <b>Take control</b> to open the session</span></div>`);
-    wrap.append(f, veil); host.appendChild(wrap);
+    dock.body.append(f, veil); Dock.setHost(host);
     S_.frame = f; S_.veil = veil;
     // the first hello must wait for the frame to navigate (a message posted to the blank frame is lost); later loads (a reload
     // of the station) re-open the session by themselves
@@ -68,22 +71,21 @@ const DesignLink = window.DesignLink = (() => {
     catch (e) { if (!/answer in time/.test(e.message)) throw e; agent({ bridge: true }, "warn", "hello unanswered — trying once more"); st = await call("hello", { sorterClientId: S_.nonce, runId: B.run ? B.run.runId : null }, { timeoutMs: 30000 }); }
     S_.state = st; S_.up = true; S_.misses = 0; S_.lastHello = Date.now();
     if (st.employee && !B.employee) { B.employee = st.employee; localStorage.setItem("cn.employee", st.employee); }
-    S_.veil && S_.veil.classList.add("hidden");
+    S_.veil && S_.veil.classList.add("hidden"); Dock.layout();
     agent({ bridge: true }, "DS", `Session ${S_.nonce.slice(0, 4)} open on ${st.bench} · ${st.counts.open} open orders (${st.counts.hydrated} read) · ${st.selection.length} selected · Etsy ${st.etsy.signedIn ? "signed in" : "NOT signed in"}${st.releasedFromPreviousSession && st.releasedFromPreviousSession.length ? ` · released ${st.releasedFromPreviousSession.length} lock(s) from a previous session` : ""}`);
     if (!st.etsy.signedIn) toast("The Design Station is not signed in to Etsy — open it in its own tab and press Connect Etsy", "bad", 8000);
     startHeartbeat(); renderConsole();
     api("charmNestLibrary", { op: "bridgeLog", session: S_.nonce, rows: [], meta: { sorterClientId: S_.nonce, bench: st.bench, startedAt: Date.now(), version: st.version } }).catch(() => {});
     return st;
   }
-  function call(type, args = {}, { timeoutMs = 120000, onProgress } = {}) {
+  function call(type, args = {}, { timeoutMs = 120000, onProgress, quiet = false } = {}) {
     if (!S_.frame || !S_.frame.contentWindow) return Promise.reject(new Error(`${type}: the Design Station frame is not open`));
     if (!S_.nonce) S_.nonce = uid() + uid();
     const id = ++S_.id;
     return new Promise((resolve, reject) => {
-      const t = setTimeout(() => { S_.pending.delete(id); logLine("reply", type, { error: "timeout" }, timeoutMs, true); S_.errors++; reject(new Error(`${type}: the Design Station did not answer in time`)); }, timeoutMs);
-      S_.pending.set(id, { resolve, reject, t, onProgress, type, sent: performance.now() });
-      logLine("cmd", type, args);
-      S_.count++;
+      const t = setTimeout(() => { S_.pending.delete(id); if (!quiet) { logLine("reply", type, { error: "timeout" }, timeoutMs, true); S_.errors++; } reject(new Error(`${type}: the Design Station did not answer in time`)); }, timeoutMs);
+      S_.pending.set(id, { resolve, reject, t, onProgress, type, sent: performance.now(), quiet });
+      if (!quiet) { logLine("cmd", type, args); S_.count++; }
       S_.frame.contentWindow.postMessage({ source: "brites-sorter", nonce: S_.nonce, id, type, args }, origin());
     });
   }
@@ -95,9 +97,9 @@ const DesignLink = window.DesignLink = (() => {
     const p = S_.pending.get(d.id); if (!p) return;
     if (d.type === "progress") { p.onProgress && p.onProgress(d); if (d.text) agentLive(`DS · ${p.type}`, d.text, d.done, d.total); return; }
     if (d.type === "ack") { p.acked = performance.now(); return; }
-    clearTimeout(p.t); S_.pending.delete(d.id); S_.replies++;
-    logLine("reply", p.type, d.type === "done" ? d.result : { error: d.error }, performance.now() - p.sent, d.type !== "done");
-    if (d.type === "done") p.resolve(d.result); else { S_.errors++; p.reject(new Error(d.error || `${p.type} failed`)); }
+    clearTimeout(p.t); S_.pending.delete(d.id); if (!p.quiet) S_.replies++;
+    if (!p.quiet) logLine("reply", p.type, d.type === "done" ? d.result : { error: d.error }, performance.now() - p.sent, d.type !== "done");
+    if (d.type === "done") p.resolve(d.result); else { if (!p.quiet) S_.errors++; p.reject(new Error(d.error || `${p.type} failed`)); }
   }
   let liveEv = null;
   function agentLive(label, text, done, total) {
@@ -108,7 +110,7 @@ const DesignLink = window.DesignLink = (() => {
   }
   function onEvent(d) {
     logLine("evt", d.type, d);
-    if (d.type === "activity") agent({ bridge: true }, "DS", d.text);
+    if (d.type === "activity") agent({ bridge: true }, "DS", d.text, { fromStation: true });
     else if (d.type === "selection") S_.state = Object.assign({}, S_.state, { selection: d.selected });
     else if (d.type === "filters") S_.state = Object.assign({}, S_.state, { filters: d.filters });
     else if (d.type === "orders.changed") { Orders.markStale(); agent({ bridge: true }, "DS", `Station refreshed its order list: ${d.open} open`); }
@@ -149,11 +151,22 @@ const DesignLink = window.DesignLink = (() => {
       if (!S_.control) return;
       try { await call("ping", {}, { timeoutMs: Math.max(1500, every - 500) }); if (!S_.up) { S_.up = true; agent({ bridge: true }, "DS", "Design Station is back"); } S_.misses = 0; }
       catch (_) { S_.misses++; if (S_.misses >= (+S.settings.heartbeatMiss || 3) && S_.up) { S_.up = false; agent({ bridge: true }, "warn", `Design Station down — ${S_.misses} heartbeats missed`); if (B.run && B.run.status === "running") RunCtl.stop("the Design Station stopped answering the heartbeat", "Check the Design Station tab; when it answers again, press Resume."); } }
-      renderConsole();
+      renderConsole(); Dock.schedule();
     }, every);
   }
   function stopHeartbeat() { if (S_.hb) clearInterval(S_.hb); S_.hb = null; }
-  async function release() { S_.control = false; stopHeartbeat(); try { await call("release", {}, { timeoutMs: 5000 }); } catch (_) {} S_.up = false; S_.veil && S_.veil.classList.remove("hidden"); renderConsole(); }
+  /* ── the sorter's side of the story, streamed to the station's banner (design §5.7): every agent line and sheet log
+        line while in control, coalesced into one quiet post every half second; the station shows the last four. ── */
+  const feedQ = []; let feedT = null;
+  function feed(ev) {
+    if (!S_.control || !S_.frame || ev.fromStation) return;
+    const text = String(ev.text || (ev.html ? ev.html.replace(/<[^>]+>/g, "") : "")).trim(); if (!text) return;
+    const last = feedQ[feedQ.length - 1]; if (last && last.text === text) return;
+    feedQ.push({ t: ev.t || Date.now(), kind: String(ev.kind || ""), text: text.slice(0, 220) }); if (feedQ.length > 12) feedQ.shift();
+    if (!feedT) feedT = setTimeout(flushFeed, 450);
+  }
+  function flushFeed() { feedT = null; const rows = feedQ.splice(0, 12).slice(-6); if (!rows.length || !S_.control) return; call("feed.post", { rows }, { timeoutMs: 4000, quiet: true }).catch(() => {}); }
+  async function release() { S_.control = false; stopHeartbeat(); try { await call("release", {}, { timeoutMs: 5000 }); } catch (_) {} S_.up = false; S_.veil && S_.veil.classList.remove("hidden"); Dock.layout(); renderConsole(); }
   function ensure() { if (S_.control && S_.up) return Promise.resolve(S_.state); if (!S_.frame) mount(document.querySelector("#designView .dsFrameHost") || Views.designHost()); return open(); }
   function renderConsole() {
     const host = document.getElementById("dsConsole"); if (!host) return;
@@ -163,7 +176,61 @@ const DesignLink = window.DesignLink = (() => {
     const log = host.querySelector(".log"); if (log) { const rows = S_.log.slice(-200); log.innerHTML = rows.map(r => `<div class="row ${r.dir}${r.err ? " err" : ""}"><span class="d">${fmtT(r.t)}</span><span class="ty">${r.dir === "cmd" ? "→" : r.dir === "reply" ? "←" : "·"} ${esc(r.type)}</span><span class="pl">${esc(r.payload ? JSON.stringify(r.payload) : "")}</span><span class="ms">${r.ms != null ? r.ms + "ms" : ""}</span></div>`).join(""); log.scrollTop = log.scrollHeight; }
     const tb = document.getElementById("tabDesignN"); if (tb) tb.textContent = S_.control && !S_.up ? "!" : "";
   }
-  return { mount, open, call, release, ensure, state: () => S_.state, log: S_.log, up: () => S_.up, inControl: () => S_.control, nonce: () => S_.nonce, renderConsole, flushLog, origin, frameUrl, _S: S_ };
+  return { mount, open, call, release, ensure, feed, state: () => S_.state, log: S_.log, up: () => S_.up, inControl: () => S_.control, nonce: () => S_.nonce, renderConsole, flushLog, origin, frameUrl, _S: S_ };
+})();
+
+/* ── the dock: where the station frame is shown. "full" over the Design Station tab's placeholder, "pip" as a live panel
+   in the corner of every other tab while the sorter is in control, hidden otherwise. The station is always rendered at a
+   desktop width and scaled to fit, so its order rail, tiles and dialogs look as they do on its own screen. ── */
+const Dock = window.Dock = (() => {
+  const D = { el: null, body: null, bar: null, host: null, mode: "hidden", hiddenByUser: false, pill: null, virtualW: 1200, ro: null, raf: 0 };
+  function ensure() {
+    if (D.el) return D;
+    const el = document.createElement("div"); el.id = "dsDock"; el.className = "hidden";
+    el.innerHTML = `<div class="dockBar"><span class="dot"></span><b>Design Station</b><span class="st" id="dockState">live</span><span class="spacer"></span><button type="button" class="dockBtn" id="dockOpen" title="Open the Design Station tab">Open ⤢</button><button type="button" class="dockBtn" id="dockHide" title="Hide the live view">Hide</button></div><div class="dockBody"></div>`;
+    document.body.appendChild(el);
+    D.el = el; D.body = el.querySelector(".dockBody"); D.bar = el.querySelector(".dockBar");
+    el.querySelector("#dockOpen").onclick = () => setMode("design");
+    el.querySelector("#dockHide").onclick = () => { D.hiddenByUser = true; layout(); };
+    D.bar.addEventListener("dblclick", () => setMode("design"));
+    const pill = document.createElement("button"); pill.type = "button"; pill.id = "dsDockPill"; pill.className = "hidden"; pill.innerHTML = `<span class="dot"></span>Design Station live view`; pill.onclick = () => { D.hiddenByUser = false; layout(); };
+    document.body.appendChild(pill); D.pill = pill;
+    window.addEventListener("resize", schedule); document.addEventListener("scroll", schedule, true);
+    return D;
+  }
+  function setHost(host) { D.host = host; if (D.ro) D.ro.disconnect(); if (host && window.ResizeObserver) { D.ro = new ResizeObserver(schedule); D.ro.observe(host); } schedule(); }
+  function schedule() { if (D.raf) return; D.raf = requestAnimationFrame(() => { D.raf = 0; layout(); }); }
+  /** Which mode applies now: the Design Station tab shows the frame full size; any other tab shows the panel while the link is in control (or a run is on). */
+  function wanted() {
+    if (!D.el || !document.getElementById("dsFrame")) return "hidden";
+    if (S.mode === "design") return "full";
+    const live = DesignLink.inControl() || (B.run && ["running", "review", "paused"].includes(B.run.status));
+    return live ? (D.hiddenByUser ? "pilled" : "pip") : "hidden";
+  }
+  function layout() {
+    if (!D.el) return;
+    const mode = wanted(); D.mode = mode;
+    const f = document.getElementById("dsFrame");
+    D.pill.classList.toggle("hidden", mode !== "pilled");
+    D.el.classList.toggle("hidden", mode === "hidden" || mode === "pilled");
+    D.el.classList.toggle("full", mode === "full"); D.el.classList.toggle("pip", mode === "pip");
+    if (mode === "hidden" || mode === "pilled" || !f) return;
+    let w, h;
+    if (mode === "full") {
+      const host = D.host; if (!host) return; const r = host.getBoundingClientRect();
+      D.el.style.left = r.left + "px"; D.el.style.top = r.top + "px"; D.el.style.width = r.width + "px"; D.el.style.height = r.height + "px"; D.el.style.right = ""; D.el.style.bottom = "";
+      w = r.width; h = r.height;
+    } else {
+      D.el.style.left = ""; D.el.style.top = ""; D.el.style.width = ""; D.el.style.height = ""; D.el.style.right = "16px"; D.el.style.bottom = "16px";
+      const r = D.body.getBoundingClientRect(); w = r.width; h = r.height;
+    }
+    // the station renders at a desktop width and is scaled to the dock; the veil and cursor scale with it
+    const vw = Math.max(D.virtualW, Math.round(w)); const k = w / vw;
+    f.style.width = vw + "px"; f.style.height = Math.round(h / k) + "px"; f.style.transform = `scale(${k})`;
+    const st = D.el.querySelector("#dockState"); if (st) st.textContent = DesignLink.inControl() ? (DesignLink.up() ? (B.run ? `run · ${B.run.step}` : "live") : "link down") : "not in control";
+    D.el.classList.toggle("down", DesignLink.inControl() && !DesignLink.up());
+  }
+  return { ensure, setHost, layout, schedule, mode: () => D.mode, _D: D };
 })();
 
 /* ── the tabs' hosts ── */
@@ -171,7 +238,7 @@ const Views = window.Views = (() => {
   function designHost() {
     const v = document.getElementById("designView"); if (v.dataset.built) return v.querySelector(".dsFrameHost");
     v.dataset.built = "1";
-    v.innerHTML = `<div class="dsFrameHost" style="display:contents"></div>
+    v.innerHTML = `<div class="dsFrameHost"></div>
       <div class="dsConsole" id="dsConsole">
         <div class="card"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="switchBtn" id="dsControl" type="button">Take control</button><a class="btn ghost xs" id="dsOpenTab" target="_blank" rel="noopener">Open station in a tab</a><button class="btn ghost xs" id="dsReload" type="button">Reload frame</button></div><div class="kv">Not in control</div></div>
         <div class="card" style="gap:4px"><div class="section" style="margin:0 0 4px">Employee</div><div style="display:flex;gap:6px;align-items:center"><span id="dsEmployee" class="mono">${esc(employeeName() || "— not set —")}</span><button class="btn ghost xs" id="dsSetEmployee" type="button">Change</button></div><div class="help" style="font-size:11px;color:var(--ink45)">Recorded with every approval. Any employee may approve.</div></div>
@@ -185,7 +252,8 @@ const Views = window.Views = (() => {
     return host;
   }
   function onShow(mode) {
-    if (mode === "design") { const host = designHost(); if (!document.getElementById("dsFrame")) DesignLink.mount(host); DesignLink.renderConsole(); }
+    if (mode === "design") { const host = designHost(); if (!document.getElementById("dsFrame")) DesignLink.mount(host); else Dock.setHost(host); DesignLink.renderConsole(); }
+    Dock.schedule();
     if (mode === "orders") Orders.render();
     if (mode === "master") Master.render();
     if (mode === "engrave") Engrave.render();
@@ -1184,12 +1252,13 @@ const RunCtl = window.RunCtl = (() => {
   function renderModeBtn() { const b = document.getElementById("btnRunMode"); if (!b) return; const auto = S.settings.runMode === "auto"; b.classList.toggle("auto", auto); document.getElementById("runModeText").textContent = auto ? "Auto" : "Manual"; }
   function renderBanner() {
     const h = document.getElementById("runBanner"); if (!h) return; const r = B.run;
-    if (!r) { h.classList.add("hidden"); return; }
+    if (!r) { h.classList.add("hidden"); Dock.schedule(); return; }
     h.classList.remove("hidden"); h.className = "runBanner" + (r.status === "stopped" ? " stopped" : r.status === "complete" ? " done" : r.status === "review" ? " review" : "");
     const idx = O.stepIndex(r.step);
     const steps = O.RUN_STEPS.map((s, i) => `<i class="${i < idx || r.status === "complete" ? "done" : i === idx ? (r.status === "stopped" ? "stop" : "now") : ""}" title="${s}"></i>`).join("");
     const reviewN = Review.count();
     const why = r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${r.fix ? ` — <span>${esc(r.fix)}</span>` : ""}` : r.status === "review" ? `<b>Waiting for a person:</b> ${reviewN} item(s) in Review` : r.status === "paused" ? (r.awaitCommit ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : `<b>Paused</b> after ${esc(O.RUN_STEPS[idx - 1] || r.step)} — next: ${esc(r.step)}`) : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(r.step)}</b> · half ${O.HALF[r.step]} · ${r.mode}`;
+    Dock.schedule();
     h.innerHTML = `<span class="step">run ${esc(r.runId.slice(-8))}</span><span class="steps">${steps}</span><span class="why">${why}${r.setId ? ` · <span class="mono">${esc(r.setId)}</span>` : ""}</span>
       ${r.status === "paused" && !r.awaitCommit ? `<button class="btn gold sm" id="rbNext">Next step ▶</button>` : ""}${r.status === "paused" && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit">Commit set</button>` : ""}${r.status === "stopped" ? `<button class="btn gold sm" id="rbResume">Resume</button>` : ""}${reviewN ? `<button class="btn ghost sm" id="rbReview">Review (${reviewN})</button>` : ""}${["running", "review", "paused"].includes(r.status) ? `<button class="btn ghost sm" id="rbStop">Stop</button>` : ""}${["complete", "stopped"].includes(r.status) ? `<button class="btn ghost sm" id="rbClear">Clear run</button>` : ""}`;
     const q = id => h.querySelector("#" + id);

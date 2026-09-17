@@ -355,10 +355,28 @@ dialog.wide{width:min(980px,95vw)}
 .ordRow .why button{margin-left:8px}
 /* ── Design Station tab ── */
 .dsView{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:12px;height:calc(100vh - 150px);min-height:480px}
-.dsView .frameWrap{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card);position:relative;min-height:0}
-.dsView iframe{width:100%;height:100%;border:0;display:block;background:#f3f0ea}
-.dsView .frameWrap .veil{position:absolute;inset:0;display:grid;place-items:center;background:rgba(243,240,234,.86);font:16px var(--serif);color:var(--ink70);text-align:center;padding:20px}
-.dsView .frameWrap .veil.hidden{display:none}
+.dsView .dsFrameHost{border:1px dashed var(--line);border-radius:12px;background:var(--card2);min-height:0}
+/* the dock: the station frame, full over the tab's placeholder or a live panel in the corner of every other tab */
+#dsDock{position:fixed;z-index:70;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card);box-shadow:var(--sh);display:flex;flex-direction:column}
+#dsDock.hidden{display:none}
+#dsDock.pip{width:480px;height:330px;box-shadow:0 14px 44px rgba(20,16,10,.38);border-color:#8a6a2a}
+#dsDock .dockBar{display:none;align-items:center;gap:8px;padding:5px 10px;background:var(--velvet);color:var(--rTxt2);font:12px var(--mono);cursor:pointer;user-select:none}
+#dsDock.pip .dockBar{display:flex}
+#dsDock .dockBar b{color:#fff;font-weight:650}
+#dsDock .dockBar .dot{width:8px;height:8px;border-radius:50%;background:var(--gold2);box-shadow:0 0 0 3px rgba(202,168,97,.25);animation:cnPulse 1.6s ease-in-out infinite}
+#dsDock.down .dockBar .dot{background:#c0553b;animation:none}
+#dsDock .dockBar .st{color:var(--gold2)}
+#dsDock .dockBar .spacer{flex:1}
+#dsDock .dockBtn{border:1px solid var(--velvetLine,#5a4b33);background:transparent;color:var(--rTxt2);border-radius:6px;padding:2px 8px;font:11.5px var(--mono);cursor:pointer}
+#dsDock .dockBtn:hover{background:rgba(255,255,255,.08);color:#fff}
+#dsDock .dockBody{position:relative;flex:1 1 auto;min-height:0;overflow:hidden;background:#f3f0ea}
+#dsDock iframe{position:absolute;left:0;top:0;border:0;display:block;background:#f3f0ea;transform-origin:0 0}
+#dsDock .veil{position:absolute;inset:0;display:grid;place-items:center;background:rgba(243,240,234,.86);font:16px var(--serif);color:var(--ink70);text-align:center;padding:20px}
+#dsDock .veil.hidden{display:none}
+#dsDockPill{position:fixed;right:16px;bottom:16px;z-index:70;display:flex;align-items:center;gap:8px;border:1px solid #8a6a2a;background:var(--velvet);color:#fff;border-radius:999px;padding:7px 14px;font:12px var(--mono);cursor:pointer;box-shadow:0 8px 24px rgba(20,16,10,.3)}
+#dsDockPill.hidden{display:none}
+#dsDockPill .dot{width:8px;height:8px;border-radius:50%;background:var(--gold2);animation:cnPulse 1.6s ease-in-out infinite}
+@keyframes cnPulse{0%,100%{box-shadow:0 0 0 3px rgba(202,168,97,.25)}50%{box-shadow:0 0 0 6px rgba(202,168,97,.08)}}
 .dsConsole{display:flex;flex-direction:column;gap:8px;min-height:0}
 .dsConsole .card{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);padding:10px 12px;display:grid;gap:6px}
 .dsConsole .kv{font-size:12px}
@@ -1008,6 +1026,7 @@ function agent(scope, kind, text, extra) {
   const ev = Object.assign({ id: uid(), t: Date.now(), scope, kind, text }, extra || {});
   AG.events.push(ev); if (AG.events.length > 600) AG.events.shift();
   if (window.LiveStrip && ["DS", "ENGRAVE", "MASTER", "POOL", "warn"].includes(kind)) LiveStrip.push(ev);
+  if (window.DesignLink && DesignLink.feed && ["DS", "ENGRAVE", "MASTER", "POOL", "warn", "ok", "cloud", "info", "claude"].includes(kind)) DesignLink.feed(ev);
   // the log opens itself the moment Claude or the solver starts working, so the activity is visible without a click
   for (const m of METALS) if (scopeTouches(scope, m.key)) { const sh = S.sheets[m.key]; renderAgent(sh); }
   return ev;
@@ -1317,7 +1336,7 @@ function ensureWorkers(sh, n) {
 }
 /** When the first file behind this sheet arrived — the clock the operator cares about starts there. */
 function sheetT0(sh) { const ids = new Set(sh.charms.map(c => c.sourceId)); const t = S.sources.concat(Object.values(S.poolSources || {})).filter(x => ids.has(x.id) && x.t0).map(x => x.t0); return t.length ? Math.min(...t) : (sh.startedAt || performance.now()); }
-function log(sh, msg) { sh.log.push(`${new Date().toLocaleTimeString()} ${msg}`); if (sh.log.length > 200) sh.log.shift(); }
+function log(sh, msg) { sh.log.push(`${new Date().toLocaleTimeString()} ${msg}`); if (sh.log.length > 200) sh.log.shift(); if (window.DesignLink && DesignLink.feed) DesignLink.feed({ kind: (METAL_TAG && METAL_TAG[sh.metal]) || sh.metal, text: msg }); }
 /** After nesting, every charm is written and previewed 2.5 % smaller than drawn, scaled about its own centre: the layout is solved at full size and the shrink afterwards makes minor overlaps disappear. */
 const CHARM_SCALE = 0.975;
 function buildJob(sh) {

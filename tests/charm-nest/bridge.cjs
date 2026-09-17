@@ -101,6 +101,10 @@ const receipts = [
   await page.evaluate(() => CN.setMode('orders'));
   await page.evaluate(() => RunCtl.setMode('auto'));
   await page.waitForFunction(() => B.run && B.run.status !== undefined, null, { timeout: 10000 });
+  // §5.7 · the live view: on any other tab the station frame is a picture-in-picture panel, never re-parented (one hello so far)
+  await page.waitForFunction(() => Dock.mode() === 'pip', null, { timeout: 5000 });
+  const dock = await page.evaluate(() => ({ mode: Dock.mode(), visible: !document.getElementById('dsDock').classList.contains('hidden'), scaled: /matrix\(0\./.test(getComputedStyle(document.getElementById('dsFrame')).transform), hellos: DesignLink.log.filter(r => r.dir === 'cmd' && r.type === 'hello').length }));
+  assert(dock.mode === 'pip' && dock.visible && dock.scaled && dock.hellos === 1, 'live panel shown while running on another tab: ' + JSON.stringify(dock));
   const approvals = [];
   let t0 = Date.now(), lastStep = '', lastJobs = '', lastDone = '';
   while (Date.now() - t0 < 600000) {
@@ -159,6 +163,15 @@ const receipts = [
   // ── 5 · the station side of the commit (§8.4): rows gone, ledger, archive with the labels ──
   const stationState = await frame.evaluate(() => Object.assign(DesignStation.bridge.snapshot(), { rows: document.querySelectorAll('.orderRow, [data-rid]').length }));
   assert.strictEqual(stationState.counts.open, 2, 'the two uncommitted orders stay open at the station: ' + JSON.stringify(stationState.counts));
+  // §5.7 · the remote cursor: the station's own record of every motion the sorter made, and the sorter's feed on its banner
+  const motions = await frame.evaluate(() => DesignStation.bridge.cursor.log.map(l => ({ role: l.role, caption: l.caption, click: l.click, fallback: l.fallback })));
+  const clicked = roles => roles.every(r => motions.some(m => m.role === r && m.click));
+  assert(clicked(['row', 'complete', 'print']), 'the cursor pressed the rows, Generate QR and the print/complete button: ' + JSON.stringify(motions.slice(-12)));
+  assert(motions.some(m => m.role === 'row' && /^Claim /.test(m.caption)) && motions.some(m => /^Select /.test(m.caption)), 'claims and selections were shown as clicks');
+  assert(!motions.some(m => m.fallback && m.role !== 'banner'), 'no motion fell back to the banner: ' + JSON.stringify(motions.filter(m => m.fallback)));
+  const feed = await frame.evaluate(() => ({ rows: DesignStation.bridge.state().feed.length, kinds: [...new Set(DesignStation.bridge.state().feed.map(r => r.kind))], shown: !document.getElementById('bridgeFeed').classList.contains('hidden'), now: document.getElementById('bridgeFeedNow').textContent }));
+  console.log('station feed', JSON.stringify(feed));
+  assert(feed.rows >= 8 && feed.shown && feed.kinds.includes('POOL') && feed.kinds.includes('ENGRAVE') && (feed.kinds.includes('GF') || feed.kinds.includes('SS')), 'the sorter narrated pooling, engraving and nesting on the station banner: ' + JSON.stringify(feed));
   // the archive is written in the background after the commit (the operator is never made to wait for it): allow it a moment
   for (let i = 0; i < 60 && !['3521000001', '3521000002', '3521000003'].every(id => st.doc('Design_Order_Archive', id)); i++) await page.waitForTimeout(250);
   for (const id of ['3521000001', '3521000002', '3521000003']) {
@@ -175,6 +188,10 @@ const receipts = [
   const again = await page.evaluate((ids) => DesignLink.call('complete.commit', { receiptIds: ids, labels: { files: [{ path: 'x' }] }, runId: B.run.runId }), run.committed);
   assert(again.idempotent && again.completed.length === 3, 'second commit for the run is a no-op: ' + JSON.stringify(again));
 
+  await page.evaluate(() => CN.setMode('design')); await page.waitForTimeout(250);
+  const full = await page.evaluate(() => { const d = document.getElementById('dsDock').getBoundingClientRect(), h = document.querySelector('.dsFrameHost').getBoundingClientRect(); return { mode: Dock.mode(), fits: Math.abs(d.left - h.left) < 2 && Math.abs(d.width - h.width) < 2 && d.height > 300, hellos: DesignLink.log.filter(r => r.dir === 'cmd' && r.type === 'hello').length }; });
+  assert(full.mode === 'full' && full.fits && full.hellos === 1, 'the Design Station tab shows the same frame full size: ' + JSON.stringify(full));
+  await page.screenshot({ path: path.join(tmp, 'bridge-design-tab.png') });
   // ── 6 · heartbeat loss and recovery: the frame reloads, the sorter says hello again by itself (§5.6) ──
   const helloBefore = await page.evaluate(() => DesignLink._S.lastHello);
   await frame.evaluate(() => location.reload());
@@ -193,6 +210,7 @@ const receipts = [
   await page.evaluate(() => Sets.undo([...B.sets.values()].find(x => x.setId === B.run.setId)));
   await page.waitForTimeout(500);
   for (const id of ['3521000001', '3521000002', '3521000003']) assert(!st.doc('Design_Completed Orders', id), 'ledger cleared for ' + id);
+  assert(await frame2.evaluate(() => DesignStation.bridge.cursor.log.some(l => l.role === 'undo' && l.click)), 'the undo was pressed by the cursor');
   const after = await frame2.evaluate(() => DesignStation.bridge.snapshot().counts);
   assert.strictEqual(after.open, 5, 'all five orders open again: ' + JSON.stringify(after));
   assert(st.blobs.has(`${set.folder}/set.json`), 'files kept after the undo');

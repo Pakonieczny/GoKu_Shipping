@@ -772,6 +772,29 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
 .bridgeBanner .btn{border-color:#8a6a2a;color:#f6e8c4;background:transparent}
 .bridgeBanner.down{background:linear-gradient(95deg,#4a2418,#6a3222);border-color:#8a3a26}
 .bridgeBanner.down .bbDot{background:var(--clay);animation:none}
+/* the sorter's own activity, streamed under the banner: what it is doing on its side (pulling, pooling, nesting, fitting,
+   labels) so a person at this station sees the whole run, not only the commands that reach this page */
+.bridgeFeed{display:flex;align-items:baseline;gap:10px;padding:4px 16px;background:#1f1a12;color:#d9c9a3;border-bottom:1px solid #4a3a1a;font:11.5px var(--mono);z-index:31;min-width:0}
+.bridgeFeed .bfLabel{color:#caa861;font-weight:700;flex:0 0 auto}
+.bridgeFeed .bfNow{color:#fff;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;max-width:55%}
+.bridgeFeed .bfHist{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.7}
+.bridgeFeed .bfHist span{margin-right:14px}
+.bridgeFeed .bfHist span b{color:#caa861;font-weight:650}
+/* ── remote cursor: the sorter's hand on this page. A distinct pointer (a spear-tip with a ring) in white with a blue glow,
+   so it can never be mistaken for the person's own cursor; it glides to the control a command acts on, presses it with a
+   ripple, and names the action in a tag. Pointer events pass straight through it. ── */
+#rcCursor{position:fixed;left:0;top:0;z-index:100000;pointer-events:none;width:30px;height:36px;opacity:0;transform:translate(-200px,-200px);transition:transform .34s cubic-bezier(.22,.8,.24,1),opacity .28s ease;filter:drop-shadow(0 0 5px #3b82f6) drop-shadow(0 0 14px rgba(59,130,246,.8))}
+#rcCursor.on{opacity:1}
+#rcCursor.fast{transition-duration:.14s}
+#rcCursor svg{width:30px;height:36px;display:block;transform-origin:3px 3px}
+#rcCursor.click svg{animation:rcPress .22s ease-out}
+#rcCursor .rcTag{position:absolute;left:26px;top:24px;background:#1d4ed8;color:#fff;font:600 11.5px/1.2 var(--mono);padding:3px 8px;border-radius:7px;white-space:nowrap;box-shadow:0 2px 10px rgba(29,78,216,.5);max-width:340px;overflow:hidden;text-overflow:ellipsis}
+#rcCursor .rcTag:empty{display:none}
+.rcRipple{position:fixed;z-index:99999;pointer-events:none;width:16px;height:16px;border-radius:50%;border:2px solid #60a5fa;box-shadow:0 0 14px #3b82f6;transform:translate(-50%,-50%) scale(.4);opacity:.95;animation:rcRipple .6s ease-out forwards}
+.rcTarget{outline:2px solid #3b82f6 !important;outline-offset:2px;box-shadow:0 0 0 4px rgba(59,130,246,.22),0 0 18px rgba(59,130,246,.55) !important;transition:box-shadow .2s,outline-color .2s}
+@keyframes rcPress{0%{transform:scale(1)}45%{transform:scale(.78)}100%{transform:scale(1)}}
+@keyframes rcRipple{to{transform:translate(-50%,-50%) scale(3.2);opacity:0}}
+@media (prefers-reduced-motion:reduce){#rcCursor{transition-duration:.01s}.rcRipple{animation-duration:.2s}}
 .orderRow.claimed .oNum::after{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--gold2);margin-left:6px;vertical-align:1px;box-shadow:0 0 0 2px rgba(202,168,97,.22)}
 .orderRow.claimed{background-color:rgba(202,168,97,.06)}
 .tile.claimed .tOrder::after{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--gold2);margin-left:5px;vertical-align:1px}
@@ -918,6 +941,7 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
       <span class="bbTicker" id="bridgeTicker"></span>
       <button class="btn ghost xs" id="bridgeRelease" title="End remote control from this station">Release</button>
     </div>
+    <div class="bridgeFeed hidden" id="bridgeFeed" role="log" aria-live="polite"><span class="bfLabel">Sorter</span><span class="bfNow" id="bridgeFeedNow"></span><span class="bfHist" id="bridgeFeedHist"></span></div>
     <header class="topbar">
       <button class="navBtn" id="railToggle" aria-label="Toggle order list" title="Toggle order list (\)">☰</button>
 
@@ -6752,7 +6776,7 @@ const Bridge = (() => {
   // when this page itself is served from loopback, so production never widens the list.
   const LOCAL_RE = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
   const originOk = o => ALLOWED.has(o) || (LOCAL_RE.test(o) && LOCAL_RE.test(location.origin));
-  const S = { nonce: null, origin: null, master: null, count: 0, last: "", dropped: 0, previewed: null, watch: false, ticker: [], startedAt: 0, sorterClientId: null, runId: null, down: false, lastPing: 0 };
+  const S = { nonce: null, origin: null, master: null, count: 0, last: "", dropped: 0, previewed: null, watch: false, ticker: [], feed: [], startedAt: 0, sorterClientId: null, runId: null, down: false, lastPing: 0 };
   const LSK = { commits: "designStation.bridgeCommits.v1", selected: "designStation.bridgeSelected.v1" };
   const framed = () => { try { return window.self !== window.top; } catch (_) { return true; } };
   const active = () => !!S.master;
@@ -6764,6 +6788,7 @@ const Bridge = (() => {
     const b = $("#bridgeBanner"); if (!b) return;
     b.classList.toggle("hidden", !active());
     b.classList.toggle("down", S.down);
+    const fd = $("#bridgeFeed"); if (fd) fd.classList.toggle("hidden", !active() || !S.feed.length);
     const meta = $("#bridgeMeta"); if (meta) meta.textContent = `session ${(S.nonce || "").slice(0, 4)} · ${S.count} command${S.count === 1 ? "" : "s"}${S.last ? ` · last: ${S.last}` : ""}${S.dropped ? ` · ${S.dropped} dropped` : ""}`;
     const t = $("#bridgeTitle"); if (t) t.textContent = S.down ? "Charm Sorter link lost" : "Controlled by Charm Sorter";
     if (text != null) { const tk = $("#bridgeTicker"); if (tk) tk.innerHTML = `<b>${esc(text)}</b>`; }
@@ -6829,8 +6854,73 @@ const Bridge = (() => {
   function priorCommit(runId, ids) { const m = readJson(LSK.commits, {}); const c = m[runId]; if (!c) return null; return ids.every(id => c.ids.includes(id)) ? c.result : null; }
   function rememberSorterSelection() { writeJson(LSK.selected, { at: Date.now(), ids: [...S.sorterSelected] }); }
 
+  /* ── the remote cursor: every command glides to the control it acts on and presses it, so a person watching this page
+        sees the sorter work the way a colleague would. Targets are looked up by role; anything not on screen falls back to
+        the banner. The log of every motion is kept for the console and the tests. ── */
+  const Cursor = (() => {
+    const C = { el: null, tag: null, x: -200, y: -200, log: [], moves: 0, hideT: null, enabled: !/[?&]cursor=0/.test(location.search), speed: 340 };
+    const SVG = `<svg viewBox="0 0 30 36" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M3 3 L27 15 L17 18.5 L23.5 30 L18.5 32.5 L12 21 L4.5 28.5 Z" fill="#fff" stroke="#1d4ed8" stroke-width="2.2" stroke-linejoin="round"/><circle cx="3.5" cy="3.5" r="2.6" fill="#3b82f6" stroke="#fff" stroke-width="1.2"/></svg>`;
+    function ensure() { if (C.el) return C.el; const el = document.createElement("div"); el.id = "rcCursor"; el.innerHTML = SVG + `<span class="rcTag"></span>`; document.body.appendChild(el); C.el = el; C.tag = el.querySelector(".rcTag"); return el; }
+    const ROLE = {
+      row: a => $(`.orderRow[data-receipt='${cssEsc(String(a))}']`), tile: a => $(`.tile[data-tx='${cssEsc(String(a))}']`) || $(`.tile[data-receipt='${cssEsc(String(a))}']`),
+      complete: () => $("#completeBtn"), print: () => { const b = $("#qrPreviewPrintBtn"); return b && visible(b) ? b : ($("#qrSorterNote") && visible($("#qrSorterNote")) ? $("#qrSorterNote") : $("#qrSummary")); }, cancel: () => $("#qrCancelBtn"), grid: () => $("#qrPreviewGrid"), undo: () => $("#undoCompleteBtn"),
+      refresh: () => [$("#updateOrderListBtn"), $("#stripRefreshBtn"), $("#emptyLoadBtn")].find(visible) || $("#updateOrderListBtn"), rail: () => $("#railToggle"), metals: () => $("#metalBar"), note: () => $("#modalStaffNote"), chat: () => $("#chatInput") || $("#modalChatInput"), banner: () => $("#bridgeBanner"), release: () => $("#bridgeRelease")
+    };
+    const visible = el => { if (!el || !el.isConnected) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+    function find(role, arg) { const f = ROLE[role]; return f ? f(arg) : null; };
+    /** Move to a control and (optionally) press it. Resolves when the motion is over, so the command acts right after. */
+    async function act(role, arg, caption, { click = true, dwell = 0 } = {}) {
+      if (!C.enabled) return null;
+      const el = ensure(); let target = find(role, arg); let fallback = false;
+      // a row hidden behind a collapsed order rail: open the rail the way a person would, then look again
+      if (target && !visible(target) && role !== "rail" && typeof setRailOpen === "function" && !SETTINGS.railOpen) { const tg = $("#railToggle"); if (tg) { await act("rail", null, "Open the order list"); setRailOpen(true); await sleep(220); } target = find(role, arg); }
+      if (target && !visible(target)) target = null;
+      if (!target) { target = find("banner"); fallback = true; }
+      if (!target) return null;
+      if (!fallback) { try { const r = target.getBoundingClientRect(); if (r.top < 60 || r.bottom > innerHeight - 20) target.scrollIntoView({ block: "center", behavior: "instant" }); } catch (_) {} }
+      const r = target.getBoundingClientRect();
+      const x = fallback ? Math.min(r.right - 40, r.left + 260) : Math.round(r.left + Math.min(r.width * 0.5, 160)), y = Math.round(r.top + r.height / 2);
+      const dist = Math.hypot(x - C.x, y - C.y); const fast = C.moves > 8 || dist < 40;
+      el.classList.toggle("fast", fast); el.classList.add("on"); el.style.transform = `translate(${x}px,${y}px)`; C.x = x; C.y = y; C.moves++;
+      C.tag.textContent = caption || ""; C.tag.style.transform = x > innerWidth - 360 ? "translateX(calc(-100% - 34px))" : "";
+      await sleep(fast ? 160 : C.speed);
+      if (!fallback) { target.classList.add("rcTarget"); setTimeout(() => target.classList.remove("rcTarget"), 900); }
+      if (click && !fallback) { el.classList.remove("click"); void el.offsetWidth; el.classList.add("click"); const rp = document.createElement("span"); rp.className = "rcRipple"; rp.style.left = x + "px"; rp.style.top = y + "px"; document.body.appendChild(rp); setTimeout(() => rp.remove(), 700); await sleep(fast ? 90 : 190); }
+      if (dwell) await sleep(dwell);
+      C.log.push({ t: Date.now(), role, arg: arg == null ? null : String(arg), caption: caption || "", click: !!click && !fallback, fallback, x, y }); if (C.log.length > 300) C.log.shift();
+      clearTimeout(C.hideT); C.hideT = setTimeout(hide, 7000);
+      return target;
+    }
+    function hide() { if (C.el) { C.el.classList.remove("on"); C.tag.textContent = ""; } C.moves = 0; }
+    function reset() { hide(); C.x = -200; C.y = -200; if (C.el) C.el.style.transform = "translate(-200px,-200px)"; }
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    return { act, hide, reset, log: C.log, state: () => ({ enabled: C.enabled, moves: C.moves, x: C.x, y: C.y, shown: !!(C.el && C.el.classList.contains("on")) }) };
+  })();
+  const idsCaption = (ids, verb) => `${verb} ${ids.length === 1 ? ids[0] : ids.length + " orders"}`;
+  /** Walk a list of rows with the cursor: the first few are pressed one by one, the rest in one sweep with a count. */
+  async function cursorRows(ids, verb, { click = true, max = 6 } = {}) {
+    const onScreen = ids.filter(id => rowFor(id)); let n = 0;
+    for (const id of onScreen) { if (n++ < max) await Cursor.act("row", id, `${verb} ${id}`, { click }); else { await Cursor.act("row", id, `${verb} ${id} (${n} of ${onScreen.length})`, { click: false }); } }
+    if (!onScreen.length) await Cursor.act("banner", null, `${verb} ${ids.length === 1 ? ids[0] : ids.length + " orders"} (no longer listed here)`, { click: false });
+  }
+
+  /** The sorter's activity feed under the banner: newest line in white, the three before it dimmed. */
+  function paintFeed() {
+    const fd = $("#bridgeFeed"); if (!fd) return;
+    fd.classList.toggle("hidden", !active() || !S.feed.length);
+    const rows = S.feed.slice(-4).reverse(); const now = rows[0];
+    $("#bridgeFeedNow").textContent = now ? `${now.kind ? now.kind + " · " : ""}${now.text}` : "";
+    $("#bridgeFeedHist").innerHTML = rows.slice(1).map(r => `<span>${new Date(r.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })} ${r.kind ? `<b>${esc(r.kind)}</b> ` : ""}${esc(r.text)}</span>`).join("");
+  }
   /* ── commands: (args, progress, ev) => result. Names mirror the buttons an operator would press. ── */
   const CMDS = {
+    /** The sorter narrates its own side of the run here (pull, pool, nest, fit, labels…); no cursor, no ticker, not counted. */
+    async "feed.post"(a) {
+      const rows = (Array.isArray(a.rows) ? a.rows : []).slice(-20).map(r => ({ t: Number(r.t) || Date.now(), kind: String(r.kind || "").slice(0, 12), text: String(r.text || "").slice(0, 220) })).filter(r => r.text);
+      for (const r of rows) { const last = S.feed[S.feed.length - 1]; if (last && last.text === r.text && last.kind === r.kind) continue; S.feed.push(r); }
+      if (S.feed.length > 80) S.feed.splice(0, S.feed.length - 80);
+      paintFeed(); return { n: S.feed.length };
+    },
     async hello(a, progress, ev) {
       // a previous sorter session may have left rows selected (locked) here: release them before anything else
       const prev = readJson(LSK.selected, null);
@@ -6842,11 +6932,14 @@ const Bridge = (() => {
       S.nonce = ev.data.nonce; S.origin = ev.origin; S.master = ev.source; S.startedAt = Date.now(); S.count = 0; S.dropped = 0; S.previewed = null; S.down = false; S.lastPing = Date.now();
       S.sorterClientId = String(a.sorterClientId || ""); S.runId = a.runId ? String(a.runId) : null; S.sorterSelected = new Set(); rememberSorterSelection();
       paintBanner(); ticker(`Remote control opened by the Charm Sorter${S.runId ? ` · run ${S.runId}` : ""}`);
+      S.feed = []; paintFeed();
+      Cursor.reset(); Cursor.act("banner", null, "Charm Sorter connected", { click: false }).catch(() => {});
       return Object.assign(stateSnapshot(), { releasedFromPreviousSession: released });
     },
     async ping() { S.lastPing = Date.now(); if (S.down) { S.down = false; paintBanner(); } return "pong"; },
     async claim(a) {
       const ids = (a.receiptIds || []).map(String); if (!ids.length) return { claimed: [] };
+      await cursorRows(ids, "Claim");
       const r = await fetch(`${FN}/firebaseOrders`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rtClaimIds: ids, claimedBy: "sorter", claimRun: a.runId || S.runId || null }) });
       if (!r.ok) throw new Error("claim write failed: HTTP " + r.status);
       ids.forEach(id => { rtClaims.set(id, { claimedBy: "sorter", run: a.runId || S.runId || null, atMs: Date.now() }); paintClaim(id, true); });
@@ -6854,13 +6947,15 @@ const Bridge = (() => {
     },
     async unclaim(a) {
       const ids = (a.receiptIds || []).map(String); if (!ids.length) return { unclaimed: [] };
+      await cursorRows(ids, "Release claim on", { max: 3 });
       const r = await fetch(`${FN}/firebaseOrders`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rtUnclaimIds: ids }) });
       if (!r.ok) throw new Error("unclaim write failed: HTTP " + r.status);
       ids.forEach(id => { rtClaims.delete(id); paintClaim(id, false); });
       return { unclaimed: ids };
     },
     async "orders.snapshot"(a, progress) {
-      if (a.refresh || !allOpenReceipts.length) { progress(0, 0, "Refreshing the open order list from Etsy"); await refreshOrders(); }
+      if (a.refresh || !allOpenReceipts.length) { progress(0, 0, "Refreshing the open order list from Etsy"); await Cursor.act("refresh", null, "Refresh the order list from Etsy"); await refreshOrders(); }
+      else await Cursor.act("banner", null, "Reading the open orders", { click: false });
       let list = allOpenReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
       if (Array.isArray(a.metals) && a.metals.length) list = list.filter(r => !r._hydrated || METAL_ORDER.some(k => a.metals.includes(k) && r._metalCounts && r._metalCounts[k]));
       if (a.onlyAttention) list = list.filter(r => r._attn);
@@ -6885,6 +6980,7 @@ const Bridge = (() => {
     async "orders.detail"(a) {
       const rid = String(a.receiptId || "");
       let r = allOpenReceipts.find(x => String(x.receipt_id) === rid) || currentReceipts.find(x => String(x.receipt_id) === rid);
+      await Cursor.act("row", rid, `Read order ${rid}${a.fresh ? " again from Etsy" : ""}`, { click: false });
       if (a.fresh || !r) {
         const data = await pullEtsyOrderDetails(rid);
         if (!data || !data.receipt) return { order: null, gone: true, reason: r ? "Etsy did not return the receipt" : "not in the open list" };
@@ -6906,17 +7002,19 @@ const Bridge = (() => {
         if (!row) { refused.push({ id, reason: "order is not in the list" }); continue; }
         if (isLockedElsewhere(id)) { refused.push({ id, reason: "order is locked at another station" }); continue; }
         if (completedOrders.has(id)) { refused.push({ id, reason: "order is already design-complete" }); continue; }
+        await Cursor.act("row", id, `Select ${id}`);
         await selectRow(row, { silent: true }); S.sorterSelected.add(id); selected.push(id);
       }
       rememberSorterSelection(); flushRtBatch();
       return { selected, refused, selection: [...selectedOrders] };
     },
     async "ui.deselect"(a) {
-      for (const id of (a.receiptIds || []).map(String)) { const row = rowFor(id); if (row) deselectRow(row); else if (selectedOrders.has(id)) { selectedOrders.delete(id); rtQueueUnlock(id); } S.sorterSelected.delete(id); }
+      for (const id of (a.receiptIds || []).map(String)) { await Cursor.act("row", id, `Deselect ${id}`); const row = rowFor(id); if (row) deselectRow(row); else if (selectedOrders.has(id)) { selectedOrders.delete(id); rtQueueUnlock(id); } S.sorterSelected.delete(id); }
       rememberSorterSelection(); persistSelection(); refreshChrome(); flushRtBatch();
       return { selection: [...selectedOrders] };
     },
     async "ui.filter"(a) {
+      await Cursor.act("metals", null, "Set the filters", { click: false });
       Object.keys(a || {}).forEach(k => { if (k === "metals" && Array.isArray(a.metals)) { const m = a.metals.filter(x => METAL_BY_KEY[x]); F.metals = new Set(m.length ? m : METAL_ORDER); } else if (k === "activeMetal") activeMetal = METAL_BY_KEY[a.activeMetal] ? a.activeMetal : null; else if (k === "dateDir") dateDir = a.dateDir < 0 ? -1 : 1; else if (k in F && typeof F[k] === "boolean") F[k] = !!a[k]; });
       paintSortHeader(); applyFilters({ rerender: true }); refreshChrome();
       return { filters: filtersForBridge() };
@@ -6925,20 +7023,22 @@ const Bridge = (() => {
       const txid = String(a.transactionId || "");
       if (!itemsByTx.has(txid) && a.receiptId) await ensureTilesFor(String(a.receiptId));
       if (!itemsByTx.has(txid)) throw new Error(`item ${txid} is not on screen — select its order first`);
+      await Cursor.act("tile", txid, `Open item ${txid}`);
       await openListingModal(txid);
       return { item: itemForBridge(itemsByTx.get(txid)) };
     },
-    async "ui.closeModal"() { $$("dialog[open]").forEach(closeDlg); return {}; },
-    async "ui.scrollTo"(a) { const ok = revealOrder(String(a.receiptId)); return { revealed: !!ok }; },
+    async "ui.closeModal"() { await Cursor.act("cancel", null, "Close the dialog"); $$("dialog[open]").forEach(closeDlg); return {}; },
+    async "ui.scrollTo"(a) { const ok = revealOrder(String(a.receiptId)); await Cursor.act("row", String(a.receiptId), `Show ${a.receiptId}`, { click: false }); return { revealed: !!ok }; },
     async "notes.set"(a) {
       const rid = String(a.receiptId || ""); const text = String(a.text || "");
+      await Cursor.act($("#modalStaffNote") && $("#modalStaffNote").dataset.rid === rid ? "note" : "row", rid, `Staff note on ${rid}`);
       const r = await fetch(`${FN}/firebaseOrders`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ orderNumber: rid, staffNote: text }) });
       if (!r.ok) throw new Error("staff note not saved: HTTP " + r.status);
       if (text.trim()) staffNoteIDs.add(rid); else staffNoteIDs.delete(rid); notesCache.set(rid, text); markStaffNoteOrders();
       const note = $("#modalStaffNote"); if (note && note.dataset.rid === rid) note.value = text;
       return { receiptId: rid, hasNote: !!text.trim() };
     },
-    async "chat.post"(a) { const rid = String(a.receiptId || ""); await BritesChat.postAs(rid, String(a.text || ""), a.sender || "Charm Sorter"); msgCache.delete(rid); return { receiptId: rid }; },
+    async "chat.post"(a) { const rid = String(a.receiptId || ""); await Cursor.act("row", rid, `Post a chat message on ${rid}`); await BritesChat.postAs(rid, String(a.text || ""), a.sender || "Charm Sorter"); msgCache.delete(rid); return { receiptId: rid }; },
     async "complete.preview"(a) {
       const ids = (a.receiptIds || []).map(String);
       if (!ids.length) throw new Error("no orders to preview");
@@ -6947,7 +7047,9 @@ const Bridge = (() => {
       // the preview works on the selection: narrow it to exactly these ids for the duration of the preview
       const others = [...selectedOrders].filter(id => !ids.includes(id));
       for (const id of others) { const row = rowFor(id); if (row) deselectRow(row); else selectedOrders.delete(id); }
+      await Cursor.act("complete", null, `Generate QR labels for ${ids.length} order${ids.length === 1 ? "" : "s"}`);
       await handleCompleteClick();
+      await Cursor.act("grid", null, "Preview the label jobs", { click: false, dwell: 250 });
       const lists = pendingLists || {}, jobs = pendingJobs || [];
       S.previewed = new Set(Object.values(lists).flat().map(String));
       return { jobs: jobs.map(j => ({ metal: j.metal, ids: j.ids, payload: j.payload, partIndex: j.partIndex, partTotal: j.partTotal, total: j.total, label: j.label, ecc: j.ecc || "M" })), lists, notes: lastPreviewNotes, previewed: [...S.previewed], deselectedOthers: others };
@@ -6963,6 +7065,7 @@ const Bridge = (() => {
       const refused = [];
       const known = knownReceiptIds();
       const commitIds = ids.filter(id => { if (!known.has(id)) { refused.push({ id, reason: "no longer in the open list" }); return false; } if (isLockedElsewhere(id)) { refused.push({ id, reason: "locked at another station" }); return false; } if (completedOrders.has(id)) { refused.push({ id, reason: "already complete" }); return false; } return true; });
+      await Cursor.act("print", null, `Mark ${commitIds.length} order${commitIds.length === 1 ? "" : "s"} design-complete (labels saved by the sorter)`);
       closeDlg($("#qrPreviewModal"));
       let completed = [];
       if (commitIds.length) { const r = await commitCompletion(commitIds, { labels: a.labels, setId: a.labels.setId || a.setId || null, sheetIds: a.sheetIds || null, backCount: a.backCount == null ? null : a.backCount, runId: a.runId || S.runId || null, completedBy: a.completedBy || "Charm Sorter" }); completed = r.completed; }
@@ -6979,10 +7082,11 @@ const Bridge = (() => {
       if (ids.length) lastClearedReceipts = ids;
       if (!lastClearedReceipts.length) throw new Error("nothing to undo — none of those orders is design-complete here");
       const undone = [...lastClearedReceipts];
+      await Cursor.act("undo", null, `Undo the completion of ${undone.length} order${undone.length === 1 ? "" : "s"}`);
       await handleUndoComplete();
       return { restored: undone, selection: [...selectedOrders] };
     },
-    async release() { endSession("released by the sorter"); return {}; }
+    async release() { await Cursor.act("release", null, "Release this station", { click: true }); endSession("released by the sorter"); return {}; }
   };
 
   async function onMessage(ev) {
@@ -6993,8 +7097,8 @@ const Bridge = (() => {
     const fn = CMDS[d.type]; if (!fn) return;                                   // unknown types are ignored, never executed
     const reply = (msg) => { try { ev.source.postMessage(Object.assign({ source: "brites-design", nonce: d.type === "hello" ? d.nonce : S.nonce }, msg), ev.origin); } catch (_) {} };
     reply({ id: d.id, type: "ack" });
-    S.count++; S.last = d.type; paintBanner();
-    if (d.type !== "ping") ticker(`Sorter: ${d.type}${d.args && Array.isArray(d.args.receiptIds) && d.args.receiptIds.length ? " " + d.args.receiptIds.slice(0, 6).join(", ") + (d.args.receiptIds.length > 6 ? "…" : "") : d.args && d.args.receiptId ? " " + d.args.receiptId : ""}`);
+    if (d.type !== "feed.post") { S.count++; S.last = d.type; paintBanner(); }
+    if (d.type !== "ping" && d.type !== "feed.post") ticker(`Sorter: ${d.type}${d.args && Array.isArray(d.args.receiptIds) && d.args.receiptIds.length ? " " + d.args.receiptIds.slice(0, 6).join(", ") + (d.args.receiptIds.length > 6 ? "…" : "") : d.args && d.args.receiptId ? " " + d.args.receiptId : ""}`);
     try {
       const result = await fn(d.args || {}, (done, total, text) => reply({ id: d.id, type: "progress", done, total, text }), ev);
       reply({ id: d.id, type: "done", result });
@@ -7011,6 +7115,7 @@ const Bridge = (() => {
     ticker(`Remote control ended — ${reason}`);
     emit("state", { ended: true, reason });
     S.master = null; S.origin = null; S.previewed = null; S.watch = false; S.down = false;
+    Cursor.reset(); S.feed = []; paintFeed();
     paintBanner(); toast(`Charm Sorter released this station (${reason})`);
   }
   // heartbeat watch: three missed pings (15 s) mark the link down on the banner; a ping brings it back
@@ -7024,7 +7129,7 @@ const Bridge = (() => {
     activity(text) { ticker(text); },
     locks() { if (!active()) return; const cur = JSON.stringify([...rtSelected]); if (cur !== lastLocks) { lastLocks = cur; emit("lock.changed", { locks: Object.fromEntries([...rtSelected].filter(([, o]) => o && o !== RT.clientId)), claims: Object.fromEntries(rtClaims) }); } }
   };
-  return { hooks, active, framed, emit, ticker, endSession, state: () => Object.assign({}, S, { master: !!S.master }), snapshot: stateSnapshot, orderForBridge, commands: Object.keys(CMDS), ALLOWED };
+  return { hooks, active, framed, emit, ticker, endSession, state: () => Object.assign({}, S, { master: !!S.master }), snapshot: stateSnapshot, orderForBridge, commands: Object.keys(CMDS), ALLOWED, cursor: Cursor };
 })();
 if (Bridge.framed()) document.documentElement.classList.add("framed");
 
