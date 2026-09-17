@@ -82,7 +82,10 @@ async function putIndex(db, FV, body) {
 
 async function putFile(db, FV, body) {
   const f = body.file || {}; const hash = str(f.masterHash, 80); if (!/^[0-9a-f]{8,64}$/i.test(hash)) return { error: "bad master hash" };
-  const doc = { masterHash: hash, path: str(f.path, 600), url: str(f.url, 900), name: str(f.name, 200), charms: num(f.charms), labelled: num(f.labelled), unlabelled: (f.unlabelled || []).slice(0, 500), orphans: (f.orphans || []).slice(0, 500), duplicates: (f.duplicates || []).slice(0, 500), undecodable: num(f.undecodable), blocked: (f.blocked || []).slice(0, 500), skus: (f.skus || []).map(s => String(s).toUpperCase()).slice(0, 2000), indexedAt: FV.serverTimestamp(), indexedAtMs: Date.now(), indexedBy: str(f.indexedBy || "browser", 20), pageW: num(f.pageW), pageH: num(f.pageH) };
+  const doc = { masterHash: hash, path: str(f.path, 600), url: str(f.url, 900), name: str(f.name, 200), charms: num(f.charms), labelled: num(f.labelled), unlabelled: (f.unlabelled || []).slice(0, 500), orphans: (f.orphans || []).slice(0, 500), duplicates: (f.duplicates || []).slice(0, 500), undecodable: num(f.undecodable), blocked: (f.blocked || []).slice(0, 500),
+    // the lists are capped so one document cannot grow without bound; the counts are what the sheet really held
+    unlabelledCount: Array.isArray(f.unlabelled) ? f.unlabelled.length : num(f.unlabelledCount), orphanCount: Array.isArray(f.orphans) ? f.orphans.length : num(f.orphanCount),
+    duplicateCount: Array.isArray(f.duplicates) ? f.duplicates.length : num(f.duplicateCount), blockedCount: Array.isArray(f.blocked) ? f.blocked.length : num(f.blockedCount), skus: (f.skus || []).map(s => String(s).toUpperCase()).slice(0, 2000), indexedAt: FV.serverTimestamp(), indexedAtMs: Date.now(), indexedBy: str(f.indexedBy || "browser", 20), pageW: num(f.pageW), pageH: num(f.pageH) };
   if (Array.isArray(f.visionReads)) doc.visionReads = f.visionReads.slice(0, 1000);
   if (f.replaces) doc.replaces = (f.replaces || []).map(String).slice(0, 20);
   await db.collection(FILES).doc(hash).set(doc, { merge: true });
