@@ -7,13 +7,14 @@ const fnDir = path.join(__dirname, '../../netlify/functions');
 /* ── in-memory Firestore ───────────────────────────────────────────────── */
 const store = new Map();                       // "coll/id" → data
 const SERVER_TS = { __ts: true };
-const FieldValue = { serverTimestamp: () => SERVER_TS, increment: n => ({ __inc: n }) };
-function applyValues(target, src) { for (const [k, v] of Object.entries(src)) { if (v && v.__inc != null) target[k] = (target[k] || 0) + v.__inc; else if (v === SERVER_TS) target[k] = { toMillis: () => Date.now() }; else target[k] = v; } return target; }
+const FieldValue = { serverTimestamp: () => SERVER_TS, increment: n => ({ __inc: n }), delete: () => ({ __del: true }) };
+function applyValues(target, src) { for (const [k, v] of Object.entries(src)) { if (v && v.__inc != null) target[k] = (target[k] || 0) + v.__inc; else if (v && v.__del) delete target[k]; else if (v === SERVER_TS) target[k] = { toMillis: () => Date.now() }; else target[k] = v; } return target; }
 function docRef(coll, id) {
   const key = coll + '/' + id;
   return {
     id, path: key,
     async get() { const d = store.get(key); return { exists: !!d, id, data: () => (d ? { ...d } : undefined) }; },
+    collection(sub) { return query(coll + '/' + id + '/' + sub); },
     async set(data, opts) { const cur = (opts && opts.merge && store.get(key)) || {}; store.set(key, applyValues({ ...cur }, data)); },
     async delete() { store.delete(key); }
   };
@@ -25,21 +26,22 @@ function query(coll, filters = [], order = null, lim = 0) {
     limit(n) { return query(coll, filters, order, n); },
     select() { return q; },
     async get() {
-      let rows = [...store.entries()].filter(([k]) => k.startsWith(coll + '/')).map(([k, v]) => ({ id: k.slice(coll.length + 1), data: () => ({ ...v }) }));
+      let rows = [...store.entries()].filter(([k]) => k.startsWith(coll + '/') && !k.slice(coll.length + 1).includes('/')).map(([k, v]) => ({ id: k.slice(coll.length + 1), data: () => ({ ...v }), ref: docRef(coll, k.slice(coll.length + 1)) }));
       for (const [f, op, v] of filters) rows = rows.filter(r => { const x = r.data()[f]; return op === '==' ? x === v : op === '>=' ? x >= v : op === '<=' ? x <= v : true; });
       if (order) rows.sort((a, b) => { const x = a.data()[order[0]], y = b.data()[order[0]]; const c = (x && x.toMillis ? x.toMillis() : x) > (y && y.toMillis ? y.toMillis() : y) ? 1 : -1; return order[1] === 'desc' ? -c : c; });
       if (lim) rows = rows.slice(0, lim);
       return { size: rows.length, docs: rows, empty: !rows.length };
     },
     async add(data) { const id = 'auto' + Math.random().toString(36).slice(2, 8); await docRef(coll, id).set(data); return docRef(coll, id); },
-    doc(id) { return docRef(coll, id); }
+    doc(id) { return docRef(coll, id || 'auto' + Math.random().toString(36).slice(2, 10)); }
   };
   return q;
 }
 const db = {
   collection: c => query(c),
-  batch() { const ops = []; return { set(ref, data, opts) { ops.push(() => ref.set(data, opts)); }, async commit() { for (const o of ops) await o(); } }; },
-  async getAll(...refs) { return Promise.all(refs.map(r => r.get())); }
+  batch() { const ops = []; return { set(ref, data, opts) { ops.push(() => ref.set(data, opts)); }, delete(ref) { ops.push(() => ref.delete()); }, async commit() { for (const o of ops) await o(); } }; },
+  async getAll(...refs) { return Promise.all(refs.map(r => r.get())); },
+  async runTransaction(fn) { return fn({ get: ref => ref.get(), set: (ref, data, opts) => ref.set(data, opts) }); }
 };
 /* ── in-memory Storage ─────────────────────────────────────────────────── */
 const blobs = new Map();
@@ -166,6 +168,48 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   assert.strictEqual(r.body.job.status, 'done', JSON.stringify(r.body.job).slice(0, 300));
   assert.strictEqual(r.body.job.result.placements.length, 4, 'all four placed on the server');
   assert(r.body.job.result.verification.ok, 'server verification');
+  const solved = r.body.job.result;
   void S;
-  console.log('functions OK ·', store.size, 'docs ·', blobs.size, 'blobs · server job placed', r.body.job.result.placements.length, 'in', r.body.job.result.trials, 'trial(s)');
+
+  // ── bridge ops (design §13): master index with duplicate blocking, pool contention, set numbering per date, runs, bridge log, maps ──
+  r = await post(lib, { op: 'masterPutIndex', masterHash: 'aaaa1111', masterName: 'A.ai', entries: [{ sku: 'BR-CMP-01', charmHash: 'abcdef01', widthPt: 40, heightPt: 50, areaPt2: 1200, members: 5, holes: 1, engravable: true, upAngle: 88, aiPath: 'charmnest/master/BR-CMP-01.ai' }, { sku: 'BR-SZD-02', size: 'S', charmHash: 'abcdef02', widthPt: 20, heightPt: 20, aiPath: 'charmnest/master/BR-SZD-02__S.ai' }, { sku: 'BR-SZD-02', size: 'M', charmHash: 'abcdef03', widthPt: 30, heightPt: 30, aiPath: 'charmnest/master/BR-SZD-02__M.ai' }] });
+  assert.strictEqual(r.body.written, 2, 'two SKUs, one of them sized');
+  r = await post(lib, { op: 'masterGet', sku: 'br-szd-02' }); assert.deepStrictEqual(Object.keys(r.body.entry.sizes).sort(), ['M', 'S'], 'sizes recorded'); assert.strictEqual(r.body.entry.upAngle, null);
+  r = await post(lib, { op: 'masterPatch', sku: 'BR-CMP-01', patch: { engravable: false } }); r = await post(lib, { op: 'masterGet', sku: 'BR-CMP-01' }); assert.strictEqual(r.body.entry.engravable, false); assert.strictEqual(r.body.entry.engravableBy, 'operator');
+  r = await post(lib, { op: 'masterPutIndex', masterHash: 'aaaa1111', masterName: 'A.ai', entries: [{ sku: 'BR-CMP-01', charmHash: 'abcdef01', widthPt: 40, heightPt: 50, engravable: true }] });
+  r = await post(lib, { op: 'masterGet', sku: 'BR-CMP-01' }); assert.strictEqual(r.body.entry.engravable, false, 'a re-index keeps the operator override');
+  r = await post(lib, { op: 'masterPutIndex', masterHash: 'bbbb2222', masterName: 'B.ai', entries: [{ sku: 'BR-CMP-01', charmHash: 'abcdef09', widthPt: 44, heightPt: 50 }] });
+  assert.strictEqual(r.body.blocked.length, 1, 'the same SKU in a second master is blocked'); assert.strictEqual(r.body.sizeMoved.length, 1, 'and its width moved 10%');
+  r = await post(lib, { op: 'masterGet', sku: 'BR-CMP-01' }); assert(/two master files/.test(r.body.entry.blocked));
+  r = await post(lib, { op: 'masterPatch', sku: 'BR-CMP-01', patch: { blocked: null } }); r = await post(lib, { op: 'masterGet', sku: 'BR-CMP-01' }); assert.strictEqual(r.body.entry.blocked, null, 'operator unblocks');
+  r = await post(lib, { op: 'masterPutFile', file: { masterHash: 'aaaa1111', name: 'A.ai', charms: 3, labelled: 2, unlabelled: [2], orphans: [], duplicates: [] } }); assert.strictEqual(r.status, 200);
+  r = await post(lib, { op: 'masterListFiles' }); assert.strictEqual(r.body.files.length, 1);
+  r = await post(lib, { op: 'poolPut', pools: [{ poolId: '3521337740_4412778001_1', runId: 'run-A', orderId: '3521337740', sku: 'BR-CMP-01', material: 'gold', copy: 1, quantity: 1, state: 'ready' }] }); assert.strictEqual(r.body.written, 1);
+  r = await post(lib, { op: 'poolPut', pools: [{ poolId: '3521337740_4412778001_1', runId: 'run-B', orderId: '3521337740', sku: 'BR-CMP-01', material: 'gold', copy: 1, quantity: 1, state: 'ready' }] }); assert.strictEqual(r.body.contended.length, 1, 'a second run contending for the line is refused'); assert.strictEqual(r.body.contended[0].runId, 'run-A');
+  r = await post(lib, { op: 'poolUpdate', poolIds: ['3521337740_4412778001_1'], patch: { state: 'written', sheetId: 'gold-x' } }); r = await post(lib, { op: 'poolList', runId: 'run-A' }); assert.strictEqual(r.body.pools[0].state, 'written');
+  r = await post(lib, { op: 'setAllocate', day: '2026-09-16', runId: 'run-A' }); assert.strictEqual(r.body.seq, 1); const setA = r.body.setId;
+  r = await post(lib, { op: 'setAllocate', day: '2026-09-16', runId: 'run-B' }); assert.strictEqual(r.body.seq, 2, 'the next set of the same day is Set-2');
+  r = await post(lib, { op: 'setAllocate', day: '2026-09-16', runId: 'run-A' }); assert.strictEqual(r.body.seq, 1); assert(r.body.existing, 'idempotent per run');
+  r = await post(lib, { op: 'setAllocate', day: '2026-09-17', runId: 'run-C' }); assert.strictEqual(r.body.seq, 1, 'numbering restarts per date');
+  r = await post(lib, { op: 'setUpdate', setId: setA, patch: { status: 'labelled', sheetIds: ['gold-x', 'silver-y'], materials: ['gold', 'silver'] } }); r = await post(lib, { op: 'setGet', setId: setA }); assert.deepStrictEqual(r.body.set.materials, ['gold', 'silver']);
+  r = await post(lib, { op: 'setList', from: '2026-09-16', to: '2026-09-16' }); assert.strictEqual(r.body.sets.length, 2);
+  r = await post(lib, { op: 'runPut', run: { runId: 'run-A', step: 'nest', status: 'running', day: '2026-09-16', lines: { a: { state: 'pooled' } } } }); r = await post(lib, { op: 'runGet', runId: 'run-A' }); assert.strictEqual(r.body.run.step, 'nest');
+  r = await post(lib, { op: 'runList' }); assert(r.body.runs.some(x => x.runId === 'run-A' && x.lines === 1));
+  r = await post(lib, { op: 'bridgeLog', session: 'k3f9a2xyz', rows: [{ t: 1, dir: 'cmd', type: 'hello' }, { t: 2, dir: 'reply', type: 'hello', ms: 12 }], meta: { bench: 'design-1' } }); assert.strictEqual(r.body.rows, 2);
+  assert.strictEqual([...store.keys()].filter(k => k.startsWith('Design_Bridge/k3f9a2xyz/log/')).length, 2, 'two log rows under the session');
+  r = await post(lib, { op: 'aliasPut', listingId: '1718', sku: 'BR-CMP-01', by: 'Ana' }); r = await post(lib, { op: 'aliasGet' }); assert.strictEqual(r.body.aliases['1718'].sku, 'BR-CMP-01');
+  r = await post(lib, { op: 'noDesignPut', pattern: '^CHAIN' }); r = await post(lib, { op: 'noDesignPut', sku: 'BOX-01' }); r = await post(lib, { op: 'noDesignPut', pattern: '(' }); assert.strictEqual(r.status, 400, 'a bad pattern is refused');
+  r = await post(lib, { op: 'noDesignGet' }); assert.deepStrictEqual(r.body.list.patterns, ['^CHAIN']); assert.deepStrictEqual(r.body.list.skus, ['BOX-01']);
+  r = await post(lib, { op: 'optionMapPut', listingId: '1718', optionName: 'Style', optionValue: 'Charm & Chain', map: { field: 'form', value: 'necklace' }, by: 'Ana' }); r = await post(lib, { op: 'optionMapGet' }); assert.strictEqual(r.body.maps['1718'].style['charm & chain'].value, 'necklace');
+  r = await post(lib, { op: 'startAgent', mode: 'engraveIntent', payload: { order: '1' } }); assert(r.body.id, 'engrave modes start through the same op');
+  const eng = require(path.join(fnDir, 'charmEngrave-background.js'));
+  anthro.callClaudeRaw = async () => ({ stop_reason: 'end_turn', usage: {}, content: [{ type: 'text', text: JSON.stringify({ engrave: true, text: 'ANNA\n9.26.25', source: 'personalization', sourceQuote: 'ANNA 9.26.25', requests: { side: 'back', font: null, handwriting: false, image: false }, questions: [], confidence: 0.97 }) }] });
+  process.env.ANTHROPIC_API_KEY = 'x';
+  await eng.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify({ id: r.body.id, mode: 'engraveIntent' }) });
+  r = await post(lib, { op: 'getAgent', id: r.body.id }); assert.strictEqual(r.body.job.result.text, 'ANNA\n9.26.25'); assert.strictEqual(r.body.job.result.confidence, 0.97);
+  const req = agentMod.buildRequest('labelRead', { sourceName: 'm', strips: [{ index: 0, image: 'data:image/png;base64,iVBORw0KGgo=' }] }); assert(req.schema && req.content.length === 3);
+  assert(agentMod.buildRequest('engraveReview', {}).error, 'engraveReview needs the back image');
+  anthro.callClaudeRaw = realCall; delete process.env.ANTHROPIC_API_KEY;
+  console.log('bridge ops OK');
+  console.log('functions OK ·', store.size, 'docs ·', blobs.size, 'blobs · server job placed', solved.placements.length, 'in', solved.trials, 'trial(s)');
 })().catch(e => { console.error(e); process.exit(1); });

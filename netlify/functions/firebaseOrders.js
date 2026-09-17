@@ -39,6 +39,25 @@ exports.handler = async (event) => {
         uncompleteIds   // array of receipt IDs to unset
       } = body;
 
+      /* ─── Sorter claims: a gold dot ("in a sorter run"), never a lock. The other bench keeps notes and chat. ─── */
+      const { rtClaimIds, rtUnclaimIds, claimedBy, claimRun } = body;
+      if (Array.isArray(rtClaimIds) && rtClaimIds.length) {
+        const batch = db.batch();
+        rtClaimIds.map(String).slice(0, 500).forEach((id) => {
+          batch.set(db.collection(REALTIME_COLL).doc(id), { claimed: true, claimedBy: String(claimedBy || "sorter"), claimRun: claimRun ? String(claimRun) : null, claimAt: admin.firestore.FieldValue.serverTimestamp(), at: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        });
+        await batch.commit();
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({ success: true, message: "Claimed", count: rtClaimIds.length }) };
+      }
+      if (Array.isArray(rtUnclaimIds) && rtUnclaimIds.length) {
+        const batch = db.batch();
+        rtUnclaimIds.map(String).slice(0, 500).forEach((id) => {
+          batch.set(db.collection(REALTIME_COLL).doc(id), { claimed: false, claimedBy: null, claimRun: null, at: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        });
+        await batch.commit();
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({ success: true, message: "Unclaimed", count: rtUnclaimIds.length }) };
+      }
+
       /* ─── Realtime selection locks (write via server) ─── */
       const { rtLockIds, rtUnlockIds, clientId, page } = body;
       if (Array.isArray(rtLockIds) && rtLockIds.length) {
@@ -274,15 +293,16 @@ exports.handler = async (event) => {
         }
         const refs = ids.map(id => db.collection(REALTIME_COLL).doc(String(id)));
         const snaps = await Promise.all(refs.map(r => r.get()));
-        const locks = {};
+        const locks = {}, claims = {};
         snaps.forEach((snap, i) => {
           if (!snap.exists) return;
           const v = snap.data() || {};
           if (v.selected === true) locks[ids[i]] = v;
+          if (v.claimed === true) claims[ids[i]] = { claimedBy: v.claimedBy || "sorter", run: v.claimRun || null, atMs: (v.claimAt?.toMillis?.() || 0) };
         });
         return {
           statusCode: 200, headers: CORS,
-          body: JSON.stringify({ success:true, locks, now: Date.now() })
+          body: JSON.stringify({ success:true, locks, claims, now: Date.now() })
         };
       }
       
@@ -301,6 +321,8 @@ exports.handler = async (event) => {
 
         const locks   = {};
         const unlocks = [];
+        const claims  = {};
+        const unclaims = [];
         snap.forEach(d=>{
           const v = d.data() || {};
           if (v.selected === true) {
@@ -312,24 +334,29 @@ exports.handler = async (event) => {
           } else if (v.selected === false) {
             unlocks.push(d.id);
           }
+          if (v.claimed === true) claims[d.id] = { claimedBy: v.claimedBy || "sorter", run: v.claimRun || null, atMs: (v.claimAt?.toMillis?.() || Date.now()) };
+          else if (v.claimed === false) unclaims.push(d.id);
         });
 
         return {
           statusCode: 200,
           headers: CORS,
-          body: JSON.stringify({ success:true, locks, unlocks, now: Date.now() })
+          body: JSON.stringify({ success:true, locks, unlocks, claims, unclaims, now: Date.now() })
         };
       }
 
       /* ?rt=1 → current active locks only (selected == true) */
       if (event.queryStringParameters?.rt === "1") {
-        const snap = await db.collection(REALTIME_COLL).where("selected","==",true).get();        
+        const snap = await db.collection(REALTIME_COLL).where("selected","==",true).get();
         const locks = {};
         snap.forEach(d => { locks[d.id] = d.data(); });
+        const csnap = await db.collection(REALTIME_COLL).where("claimed","==",true).get();
+        const claims = {};
+        csnap.forEach(d => { const v = d.data() || {}; claims[d.id] = { claimedBy: v.claimedBy || "sorter", run: v.claimRun || null, atMs: (v.claimAt?.toMillis?.() || 0) }; });
         return {
           statusCode: 200,
           headers: CORS,
-          body: JSON.stringify({ success: true, locks })
+          body: JSON.stringify({ success: true, locks, claims })
         };
       }
 

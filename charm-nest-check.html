@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Charm Sorter connections check</title>
+<meta name="robots" content="noindex">
+<style>
+  :root{--paper:#f3f0ea;--card:#fffefb;--card2:#faf7f1;--ink:#1c1a17;--ink70:#5b554c;--ink45:#938c80;--line:#e4ddd0;--velvet:#221f1b;--gold:#caa861;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--serif:"Iowan Old Style",Georgia,serif}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.45 -apple-system,"Segoe UI",Helvetica,Arial,sans-serif}
+  header{background:var(--velvet);color:#f6efe0;padding:18px 24px}
+  header h1{margin:0;font:400 26px var(--serif)}header h1 i{color:var(--gold);font-style:normal}
+  header .sum{font:13px var(--mono);margin-top:6px;color:#d9c9a3}
+  header .sum b{color:#fff}
+  header .legend{font-size:12.5px;color:#bfb39a;margin-top:10px;max-width:900px}
+  main{max-width:1100px;margin:0 auto;padding:18px 24px 60px}
+  .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 14px}
+  .bar button,.bar a{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:9px;padding:7px 12px;font:13px inherit;cursor:pointer;text-decoration:none}
+  .bar .on{background:var(--velvet);color:#fff;border-color:var(--velvet)}
+  .bar .note{font:12px var(--mono);color:var(--ink45)}
+  section{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:0 0 14px;overflow:hidden}
+  section h2{margin:0;padding:10px 14px;font:600 14px inherit;border-bottom:1px solid var(--line);background:var(--card2);display:flex;gap:10px;align-items:center}
+  section h2 .c{font:12px var(--mono);color:var(--ink45);font-weight:400}
+  section .intro{padding:8px 14px 0;font-size:12.5px;color:var(--ink70)}
+  table{width:100%;border-collapse:collapse}
+  td{padding:7px 12px;border-top:1px solid var(--line);vertical-align:top}
+  tr:first-child td{border-top:0}
+  td.s{width:28px;font-size:14px;text-align:center}
+  td.n{width:290px;font:12.5px var(--mono);color:var(--ink)}
+  td.v{font-size:13px}
+  td.v .note{display:block;color:var(--ink45);font-size:12px;margin-top:2px}
+  td.ms{width:70px;text-align:right;font:11.5px var(--mono);color:var(--ink45)}
+  tr.fail td.v{color:#8a3a26}tr.warn td.v{color:#7a5a1d}tr.skip td{color:var(--ink45)}
+  pre#report{display:none;white-space:pre-wrap;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;font:12px var(--mono)}
+  #dsHost{position:fixed;left:-4000px;top:0;width:1200px;height:900px;border:0;visibility:hidden}
+  .spin{display:inline-block;width:10px;height:10px;border:2px solid var(--ink45);border-top-color:transparent;border-radius:50%;animation:sp .8s linear infinite;vertical-align:middle}
+  @keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Charm Sorter <i>⇄</i> Design Station · connections check</h1>
+  <div class="sum" id="summary"><span class="spin"></span> running…</div>
+  <div class="legend">A green row means the thing answered this request. It does not mean a run will succeed: a person's decisions, Etsy's data and the master file are separate matters. A grey row was never attempted and is never counted as a pass. Nothing here writes data unless <b>write</b> is on, and then only probe rows and a probe object that are removed again.</div>
+</header>
+<main>
+  <div class="bar">
+    <button id="bWrite">write probes</button><button id="bEtsy">spend Etsy calls</button><button id="bAi">spend one Claude call</button>
+    <button id="bRun">Run again</button><button id="bCopy">Copy report</button>
+    <span class="note" id="cfg"></span>
+  </div>
+  <div id="groups"></div>
+  <pre id="report"></pre>
+</main>
+<iframe id="dsHost" title="Design Station (check)"></iframe>
+<script src="vendor/pdf-lib-1.17.1.min.js"></script>
+<script src="vendor/opentype-1.3.4.min.js"></script>
+<script src="vendor/jszip-3.10.1.min.js"></script>
+<script src="lib/qrcode.min.js"></script>
+<script src="charm-nest-solver.js"></script>
+<script src="charm-nest-pdf.js"></script>
+<script src="charm-nest-geom.js"></script>
+<script src="charm-nest-orders.js"></script>
+<script>
+"use strict";
+/* ═══ the connections check: every row is one real request. Groups run in order; the station rows drive the real page in
+   a hidden frame through the same bridge the sorter uses, with the same origin and nonce checks. ═══ */
+const Q = new URLSearchParams(location.search);
+const OPT = { write: Q.get("write") === "1", etsy: Q.get("etsy") === "1", ai: Q.get("ai") === "1" };
+const FN = location.origin + "/.netlify/functions";
+const DEFAULTS = { dsOrigin: "https://design-1.goldenspike.app" };
+const settings = (() => { try { return JSON.parse(localStorage.getItem("cn.settings") || "{}") || {}; } catch (_) { return {}; } })();
+const dsOrigin = (Q.get("station") || settings.dsOrigin || DEFAULTS.dsOrigin).replace(/\/+$/, "");
+const passcode = sessionStorage.getItem("cn.passcode") || Q.get("passcode") || "";
+const MM = 25.4 / 72, PT = 72 / 25.4;
+const rows = []; const groups = new Map();
+const esc = v => String(v ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const ICON = { ok: "🟢", warn: "🟡", fail: "🔴", skip: "⚪", run: "⏳" };
+function row(group, name, status, value, note, ms) { const r = { group, name, status, value: value == null ? "" : String(value), note: note || "", ms: ms == null ? null : Math.round(ms) }; const i = rows.findIndex(x => x.group === group && x.name === name); if (i >= 0) rows[i] = r; else rows.push(r); render(); return r; }
+const timed = async fn => { const t0 = performance.now(); try { return { r: await fn(), ms: performance.now() - t0 }; } catch (e) { return { e, ms: performance.now() - t0 }; } };
+const err = e => String(e && e.message || e).slice(0, 300);
+async function api(fn, body, { method = "POST", timeoutMs = 60000 } = {}) {
+  const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), timeoutMs);
+  try { const headers = { "Content-Type": "application/json" }; if (passcode) headers["X-Edit-Passcode"] = passcode; const res = await fetch(`${FN}/${fn}`, { method, headers, body: method === "POST" ? JSON.stringify(body || {}) : undefined, signal: ctl.signal }); const txt = await res.text(); let data = null; try { data = JSON.parse(txt); } catch (_) { data = { error: txt.slice(0, 200) }; } if (!res.ok) throw Object.assign(new Error((data && data.error) || `HTTP ${res.status}`), { status: res.status, data }); return data; }
+  finally { clearTimeout(t); }
+}
+function render() {
+  const host = document.getElementById("groups"); const order = [...new Set(rows.map(r => r.group))];
+  for (const g of order) {
+    let sec = groups.get(g); if (!sec) { sec = document.createElement("section"); sec.innerHTML = `<h2>${esc(g)} <span class="c"></span></h2><table></table>`; host.appendChild(sec); groups.set(g, sec); }
+    const mine = rows.filter(r => r.group === g); sec.querySelector(".c").textContent = `${mine.filter(r => r.status === "ok").length} of ${mine.length}`;
+    sec.querySelector("table").innerHTML = mine.map(r => `<tr class="${r.status}"><td class="s">${ICON[r.status] || ""}</td><td class="n">${esc(r.name)}</td><td class="v">${esc(r.value)}${r.note ? `<span class="note">${esc(r.note)}</span>` : ""}</td><td class="ms">${r.ms != null ? r.ms + " ms" : ""}</td></tr>`).join("");
+  }
+  const s = { ok: rows.filter(r => r.status === "ok").length, fail: rows.filter(r => r.status === "fail").length, warn: rows.filter(r => r.status === "warn").length, skip: rows.filter(r => r.status === "skip").length, run: rows.filter(r => r.status === "run").length };
+  document.getElementById("summary").innerHTML = `${s.run ? '<span class="spin"></span> ' : ""}<b>${s.ok} reached</b> · ${s.fail} failed · ${s.warn} need attention · ${s.skip} not attempted${s.run ? ` · ${s.run} running` : ""}<br>sorter ${esc(location.origin)} · station ${esc(dsOrigin)} · ${new Date().toISOString()}`;
+}
+function report() {
+  const s = { ok: rows.filter(r => r.status === "ok").length, fail: rows.filter(r => r.status === "fail").length, warn: rows.filter(r => r.status === "warn").length, skip: rows.filter(r => r.status === "skip").length };
+  const lines = [`Charm Sorter ⇄ Design Station connections check`, `${s.ok} reached · ${s.fail} failed · ${s.warn} need attention · ${s.skip} not attempted`, `sorter ${location.origin} · station ${dsOrigin} · ${new Date().toISOString()} · options ${Object.entries(OPT).filter(([, v]) => v).map(([k]) => k).join(",") || "none"}`, ""];
+  let g = null; for (const r of rows) { if (r.group !== g) { g = r.group; lines.push(g); } lines.push(`${ICON[r.status]}\t${r.name}\t${r.value}${r.note ? " — " + r.note : ""}${r.ms != null ? ` (${r.ms} ms)` : ""}`); }
+  return lines.join("\n");
+}
+
+/* ── 1 · this page: libraries, fonts, geometry self-test ── */
+async function checkBrowser() {
+  const G = "This page";
+  row(G, "pdf-lib", window.PDFLib ? "ok" : "fail", window.PDFLib ? "loaded" : "vendor/pdf-lib-1.17.1.min.js did not load");
+  row(G, "opentype.js", window.opentype ? "ok" : "fail", window.opentype ? "loaded" : "vendor/opentype-1.3.4.min.js did not load");
+  row(G, "qrcode", window.QRCode ? "ok" : "fail", window.QRCode ? "loaded" : "lib/qrcode.min.js did not load");
+  row(G, "charm-nest-pdf.js", window.CharmNestPDF ? "ok" : "fail", window.CharmNestPDF ? "parser loaded" : "not loaded");
+  row(G, "charm-nest-geom.js", window.CharmNestGeom ? "ok" : "fail", window.CharmNestGeom ? "geometry loaded" : "not loaded");
+  row(G, "charm-nest-orders.js", window.CharmNestOrders ? "ok" : "fail", window.CharmNestOrders ? `orders loaded · today ${CharmNestOrders.localDay()} · tag ${CharmNestOrders.dateTag()}` : "not loaded");
+  row(G, "Web Worker", typeof Worker === "function" ? "ok" : "fail", typeof Worker === "function" ? "available (the nester runs in workers)" : "missing");
+  row(G, "cross-origin isolation", crossOriginIsolated ? "ok" : "warn", crossOriginIsolated ? "COOP/COEP in force (SharedArrayBuffer available)" : "not isolated — the site-wide COEP header is not reaching this page", "");
+  row(G, "cloud passcode", passcode ? "ok" : "warn", passcode ? "present (from the sorter's session)" : "none — open the sorter first and enter the passcode, or add ?passcode=… ; without it every function call is refused when EDIT_PASSCODE is set");
+  const fonts = {};
+  for (const w of ["Regular", "Semibold"]) {
+    const path = `vendor/fonts/SourceSans3-${w}.otf`;
+    const { r, e, ms } = await timed(async () => { const res = await fetch(path, { cache: "no-store" }); if (!res.ok) throw new Error(`HTTP ${res.status}`); const buf = await res.arrayBuffer(); if (buf.byteLength < 50000) throw new Error(`only ${buf.byteLength} bytes`); const f = opentype.parse(buf); return { f, bytes: buf.byteLength }; });
+    if (e) row(G, `font · ${w}`, "fail", err(e), path, ms); else { fonts[w] = r.f; row(G, `font · ${w}`, "ok", `${Object.values(r.f.names.fullName || {})[0] || w} · ${r.f.numGlyphs} glyphs · ${r.bytes} bytes`, path, ms); }
+  }
+  // geometry self-test: a synthetic charm drawn with pdf-lib, parsed, labelled, flipped, fitted — the engraving pipeline end to end
+  if (window.PDFLib && window.CharmNestPDF && window.CharmNestGeom && fonts.Regular) {
+    const { r, e, ms } = await timed(async () => {
+      const { PDFDocument, PDFName, StandardFonts, rgb } = PDFLib; const doc = await PDFDocument.create(); const page = doc.addPage([200, 200]); const font = await doc.embedFont(StandardFonts.Helvetica);
+      const num = n => (+n).toFixed(3); const cx = 100, cy = 120, s = 16 * PT, r0 = s / 2;
+      const outline = `q 0.05 0.05 0.05 RG 0.5 w ${num(cx - r0 * 0.7)} ${num(cy - r0)} m ${num(cx + r0 * 0.5)} ${num(cy - r0)} l ${num(cx + r0)} ${num(cy - r0 * 0.3)} l ${num(cx + r0 * 0.5)} ${num(cy + r0)} l ${num(cx - r0 * 0.7)} ${num(cy + r0)} l h S Q`;
+      const hx = cx + s * 0.18, hy = cy + s * 0.3, k = 0.5523 * s * 0.06, hr = s * 0.06;
+      const hole = `q 0 0 0 RG 0.4 w ${num(hx + hr)} ${num(hy)} m ${num(hx + hr)} ${num(hy + k)} ${num(hx + k)} ${num(hy + hr)} ${num(hx)} ${num(hy + hr)} c ${num(hx - k)} ${num(hy + hr)} ${num(hx - hr)} ${num(hy + k)} ${num(hx - hr)} ${num(hy)} c ${num(hx - hr)} ${num(hy - k)} ${num(hx - k)} ${num(hy - hr)} ${num(hx)} ${num(hy - hr)} c ${num(hx + k)} ${num(hy - hr)} ${num(hx + hr)} ${num(hy - k)} ${num(hx + hr)} ${num(hy)} c h S Q`;
+      const stream = doc.context.flateStream(outline + "\n" + hole + "\n"); const ref = doc.context.register(stream); page.node.set(PDFName.of("Contents"), doc.context.obj([ref]));
+      const text = "BR-CHK-01"; const w = font.widthOfTextAtSize(text, 6); page.drawText(text, { x: cx - w / 2, y: cy - r0 - 2 * PT - 4.5, size: 6, font, color: rgb(0.1, 0.1, 0.1) });
+      const bytes = await doc.save({ useObjectStreams: false });
+      const P = CharmNestPDF, Gm = CharmNestGeom;
+      const parsed = await P.parseSource(new Uint8Array(bytes), "check.ai"); const g = P.groupCharms(parsed, { minPt: 6 });
+      if (g.charms.length !== 1) throw new Error(`expected one charm, found ${g.charms.length}`);
+      const lab = P.labelCharms(parsed, g.charms, { pattern: P.SKU_PATTERN_DEFAULT, gapPt: 6.4 * PT, widen: 0.25 }); const c = g.charms[0];
+      if (c.sku !== "BR-CHK-01") throw new Error(`label not matched (${JSON.stringify([...lab.labels.values()])})`);
+      if (c.members.some(m => m.kind === "text")) throw new Error("the label stayed a member of the charm");
+      const view = Gm.backView(c, { res: 6 }); const mask = Gm.engraveMask(view, { marginMm: 0.8 });
+      const fit = Gm.fitText(["ANNA"], fonts.Regular, mask, { minCapMm: 1.2, maxHeightFrac: 0.4, lineGap: 0.18, tryRotated: true });
+      if (!fit.ok) throw new Error(`fit failed: ${fit.reason}`);
+      const ink = Gm.verifyInk(fit.cmds, mask); if (!ink.ok) throw new Error(`ink outside the mask: ${ink.outside} px`);
+      const single = await P.buildSingleCharm(c, parsed); const p2 = await P.parseSource(new Uint8Array(single), "single.ai"); const g2 = P.groupCharms(p2, { minPt: 6 });
+      if (g2.charms.length !== 1 || g2.charms[0].members.length !== c.members.length) throw new Error("the extracted charm does not re-parse to the same members");
+      return { members: c.members.length, sizeMm: [(c.widthPt || (c.bbox[2] - c.bbox[0])) * MM, (c.heightPt || (c.bbox[3] - c.bbox[1])) * MM], flip: view.detail, fit, extract: single.length };
+    });
+    if (e) row(G, "geometry self-test", "fail", err(e), "parse → label → extract → flip → fit → ink check", ms);
+    else row(G, "geometry self-test", "ok", `charm ${r.sizeMm[0].toFixed(1)} × ${r.sizeMm[1].toFixed(1)} mm · ${r.members} members · label matched and excluded · extract ${r.extract} bytes re-parses · flip pixels ${(r.flip.pixelDiff * 100).toFixed(3)}% · "ANNA" fits at ${r.fit.size.toFixed(2)} pt (cap ${r.fit.capMm.toFixed(2)} mm)`, "parse → label → extract → flip → fit → ink check", ms);
+  } else row(G, "geometry self-test", "skip", "needs pdf-lib, the parser, the geometry and the Regular font");
+  return fonts;
+}
+
+/* ── 2 · the functions from this page: the passcode gate, the library, Storage through the signed-URL route ── */
+async function checkCloud() {
+  const G = "Cloud from this page";
+  const ping = await timed(() => api("charmNestLibrary", { op: "ping" }));
+  if (ping.e) { row(G, "charmNestLibrary · ping", "fail", ping.e.status === 401 ? "401 unauthorized — the passcode is wrong or missing" : err(ping.e), "", ping.ms); return false; }
+  row(G, "charmNestLibrary · ping", "ok", `${ping.r.sheets} sheet(s) · ${ping.r.charms} charm(s) on record`, "", ping.ms);
+  const gate = await timed(() => fetch(`${FN}/charmNestLibrary`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "ping" }) }).then(r => r.status));
+  row(G, "passcode gate", gate.r === 401 ? "ok" : "warn", gate.r === 401 ? "a call without the passcode is refused (401)" : `a call without the passcode answered HTTP ${gate.r}`, gate.r === 401 ? "" : "EDIT_PASSCODE is not set on Netlify — the sorter's functions are open", gate.ms);
+  const idx = await timed(() => api("charmNestLibrary", { op: "masterList", limit: 3 })); row(G, "master index", idx.e ? "fail" : "ok", idx.e ? err(idx.e) : `${(idx.r.entries || []).length ? (idx.r.entries || []).length + "+ entries, e.g. " + idx.r.entries.map(e => e.sku).join(", ") : "empty — index a master file on the Master tab"}`, "", idx.ms);
+  const sets = await timed(() => api("charmNestLibrary", { op: "setList", from: CharmNestOrders.localDay(), to: CharmNestOrders.localDay() })); row(G, "sets today", sets.e ? "fail" : "ok", sets.e ? err(sets.e) : `${(sets.r.sets || []).length} set(s) today`, "", sets.ms);
+  const runs = await timed(() => api("charmNestLibrary", { op: "runList", limit: 5 })); row(G, "runs", runs.e ? "fail" : "ok", runs.e ? err(runs.e) : `${(runs.r.runs || []).length} recent · ${(runs.r.runs || []).filter(x => !["complete", "abandoned"].includes(x.status)).length} open`, "", runs.ms);
+  const url = await timed(() => api("charmNestOutput", { op: "url", path: "charmnest/diag/does-not-exist.txt" })); row(G, "charmNestOutput · url", url.e && url.e.status !== 404 && !/not found/i.test(err(url.e)) ? "fail" : "ok", url.e ? (url.e.status === 404 || /not found/i.test(err(url.e)) ? "answered: a missing path is reported as not found (as it should be)" : err(url.e)) : "tokenised URL shape answered", "", url.ms);
+  if (OPT.write) {
+    const p = `charmnest/diag/browser-probe-${Date.now()}.txt`; const body = new TextEncoder().encode("charm-nest-check " + new Date().toISOString());
+    const up = await timed(async () => { const signed = await api("charmNestOutput", { op: "sign", path: p, contentType: "text/plain" }); const put = await fetch(signed.uploadUrl, { method: "PUT", headers: signed.headers || { "Content-Type": "text/plain" }, body }); if (!put.ok) throw new Error(`PUT ${put.status} — Storage CORS refuses this origin for PUT`); const fin = await api("charmNestOutput", { op: "finalize", path: signed.path, token: signed.token, contentType: "text/plain" }); const back = await fetch(fin.url); if (!back.ok) throw new Error(`GET ${back.status} of the tokenised URL — Storage CORS refuses this origin for GET`); const txt = await back.text(); if (!txt.startsWith("charm-nest-check")) throw new Error("read back a different body"); return fin; });
+    row(G, "Storage · signed PUT → finalize → CORS GET", up.e ? "fail" : "ok", up.e ? err(up.e) : `probe ${p} uploaded from this origin and read back through the tokenised URL`, up.e ? "This is the route per-SKU files, labels and back files take." : "probe object left under charmnest/diag/ (harmless)", up.ms);
+  } else row(G, "Storage · signed PUT → finalize → CORS GET", "skip", "not run. Turn on write probes to upload and read back one probe object from this origin — the real test of the bucket's CORS.");
+  const rt = await timed(() => fetch(`${FN}/firebaseOrders?rtFor=diag-probe`).then(r => r.json())); row(G, "firebaseOrders · locks and claims", rt.e || !rt.r || rt.r.success === false ? "fail" : "ok", rt.e ? err(rt.e) : "answered", "", rt.ms);
+  const dc = await timed(() => fetch(`${FN}/firebaseOrders?dcFor=diag-probe`).then(r => r.json())); row(G, "firebaseOrders · completed ledger", dc.e || !dc.r || dc.r.success === false ? "fail" : "ok", dc.e ? err(dc.e) : "answered", "", dc.ms);
+  const ar = await timed(() => fetch(`${FN}/designArchive?op=have&ids=diag-probe`).then(r => r.json())); row(G, "designArchive · have", ar.e || !ar.r || ar.r.success === false ? "fail" : "ok", ar.e ? err(ar.e) : "answered", "", ar.ms);
+  const usage = await timed(() => fetch(`${FN}/etsyApiUsage?app=design-station`).then(r => r.json())); row(G, "etsyApiUsage (free)", usage.e ? "warn" : "ok", usage.e ? err(usage.e) : `${usage.r.verified ? "verified" : "unverified"}${usage.r.count != null ? ` · ${usage.r.count} call(s) today` : ""}${usage.r.remainingToday != null ? ` · ${usage.r.remainingToday} of ${usage.r.limitPerDay} remaining` : ""}`, "reads counters real Etsy calls already populated; never calls Etsy", usage.ms);
+  if (OPT.etsy) { const pr = await timed(() => fetch(`${FN}/etsyApiProbe`).then(r => r.json())); row(G, "etsyApiProbe (1 Etsy call)", pr.e || !pr.r || !pr.r.ok ? "fail" : "ok", pr.e ? err(pr.e) : JSON.stringify(pr.r).slice(0, 200), "spends one cheap call to read Etsy's own daily-limit headers", pr.ms); }
+  else row(G, "etsyApiProbe (1 Etsy call)", "skip", "not run. Turn on Etsy calls to read Etsy's own x-limit-per-day / x-remaining-today headers.");
+  return true;
+}
+
+/* ── 3 · the server half ── */
+async function checkServer() {
+  const G = "Server";
+  row(G, "charmNestCheck", "run", "running the server-side rows…");
+  const { r, e, ms } = await timed(() => api("charmNestCheck", { op: "run", write: OPT.write ? 1 : 0, ai: OPT.ai ? 1 : 0, sorterOrigin: location.origin, stationOrigin: dsOrigin, functionsBase: FN }, { timeoutMs: 120000 }));
+  if (e) { row(G, "charmNestCheck", "fail", e.status === 404 ? "404 — the check function is not deployed" : err(e), "", ms); return; }
+  const i = rows.findIndex(x => x.group === G && x.name === "charmNestCheck"); if (i >= 0) rows.splice(i, 1);
+  for (const x of r.rows) row(x.group, x.name, x.status, x.value, x.note, x.ms);
+}
+
+/* ── 4 · the station through the bridge, exactly as the sorter drives it ── */
+async function checkStation() {
+  const G = "Design Station";
+  const f = document.getElementById("dsHost"); const nonce = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2); let id = 0; const pending = new Map();
+  window.addEventListener("message", ev => { if (ev.origin !== dsOrigin) return; const d = ev.data; if (!d || d.source !== "brites-design" || d.nonce !== nonce) return; if (d.id === 0) return; const p = pending.get(d.id); if (!p || d.type === "ack" || d.type === "progress") return; pending.delete(d.id); clearTimeout(p.t); if (d.type === "done") p.resolve(d.result); else p.reject(new Error(d.error || `${p.type} failed`)); });
+  const call = (type, args = {}, timeoutMs = 30000) => new Promise((resolve, reject) => { const n = ++id; const t = setTimeout(() => { pending.delete(n); reject(new Error(`${type}: no answer in ${timeoutMs / 1000} s`)); }, timeoutMs); pending.set(n, { resolve, reject, t, type }); f.contentWindow.postMessage({ source: "brites-sorter", nonce, id: n, type, args }, dsOrigin); });
+  row(G, "frame loads", "run", `${dsOrigin}/design-1.html?bridge=1`);
+  const loaded = await timed(() => new Promise((res, rej) => { const t = setTimeout(() => rej(new Error("no load event in 25 s — is the station reachable, and does its frame-ancestors header name this origin?")), 25000); f.addEventListener("load", () => { clearTimeout(t); res(true); }, { once: true }); f.src = `${dsOrigin}/design-1.html?bridge=1`; }));
+  if (loaded.e) { row(G, "frame loads", "fail", err(loaded.e), "", loaded.ms); return; }
+  row(G, "frame loads", "ok", "loaded", "a blank frame with a load event still means the page was blocked: the hello row below is the proof", loaded.ms);
+  const hello = await timed(() => call("hello", { sorterClientId: "check-" + nonce.slice(0, 6), runId: null }, 20000));
+  if (hello.e) { row(G, "hello", "fail", err(hello.e), "The station did not answer. Either its frame-ancestors header refused this origin (the frame is blank) or this origin is not in the station's allow-list.", hello.ms); return; }
+  const st = hello.r;
+  row(G, "hello", "ok", `${st.bench} · ${st.version} · employee ${st.employee || "— not set —"}`, "", hello.ms);
+  row(G, "Etsy sign-in", st.etsy.signedIn ? "ok" : "fail", st.etsy.signedIn ? `signed in${st.etsy.expiresAt ? ` · token to ${new Date(st.etsy.expiresAt).toLocaleString()}` : ""}` : "NOT signed in — open the station in its own tab and press Connect Etsy", "");
+  const m = st.etsy.meter; if (m) row(G, "Etsy ledger", m.braked ? "fail" : (m.last10Min >= m.guard.per10Min * 0.7 ? "warn" : "ok"), `${m.today} today · ${m.last10Min} in the current 10 min · ${m.lastMinute} in the last minute · peak ${m.maxQps}/s · ${m.status429} rate-limit answers${m.braked ? ` · WATCHDOG BRAKE: ${m.alarm && m.alarm.why}` : ""}`, `guard ${m.guard.burstPerMinute}/min · ${m.guard.per10Min}/10 min · ${m.guard.sameOrderPer10Min} reads of one order/10 min`);
+  row(G, "open orders in memory", "ok", `${st.counts.open} open · ${st.counts.hydrated} hydrated · ${st.counts.selected} selected · ${st.counts.claimed} claimed · ${st.counts.locked} locked elsewhere`, "");
+  const ping = await timed(() => call("ping", {}, 5000)); row(G, "ping", ping.e ? "fail" : "ok", ping.e ? err(ping.e) : `pong${ping.r && ping.r.etsy ? " · ledger attached" : ""}`, "", ping.ms);
+  const commands = new Set(st.commands || []);
+  for (const c of ["hello", "ping", "claim", "unclaim", "orders.snapshot", "orders.check", "orders.detail", "ui.select", "ui.deselect", "ui.filter", "ui.openItem", "ui.closeModal", "ui.scrollTo", "notes.set", "chat.post", "complete.preview", "complete.commit", "complete.undo", "feed.post", "release"]) row(G, `command · ${c}`, commands.size === 0 ? "skip" : commands.has(c) ? "ok" : "fail", commands.size === 0 ? "the station did not list its commands (older build)" : commands.has(c) ? "present" : "missing — the station build is older than the sorter");
+  const filt = await timed(() => call("ui.filter", {}, 10000)); row(G, "ui.filter (no change)", filt.e ? "fail" : "ok", filt.e ? err(filt.e) : `filters answered: ${Object.keys(filt.r.filters || {}).length} field(s)`, "", filt.ms);
+  const feed = await timed(() => call("feed.post", { rows: [{ t: Date.now(), kind: "check", text: "connections check from " + location.origin }] }, 10000)); row(G, "feed.post", feed.e ? "fail" : "ok", feed.e ? err(feed.e) : `the station shows the sorter's feed (${feed.r.n} row(s))`, "", feed.ms);
+  const refuse = await timed(() => call("complete.commit", { receiptIds: ["diag-probe"], labels: { files: [{ path: "x" }] } }, 10000)); row(G, "complete.commit without a preview", refuse.e && /preview/.test(refuse.e.message) ? "ok" : "fail", refuse.e ? `refused: ${refuse.e.message}` : "ACCEPTED — the commit guard is missing", "", refuse.ms);
+  const refuse2 = await timed(() => call("complete.preview", { receiptIds: ["diag-probe"] }, 10000)); row(G, "complete.preview of an unselected order", refuse2.e && /select/.test(refuse2.e.message) ? "ok" : "fail", refuse2.e ? `refused: ${refuse2.e.message}` : "ACCEPTED — the selection guard is missing", "", refuse2.ms);
+  if (OPT.write) { const cl = await timed(async () => { const a = await call("claim", { receiptIds: ["diag-probe"] }, 15000); const rt = await fetch(`${FN}/firebaseOrders?rtFor=diag-probe`).then(r => r.json()); const b = await call("unclaim", { receiptIds: ["diag-probe"] }, 15000); return { a, rt, b }; }); row(G, "claim → read back → unclaim", cl.e ? "fail" : (cl.r.rt.claims && cl.r.rt.claims["diag-probe"] ? "ok" : "warn"), cl.e ? err(cl.e) : (cl.r.rt.claims && cl.r.rt.claims["diag-probe"] ? "the claim was written through firebaseOrders and read back, then released" : "the claim call answered but the read-back did not show it"), "probe id diag-probe in Design_RealTime_Selected_Orders", cl.ms); }
+  else row(G, "claim → read back → unclaim", "skip", "not run. Turn on write probes to write and release one probe claim.");
+  if (OPT.etsy) {
+    if (!st.etsy.signedIn) row(G, "orders.snapshot (Etsy)", "skip", "the station is not signed in to Etsy");
+    else { const snap = await timed(() => call("orders.snapshot", { hydrate: false, refresh: true, withNotes: false }, 10 * 60 * 1000)); row(G, "orders.snapshot (Etsy)", snap.e ? "fail" : "ok", snap.e ? err(snap.e) : `${snap.r.total} open order(s) · ${snap.r.hydrated} hydrated · ${snap.r.etsyCalls} Etsy call(s) spent${snap.r.refreshSkipped ? " (list reused, swept under 90 s ago)" : ""} · sample ${snap.r.orders[0] ? `${snap.r.orders[0].receiptId} ${snap.r.orders[0].lines.map(l => l.sku + "/" + (l.metalKey || "?")).join(" ")}` : "none"}`, "", snap.ms);
+      const chk = await timed(() => call("orders.check", { receiptIds: (snap.r && snap.r.orders || []).slice(0, 3).map(o => o.receiptId) }, 5 * 60 * 1000)); row(G, "orders.check (list reuse)", chk.e ? "fail" : (chk.r.swept ? "warn" : "ok"), chk.e ? err(chk.e) : `${chk.r.swept ? "swept again" : "answered from the list in memory"} · ${chk.r.etsyCalls} Etsy call(s)`, chk.e ? "" : "right after a sweep the check must cost nothing", chk.ms); }
+  } else { row(G, "orders.snapshot (Etsy)", "skip", "not run. Turn on Etsy calls to sweep the open list once through the station (one call per 100 open orders)."); row(G, "orders.check (list reuse)", "skip", "not run (needs the sweep above)."); }
+  const rel = await timed(() => call("release", {}, 10000)); row(G, "release", rel.e ? "fail" : "ok", rel.e ? err(rel.e) : "session ended cleanly", "", rel.ms);
+}
+
+/* ── 5 · Claude through the sorter's own route (background job + poll) ── */
+async function checkClaude() {
+  const G = "Claude through the sorter";
+  if (!OPT.ai) { row(G, "engraveIntent job", "skip", "not run. Turn on the Claude call to send one tiny engraving question through startAgent → charmEngrave-background → getAgent."); return; }
+  const { r, e, ms } = await timed(async () => {
+    const st = await api("charmNestLibrary", { op: "startAgent", mode: "engraveIntent", payload: { order: "check", sku: "BR-CHK-01", title: "Check charm", quantity: 1, engravable: true, personalization: ["ANNA"], buyerMessage: "", staffNote: "", messages: [] } });
+    for (let i = 0; i < 40; i++) { await new Promise(r => setTimeout(r, 1500)); const j = await api("charmNestLibrary", { op: "getAgent", id: st.id }); if (j.job && j.job.status === "done") return j.job.result; if (j.job && j.job.status === "error") throw new Error(j.job.error || "job error"); }
+    throw new Error("no answer in 60 s");
+  });
+  row(G, "engraveIntent job", e ? "fail" : (r && r.engrave && /ANNA/.test(r.text || "") ? "ok" : "warn"), e ? err(e) : `engrave ${r.engrave} · "${r.text}" · ${Math.round((r.confidence || 0) * 100)}%`, "", ms);
+}
+
+async function run() {
+  rows.length = 0; for (const s of groups.values()) s.remove(); groups.clear(); render();
+  document.getElementById("cfg").textContent = `options: ${Object.entries(OPT).filter(([, v]) => v).map(([k]) => k).join(", ") || "read-only"}`;
+  for (const [k, id] of [["write", "bWrite"], ["etsy", "bEtsy"], ["ai", "bAi"]]) document.getElementById(id).classList.toggle("on", OPT[k]);
+  await checkBrowser();
+  const cloud = await checkCloud();
+  if (cloud) await checkServer(); else row("Server", "charmNestCheck", "skip", "not run — the library ping failed, fix the passcode first");
+  await checkStation();
+  if (cloud) await checkClaude();
+  render(); document.getElementById("report").textContent = report();
+  window.__checkDone = true;
+}
+for (const [k, id] of [["write", "bWrite"], ["etsy", "bEtsy"], ["ai", "bAi"]]) document.getElementById(id).onclick = () => { const q = new URLSearchParams(location.search); if (OPT[k]) q.delete(k); else q.set(k, "1"); location.search = q.toString(); };
+document.getElementById("bRun").onclick = () => location.reload();
+document.getElementById("bCopy").onclick = async () => { const pre = document.getElementById("report"); pre.textContent = report(); pre.style.display = "block"; try { await navigator.clipboard.writeText(pre.textContent); document.getElementById("bCopy").textContent = "Copied"; } catch (_) { document.getElementById("bCopy").textContent = "Select and copy the text below"; } };
+window.CheckPage = { rows, report, run };
+run().catch(e => { row("This page", "run", "fail", err(e)); render(); window.__checkDone = true; });
+</script>
+</body>
+</html>
