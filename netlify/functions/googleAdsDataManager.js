@@ -16,6 +16,7 @@ let grantedScopes = null;
 const MIGRATION_ERROR = /Data Manager API|CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE/i;
 // Google's generic refusal, recorded before its error detail was kept.
 const UNDIAGNOSED_ERROR = /^\s*There was a problem with the request\.?\s*$/i;
+const PAYLOAD_REVISION = Date.parse('2026-09-17T00:00:00Z');
 const CHECK_DELAY = 30 * 60 * 1000;
 
 function destination(action, login) {
@@ -129,8 +130,14 @@ function errorDetail(data, status) {
   // bad. It becomes uploadable the moment access is granted, with no flag and
   // no one remembering, and it is safe to re-send because it never reached
   // Google: a definite rejection carries no receipt.
+  // Rejected by a condition that has since changed: the account was not
+  // allowlisted, the reason recorded was too vague to act on, or the payload
+  // that was refused is not the payload this version sends. None of these mean
+  // the sale is bad, and re-sending is safe because a definite rejection
+  // carries no receipt.
+  const supersededPayload = row => Number(row.dmFailedAt || 0) > 0 && Number(row.dmFailedAt) < PAYLOAD_REVISION;
   const accountLevelRejection = row => row.dmState === 'failed' && row.dmDefiniteRejection === true
-    && !row.dmRequestId && (MIGRATION_ERROR.test(row.uploadError || '') || UNDIAGNOSED_ERROR.test(row.uploadError || ''));
+    && !row.dmRequestId && (MIGRATION_ERROR.test(row.uploadError || '') || UNDIAGNOSED_ERROR.test(row.uploadError || '') || supersededPayload(row));
   const retryable = row => row.dmState === 'failed' && row.dmDefiniteRejection === true && !row.dmRequestId;
   async function run({ ctrl = {}, limit = 50, retryRejected = false } = {}) {
     await loadConnection();

@@ -187,6 +187,7 @@ async function test(name, fn) { try { await fn(); passed++; } catch (error) { co
   // The rows this was written for were rejected before the error detail was
   // kept, so their reason is Google's bare generic sentence. If that does not
   // qualify, the drain passes over exactly the backlog it exists to clear.
+  const MIGRATION_PATTERN = eval((src.match(/const MIGRATION_ERROR = (\/[^\n]*\/i);/) || [])[1]);
   ok(/UNDIAGNOSED_ERROR/.test(src), 'a refusal recorded with no diagnostic detail is re-examined rather than parked forever');
   const undiagnosed = (src.match(/const UNDIAGNOSED_ERROR = (\/[^\n]*\/i);/) || [])[1];
   ok(undiagnosed, 'the undiagnosed pattern is stated in one place');
@@ -195,6 +196,24 @@ async function test(name, fn) { try { await fn(); passed++; } catch (error) { co
   ok(!pattern.test('notAllowlistedError:CUSTOMER_NOT_ALLOWLISTED — There was a problem with the request.'),
     'a refusal that DOES name its cause is judged on that cause, not re-sent as undiagnosed');
   ok(!pattern.test('INVALID_ARGUMENT · events[0].userData: missing'), 'a specific rejection stays parked');
+
+
+  // Those same fifteen sales were then refused a second time, with a reason
+  // that IS specific: event_source was missing. The application has since
+  // corrected that payload, so the recorded reason describes a request this
+  // version no longer sends. Judged on the reason alone they stay parked
+  // forever, having never been wrong in a way anyone could act on.
+  const STALE = 'INVALID_ARGUMENT \u00b7 events.events[0].event_source: Required field is missing.';
+  ok(!MIGRATION_PATTERN.test(STALE) && !pattern.test(STALE),
+    'the reason those sales now carry qualifies under neither earlier clause, so without a third they never retry');
+  ok(/const supersededPayload = row =>/.test(src) && /supersededPayload\(row\)/.test(src),
+    'a rejection of a payload this version no longer sends is re-examined');
+  const revision = (src.match(/const PAYLOAD_REVISION = Date\.parse\('([^']+)'\);/) || [])[1];
+  ok(revision && Number.isFinite(Date.parse(revision)), 'the revision is pinned to a real date, in one place');
+  const superseded = row => Number(row.dmFailedAt || 0) > 0 && Number(row.dmFailedAt) < Date.parse(revision);
+  ok(superseded({ dmFailedAt: Date.parse(revision) - 1 }), 'a sale refused before the payload was corrected gets one more attempt');
+  ok(!superseded({ dmFailedAt: Date.parse(revision) + 1 }), 'a sale refused by the corrected payload stays parked: that refusal is real');
+  ok(!superseded({}), 'a row with no recorded failure time is not swept up by the date');
 
   console.log(checks + ' Data Manager account-access checks passed.');
 })().catch(e => { console.error(e); process.exitCode = 1; });
