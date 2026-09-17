@@ -305,8 +305,17 @@ const Views = window.Views = (() => {
         <div class="card" style="gap:4px"><div class="section" style="margin:0 0 4px">Employee</div><div style="display:flex;gap:6px;align-items:center"><span id="dsEmployee" class="mono">${esc(employeeName() || "— not set —")}</span><button class="btn ghost xs" id="dsSetEmployee" type="button">Change</button></div><div class="help" style="font-size:11px;color:var(--ink45)">Recorded with every approval. Any employee may approve.</div></div>
         <div class="log"></div>
       </div>`;
+    { const wide = localStorage.getItem("cn.dsWide") === "1";
+      v.classList.toggle("dsWide", wide);
+      const btn = document.createElement("button"); btn.type = "button"; btn.className = "btn ghost xs dsWideBtn";
+      const paint = () => { const on = v.classList.contains("dsWide"); btn.textContent = on ? "‹ Show the panel" : "Hide the panel ›"; btn.title = on ? "Bring the controls back" : "Fold the controls away and fill the tab with the station"; };
+      btn.onclick = () => { const on = !v.classList.contains("dsWide"); v.classList.toggle("dsWide", on); localStorage.setItem("cn.dsWide", on ? "1" : "0"); paint(); Dock.schedule(); };
+      paint(); v.appendChild(btn); }
     const host = v.querySelector(".dsFrameHost");
-    v.querySelector("#dsOpenTab").href = DesignLink.frameUrl().replace(/\?bridge=1$/, "");
+    // the tab is a mirror of the station being driven, not a second station: same page, following the same pointer
+    v.querySelector("#dsOpenTab").href = DesignLink.frameUrl() + (DesignLink.frameUrl().includes("?") ? "&" : "?") + "mirror=1";
+    v.querySelector("#dsOpenTab").textContent = "Watch full screen in a tab";
+    v.querySelector("#dsOpenTab").title = "Opens the same station in a tab that follows this one, pointer and all";
     v.querySelector("#dsControl").onclick = async () => { if (DesignLink.inControl()) await DesignLink.release(); else { try { await DesignLink.ensure(); } catch (e) { toast("Could not open the session: " + e.message, "bad", 6000); } } DesignLink.renderConsole(); };
     v.querySelector("#dsConnectEtsy").onclick = () => DesignLink.connectEtsy().catch(e => toast(e.message, "bad", 6000));
     v.querySelector("#dsReload").onclick = () => { const f = document.getElementById("dsFrame"); if (f) f.src = DesignLink.frameUrl(); };
@@ -535,7 +544,18 @@ const Master = window.Master = (() => {
     return n >= 3 && n >= live.length * 0.2 ? n : 0;
   }
   async function indexFile(file) {
-    const bytes = file.bytes ? file.bytes : new Uint8Array(await file.arrayBuffer());
+    // whatever the caller had to hand — a File from the picker or a drop, bytes already read, or a plain buffer
+    const bytes = await (async () => {
+      // `data` is what this app hands over. A File also answers to `bytes`, but there it is a method the browser added
+      // (Blob.bytes()), not the contents — reading it as data is what made an upload fail with "subarray is not a function".
+      const own = file && (file.data != null ? file.data : (file.bytes != null && typeof file.bytes !== "function" ? file.bytes : null));
+      const raw = own != null ? own : (file && typeof file.arrayBuffer === "function" ? await file.arrayBuffer() : file);
+      if (raw instanceof Uint8Array) return raw;
+      if (raw instanceof ArrayBuffer) return new Uint8Array(raw);
+      if (ArrayBuffer.isView(raw)) return new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
+      throw new Error(`could not read ${file && file.name ? file.name : "the file"} — its contents arrived as ${Object.prototype.toString.call(raw)}`);
+    })();
+    if (!bytes.length) throw new Error(`${file && file.name ? file.name : "the file"} is empty, or its contents were already handed to something else`);
     const masterHash = await sha256(bytes);
     const job = { name: file.name, masterHash, state: "parsing", t0: performance.now(), log: [] }; B.master.jobs.set(masterHash, job); render();
     job.bar = window.CNProgress ? CNProgress.start(`Indexing ${file.name}`, { note: `${(bytes.length / 1048576).toFixed(1)} MB · reading` }) : null;
@@ -685,17 +705,15 @@ const Master = window.Master = (() => {
     const v = document.getElementById("masterView"); if (!v || v.classList.contains("hidden")) return;
     if (!v.dataset.built) {
       v.dataset.built = "1";
-      v.innerHTML = `<div class="masterHead"><button class="btn gold sm" id="mPick">＋ Index a master .ai</button><input type="file" id="mFile" accept=".ai,.pdf" class="hidden"><input type="search" id="mSearch" placeholder="Search SKUs" style="border:1px solid var(--line);border-radius:9px;padding:7px 10px"><button class="btn ghost sm" id="mReload">Reload index</button><label style="display:flex;gap:5px;align-items:center;font-size:11px" title="Off: a SKU the library already holds is left as it is, and only new charms are built. On: every charm on the sheet is rebuilt and rewritten."><input type="checkbox" id="mAllSkus"> re-index SKUs already held</label><span class="pill neutral" id="mCount"></span></div>
+      v.innerHTML = `<div class="masterHead"><input type="file" id="mFile" accept=".ai,.pdf" class="hidden"><input type="search" id="mSearch" placeholder="Search SKUs" style="border:1px solid var(--line);border-radius:9px;padding:7px 10px"><label style="display:flex;gap:5px;align-items:center;font-size:11px" title="Off: a SKU the library already holds is left as it is, and only new charms are built. On: every charm on the sheet is rebuilt and rewritten."><input type="checkbox" id="mAllSkus"> re-index SKUs already held</label><span class="pill neutral" id="mCount"></span></div>
         <div class="noteBox">Each charm in a master file has its SKU as text directly under it (within ${S.settings.labelGapMm} mm, centred under the outline). A SKU is one design whatever colour it is ordered in; the material comes from the order. Labels are never part of the charm. Unlabelled charms, orphan labels and duplicates are listed in red; a SKU present in two masters is blocked until fixed.</div>
         <div id="mJobs" style="display:grid;gap:10px"></div><div id="mFiles" style="display:grid;gap:10px"></div><div class="section">Indexed SKUs</div><div class="skuGrid" id="mGrid"></div>`;
-      v.querySelector("#mPick").onclick = () => v.querySelector("#mFile").click();
       { const cb = v.querySelector("#mAllSkus"); cb.checked = reindexAll; cb.onchange = () => { reindexAll = cb.checked; toast(reindexAll ? "every charm on the next sheet will be rebuilt" : "charms already in the library will be skipped", "ok"); }; }
       // the file goes where it is dropped: on this tab it is a master for the library
       ["dragenter", "dragover"].forEach(ev => v.addEventListener(ev, e => { if (!(e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files"))) return; e.preventDefault(); e.stopPropagation(); v.classList.add("dragOver"); e.dataTransfer.dropEffect = "copy"; }));
       ["dragleave", "drop"].forEach(ev => v.addEventListener(ev, () => v.classList.remove("dragOver")));
       v.addEventListener("drop", e => { if (!(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length)) return; e.preventDefault(); e.stopPropagation(); for (const f of e.dataTransfer.files) indexFile(f).catch(err => toast(err.message, "bad", 7000)); });
       v.querySelector("#mFile").onchange = e => { for (const f of e.target.files) indexFile(f).catch(err => toast(err.message, "bad", 7000)); e.target.value = ""; };
-      v.querySelector("#mReload").onclick = () => load(true).then(render);
       v.querySelector("#mSearch").oninput = render;
       load().then(render).catch(() => {});
     }
