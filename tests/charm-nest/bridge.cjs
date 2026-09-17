@@ -89,6 +89,22 @@ const receipts = [
   }
   await page.evaluate(() => { B.master.entries.delete('ZZ-SAME-01'); document.querySelector('#mSearch').value = ''; Master.render(); });
 
+  // a master dropped where sheets are nested is offered to the library, not queued as 4 charms to cut (§6.3)
+  await page.evaluate(() => CN.setMode('nest'));
+  await page.setInputFiles('#fileInput', masterPath);
+  await page.waitForFunction(() => S.sources.some(s => s.state === 'master' || s.state === 'error'), null, { timeout: 60000 });
+  const asSrc = await page.evaluate(() => { const s = S.sources[S.sources.length - 1]; return { state: s.state, lines: s.masterLines, queued: S.unassigned.length, buttons: [...document.querySelectorAll('[data-tolib],[data-nestanyway]')].map(b => b.textContent.trim()) }; });
+  console.log('dropped master', JSON.stringify(asSrc));
+  assert.strictEqual(asSrc.state, 'master', 'a master file is recognised where sheets are dropped');
+  assert(asSrc.queued === 0, 'nothing was queued for nesting');
+  assert(asSrc.buttons.length === 2, 'the card offers the library and nesting: ' + JSON.stringify(asSrc.buttons));
+  await page.evaluate(() => document.querySelector('[data-tolib]').click());
+  await page.waitForFunction(() => [...B.master.jobs.values()].some(j => ['done', 'error'].includes(j.state)), null, { timeout: 120000 });
+  const viaDrop = await page.evaluate(() => { const j = [...B.master.jobs.values()].pop(); return { state: j.state, error: j.error, written: j.written, sources: S.sources.length }; });
+  assert.strictEqual(viaDrop.state, 'done', 'indexing from the drop card: ' + viaDrop.error);
+  assert(viaDrop.sources === 0, 'the source card is gone once it went to the library');
+  await page.evaluate(() => CN.setMode('design'));
+
   // ── 2 · the link: hello, snapshot shape, dropped messages, refusal without a preview (§5, §15) ──
   await page.evaluate(() => CN.setMode('design'));
   await page.evaluate(() => DesignLink.ensure());

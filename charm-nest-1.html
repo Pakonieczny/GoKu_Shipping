@@ -887,6 +887,14 @@ async function parseSourceFile(src) {
     agentUpdate(evP, { live: false, text: `${src.name}: ${parsed.counts.paths} paths, ${parsed.counts.xobjects} form XObject(s), ${parsed.counts.text} text block(s) on a ${fmt.mm(parsed.pageW)} × ${fmt.mm(parsed.pageH)} page` });
     const g = CharmNestPDF.groupCharms(parsed, { minPt: +S.settings.minPt || 6 });
     src.group = g;
+    // A master library sheet has a SKU written under its charms. It is a catalogue, not a job: it goes to the library,
+    // and the queue is left alone until someone says otherwise.
+    const masterLines = window.Master && !src.forceNest ? Master.looksLikeMaster(parsed, g.charms) : 0;
+    if (masterLines) {
+      src.state = "master"; src.masterLines = masterLines; renderRail(); updateTopSub();
+      agent({ srcId: src.id }, "info", `${src.name}: ${masterLines} SKU label(s) under ${g.charms.length} charm(s) — this is a master library file, not a sheet to nest`);
+      return;
+    }
     // The work area is the plate the charms were laid out on. A file rarely draws it: read it from the nested block
     // of charms (the artboard is usually the whole canvas) and match it to the plates we cut.
     src.workArea = CharmNestPDF.detectWorkArea(parsed, g.charms, STOCK_PRESETS.filter(p => p.mm).map(p => ({ id: p.id, wMm: p.mm[0], hMm: p.mm[1] })));
@@ -1771,15 +1779,17 @@ function renderRailRow(src) { const el = $(`.srcRow[data-id="${src.id}"]`); if (
 function fillSrcRow(el, src) {
   const perMetal = METALS.map(m => ({ m, n: src.charms.filter(c => c.metal === m.key).length })).filter(x => x.n);
   const unN = src.charms.filter(c => !c.metal).length;
-  const state = src.state === "queued" ? "waiting to parse" : src.state === "parsing" ? "parsing paths…" : src.state === "silhouettes" ? `tracing silhouettes ${src.progress ? src.progress[0] + "/" + src.progress[1] : ""}` : src.state === "error" ? src.error : `${src.charms.length} charms · ${src.distinct} distinct${src.group && src.group.orphans.length ? ` · ${src.group.orphans.length} loose` : ""}`;
+  const state = src.state === "master" ? `a master library file · ${src.masterLines} SKU label(s)` : src.state === "queued" ? "waiting to parse" : src.state === "parsing" ? "parsing paths…" : src.state === "silhouettes" ? `tracing silhouettes ${src.progress ? src.progress[0] + "/" + src.progress[1] : ""}` : src.state === "error" ? src.error : `${src.charms.length} charms · ${src.distinct} distinct${src.group && src.group.orphans.length ? ` · ${src.group.orphans.length} loose` : ""}`;
   const cloud = src.cloud ? (src.cloud.error ? `<span style="color:#e8a992">backup failed</span>` : `backed up`) : (S.cloud.ok ? "backing up…" : "");
   const nm = src.naming && src.naming.state === "running" ? ` · naming ${fmt.s(src.naming.elapsed || 0)}` : "";
   const rv = src.review ? (src.review.state === "running" ? `<span class="spin"></span><span>Claude reviewing the grouping · ${fmt.s(src.review.elapsed || 0)}${nm}</span>` : src.review.skipped ? `<span>AI review skipped</span>` : `<span style="color:#9ed4ac">Claude ✓ ${src.review.merged.length ? src.review.merged.length + " merged" : "confirmed"}${src.review.multiple.length ? " · ⚠ " + src.review.multiple.length + " to split" : ""}</span>`) : "";
   el.innerHTML = `<div class="srcHead"><span class="srcName" title="${esc(src.folder ? src.folder + "/" : "")}${esc(src.name)}${src.zipName ? " · from " + esc(src.zipName) : ""}">${src.zipName ? "▸ " : ""}${esc(src.name)}</span><span class="srcN">${src.charms.length || ""}</span><button class="srcX" title="Remove">×</button></div>
     <div class="srcState">${["parsing", "silhouettes", "queued"].includes(src.state) ? '<span class="spin"></span>' : ""}<span>${esc(state)}</span>${cloud ? `<span>· ${cloud}</span>` : ""}</div>
     ${rv ? `<div class="srcState">${rv}</div>` : ""}
-    <div class="srcKids">${perMetal.map(x => `<span class="mchip" data-m="${x.m.key}"><i class="sw"></i>${x.m.label} ${x.n}</span>`).join("")}${unN ? `<span class="mchip" data-m="none">⚠ ${unN} unassigned</span>` : ""}${src.state === "ready" ? METALS.map(m => `<button class="mchip" data-m="${m.key}" data-assign="${m.key}" title="Send every charm in this file to ${m.label}" style="cursor:pointer"><i class="sw"></i>→</button>`).join("") : ""}</div>`;
+    <div class="srcKids">${perMetal.map(x => `<span class="mchip" data-m="${x.m.key}"><i class="sw"></i>${x.m.label} ${x.n}</span>`).join("")}${src.state === "master" ? `<button class="btn gold xs" data-tolib="1">Index into the charm library</button><button class="btn ghost xs" data-nestanyway="1">Nest these charms anyway</button>` : ""}${unN ? `<span class="mchip" data-m="none">⚠ ${unN} unassigned</span>` : ""}${src.state === "ready" ? METALS.map(m => `<button class="mchip" data-m="${m.key}" data-assign="${m.key}" title="Send every charm in this file to ${m.label}" style="cursor:pointer"><i class="sw"></i>→</button>`).join("") : ""}</div>`;
   $(".srcX", el).onclick = () => removeSource(src);
+  { const b = $("[data-tolib]", el); if (b) b.onclick = () => { const name = src.name, bytes = src.bytes; removeSource(src); CN.setMode("master"); Master.indexFile({ name, bytes }).catch(e => toast(e.message, "bad", 7000)); }; }
+  { const b = $("[data-nestanyway]", el); if (b) b.onclick = () => { src.forceNest = true; src.state = "queued"; renderRail(); pumpParse(); }; }
   $$("[data-assign]", el).forEach(b => b.onclick = () => assignSource(src, b.dataset.assign));
 }
 function updateTopSub() {

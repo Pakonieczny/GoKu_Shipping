@@ -509,8 +509,23 @@ const Master = window.Master = (() => {
     return cv.toDataURL("image/png");
   }
   /** Index a master file in the browser (design §6.3); the server route is used above `masterServerAbove` charms. */
+  /** How many charms in this file carry a SKU written under them — is it a master library sheet, not a sheet to nest?
+      Stray text elsewhere on a page does not count: the line has to sit under an outline, as a label does. */
+  function looksLikeMaster(parsed, charms) {
+    const pat = skuRegex(), gap = (+S.settings.labelGapMm || 6.4) * PT;
+    const runs = parsed.segments.concat(parsed.nested).filter(x => x.kind === "text"), lines = [];
+    for (const r of runs) { if (r.pieces && r.pieces.length > 1) lines.push(...r.pieces); else lines.push(r); }
+    const live = charms.filter(c => c.mergedInto == null); if (!live.length) return 0;
+    let n = 0;
+    for (const t of lines) {
+      if (!t.str || !t.bbox || !P.parseSkuLabel(t.str, pat)) continue;
+      const cx = (t.bbox[0] + t.bbox[2]) / 2, top = t.bbox[3];
+      for (const c of live) { const b = c.outline.bbox, w = b[2] - b[0], d = b[1] - top; if (d < -1 || d > gap) continue; if (cx < b[0] - w * 0.25 || cx > b[2] + w * 0.25) continue; n++; break; }
+    }
+    return n >= 3 && n >= live.length * 0.2 ? n : 0;
+  }
   async function indexFile(file) {
-    const bytes = new Uint8Array(await file.arrayBuffer());
+    const bytes = file.bytes ? file.bytes : new Uint8Array(await file.arrayBuffer());
     const masterHash = await sha256(bytes);
     const job = { name: file.name, masterHash, state: "parsing", t0: performance.now(), log: [] }; B.master.jobs.set(masterHash, job); render();
     const say = (kind, text) => { job.log.push(text); agent({ master: masterHash }, kind, `${file.name}: ${text}`); render(); };
@@ -545,7 +560,8 @@ const Master = window.Master = (() => {
       const src = { id: "master:" + masterHash.slice(0, 8), name: file.name, bytes, parsed, group: g, charms: g.charms, metal: null, state: "ready", master: true };
       src.charms.forEach((c, i) => Object.assign(c, { id: src.id + ":" + i, sourceId: src.id, sourceName: file.name, index: c.index, name: c.sku || null, excluded: false, cloud: null }));
       job.state = "silhouettes";
-      await P.buildSilhouettes(parsed, g.charms, +S.settings.silhouetteRes || 6, (d, t) => { job.progress = `silhouettes ${d}/${t}`; if (d % 10 === 0) render(); });
+      // only the charms that carry a SKU are indexed, so only they are traced: on the real master that is 1,038 of 3,408
+      await P.buildSilhouettes(parsed, g.charms.filter(c => c.mergedInto == null && c.sku), +S.settings.silhouetteRes || 6, (d, t) => { job.progress = `silhouettes ${d}/${t}`; if (d % 10 === 0) render(); });
       const liveCount = g.charms.filter(c => c.mergedInto == null).length;
       if (S.settings.review !== "off" && S.cloud.ok && liveCount <= 300) { try { job.state = "review"; render(); await reviewGrouping(src); } catch (e) { say("warn", `Claude grouping review skipped: ${e.message}`); } }
       else if (S.settings.review !== "off" && S.cloud.ok) say("MASTER", `grouping review skipped: ${liveCount} charms is more than one review can hold (300) — the geometry stands, the report lists what to check`);
@@ -626,6 +642,10 @@ const Master = window.Master = (() => {
         <div class="noteBox">Each charm in a master file has its SKU as text directly under it (within ${S.settings.labelGapMm} mm, centred under the outline). A SKU is one design whatever colour it is ordered in; the material comes from the order. Labels are never part of the charm. Unlabelled charms, orphan labels and duplicates are listed in red; a SKU present in two masters is blocked until fixed.</div>
         <div id="mJobs" style="display:grid;gap:10px"></div><div id="mFiles" style="display:grid;gap:10px"></div><div class="section">Indexed SKUs</div><div class="skuGrid" id="mGrid"></div>`;
       v.querySelector("#mPick").onclick = () => v.querySelector("#mFile").click();
+      // the file goes where it is dropped: on this tab it is a master for the library
+      ["dragenter", "dragover"].forEach(ev => v.addEventListener(ev, e => { if (!(e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files"))) return; e.preventDefault(); e.stopPropagation(); v.classList.add("dragOver"); e.dataTransfer.dropEffect = "copy"; }));
+      ["dragleave", "drop"].forEach(ev => v.addEventListener(ev, () => v.classList.remove("dragOver")));
+      v.addEventListener("drop", e => { if (!(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length)) return; e.preventDefault(); e.stopPropagation(); for (const f of e.dataTransfer.files) indexFile(f).catch(err => toast(err.message, "bad", 7000)); });
       v.querySelector("#mFile").onchange = e => { for (const f of e.target.files) indexFile(f).catch(err => toast(err.message, "bad", 7000)); e.target.value = ""; };
       v.querySelector("#mReload").onclick = () => load(true).then(render);
       v.querySelector("#mSearch").oninput = render;
@@ -690,7 +710,7 @@ const Master = window.Master = (() => {
     each("up", (inp, skus) => inp.onchange = () => { const v2 = inp.value.trim(); if (v2 === "") return; patchMany(skus, { upAngle: +v2 }).then(() => toast(`${skus.join(", ")}: up = ${+v2}° (operator)`, "ok")); });
     each("unblock", (b, skus) => b.onclick = () => patchMany(skus, { blocked: null }).then(() => toast(`${skus.join(", ")} unblocked`, "ok")));
   }
-  return { entryFor, thumbOf, fetchEntry, load, indexFile, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder };
+  return { entryFor, thumbOf, fetchEntry, load, indexFile, looksLikeMaster, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder };
 })();
 
 /* ═══ 20 · Pool — one charm per order line and copy ══════════════════════ */
