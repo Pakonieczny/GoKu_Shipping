@@ -505,7 +505,16 @@ const Master = window.Master = (() => {
         const up = await uploadBytes(`charmnest/master/files/${masterHash.slice(0, 12)}-${file.name.replace(/[^\w.\-]+/g, "_")}`, bytes, "application/pdf", "Uploading master");
         const r = await api("charmNestLibrary", { op: "startMaster", path: up.path, name: file.name, opts: { skuPattern: S.settings.skuPattern, labelGapMm: S.settings.labelGapMm, minPt: S.settings.minPt, engraveMarginMm: S.settings.engraveMarginMm, replaces: B.master.files.filter(f => f.name === file.name && f.masterHash !== masterHash).map(f => f.masterHash) } });
         job.state = "server"; job.jobId = r.id;
-        for (;;) { await sleep(3000); const j = await api("charmNestLibrary", { op: "getJob", id: r.id }); const d = j.job; if (!d) throw new Error("server job vanished"); job.progress = d.done && d.total ? `${d.stage} ${d.done}/${d.total}` : d.stage; render(); if (d.status === "done") { job.result = d.result; break; } if (d.status === "error") throw new Error(d.error || "server indexing failed"); }
+        const t0 = Date.now(); let lastChange = Date.now(), lastSig = "";
+        for (;;) { await sleep(3000); const j = await api("charmNestLibrary", { op: "getJob", id: r.id }); const d = j.job; if (!d) throw new Error("server job vanished");
+          const sig = `${d.status}|${d.stage}|${d.done}`; if (sig !== lastSig) { lastSig = sig; lastChange = Date.now(); }
+          const silent = Math.round((Date.now() - lastChange) / 60000);
+          job.progress = `${d.done && d.total ? `${d.stage} ${d.done}/${d.total}` : d.stage} · ${Math.round((Date.now() - t0) / 60000)} min${silent >= 2 ? ` · no progress for ${silent} min` : ""}`; render();
+          if (d.status === "done") { job.result = d.result; break; }
+          if (d.status === "error") throw new Error(d.error || "server indexing failed");
+          // a background function that stops reporting has run out of memory or time (about 1 GB and 15 min): say so instead of spinning
+          if (Date.now() - lastChange > 6 * 60000) throw new Error(`the server stopped reporting at "${d.stage}" ${silent} min ago — the file is too large for the server route (about 1 GB of memory, 15 min). Index it with the local indexer: node scripts/index-master.cjs "<file>" --origin ${location.origin}`);
+          if (Date.now() - t0 > 16 * 60000) throw new Error("the server route ran past its 15-minute limit — index the file with the local indexer: node scripts/index-master.cjs"); }
         await load(true);
         job.state = "done"; say("ok", `server indexed ${job.result.labelled} SKU(s), ${job.result.unlabelled.length} unlabelled, ${job.result.orphans.length} orphan label(s), ${job.result.blocked.length} blocked`);
         render(); return job;

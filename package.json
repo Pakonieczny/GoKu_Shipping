@@ -11,7 +11,8 @@
     "test:charm-nest:e2e": "node tests/charm-nest/e2e.cjs",
     "test:charm-nest:bridge": "node tests/charm-nest/bridge-units.cjs && node tests/charm-nest/bridge.cjs",
     "test:charm-nest:check": "node tests/charm-nest/check.cjs",
-    "test:charm-nest:sandbox": "node tests/charm-nest/sandbox.cjs"
+    "test:charm-nest:sandbox": "node tests/charm-nest/sandbox.cjs",
+    "test:charm-nest:index-master": "node tests/charm-nest/index-master.cjs"
   },
   "dependencies": {
     "ajv": "8.17.1",
