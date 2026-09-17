@@ -150,6 +150,19 @@ async function autofeed(request, account) {
   return { enabled: data.enableProducts === true, detail: data.enableProducts === true ? 'Google is crawling the store directly as a feed source.' : 'Automatic crawling is off; products come from the configured feeds only.' };
 }
 
+
+// The Merchant account is named by any linked shopping campaign, so an
+// environment variable pinning it is optional. More than one linked account is
+// not something to guess between.
+// runQuery(gaql) resolves to the rows Google returned.
+async function discoverMerchantId(runQuery) {
+  const rows = await runQuery("SELECT campaign.shopping_setting.merchant_id FROM campaign WHERE campaign.status != 'REMOVED' LIMIT 200");
+  const ids = [...new Set((rows || []).map(r => String((((r.campaign || {}).shoppingSetting || {}).merchantId) || '')).filter(Boolean))];
+  if (ids.length === 1) return { id: ids[0], ids, reason: 'discovered from a linked shopping campaign' };
+  if (ids.length > 1) return { id: null, ids, reason: 'campaigns link ' + ids.length + ' Merchant accounts (' + ids.join(', ') + '); set GMC_MERCHANT_ID to choose one' };
+  return { id: null, ids, reason: 'no shopping campaign names a Merchant account' };
+}
+
 async function merchantHealth(input) {
   const { request, merchantId, adsCustomerId, offerLimit } = input || {};
   if (typeof request !== 'function') throw new Error('A Merchant API request function is required.');
@@ -186,4 +199,4 @@ async function merchantHealth(input) {
   };
 }
 
-module.exports = { merchantHealth, accountIssues, productIssues, adsLink, conversionSources, servingSettings, dataSources, promotions, autofeed };
+module.exports = { merchantHealth, discoverMerchantId, accountIssues, productIssues, adsLink, conversionSources, servingSettings, dataSources, promotions, autofeed };

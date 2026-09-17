@@ -56,9 +56,9 @@ function adsHeaders(token, customerId) {
   return h;
 }
 
-async function adsPost(token, path, body, version) {
+async function adsPost(token, path, body, version, timeout) {
   const res = await fetch("https://googleads.googleapis.com/" + (version || V) + "/" + path, {
-    method: "POST", timeout: TIMEOUT, headers: adsHeaders(token), body: JSON.stringify(body)
+    method: "POST", timeout: timeout || TIMEOUT, headers: adsHeaders(token), body: JSON.stringify(body)
   });
   const data = await res.json().catch(() => ({}));
   return { res, data };
@@ -166,8 +166,12 @@ async function adsResourceSection(token) {
   const rows = await inBatches(C.ADS_RESOURCES, 10, async probe => {
     if (probe.needsCampaign && !campaignId) return C.skip(probe.resource, "this resource requires a single campaign and none was readable", { used: probe.used, family: probe.family, why: probe.why });
     const query = probe.needsCampaign ? probe.query.replace("${CAMPAIGN_ID}", campaignId) : probe.query;
+    const send = timeout => adsPost(token, "customers/" + CID + "/googleAds:search", { query }, null, timeout);
     try {
-      const { res, data } = await adsPost(token, "customers/" + CID + "/googleAds:search", { query });
+      let attempt;
+      try { attempt = await send(TIMEOUT); }
+      catch (slow) { if (!/timeout|ETIMEDOUT|ESOCKETTIMEDOUT/i.test(String(slow.message || slow))) throw slow; attempt = await send(TIMEOUT * 2.5); }
+      const { res, data } = attempt;
       if (res.ok) {
         const n = (data.results || []).length;
         return C.ok(probe.resource, (probe.used ? "" : "available, not yet used · ") + n + " row(s) returned", { used: probe.used, family: probe.family, why: probe.why, rows: n });

@@ -10,11 +10,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const fetch = require('node-fetch');
-const { merchantHealth } = require('./_merchantHealth');
+const { merchantHealth, discoverMerchantId } = require('./_merchantHealth');
 const ENV = process.env;
 const TIMEOUT = 20000;
 const MERCHANT = String(ENV.GMC_MERCHANT_ID || ENV.MERCHANT_CENTER_ID || '').replace(/\D/g, '');
 const ADS_CID = (ENV.GADS_CUSTOMER_ID || '').replace(/\D/g, '');
+const LOGIN = (ENV.GADS_LOGIN_CUSTOMER_ID || '').replace(/\D/g, '');
+const V = ENV.GADS_API_VERSION || 'v24';
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 async function merchantToken() {
@@ -30,6 +32,24 @@ async function merchantToken() {
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.access_token) throw new Error('Merchant OAuth: ' + (data.error_description || data.error || res.status));
   return data.access_token;
+}
+
+
+async function adsQuery(query) {
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST', timeout: TIMEOUT, headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: ENV.GADS_CLIENT_ID || '', client_secret: ENV.GADS_CLIENT_SECRET || '', refresh_token: ENV.GADS_REFRESH_TOKEN || '', grant_type: 'refresh_token' })
+  });
+  const token = await res.json().catch(() => ({}));
+  if (!res.ok || !token.access_token) throw new Error('Google Ads OAuth: ' + (token.error_description || token.error || res.status));
+  const headers = { Authorization: 'Bearer ' + token.access_token, 'developer-token': ENV.GADS_DEVELOPER_TOKEN, 'Content-Type': 'application/json' };
+  if (LOGIN) headers['login-customer-id'] = LOGIN;
+  const search = await fetch('https://googleads.googleapis.com/' + V + '/customers/' + ADS_CID + '/googleAds:search', {
+    method: 'POST', timeout: TIMEOUT, headers, body: JSON.stringify({ query })
+  });
+  const data = await search.json().catch(() => ({}));
+  if (!search.ok) throw new Error('Google Ads: HTTP ' + search.status);
+  return data.results || [];
 }
 
 function requestWith(token) {
@@ -76,8 +96,14 @@ exports.handler = async (event) => {
   }
   let result;
   try {
-    if (!MERCHANT) throw new Error('Set GMC_MERCHANT_ID to the numeric Merchant Center account ID.');
-    result = await merchantHealth({ request: requestWith(await merchantToken()), merchantId: MERCHANT, adsCustomerId: ADS_CID, offerLimit: params.offers });
+    let account = MERCHANT;
+    if (!account) {
+      const found = await discoverMerchantId(adsQuery);
+      if (!found.id) throw new Error('No Merchant Center account could be resolved: ' + found.reason + '. Set GMC_MERCHANT_ID to name it explicitly.');
+      account = found.id;
+    }
+    result = await merchantHealth({ request: requestWith(await merchantToken()), merchantId: account, adsCustomerId: ADS_CID, offerLimit: params.offers });
+    result.merchantIdSource = MERCHANT ? 'GMC_MERCHANT_ID' : 'discovered from a linked shopping campaign';
   } catch (e) {
     return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ok: false, error: String(e.message || e) }, null, 2) };
   }
