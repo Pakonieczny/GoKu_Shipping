@@ -15,6 +15,11 @@
 // without network access and the caller owns credentials.
 
 const SNIPPET = 'brites-gclid-capture';
+// The snippet is maintained in the Shopify theme rather than in this
+// repository, so the version it should be at is recorded here. Raise this when
+// a new snippet is issued, and an older installed copy becomes visible instead
+// of passing as present.
+const EXPECTED_SNIPPET_VERSION = '2';
 const RENDER_TAG = /\{%-?\s*render\s+'brites-gclid-capture'\s*-?%\}/;
 const REQUIRED_TOPICS = [
   { topic: 'orders/paid', why: 'Every sale. Without it no conversion is ever uploaded to Google Ads.' },
@@ -93,7 +98,8 @@ async function snippet(request, expectedVersion) {
 }
 
 async function shopifyAttribution(input) {
-  const { request, expectedHost, expectedVersion } = input || {};
+  const { request, expectedHost } = input || {};
+  const expectedVersion = (input || {}).expectedVersion || EXPECTED_SNIPPET_VERSION;
   input = input || {};
   if (typeof request !== 'function') throw new Error('A Shopify Admin API request function is required.');
   const out = {};
@@ -127,4 +133,4 @@ async function shopifyAttribution(input) {
   };
 }
 
-module.exports = { shopifyAttribution, webhooks, snippet, REQUIRED_TOPICS, SNIPPET, RENDER_TAG };
+module.exports = { shopifyAttribution, webhooks, snippet, REQUIRED_TOPICS, SNIPPET, RENDER_TAG, EXPECTED_SNIPPET_VERSION };

@@ -171,3 +171,51 @@ These cannot be done from code. In the Cloud project that owns the OAuth client:
 | Data Manager API | its own sealed record |
 
 The connections check names each missing piece, so the report is the checklist.
+
+## Shopify attribution — the half that lives outside Google
+
+Two things decide whether a paid sale is ever credited to the click that earned
+it, and both live outside this repository:
+
+```
+https://goldenspike.app/.netlify/functions/shopifyAttributionCheck
+```
+
+**The click-id snippet.** `snippets/brites-gclid-capture.liquid` is maintained
+in the Shopify theme, at the store owner's request, not here. The version this
+application expects is `EXPECTED_SNIPPET_VERSION` in
+`netlify/functions/_shopifyAttribution.js`; raise it whenever a new snippet is
+issued, so an older installed copy is reported rather than passing as present.
+The snippet must be present in the **published** theme AND rendered by
+`layout/theme.liquid` with `{% render 'brites-gclid-capture' %}`. Present but
+unrendered attributes nothing.
+
+Reading the theme requires the `read_themes` scope on the custom app. Without
+it the check reports that section as unavailable — an open question, never a
+pass.
+
+### What v2 of the snippet fixed
+
+Each of these lost click ids silently. They are recorded here because the file
+is no longer in this repository to carry its own history.
+
+| Defect | Consequence |
+|---|---|
+| `fetch()` resolves on 4xx, and the response status was never checked, so a refused `/cart/update.js` was recorded as a success | the click id was retired for the rest of the session |
+| the once-per-session flag was a boolean rather than the id that was synced | a second ad click never reached the cart, and the sale was credited to the first click's campaign |
+| that flag never cleared | an id that failed to apply was never retried |
+
+v2 checks `response.ok`, remembers *which* id was synced, and carries a
+`brites-gclid-capture/2` marker so the installed version is visible.
+
+**The webhooks.** `orders/paid` and `refunds/create` are registered manually.
+Without the first nothing uploads; without the second refunds never retract and
+reported ROAS stays inflated. Shopify's `webhooks.json` lists only the webhooks
+the querying app owns, so one registered by another app or in the admin is
+invisible here — an empty list is not evidence that orders are not arriving.
+Orders reaching the conversion queue are stronger evidence and outrank it.
+
+**The queue.** The check also reports sales the store recorded that Google
+refused. Those never appear in campaign metrics, ROAS or the daily charts. A
+refusal records Google's `errorCode` first, because its accompanying message is
+usually the generic "There was a problem with the request."

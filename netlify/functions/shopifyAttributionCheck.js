@@ -11,22 +11,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const fetch = require('node-fetch');
-const fs = require('fs');
-const path = require('path');
 const { shopifyAttribution } = require('./_shopifyAttribution');
 const ENV = process.env;
 const TIMEOUT = 20000;
 const STORE = ENV.SHOPIFY_STORE || '';
 const API = ENV.SHOPIFY_API_VERSION || '2025-10';
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-
-// The version this repository ships, so an older installed copy is visible.
-function shippedVersion() {
-  try {
-    const file = path.join(__dirname, '../../shopify/snippets/brites-gclid-capture.liquid');
-    return (fs.readFileSync(file, 'utf8').match(/brites-gclid-capture\/(\d+)/) || [])[1] || null;
-  } catch (e) { return null; }
-}
 
 async function shopifyToken() {
   if (!STORE) throw new Error('SHOPIFY_STORE is not set.');
@@ -72,7 +62,6 @@ async function run() {
   const result = await shopifyAttribution({
     request: requestWith(token),
     expectedHost: 'goldenspike.app',
-    expectedVersion: shippedVersion(),
     ordersArriving: !!queue && !queue.error && (queue.pending > 0 || queue.failed > 0)
   });
   result.sections.queue = queue && !queue.error
