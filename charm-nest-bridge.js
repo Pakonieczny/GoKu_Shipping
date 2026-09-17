@@ -493,18 +493,23 @@ const Master = window.Master = (() => {
     const cand = parsed.segments.concat(parsed.nested).filter(s => s.bbox && !owned.has(s) && (s.kind === "path" || s.kind === "text" || s.kind === "image"));
     const out = [];
     for (let i = 0; i < charms.length; i++) {
-      const c = charms[i], box = stripBox(c, gapPt), top = c.outline.bbox[1] + 2;
-      for (const sg of cand) { const b = sg.bbox; if (b[2] < box[0] || b[0] > box[2] || b[3] < box[1] || b[1] > box[3] || b[3] >= top) continue; out.push(c); break; }
+      const c = charms[i], box = stripBox(c, gapPt), top = c.outline.bbox[1] + 2, segs = [];
+      let x0 = Infinity, x1 = -Infinity;
+      for (const sg of cand) { const b = sg.bbox; if (b[2] < box[0] || b[0] > box[2] || b[3] < box[1] || b[1] > box[3] || b[3] >= top) continue; segs.push(sg); x0 = Math.min(x0, b[0]); x1 = Math.max(x1, b[2]); }
+      // outlined text is many small shapes in a row, one or more per letter; one or two stray bits are a scrap of
+      // artwork, not a label, and sending them to be read wastes a call and asks a person to confirm nothing
+      const cw = c.outline.bbox[2] - c.outline.bbox[0];
+      if (segs.length >= 6 && x1 - x0 >= cw * 0.4) out.push({ charm: c, segs });
       if (onTick && i % 250 === 0) { onTick(i, charms.length, cand.length); await sleep(0); }
     }
     return out;
   }
-  function stripPng(parsed, c, gapPt) {
+  function stripPng(parsed, c, gapPt, only) {
     const b = c.outline.bbox, w = b[2] - b[0]; const x0 = b[0] - w * 0.3, x1 = b[2] + w * 0.3, y1 = b[1] + 2, y0 = b[1] - gapPt - 6;
     const k = Math.min(6, 900 / (x1 - x0)); const cv = document.createElement("canvas"); cv.width = Math.ceil((x1 - x0) * k); cv.height = Math.ceil((y1 - y0) * k);
     const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
     const tx = (x, y) => [(x - x0) * k, (y1 - y) * k];
-    const segs = parsed.segments.concat(parsed.nested).filter(s => s.bbox && s.kind !== "clip" && s.kind !== "noop" && !(s.kind === "xobj" && s.children && s.children.length) && !(s.bbox[2] < x0 || s.bbox[0] > x1 || s.bbox[3] < y0 || s.bbox[1] > y1));
+    const segs = only || parsed.segments.concat(parsed.nested).filter(s => s.bbox && s.kind !== "clip" && s.kind !== "noop" && !(s.kind === "xobj" && s.children && s.children.length) && !(s.bbox[2] < x0 || s.bbox[0] > x1 || s.bbox[3] < y0 || s.bbox[1] > y1));
     P.drawSegments(ctx, segs, tx, k);
     return cv.toDataURL("image/png");
   }
@@ -569,20 +574,23 @@ const Master = window.Master = (() => {
       // read. Only a strip with something drawn in it is sent: a charm with nothing under it is reported, not read.
       job.state = "vision"; job.progress = "looking under the unlabelled charms"; render(); await sleep(0);
       const unlAll = g.charms.filter(c => c.mergedInto == null && !c.sku);
-      let unl = await strayInkUnder(parsed, g, unlAll, (+S.settings.labelGapMm || 6.4) * PT, (d, t) => { job.progress = `looking under the unlabelled charms ${d}/${t}`; render(); });
+      let found = await strayInkUnder(parsed, g, unlAll, (+S.settings.labelGapMm || 6.4) * PT, (d, t) => { job.progress = `looking under the unlabelled charms ${d}/${t}`; render(); });
+      let unl = found.map(f => f.charm);
       job.vision = [];
       if (unlAll.length > unl.length) say("MASTER", `${unlAll.length - unl.length} unlabelled charm(s) have nothing under them — reported as unlabelled`);
       const VISION_MAX = 200;
-      if (unl.length > VISION_MAX) { say("MASTER", `${unl.length} charm(s) have something under them that was not read as text — more than one pass sends to Claude (${VISION_MAX}); they are reported as unlabelled instead`); unl = []; }
+      if (unl.length > VISION_MAX) { say("MASTER", `${unl.length} charm(s) have something under them that was not read as text — more than one pass sends to Claude (${VISION_MAX}); they are reported as unlabelled instead`); unl = []; found = []; }
       if (unl.length && S.cloud.ok) {
         say("MASTER", `asking Claude to read the strip under ${unl.length} unlabelled charm(s)`);
-        const strips = unl.map(c => ({ index: c.index, image: stripPng(parsed, c, (+S.settings.labelGapMm || 6.4) * PT) }));
+        const strips = found.map(f => ({ index: f.charm.index, image: stripPng(parsed, f.charm, (+S.settings.labelGapMm || 6.4) * PT, f.segs) }));
         for (let i = 0; i < strips.length; i += 40) {
           const r = await agentCall("labelRead", { sourceName: file.name, strips: strips.slice(i, i + 40) }, { label: "Claude is reading labels" });
           if (r.skipped) { say("warn", `label read skipped — ${r.skipped}`); break; }
-          for (const rd of r.reads || []) { const c = g.charms.find(x => x.index === rd.index); const st = strips.find(x => x.index === rd.index); if (c && st) job.vision.push({ index: rd.index, sku: rd.sku, size: rd.size, confidence: rd.confidence, image: st.image, charm: c, confirmed: false }); }
+          // a strip Claude could not read is not a label to confirm: it stays an unlabelled charm in the report
+          for (const rd of r.reads || []) { if (!rd.sku) continue; const c = g.charms.find(x => x.index === rd.index); const st = strips.find(x => x.index === rd.index); if (c && st) job.vision.push({ index: rd.index, sku: rd.sku, size: rd.size, confidence: rd.confidence, image: st.image, charm: c, confirmed: false }); }
         }
       }
+      if (unl.length && !job.vision.length) say("MASTER", `Claude could not read a SKU under any of the ${unl.length} charm(s) with marks beneath them — they stay unlabelled`);
       job.state = "writing"; job.parsed = parsed; job.charms = g.charms; job.lab = lab; job.src = src;
       await writeIndex(job);
       await load(true);                                                    // the index is reloaded before the job reads "done"
@@ -632,6 +640,18 @@ const Master = window.Master = (() => {
     job.state = "done"; await load(true); render();
   }
   /** The same patch on every SKU of one charm, with a single redraw. */
+  /** Everything the run found, as a file: the lists are too long to read on screen but belong somewhere. */
+  function saveReport(job) {
+    const l = job.lab || {};
+    const rep = { file: job.name, masterHash: job.masterHash, at: new Date().toISOString(),
+      charms: job.charms ? job.charms.length : null, labelled: l.labels ? l.labels.size : null, skuLines: l.skuCount || null, written: job.written || 0,
+      unlabelledCharmIndices: l.unlabelled || [], linesWithNoCharmAbove: (l.orphans || []).map(o => ({ sku: o.sku, size: o.size || null })),
+      skusUnderTwoCharms: l.duplicates || [], blocked: job.blocked || [], alsoInAnotherMaster: job.conflicts || [], readByClaude: (job.vision || []).map(v => ({ index: v.index, sku: v.sku, size: v.size, confidence: v.confidence, confirmed: v.confirmed })) };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(rep, null, 1)], { type: "application/json" }));
+    const a = document.createElement("a"); a.href = url; a.download = `${String(job.name || "master").replace(/\.[^.]+$/, "")}-index-report.json`; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 8000);
+    toast("report saved", "ok");
+  }
   async function patchMany(skus, p) { for (const s of skus) { await api("charmNestLibrary", { op: "masterPatch", sku: s, patch: p }); const e = entryFor(s); if (e) Object.assign(e, p); } render(); }
   async function patch(sku, p) { await api("charmNestLibrary", { op: "masterPatch", sku, patch: p }); const e = entryFor(sku); if (e) Object.assign(e, p); render(); }
   function render() {
@@ -655,7 +675,22 @@ const Master = window.Master = (() => {
     for (const job of B.master.jobs.values()) {
       const card = el("div", "masterFile");
       card.innerHTML = `<div class="fh"><b>${esc(job.name)}</b><span class="hash">${job.masterHash.slice(0, 12)}</span><span class="pill ${job.state === "done" ? "ok" : job.state === "error" ? "bad" : "warn"}">${job.state === "done" ? "indexed" : job.state === "error" ? "failed" : `<span class="spin"></span>${job.state}${job.progress ? " · " + job.progress : ""}`}</span>${job.written != null ? `<span>${job.written} SKU(s) written</span>` : ""}${job.error ? `<span style="color:#8a3a26">${esc(job.error)}</span>` : ""}</div>`;
-      if (job.lab) { const l = job.lab; const left = []; if (l.unlabelled.length) left.push(`<b>${l.unlabelled.length} unlabelled charm(s)</b>: #${l.unlabelled.join(", #")}`); if (l.orphans.length) left.push(`<b>${l.orphans.length} label(s) with no charm above</b>: ${l.orphans.map(o => esc(o.sku)).join(", ")}`); if (l.duplicates.length) left.push(`<b>${l.duplicates.length} charm(s) with two labels</b>: ${l.duplicates.map(d => `#${d.charmIndex} (${esc(d.sku)} and ${esc(d.also)})`).join(", ")}`); if (job.blocked && job.blocked.length) left.push(`<b>${job.blocked.length} blocked</b>: ${job.blocked.map(b => `${esc(b.sku)} — ${esc(b.reason)}`).join("; ")}`); if (job.conflicts && job.conflicts.length) left.push(`<b>duplicate across masters</b>: ${job.conflicts.map(b => esc(b.sku)).join(", ")}`); if (job.entries) { const oor = job.entries.filter(e => e.outOfRange); if (oor.length) left.push(`<b>outside the ${S.settings.sizeMinMm}–${S.settings.sizeMaxMm} mm range</b>: ${oor.map(e => esc(e.sku)).join(", ")}`); } if (left.length) card.appendChild(el("div", "leftovers", left.map(x => `<div>${x}</div>`).join(""))); }
+      if (job.lab) {
+        // the counts are the report; the lists behind them are for a file, not for a wall of red
+        const l = job.lab, left = [], MAX = 24;
+        const some = (arr, f) => arr.slice(0, MAX).map(f).join(", ") + (arr.length > MAX ? ` <i>… and ${arr.length - MAX} more</i>` : "");
+        if (l.unlabelled.length) left.push(`<b>${l.unlabelled.length} charm(s) with no SKU under them</b>: ${some(l.unlabelled, i2 => "#" + i2)}`);
+        if (l.orphans.length) left.push(`<b>${l.orphans.length} line(s) with no charm above</b>: ${some(l.orphans, o => esc(o.sku))}`);
+        if (l.duplicates.length) left.push(`<b>${l.duplicates.length} SKU(s) written under two charms</b>: ${some(l.duplicates, d => `${esc(d.sku)} (#${d.charmIndex})`)}`);
+        if (job.blocked && job.blocked.length) left.push(`<b>${job.blocked.length} blocked</b>: ${some(job.blocked, b => `${esc(b.sku)} — ${esc(b.reason)}`)}`);
+        if (job.conflicts && job.conflicts.length) left.push(`<b>${job.conflicts.length} in another master too</b>: ${some(job.conflicts, b => esc(b.sku))}`);
+        if (job.entries) { const oor = job.entries.filter(e => e.outOfRange); if (oor.length) left.push(`<b>${oor.length} outside the ${S.settings.sizeMinMm}–${S.settings.sizeMaxMm} mm range</b>: ${some(oor, e => esc(e.sku))}`); }
+        if (left.length) {
+          const box = el("div", "leftovers", left.map(x => `<div>${x}</div>`).join(""));
+          const save = el("button", "btn ghost xs", "Save the full report"); save.style.marginTop = "8px"; save.onclick = () => saveReport(job);
+          box.appendChild(save); card.appendChild(box);
+        }
+      }
       const pending = (job.vision || []).filter(x => !x.confirmed);
       if (pending.length) {
         const tray = el("div", "visionTray"); const head = el("div", "section", `Confirm ${pending.length} label(s) read by Claude from outlined text (reads under 95% are unchecked)`);
