@@ -138,7 +138,7 @@ async function main(argv, log = console.log) {
       aiUp = await upload(o.origin, o.passcode, `charmnest/master/${key}.ai`, Buffer.from(ai), "application/illustrator");
       const png = thumbnailPng(G, c, 168); if (png) thumb = await upload(o.origin, o.passcode, `charmnest/master/${key}.png`, Buffer.from(png), "image/png");
     }
-    const reasons = []; if (open) reasons.push("open outline"); if (!flipOk) reasons.push("flip check failed: " + flipWhy);
+    const reasons = []; if (open) reasons.push("open outline"); if (!flipOk) reasons.push(flipWhy);
     const entry = { sku: l.sku, size: l.size, charmHash, widthPt: sil.bboxOuter[2] - sil.bboxOuter[0], heightPt: sil.bboxOuter[3] - sil.bboxOuter[1], areaPt2: sil.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: aiUp.path, aiUrl: aiUp.url, thumbPath: thumb && thumb.path, thumbUrl: thumb && thumb.url, open, labelSource: "text", confidence: 1, blocked: reasons.length ? reasons.join("; ") : null };
     entries.push(entry); skus.push(l.sku); const blk = reasons.length ? { sku: l.sku, reason: reasons.join("; ") } : null; if (blk) blocked.push(blk);
     for (const x of l.extra || []) { entries.push(Object.assign({}, entry, { sku: x.sku, size: x.size })); skus.push(x.sku); if (blk) blocked.push({ sku: x.sku, reason: blk.reason }); }   // every further line under the charm: the same design under another SKU
