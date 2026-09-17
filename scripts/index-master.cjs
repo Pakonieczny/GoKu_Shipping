@@ -17,6 +17,8 @@
  *    --upload-master     also store the master file itself under charmnest/master/files/
  *    --replaces HASH     an earlier version of this master to supersede (repeatable)
  *    --resume            continue an interrupted run (progress is kept in <file>.index-progress.json)
+ *  The master library (index and per-SKU files) is one library, read by production and the sandbox alike; it holds
+ *  designs, not orders, so there is no sandbox copy of it.
  *
  *  Output: a report of labelled, unlabelled, orphan and duplicate labels, blocked SKUs, and a JSON next to the file.
  *  ═══════════════════════════════════════════════════════════════════════ */
@@ -90,7 +92,7 @@ async function main(argv, log = console.log) {
   const g = P.groupCharms(parsed, { minPt: o.minPt });
   const pattern = o.pattern ? new RegExp(o.pattern) : P.SKU_PATTERN_DEFAULT;
   const lab = P.labelCharms(parsed, g.charms, { pattern, gapPt: o.gapMm / MM, widen: 0.25 });
-  log(`${g.charms.length} charm outline(s) · ${lab.labels.size} labelled · ${lab.unlabelled.length} unlabelled · ${lab.orphans.length} orphan label(s) · ${lab.duplicates.length} duplicate(s)${lab.undecodable.length ? ` · ${lab.undecodable.length} text run(s) unreadable (outlined or CID font without ToUnicode)` : ""}`);
+  log(`${g.charms.length} charm outline(s) · ${lab.labels.size} labelled (${lab.skuCount} SKU line(s)) · ${lab.unlabelled.length} unlabelled · ${lab.orphans.length} orphan label(s) · ${lab.duplicates.length} duplicate(s)${lab.undecodable.length ? ` · ${lab.undecodable.length} text run(s) unreadable (outlined or CID font without ToUnicode)` : ""}`);
   if (lab.orphans.length) log(`  orphan labels (no charm within ${o.gapMm} mm above): ${lab.orphans.slice(0, 40).map(x => x.sku).join(", ")}${lab.orphans.length > 40 ? " …" : ""}`);
   if (lab.unlabelled.length) log(`  unlabelled charms (by index): ${lab.unlabelled.slice(0, 40).join(", ")}${lab.unlabelled.length > 40 ? " …" : ""}`);
   if (lab.duplicates.length) log(`  duplicates: ${lab.duplicates.slice(0, 40).map(d => `${d.sku}/${d.also}`).join(", ")}`);
@@ -103,7 +105,7 @@ async function main(argv, log = console.log) {
   let done = 0, skipped = 0; const total = items.length; const queue = items.slice();
   const one = async ({ index, l, c }) => {
     const key = l.size ? `${l.sku}__${l.size}` : l.sku;
-    if (progress.done[key]) { entries.push(progress.done[key].entry); if (progress.done[key].blocked) blocked.push(progress.done[key].blocked); skus.push(l.sku); skipped++; return; }
+    if (progress.done[key]) { const d = progress.done[key]; entries.push(d.entry); if (d.blocked) blocked.push(d.blocked); skus.push(l.sku); for (const x of l.extra || []) { entries.push(Object.assign({}, d.entry, { sku: x.sku, size: x.size })); skus.push(x.sku); if (d.blocked) blocked.push({ sku: x.sku, reason: d.blocked.reason }); } skipped++; return; }
     const sil = G.silhouetteBits(c, 6, {});
     const charmHash = P.fnv(P.signature(sil.bits, sil.w, sil.h) + "|" + Math.round((sil.bboxOuter[2] - sil.bboxOuter[0]) * 2) + "x" + Math.round((sil.bboxOuter[3] - sil.bboxOuter[1]) * 2) + "|" + c.members.length);
     const open = (() => { const polys = G.flatten(c.outline, 12); return !polys.length || polys.some(p => Math.hypot(p[0][0] - p[p.length - 1][0], p[0][1] - p[p.length - 1][1]) > 1.5 && !c.outline.closed); })();
@@ -116,10 +118,11 @@ async function main(argv, log = console.log) {
       aiUp = await upload(o.origin, o.passcode, `charmnest/master/${key}.ai`, Buffer.from(ai), "application/illustrator");
       const png = thumbnailPng(G, c, 168); if (png) thumb = await upload(o.origin, o.passcode, `charmnest/master/${key}.png`, Buffer.from(png), "image/png");
     }
-    const reasons = []; if (open) reasons.push("open outline"); if (!flipOk) reasons.push("flip check failed: " + flipWhy); if (lab.duplicates.some(d => d.charmIndex === index)) reasons.push("two labels under one charm");
+    const reasons = []; if (open) reasons.push("open outline"); if (!flipOk) reasons.push("flip check failed: " + flipWhy);
     const entry = { sku: l.sku, size: l.size, charmHash, widthPt: sil.bboxOuter[2] - sil.bboxOuter[0], heightPt: sil.bboxOuter[3] - sil.bboxOuter[1], areaPt2: sil.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: aiUp.path, aiUrl: aiUp.url, thumbPath: thumb && thumb.path, thumbUrl: thumb && thumb.url, open, labelSource: "text", confidence: 1, blocked: reasons.length ? reasons.join("; ") : null };
     entries.push(entry); skus.push(l.sku); const blk = reasons.length ? { sku: l.sku, reason: reasons.join("; ") } : null; if (blk) blocked.push(blk);
-    progress.done[key] = { entry, blocked: blk }; done++;
+    for (const x of l.extra || []) { entries.push(Object.assign({}, entry, { sku: x.sku, size: x.size })); skus.push(x.sku); if (blk) blocked.push({ sku: x.sku, reason: blk.reason }); }   // every further line under the charm: the same design under another SKU
+    progress.done[key] = { entry, blocked: blk, extra: l.extra || [] }; done++;
     if (done % 25 === 0) { saveProgress(); log(`  ${done + skipped}/${total} · ${((Date.now() - t0) / 1000).toFixed(0)} s`); }
   };
   await Promise.all(Array.from({ length: o.dry ? 8 : o.concurrency }, async () => { while (queue.length) { const it = queue.shift(); try { await one(it); } catch (e) { log(`  ! ${it.l.sku}: ${e.message}`); blocked.push({ sku: it.l.sku, reason: "not written: " + e.message }); } } }));
