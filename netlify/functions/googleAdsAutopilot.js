@@ -1094,7 +1094,7 @@ async function conversionHealth({ force } = {}) {
   out.validated = !!(out.healthy && out.lastUpload && out.lastUpload.ok && !out.lastUpload.validateOnly && out.lastUpload.count > 0 && !out.failedCount);
   if (ENV.GADS_CONVERSION_UPLOAD_API !== "legacy") {
     try {
-      out.dataManager = await dataManagerService().health();
+      out.dataManager = await dataManagerService().health({ probeScopes: true });
       out.healthy = out.healthy && out.dataManager.configured;
       out.validated = !!(out.healthy && out.dataManager.confirmed > 0 && !out.failedCount && !out.dataManager.unknown);
       if (!out.dataManager.configured) out.reasons.push("Google requires Data Manager authorization for conversion uploads. Connect its dedicated OAuth scope before syncing orders.");
