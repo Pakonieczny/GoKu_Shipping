@@ -69,6 +69,26 @@ const receipts = [
   const ix = st.list('Charm_Master_Index');
   assert(ix.length >= fx.charms.length && ix.every(e => e.aiPath && st.blobs.has(e.aiPath)), 'per-SKU .ai files uploaded: ' + ix.map(e => e.aiPath).join(','));
 
+  // the grid is one tile per charm, listing every SKU that charm is sold under, and any of them finds it (§6.3)
+  const gridOf = async q => page.evaluate((qq) => {
+    document.querySelector('#mSearch').value = qq; Master.render();
+    return { tiles: [...document.querySelectorAll('#mGrid .skuTile')].map(t => [...t.querySelectorAll('.sku, .meta div')].map(x => x.textContent.trim()).filter(Boolean)), count: document.querySelector('#mCount').textContent };
+  }, q);
+  const gAll = await gridOf('');
+  console.log('grid', JSON.stringify(gAll).slice(0, 300));
+  assert.strictEqual(gAll.tiles.length, fx.charms.length, 'one tile per charm');
+  // a second SKU on the same design file: one charm sold as two things
+  await page.evaluate(() => { const e = Master.entryFor('BR-TST-01'); B.master.entries.set('ZZ-SAME-01', Object.assign({}, e, { sku: 'ZZ-SAME-01' })); });
+  const gTwo = await gridOf('');
+  assert.strictEqual(gTwo.tiles.length, fx.charms.length, 'a second SKU on one design does not add a tile');
+  const both = gTwo.tiles.find(t => t.includes('BR-TST-01') && t.includes('ZZ-SAME-01'));
+  assert(both, 'both SKUs are listed on the one tile: ' + JSON.stringify(gTwo.tiles));
+  for (const q of ['ZZ-SAME-01', 'BR-TST-01']) {
+    const g = await gridOf(q);
+    assert(g.tiles.length === 1 && g.tiles[0].includes('BR-TST-01') && g.tiles[0].includes('ZZ-SAME-01'), `searching ${q} finds that one charm with both SKUs: ` + JSON.stringify(g.tiles));
+  }
+  await page.evaluate(() => { B.master.entries.delete('ZZ-SAME-01'); document.querySelector('#mSearch').value = ''; Master.render(); });
+
   // ── 2 · the link: hello, snapshot shape, dropped messages, refusal without a preview (§5, §15) ──
   await page.evaluate(() => CN.setMode('design'));
   await page.evaluate(() => DesignLink.ensure());

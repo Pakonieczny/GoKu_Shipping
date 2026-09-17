@@ -615,6 +615,8 @@ const Master = window.Master = (() => {
     for (const v of reads) await api("charmNestLibrary", { op: "masterPatch", sku: v.sku, patch: { labelSource: "vision", confirmedBy: employeeName() || "operator" } }).catch(() => {});
     job.state = "done"; await load(true); render();
   }
+  /** The same patch on every SKU of one charm, with a single redraw. */
+  async function patchMany(skus, p) { for (const s of skus) { await api("charmNestLibrary", { op: "masterPatch", sku: s, patch: p }); const e = entryFor(s); if (e) Object.assign(e, p); } render(); }
   async function patch(sku, p) { await api("charmNestLibrary", { op: "masterPatch", sku, patch: p }); const e = entryFor(sku); if (e) Object.assign(e, p); render(); }
   function render() {
     const v = document.getElementById("masterView"); if (!v || v.classList.contains("hidden")) return;
@@ -647,27 +649,48 @@ const Master = window.Master = (() => {
     const files = v.querySelector("#mFiles"); files.innerHTML = B.master.files.map(f => `<div class="masterFile"><div class="fh"><b>${esc(f.name || f.masterHash)}</b><span class="hash">${esc((f.masterHash || "").slice(0, 12))}</span><span>${f.labelled || 0} labelled of ${f.charms || 0}</span>${(f.unlabelled || []).length ? `<span style="color:#8a3a26">${f.unlabelled.length} unlabelled</span>` : ""}${(f.orphans || []).length ? `<span style="color:#8a3a26">${f.orphans.length} orphan label(s)</span>` : ""}${(f.blocked || []).length ? `<span style="color:#8a3a26">${f.blocked.length} blocked</span>` : ""}<span class="hash">${f.indexedAt ? new Date(f.indexedAt).toLocaleString() : ""} · ${esc(f.indexedBy || "")}</span><span class="spacer"></span><button class="btn ghost xs" data-rm="${esc(f.masterHash)}">Remove from index</button></div>${(f.blocked || []).length ? `<div class="leftovers">${f.blocked.map(b => `<div>${esc(b.sku)} — ${esc(b.reason)}</div>`).join("")}</div>` : ""}</div>`).join("");
     files.querySelectorAll("[data-rm]").forEach(b => b.onclick = async () => { if (!confirm("Remove every SKU indexed from this master file? Pool adds for them will fail until it is re-indexed.")) return; await api("charmNestLibrary", { op: "masterRemoveFile", masterHash: b.dataset.rm }); await load(true); render(); });
     const q = (v.querySelector("#mSearch").value || "").trim().toUpperCase();
-    // a SKU can read as part of a longer one ("FROG4" inside "HUGGIE HOOPS- FROG4"): the exact SKU comes first, then the
-    // ones that start with what was typed, then the rest — alphabetical within each
-    const rank = e => (e.sku === q ? 0 : e.sku.startsWith(q) ? 1 : 2);
-    const rows = [...B.master.entries.values()].filter(e => !q || e.sku.includes(q))
-      .sort((a, b) => (q ? rank(a) - rank(b) : 0) || a.sku.localeCompare(b.sku));
-    // SKUs sharing one design file are one charm drawn once: the tile names the others so a list of three is visible from any of them
-    const byFile = new Map();
-    for (const e of B.master.entries.values()) { const f = e.aiPath || (Object.values(e.sizes || {}).find(s => s && s.aiPath) || {}).aiPath; if (!f) continue; if (!byFile.has(f)) byFile.set(f, []); byFile.get(f).push(e.sku); }
-    const alsoOf = e => { const f = e.aiPath || (Object.values(e.sizes || {}).find(s => s && s.aiPath) || {}).aiPath; const l = (byFile.get(f) || []).filter(x => x !== e.sku); return l.length ? l : null; };
+    // One charm is one tile, whatever it is sold as. The same design carries several SKUs (the jewellery it goes into),
+    // and they share one file in the library; the tile lists every one of them and the search matches any of them.
+    const fileOf = e => e.aiPath || (Object.values(e.sizes || {}).find(s => s && s.aiPath) || {}).aiPath || "";
+    const groups = new Map();
+    for (const e of B.master.entries.values()) { const k = fileOf(e) || "sku:" + e.sku; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(e); }
+    const designs = [...groups.values()].map(list => { list.sort((a, b) => a.sku.localeCompare(b.sku)); return { list, head: list[0], skus: list.map(e => e.sku) }; });
+    // a SKU can read as part of a longer one ("FROG4" inside "HUGGIE HOOPS- FROG4"): an exact SKU first, then the ones
+    // that start with what was typed, then the rest — alphabetical within each
+    const rank = d => d.skus.some(s => s === q) ? 0 : d.skus.some(s => s.startsWith(q)) ? 1 : 2;
+    const rows = designs.filter(d => !q || d.skus.some(s => s.includes(q)))
+      .sort((a, b) => (q ? rank(a) - rank(b) : 0) || a.skus[0].localeCompare(b.skus[0]));
     const cap = showAll ? rows.length : 600;
     const shown = rows.slice(0, cap);
-    v.querySelector("#mCount").innerHTML = `${B.master.entries.size} SKU(s) indexed${q ? ` · ${rows.length} match “${esc(q)}”` : ""}` +
+    v.querySelector("#mCount").innerHTML = `${designs.length} charm(s) · ${B.master.entries.size} SKU(s) indexed${q ? ` · ${rows.length} match &ldquo;${esc(q)}&rdquo;` : ""}` +
       (rows.length > shown.length ? ` · <b>showing ${shown.length}</b> <button class="btn sm" id="mAll" style="margin-left:6px">Show all ${rows.length}</button>` : "");
     const all = v.querySelector("#mAll"); if (all) all.onclick = () => { showAll = true; render(); };
     const grid = v.querySelector("#mGrid");
-    grid.innerHTML = shown.map(e => `<div class="skuTile${e.blocked ? " blocked" : ""}" data-sku="${esc(e.sku)}">${thumbOf(e) ? `<img crossorigin="anonymous" src="${thumbOf(e)}" loading="lazy" alt="">` : `<div style="aspect-ratio:1;background:#fff;border-radius:6px"></div>`}<div class="sku" title="${esc(e.sku)}">${esc(e.sku)}</div><div class="meta">${(e.widthPt * MM).toFixed(1)} × ${(e.heightPt * MM).toFixed(1)} mm · ${e.holes} hole(s)${e.sizes ? ` · sizes ${Object.keys(e.sizes).join("/")}` : ""}</div><div class="meta">up ${e.upAngle == null ? "as drawn" : Math.round(e.upAngle) + "°"} · ${esc(e.labelSource || "text")}${e.hashSource === "server" ? " · server" : ""}</div>${e.blocked ? `<div class="bad">${esc(e.blocked)}</div>` : ""}${e.sizeMoved ? `<div class="bad">size moved &gt;5% on re-index</div>` : ""}${alsoOf(e) ? `<div class="meta" title="${esc(alsoOf(e).join(", "))}">same charm as ${esc(alsoOf(e).slice(0, 3).join(", "))}${alsoOf(e).length > 3 ? ` +${alsoOf(e).length - 3}` : ""}</div>` : ""}<div class="row"><label style="display:flex;gap:4px;align-items:center;font-size:11px"><input type="checkbox" data-eng="${esc(e.sku)}" ${e.engravable !== false ? "checked" : ""}>engravable</label><input type="number" data-up="${esc(e.sku)}" value="${e.upAngle == null ? "" : Math.round(e.upAngle)}" placeholder="up°" style="width:52px;border:1px solid var(--line);border-radius:6px;padding:2px 4px;font-size:11px">${e.blocked ? `<button class="btn ghost xs" data-unblock="${esc(e.sku)}">unblock</button>` : ""}${e.aiUrl ? `<a class="btn ghost xs" href="${e.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div></div>`).join("") + (rows.length > shown.length ? `<div class="libEmpty">${rows.length - shown.length} more — press “Show all”, or narrow the search</div>` : "");
-    grid.querySelectorAll("[data-eng]").forEach(cb => cb.onchange = () => patch(cb.dataset.eng, { engravable: cb.checked }).then(() => toast(`${cb.dataset.eng}: ${cb.checked ? "engravable" : "not engravable"} (operator)`, "ok")));
-    grid.querySelectorAll("[data-up]").forEach(inp => inp.onchange = () => { const v2 = inp.value.trim(); if (v2 === "") return; patch(inp.dataset.up, { upAngle: +v2 }).then(() => toast(`${inp.dataset.up}: up = ${+v2}° (operator)`, "ok")); });
-    grid.querySelectorAll("[data-unblock]").forEach(b => b.onclick = () => patch(b.dataset.unblock, { blocked: null }).then(() => toast(`${b.dataset.unblock} unblocked`, "ok")));
+    grid.innerHTML = shown.map(d => {
+      const e = d.head, keys = esc(d.skus.join("|"));
+      const blocked = [...new Set(d.list.map(x => x.blocked).filter(Boolean))].join("; ");
+      const sizes = e.sizes ? Object.entries(e.sizes) : [];
+      return `<div class="skuTile${blocked ? " blocked" : ""}" data-sku="${esc(e.sku)}">` +
+        (thumbOf(e) ? `<img crossorigin="anonymous" src="${thumbOf(e)}" loading="lazy" alt="">` : `<div style="aspect-ratio:1;background:#fff;border-radius:6px"></div>`) +
+        `<div class="sku" title="${esc(d.skus.join(", "))}">${esc(e.sku)}</div>` +
+        (d.skus.length > 1 ? `<div class="meta">${d.skus.slice(1).map(s => `<div>${esc(s)}</div>`).join("")}</div>` : "") +
+        `<div class="meta">${(e.widthPt * MM).toFixed(1)} × ${(e.heightPt * MM).toFixed(1)} mm · ${e.holes} hole(s)${sizes.length ? ` · sizes ${sizes.map(([k]) => k).join("/")}` : ""}${d.skus.length > 1 ? ` · ${d.skus.length} SKUs` : ""}</div>` +
+        `<div class="meta">up ${e.upAngle == null ? "as drawn" : Math.round(e.upAngle) + "°"} · ${esc(e.labelSource || "text")}${e.hashSource === "server" ? " · server" : ""}</div>` +
+        (blocked ? `<div class="bad">${esc(blocked)}</div>` : "") +
+        `<div class="row"><label style="display:flex;gap:4px;align-items:center;font-size:11px"><input type="checkbox" data-eng="${keys}" ${e.engravable !== false ? "checked" : ""}> engravable</label>` +
+        `<input type="number" data-up="${keys}" value="${e.upAngle == null ? "" : Math.round(e.upAngle)}" placeholder="up°" style="width:52px;border:1px solid var(--line);border-radius:6px;padding:2px 4px;font-size:11px">` +
+        (blocked ? `<button class="btn ghost xs" data-unblock="${keys}">unblock</button>` : "") +
+        (e.aiUrl ? `<a class="btn ghost xs" href="${e.aiUrl}" target="_blank" rel="noopener">.ai</a>`
+                 : sizes.filter(([, s]) => s && s.aiUrl).map(([k, s]) => `<a class="btn ghost xs" href="${s.aiUrl}" target="_blank" rel="noopener">${esc(k)}.ai</a>`).join("")) +
+        `</div></div>`;
+    }).join("") + (rows.length > shown.length ? `<div class="libEmpty">${rows.length - shown.length} more — press &ldquo;Show all&rdquo;, or narrow the search</div>` : "");
+    // a charm's settings belong to the charm, so they are written to every SKU that shares it
+    const each = (attr, fn) => grid.querySelectorAll(`[data-${attr}]`).forEach(el => fn(el, el.dataset[attr].split("|")));
+    each("eng", (cb, skus) => cb.onchange = () => patchMany(skus, { engravable: cb.checked }).then(() => toast(`${skus.join(", ")}: ${cb.checked ? "engravable" : "not engravable"} (operator)`, "ok")));
+    each("up", (inp, skus) => inp.onchange = () => { const v2 = inp.value.trim(); if (v2 === "") return; patchMany(skus, { upAngle: +v2 }).then(() => toast(`${skus.join(", ")}: up = ${+v2}° (operator)`, "ok")); });
+    each("unblock", (b, skus) => b.onclick = () => patchMany(skus, { blocked: null }).then(() => toast(`${skus.join(", ")} unblocked`, "ok")));
   }
-  return { entryFor, thumbOf, fetchEntry, load, indexFile, render, patch, keepOutOf, skuRegex, stripPng, strayInkUnder };
+  return { entryFor, thumbOf, fetchEntry, load, indexFile, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder };
 })();
 
 /* ═══ 20 · Pool — one charm per order line and copy ══════════════════════ */
