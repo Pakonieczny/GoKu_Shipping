@@ -268,6 +268,44 @@
   }
   /** pdf-lib writes every object its context holds, reachable or not; after copyPages the copied page's original content
       stream and anything else no longer referenced would still be written. Delete what the catalog cannot reach. */
+  /** The font and form names a content stream actually names. */
+  function usedFontsAndForms(bytes) {
+    const t = new TextDecoder("latin1").decode(bytes);
+    const grab = re => { const set = new Set(); let m; while ((m = re.exec(t))) set.add(m[1]); return set; };
+    return { Font: grab(/\/([^\s/<>\[\](){}]+)\s+[\d.+-]+\s+Tf\b/g), XObject: grab(/\/([^\s/<>\[\](){}]+)\s+Do\b/g) };
+  }
+  /** A copy of a page's Resources holding only the fonts and forms these bytes draw. A single charm draws neither text
+      nor most of the master's forms, but the dict it inherited named every one of them, so each per-SKU file carried the
+      whole master's fonts. Everything else (colour spaces, states, patterns, shadings, properties) is kept as it was. */
+  function trimResources(doc, resDict, bytes, depth) {
+    const { PDFName, PDFDict } = L();
+    if (!(resDict instanceof PDFDict)) return null;
+    const need = usedFontsAndForms(bytes);
+    const xod = (() => { const v = resDict.get(PDFName.of("XObject")); const d = v ? doc.context.lookup(v) : null; return d instanceof PDFDict ? d : null; })();
+    // a form that carries no Resources of its own reads this dict, so whatever it draws is needed here too
+    if (xod && (depth || 0) < 4) {
+      for (const n of [...need.XObject]) {
+        const st = doc.context.lookup(xod.get(PDFName.of(n)));
+        if (!st || !st.dict || st.dict.get(PDFName.of("Resources"))) continue;
+        let sub = null; try { sub = decodeStream(st); } catch (_) { sub = null; }
+        if (!sub) continue;
+        const more = usedFontsAndForms(sub);
+        for (const v of more.Font) need.Font.add(v);
+        for (const v of more.XObject) if (!need.XObject.has(v)) need.XObject.add(v);
+      }
+    }
+    const res = doc.context.obj({});
+    for (const [key, val] of resDict.entries()) {
+      const k = key.encodedName.slice(1);
+      if (k !== "Font" && k !== "XObject") { res.set(key, val); continue; }
+      const d = doc.context.lookup(val);
+      if (!(d instanceof PDFDict)) { res.set(key, val); continue; }
+      const kept = doc.context.obj({}); let n = 0;
+      for (const [nk, nv] of d.entries()) if (need[k].has(nk.encodedName.slice(1))) { kept.set(nk, nv); n++; }
+      if (n) res.set(key, kept);
+    }
+    return doc.context.register(res);
+  }
   function pruneUnreachable(doc) {
     const { PDFDict, PDFArray, PDFRef, PDFStream } = L();
     const ctx = doc.context, seen = new Set(), stack = [];
@@ -959,14 +997,60 @@
 
   /* ═══ 7 · writer ═══════════════════════════════════════════════════════ */
   /** Blank every top-level segment not in `keep` (byte range → spaces). */
+  /** The page's own bytes with every other charm's drawing taken out. What is left is untouched: the kept charm's
+      operators exactly as Illustrator wrote them, and everything between segments — the graphics state, the clips, and
+      the layer markers (BDC/EMC) that carry the layer each piece belongs to.
+      A removed range leaves one space behind, so tokens never run together; that is the same page to a reader as filling
+      it with spaces was, only without carrying the whole sheet's coordinates in every per-SKU file. */
   function isolate(content, segments, keep) {
-    const out = content.slice();
     const keepSet = new Set(keep);
-    for (const s of segments) {
-      if (keepSet.has(s.index) || s.kind === "clip" || s.kind === "noop") continue;
-      if (s.start < 0 || s.end <= s.start) continue;
-      out.fill(0x20, s.start, s.end);
+    const drop = segments
+      .filter(s => !keepSet.has(s.index) && s.kind !== "clip" && s.kind !== "noop" && s.start >= 0 && s.end > s.start)
+      .map(s => [s.start, s.end]).sort((a, b) => a[0] - b[0]);
+    const runs = [];
+    for (const r of drop) { const last = runs[runs.length - 1]; if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]); else runs.push([r[0], r[1]]); }
+    let size = 0, pos = 0;
+    for (const [a, b] of runs) { if (a > pos) size += a - pos; size += 1; pos = b; }
+    size += Math.max(0, content.length - pos);
+    const out = new Uint8Array(size); let o = 0; pos = 0;
+    for (const [a, b] of runs) {
+      if (a > pos) { out.set(content.subarray(pos, a), o); o += a - pos; }
+      out[o++] = 0x20; pos = b;
     }
+    if (pos < content.length) out.set(content.subarray(pos), o);
+    return out;
+  }
+
+  /** Operators that put something on the page or mark it up; everything else is state a Q puts back. */
+  const PAINTS = new Set(["S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "Do", "sh", "BI", "ID", "EI", "Tj", "TJ", "'", "\"", "BDC", "BMC", "EMC", "DP", "MP"]);
+  /** Take out balanced q…Q blocks that draw nothing. Illustrator wraps every object in one, so a page of 22,000 objects
+      leaves 22,000 empty wrappers behind once the other charms are gone. A block that paints, shows text, draws a form
+      or carries a layer marker is never touched, and an unbalanced stream is left exactly as it is. */
+  function stripEmptyBlocks(bytes) {
+    const ins = lex(bytes);
+    const stack = []; const cuts = [];
+    let meaningful = false;
+    for (const it of ins) {
+      if (it.op === "q") { stack.push({ start: it.start, outer: meaningful }); meaningful = false; continue; }
+      if (it.op === "Q") {
+        const b = stack.pop();
+        if (!b) { meaningful = true; continue; }
+        if (!meaningful) cuts.push([b.start, it.end]);
+        meaningful = b.outer || meaningful;
+        continue;
+      }
+      if (PAINTS.has(it.op)) meaningful = true;
+    }
+    if (stack.length || !cuts.length) return bytes;
+    cuts.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+    const runs = [];
+    for (const c of cuts) { const last = runs[runs.length - 1]; if (last && c[0] <= last[1]) last[1] = Math.max(last[1], c[1]); else runs.push([c[0], c[1]]); }
+    let size = 0, pos = 0;
+    for (const [a, b] of runs) { if (a > pos) size += a - pos; size += 1; pos = b; }
+    size += Math.max(0, bytes.length - pos);
+    const out = new Uint8Array(size); let o = 0; pos = 0;
+    for (const [a, b] of runs) { if (a > pos) { out.set(bytes.subarray(pos, a), o); o += a - pos; } out[o++] = 0x20; pos = b; }
+    if (pos < bytes.length) out.set(bytes.subarray(pos), o);
     return out;
   }
 
@@ -1027,10 +1111,11 @@
       if (usedNames.has(name)) { let k = 2; while (usedNames.has(name + "-" + k)) k++; name = name + "-" + k; }
       usedNames.add(name);
       addOCG(name, tag);
-      const bytes = isolate(src.content, src.parsed.segments, c.topIndices);
+      const bytes = stripEmptyBlocks(isolate(src.content, src.parsed.segments, c.topIndices));
       const pad = c.strokePt / 2 + 1;
       const bb = [c.bbox[0] - pad, c.bbox[1] - pad, c.bbox[2] + pad, c.bbox[3] + pad];
-      const xobj = out.context.flateStream(bytes, { Type: "XObject", Subtype: "Form", BBox: bb, Matrix: [1, 0, 0, 1, 0, 0], Resources: src.resRef });
+      const trimmed = trimResources(out, out.context.lookup(src.resRef), bytes, 0) || src.resRef;
+      const xobj = out.context.flateStream(bytes, { Type: "XObject", Subtype: "Form", BBox: bb, Matrix: [1, 0, 0, 1, 0, 0], Resources: trimmed });
       const xref = out.context.register(xobj);
       const key = page.node.newXObject("Charm" + i, xref);
       // T(centre on sheet, y-up) · S(scale) · R(−θ) · T(−source centre)
