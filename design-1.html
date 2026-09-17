@@ -1995,6 +1995,42 @@ async function startOAuth(reason = "auto") {
   }
 }
 
+/* ── Connect Etsy on the sorter's behalf. Etsy refuses to be framed, so the sorter opens THIS page in its own popup window
+   with ?connect=1; the popup runs Connect Etsy, the token lands in this origin's storage (shared with the framed copy),
+   and the popup tells its opener and closes. If already signed in, it just reports and closes. ── */
+const CONNECT_FLAG = "designStation.connectForSorter";
+const CONNECT_KEY = "designStation.etsyConnectedAt";   // written by the popup, seen by the framed copy through the storage event
+function connectForSorterBoot() {
+  let want = false; try { want = new URLSearchParams(location.search).get("connect") === "1" || sessionStorage.getItem(CONNECT_FLAG) === "1"; } catch (_) {}
+  let framed = false; try { framed = window.self !== window.top; } catch (_) { framed = true; }
+  if (!want || framed) return;
+  try { sessionStorage.setItem(CONNECT_FLAG, "1"); } catch (_) {}
+  const signedIn = !!localStorage.getItem(TOKEN_KEYS.access) || !!localStorage.getItem(TOKEN_KEYS.refresh);
+  if (signedIn && !new URLSearchParams(location.search).get("code")) { connectForSorterDone(); return; }
+  if (!signedIn) { setConn("bad", "Signing in for the Charm Sorter…"); setTimeout(() => startOAuth("sorter"), 300); }
+}
+function connectForSorterDone() {
+  let want = false; try { want = sessionStorage.getItem(CONNECT_FLAG) === "1"; } catch (_) {}
+  if (!want) return;
+  try { sessionStorage.removeItem(CONNECT_FLAG); } catch (_) {}
+  const msg = { source: "brites-design", type: "etsy.connected", etsy: { signedIn: !!localStorage.getItem(TOKEN_KEYS.access) || !!localStorage.getItem(TOKEN_KEYS.refresh), expiresAt: (Number(localStorage.getItem(TOKEN_KEYS.expires) || 0) || 0) * 1000 || null }, at: Date.now() };
+  // The sorter cannot be reached directly: both sites send Cross-Origin-Opener-Policy same-origin, which cuts the link
+  // between this popup and the window that opened it. The framed copy of this page shares this origin, so the news goes
+  // through the origin's own storage (a storage event fires in every other tab of this origin) and a BroadcastChannel,
+  // and the framed copy relays it to the sorter over the bridge. The opener is still tried for browsers that keep it.
+  try { localStorage.setItem(CONNECT_KEY, JSON.stringify(msg)); } catch (_) {}
+  try { new BroadcastChannel("brites-design").postMessage(msg); } catch (_) {}
+  try { if (window.opener && !window.opener.closed) { const targets = (typeof Bridge !== "undefined" && Bridge.ALLOWED ? [...Bridge.ALLOWED] : []).concat(/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(location.origin) ? ["*"] : []); for (const o of targets) { try { window.opener.postMessage(msg, o); } catch (_) {} } } } catch (_) {}
+  toast("Connected to Etsy for the Charm Sorter — this window closes", "ok", 3000);
+  setTimeout(() => { try { window.close(); } catch (_) {} }, 1500);
+}
+/* the framed copy: when the popup reports a sign-in on this origin, refresh the badge and tell the sorter */
+(function watchConnectForSorter() {
+  const relay = raw => { let m = null; try { m = typeof raw === "string" ? JSON.parse(raw) : raw; } catch (_) { return; } if (!m || m.type !== "etsy.connected") return; try { refreshConnBadge(); } catch (_) {} try { if (typeof Bridge !== "undefined" && Bridge.active()) { Bridge.emit("etsy.connected", { etsy: m.etsy, at: m.at }); Bridge.ticker("Etsy signed in (from the station's own window)"); } } catch (_) {} };
+  window.addEventListener("storage", e => { if (e.key === CONNECT_KEY && e.newValue) relay(e.newValue); });
+  try { new BroadcastChannel("brites-design").addEventListener("message", e => relay(e.data)); } catch (_) {}
+})();
+
 /** Runs once at boot: handles all three OAuth return shapes. */
 function bootOAuth() {
   const url = new URLSearchParams(window.location.search);
@@ -2010,6 +2046,7 @@ function bootOAuth() {
     window.history.replaceState({}, document.title, window.location.pathname);
     toast("Connected to Etsy", "ok");
     refreshConnBadge();
+    connectForSorterDone();
     return;
   }
 
@@ -6787,6 +6824,7 @@ async function boot() {
   buildSettingsUI();
 
   bootOAuth();
+  connectForSorterBoot();
   purgeLedger();
   restoreSelectionSet();
 
@@ -6923,7 +6961,7 @@ const Bridge = (() => {
     const ROLE = {
       row: a => $(`.orderRow[data-receipt='${cssEsc(String(a))}']`), tile: a => $(`.tile[data-tx='${cssEsc(String(a))}']`) || $(`.tile[data-receipt='${cssEsc(String(a))}']`),
       complete: () => $("#completeBtn"), print: () => { const b = $("#qrPreviewPrintBtn"); return b && visible(b) ? b : ($("#qrSorterNote") && visible($("#qrSorterNote")) ? $("#qrSorterNote") : $("#qrSummary")); }, cancel: () => $("#qrCancelBtn"), grid: () => $("#qrPreviewGrid"), undo: () => $("#undoCompleteBtn"),
-      refresh: () => [$("#updateOrderListBtn"), $("#stripRefreshBtn"), $("#emptyLoadBtn")].find(visible) || $("#updateOrderListBtn"), rail: () => $("#railToggle"), metals: () => $("#metalBar"), note: () => $("#modalStaffNote"), chat: () => $("#chatInput") || $("#modalChatInput"), banner: () => $("#bridgeBanner"), release: () => $("#bridgeRelease")
+      refresh: () => [$("#updateOrderListBtn"), $("#stripRefreshBtn"), $("#emptyLoadBtn")].find(visible) || $("#updateOrderListBtn"), rail: () => $("#railToggle"), connect: () => $("#connectEtsyBtn"), metals: () => $("#metalBar"), note: () => $("#modalStaffNote"), chat: () => $("#chatInput") || $("#modalChatInput"), banner: () => $("#bridgeBanner"), release: () => $("#bridgeRelease")
     };
     const visible = el => { if (!el || !el.isConnected) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
     function find(role, arg) { const f = ROLE[role]; return f ? f(arg) : null; };
@@ -6996,6 +7034,12 @@ const Bridge = (() => {
       return Object.assign(stateSnapshot(), { releasedFromPreviousSession: released, commands: Object.keys(CMDS) });
     },
     async ping() { S.lastPing = Date.now(); if (S.down) { S.down = false; paintBanner(); } return { pong: true, etsy: etsyMeterSnapshot() }; },
+    /** Etsy cannot be signed in from inside a frame: this answers with the popup URL the sorter must open on this origin. */
+    async "etsy.connect"() {
+      const st = etsyState();
+      await Cursor.act("connect", null, st.signedIn ? "Etsy is signed in" : "Connect Etsy — opens the station in its own window", { click: !st.signedIn });
+      return { signedIn: st.signedIn, expiresAt: st.expiresAt, url: `${location.origin}/design-1.html?connect=1`, note: st.signedIn ? "already signed in" : "open the url in a popup on this origin; it signs in, reports etsy.connected to its opener and closes" };
+    },
     async claim(a) {
       const ids = (a.receiptIds || []).map(String); if (!ids.length) return { claimed: [] };
       await cursorRows(ids, "Claim");
