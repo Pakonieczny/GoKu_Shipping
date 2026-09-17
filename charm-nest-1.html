@@ -401,6 +401,16 @@ dialog.wide{width:min(980px,95vw)}
 .switchBtn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--card2);border-radius:999px;padding:5px 12px;font-weight:700;font-size:12px;cursor:pointer}
 .switchBtn.on{background:var(--sage);border-color:var(--sage);color:#fff}
 /* ── Master tab ── */
+.masterDay{border:1px solid var(--line);border-radius:12px;background:var(--card);margin-bottom:8px;padding:2px 10px}
+.masterDay>summary{cursor:pointer;padding:8px 2px;font-weight:600;font-size:12.5px;list-style:none}
+.masterDay>summary::-webkit-details-marker{display:none}
+.masterDay>summary::before{content:"▸ ";color:var(--ink45)}
+.masterDay[open]>summary::before{content:"▾ "}
+.masterFileRow{border-top:1px solid var(--line);padding:2px 0 6px}
+.masterFileRow:first-of-type{border-top:0}
+.masterFileRow>summary{cursor:pointer;padding:6px 2px;font-size:12px;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;list-style:none}
+.masterFileRow>summary::-webkit-details-marker{display:none}
+.masterFileRow>summary::before{content:"·";color:var(--ink45)}
 .masterHead{display:flex;gap:8px;align-items:center;flex-wrap:wrap;position:sticky;top:-16px;z-index:6;background:var(--paper);padding:10px 0 9px;margin:-10px 0 0;box-shadow:0 8px 12px -10px rgba(0,0,0,.35)}
 .masterFile{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);padding:10px 12px;display:grid;gap:8px}
 .masterFile .fh{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12.5px}
