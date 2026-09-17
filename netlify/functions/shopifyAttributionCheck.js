@@ -92,6 +92,39 @@ async function diagnoseRefusals(limit) {
   };
 }
 
+// Google no longer allowlists ConversionUploadService for new integrations and
+// refuses its uploads outright. Data Manager is this application's default;
+// GADS_CONVERSION_UPLOAD_API=legacy forces the deprecated path. Which one is in
+// use decides whether refused sales are a configuration problem or a credential
+// one, so the report names it rather than leaving it to be guessed.
+async function uploadTransport() {
+  const legacy = ENV.GADS_CONVERSION_UPLOAD_API === 'legacy';
+  const row = { transport: legacy ? 'legacy ConversionUploadService' : 'Data Manager API', legacy };
+  if (legacy) {
+    row.detail = 'GADS_CONVERSION_UPLOAD_API is set to "legacy", so uploads use ConversionUploadService — which Google refuses for accounts not allowlisted for it. Remove that variable to use the Data Manager API this application already supports.';
+    return row;
+  }
+  const health = await require('./googleAdsDataManager').createDataManager({
+    env: ENV, fetch: require('node-fetch'),
+    fb: () => ({ db: require('./firebaseAdmin').firestore() }),
+    COL: { convQueue: 'Brites_GAds_ConvQueue' }, ledger: async () => {}
+  }).health();
+  Object.assign(row, health);
+  if (!health.configured) {
+    row.detail = 'Data Manager is selected but not authorised: connect its own OAuth credentials before any order can upload.';
+    return row;
+  }
+  // Google documents both scopes as required. A credential missing the
+  // companion one still mints a token, so the gap only shows as a refusal at
+  // ingest that never mentions scopes.
+  const missing = health.missingScopes || [];
+  row.detail = (missing.length ? 'The saved credential is missing ' + missing.join(' and ') + '; Google documents both as required. Re-consent this connection with both. · ' : '') +
+    health.confirmed + ' confirmed upload(s) to the configured conversion action · ' +
+    health.processing + ' processing · ' + health.unknown + ' in an unknown state · ' +
+    (health.awaitingAccess || 0) + ' waiting on account access · ' + health.retryable + ' retryable';
+  return row;
+}
+
 async function run(options) {
   const token = await shopifyToken();
   // Read the queue first: whether orders are arriving decides how an invisible
@@ -118,6 +151,8 @@ async function run(options) {
   const t = result.sections.transport;
   if (t.status === 'available' && (t.legacy || t.configured === false))
     result.summary.blocking.push(t.legacy ? 'uploads still use the deprecated ConversionUploadService' : 'Data Manager is not authorised');
+  if (t.status === 'available' && (t.missingScopes || []).length)
+    result.summary.blocking.push('the Data Manager credential is missing ' + t.missingScopes.join(' and '));
   result.summary.healthy = result.summary.blocking.length === 0 && result.summary.unavailable === 0;
 
   if (options && options.diagnose) {

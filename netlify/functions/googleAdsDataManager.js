@@ -10,6 +10,9 @@ function sealCredentials(value,env){const iv=crypto.randomBytes(12),cipher=crypt
 function openCredentials(value,env){if(value?.version!==1)throw Error('Unsupported connection record.');try{const decipher=crypto.createDecipheriv('aes-256-gcm',credentialKey(env),Buffer.from(value.iv,'base64'));decipher.setAAD(Buffer.from(CREDENTIAL_DOC));decipher.setAuthTag(Buffer.from(value.tag,'base64'));return JSON.parse(Buffer.concat([decipher.update(Buffer.from(value.ciphertext,'base64')),decipher.final()]).toString('utf8'));}catch(_){throw Error('Saved connection could not be decrypted. Reconnect after server key rotation.');}}
 const BASE = 'https://datamanager.googleapis.com/v1';
 const SCOPE = 'https://www.googleapis.com/auth/datamanager';
+// https://developers.google.com/data-manager/api/devguides/quickstart/set-up-access
+const COMPANION_SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
+let grantedScopes = null;
 const MIGRATION_ERROR = /Data Manager API|CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE/i;
 const CHECK_DELAY = 30 * 60 * 1000;
 
@@ -79,6 +82,7 @@ function createDataManager({ env, fetch, fb, COL, ledger, now = Date.now }) {
       }) });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.access_token) throw Error('Google Data Manager authorization failed. Reconnect its OAuth credentials.');
+    if (data.scope) grantedScopes = String(data.scope).split(/\s+/).filter(Boolean);
     if ((requireScope||data.scope) && !String(data.scope||'').split(/\s+/).includes(SCOPE)) throw Error('The credentials do not include the Google Data Manager scope.');
     token = data.access_token; expires = now() + Number(data.expires_in || 3600) * 1000;
     return token;
@@ -216,7 +220,7 @@ function errorDetail(data, status) {
   }
   async function health() {
     await loadConnection();
-    const info = { configured: configured(), transport: 'data_manager', processing: 0, unknown: 0, confirmed: 0, retryable: 0, awaitingAccess: 0, blocked: !configured() };
+    const info = { configured: configured(), transport: 'data_manager', scopes: grantedScopes, missingScopes: grantedScopes ? [SCOPE, COMPANION_SCOPE].filter(s => !grantedScopes.includes(s)) : null, processing: 0, unknown: 0, confirmed: 0, retryable: 0, awaitingAccess: 0, blocked: !configured() };
     const f = fb(); if (!f) return info;
     const queue = f.db.collection(COL.convQueue);
     const rows = await queue.where('uploaded', '==', false).limit(500).get();
