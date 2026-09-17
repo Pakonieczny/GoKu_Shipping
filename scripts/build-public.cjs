@@ -49,6 +49,7 @@ const assets = [
   "AssetsTreeEntitiesCompiler.js",
   "brites-ad-editor.js",
   "brites-ad-format-policy.js",
+  "brites-campaign-styles.js",
   "brites-ad-motion.js",
   "brites-brand-assets.js",
   "assets/brites-brand/logo-square.png",

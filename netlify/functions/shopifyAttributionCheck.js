@@ -53,7 +53,79 @@ async function queueHealth() {
   return { pending: pending.size, failed: failed.size, samples };
 }
 
-async function run() {
+
+// Why Google refused a sale, asked without uploading anything.
+//
+// A definitively rejected row is never retried, so its reason is frozen at
+// whatever was recorded when it failed. This re-runs the live transport's own
+// submit path with validateOnly, which builds the identical payload and mutates
+// no record: the dry-run branch validates and moves on without touching the
+// document. Opt-in via ?diagnose=1, because it is still one request per sale.
+async function diagnoseRefusals(limit) {
+  if (ENV.GADS_CONVERSION_UPLOAD_API === 'legacy')
+    return { checked: 0, reasons: [], detail: 'Uploads are pinned to the legacy service, which Google refuses for accounts not allowlisted for it. That, not a per-sale fault, is the cause.' };
+
+  const service = require('./googleAdsDataManager').createDataManager({
+    env: ENV, fetch: require('node-fetch'),
+    fb: () => ({ db: require('./firebaseAdmin').firestore() }),
+    COL: { convQueue: 'Brites_GAds_ConvQueue' }, ledger: async () => {}
+  });
+  // dryRun makes every submission validateOnly; retryRejected reaches the rows
+  // that were parked as definitively rejected.
+  const result = await service.run({ ctrl: { dryRun: true }, limit: limit || 25, retryRejected: true });
+
+  // The same cause repeated fifteen times is one problem, not fifteen.
+  const grouped = new Map();
+  for (const e of result.errors || []) {
+    const key = String(e.error || 'unknown');
+    const at = grouped.get(key) || { reason: key, count: 0, orders: [], value: 0 };
+    at.count++; if (at.orders.length < 5) at.orders.push(e.orderId);
+    grouped.set(key, at);
+  }
+  const reasons = [...grouped.values()].sort((a, b) => b.count - a.count);
+  return {
+    checked: (result.validated || 0) + (result.rejected || 0),
+    validated: result.validated || 0, reasons,
+    detail: reasons.length
+      ? reasons.map(r => r.count + '× ' + r.reason).join(' · ').slice(0, 500)
+      : (result.validated || 0) + ' refused sale(s) now validate cleanly and would upload on the next retry.'
+  };
+}
+
+// Google no longer allowlists ConversionUploadService for new integrations and
+// refuses its uploads outright. Data Manager is this application's default;
+// GADS_CONVERSION_UPLOAD_API=legacy forces the deprecated path. Which one is in
+// use decides whether refused sales are a configuration problem or a credential
+// one, so the report names it rather than leaving it to be guessed.
+async function uploadTransport() {
+  const legacy = ENV.GADS_CONVERSION_UPLOAD_API === 'legacy';
+  const row = { transport: legacy ? 'legacy ConversionUploadService' : 'Data Manager API', legacy };
+  if (legacy) {
+    row.detail = 'GADS_CONVERSION_UPLOAD_API is set to "legacy", so uploads use ConversionUploadService — which Google refuses for accounts not allowlisted for it. Remove that variable to use the Data Manager API this application already supports.';
+    return row;
+  }
+  const health = await require('./googleAdsDataManager').createDataManager({
+    env: ENV, fetch: require('node-fetch'),
+    fb: () => ({ db: require('./firebaseAdmin').firestore() }),
+    COL: { convQueue: 'Brites_GAds_ConvQueue' }, ledger: async () => {}
+  }).health({ probeScopes: true });
+  Object.assign(row, health);
+  if (!health.configured) {
+    row.detail = 'Data Manager is selected but not authorised: connect its own OAuth credentials before any order can upload.';
+    return row;
+  }
+  // Google documents both scopes as required. A credential missing the
+  // companion one still mints a token, so the gap only shows as a refusal at
+  // ingest that never mentions scopes.
+  const missing = health.missingScopes || [];
+  row.detail = (missing.length ? 'The saved credential is missing ' + missing.join(' and ') + '; Google documents both as required. Re-consent this connection with both. · ' : '') +
+    health.confirmed + ' confirmed upload(s) to the configured conversion action · ' +
+    health.processing + ' processing · ' + health.unknown + ' in an unknown state · ' +
+    (health.awaitingAccess || 0) + ' waiting on account access · ' + health.retryable + ' retryable';
+  return row;
+}
+
+async function run(options) {
   const token = await shopifyToken();
   // Read the queue first: whether orders are arriving decides how an invisible
   // webhook should be reported.
@@ -74,6 +146,24 @@ async function run() {
     if (q.failed) result.summary.blocking.push(q.failed + ' refused conversion upload(s)');
   } else result.summary.unavailable++;
   result.summary.healthy = result.summary.blocking.length === 0 && result.summary.unavailable === 0;
+  try { result.sections.transport = { id: 'transport', label: 'Conversion upload transport', status: 'available', ...await uploadTransport() }; }
+  catch (e) { result.sections.transport = { id: 'transport', label: 'Conversion upload transport', status: 'unavailable', detail: String(e.message || e).slice(0, 240) }; }
+  const t = result.sections.transport;
+  if (t.status === 'available' && (t.legacy || t.configured === false))
+    result.summary.blocking.push(t.legacy ? 'uploads still use the deprecated ConversionUploadService' : 'Data Manager is not authorised');
+  if (t.status === 'available' && (t.missingScopes || []).length)
+    result.summary.blocking.push('the Data Manager credential is missing ' + t.missingScopes.join(' and '));
+  result.summary.healthy = result.summary.blocking.length === 0 && result.summary.unavailable === 0;
+
+  if (options && options.diagnose) {
+    try { result.sections.refusals = { id: 'refusals', label: 'Why Google refused them', status: 'available', ...await diagnoseRefusals(options.diagnoseLimit) }; }
+    catch (e) { result.sections.refusals = { id: 'refusals', label: 'Why Google refused them', status: 'unavailable', detail: String(e.message || e).slice(0, 240) }; }
+  }
+  const all = Object.values(result.sections);
+  result.summary.sections = all.length;
+  result.summary.unavailable = all.filter(s => s.status !== 'available').length;
+  result.summary.read = all.length - result.summary.unavailable;
+  result.summary.healthy = result.summary.blocking.length === 0 && result.summary.unavailable === 0;
   result.store = STORE;
   return result;
 }
@@ -85,6 +175,8 @@ function html(r) {
     let extra = '';
     if (sec.topics) extra = '<ul style="margin:6px 0 0;padding-left:18px;font-size:12px;color:#555">' + sec.topics.map(t =>
       '<li>' + (t.ok ? '🟢' : '🔴') + ' <b>' + esc(t.topic) + '</b> — ' + (t.ok ? 'registered' : 'NOT registered to this app') + '<br><span style="color:#777">' + esc(t.why) + '</span></li>').join('') + '</ul>';
+    if (sec.reasons && sec.reasons.length) extra = '<ul style="margin:6px 0 0;padding-left:18px;font-size:12px;color:#555">' + sec.reasons.map(r =>
+      '<li><b>' + r.count + ' sale(s)</b>' + (r.value ? ' worth ' + r.value.toFixed(2) : '') + ' — ' + esc(r.reason) + '<br><span style="color:#777">' + esc((r.orders || []).join(', ')) + '</span></li>').join('') + '</ul>';
     if (sec.samples && sec.samples.length) extra = '<ul style="margin:6px 0 0;padding-left:18px;font-size:12px;color:#555">' + sec.samples.map(x =>
       '<li>order ' + esc(x.orderId) + ' — ' + esc(x.error) + '</li>').join('') + '</ul>';
     return '<tr><td style="padding:8px 10px;vertical-align:top">' + dot + '</td>' +
@@ -109,7 +201,7 @@ exports.handler = async (event) => {
     return { statusCode: 401, headers: { 'Content-Type': 'text/plain' }, body: 'Add ?key=<EDIT_PASSCODE> to run the Shopify attribution check.' };
   }
   let result;
-  try { result = await run(); }
+  try { result = await run({ diagnose: String(params.diagnose || '') === '1', diagnoseLimit: Number(params.limit) || 25 }); }
   catch (e) { return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ok: false, error: String(e.message || e) }, null, 2) }; }
   const wantsJson = String(params.format || '') === 'json' || !/text\/html/.test(((event.headers || {}).accept) || '');
   return wantsJson

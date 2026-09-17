@@ -10,7 +10,12 @@ function sealCredentials(value,env){const iv=crypto.randomBytes(12),cipher=crypt
 function openCredentials(value,env){if(value?.version!==1)throw Error('Unsupported connection record.');try{const decipher=crypto.createDecipheriv('aes-256-gcm',credentialKey(env),Buffer.from(value.iv,'base64'));decipher.setAAD(Buffer.from(CREDENTIAL_DOC));decipher.setAuthTag(Buffer.from(value.tag,'base64'));return JSON.parse(Buffer.concat([decipher.update(Buffer.from(value.ciphertext,'base64')),decipher.final()]).toString('utf8'));}catch(_){throw Error('Saved connection could not be decrypted. Reconnect after server key rotation.');}}
 const BASE = 'https://datamanager.googleapis.com/v1';
 const SCOPE = 'https://www.googleapis.com/auth/datamanager';
+// https://developers.google.com/data-manager/api/devguides/quickstart/set-up-access
+const COMPANION_SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
+let grantedScopes = null;
 const MIGRATION_ERROR = /Data Manager API|CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE/i;
+// Google's generic refusal, recorded before its error detail was kept.
+const UNDIAGNOSED_ERROR = /^\s*There was a problem with the request\.?\s*$/i;
 const CHECK_DELAY = 30 * 60 * 1000;
 
 function destination(action, login) {
@@ -79,17 +84,40 @@ function createDataManager({ env, fetch, fb, COL, ledger, now = Date.now }) {
       }) });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.access_token) throw Error('Google Data Manager authorization failed. Reconnect its OAuth credentials.');
+    if (data.scope) grantedScopes = String(data.scope).split(/\s+/).filter(Boolean);
     if ((requireScope||data.scope) && !String(data.scope||'').split(/\s+/).includes(SCOPE)) throw Error('The credentials do not include the Google Data Manager scope.');
     token = data.access_token; expires = now() + Number(data.expires_in || 3600) * 1000;
     return token;
   }
+// Google's error.message is usually generic; error.details names the cause.
+// Keeping only the message left a refusal undiagnosable.
+function errorDetail(data, status) {
+  const error = (data && data.error) || {};
+  const parts = [];
+  if (error.status) parts.push(error.status);
+  for (const detail of error.details || []) {
+    if (detail.reason) parts.push('reason:' + detail.reason);
+    for (const violation of detail.fieldViolations || [])
+      parts.push((violation.field ? violation.field + ': ' : '') + String(violation.description || ''));
+    for (const inner of detail.errors || []) {
+      const code = inner.errorCode ? Object.keys(inner.errorCode).map(k => k + ':' + inner.errorCode[k]).join(',') : '';
+      if (code) parts.push(code);
+      else if (inner.message) parts.push(String(inner.message));
+    }
+  }
+  const message = String(error.message || '').trim();
+  const named = parts.filter(Boolean).join(' · ');
+  if (named && message) return named + ' — ' + message;
+  return named || message || ('Google Data Manager returned HTTP ' + status);
+}
+
   async function request(route, body, auth) {
     const response = await fetch(BASE + route, { method: body ? 'POST' : 'GET', timeout: 20000,
       headers: { Authorization: 'Bearer ' + auth, 'Content-Type': 'application/json' },
       ...(body ? { body: JSON.stringify(body) } : {}) });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const error = Error(String(data.error?.message || 'Google Data Manager returned HTTP ' + response.status).slice(0, 500));
+      const error = Error(errorDetail(data, response.status).slice(0, 500));
       error.definiteRejection = response.status >= 400 && response.status < 500;
       error.status = response.status;
       throw error;
@@ -97,6 +125,12 @@ function createDataManager({ env, fetch, fb, COL, ledger, now = Date.now }) {
     return data;
   }
   const eligibleLegacyFailure = row => row.failed === true && MIGRATION_ERROR.test(row.uploadError || '') && !row.dmState;
+  // Refused because the account is not allowlisted, not because the sale is
+  // bad. It becomes uploadable the moment access is granted, with no flag and
+  // no one remembering, and it is safe to re-send because it never reached
+  // Google: a definite rejection carries no receipt.
+  const accountLevelRejection = row => row.dmState === 'failed' && row.dmDefiniteRejection === true
+    && !row.dmRequestId && (MIGRATION_ERROR.test(row.uploadError || '') || UNDIAGNOSED_ERROR.test(row.uploadError || ''));
   const retryable = row => row.dmState === 'failed' && row.dmDefiniteRejection === true && !row.dmRequestId;
   async function run({ ctrl = {}, limit = 50, retryRejected = false } = {}) {
     await loadConnection();
@@ -111,14 +145,14 @@ function createDataManager({ env, fetch, fb, COL, ledger, now = Date.now }) {
     const pending = await queue.where('uploaded', '==', false).limit(500).get();
     const rejected = await queue.where('failed', '==', true).limit(50).get();
     const docs = new Map(pending.docs.map(d => [d.id, d]));
-    rejected.docs.filter(d => eligibleLegacyFailure(d.data())).forEach(d => docs.set(d.id, d));
+    rejected.docs.filter(d => eligibleLegacyFailure(d.data()) || accountLevelRejection(d.data())).forEach(d => docs.set(d.id, d));
     const rows = [...docs.values()].sort((a, b) => Number(!!b.data().dmRequestId) - Number(!!a.data().dmRequestId));
     const maximum = Math.min(100, Math.max(1, Number(limit) || 50));
     let handled = 0;
     for (const doc of rows) {
       let row = doc.data();
       if (handled >= maximum || now() - started > 120000) break;
-      if (row.dmState === 'submitting' || row.dmState === 'submission_unknown' || (row.dmState === 'failed' && !(retryRejected && retryable(row)))) continue;
+      if (row.dmState === 'submitting' || row.dmState === 'submission_unknown' || (row.dmState === 'failed' && !accountLevelRejection(row) && !(retryRejected && retryable(row)))) continue;
       if (row.dmRequestId) {
         result.processing++;
         if (ctrl.dryRun || now() < Number(row.dmNextCheckAt || 0)) continue;
@@ -142,7 +176,7 @@ function createDataManager({ env, fetch, fb, COL, ledger, now = Date.now }) {
         continue;
       }
       if (row.uploaded && !eligibleLegacyFailure(row)) continue;
-      if (row.failed && !eligibleLegacyFailure(row) && !(retryRejected && retryable(row))) continue;
+      if (row.failed && !eligibleLegacyFailure(row) && !accountLevelRejection(row) && !(retryRejected && retryable(row))) continue;
       let event;
       try { event = eventFor(row); } catch (error) { result.errors.push({ orderId: row.orderId, error: error.message }); continue; }
       handled++;
@@ -155,8 +189,8 @@ function createDataManager({ env, fetch, fb, COL, ledger, now = Date.now }) {
       const claimed = await f.db.runTransaction(async tx => {
         const current = await tx.get(doc.ref); if (!current.exists) return false;
         const latest = current.data();
-        if ((latest.dmState && !(retryRejected && retryable(latest))) || latest.dmRequestId || (latest.uploaded && !eligibleLegacyFailure(latest))) return false;
-        if (latest.failed && !eligibleLegacyFailure(latest) && !(retryRejected && retryable(latest))) return false;
+        if ((latest.dmState && !accountLevelRejection(latest) && !(retryRejected && retryable(latest))) || latest.dmRequestId || (latest.uploaded && !eligibleLegacyFailure(latest))) return false;
+        if (latest.failed && !eligibleLegacyFailure(latest) && !accountLevelRejection(latest) && !(retryRejected && retryable(latest))) return false;
         // Guard changes to original financial data between read and claim.
         if (JSON.stringify(eventFor(latest)) !== JSON.stringify(event)) return false;
         tx.update(doc.ref, { dmState: 'submitting', dmStartedAt: now(), dmDestination: target, uploaded: false });
@@ -186,13 +220,14 @@ function createDataManager({ env, fetch, fb, COL, ledger, now = Date.now }) {
     result.errors = result.errors.slice(0, 10);
     return result;
   }
-  async function health() {
+  async function health({ probeScopes = false } = {}) {
     await loadConnection();
-    const info = { configured: configured(), transport: 'data_manager', processing: 0, unknown: 0, confirmed: 0, retryable: 0, blocked: !configured() };
+    if (probeScopes && configured()) { try { await mintToken(); } catch (error) { /* the rows below report it */ } }
+    const info = { configured: configured(), transport: 'data_manager', scopes: grantedScopes, missingScopes: grantedScopes ? [SCOPE, COMPANION_SCOPE].filter(s => !grantedScopes.includes(s)) : null, processing: 0, unknown: 0, confirmed: 0, retryable: 0, awaitingAccess: 0, blocked: !configured() };
     const f = fb(); if (!f) return info;
     const queue = f.db.collection(COL.convQueue);
     const rows = await queue.where('uploaded', '==', false).limit(500).get();
-    rows.forEach(d => { const x = d.data(); if (x.dmRequestId && x.dmState === 'processing') info.processing++; if (['submitting', 'submission_unknown'].includes(x.dmState)) info.unknown++; if (retryable(x)) info.retryable++; });
+    rows.forEach(d => { const x = d.data(); if (x.dmRequestId && x.dmState === 'processing') info.processing++; if (['submitting', 'submission_unknown'].includes(x.dmState)) info.unknown++; if (retryable(x)) info.retryable++; if (accountLevelRejection(x)) info.awaitingAccess++; });
     if (!env.GADS_CONVERSION_ACTION) return { ...info, blocked: true };
     const confirmed = await queue.where('dmState', '==', 'success').limit(50).get();
     const target = destination(env.GADS_CONVERSION_ACTION, env.GADS_LOGIN_CUSTOMER_ID);

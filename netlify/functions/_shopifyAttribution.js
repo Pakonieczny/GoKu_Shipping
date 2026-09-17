@@ -124,7 +124,7 @@ async function shopifyAttribution(input) {
   return {
     checkedAt: Date.now(), sections: out,
     summary: {
-      read: Object.keys(out).length - unavailable.length, unavailable: unavailable.length,
+      read: Object.keys(out).length - unavailable.length, unavailable: unavailable.length, sections: Object.keys(out).length,
       blocking, warnings: warnings.concat(out.snippet.status === 'available' ? out.snippet.problems.filter(p => !/not in the published theme|never renders/.test(p)) : []),
       // An unread section leaves the question open; it never reads as healthy.
       healthy: blocking.length === 0 && unavailable.length === 0
