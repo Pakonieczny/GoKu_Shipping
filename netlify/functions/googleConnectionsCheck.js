@@ -71,7 +71,11 @@ function credentialSection() {
 
   rows.push(/^v\d+$/.test(V) ? C.ok("GADS_API_VERSION", V) : C.fail("GADS_API_VERSION", V + " — expected a vNN version"));
   shape("GADS_DEVELOPER_TOKEN", () => true, "present (" + (ENV.GADS_DEVELOPER_TOKEN || "").length + " chars)", "missing");
-  shape("GADS_CLIENT_ID", () => /\.apps\.googleusercontent\.com$/.test(ENV.GADS_CLIENT_ID), "present", "does not end in .apps.googleusercontent.com");
+  rows.push(present("GADS_CLIENT_ID")
+    ? (/\.apps\.googleusercontent\.com$/.test(ENV.GADS_CLIENT_ID)
+        ? C.ok("GADS_CLIENT_ID", ENV.GADS_CLIENT_ID, { why: "Match this exact client in Cloud Console. Every client in a project shares the leading project number; the part after the dash is the one that identifies it." })
+        : C.fail("GADS_CLIENT_ID", "does not end in .apps.googleusercontent.com"))
+    : C.fail("GADS_CLIENT_ID", "missing"));
   shape("GADS_CLIENT_SECRET", () => /^GOCSPX-/.test(ENV.GADS_CLIENT_SECRET), "present (GOCSPX-…)", "not a GOCSPX- secret");
   shape("GADS_REFRESH_TOKEN", () => /^1\/\//.test(ENV.GADS_REFRESH_TOKEN), "present (1//…)", "not a 1// refresh token");
   rows.push(/^\d{10}$/.test(LOGIN) ? C.ok("GADS_LOGIN_CUSTOMER_ID", LOGIN) : C.fail("GADS_LOGIN_CUSTOMER_ID", (LOGIN || "missing") + " — expected 10 digits, no dashes"));
