@@ -19,6 +19,7 @@
 const O = CharmNestOrders, G = CharmNestGeom, P = CharmNestPDF;
 const MM = 25.4 / 72, PT = 72 / 25.4;
 const B = window.B = { link: null, orders: { rows: [], byKey: new Map(), pulledAt: 0, stale: false, snapshot: null, filtered: 0 }, master: { entries: new Map(), files: [], loadedAt: 0, loading: null, jobs: new Map() }, maps: { optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [], rows: [] }, loadedAt: 0 }, pool: { rows: new Map(), sources: new Map() }, engrave: { items: new Map(), fonts: { ok: false, Regular: null, Semibold: null, error: null, loading: null } }, review: { items: [] }, run: null, sets: new Map(), employee: (localStorage.getItem("cn.employee") || "").trim() };
+const SOURCE_LABEL = { personalization: "the personalisation box", personalisation: "the personalisation box", buyerMessage: "the buyer's message", staffNote: "the staff note", messages: "the staff messages", none: "", "": "" };
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const fmtT = t => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -244,7 +245,7 @@ const DesignLink = window.DesignLink = (() => {
    in the corner of every other tab while the sorter is in control, hidden otherwise. The station is always rendered at a
    desktop width and scaled to fit, so its order rail, tiles and dialogs look as they do on its own screen. ── */
 const Dock = window.Dock = (() => {
-  const D = { el: null, body: null, bar: null, host: null, mode: "hidden", hiddenByUser: false, pill: null, virtualW: 1200, ro: null, raf: 0 };
+  const D = { el: null, body: null, bar: null, host: null, mode: "hidden", hiddenByUser: false, shownByUser: false, pill: null, virtualW: 1200, ro: null, raf: 0 };
   function ensure() {
     if (D.el) return D;
     const el = document.createElement("div"); el.id = "dsDock"; el.className = "hidden";
@@ -254,7 +255,7 @@ const Dock = window.Dock = (() => {
     el.querySelector("#dockOpen").onclick = () => setMode("design");
     el.querySelector("#dockHide").onclick = () => { D.hiddenByUser = true; layout(); };
     D.bar.addEventListener("dblclick", () => setMode("design"));
-    const pill = document.createElement("button"); pill.type = "button"; pill.id = "dsDockPill"; pill.className = "hidden"; pill.innerHTML = `<span class="dot"></span>Design Station live view`; pill.onclick = () => { D.hiddenByUser = false; layout(); };
+    const pill = document.createElement("button"); pill.type = "button"; pill.id = "dsDockPill"; pill.className = "hidden"; pill.innerHTML = `<span class="dot"></span>Design Station live view`; pill.onclick = () => { D.hiddenByUser = false; D.shownByUser = true; layout(); };
     document.body.appendChild(pill); D.pill = pill;
     window.addEventListener("resize", schedule); document.addEventListener("scroll", schedule, true);
     return D;
@@ -275,6 +276,9 @@ const Dock = window.Dock = (() => {
     D.pill.classList.toggle("hidden", mode !== "pilled");
     D.el.classList.toggle("hidden", mode === "hidden" || mode === "pilled");
     D.el.classList.toggle("full", mode === "full"); D.el.classList.toggle("pip", mode === "pip");
+    // on the engraving and review screens the controls live at the bottom of the page, so the live view tucks itself
+    // into a smaller corner there rather than sitting on top of them
+    D.el.classList.toggle("tucked", mode === "pip" && ["engrave", "review"].includes(S.mode) && !D.shownByUser);
     if (mode === "hidden" || mode === "pilled" || !f) return;
     let w, h;
     if (mode === "full") {
@@ -927,6 +931,8 @@ const Engrave = window.Engrave = (() => {
   const jobOf = row => items().get(row.key) || null;
   function ensureJob(row) { let j = items().get(row.key); if (!j) { j = { key: row.key, row, state: "classify", text: null, lines: [], source: null, quote: null, confidence: null, requests: null, questions: [], decision: null, fit: null, view: null, mask: null, claude: null, approvedBy: null, approvedAt: null, backs: [], copies: [], reason: null, t: Date.now() }; items().set(row.key, j); } j.copies = row.poolIds.slice(); return j; }
   const pendingCount = () => [...items().values()].filter(j => ["words", "review", "fitting", "ready", "classify"].includes(j.state) && j.row.state !== "gone").length;
+  /** How many placements have already been settled in this run — the numerator of "3 of 9" on the card. */
+  const reviewedCount = () => [...items().values()].filter(j => ["approved", "skipped", "none", "written"].includes(j.state) && j.row.state !== "gone").length;
 
   /* ── 7.1 · which lines are engraved, and what the text is ── */
   async function classify(row) {
@@ -1186,40 +1192,82 @@ const Engrave = window.Engrave = (() => {
   }
 
   /* ── the Engraving tab ── */
+  const EG = { tab: null, focus: null, chosen: false };                                   // which tab is open and which placement is in front
   function render() {
     LiveStrip.render();
     const v = document.getElementById("engraveView"); if (!v || v.classList.contains("hidden")) return;
     const jobs = [...items().values()].filter(j => j.row.state !== "gone");
     const words = jobs.filter(j => j.state === "words" || j.state === "blocked"), queue = jobs.filter(j => j.state === "review"), done = jobs.filter(j => ["approved", "written", "skipped"].includes(j.state));
-    v.innerHTML = `<div class="ordBar"><span class="pill ${F_.ok ? "ok" : "bad"}">${F_.ok ? "Source Sans 3 loaded" : "Source Sans 3 missing"}</span><span class="pill warn">${words.length} awaiting words</span><span class="pill info">${queue.length} placements to review</span><span class="pill ok">${done.length} decided</span><span class="spacer"></span><span class="mono" style="font-size:11.5px">reviewer: ${esc(employeeName() || "— set your name in the Design Station tab —")}</span></div>
-      <div class="section">Words awaiting a decision</div><div class="rvList" id="egWords"></div>
-      <div class="section">Placement review · one at a time · keys: A approve · S skip · arrows nudge 0.25 mm</div><div class="rvList" id="egQueue"></div>
-      <div class="section">Back pool · per sheet</div><div id="egBacks"></div>`;
-    const w = v.querySelector("#egWords"); for (const j of words) w.appendChild(Review.card(Review.items().find(i => i.key === "eng:" + j.key) || { kind: j.state === "blocked" ? "flipFailed" : "engraveWords", key: "eng:" + j.key, row: j.row, job: j, why: j.reason }));
-    if (!words.length) w.innerHTML = `<div class="libEmpty">nothing waiting</div>`;
-    const q = v.querySelector("#egQueue"); if (queue.length) q.appendChild(placementCard(queue[0], queue.length)); else q.innerHTML = `<div class="libEmpty">no placement to review</div>`;
-    const bk = v.querySelector("#egBacks"); const sheets = allSheets().filter(sh => (sh.backPool || []).length);
-    bk.innerHTML = sheets.length ? sheets.map(sh => `<div class="section" style="margin-top:6px">${esc(sh.fileBase || labelOf(sh.metal))} · Engraving · ${sh.backPool.length}${sh.backOutputs ? ` · <a href="${sh.backOutputs.index.url}" target="_blank" rel="noopener">back-index.pdf</a> · <a href="${sh.backOutputs.report.url}" target="_blank" rel="noopener">back-report.json</a>` : ""}</div><div class="backPool">${sh.backPool.map(b => `<div class="bp">${b.outputs && b.outputs.png ? `<img src="${b.outputs.png.url}" alt="">` : ""}<div class="t">${esc(b.order)} · ${esc(b.sku)} · ${b.copy}/${(B.pool.rows.get(b.poolId) || {}).quantity || 1}</div><div>"${esc(String(b.text).replace(/\n/g, " / "))}"</div><div class="m">${b.sizePt} pt · cap ${b.capMm} mm · ${esc(b.weight)}${b.angle ? ` · ${b.angle}°` : ""}${b.small ? " · SMALL" : ""}</div><div class="m">approved by ${esc(b.approvedBy || "—")}${b.outputs && b.outputs.ai ? ` · <a href="${b.outputs.ai.url}" target="_blank" rel="noopener">.ai</a>` : ""}</div></div>`).join("")}</div>`).join("") : `<div class="libEmpty">no back files yet</div>`;
+    // One screen, three tabs, one thing in front of you at a time: the words a person has to settle, the placements to
+    // approve, and what has already been decided. The counts are the tabs, so what is left is never more than a glance.
+    // the screen opens on whatever has work; once a person picks a tab it stays picked, empty or not
+    if (!EG.tab || (!EG.chosen && ((EG.tab === "words" && !words.length && queue.length) || (EG.tab === "place" && !queue.length && words.length)))) EG.tab = queue.length ? "place" : words.length ? "words" : "done";
+    const tab = EG.tab;
+    const focus = queue.find(j2 => j2.key === EG.focus) || queue[0] || null;
+    const tabBtn = (id, label, n, cls) => `<button class="egTab${tab === id ? " on" : ""}" data-tab="${id}">${label}<b class="${cls}">${n}</b></button>`;
+    v.innerHTML = `<div class="ordBar egBar">
+        ${tabBtn("place", "Placements", queue.length, "info")}${tabBtn("words", "Words", words.length, "warn")}${tabBtn("done", "Decided", done.length, "ok")}
+        <span class="spacer"></span><span class="pill ${F_.ok ? "ok" : "bad"}">${F_.ok ? "Source Sans 3" : "Source Sans 3 missing"}</span><span class="mono" style="font-size:11.5px">${esc(employeeName() || "— set your name in the Design Station tab —")}</span></div>
+      <div class="egPane grow"${tab === "place" ? "" : " hidden"}><div class="rvList" id="egQueue"></div>
+        <div class="egNext" id="egNext"></div></div>
+      <div class="egPane grow scroll"${tab === "words" ? "" : " hidden"}><div class="rvList" id="egWords"></div></div>
+      <div class="egPane grow scroll"${tab === "done" ? "" : " hidden"}><div id="egBacks"></div></div>`;
+    v.querySelectorAll(".egTab").forEach(b => b.onclick = () => { EG.tab = b.dataset.tab; EG.chosen = true; render(); });
+    if (tab === "words") {
+      const w = v.querySelector("#egWords"); for (const j2 of words) w.appendChild(Review.card(Review.items().find(i2 => i2.key === "eng:" + j2.key) || { kind: j2.state === "blocked" ? "flipFailed" : "engraveWords", key: "eng:" + j2.key, row: j2.row, job: j2, why: j2.reason }));
+      if (!words.length) w.innerHTML = `<div class="libEmpty">nothing waiting</div>`;
+    }
+    if (tab === "place") {
+      const q = v.querySelector("#egQueue");
+      if (focus) { const c = placementCard(focus, queue.length); c.classList.add("full"); q.appendChild(c); }
+      else q.innerHTML = `<div class="libEmpty">no placement to review</div>`;
+      // what is coming: the order and the words, so the list and the picture are the same thing
+      const rail = v.querySelector("#egNext");
+      const rest = queue.filter(j2 => j2 !== focus);
+      rail.innerHTML = rest.length ? `<span class="lbl">up next</span>` + rest.slice(0, 12).map(j2 => `<button class="egChip" data-key="${esc(j2.key)}" title="${esc(j2.row.spec.designSku)} · ${esc(j2.lines.join(" / "))}"><b>${esc(j2.row.order.receiptId)}</b><span>${esc(j2.lines.join(" / ").slice(0, 22))}</span></button>`).join("") + (rest.length > 12 ? `<span class="lbl">+${rest.length - 12}</span>` : "") : "";
+      rail.querySelectorAll(".egChip").forEach(b => b.onclick = () => { EG.focus = b.dataset.key; render(); });
+    }
+    if (tab === "done") {
+      const bk = v.querySelector("#egBacks"); const sheets = allSheets().filter(sh => (sh.backPool || []).length);
+      const lnk = (o, t) => o && o.url ? ` · <a href="${esc(o.url)}" target="_blank" rel="noopener">${t}</a>` : "";
+      bk.innerHTML = sheets.length ? sheets.map(sh => `<div class="section" style="margin-top:6px">${esc(sh.fileBase || labelOf(sh.metal))} · ${sh.backPool.length} back${sh.backPool.length === 1 ? "" : "s"}${sh.backOutputs ? lnk(sh.backOutputs.index, "back-index.pdf") + lnk(sh.backOutputs.report, "back-report.json") : ""}</div>
+        <div class="backPool">${sh.backPool.map(b => `<div class="bp">${b.outputs && b.outputs.png && b.outputs.png.url ? `<img src="${esc(b.outputs.png.url)}" alt="" loading="lazy">` : ""}<span class="t">${esc((b.lines || [b.text || ""]).join(" / "))}</span><span class="m">${esc(b.order || "")}${b.capMm ? ` · cap ${(+b.capMm).toFixed(2)} mm` : ""}${b.approvedBy ? ` · ${esc(b.approvedBy)}` : ""}</span>${b.outputs && b.outputs.ai && b.outputs.ai.url ? `<a class="m" href="${esc(b.outputs.ai.url)}" target="_blank" rel="noopener">${esc(b.name || "back")}.ai</a>` : ""}</div>`).join("")}</div>`).join("") : `<div class="libEmpty">nothing decided yet</div>`;
+    }
   }
   /** The placement review card: front and back side by side, the mask hatch, the text as it will be cut, the controls. */
   function placementCard(job, remaining) {
     const it = Review.items().find(i => i.key === "eng:" + job.key) || { kind: "placement", key: "eng:" + job.key, row: job.row, job };
     const card = el("div", "rvItem"); card.dataset.kind = "placement"; card.tabIndex = 0;
     const r = job.row, sp = r.spec, f = job.fit;
-    card.innerHTML = `<div class="rh"><span class="kind">placement review</span><span class="ttl">${esc(r.order.receiptId)} · ${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}</span><span class="sub">${job.copies.length} identical cop${job.copies.length === 1 ? "y" : "ies"} · reviewed once</span>${remaining > 1 ? `<span class="pill neutral">${remaining - 1} more after this</span>` : ""}${f && f.small ? `<span class="small">SMALL · cap ${f.capMm.toFixed(2)} mm under ${S.settings.engraveMinCapMm} mm</span>` : ""}${f && f.thin ? `<span class="small">strokes under the engraver limit</span>` : ""}</div>
-      <div class="placeView"><div><div class="section" style="margin:0 0 6px">Front</div><div class="frontHost"></div><dl class="meta" style="margin-top:8px"><dt>Customer</dt><dd>${esc((sp.personalization || []).join(" / ") || "—")}</dd><dt>Buyer msg</dt><dd>${esc(sp.buyerMessage || "—")}</dd><dt>Staff note</dt><dd>${esc(sp.staffNote || "—")}</dd><dt>Claude read</dt><dd>${esc(job.text || "")}${job.source ? ` <i style="color:var(--ink45)">(${esc(job.source)} · ${Math.round((job.confidence || 0) * 100)}%)</i>` : ""}</dd>${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}</dl></div>
-      <div><div class="section" style="margin:0 0 6px">Back · mirrored, hoop up · green = solid area allowed for text</div><div class="back"><div class="backHost"></div></div>
-      ${f ? `<dl class="meta" style="margin-top:8px"><dt>Text</dt><dd>${esc(job.lines.join(" / "))}</dd><dt>Size</dt><dd>${f.size.toFixed(2)} pt · cap ${f.capMm.toFixed(2)} mm · ${esc(f.weight)}${f.angle ? ` · ${f.angle}°` : ""}</dd><dt>Strokes</dt><dd>min stem ${f.metrics ? f.metrics.strokeMm.toFixed(2) : "?"} mm · min gap ${f.metrics && f.metrics.gapMm ? f.metrics.gapMm.toFixed(2) : "—"} mm</dd><dt>Flip checks</dt><dd>${Object.entries(job.view.checks).map(([k, ok]) => `${k} ${ok ? "✓" : "✗"}`).join(" · ")}</dd><dt>Geometry</dt><dd>${job.verify && job.verify.geometry.ok ? `zero ink outside the eroded mask (${job.verify.geometry.total} px checked)` : "NOT verified"}</dd></dl>` : `<div class="why">${esc(job.reason || "no fit")}</div>`}
-      ${job.claude ? `<div class="claude">${job.claude.skipped ? `Claude's read skipped: ${esc(job.claude.skipped)}` : `<b>Claude:</b> ${job.claude.legible ? "legible" : "hard to read"} — ${esc(job.claude.notes)}`}</div>` : `<div class="claude" style="opacity:.6">Claude is looking at the rendered back…</div>`}
-      <div class="ctl">${f ? `<button class="btn sage sm" data-a="approve">Approve (A)</button><button class="btn ghost sm" data-a="left">◀</button><button class="btn ghost sm" data-a="right">▶</button><button class="btn ghost sm" data-a="up">▲</button><button class="btn ghost sm" data-a="down">▼</button><button class="btn ghost sm" data-a="centre" title="Put the text in the middle of the area it may use">Centre</button><label style="font-size:11.5px">Resize <input type="range" min="${(0.5 * f.fittedMax).toFixed(2)}" max="${f.fittedMax.toFixed(2)}" step="0.05" value="${f.size.toFixed(2)}" data-a="resize"></label>` : ""}<button class="btn ghost sm" data-a="resplit">Re-split lines</button><button class="btn ghost sm" data-a="skip">Skip (S) — cut plain</button><button class="btn ghost sm" data-a="back">Send back</button></div></div></div>`;
+    const done = (Engrave.reviewedCount ? Engrave.reviewedCount() : 0) + 1;
+    // One card, one order, one screen: the back is the work and the right column is everything you need to judge it.
+    const pct = Math.round((job.confidence != null ? job.confidence : 0) * 100);
+    const conf = job.source ? `<span class="conf ${pct >= 80 ? "" : pct >= 60 ? "mid" : "low"}" title="how sure Claude is that these are the words to cut, read from ${esc(SOURCE_LABEL[job.source] || job.source)}${job.quote ? ` — “${esc(job.quote)}”` : ""}">${pct}% sure</span>` : "";
+    const row2 = (t, v) => v && v !== "—" ? `<dt>${t}</dt><dd>${esc(v)}</dd>` : "";
+    card.innerHTML = `<div class="rh"><span class="kind">${done} of ${done + Math.max(0, remaining - 1)}</span><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div>
+      <div class="placeView">
+        <div class="pvMain"><div class="backHost"></div>
+          <div class="ctl">${f ? `<button class="btn sage sm" data-a="approve">Approve <b class="k">A</b></button>
+            <span class="grp" title="nudge the text by 0.25 mm — the arrow keys do the same"><button class="btn ghost sm" data-a="left" title="nudge left 0.25 mm" aria-label="nudge left">◀</button><button class="btn ghost sm" data-a="down" title="nudge down 0.25 mm" aria-label="nudge down">▼</button><button class="btn ghost sm" data-a="up" title="nudge up 0.25 mm" aria-label="nudge up">▲</button><button class="btn ghost sm" data-a="right" title="nudge right 0.25 mm" aria-label="nudge right">▶</button><button class="btn ghost sm" data-a="centre" title="put the text in the middle of the area it may use">Centre</button></span>
+            <span class="sizer"><input type="range" min="${(0.5 * f.fittedMax).toFixed(2)}" max="${f.fittedMax.toFixed(2)}" step="0.05" value="${f.size.toFixed(2)}" data-a="resize" title="text size" aria-label="text size"><b class="mono" data-cap>${f.capMm.toFixed(2)} mm</b></span>` : ""}
+            <span class="rest">${f ? `<button class="btn ghost sm" data-a="resplit" title="try a different split of the words across lines">Re-split</button>` : ""}<button class="btn ghost sm" data-a="skip" title="cut this charm with no engraving">Skip <b class="k">S</b></button><button class="btn ghost sm" data-a="back" title="send this back to the words step">Send back</button></span></div>
+          <div class="help">drag the text to move it · shift-drag to resize from the centre · arrows nudge 0.25 mm</div></div>
+        <div class="pvSide">
+          <div class="pvWords"><span class="lbl">Words on the back</span>${esc(job.lines.join(" / ")) || "—"}</div>
+          <div class="frontHost"></div>
+          <dl class="meta">${row2("Customer", (sp.personalization || []).join(" / "))}${row2("Buyer msg", sp.buyerMessage)}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}</dl>
+          ${job.claude ? `<div class="claude">${job.claude.skipped ? `Claude could not look at the render: ${esc(job.claude.skipped)}` : `<b>${job.claude.legible ? "Reads clearly" : "Hard to read"}</b> — ${esc(job.claude.notes)}`}</div>` : `<div class="claude" style="opacity:.6">Claude is looking at the rendered back…</div>`}
+          ${f ? `<details class="pvNums"><summary>the numbers</summary><dl class="meta"><dt>Size</dt><dd>${f.size.toFixed(2)} pt · cap ${f.capMm.toFixed(2)} mm · ${esc(f.weight)}${f.angle ? ` · ${f.angle}°` : ""}</dd><dt>Strokes</dt><dd>min stem ${f.metrics ? f.metrics.strokeMm.toFixed(2) : "?"} mm · min gap ${f.metrics && f.metrics.gapMm ? f.metrics.gapMm.toFixed(2) : "—"} mm</dd><dt>Flip</dt><dd>${Object.entries(job.view.checks).map(([k, ok]) => `${esc(k)} ${ok ? "✓" : "✗"}`).join(" · ")}</dd><dt>Geometry</dt><dd>${job.verify && job.verify.geometry.ok ? `no ink outside the allowed area (${job.verify.geometry.total} px checked)` : "NOT verified"}</dd></dl></details>` : `<div class="why">${esc(job.reason || "no fit")}</div>`}
+        </div></div>`;
     const charm = Pool.charmOf(job.copies[0]);
-    // the previews are sized from the window, not from a number typed once: on a laptop they stay inside one screen
-    const backPx = Math.round(Math.max(300, Math.min(560, (window.innerHeight || 800) * 0.44, (window.innerWidth || 1200) * 0.34)));
-    const frontPx = Math.round(backPx * 0.62);
-    card.querySelector(".frontHost").appendChild(renderFront(charm, frontPx));
-    if (job.view) { const bc = renderBack(job, backPx, { grid: true }); card.querySelector(".backHost").appendChild(bc);
+    card.querySelector(".frontHost").appendChild(renderFront(charm, 148));
+    // the back preview is drawn to the box it is actually given, and redrawn when that box changes: no fixed number,
+    // nothing cut off on a short laptop screen, nothing left blurry after the window is resized
+    const backHost = card.querySelector(".backHost");
+    let mounted = 0, raf = 0;
+    const wire = bc => {
       let drag = null;
-      // the pointer is captured by the canvas, so the handlers live and die with this card: every card used to add
+      // the pointer is captured by the canvas, so the handlers live and die with this canvas: every card used to add
       // another pair of listeners to the window and none of them was ever removed
       bc.addEventListener("pointerdown", e => { if (!job.fit) return; bc.setPointerCapture(e.pointerId); drag = { x: e.clientX, y: e.clientY, c: job.fit.centre.slice(), size: job.fit.size, resize: e.shiftKey }; bc.classList.add("drag"); e.preventDefault(); });
       bc.addEventListener("pointermove", e => {
@@ -1250,15 +1298,30 @@ const Engrave = window.Engrave = (() => {
         else bc._paint();
       });
       bc.addEventListener("pointercancel", () => { drag = null; bc.classList.remove("drag"); bc._paint(); });
-    }
-    card.querySelectorAll("[data-a]").forEach(b => { const a = b.dataset.a; if (a === "resize") { b.oninput = () => resize(job, +b.value); return; } b.onclick = () => { if (a === "approve") approve(job); else if (a === "left") nudge(job, -0.25, 0); else if (a === "right") nudge(job, 0.25, 0); else if (a === "up") nudge(job, 0, 0.25); else if (a === "down") nudge(job, 0, -0.25); else if (a === "centre") centreText(job);
+    };
+    const mountBack = () => {
+      if (!job.view || !backHost.isConnected) return;
+      const r = backHost.getBoundingClientRect();
+      // side by side, the box says how big; stacked on a narrow screen the box has no height of its own, so half
+      // the window is the ceiling and the charm keeps its shape either way
+      const stacked = getComputedStyle(backHost).flexGrow === "0";
+      const room = stacked ? Math.min(r.width || 320, (window.innerHeight || 700) * 0.46) : Math.min(r.width || 320, r.height || 320);
+      const px = Math.round(Math.min(640, Math.max(200, room - 4)));
+      if (!px || Math.abs(px - mounted) < 12) return;
+      mounted = px; backHost.textContent = "";
+      const bc = renderBack(job, px, { grid: true }); backHost.appendChild(bc); wire(bc);
+    };
+    requestAnimationFrame(mountBack);
+    if (window.ResizeObserver) { const ro = new ResizeObserver(() => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; mountBack(); }); }); ro.observe(backHost); card._ro = ro; }
+    const capOut = card.querySelector("[data-cap]");
+    card.querySelectorAll("[data-a]").forEach(b => { const a = b.dataset.a; if (a === "resize") { b.oninput = () => { if (capOut && f && f.capMm && f.size) capOut.textContent = (f.capMm * (+b.value) / f.size).toFixed(2) + " mm"; resize(job, +b.value); }; return; } b.onclick = () => { if (a === "approve") approve(job); else if (a === "left") nudge(job, -0.25, 0); else if (a === "right") nudge(job, 0.25, 0); else if (a === "up") nudge(job, 0, 0.25); else if (a === "down") nudge(job, 0, -0.25); else if (a === "centre") centreText(job);
       else if (a === "resplit") resplit(job); else if (a === "skip") skip(job); else if (a === "back") sendBack(job); }; });
     card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT") return; const k = e.key.toLowerCase(); if (k === "a") { e.preventDefault(); approve(job); } else if (k === "s") { e.preventDefault(); skip(job); } else if (e.key === "ArrowLeft") { e.preventDefault(); nudge(job, -0.25, 0); } else if (e.key === "ArrowRight") { e.preventDefault(); nudge(job, 0.25, 0); } else if (e.key === "ArrowUp") { e.preventDefault(); nudge(job, 0, 0.25); } else if (e.key === "ArrowDown") { e.preventDefault(); nudge(job, 0, -0.25); } });
     setTimeout(() => card.focus(), 30);
     void it;
     return card;
   }
-  return { loadFonts, classify, classifyAll, fitJob, fitAll, approve, nudge, resize, resplit, skip, sendBack, decideWords, invalidate, render, placementCard, renderBack, renderFront, pendingCount, items, jobOf, ensureJob, setReady, writeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
+  return { loadFonts, classify, classifyAll, fitJob, fitAll, approve, nudge, resize, resplit, skip, sendBack, decideWords, invalidate, render, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
@@ -1634,15 +1697,14 @@ const Review = window.Review = (() => {
     B.review.items = items().filter(x => !x.key.startsWith("ord:") || keep.has(x.key));
     render(); LiveStrip.render(); RunCtl.renderBanner();
   }
-  function focus(rowKey) { render(); const c = document.querySelector(`#reviewView [data-row="${CSS.escape(rowKey)}"]`); if (c) { c.scrollIntoView({ behavior: "smooth", block: "center" }); c.classList.add("pulse"); } }
+  function focus(rowKey) { RV.filter = null; render(); const c = document.querySelector(`#reviewView [data-row="${CSS.escape(rowKey)}"]`); if (c) { c.scrollIntoView({ behavior: "smooth", block: "center" }); c.classList.add("pulse"); setTimeout(() => c.classList.remove("pulse"), 1300); } }
   async function repool(row) { row.problems = []; row.state = "pulled"; row.reason = null; Orders.interpretAll(); if (row.problems.length) { Orders.render(); return; } if (B.run && O.stepIndex(B.run.step) >= O.stepIndex("pool")) { try { await Pool.poolAdd(row, B.run); } catch (e) { row.state = "held"; row.reason = e.message; } if (row.state === "pooled" && row.spec.engraveCandidate) Engrave.classify(row).catch(() => {}); } syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards(); RunCtl.poke(); }
   const by = () => employeeName() || askEmployee();
   /** What Claude decided, in one line and one number: a reading is either text to engrave or a note to the shop. */
-  const SOURCE_WORDS = { personalization: "the personalisation box", personalisation: "the personalisation box", buyerMessage: "the buyer's message", staffNote: "the staff note", messages: "the staff messages", none: "", "": "" };
   function claudeVerdict(j) {
     const pct = Math.round((j.confidence || 0) * 100);
     const text = (j.text || "").trim();
-    const from = SOURCE_WORDS[j.source] != null ? SOURCE_WORDS[j.source] : esc(String(j.source || ""));
+    const from = SOURCE_LABEL[j.source] != null ? SOURCE_LABEL[j.source] : esc(String(j.source || ""));
     if (!text) return `<b>nothing to engrave</b> — what the customer wrote reads as a note to the shop, not words for the charm <i style="color:var(--ink45)">· ${pct}% sure it is not engraving${j.quote ? ` · "${esc(j.quote)}"` : ""}</i>`;
     return `<b>engrave this</b>${from ? ` — read from ${from}` : ""} <i style="color:var(--ink45)">· ${pct}% sure${j.quote ? ` · "${esc(j.quote)}"` : ""}</i>`;
   }
@@ -1705,13 +1767,22 @@ const Review = window.Review = (() => {
     return c;
   }
   async function row_material(r, m, who) { r.materialOverride = m; try { await DesignLink.call("notes.set", { receiptId: r.order.receiptId, text: `${r.spec.staffNote ? r.spec.staffNote + "\n" : ""}Material: ${labelOf(m)} (${who}, sorter)` }); } catch (e) { toast("Staff note not written: " + e.message, "bad"); } await repool(r); }
+  const KIND_WORDS = { needsMaterial: "Material", needsMapping: "Options", unmatchedSku: "Unknown SKU", blockedSku: "Blocked SKU", missingSize: "Size", oversize: "Too big", fontMissing: "Font", engraveWords: "Words", notRepresentable: "Characters", flipFailed: "Flip", placement: "Placement", orderChanged: "Changed", heldOrder: "Held" };
+  const RV = { filter: null };
   function render() {
     const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) return;
-    const list = items().filter(it => !(it.row && it.row.state === "gone"));
+    const all = items().filter(it => !(it.row && it.row.state === "gone"));
     const ORDER = ["needsMaterial", "needsMapping", "unmatchedSku", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "orderChanged", "heldOrder"];
-    list.sort((a, b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind) || a.t - b.t);
-    v.innerHTML = `<div class="ordBar"><span class="pill ${list.length ? "warn" : "ok"}">${list.length ? `${list.length} item(s) need a person` : "nothing to decide"}</span><span class="mono" style="font-size:11.5px">reviewer: ${esc(employeeName() || "—")}</span><button class="btn ghost xs" id="rvName">Change name</button><span class="spacer"></span><span style="font-size:11.5px;color:var(--ink45)">Every item shows what was identified, the evidence, why it stopped, and the quick fixes.</span></div><div class="rvList" id="rvList"></div>`;
+    all.sort((a, b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind) || a.t - b.t);
+    // the kinds present are the filter: one chip each, so a long mixed list becomes the one kind being worked through
+    const byKind = new Map(); for (const it of all) byKind.set(it.kind, (byKind.get(it.kind) || 0) + 1);
+    if (RV.filter && !byKind.has(RV.filter)) RV.filter = null;
+    const list = RV.filter ? all.filter(it => it.kind === RV.filter) : all;
+    const chip = (id, label, n) => `<button class="egTab${(RV.filter || "") === id ? " on" : ""}" data-k="${esc(id)}">${esc(label)}<b class="warn">${n}</b></button>`;
+    v.innerHTML = `<div class="ordBar egBar">${chip("", "Everything", all.length)}${ORDER.filter(k => byKind.has(k)).map(k => chip(k, KIND_WORDS[k] || k, byKind.get(k))).join("")}<span class="spacer"></span><span class="mono" style="font-size:11.5px">${esc(employeeName() || "— no reviewer name —")}</span><button class="btn ghost xs" id="rvName">Change name</button></div>
+      <div class="egPane grow scroll"><div class="rvList" id="rvList"></div></div>`;
     v.querySelector("#rvName").onclick = () => { askEmployee(); render(); };
+    v.querySelectorAll("[data-k]").forEach(b => b.onclick = () => { RV.filter = b.dataset.k || null; render(); });
     const host = v.querySelector("#rvList");
     for (const it of list) host.appendChild(card(it));
     if (!list.length) host.innerHTML = `<div class="libEmpty">Nothing waits for a decision.</div>`;
