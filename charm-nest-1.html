@@ -2718,8 +2718,8 @@ async function boot() {
   { const m = (location.hash || "").slice(1); if (m && $(`#modeSeg button[data-mode="${m}"]`)) setMode(m); }
   $$("#libKind button").forEach(b => b.onclick = () => { $$("#libKind button").forEach(x => x.classList.toggle("on", x === b)); S.library.kind = b.dataset.k; loadLibrary(); });
   $("#rpClose").onclick = () => closeDlg($("#dlgReport")); $("#lsClose").onclick = () => closeDlg($("#dlgSheet"));
-  $$("#libView .fchip").forEach(b => b.onclick = () => { $$("#libView .fchip").forEach(x => x.classList.toggle("on", x === b)); S.library.metal = b.dataset.m; loadLibrary(); });
-  $("#libSearch").oninput = () => (S.library.kind === "sets" ? loadLibrary() : renderLibrary()); $("#libRefresh").onclick = loadLibrary; $("#libFrom").onchange = loadLibrary; $("#libTo").onchange = loadLibrary;
+  $$("#libView .fchip").forEach(b => b.onclick = () => { $$("#libView .fchip").forEach(x => x.classList.toggle("on", x === b)); S.library.metal = b.dataset.m; if (S.library.kind === "sets" && window.Sets) Sets.renderLibrary($("#libBody"), { reuse: true }); else loadLibrary(); });
+  $("#libSearch").oninput = () => (S.library.kind === "sets" ? Sets.renderLibrary($("#libBody"), { reuse: true }) : renderLibrary()); $("#libRefresh").onclick = loadLibrary; $("#libFrom").onchange = loadLibrary; $("#libTo").onchange = loadLibrary;
   // the two search boxes on adjacent tabs must behave the same: type and it searches, and the native × clears it.
   // Debounced rather than per keystroke, because this one is a network call.
   $("#charmRefresh").onclick = loadCharms;
