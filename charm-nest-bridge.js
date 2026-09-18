@@ -2095,7 +2095,19 @@ const OrderWin = window.OrderWin = (() => {
     const next = list[(i < 0 ? 0 : i + d + list.length) % list.length];
     if (next && next.key !== W.key) open(next.key);
   }
-  function paintWho() { const w = byId("owWho"); if (w) w.textContent = me() || "— no name set —"; }
+  function paintWho() {
+    const w = byId("owWho"); if (w) w.textContent = me() || "— no name set —";
+    // the thread and the staff note both travel through the Design Station: when that link is down, say so here rather
+    // than letting a person type a message and meet an error
+    const st = byId("owLink"); if (!st) return;
+    const up = DesignLink.inControl() && DesignLink.up();
+    const etsy = DesignLink.state() && DesignLink.state().etsy;
+    const bad = !up ? "the Design Station link is down — messages and notes cannot be saved"
+      : etsy && etsy.signedIn === false ? "the Design Station is not signed in to Etsy" : "";
+    st.textContent = bad ? "● offline" : "● live";
+    st.className = "owLink " + (bad ? "bad" : "ok");
+    st.title = bad || "messages and notes are saving through the Design Station";
+  }
 
   async function saveNote() {
     const r = rowOf(W.key); if (!r) return;

@@ -343,6 +343,8 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .owFix .rvItem .rh{display:none}
 .owChatHead{display:flex;align-items:center;gap:8px;padding:11px 13px;border-bottom:1px solid var(--line);flex:0 0 auto}
 .owChatHead .lab{font:10px var(--mono);letter-spacing:.11em;text-transform:uppercase;color:var(--ink45);font-weight:700}
+.owLink{font:10px var(--mono);letter-spacing:.06em;text-transform:uppercase;font-weight:700}
+.owLink.ok{color:#3f5b3a}.owLink.bad{color:#8a3a26}
 .owThread{flex:1 1 auto;min-height:0;overflow:auto;padding:12px 13px;display:flex;flex-direction:column;gap:9px}
 .owEmpty{margin:auto;text-align:center;color:var(--ink45);font-size:12.5px;line-height:1.6;max-width:30ch}
 .owEmpty b{display:block;color:var(--ink);font-size:14px;margin-bottom:5px}
@@ -2550,7 +2552,7 @@ boot();
         </div>
       </div>
       <aside class="owChat">
-        <div class="owChatHead"><span class="lab">Messages</span><span class="spacer" style="flex:1 1 auto"></span><span class="mono" style="font-size:11px;color:var(--ink45)" id="owWho">—</span><button class="btn ghost xs" id="owWhoBtn">Change name</button></div>
+        <div class="owChatHead"><span class="owLink ok" id="owLink" title="messages and notes are saving through the Design Station">● live</span><span class="lab">Messages</span><span class="spacer" style="flex:1 1 auto"></span><span class="mono" style="font-size:11px;color:var(--ink45)" id="owWho">—</span><button class="btn ghost xs" id="owWhoBtn">Change name</button></div>
         <div class="owThread" id="owThread"></div>
         <div class="owComp">
           <div class="owTray" id="owTray"></div>
