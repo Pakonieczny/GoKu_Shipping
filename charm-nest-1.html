@@ -847,7 +847,14 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .rvItem.full .backHost{flex:1 1 0;min-height:190px}
 .frontHost{display:flex;justify-content:center}
 .pvSide .frontHost{flex:1 1 auto;min-height:220px;align-items:center}
-.pvSide .frontHost canvas{width:100%;height:auto;max-height:100%;border:1px solid var(--line2);border-radius:10px;background:#fff}
+.pvSide .frontHost{align-items:flex-start}
+.pvSide .frontHost canvas,.pvSide .frontHost img{width:100%;height:auto!important;max-height:none;aspect-ratio:auto;border:1px solid var(--line2);border-radius:10px;background:#fff;object-fit:contain}
+.pvWords textarea{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:7px;padding:6px 8px;font:600 15px var(--serif);background:var(--card);resize:vertical;margin-top:2px}
+.pvWords .wordsActs{display:flex;gap:6px;margin-top:6px}
+.pvWords .why{font:12px var(--sans);color:var(--warn,#a2591c);margin-top:6px}
+.placeView .ctl .angle{display:inline-flex;align-items:center;gap:2px;font:11.5px var(--mono);color:var(--ink45)}
+.placeView .ctl .angle input{width:52px;border:1px solid var(--line);border-radius:7px;padding:3px 4px;font:12px var(--mono);background:var(--card);text-align:right}
+.placeView .noBack{width:100%;min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--ink45);font-size:12.5px;border:1px dashed var(--line);border-radius:10px;padding:16px;text-align:center}
 @container (max-width:700px){.placeView{display:flex;flex-direction:column;flex:0 0 auto}.pvSide{overflow:visible}.backHost{flex:0 0 auto;min-height:0;height:auto}}
 @media (max-width:920px){.placeView{display:flex;flex-direction:column;flex:0 0 auto}.pvSide{overflow:visible}.backHost{flex:0 0 auto;min-height:0;height:auto}}
 /* the canvas is drawn at the size it will be shown, so it is sharp and never stretched to fill a wide window */

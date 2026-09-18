@@ -259,7 +259,7 @@ const receipts = [
           inner: { w: window.innerWidth, h: window.innerHeight } };
       });
       console.log('engraving screen', JSON.stringify(eg));
-      assert.strictEqual(eg.tabs.length, 3, 'three tabs');
+      assert.strictEqual(eg.tabs.length, 2, 'two tabs: Placements and Decided');
       assert(eg.zeroBadges === 0, 'an empty queue is not dressed as work: ' + eg.zeroBadges + ' zero badge(s)');
       assert.strictEqual(eg.tabs.filter(t => t.on).length, 1, 'exactly one tab is open');
       assert.strictEqual(eg.openPanes, 1, 'and exactly one pane is shown');
@@ -776,11 +776,11 @@ const receipts = [
       await page.evaluate(() => { CN.setMode('engrave'); Engrave.render(); });
       const switched = await page.evaluate(() => {
         const v = document.getElementById('engraveView');
-        v.querySelector('.egTab[data-tab=words]').click();   // an empty tab still opens when it is asked for
+        v.querySelector('.egTab[data-tab=done]').click();   // an empty tab still opens when it is asked for
         const v2 = document.getElementById('engraveView');
         return { on: [...v2.querySelectorAll('.egTab')].filter(b => b.classList.contains('on')).map(b => b.dataset.tab), panes: [...v2.querySelectorAll('.egPane')].map(p2 => !p2.hasAttribute('hidden')).filter(Boolean).length };
       });
-      assert.deepStrictEqual(switched.on, ['words'], 'a tab switches the screen');
+      assert.deepStrictEqual(switched.on, ['done'], 'a tab switches the screen');
       assert.strictEqual(switched.panes, 1, 'and still one pane at a time');
       await page.evaluate(() => { const v = document.getElementById('engraveView'); const b = v.querySelector('.egTab[data-tab=place]'); if (b) b.click(); });
 
@@ -798,6 +798,12 @@ const receipts = [
         // the editor: one text, one box around it, a way out, and the ghost that used to sit under a drag is gone
         const ed = await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); const bc = c && c.querySelector('.backHost canvas'); return { box: !!(bc && bc._box), close: !!(c && c.querySelector('[data-a=close]')), slider: !!(c && c.querySelector('input[data-a=resize]')), arrows: !!(c && c.querySelector('[data-a=left]')), buttons: c ? [...c.querySelectorAll('.ctl button')].map(b => b.textContent.replace(/\s+/g, ' ').trim()) : [] }; });
         console.log('editor', JSON.stringify(ed));
+        // turning the text: a snap to 90 or to 0 holds — it used to fall back to the previous angle on 0 — and the number field shows it
+        const turned = await page.evaluate(async () => { const j = [...Engrave.items().values()].find(x => x.state === 'review'); if (!j || !j.fit) return null; const out = {}; for (const a of [90, 0, 180, 45]) { Engrave.rotateTo(j, a); await new Promise(r => setTimeout(r, 50)); out[a] = { angle: j.fit.angle, field: +(document.querySelector('#egQueue input[data-a=angle]') || {}).value }; } Engrave.rotateTo(j, 0); return out; });
+        console.log('turned', JSON.stringify(turned));
+        if (turned) for (const a of [90, 0, 180]) assert(turned[a].angle === a && turned[a].field === a, `a turn to ${a}° holds: ` + JSON.stringify(turned[a]));
+        const wordsHere = await page.evaluate(() => ({ ta: !!document.querySelector('#egQueue textarea[data-f=words]'), use: !!document.querySelector('#egQueue [data-a=usewords]'), tabs: [...document.querySelectorAll('.egTab[data-tab]')].map(b => b.dataset.tab) }));
+        assert(wordsHere.ta && wordsHere.use && !wordsHere.tabs.includes('words'), 'the words are editable on the card and there is no Words tab: ' + JSON.stringify(wordsHere));
         assert(ed.box && ed.close && !ed.slider && !ed.arrows, 'the text has its box, the card has a way out, and the slider and arrow buttons are gone: ' + JSON.stringify(ed));
         const exit = await page.evaluate(async () => { document.querySelector('#egQueue [data-a=close]').click(); await new Promise(r => setTimeout(r, 200)); const rows = document.querySelectorAll('#egQueue [data-open]').length; const first = document.querySelector('#egQueue [data-open]'); if (first) first.click(); await new Promise(r => setTimeout(r, 300)); return { rows, back: !!document.querySelector('#egQueue .rvItem[data-kind=placement]') }; });
         assert(exit.rows >= 1 && exit.back, 'closing the card shows the list of placements, and a row opens one again: ' + JSON.stringify(exit));
