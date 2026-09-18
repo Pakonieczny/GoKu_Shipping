@@ -502,10 +502,14 @@ const Orders = window.Orders = (() => {
   /** The other direction: a recorded line, back to the row shape every card, list, filter and window already reads. */
   function rowFromRecord(key, l) {
     const s2 = l.snap || {};
+    /* Runs recorded before a line's own copy was kept have a SKU and a material and nothing else. The master index
+       holds the rest: the charm's name stands in for the listing title, and its drawing — the thing that will actually
+       be cut — stands in for the shop photograph, which is arguably the better picture anyway. */
+    const me = !s2.title && l.sku ? Master.entryFor(l.sku) : null;
     const order = { receiptId: String(l.orderId || ""), orderNumber: s2.orderNumber || String(l.orderId || ""), shipBy: +s2.shipBy || 0, updateTs: +l.updateTs || 0,
       buyer: { name: s2.buyer || "", country: "", city: "" }, buyerMessage: "", isGift: !!s2.isGift, giftMessage: "", staffNote: "", messages: [], metals: {}, lines: [] };
-    const line = { transactionId: String(l.transactionId || ""), listingId: s2.listingId || "", sku: l.sku || "", title: s2.title || "", quantity: +l.quantity || 1,
-      metalKey: s2.metalKey || "", metalLabel: s2.metalLabel || "", personalization: s2.pers || [], buyerMessage: "", expectedShipDate: 0,
+    const line = { transactionId: String(l.transactionId || ""), listingId: s2.listingId || "", sku: l.sku || "", title: s2.title || (me ? `${me.sku}${me.size ? " · " + me.size : ""}` : ""), quantity: +l.quantity || 1,
+      metalKey: s2.metalKey || "", metalLabel: s2.metalLabel || (l.material ? labelOf(l.material) : ""), personalization: s2.pers || [], buyerMessage: "", expectedShipDate: 0,
       variations: (s2.vars || []).map(v => { const i = String(v).indexOf("\u241f"); return { name: String(v).slice(0, i < 0 ? 0 : i), value: i < 0 ? String(v) : String(v).slice(i + 1) }; }) };
     order.lines = [line];
     return { key, order, line, spec: null, problems: [], state: l.state || "pulled", reason: l.reason || null, hold: l.hold || null, claimedBy: null,
@@ -642,14 +646,6 @@ const Orders = window.Orders = (() => {
       if (IMG.io) IMG.io.unobserve(host);
     }
   }
-  /** Light up every card or row of one order, so a person can see at a glance what else came in the same parcel. */
-  function markKin(rid, on) {
-    const host = document.getElementById("ordBody"); if (!host) return;
-    host.querySelectorAll(".kin").forEach(n => n.classList.remove("kin"));
-    if (!on) return;
-    const kin = host.querySelectorAll('[data-rid="' + String(rid).replace(/"/g, "") + '"]');
-    if (kin.length > 1) kin.forEach(n => n.classList.add("kin"));
-  }
   /* Thirteen state words in four colours said nothing about order. The five that are progress now carry their place in
      the run, so "3/5 nested" reads as progress; the exceptions stay unnumbered, so a problem reads differently. */
   const PROGRESS = ["pooled", "nested", "written", "labelled", "committed"];
@@ -705,7 +701,7 @@ const Orders = window.Orders = (() => {
       const lid = String(r.line.listingId || "");
       const url = imageFor(r);
       const why = attn ? (r.problems.map(x => Review.problemText(x)).join(" · ") || r.reason || "") : "";
-      const node = el("button", (cards ? "ocard" : "olist") + (attn ? " attn" : ""));
+      const node = el("button", (cards ? "ocard" : "olist") + " hoverItem" + (attn ? " attn" : ""));
       node.type = "button"; node.dataset.m = m; node.dataset.key = r.key;
       node.title = r.order.receiptId + " · " + (sp.designSku || r.line.sku || "no SKU") + " — " + r.line.title;
       const qty = sp.quantity || r.line.quantity || 1;
@@ -744,8 +740,6 @@ const Orders = window.Orders = (() => {
       { const rh = node.querySelector(".relHold"); if (rh) rh.onclick = e => { e.stopPropagation(); Review.repool(r); }; }
       // an order can be several lines on several cards: hovering one lifts all of them, the way the station does
       node.dataset.rid = String(r.order.receiptId);
-      node.onmouseenter = node.onfocus = () => markKin(node.dataset.rid, true);
-      node.onmouseleave = node.onblur = () => markKin(node.dataset.rid, false);
       list.appendChild(node);
     }
     paintImages();
@@ -1237,7 +1231,7 @@ const Master = window.Master = (() => {
       const e = d.head, keys = esc(d.skus.join("|"));
       const blocked = [...new Set(d.list.map(x => x.blocked).filter(Boolean))].join("; ");
       const sizes = e.sizes ? Object.entries(e.sizes) : [];
-      return `<div class="skuTile${blocked ? " blocked" : ""}" data-sku="${esc(e.sku)}">` +
+      return `<div class="skuTile hoverItem${blocked ? " blocked" : ""}" data-sku="${esc(e.sku)}">` +
         (thumbOf(e) ? `<img crossorigin="anonymous" src="${thumbOf(e)}" loading="lazy" alt="">` : `<div style="aspect-ratio:1;background:#fff;border-radius:6px"></div>`) +
         `<div class="sku" title="${esc(d.skus.join(", "))}">${esc(e.sku)}</div>` +
         (d.skus.length > 1 ? `<div class="meta">${d.skus.slice(1).map(s => `<div>${esc(s)}</div>`).join("")}</div>` : "") +
@@ -1695,7 +1689,7 @@ const Engrave = window.Engrave = (() => {
     });
     const rail = v.querySelector("#egNext"); if (!rail) return;
     const rest = queue.filter(j2 => j2.key !== EG.cardKey);
-    rail.innerHTML = rest.length ? `<span class="lbl" title="every placement still queued — scroll the rail to reach any of them">up next · ${rest.length}</span>` + rest.map(j2 => `<button class="egChip" data-key="${esc(j2.key)}" title="${esc(j2.row.spec.designSku)} · ${esc(j2.lines.join(" / "))}"><b>${esc(j2.row.order.receiptId)}</b><span>${esc(j2.lines.join(" / ").slice(0, 22))}</span></button>`).join("") : "";
+    rail.innerHTML = rest.length ? `<span class="lbl" title="every placement still queued — scroll the rail to reach any of them">up next · ${rest.length}</span>` + rest.map(j2 => `<button class="egChip hoverItem" data-rid="${esc(j2.row.order.receiptId)}" data-key="${esc(j2.key)}" title="${esc(j2.row.spec.designSku)} · ${esc(j2.lines.join(" / "))}"><b>${esc(j2.row.order.receiptId)}</b><span>${esc(j2.lines.join(" / ").slice(0, 22))}</span></button>`).join("") : "";
     rail.querySelectorAll(".egChip").forEach(b => b.onclick = () => { EG.focus = b.dataset.key; render(); });
     const card = EG.card; if (card) { const kind = card.querySelector(".rh .kind"); if (kind) kind.textContent = `${decidedJobs().length + 1} of ${decidedJobs().length + queue.length}`; }
   }
@@ -1777,7 +1771,7 @@ const Engrave = window.Engrave = (() => {
       // what is coming: the order and the words, so the list and the picture are the same thing
       const rail = v.querySelector("#egNext");
       const rest = queue.filter(j2 => j2 !== focus);
-      rail.innerHTML = rest.length ? `<span class="lbl" title="every placement still queued — scroll the rail to reach any of them">up next · ${rest.length}</span>` + rest.map(j2 => `<button class="egChip" data-key="${esc(j2.key)}" title="${esc(j2.row.spec.designSku)} · ${esc(j2.lines.join(" / "))}"><b>${esc(j2.row.order.receiptId)}</b><span>${esc(j2.lines.join(" / ").slice(0, 22))}</span></button>`).join("") : "";
+      rail.innerHTML = rest.length ? `<span class="lbl" title="every placement still queued — scroll the rail to reach any of them">up next · ${rest.length}</span>` + rest.map(j2 => `<button class="egChip hoverItem" data-rid="${esc(j2.row.order.receiptId)}" data-key="${esc(j2.key)}" title="${esc(j2.row.spec.designSku)} · ${esc(j2.lines.join(" / "))}"><b>${esc(j2.row.order.receiptId)}</b><span>${esc(j2.lines.join(" / ").slice(0, 22))}</span></button>`).join("") : "";
       rail.querySelectorAll(".egChip").forEach(b => b.onclick = () => { EG.focus = b.dataset.key; render(); });
     }
     if (tab === "done") {
@@ -1789,7 +1783,7 @@ const Engrave = window.Engrave = (() => {
         ? `<div class="section" style="margin-top:2px">Decided · ${decided.length}</div><div class="rvList" id="egDone">` + decided.map(j2 => {
             const w = j2.state === "skipped" ? "cut plain" : esc(j2.lines.join(" / "));
             const who = j2.approvedBy || (j2.decision && j2.decision.by) || "";
-            return `<div class="doneRow" data-key="${esc(j2.key)}"><b class="mono">${esc(j2.row.order.receiptId)}</b><span class="sku mono">${esc(j2.row.spec.designSku || "")}</span><span class="w">${w}</span><span class="ost ${j2.state === "skipped" ? "warn" : "ok"}">${esc(j2.state)}</span><span class="by">${esc(who)}${j2.approvedAt ? " · " + fmtT(j2.approvedAt) : ""}</span><button class="btn ghost xs" data-a="reopen" title="send it back to the words step — the back file already written is superseded">Reopen</button></div>`;
+            return `<div class="doneRow hoverItem" data-rid="${esc(j2.row.order.receiptId)}" data-key="${esc(j2.key)}"><b class="mono">${esc(j2.row.order.receiptId)}</b><span class="sku mono">${esc(j2.row.spec.designSku || "")}</span><span class="w">${w}</span><span class="ost ${j2.state === "skipped" ? "warn" : "ok"}">${esc(j2.state)}</span><span class="by">${esc(who)}${j2.approvedAt ? " · " + fmtT(j2.approvedAt) : ""}</span><button class="btn ghost xs" data-a="reopen" title="send it back to the words step — the back file already written is superseded">Reopen</button></div>`;
           }).join("") + `</div>`
         : `<div class="libEmpty">nothing decided yet</div>`)
         + (sheets.length ? `<div class="section" style="margin-top:12px">Back files written</div>` + sheets.map(sh => `<div class="section" style="margin-top:6px">${esc(sh.fileBase || labelOf(sh.metal))} · ${sh.backPool.length} back${sh.backPool.length === 1 ? "" : "s"}${sh.backOutputs ? lnk(sh.backOutputs.index, "back-index.pdf") + lnk(sh.backOutputs.report, "back-report.json") : ""}</div>
@@ -2061,7 +2055,7 @@ const Sets = window.Sets = (() => {
         const held = Object.entries(st.orders || {}).filter(([, o]) => o.held);
         const card = el("div", "setCard");
         card.innerHTML = `<div class="sh"><span class="nm">${esc(st.name || st.setId)}</span><span class="pill ${/complete/.test(st.status) ? "ok" : st.status === "labelled" ? "info" : "neutral"}">${esc(st.status || "open")}</span><span class="mono" style="font-size:11px;color:var(--ink45)">${esc(st.day)} · run ${esc(st.runId || "—")}</span><span>${mine.length} sheet(s) · ${(st.materials || []).map(m => labelOf(m)).join(", ")}</span><span>${Object.keys(st.orders || {}).length} order(s)</span><span>Engraving · ${st.backCount || mine.reduce((n, x) => n + (x.backCount || 0), 0)}</span><span class="spacer"></span>${st.labels && st.labels.pdf ? `<a class="btn ghost xs" href="${st.labels.pdf.url}" target="_blank" rel="noopener">labels PDF</a>` : ""}${st.labels && st.labels.manifest ? `<a class="btn ghost xs" href="${st.labels.manifest.url}" target="_blank" rel="noopener">manifest</a>` : ""}${st.labels && st.labels.json ? `<a class="btn ghost xs" href="${st.labels.json.url}" target="_blank" rel="noopener">set.json</a>` : ""}${/complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div>
-          <div class="sheetsRow">${mine.map(r => `<div class="libCard" data-m="${r.metal}" data-id="${r.id}"><div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${r.preview}" loading="lazy" alt="">` : `<div class="pv ph">no preview</div>`}<div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span>${r.backCount ? `<span>✎ ${r.backCount}</span>` : ""}<span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span></div></div>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
+          <div class="sheetsRow">${mine.map(r => `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}"><div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${r.preview}" loading="lazy" alt="">` : `<div class="pv ph">no preview</div>`}<div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span>${r.backCount ? `<span>✎ ${r.backCount}</span>` : ""}<span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span></div></div>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
           ${held.length ? `<div class="holds"><b>Held:</b> ${held.map(([rid, o]) => `${esc(rid)} — ${esc(o.held.why || "")}`).join(" · ")}</div>` : ""}
           ${st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}
           <div class="labels">${(st.labelFiles || []).map(f => f.url ? `<img src="${f.url}" title="${esc(f.label || f.sheet)}" data-big="${f.url}" alt="">` : "").join("")}</div>`;
@@ -2417,7 +2411,7 @@ const Review = window.Review = (() => {
     f.addEventListener("input", sync); f.addEventListener("change", sync); sync();
   }
   function card(it) {
-    const c = el("div", "rvItem"); c.dataset.kind = it.kind; if (it.row) c.dataset.row = it.row.key;
+    const c = el("div", "rvItem hoverItem"); c.dataset.kind = it.kind; if (it.row) { c.dataset.row = it.row.key; c.dataset.rid = String(it.row.order.receiptId); }
     const r = it.row, sp = r && r.spec, p = it.problem || {};
     const group = rowsOf(it);
     const orders = [...new Set(group.map(x => x.order.receiptId))];
@@ -2545,7 +2539,7 @@ const Review = window.Review = (() => {
     const host = v.querySelector("#rvList");
     if (RV.filter === "done") {
       // what this shift settled: the other half of "what has been approved", which the screen never used to say
-      host.innerHTML = settled.length ? settled.map(d => `<div class="doneRow"><b class="mono">${esc((d.orders || []).slice(0, 2).join(" "))}${(d.orders || []).length > 2 ? ` +${d.orders.length - 2}` : ""}</b><span class="sku mono">${esc(KIND_WORDS[d.kind] || d.kind)}</span><span class="w">${esc(d.why)}</span><span class="ost ok">settled</span><span class="by">${esc(d.by)}${d.t ? " · " + fmtT(d.t) : ""}</span><span class="mono" style="font-size:11px;color:var(--ink45)">${d.lines} line${d.lines === 1 ? "" : "s"}</span></div>`).join("") : `<div class="libEmpty">nothing settled yet this session</div>`;
+      host.innerHTML = settled.length ? settled.map(d => `<div class="doneRow hoverItem" data-rid="${esc((d.orders || [])[0] || "")}"><b class="mono">${esc((d.orders || []).slice(0, 2).join(" "))}${(d.orders || []).length > 2 ? ` +${d.orders.length - 2}` : ""}</b><span class="sku mono">${esc(KIND_WORDS[d.kind] || d.kind)}</span><span class="w">${esc(d.why)}</span><span class="ost ok">settled</span><span class="by">${esc(d.by)}${d.t ? " · " + fmtT(d.t) : ""}</span><span class="mono" style="font-size:11px;color:var(--ink45)">${d.lines} line${d.lines === 1 ? "" : "s"}</span></div>`).join("") : `<div class="libEmpty">nothing settled yet this session</div>`;
       return;
     }
     if (!list.length) host.innerHTML = `<div class="libEmpty">Nothing waits for a decision.</div>`;
@@ -3045,7 +3039,7 @@ const Scope = window.Scope = (() => {
   function sheetsHtml() {
     const x = SC.sheets || [];
     if (!x.length) return `<div class="libEmpty">This run wrote no sheets.</div>`;
-    return `<div class="scopeGrid">${x.map(v => `<div class="scopeCard" data-sheet="${esc(v.id)}" tabindex="0" title="open the sheet, its files and its charms">
+    return `<div class="scopeGrid">${x.map(v => `<div class="scopeCard hoverItem" data-sheet="${esc(v.id)}" tabindex="0" title="open the sheet, its files and its charms">
       <div class="h"><span class="nm">${esc(v.fileBase || v.id)}</span><span class="pill ${v.status === "complete" ? "ok" : "bad"}">${esc(v.status || "")}</span></div>
       ${v.preview ? `<img class="pv" src="${esc(v.preview)}" loading="lazy" alt="">` : `<div class="pv ph">no preview</div>`}
       <div class="m"><b>${v.placedCount}</b>/${v.charmCount} placed \u00b7 <b>${Math.round((v.density || 0) * 100)}%</b> full${v.verification && v.verification.ok === false ? ` \u00b7 <span class="bad">flagged</span>` : ""}</div>
@@ -3056,15 +3050,47 @@ const Scope = window.Scope = (() => {
     const backs = SC.full.flatMap(sh => (sh.backPool || []).map(b => Object.assign({ sheet: sh.fileBase || sh.id }, b)));
     const wanted = Object.values(SC.run.lines || {}).filter(l => l.engrave && (l.engrave.needed || l.engrave.text));
     if (!backs.length && !wanted.length) return `<div class="libEmpty">Nothing in this run was engraved.</div>`;
-    return (backs.length ? `<div class="scopeSec">Backs written \u00b7 ${backs.length}</div><div class="scopeGrid backs">${backs.map(b => `<div class="scopeCard">
+    return (backs.length ? `<div class="scopeSec">Backs written \u00b7 ${backs.length}</div><div class="scopeGrid backs">${backs.map(b => `<div class="scopeCard hoverItem" data-rid="${esc(b.order || "")}">
         ${b.outputs && b.outputs.png && b.outputs.png.url ? `<img class="pv" src="${esc(b.outputs.png.url)}" loading="lazy" alt="">` : `<div class="pv ph">no picture</div>`}
         <div class="m"><b>${esc((b.lines || [b.text || ""]).join(" / "))}</b></div>
         <div class="m sub">${esc(b.order || "")}${b.capMm ? ` \u00b7 cap ${(+b.capMm).toFixed(2)} mm` : ""}${b.approvedBy ? ` \u00b7 ${esc(b.approvedBy)}` : ""}</div>
         ${b.outputs && b.outputs.ai && b.outputs.ai.url ? `<a class="btn ghost xs" href="${esc(b.outputs.ai.url)}" target="_blank" rel="noopener">.ai</a>` : ""}
       </div>`).join("")}</div>` : "")
-      + (wanted.length ? `<div class="scopeSec">What each line asked for \u00b7 ${wanted.length}</div><div class="scopeList">${wanted.map(l => `<div class="ol"><b class="mono">${esc(String(l.orderId || ""))}</b><span class="sku mono">${esc(l.sku || "")}</span><span class="w">${l.engrave.text ? "\u201c" + esc(l.engrave.text) + "\u201d" : "\u2014"}</span><span class="st mono">${esc(l.engrave.state || "")}${l.engrave.approved ? " \u00b7 approved" : ""}</span></div>`).join("")}</div>` : "");
+      + (wanted.length ? `<div class="scopeSec">What each line asked for \u00b7 ${wanted.length}</div><div class="scopeList">${wanted.map(l => `<div class="ol hoverItem" data-rid="${esc(String(l.orderId || ""))}"><b class="mono">${esc(String(l.orderId || ""))}</b><span class="sku mono">${esc(l.sku || "")}</span><span class="w">${l.engrave.text ? "\u201c" + esc(l.engrave.text) + "\u201d" : "\u2014"}</span><span class="st mono">${esc(l.engrave.state || "")}${l.engrave.approved ? " \u00b7 approved" : ""}</span></div>`).join("")}</div>` : "");
   }
   return { open, clear, apply, on, strip, run: () => SC.run };
+})();
+
+/* ═══ 24e · Kin — the rest of the order, wherever it is ══════════════════════════════════════════════════
+   A parcel with four charms in it is four lines, and they can be four cards on Orders, a row in Review, a chip in the
+   engraving rail and a tile among the backs — on four different screens. Hovering any one of them lights the others,
+   wherever they are, because the question a person is asking is always "what else is in this parcel?".
+
+   One listener on the document does it for the whole application: anything that carries data-rid is kin to anything
+   else with the same data-rid, and the ring is drawn only when there is more than one, because a single-piece order
+   has no rest to show. Nothing has to register; new screens get it by carrying the attribute. */
+const Kin = window.Kin = (() => {
+  let cur = null;
+  const all = rid => document.querySelectorAll(`[data-rid="${String(rid).replace(/["\\]/g, "")}"]`);
+  function mark(rid) {
+    if (rid === cur) return;
+    if (cur) all(cur).forEach(n => n.classList.remove("kin"));
+    cur = null;
+    if (!rid) return;
+    const kin = all(rid);
+    if (kin.length < 2) return;                       // one piece is not a set: there is nothing to point at
+    kin.forEach(n => n.classList.add("kin"));
+    cur = rid;
+  }
+  function from(e) { const n = e.target && e.target.closest ? e.target.closest("[data-rid]") : null; mark(n ? n.dataset.rid : null); }
+  function mount() {
+    document.addEventListener("pointerover", from, true);
+    document.addEventListener("focusin", from, true);
+    document.addEventListener("pointerleave", () => mark(null), true);
+    // a repaint under the cursor drops the classes with the old nodes: the next move puts them back
+    document.addEventListener("scroll", () => mark(null), true);
+  }
+  return { mount, mark, of: () => cur };
 })();
 
 /* ═══ 25 · boot ═══════════════════════════════════════════════════════════ */
@@ -3083,6 +3109,7 @@ function bootBridge() {
   document.getElementById("btnRunMode").onclick = () => { const auto = S.settings.runMode !== "auto"; if (auto && !confirm("Auto mode: the sorter connects to the Design Station, pulls the latest orders by the date rule, nests, fits engraving, saves labels and marks the orders complete — stopping only when a person must decide. Turn Auto on?")) return; RunCtl.setMode(auto ? "auto" : "manual"); };
   Orders.loadMaps().catch(() => {}); Master.load().catch(() => {});
   Engrave.loadFonts().catch(() => {});
+  Kin.mount();
   /* The app used to open on an empty Orders tab whatever had happened yesterday, and the only way to anything was to
      pull again. It opens on the last run instead — its orders, its sheets, its engraving, read from the record, with
      one line at the top saying so and a Done that puts it down. An open run is offered for resume as before. */

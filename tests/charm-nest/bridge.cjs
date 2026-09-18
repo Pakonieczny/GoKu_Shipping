@@ -586,6 +586,55 @@ const receipts = [
       assert(ord.cards.some(c2 => c2.words), 'and the words the customer typed are on the card');
       assert(ord.chips.some(c2 => c2.id === 'attn' && c2.n >= 1), 'the piles are filter chips with counts: ' + JSON.stringify(ord.chips));
       assert(ord.sideScroll <= 2, 'the cards do not run off the side: ' + ord.sideScroll);
+
+      /* Two hover states, and only two, wherever there is a list. The first says where the mouse is and is the same
+         everywhere; the second says this line belongs to an order with other pieces in it, and rings every one of them
+         wherever it is on screen. They compose: hovering a piece of a marked order shows both at once. */
+      const hov = await page.evaluate(async () => {
+        const cards = [...document.querySelectorAll('#ordBody .ocard')];
+        // the placement card is the one thing being worked on, not a row in a list, so it is deliberately not in this set
+        const uniform = ['#ordBody .ocard', '#ordBody .olist', '.rvItem:not([data-kind=placement])', '.skuTile', '.libCard', '.charmTile', '.egChip', '.doneRow'];
+        // pick an order that really has more than one line on screen, and one that does not
+        const byRid = {};
+        for (const c of cards) { const r = c.dataset.rid; byRid[r] = (byRid[r] || 0) + 1; }
+        let multi = Object.keys(byRid).find(r => byRid[r] > 1);
+        // this shop's test orders are one line each, so a two-piece parcel is staged to exercise the mechanism itself
+        let staged = null;
+        if (!multi && cards.length > 1) { staged = cards[1].dataset.rid; cards[1].dataset.rid = cards[0].dataset.rid; multi = cards[0].dataset.rid; }
+        const single = cards.map(c => c.dataset.rid).find(r => r !== multi);
+        const shot = rid => [...document.querySelectorAll(`[data-rid="${rid}"]`)].map(n => n.classList.contains('kin'));
+        Kin.mark(multi || '');
+        const onMulti = multi ? shot(multi) : [];
+        const one = multi ? document.querySelector(`[data-rid="${multi}"]`) : null;
+        let both = null;
+        if (one) {
+          // the ring fades in, so the computed value has to be read after the transition, not in the same tick as the class
+          await new Promise(r => setTimeout(r, 400));
+          const painted = getComputedStyle(one).boxShadow;
+          both = { shadow: painted, cls: one.className, ring: /\b96,\s*165,\s*250\b/.test(painted) };
+        }
+        Kin.mark(single || '');
+        const onSingle = single ? shot(single) : [];
+        Kin.mark('');
+        const cleared = multi ? shot(multi).every(x => !x) : true;
+        if (staged) cards[1].dataset.rid = staged;
+        const sheet = [...document.styleSheets].flatMap(ss => { try { return [...ss.cssRules].map(r => r.cssText); } catch (_) { return []; } });
+        const hoverRule = sheet.find(t => /^\.hoverItem:hover/.test(t));
+        const kinHoverRule = sheet.find(t => /^\.hoverItem\.kin:hover/.test(t));
+        const missing = uniform.filter(sel => { const n = document.querySelector(sel); return n && !n.classList.contains('hoverItem'); });
+        return { multi: !!multi, onMulti, onSingle, cleared, hoverRule, kinHoverRule, missing, both };
+      });
+      console.log('hover states', JSON.stringify(hov));
+      assert(hov.missing.length === 0, 'every kind of list row carries the one hover state: ' + hov.missing.join(', '));
+      assert(/transform|box-shadow/.test(hov.hoverRule || ''), 'the single hover is a real, uniform state: ' + hov.hoverRule);
+      if (hov.multi) {
+        assert(hov.onMulti.length > 1 && hov.onMulti.every(Boolean), 'every piece of a multi-piece order is ringed: ' + JSON.stringify(hov.onMulti));
+        assert(hov.both && hov.both.ring, 'and the ring is the blue circumference');
+      }
+      assert(hov.onSingle.every(x => !x), 'a single-piece order is not ringed \u2014 there is no rest to point at');
+      assert(hov.cleared, 'and the ring goes when the mouse does');
+      assert(/box-shadow/.test(hov.kinHoverRule || '') && /transform/.test(hov.kinHoverRule || ''),
+        'hovering a ringed piece shows both states at once, neither hiding the other: ' + hov.kinHoverRule);
       // the filter shows one pile and nothing else
       const filtered = await page.evaluate(() => {
         document.querySelector('[data-pile=attn]').click();
