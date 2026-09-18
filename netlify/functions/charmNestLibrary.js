@@ -398,6 +398,23 @@ async function op_sandboxReset(b) {
   }
   void b; return { ok: true, deleted };
 }
+/* ── purge: every RECORD of past runs, in production and in the sandbox. Master files, the SKU index, aliases, option
+   maps, calibration and the sandbox snapshot are not history and stay. Files in Storage are not touched here: a sheet
+   folder nothing refers to is an orphan the app never shows, and clearing folders is a decision made in the console.
+   Gated by the delete passcode. ── */
+async function op_purgeHistory(b) {
+  if (String(b.code || "") !== DELETE_CODE) return { error: "wrong passcode", status: 403 };
+  const names = [RUNS, SHEETS, SETS, POOL, BACK, COUNTERS, RELEASE, BRIDGE];
+  const SUBS = { [BRIDGE]: ["log"] };
+  const wipe = async q => { let n = 0; for (;;) { const s = await q.limit(300).get(); if (s.empty) break; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); n += s.size; if (s.size < 300) break; } return n; };
+  const docs = {};
+  for (const prefix of ["", "Sandbox_"]) for (const name of names) {
+    const coll = db.collection(prefix + name);
+    for (const sub of SUBS[name] || []) { const parents = await coll.select().get(); for (const d of parents.docs) await wipe(d.ref.collection(sub)); }
+    docs[prefix + name] = await wipe(coll);
+  }
+  return { ok: true, docs };
+}
 async function op_backPut(b) {
   const rows = (Array.isArray(b.backs) ? b.backs : [b.back]).filter(x => x && isPoolId(x.poolId)).slice(0, 400); if (!rows.length) return { error: "no back rows" };
   let batch = db.batch(), n = 0;
@@ -535,7 +552,7 @@ async function op_optionMapPut(b) {
   return { ok: true };
 }
 
-const OPS = { startAgent: op_startAgent, getAgent: op_getAgent, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, deleteSheet: op_deleteSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
+const OPS = { startAgent: op_startAgent, getAgent: op_getAgent, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, startMaster: op_startMaster,
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backList: op_backList, sandboxPut: op_sandboxPut, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,

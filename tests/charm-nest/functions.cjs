@@ -195,6 +195,7 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   r = await post(lib, { op: 'setAllocate', day: '2026-09-16', runId: 'run-A' }); assert.strictEqual(r.body.seq, 1); const setA = r.body.setId;
   r = await post(lib, { op: 'setAllocate', day: '2026-09-16', runId: 'run-B' }); assert.strictEqual(r.body.seq, 2, 'the next set of the same day is Set-2');
   r = await post(lib, { op: 'setAllocate', day: '2026-09-16', runId: 'run-A' }); assert.strictEqual(r.body.seq, 1); assert(r.body.existing, 'idempotent per run');
+
   r = await post(lib, { op: 'setAllocate', day: '2026-09-17', runId: 'run-C' }); assert.strictEqual(r.body.seq, 1, 'numbering restarts per date');
   // one set per kin group of a run: the SS set and the GF+14K set of one run are two numbers, asked for twice they are the same two,
   // and the next run of the day counts on from there — never renumbering, never reusing
@@ -240,5 +241,11 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   assert(agentMod.buildRequest('engraveReview', {}).error, 'engraveReview needs the back image');
   anthro.callClaudeRaw = realCall; delete process.env.ANTHROPIC_API_KEY;
   console.log('bridge ops OK');
+  // ── purge: the records of past runs go, in production and sandbox; the master index and maps stay ──
+  r = await post(lib, { op: 'purgeHistory', code: '000000' }); assert.strictEqual(r.status, 403, 'a purge needs the passcode');
+  r = await post(lib, { op: 'purgeHistory', code: '975311' }); assert(r.body.ok && r.body.docs.Charm_Pool >= 1 && r.body.docs.Charm_Nest_Sets >= 1, 'the run records were wiped: ' + JSON.stringify(r.body.docs));
+  r = await post(lib, { op: 'poolList', runId: 'run-A' }); assert.strictEqual(r.body.pools.length, 0, 'no pool rows remain');
+  r = await post(lib, { op: 'masterGet', sku: 'BR-CMP-01' }); assert(r.body.entry, 'the master index is not history and stays');
+  r = await post(lib, { op: 'setAllocate', day: '2026-09-16', runId: 'run-A' }); assert.strictEqual(r.body.seq, 1, 'set numbering starts over after a purge'); assert(!r.body.existing);
   console.log('functions OK ·', store.size, 'docs ·', blobs.size, 'blobs · server job placed', solved.placements.length, 'in', solved.trials, 'trial(s)');
 })().catch(e => { console.error(e); process.exit(1); });
