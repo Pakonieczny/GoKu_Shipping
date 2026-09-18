@@ -971,6 +971,8 @@ const Master = window.Master = (() => {
       src.charms.forEach((c, i) => Object.assign(c, { id: src.id + ":" + i, sourceId: src.id, sourceName: file.name, index: c.index, name: c.sku || null, excluded: false, cloud: null }));
       job.state = "silhouettes";
       // only the charms that carry a SKU are indexed, so only they are traced: on the real master that is 1,038 of 3,408
+      // a ring drawn beside the body is welded into the cut line before the charm is measured or written
+      { let welded = 0, left = 0; for (const c of g.charms) { if (c.mergedInto != null || !c.sku || c.alreadyHeld) continue; const r = P.integrateRings(c); welded += r.welded; left += r.left.length; } if (welded || left) say("MASTER", `${welded} jump ring(s) welded into their charm's cut line${left ? ` · ${left} left as drawn (the outline crosses the ring more than twice)` : ""}`); }
       await P.buildSilhouettes(parsed, g.charms.filter(c => c.mergedInto == null && c.sku && !c.alreadyHeld), +S.settings.silhouetteRes || 6, (d, t) => { if (job.bar) job.bar.label(`Tracing charms · ${file.name}`).set(d, t); job.progress = `silhouettes ${d}/${t}`; if (d % 10 === 0) render(); });
       // The SKUs are read from the sheet as text, which is quick, so the library is consulted before any work is done:
       // a charm whose SKUs are all held already is left alone. A charm with even one new SKU is rebuilt whole, so all of
@@ -1285,6 +1287,7 @@ const Pool = window.Pool = (() => {
     if (!g.charms.length) throw new Error(`${entry.sku}: no outline in the master copy`);
     const charm = g.charms.reduce((a, b) => (b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1]) > (a.bbox[2] - a.bbox[0]) * (a.bbox[3] - a.bbox[1]) ? b : a);
     if (g.charms.length > 1) { for (const c of g.charms) if (c !== charm) { for (const m of c.members) if (!charm.members.includes(m)) charm.members.push(m); charm.topIndices = [...new Set(charm.topIndices.concat(c.topIndices))]; charm.bbox = [Math.min(charm.bbox[0], c.bbox[0]), Math.min(charm.bbox[1], c.bbox[1]), Math.max(charm.bbox[2], c.bbox[2]), Math.max(charm.bbox[3], c.bbox[3])]; /* the silhouette canvas is cut to the bbox: a merged piece outside it would be drawn but never collide */ } agent({ pool: true }, "warn", `${entry.sku}: the master copy split into ${g.charms.length} pieces — folded back into one charm`); }
+    { const r = P.integrateRings(charm); if (r.left.length) agent({ pool: true }, "warn", `${entry.sku}: a jump ring was left as drawn — ${r.left[0]}`); }
     await P.buildSilhouettes(parsed, [charm], +S.settings.silhouetteRes || 6);
     const srcId = "pool:" + key.replace(/[^\w]+/g, "_");
     const src = { id: srcId, pool: true, name: `${entry.sku}${size ? " · " + size : ""} (master)`, sku: entry.sku, bytes, hash: entry.charmHash || charm.hash, parsed, group: g, charms: [charm], metal: null, state: "ready", t0: performance.now(), cloud: { path: geom.aiPath, url }, persisting: null };

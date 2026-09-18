@@ -75,10 +75,11 @@ exports.handler = async (event) => {
     const parsed = await CharmNestPDF.parseSource(bytes, job.name || "master.ai");
     const g = CharmNestPDF.groupCharms(parsed, { minPt: +opts.minPt || 6 });
     const lab = CharmNestPDF.labelCharms(parsed, g.charms, { pattern, gapPt, widen: 0.25 });
-    const entries = [], blocked = [], skus = [];
+    const entries = [], blocked = [], skus = []; let ringsWelded = 0; const ringsLeft = [];
     const total = lab.labels.size; let done = 0;
     for (const [index, l] of lab.labels) {
       const c = g.charms.find(x => x.index === index); if (!c) continue;
+      { const r = CharmNestPDF.integrateRings(c); ringsWelded += r.welded; if (r.left.length) ringsLeft.push({ sku: l.sku, why: r.left[0] }); }   // a ring beside the body becomes part of its cut line
       const sil = Geom.silhouetteBits(c, 6, {});
       const charmHash = CharmNestPDF.fnv(CharmNestPDF.signature(sil.bits, sil.w, sil.h) + "|" + Math.round((sil.bboxOuter[2] - sil.bboxOuter[0]) * 2) + "x" + Math.round((sil.bboxOuter[3] - sil.bboxOuter[1]) * 2) + "|" + c.members.length);
       const open = (() => { const polys = Geom.flatten(c.outline, 12); return !polys.length || polys.some(p => Math.hypot(p[0][0] - p[p.length - 1][0], p[0][1] - p[p.length - 1][1]) > 1.5 && !c.outline.closed); })();
@@ -106,7 +107,7 @@ exports.handler = async (event) => {
     }
     const idx = await Master.putIndex(db, FV, { entries, masterHash, masterPath: job.path, masterName: job.name, hashSource: "server", replaces: opts.replaces || [] });
     await Master.putFile(db, FV, { file: { masterHash, path: job.path, name: job.name, charms: g.charms.length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked: blocked.concat(idx.blocked.map(b => ({ sku: b.sku, reason: b.reason }))), skus, indexedBy: "server", pageW: parsed.pageW, pageH: parsed.pageH, replaces: opts.replaces || [] } });
-    const result = { masterHash, charms: g.charms.length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked, conflicts: idx.blocked, sizeMoved: idx.sizeMoved, skus };
+    const result = { masterHash, ringsWelded, ringsLeft, charms: g.charms.length, labelled: lab.labels.size, unlabelled: lab.unlabelled, orphans: lab.orphans, duplicates: lab.duplicates, undecodable: lab.undecodable.length, blocked, conflicts: idx.blocked, sizeMoved: idx.sizeMoved, skus };
     await ref.set({ status: "done", stage: "done", done, total, result, finishedAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() }, { merge: true });
     console.log(`[charmMaster] ${id}: ${lab.labels.size} labelled of ${g.charms.length}, ${lab.unlabelled.length} unlabelled, ${lab.orphans.length} orphan labels, ${blocked.length} blocked`);
   } catch (e) {
