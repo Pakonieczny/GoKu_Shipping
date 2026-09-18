@@ -193,11 +193,11 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .shProg progress{margin:6px 0 0}
 .shProg .bp-note{margin:2px 0 0}
 .shStage{flex-wrap:wrap}
-.shStage>:first-child{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.shStage>span:not(.spin):not(.r){flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .shStage .r{flex:0 0 auto}
 @media (max-width:1300px){.shStage .r{display:none}}
 .shStage{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink70);min-height:18px;padding:5px 14px 0}
-.shStage .spin{width:11px;height:11px;border-width:2px;flex-basis:11px}
+.shStage .spin{width:11px;height:11px;border-width:2px;flex:0 0 11px}
 .shStage .r{margin-left:auto;font-family:var(--mono);color:var(--ink45);font-size:10.5px;white-space:nowrap}
 .shSat{margin:7px 14px 0;border:1px solid var(--line);border-radius:10px;background:var(--card2);padding:7px 10px;display:grid;gap:2px}
 .shSat .fact{display:flex;align-items:baseline;gap:7px;font-size:12.5px;flex-wrap:nowrap;white-space:nowrap;min-width:0}
@@ -2097,7 +2097,10 @@ function onWorkerMessage(sh, m, idx) {
   if (m.type === "done") {
     pool.done++; pool.results[idx] = m.result;
     const complete = m.result && m.result.rejects.length === 0 && m.result.placements.length === items.length;
-    if (complete && pool.winner == null) { pool.winner = idx; (sh.workers || []).forEach((w, i) => { if (i !== idx) w.postMessage({ type: "stop", jobId: sh.jobId + ":" + i }); }); }
+    // the sheet is done when a search completes it, or when the search holding the best layout has settled (a minute
+    // without bettering it): the others are stopped either way, so the ghosts never stop while the clock runs on
+    const settled = m.result && m.result.endedBy === "stalled" && idx === leader;
+    if ((complete || settled) && pool.winner == null) { pool.winner = idx; pool.settled = settled && !complete; (sh.workers || []).forEach((w, i) => { if (i !== idx) w.postMessage({ type: "stop", jobId: sh.jobId + ":" + i }); }); }
     if (!(complete && pool.winner === idx) && pool.done < pool.n) return;          // wait for the rest (or the winner)
     if (pool.winner != null && pool.winner !== idx && pool.done < pool.n) return;
     const results = pool.results.filter(Boolean);
@@ -2105,7 +2108,7 @@ function onWorkerMessage(sh, m, idx) {
     const total = pool.trials.reduce((a, b) => a + b, 0);
     pool.finished = true;   // exactly one finish per job
     m = { type: "done", jobId: sh.jobId, result: Object.assign({}, pick, { trials: total, workers: pool.n, winner: pool.winner }) };
-    agent({ metal: sh.metal }, "nest", pool.winner != null ? `Search ${pool.winner + 1} (seed ${(+S.settings.seed || 1) + pool.winner}) completed the sheet first — the other ${pool.n - 1} were stopped · ${total} trials in total` : `All ${pool.n} searches reached the ceiling · best ${pick.placements.length}/${items.length} · ${total} trials in total`);
+    agent({ metal: sh.metal }, "nest", pool.winner != null ? (pool.settled ? `Search ${pool.winner + 1} settled on ${pick.placements.length}/${items.length} — nothing better for a minute — the other ${pool.n - 1} were stopped · ${total} trials in total` : `Search ${pool.winner + 1} (seed ${(+S.settings.seed || 1) + pool.winner}) completed the sheet first — the other ${pool.n - 1} were stopped · ${total} trials in total`) : `All ${pool.n} searches reached the ceiling · best ${pick.placements.length}/${items.length} · ${total} trials in total`);
   }
   if (m.type === "error" && idx !== 0 && pool.n > 1) { log(sh, `worker ${idx}: ${m.message}`); pool.done++; return; }
   if (m.type === "error") pool.finished = true;
