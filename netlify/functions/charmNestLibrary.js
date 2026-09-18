@@ -404,6 +404,15 @@ async function op_sandboxReset(b) {
    Gated by the delete passcode. ── */
 async function op_purgeHistory(b) {
   if (String(b.code || "") !== DELETE_CODE) return { error: "wrong passcode", status: 403 };
+  /* Never under a run that is still working: a purge that ran while a set was nesting took that set's finished
+     sheets with it, and the run re-saved its own record afterwards as if nothing had happened. */
+  if (!b.force) {
+    for (const prefix of ["", "Sandbox_"]) {
+      const snap = await db.collection(prefix + RUNS).where("status", "in", ["running", "review", "paused"]).limit(5).get();
+      const live = snap.docs.map(d => d.data()).filter(r => Date.now() - (ms(r.updatedAt) || 0) < 6 * 3600 * 1000);
+      if (live.length) return { error: `a run is still open (${live.map(r => r.runId).join(", ")}) — stop or abandon it first`, status: 409 };
+    }
+  }
   const names = [RUNS, SHEETS, SETS, POOL, BACK, COUNTERS, RELEASE, BRIDGE];
   const SUBS = { [BRIDGE]: ["log"] };
   const wipe = async q => { let n = 0; for (;;) { const s = await q.limit(300).get(); if (s.empty) break; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); n += s.size; if (s.size < 300) break; } return n; };

@@ -1612,7 +1612,6 @@ const Engrave = window.Engrave = (() => {
     job.state = "review"; job.row.engrave.state = "review"; job.claude = null;
     agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: "${job.lines.join(" / ")}" fits at ${fit.size.toFixed(2)} pt (cap ${fit.capMm.toFixed(2)} mm, ${fit.weight}${fit.angle ? `, ${fit.angle}°` : ""}${fit.small ? ", SMALL" : ""}${fit.thin ? ", strokes under the engraver limit" : ""}) — awaiting a person`);
     Review.add({ kind: "placement", key: "eng:" + job.key, row: job.row, job });
-    claudeRead(job).catch(() => {});
     render(); return job;
   }
   async function claudeRead(job) {
@@ -1656,7 +1655,6 @@ const Engrave = window.Engrave = (() => {
     f.fittedMax = ceil.size; f.weight = job.fit.weight; f.rect = job.fit.rect;
     if (f.size < want - 0.01) toast(`Only ${f.size.toFixed(2)} pt fits there — the lettering was brought down`, "", 3500);
     job.fit = f; job.verify = { geometry: G.verifyInk(f.cmds, job.mask), at: Date.now() }; job.nudged = true; job.claude = null;
-    reRead(job);
     return true;
   }
   function nudge(job, dxMm, dyMm) { if (!job.fit) return; const c = [job.fit.centre[0] + dxMm * PT, job.fit.centre[1] + dyMm * PT]; if (!refit(job, { centre: c, angle: job.fit.angle })) toast("No room there", "bad"); refresh(job); }
@@ -1889,7 +1887,7 @@ const Engrave = window.Engrave = (() => {
       if (f.small) rh.insertAdjacentHTML("beforeend", `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>`);
       if (f.thin) rh.insertAdjacentHTML("beforeend", `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>`);
     }
-    const cl = c.querySelector(".claude"); if (cl) cl.outerHTML = claudeBlock(job);
+    const cl = c.querySelector(".claude"); if (cl) cl.remove();
     LiveStrip.render();
   }
   /** What Claude last said about the rendered back — and, once it has been moved, that nothing has looked at it since. */
@@ -2020,17 +2018,15 @@ const Engrave = window.Engrave = (() => {
       <div class="placeView">
         <div class="pvMain"><div class="backHost"></div>
           <div class="ctl">${f ? `<button class="btn sage sm" data-a="approve" title="this placement is right — write the back file">Approve <b class="k">A</b></button><button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><span class="mono dim" data-cap title="cap height of the lettering · its angle">${f.capMm.toFixed(2)} mm${f.angle ? ` · ${Math.round(f.angle)}°` : ""}</span>` : ""}
-            <span class="rest">${f ? `<button class="btn ghost sm" data-a="resplit" title="the same words, broken across the lines a different way">Split the lines differently</button>` : ""}<button class="btn ghost sm" data-a="skip" title="cut this charm plain — nothing engraved on its back">No engraving <b class="k">S</b></button><button class="btn ghost sm" data-a="back" title="the words are wrong or unclear — go back and settle them first">Change the words</button></span></div>
+            <span class="rest"><button class="btn ghost sm" data-a="skip" title="cut this charm plain — nothing engraved on its back">No engraving <b class="k">S</b></button></span></div>
           <div class="help">drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys nudge 0.25 mm, with shift they turn 1° · cut-outs and holes stay clear: only flat metal takes engraving</div></div>
         <div class="pvSide">
           <div class="pvWords"><span class="lbl">Words on the back</span>${esc(job.lines.join(" / ")) || "—"}</div>
           <div class="frontHost"></div>
           <dl class="meta">${row2("Customer", (sp.personalization || []).join(" / "))}${row2("Buyer msg", sp.buyerMessage)}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}</dl>
-          ${claudeBlock(job)}
-          ${f ? `<details class="pvNums"><summary>the numbers</summary><dl class="meta"><dt>Size</dt><dd>${f.size.toFixed(2)} pt · cap ${f.capMm.toFixed(2)} mm · ${esc(f.weight)}${f.angle ? ` · ${f.angle}°` : ""}</dd><dt>Strokes</dt><dd>min stem ${f.metrics ? f.metrics.strokeMm.toFixed(2) : "?"} mm · min gap ${f.metrics && f.metrics.gapMm ? f.metrics.gapMm.toFixed(2) : "—"} mm</dd><dt>Flip</dt><dd>${Object.entries(job.view.checks).map(([k, ok]) => `${esc(k)} ${ok ? "✓" : "✗"}`).join(" · ")}</dd><dt>Geometry</dt><dd>${job.verify && job.verify.geometry.ok ? `no ink outside the allowed area (${job.verify.geometry.total} px checked)` : "NOT verified"}</dd></dl></details>` : `<div class="why">${esc(job.reason || "no fit")}</div>`}
         </div></div>`;
     const charm = Pool.charmOf(job.copies[0]);
-    card.querySelector(".frontHost").appendChild(renderFront(charm, 148));
+    card.querySelector(".frontHost").appendChild(renderFront(charm, 420));
     // the back preview is drawn to the box it is actually given, and redrawn when that box changes: no fixed number,
     // nothing cut off on a short laptop screen, nothing left blurry after the window is resized
     const backHost = card.querySelector(".backHost");

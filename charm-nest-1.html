@@ -846,6 +846,8 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .backHost{flex:0 0 auto;display:flex;align-items:center;justify-content:center;overflow:hidden}
 .rvItem.full .backHost{flex:1 1 0;min-height:190px}
 .frontHost{display:flex;justify-content:center}
+.pvSide .frontHost{flex:1 1 auto;min-height:220px;align-items:center}
+.pvSide .frontHost canvas{width:100%;height:auto;max-height:100%;border:1px solid var(--line2);border-radius:10px;background:#fff}
 @container (max-width:700px){.placeView{display:flex;flex-direction:column;flex:0 0 auto}.pvSide{overflow:visible}.backHost{flex:0 0 auto;min-height:0;height:auto}}
 @media (max-width:920px){.placeView{display:flex;flex-direction:column;flex:0 0 auto}.pvSide{overflow:visible}.backHost{flex:0 0 auto;min-height:0;height:auto}}
 /* the canvas is drawn at the size it will be shown, so it is sharp and never stretched to fill a wide window */
