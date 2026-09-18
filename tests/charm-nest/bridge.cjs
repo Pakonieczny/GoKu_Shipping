@@ -384,6 +384,26 @@ const receipts = [
     assert(r.ok && r.state === 'done', 'a File is read through arrayBuffer, never through its bytes() method: ' + JSON.stringify(r));
   }
 
+  // a manual run says why it is waiting and offers to carry on by itself (§7)
+  {
+    const paused = await page.evaluate(() => {
+      const r = { runId: 'run-test', day: '2026-09-18', setId: null, step: 'claim', status: 'paused', mode: 'manual', startedAt: Date.now(), updatedAt: Date.now(), lines: {}, sheets: {}, holds: {}, errors: [], resumable: true, stoppedBy: null, fix: null, orders: [], committed: [] };
+      B.run = r; RunCtl.renderBanner();
+      const el = document.querySelector('#runBanner') || document.body;
+      return { text: el.textContent.replace(/\s+/g, ' ').trim().slice(0, 200), next: !!document.querySelector('#rbNext'), auto: !!document.querySelector('#rbAuto') };
+    });
+    console.log('paused banner', JSON.stringify(paused));
+    assert(paused.next && paused.auto, 'a paused run offers both the next step and running on: ' + JSON.stringify(paused));
+    assert(/Manual/i.test(paused.text), 'and says why it is waiting: ' + paused.text);
+    const after = await page.evaluate(() => {                      // the button's own effect, without driving a stub run through the loop
+      const real = RunCtl.next; RunCtl.next = () => {};
+      document.querySelector('#rbAuto').click();
+      return new Promise(r => setTimeout(() => { RunCtl.next = real; r(B.run && B.run.mode); }, 300));
+    });
+    assert.strictEqual(after, 'auto', 'pressing it sets the run to carry on by itself');
+    await page.evaluate(() => { B.run = null; RunCtl.renderBanner(); });
+  }
+
   // the panel folds away and the way back is always on screen, never under the station's own buttons
   {
     const fold = await page.evaluate(() => {
