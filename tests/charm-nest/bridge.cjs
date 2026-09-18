@@ -208,8 +208,17 @@ const receipts = [
   // §5.7 · the live view: a status pill while the run works, the panel when a person asks for it, never re-parented
   await page.waitForFunction(() => Dock.mode() === 'pip', null, { timeout: 5000 });
   const hellosAtStart = await page.evaluate(() => DesignLink.log.filter(r => r.dir === 'cmd' && r.type === 'hello').length);
-  const dock = await page.evaluate(() => ({ mode: Dock.mode(), visible: !document.getElementById('dsDock').classList.contains('hidden'), tucked: document.getElementById('dsDock').classList.contains('tucked'), scaled: /matrix\(0\./.test(getComputedStyle(document.getElementById('dsFrame')).transform), hellos: DesignLink.log.filter(r => r.dir === 'cmd' && r.type === 'hello').length }));
-  assert(dock.mode === 'pip' && dock.visible && dock.tucked && dock.scaled && dock.hellos === hellosAtStart, 'live panel shown small while running on another tab: ' + JSON.stringify(dock));
+  const dock = await page.evaluate(() => {
+    const d = document.getElementById('dsDock'), r2 = d.getBoundingClientRect();
+    return { mode: Dock.mode(), visible: !d.classList.contains('hidden'), h: Math.round(r2.height), w: Math.round(r2.width),
+      bar: !!d.querySelector('.dockBar'), state: (document.getElementById('dockState') || {}).textContent || '',
+      framed: !!document.getElementById('dsFrame'), hellos: DesignLink.log.filter(r => r.dir === 'cmd' && r.type === 'hello').length };
+  });
+  assert(dock.mode === 'pip' && dock.visible && dock.hellos === hellosAtStart, 'the live link is shown while running on another tab: ' + JSON.stringify(dock));
+  // off its own tab it is a status strip: it says what the station is doing without taking a fifth of the screen
+  assert(dock.h <= 64, 'the dock is a strip, not a mirror: ' + dock.h + 'px tall');
+  assert(dock.bar && dock.state, 'and it says what the station is doing: ' + JSON.stringify(dock.state));
+  assert(dock.framed, 'the frame stays laid out behind it, so the station keeps hydrating');
   // and the screen keeps room for it, so it never sits on top of the work
   const clear = await page.evaluate(() => {
     const d = document.getElementById('dsDock').getBoundingClientRect();

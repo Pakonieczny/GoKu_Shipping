@@ -339,12 +339,10 @@ const Dock = window.Dock = (() => {
     document.body.appendChild(el);
     D.el = el; D.body = el.querySelector(".dockBody"); D.bar = el.querySelector(".dockBar");
     el.querySelector("#dockOpen").onclick = () => setMode("design");
-    el.querySelector("#dockHide").onclick = () => { D.hiddenByUser = true; D.shownByUser = false; layout(); };
-    // the dock's own bar is the way to grow it: small by default, full when someone wants to watch
-    el.querySelector(".dockBar").addEventListener("dblclick", () => { D.shownByUser = !D.shownByUser; layout(); });
+    el.querySelector("#dockHide").onclick = () => { D.hiddenByUser = true; layout(); };
     D.bar.addEventListener("dblclick", () => setMode("design"));
-    const pill = document.createElement("button"); pill.type = "button"; pill.id = "dsDockPill"; pill.className = "hidden"; pill.innerHTML = `<span class="dot"></span>Design Station live view`; pill.onclick = () => { D.hiddenByUser = false; D.shownByUser = true; layout(); };
-    pill.title = "the Design Station, live — click to watch it in the corner";
+    const pill = document.createElement("button"); pill.type = "button"; pill.id = "dsDockPill"; pill.className = "hidden"; pill.innerHTML = `<span class="dot"></span>Design Station live view`; pill.onclick = () => { D.hiddenByUser = false; layout(); };
+    pill.title = "the Design Station is live — click to show the status strip";
     document.body.appendChild(pill); D.pill = pill;
     window.addEventListener("resize", schedule); document.addEventListener("scroll", schedule, true);
     return D;
@@ -365,10 +363,6 @@ const Dock = window.Dock = (() => {
     D.pill.classList.toggle("hidden", mode !== "pilled");
     D.el.classList.toggle("hidden", mode === "hidden" || mode === "pilled");
     D.el.classList.toggle("full", mode === "full"); D.el.classList.toggle("pip", mode === "pip");
-    // The live view is presence, not reading: at 480 px it renders the station at 0.4 and covered order cards, sheet
-    // cards and SKU tiles outright. It sits small unless a person expands it, and whatever size it is, the screen
-    // reserves that much room at the bottom so nothing is ever underneath it.
-    D.el.classList.toggle("tucked", mode === "pip" && !D.shownByUser);
     const dockH = mode === "pip" ? Math.round(D.el.getBoundingClientRect().height) + 12 : 0;
     document.documentElement.style.setProperty("--dockH", dockH + "px");
     // the notices hang under whatever chrome the page currently has
@@ -388,9 +382,11 @@ const Dock = window.Dock = (() => {
     // The frame was always laid out at 1200 px and scaled down to fit, so on the Design Station tab the app being
     // supervised rendered at 34–61 % — its 10 px order rows at 4–7 px. It is laid out at the width it is given, down to
     // the narrowest the station itself is built for, and only the small corner view is ever scaled.
-    const floor = mode === "full" ? 980 : D.virtualW;
-    const vw = Math.max(floor, Math.round(w)); const k = w / vw;
-    f.style.width = vw + "px"; f.style.height = Math.round(h / k) + "px"; f.style.transform = `scale(${k})`;
+    if (mode === "full") {
+      // the station you are supervising is laid out at the width it is given, never scaled below 1
+      const vw = Math.max(980, Math.round(w)); const k = w / vw;
+      f.style.width = vw + "px"; f.style.height = Math.round(h / k) + "px"; f.style.transform = `scale(${k})`;
+    } else { f.style.width = D.virtualW + "px"; f.style.height = "800px"; f.style.transform = "none"; }
     const st = D.el.querySelector("#dockState"); if (st) st.textContent = DesignLink.inControl() ? (DesignLink.up() ? (B.run ? `run · ${B.run.step}` : "live") : "link down") : "not in control";
     D.el.classList.toggle("down", DesignLink.inControl() && !DesignLink.up());
   }
@@ -487,7 +483,7 @@ const Orders = window.Orders = (() => {
   }
   let liveEv = null;
   function agentLiveLine(label, text, done, total) { const html = `<b>${esc(label)}</b> ${esc(text)}${total ? ` <i>${done}/${total}</i>` : ""}`; if (!liveEv || !liveEv.live) liveEv = agent({ bridge: true }, "DS", text, { live: true, html }); else agentUpdate(liveEv, { html, text }); if (total && done >= total) { agentUpdate(liveEv, { live: false }); liveEv = null; } }
-  function lineRecord(row) { return [row.key, { state: row.state, poolIds: row.poolIds, reason: row.reason, sku: row.spec && row.spec.designSku, material: row.material, quantity: row.spec ? row.spec.quantity : 1, engrave: row.engrave ? { needed: !!row.engrave.needed, state: row.engrave.state, approved: !!row.engrave.approved, text: row.engrave.text || null } : null, problems: (row.problems || []).map(p => p.kind), updateTs: row.order.updateTs, orderId: row.order.receiptId, transactionId: row.line.transactionId }]; }
+  function lineRecord(row) { return [row.key, { state: row.state, poolIds: row.poolIds, reason: row.reason, hold: row.hold || null, sku: row.spec && row.spec.designSku, material: row.material, quantity: row.spec ? row.spec.quantity : 1, engrave: row.engrave ? { needed: !!row.engrave.needed, state: row.engrave.state, approved: !!row.engrave.approved, text: row.engrave.text || null } : null, problems: (row.problems || []).map(p => p.kind), updateTs: row.order.updateTs, orderId: row.order.receiptId, transactionId: row.line.transactionId }]; }
   async function claim(ids) { if (!ids.length) return; const r = await DesignLink.call("claim", { receiptIds: ids, runId: B.run && B.run.runId }); for (const row of rowsOf()) if (r.claimed.includes(row.order.receiptId)) row.claimedBy = "sorter"; agent({ bridge: true }, "DS", `Claimed ${r.claimed.length} order(s) on the station (gold dot)`); render(); }
   async function unclaim(ids) { if (!ids.length) return; try { await DesignLink.call("unclaim", { receiptIds: ids }); } catch (e) { agent({ bridge: true }, "warn", `unclaim: ${e.message}`); } for (const row of rowsOf()) if (ids.includes(row.order.receiptId)) row.claimedBy = null; render(); }
   /** §10.3: every order's update_timestamp re-read through the station; changed → re-interpret; vanished → dropped. */
@@ -639,7 +635,7 @@ const Orders = window.Orders = (() => {
   const wordsOf = sp => (sp.personalization || []).join(" / ") || sp.buyerMessage || "";
   /** Where this line physically is: the set and the sheet it was nested on. "What's where", answered on the line itself. */
   function placeOf(r) {
-    for (const id of r.poolIds || []) { const p2 = B.pool.rows.get(id); if (p2 && (p2.sheetName || p2.sheetId)) return { set: p2.setId || "", sheet: p2.sheetName || p2.sheetId }; }
+    for (const id of r.poolIds || []) { const p2 = B.pool.rows.get(id); if (p2 && (p2.sheetName || p2.sheetId)) return { set: p2.setId || "", sheet: p2.sheetName || p2.sheetId, sheetId: p2.sheetId || null }; }
     return null;
   }
   /** Everything a person needs to recognise one line, as a card or as a row: the same fields either way. */
@@ -685,11 +681,13 @@ const Orders = window.Orders = (() => {
           '</span>' +
           '<span class="obody">' +
             '<span class="orow1"><b class="onum">' + esc(r.order.receiptId) + '</b><span class="spacer"></span><span class="ost ' + st[0] + '">' + esc(st[1]) + '</span></span>' +
-            '<span class="ometal"><i></i><span>' + esc(m === "none" ? "no material yet" : labelOf(m)) + '</span></span>' +
+            '<span class="ometal"><i></i><span>' + esc(m === "none" ? "no material yet" : labelOf(m)) + '</span>' +
+              (due.txt !== "\u2014" ? '<span class="due ' + due.cls + '" title="ship by ' + esc(due.txt) + (due.late ? " \u2014 overdue" : due.soon ? " \u2014 due now" : "") + '">' + esc(due.txt) + '</span>' : "") + '</span>' +
             '<span class="osku"><i>SKU</i><b>' + esc(sp.designSku || r.line.sku || "— none —") + '</b></span>' +
             (where ? '<span class="owhere" title="the set and sheet this piece was nested on">' + esc(where.set) + (where.sheet ? " · " + esc(where.sheet) : "") + '</span>' : "") +
             (wordsOf(sp) ? '<span class="opers" title="' + esc(wordsOf(sp)) + '">' + esc(wordsOf(sp)) + '</span>' : "") +
             (why ? P("owhy", esc(why)) : "") +
+            (r.hold ? '<button class="relHold" type="button" title="put this line back in play">Release hold</button>' : "") +
           '</span>';
       } else {
         node.innerHTML =
@@ -701,9 +699,11 @@ const Orders = window.Orders = (() => {
           '<span class="cell hideSm ometal"><i></i><span>' + esc(m === "none" ? "none" : labelOf(m)) + '</span></span>' +
           '<span class="cell hideSm due ' + due.cls + '" title="ship by">' + esc(due.txt) + '</span>' +
           '<span class="ost ' + st[0] + '">' + esc(st[1]) + '</span>' +
-          (why ? '<span class="cell whyc owhy">' + esc(why) + '</span>' : "");
+          (why ? '<span class="cell whyc owhy">' + esc(why) + '</span>' : "") +
+          (r.hold ? '<button class="relHold" type="button" title="put this line back in play">Release hold</button>' : "");
       }
-      node.onclick = () => OrderWin.open(r.key);
+      node.onclick = e => { if (e.target.closest(".relHold")) return; OrderWin.open(r.key); };
+      { const rh = node.querySelector(".relHold"); if (rh) rh.onclick = e => { e.stopPropagation(); Review.repool(r); }; }
       // an order can be several lines on several cards: hovering one lifts all of them, the way the station does
       node.dataset.rid = String(r.order.receiptId);
       node.onmouseenter = node.onfocus = () => markKin(node.dataset.rid, true);
@@ -757,7 +757,7 @@ const Orders = window.Orders = (() => {
     renderBody();
     const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(new Set(B.orders.rows.map(r => r.order.receiptId)).size) : "";
   }
-  return { pull, claim, unclaim, revalidate, render, renderBody, markStale, loadMaps, interpretAll, lineRecord, rows: rowsOf, visibleRows, imageFor, wantImage, shipTxt, statePill: r => STATE_PILL[r.state] || ["neutral", r.state], applyPullRule, ctx };
+  return { pull, claim, unclaim, revalidate, render, renderBody, markStale, loadMaps, interpretAll, lineRecord, rows: rowsOf, visibleRows, placeOf, imageFor, wantImage, shipTxt, statePill: r => STATE_PILL[r.state] || ["neutral", r.state], applyPullRule, ctx };
 })();
 
 /* ═══ 19 · Master — SKU labels under charms, per-SKU designs, the index ══════ */
@@ -2121,6 +2121,7 @@ const RunCtl = window.RunCtl = (() => {
   function renderBanner() {
     if (window.guardBench) guardBench();
     const h = document.getElementById("runBanner"); if (!h) return; const r = B.run;
+    LiveStrip.render();                                     // one path: the banner and the ladder can never disagree
     if (!r) {
       // a set has finished and Auto will start another: the banner stays, so nobody comes back to a blank app
       if (NEXT.at > Date.now()) {
@@ -2160,7 +2161,8 @@ const RunCtl = window.RunCtl = (() => {
 const Review = window.Review = (() => {
   const items = () => B.review.items;
   const mine = it => !String(it.key || "").startsWith("eng:") && !(it.row && it.row.state === "gone");   // engraving is the Engraving tab's
-  const count = () => items().filter(mine).length;
+  const isNotice = it => String(it.key || "").startsWith("held:");        // an order left open, not a decision to make
+  const count = () => items().filter(it => mine(it) && !isNotice(it)).length;
   function add(it) { const i = items().findIndex(x => x.key === it.key); const fresh = i < 0; if (fresh) items().push(Object.assign({ t: Date.now() }, it)); else items()[i] = Object.assign(items()[i], it); if (fresh && B.run && ["review", "paused", "stopped"].includes(B.run.status)) notifyPerson("Charm Sorter needs a person", it.why || it.kind); render(); LiveStrip.render(); RunCtl.renderBanner(); }
   const settled = [];                                                     // what this shift has answered, newest first
   function remove(key, how) {
@@ -2168,7 +2170,7 @@ const Review = window.Review = (() => {
     const gone = items().find(x => x.key === key);
     B.review.items = items().filter(x => x.key !== key);
     if (n === items().length) return;
-    if (gone && !String(key).startsWith("eng:")) settled.unshift({ key, kind: gone.kind, why: gone.why || "", lines: (gone.rows || [gone.row]).filter(Boolean).length, orders: [...new Set((gone.rows || [gone.row]).filter(Boolean).map(r2 => r2.order.receiptId))], by: how || employeeName() || "", t: Date.now() });
+    if (gone && !/^(eng|held):/.test(String(key))) settled.unshift({ key, kind: gone.kind, why: gone.why || "", lines: (gone.rows || [gone.row]).filter(Boolean).length, orders: [...new Set((gone.rows || [gone.row]).filter(Boolean).map(r2 => r2.order.receiptId))], by: how || employeeName() || "", t: Date.now() });
     if (settled.length > 200) settled.length = 200;
     render(); LiveStrip.render(); RunCtl.renderBanner();
   }
@@ -2196,6 +2198,19 @@ const Review = window.Review = (() => {
     } }
     for (const [key, it] of keep) { const had = items().find(x => x.key === key); if (had) Object.assign(had, { rows: it.rows, row: it.row, problem: it.problem, why: it.why }); else add(it); }
     B.review.items = items().filter(x => !x.key.startsWith("ord:") || keep.has(x.key));
+    // a held notice is a notice, not a decision: it goes when the order it names is committed, gone, or no longer held
+    const byRid = new Map();
+    for (const r of Orders.rows()) { const k = r.order.receiptId; if (!byRid.has(k)) byRid.set(k, []); byRid.get(k).push(r); }
+    B.review.items = items().filter(x => {
+      if (!isNotice(x)) return true;
+      const lines = byRid.get(x.rid); if (!lines || !lines.length) return false;
+      if (lines.every(l => ["committed", "gone"].includes(l.state))) return false;
+      const held = lines.find(l => l.hold);
+      if (!held && !lines.some(l => l.problems && l.problems.length)) return false;
+      x.note = held ? held.hold : (lines.find(l => l.reason) || {}).reason || "unresolved line";
+      x.line = held ? held.key : (lines.find(l => l.problems && l.problems.length) || lines[0]).key;
+      return true;
+    });
     render(); LiveStrip.render(); RunCtl.renderBanner();
   }
   /** Every line the item speaks for — the group when it has one, the single row otherwise. */
@@ -2207,7 +2222,7 @@ const Review = window.Review = (() => {
     for (const r of rows) await repool(r);
   }
   function focus(rowKey) { RV.filter = null; render(); const c = document.querySelector(`#reviewView [data-row="${CSS.escape(rowKey)}"]`); if (c) { c.scrollIntoView({ behavior: "smooth", block: "center" }); c.classList.add("pulse"); setTimeout(() => c.classList.remove("pulse"), 1300); } }
-  async function repool(row) { row.problems = []; row.state = "pulled"; row.reason = null; Orders.interpretAll(); if (row.problems.length) { Orders.render(); return; } if (B.run && O.stepIndex(B.run.step) >= O.stepIndex("pool")) { try { await Pool.poolAdd(row, B.run); } catch (e) { row.state = "held"; row.reason = e.message; } if (row.state === "pooled" && row.spec.engraveCandidate) Engrave.classify(row).catch(() => {}); } syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards(); if (OrderWin.isOpen()) OrderWin.paint(); RunCtl.poke(); }
+  async function repool(row) { row.problems = []; row.state = "pulled"; row.reason = null; row.hold = null; Orders.interpretAll(); if (row.problems.length) { Orders.render(); return; } if (B.run && O.stepIndex(B.run.step) >= O.stepIndex("pool")) { try { await Pool.poolAdd(row, B.run); } catch (e) { row.state = "held"; row.reason = e.message; } if (row.state === "pooled" && row.spec.engraveCandidate) Engrave.classify(row).catch(() => {}); } syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards(); if (OrderWin.isOpen()) OrderWin.paint(); RunCtl.poke(); }
   const by = () => employeeName() || askEmployee();
   /** What Claude decided, in one line and one number: a reading is either text to engrave or a note to the shop. */
   function claudeVerdict(j) {
@@ -2252,7 +2267,22 @@ const Review = window.Review = (() => {
       bindNeeds(c, "alias", "sku");
       c.querySelector("[data-a=alias]").onclick = async () => { const sku = c.querySelector("[data-f=sku]").value.trim().toUpperCase(); if (!sku) return; const who = by(); if (!who) return; if (!B.master.entries.has(sku)) { toast(`${sku} is not in the master index`, "bad"); return; } const lids = [...new Set(group.map(x => String(x.line.listingId)))]; for (const lid of lids) await api("charmNestLibrary", { op: "aliasPut", listingId: lid, sku, by: who, title: r.line.title }); await Orders.loadMaps(true); toast(`${lids.length} listing${lids.length === 1 ? "" : "s"} → ${sku} remembered`, "ok"); for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId))) await repool(rr); };
       c.querySelector("[data-a=nodesign]").onclick = async () => { const who = by(); if (!who) return; const sku = p.sku || (sp && sp.designSku); if (sku) await api("charmNestLibrary", { op: "noDesignPut", sku, by: who, note: r.line.title }); else await api("charmNestLibrary", { op: "noDesignPut", pattern: "^" + String(r.line.title).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").slice(0, 40), by: who, note: "by title" }); await Orders.loadMaps(true); await repoolAll(it); };
-      const mb = c.querySelector("[data-a=master]"); if (mb) mb.onclick = () => setMode("master");
+      const mb = c.querySelector("[data-a=master]");
+      if (mb) mb.onclick = () => {
+        const sku = p.sku || (sp && sp.designSku) || "";
+        modeFromUser = true;                                            // pushState, so Back returns to this card
+        setMode("master");
+        const f = document.getElementById("mSearch"); if (!f) return;
+        f.value = sku; Master.render(); f.focus(); f.select();
+        let tries = 0;
+        const show = () => {
+          const t = document.querySelector("#mGrid .skuTile");
+          if (!t) { if (++tries < 40) setTimeout(show, 150); return; }   // a cold tab is still loading the library
+          t.scrollIntoView({ behavior: "smooth", block: "center" });
+          t.classList.add("pulse"); setTimeout(() => t.classList.remove("pulse"), 1300);
+        };
+        show();
+      };
     } else if (it.kind === "missingSize") {
       c.innerHTML = head("Missing size", `${p.sku} · size ${p.size || "(none)"}`, orderSub) + `<div class="ev">${evRow("Sizes available", (p.available || []).join(", "))}${evRow("Options", (r.line.variations || []).map(v => `<q>${esc(v.name)}: ${esc(v.value)}</q>`).join(" "))}</div><div class="fixes"><select data-f="size">${(p.available || []).map(s => `<option>${esc(s)}</option>`).join("")}</select><button class="btn gold sm" data-a="size">Use this size (staff decision)</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
       c.querySelector("[data-a=size]").onclick = async () => { const s = c.querySelector("[data-f=size]").value; const who = by(); if (!who) return; r.sizeOverride = s; try { await DesignLink.call("notes.set", { receiptId: r.order.receiptId, text: `${sp.staffNote ? sp.staffNote + "\n" : ""}Size ${s} chosen by ${who} (sorter)` }); } catch (_) {} await repool(r); };
@@ -2286,7 +2316,7 @@ const Review = window.Review = (() => {
       c.querySelector("[data-a=jump]").onclick = () => { remove(it.key); focus(it.line); };
     } else { c.innerHTML = head(it.kind, it.why || "", orderSub); }
     const skipB = c.querySelector("[data-a=skip]"); if (skipB) skipB.onclick = () => { const who = by(); if (!who) return; for (const rr of rowsOf(it)) { rr.state = "skipped"; rr.reason = `line skipped by ${who}`; rr.problems = []; rr.hold = `line skipped by ${who}`; } syncOrderItems(); Orders.render(); RunCtl.poke(); };
-    const holdB = c.querySelector("[data-a=hold]"); if (holdB) holdB.onclick = () => { const who = by(); if (!who) return; const g = rowsOf(it); for (const rr of g) { rr.hold = `held by ${who}`; rr.reason = rr.hold; rr.state = "held"; rr.problems = []; } remove(it.key); Orders.render(); RunCtl.poke(); const ords = [...new Set(g.map(x => x.order.receiptId))]; toast(`${ords.length === 1 ? ords[0] : ords.length + " orders"} held — they stay open on the station`, ""); };
+    const holdB = c.querySelector("[data-a=hold]"); if (holdB) holdB.onclick = () => { const who = by(); if (!who) return; const g = rowsOf(it); for (const rr of g) { rr.hold = `held by ${who}`; rr.reason = rr.hold; rr.state = "held"; } remove(it.key); Orders.render(); RunCtl.poke(); const ords = [...new Set(g.map(x => x.order.receiptId))]; toast(`${ords.length === 1 ? ords[0] : ords.length + " orders"} held by ${who} — release them from the Orders tab`, ""); };
     return c;
   }
   async function row_material(it, m, who) {
@@ -2300,7 +2330,7 @@ const Review = window.Review = (() => {
   const RV = { filter: null };
   function render() {
     const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) return;
-    const all = items().filter(mine);
+    const all = items().filter(it => mine(it) && !isNotice(it));
     const ORDER = ["needsMaterial", "needsMapping", "unmatchedSku", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "orderChanged", "heldOrder"];
     all.sort((a, b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind) || a.t - b.t);
     // the kinds present are the filter: one chip each, so a long mixed list becomes the one kind being worked through
@@ -2318,8 +2348,13 @@ const Review = window.Review = (() => {
       host.innerHTML = settled.length ? settled.map(d => `<div class="doneRow"><b class="mono">${esc((d.orders || []).slice(0, 2).join(" "))}${(d.orders || []).length > 2 ? ` +${d.orders.length - 2}` : ""}</b><span class="sku mono">${esc(KIND_WORDS[d.kind] || d.kind)}</span><span class="w">${esc(d.why)}</span><span class="ost ok">settled</span><span class="by">${esc(d.by)}${d.t ? " · " + fmtT(d.t) : ""}</span><span class="mono" style="font-size:11px;color:var(--ink45)">${d.lines} line${d.lines === 1 ? "" : "s"}</span></div>`).join("") : `<div class="libEmpty">nothing settled yet this session</div>`;
       return;
     }
-    for (const it of list) host.appendChild(card(it));
     if (!list.length) host.innerHTML = `<div class="libEmpty">Nothing waits for a decision.</div>`;
+    else for (const it of list) host.appendChild(card(it));
+    const notices = items().filter(isNotice);
+    if (notices.length) {
+      host.insertAdjacentHTML("beforeend", `<div class="rvNotices"><div class="nHead">Left open on the station — no decision needed here</div>${notices.map(n => `<div class="nRow"><b class="mono">${esc(n.rid)}</b><span class="w">${esc(n.note || String(n.why || "").replace(n.rid + " held — ", ""))}</span><button class="btn ghost xs" data-open="${esc(n.line || "")}" title="open this order on the cards">Open order ↗</button></div>`).join("")}</div>`);
+      host.querySelectorAll("[data-open]").forEach(b => b.onclick = () => { if (b.dataset.open) OrderWin.open(b.dataset.open); });
+    }
   }
   return { items, count, add, remove, render, card, problemText, syncOrderItems, focus, repool };
 })();
@@ -2556,12 +2591,13 @@ const OrderWin = window.OrderWin = (() => {
     notes.className = said.length ? "owSaid" : "owSaid none";
     notes.innerHTML = said.length ? said.map(([k, v2]) => `<span class="lbl">${esc(k)}</span>${esc(v2)}`).join("") : "— the customer wrote nothing —";
     const note = byId("owNote"); if (document.activeElement !== note) note.value = sp.staffNote || "";
-    const st = Orders.statePill(r);
+    const st = Orders.statePill(r), where = Orders.placeOf(r);
     const mcell = (lbl, val) => '<div class="m"><i>' + esc(lbl) + '</i><span>' + esc(val) + '</span></div>';
     byId("owMeta").innerHTML =
       mcell("Quantity", String(sp.quantity || r.line.quantity || 1)) +
       mcell("Metal", r.material ? labelOf(r.material) : (sp.materialLabel || "none")) +
       mcell("State", st[1]) +
+      (where ? mcell("Sheet", (where.set ? where.set + " · " : "") + (where.sheet || "")) : "") +
       mcell("Ship by", Orders.shipTxt(r)) +
       (sp.form ? mcell("Form", sp.form) : "") + (sp.size ? mcell("Size", sp.size) : "") + (sp.chain ? mcell("Chain", sp.chain) : "") +
       (r.engrave && r.engrave.needed ? mcell("Engraving", (r.engrave.approved ? "approved" : r.engrave.state || "waiting") + (r.engrave.text ? " · " + r.engrave.text : "")) : "") +
