@@ -308,7 +308,7 @@ const receipts = [
       // ── the ladder: where the work is, on every screen, with the evidence for each step (§10) ──
       const lad = await page.evaluate(() => {
         const out = {};
-        for (const m of ['orders', 'engrave', 'review', 'master', 'nest', 'library', 'charms', 'design']) {
+        for (const m of ['orders', 'engrave', 'review', 'master', 'nest', 'library', 'design']) {
           CN.setMode(m);
           const h = document.getElementById('ladder');
           out[m] = { rows: h.querySelectorAll('.ldRow').length, band: (h.querySelector('.ldBand b') || {}).textContent || '' };
@@ -483,7 +483,7 @@ const receipts = [
         const SH = process.env.CN_SHOTS;
         await page.evaluate(() => { document.querySelectorAll('dialog[open]').forEach(d => d.close()); });
         const grab = async (name, w, h) => { await page.setViewportSize({ width: w, height: h }); await page.waitForTimeout(450); await page.screenshot({ path: SH + '/' + name + '.png' }); };
-        for (const [mode, fn] of [['orders', 'Orders'], ['engrave', 'Engrave'], ['review', 'Review'], ['master', 'Master'], ['design', null], ['nest', null], ['library', null], ['charms', null]]) {
+        for (const [mode, fn] of [['orders', 'Orders'], ['engrave', 'Engrave'], ['review', 'Review'], ['master', 'Master'], ['design', null], ['nest', null], ['library', null]]) {
           await page.evaluate(m => { CN.setMode(m); }, mode);
           if (fn) await page.evaluate(f => { try { window[f].render(); } catch (_) {} }, fn);
           await grab('tab-' + mode + '-1500', 1500, 1000);
@@ -1018,12 +1018,14 @@ const receipts = [
       const t = CNProgress.start('Preparing 411 order line(s)', { total: 411 }); t.set(229, 411, 'BLUE_94532');
       const row = document.querySelector('.cnp .cnpRow').getBoundingClientRect();
       const hits = ['#modeSeg', '#runBanner', '#topBar', '.topBar'].map(sel => { const el = document.querySelector(sel); if (!el) return null; const r = el.getBoundingClientRect(); if (!r.width) return null; return { sel, over: r.left < row.right && r.right > row.left && r.top < row.bottom && r.bottom > row.top }; }).filter(Boolean);
+      const mm = document.getElementById('moreMenu'); if (mm) mm.open = true;                 // the three behind More are reached through it
       const unreachable = [...document.querySelectorAll('#modeSeg button')].filter(seg => {
         seg.scrollIntoView({ inline: 'nearest', block: 'nearest' });
         const r2 = seg.getBoundingClientRect();
         const atPoint = document.elementFromPoint(r2.left + r2.width / 2, r2.top + r2.height / 2);
         return !(atPoint && seg.contains(atPoint));
       }).map(b => b.dataset.mode);
+      if (mm) mm.open = false;
       t.end();
       return { hits, reachable: !unreachable.length, unreachable };
     });
@@ -1121,6 +1123,7 @@ const receipts = [
     const realResume = RunCtl.resumeRun; RunCtl.resumeRun = () => { did.push('resume'); };
     const realMaster = Pool.masterCharm; Pool.masterCharm = (...a2) => { did.push('rebuild'); return realMaster(...a2); };
     RunCtl.stop('stopped for the test', ''); RunCtl.clearRunState();   // the cards are free: a person recalls a set onto them
+    CN.setMode('orders');                                                  // asked from the Orders tab
     RunHistory.show(''); await new Promise(r => setTimeout(r, 900));
     const d = document.getElementById('histDlg');
     const cards = [...d.querySelectorAll('.hSet')].map(n => ({ set: n.dataset.set, thumb: !!n.querySelector('.hThumb'), text: n.textContent.replace(/\s+/g, ' ').trim().slice(0, 80) }));
@@ -1129,26 +1132,44 @@ const receipts = [
     const btn = target && target.querySelector('[data-a=open]');
     if (btn) btn.click();
     await new Promise(r => setTimeout(r, 1500));
+    const landed = CN.S.mode;                                              // where the recall left the person
     const strip = !!document.getElementById('scopeStrip'), grid = !!document.getElementById('scopeView');
     const pages = CN.allSheets().filter(p => p.recalled).map(p => ({ metal: p.metal, name: p.recalled.fileBase, placed: p.recalled.placedCount, pill: (p.el && p.el.querySelector('[data-r=pill]') || {}).textContent, prov: (p.el && p.el.querySelector('[data-r=prov]') || {}).textContent, nest: (p.el && p.el.querySelector('[data-r=nest]') || {}).textContent, dl: !(p.el && p.el.querySelector('[data-r=dl]').classList.contains('hidden')) }));
+    CN.setMode('nest'); await new Promise(r => setTimeout(r, 300));      // pictures are asked for when their cards are shown
     const canvasDrawn = await new Promise(res => { let n = 0; const t = setInterval(() => { const pg = CN.allSheets().find(p => p.recalled && p.metal === 'silver'); const ok = pg && pg._img && pg._img.complete && pg._img.naturalWidth > 0; if (ok || ++n > 40) { clearInterval(t); res(!!ok); } }, 100); });
     CN.setMode('orders'); await new Promise(r => setTimeout(r, 200));   // the header repaints when the tab is shown
     const orders = { rows: Orders.rows().length, fromRecord: Orders.rows().every(r => r.fromRecord), meta: (document.getElementById('ordMeta') || {}).textContent };
-    CN.setMode('nest');
     Orders.pull = realPull; RunCtl.start = realStart; RunCtl.resumeRun = realResume; Pool.masterCharm = realMaster;
-    return { cards, views, strip, grid, pages, canvasDrawn, orders, did, mode: CN.S.mode };
+    return { cards, views, strip, grid, pages, canvasDrawn, orders, did, mode: landed };
   });
   console.log('recall', JSON.stringify(recalled));
   assert(!recalled.skip, 'there was a run to recall: ' + recalled.skip);
   assert(recalled.cards.length >= 2 && recalled.cards.every(c2 => c2.thumb), 'the picker lists the sets, each with a picture: ' + JSON.stringify(recalled.cards));
   assert.deepStrictEqual(recalled.views, ['cards', 'list'], 'as cards or as a list');
   assert(!recalled.strip && !recalled.grid, 'no strip, no grid: the material cards are the view');
-  assert.strictEqual(recalled.mode, 'nest', 'opening a set lands on the cards');
+  assert.strictEqual(recalled.mode, 'orders', 'asked from the Orders tab, the recall stays on the Orders tab');
+  // and asked from the Nest tab, it stays there, with its own way into the picker
+  const fromNest = await page.evaluate(async () => {
+    CN.setMode('nest'); const b = document.getElementById('btnEarlierSets'); if (!b) return { skip: 'no button' };
+    b.click(); await new Promise(r => setTimeout(r, 900));
+    const d = document.getElementById('histDlg'); const wasOpen = !!(d && d.open);
+    const o = d && [...d.querySelectorAll('.hSet')].find(n => /Set 2/.test(n.textContent)); const btn = o && o.querySelector('[data-a=open]');
+    if (btn) btn.click(); await new Promise(r => setTimeout(r, 1200));
+    return { wasOpen, mode: CN.S.mode, gold: CN.allSheets().some(p => p.recalled && p.metal === 'gold') };
+  });
+  console.log('from nest', JSON.stringify(fromNest));
+  assert(!fromNest.skip && fromNest.wasOpen && fromNest.mode === 'nest' && fromNest.gold, 'the Nest tab opens the same picker and stays on Nest: ' + JSON.stringify(fromNest));
   assert(recalled.pages.length >= 1 && recalled.pages.every(p => p.name && /Recalled/.test(p.pill) && /recalled/.test(p.prov) && /Rebuild to edit/.test(p.nest) && p.dl), 'the set is on its material card, marked recalled, with its downloads and a way to rebuild: ' + JSON.stringify(recalled.pages));
   assert(recalled.canvasDrawn, 'the saved picture is what the card shows');
   assert(recalled.orders.rows >= 1 && recalled.orders.fromRecord && /from the record/.test(recalled.orders.meta), "the run's orders are on the Orders tab, said to be from the record: " + JSON.stringify(recalled.orders));
   assert.deepStrictEqual(recalled.did, [], 'nothing was pulled, started, resumed or rebuilt: ' + JSON.stringify(recalled.did));
 
+  const tabs = await page.evaluate(() => ({ top: [...document.querySelectorAll('#modeSeg > button')].map(b => b.dataset.mode), more: [...document.querySelectorAll('#moreMenu button')].map(b => b.dataset.mode), charms: !!document.querySelector('[data-mode=charms]') }));
+  assert.deepStrictEqual(tabs.top, ['nest', 'orders', 'engrave', 'review'], "the day's four screens, in the day's order: " + tabs.top);
+  assert.deepStrictEqual(tabs.more, ['design', 'master', 'library'], 'and the rest behind More: ' + tabs.more);
+  assert(!tabs.charms, 'no Charms tab');
+  const moreLabel = await page.evaluate(() => { CN.setMode('master'); const t = document.getElementById('moreLabel').textContent; const on = document.getElementById('moreMenu').classList.contains('on'); CN.setMode('nest'); return { t, on, after: document.getElementById('moreLabel').textContent }; });
+  assert(moreLabel.on && /Master/.test(moreLabel.t) && moreLabel.after === 'More', 'the menu names the screen that is open: ' + JSON.stringify(moreLabel));
   console.log('bridge e2e OK ·', st.docs.size, 'docs ·', st.blobs.size, 'blobs · screenshots in', tmp);
   await browser.close(); srv.close();
 })().catch(e => { console.error(e); process.exit(1); });
