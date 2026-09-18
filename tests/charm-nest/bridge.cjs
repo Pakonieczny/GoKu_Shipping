@@ -323,6 +323,30 @@ const receipts = [
       assert(!lad.strip, 'the scrolling ticker is gone');
       assert(lad.recent, 'and what happened lately is one click away in the rail');
       assert(lad.band && !/^run [0-9a-z]+$/i.test(lad.band), 'the band says a state word, not a run id: ' + lad.band);
+      // ── the run banner's buttons go where they say, and the bench cannot be pulled out from under a run (§10) ──
+      const flow = await page.evaluate(() => {
+        CN.setMode('orders'); RunCtl.renderBanner();
+        const before = { mode: CN.S.settings.runMode, tab: CN.S.mode };
+        const rb = document.getElementById('rbReview'); if (rb) rb.click();
+        const afterReview = { mode: CN.S.settings.runMode, tab: CN.S.mode };
+        CN.setMode('orders');
+        const eb = document.getElementById('rbEngrave'); if (eb) eb.click();
+        const afterEngrave = { mode: CN.S.settings.runMode, tab: CN.S.mode };
+        CN.setMode('orders');
+        const bench = ['btnNestAll', 'btnClearAll', 'btnPick'].map(id => { const b = document.getElementById(id); return { id, off: !!(b && b.disabled) }; });
+        return { before, afterReview, afterEngrave, bench, hadReview: !!rb, hadEngrave: !!eb };
+      });
+      console.log('run banner buttons', JSON.stringify(flow));
+      if (flow.hadReview) {
+        assert.strictEqual(flow.afterReview.tab, 'review', 'Review (N) opens the Review tab');
+        assert.strictEqual(flow.afterReview.mode, flow.before.mode, 'and does not change Auto/Manual: ' + flow.afterReview.mode);
+      }
+      if (flow.hadEngrave) {
+        assert.strictEqual(flow.afterEngrave.tab, 'engrave', 'Engraving (N) opens the Engraving tab');
+        assert.strictEqual(flow.afterEngrave.mode, flow.before.mode, 'and does not change Auto/Manual either');
+      }
+      assert(flow.bench.every(b => b.off), 'the bench buttons cannot take the cards out from under a run: ' + JSON.stringify(flow.bench));
+      await page.evaluate(() => CN.setMode('engrave'));
       // the step that needs a person is a button that goes there
       const jumped = await page.evaluate(() => {
         const w = document.querySelector('#ladder .ldRow.wait') || document.querySelector('#ladder .ldRow[data-tab=engrave]');

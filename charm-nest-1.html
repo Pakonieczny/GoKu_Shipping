@@ -2553,9 +2553,22 @@ function setMode(mode) {
   try { if ((location.hash || "").slice(1) !== mode) history[modeFromUser ? "pushState" : "replaceState"](null, "", "#" + mode); } catch (_) {}
   modeFromUser = false;
   if (!railPinned) $("#app").classList.toggle("railOff", false);   // the ladder belongs on every tab; only a person folds the rail
+  guardBench();
   if (window.Views && Views.onShow) Views.onShow(mode);
 }
 let railPinned = false, modeFromUser = false;
+/* "Clear queues" deletes the pooled charms off the cards and "Nest all ready" re-fires a nest the run is already waiting
+   on — both were live during a run, and the confirm on the first said "Nothing in the cloud is touched", which is true
+   and beside the point: it had just killed the set in progress. */
+function guardBench() {
+  const busy = !!(window.B && B.run && ["running", "review", "paused"].includes(B.run.status));
+  for (const id of ["btnNestAll", "btnClearAll", "btnPick"]) {
+    const b = $("#" + id); if (!b) continue;
+    b.disabled = busy;
+    b.title = busy ? "a run is open — stop it first, or the cards it is working from would be taken away" : (b.dataset.t || b.title || "");
+    if (!b.dataset.t && !busy) b.dataset.t = b.title;
+  }
+}
 
 /* ═══ 15 · settings dialog ══════════════════════════════════════════════ */
 function openSettings() {

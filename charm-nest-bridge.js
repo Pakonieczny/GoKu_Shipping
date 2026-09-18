@@ -2017,6 +2017,11 @@ const RunCtl = window.RunCtl = (() => {
     });
   }
   function poke() { if (reviewWaiter) setTimeout(reviewWaiter, 50); renderBanner(); LiveStrip.render(); }
+  /* Auto used to finish a set, blank the screen and refill it minutes later with no countdown anywhere — a person came
+     back from the bench to an empty app and could not tell whether the shift was done or something had crashed. */
+  const NEXT = { at: 0, t: 0 };
+  function armNext(ms) { NEXT.at = Date.now() + ms; clearInterval(NEXT.t); NEXT.t = setInterval(() => { if (!NEXT.at) { clearInterval(NEXT.t); return; } renderBanner(); }, 1000); }
+  function cancelNext() { NEXT.at = 0; clearInterval(NEXT.t); clearTimeout(autoTimer); renderBanner(); }
   function stop(why, fix) { const r = B.run; if (!r) return; r.status = "stopped"; r.stoppedBy = why; r.fix = fix || null; r.errors.push({ t: Date.now(), why }); if (waiter && waiter.r === r) { const w = waiter; waiter = null; w.resolve(); } reviewWaiter = null; agent({ run: r.runId }, "warn", `Run stopped: ${why}${fix ? " — " + fix : ""}`); toast(`Run stopped: ${why}`, "bad", 8000); notifyPerson("Charm Sorter run stopped", why); save(r).catch(() => {}); renderBanner(); }
   function stopIfRunning(why, fix) { if (B.run && B.run.status === "running") stop(why, fix); }
   async function resume() {
@@ -2085,11 +2090,11 @@ const RunCtl = window.RunCtl = (() => {
   function onComplete(r) {
     agent({ run: r.runId }, "ok", `Run ${r.runId} complete: ${(r.committed || []).length} order(s) committed · ${Object.keys(r.holds || {}).length} held · ${(r.refused || []).length} refused`);
     toast(`Set complete — ${(r.committed || []).length} order(s) marked design-complete`, "ok", 7000); ding && ding();
-    if (S.settings.runMode === "auto" && +S.settings.autoEvery > 0) { const every = Math.max(5, +S.settings.autoEvery); clearTimeout(autoTimer); autoTimer = setTimeout(() => { if (S.settings.runMode === "auto") { clearRunState(); start({ mode: "auto" }); } }, every * 60000); agent({ bridge: true }, "DS", `Auto: the next run starts in ${every} min (never under 5, to spare the Etsy API)`); }
+    if (S.settings.runMode === "auto" && +S.settings.autoEvery > 0) { const every = Math.max(5, +S.settings.autoEvery); clearTimeout(autoTimer); autoTimer = setTimeout(() => { NEXT.at = 0; clearInterval(NEXT.t); if (S.settings.runMode === "auto") { clearRunState(); start({ mode: "auto" }); } }, every * 60000); armNext(every * 60000); agent({ bridge: true }, "DS", `Auto: the next run starts in ${every} min (never under 5, to spare the Etsy API)`); }
   }
   /** After a set is done: clear the cards and pooled lines so the next run starts clean (files and records are kept). */
   function clearRunState() { for (const m of METALS) { const prim = S.sheets[m.key]; if (prim.pages.some(p => p.charms.some(c => c.poolId))) { for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms = pg.charms.filter(c => !c.poolId); pg.sheetId = null; pg.fileBase = null; pg.setId = null; pg.runId = null; } prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim); } } B.orders.rows = []; B.orders.byKey = new Map(); B.engrave.items = new Map(); B.review.items = []; B.pool.rows = new Map(); B.run = null; Orders.render(); Engrave.render(); Review.render(); renderBanner(); renderRail(); updateTopSub(); }
-  function setMode(mode) {
+  function setRunMode(mode) {
     S.settings.runMode = mode === "auto" ? "auto" : "manual"; saveSettings(); renderModeBtn();
     if (mode === "auto") { agent({ bridge: true }, "DS", "Auto mode on: the sorter pulls the latest orders by the date rule and runs the whole process, stopping only for a person"); if (!B.run || ["complete", "stopped"].includes(B.run.status)) { if (B.run && B.run.status === "complete") clearRunState(); start({ mode: "auto" }).catch(e => toast(e.message, "bad")); } else if (B.run.status === "paused") { B.run.mode = "auto"; next(); } else B.run.mode = "auto"; }
     else { clearTimeout(autoTimer); if (B.run) B.run.mode = "manual"; agent({ bridge: true }, "DS", "Manual mode: every step waits for a click"); }
@@ -2106,8 +2111,20 @@ const RunCtl = window.RunCtl = (() => {
     return "";
   }
   function renderBanner() {
+    if (window.guardBench) guardBench();
     const h = document.getElementById("runBanner"); if (!h) return; const r = B.run;
-    if (!r) { h.classList.add("hidden"); Dock.schedule(); return; }
+    if (!r) {
+      // a set has finished and Auto will start another: the banner stays, so nobody comes back to a blank app
+      if (NEXT.at > Date.now()) {
+        const left = Math.max(0, NEXT.at - Date.now()), mm = Math.floor(left / 60000), ss = Math.floor(left % 60000 / 1000);
+        h.classList.remove("hidden"); h.className = "runBanner done";
+        h.innerHTML = `<span class="why"><b>Set finished</b> · the next run starts in ${mm}:${String(ss).padStart(2, "0")}</span><span class="spacer"></span><span class="acts"><button class="btn gold sm" id="rbNow" title="start the next run now instead of waiting">Run now</button><button class="btn ghost sm" id="rbCancelNext" title="do not start another run on its own">Cancel</button></span>`;
+        h.querySelector("#rbNow").onclick = () => { cancelNext(); clearRunState(); start({ mode: "auto" }).catch(e => toast(e.message, "bad")); };
+        h.querySelector("#rbCancelNext").onclick = () => cancelNext();
+        Dock.schedule(); return;
+      }
+      h.classList.add("hidden"); Dock.schedule(); return;
+    }
     h.classList.remove("hidden"); h.className = "runBanner" + (r.status === "stopped" ? " stopped" : r.status === "complete" ? " done" : r.status === "review" ? " review" : "");
     const idx = O.stepIndex(r.step);
     const reviewN = Review.count(), engN = Engrave.pendingCount();
@@ -2116,13 +2133,19 @@ const RunCtl = window.RunCtl = (() => {
     Dock.schedule();
     h.title = `run ${r.runId}`;
     h.innerHTML = `<span class="why">${why}</span><span class="spacer"></span><span class="acts">
-      ${r.status === "paused" && !r.awaitCommit ? `<button class="btn gold sm" id="rbNext" title="do the next step of the run and wait again">Next step ▶</button><button class="btn ghost sm" id="rbAuto" title="Stop waiting at every step: the run carries on by itself and only stops when it needs a person">Run the rest by itself</button>` : ""}${r.status === "paused" && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${r.status === "stopped" && /sign/i.test(r.stoppedBy || "") ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${r.status === "stopped" ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at">Resume</button>` : ""}${reviewN ? `<button class="btn ghost sm" id="rbReview" title="the decisions a person still has to make">Review (${reviewN})</button>` : ""}${engN ? `<button class="btn ghost sm" id="rbEngrave" title="the engraving still to be settled">Engraving (${engN})</button>` : ""}${["running", "review", "paused"].includes(r.status) ? `<button class="btn ghost sm" id="rbStop" title="stop after the step in progress — the run can be resumed from where it stopped">Stop</button>` : ""}${["complete", "stopped"].includes(r.status) ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}</span>`;
+      ${r.status === "paused" && !r.awaitCommit ? `<button class="btn gold sm" id="rbNext" title="do the next step of the run and wait again">Next step ▶</button><button class="btn ghost sm" id="rbAuto" title="Stop waiting at every step: the run carries on by itself and only stops when it needs a person">Run the rest by itself</button>` : ""}${r.status === "paused" && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${r.status === "stopped" && /sign/i.test(r.stoppedBy || "") ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${r.status === "stopped" ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at">Resume</button>` : ""}${reviewN ? `<button class="btn ghost sm" id="rbReview" title="the decisions a person still has to make">Review (${reviewN})</button>` : ""}${engN ? `<button class="btn ghost sm" id="rbEngrave" title="the engraving still to be settled">Engraving (${engN})</button>` : ""}${["running", "review", "paused"].includes(r.status) ? `<button class="btn ghost sm" id="rbStop" title="stop after the step in progress — the run can be resumed from where it stopped">Stop</button>` : ""}${r.status === "complete" ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}${r.status === "stopped" ? `<button class="btn ghost sm" id="rbAbandon" title="give this run up — anything decided but not yet written is lost">Abandon run</button>` : ""}</span>`;
     const q = id => h.querySelector("#" + id);
     if (q("rbConnect")) q("rbConnect").onclick = () => DesignLink.connectEtsy().catch(e => toast(e.message, "bad", 6000)); if (q("rbNext")) q("rbNext").onclick = () => next();
-    if (q("rbAuto")) q("rbAuto").onclick = async () => { const r2 = B.run; if (!r2) return; r2.mode = "auto"; await save(r2); agent({ run: r2.runId }, "DS", "This run carries on by itself from here — it stops only when it needs a person"); next(); }; if (q("rbCommit")) q("rbCommit").onclick = () => commitNow(); if (q("rbResume")) q("rbResume").onclick = () => resume(); if (q("rbReview")) q("rbReview").onclick = () => setMode("review"); if (q("rbEngrave")) q("rbEngrave").onclick = () => { setMode("engrave"); Engrave.render(); }; if (q("rbStop")) q("rbStop").onclick = () => stop("stopped by the operator", "Press Resume to carry on from the recorded step."); if (q("rbClear")) q("rbClear").onclick = () => { if (confirm("Clear the finished run from the cards? Files and records are kept.")) clearRunState(); };
+    if (q("rbAuto")) q("rbAuto").onclick = async () => { const r2 = B.run; if (!r2) return; r2.mode = "auto"; await save(r2); agent({ run: r2.runId }, "DS", "This run carries on by itself from here — it stops only when it needs a person"); next(); }; if (q("rbCommit")) q("rbCommit").onclick = () => commitNow(); if (q("rbResume")) q("rbResume").onclick = () => resume(); if (q("rbReview")) q("rbReview").onclick = () => CN.setMode("review"); if (q("rbEngrave")) q("rbEngrave").onclick = () => { CN.setMode("engrave"); Engrave.render(); }; if (q("rbStop")) q("rbStop").onclick = () => stop("stopped by the operator", "Press Resume to carry on from the recorded step."); if (q("rbClear")) q("rbClear").onclick = () => { if (confirm("Clear the finished run from the cards? Files and records are kept.")) clearRunState(); };
+    if (q("rbAbandon")) q("rbAbandon").onclick = () => {
+      const eng = [...Engrave.items().values()].filter(j => ["approved", "words", "review"].includes(j.state) && !j.backs).length;
+      const rev = Review.count();
+      const lost = [eng ? `${eng} engraving decision${eng === 1 ? "" : "s"}` : "", rev ? `${rev} review decision${rev === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
+      if (confirm(`Give up run ${r.runId.slice(-8)}?${lost ? `\n\n${lost} made in this run are not yet written and will be lost.` : ""}\n\nThe sheets and files already saved are kept.`)) clearRunState();
+    };
     Orders.render();
   }
-  return { start, next, resume, stop, stopIfRunning, poke, save, onSheetDone, pickResume, resumeRun, commitNow, setMode, renderBanner, renderModeBtn, clearRunState, run };
+  return { start, next, resume, stop, stopIfRunning, poke, save, onSheetDone, pickResume, resumeRun, commitNow, setMode: setRunMode, setRunMode, renderBanner, renderModeBtn, clearRunState, run };
 })();
 
 /* ═══ 24 · Review — every decision a person must make ═════════════════════ */
@@ -2175,6 +2198,13 @@ const Review = window.Review = (() => {
     if (!text) return `<b>nothing to engrave</b> — what the customer wrote reads as a note to the shop, not words for the charm <i style="color:var(--ink45)">· ${pct}% sure it is not engraving${j.quote ? ` · "${esc(j.quote)}"` : ""}</i>`;
     return `<b>engrave this</b>${from ? ` — read from ${from}` : ""} <i style="color:var(--ink45)">· ${pct}% sure${j.quote ? ` · "${esc(j.quote)}"` : ""}</i>`;
   }
+  /** A primary action whose field is empty cannot be pressed, and says so, instead of returning in silence. */
+  function bindNeeds(c, action, field) {
+    const b = c.querySelector(`[data-a=${action}]`), f = c.querySelector(`[data-f=${field}]`);
+    if (!b || !f) return;
+    const sync = () => { const empty = !String(f.value || "").trim(); b.disabled = empty; b.title = empty ? "fill the field beside it first" : ""; };
+    f.addEventListener("input", sync); f.addEventListener("change", sync); sync();
+  }
   function card(it) {
     const c = el("div", "rvItem"); c.dataset.kind = it.kind; if (it.row) c.dataset.row = it.row.key;
     const r = it.row, sp = r && r.spec, p = it.problem || {};
@@ -2188,16 +2218,19 @@ const Review = window.Review = (() => {
     if (it.kind === "needsMaterial") {
       c.innerHTML = head("Needs material", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Station read", esc(p.metalLabel || "nothing"))}${evRow("Options", (r.line.variations || []).map(v => `<q>${esc(v.name)}: ${esc(v.value)}</q>`).join(" "))}${evRow("Title", esc(r.line.title))}</div><div class="why">${esc(it.why)}</div>
         <div class="fixes"><select data-f="mat"><option value="">pick a material…</option>${METALS.map(m => `<option value="${m.key}">${esc(m.label)}</option>`).join("")}</select><button class="btn gold sm" data-a="mat">Use it (writes a staff note)</button><button class="btn ghost sm" data-a="skip">Skip line</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
+      bindNeeds(c, "mat", "mat");
       c.querySelector("[data-a=mat]").onclick = async () => { const m = c.querySelector("[data-f=mat]").value; if (!m) return; const who = by(); if (!who) return; row_material(it, m, who); };
     } else if (it.kind === "needsMapping") {
       c.innerHTML = head("Needs mapping", `${p.optionName}: ${p.optionValue}`, orderSub) + `<div class="ev">${evRow("Listing", esc(p.listingId))}${evRow("Title", esc(p.title))}${evRow("All options", (r.line.variations || []).map(v => `<q>${esc(v.name)}: ${esc(v.value)}</q>`).join(" "))}</div>
         <div class="fixes"><select data-f="field"><option value="form">form</option><option value="size">size</option><option value="chain">chain</option></select><input data-f="val" placeholder="value (necklace · earrings · charm · S · 18 inch)"><select data-f="scope">${[...new Set(group.map(x => String(x.line.listingId)))].length > 1 ? `<option value="*">every listing (${[...new Set(group.map(x => String(x.line.listingId)))].length})</option><option value="listing">this listing only</option>` : `<option value="listing">this listing only</option><option value="*">every listing</option>`}</select><button class="btn gold sm" data-a="map">Map it (remembered)</button><button class="btn ghost sm" data-a="ignore">Not relevant for this listing</button></div>`;
+      bindNeeds(c, "map", "val");
       c.querySelector("[data-a=map]").onclick = async () => { const field = c.querySelector("[data-f=field]").value, val = c.querySelector("[data-f=val]").value.trim(), scope = c.querySelector("[data-f=scope]").value; if (!val) return; const who = by(); if (!who) return; await api("charmNestLibrary", { op: "optionMapPut", listingId: scope === "*" ? "*" : p.listingId, optionName: p.optionName, optionValue: p.optionValue, map: { field, value: field === "size" ? val.toUpperCase() : val.toLowerCase() }, by: who }); await Orders.loadMaps(true); toast("Mapped and remembered", "ok"); for (const rr of Orders.rows()) if (rr.problems.some(x => x.kind === "needsMapping")) await repool(rr); };
       c.querySelector("[data-a=ignore]").onclick = async () => { const who = by(); if (!who) return; for (const lid of [...new Set(group.map(x => String(x.line.listingId)))]) await api("charmNestLibrary", { op: "optionMapPut", listingId: lid, optionName: p.optionName, optionValue: p.optionValue, map: { field: "ignore" }, by: who }); await Orders.loadMaps(true); await repoolAll(it); };
     } else if (it.kind === "unmatchedSku" || it.kind === "blockedSku") {
       const skus = [...B.master.entries.keys()].sort();
       c.innerHTML = head(it.kind === "blockedSku" ? "SKU blocked" : "Unmatched SKU", p.sku || "no SKU", orderSub) + `<div class="ev">${evRow("Why", esc(p.reason || it.why))}${evRow("Listing", esc(String(r.line.listingId || "")))}${evRow("Title", esc(r.line.title))}</div>
         <div class="fixes"><input list="rvSkus" data-f="sku" placeholder="pick the charm from the master index…"><datalist id="rvSkus">${skus.map(s => `<option value="${esc(s)}">`).join("")}</datalist><button class="btn gold sm" data-a="alias">Use this SKU (alias remembered for the listing)</button><button class="btn ghost sm" data-a="nodesign">No design (remembered)</button><button class="btn ghost sm" data-a="hold">Hold order</button>${it.kind === "blockedSku" ? `<button class="btn ghost sm" data-a="master">Open Master</button>` : ""}</div>`;
+      bindNeeds(c, "alias", "sku");
       c.querySelector("[data-a=alias]").onclick = async () => { const sku = c.querySelector("[data-f=sku]").value.trim().toUpperCase(); if (!sku) return; const who = by(); if (!who) return; if (!B.master.entries.has(sku)) { toast(`${sku} is not in the master index`, "bad"); return; } const lids = [...new Set(group.map(x => String(x.line.listingId)))]; for (const lid of lids) await api("charmNestLibrary", { op: "aliasPut", listingId: lid, sku, by: who, title: r.line.title }); await Orders.loadMaps(true); toast(`${lids.length} listing${lids.length === 1 ? "" : "s"} → ${sku} remembered`, "ok"); for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId))) await repool(rr); };
       c.querySelector("[data-a=nodesign]").onclick = async () => { const who = by(); if (!who) return; const sku = p.sku || (sp && sp.designSku); if (sku) await api("charmNestLibrary", { op: "noDesignPut", sku, by: who, note: r.line.title }); else await api("charmNestLibrary", { op: "noDesignPut", pattern: "^" + String(r.line.title).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").slice(0, 40), by: who, note: "by title" }); await Orders.loadMaps(true); await repoolAll(it); };
       const mb = c.querySelector("[data-a=master]"); if (mb) mb.onclick = () => setMode("master");
@@ -2543,6 +2576,12 @@ const OrderWin = window.OrderWin = (() => {
 
 /* ═══ 25 · boot ═══════════════════════════════════════════════════════════ */
 function bootBridge() {
+  // The Design Station guards unload in three places; the sorter guarded it nowhere. A reload mid-run loses every
+  // engraving approval not yet written to a back file and every review decision made that shift.
+  window.addEventListener("beforeunload", e => {
+    if (!B.run || !["running", "review", "paused"].includes(B.run.status)) return;
+    e.preventDefault(); e.returnValue = "";
+  });
   RunCtl.renderModeBtn(); RunCtl.renderBanner(); LiveStrip.render(); Sandbox.render(); Sandbox.afterReload(); if (Sandbox.on()) agent({ bridge: true }, "warn", "SANDBOX mode: emulated Etsy from the stored snapshot, every record and file goes to sandbox copies");
   document.getElementById("btnRunMode").onclick = () => { const auto = S.settings.runMode !== "auto"; if (auto && !confirm("Auto mode: the sorter connects to the Design Station, pulls the latest orders by the date rule, nests, fits engraving, saves labels and marks the orders complete — stopping only when a person must decide. Turn Auto on?")) return; RunCtl.setMode(auto ? "auto" : "manual"); };
   Orders.loadMaps().catch(() => {}); Master.load().catch(() => {});
