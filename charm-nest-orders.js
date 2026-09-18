@@ -31,13 +31,25 @@
   };
   const SIZE_VALUES = { "xs": "XS", "extra small": "XS", "s": "S", "small": "S", "m": "M", "medium": "M", "l": "L", "large": "L", "xl": "XL", "extra large": "XL", "mini": "XS", "regular": "M", "standard": "M" };
   const DEFAULT_OPTION_MAP = { "*": {} };
-  for (const nm of ["style", "type", "product", "option", "options", "select", "item", "product type", "jewelry type", "jewellery type", "choose", "choice"]) { DEFAULT_OPTION_MAP["*"][nm] = {}; for (const [v, f] of Object.entries(FORM_VALUES)) DEFAULT_OPTION_MAP["*"][nm][v] = { field: "form", value: f }; }
+  for (const nm of ["style", "type", "product", "option", "options", "select", "item", "product type", "jewelry type", "jewellery type", "choose", "choice", "charm type", "charm style", "jewelry style", "jewellery style", "necklace or charm", "charm or necklace"]) { DEFAULT_OPTION_MAP["*"][nm] = {}; for (const [v, f] of Object.entries(FORM_VALUES)) DEFAULT_OPTION_MAP["*"][nm][v] = { field: "form", value: f }; }
   for (const nm of ["size", "charm size", "pendant size"]) { DEFAULT_OPTION_MAP["*"][nm] = {}; for (const [v, s] of Object.entries(SIZE_VALUES)) DEFAULT_OPTION_MAP["*"][nm][v] = { field: "size", value: s }; }
+  /* A shop writes the same choice in its own word order — "Necklace CHARM" for what this vocabulary calls "charm
+     necklace" — and adds a word that is not part of the choice: "CHARM + Engraving" is a charm, engraved. A value is read
+     as a form when its words, with those fillers removed, are exactly the words of one entry in FORM_VALUES. Anything
+     else stays unmapped for a person to decide once: nothing here guesses what a buyer ordered. */
+  const FORM_FILLER = new Set(["engraving", "engraved", "engrave", "personalised", "personalized", "with", "and", "plus", "only", "the", "a", "an", "&", "+", "-"]);
+  const wordSet = v => new Set(String(v || "").toLowerCase().replace(/[^\w\s+&-]+/g, " ").split(/[\s+&-]+/).filter(w => w && !FORM_FILLER.has(w)));
+  const sameWords = (a, b) => a.size === b.size && [...a].every(w => b.has(w));
+  const FORM_WORDS = Object.entries(FORM_VALUES).map(([k, f]) => ({ words: wordSet(k), form: f }));
+  const formByWords = value => { const w = wordSet(value); if (!w.size) return null; const hit = FORM_WORDS.filter(x => sameWords(w, x.words)); const forms = [...new Set(hit.map(x => x.form))]; return forms.length === 1 ? forms[0] : null; };
+  const isFormOption = name => /^\s*(charm |pendant |jewel+ery |jewelry )?(type|style|form)\s*$/i.test(String(name || ""));
   const isMetalOption = name => /metal|colou?r|finish|plating/i.test(String(name || ""));
   const isPersonalisation = name => /personali[sz]ation|engraving text|custom text/i.test(String(name || ""));
   const isSizeOption = name => /^\s*(charm |pendant )?size\s*$/i.test(String(name || ""));
   const isChainOption = name => /chain|necklace length|length|extender/i.test(String(name || ""));
-  const looksLikeLength = v => /^\s*\d+(\.\d+)?\s*(\"|''|in|inch|inches|cm|mm)\b/i.test(String(v || "")) || /^\s*\d{1,2}\s*$/.test(String(v || ""));
+  // 16" is how a shop writes a necklace length. The old rule ended in \b, which cannot follow a quote mark, so every
+  // length written that way fell through as an unmapped option and held the line.
+  const looksLikeLength = v => /^\s*\d+(\.\d+)?\s*("|''|\u201d|\u2033|in\b|inch|cm\b|mm\b)/i.test(String(v || "")) || /^\s*\d{1,2}(\.\d)?\s*$/.test(String(v || ""));
   const looksLikeSize = v => /^(xs|s|m|l|xl|xxl|\d{1,2}(\.\d)?\s*(mm|cm)?)$/i.test(norm(v));
 
   /** { field, value, source } for one option, or null when nothing deterministic applies. */
@@ -88,6 +100,7 @@
       if (!mapped) {                                                            // deterministic name rules, no free-text reading
         if (isSizeOption(name) && looksLikeSize(value)) mapped = { field: "size", value: SIZE_VALUES[norm(value)] || value.toUpperCase().replace(/\s+/g, ""), source: "rule:size" };
         else if (isChainOption(name) && looksLikeLength(value)) mapped = { field: "chain", value, source: "rule:length" };
+        else { const f = isFormOption(name) ? formByWords(value) : null; if (f) mapped = { field: "form", value: f, source: "rule:form" }; }
       }
       spec.options.push({ name, value, mapped });
       if (!mapped) { if (!noDesign) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: value, title: line.title || "" }); continue; }

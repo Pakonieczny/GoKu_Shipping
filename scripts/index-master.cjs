@@ -106,15 +106,19 @@ async function main(argv, log = console.log) {
   // The SKUs are read from the sheet as text, so the library is consulted before any charm is built: one whose SKUs are
   // all held already is left alone, and one with even a single new SKU is rebuilt whole so they keep sharing a file.
   const supersede = new Set(); let heldCount = 0;
-  if (!o.dry && !o.all) {
+  if (!o.dry) {
     const held = new Map();
     const list = await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterList", limit: 3000 });
     for (const e of list.entries || []) if (e && e.sku) held.set(String(e.sku).toUpperCase(), e);
+    // Whichever master a SKU belongs to now is superseded by this one, or the two would block each other as the same SKU
+    // in two files. This is read even when every charm is being rebuilt, because the clash does not depend on skipping.
+    const files = await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterListFiles" });
+    for (const f of files.files || []) if (f && f.masterHash && f.masterHash !== masterHash && String(f.name || "") === name) supersede.add(f.masterHash);
     const before = items.length;
     items = items.filter(({ l }) => {
       const mine = [l.sku, ...(l.extra || []).map(x => x.sku)].filter(Boolean).map(x => String(x).toUpperCase());
-      if (mine.every(sk => held.has(sk))) return false;
       for (const sk of mine) { const e = held.get(sk); if (e && e.masterHash && e.masterHash !== masterHash) supersede.add(e.masterHash); }
+      if (!o.all && mine.every(sk => held.has(sk))) return false;
       return true;
     });
     heldCount = before - items.length;

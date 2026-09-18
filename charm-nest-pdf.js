@@ -797,24 +797,20 @@
       labels.set(best.index, l); owner.get(key).push({ charm: best, ref: l, primary: true });
       best.label = L.t.seg; best.sku = L.lab.sku; best.skuSize = L.lab.size;
     }
-    // One SKU under several charms is that design in several sizes (the sheet writes no size letters): the outlines are
-    // ranked by size and lettered S/L, S/M/L, XS/S/M/L, XS/S/M/L/XL. Two of them the same size (within 3 %) are a real
-    // duplicate: the first keeps the SKU, the rest are reported. A label that carries its own " · S" keeps it.
-    const LADDER = { 2: ["S", "L"], 3: ["S", "M", "L"], 4: ["XS", "S", "M", "L"], 5: ["XS", "S", "M", "L", "XL"] };
-    const dim = c => { const b = c.outline.bbox; return Math.max(b[2] - b[0], b[3] - b[1]); };
+    // One SKU written under more than one charm is reported, and the first one keeps it. A size belongs to a SKU only
+    // when the sheet says so, in the label itself (" · S"): the shop sells one thing per SKU unless its listing offers a
+    // size, so reading two drawings of a design as two sizes held every order for them against a size nobody asked for.
+    const dim = c => { const b2 = c.outline.bbox; return Math.max(b2[2] - b2[0], b2[3] - b2[1]); };
     const drop = (charm, ref) => { const l = labels.get(charm.index); if (!l) return; if (ref === l) { if (l.extra.length) { const nx = l.extra.shift(); l.sku = nx.sku; l.size = nx.size; l.str = nx.str; l.bbox = nx.bbox; charm.sku = nx.sku; charm.skuSize = nx.size; } else { labels.delete(charm.index); charm.sku = null; charm.skuSize = null; charm.label = null; } } else l.extra = l.extra.filter(x => x !== ref); };
-    for (const [key, uses] of owner) {
+    for (const [, uses] of owner) {
       if (uses.length < 2) continue;
       const byCharm = new Map(); for (const u of uses) if (!byCharm.has(u.charm.index)) byCharm.set(u.charm.index, u);
       const list = [...byCharm.values()]; if (list.length < 2) continue;
-      if (uses[0].ref.size) { for (const u of list.slice(1)) { duplicates.push({ sku: u.ref.sku, size: u.ref.size, also: `charm #${list[0].charm.index}`, charmIndex: u.charm.index, firstIndex: list[0].charm.index }); drop(u.charm, u.ref); } continue; }
-      list.sort((a, b) => dim(a.charm) - dim(b.charm));
-      const kept = [list[0]];
-      for (const u of list.slice(1)) { const last = kept[kept.length - 1]; if (dim(u.charm) <= dim(last.charm) * 1.03) { duplicates.push({ sku: u.ref.sku, size: null, also: `charm #${last.charm.index} (same size)`, charmIndex: u.charm.index, firstIndex: last.charm.index }); drop(u.charm, u.ref); } else kept.push(u); }
-      if (kept.length < 2) continue;
-      const letters = LADDER[Math.min(kept.length, 5)];
-      kept.forEach((u, i) => { const size = i < letters.length ? letters[i] : "L" + (i - letters.length + 2); u.ref.size = size; if (u.primary) u.charm.skuSize = size; u.ref.sizeSource = "rank"; });
-      if (kept.length > 5) duplicates.push({ sku: kept[0].ref.sku, size: null, also: `${kept.length} sizes`, charmIndex: kept[5].charm.index, firstIndex: kept[0].charm.index });
+      for (const u of list.slice(1)) {
+        const toMm = 25.4 / 72, mm = (dim(u.charm) * toMm).toFixed(1), keptMm = (dim(list[0].charm) * toMm).toFixed(1);
+        duplicates.push({ sku: u.ref.sku, size: u.ref.size || null, also: `charm #${list[0].charm.index}`, charmIndex: u.charm.index, firstIndex: list[0].charm.index, mm: +mm, keptMm: +keptMm });
+        drop(u.charm, u.ref);
+      }
     }
     for (const [index, l] of labels) { const c = live.find(x => x.index === index); if (c) c.extraSkus = l.extra; }
     // a label text is never charm material, whichever charm the grouping attached it to
