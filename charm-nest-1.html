@@ -847,8 +847,11 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .rvItem.full .backHost{flex:1 1 0;min-height:190px}
 .frontHost{display:flex;justify-content:center}
 .pvSide .frontHost{flex:1 1 auto;min-height:220px;align-items:center}
-.pvSide .frontHost{align-items:flex-start}
-.pvSide .frontHost canvas,.pvSide .frontHost img{width:100%;height:auto!important;max-height:none;aspect-ratio:auto;border:1px solid var(--line2);border-radius:10px;background:#fff;object-fit:contain}
+.pvSide .frontHost{align-items:flex-start;flex:0 0 auto}
+.pvSide .frontHost canvas,.pvSide .frontHost img{width:auto;height:auto;max-width:100%;max-height:min(44vh,360px);border:1px solid var(--line2);border-radius:10px;background:#fff;object-fit:contain}
+.pvSide{overflow:auto;min-height:0}
+.egChip{flex:0 0 auto;min-width:12ch}
+.egChip b{white-space:nowrap}
 .pvWords textarea{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:7px;padding:6px 8px;font:600 15px var(--serif);background:var(--card);resize:vertical;margin-top:2px}
 .pvWords .wordsActs{display:flex;gap:6px;margin-top:6px}
 .pvWords .why{font:12px var(--sans);color:var(--warn,#a2591c);margin-top:6px}
@@ -1148,12 +1151,12 @@ const DEFAULTS = {
   rail: "md",
   stock: { gold: [100 / 25.4, 50 / 25.4], silver: [100 / 25.4, 50 / 25.4], rose: [100 / 25.4, 50 / 25.4], gold10k: [100 / 25.4, 50 / 25.4], gold14k: [100 / 25.4, 50 / 25.4] },
   clearancePt: -0.5, insetPt: 1.5, angleStep: 30, budgetS: 180, seed: 1, serverAbove: 0, parallel: 0,
-  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", aiRounds: 10, snapIn: 0.25, maxFill: 0.74, orderView: "cards", v: 16,
+  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", aiRounds: 10, snapIn: 0.25, maxFill: 0.74, orderView: "cards", v: 18,
   // Design Station bridge, orders, run (design doc §14)
   dsOrigin: "https://design-1.goldenspike.app", heartbeatS: 5, heartbeatMiss: 3, autoCommit: "on", runMode: "manual", pullMode: "all", pullDueBy: "", pullCount: 40, autoEvery: 0, etsyHourlyCap: 600, sandbox: "off",
   skuPattern: "^[A-Z0-9][A-Z0-9 _.,'&()+\\-]{1,60}$", labelGapMm: 6.4, masterServerAbove: 0, sizeMinMm: 3, sizeMaxMm: 60,
   cadenceDays: 2, lateDays: 2,
-  engraveMarginMm: 0.8, engraveMinCapMm: 1.6, engraveMaxHeightFrac: 0.4, engraveConfidence: 0.65, engraveTryRotated: "on", engraveMinGapMm: 0.12, engraveMinStrokeMm: 0.15, backFileView: "asSeenFromBack"
+  engraveMarginMm: 0.3, engraveMinCapMm: 1.6, engraveMaxHeightFrac: 0.4, engraveConfidence: 0.65, engraveTryRotated: "on", engraveMinGapMm: 0.12, engraveMinStrokeMm: 0.15, backFileView: "asSeenFromBack"
 };
 /* The two plates production actually uses. Sizes are held in mm; `w`/`h` stay in inches for the code that reads them. */
 const STOCK_PRESETS = [
@@ -1166,6 +1169,10 @@ const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const MM_PER_PT = 25.4 / PT_PER_IN;
 const fmt = { pct: v => Math.round(v * 100) + "%", area: v => Math.round(v * MM_PER_PT * MM_PER_PT).toLocaleString() + " mm²", mm: v => (v * MM_PER_PT).toFixed(1) + " mm", mmN: v => +(v * MM_PER_PT).toFixed(1), s: ms => ms < 60000 ? Math.round(ms / 1000) + "s" : Math.floor(ms / 60000) + "m " + Math.round(ms % 60000 / 1000) + "s" };
+/* A picture the page loads in CORS mode (every cross-origin one, under this page's embedder policy) gets its own cache
+   key: a copy the browser cached from a plain load carries no CORS headers, and handing it to a CORS load broke every
+   preview and label in the Library one afternoon. */
+const cors = u => { u = u == null ? "" : String(u); return u && /firebasestorage\.googleapis\.com|\/imageProxy\?/.test(u) && !/[?&]c=1\b/.test(u) ? u + (u.includes("?") ? "&" : "?") + "c=1" : u; };
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const uid = () => Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
 const today = () => CharmNestOrders.localDay();   // one local clock decides the folder date and the name date
@@ -1225,7 +1232,9 @@ function loadSettings() {
     if ((saved.v || 1) < 12) { if (saved.engraveConfidence == null || +saved.engraveConfidence === 0.8) saved.engraveConfidence = DEFAULTS.engraveConfidence; saved.v = 12; }   // v12: Claude's reading has earned more trust
     if ((saved.v || 1) < 13) { if (!saved.orderView) saved.orderView = DEFAULTS.orderView; saved.v = 13; }   // v13: the orders tab remembers cards or list
     if ((saved.v || 1) < 15) { saved.v = 15; }
-    if ((saved.v || 1) < 16) { if (+saved.budgetS === 600) saved.budgetS = 180; saved.v = 16; }   // v16: three minutes — ten found nothing better on the shop's own sheets   // v14: the ten-minute ceiling the 81-piece sheets were nested under, back — three minutes left twenty pieces for a second sheet
+    if ((saved.v || 1) < 16) { if (+saved.budgetS === 600) saved.budgetS = 180; saved.v = 16; }   // v16: three minutes — ten found nothing better on the shop's own sheets
+    if ((saved.v || 1) < 17) { if (+saved.angleStep > 30) saved.angleStep = 30; saved.v = 17; }
+    if ((saved.v || 1) < 18) { if (+saved.engraveMarginMm === 0.8) saved.engraveMarginMm = 0.3; saved.v = 18; }   // v18: the words run close to the edge, as the shop engraves them   // v17: four angles packed the shop's sheets ten pieces short; twelve is the floor   // v14: the ten-minute ceiling the 81-piece sheets were nested under, back — three minutes left twenty pieces for a second sheet
     if ((saved.v || 1) < 11) { if (!saved.skuPattern || saved.skuPattern === "^[A-Z]{2,4}-[A-Z0-9]{2,6}(-[A-Z0-9]{1,4})?$") saved.skuPattern = DEFAULTS.skuPattern; if (saved.masterServerAbove == null || +saved.masterServerAbove === 300) saved.masterServerAbove = 0; saved.v = 11; }   // v11: SKUs are free text; masters index in the tab (the server route has 1 GB)
     const out = Object.assign({}, DEFAULTS, saved); out.stock = Object.assign({}, DEFAULTS.stock, saved.stock || {}); return out;
   } catch (_) { return Object.assign({}, DEFAULTS, { v: 2 }); }
@@ -1941,7 +1950,7 @@ function buildJob(sh) {
   return {
     sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0 },
     clearancePt: +S.settings.clearancePt || 0, angles: angleSet(), fineRes: 2, coarseRes: 0.5,
-    timeBudgetMs: (+S.settings.budgetS || 180) * 1000, maxTrials: 2000, seed: +S.settings.seed || 1, maxFill: +S.settings.maxFill || 0.74,
+    timeBudgetMs: (+S.settings.budgetS || 180) * 1000, stallMs: 60 * 1000, maxTrials: 2000, seed: +S.settings.seed || 1, maxFill: +S.settings.maxFill || 0.74,
     pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
   };
 }
@@ -2251,7 +2260,7 @@ async function finishNest(sh, { result, error }) {
   pumpNestQueue();
 }
 function pumpNestQueue() { const next = S.nestQueue.shift(); if (next && next.status === "queued") { next.status = "ready"; startNest(next); } }
-const endedText = e => ({ complete: "all pieces placed", budget: "time ceiling", stopped: "operator stop", trials: "restart cap", cap: "fill ceiling reached", rounds: "planning-round cap", "claude-full": "Claude judged the sheet full" }[e] || e);
+const endedText = e => ({ complete: "all pieces placed", budget: "time ceiling", stalled: "settled — nothing better for a minute", stopped: "operator stop", trials: "restart cap", cap: "fill ceiling reached", rounds: "planning-round cap", "claude-full": "Claude judged the sheet full" }[e] || e);
 function buildReport(sh, result, items) {
   const byId = new Map(items.map(c => [c.id, c])); const st = stockFor(sh.metal);
   return {
@@ -2351,7 +2360,7 @@ function renderRail() {
   const un = $("#unList"); un.innerHTML = "";
   for (const c of S.unassigned) {
     const row = document.createElement("div"); row.className = "unRow"; row.draggable = true;
-    row.innerHTML = `<img crossorigin="anonymous" src="${c.thumb}" alt=""><span class="unName" title="${esc(c.sourceName)}">${esc(c.name || `#${c.index + 1}`)}${c.metalHint ? ` <span class="mchip" data-m="${c.metalHint}" title="suggested"><i class="sw"></i>${esc(labelOf(c.metalHint))}?</span>` : ""}</span><span class="unBtns">${METALS.map(m => `<button title="${m.label}" data-m="${m.key}"><i style="background:${m.color}"></i></button>`).join("")}</span>`;
+    row.innerHTML = `<img crossorigin="anonymous" src="${cors(c.thumb)}" alt=""><span class="unName" title="${esc(c.sourceName)}">${esc(c.name || `#${c.index + 1}`)}${c.metalHint ? ` <span class="mchip" data-m="${c.metalHint}" title="suggested"><i class="sw"></i>${esc(labelOf(c.metalHint))}?</span>` : ""}</span><span class="unBtns">${METALS.map(m => `<button title="${m.label}" data-m="${m.key}"><i style="background:${m.color}"></i></button>`).join("")}</span>`;
     row.addEventListener("dragstart", e => { e.dataTransfer.setData("text/charm", c.id); e.dataTransfer.effectAllowed = "move"; });
     $$("button", row).forEach(b => b.onclick = () => assignCharm(c, b.dataset.m));
     un.appendChild(row);
@@ -2489,7 +2498,7 @@ function renderCard(sh) {
   else { rj.classList.add("hidden"); rj.title = ""; }
   // queue thumbnails
   const placed = new Set(sh.placements.map(p => p.id)), rejected = new Set(sh.rejects);
-  q("queue").innerHTML = sh.charms.slice(0, 60).map(c => `<img crossorigin="anonymous" src="${c.thumb}" title="${esc(c.name || "#" + (c.index + 1))} · ${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}${c.qty > 1 ? " · ×" + c.qty : ""}${c.excluded ? " · EXCLUDED (open path)" : ""}" data-cid="${c.id}" class="${placed.has(c.id) ? "placed" : rejected.has(c.id) ? "rejected" : ""}${c.pinned ? " pinned" : ""}" style="${c.excluded ? "opacity:.35;border-style:dashed" : ""}">`).join("") + (sh.charms.length > 60 ? `<span class="more">+${sh.charms.length - 60} more</span>` : "");
+  q("queue").innerHTML = sh.charms.slice(0, 60).map(c => `<img crossorigin="anonymous" src="${cors(c.thumb)}" title="${esc(c.name || "#" + (c.index + 1))} · ${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}${c.qty > 1 ? " · ×" + c.qty : ""}${c.excluded ? " · EXCLUDED (open path)" : ""}" data-cid="${c.id}" class="${placed.has(c.id) ? "placed" : rejected.has(c.id) ? "rejected" : ""}${c.pinned ? " pinned" : ""}" style="${c.excluded ? "opacity:.35;border-style:dashed" : ""}">`).join("") + (sh.charms.length > 60 ? `<span class="more">+${sh.charms.length - 60} more</span>` : "");
   $$("img[data-cid]", q("queue")).forEach(img => img.onclick = () => openCharm(sh, byId.get(img.dataset.cid)));
   // cloud row
   const cl = q("cloud");
@@ -2676,7 +2685,7 @@ function openCharm(sh, c, placement) {
   $("#rpDownloadJson").classList.add("hidden");
   $("#rpBody").innerHTML = `
     <div style="display:grid;grid-template-columns:200px 1fr;gap:18px;align-items:start">
-      <img crossorigin="anonymous" src="${c.thumb}" style="width:200px;aspect-ratio:1;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:10px">
+      <img crossorigin="anonymous" src="${cors(c.thumb)}" style="width:200px;aspect-ratio:1;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:10px">
       <div>
         <div class="field"><label>Layer name</label><input id="ciName" value="${esc(c.name || "")}"><div class="help">${c.namedBy === "claude" ? `Named by Claude${c.confidence ? ` (${Math.round(c.confidence * 100)}% sure)` : ""}${c.label ? ` — “${esc(c.label)}”` : ""}` : c.namedBy === "operator" ? "Named by an operator" : c.namedBy === "library" ? "From the charm library" : "File-based name"}. Renames are remembered for this artwork.</div></div>
         <dl class="kv"><dt>Source</dt><dd>${esc(c.sourceName)} · #${c.index + 1}</dd><dt>Size</dt><dd>${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}</dd><dt>Silhouette</dt><dd>${fmt.area(c.areaPt2)} · ${c.members.length} elements${c.qty > 1 ? ` · ×${c.qty} on this file` : ""}</dd><dt>Geometry hash</dt><dd>${c.hash}</dd>${pl ? `<dt>Placed</dt><dd>${pl.angle}° at ${fmt.mm(pl.cxPt)}, ${fmt.mm(pl.cyPt)} from top-left</dd>` : ""}${c.open ? `<dt>Status</dt><dd style="color:#8a3a26">open path — excluded from nesting</dd>` : ""}</dl>
@@ -2718,7 +2727,7 @@ function openReport(sh) {
   for (const src of srcs) if (src.review && src.review.state === "done") html += `<div class="callout" style="margin-top:8px"><b>Claude's grouping review of ${esc(src.name)}:</b> ${esc(src.review.summary || "")}${src.review.merged.length ? ` · merged ${src.review.merged.map(m => `#${m.from}→#${m.into}`).join(", ")}` : ""}${src.review.excluded.length ? ` · excluded #${src.review.excluded.join(", #")}` : ""}${src.review.multiple.length ? ` · <b style="color:#8a3a26">boxes #${src.review.multiple.join(", #")} hold more than one charm — split them in Illustrator or exclude</b>` : ""}</div>`;
   html += `<div class="section">Detected charms · ${items.length}${srcs.length ? ` from ${srcs.length} file(s)` : ""}</div>`;
   for (const src of srcs) { const g = src.group; if (!g || !src.parsed) continue; html += `<div style="font-size:11.5px;color:var(--ink70);margin:4px 0 8px">${esc(src.name)}: ${src.parsed.counts.paths} paths, ${src.parsed.counts.xobjects} form XObject(s), ${src.parsed.counts.text} text block(s) → ${g.outlineCount} outlines (rule: ${g.rule}${g.mergedCount ? `, ${g.mergedCount} inner closed paths merged as holes/details` : ""})${g.frame ? ", page-sized frame ignored" : ""}${g.orphans.length ? `, <b style="color:#8a3a26">${g.orphans.length} loose element(s) left out</b>` : ""} · page ${fmt.mm(src.parsed.pageW)} × ${fmt.mm(src.parsed.pageH)}</div>`; }
-  html += `<div class="charmGrid">${items.map((c, i) => { const pl = sh.placements.find(p => p.id === c.id); const n = pl ? sh.placements.indexOf(pl) + 1 : null; return `<div class="charmTile${c.open ? " open" : ""}" data-cid="${c.id}"><img crossorigin="anonymous" src="${c.thumb}" alt=""><div class="nm" title="${esc(c.name || "")}">${n ? `<span class="mono">${n}</span> · ` : ""}${esc(c.name || "#" + (c.index + 1))}</div><div class="meta">${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)} · ${fmt.area(c.areaPt2)}${c.qty > 1 ? ` · ×${c.qty}` : ""}</div><div class="meta">${c.open ? "OPEN PATH — excluded" : c.excluded ? esc(c.excludeReason || "excluded") : pl ? `placed ${pl.angle}°` : sh.rejects.includes(c.id) ? "did not fit" : "queued"}${c.pinned ? " · pinned" : ""}</div>${c.reviewNote ? `<div class="meta" title="${esc(c.reviewNote)}">Claude: ${esc(c.reviewNote.slice(0, 60))}</div>` : ""}</div>`; }).join("")}</div>`;
+  html += `<div class="charmGrid">${items.map((c, i) => { const pl = sh.placements.find(p => p.id === c.id); const n = pl ? sh.placements.indexOf(pl) + 1 : null; return `<div class="charmTile${c.open ? " open" : ""}" data-cid="${c.id}"><img crossorigin="anonymous" src="${cors(c.thumb)}" alt=""><div class="nm" title="${esc(c.name || "")}">${n ? `<span class="mono">${n}</span> · ` : ""}${esc(c.name || "#" + (c.index + 1))}</div><div class="meta">${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)} · ${fmt.area(c.areaPt2)}${c.qty > 1 ? ` · ×${c.qty}` : ""}</div><div class="meta">${c.open ? "OPEN PATH — excluded" : c.excluded ? esc(c.excludeReason || "excluded") : pl ? `placed ${pl.angle}°` : sh.rejects.includes(c.id) ? "did not fit" : "queued"}${c.pinned ? " · pinned" : ""}</div>${c.reviewNote ? `<div class="meta" title="${esc(c.reviewNote)}">Claude: ${esc(c.reviewNote.slice(0, 60))}</div>` : ""}</div>`; }).join("")}</div>`;
   if (sh.log.length) html += `<div class="section">Log</div><pre style="font:11px var(--mono);white-space:pre-wrap;color:var(--ink70);max-height:200px;overflow:auto;background:var(--card2);padding:8px;border-radius:8px">${esc(sh.log.slice(-60).join("\n"))}</pre>`;
   $("#rpBody").innerHTML = html;
   $$(".charmTile", $("#rpBody")).forEach(t => t.onclick = () => openCharm(sh, byId.get(t.dataset.cid)));
@@ -2761,7 +2770,7 @@ function renderLibrary() {
   const rows = [...newest.values()];
   $("#libCount").textContent = `${rows.length} sheet${rows.length === 1 ? "" : "s"}`;
   const body = $("#libBody"); if (!rows.length) { body.innerHTML = `<div class="libEmpty">No sheets match.</div>`; return; }
-  const card = (r, i) => { const m = metalOf(r), sn = setNo(r); return `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}" title="${esc(r.folder || r.id)}"><div class="h">${swatch(m, 0)}<span class="nm">Sheet ${sheetNo(r)}</span>${sn && !r._inFan ? `<span class="set">Set ${sn}</span>` : ""}<span class="tm">${r._inFan ? "" : dayShort(r.day) + " · "}${r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span></div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${r.preview}" loading="lazy" alt="">` : `<div class="pv ph">${r.saving ? "saving files…" : "no preview"}</div>`}<div class="m"><span title="charms placed of the charms asked for"><b>${r.placedCount}</b>/${r.charmCount}</span><span title="how full the sheet is"><b>${Math.round((r.density || 0) * 100)}%</b></span><span title="metal left free">${fmt.area(r.freePt2 || 0)}</span>${r.status === "complete" ? "" : `<span class="pill bad" style="padding:2px 7px">${esc(r.status)}</span>`}${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`; };
+  const card = (r, i) => { const m = metalOf(r), sn = setNo(r); return `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}" title="${esc(r.folder || r.id)}"><div class="h">${swatch(m, 0)}<span class="nm">Sheet ${sheetNo(r)}</span>${sn && !r._inFan ? `<span class="set">Set ${sn}</span>` : ""}<span class="tm">${r._inFan ? "" : dayShort(r.day) + " · "}${r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span></div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${cors(r.preview)}" loading="lazy" alt="">` : `<div class="pv ph">${r.saving ? "saving files…" : "no preview"}</div>`}<div class="m"><span title="charms placed of the charms asked for"><b>${r.placedCount}</b>/${r.charmCount}</span><span title="how full the sheet is"><b>${Math.round((r.density || 0) * 100)}%</b></span><span title="metal left free">${fmt.area(r.freePt2 || 0)}</span>${r.status === "complete" ? "" : `<span class="pill bad" style="padding:2px 7px">${esc(r.status)}</span>`}${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`; };
   // a set = the sheets of one run: same day and the same source files (runId when the record has one)
   const setKey = r => r.setId ? `set:${r.setId}` : r.runId ? `run:${r.runId}` : `${r.day}|${(r.sources || []).map(x => x.hash || x.name).sort().join("+")}`;
   const byDay = new Map(); for (const r of rows) { if (!byDay.has(r.day)) byDay.set(r.day, []); byDay.get(r.day).push(r); }
@@ -2806,11 +2815,11 @@ async function openLibrarySheet(id) {
     $("#lsTitle").textContent = d.folder ? `${d.folder}` : `${d.metalLabel} · ${d.id} · ${d.day}`;
     $("#lsBody").innerHTML = `
       <div style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:16px;align-items:start">
-        <div>${d.outputs && d.outputs.preview ? `<img crossorigin="anonymous" src="${d.outputs.preview.url}" style="width:100%;border:1px solid var(--line);border-radius:10px;background:#fff">` : `<div class="libEmpty">${d.saving ? "files are still uploading — reopen in a moment" : "no preview"}</div>`}</div>
+        <div>${d.outputs && d.outputs.preview ? `<img crossorigin="anonymous" src="${cors(d.outputs.preview.url)}" style="width:100%;border:1px solid var(--line);border-radius:10px;background:#fff">` : `<div class="libEmpty">${d.saving ? "files are still uploading — reopen in a moment" : "no preview"}</div>`}</div>
         <div><dl class="kv"><dt>Status</dt><dd>${esc(d.status)} · ${esc(endedText(d.endedBy))}</dd><dt>Placed</dt><dd>${d.placedCount} / ${d.charmCount}${d.rejectCount ? ` · ${d.rejectCount} rejected` : ""}</dd><dt>Density</dt><dd>${Math.round((d.density || 0) * 100)}% · ${fmt.area(d.freePt2 || 0)} free</dd><dt>Stock</dt><dd>${d.stock ? `${fmt.mm(d.stock.wIn * PT_PER_IN)} × ${fmt.mm(d.stock.hIn * PT_PER_IN)}` : "—"}</dd><dt>Seed · clearance</dt><dd>${d.params ? `${d.params.seed} · ${fmt.mm(d.params.clearancePt)} · ${d.params.angles.length} angles` : "—"}</dd><dt>Verification</dt><dd>${d.verification ? (d.verification.ok ? "passed" : "flagged") + (d.verification.minGapPt != null ? ` · min gap ${fmt.mm(d.verification.minGapPt)}` : "") : "—"}</dd><dt>Sources</dt><dd>${(d.sources || []).map(s => s.url ? `<a href="${s.url}" target="_blank" rel="noopener">${esc(s.name)}</a>` : esc(s.name)).join(", ") || "—"}</dd></dl>
         <div class="section">Outputs</div><div style="display:flex;gap:6px;flex-wrap:wrap">${d.outputs ? ["ai", "pdf", "labelled", "report"].filter(k => d.outputs[k]).map(k => `<a class="btn ghost xs" href="${d.outputs[k].url}" target="_blank" rel="noopener">${k === "labelled" ? "labelled proof" : k === "report" ? "nest-report.json" : "." + k}</a>`).join("") : "none"}</div></div></div>
       <div class="section">Charms · ${(d.charms || []).length}</div>
-      <div class="charmGrid">${(d.charms || []).map(c => `<div class="charmTile hoverItem">${c.thumbUrl ? `<img crossorigin="anonymous" src="${c.thumbUrl}" loading="lazy" alt="">` : ""}<div class="nm">${esc(c.name || "#" + (c.index + 1))}</div><div class="meta">${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}${c.qty > 1 ? ` · ×${c.qty}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("")}</div>`;
+      <div class="charmGrid">${(d.charms || []).map(c => `<div class="charmTile hoverItem">${c.thumbUrl ? `<img crossorigin="anonymous" src="${cors(c.thumbUrl)}" loading="lazy" alt="">` : ""}<div class="nm">${esc(c.name || "#" + (c.index + 1))}</div><div class="meta">${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}${c.qty > 1 ? ` · ×${c.qty}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("")}</div>`;
     $("#lsDownloads").onclick = () => { if (!d.outputs) return; ["ai", "labelled", "report"].forEach((k, i) => d.outputs[k] && setTimeout(() => window.open(d.outputs[k].url, "_blank"), i * 300)); };
     $("#lsRestore").onclick = () => restoreSheet(d);
     $("#lsDelete").onclick = async () => {
@@ -2860,7 +2869,7 @@ async function loadCharms() {
     const r = await api("charmNestLibrary", { op: "listCharms", q, limit: q ? 1000 : 400 }, { label: "Loading charms" });
     const rows = r.charms || [];
     $("#charmCount").textContent = q ? `${rows.length} match${rows.length === 1 ? "" : "es"}` : `${rows.length} charm${rows.length === 1 ? "" : "s"}${rows.length >= 400 ? "+" : ""}`;
-    body.innerHTML = rows.length ? rows.map(c => `<div class="charmTile hoverItem" data-h="${c.hash}">${c.thumbUrl ? `<img crossorigin="anonymous" src="${c.thumbUrl}" loading="lazy" alt="">` : ""}<div class="nmRow"><div class="nm" title="${esc(c.name || "")}">${esc(c.name || "")}</div><button class="rename" type="button" title="rename this charm in the library">✎</button></div><div class="meta">${c.widthPt ? `${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}` : ""}${c.timesUsed ? ` · used ×${c.timesUsed}` : ""}${c.metalHint ? ` · ${esc(labelOf(c.metalHint))}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("") : `<div class="libEmpty">${q
+    body.innerHTML = rows.length ? rows.map(c => `<div class="charmTile hoverItem" data-h="${c.hash}">${c.thumbUrl ? `<img crossorigin="anonymous" src="${cors(c.thumbUrl)}" loading="lazy" alt="">` : ""}<div class="nmRow"><div class="nm" title="${esc(c.name || "")}">${esc(c.name || "")}</div><button class="rename" type="button" title="rename this charm in the library">✎</button></div><div class="meta">${c.widthPt ? `${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}` : ""}${c.timesUsed ? ` · used ×${c.timesUsed}` : ""}${c.metalHint ? ` · ${esc(labelOf(c.metalHint))}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("") : `<div class="libEmpty">${q
         ? `No charm matches &ldquo;${esc(q)}&rdquo;.` + (r.truncated ? `<br><span style="font-size:12px">The search covered the ${r.scanned} most recently used charms.</span>` : "") + `<br><button class="btn ghost sm" type="button" id="charmClear" style="margin-top:12px">Clear search</button>`
         : `No charms yet &mdash; they appear here after the first sheet is nested.`}</div>`;
     { const clr = $("#charmClear"); if (clr) clr.onclick = () => { $("#charmSearch").value = ""; loadCharms(); }; }

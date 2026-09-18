@@ -276,7 +276,10 @@
     const maxTrials = job.maxTrials || 400;
     const random = rng(job.seed == null ? 1 : job.seed);
     const yieldNow = cb.yield || (() => new Promise(r => setTimeout(r, 0)));
-    const stopped = () => (cb.shouldStop && cb.shouldStop()) || (now() - t0) > budget;
+    /* A search that has not beaten its best for a while is done: on a sheet given more pieces than it can hold, the
+       ceiling used to be spent trying to seat pieces that could not fit, minutes after the layout had settled. */
+    const stallMs = +job.stallMs || 0; let lastBetterAt = now(), stalled = false; let best = null;
+    const stopped = () => (cb.shouldStop && cb.shouldStop()) || (now() - t0) > budget || (stalled = !!(stallMs && best && (now() - lastBetterAt) > stallMs));
 
     /* sheet grids at both levels; the inset band is pre-filled as wall */
     const FW = Math.round(job.sheet.wPt * fineRes), FH = Math.round(job.sheet.hPt * fineRes);
@@ -441,7 +444,7 @@
     }
 
     /* ── trials ─────────────────────────────────────────────────────────── */
-    let best = null, trials = 0, endedBy = "budget", failStreak = 0, lastRejects = [];
+    best = null; let trials = 0, endedBy = "budget", failStreak = 0, lastRejects = [];
     const byAreaDesc = prepared.slice().sort((a, b) => b.areaPt2 - a.areaPt2);
     // orders: pieces sharing `order` travel together — a sheet never holds part of a multi-piece order
     const orderSize = new Map(); for (const p of prepared) orderSize.set(p.order, (orderSize.get(p.order) || 0) + 1);
@@ -452,7 +455,7 @@
       coarse.buildSAT(); return { fine, coarse };
     };
     while (trials < maxTrials) {
-      if (stopped()) { endedBy = cb.shouldStop && cb.shouldStop() ? "stopped" : "budget"; break; }
+      if (stopped()) { endedBy = cb.shouldStop && cb.shouldStop() ? "stopped" : stalled ? "stalled" : "budget"; break; }
       const trial = trials++;
       // ordering: trial 0 = pure largest-first; later trials add noise growing with the streak
       const sigma = trial === 0 ? 0 : Math.min(0.6, 0.15 + 0.05 * Math.min(failStreak, 8));
@@ -545,7 +548,7 @@
       const better = !best || placements.length > best.placements.length ||
         (placements.length === best.placements.length && compactness(placements) < compactness(best.placements));
       if (better) {
-        failStreak = 0;
+        failStreak = 0; lastBetterAt = now();
         best = { placements, rejects, capped: capped.slice(), density: summary.density, trial, usablePt2: usableCellsFine / (fineRes * fineRes),
           freePt2: fine.freeCells() / (fineRes * fineRes), placedPt2: placedCells / (fineRes * fineRes), placedCells,
           pocket: pocketPt(coarse, coarseRes), grids: { fine, coarse }, rec: placedRec.slice() };
