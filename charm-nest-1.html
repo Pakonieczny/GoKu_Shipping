@@ -280,7 +280,10 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .charmTile .rename:hover{color:var(--ink)}
 
 /* ── toasts, dialogs ── */
-.toasts{position:fixed;right:18px;bottom:calc(18px + var(--dockH,0px));z-index:300;display:flex;flex-direction:column;gap:8px;pointer-events:none;transition:bottom .18s ease;max-width:min(420px,42vw)}
+/* Notices used to pile up in the bottom-right, which is where the live view sits and where every screen keeps its
+   controls — a toast was an invisible click shield over the button underneath it. They come down from under the
+   run banner instead, where no screen puts anything. */
+.toasts{position:fixed;right:18px;top:var(--chromeH,96px);z-index:300;display:flex;flex-direction:column;gap:8px;pointer-events:none;max-width:min(420px,42vw)}
 .toast .m{min-width:0}
 .toast .x{font:700 11px var(--mono);opacity:.7}
 .toast .c{border:0;background:transparent;color:inherit;opacity:.55;cursor:pointer;font-size:13px;line-height:1;padding:0 0 0 4px}
@@ -540,7 +543,9 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 /* the dock: the station frame, full over the tab's placeholder or a live panel in the corner of every other tab */
 #dsDock{position:fixed;z-index:70;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card);box-shadow:var(--sh);display:flex;flex-direction:column}
 #dsDock.hidden{display:none}
-#dsDock.pip.tucked{width:264px;height:186px}
+/* small, and see-through until it is wanted, so whatever it is sitting over stays readable */
+#dsDock.pip.tucked{width:264px;height:186px;opacity:.62;transition:opacity .15s}
+#dsDock.pip.tucked:hover,#dsDock.pip.tucked:focus-within{opacity:1}
 #dsDock.pip{width:480px;height:330px;box-shadow:0 14px 44px rgba(20,16,10,.38);border-color:#8a6a2a}
 #dsDock .dockBar{display:none;align-items:center;gap:8px;padding:5px 10px;background:var(--velvet);color:var(--rTxt2);font:12px var(--mono);cursor:pointer;user-select:none}
 #dsDock.pip .dockBar{display:flex}
