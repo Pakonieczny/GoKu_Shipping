@@ -714,46 +714,75 @@ const Orders = window.Orders = (() => {
     watchImages(host);
     restore();
   }
-  function render() {
-    const v = document.getElementById("ordersView"); if (!v || v.classList.contains("hidden")) { const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(new Set(B.orders.rows.map(r => r.order.receiptId)).size) : ""; return; }
+  /* The tab used to be one `v.innerHTML = …` on every call, and it is called from fifteen places — RunCtl.renderBanner's
+     last line among them, which itself has eighteen callers, and Pool.addAll every five rows. Pooling two hundred lines
+     rebuilt the whole tab forty times, and each rebuild took the scroller's position and the caret out of the search box
+     with it. The head is built once, what changes is patched, and the body is the only thing ever re-emitted. */
+  function buildHead(v) {
+    v.innerHTML = `<div class="ordHead">
+        <div class="ordBar" id="ordBar">
+          <button class="btn sm" id="ordPull">Pull orders</button>
+          <button class="btn gold sm" id="ordRun" title="nest, engrave and label every line that is ready to go">Run set ▶</button>
+          <button class="btn ghost sm" id="ordResume" title="open a run from an earlier session and carry on from where it stopped">Earlier run…</button>
+          <select id="ordPullMode" title="which open orders to bring in"><option value="all">Every open order</option><option value="dueBy">Due by date</option><option value="count">N most urgent</option></select>
+          <input type="date" id="ordDueBy" title="orders due on or before this date"><input type="number" id="ordCount" min="1" max="500" title="how many of the most urgent orders">
+          <span class="spacer"></span><span class="pill" id="ordMeta"></span>
+        </div>
+        <div class="ordFilters"><span class="chips" id="ordChips"></span>
+          <span class="tail"><input class="ordSearch" id="ordQ" placeholder="order, SKU, words…" title="search the order number, the SKU, the title and everything the customer or the shop wrote">
+          <select class="ordSort" id="ordSort" title="what orders the cards"><option value="due">by ship-by</option><option value="order">by order</option><option value="state">by state</option></select>
+          <span class="viewSeg" id="ordViewSeg"></span></span>
+        </div>
+      </div><div class="ordBody" id="ordBody"></div>`;
+    const q = v.querySelector("#ordQ");
+    q.oninput = () => { OV.q = q.value; renderBody(); };                 // never rebuilt now, so the caret needs no restoring
+    v.querySelector("#ordPullMode").onchange = e => { S.settings.pullMode = e.target.value; saveSettings(); renderHead(v); };
+    v.querySelector("#ordDueBy").onchange = e => { S.settings.pullDueBy = e.target.value; saveSettings(); };
+    v.querySelector("#ordCount").onchange = e => { S.settings.pullCount = Math.max(1, +e.target.value || 40); saveSettings(); };
+    v.querySelector("#ordSort").onchange = e => { OV.sort = e.target.value; OV.desc = false; renderBody(); };
+    v.querySelector("#ordPull").onclick = async () => { if (v.querySelector("#ordPull").disabled) return; try { await pull(null); } catch (e) { toast(e.message, "bad", 7000); agent({ bridge: true }, "warn", e.message); } };
+    v.querySelector("#ordRun").onclick = () => RunCtl.start();
+    v.querySelector("#ordResume").onclick = () => RunCtl.pickResume();
+    Sandbox.mountPanel(v);
+  }
+  /** What changes while a run works: the counts, the chips, the summary, and which run buttons apply. */
+  function renderHead(v) {
     const s = S.settings, all = rowsOf();
     const running = B.run && !["complete", "stopped"].includes(B.run.status);
-    // the bar carries what a person does here and nothing else: bring orders in, start or stop the run, and what was pulled
-    // while a run is open the banner above owns it — Next, Resume, Review and Stop are all there, and repeating them
-    // here only made it unclear which button did what
-    const runBtns = running ? ""
-      : `<button class="btn gold sm" id="ordRun" title="nest, engrave and label every line that is ready to go">Run set ▶</button><button class="btn ghost sm" id="ordResume" title="open a run from an earlier session and carry on from where it stopped">Earlier run…</button>`;
+    const pull = v.querySelector("#ordPull");
+    pull.disabled = !!running;
+    pull.title = running ? "a run is open — stop it first, or its lines would be replaced under it" : "ask the Design Station for every open order that matches the rule below";
+    // while a run is open the banner above owns it: repeating Run and Resume here only made it unclear which did what
+    v.querySelector("#ordRun").classList.toggle("hidden", !!running);
+    v.querySelector("#ordResume").classList.toggle("hidden", !!running);
+    v.querySelector("#ordPullMode").value = s.pullMode || "all";
+    v.querySelector("#ordDueBy").value = s.pullDueBy || "";
+    v.querySelector("#ordDueBy").classList.toggle("hidden", s.pullMode !== "dueBy");
+    v.querySelector("#ordCount").value = s.pullCount || 40;
+    v.querySelector("#ordCount").classList.toggle("hidden", s.pullMode !== "count");
+    v.querySelector("#ordSort").value = OV.sort;
+    const meta = v.querySelector("#ordMeta");
+    meta.className = "pill " + (B.orders.stale ? "warn" : "neutral");
+    meta.title = B.orders.stale ? "the station's open list has changed since this pull — pull again to catch up" : "the last pull";
+    meta.textContent = B.orders.pulledAt ? `${new Set(all.map(r => r.order.receiptId)).size} orders · ${all.length} lines · pulled ${fmtT(B.orders.pulledAt)}${B.orders.filtered ? ` · ${B.orders.filtered} left out by the rule` : ""}${B.orders.stale ? " · list changed" : ""}` : "nothing pulled yet";
     const counts = {}; for (const r of all) counts[pileOf(r)] = (counts[pileOf(r)] || 0) + 1;
     const byMetal = {}; for (const r of all) { const m = r.material || "none"; byMetal[m] = (byMetal[m] || 0) + 1; }
     const chip = (on, id, label, n, cls, title) => `<button class="egTab${on ? " on" : ""}" data-pile="${esc(id)}" title="${esc(title || "")}">${esc(label)}<b class="${cls}">${n}</b></button>`;
     const mChip = m => `<button class="egTab${OV.metal === m ? " on" : ""}" data-metal="${esc(m)}" title="show only ${esc(m === "none" ? "lines with no material yet" : labelOf(m))}">${esc(m === "none" ? "No material" : labelOf(m))}<b>${byMetal[m] || 0}</b></button>`;
-    v.innerHTML = `<div class="ordHead">
-        <div class="ordBar">
-          <button class="btn sm" id="ordPull"${running ? ' disabled title="a run is open — stop it first, or its lines would be replaced under it"' : ' title="ask the Design Station for every open order that matches the rule below"'}>Pull orders</button>${runBtns}
-          <select id="ordPullMode" title="which open orders to bring in"><option value="all"${s.pullMode === "all" ? " selected" : ""}>Every open order</option><option value="dueBy"${s.pullMode === "dueBy" ? " selected" : ""}>Due by date</option><option value="count"${s.pullMode === "count" ? " selected" : ""}>N most urgent</option></select>
-          <input type="date" id="ordDueBy" value="${esc(s.pullDueBy || "")}" title="orders due on or before this date" class="${s.pullMode === "dueBy" ? "" : "hidden"}"><input type="number" id="ordCount" value="${s.pullCount || 40}" min="1" max="500" title="how many of the most urgent orders" class="${s.pullMode === "count" ? "" : "hidden"}">
-          <span class="spacer"></span>
-          <span class="pill ${B.orders.stale ? "warn" : "neutral"}" id="ordMeta" title="${esc(B.orders.stale ? "the station's open list has changed since this pull — pull again to catch up" : "the last pull")}">${B.orders.pulledAt ? `${new Set(all.map(r => r.order.receiptId)).size} orders · ${all.length} lines · pulled ${fmtT(B.orders.pulledAt)}${B.orders.filtered ? ` · ${B.orders.filtered} left out by the rule` : ""}${B.orders.stale ? " · list changed" : ""}` : "nothing pulled yet"}</span>
-        </div>
-        <div class="ordFilters">
-          <span class="chips">${chip(!OV.pile, "", "Everything", all.length, "", "every line that was pulled")}${PILES.filter(g => counts[g.id] || OV.pile === g.id).map(g => chip(OV.pile === g.id, g.id, g.label, counts[g.id] || 0, g.cls, g.label)).join("")}
-          ${Object.keys(byMetal).length > 1 || OV.metal ? `<span class="sep"></span>` + ["gold", "silver", "rose", "gold10k", "gold14k", "none"].filter(m => byMetal[m] || OV.metal === m).map(mChip).join("") : ""}
-          </span>
-          <span class="tail"><input class="ordSearch" id="ordQ" placeholder="order, SKU, words…" value="${esc(OV.q)}" title="search the order number, the SKU, the title and everything the customer or the shop wrote">
-          <span class="viewSeg"><button data-view="cards"${viewMode() === "cards" ? ' class="on"' : ""} title="a card for every line, with its picture">Cards</button><button data-view="list"${viewMode() === "list" ? ' class="on"' : ""} title="the same lines as rows">List</button></span></span>
-        </div>
-      </div><div class="ordBody" id="ordBody"></div>`;
-    v.querySelector("#ordPullMode").onchange = e => { S.settings.pullMode = e.target.value; saveSettings(); render(); };
-    v.querySelector("#ordDueBy").onchange = e => { S.settings.pullDueBy = e.target.value; saveSettings(); };
-    v.querySelector("#ordCount").onchange = e => { S.settings.pullCount = Math.max(1, +e.target.value || 40); saveSettings(); };
-    v.querySelectorAll("[data-pile]").forEach(b => b.onclick = () => { OV.pile = b.dataset.pile || null; render(); });
-    v.querySelectorAll("[data-metal]").forEach(b => b.onclick = () => { OV.metal = OV.metal === b.dataset.metal ? null : b.dataset.metal; render(); });
-    v.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { OV.view = b.dataset.view; S.settings.orderView = OV.view; saveSettings(); render(); });
-    const q = v.querySelector("#ordQ"); q.oninput = () => { OV.q = q.value; const at = q.selectionStart; renderBody(); const q2 = document.getElementById("ordQ"); if (q2) { q2.focus(); try { q2.setSelectionRange(at, at); } catch (_) {} } };
-    Sandbox.mountPanel(v);
-    { const pb = v.querySelector("#ordPull"); if (!pb.disabled) pb.onclick = async () => { try { await pull(null); } catch (e) { toast(e.message, "bad", 7000); agent({ bridge: true }, "warn", e.message); } }; }
-    const rb = v.querySelector("#ordRun"); if (rb) rb.onclick = () => RunCtl.start();
-    const rs = v.querySelector("#ordResume"); if (rs) rs.onclick = () => RunCtl.pickResume();
+    v.querySelector("#ordChips").innerHTML =
+      chip(!OV.pile, "", "Everything", all.length, "", "every line that was pulled")
+      + PILES.filter(g => counts[g.id] || OV.pile === g.id).map(g => chip(OV.pile === g.id, g.id, g.label, counts[g.id] || 0, g.cls, g.label)).join("")
+      + (Object.keys(byMetal).length > 1 || OV.metal ? `<span class="sep"></span>` + ["gold", "silver", "rose", "gold10k", "gold14k", "none"].filter(m => byMetal[m] || OV.metal === m).map(mChip).join("") : "");
+    v.querySelectorAll("[data-pile]").forEach(b => b.onclick = () => { OV.pile = b.dataset.pile || null; renderHead(v); renderBody(); });
+    v.querySelectorAll("[data-metal]").forEach(b => b.onclick = () => { OV.metal = OV.metal === b.dataset.metal ? null : b.dataset.metal; renderHead(v); renderBody(); });
+    v.querySelector("#ordViewSeg").innerHTML = ["cards", "list"].map(k => `<button data-view="${k}"${viewMode() === k ? ' class="on"' : ""} title="${k === "cards" ? "a card for every line, with its picture" : "the same lines as rows"}">${k === "cards" ? "Cards" : "List"}</button>`).join("");
+    v.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { OV.view = b.dataset.view; S.settings.orderView = OV.view; saveSettings(); renderHead(v); renderBody(); });
+  }
+  function render() {
+    const v = document.getElementById("ordersView");
+    if (!v || v.classList.contains("hidden")) { const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(new Set(B.orders.rows.map(r => r.order.receiptId)).size) : ""; return; }
+    if (!v.dataset.built) { v.dataset.built = "1"; buildHead(v); }
+    renderHead(v);
     renderBody();
     const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(new Set(B.orders.rows.map(r => r.order.receiptId)).size) : "";
   }
