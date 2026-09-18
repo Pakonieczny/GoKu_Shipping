@@ -23,6 +23,8 @@ exports.handler = async function(event, context) {
       headers: {
         "Content-Type": response.headers.get("content-type") || "image/jpeg",
         "Access-Control-Allow-Origin": "*",
+        // The pictures behind these URLs never change, and a wall of order cards asks for them on every paint.
+        "Cache-Control": "public, max-age=604800, immutable",
       },
       body: buffer.toString("base64"),
       isBase64Encoded: true,

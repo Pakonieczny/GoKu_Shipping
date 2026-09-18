@@ -2275,7 +2275,8 @@ const RunCtl = window.RunCtl = (() => {
     /* Which run is this? Three cards on the Nest tab and a banner that named only a step left no way to tell this
        morning's set from yesterday's. The set, the day and the size of the run now lead it. */
     const nSheets = Object.keys(r.sheets || {}).length;
-    const who = [r.seq ? `Set ${r.seq}` : "", r.day ? new Date(r.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "",
+    const seqOf = x => x.seq || +((/-(\d+)$/.exec(String(x.setId || "")) || [])[1] || 0) || null;
+    const who = [seqOf(r) ? `Set ${seqOf(r)}` : "", r.day ? new Date(r.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "",
       `${Object.keys(r.lines || {}).length || Orders.rows().filter(x => x.state !== "gone").length} lines`, nSheets ? `${nSheets} sheet${nSheets === 1 ? "" : "s"}` : ""].filter(Boolean).join(" \u00b7 ");
     h.innerHTML = `<span class="rid" title="run ${esc(r.runId)}${r.setId ? " \u00b7 set " + esc(r.setId) : ""}">${esc(who)}</span><span class="why">${why}</span><span class="spacer"></span><span class="acts">
       ${r.at ? `<button class="btn ghost sm" id="rbAt" title="open the sheet this is about">Show the sheet</button>` : ""}
