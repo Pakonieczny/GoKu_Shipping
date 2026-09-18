@@ -7103,7 +7103,7 @@ const Bridge = (() => {
     },
     async claim(a) {
       const ids = (a.receiptIds || []).map(String); if (!ids.length) return { claimed: [] };
-      await cursorRows(ids, "Claim");
+      await cursorRows(ids, "Claim", { max: 3 });                        // a wave over three rows, not a tour of 357: the sorter is waiting
       const r = await fetch(`${FN}/firebaseOrders`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rtClaimIds: ids, claimedBy: "sorter", claimRun: a.runId || S.runId || null }) });
       if (!r.ok) throw new Error("claim write failed: HTTP " + r.status);
       ids.forEach(id => { rtClaims.set(id, { claimedBy: "sorter", run: a.runId || S.runId || null, atMs: Date.now() }); paintClaim(id, true); });
