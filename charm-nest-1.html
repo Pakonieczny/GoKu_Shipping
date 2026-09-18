@@ -501,7 +501,6 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .runBanner .rid:empty{display:none}
 .runBanner .why{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .runBanner{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:8px 16px;background:var(--goldSoft);border-bottom:1px solid var(--goldLine);font-size:12.5px;flex-wrap:nowrap}
-.runBanner.idle{background:var(--card2);border-bottom-color:var(--line);color:var(--ink45)}
 .runBanner .rid[tabindex]{cursor:pointer}
 .runBanner .rid[tabindex]:hover{border-color:var(--ink45);color:var(--ink)}
 
@@ -2605,7 +2604,7 @@ async function loadLibrary() {
 }
 function renderLibrary() {
   const q = ($("#libSearch").value || "").trim().toLowerCase();
-  const rows = S.library.rows.filter(r => !q || `${r.id} ${r.folder || ""} ${r.metalLabel} ${r.day} ${r.names || ""} ${(r.sources || []).map(s => s.name).join(" ")}`.toLowerCase().includes(q));
+  const rows = S.library.rows.filter(r => !q || `${r.id} ${r.folder || ""} ${r.metalLabel} ${r.day} ${r.setId || ""} ${r.runId || ""} ${r.names || ""} ${(r.sources || []).map(s => s.name).join(" ")}`.toLowerCase().includes(q));
   $("#libCount").textContent = `${rows.length} sheet${rows.length === 1 ? "" : "s"}`;
   const body = $("#libBody"); if (!rows.length) { body.innerHTML = `<div class="libEmpty">No sheets match.</div>`; return; }
   const card = (r, i) => `<div class="libCard" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}"><div class="h">${i != null && r._inFan ? `<span class="pg">${r.page || 1}</span>` : ""}<span class="nm">${r.folder ? esc(r.folder) : esc(r.metalLabel) + " · " + esc(r.id)}</span><span class="tm">${r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span></div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${r.preview}" loading="lazy" alt="">` : `<div class="pv ph">${r.saving ? "saving files…" : "no preview"}</div>`}<div class="m"><span><b>${r.placedCount}</b>/${r.charmCount} placed</span><span><b>${Math.round((r.density || 0) * 100)}%</b> full</span><span><b>${fmt.area(r.freePt2 || 0)}</b> free</span><span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span>${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`;

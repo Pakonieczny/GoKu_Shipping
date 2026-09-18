@@ -417,6 +417,63 @@ const receipts = [
       assert(hist.found.length >= 1 && hist.hits.some(h => /3521000002/.test(h)), 'searching by order number finds the run that carried it: ' + JSON.stringify(hist));
       assert(/nothing matches/.test(hist.none), 'and a search with no answer says so: ' + hist.none);
       assert(!hist.stillVisible, 'and closing it puts it away');
+      /* The three things this round changed that no test had ever run: the one-click option mapping, the engraving
+         tab's empty pane, and opening a finished run's sheets from the history. "I fixed it" is not a claim to make
+         about a code path nothing has executed. */
+
+      // 1 · "Map it" — one press, no typing, and the line goes through (§ the card a person meets 25 times a run)
+      const mapIt = await page.evaluate(async () => {
+        // deliberately the line that is already held: the three that go on to be committed must not be disturbed
+        const row = Orders.rows().find(r => r.state !== 'gone' && (r.problems || []).length) || Orders.rows().find(r => r.state !== 'gone');
+        if (!row) return { skip: 'no row' };
+        row.line.variations = (row.line.variations || []).concat([{ name: 'Charm Type', value: 'Zorblax Deluxe' }]);
+        Orders.interpretAll(); Review.syncOrderItems();
+        const it = Review.items().find(x => x.kind === 'needsMapping');
+        if (!it) return { skip: 'no needsMapping item' };
+        const c = Review.card(it); document.body.appendChild(c);
+        const chips = [...c.querySelectorAll('[data-pick]')].map(b => ({ v: b.dataset.pick, f: b.dataset.field, t: b.textContent, disabled: b.disabled }));
+        const evGrid = !!c.querySelector('.ev');                       // the LISTING / TITLE / ALL OPTIONS wall
+        const huggie = c.querySelector('[data-pick=huggie]');
+        huggie.click();
+        for (let i = 0; i < 60 && !CharmNestOrders.optionLookup(Orders.ctx().optionMaps, row.line.listingId, 'Charm Type', 'Zorblax Deluxe'); i++) await new Promise(r => setTimeout(r, 100));
+        const hit = CharmNestOrders.optionLookup(Orders.ctx().optionMaps, row.line.listingId, 'Charm Type', 'Zorblax Deluxe');
+        Orders.interpretAll();
+        const stillAsking = (Orders.rows().find(r => r.key === row.key).problems || []).some(p => p.kind === 'needsMapping' && p.optionValue === 'Zorblax Deluxe');
+        c.remove();
+        const out = { chips, evGrid, hit, stillAsking, form: Orders.rows().find(r => r.key === row.key).spec.form };
+        // put the line back the way it was: this row is committed later in this same run
+        row.line.variations = row.line.variations.filter(v => v.value !== 'Zorblax Deluxe');
+        Orders.interpretAll(); Review.syncOrderItems(); Orders.render();
+        return out;
+      });
+      console.log('map it', JSON.stringify(mapIt));
+      assert(!mapIt.skip, 'the mapping card could be raised: ' + mapIt.skip);
+      assert(mapIt.chips.length >= 6, 'the question is answered by buttons, not by typing the word it wants: ' + JSON.stringify(mapIt.chips));
+      assert(mapIt.chips.every(c => !c.disabled), 'and none of them is dead on arrival');
+      assert(!mapIt.evGrid, 'the listing/title/options wall is gone from the card');
+      assert(mapIt.hit && mapIt.hit.value === 'huggie', 'one press writes the mapping: ' + JSON.stringify(mapIt.hit));
+      assert(!mapIt.stillAsking, 'and the line stops asking');
+      assert.strictEqual(mapIt.form, 'huggie', 'the line is now a huggie');
+
+      // 2 · the engraving tab's empty pane names which emptiness it is, and leads out of it
+      const egEmpty = await page.evaluate(() => {
+        CN.setMode('engrave');
+        const keep = new Map(Engrave.items());
+        Engrave.items().clear(); Engrave.render();
+        const tb = document.querySelector('.egTab[data-tab=place]'); if (tb) tb.click();   // the pane his screenshot was on
+        const q = document.getElementById('egQueue');
+        const out = { text: (q.textContent || '').replace(/\s+/g, ' ').trim(), buttons: [...q.querySelectorAll('[data-go]')].map(b => b.dataset.go),
+          runChip: (document.getElementById('egRun') || {}).textContent || null };
+        for (const [k, v] of keep) Engrave.items().set(k, v);
+        Engrave.render();
+        return out;
+      });
+      console.log('engrave empty', JSON.stringify(egEmpty));
+      assert(egEmpty.text && !/^no placement to review$/.test(egEmpty.text), 'an empty queue says why it is empty: ' + egEmpty.text);
+      assert(egEmpty.buttons.length >= 1, 'and offers the way out: ' + JSON.stringify(egEmpty.buttons));
+      assert(/Set|run/i.test(egEmpty.runChip || ''), 'and the tab says whose queue it is: ' + egEmpty.runChip);
+
+
       await page.evaluate(() => { CN.setMode('review'); Review.render(); });
       // CN_SHOTS=<dir> captures every screen at two widths and the order window — the evidence a design review runs on
       if (process.env.CN_SHOTS) {
@@ -464,6 +521,38 @@ const receipts = [
       });
       console.log('orders cards', JSON.stringify({ chips: ord.chips, n: ord.cards.length, first: ord.cards[0], sideScroll: ord.sideScroll }));
       assert(ord.cards.length >= 3, 'every pulled line is a card: ' + ord.cards.length);
+
+      /* Old sheets are finished records. Looking at them must read the library and nothing else — an earlier turn of
+         mine wired this to the resume path, which re-pulled every order from Etsy to show a preview that was already
+         in Storage. Nothing here may start, pull, claim or nest. */
+      const oldSheets = await page.evaluate(async () => {
+        const runId = B.run && B.run.runId; if (!runId) return { skip: 'no run' };
+        const runBefore = B.run, linesBefore = Orders.rows().length;
+        const pulls = [];
+        const realPull = Orders.pull; Orders.pull = (...a2) => { pulls.push('pull'); return realPull(...a2); };
+        const realStart = RunCtl.start; RunCtl.start = () => { pulls.push('start'); };
+        const realResume = RunCtl.resumeRun; RunCtl.resumeRun = () => { pulls.push('resume'); };
+        RunHistory.show(''); await new Promise(r => setTimeout(r, 900));
+        const row = document.querySelector(`.hRun[data-run="${CSS.escape(runId)}"]`);
+        const btn = row && row.querySelector('[data-a=sheets]');
+        const label = btn && btn.textContent.trim();
+        if (btn) btn.click();
+        await new Promise(r => setTimeout(r, 1400));
+        Orders.pull = realPull; RunCtl.start = realStart; RunCtl.resumeRun = realResume;
+        return { label, mode: CN.S.mode, search: (document.getElementById('libSearch') || {}).value,
+          cards: document.querySelectorAll('#libBody .libCard').length, pulls,
+          sameRun: B.run === runBefore, linesKept: Orders.rows().length === linesBefore,
+          dlgOpen: !!(document.getElementById('histDlg') || {}).open };
+      });
+      console.log('old sheets', JSON.stringify(oldSheets));
+      assert(!oldSheets.skip, 'there was a run whose sheets to open: ' + oldSheets.skip);
+      assert(/Sheets/.test(oldSheets.label || ''), 'the run offers its sheets: ' + oldSheets.label);
+      assert.strictEqual(oldSheets.mode, 'library', 'pressing it goes to the sheets, not to a run');
+      assert(oldSheets.cards >= 1, 'and they are there, from the saved records: ' + oldSheets.cards);
+      assert.deepStrictEqual(oldSheets.pulls, [], 'nothing was started, pulled or resumed to show them: ' + JSON.stringify(oldSheets.pulls));
+      assert(oldSheets.sameRun && oldSheets.linesKept, 'and what was on the cards is untouched');
+      assert(!oldSheets.dlgOpen, 'the dialog gets out of the way');
+      await page.evaluate(() => { CN.setMode('orders'); Orders.render(); });
       assert(ord.cards.every(c2 => /^\d{6,}$/.test(c2.num.trim()) && c2.sku && c2.state && c2.metal), 'each card carries the order, the SKU, the state and the metal: ' + JSON.stringify(ord.cards[0]));
       assert(ord.cards.some(c2 => c2.flag && c2.why), 'a line that needs a person says so on its own card');
       assert(ord.cards.some(c2 => c2.words), 'and the words the customer typed are on the card');
@@ -674,7 +763,10 @@ const receipts = [
       if (/Waiting for a person/.test(banner.text)) {
         assert(!/\b0 item/.test(banner.text), 'the banner never says it is waiting for nothing: ' + banner.text);
         assert(/in Review|in Engraving/.test(banner.text), 'it says what it is waiting for: ' + banner.text);
-        assert(banner.btns.some(b => b === 'rbReview' || b === 'rbEngrave'), 'and offers the way there: ' + banner.btns.join(','));
+        // the way there is the tab bar's own count, not a second copy of it in the banner
+        const tabs = await page.evaluate(() => ({ review: (document.getElementById('tabReviewN') || {}).textContent || '', engrave: (document.getElementById('tabEngraveN') || {}).textContent || '' }));
+        assert(tabs.review || tabs.engrave, 'the tab that holds them carries the count: ' + JSON.stringify(tabs));
+        assert(!banner.btns.includes('rbReview') && !banner.btns.includes('rbEngrave'), 'and the banner does not repeat it: ' + banner.btns.join(','));
       }
       const done = await page.evaluate(async () => {
         const out = [];
@@ -876,23 +968,25 @@ const receipts = [
     void before;
   }
 
-  // a manual run says why it is waiting and offers to carry on by itself (§7)
+  /* A run no longer stops between its own steps to ask whether to do the next one. The banner carries no step buttons
+     at all, and a run you did not mean to start can be given up from wherever you are. */
   {
-    const paused = await page.evaluate(() => {
-      const r = { runId: 'run-test', day: '2026-09-18', setId: null, step: 'claim', status: 'paused', mode: 'manual', startedAt: Date.now(), updatedAt: Date.now(), lines: {}, sheets: {}, holds: {}, errors: [], resumable: true, stoppedBy: null, fix: null, orders: [], committed: [] };
+    const mid = await page.evaluate(() => {
+      const r = { runId: 'run-test', day: '2026-09-18', setId: null, step: 'claim', status: 'running', mode: 'manual', startedAt: Date.now(), updatedAt: Date.now(), lines: {}, sheets: {}, holds: {}, errors: [], resumable: true, stoppedBy: null, fix: null, orders: [], committed: [] };
       B.run = r; RunCtl.renderBanner();
       const el = document.querySelector('#runBanner') || document.body;
-      return { text: el.textContent.replace(/\s+/g, ' ').trim().slice(0, 200), next: !!document.querySelector('#rbNext'), auto: !!document.querySelector('#rbAuto') };
+      return { text: el.textContent.replace(/\s+/g, ' ').trim().slice(0, 200),
+        buttons: [...document.querySelectorAll('#runBanner button')].map(x => x.id || x.textContent.trim()),
+        untitled: [...document.querySelectorAll('#runBanner button')].filter(x => !x.title).map(x => x.id || x.textContent.trim()) };
     });
-    console.log('paused banner', JSON.stringify(paused));
-    assert(paused.next && paused.auto, 'a paused run offers both the next step and running on: ' + JSON.stringify(paused));
-    assert(/Manual/i.test(paused.text), 'and says why it is waiting: ' + paused.text);
-    const after = await page.evaluate(() => {                      // the button's own effect, without driving a stub run through the loop
-      const real = RunCtl.next; RunCtl.next = () => {};
-      document.querySelector('#rbAuto').click();
-      return new Promise(r => setTimeout(() => { RunCtl.next = real; r(B.run && B.run.mode); }, 300));
-    });
-    assert.strictEqual(after, 'auto', 'pressing it sets the run to carry on by itself');
+    console.log('run banner', JSON.stringify(mid));
+    assert(!mid.buttons.includes('rbNext') && !mid.buttons.includes('rbAuto'), 'no step-by-step buttons: ' + JSON.stringify(mid.buttons));
+    assert(!/Pool|pooling/i.test(mid.text), 'and no word out of the source code on screen: ' + mid.text);
+    assert(mid.buttons.includes('rbAbandon'), 'a run can be given up from here: ' + JSON.stringify(mid.buttons));
+    assert.deepStrictEqual(mid.untitled, [], 'and every button on the banner says what it does on hover');
+    // manual and auto still differ where it means something: whether the NEXT run starts on its own
+    const noPause = await page.evaluate(() => { const P = RunCtl._pauseAfter ? [...RunCtl._pauseAfter] : null; return P; });
+    void noPause;
     await page.evaluate(() => { B.run = null; RunCtl.renderBanner(); });
   }
 
