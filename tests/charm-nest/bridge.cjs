@@ -384,6 +384,41 @@ const receipts = [
     assert(r.ok && r.state === 'done', 'a File is read through arrayBuffer, never through its bytes() method: ' + JSON.stringify(r));
   }
 
+  // a bar that says what the app is doing never stands over the way out, and the way out always works (§5)
+  {
+    const clear = await page.evaluate(() => {
+      const t = CNProgress.start('Preparing 411 order line(s)', { total: 411 }); t.set(229, 411, 'BLUE_94532');
+      const row = document.querySelector('.cnp .cnpRow').getBoundingClientRect();
+      const hits = ['#modeSeg', '#runBanner', '#topBar', '.topBar'].map(sel => { const el = document.querySelector(sel); if (!el) return null; const r = el.getBoundingClientRect(); if (!r.width) return null; return { sel, over: r.left < row.right && r.right > row.left && r.top < row.bottom && r.bottom > row.top }; }).filter(Boolean);
+      const seg = document.querySelector('#modeSeg button[data-mode="orders"]');
+      const r2 = seg.getBoundingClientRect();
+      const atPoint = document.elementFromPoint(r2.left + r2.width / 2, r2.top + r2.height / 2);
+      t.end();
+      return { hits, reachable: !!(atPoint && seg.contains(atPoint)) };
+    });
+    console.log('progress bar clearance', JSON.stringify(clear));
+    assert(clear.hits.every(h => !h.over), 'the bar covers no part of the chrome: ' + JSON.stringify(clear.hits));
+    assert(clear.reachable, 'and a tab button is what the pointer finds at its own centre');
+  }
+
+  // leaving a tab while work is running neither stops the work nor reloads the station
+  {
+    const before = await page.evaluate(() => ({ hellos: B.link ? B.link.hellos : null, mode: CN.S.mode }));
+    const kept = await page.evaluate(async () => {
+      const t = CNProgress.start('long job', { total: 10 }); t.set(3, 10);
+      const seen = [];
+      for (const m of ['orders', 'nest', 'master', 'review', 'design']) { CN.setMode(m); seen.push(CN.S.mode); await new Promise(r => setTimeout(r, 60)); }
+      const stillThere = !!document.querySelector('.cnp .cnpRow');
+      t.end();
+      return { seen, stillThere, frames: document.querySelectorAll('#dsFrame').length };
+    });
+    console.log('moving about while busy', JSON.stringify(kept));
+    assert.deepStrictEqual(kept.seen, ['orders', 'nest', 'master', 'review', 'design'], 'every tab opens while work is running');
+    assert(kept.stillThere, 'and the work carries on with its bar still up');
+    assert.strictEqual(kept.frames, 1, 'the station is the same frame throughout, never reloaded');
+    void before;
+  }
+
   // a manual run says why it is waiting and offers to carry on by itself (§7)
   {
     const paused = await page.evaluate(() => {

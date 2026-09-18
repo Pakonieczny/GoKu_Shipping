@@ -22,14 +22,16 @@
   let seq = 0, host = null, timer = null;
 
   const CSS = `
-.cnp{position:fixed;left:0;right:0;top:0;z-index:400;display:grid;gap:1px;pointer-events:none;font:12px/1.35 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+/* Bottom left, clear of the top bar and of the station dock in the bottom right: a bar that says what the app is doing
+   must never stand between a person and the way out of the screen they are on. */
+.cnp{position:fixed;left:12px;bottom:12px;z-index:60;width:min(520px,calc(100vw - 24px));display:grid;gap:6px;pointer-events:none;font:12px/1.35 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
 .cnp:empty{display:none}
-.cnp .cnpRow{background:var(--paper,#f7f4ee);border-bottom:1px solid var(--line,rgba(0,0,0,.12));padding:5px 12px 6px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+.cnp .cnpRow{background:var(--paper,#f7f4ee);border:1px solid var(--line,rgba(0,0,0,.12));border-radius:12px;padding:6px 12px 8px;box-shadow:0 6px 18px -8px rgba(0,0,0,.45)}
 .cnp .cnpHead{display:flex;gap:10px;align-items:baseline;color:var(--ink,#221f1b)}
 .cnp .cnpLabel{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cnp .cnpPct{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:700}
 .cnp .cnpMeta{font-variant-numeric:tabular-nums;color:var(--ink45,rgba(0,0,0,.55));white-space:nowrap}
-.cnp .cnpNote{color:var(--ink45,rgba(0,0,0,.55));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46vw}
+.cnp .cnpNote{color:var(--ink45,rgba(0,0,0,.55));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:38%}
 .cnp .cnpTrack{position:relative;height:6px;border-radius:9px;background:var(--paper2,rgba(0,0,0,.08));overflow:hidden;margin-top:4px}
 .cnp .cnpFill{position:absolute;inset:0 auto 0 0;width:0;border-radius:9px;background:var(--accent,#8a6b2f);transition:width .25s ease-out}
 .cnp .cnpTrack.cnpIndet .cnpFill{width:30%;animation:cnpSlide 1.15s ease-in-out infinite;transition:none}
