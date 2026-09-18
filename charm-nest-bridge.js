@@ -2878,21 +2878,9 @@ const Sandbox = window.Sandbox = (() => {
     if (!confirm("Delete every sandbox record (sandbox pools, sets, runs, sheets, locks, ledger, archive)? Files and the snapshot stay. Production data is untouched.")) return;
     const r = await api("charmNestLibrary", { op: "sandboxReset" }); toast(`Sandbox reset — ${r.deleted} record(s) removed`, "ok"); await refresh();
   }
-  function mountPanel(v) {
-    /* The sandbox's controls hang off the SANDBOX pill in the top bar — a click opens them — instead of taking a
-       third of the Orders toolbar on every visit. Off is the normal state and says nothing: Settings holds the way in. */
-    let bar = document.getElementById("sandboxBar");
-    if (!bar) { const pill = document.getElementById("sandboxPill"); bar = document.createElement("div"); bar.id = "sandboxBar"; bar.className = "sandboxBar sbPop hidden"; (pill ? pill.parentElement : v).appendChild(bar); if (pill) { pill.style.cursor = "pointer"; pill.onclick = () => bar.classList.toggle("open"); } document.addEventListener("pointerdown", e => { if (!e.target.closest("#sandboxBar, #sandboxPill")) bar.classList.remove("open"); }); }
-    bar.classList.toggle("hidden", !on());
-    bar.innerHTML = on()
-      ? `<b>SANDBOX</b><span id="sbStatus" title="${esc(status ? statusText() : "nothing here touches the real Etsy or the real records")}">rehearsal — nothing real is touched</span><button class="btn ghost xs" id="sbReset" type="button" title="empty the sandbox pool, sets, runs and sheets — the real records are untouched">Reset</button><button class="btn ghost xs" id="sbToggle" type="button" title="go back to the real Etsy and the real records">Switch off</button>`
-      : "";                                            // off is the normal state and says nothing: Settings holds the way in
-    const sn = bar.querySelector("#sbSnap"); if (sn) sn.onclick = () => snapshot().catch(e => toast(e.message, "bad", 8000));
-    const rs2 = bar.querySelector("#sbReset"); if (rs2) rs2.onclick = () => reset().catch(e => toast(e.message, "bad", 8000));
-    if (!bar.querySelector("#sbToggle")) { if (!status) refresh(); return; }
-    bar.querySelector("#sbToggle").onclick = () => { if (on()) { S.settings.sandbox = "off"; saveSettings(); toast("Sandbox off — reloading", "ok", 3000); setTimeout(() => location.reload(), 600); return; } const b = bar.querySelector("#sbToggle"); b.disabled = true; b.textContent = "Switching on…"; enable().catch(e => { toast(`Sandbox: ${e.message}`, "bad", 9000); agent({ bridge: true }, "warn", `Sandbox switch-on stopped: ${e.message}`); b.disabled = false; b.textContent = "Rehearse in the sandbox"; }); };
-    if (!status) refresh();
-  }
+  /* No strip of its own any more: the SANDBOX pill in the top bar says the mode, the station's own banner says it again,
+     and Reset and the switch live in Settings. */
+  function mountPanel(v) { void v; const old = document.getElementById("sandboxBar"); if (old) old.remove(); const pill = document.getElementById("sandboxPill"); if (pill) { pill.style.cursor = "pointer"; pill.onclick = () => { if (window.CN && CN.openSettings) CN.openSettings(); else { const b = document.getElementById("btnSettings"); if (b) b.click(); } }; } if (!status) refresh(); }
   function statusText() { if (!status || status.error) return status && status.error ? `status: ${status.error}` : ""; const sn = status.snapshot; const rec = status.records || {}; return `${sn ? `snapshot of ${sn.count} order(s) taken ${new Date(sn.at).toLocaleString()}${sn.takenBy ? " by " + sn.takenBy : ""}` : "no snapshot yet"} · sandbox records: ${rec.Charm_Pool || 0} pool, ${rec.Charm_Nest_Sets || 0} sets, ${rec.Charm_Nest_Runs || 0} runs, ${rec.Charm_Nest_Sheets || 0} sheets`; }
   function render() { const el = document.getElementById("sbStatus"); if (el) el.title = statusText() || el.title; const pill = document.getElementById("sandboxPill"); if (pill) pill.classList.toggle("hidden", !on()); document.documentElement.classList.toggle("sandbox", on()); }
   return { on, refresh, snapshot, enable, afterReload, reset, mountPanel, render, status: () => status };
