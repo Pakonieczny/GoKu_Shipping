@@ -627,6 +627,8 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .ordMeta:empty{display:none}
 .sbPop{position:absolute;right:0;top:calc(100% + 6px);z-index:70;display:none;gap:8px;align-items:center;padding:8px 12px;border-radius:12px;box-shadow:0 12px 30px -10px rgba(0,0,0,.5)}
 .sbPop.open{display:inline-flex}
+.rvItem .rh .nav{display:inline-flex;gap:4px;margin-left:8px}
+.rvItem .rh .nav .btn{padding:3px 10px}
 .rvItem .rh .x{border:0;background:transparent;color:var(--ink45);font-size:18px;line-height:1;cursor:pointer;border-radius:6px;padding:0 6px;order:99;margin-left:auto}
 .rvItem .rh .x:hover{background:var(--paper2);color:var(--ink)}
 .placeView .ctl .dim{font-size:11.5px;color:var(--ink45);padding:0 4px}
@@ -806,7 +808,7 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .egPane.grow{flex:1 1 auto}
 .egPane.scroll{overflow:auto;padding-right:2px}
 .egPane #egQueue{flex:1 1 auto;min-height:0;display:flex}
-.egNext{display:flex;gap:6px;align-items:center;flex-wrap:nowrap;overflow-x:auto;flex:0 0 auto;scrollbar-width:thin}
+.egNext{display:none}
 .egNext .lbl{font:10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45)}
 .egChip{display:inline-flex;gap:7px;align-items:baseline;border:1px solid var(--line);background:var(--card);border-radius:9px;padding:4px 9px;cursor:pointer;max-width:26ch;overflow:hidden}
 .egChip:hover{background:var(--paper2)}
@@ -838,18 +840,19 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .rvItem .fixes input,.rvItem .fixes select,.rvItem .fixes textarea{border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12.5px;background:var(--card)}
 .rvItem .fixes textarea{width:100%;min-height:54px;font-family:var(--mono)}
 .rvItem .why{font-size:11.5px;color:#8a3a26}
-.placeView{display:grid;grid-template-columns:minmax(0,1.32fr) minmax(0,.68fr);gap:14px;align-items:stretch;min-height:0}
+.placeView{display:grid;grid-template-columns:minmax(0,1fr) clamp(260px,26vw,380px);gap:14px;align-items:stretch;min-height:0}
 .rvItem.full .placeView{flex:1 1 auto}
 .placeView>*{min-width:0;min-height:0}
 .pvMain{display:flex;flex-direction:column;gap:8px;min-height:0}
 .pvSide{display:flex;flex-direction:column;gap:9px;min-height:0;overflow:auto;padding-right:2px}
 .backHost{flex:0 0 auto;display:flex;align-items:center;justify-content:center;overflow:hidden}
-.rvItem.full .backHost{flex:1 1 0;min-height:190px}
+.rvItem.full .backHost{flex:1 1 0;min-height:190px;align-items:stretch;justify-content:center}
+.rvItem.full .backHost canvas{max-height:100%;max-width:100%;width:auto;height:auto}
 .frontHost{display:flex;justify-content:center}
 .pvSide .frontHost{flex:1 1 auto;min-height:220px;align-items:center}
 .pvSide .frontHost{align-items:flex-start;flex:0 0 auto}
-.pvSide .frontHost canvas,.pvSide .frontHost img{width:auto;height:auto;max-width:100%;max-height:min(44vh,360px);border:1px solid var(--line2);border-radius:10px;background:#fff;object-fit:contain}
-.pvSide{overflow:auto;min-height:0}
+.pvSide .frontHost canvas,.pvSide .frontHost img{width:auto;height:auto;max-width:100%;max-height:min(38vh,320px);border:1px solid var(--line2);border-radius:10px;background:#fff;object-fit:contain}
+.pvSide{overflow:hidden;min-height:0;gap:8px}
 .egChip{flex:0 0 auto;min-width:12ch}
 .egChip b{white-space:nowrap}
 .pvWords textarea{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:7px;padding:6px 8px;font:600 15px var(--serif);background:var(--card);resize:vertical;margin-top:2px}
