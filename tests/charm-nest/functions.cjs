@@ -243,6 +243,8 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   console.log('bridge ops OK');
   // ── purge: the records of past runs go, in production and sandbox; the master index and maps stay ──
   r = await post(lib, { op: 'purgeHistory', code: '000000' }); assert.strictEqual(r.status, 403, 'a purge needs the passcode');
+  r = await post(lib, { op: 'purgeHistory', code: '975311' }); assert.strictEqual(r.status, 409, 'a purge is refused while a run is open: ' + JSON.stringify(r.body));
+  r = await post(lib, { op: 'runPut', run: { runId: 'run-A', day: '2026-09-16', status: 'stopped', step: 'pool', lines: {} } });
   r = await post(lib, { op: 'purgeHistory', code: '975311' }); assert(r.body.ok && r.body.docs.Charm_Pool >= 1 && r.body.docs.Charm_Nest_Sets >= 1, 'the run records were wiped: ' + JSON.stringify(r.body.docs));
   r = await post(lib, { op: 'poolList', runId: 'run-A' }); assert.strictEqual(r.body.pools.length, 0, 'no pool rows remain');
   r = await post(lib, { op: 'masterGet', sku: 'BR-CMP-01' }); assert(r.body.entry, 'the master index is not history and stays');
