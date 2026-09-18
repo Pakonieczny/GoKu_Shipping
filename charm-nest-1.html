@@ -285,7 +285,11 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .libCard:hover{outline:none}
 .libCard .h{display:flex;align-items:center;gap:8px;min-width:0}
 .libCard .h .nm{font:600 13px var(--sans);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.libCard .h .tm{margin-left:auto;font:10.5px var(--mono);color:var(--ink45)}
+.libCard .h .tm{margin-left:auto;font:10.5px var(--mono);color:var(--ink45);white-space:nowrap}
+.libCard .h .set{font:600 10.5px var(--mono);color:var(--ink70);background:var(--paper2);border:1px solid var(--line);border-radius:6px;padding:1px 6px;white-space:nowrap}
+.sw{display:inline-flex;align-items:center;gap:4px;flex:0 0 auto;font:700 10px var(--mono);letter-spacing:.04em;color:#fff;background:var(--c,var(--ink45));border-radius:6px;padding:2px 6px;line-height:1.3;text-shadow:0 1px 0 rgba(0,0,0,.18)}
+.sw i{font-style:normal;font-weight:600;opacity:.85;background:rgba(255,255,255,.28);border-radius:4px;padding:0 4px}
+.fanHead .sws{display:inline-flex;gap:4px;margin-left:6px}
 .libCard .pv{width:100%;aspect-ratio:513/434;object-fit:contain;background:var(--card2);border:1px solid var(--line2);border-radius:8px}
 .libCard .pv.ph{display:flex;align-items:center;justify-content:center;font-size:11.5px;color:var(--ink45)}
 .libCard .m{display:flex;gap:8px;font-size:11px;color:var(--ink70);flex-wrap:wrap}
@@ -307,7 +311,8 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .setFan{position:absolute;left:0;top:-10px;z-index:8;display:flex;flex-wrap:wrap;gap:12px;padding:38px 12px 12px;background:var(--card2);border:1px solid var(--line);border-radius:16px;box-shadow:0 2px 6px rgba(30,26,20,.06),0 24px 60px rgba(30,26,20,.18);opacity:0;pointer-events:none;transform:translateY(8px) scale(.985);transform-origin:top left;transition:opacity .28s ease,transform .38s cubic-bezier(.2,.8,.2,1);transition-delay:0s}
 .libSet:hover .setFan,.libSet.open .setFan{opacity:1;pointer-events:auto;transform:none;transition-delay:.26s}
 .setFan .fanHead{position:absolute;top:10px;left:14px;right:14px;display:flex;align-items:center;gap:10px;font:600 12.5px var(--sans);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.setFan .fanHead .n{font:11px var(--mono);color:var(--ink45)}
+.setFan .fanHead .n{font:11px var(--mono);color:var(--ink45);white-space:nowrap}
+.setFan .fanHead b{font:700 13px var(--sans)}
 .setFan .fanHead .x{margin-left:auto;border:0;background:transparent;color:var(--ink45);font-size:15px;line-height:1;cursor:pointer;border-radius:5px;padding:0 4px}
 .setFan .libCard{flex:0 0 260px;opacity:0;transform:translateX(-22px) scale(.96);transition:transform .42s cubic-bezier(.2,.8,.2,1),opacity .32s ease,outline-color .15s;transition-delay:0s}
 .libSet:hover .setFan .libCard,.libSet.open .setFan .libCard{opacity:1;transform:none;transition-delay:calc(.26s + var(--i)*70ms)}
@@ -760,7 +765,22 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .rvNotices .nRow .w{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* one token: a zero-result message inside a grid used to be squeezed into one 150px cell */
 .libEmpty{grid-column:1/-1}
-.doneRow{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto minmax(0,auto) auto;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:6px 10px;font-size:12.5px}
+.doneRow{display:grid;grid-template-columns:auto auto auto minmax(0,1fr) auto minmax(0,auto) auto;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:6px 10px;font-size:12.5px;cursor:pointer}
+.doneRow .mini{width:36px;height:24px;object-fit:contain;background:#fff;border:1px solid var(--line2);border-radius:5px;display:block}
+.doneRow .sku{white-space:nowrap}
+.doneRow.open{border-color:var(--ink25);cursor:default}
+.doneDetail{grid-column:1/-1;display:grid;grid-template-columns:minmax(200px,1.1fr) minmax(140px,.7fr) minmax(220px,1.2fr);gap:14px 18px;align-items:start;padding:10px 0 4px;border-top:1px solid var(--line);margin-top:4px;cursor:default}
+.doneDetail .dd{display:grid;gap:4px}
+.doneDetail .dd img,.doneDetail .frontHost canvas,.doneDetail .frontHost img{width:100%;max-height:260px;object-fit:contain;background:#fff;border:1px solid var(--line2);border-radius:8px;display:block}
+.doneDetail .noPic{aspect-ratio:1.4;display:flex;align-items:center;justify-content:center;text-align:center;padding:12px;font-size:11.5px;color:var(--ink45);background:var(--card2);border:1px dashed var(--line);border-radius:8px}
+.doneDetail .cap{font:10.5px var(--mono);color:var(--ink45);text-transform:uppercase;letter-spacing:.08em}
+.doneDetail dl.meta{margin:0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:5px 12px;font-size:12.5px}
+.doneDetail dl.meta dt{font:10.5px var(--mono);color:var(--ink45);text-transform:uppercase;letter-spacing:.08em;padding-top:2px}
+.doneDetail dl.meta dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.doneDetail dd.serif{font:600 15px var(--serif)}
+.doneDetail .ctl{grid-column:1/-1;display:flex;gap:10px;align-items:center}
+.doneDetail .ctl .hint{font-size:11.5px;color:var(--ink45)}
+@media (max-width:900px){.doneDetail{grid-template-columns:1fr 1fr}.doneDetail dl.meta{grid-column:1/-1}}
 .doneRow .sku{font-size:11.5px;color:var(--ink45)}
 .doneRow .w{font:600 13px var(--serif);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .doneRow .by{font:11px var(--mono);color:var(--ink45);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -2692,12 +2712,25 @@ async function loadLibrary() {
     S.library.rows = r.sheets || []; renderLibrary();
   } catch (e) { body.innerHTML = `<div class="libEmpty">Could not load: ${esc(e.message)}</div>`; }
 }
+/* A sheet card leads with what a person looks for — the metal (its colour and short code), the sheet number, the day
+   and the time. The file name (GF_Sep.17.26_Set-1_Sheet-2) says the same three things in 26 characters and got cut
+   off at 14; it is the tooltip now, and the sheet dialog's title. */
+const CODE = { gold: "GF", silver: "SS", rose: "RG", gold10k: "10K", gold14k: "14K" };
+const metalOf = r => METALS.find(m => m.key === r.metal) || { color: "#999", label: r.metalLabel || "" };
+const setNo = r => r.setSeq || +((/_Set-(\d+)/.exec(r.folder || r.fileBase || "") || [])[1]) || 0;
+const sheetNo = r => r.sheetIndex || +((/_Sheet-(\d+)/.exec(r.folder || r.fileBase || "") || [])[1]) || r.page || 1;
+const dayShort = d => d ? new Date(d + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+const swatch = (m, n) => `<span class="sw" style="--c:${m.color}" title="${esc(m.label)}${n > 1 ? ` · ${n} sheets` : ""}">${esc(CODE[m.key] || m.label)}${n > 1 ? `<i>${n}</i>` : ""}</span>`;
+function sheetHead(r, o) { o = o || {}; const m = metalOf(r), sn = setNo(r); return `<div class="h">${swatch(m, 0)}<span class="nm">Sheet ${sheetNo(r)}</span>${sn && !o.inFan ? `<span class="set">Set ${sn}</span>` : ""}<span class="tm">${o.inFan ? "" : dayShort(r.day) + " · "}${r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span></div>`; }
 function renderLibrary() {
   const q = ($("#libSearch").value || "").trim().toLowerCase();
-  const rows = S.library.rows.filter(r => !q || `${r.id} ${r.folder || ""} ${r.metalLabel} ${r.day} ${r.setId || ""} ${r.runId || ""} ${r.names || ""} ${(r.sources || []).map(s => s.name).join(" ")}`.toLowerCase().includes(q));
+  const rows0 = S.library.rows.filter(r => !q || `${r.id} ${r.folder || ""} ${r.metalLabel} ${r.day} ${r.setId || ""} ${r.runId || ""} ${r.names || ""} ${(r.sources || []).map(s => s.name).join(" ")}`.toLowerCase().includes(q));
+  // one record per sheet name, the newest: a re-nested sheet keeps its name, and the library could hold its stale twin
+  const newest = new Map(); for (const r of rows0) { const k = r.folder || r.fileBase || r.id; const had = newest.get(k); if (!had || (r.updatedAt || 0) > (had.updatedAt || 0)) newest.set(k, r); }
+  const rows = [...newest.values()];
   $("#libCount").textContent = `${rows.length} sheet${rows.length === 1 ? "" : "s"}`;
   const body = $("#libBody"); if (!rows.length) { body.innerHTML = `<div class="libEmpty">No sheets match.</div>`; return; }
-  const card = (r, i) => `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}"><div class="h">${i != null && r._inFan ? `<span class="pg">${r.page || 1}</span>` : ""}<span class="nm">${r.folder ? esc(r.folder) : esc(r.metalLabel) + " · " + esc(r.id)}</span><span class="tm">${r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span></div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${r.preview}" loading="lazy" alt="">` : `<div class="pv ph">${r.saving ? "saving files…" : "no preview"}</div>`}<div class="m"><span><b>${r.placedCount}</b>/${r.charmCount} placed</span><span><b>${Math.round((r.density || 0) * 100)}%</b> full</span><span><b>${fmt.area(r.freePt2 || 0)}</b> free</span><span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span>${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`;
+  const card = (r, i) => { const m = metalOf(r), sn = setNo(r); return `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}" title="${esc(r.folder || r.id)}"><div class="h">${swatch(m, 0)}<span class="nm">Sheet ${sheetNo(r)}</span>${sn && !r._inFan ? `<span class="set">Set ${sn}</span>` : ""}<span class="tm">${r._inFan ? "" : dayShort(r.day) + " · "}${r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span></div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${r.preview}" loading="lazy" alt="">` : `<div class="pv ph">${r.saving ? "saving files…" : "no preview"}</div>`}<div class="m"><span title="charms placed of the charms asked for"><b>${r.placedCount}</b>/${r.charmCount}</span><span title="how full the sheet is"><b>${Math.round((r.density || 0) * 100)}%</b></span><span title="metal left free">${fmt.area(r.freePt2 || 0)}</span>${r.status === "complete" ? "" : `<span class="pill bad" style="padding:2px 7px">${esc(r.status)}</span>`}${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`; };
   // a set = the sheets of one run: same day and the same source files (runId when the record has one)
   const setKey = r => r.setId ? `set:${r.setId}` : r.runId ? `run:${r.runId}` : `${r.day}|${(r.sources || []).map(x => x.hash || x.name).sort().join("+")}`;
   const byDay = new Map(); for (const r of rows) { if (!byDay.has(r.day)) byDay.set(r.day, []); byDay.get(r.day).push(r); }
@@ -2706,11 +2739,12 @@ function renderLibrary() {
     const items = [...sets.values()].map(g => {
       g.sort((a, b) => (a.page || 1) - (b.page || 1) || (a.createdAt || 0) - (b.createdAt || 0));
       if (g.length === 1) return card(g[0], 0);
-      const lead = g[0], metals = [...new Set(g.map(r => r.metalLabel))], charms = g.reduce((n, r) => n + (r.charmCount || 0), 0);
-      const files = g.map(r => r.folder || r.id);
+      const lead = g[0], charms = g.reduce((n, r) => n + (r.charmCount || 0), 0), sn = setNo(lead);
+      // one swatch per metal, in the station's order, with a count when the metal has more than one sheet
+      const swatches = METALS.filter(m => g.some(r => r.metal === m.key)).map(m => swatch(m, g.filter(r => r.metal === m.key).length)).join("");
       return `<div class="libSet" data-n="${g.length}" tabindex="0" aria-label="Set of ${g.length} sheets">
-        <div class="setDeck" data-m="${lead.metal}"><span class="setTag"><span class="dot"></span>Set · ${g.length} sheets <span class="hint">· hover ▸</span></span>${g.slice(1).map((_, k) => `<div class="ghost" style="--k:${k + 1}"></div>`).join("")}${card(lead, 0)}</div>
-        <div class="setFan" style="--n:${g.length}"><div class="fanHead"><span>Set of ${g.length} sheets · ${esc(metals.join(", "))} · ${charms} charms</span><span class="n">${esc(files.join(" · "))}</span><button class="x" title="Close" aria-label="Close">×</button></div>${g.map((r, i) => card(Object.assign({}, r, { _inFan: true }), i)).join("")}</div>
+        <div class="setDeck" data-m="${lead.metal}"><span class="setTag"><span class="dot"></span>${sn ? `Set ${sn}` : "Set"} · ${g.length} sheets <span class="hint">· hover ▸</span></span>${g.slice(1).map((_, k) => `<div class="ghost" style="--k:${k + 1}"></div>`).join("")}${card(lead, 0)}</div>
+        <div class="setFan" style="--n:${g.length}"><div class="fanHead"><b>${sn ? `Set ${sn}` : "Set"}</b><span class="n">${dayShort(day)} · ${g.length} sheets · ${charms} charms</span><span class="sws">${swatches}</span><button class="x" title="Close" aria-label="Close">×</button></div>${g.map((r, i) => card(Object.assign({}, r, { _inFan: true }), i)).join("")}</div>
       </div>`;
     });
     return `<div class="dayHead">${new Date(day + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" })}<span class="n">${list.length} sheet${list.length === 1 ? "" : "s"}${sets.size !== list.length ? ` · ${[...sets.values()].filter(g => g.length > 1).length} set${[...sets.values()].filter(g => g.length > 1).length === 1 ? "" : "s"}` : ""}</span></div><div class="libGrid">${items.join("")}</div>`;
