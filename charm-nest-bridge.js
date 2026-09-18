@@ -651,11 +651,11 @@ const Orders = window.Orders = (() => {
       if (host.dataset.painted === "1") continue;
       if (!url) { if (IMG.got.has(host.dataset.lid)) { host.dataset.painted = "1"; const p2 = host.querySelector(".ph"); if (p2) p2.textContent = "no image"; } continue; }
       host.dataset.painted = "1";
-      if (host.tagName === "IMG") { host.onerror = () => { host.removeAttribute("src"); delete host.dataset.painted; }; host.src = url; continue; }
+      if (host.tagName === "IMG") { host.onerror = () => { host.removeAttribute("src"); delete host.dataset.painted; }; host.crossOrigin = "anonymous"; host.src = cors(url); continue; }
       const img = host.querySelector("img") || host.appendChild(el("img"));
       img.loading = "lazy"; img.alt = ""; img.crossOrigin = "anonymous";
       img.onerror = () => { img.remove(); delete host.dataset.painted; if (!host.querySelector(".ph")) { const p = el("span", "ph"); p.textContent = "no image"; host.appendChild(p); } };
-      img.src = url;
+      img.src = cors(url);
       const ph = host.querySelector(".ph"); if (ph) ph.remove();
       if (IMG.io) IMG.io.unobserve(host);
     }
@@ -724,7 +724,7 @@ const Orders = window.Orders = (() => {
       if (cards) {
         node.innerHTML =
           '<span class="oimg" data-lid="' + esc(lid) + '"' + (url ? ' data-painted="1"' : "") + '>' +
-            (url ? '<img crossorigin="anonymous" loading="lazy" alt="" src="' + esc(url) + '" onerror="this.remove()">' : '<span class="ph">' + (lid ? 'loading…' : 'no image') + '</span>') +
+            (url ? '<img crossorigin="anonymous" loading="lazy" alt="" src="' + esc(cors(url)) + '" onerror="this.remove()">' : '<span class="ph">' + (lid ? 'loading…' : 'no image') + '</span>') +
             (qty > 1 ? P("qty", "×" + qty) : "") +
             (attn ? '<span class="flag" title="' + esc(why) + '">!</span>' : "") +
           '</span>' +
@@ -740,7 +740,7 @@ const Orders = window.Orders = (() => {
           '</span>';
       } else {
         node.innerHTML =
-          '<img crossorigin="anonymous" class="th" data-lid="' + esc(lid) + '" alt="" onerror="this.removeAttribute(\'src\')"' + (url ? ' src="' + esc(url) + '" data-painted="1"' : "") + '>' +
+          '<img crossorigin="anonymous" class="th" data-lid="' + esc(lid) + '" alt="" onerror="this.removeAttribute(\'src\')"' + (url ? ' src="' + esc(cors(url)) + '" data-painted="1"' : "") + '>' +
           P("cell onum", esc(r.order.receiptId)) +
           '<span class="cell osku"><b>' + esc(sp.designSku || r.line.sku || "— none —") + '</b></span>' +
           '<span class="cell hideSm" style="font-size:12px;color:var(--ink70)">' + esc(wordsOf(sp) || r.line.title) + '</span>' +
@@ -1166,7 +1166,7 @@ const Master = window.Master = (() => {
       const pending = (job.vision || []).filter(x => !x.confirmed);
       if (pending.length) {
         const tray = el("div", "visionTray"); const head = el("div", "section", `Confirm ${pending.length} label(s) read by Claude from outlined text (reads under 95% are unchecked)`);
-        pending.forEach((x, i) => { const t = el("div", "vt"); t.innerHTML = `<img crossorigin="anonymous" src="${x.image}" alt=""><div><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-i="${i}" ${x.confidence >= 0.95 && x.sku ? "checked" : ""}><span class="mono">#${x.index}</span> <span class="pill ${x.confidence >= 0.95 ? "ok" : "warn"}">${Math.round(x.confidence * 100)}%</span></label><input type="text" data-sku="${i}" value="${esc(x.sku)}" placeholder="SKU as written"><input type="text" data-size="${i}" value="${esc(x.size || "")}" placeholder="size (optional)" style="margin-top:4px"><img crossorigin="anonymous" src="${x.charm.thumb}" style="width:48px;margin-top:4px;border-radius:4px" alt=""></div>`; tray.appendChild(t); });
+        pending.forEach((x, i) => { const t = el("div", "vt"); t.innerHTML = `<img crossorigin="anonymous" src="${cors(x.image)}" alt=""><div><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-i="${i}" ${x.confidence >= 0.95 && x.sku ? "checked" : ""}><span class="mono">#${x.index}</span> <span class="pill ${x.confidence >= 0.95 ? "ok" : "warn"}">${Math.round(x.confidence * 100)}%</span></label><input type="text" data-sku="${i}" value="${esc(x.sku)}" placeholder="SKU as written"><input type="text" data-size="${i}" value="${esc(x.size || "")}" placeholder="size (optional)" style="margin-top:4px"><img crossorigin="anonymous" src="${cors(x.charm.thumb)}" style="width:48px;margin-top:4px;border-radius:4px" alt=""></div>`; tray.appendChild(t); });
         const btn = el("button", "btn gold sm", "Confirm checked labels"); btn.type = "button";
         btn.onclick = async () => { const reads = []; tray.querySelectorAll("input[type=checkbox]").forEach(cb => { if (!cb.checked) return; const i = +cb.dataset.i; const x = pending[i]; const sku = tray.querySelector(`input[data-sku="${i}"]`).value.trim().toUpperCase(); if (!skuRegex().test(sku)) { toast(`${sku || "(empty)"} is not a valid SKU`, "bad"); return; } x.sku = sku; x.size = tray.querySelector(`input[data-size="${i}"]`).value.trim().toUpperCase() || null; reads.push(x); }); if (!reads.length) return; if (!employeeName()) askEmployee(); await confirmVision(job, reads); toast(`${reads.length} label(s) confirmed and indexed`, "ok"); };
         card.append(head, tray, btn);
@@ -1250,7 +1250,7 @@ const Master = window.Master = (() => {
       const blocked = [...new Set(d.list.map(x => x.blocked).filter(Boolean))].join("; ");
       const sizes = e.sizes ? Object.entries(e.sizes) : [];
       return `<div class="skuTile hoverItem${blocked ? " blocked" : ""}" data-sku="${esc(e.sku)}">` +
-        (thumbOf(e) ? `<img crossorigin="anonymous" src="${thumbOf(e)}" loading="lazy" alt="">` : `<div style="aspect-ratio:1;background:#fff;border-radius:6px"></div>`) +
+        (thumbOf(e) ? `<img crossorigin="anonymous" src="${cors(thumbOf(e))}" loading="lazy" alt="">` : `<div style="aspect-ratio:1;background:#fff;border-radius:6px"></div>`) +
         `<div class="sku" title="${esc(d.skus.join(", "))}">${esc(e.sku)}</div>` +
         (d.skus.length > 1 ? `<div class="meta">${d.skus.slice(1).map(s => `<div>${esc(s)}</div>`).join("")}</div>` : "") +
         `<div class="meta">${(e.widthPt * MM).toFixed(1)} × ${(e.heightPt * MM).toFixed(1)} mm · ${e.holes} hole(s)${sizes.length ? ` · sizes ${sizes.map(([k]) => k).join("/")}` : ""}${d.skus.length > 1 ? ` · ${d.skus.length} SKUs` : ""}</div>` +
@@ -1744,7 +1744,7 @@ const Engrave = window.Engrave = (() => {
         const pts = corners.map(world).map(p => tx(p[0], p[1]));
         const topMid = world([(box.lx0 + box.lx1) / 2, box.ly1 + m]); const tm = tx(topMid[0], topMid[1]);
         const up = [-sa, ca];                                                 // the text's own "up", in pt
-        const hp = tx(topMid[0] + up[0] * 6 * PT, topMid[1] + up[1] * 6 * PT);
+        const hp = tx(topMid[0] + up[0] * 2 * PT, topMid[1] + up[1] * 2 * PT);
         ctx.save(); ctx.lineWidth = 1; ctx.strokeStyle = "rgba(38,110,190,.9)"; ctx.setLineDash([]);
         ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.closePath(); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(tm[0], tm[1]); ctx.lineTo(hp[0], hp[1]); ctx.stroke();
@@ -1870,7 +1870,7 @@ const Engrave = window.Engrave = (() => {
     });
     const rail = v.querySelector("#egNext"); if (!rail) return;
     const rest = queue.filter(j2 => j2.key !== EG.cardKey);
-    rail.innerHTML = rest.length ? `<span class="lbl" title="every placement still queued — scroll the rail to reach any of them">up next · ${rest.length}</span>` + rest.map(j2 => `<button class="egChip hoverItem" data-rid="${esc(j2.row.order.receiptId)}" data-key="${esc(j2.key)}" title="${esc(j2.row.spec.designSku)} · ${esc(j2.lines.join(" / "))}"><b>${esc(j2.row.order.receiptId)}</b><span>${esc(j2.lines.join(" / ").slice(0, 22))}</span></button>`).join("") : "";
+    rail.innerHTML = rest.length ? `<span class="lbl" title="every placement still queued — scroll the rail to reach any of them">up next · ${rest.length}</span>` + rest.slice(0, 12).map(j2 => `<button class="egChip hoverItem" data-rid="${esc(j2.row.order.receiptId)}" data-key="${esc(j2.key)}" title="${esc(j2.row.spec.designSku)} · ${esc(j2.lines.join(" / "))}"><b>${esc(j2.row.order.receiptId)}</b><span>${esc(j2.lines.join(" / ").slice(0, 22))}</span></button>`).join("") + (rest.length > 12 ? `<span class="lbl">+${rest.length - 12} more · × for the list</span>` : "") : "";
     rail.querySelectorAll(".egChip").forEach(b => b.onclick = () => { EG.focus = b.dataset.key; render(); });
     const card = EG.card; if (card) { const kind = card.querySelector(".rh .kind"); if (kind) kind.textContent = `${decidedJobs().length + 1} of ${decidedJobs().length + queue.length}`; }
   }
@@ -1957,7 +1957,7 @@ const Engrave = window.Engrave = (() => {
       // what is coming: the order and the words, so the list and the picture are the same thing
       const rail = v.querySelector("#egNext");
       const rest = queue.filter(j2 => j2 !== focus);
-      rail.innerHTML = rest.length ? `<span class="lbl" title="every placement still queued — scroll the rail to reach any of them">up next · ${rest.length}</span>` + rest.map(j2 => `<button class="egChip hoverItem" data-rid="${esc(j2.row.order.receiptId)}" data-key="${esc(j2.key)}" title="${esc(j2.row.spec.designSku)} · ${esc(j2.lines.join(" / "))}"><b>${esc(j2.row.order.receiptId)}</b><span>${esc(j2.lines.join(" / ").slice(0, 22))}</span></button>`).join("") : "";
+      rail.innerHTML = rest.length ? `<span class="lbl" title="every placement still queued — scroll the rail to reach any of them">up next · ${rest.length}</span>` + rest.slice(0, 12).map(j2 => `<button class="egChip hoverItem" data-rid="${esc(j2.row.order.receiptId)}" data-key="${esc(j2.key)}" title="${esc(j2.row.spec.designSku)} · ${esc(j2.lines.join(" / "))}"><b>${esc(j2.row.order.receiptId)}</b><span>${esc(j2.lines.join(" / ").slice(0, 22))}</span></button>`).join("") + (rest.length > 12 ? `<span class="lbl">+${rest.length - 12} more · × for the list</span>` : "") : "";
       rail.querySelectorAll(".egChip").forEach(b => b.onclick = () => { EG.focus = b.dataset.key; render(); });
     }
     if (tab === "done") {
@@ -1976,7 +1976,7 @@ const Engrave = window.Engrave = (() => {
             const b0 = (j2.backs || [])[0] || {}; const png = b0.png || (b0.outputs && b0.outputs.png && b0.outputs.png.url) || ""; const ai = b0.ai || (b0.outputs && b0.outputs.ai && b0.outputs.ai.url) || "";
             const open = EG.openDone === j2.key;
             const detail = !open ? "" : `<div class="doneDetail">
-                <div class="dd back">${png ? `<img crossorigin="anonymous" src="${esc(png)}" alt="the back as written" referrerpolicy="no-referrer" data-retry="1">` : `<div class="noPic">${j2.state === "skipped" ? "cut plain — nothing on the back" : "the back picture is written with the sheet"}</div>`}<span class="cap">back${b0.sheet ? " · " + esc(b0.sheet) : ""}</span></div>
+                <div class="dd back">${png ? `<img crossorigin="anonymous" src="${esc(cors(png))}" alt="the back as written" referrerpolicy="no-referrer" data-retry="1">` : `<div class="noPic">${j2.state === "skipped" ? "cut plain — nothing on the back" : "the back picture is written with the sheet"}</div>`}<span class="cap">back${b0.sheet ? " · " + esc(b0.sheet) : ""}</span></div>
                 <div class="dd front"><div class="frontHost"></div><span class="cap">front</span></div>
                 <dl class="meta">
                   <dt>Words</dt><dd class="serif">${w}</dd>
@@ -1987,12 +1987,12 @@ const Engrave = window.Engrave = (() => {
                 </dl>
                 <div class="ctl"><button class="btn ghost sm" data-a="reopen" title="take this decision back: the words are settled again and the placement is redrawn — a back file already written is superseded">Reopen</button>${j2.recalledFrom ? `<span class="hint">this set is recalled — reopening rebuilds its sheet from the master files first</span>` : ""}</div>
               </div>`;
-            return `<div class="doneRow hoverItem${open ? " open" : ""}" data-rid="${esc(j2.row.order.receiptId)}" data-key="${esc(j2.key)}" title="click for the back as it was written, who decided, the file and Reopen">${png ? `<img crossorigin="anonymous" class="mini" src="${esc(png)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span class="mini"></span>`}<b class="mono">${esc(j2.row.order.receiptId)}</b><span class="sku mono">${esc(j2.row.spec.designSku || "")}</span><span class="w">${w}</span><span class="ost ${j2.state === "skipped" ? "warn" : "ok"}" title="${stateWhy(j2)}">${stateWord(j2)}</span><span class="by">${esc(who)}${j2.approvedAt ? " · " + fmtT(j2.approvedAt) : ""}</span>${open ? "" : `<button class="btn ghost xs" data-a="reopen" title="take this decision back">Reopen</button>`}${detail}</div>`;
+            return `<div class="doneRow hoverItem${open ? " open" : ""}" data-rid="${esc(j2.row.order.receiptId)}" data-key="${esc(j2.key)}" title="click for the back as it was written, who decided, the file and Reopen">${png ? `<img crossorigin="anonymous" class="mini" src="${esc(cors(png))}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span class="mini"></span>`}<b class="mono">${esc(j2.row.order.receiptId)}</b><span class="sku mono">${esc(j2.row.spec.designSku || "")}</span><span class="w">${w}</span><span class="ost ${j2.state === "skipped" ? "warn" : "ok"}" title="${stateWhy(j2)}">${stateWord(j2)}</span><span class="by">${esc(who)}${j2.approvedAt ? " · " + fmtT(j2.approvedAt) : ""}</span>${open ? "" : `<button class="btn ghost xs" data-a="reopen" title="take this decision back">Reopen</button>`}${detail}</div>`;
           }).join("") + `</div>`
         : `<div class="libEmpty">${window.Recall && Recall.on() ? "Nothing in this set was engraved." : "nothing decided yet"}</div>`;
       bk.querySelectorAll(".doneRow").forEach(rw => rw.addEventListener("click", e => { if (e.target.closest("button, a, .doneDetail")) return; EG.openDone = EG.openDone === rw.dataset.key ? null : rw.dataset.key; render(); }));
       { const rw = bk.querySelector(".doneRow.open"); const j2 = rw && items().get(rw.dataset.key); const host = rw && rw.querySelector(".frontHost");
-        if (j2 && host) { const charm = j2.copies && j2.copies.length ? Pool.charmOf(j2.copies[0]) : null; if (charm) host.appendChild(renderFront(charm, 148)); else { const e2 = Master.entryFor(j2.row.spec.designSku || j2.row.line.sku); const t = e2 && Master.thumbOf(e2); host.innerHTML = t ? `<img crossorigin="anonymous" src="${esc(t)}" alt="" referrerpolicy="no-referrer">` : `<div class="noPic">no picture of the front</div>`; } } }
+        if (j2 && host) { const charm = j2.copies && j2.copies.length ? Pool.charmOf(j2.copies[0]) : null; if (charm) host.appendChild(renderFront(charm, 148)); else { const e2 = Master.entryFor(j2.row.spec.designSku || j2.row.line.sku); const t = e2 && Master.thumbOf(e2); host.innerHTML = t ? `<img crossorigin="anonymous" src="${esc(cors(t))}" alt="" referrerpolicy="no-referrer">` : `<div class="noPic">no picture of the front</div>`; } } }
       // a picture that will not load is retried once with a fresh request, then says so instead of a broken icon
       bk.querySelectorAll("img").forEach(im => im.addEventListener("error", () => { if (im.dataset.retry) { im.dataset.retry = ""; im.src = im.src.replace(/([?&])_r=\d+/, "$1").replace(/[?&]$/, "") + (im.src.includes("?") ? "&" : "?") + "_r=" + Date.now(); return; } const d = document.createElement("div"); d.className = im.classList.contains("mini") ? "mini" : "noPic"; d.textContent = im.classList.contains("mini") ? "" : "the picture did not load — the .ai file is still there"; im.replaceWith(d); }));
       bk.querySelectorAll("[data-a=reopen]").forEach(b => b.onclick = () => {
@@ -2031,7 +2031,7 @@ const Engrave = window.Engrave = (() => {
         </div></div>`;
     const charm = job.copies.length ? Pool.charmOf(job.copies[0]) : null;
     if (charm) card.querySelector(".frontHost").appendChild(renderFront(charm, 420));
-    else { const e2 = Master.entryFor(job.row.spec.designSku || job.row.line.sku); const t = e2 && Master.thumbOf(e2); card.querySelector(".frontHost").innerHTML = t ? `<img crossorigin="anonymous" src="${esc(t)}" alt="">` : ""; }
+    else { const e2 = Master.entryFor(job.row.spec.designSku || job.row.line.sku); const t = e2 && Master.thumbOf(e2); card.querySelector(".frontHost").innerHTML = t ? `<img crossorigin="anonymous" src="${esc(cors(t))}" alt="">` : ""; }
     if (wordsJob) { const bh = card.querySelector(".backHost"); bh.innerHTML = `<div class="noBack">${job.state === "blocked" ? "the flip check failed on this charm — see the log" : "the back is drawn once the words are settled"}</div>`; }
     { const ta = card.querySelector("[data-f=words]"); const use = card.querySelector("[data-a=usewords]");
       const apply = async () => { const text = ta.value.trim(); if (!text) { toast("Type the words first", "bad"); return; } use.disabled = true; try { if (wordsJob) await decideWords(job, { text, note: text !== (job.text || "").trim() ? "edited" : "confirmed" }); else { job.text = text; job.lines = text.split(/\r?\n/).map(x => x.trim()).filter(Boolean); job.wantSize = null; await fitJob(job); } } catch (e) { toast(e.message, "bad"); } use.disabled = false; render(); };
@@ -2298,12 +2298,12 @@ const Sets = window.Sets = (() => {
         const held = Object.entries(st.orders || {}).filter(([, o]) => o.held);
         const card = el("div", "setCard");
         card.innerHTML = `<div class="sh"><span class="nm">${esc(st.name || st.setId)}</span><span class="pill ${/complete/.test(st.status) ? "ok" : st.status === "labelled" ? "info" : "neutral"}">${esc(st.status || "open")}</span><span class="mono" style="font-size:11px;color:var(--ink45)">${esc(st.day)} · run ${esc(st.runId || "—")}</span><span>${mine.length} sheet(s) · ${(st.materials || []).map(m => labelOf(m)).join(", ")}</span><span>${Object.keys(st.orders || {}).length} order(s)</span><span>Engraving · ${st.backCount || mine.reduce((n, x) => n + (x.backCount || 0), 0)}</span><span class="spacer"></span>${st.labels && st.labels.pdf ? `<a class="btn ghost xs" href="${st.labels.pdf.url}" target="_blank" rel="noopener">labels PDF</a>` : ""}${st.labels && st.labels.manifest ? `<a class="btn ghost xs" href="${st.labels.manifest.url}" target="_blank" rel="noopener">manifest</a>` : ""}${st.labels && st.labels.json ? `<a class="btn ghost xs" href="${st.labels.json.url}" target="_blank" rel="noopener">set.json</a>` : ""}${/complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div>
-          <div class="sheetsRow">${mine.map(r => `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}${r.preview ? `<img class="pv" crossorigin="anonymous" src="${r.preview}" loading="lazy" alt="">` : `<div class="pv ph">no preview</div>`}<div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span>${r.backCount ? `<span>✎ ${r.backCount}</span>` : ""}<span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span></div></div>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
+          <div class="sheetsRow">${mine.map(r => `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}${r.preview ? `<img class="pv" crossorigin="anonymous" src="${cors(r.preview)}" loading="lazy" alt="">` : `<div class="pv ph">no preview</div>`}<div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span>${r.backCount ? `<span>✎ ${r.backCount}</span>` : ""}<span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span></div></div>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
           ${held.length ? `<div class="holds"><b>Held:</b> ${held.map(([rid, o]) => `${esc(rid)} — ${esc(o.held.why || "")}`).join(" · ")}</div>` : ""}
           ${st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}
-          <div class="labels">${(st.labelFiles || []).map(f => f.url ? `<img crossorigin="anonymous" src="${f.url}" title="${esc(f.label || f.sheet)}" data-big="${f.url}" alt="">` : "").join("")}</div>`;
+          <div class="labels">${(st.labelFiles || []).map(f => f.url ? `<img crossorigin="anonymous" src="${cors(f.url)}" title="${esc(f.label || f.sheet)}" data-big="${f.url}" alt="">` : "").join("")}</div>`;
         card.querySelectorAll(".libCard").forEach(x => x.onclick = () => openLibrarySheet(x.dataset.id));
-        card.querySelectorAll("[data-big]").forEach(img => img.onclick = () => { const d = document.createElement("dialog"); d.className = "wide"; d.innerHTML = `<div class="dlg"><div class="dlgHead"><h3>${esc(img.title)}</h3><div class="right"><button class="btn ghost xs">Close</button></div></div><div class="dlgBody" style="display:grid;place-items:center"><img crossorigin="anonymous" class="labelBig" src="${img.dataset.big}" alt=""></div></div>`; d.querySelector("button").onclick = () => d.close(); d.addEventListener("close", () => d.remove()); document.body.appendChild(d); d.showModal(); });
+        card.querySelectorAll("[data-big]").forEach(img => img.onclick = () => { const d = document.createElement("dialog"); d.className = "wide"; d.innerHTML = `<div class="dlg"><div class="dlgHead"><h3>${esc(img.title)}</h3><div class="right"><button class="btn ghost xs">Close</button></div></div><div class="dlgBody" style="display:grid;place-items:center"><img crossorigin="anonymous" class="labelBig" src="${cors(img.dataset.big)}" alt=""></div></div>`; d.querySelector("button").onclick = () => d.close(); d.addEventListener("close", () => d.remove()); document.body.appendChild(d); d.showModal(); });
         const ub = card.querySelector("[data-undo]"); if (ub) ub.onclick = async () => { if (!confirm(`Undo the completion of ${st.name}? The orders return to the station's list; every file is kept.`)) return; const local = [...byRun().values()].find(x => x.setId === st.setId) || Object.assign({ orders: {}, sheetIds: st.sheetIds || [], materials: st.materials || [], labelFiles: st.labelFiles || [] }, st); byRun().set(local.runId || st.setId, local); try { await undo(local); toast(`${st.name} undone`, "ok"); renderLibrary(body); } catch (e) { toast(e.message, "bad", 6000); } };
         body.appendChild(card);
       }
@@ -2983,7 +2983,7 @@ const OrderWin = window.OrderWin = (() => {
     const t = byId("owTray"); if (!t) return;
     t.innerHTML = "";
     W.tray.forEach((x, i) => {
-      const c = el("span", "chip", '<img crossorigin="anonymous" alt="" src="' + x.url + '"><span>' + esc(x.file.name.slice(0, 18)) + '</span><button type="button" title="remove">×</button>');
+      const c = el("span", "chip", '<img crossorigin="anonymous" alt="" src="' + cors(x.url) + '"><span>' + esc(x.file.name.slice(0, 18)) + '</span><button type="button" title="remove">×</button>');
       c.querySelector("button").onclick = () => { try { URL.revokeObjectURL(x.url); } catch (_) {} W.tray.splice(i, 1); paintTray(); };
       t.appendChild(c);
     });
@@ -3022,7 +3022,7 @@ const OrderWin = window.OrderWin = (() => {
       const when = m.at ? new Date(m.at).toLocaleString("en-US", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
       return '<div class="owMsg' + (own ? " me" : "") + '"><span class="who">' + esc(m.senderName || "Staff") + (when ? " · " + esc(when) : "") + '</span>' +
         (m.text && m.text !== "Image attachment" ? esc(m.text).replace(/\n/g, "<br>") : "") +
-        (m.imageUrl ? '<img crossorigin="anonymous" loading="lazy" alt="" src="' + esc(m.imageUrl) + '">' : "") + '</div>';
+        (m.imageUrl ? '<img crossorigin="anonymous" loading="lazy" alt="" src="' + esc(cors(m.imageUrl)) + '">' : "") + '</div>';
     }).join("");
     t.scrollTop = t.scrollHeight;
   }
@@ -3050,7 +3050,7 @@ const OrderWin = window.OrderWin = (() => {
     mp.className = "pill " + (r.material ? "neutral" : "bad");
     const ph = byId("owPhoto"); const url = Orders.imageFor(r);
     ph.classList.remove("zoom");
-    ph.innerHTML = url ? '<img crossorigin="anonymous" alt="" src="' + esc(url) + '">' : '<span class="ph">no image</span>';
+    ph.innerHTML = url ? '<img crossorigin="anonymous" alt="" src="' + esc(cors(url)) + '">' : '<span class="ph">no image</span>';
     ph.dataset.lid = String(r.line.listingId || ""); if (url) ph.dataset.painted = "1"; else { delete ph.dataset.painted; Orders.wantImage(r.line.listingId); }
     byId("owSku").textContent = "SKU: " + (sp.designSku || r.line.sku || "—");
     // the one field that must be read exactly: labelled, whole, and never boxed into a scroller under the staff note
@@ -3194,12 +3194,12 @@ const RunHistory = window.RunHistory = (() => {
       const resumeBtn = g.runId && openRuns.some(r => r.runId === g.runId) ? `<button class="btn ghost sm" data-a="resume" title="pick the unfinished run this set belongs to up where it stopped \u2014 it re-reads every order from Etsy first">Resume the run\u2026</button>` : "";
       html += H.view === "cards"
         ? `<div class="hSet card hoverItem${isCur ? " cur" : ""}" data-set="${esc(g.setId || "")}" data-run="${esc(g.runId || "")}" tabindex="0">
-            ${g.thumb ? `<img crossorigin="anonymous" class="hThumb" loading="lazy" alt="" src="${esc(g.thumb)}" title="${esc(g.thumbOf || "")}" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'hThumb ph',textContent:'no preview'}))">` : `<div class="hThumb ph">no preview</div>`}
+            ${g.thumb ? `<img crossorigin="anonymous" class="hThumb" loading="lazy" alt="" src="${esc(cors(g.thumb))}" title="${esc(g.thumbOf || "")}" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'hThumb ph',textContent:'no preview'}))">` : `<div class="hThumb ph">no preview</div>`}
             <div class="hRow"><span class="nm">${esc(name)}</span><span class="pill ${g.status === "complete" ? "ok" : "bad"}">${g.status}</span><span class="ct">${g.sheets.length} sheet${g.sheets.length === 1 ? "" : "s"} \u00b7 ${g.orders} order${g.orders === 1 ? "" : "s"}</span></div>
             <div class="hRow sub"><span class="ct">${esc(mats)}</span><span class="sp"></span>${isCur ? `<span class="pill neutral">on the cards</span>` : openBtn}${resumeBtn}</div>
           </div>`
         : `<div class="hSet row hoverItem${isCur ? " cur" : ""}" data-set="${esc(g.setId || "")}" data-run="${esc(g.runId || "")}"><div class="hRow">
-            ${g.thumb ? `<img crossorigin="anonymous" class="hMini" loading="lazy" alt="" src="${esc(g.thumb)}" onerror="this.remove()">` : `<span class="hMini ph"></span>`}
+            ${g.thumb ? `<img crossorigin="anonymous" class="hMini" loading="lazy" alt="" src="${esc(cors(g.thumb))}" onerror="this.remove()">` : `<span class="hMini ph"></span>`}
             <span class="nm">${esc(name)}</span><span class="pill ${g.status === "complete" ? "ok" : "bad"}">${g.status}</span>
             <span class="ct">${esc(mats)} \u00b7 ${g.sheets.length} sheet${g.sheets.length === 1 ? "" : "s"} \u00b7 ${g.orders} order${g.orders === 1 ? "" : "s"}</span><span class="sp"></span>${isCur ? `<span class="pill neutral">on the cards</span>` : openBtn}${resumeBtn}</div></div>`;
     }
