@@ -1018,8 +1018,21 @@ const Engrave = window.Engrave = (() => {
     // the largest that fits is the ceiling; the default is sized to how much there is to say (design §7.4)
     {
       const bw = charm.widthPt || (charm.bbox ? charm.bbox[2] - charm.bbox[0] : 0), bh = charm.heightPt || (charm.bbox ? charm.bbox[3] - charm.bbox[1] : 0);
-      const charmMinMm = Math.min(bw, bh) * MM;
-      const want = G.defaultSize(job.lines, fit.fittedMax, { capPerEm: G.capPerEm(fontFor(fit.weight)), minCapMm: +S.settings.engraveMinCapMm || 1.6, charmMinMm });
+      const sizeOpts = font => ({
+        capPerEm: G.capPerEm(font), minCapMm: +S.settings.engraveMinCapMm || 1.6,
+        charmMinMm: Math.min(bw, bh) * MM, charmMaxMm: Math.max(bw, bh) * MM,
+        usableAreaMm2: G.area(job.mask) / (job.mask.res * job.mask.res) * MM * MM,
+        advanceOf: t => font.getAdvanceWidth(t, 1, { kerning: true })
+      });
+      let want = G.defaultSize(job.lines, fit.fittedMax, sizeOpts(fontFor(fit.weight)));
+      // the weight follows the size that will actually be cut, not the ceiling: a name that came down to 2.0 mm is
+      // Semibold even though the largest that fitted was 3.7 mm. Advances differ by ~3%, so one re-fit settles it.
+      const semiBelow = fitOpts().semiboldBelowMm || 2.2;
+      const wantWeight = want * G.capPerEm(fontFor(fit.weight)) * MM < semiBelow ? "Semibold" : "Regular";
+      if (wantWeight !== fit.weight && F_[wantWeight]) {
+        const re = G.fitText(job.lines, F_[wantWeight], job.mask, fitOpts());
+        if (re.ok) { re.fittedMax = re.size; fit = Object.assign(re, { weight: wantWeight }); job.fit = fit; want = G.defaultSize(job.lines, fit.fittedMax, sizeOpts(fontFor(fit.weight))); }
+      }
       if (want < fit.size - 0.01) {
         const L = G.layoutLines(job.lines, fontFor(fit.weight), want, 0.18, fit.angle, fit.centre);
         if (G.verifyInk(L.cmds, job.mask).ok) {
@@ -1027,6 +1040,9 @@ const Engrave = window.Engrave = (() => {
           job.fit = fit = Object.assign({}, fit, { size: want, capMm, layout: L, glyphs: L.glyphs, cmds: L.cmds, fittedMax: fit.fittedMax, sized: "default" });
         }
       }
+      // when the honest target is well past what the mask allows, the line wants re-breaking — say so rather than clamp in silence
+      if (fit.size >= fit.fittedMax - 0.01 && (job.lines || []).join(" ").trim().length > 8)
+        agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: the words only fit at the largest size the area allows — a different split of the lines may read better`);
     }
     const check = G.verifyInk(fit.cmds, job.mask);                          // 7.4 · geometry: zero ink outside the eroded mask, zero in any hole
     if (!check.ok) { throw new Error(`ink outside the eroded mask after fitting (${check.outside} px) — a bug, not a review item`); }
