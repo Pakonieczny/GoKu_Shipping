@@ -116,7 +116,7 @@ const receipts = [
   const seen = await page.evaluate(async () => {
     const shots = [];
     const snap = () => {
-      const rows = [...document.querySelectorAll('.cnp .cnpRow')].map(r => ({
+      const rows = [...document.querySelectorAll('.cnp.on .cnpRow')].map(r => ({
         label: r.querySelector('.cnpLabel').textContent, pct: r.querySelector('.cnpPct').textContent,
         meta: r.querySelector('.cnpMeta').textContent, width: r.querySelector('.cnpFill').style.width
       }));
@@ -140,7 +140,7 @@ const receipts = [
     const r = document.querySelector('.cnp .cnpRow');
     const out = { pct: r.querySelector('.cnpPct').textContent, meta: r.querySelector('.cnpMeta').textContent, width: r.querySelector('.cnpFill').style.width };
     t.end();
-    return { out, left: document.querySelectorAll('.cnp .cnpRow').length };
+    return { out, left: document.querySelector('.cnp').classList.contains('on') ? 1 : 0 };
   });
   console.log('counted bar', JSON.stringify(counted));
   assert(counted.out.pct === '25%' && /^25(\.0)?%$/.test(counted.out.width) && /50 \/ 200/.test(counted.out.meta), 'countable work shows a real percentage: ' + JSON.stringify(counted.out));
@@ -524,6 +524,23 @@ const receipts = [
       });
       console.log('orders cards', JSON.stringify({ chips: ord.chips, n: ord.cards.length, first: ord.cards[0], sideScroll: ord.sideScroll }));
       assert(ord.cards.length >= 3, 'every pulled line is a card: ' + ord.cards.length);
+      // the cards carry the listing's picture, fetched through the station's proxy and painted only once on screen
+      const pics = await page.evaluate(async () => {
+        for (let i = 0; i < 40; i++) { const im = [...document.querySelectorAll('#ordBody [data-lid]')].map(n => n.tagName === 'IMG' ? n : n.querySelector('img')).filter(n => n && n.src && n.complete && n.naturalWidth > 0); if (im.length) return { n: im.length, src: im[0].src }; await new Promise(r => setTimeout(r, 250)); }
+        const h0 = document.querySelector('#ordBody [data-lid]'); const im0 = h0 && h0.querySelector('img'); const u = im0 && im0.src;
+        const u2 = u || (Orders.imageFor ? String(Orders.imageFor(Orders.rows()[0])) : '');
+        const probe = await fetch(u2).then(async r => [u2, r.status, r.headers.get('content-type'), (await r.arrayBuffer()).byteLength]).catch(e => 'ERR ' + e.message);
+        const loaded = await new Promise(res => { const im = new Image(); im.onload = () => res('load ' + im.naturalWidth); im.onerror = e => res('error'); im.src = u2 + '&t=' + Date.now(); setTimeout(() => res('timeout'), 4000); });
+        void loaded; probe.push(loaded);
+        return { n: 0, html: h0 && h0.outerHTML.slice(0, 300), img: im0 && { src: im0.src, complete: im0.complete, nw: im0.naturalWidth }, probe };
+      });
+      console.log('card pictures', JSON.stringify(pics));
+      assert(pics.n > 0 && /imageProxy/.test(pics.src), 'the cards show the listing pictures through the proxy: ' + JSON.stringify(pics));
+      // the toolbar is one row that never scrolls sideways, with nothing of the sandbox in it
+      const bar = await page.evaluate(() => { const b = document.getElementById('ordBar'); const r = b.getBoundingClientRect(); const tops = [...b.children].filter(c => c.getBoundingClientRect().height).map(c => c.getBoundingClientRect().top).sort((x, y) => x - y); let rows = tops.length ? 1 : 0; for (let i = 1; i < tops.length; i++) if (tops[i] - tops[i - 1] > 14) rows++; return { h: r.height, rows, sideScroll: document.documentElement.scrollWidth - document.documentElement.clientWidth, sandboxInBar: !!b.querySelector('#sandboxBar'), pill: !!document.getElementById('ordMeta') }; });
+      console.log('orders toolbar', JSON.stringify(bar));
+      await page.screenshot({ path: '/tmp/claude-0/orders.png', clip: { x: 0, y: 0, width: 1500, height: 420 } });
+      assert(bar.rows <= 2 && bar.sideScroll <= 0 && !bar.sandboxInBar, 'one compact toolbar row (two at most on a narrow window), no side scroll: ' + JSON.stringify(bar));
 
 
       await page.evaluate(() => { CN.setMode('orders'); Orders.render(); });
@@ -777,6 +794,13 @@ const receipts = [
       });
       if (hasCard) {
         engChecked = true;
+        await page.waitForTimeout(600); await page.screenshot({ path: '/tmp/claude-0/editor.png', clip: { x: 344, y: 60, width: 1156, height: 900 } });
+        // the editor: one text, one box around it, a way out, and the ghost that used to sit under a drag is gone
+        const ed = await page.evaluate(() => { const c = document.querySelector('#egQueue .rvItem[data-kind=placement]'); const bc = c && c.querySelector('.backHost canvas'); return { box: !!(bc && bc._box), close: !!(c && c.querySelector('[data-a=close]')), slider: !!(c && c.querySelector('input[data-a=resize]')), arrows: !!(c && c.querySelector('[data-a=left]')), buttons: c ? [...c.querySelectorAll('.ctl button')].map(b => b.textContent.replace(/\s+/g, ' ').trim()) : [] }; });
+        console.log('editor', JSON.stringify(ed));
+        assert(ed.box && ed.close && !ed.slider && !ed.arrows, 'the text has its box, the card has a way out, and the slider and arrow buttons are gone: ' + JSON.stringify(ed));
+        const exit = await page.evaluate(async () => { document.querySelector('#egQueue [data-a=close]').click(); await new Promise(r => setTimeout(r, 200)); const rows = document.querySelectorAll('#egQueue [data-open]').length; const first = document.querySelector('#egQueue [data-open]'); if (first) first.click(); await new Promise(r => setTimeout(r, 300)); return { rows, back: !!document.querySelector('#egQueue .rvItem[data-kind=placement]') }; });
+        assert(exit.rows >= 1 && exit.back, 'closing the card shows the list of placements, and a row opens one again: ' + JSON.stringify(exit));
         const moved = await page.evaluate(async () => {
           const j = [...Engrave.items().values()].find(x => x.state === 'review'); if (!j) return null;
           const before = { size: j.fit.size, max: j.fit.fittedMax, centre: j.fit.centre.slice() };

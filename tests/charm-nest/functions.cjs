@@ -186,6 +186,11 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   r = await post(lib, { op: 'masterListFiles' }); assert.strictEqual(r.body.files.length, 1);
   r = await post(lib, { op: 'poolPut', pools: [{ poolId: '3521337740_4412778001_1', runId: 'run-A', orderId: '3521337740', sku: 'BR-CMP-01', material: 'gold', copy: 1, quantity: 1, state: 'ready' }] }); assert.strictEqual(r.body.written, 1);
   r = await post(lib, { op: 'poolPut', pools: [{ poolId: '3521337740_4412778001_1', runId: 'run-B', orderId: '3521337740', sku: 'BR-CMP-01', material: 'gold', copy: 1, quantity: 1, state: 'ready' }] }); assert.strictEqual(r.body.contended.length, 1, 'a second run contending for the line is refused'); assert.strictEqual(r.body.contended[0].runId, 'run-A');
+  // …unless the run holding the line was stopped or given up: then the line is anyone's again
+  r = await post(lib, { op: 'runPut', run: { runId: 'run-A', day: '2026-09-16', status: 'stopped', step: 'claim', lines: {} } });
+  r = await post(lib, { op: 'poolPut', pools: [{ poolId: '3521337740_4412778001_1', runId: 'run-B', orderId: '3521337740', sku: 'BR-CMP-01', material: 'gold', copy: 1, quantity: 1, state: 'ready' }] }); assert.strictEqual(r.body.contended.length, 0, 'a stopped run does not hold its lines against a new one'); assert.strictEqual(r.body.written, 1);
+  r = await post(lib, { op: 'poolUpdate', poolIds: ['3521337740_4412778001_1'], patch: { runId: 'run-A' } });   // back to run-A for the rest of the checks
+  r = await post(lib, { op: 'runPut', run: { runId: 'run-A', day: '2026-09-16', status: 'running', step: 'pool', lines: {} } });
   r = await post(lib, { op: 'poolUpdate', poolIds: ['3521337740_4412778001_1'], patch: { state: 'written', sheetId: 'gold-x' } }); r = await post(lib, { op: 'poolList', runId: 'run-A' }); assert.strictEqual(r.body.pools[0].state, 'written');
   r = await post(lib, { op: 'setAllocate', day: '2026-09-16', runId: 'run-A' }); assert.strictEqual(r.body.seq, 1); const setA = r.body.setId;
   r = await post(lib, { op: 'setAllocate', day: '2026-09-16', runId: 'run-B' }); assert.strictEqual(r.body.seq, 2, 'the next set of the same day is Set-2');
