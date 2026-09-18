@@ -544,6 +544,45 @@ dialog.hist .hFoot{flex:0 0 auto;padding:7px 18px 12px;font-size:11px;color:var(
 .hSheet .ct{font:11px var(--mono);color:var(--ink45)}
 .hSheet .sp{flex:1 1 auto}
 .hEmpty{padding:34px;text-align:center;color:var(--ink45);font-size:13px}
+
+/* one chosen run, on every tab that is about a run */
+.scopeStrip{display:flex;align-items:center;gap:10px;background:var(--velvet);color:#fff;border-radius:11px;padding:6px 8px 6px 13px;margin-bottom:11px;flex:0 0 auto}
+.scopeStrip.hidden{display:none}
+.scopeStrip .nm{font:700 12.5px var(--sans);white-space:nowrap}
+.scopeStrip .ct{font:11px var(--mono);opacity:.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.scopeStrip .sp{flex:1 1 auto;min-width:4px}
+.scopeStrip .btn.ghost{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.3);color:#fff}
+.scopeStrip .btn.ghost:hover{background:rgba(255,255,255,.24)}
+.scopeView{display:flex;flex-direction:column;gap:11px;min-height:0}
+.scopeView.hidden{display:none}
+.scopeBar{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:11px;padding:7px 9px 7px 13px;flex:0 0 auto}
+.scopeBar .nm{font:700 13px var(--sans);white-space:nowrap}
+.scopeBar .ct{font:11.5px var(--mono);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.scopeBar .sp{flex:1 1 auto;min-width:4px}
+.scopeBody{flex:1 1 auto;min-height:0;overflow:auto}
+.scopeSec{font:700 10.5px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--ink45);padding:13px 2px 7px}
+.scopeSec:first-child{padding-top:2px}
+.scopeGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.scopeGrid.backs{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
+.scopeCard{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:9px;display:grid;gap:6px;box-shadow:var(--sh);cursor:pointer}
+.scopeCard:hover{border-color:var(--ink45)}
+.scopeCard .h{display:flex;align-items:center;gap:8px;min-width:0}
+.scopeCard .nm{font:600 11.5px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.scopeCard .h .pill{margin-left:auto;flex:0 0 auto;padding:2px 7px;font-size:10px}
+.scopeCard .pv{width:100%;border:1px solid var(--line);border-radius:8px;background:#fff;display:block}
+.scopeCard .pv.ph{aspect-ratio:2/1;display:flex;align-items:center;justify-content:center;color:var(--ink45);font-size:11px}
+.scopeCard .m{font:11.5px var(--mono);color:var(--ink70)}
+.scopeCard .m.sub{color:var(--ink45);font-size:10.5px}
+.scopeCard .m .bad{color:#8a3a26}
+.scopeList{display:grid;gap:5px}
+.scopeOrd{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:7px 10px;display:grid;gap:4px}
+.scopeOrd .oh{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.scopeOrd .oh .why{font-size:11.5px;color:#8a3a26}
+.ol{display:flex;align-items:center;gap:9px;font-size:11.5px;min-width:0;flex-wrap:wrap}
+.ol .sku{color:var(--ink70);min-width:12ch}
+.ol .w{flex:1 1 200px;min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:var(--serif);font-size:12.5px}
+.ol .st{color:var(--ink45);font-size:10.5px}
+.scopeList>.ol{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:6px 10px}
 .hEmpty.bad{color:#8a3a26}
 .runBanner.stopped{background:var(--claySoft);border-color:#e3c8bf}
 .runBanner.done{background:var(--sageSoft);border-color:#cfdcc9}
@@ -2844,7 +2883,7 @@ async function boot() {
   cloudProbe();
   refreshAllCards(); updateTopSub();
   window.CN = { S, AG, DEFAULTS, METALS, showPage, startNest, intake, api, agent, agentUpdate, agentCall, uploadBytes, buildJob, setMode, renderLibrary, loadLibrary, applyGroupingReview, reviewGrouping, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; },
-    activePage, allSheets, pagesOf, addPage, sheetDirty, activeCharms, renderCard, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log };   // for tests, the console and charm-nest-bridge.js
+    activePage, allSheets, pagesOf, addPage, sheetDirty, activeCharms, renderCard, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, openLibrarySheet, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log };   // for tests, the console and charm-nest-bridge.js
 }
 boot();
 </script>

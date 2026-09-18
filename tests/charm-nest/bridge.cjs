@@ -412,7 +412,7 @@ const receipts = [
       console.log('history', JSON.stringify(hist));
       assert(hist.open, 'the history lists the runs on record');
       assert(hist.runs.some(r => /line/.test(r.text) && /Set|no set/.test(r.text)), 'each run says which set, which day and how big: ' + JSON.stringify(hist.runs[0]));
-      assert(hist.runs.every(r => r.acts.includes('lines')), 'and opens its orders');
+      assert(hist.runs.every(r => r.acts.includes('open')), 'and each one can be opened: ' + JSON.stringify(hist.runs[0].acts));
       assert(/looked at the \d+ most recent runs/.test(hist.foot), 'it says how far it looked: ' + hist.foot);
       assert(hist.found.length >= 1 && hist.hits.some(h => /3521000002/.test(h)), 'searching by order number finds the run that carried it: ' + JSON.stringify(hist));
       assert(/nothing matches/.test(hist.none), 'and a search with no answer says so: ' + hist.none);
@@ -522,36 +522,64 @@ const receipts = [
       console.log('orders cards', JSON.stringify({ chips: ord.chips, n: ord.cards.length, first: ord.cards[0], sideScroll: ord.sideScroll }));
       assert(ord.cards.length >= 3, 'every pulled line is a card: ' + ord.cards.length);
 
-      /* Old sheets are finished records. Looking at them must read the library and nothing else — an earlier turn of
-         mine wired this to the resume path, which re-pulled every order from Etsy to show a preview that was already
-         in Storage. Nothing here may start, pull, claim or nest. */
-      const oldSheets = await page.evaluate(async () => {
+      /* One chosen run, on every tab. Choosing it is a read of the records the run already wrote — an earlier turn of
+         mine wired this to the resume path, which re-pulled every order from Etsy to show a preview that was already in
+         Storage. Nothing here may start, pull, claim or nest, and what is live must be left exactly as it was. */
+      const scoped = await page.evaluate(async () => {
         const runId = B.run && B.run.runId; if (!runId) return { skip: 'no run' };
         const runBefore = B.run, linesBefore = Orders.rows().length;
-        const pulls = [];
-        const realPull = Orders.pull; Orders.pull = (...a2) => { pulls.push('pull'); return realPull(...a2); };
-        const realStart = RunCtl.start; RunCtl.start = () => { pulls.push('start'); };
-        const realResume = RunCtl.resumeRun; RunCtl.resumeRun = () => { pulls.push('resume'); };
+        const did = [];
+        const realPull = Orders.pull; Orders.pull = () => { did.push('pull'); };
+        const realStart = RunCtl.start; RunCtl.start = () => { did.push('start'); };
+        const realResume = RunCtl.resumeRun; RunCtl.resumeRun = () => { did.push('resume'); };
         RunHistory.show(''); await new Promise(r => setTimeout(r, 900));
         const row = document.querySelector(`.hRun[data-run="${CSS.escape(runId)}"]`);
-        const btn = row && row.querySelector('[data-a=sheets]');
+        const btn = row && row.querySelector('[data-a=open]');
         const label = btn && btn.textContent.trim();
         if (btn) btn.click();
-        await new Promise(r => setTimeout(r, 1400));
+        await new Promise(r => setTimeout(r, 1500));
+        const seen = {};
+        for (const m of ['nest', 'orders', 'engrave', 'review']) {
+          CN.setMode(m); await new Promise(r => setTimeout(r, m === 'engrave' ? 1800 : 350));
+          const rec = document.getElementById('scopeView');
+          const real = { orders: 'ordersView', review: 'reviewView' }[m];
+          const live = real ? document.getElementById(real) : null;
+          seen[m] = {
+            strip: !document.getElementById('scopeStrip').classList.contains('hidden'),
+            // Nest and Engraving are drawn from the records; Orders and Review are the real tabs, on the run's own lines
+            body: real ? (live && !live.classList.contains('hidden')) : (!!rec && !rec.classList.contains('hidden')),
+            text: ((real ? live : rec) || {}).textContent ? ((real ? live : rec).textContent).replace(/\s+/g, ' ').trim().slice(0, 100) : ''
+          };
+        }
+        const cards = document.querySelectorAll('#ordBody .ocard').length;
+        CN.setMode('orders'); Orders.render(); await new Promise(r => setTimeout(r, 250));
+        const ordCards = document.querySelectorAll('#ordBody .ocard, #ordBody .olist').length;
+        const pullOff = !!(document.getElementById('ordPull') || {}).disabled;
+        const recordLines = Orders.rows().length;
+        const recordIsRun = Orders.rows().every(r2 => r2.fromRecord);
+        const bar = (document.getElementById('scopeStrip') || {}).textContent || '';
+        document.querySelector('[data-s=close]').click();
+        await new Promise(r => setTimeout(r, 300));
+        const afterClose = { scope: Scope.on() };
         Orders.pull = realPull; RunCtl.start = realStart; RunCtl.resumeRun = realResume;
-        return { label, mode: CN.S.mode, search: (document.getElementById('libSearch') || {}).value,
-          cards: document.querySelectorAll('#libBody .libCard').length, pulls,
-          sameRun: B.run === runBefore, linesKept: Orders.rows().length === linesBefore,
-          dlgOpen: !!(document.getElementById('histDlg') || {}).open };
+        return { label, seen, bar: bar.replace(/\s+/g, ' ').trim(), did, afterClose, cards, ordCards, pullOff,
+          recordLines, recordIsRun, sameRun: B.run === runBefore, linesBefore, linesAfter: Orders.rows().length };
       });
-      console.log('old sheets', JSON.stringify(oldSheets));
-      assert(!oldSheets.skip, 'there was a run whose sheets to open: ' + oldSheets.skip);
-      assert(/Sheets/.test(oldSheets.label || ''), 'the run offers its sheets: ' + oldSheets.label);
-      assert.strictEqual(oldSheets.mode, 'library', 'pressing it goes to the sheets, not to a run');
-      assert(oldSheets.cards >= 1, 'and they are there, from the saved records: ' + oldSheets.cards);
-      assert.deepStrictEqual(oldSheets.pulls, [], 'nothing was started, pulled or resumed to show them: ' + JSON.stringify(oldSheets.pulls));
-      assert(oldSheets.sameRun && oldSheets.linesKept, 'and what was on the cards is untouched');
-      assert(!oldSheets.dlgOpen, 'the dialog gets out of the way');
+      console.log('one run on every tab', JSON.stringify(scoped));
+      assert(!scoped.skip, 'there was a run to open: ' + scoped.skip);
+      assert(/Open this run/.test(scoped.label || ''), 'the run list hands the run to every tab: ' + scoped.label);
+      assert.deepStrictEqual(scoped.did, [], 'nothing was started, pulled or resumed to show it: ' + JSON.stringify(scoped.did));
+      for (const m of ['nest', 'orders', 'engrave', 'review']) {
+        assert(scoped.seen[m].strip, `${m} says which run it is showing`);
+        assert(scoped.seen[m].body, `${m} shows the chosen run`);
+        assert(scoped.seen[m].text.length > 20, `${m} has something in it: ` + scoped.seen[m].text);
+      }
+      assert(/Set|run/.test(scoped.bar) && /line/.test(scoped.bar), 'and every tab says which run it is: ' + scoped.bar);
+      assert(scoped.recordLines >= 1 && scoped.recordIsRun, "the run's own lines are the Orders tab: " + scoped.recordLines);
+      assert.strictEqual(scoped.linesAfter, scoped.linesBefore, 'and putting the run down gives the live pull back, not an empty list');
+      assert(scoped.ordCards >= 1, 'drawn as the same cards and rows as a live pull: ' + scoped.ordCards);
+      assert(scoped.pullOff, 'and a finished run cannot be pulled over');
+      assert(!scoped.afterClose.scope, 'and putting it down gives the tabs back');
       await page.evaluate(() => { CN.setMode('orders'); Orders.render(); });
       assert(ord.cards.every(c2 => /^\d{6,}$/.test(c2.num.trim()) && c2.sku && c2.state && c2.metal), 'each card carries the order, the SKU, the state and the metal: ' + JSON.stringify(ord.cards[0]));
       assert(ord.cards.some(c2 => c2.flag && c2.why), 'a line that needs a person says so on its own card');
