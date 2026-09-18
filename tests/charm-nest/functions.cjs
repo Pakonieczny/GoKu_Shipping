@@ -195,6 +195,20 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   r = await post(lib, { op: 'setList', from: '2026-09-16', to: '2026-09-16' }); assert.strictEqual(r.body.sets.length, 2);
   r = await post(lib, { op: 'runPut', run: { runId: 'run-A', step: 'nest', status: 'running', day: '2026-09-16', lines: { a: { state: 'pooled' } } } }); r = await post(lib, { op: 'runGet', runId: 'run-A' }); assert.strictEqual(r.body.run.step, 'nest');
   r = await post(lib, { op: 'runList' }); assert(r.body.runs.some(x => x.runId === 'run-A' && x.lines === 1));
+  // a calibration row is a statistic, so a sheet with nothing to teach is skipped, never refused: the refusal used to
+  // travel up through the save and stop a run whose sheets were already written, verified and on record
+  r = await post(lib, { op: 'putCalibration', row: { sheetId: 'gold-x', metal: 'gold', density: 0, count: 0 } });
+  assert.strictEqual(r.status, 200, 'an empty calibration row is not an error'); assert(r.body.ok && r.body.skipped, 'and it says it was skipped');
+  r = await post(lib, { op: 'putCalibration', row: { sheetId: 'gold-x', metal: 'gold', density: 0.61, count: 40, cv: 0.4, largestFrac: 0.1 } });
+  assert(r.body.ok && !r.body.skipped, 'a real one is kept'); r = await post(lib, { op: 'getCalibration' }); assert(r.body.rows.some(x => x.sheetId === 'gold-x' && x.count === 40), 'the real one is on record'); assert(!r.body.rows.some(x => !(x.count > 0)), 'and no empty row ever was');
+  // history: one search over every run and sheet on record, and an honest count of how far it looked
+  await post(lib, { op: 'runPut', run: { runId: 'run-H', step: 'commit', status: 'complete', day: '2026-09-15', seq: 4, setId: 'set-2026-09-15-4', lines: { 'k1': { state: 'pooled', orderId: '9911', sku: 'BR-HIS-01', engrave: { text: 'MAEVE' } } } } });
+  r = await post(lib, { op: 'history' }); assert(r.body.runs.some(x => x.runId === 'run-H' && x.seq === 4), 'every run is listed');
+  assert(r.body.scanned && r.body.scanned.runs >= 2, 'and it says how many it read: ' + JSON.stringify(r.body.scanned));
+  r = await post(lib, { op: 'history', q: '9911' }); assert.strictEqual(r.body.runs.length, 1, 'found by order number'); assert.deepStrictEqual(r.body.runs[0].hitOrders, ['9911']);
+  r = await post(lib, { op: 'history', q: 'maeve' }); assert.strictEqual(r.body.runs.length, 1, 'found by the words that were engraved');
+  r = await post(lib, { op: 'history', q: 'br-his' }); assert.deepStrictEqual(r.body.runs[0].hitSkus, ['BR-HIS-01'], 'found by SKU');
+  r = await post(lib, { op: 'history', q: 'nothing-like-this' }); assert.strictEqual(r.body.runs.length, 0, 'and it does not invent matches');
   r = await post(lib, { op: 'bridgeLog', session: 'k3f9a2xyz', rows: [{ t: 1, dir: 'cmd', type: 'hello' }, { t: 2, dir: 'reply', type: 'hello', ms: 12 }], meta: { bench: 'design-1' } }); assert.strictEqual(r.body.rows, 2);
   assert.strictEqual([...store.keys()].filter(k => k.startsWith('Design_Bridge/k3f9a2xyz/log/')).length, 2, 'two log rows under the session');
   r = await post(lib, { op: 'aliasPut', listingId: '1718', sku: 'BR-CMP-01', by: 'Ana' }); r = await post(lib, { op: 'aliasGet' }); assert.strictEqual(r.body.aliases['1718'].sku, 'BR-CMP-01');

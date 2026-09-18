@@ -18,7 +18,7 @@
 (function () {
 const O = CharmNestOrders, G = CharmNestGeom, P = CharmNestPDF;
 const MM = 25.4 / 72, PT = 72 / 25.4;
-const B = window.B = { link: null, orders: { rows: [], byKey: new Map(), pulledAt: 0, stale: false, snapshot: null, filtered: 0 }, master: { entries: new Map(), files: [], loadedAt: 0, loading: null, error: null, jobs: new Map() }, maps: { optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [], rows: [] }, loadedAt: 0 }, pool: { rows: new Map(), sources: new Map() }, engrave: { items: new Map(), fonts: { ok: false, Regular: null, Semibold: null, error: null, loading: null } }, review: { items: [] }, openRuns: null, run: null, sets: new Map(), employee: (localStorage.getItem("cn.employee") || "").trim() };
+const B = window.B = { link: null, orders: { rows: [], byKey: new Map(), pulledAt: 0, stale: false, snapshot: null, filtered: 0 }, master: { entries: new Map(), files: [], loadedAt: 0, loading: null, error: null, jobs: new Map() }, maps: { optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [], rows: [] }, loadedAt: 0 }, pool: { rows: new Map(), sources: new Map() }, engrave: { items: new Map(), fonts: { ok: false, Regular: null, Semibold: null, error: null, loading: null } }, review: { items: [] }, openRuns: null, run: null, viewing: null, sets: new Map(), employee: (localStorage.getItem("cn.employee") || "").trim() };
 const SOURCE_LABEL = { personalization: "the personalisation box", personalisation: "the personalisation box", buyerMessage: "the buyer's message", staffNote: "the staff note", messages: "the staff messages", none: "", "": "" };
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const fmtT = t => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -560,7 +560,7 @@ const Orders = window.Orders = (() => {
      cards here costs Etsy nothing this page would not already have spent. They are asked for only as a card comes into
      view, at most a dozen at a time, and remembered for the session. A charm we hold a design for falls back to its own
      thumbnail, which is the drawing that will actually be cut. */
-  const IMG = { got: new Map(), want: new Set(), timer: 0, io: null };
+  const IMG = { got: new Map(), want: new Set(), timer: 0, io: null, retry: 0 };
   /** Only a card a person can actually see asks for its photograph: 411 lines must not mean 411 Etsy images. */
   function watchImages(host) {
     if (IMG.io) IMG.io.disconnect();
@@ -584,11 +584,14 @@ const Orders = window.Orders = (() => {
       IMG.timer = 0;
       const ids = [...IMG.want].slice(0, 12); ids.forEach(id => IMG.want.delete(id));
       if (!ids.length) return;
-      if (!DesignLink.up()) { ids.forEach(id => IMG.got.set(id, null)); return; }
+      /* A "no" while the Design Station was still connecting used to be remembered forever, and the cards stayed blank
+         for the rest of the session however long the link had been up since. A link that is down is not an answer:
+         the ids go back in the queue and are asked again when it comes up. */
+      if (!DesignLink.up()) { ids.forEach(id => IMG.want.add(id)); IMG.retry = setTimeout(() => { IMG.retry = 0; const back = [...IMG.want]; IMG.want.clear(); back.forEach(wantImage); }, 4000); return; }
       try {
         const got = await DesignLink.call("orders.images", { listingIds: ids }, { timeoutMs: 45000, quiet: true });
         for (const id of ids) IMG.got.set(id, (got.images && got.images[id]) || null);
-      } catch (_) { ids.forEach(id => IMG.got.set(id, null)); }
+      } catch (e) { if (/timed out|link|closed|no reply/i.test(e.message || "")) ids.forEach(id => IMG.want.add(id)); else ids.forEach(id => IMG.got.set(id, null)); }
       paintImages();
       if (IMG.want.size) { const next = [...IMG.want][0]; IMG.want.delete(next); wantImage(next); }
     }, 120);
@@ -600,9 +603,11 @@ const Orders = window.Orders = (() => {
       if (host.dataset.painted === "1") continue;
       if (!url) { if (IMG.got.has(host.dataset.lid)) { host.dataset.painted = "1"; const p2 = host.querySelector(".ph"); if (p2) p2.textContent = "no image"; } continue; }
       host.dataset.painted = "1";
-      if (host.tagName === "IMG") { host.src = url; continue; }
+      if (host.tagName === "IMG") { host.onerror = () => { host.removeAttribute("src"); delete host.dataset.painted; }; host.src = url; continue; }
       const img = host.querySelector("img") || host.appendChild(el("img"));
-      img.loading = "lazy"; img.alt = ""; img.src = url;
+      img.loading = "lazy"; img.alt = "";
+      img.onerror = () => { img.remove(); delete host.dataset.painted; if (!host.querySelector(".ph")) { const p = el("span", "ph"); p.textContent = "no image"; host.appendChild(p); } };
+      img.src = url;
       const ph = host.querySelector(".ph"); if (ph) ph.remove();
       if (IMG.io) IMG.io.unobserve(host);
     }
@@ -723,13 +728,13 @@ const Orders = window.Orders = (() => {
         <div class="ordBar" id="ordBar">
           <button class="btn sm" id="ordPull">Pull orders</button>
           <button class="btn gold sm" id="ordRun" title="nest, engrave and label every line that is ready to go">Run set ▶</button>
-          <button class="btn ghost sm" id="ordResume" title="open a run from an earlier session and carry on from where it stopped">Earlier run…</button>
+          <button class="btn ghost sm" id="ordResume" title="every run on record — search it by order, SKU or date, carry one on, or open its sheets">Earlier runs…</button>
           <select id="ordPullMode" title="which open orders to bring in"><option value="all">Every open order</option><option value="dueBy">Due by date</option><option value="count">N most urgent</option></select>
           <input type="date" id="ordDueBy" title="orders due on or before this date"><input type="number" id="ordCount" min="1" max="500" title="how many of the most urgent orders">
           <span class="spacer"></span><span class="pill" id="ordMeta"></span>
         </div>
         <div class="ordFilters"><span class="chips" id="ordChips"></span>
-          <span class="tail"><input class="ordSearch" id="ordQ" placeholder="order, SKU, words…" title="search the order number, the SKU, the title and everything the customer or the shop wrote">
+          <span class="tail"><span id="ordMetalHost"></span><input class="ordSearch" id="ordQ" placeholder="order, SKU, words…" title="search the order number, the SKU, the title and everything the customer or the shop wrote">
           <select class="ordSort" id="ordSort" title="what orders the cards"><option value="due">by ship-by</option><option value="order">by order</option><option value="state">by state</option></select>
           <span class="viewSeg" id="ordViewSeg"></span></span>
         </div>
@@ -742,7 +747,7 @@ const Orders = window.Orders = (() => {
     v.querySelector("#ordSort").onchange = e => { OV.sort = e.target.value; OV.desc = false; renderBody(); };
     v.querySelector("#ordPull").onclick = async () => { if (v.querySelector("#ordPull").disabled) return; try { await pull(null); } catch (e) { toast(e.message, "bad", 7000); agent({ bridge: true }, "warn", e.message); } };
     v.querySelector("#ordRun").onclick = () => RunCtl.start();
-    v.querySelector("#ordResume").onclick = () => RunCtl.pickResume();
+    v.querySelector("#ordResume").onclick = () => RunHistory.show();
     Sandbox.mountPanel(v);
   }
   /** What changes while a run works: the counts, the chips, the summary, and which run buttons apply. */
@@ -754,7 +759,6 @@ const Orders = window.Orders = (() => {
     pull.title = running ? "a run is open — stop it first, or its lines would be replaced under it" : "ask the Design Station for every open order that matches the rule below";
     // while a run is open the banner above owns it: repeating Run and Resume here only made it unclear which did what
     v.querySelector("#ordRun").classList.toggle("hidden", !!running);
-    v.querySelector("#ordResume").classList.toggle("hidden", !!running);
     v.querySelector("#ordPullMode").value = s.pullMode || "all";
     v.querySelector("#ordDueBy").value = s.pullDueBy || "";
     v.querySelector("#ordDueBy").classList.toggle("hidden", s.pullMode !== "dueBy");
@@ -768,13 +772,16 @@ const Orders = window.Orders = (() => {
     const counts = {}; for (const r of all) counts[pileOf(r)] = (counts[pileOf(r)] || 0) + 1;
     const byMetal = {}; for (const r of all) { const m = r.material || "none"; byMetal[m] = (byMetal[m] || 0) + 1; }
     const chip = (on, id, label, n, cls, title) => `<button class="egTab${on ? " on" : ""}" data-pile="${esc(id)}" title="${esc(title || "")}">${esc(label)}<b class="${cls}">${n}</b></button>`;
-    const mChip = m => `<button class="egTab${OV.metal === m ? " on" : ""}" data-metal="${esc(m)}" title="show only ${esc(m === "none" ? "lines with no material yet" : labelOf(m))}">${esc(m === "none" ? "No material" : labelOf(m))}<b>${byMetal[m] || 0}</b></button>`;
+    /* Six state chips and six metal chips wrapped onto two rows above every list. The state is the question a person
+       actually asks; the metal is a narrowing of it, so it is one control, not six, and the row stays one row. */
+    const metals = ["gold", "silver", "rose", "gold10k", "gold14k", "none"].filter(m => byMetal[m] || OV.metal === m);
     v.querySelector("#ordChips").innerHTML =
       chip(!OV.pile, "", "Everything", all.length, "", "every line that was pulled")
       + PILES.filter(g => counts[g.id] || OV.pile === g.id).map(g => chip(OV.pile === g.id, g.id, g.label, counts[g.id] || 0, g.cls, g.label)).join("")
-      + (Object.keys(byMetal).length > 1 || OV.metal ? `<span class="sep"></span>` + ["gold", "silver", "rose", "gold10k", "gold14k", "none"].filter(m => byMetal[m] || OV.metal === m).map(mChip).join("") : "");
+;
+    v.querySelector("#ordMetalHost").innerHTML = metals.length > 1 || OV.metal ? `<select class="ordMetal" id="ordMetal" title="narrow it to one material">${[`<option value="">Any material</option>`].concat(metals.map(m => `<option value="${esc(m)}"${OV.metal === m ? " selected" : ""}>${esc(m === "none" ? "No material" : labelOf(m))} \u00b7 ${byMetal[m] || 0}</option>`)).join("")}</select>` : "";
     v.querySelectorAll("[data-pile]").forEach(b => b.onclick = () => { OV.pile = b.dataset.pile || null; renderHead(v); renderBody(); });
-    v.querySelectorAll("[data-metal]").forEach(b => b.onclick = () => { OV.metal = OV.metal === b.dataset.metal ? null : b.dataset.metal; renderHead(v); renderBody(); });
+    const ms = v.querySelector("#ordMetal"); if (ms) ms.onchange = () => { OV.metal = ms.value || null; renderHead(v); renderBody(); };
     v.querySelector("#ordViewSeg").innerHTML = ["cards", "list"].map(k => `<button data-view="${k}"${viewMode() === k ? ' class="on"' : ""} title="${k === "cards" ? "a card for every line, with its picture" : "the same lines as rows"}">${k === "cards" ? "Cards" : "List"}</button>`).join("");
     v.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { OV.view = b.dataset.view; S.settings.orderView = OV.view; saveSettings(); renderHead(v); renderBody(); });
   }
@@ -1029,21 +1036,26 @@ const Master = window.Master = (() => {
     }
     return [...out.values()].sort((a, b) => b.lines - a.lines || a.sku.localeCompare(b.sku));
   }
+  /* This used to open as a wall: a headline, a paragraph, sixty SKU chips and three buttons, on a tab a person opened to
+     do something else, with no way to shut it. It is one line now, it closes, and it stays closed. */
   function paintMissing(v) {
     let box = v.querySelector("#mMissing");
     if (!box) { box = el("div", "missBox"); box.id = "mMissing"; const head = v.querySelector(".noteBox"); if (head) head.insertAdjacentElement("afterend", box); else v.prepend(box); }
     const miss = missingSkus();
-    if (!miss.length) { box.className = "missBox hidden"; box.innerHTML = ""; return; }
+    if (!miss.length || B.missShut) { box.className = "missBox hidden"; box.innerHTML = ""; return; }
     const lines = miss.reduce((n, m) => n + m.lines, 0);
     const orders = new Set(); miss.forEach(m => m.orders.forEach(o => orders.add(o)));
-    box.className = "missBox";
-    box.innerHTML = '<div class="t"><b>' + miss.length + ' SKU' + (miss.length === 1 ? "" : "s") + ' the orders want that no master file holds</b>' +
-      '<span>' + lines + ' line' + (lines === 1 ? "" : "s") + ' across ' + orders.size + ' order' + (orders.size === 1 ? "" : "s") + ' are waiting on them \u2014 add the master files that carry them and every one goes through</span></div>' +
-      '<div class="skus">' + miss.slice(0, 60).map(m => '<span class="s" title="' + esc(m.title) + '">' + esc(m.sku) + (m.lines > 1 ? '<i>\u00d7' + m.lines + '</i>' : "") + '</span>').join("") +
+    box.className = "missBox" + (B.missOpen ? " open" : "");
+    box.innerHTML = '<div class="t"><b>' + miss.length + ' SKU' + (miss.length === 1 ? "" : "s") + ' the orders want have no master file</b>' +
+      '<span>' + lines + ' line' + (lines === 1 ? "" : "s") + ' \u00b7 ' + orders.size + ' order' + (orders.size === 1 ? "" : "s") + '</span>' +
+      '<button class="btn ghost xs" data-a="see">' + (B.missOpen ? "Hide" : "See them") + '</button>' +
+      '<button class="x" data-a="shut" title="close this \u2014 it stays closed">\u00d7</button></div>' +
+      (B.missOpen ? '<div class="skus">' + miss.slice(0, 60).map(m => '<span class="s" title="' + esc(m.title) + '">' + esc(m.sku) + (m.lines > 1 ? '<i>\u00d7' + m.lines + '</i>' : "") + '</span>').join("") +
       (miss.length > 60 ? '<span class="s more">\u2026 and ' + (miss.length - 60) + ' more</span>' : "") + '</div>' +
-      '<div class="acts"><button class="btn ghost xs" data-a="copy" title="copy the list, so the master files that carry them can be found">Copy the list</button>' +
-      '<button class="btn ghost xs" data-a="save" title="save the list with the orders waiting on each one">Save as a file</button>' +
-      '<button class="btn gold xs" data-a="add" title="index another master file into the library">Add a master file</button></div>';
+      '<div class="acts"><button class="btn ghost xs" data-a="copy">Copy the list</button><button class="btn ghost xs" data-a="save">Save as a file</button><button class="btn gold xs" data-a="add">Add a master file</button></div>' : "");
+    box.querySelector("[data-a=shut]").onclick = () => { B.missShut = true; paintMissing(v); };
+    box.querySelector("[data-a=see]").onclick = () => { B.missOpen = !B.missOpen; paintMissing(v); };
+    if (!B.missOpen) return;
     box.querySelector("[data-a=copy]").onclick = async () => { try { await navigator.clipboard.writeText(miss.map(m => m.sku).join("\n")); toast(miss.length + " SKU(s) copied", "ok"); } catch (_) { toast("Could not reach the clipboard", "bad"); } };
     box.querySelector("[data-a=save]").onclick = () => {
       const rows = [["sku", "lines", "orders", "title"]].concat(miss.map(m => [m.sku, m.lines, [...m.orders].join(" "), m.title]));
@@ -1607,6 +1619,25 @@ const Engrave = window.Engrave = (() => {
 
   /* ── the Engraving tab ── */
   const EG = { tab: null, focus: null, chosen: false, card: null, cardKey: null, reread: 0 };
+  /** Which run's engraving this is. A tab that showed a queue and no run left nobody able to say whose queue it was. */
+  function runWord() {
+    const r = B.run || B.viewing; if (!r) return "no run — earlier runs…";
+    return (r.seq ? `Set ${r.seq}` : r.runId.slice(-8)) + (r.day ? " · " + new Date(r.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "");
+  }
+  /** An empty queue has four different causes, and only one of them means "you are done". Say which one it is. */
+  function emptyWhy(jobs, nWords, nDone) {
+    const r = B.run;
+    const line = (t, btn) => `<div class="libEmpty"><b>${t}</b>${btn || ""}</div>`;
+    if (!r && !jobs.length) return line("No run is open, so there is nothing to engrave yet.", `<button class="btn gold sm" data-go="hist">Earlier runs…</button>`);
+    if (r && r.status === "stopped") return line(`This run stopped before the engraving step${r.stoppedBy ? ` — ${esc(r.stoppedBy)}` : ""}.`, `<button class="btn ghost sm" data-go="orders">Back to the run</button>`);
+    if (r && O.stepIndex(r.step) < O.stepIndex("engrave")) return line(`Nothing to engrave yet — this run is still at ${esc(STEP_WORDS_EG[r.step] || r.step)}.`, `<button class="btn ghost sm" data-go="orders">Back to the run</button>`);
+    if (nWords) return line(`${nWords} still need their words settled before a placement can be drawn.`, `<button class="btn gold sm" data-go="words">Open Words</button>`);
+    const rv = Review.count();
+    if (rv) return line(`${rv} line${rv === 1 ? "" : "s"} need a decision before anything can be engraved.`, `<button class="btn gold sm" data-go="review">Open Review</button>`);
+    if (nDone) return line("Every placement in this run is decided.", `<button class="btn ghost sm" data-go="hist">Another run…</button>`);
+    return line("Nothing in this run needs engraving.", `<button class="btn ghost sm" data-go="hist">Another run…</button>`);
+  }
+  const STEP_WORDS_EG = { pull: "pulling orders", claim: "claiming", pool: "pooling", plan: "planning", nest: "nesting", checkpoint: "checking the sheets", labels: "writing labels", commit: "committing" };
   /** Bring the counts and the up-next rail up to date without touching the card a person is working on. */
   function renderChrome(v, queue) {
     const jobs = [...items().values()].filter(j => j.row.state !== "gone");
@@ -1682,13 +1713,14 @@ const Engrave = window.Engrave = (() => {
     v.innerHTML = `<div class="ordBar egBar">
         ${tabBtn("place", "Placements", queue.length, "info")}${tabBtn("words", "Words", words.length, "warn")}${tabBtn("done", "Decided", done.length, "ok")}
         ${working ? `<span class="egTab working" title="being read and fitted now — they arrive in Words or Placements on their own"><span class="spin"></span>Working<b>${working}</b></span>` : ""}
-        <span class="spacer"></span><span class="pill ${F_.ok ? "ok" : "bad"}" title="${F_.ok ? "the engraving font is loaded" : esc(F_.error || "the engraving font files are missing")}">${F_.ok ? "Source Sans 3" : "Source Sans 3 missing"}</span><button class="btn ghost xs" id="egWho" title="every approval is recorded under this name — click to change it">${esc(employeeName() || "set your name")}</button></div>
+        <span class="spacer"></span><button class="btn ghost xs" id="egRun" title="which run this engraving belongs to — click for every run on record">${esc(runWord())}</button><span class="pill ${F_.ok ? "ok" : "bad"}" title="${F_.ok ? "the engraving font is loaded" : esc(F_.error || "the engraving font files are missing")}">${F_.ok ? "Source Sans 3" : "Source Sans 3 missing"}</span><button class="btn ghost xs" id="egWho" title="every approval is recorded under this name — click to change it">${esc(employeeName() || "set your name")}</button></div>
       <div class="egPane grow"${tab === "place" ? "" : " hidden"}><div class="rvList" id="egQueue"></div>
         <div class="egNext" id="egNext"></div></div>
       <div class="egPane grow scroll"${tab === "words" ? "" : " hidden"}><div class="rvList" id="egWords"></div></div>
       <div class="egPane grow scroll"${tab === "done" ? "" : " hidden"}><div id="egBacks"></div></div>`;
     v.querySelectorAll(".egTab[data-tab]").forEach(b => b.onclick = () => { EG.tab = b.dataset.tab; EG.chosen = true; render(); });
     v.querySelector("#egWho").onclick = () => { askEmployee(); render(); };
+    v.querySelector("#egRun").onclick = () => RunHistory.show();
     if (tab === "words") {
       const w = v.querySelector("#egWords"); for (const j2 of words) w.appendChild(Review.card(Review.items().find(i2 => i2.key === "eng:" + j2.key) || { kind: j2.state === "blocked" ? "flipFailed" : "engraveWords", key: "eng:" + j2.key, row: j2.row, job: j2, why: j2.reason }));
       if (!words.length) w.innerHTML = `<div class="libEmpty">nothing waiting</div>`;
@@ -1696,7 +1728,7 @@ const Engrave = window.Engrave = (() => {
     if (tab === "place") {
       const q = v.querySelector("#egQueue");
       if (focus) { const c = placementCard(focus, queue.length); c.classList.add("full"); q.appendChild(c); EG.card = c; EG.cardKey = focus.key; }
-      else { EG.card = null; EG.cardKey = null; q.innerHTML = `<div class="libEmpty">no placement to review</div>`; }
+      else { EG.card = null; EG.cardKey = null; q.innerHTML = emptyWhy(jobs, words.length, done.length); q.querySelectorAll("[data-go]").forEach(b => b.onclick = () => { const g = b.dataset.go; if (g === "hist") RunHistory.show(); else if (g === "words") { EG.tab = "words"; EG.chosen = true; render(); } else { setMode(g); if (g === "review") Review.render(); } }); }
       // what is coming: the order and the words, so the list and the picture are the same thing
       const rail = v.querySelector("#egNext");
       const rest = queue.filter(j2 => j2 !== focus);
@@ -1828,7 +1860,7 @@ const Sets = window.Sets = (() => {
     let set;
     if (S.cloud.ok) { const r = await api("charmNestLibrary", { op: "setAllocate", day, runId: runKey }, { label: "Numbering the set" }); set = { setId: r.setId, seq: r.seq, day: r.day || day, runId: runKey, name: O.setLabel(r.seq), folder: O.setFolder(r.day || day, r.seq), orders: {}, sheetIds: [], materials: [], labelFiles: [], status: "open" }; }
     else { const k = "cn.setseq." + day; const seq = (+localStorage.getItem(k) || 0) + 1; localStorage.setItem(k, String(seq)); set = { setId: O.setId(day, seq), seq, day, runId: runKey, name: O.setLabel(seq), folder: O.setFolder(day, seq), orders: {}, sheetIds: [], materials: [], labelFiles: [], status: "open", offline: true }; }
-    byRun().set(runKey, set); if (B.run && B.run.runId === runKey) { B.run.setId = set.setId; B.run.day = set.day; }
+    byRun().set(runKey, set); if (B.run && B.run.runId === runKey) { B.run.setId = set.setId; B.run.day = set.day; B.run.seq = set.seq; RunCtl.renderBanner(); }
     agent({ run: runKey }, "cloud", `Set ${set.name} allocated for ${set.day} → ${set.folder}`);
     return set;
   }
@@ -2064,9 +2096,12 @@ const RunCtl = window.RunCtl = (() => {
     const r = B.run; if (!r) return;
     if (sh && sh.runId === r.runId) {
       r.sheets[sh.sheetId || sh.metal + "-" + sh.page] = { metal: sh.metal, page: sh.page, status: sh.status, verified: !!(sh.verification && sh.verification.ok), placed: sh.placements.length, rejects: sh.rejects.length, fileBase: sh.fileBase || null, error: err ? err.message : null };
-      if (err) { stop(`${sheetName(sh)}: ${err.message}`, "Fix the cause (see the card's log), then Resume — the sheet nests again."); return; }
-      if (["complete", "partial"].includes(sh.status) && sh.verification && !sh.verification.ok) { stop(`${sheetName(sh)} verification flagged`, "Open the sheet report; re-nest that card, then Resume."); return; }
-      if (sh.endedBy === "stopped") { stop(`${sheetName(sh)} nesting was stopped by the operator`, "Press Nest on that card, then Resume."); return; }
+      /* A sheet's trouble belongs on that sheet's card. The banner used to carry the whole message — "GF 14/20 · sheet 3:
+         bad row — Fix the cause (see the card's log), then Resume" — across every tab, above every list, for the rest of
+         the session. Now the banner names the sheet and offers the way to it; the reason is written where the sheet is. */
+      if (err) { sh.problem = err.message; CN.renderCard(sh); stop(`${sheetName(sh)} could not be saved`, "", { metal: sh.metal, page: sh.page }); return; }
+      if (["complete", "partial"].includes(sh.status) && sh.verification && !sh.verification.ok) { sh.problem = "verification flagged — open the report"; CN.renderCard(sh); stop(`${sheetName(sh)} needs a look`, "", { metal: sh.metal, page: sh.page }); return; }
+      if (sh.endedBy === "stopped") { sh.problem = "nesting was stopped here"; CN.renderCard(sh); stop(`${sheetName(sh)} was stopped`, "", { metal: sh.metal, page: sh.page }); return; }
       save(r).catch(() => {});
     }
     if (!waiter || waiter.r !== r) return;
@@ -2075,7 +2110,7 @@ const RunCtl = window.RunCtl = (() => {
     for (const pg of pages) if (pg.persisted && !pg.persistedDone) pg.persisted.then(() => { pg.persistedDone = true; onSheetDone(null); }, () => { pg.persistedDone = true; onSheetDone(null); });
     if (busy) return;
     const notWritten = pages.filter(pg => !pg.fileBase);
-    if (notWritten.length) { stop(`${notWritten.map(sheetName).join(", ")} not written`, "Check the cloud connection and the card's log, then Resume."); waiter = null; return; }
+    if (notWritten.length) { const one = notWritten[0]; one.problem = "not written to the cloud"; CN.renderCard(one); stop(`${notWritten.length === 1 ? sheetName(one) : notWritten.length + " sheets"} not written`, "", { metal: one.metal, page: one.page }); waiter = null; return; }
     const w = waiter; waiter = null; w.resolve();
   }
   function waitForReview(r) {
@@ -2096,7 +2131,7 @@ const RunCtl = window.RunCtl = (() => {
   const NEXT = { at: 0, t: 0 };
   function armNext(ms) { NEXT.at = Date.now() + ms; clearInterval(NEXT.t); NEXT.t = setInterval(() => { if (!NEXT.at) { clearInterval(NEXT.t); return; } renderBanner(); }, 1000); }
   function cancelNext() { NEXT.at = 0; clearInterval(NEXT.t); clearTimeout(autoTimer); renderBanner(); }
-  function stop(why, fix) { const r = B.run; if (!r) return; r.status = "stopped"; r.stoppedBy = why; r.fix = fix || null; r.errors.push({ t: Date.now(), why }); if (waiter && waiter.r === r) { const w = waiter; waiter = null; w.resolve(); } reviewWaiter = null; agent({ run: r.runId }, "warn", `Run stopped: ${why}${fix ? " — " + fix : ""}`); toast(`Run stopped: ${why}`, "bad", 8000); notifyPerson("Charm Sorter run stopped", why); save(r).catch(() => {}); renderBanner(); }
+  function stop(why, fix, at) { const r = B.run; if (!r) return; r.status = "stopped"; r.stoppedBy = why; r.fix = fix || null; r.at = at || null; r.errors.push({ t: Date.now(), why }); if (waiter && waiter.r === r) { const w = waiter; waiter = null; w.resolve(); } reviewWaiter = null; agent({ run: r.runId }, "warn", `Run stopped: ${why}${fix ? " — " + fix : ""}`); toast(`Run stopped: ${why}`, "bad", 8000); notifyPerson("Charm Sorter run stopped", why); save(r).catch(() => {}); renderBanner(); }
   function stopIfRunning(why, fix) { if (B.run && B.run.status === "running") stop(why, fix); }
   async function resume() {
     const r = B.run; if (!r || !["stopped", "paused"].includes(r.status)) return;
@@ -2183,6 +2218,10 @@ const RunCtl = window.RunCtl = (() => {
   }
   function renderModeBtn() { const b = document.getElementById("btnRunMode"); if (!b) return; const auto = S.settings.runMode === "auto"; b.classList.toggle("auto", auto); document.getElementById("runModeText").textContent = auto ? "Auto" : "Manual"; }
   const STEP_WORDS = { pull: "Pulling orders", claim: "Claiming", pool: "Pooling", plan: "Planning", nest: "Nesting", checkpoint: "Checking the sheets", engrave: "Engraving", revalidate: "Re-checking the orders", labels: "Writing labels", commit: "Committing", complete: "Complete" };
+  /* The button used to read "Next step" and the line beside it "next: plan" — and pressing it ran planning AND nesting,
+     because planning is not a step Manual mode stops at. So the button names the step it will actually stop after. */
+  const DO_WORDS = { pull: "Pull the orders", claim: "Claim them on the station", pool: "Pool the charms", plan: "Work out the layout", nest: "Nest the sheets", checkpoint: "Check the sheets", engrave: "Go to the engraving", revalidate: "Re-check the orders", labels: "Write the labels", commit: "Commit the set" };
+  function nextStop(r) { let st = r.step; for (let i = 0; i < 12; i++) { if (PAUSE_AFTER.has(st)) return st; const n = O.nextStep(st); if (!n) return st; st = n; } return st; }
   /** The one detail that makes the step concrete, in the shop's own words. */
   function stepDetail(r) {
     const sh = allSheets().filter(p => p.runId === r.runId);
@@ -2213,18 +2252,37 @@ const RunCtl = window.RunCtl = (() => {
         h.querySelector("#rbLater").onclick = () => { B.openRuns = null; renderBanner(); };
         Dock.schedule(); return;
       }
-      h.classList.add("hidden"); Dock.schedule(); return;
+      /* No run open used to mean no banner at all, and no way from here to any run that ever ran. It is a slim line now
+         with the two things a person wants from a standing start: begin one, or go back to one. */
+      const v = B.viewing;
+      h.classList.remove("hidden"); h.className = "runBanner" + (v ? " done" : " idle");
+      h.innerHTML = v
+        ? `<span class="rid" title="run ${esc(v.runId)}">${esc([v.seq ? "Set " + v.seq : "", v.day ? new Date(v.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "", `${v.lines} lines`].filter(Boolean).join(" \u00b7 "))}</span><span class="why"><b>Looking at an earlier run</b> \u2014 its sheets are on the cards and nothing is running</span><span class="spacer"></span><span class="acts"><button class="btn ghost sm" id="rbHist">Another run\u2026</button><button class="btn ghost sm" id="rbCloseView">Clear the cards</button></span>`
+        : `<span class="why">No run open</span><span class="spacer"></span><span class="acts"><button class="btn gold sm" id="rbStart" title="pull the open orders and run the set">Start a run</button><button class="btn ghost sm" id="rbHist" title="every run on record \u2014 search it, carry one on, or open its sheets">Earlier runs\u2026</button></span>`;
+      const hq = id => h.querySelector("#" + id);
+      if (hq("rbStart")) hq("rbStart").onclick = () => start().catch(e => toast(e.message, "bad", 7000));
+      if (hq("rbHist")) hq("rbHist").onclick = () => RunHistory.show();
+      if (hq("rbCloseView")) hq("rbCloseView").onclick = () => RunHistory.close();
+      Dock.schedule(); return;
     }
     h.classList.remove("hidden"); h.className = "runBanner" + (r.status === "stopped" ? " stopped" : r.status === "complete" ? " done" : r.status === "review" ? " review" : "");
     const idx = O.stepIndex(r.step);
     const reviewN = Review.count(), engN = Engrave.pendingCount();
     const waitingFor = [reviewN ? `${reviewN} in Review` : "", engN ? `${engN} in Engraving` : ""].filter(Boolean).join(" · ") || "nothing";
-    const why = r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${r.fix ? ` — <span>${esc(r.fix)}</span>` : ""}` : r.status === "review" ? `<b>Waiting for a person:</b> ${waitingFor}` : r.status === "paused" ? (r.awaitCommit ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : `<b>Paused</b> after ${esc(O.RUN_STEPS[idx - 1] || r.step)} — next: ${esc(r.step)} · <span style="opacity:.75">this run is set to Manual, so it waits at every step</span>`) : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(STEP_WORDS[r.step] || r.step)}</b>${esc(stepDetail(r))}`;
+    const why = r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${r.fix ? ` — <span>${esc(r.fix)}</span>` : ""}` : r.status === "review" ? `<b>Waiting for a person:</b> ${waitingFor}` : r.status === "paused" ? (r.awaitCommit ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : `<b>Paused</b> after ${esc((STEP_WORDS[O.RUN_STEPS[idx - 1]] || O.RUN_STEPS[idx - 1] || r.step).toLowerCase())} · <span style="opacity:.75">Manual mode waits at every step — nothing runs until you press the button</span>`) : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(STEP_WORDS[r.step] || r.step)}</b>${esc(stepDetail(r))}`;
     Dock.schedule();
     h.title = `run ${r.runId}`;
-    h.innerHTML = `<span class="why">${why}</span><span class="spacer"></span><span class="acts">
-      ${r.status === "paused" && !r.awaitCommit ? `<button class="btn gold sm" id="rbNext" title="do the next step of the run and wait again">Next step ▶</button><button class="btn ghost sm" id="rbAuto" title="Stop waiting at every step: the run carries on by itself and only stops when it needs a person">Run the rest by itself</button>` : ""}${r.status === "paused" && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${r.status === "stopped" && /sign/i.test(r.stoppedBy || "") ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${r.status === "stopped" ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at">Resume</button>` : ""}${reviewN ? `<button class="btn ghost sm" id="rbReview" title="the decisions a person still has to make">Review (${reviewN})</button>` : ""}${engN ? `<button class="btn ghost sm" id="rbEngrave" title="the engraving still to be settled">Engraving (${engN})</button>` : ""}${["running", "review", "paused"].includes(r.status) ? `<button class="btn ghost sm" id="rbStop" title="stop after the step in progress — the run can be resumed from where it stopped">Stop</button>` : ""}${r.status === "complete" ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}${r.status === "stopped" ? `<button class="btn ghost sm" id="rbAbandon" title="give this run up — anything decided but not yet written is lost">Abandon run</button>` : ""}</span>`;
+    /* Which run is this? Three cards on the Nest tab and a banner that named only a step left no way to tell this
+       morning's set from yesterday's. The set, the day and the size of the run now lead it. */
+    const nSheets = Object.keys(r.sheets || {}).length;
+    const who = [r.seq ? `Set ${r.seq}` : "", r.day ? new Date(r.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "",
+      `${Object.keys(r.lines || {}).length || Orders.rows().filter(x => x.state !== "gone").length} lines`, nSheets ? `${nSheets} sheet${nSheets === 1 ? "" : "s"}` : ""].filter(Boolean).join(" \u00b7 ");
+    h.innerHTML = `<span class="rid" title="run ${esc(r.runId)}${r.setId ? " \u00b7 set " + esc(r.setId) : ""}">${esc(who)}</span><span class="why">${why}</span><span class="spacer"></span><span class="acts">
+      ${r.at ? `<button class="btn ghost sm" id="rbAt" title="open the sheet this is about">Show the sheet</button>` : ""}
+      ${r.status === "paused" && !r.awaitCommit ? `<button class="btn gold sm" id="rbNext" title="carry on to that step, then wait again">${esc(DO_WORDS[nextStop(r)] || "Next step")} ▶</button><button class="btn ghost sm" id="rbAuto" title="Stop waiting at every step: the run carries on by itself and only stops when it needs a person">Run the rest by itself</button>` : ""}${r.status === "paused" && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${r.status === "stopped" && /sign/i.test(r.stoppedBy || "") ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${r.status === "stopped" ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at">Resume</button>` : ""}${reviewN ? `<button class="btn ghost sm" id="rbReview" title="the decisions a person still has to make">Review (${reviewN})</button>` : ""}${engN ? `<button class="btn ghost sm" id="rbEngrave" title="the engraving still to be settled">Engraving (${engN})</button>` : ""}${["running", "review", "paused"].includes(r.status) ? `<button class="btn ghost sm" id="rbStop" title="stop after the step in progress — the run can be resumed from where it stopped">Stop</button>` : ""}${r.status === "complete" ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}${r.status === "stopped" ? `<button class="btn ghost sm" id="rbAbandon" title="give this run up — anything decided but not yet written is lost">Abandon run</button>` : ""}</span>`;
     const q = id => h.querySelector("#" + id);
+    const rid = h.querySelector(".rid"); if (rid) { rid.tabIndex = 0; rid.title += " \u2014 click for every run on record"; rid.onclick = () => RunHistory.show(); rid.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); RunHistory.show(); } }; }
+    if (q("rbAt")) q("rbAt").onclick = () => { CN.setMode("nest"); const i = CN.pagesOf(r.at.metal).findIndex(p => p.page === r.at.page); CN.showPage(r.at.metal, Math.max(0, i)); };
     if (q("rbConnect")) q("rbConnect").onclick = () => DesignLink.connectEtsy().catch(e => toast(e.message, "bad", 6000)); if (q("rbNext")) q("rbNext").onclick = () => next();
     if (q("rbAuto")) q("rbAuto").onclick = async () => { const r2 = B.run; if (!r2) return; r2.mode = "auto"; await save(r2); agent({ run: r2.runId }, "DS", "This run carries on by itself from here — it stops only when it needs a person"); next(); }; if (q("rbCommit")) q("rbCommit").onclick = () => commitNow(); if (q("rbResume")) q("rbResume").onclick = () => resume(); if (q("rbReview")) q("rbReview").onclick = () => CN.setMode("review"); if (q("rbEngrave")) q("rbEngrave").onclick = () => { CN.setMode("engrave"); Engrave.render(); }; if (q("rbStop")) q("rbStop").onclick = () => stop("stopped by the operator", "Press Resume to carry on from the recorded step."); if (q("rbClear")) q("rbClear").onclick = () => { if (confirm("Clear the finished run from the cards? Files and records are kept.")) clearRunState(); };
     if (q("rbAbandon")) q("rbAbandon").onclick = () => {
@@ -2235,7 +2293,7 @@ const RunCtl = window.RunCtl = (() => {
     };
     Orders.render();
   }
-  return { start, next, resume, stop, stopIfRunning, poke, save, onSheetDone, pickResume, resumeRun, commitNow, setMode: setRunMode, setRunMode, renderBanner, renderModeBtn, clearRunState, run };
+  return { start, next, resume, stop, stopIfRunning, poke, save, onSheetDone, pickResume, resumeRun, restoreRunSheets, commitNow, setMode: setRunMode, setRunMode, renderBanner, renderModeBtn, clearRunState, run };
 })();
 
 /* ═══ 24 · Review — every decision a person must make ═════════════════════ */
@@ -2336,11 +2394,34 @@ const Review = window.Review = (() => {
       bindNeeds(c, "mat", "mat");
       c.querySelector("[data-a=mat]").onclick = async () => { const m = c.querySelector("[data-f=mat]").value; if (!m) return; const who = by(); if (!who) return; row_material(it, m, who); };
     } else if (it.kind === "needsMapping") {
-      c.innerHTML = head("Needs mapping", `${p.optionName}: ${p.optionValue}`, orderSub) + `<div class="ev">${evRow("Listing", esc(p.listingId))}${evRow("Title", esc(p.title))}${evRow("All options", (r.line.variations || []).map(v => `<q>${esc(v.name)}: ${esc(v.value)}</q>`).join(" "))}</div>
-        <div class="fixes"><select data-f="field"><option value="form">form</option><option value="size">size</option><option value="chain">chain</option></select><input data-f="val" placeholder="value (necklace · earrings · charm · S · 18 inch)"><select data-f="scope">${[...new Set(group.map(x => String(x.line.listingId)))].length > 1 ? `<option value="*">every listing (${[...new Set(group.map(x => String(x.line.listingId)))].length})</option><option value="listing">this listing only</option>` : `<option value="listing">this listing only</option><option value="*">every listing</option>`}</select><button class="btn gold sm" data-a="map">Map it (remembered)</button><button class="btn ghost sm" data-a="ignore">Not relevant for this listing</button></div>`;
+      /* This was a dropdown, a free-text box, a second dropdown and a button that did nothing at all until you had
+         guessed the exact word it wanted. The question only ever has a handful of answers, so they are the buttons:
+         one press decides it, and "Something else" opens the old typing for the rare value none of them covers. */
+      const lids = [...new Set(group.map(x => String(x.line.listingId)))];
+      const CHOICES = [["necklace", "form", "Necklace"], ["earrings", "form", "Earrings"], ["huggie", "form", "Huggie"], ["charm", "form", "Charm only"], ["bracelet", "form", "Bracelet"], ["keychain", "form", "Keychain"]];
+      const guess = CharmNestOrders.FORM_VALUES[CharmNestOrders.norm(p.optionValue)] || null;
+      c.innerHTML = head("Needs mapping", `${p.optionName}: ${p.optionValue}`, `${lids.length === 1 ? "listing " + p.listingId : lids.length + " listings"} · ${p.title || r.line.title}`) +
+        `<div class="ask">What does this option decide?</div>
+        <div class="fixes pick">${CHOICES.map(([v, f, lbl]) => `<button class="btn ${v === guess ? "gold" : "ghost"} sm" data-pick="${v}" data-field="${f}">${lbl}</button>`).join("")}<button class="btn ghost sm" data-a="ignore" title="it changes nothing about what gets made">Nothing — ignore it</button><button class="btn ghost sm" data-a="other">Something else…</button></div>
+        <div class="fixes other hidden"><select data-f="field"><option value="form">form</option><option value="size">size</option><option value="chain">chain length</option></select><input data-f="val" placeholder="the value to remember"><button class="btn gold sm" data-a="map">Remember it</button></div>
+        ${lids.length > 1 ? `<label class="scopeOne"><input type="checkbox" data-f="one"> only for listing ${esc(p.listingId)} — otherwise all ${lids.length} are mapped together</label>` : ""}`;
+      const oneOnly = () => { const b = c.querySelector("[data-f=one]"); return !!(b && b.checked); };
+      const put = async (field, value) => {
+        const who = by(); if (!who) return;
+        const wide = lids.length > 1 && !oneOnly();
+        [...c.querySelectorAll("button")].forEach(b => { b.disabled = true; });
+        try {
+          await api("charmNestLibrary", { op: "optionMapPut", listingId: wide ? "*" : p.listingId, optionName: p.optionName, optionValue: p.optionValue, map: { field, value: field === "size" ? String(value).toUpperCase() : String(value).toLowerCase() }, by: who });
+          await Orders.loadMaps(true);
+          toast(`“${p.optionValue}” → ${value} · remembered for ${wide ? "every listing" : "this listing"}`, "ok");
+          for (const rr of Orders.rows()) if (rr.problems.some(x => x.kind === "needsMapping")) await repool(rr);
+        } catch (e) { toast("Could not save that: " + e.message, "bad", 7000); [...c.querySelectorAll("button")].forEach(b => { b.disabled = false; }); }
+      };
+      c.querySelectorAll("[data-pick]").forEach(b => { b.onclick = () => put(b.dataset.field, b.dataset.pick); });
+      c.querySelector("[data-a=other]").onclick = () => { c.querySelector(".fixes.other").classList.toggle("hidden"); const f = c.querySelector("[data-f=val]"); if (f) f.focus(); };
       bindNeeds(c, "map", "val");
-      c.querySelector("[data-a=map]").onclick = async () => { const field = c.querySelector("[data-f=field]").value, val = c.querySelector("[data-f=val]").value.trim(), scope = c.querySelector("[data-f=scope]").value; if (!val) return; const who = by(); if (!who) return; await api("charmNestLibrary", { op: "optionMapPut", listingId: scope === "*" ? "*" : p.listingId, optionName: p.optionName, optionValue: p.optionValue, map: { field, value: field === "size" ? val.toUpperCase() : val.toLowerCase() }, by: who }); await Orders.loadMaps(true); toast("Mapped and remembered", "ok"); for (const rr of Orders.rows()) if (rr.problems.some(x => x.kind === "needsMapping")) await repool(rr); };
-      c.querySelector("[data-a=ignore]").onclick = async () => { const who = by(); if (!who) return; for (const lid of [...new Set(group.map(x => String(x.line.listingId)))]) await api("charmNestLibrary", { op: "optionMapPut", listingId: lid, optionName: p.optionName, optionValue: p.optionValue, map: { field: "ignore" }, by: who }); await Orders.loadMaps(true); await repoolAll(it); };
+      c.querySelector("[data-a=map]").onclick = () => { const val = c.querySelector("[data-f=val]").value.trim(); if (!val) return; put(c.querySelector("[data-f=field]").value, val); };
+      c.querySelector("[data-a=ignore]").onclick = async () => { const who = by(); if (!who) return; for (const lid of (oneOnly() ? [String(p.listingId)] : lids)) await api("charmNestLibrary", { op: "optionMapPut", listingId: lid, optionName: p.optionName, optionValue: p.optionValue, map: { field: "ignore" }, by: who }); await Orders.loadMaps(true); await repoolAll(it); };
     } else if (it.kind === "unmatchedSku" || it.kind === "blockedSku") {
       const skus = [...B.master.entries.keys()].sort();
       c.innerHTML = head(it.kind === "blockedSku" ? "SKU blocked" : "Unmatched SKU", p.sku || "no SKU", orderSub) + `<div class="ev">${evRow("Why", esc(p.reason || it.why))}${evRow("Listing", esc(String(r.line.listingId || "")))}${evRow("Title", esc(r.line.title))}</div>
@@ -2492,10 +2573,10 @@ const Sandbox = window.Sandbox = (() => {
     const r = await api("charmNestLibrary", { op: "sandboxReset" }); toast(`Sandbox reset — ${r.deleted} record(s) removed`, "ok"); await refresh();
   }
   function mountPanel(v) {
-    let bar = v.querySelector("#sandboxBar"); if (!bar) { bar = document.createElement("div"); bar.id = "sandboxBar"; bar.className = "sandboxBar"; const ob = v.querySelector(".ordBar"); if (ob) ob.insertAdjacentElement("afterend", bar); else v.prepend(bar); }
+    let bar = v.querySelector("#sandboxBar"); if (!bar) { bar = document.createElement("span"); bar.id = "sandboxBar"; bar.className = "sandboxBar"; const ob = v.querySelector(".ordBar"); if (ob) ob.appendChild(bar); else v.prepend(bar); }
     bar.classList.toggle("hidden", !on());
     bar.innerHTML = on()
-      ? `<b>SANDBOX ON</b><span id="sbStatus" title="nothing here touches the real Etsy or the real records">${status ? statusText() : "…"}</span><span class="spacer"></span><button class="btn ghost xs" id="sbReset" type="button" title="empty the sandbox pool, sets, runs and sheets — the real records are untouched">Reset records</button><button class="btn ghost xs" id="sbToggle" type="button" title="go back to the real Etsy and the real records">Switch OFF</button>`
+      ? `<b>SANDBOX</b><span id="sbStatus" title="${esc(status ? statusText() : "nothing here touches the real Etsy or the real records")}">rehearsal — nothing real is touched</span><button class="btn ghost xs" id="sbReset" type="button" title="empty the sandbox pool, sets, runs and sheets — the real records are untouched">Reset</button><button class="btn ghost xs" id="sbToggle" type="button" title="go back to the real Etsy and the real records">Switch off</button>`
       : "";                                            // off is the normal state and says nothing: Settings holds the way in
     const sn = bar.querySelector("#sbSnap"); if (sn) sn.onclick = () => snapshot().catch(e => toast(e.message, "bad", 8000));
     const rs2 = bar.querySelector("#sbReset"); if (rs2) rs2.onclick = () => reset().catch(e => toast(e.message, "bad", 8000));
@@ -2504,7 +2585,7 @@ const Sandbox = window.Sandbox = (() => {
     if (!status) refresh();
   }
   function statusText() { if (!status || status.error) return status && status.error ? `status: ${status.error}` : ""; const sn = status.snapshot; const rec = status.records || {}; return `${sn ? `snapshot of ${sn.count} order(s) taken ${new Date(sn.at).toLocaleString()}${sn.takenBy ? " by " + sn.takenBy : ""}` : "no snapshot yet"} · sandbox records: ${rec.Charm_Pool || 0} pool, ${rec.Charm_Nest_Sets || 0} sets, ${rec.Charm_Nest_Runs || 0} runs, ${rec.Charm_Nest_Sheets || 0} sheets`; }
-  function render() { const el = document.getElementById("sbStatus"); if (el) el.textContent = statusText(); const pill = document.getElementById("sandboxPill"); if (pill) pill.classList.toggle("hidden", !on()); document.documentElement.classList.toggle("sandbox", on()); }
+  function render() { const el = document.getElementById("sbStatus"); if (el) el.title = statusText() || el.title; const pill = document.getElementById("sandboxPill"); if (pill) pill.classList.toggle("hidden", !on()); document.documentElement.classList.toggle("sandbox", on()); }
   return { on, refresh, snapshot, enable, afterReload, reset, mountPanel, render, status: () => status };
 })();
 
@@ -2713,6 +2794,136 @@ const OrderWin = window.OrderWin = (() => {
     W.poll = setInterval(() => { if (W.dlg.open && W.key) loadThread(rowOf(W.key) ? rowOf(W.key).order.receiptId : null, true); }, 15000);
   }
   return { open, paint, close: () => W.dlg && W.dlg.close(), isOpen: () => !!(W.dlg && W.dlg.open), key: () => W.key };
+})();
+
+/* ═══ 24c · RunHistory — every run that ever ran, and the way back into one ═══════════════════════════════════════════
+   Until now the only run a person could reach was the one in front of them. Yesterday's set, the order that went out on
+   Tuesday, the sheet a charm was cut on — none of it had a door. This is the door: one list of runs, one search box over
+   all of them, and two ways in — carry on with a run that never finished, or load a finished one back onto the cards to
+   look at, download and print. It is reachable from the run banner, from Orders and from Engraving, because the question
+   "which run was that?" is asked from wherever you happen to be standing. */
+const RunHistory = window.RunHistory = (() => {
+  const H = { q: "", runs: [], sheets: [], scanned: null, loading: false, err: null, dlg: null, open: new Set(), lines: new Map() };
+  function ensure() {
+    if (H.dlg) return H.dlg;
+    const d = el("dialog", "hist"); d.id = "histDlg";
+    d.innerHTML = `<form method="dialog" class="x"><button class="btn ghost sm" value="cancel">Close</button></form>
+      <h2>Runs</h2>
+      <div class="hq"><input id="hQ" type="search" placeholder="order number, SKU, engraved words, a date, a set…" autocomplete="off">
+        <button class="btn ghost sm" id="hRefresh" title="read the records again">Refresh</button></div>
+      <div class="hBody" id="hBody"></div>
+      <div class="hFoot" id="hFoot"></div>`;
+    document.body.appendChild(d); H.dlg = d;
+    const q = d.querySelector("#hQ");
+    let t = 0;
+    q.oninput = () => { H.q = q.value; clearTimeout(t); t = setTimeout(load, 260); };
+    d.querySelector("#hRefresh").onclick = e => { e.preventDefault(); load(); };
+    return d;
+  }
+  function show(q) {
+    const d = ensure();
+    if (q != null) { H.q = q; d.querySelector("#hQ").value = q; }
+    if (!d.open) d.showModal();
+    d.querySelector("#hQ").focus();
+    load();
+  }
+  async function load() {
+    if (!S.cloud.ok) { H.err = "the cloud is not connected, so there is nothing to read"; H.runs = []; H.sheets = []; render(); return; }
+    H.loading = true; H.err = null; render();
+    try {
+      const r = await api("charmNestLibrary", { op: "history", q: H.q, limit: 60 }, { quiet: true });
+      H.runs = r.runs || []; H.sheets = r.sheets || []; H.scanned = r.scanned || null; H.truncated = r.truncated || null;
+    } catch (e) { H.err = e.message; H.runs = []; H.sheets = []; }
+    H.loading = false; render();
+  }
+  const dayWord = d => d ? new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "";
+  const STATUS = { complete: ["ok", "finished"], running: ["warn", "running"], review: ["warn", "waiting for a person"], paused: ["warn", "paused"], stopped: ["bad", "stopped"], abandoned: ["neutral", "given up"] };
+  function render() {
+    const b = H.dlg && H.dlg.querySelector("#hBody"); if (!b) return;
+    const f = H.dlg.querySelector("#hFoot");
+    if (H.loading && !H.runs.length) { b.innerHTML = `<div class="hEmpty"><span class="spin"></span> reading the records…</div>`; f.textContent = ""; return; }
+    if (H.err) { b.innerHTML = `<div class="hEmpty bad">${esc(H.err)}</div>`; f.textContent = ""; return; }
+    if (!H.runs.length && !H.sheets.length) {
+      b.innerHTML = `<div class="hEmpty">${H.q ? `nothing matches “${esc(H.q)}”` : "no runs on record yet"}</div>`;
+      f.textContent = H.scanned ? `looked at the ${H.scanned.runs} most recent runs and ${H.scanned.sheets} most recent sheets` : "";
+      return;
+    }
+    const cur = B.run && B.run.runId;
+    b.innerHTML = H.runs.map(r => {
+      const [k, word] = STATUS[r.status] || ["neutral", r.status || "—"];
+      const live = ["running", "review", "paused", "stopped"].includes(r.status);
+      const openable = r.setId && ["complete", "stopped", "abandoned", "paused", "review"].includes(r.status);
+      const hits = [...(r.hitOrders || []).map(x => `order ${x}`), ...(r.hitSkus || [])].slice(0, 6);
+      return `<div class="hRun${r.runId === cur ? " cur" : ""}" data-run="${esc(r.runId)}">
+        <div class="hRow">
+          <span class="nm">${r.seq ? `Set ${r.seq}` : "no set"}</span>
+          <span class="dy">${esc(dayWord(r.day))}</span>
+          <span class="pill ${k}">${esc(word)}${r.status === "stopped" && r.stoppedBy ? ` · ${esc(r.stoppedBy)}` : live && r.step ? ` · ${esc(r.step)}` : ""}</span>
+          <span class="ct">${r.lines} line${r.lines === 1 ? "" : "s"} · ${r.orders} order${r.orders === 1 ? "" : "s"}${r.sheets ? ` · ${r.sheets} sheet${r.sheets === 1 ? "" : "s"}` : ""}${r.holds ? ` · ${r.holds} held` : ""}</span>
+          <span class="sp"></span>
+          ${r.runId === cur ? `<span class="pill neutral">on the cards now</span>` : ""}
+          ${live && r.runId !== cur ? `<button class="btn gold sm" data-a="resume">Carry on</button>` : ""}
+          ${openable && r.runId !== cur ? `<button class="btn ${live ? "ghost" : "gold"} sm" data-a="view" title="put this run's sheets back on the Nest tab to look at, download and print">Open its sheets</button>` : ""}
+          <button class="btn ghost sm" data-a="lines" title="the orders and lines this run carried">${H.open.has(r.runId) ? "Hide" : "Orders"}</button>
+        </div>
+        ${hits.length ? `<div class="hHits">matched ${hits.map(x => `<b>${esc(x)}</b>`).join(", ")}</div>` : ""}
+        ${H.open.has(r.runId) ? linesHtml(r.runId) : ""}
+      </div>`;
+    }).join("") + (H.q && H.sheets.length ? `<div class="hSheets"><div class="hHead">${H.sheets.length} sheet${H.sheets.length === 1 ? "" : "s"} match</div>${H.sheets.slice(0, 24).map(x => `<div class="hSheet"><span class="nm">${esc(x.fileBase || x.id)}</span><span class="ct">${esc(dayWord(x.day))} · ${x.placedCount}/${x.charmCount} placed · ${x.orders} order${x.orders === 1 ? "" : "s"}</span><span class="sp"></span>${x.preview ? `<a class="btn ghost sm" href="${esc(x.preview)}" target="_blank" rel="noopener">Preview</a>` : ""}</div>`).join("")}</div>` : "");
+    f.textContent = [H.scanned ? `looked at the ${H.scanned.runs} most recent runs and ${H.scanned.sheets} most recent sheets` : "",
+      H.truncated && (H.truncated.runs || H.truncated.sheets) ? "there is more history than that — narrow the search to reach further back" : ""].filter(Boolean).join(" · ");
+    b.querySelectorAll(".hRun").forEach(node => {
+      const id = node.dataset.run;
+      const a = s => node.querySelector(`:scope > .hRow > [data-a=${s}]`);
+      if (a("resume")) a("resume").onclick = () => { H.dlg.close(); RunCtl.resumeRun(id).catch(e => toast(e.message, "bad", 7000)); };
+      if (a("view")) a("view").onclick = () => viewRun(id);
+      if (a("lines")) a("lines").onclick = () => { if (H.open.has(id)) { H.open.delete(id); render(); } else { H.open.add(id); loadLines(id); } };
+    });
+    b.querySelectorAll("[data-openkey]").forEach(n => n.onclick = () => { const k = n.dataset.openkey; if (Orders.rows().some(r => r.key === k)) { H.dlg.close(); OrderWin.open(k); } else toast("That line is not in the current pull — open its run first", "", 4500); });
+  }
+  function linesHtml(runId) {
+    const rec = H.lines.get(runId);
+    if (!rec) return `<div class="hLines"><span class="spin"></span> reading the run…</div>`;
+    if (rec.error) return `<div class="hLines bad">${esc(rec.error)}</div>`;
+    const q = H.q.trim().toLowerCase();
+    const rows = rec.rows.filter(r => !q || [r.orderId, r.sku, r.engrave, r.state].join(" ").toLowerCase().includes(q));
+    if (!rows.length) return `<div class="hLines">no lines${q ? ` match “${esc(H.q)}”` : ""}</div>`;
+    const byOrder = new Map();
+    for (const r of rows) { if (!byOrder.has(r.orderId)) byOrder.set(r.orderId, []); byOrder.get(r.orderId).push(r); }
+    return `<div class="hLines">${[...byOrder.entries()].slice(0, 80).map(([oid, ls]) => `<div class="hOrd"><span class="oid">${esc(oid)}</span>${ls.map(l => `<span class="ln" data-openkey="${esc(l.key)}" title="${esc(l.state + (l.reason ? " · " + l.reason : ""))}">${esc(l.sku || "no SKU")}${l.quantity > 1 ? ` ×${l.quantity}` : ""}${l.engrave ? ` · “${esc(l.engrave)}”` : ""}<i class="${l.ok ? "ok" : "no"}"></i></span>`).join("")}</div>`).join("")}${byOrder.size > 80 ? `<div class="more">… and ${byOrder.size - 80} more orders — search to narrow it</div>` : ""}</div>`;
+  }
+  async function loadLines(runId) {
+    if (H.lines.has(runId)) { render(); return; }
+    H.lines.set(runId, null); render();
+    try {
+      const r = await api("charmNestLibrary", { op: "runGet", runId }, { quiet: true });
+      const lines = (r.run && r.run.lines) || {};
+      const rows = Object.entries(lines).map(([key, l]) => ({ key, orderId: String(l.orderId || key.split(":")[0] || ""), sku: l.sku || "", quantity: l.quantity || 1, state: l.state || "", reason: l.reason || "", engrave: (l.engrave && l.engrave.text) || "", ok: ["pooled", "placed", "committed", "done"].includes(l.state) || (l.poolIds || []).length > 0 }));
+      rows.sort((a, b2) => a.orderId.localeCompare(b2.orderId) || a.sku.localeCompare(b2.sku));
+      H.lines.set(runId, { rows });
+    } catch (e) { H.lines.set(runId, { error: e.message, rows: [] }); }
+    render();
+  }
+  /** Put a finished run's sheets back on the Nest tab: the same restore a resume does, without starting the run again. */
+  async function viewRun(runId) {
+    if (B.run && ["running", "review"].includes(B.run.status)) { toast("A run is working — stop it first", "bad", 5000); return; }
+    const btn = H.dlg.querySelector(`.hRun[data-run="${CSS.escape(runId)}"] [data-a=view]`);
+    if (btn) { btn.disabled = true; btn.textContent = "Opening…"; }
+    try {
+      const r = await api("charmNestLibrary", { op: "runGet", runId }, { label: "Reading the run" });
+      const rec = r.run; if (!rec) throw new Error("that run is no longer on record");
+      RunCtl.clearRunState();
+      const set = rec.setId ? await RunCtl.restoreRunSheets(rec) : null;
+      if (set) Sets.byRun().set(runId, set);
+      B.viewing = { runId, seq: rec.seq || (set && set.seq) || null, day: rec.day || (set && set.day) || null, status: rec.status, lines: Object.keys(rec.lines || {}).length, sheets: Object.keys(rec.sheets || {}).length };
+      H.dlg.close();
+      CN.setMode("nest"); CN.refreshAllCards(); RunCtl.renderBanner();
+      agent({ run: runId }, "cloud", `Opened ${B.viewing.seq ? "Set " + B.viewing.seq : runId} from ${rec.day || "an earlier day"} — its sheets are on the cards`);
+      toast(`${B.viewing.seq ? "Set " + B.viewing.seq : "That run"} is on the cards — nothing is running`, "ok", 5000);
+    } catch (e) { toast("Could not open it: " + e.message, "bad", 7000); if (btn) { btn.disabled = false; btn.textContent = "Open its sheets"; } }
+  }
+  function close() { B.viewing = null; RunCtl.clearRunState(); RunCtl.renderBanner(); }
+  return { show, load, viewRun, close, runs: () => H.runs };
 })();
 
 /* ═══ 25 · boot ═══════════════════════════════════════════════════════════ */

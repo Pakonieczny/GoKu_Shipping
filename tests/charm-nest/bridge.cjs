@@ -370,20 +370,58 @@ const receipts = [
         CN.setMode('master'); Master.render();
         const b = document.getElementById('mMissing');
         if (!b || b.classList.contains('hidden')) return { shown: false };
-        return { shown: true, head: b.querySelector('.t b').textContent, skus: [...b.querySelectorAll('.s')].map(x => x.textContent),
-          acts: [...b.querySelectorAll('[data-a]')].map(x => x.dataset.a) };
+        const shut = { head: b.querySelector('.t b').textContent, skus: [...b.querySelectorAll('.s')].length, acts: [...b.querySelectorAll('[data-a]')].map(x => x.dataset.a) };
+        b.querySelector('[data-a=see]').click();                              // it opens only when asked
+        const b2 = document.getElementById('mMissing');
+        const open = { skus: [...b2.querySelectorAll('.s')].map(x => x.textContent), acts: [...b2.querySelectorAll('[data-a]')].map(x => x.dataset.a) };
+        b2.querySelector('[data-a=shut]').click();                            // and it closes, and stays closed
+        const gone = document.getElementById('mMissing').classList.contains('hidden');
+        B.missShut = false; B.missOpen = false; Master.render();
+        return { shown: true, shut, open, gone };
       });
       console.log('missing skus', JSON.stringify(miss));
       assert(miss.shown, 'an unmatched SKU is named on the Master tab, not only in Review');
-      assert(miss.skus.some(x => /BR-NOPE-99/.test(x)), 'by name: ' + miss.skus.join(','));
-      assert(/1 SKU the orders want/.test(miss.head), 'counted once per SKU: ' + miss.head);
-      assert.deepStrictEqual(miss.acts, ['copy', 'save', 'add'], 'with a way to take the list to the master files');
+      assert(/1 SKU the orders want/.test(miss.shut.head), 'counted once per SKU: ' + miss.shut.head);
+      assert.strictEqual(miss.shut.skus, 0, 'it opens as one line, not a wall of chips');
+      assert.deepStrictEqual(miss.shut.acts, ['see', 'shut'], 'and that line can be opened or closed: ' + miss.shut.acts.join(','));
+      assert(miss.open.skus.some(x => /BR-NOPE-99/.test(x)), 'opened, it names them: ' + miss.open.skus.join(','));
+      assert.deepStrictEqual(miss.open.acts, ['see', 'shut', 'copy', 'save', 'add'], 'with a way to take the list to the master files');
+      assert(miss.gone, 'the close button closes it');
       // and the tab always offers the thing it exists for, whether or not anything is missing
       assert(await page.evaluate(() => !!document.getElementById('mAdd')), 'the Master tab has a visible way to add a master file');
+      /* Every run that ever ran, and the way back into one. Until this existed the only run reachable was the one in
+         front of you: yesterday's set and the order that shipped on Tuesday had no door at all. */
+      const hist = await page.evaluate(async () => {
+        RunHistory.show(); await new Promise(r => setTimeout(r, 900));
+        const d = document.getElementById('histDlg');
+        const runs = [...d.querySelectorAll('.hRun')].map(n => ({ id: n.dataset.run, text: n.querySelector('.hRow').textContent.replace(/\s+/g, ' ').trim(), acts: [...n.querySelectorAll('.hRow [data-a]')].map(b => b.dataset.a) }));
+        const foot = d.querySelector('#hFoot').textContent;
+        // and it is searchable: by order number, by SKU, by the words that were engraved
+        const q = d.querySelector('#hQ'); q.value = '3521000002'; q.dispatchEvent(new Event('input'));
+        await new Promise(r => setTimeout(r, 900));
+        const found = [...d.querySelectorAll('.hRun')].map(n => n.dataset.run);
+        const hits = [...d.querySelectorAll('.hHits')].map(n => n.textContent.trim());
+        q.value = 'no-such-order-anywhere'; q.dispatchEvent(new Event('input'));
+        await new Promise(r => setTimeout(r, 900));
+        const none = d.querySelector('.hEmpty') ? d.querySelector('.hEmpty').textContent.trim() : '';
+        d.close();
+        // a closed dialog must actually be gone: CSS that lays one out unconditionally leaves it on screen forever
+        const stillVisible = d.getBoundingClientRect().height > 0 || getComputedStyle(d).display !== 'none';
+        return { open: !!runs.length, runs, foot, found, hits, none, stillVisible };
+      });
+      console.log('history', JSON.stringify(hist));
+      assert(hist.open, 'the history lists the runs on record');
+      assert(hist.runs.some(r => /line/.test(r.text) && /Set|no set/.test(r.text)), 'each run says which set, which day and how big: ' + JSON.stringify(hist.runs[0]));
+      assert(hist.runs.every(r => r.acts.includes('lines')), 'and opens its orders');
+      assert(/looked at the \d+ most recent runs/.test(hist.foot), 'it says how far it looked: ' + hist.foot);
+      assert(hist.found.length >= 1 && hist.hits.some(h => /3521000002/.test(h)), 'searching by order number finds the run that carried it: ' + JSON.stringify(hist));
+      assert(/nothing matches/.test(hist.none), 'and a search with no answer says so: ' + hist.none);
+      assert(!hist.stillVisible, 'and closing it puts it away');
       await page.evaluate(() => { CN.setMode('review'); Review.render(); });
       // CN_SHOTS=<dir> captures every screen at two widths and the order window — the evidence a design review runs on
       if (process.env.CN_SHOTS) {
         const SH = process.env.CN_SHOTS;
+        await page.evaluate(() => { document.querySelectorAll('dialog[open]').forEach(d => d.close()); });
         const grab = async (name, w, h) => { await page.setViewportSize({ width: w, height: h }); await page.waitForTimeout(450); await page.screenshot({ path: SH + '/' + name + '.png' }); };
         for (const [mode, fn] of [['orders', 'Orders'], ['engrave', 'Engrave'], ['review', 'Review'], ['master', 'Master'], ['design', null], ['nest', null], ['library', null], ['charms', null]]) {
           await page.evaluate(m => { CN.setMode(m); }, mode);

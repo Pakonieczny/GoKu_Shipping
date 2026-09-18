@@ -7181,7 +7181,10 @@ const Bridge = (() => {
           const imgs = await fetchListingImages(id);
           const first = Array.isArray(imgs) ? imgs[0] : null;
           const url = first?.url_570xN || first?.url_fullxfull || first?.url || first?.image_url || first?.fullsize_url || first?.src || null;
-          out[id] = url ? await getLocalImageData(url) : null;
+          /* The proxy's own address, not the picture inlined as base64. A dozen cards used to mean a dozen 50 kB data
+             URLs crossing the bridge in one message; the address is a hundred bytes, the browser fetches and caches the
+             bytes itself, and both pages share the one cache entry. */
+          out[id] = url ? `${FN}/imageProxy?url=${encodeURIComponent(url)}` : null;
         } catch (_) { out[id] = null; }
       }));
       return { images: out };
