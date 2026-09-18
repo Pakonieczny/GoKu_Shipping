@@ -49,11 +49,15 @@ const PROD = ['Design_Completed Orders', 'Design_RealTime_Selected_Orders', 'Des
   await page.waitForFunction(() => { const j = [...B.master.jobs.values()][0]; return j && ['done', 'error'].includes(j.state); }, null, { timeout: 120000 });
   await page.evaluate(() => CN.setMode('design')); await page.evaluate(() => DesignLink.ensure());
   assert.strictEqual(await page.evaluate(() => DesignLink.state().sandbox), false, 'production first');
+  // opening the session in production writes the bridge's own record; wait for it before the baseline, or a slow machine
+  // lands that production-mode write after the count and it reads as a sandbox leak
+  await page.waitForFunction(() => DesignLink.state().up !== undefined, null, { timeout: 20000 }).catch(() => {});
+  await new Promise(r => setTimeout(r, 1500));
   const before = Object.fromEntries(PROD.map(c => [c, st.list(c).length])); const blobsBefore = new Set(st.blobs.keys());
   // one press does the chain: snapshot (the station is signed in), switch on, reload, pull from the copy
   await page.evaluate(() => CN.setMode('orders'));
   await page.click('#sbToggle');
-  await page.waitForFunction(() => CN.S.settings.sandbox === 'on' && B.orders.rows.length > 0, null, { timeout: 120000 }).catch(() => {});
+  await page.waitForFunction(() => !!(window.CN && window.B) && CN.S.settings.sandbox === 'on' && B.orders.rows.length > 0, null, { timeout: 120000 }).catch(() => {});
   const snap = st.doc('Charm_Sandbox', 'current');
   console.log('snapshot', snap);
   assert(snap && snap.count === receipts.length && /^charmnest\/sandbox\//.test(snap.path) && st.blobs.has(snap.path), 'the snapshot holds every open order in a sandbox file');
@@ -64,6 +68,9 @@ const PROD = ['Design_Completed Orders', 'Design_RealTime_Selected_Orders', 'Des
 
   // ── the press switched the sandbox on, reloaded the sorter and pulled: the station is framed with ?sandbox=1 ──
   await page.waitForFunction(() => window.CN && window.Sandbox && CN.S.cloud.ok !== null && CN.S.settings.sandbox === 'on');
+  // the pull that follows the switch is asynchronous: wait for it rather than reading the instant the switch lands
+  await page.waitForFunction(() => !!(window.CN && window.B) && B.orders.rows.length >= 3 && CN.S.mode === 'orders', null, { timeout: 90000 })
+    .catch(() => {});
   const pulled = await page.evaluate(() => ({ rows: B.orders.rows.length, mode: CN.S.mode }));
   assert(pulled.rows === 3 && pulled.mode === 'orders', 'after the switch the orders were pulled from the copy by themselves: ' + JSON.stringify(pulled));
   await settle(stationOrigin); await page.evaluate(() => { CN.S.settings.sandbox = 'on'; CN.saveSettings(); Sandbox.render(); });
@@ -81,7 +88,7 @@ const PROD = ['Design_Completed Orders', 'Design_RealTime_Selected_Orders', 'Des
 
   // ── a whole Auto run in the sandbox ──
   await page.evaluate(() => CN.setMode('orders')); await page.evaluate(() => RunCtl.setMode('auto'));
-  await page.waitForFunction(() => B.run && B.run.status !== undefined, null, { timeout: 10000 });
+  await page.waitForFunction(() => !!window.B && B.run && B.run.status !== undefined, null, { timeout: 10000 });
   let t0 = Date.now(), last = '';
   while (Date.now() - t0 < 600000) {
     const r = await page.evaluate(() => B.run && { status: B.run.status, step: B.run.step, stoppedBy: B.run.stoppedBy, fix: B.run.fix });

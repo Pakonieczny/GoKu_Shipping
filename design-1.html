@@ -7309,13 +7309,14 @@ const Bridge = (() => {
     if (d.type !== "ping" && d.type !== "feed.post") ticker(`Sorter: ${d.type}${d.args && Array.isArray(d.args.receiptIds) && d.args.receiptIds.length ? " " + d.args.receiptIds.slice(0, 6).join(", ") + (d.args.receiptIds.length > 6 ? "…" : "") : d.args && d.args.receiptId ? " " + d.args.receiptId : ""}`);
     try {
       mirrorBroadcast(d.type, d.args || {});
-      const result = await fn(d.args || {}, (done, total, text) => reply({ id: d.id, type: "progress", done, total, text }), ev);
+      S.busy = (S.busy || 0) + 1; S.lastCmdAt = Date.now();
+      const result = await fn(d.args || {}, (done, total, text) => { S.lastCmdAt = Date.now(); reply({ id: d.id, type: "progress", done, total, text }); }, ev);
       reply({ id: d.id, type: "done", result });
     } catch (e) {
       reply({ id: d.id, type: "error", error: e && e.message || String(e) });
       ticker(`Sorter command failed: ${d.type} — ${e && e.message || e}`);
       emit("error", { command: d.type, error: e && e.message || String(e) });
-    }
+    } finally { S.busy = Math.max(0, (S.busy || 1) - 1); S.lastCmdAt = Date.now(); }
   }
   window.addEventListener("message", onMessage);
 
@@ -7327,8 +7328,14 @@ const Bridge = (() => {
     Cursor.reset(); S.feed = []; paintFeed();
     paintBanner(); toast(`Charm Sorter released this station (${reason})`);
   }
-  // heartbeat watch: three missed pings (15 s) mark the link down on the banner; a ping brings it back
-  setInterval(() => { if (active() && !S.down && S.lastPing && Date.now() - S.lastPing > 15500) { S.down = true; paintBanner(); ticker("No heartbeat from the sorter for 15 s"); } }, 5000);
+  /* Heartbeat watch: three missed pings (15 s) mark the link down on the banner; a ping brings it back. A sorter
+     waiting on a command it asked for — a pull of several hundred orders takes longer than that — is not a sorter that
+     has gone away, so the watch holds its tongue while a command is in flight and for a moment after. */
+  setInterval(() => {
+    if (!active() || S.down || !S.lastPing) return;
+    if (S.busy > 0 || Date.now() - (S.lastCmdAt || 0) < 10000) return;
+    if (Date.now() - S.lastPing > 15500) { S.down = true; paintBanner(); ticker("No heartbeat from the sorter for 15 s"); }
+  }, 5000);
   window.addEventListener("beforeunload", () => { if (active()) emit("state", { unloading: true }); });
 
   /* the station's own state changes are mirrored to the master as they happen */

@@ -26,6 +26,16 @@ const pass = (name) => console.log('  ✓', name);
     sp = O.interpretLine(order, mk({ sku: 'BR-CMP-01', variations: [{ name: 'Size', value: 'XL' }] }), ctx); assert(sp.problems.some(p => p.kind === 'missingSize'), 'sized line with no design for that size is held');
     sp = O.interpretLine(order, mk({ metalKey: '', metalLabel: 'Rose Quartz', variations: [{ name: 'Stone', value: 'Rose Quartz' }] }), ctx); assert(sp.problems.some(p => p.kind === 'needsMaterial'), '"Rose Quartz" never classifies as rose: the station left metalKey empty and the sorter holds the line'); assert(sp.problems.some(p => p.kind === 'needsMapping'), 'an unmapped option is a Needs-mapping item'); assert.strictEqual(sp.material, null);
     sp = O.interpretLine(order, mk({ variations: [{ name: 'Wrap', value: 'Gift wrap' }] }), { optionMaps: { '1718': { wrap: { 'gift wrap': { field: 'ignore' } } } }, aliases: {}, noDesign: {} }); assert(!sp.problems.some(p => p.kind === 'needsMapping'), 'a learned "ignore" map silences the item');
+    // the shop's own spellings, read from the orders it actually sends (§6.4)
+    const one = (name, value) => { const sp2 = O.interpretLine(order, mk({ variations: [{ name, value }] }), ctx); const o = sp2.options[0]; return o && o.mapped ? o.mapped.field + ':' + o.mapped.value : 'unmapped'; };
+    assert.strictEqual(one('Necklace Length in inches', '16"'), 'chain:16"', 'a length written with a quote mark is a chain length');
+    assert.strictEqual(one('Necklace Length in inches', '16&quot;'), 'chain:16"', 'and the same written as an entity');
+    for (const v of ['18"', '16.5"', '45cm', '16 inches']) assert(one('LENGTH', v).startsWith('chain:'), 'a length: ' + v);
+    assert.strictEqual(one('Charm Type', 'Necklace CHARM'), 'form:necklace', 'the shop writes the words in its own order');
+    assert.strictEqual(one('Charm Type', 'CHARM + Engraving'), 'form:charm', 'and adds a word that is not the choice');
+    for (const v of ['Huggie CHARM SET', '18 Inch', 'Tag1 (front engrave)']) assert.strictEqual(one('Charm Type', v), 'unmapped', 'anything it cannot read stays for a person: ' + v);
+    assert.strictEqual(one('HOOP SIZE', '8.5mm'), 'unmapped', 'hardware is never read as a charm size');
+    assert.strictEqual(one('Necklace Length in inches', 'Charm Only-No Chain'), 'unmapped', 'a choice that is not a length stays for a person');
     assert.strictEqual(O.poolId(order, mk(), 2), '3521337740_4412778001_2');
     pass('interpretation');
   }
@@ -40,6 +50,18 @@ const pass = (name) => console.log('  ✓', name);
     const bySku = new Map([...lab.labels.values()].map(l => [l.sku, l]));
     assert(bySku.has('BR-TST-01') && bySku.has('BR-TST-05') && bySku.has('BR-TST-06'), 'plain labels found');
     assert.strictEqual(bySku.get('BR-TST-02').size, 'S', 'size suffix after a middle dot');
+    // a size comes from the sheet's own label, never from comparing two drawings of one design
+    {
+      const mkCharm = (index, x, w) => ({ index, mergedInto: null, members: [], outline: { bbox: [x, 100, x + w, 100 + w] }, bbox: [x, 100, x + w, 100 + w] });
+      const a = mkCharm(0, 0, 30), b = mkCharm(1, 200, 60);          // the same SKU written under two charms, far apart
+      const t = (cx, str) => ({ kind: 'text', str, bbox: [cx - 10, 90, cx + 10, 96], chars: str.length });
+      const fake = { segments: [t(15, 'BR-SAME-01'), t(230, 'BR-SAME-01')], nested: [] };
+      const l2 = P.labelCharms(fake, [a, b], { gapPt: 18 });
+      const sized = [...l2.labels.values()].filter(x => x.size);
+      assert.strictEqual(sized.length, 0, 'one SKU under two charms is not two sizes: ' + JSON.stringify([...l2.labels.values()].map(x => [x.sku, x.size])));
+      assert.strictEqual(l2.labels.size, 1, 'the first charm keeps it, the other is left unlabelled');
+      assert(l2.duplicates.some(d => d.sku === 'BR-SAME-01'), 'and the repeat is reported: ' + JSON.stringify(l2.duplicates));
+    }
     assert(lab.orphans.some(o => o.sku === 'BR-TST-03'), 'a label 8 mm below is an orphan, not a label');
     const near = (c, m) => Math.abs((c.outline.bbox[0] + c.outline.bbox[2]) / 2 - m.cx) < 2 && Math.abs((c.outline.bbox[1] + c.outline.bbox[3]) / 2 - m.cy) < 4;
     const c3 = g.charms.find(c => near(c, master.charms[2])); assert(lab.unlabelled.includes(c3.index), 'the charm above the too-far label is unlabelled');
