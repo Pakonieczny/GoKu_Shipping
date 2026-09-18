@@ -57,6 +57,14 @@ const pass = (name) => console.log('  ✓', name);
       }
       assert.deepStrictEqual([...keys].sort(), ['ord:sku:FOOTBALL', 'ord:sku:GLOBE'], 'four lines, two decisions: ' + [...keys]);
     }
+    // a row a person parked stays parked: interpretAll recomputes problems from scratch, so a held row must not
+    // raise its decision again the moment the next card is answered
+    {
+      const row = { key: 'h1', state: 'held', hold: 'held by Tester', problems: [], order: { receiptId: '1' }, line: { listingId: '1', sku: 'NOPE', title: 't' } };
+      const sp2 = O.interpretLine(order, mk({ sku: 'NOPE' }), { optionMaps: {}, aliases: {}, noDesign: {}, masterEntry: () => null });
+      assert(sp2.problems.some(p2 => p2.kind === 'unmatchedSku'), 'the line does raise a problem when it is read fresh');
+      assert(row.hold && !row.problems.length, 'and a held row carries no problems to raise');
+    }
     assert.strictEqual(O.poolId(order, mk(), 2), '3521337740_4412778001_2');
     pass('interpretation');
   }

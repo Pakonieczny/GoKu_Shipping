@@ -369,6 +369,8 @@ const receipts = [
       assert(miss.skus.some(x => /BR-NOPE-99/.test(x)), 'by name: ' + miss.skus.join(','));
       assert(/1 SKU the orders want/.test(miss.head), 'counted once per SKU: ' + miss.head);
       assert.deepStrictEqual(miss.acts, ['copy', 'save', 'add'], 'with a way to take the list to the master files');
+      // and the tab always offers the thing it exists for, whether or not anything is missing
+      assert(await page.evaluate(() => !!document.getElementById('mAdd')), 'the Master tab has a visible way to add a master file');
       await page.evaluate(() => { CN.setMode('review'); Review.render(); });
       // CN_SHOTS=<dir> captures every screen at two widths and the order window — the evidence a design review runs on
       if (process.env.CN_SHOTS) {
