@@ -366,6 +366,35 @@ const receipts = [
         return { rows, cards: v.querySelectorAll('.ocard').length, sideScroll: stage.scrollWidth - stage.clientWidth };
       });
       console.log('orders list', JSON.stringify({ n: asList.rows.length, first: asList.rows[0], sideScroll: asList.sideScroll }));
+      // 411 lines is a real pull: the tab must draw them quickly and must not ask Etsy for 411 photographs (§5)
+      const scale = await page.evaluate(async () => {
+        const seed = Orders.rows().slice();
+        const many = [];
+        for (let i = 0; i < 120; i++) for (const r of seed) {
+          many.push(Object.assign(Object.create(Object.getPrototypeOf(r)), r, {
+            key: r.key + '_x' + i,
+            order: Object.assign({}, r.order, { receiptId: String(+r.order.receiptId + i * 10) }),
+            line: Object.assign({}, r.line, { listingId: String(1000000 + i * 7) }),
+          }));
+        }
+        const real = B.orders.rows;
+        B.orders.rows = many;
+        const cb = document.querySelector('[data-view=cards]'); if (cb) cb.click();
+        const t0 = performance.now();
+        Orders.render();
+        const drawn = performance.now() - t0;
+        await new Promise(r => setTimeout(r, 350));
+        const cards = document.querySelectorAll('#ordBody .ocard').length;
+        const asked = window.__imgAsked ? window.__imgAsked() : null;
+        const stage = document.querySelector('.stage');
+        const out = { cards, drawn: Math.round(drawn), sideScroll: stage.scrollWidth - stage.clientWidth, listings: new Set(many.map(r => r.line.listingId)).size };
+        B.orders.rows = real; Orders.render();
+        return out;
+      });
+      console.log('orders at scale', JSON.stringify(scale));
+      assert.strictEqual(scale.cards, 480, 'every line of a big pull is drawn: ' + scale.cards);
+      assert(scale.drawn < 2500, 'and drawn without a stall: ' + scale.drawn + ' ms');
+      assert(scale.sideScroll <= 2, 'with nothing running off the side at scale: ' + scale.sideScroll);
       assert.strictEqual(asList.cards, 0, 'the list view replaces the cards');
       assert.strictEqual(asList.rows.length, ord.cards.length, 'and holds exactly the same lines');
       assert(asList.rows.every(r2 => r2.num && r2.sku && r2.state && r2.qty && r2.thumb), 'each row carries the same fields and a thumbnail: ' + JSON.stringify(asList.rows[0]));

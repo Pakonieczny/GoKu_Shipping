@@ -468,7 +468,16 @@ const Orders = window.Orders = (() => {
      cards here costs Etsy nothing this page would not already have spent. They are asked for only as a card comes into
      view, at most a dozen at a time, and remembered for the session. A charm we hold a design for falls back to its own
      thumbnail, which is the drawing that will actually be cut. */
-  const IMG = { got: new Map(), want: new Set(), timer: 0 };
+  const IMG = { got: new Map(), want: new Set(), timer: 0, io: null };
+  /** Only a card a person can actually see asks for its photograph: 411 lines must not mean 411 Etsy images. */
+  function watchImages(host) {
+    if (IMG.io) IMG.io.disconnect();
+    if (!window.IntersectionObserver) { host.querySelectorAll("[data-lid]").forEach(n => wantImage(n.dataset.lid)); return; }
+    IMG.io = new IntersectionObserver(es => {
+      for (const e of es) if (e.isIntersecting) { wantImage(e.target.dataset.lid); IMG.io.unobserve(e.target); }
+    }, { root: host, rootMargin: "300px 0px" });
+    host.querySelectorAll("[data-lid]").forEach(n => { if (!n.dataset.painted) IMG.io.observe(n); });
+  }
   function imageFor(r) {
     const lid = String(r.line.listingId || "");
     if (IMG.got.get(lid)) return IMG.got.get(lid);
@@ -503,6 +512,7 @@ const Orders = window.Orders = (() => {
       const img = host.querySelector("img") || host.appendChild(el("img"));
       img.loading = "lazy"; img.alt = ""; img.src = url;
       const ph = host.querySelector(".ph"); if (ph) ph.remove();
+      if (IMG.io) IMG.io.unobserve(host);
     }
   }
   /** Light up every card or row of one order, so a person can see at a glance what else came in the same parcel. */
@@ -568,9 +578,9 @@ const Orders = window.Orders = (() => {
       node.onmouseenter = node.onfocus = () => markKin(node.dataset.rid, true);
       node.onmouseleave = node.onblur = () => markKin(node.dataset.rid, false);
       list.appendChild(node);
-      if (!url && lid) wantImage(lid);
     }
     paintImages();
+    watchImages(host);
   }
   function render() {
     const v = document.getElementById("ordersView"); if (!v || v.classList.contains("hidden")) { const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(new Set(B.orders.rows.map(r => r.order.receiptId)).size) : ""; return; }
