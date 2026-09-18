@@ -187,6 +187,101 @@
     return { committable: !first, held: first ? { line: first.key, why: first.why } : null, lines };
   }
 
+  /* ═══ 7b · what goes to the laser today, and what waits ═══════════════════════════════════════════════════════════
+     A sheet costs the same to cut whether it carries ninety charms or nine, so a partial sheet is money and machine
+     time thrown away. Two of the materials sell fast enough to fill a sheet most days; three do not, and could wait a
+     week for a full one, which the customers who ordered them would not thank us for. So there are two regimes:
+
+       fast (SS, GF 14/20)   — only full sheets go. A partial remainder waits for the next pull to top it up, unless a
+                               piece on it is due or belongs to an order that is going anyway (below), in which case
+                               the sheet is cut partial and filled as far as it can be.
+       slow (RG, 10K, 14K)   — whatever there is goes, dates are not looked at, but only every `cadenceDays` days, so
+                               the laser is not started for two pieces. A person can release a material early.
+
+     And one rule over both: an order is never split across sets. An order with a 14K piece and a GF piece travels as
+     one — so on a day 14K is closed, its GF piece waits too, and on the day 14K opens, its GF piece rides along even
+     if that makes the GF sheet partial. Sets are then simply the groups of materials tied together by such orders:
+     a material no order ties to another is a set of its own.
+
+     This is a pure function of what it is given and is tested as one. It touches nothing. */
+  const FAST_MATERIALS = new Set(["silver", "gold"]);
+  const SLOW_MATERIALS = new Set(["rose", "gold10k", "gold14k"]);
+  const dayDiff = (a, b) => Math.round((Date.parse(b + "T12:00:00Z") - Date.parse(a + "T12:00:00Z")) / 86400000);
+  const addDays = (day, n) => new Date(Date.parse(day + "T12:00:00Z") + n * 86400000).toISOString().slice(0, 10);
+  /**
+   * lines: [{ key, orderId, material, areaPt2 (footprint incl. clearance), shipBy (unix s, 0 = unknown) }] — only lines
+   *        that are otherwise ready to be pooled.
+   * opts:  { today: "YYYY-MM-DD", capacity: { material: usablePt2 × ceiling }, lastReleased: { material: "YYYY-MM-DD" },
+   *          released: { material: "YYYY-MM-DD" } (a person opened it that day), forceFill: { material: true } (a person
+   *          said cut the partial), cadenceDays (2), lateDays (2) }
+   * →      { take: Set(key), wait: Map(key → { kind, why, material, until, pct }), materials: { material → summary } }
+   */
+  function planRelease(lines, opts) {
+    const today = opts.today, cadence = Math.max(1, +opts.cadenceDays || 2), lateDays = Math.max(0, +opts.lateDays == null ? 2 : +opts.lateDays);
+    const lastRel = opts.lastReleased || {}, released = opts.released || {}, forceFill = opts.forceFill || {}, cap = opts.capacity || {};
+    const take = new Set(), wait = new Map(), materials = {};
+    const dueSoon = l => l.shipBy > 0 && (l.shipBy * 1000 - Date.parse(today + "T00:00:00")) <= lateDays * 86400000;
+    // 1 · is a slow material open today?
+    const openSlow = {};
+    for (const m of SLOW_MATERIALS) {
+      const forced = released[m] === today;
+      const last = lastRel[m] || null;
+      const open = forced || !last || dayDiff(last, today) >= cadence;
+      openSlow[m] = open;
+      materials[m] = { regime: "slow", open, forced, lastReleased: last, next: open ? today : addDays(last, cadence), pieces: 0, taken: 0 };
+    }
+    for (const m of FAST_MATERIALS) materials[m] = { regime: "fast", pieces: 0, taken: 0, full: 0, pct: 0, partial: false, forcedBy: [] };
+    // 2 · an order travels whole: it goes only if every slow material it touches is open
+    const byOrder = new Map();
+    for (const l of lines) { if (!byOrder.has(l.orderId)) byOrder.set(l.orderId, []); byOrder.get(l.orderId).push(l); }
+    const gated = [];
+    for (const [oid, ls] of byOrder) {
+      const mats = new Set(ls.map(l => l.material));
+      const closed = [...mats].filter(m => SLOW_MATERIALS.has(m) && !openSlow[m]);
+      if (closed.length) { for (const l of ls) wait.set(l.key, { kind: "slow", material: closed[0], until: materials[closed[0]].next, why: `${closed[0]} opens ${materials[closed[0]].next}` }); continue; }
+      for (const l of ls) gated.push(Object.assign({ multi: mats.size > 1, urgent: dueSoon(l) }, l));
+    }
+    for (const l of lines) if (materials[l.material]) materials[l.material].pieces++;
+    // 3 · slow materials that are open: everything goes
+    for (const l of gated) if (SLOW_MATERIALS.has(l.material)) { take.add(l.key); materials[l.material].taken++; }
+    // 4 · fast materials: full sheets go; the remainder waits unless something on it has to travel
+    for (const m of FAST_MATERIALS) {
+      const cand = gated.filter(l => l.material === m).sort((a, b) => (b.multi - a.multi) || (b.urgent - a.urgent) || ((a.shipBy || 1e12) - (b.shipBy || 1e12)));
+      const usable = +cap[m] || 0, sum = materials[m];
+      if (!cand.length) continue;
+      if (!(usable > 0)) { cand.forEach(l => take.add(l.key)); sum.taken = cand.length; continue; }   // no plate known: never hold on a guess
+      const total = cand.reduce((s, l) => s + (+l.areaPt2 || 0), 0);
+      const full = Math.floor(total / usable); sum.full = full;
+      const fullCap = full * usable;
+      let acc = 0; const inFull = [], rest = [];
+      for (const l of cand) { if (acc + (+l.areaPt2 || 0) <= fullCap + 1e-6) { acc += +l.areaPt2 || 0; inFull.push(l); } else rest.push(l); }
+      inFull.forEach(l => take.add(l.key));
+      const forced = rest.filter(l => l.multi || l.urgent);
+      const restArea = rest.reduce((s, l) => s + (+l.areaPt2 || 0), 0);
+      sum.pct = Math.round(Math.min(1, restArea / usable) * 100);
+      if (forced.length || forceFill[m]) {
+        // a sheet that has to be cut is filled as far as it will go: the whole remainder rides, up to one more sheet
+        let acc2 = 0; for (const l of rest) { if (acc2 + (+l.areaPt2 || 0) <= usable + 1e-6) { acc2 += +l.areaPt2 || 0; take.add(l.key); } else wait.set(l.key, { kind: "fill", material: m, pct: sum.pct, why: `waits for a full ${m} sheet` }); }
+        sum.partial = true; sum.forcedBy = forceFill[m] ? ["operator"] : [...new Set(forced.map(l => l.multi ? `order ${l.orderId} travels with another material` : `order ${l.orderId} is due`))];
+      } else for (const l of rest) wait.set(l.key, { kind: "fill", material: m, pct: sum.pct, why: `waits for a full ${m} sheet · ${sum.pct}% so far` });
+      sum.taken = cand.filter(l => take.has(l.key)).length;
+    }
+    return { take, wait, materials };
+  }
+  /** Which materials must travel together: those tied by an order with pieces in more than one. Each group is a set.
+   *  → { material → groupKey }, groupKey = the group's materials sorted and joined with "+". */
+  function kinGroups(lines) {
+    const parent = {}; const find = x => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
+    const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
+    for (const l of lines) if (l.material) parent[l.material] = parent[l.material] || l.material;
+    const byOrder = new Map();
+    for (const l of lines) { if (!l.material) continue; if (!byOrder.has(l.orderId)) byOrder.set(l.orderId, new Set()); byOrder.get(l.orderId).add(l.material); }
+    for (const mats of byOrder.values()) { const arr = [...mats]; for (let i = 1; i < arr.length; i++) union(arr[0], arr[i]); }
+    const groups = {}; for (const m of Object.keys(parent)) { const r = find(m); (groups[r] = groups[r] || []).push(m); }
+    const out = {}; for (const ms of Object.values(groups)) { const key = ms.slice().sort().join("+"); for (const m of ms) out[m] = key; }
+    return out;
+  }
+
   /* ═══ 8 · the run ══════════════════════════════════════════════════════ */
   const RUN_STEPS = ["pull", "claim", "pool", "plan", "nest", "checkpoint", "engrave", "revalidate", "labels", "commit", "complete"];
   const HALF = { pull: "A", claim: "A", pool: "A", plan: "A", nest: "A", checkpoint: "A", engrave: "B", revalidate: "B", labels: "B", commit: "B", complete: "B" };
@@ -194,5 +289,5 @@
   const stepIndex = s => RUN_STEPS.indexOf(s);
 
   return { METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, interpretLine, lineKey, poolId,
-    localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES };
+    localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES };
 });

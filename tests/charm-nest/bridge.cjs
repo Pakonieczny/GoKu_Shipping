@@ -10,7 +10,8 @@ const { start } = require('./bridge-server.cjs');
 const { buildMaster } = require('./fixture-master.cjs');
 
 const day = Math.floor(Date.now() / 1000);
-const tx = (rid, i, sku, extra = {}) => Object.assign({ transaction_id: Number(`${rid}${i}`), listing_id: 1718000 + i, receipt_id: rid, sku, title: `${sku} charm`, quantity: 1, expected_ship_date: day + 86400 * (2 + i), variations: [{ formatted_name: 'Metal', formatted_value: '14k Gold Filled' }], is_personalized: false }, extra);
+const CN_TODAY = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const tx = (rid, i, sku, extra = {}) => Object.assign({ transaction_id: Number(`${rid}${i}`), listing_id: 1718000 + i, receipt_id: rid, sku, title: `${sku} charm`, quantity: 1, expected_ship_date: day + 86400,   /* due tomorrow: three small pieces never fill a sheet, and a piece that is due is what makes a partial sheet cut */ variations: [{ formatted_name: 'Metal', formatted_value: '14k Gold Filled' }], is_personalized: false }, extra);
 const receipt = (rid, txs, extra = {}) => Object.assign({ receipt_id: rid, order_number: rid, name: 'Buyer ' + rid, country_iso: 'US', city: 'Austin', message_from_buyer: '', update_timestamp: day, create_timestamp: day - 3600, status: 'Paid', is_shipped: false, transactions: txs }, extra);
 const receipts = [
   receipt(3521000001, [tx(3521000001, 1, 'BR-TST-01')]),
@@ -635,6 +636,55 @@ const receipts = [
       assert(hov.cleared, 'and the ring goes when the mouse does');
       assert(/box-shadow/.test(hov.kinHoverRule || '') && /transform/.test(hov.kinHoverRule || ''),
         'hovering a ringed piece shows both states at once, neither hiding the other: ' + hov.kinHoverRule);
+      /* What goes to the laser today. The fixture's pieces are all due, so they cut; a slow-metal piece that is not due
+         has to wait for its day, say so on its card and on the material's card, and go at once when a person says so.
+         Staged here because the shop's test orders carry no rose gold; everything else is the real path. */
+      const gate = await page.evaluate(async () => {
+        const rows = Orders.rows(); const tmpl = rows.find(r => r.state !== 'gone' && r.spec && r.spec.designSku);
+        if (!tmpl) return { skip: 'no row to stage from' };
+        const far = Math.floor(Date.now() / 1000) + 30 * 86400;
+        const line = Object.assign({}, tmpl.line, { transactionId: '9900000001', sku: tmpl.spec.designSku, metalKey: 'rose', metalLabel: 'Rose Gold Filled', variations: [{ name: 'Metal', value: '14k Rose Gold Filled' }] });
+        const order = Object.assign({}, tmpl.order, { receiptId: '9900000001', orderNumber: '9900000001', shipBy: far, lines: [line] });
+        const row = { key: '9900000001:9900000001', order, line, spec: null, problems: [], state: 'pulled', reason: null, claimedBy: null, poolIds: [], engrave: null, metal: null };
+        rows.push(row); B.orders.byKey.set(row.key, row); Orders.interpretAll();
+        if (!row.spec || row.spec.material !== 'rose') return { skip: 'the staged line did not read as rose: ' + JSON.stringify(row.spec && { material: row.spec.material, problems: row.problems.map(p => p.kind) }) };
+        // rose went out yesterday, so today it is closed
+        const y = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+        Gate.state().loaded = true; Gate.state().lastReleased.rose = y; delete Gate.state().released.rose;
+        const plan = await Gate.plan([row]);
+        Orders.render(); CN.setMode('nest'); CN.refreshAllCards(); await new Promise(r => setTimeout(r, 200));
+        const card = document.querySelector('.ocard[data-key="9900000001:9900000001"], .olist[data-key="9900000001:9900000001"]');
+        const gateRow = document.querySelector('.sheetCard[data-m=rose] [data-r=gate]');
+        const before = { state: row.state, reason: row.reason, wait: row.wait, chipWait: !!document.querySelector('[data-pile=wait]'),
+          cardWhy: card ? (card.querySelector('.owhy') || {}).textContent : null, cardBtn: card ? (card.querySelector('[data-gate]') || {}).textContent : null,
+          gate: gateRow ? { hidden: gateRow.classList.contains('hidden'), text: gateRow.textContent.replace(/\s+/g, ' ').trim(), btn: (gateRow.querySelector('[data-gate]') || {}).textContent } : null,
+          planNext: plan.materials.rose.next, planOpen: plan.materials.rose.open };
+        // a person sends it now
+        await Gate.release('rose');
+        await new Promise(r => setTimeout(r, 600));
+        const rec = await CN.api('charmNestLibrary', { op: 'releaseGet' });
+        const after = { state: row.state, released: rec.released.rose, todayIs: CN.today(), gateHidden: gateRow ? gateRow.classList.contains('hidden') : null, gateText: gateRow ? gateRow.textContent.replace(/\s+/g, ' ').trim() : null };
+        // and put the stage away
+        const i = rows.indexOf(row); if (i >= 0) rows.splice(i, 1); B.orders.byKey.delete(row.key);
+        for (const pg of CN.pagesOf('rose')) pg.charms = pg.charms.filter(c => c.order !== '9900000001');
+        for (const id of [...B.pool.rows.keys()]) if (String(id).startsWith('9900000001')) B.pool.rows.delete(id);
+        delete Gate.state().lastReleased.rose; delete Gate.state().released.rose;
+        Orders.render(); CN.refreshAllCards(); CN.setMode('orders');
+        return { before, after };
+      });
+      for (const k of [...st.docs.keys()]) if (/^Charm_Pool\/9900000001/.test(k)) st.docs.delete(k);   // the stage's real pool record goes with it
+      console.log('gate', JSON.stringify(gate));
+      assert(!gate.skip, 'the slow-metal line could be staged: ' + gate.skip);
+      assert.strictEqual(gate.before.state, 'waiting', 'a rose piece the day after rose went out waits');
+      assert(/Rose|RG/.test(gate.before.reason || '') && /tomorrow|Sat|Sun|Mon|Tue|Wed|Thu|Fri/.test(gate.before.reason), 'and its card says for what and until when: ' + gate.before.reason);
+      assert(!gate.before.planOpen && gate.before.planNext > CN_TODAY(), 'closed today, open on a named later day: ' + gate.before.planNext);
+      assert(gate.before.chipWait, 'a Waiting pile appears only when something waits');
+      assert(gate.before.cardWhy && /Send now/.test(gate.before.cardBtn || ''), 'the order card explains the wait and offers to send it now: ' + JSON.stringify([gate.before.cardWhy, gate.before.cardBtn]));
+      assert(gate.before.gate && !gate.before.gate.hidden && /Next to the laser/.test(gate.before.gate.text) && /1 piece waiting/.test(gate.before.gate.text) && /Send now/.test(gate.before.gate.btn || ''),
+        "the rose card carries one line: the next day it goes, how much is waiting, and the way to send it now: " + JSON.stringify(gate.before.gate));
+      assert.strictEqual(gate.after.released, gate.after.todayIs, 'sending it now is written to the shop-wide record for today');
+      assert(gate.after.state !== 'waiting', 'and the piece stops waiting: ' + gate.after.state);
+
       // the filter shows one pile and nothing else
       const filtered = await page.evaluate(() => {
         document.querySelector('[data-pile=attn]').click();
@@ -867,16 +917,26 @@ const receipts = [
   assert(!Object.keys(run.lines).some(k => k.startsWith('3521000005_')), 'the far-out order was left out by the pull rule');
 
   // ── 4 · the set, its sheets, labels and back files (§7, §8) ──
-  const set = await page.evaluate(() => { const s = [...B.sets.values()].find(x => x.setId === B.run.setId); return s && { setId: s.setId, name: s.name, folder: s.folder, seq: s.seq, sheetIds: s.sheetIds, materials: s.materials, labels: s.labels, status: s.status, backCount: s.backCount, orders: Object.keys(s.orders) }; });
+  /* A run makes one set per kin group. The SS order and the two GF orders share nothing, so this run made two:
+     Set-1 and Set-2, one material each, numbered on the day's counter. Everything below holds for each of them. */
+  const sets = await page.evaluate(() => Sets.ofRun(B.run.runId).map(s => ({ setId: s.setId, name: s.name, folder: s.folder, seq: s.seq, group: s.group, sheetIds: s.sheetIds, materials: s.materials, labels: s.labels, status: s.status, backCount: s.backCount, orders: Object.keys(s.orders) })));
+  console.log('sets', JSON.stringify(sets));
+  assert.strictEqual(sets.length, 2, 'two kin groups, two sets: ' + sets.map(x => x.name));
+  assert.deepStrictEqual(sets.map(x => x.seq), [1, 2], 'numbered 1 and 2 on the day');
+  assert.deepStrictEqual(sets.map(x => x.materials).flat().sort(), ['gold', 'silver'], 'one material each: ' + JSON.stringify(sets.map(x => x.materials)));
+  assert(sets.every(x => x.materials.length === 1 && x.group === x.materials[0]), 'a material no order ties to another is a set of its own');
+  assert(sets.every(x => /\/Set-\d$/.test(x.folder) && x.name === 'Set-' + x.seq), 'named and foldered by number');
+  const set = sets.find(x => x.materials.includes('silver'));   // the set with the engraved back; the GF set is checked alongside
   console.log('set', JSON.stringify(set));
-  assert(set && set.seq === 1 && set.name === 'Set-1' && /\/Set-1$/.test(set.folder), 'first set of the day');
-  assert(set.materials.includes('gold') && set.materials.includes('silver'), 'gold and silver sheets in the set');
-  assert(set.labels && set.labels.files.length === set.sheetIds.length && set.labels.pdf, 'one label per sheet and a labels PDF');
-  assert.strictEqual(set.backCount, 1, 'one engraved back');
-  for (const f of set.labels.files) assert(st.blobs.has(f.path), 'label PNG saved: ' + f.path);
-  assert(st.blobs.has(`${set.folder}/set.json`) && st.blobs.has(`${set.folder}/${set.name}_manifest.pdf`), 'set.json and manifest saved');
-  const sheets = st.list('Charm_Nest_Sheets').filter(s => s.setId === set.setId);
-  assert.strictEqual(sheets.length, set.sheetIds.length, 'sheet records carry the set');
+  assert(set, 'the silver set is there');
+  for (const x of sets) assert(x.labels && x.labels.files.length === x.sheetIds.length && x.labels.pdf, x.name + ': one label per sheet and a labels PDF');
+  assert.strictEqual(sets.reduce((n, x) => n + (x.backCount || 0), 0), 1, 'one engraved back across the run');
+  assert.strictEqual(set.backCount, 1, 'and it is on the silver set');
+  for (const x of sets) for (const f of x.labels.files) assert(st.blobs.has(f.path), 'label PNG saved: ' + f.path);
+  for (const x of sets) assert(st.blobs.has(`${x.folder}/set.json`) && st.blobs.has(`${x.folder}/${x.name}_manifest.pdf`), x.name + ': set.json and manifest saved');
+  const sheets = st.list('Charm_Nest_Sheets').filter(s => sets.some(x => x.setId === s.setId));
+  assert.strictEqual(sheets.length, sets.reduce((n, x) => n + x.sheetIds.length, 0), 'sheet records carry their set');
+  for (const sh of sheets) { const own = sets.find(x => x.setId === sh.setId); assert(own && own.materials.includes(sh.metal), `${sh.fileBase} sits in the set of its own material`); }
   for (const sh of sheets) { assert(sh.label && sh.label.files.length && sh.label.files.every(f => /^B36\|(gold|silver|rose|gold10k|gold14k)\|/.test(f.payload) && f.ecc === 'M'), 'sheet label payload: ' + JSON.stringify(sh.label)); }
   const backs = st.list('Charm_Pool_Back');
   assert(backs.length === 1 && backs[0].text === 'ANNA' && st.blobs.has(backs[0].outputs && backs[0].outputs.ai && backs[0].outputs.ai.path || ''), 'the back file record and .ai: ' + JSON.stringify(backs[0]));
@@ -929,7 +989,7 @@ const receipts = [
   assert(!hud.alarm && !/alarm/.test(pill.cls), 'no watchdog alarm on a normal run');
   for (const id of ['3521000001', '3521000002', '3521000003']) {
     assert(st.doc('Design_Completed Orders', id), 'ledger has ' + id);
-    const ar = st.doc('Design_Order_Archive', id); assert(ar && ar.labels && ar.setId === set.setId && ar.runId === run.runId, 'archive row carries labels/set/run: ' + JSON.stringify(ar && { labels: !!ar.labels, setId: ar.setId }));
+    const ar = st.doc('Design_Order_Archive', id); const own = sets.find(x => x.orders.includes(id)); assert(ar && ar.labels && own && ar.setId === own.setId && ar.runId === run.runId, 'archive row carries labels and the set that carried the order: ' + JSON.stringify(ar && { labels: !!ar.labels, setId: ar.setId, expected: own && own.setId }));
     const rt = st.doc('Design_RealTime_Selected_Orders', id); assert(!rt || !rt.claimed, 'claim released after the run');
   }
   assert(!st.doc('Design_Completed Orders', '3521000004') && !st.doc('Design_Completed Orders', '3521000005'), 'held and unpulled orders are not complete');
@@ -960,14 +1020,14 @@ const receipts = [
   assert(banner.shown, 'banner shown: ' + JSON.stringify(banner));
 
   // ── 7 · undo the set: orders return to the open list, ledger cleared, files kept (§8.5) ──
-  await page.evaluate(() => Sets.undo([...B.sets.values()].find(x => x.setId === B.run.setId)));
+  await page.evaluate(async () => { for (const s of Sets.ofRun(B.run.runId)) await Sets.undo(s); });
   await page.waitForTimeout(500);
   for (const id of ['3521000001', '3521000002', '3521000003']) assert(!st.doc('Design_Completed Orders', id), 'ledger cleared for ' + id);
   assert(await frame2.evaluate(() => DesignStation.bridge.cursor.log.some(l => l.role === 'undo' && l.click)), 'the undo was pressed by the cursor');
   const after = await frame2.evaluate(() => DesignStation.bridge.snapshot().counts);
   assert.strictEqual(after.open, 5, 'all five orders open again: ' + JSON.stringify(after));
   assert(st.blobs.has(`${set.folder}/set.json`), 'files kept after the undo');
-  const setRec = st.doc('Charm_Nest_Sets', set.setId); assert(setRec && setRec.status === 'awaiting review', 'set back to awaiting review');
+  for (const x of sets) { const setRec = st.doc('Charm_Nest_Sets', x.setId); assert(setRec && setRec.status === 'awaiting review', x.name + ' back to awaiting review'); }
 
   // ── 7b · the Etsy watchdog: a station that sees one order re-read over and over, or a burst, raises the alarm, brakes
   //         automatic Etsy work, and tells the sorter — whose pill turns red and whose run stops ──
@@ -988,9 +1048,9 @@ const receipts = [
   assert(manual >= 1, 'a manual refresh at the station is not blocked by the brake');
   await page.evaluate(() => { RunCtl.stop('test over'); RunCtl.clearRunState(); });
   await page.screenshot({ path: path.join(tmp, 'bridge-watchdog.png') });
-  // ── 8 · a second run the same day numbers Set-2 and the released orders can be pulled again ──
-  const seq2 = await page.evaluate(async () => { const r = await CN.api('charmNestLibrary', { op: 'setAllocate', day: CharmNestOrders.localDay(), runId: 'run-probe' }); return r.seq; });
-  assert.strictEqual(seq2, 2, 'the next set of the day is Set-2');
+  // ── 8 · a later run the same day carries the day's numbering on: the first run made Set-1 and Set-2, so the next is Set-3 ──
+  const seq2 = await page.evaluate(async () => { const r = await CN.api('charmNestLibrary', { op: 'setAllocate', day: CharmNestOrders.localDay(), runId: 'run-probe', group: 'silver' }); return r.seq; });
+  assert.strictEqual(seq2, 3, 'the next set of the day is Set-3: the counter is the day\'s, whatever the earlier run made');
 
   await page.screenshot({ path: path.join(tmp, 'bridge-final.png') });
   await page.evaluate(() => CN.setMode('library'));

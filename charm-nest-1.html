@@ -150,6 +150,14 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 @keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 55%,transparent)}100%{box-shadow:0 0 0 22px transparent}}
 .shHead{display:flex;align-items:center;gap:9px;padding:10px 14px 8px;min-width:0}
 .shHead .prov{font-size:11px;color:var(--ink45);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+/* one quiet line under the head: what this material is waiting for, and the way to stop waiting */
+.shGate{display:flex;align-items:center;gap:8px;margin:-2px 14px 7px;padding:5px 9px;border-radius:8px;background:var(--card2);border:1px dashed var(--line);font-size:11.5px;color:var(--ink70);min-width:0}
+.shGate.hidden{display:none}
+.shGate .t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.shGate .t b{font-weight:700;color:var(--ink)}
+.shGate .n{font-family:var(--mono);font-size:10.5px;color:var(--ink45);white-space:nowrap}
+.shGate .btn{margin-left:auto;flex:0 0 auto}
+.shGate.open{border-style:solid;border-color:var(--sage);background:var(--sageSoft)}
 .shHead .prov b{font-weight:700;color:var(--ink70)}
 .shTabs{display:flex;gap:4px;flex:0 1 auto;min-width:0;overflow-x:auto;scrollbar-width:none}
 .shTabs::-webkit-scrollbar{display:none}
@@ -1013,6 +1021,8 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
     <div class="fieldRow3">
       <div class="field"><label>Design Station origin</label><input id="stDsOrigin" type="text" placeholder="https://design-1.goldenspike.app"><div class="help">Framed and driven over postMessage; messages from any other origin are dropped.</div></div>
       <div class="field"><label>Heartbeat (s) · station down after (misses)</label><div class="fieldRow"><input id="stHeartbeatS" type="number" min="2" max="60" step="1"><input id="stHeartbeatMiss" type="number" min="1" max="10" step="1"></div></div>
+      <div class="field"><label>Slow metals (RG, 10K, 14K) go to the laser every</label><div class="fieldRow"><input id="stCadenceDays" type="number" min="1" max="14" step="1"><span class="help" style="align-self:center">days — whatever has come in by then, dates unread</span></div><div class="help">SS and GF 14/20 go only as full sheets; a partial sheet waits for the next pull, unless a piece on it is due within the days below or travels with a slow metal that is going.</div></div>
+      <div class="field"><label>A piece due within (days) forces its sheet to cut</label><input id="stLateDays" type="number" min="0" max="14" step="1"></div>
       <div class="field"><label>Auto-commit when a set finishes</label><select id="stAutoCommit"><option value="on">On — mark orders complete on the station once every engraving is approved</option><option value="off">Off — wait for “Commit set”</option></select></div>
     </div>
     <div class="fieldRow3">
@@ -1100,6 +1110,7 @@ const DEFAULTS = {
   // Design Station bridge, orders, run (design doc §14)
   dsOrigin: "https://design-1.goldenspike.app", heartbeatS: 5, heartbeatMiss: 3, autoCommit: "on", runMode: "manual", pullMode: "all", pullDueBy: "", pullCount: 40, autoEvery: 0, etsyHourlyCap: 600, sandbox: "off",
   skuPattern: "^[A-Z0-9][A-Z0-9 _.,'&()+\\-]{1,60}$", labelGapMm: 6.4, masterServerAbove: 0, sizeMinMm: 3, sizeMaxMm: 60,
+  cadenceDays: 2, lateDays: 2,
   engraveMarginMm: 0.8, engraveMinCapMm: 1.6, engraveMaxHeightFrac: 0.4, engraveConfidence: 0.65, engraveTryRotated: "on", engraveMinGapMm: 0.12, engraveMinStrokeMm: 0.15, backFileView: "asSeenFromBack"
 };
 /* The two plates production actually uses. Sizes are held in mm; `w`/`h` stay in inches for the code that reads them. */
@@ -1760,7 +1771,7 @@ const pagesOf = metal => S.sheets[metal].pages;
 const allSheets = () => METALS.flatMap(m => pagesOf(m.key));
 const activePage = metal => { const p = S.sheets[metal]; return p.pages[p.active] || p; };
 const sheetName = sh => `${labelOf(sh.metal)}${pagesOf(sh.metal).length > 1 || sh.page > 1 ? ` · sheet ${sh.page}` : ""}`;
-function addPage(metal) { const prim = S.sheets[metal]; const pg = makeSheet(metal, prim.pages.length + 1); pg.runId = prim.runId || activePage(metal).runId || null; prim.pages.push(pg); return pg; }
+function addPage(metal) { const prim = S.sheets[metal]; const pg = makeSheet(metal, prim.pages.length + 1); const from = activePage(metal); pg.runId = prim.runId || from.runId || null; pg.group = from.group || prim.group || null; prim.pages.push(pg); return pg; }
 function showPage(metal, idx) {
   const prim = S.sheets[metal]; idx = Math.max(0, Math.min(prim.pages.length - 1, idx));
   for (const pg of prim.pages) pg.el = null;
@@ -1898,7 +1909,11 @@ function startNest(sh) {
   const running = allSheets().filter(s => s.status === "nesting").length;
   if (cores < 4 && running >= 1) { if (!S.nestQueue.includes(sh)) S.nestQueue.push(sh); sh.status = "queued"; sh.stage = `Queued — waiting for ${labelOf(allSheets().find(s => s.status === "nesting").metal)}`; renderCard(sh); return; }
   if (S.settings.notify === "on" && "Notification" in window && Notification.permission === "default") Notification.requestPermission().catch(() => {});
-  sh.sheetId = sh.sheetId && sh.status !== "complete" && sh.status !== "partial" ? sh.sheetId : `${sh.metal}${sh.page > 1 ? "-s" + sh.page : ""}-${Date.now().toString(36)}`;
+  /* A saved sheet that is nested again used to get a fresh id and, with the same set and index, the same file name —
+     two records called GF_Sep.17.26_Set-1_Sheet-1, one of them stale. Once a sheet has a name it keeps its identity:
+     re-nesting rewrites the same record and the same files. */
+  sh.sheetId = sh.sheetId && (sh.fileBase || (sh.status !== "complete" && sh.status !== "partial")) ? sh.sheetId : `${sh.metal}${sh.page > 1 ? "-s" + sh.page : ""}-${Date.now().toString(36)}`;
+  sh.persistedDone = false;
   sh.movedOn = null; sh.problem = null;
   sh.status = "nesting"; sh.startedAt = performance.now(); sh.placements = []; sh.rejects = []; sh.outputs = null; sh.verification = null; sh.best = null; sh.trials = 0; sh.liveInfo = null; sh.endedBy = null;
   sh.jobId = uid(); sh.stage = "Preparing rotations…"; sh.progress = [0, items.length]; sh.dirty = false;
@@ -2212,7 +2227,7 @@ function sheetFileBase(sh) { return CharmNestOrders.sheetName(sh.metal, sh.setDa
 /** The sheet's set (allocated once per run) and its index within its material in that set. */
 async function nextSheetSeq(sh) {
   const runKey = sh.runId || (sh.runId = "manual-" + uid());
-  const set = await Sets.ensure(runKey);
+  const set = await Sets.ensure(runKey, sh.group || null);
   sh.setId = set.setId; sh.setDay = set.day;
   const taken = pagesOf(sh.metal).filter(p => p !== sh && p.setId === set.setId && p.sheetIndex).map(p => p.sheetIndex);
   sh.sheetIndex = sh.sheetIndex && !taken.includes(sh.sheetIndex) ? sh.sheetIndex : (taken.length ? Math.max(...taken) + 1 : 1);
@@ -2333,6 +2348,7 @@ function buildCards() {
     const el = document.createElement("section"); el.className = "sheetCard"; el.dataset.m = m.key; el.style.setProperty("--ar", `${st.wPt}/${st.hPt}`);
     el.innerHTML = `
       <div class="shHead"><span class="sw"></span><span class="name">${m.label}</span><span class="stock" data-r="stock"></span><span class="prov" data-r="prov"></span><span class="shTabs hidden" data-r="tabs"></span><span class="pill neutral" data-r="pill">Idle</span></div>
+      <div class="shGate hidden" data-r="gate"></div>
       <div class="shPreviewWrap"><canvas data-r="canvas"></canvas>
         <div class="dropHint" data-r="hint"><b>Drop ${m.label} artwork here</b><span>.ai · .pdf · .zip — anything dropped on this card belongs to ${m.long.toLowerCase()}</span><span class="k">or drop on the queue to route by file name</span></div>
         <div class="shOverlay" data-r="overlay"></div><div class="hint" data-r="canvasHint"></div></div>
@@ -2430,6 +2446,7 @@ function renderCard(sh) {
   cl.innerHTML = sh.problem ? `<span class="bad">${esc(sh.problem)}</span>` : sh.outputs && !sh.cloud && !S.cloud.ok ? `<span class="bad">not saved — cloud offline</span>` : "";
   cl.classList.toggle("hidden", !cl.innerHTML);
   renderProgress(sh); renderSat(sh); drawPreview(sh); renderAgent(sh);
+  if (window.Gate) Gate.renderCard(sh);
 }
 function renderProgress(sh) {
   const el = sh.el; if (!el) return; const q = r => $(`[data-r="${r}"]`, el);
@@ -2819,7 +2836,7 @@ function openSettings() {
   $$("#railSeg button").forEach(b => b.classList.toggle("on", b.dataset.v === s.rail));
   for (const m of METALS) { $(`#st${cap(m.key)}W`).value = +(s.stock[m.key][0] * 25.4).toFixed(1); $(`#st${cap(m.key)}H`).value = +(s.stock[m.key][1] * 25.4).toFixed(1); }   // shown in mm, stored in inches
   $("#stClearance").value = +(s.clearancePt * MM_PER_PT).toFixed(2); $("#stInset").value = +(s.insetPt * MM_PER_PT).toFixed(2);   // shown in mm, stored in pt $("#stAngle").value = s.angleStep; $("#stBudget").value = s.budgetS; $("#stParallel").value = s.parallel || 0; $("#stSeed").value = s.seed; $("#stServerAbove").value = s.serverAbove;
-  $("#stDsOrigin").value = s.dsOrigin || DEFAULTS.dsOrigin; $("#stHeartbeatS").value = s.heartbeatS; $("#stHeartbeatMiss").value = s.heartbeatMiss; $("#stAutoCommit").value = s.autoCommit || "on"; $("#stPullMode").value = s.pullMode || "all"; $("#stPullDueBy").value = s.pullDueBy || ""; $("#stPullCount").value = s.pullCount || 40; $("#stAutoEvery").value = s.autoEvery || 0; $("#stEtsyCap").value = s.etsyHourlyCap || DEFAULTS.etsyHourlyCap; $("#stSandbox").value = s.sandbox === "on" ? "on" : "off";
+  $("#stDsOrigin").value = s.dsOrigin || DEFAULTS.dsOrigin; $("#stHeartbeatS").value = s.heartbeatS; $("#stHeartbeatMiss").value = s.heartbeatMiss; $("#stAutoCommit").value = s.autoCommit || "on"; $("#stCadenceDays").value = s.cadenceDays == null ? 2 : s.cadenceDays; $("#stLateDays").value = s.lateDays == null ? 2 : s.lateDays; $("#stPullMode").value = s.pullMode || "all"; $("#stPullDueBy").value = s.pullDueBy || ""; $("#stPullCount").value = s.pullCount || 40; $("#stAutoEvery").value = s.autoEvery || 0; $("#stEtsyCap").value = s.etsyHourlyCap || DEFAULTS.etsyHourlyCap; $("#stSandbox").value = s.sandbox === "on" ? "on" : "off";
   $("#stSkuPattern").value = s.skuPattern || DEFAULTS.skuPattern; $("#stLabelGapMm").value = s.labelGapMm; $("#stMasterServerAbove").value = s.masterServerAbove; $("#stSizeMinMm").value = s.sizeMinMm; $("#stSizeMaxMm").value = s.sizeMaxMm;
   $("#stEngraveMarginMm").value = s.engraveMarginMm; $("#stEngraveMinCapMm").value = s.engraveMinCapMm; $("#stEngraveMaxHeightFrac").value = s.engraveMaxHeightFrac; $("#stEngraveConfidence").value = s.engraveConfidence; $("#stEngraveMinGapMm").value = s.engraveMinGapMm; $("#stEngraveMinStrokeMm").value = s.engraveMinStrokeMm; $("#stEngraveTryRotated").value = s.engraveTryRotated || "on"; $("#stBackFileView").value = s.backFileView || "asSeenFromBack";
   { const sb = window.Sandbox; const st = $("#stSbStatus");
@@ -2843,7 +2860,7 @@ function readSettings() {
   s.rail = $("#railSeg button.on")?.dataset.v || "md";
   for (const m of METALS) s.stock[m.key] = [(+$(`#st${cap(m.key)}W`).value / 25.4) || DEFAULTS.stock[m.key][0], (+$(`#st${cap(m.key)}H`).value / 25.4) || DEFAULTS.stock[m.key][1]];
   s.clearancePt = Math.max(-2, Math.min(12, Math.round((+$("#stClearance").value || 0) / MM_PER_PT * 100) / 100)); s.insetPt = Math.max(0, Math.round((+$("#stInset").value || 0) / MM_PER_PT * 100) / 100); s.angleStep = +$("#stAngle").value || 30; s.budgetS = Math.max(10, +$("#stBudget").value || 180); s.parallel = Math.max(0, Math.min(16, Math.round(+$("#stParallel").value || 0))); s.seed = Math.max(1, Math.round(+$("#stSeed").value || 1)); s.serverAbove = Math.max(0, +$("#stServerAbove").value || 0);
-  s.dsOrigin = ($("#stDsOrigin").value || DEFAULTS.dsOrigin).trim().replace(/\/+$/, ""); s.heartbeatS = Math.max(2, Math.min(60, +$("#stHeartbeatS").value || 5)); s.heartbeatMiss = Math.max(1, Math.min(10, Math.round(+$("#stHeartbeatMiss").value || 3))); s.autoCommit = $("#stAutoCommit").value; s.pullMode = $("#stPullMode").value; s.pullDueBy = $("#stPullDueBy").value || ""; s.pullCount = Math.max(1, Math.min(500, Math.round(+$("#stPullCount").value || 40))); s.autoEvery = Math.max(0, Math.min(1440, Math.round(+$("#stAutoEvery").value || 0))); if (s.autoEvery > 0 && s.autoEvery < 5) s.autoEvery = 5; s.etsyHourlyCap = Math.max(50, Math.min(5000, Math.round(+$("#stEtsyCap").value || 600))); { const was = s.sandbox === "on"; s.sandbox = $("#stSandbox").value === "on" ? "on" : "off"; if (was !== (s.sandbox === "on")) { saveSettings(); toast(`Sandbox ${s.sandbox === "on" ? "ON" : "off"} — reloading`, "ok", 3000); setTimeout(() => location.reload(), 600); } }
+  s.dsOrigin = ($("#stDsOrigin").value || DEFAULTS.dsOrigin).trim().replace(/\/+$/, ""); s.heartbeatS = Math.max(2, Math.min(60, +$("#stHeartbeatS").value || 5)); s.heartbeatMiss = Math.max(1, Math.min(10, Math.round(+$("#stHeartbeatMiss").value || 3))); s.autoCommit = $("#stAutoCommit").value; s.cadenceDays = Math.max(1, Math.min(14, Math.round(+$("#stCadenceDays").value || 2))); s.lateDays = Math.max(0, Math.min(14, Math.round(+$("#stLateDays").value ?? 2))); s.pullMode = $("#stPullMode").value; s.pullDueBy = $("#stPullDueBy").value || ""; s.pullCount = Math.max(1, Math.min(500, Math.round(+$("#stPullCount").value || 40))); s.autoEvery = Math.max(0, Math.min(1440, Math.round(+$("#stAutoEvery").value || 0))); if (s.autoEvery > 0 && s.autoEvery < 5) s.autoEvery = 5; s.etsyHourlyCap = Math.max(50, Math.min(5000, Math.round(+$("#stEtsyCap").value || 600))); { const was = s.sandbox === "on"; s.sandbox = $("#stSandbox").value === "on" ? "on" : "off"; if (was !== (s.sandbox === "on")) { saveSettings(); toast(`Sandbox ${s.sandbox === "on" ? "ON" : "off"} — reloading`, "ok", 3000); setTimeout(() => location.reload(), 600); } }
   try { new RegExp($("#stSkuPattern").value); s.skuPattern = $("#stSkuPattern").value.trim() || DEFAULTS.skuPattern; } catch (_) { toast("SKU pattern is not a valid regular expression — kept the previous one", "bad"); }
   s.labelGapMm = Math.max(1, Math.min(30, +$("#stLabelGapMm").value || 6.4)); s.masterServerAbove = Math.max(0, Math.round(+$("#stMasterServerAbove").value || 0)); s.sizeMinMm = Math.max(0.5, +$("#stSizeMinMm").value || 3); s.sizeMaxMm = Math.max(s.sizeMinMm, +$("#stSizeMaxMm").value || 60);
   s.engraveMarginMm = Math.max(0, Math.min(5, +$("#stEngraveMarginMm").value || 0)); s.engraveMinCapMm = Math.max(0.3, +$("#stEngraveMinCapMm").value || 1.6); s.engraveMaxHeightFrac = Math.max(0.1, Math.min(1, +$("#stEngraveMaxHeightFrac").value || 0.4)); s.engraveConfidence = Math.max(0, Math.min(1, +$("#stEngraveConfidence").value || 0.8)); s.engraveMinGapMm = Math.max(0, +$("#stEngraveMinGapMm").value || 0); s.engraveMinStrokeMm = Math.max(0, +$("#stEngraveMinStrokeMm").value || 0); s.engraveTryRotated = $("#stEngraveTryRotated").value; s.backFileView = $("#stBackFileView").value;
@@ -2895,7 +2912,7 @@ async function boot() {
   cloudProbe();
   refreshAllCards(); updateTopSub();
   window.CN = { S, AG, DEFAULTS, METALS, showPage, startNest, intake, api, agent, agentUpdate, agentCall, uploadBytes, buildJob, setMode, renderLibrary, loadLibrary, applyGroupingReview, reviewGrouping, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; },
-    activePage, allSheets, pagesOf, addPage, sheetDirty, activeCharms, renderCard, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, openLibrarySheet, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log };   // for tests, the console and charm-nest-bridge.js
+    activePage, allSheets, pagesOf, addPage, sheetDirty, activeCharms, renderCard, inflatedArea, usableArea, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, openLibrarySheet, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log };   // for tests, the console and charm-nest-bridge.js
 }
 boot();
 </script>

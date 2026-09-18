@@ -6984,8 +6984,21 @@ const Bridge = (() => {
   /* ── idempotent commits per run (survive a reload of this page) ── */
   const readJson = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || "null") || d; } catch (_) { return d; } };
   const writeJson = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} };
-  function rememberCommit(runId, ids, result) { const m = readJson(LSK.commits, {}); m[runId] = { ids, result, at: Date.now() }; const keys = Object.keys(m).sort((a, b) => m[a].at - m[b].at); while (keys.length > 60) delete m[keys.shift()]; writeJson(LSK.commits, m); }
-  function priorCommit(runId, ids) { const m = readJson(LSK.commits, {}); const c = m[runId]; if (!c) return null; return ids.every(id => c.ids.includes(id)) ? c.result : null; }
+  /* A run commits once per set now — its SS set and its GF set are two commits under one run id — so the memory of a
+     run's commits accumulates rather than being overwritten by the latest, and a repeat of any subset (or of the whole
+     run) is answered from it. */
+  function rememberCommit(runId, ids, result) {
+    const m = readJson(LSK.commits, {}); const prev = m[runId] || { ids: [], result: { completed: [], refused: [] } };
+    const uniq = arr => [...new Set(arr.map(String))];
+    const refused = [...(prev.result.refused || []), ...(result.refused || [])].filter((r, i, all) => all.findIndex(x => String(x.id) === String(r.id)) === i);
+    m[runId] = { ids: uniq([...prev.ids, ...ids]), result: Object.assign({}, prev.result, result, { completed: uniq([...(prev.result.completed || []), ...(result.completed || [])]), refused }), at: Date.now() };
+    const keys = Object.keys(m).sort((a, b) => m[a].at - m[b].at); while (keys.length > 60) delete m[keys.shift()]; writeJson(LSK.commits, m);
+  }
+  function priorCommit(runId, ids) {
+    const m = readJson(LSK.commits, {}); const c = m[runId]; if (!c || !ids.every(id => c.ids.includes(String(id)))) return null;
+    const want = new Set(ids.map(String));
+    return Object.assign({}, c.result, { completed: (c.result.completed || []).filter(id => want.has(String(id))), refused: (c.result.refused || []).filter(r => want.has(String(r.id))) });
+  }
   function rememberSorterSelection() { writeJson(LSK.selected, { at: Date.now(), ids: [...S.sorterSelected] }); }
 
   /* ── the remote cursor: every command glides to the control it acts on and presses it, so a person watching this page

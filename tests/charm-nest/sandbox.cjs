@@ -11,7 +11,7 @@ const { start } = require('./bridge-server.cjs');
 const { buildMaster } = require('./fixture-master.cjs');
 
 const day = Math.floor(Date.now() / 1000);
-const tx = (rid, i, sku, extra = {}) => Object.assign({ transaction_id: Number(`${rid}${i}`), listing_id: 1718000 + i, receipt_id: rid, sku, title: `${sku} charm`, quantity: 1, expected_ship_date: day + 86400 * (2 + i), variations: [{ formatted_name: 'Metal', formatted_value: '14k Gold Filled' }], is_personalized: false }, extra);
+const tx = (rid, i, sku, extra = {}) => Object.assign({ transaction_id: Number(`${rid}${i}`), listing_id: 1718000 + i, receipt_id: rid, sku, title: `${sku} charm`, quantity: 1, expected_ship_date: day + 86400,   /* due tomorrow: three small pieces never fill a sheet, and a piece that is due is what makes a partial sheet cut */ variations: [{ formatted_name: 'Metal', formatted_value: '14k Gold Filled' }], is_personalized: false }, extra);
 const receipt = (rid, txs) => ({ receipt_id: rid, order_number: rid, name: 'Buyer ' + rid, country_iso: 'US', city: 'Austin', message_from_buyer: '', update_timestamp: day, create_timestamp: day - 3600, status: 'Paid', is_shipped: false, transactions: txs });
 const receipts = [
   receipt(3521000001, [tx(3521000001, 1, 'BR-TST-01')]),
@@ -120,7 +120,8 @@ const PROD = ['Design_Completed Orders', 'Design_RealTime_Selected_Orders', 'Des
   await page.evaluate(() => DesignLink.call('orders.snapshot', { hydrate: false, withNotes: false })).then(s3 => assert.strictEqual(s3.total, 0, 'in the sandbox the three orders are complete now')).catch(e => { throw e; });
   // status, reset, and back to production
   const status = await page.evaluate(() => Sandbox.refresh());
-  assert(status.snapshot && status.records.Charm_Pool === 4 && status.records.Charm_Nest_Sets === 1, 'sandbox status counts its own records: ' + JSON.stringify(status.records));
+  // two sets: the SS order and the GF orders share nothing, so each material is a set of its own
+  assert(status.snapshot && status.records.Charm_Pool === 4 && status.records.Charm_Nest_Sets === 2 && status.records.Charm_Nest_Release === 0, 'sandbox status counts its own records: ' + JSON.stringify(status.records));
   const reset = await page.evaluate(() => CN.api('charmNestLibrary', { op: 'sandboxReset' }));
   assert(reset.deleted >= 10 && ![...st.docs.keys()].some(k => k.startsWith('Sandbox_')), 'reset removed every sandbox record');
   for (const c of PROD) assert.strictEqual(st.list(c).length, before[c], `reset left production alone: ${c}`);

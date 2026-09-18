@@ -68,7 +68,7 @@ const Ladder = window.Ladder = (() => {
       count: () => { const k = Engrave.pendingCount(); return k ? `${k} to settle` : (Engrave.reviewedCount() ? `${Engrave.reviewedCount()} decided` : ""); },
       waits: () => Engrave.pendingCount() },
     { id: "labels", label: "Labels", covers: ["labels"], tab: "nest",
-      count: () => { const s2 = B.run && Sets.byRun && Sets.byRun().get(B.run.runId); const n = s2 && s2.labelFiles ? s2.labelFiles.length : 0; return n ? `${n} saved` : ""; } },
+      count: () => { const n = B.run && Sets.ofRun ? Sets.ofRun(B.run.runId).reduce((k, s2) => k + (s2.labelFiles ? s2.labelFiles.length : 0), 0) : 0; return n ? `${n} saved` : ""; } },
     { id: "commit", label: "Commit", covers: ["commit", "complete"], tab: "orders",
       count: () => { const n = B.run && B.run.committed ? B.run.committed.length : 0; const h = B.run && B.run.holds ? Object.keys(B.run.holds).length : 0; return n || h ? `${n} committed${h ? ` · ${h} held` : ""}` : ""; } },
   ];
@@ -491,7 +491,7 @@ const Orders = window.Orders = (() => {
   const cap = (v, n) => String(v == null ? "" : v).slice(0, n);
   function lineRecord(row) {
     const l = row.line, o = row.order;
-    return [row.key, { state: row.state, poolIds: row.poolIds, reason: row.reason, hold: row.hold || null, sku: row.spec && row.spec.designSku, material: row.material, quantity: row.spec ? row.spec.quantity : 1,
+    return [row.key, { state: row.state, poolIds: row.poolIds, reason: row.reason, hold: row.hold || null, wait: row.wait || null, sku: row.spec && row.spec.designSku, material: row.material || (row.spec && row.spec.material) || null, quantity: row.spec ? row.spec.quantity : 1,
       engrave: row.engrave ? { needed: !!row.engrave.needed, state: row.engrave.state, approved: !!row.engrave.approved, text: row.engrave.text || null } : null,
       problems: (row.problems || []).map(p => p.kind), updateTs: o.updateTs, orderId: o.receiptId, transactionId: l.transactionId,
       snap: { title: cap(l.title, 160), listingId: cap(l.listingId, 24), metalKey: cap(l.metalKey, 24), metalLabel: cap(l.metalLabel, 40),
@@ -512,7 +512,7 @@ const Orders = window.Orders = (() => {
       metalKey: s2.metalKey || "", metalLabel: s2.metalLabel || (l.material ? labelOf(l.material) : ""), personalization: s2.pers || [], buyerMessage: "", expectedShipDate: 0,
       variations: (s2.vars || []).map(v => { const i = String(v).indexOf("\u241f"); return { name: String(v).slice(0, i < 0 ? 0 : i), value: i < 0 ? String(v) : String(v).slice(i + 1) }; }) };
     order.lines = [line];
-    return { key, order, line, spec: null, problems: [], state: l.state || "pulled", reason: l.reason || null, hold: l.hold || null, claimedBy: null,
+    return { key, order, line, spec: null, problems: [], state: l.state || "pulled", reason: l.reason || null, hold: l.hold || null, wait: l.wait || null, claimedBy: null,
       poolIds: l.poolIds || [], engrave: l.engrave || null, metal: l.material || null, materialOverride: l.material || null, fromRecord: true };
   }
   async function claim(ids) { if (!ids.length) return; if (window.Scope && Scope.on()) return; const r = await DesignLink.call("claim", { receiptIds: ids, runId: B.run && B.run.runId }); for (const row of rowsOf()) if (r.claimed.includes(row.order.receiptId)) row.claimedBy = "sorter"; agent({ bridge: true }, "DS", `Claimed ${r.claimed.length} order(s) on the station (gold dot)`); render(); }
@@ -555,16 +555,18 @@ const Orders = window.Orders = (() => {
     Review.syncOrderItems(); render();
     return { changed, gone };
   }
-  const STATE_PILL = { pulled: ["neutral", "pulled"], noDesign: ["info", "no design"], pooled: ["info", "pooled"], nested: ["ok", "nested"], written: ["ok", "written"], labelled: ["ok", "labelled"], committed: ["ok", "complete"], unmatched: ["bad", "unmatched"], held: ["bad", "held"], contended: ["warn", "other run"], skipped: ["warn", "skipped"], gone: ["bad", "gone"], oversize: ["bad", "oversize"] };
+  const STATE_PILL = { pulled: ["neutral", "pulled"], waiting: ["info", "waiting"], noDesign: ["info", "no design"], pooled: ["info", "pooled"], nested: ["ok", "nested"], written: ["ok", "written"], labelled: ["ok", "labelled"], committed: ["ok", "complete"], unmatched: ["bad", "unmatched"], held: ["bad", "held"], contended: ["warn", "other run"], skipped: ["warn", "skipped"], gone: ["bad", "gone"], oversize: ["bad", "oversize"] };
   function engravePill(r) { const e = r.engrave; if (!e) return r.spec && r.spec.engraveCandidate ? ["warn", "words?"] : ["neutral", "—"]; if (!e.needed) return ["neutral", e.state === "skipped" ? "skipped" : "no engraving"]; if (e.approved) return ["ok", "approved"]; if (e.state === "words") return ["warn", "words"]; if (e.state === "review") return ["warn", "review"]; if (e.state === "fitted") return ["info", "fitted"]; if (e.state === "blocked") return ["bad", "blocked"]; return ["info", e.state || "engrave"]; }
   /* Which pile a line is in. The three the shop asked for — went through, needs a person, needs engraving settled —
      plus the two that are neither. A line is in exactly one pile, so the counts add up to the lines pulled. */
   const PILES = [
-    { id: "late", label: "Due or overdue", cls: "bad", of: r => dueOf(r).soon && !["committed", "labelled", "skipped"].includes(r.state) },
+    // a due line that needs a decision is first of all a decision: the date is on its card either way
     { id: "attn", label: "Needs a decision", cls: "warn", of: r => r.problems.length || ["held", "unmatched", "oversize", "gone"].includes(r.state) },
+    { id: "late", label: "Due or overdue", cls: "bad", of: r => dueOf(r).soon && !["committed", "labelled", "skipped"].includes(r.state) },
     { id: "eng", label: "Engraving to settle", cls: "info", of: r => r.engrave && r.engrave.needed && !r.engrave.approved && r.engrave.state !== "skipped" },
     { id: "done", label: "Done", cls: "ok", of: r => ["committed", "labelled"].includes(r.state) },
     { id: "ready", label: "Went through", cls: "ok", of: r => ["pooled", "nested", "written", "noDesign", "skipped"].includes(r.state) },
+    { id: "wait", label: "Waiting", cls: "info", of: r => r.state === "waiting" },
     { id: "rest", label: "Not started", cls: "neutral", of: r => true },
   ];
   const pileOf = r => (PILES.find(g => g.of(r)) || PILES[PILES.length - 1]).id;
@@ -700,7 +702,8 @@ const Orders = window.Orders = (() => {
       const attn = r.problems.length || ["held", "unmatched", "oversize"].includes(r.state);
       const lid = String(r.line.listingId || "");
       const url = imageFor(r);
-      const why = attn ? (r.problems.map(x => Review.problemText(x)).join(" · ") || r.reason || "") : "";
+      const why = attn ? (r.problems.map(x => Review.problemText(x)).join(" · ") || r.reason || "") : r.state === "waiting" ? (r.reason || "") : "";
+      const gateBtn = r.state === "waiting" && r.wait ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
       const node = el("button", (cards ? "ocard" : "olist") + " hoverItem" + (attn ? " attn" : ""));
       node.type = "button"; node.dataset.m = m; node.dataset.key = r.key;
       node.title = r.order.receiptId + " · " + (sp.designSku || r.line.sku || "no SKU") + " — " + r.line.title;
@@ -721,7 +724,7 @@ const Orders = window.Orders = (() => {
             (where ? '<span class="owhere" title="the set and sheet this piece was nested on">' + esc(where.set) + (where.sheet ? " · " + esc(where.sheet) : "") + '</span>' : "") +
             (wordsOf(sp) ? '<span class="opers" title="' + esc(wordsOf(sp)) + '">' + esc(wordsOf(sp)) + '</span>' : "") +
             (why ? P("owhy", esc(why)) : "") +
-            (r.hold ? '<button class="relHold" type="button" title="put this line back in play">Release hold</button>' : "") +
+            (r.hold ? '<button class="relHold" type="button" title="put this line back in play">Release hold</button>' : "") + gateBtn +
           '</span>';
       } else {
         node.innerHTML =
@@ -734,10 +737,11 @@ const Orders = window.Orders = (() => {
           '<span class="cell hideSm due ' + due.cls + '" title="ship by">' + esc(due.txt) + '</span>' +
           '<span class="ost ' + st[0] + '">' + esc(st[1]) + '</span>' +
           (why ? '<span class="cell whyc owhy">' + esc(why) + '</span>' : "") +
-          (r.hold ? '<button class="relHold" type="button" title="put this line back in play">Release hold</button>' : "");
+          (r.hold ? '<button class="relHold" type="button" title="put this line back in play">Release hold</button>' : "") + gateBtn;
       }
       node.onclick = e => { if (e.target.closest(".relHold")) return; OrderWin.open(r.key); };
-      { const rh = node.querySelector(".relHold"); if (rh) rh.onclick = e => { e.stopPropagation(); Review.repool(r); }; }
+      { const rh = node.querySelector(".relHold:not([data-gate])"); if (rh) rh.onclick = e => { e.stopPropagation(); Review.repool(r); }; }
+      { const gb = node.querySelector("[data-gate]"); if (gb) gb.onclick = e => { e.stopPropagation(); gb.disabled = true; (gb.dataset.gate === "release" ? Gate.release(gb.dataset.gm) : Gate.cutAnyway(gb.dataset.gm)).catch(err => toast(err.message, "bad", 6000)); }; }
       // an order can be several lines on several cards: hovering one lifts all of them, the way the station does
       node.dataset.rid = String(r.order.receiptId);
       list.appendChild(node);
@@ -1314,21 +1318,119 @@ const Pool = window.Pool = (() => {
     agent({ metal: sp.material, pool: true }, "POOL", `${row.order.receiptId} · ${sp.designSku}${sp.quantity > 1 ? " ×" + sp.quantity : ""} → ${labelOf(sp.material)} (${row.engrave && row.engrave.needed ? "engrave" : "plain"})`);
   }
   async function addAll(run) {
-    const rows = Orders.rows().filter(r => r.state === "pulled" || r.state === "held" || r.state === "unmatched" || r.state === "oversize");
+    const rows = Orders.rows().filter(r => ["pulled", "held", "unmatched", "oversize", "waiting"].includes(r.state));
+    // what goes to the laser today and what waits: full sheets for SS and GF, every other day for the slow metals, orders whole
+    Orders.interpretAll();
+    const plan = await Gate.plan(rows);
+    const held = [...plan.wait.values()];
+    if (held.length) agent({ pool: true }, "POOL", `${held.length} line(s) wait: ${held.filter(w => w.kind === "fill").length} for a full sheet, ${held.filter(w => w.kind === "slow").length} for a slow metal's day`);
     let n = 0;
     const bar = rows.length && window.CNProgress ? CNProgress.start(`Preparing ${rows.length} order line(s)`, { total: rows.length }) : null;
-    for (const row of rows) { if (bar) bar.set(n, rows.length, row.spec && row.spec.designSku ? String(row.spec.designSku) : ""); try { await poolAdd(row, run); } catch (e) { row.state = "held"; row.reason = e.message; agent({ pool: true }, "warn", `${row.order.receiptId} · ${row.spec && row.spec.designSku}: ${e.message}`); } if (++n % 5 === 0) { Orders.render(); } }
+    for (const row of rows) { if (row.state === "waiting") { n++; continue; } if (bar) bar.set(n, rows.length, row.spec && row.spec.designSku ? String(row.spec.designSku) : ""); try { await poolAdd(row, run); } catch (e) { row.state = "held"; row.reason = e.message; agent({ pool: true }, "warn", `${row.order.receiptId} · ${row.spec && row.spec.designSku}: ${e.message}`); } if (++n % 5 === 0) { Orders.render(); } }
     if (bar) bar.end();
+    await Gate.afterPool(run);
     Review.syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards();
     if (run) { run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); await RunCtl.save(run); }
     const pooled = rows.filter(r => r.state === "pooled").length;
-    agent({ pool: true }, "POOL", `Pool: ${pooled} line(s) queued on the cards · ${rows.filter(r => r.state !== "pooled" && r.state !== "noDesign").length} held`);
+    agent({ pool: true }, "POOL", `Pool: ${pooled} line(s) queued on the cards · ${rows.filter(r => r.state === "waiting").length} waiting · ${rows.filter(r => !["pooled", "noDesign", "waiting"].includes(r.state)).length} held`);
     return pooled;
   }
   async function update(poolIds, patch) { for (const id of poolIds) { const p = B.pool.rows.get(id); if (p) Object.assign(p, patch); } if (S.cloud.ok && poolIds.length) await api("charmNestLibrary", { op: "poolUpdate", poolIds, patch }).catch(() => {}); }
   const charmOf = poolId => allSheets().flatMap(sh => sh.charms).find(c => c.poolId === poolId) || null;
   const sheetOf = poolId => allSheets().find(sh => sh.placements.some(p => { const c = sh.charms.find(x => x.id === p.id); return c && c.poolId === poolId; })) || null;
   return { poolAdd, addAll, masterCharm, cloneCharm, update, charmOf, sheetOf, sizeEntry };
+})();
+
+/* ═══ 20b · Gate — what goes to the laser today ═══════════════════════════════════════════════════════════════════
+   The rules live in CharmNestOrders.planRelease and are tested there. This is the part that knows the shop: the record
+   of when each slow material last went out (shop-wide, in the cloud, not in one browser), the day a person opened one
+   early, the footprint of a line from its master design, and the one line on each material's card that says what is
+   waiting and for what, with the button that stops the waiting. */
+const Gate = window.Gate = (() => {
+  const R = { lastReleased: {}, released: {}, forceFill: {}, loaded: false, plan: null };
+  const O_ = window.CharmNestOrders;
+  async function load() {
+    if (R.loaded) return R;
+    if (S.cloud.ok) { try { const r = await api("charmNestLibrary", { op: "releaseGet" }, { quiet: true }); R.lastReleased = r.lastReleased || {}; R.released = r.released || {}; } catch (e) { agent({ bridge: true }, "warn", `release record: ${e.message}`); } }
+    R.loaded = true; return R;
+  }
+  async function put(patch) {
+    if (patch.lastReleased) Object.assign(R.lastReleased, patch.lastReleased);
+    if (patch.released) Object.assign(R.released, patch.released);
+    if (S.cloud.ok) await api("charmNestLibrary", { op: "releasePut", lastReleased: R.lastReleased, released: R.released }, { quiet: true }).catch(e => agent({ bridge: true }, "warn", `release record: ${e.message}`));
+  }
+  /** A line's footprint on the plate, from its master design: the silhouette grown by half the clearance, times copies. */
+  function footprint(row) {
+    const sp = row.spec; if (!sp || !sp.designSku) return 0;
+    const e = Master.entryFor(sp.designSku); if (!e) return 0;
+    const g = Pool.sizeEntry(e, sp.size) || e; if (!(g.areaPt2 > 0)) return 0;
+    return CN.inflatedArea({ areaPt2: g.areaPt2, widthPt: g.widthPt || 0, heightPt: g.heightPt || 0 }) * Math.max(1, sp.quantity || 1);
+  }
+  const capacity = () => Object.fromEntries(METALS.map(m => [m.key, CN.usableArea(S.sheets[m.key]) * (+S.settings.maxFill || 0.74)]));
+  /** Plan the lines that could pool now, and mark the ones that wait. Returns the plan. */
+  async function plan(rows) {
+    await load();
+    const ready = rows.filter(r => r.spec && !r.spec.noDesign && !r.problems.length && r.spec.material);
+    for (const r of ready) if (r.spec.designSku && !Master.entryFor(r.spec.designSku)) await Master.fetchEntry(r.spec.designSku).catch(() => {});
+    const lines = ready.map(r => ({ key: r.key, orderId: String(r.order.receiptId), material: r.spec.material, areaPt2: footprint(r), shipBy: +r.order.shipBy || 0 }));
+    R.plan = O_.planRelease(lines, { today: today(), capacity: capacity(), lastReleased: R.lastReleased, released: R.released, forceFill: R.forceFill, cadenceDays: +S.settings.cadenceDays || 2, lateDays: S.settings.lateDays == null ? 2 : +S.settings.lateDays });
+    for (const r of ready) {
+      const w = R.plan.wait.get(r.key);
+      if (w) { r.state = "waiting"; r.wait = w; r.reason = waitWords(w); }
+      else if (r.state === "waiting") { r.state = "pulled"; r.wait = null; r.reason = null; }
+    }
+    return R.plan;
+  }
+  const dayWord = d => d ? new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "";
+  function daysUntil(d) { return Math.round((Date.parse(d + "T12:00:00") - Date.parse(today() + "T12:00:00")) / 86400000); }
+  function waitWords(w) {
+    if (w.kind === "slow") { const n = daysUntil(w.until); return `${labelOf(w.material)} goes to the laser ${n <= 0 ? "today" : n === 1 ? "tomorrow" : dayWord(w.until)} — waits for it`; }
+    return `waits for a full ${labelOf(w.material)} sheet · ${w.pct}% so far`;
+  }
+  /** After pooling: the slow materials that went out today are recorded, and every card learns its kin group. */
+  async function afterPool(run) {
+    const pooled = Orders.rows().filter(r => r.state === "pooled" && r.material);
+    const went = {}; for (const r of pooled) if (O_.SLOW_MATERIALS.has(r.material) && R.lastReleased[r.material] !== today()) went[r.material] = today();
+    if (Object.keys(went).length) { await put({ lastReleased: went }); agent({ bridge: true }, "POOL", `${Object.keys(went).map(m => labelOf(m)).join(", ")} released to the laser today — next in ${+S.settings.cadenceDays || 2} days`); }
+    const groups = O_.kinGroups(pooled.map(r => ({ orderId: String(r.order.receiptId), material: r.material })));
+    for (const m of METALS) for (const pg of pagesOf(m.key)) if (!pg.fileBase && (!run || pg.runId === run.runId)) pg.group = groups[m.key] || m.key;
+    if (run) run.groups = groups;
+    refreshAllCards();
+  }
+  /** A person opens a slow material today, or cuts a fast material's partial sheet: the waiting lines pool at once. */
+  async function release(material) { await put({ released: { [material]: today() } }); await repoolWaiting(material, `${labelOf(material)} released to the laser by hand`); }
+  async function cutAnyway(material) { R.forceFill[material] = true; await repoolWaiting(material, `${labelOf(material)}: partial sheet cut by hand`); }
+  async function repoolWaiting(material, why) {
+    const who = employeeName() || askEmployee(); if (!who) return;
+    agent({ bridge: true, metal: material }, "POOL", `${why} (${who})`);
+    const rows = Orders.rows().filter(r => r.state === "waiting" && r.wait && r.wait.material === material);
+    for (const r of rows) { r.state = "pulled"; r.wait = null; r.reason = null; }
+    if (B.run && O.stepIndex(B.run.step) >= O.stepIndex("pool")) await Pool.addAll(B.run); else await plan(Orders.rows());
+    Orders.render(); RunCtl.poke();
+  }
+  /** The one line under a card's head. Slow: the next day it goes, and how much is waiting. Fast: how full the waiting
+   *  sheet has got. Nothing at all when there is nothing to say. */
+  function renderCard(sh) {
+    const el2 = sh.el && sh.el.querySelector('[data-r="gate"]'); if (!el2) return;
+    const m = sh.metal, p = R.plan && R.plan.materials[m];
+    const waiting = Orders.rows().filter(r => r.state === "waiting" && r.wait && r.wait.material === m);
+    const pieces = waiting.reduce((n, r) => n + Math.max(1, (r.spec && r.spec.quantity) || 1), 0);
+    let html = "", cls = "shGate";
+    if (O_.SLOW_MATERIALS.has(m)) {
+      const last = R.lastReleased[m], open = !last || (R.released[m] === today()) || daysUntil(last) <= -(+S.settings.cadenceDays || 2);
+      const next = open ? today() : new Date(Date.parse(last + "T12:00:00") + (+S.settings.cadenceDays || 2) * 86400000).toISOString().slice(0, 10);
+      const n = daysUntil(next);
+      if (open) { if (!pieces && !(p && p.taken)) { el2.classList.add("hidden"); return; } cls += " open"; html = `<span class="t"><b>Goes to the laser today</b>${R.released[m] === today() ? " · opened by hand" : ""}</span><span class="n">${p && p.taken ? `${p.taken} piece${p.taken === 1 ? "" : "s"} on the sheet` : ""}</span>`; }
+      else html = `<span class="t"><b>Next to the laser ${n === 1 ? "tomorrow" : dayWord(next)}</b> · every ${+S.settings.cadenceDays || 2} days</span><span class="n">${pieces ? `${pieces} piece${pieces === 1 ? "" : "s"} waiting` : "nothing waiting"}</span>${pieces ? `<button class="btn ghost xs" data-gate="release" title="send the ${pieces} waiting piece${pieces === 1 ? "" : "s"} with this set instead of waiting for ${dayWord(next)}">Send now</button>` : ""}`;
+    } else {
+      if (!pieces) { el2.classList.add("hidden"); return; }
+      const pct = (waiting[0].wait && waiting[0].wait.pct) || 0;
+      html = `<span class="t"><b>${pct}% of a sheet</b> waiting for more</span><span class="n">${pieces} piece${pieces === 1 ? "" : "s"}</span><button class="btn ghost xs" data-gate="cut" title="cut the partial sheet now instead of waiting for it to fill">Cut it anyway</button>`;
+    }
+    el2.className = cls; el2.classList.remove("hidden"); el2.innerHTML = html;
+    const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
+  }
+  return { load, plan, afterPool, release, cutAnyway, renderCard, footprint, state: () => R };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
@@ -1891,19 +1993,27 @@ const Engrave = window.Engrave = (() => {
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
 const Sets = window.Sets = (() => {
-  const byRun = () => B.sets;
-  /** The set for a run key: allocated once per run in a Firestore transaction (per date, across materials). */
-  async function ensure(runKey) {
-    if (byRun().has(runKey)) return byRun().get(runKey);
+  const byRun = () => B.sets;                         // keyed `${runId}|${group}` — a run has one set per kin group
+  const keyOf = (runId, group) => `${runId}|${group || "all"}`;
+  /* A set used to be "the run": every sheet of every material a run made, under one number. But the only thing that
+     ties two sheets together is an order with a piece on each, and the shop said so: a material no order ties to
+     another is a set of its own. So a run has one set per kin group (Orders.kinGroups), each numbered on the day's
+     counter in its own transaction, and a second run later the same day carries the numbering on. */
+  async function ensure(runId, group) {
+    const k = keyOf(runId, group);
+    if (byRun().has(k)) return byRun().get(k);
     const day = today();
     let set;
-    if (S.cloud.ok) { const r = await api("charmNestLibrary", { op: "setAllocate", day, runId: runKey }, { label: "Numbering the set" }); set = { setId: r.setId, seq: r.seq, day: r.day || day, runId: runKey, name: O.setLabel(r.seq), folder: O.setFolder(r.day || day, r.seq), orders: {}, sheetIds: [], materials: [], labelFiles: [], status: "open" }; }
-    else { const k = "cn.setseq." + day; const seq = (+localStorage.getItem(k) || 0) + 1; localStorage.setItem(k, String(seq)); set = { setId: O.setId(day, seq), seq, day, runId: runKey, name: O.setLabel(seq), folder: O.setFolder(day, seq), orders: {}, sheetIds: [], materials: [], labelFiles: [], status: "open", offline: true }; }
-    byRun().set(runKey, set); if (B.run && B.run.runId === runKey) { B.run.setId = set.setId; B.run.day = set.day; B.run.seq = set.seq; RunCtl.renderBanner(); }
-    agent({ run: runKey }, "cloud", `Set ${set.name} allocated for ${set.day} → ${set.folder}`);
+    if (S.cloud.ok) { const r = await api("charmNestLibrary", { op: "setAllocate", day, runId, group: group || "" }, { label: "Numbering the set" }); set = { setId: r.setId, seq: r.seq, day: r.day || day, runId, group: group || null, name: O.setLabel(r.seq), folder: O.setFolder(r.day || day, r.seq), orders: {}, sheetIds: [], materials: [], labelFiles: [], status: "open" }; }
+    else { const kk = "cn.setseq." + day; const seq = (+localStorage.getItem(kk) || 0) + 1; localStorage.setItem(kk, String(seq)); set = { setId: O.setId(day, seq), seq, day, runId, group: group || null, name: O.setLabel(seq), folder: O.setFolder(day, seq), orders: {}, sheetIds: [], materials: [], labelFiles: [], status: "open", offline: true }; }
+    byRun().set(k, set);
+    if (B.run && B.run.runId === runId) { B.run.setIds = [...new Set((B.run.setIds || []).concat([set.setId]))]; B.run.setId = B.run.setId || set.setId; B.run.day = set.day; B.run.seq = B.run.seq || set.seq; RunCtl.renderBanner(); }
+    agent({ run: runId }, "cloud", `${set.name} allocated for ${set.day}${group ? ` · ${group.split("+").map(m => labelOf(m)).join(" + ")}` : ""} → ${set.folder}`);
     return set;
   }
-  const setOfSheet = sh => sh.runId ? byRun().get(sh.runId) || null : null;
+  /** Every set of a run, in set order. */
+  const ofRun = runId => [...byRun().values()].filter(x => x.runId === runId).sort((a, b) => (a.seq || 0) - (b.seq || 0));
+  const setOfSheet = sh => sh.runId ? (byRun().get(keyOf(sh.runId, sh.group)) || (sh.setId ? [...byRun().values()].find(x => x.setId === sh.setId) : null) || null) : null;
   /** The QR label, 145 × 145 pt, the print page's exact geometry (QR 85 pt at 3,3 · label 9 pt bold at 1,93 · "Notes:" at 92,0.5), ECC M. */
   async function renderLabelPng(payload, label, scale) {
     const k = scale || 8; const cv = document.createElement("canvas"); cv.width = Math.round(145 * k); cv.height = Math.round(145 * k);
@@ -2025,7 +2135,7 @@ const Sets = window.Sets = (() => {
     set.status = "awaiting review"; set.committed = []; set.committedAt = null; await save(set);
     await Pool.update([...B.pool.rows.keys()].filter(id => (B.pool.rows.get(id) || {}).setId === set.setId), { state: "written" });
     for (const row of Orders.rows()) if (row.state === "committed") row.state = "written";
-    if (B.run && B.run.setId === set.setId) { B.run.status = "review"; B.run.step = "engrave"; await RunCtl.save(B.run); RunCtl.renderBanner(); }
+    if (B.run && (B.run.setId === set.setId || (B.run.setIds || []).includes(set.setId))) { B.run.status = "review"; B.run.step = "engrave"; await RunCtl.save(B.run); RunCtl.renderBanner(); }
     agent({ run: set.runId }, "DS", `${set.name}: completion undone on the station — set back to awaiting review, every file kept`);
     Orders.render();
   }
@@ -2066,7 +2176,7 @@ const Sets = window.Sets = (() => {
       }
     } catch (e) { body.innerHTML = `<div class="libEmpty">Could not load sets: ${esc(e.message)}</div>`; }
   }
-  return { ensure, onSheetSaved, finalize, commit, undo, evaluate, save, renderLibrary, renderLabelPng, sheetsOf, setOfSheet, byRun };
+  return { ensure, ofRun, keyOf, onSheetSaved, finalize, commit, undo, evaluate, save, renderLibrary, renderLabelPng, sheetsOf, setOfSheet, byRun };
 })();
 
 /* ═══ 23 · RunCtl — the two halves, the record, resume, stop, Auto/Manual ═══ */
@@ -2098,6 +2208,7 @@ const RunCtl = window.RunCtl = (() => {
       renderBanner();
       const outcome = await doStep(r, step);
       if (r.status !== "running") break;
+      if (outcome && outcome.done) break;
       if (outcome && outcome.goto) { r.step = outcome.goto; await save(r); continue; }
       const next = O.nextStep(step);
       if (!next) { r.status = "complete"; r.finishedAt = Date.now(); await save(r); renderBanner(); onComplete(r); break; }
@@ -2111,18 +2222,20 @@ const RunCtl = window.RunCtl = (() => {
     switch (step) {
       case "pull": { const rows = await Orders.pull(r, { silent: true }); if (!rows.length) { stop("no orders match the pull rule", "Change the pull rule on the Orders tab (or in Settings) and start again."); return; } return; }
       case "claim": { await Orders.claim([...new Set(Orders.rows().map(x => x.order.receiptId))]); r.claimedAt = Date.now(); return; }
-      case "pool": { const n = await Pool.addAll(r); if (!n) { stop("nothing could be pooled — every line needs a decision", "Resolve the items in Review, then Resume."); return; } Engrave.classifyAll(r).catch(e => agent({ run: r.runId }, "warn", `classifier: ${e.message}`)); return; }
+      case "pool": { const n = await Pool.addAll(r); if (!n) { const w = Orders.rows().filter(x => x.state === "waiting").length; if (w) { r.status = "complete"; r.finishedAt = Date.now(); r.nothingToCut = true; await save(r); renderBanner(); agent({ run: r.runId }, "DS", `Nothing goes to the laser today: ${w} line(s) wait for a full sheet or a slow metal's day`); return { goto: null, done: true }; } stop("nothing could be pooled — every line needs a decision", "Resolve the items in Review, then Resume."); return; } Engrave.classifyAll(r).catch(e => agent({ run: r.runId }, "warn", `classifier: ${e.message}`)); return; }
       case "plan": { for (const m of METALS) { const pg = activePage(m.key); if (!pg.charms.some(c => c.poolId)) continue; const sat = computeSaturation(pg); agent({ metal: m.key, run: r.runId }, "info", `${labelOf(m.key)}: ${sat.count} piece(s) need ${fmt.pct(sat.totalNeeded / sat.usable)} of the plate — ${sat.recommend ? "over the " + fmt.pct(sat.rho.cap) + " ceiling, the overflow goes to a second sheet" : "under the " + fmt.pct(sat.rho.cap) + " ceiling"}`); } return; }
       case "nest": { await nestAll(r); return; }
-      case "checkpoint": { const set = await Sets.ensure(r.runId); set.status = "awaiting review"; await Sets.save(set); r.setId = set.setId; r.status = "running"; await save(r); return; }
+      case "checkpoint": { const sets = Sets.ofRun(r.runId); for (const set of sets) { set.status = "awaiting review"; await Sets.save(set); } r.setIds = sets.map(x => x.setId); r.setId = r.setIds[0] || r.setId || null; r.status = "running"; await save(r); return; }
       case "engrave": { await Engrave.classifyAll(r); await Engrave.fitAll(r); await waitForReview(r); return; }
       case "revalidate": { const v = await Orders.revalidate(r, "before labels"); if (v.changed.length && [...Engrave.items().values()].some(j => j.state === "classify")) { agent({ run: r.runId }, "warn", `${v.changed.length} order(s) changed — back to engraving`); return { goto: "engrave" }; } return; }
-      case "labels": { const set = await Sets.ensure(r.runId); await Sets.finalize(set); return; }
+      case "labels": { for (const set of Sets.ofRun(r.runId)) await Sets.finalize(set); return; }
       case "commit": {
         if (S.settings.autoCommit === "off" && !r.commitRequested) { r.status = "paused"; r.awaitCommit = true; await save(r); renderBanner(); agent({ run: r.runId }, "DS", "Auto-commit is off — press Commit set when ready"); return; }
         const v = await Orders.revalidate(r, "before commit");
         if (v.changed.length && [...Engrave.items().values()].some(j => j.state === "classify")) { agent({ run: r.runId }, "warn", `${v.changed.length} order(s) changed before the commit — back to engraving`); r.commitRequested = false; return { goto: "engrave" }; }
-        const set = await Sets.ensure(r.runId); const res = await Sets.commit(set, r); r.committed = res.completed; r.refused = res.refused; r.holds = res.held || {}; return;
+        const all = { completed: [], refused: [], held: {} };
+        for (const set of Sets.ofRun(r.runId)) { const res = await Sets.commit(set, r); all.completed.push(...res.completed); all.refused.push(...res.refused); Object.assign(all.held, res.held || {}); }
+        r.committed = all.completed; r.refused = all.refused; r.holds = all.held; return;
       }
       case "complete": { try { await Orders.unclaim([...new Set(Orders.rows().map(x => x.order.receiptId))]); } catch (_) {} return; }
       default: return;
@@ -2214,7 +2327,7 @@ const RunCtl = window.RunCtl = (() => {
     if (O.stepIndex(rec.step) <= O.stepIndex("pool")) { rec.step = "pull"; }
     else {
       await Orders.pull(rec, { silent: true });                          // orders re-read through the station, lines re-interpreted
-      const set = rec.setId ? await restoreRunSheets(rec) : null; if (set) Sets.byRun().set(runId, set);
+      if (rec.setIds && rec.setIds.length || rec.setId) await restoreRunSheets(rec);
       await Pool.addAll(rec);                                              // idempotent: existing pool rows are the same ids; only unplaced lines get charms
       if (rec.step === "nest" || rec.step === "checkpoint") rec.step = "nest";
     }
@@ -2222,13 +2335,22 @@ const RunCtl = window.RunCtl = (() => {
     loop().catch(e => stop(e.message, "Fix the cause and press Resume."));
   }
   async function restoreRunSheets(rec) {
-    const sr = await api("charmNestLibrary", { op: "setGet", setId: rec.setId }); const sd = sr.set; if (!sd) return null;
-    const set = { setId: sd.setId, seq: sd.seq, day: sd.day, runId: rec.runId, name: sd.name || O.setLabel(sd.seq), folder: sd.folder || O.setFolder(sd.day, sd.seq), orders: Object.fromEntries(Object.entries(sd.orders || {}).map(([rid, o]) => [rid, { held: o.held || null, lines: Object.fromEntries((o.lines || []).map(l => [l.transactionId, l])) }])), sheetIds: sd.sheetIds || [], materials: sd.materials || [], labelFiles: sd.labelFiles || [], labels: sd.labels || null, status: sd.status || "open", committed: sd.committed || null, refused: sd.refused || null, backCount: sd.backCount || 0 };
-    const ls = await api("charmNestLibrary", { op: "listSheets", limit: 500, setId: set.setId });
+    const setIds = [...new Set((rec.setIds || []).concat(rec.setId ? [rec.setId] : []))];
+    const sets = [];
+    for (const sid of setIds) {
+      const sr = await api("charmNestLibrary", { op: "setGet", setId: sid }); const sd = sr.set; if (!sd) continue;
+      const set = { setId: sd.setId, seq: sd.seq, day: sd.day, runId: rec.runId, group: sd.group || null, name: sd.name || O.setLabel(sd.seq), folder: sd.folder || O.setFolder(sd.day, sd.seq), orders: Object.fromEntries(Object.entries(sd.orders || {}).map(([rid, o]) => [rid, { held: o.held || null, lines: Object.fromEntries((o.lines || []).map(l => [l.transactionId, l])) }])), sheetIds: sd.sheetIds || [], materials: sd.materials || [], labelFiles: sd.labelFiles || [], labels: sd.labels || null, status: sd.status || "open", committed: sd.committed || null, refused: sd.refused || null, backCount: sd.backCount || 0 };
+      Sets.byRun().set(Sets.keyOf(rec.runId, set.group), set); sets.push(set);
+    }
+    if (!sets.length) return null;
+    const bySet = new Map(sets.map(x => [x.setId, x]));
+    const ls = await api("charmNestLibrary", { op: "listSheets", limit: 500, runId: rec.runId });
+
     for (const slim of ls.sheets || []) {
       const d = (await api("charmNestLibrary", { op: "getSheet", id: slim.id })).sheet; if (!d) continue;
       const prim = S.sheets[d.metal]; let pg = prim.pages.find(p => p.sheetId === d.id) || (prim.pages[0].charms.length ? addPage(d.metal) : prim.pages[0]);
-      pg.sheetId = d.id; pg.runId = rec.runId; pg.setId = set.setId; pg.seq = d.setSeq; pg.setDay = d.day; pg.sheetIndex = d.sheetIndex; pg.fileBase = d.fileBase; pg.folderPath = `${set.folder}/${d.fileBase}`; pg.label = d.label || null; pg.backPool = d.backPool || []; pg.backOutputs = d.backOutputs || null; pg.cloud = d.outputs ? { ai: d.outputs.ai && d.outputs.ai.url, pdf: d.outputs.pdf && d.outputs.pdf.url, labelled: d.outputs.labelled && d.outputs.labelled.url, report: d.outputs.report && d.outputs.report.url, preview: d.outputs.preview && d.outputs.preview.url } : null;
+      const set = bySet.get(d.setId) || sets[0];
+      pg.sheetId = d.id; pg.runId = rec.runId; pg.group = set.group || null; pg.setId = set.setId; pg.seq = d.setSeq || set.seq; pg.setDay = d.day; pg.sheetIndex = d.sheetIndex; pg.fileBase = d.fileBase; pg.folderPath = `${set.folder}/${d.fileBase}`; pg.label = d.label || null; pg.backPool = d.backPool || []; pg.backOutputs = d.backOutputs || null; pg.cloud = d.outputs ? { ai: d.outputs.ai && d.outputs.ai.url, pdf: d.outputs.pdf && d.outputs.pdf.url, labelled: d.outputs.labelled && d.outputs.labelled.url, report: d.outputs.report && d.outputs.report.url, preview: d.outputs.preview && d.outputs.preview.url } : null;
       pg.restored = true; pg.persistedDone = true;
       // the pieces: each placement's pool charm from the master copy, pinned at its cut position
       for (const p of d.placements || []) {
@@ -2246,8 +2368,8 @@ const RunCtl = window.RunCtl = (() => {
       for (const row of Orders.rows()) { if (!row.poolIds.length) continue; if (row.poolIds.every(pid => (d.poolIds || []).includes(pid) || (B.pool.rows.get(pid) || {}).sheetId)) row.state = "written"; }
       for (const b of pg.backPool) { const row = Orders.rows().find(x => x.poolIds.includes(b.poolId)); if (row) { const j = Engrave.ensureJob(row); j.state = "written"; j.text = b.text; j.lines = b.lines || String(b.text).split("\n"); j.approvedBy = b.approvedBy; j.approvedAt = b.approvedAt; j.backs.push(b); row.engrave = { needed: true, state: "written", approved: true, text: b.text, approvedBy: b.approvedBy }; } }
     }
-    agent({ run: rec.runId }, "cloud", `Restored ${ls.sheets.length} sheet(s) of ${set.name} from their records`);
-    return set;
+    agent({ run: rec.runId }, "cloud", `Restored ${ls.sheets.length} sheet(s) of ${sets.map(x => x.name).join(", ")} from their records`);
+    return sets[0];
   }
   function onComplete(r) {
     agent({ run: r.runId }, "ok", `Run ${r.runId} complete: ${(r.committed || []).length} order(s) committed · ${Object.keys(r.holds || {}).length} held · ${(r.refused || []).length} refused`);
@@ -2979,7 +3101,7 @@ const Scope = window.Scope = (() => {
       if (!r.run) throw new Error("that run is no longer on record");
       SC.run = r.run;
       SC.run.seq = SC.run.seq || +((/-(\d+)$/.exec(String(SC.run.setId || "")) || [])[1] || 0) || null;
-      const ls = SC.run.setId ? await api("charmNestLibrary", { op: "listSheets", setId: SC.run.setId, limit: 200 }, { quiet: true }) : { sheets: [] };
+      const ls = await api("charmNestLibrary", { op: "listSheets", runId: SC.run.runId, limit: 200 }, { quiet: true });
       SC.sheets = (ls.sheets || []).sort((a2, b2) => String(a2.fileBase || "").localeCompare(String(b2.fileBase || "")));
       /* The orders are not a summary of the run: they are the run's own lines, rebuilt into the rows the Orders tab
          already draws — so the cards, the list with its thumbnails, every filter, the search and the order window all
