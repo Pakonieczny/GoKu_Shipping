@@ -513,7 +513,21 @@ const Orders = window.Orders = (() => {
     return { key, order, line, spec: null, problems: [], state: l.state || "pulled", reason: l.reason || null, hold: l.hold || null, wait: l.wait || null, claimedBy: null,
       poolIds: l.poolIds || [], engrave: l.engrave || null, metal: l.material || null, materialOverride: l.material || null, fromRecord: true };
   }
-  async function claim(ids) { if (!ids.length) return; const r = await DesignLink.call("claim", { receiptIds: ids, runId: B.run && B.run.runId }); for (const row of rowsOf()) if (r.claimed.includes(row.order.receiptId)) row.claimedBy = "sorter"; agent({ bridge: true }, "DS", `Claimed ${r.claimed.length} order(s) on the station (gold dot)`); render(); }
+  /* The claim is a courtesy — a gold dot on the station's rows saying the sorter has these — never a lock. So it goes
+     in batches of a hundred, each with its own time, and a batch the station does not answer is retried once and then
+     let go with a warning: 357 orders in one message once ran past the two-minute reply limit and stopped the whole
+     run at its first step, for a dot. */
+  async function claim(ids) {
+    if (!ids.length) return;
+    const got = new Set(); let missed = 0;
+    for (let i = 0; i < ids.length; i += 100) {
+      const part = ids.slice(i, i + 100); let r = null;
+      for (let attempt = 0; attempt < 2 && !r; attempt++) { try { r = await DesignLink.call("claim", { receiptIds: part, runId: B.run && B.run.runId }, { timeoutMs: 90000 }); } catch (e) { if (attempt) { missed += part.length; agent({ bridge: true }, "warn", `claim: ${e.message} — carrying on without the dot on ${part.length} order(s)`); } } }
+      for (const id of (r && r.claimed) || []) got.add(id);
+    }
+    for (const row of rowsOf()) if (got.has(row.order.receiptId)) row.claimedBy = "sorter";
+    agent({ bridge: true }, "DS", `Claimed ${got.size} order(s) on the station (gold dot)${missed ? ` · ${missed} unanswered` : ""}`); render();
+  }
   async function unclaim(ids) { if (!ids.length) return; try { await DesignLink.call("unclaim", { receiptIds: ids }); } catch (e) { agent({ bridge: true }, "warn", `unclaim: ${e.message}`); } for (const row of rowsOf()) if (ids.includes(row.order.receiptId)) row.claimedBy = null; render(); }
   /** §10.3: every order's update_timestamp re-read through the station; changed → re-interpret; vanished → dropped. */
   async function revalidate(run, why) {
@@ -2317,7 +2331,19 @@ const RunCtl = window.RunCtl = (() => {
     while (r && r.status === "running") {
       const step = r.step;
       renderBanner();
-      const outcome = await doStep(r, step);
+      /* A step that fails for a passing reason — the station did not answer, the network dropped, a function answered
+         5xx — is tried again, twice, with a breath in between, before the run stops. The stages know what to expect
+         of each other; a slow reply is not a reason to leave a whole day's orders standing. */
+      let outcome = null;
+      for (let attempt = 0; ; attempt++) {
+        try { outcome = await doStep(r, step); break; }
+        catch (e) {
+          const passing = /answer in time|timed out|network|Failed to fetch|HTTP 5\d\d|link is down|no reply|closed/i.test(e.message || "");
+          if (!passing || attempt >= 2 || r.status !== "running") throw e;
+          agent({ run: r.runId }, "warn", `${step}: ${e.message} — trying again (${attempt + 1} of 2)`);
+          await new Promise(res => setTimeout(res, 4000 * (attempt + 1)));
+        }
+      }
       if (r.status !== "running") break;
       if (outcome && outcome.done) break;
       if (outcome && outcome.goto) { r.step = outcome.goto; await save(r); continue; }
