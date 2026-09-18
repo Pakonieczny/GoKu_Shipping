@@ -97,12 +97,10 @@ html[data-rail=sm] .brand .tag{display:none}
 .topTitle h1{font:18px var(--serif);font-weight:500;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .topTitle .sub{font-size:11px;color:var(--ink45);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .spacer{flex:1 1 auto;min-width:6px}
-.modeSeg{display:flex;border:1px solid var(--line);border-radius:999px;background:var(--card2);padding:3px;gap:2px;flex:0 1 auto;min-width:0;overflow-x:auto;scrollbar-width:none}
-.modeSeg::-webkit-scrollbar{display:none}
+.modeSeg{display:flex;border:1px solid var(--line);border-radius:999px;background:var(--card2);padding:3px;gap:2px;flex:0 0 auto}
 .modeSeg button{flex:0 0 auto}
-.modeSeg.moreR{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 26px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 26px),transparent)}
-.modeSeg.moreL{-webkit-mask-image:linear-gradient(90deg,transparent,#000 26px);mask-image:linear-gradient(90deg,transparent,#000 26px)}
-.modeSeg.moreL.moreR{-webkit-mask-image:linear-gradient(90deg,transparent,#000 26px,#000 calc(100% - 26px),transparent);mask-image:linear-gradient(90deg,transparent,#000 26px,#000 calc(100% - 26px),transparent)}
+.modeSeg .tight{display:none}
+@media (max-width:1560px){.modeSeg .full{display:none}.modeSeg .tight{display:inline}}
 @media (max-width:1620px){.modeSeg button{padding-inline:10px;font-size:12px}}
 @media (max-width:1400px){.modeSeg button{padding-inline:8px;font-size:11.5px;gap:4px}}
 .modeSeg button{border:0;background:transparent;border-radius:999px;padding:7px 15px;font-size:12.5px;font-weight:700;color:var(--ink70);white-space:nowrap;display:flex;align-items:center;gap:6px}
@@ -133,7 +131,8 @@ html[data-rail=sm] .brand .tag{display:none}
 select.topSel{border:1px solid var(--line);background:var(--card);border-radius:9px;padding:7px 9px;font-size:12.5px;max-width:172px;text-overflow:ellipsis}
 
 /* ── sheets grid ── */
-.stage{flex:1 1 auto;min-height:0;overflow:auto;padding:16px}
+/* whatever the live view is showing, the screen keeps that much room at the bottom so nothing sits under it */
+.stage{flex:1 1 auto;min-height:0;overflow:auto;padding:16px 16px calc(16px + var(--dockH,0px))}
 .sheets{display:grid;grid-template-columns:repeat(auto-fill,minmax(400px,1fr));gap:16px;align-items:start}
 @media (max-width:1380px){.sheets{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:900px){.sheets{grid-template-columns:1fr}}
@@ -159,10 +158,14 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .shPreviewWrap .dropHint .k{font-size:11px}
 .shPreviewWrap .shOverlay{position:absolute;left:8px;bottom:6px;display:flex;gap:5px;flex-wrap:wrap;pointer-events:none}
 .shPreviewWrap .shOverlay .pill{box-shadow:0 1px 3px rgba(0,0,0,.08);font-size:10.5px;padding:3px 8px}
+@media (max-width:1300px){.shPreviewWrap .hint{display:none}}
 .shPreviewWrap .hint{position:absolute;right:8px;bottom:6px;font-size:10px;color:var(--ink45);background:rgba(255,254,251,.85);padding:2px 6px;border-radius:6px;pointer-events:none}
 .shProg{padding:4px 14px 0}
 .shProg progress{margin:6px 0 0}
 .shProg .bp-note{margin:2px 0 0}
+.shStage>:first-child{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.shStage .r{flex:0 0 auto}
+@media (max-width:1300px){.shStage .r{display:none}}
 .shStage{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink70);min-height:18px;padding:5px 14px 0}
 .shStage .spin{width:11px;height:11px;border-width:2px;flex-basis:11px}
 .shStage .r{margin-left:auto;font-family:var(--mono);color:var(--ink45);font-size:10.5px;white-space:nowrap}
@@ -271,7 +274,12 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .charmTile input{border:1px solid var(--line);border-radius:7px;padding:4px 6px;font-size:12px;width:100%}
 
 /* ── toasts, dialogs ── */
-.toasts{position:fixed;right:18px;bottom:18px;z-index:300;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toasts{position:fixed;right:18px;bottom:calc(18px + var(--dockH,0px));z-index:300;display:flex;flex-direction:column;gap:8px;pointer-events:none;transition:bottom .18s ease;max-width:min(420px,42vw)}
+.toast .m{min-width:0}
+.toast .x{font:700 11px var(--mono);opacity:.7}
+.toast .c{border:0;background:transparent;color:inherit;opacity:.55;cursor:pointer;font-size:13px;line-height:1;padding:0 0 0 4px}
+.toast .c:hover{opacity:1}
+.toast{cursor:pointer}
 .toast{background:var(--velvet);color:#f4ecdc;border:1px solid var(--velvetLine);border-radius:11px;padding:10px 14px;box-shadow:0 10px 30px rgba(0,0,0,.24);max-width:380px;display:flex;gap:9px;align-items:flex-start;font-size:12.5px;animation:tin .18s ease;pointer-events:auto}
 @keyframes tin{from{opacity:0;transform:translateY(8px)}}
 .toast .d{width:8px;height:8px;border-radius:50%;background:var(--gold2);margin-top:4px;flex:0 0 auto}
@@ -333,6 +341,11 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .owField{margin-bottom:12px}
 .owIn{width:100%;border:1px solid var(--line);border-radius:10px;padding:9px 11px;font:13px var(--sans);background:var(--card);resize:vertical;color:var(--ink)}
 .owIn[readonly]{background:var(--paper2);color:var(--ink70)}
+/* the one field that must be read exactly: it grows to its content and is never boxed into a scroller */
+.owSaid{font:14px/1.5 var(--serif);background:var(--paper2);border:1px solid var(--line);border-radius:10px;padding:9px 11px;overflow-wrap:anywhere;white-space:pre-wrap;min-height:44px}
+.owSaid .lbl{display:block;font:9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);font-weight:700;margin:6px 0 2px}
+.owSaid .lbl:first-child{margin-top:0}
+.owSaid.none{font-family:var(--sans);font-size:12.5px;color:var(--ink45)}
 .owMeta{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:9px}
 .owMeta .m{border:1px solid var(--line);border-radius:10px;padding:7px 10px;background:var(--card);min-width:0}
 .owMeta .m i{display:block;font:9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);font-style:normal;margin-bottom:2px}
@@ -340,9 +353,11 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .owFix{border:1px solid var(--clay);background:var(--claySoft);border-radius:11px;padding:10px 12px;margin-bottom:12px}
 .owFix .t{font:700 11px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:#8a3a26;margin-bottom:5px}
 .owFix .rvItem{border:0;box-shadow:none;background:transparent;padding:0;border-left:0}
-.owFix .rvItem .rh{display:none}
+.owFix .rvItem .rh .ttl,.owFix .rvItem .rh .sub{display:none}
 .owChatHead{display:flex;align-items:center;gap:8px;padding:11px 13px;border-bottom:1px solid var(--line);flex:0 0 auto}
 .owChatHead .lab{font:10px var(--mono);letter-spacing:.11em;text-transform:uppercase;color:var(--ink45);font-weight:700}
+.owLink{font:10px var(--mono);letter-spacing:.06em;text-transform:uppercase;font-weight:700}
+.owLink.ok{color:#3f5b3a}.owLink.bad{color:#8a3a26}
 .owThread{flex:1 1 auto;min-height:0;overflow:auto;padding:12px 13px;display:flex;flex-direction:column;gap:9px}
 .owEmpty{margin:auto;text-align:center;color:var(--ink45);font-size:12.5px;line-height:1.6;max-width:30ch}
 .owEmpty b{display:block;color:var(--ink);font-size:14px;margin-bottom:5px}
@@ -376,7 +391,10 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 /* ── orders: one card per line, or the same line as a row ── */
 #ordersView:not(.hidden){height:100%;min-height:0;gap:0}
 .ordHead{display:flex;flex-direction:column;gap:8px;flex:0 0 auto}
+/* the chips wrap; the search and the view toggle keep the right-hand end whatever the width */
 .ordFilters{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.ordFilters .chips{display:flex;gap:6px;align-items:center;flex-wrap:wrap;flex:1 1 320px;min-width:0}
+.ordFilters .tail{display:flex;gap:6px;align-items:center;margin-left:auto;flex:0 0 auto}
 .ordFilters .sep{width:1px;align-self:stretch;background:var(--line);margin:0 3px}
 .ordSearch{border:1px solid var(--line);border-radius:999px;padding:5px 12px;font-size:12.5px;background:var(--card);min-width:0;flex:0 1 200px}
 .viewSeg{display:flex;border:1px solid var(--line);border-radius:999px;background:var(--card2);padding:2px;gap:2px;flex:0 0 auto}
@@ -409,11 +427,14 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .osku{font:11.5px var(--mono);color:var(--ink);display:flex;gap:6px;min-width:0}
 .osku b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .osku i{font-style:normal;font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink45);flex:0 0 auto;padding-top:1px}
-.opers{font:12.5px var(--serif);background:var(--paper2);border-radius:7px;padding:4px 8px;overflow-wrap:anywhere;max-height:44px;overflow:hidden}
+.opers{font:12.5px var(--serif);background:var(--paper2);border-radius:7px;padding:4px 8px;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.owhere{font:10.5px var(--mono);color:var(--ink45);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.due{font:11px var(--mono);color:var(--ink45)}
+.due.warn{color:#7a5a1d;font-weight:700}.due.bad{color:#8a3a26;font-weight:700}
 .owhy{font:11.5px var(--sans);color:#8a3a26;overflow-wrap:anywhere}
 /* the same line as a row: every field the card has, and a smaller picture */
 .ordList{display:grid;gap:5px}
-.olist{display:grid;grid-template-columns:34px minmax(88px,auto) minmax(0,1.1fr) minmax(0,1.4fr) 44px minmax(0,110px) auto auto;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:9px;padding:5px 10px;cursor:pointer;text-align:left;font:inherit;color:inherit;--accent:var(--ink25);min-width:0}
+.olist{display:grid;grid-template-columns:34px minmax(88px,max-content) minmax(0,max-content) minmax(0,1fr) 44px minmax(0,110px) 58px auto;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:9px;padding:5px 10px;cursor:pointer;text-align:left;font:inherit;color:inherit;--accent:var(--ink25);min-width:0}
 .olist:hover,.olist:focus-visible{background:var(--paper2);outline:none}
 .olist:focus-visible{outline:2px solid var(--gold2);outline-offset:1px}
 .olist[data-m=gold]{--accent:var(--m-gold)}.olist[data-m=silver]{--accent:var(--m-silver)}.olist[data-m=rose]{--accent:var(--m-rose)}.olist[data-m=gold10k]{--accent:var(--m-gold10k)}.olist[data-m=gold14k]{--accent:var(--m-gold14k)}
@@ -424,6 +445,12 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .olist .qtyc{font:600 11.5px var(--mono);color:var(--ink45);text-align:right}
 .olist .whyc{grid-column:2/-1;white-space:normal}
 @media (max-width:1100px){.olist{grid-template-columns:34px minmax(80px,auto) minmax(0,1fr) 40px auto;}.olist .hideSm{display:none}}
+/* the columns say what they are, and the two that decide the order of work can set it */
+.olist.hdr{background:transparent;border-color:transparent;border-left-color:transparent;cursor:default;padding-block:0 2px;position:sticky;top:0;z-index:2;backdrop-filter:blur(6px)}
+.olist.hdr span{font:9.5px var(--mono);letter-spacing:.11em;text-transform:uppercase;color:var(--ink45);font-weight:700}
+.olist.hdr button{border:0;background:transparent;padding:0;font:inherit;color:inherit;cursor:pointer;text-align:left}
+.olist.hdr button:hover{color:var(--ink)}
+.olist.hdr .on{color:var(--ink)}
 
 /* ── bridge: tabs, live strip, run banner, run mode ── */
 .modeSeg button .cnt{font:700 10px var(--mono);margin-left:5px;background:var(--clay);color:#fff;border-radius:9px;padding:1px 5px;vertical-align:1px;font-style:normal}
@@ -433,12 +460,10 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .runMode.auto{background:var(--velvet);color:#fff;border-color:var(--velvet)}
 .runMode.auto .sw{background:var(--sage);box-shadow:0 0 0 3px rgba(95,122,91,.25);animation:bbPulse 1.6s ease-in-out infinite}
 @keyframes bbPulse{50%{box-shadow:0 0 0 6px rgba(95,122,91,.08)}}
-.liveStrip{flex:0 0 auto;background:var(--velvet);color:var(--rTxt2);font:11.5px var(--mono);padding:4px 16px;display:flex;gap:14px;overflow:hidden;white-space:nowrap;border-bottom:1px solid var(--velvetLine);min-height:24px}
-.liveStrip .ls{overflow:hidden;text-overflow:ellipsis;min-width:0}
-.liveStrip .ls b{color:var(--gold2);font-weight:650}
-.liveStrip .ls .t{color:var(--rDim);margin-right:5px}
-.liveStrip .ls .ev{margin-right:16px}
-.runBanner{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:8px 16px;background:var(--goldSoft);border-bottom:1px solid var(--goldLine);font-size:12.5px;flex-wrap:wrap}
+.runBanner .acts{display:flex;gap:7px;align-items:center;flex:0 0 auto;white-space:nowrap}
+.runBanner .spacer{flex:1 1 auto;min-width:8px}
+.runBanner .why{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.runBanner{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:8px 16px;background:var(--goldSoft);border-bottom:1px solid var(--goldLine);font-size:12.5px;flex-wrap:nowrap}
 .runBanner.stopped{background:var(--claySoft);border-color:#e3c8bf}
 .runBanner.done{background:var(--sageSoft);border-color:#cfdcc9}
 .runBanner.review{background:var(--slateSoft);border-color:#cbd9de}
@@ -475,12 +500,23 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .ordRow .why button{margin-left:8px}
 .sandboxPill{display:inline-flex;align-items:center;font:700 11.5px var(--mono);letter-spacing:.03em;color:#fff;background:repeating-linear-gradient(135deg,#7a2a1a 0 10px,#5a1f16 10px 20px);border:1px solid #c0553b;border-radius:999px;padding:5px 12px}
 .sandboxPill.hidden{display:none}
+/* what the orders want that the library has never heard of — one fact, said once, where master files are added */
+.missBox{background:var(--goldSoft);border:1px solid var(--gold2);border-radius:11px;padding:11px 13px;display:grid;gap:8px}
+.missBox.hidden{display:none}
+.missBox .t b{display:block;font:600 13.5px var(--sans)}
+.missBox .t span{font-size:12px;color:var(--ink70)}
+.missBox .skus{display:flex;flex-wrap:wrap;gap:5px;max-height:132px;overflow:auto}
+.missBox .s{font:11.5px var(--mono);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:2px 7px;white-space:nowrap}
+.missBox .s i{font-style:normal;color:var(--ink45);margin-left:4px}
+.missBox .s.more{color:var(--ink45);background:transparent;border-style:dashed}
+.missBox .acts{display:flex;gap:6px;flex-wrap:wrap}
 .sandboxBar{background:#fff5f2;border:1px solid #e3b7a9;border-radius:10px;padding:8px 12px;margin:8px 0 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12.5px}
 .sandboxBar b{color:#8a3a26}
 /* off is the normal state, so it says so once and quietly; on is a mode nobody may miss */
 .sandboxBar.quiet{background:transparent;border:0;padding:0;margin:8px 0 0;font-size:11.5px;color:var(--ink45)}
 .sandboxBar.quiet .off{color:var(--ink45)}
 .sandboxBar .spacer{flex:1 1 auto}
+.etsyPill.quiet{display:none}
 .etsyPill{display:inline-flex;align-items:center;gap:6px;font:11.5px var(--mono);color:var(--ink70);border:1px solid var(--line);border-radius:999px;padding:5px 10px;background:var(--card);white-space:nowrap;flex:0 1 auto;min-width:0;overflow:hidden}
 .etsyPill b{color:var(--ink);font-weight:650}
 .etsyPill.warn{border-color:#b98a3a;color:#7a5a1d}
@@ -497,7 +533,7 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 /* the dock: the station frame, full over the tab's placeholder or a live panel in the corner of every other tab */
 #dsDock{position:fixed;z-index:70;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card);box-shadow:var(--sh);display:flex;flex-direction:column}
 #dsDock.hidden{display:none}
-#dsDock.pip.tucked{width:300px;height:212px}
+#dsDock.pip.tucked{width:264px;height:186px}
 #dsDock.pip{width:480px;height:330px;box-shadow:0 14px 44px rgba(20,16,10,.38);border-color:#8a6a2a}
 #dsDock .dockBar{display:none;align-items:center;gap:8px;padding:5px 10px;background:var(--velvet);color:var(--rTxt2);font:12px var(--mono);cursor:pointer;user-select:none}
 #dsDock.pip .dockBar{display:flex}
@@ -566,6 +602,15 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .egTab b{font:700 11px var(--mono);border-radius:999px;padding:1px 7px;background:var(--paper2);color:var(--ink)}
 .egTab.on b{background:rgba(255,255,255,.18);color:var(--paper)}
 .egTab b.warn{background:var(--goldSoft)}.egTab b.info{background:var(--slateSoft,var(--paper2))}.egTab b.ok{background:var(--sageSoft,var(--paper2))}
+.egTab.on b,.egTab.on b.warn,.egTab.on b.info,.egTab.on b.ok{background:rgba(255,255,255,.18);color:var(--paper)}
+/* what is still being read and fitted: not a tab, so it is not dressed as one */
+.egTab.working{cursor:default;background:transparent;border-style:dashed;color:var(--ink45)}
+.egTab.working .spin{margin-right:2px}
+/* the decisions already made, one row each, with a way back */
+.doneRow{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto minmax(0,auto) auto;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:6px 10px;font-size:12.5px}
+.doneRow .sku{font-size:11.5px;color:var(--ink45)}
+.doneRow .w{font:600 13px var(--serif);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.doneRow .by{font:11px var(--mono);color:var(--ink45);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #engraveView:not(.hidden),#reviewView:not(.hidden){height:100%;min-height:0;gap:0}
 .egPane{margin-top:10px;min-height:0;display:flex;flex-direction:column;gap:8px}
 .egPane[hidden]{display:none}
@@ -624,7 +669,7 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .pvWords .lbl{display:block;font:10px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--ink45);font-weight:700;margin-bottom:2px}
 .placeView .ctl{display:flex;gap:7px;align-items:center;flex-wrap:wrap;flex:0 0 auto}
 .placeView .ctl .grp{display:inline-flex;gap:1px;align-items:center;border:1px solid var(--line);border-radius:9px;background:var(--paper2);padding:2px}
-.placeView .ctl .grp>.btn{border:0;background:transparent;box-shadow:none;padding:3px 8px;min-width:26px}
+.placeView .ctl .grp>.btn{border:0;background:transparent;box-shadow:none;padding:3px 9px;min-width:32px}
 .placeView .ctl .grp>.btn:hover{background:var(--card)}
 .placeView .ctl .sizer{display:inline-flex;gap:7px;align-items:center;font-size:11.5px;color:var(--ink45)}
 .placeView .ctl input[type=range]{width:120px}
@@ -639,6 +684,44 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .backPool .bp img{width:100%;aspect-ratio:1.5;object-fit:contain;background:#fff;border:1px solid var(--line2);border-radius:6px}
 .backPool .bp .t{font:600 12px var(--sans)}
 .backPool .bp .m{font:10.5px var(--mono);color:var(--ink45)}
+/* ── the ladder: where the work is, on every screen ── */
+.ladder{flex:0 0 auto;padding:9px var(--railPad) 6px;border-bottom:1px solid var(--velvetLine);display:grid;gap:5px}
+.ldBand{display:flex;align-items:baseline;gap:8px;padding:5px 9px;border-radius:8px;background:rgba(255,255,255,.06);min-width:0}
+.ldBand b{font:600 12.5px var(--sans);color:#f2ead9}
+.ldBand span{font:10.5px var(--mono);color:var(--rDim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.ldBand.ld-go b{color:var(--gold2)}.ldBand.ld-wait b{color:#f0c96a}.ldBand.ld-stop b{color:#e6a08c}
+.ldBand.ldIdle b{color:var(--rTxt2)}
+.ldRows{display:grid;gap:1px}
+.ldRow{display:grid;grid-template-columns:14px minmax(0,auto) minmax(0,1fr);gap:7px;align-items:center;background:transparent;border:0;border-radius:7px;padding:3px 8px;cursor:pointer;text-align:left;font:inherit;color:var(--rTxt2);min-width:0}
+.ldRow:hover{background:rgba(255,255,255,.07);color:#f2ead9}
+.ldRow .n{font:11.5px var(--sans);font-weight:600;white-space:nowrap}
+.ldRow .c{font:10.5px var(--mono);color:var(--rDim);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.ldRow.now{color:#f2ead9}
+.ldRow.wait{background:rgba(240,201,106,.16);color:#f6e6bf}
+.ldRow.wait .c{color:#f0c96a}
+.ldRow .g{width:9px;height:9px;border-radius:50%;justify-self:center;background:transparent;border:1.5px solid var(--rDim)}
+.ldRow .g.done{background:#8ea37f;border-color:#8ea37f}
+.ldRow .g.now{background:var(--gold2);border-color:var(--gold2);box-shadow:0 0 0 3px rgba(198,160,74,.22)}
+.ldRow .g.stop{background:#c0705a;border-color:#c0705a}
+.ldWaits{display:flex;gap:5px;flex-wrap:wrap;margin-top:2px}
+.ldChip{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--velvetLine);background:rgba(255,255,255,.05);color:#f2ead9;border-radius:999px;padding:3px 9px;font:600 11px var(--sans);cursor:pointer}
+.ldChip:hover{background:rgba(255,255,255,.12)}
+.ldChip b{font:700 10.5px var(--mono);border-radius:999px;padding:0 6px;background:rgba(0,0,0,.3)}
+.ldChip.warn b{color:#f0c96a}.ldChip.info b{color:#bcd0e6}
+/* what happened lately, one click away instead of permanently half-visible */
+.railRecent{flex:0 0 auto;border-top:1px solid var(--velvetLine);padding:5px var(--railPad)}
+.railRecent summary{font:9.5px var(--mono);letter-spacing:.11em;text-transform:uppercase;color:var(--rDim);cursor:pointer;list-style:none;padding:3px 0}
+.railRecent summary::-webkit-details-marker{display:none}
+.railRecent summary::after{content:" \25b8"}
+.railRecent[open] summary::after{content:" \25be"}
+.railRecent .rr{max-height:140px;overflow:auto;display:grid;gap:3px;padding-bottom:4px}
+.railRecent .rr div{font:10.5px var(--mono);color:var(--rTxt2);overflow-wrap:anywhere}
+.railRecent .rr b{color:var(--gold2);font-weight:650}
+.railRecent .rr i{color:var(--rDim);font-style:normal;margin-right:5px}
+/* the file queue belongs to the Nest tab; elsewhere the rail is the ladder and the cloud */
+.app:not(.nestMode) .railActions,.app:not(.nestMode) .queueHead,.app:not(.nestMode) .railScroll{display:none}
+.app:not(.nestMode) .rail .ladder{border-bottom:0}
+
 /* ── Sets view ── */
 .setCard{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);padding:12px 14px;display:grid;gap:8px}
 .setCard .sh{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
@@ -662,6 +745,7 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
       <div><div class="logo">Brites <b>Charm Nest</b></div><div class="tag">Nesting station · 1</div></div>
     </div>
     <div class="railStatus" id="cloudStatus"><span class="dot" id="cloudDot"></span><span class="t" id="cloudText">Checking cloud…</span></div>
+    <div class="ladder" id="ladder"></div>
     <div class="railActions">
       <button class="btn gold wide" id="btnPick">＋ Add .ai / .pdf / .zip</button>
       <button class="btn ghost sm" id="btnNestAll" style="color:#fff;border-color:#4a4239">Nest all ready</button>
@@ -674,14 +758,14 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
       <div id="unList"></div>
       <div class="unHint" id="unHint">Files whose name does not say GF / SS / RG land here. Drag one onto a sheet, or use the metal buttons.</div>
     </div>
+    <details class="railRecent" id="railRecent"><summary>Recent activity</summary><div class="rr" id="railRecentBody"></div></details>
     <div class="railFoot"><span id="railCores"></span><span class="spacer"></span><span class="k" id="railSolver">solver: browser</span></div>
     <input type="file" id="fileInput" multiple accept=".ai,.pdf,.zip,application/pdf,application/zip,application/postscript" class="hidden">
   </aside>
   <main class="main">
     <div class="topbar">
       <button class="navBtn" id="btnRail" title="Toggle queue">☰</button>
-      <div class="modeSeg" id="modeSeg"><button class="on" data-mode="nest">Nest</button><button data-mode="orders">Orders<i class="cnt" id="tabOrdersN"></i></button><button data-mode="design">Design Station<i class="cnt" id="tabDesignN"></i></button><button data-mode="master">Master</button><button data-mode="engrave">Engraving<i class="cnt" id="tabEngraveN"></i></button><button data-mode="review">Review<i class="cnt" id="tabReviewN"></i></button><button data-mode="library">Library</button><button data-mode="charms">Charms</button></div>
-      <div class="topTitle"><h1>Charm Nesting Station 1</h1><div class="sub" id="topSub">3 sheets · 0 charms queued</div></div>
+      <div class="modeSeg" id="modeSeg"><button class="on" data-mode="nest">Nest</button><button data-mode="orders">Orders<i class="cnt" id="tabOrdersN"></i></button><button data-mode="design"><span class="full">Design Station</span><span class="tight">Station</span><i class="cnt" id="tabDesignN"></i></button><button data-mode="master">Master</button><button data-mode="engrave"><span class="full">Engraving</span><span class="tight">Engrave</span><i class="cnt" id="tabEngraveN"></i></button><button data-mode="review">Review<i class="cnt" id="tabReviewN"></i></button><button data-mode="library">Library</button><button data-mode="charms">Charms</button></div>
       <div class="spacer"></div>
       <span class="sandboxPill hidden" id="sandboxPill" title="Sandbox: emulated Etsy from the stored snapshot; every record and file goes to sandbox copies">SANDBOX</span>
       <span class="etsyPill" id="etsyPill" title="Etsy API calls, as counted by the Design Station (the only app that calls Etsy); live on every heartbeat">Etsy <b id="etsyPillN">—</b></span>
@@ -689,7 +773,6 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
       <select class="topSel" id="stockSel" title="Stock preset for all three sheets"></select>
       <button class="btn ghost sm" id="btnSettings">⚙ Settings</button>
     </div>
-    <div class="liveStrip" id="liveStrip" title="The last bridge and engraving events"><span class="ls" id="liveStripBody">bridge idle</span></div>
     <div class="runBanner hidden" id="runBanner"></div>
     <div class="stage" id="stage">
       <div class="sheets" id="sheets"></div>
@@ -773,7 +856,7 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
       <div class="field"><label>Pull orders</label><select id="stPullMode"><option value="all">Every open order</option><option value="dueBy">Orders due by a date</option><option value="count">The N most urgent by date</option></select><div class="help">Auto mode pulls with this rule at each run; Manual shows the same controls on the Orders tab.</div></div>
       <div class="field"><label>Due by · N</label><div class="fieldRow"><input id="stPullDueBy" type="date"><input id="stPullCount" type="number" min="1" max="500" step="1"></div></div>
       <div class="field"><label>Auto: re-run every (min) · 0 = once</label><input id="stAutoEvery" type="number" min="0" max="1440" step="5"><div class="help">In Auto, after a set completes the sorter waits this long, pulls again and runs the next set. Never under 5 minutes.</div></div>
-      <div class="field"><label>Sandbox</label><select id="stSandbox"><option value="off">Off — production: real Etsy through the station, real records</option><option value="on">On — emulated Etsy from the stored snapshot, sandbox records only</option></select><div class="help">In the sandbox the Design Station is framed with ?sandbox=1: its Etsy calls go to the emulator that serves the snapshot taken on the Orders tab, and every lock, claim, completion, note, archive row, pool, set, run and file goes to Sandbox_ copies. The master index is shared (read only). Switching reloads the sorter.</div></div>
+      <div class="field"><label>Sandbox</label><select id="stSandbox"><option value="off">Off — production: real Etsy through the station, real records</option><option value="on">On — emulated Etsy from the stored snapshot, sandbox records only</option></select><div class="help">In the sandbox the Design Station is framed with ?sandbox=1: its Etsy calls go to the emulator that serves the snapshot taken on the Orders tab, and every lock, claim, completion, note, archive row, pool, set, run and file goes to Sandbox_ copies. The master index is shared (read only). Switching reloads the sorter.</div><div class="fixes" style="margin-top:7px"><button class="btn ghost xs" type="button" id="stSbSnap" title="copy today's open orders into the sandbox so a whole run can be rehearsed against them">Take a sandbox snapshot</button><button class="btn ghost xs" type="button" id="stSbReset" title="empty the sandbox pool, sets, runs and sheets — the real records are untouched">Reset sandbox records</button><button class="btn gold xs" type="button" id="stSbOn" title="take a snapshot of today's open orders, switch to the sandbox and reload — one press">Rehearse a run in the sandbox</button><span class="help" id="stSbStatus" style="margin:0"></span></div></div>
       <div class="field"><label>Etsy calls per hour (cap)</label><input id="stEtsyCap" type="number" min="50" max="5000" step="50"><div class="help">Every Etsy call the sorter causes at the station is metered. A run stops before a pull or re-validation that would pass this cap. A pull costs one list page per 100 open orders plus one detail read per order Etsy changed; a re-validation costs one list sweep (reused when under 90 s old).</div></div>
     </div>
     <div class="section">Master files and engraving</div>
@@ -872,13 +955,24 @@ const uid = () => Math.random().toString(36).slice(2, 8) + Date.now().toString(3
 const today = () => CharmNestOrders.localDay();   // one local clock decides the folder date and the name date
 
 /* ═══ 1 · tiny UI kit ═══════════════════════════════════════════════════ */
+/* A toast is a glance, not a noticeboard. It used to stack without a limit — five of them climbing from the dock to
+   mid-screen, each one an invisible click shield over the cards beneath — repeat itself rather than count, and give a
+   message that needs a decision the same three seconds as "saved to the cloud". Now: at most three, repeats count up,
+   any of them dismisses on a click, and a bad one stays until it is dismissed. */
 function toast(msg, kind = "", ms = 3600) {
   const host = $("#toasts"); if (!host) return;
+  const text = String(msg);
+  const same = [...host.children].find(n => n.dataset.msg === text && n.dataset.kind === (kind || ""));
+  if (same) { const n = (+same.dataset.n || 1) + 1; same.dataset.n = n; same.querySelector(".x").textContent = "×" + n; same.querySelector(".x").hidden = false; return; }
   const el = document.createElement("div"); el.className = "toast" + (kind ? " " + kind : "");
-  el.innerHTML = `<span class="d"></span><span></span>`; el.lastElementChild.textContent = String(msg);
+  el.dataset.msg = text; el.dataset.kind = kind || ""; el.dataset.n = "1";
+  el.innerHTML = `<span class="d"></span><span class="m"></span><b class="x" hidden></b><button class="c" type="button" aria-label="dismiss">✕</button>`;
+  el.querySelector(".m").textContent = text;
+  const go = () => { el.style.opacity = "0"; el.style.transition = "opacity .2s"; setTimeout(() => el.remove(), 250); };
+  el.onclick = go; el.querySelector(".c").onclick = e => { e.stopPropagation(); go(); };
   host.appendChild(el);
-  setTimeout(() => { el.style.opacity = "0"; el.style.transition = "opacity .2s"; }, ms);
-  setTimeout(() => el.remove(), ms + 250);
+  while (host.children.length > 3) host.firstElementChild.remove();
+  if (kind !== "bad") { setTimeout(() => { if (el.isConnected) go(); }, ms); }   // one that needs a decision waits for one
 }
 function openDlg(el) { if (!el) return; if (!el.open) { try { el.showModal(); } catch (_) { el.setAttribute("open", ""); } } }
 function closeDlg(el) { if (!el) return; try { el.close(); } catch (_) { el.removeAttribute("open"); } }
@@ -2031,7 +2125,8 @@ function fillSrcRow(el, src) {
 function updateTopSub() {
   const total = allSheets().reduce((n, sh) => n + activeCharms(sh).length, 0);
   const running = allSheets().filter(s => s.status === "nesting").length;
-  $("#topSub").textContent = `${allSheets().length} sheets · ${total} charms queued${S.unassigned.length ? ` · ${S.unassigned.length} unassigned` : ""}${running ? ` · ${running} nesting` : ""}`;
+  S.topSummary = `${allSheets().length} sheets · ${total} charms queued${S.unassigned.length ? ` · ${S.unassigned.length} unassigned` : ""}${running ? ` · ${running} nesting` : ""}`;
+  if (window.Ladder) Ladder.render();
   document.title = (running ? "⏳ " : "") + "Brites · Charm Nesting Station 1";
 }
 
@@ -2443,21 +2538,36 @@ async function loadCharms() {
     $$(".charmTile input", body).forEach(inp => inp.onchange = () => api("charmNestLibrary", { op: "renameCharm", hash: inp.closest(".charmTile").dataset.h, name: inp.value.trim() }).then(() => toast("Renamed", "ok")).catch(e => toast(e.message, "bad")));
   } catch (e) { body.innerHTML = `<div class="libEmpty">${esc(e.message)}</div>`; }
 }
-function markTabOverflow() {
-  const seg = $("#modeSeg"); if (!seg) return;
-  const more = seg.scrollWidth - seg.clientWidth;
-  seg.classList.toggle("moreL", more > 2 && seg.scrollLeft > 2);
-  seg.classList.toggle("moreR", more > 2 && seg.scrollLeft < more - 2);
-}
 function setMode(mode) {
   S.mode = mode; $$("#modeSeg button").forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
   // on a narrow window the tab strip scrolls: the tab you are on is always brought into view
-  const onTab = $("#modeSeg button.on"); if (onTab && onTab.scrollIntoView) try { onTab.scrollIntoView({ inline: "nearest", block: "nearest" }); } catch (_) {}
-  markTabOverflow();
   $("#sheets").classList.toggle("hidden", mode !== "nest"); if (mode === "nest") requestAnimationFrame(() => METALS.forEach(m => drawPreview(activePage(m.key)))); $("#libView").classList.toggle("hidden", mode !== "library"); $("#charmsView").classList.toggle("hidden", mode !== "charms");
   for (const [m, id] of [["orders", "ordersView"], ["design", "designView"], ["master", "masterView"], ["engrave", "engraveView"], ["review", "reviewView"]]) $("#" + id).classList.toggle("hidden", mode !== m);
   if (mode === "library") loadLibrary(); if (mode === "charms") loadCharms();
+  // The rail is the nesting station's own bench — files in, sheets out. On every other tab it was 344 px (a quarter of a
+  // 1500 px screen) of controls that do not apply there, taking two columns off the order grid. It folds away unless a
+  // person has pinned it open, and the hamburger brings it back anywhere.
+  $("#app").classList.toggle("nestMode", mode === "nest");
+  // eight screens and none of them addressable: Back threw a person out of the station, a reload lost the tab they were
+  // on, and "look at this" had to be said out loud. The tab is the hash now.
+  try { if ((location.hash || "").slice(1) !== mode) history[modeFromUser ? "pushState" : "replaceState"](null, "", "#" + mode); } catch (_) {}
+  modeFromUser = false;
+  if (!railPinned) $("#app").classList.toggle("railOff", false);   // the ladder belongs on every tab; only a person folds the rail
+  guardBench();
   if (window.Views && Views.onShow) Views.onShow(mode);
+}
+let railPinned = false, modeFromUser = false;
+/* "Clear queues" deletes the pooled charms off the cards and "Nest all ready" re-fires a nest the run is already waiting
+   on — both were live during a run, and the confirm on the first said "Nothing in the cloud is touched", which is true
+   and beside the point: it had just killed the set in progress. */
+function guardBench() {
+  const busy = !!(window.B && B.run && ["running", "review", "paused"].includes(B.run.status));
+  for (const id of ["btnNestAll", "btnClearAll", "btnPick"]) {
+    const b = $("#" + id); if (!b) continue;
+    b.disabled = busy;
+    b.title = busy ? "a run is open — stop it first, or the cards it is working from would be taken away" : (b.dataset.t || b.title || "");
+    if (!b.dataset.t && !busy) b.dataset.t = b.title;
+  }
 }
 
 /* ═══ 15 · settings dialog ══════════════════════════════════════════════ */
@@ -2469,6 +2579,18 @@ function openSettings() {
   $("#stDsOrigin").value = s.dsOrigin || DEFAULTS.dsOrigin; $("#stHeartbeatS").value = s.heartbeatS; $("#stHeartbeatMiss").value = s.heartbeatMiss; $("#stAutoCommit").value = s.autoCommit || "on"; $("#stPullMode").value = s.pullMode || "all"; $("#stPullDueBy").value = s.pullDueBy || ""; $("#stPullCount").value = s.pullCount || 40; $("#stAutoEvery").value = s.autoEvery || 0; $("#stEtsyCap").value = s.etsyHourlyCap || DEFAULTS.etsyHourlyCap; $("#stSandbox").value = s.sandbox === "on" ? "on" : "off";
   $("#stSkuPattern").value = s.skuPattern || DEFAULTS.skuPattern; $("#stLabelGapMm").value = s.labelGapMm; $("#stMasterServerAbove").value = s.masterServerAbove; $("#stSizeMinMm").value = s.sizeMinMm; $("#stSizeMaxMm").value = s.sizeMaxMm;
   $("#stEngraveMarginMm").value = s.engraveMarginMm; $("#stEngraveMinCapMm").value = s.engraveMinCapMm; $("#stEngraveMaxHeightFrac").value = s.engraveMaxHeightFrac; $("#stEngraveConfidence").value = s.engraveConfidence; $("#stEngraveMinGapMm").value = s.engraveMinGapMm; $("#stEngraveMinStrokeMm").value = s.engraveMinStrokeMm; $("#stEngraveTryRotated").value = s.engraveTryRotated || "on"; $("#stBackFileView").value = s.backFileView || "asSeenFromBack";
+  { const sb = window.Sandbox; const st = $("#stSbStatus");
+    if (st && sb) st.textContent = sb.status && sb.status() ? "" : "";
+    const sn = $("#stSbSnap"), rs = $("#stSbReset");
+    if (sn) sn.onclick = () => sb.snapshot().then(() => toast("Snapshot taken", "ok")).catch(e => toast(e.message, "bad", 8000));
+    if (rs) rs.onclick = () => sb.reset().then(() => toast("Sandbox records cleared", "ok")).catch(e => toast(e.message, "bad", 8000));
+    const on = $("#stSbOn");
+    if (on) { const isOn = sb.on(); on.textContent = isOn ? "Back to the real orders" : "Rehearse a run in the sandbox";
+      on.onclick = () => {
+        if (sb.on()) { S.settings.sandbox = "off"; saveSettings(); toast("Sandbox off — reloading", "ok", 3000); setTimeout(() => location.reload(), 600); return; }
+        on.disabled = true; on.textContent = "Switching on…";
+        sb.enable().catch(e => { toast(`Sandbox: ${e.message}`, "bad", 9000); on.disabled = false; on.textContent = "Rehearse a run in the sandbox"; });
+      }; } }
   $("#stMinPt").value = s.minPt; $("#stVerifyRes").value = s.verifyRes; $("#stNaming").value = s.naming; $("#stReview").value = s.review || "on"; $("#stEngine").value = s.engine || "solver"; $("#stMaxFill").value = Math.round((s.maxFill || 0.74) * 100); $("#stAiRounds").value = s.aiRounds || 10; $("#stSnapIn").value = +(((s.snapIn == null ? 0.25 : s.snapIn) * 25.4).toFixed(1)); $("#stNotify").value = s.notify; $("#stSound").value = s.sound;
   openDlg($("#dlgSettings"));
 }
@@ -2494,7 +2616,8 @@ async function boot() {
   sel.onchange = () => { S.stockPreset = sel.value; localStorage.setItem("cn.stock", sel.value); for (const sh of allSheets()) sheetDirty(sh); };
   buildCards();
   $("#railCores").textContent = `${navigator.hardwareConcurrency || "?"} cores${(navigator.hardwareConcurrency || 4) < 4 ? " · sheets nest one at a time" : ` · ${METALS.length} sheets in parallel`}`;
-  $("#btnRail").onclick = () => $("#app").classList.toggle("railOff");
+  { const rr = $("#railRecent"); if (rr) rr.ontoggle = () => { if (window.LiveStrip) LiveStrip.render(); }; }
+  $("#btnRail").onclick = () => { const off = $("#app").classList.toggle("railOff"); railPinned = !off && S.mode !== "nest"; $("#btnRail").title = off ? "show the nesting bench" : "hide the nesting bench"; };
   $("#btnPick").onclick = () => $("#fileInput").click();
   $("#fileInput").onchange = e => { intake(e.target.files); e.target.value = ""; };
   $("#btnNestAll").onclick = () => allSheets().forEach(sh => { if (activeCharms(sh).length && !["nesting", "finishing"].includes(sh.status)) startNest(sh); });
@@ -2502,9 +2625,9 @@ async function boot() {
   $("#btnSettings").onclick = openSettings; $("#btnSaveSettings").onclick = e => { e.preventDefault(); readSettings(); closeDlg($("#dlgSettings")); };
   $("#btnResetSettings").onclick = () => { S.settings = Object.assign({}, DEFAULTS, { stock: JSON.parse(JSON.stringify(DEFAULTS.stock)) }); saveSettings(); openSettings(); };
   $$("#railSeg button").forEach(b => b.onclick = () => { $$("#railSeg button").forEach(x => x.classList.toggle("on", x === b)); document.documentElement.dataset.rail = b.dataset.v; });
-  $$("#modeSeg button").forEach(b => b.onclick = () => setMode(b.dataset.mode));
-  $("#modeSeg").addEventListener("scroll", markTabOverflow, { passive: true });
-  window.addEventListener("resize", markTabOverflow); markTabOverflow();
+  $$("#modeSeg button").forEach(b => b.onclick = () => { modeFromUser = true; setMode(b.dataset.mode); });
+  window.addEventListener("popstate", () => { const m = (location.hash || "").slice(1); if (m && m !== S.mode) setMode(m); });
+  { const m = (location.hash || "").slice(1); if (m && $(`#modeSeg button[data-mode="${m}"]`)) setMode(m); }
   $$("#libKind button").forEach(b => b.onclick = () => { $$("#libKind button").forEach(x => x.classList.toggle("on", x === b)); S.library.kind = b.dataset.k; loadLibrary(); });
   $("#rpClose").onclick = () => closeDlg($("#dlgReport")); $("#lsClose").onclick = () => closeDlg($("#dlgSheet"));
   $$("#libView .fchip").forEach(b => b.onclick = () => { $$("#libView .fchip").forEach(x => x.classList.toggle("on", x === b)); S.library.metal = b.dataset.m; loadLibrary(); });
@@ -2544,13 +2667,13 @@ boot();
         </div>
         <div>
           <div id="owFix"></div>
-          <div class="owField"><label class="fLabel" for="owNotes">Personalisation &amp; buyer message</label><textarea class="owIn" id="owNotes" rows="4" readonly></textarea></div>
-          <div class="owField"><label class="fLabel" for="owNote">Staff note <span class="soft">— saved automatically, visible to every station</span></label><textarea class="owIn" id="owNote" rows="5" placeholder="Add a note for this order…"></textarea></div>
+          <div class="owField"><label class="fLabel">What the customer wrote</label><div class="owSaid" id="owNotes">— No notes —</div></div>
+          <div class="owField"><label class="fLabel" for="owNote">Staff note <span class="soft">— saved automatically, visible to every station</span></label><textarea class="owIn" id="owNote" rows="3" placeholder="Add a note for this order…"></textarea></div>
           <div class="owMeta" id="owMeta"></div>
         </div>
       </div>
       <aside class="owChat">
-        <div class="owChatHead"><span class="lab">Messages</span><span class="spacer" style="flex:1 1 auto"></span><span class="mono" style="font-size:11px;color:var(--ink45)" id="owWho">—</span><button class="btn ghost xs" id="owWhoBtn">Change name</button></div>
+        <div class="owChatHead"><span class="owLink ok" id="owLink" title="messages and notes are saving through the Design Station">● live</span><span class="lab">Messages</span><span class="spacer" style="flex:1 1 auto"></span><span class="mono" style="font-size:11px;color:var(--ink45)" id="owWho">—</span><button class="btn ghost xs" id="owWhoBtn">Change name</button></div>
         <div class="owThread" id="owThread"></div>
         <div class="owComp">
           <div class="owTray" id="owTray"></div>
@@ -2569,6 +2692,7 @@ boot();
       <span style="font-size:12.5px">Skip this line <span style="color:var(--ink45)">— cut nothing for it and leave the order open</span></span>
       <span class="spacer"></span>
       <button class="btn ghost sm" id="owFind" title="scroll the Design Station to this order and point at it">Find on the station</button>
+      <span class="mono" id="owPos" style="font-size:11.5px;color:var(--ink45)"></span>
       <button class="btn ghost sm" id="owPrev" title="the line before this one">‹ Previous</button>
       <button class="btn ghost sm" id="owNext" title="the next line">Next ›</button>
     </div>

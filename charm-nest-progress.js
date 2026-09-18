@@ -24,7 +24,7 @@
   const CSS = `
 /* Bottom left, clear of the top bar and of the station dock in the bottom right: a bar that says what the app is doing
    must never stand between a person and the way out of the screen they are on. */
-.cnp{position:fixed;left:12px;bottom:12px;z-index:60;width:min(520px,calc(100vw - 24px));display:grid;gap:6px;pointer-events:none;font:12px/1.35 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+.cnp{position:fixed;left:calc(var(--railW,344px) + 12px);bottom:12px;z-index:60;width:min(520px,calc(100vw - var(--railW,344px) - 24px));display:grid;gap:6px;pointer-events:none;font:12px/1.35 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
 .cnp:empty{display:none}
 .cnp .cnpRow{background:var(--paper,#f7f4ee);border:1px solid var(--line,rgba(0,0,0,.12));border-radius:12px;padding:6px 12px 8px;box-shadow:0 6px 18px -8px rgba(0,0,0,.45)}
 .cnp .cnpHead{display:flex;gap:10px;align-items:baseline;color:var(--ink,#221f1b)}

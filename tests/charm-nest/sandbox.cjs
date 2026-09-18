@@ -56,7 +56,9 @@ const PROD = ['Design_Completed Orders', 'Design_RealTime_Selected_Orders', 'Des
   const before = Object.fromEntries(PROD.map(c => [c, st.list(c).length])); const blobsBefore = new Set(st.blobs.keys());
   // one press does the chain: snapshot (the station is signed in), switch on, reload, pull from the copy
   await page.evaluate(() => CN.setMode('orders'));
-  await page.click('#sbToggle');
+  // the sandbox is a mode, not a control panel: it is switched on from Settings, one press for snapshot + switch + reload
+  await page.evaluate(() => openSettings());
+  await page.click('#stSbOn');
   await page.waitForFunction(() => !!(window.CN && window.B) && CN.S.settings.sandbox === 'on' && B.orders.rows.length > 0, null, { timeout: 120000 }).catch(() => {});
   const snap = st.doc('Charm_Sandbox', 'current');
   console.log('snapshot', snap);

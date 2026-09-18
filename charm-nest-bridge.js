@@ -35,9 +35,83 @@ function askEmployee() {
 /* ═══ 17 · DesignLink — the Design Station as a slave ═════════════════════ */
 const LiveStrip = window.LiveStrip = (() => {
   const rows = [];
-  function push(ev) { rows.push({ t: ev.t || Date.now(), kind: ev.kind, text: ev.text || (ev.html ? ev.html.replace(/<[^>]+>/g, "") : "") }); if (rows.length > 5) rows.shift(); render(); }
-  function render() { const b = document.getElementById("liveStripBody"); if (!b) return; b.innerHTML = rows.length ? rows.map(r => `<span class="ev"><span class="t">${fmtT(r.t)}</span><b>${esc(r.kind)}</b> ${esc(r.text).slice(0, 140)}</span>`).join("") : "bridge idle"; const n = Review.count(); const rb = document.getElementById("tabReviewN"); if (rb) rb.textContent = n ? String(n) : ""; const eb = document.getElementById("tabEngraveN"); if (eb) { const k = Engrave.pendingCount(); eb.textContent = k ? String(k) : ""; } }
+  function push(ev) { rows.push({ t: ev.t || Date.now(), kind: ev.kind, text: ev.text || (ev.html ? ev.html.replace(/<[^>]+>/g, "") : "") }); if (rows.length > 40) rows.shift(); render(); }
+  function render() {
+    const b = document.getElementById("railRecentBody");
+    // newest first, and only drawn while the disclosure is open — it used to be a permanent band that clipped the newest line
+    if (b && b.parentElement && b.parentElement.open) b.innerHTML = rows.length ? rows.slice().reverse().map(r => `<div><i>${fmtT(r.t)}</i><b>${esc(r.kind)}</b> ${esc(r.text).slice(0, 160)}</div>`).join("") : "<div>nothing yet</div>";
+    const n = Review.count(); const rb = document.getElementById("tabReviewN"); if (rb) rb.textContent = n ? String(n) : "";
+    const eb = document.getElementById("tabEngraveN"); if (eb) { const k = Engrave.pendingCount(); eb.textContent = k ? String(k) : ""; }
+    if (window.Ladder) Ladder.render();
+  }
   return { push, render, rows };
+})();
+
+/* ═══ 17b · Ladder — where the work is, on every screen ══════════════════════
+   The one thing the station never said: what has been approved, what is where, what is set. It was eleven nine-pixel
+   squares whose meaning lived in a title attribute, a scrolling ticker of the five most recent lines, and four badges
+   spread across four tabs — so answering "where are we" meant a tour of the app and some mental arithmetic.
+   The ladder is that answer, in the rail, on all eight tabs, built from state the app already holds. Seven steps a
+   person would name, each with the evidence for it; the step that is waiting on someone is the only one with a
+   background, and it is a button that goes to the screen that settles it. */
+const Ladder = window.Ladder = (() => {
+  const STEPS = [
+    { id: "pull", label: "Pull", covers: ["pull", "claim"], tab: "orders",
+      count: () => { const n = Orders.rows().filter(r => r.state !== "gone").length; return n ? `${n} line${n === 1 ? "" : "s"}` : ""; } },
+    { id: "pool", label: "Pool", covers: ["pool", "plan"], tab: "orders",
+      count: () => { const n = Orders.rows().filter(r => r.poolIds && r.poolIds.length).length; return n ? `${n} on the cards` : ""; } },
+    { id: "nest", label: "Nest", covers: ["nest"], tab: "nest",
+      count: () => { const sh = allSheets().filter(p => p.runId && B.run && p.runId === B.run.runId); const done = sh.filter(p => ["complete", "partial"].includes(p.status)).length; return sh.length ? `${done} of ${sh.length} sheet${sh.length === 1 ? "" : "s"}` : ""; } },
+    { id: "checkpoint", label: "Check", covers: ["checkpoint"], tab: "nest",
+      count: () => { const bad = allSheets().filter(p => p.runId && B.run && p.runId === B.run.runId && p.verification && !p.verification.ok).length; return bad ? `${bad} to look at` : ""; } },
+    { id: "engrave", label: "Engrave", covers: ["engrave", "revalidate"], tab: "engrave",
+      count: () => { const k = Engrave.pendingCount(); return k ? `${k} to settle` : (Engrave.reviewedCount() ? `${Engrave.reviewedCount()} decided` : ""); },
+      waits: () => Engrave.pendingCount() },
+    { id: "labels", label: "Labels", covers: ["labels"], tab: "nest",
+      count: () => { const s2 = B.run && Sets.byRun && Sets.byRun().get(B.run.runId); const n = s2 && s2.labelFiles ? s2.labelFiles.length : 0; return n ? `${n} saved` : ""; } },
+    { id: "commit", label: "Commit", covers: ["commit", "complete"], tab: "orders",
+      count: () => { const n = B.run && B.run.committed ? B.run.committed.length : 0; const h = B.run && B.run.holds ? Object.keys(B.run.holds).length : 0; return n || h ? `${n} committed${h ? ` · ${h} held` : ""}` : ""; } },
+  ];
+  const WORD = { running: ["Running", "go"], review: ["Waiting on you", "wait"], paused: ["Paused", "wait"], stopped: ["Stopped", "stop"], complete: ["Done", "go"] };
+  const mount = () => document.getElementById("ladder");
+  /** Which of the seven the run is standing on, and which of them is waiting on a person. */
+  function shape() {
+    const r = B.run;
+    const idx = r ? O.stepIndex(r.step) : -1;
+    const here = r ? STEPS.findIndex(s => s.covers.includes(r.step)) : -1;
+    const revN = Review.count(), engN = Engrave.pendingCount();
+    return { r, idx, here, revN, engN };
+  }
+  function render() {
+    const host = mount(); if (!host) return;
+    const { r, here, revN, engN } = shape();
+    if (!r) {
+      // no run: the ladder still answers "what is here" — the library, the pull, and what the library is missing
+      const pulled = Orders.rows().filter(x => x.state !== "gone").length;
+      const miss = Master.missingCount ? Master.missingCount() : 0;
+      host.innerHTML = `<div class="ldBand ldIdle"><b>No run open</b><span>${B.master.entries.size} SKU${B.master.entries.size === 1 ? "" : "s"} in the library</span></div>`
+        + `<div class="ldRows">`
+        + `<button class="ldRow" data-tab="orders" title="the orders on the cards"><i class="g ${pulled ? "done" : "todo"}"></i><span class="n">Orders</span><span class="c">${pulled ? `${pulled} line${pulled === 1 ? "" : "s"} pulled` : "nothing pulled"}</span></button>`
+        + (miss ? `<button class="ldRow wait" data-tab="master" title="SKUs the orders want that no master file holds"><i class="g stop"></i><span class="n">Library</span><span class="c">${miss} SKU${miss === 1 ? "" : "s"} missing</span></button>` : "")
+        + `</div>`;
+      wire(host); return;
+    }
+    const [word, tone] = WORD[r.status] || ["Running", "go"];
+    const waitRow = r.status === "review" ? (engN ? "engrave" : "pull") : null;
+    host.innerHTML = `<div class="ldBand ld-${tone}" title="run ${esc(r.runId)}"><b>${esc(word)}</b><span>${esc(r.setId || r.day || "")}</span></div>`
+      + `<div class="ldRows">` + STEPS.map((s, i) => {
+        const state = r.status === "complete" || i < here ? "done" : i === here ? (r.status === "stopped" ? "stop" : "now") : "todo";
+        const waiting = (s.waits && s.waits()) || (s.id === waitRow && revN);
+        const c = s.count() || "";
+        return `<button class="ldRow${waiting ? " wait" : ""}${state === "now" ? " now" : ""}" data-tab="${s.tab}" title="${esc(s.label)}${c ? " — " + esc(c) : ""}"><i class="g ${state}"></i><span class="n">${esc(s.label)}</span><span class="c">${esc(c)}</span></button>`;
+      }).join("") + `</div>`
+      + (revN || engN ? `<div class="ldWaits">${revN ? `<button class="ldChip warn" data-tab="review" title="decisions a person must make">Review<b>${revN}</b></button>` : ""}${engN ? `<button class="ldChip info" data-tab="engrave" title="engraving still to be settled">Engraving<b>${engN}</b></button>` : ""}</div>` : "");
+    wire(host);
+  }
+  function wire(host) {
+    host.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { setMode(b.dataset.tab); if (b.dataset.tab === "engrave" && window.Engrave) Engrave.render(); });
+  }
+  return { render, STEPS };
 })();
 
 const DesignLink = window.DesignLink = (() => {
@@ -194,6 +268,9 @@ const DesignLink = window.DesignLink = (() => {
     n.textContent = `${S_.state && S_.state.sandbox ? "emulated · " : ""}today ${m.today} · 10m ${m.last10Min} · 1m ${m.lastMinute}`;
     const hot = m.last10Min >= m.guard.per10Min * 0.7 || m.lastMinute >= m.guard.burstPerMinute * 0.7;
     el.classList.toggle("alarm", !!m.braked); el.classList.toggle("warn", !m.braked && hot);
+    // a rate meter is something you look at when something is wrong: in the normal state it holds no space, and the full
+    // readout stays on the Design Station panel where it always was
+    el.classList.toggle("quiet", !m.braked && !hot && !(S_.state && S_.state.sandbox));
     el.title = m.braked ? `Etsy watchdog at the station: ${m.alarm && m.alarm.why} — automatic Etsy work paused until ${new Date(m.brakeUntil).toLocaleTimeString()}` : `Etsy calls counted by the Design Station: ${m.total} this session · ${m.lastMinute} in the last minute · ${m.last10Min} in the current 10-minute window · ${m.lastHour} in the last hour · ${m.today} today · peak ${m.maxQps}/s · ${m.status429} rate-limit answers. Guard: ${m.guard.burstPerMinute}/min, ${m.guard.per10Min}/10 min, ${m.guard.sameOrderPer10Min} reads of one order/10 min.`;
     if (m.braked && (!E_.alarmed || E_.alarmed !== m.alarm.at)) { E_.alarmed = m.alarm.at; agent({ bridge: true }, "warn", `Etsy watchdog at the station: ${m.alarm.why} — automatic Etsy work is paused for ${Math.round(m.guard.brakeMs / 60000)} min`); if (B.run && ["running", "paused", "review"].includes(B.run.status)) RunCtl.stop(`Etsy watchdog: ${m.alarm.why}`, `The station paused automatic Etsy work until ${new Date(m.brakeUntil).toLocaleTimeString()}. Check the API meter on both apps, then Resume.`); }
   }
@@ -262,9 +339,12 @@ const Dock = window.Dock = (() => {
     document.body.appendChild(el);
     D.el = el; D.body = el.querySelector(".dockBody"); D.bar = el.querySelector(".dockBar");
     el.querySelector("#dockOpen").onclick = () => setMode("design");
-    el.querySelector("#dockHide").onclick = () => { D.hiddenByUser = true; layout(); };
+    el.querySelector("#dockHide").onclick = () => { D.hiddenByUser = true; D.shownByUser = false; layout(); };
+    // the dock's own bar is the way to grow it: small by default, full when someone wants to watch
+    el.querySelector(".dockBar").addEventListener("dblclick", () => { D.shownByUser = !D.shownByUser; layout(); });
     D.bar.addEventListener("dblclick", () => setMode("design"));
     const pill = document.createElement("button"); pill.type = "button"; pill.id = "dsDockPill"; pill.className = "hidden"; pill.innerHTML = `<span class="dot"></span>Design Station live view`; pill.onclick = () => { D.hiddenByUser = false; D.shownByUser = true; layout(); };
+    pill.title = "the Design Station, live — click to watch it in the corner";
     document.body.appendChild(pill); D.pill = pill;
     window.addEventListener("resize", schedule); document.addEventListener("scroll", schedule, true);
     return D;
@@ -285,9 +365,12 @@ const Dock = window.Dock = (() => {
     D.pill.classList.toggle("hidden", mode !== "pilled");
     D.el.classList.toggle("hidden", mode === "hidden" || mode === "pilled");
     D.el.classList.toggle("full", mode === "full"); D.el.classList.toggle("pip", mode === "pip");
-    // on the engraving and review screens the controls live at the bottom of the page, so the live view tucks itself
-    // into a smaller corner there rather than sitting on top of them
-    D.el.classList.toggle("tucked", mode === "pip" && ["engrave", "review"].includes(S.mode) && !D.shownByUser);
+    // The live view is presence, not reading: at 480 px it renders the station at 0.4 and covered order cards, sheet
+    // cards and SKU tiles outright. It sits small unless a person expands it, and whatever size it is, the screen
+    // reserves that much room at the bottom so nothing is ever underneath it.
+    D.el.classList.toggle("tucked", mode === "pip" && !D.shownByUser);
+    const dockH = mode === "pip" ? Math.round(D.el.getBoundingClientRect().height) + 12 : 0;
+    document.documentElement.style.setProperty("--dockH", dockH + "px");
     if (mode === "hidden" || mode === "pilled" || !f) return;
     let w, h;
     if (mode === "full") {
@@ -443,6 +526,7 @@ const Orders = window.Orders = (() => {
   /* Which pile a line is in. The three the shop asked for — went through, needs a person, needs engraving settled —
      plus the two that are neither. A line is in exactly one pile, so the counts add up to the lines pulled. */
   const PILES = [
+    { id: "late", label: "Due or overdue", cls: "bad", of: r => dueOf(r).soon && !["committed", "labelled", "skipped"].includes(r.state) },
     { id: "attn", label: "Needs a decision", cls: "warn", of: r => r.problems.length || ["held", "unmatched", "oversize", "gone"].includes(r.state) },
     { id: "eng", label: "Engraving to settle", cls: "info", of: r => r.engrave && r.engrave.needed && !r.engrave.approved && r.engrave.state !== "skipped" },
     { id: "done", label: "Done", cls: "ok", of: r => ["committed", "labelled"].includes(r.state) },
@@ -450,7 +534,7 @@ const Orders = window.Orders = (() => {
     { id: "rest", label: "Not started", cls: "neutral", of: r => true },
   ];
   const pileOf = r => (PILES.find(g => g.of(r)) || PILES[PILES.length - 1]).id;
-  const OV = { pile: null, metal: null, q: "", view: null };                    // what the tab is showing right now
+  const OV = { pile: null, metal: null, q: "", view: null, sort: "due", desc: false };                    // what the tab is showing right now
   const viewMode = () => OV.view || S.settings.orderView || "cards";
   /** The lines the filters leave, in ship-by order. */
   function visibleRows() {
@@ -462,13 +546,27 @@ const Orders = window.Orders = (() => {
       const sp = r.spec || {};
       return [r.order.receiptId, sp.designSku, r.line.sku, r.line.title, (sp.personalization || []).join(" "), sp.buyerMessage, sp.staffNote, r.reason]
         .some(x => String(x || "").toLowerCase().includes(q));
-    }).sort((x, y) => (x.order.shipBy || 0) - (y.order.shipBy || 0) || String(x.order.receiptId).localeCompare(String(y.order.receiptId)));
+    }).sort((x, y) => {
+      const k = OV.sort === "order" ? String(x.order.receiptId).localeCompare(String(y.order.receiptId))
+        : OV.sort === "state" ? String(x.state).localeCompare(String(y.state))
+        : (x.order.shipBy || 0) - (y.order.shipBy || 0);
+      return (OV.desc ? -k : k) || String(x.order.receiptId).localeCompare(String(y.order.receiptId));
+    });
   }
   /* The listing photographs come from the Design Station, which already has them cached and rate limited, so a wall of
      cards here costs Etsy nothing this page would not already have spent. They are asked for only as a card comes into
      view, at most a dozen at a time, and remembered for the session. A charm we hold a design for falls back to its own
      thumbnail, which is the drawing that will actually be cut. */
-  const IMG = { got: new Map(), want: new Set(), timer: 0 };
+  const IMG = { got: new Map(), want: new Set(), timer: 0, io: null };
+  /** Only a card a person can actually see asks for its photograph: 411 lines must not mean 411 Etsy images. */
+  function watchImages(host) {
+    if (IMG.io) IMG.io.disconnect();
+    if (!window.IntersectionObserver) { host.querySelectorAll("[data-lid]").forEach(n => wantImage(n.dataset.lid)); return; }
+    IMG.io = new IntersectionObserver(es => {
+      for (const e of es) if (e.isIntersecting) { wantImage(e.target.dataset.lid); IMG.io.unobserve(e.target); }
+    }, { root: host, rootMargin: "300px 0px" });
+    host.querySelectorAll("[data-lid]").forEach(n => { if (!n.dataset.painted) IMG.io.observe(n); });
+  }
   function imageFor(r) {
     const lid = String(r.line.listingId || "");
     if (IMG.got.get(lid)) return IMG.got.get(lid);
@@ -503,6 +601,7 @@ const Orders = window.Orders = (() => {
       const img = host.querySelector("img") || host.appendChild(el("img"));
       img.loading = "lazy"; img.alt = ""; img.src = url;
       const ph = host.querySelector(".ph"); if (ph) ph.remove();
+      if (IMG.io) IMG.io.unobserve(host);
     }
   }
   /** Light up every card or row of one order, so a person can see at a glance what else came in the same parcel. */
@@ -513,20 +612,54 @@ const Orders = window.Orders = (() => {
     const kin = host.querySelectorAll('[data-rid="' + String(rid).replace(/"/g, "") + '"]');
     if (kin.length > 1) kin.forEach(n => n.classList.add("kin"));
   }
+  /* Thirteen state words in four colours said nothing about order. The five that are progress now carry their place in
+     the run, so "3/5 nested" reads as progress; the exceptions stay unnumbered, so a problem reads differently. */
+  const PROGRESS = ["pooled", "nested", "written", "labelled", "committed"];
+  function stateWords(r) {
+    const [k, t] = STATE_PILL[r.state] || ["neutral", r.state];
+    const i = PROGRESS.indexOf(r.state);
+    return [k, i < 0 ? t : `${i + 1}/${PROGRESS.length} ${t}`];
+  }
+  const DAY = 86400;
+  /** How the ship-by date reads today: overdue, due, or simply a date. */
+  function dueOf(r) {
+    const by = r.order.shipBy; if (!by) return { cls: "", txt: "\u2014", late: false, soon: false };
+    const today0 = Math.floor(Date.now() / 1000 / DAY) * DAY, d = Math.floor(by / DAY) * DAY;
+    const txt = new Date(by * 1000).toLocaleDateString("en-US", { month: "short", day: "2-digit" });
+    return { cls: d < today0 ? "bad" : d <= today0 + DAY ? "warn" : "", txt, late: d < today0, soon: d <= today0 + DAY };
+  }
   const shipTxt = r => r.order.shipBy ? new Date(r.order.shipBy * 1000).toLocaleDateString("en-US", { month: "short", day: "2-digit" }) : "—";
   const wordsOf = sp => (sp.personalization || []).join(" / ") || sp.buyerMessage || "";
+  /** Where this line physically is: the set and the sheet it was nested on. "What's where", answered on the line itself. */
+  function placeOf(r) {
+    for (const id of r.poolIds || []) { const p2 = B.pool.rows.get(id); if (p2 && (p2.sheetName || p2.sheetId)) return { set: p2.setId || "", sheet: p2.sheetName || p2.sheetId }; }
+    return null;
+  }
   /** Everything a person needs to recognise one line, as a card or as a row: the same fields either way. */
   function renderBody() {
     const host = document.getElementById("ordBody"); if (!host) return;
+    const at = host.scrollTop;                                             // a run writing to the list must not scroll it away
     const rows = visibleRows();
+    const restore = () => { if (at) host.scrollTop = at; };
     if (!rowsOf().length) { host.innerHTML = '<div class="libEmpty">No orders pulled. Press <b>Pull orders</b> — the Design Station reads Etsy and hands every open order over the bridge.</div>'; return; }
-    if (!rows.length) { host.innerHTML = '<div class="libEmpty">Nothing matches these filters.</div>'; return; }
+    if (!rows.length) {
+      host.innerHTML = '<div class="libEmpty">Nothing matches these filters.<br><button class="btn ghost sm" id="ordClear" style="margin-top:10px">Show everything</button></div>';
+      host.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.q = ""; render(); };
+      return;
+    }
     const cards = viewMode() === "cards";
     host.innerHTML = '<div class="' + (cards ? "ordCards" : "ordList") + '" id="ordItems"></div>';
     const list = host.querySelector("#ordItems");
+    if (!cards) {
+      const th = (k, t) => '<button data-sort="' + k + '" class="' + (OV.sort === k ? "on" : "") + '" title="order the list by this">' + t + (OV.sort === k ? (OV.desc ? " \u25be" : " \u25b4") : "") + '</button>';
+      const hdr = el("div", "olist hdr");
+      hdr.innerHTML = '<span></span>' + th("order", "Order") + '<span>SKU</span><span class="hideSm">Item</span><span>Qty</span><span class="hideSm">Metal</span>' + th("due", "Ship by") + th("state", "State");
+      hdr.querySelectorAll("[data-sort]").forEach(b => b.onclick = () => { if (OV.sort === b.dataset.sort) OV.desc = !OV.desc; else { OV.sort = b.dataset.sort; OV.desc = false; } renderBody(); });
+      list.appendChild(hdr);
+    }
     for (const r of rows) {
       const sp = r.spec || {}, m = r.material || "none";
-      const st = STATE_PILL[r.state] || ["neutral", r.state];
+      const st = stateWords(r), due = dueOf(r), where = placeOf(r);
       const attn = r.problems.length || ["held", "unmatched", "oversize"].includes(r.state);
       const lid = String(r.line.listingId || "");
       const url = imageFor(r);
@@ -547,7 +680,8 @@ const Orders = window.Orders = (() => {
             '<span class="orow1"><b class="onum">' + esc(r.order.receiptId) + '</b><span class="spacer"></span><span class="ost ' + st[0] + '">' + esc(st[1]) + '</span></span>' +
             '<span class="ometal"><i></i><span>' + esc(m === "none" ? "no material yet" : labelOf(m)) + '</span></span>' +
             '<span class="osku"><i>SKU</i><b>' + esc(sp.designSku || r.line.sku || "— none —") + '</b></span>' +
-            (wordsOf(sp) ? P("opers", esc(wordsOf(sp))) : "") +
+            (where ? '<span class="owhere" title="the set and sheet this piece was nested on">' + esc(where.set) + (where.sheet ? " · " + esc(where.sheet) : "") + '</span>' : "") +
+            (wordsOf(sp) ? '<span class="opers" title="' + esc(wordsOf(sp)) + '">' + esc(wordsOf(sp)) + '</span>' : "") +
             (why ? P("owhy", esc(why)) : "") +
           '</span>';
       } else {
@@ -558,7 +692,7 @@ const Orders = window.Orders = (() => {
           '<span class="cell hideSm" style="font-size:12px;color:var(--ink70)">' + esc(wordsOf(sp) || r.line.title) + '</span>' +
           P("qtyc", "×" + qty) +
           '<span class="cell hideSm ometal"><i></i><span>' + esc(m === "none" ? "none" : labelOf(m)) + '</span></span>' +
-          '<span class="cell hideSm" style="font:11.5px var(--mono);color:var(--ink45)">' + esc(shipTxt(r)) + '</span>' +
+          '<span class="cell hideSm due ' + due.cls + '" title="ship by">' + esc(due.txt) + '</span>' +
           '<span class="ost ' + st[0] + '">' + esc(st[1]) + '</span>' +
           (why ? '<span class="cell whyc owhy">' + esc(why) + '</span>' : "");
       }
@@ -568,9 +702,10 @@ const Orders = window.Orders = (() => {
       node.onmouseenter = node.onfocus = () => markKin(node.dataset.rid, true);
       node.onmouseleave = node.onblur = () => markKin(node.dataset.rid, false);
       list.appendChild(node);
-      if (!url && lid) wantImage(lid);
     }
     paintImages();
+    watchImages(host);
+    restore();
   }
   function render() {
     const v = document.getElementById("ordersView"); if (!v || v.classList.contains("hidden")) { const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(new Set(B.orders.rows.map(r => r.order.receiptId)).size) : ""; return; }
@@ -584,21 +719,21 @@ const Orders = window.Orders = (() => {
     const counts = {}; for (const r of all) counts[pileOf(r)] = (counts[pileOf(r)] || 0) + 1;
     const byMetal = {}; for (const r of all) { const m = r.material || "none"; byMetal[m] = (byMetal[m] || 0) + 1; }
     const chip = (on, id, label, n, cls, title) => `<button class="egTab${on ? " on" : ""}" data-pile="${esc(id)}" title="${esc(title || "")}">${esc(label)}<b class="${cls}">${n}</b></button>`;
-    const mChip = m => `<button class="egTab${OV.metal === m ? " on" : ""}" data-metal="${esc(m)}" title="show only ${esc(m === "none" ? "lines with no material yet" : labelOf(m))}">${esc(m === "none" ? "No material" : labelOf(m))}<b>${byMetal[m]}</b></button>`;
+    const mChip = m => `<button class="egTab${OV.metal === m ? " on" : ""}" data-metal="${esc(m)}" title="show only ${esc(m === "none" ? "lines with no material yet" : labelOf(m))}">${esc(m === "none" ? "No material" : labelOf(m))}<b>${byMetal[m] || 0}</b></button>`;
     v.innerHTML = `<div class="ordHead">
         <div class="ordBar">
-          <button class="btn sm" id="ordPull" title="ask the Design Station for every open order that matches the rule below">Pull orders</button>${runBtns}
+          <button class="btn sm" id="ordPull"${running ? ' disabled title="a run is open — stop it first, or its lines would be replaced under it"' : ' title="ask the Design Station for every open order that matches the rule below"'}>Pull orders</button>${runBtns}
           <select id="ordPullMode" title="which open orders to bring in"><option value="all"${s.pullMode === "all" ? " selected" : ""}>Every open order</option><option value="dueBy"${s.pullMode === "dueBy" ? " selected" : ""}>Due by date</option><option value="count"${s.pullMode === "count" ? " selected" : ""}>N most urgent</option></select>
           <input type="date" id="ordDueBy" value="${esc(s.pullDueBy || "")}" title="orders due on or before this date" class="${s.pullMode === "dueBy" ? "" : "hidden"}"><input type="number" id="ordCount" value="${s.pullCount || 40}" min="1" max="500" title="how many of the most urgent orders" class="${s.pullMode === "count" ? "" : "hidden"}">
           <span class="spacer"></span>
           <span class="pill ${B.orders.stale ? "warn" : "neutral"}" id="ordMeta" title="${esc(B.orders.stale ? "the station's open list has changed since this pull — pull again to catch up" : "the last pull")}">${B.orders.pulledAt ? `${new Set(all.map(r => r.order.receiptId)).size} orders · ${all.length} lines · pulled ${fmtT(B.orders.pulledAt)}${B.orders.filtered ? ` · ${B.orders.filtered} left out by the rule` : ""}${B.orders.stale ? " · list changed" : ""}` : "nothing pulled yet"}</span>
         </div>
         <div class="ordFilters">
-          ${chip(!OV.pile, "", "Everything", all.length, "", "every line that was pulled")}${PILES.filter(g => counts[g.id]).map(g => chip(OV.pile === g.id, g.id, g.label, counts[g.id], g.cls, g.label)).join("")}
-          ${Object.keys(byMetal).length > 1 ? `<span class="sep"></span>` + ["gold", "silver", "rose", "gold10k", "gold14k", "none"].filter(m => byMetal[m]).map(mChip).join("") : ""}
-          <span class="spacer"></span>
-          <input class="ordSearch" id="ordQ" placeholder="order, SKU, words…" value="${esc(OV.q)}" title="search the order number, the SKU, the title and everything the customer or the shop wrote">
-          <span class="viewSeg"><button data-view="cards"${viewMode() === "cards" ? ' class="on"' : ""} title="a card for every line, with its picture">Cards</button><button data-view="list"${viewMode() === "list" ? ' class="on"' : ""} title="the same lines as rows">List</button></span>
+          <span class="chips">${chip(!OV.pile, "", "Everything", all.length, "", "every line that was pulled")}${PILES.filter(g => counts[g.id] || OV.pile === g.id).map(g => chip(OV.pile === g.id, g.id, g.label, counts[g.id] || 0, g.cls, g.label)).join("")}
+          ${Object.keys(byMetal).length > 1 || OV.metal ? `<span class="sep"></span>` + ["gold", "silver", "rose", "gold10k", "gold14k", "none"].filter(m => byMetal[m] || OV.metal === m).map(mChip).join("") : ""}
+          </span>
+          <span class="tail"><input class="ordSearch" id="ordQ" placeholder="order, SKU, words…" value="${esc(OV.q)}" title="search the order number, the SKU, the title and everything the customer or the shop wrote">
+          <span class="viewSeg"><button data-view="cards"${viewMode() === "cards" ? ' class="on"' : ""} title="a card for every line, with its picture">Cards</button><button data-view="list"${viewMode() === "list" ? ' class="on"' : ""} title="the same lines as rows">List</button></span></span>
         </div>
       </div><div class="ordBody" id="ordBody"></div>`;
     v.querySelector("#ordPullMode").onchange = e => { S.settings.pullMode = e.target.value; saveSettings(); render(); };
@@ -609,7 +744,7 @@ const Orders = window.Orders = (() => {
     v.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { OV.view = b.dataset.view; S.settings.orderView = OV.view; saveSettings(); render(); });
     const q = v.querySelector("#ordQ"); q.oninput = () => { OV.q = q.value; const at = q.selectionStart; renderBody(); const q2 = document.getElementById("ordQ"); if (q2) { q2.focus(); try { q2.setSelectionRange(at, at); } catch (_) {} } };
     Sandbox.mountPanel(v);
-    v.querySelector("#ordPull").onclick = async () => { try { await pull(null); } catch (e) { toast(e.message, "bad", 7000); agent({ bridge: true }, "warn", e.message); } };
+    { const pb = v.querySelector("#ordPull"); if (!pb.disabled) pb.onclick = async () => { try { await pull(null); } catch (e) { toast(e.message, "bad", 7000); agent({ bridge: true }, "warn", e.message); } }; }
     const rb = v.querySelector("#ordRun"); if (rb) rb.onclick = () => RunCtl.start();
     const rs = v.querySelector("#ordResume"); if (rs) rs.onclick = () => RunCtl.pickResume();
     renderBody();
@@ -843,6 +978,42 @@ const Master = window.Master = (() => {
   }
   async function patchMany(skus, p) { for (const s of skus) { await api("charmNestLibrary", { op: "masterPatch", sku: s, patch: p }); const e = entryFor(s); if (e) Object.assign(e, p); } render(); }
   async function patch(sku, p) { await api("charmNestLibrary", { op: "masterPatch", sku, patch: p }); const e = entryFor(sku); if (e) Object.assign(e, p); render(); }
+  /** Every SKU the pulled orders want that no master file holds, newest pull first. */
+  function missingSkus() {
+    const out = new Map();
+    for (const r of Orders.rows()) {
+      if (r.state === "gone" || r.spec.noDesign) continue;
+      const p = (r.problems || []).find(x => x.kind === "unmatchedSku" && x.sku);
+      if (!p) continue;
+      if (!out.has(p.sku)) out.set(p.sku, { sku: p.sku, lines: 0, orders: new Set(), title: r.line.title });
+      const e = out.get(p.sku); e.lines++; e.orders.add(r.order.receiptId);
+    }
+    return [...out.values()].sort((a, b) => b.lines - a.lines || a.sku.localeCompare(b.sku));
+  }
+  function paintMissing(v) {
+    let box = v.querySelector("#mMissing");
+    if (!box) { box = el("div", "missBox"); box.id = "mMissing"; const head = v.querySelector(".noteBox"); if (head) head.insertAdjacentElement("afterend", box); else v.prepend(box); }
+    const miss = missingSkus();
+    if (!miss.length) { box.className = "missBox hidden"; box.innerHTML = ""; return; }
+    const lines = miss.reduce((n, m) => n + m.lines, 0);
+    const orders = new Set(); miss.forEach(m => m.orders.forEach(o => orders.add(o)));
+    box.className = "missBox";
+    box.innerHTML = '<div class="t"><b>' + miss.length + ' SKU' + (miss.length === 1 ? "" : "s") + ' the orders want that no master file holds</b>' +
+      '<span>' + lines + ' line' + (lines === 1 ? "" : "s") + ' across ' + orders.size + ' order' + (orders.size === 1 ? "" : "s") + ' are waiting on them \u2014 add the master files that carry them and every one goes through</span></div>' +
+      '<div class="skus">' + miss.slice(0, 60).map(m => '<span class="s" title="' + esc(m.title) + '">' + esc(m.sku) + (m.lines > 1 ? '<i>\u00d7' + m.lines + '</i>' : "") + '</span>').join("") +
+      (miss.length > 60 ? '<span class="s more">\u2026 and ' + (miss.length - 60) + ' more</span>' : "") + '</div>' +
+      '<div class="acts"><button class="btn ghost xs" data-a="copy" title="copy the list, so the master files that carry them can be found">Copy the list</button>' +
+      '<button class="btn ghost xs" data-a="save" title="save the list with the orders waiting on each one">Save as a file</button>' +
+      '<button class="btn gold xs" data-a="add" title="index another master file into the library">Add a master file</button></div>';
+    box.querySelector("[data-a=copy]").onclick = async () => { try { await navigator.clipboard.writeText(miss.map(m => m.sku).join("\n")); toast(miss.length + " SKU(s) copied", "ok"); } catch (_) { toast("Could not reach the clipboard", "bad"); } };
+    box.querySelector("[data-a=save]").onclick = () => {
+      const rows = [["sku", "lines", "orders", "title"]].concat(miss.map(m => [m.sku, m.lines, [...m.orders].join(" "), m.title]));
+      const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(",")).join("\n");
+      const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+      a.download = "charm-library-missing-" + today() + ".csv"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    };
+    box.querySelector("[data-a=add]").onclick = () => { const f = v.querySelector("#mFile"); if (f) f.click(); };
+  }
   function render() {
     const v = document.getElementById("masterView"); if (!v || v.classList.contains("hidden")) return;
     if (!v.dataset.built) {
@@ -859,6 +1030,10 @@ const Master = window.Master = (() => {
       v.querySelector("#mSearch").oninput = render;
       load().then(render).catch(() => {});
     }
+    // What the orders on the cards are asking for that this library cannot answer. One real run wanted 133 SKUs the
+    // library had never heard of, because only one master file had ever been indexed — and the only way to learn that
+    // was to read 180 review cards. It is one fact, so it is said once, here, where the master files are added.
+    paintMissing(v);
     const jobs = v.querySelector("#mJobs"); jobs.innerHTML = "";
     for (const job of B.master.jobs.values()) {
       const card = el("div", "masterFile");
@@ -963,7 +1138,7 @@ const Master = window.Master = (() => {
     each("up", (inp, skus) => inp.onchange = () => { const v2 = inp.value.trim(); if (v2 === "") return; patchMany(skus, { upAngle: +v2 }).then(() => toast(`${skus.join(", ")}: up = ${+v2}° (operator)`, "ok")); });
     each("unblock", (b, skus) => b.onclick = () => patchMany(skus, { blocked: null }).then(() => toast(`${skus.join(", ")} unblocked`, "ok")));
   }
-  return { entryFor, thumbOf, fetchEntry, load, indexFile, looksLikeMaster, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder };
+  return { entryFor, thumbOf, fetchEntry, load, indexFile, looksLikeMaster, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
 })();
 
 /* ═══ 20 · Pool — one charm per order line and copy ══════════════════════ */
@@ -1068,7 +1243,9 @@ const Engrave = window.Engrave = (() => {
   function ensureJob(row) { let j = items().get(row.key); if (!j) { j = { key: row.key, row, state: "classify", text: null, lines: [], source: null, quote: null, confidence: null, requests: null, questions: [], decision: null, fit: null, view: null, mask: null, claude: null, approvedBy: null, approvedAt: null, backs: [], copies: [], reason: null, t: Date.now() }; items().set(row.key, j); } j.copies = row.poolIds.slice(); return j; }
   const pendingCount = () => [...items().values()].filter(j => ["words", "review", "fitting", "ready", "classify"].includes(j.state) && j.row.state !== "gone").length;
   /** How many placements have already been settled in this run — the numerator of "3 of 9" on the card. */
-  const reviewedCount = () => [...items().values()].filter(j => ["approved", "skipped", "none", "written"].includes(j.state) && j.row.state !== "gone").length;
+  const DECIDED = ["approved", "written", "skipped"];                    // the same set the Decided tab lists
+  const decidedJobs = () => [...items().values()].filter(j => DECIDED.includes(j.state) && j.row.state !== "gone");
+  const reviewedCount = () => decidedJobs().length;
 
   /* ── 7.1 · which lines are engraved, and what the text is ── */
   async function classify(row) {
@@ -1207,8 +1384,31 @@ const Engrave = window.Engrave = (() => {
   function invalidate(row, why) { const j = items().get(row.key); if (!j) return; if (j.state === "approved" || j.state === "written" || j.state === "review" || j.state === "ready") { j.previous = { text: j.text, fit: j.fit, approvedBy: j.approvedBy }; j.state = "classify"; j.fit = null; j.approvedBy = null; j.approvedAt = null; j.reason = why; Review.remove("eng:" + j.key); } }
 
   /* ── 7.5 · the review controls ── */
-  function refit(job, place) { const f = G.refitAt(job.lines, fontFor(job.fit.weight), job.mask, fitOpts(), place); if (!f.ok) return false; f.fittedMax = f.size; f.weight = job.fit.weight; f.rect = job.fit.rect; job.fit = f; job.verify = { geometry: G.verifyInk(f.cmds, job.mask), at: Date.now() }; job.nudged = true; job.claude = null; return true; }
-  function nudge(job, dxMm, dyMm) { if (!job.fit) return; const c = [job.fit.centre[0] + dxMm * PT, job.fit.centre[1] + dyMm * PT]; if (!refit(job, { centre: c, angle: job.fit.angle })) toast("No room there", "bad"); render(); }
+  /* Moving the text is moving the text. It used to be a re-fit with no ceiling, so one tap of a nudge arrow threw away
+     the size a person had just chosen and set the largest that happened to fit at the new spot — and overwrote the
+     slider's own scale on the way out, so they could never get back. The ceiling is recomputed where the text now is,
+     the chosen size is kept, and it only shrinks when the new spot genuinely cannot hold it. */
+  function refit(job, place) {
+    const font = fontFor(job.fit.weight), want = job.fit.size;
+    const ceil = G.refitAt(job.lines, font, job.mask, fitOpts(), place);
+    if (!ceil.ok) return false;
+    // If the chosen size still fits where the text now is, keep it EXACTLY. Re-fitting with a ceiling of `want` bisects
+    // to just under it, so twenty nudges used to walk the lettering down by a tenth of its size.
+    let f = null;
+    if (ceil.size >= want - 1e-6) {
+      const L = G.layoutLines(job.lines, font, want, 0.18, place.angle || job.fit.angle, place.centre);
+      const v = G.verifyInk(L.cmds, job.mask);
+      if (v.ok) f = { ok: true, size: want, capMm: want * G.capPerEm(font) * MM, weight: job.fit.weight, angle: place.angle || job.fit.angle, centre: place.centre, layout: L, glyphs: L.glyphs, cmds: L.cmds, metrics: G.strokeMetrics(L.cmds, 24), small: want * G.capPerEm(font) * MM < (+S.settings.engraveMinCapMm || 1.6), thin: job.fit.thin };
+    }
+    if (!f) f = ceil.size <= want + 1e-6 ? ceil : G.refitAt(job.lines, font, job.mask, fitOpts(), Object.assign({}, place, { maxSize: want }));
+    if (!f.ok) return false;
+    f.fittedMax = ceil.size; f.weight = job.fit.weight; f.rect = job.fit.rect;
+    if (f.size < want - 0.01) toast(`Only ${f.size.toFixed(2)} pt fits there — the lettering was brought down`, "", 3500);
+    job.fit = f; job.verify = { geometry: G.verifyInk(f.cmds, job.mask), at: Date.now() }; job.nudged = true; job.claude = null;
+    reRead(job);
+    return true;
+  }
+  function nudge(job, dxMm, dyMm) { if (!job.fit) return; const c = [job.fit.centre[0] + dxMm * PT, job.fit.centre[1] + dyMm * PT]; if (!refit(job, { centre: c, angle: job.fit.angle })) toast("No room there", "bad"); refresh(job); }
   /** The middle of the area the text may use: the centre of gravity of the solid pixels, not of the bounding box, so a
       cat's head with ears puts the name where the metal actually is. */
   function maskCentroid(m) {
@@ -1218,8 +1418,8 @@ const Engrave = window.Engrave = (() => {
     return [m.ox + (sx / n + 0.5) / m.res, m.oy + (sy / n + 0.5) / m.res];
   }
   function centreText(job) { if (!job.fit) return; if (!moveTo(job, maskCentroid(job.mask))) toast("The text does not fit in the middle — left where it was", "bad"); }
-  function moveTo(job, centre) { if (!job.fit) return false; const ok = refit(job, { centre, angle: job.fit.angle }); if (ok) render(); return ok; }
-  function resize(job, size) { if (!job.fit) return; size = Math.min(size, job.fit.fittedMax); const L = G.layoutLines(job.lines, fontFor(job.fit.weight), size, 0.18, job.fit.angle, job.fit.centre); const v = G.verifyInk(L.cmds, job.mask); if (!v.ok) { toast("That size does not verify", "bad"); return; } job.fit = Object.assign({}, job.fit, { size, layout: L, glyphs: L.glyphs, cmds: L.cmds, capMm: size * G.capPerEm(fontFor(job.fit.weight)) * MM, small: size * G.capPerEm(fontFor(job.fit.weight)) * MM < (+S.settings.engraveMinCapMm || 1.6), metrics: G.strokeMetrics(L.cmds, 24) }); job.verify = { geometry: v, at: Date.now() }; job.claude = null; render(); }
+  function moveTo(job, centre) { if (!job.fit) return false; const ok = refit(job, { centre, angle: job.fit.angle }); if (ok) refresh(job); return ok; }
+  function resize(job, size) { if (!job.fit) return; size = Math.min(size, job.fit.fittedMax); const L = G.layoutLines(job.lines, fontFor(job.fit.weight), size, 0.18, job.fit.angle, job.fit.centre); const v = G.verifyInk(L.cmds, job.mask); if (!v.ok) { toast("That size does not verify", "bad"); return; } job.fit = Object.assign({}, job.fit, { size, layout: L, glyphs: L.glyphs, cmds: L.cmds, capMm: size * G.capPerEm(fontFor(job.fit.weight)) * MM, small: size * G.capPerEm(fontFor(job.fit.weight)) * MM < (+S.settings.engraveMinCapMm || 1.6), metrics: G.strokeMetrics(L.cmds, 24) }); job.verify = { geometry: v, at: Date.now() }; job.claude = null; reRead(job); refresh(job); }
   async function resplit(job) { const vars = G.splitVariants(job.lines); const i = (job.splitIndex || 0) + 1; const pick = vars[i % vars.length]; job.splitIndex = i; job.lines = pick; job.text = pick.join("\n"); agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: re-split as "${pick.join(" / ")}"`); await fitJob(job); }
   async function skip(job, by) { by = by || employeeName() || askEmployee(); if (!by) return; job.state = "skipped"; job.approvedBy = null; job.row.engrave = { needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; job.row.flag = `engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`); await Pool.update(job.copies, { engrave: false, engraveSkippedBy: by }); Orders.render(); render(); RunCtl.poke(); }
   function sendBack(job, why) { job.state = "words"; job.reason = why || "sent back from the placement review — a decision on the words is needed"; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); Orders.render(); }
@@ -1344,46 +1544,124 @@ const Engrave = window.Engrave = (() => {
   }
 
   /* ── the Engraving tab ── */
-  const EG = { tab: null, focus: null, chosen: false };                                   // which tab is open and which placement is in front
+  const EG = { tab: null, focus: null, chosen: false, card: null, cardKey: null, reread: 0 };
+  /** Bring the counts and the up-next rail up to date without touching the card a person is working on. */
+  function renderChrome(v, queue) {
+    const jobs = [...items().values()].filter(j => j.row.state !== "gone");
+    const n = { place: queue.length, words: jobs.filter(j => j.state === "words" || j.state === "blocked").length, done: decidedJobs().length };
+    v.querySelectorAll(".egTab[data-tab]").forEach(b => {
+      const k = n[b.dataset.tab]; let t = b.querySelector("b");
+      if (!k) { if (t) t.remove(); return; }
+      if (!t) { t = el("b", b.dataset.tab === "words" ? "warn" : b.dataset.tab === "place" ? "info" : "ok"); b.appendChild(t); }
+      t.textContent = String(k);
+    });
+    const rail = v.querySelector("#egNext"); if (!rail) return;
+    const rest = queue.filter(j2 => j2.key !== EG.cardKey);
+    rail.innerHTML = rest.length ? `<span class="lbl" title="every placement still queued — scroll the rail to reach any of them">up next · ${rest.length}</span>` + rest.map(j2 => `<button class="egChip" data-key="${esc(j2.key)}" title="${esc(j2.row.spec.designSku)} · ${esc(j2.lines.join(" / "))}"><b>${esc(j2.row.order.receiptId)}</b><span>${esc(j2.lines.join(" / ").slice(0, 22))}</span></button>`).join("") : "";
+    rail.querySelectorAll(".egChip").forEach(b => b.onclick = () => { EG.focus = b.dataset.key; render(); });
+    const card = EG.card; if (card) { const kind = card.querySelector(".rh .kind"); if (kind) kind.textContent = `${decidedJobs().length + 1} of ${decidedJobs().length + queue.length}`; }
+  }
+  /** Repaint the card in place: the picture, the numbers, the chips. The pane is only rebuilt when what it holds changes. */
+  function refresh(job) {
+    const c = EG.card;
+    if (!c || !c.isConnected || EG.cardKey !== job.key) { render(); return; }
+    const f = job.fit; if (!f) { render(); return; }
+    const bc = c.querySelector(".backHost canvas"); if (bc && bc._paint) bc._paint();
+    const cap = c.querySelector("[data-cap]"); if (cap) cap.textContent = f.capMm.toFixed(2) + " mm";
+    const sl = c.querySelector('input[data-a="resize"]');
+    if (sl && document.activeElement !== sl) { sl.max = f.fittedMax.toFixed(2); sl.min = (0.5 * f.fittedMax).toFixed(2); sl.value = f.size.toFixed(2); }
+    else if (sl) { sl.max = f.fittedMax.toFixed(2); sl.min = (0.5 * f.fittedMax).toFixed(2); }
+    const nums = c.querySelector(".pvNums dd"); if (nums) nums.textContent = `${f.size.toFixed(2)} pt · cap ${f.capMm.toFixed(2)} mm · ${f.weight}${f.angle ? ` · ${f.angle}°` : ""}`;
+    const rh = c.querySelector(".rh"); if (rh) {
+      rh.querySelectorAll(".small").forEach(n => n.remove());
+      if (f.small) rh.insertAdjacentHTML("beforeend", `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>`);
+      if (f.thin) rh.insertAdjacentHTML("beforeend", `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>`);
+    }
+    const cl = c.querySelector(".claude"); if (cl) cl.outerHTML = claudeBlock(job);
+    LiveStrip.render();
+  }
+  /** What Claude last said about the rendered back — and, once it has been moved, that nothing has looked at it since. */
+  function claudeBlock(job) {
+    if (job.claude) return `<div class="claude">${job.claude.skipped ? `Claude could not look at the render: ${esc(job.claude.skipped)}` : `<b>${job.claude.legible ? "Reads clearly" : "Hard to read"}</b> — ${esc(job.claude.notes)}`}</div>`;
+    if (job.rereading) return `<div class="claude" style="opacity:.6">Claude is looking at the rendered back…</div>`;
+    return `<div class="claude" style="opacity:.75">Nothing has looked at this since you moved it.</div>`;
+  }
+  /** A placement that has been moved is exactly the one worth looking at again, so it is looked at again. */
+  function reRead(job) {
+    clearTimeout(EG.reread);
+    EG.reread = setTimeout(() => {
+      if (!job.fit || job.state !== "review") return;
+      job.rereading = true; refresh(job);
+      claudeRead(job).catch(() => {}).then(() => { job.rereading = false; refresh(job); });
+    }, 700);
+  }                                   // which tab is open and which placement is in front
   function render() {
     LiveStrip.render();
     const v = document.getElementById("engraveView"); if (!v || v.classList.contains("hidden")) return;
+    // a background fit finishing must not tear down the card someone is judging: when nothing about what this pane holds
+    // has changed, only the counts and the rail are brought up to date
+    if (EG.card && EG.card.isConnected && EG.tab === "place") {
+      const q2 = [...items().values()].filter(j => j.state === "review" && j.row.state !== "gone");
+      const f2 = q2.find(j => j.key === EG.focus) || q2[0];
+      if (f2 && f2.key === EG.cardKey) { renderChrome(v, q2); return; }
+    }
     const jobs = [...items().values()].filter(j => j.row.state !== "gone");
     const words = jobs.filter(j => j.state === "words" || j.state === "blocked"), queue = jobs.filter(j => j.state === "review"), done = jobs.filter(j => ["approved", "written", "skipped"].includes(j.state));
     // One screen, three tabs, one thing in front of you at a time: the words a person has to settle, the placements to
     // approve, and what has already been decided. The counts are the tabs, so what is left is never more than a glance.
-    // the screen opens on whatever has work; once a person picks a tab it stays picked, empty or not
-    if (!EG.tab || (!EG.chosen && ((EG.tab === "words" && !words.length && queue.length) || (EG.tab === "place" && !queue.length && words.length)))) EG.tab = queue.length ? "place" : words.length ? "words" : "done";
+    // Until a person picks a tab, the screen follows the work: it used to settle on Decided while the run was still
+    // classifying and then stay there as placements arrived behind it, so someone watching this tab saw an empty pane
+    // and no sign that anything was waiting. Once a tab is picked by hand it stays picked, empty or not.
+    if (!EG.tab || !EG.chosen) EG.tab = queue.length ? "place" : words.length ? "words" : "done";
     const tab = EG.tab;
     const focus = queue.find(j2 => j2.key === EG.focus) || queue[0] || null;
-    const tabBtn = (id, label, n, cls) => `<button class="egTab${tab === id ? " on" : ""}" data-tab="${id}">${label}<b class="${cls}">${n}</b></button>`;
+    const tabBtn = (id, label, n, cls) => `<button class="egTab${tab === id ? " on" : ""}" data-tab="${id}" title="${esc(label)}">${label}${n ? `<b class="${cls}">${n}</b>` : ""}</button>`;
+    const working = jobs.filter(j => ["classify", "fitting", "ready"].includes(j.state)).length;
     v.innerHTML = `<div class="ordBar egBar">
         ${tabBtn("place", "Placements", queue.length, "info")}${tabBtn("words", "Words", words.length, "warn")}${tabBtn("done", "Decided", done.length, "ok")}
-        <span class="spacer"></span><span class="pill ${F_.ok ? "ok" : "bad"}">${F_.ok ? "Source Sans 3" : "Source Sans 3 missing"}</span><span class="mono" style="font-size:11.5px">${esc(employeeName() || "— set your name in the Design Station tab —")}</span></div>
+        ${working ? `<span class="egTab working" title="being read and fitted now — they arrive in Words or Placements on their own"><span class="spin"></span>Working<b>${working}</b></span>` : ""}
+        <span class="spacer"></span><span class="pill ${F_.ok ? "ok" : "bad"}" title="${F_.ok ? "the engraving font is loaded" : esc(F_.error || "the engraving font files are missing")}">${F_.ok ? "Source Sans 3" : "Source Sans 3 missing"}</span><button class="btn ghost xs" id="egWho" title="every approval is recorded under this name — click to change it">${esc(employeeName() || "set your name")}</button></div>
       <div class="egPane grow"${tab === "place" ? "" : " hidden"}><div class="rvList" id="egQueue"></div>
         <div class="egNext" id="egNext"></div></div>
       <div class="egPane grow scroll"${tab === "words" ? "" : " hidden"}><div class="rvList" id="egWords"></div></div>
       <div class="egPane grow scroll"${tab === "done" ? "" : " hidden"}><div id="egBacks"></div></div>`;
-    v.querySelectorAll(".egTab").forEach(b => b.onclick = () => { EG.tab = b.dataset.tab; EG.chosen = true; render(); });
+    v.querySelectorAll(".egTab[data-tab]").forEach(b => b.onclick = () => { EG.tab = b.dataset.tab; EG.chosen = true; render(); });
+    v.querySelector("#egWho").onclick = () => { askEmployee(); render(); };
     if (tab === "words") {
       const w = v.querySelector("#egWords"); for (const j2 of words) w.appendChild(Review.card(Review.items().find(i2 => i2.key === "eng:" + j2.key) || { kind: j2.state === "blocked" ? "flipFailed" : "engraveWords", key: "eng:" + j2.key, row: j2.row, job: j2, why: j2.reason }));
       if (!words.length) w.innerHTML = `<div class="libEmpty">nothing waiting</div>`;
     }
     if (tab === "place") {
       const q = v.querySelector("#egQueue");
-      if (focus) { const c = placementCard(focus, queue.length); c.classList.add("full"); q.appendChild(c); }
-      else q.innerHTML = `<div class="libEmpty">no placement to review</div>`;
+      if (focus) { const c = placementCard(focus, queue.length); c.classList.add("full"); q.appendChild(c); EG.card = c; EG.cardKey = focus.key; }
+      else { EG.card = null; EG.cardKey = null; q.innerHTML = `<div class="libEmpty">no placement to review</div>`; }
       // what is coming: the order and the words, so the list and the picture are the same thing
       const rail = v.querySelector("#egNext");
       const rest = queue.filter(j2 => j2 !== focus);
-      rail.innerHTML = rest.length ? `<span class="lbl">up next</span>` + rest.slice(0, 12).map(j2 => `<button class="egChip" data-key="${esc(j2.key)}" title="${esc(j2.row.spec.designSku)} · ${esc(j2.lines.join(" / "))}"><b>${esc(j2.row.order.receiptId)}</b><span>${esc(j2.lines.join(" / ").slice(0, 22))}</span></button>`).join("") + (rest.length > 12 ? `<span class="lbl">+${rest.length - 12}</span>` : "") : "";
+      rail.innerHTML = rest.length ? `<span class="lbl" title="every placement still queued — scroll the rail to reach any of them">up next · ${rest.length}</span>` + rest.map(j2 => `<button class="egChip" data-key="${esc(j2.key)}" title="${esc(j2.row.spec.designSku)} · ${esc(j2.lines.join(" / "))}"><b>${esc(j2.row.order.receiptId)}</b><span>${esc(j2.lines.join(" / ").slice(0, 22))}</span></button>`).join("") : "";
       rail.querySelectorAll(".egChip").forEach(b => b.onclick = () => { EG.focus = b.dataset.key; render(); });
     }
     if (tab === "done") {
-      const bk = v.querySelector("#egBacks"); const sheets = allSheets().filter(sh => (sh.backPool || []).length);
+      const bk = v.querySelector("#egBacks");
+      const decided = decidedJobs().sort((a, b) => (b.approvedAt || 0) - (a.approvedAt || 0));
+      const sheets = allSheets().filter(sh => (sh.backPool || []).length);
       const lnk = (o, t) => o && o.url ? ` · <a href="${esc(o.url)}" target="_blank" rel="noopener">${t}</a>` : "";
-      bk.innerHTML = sheets.length ? sheets.map(sh => `<div class="section" style="margin-top:6px">${esc(sh.fileBase || labelOf(sh.metal))} · ${sh.backPool.length} back${sh.backPool.length === 1 ? "" : "s"}${sh.backOutputs ? lnk(sh.backOutputs.index, "back-index.pdf") + lnk(sh.backOutputs.report, "back-report.json") : ""}</div>
-        <div class="backPool">${sh.backPool.map(b => `<div class="bp">${b.outputs && b.outputs.png && b.outputs.png.url ? `<img src="${esc(b.outputs.png.url)}" alt="" loading="lazy">` : ""}<span class="t">${esc((b.lines || [b.text || ""]).join(" / "))}</span><span class="m">${esc(b.order || "")}${b.capMm ? ` · cap ${(+b.capMm).toFixed(2)} mm` : ""}${b.approvedBy ? ` · ${esc(b.approvedBy)}` : ""}</span>${b.outputs && b.outputs.ai && b.outputs.ai.url ? `<a class="m" href="${esc(b.outputs.ai.url)}" target="_blank" rel="noopener">${esc(b.name || "back")}.ai</a>` : ""}</div>`).join("")}</div>`).join("") : `<div class="libEmpty">nothing decided yet</div>`;
+      bk.innerHTML = (decided.length
+        ? `<div class="section" style="margin-top:2px">Decided · ${decided.length}</div><div class="rvList" id="egDone">` + decided.map(j2 => {
+            const w = j2.state === "skipped" ? "cut plain" : esc(j2.lines.join(" / "));
+            const who = j2.approvedBy || (j2.decision && j2.decision.by) || "";
+            return `<div class="doneRow" data-key="${esc(j2.key)}"><b class="mono">${esc(j2.row.order.receiptId)}</b><span class="sku mono">${esc(j2.row.spec.designSku || "")}</span><span class="w">${w}</span><span class="ost ${j2.state === "skipped" ? "warn" : "ok"}">${esc(j2.state)}</span><span class="by">${esc(who)}${j2.approvedAt ? " · " + fmtT(j2.approvedAt) : ""}</span><button class="btn ghost xs" data-a="reopen" title="send it back to the words step — the back file already written is superseded">Reopen</button></div>`;
+          }).join("") + `</div>`
+        : `<div class="libEmpty">nothing decided yet</div>`)
+        + (sheets.length ? `<div class="section" style="margin-top:12px">Back files written</div>` + sheets.map(sh => `<div class="section" style="margin-top:6px">${esc(sh.fileBase || labelOf(sh.metal))} · ${sh.backPool.length} back${sh.backPool.length === 1 ? "" : "s"}${sh.backOutputs ? lnk(sh.backOutputs.index, "back-index.pdf") + lnk(sh.backOutputs.report, "back-report.json") : ""}</div>
+        <div class="backPool">${sh.backPool.map(b => `<div class="bp">${b.outputs && b.outputs.png && b.outputs.png.url ? `<img src="${esc(b.outputs.png.url)}" alt="" loading="lazy">` : ""}<span class="t">${esc((b.lines || [b.text || ""]).join(" / "))}</span><span class="m">${esc(b.order || "")}${b.capMm ? ` · cap ${(+b.capMm).toFixed(2)} mm` : ""}${b.approvedBy ? ` · ${esc(b.approvedBy)}` : ""}</span>${b.outputs && b.outputs.ai && b.outputs.ai.url ? `<a class="m" href="${esc(b.outputs.ai.url)}" target="_blank" rel="noopener">${esc(b.name || "back")}.ai</a>` : ""}</div>`).join("")}</div>`).join("") : "");
+      bk.querySelectorAll("[data-a=reopen]").forEach(b => b.onclick = () => {
+        const j2 = items().get(b.closest(".doneRow").dataset.key); if (!j2) return;
+        const who = employeeName() || askEmployee(); if (!who) return;
+        if (!confirm(`Reopen ${j2.row.order.receiptId}? It goes back to the words step, and any back file already written for it is superseded.`)) return;
+        sendBack(j2, `reopened by ${who}`);
+        EG.tab = "words"; EG.chosen = true; render();
+      });
     }
   }
   /** The placement review card: front and back side by side, the mask hatch, the text as it will be cut, the controls. */
@@ -1391,16 +1669,16 @@ const Engrave = window.Engrave = (() => {
     const it = Review.items().find(i => i.key === "eng:" + job.key) || { kind: "placement", key: "eng:" + job.key, row: job.row, job };
     const card = el("div", "rvItem"); card.dataset.kind = "placement"; card.tabIndex = 0;
     const r = job.row, sp = r.spec, f = job.fit;
-    const done = (Engrave.reviewedCount ? Engrave.reviewedCount() : 0) + 1;
+    const decided = decidedJobs().length;
     // One card, one order, one screen: the back is the work and the right column is everything you need to judge it.
     const pct = Math.round((job.confidence != null ? job.confidence : 0) * 100);
     const conf = job.source ? `<span class="conf ${pct >= 80 ? "" : pct >= 60 ? "mid" : "low"}" title="how sure Claude is that these are the words to cut, read from ${esc(SOURCE_LABEL[job.source] || job.source)}${job.quote ? ` — “${esc(job.quote)}”` : ""}">${pct}% sure</span>` : "";
     const row2 = (t, v) => v && v !== "—" ? `<dt>${t}</dt><dd>${esc(v)}</dd>` : "";
-    card.innerHTML = `<div class="rh"><span class="kind">${done} of ${done + Math.max(0, remaining - 1)}</span><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div>
+    card.innerHTML = `<div class="rh"><span class="kind" title="where you are in the placements still to decide">${decided + 1} of ${decided + remaining}</span><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div>
       <div class="placeView">
         <div class="pvMain"><div class="backHost"></div>
           <div class="ctl">${f ? `<button class="btn sage sm" data-a="approve">Approve <b class="k">A</b></button>
-            <span class="grp" title="nudge the text by 0.25 mm — the arrow keys do the same"><button class="btn ghost sm" data-a="left" title="nudge left 0.25 mm" aria-label="nudge left">◀</button><button class="btn ghost sm" data-a="down" title="nudge down 0.25 mm" aria-label="nudge down">▼</button><button class="btn ghost sm" data-a="up" title="nudge up 0.25 mm" aria-label="nudge up">▲</button><button class="btn ghost sm" data-a="right" title="nudge right 0.25 mm" aria-label="nudge right">▶</button><button class="btn ghost sm" data-a="centre" title="put the text in the middle of the area it may use">Centre</button></span>
+            <span class="grp" title="nudge the text by 0.25 mm — the arrow keys do the same"><button class="btn ghost sm" data-a="left" title="nudge left 0.25 mm" aria-label="nudge left">◀</button><button class="btn ghost sm" data-a="up" title="nudge up 0.25 mm" aria-label="nudge up">▲</button><button class="btn ghost sm" data-a="down" title="nudge down 0.25 mm" aria-label="nudge down">▼</button><button class="btn ghost sm" data-a="right" title="nudge right 0.25 mm" aria-label="nudge right">▶</button><button class="btn ghost sm" data-a="centre" title="put the text in the middle of the area it may use">Centre</button></span>
             <span class="sizer"><input type="range" min="${(0.5 * f.fittedMax).toFixed(2)}" max="${f.fittedMax.toFixed(2)}" step="0.05" value="${f.size.toFixed(2)}" data-a="resize" title="text size" aria-label="text size"><b class="mono" data-cap>${f.capMm.toFixed(2)} mm</b></span>` : ""}
             <span class="rest">${f ? `<button class="btn ghost sm" data-a="resplit" title="try a different split of the words across lines">Re-split</button>` : ""}<button class="btn ghost sm" data-a="skip" title="cut this charm with no engraving">Skip <b class="k">S</b></button><button class="btn ghost sm" data-a="back" title="send this back to the words step">Send back</button></span></div>
           <div class="help">drag the text to move it · shift-drag to resize from the centre · arrows nudge 0.25 mm</div></div>
@@ -1408,7 +1686,7 @@ const Engrave = window.Engrave = (() => {
           <div class="pvWords"><span class="lbl">Words on the back</span>${esc(job.lines.join(" / ")) || "—"}</div>
           <div class="frontHost"></div>
           <dl class="meta">${row2("Customer", (sp.personalization || []).join(" / "))}${row2("Buyer msg", sp.buyerMessage)}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}</dl>
-          ${job.claude ? `<div class="claude">${job.claude.skipped ? `Claude could not look at the render: ${esc(job.claude.skipped)}` : `<b>${job.claude.legible ? "Reads clearly" : "Hard to read"}</b> — ${esc(job.claude.notes)}`}</div>` : `<div class="claude" style="opacity:.6">Claude is looking at the rendered back…</div>`}
+          ${claudeBlock(job)}
           ${f ? `<details class="pvNums"><summary>the numbers</summary><dl class="meta"><dt>Size</dt><dd>${f.size.toFixed(2)} pt · cap ${f.capMm.toFixed(2)} mm · ${esc(f.weight)}${f.angle ? ` · ${f.angle}°` : ""}</dd><dt>Strokes</dt><dd>min stem ${f.metrics ? f.metrics.strokeMm.toFixed(2) : "?"} mm · min gap ${f.metrics && f.metrics.gapMm ? f.metrics.gapMm.toFixed(2) : "—"} mm</dd><dt>Flip</dt><dd>${Object.entries(job.view.checks).map(([k, ok]) => `${esc(k)} ${ok ? "✓" : "✗"}`).join(" · ")}</dd><dt>Geometry</dt><dd>${job.verify && job.verify.geometry.ok ? `no ink outside the allowed area (${job.verify.geometry.total} px checked)` : "NOT verified"}</dd></dl></details>` : `<div class="why">${esc(job.reason || "no fit")}</div>`}
         </div></div>`;
     const charm = Pool.charmOf(job.copies[0]);
@@ -1468,8 +1746,10 @@ const Engrave = window.Engrave = (() => {
     const capOut = card.querySelector("[data-cap]");
     card.querySelectorAll("[data-a]").forEach(b => { const a = b.dataset.a; if (a === "resize") { b.oninput = () => { if (capOut && f && f.capMm && f.size) capOut.textContent = (f.capMm * (+b.value) / f.size).toFixed(2) + " mm"; resize(job, +b.value); }; return; } b.onclick = () => { if (a === "approve") approve(job); else if (a === "left") nudge(job, -0.25, 0); else if (a === "right") nudge(job, 0.25, 0); else if (a === "up") nudge(job, 0, 0.25); else if (a === "down") nudge(job, 0, -0.25); else if (a === "centre") centreText(job);
       else if (a === "resplit") resplit(job); else if (a === "skip") skip(job); else if (a === "back") sendBack(job); }; });
-    card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT") return; const k = e.key.toLowerCase(); if (k === "a") { e.preventDefault(); approve(job); } else if (k === "s") { e.preventDefault(); skip(job); } else if (e.key === "ArrowLeft") { e.preventDefault(); nudge(job, -0.25, 0); } else if (e.key === "ArrowRight") { e.preventDefault(); nudge(job, 0.25, 0); } else if (e.key === "ArrowUp") { e.preventDefault(); nudge(job, 0, 0.25); } else if (e.key === "ArrowDown") { e.preventDefault(); nudge(job, 0, -0.25); } });
-    setTimeout(() => card.focus(), 30);
+    card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.repeat) return; const k = e.key.toLowerCase(); if (k === "a") { e.preventDefault(); approve(job); } else if (k === "s") { e.preventDefault(); skip(job); } else if (e.key === "ArrowLeft") { e.preventDefault(); nudge(job, -0.25, 0); } else if (e.key === "ArrowRight") { e.preventDefault(); nudge(job, 0.25, 0); } else if (e.key === "ArrowUp") { e.preventDefault(); nudge(job, 0, 0.25); } else if (e.key === "ArrowDown") { e.preventDefault(); nudge(job, 0, -0.25); } });
+    // the next card takes focus only when the person was already working in this pane, so a held key cannot run the queue
+    const wasHere = document.activeElement && document.activeElement.closest && document.activeElement.closest("#egQueue");
+    if (wasHere || !document.activeElement || document.activeElement === document.body) setTimeout(() => { if (card.isConnected) card.focus(); }, 30);
     void it;
     return card;
   }
@@ -1737,6 +2017,11 @@ const RunCtl = window.RunCtl = (() => {
     });
   }
   function poke() { if (reviewWaiter) setTimeout(reviewWaiter, 50); renderBanner(); LiveStrip.render(); }
+  /* Auto used to finish a set, blank the screen and refill it minutes later with no countdown anywhere — a person came
+     back from the bench to an empty app and could not tell whether the shift was done or something had crashed. */
+  const NEXT = { at: 0, t: 0 };
+  function armNext(ms) { NEXT.at = Date.now() + ms; clearInterval(NEXT.t); NEXT.t = setInterval(() => { if (!NEXT.at) { clearInterval(NEXT.t); return; } renderBanner(); }, 1000); }
+  function cancelNext() { NEXT.at = 0; clearInterval(NEXT.t); clearTimeout(autoTimer); renderBanner(); }
   function stop(why, fix) { const r = B.run; if (!r) return; r.status = "stopped"; r.stoppedBy = why; r.fix = fix || null; r.errors.push({ t: Date.now(), why }); if (waiter && waiter.r === r) { const w = waiter; waiter = null; w.resolve(); } reviewWaiter = null; agent({ run: r.runId }, "warn", `Run stopped: ${why}${fix ? " — " + fix : ""}`); toast(`Run stopped: ${why}`, "bad", 8000); notifyPerson("Charm Sorter run stopped", why); save(r).catch(() => {}); renderBanner(); }
   function stopIfRunning(why, fix) { if (B.run && B.run.status === "running") stop(why, fix); }
   async function resume() {
@@ -1805,34 +2090,62 @@ const RunCtl = window.RunCtl = (() => {
   function onComplete(r) {
     agent({ run: r.runId }, "ok", `Run ${r.runId} complete: ${(r.committed || []).length} order(s) committed · ${Object.keys(r.holds || {}).length} held · ${(r.refused || []).length} refused`);
     toast(`Set complete — ${(r.committed || []).length} order(s) marked design-complete`, "ok", 7000); ding && ding();
-    if (S.settings.runMode === "auto" && +S.settings.autoEvery > 0) { const every = Math.max(5, +S.settings.autoEvery); clearTimeout(autoTimer); autoTimer = setTimeout(() => { if (S.settings.runMode === "auto") { clearRunState(); start({ mode: "auto" }); } }, every * 60000); agent({ bridge: true }, "DS", `Auto: the next run starts in ${every} min (never under 5, to spare the Etsy API)`); }
+    if (S.settings.runMode === "auto" && +S.settings.autoEvery > 0) { const every = Math.max(5, +S.settings.autoEvery); clearTimeout(autoTimer); autoTimer = setTimeout(() => { NEXT.at = 0; clearInterval(NEXT.t); if (S.settings.runMode === "auto") { clearRunState(); start({ mode: "auto" }); } }, every * 60000); armNext(every * 60000); agent({ bridge: true }, "DS", `Auto: the next run starts in ${every} min (never under 5, to spare the Etsy API)`); }
   }
   /** After a set is done: clear the cards and pooled lines so the next run starts clean (files and records are kept). */
   function clearRunState() { for (const m of METALS) { const prim = S.sheets[m.key]; if (prim.pages.some(p => p.charms.some(c => c.poolId))) { for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms = pg.charms.filter(c => !c.poolId); pg.sheetId = null; pg.fileBase = null; pg.setId = null; pg.runId = null; } prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim); } } B.orders.rows = []; B.orders.byKey = new Map(); B.engrave.items = new Map(); B.review.items = []; B.pool.rows = new Map(); B.run = null; Orders.render(); Engrave.render(); Review.render(); renderBanner(); renderRail(); updateTopSub(); }
-  function setMode(mode) {
+  function setRunMode(mode) {
     S.settings.runMode = mode === "auto" ? "auto" : "manual"; saveSettings(); renderModeBtn();
     if (mode === "auto") { agent({ bridge: true }, "DS", "Auto mode on: the sorter pulls the latest orders by the date rule and runs the whole process, stopping only for a person"); if (!B.run || ["complete", "stopped"].includes(B.run.status)) { if (B.run && B.run.status === "complete") clearRunState(); start({ mode: "auto" }).catch(e => toast(e.message, "bad")); } else if (B.run.status === "paused") { B.run.mode = "auto"; next(); } else B.run.mode = "auto"; }
     else { clearTimeout(autoTimer); if (B.run) B.run.mode = "manual"; agent({ bridge: true }, "DS", "Manual mode: every step waits for a click"); }
     renderBanner();
   }
   function renderModeBtn() { const b = document.getElementById("btnRunMode"); if (!b) return; const auto = S.settings.runMode === "auto"; b.classList.toggle("auto", auto); document.getElementById("runModeText").textContent = auto ? "Auto" : "Manual"; }
+  const STEP_WORDS = { pull: "Pulling orders", claim: "Claiming", pool: "Pooling", plan: "Planning", nest: "Nesting", checkpoint: "Checking the sheets", engrave: "Engraving", revalidate: "Re-checking the orders", labels: "Writing labels", commit: "Committing", complete: "Complete" };
+  /** The one detail that makes the step concrete, in the shop's own words. */
+  function stepDetail(r) {
+    const sh = allSheets().filter(p => p.runId === r.runId);
+    if (r.step === "nest" && sh.length) return ` · sheet ${Math.min(sh.filter(p => ["complete", "partial"].includes(p.status)).length + 1, sh.length)} of ${sh.length}`;
+    if (r.step === "pool") return ` · ${Orders.rows().filter(x => x.poolIds && x.poolIds.length).length} of ${Orders.rows().filter(x => x.state !== "gone").length} lines`;
+    if (r.step === "pull" || r.step === "claim") return ` · ${Orders.rows().filter(x => x.state !== "gone").length} lines`;
+    return "";
+  }
   function renderBanner() {
+    if (window.guardBench) guardBench();
     const h = document.getElementById("runBanner"); if (!h) return; const r = B.run;
-    if (!r) { h.classList.add("hidden"); Dock.schedule(); return; }
+    if (!r) {
+      // a set has finished and Auto will start another: the banner stays, so nobody comes back to a blank app
+      if (NEXT.at > Date.now()) {
+        const left = Math.max(0, NEXT.at - Date.now()), mm = Math.floor(left / 60000), ss = Math.floor(left % 60000 / 1000);
+        h.classList.remove("hidden"); h.className = "runBanner done";
+        h.innerHTML = `<span class="why"><b>Set finished</b> · the next run starts in ${mm}:${String(ss).padStart(2, "0")}</span><span class="spacer"></span><span class="acts"><button class="btn gold sm" id="rbNow" title="start the next run now instead of waiting">Run now</button><button class="btn ghost sm" id="rbCancelNext" title="do not start another run on its own">Cancel</button></span>`;
+        h.querySelector("#rbNow").onclick = () => { cancelNext(); clearRunState(); start({ mode: "auto" }).catch(e => toast(e.message, "bad")); };
+        h.querySelector("#rbCancelNext").onclick = () => cancelNext();
+        Dock.schedule(); return;
+      }
+      h.classList.add("hidden"); Dock.schedule(); return;
+    }
     h.classList.remove("hidden"); h.className = "runBanner" + (r.status === "stopped" ? " stopped" : r.status === "complete" ? " done" : r.status === "review" ? " review" : "");
     const idx = O.stepIndex(r.step);
-    const steps = O.RUN_STEPS.map((s, i) => `<i class="${i < idx || r.status === "complete" ? "done" : i === idx ? (r.status === "stopped" ? "stop" : "now") : ""}" title="${s}"></i>`).join("");
-    const reviewN = Review.count();
-    const why = r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${r.fix ? ` — <span>${esc(r.fix)}</span>` : ""}` : r.status === "review" ? `<b>Waiting for a person:</b> ${reviewN} item(s) in Review` : r.status === "paused" ? (r.awaitCommit ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : `<b>Paused</b> after ${esc(O.RUN_STEPS[idx - 1] || r.step)} — next: ${esc(r.step)} · <span style="opacity:.75">this run is set to Manual, so it waits at every step</span>`) : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(r.step)}</b> · half ${O.HALF[r.step]} · ${r.mode}`;
+    const reviewN = Review.count(), engN = Engrave.pendingCount();
+    const waitingFor = [reviewN ? `${reviewN} in Review` : "", engN ? `${engN} in Engraving` : ""].filter(Boolean).join(" · ") || "nothing";
+    const why = r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${r.fix ? ` — <span>${esc(r.fix)}</span>` : ""}` : r.status === "review" ? `<b>Waiting for a person:</b> ${waitingFor}` : r.status === "paused" ? (r.awaitCommit ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : `<b>Paused</b> after ${esc(O.RUN_STEPS[idx - 1] || r.step)} — next: ${esc(r.step)} · <span style="opacity:.75">this run is set to Manual, so it waits at every step</span>`) : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(STEP_WORDS[r.step] || r.step)}</b>${esc(stepDetail(r))}`;
     Dock.schedule();
-    h.innerHTML = `<span class="step">run ${esc(r.runId.slice(-8))}</span><span class="steps">${steps}</span><span class="why">${why}${r.setId ? ` · <span class="mono">${esc(r.setId)}</span>` : ""}</span>
-      ${r.status === "paused" && !r.awaitCommit ? `<button class="btn gold sm" id="rbNext" title="do the next step of the run and wait again">Next step ▶</button><button class="btn ghost sm" id="rbAuto" title="Stop waiting at every step: the run carries on by itself and only stops when it needs a person">Run the rest by itself</button>` : ""}${r.status === "paused" && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${r.status === "stopped" && /sign/i.test(r.stoppedBy || "") ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${r.status === "stopped" ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at">Resume</button>` : ""}${reviewN ? `<button class="btn ghost sm" id="rbReview" title="the decisions a person still has to make">Review (${reviewN})</button>` : ""}${["running", "review", "paused"].includes(r.status) ? `<button class="btn ghost sm" id="rbStop" title="stop after the step in progress — the run can be resumed from where it stopped">Stop</button>` : ""}${["complete", "stopped"].includes(r.status) ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}`;
+    h.title = `run ${r.runId}`;
+    h.innerHTML = `<span class="why">${why}</span><span class="spacer"></span><span class="acts">
+      ${r.status === "paused" && !r.awaitCommit ? `<button class="btn gold sm" id="rbNext" title="do the next step of the run and wait again">Next step ▶</button><button class="btn ghost sm" id="rbAuto" title="Stop waiting at every step: the run carries on by itself and only stops when it needs a person">Run the rest by itself</button>` : ""}${r.status === "paused" && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${r.status === "stopped" && /sign/i.test(r.stoppedBy || "") ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${r.status === "stopped" ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at">Resume</button>` : ""}${reviewN ? `<button class="btn ghost sm" id="rbReview" title="the decisions a person still has to make">Review (${reviewN})</button>` : ""}${engN ? `<button class="btn ghost sm" id="rbEngrave" title="the engraving still to be settled">Engraving (${engN})</button>` : ""}${["running", "review", "paused"].includes(r.status) ? `<button class="btn ghost sm" id="rbStop" title="stop after the step in progress — the run can be resumed from where it stopped">Stop</button>` : ""}${r.status === "complete" ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}${r.status === "stopped" ? `<button class="btn ghost sm" id="rbAbandon" title="give this run up — anything decided but not yet written is lost">Abandon run</button>` : ""}</span>`;
     const q = id => h.querySelector("#" + id);
     if (q("rbConnect")) q("rbConnect").onclick = () => DesignLink.connectEtsy().catch(e => toast(e.message, "bad", 6000)); if (q("rbNext")) q("rbNext").onclick = () => next();
-    if (q("rbAuto")) q("rbAuto").onclick = async () => { const r2 = B.run; if (!r2) return; r2.mode = "auto"; await save(r2); agent({ run: r2.runId }, "DS", "This run carries on by itself from here — it stops only when it needs a person"); next(); }; if (q("rbCommit")) q("rbCommit").onclick = () => commitNow(); if (q("rbResume")) q("rbResume").onclick = () => resume(); if (q("rbReview")) q("rbReview").onclick = () => setMode("review"); if (q("rbStop")) q("rbStop").onclick = () => stop("stopped by the operator", "Press Resume to carry on from the recorded step."); if (q("rbClear")) q("rbClear").onclick = () => { if (confirm("Clear the finished run from the cards? Files and records are kept.")) clearRunState(); };
+    if (q("rbAuto")) q("rbAuto").onclick = async () => { const r2 = B.run; if (!r2) return; r2.mode = "auto"; await save(r2); agent({ run: r2.runId }, "DS", "This run carries on by itself from here — it stops only when it needs a person"); next(); }; if (q("rbCommit")) q("rbCommit").onclick = () => commitNow(); if (q("rbResume")) q("rbResume").onclick = () => resume(); if (q("rbReview")) q("rbReview").onclick = () => CN.setMode("review"); if (q("rbEngrave")) q("rbEngrave").onclick = () => { CN.setMode("engrave"); Engrave.render(); }; if (q("rbStop")) q("rbStop").onclick = () => stop("stopped by the operator", "Press Resume to carry on from the recorded step."); if (q("rbClear")) q("rbClear").onclick = () => { if (confirm("Clear the finished run from the cards? Files and records are kept.")) clearRunState(); };
+    if (q("rbAbandon")) q("rbAbandon").onclick = () => {
+      const eng = [...Engrave.items().values()].filter(j => ["approved", "words", "review"].includes(j.state) && !j.backs).length;
+      const rev = Review.count();
+      const lost = [eng ? `${eng} engraving decision${eng === 1 ? "" : "s"}` : "", rev ? `${rev} review decision${rev === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
+      if (confirm(`Give up run ${r.runId.slice(-8)}?${lost ? `\n\n${lost} made in this run are not yet written and will be lost.` : ""}\n\nThe sheets and files already saved are kept.`)) clearRunState();
+    };
     Orders.render();
   }
-  return { start, next, resume, stop, stopIfRunning, poke, save, onSheetDone, pickResume, resumeRun, commitNow, setMode, renderBanner, renderModeBtn, clearRunState, run };
+  return { start, next, resume, stop, stopIfRunning, poke, save, onSheetDone, pickResume, resumeRun, commitNow, setMode: setRunMode, setRunMode, renderBanner, renderModeBtn, clearRunState, run };
 })();
 
 /* ═══ 24 · Review — every decision a person must make ═════════════════════ */
@@ -1885,6 +2198,13 @@ const Review = window.Review = (() => {
     if (!text) return `<b>nothing to engrave</b> — what the customer wrote reads as a note to the shop, not words for the charm <i style="color:var(--ink45)">· ${pct}% sure it is not engraving${j.quote ? ` · "${esc(j.quote)}"` : ""}</i>`;
     return `<b>engrave this</b>${from ? ` — read from ${from}` : ""} <i style="color:var(--ink45)">· ${pct}% sure${j.quote ? ` · "${esc(j.quote)}"` : ""}</i>`;
   }
+  /** A primary action whose field is empty cannot be pressed, and says so, instead of returning in silence. */
+  function bindNeeds(c, action, field) {
+    const b = c.querySelector(`[data-a=${action}]`), f = c.querySelector(`[data-f=${field}]`);
+    if (!b || !f) return;
+    const sync = () => { const empty = !String(f.value || "").trim(); b.disabled = empty; b.title = empty ? "fill the field beside it first" : ""; };
+    f.addEventListener("input", sync); f.addEventListener("change", sync); sync();
+  }
   function card(it) {
     const c = el("div", "rvItem"); c.dataset.kind = it.kind; if (it.row) c.dataset.row = it.row.key;
     const r = it.row, sp = r && r.spec, p = it.problem || {};
@@ -1898,16 +2218,19 @@ const Review = window.Review = (() => {
     if (it.kind === "needsMaterial") {
       c.innerHTML = head("Needs material", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Station read", esc(p.metalLabel || "nothing"))}${evRow("Options", (r.line.variations || []).map(v => `<q>${esc(v.name)}: ${esc(v.value)}</q>`).join(" "))}${evRow("Title", esc(r.line.title))}</div><div class="why">${esc(it.why)}</div>
         <div class="fixes"><select data-f="mat"><option value="">pick a material…</option>${METALS.map(m => `<option value="${m.key}">${esc(m.label)}</option>`).join("")}</select><button class="btn gold sm" data-a="mat">Use it (writes a staff note)</button><button class="btn ghost sm" data-a="skip">Skip line</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
+      bindNeeds(c, "mat", "mat");
       c.querySelector("[data-a=mat]").onclick = async () => { const m = c.querySelector("[data-f=mat]").value; if (!m) return; const who = by(); if (!who) return; row_material(it, m, who); };
     } else if (it.kind === "needsMapping") {
       c.innerHTML = head("Needs mapping", `${p.optionName}: ${p.optionValue}`, orderSub) + `<div class="ev">${evRow("Listing", esc(p.listingId))}${evRow("Title", esc(p.title))}${evRow("All options", (r.line.variations || []).map(v => `<q>${esc(v.name)}: ${esc(v.value)}</q>`).join(" "))}</div>
         <div class="fixes"><select data-f="field"><option value="form">form</option><option value="size">size</option><option value="chain">chain</option></select><input data-f="val" placeholder="value (necklace · earrings · charm · S · 18 inch)"><select data-f="scope">${[...new Set(group.map(x => String(x.line.listingId)))].length > 1 ? `<option value="*">every listing (${[...new Set(group.map(x => String(x.line.listingId)))].length})</option><option value="listing">this listing only</option>` : `<option value="listing">this listing only</option><option value="*">every listing</option>`}</select><button class="btn gold sm" data-a="map">Map it (remembered)</button><button class="btn ghost sm" data-a="ignore">Not relevant for this listing</button></div>`;
+      bindNeeds(c, "map", "val");
       c.querySelector("[data-a=map]").onclick = async () => { const field = c.querySelector("[data-f=field]").value, val = c.querySelector("[data-f=val]").value.trim(), scope = c.querySelector("[data-f=scope]").value; if (!val) return; const who = by(); if (!who) return; await api("charmNestLibrary", { op: "optionMapPut", listingId: scope === "*" ? "*" : p.listingId, optionName: p.optionName, optionValue: p.optionValue, map: { field, value: field === "size" ? val.toUpperCase() : val.toLowerCase() }, by: who }); await Orders.loadMaps(true); toast("Mapped and remembered", "ok"); for (const rr of Orders.rows()) if (rr.problems.some(x => x.kind === "needsMapping")) await repool(rr); };
       c.querySelector("[data-a=ignore]").onclick = async () => { const who = by(); if (!who) return; for (const lid of [...new Set(group.map(x => String(x.line.listingId)))]) await api("charmNestLibrary", { op: "optionMapPut", listingId: lid, optionName: p.optionName, optionValue: p.optionValue, map: { field: "ignore" }, by: who }); await Orders.loadMaps(true); await repoolAll(it); };
     } else if (it.kind === "unmatchedSku" || it.kind === "blockedSku") {
       const skus = [...B.master.entries.keys()].sort();
       c.innerHTML = head(it.kind === "blockedSku" ? "SKU blocked" : "Unmatched SKU", p.sku || "no SKU", orderSub) + `<div class="ev">${evRow("Why", esc(p.reason || it.why))}${evRow("Listing", esc(String(r.line.listingId || "")))}${evRow("Title", esc(r.line.title))}</div>
         <div class="fixes"><input list="rvSkus" data-f="sku" placeholder="pick the charm from the master index…"><datalist id="rvSkus">${skus.map(s => `<option value="${esc(s)}">`).join("")}</datalist><button class="btn gold sm" data-a="alias">Use this SKU (alias remembered for the listing)</button><button class="btn ghost sm" data-a="nodesign">No design (remembered)</button><button class="btn ghost sm" data-a="hold">Hold order</button>${it.kind === "blockedSku" ? `<button class="btn ghost sm" data-a="master">Open Master</button>` : ""}</div>`;
+      bindNeeds(c, "alias", "sku");
       c.querySelector("[data-a=alias]").onclick = async () => { const sku = c.querySelector("[data-f=sku]").value.trim().toUpperCase(); if (!sku) return; const who = by(); if (!who) return; if (!B.master.entries.has(sku)) { toast(`${sku} is not in the master index`, "bad"); return; } const lids = [...new Set(group.map(x => String(x.line.listingId)))]; for (const lid of lids) await api("charmNestLibrary", { op: "aliasPut", listingId: lid, sku, by: who, title: r.line.title }); await Orders.loadMaps(true); toast(`${lids.length} listing${lids.length === 1 ? "" : "s"} → ${sku} remembered`, "ok"); for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId))) await repool(rr); };
       c.querySelector("[data-a=nodesign]").onclick = async () => { const who = by(); if (!who) return; const sku = p.sku || (sp && sp.designSku); if (sku) await api("charmNestLibrary", { op: "noDesignPut", sku, by: who, note: r.line.title }); else await api("charmNestLibrary", { op: "noDesignPut", pattern: "^" + String(r.line.title).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").slice(0, 40), by: who, note: "by title" }); await Orders.loadMaps(true); await repoolAll(it); };
       const mb = c.querySelector("[data-a=master]"); if (mb) mb.onclick = () => setMode("master");
@@ -2030,12 +2353,13 @@ const Sandbox = window.Sandbox = (() => {
   }
   function mountPanel(v) {
     let bar = v.querySelector("#sandboxBar"); if (!bar) { bar = document.createElement("div"); bar.id = "sandboxBar"; bar.className = "sandboxBar"; const ob = v.querySelector(".ordBar"); if (ob) ob.insertAdjacentElement("afterend", bar); else v.prepend(bar); }
-    bar.classList.toggle("quiet", !on());
+    bar.classList.toggle("hidden", !on());
     bar.innerHTML = on()
       ? `<b>SANDBOX ON</b><span id="sbStatus" title="nothing here touches the real Etsy or the real records">${status ? statusText() : "…"}</span><span class="spacer"></span><button class="btn ghost xs" id="sbReset" type="button" title="empty the sandbox pool, sets, runs and sheets — the real records are untouched">Reset records</button><button class="btn ghost xs" id="sbToggle" type="button" title="go back to the real Etsy and the real records">Switch OFF</button>`
-      : `<span id="sbStatus" class="off" title="${esc(status ? statusText() : "")}">Working on the real Etsy orders</span><span class="spacer"></span><button class="btn ghost xs" id="sbSnap" type="button" title="copy today's open orders into the sandbox so a run can be rehearsed against them">Take a sandbox snapshot</button><button class="btn ghost xs" id="sbToggle" type="button" title="rehearse a whole run against a copy of the orders — nothing reaches Etsy or the real records">Rehearse in the sandbox</button>`;
+      : "";                                            // off is the normal state and says nothing: Settings holds the way in
     const sn = bar.querySelector("#sbSnap"); if (sn) sn.onclick = () => snapshot().catch(e => toast(e.message, "bad", 8000));
     const rs2 = bar.querySelector("#sbReset"); if (rs2) rs2.onclick = () => reset().catch(e => toast(e.message, "bad", 8000));
+    if (!bar.querySelector("#sbToggle")) { if (!status) refresh(); return; }
     bar.querySelector("#sbToggle").onclick = () => { if (on()) { S.settings.sandbox = "off"; saveSettings(); toast("Sandbox off — reloading", "ok", 3000); setTimeout(() => location.reload(), 600); return; } const b = bar.querySelector("#sbToggle"); b.disabled = true; b.textContent = "Switching on…"; enable().catch(e => { toast(`Sandbox: ${e.message}`, "bad", 9000); agent({ bridge: true }, "warn", `Sandbox switch-on stopped: ${e.message}`); b.disabled = false; b.textContent = "Rehearse in the sandbox"; }); };
     if (!status) refresh();
   }
@@ -2051,7 +2375,7 @@ const Sandbox = window.Sandbox = (() => {
    line is waiting on, answered without leaving the order. Messages go over the bridge, so the station keeps the one Etsy
    session and the one Firestore listener and this page never grows a second of either. */
 const OrderWin = window.OrderWin = (() => {
-  const W = { key: null, rid: null, dlg: null, thread: [], tray: [], poll: 0, noteTimer: 0, wired: false };
+  const W = { key: null, rid: null, at: 0, dlg: null, thread: [], tray: [], poll: 0, noteTimer: 0, wired: false };
   const byId = id => document.getElementById(id);
   const rowOf = key => Orders.rows().find(r => r.key === key) || null;
   const me = () => employeeName() || "";
@@ -2092,10 +2416,26 @@ const OrderWin = window.OrderWin = (() => {
   const siblings = () => Orders.visibleRows();
   function step(d) {
     const list = siblings(); const i = list.findIndex(r => r.key === W.key);
-    const next = list[(i < 0 ? 0 : i + d + list.length) % list.length];
+    // a line that has just left the list (skipped, or filtered out by the fix that was applied) resumes from where it was
+    const from = i < 0 ? Math.min(W.at || 0, list.length - 1) : i;
+    const at = from + d;
+    if (at < 0 || at >= list.length) return;
+    const next = list[at];
     if (next && next.key !== W.key) open(next.key);
   }
-  function paintWho() { const w = byId("owWho"); if (w) w.textContent = me() || "— no name set —"; }
+  function paintWho() {
+    const w = byId("owWho"); if (w) w.textContent = me() || "— no name set —";
+    // the thread and the staff note both travel through the Design Station: when that link is down, say so here rather
+    // than letting a person type a message and meet an error
+    const st = byId("owLink"); if (!st) return;
+    const up = DesignLink.inControl() && DesignLink.up();
+    const etsy = DesignLink.state() && DesignLink.state().etsy;
+    const bad = !up ? "the Design Station link is down — messages and notes cannot be saved"
+      : etsy && etsy.signedIn === false ? "the Design Station is not signed in to Etsy" : "";
+    st.textContent = bad ? "● offline" : "● live";
+    st.className = "owLink " + (bad ? "bad" : "ok");
+    st.title = bad || "messages and notes are saving through the Design Station";
+  }
 
   async function saveNote() {
     const r = rowOf(W.key); if (!r) return;
@@ -2168,7 +2508,14 @@ const OrderWin = window.OrderWin = (() => {
   function paint() {
     const r = rowOf(W.key); if (!r) { if (W.dlg && W.dlg.open) W.dlg.close(); return; }
     const sp = r.spec || {};
-    byId("owTitle").textContent = "Order " + r.order.receiptId;
+    const sibs = (Orders.rows() || []).filter(x => x.order.receiptId === r.order.receiptId && x.state !== "gone");
+    const li = sibs.findIndex(x => x.key === r.key);
+    const list = siblings(); W.at = Math.max(0, list.findIndex(x => x.key === r.key));
+    byId("owTitle").textContent = "Order " + r.order.receiptId + (sibs.length > 1 ? "  \u00b7  line " + (li + 1) + " of " + sibs.length : "");
+    const pos = byId("owPos"); if (pos) pos.textContent = list.length ? (W.at + 1) + " of " + list.length : "";
+    const pv = byId("owPrev"), nx = byId("owNext");
+    if (pv) pv.disabled = W.at <= 0;
+    if (nx) nx.disabled = W.at >= list.length - 1;
     const mp = byId("owMetal"); mp.textContent = r.material ? labelOf(r.material) : (sp.materialLabel || "no material");
     mp.className = "pill " + (r.material ? "neutral" : "bad");
     const ph = byId("owPhoto"); const url = Orders.imageFor(r);
@@ -2176,10 +2523,14 @@ const OrderWin = window.OrderWin = (() => {
     ph.innerHTML = url ? '<img alt="" src="' + esc(url) + '">' : '<span class="ph">no image</span>';
     ph.dataset.lid = String(r.line.listingId || ""); if (url) ph.dataset.painted = "1"; else { delete ph.dataset.painted; Orders.wantImage(r.line.listingId); }
     byId("owSku").textContent = "SKU: " + (sp.designSku || r.line.sku || "—");
-    const notes = [];
-    if ((sp.personalization || []).length) notes.push("Personalisation:\n" + sp.personalization.join("\n"));
-    if (sp.buyerMessage) notes.push("Buyer message:\n" + sp.buyerMessage);
-    byId("owNotes").value = notes.length ? notes.join("\n\n") : "— No notes —";
+    // the one field that must be read exactly: labelled, whole, and never boxed into a scroller under the staff note
+    const said = [];
+    if ((sp.personalization || []).length) said.push(["Personalisation", sp.personalization.join("\n")]);
+    if (sp.buyerMessage) said.push(["Buyer message", sp.buyerMessage]);
+    if (sp.messages && sp.messages.length) said.push(["Staff messages", sp.messages.map(m => `${m.senderName}: ${m.text}`).join("\n")]);
+    const notes = byId("owNotes");
+    notes.className = said.length ? "owSaid" : "owSaid none";
+    notes.innerHTML = said.length ? said.map(([k, v2]) => `<span class="lbl">${esc(k)}</span>${esc(v2)}`).join("") : "— the customer wrote nothing —";
     const note = byId("owNote"); if (document.activeElement !== note) note.value = sp.staffNote || "";
     const st = Orders.statePill(r);
     const mcell = (lbl, val) => '<div class="m"><i>' + esc(lbl) + '</i><span>' + esc(val) + '</span></div>';
@@ -2225,6 +2576,12 @@ const OrderWin = window.OrderWin = (() => {
 
 /* ═══ 25 · boot ═══════════════════════════════════════════════════════════ */
 function bootBridge() {
+  // The Design Station guards unload in three places; the sorter guarded it nowhere. A reload mid-run loses every
+  // engraving approval not yet written to a back file and every review decision made that shift.
+  window.addEventListener("beforeunload", e => {
+    if (!B.run || !["running", "review", "paused"].includes(B.run.status)) return;
+    e.preventDefault(); e.returnValue = "";
+  });
   RunCtl.renderModeBtn(); RunCtl.renderBanner(); LiveStrip.render(); Sandbox.render(); Sandbox.afterReload(); if (Sandbox.on()) agent({ bridge: true }, "warn", "SANDBOX mode: emulated Etsy from the stored snapshot, every record and file goes to sandbox copies");
   document.getElementById("btnRunMode").onclick = () => { const auto = S.settings.runMode !== "auto"; if (auto && !confirm("Auto mode: the sorter connects to the Design Station, pulls the latest orders by the date rule, nests, fits engraving, saves labels and marks the orders complete — stopping only when a person must decide. Turn Auto on?")) return; RunCtl.setMode(auto ? "auto" : "manual"); };
   Orders.loadMaps().catch(() => {}); Master.load().catch(() => {});

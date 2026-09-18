@@ -205,12 +205,20 @@ const receipts = [
   await page.evaluate(() => CN.setMode('orders'));
   await page.evaluate(() => RunCtl.setMode('auto'));
   await page.waitForFunction(() => B.run && B.run.status !== undefined, null, { timeout: 10000 });
-  // §5.7 · the live view: on any other tab the station frame is a picture-in-picture panel, never re-parented (one hello so far)
+  // §5.7 · the live view: a status pill while the run works, the panel when a person asks for it, never re-parented
   await page.waitForFunction(() => Dock.mode() === 'pip', null, { timeout: 5000 });
   const hellosAtStart = await page.evaluate(() => DesignLink.log.filter(r => r.dir === 'cmd' && r.type === 'hello').length);
-  const dock = await page.evaluate(() => ({ mode: Dock.mode(), visible: !document.getElementById('dsDock').classList.contains('hidden'), scaled: /matrix\(0\./.test(getComputedStyle(document.getElementById('dsFrame')).transform), hellos: DesignLink.log.filter(r => r.dir === 'cmd' && r.type === 'hello').length }));
-  assert(dock.mode === 'pip' && dock.visible && dock.scaled && dock.hellos === hellosAtStart, 'live panel shown while running on another tab: ' + JSON.stringify(dock));
+  const dock = await page.evaluate(() => ({ mode: Dock.mode(), visible: !document.getElementById('dsDock').classList.contains('hidden'), tucked: document.getElementById('dsDock').classList.contains('tucked'), scaled: /matrix\(0\./.test(getComputedStyle(document.getElementById('dsFrame')).transform), hellos: DesignLink.log.filter(r => r.dir === 'cmd' && r.type === 'hello').length }));
+  assert(dock.mode === 'pip' && dock.visible && dock.tucked && dock.scaled && dock.hellos === hellosAtStart, 'live panel shown small while running on another tab: ' + JSON.stringify(dock));
+  // and the screen keeps room for it, so it never sits on top of the work
+  const clear = await page.evaluate(() => {
+    const d = document.getElementById('dsDock').getBoundingClientRect();
+    const st = document.querySelector('.stage');
+    return { pad: Math.round(parseFloat(getComputedStyle(st).paddingBottom)), dockH: Math.round(d.height) };
+  });
+  assert(clear.pad >= clear.dockH, 'the stage reserves the live view\'s height: ' + JSON.stringify(clear));
   const approvals = [];
+  let engChecked = false;                      // the placement-card checks below must actually have run
   let t0 = Date.now(), lastStep = '', lastJobs = '', lastDone = '';
   while (Date.now() - t0 < 600000) {
     const r = await page.evaluate(() => B.run && { status: B.run.status, step: B.run.step, stoppedBy: B.run.stoppedBy, fix: B.run.fix, setId: B.run.setId });
@@ -228,19 +236,21 @@ const receipts = [
         CN.setMode('engrave'); Engrave.render();
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));   // the preview is drawn to the box it was given
         const v = document.getElementById('engraveView');
-        const tabs = [...v.querySelectorAll('.egTab')].map(b => ({ id: b.dataset.tab, on: b.classList.contains('on'), n: +b.querySelector('b').textContent }));
+        const tabs = [...v.querySelectorAll('.egTab[data-tab]')].map(b => ({ id: b.dataset.tab, on: b.classList.contains('on'), n: +((b.querySelector('b') || {}).textContent || 0) }));
         const panes = [...v.querySelectorAll('.egPane')].map(p2 => !p2.hasAttribute('hidden'));
         const card = v.querySelector('.rvItem[data-kind=placement]');
         const head = card ? { kind: card.querySelector('.rh .kind').textContent, ttl: card.querySelector('.rh .ttl').textContent, words: (card.querySelector('.pvWords') || {}).textContent || '', confs: card.querySelectorAll('.rh .conf').length } : null;
         const canvas = card ? card.querySelector('.backHost canvas') : null;
         const box = canvas ? canvas.getBoundingClientRect() : null;
         const stage = document.querySelector('.stage');
-        return { tabs, openPanes: panes.filter(Boolean).length, head, canvasW: box && Math.round(box.width), canvasH: box && Math.round(box.height),
+        const zeroBadges = [...v.querySelectorAll('.egTab[data-tab] b')].filter(x => +x.textContent === 0).length;
+        return { tabs, zeroBadges, openPanes: panes.filter(Boolean).length, head, canvasW: box && Math.round(box.width), canvasH: box && Math.round(box.height),
           overflow: stage ? stage.scrollHeight - stage.clientHeight : 0, cardBottom: card ? Math.round(card.getBoundingClientRect().bottom) : null,
           inner: { w: window.innerWidth, h: window.innerHeight } };
       });
       console.log('engraving screen', JSON.stringify(eg));
       assert.strictEqual(eg.tabs.length, 3, 'three tabs');
+      assert(eg.zeroBadges === 0, 'an empty queue is not dressed as work: ' + eg.zeroBadges + ' zero badge(s)');
       assert.strictEqual(eg.tabs.filter(t => t.on).length, 1, 'exactly one tab is open');
       assert.strictEqual(eg.openPanes, 1, 'and exactly one pane is shown');
       if (eg.head) {
@@ -285,6 +295,81 @@ const receipts = [
           chips: [...v.querySelectorAll('.egTab')].map(b2 => b2.textContent.trim()) };
       });
       console.log('review screen', JSON.stringify(rv));
+      // ── the ladder: where the work is, on every screen, with the evidence for each step (§10) ──
+      const lad = await page.evaluate(() => {
+        const out = {};
+        for (const m of ['orders', 'engrave', 'review', 'master', 'nest', 'library', 'charms', 'design']) {
+          CN.setMode(m);
+          const h = document.getElementById('ladder');
+          out[m] = { rows: h.querySelectorAll('.ldRow').length, band: (h.querySelector('.ldBand b') || {}).textContent || '' };
+        }
+        CN.setMode('orders');
+        const h = document.getElementById('ladder');
+        return { perTab: out,
+          steps: [...h.querySelectorAll('.ldRow')].map(r2 => ({ name: r2.querySelector('.n').textContent, count: r2.querySelector('.c').textContent, glyph: r2.querySelector('.g').className.replace('g ', ''), wait: r2.classList.contains('wait'), tab: r2.dataset.tab })),
+          band: (h.querySelector('.ldBand b') || {}).textContent || '',
+          chips: [...h.querySelectorAll('.ldChip')].map(c2 => c2.textContent.trim()),
+          strip: !!document.getElementById('liveStrip'),
+          recent: !!document.getElementById('railRecent'),
+        };
+      });
+      console.log('ladder', JSON.stringify(lad));
+      assert(Object.values(lad.perTab).every(t => t.rows >= 7), 'the ladder is on every tab: ' + JSON.stringify(lad.perTab));
+      assert(Object.values(lad.perTab).every(t => t.band === lad.band), 'and says the same thing on all of them');
+      assert.deepStrictEqual(lad.steps.map(s2 => s2.name), ['Pull', 'Pool', 'Nest', 'Check', 'Engrave', 'Labels', 'Commit'], 'seven steps a person would name: ' + lad.steps.map(s2 => s2.name));
+      assert(lad.steps.some(s2 => s2.count), 'with the evidence for them: ' + JSON.stringify(lad.steps.map(s2 => s2.count)));
+      assert(lad.steps.filter(s2 => s2.glyph === 'now' || s2.wait).length >= 1, 'and the step the run is standing on is marked: ' + JSON.stringify(lad.steps));
+      assert(lad.steps.every(s2 => s2.tab), 'every step goes to the screen that settles it');
+      assert(!lad.strip, 'the scrolling ticker is gone');
+      assert(lad.recent, 'and what happened lately is one click away in the rail');
+      assert(lad.band && !/^run [0-9a-z]+$/i.test(lad.band), 'the band says a state word, not a run id: ' + lad.band);
+      // ── the run banner's buttons go where they say, and the bench cannot be pulled out from under a run (§10) ──
+      const flow = await page.evaluate(() => {
+        CN.setMode('orders'); RunCtl.renderBanner();
+        const before = { mode: CN.S.settings.runMode, tab: CN.S.mode };
+        const rb = document.getElementById('rbReview'); if (rb) rb.click();
+        const afterReview = { mode: CN.S.settings.runMode, tab: CN.S.mode };
+        CN.setMode('orders');
+        const eb = document.getElementById('rbEngrave'); if (eb) eb.click();
+        const afterEngrave = { mode: CN.S.settings.runMode, tab: CN.S.mode };
+        CN.setMode('orders');
+        const bench = ['btnNestAll', 'btnClearAll', 'btnPick'].map(id => { const b = document.getElementById(id); return { id, off: !!(b && b.disabled) }; });
+        return { before, afterReview, afterEngrave, bench, hadReview: !!rb, hadEngrave: !!eb };
+      });
+      console.log('run banner buttons', JSON.stringify(flow));
+      if (flow.hadReview) {
+        assert.strictEqual(flow.afterReview.tab, 'review', 'Review (N) opens the Review tab');
+        assert.strictEqual(flow.afterReview.mode, flow.before.mode, 'and does not change Auto/Manual: ' + flow.afterReview.mode);
+      }
+      if (flow.hadEngrave) {
+        assert.strictEqual(flow.afterEngrave.tab, 'engrave', 'Engraving (N) opens the Engraving tab');
+        assert.strictEqual(flow.afterEngrave.mode, flow.before.mode, 'and does not change Auto/Manual either');
+      }
+      assert(flow.bench.every(b => b.off), 'the bench buttons cannot take the cards out from under a run: ' + JSON.stringify(flow.bench));
+      await page.evaluate(() => CN.setMode('engrave'));
+      // the step that needs a person is a button that goes there
+      const jumped = await page.evaluate(() => {
+        const w = document.querySelector('#ladder .ldRow.wait') || document.querySelector('#ladder .ldRow[data-tab=engrave]');
+        if (!w) return null;
+        const want = w.dataset.tab; w.click();
+        return { want, got: CN.S.mode };
+      });
+      if (jumped) { console.log('ladder jump', JSON.stringify(jumped)); assert.strictEqual(jumped.got, jumped.want, 'the ladder row goes to its own screen'); }
+      await page.evaluate(() => CN.setMode('engrave'));
+      // the Master tab says, once, what the orders want that the library has never heard of (§6)
+      const miss = await page.evaluate(() => {
+        CN.setMode('master'); Master.render();
+        const b = document.getElementById('mMissing');
+        if (!b || b.classList.contains('hidden')) return { shown: false };
+        return { shown: true, head: b.querySelector('.t b').textContent, skus: [...b.querySelectorAll('.s')].map(x => x.textContent),
+          acts: [...b.querySelectorAll('[data-a]')].map(x => x.dataset.a) };
+      });
+      console.log('missing skus', JSON.stringify(miss));
+      assert(miss.shown, 'an unmatched SKU is named on the Master tab, not only in Review');
+      assert(miss.skus.some(x => /BR-NOPE-99/.test(x)), 'by name: ' + miss.skus.join(','));
+      assert(/1 SKU the orders want/.test(miss.head), 'counted once per SKU: ' + miss.head);
+      assert.deepStrictEqual(miss.acts, ['copy', 'save', 'add'], 'with a way to take the list to the master files');
+      await page.evaluate(() => { CN.setMode('review'); Review.render(); });
       // CN_SHOTS=<dir> captures every screen at two widths and the order window — the evidence a design review runs on
       if (process.env.CN_SHOTS) {
         const SH = process.env.CN_SHOTS;
@@ -344,18 +429,49 @@ const receipts = [
         document.querySelector('[data-pile=""]').click();
         document.querySelector('[data-view=list]').click();
         const v = document.getElementById('ordersView');
-        const rows = [...v.querySelectorAll('.olist')].map(r2 => ({
+        const hdr = [...v.querySelectorAll('.olist.hdr span, .olist.hdr button')].map(x => x.textContent.replace(/[\u25b4\u25be]/g, '').trim()).filter(Boolean);
+        const rows = [...v.querySelectorAll('.olist:not(.hdr)')].map(r2 => ({
           num: r2.querySelector('.onum').textContent, sku: r2.querySelector('.osku b').textContent,
           state: r2.querySelector('.ost').textContent, qty: r2.querySelector('.qtyc').textContent, thumb: !!r2.querySelector('img.th'),
         }));
         const stage = document.querySelector('.stage');
-        return { rows, cards: v.querySelectorAll('.ocard').length, sideScroll: stage.scrollWidth - stage.clientWidth };
+        return { rows, hdr, cards: v.querySelectorAll('.ocard').length, sideScroll: stage.scrollWidth - stage.clientWidth };
       });
       console.log('orders list', JSON.stringify({ n: asList.rows.length, first: asList.rows[0], sideScroll: asList.sideScroll }));
+      // 411 lines is a real pull: the tab must draw them quickly and must not ask Etsy for 411 photographs (§5)
+      const scale = await page.evaluate(async () => {
+        const seed = Orders.rows().slice();
+        const many = [];
+        for (let i = 0; i < 120; i++) for (const r of seed) {
+          many.push(Object.assign(Object.create(Object.getPrototypeOf(r)), r, {
+            key: r.key + '_x' + i,
+            order: Object.assign({}, r.order, { receiptId: String(+r.order.receiptId + i * 10) }),
+            line: Object.assign({}, r.line, { listingId: String(1000000 + i * 7) }),
+          }));
+        }
+        const real = B.orders.rows;
+        B.orders.rows = many;
+        const cb = document.querySelector('[data-view=cards]'); if (cb) cb.click();
+        const t0 = performance.now();
+        Orders.render();
+        const drawn = performance.now() - t0;
+        await new Promise(r => setTimeout(r, 350));
+        const cards = document.querySelectorAll('#ordBody .ocard').length;
+        const asked = window.__imgAsked ? window.__imgAsked() : null;
+        const stage = document.querySelector('.stage');
+        const out = { cards, drawn: Math.round(drawn), sideScroll: stage.scrollWidth - stage.clientWidth, listings: new Set(many.map(r => r.line.listingId)).size };
+        B.orders.rows = real; Orders.render();
+        return out;
+      });
+      console.log('orders at scale', JSON.stringify(scale));
+      assert.strictEqual(scale.cards, 480, 'every line of a big pull is drawn: ' + scale.cards);
+      assert(scale.drawn < 2500, 'and drawn without a stall: ' + scale.drawn + ' ms');
+      assert(scale.sideScroll <= 2, 'with nothing running off the side at scale: ' + scale.sideScroll);
       assert.strictEqual(asList.cards, 0, 'the list view replaces the cards');
       assert.strictEqual(asList.rows.length, ord.cards.length, 'and holds exactly the same lines');
       assert(asList.rows.every(r2 => r2.num && r2.sku && r2.state && r2.qty && r2.thumb), 'each row carries the same fields and a thumbnail: ' + JSON.stringify(asList.rows[0]));
       assert(asList.sideScroll <= 2, 'and does not run off the side: ' + asList.sideScroll);
+      assert.deepStrictEqual(asList.hdr, ['Order', 'SKU', 'Item', 'Qty', 'Metal', 'Ship by', 'State'], 'the columns say what they are: ' + asList.hdr.join(','));
       // the order window: everything about one line, and the way to settle it
       const win = await page.evaluate(async () => {
         document.querySelector('[data-view=cards]').click();
@@ -413,6 +529,76 @@ const receipts = [
       assert.strictEqual(switched.panes, 1, 'and still one pane at a time');
       await page.evaluate(() => { const v = document.getElementById('engraveView'); const b = v.querySelector('.egTab[data-tab=place]'); if (b) b.click(); });
 
+      // ── moving the lettering must not resize it, and the slider must survive being dragged (§7.4) ──
+      const hasCard = !engChecked && await page.evaluate(async () => {
+        const j = [...Engrave.items().values()].find(x => x.state === 'review'); if (!j) return false;
+        EG_FORCE: { CN.setMode('engrave'); const v = document.getElementById('engraveView'); Engrave.render();
+          const b = v.querySelector('.egTab[data-tab=place]'); if (b) b.click(); }
+        await new Promise(r => setTimeout(r, 250));
+        return !!document.querySelector('#egQueue .rvItem[data-kind=placement]');
+      });
+      if (hasCard) {
+        engChecked = true;
+        const moved = await page.evaluate(async () => {
+          const j = [...Engrave.items().values()].find(x => x.state === 'review'); if (!j) return null;
+          const before = { size: j.fit.size, max: j.fit.fittedMax, centre: j.fit.centre.slice() };
+          // set a size well under the ceiling, the way a person would with the slider
+          Engrave.resize(j, before.max * 0.62);
+          const chosen = j.fit.size;
+          Engrave.nudge(j, -0.25, 0);
+          const afterNudge = { size: j.fit.size, max: j.fit.fittedMax, centre: j.fit.centre.slice() };
+          Engrave.nudge(j, 0, 0.25);
+          const afterTwo = { size: j.fit.size, max: j.fit.fittedMax };
+          return { before, chosen, afterNudge, afterTwo };
+        });
+        if (moved) {
+          console.log('nudge keeps the size', JSON.stringify(moved));
+          assert(moved.chosen < moved.before.max * 0.7, 'the size was brought down first: ' + moved.chosen);
+          assert(Math.abs(moved.afterNudge.size - moved.chosen) < 0.06, `a nudge keeps the size a person chose: ${moved.chosen} → ${moved.afterNudge.size}`);
+          assert(Math.abs(moved.afterTwo.size - moved.chosen) < 0.06, `and so does the next one: ${moved.afterTwo.size}`);
+          assert(moved.afterNudge.max > moved.chosen + 0.1, 'the slider keeps room to grow back: max ' + moved.afterNudge.max);
+          assert(moved.afterNudge.centre[0] !== moved.before.centre[0], 'and the text actually moved');
+        }
+        // the slider is still in the DOM after an input, so one grab is not one step
+        const slider = await page.evaluate(async () => {
+          const v = document.getElementById('engraveView');
+          const s2 = v.querySelector('input[data-a=resize]'); if (!s2) return null;
+          s2.focus();
+          const started = s2.value, alive = [];
+          for (let i = 0; i < 4; i++) {
+            s2.value = String(+s2.value - 0.1);
+            s2.dispatchEvent(new Event('input', { bubbles: true }));
+            await new Promise(r => setTimeout(r, 30));
+            alive.push(document.contains(s2) && document.activeElement === s2);
+          }
+          return { started, ended: s2.value, alive };
+        });
+        if (slider) {
+          console.log('slider survives', JSON.stringify(slider));
+          assert(slider.alive.every(Boolean), 'the slider is not destroyed under the pointer: ' + JSON.stringify(slider.alive));
+          assert(+slider.ended < +slider.started, 'and every step of the drag lands');
+        }
+        // a held key does not run the queue
+        const held = await page.evaluate(() => {
+          const card = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (!card) return null;
+          const n0 = [...Engrave.items().values()].filter(x => x.state === 'review').length;
+          card.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', repeat: true, bubbles: true }));
+          return { n0, n1: [...Engrave.items().values()].filter(x => x.state === 'review').length };
+        });
+        if (held) { console.log('key repeat', JSON.stringify(held)); assert.strictEqual(held.n1, held.n0, 'a repeated key press is ignored'); }
+      }
+      // the run banner names engraving as well as review when it is waiting on a person
+      const banner = await page.evaluate(() => {
+        RunCtl.renderBanner();
+        const h = document.getElementById('runBanner');
+        return { text: h.textContent.replace(/\s+/g, ' ').trim(), btns: [...h.querySelectorAll('button')].map(b => b.id) };
+      });
+      console.log('banner', JSON.stringify(banner));
+      if (/Waiting for a person/.test(banner.text)) {
+        assert(!/\b0 item/.test(banner.text), 'the banner never says it is waiting for nothing: ' + banner.text);
+        assert(/in Review|in Engraving/.test(banner.text), 'it says what it is waiting for: ' + banner.text);
+        assert(banner.btns.some(b => b === 'rbReview' || b === 'rbEngrave'), 'and offers the way there: ' + banner.btns.join(','));
+      }
       const done = await page.evaluate(async () => {
         const out = [];
         for (const j of Engrave.items().values()) {
@@ -459,6 +645,7 @@ const receipts = [
   const stationState = await frame.evaluate(() => Object.assign(DesignStation.bridge.snapshot(), { rows: document.querySelectorAll('.orderRow, [data-rid]').length }));
   assert.strictEqual(stationState.counts.open, 2, 'the two uncommitted orders stay open at the station: ' + JSON.stringify(stationState.counts));
   // §5.7 · the remote cursor: the station's own record of every motion the sorter made, and the sorter's feed on its banner
+  assert(engChecked, 'the placement card was on screen and its checks ran');
   const motions = await frame.evaluate(() => DesignStation.bridge.cursor.log.map(l => ({ role: l.role, caption: l.caption, click: l.click, fallback: l.fallback })));
   const clicked = roles => roles.every(r => motions.some(m => m.role === r && m.click));
   assert(clicked(['row', 'complete', 'print']), 'the cursor pressed the rows, Generate QR and the print/complete button: ' + JSON.stringify(motions.slice(-12)));
