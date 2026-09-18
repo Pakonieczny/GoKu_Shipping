@@ -649,7 +649,13 @@ const Orders = window.Orders = (() => {
     const at = host.scrollTop;                                             // a run writing to the list must not scroll it away
     const rows = visibleRows();
     const restore = () => { if (at) host.scrollTop = at; };
-    if (!rowsOf().length) { host.innerHTML = '<div class="libEmpty">No orders pulled. Press <b>Pull orders</b> — the Design Station reads Etsy and hands every open order over the bridge.</div>'; return; }
+    if (!rowsOf().length) {
+      host.innerHTML = B.viewing
+        ? '<div class="libEmpty"><b>An earlier run is on the cards.</b> Its sheets are on the Nest tab; the orders it carried are in its history.<button class="btn ghost sm" data-e="hist">Its orders\u2026</button></div>'
+        : '<div class="libEmpty"><b>No orders pulled yet.</b> Pull brings every open order over the bridge from the Design Station.<span style="display:flex;gap:7px"><button class="btn gold sm" data-e="pull">Pull orders</button><button class="btn ghost sm" data-e="hist">Earlier runs\u2026</button></span></div>';
+      host.querySelectorAll("[data-e]").forEach(b => b.onclick = () => { const k = b.dataset.e; if (k === "hist") RunHistory.show(); else pull(null).catch(e => toast(e.message, "bad", 7000)); });
+      return;
+    }
     if (!rows.length) {
       host.innerHTML = '<div class="libEmpty">Nothing matches these filters.<br><button class="btn ghost sm" id="ordClear" style="margin-top:10px">Show everything</button></div>';
       host.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.q = ""; render(); };
@@ -2209,7 +2215,7 @@ const RunCtl = window.RunCtl = (() => {
     if (S.settings.runMode === "auto" && +S.settings.autoEvery > 0) { const every = Math.max(5, +S.settings.autoEvery); clearTimeout(autoTimer); autoTimer = setTimeout(() => { NEXT.at = 0; clearInterval(NEXT.t); if (S.settings.runMode === "auto") { clearRunState(); start({ mode: "auto" }); } }, every * 60000); armNext(every * 60000); agent({ bridge: true }, "DS", `Auto: the next run starts in ${every} min (never under 5, to spare the Etsy API)`); }
   }
   /** After a set is done: clear the cards and pooled lines so the next run starts clean (files and records are kept). */
-  function clearRunState() { for (const m of METALS) { const prim = S.sheets[m.key]; if (prim.pages.some(p => p.charms.some(c => c.poolId))) { for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms = pg.charms.filter(c => !c.poolId); pg.sheetId = null; pg.fileBase = null; pg.setId = null; pg.runId = null; } prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim); } } B.orders.rows = []; B.orders.byKey = new Map(); B.engrave.items = new Map(); B.review.items = []; B.pool.rows = new Map(); B.run = null; Orders.render(); Engrave.render(); Review.render(); renderBanner(); renderRail(); updateTopSub(); }
+  function clearRunState() { for (const m of METALS) { const prim = S.sheets[m.key]; if (prim.pages.some(p => p.charms.some(c => c.poolId))) { for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms = pg.charms.filter(c => !c.poolId); pg.sheetId = null; pg.fileBase = null; pg.setId = null; pg.runId = null; } prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim); } } B.orders.rows = []; B.orders.byKey = new Map(); B.engrave.items = new Map(); B.review.items = []; B.pool.rows = new Map(); B.run = null; B.viewing = null; Orders.render(); Engrave.render(); Review.render(); renderBanner(); renderRail(); updateTopSub(); }
   function setRunMode(mode) {
     S.settings.runMode = mode === "auto" ? "auto" : "manual"; saveSettings(); renderModeBtn();
     if (mode === "auto") { agent({ bridge: true }, "DS", "Auto mode on: the sorter pulls the latest orders by the date rule and runs the whole process, stopping only for a person"); if (!B.run || ["complete", "stopped"].includes(B.run.status)) { if (B.run && B.run.status === "complete") clearRunState(); start({ mode: "auto" }).catch(e => toast(e.message, "bad")); } else if (B.run.status === "paused") { B.run.mode = "auto"; next(); } else B.run.mode = "auto"; }
@@ -2913,7 +2919,7 @@ const RunHistory = window.RunHistory = (() => {
     try {
       const r = await api("charmNestLibrary", { op: "runGet", runId }, { label: "Reading the run" });
       const rec = r.run; if (!rec) throw new Error("that run is no longer on record");
-      RunCtl.clearRunState();
+      B.viewing = null; RunCtl.clearRunState();
       const set = rec.setId ? await RunCtl.restoreRunSheets(rec) : null;
       if (set) Sets.byRun().set(runId, set);
       B.viewing = { runId, seq: rec.seq || (set && set.seq) || null, day: rec.day || (set && set.day) || null, status: rec.status, lines: Object.keys(rec.lines || {}).length, sheets: Object.keys(rec.sheets || {}).length };
