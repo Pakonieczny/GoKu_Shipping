@@ -18,7 +18,7 @@
 (function () {
 const O = CharmNestOrders, G = CharmNestGeom, P = CharmNestPDF;
 const MM = 25.4 / 72, PT = 72 / 25.4;
-const B = window.B = { link: null, orders: { rows: [], byKey: new Map(), pulledAt: 0, stale: false, snapshot: null, filtered: 0 }, master: { entries: new Map(), files: [], loadedAt: 0, loading: null, jobs: new Map() }, maps: { optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [], rows: [] }, loadedAt: 0 }, pool: { rows: new Map(), sources: new Map() }, engrave: { items: new Map(), fonts: { ok: false, Regular: null, Semibold: null, error: null, loading: null } }, review: { items: [] }, openRuns: null, run: null, sets: new Map(), employee: (localStorage.getItem("cn.employee") || "").trim() };
+const B = window.B = { link: null, orders: { rows: [], byKey: new Map(), pulledAt: 0, stale: false, snapshot: null, filtered: 0 }, master: { entries: new Map(), files: [], loadedAt: 0, loading: null, error: null, jobs: new Map() }, maps: { optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [], rows: [] }, loadedAt: 0 }, pool: { rows: new Map(), sources: new Map() }, engrave: { items: new Map(), fonts: { ok: false, Regular: null, Semibold: null, error: null, loading: null } }, review: { items: [] }, openRuns: null, run: null, sets: new Map(), employee: (localStorage.getItem("cn.employee") || "").trim() };
 const SOURCE_LABEL = { personalization: "the personalisation box", personalisation: "the personalisation box", buyerMessage: "the buyer's message", staffNote: "the staff note", messages: "the staff messages", none: "", "": "" };
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const fmtT = t => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -802,8 +802,11 @@ const Master = window.Master = (() => {
     if (B.master.loading) return B.master.loading;
     B.master.loading = (async () => {
       render();
-      const [ix, fl] = await Promise.all([api("charmNestLibrary", { op: "masterList", limit: 3000 }, { label: "Loading the charm library" }), api("charmNestLibrary", { op: "masterListFiles" })]);
-      B.master.entries = new Map((ix.entries || []).map(e => [e.sku, e])); B.master.files = fl.files || []; B.master.loadedAt = Date.now();
+      try {
+        const [ix, fl] = await Promise.all([api("charmNestLibrary", { op: "masterList", limit: 3000 }, { label: "Loading the charm library" }), api("charmNestLibrary", { op: "masterListFiles" })]);
+        B.master.entries = new Map((ix.entries || []).map(e => [e.sku, e])); B.master.files = fl.files || []; B.master.loadedAt = Date.now();
+        B.master.error = null;
+      } catch (e) { B.master.error = e.message; throw e; }   // a failed load must not look like an empty library
     })().finally(() => { B.master.loading = null; render(); });
     return B.master.loading;
   }
@@ -1151,6 +1154,28 @@ const Master = window.Master = (() => {
     const all = v.querySelector("#mAll"); if (all) all.onclick = () => { showAll = true; render(); };
     const grid = v.querySelector("#mGrid");
     if (B.master.loading && !B.master.entries.size) { grid.innerHTML = `<div class="libEmpty">Loading the charm library…</div>`; return; }
+    if (!shown.length) {
+      // Four answers, not one: an empty library, a search that found nothing, a cloud that is down and a load that
+      // failed used to be pixel-identical, because load() returns early when the cloud is off and a failed masterList
+      // is swallowed. The stronger claim — "the master file has not been indexed" — is only made when the orders on the
+      // cards are actually waiting on that exact SKU.
+      const raw = (v.querySelector("#mSearch").value || "").trim();
+      const wanted = q ? missingSkus().find(m => m.sku.toUpperCase() === q) : null;
+      grid.innerHTML = !S.cloud.ok
+        ? `<div class="libEmpty">Cloud offline — the charm library lives in the cloud. Nothing can be looked up until it is back.</div>`
+        : B.master.error
+          ? `<div class="libEmpty">Could not load the charm library: ${esc(B.master.error)}<br><button class="btn ghost sm" id="mRetry" style="margin-top:10px">Try again</button></div>`
+          : q
+            ? `<div class="libEmpty">No indexed SKU contains &ldquo;${esc(raw)}&rdquo;.` +
+              (wanted ? ` ${wanted.lines} order line(s) are waiting on it — the master file that carries it has not been indexed yet.` : ` Check the spelling, or index the master file that carries it.`) +
+              `<br><button class="btn ghost sm" id="mClear" style="margin-top:10px">Show all ${designs.length} charm(s)</button>` +
+              `<button class="btn gold sm" id="mEmptyAdd" style="margin:10px 0 0 6px">＋ Add a master file</button></div>`
+            : `<div class="libEmpty">No charms indexed yet — drop a master file here, or press Add.<br><button class="btn gold sm" id="mEmptyAdd" style="margin-top:10px">＋ Add a master file</button></div>`;
+      const c2 = grid.querySelector("#mClear"); if (c2) c2.onclick = () => { const f = v.querySelector("#mSearch"); f.value = ""; f.focus(); render(); };
+      const a2 = grid.querySelector("#mEmptyAdd"); if (a2) a2.onclick = () => v.querySelector("#mFile").click();
+      const r2 = grid.querySelector("#mRetry"); if (r2) r2.onclick = () => { B.master.error = null; load(true).then(render).catch(() => render()); };
+      return;
+    }
     grid.innerHTML = shown.map(d => {
       const e = d.head, keys = esc(d.skus.join("|"));
       const blocked = [...new Set(d.list.map(x => x.blocked).filter(Boolean))].join("; ");
@@ -1934,16 +1959,28 @@ const Sets = window.Sets = (() => {
     Orders.render();
   }
   /** The Library's Sets view: one card per set, its sheets side by side, held orders, engraving count, label thumbnails. */
-  async function renderLibrary(body) {
-    body.innerHTML = `<div class="libEmpty">Loading sets…</div>`;
+  let _cache = null;
+  async function renderLibrary(body, opts) {
+    const reuse = !!(opts && opts.reuse && _cache);
+    if (!reuse) body.innerHTML = `<div class="libEmpty">Loading sets…</div>`;
     try {
-      const [ss, sh] = await Promise.all([api("charmNestLibrary", { op: "setList", from: document.getElementById("libFrom").value || null, to: document.getElementById("libTo").value || null, limit: 200 }), api("charmNestLibrary", { op: "listSheets", from: document.getElementById("libFrom").value || null, to: document.getElementById("libTo").value || null, limit: 500 })]);
-      const sheets = sh.sheets || []; const sets = ss.sets || [];
+      if (!reuse) {
+        const [ss, sh] = await Promise.all([api("charmNestLibrary", { op: "setList", from: document.getElementById("libFrom").value || null, to: document.getElementById("libTo").value || null, limit: 200 }), api("charmNestLibrary", { op: "listSheets", from: document.getElementById("libFrom").value || null, to: document.getElementById("libTo").value || null, limit: 500 })]);
+        _cache = { sets: ss.sets || [], sheets: sh.sheets || [] };
+      }
+      const sheets = _cache.sheets;
+      // the metal chips and the search used to light up and change nothing here: this view read neither
+      const metal = S.library.metal && S.library.metal !== "all" ? S.library.metal : null;
+      const q = (document.getElementById("libSearch").value || "").trim().toLowerCase();
+      let sets = _cache.sets;
+      if (metal) sets = sets.filter(st => (st.materials || []).includes(metal));
+      if (q) sets = sets.filter(st => `${st.name || ""} ${st.setId || ""} ${st.day || ""} ${st.runId || ""} ${Object.keys(st.orders || {}).join(" ")}`.toLowerCase().includes(q));
       document.getElementById("libCount").textContent = `${sets.length} set${sets.length === 1 ? "" : "s"}`;
-      if (!sets.length) { body.innerHTML = `<div class="libEmpty">No sets yet.</div>`; return; }
+      if (!sets.length) { body.innerHTML = `<div class="libEmpty">${q || metal ? "No sets match this filter." : "No sets yet."}</div>`; return; }
       body.innerHTML = "";
       for (const st of sets) {
-        const mine = sheets.filter(x => x.setId === st.setId).sort((a, b) => (a.metal || "").localeCompare(b.metal || "") || (a.sheetIndex || 0) - (b.sheetIndex || 0));
+        const all = sheets.filter(x => x.setId === st.setId).sort((a, b) => (a.metal || "").localeCompare(b.metal || "") || (a.sheetIndex || 0) - (b.sheetIndex || 0));
+        const mine = metal ? all.filter(x => x.metal === metal) : all;
         const held = Object.entries(st.orders || {}).filter(([, o]) => o.held);
         const card = el("div", "setCard");
         card.innerHTML = `<div class="sh"><span class="nm">${esc(st.name || st.setId)}</span><span class="pill ${/complete/.test(st.status) ? "ok" : st.status === "labelled" ? "info" : "neutral"}">${esc(st.status || "open")}</span><span class="mono" style="font-size:11px;color:var(--ink45)">${esc(st.day)} · run ${esc(st.runId || "—")}</span><span>${mine.length} sheet(s) · ${(st.materials || []).map(m => labelOf(m)).join(", ")}</span><span>${Object.keys(st.orders || {}).length} order(s)</span><span>Engraving · ${st.backCount || mine.reduce((n, x) => n + (x.backCount || 0), 0)}</span><span class="spacer"></span>${st.labels && st.labels.pdf ? `<a class="btn ghost xs" href="${st.labels.pdf.url}" target="_blank" rel="noopener">labels PDF</a>` : ""}${st.labels && st.labels.manifest ? `<a class="btn ghost xs" href="${st.labels.manifest.url}" target="_blank" rel="noopener">manifest</a>` : ""}${st.labels && st.labels.json ? `<a class="btn ghost xs" href="${st.labels.json.url}" target="_blank" rel="noopener">set.json</a>` : ""}${/complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div>
