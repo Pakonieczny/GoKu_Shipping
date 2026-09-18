@@ -18,7 +18,7 @@
 (function () {
 const O = CharmNestOrders, G = CharmNestGeom, P = CharmNestPDF;
 const MM = 25.4 / 72, PT = 72 / 25.4;
-const B = window.B = { link: null, orders: { rows: [], byKey: new Map(), pulledAt: 0, stale: false, snapshot: null, filtered: 0 }, master: { entries: new Map(), files: [], loadedAt: 0, loading: null, error: null, jobs: new Map() }, maps: { optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [], rows: [] }, loadedAt: 0 }, pool: { rows: new Map(), sources: new Map() }, engrave: { items: new Map(), fonts: { ok: false, Regular: null, Semibold: null, error: null, loading: null } }, review: { items: [] }, openRuns: null, run: null, viewing: null, sets: new Map(), employee: (localStorage.getItem("cn.employee") || "").trim() };
+const B = window.B = { link: null, orders: { rows: [], byKey: new Map(), pulledAt: 0, stale: false, snapshot: null, filtered: 0 }, master: { entries: new Map(), files: [], loadedAt: 0, loading: null, error: null, jobs: new Map() }, maps: { optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [], rows: [] }, loadedAt: 0 }, pool: { rows: new Map(), sources: new Map() }, engrave: { items: new Map(), fonts: { ok: false, Regular: null, Semibold: null, error: null, loading: null } }, review: { items: [] }, openRuns: null, run: null, sets: new Map(), employee: (localStorage.getItem("cn.employee") || "").trim() };
 const SOURCE_LABEL = { personalization: "the personalisation box", personalisation: "the personalisation box", buyerMessage: "the buyer's message", staffNote: "the staff note", messages: "the staff messages", none: "", "": "" };
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const fmtT = t => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -650,10 +650,7 @@ const Orders = window.Orders = (() => {
     const rows = visibleRows();
     const restore = () => { if (at) host.scrollTop = at; };
     if (!rowsOf().length) {
-      host.innerHTML = B.viewing
-        ? '<div class="libEmpty"><b>An earlier run is on the cards.</b> Its sheets are on the Nest tab; the orders it carried are in its history.<button class="btn ghost sm" data-e="hist">Its orders\u2026</button></div>'
-        : '<div class="libEmpty"><b>No orders pulled yet.</b> Pull brings every open order over the bridge from the Design Station.<span style="display:flex;gap:7px"><button class="btn gold sm" data-e="pull">Pull orders</button><button class="btn ghost sm" data-e="hist">Earlier runs\u2026</button></span></div>';
-      host.querySelectorAll("[data-e]").forEach(b => b.onclick = () => { const k = b.dataset.e; if (k === "hist") RunHistory.show(); else pull(null).catch(e => toast(e.message, "bad", 7000)); });
+      host.innerHTML = '<div class="libEmpty">Nothing pulled yet \u2014 press <b>Pull orders</b> above.</div>';
       return;
     }
     if (!rows.length) {
@@ -1627,7 +1624,7 @@ const Engrave = window.Engrave = (() => {
   const EG = { tab: null, focus: null, chosen: false, card: null, cardKey: null, reread: 0 };
   /** Which run's engraving this is. A tab that showed a queue and no run left nobody able to say whose queue it was. */
   function runWord() {
-    const r = B.run || B.viewing; if (!r) return "no run — earlier runs…";
+    const r = B.run; if (!r) return "no run — earlier runs…";
     return (r.seq ? `Set ${r.seq}` : r.runId.slice(-8)) + (r.day ? " · " + new Date(r.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "");
   }
   /** An empty queue has four different causes, and only one of them means "you are done". Say which one it is. */
@@ -1637,9 +1634,9 @@ const Engrave = window.Engrave = (() => {
     if (!r && !jobs.length) return line("No run is open, so there is nothing to engrave yet.", `<button class="btn gold sm" data-go="hist">Earlier runs…</button>`);
     if (r && r.status === "stopped") return line(`This run stopped before the engraving step${r.stoppedBy ? ` — ${esc(r.stoppedBy)}` : ""}.`, `<button class="btn ghost sm" data-go="orders">Back to the run</button>`);
     if (r && O.stepIndex(r.step) < O.stepIndex("engrave")) return line(`Nothing to engrave yet — this run is still at ${esc(STEP_WORDS_EG[r.step] || r.step)}.`, `<button class="btn ghost sm" data-go="orders">Back to the run</button>`);
-    if (nWords) return line(`${nWords} still need their words settled before a placement can be drawn.`, `<button class="btn gold sm" data-go="words">Open Words</button>`);
+    if (nWords) return line(`${nWords} still need${nWords === 1 ? "s" : ""} its words settled before a placement can be drawn.`, `<button class="btn gold sm" data-go="words">Open Words</button>`);
     const rv = Review.count();
-    if (rv) return line(`${rv} line${rv === 1 ? "" : "s"} need a decision before anything can be engraved.`, `<button class="btn gold sm" data-go="review">Open Review</button>`);
+    if (rv) return line(`${rv} line${rv === 1 ? " needs" : "s need"} a decision before anything can be engraved.`, `<button class="btn gold sm" data-go="review">Open Review</button>`);
     if (nDone) return line("Every placement in this run is decided.", `<button class="btn ghost sm" data-go="hist">Another run…</button>`);
     return line("Nothing in this run needs engraving.", `<button class="btn ghost sm" data-go="hist">Another run…</button>`);
   }
@@ -2038,7 +2035,13 @@ const Sets = window.Sets = (() => {
 
 /* ═══ 23 · RunCtl — the two halves, the record, resume, stop, Auto/Manual ═══ */
 const RunCtl = window.RunCtl = (() => {
-  const PAUSE_AFTER = new Set(["pull", "pool", "nest", "engrave", "labels"]);
+  /* A run used to halt after five of its own steps and ask, with a button named after the source code, whether to do
+     the next one. Nobody could answer that question usefully, and nothing was gained by asking it: a run that has been
+     started is a run that should finish. It now runs straight through and stops only where a person is genuinely
+     needed — a decision in Review or Engraving, a commit held back on purpose, or something gone wrong.
+     Manual and Auto still differ, in the one place the difference means anything: Auto starts the next run when this
+     one is done, Manual does not. */
+  const PAUSE_AFTER = new Set();
   let waiter = null, reviewWaiter = null, autoTimer = null;
   const run = () => B.run;
   async function save(r) { r = r || B.run; if (!r) return; r.updatedAt = Date.now(); if (!S.cloud.ok) return; const rec = Object.assign({}, r, { lines: r.lines || {}, sheets: r.sheets || {}, holds: r.holds || {}, errors: (r.errors || []).slice(-50) }); delete rec._wait; await api("charmNestLibrary", { op: "runPut", run: rec }).catch(e => agent({ run: r.runId }, "warn", `run record: ${e.message}`)); renderBanner(); }
@@ -2215,7 +2218,7 @@ const RunCtl = window.RunCtl = (() => {
     if (S.settings.runMode === "auto" && +S.settings.autoEvery > 0) { const every = Math.max(5, +S.settings.autoEvery); clearTimeout(autoTimer); autoTimer = setTimeout(() => { NEXT.at = 0; clearInterval(NEXT.t); if (S.settings.runMode === "auto") { clearRunState(); start({ mode: "auto" }); } }, every * 60000); armNext(every * 60000); agent({ bridge: true }, "DS", `Auto: the next run starts in ${every} min (never under 5, to spare the Etsy API)`); }
   }
   /** After a set is done: clear the cards and pooled lines so the next run starts clean (files and records are kept). */
-  function clearRunState() { for (const m of METALS) { const prim = S.sheets[m.key]; if (prim.pages.some(p => p.charms.some(c => c.poolId))) { for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms = pg.charms.filter(c => !c.poolId); pg.sheetId = null; pg.fileBase = null; pg.setId = null; pg.runId = null; } prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim); } } B.orders.rows = []; B.orders.byKey = new Map(); B.engrave.items = new Map(); B.review.items = []; B.pool.rows = new Map(); B.run = null; B.viewing = null; Orders.render(); Engrave.render(); Review.render(); renderBanner(); renderRail(); updateTopSub(); }
+  function clearRunState() { for (const m of METALS) { const prim = S.sheets[m.key]; if (prim.pages.some(p => p.charms.some(c => c.poolId))) { for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms = pg.charms.filter(c => !c.poolId); pg.sheetId = null; pg.fileBase = null; pg.setId = null; pg.runId = null; } prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim); } } B.orders.rows = []; B.orders.byKey = new Map(); B.engrave.items = new Map(); B.review.items = []; B.pool.rows = new Map(); B.run = null; Orders.render(); Engrave.render(); Review.render(); renderBanner(); renderRail(); updateTopSub(); }
   function setRunMode(mode) {
     S.settings.runMode = mode === "auto" ? "auto" : "manual"; saveSettings(); renderModeBtn();
     if (mode === "auto") { agent({ bridge: true }, "DS", "Auto mode on: the sorter pulls the latest orders by the date rule and runs the whole process, stopping only for a person"); if (!B.run || ["complete", "stopped"].includes(B.run.status)) { if (B.run && B.run.status === "complete") clearRunState(); start({ mode: "auto" }).catch(e => toast(e.message, "bad")); } else if (B.run.status === "paused") { B.run.mode = "auto"; next(); } else B.run.mode = "auto"; }
@@ -2224,11 +2227,6 @@ const RunCtl = window.RunCtl = (() => {
   }
   function renderModeBtn() { const b = document.getElementById("btnRunMode"); if (!b) return; const auto = S.settings.runMode === "auto"; b.classList.toggle("auto", auto); document.getElementById("runModeText").textContent = auto ? "Auto" : "Manual"; }
   const STEP_WORDS = { pull: "Pulling orders", claim: "Claiming", pool: "Pooling", plan: "Planning", nest: "Nesting", checkpoint: "Checking the sheets", engrave: "Engraving", revalidate: "Re-checking the orders", labels: "Writing labels", commit: "Committing", complete: "Complete" };
-  /* The button used to read "Next step" and the line beside it "next: plan" — and pressing it ran planning AND nesting,
-     because planning is not a step Manual mode stops at. So the button names the step it will actually stop after. */
-  const DO_WORDS = { pull: "Pull the orders", claim: "Claim them on the station", pool: "Pool the charms", plan: "Work out the layout", nest: "Nest the sheets", checkpoint: "Check the sheets", engrave: "Go to the engraving", revalidate: "Re-check the orders", labels: "Write the labels", commit: "Commit the set" };
-  function nextStop(r) { let st = r.step; for (let i = 0; i < 12; i++) { if (PAUSE_AFTER.has(st)) return st; const n = O.nextStep(st); if (!n) return st; st = n; } return st; }
-  /** The one detail that makes the step concrete, in the shop's own words. */
   function stepDetail(r) {
     const sh = allSheets().filter(p => p.runId === r.runId);
     if (r.step === "nest" && sh.length) return ` · sheet ${Math.min(sh.filter(p => ["complete", "partial"].includes(p.status)).length + 1, sh.length)} of ${sh.length}`;
@@ -2258,24 +2256,14 @@ const RunCtl = window.RunCtl = (() => {
         h.querySelector("#rbLater").onclick = () => { B.openRuns = null; renderBanner(); };
         Dock.schedule(); return;
       }
-      /* No run open used to mean no banner at all, and no way from here to any run that ever ran. It is a slim line now
-         with the two things a person wants from a standing start: begin one, or go back to one. */
-      const v = B.viewing;
-      h.classList.remove("hidden"); h.className = "runBanner" + (v ? " done" : " idle");
-      h.innerHTML = v
-        ? `<span class="rid" title="run ${esc(v.runId)}">${esc([v.seq ? "Set " + v.seq : "", v.day ? new Date(v.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "", `${v.lines} lines`].filter(Boolean).join(" \u00b7 "))}</span><span class="why"><b>Looking at an earlier run</b> \u2014 its sheets are on the cards and nothing is running</span><span class="spacer"></span><span class="acts"><button class="btn ghost sm" id="rbHist">Another run\u2026</button><button class="btn ghost sm" id="rbCloseView">Clear the cards</button></span>`
-        : `<span class="why">No run open</span><span class="spacer"></span><span class="acts"><button class="btn gold sm" id="rbStart" title="pull the open orders and run the set">Start a run</button><button class="btn ghost sm" id="rbHist" title="every run on record \u2014 search it, carry one on, or open its sheets">Earlier runs\u2026</button></span>`;
-      const hq = id => h.querySelector("#" + id);
-      if (hq("rbStart")) hq("rbStart").onclick = () => start().catch(e => toast(e.message, "bad", 7000));
-      if (hq("rbHist")) hq("rbHist").onclick = () => RunHistory.show();
-      if (hq("rbCloseView")) hq("rbCloseView").onclick = () => RunHistory.close();
-      Dock.schedule(); return;
+      // nothing is running, so there is nothing to report: the banner is not a place to advertise from
+      h.classList.add("hidden"); Dock.schedule(); return;
     }
     h.classList.remove("hidden"); h.className = "runBanner" + (r.status === "stopped" ? " stopped" : r.status === "complete" ? " done" : r.status === "review" ? " review" : "");
     const idx = O.stepIndex(r.step);
     const reviewN = Review.count(), engN = Engrave.pendingCount();
     const waitingFor = [reviewN ? `${reviewN} in Review` : "", engN ? `${engN} in Engraving` : ""].filter(Boolean).join(" · ") || "nothing";
-    const why = r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${r.fix ? ` — <span>${esc(r.fix)}</span>` : ""}` : r.status === "review" ? `<b>Waiting for a person:</b> ${waitingFor}` : r.status === "paused" ? (r.awaitCommit ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : `<b>Paused</b> after ${esc((STEP_WORDS[O.RUN_STEPS[idx - 1]] || O.RUN_STEPS[idx - 1] || r.step).toLowerCase())} · <span style="opacity:.75">Manual mode waits at every step — nothing runs until you press the button</span>`) : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(STEP_WORDS[r.step] || r.step)}</b>${esc(stepDetail(r))}`;
+    const why = r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${r.fix ? ` — <span>${esc(r.fix)}</span>` : ""}` : r.status === "review" ? `<b>Waiting for a person:</b> ${waitingFor}` : r.status === "paused" ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(STEP_WORDS[r.step] || r.step)}</b>${esc(stepDetail(r))}`;
     Dock.schedule();
     h.title = `run ${r.runId}`;
     /* Which run is this? Three cards on the Nest tab and a banner that named only a step left no way to tell this
@@ -2286,12 +2274,12 @@ const RunCtl = window.RunCtl = (() => {
       `${Object.keys(r.lines || {}).length || Orders.rows().filter(x => x.state !== "gone").length} lines`, nSheets ? `${nSheets} sheet${nSheets === 1 ? "" : "s"}` : ""].filter(Boolean).join(" \u00b7 ");
     h.innerHTML = `<span class="rid" title="run ${esc(r.runId)}${r.setId ? " \u00b7 set " + esc(r.setId) : ""}">${esc(who)}</span><span class="why">${why}</span><span class="spacer"></span><span class="acts">
       ${r.at ? `<button class="btn ghost sm" id="rbAt" title="open the sheet this is about">Show the sheet</button>` : ""}
-      ${r.status === "paused" && !r.awaitCommit ? `<button class="btn gold sm" id="rbNext" title="carry on to that step, then wait again">${esc(DO_WORDS[nextStop(r)] || "Next step")} ▶</button><button class="btn ghost sm" id="rbAuto" title="Stop waiting at every step: the run carries on by itself and only stops when it needs a person">Run the rest by itself</button>` : ""}${r.status === "paused" && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${r.status === "stopped" && /sign/i.test(r.stoppedBy || "") ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${r.status === "stopped" ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at">Resume</button>` : ""}${reviewN ? `<button class="btn ghost sm" id="rbReview" title="the decisions a person still has to make">Review (${reviewN})</button>` : ""}${engN ? `<button class="btn ghost sm" id="rbEngrave" title="the engraving still to be settled">Engraving (${engN})</button>` : ""}${["running", "review", "paused"].includes(r.status) ? `<button class="btn ghost sm" id="rbStop" title="stop after the step in progress — the run can be resumed from where it stopped">Stop</button>` : ""}${r.status === "complete" ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}${r.status === "stopped" ? `<button class="btn ghost sm" id="rbAbandon" title="give this run up — anything decided but not yet written is lost">Abandon run</button>` : ""}</span>`;
+      ${r.status === "paused" && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${r.status === "stopped" && /sign/i.test(r.stoppedBy || "") ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${r.status === "stopped" ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at">Resume</button>` : ""}${["running", "review", "paused"].includes(r.status) ? `<button class="btn ghost sm" id="rbStop" title="stop after the step in progress — the run can be resumed from where it stopped">Stop</button>` : ""}${r.status === "complete" ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}${r.status !== "complete" ? `<button class="btn ghost sm" id="rbAbandon" title="give this run up and take the banner away — the sheets and files already saved are kept">Abandon run</button>` : ""}</span>`;
     const q = id => h.querySelector("#" + id);
     const rid = h.querySelector(".rid"); if (rid) { rid.tabIndex = 0; rid.title += " \u2014 click for every run on record"; rid.onclick = () => RunHistory.show(); rid.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); RunHistory.show(); } }; }
     if (q("rbAt")) q("rbAt").onclick = () => { CN.setMode("nest"); const i = CN.pagesOf(r.at.metal).findIndex(p => p.page === r.at.page); CN.showPage(r.at.metal, Math.max(0, i)); };
-    if (q("rbConnect")) q("rbConnect").onclick = () => DesignLink.connectEtsy().catch(e => toast(e.message, "bad", 6000)); if (q("rbNext")) q("rbNext").onclick = () => next();
-    if (q("rbAuto")) q("rbAuto").onclick = async () => { const r2 = B.run; if (!r2) return; r2.mode = "auto"; await save(r2); agent({ run: r2.runId }, "DS", "This run carries on by itself from here — it stops only when it needs a person"); next(); }; if (q("rbCommit")) q("rbCommit").onclick = () => commitNow(); if (q("rbResume")) q("rbResume").onclick = () => resume(); if (q("rbReview")) q("rbReview").onclick = () => CN.setMode("review"); if (q("rbEngrave")) q("rbEngrave").onclick = () => { CN.setMode("engrave"); Engrave.render(); }; if (q("rbStop")) q("rbStop").onclick = () => stop("stopped by the operator", "Press Resume to carry on from the recorded step."); if (q("rbClear")) q("rbClear").onclick = () => { if (confirm("Clear the finished run from the cards? Files and records are kept.")) clearRunState(); };
+    if (q("rbConnect")) q("rbConnect").onclick = () => DesignLink.connectEtsy().catch(e => toast(e.message, "bad", 6000)); 
+    if (q("rbCommit")) q("rbCommit").onclick = () => commitNow(); if (q("rbResume")) q("rbResume").onclick = () => resume(); if (q("rbStop")) q("rbStop").onclick = () => stop("stopped by the operator", "Press Resume to carry on from the recorded step."); if (q("rbClear")) q("rbClear").onclick = () => { if (confirm("Clear the finished run from the cards? Files and records are kept.")) clearRunState(); };
     if (q("rbAbandon")) q("rbAbandon").onclick = () => {
       const eng = [...Engrave.items().values()].filter(j => ["approved", "words", "review"].includes(j.state) && !j.backs).length;
       const rev = Review.count();
@@ -2888,9 +2876,9 @@ const RunHistory = window.RunHistory = (() => {
           <span class="ct">${r.lines} line${r.lines === 1 ? "" : "s"} · ${r.orders} order${r.orders === 1 ? "" : "s"}${r.sheets ? ` · ${r.sheets} sheet${r.sheets === 1 ? "" : "s"}` : ""}${r.holds ? ` · ${r.holds} held` : ""}</span>
           <span class="sp"></span>
           ${r.runId === cur ? `<span class="pill neutral">on the cards now</span>` : ""}
-          ${live && r.runId !== cur ? `<button class="btn gold sm" data-a="resume">Carry on</button>` : ""}
-          ${openable && r.runId !== cur ? `<button class="btn ${live ? "ghost" : "gold"} sm" data-a="view" title="put this run's sheets back on the Nest tab to look at, download and print">Open its sheets</button>` : ""}
+          ${r.sheets || r.setId ? `<button class="btn gold sm" data-a="sheets" title="the sheets this run wrote \u2014 previews, the .ai, the labelled proof and the report. Nothing runs and nothing is re-read from Etsy.">Sheets${r.sheets ? ` \u00b7 ${r.sheets}` : ""}</button>` : ""}
           <button class="btn ghost sm" data-a="lines" title="the orders and lines this run carried">${H.open.has(r.runId) ? "Hide" : "Orders"}</button>
+          ${live && r.runId !== cur ? `<button class="btn ghost sm" data-a="resume" title="pick this unfinished run up where it stopped \u2014 it re-reads every order from Etsy first, which takes a while">Resume the run\u2026</button>` : ""}
         </div>
         ${hits.length ? `<div class="hHits">matched ${hits.map(x => `<b>${esc(x)}</b>`).join(", ")}</div>` : ""}
         ${H.open.has(r.runId) ? linesHtml(r.runId) : ""}
@@ -2901,8 +2889,12 @@ const RunHistory = window.RunHistory = (() => {
     b.querySelectorAll(".hRun").forEach(node => {
       const id = node.dataset.run;
       const a = s => node.querySelector(`:scope > .hRow > [data-a=${s}]`);
-      if (a("resume")) a("resume").onclick = () => { H.dlg.close(); RunCtl.resumeRun(id).catch(e => toast(e.message, "bad", 7000)); };
-      if (a("view")) a("view").onclick = () => viewRun(id);
+      if (a("resume")) a("resume").onclick = () => {
+        const r2 = H.runs.find(x => x.runId === id) || {};
+        if (!confirm(`Pick run ${r2.seq ? "Set " + r2.seq : id.slice(-8)} up again?\n\nIt re-reads all ${r2.orders || ""} orders from Etsy through the Design Station before it can carry on, which takes a few minutes.\n\nTo look at what it already made, press Sheets instead \u2014 that reads nothing from Etsy.`)) return;
+        H.dlg.close(); RunCtl.resumeRun(id).catch(e => toast(e.message, "bad", 7000));
+      };
+      if (a("sheets")) a("sheets").onclick = () => openSheets(H.runs.find(x => x.runId === id) || { runId: id });
       if (a("lines")) a("lines").onclick = () => { if (H.open.has(id)) { H.open.delete(id); render(); } else { H.open.add(id); loadLines(id); } };
     });
     b.querySelectorAll("[data-openkey]").forEach(n => n.onclick = () => { const k = n.dataset.openkey; if (Orders.rows().some(r => r.key === k)) { H.dlg.close(); OrderWin.open(k); } else toast("That line is not in the current pull — open its run first", "", 4500); });
@@ -2930,26 +2922,22 @@ const RunHistory = window.RunHistory = (() => {
     } catch (e) { H.lines.set(runId, { error: e.message, rows: [] }); }
     render();
   }
-  /** Put a finished run's sheets back on the Nest tab: the same restore a resume does, without starting the run again. */
-  async function viewRun(runId) {
-    if (B.run && ["running", "review"].includes(B.run.status)) { toast("A run is working — stop it first", "bad", 5000); return; }
-    const btn = H.dlg.querySelector(`.hRun[data-run="${CSS.escape(runId)}"] [data-a=view]`);
-    if (btn) { btn.disabled = true; btn.textContent = "Opening…"; }
-    try {
-      const r = await api("charmNestLibrary", { op: "runGet", runId }, { label: "Reading the run" });
-      const rec = r.run; if (!rec) throw new Error("that run is no longer on record");
-      B.viewing = null; RunCtl.clearRunState();
-      const set = rec.setId ? await RunCtl.restoreRunSheets(rec) : null;
-      if (set) Sets.byRun().set(runId, set);
-      B.viewing = { runId, seq: rec.seq || (set && set.seq) || null, day: rec.day || (set && set.day) || null, status: rec.status, lines: Object.keys(rec.lines || {}).length, sheets: Object.keys(rec.sheets || {}).length };
-      H.dlg.close();
-      CN.setMode("nest"); CN.refreshAllCards(); RunCtl.renderBanner();
-      agent({ run: runId }, "cloud", `Opened ${B.viewing.seq ? "Set " + B.viewing.seq : runId} from ${rec.day || "an earlier day"} — its sheets are on the cards`);
-      toast(`${B.viewing.seq ? "Set " + B.viewing.seq : "That run"} is on the cards — nothing is running`, "ok", 5000);
-    } catch (e) { toast("Could not open it: " + e.message, "bad", 7000); if (btn) { btn.disabled = false; btn.textContent = "Open its sheets"; } }
+  /* Old sheets are finished records: a preview, an .ai, a labelled proof, a report and the charm thumbnails, all
+     already written. Looking at them is one read of the library, not a rebuild of the run that made them — an earlier
+     turn of mine wired this to the resume path, which re-pulled every order from Etsy to show a picture that was
+     sitting in Storage the whole time. Nothing here starts, pulls, claims or nests. */
+  function openSheets(r) {
+    if (H.dlg && H.dlg.open) H.dlg.close();
+    CN.S.library.kind = "sheets";
+    CN.setMode("library");
+    const f = document.getElementById("libSearch");
+    if (f) f.value = r.setId || r.runId || "";
+    const from = document.getElementById("libFrom"), to = document.getElementById("libTo");
+    if (from) from.value = ""; if (to) to.value = "";                 // a run's own day is inside the last 300 sheets
+    CN.loadLibrary();
+    agent({ run: r.runId }, "cloud", `Showing the sheets of ${r.seq ? "Set " + r.seq : r.runId}${r.day ? " from " + r.day : ""}`);
   }
-  function close() { B.viewing = null; RunCtl.clearRunState(); RunCtl.renderBanner(); }
-  return { show, load, viewRun, close, runs: () => H.runs };
+  return { show, load, openSheets, runs: () => H.runs };
 })();
 
 /* ═══ 25 · boot ═══════════════════════════════════════════════════════════ */
