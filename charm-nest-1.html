@@ -252,7 +252,19 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .libGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
 .libCard{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);padding:10px 12px;display:grid;gap:6px;--accent:var(--ink25);border-left:5px solid var(--accent);cursor:pointer;min-width:0}
 .libCard[data-m=gold]{--accent:var(--m-gold)}.libCard[data-m=silver]{--accent:var(--m-silver)}.libCard[data-m=rose]{--accent:var(--m-rose)}.libCard[data-m=gold10k]{--accent:var(--m-gold10k)}.libCard[data-m=gold14k]{--accent:var(--m-gold14k)}
-.libCard:hover{outline:2px solid var(--accent);outline-offset:1px}
+/* Two hover states, and only two, everywhere there is a list — order cards, order rows, review items, charm tiles,
+   SKU tiles, sheet cards, engraving chips and the engraved backs. The first says where the mouse is: a quiet lift, the
+   same lift on all of them, so the feedback never changes meaning from one screen to the next. The second says this
+   line is not alone — it belongs to an order with other pieces in it — and draws a soft blue circumference round every
+   piece of that order wherever it happens to be on screen. They are built to compose: the lift is a transform and a
+   border, the ring is a shadow, so hovering one piece of a marked order shows both at once and neither hides the other. */
+:root{--hoverLift:0 8px 22px rgba(20,16,10,.14);--kinEdge:rgba(96,165,250,.55);--kinGlow:rgba(96,165,250,.26);--kinEdgeOn:rgba(96,165,250,.72);--kinGlowOn:rgba(96,165,250,.34);--kinLine:rgba(96,165,250,.85)}
+.hoverItem{transition:transform .13s ease,border-color .13s ease,box-shadow .17s ease,background-color .13s ease}
+.hoverItem:hover,.hoverItem:focus-visible{transform:translateY(-1px);border-color:var(--ink45);box-shadow:var(--hoverLift);outline:none}
+.hoverItem.kin{box-shadow:0 0 0 2px var(--kinEdge),0 0 15px 3px var(--kinGlow)}
+.hoverItem.kin:hover,.hoverItem.kin:focus-visible{transform:translateY(-1px);border-color:var(--kinLine);box-shadow:0 0 0 2px var(--kinEdgeOn),0 0 18px 5px var(--kinGlowOn),var(--hoverLift)}
+@media (prefers-reduced-motion:reduce){.hoverItem,.hoverItem:hover{transition:none;transform:none}}
+.libCard:hover{outline:none}
 .libCard .h{display:flex;align-items:center;gap:8px;min-width:0}
 .libCard .h .nm{font:600 13px var(--sans);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .libCard .h .tm{margin-left:auto;font:10.5px var(--mono);color:var(--ink45)}
@@ -435,12 +447,12 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .ordCards{display:grid;grid-template-columns:repeat(auto-fill,minmax(212px,1fr));gap:12px;align-items:start}
 @media (max-width:760px){.ordCards{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}}
 .ocard{background:var(--card);border:1px solid var(--line);border-radius:13px;box-shadow:var(--sh);overflow:hidden;cursor:pointer;display:flex;flex-direction:column;min-width:0;text-align:left;padding:0;font:inherit;color:inherit;--accent:var(--ink25);border-top:3px solid var(--accent);transition:box-shadow .14s,transform .14s}
-.ocard:hover,.ocard:focus-visible{box-shadow:0 10px 28px rgba(20,16,10,.16);transform:translateY(-1px);outline:none}
+
 .ocard:focus-visible{outline:2px solid var(--gold2);outline-offset:2px}
 .ocard[data-m=gold]{--accent:var(--m-gold)}.ocard[data-m=silver]{--accent:var(--m-silver)}.ocard[data-m=rose]{--accent:var(--m-rose)}.ocard[data-m=gold10k]{--accent:var(--m-gold10k)}.ocard[data-m=gold14k]{--accent:var(--m-gold14k)}
 .ocard.attn{--accent:var(--clay)}
 /* the other lines of the same order, lifted while one of them is under the cursor */
-.ocard.kin,.olist.kin{box-shadow:0 0 0 2px var(--gold2),var(--sh)}
+
 .oimg{position:relative;aspect-ratio:1;background:var(--paper2);display:flex;align-items:center;justify-content:center;overflow:hidden}
 .oimg img{width:100%;height:100%;object-fit:contain;display:block}
 .oimg .ph{font:10.5px var(--mono);color:var(--ink25);letter-spacing:.08em;text-transform:uppercase}
@@ -470,7 +482,7 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 /* the same line as a row: every field the card has, and a smaller picture */
 .ordList{display:grid;gap:5px}
 .olist{display:grid;grid-template-columns:34px minmax(88px,max-content) minmax(0,max-content) minmax(0,1fr) 44px minmax(0,110px) 58px auto;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:9px;padding:5px 10px;cursor:pointer;text-align:left;font:inherit;color:inherit;--accent:var(--ink25);min-width:0}
-.olist:hover,.olist:focus-visible{background:var(--paper2);outline:none}
+.olist.hoverItem:hover{background:var(--paper2)}
 .olist:focus-visible{outline:2px solid var(--gold2);outline-offset:1px}
 .olist[data-m=gold]{--accent:var(--m-gold)}.olist[data-m=silver]{--accent:var(--m-silver)}.olist[data-m=rose]{--accent:var(--m-rose)}.olist[data-m=gold10k]{--accent:var(--m-gold10k)}.olist[data-m=gold14k]{--accent:var(--m-gold14k)}
 .olist.attn{--accent:var(--clay)}
@@ -2646,7 +2658,7 @@ function renderLibrary() {
   const rows = S.library.rows.filter(r => !q || `${r.id} ${r.folder || ""} ${r.metalLabel} ${r.day} ${r.setId || ""} ${r.runId || ""} ${r.names || ""} ${(r.sources || []).map(s => s.name).join(" ")}`.toLowerCase().includes(q));
   $("#libCount").textContent = `${rows.length} sheet${rows.length === 1 ? "" : "s"}`;
   const body = $("#libBody"); if (!rows.length) { body.innerHTML = `<div class="libEmpty">No sheets match.</div>`; return; }
-  const card = (r, i) => `<div class="libCard" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}"><div class="h">${i != null && r._inFan ? `<span class="pg">${r.page || 1}</span>` : ""}<span class="nm">${r.folder ? esc(r.folder) : esc(r.metalLabel) + " · " + esc(r.id)}</span><span class="tm">${r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span></div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${r.preview}" loading="lazy" alt="">` : `<div class="pv ph">${r.saving ? "saving files…" : "no preview"}</div>`}<div class="m"><span><b>${r.placedCount}</b>/${r.charmCount} placed</span><span><b>${Math.round((r.density || 0) * 100)}%</b> full</span><span><b>${fmt.area(r.freePt2 || 0)}</b> free</span><span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span>${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`;
+  const card = (r, i) => `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}"><div class="h">${i != null && r._inFan ? `<span class="pg">${r.page || 1}</span>` : ""}<span class="nm">${r.folder ? esc(r.folder) : esc(r.metalLabel) + " · " + esc(r.id)}</span><span class="tm">${r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span></div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${r.preview}" loading="lazy" alt="">` : `<div class="pv ph">${r.saving ? "saving files…" : "no preview"}</div>`}<div class="m"><span><b>${r.placedCount}</b>/${r.charmCount} placed</span><span><b>${Math.round((r.density || 0) * 100)}%</b> full</span><span><b>${fmt.area(r.freePt2 || 0)}</b> free</span><span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span>${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`;
   // a set = the sheets of one run: same day and the same source files (runId when the record has one)
   const setKey = r => r.setId ? `set:${r.setId}` : r.runId ? `run:${r.runId}` : `${r.day}|${(r.sources || []).map(x => x.hash || x.name).sort().join("+")}`;
   const byDay = new Map(); for (const r of rows) { if (!byDay.has(r.day)) byDay.set(r.day, []); byDay.get(r.day).push(r); }
@@ -2694,7 +2706,7 @@ async function openLibrarySheet(id) {
         <div><dl class="kv"><dt>Status</dt><dd>${esc(d.status)} · ${esc(endedText(d.endedBy))}</dd><dt>Placed</dt><dd>${d.placedCount} / ${d.charmCount}${d.rejectCount ? ` · ${d.rejectCount} rejected` : ""}</dd><dt>Density</dt><dd>${Math.round((d.density || 0) * 100)}% · ${fmt.area(d.freePt2 || 0)} free</dd><dt>Stock</dt><dd>${d.stock ? `${fmt.mm(d.stock.wIn * PT_PER_IN)} × ${fmt.mm(d.stock.hIn * PT_PER_IN)}` : "—"}</dd><dt>Seed · clearance</dt><dd>${d.params ? `${d.params.seed} · ${fmt.mm(d.params.clearancePt)} · ${d.params.angles.length} angles` : "—"}</dd><dt>Verification</dt><dd>${d.verification ? (d.verification.ok ? "passed" : "flagged") + (d.verification.minGapPt != null ? ` · min gap ${fmt.mm(d.verification.minGapPt)}` : "") : "—"}</dd><dt>Sources</dt><dd>${(d.sources || []).map(s => s.url ? `<a href="${s.url}" target="_blank" rel="noopener">${esc(s.name)}</a>` : esc(s.name)).join(", ") || "—"}</dd></dl>
         <div class="section">Outputs</div><div style="display:flex;gap:6px;flex-wrap:wrap">${d.outputs ? ["ai", "pdf", "labelled", "report"].filter(k => d.outputs[k]).map(k => `<a class="btn ghost xs" href="${d.outputs[k].url}" target="_blank" rel="noopener">${k === "labelled" ? "labelled proof" : k === "report" ? "nest-report.json" : "." + k}</a>`).join("") : "none"}</div></div></div>
       <div class="section">Charms · ${(d.charms || []).length}</div>
-      <div class="charmGrid">${(d.charms || []).map(c => `<div class="charmTile">${c.thumbUrl ? `<img crossorigin="anonymous" src="${c.thumbUrl}" loading="lazy" alt="">` : ""}<div class="nm">${esc(c.name || "#" + (c.index + 1))}</div><div class="meta">${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}${c.qty > 1 ? ` · ×${c.qty}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("")}</div>`;
+      <div class="charmGrid">${(d.charms || []).map(c => `<div class="charmTile hoverItem">${c.thumbUrl ? `<img crossorigin="anonymous" src="${c.thumbUrl}" loading="lazy" alt="">` : ""}<div class="nm">${esc(c.name || "#" + (c.index + 1))}</div><div class="meta">${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}${c.qty > 1 ? ` · ×${c.qty}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("")}</div>`;
     $("#lsDownloads").onclick = () => { if (!d.outputs) return; ["ai", "labelled", "report"].forEach((k, i) => d.outputs[k] && setTimeout(() => window.open(d.outputs[k].url, "_blank"), i * 300)); };
     $("#lsRestore").onclick = () => restoreSheet(d);
     $("#lsDelete").onclick = async () => {
@@ -2744,7 +2756,7 @@ async function loadCharms() {
     const r = await api("charmNestLibrary", { op: "listCharms", q, limit: q ? 1000 : 400 }, { label: "Loading charms" });
     const rows = r.charms || [];
     $("#charmCount").textContent = q ? `${rows.length} match${rows.length === 1 ? "" : "es"}` : `${rows.length} charm${rows.length === 1 ? "" : "s"}${rows.length >= 400 ? "+" : ""}`;
-    body.innerHTML = rows.length ? rows.map(c => `<div class="charmTile" data-h="${c.hash}">${c.thumbUrl ? `<img crossorigin="anonymous" src="${c.thumbUrl}" loading="lazy" alt="">` : ""}<div class="nmRow"><div class="nm" title="${esc(c.name || "")}">${esc(c.name || "")}</div><button class="rename" type="button" title="rename this charm in the library">✎</button></div><div class="meta">${c.widthPt ? `${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}` : ""}${c.timesUsed ? ` · used ×${c.timesUsed}` : ""}${c.metalHint ? ` · ${esc(labelOf(c.metalHint))}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("") : `<div class="libEmpty">${q
+    body.innerHTML = rows.length ? rows.map(c => `<div class="charmTile hoverItem" data-h="${c.hash}">${c.thumbUrl ? `<img crossorigin="anonymous" src="${c.thumbUrl}" loading="lazy" alt="">` : ""}<div class="nmRow"><div class="nm" title="${esc(c.name || "")}">${esc(c.name || "")}</div><button class="rename" type="button" title="rename this charm in the library">✎</button></div><div class="meta">${c.widthPt ? `${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}` : ""}${c.timesUsed ? ` · used ×${c.timesUsed}` : ""}${c.metalHint ? ` · ${esc(labelOf(c.metalHint))}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("") : `<div class="libEmpty">${q
         ? `No charm matches &ldquo;${esc(q)}&rdquo;.` + (r.truncated ? `<br><span style="font-size:12px">The search covered the ${r.scanned} most recently used charms.</span>` : "") + `<br><button class="btn ghost sm" type="button" id="charmClear" style="margin-top:12px">Clear search</button>`
         : `No charms yet &mdash; they appear here after the first sheet is nested.`}</div>`;
     { const clr = $("#charmClear"); if (clr) clr.onclick = () => { $("#charmSearch").value = ""; loadCharms(); }; }
