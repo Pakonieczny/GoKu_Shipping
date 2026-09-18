@@ -2169,7 +2169,8 @@ const Sets = window.Sets = (() => {
     const placed = sh.placements.map(p => byId.get(p.id)).filter(Boolean);
     const ids = [...new Set(placed.map(c => String(c.order || c.id).split("/")[0]))];
     const metalDS = O.CARD_TO_METAL[sh.metal] || sh.metal;
-    const parts = O.safeChunks(ids, metalDS, 1000, 50, 8);
+    // one code per sheet: a QR holds a thousand characters (about ninety orders) before it has to split; it used to split at fifty
+    const parts = O.safeChunks(ids, metalDS, 1000, 500, 8);
     const files = [];
     for (const [i, slice] of parts.entries()) {
       const payload = O.encodeOrderList(slice, metalDS);
