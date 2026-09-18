@@ -389,22 +389,43 @@
      SHORT_CHARS or fewer to LONG_FILL at LONG_CHARS or more. Two further rules hold it honest: the cap height never
      passes CAP_OF_CHARM of the charm's smaller side, and it never drops below the legible minimum unless the ceiling
      itself is below it. Everything here is a default a person can override by hand afterwards. */
-  const SIZE_RULE = { SHORT_CHARS: 4, LONG_CHARS: 18, SHORT_FILL: 0.55, LONG_FILL: 1, CAP_OF_CHARM: 0.3 };
+  /* How big should the lettering be? The largest size that fits is the CEILING, not the answer: a four letter name at
+     the ceiling spans the charm and reads as a logo. So the longest line is given a share of the usable face, and that
+     share GROWS with the line's own measured width — a long message claims more of the face while every letter in it is
+     set smaller. Length is read from the font's real kerned advance, never from a character count: "WILLIAM" is seven
+     characters and wider than "illinois", which is eight. Three rules hold it honest — never past a share of the charm's
+     smaller side, never above the fitted ceiling, never below the legible minimum unless the ceiling is itself below it. */
+  const SIZE_RULE = { ADV_REF: 2.78, SPAN_REF: 0.45, Q: 0.8, CAP_OF_CHARM: 0.3, STEP_PT: 0.05 };
+  /** opts: { capPerEm, minCapMm, charmMinMm, charmMaxMm, usableAreaMm2, advanceOf(text) → advance at size 1, sizeRule } */
   function defaultSize(lines, fittedMax, opts) {
     opts = opts || {};
     const R = Object.assign({}, SIZE_RULE, opts.sizeRule || {});
-    const longest = (lines || []).reduce((n, l) => Math.max(n, String(l).trim().length), 0);
-    const t = Math.max(0, Math.min(1, (longest - R.SHORT_CHARS) / Math.max(1, R.LONG_CHARS - R.SHORT_CHARS)));
-    const fill = R.SHORT_FILL + (R.LONG_FILL - R.SHORT_FILL) * t;
-    // the share applies to the room ABOVE the legible minimum, not to the whole size: on a charm that barely has room
-    // the lettering stays close to the largest that fits, while a roomy charm gives a short name a modest size
-    const floor = opts.minCapMm > 0 && opts.capPerEm > 0 ? Math.min(opts.minCapMm / (opts.capPerEm * MM_PER_PT), fittedMax) : 0;
-    let size = floor + (fittedMax - floor) * fill;
-    if (opts.charmMinMm > 0 && opts.capPerEm > 0) {                       // never taller than a share of the charm itself
-      const capCeil = R.CAP_OF_CHARM * opts.charmMinMm / (opts.capPerEm * MM_PER_PT);
-      size = Math.min(size, Math.max(capCeil, floor));
-    }
-    return Math.max(Math.min(size, fittedMax), Math.min(floor, fittedMax));
+    const cpe = opts.capPerEm; if (!(cpe > 0) || !(fittedMax > 0)) return fittedMax;
+    const toMm = sz => sz * cpe * MM_PER_PT, toPt = cap => cap / (cpe * MM_PER_PT);
+    const capCeil = toMm(fittedMax);
+    const lo = Math.min(opts.minCapMm > 0 ? opts.minCapMm : 1.6, capCeil);
+    let adv = 0;                                                      // the longest line, measured in its own cap heights
+    if (typeof opts.advanceOf === "function") for (const l of lines || []) { const t = String(l).trim(); if (!t) continue; const w = opts.advanceOf(t) / cpe; if (w > adv) adv = w; }
+    // how wide the usable face is: the equivalent-circle diameter of the eroded area, which is exact for a disc
+    let span = opts.usableAreaMm2 > 0 ? 2 * Math.sqrt(opts.usableAreaMm2 / Math.PI) : opts.charmMinMm;
+    if (opts.charmMaxMm > 0) span = Math.min(span, opts.charmMaxMm);
+    if (!(adv > 0) || !(span > 0)) return fittedMax;                  // nothing measured: the ceiling stands
+    const share = R.SPAN_REF * Math.pow(adv / R.ADV_REF, R.Q);        // ← the whole rule: cap ∝ adv^(Q−1)
+    const want = share * span / adv;
+    let hi = capCeil;
+    if (opts.charmMinMm > 0) hi = Math.min(hi, R.CAP_OF_CHARM * opts.charmMinMm);
+    const cap = Math.min(Math.max(want, lo), Math.max(hi, lo));       // max inside min: legibility beats taste, physics beats both
+    if (cap >= capCeil - 1e-9) return fittedMax;                      // the ceiling is already verified and settled
+    let size = Math.round(toPt(cap) / R.STEP_PT) * R.STEP_PT;
+    if (toMm(size) < lo - 1e-9) size = Math.ceil(toPt(lo) / R.STEP_PT) * R.STEP_PT;   // rounding must not land under the floor
+    return Math.min(size, fittedMax);
+  }
+  /** What the size rule was asked and what it was allowed: the slider runs [lo, ceiling] and the default sits between. */
+  function sizeRange(fittedMax, opts) {
+    opts = opts || {}; const cpe = opts.capPerEm;
+    if (!(cpe > 0)) return null;
+    const capCeil = fittedMax * cpe * MM_PER_PT;
+    return { loMm: Math.min(opts.minCapMm > 0 ? opts.minCapMm : 1.6, capCeil), capCeilMm: capCeil };
   }
   /** Largest size at a fixed centre and angle (a nudge), optionally capped. */
   function refitAt(lines, font, mask, opts, place) {
@@ -457,6 +478,6 @@
   return { MM_PER_PT, PT_PER_MM, mul, ap, mirrorX, rotateAbout, translate, transformSeg, flatten, polyCentroid, pointInPolys, distToPolys, interiorPoint,
     makeFrame, emptyMask, cloneMask, rasterPolys, raster, area, flipX, diffFraction, at, distanceTransform, erode, subtract, rotateMask, largestRectangles,
     isCutLine, BackViewError, upAngleOf, backView, engraveMask,
-    glyphCoverage, capPerEm, lineGlyphs, layoutLines, glyphPolys, rasterGlyphs, verifyInk, strokeMetrics, fitText, refitAt, defaultSize, SIZE_RULE, splitVariants,
+    glyphCoverage, capPerEm, lineGlyphs, layoutLines, glyphPolys, rasterGlyphs, verifyInk, strokeMetrics, fitText, refitAt, defaultSize, sizeRange, SIZE_RULE, splitVariants,
     svgPathOf, svgPathOfCmds, silhouetteBits };
 });

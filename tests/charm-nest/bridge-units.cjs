@@ -33,9 +33,30 @@ const pass = (name) => console.log('  ✓', name);
     for (const v of ['18"', '16.5"', '45cm', '16 inches']) assert(one('LENGTH', v).startsWith('chain:'), 'a length: ' + v);
     assert.strictEqual(one('Charm Type', 'Necklace CHARM'), 'form:necklace', 'the shop writes the words in its own order');
     assert.strictEqual(one('Charm Type', 'CHARM + Engraving'), 'form:charm', 'and adds a word that is not the choice');
-    for (const v of ['Huggie CHARM SET', '18 Inch', 'Tag1 (front engrave)']) assert.strictEqual(one('Charm Type', v), 'unmapped', 'anything it cannot read stays for a person: ' + v);
-    assert.strictEqual(one('HOOP SIZE', '8.5mm'), 'unmapped', 'hardware is never read as a charm size');
-    assert.strictEqual(one('Necklace Length in inches', 'Charm Only-No Chain'), 'unmapped', 'a choice that is not a length stays for a person');
+    for (const v of ['Huggie CHARM SET', 'Tag1 (front engrave)']) assert.strictEqual(one('Charm Type', v), 'unmapped', 'anything it cannot read stays for a person: ' + v);
+    // each of these held real lines in the shop's own run — the words say plainly what the other option's name asks for
+    assert.strictEqual(one('Charm Type', '18 Inch'), 'chain:18 Inch', 'a length under a form option is still a length');
+    for (const n of ['Necklace Length in inches', 'LENGTH', 'Length'])
+      assert.strictEqual(one(n, 'Charm Only-No Chain'), 'form:charm', 'a form under a length option is still a form: ' + n);
+    for (const [n, v, want] of [['HOOP SIZE', '8.5mm', 'size:8.5MM'], ['HOOP SIZE', '11mm', 'size:11MM'], ['Ring size', '8 US', 'size:8US'], ['Charm Size', '14mm + engraving', 'size:14MM']])
+      assert.strictEqual(one(n, v), want, `a measurement under a size option is a size: ${n}: ${v}`);
+    assert.strictEqual(one('Charm Type', 'Huggie hoops'), 'form:huggie', 'the shop sells huggies as their own design');
+    // the shop's own run: 411 lines raised 180 unknown-SKU problems over 133 distinct SKUs and 79 unmapped-option
+    // problems over 15 distinct option strings. The decision is the SKU and the option, never the line.
+    {
+      const keyOf = (kind, p2) => kind === 'unmatchedSku' ? (p2.sku ? 'ord:sku:' + p2.sku : 'ord:listing:' + p2.listingId)
+        : kind === 'needsMapping' ? 'ord:opt:' + p2.optionName + '\u0000' + p2.optionValue : null;
+      const lines = [
+        { listingId: '1', sku: 'FOOTBALL', title: 'a' }, { listingId: '2', sku: 'FOOTBALL', title: 'b' },
+        { listingId: '3', sku: 'FOOTBALL', title: 'c' }, { listingId: '4', sku: 'GLOBE', title: 'd' },
+      ];
+      const keys = new Set();
+      for (const l of lines) {
+        const sp2 = O.interpretLine(order, mk(l), { optionMaps: {}, aliases: {}, noDesign: {}, masterEntry: () => null });
+        for (const p2 of sp2.problems) { const k = keyOf(p2.kind, p2); if (k) keys.add(k); }
+      }
+      assert.deepStrictEqual([...keys].sort(), ['ord:sku:FOOTBALL', 'ord:sku:GLOBE'], 'four lines, two decisions: ' + [...keys]);
+    }
     assert.strictEqual(O.poolId(order, mk(), 2), '3521337740_4412778001_2');
     pass('interpretation');
   }
@@ -93,30 +114,60 @@ const pass = (name) => console.log('  ✓', name);
     { const c = g.charms.find(x => x.sku === 'BR-TST-01'); const fillIn = { outline: c.outline, members: c.members, bbox: c.bbox }; let threw = null; try { G.backView(fillIn, { res: 6, isCut: m => G.isCutLine(m) || (m.fill && !m.stroke) }); } catch (e) { threw = e; } assert(threw && threw.checks && threw.checks.detailDropped === false, 'a fill left in fails detailDropped'); }
     { const c = g.charms.find(x => x.sku === 'BR-TST-01'); const hole = c.members.find(m => m !== c.outline && G.isCutLine(m)); const shifted = G.transformSeg(hole, G.translate(0, -4)); const bad = { outline: c.outline, members: [c.outline, shifted], bbox: c.bbox }; const v = G.backView(bad, { res: 6 }); const p = G.interiorPoint(G.flatten(hole, 12)); assert.strictEqual(G.at(v.B, 2 * v.cx - p[0], p[1]), 1, 'with the hole shifted, the ORIGINAL hole spot is solid on the back: the hole check would catch it'); }
     pass('flip');
-    /* ── the size of the lettering: how much there is to say against how much room there is (§7.4) ── */
+    /* ── the size of the lettering: how wide the longest line is against how wide the face is (§7.4) ── */
     {
-      const capPerEm = 0.66, mm = 25.4 / 72;
-      const capOf = (text, charmMm, ceilingCapMm) => {
-        const fittedMax = ceilingCapMm / (capPerEm * mm);
-        const size = G.defaultSize([text], fittedMax, { capPerEm, minCapMm: 1.6, charmMinMm: charmMm });
-        return { cap: size * capPerEm * mm, size, fittedMax };
+      const capPerEm = G.capPerEm(font), mm = 25.4 / 72;
+      const advanceOf = t => font.getAdvanceWidth(t, 1, { kerning: true });
+      // a disc of D mm: the usable face after the 0.8 mm margin, and the largest cap the fitter would allow
+      const face = D => Math.PI * Math.pow((D - 1.6) / 2, 2);
+      const ceilOf = D => 0.4 * capPerEm * D;                                  // fitText's own maxHeightFrac guard
+      const call = (text, D, ceilingCapMm) => {
+        const capCeil = ceilingCapMm == null ? ceilOf(D) : ceilingCapMm;
+        const fittedMax = capCeil / (capPerEm * mm);
+        const size = G.defaultSize([].concat(text), fittedMax, { capPerEm, minCapMm: 1.6, charmMinMm: D, charmMaxMm: D, usableAreaMm2: face(D), advanceOf });
+        return { size, fittedMax, cap: size * capPerEm * mm, capCeil, adv: Math.max(...[].concat(text).map(t => advanceOf(t) / capPerEm)) };
       };
-      const finn = capOf('Finn', 14, 5.6), long = capOf('Happy Birthday Mom Love You', 14, 5.6);
-      assert(finn.size < finn.fittedMax * 0.8, 'a short name does not take the largest size that fits');
-      assert(finn.cap / 14 < 0.32, `a short name stays modest against the charm: ${finn.cap.toFixed(2)} mm on 14 mm`);
-      assert(long.size > finn.size, 'a longer text takes more of the room than a short one');
-      assert(long.size <= long.fittedMax + 1e-9, 'and never more than fits');
-      // smooth across lengths: no cliff between one character and the next
-      let prev = 0, jumps = [];
-      for (let n = 2; n <= 24; n++) { const c = capOf('x'.repeat(n), 14, 5.6).size; if (prev) jumps.push(c - prev); prev = c; }
-      assert(jumps.every(j => j >= -1e-9), 'size never falls as the text gets longer');
-      assert(Math.max(...jumps) < 0.25 * prev, 'and never jumps in a step: biggest step ' + Math.max(...jumps).toFixed(3));
+      // the complaint: a four letter name must not be set at the largest size that fits
+      const finn = call('Finn', 14);
+      assert(finn.cap < finn.capCeil * 0.75, `a short name is well under the ceiling: ${finn.cap.toFixed(2)} of ${finn.capCeil.toFixed(2)} mm`);
+      assert(finn.cap / 14 > 0.1 && finn.cap / 14 < 0.2, `and is a sane share of the charm: ${(finn.cap / 14 * 100).toFixed(1)}% of 14 mm`);
+      // the ceiling is absolute, and the legible floor is absolute — including after the 0.05 pt quantisation
+      for (const D of [8, 10, 12, 14, 16, 20, 24, 30]) for (const n of [1, 3, 4, 7, 12, 20, 34]) {
+        const c = call('m'.repeat(n), D);
+        assert(c.size <= c.fittedMax + 1e-9, `ceiling held: ${n} chars on ${D} mm`);
+        assert(c.cap >= Math.min(1.6, c.capCeil) - 1e-6, `floor held: ${c.cap.toFixed(3)} mm, ${n} chars on ${D} mm`);
+        assert(c.size > 0 && isFinite(c.size), `a real size: ${n} on ${D}`);
+      }
+      // length is read from the font, not from a character count: WILLIAM is 7 characters and wider than illinois, 8
+      const will = call('WILLIAM', 16), illi = call('illinois', 16);
+      assert(will.adv > illi.adv, 'WILLIAM is the wider line');
+      assert(will.cap < illi.cap, `and so is set smaller: WILLIAM ${will.cap.toFixed(2)} vs illinois ${illi.cap.toFixed(2)} mm`);
+      // the lettering falls as the line gets wider, and the line itself claims more of the face
+      const names = ['Al', 'Finn', 'Emily', 'Jessica', 'Charlotte', 'Alexandria'];
+      let lastCap = Infinity, lastWidth = 0;
+      for (const nm of names) {
+        const c = call(nm, 20);
+        const width = c.adv * c.cap;
+        assert(c.cap <= lastCap + 1e-9, `the lettering never grows with the line: ${nm} ${c.cap.toFixed(2)} after ${lastCap.toFixed(2)}`);
+        assert(width >= lastWidth - 1e-9, `and the line claims more of the face: ${nm} ${width.toFixed(2)} mm`);
+        lastCap = c.cap; lastWidth = width;
+      }
+      // no cliff: one more character never moves the size by more than a sixteenth
+      let prev = 0, biggest = 0;
+      for (let n = 3; n <= 40; n++) { const c = call('n'.repeat(n), 16).cap; if (prev) biggest = Math.max(biggest, Math.abs(c - prev) / prev); prev = c; }
+      assert(biggest < 0.0625, 'no step between consecutive lengths: biggest ' + (biggest * 100).toFixed(1) + '%');
+      // the same name on bigger charms keeps the same proportion
+      const band = [14, 16, 20, 24, 30].map(D => call('Finn', D).cap / D);
+      assert(Math.max(...band) / Math.min(...band) < 1.12, 'Finn holds its share of the charm across sizes: ' + band.map(v => v.toFixed(3)).join(' '));
       // a charm with barely any room keeps the lettering legible rather than shrinking it to nothing
-      const tight = capOf('ANNA', 6, 1.9);
+      const tight = call('ANNA', 6, 1.9);
       assert(tight.cap >= 1.6 - 1e-6, `never under the legible minimum: ${tight.cap.toFixed(2)} mm`);
-      assert(tight.size > tight.fittedMax * 0.8, 'and close to the largest that fits when the room is tight');
-      // the ceiling is always respected
-      for (const n of [1, 4, 9, 18, 40]) { const c = capOf('y'.repeat(n), 10, 2.0); assert(c.size <= c.fittedMax + 1e-9, 'ceiling held at ' + n); }
+      // and when the ceiling is itself under the minimum, the ceiling wins and is returned untouched
+      const squeezed = call('Happy Birthday Mom', 16, 1.0966);
+      assert.strictEqual(squeezed.size, squeezed.fittedMax, 'a ceiling under the floor is returned exactly, never re-quantised');
+      // nothing measured, nothing changed
+      assert.strictEqual(G.defaultSize(['Finn'], 9, { capPerEm }), 9, 'with no face and no font the ceiling stands');
+      assert.strictEqual(G.defaultSize([''], 9, { capPerEm, usableAreaMm2: 100, advanceOf }), 9, 'an empty line leaves the ceiling alone');
       pass('lettering size');
     }
     /* ── fit (§15 · a hole, a thin ring, a diagonal band; largest size; heart refused) ── */

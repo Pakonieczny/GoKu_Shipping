@@ -5354,13 +5354,19 @@ const BritesChat = (() => {
 
   return {
     /** Post one internal message under a given sender name (the Charm Sorter posts as "Charm Sorter"). */
-    async postAs(rid, text, sender) {
+    async postAs(rid, text, sender, imageUrl) {
       rid = String(rid || "").trim(); text = String(text || "").trim(); sender = String(sender || "Charm Sorter").trim();
-      if (!rid || !text) throw new Error("receipt and text required");
-      try { await postText(rid, text, sender); }
-      catch (_) { await directWrite(rid, { text, senderName: sender, senderRole: "staff" }); }
+      if (!rid || (!text && !imageUrl)) throw new Error("receipt and text required");
+      if (imageUrl) await directWrite(rid, { imageUrl: String(imageUrl), text: text || "Image attachment", senderName: sender, senderRole: "staff" });
+      else { try { await postText(rid, text, sender); } catch (_) { await directWrite(rid, { text, senderName: sender, senderRole: "staff" }); } }
       try { setMessageFlag(rid, true); } catch (_) {}
       return true;
+    },
+    /** The whole internal thread for one order, oldest first — what the sorter's own order window shows. */
+    async listAll(rid, limit) {
+      if (!db) return [];
+      const snap = await db.collection(COLL).doc(String(rid)).collection("messages").orderBy("timestamp", "desc").limit(Math.max(1, Math.min(200, limit || 80))).get();
+      return snap.docs.map(d => { const m = d.data() || {}; const t = m.timestamp; return { id: d.id, senderName: String(m.senderName || "Staff"), senderRole: String(m.senderRole || "staff"), text: String(m.text || ""), imageUrl: m.imageUrl || null, at: t && t.toMillis ? t.toMillis() : (t && t.seconds ? t.seconds * 1000 : null) }; }).reverse();
     },
     open(rid) {
       wire();
@@ -7164,6 +7170,22 @@ const Bridge = (() => {
       return { order: await orderForBridge(r), gone: false, etsyCalls: etsyMeter.total - calls0 };
     },
     async "orders.watch"(a) { S.watch = !!a.on; return { watching: S.watch }; },
+    /* The sorter shows the same photographs this page does. They are served from this page's own listing-image cache and
+       its rate limiter, so a wall of cards in the sorter costs Etsy nothing beyond what this page would already have
+       spent, and the sorter never needs an Etsy session of its own. */
+    async "orders.images"(a) {
+      const ids = [...new Set((a.listingIds || []).map(String).filter(Boolean))].slice(0, 24);
+      const out = {};
+      await Promise.all(ids.map(async id => {
+        try {
+          const imgs = await fetchListingImages(id);
+          const first = Array.isArray(imgs) ? imgs[0] : null;
+          const url = first?.url_570xN || first?.url_fullxfull || first?.url || first?.image_url || first?.fullsize_url || first?.src || null;
+          out[id] = url ? await getLocalImageData(url) : null;
+        } catch (_) { out[id] = null; }
+      }));
+      return { images: out };
+    },
     async "ui.select"(a) {
       const selected = [], refused = [];
       for (const id of (a.receiptIds || []).map(String)) {
@@ -7207,7 +7229,8 @@ const Bridge = (() => {
       const note = $("#modalStaffNote"); if (note && note.dataset.rid === rid) note.value = text;
       return { receiptId: rid, hasNote: !!text.trim() };
     },
-    async "chat.post"(a) { const rid = String(a.receiptId || ""); await Cursor.act("row", rid, `Post a chat message on ${rid}`); await BritesChat.postAs(rid, String(a.text || ""), a.sender || "Charm Sorter"); msgCache.delete(rid); return { receiptId: rid }; },
+    async "chat.post"(a) { const rid = String(a.receiptId || ""); await Cursor.act("row", rid, `Post a chat message on ${rid}`); await BritesChat.postAs(rid, String(a.text || ""), a.sender || "Charm Sorter", a.imageUrl || null); msgCache.delete(rid); return { receiptId: rid }; },
+    async "chat.list"(a) { const rid = String(a.receiptId || ""); if (!rid) throw new Error("receiptId required"); return { receiptId: rid, messages: await BritesChat.listAll(rid, a.limit) }; },
     async "complete.preview"(a) {
       const ids = (a.receiptIds || []).map(String);
       if (!ids.length) throw new Error("no orders to preview");
