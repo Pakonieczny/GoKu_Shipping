@@ -285,6 +285,31 @@ const receipts = [
           chips: [...v.querySelectorAll('.egTab')].map(b2 => b2.textContent.trim()) };
       });
       console.log('review screen', JSON.stringify(rv));
+      // CN_SHOTS=<dir> captures every screen at two widths and the order window — the evidence a design review runs on
+      if (process.env.CN_SHOTS) {
+        const SH = process.env.CN_SHOTS;
+        const grab = async (name, w, h) => { await page.setViewportSize({ width: w, height: h }); await page.waitForTimeout(450); await page.screenshot({ path: SH + '/' + name + '.png' }); };
+        for (const [mode, fn] of [['orders', 'Orders'], ['engrave', 'Engrave'], ['review', 'Review'], ['master', 'Master'], ['design', null], ['nest', null], ['library', null], ['charms', null]]) {
+          await page.evaluate(m => { CN.setMode(m); }, mode);
+          if (fn) await page.evaluate(f => { try { window[f].render(); } catch (_) {} }, fn);
+          await grab('tab-' + mode + '-1500', 1500, 1000);
+          await grab('tab-' + mode + '-1180', 1180, 760);
+        }
+        await page.setViewportSize({ width: 1500, height: 1000 });
+        await page.evaluate(() => { CN.setMode('orders'); Orders.render(); });
+        await page.waitForTimeout(400);
+        await page.evaluate(() => { const b = document.querySelector('#ordItems .ocard'); if (b) b.click(); });
+        await page.waitForTimeout(800);
+        await page.screenshot({ path: SH + '/win-order-1500.png' });
+        await grab('win-order-1180', 1180, 760);
+        await page.evaluate(() => { const d = document.getElementById('orderWin'); if (d && d.open) d.close(); });
+        await page.setViewportSize({ width: 1500, height: 1000 });
+        await page.evaluate(() => { CN.setMode('orders'); Orders.render(); const lb = document.querySelector('[data-view=list]'); if (lb) lb.click(); });
+        await page.waitForTimeout(400);
+        await page.screenshot({ path: SH + '/orders-list-1500.png' });
+        await page.evaluate(() => { const cb = document.querySelector('[data-view=cards]'); if (cb) cb.click(); CN.setMode('engrave'); Engrave.render(); });
+        await page.waitForTimeout(400);
+      }
       // ── the Orders tab: a card for every line, the same line as a row, the filters, and the order window (§5) ──
       const ord = await page.evaluate(async () => {
         CN.setMode('orders'); Orders.render();
