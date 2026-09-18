@@ -18,7 +18,7 @@
 (function () {
 const O = CharmNestOrders, G = CharmNestGeom, P = CharmNestPDF;
 const MM = 25.4 / 72, PT = 72 / 25.4;
-const B = window.B = { link: null, orders: { rows: [], byKey: new Map(), pulledAt: 0, stale: false, snapshot: null, filtered: 0 }, master: { entries: new Map(), files: [], loadedAt: 0, loading: null, jobs: new Map() }, maps: { optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [], rows: [] }, loadedAt: 0 }, pool: { rows: new Map(), sources: new Map() }, engrave: { items: new Map(), fonts: { ok: false, Regular: null, Semibold: null, error: null, loading: null } }, review: { items: [] }, run: null, sets: new Map(), employee: (localStorage.getItem("cn.employee") || "").trim() };
+const B = window.B = { link: null, orders: { rows: [], byKey: new Map(), pulledAt: 0, stale: false, snapshot: null, filtered: 0 }, master: { entries: new Map(), files: [], loadedAt: 0, loading: null, jobs: new Map() }, maps: { optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [], rows: [] }, loadedAt: 0 }, pool: { rows: new Map(), sources: new Map() }, engrave: { items: new Map(), fonts: { ok: false, Regular: null, Semibold: null, error: null, loading: null } }, review: { items: [] }, openRuns: null, run: null, sets: new Map(), employee: (localStorage.getItem("cn.employee") || "").trim() };
 const SOURCE_LABEL = { personalization: "the personalisation box", personalisation: "the personalisation box", buyerMessage: "the buyer's message", staffNote: "the staff note", messages: "the staff messages", none: "", "": "" };
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 const fmtT = t => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -2078,7 +2078,14 @@ const RunCtl = window.RunCtl = (() => {
     if (!open.length) { toast("No open run to resume", ""); return; }
     const pick = prompt(`Open runs:\n${open.map((x, i) => `${i + 1}. ${x.runId} · ${x.step} · ${x.status} · ${x.lines} line(s) · ${new Date(x.updatedAt).toLocaleString()}${x.stoppedBy ? " · " + x.stoppedBy : ""}`).join("\n")}\n\nNumber to resume (or a to abandon one):`, "1");
     if (!pick) return;
-    const m = /^a\s*(\d+)/i.exec(pick.trim()); if (m) { const x = open[+m[1] - 1]; if (x) { await api("charmNestLibrary", { op: "runPut", run: { runId: x.runId, status: "abandoned", abandonedAt: Date.now() }, merge: true }); toast(`${x.runId} abandoned`, "ok"); } return; }
+    const m = /^a\s*(\d+)/i.exec(pick.trim());
+    if (m) {
+      const x = open[+m[1] - 1]; if (!x) return;
+      if (!confirm(`Give up run ${x.runId.slice(-8)}?\n\n${x.lines} line(s) at step ${x.step}. Anything decided but not written is lost.\n\nThe sheets and files already saved are kept.`)) return;
+      await api("charmNestLibrary", { op: "runPut", run: { runId: x.runId, status: "abandoned", abandonedAt: Date.now() }, merge: true });
+      toast(`${x.runId} abandoned`, "ok");
+      return;
+    }
     const x = open[+pick - 1]; if (!x) return;
     await resumeRun(x.runId);
   }
@@ -2159,6 +2166,14 @@ const RunCtl = window.RunCtl = (() => {
         h.innerHTML = `<span class="why"><b>Set finished</b> · the next run starts in ${mm}:${String(ss).padStart(2, "0")}</span><span class="spacer"></span><span class="acts"><button class="btn gold sm" id="rbNow" title="start the next run now instead of waiting">Run now</button><button class="btn ghost sm" id="rbCancelNext" title="do not start another run on its own">Cancel</button></span>`;
         h.querySelector("#rbNow").onclick = () => { cancelNext(); clearRunState(); start({ mode: "auto" }).catch(e => toast(e.message, "bad")); };
         h.querySelector("#rbCancelNext").onclick = () => cancelNext();
+        Dock.schedule(); return;
+      }
+      // a run left open by a reload or a closed tab is offered here, not in a toast pointing at another tab's button
+      if (B.openRuns && B.openRuns.length) {
+        h.classList.remove("hidden"); h.className = "runBanner review";
+        h.innerHTML = `<span class="why"><b>${B.openRuns.length} open run${B.openRuns.length === 1 ? "" : "s"}</b> · left from an earlier session</span><span class="spacer"></span><span class="acts">${B.openRuns.slice(0, 3).map(x => `<button class="btn gold sm" data-rbres="${esc(x.runId)}" title="carry on from ${esc(x.step)} · ${x.lines} line(s) · ${new Date(x.updatedAt).toLocaleString()}">Resume ${esc(x.runId.slice(-8))} · ${esc(x.step)}</button>`).join("")}<button class="btn ghost sm" id="rbLater" title="leave these for later — they stay on record">Not now</button></span>`;
+        h.querySelectorAll("[data-rbres]").forEach(b => b.onclick = () => { B.openRuns = null; resumeRun(b.dataset.rbres).catch(e => toast(e.message, "bad", 7000)); });
+        h.querySelector("#rbLater").onclick = () => { B.openRuns = null; renderBanner(); };
         Dock.schedule(); return;
       }
       h.classList.add("hidden"); Dock.schedule(); return;
@@ -2668,7 +2683,11 @@ function bootBridge() {
   // The Design Station guards unload in three places; the sorter guarded it nowhere. A reload mid-run loses every
   // engraving approval not yet written to a back file and every review decision made that shift.
   window.addEventListener("beforeunload", e => {
-    if (!B.run || !["running", "review", "paused"].includes(B.run.status)) return;
+    const r = B.run; if (!r) return;
+    const live = ["running", "review", "paused"].includes(r.status);
+    // a stopped run is the likeliest moment for a reload and holds the most unwritten work — but only nag when there is some
+    const unwritten = r.status === "stopped" && ([...Engrave.items().values()].filter(j => ["approved", "words", "review"].includes(j.state) && !j.backs).length || Review.count());
+    if (!live && !unwritten) return;
     e.preventDefault(); e.returnValue = "";
   });
   RunCtl.renderModeBtn(); RunCtl.renderBanner(); LiveStrip.render(); Sandbox.render(); Sandbox.afterReload(); if (Sandbox.on()) agent({ bridge: true }, "warn", "SANDBOX mode: emulated Etsy from the stored snapshot, every record and file goes to sandbox copies");
@@ -2676,7 +2695,7 @@ function bootBridge() {
   Orders.loadMaps().catch(() => {}); Master.load().catch(() => {});
   Engrave.loadFonts().catch(() => {});
   // an open run from a previous session is offered for resume
-  if (S.cloud.ok) api("charmNestLibrary", { op: "runList", limit: 10 }).then(r => { const open = (r.runs || []).filter(x => !["complete", "abandoned"].includes(x.status)); if (open.length) { agent({ bridge: true }, "DS", `${open.length} open run(s) on record — Orders tab › Resume run…`); toast(`${open.length} run(s) can be resumed (Orders tab)`, "", 6000); } }).catch(() => {});
+  if (S.cloud.ok) api("charmNestLibrary", { op: "runList", limit: 10 }).then(r => { const open = (r.runs || []).filter(x => !["complete", "abandoned"].includes(x.status)); if (open.length) { B.openRuns = open; agent({ bridge: true }, "DS", `${open.length} open run(s) on record — offered on the run banner`); RunCtl.renderBanner(); } }).catch(() => {});
   // the Design Station frame mounts on first visit to its tab; Auto mode mounts it now
   if (S.settings.runMode === "auto") { setTimeout(() => RunCtl.setMode("auto"), 1500); }
   document.addEventListener("keydown", e => { if (e.altKey && e.key === "r") { e.preventDefault(); setMode("review"); } });

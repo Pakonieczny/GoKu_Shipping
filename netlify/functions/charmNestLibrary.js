@@ -109,8 +109,12 @@ async function op_listCharms(b) {
   const q = str(b.q, 80).toLowerCase(); const limit = Math.min(1000, Math.max(1, num(b.limit) || 400));
   const snap = await db.collection(LIB).orderBy("lastUsed", "desc").limit(limit).get();
   let rows = snap.docs.map(d => { const r = d.data(); return { hash: d.id, name: r.name || null, label: r.label || null, namedBy: r.namedBy || null, metalHint: r.metalHint || null, thumbUrl: r.thumbUrl || null, aiUrl: r.aiUrl || null, widthPt: num(r.widthPt), heightPt: num(r.heightPt), areaPt2: num(r.areaPt2), timesUsed: num(r.timesUsed), sourceName: r.sourceName || null, lastUsed: ms(r.lastUsed) }; });
+  // Firestore cannot match a substring, so the limit has to come first and the filter second — which means a search
+  // only ever sees the most recently used `limit` charms. A charm that genuinely exists but was last used 401 charms
+  // ago used to come back as "no charms yet": a false negative on correct input. The caller is told how far it looked.
+  const scanned = rows.length;
   if (q) rows = rows.filter(r => `${r.name || ""} ${r.label || ""} ${r.sourceName || ""}`.toLowerCase().includes(q));
-  return { charms: rows };
+  return { charms: rows, scanned, truncated: scanned >= limit };
 }
 async function op_putSheet(b) {
   const s = b.sheet || {}; if (!isId(s.id)) return { error: "bad sheet id" };
