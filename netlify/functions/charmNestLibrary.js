@@ -409,7 +409,7 @@ async function op_purgeHistory(b) {
   if (!b.force) {
     for (const prefix of ["", "Sandbox_"]) {
       const snap = await db.collection(prefix + RUNS).where("status", "in", ["running", "review", "paused"]).limit(5).get();
-      const live = snap.docs.map(d => d.data()).filter(r => Date.now() - (ms(r.updatedAt) || 0) < 6 * 3600 * 1000);
+      const live = snap.docs.map(d => d.data()).filter(r => ["running", "review", "paused"].includes(r.status) && Date.now() - (ms(r.updatedAt) || 0) < 6 * 3600 * 1000);
       if (live.length) return { error: `a run is still open (${live.map(r => r.runId).join(", ")}) — stop or abandon it first`, status: 409 };
     }
   }
