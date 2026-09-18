@@ -33,9 +33,30 @@ const pass = (name) => console.log('  ✓', name);
     for (const v of ['18"', '16.5"', '45cm', '16 inches']) assert(one('LENGTH', v).startsWith('chain:'), 'a length: ' + v);
     assert.strictEqual(one('Charm Type', 'Necklace CHARM'), 'form:necklace', 'the shop writes the words in its own order');
     assert.strictEqual(one('Charm Type', 'CHARM + Engraving'), 'form:charm', 'and adds a word that is not the choice');
-    for (const v of ['Huggie CHARM SET', '18 Inch', 'Tag1 (front engrave)']) assert.strictEqual(one('Charm Type', v), 'unmapped', 'anything it cannot read stays for a person: ' + v);
-    assert.strictEqual(one('HOOP SIZE', '8.5mm'), 'unmapped', 'hardware is never read as a charm size');
-    assert.strictEqual(one('Necklace Length in inches', 'Charm Only-No Chain'), 'unmapped', 'a choice that is not a length stays for a person');
+    for (const v of ['Huggie CHARM SET', 'Tag1 (front engrave)']) assert.strictEqual(one('Charm Type', v), 'unmapped', 'anything it cannot read stays for a person: ' + v);
+    // each of these held real lines in the shop's own run — the words say plainly what the other option's name asks for
+    assert.strictEqual(one('Charm Type', '18 Inch'), 'chain:18 Inch', 'a length under a form option is still a length');
+    for (const n of ['Necklace Length in inches', 'LENGTH', 'Length'])
+      assert.strictEqual(one(n, 'Charm Only-No Chain'), 'form:charm', 'a form under a length option is still a form: ' + n);
+    for (const [n, v, want] of [['HOOP SIZE', '8.5mm', 'size:8.5MM'], ['HOOP SIZE', '11mm', 'size:11MM'], ['Ring size', '8 US', 'size:8US'], ['Charm Size', '14mm + engraving', 'size:14MM']])
+      assert.strictEqual(one(n, v), want, `a measurement under a size option is a size: ${n}: ${v}`);
+    assert.strictEqual(one('Charm Type', 'Huggie hoops'), 'form:huggie', 'the shop sells huggies as their own design');
+    // the shop's own run: 411 lines raised 180 unknown-SKU problems over 133 distinct SKUs and 79 unmapped-option
+    // problems over 15 distinct option strings. The decision is the SKU and the option, never the line.
+    {
+      const keyOf = (kind, p2) => kind === 'unmatchedSku' ? (p2.sku ? 'ord:sku:' + p2.sku : 'ord:listing:' + p2.listingId)
+        : kind === 'needsMapping' ? 'ord:opt:' + p2.optionName + '\u0000' + p2.optionValue : null;
+      const lines = [
+        { listingId: '1', sku: 'FOOTBALL', title: 'a' }, { listingId: '2', sku: 'FOOTBALL', title: 'b' },
+        { listingId: '3', sku: 'FOOTBALL', title: 'c' }, { listingId: '4', sku: 'GLOBE', title: 'd' },
+      ];
+      const keys = new Set();
+      for (const l of lines) {
+        const sp2 = O.interpretLine(order, mk(l), { optionMaps: {}, aliases: {}, noDesign: {}, masterEntry: () => null });
+        for (const p2 of sp2.problems) { const k = keyOf(p2.kind, p2); if (k) keys.add(k); }
+      }
+      assert.deepStrictEqual([...keys].sort(), ['ord:sku:FOOTBALL', 'ord:sku:GLOBE'], 'four lines, two decisions: ' + [...keys]);
+    }
     assert.strictEqual(O.poolId(order, mk(), 2), '3521337740_4412778001_2');
     pass('interpretation');
   }

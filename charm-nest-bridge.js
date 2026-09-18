@@ -1702,16 +1702,41 @@ const RunCtl = window.RunCtl = (() => {
 /* ═══ 24 · Review — every decision a person must make ═════════════════════ */
 const Review = window.Review = (() => {
   const items = () => B.review.items;
-  const count = () => items().filter(it => !(it.row && it.row.state === "gone")).length;
+  const mine = it => !String(it.key || "").startsWith("eng:") && !(it.row && it.row.state === "gone");   // engraving is the Engraving tab's
+  const count = () => items().filter(mine).length;
   function add(it) { const i = items().findIndex(x => x.key === it.key); const fresh = i < 0; if (fresh) items().push(Object.assign({ t: Date.now() }, it)); else items()[i] = Object.assign(items()[i], it); if (fresh && B.run && ["review", "paused", "stopped"].includes(B.run.status)) notifyPerson("Charm Sorter needs a person", it.why || it.kind); render(); LiveStrip.render(); RunCtl.renderBanner(); }
   function remove(key) { const n = items().length; B.review.items = items().filter(x => x.key !== key); if (n !== items().length) { render(); LiveStrip.render(); RunCtl.renderBanner(); } }
   function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? `option "${p.optionName}: ${p.optionValue}" not mapped` : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
+  /** The key of the DECISION a problem asks for, not of the line that raised it. An unknown SKU is one decision however
+   *  many orders bought it; an unmapped option is one decision however many lines carry it. A run that raised 180 of the
+   *  first and 79 of the second showed 259 items where 148 decisions were waiting. */
+  const SEP = "\u0000";
+  function decisionKey(row, p) {
+    if (p.kind === "unmatchedSku") return p.sku ? `ord:sku:${p.sku}` : `ord:listing:${p.listingId || row.key}`;
+    if (p.kind === "blockedSku") return `ord:blocked:${p.sku}`;
+    if (p.kind === "needsMapping") return `ord:opt:${p.optionName}${SEP}${p.optionValue}`;
+    if (p.kind === "needsMaterial") return `ord:mat:${p.listingId || row.key}${SEP}${p.metalLabel || ""}`;
+    return `ord:${row.key}:${p.kind}`;                                   // a size or a plate is this charm's own
+  }
   /** Order-level items follow the rows' problems: added when a problem appears, removed when it is fixed. */
   function syncOrderItems() {
-    const keep = new Set();
-    for (const row of Orders.rows()) { if (row.state === "gone") continue; for (const p of row.problems || []) { const key = `ord:${row.key}:${p.kind}`; keep.add(key); if (!items().some(x => x.key === key)) add({ kind: p.kind, key, row, problem: p, why: problemText(p) }); } }
+    const keep = new Map();
+    for (const row of Orders.rows()) { if (row.state === "gone") continue; for (const p of row.problems || []) {
+      const key = decisionKey(row, p);
+      if (!keep.has(key)) keep.set(key, { kind: p.kind, key, row, problem: p, rows: [], why: problemText(p) });
+      const it = keep.get(key); if (!it.rows.includes(row)) it.rows.push(row);
+    } }
+    for (const [key, it] of keep) { const had = items().find(x => x.key === key); if (had) Object.assign(had, { rows: it.rows, row: it.row, problem: it.problem, why: it.why }); else add(it); }
     B.review.items = items().filter(x => !x.key.startsWith("ord:") || keep.has(x.key));
     render(); LiveStrip.render(); RunCtl.renderBanner();
+  }
+  /** Every line the item speaks for — the group when it has one, the single row otherwise. */
+  const rowsOf = it => (it.rows && it.rows.length ? it.rows : it.row ? [it.row] : []).filter(r => r.state !== "gone");
+  /** Apply one decision to every line it covers, then re-pool them together. */
+  async function repoolAll(it, before) {
+    const rows = rowsOf(it);
+    for (const r of rows) if (before) before(r);
+    for (const r of rows) await repool(r);
   }
   function focus(rowKey) { RV.filter = null; render(); const c = document.querySelector(`#reviewView [data-row="${CSS.escape(rowKey)}"]`); if (c) { c.scrollIntoView({ behavior: "smooth", block: "center" }); c.classList.add("pulse"); setTimeout(() => c.classList.remove("pulse"), 1300); } }
   async function repool(row) { row.problems = []; row.state = "pulled"; row.reason = null; Orders.interpretAll(); if (row.problems.length) { Orders.render(); return; } if (B.run && O.stepIndex(B.run.step) >= O.stepIndex("pool")) { try { await Pool.poolAdd(row, B.run); } catch (e) { row.state = "held"; row.reason = e.message; } if (row.state === "pooled" && row.spec.engraveCandidate) Engrave.classify(row).catch(() => {}); } syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards(); RunCtl.poke(); }
@@ -1727,24 +1752,28 @@ const Review = window.Review = (() => {
   function card(it) {
     const c = el("div", "rvItem"); c.dataset.kind = it.kind; if (it.row) c.dataset.row = it.row.key;
     const r = it.row, sp = r && r.spec, p = it.problem || {};
-    const head = (kind, ttl, sub) => `<div class="rh"><span class="kind">${esc(kind)}</span><span class="ttl">${esc(ttl)}</span><span class="sub">${esc(sub || "")}</span></div>`;
+    const group = rowsOf(it);
+    const orders = [...new Set(group.map(x => x.order.receiptId))];
+    const scope = group.length > 1
+      ? `<span class="pill neutral" title="${esc(orders.slice(0, 20).join(" · ") + (orders.length > 20 ? " …" : ""))}">${group.length} lines · ${orders.length} order${orders.length === 1 ? "" : "s"} · one decision</span>` : "";
+    const head = (kind, ttl, sub) => `<div class="rh"><span class="kind">${esc(kind)}</span><span class="ttl">${esc(ttl)}</span><span class="sub">${esc(sub || "")}</span>${scope}</div>`;
     const evRow = (lbl, val) => `<div><span class="lbl">${esc(lbl)}</span>${val}</div>`;
     const orderSub = r ? `${r.order.receiptId} · ${sp && sp.designSku || r.line.sku || "no SKU"} · ${r.line.title}` : "";
     if (it.kind === "needsMaterial") {
       c.innerHTML = head("Needs material", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Station read", esc(p.metalLabel || "nothing"))}${evRow("Options", (r.line.variations || []).map(v => `<q>${esc(v.name)}: ${esc(v.value)}</q>`).join(" "))}${evRow("Title", esc(r.line.title))}</div><div class="why">${esc(it.why)}</div>
         <div class="fixes"><select data-f="mat"><option value="">pick a material…</option>${METALS.map(m => `<option value="${m.key}">${esc(m.label)}</option>`).join("")}</select><button class="btn gold sm" data-a="mat">Use it (writes a staff note)</button><button class="btn ghost sm" data-a="skip">Skip line</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
-      c.querySelector("[data-a=mat]").onclick = async () => { const m = c.querySelector("[data-f=mat]").value; if (!m) return; const who = by(); if (!who) return; row_material(r, m, who); };
+      c.querySelector("[data-a=mat]").onclick = async () => { const m = c.querySelector("[data-f=mat]").value; if (!m) return; const who = by(); if (!who) return; row_material(it, m, who); };
     } else if (it.kind === "needsMapping") {
       c.innerHTML = head("Needs mapping", `${p.optionName}: ${p.optionValue}`, orderSub) + `<div class="ev">${evRow("Listing", esc(p.listingId))}${evRow("Title", esc(p.title))}${evRow("All options", (r.line.variations || []).map(v => `<q>${esc(v.name)}: ${esc(v.value)}</q>`).join(" "))}</div>
-        <div class="fixes"><select data-f="field"><option value="form">form</option><option value="size">size</option><option value="chain">chain</option></select><input data-f="val" placeholder="value (necklace · earrings · charm · S · 18 inch)"><select data-f="scope"><option value="listing">this listing only</option><option value="*">every listing</option></select><button class="btn gold sm" data-a="map">Map it (remembered)</button><button class="btn ghost sm" data-a="ignore">Not relevant for this listing</button></div>`;
+        <div class="fixes"><select data-f="field"><option value="form">form</option><option value="size">size</option><option value="chain">chain</option></select><input data-f="val" placeholder="value (necklace · earrings · charm · S · 18 inch)"><select data-f="scope">${[...new Set(group.map(x => String(x.line.listingId)))].length > 1 ? `<option value="*">every listing (${[...new Set(group.map(x => String(x.line.listingId)))].length})</option><option value="listing">this listing only</option>` : `<option value="listing">this listing only</option><option value="*">every listing</option>`}</select><button class="btn gold sm" data-a="map">Map it (remembered)</button><button class="btn ghost sm" data-a="ignore">Not relevant for this listing</button></div>`;
       c.querySelector("[data-a=map]").onclick = async () => { const field = c.querySelector("[data-f=field]").value, val = c.querySelector("[data-f=val]").value.trim(), scope = c.querySelector("[data-f=scope]").value; if (!val) return; const who = by(); if (!who) return; await api("charmNestLibrary", { op: "optionMapPut", listingId: scope === "*" ? "*" : p.listingId, optionName: p.optionName, optionValue: p.optionValue, map: { field, value: field === "size" ? val.toUpperCase() : val.toLowerCase() }, by: who }); await Orders.loadMaps(true); toast("Mapped and remembered", "ok"); for (const rr of Orders.rows()) if (rr.problems.some(x => x.kind === "needsMapping")) await repool(rr); };
-      c.querySelector("[data-a=ignore]").onclick = async () => { const who = by(); if (!who) return; await api("charmNestLibrary", { op: "optionMapPut", listingId: p.listingId, optionName: p.optionName, optionValue: p.optionValue, map: { field: "ignore" }, by: who }); await Orders.loadMaps(true); await repool(r); };
+      c.querySelector("[data-a=ignore]").onclick = async () => { const who = by(); if (!who) return; for (const lid of [...new Set(group.map(x => String(x.line.listingId)))]) await api("charmNestLibrary", { op: "optionMapPut", listingId: lid, optionName: p.optionName, optionValue: p.optionValue, map: { field: "ignore" }, by: who }); await Orders.loadMaps(true); await repoolAll(it); };
     } else if (it.kind === "unmatchedSku" || it.kind === "blockedSku") {
       const skus = [...B.master.entries.keys()].sort();
       c.innerHTML = head(it.kind === "blockedSku" ? "SKU blocked" : "Unmatched SKU", p.sku || "no SKU", orderSub) + `<div class="ev">${evRow("Why", esc(p.reason || it.why))}${evRow("Listing", esc(String(r.line.listingId || "")))}${evRow("Title", esc(r.line.title))}</div>
         <div class="fixes"><input list="rvSkus" data-f="sku" placeholder="pick the charm from the master index…"><datalist id="rvSkus">${skus.map(s => `<option value="${esc(s)}">`).join("")}</datalist><button class="btn gold sm" data-a="alias">Use this SKU (alias remembered for the listing)</button><button class="btn ghost sm" data-a="nodesign">No design (remembered)</button><button class="btn ghost sm" data-a="hold">Hold order</button>${it.kind === "blockedSku" ? `<button class="btn ghost sm" data-a="master">Open Master</button>` : ""}</div>`;
-      c.querySelector("[data-a=alias]").onclick = async () => { const sku = c.querySelector("[data-f=sku]").value.trim().toUpperCase(); if (!sku) return; const who = by(); if (!who) return; if (!B.master.entries.has(sku)) { toast(`${sku} is not in the master index`, "bad"); return; } await api("charmNestLibrary", { op: "aliasPut", listingId: r.line.listingId, sku, by: who, title: r.line.title }); await Orders.loadMaps(true); toast(`Listing ${r.line.listingId} → ${sku} remembered`, "ok"); for (const rr of Orders.rows()) if (String(rr.line.listingId) === String(r.line.listingId)) await repool(rr); };
-      c.querySelector("[data-a=nodesign]").onclick = async () => { const who = by(); if (!who) return; const sku = p.sku || (sp && sp.designSku); if (sku) await api("charmNestLibrary", { op: "noDesignPut", sku, by: who, note: r.line.title }); else await api("charmNestLibrary", { op: "noDesignPut", pattern: "^" + String(r.line.title).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").slice(0, 40), by: who, note: "by title" }); await Orders.loadMaps(true); await repool(r); };
+      c.querySelector("[data-a=alias]").onclick = async () => { const sku = c.querySelector("[data-f=sku]").value.trim().toUpperCase(); if (!sku) return; const who = by(); if (!who) return; if (!B.master.entries.has(sku)) { toast(`${sku} is not in the master index`, "bad"); return; } const lids = [...new Set(group.map(x => String(x.line.listingId)))]; for (const lid of lids) await api("charmNestLibrary", { op: "aliasPut", listingId: lid, sku, by: who, title: r.line.title }); await Orders.loadMaps(true); toast(`${lids.length} listing${lids.length === 1 ? "" : "s"} → ${sku} remembered`, "ok"); for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId))) await repool(rr); };
+      c.querySelector("[data-a=nodesign]").onclick = async () => { const who = by(); if (!who) return; const sku = p.sku || (sp && sp.designSku); if (sku) await api("charmNestLibrary", { op: "noDesignPut", sku, by: who, note: r.line.title }); else await api("charmNestLibrary", { op: "noDesignPut", pattern: "^" + String(r.line.title).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").slice(0, 40), by: who, note: "by title" }); await Orders.loadMaps(true); await repoolAll(it); };
       const mb = c.querySelector("[data-a=master]"); if (mb) mb.onclick = () => setMode("master");
     } else if (it.kind === "missingSize") {
       c.innerHTML = head("Missing size", `${p.sku} · size ${p.size || "(none)"}`, orderSub) + `<div class="ev">${evRow("Sizes available", (p.available || []).join(", "))}${evRow("Options", (r.line.variations || []).map(v => `<q>${esc(v.name)}: ${esc(v.value)}</q>`).join(" "))}</div><div class="fixes"><select data-f="size">${(p.available || []).map(s => `<option>${esc(s)}</option>`).join("")}</select><button class="btn gold sm" data-a="size">Use this size (staff decision)</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
@@ -1778,16 +1807,22 @@ const Review = window.Review = (() => {
       c.innerHTML = head("Held order", it.rid, it.why) + `<div class="fixes"><button class="btn ghost sm" data-a="jump">Jump to the line's item</button></div>`;
       c.querySelector("[data-a=jump]").onclick = () => { remove(it.key); focus(it.line); };
     } else { c.innerHTML = head(it.kind, it.why || "", orderSub); }
-    const skipB = c.querySelector("[data-a=skip]"); if (skipB) skipB.onclick = () => { const who = by(); if (!who) return; r.state = "skipped"; r.reason = `line skipped by ${who}`; r.problems = []; r.hold = `line skipped by ${who}`; syncOrderItems(); Orders.render(); RunCtl.poke(); };
-    const holdB = c.querySelector("[data-a=hold]"); if (holdB) holdB.onclick = () => { const who = by(); if (!who) return; r.hold = `held by ${who}`; r.reason = r.hold; remove(it.key); Orders.render(); RunCtl.poke(); toast(`${r.order.receiptId} held — it stays open on the station`, ""); };
+    const skipB = c.querySelector("[data-a=skip]"); if (skipB) skipB.onclick = () => { const who = by(); if (!who) return; for (const rr of rowsOf(it)) { rr.state = "skipped"; rr.reason = `line skipped by ${who}`; rr.problems = []; rr.hold = `line skipped by ${who}`; } syncOrderItems(); Orders.render(); RunCtl.poke(); };
+    const holdB = c.querySelector("[data-a=hold]"); if (holdB) holdB.onclick = () => { const who = by(); if (!who) return; const g = rowsOf(it); for (const rr of g) { rr.hold = `held by ${who}`; rr.reason = rr.hold; } remove(it.key); Orders.render(); RunCtl.poke(); const ords = [...new Set(g.map(x => x.order.receiptId))]; toast(`${ords.length === 1 ? ords[0] : ords.length + " orders"} held — they stay open on the station`, ""); };
     return c;
   }
-  async function row_material(r, m, who) { r.materialOverride = m; try { await DesignLink.call("notes.set", { receiptId: r.order.receiptId, text: `${r.spec.staffNote ? r.spec.staffNote + "\n" : ""}Material: ${labelOf(m)} (${who}, sorter)` }); } catch (e) { toast("Staff note not written: " + e.message, "bad"); } await repool(r); }
+  async function row_material(it, m, who) {
+    for (const r of rowsOf(it)) {
+      r.materialOverride = m;
+      try { await DesignLink.call("notes.set", { receiptId: r.order.receiptId, text: `${r.spec.staffNote ? r.spec.staffNote + "\n" : ""}Material: ${labelOf(m)} (${who}, sorter)` }); } catch (e) { toast("Staff note not written: " + e.message, "bad"); }
+    }
+    await repoolAll(it);
+  }
   const KIND_WORDS = { needsMaterial: "Material", needsMapping: "Options", unmatchedSku: "Unknown SKU", blockedSku: "Blocked SKU", missingSize: "Size", oversize: "Too big", fontMissing: "Font", engraveWords: "Words", notRepresentable: "Characters", flipFailed: "Flip", placement: "Placement", orderChanged: "Changed", heldOrder: "Held" };
   const RV = { filter: null };
   function render() {
     const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) return;
-    const all = items().filter(it => !(it.row && it.row.state === "gone"));
+    const all = items().filter(mine);
     const ORDER = ["needsMaterial", "needsMapping", "unmatchedSku", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "orderChanged", "heldOrder"];
     all.sort((a, b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind) || a.t - b.t);
     // the kinds present are the filter: one chip each, so a long mixed list becomes the one kind being worked through

@@ -27,6 +27,7 @@
     "necklace": "necklace", "pendant necklace": "necklace", "charm necklace": "necklace", "necklace (with chain)": "necklace", "with chain": "necklace", "with necklace": "necklace", "necklace & charm": "necklace", "charm + chain": "necklace", "charm and chain": "necklace", "charm with chain": "necklace",
     "earrings": "earrings", "earring": "earrings", "pair of earrings": "earrings", "earrings (pair)": "earrings", "single earring": "earring-single",
     "charm only": "charm", "charm": "charm", "pendant only": "charm", "pendant": "charm", "charm only (no chain)": "charm", "no chain": "charm", "charm without chain": "charm", "loose charm": "charm",
+    "huggie": "huggie", "huggie charm": "huggie", "huggie hoop": "huggie", "huggie hoops": "huggie", "huggie earrings": "huggie", "huggies": "huggie",
     "bracelet": "bracelet", "charm bracelet": "bracelet", "anklet": "anklet", "keychain": "keychain", "key chain": "keychain", "keyring": "keychain"
   };
   const SIZE_VALUES = { "xs": "XS", "extra small": "XS", "s": "S", "small": "S", "m": "M", "medium": "M", "l": "L", "large": "L", "xl": "XL", "extra large": "XL", "mini": "XS", "regular": "M", "standard": "M" };
@@ -45,12 +46,13 @@
   const isFormOption = name => /^\s*(charm |pendant |jewel+ery |jewelry )?(type|style|form)\s*$/i.test(String(name || ""));
   const isMetalOption = name => /metal|colou?r|finish|plating/i.test(String(name || ""));
   const isPersonalisation = name => /personali[sz]ation|engraving text|custom text/i.test(String(name || ""));
-  const isSizeOption = name => /^\s*(charm |pendant )?size\s*$/i.test(String(name || ""));
+  const isSizeOption = name => /(^|\s)size\s*$/i.test(String(name || ""));
   const isChainOption = name => /chain|necklace length|length|extender/i.test(String(name || ""));
   // 16" is how a shop writes a necklace length. The old rule ended in \b, which cannot follow a quote mark, so every
   // length written that way fell through as an unmapped option and held the line.
   const looksLikeLength = v => /^\s*\d+(\.\d+)?\s*("|''|\u201d|\u2033|in\b|inch|cm\b|mm\b)/i.test(String(v || "")) || /^\s*\d{1,2}(\.\d)?\s*$/.test(String(v || ""));
-  const looksLikeSize = v => /^(xs|s|m|l|xl|xxl|\d{1,2}(\.\d)?\s*(mm|cm)?)$/i.test(norm(v));
+  const bareValue = v => norm(String(v || "").replace(/[^\w\s.+&-]+/g, " ")).split(/[\s+&]+/).filter(w => w && !FORM_FILLER.has(w)).join(" ");
+  const looksLikeSize = v => /^(xs|s|m|l|xl|xxl|\d{1,2}(\.\d)?\s*(mm|cm)?( us)?)$/i.test(bareValue(v));
 
   /** { field, value, source } for one option, or null when nothing deterministic applies. */
   function optionLookup(maps, listingId, name, value) {
@@ -90,7 +92,7 @@
     const noDesign = isNoDesign(sku, ctx.noDesign) || (!sku && isNoDesign(line.title, ctx.noDesign));
     const metalKey = String(line.metalKey || "");
     const material = METAL_TO_CARD[metalKey] || null;
-    if (!noDesign && !material) problems.push({ kind: "needsMaterial", metalKey: metalKey || null, metalLabel: line.metalLabel || "", options: (line.variations || []).map(v => `${v.name}: ${v.value}`), title: line.title || "" });
+    if (!noDesign && !material) problems.push({ kind: "needsMaterial", metalKey: metalKey || null, metalLabel: line.metalLabel || "", listingId: String(line.listingId || ""), options: (line.variations || []).map(v => `${v.name}: ${v.value}`), title: line.title || "" });
     const spec = { designSku: sku || null, skuSource, material, materialKey: metalKey || null, materialLabel: line.metalLabel || (material ? CARD_LABEL[material] : ""), form: null, size: null, chain: null, quantity: Math.max(1, Math.round(+line.quantity || 1)), personalization: (line.personalization || []).map(s => String(s)).filter(s => s.trim()), buyerMessage: String(line.buyerMessage || order.buyerMessage || ""), staffNote: String(line.staffNote || order.staffNote || ""), messages: (line.messages || order.messages || []).slice(-5), updateTs: +order.updateTs || 0, options: [], problems, noDesign, sources: { material: "station classifier (Metal/Colour option first)", sku: skuSource } };
     for (const v of line.variations || []) {
       const name = v.name || v.formatted_name, value = String(v.value != null ? v.value : v.formatted_value || "").replace(/&quot;/g, "\"").trim();
@@ -98,9 +100,12 @@
       const hit = optionLookup(ctx.optionMaps, line.listingId, name, value);
       let mapped = hit ? { field: hit.field, value: hit.value, source: hit.source } : null;
       if (!mapped) {                                                            // deterministic name rules, no free-text reading
-        if (isSizeOption(name) && looksLikeSize(value)) mapped = { field: "size", value: SIZE_VALUES[norm(value)] || value.toUpperCase().replace(/\s+/g, ""), source: "rule:size" };
+        const asForm = formByWords(value);
+        if (isSizeOption(name) && looksLikeSize(value)) mapped = { field: "size", value: SIZE_VALUES[bareValue(value)] || bareValue(value).toUpperCase().replace(/\s+/g, ""), source: "rule:size" };
         else if (isChainOption(name) && looksLikeLength(value)) mapped = { field: "chain", value, source: "rule:length" };
-        else { const f = isFormOption(name) ? formByWords(value) : null; if (f) mapped = { field: "form", value: f, source: "rule:form" }; }
+        else if (isChainOption(name) && asForm) mapped = { field: "form", value: asForm, source: "rule:form" };
+        else if (isFormOption(name) && looksLikeLength(value)) mapped = { field: "chain", value, source: "rule:length" };
+        else if (isFormOption(name) && asForm) mapped = { field: "form", value: asForm, source: "rule:form" };
       }
       spec.options.push({ name, value, mapped });
       if (!mapped) { if (!noDesign) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: value, title: line.title || "" }); continue; }

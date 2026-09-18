@@ -276,6 +276,20 @@ const receipts = [
         await page.setViewportSize({ width: 1500, height: 1000 });
         await page.evaluate(() => Engrave.render());
       }
+      // engraving belongs to the Engraving tab: Review neither lists it nor counts it (§11)
+      const rv = await page.evaluate(() => {
+        CN.setMode('review'); Review.render();
+        const v = document.getElementById('reviewView');
+        const cards = [...v.querySelectorAll('.rvItem')].map(c2 => c2.dataset.kind);
+        return { cards, count: Review.count(), held: Review.items().filter(i2 => String(i2.key).startsWith('eng:')).length,
+          chips: [...v.querySelectorAll('.egTab')].map(b2 => b2.textContent.trim()) };
+      });
+      console.log('review screen', JSON.stringify(rv));
+      const ENG = ['engraveWords', 'placement', 'flipFailed', 'notRepresentable', 'fontMissing'];
+      assert(!rv.cards.some(k => ENG.includes(k)), 'no engraving card is listed in Review: ' + rv.cards);
+      assert.strictEqual(rv.count, rv.cards.length, 'and the count is what the tab shows');
+      assert(rv.chips.length >= 2, 'the kinds present are filter chips: ' + JSON.stringify(rv.chips));
+      await page.evaluate(() => { CN.setMode('engrave'); Engrave.render(); });
       const switched = await page.evaluate(() => {
         const v = document.getElementById('engraveView');
         v.querySelector('.egTab[data-tab=words]').click();   // an empty tab still opens when it is asked for
