@@ -1649,9 +1649,10 @@ const Engrave = window.Engrave = (() => {
     // to just under it, so twenty nudges used to walk the lettering down by a tenth of its size.
     let f = null;
     if (ceil.size >= want - 1e-6) {
-      const L = G.layoutLines(job.lines, font, want, 0.18, place.angle || job.fit.angle, place.centre);
+      const ang = place.angle != null ? place.angle : (job.fit.angle || 0);
+      const L = G.layoutLines(job.lines, font, want, 0.18, ang, place.centre);
       const v = G.verifyInk(L.cmds, job.mask);
-      if (v.ok) f = { ok: true, size: want, capMm: want * G.capPerEm(font) * MM, weight: job.fit.weight, angle: place.angle || job.fit.angle, centre: place.centre, layout: L, glyphs: L.glyphs, cmds: L.cmds, metrics: G.strokeMetrics(L.cmds, 24), small: want * G.capPerEm(font) * MM < (+S.settings.engraveMinCapMm || 1.6), thin: job.fit.thin };
+      if (v.ok) f = { ok: true, size: want, capMm: want * G.capPerEm(font) * MM, weight: job.fit.weight, angle: ang, centre: place.centre, layout: L, glyphs: L.glyphs, cmds: L.cmds, metrics: G.strokeMetrics(L.cmds, 24), small: want * G.capPerEm(font) * MM < (+S.settings.engraveMinCapMm || 1.6), thin: job.fit.thin };
     }
     if (!f) f = ceil.size <= want + 1e-6 ? ceil : G.refitAt(job.lines, font, job.mask, fitOpts(), Object.assign({}, place, { maxSize: want }));
     if (!f.ok) return false;
@@ -1850,7 +1851,6 @@ const Engrave = window.Engrave = (() => {
     if (!r && !jobs.length) return line("No run is open, so there is nothing to engrave yet.", `<button class="btn gold sm" data-go="hist">Earlier sets…</button>`);
     if (r && r.status === "stopped") return line(`This run stopped before the engraving step${r.stoppedBy ? ` — ${esc(r.stoppedBy)}` : ""}.`, `<button class="btn ghost sm" data-go="orders">Back to the run</button>`);
     if (r && O.stepIndex(r.step) < O.stepIndex("engrave")) return line(`Nothing to engrave yet — this run is still at ${esc(STEP_WORDS_EG[r.step] || r.step)}.`, `<button class="btn ghost sm" data-go="orders">Back to the run</button>`);
-    if (nWords) return line(`${nWords} still need${nWords === 1 ? "s" : ""} its words settled before a placement can be drawn.`, `<button class="btn gold sm" data-go="words">Open Words</button>`);
     const rv = Review.count();
     if (rv) return line(`${rv} line${rv === 1 ? " needs" : "s need"} a decision before anything can be engraved.`, `<button class="btn gold sm" data-go="review">Open Review</button>`);
     if (nDone) return line("Every placement in this run is decided.", `<button class="btn ghost sm" data-go="hist">Another run…</button>`);
@@ -1861,7 +1861,7 @@ const Engrave = window.Engrave = (() => {
   function renderChrome(v, queue) {
     const jobs = [...items().values()].filter(j => j.row.state !== "gone");
     { const rw = v.querySelector("#egRun"); if (rw) rw.textContent = runWord(); }
-    const n = { place: queue.length, words: jobs.filter(j => j.state === "words" || j.state === "blocked").length, done: decidedJobs().length };
+    const n = { place: queue.length, done: decidedJobs().length };
     v.querySelectorAll(".egTab[data-tab]").forEach(b => {
       const k = n[b.dataset.tab]; let t = b.querySelector("b");
       if (!k) { if (t) t.remove(); return; }
@@ -1880,7 +1880,8 @@ const Engrave = window.Engrave = (() => {
     if (!c || !c.isConnected || EG.cardKey !== job.key) { render(); return; }
     const f = job.fit; if (!f) { render(); return; }
     const bc = c.querySelector(".backHost canvas"); if (bc && bc._paint) bc._paint();
-    const cap = c.querySelector("[data-cap]"); if (cap) cap.textContent = f.capMm.toFixed(2) + " mm" + (f.angle ? ` · ${Math.round(f.angle)}°` : "");
+    const cap = c.querySelector("[data-cap]"); if (cap) cap.textContent = f.capMm.toFixed(2) + " mm";
+    const an = c.querySelector('input[data-a="angle"]'); if (an && document.activeElement !== an) an.value = String(Math.round(f.angle || 0));
     const sl = c.querySelector('input[data-a="resize"]');
     if (sl && document.activeElement !== sl) { sl.max = f.fittedMax.toFixed(2); sl.min = (0.5 * f.fittedMax).toFixed(2); sl.value = f.size.toFixed(2); }
     else if (sl) { sl.max = f.fittedMax.toFixed(2); sl.min = (0.5 * f.fittedMax).toFixed(2); }
@@ -1919,39 +1920,36 @@ const Engrave = window.Engrave = (() => {
       if (f2 && f2.key === EG.cardKey) { renderChrome(v, q2); return; }
     }
     const jobs = [...items().values()].filter(j => j.row.state !== "gone");
-    const words = jobs.filter(matchesQ).filter(j => j.state === "words" || j.state === "blocked"), queue = jobs.filter(matchesQ).filter(j => j.state === "review"), done = jobs.filter(matchesQ).filter(j => ["approved", "written", "skipped"].includes(j.state));
+    // the words to settle and the placements to approve are one queue, one card each: the card carries the words as an
+    // editable field, so nothing needs a second tab
+    const words = jobs.filter(matchesQ).filter(j => j.state === "words" || j.state === "blocked"), queue = jobs.filter(matchesQ).filter(j => j.state === "review").concat(words), done = jobs.filter(matchesQ).filter(j => ["approved", "written", "skipped"].includes(j.state));
     // One screen, three tabs, one thing in front of you at a time: the words a person has to settle, the placements to
     // approve, and what has already been decided. The counts are the tabs, so what is left is never more than a glance.
     // Until a person picks a tab, the screen follows the work: it used to settle on Decided while the run was still
     // classifying and then stay there as placements arrived behind it, so someone watching this tab saw an empty pane
     // and no sign that anything was waiting. Once a tab is picked by hand it stays picked, empty or not.
-    if (!EG.tab || !EG.chosen) EG.tab = queue.length ? "place" : words.length ? "words" : "done";
+    if (!EG.tab || !EG.chosen || EG.tab === "words") EG.tab = queue.length ? "place" : "done";
     const tab = EG.tab;
     const focus = queue.find(j2 => j2.key === EG.focus) || queue[0] || null;
     const tabBtn = (id, label, n, cls) => `<button class="egTab${tab === id ? " on" : ""}" data-tab="${id}" title="${esc(label)}">${label}${n ? `<b class="${cls}">${n}</b>` : ""}</button>`;
     const working = jobs.filter(j => ["classify", "fitting", "ready"].includes(j.state)).length;
     v.innerHTML = `<div class="ordBar egBar">
-        ${tabBtn("place", "Placements", queue.length, "info")}${tabBtn("words", "Words", words.length, "warn")}${tabBtn("done", "Decided", done.length, "ok")}
+        ${tabBtn("place", "Placements", queue.length, "info")}${tabBtn("done", "Decided", done.length, "ok")}
         ${working ? `<span class="egTab working" title="being read and fitted now — they arrive in Words or Placements on their own"><span class="spin"></span>Working<b>${working}</b></span>` : ""}
         <input class="ordSearch" id="egQ" placeholder="order, SKU, words…" value="${esc(EG.q || "")}" title="search the placements, the words and what has been decided by order number, SKU or the engraved words">
         <span class="spacer"></span><button class="btn ghost xs" id="egRun" title="which run this engraving belongs to — click for every run on record">${esc(runWord())}</button><span class="pill ${F_.ok ? "ok" : "bad"}" title="${F_.ok ? "the engraving font is loaded" : esc(F_.error || "the engraving font files are missing")}">${F_.ok ? "Source Sans 3" : "Source Sans 3 missing"}</span><button class="btn ghost xs" id="egWho" title="every approval is recorded under this name — click to change it">${esc(employeeName() || "set your name")}</button></div>
       <div class="egPane grow"${tab === "place" ? "" : " hidden"}><div class="rvList" id="egQueue"></div>
         <div class="egNext" id="egNext"></div></div>
-      <div class="egPane grow scroll"${tab === "words" ? "" : " hidden"}><div class="rvList" id="egWords"></div></div>
       <div class="egPane grow scroll"${tab === "done" ? "" : " hidden"}><div id="egBacks"></div></div>`;
     v.querySelectorAll(".egTab[data-tab]").forEach(b => b.onclick = () => { EG.tab = b.dataset.tab; EG.chosen = true; render(); });
     v.querySelector("#egWho").onclick = () => { askEmployee(); render(); };
     v.querySelector("#egRun").onclick = () => RunHistory.show();
     { const q = v.querySelector("#egQ"); q.oninput = () => { EG.q = q.value; render(); const q2 = v.querySelector("#egQ"); if (q2) { q2.focus(); q2.setSelectionRange(q2.value.length, q2.value.length); } }; }
-    if (tab === "words") {
-      const w = v.querySelector("#egWords"); for (const j2 of words) w.appendChild(Review.card(Review.items().find(i2 => i2.key === "eng:" + j2.key) || { kind: j2.state === "blocked" ? "flipFailed" : "engraveWords", key: "eng:" + j2.key, row: j2.row, job: j2, why: j2.reason }));
-      if (!words.length) w.innerHTML = `<div class="libEmpty">nothing waiting</div>`;
-    }
     if (tab === "place") {
       const q = v.querySelector("#egQueue");
       if (focus && EG.list) {
         EG.card = null; EG.cardKey = null;
-        q.innerHTML = `<div class="rvList">` + queue.map(j2 => `<div class="doneRow hoverItem" data-rid="${esc(j2.row.order.receiptId)}" data-open="${esc(j2.key)}" title="open this placement"><span class="mini"></span><b class="mono">${esc(j2.row.order.receiptId)}</b><span class="sku mono">${esc(j2.row.spec.designSku || "")}</span><span class="w">${esc(j2.lines.join(" / "))}</span><span class="ost info">${j2.fit ? `cap ${j2.fit.capMm.toFixed(2)} mm` : "fitting"}</span><span class="by"></span><button class="btn ghost xs">Open</button></div>`).join("") + `</div>`;
+        q.innerHTML = `<div class="rvList">` + queue.map(j2 => `<div class="doneRow hoverItem" data-rid="${esc(j2.row.order.receiptId)}" data-open="${esc(j2.key)}" title="open this placement"><span class="mini"></span><b class="mono">${esc(j2.row.order.receiptId)}</b><span class="sku mono">${esc(j2.row.spec.designSku || "")}</span><span class="w">${esc(j2.lines.join(" / "))}</span><span class="ost ${j2.state === "review" ? "info" : "warn"}">${j2.state === "review" ? (j2.fit ? `cap ${j2.fit.capMm.toFixed(2)} mm` : "fitting") : j2.state === "blocked" ? "flip failed" : "words to settle"}</span><span class="by"></span><button class="btn ghost xs">Open</button></div>`).join("") + `</div>`;
         q.querySelectorAll("[data-open]").forEach(rw => rw.onclick = () => { EG.focus = rw.dataset.open; EG.list = false; render(); });
       }
       else if (focus) { const c = placementCard(focus, queue.length); c.classList.add("full"); q.appendChild(c); EG.card = c; EG.cardKey = focus.key; }
@@ -2001,7 +1999,7 @@ const Engrave = window.Engrave = (() => {
         const j2 = items().get(b.closest(".doneRow").dataset.key); if (!j2) return;
         const who = employeeName() || askEmployee(); if (!who) return;
         if (!confirm(`Reopen ${j2.row.order.receiptId}? It goes back to the words step, and any back file already written for it is superseded.`)) return;
-        const go = () => { sendBack(j2, `reopened by ${who}`); EG.tab = "words"; EG.chosen = true; render(); };
+        const go = () => { sendBack(j2, `reopened by ${who}`); EG.tab = "place"; EG.focus = j2.key; EG.list = false; EG.chosen = true; render(); };
         if (j2.recalledFrom && j2.recalledFrom.recalled) { Recall.rebuild(j2.recalledFrom).then(() => { const pool = B.pool.rows; for (const [pid, p] of pool) if (String(p.orderId) === String(j2.row.order.receiptId) && (p.sku === (j2.row.spec && j2.row.spec.designSku) || p.sku === j2.row.line.sku) && !j2.row.poolIds.includes(pid)) j2.row.poolIds.push(pid); go(); }).catch(e => toast(`Could not rebuild the sheet: ${e.message}`, "bad", 7000)); return; }
         go();
       });
@@ -2017,23 +2015,32 @@ const Engrave = window.Engrave = (() => {
     const pct = Math.round((job.confidence != null ? job.confidence : 0) * 100);
     const conf = job.source ? `<span class="conf ${pct >= 80 ? "" : pct >= 60 ? "mid" : "low"}" title="how sure Claude is that these are the words to cut, read from ${esc(SOURCE_LABEL[job.source] || job.source)}${job.quote ? ` — “${esc(job.quote)}”` : ""}">${pct}% sure</span>` : "";
     const row2 = (t, v) => v && v !== "—" ? `<dt>${t}</dt><dd>${esc(v)}</dd>` : "";
+    const wordsJob = job.state !== "review";
     card.innerHTML = `<div class="rh"><span class="kind" title="where you are in the placements still to decide">${decided + 1} of ${decided + remaining}</span><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div>
       <div class="placeView">
         <div class="pvMain"><div class="backHost"></div>
-          <div class="ctl">${f ? `<button class="btn sage sm" data-a="approve" title="this placement is right — write the back file">Approve <b class="k">A</b></button><button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><span class="mono dim" data-cap title="cap height of the lettering · its angle">${f.capMm.toFixed(2)} mm${f.angle ? ` · ${Math.round(f.angle)}°` : ""}</span>` : ""}
+          <div class="ctl">${f && !wordsJob ? `<button class="btn sage sm" data-a="approve" title="this placement is right — write the back file">Approve <b class="k">A</b></button><button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><span class="mono dim" data-cap title="cap height of the lettering">${f.capMm.toFixed(2)} mm</span><label class="angle" title="the angle of the text, in degrees — type one, or drag the handle above the text"><input type="number" data-a="angle" min="-359" max="359" step="1" value="${Math.round(f.angle || 0)}">°</label>` : ""}
             <span class="rest"><button class="btn ghost sm" data-a="skip" title="cut this charm plain — nothing engraved on its back">No engraving <b class="k">S</b></button></span></div>
           <div class="help">drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys nudge 0.25 mm, with shift they turn 1° · cut-outs and holes stay clear: only flat metal takes engraving</div></div>
         <div class="pvSide">
-          <div class="pvWords"><span class="lbl">Words on the back</span>${esc(job.lines.join(" / ")) || "—"}</div>
+          <div class="pvWords"><span class="lbl">Words on the back</span><textarea data-f="words" rows="${Math.max(1, Math.min(4, (job.lines || []).length || 1))}" title="one line of the engraving per line — change them here and press Use these words">${esc((job.lines || []).join("\n"))}</textarea>
+            <div class="wordsActs"><button class="btn gold xs" data-a="usewords" title="${wordsJob ? "settle the words and draw the placement" : "re-fit the placement with these words"}">${wordsJob ? "Engrave these words" : "Use these words"}</button>${wordsJob ? `<button class="btn ghost xs" data-a="skip" title="cut this charm plain — nothing engraved on its back">No engraving</button>` : ""}</div>
+            ${wordsJob ? `<div class="why">${esc(job.reason || "the words need a decision")}${(job.questions || []).length ? ` — ${esc(job.questions.join(" · "))}` : ""}</div>` : ""}</div>
           <div class="frontHost"></div>
           <dl class="meta">${row2("Customer", (sp.personalization || []).join(" / "))}${row2("Buyer msg", sp.buyerMessage)}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}</dl>
         </div></div>`;
-    const charm = Pool.charmOf(job.copies[0]);
-    card.querySelector(".frontHost").appendChild(renderFront(charm, 420));
+    const charm = job.copies.length ? Pool.charmOf(job.copies[0]) : null;
+    if (charm) card.querySelector(".frontHost").appendChild(renderFront(charm, 420));
+    else { const e2 = Master.entryFor(job.row.spec.designSku || job.row.line.sku); const t = e2 && Master.thumbOf(e2); card.querySelector(".frontHost").innerHTML = t ? `<img crossorigin="anonymous" src="${esc(t)}" alt="">` : ""; }
+    if (wordsJob) { const bh = card.querySelector(".backHost"); bh.innerHTML = `<div class="noBack">${job.state === "blocked" ? "the flip check failed on this charm — see the log" : "the back is drawn once the words are settled"}</div>`; }
+    { const ta = card.querySelector("[data-f=words]"); const use = card.querySelector("[data-a=usewords]");
+      const apply = async () => { const text = ta.value.trim(); if (!text) { toast("Type the words first", "bad"); return; } use.disabled = true; try { if (wordsJob) await decideWords(job, { text, note: text !== (job.text || "").trim() ? "edited" : "confirmed" }); else { job.text = text; job.lines = text.split(/\r?\n/).map(x => x.trim()).filter(Boolean); job.wantSize = null; await fitJob(job); } } catch (e) { toast(e.message, "bad"); } use.disabled = false; render(); };
+      use.onclick = apply; ta.addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); apply(); } e.stopPropagation(); }); }
     // the back preview is drawn to the box it is actually given, and redrawn when that box changes: no fixed number,
     // nothing cut off on a short laptop screen, nothing left blurry after the window is resized
     const backHost = card.querySelector(".backHost");
     let mounted = 0, raf = 0;
+    if (wordsJob) { /* no back to draw */ }
     const wire = bc => {
       let drag = null;
       // the pointer is captured by the canvas, so the handlers live and die with this canvas: every card used to add
@@ -2067,7 +2074,7 @@ const Engrave = window.Engrave = (() => {
           drag.pendingAngle = ang;
           const L = G.layoutLines(job.lines, fontFor(job.fit.weight), job.fit.size, 0.18, ang, drag.c);
           bc._paint({ glyphs: L.glyphs, centre: drag.c, angle: ang, mode: "rotate" });
-          const cap = card.querySelector("[data-cap]"); if (cap) cap.textContent = `${job.fit.capMm.toFixed(2)} mm · ${Math.round(ang)}°`;
+          const an = card.querySelector('input[data-a="angle"]'); if (an) an.value = String(Math.round(ang));
         } else {
           const c = [drag.c[0] + dx, drag.c[1] + dy];
           // within a third of a millimetre of the charm's own centre line, the text takes it
@@ -2089,7 +2096,7 @@ const Engrave = window.Engrave = (() => {
       bc.addEventListener("pointercancel", () => { drag = null; bc.classList.remove("drag"); bc._paint(); });
     };
     const mountBack = () => {
-      if (!job.view || !backHost.isConnected) return;
+      if (wordsJob || !job.view || !backHost.isConnected) return;
       const r = backHost.getBoundingClientRect();
       // side by side, the box says how big; stacked on a narrow screen the box has no height of its own, so half
       // the window is the ceiling and the charm keeps its shape either way
@@ -2103,17 +2110,17 @@ const Engrave = window.Engrave = (() => {
     requestAnimationFrame(mountBack);
     if (window.ResizeObserver) { const ro = new ResizeObserver(() => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; mountBack(); }); }); ro.observe(backHost); card._ro = ro; }
     const capOut = card.querySelector("[data-cap]");
-    card.querySelectorAll("[data-a]").forEach(b => { const a = b.dataset.a; b.onclick = () => { if (a === "approve") approve(job); else if (a === "centre") centreText(job); else if (a === "close") { EG.list = true; EG.card = null; EG.cardKey = null; render(); }
+    card.querySelectorAll("[data-a]").forEach(b => { const a = b.dataset.a; if (a === "usewords") return; if (a === "angle") { b.onchange = () => { const v = +b.value; if (Number.isFinite(v)) rotateTo(job, v); }; b.addEventListener("keydown", e => e.stopPropagation()); return; } b.onclick = () => { if (a === "approve") approve(job); else if (a === "centre") centreText(job); else if (a === "close") { EG.list = true; EG.card = null; EG.cardKey = null; render(); }
       else if (a === "resplit") resplit(job); else if (a === "skip") skip(job); else if (a === "back") sendBack(job); }; });
     void capOut;
-    card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.repeat) return; const k = e.key.toLowerCase(); if (k === "a") { e.preventDefault(); approve(job); } else if (k === "s") { e.preventDefault(); skip(job); } else if (e.key === "Escape") { EG.list = true; EG.card = null; EG.cardKey = null; render(); } else if (e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); rotateTo(job, (job.fit ? job.fit.angle || 0 : 0) + (e.key === "ArrowLeft" ? 1 : -1)); } else if (e.key === "ArrowLeft") { e.preventDefault(); nudge(job, -0.25, 0); } else if (e.key === "ArrowRight") { e.preventDefault(); nudge(job, 0.25, 0); } else if (e.key === "ArrowUp") { e.preventDefault(); nudge(job, 0, 0.25); } else if (e.key === "ArrowDown") { e.preventDefault(); nudge(job, 0, -0.25); } });
+    card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.repeat) return; const k = e.key.toLowerCase(); if (k === "a") { e.preventDefault(); approve(job); } else if (k === "s") { e.preventDefault(); skip(job); } else if (e.key === "Escape") { EG.list = true; EG.card = null; EG.cardKey = null; render(); } else if (e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); rotateTo(job, (job.fit ? job.fit.angle || 0 : 0) + (e.key === "ArrowLeft" ? 1 : -1)); } else if (e.key === "ArrowLeft") { e.preventDefault(); nudge(job, -0.25, 0); } else if (e.key === "ArrowRight") { e.preventDefault(); nudge(job, 0.25, 0); } else if (e.key === "ArrowUp") { e.preventDefault(); nudge(job, 0, 0.25); } else if (e.key === "ArrowDown") { e.preventDefault(); nudge(job, 0, -0.25); } });
     // the next card takes focus only when the person was already working in this pane, so a held key cannot run the queue
     const wasHere = document.activeElement && document.activeElement.closest && document.activeElement.closest("#egQueue");
     if (wasHere || !document.activeElement || document.activeElement === document.body) setTimeout(() => { if (card.isConnected) card.focus(); }, 30);
     void it;
     return card;
   }
-  return { loadFonts, classify, classifyAll, fitJob, fitAll, approve, nudge, resize, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
+  return { loadFonts, classify, classifyAll, fitJob, fitAll, approve, nudge, resize, rotateTo, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
