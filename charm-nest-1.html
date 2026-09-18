@@ -390,6 +390,8 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .ocard:focus-visible{outline:2px solid var(--gold2);outline-offset:2px}
 .ocard[data-m=gold]{--accent:var(--m-gold)}.ocard[data-m=silver]{--accent:var(--m-silver)}.ocard[data-m=rose]{--accent:var(--m-rose)}.ocard[data-m=gold10k]{--accent:var(--m-gold10k)}.ocard[data-m=gold14k]{--accent:var(--m-gold14k)}
 .ocard.attn{--accent:var(--clay)}
+/* the other lines of the same order, lifted while one of them is under the cursor */
+.ocard.kin,.olist.kin{box-shadow:0 0 0 2px var(--gold2),var(--sh)}
 .oimg{position:relative;aspect-ratio:1;background:var(--paper2);display:flex;align-items:center;justify-content:center;overflow:hidden}
 .oimg img{width:100%;height:100%;object-fit:contain;display:block}
 .oimg .ph{font:10.5px var(--mono);color:var(--ink25);letter-spacing:.08em;text-transform:uppercase}
@@ -2566,6 +2568,7 @@ boot();
       <button class="owSw" id="owSkip" role="switch" aria-checked="false" aria-label="Skip this line"><i></i></button>
       <span style="font-size:12.5px">Skip this line <span style="color:var(--ink45)">— cut nothing for it and leave the order open</span></span>
       <span class="spacer"></span>
+      <button class="btn ghost sm" id="owFind" title="scroll the Design Station to this order and point at it">Find on the station</button>
       <button class="btn ghost sm" id="owPrev" title="the line before this one">‹ Previous</button>
       <button class="btn ghost sm" id="owNext" title="the next line">Next ›</button>
     </div>

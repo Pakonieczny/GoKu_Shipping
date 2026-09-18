@@ -505,6 +505,14 @@ const Orders = window.Orders = (() => {
       const ph = host.querySelector(".ph"); if (ph) ph.remove();
     }
   }
+  /** Light up every card or row of one order, so a person can see at a glance what else came in the same parcel. */
+  function markKin(rid, on) {
+    const host = document.getElementById("ordBody"); if (!host) return;
+    host.querySelectorAll(".kin").forEach(n => n.classList.remove("kin"));
+    if (!on) return;
+    const kin = host.querySelectorAll('[data-rid="' + String(rid).replace(/"/g, "") + '"]');
+    if (kin.length > 1) kin.forEach(n => n.classList.add("kin"));
+  }
   const shipTxt = r => r.order.shipBy ? new Date(r.order.shipBy * 1000).toLocaleDateString("en-US", { month: "short", day: "2-digit" }) : "—";
   const wordsOf = sp => (sp.personalization || []).join(" / ") || sp.buyerMessage || "";
   /** Everything a person needs to recognise one line, as a card or as a row: the same fields either way. */
@@ -555,6 +563,10 @@ const Orders = window.Orders = (() => {
           (why ? '<span class="cell whyc owhy">' + esc(why) + '</span>' : "");
       }
       node.onclick = () => OrderWin.open(r.key);
+      // an order can be several lines on several cards: hovering one lifts all of them, the way the station does
+      node.dataset.rid = String(r.order.receiptId);
+      node.onmouseenter = node.onfocus = () => markKin(node.dataset.rid, true);
+      node.onmouseleave = node.onblur = () => markKin(node.dataset.rid, false);
       list.appendChild(node);
       if (!url && lid) wantImage(lid);
     }
@@ -2040,36 +2052,41 @@ const Sandbox = window.Sandbox = (() => {
    session and the one Firestore listener and this page never grows a second of either. */
 const OrderWin = window.OrderWin = (() => {
   const W = { key: null, rid: null, dlg: null, thread: [], tray: [], poll: 0, noteTimer: 0, wired: false };
-  const $$ = id => document.getElementById(id);
+  const byId = id => document.getElementById(id);
   const rowOf = key => Orders.rows().find(r => r.key === key) || null;
   const me = () => employeeName() || "";
 
   function wire() {
     if (W.wired) return; W.wired = true;
-    W.dlg = $$("orderWin"); if (!W.dlg) return;
+    W.dlg = byId("orderWin"); if (!W.dlg) return;
     const close = () => W.dlg.close();
-    $$("owClose").onclick = close;
+    byId("owClose").onclick = close;
     W.dlg.addEventListener("close", () => { clearInterval(W.poll); W.poll = 0; W.key = null; W.tray.forEach(t => { try { URL.revokeObjectURL(t.url); } catch (_) {} }); W.tray = []; });
-    $$("owPhoto").onclick = e => e.currentTarget.classList.toggle("zoom");
-    $$("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && (r.spec.designSku || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
-    $$("owWhoBtn").onclick = () => { askEmployee(); paintWho(); };
-    const note = $$("owNote");
+    byId("owPhoto").onclick = e => e.currentTarget.classList.toggle("zoom");
+    byId("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && (r.spec.designSku || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
+    byId("owWhoBtn").onclick = () => { askEmployee(); paintWho(); };
+    const note = byId("owNote");
     note.oninput = () => { clearTimeout(W.noteTimer); W.noteTimer = setTimeout(saveNote, 700); };
     note.onblur = () => { clearTimeout(W.noteTimer); saveNote(); };
-    const input = $$("owInput");
-    const grow = () => { input.style.height = "auto"; input.style.height = Math.min(120, input.scrollHeight) + "px"; $$("owSend").disabled = !input.value.trim() && !W.tray.length; };
+    const input = byId("owInput");
+    const grow = () => { input.style.height = "auto"; input.style.height = Math.min(120, input.scrollHeight) + "px"; byId("owSend").disabled = !input.value.trim() && !W.tray.length; };
     input.oninput = grow;
     input.onkeydown = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
     input.addEventListener("paste", e => { const f = [...(e.clipboardData || {}).items || []].filter(i => i.type.startsWith("image/")).map(i => i.getAsFile()).filter(Boolean); if (f.length) { e.preventDefault(); addFiles(f); } });
-    $$("owSend").onclick = send;
-    $$("owAttach").onclick = () => $$("owFile").click();
-    $$("owFile").onchange = e => { addFiles([...e.target.files]); e.target.value = ""; };
+    byId("owSend").onclick = send;
+    byId("owAttach").onclick = () => byId("owFile").click();
+    byId("owFile").onchange = e => { addFiles([...e.target.files]); e.target.value = ""; };
     const pane = W.dlg.querySelector(".owChat");
     pane.addEventListener("dragover", e => { e.preventDefault(); });
     pane.addEventListener("drop", e => { e.preventDefault(); addFiles([...(e.dataTransfer.files || [])].filter(f => f.type.startsWith("image/"))); });
-    $$("owSkip").onclick = toggleSkip;
-    $$("owPrev").onclick = () => step(-1);
-    $$("owNext").onclick = () => step(1);
+    byId("owSkip").onclick = toggleSkip;
+    byId("owFind").onclick = async () => {
+      const r = rowOf(W.key); if (!r) return;
+      try { await DesignLink.call("ui.scrollTo", { receiptId: r.order.receiptId }); toast("Shown on the Design Station", "ok", 2200); }
+      catch (e) { toast(e.message, "bad", 5000); }
+    };
+    byId("owPrev").onclick = () => step(-1);
+    byId("owNext").onclick = () => step(1);
   }
   /** The lines the Orders tab is showing, so Previous and Next walk what the person is actually looking at. */
   const siblings = () => Orders.visibleRows();
@@ -2078,11 +2095,11 @@ const OrderWin = window.OrderWin = (() => {
     const next = list[(i < 0 ? 0 : i + d + list.length) % list.length];
     if (next && next.key !== W.key) open(next.key);
   }
-  function paintWho() { const w = $$("owWho"); if (w) w.textContent = me() || "— no name set —"; }
+  function paintWho() { const w = byId("owWho"); if (w) w.textContent = me() || "— no name set —"; }
 
   async function saveNote() {
     const r = rowOf(W.key); if (!r) return;
-    const text = $$("owNote").value;
+    const text = byId("owNote").value;
     if (text === (r.spec.staffNote || "")) return;
     r.spec.staffNote = text;
     try { await DesignLink.call("notes.set", { receiptId: r.order.receiptId, text }, { quiet: true }); toast("Staff note saved", "ok", 1400); }
@@ -2090,10 +2107,10 @@ const OrderWin = window.OrderWin = (() => {
   }
   function addFiles(files) {
     for (const f of files.slice(0, 6)) W.tray.push({ file: f, url: URL.createObjectURL(f) });
-    paintTray(); $$("owSend").disabled = !$$("owInput").value.trim() && !W.tray.length;
+    paintTray(); byId("owSend").disabled = !byId("owInput").value.trim() && !W.tray.length;
   }
   function paintTray() {
-    const t = $$("owTray"); if (!t) return;
+    const t = byId("owTray"); if (!t) return;
     t.innerHTML = "";
     W.tray.forEach((x, i) => {
       const c = el("span", "chip", '<img alt="" src="' + x.url + '"><span>' + esc(x.file.name.slice(0, 18)) + '</span><button type="button" title="remove">×</button>');
@@ -2104,9 +2121,9 @@ const OrderWin = window.OrderWin = (() => {
   async function send() {
     const r = rowOf(W.key); if (!r) return;
     const who = me() || askEmployee(); if (!who) return;
-    const text = $$("owInput").value.trim(), files = W.tray.slice();
+    const text = byId("owInput").value.trim(), files = W.tray.slice();
     if (!text && !files.length) return;
-    $$("owInput").value = ""; $$("owInput").style.height = "auto"; W.tray = []; paintTray(); $$("owSend").disabled = true;
+    byId("owInput").value = ""; byId("owInput").style.height = "auto"; W.tray = []; paintTray(); byId("owSend").disabled = true;
     const rid = r.order.receiptId;
     try {
       for (const f of files) {
@@ -2127,7 +2144,7 @@ const OrderWin = window.OrderWin = (() => {
     if (W.rid === rid) paintThread();
   }
   function paintThread() {
-    const t = $$("owThread"); if (!t) return;
+    const t = byId("owThread"); if (!t) return;
     if (!W.thread.length) { t.innerHTML = '<div class="owEmpty"><b>No internal messages yet</b>Anything sent here reaches every station working this order. The customer never sees it.</div>'; return; }
     const mine = me().toLowerCase();
     t.innerHTML = W.thread.map(m => {
@@ -2151,22 +2168,22 @@ const OrderWin = window.OrderWin = (() => {
   function paint() {
     const r = rowOf(W.key); if (!r) { if (W.dlg && W.dlg.open) W.dlg.close(); return; }
     const sp = r.spec || {};
-    $$("owTitle").textContent = "Order " + r.order.receiptId;
-    const mp = $$("owMetal"); mp.textContent = r.material ? labelOf(r.material) : (sp.materialLabel || "no material");
+    byId("owTitle").textContent = "Order " + r.order.receiptId;
+    const mp = byId("owMetal"); mp.textContent = r.material ? labelOf(r.material) : (sp.materialLabel || "no material");
     mp.className = "pill " + (r.material ? "neutral" : "bad");
-    const ph = $$("owPhoto"); const url = Orders.imageFor(r);
+    const ph = byId("owPhoto"); const url = Orders.imageFor(r);
     ph.classList.remove("zoom");
     ph.innerHTML = url ? '<img alt="" src="' + esc(url) + '">' : '<span class="ph">no image</span>';
     ph.dataset.lid = String(r.line.listingId || ""); if (url) ph.dataset.painted = "1"; else { delete ph.dataset.painted; Orders.wantImage(r.line.listingId); }
-    $$("owSku").textContent = "SKU: " + (sp.designSku || r.line.sku || "—");
+    byId("owSku").textContent = "SKU: " + (sp.designSku || r.line.sku || "—");
     const notes = [];
     if ((sp.personalization || []).length) notes.push("Personalisation:\n" + sp.personalization.join("\n"));
     if (sp.buyerMessage) notes.push("Buyer message:\n" + sp.buyerMessage);
-    $$("owNotes").value = notes.length ? notes.join("\n\n") : "— No notes —";
-    const note = $$("owNote"); if (document.activeElement !== note) note.value = sp.staffNote || "";
+    byId("owNotes").value = notes.length ? notes.join("\n\n") : "— No notes —";
+    const note = byId("owNote"); if (document.activeElement !== note) note.value = sp.staffNote || "";
     const st = Orders.statePill(r);
     const mcell = (lbl, val) => '<div class="m"><i>' + esc(lbl) + '</i><span>' + esc(val) + '</span></div>';
-    $$("owMeta").innerHTML =
+    byId("owMeta").innerHTML =
       mcell("Quantity", String(sp.quantity || r.line.quantity || 1)) +
       mcell("Metal", r.material ? labelOf(r.material) : (sp.materialLabel || "none")) +
       mcell("State", st[1]) +
@@ -2177,7 +2194,7 @@ const OrderWin = window.OrderWin = (() => {
       mcell("Listing", String(r.line.listingId || "—")) +
       mcell("Title", r.line.title || "—");
     // the decision this line is waiting on, answered here
-    const fix = $$("owFix"); fix.innerHTML = "";
+    const fix = byId("owFix"); fix.innerHTML = "";
     const item = Review.items().find(x => (x.rows || [x.row]).some(y => y && y.key === r.key) && !String(x.key).startsWith("eng:"));
     if (item) {
       const box = el("div", "owFix", '<div class="t">This line is waiting on a decision</div>');
@@ -2189,7 +2206,7 @@ const OrderWin = window.OrderWin = (() => {
       b.onclick = () => { W.dlg.close(); setMode("engrave"); Engrave.render(); };
       box.appendChild(b); fix.appendChild(box);
     }
-    const sw = $$("owSkip"); sw.setAttribute("aria-checked", r.state === "skipped" ? "true" : "false");
+    const sw = byId("owSkip"); sw.setAttribute("aria-checked", r.state === "skipped" ? "true" : "false");
     paintWho();
   }
   function open(key) {
