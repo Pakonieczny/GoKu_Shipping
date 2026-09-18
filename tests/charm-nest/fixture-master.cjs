@@ -24,6 +24,7 @@ function outline(kind, cx, cy, s, num) {
  * The SKUs are BR-TST-01 … and the page is 300 × 250 mm-ish so the charms have room; sizes 10–18 mm.
  */
 async function buildMaster(outPath, opts = {}) {
+  const layered = !!opts.layered;   // bodies first, rings after — how a master drawn in Illustrator layers reaches the parser
   const count = opts.count || 8, edge = opts.edge !== false;
   const doc = await PDFDocument.create();
   const W = 300 * MM, H = 220 * MM;
@@ -31,7 +32,7 @@ async function buildMaster(outPath, opts = {}) {
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const ops = []; const num = n => (+n).toFixed(3);
   const kinds = ['tag', 'blob', 'shield', 'house'];
-  const charms = [];
+  const charms = []; const later = [];
   const cols = 5, gapX = W / cols, gapY = 55 * MM;
   for (let i = 0; i < count; i++) {
     const kind = kinds[i % kinds.length]; const s = (10 + (i % 5) * 2) * MM;
@@ -43,9 +44,14 @@ async function buildMaster(outPath, opts = {}) {
     ops.push(`q 0.9 0.1 0.1 RG 0.4 w ${num(cx - s * 0.2)} ${num(cy - s * 0.3)} m ${num(cx + s * 0.15)} ${num(cy - s * 0.3)} l S Q`);
     // the hanging hole: a closed black circle inside the outline near its top, off-centre so the flip is visible
     const hx = cx + s * 0.18, hy = cy + s * 0.3;
-    ops.push(`q 0 0 0 RG 0.4 w ${circle(hx, hy, s * 0.06, num)} S Q`);
+    const holeOp = `q 0 0 0 RG 0.4 w ${circle(hx, hy, s * 0.06, num)} S Q`;
+    // a layered master writes every body first and every ring after (Illustrator layers): the ring's stream neighbours are
+    // other rings, never its own body. It also hangs a jump ring off the top of the outline, touching it from outside.
+    const jumpOp = `q 0 0 0 RG 0.4 w ${circle(cx, cy + s / 2 + s * 0.05, s * 0.055, num)} S Q`;
+    if (layered) later.push(holeOp, jumpOp); else ops.push(holeOp);
     charms.push({ sku, size: null, kind, cx, cy, s, hole: [hx, hy], labelled: true });
   }
+  if (layered) ops.push(...later);
   const raw = ops.join('\n') + '\n';
   const stream = doc.context.flateStream(raw); const ref = doc.context.register(stream);
   page.node.set(PDFName.of('Contents'), doc.context.obj([ref]));

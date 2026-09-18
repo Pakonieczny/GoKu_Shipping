@@ -267,6 +267,27 @@ const pass = (name) => console.log('  ✓', name);
     assert.deepStrictEqual(g, { silver: 'silver', gold: 'gold+gold14k', gold14k: 'gold+gold14k', rose: 'rose' }, JSON.stringify(g));
     pass('release plan');
   }
+  /* ── rings on a layered master: every body first, every ring after. The ring's stream neighbours are other rings, and a
+        gate that trusted the stream alone detached every ring in the shop's library. Geometry decides when one outline
+        is in reach; the stream decides only when two are. ── */
+  {
+    const { buildMaster } = require('./fixture-master.cjs');
+    for (const layered of [false, true]) {
+      const fx = await buildMaster(null, { count: 8, edge: false, layered });
+      const parsed = await P.parseSource(new Uint8Array(fx.bytes), 'layered.ai'); const g = P.groupCharms(parsed, { minPt: 6 });
+      assert.strictEqual(g.charms.length, 8, `${layered ? 'layered' : 'grouped'} master: eight charms, no ring counted as a charm of its own (${g.charms.length})`);
+      const holes = g.charms.map(c => P.cutLinesOf(c).length);
+      assert(holes.every(n => n >= 1), `${layered ? 'layered' : 'grouped'} master: every charm keeps its hole: ${holes}`);
+      if (layered) {
+        assert(g.charms.every(c => c.members.length >= 4), 'body, fill, engraving stroke, hole and the jump ring all belong to the charm: ' + g.charms.map(c => c.members.length));
+        // the hole and the jump ring are both tiny closed paths; every charm holds exactly its own two, so the nester sees the ring
+        const tiny = g.charms.map(c => c.members.filter(m => m !== c.outline && m.kind === 'path' && m.closed && m.stroke && !m.fill && (m.bbox[2] - m.bbox[0]) < 8).length);   // stroked rings, not the small colour fill
+        assert(tiny.every(n => n === 2), 'each charm holds its hole and its jump ring, nobody else\'s: ' + tiny);
+        assert.strictEqual((g.orphans || []).length, 0, 'nothing left loose: ' + (g.orphans || []).length);
+      }
+    }
+    pass('rings on a layered master');
+  }
   /* ── run steps ── */
   { assert.strictEqual(O.RUN_STEPS.length, 11); assert.strictEqual(O.nextStep('nest'), 'checkpoint'); assert.strictEqual(O.nextStep('complete'), null); assert.strictEqual(O.HALF.engrave, 'B'); assert.strictEqual(O.HALF.nest, 'A'); pass('run steps'); }
   /* ── back file: written and re-parsed, the cut geometry is the mirrored original and the text is paths ── */
