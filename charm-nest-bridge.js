@@ -382,7 +382,11 @@ const Dock = window.Dock = (() => {
       const r = D.body.getBoundingClientRect(); w = r.width; h = r.height;
     }
     // the station renders at a desktop width and is scaled to the dock; the veil and cursor scale with it
-    const vw = Math.max(D.virtualW, Math.round(w)); const k = w / vw;
+    // The frame was always laid out at 1200 px and scaled down to fit, so on the Design Station tab the app being
+    // supervised rendered at 34–61 % — its 10 px order rows at 4–7 px. It is laid out at the width it is given, down to
+    // the narrowest the station itself is built for, and only the small corner view is ever scaled.
+    const floor = mode === "full" ? 980 : D.virtualW;
+    const vw = Math.max(floor, Math.round(w)); const k = w / vw;
     f.style.width = vw + "px"; f.style.height = Math.round(h / k) + "px"; f.style.transform = `scale(${k})`;
     const st = D.el.querySelector("#dockState"); if (st) st.textContent = DesignLink.inControl() ? (DesignLink.up() ? (B.run ? `run · ${B.run.step}` : "live") : "link down") : "not in control";
     D.el.classList.toggle("down", DesignLink.inControl() && !DesignLink.up());
@@ -1018,8 +1022,8 @@ const Master = window.Master = (() => {
     const v = document.getElementById("masterView"); if (!v || v.classList.contains("hidden")) return;
     if (!v.dataset.built) {
       v.dataset.built = "1";
-      v.innerHTML = `<div class="masterHead"><input type="file" id="mFile" accept=".ai,.pdf" class="hidden"><input type="search" id="mSearch" placeholder="Search SKUs" style="border:1px solid var(--line);border-radius:9px;padding:7px 10px"><label style="display:flex;gap:5px;align-items:center;font-size:11px" title="Off: a SKU the library already holds is left as it is, and only new charms are built. On: every charm on the sheet is rebuilt and rewritten."><input type="checkbox" id="mAllSkus"> re-index SKUs already held</label><span class="pill neutral" id="mCount"></span></div>
-        <div class="noteBox">Each charm in a master file has its SKU as text directly under it (within ${S.settings.labelGapMm} mm, centred under the outline). A SKU is one design whatever colour it is ordered in; the material comes from the order. Labels are never part of the charm. Unlabelled charms, orphan labels and duplicates are listed in red; a SKU present in two masters is blocked until fixed.</div>
+      v.innerHTML = `<div class="masterHead"><input type="file" id="mFile" accept=".ai,.pdf" class="hidden"><button class="btn gold sm" id="mAdd" title="index another master .ai into the charm library">＋ Add a master file</button><input type="search" id="mSearch" placeholder="Search SKUs" style="border:1px solid var(--line);border-radius:9px;padding:7px 10px"><label style="display:flex;gap:5px;align-items:center;font-size:11px" title="Off: a SKU the library already holds is left as it is, and only new charms are built. On: every charm on the sheet is rebuilt and rewritten."><input type="checkbox" id="mAllSkus"> re-index SKUs already held</label><span class="pill neutral" id="mCount"></span></div>
+        <div class="noteBox">Drop a master file here, or press Add. Each charm in it has its SKU as text directly under it (within ${S.settings.labelGapMm} mm, centred under the outline). A SKU is one design whatever colour it is ordered in; the material comes from the order. Labels are never part of the charm. Unlabelled charms, orphan labels and duplicates are listed in red; a SKU present in two masters is blocked until fixed.</div>
         <div id="mJobs" style="display:grid;gap:10px"></div><div id="mFiles" style="display:grid;gap:10px"></div><div class="section">Indexed SKUs</div><div class="skuGrid" id="mGrid"></div>`;
       { const cb = v.querySelector("#mAllSkus"); cb.checked = reindexAll; cb.onchange = () => { reindexAll = cb.checked; toast(reindexAll ? "every charm on the next sheet will be rebuilt" : "charms already in the library will be skipped", "ok"); }; }
       // the file goes where it is dropped: on this tab it is a master for the library
@@ -1028,6 +1032,7 @@ const Master = window.Master = (() => {
       v.addEventListener("drop", e => { if (!(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length)) return; e.preventDefault(); e.stopPropagation(); for (const f of e.dataTransfer.files) indexFile(f).catch(err => toast(err.message, "bad", 7000)); });
       v.querySelector("#mFile").onchange = e => { for (const f of e.target.files) indexFile(f).catch(err => toast(err.message, "bad", 7000)); e.target.value = ""; };
       v.querySelector("#mSearch").oninput = render;
+      v.querySelector("#mAdd").onclick = () => v.querySelector("#mFile").click();
       load().then(render).catch(() => {});
     }
     // What the orders on the cards are asking for that this library cannot answer. One real run wanted 133 SKUs the
@@ -2154,7 +2159,16 @@ const Review = window.Review = (() => {
   const mine = it => !String(it.key || "").startsWith("eng:") && !(it.row && it.row.state === "gone");   // engraving is the Engraving tab's
   const count = () => items().filter(mine).length;
   function add(it) { const i = items().findIndex(x => x.key === it.key); const fresh = i < 0; if (fresh) items().push(Object.assign({ t: Date.now() }, it)); else items()[i] = Object.assign(items()[i], it); if (fresh && B.run && ["review", "paused", "stopped"].includes(B.run.status)) notifyPerson("Charm Sorter needs a person", it.why || it.kind); render(); LiveStrip.render(); RunCtl.renderBanner(); }
-  function remove(key) { const n = items().length; B.review.items = items().filter(x => x.key !== key); if (n !== items().length) { render(); LiveStrip.render(); RunCtl.renderBanner(); } }
+  const settled = [];                                                     // what this shift has answered, newest first
+  function remove(key, how) {
+    const n = items().length;
+    const gone = items().find(x => x.key === key);
+    B.review.items = items().filter(x => x.key !== key);
+    if (n === items().length) return;
+    if (gone && !String(key).startsWith("eng:")) settled.unshift({ key, kind: gone.kind, why: gone.why || "", lines: (gone.rows || [gone.row]).filter(Boolean).length, orders: [...new Set((gone.rows || [gone.row]).filter(Boolean).map(r2 => r2.order.receiptId))], by: how || employeeName() || "", t: Date.now() });
+    if (settled.length > 200) settled.length = 200;
+    render(); LiveStrip.render(); RunCtl.renderBanner();
+  }
   function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? `option "${p.optionName}: ${p.optionValue}" not mapped` : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
   /** The key of the DECISION a problem asks for, not of the line that raised it. An unknown SKU is one decision however
    *  many orders bought it; an unmapped option is one decision however many lines carry it. A run that raised 180 of the
@@ -2170,7 +2184,9 @@ const Review = window.Review = (() => {
   /** Order-level items follow the rows' problems: added when a problem appears, removed when it is fixed. */
   function syncOrderItems() {
     const keep = new Map();
-    for (const row of Orders.rows()) { if (row.state === "gone") continue; for (const p of row.problems || []) {
+    // a row a person parked is parked: it used to re-raise its decision the moment the next card was answered, because
+    // interpretAll recomputes problems from scratch and sync rebuilt the queue from them
+    for (const row of Orders.rows()) { if (row.state === "gone" || row.hold) continue; for (const p of row.problems || []) {
       const key = decisionKey(row, p);
       if (!keep.has(key)) keep.set(key, { kind: p.kind, key, row, problem: p, rows: [], why: problemText(p) });
       const it = keep.get(key); if (!it.rows.includes(row)) it.rows.push(row);
@@ -2267,7 +2283,7 @@ const Review = window.Review = (() => {
       c.querySelector("[data-a=jump]").onclick = () => { remove(it.key); focus(it.line); };
     } else { c.innerHTML = head(it.kind, it.why || "", orderSub); }
     const skipB = c.querySelector("[data-a=skip]"); if (skipB) skipB.onclick = () => { const who = by(); if (!who) return; for (const rr of rowsOf(it)) { rr.state = "skipped"; rr.reason = `line skipped by ${who}`; rr.problems = []; rr.hold = `line skipped by ${who}`; } syncOrderItems(); Orders.render(); RunCtl.poke(); };
-    const holdB = c.querySelector("[data-a=hold]"); if (holdB) holdB.onclick = () => { const who = by(); if (!who) return; const g = rowsOf(it); for (const rr of g) { rr.hold = `held by ${who}`; rr.reason = rr.hold; } remove(it.key); Orders.render(); RunCtl.poke(); const ords = [...new Set(g.map(x => x.order.receiptId))]; toast(`${ords.length === 1 ? ords[0] : ords.length + " orders"} held — they stay open on the station`, ""); };
+    const holdB = c.querySelector("[data-a=hold]"); if (holdB) holdB.onclick = () => { const who = by(); if (!who) return; const g = rowsOf(it); for (const rr of g) { rr.hold = `held by ${who}`; rr.reason = rr.hold; rr.state = "held"; rr.problems = []; } remove(it.key); Orders.render(); RunCtl.poke(); const ords = [...new Set(g.map(x => x.order.receiptId))]; toast(`${ords.length === 1 ? ords[0] : ords.length + " orders"} held — they stay open on the station`, ""); };
     return c;
   }
   async function row_material(it, m, who) {
@@ -2286,14 +2302,19 @@ const Review = window.Review = (() => {
     all.sort((a, b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind) || a.t - b.t);
     // the kinds present are the filter: one chip each, so a long mixed list becomes the one kind being worked through
     const byKind = new Map(); for (const it of all) byKind.set(it.kind, (byKind.get(it.kind) || 0) + 1);
-    if (RV.filter && !byKind.has(RV.filter)) RV.filter = null;
-    const list = RV.filter ? all.filter(it => it.kind === RV.filter) : all;
-    const chip = (id, label, n) => `<button class="egTab${(RV.filter || "") === id ? " on" : ""}" data-k="${esc(id)}">${esc(label)}<b class="warn">${n}</b></button>`;
-    v.innerHTML = `<div class="ordBar egBar">${chip("", "Everything", all.length)}${ORDER.filter(k => byKind.has(k)).map(k => chip(k, KIND_WORDS[k] || k, byKind.get(k))).join("")}<span class="spacer"></span><span class="mono" style="font-size:11.5px">${esc(employeeName() || "— no reviewer name —")}</span><button class="btn ghost xs" id="rvName">Change name</button></div>
+    if (RV.filter && RV.filter !== "done" && !byKind.has(RV.filter)) RV.filter = null;
+    const list = RV.filter && RV.filter !== "done" ? all.filter(it => it.kind === RV.filter) : RV.filter === "done" ? [] : all;
+    const chip = (id, label, n, cls) => `<button class="egTab${(RV.filter || "") === id ? " on" : ""}" data-k="${esc(id)}" title="${esc(label)}">${esc(label)}${n ? `<b class="${cls || "warn"}">${n}</b>` : ""}</button>`;
+    v.innerHTML = `<div class="ordBar egBar">${chip("", "Everything", all.length, "info")}${ORDER.filter(k => byKind.has(k)).map(k => chip(k, KIND_WORDS[k] || k, byKind.get(k))).join("")}${settled.length ? chip("done", "Decided", settled.length, "ok") : ""}<span class="spacer"></span><button class="btn ghost xs" id="rvName" title="every decision is recorded under this name — click to change it">${esc(employeeName() || "set your name")}</button></div>
       <div class="egPane grow scroll"><div class="rvList" id="rvList"></div></div>`;
     v.querySelector("#rvName").onclick = () => { askEmployee(); render(); };
     v.querySelectorAll("[data-k]").forEach(b => b.onclick = () => { RV.filter = b.dataset.k || null; render(); });
     const host = v.querySelector("#rvList");
+    if (RV.filter === "done") {
+      // what this shift settled: the other half of "what has been approved", which the screen never used to say
+      host.innerHTML = settled.length ? settled.map(d => `<div class="doneRow"><b class="mono">${esc((d.orders || []).slice(0, 2).join(" "))}${(d.orders || []).length > 2 ? ` +${d.orders.length - 2}` : ""}</b><span class="sku mono">${esc(KIND_WORDS[d.kind] || d.kind)}</span><span class="w">${esc(d.why)}</span><span class="ost ok">settled</span><span class="by">${esc(d.by)}${d.t ? " · " + fmtT(d.t) : ""}</span><span class="mono" style="font-size:11px;color:var(--ink45)">${d.lines} line${d.lines === 1 ? "" : "s"}</span></div>`).join("") : `<div class="libEmpty">nothing settled yet this session</div>`;
+      return;
+    }
     for (const it of list) host.appendChild(card(it));
     if (!list.length) host.innerHTML = `<div class="libEmpty">Nothing waits for a decision.</div>`;
   }

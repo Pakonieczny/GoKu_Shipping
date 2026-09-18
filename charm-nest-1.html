@@ -134,7 +134,7 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 /* whatever the live view is showing, the screen keeps that much room at the bottom so nothing sits under it */
 .stage{flex:1 1 auto;min-height:0;overflow:auto;padding:16px 16px calc(16px + var(--dockH,0px))}
 .sheets{display:grid;grid-template-columns:repeat(auto-fill,minmax(400px,1fr));gap:16px;align-items:start}
-@media (max-width:1380px){.sheets{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:1380px){.sheets{grid-template-columns:repeat(auto-fill,minmax(360px,1fr))}}
 @media (max-width:900px){.sheets{grid-template-columns:1fr}}
 .sheetCard{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh);display:flex;flex-direction:column;min-width:0;position:relative;--accent:var(--ink25);border-top:4px solid var(--accent);transition:box-shadow .15s,outline-color .15s;outline:2px solid transparent;outline-offset:2px}
 .sheetCard[data-m=gold]{--accent:var(--m-gold)}.sheetCard[data-m=silver]{--accent:var(--m-silver)}.sheetCard[data-m=rose]{--accent:var(--m-rose)}.sheetCard[data-m=gold10k]{--accent:var(--m-gold10k)}.sheetCard[data-m=gold14k]{--accent:var(--m-gold14k)}
@@ -163,6 +163,7 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .shProg{padding:4px 14px 0}
 .shProg progress{margin:6px 0 0}
 .shProg .bp-note{margin:2px 0 0}
+.shStage{flex-wrap:wrap}
 .shStage>:first-child{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .shStage .r{flex:0 0 auto}
 @media (max-width:1300px){.shStage .r{display:none}}
@@ -272,6 +273,11 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .charmTile .meta{font:10.5px var(--mono);color:var(--ink45)}
 .charmTile.open{border-color:var(--clay);background:var(--claySoft)}
 .charmTile input{border:1px solid var(--line);border-radius:7px;padding:4px 6px;font-size:12px;width:100%}
+.charmTile .nmRow{display:flex;align-items:center;gap:6px;min-width:0}
+.charmTile .nm{font:12px var(--sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto;min-width:0}
+.charmTile .rename{border:0;background:transparent;color:var(--ink45);cursor:pointer;font-size:11px;padding:0 2px;flex:0 0 auto;opacity:0}
+.charmTile:hover .rename,.charmTile .rename:focus{opacity:1}
+.charmTile .rename:hover{color:var(--ink)}
 
 /* ── toasts, dialogs ── */
 .toasts{position:fixed;right:18px;bottom:calc(18px + var(--dockH,0px));z-index:300;display:flex;flex-direction:column;gap:8px;pointer-events:none;transition:bottom .18s ease;max-width:min(420px,42vw)}
@@ -523,6 +529,7 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .etsyPill.alarm{background:#5a1f16;border-color:#c0553b;color:#fff;animation:cnPulse 1.2s ease-in-out infinite}
 .etsyPill.alarm b{color:#ffd6c9}
 /* ── Design Station tab ── */
+@media (max-width:1320px){.dsView{grid-template-columns:minmax(0,1fr)}.dsView .dsConsole{display:none}}
 .dsView{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:12px;height:calc(100vh - 150px);min-height:480px;position:relative}
 .dsView.dsWide{grid-template-columns:minmax(0,1fr) 30px}
 .dsView.dsWide .dsConsole>*:not(.dsFold){display:none}
@@ -892,7 +899,7 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 <dialog id="dlgSheet" class="wide"><div class="dlg">
   <div class="dlgHead"><h3 id="lsTitle">Sheet</h3><div class="right"><button class="btn ghost xs" id="lsClose">Close</button></div></div>
   <div class="dlgBody" id="lsBody"></div>
-  <div class="dlgFoot"><div class="left"><button class="btn danger sm" id="lsDelete">Delete sheet</button></div><button class="btn ghost sm" id="lsDownloads">Download outputs</button><button class="btn gold sm" id="lsRestore">Restore into card</button></div>
+  <div class="dlgFoot"><div class="left"><button class="btn danger sm" id="lsDelete">Delete sheet</button></div><button class="btn ghost sm" id="lsDownloads">Download outputs</button><button class="btn ghost sm" id="lsRestore" title="put this saved sheet back on the nesting card — whatever is queued there now is replaced">Restore into card</button></div>
 </div></dialog>
 
 <div class="signin hidden" id="signin"><form class="box" id="signinForm">
@@ -2502,6 +2509,9 @@ async function openLibrarySheet(id) {
 }
 /** Bring a saved sheet back into its card: re-fetch the sources, re-parse, re-apply the saved placements as pins. */
 async function restoreSheet(d) {
+  // the reversible action was passcode-gated and this one, which throws away work in progress, was the gold default
+  const live = (activeCharms(S.sheets[d.metal]) || []).length;
+  if (live && !confirm(`Restoring this sheet replaces the ${live} charm(s) queued on ${labelOf(d.metal)}. Continue?`)) return;
   closeDlg($("#dlgSheet")); setMode("nest");
   const sh = S.sheets[d.metal]; if (!sh) return;
   if (sh.status === "nesting") { toast(`${labelOf(d.metal)} is nesting — stop it first`, "bad"); return; }
@@ -2534,8 +2544,23 @@ async function loadCharms() {
   try {
     const r = await api("charmNestLibrary", { op: "listCharms", q: ($("#charmSearch").value || "").trim(), limit: 400 }, { label: "Loading charms" });
     const rows = r.charms || []; $("#charmCount").textContent = `${rows.length} charm${rows.length === 1 ? "" : "s"}`;
-    body.innerHTML = rows.length ? rows.map(c => `<div class="charmTile" data-h="${c.hash}">${c.thumbUrl ? `<img crossorigin="anonymous" src="${c.thumbUrl}" loading="lazy" alt="">` : ""}<input value="${esc(c.name || "")}" title="rename"><div class="meta">${c.widthPt ? `${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}` : ""}${c.timesUsed ? ` · used ×${c.timesUsed}` : ""}${c.metalHint ? ` · ${esc(labelOf(c.metalHint))}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("") : `<div class="libEmpty">No charms yet.</div>`;
-    $$(".charmTile input", body).forEach(inp => inp.onchange = () => api("charmNestLibrary", { op: "renameCharm", hash: inp.closest(".charmTile").dataset.h, name: inp.value.trim() }).then(() => toast("Renamed", "ok")).catch(e => toast(e.message, "bad")));
+    body.innerHTML = rows.length ? rows.map(c => `<div class="charmTile" data-h="${c.hash}">${c.thumbUrl ? `<img crossorigin="anonymous" src="${c.thumbUrl}" loading="lazy" alt="">` : ""}<div class="nmRow"><div class="nm" title="${esc(c.name || "")}">${esc(c.name || "")}</div><button class="rename" type="button" title="rename this charm in the library">✎</button></div><div class="meta">${c.widthPt ? `${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}` : ""}${c.timesUsed ? ` · used ×${c.timesUsed}` : ""}${c.metalHint ? ` · ${esc(labelOf(c.metalHint))}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("") : `<div class="libEmpty">No charms yet.</div>`;
+    // a grid of 400 tiles used to be 400 focusable fields wired to a permanent rename in the shared library: a stray
+    // click and a keystroke committed it on blur, with no way back. A name is read-only until its pencil is pressed.
+    $$(".charmTile .rename", body).forEach(btn => btn.onclick = () => {
+      const tile = btn.closest(".charmTile"), nm = tile.querySelector(".nm");
+      const was = nm.textContent;
+      const inp = document.createElement("input"); inp.value = was; nm.replaceWith(inp); inp.focus(); inp.select();
+      const done = ok => {
+        const v = inp.value.trim();
+        const back = document.createElement("div"); back.className = "nm"; back.textContent = ok && v ? v : was;
+        inp.replaceWith(back);
+        if (!ok || !v || v === was) return;
+        api("charmNestLibrary", { op: "renameCharm", hash: tile.dataset.h, name: v }).then(() => toast("Renamed", "ok")).catch(e => { back.textContent = was; toast(e.message, "bad"); });
+      };
+      inp.onblur = () => done(true);
+      inp.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); inp.blur(); } else if (e.key === "Escape") { e.preventDefault(); inp.onblur = null; done(false); } };
+    });
   } catch (e) { body.innerHTML = `<div class="libEmpty">${esc(e.message)}</div>`; }
 }
 function setMode(mode) {
@@ -2631,7 +2656,7 @@ async function boot() {
   $$("#libKind button").forEach(b => b.onclick = () => { $$("#libKind button").forEach(x => x.classList.toggle("on", x === b)); S.library.kind = b.dataset.k; loadLibrary(); });
   $("#rpClose").onclick = () => closeDlg($("#dlgReport")); $("#lsClose").onclick = () => closeDlg($("#dlgSheet"));
   $$("#libView .fchip").forEach(b => b.onclick = () => { $$("#libView .fchip").forEach(x => x.classList.toggle("on", x === b)); S.library.metal = b.dataset.m; loadLibrary(); });
-  $("#libSearch").oninput = renderLibrary; $("#libRefresh").onclick = loadLibrary; $("#libFrom").onchange = loadLibrary; $("#libTo").onchange = loadLibrary;
+  $("#libSearch").oninput = () => (S.library.kind === "sets" ? loadLibrary() : renderLibrary()); $("#libRefresh").onclick = loadLibrary; $("#libFrom").onchange = loadLibrary; $("#libTo").onchange = loadLibrary;
   $("#charmRefresh").onclick = loadCharms; $("#charmSearch").onchange = loadCharms;
   // page-level drop: route by name; rail drop = same
   let dragDepth = 0;
