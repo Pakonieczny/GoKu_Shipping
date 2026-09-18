@@ -564,45 +564,29 @@ dialog.hist .hFoot{flex:0 0 auto;padding:7px 18px 12px;font-size:11px;color:var(
 .hSheet .ct{font:11px var(--mono);color:var(--ink45)}
 .hSheet .sp{flex:1 1 auto}
 .hEmpty{padding:34px;text-align:center;color:var(--ink45);font-size:13px}
+/* the sets a person can recall: a picture of each (its GF sheet), or one line each */
+dialog.hist .hWhen .sp{flex:1 1 auto}
+dialog.hist .hWhen .viewSeg{display:inline-flex;border:1px solid var(--line);border-radius:999px;background:var(--card2);padding:2px}
+dialog.hist .hWhen .viewSeg button{border:0;background:transparent;border-radius:999px;padding:4px 11px;font:700 11.5px var(--sans);color:var(--ink70);cursor:pointer}
+dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
+.hSets.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;padding:4px 2px}
+.hSets.cards .hDay{grid-column:1/-1}
+.hSets.list{display:grid;gap:5px}
+.hSet{background:var(--card);border:1px solid var(--line);border-radius:12px;min-width:0;cursor:pointer;box-shadow:var(--sh)}
+.hSet.cur{border-color:var(--gold2);background:var(--goldSoft)}
+.hSet.card{padding:8px;display:grid;gap:6px}
+.hSet.row{padding:6px 10px}
+.hThumb{display:block;width:100%;aspect-ratio:2/1;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:9px}
+.hThumb.ph{display:flex;align-items:center;justify-content:center;color:var(--ink45);font-size:11.5px}
+.hMini{width:56px;height:28px;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:5px;flex:0 0 auto}
+.hMini.ph{display:inline-block}
+.hSet .hRow{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
+.hSet .hRow.sub{margin-top:-2px}
+.hSet .nm{font:700 13px var(--sans);white-space:nowrap}
+.hSet .ct{font:11px var(--mono);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.hSet .sp{flex:1 1 auto;min-width:4px}
+.hSet .pill{padding:2px 7px;font-size:10px}
 
-/* one chosen run, on every tab that is about a run */
-.scopeStrip{display:flex;align-items:center;gap:10px;background:var(--velvet);color:#fff;border-radius:11px;padding:6px 8px 6px 13px;margin-bottom:11px;flex:0 0 auto}
-.scopeStrip.hidden{display:none}
-.scopeStrip .nm{font:700 12.5px var(--sans);white-space:nowrap}
-.scopeStrip .ct{font:11px var(--mono);opacity:.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.scopeStrip .sp{flex:1 1 auto;min-width:4px}
-.scopeStrip .btn.ghost{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.3);color:#fff}
-.scopeStrip .btn.ghost:hover{background:rgba(255,255,255,.24)}
-.scopeView{display:flex;flex-direction:column;gap:11px;min-height:0}
-.scopeView.hidden{display:none}
-.scopeBar{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:11px;padding:7px 9px 7px 13px;flex:0 0 auto}
-.scopeBar .nm{font:700 13px var(--sans);white-space:nowrap}
-.scopeBar .ct{font:11.5px var(--mono);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.scopeBar .sp{flex:1 1 auto;min-width:4px}
-.scopeBody{flex:1 1 auto;min-height:0;overflow:auto}
-.scopeSec{font:700 10.5px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--ink45);padding:13px 2px 7px}
-.scopeSec:first-child{padding-top:2px}
-.scopeGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
-.scopeGrid.backs{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
-.scopeCard{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:9px;display:grid;gap:6px;box-shadow:var(--sh);cursor:pointer}
-.scopeCard:hover{border-color:var(--ink45)}
-.scopeCard .h{display:flex;align-items:center;gap:8px;min-width:0}
-.scopeCard .nm{font:600 11.5px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.scopeCard .h .pill{margin-left:auto;flex:0 0 auto;padding:2px 7px;font-size:10px}
-.scopeCard .pv{width:100%;border:1px solid var(--line);border-radius:8px;background:#fff;display:block}
-.scopeCard .pv.ph{aspect-ratio:2/1;display:flex;align-items:center;justify-content:center;color:var(--ink45);font-size:11px}
-.scopeCard .m{font:11.5px var(--mono);color:var(--ink70)}
-.scopeCard .m.sub{color:var(--ink45);font-size:10.5px}
-.scopeCard .m .bad{color:#8a3a26}
-.scopeList{display:grid;gap:5px}
-.scopeOrd{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:7px 10px;display:grid;gap:4px}
-.scopeOrd .oh{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
-.scopeOrd .oh .why{font-size:11.5px;color:#8a3a26}
-.ol{display:flex;align-items:center;gap:9px;font-size:11.5px;min-width:0;flex-wrap:wrap}
-.ol .sku{color:var(--ink70);min-width:12ch}
-.ol .w{flex:1 1 200px;min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:var(--serif);font-size:12.5px}
-.ol .st{color:var(--ink45);font-size:10.5px}
-.scopeList>.ol{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:6px 10px}
 .hEmpty.bad{color:#8a3a26}
 .runBanner.stopped{background:var(--claySoft);border-color:#e3c8bf}
 .runBanner.done{background:var(--sageSoft);border-color:#cfdcc9}
@@ -2369,8 +2353,9 @@ function buildCards() {
       </div>`;
     host.appendChild(el); sh.el = el; sh.cardEl = el;
     const q = r => $(`[data-r="${r}"]`, el); const cur = () => activePage(m.key);   // buttons act on the sheet the tab shows
-    q("nest").onclick = () => startNest(cur()); q("stop").onclick = () => stopNest(cur());
-    q("dl").onclick = () => downloadOutputs(cur()); q("report").onclick = () => openReport(cur());
+    q("nest").onclick = () => { const pg = cur(); if (pg.recalled && !pg.charms.length) { if (window.Recall) Recall.rebuild(pg).catch(e => toast(e.message, "bad", 7000)); return; } startNest(pg); }; q("stop").onclick = () => stopNest(cur());
+    q("dl").onclick = () => { const pg = cur(); if (pg.recalled && !pg.outputs) { const o = pg.recalled.outputs || {}; ["ai", "labelled", "report"].filter(k => o[k]).forEach((k, i) => setTimeout(() => window.open(o[k], "_blank"), i * 300)); return; } downloadOutputs(pg); };
+    q("report").onclick = () => { const pg = cur(); if (pg.recalled && !pg.outputs) { if (pg.recalled.outputs && pg.recalled.outputs.report) window.open(pg.recalled.outputs.report, "_blank"); else toast("no report was saved for this sheet", ""); return; } openReport(pg); };
     q("second").onclick = () => overflowToNextSheet(cur());
     q("clear").onclick = () => { const pg = cur(); if (pg.page > 1) { if (pg.status === "nesting") stopNest(pg); pg.charms.forEach(c => { c.metal = null; }); pg.charms = []; removePage(pg); } else clearMetal(m.key); renderRail(); updateTopSub(); };
     // drag & drop on the card
@@ -2400,13 +2385,14 @@ function renderTabs(sh) {
   const el = sh.el; if (!el) return; const tabs = $(`[data-r="tabs"]`, el); const pages = pagesOf(sh.metal);
   tabs.classList.toggle("hidden", pages.length < 2);
   if (pages.length < 2) { tabs.innerHTML = ""; return; }
-  const st = pg => pg.status === "nesting" || pg.status === "finishing" ? `<span class="spin"></span>` : pg.status === "complete" ? `<i>✓ ${pg.placements.length}</i>` : pg.status === "partial" ? `<i>⚠ ${pg.placements.length}/${activeCharms(pg).length}</i>` : `<i>${activeCharms(pg).length}</i>`;
+  const st = pg => pg.status === "nesting" || pg.status === "finishing" ? `<span class="spin"></span>` : pg.recalled && !pg.charms.length ? `<i>✓ ${pg.recalled.placedCount}</i>` : pg.status === "complete" ? `<i>✓ ${pg.placements.length}</i>` : pg.status === "partial" ? `<i>⚠ ${pg.placements.length}/${activeCharms(pg).length}</i>` : `<i>${activeCharms(pg).length}</i>`;
   tabs.innerHTML = pages.map((pg, i) => `<button type="button" class="${pg === sh ? "on" : ""}" data-i="${i}" title="${esc(sheetName(pg))}">Sheet ${pg.page}${st(pg)}</button>`).join("");
   $$("button", tabs).forEach(b => b.onclick = () => showPage(sh.metal, +b.dataset.i));
 }
 function refreshAllCards() { for (const sh of allSheets()) { computeSaturation(sh); renderCard(sh); } }
 function renderCard(sh) {
   const el = sh.el; if (!el) return; const q = r => $(`[data-r="${r}"]`, el); const st = stockFor(sh.metal);
+  const rc = sh.recalled && !sh.charms.length ? sh.recalled : null;        // a saved sheet shown from its record
   el.style.setProperty("--ar", `${st.wPt}/${st.hPt}`);
   q("stock").textContent = `${fmt.mm(st.wPt).replace(/\.0 mm$/, "")} × ${fmt.mm(st.hPt).replace(/\.0 mm$/, " mm")}`;
   /* Which run, which set, which day. A finished card used to say only its metal and its size, so a person looking at
@@ -2416,20 +2402,21 @@ function renderCard(sh) {
   const bits = [];
   if (sh.seq) bits.push(`<b>Set ${sh.seq}</b>`);
   if (dayTxt) bits.push(esc(dayTxt));
+  if (rc) bits.push("recalled");
   if (pages.length > 1) bits.push(`sheet ${sh.page} of ${pages.length}`);
   prov.innerHTML = bits.length ? "· " + bits.join(" · ") : "";
   prov.title = sh.fileBase ? `Saved as ${sh.fileBase}` : (sh.runId ? `Run ${sh.runId}` : "");
   const items = activeCharms(sh);
-  const pillMap = { idle: ["neutral", "Idle"], ready: ["info", `Ready · ${items.length}`], queued: ["warn", "Queued"], nesting: ["warn", `<span class="spin"></span>Nesting`], finishing: ["warn", `<span class="spin"></span>Finishing`], complete: ["ok", "Complete"], partial: ["bad", "Partial"] };
+  const pillMap = { idle: ["neutral", "Idle"], ready: ["info", `Ready · ${items.length}`], queued: ["warn", "Queued"], nesting: ["warn", `<span class="spin"></span>Nesting`], finishing: ["warn", `<span class="spin"></span>Finishing`], complete: ["ok", rc ? "Recalled" : "Complete"], partial: ["bad", "Partial"] };
   const [k, t] = pillMap[sh.status] || pillMap.idle; q("pill").className = "pill " + k; q("pill").innerHTML = t;
   renderTabs(sh);
   q("hint").classList.toggle("hidden", items.length > 0 || sh.status !== "idle");
   const reviewing = S.sources.some(s => s.review && s.review.state === "running" && s.charms.some(c => c.metal === sh.metal));
-  q("nest").classList.toggle("hidden", ["nesting", "finishing", "queued"].includes(sh.status)); q("nest").disabled = !items.length || reviewing;
-  q("nest").title = reviewing ? "Waiting for Claude's grouping review" : "";
-  q("nest").textContent = (sh.status === "complete" || sh.status === "partial") ? (sh.dirty ? "Nest again" : "Re-nest") : "Nest";
+  q("nest").classList.toggle("hidden", ["nesting", "finishing", "queued"].includes(sh.status)); q("nest").disabled = (!items.length && !rc) || reviewing;
+  q("nest").title = reviewing ? "Waiting for Claude's grouping review" : rc ? "bring this sheet's charms back from the master files so it can be nested again — the saved picture stays until then" : "";
+  q("nest").textContent = rc ? "Rebuild to edit" : (sh.status === "complete" || sh.status === "partial") ? (sh.dirty ? "Nest again" : "Re-nest") : "Nest";
   q("stop").classList.toggle("hidden", sh.status !== "nesting");
-  q("dl").classList.toggle("hidden", !sh.outputs); q("dl").textContent = sh.verification && !sh.verification.ok ? "Download .ai (flagged)" : "Download .ai";
+  q("dl").classList.toggle("hidden", !sh.outputs && !(rc && rc.outputs && rc.outputs.ai)); q("dl").textContent = sh.verification && !sh.verification.ok ? "Download .ai (flagged)" : "Download .ai";
   q("second").classList.toggle("hidden", !(sh.status === "partial" && sh.rejects.length));
   q("clear").disabled = !sh.charms.length;
   // rejects tray
@@ -2471,13 +2458,16 @@ function renderProgress(sh) {
   st.title = done ? deep : "";
   st.innerHTML = sh.stage ? `<span class="spin"></span><span>${esc(sh.stage)}</span><span class="r">${elapsed}${budget}</span>`
     : reviewingSrc ? `<span class="spin"></span><span>Claude is reviewing the ${reviewingSrc.charms.length} charms detected in ${esc(reviewingSrc.name)}</span><span class="r">${fmt.s(reviewingSrc.review.elapsed || 0)}</span>`
+    : sh.recalled && !sh.charms.length ? `<span>${sh.recalled.placedCount}/${sh.recalled.charmCount} placed · ${fmt.pct(sh.recalled.density || 0)} full${sh.recalled.verification ? (sh.recalled.verification.ok ? " · verified ✓" : " · ⚠ flagged") : ""} · ${esc(sh.recalled.fileBase || "")}</span><span class="r">${sh.recalled.updatedAt ? new Date(sh.recalled.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}</span>`
     : done ? `<span>${sh.placements.length}/${activeCharms(sh).length} placed${sh.sat ? ` · ${fmt.pct(sh.sat.fullPct)} full` : ""}${sh.verification ? (sh.verification.ok ? " · verified ✓" : " · ⚠ verification flagged, open the report") : ""}${sh.endedBy && sh.endedBy !== "complete" ? ` · ${esc(endedText(sh.endedBy))}` : ""}</span><span class="r">${elapsed}</span>` : "";
   const ov = q("overlay");
   const moving = sh.status === "nesting" || sh.status === "finishing";
   ov.innerHTML = moving ? `<span class="pill neutral">${sh.placements.length}/${activeCharms(sh).length} placed</span>${sh.sat ? `<span class="pill neutral">${fmt.pct(sh.sat.fullPct)} full</span>` : ""}` : "";
 }
 function renderSat(sh) {
-  const el = sh.el; if (!el) return; const box = $(`[data-r="sat"]`, el); const s = sh.sat || computeSaturation(sh);
+  const el = sh.el; if (!el) return; const box = $(`[data-r="sat"]`, el);
+  if (sh.recalled && !sh.charms.length) { const r = sh.recalled; box.innerHTML = `<div class="fact"><b>${fmt.pct(r.density || 0)}</b><span>full</span><span class="free">· ${fmt.area(r.freePt2 || 0)} free · ${r.orders || 0} order${r.orders === 1 ? "" : "s"}</span></div><div class="bar"><i style="width:${Math.round((r.density || 0) * 100)}%"></i></div>`; box.title = ""; return; }
+  const s = sh.sat || computeSaturation(sh);
   const stk = stockFor(sh.metal);
   if (!activeCharms(sh).length) { box.innerHTML = `<div class="fact"><b>0%</b><span>full</span><span class="free">· ${fmt.area(s.usable)} usable on ${fmt.mm(stk.wPt)} × ${fmt.mm(stk.hPt)}</span></div>`; return; }
   const live = !!sh.liveInfo;
@@ -2505,9 +2495,29 @@ function renderSat(sh) {
 }
 
 /* ═══ 12 · preview canvas ═══════════════════════════════════════════════ */
+/* A recalled sheet is drawn from the picture it saved when it was nested, not from its charms: recalling a set of nine
+   sheets is one read of the sheet list and nine pictures loaded as their cards come into view. The picture is asked for
+   once per page, with the record's own time on the address, so a sheet nested again shows its new picture. */
+function drawRecalled(sh, cv) {
+  const r = sh.recalled, wrap = cv.parentElement, st = stockFor(sh.metal);
+  const w = Math.round(wrap.clientWidth * devicePixelRatio), h = Math.round(w * st.hPt / st.wPt);
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+  if (!r.preview) { ctx.fillStyle = "#9a9388"; ctx.font = `${Math.round(w / 40)}px sans-serif`; ctx.textAlign = "center"; ctx.fillText("no preview was saved for this sheet", w / 2, h / 2); return; }
+  if (sh._img && sh._img.src === r.previewSrc && sh._img.complete && sh._img.naturalWidth) { ctx.drawImage(sh._img, 0, 0, w, h); return; }
+  if (!sh._img || sh._img.src !== r.previewSrc) {
+    r.previewSrc = r.previewSrc || (r.preview + (r.preview.includes("?") ? "&" : "?") + "v=" + (r.updatedAt || 0));
+    const img = new Image(); img.crossOrigin = "anonymous"; img.decoding = "async"; sh._img = img;
+    img.onload = () => { if (sh.el) drawPreview(sh); };
+    img.onerror = () => { sh._imgFailed = true; if (sh.el) { const c2 = $(`[data-r="canvas"]`, sh.el); if (c2) { const x = c2.getContext("2d"); x.fillStyle = "#9a9388"; x.font = `${Math.round(c2.width / 40)}px sans-serif`; x.textAlign = "center"; x.fillText("the saved preview could not be loaded", c2.width / 2, c2.height / 2); } } };
+    img.src = r.previewSrc;
+  }
+  ctx.fillStyle = "#9a9388"; ctx.font = `${Math.round(w / 40)}px sans-serif`; ctx.textAlign = "center"; ctx.fillText("loading the saved sheet…", w / 2, h / 2);
+}
 function drawPreview(sh) {
   const cv = sh.el && $(`[data-r="canvas"]`, sh.el); if (!cv) return;
   const wrap = cv.parentElement; const st = stockFor(sh.metal);
+  if (sh.recalled && !sh.charms.length) { if (wrap.clientWidth >= 40) drawRecalled(sh, cv); else requestAnimationFrame(() => { if (sh.el) drawPreview(sh); }); return; }
   // a card that is not laid out yet (view switch, collapsed rail, first paint) has no width: a bitmap drawn at that
   // size would be stretched to a blur later. Wait for a real width instead.
   if (wrap.clientWidth < 40) { if (!sh._redrawPending) { sh._redrawPending = true; requestAnimationFrame(() => { sh._redrawPending = false; if (sh.el) drawPreview(sh); }); } return; }

@@ -393,29 +393,31 @@ const receipts = [
       /* Every run that ever ran, and the way back into one. Until this existed the only run reachable was the one in
          front of you: yesterday's set and the order that shipped on Tuesday had no door at all. */
       const hist = await page.evaluate(async () => {
-        RunHistory.show(); await new Promise(r => setTimeout(r, 900));
+        RunHistory.show(''); await new Promise(r => setTimeout(r, 900));
         const d = document.getElementById('histDlg');
-        const runs = [...d.querySelectorAll('.hRun')].map(n => ({ id: n.dataset.run, text: n.querySelector('.hRow').textContent.replace(/\s+/g, ' ').trim(), acts: [...n.querySelectorAll('.hRow [data-a]')].map(b => b.dataset.a) }));
+        const sets = [...d.querySelectorAll('.hSet')].map(n => ({ set: n.dataset.set, text: n.textContent.replace(/\s+/g, ' ').trim(), acts: [...n.querySelectorAll('[data-a]')].map(x => x.dataset.a), thumb: !!n.querySelector('.hThumb, .hMini') }));
+        const days = [...d.querySelectorAll('.hDay')].map(n => n.textContent.trim());
         const foot = d.querySelector('#hFoot').textContent;
-        // and it is searchable: by order number, by SKU, by the words that were engraved
+        // and it is searchable: by order number, by SKU, by the words that were engraved, by a date
         const q = d.querySelector('#hQ'); q.value = '3521000002'; q.dispatchEvent(new Event('input'));
         await new Promise(r => setTimeout(r, 900));
-        const found = [...d.querySelectorAll('.hRun')].map(n => n.dataset.run);
-        const hits = [...d.querySelectorAll('.hHits')].map(n => n.textContent.trim());
+        const found = [...d.querySelectorAll('.hSet')].map(n => n.textContent.replace(/\s+/g, ' ').trim());
         q.value = 'no-such-order-anywhere'; q.dispatchEvent(new Event('input'));
         await new Promise(r => setTimeout(r, 900));
-        const none = d.querySelector('.hEmpty') ? d.querySelector('.hEmpty').textContent.trim() : '';
+        const e = d.querySelector('.hEmpty'); const noneText = e ? e.textContent.trim() : '';
+        q.value = ''; q.dispatchEvent(new Event('input')); await new Promise(r => setTimeout(r, 900));
         d.close();
         // a closed dialog must actually be gone: CSS that lays one out unconditionally leaves it on screen forever
         const stillVisible = d.getBoundingClientRect().height > 0 || getComputedStyle(d).display !== 'none';
-        return { open: !!runs.length, runs, foot, found, hits, none, stillVisible };
+        return { sets, days, foot, found, none: noneText, stillVisible };
       });
       console.log('history', JSON.stringify(hist));
-      assert(hist.open, 'the history lists the runs on record');
-      assert(hist.runs.some(r => /line/.test(r.text) && /Set|no set/.test(r.text)), 'each run says which set, which day and how big: ' + JSON.stringify(hist.runs[0]));
-      assert(hist.runs.every(r => r.acts.includes('open')), 'and each one can be opened: ' + JSON.stringify(hist.runs[0].acts));
+      assert(hist.sets.length >= 2, 'the history lists the sets on record, one per kin group: ' + JSON.stringify(hist.sets));
+      // the sets of the run on the cards right now say so instead of offering Open
+      assert(hist.sets.every(x => /Set \d/.test(x.text) && /sheet/.test(x.text) && (x.acts.includes('open') || /on the cards/.test(x.text)) && x.thumb), 'each set is named, sized, pictured and can be opened: ' + JSON.stringify(hist.sets[0]));
+      assert(hist.days.length >= 1, 'filed under its day: ' + JSON.stringify(hist.days));
       assert(/looked at the \d+ most recent runs/.test(hist.foot), 'it says how far it looked: ' + hist.foot);
-      assert(hist.found.length >= 1 && hist.hits.some(h => /3521000002/.test(h)), 'searching by order number finds the run that carried it: ' + JSON.stringify(hist));
+      assert(hist.found.length === 1 && /Set 1/.test(hist.found[0]), 'searching by order number leaves only the set that carried it: ' + JSON.stringify(hist.found));
       assert(/nothing matches/.test(hist.none), 'and a search with no answer says so: ' + hist.none);
       assert(!hist.stillVisible, 'and closing it puts it away');
       /* The three things this round changed that no test had ever run: the one-click option mapping, the engraving
@@ -523,64 +525,7 @@ const receipts = [
       console.log('orders cards', JSON.stringify({ chips: ord.chips, n: ord.cards.length, first: ord.cards[0], sideScroll: ord.sideScroll }));
       assert(ord.cards.length >= 3, 'every pulled line is a card: ' + ord.cards.length);
 
-      /* One chosen run, on every tab. Choosing it is a read of the records the run already wrote — an earlier turn of
-         mine wired this to the resume path, which re-pulled every order from Etsy to show a preview that was already in
-         Storage. Nothing here may start, pull, claim or nest, and what is live must be left exactly as it was. */
-      const scoped = await page.evaluate(async () => {
-        const runId = B.run && B.run.runId; if (!runId) return { skip: 'no run' };
-        const runBefore = B.run, linesBefore = Orders.rows().length;
-        const did = [];
-        const realPull = Orders.pull; Orders.pull = () => { did.push('pull'); };
-        const realStart = RunCtl.start; RunCtl.start = () => { did.push('start'); };
-        const realResume = RunCtl.resumeRun; RunCtl.resumeRun = () => { did.push('resume'); };
-        RunHistory.show(''); await new Promise(r => setTimeout(r, 900));
-        const row = document.querySelector(`.hRun[data-run="${CSS.escape(runId)}"]`);
-        const btn = row && row.querySelector('[data-a=open]');
-        const label = btn && btn.textContent.trim();
-        if (btn) btn.click();
-        await new Promise(r => setTimeout(r, 1500));
-        const seen = {};
-        for (const m of ['nest', 'orders', 'engrave', 'review']) {
-          CN.setMode(m); await new Promise(r => setTimeout(r, m === 'engrave' ? 1800 : 350));
-          const rec = document.getElementById('scopeView');
-          const real = { orders: 'ordersView', review: 'reviewView' }[m];
-          const live = real ? document.getElementById(real) : null;
-          seen[m] = {
-            strip: !document.getElementById('scopeStrip').classList.contains('hidden'),
-            // Nest and Engraving are drawn from the records; Orders and Review are the real tabs, on the run's own lines
-            body: real ? (live && !live.classList.contains('hidden')) : (!!rec && !rec.classList.contains('hidden')),
-            text: ((real ? live : rec) || {}).textContent ? ((real ? live : rec).textContent).replace(/\s+/g, ' ').trim().slice(0, 100) : ''
-          };
-        }
-        const cards = document.querySelectorAll('#ordBody .ocard').length;
-        CN.setMode('orders'); Orders.render(); await new Promise(r => setTimeout(r, 250));
-        const ordCards = document.querySelectorAll('#ordBody .ocard, #ordBody .olist').length;
-        const pullOff = !!(document.getElementById('ordPull') || {}).disabled;
-        const recordLines = Orders.rows().length;
-        const recordIsRun = Orders.rows().every(r2 => r2.fromRecord);
-        const bar = (document.getElementById('scopeStrip') || {}).textContent || '';
-        document.querySelector('[data-s=close]').click();
-        await new Promise(r => setTimeout(r, 300));
-        const afterClose = { scope: Scope.on() };
-        Orders.pull = realPull; RunCtl.start = realStart; RunCtl.resumeRun = realResume;
-        return { label, seen, bar: bar.replace(/\s+/g, ' ').trim(), did, afterClose, cards, ordCards, pullOff,
-          recordLines, recordIsRun, sameRun: B.run === runBefore, linesBefore, linesAfter: Orders.rows().length };
-      });
-      console.log('one run on every tab', JSON.stringify(scoped));
-      assert(!scoped.skip, 'there was a run to open: ' + scoped.skip);
-      assert(/Open this run/.test(scoped.label || ''), 'the run list hands the run to every tab: ' + scoped.label);
-      assert.deepStrictEqual(scoped.did, [], 'nothing was started, pulled or resumed to show it: ' + JSON.stringify(scoped.did));
-      for (const m of ['nest', 'orders', 'engrave', 'review']) {
-        assert(scoped.seen[m].strip, `${m} says which run it is showing`);
-        assert(scoped.seen[m].body, `${m} shows the chosen run`);
-        assert(scoped.seen[m].text.length > 20, `${m} has something in it: ` + scoped.seen[m].text);
-      }
-      assert(/Set|run/.test(scoped.bar) && /line/.test(scoped.bar), 'and every tab says which run it is: ' + scoped.bar);
-      assert(scoped.recordLines >= 1 && scoped.recordIsRun, "the run's own lines are the Orders tab: " + scoped.recordLines);
-      assert.strictEqual(scoped.linesAfter, scoped.linesBefore, 'and putting the run down gives the live pull back, not an empty list');
-      assert(scoped.ordCards >= 1, 'drawn as the same cards and rows as a live pull: ' + scoped.ordCards);
-      assert(scoped.pullOff, 'and a finished run cannot be pulled over');
-      assert(!scoped.afterClose.scope, 'and putting it down gives the tabs back');
+
       await page.evaluate(() => { CN.setMode('orders'); Orders.render(); });
       assert(ord.cards.every(c2 => /^\d{6,}$/.test(c2.num.trim()) && c2.sku && c2.state && c2.metal), 'each card carries the order, the SKU, the state and the metal: ' + JSON.stringify(ord.cards[0]));
       assert(ord.cards.some(c2 => c2.flag && c2.why), 'a line that needs a person says so on its own card');
@@ -1165,6 +1110,45 @@ const receipts = [
   const fatal = errors.filter(e => !/favicon|net::ERR|Notification|AudioContext|ResizeObserver|The play\(\)|Failed to load resource/.test(e));
   if (fatal.length) console.log('page errors:\n  ' + fatal.join('\n  '));
   assert.strictEqual(fatal.length, 0, 'no page errors');
+  // ── 9 · recall: last of all, because it clears the cards ──
+  /* Recall: a saved set goes back onto the material cards, drawn from the picture and numbers it saved, in one read
+     of the sheet list. Nothing is rebuilt, started, pulled or resumed; the picker knows each set by its GF picture. */
+  const recalled = await page.evaluate(async () => {
+    const runId = (B.run && B.run.runId) || 'ended'; if (!runId) return { skip: 'no run' };
+    const did = [];
+    const realPull = Orders.pull; Orders.pull = () => { did.push('pull'); };
+    const realStart = RunCtl.start; RunCtl.start = () => { did.push('start'); };
+    const realResume = RunCtl.resumeRun; RunCtl.resumeRun = () => { did.push('resume'); };
+    const realMaster = Pool.masterCharm; Pool.masterCharm = (...a2) => { did.push('rebuild'); return realMaster(...a2); };
+    RunCtl.stop('stopped for the test', ''); RunCtl.clearRunState();   // the cards are free: a person recalls a set onto them
+    RunHistory.show(''); await new Promise(r => setTimeout(r, 900));
+    const d = document.getElementById('histDlg');
+    const cards = [...d.querySelectorAll('.hSet')].map(n => ({ set: n.dataset.set, thumb: !!n.querySelector('.hThumb'), text: n.textContent.replace(/\s+/g, ' ').trim().slice(0, 80) }));
+    const views = [...d.querySelectorAll('[data-view]')].map(x => x.dataset.view);
+    const target = [...d.querySelectorAll('.hSet')].find(n => /Set 1/.test(n.textContent));
+    const btn = target && target.querySelector('[data-a=open]');
+    if (btn) btn.click();
+    await new Promise(r => setTimeout(r, 1500));
+    const strip = !!document.getElementById('scopeStrip'), grid = !!document.getElementById('scopeView');
+    const pages = CN.allSheets().filter(p => p.recalled).map(p => ({ metal: p.metal, name: p.recalled.fileBase, placed: p.recalled.placedCount, pill: (p.el && p.el.querySelector('[data-r=pill]') || {}).textContent, prov: (p.el && p.el.querySelector('[data-r=prov]') || {}).textContent, nest: (p.el && p.el.querySelector('[data-r=nest]') || {}).textContent, dl: !(p.el && p.el.querySelector('[data-r=dl]').classList.contains('hidden')) }));
+    const canvasDrawn = await new Promise(res => { let n = 0; const t = setInterval(() => { const pg = CN.allSheets().find(p => p.recalled && p.metal === 'silver'); const ok = pg && pg._img && pg._img.complete && pg._img.naturalWidth > 0; if (ok || ++n > 40) { clearInterval(t); res(!!ok); } }, 100); });
+    CN.setMode('orders'); await new Promise(r => setTimeout(r, 200));   // the header repaints when the tab is shown
+    const orders = { rows: Orders.rows().length, fromRecord: Orders.rows().every(r => r.fromRecord), meta: (document.getElementById('ordMeta') || {}).textContent };
+    CN.setMode('nest');
+    Orders.pull = realPull; RunCtl.start = realStart; RunCtl.resumeRun = realResume; Pool.masterCharm = realMaster;
+    return { cards, views, strip, grid, pages, canvasDrawn, orders, did, mode: CN.S.mode };
+  });
+  console.log('recall', JSON.stringify(recalled));
+  assert(!recalled.skip, 'there was a run to recall: ' + recalled.skip);
+  assert(recalled.cards.length >= 2 && recalled.cards.every(c2 => c2.thumb), 'the picker lists the sets, each with a picture: ' + JSON.stringify(recalled.cards));
+  assert.deepStrictEqual(recalled.views, ['cards', 'list'], 'as cards or as a list');
+  assert(!recalled.strip && !recalled.grid, 'no strip, no grid: the material cards are the view');
+  assert.strictEqual(recalled.mode, 'nest', 'opening a set lands on the cards');
+  assert(recalled.pages.length >= 1 && recalled.pages.every(p => p.name && /Recalled/.test(p.pill) && /recalled/.test(p.prov) && /Rebuild to edit/.test(p.nest) && p.dl), 'the set is on its material card, marked recalled, with its downloads and a way to rebuild: ' + JSON.stringify(recalled.pages));
+  assert(recalled.canvasDrawn, 'the saved picture is what the card shows');
+  assert(recalled.orders.rows >= 1 && recalled.orders.fromRecord && /from the record/.test(recalled.orders.meta), "the run's orders are on the Orders tab, said to be from the record: " + JSON.stringify(recalled.orders));
+  assert.deepStrictEqual(recalled.did, [], 'nothing was pulled, started, resumed or rebuilt: ' + JSON.stringify(recalled.did));
+
   console.log('bridge e2e OK ·', st.docs.size, 'docs ·', st.blobs.size, 'blobs · screenshots in', tmp);
   await browser.close(); srv.close();
 })().catch(e => { console.error(e); process.exit(1); });

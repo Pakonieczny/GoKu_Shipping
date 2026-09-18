@@ -426,7 +426,6 @@ const Views = window.Views = (() => {
   function onShow(mode) {
     if (mode === "design") { const host = designHost(); if (!document.getElementById("dsFrame")) DesignLink.mount(host); else Dock.setHost(host); DesignLink.renderConsole(); }
     Dock.schedule();
-    if (window.Scope && Scope.apply(mode)) return;              // a chosen run is what this tab is about, live or not
     if (mode === "orders") Orders.render();
     if (mode === "master") Master.render();
     if (mode === "engrave") Engrave.render();
@@ -459,7 +458,6 @@ const Orders = window.Orders = (() => {
     Review.syncOrderItems();
   }
   async function pull(run, { silent = false } = {}) {
-    if (window.Scope && Scope.on()) throw new Error("a run from the record is open — press Done on the strip above to come back to live orders");
     await DesignLink.ensure();
     if (!DesignLink.etsyBudgetOk("the pull")) throw new Error("Etsy call budget reached — the pull was not started");
     await Promise.all([loadMaps(), Master.load()]);
@@ -467,7 +465,7 @@ const Orders = window.Orders = (() => {
     try {
     const r = await DesignLink.call("orders.snapshot", { hydrate: true, refresh: true }, { timeoutMs: 20 * 60 * 1000, onProgress: p => { if (pullBar) { if (p.done != null && p.total) pullBar.set(p.done, p.total, p.text || ""); else if (p.text) pullBar.note(p.text); } if (p.text) agentLiveLine("Pulling orders", p.text, p.done, p.total); } });
     DesignLink.meter(r, "the pull");
-    B.orders.snapshot = { total: r.total, hydrated: r.hydrated, etsy: r.etsy, at: Date.now() };
+    B.orders.snapshot = { total: r.total, hydrated: r.hydrated, etsy: r.etsy, at: Date.now() }; B.orders.recalled = null;
     if (r.hydrated < r.total) throw new Error(`only ${r.hydrated} of ${r.total} orders could be read from Etsy — ${r.etsy && !r.etsy.signedIn ? "the station is not signed in: press Connect Etsy" : "check the Design Station and pull again"}`);
     const picked = applyPullRule(r.orders);
     B.orders.filtered = r.orders.length - picked.length;
@@ -515,7 +513,7 @@ const Orders = window.Orders = (() => {
     return { key, order, line, spec: null, problems: [], state: l.state || "pulled", reason: l.reason || null, hold: l.hold || null, wait: l.wait || null, claimedBy: null,
       poolIds: l.poolIds || [], engrave: l.engrave || null, metal: l.material || null, materialOverride: l.material || null, fromRecord: true };
   }
-  async function claim(ids) { if (!ids.length) return; if (window.Scope && Scope.on()) return; const r = await DesignLink.call("claim", { receiptIds: ids, runId: B.run && B.run.runId }); for (const row of rowsOf()) if (r.claimed.includes(row.order.receiptId)) row.claimedBy = "sorter"; agent({ bridge: true }, "DS", `Claimed ${r.claimed.length} order(s) on the station (gold dot)`); render(); }
+  async function claim(ids) { if (!ids.length) return; const r = await DesignLink.call("claim", { receiptIds: ids, runId: B.run && B.run.runId }); for (const row of rowsOf()) if (r.claimed.includes(row.order.receiptId)) row.claimedBy = "sorter"; agent({ bridge: true }, "DS", `Claimed ${r.claimed.length} order(s) on the station (gold dot)`); render(); }
   async function unclaim(ids) { if (!ids.length) return; try { await DesignLink.call("unclaim", { receiptIds: ids }); } catch (e) { agent({ bridge: true }, "warn", `unclaim: ${e.message}`); } for (const row of rowsOf()) if (ids.includes(row.order.receiptId)) row.claimedBy = null; render(); }
   /** §10.3: every order's update_timestamp re-read through the station; changed → re-interpret; vanished → dropped. */
   async function revalidate(run, why) {
@@ -610,7 +608,7 @@ const Orders = window.Orders = (() => {
     const lid = String(r.line.listingId || "");
     if (IMG.got.get(lid)) return IMG.got.get(lid);
     const e = r.spec && r.spec.designSku ? B.master.entries.get(r.spec.designSku) : null;
-    return (e && e.thumbUrl) || null;
+    return (e && Master.thumbOf(e)) || null;
   }
   function wantImage(lid) {
     lid = String(lid || ""); if (!lid || IMG.got.has(lid) || IMG.want.has(lid)) return;
@@ -712,7 +710,7 @@ const Orders = window.Orders = (() => {
       if (cards) {
         node.innerHTML =
           '<span class="oimg" data-lid="' + esc(lid) + '"' + (url ? ' data-painted="1"' : "") + '>' +
-            (url ? '<img loading="lazy" alt="" src="' + esc(url) + '">' : '<span class="ph">loading…</span>') +
+            (url ? '<img loading="lazy" alt="" src="' + esc(url) + '" onerror="this.remove()">' : '<span class="ph">' + (lid ? 'loading…' : 'no image') + '</span>') +
             (qty > 1 ? P("qty", "×" + qty) : "") +
             (attn ? '<span class="flag" title="' + esc(why) + '">!</span>' : "") +
           '</span>' +
@@ -728,7 +726,7 @@ const Orders = window.Orders = (() => {
           '</span>';
       } else {
         node.innerHTML =
-          '<img class="th" data-lid="' + esc(lid) + '" alt=""' + (url ? ' src="' + esc(url) + '" data-painted="1"' : "") + '>' +
+          '<img class="th" data-lid="' + esc(lid) + '" alt="" onerror="this.removeAttribute(\'src\')"' + (url ? ' src="' + esc(url) + '" data-painted="1"' : "") + '>' +
           P("cell onum", esc(r.order.receiptId)) +
           '<span class="cell osku"><b>' + esc(sp.designSku || r.line.sku || "— none —") + '</b></span>' +
           '<span class="cell hideSm" style="font-size:12px;color:var(--ink70)">' + esc(wordsOf(sp) || r.line.title) + '</span>' +
@@ -785,13 +783,11 @@ const Orders = window.Orders = (() => {
   function renderHead(v) {
     const s = S.settings, all = rowsOf();
     const running = B.run && !["complete", "stopped"].includes(B.run.status);
-    const scoped = !!(window.Scope && Scope.on());
     const pull = v.querySelector("#ordPull");
-    pull.disabled = !!running || scoped;
-    pull.title = scoped ? "these are a finished run's orders, read from the record — press Done above to come back to live orders"
-      : running ? "a run is open — stop it first, or its lines would be replaced under it" : "ask the Design Station for every open order that matches the rule below";
+    pull.disabled = !!running;
+    pull.title = running ? "a run is open — stop it first, or its lines would be replaced under it" : "ask the Design Station for every open order that matches the rule below";
     // while a run is open the banner above owns it: repeating Run and Resume here only made it unclear which did what
-    v.querySelector("#ordRun").classList.toggle("hidden", !!running || scoped);
+    v.querySelector("#ordRun").classList.toggle("hidden", !!running);
     v.querySelector("#ordPullMode").value = s.pullMode || "all";
     v.querySelector("#ordDueBy").value = s.pullDueBy || "";
     v.querySelector("#ordDueBy").classList.toggle("hidden", s.pullMode !== "dueBy");
@@ -801,7 +797,7 @@ const Orders = window.Orders = (() => {
     const meta = v.querySelector("#ordMeta");
     meta.className = "pill " + (B.orders.stale ? "warn" : "neutral");
     meta.title = B.orders.stale ? "the station's open list has changed since this pull — pull again to catch up" : "the last pull";
-    meta.textContent = B.orders.pulledAt ? `${new Set(all.map(r => r.order.receiptId)).size} orders · ${all.length} lines · pulled ${fmtT(B.orders.pulledAt)}${B.orders.filtered ? ` · ${B.orders.filtered} left out by the rule` : ""}${B.orders.stale ? " · list changed" : ""}` : "nothing pulled yet";
+    meta.textContent = B.orders.recalled ? `${new Set(all.map(r => r.order.receiptId)).size} orders · ${all.length} lines · ${B.orders.recalled.seq ? "Set " + B.orders.recalled.seq : "run"}${B.orders.recalled.day ? " · " + B.orders.recalled.day : ""} · from the record` : B.orders.pulledAt ? `${new Set(all.map(r => r.order.receiptId)).size} orders · ${all.length} lines · pulled ${fmtT(B.orders.pulledAt)}${B.orders.filtered ? ` · ${B.orders.filtered} left out by the rule` : ""}${B.orders.stale ? " · list changed" : ""}` : "nothing pulled yet";
     const counts = {}; for (const r of all) counts[pileOf(r)] = (counts[pileOf(r)] || 0) + 1;
     const byMetal = {}; for (const r of all) { const m = r.material || "none"; byMetal[m] = (byMetal[m] || 0) + 1; }
     const chip = (on, id, label, n, cls, title) => `<button class="egTab${on ? " on" : ""}" data-pile="${esc(id)}" title="${esc(title || "")}">${esc(label)}<b class="${cls}">${n}</b></button>`;
@@ -2193,7 +2189,6 @@ const RunCtl = window.RunCtl = (() => {
   async function save(r) { r = r || B.run; if (!r) return; r.updatedAt = Date.now(); if (!S.cloud.ok) return; const rec = Object.assign({}, r, { lines: r.lines || {}, sheets: r.sheets || {}, holds: r.holds || {}, errors: (r.errors || []).slice(-50) }); delete rec._wait; await api("charmNestLibrary", { op: "runPut", run: rec }).catch(e => agent({ run: r.runId }, "warn", `run record: ${e.message}`)); renderBanner(); }
   function newRun(mode) { const day = today(); return { runId: `run-${day}-${uid()}`, day, setId: null, step: "pull", status: "running", mode: mode || S.settings.runMode || "manual", startedAt: Date.now(), updatedAt: Date.now(), lines: {}, sheets: {}, holds: {}, errors: [], resumable: true, stoppedBy: null, fix: null, orders: [] }; }
   async function start(opts = {}) {
-    if (window.Scope && Scope.on()) { toast("A run from the record is open — press Done on the strip above first", "bad", 6000); return; }
     if (B.run && ["running", "review", "paused"].includes(B.run.status)) { toast("A run is already open — stop it or let it finish", "bad"); return B.run; }
     const r = newRun(opts.mode); B.run = r;
     agent({ run: r.runId }, "DS", `Run ${r.runId} started (${r.mode} mode)`);
@@ -2377,7 +2372,7 @@ const RunCtl = window.RunCtl = (() => {
     if (S.settings.runMode === "auto" && +S.settings.autoEvery > 0) { const every = Math.max(5, +S.settings.autoEvery); clearTimeout(autoTimer); autoTimer = setTimeout(() => { NEXT.at = 0; clearInterval(NEXT.t); if (S.settings.runMode === "auto") { clearRunState(); start({ mode: "auto" }); } }, every * 60000); armNext(every * 60000); agent({ bridge: true }, "DS", `Auto: the next run starts in ${every} min (never under 5, to spare the Etsy API)`); }
   }
   /** After a set is done: clear the cards and pooled lines so the next run starts clean (files and records are kept). */
-  function clearRunState() { for (const m of METALS) { const prim = S.sheets[m.key]; if (prim.pages.some(p => p.charms.some(c => c.poolId))) { for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms = pg.charms.filter(c => !c.poolId); pg.sheetId = null; pg.fileBase = null; pg.setId = null; pg.runId = null; } prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim); } } B.orders.rows = []; B.orders.byKey = new Map(); B.engrave.items = new Map(); B.review.items = []; B.pool.rows = new Map(); B.run = null; Orders.render(); Engrave.render(); Review.render(); renderBanner(); renderRail(); updateTopSub(); }
+  function clearRunState() { for (const m of METALS) { const prim = S.sheets[m.key]; if (prim.pages.some(p => p.charms.some(c => c.poolId))) { for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms = pg.charms.filter(c => !c.poolId); pg.sheetId = null; pg.fileBase = null; pg.setId = null; pg.runId = null; } prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim); } } B.orders.rows = []; B.orders.byKey = new Map(); B.engrave.items = new Map(); B.review.items = []; B.pool.rows = new Map(); B.run = null; B.orders.recalled = null; Orders.render(); Engrave.render(); Review.render(); renderBanner(); renderRail(); updateTopSub(); }
   function setRunMode(mode) {
     S.settings.runMode = mode === "auto" ? "auto" : "manual"; saveSettings(); renderModeBtn();
     if (mode === "auto") { agent({ bridge: true }, "DS", "Auto mode on: the sorter pulls the latest orders by the date rule and runs the whole process, stopping only for a person"); if (!B.run || ["complete", "stopped"].includes(B.run.status)) { if (B.run && B.run.status === "complete") clearRunState(); start({ mode: "auto" }).catch(e => toast(e.message, "bad")); } else if (B.run.status === "paused") { B.run.mode = "auto"; next(); } else B.run.mode = "auto"; }
@@ -2957,7 +2952,7 @@ const OrderWin = window.OrderWin = (() => {
    look at, download and print. It is reachable from the run banner, from Orders and from Engraving, because the question
    "which run was that?" is asked from wherever you happen to be standing. */
 const RunHistory = window.RunHistory = (() => {
-  const H = { q: "", when: "all", runs: [], sheets: [], scanned: null, loading: false, err: null, dlg: null, open: new Set(), lines: new Map() };
+  const H = { q: "", when: "all", view: localStorage.getItem("cn.histView") || "cards", runs: [], sheets: [], sets: [], scanned: null, loading: false, err: null, dlg: null, open: new Set(), lines: new Map() };
   /* "Select previous run sets or days" is a filing question, so the dialog files them: four ways to narrow by time and
      state, and a heading for every day, because a flat list of eighty runs is a wall whatever order it is in. */
   const WHEN = [["all", "All"], ["today", "Today"], ["week", "Last 7 days"], ["open", "Unfinished"]];
@@ -2972,7 +2967,7 @@ const RunHistory = window.RunHistory = (() => {
     if (H.dlg) return H.dlg;
     const d = el("dialog", "hist"); d.id = "histDlg";
     d.innerHTML = `<form method="dialog" class="x"><button class="btn ghost sm" value="cancel">Close</button></form>
-      <h2>Runs</h2>
+      <h2>Sets</h2>
       <div class="hq"><input id="hQ" type="search" placeholder="order number, SKU, engraved words, a date, a set…" autocomplete="off">
         <button class="btn ghost sm" id="hRefresh" title="read the records again">Refresh</button></div>
       <div class="hWhen" id="hWhen"></div>
@@ -2982,7 +2977,7 @@ const RunHistory = window.RunHistory = (() => {
     const q = d.querySelector("#hQ");
     let t = 0;
     q.oninput = () => { H.q = q.value; clearTimeout(t); t = setTimeout(load, 260); };
-    d.querySelector("#hWhen").onclick = e => { const b = e.target.closest("[data-when]"); if (!b) return; H.when = b.dataset.when; render(); };
+    d.querySelector("#hWhen").onclick = e => { const b = e.target.closest("[data-when]"); if (b) { H.when = b.dataset.when; render(); return; } const v = e.target.closest("[data-view]"); if (v) { H.view = v.dataset.view; try { localStorage.setItem("cn.histView", H.view); } catch (_) {} render(); } };
     d.querySelector("#hRefresh").onclick = e => { e.preventDefault(); load(); };
     return d;
   }
@@ -2999,6 +2994,11 @@ const RunHistory = window.RunHistory = (() => {
     try {
       const r = await api("charmNestLibrary", { op: "history", q: H.q, limit: 60 }, { quiet: true });
       H.runs = r.runs || []; H.sheets = r.sheets || []; H.scanned = r.scanned || null; H.truncated = r.truncated || null;
+      /* A set is what a person recalls, so the sheets are folded into their sets here: name, day, materials, how many
+         sheets and orders, and the picture of its GF sheet (the first sheet, failing that) to know it by. */
+      const bySet = new Map();
+      for (const x of H.sheets) { const k = x.setId || `sheet:${x.id}`; if (!bySet.has(k)) bySet.set(k, { setId: x.setId || null, seq: x.setSeq || null, day: x.day, runId: x.runId || null, sheets: [], materials: [], orders: 0, updatedAt: 0 }); const g = bySet.get(k); g.sheets.push(x); if (!g.materials.includes(x.metal)) g.materials.push(x.metal); g.orders += x.orders || 0; g.updatedAt = Math.max(g.updatedAt, x.updatedAt || 0); }
+      H.sets = [...bySet.values()].map(g => { g.sheets.sort((a, b) => (a.sheetIndex || 0) - (b.sheetIndex || 0)); const gf = g.sheets.find(x => x.metal === "gold" && x.preview) || g.sheets.find(x => x.preview) || null; g.thumb = gf ? gf.preview + (gf.preview.includes("?") ? "&" : "?") + "v=" + (gf.updatedAt || 0) : null; g.thumbOf = gf ? gf.fileBase : null; g.status = g.sheets.every(x => x.status === "complete") ? "complete" : "partial"; return g; }).sort((a, b) => String(b.day).localeCompare(String(a.day)) || (b.seq || 0) - (a.seq || 0));
     } catch (e) { H.err = e.message; H.runs = []; H.sheets = []; }
     H.loading = false; render();
   }
@@ -3016,172 +3016,121 @@ const RunHistory = window.RunHistory = (() => {
       return;
     }
     const cur = B.run && B.run.runId;
-    const seen = H.runs.filter(inWhen);
+    const seenRuns = H.runs.filter(inWhen);
+    const seenSets = H.sets.filter(inWhen);
     const wsel = H.dlg.querySelector("#hWhen");
-    wsel.innerHTML = WHEN.map(([k, lbl]) => `<button class="egTab${H.when === k ? " on" : ""}" data-when="${k}">${lbl}<b>${H.runs.filter(r => { const was = H.when; H.when = k; const yes = inWhen(r); H.when = was; return yes; }).length}</b></button>`).join("");
-    if (!seen.length) { b.innerHTML = `<div class="hEmpty">no runs ${H.when === "today" ? "today" : H.when === "week" ? "in the last seven days" : H.when === "open" ? "left unfinished" : "on record"}</div>`; f.textContent = ""; return; }
-    let lastDay = null;
-    b.innerHTML = seen.map(r => {
-      const dayHead = r.day !== lastDay ? `<div class="hDay">${esc(dayWord(r.day) || "no date")}</div>` : "";
-      lastDay = r.day;
-      const [k, word] = STATUS[r.status] || ["neutral", r.status || "—"];
-      const live = ["running", "review", "paused", "stopped"].includes(r.status);
-      const openable = r.setId && ["complete", "stopped", "abandoned", "paused", "review"].includes(r.status);
-      const hits = [...(r.hitOrders || []).map(x => `order ${x}`), ...(r.hitSkus || [])].slice(0, 6);
-      return dayHead + `<div class="hRun${r.runId === cur ? " cur" : ""}" data-run="${esc(r.runId)}">
-        <div class="hRow">
-          <span class="nm">${r.seq ? `Set ${r.seq}` : "no set"}</span>
-          <span class="pill ${k}">${esc(word)}${r.status === "stopped" && r.stoppedBy ? ` · ${esc(r.stoppedBy)}` : live && r.step ? ` · ${esc(r.step)}` : ""}</span>
-          <span class="ct">${r.lines} line${r.lines === 1 ? "" : "s"} · ${r.orders} order${r.orders === 1 ? "" : "s"}${r.sheets ? ` · ${r.sheets} sheet${r.sheets === 1 ? "" : "s"}` : ""}${r.holds ? ` · ${r.holds} held` : ""}</span>
-          <span class="sp"></span>
-          ${r.runId === cur ? `<span class="pill neutral">on the cards now</span>` : ""}
-          <button class="btn gold sm" data-a="open" title="put this run on every tab \u2014 its sheets, its orders, its engraving, its decisions. Nothing runs and nothing is read from Etsy.">Open this run</button>
-          ${live && r.runId !== cur ? `<button class="btn ghost sm" data-a="resume" title="pick this unfinished run up where it stopped \u2014 it re-reads every order from Etsy first, which takes a while">Resume the run\u2026</button>` : ""}
-        </div>
-        ${hits.length ? `<div class="hHits">matched ${hits.map(x => `<b>${esc(x)}</b>`).join(", ")}</div>` : ""}
-      </div>`;
-    }).join("") + (H.q && H.sheets.length ? `<div class="hSheets"><div class="hHead">${H.sheets.length} sheet${H.sheets.length === 1 ? "" : "s"} match</div>${H.sheets.slice(0, 24).map(x => `<div class="hSheet"><span class="nm">${esc(x.fileBase || x.id)}</span><span class="ct">${esc(dayWord(x.day))} · ${x.placedCount}/${x.charmCount} placed · ${x.orders} order${x.orders === 1 ? "" : "s"}</span><span class="sp"></span>${x.preview ? `<a class="btn ghost sm" href="${esc(x.preview)}" target="_blank" rel="noopener">Preview</a>` : ""}</div>`).join("")}</div>` : "");
+    const countIn = (k, arr) => arr.filter(r => { const was = H.when; H.when = k; const yes = inWhen(r); H.when = was; return yes; }).length;
+    wsel.innerHTML = WHEN.map(([k, lbl]) => `<button class="egTab${H.when === k ? " on" : ""}" data-when="${k}">${lbl}<b>${countIn(k, H.sets)}</b></button>`).join("")
+      + `<span class="sp"></span><span class="viewSeg">${["cards", "list"].map(v => `<button data-view="${v}"${H.view === v ? ' class="on"' : ""} title="${v === "cards" ? "a picture of each set" : "one line per set"}">${v === "cards" ? "Cards" : "List"}</button>`).join("")}</span>`;
+    if (!seenSets.length && !seenRuns.length) { b.innerHTML = `<div class="hEmpty">no sets ${H.when === "today" ? "today" : H.when === "week" ? "in the last seven days" : H.when === "open" ? "left unfinished" : "on record"}</div>`; f.textContent = ""; return; }
+    const openRuns = seenRuns.filter(r => ["running", "review", "paused", "stopped"].includes(r.status) && r.runId !== cur);
+    let lastDay = null, html = "";
+    for (const g of seenSets) {
+      if (g.day !== lastDay) { html += `<div class="hDay">${esc(dayWord(g.day) || "no date")}</div>`; lastDay = g.day; }
+      const name = g.seq ? `Set ${g.seq}` : (g.sheets[0].fileBase || "sheet");
+      const mats = g.materials.map(m => labelOf(m)).join(" \u00b7 ");
+      const isCur = g.runId && g.runId === cur;
+      const openBtn = `<button class="btn gold sm" data-a="open" title="put this set's sheets back on the material cards \u2014 from what was saved, nothing runs">Open</button>`;
+      const resumeBtn = g.runId && openRuns.some(r => r.runId === g.runId) ? `<button class="btn ghost sm" data-a="resume" title="pick the unfinished run this set belongs to up where it stopped \u2014 it re-reads every order from Etsy first">Resume the run\u2026</button>` : "";
+      html += H.view === "cards"
+        ? `<div class="hSet card hoverItem${isCur ? " cur" : ""}" data-set="${esc(g.setId || "")}" data-run="${esc(g.runId || "")}" tabindex="0">
+            ${g.thumb ? `<img class="hThumb" loading="lazy" alt="" src="${esc(g.thumb)}" title="${esc(g.thumbOf || "")}" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'hThumb ph',textContent:'no preview'}))">` : `<div class="hThumb ph">no preview</div>`}
+            <div class="hRow"><span class="nm">${esc(name)}</span><span class="pill ${g.status === "complete" ? "ok" : "bad"}">${g.status}</span><span class="ct">${g.sheets.length} sheet${g.sheets.length === 1 ? "" : "s"} \u00b7 ${g.orders} order${g.orders === 1 ? "" : "s"}</span></div>
+            <div class="hRow sub"><span class="ct">${esc(mats)}</span><span class="sp"></span>${isCur ? `<span class="pill neutral">on the cards</span>` : openBtn}${resumeBtn}</div>
+          </div>`
+        : `<div class="hSet row hoverItem${isCur ? " cur" : ""}" data-set="${esc(g.setId || "")}" data-run="${esc(g.runId || "")}"><div class="hRow">
+            ${g.thumb ? `<img class="hMini" loading="lazy" alt="" src="${esc(g.thumb)}" onerror="this.remove()">` : `<span class="hMini ph"></span>`}
+            <span class="nm">${esc(name)}</span><span class="pill ${g.status === "complete" ? "ok" : "bad"}">${g.status}</span>
+            <span class="ct">${esc(mats)} \u00b7 ${g.sheets.length} sheet${g.sheets.length === 1 ? "" : "s"} \u00b7 ${g.orders} order${g.orders === 1 ? "" : "s"}</span><span class="sp"></span>${isCur ? `<span class="pill neutral">on the cards</span>` : openBtn}${resumeBtn}</div></div>`;
+    }
+    // unfinished runs that wrote no sheet yet have nothing to picture, but can still be picked up
+    for (const r of openRuns.filter(r => !seenSets.some(g => g.runId === r.runId))) html += `<div class="hSet row" data-run="${esc(r.runId)}"><div class="hRow"><span class="nm">${r.seq ? "Set " + r.seq : "run " + r.runId.slice(-8)}</span><span class="pill warn">${esc(r.status)}${r.stoppedBy ? " \u00b7 " + esc(r.stoppedBy) : ""}</span><span class="ct">${r.lines} line${r.lines === 1 ? "" : "s"} \u00b7 no sheet written yet</span><span class="sp"></span><button class="btn ghost sm" data-a="resume" title="pick it up where it stopped \u2014 it re-reads every order from Etsy first">Resume the run\u2026</button></div></div>`;
+    b.innerHTML = `<div class="hSets ${H.view}">${html}</div>`;
     f.textContent = [H.scanned ? `looked at the ${H.scanned.runs} most recent runs and ${H.scanned.sheets} most recent sheets` : "",
       H.truncated && (H.truncated.runs || H.truncated.sheets) ? "there is more history than that — narrow the search to reach further back" : ""].filter(Boolean).join(" · ");
-    b.querySelectorAll(".hRun").forEach(node => {
-      const id = node.dataset.run;
-      const a = s => node.querySelector(`:scope > .hRow > [data-a=${s}]`);
-      if (a("resume")) a("resume").onclick = () => {
-        const r2 = H.runs.find(x => x.runId === id) || {};
-        if (!confirm(`Pick run ${r2.seq ? "Set " + r2.seq : id.slice(-8)} up again?\n\nIt re-reads all ${r2.orders || ""} orders from Etsy through the Design Station before it can carry on, which takes a few minutes.\n\nTo look at what it already made, press Sheets instead \u2014 that reads nothing from Etsy.`)) return;
-        H.dlg.close(); RunCtl.resumeRun(id).catch(e => toast(e.message, "bad", 7000));
+    b.querySelectorAll(".hSet").forEach(node => {
+      const setId = node.dataset.set || null, runId = node.dataset.run || null;
+      const o = node.querySelector("[data-a=open]"); if (o) o.onclick = e => { e.stopPropagation(); if (H.dlg.open) H.dlg.close(); Recall.open(setId ? { setId, runId } : { runId }).catch(err => toast(err.message, "bad", 7000)); };
+      const rs = node.querySelector("[data-a=resume]"); if (rs) rs.onclick = e => {
+        e.stopPropagation(); const r2 = H.runs.find(x => x.runId === runId) || {};
+        if (!confirm(`Pick run ${r2.seq ? "Set " + r2.seq : String(runId).slice(-8)} up again?\n\nIt re-reads all ${r2.orders || ""} orders from Etsy through the Design Station before it can carry on, which takes a few minutes.\n\nTo look at what it already made, press Open instead \u2014 that reads nothing from Etsy.`)) return;
+        H.dlg.close(); RunCtl.resumeRun(runId).catch(err => toast(err.message, "bad", 7000));
       };
-      if (a("open")) a("open").onclick = () => { if (H.dlg && H.dlg.open) H.dlg.close(); Scope.open(id).catch(e => toast(e.message, "bad", 7000)); };
+      if (o) node.onclick = e => { if (e.target.closest("button")) return; o.click(); };
     });
   }
   return { show, load, runs: () => H.runs };
 })();
 
-/* ═══ 24d · Scope — one run, on every tab ═══════════════════════════════════════════════════════════════════════════
-   A run that is working already reaches every tab: its orders are the Orders tab, its engraving is the Engraving tab,
-   its sheets are the cards. A run that has finished reached none of them — you could find it in a list and that was
-   all. So the same idea is made explicit: choose a run, and every tab that is about a run shows that run and nothing
-   else, until you put it down.
-
-   Nothing here touches Etsy, the pool, the station or the live state. It reads the records that were written when the
-   run happened — the run record, the sheets of its set — and draws them. Choosing a run does not start one; clearing
-   the scope leaves whatever was running exactly as it was. */
-const Scope = window.Scope = (() => {
-  const SC = { run: null, sheets: null, full: null, fullLoading: false, loading: false, err: null, host: null, tab: null, live: null };
-  const RECORD_TABS = new Set(["nest", "engrave"]);          // these read the records; Orders and Review use the real tabs
-  const TABS = new Set(["nest", "orders", "engrave", "review"]);
-  const on = () => !!SC.run;
-  const dayWord = d => d ? new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "";
-
-  function host() {
-    if (SC.host && SC.host.isConnected) return SC.host;
-    const st = document.getElementById("stage");
-    const h = el("div", "scopeView hidden"); h.id = "scopeView";
-    st.appendChild(h); SC.host = h; return h;
+/* ═══ 24d · Recall — a saved set back on the cards, from what was saved ═══════════════════════════════════════════════
+   The material cards are the view. A recalled set is not a different screen: its sheets go back onto the GF card, the
+   SS card, the RG card — as pages under the same tabs a live run uses — drawn from the picture each sheet saved when it
+   was nested and the numbers in its record. One read of the sheet list; the pictures load as the cards scroll into view.
+   Nothing is rebuilt from the master files unless a person presses "Rebuild to edit" on one card, and then only that
+   sheet. The set's orders come back onto the Orders tab the same way, from the run record. */
+const Recall = window.Recall = (() => {
+  const RC = { runId: null, setId: null, live: null };
+  const on = () => !!(RC.runId || RC.setId);
+  /** Put a run's or a set's sheets onto their material cards. Instant: the slim sheet list is all it reads. */
+  async function open(sel) {
+    const q = sel.setId ? { setId: sel.setId } : { runId: sel.runId };
+    const ls = await api("charmNestLibrary", Object.assign({ op: "listSheets", limit: 200 }, q), { label: "Reading the set" });
+    const sheets = (ls.sheets || []).sort((a, b) => (a.setSeq || 0) - (b.setSeq || 0) || (a.sheetIndex || 0) - (b.sheetIndex || 0));
+    if (!sheets.length) { toast("Nothing is saved under that set", "bad", 5000); return; }
+    if (B.run && ["running", "review"].includes(B.run.status)) { toast("A run is working — stop it first, or its sheets would be replaced under it", "bad", 6000); return; }
+    RunCtl.clearRunState();
+    RC.runId = sel.runId || sheets[0].runId || null; RC.setId = sel.setId || null;
+    for (const m of METALS) {
+      const mine = sheets.filter(x => x.metal === m.key); if (!mine.length) continue;
+      const prim = S.sheets[m.key];
+      mine.forEach((rec, i) => {
+        const pg = i === 0 ? prim.pages[0] : CN.addPage(m.key);
+        pg.charms = []; pg.placements = []; pg.rejects = []; pg.outputs = null; pg.verification = rec.verification || null; pg.liveInfo = null; pg.dirty = false; pg.problem = null;
+        pg.recalled = rec; pg.status = "complete"; pg.sheetId = rec.id; pg.runId = rec.runId || RC.runId; pg.setId = rec.setId; pg.seq = rec.setSeq; pg.setDay = rec.day; pg.sheetIndex = rec.sheetIndex; pg.fileBase = rec.fileBase; pg.group = null;
+        pg.backPool = (rec.backs || []).map(bk => ({ poolId: bk.poolId, order: bk.order, sku: bk.sku, text: bk.text, lines: bk.lines || (bk.text ? String(bk.text).split("\n") : []), approvedBy: bk.approvedBy, capMm: bk.capMm, outputs: { png: bk.png ? { url: bk.png } : null, ai: bk.ai ? { url: bk.ai } : null } }));
+        pg.cloud = Object.assign({ preview: rec.preview }, rec.outputs || {});
+        pg.persistedDone = true; pg.persisted = Promise.resolve(); pg._img = null;
+      });
+      prim.active = 0; prim.el = prim.cardEl; CN.showPage(m.key, 0);
+    }
+    CN.refreshAllCards(); CN.renderRail(); CN.updateTopSub();
+    // and the run's orders, as the Orders tab's own rows
+    if (RC.runId) await ordersOf(RC.runId).catch(e => agent({ run: RC.runId }, "warn", `orders of the run: ${e.message}`));
+    agent({ run: RC.runId }, "cloud", `Recalled ${sheets.length} sheet(s)${sel.setId ? " of " + (sheets[0].setSeq ? "Set-" + sheets[0].setSeq : sel.setId) : ""} from ${sheets[0].day || "the record"} onto the cards — nothing is running`);
+    setMode("nest");
   }
-  /** One line, above every tab, saying which run everything below it is about. */
-  function strip() {
-    let n = document.getElementById("scopeStrip");
-    if (!n) { n = el("div", "scopeStrip hidden"); n.id = "scopeStrip"; const st = document.getElementById("stage"); st.insertBefore(n, st.firstChild); }
-    const r = SC.run;
-    if (!r && !SC.loading) { n.classList.add("hidden"); n.innerHTML = ""; return; }
-    n.classList.remove("hidden");
-    n.innerHTML = SC.loading && !r ? `<span class="nm"><span class="spin"></span> reading the run\u2026</span>`
-      : `<span class="nm">${esc([r.seq ? "Set " + r.seq : "run " + r.runId.slice(-8), dayWord(r.day)].filter(Boolean).join(" \u00b7 "))}</span>
-         <span class="ct">${Object.keys(r.lines || {}).length} lines \u00b7 ${(SC.sheets || []).length} sheet${(SC.sheets || []).length === 1 ? "" : "s"}${r.status ? " \u00b7 " + esc(r.status) : ""} \u00b7 on record, nothing is running</span>
-         <span class="sp"></span><button class="btn ghost sm" data-s="other">Another run\u2026</button><button class="btn ghost sm" data-s="close" title="put this run down \u2014 the tabs go back to whatever is live">Done</button>`;
-    n.querySelectorAll("[data-s]").forEach(b => b.onclick = () => { if (b.dataset.s === "close") clear(); else RunHistory.show(""); });
+  async function ordersOf(runId) {
+    const r = await api("charmNestLibrary", { op: "runGet", runId }, { quiet: true }); if (!r.run) return;
+    await Orders.loadMaps().catch(() => {}); await Master.load().catch(() => {});
+    B.orders.rows = Object.entries(r.run.lines || {}).map(([k, l]) => Orders.rowFromRecord(k, l));
+    B.orders.byKey = new Map(B.orders.rows.map(x => [x.key, x]));
+    B.orders.pulledAt = r.run.updatedAt || r.run.startedAt || null; B.orders.filtered = 0; B.orders.stale = false;
+    B.orders.recalled = { runId, seq: r.run.seq || +((/-(\d+)$/.exec(String(r.run.setId || "")) || [])[1] || 0) || null, day: r.run.day || null };
+    Orders.interpretAll(); Orders.render();
   }
-
-  /** Take a run off the record and put it in front of the person, on every tab. One read; nothing is started. */
-  async function open(runId) {
-    SC.loading = true; SC.err = null; SC.full = null; strip();
+  /** Bring one recalled sheet's charms back from the master files so it can be edited and nested again. On demand only. */
+  async function rebuild(pg) {
+    const rec = pg.recalled; if (!rec) return;
+    const bar = window.CNProgress ? CNProgress.start(`Rebuilding ${rec.fileBase || rec.id}`) : null;
     try {
-      const r = await api("charmNestLibrary", { op: "runGet", runId }, { label: "Reading the run" });
-      if (!r.run) throw new Error("that run is no longer on record");
-      SC.run = r.run;
-      SC.run.seq = SC.run.seq || +((/-(\d+)$/.exec(String(SC.run.setId || "")) || [])[1] || 0) || null;
-      const ls = await api("charmNestLibrary", { op: "listSheets", runId: SC.run.runId, limit: 200 }, { quiet: true });
-      SC.sheets = (ls.sheets || []).sort((a2, b2) => String(a2.fileBase || "").localeCompare(String(b2.fileBase || "")));
-      /* The orders are not a summary of the run: they are the run's own lines, rebuilt into the rows the Orders tab
-         already draws — so the cards, the list with its thumbnails, every filter, the search and the order window all
-         work on a finished run exactly as they do on a live one. */
-      await Orders.loadMaps().catch(() => {}); await Master.load().catch(() => {});
-      // whatever was pulled is put aside, not thrown away: looking at last Tuesday must not cost this morning's work
-      if (!SC.live) SC.live = { rows: B.orders.rows, byKey: B.orders.byKey, pulledAt: B.orders.pulledAt, filtered: B.orders.filtered, stale: B.orders.stale, review: B.review.items };
-      B.orders.rows = Object.entries(SC.run.lines || {}).map(([k, l]) => Orders.rowFromRecord(k, l));
-      B.orders.byKey = new Map(B.orders.rows.map(x => [x.key, x]));
-      B.orders.pulledAt = SC.run.updatedAt || SC.run.startedAt || null;
-      B.orders.filtered = 0; B.orders.stale = false;
-      Orders.interpretAll();
-      SC.loading = false;
-      agent({ run: runId }, "cloud", `Showing ${SC.run.seq ? "Set " + SC.run.seq : runId}${SC.run.day ? " from " + SC.run.day : ""} on every tab \u2014 ${B.orders.rows.length} line(s), nothing is running`);
-    } catch (e) { SC.loading = false; SC.err = e.message; toast("Could not open that run: " + e.message, "bad", 7000); }
-    strip();
-    setMode(TABS.has(S.mode) ? S.mode : "orders");
+      const d = (await api("charmNestLibrary", { op: "getSheet", id: rec.id })).sheet; if (!d) throw new Error("the sheet record is gone");
+      for (const p of d.placements || []) {
+        const rc = (d.charms || []).find(c => c.id === p.id); if (!rc || !rc.poolId) continue;
+        const pool = B.pool.rows.get(rc.poolId) || ((await api("charmNestLibrary", { op: "poolGet", poolIds: [rc.poolId] })).pools || {})[rc.poolId]; if (!pool) continue; B.pool.rows.set(rc.poolId, pool);
+        const entry = Master.entryFor(pool.sku) || await Master.fetchEntry(pool.sku); if (!entry) continue;
+        const src = await Pool.masterCharm(entry, pool.size); const base = src.charms[0];
+        const charm = Pool.cloneCharm(base, `${src.id}:${rc.poolId}`); charm.name = rc.name; charm.order = pool.orderId; charm.poolId = rc.poolId; charm.metal = d.metal; charm.lineKey = pool.lineKey; charm.orderInfo = { receiptId: pool.orderId, transactionId: pool.transactionId, sku: pool.sku, copy: pool.copy, quantity: pool.quantity, form: pool.form, size: pool.size }; charm.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle };
+        pg.charms.push(charm);
+        pg.placements.push({ id: charm.id, angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, wPt: p.wPt, hPt: p.hPt, layerName: p.layer, scale: 0.975 });
+      }
+      pg.recalled = null; pg.status = "complete"; pg.dirty = false;
+      CN.computeSaturation(pg); CN.renderCard(pg);
+      agent({ metal: pg.metal }, "cloud", `${rec.fileBase || rec.id}: ${pg.charms.length} charm(s) rebuilt from the master files — the sheet can be edited and nested again`);
+    } finally { if (bar) bar.end(); }
   }
-  function clear() {
-    SC.run = null; SC.sheets = null; SC.full = null; SC.err = null;
-    const L = SC.live; SC.live = null;
-    if (L) { B.orders.rows = L.rows; B.orders.byKey = L.byKey; B.orders.pulledAt = L.pulledAt; B.orders.filtered = L.filtered; B.orders.stale = L.stale; B.review.items = L.review; }
-    else { B.orders.rows = []; B.orders.byKey = new Map(); B.review.items = []; }
-    host().innerHTML = ""; host().classList.add("hidden"); strip();
-    setMode(S.mode); Orders.render(); Review.render(); RunCtl.renderBanner();
-  }
-
-  /** Called on every tab switch. Nest and Engraving are drawn from the records; Orders and Review are the real tabs. */
-  function apply(mode) {
-    strip();
-    const h = host();
-    const mine = on() && RECORD_TABS.has(mode);
-    h.classList.toggle("hidden", !mine);
-    if (!on()) return false;
-    if (!mine) return false;                                   // Orders and Review carry on to their own renders
-    for (const id of ["sheets", "engraveView"]) { const v = document.getElementById(id); if (v) v.classList.add("hidden"); }
-    SC.tab = mode; paint();
-    return true;
-  }
-  function paint() {
-    const h = host(); if (!on()) { h.innerHTML = ""; return; }
-    h.innerHTML = SC.err ? `<div class="libEmpty bad">${esc(SC.err)}</div>` : SC.tab === "nest" ? sheetsHtml() : engraveHtml();
-    h.querySelectorAll("[data-sheet]").forEach(b => b.onclick = () => CN.openLibrarySheet(b.dataset.sheet));
-    if (SC.tab === "engrave" && !SC.full && !SC.fullLoading) loadFull();
-  }
-  /* The engraved backs live inside each sheet record, so that tab costs a read per sheet — taken when the tab is
-     opened, never on the way past. */
-  async function loadFull() {
-    SC.fullLoading = true;
-    try {
-      const out = [];
-      for (const x of SC.sheets || []) { const g = await api("charmNestLibrary", { op: "getSheet", id: x.id }, { quiet: true }); if (g.sheet) out.push(g.sheet); }
-      SC.full = out;
-    } catch (e) { SC.full = []; SC.err = e.message; }
-    SC.fullLoading = false; if (SC.tab === "engrave") paint();
-  }
-  function sheetsHtml() {
-    const x = SC.sheets || [];
-    if (!x.length) return `<div class="libEmpty">This run wrote no sheets.</div>`;
-    return `<div class="scopeGrid">${x.map(v => `<div class="scopeCard hoverItem" data-sheet="${esc(v.id)}" tabindex="0" title="open the sheet, its files and its charms">
-      <div class="h"><span class="nm">${esc(v.fileBase || v.id)}</span><span class="pill ${v.status === "complete" ? "ok" : "bad"}">${esc(v.status || "")}</span></div>
-      ${v.preview ? `<img class="pv" src="${esc(v.preview)}" loading="lazy" alt="">` : `<div class="pv ph">no preview</div>`}
-      <div class="m"><b>${v.placedCount}</b>/${v.charmCount} placed \u00b7 <b>${Math.round((v.density || 0) * 100)}%</b> full${v.verification && v.verification.ok === false ? ` \u00b7 <span class="bad">flagged</span>` : ""}</div>
-    </div>`).join("")}</div>`;
-  }
-  function engraveHtml() {
-    if (!SC.full) return `<div class="libEmpty"><span class="spin"></span> reading the engraving\u2026</div>`;
-    const backs = SC.full.flatMap(sh => (sh.backPool || []).map(b => Object.assign({ sheet: sh.fileBase || sh.id }, b)));
-    const wanted = Object.values(SC.run.lines || {}).filter(l => l.engrave && (l.engrave.needed || l.engrave.text));
-    if (!backs.length && !wanted.length) return `<div class="libEmpty">Nothing in this run was engraved.</div>`;
-    return (backs.length ? `<div class="scopeSec">Backs written \u00b7 ${backs.length}</div><div class="scopeGrid backs">${backs.map(b => `<div class="scopeCard hoverItem" data-rid="${esc(b.order || "")}">
-        ${b.outputs && b.outputs.png && b.outputs.png.url ? `<img class="pv" src="${esc(b.outputs.png.url)}" loading="lazy" alt="">` : `<div class="pv ph">no picture</div>`}
-        <div class="m"><b>${esc((b.lines || [b.text || ""]).join(" / "))}</b></div>
-        <div class="m sub">${esc(b.order || "")}${b.capMm ? ` \u00b7 cap ${(+b.capMm).toFixed(2)} mm` : ""}${b.approvedBy ? ` \u00b7 ${esc(b.approvedBy)}` : ""}</div>
-        ${b.outputs && b.outputs.ai && b.outputs.ai.url ? `<a class="btn ghost xs" href="${esc(b.outputs.ai.url)}" target="_blank" rel="noopener">.ai</a>` : ""}
-      </div>`).join("")}</div>` : "")
-      + (wanted.length ? `<div class="scopeSec">What each line asked for \u00b7 ${wanted.length}</div><div class="scopeList">${wanted.map(l => `<div class="ol hoverItem" data-rid="${esc(String(l.orderId || ""))}"><b class="mono">${esc(String(l.orderId || ""))}</b><span class="sku mono">${esc(l.sku || "")}</span><span class="w">${l.engrave.text ? "\u201c" + esc(l.engrave.text) + "\u201d" : "\u2014"}</span><span class="st mono">${esc(l.engrave.state || "")}${l.engrave.approved ? " \u00b7 approved" : ""}</span></div>`).join("")}</div>` : "");
-  }
-  return { open, clear, apply, on, strip, run: () => SC.run };
+  return { open, rebuild, on, state: () => RC };
 })();
+
 
 /* ═══ 24e · Kin — the rest of the order, wherever it is ══════════════════════════════════════════════════
    A parcel with four charms in it is four lines, and they can be four cards on Orders, a row in Review, a chip in the
@@ -3240,7 +3189,7 @@ function bootBridge() {
     const open = runs.filter(x => !["complete", "abandoned"].includes(x.status));
     if (open.length) { B.openRuns = open; agent({ bridge: true }, "DS", `${open.length} open run(s) on record — offered on the run banner`); RunCtl.renderBanner(); }
     const last = runs.find(x => x.lines > 0);
-    if (last && !B.run && !B.orders.rows.length) Scope.open(last.runId).catch(() => {});
+    if (last && !B.run && !B.orders.rows.length) Recall.open({ runId: last.runId }).catch(() => {});
   }).catch(() => {});
   // the Design Station frame mounts on first visit to its tab; Auto mode mounts it now
   if (S.settings.runMode === "auto") { setTimeout(() => RunCtl.setMode("auto"), 1500); }
