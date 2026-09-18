@@ -27,7 +27,9 @@ async function functions(st, name, req, res, base) {
   // ── Design Station's Etsy ──
   if (name === 'listOpenOrders') { const off = +q.offset || 0; return json(res, 200, { results: st.receipts.slice(off, off + 100).map(r => Object.assign({}, r, { transactions: undefined })) }); }
   if (name === 'etsyOrderProxy') { const r = st.receipts.find(x => String(x.receipt_id) === String(q.orderId)); if (!r) return json(res, 404, { error: 'no such receipt' }); return json(res, 200, { receipt: Object.assign({}, r, { transactions: undefined }), transactions: r.transactions }); }
-  if (name === 'etsyImages') return json(res, 200, []);
+  // a listing's pictures, and the proxy the station hands the sorter: a 1×1 PNG is enough to prove the card paints it
+  if (name === 'etsyImages') return json(res, 200, [{ listing_id: q.listingId, url_570xN: `${base}/__pic/${q.listingId}.jpg` }]);
+  if (name === 'imageProxy') { res.writeHead(200, { 'Content-Type': 'image/png', 'Access-Control-Allow-Origin': '*', 'Cross-Origin-Resource-Policy': 'cross-origin' }); return res.end(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII=', 'base64')); }
   if (name === 'refreshEtsyToken') return json(res, 200, { access_token: 'tok', refresh_token: 'ref', expires_in: 3600 });
   const SB = q.sandbox === '1' ? 'Sandbox_' : '';
   if (name === 'firebaseOrders') {

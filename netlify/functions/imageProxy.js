@@ -23,6 +23,9 @@ exports.handler = async function(event, context) {
       headers: {
         "Content-Type": response.headers.get("content-type") || "image/jpeg",
         "Access-Control-Allow-Origin": "*",
+        // The sorter page runs under Cross-Origin-Embedder-Policy: require-corp, so a picture from this origin is drawn
+        // there only when it says so itself. Without this line every order card showed "no image".
+        "Cross-Origin-Resource-Policy": "cross-origin",
         // The pictures behind these URLs never change, and a wall of order cards asks for them on every paint.
         "Cache-Control": "public, max-age=604800, immutable",
       },

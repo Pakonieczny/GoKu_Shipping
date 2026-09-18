@@ -639,7 +639,7 @@ const Orders = window.Orders = (() => {
       host.dataset.painted = "1";
       if (host.tagName === "IMG") { host.onerror = () => { host.removeAttribute("src"); delete host.dataset.painted; }; host.src = url; continue; }
       const img = host.querySelector("img") || host.appendChild(el("img"));
-      img.loading = "lazy"; img.alt = "";
+      img.loading = "lazy"; img.alt = ""; img.crossOrigin = "anonymous";
       img.onerror = () => { img.remove(); delete host.dataset.painted; if (!host.querySelector(".ph")) { const p = el("span", "ph"); p.textContent = "no image"; host.appendChild(p); } };
       img.src = url;
       const ph = host.querySelector(".ph"); if (ph) ph.remove();
@@ -710,7 +710,7 @@ const Orders = window.Orders = (() => {
       if (cards) {
         node.innerHTML =
           '<span class="oimg" data-lid="' + esc(lid) + '"' + (url ? ' data-painted="1"' : "") + '>' +
-            (url ? '<img loading="lazy" alt="" src="' + esc(url) + '" onerror="this.remove()">' : '<span class="ph">' + (lid ? 'loading…' : 'no image') + '</span>') +
+            (url ? '<img crossorigin="anonymous" loading="lazy" alt="" src="' + esc(url) + '" onerror="this.remove()">' : '<span class="ph">' + (lid ? 'loading…' : 'no image') + '</span>') +
             (qty > 1 ? P("qty", "×" + qty) : "") +
             (attn ? '<span class="flag" title="' + esc(why) + '">!</span>' : "") +
           '</span>' +
@@ -726,7 +726,7 @@ const Orders = window.Orders = (() => {
           '</span>';
       } else {
         node.innerHTML =
-          '<img class="th" data-lid="' + esc(lid) + '" alt="" onerror="this.removeAttribute(\'src\')"' + (url ? ' src="' + esc(url) + '" data-painted="1"' : "") + '>' +
+          '<img crossorigin="anonymous" class="th" data-lid="' + esc(lid) + '" alt="" onerror="this.removeAttribute(\'src\')"' + (url ? ' src="' + esc(url) + '" data-painted="1"' : "") + '>' +
           P("cell onum", esc(r.order.receiptId)) +
           '<span class="cell osku"><b>' + esc(sp.designSku || r.line.sku || "— none —") + '</b></span>' +
           '<span class="cell hideSm" style="font-size:12px;color:var(--ink70)">' + esc(wordsOf(sp) || r.line.title) + '</span>' +
@@ -753,19 +753,19 @@ const Orders = window.Orders = (() => {
      rebuilt the whole tab forty times, and each rebuild took the scroller's position and the caret out of the search box
      with it. The head is built once, what changes is patched, and the body is the only thing ever re-emitted. */
   function buildHead(v) {
+    /* One row. What a person does here, in the order they do it: bring orders in, narrow them, find one, choose how
+       to look. It wraps on a narrow window and never scrolls sideways; the count of the pull is a line of small type
+       at the end, not a pill in a row of its own. The sandbox's own controls live under the SANDBOX pill up top. */
     v.innerHTML = `<div class="ordHead">
         <div class="ordBar" id="ordBar">
-          <button class="btn sm" id="ordPull">Pull orders</button>
+          <span class="grp"><button class="btn sm" id="ordPull">Pull orders</button><select id="ordPullMode" title="which open orders to bring in"><option value="all">every open order</option><option value="dueBy">due by a date</option><option value="count">the most urgent</option></select><input type="date" id="ordDueBy" title="orders due on or before this date"><input type="number" id="ordCount" min="1" max="500" title="how many of the most urgent orders"></span>
           <button class="btn gold sm" id="ordRun" title="nest, engrave and label every line that is ready to go">Run set ▶</button>
-          <button class="btn ghost sm" id="ordResume" title="every run on record — search it by order, SKU or date, carry one on, or open its sheets">Earlier runs…</button>
-          <select id="ordPullMode" title="which open orders to bring in"><option value="all">Every open order</option><option value="dueBy">Due by date</option><option value="count">N most urgent</option></select>
-          <input type="date" id="ordDueBy" title="orders due on or before this date"><input type="number" id="ordCount" min="1" max="500" title="how many of the most urgent orders">
-          <span class="spacer"></span><span class="pill" id="ordMeta"></span>
-        </div>
-        <div class="ordFilters"><span class="chips" id="ordChips"></span>
-          <span class="tail"><span id="ordMetalHost"></span><input class="ordSearch" id="ordQ" placeholder="order, SKU, words…" title="search the order number, the SKU, the title and everything the customer or the shop wrote">
+          <button class="btn ghost sm" id="ordResume" title="every set on record — open its sheets, its orders and its engraving">Earlier sets…</button>
+          <span class="chips" id="ordChips"></span>
+          <span class="chips" id="ordMetalHost"></span>
+          <input class="ordSearch" id="ordQ" placeholder="order, SKU, words…" title="search the order number, the SKU, the title and everything the customer or the shop wrote">
           <select class="ordSort" id="ordSort" title="what orders the cards"><option value="due">by ship-by</option><option value="order">by order</option><option value="state">by state</option></select>
-          <span class="viewSeg" id="ordViewSeg"></span></span>
+          <span class="viewSeg" id="ordViewSeg"></span><span class="ordMeta mono" id="ordMeta"></span>
         </div>
       </div><div class="ordBody" id="ordBody"></div>`;
     const q = v.querySelector("#ordQ");
@@ -795,9 +795,11 @@ const Orders = window.Orders = (() => {
     v.querySelector("#ordCount").classList.toggle("hidden", s.pullMode !== "count");
     v.querySelector("#ordSort").value = OV.sort;
     const meta = v.querySelector("#ordMeta");
-    meta.className = "pill " + (B.orders.stale ? "warn" : "neutral");
-    meta.title = B.orders.stale ? "the station's open list has changed since this pull — pull again to catch up" : "the last pull";
-    meta.textContent = B.orders.recalled ? `${new Set(all.map(r => r.order.receiptId)).size} orders · ${all.length} lines · ${B.orders.recalled.seq ? "Set " + B.orders.recalled.seq : "run"}${B.orders.recalled.day ? " · " + B.orders.recalled.day : ""} · from the record` : B.orders.pulledAt ? `${new Set(all.map(r => r.order.receiptId)).size} orders · ${all.length} lines · pulled ${fmtT(B.orders.pulledAt)}${B.orders.filtered ? ` · ${B.orders.filtered} left out by the rule` : ""}${B.orders.stale ? " · list changed" : ""}` : "nothing pulled yet";
+    meta.className = "ordMeta mono" + (B.orders.stale ? " warn" : "");
+    const nOrd = new Set(all.map(r => r.order.receiptId)).size;
+    const full = B.orders.recalled ? `${nOrd} orders · ${all.length} lines · ${B.orders.recalled.seq ? "Set " + B.orders.recalled.seq : "run"}${B.orders.recalled.day ? " · " + B.orders.recalled.day : ""} · from the record` : B.orders.pulledAt ? `${nOrd} orders · ${all.length} lines · pulled ${fmtT(B.orders.pulledAt)}${B.orders.filtered ? ` · ${B.orders.filtered} left out by the rule` : ""}${B.orders.stale ? " · the station's open list has changed since — pull again to catch up" : ""}` : "nothing pulled yet";
+    meta.title = full;
+    meta.textContent = B.orders.recalled ? full : B.orders.pulledAt ? `${nOrd} orders · ${all.length} lines · ${fmtT(B.orders.pulledAt)}${B.orders.stale ? " · stale" : ""}` : "";
     const counts = {}; for (const r of all) counts[pileOf(r)] = (counts[pileOf(r)] || 0) + 1;
     const byMetal = {}; for (const r of all) { const m = r.material || "none"; byMetal[m] = (byMetal[m] || 0) + 1; }
     const chip = (on, id, label, n, cls, title) => `<button class="egTab${on ? " on" : ""}" data-pile="${esc(id)}" title="${esc(title || "")}">${esc(label)}<b class="${cls}">${n}</b></button>`;
@@ -1148,7 +1150,7 @@ const Master = window.Master = (() => {
       const pending = (job.vision || []).filter(x => !x.confirmed);
       if (pending.length) {
         const tray = el("div", "visionTray"); const head = el("div", "section", `Confirm ${pending.length} label(s) read by Claude from outlined text (reads under 95% are unchecked)`);
-        pending.forEach((x, i) => { const t = el("div", "vt"); t.innerHTML = `<img src="${x.image}" alt=""><div><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-i="${i}" ${x.confidence >= 0.95 && x.sku ? "checked" : ""}><span class="mono">#${x.index}</span> <span class="pill ${x.confidence >= 0.95 ? "ok" : "warn"}">${Math.round(x.confidence * 100)}%</span></label><input type="text" data-sku="${i}" value="${esc(x.sku)}" placeholder="SKU as written"><input type="text" data-size="${i}" value="${esc(x.size || "")}" placeholder="size (optional)" style="margin-top:4px"><img src="${x.charm.thumb}" style="width:48px;margin-top:4px;border-radius:4px" alt=""></div>`; tray.appendChild(t); });
+        pending.forEach((x, i) => { const t = el("div", "vt"); t.innerHTML = `<img crossorigin="anonymous" src="${x.image}" alt=""><div><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-i="${i}" ${x.confidence >= 0.95 && x.sku ? "checked" : ""}><span class="mono">#${x.index}</span> <span class="pill ${x.confidence >= 0.95 ? "ok" : "warn"}">${Math.round(x.confidence * 100)}%</span></label><input type="text" data-sku="${i}" value="${esc(x.sku)}" placeholder="SKU as written"><input type="text" data-size="${i}" value="${esc(x.size || "")}" placeholder="size (optional)" style="margin-top:4px"><img crossorigin="anonymous" src="${x.charm.thumb}" style="width:48px;margin-top:4px;border-radius:4px" alt=""></div>`; tray.appendChild(t); });
         const btn = el("button", "btn gold sm", "Confirm checked labels"); btn.type = "button";
         btn.onclick = async () => { const reads = []; tray.querySelectorAll("input[type=checkbox]").forEach(cb => { if (!cb.checked) return; const i = +cb.dataset.i; const x = pending[i]; const sku = tray.querySelector(`input[data-sku="${i}"]`).value.trim().toUpperCase(); if (!skuRegex().test(sku)) { toast(`${sku || "(empty)"} is not a valid SKU`, "bad"); return; } x.sku = sku; x.size = tray.querySelector(`input[data-size="${i}"]`).value.trim().toUpperCase() || null; reads.push(x); }); if (!reads.length) return; if (!employeeName()) askEmployee(); await confirmVision(job, reads); toast(`${reads.length} label(s) confirmed and indexed`, "ok"); };
         card.append(head, tray, btn);
@@ -1483,7 +1485,7 @@ const Engrave = window.Engrave = (() => {
     const entry = Master.entryFor(sp.designSku); const engravable = !entry || entry.engravable !== false;
     job.state = "classify"; row.engrave = { needed: false, state: "classify" };
     let r = null;
-    try { r = await agentCall("engraveIntent", { order: row.order.receiptId, sku: sp.designSku, title: row.line.title, form: sp.form, quantity: sp.quantity, engravable, personalization: sp.personalization, buyerMessage: sp.buyerMessage, staffNote: sp.staffNote, messages: sp.messages }, { label: `Claude reads the words of ${row.order.receiptId}` }); }
+    try { r = await agentCall("engraveIntent", { order: row.order.receiptId, sku: sp.designSku, title: row.line.title, form: sp.form, quantity: sp.quantity, engravable, personalization: sp.personalization, buyerMessage: sp.buyerMessage, staffNote: sp.staffNote, messages: sp.messages }, { label: `Claude reads the words of ${row.order.receiptId}`, background: true }); }
     catch (e) { r = { skipped: e.message }; }
     if (!r || r.skipped || r.error) {
       // the classifier is unavailable: a person decides, with the verbatim personalisation as the proposal
@@ -1529,7 +1531,11 @@ const Engrave = window.Engrave = (() => {
     await loadFonts();
     const rows = Orders.rows().filter(r => r.state === "pooled" && r.spec && r.spec.engraveCandidate && (!r.engrave || r.engrave.state === "reclassify" || r.engrave.state === "classify"));
     const q = rows.slice(); let done = 0;
-    await Promise.all(Array.from({ length: 3 }, async () => { while (q.length) { const r = q.shift(); try { await classify(r); } catch (e) { agent({ engrave: true }, "warn", `${r.order.receiptId}: classifier failed — ${e.message}`); toWords(ensureJob(r), e.message); } done++; } }));
+    // one bar for the whole pass, not one per order: what a person needs to know is how far along the reading is
+    const bar = rows.length && window.CNProgress ? CNProgress.start(`Reading the words of ${rows.length} order line${rows.length === 1 ? "" : "s"}`, { total: rows.length }) : null;
+    try {
+      await Promise.all(Array.from({ length: 3 }, async () => { while (q.length) { const r = q.shift(); try { await classify(r); } catch (e) { agent({ engrave: true }, "warn", `${r.order.receiptId}: classifier failed — ${e.message}`); toWords(ensureJob(r), e.message); } done++; if (bar) bar.set(done, rows.length, r.order.receiptId); } }));
+    } finally { if (bar) bar.end(); }
     for (const r of Orders.rows()) if (r.state === "pooled" && r.spec && !r.spec.engraveCandidate && !r.engrave) r.engrave = { needed: false, state: "none", approved: true };
     Orders.render(); render();
     if (run) { run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); await RunCtl.save(run); }
@@ -1598,7 +1604,7 @@ const Engrave = window.Engrave = (() => {
   async function claudeRead(job) {
     if (!S.cloud.ok || !job.fit) return;
     const png = renderBack(job, 700, { grid: true }).toDataURL("image/png");
-    const r = await agentCall("engraveReview", { image: png, order: job.row.order.receiptId, sku: job.row.spec.designSku, text: job.lines.join("\n"), capMm: job.fit.capMm, font: "Source Sans 3", weight: job.fit.weight, angle: job.fit.angle, small: job.fit.small }, { label: `Claude looks at the back of ${job.row.order.receiptId}` });
+    const r = await agentCall("engraveReview", { image: png, order: job.row.order.receiptId, sku: job.row.spec.designSku, text: job.lines.join("\n"), capMm: job.fit.capMm, font: "Source Sans 3", weight: job.fit.weight, angle: job.fit.angle, small: job.fit.small }, { label: `Claude looks at the back of ${job.row.order.receiptId}`, background: true });
     if (r.skipped) { job.claude = { skipped: r.skipped }; render(); return; }
     job.claude = { legible: !!r.legible, notes: r.notes || "", concerns: r.concerns || [] };
     agent({ engrave: true }, r.legible ? "ENGRAVE" : "warn", `${job.row.order.receiptId}: Claude ${r.legible ? "reads it fine" : "finds it hard to read"} — ${r.notes}`);
@@ -1618,7 +1624,9 @@ const Engrave = window.Engrave = (() => {
      slider's own scale on the way out, so they could never get back. The ceiling is recomputed where the text now is,
      the chosen size is kept, and it only shrinks when the new spot genuinely cannot hold it. */
   function refit(job, place) {
-    const font = fontFor(job.fit.weight), want = job.fit.size;
+    // the size a person chose (or the fit's own default) is what the text goes back to whenever there is room for it:
+    // a nudge into a narrow spot used to bring the lettering down and leave it down
+    const font = fontFor(job.fit.weight), want = job.wantSize != null ? job.wantSize : job.fit.size;
     const ceil = G.refitAt(job.lines, font, job.mask, fitOpts(), place);
     if (!ceil.ok) return false;
     // If the chosen size still fits where the text now is, keep it EXACTLY. Re-fitting with a ceiling of `want` bisects
@@ -1648,7 +1656,17 @@ const Engrave = window.Engrave = (() => {
   }
   function centreText(job) { if (!job.fit) return; if (!moveTo(job, maskCentroid(job.mask))) toast("The text does not fit in the middle — left where it was", "bad"); }
   function moveTo(job, centre) { if (!job.fit) return false; const ok = refit(job, { centre, angle: job.fit.angle }); if (ok) refresh(job); return ok; }
-  function resize(job, size) { if (!job.fit) return; size = Math.min(size, job.fit.fittedMax); const L = G.layoutLines(job.lines, fontFor(job.fit.weight), size, 0.18, job.fit.angle, job.fit.centre); const v = G.verifyInk(L.cmds, job.mask); if (!v.ok) { toast("That size does not verify", "bad"); return; } job.fit = Object.assign({}, job.fit, { size, layout: L, glyphs: L.glyphs, cmds: L.cmds, capMm: size * G.capPerEm(fontFor(job.fit.weight)) * MM, small: size * G.capPerEm(fontFor(job.fit.weight)) * MM < (+S.settings.engraveMinCapMm || 1.6), metrics: G.strokeMetrics(L.cmds, 24) }); job.verify = { geometry: v, at: Date.now() }; job.claude = null; reRead(job); refresh(job); }
+  /** Turn the text about its centre. Within three degrees of straight or upright it snaps there. */
+  function rotateTo(job, angle) { if (!job.fit) return false; angle = ((angle % 360) + 360) % 360; for (const snap of [0, 90, 180, 270, 360]) if (Math.abs(angle - snap) < 3) angle = snap % 360; const ok = refit(job, { centre: job.fit.centre, angle }); if (!ok) toast("The text does not fit at that angle", "bad"); refresh(job); return ok; }
+  /** The box around the text: its centre, its width and height in the text's own frame, and its angle. */
+  function textBox(glyphs, centre, angleDeg) {
+    const a = -(angleDeg || 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const g of glyphs) for (const c of g.cmds) { if (c.type === "Z") continue; for (const [px, py] of [[c.x, c.y], c.x1 != null ? [c.x1, c.y1] : null, c.x2 != null ? [c.x2, c.y2] : null].filter(Boolean)) { const dx = px - centre[0], dy = py - centre[1]; const lx = dx * ca - dy * sa, ly = dx * sa + dy * ca; if (lx < x0) x0 = lx; if (lx > x1) x1 = lx; if (ly < y0) y0 = ly; if (ly > y1) y1 = ly; } }
+    if (!isFinite(x0)) return null;
+    return { cx: centre[0], cy: centre[1], lx0: x0, ly0: y0, lx1: x1, ly1: y1, angle: angleDeg || 0 };
+  }
+  function resize(job, size) { if (!job.fit) return; size = Math.max(0.5, Math.min(size, job.fit.fittedMax)); job.wantSize = size; const L = G.layoutLines(job.lines, fontFor(job.fit.weight), size, 0.18, job.fit.angle, job.fit.centre); const v = G.verifyInk(L.cmds, job.mask); if (!v.ok) { toast("That size does not verify", "bad"); return; } job.fit = Object.assign({}, job.fit, { size, layout: L, glyphs: L.glyphs, cmds: L.cmds, capMm: size * G.capPerEm(fontFor(job.fit.weight)) * MM, small: size * G.capPerEm(fontFor(job.fit.weight)) * MM < (+S.settings.engraveMinCapMm || 1.6), metrics: G.strokeMetrics(L.cmds, 24) }); job.verify = { geometry: v, at: Date.now() }; job.claude = null; reRead(job); refresh(job); }
   async function resplit(job) { const vars = G.splitVariants(job.lines); const i = (job.splitIndex || 0) + 1; const pick = vars[i % vars.length]; job.splitIndex = i; job.lines = pick; job.text = pick.join("\n"); agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: re-split as "${pick.join(" / ")}"`); await fitJob(job); }
   async function skip(job, by) { by = by || employeeName() || askEmployee(); if (!by) return; job.state = "skipped"; job.approvedBy = null; job.row.engrave = { needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; job.row.flag = `engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`); await Pool.update(job.copies, { engrave: false, engraveSkippedBy: by }); Orders.render(); render(); RunCtl.poke(); }
   function sendBack(job, why) { job.state = "words"; job.reason = why || "sent back from the placement review — a decision on the words is needed"; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); Orders.render(); }
@@ -1664,8 +1682,8 @@ const Engrave = window.Engrave = (() => {
   }
 
   /* ── 7.6 · back files, one per piece, only after approval ── */
-  function renderBack(job, px, { grid = false, hatch = true } = {}) {
-    const view = job.view, mask = job.mask, fit = job.fit; const cv = document.createElement("canvas");
+  function renderBack(job, px, { grid = false, hatch = true, editable = false } = {}) {
+    const view = job.view, mask = job.mask, fit = job.fit; const cv = document.createElement("canvas"); cv._editable = editable;
     const bb = view.members.reduce((a, s) => [Math.min(a[0], s.bbox[0]), Math.min(a[1], s.bbox[1]), Math.max(a[2], s.bbox[2]), Math.max(a[3], s.bbox[3])], [Infinity, Infinity, -Infinity, -Infinity]);
     const pad = 3 * PT; const w = bb[2] - bb[0] + 2 * pad, h = bb[3] - bb[1] + 2 * pad; const k = px / Math.max(w, h);
     cv.width = Math.round(w * k); cv.height = Math.round(h * k); const ctx = cv.getContext("2d");
@@ -1680,7 +1698,7 @@ const Engrave = window.Engrave = (() => {
     const base = document.createElement("canvas"); base.width = cv.width; base.height = cv.height;   // grid + mask tint, drawn once
     base.getContext("2d").drawImage(cv, 0, 0);
     for (const m of view.members) { ctx.beginPath(); P.pathToCanvas(ctx, m, tx); ctx.strokeStyle = m.original === view.cutMembers[0] || m.original === job.view.cutMembers.find(c => c === Pool.charmOf(job.copies[0]).outline) ? "rgba(190,40,40,.95)" : "rgba(60,60,60,.9)"; ctx.lineWidth = Math.max(1, 0.5 * k); ctx.stroke(); }
-    if (fit) { ctx.fillStyle = "#111"; for (const g of fit.glyphs) { ctx.beginPath(); let cur = null; for (const c of g.cmds) { if (c.type === "M") { const p = tx(c.x, c.y); ctx.moveTo(p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "L") { const p = tx(c.x, c.y); ctx.lineTo(p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "C") { const a = tx(c.x1, c.y1), b = tx(c.x2, c.y2), p = tx(c.x, c.y); ctx.bezierCurveTo(a[0], a[1], b[0], b[1], p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "Q") { const a = tx(c.x1, c.y1), p = tx(c.x, c.y); ctx.quadraticCurveTo(a[0], a[1], p[0], p[1]); cur = [c.x, c.y]; } else ctx.closePath(); } ctx.fill("nonzero"); } }
+    if (false && fit) { ctx.fillStyle = "#111"; for (const g of fit.glyphs) { ctx.beginPath(); let cur = null; for (const c of g.cmds) { if (c.type === "M") { const p = tx(c.x, c.y); ctx.moveTo(p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "L") { const p = tx(c.x, c.y); ctx.lineTo(p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "C") { const a = tx(c.x1, c.y1), b = tx(c.x2, c.y2), p = tx(c.x, c.y); ctx.bezierCurveTo(a[0], a[1], b[0], b[1], p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "Q") { const a = tx(c.x1, c.y1), p = tx(c.x, c.y); ctx.quadraticCurveTo(a[0], a[1], p[0], p[1]); cur = [c.x, c.y]; } else ctx.closePath(); } ctx.fill("nonzero"); } }
     const outline = document.createElement("canvas"); outline.width = cv.width; outline.height = cv.height;   // …and the charm itself
     outline.getContext("2d").drawImage(cv, 0, 0);
     /** Repaint: the static layers, then the text — the fitted one, or a provisional one while a hand is moving it. */
@@ -1688,16 +1706,41 @@ const Engrave = window.Engrave = (() => {
     cv._paint = (prov) => {
       ctx.clearRect(0, 0, cv.width, cv.height); ctx.drawImage(outline, 0, 0);
       const gl = prov && prov.glyphs ? prov.glyphs : (job.fit ? job.fit.glyphs : []);
+      const centre = prov && prov.centre ? prov.centre : (job.fit ? job.fit.centre : null);
+      const angle = prov && prov.angle != null ? prov.angle : (job.fit ? job.fit.angle || 0 : 0);
       if (gl.length) glyphsOf(gl);
-      if (prov && prov.centre) {                                              // guides: the charm's own centre lines, lit when the text is on them
+      if (prov && prov.centre && prov.mode === "move") {                     // guides: the charm's own centre lines, lit when the text is on them
         const c = prov.centre, snapX = Math.abs(c[0] - mask.cx) < 0.35 * PT, snapY = Math.abs(c[1] - mask.cy) < 0.35 * PT;
         ctx.save(); ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
         ctx.strokeStyle = snapX ? "rgba(160,110,30,.9)" : "rgba(0,0,0,.18)"; const px1 = tx(mask.cx, bb[1]), px2 = tx(mask.cx, bb[3]); ctx.beginPath(); ctx.moveTo(px1[0], px1[1]); ctx.lineTo(px2[0], px2[1]); ctx.stroke();
         ctx.strokeStyle = snapY ? "rgba(160,110,30,.9)" : "rgba(0,0,0,.18)"; const py1 = tx(bb[0], mask.cy), py2 = tx(bb[2], mask.cy); ctx.beginPath(); ctx.moveTo(py1[0], py1[1]); ctx.lineTo(py2[0], py2[1]); ctx.stroke();
         ctx.restore();
       }
+      /* The box around the text is the whole editor: drag inside it to move, drag a corner to resize, drag the handle
+         above it to turn. It is drawn in screen pixels so it reads the same at every zoom. */
+      cv._box = null;
+      if (gl.length && centre && cv._editable) {
+        const box = textBox(gl, centre, angle); if (!box) return;
+        const m = 3 * PT;                                                     // a little air around the letters
+        const corners = [[box.lx0 - m, box.ly0 - m], [box.lx1 + m, box.ly0 - m], [box.lx1 + m, box.ly1 + m], [box.lx0 - m, box.ly1 + m]];
+        const a = (box.angle || 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+        const world = ([lx, ly]) => [box.cx + lx * ca - ly * sa, box.cy + lx * sa + ly * ca];
+        const pts = corners.map(world).map(p => tx(p[0], p[1]));
+        const topMid = world([(box.lx0 + box.lx1) / 2, box.ly1 + m]); const tm = tx(topMid[0], topMid[1]);
+        const up = [-sa, ca];                                                 // the text's own "up", in pt
+        const hp = tx(topMid[0] + up[0] * 6 * PT, topMid[1] + up[1] * 6 * PT);
+        ctx.save(); ctx.lineWidth = 1; ctx.strokeStyle = "rgba(38,110,190,.9)"; ctx.setLineDash([]);
+        ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.closePath(); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(tm[0], tm[1]); ctx.lineTo(hp[0], hp[1]); ctx.stroke();
+        ctx.fillStyle = "#fff";
+        for (const p of pts) { ctx.beginPath(); ctx.rect(p[0] - 4, p[1] - 4, 8, 8); ctx.fill(); ctx.stroke(); }
+        ctx.beginPath(); ctx.arc(hp[0], hp[1], 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.restore();
+        cv._box = { box, corners: pts, rotate: hp, centrePx: tx(centre[0], centre[1]) };
+      }
     };
-    cv._map = { bb, pad, k, tx, base, outline };
+    cv._map = { bb, pad, k, tx, base, outline, inv: (px, py) => [bb[0] - pad + px / k, bb[3] + pad - py / k] };
+    cv._paint();
     return cv;
   }
   function renderFront(charm, px) { const cv = document.createElement("canvas"); const b = charm.bbox, pad = 3 * PT; const w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, k = px / Math.max(w, h); cv.width = Math.round(w * k); cv.height = Math.round(h * k); const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height); const tx = (x, y) => [(x - b[0] + pad) * k, (b[3] + pad - y) * k]; P.drawSegments(ctx, charm.members, tx, k); ctx.beginPath(); P.pathToCanvas(ctx, charm.outline, tx); ctx.strokeStyle = "rgba(190,40,40,.9)"; ctx.lineWidth = Math.max(1, 0.5 * k); ctx.stroke(); return cv; }
@@ -1822,7 +1865,7 @@ const Engrave = window.Engrave = (() => {
     if (!c || !c.isConnected || EG.cardKey !== job.key) { render(); return; }
     const f = job.fit; if (!f) { render(); return; }
     const bc = c.querySelector(".backHost canvas"); if (bc && bc._paint) bc._paint();
-    const cap = c.querySelector("[data-cap]"); if (cap) cap.textContent = f.capMm.toFixed(2) + " mm";
+    const cap = c.querySelector("[data-cap]"); if (cap) cap.textContent = f.capMm.toFixed(2) + " mm" + (f.angle ? ` · ${Math.round(f.angle)}°` : "");
     const sl = c.querySelector('input[data-a="resize"]');
     if (sl && document.activeElement !== sl) { sl.max = f.fittedMax.toFixed(2); sl.min = (0.5 * f.fittedMax).toFixed(2); sl.value = f.size.toFixed(2); }
     else if (sl) { sl.max = f.fittedMax.toFixed(2); sl.min = (0.5 * f.fittedMax).toFixed(2); }
@@ -1891,7 +1934,12 @@ const Engrave = window.Engrave = (() => {
     }
     if (tab === "place") {
       const q = v.querySelector("#egQueue");
-      if (focus) { const c = placementCard(focus, queue.length); c.classList.add("full"); q.appendChild(c); EG.card = c; EG.cardKey = focus.key; }
+      if (focus && EG.list) {
+        EG.card = null; EG.cardKey = null;
+        q.innerHTML = `<div class="rvList">` + queue.map(j2 => `<div class="doneRow hoverItem" data-rid="${esc(j2.row.order.receiptId)}" data-open="${esc(j2.key)}" title="open this placement"><span class="mini"></span><b class="mono">${esc(j2.row.order.receiptId)}</b><span class="sku mono">${esc(j2.row.spec.designSku || "")}</span><span class="w">${esc(j2.lines.join(" / "))}</span><span class="ost info">${j2.fit ? `cap ${j2.fit.capMm.toFixed(2)} mm` : "fitting"}</span><span class="by"></span><button class="btn ghost xs">Open</button></div>`).join("") + `</div>`;
+        q.querySelectorAll("[data-open]").forEach(rw => rw.onclick = () => { EG.focus = rw.dataset.open; EG.list = false; render(); });
+      }
+      else if (focus) { const c = placementCard(focus, queue.length); c.classList.add("full"); q.appendChild(c); EG.card = c; EG.cardKey = focus.key; }
       else { EG.card = null; EG.cardKey = null; q.innerHTML = emptyWhy(jobs, words.length, done.length); q.querySelectorAll("[data-go]").forEach(b => b.onclick = () => { const g = b.dataset.go; if (g === "hist") RunHistory.show(); else if (g === "words") { EG.tab = "words"; EG.chosen = true; render(); } else { setMode(g); if (g === "review") Review.render(); } }); }
       // what is coming: the order and the words, so the list and the picture are the same thing
       const rail = v.querySelector("#egNext");
@@ -1915,7 +1963,7 @@ const Engrave = window.Engrave = (() => {
             const b0 = (j2.backs || [])[0] || {}; const png = b0.png || (b0.outputs && b0.outputs.png && b0.outputs.png.url) || ""; const ai = b0.ai || (b0.outputs && b0.outputs.ai && b0.outputs.ai.url) || "";
             const open = EG.openDone === j2.key;
             const detail = !open ? "" : `<div class="doneDetail">
-                <div class="dd back">${png ? `<img src="${esc(png)}" alt="the back as written" referrerpolicy="no-referrer" data-retry="1">` : `<div class="noPic">${j2.state === "skipped" ? "cut plain — nothing on the back" : "the back picture is written with the sheet"}</div>`}<span class="cap">back${b0.sheet ? " · " + esc(b0.sheet) : ""}</span></div>
+                <div class="dd back">${png ? `<img crossorigin="anonymous" src="${esc(png)}" alt="the back as written" referrerpolicy="no-referrer" data-retry="1">` : `<div class="noPic">${j2.state === "skipped" ? "cut plain — nothing on the back" : "the back picture is written with the sheet"}</div>`}<span class="cap">back${b0.sheet ? " · " + esc(b0.sheet) : ""}</span></div>
                 <div class="dd front"><div class="frontHost"></div><span class="cap">front</span></div>
                 <dl class="meta">
                   <dt>Words</dt><dd class="serif">${w}</dd>
@@ -1926,12 +1974,12 @@ const Engrave = window.Engrave = (() => {
                 </dl>
                 <div class="ctl"><button class="btn ghost sm" data-a="reopen" title="take this decision back: the words are settled again and the placement is redrawn — a back file already written is superseded">Reopen</button>${j2.recalledFrom ? `<span class="hint">this set is recalled — reopening rebuilds its sheet from the master files first</span>` : ""}</div>
               </div>`;
-            return `<div class="doneRow hoverItem${open ? " open" : ""}" data-rid="${esc(j2.row.order.receiptId)}" data-key="${esc(j2.key)}" title="click for the back as it was written, who decided, the file and Reopen">${png ? `<img class="mini" src="${esc(png)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span class="mini"></span>`}<b class="mono">${esc(j2.row.order.receiptId)}</b><span class="sku mono">${esc(j2.row.spec.designSku || "")}</span><span class="w">${w}</span><span class="ost ${j2.state === "skipped" ? "warn" : "ok"}" title="${stateWhy(j2)}">${stateWord(j2)}</span><span class="by">${esc(who)}${j2.approvedAt ? " · " + fmtT(j2.approvedAt) : ""}</span>${open ? "" : `<button class="btn ghost xs" data-a="reopen" title="take this decision back">Reopen</button>`}${detail}</div>`;
+            return `<div class="doneRow hoverItem${open ? " open" : ""}" data-rid="${esc(j2.row.order.receiptId)}" data-key="${esc(j2.key)}" title="click for the back as it was written, who decided, the file and Reopen">${png ? `<img crossorigin="anonymous" class="mini" src="${esc(png)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<span class="mini"></span>`}<b class="mono">${esc(j2.row.order.receiptId)}</b><span class="sku mono">${esc(j2.row.spec.designSku || "")}</span><span class="w">${w}</span><span class="ost ${j2.state === "skipped" ? "warn" : "ok"}" title="${stateWhy(j2)}">${stateWord(j2)}</span><span class="by">${esc(who)}${j2.approvedAt ? " · " + fmtT(j2.approvedAt) : ""}</span>${open ? "" : `<button class="btn ghost xs" data-a="reopen" title="take this decision back">Reopen</button>`}${detail}</div>`;
           }).join("") + `</div>`
         : `<div class="libEmpty">${window.Recall && Recall.on() ? "Nothing in this set was engraved." : "nothing decided yet"}</div>`;
       bk.querySelectorAll(".doneRow").forEach(rw => rw.addEventListener("click", e => { if (e.target.closest("button, a, .doneDetail")) return; EG.openDone = EG.openDone === rw.dataset.key ? null : rw.dataset.key; render(); }));
       { const rw = bk.querySelector(".doneRow.open"); const j2 = rw && items().get(rw.dataset.key); const host = rw && rw.querySelector(".frontHost");
-        if (j2 && host) { const charm = j2.copies && j2.copies.length ? Pool.charmOf(j2.copies[0]) : null; if (charm) host.appendChild(renderFront(charm, 148)); else { const e2 = Master.entryFor(j2.row.spec.designSku || j2.row.line.sku); const t = e2 && Master.thumbOf(e2); host.innerHTML = t ? `<img src="${esc(t)}" alt="" referrerpolicy="no-referrer">` : `<div class="noPic">no picture of the front</div>`; } } }
+        if (j2 && host) { const charm = j2.copies && j2.copies.length ? Pool.charmOf(j2.copies[0]) : null; if (charm) host.appendChild(renderFront(charm, 148)); else { const e2 = Master.entryFor(j2.row.spec.designSku || j2.row.line.sku); const t = e2 && Master.thumbOf(e2); host.innerHTML = t ? `<img crossorigin="anonymous" src="${esc(t)}" alt="" referrerpolicy="no-referrer">` : `<div class="noPic">no picture of the front</div>`; } } }
       // a picture that will not load is retried once with a fresh request, then says so instead of a broken icon
       bk.querySelectorAll("img").forEach(im => im.addEventListener("error", () => { if (im.dataset.retry) { im.dataset.retry = ""; im.src = im.src.replace(/([?&])_r=\d+/, "$1").replace(/[?&]$/, "") + (im.src.includes("?") ? "&" : "?") + "_r=" + Date.now(); return; } const d = document.createElement("div"); d.className = im.classList.contains("mini") ? "mini" : "noPic"; d.textContent = im.classList.contains("mini") ? "" : "the picture did not load — the .ai file is still there"; im.replaceWith(d); }));
       bk.querySelectorAll("[data-a=reopen]").forEach(b => b.onclick = () => {
@@ -1954,14 +2002,12 @@ const Engrave = window.Engrave = (() => {
     const pct = Math.round((job.confidence != null ? job.confidence : 0) * 100);
     const conf = job.source ? `<span class="conf ${pct >= 80 ? "" : pct >= 60 ? "mid" : "low"}" title="how sure Claude is that these are the words to cut, read from ${esc(SOURCE_LABEL[job.source] || job.source)}${job.quote ? ` — “${esc(job.quote)}”` : ""}">${pct}% sure</span>` : "";
     const row2 = (t, v) => v && v !== "—" ? `<dt>${t}</dt><dd>${esc(v)}</dd>` : "";
-    card.innerHTML = `<div class="rh"><span class="kind" title="where you are in the placements still to decide">${decided + 1} of ${decided + remaining}</span><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div>
+    card.innerHTML = `<div class="rh"><span class="kind" title="where you are in the placements still to decide">${decided + 1} of ${decided + remaining}</span><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div>
       <div class="placeView">
         <div class="pvMain"><div class="backHost"></div>
-          <div class="ctl">${f ? `<button class="btn sage sm" data-a="approve">Approve <b class="k">A</b></button>
-            <span class="grp" title="nudge the text by 0.25 mm — the arrow keys do the same"><button class="btn ghost sm" data-a="left" title="nudge left 0.25 mm" aria-label="nudge left">◀</button><button class="btn ghost sm" data-a="up" title="nudge up 0.25 mm" aria-label="nudge up">▲</button><button class="btn ghost sm" data-a="down" title="nudge down 0.25 mm" aria-label="nudge down">▼</button><button class="btn ghost sm" data-a="right" title="nudge right 0.25 mm" aria-label="nudge right">▶</button><button class="btn ghost sm" data-a="centre" title="put the text in the middle of the area it may use">Centre</button></span>
-            <span class="sizer"><input type="range" min="${(0.5 * f.fittedMax).toFixed(2)}" max="${f.fittedMax.toFixed(2)}" step="0.05" value="${f.size.toFixed(2)}" data-a="resize" title="text size" aria-label="text size"><b class="mono" data-cap>${f.capMm.toFixed(2)} mm</b></span>` : ""}
+          <div class="ctl">${f ? `<button class="btn sage sm" data-a="approve" title="this placement is right — write the back file">Approve <b class="k">A</b></button><button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><span class="mono dim" data-cap title="cap height of the lettering · its angle">${f.capMm.toFixed(2)} mm${f.angle ? ` · ${Math.round(f.angle)}°` : ""}</span>` : ""}
             <span class="rest">${f ? `<button class="btn ghost sm" data-a="resplit" title="the same words, broken across the lines a different way">Split the lines differently</button>` : ""}<button class="btn ghost sm" data-a="skip" title="cut this charm plain — nothing engraved on its back">No engraving <b class="k">S</b></button><button class="btn ghost sm" data-a="back" title="the words are wrong or unclear — go back and settle them first">Change the words</button></span></div>
-          <div class="help">drag the text to move it · shift-drag to resize from the centre · arrows nudge 0.25 mm · cut-outs and holes stay clear: only flat metal takes engraving</div></div>
+          <div class="help">drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys nudge 0.25 mm, with shift they turn 1° · cut-outs and holes stay clear: only flat metal takes engraving</div></div>
         <div class="pvSide">
           <div class="pvWords"><span class="lbl">Words on the back</span>${esc(job.lines.join(" / ")) || "—"}</div>
           <div class="frontHost"></div>
@@ -1979,32 +2025,52 @@ const Engrave = window.Engrave = (() => {
       let drag = null;
       // the pointer is captured by the canvas, so the handlers live and die with this canvas: every card used to add
       // another pair of listeners to the window and none of them was ever removed
-      bc.addEventListener("pointerdown", e => { if (!job.fit) return; bc.setPointerCapture(e.pointerId); drag = { x: e.clientX, y: e.clientY, c: job.fit.centre.slice(), size: job.fit.size, resize: e.shiftKey }; bc.classList.add("drag"); e.preventDefault(); });
+      const near = (p, q2, r) => Math.hypot(p[0] - q2[0], p[1] - q2[1]) <= r;
+      const local = e => { const rect = bc.getBoundingClientRect(); return [(e.clientX - rect.left) * bc.width / rect.width, (e.clientY - rect.top) * bc.height / rect.height]; };
+      bc.addEventListener("pointermove", e => { if (drag || !bc._box) return; const p = local(e); const b = bc._box; bc.style.cursor = near(p, b.rotate, 9) ? "alias" : b.corners.some(c => near(p, c, 8)) ? "nwse-resize" : "grab"; });
+      bc.addEventListener("pointerdown", e => {
+        if (!job.fit) return; bc.setPointerCapture(e.pointerId); e.preventDefault();
+        const p = local(e), b = bc._box;
+        const mode = b && near(p, b.rotate, 10) ? "rotate" : (b && b.corners.some(c => near(p, c, 9))) || e.shiftKey ? "resize" : "move";
+        const c0 = job.fit.centre.slice(); const cpx = b ? b.centrePx : bc._map.tx(c0[0], c0[1]);
+        drag = { mode, x: e.clientX, y: e.clientY, c: c0, size: job.fit.size, angle: job.fit.angle || 0, cpx, r0: Math.max(4, Math.hypot(p[0] - cpx[0], p[1] - cpx[1])), a0: Math.atan2(p[1] - cpx[1], p[0] - cpx[0]) };
+        bc.classList.add("drag");
+      });
       bc.addEventListener("pointermove", e => {
         if (!drag) return;
         const rect = bc.getBoundingClientRect(), kx = bc.width / rect.width;
         const dx = (e.clientX - drag.x) * kx / bc._map.k, dy = -(e.clientY - drag.y) * kx / bc._map.k;
-        if (drag.resize) {
-          // shift-drag grows and shrinks about the centre the text already has, so it never wanders while being sized
-          const span = Math.max(24, bc.height / 3) * kx / bc._map.k;
-          drag.pendingSize = Math.max(0.5, Math.min(job.fit.fittedMax, drag.size * (1 + dy / span)));
-          const L = G.layoutLines(job.lines, fontFor(job.fit.weight), drag.pendingSize, 0.18, job.fit.angle, drag.c);
-          bc._paint({ glyphs: L.glyphs, centre: drag.c });
+        const p = local(e);
+        if (drag.mode === "resize") {
+          // a corner pulled away from the centre grows the text, pulled in shrinks it: the size follows the distance
+          const r = Math.hypot(p[0] - drag.cpx[0], p[1] - drag.cpx[1]);
+          drag.pendingSize = Math.max(0.5, Math.min(job.fit.fittedMax, drag.size * r / drag.r0));
+          const L = G.layoutLines(job.lines, fontFor(job.fit.weight), drag.pendingSize, 0.18, drag.angle, drag.c);
+          bc._paint({ glyphs: L.glyphs, centre: drag.c, angle: drag.angle, mode: "resize" });
+        } else if (drag.mode === "rotate") {
+          const a = Math.atan2(p[1] - drag.cpx[1], p[0] - drag.cpx[0]);
+          let ang = drag.angle - (a - drag.a0) * 180 / Math.PI;               // screen y points down, so the sign flips
+          ang = ((ang % 360) + 360) % 360; for (const snap of [0, 90, 180, 270, 360]) if (Math.abs(ang - snap) < 3) ang = snap % 360;
+          drag.pendingAngle = ang;
+          const L = G.layoutLines(job.lines, fontFor(job.fit.weight), job.fit.size, 0.18, ang, drag.c);
+          bc._paint({ glyphs: L.glyphs, centre: drag.c, angle: ang, mode: "rotate" });
+          const cap = card.querySelector("[data-cap]"); if (cap) cap.textContent = `${job.fit.capMm.toFixed(2)} mm · ${Math.round(ang)}°`;
         } else {
           const c = [drag.c[0] + dx, drag.c[1] + dy];
           // within a third of a millimetre of the charm's own centre line, the text takes it
           if (Math.abs(c[0] - job.mask.cx) < 0.35 * PT) c[0] = job.mask.cx;
           if (Math.abs(c[1] - job.mask.cy) < 0.35 * PT) c[1] = job.mask.cy;
           drag.pending = c;
-          const L = G.layoutLines(job.lines, fontFor(job.fit.weight), job.fit.size, 0.18, job.fit.angle, c);
-          bc._paint({ glyphs: L.glyphs, centre: c });
+          const L = G.layoutLines(job.lines, fontFor(job.fit.weight), job.fit.size, 0.18, drag.angle, c);
+          bc._paint({ glyphs: L.glyphs, centre: c, angle: drag.angle, mode: "move" });
         }
       });
       bc.addEventListener("pointerup", () => {
         if (!drag) return;
-        const p = drag.pending, sz = drag.pendingSize, was = drag.resize; drag = null; bc.classList.remove("drag");
-        if (was) { if (sz != null) resize(job, sz); else bc._paint(); }
-        else if (p) { if (!moveTo(job, p)) { toast("No room there — kept the previous position", "bad"); bc._paint(); } }
+        const d = drag; drag = null; bc.classList.remove("drag");
+        if (d.mode === "resize") { if (d.pendingSize != null) resize(job, d.pendingSize); else bc._paint(); }
+        else if (d.mode === "rotate") { if (d.pendingAngle != null) rotateTo(job, d.pendingAngle); else bc._paint(); }
+        else if (d.pending) { if (!moveTo(job, d.pending)) { toast("No room there — kept the previous position", "bad"); bc._paint(); } }
         else bc._paint();
       });
       bc.addEventListener("pointercancel", () => { drag = null; bc.classList.remove("drag"); bc._paint(); });
@@ -2019,14 +2085,15 @@ const Engrave = window.Engrave = (() => {
       const px = Math.round(Math.min(640, Math.max(200, room - 4)));
       if (!px || Math.abs(px - mounted) < 12) return;
       mounted = px; backHost.textContent = "";
-      const bc = renderBack(job, px, { grid: true }); backHost.appendChild(bc); wire(bc);
+      const bc = renderBack(job, px, { grid: true, editable: true }); backHost.appendChild(bc); wire(bc);
     };
     requestAnimationFrame(mountBack);
     if (window.ResizeObserver) { const ro = new ResizeObserver(() => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; mountBack(); }); }); ro.observe(backHost); card._ro = ro; }
     const capOut = card.querySelector("[data-cap]");
-    card.querySelectorAll("[data-a]").forEach(b => { const a = b.dataset.a; if (a === "resize") { b.oninput = () => { if (capOut && f && f.capMm && f.size) capOut.textContent = (f.capMm * (+b.value) / f.size).toFixed(2) + " mm"; resize(job, +b.value); }; return; } b.onclick = () => { if (a === "approve") approve(job); else if (a === "left") nudge(job, -0.25, 0); else if (a === "right") nudge(job, 0.25, 0); else if (a === "up") nudge(job, 0, 0.25); else if (a === "down") nudge(job, 0, -0.25); else if (a === "centre") centreText(job);
+    card.querySelectorAll("[data-a]").forEach(b => { const a = b.dataset.a; b.onclick = () => { if (a === "approve") approve(job); else if (a === "centre") centreText(job); else if (a === "close") { EG.list = true; EG.card = null; EG.cardKey = null; render(); }
       else if (a === "resplit") resplit(job); else if (a === "skip") skip(job); else if (a === "back") sendBack(job); }; });
-    card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.repeat) return; const k = e.key.toLowerCase(); if (k === "a") { e.preventDefault(); approve(job); } else if (k === "s") { e.preventDefault(); skip(job); } else if (e.key === "ArrowLeft") { e.preventDefault(); nudge(job, -0.25, 0); } else if (e.key === "ArrowRight") { e.preventDefault(); nudge(job, 0.25, 0); } else if (e.key === "ArrowUp") { e.preventDefault(); nudge(job, 0, 0.25); } else if (e.key === "ArrowDown") { e.preventDefault(); nudge(job, 0, -0.25); } });
+    void capOut;
+    card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.repeat) return; const k = e.key.toLowerCase(); if (k === "a") { e.preventDefault(); approve(job); } else if (k === "s") { e.preventDefault(); skip(job); } else if (e.key === "Escape") { EG.list = true; EG.card = null; EG.cardKey = null; render(); } else if (e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); rotateTo(job, (job.fit ? job.fit.angle || 0 : 0) + (e.key === "ArrowLeft" ? 1 : -1)); } else if (e.key === "ArrowLeft") { e.preventDefault(); nudge(job, -0.25, 0); } else if (e.key === "ArrowRight") { e.preventDefault(); nudge(job, 0.25, 0); } else if (e.key === "ArrowUp") { e.preventDefault(); nudge(job, 0, 0.25); } else if (e.key === "ArrowDown") { e.preventDefault(); nudge(job, 0, -0.25); } });
     // the next card takes focus only when the person was already working in this pane, so a held key cannot run the queue
     const wasHere = document.activeElement && document.activeElement.closest && document.activeElement.closest("#egQueue");
     if (wasHere || !document.activeElement || document.activeElement === document.body) setTimeout(() => { if (card.isConnected) card.focus(); }, 30);
@@ -2213,9 +2280,9 @@ const Sets = window.Sets = (() => {
           <div class="sheetsRow">${mine.map(r => `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}${r.preview ? `<img class="pv" crossorigin="anonymous" src="${r.preview}" loading="lazy" alt="">` : `<div class="pv ph">no preview</div>`}<div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span>${r.backCount ? `<span>✎ ${r.backCount}</span>` : ""}<span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span></div></div>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
           ${held.length ? `<div class="holds"><b>Held:</b> ${held.map(([rid, o]) => `${esc(rid)} — ${esc(o.held.why || "")}`).join(" · ")}</div>` : ""}
           ${st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}
-          <div class="labels">${(st.labelFiles || []).map(f => f.url ? `<img src="${f.url}" title="${esc(f.label || f.sheet)}" data-big="${f.url}" alt="">` : "").join("")}</div>`;
+          <div class="labels">${(st.labelFiles || []).map(f => f.url ? `<img crossorigin="anonymous" src="${f.url}" title="${esc(f.label || f.sheet)}" data-big="${f.url}" alt="">` : "").join("")}</div>`;
         card.querySelectorAll(".libCard").forEach(x => x.onclick = () => openLibrarySheet(x.dataset.id));
-        card.querySelectorAll("[data-big]").forEach(img => img.onclick = () => { const d = document.createElement("dialog"); d.className = "wide"; d.innerHTML = `<div class="dlg"><div class="dlgHead"><h3>${esc(img.title)}</h3><div class="right"><button class="btn ghost xs">Close</button></div></div><div class="dlgBody" style="display:grid;place-items:center"><img class="labelBig" src="${img.dataset.big}" alt=""></div></div>`; d.querySelector("button").onclick = () => d.close(); d.addEventListener("close", () => d.remove()); document.body.appendChild(d); d.showModal(); });
+        card.querySelectorAll("[data-big]").forEach(img => img.onclick = () => { const d = document.createElement("dialog"); d.className = "wide"; d.innerHTML = `<div class="dlg"><div class="dlgHead"><h3>${esc(img.title)}</h3><div class="right"><button class="btn ghost xs">Close</button></div></div><div class="dlgBody" style="display:grid;place-items:center"><img crossorigin="anonymous" class="labelBig" src="${img.dataset.big}" alt=""></div></div>`; d.querySelector("button").onclick = () => d.close(); d.addEventListener("close", () => d.remove()); document.body.appendChild(d); d.showModal(); });
         const ub = card.querySelector("[data-undo]"); if (ub) ub.onclick = async () => { if (!confirm(`Undo the completion of ${st.name}? The orders return to the station's list; every file is kept.`)) return; const local = [...byRun().values()].find(x => x.setId === st.setId) || Object.assign({ orders: {}, sheetIds: st.sheetIds || [], materials: st.materials || [], labelFiles: st.labelFiles || [] }, st); byRun().set(local.runId || st.setId, local); try { await undo(local); toast(`${st.name} undone`, "ok"); renderLibrary(body); } catch (e) { toast(e.message, "bad", 6000); } };
         body.appendChild(card);
       }
@@ -2334,6 +2401,14 @@ const RunCtl = window.RunCtl = (() => {
   const NEXT = { at: 0, t: 0 };
   function armNext(ms) { NEXT.at = Date.now() + ms; clearInterval(NEXT.t); NEXT.t = setInterval(() => { if (!NEXT.at) { clearInterval(NEXT.t); return; } renderBanner(); }, 1000); }
   function cancelNext() { NEXT.at = 0; clearInterval(NEXT.t); clearTimeout(autoTimer); renderBanner(); }
+  /** A run that is given up lets go of its lines: its pool rows are marked abandoned and the station's claims are lifted,
+      so the next run can take them without waiting a day for the rows to go stale. */
+  function releaseRun(r) {
+    const ids = [...new Set(Orders.rows().filter(x => x.poolIds && x.poolIds.length).flatMap(x => x.poolIds))];
+    if (ids.length && S.cloud.ok) api("charmNestLibrary", { op: "poolUpdate", poolIds: ids, patch: { state: "abandoned" } }, { quiet: true }).catch(() => {});
+    Orders.unclaim([...new Set(Orders.rows().map(x => x.order.receiptId))]).catch(() => {});
+    r.status = "abandoned"; save(r).catch(() => {});
+  }
   function stop(why, fix, at) { const r = B.run; if (!r) return; r.status = "stopped"; r.stoppedBy = why; r.fix = fix || null; r.at = at || null; r.errors.push({ t: Date.now(), why }); if (waiter && waiter.r === r) { const w = waiter; waiter = null; w.resolve(); } reviewWaiter = null; agent({ run: r.runId }, "warn", `Run stopped: ${why}${fix ? " — " + fix : ""}`); toast(`Run stopped: ${why}`, "bad", 8000); notifyPerson("Charm Sorter run stopped", why); save(r).catch(() => {}); renderBanner(); }
   function stopIfRunning(why, fix) { if (B.run && B.run.status === "running") stop(why, fix); }
   async function resume() {
@@ -2487,7 +2562,7 @@ const RunCtl = window.RunCtl = (() => {
       const eng = [...Engrave.items().values()].filter(j => ["approved", "words", "review"].includes(j.state) && !j.backs).length;
       const rev = Review.count();
       const lost = [eng ? `${eng} engraving decision${eng === 1 ? "" : "s"}` : "", rev ? `${rev} review decision${rev === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
-      if (confirm(`Give up run ${r.runId.slice(-8)}?${lost ? `\n\n${lost} made in this run are not yet written and will be lost.` : ""}\n\nThe sheets and files already saved are kept.`)) clearRunState();
+      if (confirm(`Give up run ${r.runId.slice(-8)}?${lost ? `\n\n${lost} made in this run are not yet written and will be lost.` : ""}\n\nThe sheets and files already saved are kept.`)) { releaseRun(r); clearRunState(); }
     };
     Orders.render();
   }
@@ -2771,7 +2846,10 @@ const Sandbox = window.Sandbox = (() => {
     const r = await api("charmNestLibrary", { op: "sandboxReset" }); toast(`Sandbox reset — ${r.deleted} record(s) removed`, "ok"); await refresh();
   }
   function mountPanel(v) {
-    let bar = v.querySelector("#sandboxBar"); if (!bar) { bar = document.createElement("span"); bar.id = "sandboxBar"; bar.className = "sandboxBar"; const ob = v.querySelector(".ordBar"); if (ob) ob.appendChild(bar); else v.prepend(bar); }
+    /* The sandbox's controls hang off the SANDBOX pill in the top bar — a click opens them — instead of taking a
+       third of the Orders toolbar on every visit. Off is the normal state and says nothing: Settings holds the way in. */
+    let bar = document.getElementById("sandboxBar");
+    if (!bar) { const pill = document.getElementById("sandboxPill"); bar = document.createElement("div"); bar.id = "sandboxBar"; bar.className = "sandboxBar sbPop hidden"; (pill ? pill.parentElement : v).appendChild(bar); if (pill) { pill.style.cursor = "pointer"; pill.onclick = () => bar.classList.toggle("open"); } document.addEventListener("pointerdown", e => { if (!e.target.closest("#sandboxBar, #sandboxPill")) bar.classList.remove("open"); }); }
     bar.classList.toggle("hidden", !on());
     bar.innerHTML = on()
       ? `<b>SANDBOX</b><span id="sbStatus" title="${esc(status ? statusText() : "nothing here touches the real Etsy or the real records")}">rehearsal — nothing real is touched</span><button class="btn ghost xs" id="sbReset" type="button" title="empty the sandbox pool, sets, runs and sheets — the real records are untouched">Reset</button><button class="btn ghost xs" id="sbToggle" type="button" title="go back to the real Etsy and the real records">Switch off</button>`
@@ -2872,7 +2950,7 @@ const OrderWin = window.OrderWin = (() => {
     const t = byId("owTray"); if (!t) return;
     t.innerHTML = "";
     W.tray.forEach((x, i) => {
-      const c = el("span", "chip", '<img alt="" src="' + x.url + '"><span>' + esc(x.file.name.slice(0, 18)) + '</span><button type="button" title="remove">×</button>');
+      const c = el("span", "chip", '<img crossorigin="anonymous" alt="" src="' + x.url + '"><span>' + esc(x.file.name.slice(0, 18)) + '</span><button type="button" title="remove">×</button>');
       c.querySelector("button").onclick = () => { try { URL.revokeObjectURL(x.url); } catch (_) {} W.tray.splice(i, 1); paintTray(); };
       t.appendChild(c);
     });
@@ -2911,7 +2989,7 @@ const OrderWin = window.OrderWin = (() => {
       const when = m.at ? new Date(m.at).toLocaleString("en-US", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
       return '<div class="owMsg' + (own ? " me" : "") + '"><span class="who">' + esc(m.senderName || "Staff") + (when ? " · " + esc(when) : "") + '</span>' +
         (m.text && m.text !== "Image attachment" ? esc(m.text).replace(/\n/g, "<br>") : "") +
-        (m.imageUrl ? '<img loading="lazy" alt="" src="' + esc(m.imageUrl) + '">' : "") + '</div>';
+        (m.imageUrl ? '<img crossorigin="anonymous" loading="lazy" alt="" src="' + esc(m.imageUrl) + '">' : "") + '</div>';
     }).join("");
     t.scrollTop = t.scrollHeight;
   }
@@ -2939,7 +3017,7 @@ const OrderWin = window.OrderWin = (() => {
     mp.className = "pill " + (r.material ? "neutral" : "bad");
     const ph = byId("owPhoto"); const url = Orders.imageFor(r);
     ph.classList.remove("zoom");
-    ph.innerHTML = url ? '<img alt="" src="' + esc(url) + '">' : '<span class="ph">no image</span>';
+    ph.innerHTML = url ? '<img crossorigin="anonymous" alt="" src="' + esc(url) + '">' : '<span class="ph">no image</span>';
     ph.dataset.lid = String(r.line.listingId || ""); if (url) ph.dataset.painted = "1"; else { delete ph.dataset.painted; Orders.wantImage(r.line.listingId); }
     byId("owSku").textContent = "SKU: " + (sp.designSku || r.line.sku || "—");
     // the one field that must be read exactly: labelled, whole, and never boxed into a scroller under the staff note
@@ -3083,12 +3161,12 @@ const RunHistory = window.RunHistory = (() => {
       const resumeBtn = g.runId && openRuns.some(r => r.runId === g.runId) ? `<button class="btn ghost sm" data-a="resume" title="pick the unfinished run this set belongs to up where it stopped \u2014 it re-reads every order from Etsy first">Resume the run\u2026</button>` : "";
       html += H.view === "cards"
         ? `<div class="hSet card hoverItem${isCur ? " cur" : ""}" data-set="${esc(g.setId || "")}" data-run="${esc(g.runId || "")}" tabindex="0">
-            ${g.thumb ? `<img class="hThumb" loading="lazy" alt="" src="${esc(g.thumb)}" title="${esc(g.thumbOf || "")}" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'hThumb ph',textContent:'no preview'}))">` : `<div class="hThumb ph">no preview</div>`}
+            ${g.thumb ? `<img crossorigin="anonymous" class="hThumb" loading="lazy" alt="" src="${esc(g.thumb)}" title="${esc(g.thumbOf || "")}" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'hThumb ph',textContent:'no preview'}))">` : `<div class="hThumb ph">no preview</div>`}
             <div class="hRow"><span class="nm">${esc(name)}</span><span class="pill ${g.status === "complete" ? "ok" : "bad"}">${g.status}</span><span class="ct">${g.sheets.length} sheet${g.sheets.length === 1 ? "" : "s"} \u00b7 ${g.orders} order${g.orders === 1 ? "" : "s"}</span></div>
             <div class="hRow sub"><span class="ct">${esc(mats)}</span><span class="sp"></span>${isCur ? `<span class="pill neutral">on the cards</span>` : openBtn}${resumeBtn}</div>
           </div>`
         : `<div class="hSet row hoverItem${isCur ? " cur" : ""}" data-set="${esc(g.setId || "")}" data-run="${esc(g.runId || "")}"><div class="hRow">
-            ${g.thumb ? `<img class="hMini" loading="lazy" alt="" src="${esc(g.thumb)}" onerror="this.remove()">` : `<span class="hMini ph"></span>`}
+            ${g.thumb ? `<img crossorigin="anonymous" class="hMini" loading="lazy" alt="" src="${esc(g.thumb)}" onerror="this.remove()">` : `<span class="hMini ph"></span>`}
             <span class="nm">${esc(name)}</span><span class="pill ${g.status === "complete" ? "ok" : "bad"}">${g.status}</span>
             <span class="ct">${esc(mats)} \u00b7 ${g.sheets.length} sheet${g.sheets.length === 1 ? "" : "s"} \u00b7 ${g.orders} order${g.orders === 1 ? "" : "s"}</span><span class="sp"></span>${isCur ? `<span class="pill neutral">on the cards</span>` : openBtn}${resumeBtn}</div></div>`;
     }
