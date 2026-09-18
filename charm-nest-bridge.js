@@ -1456,6 +1456,24 @@ const Engrave = window.Engrave = (() => {
   /** How many placements have already been settled in this run — the numerator of "3 of 9" on the card. */
   const DECIDED = ["approved", "written", "skipped"];                    // the same set the Decided tab lists
   const decidedJobs = () => [...items().values()].filter(j => DECIDED.includes(j.state) && j.row.state !== "gone");
+  /** A recalled set's engraving: each back written on its sheets becomes a decided job on the line it belongs to, with
+   *  its words, who approved it and the file, so the Decided list reads the same for a set from March as for today's. */
+  function fromRecall() {
+    items().clear();
+    const rows = Orders.rows();
+    for (const pg of allSheets()) {
+      if (!pg.recalled) continue;
+      for (const bk of pg.backPool || []) {
+        const row = rows.find(r => (bk.poolId && r.poolIds.includes(bk.poolId)) || (String(r.order.receiptId) === String(bk.order) && (!bk.sku || (r.spec && r.spec.designSku) === bk.sku || r.line.sku === bk.sku)));
+        if (!row) continue;
+        const j = ensureJob(row);
+        const lines = bk.lines && bk.lines.length ? bk.lines : String(bk.text || "").split("\n").filter(Boolean);
+        Object.assign(j, { state: "written", text: lines.join("\n"), lines, approvedBy: bk.approvedBy || null, approvedAt: pg.recalled.updatedAt || null, backs: [{ poolId: bk.poolId, sheet: pg.fileBase, png: bk.outputs && bk.outputs.png && bk.outputs.png.url, ai: bk.outputs && bk.outputs.ai && bk.outputs.ai.url, capMm: bk.capMm }], recalledFrom: pg });
+        row.engrave = { needed: true, state: "written", approved: true, text: j.text };
+      }
+    }
+    render();
+  }
   const reviewedCount = () => decidedJobs().length;
 
   /* ── 7.1 · which lines are engraved, and what the text is ── */
@@ -1755,10 +1773,13 @@ const Engrave = window.Engrave = (() => {
   }
 
   /* ── the Engraving tab ── */
-  const EG = { tab: null, focus: null, chosen: false, card: null, cardKey: null, reread: 0 };
+  const EG = { tab: null, focus: null, chosen: false, card: null, cardKey: null, reread: 0, q: "" };
+  const matchesQ = j => { const q = (EG.q || "").trim().toLowerCase(); if (!q) return true; return [j.row.order.receiptId, j.row.spec && j.row.spec.designSku, j.row.line.sku, j.text, (j.lines || []).join(" "), j.row.line.title].some(x => String(x || "").toLowerCase().includes(q)); };
   /** Which run's engraving this is. A tab that showed a queue and no run left nobody able to say whose queue it was. */
   function runWord() {
-    const r = B.run; if (!r) return "no run — earlier runs…";
+    // a recalled set names itself, even while a finished run is still remembered underneath
+    const rc = B.orders.recalled && window.Recall && Recall.on() ? Object.assign({ runId: B.orders.recalled.runId || "" }, B.orders.recalled) : null;
+    const r = rc || B.run || (B.orders.recalled ? Object.assign({ runId: B.orders.recalled.runId || "" }, B.orders.recalled) : null); if (!r) return "no run — earlier runs…";
     return (r.seq ? `Set ${r.seq}` : r.runId.slice(-8)) + (r.day ? " · " + new Date(r.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "");
   }
   /** An empty queue has four different causes, and only one of them means "you are done". Say which one it is. */
@@ -1778,6 +1799,7 @@ const Engrave = window.Engrave = (() => {
   /** Bring the counts and the up-next rail up to date without touching the card a person is working on. */
   function renderChrome(v, queue) {
     const jobs = [...items().values()].filter(j => j.row.state !== "gone");
+    { const rw = v.querySelector("#egRun"); if (rw) rw.textContent = runWord(); }
     const n = { place: queue.length, words: jobs.filter(j => j.state === "words" || j.state === "blocked").length, done: decidedJobs().length };
     v.querySelectorAll(".egTab[data-tab]").forEach(b => {
       const k = n[b.dataset.tab]; let t = b.querySelector("b");
@@ -1836,7 +1858,7 @@ const Engrave = window.Engrave = (() => {
       if (f2 && f2.key === EG.cardKey) { renderChrome(v, q2); return; }
     }
     const jobs = [...items().values()].filter(j => j.row.state !== "gone");
-    const words = jobs.filter(j => j.state === "words" || j.state === "blocked"), queue = jobs.filter(j => j.state === "review"), done = jobs.filter(j => ["approved", "written", "skipped"].includes(j.state));
+    const words = jobs.filter(matchesQ).filter(j => j.state === "words" || j.state === "blocked"), queue = jobs.filter(matchesQ).filter(j => j.state === "review"), done = jobs.filter(matchesQ).filter(j => ["approved", "written", "skipped"].includes(j.state));
     // One screen, three tabs, one thing in front of you at a time: the words a person has to settle, the placements to
     // approve, and what has already been decided. The counts are the tabs, so what is left is never more than a glance.
     // Until a person picks a tab, the screen follows the work: it used to settle on Decided while the run was still
@@ -1850,6 +1872,7 @@ const Engrave = window.Engrave = (() => {
     v.innerHTML = `<div class="ordBar egBar">
         ${tabBtn("place", "Placements", queue.length, "info")}${tabBtn("words", "Words", words.length, "warn")}${tabBtn("done", "Decided", done.length, "ok")}
         ${working ? `<span class="egTab working" title="being read and fitted now — they arrive in Words or Placements on their own"><span class="spin"></span>Working<b>${working}</b></span>` : ""}
+        <input class="ordSearch" id="egQ" placeholder="order, SKU, words…" value="${esc(EG.q || "")}" title="search the placements, the words and what has been decided by order number, SKU or the engraved words">
         <span class="spacer"></span><button class="btn ghost xs" id="egRun" title="which run this engraving belongs to — click for every run on record">${esc(runWord())}</button><span class="pill ${F_.ok ? "ok" : "bad"}" title="${F_.ok ? "the engraving font is loaded" : esc(F_.error || "the engraving font files are missing")}">${F_.ok ? "Source Sans 3" : "Source Sans 3 missing"}</span><button class="btn ghost xs" id="egWho" title="every approval is recorded under this name — click to change it">${esc(employeeName() || "set your name")}</button></div>
       <div class="egPane grow"${tab === "place" ? "" : " hidden"}><div class="rvList" id="egQueue"></div>
         <div class="egNext" id="egNext"></div></div>
@@ -1858,6 +1881,7 @@ const Engrave = window.Engrave = (() => {
     v.querySelectorAll(".egTab[data-tab]").forEach(b => b.onclick = () => { EG.tab = b.dataset.tab; EG.chosen = true; render(); });
     v.querySelector("#egWho").onclick = () => { askEmployee(); render(); };
     v.querySelector("#egRun").onclick = () => RunHistory.show();
+    { const q = v.querySelector("#egQ"); q.oninput = () => { EG.q = q.value; render(); const q2 = v.querySelector("#egQ"); if (q2) { q2.focus(); q2.setSelectionRange(q2.value.length, q2.value.length); } }; }
     if (tab === "words") {
       const w = v.querySelector("#egWords"); for (const j2 of words) w.appendChild(Review.card(Review.items().find(i2 => i2.key === "eng:" + j2.key) || { kind: j2.state === "blocked" ? "flipFailed" : "engraveWords", key: "eng:" + j2.key, row: j2.row, job: j2, why: j2.reason }));
       if (!words.length) w.innerHTML = `<div class="libEmpty">nothing waiting</div>`;
@@ -1874,7 +1898,7 @@ const Engrave = window.Engrave = (() => {
     }
     if (tab === "done") {
       const bk = v.querySelector("#egBacks");
-      const decided = decidedJobs().sort((a, b) => (b.approvedAt || 0) - (a.approvedAt || 0));
+      const decided = decidedJobs().filter(matchesQ).sort((a, b) => (b.approvedAt || 0) - (a.approvedAt || 0));
       const sheets = allSheets().filter(sh => (sh.backPool || []).length);
       const lnk = (o, t) => o && o.url ? ` · <a href="${esc(o.url)}" target="_blank" rel="noopener">${t}</a>` : "";
       bk.innerHTML = (decided.length
@@ -1890,8 +1914,9 @@ const Engrave = window.Engrave = (() => {
         const j2 = items().get(b.closest(".doneRow").dataset.key); if (!j2) return;
         const who = employeeName() || askEmployee(); if (!who) return;
         if (!confirm(`Reopen ${j2.row.order.receiptId}? It goes back to the words step, and any back file already written for it is superseded.`)) return;
-        sendBack(j2, `reopened by ${who}`);
-        EG.tab = "words"; EG.chosen = true; render();
+        const go = () => { sendBack(j2, `reopened by ${who}`); EG.tab = "words"; EG.chosen = true; render(); };
+        if (j2.recalledFrom && j2.recalledFrom.recalled) { Recall.rebuild(j2.recalledFrom).then(() => { const pool = B.pool.rows; for (const [pid, p] of pool) if (String(p.orderId) === String(j2.row.order.receiptId) && (p.sku === (j2.row.spec && j2.row.spec.designSku) || p.sku === j2.row.line.sku) && !j2.row.poolIds.includes(pid)) j2.row.poolIds.push(pid); go(); }).catch(e => toast(`Could not rebuild the sheet: ${e.message}`, "bad", 7000)); return; }
+        go();
       });
     }
   }
@@ -1984,7 +2009,7 @@ const Engrave = window.Engrave = (() => {
     void it;
     return card;
   }
-  return { loadFonts, classify, classifyAll, fitJob, fitAll, approve, nudge, resize, resplit, skip, sendBack, decideWords, invalidate, render, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
+  return { loadFonts, classify, classifyAll, fitJob, fitAll, approve, nudge, resize, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
@@ -2372,7 +2397,7 @@ const RunCtl = window.RunCtl = (() => {
     if (S.settings.runMode === "auto" && +S.settings.autoEvery > 0) { const every = Math.max(5, +S.settings.autoEvery); clearTimeout(autoTimer); autoTimer = setTimeout(() => { NEXT.at = 0; clearInterval(NEXT.t); if (S.settings.runMode === "auto") { clearRunState(); start({ mode: "auto" }); } }, every * 60000); armNext(every * 60000); agent({ bridge: true }, "DS", `Auto: the next run starts in ${every} min (never under 5, to spare the Etsy API)`); }
   }
   /** After a set is done: clear the cards and pooled lines so the next run starts clean (files and records are kept). */
-  function clearRunState() { for (const m of METALS) { const prim = S.sheets[m.key]; if (prim.pages.some(p => p.charms.some(c => c.poolId))) { for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms = pg.charms.filter(c => !c.poolId); pg.sheetId = null; pg.fileBase = null; pg.setId = null; pg.runId = null; } prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim); } } B.orders.rows = []; B.orders.byKey = new Map(); B.engrave.items = new Map(); B.review.items = []; B.pool.rows = new Map(); B.run = null; B.orders.recalled = null; Orders.render(); Engrave.render(); Review.render(); renderBanner(); renderRail(); updateTopSub(); }
+  function clearRunState() { for (const m of METALS) { const prim = S.sheets[m.key]; if (prim.pages.some(p => p.charms.some(c => c.poolId))) { for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms = pg.charms.filter(c => !c.poolId); pg.sheetId = null; pg.fileBase = null; pg.setId = null; pg.runId = null; } prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim); } } B.orders.rows = []; B.orders.byKey = new Map(); B.engrave.items = new Map(); B.review.items = []; B.pool.rows = new Map(); B.run = null; B.orders.recalled = null; B.orders.pulledAt = null; B.orders.filtered = 0; B.orders.stale = false; Orders.render(); Engrave.render(); Review.render(); renderBanner(); renderRail(); updateTopSub(); }
   function setRunMode(mode) {
     S.settings.runMode = mode === "auto" ? "auto" : "manual"; saveSettings(); renderModeBtn();
     if (mode === "auto") { agent({ bridge: true }, "DS", "Auto mode on: the sorter pulls the latest orders by the date rule and runs the whole process, stopping only for a person"); if (!B.run || ["complete", "stopped"].includes(B.run.status)) { if (B.run && B.run.status === "complete") clearRunState(); start({ mode: "auto" }).catch(e => toast(e.message, "bad")); } else if (B.run.status === "paused") { B.run.mode = "auto"; next(); } else B.run.mode = "auto"; }
@@ -3075,18 +3100,27 @@ const Recall = window.Recall = (() => {
   /* Recall stays on the tab it was asked from. Asked from Orders, the orders come up on Orders; from Nest, the sheets
      on Nest; from anywhere else, Nest — every tab is filled either way, because what is on the cards is what every
      tab is about, live or recalled. */
-  async function open(sel) {
+  let opening = null;
+  async function open(sel) { if (opening) await opening.catch(() => {}); opening = openNow(sel); try { return await opening; } finally { opening = null; } }
+  async function openNow(sel) {
     const from = S.mode;
     const q = sel.setId ? { setId: sel.setId } : { runId: sel.runId };
     const ls = await api("charmNestLibrary", Object.assign({ op: "listSheets", limit: 200 }, q), { label: "Reading the set" });
-    const sheets = (ls.sheets || []).sort((a, b) => (a.setSeq || 0) - (b.setSeq || 0) || (a.sheetIndex || 0) - (b.sheetIndex || 0));
+    /* One record per sheet name, the newest: before a re-nested sheet kept its identity, the library could hold two
+       GF_Sep.17.26_Set-1_Sheet-1 records, one stale. */
+    const byName = new Map();
+    for (const x of ls.sheets || []) { const k = x.fileBase || x.id; const had = byName.get(k); if (!had || (x.updatedAt || 0) > (had.updatedAt || 0)) byName.set(k, x); }
+    const sheets = [...byName.values()].sort((a, b) => (a.setSeq || 0) - (b.setSeq || 0) || (a.sheetIndex || 0) - (b.sheetIndex || 0));
     if (!sheets.length) { toast("Nothing is saved under that set", "bad", 5000); return; }
     if (B.run && ["running", "review"].includes(B.run.status)) { toast("A run is working — stop it first, or its sheets would be replaced under it", "bad", 6000); return; }
     RunCtl.clearRunState();
     RC.runId = sel.runId || sheets[0].runId || null; RC.setId = sel.setId || null;
     for (const m of METALS) {
-      const mine = sheets.filter(x => x.metal === m.key); if (!mine.length) continue;
       const prim = S.sheets[m.key];
+      // a recall replaces what a previous recall left: never pages stacked on pages
+      for (const pg of prim.pages.slice(1)) { (pg.workers || []).forEach(w => w.terminate()); }
+      prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; prim.recalled = null; prim.charms = prim.charms.filter(c => !c.poolId); prim.status = prim.charms.length ? "ready" : "idle"; prim.placements = []; prim.fileBase = null; prim.setId = null; prim.seq = null; prim.sheetIndex = null;
+      const mine = sheets.filter(x => x.metal === m.key); if (!mine.length) { CN.renderCard(prim); continue; }
       mine.forEach((rec, i) => {
         const pg = i === 0 ? prim.pages[0] : CN.addPage(m.key);
         pg.charms = []; pg.placements = []; pg.rejects = []; pg.outputs = null; pg.verification = rec.verification || null; pg.liveInfo = null; pg.dirty = false; pg.problem = null;
@@ -3099,18 +3133,24 @@ const Recall = window.Recall = (() => {
     }
     CN.refreshAllCards(); CN.renderRail(); CN.updateTopSub();
     // and the run's orders, as the Orders tab's own rows
-    if (RC.runId) await ordersOf(RC.runId).catch(e => agent({ run: RC.runId }, "warn", `orders of the run: ${e.message}`));
+    if (RC.runId) await ordersOf(RC.runId, sheets).catch(e => agent({ run: RC.runId }, "warn", `orders of the run: ${e.message}`));
+    Engrave.fromRecall(); Review.syncOrderItems(); Review.render();
     agent({ run: RC.runId }, "cloud", `Recalled ${sheets.length} sheet(s)${sel.setId ? " of " + (sheets[0].setSeq ? "Set-" + sheets[0].setSeq : sel.setId) : ""} from ${sheets[0].day || "the record"} onto the cards — nothing is running`);
     setMode(["orders", "nest", "engrave", "review"].includes(from) ? from : "nest");
-    if (S.mode === "engrave") Engrave.render(); if (S.mode === "review") Review.render();
+    Engrave.render(); Review.render();
   }
-  async function ordersOf(runId) {
+  async function ordersOf(runId, sheets) {
     const r = await api("charmNestLibrary", { op: "runGet", runId }, { quiet: true }); if (!r.run) return;
     await Orders.loadMaps().catch(() => {}); await Master.load().catch(() => {});
-    B.orders.rows = Object.entries(r.run.lines || {}).map(([k, l]) => Orders.rowFromRecord(k, l));
+    let rows = Object.entries(r.run.lines || {}).map(([k, l]) => Orders.rowFromRecord(k, l));
+    // opened as a set, the Orders tab is that set's parcels: the orders the recalled sheets name
+    const named = new Set((sheets || []).flatMap(x => (x.orders || []).map(String)));
+    if (RC.setId && named.size) { const mine = rows.filter(x => named.has(String(x.order.receiptId))); if (mine.length) rows = mine; }
+    B.orders.rows = rows;
     B.orders.byKey = new Map(B.orders.rows.map(x => [x.key, x]));
     B.orders.pulledAt = r.run.updatedAt || r.run.startedAt || null; B.orders.filtered = 0; B.orders.stale = false;
-    B.orders.recalled = { runId, seq: r.run.seq || +((/-(\d+)$/.exec(String(r.run.setId || "")) || [])[1] || 0) || null, day: r.run.day || null };
+    const first = (sheets || []).find(x => x.setSeq) || {};
+    B.orders.recalled = { runId, seq: first.setSeq || r.run.seq || +((/-(\d+)$/.exec(String(r.run.setId || "")) || [])[1] || 0) || null, day: first.day || r.run.day || null };
     Orders.interpretAll(); Orders.render();
   }
   /** Bring one recalled sheet's charms back from the master files so it can be edited and nested again. On demand only. */
@@ -3194,7 +3234,7 @@ function bootBridge() {
     const open = runs.filter(x => !["complete", "abandoned"].includes(x.status));
     if (open.length) { B.openRuns = open; agent({ bridge: true }, "DS", `${open.length} open run(s) on record — offered on the run banner`); RunCtl.renderBanner(); }
     const last = runs.find(x => x.lines > 0);
-    if (last && !B.run && !B.orders.rows.length) Recall.open({ runId: last.runId }).catch(() => {});
+    if (last && !B.run && !B.orders.rows.length && !Recall.on()) Recall.open({ runId: last.runId }).catch(() => {});
   }).catch(() => {});
   // the Design Station frame mounts on first visit to its tab; Auto mode mounts it now
   if (S.settings.runMode === "auto") { setTimeout(() => RunCtl.setMode("auto"), 1500); }

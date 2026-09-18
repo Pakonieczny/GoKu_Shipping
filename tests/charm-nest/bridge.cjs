@@ -1163,6 +1163,33 @@ const receipts = [
   assert(recalled.canvasDrawn, 'the saved picture is what the card shows');
   assert(recalled.orders.rows >= 1 && recalled.orders.fromRecord && /from the record/.test(recalled.orders.meta), "the run's orders are on the Orders tab, said to be from the record: " + JSON.stringify(recalled.orders));
   assert.deepStrictEqual(recalled.did, [], 'nothing was pulled, started, resumed or rebuilt: ' + JSON.stringify(recalled.did));
+  // the recalled set's engraving is on the Engraving tab too: the back that was written, its words, who approved it, and Reopen
+  // Set 2 is open now (gold, no engraving); its chip says so, and nothing of Set 1 is on the cards
+  const set2 = await page.evaluate(() => ({ _: (CN.setMode('engrave'), CN.setMode('nest')), rec: JSON.stringify(window.B.orders.recalled), orders: Orders.rows().map(r => r.order.receiptId), chip: (document.getElementById('egRun') || {}).textContent, recalled: CN.allSheets().filter(p => p.recalled).map(p => p.fileBase) }));
+  assert(/Set 2/.test(set2.chip) && set2.recalled.every(f => /Set-2/.test(f)), 'the tabs follow the set that was opened: ' + JSON.stringify(set2));
+  // back to Set 1, whose silver sheet carries the written back
+  const back1 = await page.evaluate(async () => {
+    document.getElementById('btnEarlierSets').click(); await new Promise(r => setTimeout(r, 900));
+    const d = document.getElementById('histDlg'); const o = [...d.querySelectorAll('.hSet')].find(n => /Set 1/.test(n.textContent)); const btn = o && o.querySelector('[data-a=open]');
+    if (btn) btn.click(); await new Promise(r => setTimeout(r, 1500));
+    return CN.allSheets().filter(p => p.recalled).map(p => p.fileBase);
+  });
+  assert(back1.length && back1.every(f => /Set-1/.test(f)), 'Set 1 is back on the cards: ' + JSON.stringify(back1));
+  const eng = await page.evaluate(async () => {
+    CN.setMode('engrave'); Engrave.render(); await new Promise(r => setTimeout(r, 300));
+    const tb = document.querySelector('.egTab[data-tab=done]'); if (tb) tb.click(); await new Promise(r => setTimeout(r, 200));
+    const rows = [...document.querySelectorAll('#egDone .doneRow')].map(n => n.textContent.replace(/\s+/g, ' ').trim());
+    const reopen = !!document.querySelector('#egDone [data-a=reopen]');
+    const q = document.getElementById('egQ'); q.value = 'no-such-words'; q.dispatchEvent(new Event('input')); await new Promise(r => setTimeout(r, 200));
+    const narrowed = document.querySelectorAll('#egDone .doneRow').length;
+    const q2 = document.getElementById('egQ'); q2.value = ''; q2.dispatchEvent(new Event('input'));
+    return { jobs: Engrave.items().size, rows, reopen, narrowed, chip: (document.getElementById('egRun') || {}).textContent };
+  });
+  console.log('recalled engraving', JSON.stringify(eng));
+  assert(eng.jobs >= 1 && eng.rows.some(r => /ANNA/.test(r) && /written/.test(r)), 'the written back is a decided job with its words: ' + JSON.stringify(eng.rows));
+  assert(eng.reopen, 'and can be reopened');
+  assert.strictEqual(eng.narrowed, 0, 'the search narrows the decided list');
+  assert(/Set 1/.test(eng.chip), 'and the tab says whose engraving it is: ' + eng.chip);
 
   const tabs = await page.evaluate(() => ({ top: [...document.querySelectorAll('#modeSeg > button')].map(b => b.dataset.mode), more: [...document.querySelectorAll('#moreMenu button')].map(b => b.dataset.mode), charms: !!document.querySelector('[data-mode=charms]') }));
   assert.deepStrictEqual(tabs.top, ['nest', 'orders', 'engrave', 'review'], "the day's four screens, in the day's order: " + tabs.top);
