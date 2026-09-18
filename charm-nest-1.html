@@ -836,6 +836,12 @@ dialog.hist .hFoot{flex:0 0 auto;padding:7px 18px 12px;font-size:11px;color:var(
 .setCard .holds{font-size:12px;color:#8a3a26}
 .labelBig{width:min(90vw,90vh);height:min(90vw,90vh);background:#fff;display:block;image-rendering:pixelated}
 .noteBox{background:var(--card2);border:1px solid var(--line);border-radius:9px;padding:8px 10px;font-size:12px;color:var(--ink70);line-height:1.45}
+details.noteBox{padding:6px 10px}
+details.noteBox>summary{cursor:pointer;font-size:11.5px;color:var(--ink45);list-style:none}
+details.noteBox>summary::-webkit-details-marker{display:none}
+details.noteBox>summary::before{content:'\203A ';display:inline-block;transition:transform .15s;margin-right:5px}
+details.noteBox[open]>summary{margin-bottom:6px;color:var(--ink70)}
+details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .tbl{width:100%;border-collapse:collapse;font-size:12px}
 .tbl th{text-align:left;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);padding:4px 6px;border-bottom:1px solid var(--line)}
 .tbl td{padding:4px 6px;border-bottom:1px solid var(--line2);vertical-align:top}
