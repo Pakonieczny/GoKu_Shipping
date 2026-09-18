@@ -148,8 +148,12 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .sheetCard.dragOver{outline-color:var(--accent);box-shadow:0 0 0 6px color-mix(in srgb,var(--accent) 18%,transparent),var(--sh)}
 .sheetCard.pulse{animation:pulse 1.1s ease}
 @keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 55%,transparent)}100%{box-shadow:0 0 0 22px transparent}}
-.shHead{display:flex;align-items:center;gap:9px;padding:11px 14px 8px;min-width:0}
-.shTabs{display:flex;gap:4px;margin:-2px 14px 8px;flex-wrap:wrap}
+.shHead{display:flex;align-items:center;gap:9px;padding:10px 14px 8px;min-width:0}
+.shHead .prov{font-size:11px;color:var(--ink45);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.shHead .prov b{font-weight:700;color:var(--ink70)}
+.shTabs{display:flex;gap:4px;flex:0 1 auto;min-width:0;overflow-x:auto;scrollbar-width:none}
+.shTabs::-webkit-scrollbar{display:none}
+.shTabs button{flex:0 0 auto}
 .shTabs button{font:600 11px var(--sans);letter-spacing:.02em;padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:var(--card2);color:var(--ink70);cursor:pointer}
 .shTabs button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
 .shTabs button i{font-style:normal;opacity:.7;margin-left:6px;font-weight:500}
@@ -177,10 +181,12 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .shStage{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink70);min-height:18px;padding:5px 14px 0}
 .shStage .spin{width:11px;height:11px;border-width:2px;flex-basis:11px}
 .shStage .r{margin-left:auto;font-family:var(--mono);color:var(--ink45);font-size:10.5px;white-space:nowrap}
-.shSat{margin:8px 14px 0;border:1px solid var(--line);border-radius:10px;background:var(--card2);padding:9px 11px;display:grid;gap:3px}
-.shSat .fact{display:flex;align-items:baseline;gap:8px;font-size:12.5px}
-.shSat .fact b{font:700 20px var(--mono);letter-spacing:-.01em}
+.shSat{margin:7px 14px 0;border:1px solid var(--line);border-radius:10px;background:var(--card2);padding:7px 10px;display:grid;gap:2px}
+.shSat .fact{display:flex;align-items:baseline;gap:7px;font-size:12.5px;flex-wrap:nowrap;white-space:nowrap;min-width:0}
+.shSat .fact>b{font:700 20px var(--mono);letter-spacing:-.01em;flex:0 0 auto}
+.shSat .fact>span{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .shSat .fact .free{color:var(--ink70);font-family:var(--mono);font-size:11.5px}
+.shSat .fact .free b{font:inherit;font-weight:700;color:var(--ink)}
 .shSat .bar{height:6px;border-radius:9px;background:var(--paper2);overflow:hidden;position:relative;margin:2px 0 3px}
 .shSat .bar i{position:absolute;left:0;top:0;bottom:0;background:var(--accent);border-radius:9px;transition:width .3s}
 .shSat .bar em{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink45);opacity:.6}
@@ -192,12 +198,15 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .shSat .good{font-size:11.5px;color:#3c5a39;background:var(--sageSoft);border-radius:7px;padding:5px 8px;margin-top:2px}
 .shActions{display:flex;gap:7px;padding:10px 14px 13px;flex-wrap:wrap;align-items:center}
 .shActions .right{margin-left:auto;display:flex;gap:6px}
-.shRejects{margin:0 14px;border:1px dashed var(--clay);border-radius:9px;background:var(--claySoft);padding:8px 10px;font-size:11.5px;color:#8a3a26;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.shRejects{margin:0 14px;border:1px dashed var(--clay);border-radius:9px;background:var(--claySoft);padding:6px 9px;font-size:11.5px;color:#8a3a26;display:flex;align-items:center;gap:8px;white-space:nowrap;overflow:hidden}
+.shRejects b{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.shRejects .btn{margin-left:auto;flex:0 0 auto}
 .shRejects .thumbs{display:flex;gap:4px}
 .shRejects img{width:26px;height:26px;background:#fff;border-radius:4px;object-fit:contain;border:1px solid #e3c8bf}
-.shQueue{display:flex;gap:4px;flex-wrap:wrap;padding:0 14px;margin-top:8px}
+.shQueue{display:flex;gap:4px;padding:4px 14px 0;margin-top:4px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}
+.shQueue img{flex:0 0 auto}
 .shQueue img{width:30px;height:30px;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:6px;cursor:pointer;transition:transform .1s}
-.shQueue img:hover{transform:scale(1.35);z-index:2;box-shadow:var(--sh)}
+.shQueue img:hover{transform:scale(1.35);z-index:2;box-shadow:var(--sh);position:relative}
 .shQueue img.placed{border-color:var(--sage)}
 .shQueue img.rejected{border-color:var(--clay);opacity:.7}
 .shQueue img.pinned{outline:2px solid var(--gold2)}
@@ -251,7 +260,8 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .libCard .pv.ph{display:flex;align-items:center;justify-content:center;font-size:11.5px;color:var(--ink45)}
 .libCard .m{display:flex;gap:8px;font-size:11px;color:var(--ink70);flex-wrap:wrap}
 .libCard .m b{font-family:var(--mono);font-weight:700;color:var(--ink)}
-.libEmpty{padding:40px;text-align:center;color:var(--ink45);font-size:13px}
+.libEmpty{padding:40px;text-align:center;color:var(--ink45);font-size:13px;display:flex;flex-direction:column;align-items:center;gap:11px}
+.libEmpty b{font-weight:600;color:var(--ink70);max-width:46ch;line-height:1.5}
 /* Sheet sets: the sheets of one run (same day, same source files) sit as one stacked deck; hovering fans them out */
 .libGrid{position:relative;padding-top:14px}
 .libSet{position:relative;min-width:0}
@@ -408,9 +418,13 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 #ordersView:not(.hidden){height:100%;min-height:0;gap:0}
 .ordHead{display:flex;flex-direction:column;gap:8px;flex:0 0 auto}
 /* the chips wrap; the search and the view toggle keep the right-hand end whatever the width */
-.ordFilters{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-.ordFilters .chips{display:flex;gap:6px;align-items:center;flex-wrap:wrap;flex:1 1 320px;min-width:0}
+.ordFilters{display:flex;gap:6px;align-items:center;flex-wrap:nowrap}
+.ordFilters .chips{display:flex;gap:6px;align-items:center;flex-wrap:nowrap;flex:1 1 220px;min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;padding-bottom:1px}
+.ordFilters .chips::-webkit-scrollbar{display:none}
+.ordFilters .chips>*{flex:0 0 auto}
+.ordMetal{border:1px solid var(--line);border-radius:999px;padding:5px 9px;font-size:11.5px;background:var(--card2);color:var(--ink70);max-width:150px}
 .ordFilters .tail{display:flex;gap:6px;align-items:center;margin-left:auto;flex:0 0 auto}
+.ordFilters .chips{flex:1 1 140px}
 .ordFilters .sep{width:1px;align-self:stretch;background:var(--line);margin:0 3px}
 .ordSearch{border:1px solid var(--line);border-radius:999px;padding:5px 12px;font-size:12.5px;background:var(--card);min-width:0;flex:0 1 200px}
 .ordSort{border:1px solid var(--line);border-radius:999px;padding:5px 10px;font-size:12.5px;background:var(--card);flex:0 0 auto}
@@ -483,8 +497,51 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 @keyframes bbPulse{50%{box-shadow:0 0 0 6px rgba(95,122,91,.08)}}
 .runBanner .acts{display:flex;gap:7px;align-items:center;flex:0 0 auto;white-space:nowrap}
 .runBanner .spacer{flex:1 1 auto;min-width:8px}
+.runBanner .rid{font:700 10.5px var(--mono);letter-spacing:.04em;background:var(--card);border:1px solid var(--line);border-radius:7px;padding:3px 8px;color:var(--ink70);white-space:nowrap;flex:0 0 auto}
+.runBanner .rid:empty{display:none}
 .runBanner .why{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .runBanner{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:8px 16px;background:var(--goldSoft);border-bottom:1px solid var(--goldLine);font-size:12.5px;flex-wrap:nowrap}
+.runBanner.idle{background:var(--card2);border-bottom-color:var(--line);color:var(--ink45)}
+.runBanner .rid[tabindex]{cursor:pointer}
+.runBanner .rid[tabindex]:hover{border-color:var(--ink45);color:var(--ink)}
+
+/* the door back into every run that ever ran */
+dialog.hist{border:0;border-radius:var(--r);box-shadow:0 24px 70px rgba(0,0,0,.26);padding:0;width:min(980px,94vw);max-height:88vh;background:var(--card);color:var(--ink)}
+dialog.hist[open]{display:flex;flex-direction:column}
+dialog.hist::backdrop{background:rgba(24,20,16,.4)}
+dialog.hist h2{font:22px var(--serif);font-weight:400;margin:0;padding:16px 18px 0}
+dialog.hist .x{position:absolute;top:12px;right:14px;margin:0}
+dialog.hist .hq{display:flex;gap:8px;padding:11px 18px 12px;border-bottom:1px solid var(--line)}
+dialog.hist .hq input{flex:1 1 auto;min-width:0;border:1px solid var(--line);border-radius:9px;padding:8px 11px;font-size:13px;background:var(--card2);color:var(--ink)}
+dialog.hist .hBody{flex:1 1 auto;overflow:auto;padding:8px 12px 12px}
+dialog.hist .hFoot{flex:0 0 auto;padding:7px 18px 12px;font-size:11px;color:var(--ink45);font-family:var(--mono)}
+.hRun{border:1px solid var(--line);border-radius:11px;margin:6px 0;background:var(--card2);overflow:hidden}
+.hRun.cur{border-color:var(--gold2);background:var(--goldSoft)}
+.hRun .hRow{display:flex;align-items:center;gap:9px;padding:9px 11px;min-width:0;flex-wrap:wrap}
+.hRun .nm{font:700 13px var(--sans);white-space:nowrap}
+.hRun .dy{font:11.5px var(--mono);color:var(--ink70);white-space:nowrap}
+.hRun .ct{font:11px var(--mono);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.hRun .sp{flex:1 1 auto;min-width:4px}
+.hRun .hHits{padding:0 11px 8px;font-size:11.5px;color:var(--ink70)}
+.hRun .hHits b{font-family:var(--mono);font-weight:700}
+.hLines{padding:2px 11px 10px;display:grid;gap:5px;max-height:320px;overflow:auto}
+.hLines.bad{color:#8a3a26}
+.hOrd{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11.5px}
+.hOrd .oid{font:700 11.5px var(--mono);min-width:12ch}
+.hOrd .ln{display:inline-flex;align-items:center;gap:5px;background:var(--card);border:1px solid var(--line);border-radius:7px;padding:2px 8px;font-family:var(--mono);cursor:pointer;max-width:42ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hOrd .ln:hover{border-color:var(--ink45)}
+.hOrd .ln i{width:6px;height:6px;border-radius:50%;background:var(--clay);flex:0 0 auto}
+.hOrd .ln i.ok{background:var(--sage)}
+.hLines .more{font-size:11px;color:var(--ink45)}
+.hSheets{margin-top:12px;border-top:1px solid var(--line);padding-top:9px}
+.hSheets .hHead{font:700 10.5px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--ink45);padding:0 4px 5px}
+.hSheet{display:flex;align-items:center;gap:9px;padding:5px 8px;font-size:12px;border-radius:8px}
+.hSheet:hover{background:var(--card2)}
+.hSheet .nm{font:600 12px var(--mono)}
+.hSheet .ct{font:11px var(--mono);color:var(--ink45)}
+.hSheet .sp{flex:1 1 auto}
+.hEmpty{padding:34px;text-align:center;color:var(--ink45);font-size:13px}
+.hEmpty.bad{color:#8a3a26}
 .runBanner.stopped{background:var(--claySoft);border-color:#e3c8bf}
 .runBanner.done{background:var(--sageSoft);border-color:#cfdcc9}
 .runBanner.review{background:var(--slateSoft);border-color:#cbd9de}
@@ -522,16 +579,24 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .sandboxPill{display:inline-flex;align-items:center;font:700 11.5px var(--mono);letter-spacing:.03em;color:#fff;background:repeating-linear-gradient(135deg,#7a2a1a 0 10px,#5a1f16 10px 20px);border:1px solid #c0553b;border-radius:999px;padding:5px 12px}
 .sandboxPill.hidden{display:none}
 /* what the orders want that the library has never heard of — one fact, said once, where master files are added */
-.missBox{background:var(--goldSoft);border:1px solid var(--gold2);border-radius:11px;padding:11px 13px;display:grid;gap:8px}
+.missBox{background:var(--goldSoft);border:1px solid var(--gold2);border-radius:11px;padding:6px 8px 6px 12px;display:grid;gap:8px}
+.missBox.open{padding:10px 8px 11px 12px}
 .missBox.hidden{display:none}
-.missBox .t b{display:block;font:600 13.5px var(--sans)}
-.missBox .t span{font-size:12px;color:var(--ink70)}
+.missBox .t{display:flex;align-items:center;gap:9px;min-width:0}
+.missBox .t b{font:600 12.5px var(--sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.missBox .t span{font-size:11.5px;color:var(--ink70);white-space:nowrap;font-family:var(--mono)}
+.missBox .t .btn{margin-left:auto;flex:0 0 auto}
+.missBox .x{border:0;background:transparent;color:var(--ink45);font-size:17px;line-height:1;padding:2px 6px;border-radius:7px;cursor:pointer;flex:0 0 auto}
+.missBox .x:hover{background:var(--card);color:var(--ink)}
 .missBox .skus{display:flex;flex-wrap:wrap;gap:5px;max-height:132px;overflow:auto}
 .missBox .s{font:11.5px var(--mono);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:2px 7px;white-space:nowrap}
 .missBox .s i{font-style:normal;color:var(--ink45);margin-left:4px}
 .missBox .s.more{color:var(--ink45);background:transparent;border-style:dashed}
 .missBox .acts{display:flex;gap:6px;flex-wrap:wrap}
-.sandboxBar{background:#fff5f2;border:1px solid #e3b7a9;border-radius:10px;padding:8px 12px;margin:8px 0 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12.5px}
+.sandboxBar{background:#fff5f2;border:1px solid #e3b7a9;border-radius:999px;padding:3px 5px 3px 11px;display:inline-flex;gap:7px;align-items:center;font-size:11.5px;white-space:nowrap}
+.sandboxBar b{font:700 10px var(--mono);letter-spacing:.09em}
+.sandboxBar #sbStatus{color:var(--ink70);overflow:hidden;text-overflow:ellipsis;max-width:26ch}
+@media (max-width:1200px){.sandboxBar #sbStatus{display:none}}
 .sandboxBar b{color:#8a3a26}
 /* off is the normal state, so it says so once and quietly; on is a mode nobody may miss */
 .sandboxBar.quiet{background:transparent;border:0;padding:0;margin:8px 0 0;font-size:11.5px;color:var(--ink45)}
@@ -670,9 +735,14 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .rvItem .rh .conf.mid{background:var(--goldSoft);color:#7a5a1d}
 .rvItem .rh .conf.low{background:var(--claySoft);color:#8a3a26}
 .rvItem .ev q{font-family:var(--serif);color:var(--ink);quotes:"\201C" "\201D"}
-.rvItem .ev .lbl{display:inline-block;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);margin-right:6px;min-width:110px}
+.rvItem .ev .lbl{display:inline-block;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);margin-right:6px;min-width:84px}
 .rvItem .ev .miss{background:var(--claySoft);color:#8a3a26;border-radius:4px;padding:0 4px;font-weight:700}
 .rvItem .fixes{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.rvItem .ask{font:12.5px var(--sans);color:var(--ink70)}
+.rvItem .fixes.pick{gap:5px}
+.rvItem .fixes.other.hidden{display:none}
+.rvItem .scopeOne{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink45)}
+.rvItem[data-kind=needsMapping] .rh .sub{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 220px}
 .rvItem .fixes input,.rvItem .fixes select,.rvItem .fixes textarea{border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12.5px;background:var(--card)}
 .rvItem .fixes textarea{width:100%;min-height:54px;font-family:var(--mono)}
 .rvItem .why{font-size:11.5px;color:#8a3a26}
@@ -1623,7 +1693,7 @@ async function reviewLayout(sh, items) {
 function makeSheet(metal, page) {
   return { metal, page: page || 1, runId: null, sheetId: null, charms: [], status: "idle", worker: null, jobId: null, layout: null, placements: [], rejects: [], sat: null, progress: null, stage: "", outputs: null, verification: null, startedAt: 0, endedBy: null, trials: 0, best: null, dirty: true, log: [], liveInfo: null, serverJob: null };
 }
-function sheetDirty(sh) { sh.dirty = true; sh.movedOn = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
+function sheetDirty(sh) { sh.dirty = true; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
 function activeCharms(sh) { return sh.charms.filter(c => !c.excluded); }
 /* One card per metal; a metal can hold several sheets ("pages"). The card shows the active page and tabs to switch. */
 const pagesOf = metal => S.sheets[metal].pages;
@@ -1699,18 +1769,19 @@ function computeSaturation(sh) {
   const usable = usableArea(sh), items = activeCharms(sh), rt = rhoTarget(sh);
   const live = sh.liveInfo;                                   // from the worker, when a nest is running or done
   const placedIds = new Set(sh.placements.map(p => p.id));
-  const placedArea = live ? live.placedPt2 : 0;
+  const placedArea = live ? (+live.placedPt2 || 0) : 0;
   const queuedArea = items.filter(c => !placedIds.has(c.id)).reduce((s, c) => s + inflatedArea(c), 0);
   const totalNeeded = items.reduce((s, c) => s + inflatedArea(c), 0);
-  const freeFact = live ? live.freePt2 : usable;
-  const fullPct = live ? Math.min(1, 1 - live.freePt2 / (live.usablePt2 || usable)) : 0;
+  const freeFact = live ? (+live.freePt2 || 0) : usable;
+  const fullPct = live ? Math.max(0, Math.min(1, 1 - freeFact / (+live.usablePt2 || usable))) : 0;
   const cap = +S.settings.maxFill || 0.74;
   const rho = Math.min(rt.rho, cap);                       // never estimate past the ceiling
   const capacity = usable * rho - (live ? placedArea : 0);
   const remaining = items.filter(c => !placedIds.has(c.id));
   const meanA = (remaining.length ? remaining : items).reduce((s, c) => s + inflatedArea(c), 0) / Math.max(1, (remaining.length ? remaining : items).length);
   let nEst = meanA > 0 ? Math.floor(capacity / meanA) : 0, lo = meanA > 0 ? Math.floor((usable * Math.min(rt.lo, cap) - placedArea) / meanA) : 0, hi = meanA > 0 ? Math.floor((usable * Math.min(rt.hi, cap) - placedArea) / meanA) : 0;
-  nEst = Math.max(0, nEst); lo = Math.max(0, Math.min(lo, nEst)); hi = Math.max(nEst, hi);
+  const fin = (x, d) => Number.isFinite(x) ? x : d;                 // a missing worker figure must read as nothing, never NaN
+  nEst = Math.max(0, fin(nEst, 0)); lo = Math.max(0, Math.min(fin(lo, 0), nEst)); hi = Math.max(nEst, fin(hi, nEst));
   const saturated = sh.rejects.length >= 2 || (sh.status === "partial" && sh.rejects.length > 0);
   if (saturated) { nEst = 0; lo = 0; hi = 0; }
   // will the queue fit? (before nesting: honest estimate against ρ_target)
@@ -1768,7 +1839,7 @@ function startNest(sh) {
   if (cores < 4 && running >= 1) { if (!S.nestQueue.includes(sh)) S.nestQueue.push(sh); sh.status = "queued"; sh.stage = `Queued — waiting for ${labelOf(allSheets().find(s => s.status === "nesting").metal)}`; renderCard(sh); return; }
   if (S.settings.notify === "on" && "Notification" in window && Notification.permission === "default") Notification.requestPermission().catch(() => {});
   sh.sheetId = sh.sheetId && sh.status !== "complete" && sh.status !== "partial" ? sh.sheetId : `${sh.metal}${sh.page > 1 ? "-s" + sh.page : ""}-${Date.now().toString(36)}`;
-  sh.movedOn = null;
+  sh.movedOn = null; sh.problem = null;
   sh.status = "nesting"; sh.startedAt = performance.now(); sh.placements = []; sh.rejects = []; sh.outputs = null; sh.verification = null; sh.best = null; sh.trials = 0; sh.liveInfo = null; sh.endedBy = null;
   sh.jobId = uid(); sh.stage = "Preparing rotations…"; sh.progress = [0, items.length]; sh.dirty = false;
   log(sh, `nest started · ${items.length} pieces · seed ${S.settings.seed} · clearance ${S.settings.clearancePt} pt`);
@@ -2048,7 +2119,7 @@ async function finishNest(sh, { result, error }) {
     setTimeout(() => $$(".sheetCard").find(el => el.dataset.m === sh.metal)?.classList.remove("pulse"), 1300);
     if (document.hidden && S.settings.notify === "on" && "Notification" in window && Notification.permission === "granted") { try { new Notification("Charm Nesting Station", { body: msg }); } catch (_) { /* ignore */ } }
     // 5 · persist everything. The two verifiers above are the acceptance test; no further inspection runs.
-    sh.persisted = persistSheet(sh, items).then(() => { if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { toast("Cloud save failed: " + e.message, "bad", 6000); log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, e); });
+    sh.persisted = persistSheet(sh, items).then(() => { if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, e); });
     // 6 · whatever did not fit under the ceiling goes to the next sheet of this metal, which nests on its own
     if (sh.rejects.length && sh.endedBy !== "stopped") overflowToNextSheet(sh);
   } catch (e) {
@@ -2124,8 +2195,14 @@ async function persistSheet(sh, items) {
   // 4 · charm links: once the charms' own permanent copies (started when the file arrived) are done, refresh the record with their links
   const pending = [...new Set(items.map(c => c.sourceId))].map(id => { const x = sourceOf(id); return x && x.persisting; }).filter(Boolean);
   if (pending.length) Promise.allSettled(pending).then(() => api("charmNestLibrary", { op: "putSheet", sheet: Object.assign(record(outputs), { saving: false }) }, { label: "Linking charm copies" })).catch(e => console.warn("charm links", e));
-  await api("charmNestLibrary", { op: "putCalibration", row: Object.assign({ sheetId: sh.sheetId, metal: sh.metal, clearancePt: +S.settings.clearancePt }, sh.outputs.report.calibration) }, { label: "Saving calibration" });
-  S.calibration.push(Object.assign({ sheetId: sh.sheetId }, sh.outputs.report.calibration));
+  // The calibration row only teaches the fill estimate. A sheet that placed nothing has nothing to teach, and a refused
+  // statistic must never travel up as a failure: this used to stop a run whose sheets were already written and verified.
+  const cal = sh.outputs.report.calibration || {};
+  if (cal.density > 0 && cal.count > 0) {
+    api("charmNestLibrary", { op: "putCalibration", row: Object.assign({ sheetId: sh.sheetId, metal: sh.metal, clearancePt: +S.settings.clearancePt }, cal) }, { label: "Saving calibration", quiet: true })
+      .catch(e => log(sh, "calibration not recorded: " + e.message));
+    S.calibration.push(Object.assign({ sheetId: sh.sheetId }, cal));
+  }
   renderCard(sh);
   recountLibrary();                                            // the rail's library count moves with the library
   if (failed.length) { agent({ metal: sh.metal }, "warn", `Saved the record for ${name}, but these files did not upload: ${failed.join("; ")}`); toast(`${labelOf(sh.metal)}: record saved, ${failed.length} file(s) failed to upload — see the log`, "bad", 6000); return; }
@@ -2195,8 +2272,7 @@ function buildCards() {
     const sh = S.sheets[m.key]; const st = stockFor(m.key);
     const el = document.createElement("section"); el.className = "sheetCard"; el.dataset.m = m.key; el.style.setProperty("--ar", `${st.wPt}/${st.hPt}`);
     el.innerHTML = `
-      <div class="shHead"><span class="sw"></span><span class="name">${m.label}</span><span class="stock" data-r="stock"></span><span class="pill neutral" data-r="pill">Idle</span></div>
-      <div class="shTabs hidden" data-r="tabs"></div>
+      <div class="shHead"><span class="sw"></span><span class="name">${m.label}</span><span class="stock" data-r="stock"></span><span class="prov" data-r="prov"></span><span class="shTabs hidden" data-r="tabs"></span><span class="pill neutral" data-r="pill">Idle</span></div>
       <div class="shPreviewWrap"><canvas data-r="canvas"></canvas>
         <div class="dropHint" data-r="hint"><b>Drop ${m.label} artwork here</b><span>.ai · .pdf · .zip — anything dropped on this card belongs to ${m.long.toLowerCase()}</span><span class="k">or drop on the queue to route by file name</span></div>
         <div class="shOverlay" data-r="overlay"></div><div class="hint" data-r="canvasHint"></div></div>
@@ -2256,7 +2332,17 @@ function refreshAllCards() { for (const sh of allSheets()) { computeSaturation(s
 function renderCard(sh) {
   const el = sh.el; if (!el) return; const q = r => $(`[data-r="${r}"]`, el); const st = stockFor(sh.metal);
   el.style.setProperty("--ar", `${st.wPt}/${st.hPt}`);
-  q("stock").textContent = `${fmt.mm(st.wPt)} × ${fmt.mm(st.hPt)}`;
+  q("stock").textContent = `${fmt.mm(st.wPt).replace(/\.0 mm$/, "")} × ${fmt.mm(st.hPt).replace(/\.0 mm$/, " mm")}`;
+  /* Which run, which set, which day. A finished card used to say only its metal and its size, so a person looking at
+     three cards could not tell whether they were this morning's set or yesterday's. */
+  const prov = q("prov"); const pages = pagesOf(sh.metal);
+  const dayTxt = sh.setDay ? CharmNestOrders.dateTag(new Date(sh.setDay + "T12:00:00")).replace(/\.\d\d$/, "").replace(/\./g, " ") : "";
+  const bits = [];
+  if (sh.seq) bits.push(`<b>Set ${sh.seq}</b>`);
+  if (dayTxt) bits.push(esc(dayTxt));
+  if (pages.length > 1) bits.push(`sheet ${sh.page} of ${pages.length}`);
+  prov.innerHTML = bits.length ? "· " + bits.join(" · ") : "";
+  prov.title = sh.fileBase ? `Saved as ${sh.fileBase}` : (sh.runId ? `Run ${sh.runId}` : "");
   const items = activeCharms(sh);
   const pillMap = { idle: ["neutral", "Idle"], ready: ["info", `Ready · ${items.length}`], queued: ["warn", "Queued"], nesting: ["warn", `<span class="spin"></span>Nesting`], finishing: ["warn", `<span class="spin"></span>Finishing`], complete: ["ok", "Complete"], partial: ["bad", "Partial"] };
   const [k, t] = pillMap[sh.status] || pillMap.idle; q("pill").className = "pill " + k; q("pill").innerHTML = t;
@@ -2272,16 +2358,16 @@ function renderCard(sh) {
   q("clear").disabled = !sh.charms.length;
   // rejects tray
   const rj = q("rejects"); const byId = new Map(sh.charms.map(c => [c.id, c]));
-  if (sh.movedOn && sh.movedOn.n) { rj.classList.remove("hidden"); rj.innerHTML = `<b>${sh.movedOn.n} moved to sheet ${sh.movedOn.page}</b><span>${esc(sh.movedOn.names.slice(0, 4).join(", "))}${sh.movedOn.n > 4 ? "…" : ""}</span> <button type="button" class="btn ghost xs" data-goto="${sh.movedOn.page - 1}">open sheet ${sh.movedOn.page}</button>`; $("[data-goto]", rj).onclick = e => showPage(sh.metal, +e.currentTarget.dataset.goto); }
-  else if ((sh.status === "partial" || sh.status === "complete") && sh.rejects.length) { rj.classList.remove("hidden"); rj.innerHTML = `<b>${sh.rejects.length} need another sheet${sh.endedBy === "cap" ? " (held back by the fill ceiling)" : ""}</b><span class="thumbs">${sh.rejects.slice(0, 8).map(id => `<img src="${byId.get(id)?.thumb || ""}" title="${esc(byId.get(id)?.name || id)}">`).join("")}</span><span>${sh.rejects.map(id => esc(byId.get(id)?.name || id)).slice(0, 4).join(", ")}${sh.rejects.length > 4 ? "…" : ""}</span>`; }
-  else rj.classList.add("hidden");
+  if (sh.movedOn && sh.movedOn.n) { rj.classList.remove("hidden"); rj.title = sh.movedOn.names.join(", "); rj.innerHTML = `<b>${sh.movedOn.n} moved to sheet ${sh.movedOn.page}</b><button type="button" class="btn ghost xs" data-goto="${sh.movedOn.page - 1}">open it</button>`; $("[data-goto]", rj).onclick = e => showPage(sh.metal, +e.currentTarget.dataset.goto); }
+  else if ((sh.status === "partial" || sh.status === "complete") && sh.rejects.length) { rj.classList.remove("hidden"); rj.title = sh.rejects.map(id => byId.get(id)?.name || id).join(", "); rj.innerHTML = `<b>${sh.rejects.length} need another sheet${sh.endedBy === "cap" ? ", held back by the fill ceiling" : ""}</b><button type="button" class="btn ghost xs" data-r2="second">Move them on</button>`; $("[data-r2=second]", rj).onclick = () => overflowToNextSheet(sh); }
+  else { rj.classList.add("hidden"); rj.title = ""; }
   // queue thumbnails
   const placed = new Set(sh.placements.map(p => p.id)), rejected = new Set(sh.rejects);
   q("queue").innerHTML = sh.charms.slice(0, 60).map(c => `<img src="${c.thumb}" title="${esc(c.name || "#" + (c.index + 1))} · ${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}${c.qty > 1 ? " · ×" + c.qty : ""}${c.excluded ? " · EXCLUDED (open path)" : ""}" data-cid="${c.id}" class="${placed.has(c.id) ? "placed" : rejected.has(c.id) ? "rejected" : ""}${c.pinned ? " pinned" : ""}" style="${c.excluded ? "opacity:.35;border-style:dashed" : ""}">`).join("") + (sh.charms.length > 60 ? `<span class="more">+${sh.charms.length - 60} more</span>` : "");
   $$("img[data-cid]", q("queue")).forEach(img => img.onclick = () => openCharm(sh, byId.get(img.dataset.cid)));
   // cloud row
   const cl = q("cloud");
-  cl.innerHTML = sh.outputs && !sh.cloud && !S.cloud.ok ? `<span class="bad">not saved — cloud offline</span>` : "";
+  cl.innerHTML = sh.problem ? `<span class="bad">${esc(sh.problem)}</span>` : sh.outputs && !sh.cloud && !S.cloud.ok ? `<span class="bad">not saved — cloud offline</span>` : "";
   cl.classList.toggle("hidden", !cl.innerHTML);
   renderProgress(sh); renderSat(sh); drawPreview(sh); renderAgent(sh);
 }
@@ -2297,35 +2383,48 @@ function renderProgress(sh) {
     p.setAttribute("value", p.value);
     if (p.parentElement.classList.contains("bp-meter")) { const pct = Math.round(p.value / p.max * 100); p.parentElement.dataset.label = sh.progressKind === "prepare" ? `preparing ${pct}%` : sh.progressKind === "optimize" ? `optimizing charms ${p.value}/${p.max}` : sh.progressKind === "finish" ? `finishing ${pct}%` : `${p.value}/${p.max} placed · ${pct}%`; p.parentElement.style.setProperty("--bp-pct", pct + "%"); p.parentElement.dataset.determinate = "true"; }
   }
-  const st = q("stage"); const elapsed = ["nesting", "finishing"].includes(sh.status) ? fmt.s(performance.now() - sheetT0(sh)) + " total" : (sh.totalMs ? `${fmt.s(sh.totalMs)} total · nest ${fmt.s(sh.elapsedMs || 0)}${sh.optimized ? ` · charms shrunk ${((1 - sh.optimized.scale) * 100).toFixed(1).replace(/\.0$/, "")}%` : ""}` : (sh.elapsedMs ? fmt.s(sh.elapsedMs) : ""));
+  /* One line under the preview, never two that wrap. While a sheet works it reads as the stage and the clock; once it is
+     done it is the whole result — placed, full, verified, elapsed — and the timings that used to take a second line are
+     kept in its tooltip instead. The pills over the image would repeat it, so they show only while it is still moving. */
+  const st = q("stage"); const elapsed = ["nesting", "finishing"].includes(sh.status) ? fmt.s(performance.now() - sheetT0(sh)) : (sh.totalMs ? fmt.s(sh.totalMs) : (sh.elapsedMs ? fmt.s(sh.elapsedMs) : ""));
   const budget = sh.status === "nesting" ? ((S.settings.engine || "solver") === "ai" ? ` · round ${sh.aiRound || 1}/${S.settings.aiRounds || 10}` : ` / ${S.settings.budgetS}s`) : "";
-  const trials = sh.trials ? ((S.settings.engine || "solver") === "ai" && !sh.solveParams?.seed ? ` · ${sh.trials} round${sh.trials > 1 ? "s" : ""}` : ` · ${sh.trials} trial${sh.trials > 1 ? "s" : ""}`) : "";
+  const deep = sh.totalMs ? `${fmt.s(sh.totalMs)} from the first file · nest ${fmt.s(sh.elapsedMs || 0)}${sh.trials ? ` · ${sh.trials} trial${sh.trials > 1 ? "s" : ""}` : ""}${sh.optimized ? ` · charms shrunk ${((1 - sh.optimized.scale) * 100).toFixed(1).replace(/\.0$/, "")}%` : ""}` : "";
   const reviewingSrc = S.sources.find(s => s.review && s.review.state === "running" && s.charms.some(c => c.metal === sh.metal));
-  const ai = "";
-  st.innerHTML = sh.stage ? `<span class="spin"></span><span>${esc(sh.stage)}</span><span class="r">${elapsed}${budget}${trials}</span>`
-    : reviewingSrc ? `<span class="spin"></span><span>Claude is reviewing the ${reviewingSrc.charms.length} charms detected in ${esc(reviewingSrc.name)} — high effort, usually 1–3 minutes</span><span class="r">${fmt.s(reviewingSrc.review.elapsed || 0)}</span>`
-    : (sh.status === "complete" || sh.status === "partial" ? `<span>${esc(endedText(sh.endedBy))} · ${sh.placements.length}/${activeCharms(sh).length} placed${sh.verification ? (sh.verification.ok ? " · verified ✓" : " · ⚠ verification flagged") : ""}${ai}</span><span class="r">${elapsed}${trials}</span>` : "");
+  const done = sh.status === "complete" || sh.status === "partial";
+  st.title = done ? deep : "";
+  st.innerHTML = sh.stage ? `<span class="spin"></span><span>${esc(sh.stage)}</span><span class="r">${elapsed}${budget}</span>`
+    : reviewingSrc ? `<span class="spin"></span><span>Claude is reviewing the ${reviewingSrc.charms.length} charms detected in ${esc(reviewingSrc.name)}</span><span class="r">${fmt.s(reviewingSrc.review.elapsed || 0)}</span>`
+    : done ? `<span>${sh.placements.length}/${activeCharms(sh).length} placed${sh.sat ? ` · ${fmt.pct(sh.sat.fullPct)} full` : ""}${sh.verification ? (sh.verification.ok ? " · verified ✓" : " · ⚠ verification flagged, open the report") : ""}${sh.endedBy && sh.endedBy !== "complete" ? ` · ${esc(endedText(sh.endedBy))}` : ""}</span><span class="r">${elapsed}</span>` : "";
   const ov = q("overlay");
-  ov.innerHTML = sh.status === "nesting" || sh.status === "finishing" || sh.placements.length ? `<span class="pill neutral">${sh.placements.length}/${activeCharms(sh).length} placed</span>${sh.sat ? `<span class="pill neutral">${fmt.pct(sh.sat.fullPct)} full</span>` : ""}${sh.rejects.length ? `<span class="pill bad">${sh.rejects.length} rejected</span>` : ""}${sh.verification ? (sh.verification.ok ? `<span class="pill ok">verified</span>` : `<span class="pill bad">check report</span>`) : ""}` : "";
+  const moving = sh.status === "nesting" || sh.status === "finishing";
+  ov.innerHTML = moving ? `<span class="pill neutral">${sh.placements.length}/${activeCharms(sh).length} placed</span>${sh.sat ? `<span class="pill neutral">${fmt.pct(sh.sat.fullPct)} full</span>` : ""}` : "";
 }
 function renderSat(sh) {
   const el = sh.el; if (!el) return; const box = $(`[data-r="sat"]`, el); const s = sh.sat || computeSaturation(sh);
-  if (!activeCharms(sh).length) { box.innerHTML = `<div class="fact"><b>0%</b><span class="free">${fmt.area(s.usable)} usable · ${fmt.mm(stockFor(sh.metal).wPt)} × ${fmt.mm(stockFor(sh.metal).hPt)}</span></div><div class="bar"><i style="width:0"></i></div><div class="est"><span class="lbl">estimate</span>drop charms to see how many fit</div>`; return; }
+  const stk = stockFor(sh.metal);
+  if (!activeCharms(sh).length) { box.innerHTML = `<div class="fact"><b>0%</b><span>full</span><span class="free">· ${fmt.area(s.usable)} usable on ${fmt.mm(stk.wPt)} × ${fmt.mm(stk.hPt)}</span></div>`; return; }
   const live = !!sh.liveInfo;
+  /* Four lines of arithmetic used to sit under every preview — the ceiling, the reachable density, how many past sheets
+     it came from, the largest empty rectangle. None of it is a decision. It is kept, in the tooltip of the one line that
+     stays, and the preview gets the room back. */
+  const deep = [`${fmt.area(s.usable)} usable on a ${fmt.mm(stk.wPt)} × ${fmt.mm(stk.hPt)} sheet`,
+    `fill ceiling ${fmt.pct(s.rho.cap)}`,
+    s.rho.n ? `reachable density ${fmt.pct(s.rho.rho)}, learned from ${s.rho.n} past sheets of this shape` : "no past sheets of this shape to learn from yet",
+    s.pocket && s.pocket.wPt > 4 && s.pocket.hPt > 4 ? `largest empty rectangle ${fmt.mm(s.pocket.wPt)} × ${fmt.mm(s.pocket.hPt)} — a charm up to that size still fits` : ""].filter(Boolean).join(" · ");
   const needPct = Math.min(1.6, s.totalNeeded / s.usable);
-  const fact = live ? `<div class="fact"><b>${fmt.pct(s.fullPct)}</b><span>full</span><span class="free">· ${fmt.area(s.freeFact)} free</span></div><div class="bar"><i style="width:${Math.round(s.fullPct * 100)}%"></i><em style="left:${Math.round(s.rho.cap * 100)}%" title="fill ceiling"></em></div>`
-    : `<div class="fact"><b>${fmt.pct(Math.min(1, s.totalNeeded / s.usable))}</b><span>of the sheet needed</span><span class="free">· ${s.count} charms · ${fmt.area(s.totalNeeded)} incl. clearance</span></div><div class="bar"><i style="width:${Math.round(Math.min(1, needPct) * 100)}%;${needPct > s.rho.rho ? "background:var(--clay)" : ""}"></i><em style="left:${Math.round(s.rho.cap * 100)}%" title="fill ceiling"></em></div>`;
-  let est;
-  if (s.saturated) est = `<div class="est"><span class="lbl">estimate</span><b>sheet is saturated</b> · ${sh.rejects.length} could not be placed</div>`;
-  else est = `<div class="est"><span class="lbl">estimate</span>≈ <b>${s.nEst} more fit</b> (${s.lo}–${s.hi}) under the ${fmt.pct(s.rho.cap)} ceiling · reachable density ${fmt.pct(s.rho.rho)}${s.rho.n ? ` from ${s.rho.n} past sheets` : ""}</div>`;
-  let extra = "";
-  if (s.pocket && s.pocket.wPt > 4 && s.pocket.hPt > 4) extra += `<div class="est"><span class="lbl">open pocket</span>largest empty rectangle ≈ <b>${fmt.mm(s.pocket.wPt)} × ${fmt.mm(s.pocket.hPt)}</b> — a charm up to that size still fits</div>`;
+  const room = !s.saturated && s.nEst > 0 ? `<span class="free">· room for about <b>${s.nEst} more</b></span>` : s.saturated ? `<span class="free">· full</span>` : "";
+  const fact = live
+    ? `<div class="fact"><b>${fmt.pct(s.fullPct)}</b><span>full</span><span class="free">· ${fmt.area(s.freeFact)} free</span>${room}</div><div class="bar"><i style="width:${Math.round(s.fullPct * 100)}%"></i><em style="left:${Math.round(s.rho.cap * 100)}%" title="fill ceiling"></em></div>`
+    : `<div class="fact"><b>${fmt.pct(Math.min(1, s.totalNeeded / s.usable))}</b><span>needed</span><span class="free">· ${s.count} charms</span>${room}</div><div class="bar"><i style="width:${Math.round(Math.min(1, needPct) * 100)}%;${needPct > s.rho.rho ? "background:var(--clay)" : ""}"></i><em style="left:${Math.round(s.rho.cap * 100)}%" title="fill ceiling"></em></div>`;
+  // and a second line only when there is something to decide, never to restate the first
+  let note = "";
   if (s.recommend) {
-    const r = s.recommend; const side = Math.sqrt(Math.max(0, r.swapArea)); const L = r.largest;
-    const swap = r.swapArea > 0 ? ` Or swap the largest, ${esc(L.name || "#" + (L.index + 1))} (${fmt.mm(L.widthPt)} × ${fmt.mm(L.heightPt)}), for a charm up to about <b>${fmt.mm(side)} × ${fmt.mm(side)}</b>.` : "";
-    extra += `<div class="warn"><b>Over the ${fmt.pct(s.rho.cap)} ceiling</b> — the queue would fill ${fmt.pct(s.totalNeeded / s.usable)}, ≈ ${fmt.area(r.overPt2)} too much. Hold back the ${r.removeN} largest (${esc(r.removeNames.join(", "))}) and the rest stays under the line.${swap} Or nest anyway — whatever would cross the ceiling waits for a second sheet.</div>`;
-  } else if (!live && s.count) extra += `<div class="good">All ${s.count} placed would fill <b>${fmt.pct(s.totalNeeded / s.usable)}</b> of the usable sheet — under the ${fmt.pct(s.rho.cap)} ceiling with ${fmt.area(Math.max(0, s.usable * s.rho.cap - s.totalNeeded))} to spare.</div>`;
-  box.innerHTML = fact + est + extra;
+    const r = s.recommend; const side = Math.sqrt(Math.max(0, r.swapArea));
+    const why = `The queue would fill ${fmt.pct(s.totalNeeded / s.usable)} of the sheet, ${fmt.area(r.overPt2)} over the ${fmt.pct(s.rho.cap)} ceiling. The ${r.removeN} largest are ${r.removeNames.join(", ")}.${r.swapArea > 0 ? ` In the largest one's place a charm up to about ${fmt.mm(side)} × ${fmt.mm(side)} would fit.` : ""}`;
+    note = `<div class="warn" title="${esc(why)}"><b>${fmt.area(r.overPt2)} over the ceiling</b> — hold back the ${r.removeN} largest, or nest anyway and they wait for the next sheet.</div>`;
+  }
+  box.innerHTML = fact + note;
+  box.title = deep;
 }
 
 /* ═══ 12 · preview canvas ═══════════════════════════════════════════════ */

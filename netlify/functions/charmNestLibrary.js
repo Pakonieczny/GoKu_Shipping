@@ -180,9 +180,12 @@ async function op_deleteSheet(b) {
   }
   return { ok: true, deleted: snap.exists };
 }
+/* A calibration row is a statistic the fill estimate learns from — never part of the sheet record. A sheet that placed
+   nothing has nothing to teach, so it is skipped, not refused: an error here used to travel all the way up and stop a run
+   whose sheets were already written, verified and saved. */
 async function op_putCalibration(b) {
   const r = b.row || {};
-  if (!(num(r.density) > 0) || !(num(r.count) > 0)) return { error: "bad row" };
+  if (!(num(r.density) > 0) || !(num(r.count) > 0)) return { ok: true, skipped: "nothing to learn from this sheet" };
   await db.collection(CAL).add({ sheetId: str(r.sheetId, 80), metal: str(r.metal, 12), count: num(r.count), cv: num(r.cv), largestFrac: num(r.largestFrac), density: num(r.density), placedAll: !!r.placedAll, clearancePt: num(r.clearancePt), createdAt: FV.serverTimestamp() });
   return { ok: true };
 }
@@ -445,6 +448,40 @@ async function op_runList(b) {
   if (b.status) rows = rows.filter(r => r.status === b.status);
   return { runs: rows };
 }
+/* "Find that order from last Tuesday." There is no index that can answer it: Firestore has no full-text search, and a
+   shop's history of runs is small enough to read. So the most recent runs and sheets are scanned here, in one place, and
+   the answer says how many of each it actually looked at — a search that quietly stopped early is worse than none. */
+async function op_history(b) {
+  const q = String(b.q || "").trim().toLowerCase();
+  const want = Math.min(200, num(b.limit) || 60);
+  const scanRuns = Math.min(400, num(b.scanRuns) || 150), scanSheets = Math.min(500, num(b.scanSheets) || 200);
+  const rs = await col(RUNS).orderBy("updatedAt", "desc").limit(scanRuns).get();
+  const runs = [];
+  for (const d of rs.docs) {
+    const r = d.data(), lines = r.lines || {};
+    const skus = new Set(), orders = new Set(), words = [];
+    for (const k of Object.keys(lines)) { const l = lines[k] || {}; if (l.sku) skus.add(String(l.sku)); if (l.orderId) orders.add(String(l.orderId)); if (l.engrave && l.engrave.text) words.push(String(l.engrave.text)); }
+    const hay = [r.runId, r.setId, r.day, r.status, r.step, r.mode, [...orders].join(" "), [...skus].join(" "), words.join(" ")].join(" ").toLowerCase();
+    if (q && !hay.includes(q)) continue;
+    runs.push({ runId: r.runId, setId: r.setId || null, seq: r.seq || null, day: r.day || null, status: r.status, step: r.step, mode: r.mode || null,
+      lines: Object.keys(lines).length, orders: orders.size, skus: skus.size, holds: Object.keys(r.holds || {}).length, sheets: Object.keys(r.sheets || {}).length,
+      updatedAt: ms(r.updatedAt), createdAt: ms(r.createdAt), stoppedBy: r.stoppedBy || null,
+      hitOrders: q ? [...orders].filter(x => x.toLowerCase().includes(q)).slice(0, 12) : [],
+      hitSkus: q ? [...skus].filter(x => x.toLowerCase().includes(q)).slice(0, 12) : [] });
+    if (runs.length >= want) break;
+  }
+  const ss = await col(SHEETS).orderBy("day", "desc").limit(scanSheets).get();
+  const sheets = [];
+  for (const d of ss.docs) {
+    const x = d.data(); if (x.archived) continue;
+    const hay = [x.id, x.fileBase, x.metal, x.metalLabel, x.day, x.setId, x.runId, (x.orders || []).join(" "), x.names || "", (x.charms || []).map(c => c.sku || "").join(" ")].join(" ").toLowerCase();
+    if (q && !hay.includes(q)) continue;
+    sheets.push({ id: x.id, fileBase: x.fileBase || null, metal: x.metal, metalLabel: x.metalLabel || null, day: x.day || null, setId: x.setId || null, setSeq: x.setSeq || null, runId: x.runId || null,
+      status: x.status, placedCount: x.placedCount || 0, charmCount: x.charmCount || 0, density: x.density || 0, orders: (x.orders || []).length, updatedAt: ms(x.updatedAt), preview: (x.outputs && x.outputs.preview && x.outputs.preview.url) || null });
+    if (sheets.length >= want) break;
+  }
+  return { runs, sheets, scanned: { runs: rs.size, sheets: ss.size }, truncated: { runs: rs.size >= scanRuns, sheets: ss.size >= scanSheets } };
+}
 // ── bridge session log: Design_Bridge/{session} + /log rows (ids and counts only, never order text) ──
 async function op_bridgeLog(b) {
   const session = str(b.session, 80); if (!/^[\w\-]{6,80}$/.test(session)) return { error: "bad session" };
@@ -478,7 +515,7 @@ async function op_optionMapPut(b) {
 const OPS = { startAgent: op_startAgent, getAgent: op_getAgent, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, deleteSheet: op_deleteSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, startMaster: op_startMaster,
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backList: op_backList, sandboxPut: op_sandboxPut, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset,
-  setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runGet: op_runGet, runList: op_runList, bridgeLog: op_bridgeLog,
+  setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runGet: op_runGet, runList: op_runList, history: op_history, bridgeLog: op_bridgeLog,
   aliasGet: op_aliasGet, aliasPut: op_aliasPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut };
 
 exports.ops = OPS;   // the connections check runs the same queries the app runs
