@@ -477,6 +477,16 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .ordRow .why button{margin-left:8px}
 .sandboxPill{display:inline-flex;align-items:center;font:700 11.5px var(--mono);letter-spacing:.03em;color:#fff;background:repeating-linear-gradient(135deg,#7a2a1a 0 10px,#5a1f16 10px 20px);border:1px solid #c0553b;border-radius:999px;padding:5px 12px}
 .sandboxPill.hidden{display:none}
+/* what the orders want that the library has never heard of — one fact, said once, where master files are added */
+.missBox{background:var(--goldSoft);border:1px solid var(--gold2);border-radius:11px;padding:11px 13px;display:grid;gap:8px}
+.missBox.hidden{display:none}
+.missBox .t b{display:block;font:600 13.5px var(--sans)}
+.missBox .t span{font-size:12px;color:var(--ink70)}
+.missBox .skus{display:flex;flex-wrap:wrap;gap:5px;max-height:132px;overflow:auto}
+.missBox .s{font:11.5px var(--mono);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:2px 7px;white-space:nowrap}
+.missBox .s i{font-style:normal;color:var(--ink45);margin-left:4px}
+.missBox .s.more{color:var(--ink45);background:transparent;border-style:dashed}
+.missBox .acts{display:flex;gap:6px;flex-wrap:wrap}
 .sandboxBar{background:#fff5f2;border:1px solid #e3b7a9;border-radius:10px;padding:8px 12px;margin:8px 0 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12.5px}
 .sandboxBar b{color:#8a3a26}
 /* off is the normal state, so it says so once and quietly; on is a mode nobody may miss */

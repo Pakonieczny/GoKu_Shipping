@@ -285,6 +285,20 @@ const receipts = [
           chips: [...v.querySelectorAll('.egTab')].map(b2 => b2.textContent.trim()) };
       });
       console.log('review screen', JSON.stringify(rv));
+      // the Master tab says, once, what the orders want that the library has never heard of (§6)
+      const miss = await page.evaluate(() => {
+        CN.setMode('master'); Master.render();
+        const b = document.getElementById('mMissing');
+        if (!b || b.classList.contains('hidden')) return { shown: false };
+        return { shown: true, head: b.querySelector('.t b').textContent, skus: [...b.querySelectorAll('.s')].map(x => x.textContent),
+          acts: [...b.querySelectorAll('[data-a]')].map(x => x.dataset.a) };
+      });
+      console.log('missing skus', JSON.stringify(miss));
+      assert(miss.shown, 'an unmatched SKU is named on the Master tab, not only in Review');
+      assert(miss.skus.some(x => /BR-NOPE-99/.test(x)), 'by name: ' + miss.skus.join(','));
+      assert(/1 SKU the orders want/.test(miss.head), 'counted once per SKU: ' + miss.head);
+      assert.deepStrictEqual(miss.acts, ['copy', 'save', 'add'], 'with a way to take the list to the master files');
+      await page.evaluate(() => { CN.setMode('review'); Review.render(); });
       // CN_SHOTS=<dir> captures every screen at two widths and the order window — the evidence a design review runs on
       if (process.env.CN_SHOTS) {
         const SH = process.env.CN_SHOTS;

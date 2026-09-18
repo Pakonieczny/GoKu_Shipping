@@ -843,6 +843,42 @@ const Master = window.Master = (() => {
   }
   async function patchMany(skus, p) { for (const s of skus) { await api("charmNestLibrary", { op: "masterPatch", sku: s, patch: p }); const e = entryFor(s); if (e) Object.assign(e, p); } render(); }
   async function patch(sku, p) { await api("charmNestLibrary", { op: "masterPatch", sku, patch: p }); const e = entryFor(sku); if (e) Object.assign(e, p); render(); }
+  /** Every SKU the pulled orders want that no master file holds, newest pull first. */
+  function missingSkus() {
+    const out = new Map();
+    for (const r of Orders.rows()) {
+      if (r.state === "gone" || r.spec.noDesign) continue;
+      const p = (r.problems || []).find(x => x.kind === "unmatchedSku" && x.sku);
+      if (!p) continue;
+      if (!out.has(p.sku)) out.set(p.sku, { sku: p.sku, lines: 0, orders: new Set(), title: r.line.title });
+      const e = out.get(p.sku); e.lines++; e.orders.add(r.order.receiptId);
+    }
+    return [...out.values()].sort((a, b) => b.lines - a.lines || a.sku.localeCompare(b.sku));
+  }
+  function paintMissing(v) {
+    let box = v.querySelector("#mMissing");
+    if (!box) { box = el("div", "missBox"); box.id = "mMissing"; const head = v.querySelector(".noteBox"); if (head) head.insertAdjacentElement("afterend", box); else v.prepend(box); }
+    const miss = missingSkus();
+    if (!miss.length) { box.className = "missBox hidden"; box.innerHTML = ""; return; }
+    const lines = miss.reduce((n, m) => n + m.lines, 0);
+    const orders = new Set(); miss.forEach(m => m.orders.forEach(o => orders.add(o)));
+    box.className = "missBox";
+    box.innerHTML = '<div class="t"><b>' + miss.length + ' SKU' + (miss.length === 1 ? "" : "s") + ' the orders want that no master file holds</b>' +
+      '<span>' + lines + ' line' + (lines === 1 ? "" : "s") + ' across ' + orders.size + ' order' + (orders.size === 1 ? "" : "s") + ' are waiting on them \u2014 add the master files that carry them and every one goes through</span></div>' +
+      '<div class="skus">' + miss.slice(0, 60).map(m => '<span class="s" title="' + esc(m.title) + '">' + esc(m.sku) + (m.lines > 1 ? '<i>\u00d7' + m.lines + '</i>' : "") + '</span>').join("") +
+      (miss.length > 60 ? '<span class="s more">\u2026 and ' + (miss.length - 60) + ' more</span>' : "") + '</div>' +
+      '<div class="acts"><button class="btn ghost xs" data-a="copy" title="copy the list, so the master files that carry them can be found">Copy the list</button>' +
+      '<button class="btn ghost xs" data-a="save" title="save the list with the orders waiting on each one">Save as a file</button>' +
+      '<button class="btn gold xs" data-a="add" title="index another master file into the library">Add a master file</button></div>';
+    box.querySelector("[data-a=copy]").onclick = async () => { try { await navigator.clipboard.writeText(miss.map(m => m.sku).join("\n")); toast(miss.length + " SKU(s) copied", "ok"); } catch (_) { toast("Could not reach the clipboard", "bad"); } };
+    box.querySelector("[data-a=save]").onclick = () => {
+      const rows = [["sku", "lines", "orders", "title"]].concat(miss.map(m => [m.sku, m.lines, [...m.orders].join(" "), m.title]));
+      const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(",")).join("\n");
+      const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+      a.download = "charm-library-missing-" + today() + ".csv"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    };
+    box.querySelector("[data-a=add]").onclick = () => { const f = v.querySelector("#mFile"); if (f) f.click(); };
+  }
   function render() {
     const v = document.getElementById("masterView"); if (!v || v.classList.contains("hidden")) return;
     if (!v.dataset.built) {
@@ -859,6 +895,10 @@ const Master = window.Master = (() => {
       v.querySelector("#mSearch").oninput = render;
       load().then(render).catch(() => {});
     }
+    // What the orders on the cards are asking for that this library cannot answer. One real run wanted 133 SKUs the
+    // library had never heard of, because only one master file had ever been indexed — and the only way to learn that
+    // was to read 180 review cards. It is one fact, so it is said once, here, where the master files are added.
+    paintMissing(v);
     const jobs = v.querySelector("#mJobs"); jobs.innerHTML = "";
     for (const job of B.master.jobs.values()) {
       const card = el("div", "masterFile");
