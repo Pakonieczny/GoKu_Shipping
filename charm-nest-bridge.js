@@ -371,6 +371,9 @@ const Dock = window.Dock = (() => {
     D.el.classList.toggle("tucked", mode === "pip" && !D.shownByUser);
     const dockH = mode === "pip" ? Math.round(D.el.getBoundingClientRect().height) + 12 : 0;
     document.documentElement.style.setProperty("--dockH", dockH + "px");
+    // the notices hang under whatever chrome the page currently has
+    const stg = document.querySelector(".stage");
+    if (stg) document.documentElement.style.setProperty("--chromeH", Math.round(stg.getBoundingClientRect().top + 10) + "px");
     if (mode === "hidden" || mode === "pilled" || !f) return;
     let w, h;
     if (mode === "full") {
