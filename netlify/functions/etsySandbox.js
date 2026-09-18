@@ -7,11 +7,13 @@
  *
  *    ?fn=listOpenOrders&offset=N   → { results: [receipts…] }  one page of 100, like listOpenOrders
  *    ?fn=etsyOrderProxy&orderId=R  → { receipt, transactions }  like etsyOrderProxy
- *    ?fn=etsyImages…               → []                         no images in the sandbox
+ *    ?fn=etsyImages&listingId=L    → [images…]                  the listing's real pictures
  *    ?fn=refreshEtsyToken          → { access_token, expires_in }
  *    ?fn=status                    → { ok, count, at, path }    what the snapshot holds
  *
- *  Nothing here reaches Etsy, and nothing here writes. The snapshot is the
+ *  The one thing that does reach Etsy is a listing's pictures: /listings/{id}/images is a public read that needs only
+ *  the application key, no shop session and no order data, and a rehearsal with grey squares where the charms should be
+ *  is not a rehearsal of anything. Nothing else here reaches Etsy, and nothing here writes. The snapshot is the
  *  document Charm_Sandbox/current (count, at, path) and the JSON file it
  *  names under charmnest/sandbox/. A missing snapshot answers an empty shop.
  *  ═══════════════════════════════════════════════════════════════════════ */
@@ -24,6 +26,26 @@ const PAGE = 100;
 
 const json = (statusCode, body) => ({ statusCode, headers: CORS, body: JSON.stringify(body) });
 let cache = { path: null, at: 0, receipts: [] };
+const imgCache = new Map();
+
+/** A listing's pictures, straight from Etsy's public listings endpoint — the application key only, never a shop session.
+ *  A failure is an empty list, never an error: a card with no picture is a small loss, a broken rehearsal is not. */
+async function listingImages(listingId) {
+  if (!/^\d{3,20}$/.test(listingId)) return [];
+  if (imgCache.has(listingId)) return imgCache.get(listingId);
+  const CLIENT_ID = process.env.CLIENT_ID, CLIENT_SECRET = process.env.CLIENT_SECRET || process.env.ETSY_SHARED_SECRET;
+  if (!CLIENT_ID) return [];
+  try {
+    const fetch = require("node-fetch");
+    const r = await fetch(`https://api.etsy.com/v3/application/listings/${listingId}/images`, { headers: { "x-api-key": CLIENT_SECRET ? `${CLIENT_ID}:${CLIENT_SECRET}` : CLIENT_ID } });
+    if (!r.ok) { imgCache.set(listingId, []); return []; }
+    const d = await r.json();
+    const out = Array.isArray(d) ? d : (d && d.results) || [];
+    if (imgCache.size > 2000) imgCache.clear();
+    imgCache.set(listingId, out);
+    return out;
+  } catch (_) { return []; }
+}
 
 async function loadSnapshot() {
   const doc = await db.collection(SANDBOX).doc("current").get();
@@ -44,7 +66,7 @@ exports.handler = async function (event) {
   const fn = String(q.fn || "");
   try {
     if (fn === "refreshEtsyToken") return json(200, { access_token: "sandbox-token", refresh_token: "sandbox-refresh", expires_in: 7200, sandbox: true });
-    if (fn === "etsyImages") return json(200, []);
+    if (fn === "etsyImages") return json(200, await listingImages(String(q.listingId || "")));
     const { meta, receipts } = await loadSnapshot();
     if (fn === "status") return json(200, { ok: true, sandbox: true, count: receipts.length, at: meta ? meta.at : null, path: meta ? meta.path : null, takenBy: meta ? meta.takenBy || null : null });
     if (fn === "listOpenOrders") {

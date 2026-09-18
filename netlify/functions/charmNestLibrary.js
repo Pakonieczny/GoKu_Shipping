@@ -463,7 +463,8 @@ async function op_history(b) {
     for (const k of Object.keys(lines)) { const l = lines[k] || {}; if (l.sku) skus.add(String(l.sku)); if (l.orderId) orders.add(String(l.orderId)); if (l.engrave && l.engrave.text) words.push(String(l.engrave.text)); }
     const hay = [r.runId, r.setId, r.day, r.status, r.step, r.mode, [...orders].join(" "), [...skus].join(" "), words.join(" ")].join(" ").toLowerCase();
     if (q && !hay.includes(q)) continue;
-    runs.push({ runId: r.runId, setId: r.setId || null, seq: r.seq || null, day: r.day || null, status: r.status, step: r.step, mode: r.mode || null,
+    const seq = r.seq || (/-(\d+)$/.exec(String(r.setId || "")) || [])[1] || null;
+    runs.push({ runId: r.runId, setId: r.setId || null, seq: seq ? +seq : null, day: r.day || null, status: r.status, step: r.step, mode: r.mode || null,
       lines: Object.keys(lines).length, orders: orders.size, skus: skus.size, holds: Object.keys(r.holds || {}).length, sheets: Object.keys(r.sheets || {}).length,
       updatedAt: ms(r.updatedAt), createdAt: ms(r.createdAt), stoppedBy: r.stoppedBy || null,
       hitOrders: q ? [...orders].filter(x => x.toLowerCase().includes(q)).slice(0, 12) : [],
