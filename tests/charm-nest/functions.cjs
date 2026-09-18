@@ -191,6 +191,16 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   r = await post(lib, { op: 'setAllocate', day: '2026-09-16', runId: 'run-B' }); assert.strictEqual(r.body.seq, 2, 'the next set of the same day is Set-2');
   r = await post(lib, { op: 'setAllocate', day: '2026-09-16', runId: 'run-A' }); assert.strictEqual(r.body.seq, 1); assert(r.body.existing, 'idempotent per run');
   r = await post(lib, { op: 'setAllocate', day: '2026-09-17', runId: 'run-C' }); assert.strictEqual(r.body.seq, 1, 'numbering restarts per date');
+  // one set per kin group of a run: the SS set and the GF+14K set of one run are two numbers, asked for twice they are the same two,
+  // and the next run of the day counts on from there — never renumbering, never reusing
+  r = await post(lib, { op: 'setAllocate', day: '2026-09-17', runId: 'run-D', group: 'silver' }); const dSS = r.body; assert.strictEqual(dSS.seq, 2, 'the day counter carries on: ' + JSON.stringify(dSS));
+  r = await post(lib, { op: 'setAllocate', day: '2026-09-17', runId: 'run-D', group: 'gold+gold14k' }); const dGF = r.body; assert.strictEqual(dGF.seq, 3, 'a second kin group of the same run is its own set');
+  r = await post(lib, { op: 'setAllocate', day: '2026-09-17', runId: 'run-D', group: 'silver' }); assert(r.body.existing && r.body.setId === dSS.setId, 'asked again, the same set');
+  r = await post(lib, { op: 'setAllocate', day: '2026-09-17', runId: 'run-E', group: 'silver' }); assert.strictEqual(r.body.seq, 4, 'a later run the same day is the next number, whatever the earlier one made');
+  // the release record is shop-wide and validated
+  r = await post(lib, { op: 'releaseGet' }); assert.deepStrictEqual(r.body.lastReleased, {}, 'nothing released yet');
+  r = await post(lib, { op: 'releasePut', lastReleased: { rose: '2026-09-17' }, released: { gold14k: '2026-09-18' } }); assert.strictEqual(r.body.lastReleased.rose, '2026-09-17'); assert.strictEqual(r.body.released.gold14k, '2026-09-18');
+  r = await post(lib, { op: 'releasePut', lastReleased: { rose: 'yesterday' } }); assert.strictEqual(r.status, 400, 'a date that is not a date is refused');
   r = await post(lib, { op: 'setUpdate', setId: setA, patch: { status: 'labelled', sheetIds: ['gold-x', 'silver-y'], materials: ['gold', 'silver'] } }); r = await post(lib, { op: 'setGet', setId: setA }); assert.deepStrictEqual(r.body.set.materials, ['gold', 'silver']);
   r = await post(lib, { op: 'setList', from: '2026-09-16', to: '2026-09-16' }); assert.strictEqual(r.body.sets.length, 2);
   r = await post(lib, { op: 'runPut', run: { runId: 'run-A', step: 'nest', status: 'running', day: '2026-09-16', lines: { a: { state: 'pooled' } } } }); r = await post(lib, { op: 'runGet', runId: 'run-A' }); assert.strictEqual(r.body.run.step, 'nest');

@@ -225,6 +225,48 @@ const pass = (name) => console.log('  ✓', name);
     assert.strictEqual(O.CARD_TO_METAL.gold10k, '10k'); assert.strictEqual(O.CARD_TO_METAL.gold14k, '14k');
     pass('sets');
   }
+  /* ── what goes to the laser today: full sheets for the fast metals, every other day for the slow ones, orders whole ── */
+  {
+    const P = O.planRelease, K = O.kinGroups;
+    const cap = { silver: 1000, gold: 1000, rose: 1000, gold10k: 1000, gold14k: 1000 };
+    const L = (key, orderId, material, areaPt2, shipDays) => ({ key, orderId, material, areaPt2, shipBy: shipDays == null ? 0 : Math.floor(Date.parse('2026-09-18T00:00:00') / 1000) + shipDays * 86400 });
+    const base = { today: '2026-09-18', capacity: cap, cadenceDays: 2, lateDays: 2 };
+    // 1 · a fast metal with less than a sheet waits, and says how far it has got
+    let r = P([L('a', '1', 'silver', 300), L('b', '2', 'silver', 310)], base);
+    assert.strictEqual(r.take.size, 0, 'a partial SS sheet is not cut'); assert(/full silver sheet/.test(r.wait.get('a').why) && r.wait.get('a').pct === 61, 'and the wait says how full it is: ' + JSON.stringify(r.wait.get('a')));
+    // 2 · one full sheet goes, the remainder waits
+    r = P([L('a', '1', 'silver', 400), L('b', '2', 'silver', 400), L('c', '3', 'silver', 200), L('d', '4', 'silver', 150)], base);
+    assert.deepStrictEqual([...r.take].sort(), ['a', 'b', 'c'], 'exactly one full sheet goes: ' + [...r.take]); assert(r.wait.has('d'), 'the rest waits'); assert.strictEqual(r.materials.silver.full, 1);
+    // 3 · a piece that is due forces the partial sheet, and the sheet is then filled as far as it will go
+    r = P([L('a', '1', 'silver', 300, 1), L('b', '2', 'silver', 300, 9)], base);
+    assert.deepStrictEqual([...r.take].sort(), ['a', 'b'], 'a due piece cuts the sheet and the other piece rides along'); assert(r.materials.silver.partial && /due/.test(r.materials.silver.forcedBy[0]), 'and the sheet is marked partial with the reason: ' + JSON.stringify(r.materials.silver.forcedBy));
+    // 4 · slow metals: whatever there is goes, dates unread, on an open day
+    r = P([L('a', '1', 'rose', 50, 30)], base);
+    assert(r.take.has('a') && r.materials.rose.open && !r.materials.rose.lastReleased, 'a never-released slow metal is open'); 
+    // 5 · … and is closed the day after a release, with the next day named
+    r = P([L('a', '1', 'rose', 50)], Object.assign({}, base, { lastReleased: { rose: '2026-09-17' } }));
+    assert(r.wait.has('a') && r.wait.get('a').kind === 'slow' && r.wait.get('a').until === '2026-09-19', 'closed the day after: ' + JSON.stringify(r.wait.get('a'))); assert.strictEqual(r.materials.rose.next, '2026-09-19');
+    r = P([L('a', '1', 'rose', 50)], Object.assign({}, base, { lastReleased: { rose: '2026-09-16' } }));
+    assert(r.take.has('a'), 'open again two days on');
+    // 6 · a person opens it early
+    r = P([L('a', '1', 'rose', 50)], Object.assign({}, base, { lastReleased: { rose: '2026-09-17' }, released: { rose: '2026-09-18' } }));
+    assert(r.take.has('a') && r.materials.rose.forced, 'released by hand today');
+    // 7 · an order is never split: its GF piece waits with its closed 14K piece …
+    r = P([L('g', '9', 'gold', 900), L('k', '9', 'gold14k', 40), L('h', '8', 'gold', 100)], Object.assign({}, base, { lastReleased: { gold14k: '2026-09-17' } }));
+    assert(r.wait.get('g') && r.wait.get('g').kind === 'slow' && r.wait.get('k').kind === 'slow', 'the whole order waits for 14K: ' + JSON.stringify([...r.wait]));
+    assert(r.wait.get('h') && r.wait.get('h').kind === 'fill', 'and the lone GF piece waits for a full sheet, not for 14K');
+    // 8 · … and rides along the day 14K opens, even though that makes the GF sheet partial
+    r = P([L('g', '9', 'gold', 300), L('k', '9', 'gold14k', 40), L('h', '8', 'gold', 100)], base);
+    assert(r.take.has('g') && r.take.has('k') && r.take.has('h'), 'order 9 travels whole and the partial GF sheet is filled with what else there is: ' + [...r.take]);
+    assert(r.materials.gold.partial && /travels with another material/.test(r.materials.gold.forcedBy[0]), 'the partial is explained: ' + JSON.stringify(r.materials.gold.forcedBy));
+    // 9 · a person can say "cut it anyway"
+    r = P([L('a', '1', 'silver', 300)], Object.assign({}, base, { forceFill: { silver: true } }));
+    assert(r.take.has('a') && r.materials.silver.forcedBy[0] === 'operator', 'the operator can cut a partial sheet');
+    // 10 · sets are the materials tied together by shared orders; a material no order ties is a set of its own
+    const g = K([L('a', '1', 'silver', 1), L('b', '2', 'gold', 1), L('c', '2', 'gold14k', 1), L('d', '3', 'rose', 1)]);
+    assert.deepStrictEqual(g, { silver: 'silver', gold: 'gold+gold14k', gold14k: 'gold+gold14k', rose: 'rose' }, JSON.stringify(g));
+    pass('release plan');
+  }
   /* ── run steps ── */
   { assert.strictEqual(O.RUN_STEPS.length, 11); assert.strictEqual(O.nextStep('nest'), 'checkpoint'); assert.strictEqual(O.nextStep('complete'), null); assert.strictEqual(O.HALF.engrave, 'B'); assert.strictEqual(O.HALF.nest, 'A'); pass('run steps'); }
   /* ── back file: written and re-parsed, the cut geometry is the mirrored original and the text is paths ── */
