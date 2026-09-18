@@ -426,6 +426,7 @@ const Views = window.Views = (() => {
   function onShow(mode) {
     if (mode === "design") { const host = designHost(); if (!document.getElementById("dsFrame")) DesignLink.mount(host); else Dock.setHost(host); DesignLink.renderConsole(); }
     Dock.schedule();
+    if (window.Scope && Scope.apply(mode)) return;              // a chosen run is what this tab is about, live or not
     if (mode === "orders") Orders.render();
     if (mode === "master") Master.render();
     if (mode === "engrave") Engrave.render();
@@ -458,6 +459,7 @@ const Orders = window.Orders = (() => {
     Review.syncOrderItems();
   }
   async function pull(run, { silent = false } = {}) {
+    if (window.Scope && Scope.on()) throw new Error("a run from the record is open — press Done on the strip above to come back to live orders");
     await DesignLink.ensure();
     if (!DesignLink.etsyBudgetOk("the pull")) throw new Error("Etsy call budget reached — the pull was not started");
     await Promise.all([loadMaps(), Master.load()]);
@@ -483,8 +485,33 @@ const Orders = window.Orders = (() => {
   }
   let liveEv = null;
   function agentLiveLine(label, text, done, total) { const html = `<b>${esc(label)}</b> ${esc(text)}${total ? ` <i>${done}/${total}</i>` : ""}`; if (!liveEv || !liveEv.live) liveEv = agent({ bridge: true }, "DS", text, { live: true, html }); else agentUpdate(liveEv, { html, text }); if (total && done >= total) { agentUpdate(liveEv, { live: false }); liveEv = null; } }
-  function lineRecord(row) { return [row.key, { state: row.state, poolIds: row.poolIds, reason: row.reason, hold: row.hold || null, sku: row.spec && row.spec.designSku, material: row.material, quantity: row.spec ? row.spec.quantity : 1, engrave: row.engrave ? { needed: !!row.engrave.needed, state: row.engrave.state, approved: !!row.engrave.approved, text: row.engrave.text || null } : null, problems: (row.problems || []).map(p => p.kind), updateTs: row.order.updateTs, orderId: row.order.receiptId, transactionId: row.line.transactionId }]; }
-  async function claim(ids) { if (!ids.length) return; const r = await DesignLink.call("claim", { receiptIds: ids, runId: B.run && B.run.runId }); for (const row of rowsOf()) if (r.claimed.includes(row.order.receiptId)) row.claimedBy = "sorter"; agent({ bridge: true }, "DS", `Claimed ${r.claimed.length} order(s) on the station (gold dot)`); render(); }
+  /* The record used to keep a line's state and little else, so a finished run could be listed but never opened: no
+     title, no listing, no metal, no ship-by meant no card, no thumbnail and no filter. It keeps a compact copy of the
+     line now — everything a row is built from, capped so four hundred of them still fit in one document. */
+  const cap = (v, n) => String(v == null ? "" : v).slice(0, n);
+  function lineRecord(row) {
+    const l = row.line, o = row.order;
+    return [row.key, { state: row.state, poolIds: row.poolIds, reason: row.reason, hold: row.hold || null, sku: row.spec && row.spec.designSku, material: row.material, quantity: row.spec ? row.spec.quantity : 1,
+      engrave: row.engrave ? { needed: !!row.engrave.needed, state: row.engrave.state, approved: !!row.engrave.approved, text: row.engrave.text || null } : null,
+      problems: (row.problems || []).map(p => p.kind), updateTs: o.updateTs, orderId: o.receiptId, transactionId: l.transactionId,
+      snap: { title: cap(l.title, 160), listingId: cap(l.listingId, 24), metalKey: cap(l.metalKey, 24), metalLabel: cap(l.metalLabel, 40),
+        orderNumber: cap(o.orderNumber, 24), buyer: cap(o.buyer && o.buyer.name, 60), shipBy: +o.shipBy || 0, isGift: !!o.isGift,
+        vars: (l.variations || []).slice(0, 8).map(v => cap(v.name, 40) + "\u241f" + cap(v.value, 60)),
+        pers: (l.personalization || []).slice(0, 4).map(x => cap(x, 200)) } }];
+  }
+  /** The other direction: a recorded line, back to the row shape every card, list, filter and window already reads. */
+  function rowFromRecord(key, l) {
+    const s2 = l.snap || {};
+    const order = { receiptId: String(l.orderId || ""), orderNumber: s2.orderNumber || String(l.orderId || ""), shipBy: +s2.shipBy || 0, updateTs: +l.updateTs || 0,
+      buyer: { name: s2.buyer || "", country: "", city: "" }, buyerMessage: "", isGift: !!s2.isGift, giftMessage: "", staffNote: "", messages: [], metals: {}, lines: [] };
+    const line = { transactionId: String(l.transactionId || ""), listingId: s2.listingId || "", sku: l.sku || "", title: s2.title || "", quantity: +l.quantity || 1,
+      metalKey: s2.metalKey || "", metalLabel: s2.metalLabel || "", personalization: s2.pers || [], buyerMessage: "", expectedShipDate: 0,
+      variations: (s2.vars || []).map(v => { const i = String(v).indexOf("\u241f"); return { name: String(v).slice(0, i < 0 ? 0 : i), value: i < 0 ? String(v) : String(v).slice(i + 1) }; }) };
+    order.lines = [line];
+    return { key, order, line, spec: null, problems: [], state: l.state || "pulled", reason: l.reason || null, hold: l.hold || null, claimedBy: null,
+      poolIds: l.poolIds || [], engrave: l.engrave || null, metal: l.material || null, materialOverride: l.material || null, fromRecord: true };
+  }
+  async function claim(ids) { if (!ids.length) return; if (window.Scope && Scope.on()) return; const r = await DesignLink.call("claim", { receiptIds: ids, runId: B.run && B.run.runId }); for (const row of rowsOf()) if (r.claimed.includes(row.order.receiptId)) row.claimedBy = "sorter"; agent({ bridge: true }, "DS", `Claimed ${r.claimed.length} order(s) on the station (gold dot)`); render(); }
   async function unclaim(ids) { if (!ids.length) return; try { await DesignLink.call("unclaim", { receiptIds: ids }); } catch (e) { agent({ bridge: true }, "warn", `unclaim: ${e.message}`); } for (const row of rowsOf()) if (ids.includes(row.order.receiptId)) row.claimedBy = null; render(); }
   /** §10.3: every order's update_timestamp re-read through the station; changed → re-interpret; vanished → dropped. */
   async function revalidate(run, why) {
@@ -537,7 +564,8 @@ const Orders = window.Orders = (() => {
     { id: "rest", label: "Not started", cls: "neutral", of: r => true },
   ];
   const pileOf = r => (PILES.find(g => g.of(r)) || PILES[PILES.length - 1]).id;
-  const OV = { pile: null, metal: null, q: "", view: null, sort: "due", desc: false };                    // what the tab is showing right now
+  const OV = { pile: null, metal: null, form: null, eng: null, q: "", view: null, sort: "due", desc: false };   // what the tab is showing right now
+  const FORM_LABEL = { necklace: "Necklaces", earrings: "Earrings", "earring-single": "Single earrings", huggie: "Huggies", charm: "Charms only", bracelet: "Bracelets", anklet: "Anklets", keychain: "Keychains" };
   const viewMode = () => OV.view || S.settings.orderView || "cards";
   /** The lines the filters leave, in ship-by order. */
   function visibleRows() {
@@ -545,6 +573,8 @@ const Orders = window.Orders = (() => {
     return rowsOf().filter(r => {
       if (OV.pile && pileOf(r) !== OV.pile) return false;
       if (OV.metal && (r.material || "none") !== OV.metal) return false;
+      if (OV.form && ((r.spec && r.spec.form) || "none") !== OV.form) return false;
+      if (OV.eng) { const needs = !!(r.engrave && r.engrave.needed); if (OV.eng === "yes" ? !needs : needs) return false; }
       if (!q) return true;
       const sp = r.spec || {};
       return [r.order.receiptId, sp.designSku, r.line.sku, r.line.title, (sp.personalization || []).join(" "), sp.buyerMessage, sp.staffNote, r.reason]
@@ -655,7 +685,7 @@ const Orders = window.Orders = (() => {
     }
     if (!rows.length) {
       host.innerHTML = '<div class="libEmpty">Nothing matches these filters.<br><button class="btn ghost sm" id="ordClear" style="margin-top:10px">Show everything</button></div>';
-      host.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.q = ""; render(); };
+      host.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.form = null; OV.eng = null; OV.q = ""; render(); };
       return;
     }
     const cards = viewMode() === "cards";
@@ -757,11 +787,13 @@ const Orders = window.Orders = (() => {
   function renderHead(v) {
     const s = S.settings, all = rowsOf();
     const running = B.run && !["complete", "stopped"].includes(B.run.status);
+    const scoped = !!(window.Scope && Scope.on());
     const pull = v.querySelector("#ordPull");
-    pull.disabled = !!running;
-    pull.title = running ? "a run is open — stop it first, or its lines would be replaced under it" : "ask the Design Station for every open order that matches the rule below";
+    pull.disabled = !!running || scoped;
+    pull.title = scoped ? "these are a finished run's orders, read from the record — press Done above to come back to live orders"
+      : running ? "a run is open — stop it first, or its lines would be replaced under it" : "ask the Design Station for every open order that matches the rule below";
     // while a run is open the banner above owns it: repeating Run and Resume here only made it unclear which did what
-    v.querySelector("#ordRun").classList.toggle("hidden", !!running);
+    v.querySelector("#ordRun").classList.toggle("hidden", !!running || scoped);
     v.querySelector("#ordPullMode").value = s.pullMode || "all";
     v.querySelector("#ordDueBy").value = s.pullDueBy || "";
     v.querySelector("#ordDueBy").classList.toggle("hidden", s.pullMode !== "dueBy");
@@ -778,13 +810,23 @@ const Orders = window.Orders = (() => {
     /* Six state chips and six metal chips wrapped onto two rows above every list. The state is the question a person
        actually asks; the metal is a narrowing of it, so it is one control, not six, and the row stays one row. */
     const metals = ["gold", "silver", "rose", "gold10k", "gold14k", "none"].filter(m => byMetal[m] || OV.metal === m);
+    /* Material, kind of jewellery and "does it get engraved" are the three ways a bench actually narrows a day's work.
+       Each one appears only when the lines on screen give it more than one answer — a filter with one option is a
+       control that can only ever do nothing. */
+    const byForm = {}; for (const r of all) { const f = (r.spec && r.spec.form) || "none"; byForm[f] = (byForm[f] || 0) + 1; }
+    const forms = Object.keys(byForm).filter(f => f !== "none" || OV.form === "none").sort((a2, b2) => byForm[b2] - byForm[a2]);
+    const engN = all.filter(r => r.engrave && r.engrave.needed).length;
     v.querySelector("#ordChips").innerHTML =
       chip(!OV.pile, "", "Everything", all.length, "", "every line that was pulled")
       + PILES.filter(g => counts[g.id] || OV.pile === g.id).map(g => chip(OV.pile === g.id, g.id, g.label, counts[g.id] || 0, g.cls, g.label)).join("")
 ;
-    v.querySelector("#ordMetalHost").innerHTML = metals.length > 1 || OV.metal ? `<select class="ordMetal" id="ordMetal" title="narrow it to one material">${[`<option value="">Any material</option>`].concat(metals.map(m => `<option value="${esc(m)}"${OV.metal === m ? " selected" : ""}>${esc(m === "none" ? "No material" : labelOf(m))} \u00b7 ${byMetal[m] || 0}</option>`)).join("")}</select>` : "";
+    const sel = (id, ttl, any, opts, cur) => opts.length > 1 || cur ? `<select class="ordMetal" id="${id}" title="${esc(ttl)}">${[`<option value="">${esc(any)}</option>`].concat(opts.map(o => `<option value="${esc(o[0])}"${cur === o[0] ? " selected" : ""}>${esc(o[1])} \u00b7 ${o[2]}</option>`)).join("")}</select>` : "";
+    v.querySelector("#ordMetalHost").innerHTML =
+      sel("ordMetal", "narrow it to one material", "Any material", metals.map(m => [m, m === "none" ? "No material" : labelOf(m), byMetal[m] || 0]), OV.metal)
+      + sel("ordForm", "narrow it to one kind of jewellery", "Any kind", forms.map(f => [f, FORM_LABEL[f] || (f === "none" ? "Kind not set" : f), byForm[f] || 0]), OV.form)
+      + (engN && engN < all.length || OV.eng ? sel("ordEng", "engraved or not", "Engraved or not", [["yes", "Engraved", engN], ["no", "Not engraved", all.length - engN]], OV.eng) : "");
     v.querySelectorAll("[data-pile]").forEach(b => b.onclick = () => { OV.pile = b.dataset.pile || null; renderHead(v); renderBody(); });
-    const ms = v.querySelector("#ordMetal"); if (ms) ms.onchange = () => { OV.metal = ms.value || null; renderHead(v); renderBody(); };
+    for (const [id, k] of [["ordMetal", "metal"], ["ordForm", "form"], ["ordEng", "eng"]]) { const n = v.querySelector("#" + id); if (n) n.onchange = () => { OV[k] = n.value || null; renderHead(v); renderBody(); }; }
     v.querySelector("#ordViewSeg").innerHTML = ["cards", "list"].map(k => `<button data-view="${k}"${viewMode() === k ? ' class="on"' : ""} title="${k === "cards" ? "a card for every line, with its picture" : "the same lines as rows"}">${k === "cards" ? "Cards" : "List"}</button>`).join("");
     v.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { OV.view = b.dataset.view; S.settings.orderView = OV.view; saveSettings(); renderHead(v); renderBody(); });
   }
@@ -796,7 +838,7 @@ const Orders = window.Orders = (() => {
     renderBody();
     const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(new Set(B.orders.rows.map(r => r.order.receiptId)).size) : "";
   }
-  return { pull, claim, unclaim, revalidate, render, renderBody, markStale, loadMaps, interpretAll, lineRecord, rows: rowsOf, visibleRows, placeOf, imageFor, wantImage, shipTxt, statePill: r => STATE_PILL[r.state] || ["neutral", r.state], applyPullRule, ctx };
+  return { pull, claim, unclaim, revalidate, render, renderBody, markStale, loadMaps, interpretAll, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, imageFor, wantImage, shipTxt, statePill: r => STATE_PILL[r.state] || ["neutral", r.state], applyPullRule, ctx };
 })();
 
 /* ═══ 19 · Master — SKU labels under charms, per-SKU designs, the index ══════ */
@@ -2047,6 +2089,7 @@ const RunCtl = window.RunCtl = (() => {
   async function save(r) { r = r || B.run; if (!r) return; r.updatedAt = Date.now(); if (!S.cloud.ok) return; const rec = Object.assign({}, r, { lines: r.lines || {}, sheets: r.sheets || {}, holds: r.holds || {}, errors: (r.errors || []).slice(-50) }); delete rec._wait; await api("charmNestLibrary", { op: "runPut", run: rec }).catch(e => agent({ run: r.runId }, "warn", `run record: ${e.message}`)); renderBanner(); }
   function newRun(mode) { const day = today(); return { runId: `run-${day}-${uid()}`, day, setId: null, step: "pull", status: "running", mode: mode || S.settings.runMode || "manual", startedAt: Date.now(), updatedAt: Date.now(), lines: {}, sheets: {}, holds: {}, errors: [], resumable: true, stoppedBy: null, fix: null, orders: [] }; }
   async function start(opts = {}) {
+    if (window.Scope && Scope.on()) { toast("A run from the record is open — press Done on the strip above first", "bad", 6000); return; }
     if (B.run && ["running", "review", "paused"].includes(B.run.status)) { toast("A run is already open — stop it or let it finish", "bad"); return B.run; }
     const r = newRun(opts.mode); B.run = r;
     agent({ run: r.runId }, "DS", `Run ${r.runId} started (${r.mode} mode)`);
@@ -2876,12 +2919,10 @@ const RunHistory = window.RunHistory = (() => {
           <span class="ct">${r.lines} line${r.lines === 1 ? "" : "s"} · ${r.orders} order${r.orders === 1 ? "" : "s"}${r.sheets ? ` · ${r.sheets} sheet${r.sheets === 1 ? "" : "s"}` : ""}${r.holds ? ` · ${r.holds} held` : ""}</span>
           <span class="sp"></span>
           ${r.runId === cur ? `<span class="pill neutral">on the cards now</span>` : ""}
-          ${r.sheets || r.setId ? `<button class="btn gold sm" data-a="sheets" title="the sheets this run wrote \u2014 previews, the .ai, the labelled proof and the report. Nothing runs and nothing is re-read from Etsy.">Sheets${r.sheets ? ` \u00b7 ${r.sheets}` : ""}</button>` : ""}
-          <button class="btn ghost sm" data-a="lines" title="the orders and lines this run carried">${H.open.has(r.runId) ? "Hide" : "Orders"}</button>
+          <button class="btn gold sm" data-a="open" title="put this run on every tab \u2014 its sheets, its orders, its engraving, its decisions. Nothing runs and nothing is read from Etsy.">Open this run</button>
           ${live && r.runId !== cur ? `<button class="btn ghost sm" data-a="resume" title="pick this unfinished run up where it stopped \u2014 it re-reads every order from Etsy first, which takes a while">Resume the run\u2026</button>` : ""}
         </div>
         ${hits.length ? `<div class="hHits">matched ${hits.map(x => `<b>${esc(x)}</b>`).join(", ")}</div>` : ""}
-        ${H.open.has(r.runId) ? linesHtml(r.runId) : ""}
       </div>`;
     }).join("") + (H.q && H.sheets.length ? `<div class="hSheets"><div class="hHead">${H.sheets.length} sheet${H.sheets.length === 1 ? "" : "s"} match</div>${H.sheets.slice(0, 24).map(x => `<div class="hSheet"><span class="nm">${esc(x.fileBase || x.id)}</span><span class="ct">${esc(dayWord(x.day))} · ${x.placedCount}/${x.charmCount} placed · ${x.orders} order${x.orders === 1 ? "" : "s"}</span><span class="sp"></span>${x.preview ? `<a class="btn ghost sm" href="${esc(x.preview)}" target="_blank" rel="noopener">Preview</a>` : ""}</div>`).join("")}</div>` : "");
     f.textContent = [H.scanned ? `looked at the ${H.scanned.runs} most recent runs and ${H.scanned.sheets} most recent sheets` : "",
@@ -2894,50 +2935,136 @@ const RunHistory = window.RunHistory = (() => {
         if (!confirm(`Pick run ${r2.seq ? "Set " + r2.seq : id.slice(-8)} up again?\n\nIt re-reads all ${r2.orders || ""} orders from Etsy through the Design Station before it can carry on, which takes a few minutes.\n\nTo look at what it already made, press Sheets instead \u2014 that reads nothing from Etsy.`)) return;
         H.dlg.close(); RunCtl.resumeRun(id).catch(e => toast(e.message, "bad", 7000));
       };
-      if (a("sheets")) a("sheets").onclick = () => openSheets(H.runs.find(x => x.runId === id) || { runId: id });
-      if (a("lines")) a("lines").onclick = () => { if (H.open.has(id)) { H.open.delete(id); render(); } else { H.open.add(id); loadLines(id); } };
+      if (a("open")) a("open").onclick = () => { if (H.dlg && H.dlg.open) H.dlg.close(); Scope.open(id).catch(e => toast(e.message, "bad", 7000)); };
     });
-    b.querySelectorAll("[data-openkey]").forEach(n => n.onclick = () => { const k = n.dataset.openkey; if (Orders.rows().some(r => r.key === k)) { H.dlg.close(); OrderWin.open(k); } else toast("That line is not in the current pull — open its run first", "", 4500); });
   }
-  function linesHtml(runId) {
-    const rec = H.lines.get(runId);
-    if (!rec) return `<div class="hLines"><span class="spin"></span> reading the run…</div>`;
-    if (rec.error) return `<div class="hLines bad">${esc(rec.error)}</div>`;
-    const q = H.q.trim().toLowerCase();
-    const rows = rec.rows.filter(r => !q || [r.orderId, r.sku, r.engrave, r.state].join(" ").toLowerCase().includes(q));
-    if (!rows.length) return `<div class="hLines">no lines${q ? ` match “${esc(H.q)}”` : ""}</div>`;
-    const byOrder = new Map();
-    for (const r of rows) { if (!byOrder.has(r.orderId)) byOrder.set(r.orderId, []); byOrder.get(r.orderId).push(r); }
-    return `<div class="hLines">${[...byOrder.entries()].slice(0, 80).map(([oid, ls]) => `<div class="hOrd"><span class="oid">${esc(oid)}</span>${ls.map(l => `<span class="ln" data-openkey="${esc(l.key)}" title="${esc(l.state + (l.reason ? " · " + l.reason : ""))}">${esc(l.sku || "no SKU")}${l.quantity > 1 ? ` ×${l.quantity}` : ""}${l.engrave ? ` · “${esc(l.engrave)}”` : ""}<i class="${l.ok ? "ok" : "no"}"></i></span>`).join("")}</div>`).join("")}${byOrder.size > 80 ? `<div class="more">… and ${byOrder.size - 80} more orders — search to narrow it</div>` : ""}</div>`;
+  return { show, load, runs: () => H.runs };
+})();
+
+/* ═══ 24d · Scope — one run, on every tab ═══════════════════════════════════════════════════════════════════════════
+   A run that is working already reaches every tab: its orders are the Orders tab, its engraving is the Engraving tab,
+   its sheets are the cards. A run that has finished reached none of them — you could find it in a list and that was
+   all. So the same idea is made explicit: choose a run, and every tab that is about a run shows that run and nothing
+   else, until you put it down.
+
+   Nothing here touches Etsy, the pool, the station or the live state. It reads the records that were written when the
+   run happened — the run record, the sheets of its set — and draws them. Choosing a run does not start one; clearing
+   the scope leaves whatever was running exactly as it was. */
+const Scope = window.Scope = (() => {
+  const SC = { run: null, sheets: null, full: null, fullLoading: false, loading: false, err: null, host: null, tab: null, live: null };
+  const RECORD_TABS = new Set(["nest", "engrave"]);          // these read the records; Orders and Review use the real tabs
+  const TABS = new Set(["nest", "orders", "engrave", "review"]);
+  const on = () => !!SC.run;
+  const dayWord = d => d ? new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "";
+
+  function host() {
+    if (SC.host && SC.host.isConnected) return SC.host;
+    const st = document.getElementById("stage");
+    const h = el("div", "scopeView hidden"); h.id = "scopeView";
+    st.appendChild(h); SC.host = h; return h;
   }
-  async function loadLines(runId) {
-    if (H.lines.has(runId)) { render(); return; }
-    H.lines.set(runId, null); render();
+  /** One line, above every tab, saying which run everything below it is about. */
+  function strip() {
+    let n = document.getElementById("scopeStrip");
+    if (!n) { n = el("div", "scopeStrip hidden"); n.id = "scopeStrip"; const st = document.getElementById("stage"); st.insertBefore(n, st.firstChild); }
+    const r = SC.run;
+    if (!r && !SC.loading) { n.classList.add("hidden"); n.innerHTML = ""; return; }
+    n.classList.remove("hidden");
+    n.innerHTML = SC.loading && !r ? `<span class="nm"><span class="spin"></span> reading the run\u2026</span>`
+      : `<span class="nm">${esc([r.seq ? "Set " + r.seq : "run " + r.runId.slice(-8), dayWord(r.day)].filter(Boolean).join(" \u00b7 "))}</span>
+         <span class="ct">${Object.keys(r.lines || {}).length} lines \u00b7 ${(SC.sheets || []).length} sheet${(SC.sheets || []).length === 1 ? "" : "s"}${r.status ? " \u00b7 " + esc(r.status) : ""} \u00b7 on record, nothing is running</span>
+         <span class="sp"></span><button class="btn ghost sm" data-s="other">Another run\u2026</button><button class="btn ghost sm" data-s="close" title="put this run down \u2014 the tabs go back to whatever is live">Done</button>`;
+    n.querySelectorAll("[data-s]").forEach(b => b.onclick = () => { if (b.dataset.s === "close") clear(); else RunHistory.show(""); });
+  }
+
+  /** Take a run off the record and put it in front of the person, on every tab. One read; nothing is started. */
+  async function open(runId) {
+    SC.loading = true; SC.err = null; SC.full = null; strip();
     try {
-      const r = await api("charmNestLibrary", { op: "runGet", runId }, { quiet: true });
-      const lines = (r.run && r.run.lines) || {};
-      const rows = Object.entries(lines).map(([key, l]) => ({ key, orderId: String(l.orderId || key.split(":")[0] || ""), sku: l.sku || "", quantity: l.quantity || 1, state: l.state || "", reason: l.reason || "", engrave: (l.engrave && l.engrave.text) || "", ok: ["pooled", "placed", "committed", "done"].includes(l.state) || (l.poolIds || []).length > 0 }));
-      rows.sort((a, b2) => a.orderId.localeCompare(b2.orderId) || a.sku.localeCompare(b2.sku));
-      H.lines.set(runId, { rows });
-    } catch (e) { H.lines.set(runId, { error: e.message, rows: [] }); }
-    render();
+      const r = await api("charmNestLibrary", { op: "runGet", runId }, { label: "Reading the run" });
+      if (!r.run) throw new Error("that run is no longer on record");
+      SC.run = r.run;
+      SC.run.seq = SC.run.seq || +((/-(\d+)$/.exec(String(SC.run.setId || "")) || [])[1] || 0) || null;
+      const ls = SC.run.setId ? await api("charmNestLibrary", { op: "listSheets", setId: SC.run.setId, limit: 200 }, { quiet: true }) : { sheets: [] };
+      SC.sheets = (ls.sheets || []).sort((a2, b2) => String(a2.fileBase || "").localeCompare(String(b2.fileBase || "")));
+      /* The orders are not a summary of the run: they are the run's own lines, rebuilt into the rows the Orders tab
+         already draws — so the cards, the list with its thumbnails, every filter, the search and the order window all
+         work on a finished run exactly as they do on a live one. */
+      await Orders.loadMaps().catch(() => {}); await Master.load().catch(() => {});
+      // whatever was pulled is put aside, not thrown away: looking at last Tuesday must not cost this morning's work
+      if (!SC.live) SC.live = { rows: B.orders.rows, byKey: B.orders.byKey, pulledAt: B.orders.pulledAt, filtered: B.orders.filtered, stale: B.orders.stale, review: B.review.items };
+      B.orders.rows = Object.entries(SC.run.lines || {}).map(([k, l]) => Orders.rowFromRecord(k, l));
+      B.orders.byKey = new Map(B.orders.rows.map(x => [x.key, x]));
+      B.orders.pulledAt = SC.run.updatedAt || SC.run.startedAt || null;
+      B.orders.filtered = 0; B.orders.stale = false;
+      Orders.interpretAll();
+      SC.loading = false;
+      agent({ run: runId }, "cloud", `Showing ${SC.run.seq ? "Set " + SC.run.seq : runId}${SC.run.day ? " from " + SC.run.day : ""} on every tab \u2014 ${B.orders.rows.length} line(s), nothing is running`);
+    } catch (e) { SC.loading = false; SC.err = e.message; toast("Could not open that run: " + e.message, "bad", 7000); }
+    strip();
+    setMode(TABS.has(S.mode) ? S.mode : "orders");
   }
-  /* Old sheets are finished records: a preview, an .ai, a labelled proof, a report and the charm thumbnails, all
-     already written. Looking at them is one read of the library, not a rebuild of the run that made them — an earlier
-     turn of mine wired this to the resume path, which re-pulled every order from Etsy to show a picture that was
-     sitting in Storage the whole time. Nothing here starts, pulls, claims or nests. */
-  function openSheets(r) {
-    if (H.dlg && H.dlg.open) H.dlg.close();
-    CN.S.library.kind = "sheets";
-    CN.setMode("library");
-    const f = document.getElementById("libSearch");
-    if (f) f.value = r.setId || r.runId || "";
-    const from = document.getElementById("libFrom"), to = document.getElementById("libTo");
-    if (from) from.value = ""; if (to) to.value = "";                 // a run's own day is inside the last 300 sheets
-    CN.loadLibrary();
-    agent({ run: r.runId }, "cloud", `Showing the sheets of ${r.seq ? "Set " + r.seq : r.runId}${r.day ? " from " + r.day : ""}`);
+  function clear() {
+    SC.run = null; SC.sheets = null; SC.full = null; SC.err = null;
+    const L = SC.live; SC.live = null;
+    if (L) { B.orders.rows = L.rows; B.orders.byKey = L.byKey; B.orders.pulledAt = L.pulledAt; B.orders.filtered = L.filtered; B.orders.stale = L.stale; B.review.items = L.review; }
+    else { B.orders.rows = []; B.orders.byKey = new Map(); B.review.items = []; }
+    host().innerHTML = ""; host().classList.add("hidden"); strip();
+    setMode(S.mode); Orders.render(); Review.render(); RunCtl.renderBanner();
   }
-  return { show, load, openSheets, runs: () => H.runs };
+
+  /** Called on every tab switch. Nest and Engraving are drawn from the records; Orders and Review are the real tabs. */
+  function apply(mode) {
+    strip();
+    const h = host();
+    const mine = on() && RECORD_TABS.has(mode);
+    h.classList.toggle("hidden", !mine);
+    if (!on()) return false;
+    if (!mine) return false;                                   // Orders and Review carry on to their own renders
+    for (const id of ["sheets", "engraveView"]) { const v = document.getElementById(id); if (v) v.classList.add("hidden"); }
+    SC.tab = mode; paint();
+    return true;
+  }
+  function paint() {
+    const h = host(); if (!on()) { h.innerHTML = ""; return; }
+    h.innerHTML = SC.err ? `<div class="libEmpty bad">${esc(SC.err)}</div>` : SC.tab === "nest" ? sheetsHtml() : engraveHtml();
+    h.querySelectorAll("[data-sheet]").forEach(b => b.onclick = () => CN.openLibrarySheet(b.dataset.sheet));
+    if (SC.tab === "engrave" && !SC.full && !SC.fullLoading) loadFull();
+  }
+  /* The engraved backs live inside each sheet record, so that tab costs a read per sheet — taken when the tab is
+     opened, never on the way past. */
+  async function loadFull() {
+    SC.fullLoading = true;
+    try {
+      const out = [];
+      for (const x of SC.sheets || []) { const g = await api("charmNestLibrary", { op: "getSheet", id: x.id }, { quiet: true }); if (g.sheet) out.push(g.sheet); }
+      SC.full = out;
+    } catch (e) { SC.full = []; SC.err = e.message; }
+    SC.fullLoading = false; if (SC.tab === "engrave") paint();
+  }
+  function sheetsHtml() {
+    const x = SC.sheets || [];
+    if (!x.length) return `<div class="libEmpty">This run wrote no sheets.</div>`;
+    return `<div class="scopeGrid">${x.map(v => `<div class="scopeCard" data-sheet="${esc(v.id)}" tabindex="0" title="open the sheet, its files and its charms">
+      <div class="h"><span class="nm">${esc(v.fileBase || v.id)}</span><span class="pill ${v.status === "complete" ? "ok" : "bad"}">${esc(v.status || "")}</span></div>
+      ${v.preview ? `<img class="pv" src="${esc(v.preview)}" loading="lazy" alt="">` : `<div class="pv ph">no preview</div>`}
+      <div class="m"><b>${v.placedCount}</b>/${v.charmCount} placed \u00b7 <b>${Math.round((v.density || 0) * 100)}%</b> full${v.verification && v.verification.ok === false ? ` \u00b7 <span class="bad">flagged</span>` : ""}</div>
+    </div>`).join("")}</div>`;
+  }
+  function engraveHtml() {
+    if (!SC.full) return `<div class="libEmpty"><span class="spin"></span> reading the engraving\u2026</div>`;
+    const backs = SC.full.flatMap(sh => (sh.backPool || []).map(b => Object.assign({ sheet: sh.fileBase || sh.id }, b)));
+    const wanted = Object.values(SC.run.lines || {}).filter(l => l.engrave && (l.engrave.needed || l.engrave.text));
+    if (!backs.length && !wanted.length) return `<div class="libEmpty">Nothing in this run was engraved.</div>`;
+    return (backs.length ? `<div class="scopeSec">Backs written \u00b7 ${backs.length}</div><div class="scopeGrid backs">${backs.map(b => `<div class="scopeCard">
+        ${b.outputs && b.outputs.png && b.outputs.png.url ? `<img class="pv" src="${esc(b.outputs.png.url)}" loading="lazy" alt="">` : `<div class="pv ph">no picture</div>`}
+        <div class="m"><b>${esc((b.lines || [b.text || ""]).join(" / "))}</b></div>
+        <div class="m sub">${esc(b.order || "")}${b.capMm ? ` \u00b7 cap ${(+b.capMm).toFixed(2)} mm` : ""}${b.approvedBy ? ` \u00b7 ${esc(b.approvedBy)}` : ""}</div>
+        ${b.outputs && b.outputs.ai && b.outputs.ai.url ? `<a class="btn ghost xs" href="${esc(b.outputs.ai.url)}" target="_blank" rel="noopener">.ai</a>` : ""}
+      </div>`).join("")}</div>` : "")
+      + (wanted.length ? `<div class="scopeSec">What each line asked for \u00b7 ${wanted.length}</div><div class="scopeList">${wanted.map(l => `<div class="ol"><b class="mono">${esc(String(l.orderId || ""))}</b><span class="sku mono">${esc(l.sku || "")}</span><span class="w">${l.engrave.text ? "\u201c" + esc(l.engrave.text) + "\u201d" : "\u2014"}</span><span class="st mono">${esc(l.engrave.state || "")}${l.engrave.approved ? " \u00b7 approved" : ""}</span></div>`).join("")}</div>` : "");
+  }
+  return { open, clear, apply, on, strip, run: () => SC.run };
 })();
 
 /* ═══ 25 · boot ═══════════════════════════════════════════════════════════ */
@@ -2956,8 +3083,16 @@ function bootBridge() {
   document.getElementById("btnRunMode").onclick = () => { const auto = S.settings.runMode !== "auto"; if (auto && !confirm("Auto mode: the sorter connects to the Design Station, pulls the latest orders by the date rule, nests, fits engraving, saves labels and marks the orders complete — stopping only when a person must decide. Turn Auto on?")) return; RunCtl.setMode(auto ? "auto" : "manual"); };
   Orders.loadMaps().catch(() => {}); Master.load().catch(() => {});
   Engrave.loadFonts().catch(() => {});
-  // an open run from a previous session is offered for resume
-  if (S.cloud.ok) api("charmNestLibrary", { op: "runList", limit: 10 }).then(r => { const open = (r.runs || []).filter(x => !["complete", "abandoned"].includes(x.status)); if (open.length) { B.openRuns = open; agent({ bridge: true }, "DS", `${open.length} open run(s) on record — offered on the run banner`); RunCtl.renderBanner(); } }).catch(() => {});
+  /* The app used to open on an empty Orders tab whatever had happened yesterday, and the only way to anything was to
+     pull again. It opens on the last run instead — its orders, its sheets, its engraving, read from the record, with
+     one line at the top saying so and a Done that puts it down. An open run is offered for resume as before. */
+  if (S.cloud.ok) api("charmNestLibrary", { op: "runList", limit: 10 }).then(r => {
+    const runs = r.runs || [];
+    const open = runs.filter(x => !["complete", "abandoned"].includes(x.status));
+    if (open.length) { B.openRuns = open; agent({ bridge: true }, "DS", `${open.length} open run(s) on record — offered on the run banner`); RunCtl.renderBanner(); }
+    const last = runs.find(x => x.lines > 0);
+    if (last && !B.run && !B.orders.rows.length) Scope.open(last.runId).catch(() => {});
+  }).catch(() => {});
   // the Design Station frame mounts on first visit to its tab; Auto mode mounts it now
   if (S.settings.runMode === "auto") { setTimeout(() => RunCtl.setMode("auto"), 1500); }
   document.addEventListener("keydown", e => { if (e.altKey && e.key === "r") { e.preventDefault(); setMode("review"); } });
