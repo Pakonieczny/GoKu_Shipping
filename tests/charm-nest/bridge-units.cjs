@@ -288,6 +288,26 @@ const pass = (name) => console.log('  ✓', name);
     }
     pass('rings on a layered master');
   }
+  /* ── a ring drawn beside the body is welded into the cut line: one outline over body and ring, the ring's inner
+        circle a black hole; the per-SKU copy carries the weld as ink of its own and welds nothing twice ── */
+  {
+    const fx = await buildMaster(null, { count: 4, edge: false, layered: true });
+    const parsed = await P.parseSource(new Uint8Array(fx.bytes), 'weld.ai'); const g = P.groupCharms(parsed, { minPt: 6 });
+    const c = g.charms[0]; const before = { members: c.members.length, holes: P.cutLinesOf(c).length, top: c.bbox[3] };
+    const looseOf = x => x.members.filter(m => m !== x.outline && P.ringLike(m) && m.bbox[3] > x.outline.bbox[3] + 1).length;   // a small circle above the body's top edge
+    assert.strictEqual(looseOf(c), 1, 'the fixture charm carries one loose ring: ' + looseOf(c));
+    const r = P.integrateRings(c); assert.strictEqual(r.welded, 1, 'the ring is welded: ' + JSON.stringify(r));
+    assert(c.outline.synthetic && c.outline.subpaths[0].length > 20, 'the outline is a new path that runs over the ring');
+    const ringW = 4.99; assert(P.cutLinesOf(c).some(m => (m.bbox[2] - m.bbox[0]) < ringW - 0.5 && m.bbox[3] > before.top - ringW), "the ring's inner circle is a hole now, up where the ring was");
+    assert.strictEqual(c.members.filter(m => m !== c.outline && P.ringLike(m) && m.bbox[1] > before.top - 1).length, 0, 'no loose ring remains above the old top');
+    assert(c.bbox[3] > c.outline.bbox[3] - 0.01 && c.outline.bbox[3] > before.top - ringW, 'the welded outline now reaches up over the seated ring: ' + c.outline.bbox[3] + ' vs old top ' + before.top);
+    const bytes = await P.buildSingleCharm(Object.assign({}, c, { name: 'welded' }), parsed);
+    const p2 = await P.parseSource(new Uint8Array(bytes), 'copy.ai'); const g2 = P.groupCharms(p2, { minPt: 6 }); const c2 = g2.charms[0];
+    assert.strictEqual(g2.charms.length, 1, 'the copy is one charm');
+    assert(c2.outline.subpaths[0].length > 20 && P.cutLinesOf(c2).length === P.cutLinesOf(c).length, 'the copy holds the welded outline and the hole: ops ' + c2.outline.subpaths[0].length + ' holes ' + P.cutLinesOf(c2).length);
+    assert.strictEqual(P.integrateRings(c2).welded, 0, 'parsed again, nothing is welded twice');
+    pass('ring welded into the cut line');
+  }
   /* ── run steps ── */
   { assert.strictEqual(O.RUN_STEPS.length, 11); assert.strictEqual(O.nextStep('nest'), 'checkpoint'); assert.strictEqual(O.nextStep('complete'), null); assert.strictEqual(O.HALF.engrave, 'B'); assert.strictEqual(O.HALF.nest, 'A'); pass('run steps'); }
   /* ── back file: written and re-parsed, the cut geometry is the mirrored original and the text is paths ── */
