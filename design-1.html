@@ -7048,7 +7048,10 @@ const Bridge = (() => {
   /** Walk a list of rows with the cursor: the first few are pressed one by one, the rest in one sweep with a count. */
   async function cursorRows(ids, verb, { click = true, max = 6 } = {}) {
     const onScreen = ids.filter(id => rowFor(id)); let n = 0;
-    for (const id of onScreen) { if (n++ < max) await Cursor.act("row", id, `${verb} ${id}`, { click }); else { await Cursor.act("row", id, `${verb} ${id} (${n} of ${onScreen.length})`, { click: false }); } }
+    /* The first few rows get the cursor; the rest get one line in the banner. Every row used to get its own animated
+       visit even past the cap, so a claim on 408 orders ran for minutes while the sorter waited for the answer. */
+    for (const id of onScreen) { if (n++ < max) await Cursor.act("row", id, `${verb} ${id}`, { click }); else break; }
+    if (onScreen.length > max) await Cursor.act("banner", null, `${verb} ${onScreen.length} orders`, { click: false });
     if (!onScreen.length) await Cursor.act("banner", null, `${verb} ${ids.length === 1 ? ids[0] : ids.length + " orders"} (no longer listed here)`, { click: false });
   }
 

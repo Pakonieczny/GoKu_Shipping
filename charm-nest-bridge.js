@@ -3239,7 +3239,7 @@ const Recall = window.Recall = (() => {
     const byName = new Map();
     for (const x of ls.sheets || []) { const k = x.fileBase || x.id; const had = byName.get(k); if (!had || (x.updatedAt || 0) > (had.updatedAt || 0)) byName.set(k, x); }
     const sheets = [...byName.values()].sort((a, b) => (a.setSeq || 0) - (b.setSeq || 0) || (a.sheetIndex || 0) - (b.sheetIndex || 0));
-    if (!sheets.length) { toast("Nothing is saved under that set", "bad", 5000); return; }
+    if (!sheets.length) { if (!sel.quiet) toast("Nothing is saved under that set", "bad", 5000); return; }
     if (B.run && ["running", "review"].includes(B.run.status)) { toast("A run is working — stop it first, or its sheets would be replaced under it", "bad", 6000); return; }
     RunCtl.clearRunState();
     RC.runId = sel.runId || sheets[0].runId || null; RC.setId = sel.setId || null;
@@ -3362,7 +3362,7 @@ function bootBridge() {
     const open = runs.filter(x => !["complete", "abandoned"].includes(x.status));
     if (open.length) { B.openRuns = open; agent({ bridge: true }, "DS", `${open.length} open run(s) on record — offered on the run banner`); RunCtl.renderBanner(); }
     const last = runs.find(x => x.lines > 0);
-    if (last && !B.run && !B.orders.rows.length && !Recall.on()) Recall.open({ runId: last.runId }).catch(() => {});
+    if (last && !B.run && !B.orders.rows.length && !Recall.on()) Recall.open({ runId: last.runId, quiet: true }).catch(() => {});
   }).catch(() => {});
   // the Design Station frame mounts on first visit to its tab; Auto mode mounts it now
   if (S.settings.runMode === "auto") { setTimeout(() => RunCtl.setMode("auto"), 1500); }
