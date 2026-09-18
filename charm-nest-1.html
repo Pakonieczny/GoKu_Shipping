@@ -333,6 +333,11 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .owField{margin-bottom:12px}
 .owIn{width:100%;border:1px solid var(--line);border-radius:10px;padding:9px 11px;font:13px var(--sans);background:var(--card);resize:vertical;color:var(--ink)}
 .owIn[readonly]{background:var(--paper2);color:var(--ink70)}
+/* the one field that must be read exactly: it grows to its content and is never boxed into a scroller */
+.owSaid{font:14px/1.5 var(--serif);background:var(--paper2);border:1px solid var(--line);border-radius:10px;padding:9px 11px;overflow-wrap:anywhere;white-space:pre-wrap;min-height:44px}
+.owSaid .lbl{display:block;font:9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);font-weight:700;margin:6px 0 2px}
+.owSaid .lbl:first-child{margin-top:0}
+.owSaid.none{font-family:var(--sans);font-size:12.5px;color:var(--ink45)}
 .owMeta{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:9px}
 .owMeta .m{border:1px solid var(--line);border-radius:10px;padding:7px 10px;background:var(--card);min-width:0}
 .owMeta .m i{display:block;font:9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);font-style:normal;margin-bottom:2px}
@@ -340,7 +345,7 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .owFix{border:1px solid var(--clay);background:var(--claySoft);border-radius:11px;padding:10px 12px;margin-bottom:12px}
 .owFix .t{font:700 11px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:#8a3a26;margin-bottom:5px}
 .owFix .rvItem{border:0;box-shadow:none;background:transparent;padding:0;border-left:0}
-.owFix .rvItem .rh{display:none}
+.owFix .rvItem .rh .ttl,.owFix .rvItem .rh .sub{display:none}
 .owChatHead{display:flex;align-items:center;gap:8px;padding:11px 13px;border-bottom:1px solid var(--line);flex:0 0 auto}
 .owChatHead .lab{font:10px var(--mono);letter-spacing:.11em;text-transform:uppercase;color:var(--ink45);font-weight:700}
 .owLink{font:10px var(--mono);letter-spacing:.06em;text-transform:uppercase;font-weight:700}
@@ -378,7 +383,10 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 /* ── orders: one card per line, or the same line as a row ── */
 #ordersView:not(.hidden){height:100%;min-height:0;gap:0}
 .ordHead{display:flex;flex-direction:column;gap:8px;flex:0 0 auto}
+/* the chips wrap; the search and the view toggle keep the right-hand end whatever the width */
 .ordFilters{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.ordFilters .chips{display:flex;gap:6px;align-items:center;flex-wrap:wrap;flex:1 1 320px;min-width:0}
+.ordFilters .tail{display:flex;gap:6px;align-items:center;margin-left:auto;flex:0 0 auto}
 .ordFilters .sep{width:1px;align-self:stretch;background:var(--line);margin:0 3px}
 .ordSearch{border:1px solid var(--line);border-radius:999px;padding:5px 12px;font-size:12.5px;background:var(--card);min-width:0;flex:0 1 200px}
 .viewSeg{display:flex;border:1px solid var(--line);border-radius:999px;background:var(--card2);padding:2px;gap:2px;flex:0 0 auto}
@@ -411,11 +419,14 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .osku{font:11.5px var(--mono);color:var(--ink);display:flex;gap:6px;min-width:0}
 .osku b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .osku i{font-style:normal;font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink45);flex:0 0 auto;padding-top:1px}
-.opers{font:12.5px var(--serif);background:var(--paper2);border-radius:7px;padding:4px 8px;overflow-wrap:anywhere;max-height:44px;overflow:hidden}
+.opers{font:12.5px var(--serif);background:var(--paper2);border-radius:7px;padding:4px 8px;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.owhere{font:10.5px var(--mono);color:var(--ink45);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.due{font:11px var(--mono);color:var(--ink45)}
+.due.warn{color:#7a5a1d;font-weight:700}.due.bad{color:#8a3a26;font-weight:700}
 .owhy{font:11.5px var(--sans);color:#8a3a26;overflow-wrap:anywhere}
 /* the same line as a row: every field the card has, and a smaller picture */
 .ordList{display:grid;gap:5px}
-.olist{display:grid;grid-template-columns:34px minmax(88px,auto) minmax(0,1.1fr) minmax(0,1.4fr) 44px minmax(0,110px) auto auto;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:9px;padding:5px 10px;cursor:pointer;text-align:left;font:inherit;color:inherit;--accent:var(--ink25);min-width:0}
+.olist{display:grid;grid-template-columns:34px minmax(88px,max-content) minmax(0,max-content) minmax(0,1fr) 44px minmax(0,110px) 58px auto;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:9px;padding:5px 10px;cursor:pointer;text-align:left;font:inherit;color:inherit;--accent:var(--ink25);min-width:0}
 .olist:hover,.olist:focus-visible{background:var(--paper2);outline:none}
 .olist:focus-visible{outline:2px solid var(--gold2);outline-offset:1px}
 .olist[data-m=gold]{--accent:var(--m-gold)}.olist[data-m=silver]{--accent:var(--m-silver)}.olist[data-m=rose]{--accent:var(--m-rose)}.olist[data-m=gold10k]{--accent:var(--m-gold10k)}.olist[data-m=gold14k]{--accent:var(--m-gold14k)}
@@ -426,6 +437,12 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .olist .qtyc{font:600 11.5px var(--mono);color:var(--ink45);text-align:right}
 .olist .whyc{grid-column:2/-1;white-space:normal}
 @media (max-width:1100px){.olist{grid-template-columns:34px minmax(80px,auto) minmax(0,1fr) 40px auto;}.olist .hideSm{display:none}}
+/* the columns say what they are, and the two that decide the order of work can set it */
+.olist.hdr{background:transparent;border-color:transparent;border-left-color:transparent;cursor:default;padding-block:0 2px;position:sticky;top:0;z-index:2;backdrop-filter:blur(6px)}
+.olist.hdr span{font:9.5px var(--mono);letter-spacing:.11em;text-transform:uppercase;color:var(--ink45);font-weight:700}
+.olist.hdr button{border:0;background:transparent;padding:0;font:inherit;color:inherit;cursor:pointer;text-align:left}
+.olist.hdr button:hover{color:var(--ink)}
+.olist.hdr .on{color:var(--ink)}
 
 /* ── bridge: tabs, live strip, run banner, run mode ── */
 .modeSeg button .cnt{font:700 10px var(--mono);margin-left:5px;background:var(--clay);color:#fff;border-radius:9px;padding:1px 5px;vertical-align:1px;font-style:normal}
@@ -794,7 +811,7 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
       <div class="field"><label>Pull orders</label><select id="stPullMode"><option value="all">Every open order</option><option value="dueBy">Orders due by a date</option><option value="count">The N most urgent by date</option></select><div class="help">Auto mode pulls with this rule at each run; Manual shows the same controls on the Orders tab.</div></div>
       <div class="field"><label>Due by · N</label><div class="fieldRow"><input id="stPullDueBy" type="date"><input id="stPullCount" type="number" min="1" max="500" step="1"></div></div>
       <div class="field"><label>Auto: re-run every (min) · 0 = once</label><input id="stAutoEvery" type="number" min="0" max="1440" step="5"><div class="help">In Auto, after a set completes the sorter waits this long, pulls again and runs the next set. Never under 5 minutes.</div></div>
-      <div class="field"><label>Sandbox</label><select id="stSandbox"><option value="off">Off — production: real Etsy through the station, real records</option><option value="on">On — emulated Etsy from the stored snapshot, sandbox records only</option></select><div class="help">In the sandbox the Design Station is framed with ?sandbox=1: its Etsy calls go to the emulator that serves the snapshot taken on the Orders tab, and every lock, claim, completion, note, archive row, pool, set, run and file goes to Sandbox_ copies. The master index is shared (read only). Switching reloads the sorter.</div></div>
+      <div class="field"><label>Sandbox</label><select id="stSandbox"><option value="off">Off — production: real Etsy through the station, real records</option><option value="on">On — emulated Etsy from the stored snapshot, sandbox records only</option></select><div class="help">In the sandbox the Design Station is framed with ?sandbox=1: its Etsy calls go to the emulator that serves the snapshot taken on the Orders tab, and every lock, claim, completion, note, archive row, pool, set, run and file goes to Sandbox_ copies. The master index is shared (read only). Switching reloads the sorter.</div><div class="fixes" style="margin-top:7px"><button class="btn ghost xs" type="button" id="stSbSnap" title="copy today's open orders into the sandbox so a whole run can be rehearsed against them">Take a sandbox snapshot</button><button class="btn ghost xs" type="button" id="stSbReset" title="empty the sandbox pool, sets, runs and sheets — the real records are untouched">Reset sandbox records</button><button class="btn gold xs" type="button" id="stSbOn" title="take a snapshot of today's open orders, switch to the sandbox and reload — one press">Rehearse a run in the sandbox</button><span class="help" id="stSbStatus" style="margin:0"></span></div></div>
       <div class="field"><label>Etsy calls per hour (cap)</label><input id="stEtsyCap" type="number" min="50" max="5000" step="50"><div class="help">Every Etsy call the sorter causes at the station is metered. A run stops before a pull or re-validation that would pass this cap. A pull costs one list page per 100 open orders plus one detail read per order Etsy changed; a re-validation costs one list sweep (reused when under 90 s old).</div></div>
     </div>
     <div class="section">Master files and engraving</div>
@@ -2478,8 +2495,13 @@ function setMode(mode) {
   $("#sheets").classList.toggle("hidden", mode !== "nest"); if (mode === "nest") requestAnimationFrame(() => METALS.forEach(m => drawPreview(activePage(m.key)))); $("#libView").classList.toggle("hidden", mode !== "library"); $("#charmsView").classList.toggle("hidden", mode !== "charms");
   for (const [m, id] of [["orders", "ordersView"], ["design", "designView"], ["master", "masterView"], ["engrave", "engraveView"], ["review", "reviewView"]]) $("#" + id).classList.toggle("hidden", mode !== m);
   if (mode === "library") loadLibrary(); if (mode === "charms") loadCharms();
+  // The rail is the nesting station's own bench — files in, sheets out. On every other tab it was 344 px (a quarter of a
+  // 1500 px screen) of controls that do not apply there, taking two columns off the order grid. It folds away unless a
+  // person has pinned it open, and the hamburger brings it back anywhere.
+  if (!railPinned) $("#app").classList.toggle("railOff", mode !== "nest");
   if (window.Views && Views.onShow) Views.onShow(mode);
 }
+let railPinned = false;
 
 /* ═══ 15 · settings dialog ══════════════════════════════════════════════ */
 function openSettings() {
@@ -2490,6 +2512,18 @@ function openSettings() {
   $("#stDsOrigin").value = s.dsOrigin || DEFAULTS.dsOrigin; $("#stHeartbeatS").value = s.heartbeatS; $("#stHeartbeatMiss").value = s.heartbeatMiss; $("#stAutoCommit").value = s.autoCommit || "on"; $("#stPullMode").value = s.pullMode || "all"; $("#stPullDueBy").value = s.pullDueBy || ""; $("#stPullCount").value = s.pullCount || 40; $("#stAutoEvery").value = s.autoEvery || 0; $("#stEtsyCap").value = s.etsyHourlyCap || DEFAULTS.etsyHourlyCap; $("#stSandbox").value = s.sandbox === "on" ? "on" : "off";
   $("#stSkuPattern").value = s.skuPattern || DEFAULTS.skuPattern; $("#stLabelGapMm").value = s.labelGapMm; $("#stMasterServerAbove").value = s.masterServerAbove; $("#stSizeMinMm").value = s.sizeMinMm; $("#stSizeMaxMm").value = s.sizeMaxMm;
   $("#stEngraveMarginMm").value = s.engraveMarginMm; $("#stEngraveMinCapMm").value = s.engraveMinCapMm; $("#stEngraveMaxHeightFrac").value = s.engraveMaxHeightFrac; $("#stEngraveConfidence").value = s.engraveConfidence; $("#stEngraveMinGapMm").value = s.engraveMinGapMm; $("#stEngraveMinStrokeMm").value = s.engraveMinStrokeMm; $("#stEngraveTryRotated").value = s.engraveTryRotated || "on"; $("#stBackFileView").value = s.backFileView || "asSeenFromBack";
+  { const sb = window.Sandbox; const st = $("#stSbStatus");
+    if (st && sb) st.textContent = sb.status && sb.status() ? "" : "";
+    const sn = $("#stSbSnap"), rs = $("#stSbReset");
+    if (sn) sn.onclick = () => sb.snapshot().then(() => toast("Snapshot taken", "ok")).catch(e => toast(e.message, "bad", 8000));
+    if (rs) rs.onclick = () => sb.reset().then(() => toast("Sandbox records cleared", "ok")).catch(e => toast(e.message, "bad", 8000));
+    const on = $("#stSbOn");
+    if (on) { const isOn = sb.on(); on.textContent = isOn ? "Back to the real orders" : "Rehearse a run in the sandbox";
+      on.onclick = () => {
+        if (sb.on()) { S.settings.sandbox = "off"; saveSettings(); toast("Sandbox off — reloading", "ok", 3000); setTimeout(() => location.reload(), 600); return; }
+        on.disabled = true; on.textContent = "Switching on…";
+        sb.enable().catch(e => { toast(`Sandbox: ${e.message}`, "bad", 9000); on.disabled = false; on.textContent = "Rehearse a run in the sandbox"; });
+      }; } }
   $("#stMinPt").value = s.minPt; $("#stVerifyRes").value = s.verifyRes; $("#stNaming").value = s.naming; $("#stReview").value = s.review || "on"; $("#stEngine").value = s.engine || "solver"; $("#stMaxFill").value = Math.round((s.maxFill || 0.74) * 100); $("#stAiRounds").value = s.aiRounds || 10; $("#stSnapIn").value = +(((s.snapIn == null ? 0.25 : s.snapIn) * 25.4).toFixed(1)); $("#stNotify").value = s.notify; $("#stSound").value = s.sound;
   openDlg($("#dlgSettings"));
 }
@@ -2515,7 +2549,7 @@ async function boot() {
   sel.onchange = () => { S.stockPreset = sel.value; localStorage.setItem("cn.stock", sel.value); for (const sh of allSheets()) sheetDirty(sh); };
   buildCards();
   $("#railCores").textContent = `${navigator.hardwareConcurrency || "?"} cores${(navigator.hardwareConcurrency || 4) < 4 ? " · sheets nest one at a time" : ` · ${METALS.length} sheets in parallel`}`;
-  $("#btnRail").onclick = () => $("#app").classList.toggle("railOff");
+  $("#btnRail").onclick = () => { const off = $("#app").classList.toggle("railOff"); railPinned = !off && S.mode !== "nest"; $("#btnRail").title = off ? "show the nesting bench" : "hide the nesting bench"; };
   $("#btnPick").onclick = () => $("#fileInput").click();
   $("#fileInput").onchange = e => { intake(e.target.files); e.target.value = ""; };
   $("#btnNestAll").onclick = () => allSheets().forEach(sh => { if (activeCharms(sh).length && !["nesting", "finishing"].includes(sh.status)) startNest(sh); });
@@ -2565,8 +2599,8 @@ boot();
         </div>
         <div>
           <div id="owFix"></div>
-          <div class="owField"><label class="fLabel" for="owNotes">Personalisation &amp; buyer message</label><textarea class="owIn" id="owNotes" rows="4" readonly></textarea></div>
-          <div class="owField"><label class="fLabel" for="owNote">Staff note <span class="soft">— saved automatically, visible to every station</span></label><textarea class="owIn" id="owNote" rows="5" placeholder="Add a note for this order…"></textarea></div>
+          <div class="owField"><label class="fLabel">What the customer wrote</label><div class="owSaid" id="owNotes">— No notes —</div></div>
+          <div class="owField"><label class="fLabel" for="owNote">Staff note <span class="soft">— saved automatically, visible to every station</span></label><textarea class="owIn" id="owNote" rows="3" placeholder="Add a note for this order…"></textarea></div>
           <div class="owMeta" id="owMeta"></div>
         </div>
       </div>
@@ -2590,6 +2624,7 @@ boot();
       <span style="font-size:12.5px">Skip this line <span style="color:var(--ink45)">— cut nothing for it and leave the order open</span></span>
       <span class="spacer"></span>
       <button class="btn ghost sm" id="owFind" title="scroll the Design Station to this order and point at it">Find on the station</button>
+      <span class="mono" id="owPos" style="font-size:11.5px;color:var(--ink45)"></span>
       <button class="btn ghost sm" id="owPrev" title="the line before this one">‹ Previous</button>
       <button class="btn ghost sm" id="owNext" title="the next line">Next ›</button>
     </div>

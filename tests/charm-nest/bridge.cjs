@@ -361,12 +361,13 @@ const receipts = [
         document.querySelector('[data-pile=""]').click();
         document.querySelector('[data-view=list]').click();
         const v = document.getElementById('ordersView');
-        const rows = [...v.querySelectorAll('.olist')].map(r2 => ({
+        const hdr = [...v.querySelectorAll('.olist.hdr span, .olist.hdr button')].map(x => x.textContent.replace(/[\u25b4\u25be]/g, '').trim()).filter(Boolean);
+        const rows = [...v.querySelectorAll('.olist:not(.hdr)')].map(r2 => ({
           num: r2.querySelector('.onum').textContent, sku: r2.querySelector('.osku b').textContent,
           state: r2.querySelector('.ost').textContent, qty: r2.querySelector('.qtyc').textContent, thumb: !!r2.querySelector('img.th'),
         }));
         const stage = document.querySelector('.stage');
-        return { rows, cards: v.querySelectorAll('.ocard').length, sideScroll: stage.scrollWidth - stage.clientWidth };
+        return { rows, hdr, cards: v.querySelectorAll('.ocard').length, sideScroll: stage.scrollWidth - stage.clientWidth };
       });
       console.log('orders list', JSON.stringify({ n: asList.rows.length, first: asList.rows[0], sideScroll: asList.sideScroll }));
       // 411 lines is a real pull: the tab must draw them quickly and must not ask Etsy for 411 photographs (§5)
@@ -402,6 +403,7 @@ const receipts = [
       assert.strictEqual(asList.rows.length, ord.cards.length, 'and holds exactly the same lines');
       assert(asList.rows.every(r2 => r2.num && r2.sku && r2.state && r2.qty && r2.thumb), 'each row carries the same fields and a thumbnail: ' + JSON.stringify(asList.rows[0]));
       assert(asList.sideScroll <= 2, 'and does not run off the side: ' + asList.sideScroll);
+      assert.deepStrictEqual(asList.hdr, ['Order', 'SKU', 'Item', 'Qty', 'Metal', 'Ship by', 'State'], 'the columns say what they are: ' + asList.hdr.join(','));
       // the order window: everything about one line, and the way to settle it
       const win = await page.evaluate(async () => {
         document.querySelector('[data-view=cards]').click();

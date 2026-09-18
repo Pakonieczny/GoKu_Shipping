@@ -287,7 +287,7 @@ const Dock = window.Dock = (() => {
     D.el.classList.toggle("full", mode === "full"); D.el.classList.toggle("pip", mode === "pip");
     // on the engraving and review screens the controls live at the bottom of the page, so the live view tucks itself
     // into a smaller corner there rather than sitting on top of them
-    D.el.classList.toggle("tucked", mode === "pip" && ["engrave", "review"].includes(S.mode) && !D.shownByUser);
+    D.el.classList.toggle("tucked", mode === "pip" && ["engrave", "review", "orders"].includes(S.mode) && !D.shownByUser);
     // and the toasts stack above it rather than across it
     const dockH = mode === "pip" ? Math.round(D.el.getBoundingClientRect().height) + 12 : 0;
     document.documentElement.style.setProperty("--dockH", dockH + "px");
@@ -446,6 +446,7 @@ const Orders = window.Orders = (() => {
   /* Which pile a line is in. The three the shop asked for — went through, needs a person, needs engraving settled —
      plus the two that are neither. A line is in exactly one pile, so the counts add up to the lines pulled. */
   const PILES = [
+    { id: "late", label: "Due or overdue", cls: "bad", of: r => dueOf(r).soon && !["committed", "labelled", "skipped"].includes(r.state) },
     { id: "attn", label: "Needs a decision", cls: "warn", of: r => r.problems.length || ["held", "unmatched", "oversize", "gone"].includes(r.state) },
     { id: "eng", label: "Engraving to settle", cls: "info", of: r => r.engrave && r.engrave.needed && !r.engrave.approved && r.engrave.state !== "skipped" },
     { id: "done", label: "Done", cls: "ok", of: r => ["committed", "labelled"].includes(r.state) },
@@ -453,7 +454,7 @@ const Orders = window.Orders = (() => {
     { id: "rest", label: "Not started", cls: "neutral", of: r => true },
   ];
   const pileOf = r => (PILES.find(g => g.of(r)) || PILES[PILES.length - 1]).id;
-  const OV = { pile: null, metal: null, q: "", view: null };                    // what the tab is showing right now
+  const OV = { pile: null, metal: null, q: "", view: null, sort: "due", desc: false };                    // what the tab is showing right now
   const viewMode = () => OV.view || S.settings.orderView || "cards";
   /** The lines the filters leave, in ship-by order. */
   function visibleRows() {
@@ -465,7 +466,12 @@ const Orders = window.Orders = (() => {
       const sp = r.spec || {};
       return [r.order.receiptId, sp.designSku, r.line.sku, r.line.title, (sp.personalization || []).join(" "), sp.buyerMessage, sp.staffNote, r.reason]
         .some(x => String(x || "").toLowerCase().includes(q));
-    }).sort((x, y) => (x.order.shipBy || 0) - (y.order.shipBy || 0) || String(x.order.receiptId).localeCompare(String(y.order.receiptId)));
+    }).sort((x, y) => {
+      const k = OV.sort === "order" ? String(x.order.receiptId).localeCompare(String(y.order.receiptId))
+        : OV.sort === "state" ? String(x.state).localeCompare(String(y.state))
+        : (x.order.shipBy || 0) - (y.order.shipBy || 0);
+      return (OV.desc ? -k : k) || String(x.order.receiptId).localeCompare(String(y.order.receiptId));
+    });
   }
   /* The listing photographs come from the Design Station, which already has them cached and rate limited, so a wall of
      cards here costs Etsy nothing this page would not already have spent. They are asked for only as a card comes into
@@ -526,20 +532,54 @@ const Orders = window.Orders = (() => {
     const kin = host.querySelectorAll('[data-rid="' + String(rid).replace(/"/g, "") + '"]');
     if (kin.length > 1) kin.forEach(n => n.classList.add("kin"));
   }
+  /* Thirteen state words in four colours said nothing about order. The five that are progress now carry their place in
+     the run, so "3/5 nested" reads as progress; the exceptions stay unnumbered, so a problem reads differently. */
+  const PROGRESS = ["pooled", "nested", "written", "labelled", "committed"];
+  function stateWords(r) {
+    const [k, t] = STATE_PILL[r.state] || ["neutral", r.state];
+    const i = PROGRESS.indexOf(r.state);
+    return [k, i < 0 ? t : `${i + 1}/${PROGRESS.length} ${t}`];
+  }
+  const DAY = 86400;
+  /** How the ship-by date reads today: overdue, due, or simply a date. */
+  function dueOf(r) {
+    const by = r.order.shipBy; if (!by) return { cls: "", txt: "\u2014", late: false, soon: false };
+    const today0 = Math.floor(Date.now() / 1000 / DAY) * DAY, d = Math.floor(by / DAY) * DAY;
+    const txt = new Date(by * 1000).toLocaleDateString("en-US", { month: "short", day: "2-digit" });
+    return { cls: d < today0 ? "bad" : d <= today0 + DAY ? "warn" : "", txt, late: d < today0, soon: d <= today0 + DAY };
+  }
   const shipTxt = r => r.order.shipBy ? new Date(r.order.shipBy * 1000).toLocaleDateString("en-US", { month: "short", day: "2-digit" }) : "—";
   const wordsOf = sp => (sp.personalization || []).join(" / ") || sp.buyerMessage || "";
+  /** Where this line physically is: the set and the sheet it was nested on. "What's where", answered on the line itself. */
+  function placeOf(r) {
+    for (const id of r.poolIds || []) { const p2 = B.pool.rows.get(id); if (p2 && (p2.sheetName || p2.sheetId)) return { set: p2.setId || "", sheet: p2.sheetName || p2.sheetId }; }
+    return null;
+  }
   /** Everything a person needs to recognise one line, as a card or as a row: the same fields either way. */
   function renderBody() {
     const host = document.getElementById("ordBody"); if (!host) return;
+    const at = host.scrollTop;                                             // a run writing to the list must not scroll it away
     const rows = visibleRows();
+    const restore = () => { if (at) host.scrollTop = at; };
     if (!rowsOf().length) { host.innerHTML = '<div class="libEmpty">No orders pulled. Press <b>Pull orders</b> — the Design Station reads Etsy and hands every open order over the bridge.</div>'; return; }
-    if (!rows.length) { host.innerHTML = '<div class="libEmpty">Nothing matches these filters.</div>'; return; }
+    if (!rows.length) {
+      host.innerHTML = '<div class="libEmpty">Nothing matches these filters.<br><button class="btn ghost sm" id="ordClear" style="margin-top:10px">Show everything</button></div>';
+      host.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.q = ""; render(); };
+      return;
+    }
     const cards = viewMode() === "cards";
     host.innerHTML = '<div class="' + (cards ? "ordCards" : "ordList") + '" id="ordItems"></div>';
     const list = host.querySelector("#ordItems");
+    if (!cards) {
+      const th = (k, t) => '<button data-sort="' + k + '" class="' + (OV.sort === k ? "on" : "") + '" title="order the list by this">' + t + (OV.sort === k ? (OV.desc ? " \u25be" : " \u25b4") : "") + '</button>';
+      const hdr = el("div", "olist hdr");
+      hdr.innerHTML = '<span></span>' + th("order", "Order") + '<span>SKU</span><span class="hideSm">Item</span><span>Qty</span><span class="hideSm">Metal</span>' + th("due", "Ship by") + th("state", "State");
+      hdr.querySelectorAll("[data-sort]").forEach(b => b.onclick = () => { if (OV.sort === b.dataset.sort) OV.desc = !OV.desc; else { OV.sort = b.dataset.sort; OV.desc = false; } renderBody(); });
+      list.appendChild(hdr);
+    }
     for (const r of rows) {
       const sp = r.spec || {}, m = r.material || "none";
-      const st = STATE_PILL[r.state] || ["neutral", r.state];
+      const st = stateWords(r), due = dueOf(r), where = placeOf(r);
       const attn = r.problems.length || ["held", "unmatched", "oversize"].includes(r.state);
       const lid = String(r.line.listingId || "");
       const url = imageFor(r);
@@ -560,7 +600,8 @@ const Orders = window.Orders = (() => {
             '<span class="orow1"><b class="onum">' + esc(r.order.receiptId) + '</b><span class="spacer"></span><span class="ost ' + st[0] + '">' + esc(st[1]) + '</span></span>' +
             '<span class="ometal"><i></i><span>' + esc(m === "none" ? "no material yet" : labelOf(m)) + '</span></span>' +
             '<span class="osku"><i>SKU</i><b>' + esc(sp.designSku || r.line.sku || "— none —") + '</b></span>' +
-            (wordsOf(sp) ? P("opers", esc(wordsOf(sp))) : "") +
+            (where ? '<span class="owhere" title="the set and sheet this piece was nested on">' + esc(where.set) + (where.sheet ? " · " + esc(where.sheet) : "") + '</span>' : "") +
+            (wordsOf(sp) ? '<span class="opers" title="' + esc(wordsOf(sp)) + '">' + esc(wordsOf(sp)) + '</span>' : "") +
             (why ? P("owhy", esc(why)) : "") +
           '</span>';
       } else {
@@ -571,7 +612,7 @@ const Orders = window.Orders = (() => {
           '<span class="cell hideSm" style="font-size:12px;color:var(--ink70)">' + esc(wordsOf(sp) || r.line.title) + '</span>' +
           P("qtyc", "×" + qty) +
           '<span class="cell hideSm ometal"><i></i><span>' + esc(m === "none" ? "none" : labelOf(m)) + '</span></span>' +
-          '<span class="cell hideSm" style="font:11.5px var(--mono);color:var(--ink45)">' + esc(shipTxt(r)) + '</span>' +
+          '<span class="cell hideSm due ' + due.cls + '" title="ship by">' + esc(due.txt) + '</span>' +
           '<span class="ost ' + st[0] + '">' + esc(st[1]) + '</span>' +
           (why ? '<span class="cell whyc owhy">' + esc(why) + '</span>' : "");
       }
@@ -584,6 +625,7 @@ const Orders = window.Orders = (() => {
     }
     paintImages();
     watchImages(host);
+    restore();
   }
   function render() {
     const v = document.getElementById("ordersView"); if (!v || v.classList.contains("hidden")) { const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(new Set(B.orders.rows.map(r => r.order.receiptId)).size) : ""; return; }
@@ -597,21 +639,21 @@ const Orders = window.Orders = (() => {
     const counts = {}; for (const r of all) counts[pileOf(r)] = (counts[pileOf(r)] || 0) + 1;
     const byMetal = {}; for (const r of all) { const m = r.material || "none"; byMetal[m] = (byMetal[m] || 0) + 1; }
     const chip = (on, id, label, n, cls, title) => `<button class="egTab${on ? " on" : ""}" data-pile="${esc(id)}" title="${esc(title || "")}">${esc(label)}<b class="${cls}">${n}</b></button>`;
-    const mChip = m => `<button class="egTab${OV.metal === m ? " on" : ""}" data-metal="${esc(m)}" title="show only ${esc(m === "none" ? "lines with no material yet" : labelOf(m))}">${esc(m === "none" ? "No material" : labelOf(m))}<b>${byMetal[m]}</b></button>`;
+    const mChip = m => `<button class="egTab${OV.metal === m ? " on" : ""}" data-metal="${esc(m)}" title="show only ${esc(m === "none" ? "lines with no material yet" : labelOf(m))}">${esc(m === "none" ? "No material" : labelOf(m))}<b>${byMetal[m] || 0}</b></button>`;
     v.innerHTML = `<div class="ordHead">
         <div class="ordBar">
-          <button class="btn sm" id="ordPull" title="ask the Design Station for every open order that matches the rule below">Pull orders</button>${runBtns}
+          <button class="btn sm" id="ordPull"${running ? ' disabled title="a run is open — stop it first, or its lines would be replaced under it"' : ' title="ask the Design Station for every open order that matches the rule below"'}>Pull orders</button>${runBtns}
           <select id="ordPullMode" title="which open orders to bring in"><option value="all"${s.pullMode === "all" ? " selected" : ""}>Every open order</option><option value="dueBy"${s.pullMode === "dueBy" ? " selected" : ""}>Due by date</option><option value="count"${s.pullMode === "count" ? " selected" : ""}>N most urgent</option></select>
           <input type="date" id="ordDueBy" value="${esc(s.pullDueBy || "")}" title="orders due on or before this date" class="${s.pullMode === "dueBy" ? "" : "hidden"}"><input type="number" id="ordCount" value="${s.pullCount || 40}" min="1" max="500" title="how many of the most urgent orders" class="${s.pullMode === "count" ? "" : "hidden"}">
           <span class="spacer"></span>
           <span class="pill ${B.orders.stale ? "warn" : "neutral"}" id="ordMeta" title="${esc(B.orders.stale ? "the station's open list has changed since this pull — pull again to catch up" : "the last pull")}">${B.orders.pulledAt ? `${new Set(all.map(r => r.order.receiptId)).size} orders · ${all.length} lines · pulled ${fmtT(B.orders.pulledAt)}${B.orders.filtered ? ` · ${B.orders.filtered} left out by the rule` : ""}${B.orders.stale ? " · list changed" : ""}` : "nothing pulled yet"}</span>
         </div>
         <div class="ordFilters">
-          ${chip(!OV.pile, "", "Everything", all.length, "", "every line that was pulled")}${PILES.filter(g => counts[g.id]).map(g => chip(OV.pile === g.id, g.id, g.label, counts[g.id], g.cls, g.label)).join("")}
-          ${Object.keys(byMetal).length > 1 ? `<span class="sep"></span>` + ["gold", "silver", "rose", "gold10k", "gold14k", "none"].filter(m => byMetal[m]).map(mChip).join("") : ""}
-          <span class="spacer"></span>
-          <input class="ordSearch" id="ordQ" placeholder="order, SKU, words…" value="${esc(OV.q)}" title="search the order number, the SKU, the title and everything the customer or the shop wrote">
-          <span class="viewSeg"><button data-view="cards"${viewMode() === "cards" ? ' class="on"' : ""} title="a card for every line, with its picture">Cards</button><button data-view="list"${viewMode() === "list" ? ' class="on"' : ""} title="the same lines as rows">List</button></span>
+          <span class="chips">${chip(!OV.pile, "", "Everything", all.length, "", "every line that was pulled")}${PILES.filter(g => counts[g.id] || OV.pile === g.id).map(g => chip(OV.pile === g.id, g.id, g.label, counts[g.id] || 0, g.cls, g.label)).join("")}
+          ${Object.keys(byMetal).length > 1 || OV.metal ? `<span class="sep"></span>` + ["gold", "silver", "rose", "gold10k", "gold14k", "none"].filter(m => byMetal[m] || OV.metal === m).map(mChip).join("") : ""}
+          </span>
+          <span class="tail"><input class="ordSearch" id="ordQ" placeholder="order, SKU, words…" value="${esc(OV.q)}" title="search the order number, the SKU, the title and everything the customer or the shop wrote">
+          <span class="viewSeg"><button data-view="cards"${viewMode() === "cards" ? ' class="on"' : ""} title="a card for every line, with its picture">Cards</button><button data-view="list"${viewMode() === "list" ? ' class="on"' : ""} title="the same lines as rows">List</button></span></span>
         </div>
       </div><div class="ordBody" id="ordBody"></div>`;
     v.querySelector("#ordPullMode").onchange = e => { S.settings.pullMode = e.target.value; saveSettings(); render(); };
@@ -622,7 +664,7 @@ const Orders = window.Orders = (() => {
     v.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { OV.view = b.dataset.view; S.settings.orderView = OV.view; saveSettings(); render(); });
     const q = v.querySelector("#ordQ"); q.oninput = () => { OV.q = q.value; const at = q.selectionStart; renderBody(); const q2 = document.getElementById("ordQ"); if (q2) { q2.focus(); try { q2.setSelectionRange(at, at); } catch (_) {} } };
     Sandbox.mountPanel(v);
-    v.querySelector("#ordPull").onclick = async () => { try { await pull(null); } catch (e) { toast(e.message, "bad", 7000); agent({ bridge: true }, "warn", e.message); } };
+    { const pb = v.querySelector("#ordPull"); if (!pb.disabled) pb.onclick = async () => { try { await pull(null); } catch (e) { toast(e.message, "bad", 7000); agent({ bridge: true }, "warn", e.message); } }; }
     const rb = v.querySelector("#ordRun"); if (rb) rb.onclick = () => RunCtl.start();
     const rs = v.querySelector("#ordResume"); if (rs) rs.onclick = () => RunCtl.pickResume();
     renderBody();
@@ -2189,12 +2231,13 @@ const Sandbox = window.Sandbox = (() => {
   }
   function mountPanel(v) {
     let bar = v.querySelector("#sandboxBar"); if (!bar) { bar = document.createElement("div"); bar.id = "sandboxBar"; bar.className = "sandboxBar"; const ob = v.querySelector(".ordBar"); if (ob) ob.insertAdjacentElement("afterend", bar); else v.prepend(bar); }
-    bar.classList.toggle("quiet", !on());
+    bar.classList.toggle("hidden", !on());
     bar.innerHTML = on()
       ? `<b>SANDBOX ON</b><span id="sbStatus" title="nothing here touches the real Etsy or the real records">${status ? statusText() : "…"}</span><span class="spacer"></span><button class="btn ghost xs" id="sbReset" type="button" title="empty the sandbox pool, sets, runs and sheets — the real records are untouched">Reset records</button><button class="btn ghost xs" id="sbToggle" type="button" title="go back to the real Etsy and the real records">Switch OFF</button>`
-      : `<span id="sbStatus" class="off" title="${esc(status ? statusText() : "")}">Working on the real Etsy orders</span><span class="spacer"></span><button class="btn ghost xs" id="sbSnap" type="button" title="copy today's open orders into the sandbox so a run can be rehearsed against them">Take a sandbox snapshot</button><button class="btn ghost xs" id="sbToggle" type="button" title="rehearse a whole run against a copy of the orders — nothing reaches Etsy or the real records">Rehearse in the sandbox</button>`;
+      : "";                                            // off is the normal state and says nothing: Settings holds the way in
     const sn = bar.querySelector("#sbSnap"); if (sn) sn.onclick = () => snapshot().catch(e => toast(e.message, "bad", 8000));
     const rs2 = bar.querySelector("#sbReset"); if (rs2) rs2.onclick = () => reset().catch(e => toast(e.message, "bad", 8000));
+    if (!bar.querySelector("#sbToggle")) { if (!status) refresh(); return; }
     bar.querySelector("#sbToggle").onclick = () => { if (on()) { S.settings.sandbox = "off"; saveSettings(); toast("Sandbox off — reloading", "ok", 3000); setTimeout(() => location.reload(), 600); return; } const b = bar.querySelector("#sbToggle"); b.disabled = true; b.textContent = "Switching on…"; enable().catch(e => { toast(`Sandbox: ${e.message}`, "bad", 9000); agent({ bridge: true }, "warn", `Sandbox switch-on stopped: ${e.message}`); b.disabled = false; b.textContent = "Rehearse in the sandbox"; }); };
     if (!status) refresh();
   }
@@ -2210,7 +2253,7 @@ const Sandbox = window.Sandbox = (() => {
    line is waiting on, answered without leaving the order. Messages go over the bridge, so the station keeps the one Etsy
    session and the one Firestore listener and this page never grows a second of either. */
 const OrderWin = window.OrderWin = (() => {
-  const W = { key: null, rid: null, dlg: null, thread: [], tray: [], poll: 0, noteTimer: 0, wired: false };
+  const W = { key: null, rid: null, at: 0, dlg: null, thread: [], tray: [], poll: 0, noteTimer: 0, wired: false };
   const byId = id => document.getElementById(id);
   const rowOf = key => Orders.rows().find(r => r.key === key) || null;
   const me = () => employeeName() || "";
@@ -2251,7 +2294,11 @@ const OrderWin = window.OrderWin = (() => {
   const siblings = () => Orders.visibleRows();
   function step(d) {
     const list = siblings(); const i = list.findIndex(r => r.key === W.key);
-    const next = list[(i < 0 ? 0 : i + d + list.length) % list.length];
+    // a line that has just left the list (skipped, or filtered out by the fix that was applied) resumes from where it was
+    const from = i < 0 ? Math.min(W.at || 0, list.length - 1) : i;
+    const at = from + d;
+    if (at < 0 || at >= list.length) return;
+    const next = list[at];
     if (next && next.key !== W.key) open(next.key);
   }
   function paintWho() {
@@ -2339,7 +2386,14 @@ const OrderWin = window.OrderWin = (() => {
   function paint() {
     const r = rowOf(W.key); if (!r) { if (W.dlg && W.dlg.open) W.dlg.close(); return; }
     const sp = r.spec || {};
-    byId("owTitle").textContent = "Order " + r.order.receiptId;
+    const sibs = (Orders.rows() || []).filter(x => x.order.receiptId === r.order.receiptId && x.state !== "gone");
+    const li = sibs.findIndex(x => x.key === r.key);
+    const list = siblings(); W.at = Math.max(0, list.findIndex(x => x.key === r.key));
+    byId("owTitle").textContent = "Order " + r.order.receiptId + (sibs.length > 1 ? "  \u00b7  line " + (li + 1) + " of " + sibs.length : "");
+    const pos = byId("owPos"); if (pos) pos.textContent = list.length ? (W.at + 1) + " of " + list.length : "";
+    const pv = byId("owPrev"), nx = byId("owNext");
+    if (pv) pv.disabled = W.at <= 0;
+    if (nx) nx.disabled = W.at >= list.length - 1;
     const mp = byId("owMetal"); mp.textContent = r.material ? labelOf(r.material) : (sp.materialLabel || "no material");
     mp.className = "pill " + (r.material ? "neutral" : "bad");
     const ph = byId("owPhoto"); const url = Orders.imageFor(r);
@@ -2347,10 +2401,14 @@ const OrderWin = window.OrderWin = (() => {
     ph.innerHTML = url ? '<img alt="" src="' + esc(url) + '">' : '<span class="ph">no image</span>';
     ph.dataset.lid = String(r.line.listingId || ""); if (url) ph.dataset.painted = "1"; else { delete ph.dataset.painted; Orders.wantImage(r.line.listingId); }
     byId("owSku").textContent = "SKU: " + (sp.designSku || r.line.sku || "—");
-    const notes = [];
-    if ((sp.personalization || []).length) notes.push("Personalisation:\n" + sp.personalization.join("\n"));
-    if (sp.buyerMessage) notes.push("Buyer message:\n" + sp.buyerMessage);
-    byId("owNotes").value = notes.length ? notes.join("\n\n") : "— No notes —";
+    // the one field that must be read exactly: labelled, whole, and never boxed into a scroller under the staff note
+    const said = [];
+    if ((sp.personalization || []).length) said.push(["Personalisation", sp.personalization.join("\n")]);
+    if (sp.buyerMessage) said.push(["Buyer message", sp.buyerMessage]);
+    if (sp.messages && sp.messages.length) said.push(["Staff messages", sp.messages.map(m => `${m.senderName}: ${m.text}`).join("\n")]);
+    const notes = byId("owNotes");
+    notes.className = said.length ? "owSaid" : "owSaid none";
+    notes.innerHTML = said.length ? said.map(([k, v2]) => `<span class="lbl">${esc(k)}</span>${esc(v2)}`).join("") : "— the customer wrote nothing —";
     const note = byId("owNote"); if (document.activeElement !== note) note.value = sp.staffNote || "";
     const st = Orders.statePill(r);
     const mcell = (lbl, val) => '<div class="m"><i>' + esc(lbl) + '</i><span>' + esc(val) + '</span></div>';
