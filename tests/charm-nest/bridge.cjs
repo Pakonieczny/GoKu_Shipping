@@ -211,6 +211,7 @@ const receipts = [
   const dock = await page.evaluate(() => ({ mode: Dock.mode(), visible: !document.getElementById('dsDock').classList.contains('hidden'), scaled: /matrix\(0\./.test(getComputedStyle(document.getElementById('dsFrame')).transform), hellos: DesignLink.log.filter(r => r.dir === 'cmd' && r.type === 'hello').length }));
   assert(dock.mode === 'pip' && dock.visible && dock.scaled && dock.hellos === hellosAtStart, 'live panel shown while running on another tab: ' + JSON.stringify(dock));
   const approvals = [];
+  let engChecked = false;                      // the placement-card checks below must actually have run
   let t0 = Date.now(), lastStep = '', lastJobs = '', lastDone = '';
   while (Date.now() - t0 < 600000) {
     const r = await page.evaluate(() => B.run && { status: B.run.status, step: B.run.step, stoppedBy: B.run.stoppedBy, fix: B.run.fix, setId: B.run.setId });
@@ -228,19 +229,21 @@ const receipts = [
         CN.setMode('engrave'); Engrave.render();
         await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));   // the preview is drawn to the box it was given
         const v = document.getElementById('engraveView');
-        const tabs = [...v.querySelectorAll('.egTab')].map(b => ({ id: b.dataset.tab, on: b.classList.contains('on'), n: +b.querySelector('b').textContent }));
+        const tabs = [...v.querySelectorAll('.egTab[data-tab]')].map(b => ({ id: b.dataset.tab, on: b.classList.contains('on'), n: +((b.querySelector('b') || {}).textContent || 0) }));
         const panes = [...v.querySelectorAll('.egPane')].map(p2 => !p2.hasAttribute('hidden'));
         const card = v.querySelector('.rvItem[data-kind=placement]');
         const head = card ? { kind: card.querySelector('.rh .kind').textContent, ttl: card.querySelector('.rh .ttl').textContent, words: (card.querySelector('.pvWords') || {}).textContent || '', confs: card.querySelectorAll('.rh .conf').length } : null;
         const canvas = card ? card.querySelector('.backHost canvas') : null;
         const box = canvas ? canvas.getBoundingClientRect() : null;
         const stage = document.querySelector('.stage');
-        return { tabs, openPanes: panes.filter(Boolean).length, head, canvasW: box && Math.round(box.width), canvasH: box && Math.round(box.height),
+        const zeroBadges = [...v.querySelectorAll('.egTab[data-tab] b')].filter(x => +x.textContent === 0).length;
+        return { tabs, zeroBadges, openPanes: panes.filter(Boolean).length, head, canvasW: box && Math.round(box.width), canvasH: box && Math.round(box.height),
           overflow: stage ? stage.scrollHeight - stage.clientHeight : 0, cardBottom: card ? Math.round(card.getBoundingClientRect().bottom) : null,
           inner: { w: window.innerWidth, h: window.innerHeight } };
       });
       console.log('engraving screen', JSON.stringify(eg));
       assert.strictEqual(eg.tabs.length, 3, 'three tabs');
+      assert(eg.zeroBadges === 0, 'an empty queue is not dressed as work: ' + eg.zeroBadges + ' zero badge(s)');
       assert.strictEqual(eg.tabs.filter(t => t.on).length, 1, 'exactly one tab is open');
       assert.strictEqual(eg.openPanes, 1, 'and exactly one pane is shown');
       if (eg.head) {
@@ -456,6 +459,76 @@ const receipts = [
       assert.strictEqual(switched.panes, 1, 'and still one pane at a time');
       await page.evaluate(() => { const v = document.getElementById('engraveView'); const b = v.querySelector('.egTab[data-tab=place]'); if (b) b.click(); });
 
+      // ── moving the lettering must not resize it, and the slider must survive being dragged (§7.4) ──
+      const hasCard = !engChecked && await page.evaluate(async () => {
+        const j = [...Engrave.items().values()].find(x => x.state === 'review'); if (!j) return false;
+        EG_FORCE: { CN.setMode('engrave'); const v = document.getElementById('engraveView'); Engrave.render();
+          const b = v.querySelector('.egTab[data-tab=place]'); if (b) b.click(); }
+        await new Promise(r => setTimeout(r, 250));
+        return !!document.querySelector('#egQueue .rvItem[data-kind=placement]');
+      });
+      if (hasCard) {
+        engChecked = true;
+        const moved = await page.evaluate(async () => {
+          const j = [...Engrave.items().values()].find(x => x.state === 'review'); if (!j) return null;
+          const before = { size: j.fit.size, max: j.fit.fittedMax, centre: j.fit.centre.slice() };
+          // set a size well under the ceiling, the way a person would with the slider
+          Engrave.resize(j, before.max * 0.62);
+          const chosen = j.fit.size;
+          Engrave.nudge(j, -0.25, 0);
+          const afterNudge = { size: j.fit.size, max: j.fit.fittedMax, centre: j.fit.centre.slice() };
+          Engrave.nudge(j, 0, 0.25);
+          const afterTwo = { size: j.fit.size, max: j.fit.fittedMax };
+          return { before, chosen, afterNudge, afterTwo };
+        });
+        if (moved) {
+          console.log('nudge keeps the size', JSON.stringify(moved));
+          assert(moved.chosen < moved.before.max * 0.7, 'the size was brought down first: ' + moved.chosen);
+          assert(Math.abs(moved.afterNudge.size - moved.chosen) < 0.06, `a nudge keeps the size a person chose: ${moved.chosen} → ${moved.afterNudge.size}`);
+          assert(Math.abs(moved.afterTwo.size - moved.chosen) < 0.06, `and so does the next one: ${moved.afterTwo.size}`);
+          assert(moved.afterNudge.max > moved.chosen + 0.1, 'the slider keeps room to grow back: max ' + moved.afterNudge.max);
+          assert(moved.afterNudge.centre[0] !== moved.before.centre[0], 'and the text actually moved');
+        }
+        // the slider is still in the DOM after an input, so one grab is not one step
+        const slider = await page.evaluate(async () => {
+          const v = document.getElementById('engraveView');
+          const s2 = v.querySelector('input[data-a=resize]'); if (!s2) return null;
+          s2.focus();
+          const started = s2.value, alive = [];
+          for (let i = 0; i < 4; i++) {
+            s2.value = String(+s2.value - 0.1);
+            s2.dispatchEvent(new Event('input', { bubbles: true }));
+            await new Promise(r => setTimeout(r, 30));
+            alive.push(document.contains(s2) && document.activeElement === s2);
+          }
+          return { started, ended: s2.value, alive };
+        });
+        if (slider) {
+          console.log('slider survives', JSON.stringify(slider));
+          assert(slider.alive.every(Boolean), 'the slider is not destroyed under the pointer: ' + JSON.stringify(slider.alive));
+          assert(+slider.ended < +slider.started, 'and every step of the drag lands');
+        }
+        // a held key does not run the queue
+        const held = await page.evaluate(() => {
+          const card = document.querySelector('#egQueue .rvItem[data-kind=placement]'); if (!card) return null;
+          const n0 = [...Engrave.items().values()].filter(x => x.state === 'review').length;
+          card.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', repeat: true, bubbles: true }));
+          return { n0, n1: [...Engrave.items().values()].filter(x => x.state === 'review').length };
+        });
+        if (held) { console.log('key repeat', JSON.stringify(held)); assert.strictEqual(held.n1, held.n0, 'a repeated key press is ignored'); }
+      }
+      // the run banner names engraving as well as review when it is waiting on a person
+      const banner = await page.evaluate(() => {
+        RunCtl.renderBanner();
+        const h = document.getElementById('runBanner');
+        return { text: h.textContent.replace(/\s+/g, ' ').trim(), btns: [...h.querySelectorAll('button')].map(b => b.id) };
+      });
+      console.log('banner', JSON.stringify(banner));
+      if (/Waiting for a person/.test(banner.text)) {
+        assert(!/\b0 item/.test(banner.text), 'the banner never says it is waiting for nothing: ' + banner.text);
+        assert(/in Review|in Engraving/.test(banner.text), 'it says what it is waiting for: ' + banner.text);
+        assert(banner.btns.some(b => b === 'rbReview' || b === 'rbEngrave'), 'and offers the way there: ' + banner.btns.join(','));
+      }
       const done = await page.evaluate(async () => {
         const out = [];
         for (const j of Engrave.items().values()) {
@@ -502,6 +575,7 @@ const receipts = [
   const stationState = await frame.evaluate(() => Object.assign(DesignStation.bridge.snapshot(), { rows: document.querySelectorAll('.orderRow, [data-rid]').length }));
   assert.strictEqual(stationState.counts.open, 2, 'the two uncommitted orders stay open at the station: ' + JSON.stringify(stationState.counts));
   // §5.7 · the remote cursor: the station's own record of every motion the sorter made, and the sorter's feed on its banner
+  assert(engChecked, 'the placement card was on screen and its checks ran');
   const motions = await frame.evaluate(() => DesignStation.bridge.cursor.log.map(l => ({ role: l.role, caption: l.caption, click: l.click, fallback: l.fallback })));
   const clicked = roles => roles.every(r => motions.some(m => m.role === r && m.click));
   assert(clicked(['row', 'complete', 'print']), 'the cursor pressed the rows, Generate QR and the print/complete button: ' + JSON.stringify(motions.slice(-12)));

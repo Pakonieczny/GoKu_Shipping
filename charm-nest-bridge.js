@@ -288,6 +288,9 @@ const Dock = window.Dock = (() => {
     // on the engraving and review screens the controls live at the bottom of the page, so the live view tucks itself
     // into a smaller corner there rather than sitting on top of them
     D.el.classList.toggle("tucked", mode === "pip" && ["engrave", "review"].includes(S.mode) && !D.shownByUser);
+    // and the toasts stack above it rather than across it
+    const dockH = mode === "pip" ? Math.round(D.el.getBoundingClientRect().height) + 12 : 0;
+    document.documentElement.style.setProperty("--dockH", dockH + "px");
     if (mode === "hidden" || mode === "pilled" || !f) return;
     let w, h;
     if (mode === "full") {
@@ -1118,7 +1121,9 @@ const Engrave = window.Engrave = (() => {
   function ensureJob(row) { let j = items().get(row.key); if (!j) { j = { key: row.key, row, state: "classify", text: null, lines: [], source: null, quote: null, confidence: null, requests: null, questions: [], decision: null, fit: null, view: null, mask: null, claude: null, approvedBy: null, approvedAt: null, backs: [], copies: [], reason: null, t: Date.now() }; items().set(row.key, j); } j.copies = row.poolIds.slice(); return j; }
   const pendingCount = () => [...items().values()].filter(j => ["words", "review", "fitting", "ready", "classify"].includes(j.state) && j.row.state !== "gone").length;
   /** How many placements have already been settled in this run — the numerator of "3 of 9" on the card. */
-  const reviewedCount = () => [...items().values()].filter(j => ["approved", "skipped", "none", "written"].includes(j.state) && j.row.state !== "gone").length;
+  const DECIDED = ["approved", "written", "skipped"];                    // the same set the Decided tab lists
+  const decidedJobs = () => [...items().values()].filter(j => DECIDED.includes(j.state) && j.row.state !== "gone");
+  const reviewedCount = () => decidedJobs().length;
 
   /* ── 7.1 · which lines are engraved, and what the text is ── */
   async function classify(row) {
@@ -1257,8 +1262,31 @@ const Engrave = window.Engrave = (() => {
   function invalidate(row, why) { const j = items().get(row.key); if (!j) return; if (j.state === "approved" || j.state === "written" || j.state === "review" || j.state === "ready") { j.previous = { text: j.text, fit: j.fit, approvedBy: j.approvedBy }; j.state = "classify"; j.fit = null; j.approvedBy = null; j.approvedAt = null; j.reason = why; Review.remove("eng:" + j.key); } }
 
   /* ── 7.5 · the review controls ── */
-  function refit(job, place) { const f = G.refitAt(job.lines, fontFor(job.fit.weight), job.mask, fitOpts(), place); if (!f.ok) return false; f.fittedMax = f.size; f.weight = job.fit.weight; f.rect = job.fit.rect; job.fit = f; job.verify = { geometry: G.verifyInk(f.cmds, job.mask), at: Date.now() }; job.nudged = true; job.claude = null; return true; }
-  function nudge(job, dxMm, dyMm) { if (!job.fit) return; const c = [job.fit.centre[0] + dxMm * PT, job.fit.centre[1] + dyMm * PT]; if (!refit(job, { centre: c, angle: job.fit.angle })) toast("No room there", "bad"); render(); }
+  /* Moving the text is moving the text. It used to be a re-fit with no ceiling, so one tap of a nudge arrow threw away
+     the size a person had just chosen and set the largest that happened to fit at the new spot — and overwrote the
+     slider's own scale on the way out, so they could never get back. The ceiling is recomputed where the text now is,
+     the chosen size is kept, and it only shrinks when the new spot genuinely cannot hold it. */
+  function refit(job, place) {
+    const font = fontFor(job.fit.weight), want = job.fit.size;
+    const ceil = G.refitAt(job.lines, font, job.mask, fitOpts(), place);
+    if (!ceil.ok) return false;
+    // If the chosen size still fits where the text now is, keep it EXACTLY. Re-fitting with a ceiling of `want` bisects
+    // to just under it, so twenty nudges used to walk the lettering down by a tenth of its size.
+    let f = null;
+    if (ceil.size >= want - 1e-6) {
+      const L = G.layoutLines(job.lines, font, want, 0.18, place.angle || job.fit.angle, place.centre);
+      const v = G.verifyInk(L.cmds, job.mask);
+      if (v.ok) f = { ok: true, size: want, capMm: want * G.capPerEm(font) * MM, weight: job.fit.weight, angle: place.angle || job.fit.angle, centre: place.centre, layout: L, glyphs: L.glyphs, cmds: L.cmds, metrics: G.strokeMetrics(L.cmds, 24), small: want * G.capPerEm(font) * MM < (+S.settings.engraveMinCapMm || 1.6), thin: job.fit.thin };
+    }
+    if (!f) f = ceil.size <= want + 1e-6 ? ceil : G.refitAt(job.lines, font, job.mask, fitOpts(), Object.assign({}, place, { maxSize: want }));
+    if (!f.ok) return false;
+    f.fittedMax = ceil.size; f.weight = job.fit.weight; f.rect = job.fit.rect;
+    if (f.size < want - 0.01) toast(`Only ${f.size.toFixed(2)} pt fits there — the lettering was brought down`, "", 3500);
+    job.fit = f; job.verify = { geometry: G.verifyInk(f.cmds, job.mask), at: Date.now() }; job.nudged = true; job.claude = null;
+    reRead(job);
+    return true;
+  }
+  function nudge(job, dxMm, dyMm) { if (!job.fit) return; const c = [job.fit.centre[0] + dxMm * PT, job.fit.centre[1] + dyMm * PT]; if (!refit(job, { centre: c, angle: job.fit.angle })) toast("No room there", "bad"); refresh(job); }
   /** The middle of the area the text may use: the centre of gravity of the solid pixels, not of the bounding box, so a
       cat's head with ears puts the name where the metal actually is. */
   function maskCentroid(m) {
@@ -1268,8 +1296,8 @@ const Engrave = window.Engrave = (() => {
     return [m.ox + (sx / n + 0.5) / m.res, m.oy + (sy / n + 0.5) / m.res];
   }
   function centreText(job) { if (!job.fit) return; if (!moveTo(job, maskCentroid(job.mask))) toast("The text does not fit in the middle — left where it was", "bad"); }
-  function moveTo(job, centre) { if (!job.fit) return false; const ok = refit(job, { centre, angle: job.fit.angle }); if (ok) render(); return ok; }
-  function resize(job, size) { if (!job.fit) return; size = Math.min(size, job.fit.fittedMax); const L = G.layoutLines(job.lines, fontFor(job.fit.weight), size, 0.18, job.fit.angle, job.fit.centre); const v = G.verifyInk(L.cmds, job.mask); if (!v.ok) { toast("That size does not verify", "bad"); return; } job.fit = Object.assign({}, job.fit, { size, layout: L, glyphs: L.glyphs, cmds: L.cmds, capMm: size * G.capPerEm(fontFor(job.fit.weight)) * MM, small: size * G.capPerEm(fontFor(job.fit.weight)) * MM < (+S.settings.engraveMinCapMm || 1.6), metrics: G.strokeMetrics(L.cmds, 24) }); job.verify = { geometry: v, at: Date.now() }; job.claude = null; render(); }
+  function moveTo(job, centre) { if (!job.fit) return false; const ok = refit(job, { centre, angle: job.fit.angle }); if (ok) refresh(job); return ok; }
+  function resize(job, size) { if (!job.fit) return; size = Math.min(size, job.fit.fittedMax); const L = G.layoutLines(job.lines, fontFor(job.fit.weight), size, 0.18, job.fit.angle, job.fit.centre); const v = G.verifyInk(L.cmds, job.mask); if (!v.ok) { toast("That size does not verify", "bad"); return; } job.fit = Object.assign({}, job.fit, { size, layout: L, glyphs: L.glyphs, cmds: L.cmds, capMm: size * G.capPerEm(fontFor(job.fit.weight)) * MM, small: size * G.capPerEm(fontFor(job.fit.weight)) * MM < (+S.settings.engraveMinCapMm || 1.6), metrics: G.strokeMetrics(L.cmds, 24) }); job.verify = { geometry: v, at: Date.now() }; job.claude = null; reRead(job); refresh(job); }
   async function resplit(job) { const vars = G.splitVariants(job.lines); const i = (job.splitIndex || 0) + 1; const pick = vars[i % vars.length]; job.splitIndex = i; job.lines = pick; job.text = pick.join("\n"); agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: re-split as "${pick.join(" / ")}"`); await fitJob(job); }
   async function skip(job, by) { by = by || employeeName() || askEmployee(); if (!by) return; job.state = "skipped"; job.approvedBy = null; job.row.engrave = { needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; job.row.flag = `engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`); await Pool.update(job.copies, { engrave: false, engraveSkippedBy: by }); Orders.render(); render(); RunCtl.poke(); }
   function sendBack(job, why) { job.state = "words"; job.reason = why || "sent back from the placement review — a decision on the words is needed"; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); Orders.render(); }
@@ -1394,46 +1422,124 @@ const Engrave = window.Engrave = (() => {
   }
 
   /* ── the Engraving tab ── */
-  const EG = { tab: null, focus: null, chosen: false };                                   // which tab is open and which placement is in front
+  const EG = { tab: null, focus: null, chosen: false, card: null, cardKey: null, reread: 0 };
+  /** Bring the counts and the up-next rail up to date without touching the card a person is working on. */
+  function renderChrome(v, queue) {
+    const jobs = [...items().values()].filter(j => j.row.state !== "gone");
+    const n = { place: queue.length, words: jobs.filter(j => j.state === "words" || j.state === "blocked").length, done: decidedJobs().length };
+    v.querySelectorAll(".egTab[data-tab]").forEach(b => {
+      const k = n[b.dataset.tab]; let t = b.querySelector("b");
+      if (!k) { if (t) t.remove(); return; }
+      if (!t) { t = el("b", b.dataset.tab === "words" ? "warn" : b.dataset.tab === "place" ? "info" : "ok"); b.appendChild(t); }
+      t.textContent = String(k);
+    });
+    const rail = v.querySelector("#egNext"); if (!rail) return;
+    const rest = queue.filter(j2 => j2.key !== EG.cardKey);
+    rail.innerHTML = rest.length ? `<span class="lbl" title="every placement still queued — scroll the rail to reach any of them">up next · ${rest.length}</span>` + rest.map(j2 => `<button class="egChip" data-key="${esc(j2.key)}" title="${esc(j2.row.spec.designSku)} · ${esc(j2.lines.join(" / "))}"><b>${esc(j2.row.order.receiptId)}</b><span>${esc(j2.lines.join(" / ").slice(0, 22))}</span></button>`).join("") : "";
+    rail.querySelectorAll(".egChip").forEach(b => b.onclick = () => { EG.focus = b.dataset.key; render(); });
+    const card = EG.card; if (card) { const kind = card.querySelector(".rh .kind"); if (kind) kind.textContent = `${decidedJobs().length + 1} of ${decidedJobs().length + queue.length}`; }
+  }
+  /** Repaint the card in place: the picture, the numbers, the chips. The pane is only rebuilt when what it holds changes. */
+  function refresh(job) {
+    const c = EG.card;
+    if (!c || !c.isConnected || EG.cardKey !== job.key) { render(); return; }
+    const f = job.fit; if (!f) { render(); return; }
+    const bc = c.querySelector(".backHost canvas"); if (bc && bc._paint) bc._paint();
+    const cap = c.querySelector("[data-cap]"); if (cap) cap.textContent = f.capMm.toFixed(2) + " mm";
+    const sl = c.querySelector('input[data-a="resize"]');
+    if (sl && document.activeElement !== sl) { sl.max = f.fittedMax.toFixed(2); sl.min = (0.5 * f.fittedMax).toFixed(2); sl.value = f.size.toFixed(2); }
+    else if (sl) { sl.max = f.fittedMax.toFixed(2); sl.min = (0.5 * f.fittedMax).toFixed(2); }
+    const nums = c.querySelector(".pvNums dd"); if (nums) nums.textContent = `${f.size.toFixed(2)} pt · cap ${f.capMm.toFixed(2)} mm · ${f.weight}${f.angle ? ` · ${f.angle}°` : ""}`;
+    const rh = c.querySelector(".rh"); if (rh) {
+      rh.querySelectorAll(".small").forEach(n => n.remove());
+      if (f.small) rh.insertAdjacentHTML("beforeend", `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>`);
+      if (f.thin) rh.insertAdjacentHTML("beforeend", `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>`);
+    }
+    const cl = c.querySelector(".claude"); if (cl) cl.outerHTML = claudeBlock(job);
+    LiveStrip.render();
+  }
+  /** What Claude last said about the rendered back — and, once it has been moved, that nothing has looked at it since. */
+  function claudeBlock(job) {
+    if (job.claude) return `<div class="claude">${job.claude.skipped ? `Claude could not look at the render: ${esc(job.claude.skipped)}` : `<b>${job.claude.legible ? "Reads clearly" : "Hard to read"}</b> — ${esc(job.claude.notes)}`}</div>`;
+    if (job.rereading) return `<div class="claude" style="opacity:.6">Claude is looking at the rendered back…</div>`;
+    return `<div class="claude" style="opacity:.75">Nothing has looked at this since you moved it.</div>`;
+  }
+  /** A placement that has been moved is exactly the one worth looking at again, so it is looked at again. */
+  function reRead(job) {
+    clearTimeout(EG.reread);
+    EG.reread = setTimeout(() => {
+      if (!job.fit || job.state !== "review") return;
+      job.rereading = true; refresh(job);
+      claudeRead(job).catch(() => {}).then(() => { job.rereading = false; refresh(job); });
+    }, 700);
+  }                                   // which tab is open and which placement is in front
   function render() {
     LiveStrip.render();
     const v = document.getElementById("engraveView"); if (!v || v.classList.contains("hidden")) return;
+    // a background fit finishing must not tear down the card someone is judging: when nothing about what this pane holds
+    // has changed, only the counts and the rail are brought up to date
+    if (EG.card && EG.card.isConnected && EG.tab === "place") {
+      const q2 = [...items().values()].filter(j => j.state === "review" && j.row.state !== "gone");
+      const f2 = q2.find(j => j.key === EG.focus) || q2[0];
+      if (f2 && f2.key === EG.cardKey) { renderChrome(v, q2); return; }
+    }
     const jobs = [...items().values()].filter(j => j.row.state !== "gone");
     const words = jobs.filter(j => j.state === "words" || j.state === "blocked"), queue = jobs.filter(j => j.state === "review"), done = jobs.filter(j => ["approved", "written", "skipped"].includes(j.state));
     // One screen, three tabs, one thing in front of you at a time: the words a person has to settle, the placements to
     // approve, and what has already been decided. The counts are the tabs, so what is left is never more than a glance.
-    // the screen opens on whatever has work; once a person picks a tab it stays picked, empty or not
-    if (!EG.tab || (!EG.chosen && ((EG.tab === "words" && !words.length && queue.length) || (EG.tab === "place" && !queue.length && words.length)))) EG.tab = queue.length ? "place" : words.length ? "words" : "done";
+    // Until a person picks a tab, the screen follows the work: it used to settle on Decided while the run was still
+    // classifying and then stay there as placements arrived behind it, so someone watching this tab saw an empty pane
+    // and no sign that anything was waiting. Once a tab is picked by hand it stays picked, empty or not.
+    if (!EG.tab || !EG.chosen) EG.tab = queue.length ? "place" : words.length ? "words" : "done";
     const tab = EG.tab;
     const focus = queue.find(j2 => j2.key === EG.focus) || queue[0] || null;
-    const tabBtn = (id, label, n, cls) => `<button class="egTab${tab === id ? " on" : ""}" data-tab="${id}">${label}<b class="${cls}">${n}</b></button>`;
+    const tabBtn = (id, label, n, cls) => `<button class="egTab${tab === id ? " on" : ""}" data-tab="${id}" title="${esc(label)}">${label}${n ? `<b class="${cls}">${n}</b>` : ""}</button>`;
+    const working = jobs.filter(j => ["classify", "fitting", "ready"].includes(j.state)).length;
     v.innerHTML = `<div class="ordBar egBar">
         ${tabBtn("place", "Placements", queue.length, "info")}${tabBtn("words", "Words", words.length, "warn")}${tabBtn("done", "Decided", done.length, "ok")}
-        <span class="spacer"></span><span class="pill ${F_.ok ? "ok" : "bad"}">${F_.ok ? "Source Sans 3" : "Source Sans 3 missing"}</span><span class="mono" style="font-size:11.5px">${esc(employeeName() || "— set your name in the Design Station tab —")}</span></div>
+        ${working ? `<span class="egTab working" title="being read and fitted now — they arrive in Words or Placements on their own"><span class="spin"></span>Working<b>${working}</b></span>` : ""}
+        <span class="spacer"></span><span class="pill ${F_.ok ? "ok" : "bad"}" title="${F_.ok ? "the engraving font is loaded" : esc(F_.error || "the engraving font files are missing")}">${F_.ok ? "Source Sans 3" : "Source Sans 3 missing"}</span><button class="btn ghost xs" id="egWho" title="every approval is recorded under this name — click to change it">${esc(employeeName() || "set your name")}</button></div>
       <div class="egPane grow"${tab === "place" ? "" : " hidden"}><div class="rvList" id="egQueue"></div>
         <div class="egNext" id="egNext"></div></div>
       <div class="egPane grow scroll"${tab === "words" ? "" : " hidden"}><div class="rvList" id="egWords"></div></div>
       <div class="egPane grow scroll"${tab === "done" ? "" : " hidden"}><div id="egBacks"></div></div>`;
-    v.querySelectorAll(".egTab").forEach(b => b.onclick = () => { EG.tab = b.dataset.tab; EG.chosen = true; render(); });
+    v.querySelectorAll(".egTab[data-tab]").forEach(b => b.onclick = () => { EG.tab = b.dataset.tab; EG.chosen = true; render(); });
+    v.querySelector("#egWho").onclick = () => { askEmployee(); render(); };
     if (tab === "words") {
       const w = v.querySelector("#egWords"); for (const j2 of words) w.appendChild(Review.card(Review.items().find(i2 => i2.key === "eng:" + j2.key) || { kind: j2.state === "blocked" ? "flipFailed" : "engraveWords", key: "eng:" + j2.key, row: j2.row, job: j2, why: j2.reason }));
       if (!words.length) w.innerHTML = `<div class="libEmpty">nothing waiting</div>`;
     }
     if (tab === "place") {
       const q = v.querySelector("#egQueue");
-      if (focus) { const c = placementCard(focus, queue.length); c.classList.add("full"); q.appendChild(c); }
-      else q.innerHTML = `<div class="libEmpty">no placement to review</div>`;
+      if (focus) { const c = placementCard(focus, queue.length); c.classList.add("full"); q.appendChild(c); EG.card = c; EG.cardKey = focus.key; }
+      else { EG.card = null; EG.cardKey = null; q.innerHTML = `<div class="libEmpty">no placement to review</div>`; }
       // what is coming: the order and the words, so the list and the picture are the same thing
       const rail = v.querySelector("#egNext");
       const rest = queue.filter(j2 => j2 !== focus);
-      rail.innerHTML = rest.length ? `<span class="lbl">up next</span>` + rest.slice(0, 12).map(j2 => `<button class="egChip" data-key="${esc(j2.key)}" title="${esc(j2.row.spec.designSku)} · ${esc(j2.lines.join(" / "))}"><b>${esc(j2.row.order.receiptId)}</b><span>${esc(j2.lines.join(" / ").slice(0, 22))}</span></button>`).join("") + (rest.length > 12 ? `<span class="lbl">+${rest.length - 12}</span>` : "") : "";
+      rail.innerHTML = rest.length ? `<span class="lbl" title="every placement still queued — scroll the rail to reach any of them">up next · ${rest.length}</span>` + rest.map(j2 => `<button class="egChip" data-key="${esc(j2.key)}" title="${esc(j2.row.spec.designSku)} · ${esc(j2.lines.join(" / "))}"><b>${esc(j2.row.order.receiptId)}</b><span>${esc(j2.lines.join(" / ").slice(0, 22))}</span></button>`).join("") : "";
       rail.querySelectorAll(".egChip").forEach(b => b.onclick = () => { EG.focus = b.dataset.key; render(); });
     }
     if (tab === "done") {
-      const bk = v.querySelector("#egBacks"); const sheets = allSheets().filter(sh => (sh.backPool || []).length);
+      const bk = v.querySelector("#egBacks");
+      const decided = decidedJobs().sort((a, b) => (b.approvedAt || 0) - (a.approvedAt || 0));
+      const sheets = allSheets().filter(sh => (sh.backPool || []).length);
       const lnk = (o, t) => o && o.url ? ` · <a href="${esc(o.url)}" target="_blank" rel="noopener">${t}</a>` : "";
-      bk.innerHTML = sheets.length ? sheets.map(sh => `<div class="section" style="margin-top:6px">${esc(sh.fileBase || labelOf(sh.metal))} · ${sh.backPool.length} back${sh.backPool.length === 1 ? "" : "s"}${sh.backOutputs ? lnk(sh.backOutputs.index, "back-index.pdf") + lnk(sh.backOutputs.report, "back-report.json") : ""}</div>
-        <div class="backPool">${sh.backPool.map(b => `<div class="bp">${b.outputs && b.outputs.png && b.outputs.png.url ? `<img src="${esc(b.outputs.png.url)}" alt="" loading="lazy">` : ""}<span class="t">${esc((b.lines || [b.text || ""]).join(" / "))}</span><span class="m">${esc(b.order || "")}${b.capMm ? ` · cap ${(+b.capMm).toFixed(2)} mm` : ""}${b.approvedBy ? ` · ${esc(b.approvedBy)}` : ""}</span>${b.outputs && b.outputs.ai && b.outputs.ai.url ? `<a class="m" href="${esc(b.outputs.ai.url)}" target="_blank" rel="noopener">${esc(b.name || "back")}.ai</a>` : ""}</div>`).join("")}</div>`).join("") : `<div class="libEmpty">nothing decided yet</div>`;
+      bk.innerHTML = (decided.length
+        ? `<div class="section" style="margin-top:2px">Decided · ${decided.length}</div><div class="rvList" id="egDone">` + decided.map(j2 => {
+            const w = j2.state === "skipped" ? "cut plain" : esc(j2.lines.join(" / "));
+            const who = j2.approvedBy || (j2.decision && j2.decision.by) || "";
+            return `<div class="doneRow" data-key="${esc(j2.key)}"><b class="mono">${esc(j2.row.order.receiptId)}</b><span class="sku mono">${esc(j2.row.spec.designSku || "")}</span><span class="w">${w}</span><span class="ost ${j2.state === "skipped" ? "warn" : "ok"}">${esc(j2.state)}</span><span class="by">${esc(who)}${j2.approvedAt ? " · " + fmtT(j2.approvedAt) : ""}</span><button class="btn ghost xs" data-a="reopen" title="send it back to the words step — the back file already written is superseded">Reopen</button></div>`;
+          }).join("") + `</div>`
+        : `<div class="libEmpty">nothing decided yet</div>`)
+        + (sheets.length ? `<div class="section" style="margin-top:12px">Back files written</div>` + sheets.map(sh => `<div class="section" style="margin-top:6px">${esc(sh.fileBase || labelOf(sh.metal))} · ${sh.backPool.length} back${sh.backPool.length === 1 ? "" : "s"}${sh.backOutputs ? lnk(sh.backOutputs.index, "back-index.pdf") + lnk(sh.backOutputs.report, "back-report.json") : ""}</div>
+        <div class="backPool">${sh.backPool.map(b => `<div class="bp">${b.outputs && b.outputs.png && b.outputs.png.url ? `<img src="${esc(b.outputs.png.url)}" alt="" loading="lazy">` : ""}<span class="t">${esc((b.lines || [b.text || ""]).join(" / "))}</span><span class="m">${esc(b.order || "")}${b.capMm ? ` · cap ${(+b.capMm).toFixed(2)} mm` : ""}${b.approvedBy ? ` · ${esc(b.approvedBy)}` : ""}</span>${b.outputs && b.outputs.ai && b.outputs.ai.url ? `<a class="m" href="${esc(b.outputs.ai.url)}" target="_blank" rel="noopener">${esc(b.name || "back")}.ai</a>` : ""}</div>`).join("")}</div>`).join("") : "");
+      bk.querySelectorAll("[data-a=reopen]").forEach(b => b.onclick = () => {
+        const j2 = items().get(b.closest(".doneRow").dataset.key); if (!j2) return;
+        const who = employeeName() || askEmployee(); if (!who) return;
+        if (!confirm(`Reopen ${j2.row.order.receiptId}? It goes back to the words step, and any back file already written for it is superseded.`)) return;
+        sendBack(j2, `reopened by ${who}`);
+        EG.tab = "words"; EG.chosen = true; render();
+      });
     }
   }
   /** The placement review card: front and back side by side, the mask hatch, the text as it will be cut, the controls. */
@@ -1441,16 +1547,16 @@ const Engrave = window.Engrave = (() => {
     const it = Review.items().find(i => i.key === "eng:" + job.key) || { kind: "placement", key: "eng:" + job.key, row: job.row, job };
     const card = el("div", "rvItem"); card.dataset.kind = "placement"; card.tabIndex = 0;
     const r = job.row, sp = r.spec, f = job.fit;
-    const done = (Engrave.reviewedCount ? Engrave.reviewedCount() : 0) + 1;
+    const decided = decidedJobs().length;
     // One card, one order, one screen: the back is the work and the right column is everything you need to judge it.
     const pct = Math.round((job.confidence != null ? job.confidence : 0) * 100);
     const conf = job.source ? `<span class="conf ${pct >= 80 ? "" : pct >= 60 ? "mid" : "low"}" title="how sure Claude is that these are the words to cut, read from ${esc(SOURCE_LABEL[job.source] || job.source)}${job.quote ? ` — “${esc(job.quote)}”` : ""}">${pct}% sure</span>` : "";
     const row2 = (t, v) => v && v !== "—" ? `<dt>${t}</dt><dd>${esc(v)}</dd>` : "";
-    card.innerHTML = `<div class="rh"><span class="kind">${done} of ${done + Math.max(0, remaining - 1)}</span><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div>
+    card.innerHTML = `<div class="rh"><span class="kind" title="where you are in the placements still to decide">${decided + 1} of ${decided + remaining}</span><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div>
       <div class="placeView">
         <div class="pvMain"><div class="backHost"></div>
           <div class="ctl">${f ? `<button class="btn sage sm" data-a="approve">Approve <b class="k">A</b></button>
-            <span class="grp" title="nudge the text by 0.25 mm — the arrow keys do the same"><button class="btn ghost sm" data-a="left" title="nudge left 0.25 mm" aria-label="nudge left">◀</button><button class="btn ghost sm" data-a="down" title="nudge down 0.25 mm" aria-label="nudge down">▼</button><button class="btn ghost sm" data-a="up" title="nudge up 0.25 mm" aria-label="nudge up">▲</button><button class="btn ghost sm" data-a="right" title="nudge right 0.25 mm" aria-label="nudge right">▶</button><button class="btn ghost sm" data-a="centre" title="put the text in the middle of the area it may use">Centre</button></span>
+            <span class="grp" title="nudge the text by 0.25 mm — the arrow keys do the same"><button class="btn ghost sm" data-a="left" title="nudge left 0.25 mm" aria-label="nudge left">◀</button><button class="btn ghost sm" data-a="up" title="nudge up 0.25 mm" aria-label="nudge up">▲</button><button class="btn ghost sm" data-a="down" title="nudge down 0.25 mm" aria-label="nudge down">▼</button><button class="btn ghost sm" data-a="right" title="nudge right 0.25 mm" aria-label="nudge right">▶</button><button class="btn ghost sm" data-a="centre" title="put the text in the middle of the area it may use">Centre</button></span>
             <span class="sizer"><input type="range" min="${(0.5 * f.fittedMax).toFixed(2)}" max="${f.fittedMax.toFixed(2)}" step="0.05" value="${f.size.toFixed(2)}" data-a="resize" title="text size" aria-label="text size"><b class="mono" data-cap>${f.capMm.toFixed(2)} mm</b></span>` : ""}
             <span class="rest">${f ? `<button class="btn ghost sm" data-a="resplit" title="try a different split of the words across lines">Re-split</button>` : ""}<button class="btn ghost sm" data-a="skip" title="cut this charm with no engraving">Skip <b class="k">S</b></button><button class="btn ghost sm" data-a="back" title="send this back to the words step">Send back</button></span></div>
           <div class="help">drag the text to move it · shift-drag to resize from the centre · arrows nudge 0.25 mm</div></div>
@@ -1458,7 +1564,7 @@ const Engrave = window.Engrave = (() => {
           <div class="pvWords"><span class="lbl">Words on the back</span>${esc(job.lines.join(" / ")) || "—"}</div>
           <div class="frontHost"></div>
           <dl class="meta">${row2("Customer", (sp.personalization || []).join(" / "))}${row2("Buyer msg", sp.buyerMessage)}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}</dl>
-          ${job.claude ? `<div class="claude">${job.claude.skipped ? `Claude could not look at the render: ${esc(job.claude.skipped)}` : `<b>${job.claude.legible ? "Reads clearly" : "Hard to read"}</b> — ${esc(job.claude.notes)}`}</div>` : `<div class="claude" style="opacity:.6">Claude is looking at the rendered back…</div>`}
+          ${claudeBlock(job)}
           ${f ? `<details class="pvNums"><summary>the numbers</summary><dl class="meta"><dt>Size</dt><dd>${f.size.toFixed(2)} pt · cap ${f.capMm.toFixed(2)} mm · ${esc(f.weight)}${f.angle ? ` · ${f.angle}°` : ""}</dd><dt>Strokes</dt><dd>min stem ${f.metrics ? f.metrics.strokeMm.toFixed(2) : "?"} mm · min gap ${f.metrics && f.metrics.gapMm ? f.metrics.gapMm.toFixed(2) : "—"} mm</dd><dt>Flip</dt><dd>${Object.entries(job.view.checks).map(([k, ok]) => `${esc(k)} ${ok ? "✓" : "✗"}`).join(" · ")}</dd><dt>Geometry</dt><dd>${job.verify && job.verify.geometry.ok ? `no ink outside the allowed area (${job.verify.geometry.total} px checked)` : "NOT verified"}</dd></dl></details>` : `<div class="why">${esc(job.reason || "no fit")}</div>`}
         </div></div>`;
     const charm = Pool.charmOf(job.copies[0]);
@@ -1518,8 +1624,10 @@ const Engrave = window.Engrave = (() => {
     const capOut = card.querySelector("[data-cap]");
     card.querySelectorAll("[data-a]").forEach(b => { const a = b.dataset.a; if (a === "resize") { b.oninput = () => { if (capOut && f && f.capMm && f.size) capOut.textContent = (f.capMm * (+b.value) / f.size).toFixed(2) + " mm"; resize(job, +b.value); }; return; } b.onclick = () => { if (a === "approve") approve(job); else if (a === "left") nudge(job, -0.25, 0); else if (a === "right") nudge(job, 0.25, 0); else if (a === "up") nudge(job, 0, 0.25); else if (a === "down") nudge(job, 0, -0.25); else if (a === "centre") centreText(job);
       else if (a === "resplit") resplit(job); else if (a === "skip") skip(job); else if (a === "back") sendBack(job); }; });
-    card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT") return; const k = e.key.toLowerCase(); if (k === "a") { e.preventDefault(); approve(job); } else if (k === "s") { e.preventDefault(); skip(job); } else if (e.key === "ArrowLeft") { e.preventDefault(); nudge(job, -0.25, 0); } else if (e.key === "ArrowRight") { e.preventDefault(); nudge(job, 0.25, 0); } else if (e.key === "ArrowUp") { e.preventDefault(); nudge(job, 0, 0.25); } else if (e.key === "ArrowDown") { e.preventDefault(); nudge(job, 0, -0.25); } });
-    setTimeout(() => card.focus(), 30);
+    card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.repeat) return; const k = e.key.toLowerCase(); if (k === "a") { e.preventDefault(); approve(job); } else if (k === "s") { e.preventDefault(); skip(job); } else if (e.key === "ArrowLeft") { e.preventDefault(); nudge(job, -0.25, 0); } else if (e.key === "ArrowRight") { e.preventDefault(); nudge(job, 0.25, 0); } else if (e.key === "ArrowUp") { e.preventDefault(); nudge(job, 0, 0.25); } else if (e.key === "ArrowDown") { e.preventDefault(); nudge(job, 0, -0.25); } });
+    // the next card takes focus only when the person was already working in this pane, so a held key cannot run the queue
+    const wasHere = document.activeElement && document.activeElement.closest && document.activeElement.closest("#egQueue");
+    if (wasHere || !document.activeElement || document.activeElement === document.body) setTimeout(() => { if (card.isConnected) card.focus(); }, 30);
     void it;
     return card;
   }
@@ -1872,14 +1980,15 @@ const RunCtl = window.RunCtl = (() => {
     h.classList.remove("hidden"); h.className = "runBanner" + (r.status === "stopped" ? " stopped" : r.status === "complete" ? " done" : r.status === "review" ? " review" : "");
     const idx = O.stepIndex(r.step);
     const steps = O.RUN_STEPS.map((s, i) => `<i class="${i < idx || r.status === "complete" ? "done" : i === idx ? (r.status === "stopped" ? "stop" : "now") : ""}" title="${s}"></i>`).join("");
-    const reviewN = Review.count();
-    const why = r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${r.fix ? ` — <span>${esc(r.fix)}</span>` : ""}` : r.status === "review" ? `<b>Waiting for a person:</b> ${reviewN} item(s) in Review` : r.status === "paused" ? (r.awaitCommit ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : `<b>Paused</b> after ${esc(O.RUN_STEPS[idx - 1] || r.step)} — next: ${esc(r.step)} · <span style="opacity:.75">this run is set to Manual, so it waits at every step</span>`) : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(r.step)}</b> · half ${O.HALF[r.step]} · ${r.mode}`;
+    const reviewN = Review.count(), engN = Engrave.pendingCount();
+    const waitingFor = [reviewN ? `${reviewN} in Review` : "", engN ? `${engN} in Engraving` : ""].filter(Boolean).join(" · ") || "nothing";
+    const why = r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${r.fix ? ` — <span>${esc(r.fix)}</span>` : ""}` : r.status === "review" ? `<b>Waiting for a person:</b> ${waitingFor}` : r.status === "paused" ? (r.awaitCommit ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : `<b>Paused</b> after ${esc(O.RUN_STEPS[idx - 1] || r.step)} — next: ${esc(r.step)} · <span style="opacity:.75">this run is set to Manual, so it waits at every step</span>`) : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(r.step)}</b> · half ${O.HALF[r.step]} · ${r.mode}`;
     Dock.schedule();
     h.innerHTML = `<span class="step">run ${esc(r.runId.slice(-8))}</span><span class="steps">${steps}</span><span class="why">${why}${r.setId ? ` · <span class="mono">${esc(r.setId)}</span>` : ""}</span>
-      ${r.status === "paused" && !r.awaitCommit ? `<button class="btn gold sm" id="rbNext" title="do the next step of the run and wait again">Next step ▶</button><button class="btn ghost sm" id="rbAuto" title="Stop waiting at every step: the run carries on by itself and only stops when it needs a person">Run the rest by itself</button>` : ""}${r.status === "paused" && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${r.status === "stopped" && /sign/i.test(r.stoppedBy || "") ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${r.status === "stopped" ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at">Resume</button>` : ""}${reviewN ? `<button class="btn ghost sm" id="rbReview" title="the decisions a person still has to make">Review (${reviewN})</button>` : ""}${["running", "review", "paused"].includes(r.status) ? `<button class="btn ghost sm" id="rbStop" title="stop after the step in progress — the run can be resumed from where it stopped">Stop</button>` : ""}${["complete", "stopped"].includes(r.status) ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}`;
+      ${r.status === "paused" && !r.awaitCommit ? `<button class="btn gold sm" id="rbNext" title="do the next step of the run and wait again">Next step ▶</button><button class="btn ghost sm" id="rbAuto" title="Stop waiting at every step: the run carries on by itself and only stops when it needs a person">Run the rest by itself</button>` : ""}${r.status === "paused" && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${r.status === "stopped" && /sign/i.test(r.stoppedBy || "") ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${r.status === "stopped" ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at">Resume</button>` : ""}${reviewN ? `<button class="btn ghost sm" id="rbReview" title="the decisions a person still has to make">Review (${reviewN})</button>` : ""}${engN ? `<button class="btn ghost sm" id="rbEngrave" title="the engraving still to be settled">Engraving (${engN})</button>` : ""}${["running", "review", "paused"].includes(r.status) ? `<button class="btn ghost sm" id="rbStop" title="stop after the step in progress — the run can be resumed from where it stopped">Stop</button>` : ""}${["complete", "stopped"].includes(r.status) ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}`;
     const q = id => h.querySelector("#" + id);
     if (q("rbConnect")) q("rbConnect").onclick = () => DesignLink.connectEtsy().catch(e => toast(e.message, "bad", 6000)); if (q("rbNext")) q("rbNext").onclick = () => next();
-    if (q("rbAuto")) q("rbAuto").onclick = async () => { const r2 = B.run; if (!r2) return; r2.mode = "auto"; await save(r2); agent({ run: r2.runId }, "DS", "This run carries on by itself from here — it stops only when it needs a person"); next(); }; if (q("rbCommit")) q("rbCommit").onclick = () => commitNow(); if (q("rbResume")) q("rbResume").onclick = () => resume(); if (q("rbReview")) q("rbReview").onclick = () => setMode("review"); if (q("rbStop")) q("rbStop").onclick = () => stop("stopped by the operator", "Press Resume to carry on from the recorded step."); if (q("rbClear")) q("rbClear").onclick = () => { if (confirm("Clear the finished run from the cards? Files and records are kept.")) clearRunState(); };
+    if (q("rbAuto")) q("rbAuto").onclick = async () => { const r2 = B.run; if (!r2) return; r2.mode = "auto"; await save(r2); agent({ run: r2.runId }, "DS", "This run carries on by itself from here — it stops only when it needs a person"); next(); }; if (q("rbCommit")) q("rbCommit").onclick = () => commitNow(); if (q("rbResume")) q("rbResume").onclick = () => resume(); if (q("rbReview")) q("rbReview").onclick = () => setMode("review"); if (q("rbEngrave")) q("rbEngrave").onclick = () => { setMode("engrave"); Engrave.render(); }; if (q("rbStop")) q("rbStop").onclick = () => stop("stopped by the operator", "Press Resume to carry on from the recorded step."); if (q("rbClear")) q("rbClear").onclick = () => { if (confirm("Clear the finished run from the cards? Files and records are kept.")) clearRunState(); };
     Orders.render();
   }
   return { start, next, resume, stop, stopIfRunning, poke, save, onSheetDone, pickResume, resumeRun, commitNow, setMode, renderBanner, renderModeBtn, clearRunState, run };
