@@ -222,6 +222,7 @@ const pass = (name) => console.log('  ✓', name);
     const late = new Date(2026, 8, 16, 23, 59, 30); assert.strictEqual(O.localDay(late), '2026-09-16'); assert.strictEqual(O.dateTag(late), 'Sep.16.26'); assert.strictEqual(O.dateTagOfDay(O.localDay(late)), O.dateTag(late), 'folder date and name date come from one local clock, even at 23:59:30');
     assert.strictEqual(O.encodeOrderList(['3521337740', '3521337741'], 'gold'), 'B36|gold|' + ['3521337740', '3521337741'].map(O.toB36).join('.'));
     assert.deepStrictEqual(O.safeChunks(Array.from({ length: 120 }, (_, i) => String(3521337740 + i)), 'gold').map(c => c.length), [50, 50, 20], 'the station\'s chunker, byte for byte');
+    assert.deepStrictEqual(O.safeChunks(Array.from({ length: 64 }, (_, i) => String(3521337740 + i)), 'gold', 1000, 500, 8).map(c => c.length), [64], 'a sheet of sixty-four orders is one label, not three');
     assert.strictEqual(O.CARD_TO_METAL.gold10k, '10k'); assert.strictEqual(O.CARD_TO_METAL.gold14k, '14k');
     pass('sets');
   }
