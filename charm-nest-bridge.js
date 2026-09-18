@@ -1009,6 +1009,19 @@ const Engrave = window.Engrave = (() => {
     if (fit.ok && fit.weight === "Semibold" && F_.Semibold) { const sb = G.fitText(job.lines, F_.Semibold, job.mask, fitOpts()); if (sb.ok) fit = Object.assign(sb, { weight: "Semibold" }); }
     if (!fit.ok) { job.state = "review"; job.fit = null; job.reason = fit.reason; job.row.engrave.state = "review"; agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: ${fit.reason}`); Review.add({ kind: "placement", key: "eng:" + job.key, row: job.row, job, why: fit.reason }); render(); return job; }
     fit.fittedMax = fit.size; job.fit = fit; job.fitAt = Date.now();
+    // the largest that fits is the ceiling; the default is sized to how much there is to say (design §7.4)
+    {
+      const bw = charm.widthPt || (charm.bbox ? charm.bbox[2] - charm.bbox[0] : 0), bh = charm.heightPt || (charm.bbox ? charm.bbox[3] - charm.bbox[1] : 0);
+      const charmMinMm = Math.min(bw, bh) * MM;
+      const want = G.defaultSize(job.lines, fit.fittedMax, { capPerEm: G.capPerEm(fontFor(fit.weight)), minCapMm: +S.settings.engraveMinCapMm || 1.6, charmMinMm });
+      if (want < fit.size - 0.01) {
+        const L = G.layoutLines(job.lines, fontFor(fit.weight), want, 0.18, fit.angle, fit.centre);
+        if (G.verifyInk(L.cmds, job.mask).ok) {
+          const capMm = want * G.capPerEm(fontFor(fit.weight)) * MM;
+          job.fit = fit = Object.assign({}, fit, { size: want, capMm, layout: L, glyphs: L.glyphs, cmds: L.cmds, fittedMax: fit.fittedMax, sized: "default" });
+        }
+      }
+    }
     const check = G.verifyInk(fit.cmds, job.mask);                          // 7.4 · geometry: zero ink outside the eroded mask, zero in any hole
     if (!check.ok) { throw new Error(`ink outside the eroded mask after fitting (${check.outside} px) — a bug, not a review item`); }
     job.verify = { geometry: check, at: Date.now() };
@@ -1038,6 +1051,15 @@ const Engrave = window.Engrave = (() => {
   /* ── 7.5 · the review controls ── */
   function refit(job, place) { const f = G.refitAt(job.lines, fontFor(job.fit.weight), job.mask, fitOpts(), place); if (!f.ok) return false; f.fittedMax = f.size; f.weight = job.fit.weight; f.rect = job.fit.rect; job.fit = f; job.verify = { geometry: G.verifyInk(f.cmds, job.mask), at: Date.now() }; job.nudged = true; job.claude = null; return true; }
   function nudge(job, dxMm, dyMm) { if (!job.fit) return; const c = [job.fit.centre[0] + dxMm * PT, job.fit.centre[1] + dyMm * PT]; if (!refit(job, { centre: c, angle: job.fit.angle })) toast("No room there", "bad"); render(); }
+  /** The middle of the area the text may use: the centre of gravity of the solid pixels, not of the bounding box, so a
+      cat's head with ears puts the name where the metal actually is. */
+  function maskCentroid(m) {
+    let sx = 0, sy = 0, n = 0;
+    for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) if (m.bits[y * m.w + x]) { sx += x; sy += y; n++; }
+    if (!n) return [m.cx, m.cy];
+    return [m.ox + (sx / n + 0.5) / m.res, m.oy + (sy / n + 0.5) / m.res];
+  }
+  function centreText(job) { if (!job.fit) return; if (!moveTo(job, maskCentroid(job.mask))) toast("The text does not fit in the middle — left where it was", "bad"); }
   function moveTo(job, centre) { if (!job.fit) return false; const ok = refit(job, { centre, angle: job.fit.angle }); if (ok) render(); return ok; }
   function resize(job, size) { if (!job.fit) return; size = Math.min(size, job.fit.fittedMax); const L = G.layoutLines(job.lines, fontFor(job.fit.weight), size, 0.18, job.fit.angle, job.fit.centre); const v = G.verifyInk(L.cmds, job.mask); if (!v.ok) { toast("That size does not verify", "bad"); return; } job.fit = Object.assign({}, job.fit, { size, layout: L, glyphs: L.glyphs, cmds: L.cmds, capMm: size * G.capPerEm(fontFor(job.fit.weight)) * MM, small: size * G.capPerEm(fontFor(job.fit.weight)) * MM < (+S.settings.engraveMinCapMm || 1.6), metrics: G.strokeMetrics(L.cmds, 24) }); job.verify = { geometry: v, at: Date.now() }; job.claude = null; render(); }
   async function resplit(job) { const vars = G.splitVariants(job.lines); const i = (job.splitIndex || 0) + 1; const pick = vars[i % vars.length]; job.splitIndex = i; job.lines = pick; job.text = pick.join("\n"); agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: re-split as "${pick.join(" / ")}"`); await fitJob(job); }
@@ -1068,9 +1090,27 @@ const Engrave = window.Engrave = (() => {
       for (let py = 0; py < cv.height; py++) for (let pxx = 0; pxx < cv.width; pxx++) { const x = bb[0] - pad + pxx / k, y = bb[3] + pad - py / k; if (G.at(mask, x, y)) { const i = (py * cv.width + pxx) * 4; d[i] = 231; d[i + 1] = 237; d[i + 2] = 223; d[i + 3] = 255; } }
       const off = document.createElement("canvas"); off.width = cv.width; off.height = cv.height; off.getContext("2d").putImageData(img, 0, 0); ctx.globalCompositeOperation = "multiply"; ctx.drawImage(off, 0, 0); ctx.globalCompositeOperation = "source-over";
     }
+    const base = document.createElement("canvas"); base.width = cv.width; base.height = cv.height;   // grid + mask tint, drawn once
+    base.getContext("2d").drawImage(cv, 0, 0);
     for (const m of view.members) { ctx.beginPath(); P.pathToCanvas(ctx, m, tx); ctx.strokeStyle = m.original === view.cutMembers[0] || m.original === job.view.cutMembers.find(c => c === Pool.charmOf(job.copies[0]).outline) ? "rgba(190,40,40,.95)" : "rgba(60,60,60,.9)"; ctx.lineWidth = Math.max(1, 0.5 * k); ctx.stroke(); }
     if (fit) { ctx.fillStyle = "#111"; for (const g of fit.glyphs) { ctx.beginPath(); let cur = null; for (const c of g.cmds) { if (c.type === "M") { const p = tx(c.x, c.y); ctx.moveTo(p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "L") { const p = tx(c.x, c.y); ctx.lineTo(p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "C") { const a = tx(c.x1, c.y1), b = tx(c.x2, c.y2), p = tx(c.x, c.y); ctx.bezierCurveTo(a[0], a[1], b[0], b[1], p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "Q") { const a = tx(c.x1, c.y1), p = tx(c.x, c.y); ctx.quadraticCurveTo(a[0], a[1], p[0], p[1]); cur = [c.x, c.y]; } else ctx.closePath(); } ctx.fill("nonzero"); } }
-    cv._map = { bb, pad, k, tx };
+    const outline = document.createElement("canvas"); outline.width = cv.width; outline.height = cv.height;   // …and the charm itself
+    outline.getContext("2d").drawImage(cv, 0, 0);
+    /** Repaint: the static layers, then the text — the fitted one, or a provisional one while a hand is moving it. */
+    const glyphsOf = g => { ctx.fillStyle = "#111"; for (const gl of g) { ctx.beginPath(); for (const c of gl.cmds) { if (c.type === "M") { const p = tx(c.x, c.y); ctx.moveTo(p[0], p[1]); } else if (c.type === "L") { const p = tx(c.x, c.y); ctx.lineTo(p[0], p[1]); } else if (c.type === "C") { const a = tx(c.x1, c.y1), b2 = tx(c.x2, c.y2), d2 = tx(c.x, c.y); ctx.bezierCurveTo(a[0], a[1], b2[0], b2[1], d2[0], d2[1]); } else if (c.type === "Q") { const a = tx(c.x1, c.y1), d2 = tx(c.x, c.y); ctx.quadraticCurveTo(a[0], a[1], d2[0], d2[1]); } else if (c.type === "Z") ctx.closePath(); } ctx.fill("nonzero"); } };
+    cv._paint = (prov) => {
+      ctx.clearRect(0, 0, cv.width, cv.height); ctx.drawImage(outline, 0, 0);
+      const gl = prov && prov.glyphs ? prov.glyphs : (job.fit ? job.fit.glyphs : []);
+      if (gl.length) glyphsOf(gl);
+      if (prov && prov.centre) {                                              // guides: the charm's own centre lines, lit when the text is on them
+        const c = prov.centre, snapX = Math.abs(c[0] - mask.cx) < 0.35 * PT, snapY = Math.abs(c[1] - mask.cy) < 0.35 * PT;
+        ctx.save(); ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+        ctx.strokeStyle = snapX ? "rgba(160,110,30,.9)" : "rgba(0,0,0,.18)"; const px1 = tx(mask.cx, bb[1]), px2 = tx(mask.cx, bb[3]); ctx.beginPath(); ctx.moveTo(px1[0], px1[1]); ctx.lineTo(px2[0], px2[1]); ctx.stroke();
+        ctx.strokeStyle = snapY ? "rgba(160,110,30,.9)" : "rgba(0,0,0,.18)"; const py1 = tx(bb[0], mask.cy), py2 = tx(bb[2], mask.cy); ctx.beginPath(); ctx.moveTo(py1[0], py1[1]); ctx.lineTo(py2[0], py2[1]); ctx.stroke();
+        ctx.restore();
+      }
+    };
+    cv._map = { bb, pad, k, tx, base, outline };
     return cv;
   }
   function renderFront(charm, px) { const cv = document.createElement("canvas"); const b = charm.bbox, pad = 3 * PT; const w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, k = px / Math.max(w, h); cv.width = Math.round(w * k); cv.height = Math.round(h * k); const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height); const tx = (x, y) => [(x - b[0] + pad) * k, (b[3] + pad - y) * k]; P.drawSegments(ctx, charm.members, tx, k); ctx.beginPath(); P.pathToCanvas(ctx, charm.outline, tx); ctx.strokeStyle = "rgba(190,40,40,.9)"; ctx.lineWidth = Math.max(1, 0.5 * k); ctx.stroke(); return cv; }
@@ -1171,16 +1211,48 @@ const Engrave = window.Engrave = (() => {
       <div><div class="section" style="margin:0 0 6px">Back · mirrored, hoop up · green = solid area allowed for text</div><div class="back"><div class="backHost"></div></div>
       ${f ? `<dl class="meta" style="margin-top:8px"><dt>Text</dt><dd>${esc(job.lines.join(" / "))}</dd><dt>Size</dt><dd>${f.size.toFixed(2)} pt · cap ${f.capMm.toFixed(2)} mm · ${esc(f.weight)}${f.angle ? ` · ${f.angle}°` : ""}</dd><dt>Strokes</dt><dd>min stem ${f.metrics ? f.metrics.strokeMm.toFixed(2) : "?"} mm · min gap ${f.metrics && f.metrics.gapMm ? f.metrics.gapMm.toFixed(2) : "—"} mm</dd><dt>Flip checks</dt><dd>${Object.entries(job.view.checks).map(([k, ok]) => `${k} ${ok ? "✓" : "✗"}`).join(" · ")}</dd><dt>Geometry</dt><dd>${job.verify && job.verify.geometry.ok ? `zero ink outside the eroded mask (${job.verify.geometry.total} px checked)` : "NOT verified"}</dd></dl>` : `<div class="why">${esc(job.reason || "no fit")}</div>`}
       ${job.claude ? `<div class="claude">${job.claude.skipped ? `Claude's read skipped: ${esc(job.claude.skipped)}` : `<b>Claude:</b> ${job.claude.legible ? "legible" : "hard to read"} — ${esc(job.claude.notes)}`}</div>` : `<div class="claude" style="opacity:.6">Claude is looking at the rendered back…</div>`}
-      <div class="ctl">${f ? `<button class="btn sage sm" data-a="approve">Approve (A)</button><button class="btn ghost sm" data-a="left">◀</button><button class="btn ghost sm" data-a="right">▶</button><button class="btn ghost sm" data-a="up">▲</button><button class="btn ghost sm" data-a="down">▼</button><label style="font-size:11.5px">Resize <input type="range" min="${(0.5 * f.fittedMax).toFixed(2)}" max="${f.fittedMax.toFixed(2)}" step="0.05" value="${f.size.toFixed(2)}" data-a="resize"></label>` : ""}<button class="btn ghost sm" data-a="resplit">Re-split lines</button><button class="btn ghost sm" data-a="skip">Skip (S) — cut plain</button><button class="btn ghost sm" data-a="back">Send back</button></div></div></div>`;
+      <div class="ctl">${f ? `<button class="btn sage sm" data-a="approve">Approve (A)</button><button class="btn ghost sm" data-a="left">◀</button><button class="btn ghost sm" data-a="right">▶</button><button class="btn ghost sm" data-a="up">▲</button><button class="btn ghost sm" data-a="down">▼</button><button class="btn ghost sm" data-a="centre" title="Put the text in the middle of the area it may use">Centre</button><label style="font-size:11.5px">Resize <input type="range" min="${(0.5 * f.fittedMax).toFixed(2)}" max="${f.fittedMax.toFixed(2)}" step="0.05" value="${f.size.toFixed(2)}" data-a="resize"></label>` : ""}<button class="btn ghost sm" data-a="resplit">Re-split lines</button><button class="btn ghost sm" data-a="skip">Skip (S) — cut plain</button><button class="btn ghost sm" data-a="back">Send back</button></div></div></div>`;
     const charm = Pool.charmOf(job.copies[0]);
-    card.querySelector(".frontHost").appendChild(renderFront(charm, 420));
-    if (job.view) { const bc = renderBack(job, 720, { grid: true }); card.querySelector(".backHost").appendChild(bc);
+    // the previews are sized from the window, not from a number typed once: on a laptop they stay inside one screen
+    const backPx = Math.round(Math.max(300, Math.min(560, (window.innerHeight || 800) * 0.44, (window.innerWidth || 1200) * 0.34)));
+    const frontPx = Math.round(backPx * 0.62);
+    card.querySelector(".frontHost").appendChild(renderFront(charm, frontPx));
+    if (job.view) { const bc = renderBack(job, backPx, { grid: true }); card.querySelector(".backHost").appendChild(bc);
       let drag = null;
-      bc.addEventListener("mousedown", e => { if (!job.fit) return; drag = { x: e.clientX, y: e.clientY, c: job.fit.centre.slice() }; bc.classList.add("drag"); });
-      window.addEventListener("mousemove", e => { if (!drag) return; const rect = bc.getBoundingClientRect(); const kx = bc.width / rect.width; const dx = (e.clientX - drag.x) * kx / bc._map.k, dy = -(e.clientY - drag.y) * kx / bc._map.k; drag.pending = [drag.c[0] + dx, drag.c[1] + dy]; });
-      window.addEventListener("mouseup", () => { if (!drag) return; const p = drag.pending; drag = null; bc.classList.remove("drag"); if (p && !moveTo(job, p)) toast("No room there — kept the previous position", "bad"); });
+      // the pointer is captured by the canvas, so the handlers live and die with this card: every card used to add
+      // another pair of listeners to the window and none of them was ever removed
+      bc.addEventListener("pointerdown", e => { if (!job.fit) return; bc.setPointerCapture(e.pointerId); drag = { x: e.clientX, y: e.clientY, c: job.fit.centre.slice(), size: job.fit.size, resize: e.shiftKey }; bc.classList.add("drag"); e.preventDefault(); });
+      bc.addEventListener("pointermove", e => {
+        if (!drag) return;
+        const rect = bc.getBoundingClientRect(), kx = bc.width / rect.width;
+        const dx = (e.clientX - drag.x) * kx / bc._map.k, dy = -(e.clientY - drag.y) * kx / bc._map.k;
+        if (drag.resize) {
+          // shift-drag grows and shrinks about the centre the text already has, so it never wanders while being sized
+          const span = Math.max(24, bc.height / 3) * kx / bc._map.k;
+          drag.pendingSize = Math.max(0.5, Math.min(job.fit.fittedMax, drag.size * (1 + dy / span)));
+          const L = G.layoutLines(job.lines, fontFor(job.fit.weight), drag.pendingSize, 0.18, job.fit.angle, drag.c);
+          bc._paint({ glyphs: L.glyphs, centre: drag.c });
+        } else {
+          const c = [drag.c[0] + dx, drag.c[1] + dy];
+          // within a third of a millimetre of the charm's own centre line, the text takes it
+          if (Math.abs(c[0] - job.mask.cx) < 0.35 * PT) c[0] = job.mask.cx;
+          if (Math.abs(c[1] - job.mask.cy) < 0.35 * PT) c[1] = job.mask.cy;
+          drag.pending = c;
+          const L = G.layoutLines(job.lines, fontFor(job.fit.weight), job.fit.size, 0.18, job.fit.angle, c);
+          bc._paint({ glyphs: L.glyphs, centre: c });
+        }
+      });
+      bc.addEventListener("pointerup", () => {
+        if (!drag) return;
+        const p = drag.pending, sz = drag.pendingSize, was = drag.resize; drag = null; bc.classList.remove("drag");
+        if (was) { if (sz != null) resize(job, sz); else bc._paint(); }
+        else if (p) { if (!moveTo(job, p)) { toast("No room there — kept the previous position", "bad"); bc._paint(); } }
+        else bc._paint();
+      });
+      bc.addEventListener("pointercancel", () => { drag = null; bc.classList.remove("drag"); bc._paint(); });
     }
-    card.querySelectorAll("[data-a]").forEach(b => { const a = b.dataset.a; if (a === "resize") { b.oninput = () => resize(job, +b.value); return; } b.onclick = () => { if (a === "approve") approve(job); else if (a === "left") nudge(job, -0.25, 0); else if (a === "right") nudge(job, 0.25, 0); else if (a === "up") nudge(job, 0, 0.25); else if (a === "down") nudge(job, 0, -0.25); else if (a === "resplit") resplit(job); else if (a === "skip") skip(job); else if (a === "back") sendBack(job); }; });
+    card.querySelectorAll("[data-a]").forEach(b => { const a = b.dataset.a; if (a === "resize") { b.oninput = () => resize(job, +b.value); return; } b.onclick = () => { if (a === "approve") approve(job); else if (a === "left") nudge(job, -0.25, 0); else if (a === "right") nudge(job, 0.25, 0); else if (a === "up") nudge(job, 0, 0.25); else if (a === "down") nudge(job, 0, -0.25); else if (a === "centre") centreText(job);
+      else if (a === "resplit") resplit(job); else if (a === "skip") skip(job); else if (a === "back") sendBack(job); }; });
     card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT") return; const k = e.key.toLowerCase(); if (k === "a") { e.preventDefault(); approve(job); } else if (k === "s") { e.preventDefault(); skip(job); } else if (e.key === "ArrowLeft") { e.preventDefault(); nudge(job, -0.25, 0); } else if (e.key === "ArrowRight") { e.preventDefault(); nudge(job, 0.25, 0); } else if (e.key === "ArrowUp") { e.preventDefault(); nudge(job, 0, 0.25); } else if (e.key === "ArrowDown") { e.preventDefault(); nudge(job, 0, -0.25); } });
     setTimeout(() => card.focus(), 30);
     void it;
@@ -1565,6 +1637,15 @@ const Review = window.Review = (() => {
   function focus(rowKey) { render(); const c = document.querySelector(`#reviewView [data-row="${CSS.escape(rowKey)}"]`); if (c) { c.scrollIntoView({ behavior: "smooth", block: "center" }); c.classList.add("pulse"); } }
   async function repool(row) { row.problems = []; row.state = "pulled"; row.reason = null; Orders.interpretAll(); if (row.problems.length) { Orders.render(); return; } if (B.run && O.stepIndex(B.run.step) >= O.stepIndex("pool")) { try { await Pool.poolAdd(row, B.run); } catch (e) { row.state = "held"; row.reason = e.message; } if (row.state === "pooled" && row.spec.engraveCandidate) Engrave.classify(row).catch(() => {}); } syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards(); RunCtl.poke(); }
   const by = () => employeeName() || askEmployee();
+  /** What Claude decided, in one line and one number: a reading is either text to engrave or a note to the shop. */
+  const SOURCE_WORDS = { personalization: "the personalisation box", personalisation: "the personalisation box", buyerMessage: "the buyer's message", staffNote: "the staff note", messages: "the staff messages", none: "", "": "" };
+  function claudeVerdict(j) {
+    const pct = Math.round((j.confidence || 0) * 100);
+    const text = (j.text || "").trim();
+    const from = SOURCE_WORDS[j.source] != null ? SOURCE_WORDS[j.source] : esc(String(j.source || ""));
+    if (!text) return `<b>nothing to engrave</b> — what the customer wrote reads as a note to the shop, not words for the charm <i style="color:var(--ink45)">· ${pct}% sure it is not engraving${j.quote ? ` · "${esc(j.quote)}"` : ""}</i>`;
+    return `<b>engrave this</b>${from ? ` — read from ${from}` : ""} <i style="color:var(--ink45)">· ${pct}% sure${j.quote ? ` · "${esc(j.quote)}"` : ""}</i>`;
+  }
   function card(it) {
     const c = el("div", "rvItem"); c.dataset.kind = it.kind; if (it.row) c.dataset.row = it.row.key;
     const r = it.row, sp = r && r.spec, p = it.problem || {};
@@ -1596,9 +1677,9 @@ const Review = window.Review = (() => {
     } else if (it.kind === "engraveWords" || it.kind === "notRepresentable" || it.kind === "fontMissing") {
       const j = it.job; const miss = j.missing || [];
       const hl = t => esc(t).replace(/\n/g, "<br>"); const marked = miss.length ? [...(j.text || "")].map(ch => miss.includes(ch) ? `<span class="miss">${esc(ch)}</span>` : esc(ch) === "\n" ? "<br>" : esc(ch)).join("") : hl(j.text || "");
-      c.innerHTML = head(it.kind === "notRepresentable" ? "Not representable" : it.kind === "fontMissing" ? "Font files missing" : "Engraving words", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Customer typed", `<q>${esc((sp.personalization || []).join(" / ") || "—")}</q>`)}${evRow("Buyer message", `<q>${esc(sp.buyerMessage || "—")}</q>`)}${evRow("Staff note", `<q>${esc(sp.staffNote || "—")}</q>`)}${sp.messages && sp.messages.length ? evRow("Staff messages", sp.messages.map(m => `<q>${esc(m.senderName)}: ${esc(m.text)}</q>`).join(" ")) : ""}${evRow("Claude's reading", `${marked || "—"} <i style="color:var(--ink45)">${j.source ? `from ${esc(j.source)} · ${Math.round((j.confidence || 0) * 100)}%` : ""}${j.quote ? ` · "${esc(j.quote)}"` : ""}</i>`)}${j.questions && j.questions.length ? evRow("Questions", j.questions.map(q => `<q>${esc(q)}</q>`).join(" ")) : ""}${j.requests && (j.requests.font || j.requests.handwriting || j.requests.image || (j.requests.side && !["back", "unspecified"].includes(j.requests.side))) ? evRow("Customer asks", esc(JSON.stringify(j.requests))) : ""}</div><div class="why">${esc(it.why || j.reason || "")}</div>
+      c.innerHTML = head(it.kind === "notRepresentable" ? "Not representable" : it.kind === "fontMissing" ? "Font files missing" : "Engraving words", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Customer typed", `<q>${esc((sp.personalization || []).join(" / ") || "—")}</q>`)}${evRow("Buyer message", `<q>${esc(sp.buyerMessage || "—")}</q>`)}${evRow("Staff note", `<q>${esc(sp.staffNote || "—")}</q>`)}${sp.messages && sp.messages.length ? evRow("Staff messages", sp.messages.map(m => `<q>${esc(m.senderName)}: ${esc(m.text)}</q>`).join(" ")) : ""}${evRow("Claude read", claudeVerdict(j))}${j.questions && j.questions.length ? evRow("Claude asks", j.questions.map(q => `<q>${esc(q)}</q>`).join(" ")) : ""}${j.requests && (j.requests.font || j.requests.handwriting || j.requests.image || (j.requests.side && !["back", "unspecified"].includes(j.requests.side))) ? evRow("Customer asks", esc(JSON.stringify(j.requests))) : ""}</div><div class="why">${esc(it.why || j.reason || "")}</div>
         <div class="fixes"><textarea data-f="text">${esc(j.text || (sp.personalization || []).join("\n"))}</textarea></div>
-        <div class="fixes"><button class="btn gold sm" data-a="confirm">${it.kind === "notRepresentable" ? "Engrave this text (edited)" : "Confirm / use edited text"}</button>${miss.length ? `<button class="btn ghost sm" data-a="drop">Drop the character${miss.length > 1 ? "s" : ""} ${esc(miss.join(" "))}</button>` : ""}<button class="btn ghost sm" data-a="msg">Message customer (station chat)</button><button class="btn ghost sm" data-a="none">No engraving</button>${it.kind === "fontMissing" ? `<button class="btn ghost sm" data-a="fonts">Retry font files</button>` : ""}</div>`;
+        <div class="fixes"><button class="btn gold sm" data-a="confirm">Engrave this text</button>${miss.length ? `<button class="btn ghost sm" data-a="drop">Drop the character${miss.length > 1 ? "s" : ""} ${esc(miss.join(" "))}</button>` : ""}<button class="btn ghost sm" data-a="msg">Ask the customer</button><button class="btn ghost sm" data-a="none">Don't engrave</button>${it.kind === "fontMissing" ? `<button class="btn ghost sm" data-a="fonts">Retry font files</button>` : ""}</div>`;
       c.querySelector("[data-a=confirm]").onclick = () => Engrave.decideWords(j, { text: c.querySelector("[data-f=text]").value, note: c.querySelector("[data-f=text]").value.trim() !== (j.text || "").trim() ? "edited" : "confirmed" });
       const dr = c.querySelector("[data-a=drop]"); if (dr) dr.onclick = () => { let t = c.querySelector("[data-f=text]").value; for (const ch of miss) t = t.split(ch).join(""); c.querySelector("[data-f=text]").value = t.replace(/[ ]{2,}/g, " ").trim(); };
       c.querySelector("[data-a=msg]").onclick = async () => { const who = by(); if (!who) return; const draft = prompt("Message to post in the order's internal chat (the station staff will contact the customer):", `${who}: please confirm the engraving text for ${sp.designSku} — we read "${(j.text || "").replace(/\n/g, " / ")}"${miss.length ? `; the symbol ${miss.join(" ")} cannot be engraved exactly` : ""}.`); if (!draft) return; try { await DesignLink.call("chat.post", { receiptId: r.order.receiptId, text: draft, sender: "Charm Sorter" }); toast("Posted to the station chat", "ok"); } catch (e) { toast(e.message, "bad"); } };

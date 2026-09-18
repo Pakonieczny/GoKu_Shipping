@@ -93,6 +93,32 @@ const pass = (name) => console.log('  ✓', name);
     { const c = g.charms.find(x => x.sku === 'BR-TST-01'); const fillIn = { outline: c.outline, members: c.members, bbox: c.bbox }; let threw = null; try { G.backView(fillIn, { res: 6, isCut: m => G.isCutLine(m) || (m.fill && !m.stroke) }); } catch (e) { threw = e; } assert(threw && threw.checks && threw.checks.detailDropped === false, 'a fill left in fails detailDropped'); }
     { const c = g.charms.find(x => x.sku === 'BR-TST-01'); const hole = c.members.find(m => m !== c.outline && G.isCutLine(m)); const shifted = G.transformSeg(hole, G.translate(0, -4)); const bad = { outline: c.outline, members: [c.outline, shifted], bbox: c.bbox }; const v = G.backView(bad, { res: 6 }); const p = G.interiorPoint(G.flatten(hole, 12)); assert.strictEqual(G.at(v.B, 2 * v.cx - p[0], p[1]), 1, 'with the hole shifted, the ORIGINAL hole spot is solid on the back: the hole check would catch it'); }
     pass('flip');
+    /* ── the size of the lettering: how much there is to say against how much room there is (§7.4) ── */
+    {
+      const capPerEm = 0.66, mm = 25.4 / 72;
+      const capOf = (text, charmMm, ceilingCapMm) => {
+        const fittedMax = ceilingCapMm / (capPerEm * mm);
+        const size = G.defaultSize([text], fittedMax, { capPerEm, minCapMm: 1.6, charmMinMm: charmMm });
+        return { cap: size * capPerEm * mm, size, fittedMax };
+      };
+      const finn = capOf('Finn', 14, 5.6), long = capOf('Happy Birthday Mom Love You', 14, 5.6);
+      assert(finn.size < finn.fittedMax * 0.8, 'a short name does not take the largest size that fits');
+      assert(finn.cap / 14 < 0.32, `a short name stays modest against the charm: ${finn.cap.toFixed(2)} mm on 14 mm`);
+      assert(long.size > finn.size, 'a longer text takes more of the room than a short one');
+      assert(long.size <= long.fittedMax + 1e-9, 'and never more than fits');
+      // smooth across lengths: no cliff between one character and the next
+      let prev = 0, jumps = [];
+      for (let n = 2; n <= 24; n++) { const c = capOf('x'.repeat(n), 14, 5.6).size; if (prev) jumps.push(c - prev); prev = c; }
+      assert(jumps.every(j => j >= -1e-9), 'size never falls as the text gets longer');
+      assert(Math.max(...jumps) < 0.25 * prev, 'and never jumps in a step: biggest step ' + Math.max(...jumps).toFixed(3));
+      // a charm with barely any room keeps the lettering legible rather than shrinking it to nothing
+      const tight = capOf('ANNA', 6, 1.9);
+      assert(tight.cap >= 1.6 - 1e-6, `never under the legible minimum: ${tight.cap.toFixed(2)} mm`);
+      assert(tight.size > tight.fittedMax * 0.8, 'and close to the largest that fits when the room is tight');
+      // the ceiling is always respected
+      for (const n of [1, 4, 9, 18, 40]) { const c = capOf('y'.repeat(n), 10, 2.0); assert(c.size <= c.fittedMax + 1e-9, 'ceiling held at ' + n); }
+      pass('lettering size');
+    }
     /* ── fit (§15 · a hole, a thin ring, a diagonal band; largest size; heart refused) ── */
     {
       const c = g.charms.find(x => x.sku === 'BR-TST-05');
