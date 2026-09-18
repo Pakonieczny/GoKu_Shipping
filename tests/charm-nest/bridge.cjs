@@ -1168,6 +1168,9 @@ const receipts = [
   assert.deepStrictEqual(tabs.top, ['nest', 'orders', 'engrave', 'review'], "the day's four screens, in the day's order: " + tabs.top);
   assert.deepStrictEqual(tabs.more, ['design', 'master', 'library'], 'and the rest behind More: ' + tabs.more);
   assert(!tabs.charms, 'no Charms tab');
+  // the menu opens where the pointer can see it: it used to sit inside the strip, whose overflow clipped its list away
+  const menu = await page.evaluate(() => { const mm = document.getElementById('moreMenu'); mm.querySelector('summary').click(); const item = mm.querySelector('button[data-mode=library]'); const r = item.getBoundingClientRect(); const seen = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); const shown = mm.open && r.height > 0 && !!seen && item.contains(seen); item.click(); const landed = CN.S.mode; const closed = !mm.open; CN.setMode('nest'); return { shown, landed, closed }; });
+  assert(menu.shown && menu.landed === 'library' && menu.closed, 'the More list opens in view, its item works, and the menu closes after: ' + JSON.stringify(menu));
   const moreLabel = await page.evaluate(() => { CN.setMode('master'); const t = document.getElementById('moreLabel').textContent; const on = document.getElementById('moreMenu').classList.contains('on'); CN.setMode('nest'); return { t, on, after: document.getElementById('moreLabel').textContent }; });
   assert(moreLabel.on && /Master/.test(moreLabel.t) && moreLabel.after === 'More', 'the menu names the screen that is open: ' + JSON.stringify(moreLabel));
   console.log('bridge e2e OK ·', st.docs.size, 'docs ·', st.blobs.size, 'blobs · screenshots in', tmp);

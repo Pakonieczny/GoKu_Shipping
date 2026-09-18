@@ -633,10 +633,16 @@
           // touching wins outright; a ring that merely floats near two outlines (an already-nested sheet fed back
           // in) attaches only when it is clearly closer to one of them — never to whichever neighbour is a hair nearer
           if (bestO && (bestD <= touch || (bestD <= Math.max(opts.touchPt, opts.nearPt) + touch && (secondD === Infinity || secondD >= 2 * Math.max(bestD, 0.5))))) {
-            // on a nested sheet a ring can touch a neighbour's charm too: it belongs to the outline it was drawn with
+            /* On a nested sheet fed back in, a ring can touch a neighbour's charm as well as its own: then the artist's
+               order decides, and it belongs to the outline written beside it. But that gate must not run when there is
+               nothing to disambiguate. A master drawn in layers writes every body, then every ring: a ring's stream
+               neighbours are other rings, and gating on them detached every ring in the shop's library (entries came
+               back with one member and no holes, and the nester packed bodies through rings it could not see). So:
+               one outline within reach, geometry decides; two within touch, the stream decides. */
+            const ambiguous = secondD <= Math.max(opts.touchPt, opts.nearPt) + touch;
             const big = cands.filter(c => Math.max(c.bbox[2] - c.bbox[0], c.bbox[3] - c.bbox[1]) > opts.ringMaxPt).sort((a, b) => ord(a) - ord(b));
             const o = ord(s); let prev = null, next = null; for (const c of big) { if (ord(c) < o) prev = c; else if (!next) next = c; }
-            if (bestO === prev || bestO === next || (!prev && !next)) host = bestO;
+            if (!ambiguous || bestO === prev || bestO === next || (!prev && !next)) host = bestO;
           }
         }
       }
