@@ -113,6 +113,16 @@ html[data-rail=sm] .brand .tag{display:none}
 .modeSeg button{border:0;background:transparent;border-radius:999px;padding:7px 15px;font-size:12.5px;font-weight:700;color:var(--ink70);white-space:nowrap;display:flex;align-items:center;gap:6px}
 .modeSeg button:hover{color:var(--ink)}
 .modeSeg button.on{background:var(--velvet);color:#fff}
+/* the three screens that are not the day's work live behind one small menu, and the menu names the one that is open */
+.moreMenu{position:relative;flex:0 0 auto}
+.moreMenu>summary{list-style:none;cursor:pointer;border-radius:999px;padding:7px 13px;font-size:12.5px;font-weight:700;color:var(--ink70);white-space:nowrap;display:flex;align-items:center;gap:4px}
+.moreMenu>summary::-webkit-details-marker{display:none}
+.moreMenu>summary:hover{color:var(--ink)}
+.moreMenu.on>summary{background:var(--velvet);color:#fff}
+.moreMenu .moreList{position:absolute;top:calc(100% + 6px);left:0;z-index:40;background:var(--card);border:1px solid var(--line);border-radius:11px;box-shadow:0 14px 40px rgba(20,16,10,.16);padding:5px;display:grid;gap:2px;min-width:170px}
+.moreMenu .moreList button{justify-content:flex-start;border-radius:8px;padding:8px 11px;color:var(--ink)}
+.moreMenu .moreList button:hover{background:var(--paper2)}
+.moreMenu .moreList button.on{background:var(--velvet);color:#fff}
 .btn{border:1px solid var(--ink);background:var(--ink);color:#fff;border-radius:9px;padding:8px 13px;font-weight:650;transition:opacity .15s,transform .08s;white-space:nowrap}
 .btn:hover{opacity:.9}.btn:active{transform:translateY(1px)}
 .btn:disabled{opacity:.45;cursor:default;transform:none}
@@ -904,6 +914,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
     <div class="railActions">
       <button class="btn gold wide" id="btnPick">＋ Add .ai / .pdf / .zip</button>
       <button class="btn ghost sm" id="btnNestAll" style="color:#fff;border-color:#4a4239">Nest all ready</button>
+      <button class="btn ghost sm" id="btnEarlierSets" style="color:#fff;border-color:#4a4239" title="every set on record — by day, by picture — to put back on these cards">Earlier sets…</button>
       <button class="btn ghost sm" id="btnClearAll" style="color:#fff;border-color:#4a4239">Clear queues</button>
     </div>
     <div class="queueHead">Sources <span class="qhCount" id="srcCount">0</span></div>
@@ -920,7 +931,8 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
   <main class="main">
     <div class="topbar">
       <button class="navBtn" id="btnRail" title="Toggle queue">☰</button>
-      <div class="modeNav" id="modeNav"><button class="modeArrow l" id="modeArrowL" aria-label="Scroll tabs left" tabindex="-1">&lsaquo;</button><div class="modeSeg" id="modeSeg"><button class="on" data-mode="nest">Nest</button><button data-mode="orders">Orders<i class="cnt" id="tabOrdersN"></i></button><button data-mode="design"><span class="full">Design Station</span><span class="tight">Station</span><i class="cnt" id="tabDesignN"></i></button><button data-mode="master">Master</button><button data-mode="engrave"><span class="full">Engraving</span><span class="tight">Engrave</span><i class="cnt" id="tabEngraveN"></i></button><button data-mode="review">Review<i class="cnt" id="tabReviewN"></i></button><button data-mode="library">Library</button><button data-mode="charms">Charms</button></div><button class="modeArrow r" id="modeArrowR" aria-label="Scroll tabs right" tabindex="-1">&rsaquo;</button></div>
+      <div class="modeNav" id="modeNav"><button class="modeArrow l" id="modeArrowL" aria-label="Scroll tabs left" tabindex="-1">&lsaquo;</button><div class="modeSeg" id="modeSeg"><button class="on" data-mode="nest">Nest</button><button data-mode="orders">Orders<i class="cnt" id="tabOrdersN"></i></button><button data-mode="engrave"><span class="full">Engraving</span><span class="tight">Engrave</span><i class="cnt" id="tabEngraveN"></i></button><button data-mode="review">Review<i class="cnt" id="tabReviewN"></i></button>
+        <details class="moreMenu" id="moreMenu"><summary title="the screens that are not part of the day's work: the Design Station, the master files, the library of sheets"><span id="moreLabel">More</span> ▾</summary><div class="moreList"><button data-mode="design">Design Station<i class="cnt" id="tabDesignN"></i></button><button data-mode="master">Master files</button><button data-mode="library">Library</button></div></details></div><button class="modeArrow r" id="modeArrowR" aria-label="Scroll tabs right" tabindex="-1">&rsaquo;</button></div>
       <div class="spacer"></div>
       <span class="sandboxPill hidden" id="sandboxPill" title="Sandbox: emulated Etsy from the stored snapshot; every record and file goes to sandbox copies">SANDBOX</span>
       <span class="etsyPill" id="etsyPill" title="Etsy API calls, as counted by the Design Station (the only app that calls Etsy); live on every heartbeat">Etsy <b id="etsyPillN">—</b></span>
@@ -2807,6 +2819,7 @@ async function loadCharms() {
 }
 function setMode(mode) {
   S.mode = mode; $$("#modeSeg button").forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
+  { const mm = $("#moreMenu"); if (mm) { const inMore = mm.querySelector(`button[data-mode="${mode}"]`); mm.classList.toggle("on", !!inMore); $("#moreLabel").textContent = inMore ? inMore.textContent.replace(/\d+$/, "").trim() : "More"; mm.open = false; } }
   // on a narrow window the tab strip scrolls: the tab you are on is always brought into view
   $("#sheets").classList.toggle("hidden", mode !== "nest"); if (mode === "nest") requestAnimationFrame(() => METALS.forEach(m => drawPreview(activePage(m.key)))); $("#libView").classList.toggle("hidden", mode !== "library"); $("#charmsView").classList.toggle("hidden", mode !== "charms");
   for (const [m, id] of [["orders", "ordersView"], ["design", "designView"], ["master", "masterView"], ["engrave", "engraveView"], ["review", "reviewView"]]) $("#" + id).classList.toggle("hidden", mode !== m);
@@ -2890,6 +2903,7 @@ async function boot() {
   $("#btnRail").onclick = () => { const off = $("#app").classList.toggle("railOff"); railUserClosed = off; railPinned = !off && S.mode !== "nest"; $("#btnRail").title = off ? "show the rail" : "hide the rail"; showActiveTab(); };
   $("#btnPick").onclick = () => $("#fileInput").click();
   $("#fileInput").onchange = e => { intake(e.target.files); e.target.value = ""; };
+  $("#btnEarlierSets").onclick = () => { if (window.RunHistory) RunHistory.show(""); };
   $("#btnNestAll").onclick = () => allSheets().forEach(sh => { if (activeCharms(sh).length && !["nesting", "finishing"].includes(sh.status)) startNest(sh); });
   $("#btnClearAll").onclick = () => { if (!confirm("Clear every queue and source? Nothing in the cloud is touched.")) return; METALS.forEach(m => clearMetal(m.key)); S.sources = []; S.unassigned = []; renderRail(); updateTopSub(); };
   $("#btnSettings").onclick = openSettings; $("#btnSaveSettings").onclick = e => { e.preventDefault(); readSettings(); closeDlg($("#dlgSettings")); };

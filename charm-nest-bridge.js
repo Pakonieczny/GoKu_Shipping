@@ -3072,7 +3072,11 @@ const Recall = window.Recall = (() => {
   const RC = { runId: null, setId: null, live: null };
   const on = () => !!(RC.runId || RC.setId);
   /** Put a run's or a set's sheets onto their material cards. Instant: the slim sheet list is all it reads. */
+  /* Recall stays on the tab it was asked from. Asked from Orders, the orders come up on Orders; from Nest, the sheets
+     on Nest; from anywhere else, Nest — every tab is filled either way, because what is on the cards is what every
+     tab is about, live or recalled. */
   async function open(sel) {
+    const from = S.mode;
     const q = sel.setId ? { setId: sel.setId } : { runId: sel.runId };
     const ls = await api("charmNestLibrary", Object.assign({ op: "listSheets", limit: 200 }, q), { label: "Reading the set" });
     const sheets = (ls.sheets || []).sort((a, b) => (a.setSeq || 0) - (b.setSeq || 0) || (a.sheetIndex || 0) - (b.sheetIndex || 0));
@@ -3097,7 +3101,8 @@ const Recall = window.Recall = (() => {
     // and the run's orders, as the Orders tab's own rows
     if (RC.runId) await ordersOf(RC.runId).catch(e => agent({ run: RC.runId }, "warn", `orders of the run: ${e.message}`));
     agent({ run: RC.runId }, "cloud", `Recalled ${sheets.length} sheet(s)${sel.setId ? " of " + (sheets[0].setSeq ? "Set-" + sheets[0].setSeq : sel.setId) : ""} from ${sheets[0].day || "the record"} onto the cards — nothing is running`);
-    setMode("nest");
+    setMode(["orders", "nest", "engrave", "review"].includes(from) ? from : "nest");
+    if (S.mode === "engrave") Engrave.render(); if (S.mode === "review") Review.render();
   }
   async function ordersOf(runId) {
     const r = await api("charmNestLibrary", { op: "runGet", runId }, { quiet: true }); if (!r.run) return;
