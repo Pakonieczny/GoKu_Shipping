@@ -312,6 +312,117 @@ dialog.wide{width:min(980px,95vw)}
 .dropAll span{background:var(--velvet);border:2px dashed var(--gold2);border-radius:16px;padding:22px 34px}
 @media (prefers-reduced-motion:reduce){.sheetCard.pulse,.rvItem.pulse{animation:none}}
 
+/* ── the order window: everything about one line, and the way to settle it ── */
+dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
+.owBox{display:flex;flex-direction:column;max-height:inherit;min-height:0}
+.owHead{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);flex:0 0 auto}
+.owHead h3{margin:0;font:22px var(--serif);font-weight:500;letter-spacing:.01em}
+.owHead .spacer{flex:1 1 auto}
+.owBody{flex:1 1 auto;min-height:0;overflow:hidden;display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr)}
+.owMain{min-width:0;min-height:0;overflow:auto;padding:14px 16px;display:grid;grid-template-columns:200px minmax(0,1fr);gap:16px;align-content:start}
+.owChat{min-width:0;min-height:0;display:flex;flex-direction:column;border-left:1px solid var(--line);background:var(--paper)}
+@media (max-width:900px){.owBody{grid-template-columns:minmax(0,1fr);overflow:auto}.owMain{grid-template-columns:minmax(0,1fr);overflow:visible}.owChat{border-left:0;border-top:1px solid var(--line);min-height:320px}}
+.owPhoto{width:100%;aspect-ratio:1;background:var(--paper2);border:1px solid var(--line);border-radius:11px;display:grid;place-items:center;overflow:hidden;cursor:zoom-in}
+.owPhoto img{width:100%;height:100%;object-fit:contain;display:block;transition:transform .18s ease}
+.owPhoto.zoom{cursor:zoom-out}.owPhoto.zoom img{transform:scale(2.2)}
+.owPhoto .ph{font:10.5px var(--mono);color:var(--ink25);letter-spacing:.08em;text-transform:uppercase}
+.owSku{display:flex;align-items:center;gap:8px;margin-top:10px;min-width:0}
+.owSku b{font:600 12.5px var(--mono);overflow-wrap:anywhere}
+.fLabel{display:block;font:10px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);font-weight:700;margin:0 0 5px}
+.fLabel .soft{text-transform:none;letter-spacing:0;font-weight:400;color:var(--ink45);font-family:var(--sans)}
+.owField{margin-bottom:12px}
+.owIn{width:100%;border:1px solid var(--line);border-radius:10px;padding:9px 11px;font:13px var(--sans);background:var(--card);resize:vertical;color:var(--ink)}
+.owIn[readonly]{background:var(--paper2);color:var(--ink70)}
+.owMeta{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:9px}
+.owMeta .m{border:1px solid var(--line);border-radius:10px;padding:7px 10px;background:var(--card);min-width:0}
+.owMeta .m i{display:block;font:9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);font-style:normal;margin-bottom:2px}
+.owMeta .m span{font:12.5px var(--mono);overflow-wrap:anywhere}
+.owFix{border:1px solid var(--clay);background:var(--claySoft);border-radius:11px;padding:10px 12px;margin-bottom:12px}
+.owFix .t{font:700 11px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:#8a3a26;margin-bottom:5px}
+.owFix .rvItem{border:0;box-shadow:none;background:transparent;padding:0;border-left:0}
+.owFix .rvItem .rh{display:none}
+.owChatHead{display:flex;align-items:center;gap:8px;padding:11px 13px;border-bottom:1px solid var(--line);flex:0 0 auto}
+.owChatHead .lab{font:10px var(--mono);letter-spacing:.11em;text-transform:uppercase;color:var(--ink45);font-weight:700}
+.owThread{flex:1 1 auto;min-height:0;overflow:auto;padding:12px 13px;display:flex;flex-direction:column;gap:9px}
+.owEmpty{margin:auto;text-align:center;color:var(--ink45);font-size:12.5px;line-height:1.6;max-width:30ch}
+.owEmpty b{display:block;color:var(--ink);font-size:14px;margin-bottom:5px}
+.owMsg{max-width:86%;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:7px 10px;font-size:12.5px;overflow-wrap:anywhere}
+.owMsg.me{align-self:flex-end;background:var(--velvet);color:#eee7da;border-color:var(--velvetLine)}
+.owMsg .who{display:block;font:10px var(--mono);letter-spacing:.06em;color:var(--ink45);margin-bottom:2px}
+.owMsg.me .who{color:rgba(255,255,255,.6)}
+.owMsg img{max-width:100%;border-radius:8px;display:block;margin-top:5px}
+.owComp{flex:0 0 auto;border-top:1px solid var(--line);padding:9px 11px;display:grid;gap:6px;background:var(--card)}
+.owCompLine{display:flex;gap:7px;align-items:flex-end}
+.owCompLine textarea{flex:1 1 auto;min-width:0;border:1px solid var(--line);border-radius:11px;padding:8px 11px;font:13px var(--sans);resize:none;max-height:120px;background:var(--card);color:var(--ink)}
+.owIco{width:34px;height:34px;flex:0 0 auto;border:1px solid var(--line);border-radius:10px;background:var(--card);display:grid;place-items:center;cursor:pointer;color:var(--ink70)}
+.owIco:hover{background:var(--paper2)}
+.owIco.send{background:var(--velvet);border-color:var(--velvet);color:#f2ead9}
+.owIco.send:disabled{opacity:.42;cursor:default}
+.owIco svg{width:17px;height:17px}
+.owTray{display:flex;gap:6px;flex-wrap:wrap}
+.owTray .chip{display:flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:8px;padding:2px 6px;font:11px var(--mono);background:var(--paper2)}
+.owTray .chip img{width:26px;height:26px;object-fit:cover;border-radius:4px}
+.owTray .chip button{border:0;background:transparent;cursor:pointer;color:var(--ink45);font-size:13px;line-height:1}
+.owHint{font:10.5px var(--sans);color:var(--ink45)}
+.owHint kbd{font:10px var(--mono);border:1px solid var(--line);border-radius:4px;padding:0 4px;background:var(--paper2)}
+.owFoot{display:flex;align-items:center;gap:10px;padding:10px 16px;border-top:1px solid var(--line);flex:0 0 auto;background:var(--card)}
+.owFoot .spacer{flex:1 1 auto}
+.owSkip{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;cursor:pointer}
+.owSw{width:40px;height:22px;border-radius:999px;border:1px solid var(--line);background:var(--paper2);position:relative;cursor:pointer;flex:0 0 auto;padding:0}
+.owSw i{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--ink45);transition:left .15s,background .15s}
+.owSw[aria-checked=true]{background:var(--sageSoft,var(--paper2));border-color:var(--sage,var(--line))}
+.owSw[aria-checked=true] i{left:20px;background:var(--sage,var(--ink))}
+
+/* ── orders: one card per line, or the same line as a row ── */
+#ordersView:not(.hidden){height:100%;min-height:0;gap:0}
+.ordHead{display:flex;flex-direction:column;gap:8px;flex:0 0 auto}
+.ordFilters{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.ordFilters .sep{width:1px;align-self:stretch;background:var(--line);margin:0 3px}
+.ordSearch{border:1px solid var(--line);border-radius:999px;padding:5px 12px;font-size:12.5px;background:var(--card);min-width:0;flex:0 1 200px}
+.viewSeg{display:flex;border:1px solid var(--line);border-radius:999px;background:var(--card2);padding:2px;gap:2px;flex:0 0 auto}
+.viewSeg button{border:0;background:transparent;border-radius:999px;padding:4px 11px;font:600 11.5px var(--sans);color:var(--ink70);cursor:pointer;white-space:nowrap}
+.viewSeg button.on{background:var(--ink);color:var(--paper)}
+.ordBody{flex:1 1 auto;min-height:0;overflow:auto;margin-top:10px;padding-right:2px}
+.ordCards{display:grid;grid-template-columns:repeat(auto-fill,minmax(212px,1fr));gap:12px;align-items:start}
+@media (max-width:760px){.ordCards{grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}}
+.ocard{background:var(--card);border:1px solid var(--line);border-radius:13px;box-shadow:var(--sh);overflow:hidden;cursor:pointer;display:flex;flex-direction:column;min-width:0;text-align:left;padding:0;font:inherit;color:inherit;--accent:var(--ink25);border-top:3px solid var(--accent);transition:box-shadow .14s,transform .14s}
+.ocard:hover,.ocard:focus-visible{box-shadow:0 10px 28px rgba(20,16,10,.16);transform:translateY(-1px);outline:none}
+.ocard:focus-visible{outline:2px solid var(--gold2);outline-offset:2px}
+.ocard[data-m=gold]{--accent:var(--m-gold)}.ocard[data-m=silver]{--accent:var(--m-silver)}.ocard[data-m=rose]{--accent:var(--m-rose)}.ocard[data-m=gold10k]{--accent:var(--m-gold10k)}.ocard[data-m=gold14k]{--accent:var(--m-gold14k)}
+.ocard.attn{--accent:var(--clay)}
+.oimg{position:relative;aspect-ratio:1;background:var(--paper2);display:flex;align-items:center;justify-content:center;overflow:hidden}
+.oimg img{width:100%;height:100%;object-fit:contain;display:block}
+.oimg .ph{font:10.5px var(--mono);color:var(--ink25);letter-spacing:.08em;text-transform:uppercase}
+.oimg .qty{position:absolute;top:7px;right:7px;background:rgba(34,31,27,.86);color:#fff;border-radius:7px;padding:2px 8px;font:700 11.5px var(--mono)}
+.oimg .flag{position:absolute;top:7px;left:7px;background:var(--clay);color:#fff;border-radius:999px;width:19px;height:19px;display:grid;place-items:center;font:700 12px var(--sans)}
+.obody{padding:9px 11px 11px;display:grid;gap:5px;min-width:0}
+.orow1{display:flex;align-items:center;gap:7px;min-width:0}
+.onum{font:600 13.5px var(--mono);letter-spacing:.01em}
+.orow1 .spacer{flex:1 1 auto}
+.ost{font:700 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;border-radius:6px;padding:2px 6px;background:var(--paper2);white-space:nowrap}
+.ost.ok{background:var(--sageSoft,var(--paper2));color:#3f5b3a}.ost.warn{background:var(--goldSoft);color:#7a5a1d}.ost.bad{background:var(--claySoft);color:#8a3a26}.ost.info{background:var(--slateSoft,var(--paper2))}
+.ometal{display:flex;align-items:center;gap:6px;font:11.5px var(--sans);color:var(--ink70);min-width:0}
+.ometal i{width:9px;height:9px;border-radius:3px;background:var(--accent);flex:0 0 auto}
+.ometal span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.osku{font:11.5px var(--mono);color:var(--ink);display:flex;gap:6px;min-width:0}
+.osku b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.osku i{font-style:normal;font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink45);flex:0 0 auto;padding-top:1px}
+.opers{font:12.5px var(--serif);background:var(--paper2);border-radius:7px;padding:4px 8px;overflow-wrap:anywhere;max-height:44px;overflow:hidden}
+.owhy{font:11.5px var(--sans);color:#8a3a26;overflow-wrap:anywhere}
+/* the same line as a row: every field the card has, and a smaller picture */
+.ordList{display:grid;gap:5px}
+.olist{display:grid;grid-template-columns:34px minmax(88px,auto) minmax(0,1.1fr) minmax(0,1.4fr) 44px minmax(0,110px) auto auto;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:9px;padding:5px 10px;cursor:pointer;text-align:left;font:inherit;color:inherit;--accent:var(--ink25);min-width:0}
+.olist:hover,.olist:focus-visible{background:var(--paper2);outline:none}
+.olist:focus-visible{outline:2px solid var(--gold2);outline-offset:1px}
+.olist[data-m=gold]{--accent:var(--m-gold)}.olist[data-m=silver]{--accent:var(--m-silver)}.olist[data-m=rose]{--accent:var(--m-rose)}.olist[data-m=gold10k]{--accent:var(--m-gold10k)}.olist[data-m=gold14k]{--accent:var(--m-gold14k)}
+.olist.attn{--accent:var(--clay)}
+.olist .th{width:34px;height:34px;border-radius:6px;background:var(--paper2);object-fit:contain;display:block}
+.olist .cell{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.olist .onum{font-size:12.5px}
+.olist .qtyc{font:600 11.5px var(--mono);color:var(--ink45);text-align:right}
+.olist .whyc{grid-column:2/-1;white-space:normal}
+@media (max-width:1100px){.olist{grid-template-columns:34px minmax(80px,auto) minmax(0,1fr) 40px auto;}.olist .hideSm{display:none}}
+
 /* ── bridge: tabs, live strip, run banner, run mode ── */
 .modeSeg button .cnt{font:700 10px var(--mono);margin-left:5px;background:var(--clay);color:#fff;border-radius:9px;padding:1px 5px;vertical-align:1px;font-style:normal}
 .modeSeg button .cnt:empty{display:none}
@@ -362,8 +473,12 @@ dialog.wide{width:min(980px,95vw)}
 .ordRow .why button{margin-left:8px}
 .sandboxPill{display:inline-flex;align-items:center;font:700 11.5px var(--mono);letter-spacing:.03em;color:#fff;background:repeating-linear-gradient(135deg,#7a2a1a 0 10px,#5a1f16 10px 20px);border:1px solid #c0553b;border-radius:999px;padding:5px 12px}
 .sandboxPill.hidden{display:none}
-.sandboxBar{background:#fff5f2;border:1px solid #e3b7a9;border-radius:10px;padding:8px 12px;margin:8px 0 10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12.5px}
+.sandboxBar{background:#fff5f2;border:1px solid #e3b7a9;border-radius:10px;padding:8px 12px;margin:8px 0 0;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12.5px}
 .sandboxBar b{color:#8a3a26}
+/* off is the normal state, so it says so once and quietly; on is a mode nobody may miss */
+.sandboxBar.quiet{background:transparent;border:0;padding:0;margin:8px 0 0;font-size:11.5px;color:var(--ink45)}
+.sandboxBar.quiet .off{color:var(--ink45)}
+.sandboxBar .spacer{flex:1 1 auto}
 .etsyPill{display:inline-flex;align-items:center;gap:6px;font:11.5px var(--mono);color:var(--ink70);border:1px solid var(--line);border-radius:999px;padding:5px 10px;background:var(--card);white-space:nowrap;flex:0 1 auto;min-width:0;overflow:hidden}
 .etsyPill b{color:var(--ink);font-weight:650}
 .etsyPill.warn{border-color:#b98a3a;color:#7a5a1d}
@@ -733,7 +848,7 @@ const DEFAULTS = {
   rail: "md",
   stock: { gold: [100 / 25.4, 50 / 25.4], silver: [100 / 25.4, 50 / 25.4], rose: [100 / 25.4, 50 / 25.4], gold10k: [100 / 25.4, 50 / 25.4], gold14k: [100 / 25.4, 50 / 25.4] },
   clearancePt: -0.5, insetPt: 1.5, angleStep: 30, budgetS: 180, seed: 1, serverAbove: 0, parallel: 0,
-  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", aiRounds: 10, snapIn: 0.25, maxFill: 0.74, v: 12,
+  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", aiRounds: 10, snapIn: 0.25, maxFill: 0.74, orderView: "cards", v: 13,
   // Design Station bridge, orders, run (design doc §14)
   dsOrigin: "https://design-1.goldenspike.app", heartbeatS: 5, heartbeatMiss: 3, autoCommit: "on", runMode: "manual", pullMode: "all", pullDueBy: "", pullCount: 40, autoEvery: 0, etsyHourlyCap: 600, sandbox: "off",
   skuPattern: "^[A-Z0-9][A-Z0-9 _.,'&()+\\-]{1,60}$", labelGapMm: 6.4, masterServerAbove: 0, sizeMinMm: 3, sizeMaxMm: 60,
@@ -796,6 +911,7 @@ function loadSettings() {
     if ((saved.v || 1) < 9) { saved.serverAbove = 0; saved.v = 9; }
     if ((saved.v || 1) < 10) { saved.v = 10; }                                              // v10: bridge settings arrive with their defaults
     if ((saved.v || 1) < 12) { if (saved.engraveConfidence == null || +saved.engraveConfidence === 0.8) saved.engraveConfidence = DEFAULTS.engraveConfidence; saved.v = 12; }   // v12: Claude's reading has earned more trust
+    if ((saved.v || 1) < 13) { if (!saved.orderView) saved.orderView = DEFAULTS.orderView; saved.v = 13; }   // v13: the orders tab remembers cards or list
     if ((saved.v || 1) < 11) { if (!saved.skuPattern || saved.skuPattern === "^[A-Z]{2,4}-[A-Z0-9]{2,6}(-[A-Z0-9]{1,4})?$") saved.skuPattern = DEFAULTS.skuPattern; if (saved.masterServerAbove == null || +saved.masterServerAbove === 300) saved.masterServerAbove = 0; saved.v = 11; }   // v11: SKUs are free text; masters index in the tab (the server route has 1 GB)
     const out = Object.assign({}, DEFAULTS, saved); out.stock = Object.assign({}, DEFAULTS.stock, saved.stock || {}); return out;
   } catch (_) { return Object.assign({}, DEFAULTS, { v: 2 }); }
@@ -2409,5 +2525,51 @@ async function boot() {
 boot();
 </script>
 <script src="charm-nest-bridge.js"></script>
+<!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
+<dialog id="orderWin" class="owin" aria-labelledby="owTitle">
+  <div class="owBox">
+    <div class="owHead">
+      <h3 id="owTitle">Order</h3>
+      <span class="spacer"></span>
+      <span class="pill neutral" id="owMetal">—</span>
+      <button class="btn ghost sm" id="owClose">✕ Close</button>
+    </div>
+    <div class="owBody">
+      <div class="owMain">
+        <div>
+          <div class="owPhoto" id="owPhoto" title="click to zoom"><span class="ph">no image</span></div>
+          <div class="owSku"><b id="owSku">SKU: —</b><button class="btn ghost xs" id="owCopy">Copy</button></div>
+        </div>
+        <div>
+          <div id="owFix"></div>
+          <div class="owField"><label class="fLabel" for="owNotes">Personalisation &amp; buyer message</label><textarea class="owIn" id="owNotes" rows="4" readonly></textarea></div>
+          <div class="owField"><label class="fLabel" for="owNote">Staff note <span class="soft">— saved automatically, visible to every station</span></label><textarea class="owIn" id="owNote" rows="5" placeholder="Add a note for this order…"></textarea></div>
+          <div class="owMeta" id="owMeta"></div>
+        </div>
+      </div>
+      <aside class="owChat">
+        <div class="owChatHead"><span class="lab">Messages</span><span class="spacer" style="flex:1 1 auto"></span><span class="mono" style="font-size:11px;color:var(--ink45)" id="owWho">—</span><button class="btn ghost xs" id="owWhoBtn">Change name</button></div>
+        <div class="owThread" id="owThread"></div>
+        <div class="owComp">
+          <div class="owTray" id="owTray"></div>
+          <div class="owCompLine">
+            <button type="button" class="owIco" id="owAttach" title="Attach images"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+            <textarea id="owInput" rows="1" placeholder="Message every station working this order…"></textarea>
+            <button type="button" class="owIco send" id="owSend" title="Send (Enter)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg></button>
+          </div>
+          <div class="owHint"><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · paste or drop images · the customer never sees this</div>
+        </div>
+        <input type="file" id="owFile" accept="image/*" multiple hidden>
+      </aside>
+    </div>
+    <div class="owFoot">
+      <button class="owSw" id="owSkip" role="switch" aria-checked="false" aria-label="Skip this line"><i></i></button>
+      <span style="font-size:12.5px">Skip this line <span style="color:var(--ink45)">— cut nothing for it and leave the order open</span></span>
+      <span class="spacer"></span>
+      <button class="btn ghost sm" id="owPrev" title="the line before this one">‹ Previous</button>
+      <button class="btn ghost sm" id="owNext" title="the next line">Next ›</button>
+    </div>
+  </div>
+</dialog>
 </body>
 </html>

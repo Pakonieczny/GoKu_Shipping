@@ -223,10 +223,19 @@ const DesignLink = window.DesignLink = (() => {
     if (!S_.control || !S_.frame || ev.fromStation) return;
     const text = String(ev.text || (ev.html ? ev.html.replace(/<[^>]+>/g, "") : "")).trim(); if (!text) return;
     const last = feedQ[feedQ.length - 1]; if (last && last.text === text) return;
-    feedQ.push({ t: ev.t || Date.now(), kind: String(ev.kind || ""), text: text.slice(0, 220) }); if (feedQ.length > 12) feedQ.shift();
+    feedQ.push({ t: ev.t || Date.now(), kind: String(ev.kind || ""), text: text.slice(0, 220) }); if (feedQ.length > 240) feedQ.shift();
     if (!feedT) feedT = setTimeout(flushFeed, 450);
   }
-  function flushFeed() { feedT = null; const rows = feedQ.splice(0, 12).slice(-6); if (!rows.length || !S_.control) return; call("feed.post", { rows }, { timeoutMs: 4000, quiet: true }).catch(() => {}); }
+  /* A burst — pooling forty lines, nesting six sheets — used to lose most of itself here: the queue was capped at twelve
+     and each flush sent only the last six of the twelve it took. Everything queued now reaches the station, a dozen at a
+     time, and only a runaway ever drops a line. */
+  function flushFeed() {
+    feedT = null;
+    if (!feedQ.length || !S_.control) return;
+    const rows = feedQ.splice(0, 12);
+    call("feed.post", { rows }, { timeoutMs: 4000, quiet: true }).catch(() => {});
+    if (feedQ.length) feedT = setTimeout(flushFeed, 250);
+  }
   async function release() { S_.control = false; stopHeartbeat(); try { await call("release", {}, { timeoutMs: 5000 }); } catch (_) {} S_.up = false; S_.veil && S_.veil.classList.remove("hidden"); Dock.layout(); renderConsole(); }
   function ensure() { if (S_.control && S_.up) return Promise.resolve(S_.state); if (!S_.frame) mount(document.querySelector("#designView .dsFrameHost") || Views.designHost()); return open(); }
   function renderConsole() {
@@ -431,55 +440,170 @@ const Orders = window.Orders = (() => {
   }
   const STATE_PILL = { pulled: ["neutral", "pulled"], noDesign: ["info", "no design"], pooled: ["info", "pooled"], nested: ["ok", "nested"], written: ["ok", "written"], labelled: ["ok", "labelled"], committed: ["ok", "complete"], unmatched: ["bad", "unmatched"], held: ["bad", "held"], contended: ["warn", "other run"], skipped: ["warn", "skipped"], gone: ["bad", "gone"], oversize: ["bad", "oversize"] };
   function engravePill(r) { const e = r.engrave; if (!e) return r.spec && r.spec.engraveCandidate ? ["warn", "words?"] : ["neutral", "—"]; if (!e.needed) return ["neutral", e.state === "skipped" ? "skipped" : "no engraving"]; if (e.approved) return ["ok", "approved"]; if (e.state === "words") return ["warn", "words"]; if (e.state === "review") return ["warn", "review"]; if (e.state === "fitted") return ["info", "fitted"]; if (e.state === "blocked") return ["bad", "blocked"]; return ["info", e.state || "engrave"]; }
+  /* Which pile a line is in. The three the shop asked for — went through, needs a person, needs engraving settled —
+     plus the two that are neither. A line is in exactly one pile, so the counts add up to the lines pulled. */
+  const PILES = [
+    { id: "attn", label: "Needs a decision", cls: "warn", of: r => r.problems.length || ["held", "unmatched", "oversize", "gone"].includes(r.state) },
+    { id: "eng", label: "Engraving to settle", cls: "info", of: r => r.engrave && r.engrave.needed && !r.engrave.approved && r.engrave.state !== "skipped" },
+    { id: "done", label: "Done", cls: "ok", of: r => ["committed", "labelled"].includes(r.state) },
+    { id: "ready", label: "Went through", cls: "ok", of: r => ["pooled", "nested", "written", "noDesign", "skipped"].includes(r.state) },
+    { id: "rest", label: "Not started", cls: "neutral", of: r => true },
+  ];
+  const pileOf = r => (PILES.find(g => g.of(r)) || PILES[PILES.length - 1]).id;
+  const OV = { pile: null, metal: null, q: "", view: null };                    // what the tab is showing right now
+  const viewMode = () => OV.view || S.settings.orderView || "cards";
+  /** The lines the filters leave, in ship-by order. */
+  function visibleRows() {
+    const q = OV.q.trim().toLowerCase();
+    return rowsOf().filter(r => {
+      if (OV.pile && pileOf(r) !== OV.pile) return false;
+      if (OV.metal && (r.material || "none") !== OV.metal) return false;
+      if (!q) return true;
+      const sp = r.spec || {};
+      return [r.order.receiptId, sp.designSku, r.line.sku, r.line.title, (sp.personalization || []).join(" "), sp.buyerMessage, sp.staffNote, r.reason]
+        .some(x => String(x || "").toLowerCase().includes(q));
+    }).sort((x, y) => (x.order.shipBy || 0) - (y.order.shipBy || 0) || String(x.order.receiptId).localeCompare(String(y.order.receiptId)));
+  }
+  /* The listing photographs come from the Design Station, which already has them cached and rate limited, so a wall of
+     cards here costs Etsy nothing this page would not already have spent. They are asked for only as a card comes into
+     view, at most a dozen at a time, and remembered for the session. A charm we hold a design for falls back to its own
+     thumbnail, which is the drawing that will actually be cut. */
+  const IMG = { got: new Map(), want: new Set(), timer: 0 };
+  function imageFor(r) {
+    const lid = String(r.line.listingId || "");
+    if (IMG.got.get(lid)) return IMG.got.get(lid);
+    const e = r.spec && r.spec.designSku ? B.master.entries.get(r.spec.designSku) : null;
+    return (e && e.thumbUrl) || null;
+  }
+  function wantImage(lid) {
+    lid = String(lid || ""); if (!lid || IMG.got.has(lid) || IMG.want.has(lid)) return;
+    IMG.want.add(lid);
+    if (IMG.timer) return;
+    IMG.timer = setTimeout(async () => {
+      IMG.timer = 0;
+      const ids = [...IMG.want].slice(0, 12); ids.forEach(id => IMG.want.delete(id));
+      if (!ids.length) return;
+      if (!DesignLink.up()) { ids.forEach(id => IMG.got.set(id, null)); return; }
+      try {
+        const got = await DesignLink.call("orders.images", { listingIds: ids }, { timeoutMs: 45000, quiet: true });
+        for (const id of ids) IMG.got.set(id, (got.images && got.images[id]) || null);
+      } catch (_) { ids.forEach(id => IMG.got.set(id, null)); }
+      paintImages();
+      if (IMG.want.size) { const next = [...IMG.want][0]; IMG.want.delete(next); wantImage(next); }
+    }, 120);
+  }
+  /** Fill in every picture that has arrived, without rebuilding the cards under the person's cursor. */
+  function paintImages() {
+    for (const host of document.querySelectorAll("#ordBody [data-lid]")) {
+      const url = IMG.got.get(host.dataset.lid);
+      if (host.dataset.painted === "1") continue;
+      if (!url) { if (IMG.got.has(host.dataset.lid)) { host.dataset.painted = "1"; const p2 = host.querySelector(".ph"); if (p2) p2.textContent = "no image"; } continue; }
+      host.dataset.painted = "1";
+      if (host.tagName === "IMG") { host.src = url; continue; }
+      const img = host.querySelector("img") || host.appendChild(el("img"));
+      img.loading = "lazy"; img.alt = ""; img.src = url;
+      const ph = host.querySelector(".ph"); if (ph) ph.remove();
+    }
+  }
+  const shipTxt = r => r.order.shipBy ? new Date(r.order.shipBy * 1000).toLocaleDateString("en-US", { month: "short", day: "2-digit" }) : "—";
+  const wordsOf = sp => (sp.personalization || []).join(" / ") || sp.buyerMessage || "";
+  /** Everything a person needs to recognise one line, as a card or as a row: the same fields either way. */
+  function renderBody() {
+    const host = document.getElementById("ordBody"); if (!host) return;
+    const rows = visibleRows();
+    if (!rowsOf().length) { host.innerHTML = '<div class="libEmpty">No orders pulled. Press <b>Pull orders</b> — the Design Station reads Etsy and hands every open order over the bridge.</div>'; return; }
+    if (!rows.length) { host.innerHTML = '<div class="libEmpty">Nothing matches these filters.</div>'; return; }
+    const cards = viewMode() === "cards";
+    host.innerHTML = '<div class="' + (cards ? "ordCards" : "ordList") + '" id="ordItems"></div>';
+    const list = host.querySelector("#ordItems");
+    for (const r of rows) {
+      const sp = r.spec || {}, m = r.material || "none";
+      const st = STATE_PILL[r.state] || ["neutral", r.state];
+      const attn = r.problems.length || ["held", "unmatched", "oversize"].includes(r.state);
+      const lid = String(r.line.listingId || "");
+      const url = imageFor(r);
+      const why = attn ? (r.problems.map(x => Review.problemText(x)).join(" · ") || r.reason || "") : "";
+      const node = el("button", (cards ? "ocard" : "olist") + (attn ? " attn" : ""));
+      node.type = "button"; node.dataset.m = m; node.dataset.key = r.key;
+      node.title = r.order.receiptId + " · " + (sp.designSku || r.line.sku || "no SKU") + " — " + r.line.title;
+      const qty = sp.quantity || r.line.quantity || 1;
+      const P = (c, h) => '<span class="' + c + '">' + h + '</span>';
+      if (cards) {
+        node.innerHTML =
+          '<span class="oimg" data-lid="' + esc(lid) + '"' + (url ? ' data-painted="1"' : "") + '>' +
+            (url ? '<img loading="lazy" alt="" src="' + esc(url) + '">' : '<span class="ph">loading…</span>') +
+            (qty > 1 ? P("qty", "×" + qty) : "") +
+            (attn ? '<span class="flag" title="' + esc(why) + '">!</span>' : "") +
+          '</span>' +
+          '<span class="obody">' +
+            '<span class="orow1"><b class="onum">' + esc(r.order.receiptId) + '</b><span class="spacer"></span><span class="ost ' + st[0] + '">' + esc(st[1]) + '</span></span>' +
+            '<span class="ometal"><i></i><span>' + esc(m === "none" ? "no material yet" : labelOf(m)) + '</span></span>' +
+            '<span class="osku"><i>SKU</i><b>' + esc(sp.designSku || r.line.sku || "— none —") + '</b></span>' +
+            (wordsOf(sp) ? P("opers", esc(wordsOf(sp))) : "") +
+            (why ? P("owhy", esc(why)) : "") +
+          '</span>';
+      } else {
+        node.innerHTML =
+          '<img class="th" data-lid="' + esc(lid) + '" alt=""' + (url ? ' src="' + esc(url) + '" data-painted="1"' : "") + '>' +
+          P("cell onum", esc(r.order.receiptId)) +
+          '<span class="cell osku"><b>' + esc(sp.designSku || r.line.sku || "— none —") + '</b></span>' +
+          '<span class="cell hideSm" style="font-size:12px;color:var(--ink70)">' + esc(wordsOf(sp) || r.line.title) + '</span>' +
+          P("qtyc", "×" + qty) +
+          '<span class="cell hideSm ometal"><i></i><span>' + esc(m === "none" ? "none" : labelOf(m)) + '</span></span>' +
+          '<span class="cell hideSm" style="font:11.5px var(--mono);color:var(--ink45)">' + esc(shipTxt(r)) + '</span>' +
+          '<span class="ost ' + st[0] + '">' + esc(st[1]) + '</span>' +
+          (why ? '<span class="cell whyc owhy">' + esc(why) + '</span>' : "");
+      }
+      node.onclick = () => OrderWin.open(r.key);
+      list.appendChild(node);
+      if (!url && lid) wantImage(lid);
+    }
+    paintImages();
+  }
   function render() {
     const v = document.getElementById("ordersView"); if (!v || v.classList.contains("hidden")) { const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(new Set(B.orders.rows.map(r => r.order.receiptId)).size) : ""; return; }
-    const s = S.settings;
-    const runBtns = B.run && B.run.status !== "complete" && B.run.status !== "stopped" ? `<button class="btn ghost sm" id="ordStop">Stop run</button>` : `<button class="btn gold sm" id="ordRun">Run set ▶</button><button class="btn ghost sm" id="ordResume">Resume run…</button>`;
-    v.innerHTML = `<div class="ordBar">
-        <button class="btn sm" id="ordPull">Pull orders</button>${runBtns}
-        <select id="ordPullMode"><option value="all"${s.pullMode === "all" ? " selected" : ""}>Every open order</option><option value="dueBy"${s.pullMode === "dueBy" ? " selected" : ""}>Due by date</option><option value="count"${s.pullMode === "count" ? " selected" : ""}>N most urgent</option></select>
-        <input type="date" id="ordDueBy" value="${esc(s.pullDueBy || "")}" title="Orders due by" class="${s.pullMode === "dueBy" ? "" : "hidden"}"><input type="number" id="ordCount" value="${s.pullCount || 40}" min="1" max="500" title="How many" class="${s.pullMode === "count" ? "" : "hidden"}">
-        <span class="pill ${B.orders.stale ? "warn" : "neutral"}" id="ordMeta">${B.orders.pulledAt ? `pulled ${fmtT(B.orders.pulledAt)} · ${new Set(B.orders.rows.map(r => r.order.receiptId)).size} orders · ${B.orders.rows.length} lines${B.orders.filtered ? ` · ${B.orders.filtered} left out by the rule` : ""}${B.orders.stale ? " · station list changed since" : ""}` : "nothing pulled yet"}</span>
-        <span class="spacer"></span><span class="pill info">${Review.count() ? Review.count() + " to decide in Review" : "nothing to decide"}</span>
-      </div><div class="ordGroups" id="ordGroups"></div>`;
+    const s = S.settings, all = rowsOf();
+    const running = B.run && !["complete", "stopped"].includes(B.run.status);
+    // the bar carries what a person does here and nothing else: bring orders in, start or stop the run, and what was pulled
+    // while a run is open the banner above owns it — Next, Resume, Review and Stop are all there, and repeating them
+    // here only made it unclear which button did what
+    const runBtns = running ? ""
+      : `<button class="btn gold sm" id="ordRun" title="nest, engrave and label every line that is ready to go">Run set ▶</button><button class="btn ghost sm" id="ordResume" title="open a run from an earlier session and carry on from where it stopped">Earlier run…</button>`;
+    const counts = {}; for (const r of all) counts[pileOf(r)] = (counts[pileOf(r)] || 0) + 1;
+    const byMetal = {}; for (const r of all) { const m = r.material || "none"; byMetal[m] = (byMetal[m] || 0) + 1; }
+    const chip = (on, id, label, n, cls, title) => `<button class="egTab${on ? " on" : ""}" data-pile="${esc(id)}" title="${esc(title || "")}">${esc(label)}<b class="${cls}">${n}</b></button>`;
+    const mChip = m => `<button class="egTab${OV.metal === m ? " on" : ""}" data-metal="${esc(m)}" title="show only ${esc(m === "none" ? "lines with no material yet" : labelOf(m))}">${esc(m === "none" ? "No material" : labelOf(m))}<b>${byMetal[m]}</b></button>`;
+    v.innerHTML = `<div class="ordHead">
+        <div class="ordBar">
+          <button class="btn sm" id="ordPull" title="ask the Design Station for every open order that matches the rule below">Pull orders</button>${runBtns}
+          <select id="ordPullMode" title="which open orders to bring in"><option value="all"${s.pullMode === "all" ? " selected" : ""}>Every open order</option><option value="dueBy"${s.pullMode === "dueBy" ? " selected" : ""}>Due by date</option><option value="count"${s.pullMode === "count" ? " selected" : ""}>N most urgent</option></select>
+          <input type="date" id="ordDueBy" value="${esc(s.pullDueBy || "")}" title="orders due on or before this date" class="${s.pullMode === "dueBy" ? "" : "hidden"}"><input type="number" id="ordCount" value="${s.pullCount || 40}" min="1" max="500" title="how many of the most urgent orders" class="${s.pullMode === "count" ? "" : "hidden"}">
+          <span class="spacer"></span>
+          <span class="pill ${B.orders.stale ? "warn" : "neutral"}" id="ordMeta" title="${esc(B.orders.stale ? "the station's open list has changed since this pull — pull again to catch up" : "the last pull")}">${B.orders.pulledAt ? `${new Set(all.map(r => r.order.receiptId)).size} orders · ${all.length} lines · pulled ${fmtT(B.orders.pulledAt)}${B.orders.filtered ? ` · ${B.orders.filtered} left out by the rule` : ""}${B.orders.stale ? " · list changed" : ""}` : "nothing pulled yet"}</span>
+        </div>
+        <div class="ordFilters">
+          ${chip(!OV.pile, "", "Everything", all.length, "", "every line that was pulled")}${PILES.filter(g => counts[g.id]).map(g => chip(OV.pile === g.id, g.id, g.label, counts[g.id], g.cls, g.label)).join("")}
+          ${Object.keys(byMetal).length > 1 ? `<span class="sep"></span>` + ["gold", "silver", "rose", "gold10k", "gold14k", "none"].filter(m => byMetal[m]).map(mChip).join("") : ""}
+          <span class="spacer"></span>
+          <input class="ordSearch" id="ordQ" placeholder="order, SKU, words…" value="${esc(OV.q)}" title="search the order number, the SKU, the title and everything the customer or the shop wrote">
+          <span class="viewSeg"><button data-view="cards"${viewMode() === "cards" ? ' class="on"' : ""} title="a card for every line, with its picture">Cards</button><button data-view="list"${viewMode() === "list" ? ' class="on"' : ""} title="the same lines as rows">List</button></span>
+        </div>
+      </div><div class="ordBody" id="ordBody"></div>`;
     v.querySelector("#ordPullMode").onchange = e => { S.settings.pullMode = e.target.value; saveSettings(); render(); };
     v.querySelector("#ordDueBy").onchange = e => { S.settings.pullDueBy = e.target.value; saveSettings(); };
     v.querySelector("#ordCount").onchange = e => { S.settings.pullCount = Math.max(1, +e.target.value || 40); saveSettings(); };
+    v.querySelectorAll("[data-pile]").forEach(b => b.onclick = () => { OV.pile = b.dataset.pile || null; render(); });
+    v.querySelectorAll("[data-metal]").forEach(b => b.onclick = () => { OV.metal = OV.metal === b.dataset.metal ? null : b.dataset.metal; render(); });
+    v.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { OV.view = b.dataset.view; S.settings.orderView = OV.view; saveSettings(); render(); });
+    const q = v.querySelector("#ordQ"); q.oninput = () => { OV.q = q.value; const at = q.selectionStart; renderBody(); const q2 = document.getElementById("ordQ"); if (q2) { q2.focus(); try { q2.setSelectionRange(at, at); } catch (_) {} } };
     Sandbox.mountPanel(v);
     v.querySelector("#ordPull").onclick = async () => { try { await pull(null); } catch (e) { toast(e.message, "bad", 7000); agent({ bridge: true }, "warn", e.message); } };
     const rb = v.querySelector("#ordRun"); if (rb) rb.onclick = () => RunCtl.start();
     const rs = v.querySelector("#ordResume"); if (rs) rs.onclick = () => RunCtl.pickResume();
-    const st = v.querySelector("#ordStop"); if (st) st.onclick = () => RunCtl.stop("stopped by the operator", "Press Resume to carry on from the recorded step.");
-    const groups = v.querySelector("#ordGroups");
-    const byM = new Map();
-    for (const r of rowsOf()) { const m = r.material || "none"; if (!byM.has(m)) byM.set(m, []); byM.get(m).push(r); }
-    const order = ["gold", "silver", "rose", "gold10k", "gold14k", "none"];
-    for (const m of order) {
-      const rows = byM.get(m); if (!rows || !rows.length) continue;
-      const g = el("div", "ordGroup"); g.dataset.m = m;
-      g.innerHTML = `<div class="gh"><span class="sw" style="width:10px;height:10px;border-radius:3px;background:var(--accent)"></span>${m === "none" ? "No material yet" : esc(labelOf(m))}<span class="n">${rows.length} line(s) · ${new Set(rows.map(r => r.order.receiptId)).size} order(s)</span></div>`;
-      for (const r of rows.sort((a, b) => (a.order.shipBy || 0) - (b.order.shipBy || 0))) {
-        const sp = r.spec || {}; const [k, t] = STATE_PILL[r.state] || ["neutral", r.state]; const [ek, et] = engravePill(r);
-        const held = r.problems.length || r.state === "held";
-        const row = el("div", "ordRow" + (held ? " held" : "") + (r.state === "gone" ? " gone" : ""));
-        const words = sp.personalization && sp.personalization.length ? `<i>pers</i>${esc(sp.personalization.join(" / "))} ` : ""; const bm = sp.buyerMessage ? `<i>msg</i>${esc(sp.buyerMessage)} ` : ""; const sn = sp.staffNote ? `<i>note</i>${esc(sp.staffNote)}` : "";
-        row.innerHTML = `<span class="num">${esc(r.order.receiptId)}${r.order.attention ? '<span class="attn" title="personalisation or buyer message">!</span>' : ""}${r.claimedBy ? ' <span title="claimed on the station" style="color:var(--gold)">●</span>' : ""}</span>
-          <span class="sku" title="${esc(r.line.title)}">${esc(sp.designSku || "— no SKU —")}${sp.form ? ` · ${esc(sp.form)}` : ""}${sp.size ? ` · ${esc(sp.size)}` : ""}</span>
-          <span class="txt" title="${esc((sp.personalization || []).join(" / "))} ${esc(sp.buyerMessage || "")} ${esc(sp.staffNote || "")}">${words}${bm}${sn}${!words && !bm && !sn ? `<span style="color:var(--ink25)">${esc(r.line.title)}</span>` : ""}</span>
-          <span class="qty">×${sp.quantity || r.line.quantity}</span>
-          <span class="ship" title="ship by">${r.order.shipBy ? new Date(r.order.shipBy * 1000).toLocaleDateString("en-US", { month: "short", day: "2-digit" }) : "—"}</span>
-          <span class="st ${ek}" title="engraving">${et}</span>
-          <span class="st ${k}">${t}</span>
-          <span class="ship" title="update_timestamp">${r.order.updateTs ? new Date(r.order.updateTs * 1000).toLocaleString("en-US", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}</span>`;
-        if (held || r.reason) { const why = el("div", "why", `${r.reason ? esc(r.reason) : ""}${r.problems.map(p => `<span>${esc(Review.problemText(p))}</span>`).join(" · ")} <button class="btn ghost xs" type="button">Fix in Review</button>`); why.querySelector("button").onclick = () => { setMode("review"); Review.focus(r.key); }; row.appendChild(why); }
-        g.appendChild(row);
-      }
-      groups.appendChild(g);
-    }
-    if (!rowsOf().length) groups.innerHTML = `<div class="libEmpty">No orders pulled. Press <b>Pull orders</b> — the Design Station reads Etsy and hands every open order over the bridge.</div>`;
+    renderBody();
     const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(new Set(B.orders.rows.map(r => r.order.receiptId)).size) : "";
   }
-  return { pull, claim, unclaim, revalidate, render, markStale, loadMaps, interpretAll, lineRecord, rows: rowsOf, applyPullRule, ctx };
+  return { pull, claim, unclaim, revalidate, render, renderBody, markStale, loadMaps, interpretAll, lineRecord, rows: rowsOf, visibleRows, imageFor, wantImage, shipTxt, statePill: r => STATE_PILL[r.state] || ["neutral", r.state], applyPullRule, ctx };
 })();
 
 /* ═══ 19 · Master — SKU labels under charms, per-SKU designs, the index ══════ */
@@ -1690,7 +1814,7 @@ const RunCtl = window.RunCtl = (() => {
     const why = r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${r.fix ? ` — <span>${esc(r.fix)}</span>` : ""}` : r.status === "review" ? `<b>Waiting for a person:</b> ${reviewN} item(s) in Review` : r.status === "paused" ? (r.awaitCommit ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : `<b>Paused</b> after ${esc(O.RUN_STEPS[idx - 1] || r.step)} — next: ${esc(r.step)} · <span style="opacity:.75">this run is set to Manual, so it waits at every step</span>`) : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(r.step)}</b> · half ${O.HALF[r.step]} · ${r.mode}`;
     Dock.schedule();
     h.innerHTML = `<span class="step">run ${esc(r.runId.slice(-8))}</span><span class="steps">${steps}</span><span class="why">${why}${r.setId ? ` · <span class="mono">${esc(r.setId)}</span>` : ""}</span>
-      ${r.status === "paused" && !r.awaitCommit ? `<button class="btn gold sm" id="rbNext">Next step ▶</button><button class="btn ghost sm" id="rbAuto" title="Stop waiting at every step: the run carries on by itself and only stops when it needs a person">Run the rest by itself</button>` : ""}${r.status === "paused" && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit">Commit set</button>` : ""}${r.status === "stopped" && /sign/i.test(r.stoppedBy || "") ? `<button class="btn gold sm" id="rbConnect">Connect Etsy</button>` : ""}${r.status === "stopped" ? `<button class="btn gold sm" id="rbResume">Resume</button>` : ""}${reviewN ? `<button class="btn ghost sm" id="rbReview">Review (${reviewN})</button>` : ""}${["running", "review", "paused"].includes(r.status) ? `<button class="btn ghost sm" id="rbStop">Stop</button>` : ""}${["complete", "stopped"].includes(r.status) ? `<button class="btn ghost sm" id="rbClear">Clear run</button>` : ""}`;
+      ${r.status === "paused" && !r.awaitCommit ? `<button class="btn gold sm" id="rbNext" title="do the next step of the run and wait again">Next step ▶</button><button class="btn ghost sm" id="rbAuto" title="Stop waiting at every step: the run carries on by itself and only stops when it needs a person">Run the rest by itself</button>` : ""}${r.status === "paused" && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${r.status === "stopped" && /sign/i.test(r.stoppedBy || "") ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${r.status === "stopped" ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at">Resume</button>` : ""}${reviewN ? `<button class="btn ghost sm" id="rbReview" title="the decisions a person still has to make">Review (${reviewN})</button>` : ""}${["running", "review", "paused"].includes(r.status) ? `<button class="btn ghost sm" id="rbStop" title="stop after the step in progress — the run can be resumed from where it stopped">Stop</button>` : ""}${["complete", "stopped"].includes(r.status) ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}`;
     const q = id => h.querySelector("#" + id);
     if (q("rbConnect")) q("rbConnect").onclick = () => DesignLink.connectEtsy().catch(e => toast(e.message, "bad", 6000)); if (q("rbNext")) q("rbNext").onclick = () => next();
     if (q("rbAuto")) q("rbAuto").onclick = async () => { const r2 = B.run; if (!r2) return; r2.mode = "auto"; await save(r2); agent({ run: r2.runId }, "DS", "This run carries on by itself from here — it stops only when it needs a person"); next(); }; if (q("rbCommit")) q("rbCommit").onclick = () => commitNow(); if (q("rbResume")) q("rbResume").onclick = () => resume(); if (q("rbReview")) q("rbReview").onclick = () => setMode("review"); if (q("rbStop")) q("rbStop").onclick = () => stop("stopped by the operator", "Press Resume to carry on from the recorded step."); if (q("rbClear")) q("rbClear").onclick = () => { if (confirm("Clear the finished run from the cards? Files and records are kept.")) clearRunState(); };
@@ -1739,7 +1863,7 @@ const Review = window.Review = (() => {
     for (const r of rows) await repool(r);
   }
   function focus(rowKey) { RV.filter = null; render(); const c = document.querySelector(`#reviewView [data-row="${CSS.escape(rowKey)}"]`); if (c) { c.scrollIntoView({ behavior: "smooth", block: "center" }); c.classList.add("pulse"); setTimeout(() => c.classList.remove("pulse"), 1300); } }
-  async function repool(row) { row.problems = []; row.state = "pulled"; row.reason = null; Orders.interpretAll(); if (row.problems.length) { Orders.render(); return; } if (B.run && O.stepIndex(B.run.step) >= O.stepIndex("pool")) { try { await Pool.poolAdd(row, B.run); } catch (e) { row.state = "held"; row.reason = e.message; } if (row.state === "pooled" && row.spec.engraveCandidate) Engrave.classify(row).catch(() => {}); } syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards(); RunCtl.poke(); }
+  async function repool(row) { row.problems = []; row.state = "pulled"; row.reason = null; Orders.interpretAll(); if (row.problems.length) { Orders.render(); return; } if (B.run && O.stepIndex(B.run.step) >= O.stepIndex("pool")) { try { await Pool.poolAdd(row, B.run); } catch (e) { row.state = "held"; row.reason = e.message; } if (row.state === "pooled" && row.spec.engraveCandidate) Engrave.classify(row).catch(() => {}); } syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards(); if (OrderWin.isOpen()) OrderWin.paint(); RunCtl.poke(); }
   const by = () => employeeName() || askEmployee();
   /** What Claude decided, in one line and one number: a reading is either text to engrave or a note to the shop. */
   function claudeVerdict(j) {
@@ -1894,15 +2018,192 @@ const Sandbox = window.Sandbox = (() => {
   }
   function mountPanel(v) {
     let bar = v.querySelector("#sandboxBar"); if (!bar) { bar = document.createElement("div"); bar.id = "sandboxBar"; bar.className = "sandboxBar"; const ob = v.querySelector(".ordBar"); if (ob) ob.insertAdjacentElement("afterend", bar); else v.prepend(bar); }
-    bar.innerHTML = `<b>${on() ? "SANDBOX ON" : "Sandbox off"}</b><span id="sbStatus">${status ? statusText() : "…"}</span><span class="spacer"></span><button class="btn ghost xs" id="sbSnap" type="button" ${on() ? "disabled title=\"switch the sandbox off to take a snapshot from the real Etsy\"" : ""}>Snapshot open orders → sandbox</button><button class="btn ghost xs" id="sbReset" type="button">Reset sandbox records</button><button class="btn ${on() ? "ghost" : "gold"} xs" id="sbToggle" type="button">${on() ? "Switch sandbox OFF" : "Switch sandbox ON"}</button>`;
-    bar.querySelector("#sbSnap").onclick = () => snapshot().catch(e => toast(e.message, "bad", 8000));
-    bar.querySelector("#sbReset").onclick = () => reset().catch(e => toast(e.message, "bad", 8000));
-    bar.querySelector("#sbToggle").onclick = () => { if (on()) { S.settings.sandbox = "off"; saveSettings(); toast("Sandbox off — reloading", "ok", 3000); setTimeout(() => location.reload(), 600); return; } const b = bar.querySelector("#sbToggle"); b.disabled = true; b.textContent = "Switching on…"; enable().catch(e => { toast(`Sandbox: ${e.message}`, "bad", 9000); agent({ bridge: true }, "warn", `Sandbox switch-on stopped: ${e.message}`); b.disabled = false; b.textContent = "Switch sandbox ON"; }); };
+    bar.classList.toggle("quiet", !on());
+    bar.innerHTML = on()
+      ? `<b>SANDBOX ON</b><span id="sbStatus" title="nothing here touches the real Etsy or the real records">${status ? statusText() : "…"}</span><span class="spacer"></span><button class="btn ghost xs" id="sbReset" type="button" title="empty the sandbox pool, sets, runs and sheets — the real records are untouched">Reset records</button><button class="btn ghost xs" id="sbToggle" type="button" title="go back to the real Etsy and the real records">Switch OFF</button>`
+      : `<span id="sbStatus" class="off" title="${esc(status ? statusText() : "")}">Working on the real Etsy orders</span><span class="spacer"></span><button class="btn ghost xs" id="sbSnap" type="button" title="copy today's open orders into the sandbox so a run can be rehearsed against them">Take a sandbox snapshot</button><button class="btn ghost xs" id="sbToggle" type="button" title="rehearse a whole run against a copy of the orders — nothing reaches Etsy or the real records">Rehearse in the sandbox</button>`;
+    const sn = bar.querySelector("#sbSnap"); if (sn) sn.onclick = () => snapshot().catch(e => toast(e.message, "bad", 8000));
+    const rs2 = bar.querySelector("#sbReset"); if (rs2) rs2.onclick = () => reset().catch(e => toast(e.message, "bad", 8000));
+    bar.querySelector("#sbToggle").onclick = () => { if (on()) { S.settings.sandbox = "off"; saveSettings(); toast("Sandbox off — reloading", "ok", 3000); setTimeout(() => location.reload(), 600); return; } const b = bar.querySelector("#sbToggle"); b.disabled = true; b.textContent = "Switching on…"; enable().catch(e => { toast(`Sandbox: ${e.message}`, "bad", 9000); agent({ bridge: true }, "warn", `Sandbox switch-on stopped: ${e.message}`); b.disabled = false; b.textContent = "Rehearse in the sandbox"; }); };
     if (!status) refresh();
   }
   function statusText() { if (!status || status.error) return status && status.error ? `status: ${status.error}` : ""; const sn = status.snapshot; const rec = status.records || {}; return `${sn ? `snapshot of ${sn.count} order(s) taken ${new Date(sn.at).toLocaleString()}${sn.takenBy ? " by " + sn.takenBy : ""}` : "no snapshot yet"} · sandbox records: ${rec.Charm_Pool || 0} pool, ${rec.Charm_Nest_Sets || 0} sets, ${rec.Charm_Nest_Runs || 0} runs, ${rec.Charm_Nest_Sheets || 0} sheets`; }
   function render() { const el = document.getElementById("sbStatus"); if (el) el.textContent = statusText(); const pill = document.getElementById("sandboxPill"); if (pill) pill.classList.toggle("hidden", !on()); document.documentElement.classList.toggle("sandbox", on()); }
   return { on, refresh, snapshot, enable, afterReload, reset, mountPanel, render, status: () => status };
+})();
+
+
+/* ═══ 24b · OrderWin — one line, everything about it, and the way to settle it ═══
+   The Design Station's own order window, here: the picture, the SKU, what the customer typed, the staff note that saves
+   itself, the internal thread every station shares, and — the reason it is worth having here — the review decision the
+   line is waiting on, answered without leaving the order. Messages go over the bridge, so the station keeps the one Etsy
+   session and the one Firestore listener and this page never grows a second of either. */
+const OrderWin = window.OrderWin = (() => {
+  const W = { key: null, rid: null, dlg: null, thread: [], tray: [], poll: 0, noteTimer: 0, wired: false };
+  const $$ = id => document.getElementById(id);
+  const rowOf = key => Orders.rows().find(r => r.key === key) || null;
+  const me = () => employeeName() || "";
+
+  function wire() {
+    if (W.wired) return; W.wired = true;
+    W.dlg = $$("orderWin"); if (!W.dlg) return;
+    const close = () => W.dlg.close();
+    $$("owClose").onclick = close;
+    W.dlg.addEventListener("close", () => { clearInterval(W.poll); W.poll = 0; W.key = null; W.tray.forEach(t => { try { URL.revokeObjectURL(t.url); } catch (_) {} }); W.tray = []; });
+    $$("owPhoto").onclick = e => e.currentTarget.classList.toggle("zoom");
+    $$("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && (r.spec.designSku || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
+    $$("owWhoBtn").onclick = () => { askEmployee(); paintWho(); };
+    const note = $$("owNote");
+    note.oninput = () => { clearTimeout(W.noteTimer); W.noteTimer = setTimeout(saveNote, 700); };
+    note.onblur = () => { clearTimeout(W.noteTimer); saveNote(); };
+    const input = $$("owInput");
+    const grow = () => { input.style.height = "auto"; input.style.height = Math.min(120, input.scrollHeight) + "px"; $$("owSend").disabled = !input.value.trim() && !W.tray.length; };
+    input.oninput = grow;
+    input.onkeydown = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
+    input.addEventListener("paste", e => { const f = [...(e.clipboardData || {}).items || []].filter(i => i.type.startsWith("image/")).map(i => i.getAsFile()).filter(Boolean); if (f.length) { e.preventDefault(); addFiles(f); } });
+    $$("owSend").onclick = send;
+    $$("owAttach").onclick = () => $$("owFile").click();
+    $$("owFile").onchange = e => { addFiles([...e.target.files]); e.target.value = ""; };
+    const pane = W.dlg.querySelector(".owChat");
+    pane.addEventListener("dragover", e => { e.preventDefault(); });
+    pane.addEventListener("drop", e => { e.preventDefault(); addFiles([...(e.dataTransfer.files || [])].filter(f => f.type.startsWith("image/"))); });
+    $$("owSkip").onclick = toggleSkip;
+    $$("owPrev").onclick = () => step(-1);
+    $$("owNext").onclick = () => step(1);
+  }
+  /** The lines the Orders tab is showing, so Previous and Next walk what the person is actually looking at. */
+  const siblings = () => Orders.visibleRows();
+  function step(d) {
+    const list = siblings(); const i = list.findIndex(r => r.key === W.key);
+    const next = list[(i < 0 ? 0 : i + d + list.length) % list.length];
+    if (next && next.key !== W.key) open(next.key);
+  }
+  function paintWho() { const w = $$("owWho"); if (w) w.textContent = me() || "— no name set —"; }
+
+  async function saveNote() {
+    const r = rowOf(W.key); if (!r) return;
+    const text = $$("owNote").value;
+    if (text === (r.spec.staffNote || "")) return;
+    r.spec.staffNote = text;
+    try { await DesignLink.call("notes.set", { receiptId: r.order.receiptId, text }, { quiet: true }); toast("Staff note saved", "ok", 1400); }
+    catch (e) { toast("Staff note not saved: " + e.message, "bad", 5000); }
+  }
+  function addFiles(files) {
+    for (const f of files.slice(0, 6)) W.tray.push({ file: f, url: URL.createObjectURL(f) });
+    paintTray(); $$("owSend").disabled = !$$("owInput").value.trim() && !W.tray.length;
+  }
+  function paintTray() {
+    const t = $$("owTray"); if (!t) return;
+    t.innerHTML = "";
+    W.tray.forEach((x, i) => {
+      const c = el("span", "chip", '<img alt="" src="' + x.url + '"><span>' + esc(x.file.name.slice(0, 18)) + '</span><button type="button" title="remove">×</button>');
+      c.querySelector("button").onclick = () => { try { URL.revokeObjectURL(x.url); } catch (_) {} W.tray.splice(i, 1); paintTray(); };
+      t.appendChild(c);
+    });
+  }
+  async function send() {
+    const r = rowOf(W.key); if (!r) return;
+    const who = me() || askEmployee(); if (!who) return;
+    const text = $$("owInput").value.trim(), files = W.tray.slice();
+    if (!text && !files.length) return;
+    $$("owInput").value = ""; $$("owInput").style.height = "auto"; W.tray = []; paintTray(); $$("owSend").disabled = true;
+    const rid = r.order.receiptId;
+    try {
+      for (const f of files) {
+        const bytes = new Uint8Array(await f.file.arrayBuffer());
+        const up = await uploadBytes("chatImages/" + rid + "/" + Date.now() + "_" + f.file.name.replace(/[^\w.\-]+/g, "_"), bytes, f.file.type || "image/png", "Sending image");
+        await DesignLink.call("chat.post", { receiptId: rid, text: "Image attachment", sender: who, imageUrl: up.url });
+        try { URL.revokeObjectURL(f.url); } catch (_) {}
+      }
+      if (text) await DesignLink.call("chat.post", { receiptId: rid, text, sender: who });
+      await loadThread(rid, true);
+    } catch (e) { toast("Message not sent: " + e.message, "bad", 6000); }
+  }
+  async function loadThread(rid, force) {
+    if (!rid || (!force && W.rid === rid && W.thread.length)) return;
+    W.rid = rid;
+    try { const res = await DesignLink.call("chat.list", { receiptId: rid, limit: 80 }, { quiet: true }); W.thread = res.messages || []; }
+    catch (_) { const r = rowOf(W.key); W.thread = (r && r.spec.messages) || []; }
+    if (W.rid === rid) paintThread();
+  }
+  function paintThread() {
+    const t = $$("owThread"); if (!t) return;
+    if (!W.thread.length) { t.innerHTML = '<div class="owEmpty"><b>No internal messages yet</b>Anything sent here reaches every station working this order. The customer never sees it.</div>'; return; }
+    const mine = me().toLowerCase();
+    t.innerHTML = W.thread.map(m => {
+      const own = String(m.senderName || "").toLowerCase() === mine && mine;
+      const when = m.at ? new Date(m.at).toLocaleString("en-US", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+      return '<div class="owMsg' + (own ? " me" : "") + '"><span class="who">' + esc(m.senderName || "Staff") + (when ? " · " + esc(when) : "") + '</span>' +
+        (m.text && m.text !== "Image attachment" ? esc(m.text).replace(/\n/g, "<br>") : "") +
+        (m.imageUrl ? '<img loading="lazy" alt="" src="' + esc(m.imageUrl) + '">' : "") + '</div>';
+    }).join("");
+    t.scrollTop = t.scrollHeight;
+  }
+  function toggleSkip() {
+    const r = rowOf(W.key); if (!r) return;
+    const who = me() || askEmployee(); if (!who) return;
+    const on = r.state !== "skipped";
+    if (on) { r.state = "skipped"; r.reason = "line skipped by " + who; r.problems = []; r.hold = r.reason; }
+    else { r.state = "pulled"; r.reason = null; r.hold = null; Orders.interpretAll(); }
+    Review.syncOrderItems(); Orders.render(); RunCtl.poke(); paint();
+  }
+  /** Paint the window from the row it is showing. */
+  function paint() {
+    const r = rowOf(W.key); if (!r) { if (W.dlg && W.dlg.open) W.dlg.close(); return; }
+    const sp = r.spec || {};
+    $$("owTitle").textContent = "Order " + r.order.receiptId;
+    const mp = $$("owMetal"); mp.textContent = r.material ? labelOf(r.material) : (sp.materialLabel || "no material");
+    mp.className = "pill " + (r.material ? "neutral" : "bad");
+    const ph = $$("owPhoto"); const url = Orders.imageFor(r);
+    ph.classList.remove("zoom");
+    ph.innerHTML = url ? '<img alt="" src="' + esc(url) + '">' : '<span class="ph">no image</span>';
+    ph.dataset.lid = String(r.line.listingId || ""); if (url) ph.dataset.painted = "1"; else { delete ph.dataset.painted; Orders.wantImage(r.line.listingId); }
+    $$("owSku").textContent = "SKU: " + (sp.designSku || r.line.sku || "—");
+    const notes = [];
+    if ((sp.personalization || []).length) notes.push("Personalisation:\n" + sp.personalization.join("\n"));
+    if (sp.buyerMessage) notes.push("Buyer message:\n" + sp.buyerMessage);
+    $$("owNotes").value = notes.length ? notes.join("\n\n") : "— No notes —";
+    const note = $$("owNote"); if (document.activeElement !== note) note.value = sp.staffNote || "";
+    const st = Orders.statePill(r);
+    const mcell = (lbl, val) => '<div class="m"><i>' + esc(lbl) + '</i><span>' + esc(val) + '</span></div>';
+    $$("owMeta").innerHTML =
+      mcell("Quantity", String(sp.quantity || r.line.quantity || 1)) +
+      mcell("Metal", r.material ? labelOf(r.material) : (sp.materialLabel || "none")) +
+      mcell("State", st[1]) +
+      mcell("Ship by", Orders.shipTxt(r)) +
+      (sp.form ? mcell("Form", sp.form) : "") + (sp.size ? mcell("Size", sp.size) : "") + (sp.chain ? mcell("Chain", sp.chain) : "") +
+      (r.engrave && r.engrave.needed ? mcell("Engraving", (r.engrave.approved ? "approved" : r.engrave.state || "waiting") + (r.engrave.text ? " · " + r.engrave.text : "")) : "") +
+      (sp.options || []).filter(o => o.mapped).map(o => mcell(o.name, o.value)).join("") +
+      mcell("Listing", String(r.line.listingId || "—")) +
+      mcell("Title", r.line.title || "—");
+    // the decision this line is waiting on, answered here
+    const fix = $$("owFix"); fix.innerHTML = "";
+    const item = Review.items().find(x => (x.rows || [x.row]).some(y => y && y.key === r.key) && !String(x.key).startsWith("eng:"));
+    if (item) {
+      const box = el("div", "owFix", '<div class="t">This line is waiting on a decision</div>');
+      box.appendChild(Review.card(item));
+      fix.appendChild(box);
+    } else if (r.engrave && r.engrave.needed && !r.engrave.approved) {
+      const box = el("div", "owFix", '<div class="t">Its engraving is still to be settled</div>');
+      const b = el("button", "btn ghost sm", "Open it in Engraving");
+      b.onclick = () => { W.dlg.close(); setMode("engrave"); Engrave.render(); };
+      box.appendChild(b); fix.appendChild(box);
+    }
+    const sw = $$("owSkip"); sw.setAttribute("aria-checked", r.state === "skipped" ? "true" : "false");
+    paintWho();
+  }
+  function open(key) {
+    wire(); if (!W.dlg) return;
+    const r = rowOf(key); if (!r) { toast("That line is no longer in the pull", "bad"); return; }
+    W.key = key; W.thread = []; W.rid = null;
+    paint();
+    if (!W.dlg.open) W.dlg.showModal();
+    paintThread();
+    loadThread(r.order.receiptId, true);
+    clearInterval(W.poll);
+    W.poll = setInterval(() => { if (W.dlg.open && W.key) loadThread(rowOf(W.key) ? rowOf(W.key).order.receiptId : null, true); }, 15000);
+  }
+  return { open, paint, close: () => W.dlg && W.dlg.close(), isOpen: () => !!(W.dlg && W.dlg.open), key: () => W.key };
 })();
 
 /* ═══ 25 · boot ═══════════════════════════════════════════════════════════ */

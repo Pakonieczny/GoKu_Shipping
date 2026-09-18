@@ -285,6 +285,94 @@ const receipts = [
           chips: [...v.querySelectorAll('.egTab')].map(b2 => b2.textContent.trim()) };
       });
       console.log('review screen', JSON.stringify(rv));
+      // ── the Orders tab: a card for every line, the same line as a row, the filters, and the order window (§5) ──
+      const ord = await page.evaluate(async () => {
+        CN.setMode('orders'); Orders.render();
+        await new Promise(r => setTimeout(r, 250));
+        const v = document.getElementById('ordersView');
+        const chips = [...v.querySelectorAll('[data-pile]')].map(b => ({ id: b.dataset.pile, n: +b.querySelector('b').textContent, on: b.classList.contains('on') }));
+        const cards = [...v.querySelectorAll('.ocard')].map(c2 => ({
+          num: c2.querySelector('.onum').textContent, sku: c2.querySelector('.osku b').textContent,
+          state: c2.querySelector('.ost').textContent, metal: c2.querySelector('.ometal span').textContent,
+          words: (c2.querySelector('.opers') || {}).textContent || '', why: (c2.querySelector('.owhy') || {}).textContent || '',
+          qty: (c2.querySelector('.oimg .qty') || {}).textContent || '', flag: !!c2.querySelector('.oimg .flag'),
+        }));
+        const stage = document.querySelector('.stage');
+        return { chips, cards, sideScroll: stage.scrollWidth - stage.clientWidth, view: 'cards' };
+      });
+      console.log('orders cards', JSON.stringify({ chips: ord.chips, n: ord.cards.length, first: ord.cards[0], sideScroll: ord.sideScroll }));
+      assert(ord.cards.length >= 3, 'every pulled line is a card: ' + ord.cards.length);
+      assert(ord.cards.every(c2 => /^\d{6,}$/.test(c2.num.trim()) && c2.sku && c2.state && c2.metal), 'each card carries the order, the SKU, the state and the metal: ' + JSON.stringify(ord.cards[0]));
+      assert(ord.cards.some(c2 => c2.flag && c2.why), 'a line that needs a person says so on its own card');
+      assert(ord.cards.some(c2 => c2.words), 'and the words the customer typed are on the card');
+      assert(ord.chips.some(c2 => c2.id === 'attn' && c2.n >= 1), 'the piles are filter chips with counts: ' + JSON.stringify(ord.chips));
+      assert(ord.sideScroll <= 2, 'the cards do not run off the side: ' + ord.sideScroll);
+      // the filter shows one pile and nothing else
+      const filtered = await page.evaluate(() => {
+        document.querySelector('[data-pile=attn]').click();
+        const v = document.getElementById('ordersView');
+        return { n: v.querySelectorAll('.ocard').length, allFlagged: [...v.querySelectorAll('.ocard')].every(c2 => c2.classList.contains('attn')) };
+      });
+      assert(filtered.n >= 1 && filtered.allFlagged, 'the filter leaves only that pile: ' + JSON.stringify(filtered));
+      // the list carries the same fields, with a smaller picture
+      const asList = await page.evaluate(() => {
+        document.querySelector('[data-pile=""]').click();
+        document.querySelector('[data-view=list]').click();
+        const v = document.getElementById('ordersView');
+        const rows = [...v.querySelectorAll('.olist')].map(r2 => ({
+          num: r2.querySelector('.onum').textContent, sku: r2.querySelector('.osku b').textContent,
+          state: r2.querySelector('.ost').textContent, qty: r2.querySelector('.qtyc').textContent, thumb: !!r2.querySelector('img.th'),
+        }));
+        const stage = document.querySelector('.stage');
+        return { rows, cards: v.querySelectorAll('.ocard').length, sideScroll: stage.scrollWidth - stage.clientWidth };
+      });
+      console.log('orders list', JSON.stringify({ n: asList.rows.length, first: asList.rows[0], sideScroll: asList.sideScroll }));
+      assert.strictEqual(asList.cards, 0, 'the list view replaces the cards');
+      assert.strictEqual(asList.rows.length, ord.cards.length, 'and holds exactly the same lines');
+      assert(asList.rows.every(r2 => r2.num && r2.sku && r2.state && r2.qty && r2.thumb), 'each row carries the same fields and a thumbnail: ' + JSON.stringify(asList.rows[0]));
+      assert(asList.sideScroll <= 2, 'and does not run off the side: ' + asList.sideScroll);
+      // the order window: everything about one line, and the way to settle it
+      const win = await page.evaluate(async () => {
+        document.querySelector('[data-view=cards]').click();
+        const held = [...document.querySelectorAll('.ocard')].find(c2 => c2.classList.contains('attn')) || document.querySelector('.ocard');
+        held.click();
+        await new Promise(r => setTimeout(r, 400));
+        const d = document.getElementById('orderWin');
+        const meta = [...d.querySelectorAll('#owMeta .m i')].map(i => i.textContent);
+        return { open: d.open, title: document.getElementById('owTitle').textContent, sku: document.getElementById('owSku').textContent,
+          metal: document.getElementById('owMetal').textContent, meta, fix: !!d.querySelector('#owFix .rvItem'),
+          note: !!document.getElementById('owNote'), thread: !!document.getElementById('owThread'),
+          composer: !!document.getElementById('owInput'), attach: !!document.getElementById('owAttach'),
+          skip: document.getElementById('owSkip').getAttribute('aria-checked'), photo: !!d.querySelector('#owPhoto'),
+          box: (() => { const r2 = d.getBoundingClientRect(); return { w: Math.round(r2.width), h: Math.round(r2.height), inW: window.innerWidth, inH: window.innerHeight }; })() };
+      });
+      console.log('order window', JSON.stringify(win));
+      assert(win.open, 'clicking a card opens the order window');
+      assert(/^Order \d{6,}$/.test(win.title.trim()), 'headed by the order: ' + win.title);
+      assert(/^SKU: /.test(win.sku) && win.metal, 'with the SKU and the metal');
+      assert(['Quantity', 'Metal', 'State', 'Ship by', 'Listing', 'Title'].every(k => win.meta.includes(k)), 'and the details: ' + win.meta.join(','));
+      assert(win.note && win.thread && win.composer && win.attach && win.photo, 'the staff note, the thread, the composer and the picture are all there');
+      assert(win.fix, 'and the decision the line is waiting on is answered from inside the window');
+      assert(win.box.w <= win.box.inW && win.box.h <= win.box.inH, `the window fits the screen: ${win.box.w}x${win.box.h} in ${win.box.inW}x${win.box.inH}`);
+      // a staff note typed here reaches the station
+      const noted = await page.evaluate(async () => {
+        const n = document.getElementById('owNote'); n.value = 'checked by the sorter'; n.dispatchEvent(new Event('input'));
+        n.dispatchEvent(new Event('blur'));
+        await new Promise(r => setTimeout(r, 700));
+        return true;
+      });
+      void noted;
+      const noteSeen = await frame.evaluate(() => DesignStation.bridge.cursor.log.filter(l => /Staff note on/.test(l.caption)).length);
+      assert(noteSeen >= 1, 'the staff note was written through the station');
+      // a message typed here reaches the shared thread
+      await page.evaluate(async () => {
+        const i = document.getElementById('owInput'); i.value = 'sorter says hello'; i.dispatchEvent(new Event('input'));
+        document.getElementById('owSend').click();
+        await new Promise(r => setTimeout(r, 900));
+      });
+      const chatSeen = await frame.evaluate(() => DesignStation.bridge.cursor.log.filter(l => /Post a chat message/.test(l.caption)).length);
+      assert(chatSeen >= 1, 'and the message was posted through the station');
+      await page.evaluate(() => { const d = document.getElementById('orderWin'); if (d && d.open) d.close(); });
       const ENG = ['engraveWords', 'placement', 'flipFailed', 'notRepresentable', 'fontMissing'];
       assert(!rv.cards.some(k => ENG.includes(k)), 'no engraving card is listed in Review: ' + rv.cards);
       assert.strictEqual(rv.count, rv.cards.length, 'and the count is what the tab shows');
