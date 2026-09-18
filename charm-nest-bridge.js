@@ -2810,7 +2810,17 @@ const OrderWin = window.OrderWin = (() => {
    look at, download and print. It is reachable from the run banner, from Orders and from Engraving, because the question
    "which run was that?" is asked from wherever you happen to be standing. */
 const RunHistory = window.RunHistory = (() => {
-  const H = { q: "", runs: [], sheets: [], scanned: null, loading: false, err: null, dlg: null, open: new Set(), lines: new Map() };
+  const H = { q: "", when: "all", runs: [], sheets: [], scanned: null, loading: false, err: null, dlg: null, open: new Set(), lines: new Map() };
+  /* "Select previous run sets or days" is a filing question, so the dialog files them: four ways to narrow by time and
+     state, and a heading for every day, because a flat list of eighty runs is a wall whatever order it is in. */
+  const WHEN = [["all", "All"], ["today", "Today"], ["week", "Last 7 days"], ["open", "Unfinished"]];
+  const DAY_MS = 86400000;
+  function inWhen(r) {
+    if (H.when === "open") return !["complete", "abandoned"].includes(r.status);
+    if (H.when === "all" || !r.day) return H.when === "all";
+    const age = (Date.now() - new Date(r.day + "T12:00:00").getTime()) / DAY_MS;
+    return H.when === "today" ? age < 1 : age < 7;
+  }
   function ensure() {
     if (H.dlg) return H.dlg;
     const d = el("dialog", "hist"); d.id = "histDlg";
@@ -2818,12 +2828,14 @@ const RunHistory = window.RunHistory = (() => {
       <h2>Runs</h2>
       <div class="hq"><input id="hQ" type="search" placeholder="order number, SKU, engraved words, a date, a set…" autocomplete="off">
         <button class="btn ghost sm" id="hRefresh" title="read the records again">Refresh</button></div>
+      <div class="hWhen" id="hWhen"></div>
       <div class="hBody" id="hBody"></div>
       <div class="hFoot" id="hFoot"></div>`;
     document.body.appendChild(d); H.dlg = d;
     const q = d.querySelector("#hQ");
     let t = 0;
     q.oninput = () => { H.q = q.value; clearTimeout(t); t = setTimeout(load, 260); };
+    d.querySelector("#hWhen").onclick = e => { const b = e.target.closest("[data-when]"); if (!b) return; H.when = b.dataset.when; render(); };
     d.querySelector("#hRefresh").onclick = e => { e.preventDefault(); load(); };
     return d;
   }
@@ -2852,19 +2864,26 @@ const RunHistory = window.RunHistory = (() => {
     if (H.err) { b.innerHTML = `<div class="hEmpty bad">${esc(H.err)}</div>`; f.textContent = ""; return; }
     if (!H.runs.length && !H.sheets.length) {
       b.innerHTML = `<div class="hEmpty">${H.q ? `nothing matches “${esc(H.q)}”` : "no runs on record yet"}</div>`;
+      H.dlg.querySelector("#hWhen").innerHTML = "";
       f.textContent = H.scanned ? `looked at the ${H.scanned.runs} most recent runs and ${H.scanned.sheets} most recent sheets` : "";
       return;
     }
     const cur = B.run && B.run.runId;
-    b.innerHTML = H.runs.map(r => {
+    const seen = H.runs.filter(inWhen);
+    const wsel = H.dlg.querySelector("#hWhen");
+    wsel.innerHTML = WHEN.map(([k, lbl]) => `<button class="egTab${H.when === k ? " on" : ""}" data-when="${k}">${lbl}<b>${H.runs.filter(r => { const was = H.when; H.when = k; const yes = inWhen(r); H.when = was; return yes; }).length}</b></button>`).join("");
+    if (!seen.length) { b.innerHTML = `<div class="hEmpty">no runs ${H.when === "today" ? "today" : H.when === "week" ? "in the last seven days" : H.when === "open" ? "left unfinished" : "on record"}</div>`; f.textContent = ""; return; }
+    let lastDay = null;
+    b.innerHTML = seen.map(r => {
+      const dayHead = r.day !== lastDay ? `<div class="hDay">${esc(dayWord(r.day) || "no date")}</div>` : "";
+      lastDay = r.day;
       const [k, word] = STATUS[r.status] || ["neutral", r.status || "—"];
       const live = ["running", "review", "paused", "stopped"].includes(r.status);
       const openable = r.setId && ["complete", "stopped", "abandoned", "paused", "review"].includes(r.status);
       const hits = [...(r.hitOrders || []).map(x => `order ${x}`), ...(r.hitSkus || [])].slice(0, 6);
-      return `<div class="hRun${r.runId === cur ? " cur" : ""}" data-run="${esc(r.runId)}">
+      return dayHead + `<div class="hRun${r.runId === cur ? " cur" : ""}" data-run="${esc(r.runId)}">
         <div class="hRow">
           <span class="nm">${r.seq ? `Set ${r.seq}` : "no set"}</span>
-          <span class="dy">${esc(dayWord(r.day))}</span>
           <span class="pill ${k}">${esc(word)}${r.status === "stopped" && r.stoppedBy ? ` · ${esc(r.stoppedBy)}` : live && r.step ? ` · ${esc(r.step)}` : ""}</span>
           <span class="ct">${r.lines} line${r.lines === 1 ? "" : "s"} · ${r.orders} order${r.orders === 1 ? "" : "s"}${r.sheets ? ` · ${r.sheets} sheet${r.sheets === 1 ? "" : "s"}` : ""}${r.holds ? ` · ${r.holds} held` : ""}</span>
           <span class="sp"></span>

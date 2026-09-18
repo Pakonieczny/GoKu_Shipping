@@ -429,6 +429,9 @@ const receipts = [
           await grab('tab-' + mode + '-1500', 1500, 1000);
           await grab('tab-' + mode + '-1180', 1180, 760);
         }
+        await page.evaluate(() => RunHistory.show('')); await page.waitForTimeout(900);
+        await grab('win-history-1500', 1500, 1000);
+        await page.evaluate(() => { const d = document.getElementById('histDlg'); if (d) d.close(); });
         await page.setViewportSize({ width: 1500, height: 1000 });
         await page.evaluate(() => { CN.setMode('orders'); Orders.render(); });
         await page.waitForTimeout(400);
