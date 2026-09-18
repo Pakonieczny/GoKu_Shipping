@@ -97,12 +97,10 @@ html[data-rail=sm] .brand .tag{display:none}
 .topTitle h1{font:18px var(--serif);font-weight:500;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .topTitle .sub{font-size:11px;color:var(--ink45);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .spacer{flex:1 1 auto;min-width:6px}
-.modeSeg{display:flex;border:1px solid var(--line);border-radius:999px;background:var(--card2);padding:3px;gap:2px;flex:0 1 auto;min-width:0;overflow-x:auto;scrollbar-width:none}
-.modeSeg::-webkit-scrollbar{display:none}
+.modeSeg{display:flex;border:1px solid var(--line);border-radius:999px;background:var(--card2);padding:3px;gap:2px;flex:0 0 auto}
 .modeSeg button{flex:0 0 auto}
-.modeSeg.moreR{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 26px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 26px),transparent)}
-.modeSeg.moreL{-webkit-mask-image:linear-gradient(90deg,transparent,#000 26px);mask-image:linear-gradient(90deg,transparent,#000 26px)}
-.modeSeg.moreL.moreR{-webkit-mask-image:linear-gradient(90deg,transparent,#000 26px,#000 calc(100% - 26px),transparent);mask-image:linear-gradient(90deg,transparent,#000 26px,#000 calc(100% - 26px),transparent)}
+.modeSeg .tight{display:none}
+@media (max-width:1560px){.modeSeg .full{display:none}.modeSeg .tight{display:inline}}
 @media (max-width:1620px){.modeSeg button{padding-inline:10px;font-size:12px}}
 @media (max-width:1400px){.modeSeg button{padding-inline:8px;font-size:11.5px;gap:4px}}
 .modeSeg button{border:0;background:transparent;border-radius:999px;padding:7px 15px;font-size:12.5px;font-weight:700;color:var(--ink70);white-space:nowrap;display:flex;align-items:center;gap:6px}
@@ -133,7 +131,8 @@ html[data-rail=sm] .brand .tag{display:none}
 select.topSel{border:1px solid var(--line);background:var(--card);border-radius:9px;padding:7px 9px;font-size:12.5px;max-width:172px;text-overflow:ellipsis}
 
 /* ── sheets grid ── */
-.stage{flex:1 1 auto;min-height:0;overflow:auto;padding:16px}
+/* whatever the live view is showing, the screen keeps that much room at the bottom so nothing sits under it */
+.stage{flex:1 1 auto;min-height:0;overflow:auto;padding:16px 16px calc(16px + var(--dockH,0px))}
 .sheets{display:grid;grid-template-columns:repeat(auto-fill,minmax(400px,1fr));gap:16px;align-items:start}
 @media (max-width:1380px){.sheets{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:900px){.sheets{grid-template-columns:1fr}}
@@ -159,10 +158,14 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .shPreviewWrap .dropHint .k{font-size:11px}
 .shPreviewWrap .shOverlay{position:absolute;left:8px;bottom:6px;display:flex;gap:5px;flex-wrap:wrap;pointer-events:none}
 .shPreviewWrap .shOverlay .pill{box-shadow:0 1px 3px rgba(0,0,0,.08);font-size:10.5px;padding:3px 8px}
+@media (max-width:1300px){.shPreviewWrap .hint{display:none}}
 .shPreviewWrap .hint{position:absolute;right:8px;bottom:6px;font-size:10px;color:var(--ink45);background:rgba(255,254,251,.85);padding:2px 6px;border-radius:6px;pointer-events:none}
 .shProg{padding:4px 14px 0}
 .shProg progress{margin:6px 0 0}
 .shProg .bp-note{margin:2px 0 0}
+.shStage>:first-child{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.shStage .r{flex:0 0 auto}
+@media (max-width:1300px){.shStage .r{display:none}}
 .shStage{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink70);min-height:18px;padding:5px 14px 0}
 .shStage .spin{width:11px;height:11px;border-width:2px;flex-basis:11px}
 .shStage .r{margin-left:auto;font-family:var(--mono);color:var(--ink45);font-size:10.5px;white-space:nowrap}
@@ -271,7 +274,12 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .charmTile input{border:1px solid var(--line);border-radius:7px;padding:4px 6px;font-size:12px;width:100%}
 
 /* ── toasts, dialogs ── */
-.toasts{position:fixed;right:18px;bottom:calc(18px + var(--dockH,0px));z-index:300;display:flex;flex-direction:column;gap:8px;pointer-events:none;transition:bottom .18s ease}
+.toasts{position:fixed;right:18px;bottom:calc(18px + var(--dockH,0px));z-index:300;display:flex;flex-direction:column;gap:8px;pointer-events:none;transition:bottom .18s ease;max-width:min(420px,42vw)}
+.toast .m{min-width:0}
+.toast .x{font:700 11px var(--mono);opacity:.7}
+.toast .c{border:0;background:transparent;color:inherit;opacity:.55;cursor:pointer;font-size:13px;line-height:1;padding:0 0 0 4px}
+.toast .c:hover{opacity:1}
+.toast{cursor:pointer}
 .toast{background:var(--velvet);color:#f4ecdc;border:1px solid var(--velvetLine);border-radius:11px;padding:10px 14px;box-shadow:0 10px 30px rgba(0,0,0,.24);max-width:380px;display:flex;gap:9px;align-items:flex-start;font-size:12.5px;animation:tin .18s ease;pointer-events:auto}
 @keyframes tin{from{opacity:0;transform:translateY(8px)}}
 .toast .d{width:8px;height:8px;border-radius:50%;background:var(--gold2);margin-top:4px;flex:0 0 auto}
@@ -452,12 +460,10 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .runMode.auto{background:var(--velvet);color:#fff;border-color:var(--velvet)}
 .runMode.auto .sw{background:var(--sage);box-shadow:0 0 0 3px rgba(95,122,91,.25);animation:bbPulse 1.6s ease-in-out infinite}
 @keyframes bbPulse{50%{box-shadow:0 0 0 6px rgba(95,122,91,.08)}}
-.liveStrip{flex:0 0 auto;background:var(--velvet);color:var(--rTxt2);font:11.5px var(--mono);padding:4px 16px;display:flex;gap:14px;overflow:hidden;white-space:nowrap;border-bottom:1px solid var(--velvetLine);min-height:24px}
-.liveStrip .ls{overflow:hidden;text-overflow:ellipsis;min-width:0}
-.liveStrip .ls b{color:var(--gold2);font-weight:650}
-.liveStrip .ls .t{color:var(--rDim);margin-right:5px}
-.liveStrip .ls .ev{margin-right:16px}
-.runBanner{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:8px 16px;background:var(--goldSoft);border-bottom:1px solid var(--goldLine);font-size:12.5px;flex-wrap:wrap}
+.runBanner .acts{display:flex;gap:7px;align-items:center;flex:0 0 auto;white-space:nowrap}
+.runBanner .spacer{flex:1 1 auto;min-width:8px}
+.runBanner .why{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.runBanner{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:8px 16px;background:var(--goldSoft);border-bottom:1px solid var(--goldLine);font-size:12.5px;flex-wrap:nowrap}
 .runBanner.stopped{background:var(--claySoft);border-color:#e3c8bf}
 .runBanner.done{background:var(--sageSoft);border-color:#cfdcc9}
 .runBanner.review{background:var(--slateSoft);border-color:#cbd9de}
@@ -510,6 +516,7 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .sandboxBar.quiet{background:transparent;border:0;padding:0;margin:8px 0 0;font-size:11.5px;color:var(--ink45)}
 .sandboxBar.quiet .off{color:var(--ink45)}
 .sandboxBar .spacer{flex:1 1 auto}
+.etsyPill.quiet{display:none}
 .etsyPill{display:inline-flex;align-items:center;gap:6px;font:11.5px var(--mono);color:var(--ink70);border:1px solid var(--line);border-radius:999px;padding:5px 10px;background:var(--card);white-space:nowrap;flex:0 1 auto;min-width:0;overflow:hidden}
 .etsyPill b{color:var(--ink);font-weight:650}
 .etsyPill.warn{border-color:#b98a3a;color:#7a5a1d}
@@ -526,7 +533,7 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 /* the dock: the station frame, full over the tab's placeholder or a live panel in the corner of every other tab */
 #dsDock{position:fixed;z-index:70;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--card);box-shadow:var(--sh);display:flex;flex-direction:column}
 #dsDock.hidden{display:none}
-#dsDock.pip.tucked{width:300px;height:212px}
+#dsDock.pip.tucked{width:264px;height:186px}
 #dsDock.pip{width:480px;height:330px;box-shadow:0 14px 44px rgba(20,16,10,.38);border-color:#8a6a2a}
 #dsDock .dockBar{display:none;align-items:center;gap:8px;padding:5px 10px;background:var(--velvet);color:var(--rTxt2);font:12px var(--mono);cursor:pointer;user-select:none}
 #dsDock.pip .dockBar{display:flex}
@@ -677,6 +684,44 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .backPool .bp img{width:100%;aspect-ratio:1.5;object-fit:contain;background:#fff;border:1px solid var(--line2);border-radius:6px}
 .backPool .bp .t{font:600 12px var(--sans)}
 .backPool .bp .m{font:10.5px var(--mono);color:var(--ink45)}
+/* ── the ladder: where the work is, on every screen ── */
+.ladder{flex:0 0 auto;padding:9px var(--railPad) 6px;border-bottom:1px solid var(--velvetLine);display:grid;gap:5px}
+.ldBand{display:flex;align-items:baseline;gap:8px;padding:5px 9px;border-radius:8px;background:rgba(255,255,255,.06);min-width:0}
+.ldBand b{font:600 12.5px var(--sans);color:#f2ead9}
+.ldBand span{font:10.5px var(--mono);color:var(--rDim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.ldBand.ld-go b{color:var(--gold2)}.ldBand.ld-wait b{color:#f0c96a}.ldBand.ld-stop b{color:#e6a08c}
+.ldBand.ldIdle b{color:var(--rTxt2)}
+.ldRows{display:grid;gap:1px}
+.ldRow{display:grid;grid-template-columns:14px minmax(0,auto) minmax(0,1fr);gap:7px;align-items:center;background:transparent;border:0;border-radius:7px;padding:3px 8px;cursor:pointer;text-align:left;font:inherit;color:var(--rTxt2);min-width:0}
+.ldRow:hover{background:rgba(255,255,255,.07);color:#f2ead9}
+.ldRow .n{font:11.5px var(--sans);font-weight:600;white-space:nowrap}
+.ldRow .c{font:10.5px var(--mono);color:var(--rDim);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.ldRow.now{color:#f2ead9}
+.ldRow.wait{background:rgba(240,201,106,.16);color:#f6e6bf}
+.ldRow.wait .c{color:#f0c96a}
+.ldRow .g{width:9px;height:9px;border-radius:50%;justify-self:center;background:transparent;border:1.5px solid var(--rDim)}
+.ldRow .g.done{background:#8ea37f;border-color:#8ea37f}
+.ldRow .g.now{background:var(--gold2);border-color:var(--gold2);box-shadow:0 0 0 3px rgba(198,160,74,.22)}
+.ldRow .g.stop{background:#c0705a;border-color:#c0705a}
+.ldWaits{display:flex;gap:5px;flex-wrap:wrap;margin-top:2px}
+.ldChip{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--velvetLine);background:rgba(255,255,255,.05);color:#f2ead9;border-radius:999px;padding:3px 9px;font:600 11px var(--sans);cursor:pointer}
+.ldChip:hover{background:rgba(255,255,255,.12)}
+.ldChip b{font:700 10.5px var(--mono);border-radius:999px;padding:0 6px;background:rgba(0,0,0,.3)}
+.ldChip.warn b{color:#f0c96a}.ldChip.info b{color:#bcd0e6}
+/* what happened lately, one click away instead of permanently half-visible */
+.railRecent{flex:0 0 auto;border-top:1px solid var(--velvetLine);padding:5px var(--railPad)}
+.railRecent summary{font:9.5px var(--mono);letter-spacing:.11em;text-transform:uppercase;color:var(--rDim);cursor:pointer;list-style:none;padding:3px 0}
+.railRecent summary::-webkit-details-marker{display:none}
+.railRecent summary::after{content:" \25b8"}
+.railRecent[open] summary::after{content:" \25be"}
+.railRecent .rr{max-height:140px;overflow:auto;display:grid;gap:3px;padding-bottom:4px}
+.railRecent .rr div{font:10.5px var(--mono);color:var(--rTxt2);overflow-wrap:anywhere}
+.railRecent .rr b{color:var(--gold2);font-weight:650}
+.railRecent .rr i{color:var(--rDim);font-style:normal;margin-right:5px}
+/* the file queue belongs to the Nest tab; elsewhere the rail is the ladder and the cloud */
+.app:not(.nestMode) .railActions,.app:not(.nestMode) .queueHead,.app:not(.nestMode) .railScroll{display:none}
+.app:not(.nestMode) .rail .ladder{border-bottom:0}
+
 /* ── Sets view ── */
 .setCard{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);padding:12px 14px;display:grid;gap:8px}
 .setCard .sh{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
@@ -700,6 +745,7 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
       <div><div class="logo">Brites <b>Charm Nest</b></div><div class="tag">Nesting station · 1</div></div>
     </div>
     <div class="railStatus" id="cloudStatus"><span class="dot" id="cloudDot"></span><span class="t" id="cloudText">Checking cloud…</span></div>
+    <div class="ladder" id="ladder"></div>
     <div class="railActions">
       <button class="btn gold wide" id="btnPick">＋ Add .ai / .pdf / .zip</button>
       <button class="btn ghost sm" id="btnNestAll" style="color:#fff;border-color:#4a4239">Nest all ready</button>
@@ -712,14 +758,14 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
       <div id="unList"></div>
       <div class="unHint" id="unHint">Files whose name does not say GF / SS / RG land here. Drag one onto a sheet, or use the metal buttons.</div>
     </div>
+    <details class="railRecent" id="railRecent"><summary>Recent activity</summary><div class="rr" id="railRecentBody"></div></details>
     <div class="railFoot"><span id="railCores"></span><span class="spacer"></span><span class="k" id="railSolver">solver: browser</span></div>
     <input type="file" id="fileInput" multiple accept=".ai,.pdf,.zip,application/pdf,application/zip,application/postscript" class="hidden">
   </aside>
   <main class="main">
     <div class="topbar">
       <button class="navBtn" id="btnRail" title="Toggle queue">☰</button>
-      <div class="modeSeg" id="modeSeg"><button class="on" data-mode="nest">Nest</button><button data-mode="orders">Orders<i class="cnt" id="tabOrdersN"></i></button><button data-mode="design">Design Station<i class="cnt" id="tabDesignN"></i></button><button data-mode="master">Master</button><button data-mode="engrave">Engraving<i class="cnt" id="tabEngraveN"></i></button><button data-mode="review">Review<i class="cnt" id="tabReviewN"></i></button><button data-mode="library">Library</button><button data-mode="charms">Charms</button></div>
-      <div class="topTitle"><h1>Charm Nesting Station 1</h1><div class="sub" id="topSub">3 sheets · 0 charms queued</div></div>
+      <div class="modeSeg" id="modeSeg"><button class="on" data-mode="nest">Nest</button><button data-mode="orders">Orders<i class="cnt" id="tabOrdersN"></i></button><button data-mode="design"><span class="full">Design Station</span><span class="tight">Station</span><i class="cnt" id="tabDesignN"></i></button><button data-mode="master">Master</button><button data-mode="engrave"><span class="full">Engraving</span><span class="tight">Engrave</span><i class="cnt" id="tabEngraveN"></i></button><button data-mode="review">Review<i class="cnt" id="tabReviewN"></i></button><button data-mode="library">Library</button><button data-mode="charms">Charms</button></div>
       <div class="spacer"></div>
       <span class="sandboxPill hidden" id="sandboxPill" title="Sandbox: emulated Etsy from the stored snapshot; every record and file goes to sandbox copies">SANDBOX</span>
       <span class="etsyPill" id="etsyPill" title="Etsy API calls, as counted by the Design Station (the only app that calls Etsy); live on every heartbeat">Etsy <b id="etsyPillN">—</b></span>
@@ -727,7 +773,6 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
       <select class="topSel" id="stockSel" title="Stock preset for all three sheets"></select>
       <button class="btn ghost sm" id="btnSettings">⚙ Settings</button>
     </div>
-    <div class="liveStrip" id="liveStrip" title="The last bridge and engraving events"><span class="ls" id="liveStripBody">bridge idle</span></div>
     <div class="runBanner hidden" id="runBanner"></div>
     <div class="stage" id="stage">
       <div class="sheets" id="sheets"></div>
@@ -910,13 +955,24 @@ const uid = () => Math.random().toString(36).slice(2, 8) + Date.now().toString(3
 const today = () => CharmNestOrders.localDay();   // one local clock decides the folder date and the name date
 
 /* ═══ 1 · tiny UI kit ═══════════════════════════════════════════════════ */
+/* A toast is a glance, not a noticeboard. It used to stack without a limit — five of them climbing from the dock to
+   mid-screen, each one an invisible click shield over the cards beneath — repeat itself rather than count, and give a
+   message that needs a decision the same three seconds as "saved to the cloud". Now: at most three, repeats count up,
+   any of them dismisses on a click, and a bad one stays until it is dismissed. */
 function toast(msg, kind = "", ms = 3600) {
   const host = $("#toasts"); if (!host) return;
+  const text = String(msg);
+  const same = [...host.children].find(n => n.dataset.msg === text && n.dataset.kind === (kind || ""));
+  if (same) { const n = (+same.dataset.n || 1) + 1; same.dataset.n = n; same.querySelector(".x").textContent = "×" + n; same.querySelector(".x").hidden = false; return; }
   const el = document.createElement("div"); el.className = "toast" + (kind ? " " + kind : "");
-  el.innerHTML = `<span class="d"></span><span></span>`; el.lastElementChild.textContent = String(msg);
+  el.dataset.msg = text; el.dataset.kind = kind || ""; el.dataset.n = "1";
+  el.innerHTML = `<span class="d"></span><span class="m"></span><b class="x" hidden></b><button class="c" type="button" aria-label="dismiss">✕</button>`;
+  el.querySelector(".m").textContent = text;
+  const go = () => { el.style.opacity = "0"; el.style.transition = "opacity .2s"; setTimeout(() => el.remove(), 250); };
+  el.onclick = go; el.querySelector(".c").onclick = e => { e.stopPropagation(); go(); };
   host.appendChild(el);
-  setTimeout(() => { el.style.opacity = "0"; el.style.transition = "opacity .2s"; }, ms);
-  setTimeout(() => el.remove(), ms + 250);
+  while (host.children.length > 3) host.firstElementChild.remove();
+  if (kind !== "bad") { setTimeout(() => { if (el.isConnected) go(); }, ms); }   // one that needs a decision waits for one
 }
 function openDlg(el) { if (!el) return; if (!el.open) { try { el.showModal(); } catch (_) { el.setAttribute("open", ""); } } }
 function closeDlg(el) { if (!el) return; try { el.close(); } catch (_) { el.removeAttribute("open"); } }
@@ -2069,7 +2125,8 @@ function fillSrcRow(el, src) {
 function updateTopSub() {
   const total = allSheets().reduce((n, sh) => n + activeCharms(sh).length, 0);
   const running = allSheets().filter(s => s.status === "nesting").length;
-  $("#topSub").textContent = `${allSheets().length} sheets · ${total} charms queued${S.unassigned.length ? ` · ${S.unassigned.length} unassigned` : ""}${running ? ` · ${running} nesting` : ""}`;
+  S.topSummary = `${allSheets().length} sheets · ${total} charms queued${S.unassigned.length ? ` · ${S.unassigned.length} unassigned` : ""}${running ? ` · ${running} nesting` : ""}`;
+  if (window.Ladder) Ladder.render();
   document.title = (running ? "⏳ " : "") + "Brites · Charm Nesting Station 1";
 }
 
@@ -2481,27 +2538,24 @@ async function loadCharms() {
     $$(".charmTile input", body).forEach(inp => inp.onchange = () => api("charmNestLibrary", { op: "renameCharm", hash: inp.closest(".charmTile").dataset.h, name: inp.value.trim() }).then(() => toast("Renamed", "ok")).catch(e => toast(e.message, "bad")));
   } catch (e) { body.innerHTML = `<div class="libEmpty">${esc(e.message)}</div>`; }
 }
-function markTabOverflow() {
-  const seg = $("#modeSeg"); if (!seg) return;
-  const more = seg.scrollWidth - seg.clientWidth;
-  seg.classList.toggle("moreL", more > 2 && seg.scrollLeft > 2);
-  seg.classList.toggle("moreR", more > 2 && seg.scrollLeft < more - 2);
-}
 function setMode(mode) {
   S.mode = mode; $$("#modeSeg button").forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
   // on a narrow window the tab strip scrolls: the tab you are on is always brought into view
-  const onTab = $("#modeSeg button.on"); if (onTab && onTab.scrollIntoView) try { onTab.scrollIntoView({ inline: "nearest", block: "nearest" }); } catch (_) {}
-  markTabOverflow();
   $("#sheets").classList.toggle("hidden", mode !== "nest"); if (mode === "nest") requestAnimationFrame(() => METALS.forEach(m => drawPreview(activePage(m.key)))); $("#libView").classList.toggle("hidden", mode !== "library"); $("#charmsView").classList.toggle("hidden", mode !== "charms");
   for (const [m, id] of [["orders", "ordersView"], ["design", "designView"], ["master", "masterView"], ["engrave", "engraveView"], ["review", "reviewView"]]) $("#" + id).classList.toggle("hidden", mode !== m);
   if (mode === "library") loadLibrary(); if (mode === "charms") loadCharms();
   // The rail is the nesting station's own bench — files in, sheets out. On every other tab it was 344 px (a quarter of a
   // 1500 px screen) of controls that do not apply there, taking two columns off the order grid. It folds away unless a
   // person has pinned it open, and the hamburger brings it back anywhere.
-  if (!railPinned) $("#app").classList.toggle("railOff", mode !== "nest");
+  $("#app").classList.toggle("nestMode", mode === "nest");
+  // eight screens and none of them addressable: Back threw a person out of the station, a reload lost the tab they were
+  // on, and "look at this" had to be said out loud. The tab is the hash now.
+  try { if ((location.hash || "").slice(1) !== mode) history[modeFromUser ? "pushState" : "replaceState"](null, "", "#" + mode); } catch (_) {}
+  modeFromUser = false;
+  if (!railPinned) $("#app").classList.toggle("railOff", false);   // the ladder belongs on every tab; only a person folds the rail
   if (window.Views && Views.onShow) Views.onShow(mode);
 }
-let railPinned = false;
+let railPinned = false, modeFromUser = false;
 
 /* ═══ 15 · settings dialog ══════════════════════════════════════════════ */
 function openSettings() {
@@ -2549,6 +2603,7 @@ async function boot() {
   sel.onchange = () => { S.stockPreset = sel.value; localStorage.setItem("cn.stock", sel.value); for (const sh of allSheets()) sheetDirty(sh); };
   buildCards();
   $("#railCores").textContent = `${navigator.hardwareConcurrency || "?"} cores${(navigator.hardwareConcurrency || 4) < 4 ? " · sheets nest one at a time" : ` · ${METALS.length} sheets in parallel`}`;
+  { const rr = $("#railRecent"); if (rr) rr.ontoggle = () => { if (window.LiveStrip) LiveStrip.render(); }; }
   $("#btnRail").onclick = () => { const off = $("#app").classList.toggle("railOff"); railPinned = !off && S.mode !== "nest"; $("#btnRail").title = off ? "show the nesting bench" : "hide the nesting bench"; };
   $("#btnPick").onclick = () => $("#fileInput").click();
   $("#fileInput").onchange = e => { intake(e.target.files); e.target.value = ""; };
@@ -2557,9 +2612,9 @@ async function boot() {
   $("#btnSettings").onclick = openSettings; $("#btnSaveSettings").onclick = e => { e.preventDefault(); readSettings(); closeDlg($("#dlgSettings")); };
   $("#btnResetSettings").onclick = () => { S.settings = Object.assign({}, DEFAULTS, { stock: JSON.parse(JSON.stringify(DEFAULTS.stock)) }); saveSettings(); openSettings(); };
   $$("#railSeg button").forEach(b => b.onclick = () => { $$("#railSeg button").forEach(x => x.classList.toggle("on", x === b)); document.documentElement.dataset.rail = b.dataset.v; });
-  $$("#modeSeg button").forEach(b => b.onclick = () => setMode(b.dataset.mode));
-  $("#modeSeg").addEventListener("scroll", markTabOverflow, { passive: true });
-  window.addEventListener("resize", markTabOverflow); markTabOverflow();
+  $$("#modeSeg button").forEach(b => b.onclick = () => { modeFromUser = true; setMode(b.dataset.mode); });
+  window.addEventListener("popstate", () => { const m = (location.hash || "").slice(1); if (m && m !== S.mode) setMode(m); });
+  { const m = (location.hash || "").slice(1); if (m && $(`#modeSeg button[data-mode="${m}"]`)) setMode(m); }
   $$("#libKind button").forEach(b => b.onclick = () => { $$("#libKind button").forEach(x => x.classList.toggle("on", x === b)); S.library.kind = b.dataset.k; loadLibrary(); });
   $("#rpClose").onclick = () => closeDlg($("#dlgReport")); $("#lsClose").onclick = () => closeDlg($("#dlgSheet"));
   $$("#libView .fchip").forEach(b => b.onclick = () => { $$("#libView .fchip").forEach(x => x.classList.toggle("on", x === b)); S.library.metal = b.dataset.m; loadLibrary(); });

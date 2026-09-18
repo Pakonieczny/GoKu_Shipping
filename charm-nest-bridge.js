@@ -35,9 +35,83 @@ function askEmployee() {
 /* ═══ 17 · DesignLink — the Design Station as a slave ═════════════════════ */
 const LiveStrip = window.LiveStrip = (() => {
   const rows = [];
-  function push(ev) { rows.push({ t: ev.t || Date.now(), kind: ev.kind, text: ev.text || (ev.html ? ev.html.replace(/<[^>]+>/g, "") : "") }); if (rows.length > 5) rows.shift(); render(); }
-  function render() { const b = document.getElementById("liveStripBody"); if (!b) return; b.innerHTML = rows.length ? rows.map(r => `<span class="ev"><span class="t">${fmtT(r.t)}</span><b>${esc(r.kind)}</b> ${esc(r.text).slice(0, 140)}</span>`).join("") : "bridge idle"; const n = Review.count(); const rb = document.getElementById("tabReviewN"); if (rb) rb.textContent = n ? String(n) : ""; const eb = document.getElementById("tabEngraveN"); if (eb) { const k = Engrave.pendingCount(); eb.textContent = k ? String(k) : ""; } }
+  function push(ev) { rows.push({ t: ev.t || Date.now(), kind: ev.kind, text: ev.text || (ev.html ? ev.html.replace(/<[^>]+>/g, "") : "") }); if (rows.length > 40) rows.shift(); render(); }
+  function render() {
+    const b = document.getElementById("railRecentBody");
+    // newest first, and only drawn while the disclosure is open — it used to be a permanent band that clipped the newest line
+    if (b && b.parentElement && b.parentElement.open) b.innerHTML = rows.length ? rows.slice().reverse().map(r => `<div><i>${fmtT(r.t)}</i><b>${esc(r.kind)}</b> ${esc(r.text).slice(0, 160)}</div>`).join("") : "<div>nothing yet</div>";
+    const n = Review.count(); const rb = document.getElementById("tabReviewN"); if (rb) rb.textContent = n ? String(n) : "";
+    const eb = document.getElementById("tabEngraveN"); if (eb) { const k = Engrave.pendingCount(); eb.textContent = k ? String(k) : ""; }
+    if (window.Ladder) Ladder.render();
+  }
   return { push, render, rows };
+})();
+
+/* ═══ 17b · Ladder — where the work is, on every screen ══════════════════════
+   The one thing the station never said: what has been approved, what is where, what is set. It was eleven nine-pixel
+   squares whose meaning lived in a title attribute, a scrolling ticker of the five most recent lines, and four badges
+   spread across four tabs — so answering "where are we" meant a tour of the app and some mental arithmetic.
+   The ladder is that answer, in the rail, on all eight tabs, built from state the app already holds. Seven steps a
+   person would name, each with the evidence for it; the step that is waiting on someone is the only one with a
+   background, and it is a button that goes to the screen that settles it. */
+const Ladder = window.Ladder = (() => {
+  const STEPS = [
+    { id: "pull", label: "Pull", covers: ["pull", "claim"], tab: "orders",
+      count: () => { const n = Orders.rows().filter(r => r.state !== "gone").length; return n ? `${n} line${n === 1 ? "" : "s"}` : ""; } },
+    { id: "pool", label: "Pool", covers: ["pool", "plan"], tab: "orders",
+      count: () => { const n = Orders.rows().filter(r => r.poolIds && r.poolIds.length).length; return n ? `${n} on the cards` : ""; } },
+    { id: "nest", label: "Nest", covers: ["nest"], tab: "nest",
+      count: () => { const sh = allSheets().filter(p => p.runId && B.run && p.runId === B.run.runId); const done = sh.filter(p => ["complete", "partial"].includes(p.status)).length; return sh.length ? `${done} of ${sh.length} sheet${sh.length === 1 ? "" : "s"}` : ""; } },
+    { id: "checkpoint", label: "Check", covers: ["checkpoint"], tab: "nest",
+      count: () => { const bad = allSheets().filter(p => p.runId && B.run && p.runId === B.run.runId && p.verification && !p.verification.ok).length; return bad ? `${bad} to look at` : ""; } },
+    { id: "engrave", label: "Engrave", covers: ["engrave", "revalidate"], tab: "engrave",
+      count: () => { const k = Engrave.pendingCount(); return k ? `${k} to settle` : (Engrave.reviewedCount() ? `${Engrave.reviewedCount()} decided` : ""); },
+      waits: () => Engrave.pendingCount() },
+    { id: "labels", label: "Labels", covers: ["labels"], tab: "nest",
+      count: () => { const s2 = B.run && Sets.byRun && Sets.byRun().get(B.run.runId); const n = s2 && s2.labelFiles ? s2.labelFiles.length : 0; return n ? `${n} saved` : ""; } },
+    { id: "commit", label: "Commit", covers: ["commit", "complete"], tab: "orders",
+      count: () => { const n = B.run && B.run.committed ? B.run.committed.length : 0; const h = B.run && B.run.holds ? Object.keys(B.run.holds).length : 0; return n || h ? `${n} committed${h ? ` · ${h} held` : ""}` : ""; } },
+  ];
+  const WORD = { running: ["Running", "go"], review: ["Waiting on you", "wait"], paused: ["Paused", "wait"], stopped: ["Stopped", "stop"], complete: ["Done", "go"] };
+  const mount = () => document.getElementById("ladder");
+  /** Which of the seven the run is standing on, and which of them is waiting on a person. */
+  function shape() {
+    const r = B.run;
+    const idx = r ? O.stepIndex(r.step) : -1;
+    const here = r ? STEPS.findIndex(s => s.covers.includes(r.step)) : -1;
+    const revN = Review.count(), engN = Engrave.pendingCount();
+    return { r, idx, here, revN, engN };
+  }
+  function render() {
+    const host = mount(); if (!host) return;
+    const { r, here, revN, engN } = shape();
+    if (!r) {
+      // no run: the ladder still answers "what is here" — the library, the pull, and what the library is missing
+      const pulled = Orders.rows().filter(x => x.state !== "gone").length;
+      const miss = Master.missingCount ? Master.missingCount() : 0;
+      host.innerHTML = `<div class="ldBand ldIdle"><b>No run open</b><span>${B.master.entries.size} SKU${B.master.entries.size === 1 ? "" : "s"} in the library</span></div>`
+        + `<div class="ldRows">`
+        + `<button class="ldRow" data-tab="orders" title="the orders on the cards"><i class="g ${pulled ? "done" : "todo"}"></i><span class="n">Orders</span><span class="c">${pulled ? `${pulled} line${pulled === 1 ? "" : "s"} pulled` : "nothing pulled"}</span></button>`
+        + (miss ? `<button class="ldRow wait" data-tab="master" title="SKUs the orders want that no master file holds"><i class="g stop"></i><span class="n">Library</span><span class="c">${miss} SKU${miss === 1 ? "" : "s"} missing</span></button>` : "")
+        + `</div>`;
+      wire(host); return;
+    }
+    const [word, tone] = WORD[r.status] || ["Running", "go"];
+    const waitRow = r.status === "review" ? (engN ? "engrave" : "pull") : null;
+    host.innerHTML = `<div class="ldBand ld-${tone}" title="run ${esc(r.runId)}"><b>${esc(word)}</b><span>${esc(r.setId || r.day || "")}</span></div>`
+      + `<div class="ldRows">` + STEPS.map((s, i) => {
+        const state = r.status === "complete" || i < here ? "done" : i === here ? (r.status === "stopped" ? "stop" : "now") : "todo";
+        const waiting = (s.waits && s.waits()) || (s.id === waitRow && revN);
+        const c = s.count() || "";
+        return `<button class="ldRow${waiting ? " wait" : ""}${state === "now" ? " now" : ""}" data-tab="${s.tab}" title="${esc(s.label)}${c ? " — " + esc(c) : ""}"><i class="g ${state}"></i><span class="n">${esc(s.label)}</span><span class="c">${esc(c)}</span></button>`;
+      }).join("") + `</div>`
+      + (revN || engN ? `<div class="ldWaits">${revN ? `<button class="ldChip warn" data-tab="review" title="decisions a person must make">Review<b>${revN}</b></button>` : ""}${engN ? `<button class="ldChip info" data-tab="engrave" title="engraving still to be settled">Engraving<b>${engN}</b></button>` : ""}</div>` : "");
+    wire(host);
+  }
+  function wire(host) {
+    host.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { setMode(b.dataset.tab); if (b.dataset.tab === "engrave" && window.Engrave) Engrave.render(); });
+  }
+  return { render, STEPS };
 })();
 
 const DesignLink = window.DesignLink = (() => {
@@ -194,6 +268,9 @@ const DesignLink = window.DesignLink = (() => {
     n.textContent = `${S_.state && S_.state.sandbox ? "emulated · " : ""}today ${m.today} · 10m ${m.last10Min} · 1m ${m.lastMinute}`;
     const hot = m.last10Min >= m.guard.per10Min * 0.7 || m.lastMinute >= m.guard.burstPerMinute * 0.7;
     el.classList.toggle("alarm", !!m.braked); el.classList.toggle("warn", !m.braked && hot);
+    // a rate meter is something you look at when something is wrong: in the normal state it holds no space, and the full
+    // readout stays on the Design Station panel where it always was
+    el.classList.toggle("quiet", !m.braked && !hot && !(S_.state && S_.state.sandbox));
     el.title = m.braked ? `Etsy watchdog at the station: ${m.alarm && m.alarm.why} — automatic Etsy work paused until ${new Date(m.brakeUntil).toLocaleTimeString()}` : `Etsy calls counted by the Design Station: ${m.total} this session · ${m.lastMinute} in the last minute · ${m.last10Min} in the current 10-minute window · ${m.lastHour} in the last hour · ${m.today} today · peak ${m.maxQps}/s · ${m.status429} rate-limit answers. Guard: ${m.guard.burstPerMinute}/min, ${m.guard.per10Min}/10 min, ${m.guard.sameOrderPer10Min} reads of one order/10 min.`;
     if (m.braked && (!E_.alarmed || E_.alarmed !== m.alarm.at)) { E_.alarmed = m.alarm.at; agent({ bridge: true }, "warn", `Etsy watchdog at the station: ${m.alarm.why} — automatic Etsy work is paused for ${Math.round(m.guard.brakeMs / 60000)} min`); if (B.run && ["running", "paused", "review"].includes(B.run.status)) RunCtl.stop(`Etsy watchdog: ${m.alarm.why}`, `The station paused automatic Etsy work until ${new Date(m.brakeUntil).toLocaleTimeString()}. Check the API meter on both apps, then Resume.`); }
   }
@@ -262,9 +339,12 @@ const Dock = window.Dock = (() => {
     document.body.appendChild(el);
     D.el = el; D.body = el.querySelector(".dockBody"); D.bar = el.querySelector(".dockBar");
     el.querySelector("#dockOpen").onclick = () => setMode("design");
-    el.querySelector("#dockHide").onclick = () => { D.hiddenByUser = true; layout(); };
+    el.querySelector("#dockHide").onclick = () => { D.hiddenByUser = true; D.shownByUser = false; layout(); };
+    // the dock's own bar is the way to grow it: small by default, full when someone wants to watch
+    el.querySelector(".dockBar").addEventListener("dblclick", () => { D.shownByUser = !D.shownByUser; layout(); });
     D.bar.addEventListener("dblclick", () => setMode("design"));
     const pill = document.createElement("button"); pill.type = "button"; pill.id = "dsDockPill"; pill.className = "hidden"; pill.innerHTML = `<span class="dot"></span>Design Station live view`; pill.onclick = () => { D.hiddenByUser = false; D.shownByUser = true; layout(); };
+    pill.title = "the Design Station, live — click to watch it in the corner";
     document.body.appendChild(pill); D.pill = pill;
     window.addEventListener("resize", schedule); document.addEventListener("scroll", schedule, true);
     return D;
@@ -285,10 +365,10 @@ const Dock = window.Dock = (() => {
     D.pill.classList.toggle("hidden", mode !== "pilled");
     D.el.classList.toggle("hidden", mode === "hidden" || mode === "pilled");
     D.el.classList.toggle("full", mode === "full"); D.el.classList.toggle("pip", mode === "pip");
-    // on the engraving and review screens the controls live at the bottom of the page, so the live view tucks itself
-    // into a smaller corner there rather than sitting on top of them
-    D.el.classList.toggle("tucked", mode === "pip" && ["engrave", "review", "orders"].includes(S.mode) && !D.shownByUser);
-    // and the toasts stack above it rather than across it
+    // The live view is presence, not reading: at 480 px it renders the station at 0.4 and covered order cards, sheet
+    // cards and SKU tiles outright. It sits small unless a person expands it, and whatever size it is, the screen
+    // reserves that much room at the bottom so nothing is ever underneath it.
+    D.el.classList.toggle("tucked", mode === "pip" && !D.shownByUser);
     const dockH = mode === "pip" ? Math.round(D.el.getBoundingClientRect().height) + 12 : 0;
     document.documentElement.style.setProperty("--dockH", dockH + "px");
     if (mode === "hidden" || mode === "pilled" || !f) return;
@@ -1058,7 +1138,7 @@ const Master = window.Master = (() => {
     each("up", (inp, skus) => inp.onchange = () => { const v2 = inp.value.trim(); if (v2 === "") return; patchMany(skus, { upAngle: +v2 }).then(() => toast(`${skus.join(", ")}: up = ${+v2}° (operator)`, "ok")); });
     each("unblock", (b, skus) => b.onclick = () => patchMany(skus, { blocked: null }).then(() => toast(`${skus.join(", ")} unblocked`, "ok")));
   }
-  return { entryFor, thumbOf, fetchEntry, load, indexFile, looksLikeMaster, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder };
+  return { entryFor, thumbOf, fetchEntry, load, indexFile, looksLikeMaster, render, patch, patchMany, keepOutOf, skuRegex, stripPng, strayInkUnder, missingSkus, missingCount: () => missingSkus().length };
 })();
 
 /* ═══ 20 · Pool — one charm per order line and copy ══════════════════════ */
@@ -2016,18 +2096,27 @@ const RunCtl = window.RunCtl = (() => {
     renderBanner();
   }
   function renderModeBtn() { const b = document.getElementById("btnRunMode"); if (!b) return; const auto = S.settings.runMode === "auto"; b.classList.toggle("auto", auto); document.getElementById("runModeText").textContent = auto ? "Auto" : "Manual"; }
+  const STEP_WORDS = { pull: "Pulling orders", claim: "Claiming", pool: "Pooling", plan: "Planning", nest: "Nesting", checkpoint: "Checking the sheets", engrave: "Engraving", revalidate: "Re-checking the orders", labels: "Writing labels", commit: "Committing", complete: "Complete" };
+  /** The one detail that makes the step concrete, in the shop's own words. */
+  function stepDetail(r) {
+    const sh = allSheets().filter(p => p.runId === r.runId);
+    if (r.step === "nest" && sh.length) return ` · sheet ${Math.min(sh.filter(p => ["complete", "partial"].includes(p.status)).length + 1, sh.length)} of ${sh.length}`;
+    if (r.step === "pool") return ` · ${Orders.rows().filter(x => x.poolIds && x.poolIds.length).length} of ${Orders.rows().filter(x => x.state !== "gone").length} lines`;
+    if (r.step === "pull" || r.step === "claim") return ` · ${Orders.rows().filter(x => x.state !== "gone").length} lines`;
+    return "";
+  }
   function renderBanner() {
     const h = document.getElementById("runBanner"); if (!h) return; const r = B.run;
     if (!r) { h.classList.add("hidden"); Dock.schedule(); return; }
     h.classList.remove("hidden"); h.className = "runBanner" + (r.status === "stopped" ? " stopped" : r.status === "complete" ? " done" : r.status === "review" ? " review" : "");
     const idx = O.stepIndex(r.step);
-    const steps = O.RUN_STEPS.map((s, i) => `<i class="${i < idx || r.status === "complete" ? "done" : i === idx ? (r.status === "stopped" ? "stop" : "now") : ""}" title="${s}"></i>`).join("");
     const reviewN = Review.count(), engN = Engrave.pendingCount();
     const waitingFor = [reviewN ? `${reviewN} in Review` : "", engN ? `${engN} in Engraving` : ""].filter(Boolean).join(" · ") || "nothing";
-    const why = r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${r.fix ? ` — <span>${esc(r.fix)}</span>` : ""}` : r.status === "review" ? `<b>Waiting for a person:</b> ${waitingFor}` : r.status === "paused" ? (r.awaitCommit ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : `<b>Paused</b> after ${esc(O.RUN_STEPS[idx - 1] || r.step)} — next: ${esc(r.step)} · <span style="opacity:.75">this run is set to Manual, so it waits at every step</span>`) : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(r.step)}</b> · half ${O.HALF[r.step]} · ${r.mode}`;
+    const why = r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${r.fix ? ` — <span>${esc(r.fix)}</span>` : ""}` : r.status === "review" ? `<b>Waiting for a person:</b> ${waitingFor}` : r.status === "paused" ? (r.awaitCommit ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : `<b>Paused</b> after ${esc(O.RUN_STEPS[idx - 1] || r.step)} — next: ${esc(r.step)} · <span style="opacity:.75">this run is set to Manual, so it waits at every step</span>`) : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(STEP_WORDS[r.step] || r.step)}</b>${esc(stepDetail(r))}`;
     Dock.schedule();
-    h.innerHTML = `<span class="step">run ${esc(r.runId.slice(-8))}</span><span class="steps">${steps}</span><span class="why">${why}${r.setId ? ` · <span class="mono">${esc(r.setId)}</span>` : ""}</span>
-      ${r.status === "paused" && !r.awaitCommit ? `<button class="btn gold sm" id="rbNext" title="do the next step of the run and wait again">Next step ▶</button><button class="btn ghost sm" id="rbAuto" title="Stop waiting at every step: the run carries on by itself and only stops when it needs a person">Run the rest by itself</button>` : ""}${r.status === "paused" && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${r.status === "stopped" && /sign/i.test(r.stoppedBy || "") ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${r.status === "stopped" ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at">Resume</button>` : ""}${reviewN ? `<button class="btn ghost sm" id="rbReview" title="the decisions a person still has to make">Review (${reviewN})</button>` : ""}${engN ? `<button class="btn ghost sm" id="rbEngrave" title="the engraving still to be settled">Engraving (${engN})</button>` : ""}${["running", "review", "paused"].includes(r.status) ? `<button class="btn ghost sm" id="rbStop" title="stop after the step in progress — the run can be resumed from where it stopped">Stop</button>` : ""}${["complete", "stopped"].includes(r.status) ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}`;
+    h.title = `run ${r.runId}`;
+    h.innerHTML = `<span class="why">${why}</span><span class="spacer"></span><span class="acts">
+      ${r.status === "paused" && !r.awaitCommit ? `<button class="btn gold sm" id="rbNext" title="do the next step of the run and wait again">Next step ▶</button><button class="btn ghost sm" id="rbAuto" title="Stop waiting at every step: the run carries on by itself and only stops when it needs a person">Run the rest by itself</button>` : ""}${r.status === "paused" && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${r.status === "stopped" && /sign/i.test(r.stoppedBy || "") ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${r.status === "stopped" ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at">Resume</button>` : ""}${reviewN ? `<button class="btn ghost sm" id="rbReview" title="the decisions a person still has to make">Review (${reviewN})</button>` : ""}${engN ? `<button class="btn ghost sm" id="rbEngrave" title="the engraving still to be settled">Engraving (${engN})</button>` : ""}${["running", "review", "paused"].includes(r.status) ? `<button class="btn ghost sm" id="rbStop" title="stop after the step in progress — the run can be resumed from where it stopped">Stop</button>` : ""}${["complete", "stopped"].includes(r.status) ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}</span>`;
     const q = id => h.querySelector("#" + id);
     if (q("rbConnect")) q("rbConnect").onclick = () => DesignLink.connectEtsy().catch(e => toast(e.message, "bad", 6000)); if (q("rbNext")) q("rbNext").onclick = () => next();
     if (q("rbAuto")) q("rbAuto").onclick = async () => { const r2 = B.run; if (!r2) return; r2.mode = "auto"; await save(r2); agent({ run: r2.runId }, "DS", "This run carries on by itself from here — it stops only when it needs a person"); next(); }; if (q("rbCommit")) q("rbCommit").onclick = () => commitNow(); if (q("rbResume")) q("rbResume").onclick = () => resume(); if (q("rbReview")) q("rbReview").onclick = () => setMode("review"); if (q("rbEngrave")) q("rbEngrave").onclick = () => { setMode("engrave"); Engrave.render(); }; if (q("rbStop")) q("rbStop").onclick = () => stop("stopped by the operator", "Press Resume to carry on from the recorded step."); if (q("rbClear")) q("rbClear").onclick = () => { if (confirm("Clear the finished run from the cards? Files and records are kept.")) clearRunState(); };

@@ -205,11 +205,18 @@ const receipts = [
   await page.evaluate(() => CN.setMode('orders'));
   await page.evaluate(() => RunCtl.setMode('auto'));
   await page.waitForFunction(() => B.run && B.run.status !== undefined, null, { timeout: 10000 });
-  // §5.7 · the live view: on any other tab the station frame is a picture-in-picture panel, never re-parented (one hello so far)
+  // §5.7 · the live view: a status pill while the run works, the panel when a person asks for it, never re-parented
   await page.waitForFunction(() => Dock.mode() === 'pip', null, { timeout: 5000 });
   const hellosAtStart = await page.evaluate(() => DesignLink.log.filter(r => r.dir === 'cmd' && r.type === 'hello').length);
-  const dock = await page.evaluate(() => ({ mode: Dock.mode(), visible: !document.getElementById('dsDock').classList.contains('hidden'), scaled: /matrix\(0\./.test(getComputedStyle(document.getElementById('dsFrame')).transform), hellos: DesignLink.log.filter(r => r.dir === 'cmd' && r.type === 'hello').length }));
-  assert(dock.mode === 'pip' && dock.visible && dock.scaled && dock.hellos === hellosAtStart, 'live panel shown while running on another tab: ' + JSON.stringify(dock));
+  const dock = await page.evaluate(() => ({ mode: Dock.mode(), visible: !document.getElementById('dsDock').classList.contains('hidden'), tucked: document.getElementById('dsDock').classList.contains('tucked'), scaled: /matrix\(0\./.test(getComputedStyle(document.getElementById('dsFrame')).transform), hellos: DesignLink.log.filter(r => r.dir === 'cmd' && r.type === 'hello').length }));
+  assert(dock.mode === 'pip' && dock.visible && dock.tucked && dock.scaled && dock.hellos === hellosAtStart, 'live panel shown small while running on another tab: ' + JSON.stringify(dock));
+  // and the screen keeps room for it, so it never sits on top of the work
+  const clear = await page.evaluate(() => {
+    const d = document.getElementById('dsDock').getBoundingClientRect();
+    const st = document.querySelector('.stage');
+    return { pad: Math.round(parseFloat(getComputedStyle(st).paddingBottom)), dockH: Math.round(d.height) };
+  });
+  assert(clear.pad >= clear.dockH, 'the stage reserves the live view\'s height: ' + JSON.stringify(clear));
   const approvals = [];
   let engChecked = false;                      // the placement-card checks below must actually have run
   let t0 = Date.now(), lastStep = '', lastJobs = '', lastDone = '';
@@ -288,6 +295,43 @@ const receipts = [
           chips: [...v.querySelectorAll('.egTab')].map(b2 => b2.textContent.trim()) };
       });
       console.log('review screen', JSON.stringify(rv));
+      // ── the ladder: where the work is, on every screen, with the evidence for each step (§10) ──
+      const lad = await page.evaluate(() => {
+        const out = {};
+        for (const m of ['orders', 'engrave', 'review', 'master', 'nest', 'library', 'charms', 'design']) {
+          CN.setMode(m);
+          const h = document.getElementById('ladder');
+          out[m] = { rows: h.querySelectorAll('.ldRow').length, band: (h.querySelector('.ldBand b') || {}).textContent || '' };
+        }
+        CN.setMode('orders');
+        const h = document.getElementById('ladder');
+        return { perTab: out,
+          steps: [...h.querySelectorAll('.ldRow')].map(r2 => ({ name: r2.querySelector('.n').textContent, count: r2.querySelector('.c').textContent, glyph: r2.querySelector('.g').className.replace('g ', ''), wait: r2.classList.contains('wait'), tab: r2.dataset.tab })),
+          band: (h.querySelector('.ldBand b') || {}).textContent || '',
+          chips: [...h.querySelectorAll('.ldChip')].map(c2 => c2.textContent.trim()),
+          strip: !!document.getElementById('liveStrip'),
+          recent: !!document.getElementById('railRecent'),
+        };
+      });
+      console.log('ladder', JSON.stringify(lad));
+      assert(Object.values(lad.perTab).every(t => t.rows >= 7), 'the ladder is on every tab: ' + JSON.stringify(lad.perTab));
+      assert(Object.values(lad.perTab).every(t => t.band === lad.band), 'and says the same thing on all of them');
+      assert.deepStrictEqual(lad.steps.map(s2 => s2.name), ['Pull', 'Pool', 'Nest', 'Check', 'Engrave', 'Labels', 'Commit'], 'seven steps a person would name: ' + lad.steps.map(s2 => s2.name));
+      assert(lad.steps.some(s2 => s2.count), 'with the evidence for them: ' + JSON.stringify(lad.steps.map(s2 => s2.count)));
+      assert(lad.steps.filter(s2 => s2.glyph === 'now' || s2.wait).length >= 1, 'and the step the run is standing on is marked: ' + JSON.stringify(lad.steps));
+      assert(lad.steps.every(s2 => s2.tab), 'every step goes to the screen that settles it');
+      assert(!lad.strip, 'the scrolling ticker is gone');
+      assert(lad.recent, 'and what happened lately is one click away in the rail');
+      assert(lad.band && !/^run [0-9a-z]+$/i.test(lad.band), 'the band says a state word, not a run id: ' + lad.band);
+      // the step that needs a person is a button that goes there
+      const jumped = await page.evaluate(() => {
+        const w = document.querySelector('#ladder .ldRow.wait') || document.querySelector('#ladder .ldRow[data-tab=engrave]');
+        if (!w) return null;
+        const want = w.dataset.tab; w.click();
+        return { want, got: CN.S.mode };
+      });
+      if (jumped) { console.log('ladder jump', JSON.stringify(jumped)); assert.strictEqual(jumped.got, jumped.want, 'the ladder row goes to its own screen'); }
+      await page.evaluate(() => CN.setMode('engrave'));
       // the Master tab says, once, what the orders want that the library has never heard of (§6)
       const miss = await page.evaluate(() => {
         CN.setMode('master'); Master.render();
