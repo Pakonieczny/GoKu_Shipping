@@ -2593,9 +2593,14 @@ async function loadCharms() {
   const body = $("#charmsBody"); body.innerHTML = `<div class="libEmpty">Loading charms…</div>`;
   if (!S.cloud.ok) { body.innerHTML = `<div class="libEmpty">Cloud offline.</div>`; return; }
   try {
-    const r = await api("charmNestLibrary", { op: "listCharms", q: ($("#charmSearch").value || "").trim(), limit: 400 }, { label: "Loading charms" });
-    const rows = r.charms || []; $("#charmCount").textContent = `${rows.length} charm${rows.length === 1 ? "" : "s"}`;
-    body.innerHTML = rows.length ? rows.map(c => `<div class="charmTile" data-h="${c.hash}">${c.thumbUrl ? `<img crossorigin="anonymous" src="${c.thumbUrl}" loading="lazy" alt="">` : ""}<div class="nmRow"><div class="nm" title="${esc(c.name || "")}">${esc(c.name || "")}</div><button class="rename" type="button" title="rename this charm in the library">✎</button></div><div class="meta">${c.widthPt ? `${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}` : ""}${c.timesUsed ? ` · used ×${c.timesUsed}` : ""}${c.metalHint ? ` · ${esc(labelOf(c.metalHint))}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("") : `<div class="libEmpty">No charms yet.</div>`;
+    const q = ($("#charmSearch").value || "").trim();
+    const r = await api("charmNestLibrary", { op: "listCharms", q, limit: q ? 1000 : 400 }, { label: "Loading charms" });
+    const rows = r.charms || [];
+    $("#charmCount").textContent = q ? `${rows.length} match${rows.length === 1 ? "" : "es"}` : `${rows.length} charm${rows.length === 1 ? "" : "s"}${rows.length >= 400 ? "+" : ""}`;
+    body.innerHTML = rows.length ? rows.map(c => `<div class="charmTile" data-h="${c.hash}">${c.thumbUrl ? `<img crossorigin="anonymous" src="${c.thumbUrl}" loading="lazy" alt="">` : ""}<div class="nmRow"><div class="nm" title="${esc(c.name || "")}">${esc(c.name || "")}</div><button class="rename" type="button" title="rename this charm in the library">✎</button></div><div class="meta">${c.widthPt ? `${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}` : ""}${c.timesUsed ? ` · used ×${c.timesUsed}` : ""}${c.metalHint ? ` · ${esc(labelOf(c.metalHint))}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("") : `<div class="libEmpty">${q
+        ? `No charm matches &ldquo;${esc(q)}&rdquo;.` + (r.truncated ? `<br><span style="font-size:12px">The search covered the ${r.scanned} most recently used charms.</span>` : "") + `<br><button class="btn ghost sm" type="button" id="charmClear" style="margin-top:12px">Clear search</button>`
+        : `No charms yet &mdash; they appear here after the first sheet is nested.`}</div>`;
+    { const clr = $("#charmClear"); if (clr) clr.onclick = () => { $("#charmSearch").value = ""; loadCharms(); }; }
     // a grid of 400 tiles used to be 400 focusable fields wired to a permanent rename in the shared library: a stray
     // click and a keystroke committed it on blur, with no way back. A name is read-only until its pencil is pressed.
     $$(".charmTile .rename", body).forEach(btn => btn.onclick = () => {
@@ -2715,7 +2720,10 @@ async function boot() {
   $("#rpClose").onclick = () => closeDlg($("#dlgReport")); $("#lsClose").onclick = () => closeDlg($("#dlgSheet"));
   $$("#libView .fchip").forEach(b => b.onclick = () => { $$("#libView .fchip").forEach(x => x.classList.toggle("on", x === b)); S.library.metal = b.dataset.m; loadLibrary(); });
   $("#libSearch").oninput = () => (S.library.kind === "sets" ? loadLibrary() : renderLibrary()); $("#libRefresh").onclick = loadLibrary; $("#libFrom").onchange = loadLibrary; $("#libTo").onchange = loadLibrary;
-  $("#charmRefresh").onclick = loadCharms; $("#charmSearch").onchange = loadCharms;
+  // the two search boxes on adjacent tabs must behave the same: type and it searches, and the native × clears it.
+  // Debounced rather than per keystroke, because this one is a network call.
+  $("#charmRefresh").onclick = loadCharms;
+  { let charmT; $("#charmSearch").oninput = () => { clearTimeout(charmT); charmT = setTimeout(loadCharms, 250); }; }
   // page-level drop: route by name; rail drop = same
   let dragDepth = 0;
   document.addEventListener("dragenter", e => { if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files")) { dragDepth++; $("#dropAll").classList.add("on"); } });
