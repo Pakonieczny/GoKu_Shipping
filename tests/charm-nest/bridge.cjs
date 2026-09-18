@@ -264,7 +264,7 @@ const receipts = [
       assert.strictEqual(eg.tabs.filter(t => t.on).length, 1, 'exactly one tab is open');
       assert.strictEqual(eg.openPanes, 1, 'and exactly one pane is shown');
       if (eg.head) {
-        assert(/^\d+ of \d+$/.test(eg.head.kind.trim()), 'the card says where you are in the queue: ' + eg.head.kind);
+        assert(/^\d+ of \d+ · \d+ done$/.test(eg.head.kind.trim()), 'the card says where you are in the queue and how many are done: ' + eg.head.kind);
         assert(/^\d{6,}$/.test(eg.head.ttl.trim()), 'the order number is the heading: ' + eg.head.ttl);
         assert(/ANNA/.test(eg.head.words), 'and the words that will be cut are beside the preview: ' + eg.head.words);
         assert.strictEqual(eg.head.confs, 1, 'one confidence score, not several');
