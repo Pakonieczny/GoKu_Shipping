@@ -383,6 +383,29 @@
     const metrics = strokeMetrics(layout.cmds, 24);
     return { ok: true, size, capMm, weight: capMm < opts.semiboldBelowMm ? "Semibold" : "Regular", small: capMm < opts.minCapMm, thin: !!pick.thin, angle: pick.angle, rect: pick.rect, centre, layout, glyphs: layout.glyphs, cmds: layout.cmds, metrics, gain: pick.gain || 0, lines };
   }
+  /* How big should the lettering be, given how much there is to say and how much room there is to say it in?
+     The largest size that fits is the ceiling, not the answer: a four letter name at the ceiling fills the charm and
+     reads as a logo. The share of that ceiling grows with the length of the longest line, smoothly, from SHORT_FILL at
+     SHORT_CHARS or fewer to LONG_FILL at LONG_CHARS or more. Two further rules hold it honest: the cap height never
+     passes CAP_OF_CHARM of the charm's smaller side, and it never drops below the legible minimum unless the ceiling
+     itself is below it. Everything here is a default a person can override by hand afterwards. */
+  const SIZE_RULE = { SHORT_CHARS: 4, LONG_CHARS: 18, SHORT_FILL: 0.55, LONG_FILL: 1, CAP_OF_CHARM: 0.3 };
+  function defaultSize(lines, fittedMax, opts) {
+    opts = opts || {};
+    const R = Object.assign({}, SIZE_RULE, opts.sizeRule || {});
+    const longest = (lines || []).reduce((n, l) => Math.max(n, String(l).trim().length), 0);
+    const t = Math.max(0, Math.min(1, (longest - R.SHORT_CHARS) / Math.max(1, R.LONG_CHARS - R.SHORT_CHARS)));
+    const fill = R.SHORT_FILL + (R.LONG_FILL - R.SHORT_FILL) * t;
+    // the share applies to the room ABOVE the legible minimum, not to the whole size: on a charm that barely has room
+    // the lettering stays close to the largest that fits, while a roomy charm gives a short name a modest size
+    const floor = opts.minCapMm > 0 && opts.capPerEm > 0 ? Math.min(opts.minCapMm / (opts.capPerEm * MM_PER_PT), fittedMax) : 0;
+    let size = floor + (fittedMax - floor) * fill;
+    if (opts.charmMinMm > 0 && opts.capPerEm > 0) {                       // never taller than a share of the charm itself
+      const capCeil = R.CAP_OF_CHARM * opts.charmMinMm / (opts.capPerEm * MM_PER_PT);
+      size = Math.min(size, Math.max(capCeil, floor));
+    }
+    return Math.max(Math.min(size, fittedMax), Math.min(floor, fittedMax));
+  }
   /** Largest size at a fixed centre and angle (a nudge), optionally capped. */
   function refitAt(lines, font, mask, opts, place) {
     opts = Object.assign({ lineGap: 0.18, maxHeightFrac: 0.4, minCapMm: 1.6, semiboldBelowMm: 2.2 }, opts || {});
@@ -434,6 +457,6 @@
   return { MM_PER_PT, PT_PER_MM, mul, ap, mirrorX, rotateAbout, translate, transformSeg, flatten, polyCentroid, pointInPolys, distToPolys, interiorPoint,
     makeFrame, emptyMask, cloneMask, rasterPolys, raster, area, flipX, diffFraction, at, distanceTransform, erode, subtract, rotateMask, largestRectangles,
     isCutLine, BackViewError, upAngleOf, backView, engraveMask,
-    glyphCoverage, capPerEm, lineGlyphs, layoutLines, glyphPolys, rasterGlyphs, verifyInk, strokeMetrics, fitText, refitAt, splitVariants,
+    glyphCoverage, capPerEm, lineGlyphs, layoutLines, glyphPolys, rasterGlyphs, verifyInk, strokeMetrics, fitText, refitAt, defaultSize, SIZE_RULE, splitVariants,
     svgPathOf, svgPathOfCmds, silhouetteBits };
 });

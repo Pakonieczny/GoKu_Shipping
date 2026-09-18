@@ -223,6 +223,69 @@ const receipts = [
       const jk = JSON.stringify(jobs); if (jk !== lastJobs) { lastJobs = jk; console.log('  engrave jobs', jk); console.log('  agent', JSON.stringify(await page.evaluate(() => CN.AG.events.filter(e => /engrav|ENGRAVE|Claude|font|Myriad/i.test(e.text || '')).slice(-8).map(e => e.text)))); }
       if (jobs.some(j => j.state === 'blocked')) throw new Error('engraving blocked: ' + jk);
       if (jobs.some(j => j.state === 'ready') && Date.now() - t0 > 90000) throw new Error('engraving never fitted: ' + JSON.stringify(await page.evaluate(() => [...Engrave.items().values()].map(j => { const c = Pool.charmOf(j.copies[0]); const sh = Pool.sheetOf(j.copies[0]); return { copies: j.copies, charm: c && c.id, sheet: sh && { fileBase: sh.fileBase, status: sh.status, ids: sh.placements.map(p => p.id), charmIds: sh.charms.map(c => c.id + ':' + c.poolId) } }; }))));
+      // the engraving screen: three tabs carrying the counts, one pane open, and the queue reachable from the rail (§7)
+      const eg = await page.evaluate(async () => {
+        CN.setMode('engrave'); Engrave.render();
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));   // the preview is drawn to the box it was given
+        const v = document.getElementById('engraveView');
+        const tabs = [...v.querySelectorAll('.egTab')].map(b => ({ id: b.dataset.tab, on: b.classList.contains('on'), n: +b.querySelector('b').textContent }));
+        const panes = [...v.querySelectorAll('.egPane')].map(p2 => !p2.hasAttribute('hidden'));
+        const card = v.querySelector('.rvItem[data-kind=placement]');
+        const head = card ? { kind: card.querySelector('.rh .kind').textContent, ttl: card.querySelector('.rh .ttl').textContent, words: (card.querySelector('.pvWords') || {}).textContent || '', confs: card.querySelectorAll('.rh .conf').length } : null;
+        const canvas = card ? card.querySelector('.backHost canvas') : null;
+        const box = canvas ? canvas.getBoundingClientRect() : null;
+        const stage = document.querySelector('.stage');
+        return { tabs, openPanes: panes.filter(Boolean).length, head, canvasW: box && Math.round(box.width), canvasH: box && Math.round(box.height),
+          overflow: stage ? stage.scrollHeight - stage.clientHeight : 0, cardBottom: card ? Math.round(card.getBoundingClientRect().bottom) : null,
+          inner: { w: window.innerWidth, h: window.innerHeight } };
+      });
+      console.log('engraving screen', JSON.stringify(eg));
+      assert.strictEqual(eg.tabs.length, 3, 'three tabs');
+      assert.strictEqual(eg.tabs.filter(t => t.on).length, 1, 'exactly one tab is open');
+      assert.strictEqual(eg.openPanes, 1, 'and exactly one pane is shown');
+      if (eg.head) {
+        assert(/^\d+ of \d+$/.test(eg.head.kind.trim()), 'the card says where you are in the queue: ' + eg.head.kind);
+        assert(/^\d{6,}$/.test(eg.head.ttl.trim()), 'the order number is the heading: ' + eg.head.ttl);
+        assert(/ANNA/.test(eg.head.words), 'and the words that will be cut are beside the preview: ' + eg.head.words);
+        assert.strictEqual(eg.head.confs, 1, 'one confidence score, not several');
+        assert(eg.canvasW <= Math.round(eg.inner.w * 0.6) && eg.canvasH <= Math.round(eg.inner.h * 0.7),
+          `the back preview fits the window: ${eg.canvasW}x${eg.canvasH} in ${eg.inner.w}x${eg.inner.h}`);
+        assert(eg.canvasW >= 180 && eg.canvasH >= 180, `and is drawn large enough to judge: ${eg.canvasW}x${eg.canvasH}`);
+        assert(eg.overflow <= 2, `the placement screen is one screen, not a scroll: ${eg.overflow}px over`);
+        assert(eg.cardBottom <= eg.inner.h, `and the card ends inside the window: bottom ${eg.cardBottom} of ${eg.inner.h}`);
+      }
+      // …and it survives a small screen: the preview redraws to the box it is given and nothing runs off the side (§7)
+      if (eg.head) {
+        for (const [w, h] of [[1180, 720], [900, 640]]) {
+          await page.setViewportSize({ width: w, height: h });
+          const small = await page.evaluate(async () => {
+            Engrave.render();
+            await new Promise(r => setTimeout(r, 120));
+            await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+            const v = document.getElementById('engraveView'), card = v.querySelector('.rvItem[data-kind=placement]');
+            const cv = card && card.querySelector('.backHost canvas'), b = cv && cv.getBoundingClientRect();
+            const st = document.querySelector('.stage');
+            const wide = [...v.querySelectorAll('*')].filter(n2 => n2.getBoundingClientRect().right > window.innerWidth + 1).map(n2 => n2.className);
+            return { cw: b && Math.round(b.width), ch: b && Math.round(b.height), sideScroll: st.scrollWidth - st.clientWidth, wide: wide.slice(0, 4) };
+          });
+          console.log('narrow ' + w + 'x' + h, JSON.stringify(small));
+          assert(small.sideScroll <= 2, `nothing runs off the side at ${w}x${h}: ${small.sideScroll}px`);
+          assert.deepStrictEqual(small.wide, [], `and nothing is cut off at ${w}x${h}`);
+          assert(small.cw >= 150 && small.cw <= w, `the preview redrew to fit ${w}x${h}: ${small.cw}x${small.ch}`);
+        }
+        await page.setViewportSize({ width: 1500, height: 1000 });
+        await page.evaluate(() => Engrave.render());
+      }
+      const switched = await page.evaluate(() => {
+        const v = document.getElementById('engraveView');
+        v.querySelector('.egTab[data-tab=words]').click();   // an empty tab still opens when it is asked for
+        const v2 = document.getElementById('engraveView');
+        return { on: [...v2.querySelectorAll('.egTab')].filter(b => b.classList.contains('on')).map(b => b.dataset.tab), panes: [...v2.querySelectorAll('.egPane')].map(p2 => !p2.hasAttribute('hidden')).filter(Boolean).length };
+      });
+      assert.deepStrictEqual(switched.on, ['words'], 'a tab switches the screen');
+      assert.strictEqual(switched.panes, 1, 'and still one pane at a time');
+      await page.evaluate(() => { const v = document.getElementById('engraveView'); const b = v.querySelector('.egTab[data-tab=place]'); if (b) b.click(); });
+
       const done = await page.evaluate(async () => {
         const out = [];
         for (const j of Engrave.items().values()) {
@@ -390,15 +453,18 @@ const receipts = [
       const t = CNProgress.start('Preparing 411 order line(s)', { total: 411 }); t.set(229, 411, 'BLUE_94532');
       const row = document.querySelector('.cnp .cnpRow').getBoundingClientRect();
       const hits = ['#modeSeg', '#runBanner', '#topBar', '.topBar'].map(sel => { const el = document.querySelector(sel); if (!el) return null; const r = el.getBoundingClientRect(); if (!r.width) return null; return { sel, over: r.left < row.right && r.right > row.left && r.top < row.bottom && r.bottom > row.top }; }).filter(Boolean);
-      const seg = document.querySelector('#modeSeg button[data-mode="orders"]');
-      const r2 = seg.getBoundingClientRect();
-      const atPoint = document.elementFromPoint(r2.left + r2.width / 2, r2.top + r2.height / 2);
+      const unreachable = [...document.querySelectorAll('#modeSeg button')].filter(seg => {
+        seg.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+        const r2 = seg.getBoundingClientRect();
+        const atPoint = document.elementFromPoint(r2.left + r2.width / 2, r2.top + r2.height / 2);
+        return !(atPoint && seg.contains(atPoint));
+      }).map(b => b.dataset.mode);
       t.end();
-      return { hits, reachable: !!(atPoint && seg.contains(atPoint)) };
+      return { hits, reachable: !unreachable.length, unreachable };
     });
     console.log('progress bar clearance', JSON.stringify(clear));
     assert(clear.hits.every(h => !h.over), 'the bar covers no part of the chrome: ' + JSON.stringify(clear.hits));
-    assert(clear.reachable, 'and a tab button is what the pointer finds at its own centre');
+    assert(clear.reachable, 'every tab is where the pointer can reach it: ' + JSON.stringify(clear.unreachable));
   }
 
   // leaving a tab while work is running neither stops the work nor reloads the station
