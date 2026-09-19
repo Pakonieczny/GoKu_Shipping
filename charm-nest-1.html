@@ -955,6 +955,61 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .tbl{width:100%;border-collapse:collapse;font-size:12px}
 .tbl th{text-align:left;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);padding:4px 6px;border-bottom:1px solid var(--line)}
 .tbl td{padding:4px 6px;border-bottom:1px solid var(--line2);vertical-align:top}
+
+/* Compact workspace chrome: primary work stays visible; tools are one menu away. */
+.main{container-type:inline-size;container-name:workspace}
+.topbar{padding:5px 12px;gap:8px;min-height:44px}
+.topbar .navBtn{width:32px;height:32px;border-color:transparent;border-radius:7px;background:transparent}
+.topbar .modeNav{flex:1 1 auto;gap:3px}
+.topbar .modeSeg{border:0;background:transparent;padding:0;gap:2px;border-radius:7px}
+.topbar .modeSeg button{padding:8px 10px;border-radius:6px;font-size:12px;gap:5px}
+.topbar .modeSeg button .cnt{margin-left:0;font-size:10px;padding:1px 4px}
+.topbar .modeSeg .full{display:none}.topbar .modeSeg .tight{display:inline}
+.topTools{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+.topbar .runMode{padding:7px 9px;border-color:transparent;font-size:11.5px;border-radius:6px}
+.topbar .sandboxPill{font:700 9px var(--mono);padding:4px 6px;letter-spacing:0;border-radius:4px}
+.topbar .moreMenu{margin:0;padding:0;border:0;border-radius:6px;background:transparent}
+.topbar .moreMenu>summary,.topbar .setPicker>summary{display:flex;align-items:center;gap:6px;padding:8px 9px;border:0;border-radius:6px;background:transparent;font:650 12px var(--sans);color:var(--ink70);white-space:nowrap;list-style:none}
+.topbar details>summary::-webkit-details-marker,.runMenu>summary::-webkit-details-marker{display:none}
+.topbar details[open]>summary,.topbar details>summary:hover{background:var(--paper2);color:var(--ink)}
+.topbar .moreMenu.on>summary{color:var(--ink);background:var(--paper2)}
+.topbar .moreList{left:auto;right:0;width:270px;max-width:calc(100vw - 24px);padding:7px;gap:1px}
+.menuLabel{display:block;font:700 10px var(--sans);letter-spacing:.06em;text-transform:uppercase;color:var(--ink45);padding:7px 10px 5px}
+.menuSection{border-top:1px solid var(--line);margin-top:5px;padding:4px 0}
+.menuHint{margin-left:auto;color:var(--ink45)}
+.moreList select.topSel{width:calc(100% - 20px);max-width:none;margin:3px 10px 5px;font-size:12px}
+.moreList .etsyPill{display:block;border:0;border-radius:5px;padding:6px 10px;font-size:10.5px;white-space:normal;line-height:1.6;background:transparent}
+.moreList .etsyPill.alarm{background:#5a1f16}
+.apiAlert{width:6px;height:6px;border-radius:50%;background:var(--clay)}
+.setPicker{position:relative;font-size:12px}
+.setMenu{top:calc(100% + 6px);border-radius:11px;box-shadow:var(--sh);max-width:calc(100vw - 24px);z-index:40}
+.runBanner{position:relative;z-index:25;padding:3px 12px;gap:10px;min-height:34px;font-size:11.5px}
+.runBanner .rid{border:0;background:transparent;padding:3px 0;font:600 11px var(--sans);letter-spacing:0}
+.runBanner .why{white-space:nowrap}
+.runBanner .spacer{display:none}
+.runBanner .acts{gap:5px;min-width:0}
+.runBanner .btn.sm{padding:5px 9px;font-size:11px;border-radius:5px}
+.runMenu{position:relative;flex:0 0 auto}
+.runMenu>summary{list-style:none;cursor:pointer;padding:2px 9px;border-radius:5px;font-size:18px;line-height:22px}
+.runMenu>summary:hover,.runMenu[open]>summary{background:#0000000a}
+.runMenuBody{position:absolute;right:0;top:calc(100% + 6px);width:300px;max-width:calc(100vw - 24px);max-height:65vh;overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:11px;box-shadow:var(--sh);padding:10px;white-space:normal}
+.runMenuBody .runDetail{padding:4px 6px 10px;font-size:11.5px;line-height:1.6;overflow-wrap:anywhere}
+.runMenuBody small{display:block;color:var(--ink45);font-size:10px}
+.runMenuBody .btn{display:block;width:100%;text-align:left;margin-top:3px;border:0;background:transparent}
+.runMenuBody .btn:hover{background:var(--paper2)}
+.runMenuBody #rbAbandon{color:var(--clay)}
+.topbar :is(button,summary,select):focus-visible,.runBanner :is(button,summary):focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.stage{padding-top:12px}
+@container workspace (max-width:680px){
+  .topbar{flex-wrap:wrap;gap:2px 6px;padding:4px 10px}
+  .topbar .modeNav{flex-basis:calc(100% - 40px)}
+  .topTools{width:100%;justify-content:flex-end;gap:5px}
+  .topTools .sandboxPill{margin-right:auto}
+  .topbar .modeSeg{flex:1}.topbar .modeSeg button{flex:1;justify-content:center;padding-inline:7px}
+  .runBanner{gap:7px;padding-inline:10px}.runBanner .rid{max-width:40%;overflow:hidden;text-overflow:ellipsis}
+  .runBanner .acts{flex-shrink:1}.runBanner .acts>.btn{max-width:140px;overflow:hidden;text-overflow:ellipsis}
+  .setMenu{position:fixed;top:auto;right:10px;margin-top:6px}
+}
 </style>
 </head>
 <body>
@@ -984,15 +1039,23 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
   </aside>
   <main class="main">
     <div class="topbar">
-      <button class="navBtn" id="btnRail" title="Toggle queue">☰</button>
+      <button class="navBtn" id="btnRail" title="Toggle queue" aria-label="Toggle queue">☰</button>
       <div class="modeNav" id="modeNav"><button class="modeArrow l" id="modeArrowL" aria-label="Scroll tabs left" tabindex="-1">&lsaquo;</button><div class="modeSeg" id="modeSeg"><button class="on" data-mode="nest">Nest</button><button data-mode="orders">Orders<i class="cnt" id="tabOrdersN"></i></button><button data-mode="engrave"><span class="full">Engraving</span><span class="tight">Engrave</span><i class="cnt" id="tabEngraveN"></i></button><button data-mode="review">Review<i class="cnt" id="tabReviewN"></i></button></div>
-        <details class="moreMenu" id="moreMenu"><summary title="the screens that are not part of the day's work: the Design Station, the master files, the library of sheets"><span id="moreLabel">More</span> ▾</summary><div class="moreList"><button data-mode="design">Design Station<i class="cnt" id="tabDesignN"></i></button><button data-mode="master">Master files</button><button data-mode="library">Library</button></div></details><button class="modeArrow r" id="modeArrowR" aria-label="Scroll tabs right" tabindex="-1">&rsaquo;</button></div>
-      <div class="spacer"></div>
-      <span class="sandboxPill hidden" id="sandboxPill" title="Sandbox: emulated Etsy from the stored snapshot; every record and file goes to sandbox copies">SANDBOX</span>
-      <span class="etsyPill" id="etsyPill" title="Etsy API calls, as counted by the Design Station (the only app that calls Etsy); live on every heartbeat">Etsy <b id="etsyPillN">—</b></span>
-      <button class="btn ghost sm runMode" id="btnRunMode" title="Auto: the sorter pulls the latest orders by date and runs the whole process on its own, stopping only for a person. Manual: every step waits for a click."><span class="sw"></span><span id="runModeText">Manual</span></button>
-      <select class="topSel" id="stockSel" title="Stock preset for GF, SS and rose gold; solid gold uses its custom size"></select>
-      <button class="btn ghost sm" id="btnSettings">⚙ Settings</button>
+        <button class="modeArrow r" id="modeArrowR" aria-label="Scroll tabs right" tabindex="-1">&rsaquo;</button></div>
+      <div class="topTools">
+        <button type="button" class="sandboxPill hidden" id="sandboxPill" title="Sandbox: emulated Etsy; all records and files use sandbox copies">Sandbox</button>
+        <div id="setPickerSlot"></div>
+        <button class="btn ghost sm runMode" id="btnRunMode" title="Switch between automatic processing and manual steps"><span class="sw"></span><span id="runModeText">Manual</span></button>
+        <details class="moreMenu" id="moreMenu"><summary title="Workspace tools and settings"><span id="moreLabel">Workspace</span><span aria-hidden="true">⌄</span><i class="apiAlert hidden" id="etsyAlert" title="Etsy API needs attention"></i></summary>
+          <div class="moreList">
+            <div class="menuLabel">Workspace</div>
+            <button data-mode="design">Design Station<i class="cnt" id="tabDesignN"></i></button><button data-mode="master">Master files</button><button data-mode="library">Library</button>
+            <div class="menuSection"><label class="menuLabel" for="stockSel">Sheet preset · GF / SS / Rose</label><select class="topSel" id="stockSel" title="Solid gold uses its own custom size"></select></div>
+            <button id="btnSettings">Settings<span class="menuHint">⚙</span></button>
+            <div class="menuSection"><div class="menuLabel">Etsy API calls</div><span class="etsyPill" id="etsyPill" title="API calls counted by the Design Station"><b id="etsyPillN">Waiting for station…</b></span></div>
+          </div>
+        </details>
+      </div>
     </div>
     <div class="runBanner hidden" id="runBanner"></div>
     <div class="stage" id="stage">
@@ -2927,8 +2990,8 @@ async function loadCharms() {
   } catch (e) { body.innerHTML = `<div class="libEmpty">${esc(e.message)}</div>`; }
 }
 function setMode(mode) {
-  S.mode = mode; $$("#modeNav button[data-mode]").forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
-  { const mm = $("#moreMenu"); if (mm) { const inMore = mm.querySelector(`button[data-mode="${mode}"]`); mm.classList.toggle("on", !!inMore); $("#moreLabel").textContent = inMore ? inMore.textContent.replace(/\d+$/, "").trim() : "More"; mm.open = false; } }
+  S.mode = mode; $$(".topbar button[data-mode]").forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
+  { const mm = $("#moreMenu"); if (mm) { const inMore = mm.querySelector(`button[data-mode="${mode}"]`); mm.classList.toggle("on", !!inMore); mm.querySelector("summary").title = inMore ? "Workspace · " + inMore.textContent.trim() : "Workspace tools and settings"; mm.open = false; } }
   // on a narrow window the tab strip scrolls: the tab you are on is always brought into view
   $("#sheets").classList.toggle("hidden", mode !== "nest"); if (mode === "nest") requestAnimationFrame(() => METALS.forEach(m => drawPreview(activePage(m.key)))); $("#libView").classList.toggle("hidden", mode !== "library"); $("#charmsView").classList.toggle("hidden", mode !== "charms");
   for (const [m, id] of [["orders", "ordersView"], ["design", "designView"], ["master", "masterView"], ["engrave", "engraveView"], ["review", "reviewView"]]) $("#" + id).classList.toggle("hidden", mode !== m);
@@ -3034,17 +3097,21 @@ async function boot() {
   $("#btnEarlierSets").onclick = () => { if (window.RunHistory) RunHistory.show(""); };
   $("#btnNestAll").onclick = () => allSheets().forEach(sh => { if (activeCharms(sh).length && !["nesting", "finishing"].includes(sh.status)) startNest(sh); });
   $("#btnClearAll").onclick = () => { if (!confirm("Clear every queue and source? Nothing in the cloud is touched.")) return; METALS.forEach(m => clearMetal(m.key)); S.sources = []; S.unassigned = []; renderRail(); updateTopSub(); };
-  $("#btnSettings").onclick = openSettings; $("#btnSaveSettings").onclick = e => { e.preventDefault(); readSettings(); closeDlg($("#dlgSettings")); };
+  $("#btnSettings").onclick = () => { $("#moreMenu").open = false; openSettings(); }; $("#btnSaveSettings").onclick = e => { e.preventDefault(); readSettings(); closeDlg($("#dlgSettings")); };
   $("#btnResetSettings").onclick = () => { S.settings = Object.assign({}, DEFAULTS, { stock: JSON.parse(JSON.stringify(DEFAULTS.stock)) }); saveSettings(); openSettings(); };
   $$("#railSeg button").forEach(b => b.onclick = () => { $$("#railSeg button").forEach(x => x.classList.toggle("on", x === b)); document.documentElement.dataset.rail = b.dataset.v; });
-  $$("#modeNav button[data-mode]").forEach(b => b.onclick = () => { modeFromUser = true; setMode(b.dataset.mode); });
-  document.addEventListener("pointerdown", e => { const mm = $("#moreMenu"); if (mm && mm.open && !mm.contains(e.target)) mm.open = false; }, true);   // a menu left open closes on the next click anywhere
+  $$(".topbar button[data-mode]").forEach(b => b.onclick = () => { modeFromUser = true; setMode(b.dataset.mode); });
+  // Shared behavior also covers the dynamically mounted set and run menus.
+  const headerMenus = ".topbar details, .runBanner details";
+  document.addEventListener("pointerdown", e => { $$(headerMenus).forEach(menu => { if (menu.open && !menu.contains(e.target)) menu.open = false; }); }, true);
+  document.addEventListener("toggle", e => { if (e.target.matches?.(headerMenus) && e.target.open) $$(headerMenus).forEach(menu => { if (menu !== e.target) menu.open = false; }); }, true);
+  document.addEventListener("keydown", e => { if (e.key !== "Escape" || document.querySelector("dialog[open]")) return; const menu = $$(headerMenus).find(x => x.open); if (menu) { menu.open = false; menu.querySelector("summary").focus(); e.preventDefault(); } });
   $("#modeSeg").addEventListener("scroll", syncTabNav, { passive: true });
   $("#modeArrowL").onclick = () => $("#modeSeg").scrollBy({ left: -160, behavior: "smooth" });
   $("#modeArrowR").onclick = () => $("#modeSeg").scrollBy({ left: 160, behavior: "smooth" });
   if (window.ResizeObserver) new ResizeObserver(showActiveTab).observe($("#modeSeg"));
   window.addEventListener("popstate", () => { const m = (location.hash || "").slice(1); if (m && m !== S.mode) setMode(m); });
-  { const m = (location.hash || "").slice(1); if (m && $(`#modeNav button[data-mode="${m}"]`)) setMode(m); }
+  { const m = (location.hash || "").slice(1); if (m && $(`.topbar button[data-mode="${m}"]`)) setMode(m); }
   $$("#libKind button").forEach(b => b.onclick = () => { $$("#libKind button").forEach(x => x.classList.toggle("on", x === b)); S.library.kind = b.dataset.k; loadLibrary(); });
   $("#rpClose").onclick = () => closeDlg($("#dlgReport")); $("#lsClose").onclick = () => closeDlg($("#dlgSheet"));
   $$("#libView .fchip").forEach(b => b.onclick = () => { $$("#libView .fchip").forEach(x => x.classList.toggle("on", x === b)); S.library.metal = b.dataset.m; if (S.library.kind === "sets" && window.Sets) Sets.renderLibrary($("#libBody"), { reuse: true }); else loadLibrary(); });

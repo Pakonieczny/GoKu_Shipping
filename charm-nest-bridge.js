@@ -267,6 +267,7 @@ const DesignLink = window.DesignLink = (() => {
     const el = document.getElementById("etsyPill"), n = document.getElementById("etsyPillN"); if (!el || !n) return;
     n.textContent = `${S_.state && S_.state.sandbox ? "emulated · " : ""}today ${m.today} · 10m ${m.last10Min} · 1m ${m.lastMinute}`;
     const hot = m.last10Min >= m.guard.per10Min * 0.7 || m.lastMinute >= m.guard.burstPerMinute * 0.7;
+    const alert = document.getElementById("etsyAlert"); if (alert) { alert.classList.toggle("hidden", !m.braked && !hot); alert.title = m.braked ? "Etsy API paused — open Workspace for details" : "Etsy API nearing its limit"; }
     el.classList.toggle("alarm", !!m.braked); el.classList.toggle("warn", !m.braked && hot);
     // a rate meter is something you look at when something is wrong: in the normal state it holds no space, and the full
     // readout stays on the Design Station panel where it always was
@@ -2783,6 +2784,9 @@ const RunCtl = window.RunCtl = (() => {
     return "";
   }
   function renderBanner() {
+    const previousMenu = document.getElementById("runMenu");
+    const menuWasOpen = !!previousMenu?.open;
+    const focusId = previousMenu?.contains(document.activeElement) ? document.activeElement.id : null;
     if (window.Session) Session.schedule();
     if (window.guardBench) guardBench();
     const h = document.getElementById("runBanner"); if (!h) return; const r = B.run;
@@ -2822,10 +2826,13 @@ const RunCtl = window.RunCtl = (() => {
     const seqOf = x => x.seq || +((/-(\d+)$/.exec(String(x.setId || "")) || [])[1] || 0) || null;
     const who = [seqOf(r) ? `Set ${seqOf(r)}` : "", r.day ? new Date(r.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "",
       `${Object.keys(r.lines || {}).length || Orders.rows().filter(x => x.state !== "gone").length} lines`, nSheets ? `${nSheets} sheet${nSheets === 1 ? "" : "s"}` : ""].filter(Boolean).join(" \u00b7 ");
-    h.innerHTML = `<span class="rid" title="run ${esc(r.runId)}${r.setId ? " \u00b7 set " + esc(r.setId) : ""}">${esc(who)}</span><span class="why">${why}</span><span class="spacer"></span><span class="acts">
-      ${r.at ? `<button class="btn ghost sm" id="rbAt" title="open the sheet this is about">Show the sheet</button>` : ""}
-      ${r.status === "paused" && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${r.status === "stopped" && /sign/i.test(r.stoppedBy || "") ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${r.status === "stopped" ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at">Resume</button>` : ""}${["running", "review", "paused"].includes(r.status) ? `<button class="btn ghost sm" id="rbStop" title="stop after the step in progress — the run can be resumed from where it stopped">Stop</button>` : ""}${r.status === "complete" ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}${r.status !== "complete" ? `<button class="btn ghost sm" id="rbAbandon" title="give this run up and take the banner away — the sheets and files already saved are kept">Abandon run</button>` : ""}</span>`;
+    h.innerHTML = `<button type="button" class="rid" title="run ${esc(r.runId)}${r.setId ? " \u00b7 set " + esc(r.setId) : ""}">${esc([seqOf(r) ? `Set ${seqOf(r)}` : "", r.day ? new Date(r.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "", nSheets ? `${nSheets} sheets` : ""].filter(Boolean).join(" · "))}</button><span class="why">${why}</span><span class="spacer"></span><span class="acts">
+      ${r.status === "paused" && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${r.status === "stopped" && /sign/i.test(r.stoppedBy || "") ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${r.status === "stopped" ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at">Resume</button>` : ""}${["running", "review", "paused"].includes(r.status) ? `<button class="btn ghost sm" id="rbStop" title="stop after the step in progress — the run can be resumed from where it stopped">Stop</button>` : ""}${r.status === "complete" ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}<details class="runMenu" id="runMenu"${menuWasOpen ? " open" : ""}><summary id="runMenuToggle" aria-label="Run options" title="Run options">⋯</summary><div class="runMenuBody"><div class="runDetail"><b>${esc(who)}</b><small>${esc(r.runId)}</small>${why}</div>
+      ${r.at ? `<button class="btn ghost sm" id="rbAt">Show the sheet</button>` : ""}<button class="btn ghost sm" id="rbHistory">Run history…</button>
+      ${r.status !== "complete" ? `<button class="btn ghost sm" id="rbAbandon" title="Saved sheets and files are kept">Abandon run…</button>` : ""}</div></details></span>`;
     const q = id => h.querySelector("#" + id);
+    if (focusId) q(focusId)?.focus({ preventScroll: true });
+    q("rbHistory").onclick = () => { q("runMenu").open = false; RunHistory.show(); };
     const rid = h.querySelector(".rid"); if (rid) { rid.tabIndex = 0; rid.title += " \u2014 click for every run on record"; rid.onclick = () => RunHistory.show(); rid.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); RunHistory.show(); } }; }
     if (q("rbAt")) q("rbAt").onclick = () => { CN.setMode("nest"); const i = CN.pagesOf(r.at.metal).findIndex(p => p.page === r.at.page); CN.showPage(r.at.metal, Math.max(0, i)); };
     if (q("rbConnect")) q("rbConnect").onclick = () => DesignLink.connectEtsy().catch(e => toast(e.message, "bad", 6000)); 
@@ -3926,7 +3933,7 @@ const SetPicker = window.SetPicker = (() => {
     if (document.getElementById("setPicker")) return;
     box = el("details", "setPicker"); box.id = "setPicker";
     box.innerHTML = `<summary>Sets ▾</summary><div class="setMenu"><div data-setlist>Loading…</div><button class="btn ghost sm" data-history>Search all sets…</button></div>`;
-    document.getElementById("sheets").prepend(box);
+    document.getElementById("setPickerSlot").appendChild(box);
     box.ontoggle = () => { if (box.open) load(); };
     box.querySelector('[data-history]').onclick = () => { box.open = false; RunHistory.show(); };
   }
