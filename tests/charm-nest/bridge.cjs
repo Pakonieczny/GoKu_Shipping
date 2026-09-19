@@ -1221,15 +1221,15 @@ const receipts = [
   assert.strictEqual(eng.narrowed, 0, 'the search narrows the decided list');
   assert(/Set 1/.test(eng.chip), 'and the tab says whose engraving it is: ' + eng.chip);
 
-  const tabs = await page.evaluate(() => ({ top: [...document.querySelectorAll('#modeSeg > button')].map(b => b.dataset.mode), more: [...document.querySelectorAll('#moreMenu button')].map(b => b.dataset.mode), charms: !!document.querySelector('[data-mode=charms]') }));
+  const tabs = await page.evaluate(() => ({ top: [...document.querySelectorAll('#modeSeg > button')].map(b => b.dataset.mode), more: [...document.querySelectorAll('#moreMenu button[data-mode]')].map(b => b.dataset.mode), charms: !!document.querySelector('[data-mode=charms]') }));
   assert.deepStrictEqual(tabs.top, ['nest', 'orders', 'engrave', 'review'], "the day's four screens, in the day's order: " + tabs.top);
-  assert.deepStrictEqual(tabs.more, ['design', 'master', 'library'], 'and the rest behind More: ' + tabs.more);
+  assert.deepStrictEqual(tabs.more, ['design', 'master', 'library'], 'and the rest behind Workspace: ' + tabs.more);
   assert(!tabs.charms, 'no Charms tab');
   // the menu opens where the pointer can see it: it used to sit inside the strip, whose overflow clipped its list away
   const menu = await page.evaluate(() => { const mm = document.getElementById('moreMenu'); mm.querySelector('summary').click(); const item = mm.querySelector('button[data-mode=library]'); const r = item.getBoundingClientRect(); const seen = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); const shown = mm.open && r.height > 0 && !!seen && item.contains(seen); item.click(); const landed = CN.S.mode; const closed = !mm.open; CN.setMode('nest'); return { shown, landed, closed }; });
-  assert(menu.shown && menu.landed === 'library' && menu.closed, 'the More list opens in view, its item works, and the menu closes after: ' + JSON.stringify(menu));
-  const moreLabel = await page.evaluate(() => { CN.setMode('master'); const t = document.getElementById('moreLabel').textContent; const on = document.getElementById('moreMenu').classList.contains('on'); CN.setMode('nest'); return { t, on, after: document.getElementById('moreLabel').textContent }; });
-  assert(moreLabel.on && /Master/.test(moreLabel.t) && moreLabel.after === 'More', 'the menu names the screen that is open: ' + JSON.stringify(moreLabel));
+  assert(menu.shown && menu.landed === 'library' && menu.closed, 'the Workspace list opens in view, its item works, and the menu closes after: ' + JSON.stringify(menu));
+  const moreLabel = await page.evaluate(() => { CN.setMode('master'); const t = document.getElementById('moreMenu').querySelector('summary').title; const on = document.getElementById('moreMenu').classList.contains('on'); CN.setMode('nest'); return { t, on, after: document.getElementById('moreLabel').textContent }; });
+  assert(moreLabel.on && /Master/.test(moreLabel.t) && moreLabel.after === 'Workspace', 'the menu title identifies the open screen while its label stays compact: ' + JSON.stringify(moreLabel));
   console.log('bridge e2e OK ·', st.docs.size, 'docs ·', st.blobs.size, 'blobs · screenshots in', tmp);
   await browser.close(); srv.close();
 })().catch(e => { console.error(e); process.exit(1); });
