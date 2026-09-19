@@ -279,7 +279,7 @@
     /* A search that has not beaten its best for a while is done: on a sheet given more pieces than it can hold, the
        ceiling used to be spent trying to seat pieces that could not fit, minutes after the layout had settled. */
     const stallMs = +job.stallMs || 0; let lastBetterAt = now(), stalled = false; let best = null;
-    const stopped = () => (cb.shouldStop && cb.shouldStop()) || (now() - t0) > budget || (stalled = !!(stallMs && best && (now() - lastBetterAt) > stallMs));
+    const stopped = () => (cb.shouldStop && cb.shouldStop()) || (now() - t0) > budget || (stalled = !!(stallMs && !job.packingPending && best && (now() - lastBetterAt) > stallMs));
 
     /* sheet grids at both levels; the inset band is pre-filled as wall */
     const FW = Math.round(job.sheet.wPt * fineRes), FH = Math.round(job.sheet.hPt * fineRes);
@@ -340,12 +340,14 @@
        restart lands the gap. Runs on every new best that qualifies; if it fails,
        the restarts simply continue.                                             */
     async function finishPush(best) {
-      if (!best || !best.rejects.length || best.rejects.length > 2 || !best.grids || best.pushed) return;
+      const missing = repairCandidates(best);
+      if (!missing.length || missing.length > 2 || !best.grids || best.pushed) return;
       if (cb.shouldStop && cb.shouldStop()) return;
       best.pushed = true;
       const fine = best.grids.fine, coarse = best.grids.coarse;
       const total = prepared.length;
-      for (const id of best.rejects.slice()) {
+      for (const id of missing) {
+        if (stopped()) break;
         const p = prepared.find(x => x.id === id); if (!p || p.pinned || multi(p)) continue;
         if ((best.placedCells + p.footprintCells) / usableCellsFine > maxFill) continue;
         if (cb.onStage) cb.onStage("finish", best.placements.length, total);
@@ -358,15 +360,17 @@
           if (!dil.w || !areaOf(dil.bits)) continue;
           const rg = ring(dil.bits, dil.w, dil.h, Math.max(2, Math.round(2 * fineRes)));
           const co = majority(dil.bits, dil.w, dil.h, ratio);
-          variants.push({ angle: a, fine: { bits: dil.bits, w: dil.w, h: dil.h, pm: packShifted(dil.bits, dil.w, dil.h) }, solid: { bits: rot.bits, w: rot.w, h: rot.h, cx: rot.cx + halfGapFine - erodeFine, cy: rot.cy + halfGapFine - erodeFine }, ringFine: packShifted(rg.bits, rg.w, rg.h), ringPad: Math.max(2, Math.round(2 * fineRes)), coarse: { pm: packShifted(co.bits, co.w, co.h), w: co.w, h: co.h } });
+          variants.push({ angle: a, fine: { bits: dil.bits, w: dil.w, h: dil.h, pm: packShifted(dil.bits, dil.w, dil.h) }, cells: areaOf(dil.bits), solid: { bits: rot.bits, w: rot.w, h: rot.h, cx: rot.cx + halfGapFine - erodeFine, cy: rot.cy + halfGapFine - erodeFine }, ringFine: packShifted(rg.bits, rg.w, rg.h), ringPad: Math.max(2, Math.round(2 * fineRes)), coarse: { pm: packShifted(co.bits, co.w, co.h), w: co.w, h: co.h } });
         }
         const pos = search({ variants }, fine, coarse, ratio, 0.35, 0, random, 0, 0);
         if (!pos) continue;
         const { v, x, y } = pos;
+        if ((best.placedCells + v.cells) / usableCellsFine > maxFill) continue;
         fine.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y);
         for (let r = 0; r < v.fine.h; r++) for (let c = 0; c < v.fine.w; c++) if (v.fine.bits[r * v.fine.w + c]) { const gx = Math.floor((x + c) / ratio), gy = Math.floor((y + r) / ratio); if (gx >= 0 && gy >= 0 && gx < coarse.W && gy < coarse.H) coarse.set(gx, gy); }
         coarse.buildSAT();
         const pl = { id, angle: v.angle, cxPt: (x + v.solid.cx) / fineRes, cyPt: (y + v.solid.cy) / fineRes, xPt: (x + (v.fine.w - v.solid.w) / 2) / fineRes, yPt: (y + (v.fine.h - v.solid.h) / 2) / fineRes, wPt: v.solid.w / fineRes, hPt: v.solid.h / fineRes, contact: pos.contact || 0, finishing: true };
+        best.rec.push({ p, v, x, y });
         best.placements.push(pl); best.rejects = best.rejects.filter(r => r !== id);
         best.placedCells += v.cells; best.placedPt2 = best.placedCells / (fineRes * fineRes);
         best.density = best.placedCells / usableCellsFine; best.freePt2 = fine.freeCells() / (fineRes * fineRes); best.pocket = pocketPt(coarse, coarseRes);
@@ -381,11 +385,7 @@
        its largest gap (or a random neighbourhood), then re-insert them together
        with the missing pieces, missing pieces first, at 15° steps. Deterministic
        given the seed. Invoked when restarts stall and the best is a few short.  */
-    async function ruinRecreate(best, attempts) {
-      if (!best || !best.rec || !best.rejects.length || best.rejects.length > 3) return false;
-      const total = prepared.length;
-      const angles15 = []; for (let a = 0; a < 360; a += 15) angles15.push(a);
-      const variantsFor = (p, list) => {
+    const variantsFor = (p, list) => {
         if (!p._v15) { p._v15 = new Map(); for (const v of p.variants) p._v15.set(v.angle, v); }
         const out = [];
         for (const a of list) {
@@ -396,14 +396,20 @@
             if (!dil.w || !areaOf(dil.bits)) { p._v15.set(a, null); continue; }
             const rg = ring(dil.bits, dil.w, dil.h, Math.max(2, Math.round(2 * fineRes)));
             const co = majority(dil.bits, dil.w, dil.h, ratio);
-            p._v15.set(a, { angle: a, fine: { bits: dil.bits, w: dil.w, h: dil.h, pm: packShifted(dil.bits, dil.w, dil.h) }, solid: { bits: rot.bits, w: rot.w, h: rot.h, cx: rot.cx + halfGapFine - erodeFine, cy: rot.cy + halfGapFine - erodeFine }, ringFine: packShifted(rg.bits, rg.w, rg.h), ringPad: Math.max(2, Math.round(2 * fineRes)), coarse: { pm: packShifted(co.bits, co.w, co.h), w: co.w, h: co.h } });
+            p._v15.set(a, { angle: a, fine: { bits: dil.bits, w: dil.w, h: dil.h, pm: packShifted(dil.bits, dil.w, dil.h) }, cells: areaOf(dil.bits), solid: { bits: rot.bits, w: rot.w, h: rot.h, cx: rot.cx + halfGapFine - erodeFine, cy: rot.cy + halfGapFine - erodeFine }, ringFine: packShifted(rg.bits, rg.w, rg.h), ringPad: Math.max(2, Math.round(2 * fineRes)), coarse: { pm: packShifted(co.bits, co.w, co.h), w: co.w, h: co.h } });
           }
           const v = p._v15.get(a); if (v) out.push(v);
         }
         return out;
       };
+
+    async function ruinRecreate(best, attempts) {
+      const missingIds = repairCandidates(best);
+      if (!best?.rec?.length || !missingIds.length || missingIds.length > 3) return false;
+      const total = prepared.length;
+      const angles15 = []; for (let a = 0; a < 360; a += 15) angles15.push(a);
       for (let att = 0; att < attempts; att++) {
-        if (cb.shouldStop && cb.shouldStop()) return false;
+        if (stopped()) return false;
         // choose the neighbourhood: around the largest gap on even attempts, around a random piece on odd ones
         const rec = best.rec;
         let anchor;
@@ -418,13 +424,17 @@
         for (const r of keep) { fine.stamp(r.v.fine.bits, r.v.fine.w, r.v.fine.h, r.x, r.y); for (let yy = 0; yy < r.v.fine.h; yy++) for (let xx = 0; xx < r.v.fine.w; xx++) if (r.v.fine.bits[yy * r.v.fine.w + xx]) { const gx = Math.floor((r.x + xx) / ratio), gy = Math.floor((r.y + yy) / ratio); if (gx >= 0 && gy >= 0 && gx < coarse.W && gy < coarse.H) coarse.set(gx, gy); } }
         coarse.buildSAT();
         // re-insert: missing pieces first, then the removed ones, largest first, at 15° steps
-        const missing = best.rejects.map(id => prepared.find(x => x.id === id)).filter(Boolean);
+        const missing = missingIds.map(id => prepared.find(x => x.id === id)).filter(Boolean);
+        if (missing.some(p => p.pinned)) continue;
         const queue = missing.concat(removed.map(r => r.p).sort((a, b) => b.areaPt2 - a.areaPt2));
-        const newRec = keep.slice(); let ok = true;
+        const newRec = keep.slice(); let ok = true, cells = keep.reduce((n,r) => n + r.v.cells, 0);
         for (const p of queue) {
+          if (stopped()) { ok = false; break; }
           const pos = search({ variants: variantsFor(p, angles15) }, fine, coarse, ratio, 0.35, 0.02, random, 0, 0);
           if (!pos) { ok = false; break; }
           const { v, x, y } = pos;
+          if ((cells + v.cells) / usableCellsFine > maxFill) { ok = false; break; }
+          cells += v.cells;
           fine.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y);
           for (let yy = 0; yy < v.fine.h; yy++) for (let xx = 0; xx < v.fine.w; xx++) if (v.fine.bits[yy * v.fine.w + xx]) { const gx = Math.floor((x + xx) / ratio), gy = Math.floor((y + yy) / ratio); if (gx >= 0 && gy >= 0 && gx < coarse.W && gy < coarse.H) coarse.set(gx, gy); }
           coarse.buildSAT();
@@ -436,18 +446,37 @@
         // success: everything placed — rebuild the public layout from newRec
         const placements = newRec.map(r => ({ id: r.p.id, angle: r.v.angle, cxPt: (r.x + r.v.solid.cx) / fineRes, cyPt: (r.y + r.v.solid.cy) / fineRes, xPt: (r.x + (r.v.fine.w - r.v.solid.w) / 2) / fineRes, yPt: (r.y + (r.v.fine.h - r.v.solid.h) / 2) / fineRes, wPt: r.v.solid.w / fineRes, hPt: r.v.solid.h / fineRes, repaired: true }));
         const placedCells = newRec.reduce((n, r) => n + r.v.cells, 0);
-        Object.assign(best, { placements, rejects: [], capped: [], density: placedCells / usableCellsFine, placedCells, placedPt2: placedCells / (fineRes * fineRes), freePt2: fine.freeCells() / (fineRes * fineRes), pocket: pocketPt(coarse, coarseRes), grids: { fine, coarse }, rec: newRec, repaired: true });
-        if (cb.onBest) cb.onBest(best, { trial: best.trial, placed: placements.length, total, rejects: [], density: best.density, elapsedMs: now() - t0, repaired: true, removed: removed.length });
+        const placedIds = new Set(placements.map(p => p.id));
+        const rejects = prepared.filter(p => !placedIds.has(p.id)).map(p => p.id);
+        Object.assign(best, { placements, rejects, capped: (best.capped || []).filter(id => !placedIds.has(id)), density: placedCells / usableCellsFine, placedCells, placedPt2: placedCells / (fineRes * fineRes), freePt2: fine.freeCells() / (fineRes * fineRes), pocket: pocketPt(coarse, coarseRes), grids: { fine, coarse }, rec: newRec, repaired: true });
+        if (cb.onBest) cb.onBest(best, { trial: best.trial, placed: placements.length, total, rejects, density: best.density, elapsedMs: now() - t0, repaired: true, removed: removed.length });
         return true;
       }
       return false;
     }
 
     /* ── trials ─────────────────────────────────────────────────────────── */
-    best = null; let trials = 0, endedBy = "budget", failStreak = 0, lastRejects = [];
+    best = null; let trials = 0, endedBy = "budget", failStreak = 0, lastRejects = [], lastAdvice = null, guidedTrials = 0;
     const fifo = prepared.some(p => p.orderDate > 0);
     const dates = new Map(); for (const p of prepared) dates.set(p.order, Math.min(dates.get(p.order) ?? Infinity, p.orderDate));
     const rank = new Map([...dates].sort((a, b) => a[1] - b[1] || String(a[0]).localeCompare(String(b[0]))).map(([id], i) => [id, i]));
+    // Dates choose sheet membership, never the geometric placement sequence.
+    // Admit a whole chronological prefix under the area cap, then let shapes interlock.
+    let capOrders = rank.size, admittedCells = 0;
+    if (fifo) for (const [id, r] of rank) {
+      const cells = prepared.filter(p => p.order === id).reduce((n,p) => n + p.footprintCells, 0);
+      if ((admittedCells + cells) / usableCellsFine > maxFill) { capOrders = r; break; }
+      admittedCells += cells;
+    }
+    const prefixCount = layout => layout?.placements.length ? new Set(layout.placements.map(pl => prepared.find(p => p.id === pl.id).order)).size : 0;
+    function repairCandidates(layout) {
+      if (!layout?.rejects?.length) return [];
+      if (!fifo) return layout.rejects.filter(id => !(layout.capped || []).includes(id));
+      const next = Math.min(...layout.rejects.map(id => rank.get(prepared.find(p => p.id === id).order)));
+      if (next >= capOrders) return [];
+      // No repair may let a younger order jump over the first waiting order.
+      return prepared.filter(p => rank.get(p.order) === next).map(p => p.id);
+    }
     const byAreaDesc = prepared.slice().sort((a, b) => b.areaPt2 - a.areaPt2);
     // orders: pieces sharing `order` travel together — a sheet never holds part of a multi-piece order
     const orderSize = new Map(); for (const p of prepared) orderSize.set(p.order, (orderSize.get(p.order) || 0) + 1);
@@ -458,21 +487,28 @@
       coarse.buildSAT(); return { fine, coarse };
     };
     while (trials < maxTrials) {
+      if (job.packingHints && job.packingHints !== lastAdvice) { lastAdvice = job.packingHints; lastBetterAt = now(); }
       if (stopped()) { endedBy = cb.shouldStop && cb.shouldStop() ? "stopped" : stalled ? "stalled" : "budget"; break; }
       const trial = trials++;
       // ordering: trial 0 = pure largest-first; later trials add noise growing with the streak
       const sigma = trial === 0 ? 0 : Math.min(0.6, 0.15 + 0.05 * Math.min(failStreak, 8));
       // pieces the previous trial could not place go first (most of the time), so the layout is built around them
       const front = trial > 0 && lastRejects.length && random() < 0.75 ? new Set(lastRejects) : new Set();
-      const order = byAreaDesc.map(p => ({ p, k: (front.has(p.id) ? 1e9 : 0) + p.areaPt2 * (1 + sigma * (random() * 2 - 1)) })).sort((a, b) => (fifo ? rank.get(a.p.order) - rank.get(b.p.order) : 0) || b.k - a.k).map(o => o.p);
+      const targetOrders = fifo && best && failStreak >= 2 && trial % 4 !== 0 ? Math.min(capOrders, prefixCount(best) + 1) : capOrders;
+      const candidates = fifo ? byAreaDesc.filter(p => rank.get(p.order) < targetOrders) : byAreaDesc;
+      const advice = job.packingHints || {}, priorities = new Map((advice.priority || []).map((id,i,a) => [id, 1 - i / Math.max(1,a.length)]));
+      const guided = trial % 3 === 1 && priorities.size;
+      if (guided) guidedTrials++;
+      if (guided) for (const p of candidates) if (!p.pinned && advice.angles?.[p.id]) p.variants = variantsFor(p, [...new Set(angles.concat(advice.angles[p.id].filter(Number.isFinite).slice(0,3).map(a => ((a % 360) + 360) % 360)))]);
+      const order = candidates.map(p => ({ p, k: (front.has(p.id) ? 1e9 : 0) + p.areaPt2 * (1 + sigma * (random() * 2 - 1) + (guided ? .8 * (priorities.get(p.id) || 0) : 0)) })).sort((a, b) => b.k - a.k).map(o => o.p);
       const pinnedFirst = order.filter(p => p.pinned).concat(order.filter(p => !p.pinned));
       const gravW = trial === 0 ? 0.35 : 0.1 + random() * 0.8;
       const noise = trial === 0 ? 0 : random() * 0.15;
       const cornerX = trial === 0 ? 0 : (random() < 0.7 ? 0 : 1), cornerY = trial === 0 ? 0 : (random() < 0.7 ? 0 : 1);
       let fine = baseFine.clone(), coarse = baseCoarse.clone();
-      let placements = [], placedRec = []; const rejects = [], capped = [];
+      let placements = [], placedRec = []; const capped = fifo ? prepared.filter(p => rank.get(p.order) >= capOrders).map(p => p.id) : [], rejects = capped.slice();
       let placedCells = 0;
-      const deadOrders = new Set(); let blockedRank = Infinity;
+      const deadOrders = new Set();
       // a piece of a multi-piece order failed: the order leaves this sheet whole — its placed siblings are lifted back off
       const dropOrder = (p, why) => {
         if (!multi(p)) return;
@@ -489,10 +525,8 @@
         const p = pinnedFirst[pi];
         if (stopped()) break;
         let bestPos = null;
-        if (fifo && rank.get(p.order) > blockedRank) { rejects.push(p.id); if (capped.length) capped.push(p.id); continue; }
         if (deadOrders.has(p.order)) { rejects.push(p.id); if (capped.some(id => prepared.find(x => x.id === id && x.order === p.order))) capped.push(p.id); if (cb.onReject) cb.onReject(p.id, trial, "order"); continue; }
         if (!p.pinned && (placedCells + p.footprintCells) / usableCellsFine > maxFill) {
-          if (fifo) blockedRank = Math.min(blockedRank, rank.get(p.order));
           rejects.push(p.id); capped.push(p.id);
           if (cb.onReject) cb.onReject(p.id, trial, "cap");
           dropOrder(p, "cap");
@@ -505,8 +539,10 @@
         } else {
           bestPos = search(p, fine, coarse, ratio, gravW, noise, random, cornerX, cornerY);
         }
+        if (bestPos && !p.pinned && (placedCells + bestPos.v.cells) / usableCellsFine > maxFill) {
+          rejects.push(p.id); capped.push(p.id); dropOrder(p, "cap"); await yieldNow(); continue;
+        }
         if (!bestPos) {
-          if (fifo) blockedRank = Math.min(blockedRank, rank.get(p.order));
           rejects.push(p.id);
           if (cb.onReject) cb.onReject(p.id, trial, "nofit");
           dropOrder(p, "nofit");
@@ -534,7 +570,7 @@
           if (cb.onPlaced) {
             const pocket = coarse.largestPocket();
             cb.onPlaced(pl, {
-              trial, placed: placements.length, total: pinnedFirst.length,
+              trial, placed: placements.length, total: prepared.length,
               freePt2: fine.freeCells() / (fineRes * fineRes),
               usablePt2: usableCellsFine / (fineRes * fineRes),
               placedPt2: placedCells / (fineRes * fineRes),
@@ -560,7 +596,7 @@
       }
       lastRejects = rejects.filter(id => !capped.includes(id));
       const summary = {
-        trial, placed: placements.length, total: pinnedFirst.length, rejects,
+        trial, placed: placements.length, total: prepared.length, rejects,
         density: placedCells / usableCellsFine,
         elapsedMs: now() - t0, gravW, noise
       };
@@ -573,16 +609,16 @@
           pocket: pocketPt(coarse, coarseRes), grids: { fine, coarse }, rec: placedRec.slice() };
         if (cb.onBest) cb.onBest(best, summary);
         // one or two short (and not because of the cap): targeted push into this very layout
-        if (!fifo && rejects.length && rejects.length <= 2 && rejects.every(id => !capped.includes(id))) await finishPush(best);
+        if (repairCandidates(best).length <= 2) await finishPush(best);
       } else failStreak++;
       if (cb.onTrial) cb.onTrial(Object.assign({ better }, summary));
-      if (best && best.placements.length === pinnedFirst.length) { endedBy = "complete"; break; }
+      if (best && best.placements.length === prepared.length) { endedBy = "complete"; break; }
       // restarts stalling while the best is a few short → repair the best layout instead
-      if (!fifo && best && best.rejects.length && best.rejects.length <= 3 && failStreak >= 4 && !best.rejects.every(id => best.capped.includes(id))) {
+      if (best && repairCandidates(best).length > 0 && repairCandidates(best).length <= 3 && failStreak >= 4) {
         failStreak = 0;
         if (cb.onStage) cb.onStage("repair", 0, 6);
         const fixed = await ruinRecreate(best, 6);
-        if (fixed && best.placements.length === pinnedFirst.length) { endedBy = "complete"; break; }
+        if (fixed && best.placements.length === prepared.length) { endedBy = "complete"; break; }
       }
       if (best && best.rejects.length && best.rejects.every(id => best.capped.includes(id))) { endedBy = "cap"; break; }   // only the ceiling holds pieces back
       await yieldNow();
@@ -612,7 +648,7 @@
     const cappedPt2 = (best.capped || []).reduce((n, id) => { const p = prepared.find(x => x.id === id); return n + (p ? p.footprintCells / (fineRes * fineRes) : 0); }, 0);
     return Object.assign({}, best, {
       endedBy, trials, elapsedMs: now() - t0, cappedPt2,
-      params: { seed: job.seed == null ? 1 : job.seed, angles, clearancePt, insetPt, fineRes, coarseRes, maxFill, pieceOrder: byAreaDesc.map(p => p.id) }
+      params: { packingGuided: guidedTrials > 0, guidedTrials, seed: job.seed == null ? 1 : job.seed, angles, clearancePt, insetPt, fineRes, coarseRes, maxFill, pieceOrder: byAreaDesc.map(p => p.id) }
     });
   }
 

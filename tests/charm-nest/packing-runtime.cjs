@@ -1,0 +1,64 @@
+// Node-only message/lifecycle regression tests. This does not launch or simulate browser interaction.
+const assert = require('node:assert/strict'), fs = require('node:fs'), vm = require('node:vm'), path = require('node:path');
+const root = path.join(__dirname, '../..'), html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8');
+const section = (from, to) => html.slice(html.indexOf(from), html.indexOf(to, html.indexOf(from)));
+const evaluate = (c, code) => vm.runInContext(code, c);
+(async () => {
+  const c = vm.createContext({ assert, console });
+  evaluate(c, `
+    const finishes=[], messages=[], S={settings:{packingAI:'on',maxFill:.74},cloud:{ok:true}};
+    const activeCharms=sh=>sh.charms, agent=()=>({}), agentUpdate=()=>{}, log=()=>{}, finishNest=(sh,r)=>finishes.push(r);
+    const stockFor=()=>({wPt:100,hPt:50});
+    const sh={jobId:'a',metal:'gold',status:'nesting',charms:[{id:'old',bbox:[0,0,4,4],members:[],widthPt:4,heightPt:4},{id:'new',bbox:[0,0,5,5],members:[],widthPt:5,heightPt:5}],placements:[],pool:{n:2,done:0,results:[],trials:[1,1],winner:null},workers:[0,1].map(i=>({postMessage:m=>messages.push({i,...m})}))};
+    const short={placements:[{id:'old'}],rejects:['new'],density:.4,endedBy:'stalled'};
+    const full={placements:[{id:'old'},{id:'new'}],rejects:[],density:.7,endedBy:'complete'};
+    const reset=()=>{finishes.length=messages.length=0;sh.pool={n:2,done:0,results:[],trials:[1,1],winner:null};};
+  `);
+  evaluate(c, section('function onWorkerMessage(', 'async function startServerNest('));
+  evaluate(c, `
+    onWorkerMessage(sh,{type:'done',jobId:'a:0',result:short},0);
+    assert.equal(finishes.length,0);assert.equal(messages.length,0,'a stalled leader does not stop another seed');
+    onWorkerMessage(sh,{type:'done',jobId:'a:1',result:full},1);
+    assert.equal(finishes.length,1);assert.equal(finishes[0].result.placements.length,2);
+    onWorkerMessage(sh,{type:'done',jobId:'a:0',result:short},0);assert.equal(finishes.length,1,'late messages cannot finish twice');
+    reset();onWorkerMessage(sh,{type:'done',jobId:'a:0',result:short},0);
+    onWorkerMessage(sh,{type:'error',jobId:'a:1',message:'failed'},1);
+    assert.equal(finishes.length,1);assert.equal(finishes[0].result.placements.length,1,'last worker error releases the successful result');
+    reset();onWorkerMessage(sh,{type:'error',jobId:'a:0',message:'failed 0'},0);
+    assert.equal(finishes.length,0);onWorkerMessage(sh,{type:'error',jobId:'a:1',message:'failed 1'},1);
+    assert.equal(finishes.length,1);assert.match(finishes[0].error,/failed 0/);
+    reset();
+    let resolvePlan,calls=0,existingIds=[];
+    const window={}, aiRenderSheet=()=>'', CharmNestPDF={drawSegments(){}}, document={createElement:()=>({getContext:()=>({fillRect(){},save(){},beginPath(){},rect(){},clip(){},fillText(){},restore(){}}),toDataURL:()=>''})};
+    const agentCall=async(mode,payload,opts)=>{calls++;existingIds.push(opts.existingId);opts.onStarted('stored-agent');return new Promise(r=>resolvePlan=r);};
+  `);
+  evaluate(c, section('function packingKey(', 'function startNest('));
+  await evaluate(c, `(async()=>{
+    const first=requestPackingGuidance(sh);await requestPackingGuidance(sh);
+    assert.equal(calls,1,'only one consultation for concurrent worker requests');assert.equal(sh.packingAdvice.jobId,'stored-agent');
+    resolvePlan({suggestions:[{index:0,angles:[-30,390,NaN,20]}],summary:'try a rotation'});await first;
+    assert.deepEqual(sh.packingAdvice.hints.angles.old,[330,30,20]);
+    assert.equal(messages.filter(m=>m.hints).length,2);await requestPackingGuidance(sh);assert.equal(calls,1,'advice is reused for an unchanged queue');
+    sh.packingAdvice.state='pending';sh.packingAdvice.hints=null;
+    const resumed=requestPackingGuidance(sh);assert.equal(existingIds[1],'stored-agent','a refreshed pending consultation polls its existing id');
+    sh.jobId='b';const before=messages.length;
+    resolvePlan({suggestions:[{index:1,angles:[45]}]});await resumed;
+    assert.equal(messages.length,before,'late advice cannot touch the next worker job');
+    assert.equal(sh.packingAdvice.state,'done','late advice is cached for the next re-nest');
+    S.settings.packingAI='off';await requestPackingGuidance(sh);assert.equal(calls,2);
+  })()`);
+
+  let capturedJob, finishSolve;const posted=[];
+  const w=vm.createContext({importScripts(){}, self:{postMessage:m=>posted.push(m)}, CharmNestSolver:{solve:async job=>{capturedJob=job;return new Promise(r=>finishSolve=r);}}});
+  evaluate(w,fs.readFileSync(path.join(root,'charm-nest-worker.js'),'utf8'));
+  const running=w.self.onmessage({data:{type:'solve',jobId:'current',job:{}}});
+  await w.self.onmessage({data:{type:'packingHints',jobId:'previous',hints:{priority:['wrong']},pending:true}});
+  assert.equal(capturedJob.packingHints,undefined);
+  await w.self.onmessage({data:{type:'packingHints',jobId:'current',hints:{priority:['right']},pending:false}});
+  assert.equal(capturedJob.packingHints.priority[0],'right');
+  await w.self.onmessage({data:{type:'stop',jobId:'current'}});
+  await w.self.onmessage({data:{type:'packingHints',jobId:'current',hints:{priority:['late']},pending:true}});
+  assert.equal(capturedJob.packingHints.priority[0],'right');assert.equal(capturedJob.packingPending,false);
+  finishSolve({placements:[]});await running;assert.equal(posted[0].type,'done');
+  console.log('packing runtime OK · worker failures, completion, advice caching, refresh resume, stale responses and operator stop');
+})().catch(e=>{console.error(e);process.exit(1);});

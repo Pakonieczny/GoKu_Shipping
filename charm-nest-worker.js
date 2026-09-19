@@ -4,16 +4,24 @@
  *
  *  in : {type:"solve",  jobId, job}            job → see charm-nest-solver.js
  *       {type:"stop",   jobId}                  honoured at the next piece boundary
+ *       {type:"packingHints", jobId, hints, pending}  live, bounded search advice
  *       {type:"verify", jobId, job, placements, res}
  *  out: {type:"stage"|"placed"|"reject"|"trial"|"best"|"done"|"verified"|"error", jobId, …}
  */
 importScripts("charm-nest-solver.js");
 
-let current = null;   // { jobId, stop }
+let current = null;   // { jobId, job, stop }
 
 self.onmessage = async (e) => {
   const m = e.data || {};
   if (m.type === "stop") { if (current && (!m.jobId || current.jobId === m.jobId)) current.stop = true; return; }
+  if (m.type === "packingHints") {
+    if (current && current.jobId === m.jobId && !current.stop) {
+      current.job.packingPending = !!m.pending;
+      if (m.hints) current.job.packingHints = m.hints;
+    }
+    return;
+  }
   if (m.type === "verify") {
     try {
       const v = CharmNestSolver.verify(m.job, m.placements, m.res || 6);
@@ -22,7 +30,7 @@ self.onmessage = async (e) => {
     return;
   }
   if (m.type !== "solve") return;
-  const state = { jobId: m.jobId, stop: false };
+  const state = { jobId: m.jobId, job: m.job, stop: false };
   current = state;
   const post = (msg) => self.postMessage(Object.assign({ jobId: m.jobId }, msg));
   try {

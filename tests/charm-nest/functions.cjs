@@ -153,6 +153,18 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   r = await post(lib, { op: 'getAgent', id: agentId });
   assert.strictEqual(r.body.job.status, 'done'); assert.strictEqual(r.body.job.result.realCharmCount, 1, JSON.stringify(r.body.job));
   assert(!blobs.has('charmnest/agent/' + agentId + '.json'), 'parked payload cleaned up');
+  // The new packing mode uses the same real job route and validates model advice.
+  const packingPayload={contactSheet:'data:image/png;base64,iVBORw0KGgo=',wPt:100,hPt:50,maxFill:.74,density:.66,pieces:[{widthPt:12,heightPt:8,areaPt2:70},{widthPt:9,heightPt:9,areaPt2:60}]};
+  assert(agentMod.buildRequest('packing',{}).error);
+  const packingRequest=agentMod.buildRequest('packing',packingPayload);
+  assert(packingRequest.system.includes('never change membership') && packingRequest.schema.properties.suggestions.maxItems===24);
+  anthro.callClaudeRaw=async()=>({stop_reason:'end_turn',content:[{type:'text',text:JSON.stringify({summary:'Place the long silhouette early.',suggestions:[{index:1,angles:[-30,390]},{index:1,angles:[0]},{index:999,angles:[0]},{index:0,angles:['bad',45]}]})}]});
+  const packingStart=await post(lib,{op:'startAgent',mode:'packing',payload:packingPayload});assert(packingStart.body.id);
+  await agentBg.handler({httpMethod:'POST',headers:{},body:JSON.stringify({id:packingStart.body.id,mode:'packing'})});
+  const packingDone=await post(lib,{op:'getAgent',id:packingStart.body.id});
+  assert.equal(packingDone.body.job.status,'done');
+  assert.deepEqual(packingDone.body.job.result.suggestions,[{index:1,angles:[330,30]},{index:0,angles:[45]}]);
+  assert(!blobs.has('charmnest/agent/'+packingStart.body.id+'.json'));
   anthro.callClaudeRaw = realCall; delete process.env.ANTHROPIC_API_KEY;
 
   // ── server solver: startJob → background → done ──

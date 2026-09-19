@@ -141,6 +141,13 @@ const PLACE_SCHEMA = {
 };
 
 
+// Packing advice supplies search heuristics, never unchecked coordinates or permission to alter artwork.
+const PACKING_INSTRUCTIONS = `You advise a geometric nesting solver for laser-cut jewelry. You see a numbered contact sheet of exact charm artwork, the current layout, and dimensions in points. Recommend up to 24 difficult shapes to place early and up to three promising rotation angles for each. Favor long or concave shapes and complementary silhouettes; reserve small simple pieces for gaps. Use the supplied integer indices only. Dates and whole-order sheet membership are enforced separately: never change membership, size, clearance, outline, or the fill ceiling. Your advice is tried alongside unguided searches and accepted only through geometric collision checks. Return a short, specific explanation of your packing strategy. Do not claim an achieved density or that a sheet has been verified.`;
+const PACKING_SCHEMA = { type: "object", additionalProperties: false, properties: {
+  suggestions: { type: "array", maxItems: 24, items: { type: "object", additionalProperties: false, properties: { index: { type: "integer" }, angles: { type: "array", maxItems: 3, items: { type: "number" } } }, required: ["index", "angles"] } },
+  summary: { type: "string" }
+}, required: ["suggestions", "summary"] };
+
 /* ═══ bridge modes (design §7.1, §7.4, §6.3 item 8) ═══════════════════════ */
 const ENGRAVE_INTENT_INSTRUCTIONS = `You read one Etsy order line for a jewelry engraver and decide, from the customer's own words only, whether the charm is to be engraved and with exactly what text.
 
@@ -189,6 +196,14 @@ function buildRequest(mode, body) {
     content.push({ type: "text", text: `Sheet ${str(body.sheetName, 80)} · ${(body.placements || []).length} charms placed${body.rejects ? ` · ${str(body.rejects, 300)} did not fit` : ""}.\n\nPlaced charms:\n${list}\n\nRendered sheet:` });
     content.push(preview);
     return { system: LAYOUT_INSTRUCTIONS, schema: LAYOUT_SCHEMA, content, effort: EFFORT };
+  }
+  if (mode === "packing") {
+    const image = parseDataUrl(body.contactSheet), preview = parseDataUrl(body.preview);
+    const pieces = (body.pieces || []).slice(0, 120).map((p,index) => ({ index, widthPt: num(p.widthPt), heightPt: num(p.heightPt), areaPt2: num(p.areaPt2) }));
+    if (!image || !pieces.length) return { error: "numbered contact sheet and pieces required" };
+    content.push({ type: "text", text: `Stock ${num(body.wPt)} × ${num(body.hPt)} pt. Fill ceiling ${num(body.maxFill) * 100}%. Current fill ${num(body.density) * 100}%. Geometry remains authoritative. Numbered shapes:\n${JSON.stringify(pieces)}` }, image);
+    if (preview) content.push({ type: "text", text: "Current best layout (its numbers label placements, not the contact-sheet indices):" }, preview);
+    return { system: PACKING_INSTRUCTIONS, schema: PACKING_SCHEMA, content, effort: EFFORT, pieceCount: pieces.length };
   }
   if (mode === "place") {
     const sheet = parseDataUrl(body.sheet);
@@ -246,7 +261,7 @@ async function run(mode, body) {
   if (req.error) return { error: req.error };
   try {
     // Thinking tokens count against max_tokens; a placement round reasons at length, so give it room.
-    const res = await anthropic.callClaudeRaw({ model: MODEL, maxTokens: mode === "place" ? 32000 : mode === "engraveIntent" ? 8000 : 16000, effort: req.effort, system: [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }], messages: [{ role: "user", content: req.content }], outputFormat: { type: "json_schema", schema: req.schema }, thinkingDisplay: "summarized" });
+    const res = await anthropic.callClaudeRaw({ model: MODEL, maxTokens: mode === "packing" ? 8000 : mode === "place" ? 32000 : mode === "engraveIntent" ? 8000 : 16000, effort: req.effort, system: [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }], messages: [{ role: "user", content: req.content }], outputFormat: { type: "json_schema", schema: req.schema }, thinkingDisplay: "summarized" });
     const reasoning = (res.content || []).filter(b => b.type === "thinking" && b.thinking).map(b => b.thinking).join("\n").slice(0, 6000);
     if (res.stop_reason === "refusal") return { skipped: "model declined" };
     const text = (res.content || []).filter(b => b.type === "text").map(b => b.text).join("");
@@ -261,6 +276,10 @@ async function run(mode, body) {
     }
     if (mode === "engraveIntent") {
       parsed.text = str(parsed.text, 400); parsed.confidence = Math.max(0, Math.min(1, num(parsed.confidence))); parsed.questions = (parsed.questions || []).map(q => str(q, 300)).filter(Boolean);
+    }
+    if (mode === "packing") {
+      const seen = new Set();
+      parsed = { summary: str(parsed.summary, 700), suggestions: (Array.isArray(parsed.suggestions) ? parsed.suggestions : []).filter(p => Number.isInteger(p.index) && p.index >= 0 && p.index < req.pieceCount && !seen.has(p.index) && seen.add(p.index)).slice(0,24).map(p => ({ index: p.index, angles: (Array.isArray(p.angles) ? p.angles : []).filter(Number.isFinite).slice(0,3).map(a => ((Math.round(a) % 360) + 360) % 360) })) };
     }
     if (mode === "name") {
       parsed = { charms: (parsed.charms || []).map(x => ({ index: num(x.index), slug: str(x.slug, 60).toLowerCase().replace(/[^a-z0-9\-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || null, label: str(x.label, 120), confidence: Math.max(0, Math.min(1, num(x.confidence))), metal: req.wantMetal && /^(gold|silver|rose)$/.test(x.metal || "") ? x.metal : null })).filter(x => x.slug) };

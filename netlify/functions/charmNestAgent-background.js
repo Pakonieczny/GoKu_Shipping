@@ -13,7 +13,7 @@ const COLL = "Charm_Nest_Agent";
 exports.handler = async (event) => {
   const body = parseBody(event);
   const id = String(body.id || "").replace(/[^\w\-]/g, "").slice(0, 80);
-  const mode = ["grouping", "layout", "name", "place", "labelRead"].includes(body.mode) ? body.mode : null;
+  const mode = ["grouping", "layout", "name", "place", "packing", "labelRead"].includes(body.mode) ? body.mode : null;
   if (!id || !mode) return { statusCode: 400, body: "bad payload" };
   const ref = db.collection(COLL).doc(id);
   const snap = await ref.get();

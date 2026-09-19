@@ -1108,7 +1108,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
     <div class="field"><div class="help">The reference box measured 181.0 × 153.2 mm (513.03 × 434.19 pt). Change a metal's stock here if it cuts at a different size; the sheet outline in the output follows it.</div></div>
     <div class="section">Nesting engine</div>
     <div class="fieldRow">
-      <div class="field"><label>Engine</label><select id="stEngine"><option value="solver">Claude-reviewed geometric nesting (the process that produced 21/21 at 71%)</option><option value="ai">Claude places every charm itself (experimental — reached 55%)</option></select><div class="help">Recommended: Claude judges the grouping from the source page, the geometry places the pieces (contact-scored, restarting until every piece is placed, with a targeted 5° push for the last one or two), two verifiers check the result, Claude inspects the finished sheet.</div></div>
+      <div class="field"><label>Engine</label><select id="stEngine"><option value="solver">Geometric nesting + AI packing guidance</option><option value="ai">Claude places every charm itself (experimental — reached 55%)</option></select><div class="help">Recommended: geometry arranges the oldest whole orders using contact scoring and gap repair. AI can advise difficult searches while geometry continues; two independent verifiers check the written result. Grouping review applies when importing source artwork.</div></div>
       <div class="field"><label>Fill ceiling (%) · AI rounds · snap (mm)</label><div class="fieldRow3"><input id="stMaxFill" type="number" min="30" max="100" step="1"><input id="stAiRounds" type="number" min="1" max="30" step="1"><input id="stSnapIn" type="number" min="0" max="25" step="0.5"></div><div class="help">The sheet is never filled past the ceiling; pieces that would cross it wait for a second sheet. Rounds and snap apply to the experimental engine only.</div></div>
     </div>
     <div class="section">Geometry (measuring tool · solver option)</div>
@@ -1118,7 +1118,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
       <div class="field"><label>Angle step (°)</label><select id="stAngle"><option value="90">90 (4 angles)</option><option value="45">45 (8)</option><option value="30">30 (12)</option><option value="15">15 (24)</option></select></div>
     </div>
     <div class="fieldRow3">
-      <div class="field"><label>Time ceiling (s) · parallel searches</label><div class="fieldRow"><input id="stBudget" type="number" step="5" min="10" max="900"><input id="stParallel" type="number" step="1" min="0" max="16"></div><div class="help">Several searches run at once on different seeds; the first to complete the sheet wins and stops the rest. 0 = all cores but one. The ceiling only caps a sheet that cannot be completed.</div></div>
+      <div class="field"><label>Time ceiling (s) · parallel searches</label><div class="fieldRow"><input id="stBudget" type="number" step="5" min="10" max="900"><input id="stParallel" type="number" step="1" min="0" max="16"></div><div class="help">Several searches run at once on different seeds. A completed search stops the rest; a stalled search does not cancel other seeds. 0 = all cores but one. The ceiling only caps a sheet that cannot be completed.</div></div>
       <div class="field"><label>Seed</label><input id="stSeed" type="number" step="1" min="1"><div class="help">Same seed + same queue = same layout.</div></div>
       <div class="field"><label>Server fallback above</label><input id="stServerAbove" type="number" step="1" min="0"><div class="help">Pieces. 0 = never use the server solver.</div></div>
     </div>
@@ -1128,7 +1128,8 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
       <div class="field"><label>Naming (Claude)</label><select id="stNaming"><option value="on">On</option><option value="off">Off</option></select></div>
     </div>
     <div class="fieldRow">
-      <div class="field"><label>AI review (Claude Opus 5, high effort)</label><select id="stReview"><option value="on">On — review grouping before nesting and the sheet after</option><option value="off">Off — geometry only</option></select><div class="help">Claude looks at the detected charms on your source page and merges fragments back where they belong, then inspects the finished sheet and re-nests once if it finds a problem.</div></div>
+      <div class="field"><label for="stPackingAI">AI packing guidance</label><select id="stPackingAI"><option value="on">On — advise difficult browser searches</option><option value="off">Off — geometry only</option></select><div class="help">One AI consultation per unchanged queue when packing struggles. Suggests shape priorities and rotations while the solver keeps working; every placement still passes geometric checks. Advice is cached for re-nesting. The configured time ceiling still applies.</div></div>
+    <div class="field"><label>AI review (Claude Opus 5, high effort)</label><select id="stReview"><option value="on">On — review imported grouping</option><option value="off">Off — geometry only</option></select><div class="help">Claude reviews detected charms when importing a source page and can merge fragments. Finished-sheet AI inspection is available separately.</div></div>
     </div>
     <div class="section">Design Station bridge, orders, run</div>
     <div class="fieldRow3">
@@ -1222,7 +1223,7 @@ const DEFAULTS = {
   rail: "md",
   stock: { gold: [100 / 25.4, 50 / 25.4], silver: [100 / 25.4, 50 / 25.4], rose: [100 / 25.4, 50 / 25.4], gold10k: [100 / 25.4, 50 / 25.4], gold14k: [100 / 25.4, 50 / 25.4] },
   clearancePt: -0.5, insetPt: 1.5, angleStep: 30, budgetS: 180, seed: 1, serverAbove: 0, parallel: 0,
-  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", aiRounds: 10, snapIn: 0.25, maxFill: 0.74, orderView: "cards", v: 18,
+  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", packingAI: "on", aiRounds: 10, snapIn: 0.25, maxFill: 0.74, orderView: "cards", v: 18,
   // Design Station bridge, orders, run (design doc §14)
   dsOrigin: "https://design-1.goldenspike.app", heartbeatS: 5, heartbeatMiss: 3, autoCommit: "on", runMode: "manual", pullMode: "all", pullDueBy: "", pullCount: 40, autoEvery: 0, pollOrders: "on", pollMinutes: 10, optimizeAt: 85, etsyHourlyCap: 600, sandbox: "off",
   skuPattern: "^[A-Z0-9][A-Z0-9 _.,'&()+\\-]{1,60}$", labelGapMm: 6.4, masterServerAbove: 0, sizeMinMm: 3, sizeMaxMm: 60,
@@ -1430,8 +1431,8 @@ async function agentCall(mode, payload, opts = {}) {
 }
 async function agentCallRemote(mode, payload, opts = {}) {
   const started = performance.now();
-  const r = await api("charmNestLibrary", { op: "startAgent", mode, payload, sheetId: opts.sheetId || null, sourceName: opts.sourceName || null }, { label: opts.label || "Starting Claude", background: !!opts.background });
-  const id = r.id; let tick = 0;
+  const r = opts.existingId ? { id: opts.existingId } : await api("charmNestLibrary", { op: "startAgent", mode, payload, sheetId: opts.sheetId || null, sourceName: opts.sourceName || null }, { label: opts.label || "Starting Claude", background: !!opts.background });
+  const id = r.id; if (opts.onStarted) opts.onStarted(id); let tick = 0;
   for (;;) {
     await new Promise(res => setTimeout(res, tick++ < 4 ? 2000 : 3500));
     const elapsed = performance.now() - started;
@@ -2026,8 +2027,68 @@ function buildJob(sh) {
     sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0 },
     clearancePt: +S.settings.clearancePt || 0, angles: angleSet(), fineRes: 2, coarseRes: 0.5,
     timeBudgetMs: (+S.settings.budgetS || 180) * 1000, stallMs: 60 * 1000, maxTrials: 2000, seed: +S.settings.seed || 1, maxFill: +S.settings.maxFill || 0.74,
+    packingHints: S.settings.packingAI !== "off" && sh.packingAdvice?.key === packingKey(sh, items) ? sh.packingAdvice.hints || null : null,
     pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: c.orderDate || 0, pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
   };
+}
+function packingKey(sh, items) {
+  const st = stockFor(sh.metal);
+  return JSON.stringify([st.wPt, st.hPt, S.settings.clearancePt, S.settings.insetPt, S.settings.maxFill,
+    items.map(c => [c.id, c.hash, c.w, c.h, c.areaPt2])]);
+}
+function sendPackingHints(sh, jobId, hints, pending) {
+  if (sh.jobId !== jobId || sh.status !== "nesting" || sh.pool?.finished) return;
+  (sh.workers || []).forEach((w,i) => w.postMessage({ type: "packingHints", jobId: jobId + ":" + i, hints, pending }));
+}
+async function requestPackingGuidance(sh) {
+  if (S.settings.packingAI === "off" || !S.cloud.ok || sh.serverJob || sh.status !== "nesting") return;
+  const items = activeCharms(sh), key = packingKey(sh, items), jobId = sh.jobId;
+  const prior = sh.packingAdvice?.key === key ? sh.packingAdvice : null;
+  if (prior && prior.state !== "pending") return;
+  if (sh._packingPromise) return;
+  // Persist the agent id so a refresh resumes its result instead of buying another consultation.
+  const advice = prior || { key, state: "pending", jobId: null, hints: null };
+  sh.packingAdvice = advice;
+  const ev = agent({ metal: sh.metal }, "claude", "AI is advising shape priorities and rotations; geometric searches continue", { live: true });
+  sendPackingHints(sh, jobId, null, true);
+  const task = (async () => {
+    try {
+      const chosen = items.slice().sort((a,b) => (+a.orderDate || 0) - (+b.orderDate || 0)).slice(0,120);
+      const cv = document.createElement("canvas"), cell = 96, cols = 10;
+      cv.width = cols * cell; cv.height = Math.ceil(chosen.length / cols) * cell;
+      const ctx = cv.getContext("2d"); ctx.fillStyle = "#f3f0ea"; ctx.fillRect(0,0,cv.width,cv.height);
+      chosen.forEach((c,i) => {
+        const x = i % cols * cell, y = Math.floor(i / cols) * cell, b = c.bbox;
+        const scale = Math.min((cell-12) / Math.max(1,b[2]-b[0]), (cell-26) / Math.max(1,b[3]-b[1]));
+        ctx.save(); ctx.beginPath(); ctx.rect(x,y,cell,cell); ctx.clip();
+        CharmNestPDF.drawSegments(ctx,c.members,(px,py) => [x+6+(px-b[0])*scale,y+21+(b[3]-py)*scale],scale);
+        ctx.fillStyle = "#181818"; ctx.font = "bold 12px sans-serif"; ctx.fillText(String(i),x+5,y+14); ctx.restore();
+      });
+      const st = stockFor(sh.metal);
+      const plan = await agentCall("packing", { contactSheet: cv.toDataURL("image/png"), preview: aiRenderSheet(sh),
+        wPt: st.wPt, hPt: st.hPt, maxFill: +S.settings.maxFill || .74, density: sh.best?.density || 0,
+        pieces: chosen.map(c => ({ widthPt:c.widthPt, heightPt:c.heightPt, areaPt2:c.areaPt2 }))
+      }, { label: "AI packing advice", sheetId: sh.sheetId, background: true, existingId: advice.jobId,
+        onStarted: id => { advice.jobId = id; if (window.Session) Session.schedule(); },
+        onTick: elapsed => agentUpdate(ev,{elapsed}) });
+      if (plan.skipped || plan.error) throw new Error(plan.skipped || plan.error);
+      const hints = { priority: [], angles: {} };
+      for (const p of (Array.isArray(plan.suggestions) ? plan.suggestions : []).slice(0,24)) {
+        const c = Number.isInteger(p.index) && chosen[p.index]; if (!c || hints.priority.includes(c.id)) continue;
+        hints.priority.push(c.id); hints.angles[c.id] = (Array.isArray(p.angles) ? p.angles : []).filter(Number.isFinite).slice(0,3).map(a => ((Math.round(a) % 360) + 360) % 360);
+      }
+      Object.assign(advice,{state:"done",hints,summary:plan.summary || "",usage:plan.usage || null});
+      if (sh.packingAdvice === advice) sendPackingHints(sh,jobId,hints,false);
+      agentUpdate(ev,{live:false,text:`AI packing advice: ${advice.summary || "shape priorities and rotations ready"}. ${sh.status === "nesting" && sh.jobId === jobId ? "Trying it alongside unguided searches." : "Saved for the next re-nest of this queue."}`});
+    } catch(e) {
+      Object.assign(advice,{state:"skipped",error:e.message});
+      if (sh.packingAdvice === advice) sendPackingHints(sh,jobId,null,false);
+      agentUpdate(ev,{live:false,kind:"warn",text:`AI packing advice unavailable: ${e.message}. Geometry continues.`});
+    } finally { if (window.Session) Session.schedule(); }
+  })();
+  sh._packingPromise = task;
+  await task;
+  if (sh._packingPromise === task) sh._packingPromise = null;
 }
 function startNest(sh) {
   if (["nesting", "finishing"].includes(sh.status)) return;
@@ -2055,7 +2116,7 @@ function startNest(sh) {
   const n = parallelCount();
   const workers = ensureWorkers(sh, n);
   sh.pool = { n, done: 0, results: [], trials: new Array(n).fill(0), winner: null };
-  if (sh.evNest) agentUpdate(sh.evNest, { text: `${n} parallel search${n > 1 ? "es" : ""} on seeds ${job.seed}–${job.seed + n - 1} · ${items.length} pieces · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · the first to complete the sheet stops the rest · ceiling ${S.settings.budgetS}s` });
+  if (sh.evNest) agentUpdate(sh.evNest, { text: `${n} parallel search${n > 1 ? "es" : ""} on seeds ${job.seed}–${job.seed + n - 1} · ${items.length} pieces · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · shape order is optimized within oldest-first sheet membership · ceiling ${S.settings.budgetS}s` });
   workers.forEach((w, i) => w.postMessage({ type: "solve", jobId: sh.jobId + ":" + i, job: Object.assign({}, job, { seed: job.seed + i }) }));
 }
 
@@ -2168,23 +2229,26 @@ function onWorkerMessage(sh, m, idx) {
     if (!better) { if (idx === leader) { sh.livePlacements = []; } return; }
     sh.bestWorker = idx; m.summary = Object.assign({}, m.summary, { trial: pool.trials.reduce((a, b) => a + b, 0) - 1, worker: idx });
   }
+  if (m.type === "error" && pool.n > 1) {
+    log(sh, `worker ${idx}: ${m.message}`);
+    pool.errors = (pool.errors || []).concat(m.message);
+    m = { type: "done", jobId: m.jobId, result: null };
+  }
   if (m.type === "done") {
     pool.done++; pool.results[idx] = m.result;
     const complete = m.result && m.result.rejects.length === 0 && m.result.placements.length === items.length;
-    // the sheet is done when a search completes it, or when the search holding the best layout has settled (a minute
-    // without bettering it): the others are stopped either way, so the ghosts never stop while the clock runs on
-    const settled = m.result && m.result.endedBy === "stalled" && idx === leader;
-    if ((complete || settled) && pool.winner == null) { pool.winner = idx; pool.settled = settled && !complete; (sh.workers || []).forEach((w, i) => { if (i !== idx) w.postMessage({ type: "stop", jobId: sh.jobId + ":" + i }); }); }
+    // Only a complete layout cancels the other seeds. One stalled seed is not proof that the sheet is full.
+    if (complete && pool.winner == null) { pool.winner = idx; (sh.workers || []).forEach((w, i) => { if (i !== idx) w.postMessage({ type: "stop", jobId: sh.jobId + ":" + i }); }); }
     if (!(complete && pool.winner === idx) && pool.done < pool.n) return;          // wait for the rest (or the winner)
     if (pool.winner != null && pool.winner !== idx && pool.done < pool.n) return;
     const results = pool.results.filter(Boolean);
+    if (!results.length) { pool.finished = true; finishNest(sh, { error: (pool.errors || ["No search returned a layout"]).join("; ") }); return; }
     const pick = results.reduce((a, b) => !a ? b : (b.placements.length > a.placements.length || (b.placements.length === a.placements.length && b.density > a.density)) ? b : a, null);
     const total = pool.trials.reduce((a, b) => a + b, 0);
     pool.finished = true;   // exactly one finish per job
     m = { type: "done", jobId: sh.jobId, result: Object.assign({}, pick, { trials: total, workers: pool.n, winner: pool.winner }) };
-    agent({ metal: sh.metal }, "nest", pool.winner != null ? (pool.settled ? `Search ${pool.winner + 1} settled on ${pick.placements.length}/${items.length} — nothing better for a minute — the other ${pool.n - 1} were stopped · ${total} trials in total` : `Search ${pool.winner + 1} (seed ${(+S.settings.seed || 1) + pool.winner}) completed the sheet first — the other ${pool.n - 1} were stopped · ${total} trials in total`) : `All ${pool.n} searches reached the ceiling · best ${pick.placements.length}/${items.length} · ${total} trials in total`);
+    agent({ metal: sh.metal }, "nest", pool.winner != null ? `Search ${pool.winner + 1} completed the sheet — the other ${pool.n - 1} were stopped · ${total} trials in total` : `All ${pool.n} searches finished · best ${pick.placements.length}/${items.length} · ${total} trials in total`);
   }
-  if (m.type === "error" && idx !== 0 && pool.n > 1) { log(sh, `worker ${idx}: ${m.message}`); pool.done++; return; }
   if (m.type === "error") pool.finished = true;
   switch (m.type) {
     case "placed": {
@@ -2205,6 +2269,7 @@ function onWorkerMessage(sh, m, idx) {
     case "stage": if (m.stage === "finish") { agent({ metal: sh.metal }, "nest", `Best layout is ${m.total - m.done} short — targeted search at 5° steps for the missing piece(s) into that layout`); } else if (m.stage === "repair") { if (m.done === 0) agent({ metal: sh.metal }, "nest", `Restarts stalled — repairing the best layout instead: pulling out the pieces around its largest gap and re-inserting them with the missing piece at 15° steps (${m.total} attempts)`); sh.stage = `Repairing the best layout · attempt ${m.done}/${m.total}`; renderProgress(sh); } else if (m.stage === "prepare") { sh.stage = `Preparing rotations · ${m.done}/${m.total}`; sh.progress = [m.done, m.total]; sh.progressKind = "prepare"; renderProgress(sh); } break;
     case "reject": log(sh, `trial ${m.trial + 1}: ${byId.get(m.id)?.name || m.id} ${m.reason === "cap" ? "held back by the fill ceiling" : "did not fit"}`); break;
     case "trial": {
+      if (m.summary.elapsedMs >= 12000 && sh.best?.rejects?.length && sh.best.density < (+S.settings.maxFill || .74) - .01) requestPackingGuidance(sh).catch(e => log(sh, "AI packing: " + e.message));
       sh.trials = m.summary.trial + 1;
       if (!m.summary.better) sh.stage = `Trial ${sh.trials} · best so far ${sh.best ? sh.best.placements.length : 0}/${m.summary.total} · ${fmt.s(m.summary.elapsedMs)}`;
       // one live line that ticks with every trial, so the search is visible even when no trial beats the best
@@ -3060,11 +3125,12 @@ function openSettings() {
         on.disabled = true; on.textContent = "Switching on…";
         sb.enable().catch(e => { toast(`Sandbox: ${e.message}`, "bad", 9000); on.disabled = false; on.textContent = "Rehearse a run in the sandbox"; });
       }; } }
-  $("#stMinPt").value = s.minPt; $("#stVerifyRes").value = s.verifyRes; $("#stNaming").value = s.naming; $("#stReview").value = s.review || "on"; $("#stEngine").value = s.engine || "solver"; $("#stMaxFill").value = Math.round((s.maxFill || 0.74) * 100); $("#stAiRounds").value = s.aiRounds || 10; $("#stSnapIn").value = +(((s.snapIn == null ? 0.25 : s.snapIn) * 25.4).toFixed(1)); $("#stNotify").value = s.notify; $("#stSound").value = s.sound;
+  $("#stMinPt").value = s.minPt; $("#stVerifyRes").value = s.verifyRes; $("#stNaming").value = s.naming; $("#stReview").value = s.review || "on"; $("#stPackingAI").value = s.packingAI || "on"; $("#stEngine").value = s.engine || "solver"; $("#stMaxFill").value = Math.round((s.maxFill || 0.74) * 100); $("#stAiRounds").value = s.aiRounds || 10; $("#stSnapIn").value = +(((s.snapIn == null ? 0.25 : s.snapIn) * 25.4).toFixed(1)); $("#stNotify").value = s.notify; $("#stSound").value = s.sound;
   openDlg($("#dlgSettings"));
 }
 const cap = s => s[0].toUpperCase() + s.slice(1);
 function readSettings() {
+  S.settings.packingAI = $("#stPackingAI").value === "off" ? "off" : "on";
   const s = S.settings, previousGeometry = JSON.stringify([s.stock,s.clearancePt,s.insetPt,s.maxFill]);
   s.rail = $("#railSeg button.on")?.dataset.v || "md";
   for (const m of METALS) s.stock[m.key] = [(+$(`#st${cap(m.key)}W`).value / 25.4) || DEFAULTS.stock[m.key][0], (+$(`#st${cap(m.key)}H`).value / 25.4) || DEFAULTS.stock[m.key][1]];

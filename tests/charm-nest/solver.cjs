@@ -66,5 +66,32 @@ function shape(id, kind, wPt, hPt, scale = 6) {
     assert.equal(fixed.placements.length,1);assert.equal(packed.placements.length,2);assert(S.verify(space,packed.placements,1).ok);
     console.log('FIFO and repack OK · oldest whole orders, overflow, pinned priorities, interrupted preparation, reclaimed space');
   }
+  // Chronology controls membership, not the physical placement sequence: put the
+  // newer U down first so the older square can occupy its open middle.
+  {
+    const old = {...shape('old-square','rect',4,4,1),order:'old',orderDate:1};
+    const u = {...shape('new-u','rect',20,20,1),order:'new',orderDate:2};
+    u.areaPt2 = 0;
+    for(let y=0;y<20;y++)for(let x=0;x<20;x++){u.bits[y*20+x]=+(x<4 || x>=16 || y>=16);u.areaPt2+=u.bits[y*20+x];}
+    const j={sheet:{wPt:20,hPt:20,insetPt:0},clearancePt:0,angles:[0,90,180,270],fineRes:1,coarseRes:1,maxFill:.74,timeBudgetMs:3000,maxTrials:1,pieces:[old,u]};
+    const r=await S.solve(j,{});
+    assert.equal(r.placements.length,2,'the old square must not lock a corner needed by the U');
+    assert.equal(r.placements[0].id,'new-u','younger geometry may be placed first within the same chronological sheet');
+    assert(S.verify(j,r.placements,1).ok);assert(Number.isFinite(r.density) && r.density<=.74);
+    const impossible={...j,sheet:{wPt:18,hPt:20,insetPt:0},pieces:[old,u,{...shape('youngest','rect',3,3,1),order:'youngest',orderDate:3}]};
+    const blocked=await S.solve(impossible,{});
+    assert.deepEqual(blocked.placements.map(p=>p.id),['old-square'],'younger filler cannot bypass an older unplaceable order');
+  }
+  // Advice changes search heuristics only: unfamiliar rotations cannot bypass
+  // the cap, chronology, pins, or verification, and must retain finite areas.
+  {
+    const pieces=[1,2,3].map(i=>({...shape('guide'+i,'rect',11,11,1),order:'order'+i,orderDate:i}));
+    const job={sheet:{wPt:20,hPt:20,insetPt:0},clearancePt:0,angles:[0,90],fineRes:1,coarseRes:1,maxFill:.99,timeBudgetMs:2500,maxTrials:4,pieces,packingHints:{priority:['guide3','guide2','guide1'],angles:{guide1:[37],guide2:[-17],guide3:[731]}}};
+    const result=await S.solve(job,{});
+    assert(result.params.guidedTrials>0,'advice participates in a search');
+    assert(Number.isFinite(result.density) && result.density<=.99,'rotated repair area stays finite and capped');
+    const ids=new Set(result.placements.map(p=>p.id));if(ids.has('guide3'))assert(ids.has('guide1')&&ids.has('guide2'));if(ids.has('guide2'))assert(ids.has('guide1'));
+    assert(S.verify(job,result.placements,1).ok);
+  }
   console.log('OK');
 })().catch(e => { console.error(e); process.exit(1); });
