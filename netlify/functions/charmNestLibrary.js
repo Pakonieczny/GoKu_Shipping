@@ -582,9 +582,9 @@ async function op_history(b) {
     const hay = [g.setId, "Set " + g.seq, g.day, g.runId, g.status, r?.stoppedBy, ...(r?.errors || []).map(e => e.why), ...g.materials, ...(g.search || []), ...ids, ...lines.flatMap(l => [l.orderId, l.sku, l.engrave?.text, l.snap?.title]), ...g.sheets.map(x => x.fileBase)].join(" ").toLowerCase();
     return Object.assign(g, { orders: ids.size || g.orders || new Set(lines.map(l => l.orderId)).size, status: g.draft ? "held" : g.status === "superseded" ? g.status : r?.status === "complete" ? (String(g.status).startsWith("complete") ? g.status : "complete") : r?.status || g.status, match: !q || hay.includes(q) });
   }).filter(g => g.match).sort((a, b) => String(b.day || "").localeCompare(String(a.day || "")) || (b.seq || 0) - (a.seq || 0) || (b.updatedAt || 0) - (a.updatedAt || 0));
-  const total = rows.length; rows = rows.slice(offset, offset + limit);
+  const total = rows.length, setCount = rows.filter(g => g.setId && g.sheets.length && g.status !== "superseded").length, workingCount = rows.filter(g => g.draft).length; rows = rows.slice(offset, offset + limit);
   for (const row of rows) { delete row.search; delete row.match; }
-  return { sets: rows, runs: runRows.filter(r => rows.some(g => g.runId === r.runId)), sheets: rows.flatMap(g => g.sheets), total, nextOffset: offset + rows.length < total ? offset + rows.length : null,
+  return { sets: rows, runs: runRows.filter(r => rows.some(g => g.runId === r.runId)), sheets: rows.flatMap(g => g.sheets), total, setCount, workingCount, nextOffset: offset + rows.length < total ? offset + rows.length : null,
     scanned: { runs: rs.size, sheets: ss.size }, truncated: { runs: false, sheets: false } };
 }
 // ── bridge session log: Design_Bridge/{session} + /log rows (ids and counts only, never order text) ──

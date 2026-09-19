@@ -203,6 +203,13 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   r = await post(lib, { op: 'setAllocate', day: '2026-09-17', runId: 'run-D', group: 'gold+gold14k' }); const dGF = r.body; assert.strictEqual(dGF.seq, 3, 'a second kin group of the same run is its own set');
   r = await post(lib, { op: 'setAllocate', day: '2026-09-17', runId: 'run-D', group: 'silver' }); assert(r.body.existing && r.body.setId === dSS.setId, 'asked again, the same set');
   r = await post(lib, { op: 'setAllocate', day: '2026-09-17', runId: 'run-E', group: 'silver' }); assert.strictEqual(r.body.seq, 4, 'a later run the same day is the next number, whatever the earlier one made');
+  // Rose-only attempts on odd numbers leave the counter untouched; retries on even sets stay idempotent.
+  r = await post(lib, { op:'setAllocate', day:'2026-09-14', runId:'rose-only', group:'dispatch', roseOnly:true });
+  assert.strictEqual(r.body.deferred,true); assert.strictEqual(r.body.nextSeq,1);
+  r = await post(lib, { op:'setAllocate', day:'2026-09-14', runId:'full-gf', group:'dispatch' }); assert.strictEqual(r.body.seq,1);
+  r = await post(lib, { op:'setAllocate', day:'2026-09-14', runId:'rose-only', group:'dispatch', roseOnly:true }); assert.strictEqual(r.body.seq,2);
+  r = await post(lib, { op:'setAllocate', day:'2026-09-14', runId:'rose-only', group:'dispatch', roseOnly:true }); assert.strictEqual(r.body.seq,2);
+  r = await post(lib, { op:'setAllocate', day:'2026-09-14', runId:'rose-next', group:'dispatch', roseOnly:true }); assert.strictEqual(r.body.deferred,true);
   // the release record is shop-wide and validated
   r = await post(lib, { op: 'releaseGet' }); assert.deepStrictEqual(r.body.lastReleased, {}, 'nothing released yet');
   r = await post(lib, { op: 'releasePut', lastReleased: { rose: '2026-09-17' }, released: { gold14k: '2026-09-18' } }); assert.strictEqual(r.body.lastReleased.rose, '2026-09-17'); assert.strictEqual(r.body.released.gold14k, '2026-09-18');

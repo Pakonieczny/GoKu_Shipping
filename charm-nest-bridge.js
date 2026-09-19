@@ -1352,7 +1352,7 @@ const Pool = window.Pool = (() => {
     agent({ pool: true }, "POOL", `Pool: ${pooled} line(s) queued on the cards · ${rows.filter(r => r.state === "waiting").length} waiting · ${rows.filter(r => !["pooled", "noDesign", "waiting"].includes(r.state)).length} held`);
     return pooled;
   }
-  async function update(poolIds, patch) { for (const id of poolIds) { const p = B.pool.rows.get(id); if (p) Object.assign(p, patch); } if (S.cloud.ok && poolIds.length) await api("charmNestLibrary", { op: "poolUpdate", poolIds, patch }); }
+  async function update(poolIds, patch) { for (const id of poolIds) { const p = B.pool.rows.get(id); if (p) Object.assign(p, patch); } if (S.cloud.ok) for (let i = 0; i < poolIds.length; i += 400) await api("charmNestLibrary", { op: "poolUpdate", poolIds: poolIds.slice(i, i + 400), patch }); }
   const charmOf = poolId => allSheets().flatMap(sh => sh.charms).find(c => c.poolId === poolId) || null;
   const sheetOf = poolId => allSheets().find(sh => sh.placements.some(p => { const c = sh.charms.find(x => x.id === p.id); return c && c.poolId === poolId; })) || null;
   return { poolAdd, addAll, masterCharm, cloneCharm, update, charmOf, sheetOf, sizeEntry };
@@ -1402,7 +1402,29 @@ const Gate = window.Gate = (() => {
     return O_.sheetRelease({ material: sh.metal, verified: !!sh.verification?.ok, placed: sh.placements.length,
       stopped: sh.endedBy === "stopped", dirty: sh.dirty || ["nesting", "finishing", "queued"].includes(sh.status), full: !!sh.releaseFull }, { seq, selected: selected() });
   }
-  async function assemble(run) {
+  async function upgrade(run) {
+    if (!run || run.releasePolicy === 2) return;
+    const prior = Sets.ofRun(run.runId);
+    if (prior.some(s => s.committedAt)) return; // A partially released legacy run finishes under its recorded rules; new runs use policy 2.
+    if (!S.cloud.ok) throw new Error("Reconnect before updating this older run's set rules");
+    run.intakeRecovery ||= { retire:[], backs:[] };
+    for (const set of prior) { set.status = "superseded"; await Sets.save(set); for (const [key, value] of B.sets) if (value === set) B.sets.delete(key); }
+    for (const p of allSheets().filter(p => p.runId === run.runId)) {
+      if (p.sheetId) run.intakeRecovery.retire.push(p.sheetId);
+      run.intakeRecovery.backs.push(...p.charms.map(c => c.poolId).filter(Boolean));
+      p.sheetId = null; p.fileBase = null; p.setId = null; p.seq = null; p.label = null; p.group = "dispatch"; p.draft = true;
+      sheetDirty(p);
+    }
+    await Pool.update(allSheets().filter(p => p.runId === run.runId).flatMap(p => p.charms.map(c => c.poolId).filter(Boolean)), { state:"ready", sheetId:null, setId:null });
+    for (const row of Orders.rows()) if (["written","labelled"].includes(row.state)) row.state = "pooled";
+    run.releasePolicy = 2; run.solidIncluded = {}; run.setIds = []; run.setId = null; run.seq = null; run.step = "nest";
+    await RunCtl.save(run);
+  }
+  let assemblyQueue = Promise.resolve();
+  function assemble(run) {
+    const task = assemblyQueue.catch(() => {}).then(() => assembleNow(run)); assemblyQueue = task; return task;
+  }
+  async function assembleNow(run) {
     if (!modern(run?.runId) || !run) return;
     const pages = allSheets().filter(p => p.runId === run.runId && p.outputs && p.persistedDone);
     let set = Sets.ofRun(run.runId).find(s => s.group === "dispatch");
@@ -1426,11 +1448,13 @@ const Gate = window.Gate = (() => {
     }
     for (const sh of pages) {
       if (!policy(sh, set.seq).include || sh.setId === set.setId) continue;
+      const previous = { draft:sh.draft, setId:sh.setId, setDay:sh.setDay, seq:sh.seq, group:sh.group, sheetIndex:sh.sheetIndex, fileBase:sh.fileBase };
       sh.draft = false; sh.setId = set.setId; sh.setDay = set.day; sh.seq = set.seq; sh.group = "dispatch";
       sh.sheetIndex = 1 + pages.filter(p => p !== sh && p.setId === set.setId && p.metal === sh.metal).length;
       sh.fileBase = CN.sheetFileBase(sh);
       sh.persistedDone = false;
-      await CN.persistSheet(sh, sh.charms); sh.persistedDone = true;
+      try { await CN.persistSheet(sh, sh.charms); sh.persistedDone = true; sh.problem = null; }
+      catch (e) { Object.assign(sh, previous); sh.persistedDone = true; sh.problem = "Set files were not saved: " + e.message; throw e; }
       RunCtl.onSheetDone(sh);
       for (const j of Engrave.items().values()) if (["approved", "written"].includes(j.state) && j.copies.some(id => sh.charms.some(c => c.poolId === id))) await Engrave.writeBacks(j);
     }
@@ -1446,11 +1470,12 @@ const Gate = window.Gate = (() => {
     if (B.run && !["complete", "abandoned"].includes(B.run.status)) {
       B.run.step = "nest"; B.run.commitRequested = false;
       RunCtl.stop("Sheet options changed", "Resume to verify the sheets and rebuild this set before committing.");
-      RunCtl.save(B.run).catch(e => toast(e.message, "bad"));
+      assemble(B.run).then(() => RunCtl.save(B.run)).catch(e => toast(e.message, "bad"));
     }
     refreshAllCards();
   }
   function renderRelease(sh, node) {
+    if (node.contains(document.activeElement) && document.activeElement.matches('[data-solid="w"], [data-solid="h"]')) return;
     const m = sh.metal, st = stockFor(m), seq = Sets.ofRun(B.run?.runId).find(s => s.group === "dispatch")?.seq;
     node.className = "shGate";
     if (!solid(m)) {
@@ -1460,11 +1485,12 @@ const Gate = window.Gate = (() => {
     }
     const disabled = !editable(sh), included = selected()[m] === true;
     node.innerHTML = `<div class="solidOptions"><label><input type="checkbox" data-solid="include" aria-label="Include ${esc(labelOf(m))} in current set" ${included ? "checked" : ""} ${disabled ? "disabled" : ""}> Include in current set</label>
-      <details><summary>Custom size · ${(st.wIn * 25.4).toFixed(1)} × ${(st.hIn * 25.4).toFixed(1)} mm</summary><div class="solidSize">
+      <details ${R.sizeOpen?.[m] ? "open" : ""}><summary>Custom size · ${(st.wIn * 25.4).toFixed(1)} × ${(st.hIn * 25.4).toFixed(1)} mm</summary><div class="solidSize">
       <label>Width (mm)<input type="number" min="5" max="500" step="0.1" data-solid="w" value="${+(st.wIn * 25.4).toFixed(2)}" ${disabled ? "disabled" : ""}></label>
       <label>Height (mm)<input type="number" min="5" max="500" step="0.1" data-solid="h" value="${+(st.hIn * 25.4).toFixed(2)}" ${disabled ? "disabled" : ""}></label>
       <button type="button" class="btn ghost xs" data-solid="size" ${disabled ? "disabled" : ""}>Apply size</button></div></details>
       <button type="button" class="btn ghost xs" data-solid="nest" ${disabled || !sh.charms.length ? "disabled" : ""}>Nest ${esc(labelOf(m))} only</button></div>`;
+    node.querySelector("details").ontoggle = e => { (R.sizeOpen ||= {})[m] = e.target.open; };
     node.querySelector('[data-solid="include"]').onchange = e => {
       if (!editable(sh)) return renderRelease(sh, node);
       const choices = B.run ? (B.run.solidIncluded ||= {}) : (R.solidIncluded ||= {});
@@ -1485,7 +1511,11 @@ const Gate = window.Gate = (() => {
       const pages = pagesOf(m).filter(p => !p.recalled && (!p.runId || p.runId === B.run?.runId));
       const charms = [...new Map(pages.flatMap(p => p.charms).map(c => [c.poolId || c.id, c])).values()];
       const first = pages[0] || sh;
-      for (const p of pages) { p.charms = []; sheetDirty(p); p.isolated = true; }
+      for (const p of pages) {
+        if (B.run && p.sheetId) { B.run.intakeRecovery ||= { retire:[], backs:[] }; B.run.intakeRecovery.retire.push(p.sheetId); B.run.intakeRecovery.backs.push(...p.charms.map(c => c.poolId).filter(Boolean)); }
+        p.sheetId = null; p.fileBase = null; p.setId = null; p.seq = null; p.label = null; p.draft = true;
+        p.charms = []; sheetDirty(p); p.isolated = true;
+      }
       first.charms = charms; first.isolated = true; sheetDirty(first); CN.showPage(m, pagesOf(m).indexOf(first));
       if (B.run) B.run.step = "nest";
       startNest(first);
@@ -1586,7 +1616,7 @@ const Gate = window.Gate = (() => {
     el2.className = cls; el2.classList.remove("hidden"); el2.innerHTML = html;
     const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
   }
-  return { load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, selected, nestable, renderRelease, state: () => R };
+  return { load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, upgrade, selected, nestable, renderRelease, state: () => R };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
@@ -2543,14 +2573,14 @@ const RunCtl = window.RunCtl = (() => {
       case "checkpoint": { await LiveNest.finish(r); await Gate.assemble(r); const sets = Sets.ofRun(r.runId); for (const set of sets) { set.status = "awaiting review"; await Sets.save(set); } r.setIds = sets.map(x => x.setId); r.setId = r.setIds[0] || r.setId || null; r.status = "running"; await save(r); return; }
       case "engrave": { for (const j of Engrave.items().values()) if (j.state === "approved" && j.row.poolIds.length && Pool.sheetOf(j.row.poolIds[0])) { j.copies = j.row.poolIds.slice(); await Engrave.writeBacks(j); } await Engrave.classifyAll(r); await Engrave.fitAll(r); await waitForReview(r); return; }
       case "revalidate": { const v = await Orders.revalidate(r, "before labels"); if (v.changed.length && [...Engrave.items().values()].some(j => j.state === "classify")) { agent({ run: r.runId }, "warn", `${v.changed.length} order(s) changed — back to engraving`); return { goto: "engrave" }; } return; }
-      case "labels": { for (const set of Sets.ofRun(r.runId)) await Sets.finalize(set); return; }
+      case "labels": { for (const set of Sets.ofRun(r.runId).filter(s => s.sheetIds.length)) await Sets.finalize(set); return; }
       case "commit": {
         if (Gate.modern(r.runId) && !Sets.ofRun(r.runId).some(s => s.sheetIds.length)) { r.nothingToCut = true; return; }
         if (S.settings.autoCommit === "off" && !r.commitRequested) { r.status = "paused"; r.awaitCommit = true; await save(r); renderBanner(); agent({ run: r.runId }, "DS", "Auto-commit is off — press Commit set when ready"); return; }
         const v = await Orders.revalidate(r, "before commit");
         if (v.changed.length && [...Engrave.items().values()].some(j => j.state === "classify")) { agent({ run: r.runId }, "warn", `${v.changed.length} order(s) changed before the commit — back to engraving`); r.commitRequested = false; return { goto: "engrave" }; }
         const all = { completed: [], refused: [], held: {} };
-        for (const set of Sets.ofRun(r.runId)) { const res = await Sets.commit(set, r); all.completed.push(...res.completed); all.refused.push(...res.refused); Object.assign(all.held, res.held || {}); }
+        for (const set of Sets.ofRun(r.runId).filter(s => s.sheetIds.length)) { const res = await Sets.commit(set, r); all.completed.push(...res.completed); all.refused.push(...res.refused); Object.assign(all.held, res.held || {}); }
         r.committed = all.completed; r.refused = all.refused; r.holds = all.held; return;
       }
       case "complete": { try { await Orders.unclaim([...new Set(Orders.rows().map(x => x.order.receiptId))]); } catch (_) {} return; }
@@ -2620,6 +2650,7 @@ const RunCtl = window.RunCtl = (() => {
   function stopIfRunning(why, fix) { if (B.run && B.run.status === "running") stop(why, fix); }
   async function resume() {
     const r = B.run; if (!r || !["stopped", "paused"].includes(r.status)) return;
+    await Gate.upgrade(r);
     if (allSheets().some(pg => pg.runId === r.runId && (pg.problem || pg.dirty || ["ready", "idle"].includes(pg.status)) && pg.charms.length)) {
       r.step = "nest"; for (const pg of allSheets()) if (pg.runId === r.runId && pg.problem) sheetDirty(pg);
     }
@@ -3368,10 +3399,10 @@ const RunHistory = window.RunHistory = (() => {
     let lastDay = null, html = "";
     for (const g of seenSets) {
       if (g.day !== lastDay) { html += `<div class="hDay">${esc(dayWord(g.day) || "no date")}</div>`; lastDay = g.day; }
-      const name = g.seq ? `Set ${g.seq}` : (g.sheets[0]?.fileBase || "Run " + String(g.runId || "").slice(-8));
+      const name = g.seq ? `Set ${g.seq}` : (g.draft ? "Working sheets" : g.sheets[0]?.fileBase || "Run " + String(g.runId || "").slice(-8));
       const mats = g.materials.map(m => labelOf(m)).join(" \u00b7 ");
       const isCur = g.runId && g.runId === cur;
-      const openBtn = g.sheets.length ? `<button class="btn gold sm" data-a="open" title="put this set's sheets back on the material cards \u2014 from what was saved, nothing runs">Preview</button>` : "";
+      const openBtn = g.sheets.length ? `<button class="btn gold sm" data-a="open" title="Preview the saved sheets without replacing your current workspace">Preview</button>` : "";
       const resumeBtn = g.runId && openRuns.some(r => r.runId === g.runId) ? `<button class="btn ghost sm" data-a="resume" title="pick the unfinished run this set belongs to up where it stopped \u2014 it re-reads every order from Etsy first">Resume the run\u2026</button>` : "";
       html += H.view === "cards"
         ? `<div class="hSet card hoverItem${isCur ? " cur" : ""}" data-set="${esc(g.setId || "")}" data-run="${esc(g.runId || "")}" tabindex="0">
@@ -3394,7 +3425,7 @@ const RunHistory = window.RunHistory = (() => {
       const o = node.querySelector("[data-a=open]"); if (o) o.onclick = e => { e.stopPropagation(); if (H.dlg.open) H.dlg.close(); SetPicker.preview(H.sets.find(g => g.setId === setId && g.runId === runId)); };
       const rs = node.querySelector("[data-a=resume]"); if (rs) rs.onclick = e => {
         e.stopPropagation(); const r2 = H.runs.find(x => x.runId === runId) || {};
-        if (!confirm(`Pick run ${r2.seq ? "Set " + r2.seq : String(runId).slice(-8)} up again?\n\nIt re-reads all ${r2.orders || ""} orders from Etsy through the Design Station before it can carry on, which takes a few minutes.\n\nTo look at what it already made, press Open instead \u2014 that reads nothing from Etsy.`)) return;
+        if (!confirm(`Pick run ${r2.seq ? "Set " + r2.seq : String(runId).slice(-8)} up again?\n\nIt re-reads all ${r2.orders || ""} orders from Etsy through the Design Station before it can carry on, which takes a few minutes.\n\nTo look at what it already made, press Preview instead \u2014 that reads nothing from Etsy.`)) return;
         H.dlg.close(); RunCtl.resumeRun(runId).catch(err => toast(err.message, "bad", 7000));
       };
       if (o) node.onclick = e => { if (e.target.closest("button")) return; o.click(); };
@@ -3812,6 +3843,11 @@ const LiveNest = window.LiveNest = (() => {
         else if (c.arrivalPin) { c.pinned = null; delete c.arrivalPin; }
       }
       const retiredIds = pages.map(p => p.sheetId).filter(Boolean);
+      if (Gate.modern(run.runId)) {
+        const ids = all.map(c => c.poolId).filter(Boolean);
+        await Pool.update(ids, { state:"ready", sheetId:null, setId:null });
+        for (const row of Orders.rows()) if (row.poolIds.some(id => ids.includes(id))) row.state = "pooled";
+      }
       for (const p of pages) {
         for (const c of p.charms) if (c.poolId) rewrites.add(c.poolId);
         if (Gate.modern(run.runId)) { p.sheetId = null; p.fileBase = null; p.setId = null; p.seq = null; p.draft = true; }
@@ -3819,7 +3855,7 @@ const LiveNest = window.LiveNest = (() => {
       }
       pg.charms = all; pg.status = "ready"; pg.optimizationTried = near || pages.length > 1;
       for (const set of Sets.ofRun(run.runId)) {
-        const ids = new Set(pages.map(p => p.sheetId).filter(Boolean));
+        const ids = new Set(retiredIds);
         set.sheetIds = set.sheetIds.filter(id => !ids.has(id)); set.labelFiles = set.labelFiles.filter(f => !ids.has(f.sheetId));
         for (const order of Object.values(set.orders)) for (const line of Object.values(order.lines)) line.copies = line.copies.filter(c => !ids.has(c.sheetId));
       }
@@ -3852,7 +3888,7 @@ const LiveNest = window.LiveNest = (() => {
       if (page) { page.cloud = null; page.fileBase = null; page.sheetId = null; }
     }
     const rewrites = new Set(recovery.backs);
-    for (const j of Engrave.items().values()) if (j.copies.some(id => rewrites.has(id)) && ["approved", "written"].includes(j.state)) await Engrave.writeBacks(j);
+    for (const j of Engrave.items().values()) if (j.copies.some(id => rewrites.has(id)) && ["approved", "written"].includes(j.state) && (!Gate.modern(run.runId) || j.copies.every(id => Pool.sheetOf(id)?.fileBase))) await Engrave.writeBacks(j);
     for (const set of Sets.ofRun(run.runId)) await Sets.save(set);
     delete run.intakeRecovery; Session.schedule();
   }
@@ -3871,14 +3907,17 @@ const SetPicker = window.SetPicker = (() => {
     box.querySelector('[data-history]').onclick = () => { box.open = false; RunHistory.show(); };
   }
   async function load() {
-    const list = box.querySelector('[data-setlist]'); list.textContent = "Reading saved sets…";
+    const list = box.querySelector('[data-setlist]');
+    const current = `<button type="button" data-current>Current workspace · ${allSheets().filter(p => p.charms.length).length} sheets</button>`;
+    list.innerHTML = current + `<small>Reading saved sets…</small>`;
+    list.querySelector('[data-current]').onclick = previewCurrent;
     try {
       const r = await api("charmNestLibrary", { op: "history", limit: 20 }, { quiet: true });
       rows = r.sets || [];
-      list.innerHTML = `<button type="button" data-current>Current workspace · ${allSheets().filter(p => p.charms.length).length} sheets</button><small>${r.total || 0} saved sets / working groups · newest first</small>` + rows.map((g,i) => `<button type="button" data-preview="${i}">${g.seq ? "Set " + g.seq : "Working sheets"} · ${esc(g.day || "")}<small>${g.sheets.length} sheets · ${esc(counts(g.sheets))}</small></button>`).join("");
+      list.innerHTML = `<button type="button" data-current>Current workspace · ${allSheets().filter(p => p.charms.length).length} sheets</button><small>${r.setCount || 0} saved sets · ${r.workingCount || 0} working groups · newest first</small>` + rows.map((g,i) => `<button type="button" data-preview="${i}">${g.seq ? "Set " + g.seq : "Working sheets"} · ${esc(g.day || "")}<small>${g.sheets.length} sheets · ${esc(counts(g.sheets))}</small></button>`).join("");
       list.querySelector('[data-current]').onclick = () => previewCurrent();
       list.querySelectorAll('[data-preview]').forEach(b => b.onclick = () => preview(rows[+b.dataset.preview]));
-    } catch (e) { list.textContent = `Could not read sets: ${e.message}`; }
+    } catch (e) { list.innerHTML = current + `<small>Could not read saved sets: ${esc(e.message)}</small>`; list.querySelector('[data-current]').onclick = previewCurrent; }
   }
   const counts = sheets => METALS.map(m => { const n = sheets.filter(s => s.metal === m.key).length; return n ? `${labelOf(m.key)} ${n}` : ""; }).filter(Boolean).join(" · ");
   function previewCurrent() {
@@ -3886,7 +3925,8 @@ const SetPicker = window.SetPicker = (() => {
     preview({ name:"Current workspace", day:B.run?.day || today(), sheets, status:B.run?.status || "manual" });
   }
   function preview(g) {
-    box.open = false;
+    if (!g) return;
+    mount(); box.open = false;
     if (!dialog) { dialog = el("dialog", "hist"); dialog.id = "setPreview"; document.body.appendChild(dialog); }
     dialog.innerHTML = `<form method="dialog" class="x"><button class="btn ghost sm">Close preview</button></form><h2>${esc(g.name || (g.seq ? "Set " + g.seq : "Working sheets"))}</h2><p>${esc(g.day || "")} · ${esc(g.status || "")} · ${g.sheets.length} sheets</p><p>${esc(counts(g.sheets))}</p><div class="setPreviewGrid">${g.sheets.map(s => `<figure>${s.preview ? `<img crossorigin="anonymous" src="${esc(cors(s.preview))}" alt="${esc(labelOf(s.metal))} sheet preview">` : `<div class="hEmpty">Preview not saved yet</div>`}<figcaption><b>${esc(labelOf(s.metal))}</b> · ${s.placedCount || 0} pieces · ${s.draft ? "held for a later set" : "Set " + (s.setSeq || g.seq || "—")}<small>${esc(s.fileBase || "")}</small></figcaption></figure>`).join("")}</div><p class="help">Preview only. Your current workspace stays open.</p>`;
     dialog.showModal();

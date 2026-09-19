@@ -2514,7 +2514,7 @@ function renderCard(sh) {
   prov.innerHTML = bits.length ? "· " + bits.join(" · ") : "";
   prov.title = sh.fileBase ? `Saved as ${sh.fileBase}` : (sh.runId ? `Run ${sh.runId}` : "");
   const items = activeCharms(sh);
-  const pillMap = { idle: ["neutral", "Idle"], ready: ["info", `Ready · ${items.length}`], queued: ["warn", "Queued"], nesting: ["warn", `<span class="spin"></span>Nesting`], finishing: ["warn", `<span class="spin"></span>Finishing`], complete: ["ok", rc ? "Recalled" : "Complete"], partial: ["bad", "Partial"] };
+  const pillMap = { idle: ["neutral", "Idle"], ready: ["info", `Ready · ${items.length}`], queued: ["warn", "Queued"], nesting: ["warn", `<span class="spin"></span>Nesting`], finishing: ["warn", `<span class="spin"></span>Finishing`], complete: ["ok", rc ? "Recalled" : sh.draft ? "Held" : "Complete"], partial: ["bad", "Partial"] };
   const [k, t] = pillMap[sh.status] || pillMap.idle; q("pill").className = "pill " + k; q("pill").innerHTML = t;
   renderTabs(sh);
   q("hint").classList.toggle("hidden", items.length > 0 || sh.status !== "idle");
