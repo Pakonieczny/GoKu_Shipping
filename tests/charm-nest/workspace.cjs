@@ -50,7 +50,7 @@ function context() {
     const RunCtl={renderBanner(){},save:async()=>saved++,poke(){},stop(){},start:async()=>{},clearRunState(){recall.runId=null;B.orders={rows:[],byKey:new Map()};}};
     const CN={showPage(){}}; const LiveStrip={rows:[]};
     const P={parseSource:async()=>{parsed++;return {rebuilt:true};}};
-    const O={lineKey:(o,l)=>o.receiptId+'/'+l.transactionId,stepIndex:s=>['pull','pool','nest','engrave'].indexOf(s)};
+    const O={lineKey:(o,l)=>o.receiptId+'/'+l.transactionId,stepIndex:s=>['pull','pool','nest','checkpoint','engrave'].indexOf(s)};
     const Sandbox={on:()=>S.settings.sandbox==='on'};
     const DesignLink={ensure:async()=>{},etsyBudgetOk:()=>true,meter(){},call:async()=>{polled++;return {total:0,hydrated:0,orders:[]};}};
     const Master={load:async()=>{}}; const LiveNest={add:async()=>{}};
@@ -158,6 +158,14 @@ function context() {
     assert.equal(goldSet.status,'superseded');assert.equal(silverSet.status,'superseded');assert.equal(B.sets.size,1);
     assert.equal(first.group,'gold+silver');assert.equal(silver.group,'gold+silver');assert.equal(B.run.setIds[0],'combined');
     assert(apiCalls.some(x=>x.op==='archiveEmptySheet'&&x.id==='original-gold'));assert(apiCalls.some(x=>x.op==='archiveEmptySheet'&&x.id==='original-silver'));
+    await Session.flush();
+  })()`,c);
+  await vm.runInContext(`(async()=>{
+    B.run.status='review';B.run.step='engrave';B.run.intakeRecovery={retire:['interrupted-sheet'],backs:['p1']};B.run.sheets['interrupted-sheet']={};
+    await Session.flush();await Session.restore();assert.equal(B.run.step,'checkpoint','refresh must finish repack bookkeeping before engraving/labels');
+    await RealLiveNest.finish(B.run);await RealLiveNest.finish(B.run);
+    assert.equal(B.run.intakeRecovery,undefined);assert.equal(B.run.sheets['interrupted-sheet'],undefined);
+    assert.equal(apiCalls.filter(x=>x.op==='archiveEmptySheet'&&x.id==='interrupted-sheet').length,1);
     await Session.flush();
   })()`,c);
   console.log('workspace OK · layouts, typed geometry, approval links, pending intake, duplicate receipts, dates, cadence, rolling counts, live repack, mixed-material sets');

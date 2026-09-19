@@ -2399,7 +2399,7 @@ const RunCtl = window.RunCtl = (() => {
       case "pool": { const n = await Pool.addAll(r); if (!n) { const w = Orders.rows().filter(x => x.state === "waiting").length; if (w) { r.status = "complete"; r.finishedAt = Date.now(); r.nothingToCut = true; await save(r); renderBanner(); agent({ run: r.runId }, "DS", `Nothing goes to the laser today: ${w} line(s) wait for a full sheet or a slow metal's day`); return { goto: null, done: true }; } stop("nothing could be pooled — every line needs a decision", "Resolve the items in Review, then Resume."); return; } Engrave.classifyAll(r).catch(e => agent({ run: r.runId }, "warn", `classifier: ${e.message}`)); return; }
       case "plan": { for (const m of METALS) { const pg = activePage(m.key); if (!pg.charms.some(c => c.poolId)) continue; const sat = computeSaturation(pg); agent({ metal: m.key, run: r.runId }, "info", `${labelOf(m.key)}: ${sat.count} piece(s) need ${fmt.pct(sat.totalNeeded / sat.usable)} of the plate — ${sat.recommend ? "over the " + fmt.pct(sat.rho.cap) + " ceiling, the overflow goes to a second sheet" : "under the " + fmt.pct(sat.rho.cap) + " ceiling"}`); } return; }
       case "nest": { await nestAll(r); return; }
-      case "checkpoint": { const sets = Sets.ofRun(r.runId); for (const set of sets) { set.status = "awaiting review"; await Sets.save(set); } r.setIds = sets.map(x => x.setId); r.setId = r.setIds[0] || r.setId || null; r.status = "running"; await save(r); return; }
+      case "checkpoint": { await LiveNest.finish(r); const sets = Sets.ofRun(r.runId); for (const set of sets) { set.status = "awaiting review"; await Sets.save(set); } r.setIds = sets.map(x => x.setId); r.setId = r.setIds[0] || r.setId || null; r.status = "running"; await save(r); return; }
       case "engrave": { await Engrave.classifyAll(r); await Engrave.fitAll(r); await waitForReview(r); return; }
       case "revalidate": { const v = await Orders.revalidate(r, "before labels"); if (v.changed.length && [...Engrave.items().values()].some(j => j.state === "classify")) { agent({ run: r.runId }, "warn", `${v.changed.length} order(s) changed — back to engraving`); return { goto: "engrave" }; } return; }
       case "labels": { for (const set of Sets.ofRun(r.runId)) await Sets.finalize(set); return; }
@@ -3483,6 +3483,7 @@ const Session = window.Session = (() => {
         B.run.workspaceRestored = true;
         if (allSheets().some(p => p.runId === B.run.runId && p.dirty) && O.stepIndex(B.run.step) > O.stepIndex("nest")) B.run.step = "nest";
         B.run.status = "stopped"; B.run.stoppedBy = "Workspace restored after refresh";
+        if (B.run.intakeRecovery && O.stepIndex(B.run.step) > O.stepIndex("checkpoint")) B.run.step = "checkpoint";
         B.run.fix = "Your layouts and decisions are kept. Resume to continue processing.";
       }
       Orders.render(); Engrave.render(); Review.render(); RunCtl.renderBanner(); refreshAllCards(); renderRail(); updateTopSub();
@@ -3616,12 +3617,12 @@ const Arrivals = window.Arrivals = (() => {
    Only uncommitted sheets belong here. The same solver and both existing verifiers still decide acceptance. */
 const LiveNest = window.LiveNest = (() => {
   async function add(run) {
+    run.intakeRecovery = run.intakeRecovery || { retire: [], backs: [] };
     const touched = new Set(Orders.rows().filter(r => ["pulled", "waiting"].includes(r.state)).map(r => r.spec?.material).filter(Boolean));
     const before = new Set(allSheets().flatMap(p => p.charms.map(c => c.poolId)).filter(Boolean));
     // An order can join previously independent material sets. Re-number that connected group together.
     const potential = O.kinGroups(Orders.rows().filter(r => r.spec?.material && !["gone", "noDesign"].includes(r.state)).map(r => ({ orderId: String(r.order.receiptId), material: r.spec.material })));
     for (const m of [...touched]) for (const linked of (potential[m] || m).split("+")) touched.add(linked);
-    const superseded = [];
     async function reconcileGroups() {
     for (const group of new Set(Object.values(run.groups || {}))) {
       const old = Sets.ofRun(run.runId).filter(s => s.materials.some(m => group.split("+").includes(m)) && s.group !== group);
@@ -3632,7 +3633,7 @@ const LiveNest = window.LiveNest = (() => {
         set.status = "superseded"; await Sets.save(set);
         for (const [key, value] of B.sets) if (value === set) B.sets.delete(key);
         for (const p of allSheets().filter(p => p.setId === set.setId)) {
-          if (p.sheetId) superseded.push(p.sheetId);
+          if (p.sheetId) { run.intakeRecovery.retire.push(p.sheetId); }
           p.sheetId = null; p.fileBase = null; p.setId = null; p.seq = null; p.sheetIndex = null; p.group = group;
         }
       }
@@ -3650,7 +3651,7 @@ const LiveNest = window.LiveNest = (() => {
     }
     try { await Pool.addAll(run); } finally { Gate.state().forceFill = force; }
     await reconcileGroups();
-    const oldSheets = [], rewrites = new Set();
+    const rewrites = new Set();
     for (const [m, pg] of target) {
       const pages = pagesOf(m).filter(p => p.runId === run.runId);
       const all = [...new Map(pages.flatMap(p => p.charms).map(c => [c.poolId || c.id, c])).values()];
@@ -3664,7 +3665,6 @@ const LiveNest = window.LiveNest = (() => {
         if (!near && pages.length === 1 && pl && !c.pinned && !all.some(x => (x.orderDate || 0) < (c.orderDate || 0) && !before.has(x.poolId))) { c.pinned = { cxPt: pl.cxPt, cyPt: pl.cyPt, angle: pl.angle }; c.arrivalPin = true; }
         else if (c.arrivalPin) { c.pinned = null; delete c.arrivalPin; }
       }
-      oldSheets.push(...pages);
       for (const p of pages) {
         for (const c of p.charms) if (c.poolId) rewrites.add(c.poolId);
         p.charms = []; p.placements = []; p.outputs = null; p.label = null; p.backPool = []; p.backOutputs = null; p.persisted = null; p.persistedDone = true; p.status = "idle"; p.dirty = false;
@@ -3676,6 +3676,8 @@ const LiveNest = window.LiveNest = (() => {
         for (const order of Object.values(set.orders)) for (const line of Object.values(order.lines)) line.copies = line.copies.filter(c => !ids.has(c.sheetId));
       }
       agent({ metal: m }, "nest", near || pages.length > 1 ? "Re-optimizing open sheets, oldest orders first; free space is used before the next sheet" : "Adding new pieces around the current layout");
+      run.intakeRecovery.retire = [...new Set(run.intakeRecovery.retire.concat(pages.map(p => p.sheetId).filter(Boolean)))];
+      run.intakeRecovery.backs = [...new Set(run.intakeRecovery.backs.concat([...rewrites]))];
       startNest(pg);
     }
     // Never advance to labels/commit until all overflow sheets and all cloud writes have finished.
@@ -3686,18 +3688,26 @@ const LiveNest = window.LiveNest = (() => {
       if (!pages.some(p => ["nesting", "finishing", "queued"].includes(p.status) || p.dirty || (p.persisted && !p.persistedDone))) break;
       await sleep(250);
     }
-    for (const id of superseded) { if (S.cloud.ok) await api("charmNestLibrary", { op: "archiveEmptySheet", id, runId: run.runId }); delete run.sheets[id]; }
-    for (const p of oldSheets.filter(p => !p.charms.length && p.sheetId)) {
-      if (S.cloud.ok) await api("charmNestLibrary", { op: "archiveEmptySheet", id: p.sheetId, runId: run.runId });
-      delete run.sheets[p.sheetId]; p.cloud = null; p.fileBase = null; p.sheetId = null;
-    }
-    // Approval is for the engraving on the charm. Keep it, regenerate its back files under its new sheet membership.
-    for (const j of Engrave.items().values()) if (j.copies.some(id => rewrites.has(id)) && ["approved", "written"].includes(j.state)) await Engrave.writeBacks(j);
-    for (const set of Sets.ofRun(run.runId)) await Sets.save(set);
+    await finish(run);
     if (allSheets().some(p => p.runId === run.runId && p.problem)) throw new Error("A sheet needs attention before intake can finish");
   }
-
-  return { add };
+  // Also called at the normal checkpoint after refresh, so a crash cannot leave obsolete sheets or backs in the set.
+  async function finish(run) {
+    const recovery = run.intakeRecovery; if (!recovery) return;
+    for (const id of new Set(recovery.retire)) {
+      const page = allSheets().find(p => p.runId === run.runId && p.sheetId === id);
+      if (page?.charms.length) continue;
+      if (!S.cloud.ok) throw new Error("Reconnect to finish saving the re-optimized set");
+      await api("charmNestLibrary", { op: "archiveEmptySheet", id, runId: run.runId });
+      delete run.sheets[id];
+      if (page) { page.cloud = null; page.fileBase = null; page.sheetId = null; }
+    }
+    const rewrites = new Set(recovery.backs);
+    for (const j of Engrave.items().values()) if (j.copies.some(id => rewrites.has(id)) && ["approved", "written"].includes(j.state)) await Engrave.writeBacks(j);
+    for (const set of Sets.ofRun(run.runId)) await Sets.save(set);
+    delete run.intakeRecovery; Session.schedule();
+  }
+  return { add, finish };
 })();
 
 /* ═══ 25 · boot ═══════════════════════════════════════════════════════════ */
