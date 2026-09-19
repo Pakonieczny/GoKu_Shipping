@@ -40,7 +40,7 @@ const db = admin.firestore();
    bridge log) go to Sandbox_-prefixed collections; the master index, the charm library, maps and calibration stay
    shared and are only read. Set per request; a function instance handles one request at a time. ── */
 let PREFIX = "";
-const SANDBOXED = new Set(["Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Release", "Design_Bridge"]);
+const SANDBOXED = new Set(["Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Design_Bridge"]);
 const col = name => db.collection(SANDBOXED.has(name) ? PREFIX + name : name);
 const FV = admin.firestore.FieldValue;
 
@@ -130,7 +130,7 @@ async function op_putSheet(b) {
 }
 async function op_listSheets(b) {
   const limit = Math.min(500, Math.max(1, num(b.limit) || 300));
-  let q = col(SHEETS).orderBy("day", "desc");
+  let q = b.runId ? col(SHEETS).where("runId", "==", b.runId) : b.setId ? col(SHEETS).where("setId", "==", b.setId) : col(SHEETS).orderBy("day", "desc");
   if (b.from && /^\d{4}-\d{2}-\d{2}$/.test(b.from)) q = q.where("day", ">=", b.from);
   if (b.to && /^\d{4}-\d{2}-\d{2}$/.test(b.to)) q = q.where("day", "<=", b.to);
   const snap = await q.limit(limit).get();
@@ -471,11 +471,14 @@ async function op_setAllocate(b) {
   if (runId) { const ex = await col(SETS).where("key", "==", key).limit(1).get(); if (!ex.empty) { const d = ex.docs[0].data(); return { ok: true, setId: d.setId, seq: d.seq, day: d.day, existing: true }; }
     if (!group) { const ex2 = await col(SETS).where("runId", "==", runId).limit(1).get(); if (!ex2.empty) { const d = ex2.docs[0].data(); return { ok: true, setId: d.setId, seq: d.seq, day: d.day, existing: true }; } } }
   const res = await db.runTransaction(async t => {
+    const allocation = runId ? col(COUNTERS).doc("allocation-" + require("crypto").createHash("sha256").update(key).digest("hex").slice(0, 40)) : null;
+    if (allocation) { const prior = await t.get(allocation); if (prior.exists) return prior.data(); }
     const cref = col(COUNTERS).doc(day); const cs = await t.get(cref);
     const seq = (cs.exists ? num(cs.data().seq) : 0) + 1;
     const setId = `set-${day}-${seq}`;
     t.set(cref, { day, seq, updatedAt: FV.serverTimestamp() }, { merge: true });
     t.set(col(SETS).doc(setId), { setId, runId: runId || null, key, group: group || null, day, seq, name: `Set-${seq}`, folder: `charmnest/sets/${day}/Set-${seq}`, materials: [], sheetIds: [], orders: {}, labels: null, status: "open", createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() });
+    if (allocation) t.set(allocation, { setId, seq });
     return { setId, seq };
   });
   return Object.assign({ ok: true, day }, res);
@@ -504,11 +507,44 @@ async function op_releasePut(b) {
   await col(RELEASE).doc("current").set(patch, { merge: true });
   return op_releaseGet();
 }
+async function op_archiveEmptySheet(b) {
+  if (!isId(b.id) || !isId(b.runId)) return { error: "bad sheet/run id" };
+  const ref = col(SHEETS).doc(b.id), sheet = await ref.get();
+  if (!sheet.exists || sheet.data().runId !== b.runId) return { error: "sheet does not belong to this run" };
+  const run = await col(RUNS).doc(b.runId).get();
+  if (!run.exists || ["complete", "abandoned"].includes(run.data().status)) return { error: "finished sheets cannot be changed by intake" };
+  await ref.set({ archived: true, archivedReason: "open sheets repacked", updatedAt: FV.serverTimestamp() }, { merge: true });
+  return { ok: true };
+}
+// ── arrival ledger, separate in production and sandbox ──
+async function op_arrivalRecord(b) {
+  const receipts = [...new Map((b.orders || []).filter(o => /^\d{1,30}$/.test(String(o.id))).map(o => [String(o.id), o])).values()];
+  if (receipts.length > 5000) return { error: "too many receipts" };
+  const now = Date.now(), collection = col("Charm_Nest_Arrivals"), firstSeen = {};
+  // Existing receipts need one batched read; transact only first arrivals.
+  const known = receipts.length ? await db.getAll(...receipts.map(o => collection.doc(String(o.id)))) : [];
+  const missing = receipts.filter((o, i) => { if (!known[i].exists) return true; firstSeen[String(o.id)] = known[i].data().firstSeenAt; return false; });
+  // Bound concurrency; transactions keep simultaneous stations from counting an order twice.
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(8, missing.length) }, async () => {
+    while (cursor < missing.length) {
+      const o = missing[cursor++], id = String(o.id), ref = collection.doc(id);
+      firstSeen[id] = await db.runTransaction(async t => {
+        const old = await t.get(ref); if (old.exists) return old.data().firstSeenAt;
+        t.set(ref, { id, firstSeenAt: now, createTs: num(o.createTs) }); return now;
+      });
+    }
+  }));
+  const recent = await collection.where("firstSeenAt", ">=", now - 86400000).get();
+  const times = recent.docs.map(d => d.data());
+  for (const row of times) firstSeen[row.id] = row.firstSeenAt;
+  return { ok: true, firstSeen, count24: times.length, count1: times.filter(r => r.firstSeenAt > now - 3600000).length, at: now };
+}
 // ── runs ──
 async function op_runPut(b) {
   const r = b.run || {}; const id = str(r.runId, 80); if (!isId(id)) return { error: "bad run id" };
   const doc = Object.assign({}, r, { runId: id, updatedAt: FV.serverTimestamp() });
-  const ref = col(RUNS).doc(id); const ex = await ref.get(); if (!ex.exists) doc.createdAt = FV.serverTimestamp();
+  const ref = col(RUNS).doc(id); const ex = await ref.get(); doc.createdAt = ex.exists ? (ex.data().createdAt || FV.serverTimestamp()) : FV.serverTimestamp();
   await ref.set(doc, { merge: !!b.merge });
   return { ok: true, runId: id };
 }
@@ -520,39 +556,34 @@ async function op_runList(b) {
   return { runs: rows };
 }
 /* "Find that order from last Tuesday." There is no index that can answer it: Firestore has no full-text search, and a
-   shop's history of runs is small enough to read. So the most recent runs and sheets are scanned here, in one place, and
+   shop's history of runs is small enough to read. So run summaries and sheet metadata are searched here, before result pagination, and
    the answer says how many of each it actually looked at — a search that quietly stopped early is worse than none. */
 async function op_history(b) {
-  const q = String(b.q || "").trim().toLowerCase();
-  const want = Math.min(200, num(b.limit) || 60);
-  const scanRuns = Math.min(400, num(b.scanRuns) || 150), scanSheets = Math.min(500, num(b.scanSheets) || 200);
-  const rs = await col(RUNS).orderBy("updatedAt", "desc").limit(scanRuns).get();
-  const runs = [];
-  for (const d of rs.docs) {
-    const r = d.data(), lines = r.lines || {};
-    const skus = new Set(), orders = new Set(), words = [];
-    for (const k of Object.keys(lines)) { const l = lines[k] || {}; if (l.sku) skus.add(String(l.sku)); if (l.orderId) orders.add(String(l.orderId)); if (l.engrave && l.engrave.text) words.push(String(l.engrave.text)); }
-    const hay = [r.runId, r.setId, r.day, r.status, r.step, r.mode, r.stoppedBy, (r.errors || []).map(e => e.why).join(" "), [...orders].join(" "), [...skus].join(" "), words.join(" ")].join(" ").toLowerCase();
-    if (q && !hay.includes(q)) continue;
-    const seq = r.seq || (/-(\d+)$/.exec(String(r.setId || "")) || [])[1] || null;
-    runs.push({ runId: r.runId, setId: r.setId || null, seq: seq ? +seq : null, day: r.day || null, status: r.status, step: r.step, mode: r.mode || null,
-      lines: Object.keys(lines).length, orders: orders.size, skus: skus.size, holds: Object.keys(r.holds || {}).length, sheets: Object.keys(r.sheets || {}).length,
-      updatedAt: ms(r.updatedAt), createdAt: ms(r.createdAt), stoppedBy: r.stoppedBy || null,
-      hitOrders: q ? [...orders].filter(x => x.toLowerCase().includes(q)).slice(0, 12) : [],
-      hitSkus: q ? [...skus].filter(x => x.toLowerCase().includes(q)).slice(0, 12) : [] });
-    if (runs.length >= want) break;
+  const q = String(b.q || "").trim().toLowerCase(), offset = Math.max(0, num(b.offset)), limit = Math.min(100, Math.max(1, num(b.limit) || 60));
+  // Search complete set membership before pagination: a matching order must reveal all of its set's sheets.
+  const [rs, ss, ts] = await Promise.all([col(RUNS).select("runId", "setId", "seq", "day", "status", "step", "lines", "sheets", "errors", "stoppedBy", "createdAt", "updatedAt").get(), col(SHEETS).select("id", "setId", "setSeq", "runId", "day", "metal", "metalLabel", "status", "orders", "sheetIndex", "page", "updatedAt", "archived", "folder", "fileBase", "saving", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "outputs", "names", "charms").get(), col(SETS).select("seq", "day", "runId", "status", "updatedAt", "materials", "orders").get()]);
+  const runMap = new Map(rs.docs.map(d => [d.id, d.data()])), sheets = ss.docs.map(d => d.data()).filter(x => !x.archived);
+  const groups = new Map(ts.docs.map(d => { const x = d.data(); return [d.id, { setId: d.id, seq: x.seq, day: x.day, runId: x.runId, status: x.status, updatedAt: ms(x.updatedAt), sheets: [], materials: x.materials || [], orderIds: Object.keys(x.orders || {}), search: [] }]; }));
+  for (const x of sheets) {
+    const key = x.setId || "sheet:" + x.id;
+    if (!groups.has(key)) groups.set(key, { setId: x.setId || null, seq: x.setSeq || null, day: x.day, runId: x.runId, status: x.status, sheets: [], materials: [], orderIds: [], search: [] });
+    const g = groups.get(key); g.sheets.push(Object.assign(slim(x), { orders: (x.orders || []).length, orderIds: x.orders || [], sheetIndex: x.sheetIndex || x.page || 1 }));
+    if (!g.materials.includes(x.metal)) g.materials.push(x.metal);
+    g.search.push(x.names || "", x.metalLabel || "", ...(x.charms || []).map(c => c.sku || ""));
+    g.orderIds.push(...(x.orders || [])); g.updatedAt = Math.max(g.updatedAt || 0, ms(x.updatedAt) || 0);
   }
-  const ss = await col(SHEETS).orderBy("day", "desc").limit(scanSheets).get();
-  const sheets = [];
-  for (const d of ss.docs) {
-    const x = d.data(); if (x.archived) continue;
-    const hay = [x.id, x.fileBase, x.metal, x.metalLabel, x.day, x.setId, x.runId, (x.orders || []).join(" "), x.names || "", (x.charms || []).map(c => c.sku || "").join(" ")].join(" ").toLowerCase();
-    if (q && !hay.includes(q)) continue;
-    sheets.push({ id: x.id, fileBase: x.fileBase || null, metal: x.metal, metalLabel: x.metalLabel || null, day: x.day || null, setId: x.setId || null, setSeq: x.setSeq || null, runId: x.runId || null,
-      status: x.status, placedCount: x.placedCount || 0, charmCount: x.charmCount || 0, density: x.density || 0, orders: (x.orders || []).length, updatedAt: ms(x.updatedAt), preview: (x.outputs && x.outputs.preview && x.outputs.preview.url) || null });
-    if (sheets.length >= want) break;
-  }
-  return { runs, sheets, scanned: { runs: rs.size, sheets: ss.size }, truncated: { runs: rs.size >= scanRuns, sheets: ss.size >= scanSheets } };
+  const runRows = [...runMap.values()].map(r => ({ runId: r.runId, setId: r.setId || null, seq: r.seq || null, day: r.day, status: r.status, step: r.step, lines: Object.keys(r.lines || {}).length, orders: new Set(Object.values(r.lines || {}).map(l => l.orderId)).size, sheets: Object.keys(r.sheets || {}).length, updatedAt: ms(r.updatedAt), createdAt: ms(r.createdAt), stoppedBy: r.stoppedBy || null, hitOrders: [...new Set(Object.values(r.lines || {}).map(l => String(l.orderId || "")))].filter(x => q && x.toLowerCase().includes(q)), hitSkus: [...new Set(Object.values(r.lines || {}).map(l => String(l.sku || "")))].filter(x => q && x.toLowerCase().includes(q)) }));
+  for (const r of runRows) if (![...groups.values()].some(g => g.runId === r.runId)) groups.set("run:" + r.runId, { setId: r.setId, seq: r.seq, runId: r.runId, day: r.day, status: r.status, sheets: [], materials: [], orderIds: [], orders: r.orders, updatedAt: r.updatedAt });
+  let rows = [...groups.values()].map(g => {
+    const r = runMap.get(g.runId), ids = new Set(g.orderIds.map(String));
+    const lines = Object.values(r?.lines || {}).filter(l => !ids.size || ids.has(String(l.orderId)));
+    const hay = [g.setId, "Set " + g.seq, g.day, g.runId, g.status, r?.stoppedBy, ...(r?.errors || []).map(e => e.why), ...g.materials, ...(g.search || []), ...ids, ...lines.flatMap(l => [l.orderId, l.sku, l.engrave?.text, l.snap?.title]), ...g.sheets.map(x => x.fileBase)].join(" ").toLowerCase();
+    return Object.assign(g, { orders: ids.size || g.orders || new Set(lines.map(l => l.orderId)).size, status: g.status === "superseded" ? g.status : r?.status === "complete" ? (String(g.status).startsWith("complete") ? g.status : "complete") : r?.status || g.status, match: !q || hay.includes(q) });
+  }).filter(g => g.match).sort((a, b) => String(b.day || "").localeCompare(String(a.day || "")) || (b.seq || 0) - (a.seq || 0) || (b.updatedAt || 0) - (a.updatedAt || 0));
+  const total = rows.length; rows = rows.slice(offset, offset + limit);
+  for (const row of rows) { delete row.search; delete row.match; }
+  return { sets: rows, runs: runRows.filter(r => rows.some(g => g.runId === r.runId)), sheets: rows.flatMap(g => g.sheets), total, nextOffset: offset + rows.length < total ? offset + rows.length : null,
+    scanned: { runs: rs.size, sheets: ss.size }, truncated: { runs: false, sheets: false } };
 }
 // ── bridge session log: Design_Bridge/{session} + /log rows (ids and counts only, never order text) ──
 async function op_bridgeLog(b) {
@@ -584,7 +615,7 @@ async function op_optionMapPut(b) {
   return { ok: true };
 }
 
-const OPS = { startAgent: op_startAgent, getAgent: op_getAgent, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
+const OPS = { archiveEmptySheet: op_archiveEmptySheet, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, startMaster: op_startMaster,
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backList: op_backList, sandboxPut: op_sandboxPut, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,

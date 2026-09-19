@@ -681,6 +681,7 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .sandboxBar.quiet{background:transparent;border:0;padding:0;margin:8px 0 0;font-size:11.5px;color:var(--ink45)}
 .sandboxBar.quiet .off{color:var(--ink45)}
 .sandboxBar .spacer{flex:1 1 auto}
+[data-new-order]::before{content:"New";display:inline-block;background:#e5f0df;color:#35552f;border-radius:6px;padding:2px 5px;font:10px var(--mono);margin-right:5px}.newArrival{outline:1px solid #91ad83;outline-offset:-1px}
 .etsyPill.quiet{display:none}
 .etsyPill{display:inline-flex;align-items:center;gap:6px;font:11.5px var(--mono);color:var(--ink70);border:1px solid var(--line);border-radius:999px;padding:5px 10px;background:var(--card);white-space:nowrap;flex:0 1 auto;min-width:0;overflow:hidden}
 .etsyPill b{color:var(--ink);font-weight:650}
@@ -1075,7 +1076,9 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
     <div class="fieldRow3">
       <div class="field"><label>Pull orders</label><select id="stPullMode"><option value="all">Every open order</option><option value="dueBy">Orders due by a date</option><option value="count">The N most urgent by date</option></select><div class="help">Auto mode pulls with this rule at each run; Manual shows the same controls on the Orders tab.</div></div>
       <div class="field"><label>Due by · N</label><div class="fieldRow"><input id="stPullDueBy" type="date"><input id="stPullCount" type="number" min="1" max="500" step="1"></div></div>
-      <div class="field"><label>Auto: re-run every (min) · 0 = once</label><input id="stAutoEvery" type="number" min="0" max="1440" step="5"><div class="help">In Auto, after a set completes the sorter waits this long, pulls again and runs the next set. Never under 5 minutes.</div></div>
+      <div class="field"><label for="stPollOrders">Check for new Etsy orders</label><select id="stPollOrders"><option value="on">On</option><option value="off">Off</option></select><div class="help">Checks while this station is open, including while a run waits for review. Auto processes arrivals; Manual adds them to the order list.</div></div>
+      <div class="field"><label for="stPollMinutes">Check interval (minutes)</label><input id="stPollMinutes" type="number" min="5" max="1440" step="1"><div class="help">Default 10 minutes. The corner counter shows unique orders imported in the last 24 hours and last hour, plus the next check.</div></div>
+      <div class="field"><label for="stOptimizeAt">Re-optimize at (% of fill ceiling)</label><input id="stOptimizeAt" type="number" min="50" max="100" step="5"><div class="help">Repack an open sheet near capacity, then try its free space before opening the next sheet. Committed sheets stay fixed.</div></div><input id="stAutoEvery" type="hidden" value="0">
       <div class="field"><label>Sandbox</label><select id="stSandbox"><option value="off">Off — production: real Etsy through the station, real records</option><option value="on">On — emulated Etsy from the stored snapshot, sandbox records only</option></select><div class="help">In the sandbox the Design Station is framed with ?sandbox=1: its Etsy calls go to the emulator that serves the snapshot taken on the Orders tab, and every lock, claim, completion, note, archive row, pool, set, run and file goes to Sandbox_ copies. The master index is shared (read only). Switching reloads the sorter.</div><div class="fixes" style="margin-top:7px"><button class="btn ghost xs" type="button" id="stSbSnap" title="copy today's open orders into the sandbox so a whole run can be rehearsed against them">Take a sandbox snapshot</button><button class="btn ghost xs" type="button" id="stSbReset" title="empty the sandbox pool, sets, runs and sheets — the real records are untouched">Reset sandbox records</button><button class="btn gold xs" type="button" id="stSbOn" title="take a snapshot of today's open orders, switch to the sandbox and reload — one press">Rehearse a run in the sandbox</button><span class="help" id="stSbStatus" style="margin:0"></span></div></div>
       <div class="field"><label>Sandbox records</label><button class="btn ghost sm" id="stSandboxReset" type="button" title="empty the sandbox's own pool, sets, runs and sheets — the real records are never touched">Reset the sandbox…</button></div>
       <div class="field"><label>Run history</label><button class="btn ghost sm" id="stPurge" type="button" title="delete every run, sheet, set, pool row, back record and set counter — production and sandbox — and start with a clean sheet; the master files, the SKU index, the mappings and the sandbox snapshot stay">Purge all run history…</button><div class="help">Asks for the passcode. A run that is still open is named and has to be given up first, or the purge can be forced.</div></div>
@@ -1157,7 +1160,7 @@ const DEFAULTS = {
   clearancePt: -0.5, insetPt: 1.5, angleStep: 30, budgetS: 180, seed: 1, serverAbove: 0, parallel: 0,
   minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", aiRounds: 10, snapIn: 0.25, maxFill: 0.74, orderView: "cards", v: 18,
   // Design Station bridge, orders, run (design doc §14)
-  dsOrigin: "https://design-1.goldenspike.app", heartbeatS: 5, heartbeatMiss: 3, autoCommit: "on", runMode: "manual", pullMode: "all", pullDueBy: "", pullCount: 40, autoEvery: 0, etsyHourlyCap: 600, sandbox: "off",
+  dsOrigin: "https://design-1.goldenspike.app", heartbeatS: 5, heartbeatMiss: 3, autoCommit: "on", runMode: "manual", pullMode: "all", pullDueBy: "", pullCount: 40, autoEvery: 0, pollOrders: "on", pollMinutes: 10, optimizeAt: 85, etsyHourlyCap: 600, sandbox: "off",
   skuPattern: "^[A-Z0-9][A-Z0-9 _.,'&()+\\-]{1,60}$", labelGapMm: 6.4, masterServerAbove: 0, sizeMinMm: 3, sizeMaxMm: 60,
   cadenceDays: 2, lateDays: 2,
   engraveMarginMm: 0.3, engraveMinCapMm: 1.6, engraveMaxHeightFrac: 0.4, engraveConfidence: 0.65, engraveTryRotated: "on", engraveMinGapMm: 0.12, engraveMinStrokeMm: 0.15, backFileView: "asSeenFromBack"
@@ -1846,11 +1849,13 @@ function removePage(pg) {
 function keepOrdersWhole(sh, byId) {
   const orderOf = id => { const c = byId.get(id); return c ? (c.order || c.id) : id; };
   const bad = new Set(sh.rejects.map(orderOf));
-  const lifted = sh.placements.filter(p => bad.has(orderOf(p.id)));
+  const dated = [...byId.values()].some(c => c.orderDate > 0);
+  const cutoff = dated && sh.rejects.length ? Math.min(...sh.rejects.map(id => byId.get(id)?.orderDate || 0)) : Infinity;
+  const lifted = sh.placements.filter(p => bad.has(orderOf(p.id)) || (dated && (byId.get(p.id)?.orderDate || 0) > cutoff));
   if (!lifted.length) return;
   sh.placements = sh.placements.filter(p => !lifted.includes(p));
   sh.rejects.push(...lifted.map(p => p.id));
-  agent({ metal: sh.metal }, "nest", `Orders kept whole: ${lifted.length} placed piece(s) of ${new Set(lifted.map(p => orderOf(p.id))).size} order(s) lifted off — the order moves to the next sheet as one`);
+  agent({ metal: sh.metal }, "nest", `Orders kept whole and oldest first: ${lifted.length} placed piece(s) of ${new Set(lifted.map(p => orderOf(p.id))).size} order(s) lifted off — the order moves to the next sheet as one`);
 }
 function orderSummary(charms) {
   const by = new Map(); for (const c of charms) { const k = c.order || c.id; by.set(k, (by.get(k) || 0) + 1); }
@@ -1860,6 +1865,7 @@ function orderSummary(charms) {
 function overflowToNextSheet(sh) {
   const ids = new Set(sh.rejects); if (!ids.size) return null;
   const moving = sh.charms.filter(c => ids.has(c.id));
+  if (!sh.placements.length) { sh.problem = "The oldest order cannot fit on an empty sheet at these settings. Review its size or the fill ceiling before continuing."; renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, new Error(sh.problem)); return null; }
   sh.charms = sh.charms.filter(c => !ids.has(c.id)); sh.rejects = [];
   sh.movedOn = { n: moving.length, names: moving.map(c => c.name || `#${c.index + 1}`) };
   sh.status = sh.verification && sh.verification.ok ? "complete" : "partial";
@@ -1955,7 +1961,7 @@ function buildJob(sh) {
     sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0 },
     clearancePt: +S.settings.clearancePt || 0, angles: angleSet(), fineRes: 2, coarseRes: 0.5,
     timeBudgetMs: (+S.settings.budgetS || 180) * 1000, stallMs: 60 * 1000, maxTrials: 2000, seed: +S.settings.seed || 1, maxFill: +S.settings.maxFill || 0.74,
-    pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
+    pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: c.orderDate || 0, pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
   };
 }
 function startNest(sh) {
@@ -2191,6 +2197,11 @@ async function startServerNest(sh, job) {
 async function finishNest(sh, { result, error }) {
   const items = activeCharms(sh); const byId = new Map(items.map(c => [c.id, c]));
   if (error) { sh.status = items.length ? "ready" : "idle"; sh.stage = ""; log(sh, "error: " + error); toast(`${labelOf(sh.metal)}: nesting failed — ${error}`, "bad", 6000); renderCard(sh); pumpNestQueue(); if (window.RunCtl) RunCtl.onSheetDone(sh, new Error(error)); return; }
+  if (result.endedBy !== "stopped" && result.rejects.length && !sh.optimizationTried && sh.charms.some(c => c.arrivalPin)) {
+    sh.optimizationTried = true;
+    for (const c of sh.charms) if (c.arrivalPin) { c.pinned = null; delete c.arrivalPin; }
+    sh.status = "ready"; log(sh, "Re-optimizing before overflow: trying a fresh arrangement"); startNest(sh); return;
+  }
   sh.status = "finishing"; sh.endedBy = result.endedBy; sh.trials = result.trials; sh.placements = result.placements; sh.rejects = result.rejects.slice(); sh.livePlacements = [];
   keepOrdersWhole(sh, byId);
   if (sh.evSearch && sh.evSearch.live) agentUpdate(sh.evSearch, { live: false, elapsed: 0, html: null, text: `Search ended after ${result.trials} trial(s): ${endedText(result.endedBy)}` });
@@ -2257,7 +2268,7 @@ async function finishNest(sh, { result, error }) {
     setTimeout(() => $$(".sheetCard").find(el => el.dataset.m === sh.metal)?.classList.remove("pulse"), 1300);
     if (document.hidden && S.settings.notify === "on" && "Notification" in window && Notification.permission === "granted") { try { new Notification("Charm Nesting Station", { body: msg }); } catch (_) { /* ignore */ } }
     // 5 · persist everything. The two verifiers above are the acceptance test; no further inspection runs.
-    sh.persisted = persistSheet(sh, items).then(() => { if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, e); });
+    sh.persisted = persistSheet(sh, items).then(() => { sh.persistedDone = true; if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, e); });
     // 6 · whatever did not fit under the ceiling goes to the next sheet of this metal, which nests on its own
     if (sh.rejects.length && sh.endedBy !== "stopped") overflowToNextSheet(sh);
   } catch (e) {
@@ -2297,7 +2308,7 @@ async function nextSheetSeq(sh) {
   return set.seq;
 }
 async function persistSheet(sh, items) {
-  if (!S.cloud.ok) return;
+  if (!S.cloud.ok) throw new Error("Cloud offline — sheet is kept in this browser, but has not been saved online");
   const day = sh.setDay || today(), name = sh.fileBase || sheetFileBase(sh), base = sh.setId ? `${CharmNestOrders.setFolder(day, sh.seq)}/${name}` : `charmnest/sheets/${day}/${name}`;
   sh.folderPath = base;
   const byId = new Map(items.map(c => [c.id, c]));
@@ -2314,28 +2325,32 @@ async function persistSheet(sh, items) {
     placements: sh.outputs.report.placements, rejects: sh.outputs.report.rejects,
     names: items.map(c => c.name).filter(Boolean).join(" ")
   });
+  const savedJob = sh.jobId, savedId = sh.sheetId, savedOutputs = sh.outputs;
+  const snapshot = record(null);
+  // Freeze membership before overflow moves rejected charms to another page.
+  const savedRecord = outputs => Object.assign({}, snapshot, { outputs });
   // 1 · the Library record first, so the sheet is on record even if a file upload fails
-  await api("charmNestLibrary", { op: "putSheet", sheet: Object.assign(record(null), { saving: true }) }, { label: "Saving sheet record" });
+  await api("charmNestLibrary", { op: "putSheet", sheet: Object.assign(savedRecord(null), { saving: true }) }, { label: "Saving sheet record" });
   // 2 · the files, each retried on its own; a failure is reported, never hidden
   const up = async (path, bytes, type, label) => { let err = null; for (let t = 0; t < 3; t++) { try { return await uploadBytes(path, bytes, type, label); } catch (e) { err = e; await new Promise(r => setTimeout(r, 1500 * (t + 1))); } } throw err; };
   const failed = []; const got = async (k, path, bytes, type, label) => { try { const r = await up(path, bytes, type, label); return { path: r.path, url: r.url }; } catch (e) { failed.push(`${k}: ${e.message}`); return null; } };
   const outputs = {
-    ai: await got("ai", `${base}/${name}.ai`, sh.outputs.ai, "application/illustrator", "Saving sheet .ai"),
-    pdf: await got("pdf", `${base}/${name}.pdf`, sh.outputs.ai, "application/pdf", "Saving sheet .pdf"),
-    labelled: await got("labelled proof", `${base}/${name}_labelled.pdf`, sh.outputs.labelled, "application/pdf", "Saving labelled proof"),
-    report: await got("report", `${base}/${name}_nest-report.json`, new TextEncoder().encode(JSON.stringify(sh.outputs.report, null, 1)), "application/json", "Saving report"),
-    preview: sh.outputs.previewPng ? await got("preview", `${base}/preview.png`, sh.outputs.previewPng, "image/png", "Saving preview") : null
+    ai: await got("ai", `${base}/${name}.ai`, savedOutputs.ai, "application/illustrator", "Saving sheet .ai"),
+    pdf: await got("pdf", `${base}/${name}.pdf`, savedOutputs.ai, "application/pdf", "Saving sheet .pdf"),
+    labelled: await got("labelled proof", `${base}/${name}_labelled.pdf`, savedOutputs.labelled, "application/pdf", "Saving labelled proof"),
+    report: await got("report", `${base}/${name}_nest-report.json`, new TextEncoder().encode(JSON.stringify(savedOutputs.report, null, 1)), "application/json", "Saving report"),
+    preview: savedOutputs.previewPng ? await got("preview", `${base}/preview.png`, savedOutputs.previewPng, "image/png", "Saving preview") : null
   };
   sh.cloud = { ai: outputs.ai && outputs.ai.url, pdf: outputs.pdf && outputs.pdf.url, labelled: outputs.labelled && outputs.labelled.url, report: outputs.report && outputs.report.url, preview: outputs.preview && outputs.preview.url };
   // 3 · the record is complete as soon as the sheet's own files are up: the Library shows it now, not after the charm backups
-  await api("charmNestLibrary", { op: "putSheet", sheet: Object.assign(record(outputs), { saving: false }) }, { label: "Completing sheet record" });
+  await api("charmNestLibrary", { op: "putSheet", sheet: Object.assign(savedRecord(outputs), { saving: false }) }, { label: "Completing sheet record" });
   if (S.mode === "library") loadLibrary();   // the list is open: show the finished record
   // 4 · charm links: once the charms' own permanent copies (started when the file arrived) are done, refresh the record with their links
   const pending = [...new Set(items.map(c => c.sourceId))].map(id => { const x = sourceOf(id); return x && x.persisting; }).filter(Boolean);
-  if (pending.length) Promise.allSettled(pending).then(() => api("charmNestLibrary", { op: "putSheet", sheet: Object.assign(record(outputs), { saving: false }) }, { label: "Linking charm copies" })).catch(e => console.warn("charm links", e));
+  if (pending.length) Promise.allSettled(pending).then(() => { if (sh.jobId === savedJob) return api("charmNestLibrary", { op: "putSheet", sheet: { id: savedId, charms: record(outputs).charms } }, { label: "Linking charm copies" }); }).catch(e => console.warn("charm links", e));
   // The calibration row only teaches the fill estimate. A sheet that placed nothing has nothing to teach, and a refused
   // statistic must never travel up as a failure: this used to stop a run whose sheets were already written and verified.
-  const cal = sh.outputs.report.calibration || {};
+  const cal = savedOutputs.report.calibration || {};
   if (cal.density > 0 && cal.count > 0) {
     api("charmNestLibrary", { op: "putCalibration", row: Object.assign({ sheetId: sh.sheetId, metal: sh.metal, clearancePt: +S.settings.clearancePt }, cal) }, { label: "Saving calibration", quiet: true })
       .catch(e => log(sh, "calibration not recorded: " + e.message));
@@ -2343,11 +2358,11 @@ async function persistSheet(sh, items) {
   }
   renderCard(sh);
   recountLibrary();                                            // the rail's library count moves with the library
-  if (failed.length) { agent({ metal: sh.metal }, "warn", `Saved the record for ${name}, but these files did not upload: ${failed.join("; ")}`); toast(`${labelOf(sh.metal)}: record saved, ${failed.length} file(s) failed to upload — see the log`, "bad", 6000); return; }
+  if (failed.length) { agent({ metal: sh.metal }, "warn", `Saved the record for ${name}, but these files did not upload: ${failed.join("; ")}`); toast(`${labelOf(sh.metal)}: record saved, ${failed.length} file(s) failed to upload — see the log`, "bad", 6000); throw new Error("Sheet files not saved: " + failed.join("; ")); }
   agent({ metal: sh.metal }, "cloud", `Saved to the cloud in folder ${name}: ${name}.ai, .pdf, labelled proof, report, preview`);
   toast(`${labelOf(sh.metal)}: sheet, proof and report saved to the cloud`, "ok", 3000);
   // the set: one QR label per sheet saved beside it, the set record kept current (design §8.3)
-  if (window.Sets) await Sets.onSheetSaved(sh, items, outputs).catch(e => { agent({ metal: sh.metal }, "warn", `Set bookkeeping failed: ${e.message}`); });
+  if (window.Sets) await Sets.onSheetSaved(sh, items, outputs);
 }
 let pdfjsReady = null;
 function ensurePdfJs() {
@@ -2470,6 +2485,7 @@ function renderTabs(sh) {
 }
 function refreshAllCards() { for (const sh of allSheets()) { computeSaturation(sh); renderCard(sh); } }
 function renderCard(sh) {
+  if (window.Session) Session.schedule();
   const el = sh.el; if (!el) return; const q = r => $(`[data-r="${r}"]`, el); const st = stockFor(sh.metal);
   const rc = sh.recalled && !sh.charms.length ? sh.recalled : null;        // a saved sheet shown from its record
   el.style.setProperty("--ar", `${st.wPt}/${st.hPt}`);
@@ -2505,7 +2521,7 @@ function renderCard(sh) {
   else { rj.classList.add("hidden"); rj.title = ""; }
   // queue thumbnails
   const placed = new Set(sh.placements.map(p => p.id)), rejected = new Set(sh.rejects);
-  q("queue").innerHTML = sh.charms.slice(0, 60).map(c => `<img crossorigin="anonymous" src="${cors(c.thumb)}" title="${esc(c.name || "#" + (c.index + 1))} · ${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}${c.qty > 1 ? " · ×" + c.qty : ""}${c.excluded ? " · EXCLUDED (open path)" : ""}" data-cid="${c.id}" class="${placed.has(c.id) ? "placed" : rejected.has(c.id) ? "rejected" : ""}${c.pinned ? " pinned" : ""}" style="${c.excluded ? "opacity:.35;border-style:dashed" : ""}">`).join("") + (sh.charms.length > 60 ? `<span class="more">+${sh.charms.length - 60} more</span>` : "");
+  q("queue").innerHTML = sh.charms.slice().sort((a, b) => (b.arrivedAt || 0) - (a.arrivedAt || 0)).slice(0, 60).map(c => `<img crossorigin="anonymous" src="${cors(c.thumb)}" title="${esc(c.name || "#" + (c.index + 1))} · ${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}${c.qty > 1 ? " · ×" + c.qty : ""}${c.excluded ? " · EXCLUDED (open path)" : ""}" data-cid="${c.id}" data-rid="${esc(c.order || "")}" class="${placed.has(c.id) ? "placed" : rejected.has(c.id) ? "rejected" : ""}${c.pinned ? " pinned" : ""}" style="${c.excluded ? "opacity:.35;border-style:dashed" : ""}">`).join("") + (sh.charms.length > 60 ? `<span class="more">+${sh.charms.length - 60} more</span>` : "");
   $$("img[data-cid]", q("queue")).forEach(img => img.onclick = () => openCharm(sh, byId.get(img.dataset.cid)));
   // cloud row
   const cl = q("cloud");
@@ -2952,6 +2968,7 @@ function openSettings() {
         setTimeout(() => location.reload(), 1200);
       } catch (e) { toast(e.status === 403 ? "Wrong passcode — nothing was purged" : "Purge failed: " + e.message, "bad", 7000); }
     }; } }
+  $("#stPollOrders").value = s.pollOrders || "on"; $("#stPollMinutes").value = s.pollMinutes || 10; $("#stOptimizeAt").value = s.optimizeAt || 85;
   $("#stDsOrigin").value = s.dsOrigin || DEFAULTS.dsOrigin; $("#stHeartbeatS").value = s.heartbeatS; $("#stHeartbeatMiss").value = s.heartbeatMiss; $("#stAutoCommit").value = s.autoCommit || "on"; $("#stCadenceDays").value = s.cadenceDays == null ? 2 : s.cadenceDays; $("#stLateDays").value = s.lateDays == null ? 2 : s.lateDays; $("#stPullMode").value = s.pullMode || "all"; $("#stPullDueBy").value = s.pullDueBy || ""; $("#stPullCount").value = s.pullCount || 40; $("#stAutoEvery").value = s.autoEvery || 0; $("#stEtsyCap").value = s.etsyHourlyCap || DEFAULTS.etsyHourlyCap; $("#stSandbox").value = s.sandbox === "on" ? "on" : "off";
   $("#stSkuPattern").value = s.skuPattern || DEFAULTS.skuPattern; $("#stLabelGapMm").value = s.labelGapMm; $("#stMasterServerAbove").value = s.masterServerAbove; $("#stSizeMinMm").value = s.sizeMinMm; $("#stSizeMaxMm").value = s.sizeMaxMm;
   $("#stEngraveMarginMm").value = s.engraveMarginMm; $("#stEngraveMinCapMm").value = s.engraveMinCapMm; $("#stEngraveMaxHeightFrac").value = s.engraveMaxHeightFrac; $("#stEngraveConfidence").value = s.engraveConfidence; $("#stEngraveMinGapMm").value = s.engraveMinGapMm; $("#stEngraveMinStrokeMm").value = s.engraveMinStrokeMm; $("#stEngraveTryRotated").value = s.engraveTryRotated || "on"; $("#stBackFileView").value = s.backFileView || "asSeenFromBack";
@@ -2976,12 +2993,13 @@ function readSettings() {
   s.rail = $("#railSeg button.on")?.dataset.v || "md";
   for (const m of METALS) s.stock[m.key] = [(+$(`#st${cap(m.key)}W`).value / 25.4) || DEFAULTS.stock[m.key][0], (+$(`#st${cap(m.key)}H`).value / 25.4) || DEFAULTS.stock[m.key][1]];
   s.clearancePt = Math.max(-2, Math.min(12, Math.round((+$("#stClearance").value || 0) / MM_PER_PT * 100) / 100)); s.insetPt = Math.max(0, Math.round((+$("#stInset").value || 0) / MM_PER_PT * 100) / 100); s.angleStep = +$("#stAngle").value || 30; s.budgetS = Math.max(10, +$("#stBudget").value || 180); s.parallel = Math.max(0, Math.min(16, Math.round(+$("#stParallel").value || 0))); s.seed = Math.max(1, Math.round(+$("#stSeed").value || 1)); s.serverAbove = Math.max(0, +$("#stServerAbove").value || 0);
+  s.pollOrders = $("#stPollOrders").value; s.pollMinutes = Math.max(5, Math.min(1440, +$("#stPollMinutes").value || 10)); s.optimizeAt = Math.max(50, Math.min(100, +$("#stOptimizeAt").value || 85));
   s.dsOrigin = ($("#stDsOrigin").value || DEFAULTS.dsOrigin).trim().replace(/\/+$/, ""); s.heartbeatS = Math.max(2, Math.min(60, +$("#stHeartbeatS").value || 5)); s.heartbeatMiss = Math.max(1, Math.min(10, Math.round(+$("#stHeartbeatMiss").value || 3))); s.autoCommit = $("#stAutoCommit").value; s.cadenceDays = Math.max(1, Math.min(14, Math.round(+$("#stCadenceDays").value || 2))); s.lateDays = Math.max(0, Math.min(14, Math.round(+$("#stLateDays").value ?? 2))); s.pullMode = $("#stPullMode").value; s.pullDueBy = $("#stPullDueBy").value || ""; s.pullCount = Math.max(1, Math.min(500, Math.round(+$("#stPullCount").value || 40))); s.autoEvery = Math.max(0, Math.min(1440, Math.round(+$("#stAutoEvery").value || 0))); if (s.autoEvery > 0 && s.autoEvery < 5) s.autoEvery = 5; s.etsyHourlyCap = Math.max(50, Math.min(5000, Math.round(+$("#stEtsyCap").value || 600))); { const was = s.sandbox === "on"; s.sandbox = $("#stSandbox").value === "on" ? "on" : "off"; if (was !== (s.sandbox === "on")) { saveSettings(); toast(`Sandbox ${s.sandbox === "on" ? "ON" : "off"} — reloading`, "ok", 3000); setTimeout(() => location.reload(), 600); } }
   try { new RegExp($("#stSkuPattern").value); s.skuPattern = $("#stSkuPattern").value.trim() || DEFAULTS.skuPattern; } catch (_) { toast("SKU pattern is not a valid regular expression — kept the previous one", "bad"); }
   s.labelGapMm = Math.max(1, Math.min(30, +$("#stLabelGapMm").value || 6.4)); s.masterServerAbove = Math.max(0, Math.round(+$("#stMasterServerAbove").value || 0)); s.sizeMinMm = Math.max(0.5, +$("#stSizeMinMm").value || 3); s.sizeMaxMm = Math.max(s.sizeMinMm, +$("#stSizeMaxMm").value || 60);
   s.engraveMarginMm = Math.max(0, Math.min(5, +$("#stEngraveMarginMm").value || 0)); s.engraveMinCapMm = Math.max(0.3, +$("#stEngraveMinCapMm").value || 1.6); s.engraveMaxHeightFrac = Math.max(0.1, Math.min(1, +$("#stEngraveMaxHeightFrac").value || 0.4)); s.engraveConfidence = Math.max(0, Math.min(1, +$("#stEngraveConfidence").value || 0.8)); s.engraveMinGapMm = Math.max(0, +$("#stEngraveMinGapMm").value || 0); s.engraveMinStrokeMm = Math.max(0, +$("#stEngraveMinStrokeMm").value || 0); s.engraveTryRotated = $("#stEngraveTryRotated").value; s.backFileView = $("#stBackFileView").value;
   s.minPt = Math.max(1, +$("#stMinPt").value || 6); s.verifyRes = +$("#stVerifyRes").value || 6; s.naming = $("#stNaming").value; s.review = $("#stReview").value; s.engine = $("#stEngine").value; s.maxFill = Math.max(0.3, Math.min(1, (+$("#stMaxFill").value || 75) / 100)); s.aiRounds = Math.max(1, Math.min(30, +$("#stAiRounds").value || 10)); s.snapIn = Math.max(0, Math.min(1, (+$("#stSnapIn").value || 0) / 25.4)); s.notify = $("#stNotify").value; s.sound = $("#stSound").value;
-  saveSettings(); refreshAllCards(); toast("Settings saved", "ok", 1800);
+  saveSettings(); if (window.Arrivals) Arrivals.start(); refreshAllCards(); toast("Settings saved", "ok", 1800);
 }
 
 /* ═══ 16 · boot ═════════════════════════════════════════════════════════ */

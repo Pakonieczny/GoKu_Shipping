@@ -225,6 +225,43 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   r = await post(lib, { op: 'history', q: 'maeve' }); assert.strictEqual(r.body.runs.length, 1, 'found by the words that were engraved');
   r = await post(lib, { op: 'history', q: 'br-his' }); assert.deepStrictEqual(r.body.runs[0].hitSkus, ['BR-HIS-01'], 'found by SKU');
   r = await post(lib, { op: 'history', q: 'nothing-like-this' }); assert.strictEqual(r.body.runs.length, 0, 'and it does not invent matches');
+  // Arrival counts use first import, not refreshes, lines, or midnight boundaries.
+  let arrivals = await post(lib, { op: 'arrivalRecord', orders: [{ id: '7001', createTs: 123 }, { id: '7001', createTs: 123 }, { id: '7002', createTs: 456 }] });
+  assert.equal(arrivals.body.count24, 2); assert.equal(arrivals.body.count1, 2);
+  const firstImport = arrivals.body.firstSeen['7001'];
+  arrivals = await post(lib, { op: 'arrivalRecord', orders: [{ id: '7001', createTs: 999 }] });
+  assert.equal(arrivals.body.firstSeen['7001'], firstImport); assert.equal(arrivals.body.count24, 2);
+  assert.equal(store.get('Charm_Nest_Arrivals/7001').createTs, 123, 'Etsy order date is immutable');
+  store.set('Charm_Nest_Arrivals/7001', { id:'7001', createTs:123, firstSeenAt:Date.now()-2*3600000 });
+  store.set('Charm_Nest_Arrivals/7002', { id:'7002', createTs:456, firstSeenAt:Date.now()-25*3600000 });
+  arrivals = await post(lib, { op:'arrivalRecord', orders:[] });
+  assert.equal(arrivals.body.count24,1); assert.equal(arrivals.body.count1,0);
+  arrivals = await post(lib, { op:'arrivalRecord', sandbox:true, orders:[{id:'7001',createTs:123}] });
+  assert.equal(arrivals.body.count24,1); assert.equal(arrivals.body.count1,1,'sandbox has its own ledger');
+
+  // Run creation date stays stable across ordinary checkpoints.
+  store.get('Charm_Nest_Runs/run-H').createdAt = 12345;
+  await post(lib, { op:'runPut', run:{ runId:'run-H', status:'complete' }, merge:true });
+  r = await post(lib, { op:'runGet', runId:'run-H' }); assert.equal(r.body.run.createdAt,12345);
+  // Search must include a set's whole membership, beyond the old 200-sheet window.
+  for(let i=0;i<205;i++) store.set('Charm_Nest_Sheets/recent-'+i,{id:'recent-'+i,day:'2026-09-19',metal:'gold',status:'complete',updatedAt:99999+i});
+  store.set('Charm_Nest_Sets/history-old',{setId:'history-old',seq:9,day:'2026-09-01',runId:'run-old',status:'complete',orders:{'8100':{},'8101':{}}});
+  store.set('Charm_Nest_Runs/run-old',{runId:'run-old',day:'2026-09-01',status:'complete',lines:{a:{orderId:'8100',sku:'FIND-OLDER',engrave:{text:'remember me'}},b:{orderId:'8101'}}});
+  for(let i=0;i<2;i++) store.set('Charm_Nest_Sheets/old-'+i,{id:'old-'+i,setId:'history-old',setSeq:9,runId:'run-old',day:'2026-09-01',metal:'gold',status:'complete',orders:[String(8100+i)],sheetIndex:i+1,updatedAt:1});
+  r=await post(lib,{op:'history',q:'remember me',limit:1});
+  assert.equal(r.body.sets.length,1);assert.equal(r.body.sets[0].sheets.length,2,'a match returns the whole set');assert.equal(r.body.sets[0].orders,2);
+  r=await post(lib,{op:'listSheets',runId:'run-old',limit:10});assert.equal(r.body.sheets.length,2,'scope before limit');
+  r=await post(lib,{op:'history',limit:2});assert.equal(r.body.sets.length,2);assert.equal(r.body.nextOffset,2);assert.equal(r.body.sets[0].day,'2026-09-19');
+  r=await post(lib,{op:'history',q:'set 9'});assert(r.body.sets.some(s=>s.setId==='history-old'));
+  // Allocation retries reuse the same number, but a different run gets a new number.
+  const a1=await post(lib,{op:'setAllocate',day:'2026-09-19',runId:'run-test1',group:'gold'});
+  const a2=await post(lib,{op:'setAllocate',day:'2026-09-19',runId:'run-test1',group:'gold'});
+  const a3=await post(lib,{op:'setAllocate',day:'2026-09-19',runId:'run-test2',group:'gold'});
+  assert.equal(a1.body.setId,a2.body.setId);assert.equal(a3.body.seq,a1.body.seq+1);
+  // Intake can retire only an open run's sheet, never another run or finished production.
+  r=await post(lib,{op:'archiveEmptySheet',id:'old-0',runId:'run-other'});assert.equal(r.status,400);
+  r=await post(lib,{op:'archiveEmptySheet',id:'old-0',runId:'run-old'});assert.equal(r.status,400);
+  for(const key of [...store.keys()]) if (/^(Charm_Nest_Sheets\/(recent-|old-)|Charm_Nest_Sets\/history-old|Charm_Nest_Runs\/run-old)/.test(key)) store.delete(key);
   r = await post(lib, { op: 'bridgeLog', session: 'k3f9a2xyz', rows: [{ t: 1, dir: 'cmd', type: 'hello' }, { t: 2, dir: 'reply', type: 'hello', ms: 12 }], meta: { bench: 'design-1' } }); assert.strictEqual(r.body.rows, 2);
   assert.strictEqual([...store.keys()].filter(k => k.startsWith('Design_Bridge/k3f9a2xyz/log/')).length, 2, 'two log rows under the session');
   r = await post(lib, { op: 'aliasPut', listingId: '1718', sku: 'BR-CMP-01', by: 'Ana' }); r = await post(lib, { op: 'aliasGet' }); assert.strictEqual(r.body.aliases['1718'].sku, 'BR-CMP-01');

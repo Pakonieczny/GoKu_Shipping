@@ -327,7 +327,7 @@
       // footprintCells: what the piece occupies on the sheet grid (its eroded or grown mask) — the same measure the
       // occupancy readout uses, so the fill ceiling and "% full" agree. The solid silhouette (holes filled) stays for reports.
       const footprintCells = variants.length ? Math.min(...variants.map(v => v.cells)) : solidFineCells;
-      prepared.push({ id: p.id, idx: i, order: p.order || p.id, areaPt2: p.areaPt2 || (solidFineCells / (fineRes * fineRes)), solidFineCells, footprintCells, variants, pinned: p.pinned || null, meta: p.meta || null });
+      prepared.push({ id: p.id, idx: i, order: p.order || p.id, orderDate: +p.orderDate || 0, areaPt2: p.areaPt2 || (solidFineCells / (fineRes * fineRes)), solidFineCells, footprintCells, variants, pinned: p.pinned || null, meta: p.meta || null });
       if (cb.onStage) cb.onStage("prepare", i + 1, pieces.length);
       await yieldNow();
     }
@@ -445,6 +445,9 @@
 
     /* ── trials ─────────────────────────────────────────────────────────── */
     best = null; let trials = 0, endedBy = "budget", failStreak = 0, lastRejects = [];
+    const fifo = prepared.some(p => p.orderDate > 0);
+    const dates = new Map(); for (const p of prepared) dates.set(p.order, Math.min(dates.get(p.order) ?? Infinity, p.orderDate));
+    const rank = new Map([...dates].sort((a, b) => a[1] - b[1] || String(a[0]).localeCompare(String(b[0]))).map(([id], i) => [id, i]));
     const byAreaDesc = prepared.slice().sort((a, b) => b.areaPt2 - a.areaPt2);
     // orders: pieces sharing `order` travel together — a sheet never holds part of a multi-piece order
     const orderSize = new Map(); for (const p of prepared) orderSize.set(p.order, (orderSize.get(p.order) || 0) + 1);
@@ -461,7 +464,7 @@
       const sigma = trial === 0 ? 0 : Math.min(0.6, 0.15 + 0.05 * Math.min(failStreak, 8));
       // pieces the previous trial could not place go first (most of the time), so the layout is built around them
       const front = trial > 0 && lastRejects.length && random() < 0.75 ? new Set(lastRejects) : new Set();
-      const order = byAreaDesc.map(p => ({ p, k: (front.has(p.id) ? 1e9 : 0) + p.areaPt2 * (1 + sigma * (random() * 2 - 1)) })).sort((a, b) => b.k - a.k).map(o => o.p);
+      const order = byAreaDesc.map(p => ({ p, k: (front.has(p.id) ? 1e9 : 0) + p.areaPt2 * (1 + sigma * (random() * 2 - 1)) })).sort((a, b) => (fifo ? rank.get(a.p.order) - rank.get(b.p.order) : 0) || b.k - a.k).map(o => o.p);
       const pinnedFirst = order.filter(p => p.pinned).concat(order.filter(p => !p.pinned));
       const gravW = trial === 0 ? 0.35 : 0.1 + random() * 0.8;
       const noise = trial === 0 ? 0 : random() * 0.15;
@@ -469,7 +472,7 @@
       let fine = baseFine.clone(), coarse = baseCoarse.clone();
       let placements = [], placedRec = []; const rejects = [], capped = [];
       let placedCells = 0;
-      const deadOrders = new Set();
+      const deadOrders = new Set(); let blockedRank = Infinity;
       // a piece of a multi-piece order failed: the order leaves this sheet whole — its placed siblings are lifted back off
       const dropOrder = (p, why) => {
         if (!multi(p)) return;
@@ -486,8 +489,10 @@
         const p = pinnedFirst[pi];
         if (stopped()) break;
         let bestPos = null;
+        if (fifo && rank.get(p.order) > blockedRank) { rejects.push(p.id); if (capped.length) capped.push(p.id); continue; }
         if (deadOrders.has(p.order)) { rejects.push(p.id); if (capped.some(id => prepared.find(x => x.id === id && x.order === p.order))) capped.push(p.id); if (cb.onReject) cb.onReject(p.id, trial, "order"); continue; }
         if (!p.pinned && (placedCells + p.footprintCells) / usableCellsFine > maxFill) {
+          if (fifo) blockedRank = Math.min(blockedRank, rank.get(p.order));
           rejects.push(p.id); capped.push(p.id);
           if (cb.onReject) cb.onReject(p.id, trial, "cap");
           dropOrder(p, "cap");
@@ -501,6 +506,7 @@
           bestPos = search(p, fine, coarse, ratio, gravW, noise, random, cornerX, cornerY);
         }
         if (!bestPos) {
+          if (fifo) blockedRank = Math.min(blockedRank, rank.get(p.order));
           rejects.push(p.id);
           if (cb.onReject) cb.onReject(p.id, trial, "nofit");
           dropOrder(p, "nofit");
@@ -539,6 +545,19 @@
         await yieldNow();
       }
 
+      // A budget/stop during a trial must not make the unvisited pieces disappear.
+      for (const p of prepared) if (!placements.some(pl => pl.id === p.id) && !rejects.includes(p.id)) rejects.push(p.id);
+      // Pinned pieces are placed first geometrically, but younger orders must not bypass an older rejection.
+      if (fifo && rejects.length) {
+        const cutoff = Math.min(...rejects.map(id => rank.get(prepared.find(p => p.id === id).order)));
+        const lifted = placedRec.filter(r => rank.get(r.p.order) >= cutoff);
+        if (lifted.length) {
+          placedRec = placedRec.filter(r => !lifted.includes(r));
+          placements = placements.filter(pl => !lifted.some(r => r.p.id === pl.id));
+          for (const r of lifted) { placedCells -= r.v.cells; if (!rejects.includes(r.p.id)) rejects.push(r.p.id); }
+          ({ fine, coarse } = rebuildGrids(placedRec));
+        }
+      }
       lastRejects = rejects.filter(id => !capped.includes(id));
       const summary = {
         trial, placed: placements.length, total: pinnedFirst.length, rejects,
@@ -554,12 +573,12 @@
           pocket: pocketPt(coarse, coarseRes), grids: { fine, coarse }, rec: placedRec.slice() };
         if (cb.onBest) cb.onBest(best, summary);
         // one or two short (and not because of the cap): targeted push into this very layout
-        if (rejects.length && rejects.length <= 2 && rejects.every(id => !capped.includes(id))) await finishPush(best);
+        if (!fifo && rejects.length && rejects.length <= 2 && rejects.every(id => !capped.includes(id))) await finishPush(best);
       } else failStreak++;
       if (cb.onTrial) cb.onTrial(Object.assign({ better }, summary));
       if (best && best.placements.length === pinnedFirst.length) { endedBy = "complete"; break; }
       // restarts stalling while the best is a few short → repair the best layout instead
-      if (best && best.rejects.length && best.rejects.length <= 3 && failStreak >= 4 && !best.rejects.every(id => best.capped.includes(id))) {
+      if (!fifo && best && best.rejects.length && best.rejects.length <= 3 && failStreak >= 4 && !best.rejects.every(id => best.capped.includes(id))) {
         failStreak = 0;
         if (cb.onStage) cb.onStage("repair", 0, 6);
         const fixed = await ruinRecreate(best, 6);
@@ -572,6 +591,8 @@
     if (best && best.grids) delete best.grids;
     if (best && best.rec) delete best.rec;
     if (!best) best = { placements: [], rejects: prepared.map(p => p.id), density: 0, trial: -1, usablePt2: usableCellsFine / (fineRes * fineRes), freePt2: usableCellsFine / (fineRes * fineRes), placedPt2: 0, pocket: pocketPt(baseCoarse, coarseRes) };
+    const placedIds = new Set(best.placements.map(p => p.id));
+    best.rejects = pieces.filter(p => !placedIds.has(p.id)).map(p => p.id);
     // safety: no sheet holds part of a multi-piece order — any order with a rejected piece leaves whole
     {
       const rej = new Set(best.rejects || []); const badOrders = new Set();

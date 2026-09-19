@@ -40,5 +40,31 @@ function shape(id, kind, wPt, hPt, scale = 6) {
     console.log('orders whole', r2.placements.length + '/' + ps.length, 'rejects', r2.rejects.join(','), 'endedBy', r2.endedBy);
     assert(S.verify(j2, r2.placements, 6).ok, 'order test overlap');
   }
+  // Arrival display order is irrelevant: oldest Etsy orders own earlier sheets, whole.
+  {
+    const ps=[Object.assign(shape('new','rect',8,8,1),{order:'new',orderDate:300}),
+      Object.assign(shape('old-a','rect',8,8,1),{order:'old',orderDate:100}),
+      Object.assign(shape('middle','rect',8,8,1),{order:'middle',orderDate:200}),
+      Object.assign(shape('old-b','rect',8,8,1),{order:'old',orderDate:100})];
+    const job={sheet:{wPt:20,hPt:12,insetPt:0},clearancePt:0,angles:[0,90],fineRes:1,coarseRes:1,timeBudgetMs:1200,maxFill:.74,pieces:ps};
+    const result=await S.solve(job,{});assert.deepEqual(new Set(result.placements.map(p=>p.id)),new Set(['old-a','old-b']));
+    assert(S.verify(job,result.placements,1).ok);
+    const remainder=ps.filter(p=>result.rejects.includes(p.id));
+    const second=await S.solve({...job,pieces:remainder},{});assert.equal(second.placements.length,2);
+    // A pinned younger piece cannot jump ahead of an unplaceable older order.
+    const oversized=Object.assign(shape('oversized','rect',30,30,1),{order:'old',orderDate:1});
+    const pinned={...ps[0],pinned:{cxPt:4,cyPt:4,angle:0}};
+    const blocked=await S.solve({...job,pieces:[pinned,oversized]},{});
+    assert.equal(blocked.placements.length,0);assert.equal(blocked.rejects.length,2);
+    const stopped=await S.solve({...job,pieces:ps},{shouldStop:()=>true});
+    assert.equal(stopped.rejects.length,ps.length,'stopping in preparation cannot lose pieces');
+    // Releasing arrival pins creates room before allocating another sheet.
+    const a=Object.assign(shape('a','rect',12,8,1),{order:'a',orderDate:1,pinned:{cxPt:10,cyPt:10,angle:0}});
+    const b=Object.assign(shape('b','rect',12,8,1),{order:'b',orderDate:2});
+    const space={...job,sheet:{wPt:20,hPt:20,insetPt:0},maxFill:.9,pieces:[a,b]};
+    const fixed=await S.solve(space,{}), packed=await S.solve({...space,pieces:[{...a,pinned:null},b]},{});
+    assert.equal(fixed.placements.length,1);assert.equal(packed.placements.length,2);assert(S.verify(space,packed.placements,1).ok);
+    console.log('FIFO and repack OK · oldest whole orders, overflow, pinned priorities, interrupted preparation, reclaimed space');
+  }
   console.log('OK');
 })().catch(e => { console.error(e); process.exit(1); });

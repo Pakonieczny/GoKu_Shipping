@@ -119,3 +119,23 @@ A multi-piece order is never split across sheets. Each charm carries an `order` 
 ## Library sets
 
 The sheets of one run (one drop of files: same `runId`, or for older records the same day and source files) are one **set** in the Library. A set shows as a stacked deck with a "Set · N sheets" tag; hovering (or tapping the deck) fans the sheets out in order after a short delay, each card sliding in with a stagger; × or Escape closes a pinned fan.
+
+
+## Workspace recovery and continuous intake
+
+The sorter checkpoints its working workspace in IndexedDB, with separate sandbox and production records. It retains source bytes, geometry, page layouts and selection, orders, pool membership, engraving decisions, review links, settings-backed filters, and the activity log. Parsed PDF handles, DOM nodes and workers are rebuilt rather than serialized. Refreshing an active run restores the work and offers Resume; interrupted nesting is restarted before labels or completion. Browser storage errors and cloud save failures are visible and never treated as successful sheet delivery.
+
+Run saves are serialized. A new run clears the previous sheet identities; re-nesting within a run keeps its identities. Set allocation is idempotent per run/material group, numbered transactionally per day. The Sets dialog searches complete set membership, including older records and runs without sheets, and pages results newest date first. Receipt number, SKU, engraving words, date and set number are searchable. A matching sheet returns the entire set and its sheet count.
+
+Etsy intake defaults to a 10-minute interval, configurable from 5 minutes to 24 hours in Settings. It uses the Design Station's existing refresh, hydration cache, rate budget and watchdog. **The sorter tab must remain open and connected to the station; this is not an unattended server scheduler.** A fixed counter shows unique imported receipt IDs in rolling 24-hour and 1-hour windows, time to next check, and failures. The server ledger deduplicates across checks and stations, separately for sandbox. A historical set remains a historical view; its counter offers incoming orders without overwriting that view.
+
+New rows merge without replacing earlier decisions. Lists default to newest arrivals, while each charm retains the original Etsy creation timestamp for physical nesting. Open Auto runs incorporate intake at the engraving/review boundary, before labels and commit. Stopped runs remain stopped. Arrival pins retain a lightly loaded sheet's existing arrangement. At the configurable capacity threshold (85% of the existing fill ceiling by default), or before overflow when pinned placement fails, the solver tries a fresh arrangement. Existing later sheets are considered together so earlier space is filled first. Whole orders form an oldest-first prefix on each material's sheet; an unplaceable oldest order stops for attention rather than generating empty overflow sheets. Manually pinned pieces require unpinning before multi-sheet repacking.
+
+A new order connecting formerly independent material groups gets a newly numbered combined set. Earlier uncommitted records are retained as superseded. Existing engraving approvals remain valid on the same charm geometry, and back files and sheet labels are regenerated for their new membership. Committed sets are not eligible for automatic intake.
+
+Regression commands:
+
+- `npm run test:charm-nest` — solver/verifier, handler tests, workspace recovery and intake tests; no live services.
+- `node tests/charm-nest/bridge-units.cjs` — existing interpretation, geometry, engraving, labels and release-rule tests.
+
+Before production release, exercise the sandbox UI with a refresh during Review, a duplicate snapshot, a new mixed-material order, and a near-capacity sheet. Confirm the resulting saved files, labels and memberships through the Sets dialog. The browser workspace tests use transaction-shaped IndexedDB and DOM adapters; they do not replace this end-to-end check.

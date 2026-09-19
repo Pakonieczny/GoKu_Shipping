@@ -6972,7 +6972,7 @@ const Bridge = (() => {
     const txs = Array.isArray(r.transactions) && r.transactions.length ? r.transactions : (orderCache[rid] || []);
     const [staffNote, messages] = withNotes ? await Promise.all([staffNoteOf(rid), messagesOf(rid)]) : ["", []];
     const owner = rtSelected.get(rid) || null;
-    return { receiptId: rid, orderNumber: String(r.order_number || rid), shipBy: Number(r._shipTS) || 0, updateTs: Number(r._stamp || receiptStamp(r)) || 0, createTs: Number(r.create_timestamp || 0) || 0,
+    return { receiptId: rid, orderNumber: String(r.order_number || rid), shipBy: Number(r._shipTS) || 0, updateTs: Number(r._stamp || receiptStamp(r)) || 0, createTs: Number(r.create_timestamp || r.created_timestamp || r.creation_tsz || 0) || 0,
       buyer: { name: String(r.name || ""), country: String(r.country_iso || r.country || ""), city: String(r.city || "") }, buyerMessage: String(r.message_from_buyer || ""), isGift: !!r.is_gift, giftMessage: String(r.gift_message || ""),
       attention: !!r._attn, hydrated: !!r._hydrated, staffNote, hasNote: staffNoteIDs.has(rid), hasMessages: msgOrderIDs.has(rid) || messages.length > 0, messages,
       lockedBy: owner && owner !== RT.clientId ? owner : null, selectedHere: selectedOrders.has(rid), claimed: rtClaims.get(rid) || null, completed: completedOrders.has(rid),

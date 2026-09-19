@@ -469,7 +469,8 @@ const Orders = window.Orders = (() => {
     if (r.hydrated < r.total) throw new Error(`only ${r.hydrated} of ${r.total} orders could be read from Etsy — ${r.etsy && !r.etsy.signedIn ? "the station is not signed in: press Connect Etsy" : "check the Design Station and pull again"}`);
     const picked = applyPullRule(r.orders);
     B.orders.filtered = r.orders.length - picked.length;
-    B.orders.rows = picked.flatMap(o => o.lines.map(l => ({ key: O.lineKey(o, l), order: o, line: l, spec: null, problems: [], state: "pulled", reason: null, claimedBy: null, poolIds: [], engrave: null, metal: null })));
+    await Arrivals.record(picked);
+    B.orders.rows = picked.flatMap(o => o.lines.map(l => ({ arrivedAt: Arrivals.at(o.receiptId), key: O.lineKey(o, l), order: o, line: l, spec: null, problems: [], state: "pulled", reason: null, claimedBy: null, poolIds: [], engrave: null, metal: null })));
     B.orders.byKey = new Map(B.orders.rows.map(r => [r.key, r]));
     interpretAll();
     B.orders.pulledAt = Date.now(); B.orders.stale = false;
@@ -491,7 +492,7 @@ const Orders = window.Orders = (() => {
     const l = row.line, o = row.order;
     return [row.key, { state: row.state, poolIds: row.poolIds, reason: row.reason, hold: row.hold || null, wait: row.wait || null, sku: row.spec && row.spec.designSku, material: row.material || (row.spec && row.spec.material) || null, quantity: row.spec ? row.spec.quantity : 1,
       engrave: row.engrave ? { needed: !!row.engrave.needed, state: row.engrave.state, approved: !!row.engrave.approved, text: row.engrave.text || null } : null,
-      problems: (row.problems || []).map(p => p.kind), updateTs: o.updateTs, orderId: o.receiptId, transactionId: l.transactionId,
+      arrivedAt: row.arrivedAt || 0, createTs: o.createTs || 0, materialOverride: row.materialOverride || null, sizeOverride: row.sizeOverride || null, problems: (row.problems || []).map(p => p.kind), updateTs: o.updateTs, orderId: o.receiptId, transactionId: l.transactionId,
       snap: { title: cap(l.title, 160), listingId: cap(l.listingId, 24), metalKey: cap(l.metalKey, 24), metalLabel: cap(l.metalLabel, 40),
         orderNumber: cap(o.orderNumber, 24), buyer: cap(o.buyer && o.buyer.name, 60), shipBy: +o.shipBy || 0, isGift: !!o.isGift,
         vars: (l.variations || []).slice(0, 8).map(v => cap(v.name, 40) + "\u241f" + cap(v.value, 60)),
@@ -504,14 +505,14 @@ const Orders = window.Orders = (() => {
        holds the rest: the charm's name stands in for the listing title, and its drawing — the thing that will actually
        be cut — stands in for the shop photograph, which is arguably the better picture anyway. */
     const me = !s2.title && l.sku ? Master.entryFor(l.sku) : null;
-    const order = { receiptId: String(l.orderId || ""), orderNumber: s2.orderNumber || String(l.orderId || ""), shipBy: +s2.shipBy || 0, updateTs: +l.updateTs || 0,
+    const order = { receiptId: String(l.orderId || ""), orderNumber: s2.orderNumber || String(l.orderId || ""), shipBy: +s2.shipBy || 0, createTs: +l.createTs || 0, updateTs: +l.updateTs || 0,
       buyer: { name: s2.buyer || "", country: "", city: "" }, buyerMessage: "", isGift: !!s2.isGift, giftMessage: "", staffNote: "", messages: [], metals: {}, lines: [] };
     const line = { transactionId: String(l.transactionId || ""), listingId: s2.listingId || "", sku: l.sku || "", title: s2.title || (me ? `${me.sku}${me.size ? " · " + me.size : ""}` : ""), quantity: +l.quantity || 1,
       metalKey: s2.metalKey || "", metalLabel: s2.metalLabel || (l.material ? labelOf(l.material) : ""), personalization: s2.pers || [], buyerMessage: "", expectedShipDate: 0,
       variations: (s2.vars || []).map(v => { const i = String(v).indexOf("\u241f"); return { name: String(v).slice(0, i < 0 ? 0 : i), value: i < 0 ? String(v) : String(v).slice(i + 1) }; }) };
     order.lines = [line];
-    return { key, order, line, spec: null, problems: [], state: l.state || "pulled", reason: l.reason || null, hold: l.hold || null, wait: l.wait || null, claimedBy: null,
-      poolIds: l.poolIds || [], engrave: l.engrave || null, metal: l.material || null, materialOverride: l.material || null, fromRecord: true };
+    return { key, order, line, arrivedAt: +l.arrivedAt || 0, sizeOverride: l.sizeOverride || null, spec: null, problems: [], state: l.state || "pulled", reason: l.reason || null, hold: l.hold || null, wait: l.wait || null, claimedBy: null,
+      poolIds: l.poolIds || [], engrave: l.engrave || null, metal: l.material || null, materialOverride: l.materialOverride || l.material || null, fromRecord: true };
   }
   /* The claim is a courtesy — a gold dot on the station's rows saying the sorter has these — never a lock. So it goes
      in batches of a hundred, each with its own time, and a batch the station does not answer is retried once and then
@@ -582,7 +583,7 @@ const Orders = window.Orders = (() => {
     { id: "rest", label: "Not started", cls: "neutral", of: r => true },
   ];
   const pileOf = r => (PILES.find(g => g.of(r)) || PILES[PILES.length - 1]).id;
-  const OV = { pile: null, metal: null, form: null, eng: null, q: "", view: null, sort: "due", desc: false };   // what the tab is showing right now
+  const OV = { pile: null, metal: null, form: null, eng: null, q: "", view: null, sort: "arrival", desc: false };   // what the tab is showing right now
   const FORM_LABEL = { necklace: "Necklaces", earrings: "Earrings", "earring-single": "Single earrings", huggie: "Huggies", charm: "Charms only", bracelet: "Bracelets", anklet: "Anklets", keychain: "Keychains" };
   const viewMode = () => OV.view || S.settings.orderView || "cards";
   /** The lines the filters leave, in ship-by order. */
@@ -598,7 +599,7 @@ const Orders = window.Orders = (() => {
       return [r.order.receiptId, sp.designSku, r.line.sku, r.line.title, (sp.personalization || []).join(" "), sp.buyerMessage, sp.staffNote, r.reason]
         .some(x => String(x || "").toLowerCase().includes(q));
     }).sort((x, y) => {
-      const k = OV.sort === "order" ? String(x.order.receiptId).localeCompare(String(y.order.receiptId))
+      const k = OV.sort === "arrival" ? ((y.arrivedAt || 0) - (x.arrivedAt || 0) || (y.order.createTs || 0) - (x.order.createTs || 0)) : OV.sort === "order" ? String(x.order.receiptId).localeCompare(String(y.order.receiptId))
         : OV.sort === "state" ? String(x.state).localeCompare(String(y.state))
         : (x.order.shipBy || 0) - (y.order.shipBy || 0);
       return (OV.desc ? -k : k) || String(x.order.receiptId).localeCompare(String(y.order.receiptId));
@@ -778,7 +779,7 @@ const Orders = window.Orders = (() => {
           <span class="chips" id="ordChips"></span>
           <span class="chips" id="ordMetalHost"></span>
           <input class="ordSearch" id="ordQ" placeholder="order, SKU, words…" title="search the order number, the SKU, the title and everything the customer or the shop wrote">
-          <select class="ordSort" id="ordSort" title="what orders the cards"><option value="due">by ship-by</option><option value="order">by order</option><option value="state">by state</option></select>
+          <select class="ordSort" id="ordSort" title="what orders the cards"><option value="arrival">newest arrivals first</option><option value="due">by ship-by</option><option value="order">by order</option><option value="state">by state</option></select>
           <span class="viewSeg" id="ordViewSeg"></span><span class="ordMeta mono" id="ordMeta"></span>
         </div>
       </div><div class="ordBody" id="ordBody"></div>`;
@@ -848,7 +849,7 @@ const Orders = window.Orders = (() => {
     renderBody();
     const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(new Set(B.orders.rows.map(r => r.order.receiptId)).size) : "";
   }
-  return { pull, claim, unclaim, revalidate, render, renderBody, markStale, loadMaps, interpretAll, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, imageFor, wantImage, shipTxt, statePill: r => STATE_PILL[r.state] || ["neutral", r.state], applyPullRule, ctx };
+  return { view: () => OV, pull, claim, unclaim, revalidate, render, renderBody, markStale, loadMaps, interpretAll, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, imageFor, wantImage, shipTxt, statePill: r => STATE_PILL[r.state] || ["neutral", r.state], applyPullRule, ctx };
 })();
 
 /* ═══ 19 · Master — SKU labels under charms, per-SKU designs, the index ══════ */
@@ -1316,9 +1317,9 @@ const Pool = window.Pool = (() => {
       const poolId = O.poolId(row.order, row.line, copy);
       const charm = copy === 1 && !base.poolId ? base : cloneCharm(base, `${src.id}:${poolId}`);
       charm.name = `${row.order.receiptId} · ${sp.designSku}${sp.quantity > 1 ? ` · ${copy}/${sp.quantity}` : ""}`;
-      charm.order = row.order.receiptId; charm.orderInfo = { receiptId: row.order.receiptId, transactionId: row.line.transactionId, sku: sp.designSku, copy, quantity: sp.quantity, form: sp.form, size: sp.size };
+      charm.order = row.order.receiptId; charm.orderDate = +row.order.createTs || 0; charm.arrivedAt = row.arrivedAt || 0; charm.orderInfo = { receiptId: row.order.receiptId, transactionId: row.line.transactionId, sku: sp.designSku, copy, quantity: sp.quantity, form: sp.form, size: sp.size };
       charm.poolId = poolId; charm.metal = sp.material; charm.lineKey = row.key; charm.pinned = null; charm.excluded = false;
-      pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: row.order.receiptId, transactionId: row.line.transactionId, sku: sp.designSku, material: sp.material, size: sp.size || null, form: sp.form || null, chain: sp.chain || null, copy, quantity: sp.quantity, charmHash: charm.hash, masterHash: entry.masterHash || null, aiPath: sizeEntry(entry, sp.size).aiPath, engrave: !!(row.engrave && row.engrave.needed), state: "ready", lineKey: row.key, updateTs: row.order.updateTs });
+      pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: row.order.receiptId, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, transactionId: row.line.transactionId, sku: sp.designSku, material: sp.material, size: sp.size || null, form: sp.form || null, chain: sp.chain || null, copy, quantity: sp.quantity, charmHash: charm.hash, masterHash: entry.masterHash || null, aiPath: sizeEntry(entry, sp.size).aiPath, engrave: !!(row.engrave && row.engrave.needed), state: "ready", lineKey: row.key, updateTs: row.order.updateTs });
       charms.push(charm);
     }
     if (S.cloud.ok) {
@@ -1333,7 +1334,7 @@ const Pool = window.Pool = (() => {
     agent({ metal: sp.material, pool: true }, "POOL", `${row.order.receiptId} · ${sp.designSku}${sp.quantity > 1 ? " ×" + sp.quantity : ""} → ${labelOf(sp.material)} (${row.engrave && row.engrave.needed ? "engrave" : "plain"})`);
   }
   async function addAll(run) {
-    const rows = Orders.rows().filter(r => ["pulled", "held", "unmatched", "oversize", "waiting"].includes(r.state));
+    const rows = Orders.rows().filter(r => ["pulled", "held", "unmatched", "oversize", "waiting"].includes(r.state)).sort((a, b) => (+a.order.createTs || 0) - (+b.order.createTs || 0));
     // what goes to the laser today and what waits: full sheets for SS and GF, every other day for the slow metals, orders whole
     Orders.interpretAll();
     const plan = await Gate.plan(rows);
@@ -1350,7 +1351,7 @@ const Pool = window.Pool = (() => {
     agent({ pool: true }, "POOL", `Pool: ${pooled} line(s) queued on the cards · ${rows.filter(r => r.state === "waiting").length} waiting · ${rows.filter(r => !["pooled", "noDesign", "waiting"].includes(r.state)).length} held`);
     return pooled;
   }
-  async function update(poolIds, patch) { for (const id of poolIds) { const p = B.pool.rows.get(id); if (p) Object.assign(p, patch); } if (S.cloud.ok && poolIds.length) await api("charmNestLibrary", { op: "poolUpdate", poolIds, patch }).catch(() => {}); }
+  async function update(poolIds, patch) { for (const id of poolIds) { const p = B.pool.rows.get(id); if (p) Object.assign(p, patch); } if (S.cloud.ok && poolIds.length) await api("charmNestLibrary", { op: "poolUpdate", poolIds, patch }); }
   const charmOf = poolId => allSheets().flatMap(sh => sh.charms).find(c => c.poolId === poolId) || null;
   const sheetOf = poolId => allSheets().find(sh => sh.placements.some(p => { const c = sh.charms.find(x => x.id === p.id); return c && c.poolId === poolId; })) || null;
   return { poolAdd, addAll, masterCharm, cloneCharm, update, charmOf, sheetOf, sizeEntry };
@@ -1387,7 +1388,7 @@ const Gate = window.Gate = (() => {
     await load();
     const ready = rows.filter(r => r.spec && !r.spec.noDesign && !r.problems.length && r.spec.material);
     for (const r of ready) if (r.spec.designSku && !Master.entryFor(r.spec.designSku)) await Master.fetchEntry(r.spec.designSku).catch(() => {});
-    const lines = ready.map(r => ({ key: r.key, orderId: String(r.order.receiptId), material: r.spec.material, areaPt2: footprint(r), shipBy: +r.order.shipBy || 0 }));
+    const lines = ready.map(r => ({ key: r.key, orderId: String(r.order.receiptId), material: r.spec.material, areaPt2: footprint(r), createTs: +r.order.createTs || 0, shipBy: +r.order.shipBy || 0 }));
     R.plan = O_.planRelease(lines, { today: today(), capacity: capacity(), lastReleased: R.lastReleased, released: R.released, forceFill: R.forceFill, cadenceDays: +S.settings.cadenceDays || 2, lateDays: S.settings.lateDays == null ? 2 : +S.settings.lateDays });
     for (const r of ready) {
       const w = R.plan.wait.get(r.key);
@@ -1404,12 +1405,15 @@ const Gate = window.Gate = (() => {
   }
   /** After pooling: the slow materials that went out today are recorded, and every card learns its kin group. */
   async function afterPool(run) {
-    const pooled = Orders.rows().filter(r => r.state === "pooled" && r.material);
+    const pooled = Orders.rows().filter(r => ["pooled", "written"].includes(r.state) && r.material);
     const went = {}; for (const r of pooled) if (O_.SLOW_MATERIALS.has(r.material) && R.lastReleased[r.material] !== today()) went[r.material] = today();
     if (Object.keys(went).length) { await put({ lastReleased: went }); agent({ bridge: true }, "POOL", `${Object.keys(went).map(m => labelOf(m)).join(", ")} released to the laser today — next in ${+S.settings.cadenceDays || 2} days`); }
     const groups = O_.kinGroups(pooled.map(r => ({ orderId: String(r.order.receiptId), material: r.material })));
     for (const m of METALS) for (const pg of pagesOf(m.key)) if (!pg.fileBase && (!run || pg.runId === run.runId)) pg.group = groups[m.key] || m.key;
-    if (run) run.groups = groups;
+    if (run) {
+      run.groups = groups;
+      for (const group of new Set(Object.values(groups))) { const set = await Sets.ensure(run.runId, group); set.materials = group.split("+"); await Sets.save(set); }
+    }
     refreshAllCards();
   }
   /** A person opens a slow material today, or cuts a fast material's partial sheet: the waiting lines pool at once. */
@@ -1861,7 +1865,7 @@ const Engrave = window.Engrave = (() => {
   const STEP_WORDS_EG = { pull: "pulling orders", claim: "claiming", pool: "pooling", plan: "planning", nest: "nesting", checkpoint: "checking the sheets", labels: "writing labels", commit: "committing" };
   /** Bring the counts and the up-next rail up to date without touching the card a person is working on. */
   function renderChrome(v, queue) {
-    const jobs = [...items().values()].filter(j => j.row.state !== "gone");
+    const jobs = [...items().values()].filter(j => j.row.state !== "gone").sort((a, b) => (b.row.arrivedAt || 0) - (a.row.arrivedAt || 0) || (+b.row.order.createTs || 0) - (+a.row.order.createTs || 0));
     { const rw = v.querySelector("#egRun"); if (rw) rw.textContent = runWord(); }
     const n = { place: queue.length, done: decidedJobs().length };
     v.querySelectorAll(".egTab[data-tab]").forEach(b => {
@@ -1921,10 +1925,10 @@ const Engrave = window.Engrave = (() => {
       const f2 = q2.find(j => j.key === EG.focus) || q2[0];
       if (f2 && f2.key === EG.cardKey) { renderChrome(v, q2); return; }
     }
-    const jobs = [...items().values()].filter(j => j.row.state !== "gone");
+    const jobs = [...items().values()].filter(j => j.row.state !== "gone").sort((a, b) => (b.row.arrivedAt || 0) - (a.row.arrivedAt || 0) || (+b.row.order.createTs || 0) - (+a.row.order.createTs || 0));
     // the words to settle and the placements to approve are one queue, one card each: the card carries the words as an
     // editable field, so nothing needs a second tab
-    const words = jobs.filter(matchesQ).filter(j => j.state === "words" || j.state === "blocked"), queue = jobs.filter(matchesQ).filter(j => j.state === "review").concat(words), done = jobs.filter(matchesQ).filter(j => ["approved", "written", "skipped"].includes(j.state));
+    const words = jobs.filter(matchesQ).filter(j => j.state === "words" || j.state === "blocked"), queue = jobs.filter(matchesQ).filter(j => ["review", "words", "blocked"].includes(j.state)), done = jobs.filter(matchesQ).filter(j => ["approved", "written", "skipped"].includes(j.state));
     // One screen, three tabs, one thing in front of you at a time: the words a person has to settle, the placements to
     // approve, and what has already been decided. The counts are the tabs, so what is left is never more than a glance.
     // Until a person picks a tab, the screen follows the work: it used to settle on Decided while the run was still
@@ -1964,7 +1968,7 @@ const Engrave = window.Engrave = (() => {
     }
     if (tab === "done") {
       const bk = v.querySelector("#egBacks");
-      const decided = decidedJobs().filter(matchesQ).sort((a, b) => (b.approvedAt || 0) - (a.approvedAt || 0));
+      const decided = decidedJobs().filter(matchesQ).sort((a, b) => (b.row.arrivedAt || 0) - (a.row.arrivedAt || 0) || (b.approvedAt || 0) - (a.approvedAt || 0));
       const stateWord = j2 => j2.state === "written" ? "written" : j2.state === "skipped" ? "no engraving" : "approved";
       const stateWhy = j2 => j2.state === "written" ? "the back file is saved with the sheet" : j2.state === "skipped" ? "cut plain, nothing on the back" : "approved — the back file is written when the sheet is";
       const fmtT = t => t ? new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
@@ -2122,7 +2126,7 @@ const Engrave = window.Engrave = (() => {
     void it;
     return card;
   }
-  return { loadFonts, classify, classifyAll, fitJob, fitAll, approve, nudge, resize, rotateTo, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
+  return { view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0 }), loadFonts, classify, classifyAll, fitJob, fitAll, approve, nudge, resize, rotateTo, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
@@ -2133,13 +2137,20 @@ const Sets = window.Sets = (() => {
      ties two sheets together is an order with a piece on each, and the shop said so: a material no order ties to
      another is a set of its own. So a run has one set per kin group (Orders.kinGroups), each numbered on the day's
      counter in its own transaction, and a second run later the same day carries the numbering on. */
-  async function ensure(runId, group) {
+  const allocating = new Map();
+  function ensure(runId, group) {
+    const key = keyOf(runId, group);
+    if (!allocating.has(key)) allocating.set(key, allocate(runId, group).finally(() => allocating.delete(key)));
+    return allocating.get(key);
+  }
+  async function allocate(runId, group) {
     const k = keyOf(runId, group);
-    if (byRun().has(k)) return byRun().get(k);
+    if (byRun().has(k) && !byRun().get(k).offline) return byRun().get(k);
+    if (!S.cloud.ok) throw new Error("Reconnect to the cloud before numbering a new set; the layout is kept locally");
     const day = today();
     let set;
     if (S.cloud.ok) { const r = await api("charmNestLibrary", { op: "setAllocate", day, runId, group: group || "" }, { label: "Numbering the set" }); set = { setId: r.setId, seq: r.seq, day: r.day || day, runId, group: group || null, name: O.setLabel(r.seq), folder: O.setFolder(r.day || day, r.seq), orders: {}, sheetIds: [], materials: [], labelFiles: [], status: "open" }; }
-    else { const kk = "cn.setseq." + day; const seq = (+localStorage.getItem(kk) || 0) + 1; localStorage.setItem(kk, String(seq)); set = { setId: O.setId(day, seq), seq, day, runId, group: group || null, name: O.setLabel(seq), folder: O.setFolder(day, seq), orders: {}, sheetIds: [], materials: [], labelFiles: [], status: "open", offline: true }; }
+
     byRun().set(k, set);
     if (B.run && B.run.runId === runId) { B.run.setIds = [...new Set((B.run.setIds || []).concat([set.setId]))]; B.run.setId = B.run.setId || set.setId; B.run.day = set.day; B.run.seq = B.run.seq || set.seq; RunCtl.renderBanner(); }
     agent({ run: runId }, "cloud", `${set.name} allocated for ${set.day}${group ? ` · ${group.split("+").map(m => labelOf(m)).join(" + ")}` : ""} → ${set.folder}`);
@@ -2183,7 +2194,7 @@ const Sets = window.Sets = (() => {
     }
     sh.label = { files: files.map(f => ({ path: f.path, url: f.url, sheet: f.sheet, part: f.part, parts: f.parts, orders: f.orders, payload: f.payload, ecc: f.ecc, label: f.label })), orders: ids };
     sh.setId = set.setId; sh.setSeq = set.seq;
-    if (S.cloud.ok && sh.sheetId) await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, label: sh.label, setId: set.setId, setSeq: set.seq, sheetIndex: sh.sheetIndex, orders: ids, runId: sh.runId, poolIds: placed.map(c => c.poolId).filter(Boolean) } }).catch(() => {});
+    if (S.cloud.ok && sh.sheetId) await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, label: sh.label, setId: set.setId, setSeq: set.seq, sheetIndex: sh.sheetIndex, orders: ids, runId: sh.runId, poolIds: placed.map(c => c.poolId).filter(Boolean) } });
     // pool rows and order lines
     const poolIds = placed.map(c => c.poolId).filter(Boolean);
     if (poolIds.length) await Pool.update(poolIds, { sheetId: sh.sheetId, setId: set.setId, state: "written", sheetName: sh.fileBase });
@@ -2195,10 +2206,11 @@ const Sets = window.Sets = (() => {
     set.labelFiles = set.labelFiles.filter(f => f.sheetId !== sh.sheetId).concat(sh.label.files.map(f => Object.assign({ sheetId: sh.sheetId }, f)));
     set.status = "nesting";
     await save(set);
+    if (window.RunHistory) RunHistory.refreshIfOpen();
     agent({ metal: sh.metal, run: sh.runId }, "cloud", `${sh.fileBase}: ${files.length} label${files.length === 1 ? "" : "s"} saved (${ids.length} order${ids.length === 1 ? "" : "s"}) · set ${set.name} now ${set.sheetIds.length} sheet(s)`);
     Orders.render();
   }
-  async function save(set) { if (!S.cloud.ok || set.offline) return; const orders = {}; for (const [rid, o] of Object.entries(set.orders)) orders[rid] = { held: o.held || null, lines: Object.values(o.lines) }; await api("charmNestLibrary", { op: "setUpdate", setId: set.setId, patch: { runId: set.runId, day: set.day, seq: set.seq, name: set.name, folder: set.folder, materials: set.materials, sheetIds: set.sheetIds, orders, status: set.status, labels: set.labels || null, labelFiles: set.labelFiles.map(f => ({ path: f.path, url: f.url, sheet: f.sheet, sheetId: f.sheetId, part: f.part, parts: f.parts, orders: f.orders, label: f.label })), committed: set.committed || null, refused: set.refused || null, committedAt: set.committedAt || null, backCount: set.backCount || 0 } }).catch(e => agent({ run: set.runId }, "warn", `set record: ${e.message}`)); }
+  async function save(set) { if (!S.cloud.ok || set.offline) return; const orders = {}; for (const [rid, o] of Object.entries(set.orders)) orders[rid] = { held: o.held || null, lines: Object.values(o.lines) }; await api("charmNestLibrary", { op: "setUpdate", setId: set.setId, patch: { runId: set.runId, day: set.day, seq: set.seq, name: set.name, folder: set.folder, materials: set.materials, sheetIds: set.sheetIds, orders, status: set.status, labels: set.labels || null, labelFiles: set.labelFiles.map(f => ({ path: f.path, url: f.url, sheet: f.sheet, sheetId: f.sheetId, part: f.part, parts: f.parts, orders: f.orders, label: f.label })), committed: set.committed || null, refused: set.refused || null, committedAt: set.committedAt || null, backCount: set.backCount || 0 } }); }
   const sheetsOf = set => allSheets().filter(sh => sh.setId === set.setId);
   /** Which orders of the set travel, which are held and why (design §5.4, §8.4). */
   function evaluate(set) {
@@ -2325,10 +2337,26 @@ const RunCtl = window.RunCtl = (() => {
   const PAUSE_AFTER = new Set();
   let waiter = null, reviewWaiter = null, autoTimer = null;
   const run = () => B.run;
-  async function save(r) { r = r || B.run; if (!r) return; r.updatedAt = Date.now(); if (!S.cloud.ok) return; const rec = Object.assign({}, r, { lines: r.lines || {}, sheets: r.sheets || {}, holds: r.holds || {}, errors: (r.errors || []).slice(-50) }); delete rec._wait; await api("charmNestLibrary", { op: "runPut", run: rec }).catch(e => agent({ run: r.runId }, "warn", `run record: ${e.message}`)); renderBanner(); }
+  let saveQueue = Promise.resolve();
+  async function save(r) {
+    r = r || B.run; if (!r) return;
+    r.updatedAt = Date.now();
+    if (r === B.run && Orders.rows().length) { const ids = new Set((r.orders || []).map(String)); r.lines = Object.fromEntries(Orders.rows().filter(row => ids.has(String(row.order.receiptId))).map(Orders.lineRecord)); }
+    Session.schedule();
+    if (!S.cloud.ok) { r.saveError = "Cloud offline — work is saved on this browser; reconnect to save the run online"; renderBanner(); return; }
+    const rec = JSON.parse(JSON.stringify(Object.assign({}, r, { errors: (r.errors || []).slice(-50) })));
+    delete rec._wait; delete rec.saveError;
+    const write = saveQueue.catch(() => {}).then(() => api("charmNestLibrary", { op: "runPut", run: rec }));
+    saveQueue = write;
+    try { await write; r.cloudSavedAt = Date.now(); delete r.saveError; }
+    catch (e) { r.saveError = e.message; agent({ run: r.runId }, "warn", `Run not saved online: ${e.message}`); throw e; }
+    finally { renderBanner(); if (window.RunHistory) RunHistory.refreshIfOpen(); }
+  }
   function newRun(mode) { const day = today(); return { runId: `run-${day}-${uid()}`, day, setId: null, step: "pull", status: "running", mode: mode || S.settings.runMode || "manual", startedAt: Date.now(), updatedAt: Date.now(), lines: {}, sheets: {}, holds: {}, errors: [], resumable: true, stoppedBy: null, fix: null, orders: [] }; }
   async function start(opts = {}) {
     if (B.run && ["running", "review", "paused"].includes(B.run.status)) { toast("A run is already open — stop it or let it finish", "bad"); return B.run; }
+    if (B.run) await save(B.run);
+    if (B.run || Recall.on()) clearRunState();
     const r = newRun(opts.mode); B.run = r;
     agent({ run: r.runId }, "DS", `Run ${r.runId} started (${r.mode} mode)`);
     await save(r); renderBanner();
@@ -2421,6 +2449,8 @@ const RunCtl = window.RunCtl = (() => {
   function waitForReview(r) {
     return new Promise(resolve => {
       const check = () => {
+        if (r.arrivalBusy) return;
+        if (Arrivals.state().pending && S.settings.runMode === "auto") { r.status = "review"; Arrivals.processPending().catch(e => stop(e.message, "Resume after fixing intake.")); return; }
         const open = [...Engrave.items().values()].filter(j => j.row.state !== "gone" && ["words", "review", "fitting", "ready", "classify", "blocked"].includes(j.state));
         const ready = open.filter(j => j.state === "ready");
         if (ready.length) { Engrave.fitAll(r).catch(() => {}).then(() => { if (reviewWaiter === check) setTimeout(check, 50); }); return; }
@@ -2448,10 +2478,13 @@ const RunCtl = window.RunCtl = (() => {
   function stopIfRunning(why, fix) { if (B.run && B.run.status === "running") stop(why, fix); }
   async function resume() {
     const r = B.run; if (!r || !["stopped", "paused"].includes(r.status)) return;
+    if (allSheets().some(pg => pg.runId === r.runId && (pg.problem || pg.dirty || ["ready", "idle"].includes(pg.status)) && pg.charms.length)) {
+      r.step = "nest"; for (const pg of allSheets()) if (pg.runId === r.runId && pg.problem) sheetDirty(pg);
+    }
     if (r.awaitCommit) r.commitRequested = true;
     r.status = "running"; r.stoppedBy = null; r.fix = null; await save(r);
     if (["nest"].includes(r.step)) { for (const pg of allSheets()) if (pg.runId === r.runId && ["complete", "partial"].includes(pg.status) && pg.verification && !pg.verification.ok) sheetDirty(pg); }
-    if (r.step === "pool" || r.step === "pull" || r.step === "claim") r.step = "pull";
+    if (!r.workspaceRestored && (r.step === "pool" || r.step === "pull" || r.step === "claim")) r.step = "pull";
     loop().catch(e => stop(e.message, "Fix the cause and press Resume."));
   }
   async function commitNow() { const r = B.run; if (!r) return; r.commitRequested = true; r.awaitCommit = false; if (r.status === "paused") { r.status = "running"; await save(r); loop().catch(e => stop(e.message, "Fix the cause and press Resume.")); } }
@@ -2512,7 +2545,7 @@ const RunCtl = window.RunCtl = (() => {
         const pool = B.pool.rows.get(rc.poolId) || (await api("charmNestLibrary", { op: "poolGet", poolIds: [rc.poolId] })).pools[rc.poolId]; if (!pool) continue; B.pool.rows.set(rc.poolId, pool);
         const entry = Master.entryFor(pool.sku) || await Master.fetchEntry(pool.sku); if (!entry) continue;
         const src = await Pool.masterCharm(entry, pool.size); const base = src.charms[0];
-        const charm = Pool.cloneCharm(base, `${src.id}:${rc.poolId}`); charm.name = rc.name; charm.order = pool.orderId; charm.poolId = rc.poolId; charm.metal = d.metal; charm.lineKey = pool.lineKey; charm.orderInfo = { receiptId: pool.orderId, transactionId: pool.transactionId, sku: pool.sku, copy: pool.copy, quantity: pool.quantity, form: pool.form, size: pool.size }; charm.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle };
+        const charm = Pool.cloneCharm(base, `${src.id}:${rc.poolId}`); charm.name = rc.name; charm.order = pool.orderId; charm.orderDate = pool.orderDate || 0; charm.arrivedAt = pool.arrivedAt || 0; charm.poolId = rc.poolId; charm.metal = d.metal; charm.lineKey = pool.lineKey; charm.orderInfo = { receiptId: pool.orderId, transactionId: pool.transactionId, sku: pool.sku, copy: pool.copy, quantity: pool.quantity, form: pool.form, size: pool.size }; charm.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle };
         if (!pg.charms.some(c => c.poolId === rc.poolId)) pg.charms.push(charm);
         pg.placements = pg.placements.filter(x => x.id !== charm.id).concat([{ id: charm.id, angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, wPt: p.wPt, hPt: p.hPt, layerName: p.layer, scale: 0.975 }]);
       }
@@ -2528,14 +2561,14 @@ const RunCtl = window.RunCtl = (() => {
   function onComplete(r) {
     agent({ run: r.runId }, "ok", `Run ${r.runId} complete: ${(r.committed || []).length} order(s) committed · ${Object.keys(r.holds || {}).length} held · ${(r.refused || []).length} refused`);
     toast(`Set complete — ${(r.committed || []).length} order(s) marked design-complete`, "ok", 7000); ding && ding();
-    if (S.settings.runMode === "auto" && +S.settings.autoEvery > 0) { const every = Math.max(5, +S.settings.autoEvery); clearTimeout(autoTimer); autoTimer = setTimeout(() => { NEXT.at = 0; clearInterval(NEXT.t); if (S.settings.runMode === "auto") { clearRunState(); start({ mode: "auto" }); } }, every * 60000); armNext(every * 60000); agent({ bridge: true }, "DS", `Auto: the next run starts in ${every} min (never under 5, to spare the Etsy API)`); }
+    Arrivals.start();
   }
   /** After a set is done: clear the cards and pooled lines so the next run starts clean (files and records are kept). */
   function clearRunState() {
     // nothing waits for a run that is gone: the rows go back to plain pulled lines, and the gate forgets its plan
     for (const r of Orders.rows()) if (r.state === "waiting") { r.state = "pulled"; r.wait = null; r.reason = null; }
     if (window.Gate) { const g = Gate.state(); g.plan = null; g.forceFill = {}; }
-    for (const m of METALS) { const prim = S.sheets[m.key]; if (prim.pages.some(p => p.charms.some(c => c.poolId))) { for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms = pg.charms.filter(c => !c.poolId); pg.sheetId = null; pg.fileBase = null; pg.setId = null; pg.runId = null; } prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim); } } B.orders.rows = []; B.orders.byKey = new Map(); B.engrave.items = new Map(); B.review.items = []; B.pool.rows = new Map(); B.run = null; B.orders.recalled = null; B.orders.pulledAt = null; B.orders.filtered = 0; B.orders.stale = false; Orders.render(); Engrave.render(); Review.render(); renderBanner(); renderRail(); updateTopSub(); }
+    for (const m of METALS) { const prim = S.sheets[m.key]; if (prim.pages.some(p => p.runId || p.recalled || p.charms.some(c => c.poolId))) { for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms = pg.charms.filter(c => !c.poolId); pg.sheetId = null; pg.fileBase = null; pg.setId = null; pg.runId = null; pg.seq = null; pg.setDay = null; pg.sheetIndex = null; pg.group = null; pg.backPool = []; pg.backOutputs = null; pg.label = null; pg.cloud = null; pg.persisted = null; pg.recalled = null; } prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim); } } B.orders.rows = []; B.orders.byKey = new Map(); B.engrave.items = new Map(); B.review.items = []; B.pool.rows = new Map(); B.run = null; B.orders.recalled = null; B.orders.pulledAt = null; B.orders.filtered = 0; B.orders.stale = false; Object.assign(Recall.state(), { runId: null, setId: null, live: null }); Orders.render(); Engrave.render(); Review.render(); renderBanner(); renderRail(); updateTopSub(); }
   function setRunMode(mode) {
     S.settings.runMode = mode === "auto" ? "auto" : "manual"; saveSettings(); renderModeBtn();
     if (mode === "auto") { agent({ bridge: true }, "DS", "Auto mode on: the sorter pulls the latest orders by the date rule and runs the whole process, stopping only for a person"); if (!B.run || ["complete", "stopped"].includes(B.run.status)) { if (B.run && B.run.status === "complete") clearRunState(); start({ mode: "auto" }).catch(e => toast(e.message, "bad")); } else if (B.run.status === "paused") { B.run.mode = "auto"; next(); } else B.run.mode = "auto"; }
@@ -2552,6 +2585,7 @@ const RunCtl = window.RunCtl = (() => {
     return "";
   }
   function renderBanner() {
+    if (window.Session) Session.schedule();
     if (window.guardBench) guardBench();
     const h = document.getElementById("runBanner"); if (!h) return; const r = B.run;
     LiveStrip.render();                                     // one path: the banner and the ladder can never disagree
@@ -2580,7 +2614,8 @@ const RunCtl = window.RunCtl = (() => {
     const idx = O.stepIndex(r.step);
     const reviewN = Review.count(), engN = Engrave.pendingCount();
     const waitingFor = [reviewN ? `${reviewN} in Review` : "", engN ? `${engN} in Engraving` : ""].filter(Boolean).join(" · ") || "nothing";
-    const why = r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${r.fix ? ` — <span>${esc(r.fix)}</span>` : ""}` : r.status === "review" ? `<b>Waiting for a person:</b> ${waitingFor}` : r.status === "paused" ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(STEP_WORDS[r.step] || r.step)}</b>${esc(stepDetail(r))}`;
+    const saveWarning = r.saveError ? `<span class="bad">Not saved online: ${esc(r.saveError)}</span> · ` : "";
+    const why = saveWarning + (r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${r.fix ? ` — <span>${esc(r.fix)}</span>` : ""}` : r.status === "review" ? `<b>Waiting for a person:</b> ${waitingFor}` : r.status === "paused" ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(STEP_WORDS[r.step] || r.step)}</b>${esc(stepDetail(r))}`);
     Dock.schedule();
     h.title = `run ${r.runId}`;
     /* Which run is this? Three cards on the Nest tab and a banner that named only a step left no way to tell this
@@ -2806,7 +2841,8 @@ const Review = window.Review = (() => {
     const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) return;
     const all = items().filter(it => mine(it) && !isNotice(it));
     const ORDER = ["needsMaterial", "needsMapping", "unmatchedSku", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "orderChanged", "heldOrder"];
-    all.sort((a, b) => ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind) || a.t - b.t);
+    const arrivalOf = it => Math.max(0, ...(it.rows || [it.row]).filter(Boolean).map(r => r.arrivedAt || 0));
+    all.sort((a, b) => arrivalOf(b) - arrivalOf(a) || ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind) || a.t - b.t);
     // the kinds present are the filter: one chip each, so a long mixed list becomes the one kind being worked through
     const byKind = new Map(); for (const it of all) byKind.set(it.kind, (byKind.get(it.kind) || 0) + 1);
     if (RV.filter && RV.filter !== "done" && !byKind.has(RV.filter)) RV.filter = null;
@@ -2830,7 +2866,7 @@ const Review = window.Review = (() => {
       host.querySelectorAll("[data-open]").forEach(b => b.onclick = () => { if (b.dataset.open) OrderWin.open(b.dataset.open); });
     }
   }
-  return { items, count, add, remove, render, card, problemText, syncOrderItems, focus, repool };
+  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, problemText, syncOrderItems, focus, repool };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -3112,10 +3148,10 @@ const RunHistory = window.RunHistory = (() => {
   const WHEN = [["all", "All"], ["today", "Today"], ["week", "Last 7 days"], ["open", "Unfinished"]];
   const DAY_MS = 86400000;
   function inWhen(r) {
-    if (H.when === "open") return !["complete", "abandoned"].includes(r.status);
+    if (H.when === "open") return !["complete", "abandoned", "superseded"].includes(r.status);
     if (H.when === "all" || !r.day) return H.when === "all";
-    const age = (Date.now() - new Date(r.day + "T12:00:00").getTime()) / DAY_MS;
-    return H.when === "today" ? age < 1 : age < 7;
+    const age = (Date.parse(today() + "T12:00:00") - Date.parse(r.day + "T12:00:00")) / DAY_MS;
+    return H.when === "today" ? age === 0 : age >= 0 && age < 7;
   }
   function ensure() {
     if (H.dlg) return H.dlg;
@@ -3126,12 +3162,13 @@ const RunHistory = window.RunHistory = (() => {
         <button class="btn ghost sm" id="hRefresh" title="read the records again">Refresh</button></div>
       <div class="hWhen" id="hWhen"></div>
       <div class="hBody" id="hBody"></div>
-      <div class="hFoot" id="hFoot"></div>`;
+      <div class="hFoot" id="hFoot"></div><button class="btn ghost sm" id="hMore" hidden>Load older sets</button>`;
     document.body.appendChild(d); H.dlg = d;
     const q = d.querySelector("#hQ");
     let t = 0;
     q.oninput = () => { H.q = q.value; clearTimeout(t); t = setTimeout(load, 260); };
     d.querySelector("#hWhen").onclick = e => { const b = e.target.closest("[data-when]"); if (b) { H.when = b.dataset.when; render(); return; } const v = e.target.closest("[data-view]"); if (v) { H.view = v.dataset.view; try { localStorage.setItem("cn.histView", H.view); } catch (_) {} render(); } };
+    d.querySelector("#hMore").onclick = () => load(true);
     d.querySelector("#hRefresh").onclick = e => { e.preventDefault(); load(); };
     return d;
   }
@@ -3142,17 +3179,24 @@ const RunHistory = window.RunHistory = (() => {
     d.querySelector("#hQ").focus();
     load();
   }
-  async function load() {
+  async function load(more = false) {
     if (!S.cloud.ok) { H.err = "the cloud is not connected, so there is nothing to read"; H.runs = []; H.sheets = []; render(); return; }
     H.loading = true; H.err = null; render();
     try {
-      const r = await api("charmNestLibrary", { op: "history", q: H.q, limit: 60 }, { quiet: true });
-      H.runs = r.runs || []; H.sheets = r.sheets || []; H.scanned = r.scanned || null; H.truncated = r.truncated || null;
-      /* A set is what a person recalls, so the sheets are folded into their sets here: name, day, materials, how many
-         sheets and orders, and the picture of its GF sheet (the first sheet, failing that) to know it by. */
-      const bySet = new Map();
-      for (const x of H.sheets) { const k = x.setId || `sheet:${x.id}`; if (!bySet.has(k)) bySet.set(k, { setId: x.setId || null, seq: x.setSeq || null, day: x.day, runId: x.runId || null, sheets: [], materials: [], orders: 0, updatedAt: 0 }); const g = bySet.get(k); g.sheets.push(x); if (!g.materials.includes(x.metal)) g.materials.push(x.metal); g.orders += x.orders || 0; g.updatedAt = Math.max(g.updatedAt, x.updatedAt || 0); }
-      H.sets = [...bySet.values()].map(g => { g.sheets.sort((a, b) => (a.sheetIndex || 0) - (b.sheetIndex || 0)); const gf = g.sheets.find(x => x.metal === "gold" && x.preview) || g.sheets.find(x => x.preview) || null; g.thumb = gf ? gf.preview + (gf.preview.includes("?") ? "&" : "?") + "v=" + (gf.updatedAt || 0) : null; g.thumbOf = gf ? gf.fileBase : null; g.status = g.sheets.every(x => x.status === "complete") ? "complete" : "partial"; return g; }).sort((a, b) => String(b.day).localeCompare(String(a.day)) || (b.seq || 0) - (a.seq || 0));
+      const query = H.q, request = (H.request || 0) + 1; H.request = request;
+      const r = await api("charmNestLibrary", { op: "history", q: query, limit: 60, offset: more ? H.nextOffset || 0 : 0 }, { quiet: true });
+      if (H.request !== request || H.q !== query) return;
+      H.runs = more ? H.runs.concat(r.runs || []) : r.runs || []; H.sheets = more ? H.sheets.concat(r.sheets || []) : r.sheets || [];
+      H.scanned = r.scanned; H.nextOffset = r.nextOffset; H.total = r.total;
+      const groups = (r.sets || []).map(g => {
+        g.sheets.sort((a, b) => (a.sheetIndex || 0) - (b.sheetIndex || 0));
+        const preview = g.sheets.find(x => x.metal === "gold" && x.preview) || g.sheets.find(x => x.preview);
+        g.thumb = preview ? cors(preview.preview) : null; g.thumbOf = preview?.fileBase || null;
+        return g;
+      });
+      H.sets = more ? H.sets.concat(groups) : groups;
+      const moreButton = H.dlg.querySelector("#hMore"); moreButton.hidden = r.nextOffset == null;
+
     } catch (e) { H.err = e.message; H.runs = []; H.sheets = []; }
     H.loading = false; render();
   }
@@ -3163,10 +3207,10 @@ const RunHistory = window.RunHistory = (() => {
     const f = H.dlg.querySelector("#hFoot");
     if (H.loading && !H.runs.length) { b.innerHTML = `<div class="hEmpty"><span class="spin"></span> reading the records…</div>`; f.textContent = ""; return; }
     if (H.err) { b.innerHTML = `<div class="hEmpty bad">${esc(H.err)}</div>`; f.textContent = ""; return; }
-    if (!H.runs.length && !H.sheets.length) {
+    if (!H.sets.length && !H.runs.length && !H.sheets.length) {
       b.innerHTML = `<div class="hEmpty">${H.q ? `nothing matches “${esc(H.q)}”` : "no runs on record yet"}</div>`;
       H.dlg.querySelector("#hWhen").innerHTML = "";
-      f.textContent = H.scanned ? `looked at the ${H.scanned.runs} most recent runs and ${H.scanned.sheets} most recent sheets` : "";
+      f.textContent = H.scanned ? `searched ${H.scanned.runs} runs and ${H.scanned.sheets} sheets` : "";
       return;
     }
     const cur = B.run && B.run.runId;
@@ -3181,10 +3225,10 @@ const RunHistory = window.RunHistory = (() => {
     let lastDay = null, html = "";
     for (const g of seenSets) {
       if (g.day !== lastDay) { html += `<div class="hDay">${esc(dayWord(g.day) || "no date")}</div>`; lastDay = g.day; }
-      const name = g.seq ? `Set ${g.seq}` : (g.sheets[0].fileBase || "sheet");
+      const name = g.seq ? `Set ${g.seq}` : (g.sheets[0]?.fileBase || "Run " + String(g.runId || "").slice(-8));
       const mats = g.materials.map(m => labelOf(m)).join(" \u00b7 ");
       const isCur = g.runId && g.runId === cur;
-      const openBtn = `<button class="btn gold sm" data-a="open" title="put this set's sheets back on the material cards \u2014 from what was saved, nothing runs">Open</button>`;
+      const openBtn = g.sheets.length ? `<button class="btn gold sm" data-a="open" title="put this set's sheets back on the material cards \u2014 from what was saved, nothing runs">Open</button>` : "";
       const resumeBtn = g.runId && openRuns.some(r => r.runId === g.runId) ? `<button class="btn ghost sm" data-a="resume" title="pick the unfinished run this set belongs to up where it stopped \u2014 it re-reads every order from Etsy first">Resume the run\u2026</button>` : "";
       html += H.view === "cards"
         ? `<div class="hSet card hoverItem${isCur ? " cur" : ""}" data-set="${esc(g.setId || "")}" data-run="${esc(g.runId || "")}" tabindex="0">
@@ -3200,8 +3244,8 @@ const RunHistory = window.RunHistory = (() => {
     // unfinished runs that wrote no sheet yet have nothing to picture, but can still be picked up
     for (const r of openRuns.filter(r => !seenSets.some(g => g.runId === r.runId))) html += `<div class="hSet row" data-run="${esc(r.runId)}"><div class="hRow"><span class="nm">${r.seq ? "Set " + r.seq : "run " + r.runId.slice(-8)}</span><span class="pill warn">${esc(r.status)}${r.stoppedBy ? " \u00b7 " + esc(r.stoppedBy) : ""}</span><span class="ct">${r.lines} line${r.lines === 1 ? "" : "s"} \u00b7 no sheet written yet</span><span class="sp"></span><button class="btn ghost sm" data-a="resume" title="pick it up where it stopped \u2014 it re-reads every order from Etsy first">Resume the run\u2026</button></div></div>`;
     b.innerHTML = `<div class="hSets ${H.view}">${html}</div>`;
-    f.textContent = [H.scanned ? `looked at the ${H.scanned.runs} most recent runs and ${H.scanned.sheets} most recent sheets` : "",
-      H.truncated && (H.truncated.runs || H.truncated.sheets) ? "there is more history than that — narrow the search to reach further back" : ""].filter(Boolean).join(" · ");
+    f.textContent = [H.scanned ? `searched ${H.scanned.runs} runs and ${H.scanned.sheets} sheets` : "",
+      H.nextOffset != null ? `${H.sets.length} of ${H.total} matching sets shown — load older sets below` : ""].filter(Boolean).join(" · ");
     b.querySelectorAll(".hSet").forEach(node => {
       const setId = node.dataset.set || null, runId = node.dataset.run || null;
       const o = node.querySelector("[data-a=open]"); if (o) o.onclick = e => { e.stopPropagation(); if (H.dlg.open) H.dlg.close(); Recall.open(setId ? { setId, runId } : { runId }).catch(err => toast(err.message, "bad", 7000)); };
@@ -3213,7 +3257,8 @@ const RunHistory = window.RunHistory = (() => {
       if (o) node.onclick = e => { if (e.target.closest("button")) return; o.click(); };
     });
   }
-  return { show, load, runs: () => H.runs };
+  let refreshTimer = 0;
+  return { show, load, refreshIfOpen: () => { if (H.dlg?.open && !refreshTimer) refreshTimer = setTimeout(() => { refreshTimer = 0; if (H.dlg?.open) load(); }, 700); }, runs: () => H.runs };
 })();
 
 /* ═══ 24d · Recall — a saved set back on the cards, from what was saved ═══════════════════════════════════════════════
@@ -3241,7 +3286,7 @@ const Recall = window.Recall = (() => {
     for (const x of ls.sheets || []) { const k = x.fileBase || x.id; const had = byName.get(k); if (!had || (x.updatedAt || 0) > (had.updatedAt || 0)) byName.set(k, x); }
     const sheets = [...byName.values()].sort((a, b) => (a.setSeq || 0) - (b.setSeq || 0) || (a.sheetIndex || 0) - (b.sheetIndex || 0));
     if (!sheets.length) { if (!sel.quiet) toast("Nothing is saved under that set", "bad", 5000); return; }
-    if (B.run && ["running", "review"].includes(B.run.status)) { toast("A run is working — stop it first, or its sheets would be replaced under it", "bad", 6000); return; }
+    if (B.run && !["complete", "abandoned"].includes(B.run.status)) { toast("Finish or abandon the current run before opening another set; your current decisions are kept", "bad", 6000); return; }
     RunCtl.clearRunState();
     RC.runId = sel.runId || sheets[0].runId || null; RC.setId = sel.setId || null;
     for (const m of METALS) {
@@ -3293,7 +3338,7 @@ const Recall = window.Recall = (() => {
         const pool = B.pool.rows.get(rc.poolId) || ((await api("charmNestLibrary", { op: "poolGet", poolIds: [rc.poolId] })).pools || {})[rc.poolId]; if (!pool) continue; B.pool.rows.set(rc.poolId, pool);
         const entry = Master.entryFor(pool.sku) || await Master.fetchEntry(pool.sku); if (!entry) continue;
         const src = await Pool.masterCharm(entry, pool.size); const base = src.charms[0];
-        const charm = Pool.cloneCharm(base, `${src.id}:${rc.poolId}`); charm.name = rc.name; charm.order = pool.orderId; charm.poolId = rc.poolId; charm.metal = d.metal; charm.lineKey = pool.lineKey; charm.orderInfo = { receiptId: pool.orderId, transactionId: pool.transactionId, sku: pool.sku, copy: pool.copy, quantity: pool.quantity, form: pool.form, size: pool.size }; charm.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle };
+        const charm = Pool.cloneCharm(base, `${src.id}:${rc.poolId}`); charm.name = rc.name; charm.order = pool.orderId; charm.orderDate = pool.orderDate || 0; charm.arrivedAt = pool.arrivedAt || 0; charm.poolId = rc.poolId; charm.metal = d.metal; charm.lineKey = pool.lineKey; charm.orderInfo = { receiptId: pool.orderId, transactionId: pool.transactionId, sku: pool.sku, copy: pool.copy, quantity: pool.quantity, form: pool.form, size: pool.size }; charm.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle };
         pg.charms.push(charm);
         pg.placements.push({ id: charm.id, angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, wPt: p.wPt, hPt: p.hPt, layerName: p.layer, scale: 0.975 });
       }
@@ -3338,8 +3383,325 @@ const Kin = window.Kin = (() => {
   return { mount, mark, of: () => cur };
 })();
 
+/* Durable workspace: large geometry stays in IndexedDB, never in the small localStorage quota.
+   It is a checkpoint, not a second execution engine. Reload reconstructs PDF objects from the original bytes. */
+const Session = window.Session = (() => {
+  let dbP, ready = false, timer = 0, chain = Promise.resolve(), failed = false;
+  const key = () => S.settings.sandbox === "on" ? "sandbox" : "production";
+  const OMIT = new Set(["parsed", "worker", "workers", "el", "cardEl", "pages", "persisted", "persisting", "bar", "evNest", "evSearch", "_img", "_geomVerify", "pool", "row", "job", "recalledFrom"]);
+  function copy(v, seen = new Map()) {
+    if (v == null || typeof v !== "object") return typeof v === "function" ? undefined : v;
+    if (seen.has(v)) return seen.get(v);
+    if (ArrayBuffer.isView(v)) return v.slice ? v.slice() : new Uint8Array(v.buffer.slice(0));
+    if (v instanceof ArrayBuffer) return v.slice(0);
+    if (v instanceof Blob) return v;
+    if (v instanceof Map) { const out = new Map(); seen.set(v, out); for (const [k, x] of v) out.set(k, copy(x, seen)); return out; }
+    if (v instanceof Set) return new Set([...v].map(x => copy(x, seen)));
+    if (!Array.isArray(v) && Object.getPrototypeOf(v) !== Object.prototype && Object.getPrototypeOf(v) !== null) return undefined;
+    const out = Array.isArray(v) ? [] : {}; seen.set(v, out);
+    for (const [k, x] of Object.entries(v)) if (!(OMIT.has(k) && !(k === "pool" && typeof x === "boolean")) && !k.startsWith("_")) { const y = copy(x, seen); if (y !== undefined) out[k] = y; }
+    return out;
+  }
+  function open() {
+    if (!dbP) dbP = new Promise((resolve, reject) => {
+      const req = indexedDB.open("charm-nest-workspace", 1);
+      req.onupgradeneeded = () => req.result.createObjectStore("workspaces");
+      req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error);
+    });
+    return dbP;
+  }
+  async function io(value, scope = key()) {
+    const db = await open(); return new Promise((resolve, reject) => {
+      const tx = db.transaction("workspaces", value === undefined ? "readonly" : "readwrite");
+      const req = value === undefined ? tx.objectStore("workspaces").get(scope) : tx.objectStore("workspaces").put(value, scope);
+      tx.oncomplete = () => resolve(req.result); tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error || new Error("Workspace save interrupted"));
+    });
+  }
+  function capture() {
+    const seen = new Map();
+    return { v: 1, at: Date.now(), run: copy(B.run, seen), orders: copy(B.orders, seen),
+      sources: copy(S.sources, seen), poolSources: copy(S.poolSources, seen), unassigned: copy(S.unassigned, seen),
+      sheets: METALS.map(m => ({ metal: m.key, active: S.sheets[m.key].active, pages: allSheets().filter(p => p.metal === m.key).map(p => copy(p, seen)) })),
+      pools: copy(B.pool.rows, seen), sets: copy(B.sets, seen), jobs: [...B.engrave.items.values()].map(j => copy(j, seen)),
+      review: B.review.items.map(it => Object.assign(copy(it, seen), { rowKey: it.row?.key, jobKey: it.job?.key })),
+      mode: S.mode, orderView: copy(Orders.view()), engravingView: copy(Engrave.view?.()), reviewView: copy(Review.view?.()), settled: copy(Review.settled?.()), gate: copy(Gate.state()), recall: copy(Recall.state()), logs: copy(LiveStrip.rows) };
+  }
+  function flush() {
+    clearTimeout(timer); timer = 0; if (!ready) return chain;
+    const snap = capture(), scope = key();
+    chain = chain.catch(() => {}).then(() => io(snap, scope)).then(() => { failed = false; }).catch(e => {
+      if (!failed) toast(`Workspace could not be saved on this browser: ${e.message}. Keep this tab open.`, "bad", 10000);
+      failed = true;
+    });
+    return chain;
+  }
+  function schedule() { if (ready && !timer) timer = setTimeout(flush, 1000); }
+  async function restore() {
+    let d; try { d = await io(); } catch (e) { toast(`Workspace recovery unavailable: ${e.message}`, "bad"); return false; }
+    if (!d || d.v !== 1) return false;
+    try {
+      // A purged/abandoned cloud run must never be resurrected by an old browser checkpoint.
+      if (d.run && S.cloud.ok) {
+        let cloud;
+        try { cloud = await api("charmNestLibrary", { op: "runGet", runId: d.run.runId }, { quiet: true }); }
+        catch (e) { d.run.saveError = "Cloud check unavailable: " + e.message; }
+        if (cloud?.run?.status === "abandoned") return false;
+        if (cloud?.run?.status === "complete" && d.run.status !== "complete") return false;
+        if (cloud && !cloud.run && d.run.cloudSavedAt && !d.run.saveError) return false;
+      }
+      for (const src of (d.sources || []).concat(Object.values(d.poolSources || {}))) {
+        if (src.bytes?.length) src.parsed = await P.parseSource(src.bytes, src.name);
+        src.persisting = null; src.t0 = performance.now();
+      }
+      S.sources = d.sources || []; S.poolSources = d.poolSources || {}; S.unassigned = d.unassigned || [];
+      B.run = d.run; B.orders = d.orders; B.orders.byKey = new Map(B.orders.rows.map(r => [r.key, r]));
+      B.pool.rows = d.pools || new Map(); B.sets = d.sets || new Map();
+      for (const group of d.sheets) {
+        const prim = S.sheets[group.metal], card = prim.cardEl;
+        const saved = group.pages[0]; Object.assign(prim, saved); prim.cardEl = card; prim.pages = [prim];
+        for (const p of group.pages.slice(1)) prim.pages.push(p);
+        for (const p of prim.pages) {
+          p.worker = null; p.workers = []; p.pool = null; p.el = null; p.persisted = Promise.resolve();
+          if (p.persistedDone === false || p.problem) { p.status = "ready"; p.dirty = true; }
+          p.persistedDone = true;
+          if (["nesting", "finishing", "queued"].includes(p.status)) { p.status = "ready"; p.dirty = true; p.stage = "Recovered — ready to continue"; }
+        }
+        prim.active = Math.min(group.active || 0, prim.pages.length - 1); CN.showPage(group.metal, prim.active);
+      }
+      B.engrave.items = new Map((d.jobs || []).filter(j => B.orders.byKey.has(j.key)).map(j => {
+        j.row = B.orders.byKey.get(j.key); if (j.state === "fitting") j.state = "ready";
+        return [j.key, j];
+      }));
+      B.review.items = (d.review || []).map(it => Object.assign(it, { row: B.orders.byKey.get(it.rowKey), job: B.engrave.items.get(it.jobKey) }));
+      Engrave.restoreView?.(d.engravingView);
+      if (Review.view) Object.assign(Review.view(), d.reviewView || {});
+      if (Review.settled) Review.settled().splice(0, Review.settled().length, ...(d.settled || []));
+      Object.assign(Gate.state(), d.gate || {}); Object.assign(Recall.state(), d.recall || {}); Object.assign(Orders.view(), d.orderView || {});
+      LiveStrip.rows.splice(0, LiveStrip.rows.length, ...(d.logs || []));
+      if (B.run && ["running", "review", "paused"].includes(B.run.status)) {
+        B.run.arrivalBusy = false;
+        B.run.workspaceRestored = true;
+        if (allSheets().some(p => p.runId === B.run.runId && p.dirty) && O.stepIndex(B.run.step) > O.stepIndex("nest")) B.run.step = "nest";
+        B.run.status = "stopped"; B.run.stoppedBy = "Workspace restored after refresh";
+        B.run.fix = "Your layouts and decisions are kept. Resume to continue processing.";
+      }
+      Orders.render(); Engrave.render(); Review.render(); RunCtl.renderBanner(); refreshAllCards(); renderRail(); updateTopSub();
+      setMode(d.mode || "nest");
+      toast("Workspace restored — sheets, orders and decisions kept", "ok", 4000);
+      return true;
+    } catch (e) { toast(`Workspace recovery stopped: ${e.message}. The saved checkpoint is kept.`, "bad", 10000); throw e; }
+  }
+  function listen() {
+    ready = true;
+    for (const type of ["input", "change", "pointerup"]) document.addEventListener(type, schedule, true);
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", () => { if (document.hidden) flush(); });
+  }
+  return { copy, capture, restore, listen, flush, schedule };
+})();
+
+/* Import cadence is independent of run completion. The cloud ledger counts receipt IDs, not API calls. */
+const Arrivals = window.Arrivals = (() => {
+  const storageKey = () => "cn.arrivals." + (S.settings.sandbox === "on" ? "sandbox" : "production");
+  let state; try { state = JSON.parse(localStorage.getItem(storageKey()) || "null"); } catch (_) {}
+  state = Object.assign({ seen: {}, lastCheck: 0, nextCheck: 0, lastAdded: 0, error: null }, state || {});
+  let tick = 0, busy = false;
+  window.addEventListener("storage", e => { if (e.key !== storageKey() || !e.newValue) return; try { const other = JSON.parse(e.newValue); Object.assign(state.seen, other.seen); if (other.lastCheck > state.lastCheck) { state.lastCheck = other.lastCheck; state.nextCheck = other.nextCheck; state.lastAdded = other.lastAdded; } paint(); } catch (_) {} });
+  const interval = () => Math.max(5, Math.min(1440, +S.settings.pollMinutes || 10)) * 60000;
+  const at = id => state.seen[String(id)] || 0;
+  const save = () => { try { localStorage.setItem(storageKey(), JSON.stringify(state)); } catch (_) {} };
+  async function record(orders) {
+    const now = Date.now(), ids = [...new Set(orders.map(o => String(o.receiptId)))];
+    let stamps = Object.fromEntries(ids.map(id => [id, at(id) || now]));
+    if (S.cloud.ok) {
+      const r = await api("charmNestLibrary", { op: "arrivalRecord", orders: orders.map(o => ({ id: String(o.receiptId), createTs: +o.createTs || 0 })) }, { quiet: true });
+      stamps = r.firstSeen || stamps; state.count24 = r.count24; state.count1 = r.count1;
+    }
+    const fresh = ids.filter(id => !at(id));
+    Object.assign(state.seen, stamps); state.lastAdded = fresh.length;
+    state.lastCheck = now; state.nextCheck = now + interval(); save(); paint(); return fresh;
+  }
+  function paint() {
+    let box = document.getElementById("arrivalCounter");
+    if (!box) {
+      box = el("button", "btn ghost sm"); box.id = "arrivalCounter"; box.type = "button";
+      box.style.cssText = "position:fixed;right:14px;bottom:12px;z-index:35;max-width:calc(100vw - 28px);background:var(--card);box-shadow:0 3px 18px #0002;font-size:12px";
+      box.onclick = async () => {
+        if (Recall.on() && state.inbox?.length) { const incoming = state.inbox; RunCtl.clearRunState(); delete state.inbox; await merge(incoming); }
+        setMode("orders"); Orders.view().sort = "arrival"; Orders.view().desc = false; Orders.render();
+      };
+      document.body.appendChild(box);
+    }
+    const now = Date.now(), times = Object.values(state.seen);
+    // Server counts are refreshed each check; local receipt times roll out live between checks.
+    const n24 = times.filter(t => t > now - 86400000).length, n1 = times.filter(t => t > now - 3600000).length;
+    const left = Math.max(0, (state.nextCheck || now + interval()) - now);
+    const inbox = Recall.on() && state.inbox?.length ? `${state.inbox.length} orders available · click to open · ` : "";
+    const tail = state.error ? `Check failed: ${state.error}` : busy ? "Checking…" : S.settings.pollOrders === "off" ? "checks off" : `next ${Math.floor(left / 60000)}:${String(Math.floor(left % 60000 / 1000)).padStart(2, "0")}`;
+    box.textContent = `${Sandbox.on() ? "Sandbox · " : ""}New orders · 24h ${n24} · 1h ${n1} · ${inbox}${tail}`;
+    box.title = `Unique orders imported, by first arrival time. Last successful check: ${state.lastCheck ? new Date(state.lastCheck).toLocaleString() : "not yet"}. Last check added ${state.lastAdded}. Checks run while this station is open. Click to see newest arrivals.`;
+    box.classList.toggle("bad", !!state.error);
+    for (const node of document.querySelectorAll("[data-rid]")) {
+      const fresh = at(node.dataset.rid) > now - 3600000;
+      node.classList.toggle("newArrival", fresh);
+      if (fresh) node.setAttribute("data-new-order", "New order"); else node.removeAttribute("data-new-order");
+    }
+  }
+  async function merge(orders) {
+    const freshIds = await record(orders), added = [];
+    for (const order of orders) for (const line of order.lines || []) {
+      const key = O.lineKey(order, line);
+      if (B.orders.byKey.has(key)) continue; // Existing human decisions and pool membership belong to the existing row.
+      const row = { key, order, line, arrivedAt: at(order.receiptId), spec: null, problems: [], state: "pulled", reason: null, claimedBy: null, poolIds: [], engrave: null, material: null };
+      B.orders.rows.unshift(row); B.orders.byKey.set(key, row); added.push(row);
+    }
+    Orders.interpretAll(); B.orders.pulledAt = Date.now();
+    if (added.length) {
+      state.pending = true; save();
+      if (B.run && !["complete", "abandoned"].includes(B.run.status)) { B.run.orders = [...new Set((B.run.orders || []).concat(added.map(r => r.order.receiptId)))]; await RunCtl.save(); }
+      toast(`${freshIds.length || new Set(added.map(r => r.order.receiptId)).size} new order(s) arrived`, "ok", 6000);
+      notifyPerson("New Etsy orders", `${added.length} new order line(s) added to the sorter`);
+    }
+    Orders.render(); Review.render(); Engrave.render(); refreshAllCards(); Session.schedule(); paint();
+    return added;
+  }
+  async function processPending() {
+    if (!state.pending || S.settings.runMode !== "auto" || Recall.on()) return;
+    const r = B.run;
+    if (!r || ["complete", "abandoned"].includes(r.status)) { state.pending = false; save(); await RunCtl.start({ mode: "auto" }); return; }
+    // Never alter the data while a run is producing labels or committing, nor revive an operator-stopped run.
+    if (r.status !== "review" || r.step !== "engrave" || r.arrivalBusy) return;
+    state.pending = false; save(); r.arrivalBusy = true;
+    try {
+      await Orders.claim([...new Set(Orders.rows().filter(x => x.state === "pulled").map(x => x.order.receiptId))]);
+      await LiveNest.add(r);
+      await Engrave.classifyAll(r); await Engrave.fitAll(r); await RunCtl.save(r);
+    } catch (e) { state.pending = true; save(); RunCtl.stop(`New orders could not be added: ${e.message}`, "Resume after fixing the cause. Your earlier work is kept."); }
+    finally { r.arrivalBusy = false; RunCtl.poke(); Session.schedule(); }
+  }
+  async function check() {
+    if (busy || S.settings.pollOrders === "off") return;
+    busy = true; paint();
+    try {
+      await DesignLink.ensure();
+      if (!DesignLink.etsyBudgetOk("new orders")) throw new Error("Etsy hourly cap reached");
+      await Promise.all([Orders.loadMaps(), Master.load()]);
+      const res = await DesignLink.call("orders.snapshot", { hydrate: true, refresh: true }, { timeoutMs: 20 * 60000, quiet: true });
+      DesignLink.meter(res, "new orders");
+      if (res.hydrated < res.total) throw new Error(`Only ${res.hydrated} of ${res.total} orders could be read`);
+      const picked = Orders.applyPullRule(res.orders || []);
+      if (Recall.on()) { await record(picked); state.inbox = picked; }
+      else await merge(picked);
+      state.error = null;
+      await processPending();
+    } catch (e) { state.error = e.message; }
+    finally { busy = false; state.nextCheck = Date.now() + interval(); save(); paint(); }
+  }
+  function start() {
+    clearInterval(tick); state.nextCheck = Math.max(Date.now(), (state.lastCheck || Date.now()) + interval());
+    paint();
+    tick = setInterval(() => {
+      paint();
+      if (busy || S.settings.pollOrders === "off") return;
+      if (Date.now() >= state.nextCheck) {
+        if (navigator.locks) navigator.locks.request(storageKey(), { ifAvailable: true }, lock => { if (!lock) return; let shared; try { shared = JSON.parse(localStorage.getItem(storageKey()) || "null"); } catch (_) {} if (shared?.nextCheck > Date.now()) { Object.assign(state.seen, shared.seen); state.lastCheck = shared.lastCheck; state.nextCheck = shared.nextCheck; return; } return check(); }).catch(e => { state.error = e.message; });
+        else check();
+      } else processPending().catch(e => { state.error = e.message; });
+    }, 1000);
+  }
+  return { start, check, merge, record, at, paint, processPending, state: () => state };
+})();
+
+/* A new batch tries the earliest open sheet. Existing sheets with approved backs are pinned; their approvals survive.
+   Only uncommitted sheets belong here. The same solver and both existing verifiers still decide acceptance. */
+const LiveNest = window.LiveNest = (() => {
+  async function add(run) {
+    const touched = new Set(Orders.rows().filter(r => ["pulled", "waiting"].includes(r.state)).map(r => r.spec?.material).filter(Boolean));
+    const before = new Set(allSheets().flatMap(p => p.charms.map(c => c.poolId)).filter(Boolean));
+    // An order can join previously independent material sets. Re-number that connected group together.
+    const potential = O.kinGroups(Orders.rows().filter(r => r.spec?.material && !["gone", "noDesign"].includes(r.state)).map(r => ({ orderId: String(r.order.receiptId), material: r.spec.material })));
+    for (const m of [...touched]) for (const linked of (potential[m] || m).split("+")) touched.add(linked);
+    const superseded = [];
+    async function reconcileGroups() {
+    for (const group of new Set(Object.values(run.groups || {}))) {
+      const old = Sets.ofRun(run.runId).filter(s => s.materials.some(m => group.split("+").includes(m)) && s.group !== group);
+      if (!old.length) continue;
+      if (old.some(s => s.committedAt)) throw new Error("A related material set was already committed; finish this run before adding the new order");
+      await Sets.ensure(run.runId, group);
+      for (const set of old) {
+        set.status = "superseded"; await Sets.save(set);
+        for (const [key, value] of B.sets) if (value === set) B.sets.delete(key);
+        for (const p of allSheets().filter(p => p.setId === set.setId)) {
+          if (p.sheetId) superseded.push(p.sheetId);
+          p.sheetId = null; p.fileBase = null; p.setId = null; p.seq = null; p.sheetIndex = null; p.group = group;
+        }
+      }
+      run.setIds = Sets.ofRun(run.runId).map(s => s.setId); run.setId = run.setIds[0] || null;
+    }
+    }
+    const previousPlacements = new Map(allSheets().flatMap(p => p.placements.map(pl => [pl.id, pl])));
+    const target = new Map(), force = Object.assign({}, Gate.state().forceFill);
+    for (const m of touched) {
+      const prim = S.sheets[m], pages = prim.pages.filter(p => p.runId === run.runId);
+      if (pages.some(p => ["nesting", "finishing", "queued"].includes(p.status))) throw new Error("A sheet is still being written");
+      if (Sets.ofRun(run.runId).some(s => s.materials.includes(m) && s.committedAt)) continue;
+      const p = pages[0] || activePage(m); target.set(m, p); prim.active = prim.pages.indexOf(p);
+      if (pages.some(p => p.charms.length)) Gate.state().forceFill[m] = true;
+    }
+    try { await Pool.addAll(run); } finally { Gate.state().forceFill = force; }
+    await reconcileGroups();
+    const oldSheets = [], rewrites = new Set();
+    for (const [m, pg] of target) {
+      const pages = pagesOf(m).filter(p => p.runId === run.runId);
+      const all = [...new Map(pages.flatMap(p => p.charms).map(c => [c.poolId || c.id, c])).values()];
+      if (!all.some(c => c.poolId && !before.has(c.poolId)) && !pages.some(p => !p.fileBase && p.charms.length)) continue;
+      const near = all.reduce((n, c) => n + inflatedArea(c), 0) >= usableArea(pg) * (+S.settings.maxFill || 0.74) * (+S.settings.optimizeAt || 85) / 100;
+      const pins = previousPlacements;
+      for (const c of all) {
+        const pl = pins.get(c.id);
+        if (pages.length > 1 && c.pinned && !c.arrivalPin) throw new Error("Unpin manually locked pieces before re-optimizing multiple sheets");
+        // Repacking the full queue is required when a later sheet already exists: its older orders get first refusal.
+        if (!near && pages.length === 1 && pl && !c.pinned && !all.some(x => (x.orderDate || 0) < (c.orderDate || 0) && !before.has(x.poolId))) { c.pinned = { cxPt: pl.cxPt, cyPt: pl.cyPt, angle: pl.angle }; c.arrivalPin = true; }
+        else if (c.arrivalPin) { c.pinned = null; delete c.arrivalPin; }
+      }
+      oldSheets.push(...pages);
+      for (const p of pages) {
+        for (const c of p.charms) if (c.poolId) rewrites.add(c.poolId);
+        p.charms = []; p.placements = []; p.outputs = null; p.label = null; p.backPool = []; p.backOutputs = null; p.persisted = null; p.persistedDone = true; p.status = "idle"; p.dirty = false;
+      }
+      pg.charms = all; pg.status = "ready"; pg.optimizationTried = near || pages.length > 1;
+      for (const set of Sets.ofRun(run.runId)) {
+        const ids = new Set(pages.map(p => p.sheetId).filter(Boolean));
+        set.sheetIds = set.sheetIds.filter(id => !ids.has(id)); set.labelFiles = set.labelFiles.filter(f => !ids.has(f.sheetId));
+        for (const order of Object.values(set.orders)) for (const line of Object.values(order.lines)) line.copies = line.copies.filter(c => !ids.has(c.sheetId));
+      }
+      agent({ metal: m }, "nest", near || pages.length > 1 ? "Re-optimizing open sheets, oldest orders first; free space is used before the next sheet" : "Adding new pieces around the current layout");
+      startNest(pg);
+    }
+    // Never advance to labels/commit until all overflow sheets and all cloud writes have finished.
+    while (true) {
+      const pages = allSheets().filter(p => p.runId === run.runId && p.charms.length);
+      for (const p of pages) if (p.persisted && !p.persistedDone) await p.persisted.then(() => { p.persistedDone = true; });
+      if (run.status === "stopped") throw new Error(run.stoppedBy || "run stopped");
+      if (!pages.some(p => ["nesting", "finishing", "queued"].includes(p.status) || p.dirty || (p.persisted && !p.persistedDone))) break;
+      await sleep(250);
+    }
+    for (const id of superseded) { if (S.cloud.ok) await api("charmNestLibrary", { op: "archiveEmptySheet", id, runId: run.runId }); delete run.sheets[id]; }
+    for (const p of oldSheets.filter(p => !p.charms.length && p.sheetId)) {
+      if (S.cloud.ok) await api("charmNestLibrary", { op: "archiveEmptySheet", id: p.sheetId, runId: run.runId });
+      delete run.sheets[p.sheetId]; p.cloud = null; p.fileBase = null; p.sheetId = null;
+    }
+    // Approval is for the engraving on the charm. Keep it, regenerate its back files under its new sheet membership.
+    for (const j of Engrave.items().values()) if (j.copies.some(id => rewrites.has(id)) && ["approved", "written"].includes(j.state)) await Engrave.writeBacks(j);
+    for (const set of Sets.ofRun(run.runId)) await Sets.save(set);
+    if (allSheets().some(p => p.runId === run.runId && p.problem)) throw new Error("A sheet needs attention before intake can finish");
+  }
+
+  return { add };
+})();
+
 /* ═══ 25 · boot ═══════════════════════════════════════════════════════════ */
-function bootBridge() {
+async function bootBridge() {
   // The Design Station guards unload in three places; the sorter guarded it nowhere. A reload mid-run loses every
   // engraving approval not yet written to a back file and every review decision made that shift.
   window.addEventListener("beforeunload", e => {
@@ -3355,10 +3717,12 @@ function bootBridge() {
   Orders.loadMaps().catch(() => {}); Master.load().catch(() => {});
   Engrave.loadFonts().catch(() => {});
   Kin.mount();
+  const recovered = await Session.restore();
+  Session.listen(); Arrivals.start();
   /* The app used to open on an empty Orders tab whatever had happened yesterday, and the only way to anything was to
      pull again. It opens on the last run instead — its orders, its sheets, its engraving, read from the record, with
      one line at the top saying so and a Done that puts it down. An open run is offered for resume as before. */
-  if (S.cloud.ok) api("charmNestLibrary", { op: "runList", limit: 10 }).then(r => {
+  if (!recovered && S.cloud.ok) api("charmNestLibrary", { op: "runList", limit: 10 }).then(r => {
     const runs = r.runs || [];
     const open = runs.filter(x => !["complete", "abandoned"].includes(x.status));
     if (open.length) { B.openRuns = open; agent({ bridge: true }, "DS", `${open.length} open run(s) on record — offered on the run banner`); RunCtl.renderBanner(); }
@@ -3366,7 +3730,7 @@ function bootBridge() {
     if (last && !B.run && !B.orders.rows.length && !Recall.on()) Recall.open({ runId: last.runId, quiet: true }).catch(() => {});
   }).catch(() => {});
   // the Design Station frame mounts on first visit to its tab; Auto mode mounts it now
-  if (S.settings.runMode === "auto") { setTimeout(() => RunCtl.setMode("auto"), 1500); }
+  if (!recovered && S.settings.runMode === "auto") { setTimeout(() => { if (!B.openRuns?.length && !Recall.on() && !B.run) RunCtl.setMode("auto"); }, 1500); }
   document.addEventListener("keydown", e => { if (e.altKey && e.key === "r") { e.preventDefault(); setMode("review"); } });
   agent({ bridge: true }, "DS", `Bridge ready · station ${DesignLink.origin()} · ${S.settings.runMode} mode`);
 }

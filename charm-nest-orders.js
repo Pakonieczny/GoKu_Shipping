@@ -246,7 +246,7 @@
     for (const l of gated) if (SLOW_MATERIALS.has(l.material)) { take.add(l.key); materials[l.material].taken++; }
     // 4 · fast materials: full sheets go; the remainder waits unless something on it has to travel
     for (const m of FAST_MATERIALS) {
-      const cand = gated.filter(l => l.material === m).sort((a, b) => (b.multi - a.multi) || (b.urgent - a.urgent) || ((a.shipBy || 1e12) - (b.shipBy || 1e12)));
+      const cand = gated.filter(l => l.material === m).sort((a, b) => ((a.createTs || 0) - (b.createTs || 0)) || (b.multi - a.multi) || (b.urgent - a.urgent) || ((a.shipBy || 1e12) - (b.shipBy || 1e12)));
       const usable = +cap[m] || 0, sum = materials[m];
       if (!cand.length) continue;
       if (!(usable > 0)) { cand.forEach(l => take.add(l.key)); sum.taken = cand.length; continue; }   // no plate known: never hold on a guess
