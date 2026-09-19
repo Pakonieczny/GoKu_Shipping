@@ -1,0 +1,4 @@
+# CPU works on Linux/macOS; CUDA may be installed separately for an NVIDIA laptop.
+torch>=2.6,<3
+torch-geometric>=2.6,<3
+numpy>=1.26,<3

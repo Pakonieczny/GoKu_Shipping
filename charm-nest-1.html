@@ -128,6 +128,7 @@ html[data-rail=sm] .brand .tag{display:none}
 .btn:disabled{opacity:.45;cursor:default;transform:none}
 .btn.ghost{background:transparent;color:var(--ink);border-color:var(--line)}
 .btn.ghost:hover{background:var(--card2)}
+#btnNestFlow{font-size:12px;padding:7px 10px;flex:none}#btnNestFlow[aria-checked="true"]{background:var(--sageSoft);border-color:var(--sage);color:var(--ink)}#btnNestFlow[hidden]{display:none}.learnedSettings{border:1px solid var(--line);border-radius:9px;padding:10px;margin:12px 0}.learnedSettings summary{cursor:pointer;font-weight:650}.learnedSettings .help{margin:8px 0}
 .btn.gold{background:var(--gold);border-color:var(--gold);color:#2a2013}
 .btn.sage{background:var(--sage);border-color:var(--sage);color:#fff}
 .btn.danger{background:var(--clay);border-color:var(--clay);color:#fff}
@@ -1045,6 +1046,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
       <div class="topTools">
         <button type="button" class="sandboxPill hidden" id="sandboxPill" title="Sandbox: emulated Etsy; all records and files use sandbox copies">Sandbox</button>
         <div id="setPickerSlot"></div>
+        <button id="btnNestFlow" class="btn ghost sm" role="switch" aria-checked="false" title="Nesting workflow: standard or learned packing">Learned <span id="nestFlowState">off</span></button>
         <button class="btn ghost sm runMode" id="btnRunMode" title="Switch between automatic processing and manual steps"><span class="sw"></span><span id="runModeText">Manual</span></button>
         <details class="moreMenu" id="moreMenu"><summary title="Workspace tools and settings"><span id="moreLabel">Workspace</span><span aria-hidden="true">⌄</span><i class="apiAlert hidden" id="etsyAlert" title="Etsy API needs attention"></i></summary>
           <div class="moreList">
@@ -1111,6 +1113,15 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
       <div class="field"><label>Engine</label><select id="stEngine"><option value="solver">Geometric nesting + AI packing guidance</option><option value="ai">Claude places every charm itself (experimental — reached 55%)</option></select><div class="help">Recommended: geometry arranges the oldest whole orders using contact scoring and gap repair. AI can advise difficult searches while geometry continues; two independent verifiers check the written result. Grouping review applies when importing source artwork.</div></div>
       <div class="field"><label>Fill ceiling (%) · AI rounds · snap (mm)</label><div class="fieldRow3"><input id="stMaxFill" type="number" min="30" max="100" step="1"><input id="stAiRounds" type="number" min="1" max="30" step="1"><input id="stSnapIn" type="number" min="0" max="25" step="0.5"></div><div class="help">The sheet is never filled past the ceiling; pieces that would cross it wait for a second sheet. Rounds and snap apply to the experimental engine only.</div></div>
     </div>
+    <details class="learnedSettings"><summary>Learned packing · laptop runner</summary>
+      <p class="help">Experimental GFPack++ model proposes positions and rotations; the geometric solver repairs and verifies them. A verified standard baseline is kept. One sheet runs at a time, with two browser workers: refinement and a standard challenger. The best verified result wins. <a href="https://github.com/Pakonieczny/GoKu_Shipping/blob/main/docs/charm-nest-learned.md" target="_blank" rel="noopener">Runner setup and evidence</a></p>
+      <div class="fieldRow3">
+        <div class="field"><label for="stLearnedKey">Laptop pairing key</label><input id="stLearnedKey" type="password" autocomplete="off"><button type="button" class="btn ghost xs" id="stLearnedTest">Check connection</button><span id="stLearnedStatus" role="status"></span></div>
+        <div class="field"><label for="stLearnedBudget">Maximum time per sheet</label><select id="stLearnedBudget"><option value="600">10 minutes</option><option value="3600">1 hour</option><option value="36000">10 hours</option></select></div>
+        <div class="field"><label for="stLearnedStall">Stop after no extra pieces</label><select id="stLearnedStall"><option value="120">2 minutes</option><option value="300">5 minutes</option><option value="900">15 minutes</option><option value="3600">1 hour</option></select></div>
+      </div>
+      <p class="help">The time is a ceiling, not a promise of better packing. Re-nest resumes a matching checkpoint; changing geometry starts fresh. Extend the ceiling to continue a timed-out sheet. Keep the laptop awake and this tab open. Pairing stays in this browser only.</p>
+    </details>
     <div class="section">Geometry (measuring tool · solver option)</div>
     <div class="fieldRow3">
       <div class="field"><label>Clearance (mm)</label><input id="stClearance" type="number" step="0.01" min="-0.7" max="4.2"><div class="help">Gap between silhouettes. <b>Negative = aggressive:</b> outlines may touch and their strokes overlap by up to that much (−0.18 mm ≈ half a 0.3 mm cut line), bodies never more. 0 = touching. 0.33 pt fit the reference sheet; 1.5 pt did not.</div></div>
@@ -1222,6 +1233,7 @@ const METAL_TAG = { gold: "GF", silver: "SS", rose: "RG", gold10k: "10K", gold14
 const DEFAULTS = {
   rail: "md",
   stock: { gold: [100 / 25.4, 50 / 25.4], silver: [100 / 25.4, 50 / 25.4], rose: [100 / 25.4, 50 / 25.4], gold10k: [100 / 25.4, 50 / 25.4], gold14k: [100 / 25.4, 50 / 25.4] },
+  nestFlow: "standard", learnedBudgetS: 600, learnedStallS: 300,
   clearancePt: -0.5, insetPt: 1.5, angleStep: 30, budgetS: 180, seed: 1, serverAbove: 0, parallel: 0,
   minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", packingAI: "on", aiRounds: 10, snapIn: 0.25, maxFill: 0.74, orderView: "cards", v: 18,
   // Design Station bridge, orders, run (design doc §14)
@@ -2090,18 +2102,45 @@ async function requestPackingGuidance(sh) {
   await task;
   if (sh._packingPromise === task) sh._packingPromise = null;
 }
+function renderNestFlow() {
+  const b = $("#btnNestFlow"); if (!b) return;
+  const on = S.settings.nestFlow === "learned";
+  b.setAttribute("aria-checked", String(on)); b.classList.toggle("on", on);
+  $("#nestFlowState").textContent = on ? "on" : "off";
+  b.hidden = S.mode !== "nest";
+}
+async function checkLearnedRunner(token = localStorage.getItem("cn.learnedKey") || "") {
+  if (!token) throw new Error("Start the laptop runner and enter its pairing key in Settings → Learned packing");
+  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 4000);
+  try {
+    const r = await fetch("http://127.0.0.1:8766/health", { headers: { Authorization: "Bearer " + token }, signal: controller.signal });
+    const data = await r.json(); if (!r.ok || !data.ready) throw new Error(data.error || "Runner not ready"); return data;
+  } catch (e) { throw new Error(e.name === "AbortError" || e instanceof TypeError ? "Laptop runner is unreachable. Start it, then check the pairing key and browser local-network permission in Settings." : e.message); }
+  finally { clearTimeout(timeout); }
+}
 function startNest(sh) {
+  if (S.settings.nestFlow !== "learned") return startNestReady(sh);
+  if (sh._learnedStarting || ["nesting", "finishing", "queued"].includes(sh.status)) return;
+  sh._learnedStarting = true;
+  checkLearnedRunner().then(info => { sh._learnedModelDigest = info.weightsSha256; sh._learnedStarting = false; if (S.settings.nestFlow === "learned" && activeCharms(sh).length) startNestReady(sh); }).catch(e => {
+    sh._learnedStarting = false; sh.problem = e.message; renderCard(sh); toast(e.message, "bad", 8000);
+    if (window.RunCtl) RunCtl.onSheetDone(sh, e);
+  });
+}
+function startNestReady(sh) {
   if (["nesting", "finishing"].includes(sh.status)) return;
   const items = activeCharms(sh);
   if (!items.length) { toast(`${labelOf(sh.metal)}: nothing to nest`, ""); return; }
   const cores = navigator.hardwareConcurrency || 2;
   const running = allSheets().filter(s => s.status === "nesting").length;
-  if (cores < 4 && running >= 1) { if (!S.nestQueue.includes(sh)) S.nestQueue.push(sh); sh.status = "queued"; sh.stage = `Queued — waiting for ${labelOf(allSheets().find(s => s.status === "nesting").metal)}`; renderCard(sh); return; }
+  if ((cores < 4 || S.settings.nestFlow === "learned" || allSheets().some(s => s.status === "nesting" && s.nestFlow === "learned")) && running >= 1) { if (!S.nestQueue.includes(sh)) S.nestQueue.push(sh); sh.status = "queued"; sh.stage = `Queued — waiting for ${labelOf(allSheets().find(s => s.status === "nesting").metal)}`; renderCard(sh); return; }
   if (S.settings.notify === "on" && "Notification" in window && Notification.permission === "default") Notification.requestPermission().catch(() => {});
   /* A saved sheet that is nested again used to get a fresh id and, with the same set and index, the same file name —
      two records called GF_Sep.17.26_Set-1_Sheet-1, one of them stale. Once a sheet has a name it keeps its identity:
      re-nesting rewrites the same record and the same files. */
   sh.sheetId = sh.sheetId && (sh.fileBase || (sh.status !== "complete" && sh.status !== "partial")) ? sh.sheetId : `${sh.metal}${sh.page > 1 ? "-s" + sh.page : ""}-${Date.now().toString(36)}`;
+  sh._beforeLearned = S.settings.nestFlow === "learned" ? { placements: sh.placements, outputs: sh.outputs, verification: sh.verification, best: sh.best, status: sh.status } : null;
+  sh.nestFlow = S.settings.nestFlow || "standard";
   sh.persistedDone = false;
   sh.movedOn = null; sh.problem = null;
   sh.status = "nesting"; sh.startedAt = performance.now(); sh.placements = []; sh.rejects = []; sh.outputs = null; sh.verification = null; sh.best = null; sh.trials = 0; sh.liveInfo = null; sh.endedBy = null;
@@ -2110,6 +2149,13 @@ function startNest(sh) {
   sh.evNest = (S.settings.engine || "solver") === "ai" ? null : agent({ metal: sh.metal }, "nest", `Solver: ${items.length} pieces · seed ${S.settings.seed} · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · up to ${S.settings.budgetS}s`, { live: true });
   renderCard(sh); drawPreview(sh);
   const job = buildJob(sh);
+  if (sh.nestFlow === "learned") {
+    job.learned = { modelDigest: sh._learnedModelDigest, token: localStorage.getItem("cn.learnedKey") || "", budgetMs: S.settings.learnedBudgetS * 1000, stallMs: S.settings.learnedStallS * 1000, checkpoint: sh.learnedCheckpoint || null };
+    const workers = ensureWorkers(sh, 2); sh.pool = { n: 2, done: 0, results: [], trials: [0, 0], winner: null };
+    sh.stage = "Starting learned workflow…"; renderProgress(sh);
+    workers[0].postMessage({ type: "solve", jobId: sh.jobId + ":0", job });
+    workers[1].postMessage({ type: "solve", jobId: sh.jobId + ":1", job: { ...job, learned: undefined, verifyResult: true, packingHints: null, timeBudgetMs: S.settings.learnedBudgetS * 1000, stallMs: S.settings.learnedStallS * 1000, maxTrials: 1000000 } }); return;
+  }
   if ((S.settings.engine || "solver") === "ai") { startAINest(sh, items).catch(e => finishNest(sh, { error: e.message })); return; }
   const useServer = S.settings.serverAbove > 0 && items.length > S.settings.serverAbove && S.cloud.ok;
   if (useServer) return startServerNest(sh, job);
@@ -2213,10 +2259,18 @@ async function startAINest(sh, items) {
     params: { seed: 0, angles: [...new Set(sh.placements.map(p => p.angle))], clearancePt: clearance, insetPt: inset, fineRes: 2, coarseRes: 0.5, engine: "claude", rounds }
   } });
 }
-function stopNest(sh) { if (sh.status !== "nesting") return; sh.stage = "Stopping after this piece…"; renderCard(sh); if ((S.settings.engine || "solver") === "ai") { sh.status = "ready"; sh.stage = ""; agent({ metal: sh.metal }, "info", "Stopped by operator"); renderCard(sh); return; } if (sh.serverJob) { api("charmNestLibrary", { op: "stopJob", id: sh.serverJob }).catch(() => {}); } else (sh.workers || []).forEach((w, i) => w.postMessage({ type: "stop", jobId: sh.jobId + ":" + i })); }
+function stopNest(sh) { if (sh.status !== "nesting") return; sh.stage = "Stopping after this piece…"; renderCard(sh); if (sh.nestFlow !== "learned" && (S.settings.engine || "solver") === "ai") { sh.status = "ready"; sh.stage = ""; agent({ metal: sh.metal }, "info", "Stopped by operator"); renderCard(sh); return; } if (sh.serverJob) { api("charmNestLibrary", { op: "stopJob", id: sh.serverJob }).catch(() => {}); } else (sh.workers || []).forEach((w, i) => w.postMessage({ type: "stop", jobId: sh.jobId + ":" + i })); }
 function onWorkerMessage(sh, m, idx) {
   const base = String(m.jobId || "").split(":")[0];
   if (base !== sh.jobId) return;
+  if (m.type === "learned") {
+    if (sh.status !== "nesting" || sh.pool?.finished) return;
+    const p = m.progress; if (p.checkpoint) sh.learnedCheckpoint = p.checkpoint;
+    sh.learnedProgress = { ...p, checkpoint: undefined }; sh.trials = p.attempts;
+    if (sh.pool) sh.pool.trials[0] = p.attempts;
+    sh.stage = `${p.stage} · ${p.bestCount} placed · +${Math.max(0, p.bestCount - p.baselineCount)} vs baseline · last gain ${fmt.s(p.sinceGainMs)} ago`;
+    renderProgress(sh); return;
+  }
   const items = activeCharms(sh); const byId = new Map(items.map(c => [c.id, c]));
   const pool = sh.pool || { n: 1, done: 0, results: [], trials: [0], winner: null };
   if (pool.finished) { if (m.type === "verified") sh._geomVerify && sh._geomVerify(m.result); return; }   // the sheet is done — late messages from stopped searches are dropped
@@ -2225,8 +2279,12 @@ function onWorkerMessage(sh, m, idx) {
   if (m.type === "stage" && (m.stage === "prepare" ? idx !== 0 : idx !== leader)) return;   // one voice for the pool: only the leading search narrates
   if (m.type === "trial") { pool.trials[idx] = m.summary.trial + 1; m.summary = Object.assign({}, m.summary, { trial: pool.trials.reduce((a, b) => a + b, 0) - 1, worker: idx }); }
   if (m.type === "best") {
+    if (sh.nestFlow === "learned" && idx === 1) {
+      const { grids, rec, ...layout } = m.best;
+      sh.workers[0].postMessage({ type: "incumbent", jobId: sh.jobId + ":0", layout });
+    }
     const cur = sh.best; const better = !cur || m.best.placements.length > cur.placements.length || (m.best.placements.length === cur.placements.length && m.best.density > cur.density);
-    if (!better) { if (idx === leader) { sh.livePlacements = []; } return; }
+    if (!better && !(sh.nestFlow === "learned" && idx === 0 && cur && m.best.placements.length === cur.placements.length)) { if (idx === leader) { sh.livePlacements = []; } return; }
     sh.bestWorker = idx; m.summary = Object.assign({}, m.summary, { trial: pool.trials.reduce((a, b) => a + b, 0) - 1, worker: idx });
   }
   if (m.type === "error" && pool.n > 1) {
@@ -2236,6 +2294,10 @@ function onWorkerMessage(sh, m, idx) {
   }
   if (m.type === "done") {
     pool.done++; pool.results[idx] = m.result;
+    if (sh.nestFlow === "learned" && idx === 0 && m.result && ["plateau", "budget", "model-unavailable"].includes(m.result.endedBy)) {
+      // The measured no-gain window governs both routes, including a challenger making only cosmetic improvements.
+      sh.workers[1]?.postMessage({ type: "stop", jobId: sh.jobId + ":1" });
+    }
     const complete = m.result && m.result.rejects.length === 0 && m.result.placements.length === items.length;
     // Only a complete layout cancels the other seeds. One stalled seed is not proof that the sheet is full.
     if (complete && pool.winner == null) { pool.winner = idx; (sh.workers || []).forEach((w, i) => { if (i !== idx) w.postMessage({ type: "stop", jobId: sh.jobId + ":" + i }); }); }
@@ -2244,6 +2306,18 @@ function onWorkerMessage(sh, m, idx) {
     const results = pool.results.filter(Boolean);
     if (!results.length) { pool.finished = true; finishNest(sh, { error: (pool.errors || ["No search returned a layout"]).join("; ") }); return; }
     const pick = results.reduce((a, b) => !a ? b : (b.placements.length > a.placements.length || (b.placements.length === a.placements.length && b.density > a.density)) ? b : a, null);
+    if (sh.nestFlow === "learned") {
+      const source = pick.params?.engine === "learned" ? "learned refinement" : "standard challenger";
+      const learned = results.find(r => r.params?.engine === "learned");
+      pick.params = { ...pick.params, engine: "learned", selectedSource: source, model: learned?.params?.model || sh.learnedCheckpoint?.model || null, modelError: learned?.params?.modelError || pool.errors?.join("; ") || null,
+        baselineCount: Math.max(learned?.params?.baselineCount || 0, pool.results[1]?.placements.length || 0),
+        gainedPieces: Math.max(0, pick.placements.length - Math.max(learned?.params?.baselineCount || 0, pool.results[1]?.placements.length || 0)) };
+      if (sh.learnedCheckpoint) { sh.learnedCheckpoint.best = pick; if (pool.results[1]) sh.learnedCheckpoint.baseline = pool.results[1]; }
+      sh.learnedResult = pick.params; pick.elapsedMs = Math.max(pick.elapsedMs || 0, learned?.elapsedMs || 0);
+      // A learned run ending on a deadline/unavailable model holds unfinished work for the operator.
+      if (pick.rejects.length && learned && ["plateau", "budget", "model-unavailable", "stopped"].includes(learned.endedBy)) pick.endedBy = learned.endedBy;
+      else if (pick.rejects.length && pick.endedBy === "stalled") pick.endedBy = "plateau";
+    }
     const total = pool.trials.reduce((a, b) => a + b, 0);
     pool.finished = true;   // exactly one finish per job
     m = { type: "done", jobId: sh.jobId, result: Object.assign({}, pick, { trials: total, workers: pool.n, winner: pool.winner }) };
@@ -2269,7 +2343,8 @@ function onWorkerMessage(sh, m, idx) {
     case "stage": if (m.stage === "finish") { agent({ metal: sh.metal }, "nest", `Best layout is ${m.total - m.done} short — targeted search at 5° steps for the missing piece(s) into that layout`); } else if (m.stage === "repair") { if (m.done === 0) agent({ metal: sh.metal }, "nest", `Restarts stalled — repairing the best layout instead: pulling out the pieces around its largest gap and re-inserting them with the missing piece at 15° steps (${m.total} attempts)`); sh.stage = `Repairing the best layout · attempt ${m.done}/${m.total}`; renderProgress(sh); } else if (m.stage === "prepare") { sh.stage = `Preparing rotations · ${m.done}/${m.total}`; sh.progress = [m.done, m.total]; sh.progressKind = "prepare"; renderProgress(sh); } break;
     case "reject": log(sh, `trial ${m.trial + 1}: ${byId.get(m.id)?.name || m.id} ${m.reason === "cap" ? "held back by the fill ceiling" : "did not fit"}`); break;
     case "trial": {
-      if (m.summary.elapsedMs >= 12000 && sh.best?.rejects?.length && sh.best.density < (+S.settings.maxFill || .74) - .01) requestPackingGuidance(sh).catch(e => log(sh, "AI packing: " + e.message));
+      if (sh.nestFlow === "learned") break;
+      if (sh.nestFlow !== "learned" && m.summary.elapsedMs >= 12000 && sh.best?.rejects?.length && sh.best.density < (+S.settings.maxFill || .74) - .01) requestPackingGuidance(sh).catch(e => log(sh, "AI packing: " + e.message));
       sh.trials = m.summary.trial + 1;
       if (!m.summary.better) sh.stage = `Trial ${sh.trials} · best so far ${sh.best ? sh.best.placements.length : 0}/${m.summary.total} · ${fmt.s(m.summary.elapsedMs)}`;
       // one live line that ticks with every trial, so the search is visible even when no trial beats the best
@@ -2326,12 +2401,14 @@ async function startServerNest(sh, job) {
 
 async function finishNest(sh, { result, error }) {
   const items = activeCharms(sh); const byId = new Map(items.map(c => [c.id, c]));
-  if (error) { sh.status = items.length ? "ready" : "idle"; sh.stage = ""; log(sh, "error: " + error); toast(`${labelOf(sh.metal)}: nesting failed — ${error}`, "bad", 6000); renderCard(sh); pumpNestQueue(); if (window.RunCtl) RunCtl.onSheetDone(sh, new Error(error)); return; }
+  if (error && sh._beforeLearned) { Object.assign(sh, sh._beforeLearned); sh._beforeLearned = null; drawPreview(sh); }
+  if (error) { sh.status = sh.outputs ? "partial" : items.length ? "ready" : "idle"; sh.stage = ""; log(sh, "error: " + error); toast(`${labelOf(sh.metal)}: nesting failed — ${error}`, "bad", 6000); renderCard(sh); pumpNestQueue(); if (window.RunCtl) RunCtl.onSheetDone(sh, new Error(error)); return; }
   if (result.endedBy !== "stopped" && result.rejects.length && !sh.optimizationTried && sh.charms.some(c => c.arrivalPin)) {
     sh.optimizationTried = true;
     for (const c of sh.charms) if (c.arrivalPin) { c.pinned = null; delete c.arrivalPin; }
     sh.status = "ready"; log(sh, "Re-optimizing before overflow: trying a fresh arrangement"); startNest(sh); return;
   }
+  sh._beforeLearned = null;
   sh.releaseFull = false;
   sh.status = "finishing"; sh.endedBy = result.endedBy; sh.trials = result.trials; sh.placements = result.placements; sh.rejects = result.rejects.slice(); sh.livePlacements = [];
   keepOrdersWhole(sh, byId);
@@ -2389,7 +2466,7 @@ async function finishNest(sh, { result, error }) {
     sh.progress = [4, 5]; sh.stage = "Saving to the cloud…"; renderProgress(sh);
     // Overflow after a complete search closes a sheet; merely placing a small queue does not.
     sh.releaseFull = result.endedBy !== "stopped" && sh.verification.ok && sh.placements.length > 0 &&
-      ((sh.rejects.length > 0 && ["cap", "stalled", "trials", "claude-full"].includes(result.endedBy) &&
+      ((sh.rejects.length > 0 && ["cap", "stalled", "trials", "claude-full", "plateau"].includes(result.endedBy) &&
         [...new Set(sh.rejects.map(id => byId.get(id)?.order || id))].some(order => items.filter(c => (c.order || c.id) === order).reduce((n,c) => n + inflatedArea(c), 0) <= result.usablePt2 * (+S.settings.maxFill || .74))) ||
         (result.placedPt2 / Math.max(1, result.usablePt2)) >= (+S.settings.maxFill || .74) - 1e-6);
     sh.seq = await nextSheetSeq(sh); sh.fileBase = sheetFileBase(sh);
@@ -2398,7 +2475,7 @@ async function finishNest(sh, { result, error }) {
     sh.stage = ""; sh.progress = [5, 5]; sh.totalMs = performance.now() - sh.t0;   // file in → sheet written and verified, Claude's review included
     renderCard(sh); drawPreview(sh);
     // 4 · announce
-    const msg = `${sheetName(sh)} · ${allPlaced ? "sheet complete" : "sheet full"} — ${sh.placements.length} of ${items.length} placed, ${fmt.pct(sh.sat ? sh.sat.fullPct : sh.density)} full` + (sh.verification.ok ? "" : " · verification flagged, see report") + (allPlaced ? ` · ended by: ${endedText(sh.endedBy)}` : ` · the other ${sh.rejects.length} move to sheet ${sh.page + 1}`);
+    const msg = `${sheetName(sh)} · ${allPlaced ? "sheet complete" : sh.releaseFull ? "sheet full" : "best layout saved"} — ${sh.placements.length} of ${items.length} placed, ${fmt.pct(sh.sat ? sh.sat.fullPct : sh.density)} full` + (sh.verification.ok ? "" : " · verification flagged, see report") + (allPlaced ? ` · ended by: ${endedText(sh.endedBy)}` : ` · ${sh.rejects.length} still waiting${sh.nestFlow !== "learned" || ["cap", "plateau"].includes(sh.endedBy) ? ` for sheet ${sh.page + 1}` : " on this sheet"}`);
     toast(msg, allPlaced && sh.verification.ok ? "ok" : "", 6500); ding();
     $$(".sheetCard").find(el => el.dataset.m === sh.metal)?.classList.add("pulse");
     setTimeout(() => $$(".sheetCard").find(el => el.dataset.m === sh.metal)?.classList.remove("pulse"), 1300);
@@ -2406,7 +2483,7 @@ async function finishNest(sh, { result, error }) {
     // 5 · persist everything. The two verifiers above are the acceptance test; no further inspection runs.
     sh.persisted = persistSheet(sh, items).then(() => { sh.persistedDone = true; if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, e); });
     // 6 · whatever did not fit under the ceiling goes to the next sheet of this metal, which nests on its own
-    if (sh.rejects.length && sh.endedBy !== "stopped") overflowToNextSheet(sh);
+    if (sh.rejects.length && sh.endedBy !== "stopped" && (sh.nestFlow !== "learned" || sh.verification.ok && ["cap", "plateau"].includes(sh.endedBy))) overflowToNextSheet(sh);
   } catch (e) {
     sh.status = "partial"; sh.stage = ""; log(sh, "finish error: " + (e.stack || e)); toast(`${labelOf(sh.metal)}: output failed — ${e.message}`, "bad", 7000); renderCard(sh);
     if (window.RunCtl) RunCtl.onSheetDone(sh, e);
@@ -2414,7 +2491,7 @@ async function finishNest(sh, { result, error }) {
   pumpNestQueue();
 }
 function pumpNestQueue() { const next = S.nestQueue.shift(); if (next && next.status === "queued") { next.status = "ready"; startNest(next); } }
-const endedText = e => ({ complete: "all pieces placed", budget: "time ceiling", stalled: "settled — nothing better for a minute", stopped: "operator stop", trials: "restart cap", cap: "fill ceiling reached", rounds: "planning-round cap", "claude-full": "Claude judged the sheet full" }[e] || e);
+const endedText = e => ({ plateau: "paused — no additional pieces during the improvement window", "model-unavailable": "model unavailable — verified baseline retained", complete: "all pieces placed", budget: "time ceiling", stalled: "settled — nothing better for a minute", stopped: "operator stop", trials: "restart cap", cap: "fill ceiling reached", rounds: "planning-round cap", "claude-full": "Claude judged the sheet full" }[e] || e);
 function buildReport(sh, result, items) {
   const byId = new Map(items.map(c => [c.id, c])); const st = stockFor(sh.metal);
   return {
@@ -2686,11 +2763,11 @@ function renderProgress(sh) {
      done it is the whole result — placed, full, verified, elapsed — and the timings that used to take a second line are
      kept in its tooltip instead. The pills over the image would repeat it, so they show only while it is still moving. */
   const st = q("stage"); const elapsed = ["nesting", "finishing"].includes(sh.status) ? fmt.s(performance.now() - sheetT0(sh)) : (sh.totalMs ? fmt.s(sh.totalMs) : (sh.elapsedMs ? fmt.s(sh.elapsedMs) : ""));
-  const budget = sh.status === "nesting" ? ((S.settings.engine || "solver") === "ai" ? ` · round ${sh.aiRound || 1}/${S.settings.aiRounds || 10}` : ` / ${S.settings.budgetS}s`) : "";
+  const budget = sh.status === "nesting" ? (sh.nestFlow === "learned" ? ` / ${fmt.s((S.settings.learnedBudgetS || 600) * 1000)} ceiling` : (S.settings.engine || "solver") === "ai" ? ` · round ${sh.aiRound || 1}/${S.settings.aiRounds || 10}` : ` / ${S.settings.budgetS}s`) : "";
   const deep = sh.totalMs ? `${fmt.s(sh.totalMs)} from the first file · nest ${fmt.s(sh.elapsedMs || 0)}${sh.trials ? ` · ${sh.trials} trial${sh.trials > 1 ? "s" : ""}` : ""}${sh.optimized ? ` · charms shrunk ${((1 - sh.optimized.scale) * 100).toFixed(1).replace(/\.0$/, "")}%` : ""}` : "";
   const reviewingSrc = S.sources.find(s => s.review && s.review.state === "running" && s.charms.some(c => c.metal === sh.metal));
   const done = sh.status === "complete" || sh.status === "partial";
-  st.title = done ? deep : "";
+  st.title = done ? deep + (sh.nestFlow === "learned" ? ` · ${sh.learnedResult?.model?.model || (sh.learnedResult?.modelError ? "model unavailable" : "model skipped: baseline sufficient")} · selected ${sh.learnedResult?.selectedSource || "best verified layout"} · +${sh.learnedResult?.gainedPieces || 0} vs standard · baseline ${sh.learnedCheckpoint?.baseline?.placements.length || 0} · ${sh.trials} measured candidates` : "") : "";
   st.innerHTML = sh.stage ? `<span class="spin"></span><span>${esc(sh.stage)}</span><span class="r">${elapsed}${budget}</span>`
     : reviewingSrc ? `<span class="spin"></span><span>Claude is reviewing the ${reviewingSrc.charms.length} charms detected in ${esc(reviewingSrc.name)}</span><span class="r">${fmt.s(reviewingSrc.review.elapsed || 0)}</span>`
     : sh.recalled && !sh.charms.length ? `<span>${sh.recalled.placedCount}/${sh.recalled.charmCount} placed · ${fmt.pct(sh.recalled.density || 0)} full${sh.recalled.verification ? (sh.recalled.verification.ok ? " · verified ✓" : " · ⚠ flagged") : ""} · ${esc(sh.recalled.fileBase || "")}</span><span class="r">${sh.recalled.updatedAt ? new Date(sh.recalled.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}</span>`
@@ -3055,7 +3132,7 @@ async function loadCharms() {
   } catch (e) { body.innerHTML = `<div class="libEmpty">${esc(e.message)}</div>`; }
 }
 function setMode(mode) {
-  S.mode = mode; $$(".topbar button[data-mode]").forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
+  S.mode = mode; renderNestFlow(); $$(".topbar button[data-mode]").forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
   { const mm = $("#moreMenu"); if (mm) { const inMore = mm.querySelector(`button[data-mode="${mode}"]`); mm.classList.toggle("on", !!inMore); mm.querySelector("summary").title = inMore ? "Workspace · " + inMore.textContent.trim() : "Workspace tools and settings"; mm.open = false; } }
   // on a narrow window the tab strip scrolls: the tab you are on is always brought into view
   $("#sheets").classList.toggle("hidden", mode !== "nest"); if (mode === "nest") requestAnimationFrame(() => METALS.forEach(m => drawPreview(activePage(m.key)))); $("#libView").classList.toggle("hidden", mode !== "library"); $("#charmsView").classList.toggle("hidden", mode !== "charms");
@@ -3093,6 +3170,13 @@ function guardBench() {
 /* ═══ 15 · settings dialog ══════════════════════════════════════════════ */
 function openSettings() {
   const s = S.settings;
+  $("#stLearnedKey").value = localStorage.getItem("cn.learnedKey") || "";
+  $("#stLearnedBudget").value = s.learnedBudgetS || 600; $("#stLearnedStall").value = s.learnedStallS || 300;
+  $("#stLearnedTest").onclick = async () => {
+    const status = $("#stLearnedStatus"); status.textContent = "Connecting…";
+    try { const r = await checkLearnedRunner($("#stLearnedKey").value.trim()); status.textContent = `${r.model} ready · ${r.device}`; }
+    catch (e) { status.textContent = e.message; }
+  };
   $$("#railSeg button").forEach(b => b.classList.toggle("on", b.dataset.v === s.rail));
   for (const m of METALS) { $(`#st${cap(m.key)}W`).value = +(s.stock[m.key][0] * 25.4).toFixed(1); $(`#st${cap(m.key)}H`).value = +(s.stock[m.key][1] * 25.4).toFixed(1); }   // shown in mm, stored in inches
   $("#stClearance").value = +(s.clearancePt * MM_PER_PT).toFixed(2); $("#stInset").value = +(s.insetPt * MM_PER_PT).toFixed(2);   // shown in mm, stored in pt
@@ -3145,11 +3229,20 @@ function readSettings() {
     for (const sh of allSheets()) if (sh.charms.length) sheetDirty(sh);
     if (window.B?.run && !["complete","abandoned"].includes(B.run.status)) { B.run.step = "nest"; B.run.commitRequested = false; RunCtl.stop("Sheet settings changed", "Resume to nest and verify at the new dimensions."); }
   }
-  saveSettings(); if (window.Arrivals) Arrivals.start(); refreshAllCards(); toast("Settings saved", "ok", 1800);
+  localStorage.setItem("cn.learnedKey", $("#stLearnedKey").value.trim());
+  s.learnedBudgetS = Math.max(600, Math.min(36000, +$("#stLearnedBudget").value || 600)); s.learnedStallS = Math.max(120, Math.min(3600, +$("#stLearnedStall").value || 300));
+  saveSettings(); renderNestFlow(); if (window.Arrivals) Arrivals.start(); refreshAllCards(); toast("Settings saved", "ok", 1800);
 }
 
 /* ═══ 16 · boot ═════════════════════════════════════════════════════════ */
 async function boot() {
+  renderNestFlow();
+  $("#btnNestFlow").onclick = async () => {
+    if (allSheets().some(s => ["nesting", "finishing", "queued"].includes(s.status) || s._learnedStarting)) { toast("Stop the current nesting work before changing the workflow", ""); return; }
+    const next = S.settings.nestFlow === "learned" ? "standard" : "learned";
+    if (next === "learned") try { await checkLearnedRunner(); } catch (e) { toast(e.message, "bad", 8000); openSettings(); $(".learnedSettings").open = true; return; }
+    S.settings.nestFlow = next; saveSettings(); renderNestFlow(); toast(next === "learned" ? "Learned workflow on · rotations, verified proposals and measured refinement" : "Standard nesting on", "ok");
+  };
   document.documentElement.dataset.rail = S.settings.rail;
   for (const m of METALS) { const sh = makeSheet(m.key); sh.pages = [sh]; sh.active = 0; S.sheets[m.key] = sh; }
   const sel = $("#stockSel"); sel.innerHTML = STOCK_PRESETS.map(p => `<option value="${p.id}">${p.label}</option>`).join(""); sel.value = S.stockPreset;

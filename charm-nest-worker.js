@@ -8,7 +8,7 @@
  *       {type:"verify", jobId, job, placements, res}
  *  out: {type:"stage"|"placed"|"reject"|"trial"|"best"|"done"|"verified"|"error", jobId, …}
  */
-importScripts("charm-nest-solver.js");
+importScripts("charm-nest-solver.js", "charm-nest-learned.js");
 
 let current = null;   // { jobId, job, stop }
 
@@ -20,6 +20,10 @@ self.onmessage = async (e) => {
       current.job.packingPending = !!m.pending;
       if (m.hints) current.job.packingHints = m.hints;
     }
+    return;
+  }
+  if (m.type === "incumbent") {
+    if (current && current.jobId === m.jobId && current.job.learned && !current.stop) current.job.learned.incumbent = m.layout;
     return;
   }
   if (m.type === "verify") {
@@ -34,14 +38,17 @@ self.onmessage = async (e) => {
   current = state;
   const post = (msg) => self.postMessage(Object.assign({ jobId: m.jobId }, msg));
   try {
-    const result = await CharmNestSolver.solve(m.job, {
+    const solver = m.job.learned ? CharmNestLearned : CharmNestSolver;
+    const result = await solver.solve(m.job, {
       shouldStop: () => state.stop,
       onStage: (stage, done, total) => post({ type: "stage", stage, done, total }),
       onPlaced: (placement, info) => post({ type: "placed", placement, info }),
       onReject: (id, trial, reason) => post({ type: "reject", id, trial, reason }),
       onTrial: (summary) => post({ type: "trial", summary }),
-      onBest: (best, summary) => post({ type: "best", best, summary })
+      onBest: (best, summary) => post({ type: "best", best, summary }),
+      onLearned: (progress) => post({ type: "learned", progress })
     });
+    if (m.job.verifyResult && !CharmNestSolver.verify(m.job, result.placements, 6).ok) throw new Error("Challenger result failed high-resolution verification; retaining the verified refinement result");
     post({ type: "done", result });
   } catch (err) {
     post({ type: "error", message: String(err && err.stack || err) });
