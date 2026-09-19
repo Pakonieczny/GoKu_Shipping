@@ -268,6 +268,17 @@
     }
     return { take, wait, materials };
   }
+  // Set membership is decided from the verified layout, never from “all queued pieces placed”.
+  function sheetRelease(sheet, opts = {}) {
+    if (!sheet.verified || !sheet.placed || sheet.stopped || sheet.dirty) return { include: false, reason: "Nest and verify first" };
+    if (FAST_MATERIALS.has(sheet.material)) return sheet.full
+      ? { include: true, reason: "Full sheet" } : { include: false, reason: "Partial · held for a later set" };
+    if (sheet.material === "rose") return opts.seq > 0 && opts.seq % 2 === 0
+      ? { include: true, reason: "Rose gold · even-numbered set" } : { include: false, reason: "Held for Set 2, 4, 6…" };
+    if (["gold10k", "gold14k"].includes(sheet.material)) return opts.selected?.[sheet.material] === true
+      ? { include: true, reason: "Included by you" } : { include: false, reason: "Not selected for this set" };
+    return { include: false, reason: "Unknown material" };
+  }
   /** Which materials must travel together: those tied by an order with pieces in more than one. Each group is a set.
    *  → { material → groupKey }, groupKey = the group's materials sorted and joined with "+". */
   function kinGroups(lines) {
@@ -289,5 +300,5 @@
   const stepIndex = s => RUN_STEPS.indexOf(s);
 
   return { METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, interpretLine, lineKey, poolId,
-    localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES };
+    localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES };
 });

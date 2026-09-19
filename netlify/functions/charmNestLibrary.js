@@ -52,7 +52,7 @@ const ms = v => (v && v.toMillis ? v.toMillis() : (typeof v === "number" ? v : n
 
 function slim(d) {
   return {
-    id: d.id, folder: d.folder || null, fileBase: d.fileBase || d.folder || null, saving: !!d.saving, metal: d.metal, metalLabel: d.metalLabel, day: d.day, status: d.status, endedBy: d.endedBy,
+    id: d.id, draft: !!d.draft, releaseFull: !!d.releaseFull, folder: d.folder || null, fileBase: d.fileBase || d.folder || null, saving: !!d.saving, metal: d.metal, metalLabel: d.metalLabel, day: d.day, status: d.status, endedBy: d.endedBy,
     charmCount: num(d.charmCount), placedCount: num(d.placedCount), rejectCount: num(d.rejectCount), density: num(d.density), freePt2: num(d.freePt2),
     verification: d.verification ? { ok: !!d.verification.ok } : null,
     preview: d.outputs && d.outputs.preview ? d.outputs.preview.url : null,
@@ -475,6 +475,8 @@ async function op_setAllocate(b) {
     if (allocation) { const prior = await t.get(allocation); if (prior.exists) return prior.data(); }
     const cref = col(COUNTERS).doc(day); const cs = await t.get(cref);
     const seq = (cs.exists ? num(cs.data().seq) : 0) + 1;
+    // A rose-only attempt must not consume an odd number just to make itself eligible.
+    if (b.roseOnly && seq % 2 !== 0) return { deferred: true, nextSeq: seq };
     const setId = `set-${day}-${seq}`;
     t.set(cref, { day, seq, updatedAt: FV.serverTimestamp() }, { merge: true });
     t.set(col(SETS).doc(setId), { setId, runId: runId || null, key, group: group || null, day, seq, name: `Set-${seq}`, folder: `charmnest/sets/${day}/Set-${seq}`, materials: [], sheetIds: [], orders: {}, labels: null, status: "open", createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() });
@@ -561,12 +563,12 @@ async function op_runList(b) {
 async function op_history(b) {
   const q = String(b.q || "").trim().toLowerCase(), offset = Math.max(0, num(b.offset)), limit = Math.min(100, Math.max(1, num(b.limit) || 60));
   // Search complete set membership before pagination: a matching order must reveal all of its set's sheets.
-  const [rs, ss, ts] = await Promise.all([col(RUNS).select("runId", "setId", "seq", "day", "status", "step", "lines", "sheets", "errors", "stoppedBy", "createdAt", "updatedAt").get(), col(SHEETS).select("id", "setId", "setSeq", "runId", "day", "metal", "metalLabel", "status", "orders", "sheetIndex", "page", "updatedAt", "archived", "folder", "fileBase", "saving", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "outputs", "names", "charms").get(), col(SETS).select("seq", "day", "runId", "status", "updatedAt", "materials", "orders").get()]);
+  const [rs, ss, ts] = await Promise.all([col(RUNS).select("runId", "setId", "seq", "day", "status", "step", "lines", "sheets", "errors", "stoppedBy", "createdAt", "updatedAt").get(), col(SHEETS).select("id", "setId", "setSeq", "runId", "day", "metal", "metalLabel", "status", "orders", "sheetIndex", "page", "updatedAt", "archived", "folder", "fileBase", "saving", "draft", "releaseFull", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "outputs", "names", "charms").get(), col(SETS).select("seq", "day", "runId", "status", "updatedAt", "materials", "orders").get()]);
   const runMap = new Map(rs.docs.map(d => [d.id, d.data()])), sheets = ss.docs.map(d => d.data()).filter(x => !x.archived);
   const groups = new Map(ts.docs.map(d => { const x = d.data(); return [d.id, { setId: d.id, seq: x.seq, day: x.day, runId: x.runId, status: x.status, updatedAt: ms(x.updatedAt), sheets: [], materials: x.materials || [], orderIds: Object.keys(x.orders || {}), search: [] }]; }));
   for (const x of sheets) {
-    const key = x.setId || "sheet:" + x.id;
-    if (!groups.has(key)) groups.set(key, { setId: x.setId || null, seq: x.setSeq || null, day: x.day, runId: x.runId, status: x.status, sheets: [], materials: [], orderIds: [], search: [] });
+    const key = x.setId || (x.draft ? "draft:" + x.runId : "sheet:" + x.id);
+    if (!groups.has(key)) groups.set(key, { setId: x.setId || null, seq: x.setSeq || null, day: x.day, runId: x.runId, status: x.draft ? "held" : x.status, draft: !!x.draft, sheets: [], materials: [], orderIds: [], search: [] });
     const g = groups.get(key); g.sheets.push(Object.assign(slim(x), { orders: (x.orders || []).length, orderIds: x.orders || [], sheetIndex: x.sheetIndex || x.page || 1 }));
     if (!g.materials.includes(x.metal)) g.materials.push(x.metal);
     g.search.push(x.names || "", x.metalLabel || "", ...(x.charms || []).map(c => c.sku || ""));
@@ -578,7 +580,7 @@ async function op_history(b) {
     const r = runMap.get(g.runId), ids = new Set(g.orderIds.map(String));
     const lines = Object.values(r?.lines || {}).filter(l => !ids.size || ids.has(String(l.orderId)));
     const hay = [g.setId, "Set " + g.seq, g.day, g.runId, g.status, r?.stoppedBy, ...(r?.errors || []).map(e => e.why), ...g.materials, ...(g.search || []), ...ids, ...lines.flatMap(l => [l.orderId, l.sku, l.engrave?.text, l.snap?.title]), ...g.sheets.map(x => x.fileBase)].join(" ").toLowerCase();
-    return Object.assign(g, { orders: ids.size || g.orders || new Set(lines.map(l => l.orderId)).size, status: g.status === "superseded" ? g.status : r?.status === "complete" ? (String(g.status).startsWith("complete") ? g.status : "complete") : r?.status || g.status, match: !q || hay.includes(q) });
+    return Object.assign(g, { orders: ids.size || g.orders || new Set(lines.map(l => l.orderId)).size, status: g.draft ? "held" : g.status === "superseded" ? g.status : r?.status === "complete" ? (String(g.status).startsWith("complete") ? g.status : "complete") : r?.status || g.status, match: !q || hay.includes(q) });
   }).filter(g => g.match).sort((a, b) => String(b.day || "").localeCompare(String(a.day || "")) || (b.seq || 0) - (a.seq || 0) || (b.updatedAt || 0) - (a.updatedAt || 0));
   const total = rows.length; rows = rows.slice(offset, offset + limit);
   for (const row of rows) { delete row.search; delete row.match; }

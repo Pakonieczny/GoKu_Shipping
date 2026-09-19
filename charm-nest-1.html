@@ -530,6 +530,8 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .runMode.auto{background:var(--velvet);color:#fff;border-color:var(--velvet)}
 .runMode.auto .sw{background:var(--sage);box-shadow:0 0 0 3px rgba(95,122,91,.25);animation:bbPulse 1.6s ease-in-out infinite}
 @keyframes bbPulse{50%{box-shadow:0 0 0 6px rgba(95,122,91,.08)}}
+.setPicker{grid-column:1/-1;position:relative;justify-self:end;font-size:12px}.setPicker summary{cursor:pointer;list-style:none;border:1px solid var(--line);border-radius:18px;padding:6px 16px;background:var(--card)}.setMenu{position:absolute;right:0;top:34px;width:330px;max-height:55vh;overflow:auto;z-index:20;padding:10px;background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}.setMenu button{display:block;text-align:left;width:100%;padding:9px;border:0;border-radius:8px;background:transparent;color:var(--ink);cursor:pointer}.setMenu button:hover{background:var(--goldSoft)}.setMenu small,.setPreviewGrid small{display:block;color:var(--ink45);font-size:11px}.setPreviewGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}.setPreviewGrid figure{margin:0;overflow:hidden}.setPreviewGrid img{width:100%;border:1px solid var(--line);border-radius:10px}.setPreviewGrid figcaption{padding:8px 0;overflow-wrap:anywhere}
+.solidOptions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;width:100%}.solidOptions label{display:flex;align-items:center;gap:5px}.solidOptions details{margin-left:auto}.solidOptions summary{cursor:pointer;font-size:11px}.solidSize{display:flex;gap:6px;flex-wrap:wrap;padding:8px 0}.solidSize label{font-size:11px}.solidSize input{width:70px;padding:4px;border:1px solid var(--line);border-radius:6px}
 .runBanner .acts{display:flex;gap:7px;align-items:center;flex:0 0 auto;white-space:nowrap}
 .runBanner .spacer{flex:1 1 auto;min-width:8px}
 .runBanner .rid{font:700 10.5px var(--mono);letter-spacing:.04em;background:var(--card);border:1px solid var(--line);border-radius:7px;padding:3px 8px;color:var(--ink70);white-space:nowrap;flex:0 0 auto}
@@ -989,7 +991,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
       <span class="sandboxPill hidden" id="sandboxPill" title="Sandbox: emulated Etsy from the stored snapshot; every record and file goes to sandbox copies">SANDBOX</span>
       <span class="etsyPill" id="etsyPill" title="Etsy API calls, as counted by the Design Station (the only app that calls Etsy); live on every heartbeat">Etsy <b id="etsyPillN">—</b></span>
       <button class="btn ghost sm runMode" id="btnRunMode" title="Auto: the sorter pulls the latest orders by date and runs the whole process on its own, stopping only for a person. Manual: every step waits for a click."><span class="sw"></span><span id="runModeText">Manual</span></button>
-      <select class="topSel" id="stockSel" title="Stock preset for all three sheets"></select>
+      <select class="topSel" id="stockSel" title="Stock preset for GF, SS and rose gold; solid gold uses its custom size"></select>
       <button class="btn ghost sm" id="btnSettings">⚙ Settings</button>
     </div>
     <div class="runBanner hidden" id="runBanner"></div>
@@ -1069,8 +1071,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
     <div class="fieldRow3">
       <div class="field"><label>Design Station origin</label><input id="stDsOrigin" type="text" placeholder="https://design-1.goldenspike.app"><div class="help">Framed and driven over postMessage; messages from any other origin are dropped.</div></div>
       <div class="field"><label>Heartbeat (s) · station down after (misses)</label><div class="fieldRow"><input id="stHeartbeatS" type="number" min="2" max="60" step="1"><input id="stHeartbeatMiss" type="number" min="1" max="10" step="1"></div></div>
-      <div class="field"><label>Slow metals (RG, 10K, 14K) go to the laser every</label><div class="fieldRow"><input id="stCadenceDays" type="number" min="1" max="14" step="1"><span class="help" style="align-self:center">days — whatever has come in by then, dates unread</span></div><div class="help">SS and GF 14/20 go only as full sheets; a partial sheet waits for the next pull, unless a piece on it is due within the days below or travels with a slow metal that is going.</div></div>
-      <div class="field"><label>A piece due within (days) forces its sheet to cut</label><input id="stLateDays" type="number" min="0" max="14" step="1"></div>
+      <div class="field"><label>Set membership</label><div class="help">GF 14/20 and SS: full, verified sheets only. Partials carry forward. Rose GF: Sets 2, 4, 6… each day. Solid 10K and 14K: tick “Include in current set” above the sheet. Their custom sizes always apply.</div><input id="stCadenceDays" type="hidden" value="2"><input id="stLateDays" type="hidden" value="0"></div>
       <div class="field"><label>Auto-commit when a set finishes</label><select id="stAutoCommit"><option value="on">On — mark orders complete on the station once every engraving is approved</option><option value="off">Off — wait for “Commit set”</option></select></div>
     </div>
     <div class="fieldRow3">
@@ -1249,7 +1250,7 @@ function loadSettings() {
 function saveSettings() { localStorage.setItem("cn.settings", JSON.stringify(S.settings)); document.documentElement.dataset.rail = S.settings.rail; }
 function stockFor(metal) {
   const p = STOCK_PRESETS.find(p => p.id === S.stockPreset);
-  const inches = (p && p.id !== "custom") ? [p.w, p.h] : (S.settings.stock[metal] || DEFAULTS.stock[metal]);
+  const inches = (p && p.id !== "custom" && !["gold10k", "gold14k"].includes(metal)) ? [p.w, p.h] : (S.settings.stock[metal] || DEFAULTS.stock[metal]);
   return { wIn: inches[0], hIn: inches[1], wPt: inches[0] * PT_PER_IN, hPt: inches[1] * PT_PER_IN };
 }
 function angleSet() { const st = +S.settings.angleStep || 30; const a = []; for (let d = 0; d < 360; d += st) a.push(d); return a; }
@@ -1824,7 +1825,7 @@ async function reviewLayout(sh, items) {
 function makeSheet(metal, page) {
   return { metal, page: page || 1, runId: null, sheetId: null, charms: [], status: "idle", worker: null, jobId: null, layout: null, placements: [], rejects: [], sat: null, progress: null, stage: "", outputs: null, verification: null, startedAt: 0, endedBy: null, trials: 0, best: null, dirty: true, log: [], liveInfo: null, serverJob: null };
 }
-function sheetDirty(sh) { sh.dirty = true; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
+function sheetDirty(sh) { sh.dirty = true; sh.releaseFull = false; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
 function activeCharms(sh) { return sh.charms.filter(c => !c.excluded); }
 /* One card per metal; a metal can hold several sheets ("pages"). The card shows the active page and tabs to switch. */
 const pagesOf = metal => S.sheets[metal].pages;
@@ -1874,6 +1875,7 @@ function overflowToNextSheet(sh) {
   if (!next || ["nesting", "finishing", "queued"].includes(next.status)) next = addPage(sh.metal);
   moving.forEach(c => { c.pinned = null; c.metal = sh.metal; next.charms.push(c); });
   sh.movedOn.page = next.page;
+  next.isolated = sh.isolated;
   computeSaturation(sh); computeSaturation(next); renderCard(sh);
   agent({ metal: sh.metal }, "nest", `Sheet ${sh.page} is full at its ${fmt.pct(+S.settings.maxFill || 0.74)} ceiling — ${moving.length} charm(s) in ${orderSummary(moving).text} moved whole to sheet ${next.page}: ${sh.movedOn.names.slice(0, 6).join(", ")}${moving.length > 6 ? "…" : ""}`);
   toast(`${labelOf(sh.metal)}: ${moving.length} charm(s) moved to sheet ${next.page} — nesting it now`, "ok", 4200);
@@ -2202,6 +2204,7 @@ async function finishNest(sh, { result, error }) {
     for (const c of sh.charms) if (c.arrivalPin) { c.pinned = null; delete c.arrivalPin; }
     sh.status = "ready"; log(sh, "Re-optimizing before overflow: trying a fresh arrangement"); startNest(sh); return;
   }
+  sh.releaseFull = false;
   sh.status = "finishing"; sh.endedBy = result.endedBy; sh.trials = result.trials; sh.placements = result.placements; sh.rejects = result.rejects.slice(); sh.livePlacements = [];
   keepOrdersWhole(sh, byId);
   if (sh.evSearch && sh.evSearch.live) agentUpdate(sh.evSearch, { live: false, elapsed: 0, html: null, text: `Search ended after ${result.trials} trial(s): ${endedText(result.endedBy)}` });
@@ -2256,6 +2259,11 @@ async function finishNest(sh, { result, error }) {
     const report = buildReport(sh, result, items);
     sh.outputs = { ai: aiBytes, labelled: labelledBytes, report, previewPng: await previewPng(sh) };
     sh.progress = [4, 5]; sh.stage = "Saving to the cloud…"; renderProgress(sh);
+    // Overflow after a complete search closes a sheet; merely placing a small queue does not.
+    sh.releaseFull = result.endedBy !== "stopped" && sh.verification.ok && sh.placements.length > 0 &&
+      ((sh.rejects.length > 0 && ["cap", "stalled", "trials", "claude-full"].includes(result.endedBy) &&
+        [...new Set(sh.rejects.map(id => byId.get(id)?.order || id))].some(order => items.filter(c => (c.order || c.id) === order).reduce((n,c) => n + inflatedArea(c), 0) <= result.usablePt2 * (+S.settings.maxFill || .74))) ||
+        (result.placedPt2 / Math.max(1, result.usablePt2)) >= (+S.settings.maxFill || .74) - 1e-6);
     sh.seq = await nextSheetSeq(sh); sh.fileBase = sheetFileBase(sh);
     const allPlaced = sh.rejects.length === 0;
     sh.status = allPlaced && sh.verification.ok ? "complete" : "partial";
@@ -2297,9 +2305,12 @@ function buildReport(sh, result, items) {
  *  the material in that set (design §8.1). One run = one set = one folder; a gold sheet and a silver sheet of the same
  *  run read as …_Set-3_… on both. The set number is allocated in a Firestore transaction, never by counting here. */
 const dateTag = (d = new Date()) => CharmNestOrders.dateTag(d);
-function sheetFileBase(sh) { return CharmNestOrders.sheetName(sh.metal, sh.setDay || today(), sh.seq || 1, sh.sheetIndex || sh.page || 1); }
+function sheetFileBase(sh) { if (sh.draft) return `${METAL_TAG[sh.metal]}_working_${sh.sheetId}`; return CharmNestOrders.sheetName(sh.metal, sh.setDay || today(), sh.seq || 1, sh.sheetIndex || sh.page || 1); }
 /** The sheet's set (allocated once per run) and its index within its material in that set. */
 async function nextSheetSeq(sh) {
+  if (window.Gate && Gate.modern(sh.runId)) {
+    sh.draft = true; sh.setId = null; sh.setDay = today(); sh.sheetIndex = null; return null;
+  }
   const runKey = sh.runId || (sh.runId = "manual-" + uid());
   const set = await Sets.ensure(runKey, sh.group || null);
   sh.setId = set.setId; sh.setDay = set.day;
@@ -2318,7 +2329,7 @@ async function persistSheet(sh, items) {
     charmCount: items.length, placedCount: sh.placements.length, rejectCount: (sh.outputs.report.rejects || []).length, page: sh.page, verification: { ok: !!sh.verification.ok, minGapPt: sh.verification.minGapPt, minEdgePt: sh.verification.minEdgePt, render: sh.verification.render && { ok: sh.verification.render.ok, overlapPx: sh.verification.render.overlapPx, outsidePx: sh.verification.render.outsidePx } },
     outputs,
     sources: [...new Set(items.map(c => c.sourceId))].map(id => { const s = sourceOf(id); return s ? { id: s.id, name: s.name, zipName: s.zipName, hash: s.hash, bytes: s.bytes ? s.bytes.length : 0, path: s.cloud && s.cloud.path, url: s.cloud && s.cloud.url, pool: !!s.pool, sku: s.sku || null } : null; }).filter(Boolean),
-    setId: sh.setId || null, setSeq: sh.seq || null, sheetIndex: sh.sheetIndex || null, runId: sh.runId || null,
+    draft: !!sh.draft, releaseFull: !!sh.releaseFull, setId: sh.setId || null, setSeq: sh.seq || null, sheetIndex: sh.sheetIndex || null, runId: sh.runId || null,
     orders: [...new Set(sh.placements.map(p => { const c = byId.get(p.id); return c && c.order ? String(c.order).split("/")[0] : null; }).filter(Boolean))],
     poolIds: sh.placements.map(p => byId.get(p.id) && byId.get(p.id).poolId).filter(Boolean), backPool: sh.backPool || [], backOutputs: sh.backOutputs || null, label: sh.label || null,
     charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, order: c.order || c.id, layer: c.layer || null, poolId: c.poolId || null, sku: c.sku || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open })),
@@ -2495,6 +2506,7 @@ function renderCard(sh) {
   const prov = q("prov"); const pages = pagesOf(sh.metal);
   const dayTxt = sh.setDay ? CharmNestOrders.dateTag(new Date(sh.setDay + "T12:00:00")).replace(/\.\d\d$/, "").replace(/\./g, " ") : "";
   const bits = [];
+  if (sh.draft) bits.push("Working sheet · held");
   if (sh.seq) bits.push(`<b>Set ${sh.seq}</b>`);
   if (dayTxt) bits.push(esc(dayTxt));
   if (rc) bits.push("recalled");
@@ -2955,7 +2967,8 @@ function openSettings() {
   const s = S.settings;
   $$("#railSeg button").forEach(b => b.classList.toggle("on", b.dataset.v === s.rail));
   for (const m of METALS) { $(`#st${cap(m.key)}W`).value = +(s.stock[m.key][0] * 25.4).toFixed(1); $(`#st${cap(m.key)}H`).value = +(s.stock[m.key][1] * 25.4).toFixed(1); }   // shown in mm, stored in inches
-  $("#stClearance").value = +(s.clearancePt * MM_PER_PT).toFixed(2); $("#stInset").value = +(s.insetPt * MM_PER_PT).toFixed(2);   // shown in mm, stored in pt $("#stAngle").value = s.angleStep; $("#stBudget").value = s.budgetS; $("#stParallel").value = s.parallel || 0; $("#stSeed").value = s.seed; $("#stServerAbove").value = s.serverAbove;
+  $("#stClearance").value = +(s.clearancePt * MM_PER_PT).toFixed(2); $("#stInset").value = +(s.insetPt * MM_PER_PT).toFixed(2);   // shown in mm, stored in pt
+  $("#stAngle").value = s.angleStep; $("#stBudget").value = s.budgetS; $("#stParallel").value = s.parallel || 0; $("#stSeed").value = s.seed; $("#stServerAbove").value = s.serverAbove;
   { const rb = $("#stSandboxReset"); if (rb && !rb.dataset.wired) { rb.dataset.wired = "1"; rb.onclick = () => { if (!window.Sandbox || !Sandbox.on()) { toast("The sandbox is off", "bad"); return; } if (confirm("Empty the sandbox's pool, sets, runs and sheets? The real records are never touched.")) Sandbox.reset().then(() => toast("Sandbox emptied", "ok")).catch(e => toast(e.message, "bad", 8000)); }; } }
   { const pb = $("#stPurge"); if (pb && !pb.dataset.wired) { pb.dataset.wired = "1"; pb.onclick = async () => {
       const code = prompt("Purge every run, sheet, set, pool row, back record and counter — production and sandbox? The master files, the SKU index, the mappings and the sandbox snapshot stay.\n\nEnter the passcode to confirm."); if (code == null) return;
@@ -2989,7 +3002,7 @@ function openSettings() {
 }
 const cap = s => s[0].toUpperCase() + s.slice(1);
 function readSettings() {
-  const s = S.settings;
+  const s = S.settings, previousGeometry = JSON.stringify([s.stock,s.clearancePt,s.insetPt,s.maxFill]);
   s.rail = $("#railSeg button.on")?.dataset.v || "md";
   for (const m of METALS) s.stock[m.key] = [(+$(`#st${cap(m.key)}W`).value / 25.4) || DEFAULTS.stock[m.key][0], (+$(`#st${cap(m.key)}H`).value / 25.4) || DEFAULTS.stock[m.key][1]];
   s.clearancePt = Math.max(-2, Math.min(12, Math.round((+$("#stClearance").value || 0) / MM_PER_PT * 100) / 100)); s.insetPt = Math.max(0, Math.round((+$("#stInset").value || 0) / MM_PER_PT * 100) / 100); s.angleStep = +$("#stAngle").value || 30; s.budgetS = Math.max(10, +$("#stBudget").value || 180); s.parallel = Math.max(0, Math.min(16, Math.round(+$("#stParallel").value || 0))); s.seed = Math.max(1, Math.round(+$("#stSeed").value || 1)); s.serverAbove = Math.max(0, +$("#stServerAbove").value || 0);
@@ -2999,6 +3012,10 @@ function readSettings() {
   s.labelGapMm = Math.max(1, Math.min(30, +$("#stLabelGapMm").value || 6.4)); s.masterServerAbove = Math.max(0, Math.round(+$("#stMasterServerAbove").value || 0)); s.sizeMinMm = Math.max(0.5, +$("#stSizeMinMm").value || 3); s.sizeMaxMm = Math.max(s.sizeMinMm, +$("#stSizeMaxMm").value || 60);
   s.engraveMarginMm = Math.max(0, Math.min(5, +$("#stEngraveMarginMm").value || 0)); s.engraveMinCapMm = Math.max(0.3, +$("#stEngraveMinCapMm").value || 1.6); s.engraveMaxHeightFrac = Math.max(0.1, Math.min(1, +$("#stEngraveMaxHeightFrac").value || 0.4)); s.engraveConfidence = Math.max(0, Math.min(1, +$("#stEngraveConfidence").value || 0.8)); s.engraveMinGapMm = Math.max(0, +$("#stEngraveMinGapMm").value || 0); s.engraveMinStrokeMm = Math.max(0, +$("#stEngraveMinStrokeMm").value || 0); s.engraveTryRotated = $("#stEngraveTryRotated").value; s.backFileView = $("#stBackFileView").value;
   s.minPt = Math.max(1, +$("#stMinPt").value || 6); s.verifyRes = +$("#stVerifyRes").value || 6; s.naming = $("#stNaming").value; s.review = $("#stReview").value; s.engine = $("#stEngine").value; s.maxFill = Math.max(0.3, Math.min(1, (+$("#stMaxFill").value || 75) / 100)); s.aiRounds = Math.max(1, Math.min(30, +$("#stAiRounds").value || 10)); s.snapIn = Math.max(0, Math.min(1, (+$("#stSnapIn").value || 0) / 25.4)); s.notify = $("#stNotify").value; s.sound = $("#stSound").value;
+  if (previousGeometry !== JSON.stringify([s.stock,s.clearancePt,s.insetPt,s.maxFill])) {
+    for (const sh of allSheets()) if (sh.charms.length) sheetDirty(sh);
+    if (window.B?.run && !["complete","abandoned"].includes(B.run.status)) { B.run.step = "nest"; B.run.commitRequested = false; RunCtl.stop("Sheet settings changed", "Resume to nest and verify at the new dimensions."); }
+  }
   saveSettings(); if (window.Arrivals) Arrivals.start(); refreshAllCards(); toast("Settings saved", "ok", 1800);
 }
 
@@ -3007,7 +3024,7 @@ async function boot() {
   document.documentElement.dataset.rail = S.settings.rail;
   for (const m of METALS) { const sh = makeSheet(m.key); sh.pages = [sh]; sh.active = 0; S.sheets[m.key] = sh; }
   const sel = $("#stockSel"); sel.innerHTML = STOCK_PRESETS.map(p => `<option value="${p.id}">${p.label}</option>`).join(""); sel.value = S.stockPreset;
-  sel.onchange = () => { S.stockPreset = sel.value; localStorage.setItem("cn.stock", sel.value); for (const sh of allSheets()) sheetDirty(sh); };
+  sel.onchange = () => { S.stockPreset = sel.value; localStorage.setItem("cn.stock", sel.value); for (const sh of allSheets()) if (!["gold10k", "gold14k"].includes(sh.metal)) sheetDirty(sh); };
   buildCards();
   $("#railCores").textContent = `${navigator.hardwareConcurrency || "?"} cores${(navigator.hardwareConcurrency || 4) < 4 ? " · sheets nest one at a time" : ` · ${METALS.length} sheets in parallel`}`;
   { const rr = $("#railRecent"); if (rr) rr.ontoggle = () => { if (window.LiveStrip) LiveStrip.render(); }; }
