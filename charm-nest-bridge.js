@@ -2354,7 +2354,7 @@ const RunCtl = window.RunCtl = (() => {
   }
   function newRun(mode) { const day = today(); return { runId: `run-${day}-${uid()}`, day, setId: null, step: "pull", status: "running", mode: mode || S.settings.runMode || "manual", startedAt: Date.now(), updatedAt: Date.now(), lines: {}, sheets: {}, holds: {}, errors: [], resumable: true, stoppedBy: null, fix: null, orders: [] }; }
   async function start(opts = {}) {
-    if (B.run && ["running", "review", "paused"].includes(B.run.status)) { toast("A run is already open — stop it or let it finish", "bad"); return B.run; }
+    if (B.run && ["running", "review", "paused", "stopped"].includes(B.run.status)) { toast("A run is already open — resume, finish, or abandon it before starting another", "bad"); return B.run; }
     if (B.run) await save(B.run);
     if (B.run || Recall.on()) clearRunState();
     const r = newRun(opts.mode); B.run = r;
@@ -2571,7 +2571,7 @@ const RunCtl = window.RunCtl = (() => {
     for (const m of METALS) { const prim = S.sheets[m.key]; if (prim.pages.some(p => p.runId || p.recalled || p.charms.some(c => c.poolId))) { for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms = pg.charms.filter(c => !c.poolId); pg.sheetId = null; pg.fileBase = null; pg.setId = null; pg.runId = null; pg.seq = null; pg.setDay = null; pg.sheetIndex = null; pg.group = null; pg.backPool = []; pg.backOutputs = null; pg.label = null; pg.cloud = null; pg.persisted = null; pg.recalled = null; } prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim); } } B.orders.rows = []; B.orders.byKey = new Map(); B.engrave.items = new Map(); B.review.items = []; B.pool.rows = new Map(); B.run = null; B.orders.recalled = null; B.orders.pulledAt = null; B.orders.filtered = 0; B.orders.stale = false; Object.assign(Recall.state(), { runId: null, setId: null, live: null }); Orders.render(); Engrave.render(); Review.render(); renderBanner(); renderRail(); updateTopSub(); }
   function setRunMode(mode) {
     S.settings.runMode = mode === "auto" ? "auto" : "manual"; saveSettings(); renderModeBtn();
-    if (mode === "auto") { agent({ bridge: true }, "DS", "Auto mode on: the sorter pulls the latest orders by the date rule and runs the whole process, stopping only for a person"); if (!B.run || ["complete", "stopped"].includes(B.run.status)) { if (B.run && B.run.status === "complete") clearRunState(); start({ mode: "auto" }).catch(e => toast(e.message, "bad")); } else if (B.run.status === "paused") { B.run.mode = "auto"; next(); } else B.run.mode = "auto"; }
+    if (mode === "auto") { agent({ bridge: true }, "DS", "Auto mode on: the sorter pulls the latest orders by the date rule and runs the whole process, stopping only for a person"); if (!B.run || B.run.status === "complete") { if (B.run && B.run.status === "complete") clearRunState(); start({ mode: "auto" }).catch(e => toast(e.message, "bad")); } else if (B.run.status === "stopped") { B.run.mode = "auto"; resume().catch(e => toast(e.message, "bad")); } else if (B.run.status === "paused") { B.run.mode = "auto"; next(); } else B.run.mode = "auto"; }
     else { clearTimeout(autoTimer); if (B.run) B.run.mode = "manual"; agent({ bridge: true }, "DS", "Manual mode: every step waits for a click"); }
     renderBanner();
   }
