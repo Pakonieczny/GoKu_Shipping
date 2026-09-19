@@ -2139,7 +2139,7 @@ function startNestReady(sh) {
      two records called GF_Sep.17.26_Set-1_Sheet-1, one of them stale. Once a sheet has a name it keeps its identity:
      re-nesting rewrites the same record and the same files. */
   sh.sheetId = sh.sheetId && (sh.fileBase || (sh.status !== "complete" && sh.status !== "partial")) ? sh.sheetId : `${sh.metal}${sh.page > 1 ? "-s" + sh.page : ""}-${Date.now().toString(36)}`;
-  sh._beforeLearned = S.settings.nestFlow === "learned" ? { placements: sh.placements, outputs: sh.outputs, verification: sh.verification, best: sh.best, status: sh.status } : null;
+  sh._beforeLearned = S.settings.nestFlow === "learned" ? { placements: sh.placements, outputs: sh.outputs, verification: sh.verification, best: sh.best, status: sh.status, rejects: sh.rejects, liveInfo: sh.liveInfo, sat: sh.sat, solveParams: sh.solveParams, endedBy: sh.endedBy, trials: sh.trials, persistedDone: sh.persistedDone } : null;
   sh.nestFlow = S.settings.nestFlow || "standard";
   sh.persistedDone = false;
   sh.movedOn = null; sh.problem = null;
@@ -2150,7 +2150,7 @@ function startNestReady(sh) {
   renderCard(sh); drawPreview(sh);
   const job = buildJob(sh);
   if (sh.nestFlow === "learned") {
-    job.learned = { modelDigest: sh._learnedModelDigest, token: localStorage.getItem("cn.learnedKey") || "", budgetMs: S.settings.learnedBudgetS * 1000, stallMs: S.settings.learnedStallS * 1000, checkpoint: sh.learnedCheckpoint || null };
+    job.learned = { modelDigest: sh._learnedModelDigest, token: localStorage.getItem("cn.learnedKey") || "", budgetMs: S.settings.learnedBudgetS * 1000, stallMs: S.settings.learnedStallS * 1000, checkpoint: sh.learnedCheckpoint || null, initialLayout: sh._beforeLearned?.placements || null };
     const workers = ensureWorkers(sh, 2); sh.pool = { n: 2, done: 0, results: [], trials: [0, 0], winner: null };
     sh.stage = "Starting learned workflow…"; renderProgress(sh);
     workers[0].postMessage({ type: "solve", jobId: sh.jobId + ":0", job });

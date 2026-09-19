@@ -144,6 +144,10 @@
       await accept(measure(restored.best.placements), "Resumed verified checkpoint");
       baseline = restored.baseline;
     }
+    if (!best && Array.isArray(opts.initialLayout) && opts.initialLayout.length) {
+      await accept(measure(opts.initialLayout), "Retained the previous verified sheet");
+      baseline = best ? clean(best) : null;
+    }
     if (!best && !stopped()) {
       checkpoint("Measuring the standard baseline", true);
       const result = await Sv.solve({ ...job, timeBudgetMs: Math.min(20000, budget - elapsed()), maxTrials: 24, stallMs: 10000, packingHints: null }, {
