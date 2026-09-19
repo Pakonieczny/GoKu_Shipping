@@ -457,7 +457,7 @@ const Orders = window.Orders = (() => {
     for (const row of rowsOf()) { if (row.state === "gone") continue; row.spec = O.interpretLine(row.order, row.line, ctx()); row.problems = row.spec.problems.slice(); if (row.spec.noDesign) row.state = row.state === "pulled" ? "noDesign" : row.state; if (row.materialOverride) { row.spec.material = row.materialOverride; row.problems = row.problems.filter(p => p.kind !== "needsMaterial"); } if (row.sizeOverride) { row.spec.size = row.sizeOverride; row.problems = row.problems.filter(p => p.kind !== "missingSize"); } row.material = row.spec.material; }
     Review.syncOrderItems();
   }
-  async function pull(run, { silent = false } = {}) {
+  async function pull(run, { silent = false, receiptIds = null } = {}) {
     await DesignLink.ensure();
     if (!DesignLink.etsyBudgetOk("the pull")) throw new Error("Etsy call budget reached — the pull was not started");
     await Promise.all([loadMaps(), Master.load()]);
@@ -467,7 +467,8 @@ const Orders = window.Orders = (() => {
     DesignLink.meter(r, "the pull");
     B.orders.snapshot = { total: r.total, hydrated: r.hydrated, etsy: r.etsy, at: Date.now() }; B.orders.recalled = null;
     if (r.hydrated < r.total) throw new Error(`only ${r.hydrated} of ${r.total} orders could be read from Etsy — ${r.etsy && !r.etsy.signedIn ? "the station is not signed in: press Connect Etsy" : "check the Design Station and pull again"}`);
-    const picked = applyPullRule(r.orders);
+    const wanted = receiptIds && new Set(receiptIds.map(String));
+    const picked = wanted ? r.orders.filter(o => wanted.has(String(o.receiptId))) : applyPullRule(r.orders);
     B.orders.filtered = r.orders.length - picked.length;
     await Arrivals.record(picked);
     B.orders.rows = picked.flatMap(o => o.lines.map(l => ({ arrivedAt: Arrivals.at(o.receiptId), key: O.lineKey(o, l), order: o, line: l, spec: null, problems: [], state: "pulled", reason: null, claimedBy: null, poolIds: [], engrave: null, metal: null })));
@@ -1717,7 +1718,7 @@ const Engrave = window.Engrave = (() => {
   }
   async function classifyAll(run) {
     await loadFonts();
-    const rows = Orders.rows().filter(r => r.state === "pooled" && (!Gate.modern() || Pool.sheetOf(r.poolIds[0])) && r.spec && r.spec.engraveCandidate && (!r.engrave || r.engrave.state === "reclassify" || r.engrave.state === "classify"));
+    const rows = Orders.rows().filter(r => ["pooled", "written"].includes(r.state) && (!Gate.modern() || Pool.sheetOf(r.poolIds[0])) && r.spec && r.spec.engraveCandidate && (!r.engrave || r.engrave.state === "reclassify" || r.engrave.state === "classify"));
     const q = rows.slice(); let done = 0;
     // one bar for the whole pass, not one per order: what a person needs to know is how far along the reading is
     const bar = rows.length && window.CNProgress ? CNProgress.start(`Reading the words of ${rows.length} order line${rows.length === 1 ? "" : "s"}`, { total: rows.length }) : null;
@@ -2686,10 +2687,19 @@ const RunCtl = window.RunCtl = (() => {
     agent({ run: runId }, "DS", `Resuming ${runId} at step ${rec.step}`);
     if (O.stepIndex(rec.step) <= O.stepIndex("pool")) { rec.step = "pull"; }
     else {
-      await Orders.pull(rec, { silent: true });                          // orders re-read through the station, lines re-interpreted
-      if (rec.setIds && rec.setIds.length || rec.setId) await restoreRunSheets(rec);
+      const savedStep = rec.step, savedLines = rec.lines || {};
+      // A recovery uses this run's orders, regardless of the current pull limit. Pulling
+      // into the run itself used to erase its checkpoint and all saved pool identities.
+      await Orders.pull(null, { silent: true, receiptIds: rec.orders || Object.values(savedLines).map(l => l.orderId) });
+      for (const row of Orders.rows()) {
+        const old = savedLines[row.key];
+        if (!old || +old.updateTs !== +row.order.updateTs) continue;
+        for (const key of ["state", "poolIds", "reason", "hold", "wait", "engrave", "materialOverride", "sizeOverride"]) if (old[key] != null) row[key] = old[key];
+      }
+      Orders.interpretAll();
+      await restoreRunSheets(rec);
       await Pool.addAll(rec);                                              // idempotent: existing pool rows are the same ids; only unplaced lines get charms
-      if (rec.step === "nest" || rec.step === "checkpoint") rec.step = "nest";
+      rec.step = allSheets().some(p => p.runId === runId && p.dirty) || ["nest", "checkpoint"].includes(savedStep) ? "nest" : savedStep;
     }
     await save(rec); renderBanner();
     loop().catch(e => stop(e.message, "Fix the cause and press Resume."));
@@ -2700,21 +2710,23 @@ const RunCtl = window.RunCtl = (() => {
     for (const sid of setIds) {
       const sr = await api("charmNestLibrary", { op: "setGet", setId: sid }); const sd = sr.set; if (!sd) continue;
       const set = { setId: sd.setId, seq: sd.seq, day: sd.day, runId: rec.runId, group: sd.group || null, name: sd.name || O.setLabel(sd.seq), folder: sd.folder || O.setFolder(sd.day, sd.seq), orders: Object.fromEntries(Object.entries(sd.orders || {}).map(([rid, o]) => [rid, { held: o.held || null, lines: Object.fromEntries((o.lines || []).map(l => [l.transactionId, l])) }])), sheetIds: sd.sheetIds || [], materials: sd.materials || [], labelFiles: sd.labelFiles || [], labels: sd.labels || null, status: sd.status || "open", committed: sd.committed || null, refused: sd.refused || null, backCount: sd.backCount || 0 };
+      set.committedAt = sd.committedAt || null;
       Sets.byRun().set(Sets.keyOf(rec.runId, set.group), set); sets.push(set);
     }
-    if (!sets.length) return null;
     const bySet = new Map(sets.map(x => [x.setId, x]));
     const ls = await api("charmNestLibrary", { op: "listSheets", limit: 500, runId: rec.runId });
 
     for (const slim of ls.sheets || []) {
       const d = (await api("charmNestLibrary", { op: "getSheet", id: slim.id })).sheet; if (!d) continue;
       const prim = S.sheets[d.metal]; let pg = prim.pages.find(p => p.sheetId === d.id) || (prim.pages[0].charms.length ? addPage(d.metal) : prim.pages[0]);
-      const set = bySet.get(d.setId) || sets[0];
-      pg.sheetId = d.id; pg.runId = rec.runId; pg.group = set.group || null; pg.setId = set.setId; pg.seq = d.setSeq || set.seq; pg.setDay = d.day; pg.sheetIndex = d.sheetIndex; pg.fileBase = d.fileBase; pg.folderPath = `${set.folder}/${d.fileBase}`; pg.label = d.label || null; pg.backPool = d.backPool || []; pg.backOutputs = d.backOutputs || null; pg.cloud = d.outputs ? { ai: d.outputs.ai && d.outputs.ai.url, pdf: d.outputs.pdf && d.outputs.pdf.url, labelled: d.outputs.labelled && d.outputs.labelled.url, report: d.outputs.report && d.outputs.report.url, preview: d.outputs.preview && d.outputs.preview.url } : null;
+      const set = d.draft ? null : bySet.get(d.setId);
+      pg.draft = !!d.draft || !set; pg.releaseFull = !!d.releaseFull;
+      pg.sheetId = d.id; pg.runId = rec.runId; pg.group = set ? set.group || null : "dispatch"; pg.setId = set ? set.setId : null; pg.seq = set ? d.setSeq || set.seq : null; pg.setDay = d.day; pg.sheetIndex = set ? d.sheetIndex : null; pg.fileBase = d.fileBase; pg.folderPath = set ? `${set.folder}/${d.fileBase}` : `charmnest/sheets/${d.day}/${d.fileBase}`; pg.label = set ? d.label || null : null; pg.backPool = d.backPool || []; pg.backOutputs = d.backOutputs || null; pg.cloud = d.outputs ? { ai: d.outputs.ai && d.outputs.ai.url, pdf: d.outputs.pdf && d.outputs.pdf.url, labelled: d.outputs.labelled && d.outputs.labelled.url, report: d.outputs.report && d.outputs.report.url, preview: d.outputs.preview && d.outputs.preview.url } : null;
       pg.restored = true; pg.persistedDone = true;
       // the pieces: each placement's pool charm from the master copy, pinned at its cut position
       for (const p of d.placements || []) {
         const rc = (d.charms || []).find(c => c.id === p.id); if (!rc || !rc.poolId) continue;
+        if (!Orders.rows().some(row => row.poolIds.includes(rc.poolId))) continue;
         const pool = B.pool.rows.get(rc.poolId) || (await api("charmNestLibrary", { op: "poolGet", poolIds: [rc.poolId] })).pools[rc.poolId]; if (!pool) continue; B.pool.rows.set(rc.poolId, pool);
         const entry = Master.entryFor(pool.sku) || await Master.fetchEntry(pool.sku); if (!entry) continue;
         const src = await Pool.masterCharm(entry, pool.size); const base = src.charms[0];
@@ -2725,10 +2737,22 @@ const RunCtl = window.RunCtl = (() => {
       pg.status = d.status === "complete" ? "complete" : "partial"; pg.dirty = false; pg.verification = d.verification ? Object.assign({ ok: !!d.verification.ok, geom: { ok: !!d.verification.ok, res: 6, overlapPx: 0, outsidePx: 0, overlappingPairs: [] }, render: d.verification.render || null }, d.verification) : null; pg.endedBy = d.endedBy; pg.density = d.density; pg.liveInfo = { freePt2: d.freePt2, usablePt2: d.usablePt2, placedPt2: (d.usablePt2 || 0) - (d.freePt2 || 0), pocket: d.pocket, placed: pg.placements.length, total: pg.charms.length };
       pg.persisted = Promise.resolve();
       computeSaturation(pg); renderCard(pg);
-      for (const row of Orders.rows()) { if (!row.poolIds.length) continue; if (row.poolIds.every(pid => (d.poolIds || []).includes(pid) || (B.pool.rows.get(pid) || {}).sheetId)) row.state = "written"; }
+      for (const row of Orders.rows()) { if (!row.poolIds.length) continue; if (row.poolIds.every(pid => { const pool = B.pool.rows.get(pid); return pool && pool.setId && ["written", "engraved", "labelled", "committed"].includes(pool.state); })) row.state = "written"; else if (row.poolIds.some(pid => (d.poolIds || []).includes(pid))) row.state = "pooled"; }
       for (const b of pg.backPool) { const row = Orders.rows().find(x => x.poolIds.includes(b.poolId)); if (row) { const j = Engrave.ensureJob(row); j.state = "written"; j.text = b.text; j.lines = b.lines || String(b.text).split("\n"); j.approvedBy = b.approvedBy; j.approvedAt = b.approvedAt; j.backs.push(b); row.engrave = { needed: true, state: "written", approved: true, text: b.text, approvedBy: b.approvedBy }; } }
+      // Cloud-only recovery has file links, not the editable output bytes. A working
+      // sheet must be rebuilt and verified before it can acquire set membership.
+      if (pg.draft || pg.placements.length !== (d.placements || []).length) {
+        for (const c of pg.charms) c.pinned = null;
+        sheetDirty(pg);
+        for (const j of Engrave.items().values()) if (j.copies.some(id => (d.poolIds || []).includes(id))) {
+          j.state = "ready"; j.backs = []; j.row.engrave.state = "ready"; j.row.engrave.approved = false;
+        }
+      }
     }
-    agent({ run: rec.runId }, "cloud", `Restored ${ls.sheets.length} sheet(s) of ${sets.map(x => x.name).join(", ")} from their records`);
+    // Saved rows without a recovered placement (for example, an unselected solid
+    // material) still need their charms recreated on the queue.
+    for (const row of Orders.rows()) if (row.poolIds.length && !row.poolIds.every(id => Pool.charmOf(id))) { row.state = "pulled"; row.poolIds = []; }
+    agent({ run: rec.runId }, "cloud", `Restored ${(ls.sheets || []).length} sheet(s) of ${sets.map(x => x.name).join(", ") || "the working run"} from their records`);
     return sets[0];
   }
   function onComplete(r) {

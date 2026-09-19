@@ -1,6 +1,20 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), vm = require('node:vm');
 const O = require('../../charm-nest-orders.js');
+// The approved rehearsal origin must not open production or another preview to bridge messages.
+{
+ const html=fs.readFileSync(require('node:path').join(__dirname,'../../design-1.html'),'utf8');
+ const start=html.indexOf('  const ALLOWED = new Set('), end=html.indexOf('  const S = { nonce:',start);
+ const gate=html.slice(start,end);
+ for (const [sandbox,page,sender,expected] of [
+  [true,'https://deploy-preview-12.goldenspike.app','https://deploy-preview-12.goldenspike.app',true],
+  [false,'https://deploy-preview-12.goldenspike.app','https://deploy-preview-12.goldenspike.app',false],
+  [true,'https://design-1.goldenspike.app','https://deploy-preview-12.goldenspike.app',false],
+  [true,'https://deploy-preview-12.goldenspike.app','https://deploy-preview-13.goldenspike.app',false],
+  [true,'https://deploy-preview-12.goldenspike.app','https://example.com',false]])
+   assert.equal(vm.runInNewContext(gate+'originOk(sender)',{SANDBOX:sandbox,location:{origin:page},sender}),expected);
+}
+
 const base = {verified:true, placed:3, full:false};
 for (const material of ['gold','silver']) {
   assert.equal(O.sheetRelease({...base,material},{seq:2, selected:{[material]:true},urgent:true}).include,false);
@@ -32,6 +46,48 @@ const page=(metal,full=false)=>({metal,runId:B.run.runId,sheetId:metal+'-id',dra
 `,c);
 vm.runInContext(part('Gate','/* ═══ 21'),c);
 (async()=>{
+ // Exercise the actual cloud reconstruction path, including a run with no set yet.
+ const recovery=vm.createContext({assert,console});
+ vm.runInContext(`
+ const rows=[{key:'o/a',state:'written',poolIds:['p1'],order:{receiptId:'o'},line:{}}];
+ const page={charms:[],placements:[],metal:'gold'};page.pages=[page];
+ const S={sheets:{gold:page}},B={pool:{rows:new Map()}};
+ const record={id:'draft1',metal:'gold',draft:true,releaseFull:false,day:'2026-09-19',fileBase:'working',status:'complete',verification:{ok:true},poolIds:['p1'],placements:[{id:'c1',cxPt:1,cyPt:2}],charms:[{id:'c1',poolId:'p1',name:'one'}]};
+ const api=async(n,b)=> b.op==='listSheets'?{sheets:[{id:record.id}]}:b.op==='getSheet'?{sheet:record}:b.op==='poolGet'?{pools:{p1:{poolId:'p1',state:'ready',sheetId:'draft1',setId:null,sku:'A',orderId:'o'}}}:{};
+ const Orders={rows:()=>rows},Sets={byRun:()=>new Map(),keyOf:()=>''};
+ const Master={entryFor:()=>({})},Pool={masterCharm:async()=>({id:'source',charms:[{sourceId:'source'}]}),cloneCharm:(c,id)=>({...c,id}),charmOf:id=>page.charms.find(c=>c.poolId===id)};
+ const jobs=new Map(),Engrave={items:()=>jobs};
+ const computeSaturation=()=>{},renderCard=()=>{},agent=()=>{};
+ const sheetDirty=p=>{p.dirty=true;p.releaseFull=false;p.placements=[];p.status='ready';};
+ `,recovery);
+ const restore=code.slice(code.indexOf('  async function restoreRunSheets(rec)'),code.indexOf('  function onComplete(r)',code.indexOf('  async function restoreRunSheets(rec)')));
+ vm.runInContext(restore,recovery);
+ await vm.runInContext(`(async()=>{
+ await restoreRunSheets({runId:'working',setIds:[]});
+ assert.equal(page.charms.length,1,'a working run restores even before a set number exists');
+ assert.equal(page.setId,null);assert.equal(page.seq,null);assert.equal(page.draft,true);
+ assert.equal(rows[0].state,'pooled','saved draft placement is never treated as released');
+ assert.equal(page.status,'ready','cloud-only draft gets rebuilt and verified before release');
+ assert.equal(page.charms[0].pinned,null);
+ })()`,recovery);
+ const classifier=code.slice(code.indexOf('  async function classifyAll(run)'),code.indexOf('  /* ── 7.2',code.indexOf('  async function classifyAll(run)')));
+ const eng=vm.createContext({assert,console});
+ vm.runInContext(`
+ const rows=[{state:'written',poolIds:['p1'],spec:{engraveCandidate:true},order:{receiptId:'1'},engrave:null}];
+ let calls=0;const Orders={rows:()=>rows,render(){}},Gate={modern:()=>true},Pool={sheetOf:()=>({fileBase:'set-1'})};
+ const window={},loadFonts=async()=>{},classify=async()=>{calls++},render=()=>{};
+ `+classifier,eng);
+ await vm.runInContext(`(async()=>{await classifyAll();assert.equal(calls,1,'set assembly must not skip personalization after promoting a row to written')})()`,eng);
+ const resume=vm.createContext({assert,console});
+ vm.runInContext(`
+ const rec={runId:'r1',step:'engrave',orders:['o'],lines:{'o/a':{updateTs:10,state:'pooled',poolIds:['p1']}}};
+ const B={},O={stepIndex:s=>['pull','pool','nest','checkpoint','engrave'].indexOf(s)};
+ const row={key:'o/a',order:{updateTs:10},poolIds:[],state:'pulled'};let restores=0;
+ const api=async()=>({run:rec}),agent=()=>{},toast=()=>{},renderBanner=()=>{},save=async()=>{},loop=async()=>{};
+ const Orders={rows:()=>[row],interpretAll(){},pull:async(run,opts)=>{assert.equal(run,null);assert.deepEqual(opts.receiptIds,['o']);}};
+ const restoreRunSheets=async()=>restores++,Pool={addAll:async()=>{}},allSheets=()=>[];
+ `+code.slice(code.indexOf('  async function resumeRun(runId)'),code.indexOf('  async function restoreRunSheets(rec)')),resume);
+ await vm.runInContext(`(async()=>{await resumeRun('r1');assert.equal(rec.step,'engrave');assert.equal(restores,1);assert.equal(row.poolIds[0],'p1');assert.equal(row.state,'pooled');})()`,resume);
  await vm.runInContext(`(async()=>{
  pages.push(page('gold'),page('silver'),page('rose'),page('gold10k'),page('gold14k'));
  await Gate.assemble(B.run);assert.equal(allocations,0,'partials/unselected solids/odd rose must not consume a set number');
