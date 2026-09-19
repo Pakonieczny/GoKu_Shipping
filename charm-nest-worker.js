@@ -8,7 +8,7 @@
  *       {type:"verify", jobId, job, placements, res}
  *  out: {type:"stage"|"placed"|"reject"|"trial"|"best"|"done"|"verified"|"error", jobId, …}
  */
-importScripts("charm-nest-solver.js", "charm-nest-learned.js");
+importScripts("charm-nest-solver.js");
 
 let current = null;   // { jobId, job, stop }
 
@@ -38,6 +38,7 @@ self.onmessage = async (e) => {
   current = state;
   const post = (msg) => self.postMessage(Object.assign({ jobId: m.jobId }, msg));
   try {
+    if (m.job.learned && !self.CharmNestLearned) importScripts("charm-nest-learned.js");
     const solver = m.job.learned ? CharmNestLearned : CharmNestSolver;
     const result = await solver.solve(m.job, {
       shouldStop: () => state.stop,
