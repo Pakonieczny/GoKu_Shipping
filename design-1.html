@@ -6903,7 +6903,11 @@ const Bridge = (() => {
   // Local development and the browser test bench run both pages on loopback with ephemeral ports; only accept those
   // when this page itself is served from loopback, so production never widens the list.
   const LOCAL_RE = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
-  const originOk = o => ALLOWED.has(o) || (LOCAL_RE.test(o) && LOCAL_RE.test(location.origin));
+  // Explicitly approved PR-12 rehearsal: both pages must be this exact preview, in sandbox mode.
+  // This does not add any production origin or wildcard preview domain.
+  const SANDBOX_PREVIEW = "https://deploy-preview-12.goldenspike.app";
+  const originOk = o => ALLOWED.has(o) || (LOCAL_RE.test(o) && LOCAL_RE.test(location.origin)) ||
+    (SANDBOX && location.origin === SANDBOX_PREVIEW && o === SANDBOX_PREVIEW);
   const S = { nonce: null, origin: null, master: null, count: 0, last: "", dropped: 0, previewed: null, watch: false, ticker: [], feed: [], startedAt: 0, sorterClientId: null, runId: null, down: false, lastPing: 0, lastSweepAt: 0 };
   const LSK = { commits: "designStation.bridgeCommits.v1" + NS, selected: "designStation.bridgeSelected.v1" + NS };
   const framed = () => { try { return window.self !== window.top; } catch (_) { return true; } };
