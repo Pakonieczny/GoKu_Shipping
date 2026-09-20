@@ -1437,7 +1437,7 @@
       c.members=c.members.filter(m=>!replaced.has(m));c.members.push(outline,...apertures);c.outline=outline;
       c.bbox=c.members.reduce((a,m)=>bbUnion(a,m.bbox),null);res.welded++;
     }
-    return res;
+    c.ringGeometryVersion=2;return res;
   }
   /** Content-stream operators for members that have no bytes in the source, in the source's own coordinates. */
   function syntheticOps(members) {

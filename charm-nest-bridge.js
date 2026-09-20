@@ -1290,13 +1290,45 @@ const Pool = window.Pool = (() => {
     if (!g.charms.length) throw new Error(`${entry.sku}: no outline in the master copy`);
     const charm = g.charms.reduce((a, b) => (b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1]) > (a.bbox[2] - a.bbox[0]) * (a.bbox[3] - a.bbox[1]) ? b : a);
     if (g.charms.length > 1) { for (const c of g.charms) if (c !== charm) { for (const m of c.members) if (!charm.members.includes(m)) charm.members.push(m); charm.topIndices = [...new Set(charm.topIndices.concat(c.topIndices))]; charm.bbox = [Math.min(charm.bbox[0], c.bbox[0]), Math.min(charm.bbox[1], c.bbox[1]), Math.max(charm.bbox[2], c.bbox[2]), Math.max(charm.bbox[3], c.bbox[3])]; /* the silhouette canvas is cut to the bbox: a merged piece outside it would be drawn but never collide */ } agent({ pool: true }, "warn", `${entry.sku}: the master copy split into ${g.charms.length} pieces — folded back into one charm`); }
-    { const r = P.integrateRings(charm); if (r.left.length) agent({ pool: true }, "warn", `${entry.sku}: a jump ring was left as drawn — ${r.left[0]}`); }
+    { const r = P.integrateRings(charm); if (r.left.length) throw new Error(`${entry.sku}: a hoop could not join its charm — ${r.left[0]}`); }
     await P.buildSilhouettes(parsed, [charm], +S.settings.silhouetteRes || 6);
     const srcId = "pool:" + key.replace(/[^\w]+/g, "_");
     const src = { id: srcId, pool: true, name: `${entry.sku}${size ? " · " + size : ""} (master)`, sku: entry.sku, bytes, hash: entry.charmHash || charm.hash, parsed, group: g, charms: [charm], metal: null, state: "ready", t0: performance.now(), cloud: { path: geom.aiPath, url }, persisting: null };
     Object.assign(charm, { id: srcId + ":0", sourceId: srcId, sourceName: src.name, index: 0, name: entry.sku, sku: entry.sku, namedBy: "master", excluded: false, cloud: { ai: url, aiPath: geom.aiPath, png: geom.thumbUrl || null, pngPath: geom.thumbPath || null }, upAngle: entry.upAngle, engravable: true, backKeepOut: Master.keepOutOf(charm) });
     S.poolSources[srcId] = src; B.pool.sources.set(key, src);
     return src;
+  }
+  /** Upgrade cached geometry before a recovered sheet can be used again. */
+  async function repairRecoveredGeometry(d) {
+    const sources=(d.sources || []).concat(Object.values(d.poolSources || {}));
+    const bySource=new Map(sources.map(src=>[src.id,src]));
+    const pages=(d.sheets || []).flatMap(g=>g.pages || []);
+    const charms=new Set([...sources.flatMap(src=>src.charms || []),...(d.unassigned || []),...pages.flatMap(p=>p.charms || [])]);
+    const repaired=new Set(),poolIds=new Set();
+    for(const c of charms) {
+      if(c.ringGeometryVersion===2 || !c.outline)continue;
+      const result=P.integrateRings(c);
+      if(result.left.length)throw new Error('A recovered hoop needs a geometry check: '+result.left.join('; '));
+      if(!result.welded)continue;
+      const src=bySource.get(c.sourceId);
+      await P.buildSilhouettes(src?.parsed,[c],+S.settings.silhouetteRes || 6);
+      c.pinned=null;repaired.add(c);if(c.poolId)poolIds.add(c.poolId);
+    }
+    for(const pg of pages)if(pg.charms?.some(c=>repaired.has(c))) {
+      Object.assign(pg,{dirty:true,status:'ready',placements:[],rejects:[],layout:null,outputs:null,verification:null,liveInfo:null,releaseFull:false,backOutputs:null});
+      pg.backPool=(pg.backPool || []).filter(b=>!poolIds.has(b.poolId));
+      pg.stage='Hoops connected — ready to re-nest';
+    }
+    const keys=new Set();
+    for(const j of d.jobs || [])if((j.copies || []).some(id=>poolIds.has(id)) && j.state!=='skipped') {
+      Object.assign(j,{state:'ready',view:null,mask:null,fit:null,verify:null,backs:[],approvedBy:null,approvedAt:null});keys.add(j.key);
+      const row=d.orders?.rows?.find(r=>r.key===j.key);if(row?.engrave)Object.assign(row.engrave,{state:'ready',approved:false});
+    }
+    if(keys.size)d.review=(d.review || []).filter(it=>!keys.has(it.jobKey));
+    if(repaired.size && d.run && d.run.status!=='complete') {
+      Object.assign(d.run,{step:'nest',status:'stopped',stoppedBy:'Recovered hoop geometry updated',fix:'Resume to re-nest the repaired pieces and review their engraving.'});
+    }
+    return repaired.size;
   }
   function cloneCharm(c, id) { const k = Object.assign({}, c, { id, pinned: null }); return k; }
   /** §6.4 · one pooled charm per copy of the line, on the material card the ORDER says. */
@@ -1356,7 +1388,7 @@ const Pool = window.Pool = (() => {
   async function update(poolIds, patch) { for (const id of poolIds) { const p = B.pool.rows.get(id); if (p) Object.assign(p, patch); } if (S.cloud.ok) for (let i = 0; i < poolIds.length; i += 400) await api("charmNestLibrary", { op: "poolUpdate", poolIds: poolIds.slice(i, i + 400), patch }); }
   const charmOf = poolId => allSheets().flatMap(sh => sh.charms).find(c => c.poolId === poolId) || null;
   const sheetOf = poolId => allSheets().find(sh => sh.placements.some(p => { const c = sh.charms.find(x => x.id === p.id); return c && c.poolId === poolId; })) || null;
-  return { poolAdd, addAll, masterCharm, cloneCharm, update, charmOf, sheetOf, sizeEntry };
+  return { poolAdd, addAll, masterCharm, cloneCharm, update, charmOf, sheetOf, sizeEntry, repairRecoveredGeometry };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -2146,6 +2178,23 @@ const Engrave = window.Engrave = (() => {
     return cv;
   }
   function renderFront(charm, px) { const cv = document.createElement("canvas"); const b = charm.bbox, pad = 3 * PT; const w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, k = px / Math.max(w, h); cv.width = Math.round(w * k); cv.height = Math.round(h * k); const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height); const tx = (x, y) => [(x - b[0] + pad) * k, (b[3] + pad - y) * k]; P.drawSegments(ctx, charm.members, tx, k); ctx.beginPath(); P.pathToCanvas(ctx, charm.outline, tx); ctx.strokeStyle = "rgba(190,40,40,.9)"; ctx.lineWidth = Math.max(1, 0.5 * k); ctx.stroke(); return cv; }
+  async function mountPlacementThumbnail(host,job) {
+    if(!host || !job)return;
+    const charm=(job.copies || job.row.poolIds || []).map(id=>Pool.charmOf(id)).find(Boolean);
+    const paint=c=>{host.replaceChildren(renderFront(c,220));};
+    if(charm?.outline && charm.members?.length){paint(charm);return;}
+    const sku=job.row.spec.designSku || job.row.line.sku;
+    const entry=Master.entryFor(sku) || await Master.fetchEntry(sku).catch(()=>null);
+    if(!host.isConnected)return;
+    const geom=entry && Pool.sizeEntry(entry,job.row.spec.size),url=geom?.thumbUrl || (entry && Master.thumbOf(entry));
+    const fallback=async()=>{
+      if(!entry || !geom?.aiPath){host.textContent="Preview unavailable";return;}
+      try{const src=await Pool.masterCharm(entry,job.row.spec.size);if(host.isConnected)paint(src.charms[0]);}
+      catch(_){if(host.isConnected)host.textContent="Preview unavailable";}
+    };
+    if(url){const img=document.createElement('img');img.alt='';img.loading='lazy';img.referrerPolicy='no-referrer';img.onerror=()=>{img.remove();void fallback();};img.src=cors(url);host.replaceChildren(img);}
+    else await fallback();
+  }
   // Preview ownership is always derived from placements, never from SKU, order number or a cached sheet name.
   function sheetBacks(sheet) {
     const id = sheet.sheetId || sheet.id;
@@ -2405,8 +2454,13 @@ const Engrave = window.Engrave = (() => {
       const q = v.querySelector("#egQueue");
       if (focus && EG.list) {
         EG.card = null; EG.cardKey = null;
-        q.innerHTML = `<div class="rvList">` + queue.map(j2 => `<div class="doneRow hoverItem" data-rid="${esc(j2.row.order.receiptId)}" data-open="${esc(j2.key)}" title="open this placement"><span class="mini"></span><b class="mono">${esc(j2.row.order.receiptId)}</b><span class="sku mono">${esc(j2.row.spec.designSku || "")}</span><span class="w">${esc(j2.lines.join(" / "))}</span><span class="ost ${j2.state === "review" ? "info" : "warn"}">${j2.state === "review" ? (j2.fit ? `cap ${j2.fit.capMm.toFixed(2)} mm` : "fitting") : j2.state === "blocked" ? "flip failed" : "words to settle"}</span><span class="by"></span><button class="btn ghost xs">Open</button></div>`).join("") + `</div>`;
-        q.querySelectorAll("[data-open]").forEach(rw => rw.onclick = () => { EG.focus = rw.dataset.open; EG.list = false; render(); });
+        q.innerHTML = `<div class="rvList egPlacementList">` + queue.map(j2 => `<div class="doneRow placementRow hoverItem" role="button" tabindex="0" aria-label="Open engraving for order ${esc(j2.row.order.receiptId)} · ${esc(j2.row.spec.designSku || "")}" data-rid="${esc(j2.row.order.receiptId)}" data-open="${esc(j2.key)}"><span class="placementThumb" role="img" aria-label="${esc(j2.row.spec.designSku || "Charm")} design"></span><b class="mono">${esc(j2.row.order.receiptId)}</b><span class="sku mono">${esc(j2.row.spec.designSku || "")}</span><span class="w">${esc(j2.lines.join(" / "))}</span></div>`).join("") + `</div>`;
+        const queued=new Map(queue.map(j=>[j.key,j]));
+        q.querySelectorAll("[data-open]").forEach(rw => {
+          const open=()=>{EG.focus=rw.dataset.open;EG.list=false;render();};
+          rw.onclick=open;rw.onkeydown=e=>{if(e.key==="Enter" || e.key===" "){e.preventDefault();open();}};
+          mountPlacementThumbnail(rw.querySelector('.placementThumb'),queued.get(rw.dataset.open));
+        });
       }
       else if (focus) { const c = placementCard(focus, queue.length); c.classList.add("full"); q.appendChild(c); EG.card = c; EG.cardKey = focus.key; }
       else { EG.card = null; EG.cardKey = null; q.innerHTML = emptyWhy(jobs, words.length, done.length); q.querySelectorAll("[data-go]").forEach(b => b.onclick = () => { const g = b.dataset.go; if (g === "hist") RunHistory.show(); else if (g === "words") { EG.tab = "words"; EG.chosen = true; render(); } else { setMode(g); if (g === "review") Review.render(); } }); }
@@ -4106,6 +4160,7 @@ const Session = window.Session = (() => {
         if (src.bytes?.length) src.parsed = await P.parseSource(src.bytes, src.name);
         src.persisting = null; src.t0 = performance.now();
       }
+      await Pool.repairRecoveredGeometry(d);
       S.sources = d.sources || []; S.poolSources = d.poolSources || {}; S.unassigned = d.unassigned || [];
       B.carry = d.carry;
       B.run = d.run; B.orders = d.orders; B.orders.byKey = new Map(B.orders.rows.map(r => [r.key, r]));
@@ -4199,7 +4254,7 @@ const Arrivals = window.Arrivals = (() => {
     for (const node of document.querySelectorAll("[data-rid]")) {
       // Preview figures share receipt IDs for order highlighting, not badges.
       // A generated badge inside their fixed-width flex slot clips the image.
-      const fresh = !node.closest(".sheetBacks") && at(node.dataset.rid) > now - 3600000;
+      const fresh = !node.closest(".sheetBacks, #engraveView") && at(node.dataset.rid) > now - 3600000;
       node.classList.toggle("newArrival", fresh);
       if (fresh) node.setAttribute("data-new-order", "New order"); else node.removeAttribute("data-new-order");
     }

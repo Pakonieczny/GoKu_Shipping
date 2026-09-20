@@ -53,7 +53,7 @@ function context() {
     const O={lineKey:(o,l)=>o.receiptId+'/'+l.transactionId,stepIndex:s=>['pull','pool','nest','checkpoint','engrave'].indexOf(s)};
     const Sandbox={on:()=>S.settings.sandbox==='on'};
     const DesignLink={ensure:async()=>{},etsyBudgetOk:()=>true,meter(){},call:async()=>{polled++;return {total:0,hydrated:0,orders:[]};}};
-    const Master={load:async()=>{}}; const LiveNest={add:async()=>{}};
+    const Pool={repairRecoveredGeometry:async()=>0};const Master={load:async()=>{}}; const LiveNest={add:async()=>{}};
     const apiCalls=[];const api=async(name,body)=>{apiCalls.push(body);return {run:null};};
     const toast=()=>{},notifyPerson=()=>{},refreshAllCards=()=>{},renderRail=()=>{},updateTopSub=()=>{};
     const setMode=m=>{S.mode=m;};
@@ -124,7 +124,7 @@ function context() {
     const Sets={ofRun:()=>[set],save:async()=>{},ensure:async()=>set};
     const activePage=m=>S.sheets[m].pages[S.sheets[m].active], pagesOf=m=>S.sheets[m].pages;
     const inflatedArea=c=>c.areaPt2,usableArea=()=>1000;
-    const Pool={addAll:async()=>{activePage('gold').charms.push({id:'new',poolId:'pn',orderDate:3,areaPt2:10});activePage('gold').placements=[];}};
+    Pool.addAll=async()=>{activePage('gold').charms.push({id:'new',poolId:'pn',orderDate:3,areaPt2:10});activePage('gold').placements=[];};
     const sleep=async()=>{},agent=()=>{};
     const starts=[];
     const startNest=p=>{starts.push(p.charms.map(c=>({...c})));p.status='complete';p.dirty=false;p.placements=p.charms.map(c=>({id:c.id}));};
