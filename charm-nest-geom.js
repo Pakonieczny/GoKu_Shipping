@@ -344,6 +344,17 @@
   }
   /** The hard check: every ink pixel sits on a 1 of the mask. */
   function verifyInk(cmds, mask) {
+    // Rasterization clips to its frame; reject off-frame vector ink first so
+    // shrinking/searching cannot mistake clipped-away letters for a valid fit.
+    const polys = glyphPolys(cmds), bb = bboxOf(polys.flat());
+    if (!bb || bb[0] < mask.ox || bb[1] < mask.oy || bb[2] > mask.ox + mask.w / mask.res || bb[3] > mask.oy + mask.h / mask.res)
+      return {ok:false, outside:1, total:0};
+    // Fine lettering can fall between raster sample centres. Its outline must
+    // also stay on solid mask pixels, including every segment between vertices.
+    for (const p of polys) for (let i=0,j=p.length-1;i<p.length;j=i++) {
+      const a=p[j], b=p[i], n=Math.max(1,Math.ceil(Math.hypot(b[0]-a[0],b[1]-a[1])*mask.res*2));
+      for(let k=0;k<=n;k++) if(!at(mask,a[0]+(b[0]-a[0])*k/n,a[1]+(b[1]-a[1])*k/n)) return {ok:false,outside:1,total:0};
+    }
     const ink = rasterGlyphs(cmds, mask); let outside = 0, total = 0;
     for (let i = 0; i < ink.bits.length; i++) if (ink.bits[i]) { total++; if (!mask.bits[i]) outside++; }
     return { ok: outside === 0 && total > 0, outside, total };
@@ -376,7 +387,7 @@
     lines = (lines || []).map(s => String(s)).filter(s => s.trim().length);
     if (!lines.length) return { ok: false, reason: "no text" };
     if (!area(mask)) return { ok: false, reason: "no solid area on the back" };
-    const angles = opts.tryRotated ? (opts.angles || [0, 15, -15, 30, -30]) : [0];
+    const angles = opts.tryRotated ? (opts.angles || [0, 15, -15, 30, -30, 45, -45, 60, -60, 75, -75, 90, -90]) : [0];
     const maxH = opts.maxHeightFrac * (mask.hPt || mask.h / mask.res);
     const strokeOk = layout => { if (!(opts.minStrokeMm > 0) && !(opts.minGapMm > 0)) return true; const mt = strokeMetrics(layout.cmds, 24); return (!(opts.minStrokeMm > 0) || mt.strokeMm >= opts.minStrokeMm) && (!(opts.minGapMm > 0) || !mt.gapMm || mt.gapMm >= opts.minGapMm); };
     const fitsIn = (b, r) => b[0] >= r.x0 && b[1] >= r.y0 && b[2] <= r.x1 && b[3] <= r.y1;
@@ -387,11 +398,11 @@
       for (const r of rects) {
         const centre = [(r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2];
         const passes = (size, withStroke) => { const L = layoutLines(lines, font, size, opts.lineGap, 0, centre); if (!fitsIn(L.bbox, r)) return null; if (!verifyInk(L.cmds, mA).ok) return null; if (withStroke && !strokeOk(L)) return null; return L; };
-        let lo = 0.5, hi = Math.min(r.hPt, maxH, r.wPt * 4), size = 0, thin = false;
+        let lo = 0.01, hi = Math.min(r.hPt, maxH, r.wPt * 4), size = 0, thin = false;
         if (!(hi > lo)) continue;
         for (let withStroke of [true, false]) {
           let l = lo, h = hi; size = 0;
-          while (h - l > 0.05) { const mid = (l + h) / 2; if (passes(mid, withStroke)) { size = mid; l = mid; } else h = mid; }
+          while (h - l > 0.002) { const mid = (l + h) / 2; if (passes(mid, withStroke)) { size = mid; l = mid; } else h = mid; }
           if (size) { thin = !withStroke; break; }
         }
         if (!size) continue;
@@ -400,7 +411,7 @@
         else if (!best || size > best.size + 0.01) best = cand;
       }
     }
-    if (!best && !best0) return { ok: false, reason: `no solid area for ${lines.length} line(s) of "${lines.join(" / ")}"` };
+    if (!best && !best0) return { ok: false, reason: `The text could not fit inside the usable back area. Try another line break or placement.` };
     // the search on a rotated raster is only a guide: each candidate's size is settled again at its final centre and
     // angle against the UNROTATED eroded mask, so what is returned is the largest size that verifies there and 0.1 pt
     // more does not. The block centre goes back into the unrotated frame by rotating it +angle about the mask centre.
@@ -462,8 +473,8 @@
   function refitAt(lines, font, mask, opts, place) {
     opts = Object.assign({ lineGap: 0.18, maxHeightFrac: 0.4, minCapMm: 1.6, semiboldBelowMm: 2.2 }, opts || {});
     const maxH = opts.maxHeightFrac * (mask.hPt || mask.h / mask.res);
-    let lo = 0.5, hi = Math.min(place.maxSize || maxH, maxH), size = 0;
-    while (hi - lo > 0.05) { const mid = (lo + hi) / 2; const L = layoutLines(lines, font, mid, opts.lineGap, place.angle || 0, place.centre); if (verifyInk(L.cmds, mask).ok) { size = mid; lo = mid; } else hi = mid; }
+    let lo = 0.01, hi = Math.min(place.maxSize || maxH, maxH), size = 0;
+    while (hi - lo > 0.002) { const mid = (lo + hi) / 2; const L = layoutLines(lines, font, mid, opts.lineGap, place.angle || 0, place.centre); if (verifyInk(L.cmds, mask).ok) { size = mid; lo = mid; } else hi = mid; }
     if (!size) return { ok: false, reason: "no room at that position" };
     const layout = layoutLines(lines, font, size, opts.lineGap, place.angle || 0, place.centre);
     const capMm = size * capPerEm(font) * MM_PER_PT;

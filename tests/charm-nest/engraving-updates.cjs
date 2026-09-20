@@ -88,3 +88,18 @@ const waiting=solidGroups.find(g=>g.standalone);
 assert.equal(waiting.name,'14K / 10K Solid Waiting for Approval');
 assert.equal(waiting.sheets.length,2,'waiting solids combine across days and runs, approved sheets stay in their set');
 assert.equal(solidGroups.length,2);
+
+// Long verbatim requests can be deliberately engraved below the former 0.5 pt
+// floor. Tiny glyph contours still cannot cross holes or leave the sheet frame.
+const narrow={w:72,h:240,res:6,ox:0,oy:0,cx:6,cy:20,wPt:12,hPt:40,bits:new Uint8Array(72*240).fill(1)};
+const longWords=['Bitte folgendes wenn es geht hochkant (von unten nach oben des Otters zu lesen) auf die Rückseite gravieren:','Always.'];
+const tiny=G.fitText(longWords,base,narrow,{tryRotated:false,minStrokeMm:0,minGapMm:0});
+assert(tiny.ok,tiny.reason);assert(tiny.size<.5&&tiny.size>0);assert.deepEqual(tiny.lines,longWords,'verbatim words and line breaks preserved');assert(G.verifyInk(tiny.cmds,narrow).ok);
+const upright=G.fitText(['Always.'],base,narrow,{minStrokeMm:0,minGapMm:0});
+assert(upright.ok);assert.equal(Math.abs(upright.angle),90,'vertical placement considered');
+const clipped=G.layoutLines(longWords,base,16,.18,0,[6,20]);
+assert(!G.verifyInk(clipped.cmds,narrow).ok,'clipped-away letters cannot falsely pass');
+const microscopic=[{type:'M',x:4.01,y:4.01},{type:'L',x:4.06,y:4.01},{type:'L',x:4.06,y:4.06},{type:'Z'}];
+const withHole={...narrow,bits:narrow.bits.slice()};withHole.bits[24*72+24]=0;
+assert(!G.verifyInk(microscopic,withHole).ok,'subpixel engraving cannot cross a hole');
+console.log('Tiny text OK: long exact wording, vertical fits, off-frame rejection and subpixel hole checks');

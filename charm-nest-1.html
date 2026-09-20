@@ -2724,7 +2724,7 @@ function renderTabs(sh) {
 }
 function refreshAllCards() { for (const sh of allSheets()) { computeSaturation(sh); renderCard(sh); } }
 function renderCard(sh) {
-  if (["gold10k","gold14k"].includes(sh.metal) && sh.charms.length && !sh.cardStartedAt) sh.cardStartedAt = sh.recalled?.cardStartedAt || sh.recalled?.createdAt || (sh.setDay ? new Date(sh.setDay + "T12:00:00").getTime() : Date.now());
+  if (sh.charms.length && !sh.cardStartedAt) sh.cardStartedAt = sh.recalled?.cardStartedAt || sh.recalled?.createdAt || (sh.setDay ? new Date(sh.setDay + "T12:00:00").getTime() : Date.now());
   if (window.Session) Session.schedule();
   const el = sh.el; if (!el) return; const q = r => $(`[data-r="${r}"]`, el); const st = stockFor(sh.metal);
   if (q("backs")) q("backs").innerHTML = window.Engrave ? Engrave.backsMarkup(sh) : "";
@@ -2734,7 +2734,7 @@ function renderCard(sh) {
   /* Which run, which set, which day. A finished card used to say only its metal and its size, so a person looking at
      three cards could not tell whether they were this morning's set or yesterday's. */
   const prov = q("prov"); const pages = pagesOf(sh.metal);
-  const dayTxt = ["gold10k","gold14k"].includes(sh.metal) && sh.cardStartedAt ? new Date(sh.cardStartedAt).toLocaleDateString(undefined, {month:"short",day:"numeric"}) : sh.setDay ? CharmNestOrders.dateTag(new Date(sh.setDay + "T12:00:00")).replace(/\.\d\d$/, "").replace(/\./g, " ") : "";
+  const dayTxt = sh.cardStartedAt ? new Date(sh.cardStartedAt).toLocaleDateString(undefined, {month:"short",day:"numeric"}) : sh.setDay ? CharmNestOrders.dateTag(new Date(sh.setDay + "T12:00:00")).replace(/\.\d\d$/, "").replace(/\./g, " ") : "";
   const bits = [];
   if (sh.draft) bits.push("Working sheet · held");
   if (sh.seq) bits.push(`<b>Set ${sh.seq}</b>`);
@@ -3029,7 +3029,12 @@ const setNo = r => r.draft || r.solidIncluded === false ? 0 : r.setSeq || +((/_S
 const sheetNo = r => r.sheetIndex || +((/_Sheet-(\d+)/.exec(r.folder || r.fileBase || "") || [])[1]) || r.page || 1;
 const dayShort = d => d ? new Date(d + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
 const swatch = (m, n) => `<span class="sw" style="--c:${m.color}" title="${esc(m.label)}${n > 1 ? ` · ${n} sheets` : ""}">${esc(CODE[m.key] || m.label)}${n > 1 ? `<i>${n}</i>` : ""}</span>`;
-function sheetHead(r, o) { o = o || {}; const m = metalOf(r), sn = setNo(r); return `<div class="h">${swatch(m, 0)}<span class="nm">Sheet ${sheetNo(r)}</span>${sn && !o.inFan ? `<span class="set">Set ${sn}</span>` : ""}<span class="tm">${["gold10k","gold14k"].includes(r.metal) ? (r.cardStartedAt || r.createdAt ? new Date(r.cardStartedAt || r.createdAt).toLocaleDateString(undefined, {month:"short",day:"numeric"}) : dayShort(r.day)) : o.inFan ? "" : dayShort(r.day) + " · "}${!["gold10k","gold14k"].includes(r.metal) && r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span></div>`; }
+function sheetHead(r, o) {
+  o = o || {}; const m = metalOf(r), sn = setNo(r);
+  const started = r.cardStartedAt || r.createdAt;
+  const date = started ? new Date(started).toLocaleDateString(undefined, {month:"short", day:"numeric"}) : dayShort(r.day);
+  return `<div class="h">${swatch(m, 0)}<span class="nm">Sheet ${sheetNo(r)}</span>${sn && !o.inFan ? `<span class="set">Set ${sn}</span>` : ""}<span class="tm" title="Sheet started">${esc(date)}</span></div>`;
+}
 function renderLibrary() {
   const q = ($("#libSearch").value || "").trim().toLowerCase();
   const rows0 = S.library.rows.filter(r => !q || `${r.id} ${r.folder || ""} ${r.metalLabel} ${r.day} ${r.setId || ""} ${r.runId || ""} ${r.names || ""} ${(r.sources || []).map(s => s.name).join(" ")}`.toLowerCase().includes(q));
