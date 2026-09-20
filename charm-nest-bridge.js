@@ -2225,7 +2225,7 @@ const Engrave = window.Engrave = (() => {
             const open = EG.openDone === j2.key;
             const detail = !open ? "" : `<div class="doneDetail">
                 <div class="dd back">${png ? `<img crossorigin="anonymous" src="${esc(cors(png))}" alt="the back as written" referrerpolicy="no-referrer" data-retry="1">` : `<div class="noPic">${j2.state === "skipped" ? "cut plain — nothing on the back" : "the back picture is written with the sheet"}</div>`}<span class="cap">back${b0.sheet ? " · " + esc(b0.sheet) : ""}</span></div>
-                <div class="dd front">${job.view?.detail.filledArtwork ? `<div class="why">Filled artwork: inspect the back outline and cut-outs before approving.</div>` : ""}<div class="frontHost"></div><span class="cap">front</span></div>
+                <div class="dd front">${j2.view?.detail.filledArtwork ? `<div class="why">Filled artwork: inspect the back outline and cut-outs before approving.</div>` : ""}<div class="frontHost"></div><span class="cap">front</span></div>
                 <dl class="meta">
                   <dt>Words</dt><dd class="serif">${w}</dd>
                   ${j2.fit || b0.capMm ? `<dt>Size</dt><dd>cap ${(+(b0.capMm || (j2.fit && j2.fit.capMm) || 0)).toFixed(2)} mm · Source Sans 3${j2.fit && j2.fit.weight ? " " + esc(j2.fit.weight) : ""}</dd>` : ""}

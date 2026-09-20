@@ -27,6 +27,17 @@ assert.deepEqual(Backs.forSheet(moved,records).map(b=>b.copy),[1,3]);assert.equa
 assert.equal(Backs.forSheet(moved,[records[0],{...records[0],approvedAt:20,text:'new'}]).length,1);
 assert.equal(Backs.forSheet(moved,[{...records[0],invalidated:true}]).length,0);
 assert(!Backs.markup([{...records[0],png:'javascript:alert(1)',text:'<script>'}]).includes('<script>'));
+// Production uses require-corp: a plain cross-origin img is blocked even when
+// its saved PNG exists. Exercise compact history and full saved records alike.
+const storagePng='https://firebasestorage.googleapis.com/v0/b/test/o/back%2Fcopy.png?alt=media&token=test';
+for(const back of [{png:storagePng},{outputs:{png:{url:storagePng}}},{png:storagePng+'&c=1'}]) {
+ const html=Backs.markup([{...records[0],...back}]);
+ assert.match(html,/<img crossorigin="anonymous" referrerpolicy="no-referrer" src=/);
+ assert.equal((html.match(/&amp;c=1/g)||[]).length,1,'one CORS cache key');
+ assert(html.includes('back%2Fcopy.png?alt=media&amp;token=test'),'preserve object and download token');
+}
+assert(Backs.markup([{...records[0],preview:'data:image/png;base64,AAAA'}]).includes('src="data:image/png;base64,AAAA"'),'instant approval preview preserved');
+assert(!Backs.markup([{...records[0],png:'https://['}]).includes('<img'),'malformed historical URL cannot break the sheet');
 const source=fs.readFileSync('charm-nest-bridge.js','utf8');
 const start=source.indexOf('  function libraryGroups('),end=source.indexOf('  let _cache',start);const context=vm.createContext({O:require("../../charm-nest-orders.js")});vm.runInContext(source.slice(start,end),context);
 const groups=context.libraryGroups([{setId:'released',day:'2026-09-18',orders:{}}],[{id:'1',runId:'work',day:'2026-09-19',metal:'gold'},{id:'2',runId:'work',day:'2026-09-19',metal:'silver'},{id:'3',setId:'released',day:'2026-09-18',metal:'gold'}]);
