@@ -481,6 +481,46 @@
     return { ok: true, size, capMm, weight: capMm < opts.semiboldBelowMm ? "Semibold" : "Regular", small: capMm < opts.minCapMm, angle: place.angle || 0, centre: place.centre, layout, glyphs: layout.glyphs, cmds: layout.cmds, metrics: strokeMetrics(layout.cmds, 24), lines };
   }
   /** Alternative line splits for "Re-split lines": joined, at the customer's breaks, and between a name and a date. */
+  // Word boundaries use measured glyph advances; explicit newlines are hard
+  // boundaries in Auto. A chosen count deliberately reflows the whole text.
+  function wrapLines(text, count, font) {
+    const words = String(text).trim().split(/\s+/u).filter(Boolean);
+    count = Math.max(1, Math.min(words.length, Number.isFinite(+count) ? Math.round(+count) : 1));
+    if (!words.length) return [];
+    const width = t => font.getAdvanceWidth(t, 1, {kerning:true});
+    const target = width(words.join(" ")) / count;
+    const memo = new Map();
+    function solve(start, left) {
+      if (left === 1) { const line=words.slice(start).join(" "); return {cost:(width(line)-target)**2,lines:[line]}; }
+      const key=start+":"+left;if(memo.has(key))return memo.get(key);
+      let best=null;
+      for(let end=start+1;end<=words.length-left+1;end++) {
+        const line=words.slice(start,end).join(" "), rest=solve(end,left-1);
+        const cost=(width(line)-target)**2+rest.cost;
+        if(!best||cost<best.cost)best={cost,lines:[line,...rest.lines]};
+      }
+      memo.set(key,best);return best;
+    }
+    return solve(0,count).lines;
+  }
+  function fitMultiline(lines, font, mask, opts, mode='auto') {
+    lines=(lines||[]).flatMap(s=>String(s).split(/\r?\n/)).map(s=>s.trim()).filter(Boolean);
+    if(mode==='preserve'||(mode==='auto'&&lines.length>1))return fitText(lines,font,mask,opts);
+    const text=lines.join(" "), words=text.split(/\s+/).filter(Boolean);
+    if(mode!=='auto')return fitText(wrapLines(text,+mode,font),font,mask,opts);
+    if(words.length<2)return fitText(lines,font,mask,opts);
+    const rects=largestRectangles(mask,6),maxH=(opts?.maxHeightFrac||.4)*(mask.hPt||mask.h/mask.res);
+    const variants=Array.from({length:Math.min(6,words.length)},(_,i)=>wrapLines(text,i+1,font)).map(v=>{
+      const box=layoutLines(v,font,1,.18,0,[0,0]).bbox;
+      return {lines:v,score:Math.max(0,...rects.map(r=>Math.min(r.wPt/(box[2]-box[0]),r.hPt/(box[3]-box[1]),maxH)))};
+    }).sort((a,b)=>b.score-a.score||a.lines.length-b.lines.length);
+    let best=null;
+    for(const v of variants.slice(0,2)) {
+      const fit=fitText(v.lines,font,mask,opts);
+      if(fit.ok&&(!best||fit.size>best.size*1.03))best=fit;
+    }
+    return best||fitText(lines,font,mask,opts);
+  }
   function splitVariants(lines) {
     const joined = lines.join(" ").replace(/\s+/g, " ").trim();
     const out = [[joined]];
@@ -520,6 +560,6 @@
   return { MM_PER_PT, PT_PER_MM, mul, ap, mirrorX, rotateAbout, translate, transformSeg, flatten, polyCentroid, pointInPolys, distToPolys, interiorPoint,
     makeFrame, emptyMask, cloneMask, rasterPolys, raster, area, flipX, diffFraction, at, distanceTransform, erode, subtract, rotateMask, largestRectangles,
     isCutLine, BackViewError, upAngleOf, backView, engraveMask,
-    glyphCoverage, capPerEm, lineGlyphs, layoutLines, glyphPolys, rasterGlyphs, verifyInk, strokeMetrics, fitText, refitAt, defaultSize, sizeRange, SIZE_RULE, splitVariants,
+    glyphCoverage, capPerEm, lineGlyphs, layoutLines, glyphPolys, rasterGlyphs, verifyInk, strokeMetrics, fitText, refitAt, defaultSize, sizeRange, SIZE_RULE, splitVariants, wrapLines, fitMultiline,
     svgPathOf, svgPathOfCmds, silhouetteBits };
 });

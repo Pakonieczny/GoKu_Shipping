@@ -76,18 +76,34 @@
         const w = +fig.dataset.previewW, h = +fig.dataset.previewH, pad = +fig.dataset.previewPad;
         const thumb = fig.querySelector('.backThumb'), img = thumb?.querySelector('img');
         if (!img || !scale || !w || !h) continue;
-        const k = Math.min(scale, section.clientWidth / (w - 2 * pad));
+        const k = Math.min(scale * .9, section.clientWidth / (w - 2 * pad));
         const width = (w - 2 * pad) * k, height = (h - 2 * pad) * k;
         fig.style.setProperty('--back-width', width + 'px');
         fig.style.setProperty('--back-height', height + 'px');
+        const slot = Math.max(0, (section.clientWidth - 15) / 6 - width / .9);
+        fig.style.marginRight = slot * .34 + 'px';
         img.style.cssText = `width:${w*k}px;height:${h*k}px;max-width:none;left:${-pad*k}px;top:${-pad*k}px`;
       }
     };
-    const ro = new ResizeObserver(entries => entries.forEach(e => resize(e.target)));
+    const ro = new ResizeObserver(() => schedule());
     const sync = () => {
       frame = 0;
       for (const s of observed) if (!s.isConnected) { ro.unobserve(s); observed.delete(s); }
       document.querySelectorAll('.sheetBacks').forEach(s => { if (!observed.has(s)) { observed.add(s); ro.observe(s); } resize(s); });
+      // Align populated shelves only within their actual responsive grid row.
+      // Empty cards never inherit the height of another card's engraving shelf.
+      const rows = new Map();
+      document.querySelectorAll('.sheets .sheetCard').forEach(card => {
+        const shelf = card.querySelector('[data-r="backs"]>.sheetBacks');
+        if (!shelf) return;
+        const key = card.offsetTop;
+        if (!rows.has(key)) rows.set(key, []);
+        rows.get(key).push(shelf);
+      });
+      for (const shelves of rows.values()) {
+        const height = Math.ceil(Math.max(...shelves.map(s => s.firstElementChild.getBoundingClientRect().height)) + 6) + 'px';
+        for (const shelf of shelves) if (shelf.style.getPropertyValue('--back-row-height') !== height) shelf.style.setProperty('--back-row-height', height);
+      }
       if (active && !active.isConnected) hide();
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(sync); };

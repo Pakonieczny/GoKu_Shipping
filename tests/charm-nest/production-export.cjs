@@ -1,0 +1,38 @@
+const assert=require('node:assert/strict'),fs=require('fs'),vm=require('vm');
+global.self=global;global.PDFLib=require('../../vendor/pdf-lib-1.17.1.min.js');
+vm.runInThisContext(fs.readFileSync('charm-nest-pdf.js','utf8'));
+const E=require('../../charm-nest-export.js'),G=require('../../charm-nest-geom.js'),ot=require('../../vendor/opentype-1.3.4.min.js');
+const font=ot.loadSync('vendor/fonts/SourceSans3-Regular.otf');
+const rect=(x,y,w,h)=>[['m',[x,y]],['l',[x+w,y]],['l',[x+w,y+h]],['l',[x,y+h]],['h']];
+async function vector(name,w,h,ops){const L=PDFLib,d=await L.PDFDocument.create(),p=d.addPage([w,h]);p.node.normalize();const ref=d.context.register(d.context.obj({Type:'OCG',Name:L.PDFString.of(name)}));p.node.Resources().set(L.PDFName.of('Properties'),d.context.obj({art:ref}));p.node.addContentStream(d.context.register(d.context.flateStream('/OC /art BDC '+ops+' EMC')));d.catalog.set(L.PDFName.of('OCProperties'),d.context.obj({OCGs:[ref],D:{Order:[ref],ON:[ref]}}));return d.save({useObjectStreams:false});}
+(async()=>{
+ const original=await vector('Artwork',40,30,'1 0 0 RG 0.5 w 0 0 m 40 0 l 40 30 l 0 30 l h S 0 0 1 rg 5 5 4 4 re f');
+ const src=await CharmNestPDF.parseSource(original,'sample');
+ const charm={id:'a',sourceId:'s',poolId:'order_transaction_1',name:'Parent',bbox:[0,0,40,30],centerPt:[20,15],strokePt:.5,topIndices:[0,1],members:src.segments};
+ const spec={sheet:{wPt:200,hPt:120},placements:[{charm,angle:90,cxPt:60,cyPt:60,scale:.93}],sources:new Map([['s',src]])};
+ const front=await CharmNestPDF.buildSheet(spec);
+ const back=await vector('CUT OUTLINE',50,40,'1 0 0 RG 0.5 w 5 5 m 45 5 l 45 35 l 5 35 l h S 0 0 0 rg 10 10 10 3 re f');
+ const sheet={id:'sheet-1',charms:[charm],placements:[{id:'a',n:1,layer:'Parent',scale:.93}]};
+ const made=await E.compose(front,sheet,[{poolId:charm.poolId,bytes:back}]);
+ assert.equal(made.layout.length,1);assert.equal(made.layout[0].scale,.93);
+ const legacy=await E.compose(front,{...sheet,placements:[{id:'a',n:1,layer:'Parent'}]},[{poolId:charm.poolId,bytes:back}]);
+ assert.equal(legacy.layout[0].scale,.93,'historical scale comes from the actual front transform');
+ const wide=await vector('CUT OUTLINE',220,40,'1 0 0 RG 0.5 w 0 0 m 212 0 l 212 30 l 0 30 l h S');
+ const wideExport=await E.compose(front,sheet,[{poolId:charm.poolId,bytes:wide}]);
+ assert(wideExport.layout[0].boundsPt[2]<=wideExport.widthPt,'full-width backs remain inside the page without resizing');
+ const bb=made.layout[0].boundsPt;assert(Math.abs((bb[2]-bb[0])-40*.93)<1e-8);assert(bb[1]>=120+10/E.MM-1e-8);
+ const parsed=await CharmNestPDF.parseSource(made.ai,'combined');const paths=E.leaves(parsed);
+ assert(paths.some(p=>p.layer.startsWith('BACK order_transaction_1')));
+ assert(paths.some(p=>p.strokeRGB?.[0]===1));assert(paths.some(p=>p.fillRGB?.[2]===1));
+ const result=E.dxf(paths);assert(result.text.includes('$INSUNITS\r\n70\r\n4'));assert(result.colors.includes(0xff0000));assert(result.colors.includes(0x0000ff));
+ fs.writeFileSync('/tmp/production-test.dxf',result.text);fs.writeFileSync('/tmp/production-test.ai',made.ai);
+ assert.equal((await E.compose(front,sheet,[])).heightPt,120,'no backs means no added export margin');
+ await assert.rejects(()=>E.compose(front,{...sheet,placements:[]},[{poolId:charm.poolId,bytes:back}]),/no matching/);
+ const cubic=[['m',[0,0]],['c',[0,20],[20,20],[20,0]]];const f=E.flatten(cubic);assert(f.points.length>25);assert.deepEqual(f.points.at(-1),[20,0]);
+ const outline={kind:'path',closed:true,stroke:true,subpaths:[rect(0,0,60,60)],bbox:[0,0,60,60]},ch={outline,members:[outline],bbox:outline.bbox};const mask=G.engraveMask(G.backView(ch),{marginMm:.3});
+ const opts={tryRotated:false,minStrokeMm:0,minGapMm:0};
+ const hard=['First line','Second line','Third line'];const a=G.fitMultiline(hard,font,mask,opts);assert.deepEqual(a.lines,hard,'hard breaks preserved');
+ const text='Always together in our hearts';const b=G.fitMultiline([text],font,mask,opts);assert(b.lines.length>1,'auto wraps long phrases');assert.equal(b.lines.join(' '),text);
+ const c=G.fitMultiline([text],font,mask,opts,3);assert.equal(c.lines.length,3);assert(G.verifyInk(c.cmds,mask).ok);
+ console.log('Production export OK: exact parent scale, above-sheet backs, original RGB/layers, mm DXF, precise curves, hard breaks and automatic multiline');
+})().catch(e=>{console.error(e);process.exit(1)});

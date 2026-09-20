@@ -202,8 +202,8 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .shProg{padding:4px 14px 0}
 .shProg progress{margin:6px 0 0}
 .shProg .bp-note{margin:2px 0 0}
-.shStage{flex-wrap:wrap}
-.shStage>span:not(.spin):not(.r){flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.shStage{flex-wrap:nowrap}
+.shStage>span:not(.spin):not(.r){flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .shStage .r{flex:0 0 auto}
 @media (max-width:1300px){.shStage .r{display:none}}
 .shStage{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink70);min-height:18px;padding:5px 14px 0}
@@ -908,15 +908,19 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .placeView .claude{border-left:3px solid var(--gold2);background:var(--goldSoft);padding:6px 9px;border-radius:6px;font-size:12px;overflow-wrap:anywhere}
 .sheetBacks{padding:8px 12px 6px;background:#fff;border-bottom:1px solid var(--line2)}
 .backLabel{font:600 10px var(--sans);color:var(--ink45);letter-spacing:.04em;display:flex;gap:6px}
-.backPieces{display:flex;flex-wrap:wrap;gap:5px 3px;align-items:center;padding:3px 0}
-.backPieces figure{margin:0;min-width:0;flex:0 0 max(calc((100% - 15px)/6),var(--back-width,28px));display:flex;justify-content:center;align-items:center;position:relative}
+.backPieces{display:flex;flex-wrap:wrap;gap:2px 1px;align-items:center;padding:0}
+.backPieces figure{margin:0;min-width:0;flex:0 0 var(--back-width,28px);display:flex;justify-content:center;align-items:center;position:relative}
 .backPieces .backThumb{padding:0;border:0;background:transparent;position:relative;display:block;width:var(--back-width,28px);height:var(--back-height,28px);border-radius:3px;overflow:hidden;cursor:zoom-in;color:inherit}
 .backPieces .backThumb:focus-visible{outline:2px solid var(--gold2);outline-offset:3px}
 .backPieces .backThumb img{position:absolute;display:block;width:100%;height:100%;object-fit:contain;border:0;border-radius:0}
 .backPending{font:9px var(--mono);color:var(--ink45)}.sheetBacks:empty{display:none}
-/* Shared preview shelf: back artwork never shifts the front sheets or card edges. */
-.sheets:has(.sheetBacks) .sheetCard>[data-r="backs"]{height:clamp(72px,7vw,112px);flex:0 0 auto;overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-gutter:stable both-edges}
-.sheetCard>[data-r="backs"]>.sheetBacks{box-sizing:border-box;min-height:100%;padding:4px 12px;border:0;display:flex;align-items:center}
+/* Empty shelves collapse. Populated shelves align to their responsive row. */
+.sheetCard>[data-r="backs"]{flex:0 0 auto;height:auto;min-height:0}
+.sheetCard>[data-r="backs"]:empty{display:none}
+.sheetCard>[data-r="backs"]>.sheetBacks{box-sizing:border-box;padding:3px 14px;border:0;min-height:var(--back-row-height,0px);display:flex;align-items:center}
+.sheetCard [data-r="rejects"],.sheetCard [data-r="second"]{display:none!important}
+.shQueue{min-height:34px;scrollbar-gutter:stable}
+.shActions{margin-top:auto}
 .sheetCard .backPieces{width:100%}
 .backZoom{position:fixed;inset:auto;margin:0;padding:8px;box-sizing:border-box;border:1px solid var(--line);border-radius:16px;background:#fff;box-shadow:0 14px 45px rgba(25,20,12,.22);pointer-events:none;opacity:0;transform:scale(.45);transition:opacity .18s ease,transform .24s cubic-bezier(.2,.8,.2,1);z-index:10000}
 .backZoom.visible{opacity:1;transform:scale(1)}.backZoom img{display:block;width:100%;height:100%;object-fit:contain}
@@ -1044,6 +1048,12 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
   .runBanner .acts{flex-shrink:1}.runBanner .acts>.btn{max-width:140px;overflow:hidden;text-overflow:ellipsis}
   .setMenu{position:fixed;top:auto;right:10px;margin-top:6px}
 }
+.sheetExport{display:inline-flex;gap:3px;align-items:center;margin-left:auto;flex:0 0 auto}
+.sheetExport input,[data-export-group]{accent-color:var(--sage);cursor:pointer}
+.libCard .h{flex-wrap:wrap;gap:6px}.sheetExport .btn{padding:3px 5px;font-size:10px}
+.libraryDownloads{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:0 0 12px;font-size:12px}
+.libraryDownloads label{display:flex;align-items:center;gap:4px}.libraryDownloads select{padding:5px;border:1px solid var(--line);border-radius:6px;background:var(--card)}
+.libraryDownloads details{margin-left:auto;max-width:460px;font-size:11px;color:var(--ink70)}
 </style>
 </head>
 <body>
@@ -1247,6 +1257,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-pdf.js"></script>
 <script src="charm-nest-geom.js"></script>
 <script src="charm-nest-backs.js"></script>
+<script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-orders.js"></script>
 <script>
@@ -1764,7 +1775,7 @@ function scopeTouches(scope, metal) {
 const AG_ICON = { geom: "▸", claude: "✦", nest: "◆", verify: "✓", cloud: "☁", warn: "⚠", ok: "✓", info: "·", DS: "⇄", MASTER: "▦", POOL: "▤", ENGRAVE: "✎" };
 function renderAgent(sh) {
   const el = sh.el; if (!el) return; const q = r => $(`[data-r="${r}"]`, el);
-  q("agent").classList.toggle("show", !!sh.agentShow); q("logBtn").textContent = sh.agentShow ? "Hide log" : "Log";
+  q("agent").classList.toggle("show", !!sh.agentShow);
   if (!sh.agentShow) return;
   const evs = AG.events.filter(e => scopeTouches(e.scope, sh.metal));
   const live = evs.filter(e => e.live).pop();
@@ -2533,7 +2544,7 @@ function buildReport(sh, result, items) {
     version: 1, sheetId: sh.sheetId, metal: sh.metal, metalLabel: labelOf(sh.metal), createdAt: new Date().toISOString(),
     stock: { wIn: st.wIn, hIn: st.hIn, wPt: st.wPt, hPt: st.hPt }, params: result.params, endedBy: result.endedBy, trials: result.trials, elapsedMs: Math.round(result.elapsedMs),
     density: +result.density.toFixed(4), usablePt2: Math.round(result.usablePt2), freePt2: Math.round(result.freePt2), placedPt2: Math.round(result.placedPt2), pocket: result.pocket,
-    placements: sh.placements.map((p, i) => ({ n: i + 1, id: p.id, layer: p.layerName, name: byId.get(p.id)?.name, hash: byId.get(p.id)?.hash, source: byId.get(p.id)?.sourceName, index: byId.get(p.id)?.index, angle: p.angle, cxPt: +p.cxPt.toFixed(3), cyPt: +p.cyPt.toFixed(3), wPt: +p.wPt.toFixed(2), hPt: +p.hPt.toFixed(2), areaPt2: +(byId.get(p.id)?.areaPt2 || 0).toFixed(1) })),
+    placements: sh.placements.map((p, i) => ({ n: i + 1, id: p.id, layer: p.layerName, name: byId.get(p.id)?.name, hash: byId.get(p.id)?.hash, source: byId.get(p.id)?.sourceName, index: byId.get(p.id)?.index, angle: p.angle, scale: p.scale || 1, cxPt: +p.cxPt.toFixed(3), cyPt: +p.cyPt.toFixed(3), wPt: +p.wPt.toFixed(2), hPt: +p.hPt.toFixed(2), areaPt2: +(byId.get(p.id)?.areaPt2 || 0).toFixed(1) })),
     rejects: sh.rejects.map(id => ({ id, name: byId.get(id)?.name, source: byId.get(id)?.sourceName, index: byId.get(id)?.index, areaPt2: +(byId.get(id)?.areaPt2 || 0).toFixed(1), widthPt: +(byId.get(id)?.widthPt || 0).toFixed(1), heightPt: +(byId.get(id)?.heightPt || 0).toFixed(1) })),
     excluded: sh.charms.filter(c => c.excluded).map(c => ({ id: c.id, name: c.name, reason: c.open ? "open path" : "excluded by operator" })),
     verification: sh.verification, charms: items.map(c => ({ id: c.id, name: c.name, hash: c.hash, qty: c.qty, order: c.order || c.id, layer: c.layer || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), namedBy: c.namedBy, confidence: c.confidence })),
@@ -2690,7 +2701,7 @@ function buildCards() {
       <div class="shStage" data-r="stage"></div>
       <div class="shProg"><progress data-r="prog" aria-label="${m.label} nesting progress" max="1" hidden></progress></div>
       <div class="shSat" data-r="sat"></div>
-      <div class="shRejects hidden" data-r="rejects"></div>
+      <div hidden data-r="rejects"></div>
       <div class="shQueue" data-r="queue"></div>
       <div class="shAgent" data-r="agent"><div class="agHead"><span class="lbl">Agent</span><span class="now" data-r="agentNow">idle</span><span class="tog" data-r="agentTog">show log</span></div><div class="agBody off" data-r="agentBody"></div></div>
       <div class="cloudRow" data-r="cloud"></div>
@@ -2698,15 +2709,14 @@ function buildCards() {
         <button class="btn gold sm" data-r="nest">Nest</button>
         <button class="btn danger sm hidden" data-r="stop">Stop</button>
         <button class="btn sage sm hidden" data-r="dl">Download .ai</button>
-        <button class="btn ghost xs" data-r="report">Report</button>
-        <button class="btn ghost xs" data-r="logBtn" title="Show what the agent did, step by step">Log</button>
+        <button class="btn ghost sm hidden" data-r="dxf">.dxf</button>
         <div class="right"><button class="btn ghost xs hidden" data-r="second">Move the rest to the next sheet</button><button class="btn ghost xs" data-r="clear">Clear</button></div>
       </div>`;
     host.appendChild(el); sh.el = el; sh.cardEl = el;
     const q = r => $(`[data-r="${r}"]`, el); const cur = () => activePage(m.key);   // buttons act on the sheet the tab shows
     q("nest").onclick = () => { const pg = cur(); if (pg.recalled && !pg.charms.length) { if (window.Recall) Recall.rebuild(pg).catch(e => toast(e.message, "bad", 7000)); return; } startNest(pg); }; q("stop").onclick = () => stopNest(cur());
-    q("dl").onclick = () => { const pg = cur(); if (pg.recalled && !pg.outputs) { const o = pg.recalled.outputs || {}; ["ai", "labelled", "report"].filter(k => o[k]).forEach((k, i) => setTimeout(() => window.open(o[k], "_blank"), i * 300)); return; } downloadOutputs(pg); };
-    q("report").onclick = () => { const pg = cur(); if (pg.recalled && !pg.outputs) { if (pg.recalled.outputs && pg.recalled.outputs.report) window.open(pg.recalled.outputs.report, "_blank"); else toast("no report was saved for this sheet", ""); return; } openReport(pg); };
+    q("dl").onclick = () => ProductionExports.live(cur(), "ai");
+    q("dxf").onclick = () => ProductionExports.live(cur(), "dxf");
     q("second").onclick = () => overflowToNextSheet(cur());
     q("clear").onclick = () => { const pg = cur(); if (pg.page > 1) { if (pg.status === "nesting") stopNest(pg); pg.charms.forEach(c => { c.metal = null; }); pg.charms = []; removePage(pg); } else clearMetal(m.key); renderRail(); updateTopSub(); };
     // drag & drop on the card
@@ -2720,7 +2730,6 @@ function buildCards() {
     });
     q("canvas").addEventListener("click", e => onPreviewClick(cur(), e));
     q("agentTog").parentElement.onclick = () => { const pg = cur(); pg.agentOpen = !pg.agentOpen; renderAgent(pg); };
-    q("logBtn").onclick = () => { const pg = cur(); pg.agentShow = !pg.agentShow; if (pg.agentShow && pg.agentOpen == null) pg.agentOpen = true; renderAgent(pg); };
     renderCard(sh);
   }
 }
@@ -2786,6 +2795,7 @@ function renderCard(sh) {
   const cl = q("cloud");
   cl.innerHTML = sh.problem ? `<span class="bad">${esc(sh.problem)}</span>` : sh.outputs && !sh.cloud && !S.cloud.ok ? `<span class="bad">not saved — cloud offline</span>` : "";
   cl.classList.toggle("hidden", !cl.innerHTML);
+  q("dxf").classList.toggle("hidden", q("dl").classList.contains("hidden"));
   renderProgress(sh); renderSat(sh); drawPreview(sh); renderAgent(sh);
   if (window.Gate) Gate.renderCard(sh);
 }
@@ -2813,7 +2823,7 @@ function renderProgress(sh) {
   st.innerHTML = sh.stage ? `<span class="spin"></span><span>${esc(sh.stage)}</span><span class="r">${elapsed}${budget}</span>`
     : reviewingSrc ? `<span class="spin"></span><span>Claude is reviewing the ${reviewingSrc.charms.length} charms detected in ${esc(reviewingSrc.name)}</span><span class="r">${fmt.s(reviewingSrc.review.elapsed || 0)}</span>`
     : sh.recalled && !sh.charms.length ? `<span>${sh.recalled.placedCount}/${sh.recalled.charmCount} placed · ${fmt.pct(sh.recalled.density || 0)} full${sh.recalled.verification ? (sh.recalled.verification.ok ? " · verified ✓" : " · ⚠ flagged") : ""} · ${esc(sh.recalled.fileBase || "")}</span><span class="r">${sh.recalled.updatedAt ? new Date(sh.recalled.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}</span>`
-    : done ? `<span>${sh.placements.length}/${activeCharms(sh).length} placed${sh.sat ? ` · ${fmt.pct(sh.sat.fullPct)} full` : ""}${sh.verification ? (sh.verification.ok ? " · verified ✓" : " · ⚠ verification flagged, open the report") : ""}${sh.endedBy && sh.endedBy !== "complete" ? ` · ${esc(endedText(sh.endedBy))}` : ""}</span><span class="r">${elapsed}</span>` : "";
+    : done ? `<span>${sh.placements.length}/${activeCharms(sh).length} placed${sh.sat ? ` · ${fmt.pct(sh.sat.fullPct)} full` : ""}${sh.verification ? (sh.verification.ok ? " · verified ✓" : " · ⚠ verification flagged") : ""}</span><span class="r">${elapsed}</span>` : "";
   const ov = q("overlay");
   const moving = sh.status === "nesting" || sh.status === "finishing";
   ov.innerHTML = moving ? `<span class="pill neutral">${sh.placements.length}/${activeCharms(sh).length} placed</span>${sh.sat ? `<span class="pill neutral">${fmt.pct(sh.sat.fullPct)} full</span>` : ""}` : "";
@@ -3015,14 +3025,7 @@ function openReport(sh) {
   $$(".charmTile", $("#rpBody")).forEach(t => t.onclick = () => openCharm(sh, byId.get(t.dataset.cid)));
   openDlg(dlg);
 }
-function downloadOutputs(sh) {
-  if (!sh.outputs) return;
-  const base = sh.fileBase || sheetFileBase(sh);
-  download(sh.outputs.ai, `${base}.ai`, "application/illustrator");   // an .ai MIME, so no browser renames the file to .pdf
-  setTimeout(() => download(sh.outputs.labelled, `${base}_labelled.pdf`, "application/pdf"), 350);
-  setTimeout(() => download(new TextEncoder().encode(JSON.stringify(sh.outputs.report, null, 2)), `${base}_nest-report.json`, "application/json"), 700);
-  toast("Downloading .ai, labelled proof and nest-report.json", "ok");
-}
+function downloadOutputs(sh) { return ProductionExports.live(sh, "ai"); }
 
 /* ═══ 14 · library (recovery) & charms views ════════════════════════════ */
 let libraryLoadId = 0;
@@ -3109,10 +3112,10 @@ async function openLibrarySheet(id) {
       <div style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:16px;align-items:start">
         <div><div data-back-sheet="${esc(d.id)}">${window.Engrave ? Engrave.backsMarkup(d) : ""}</div>${d.outputs && d.outputs.preview ? `<img crossorigin="anonymous" src="${cors(d.outputs.preview.url)}" style="width:100%;border:1px solid var(--line);border-radius:10px;background:#fff">` : `<div class="libEmpty">${d.saving ? "files are still uploading — reopen in a moment" : "no preview"}</div>`}</div>
         <div><dl class="kv"><dt>Status</dt><dd>${esc(d.status)} · ${esc(endedText(d.endedBy))}</dd><dt>Placed</dt><dd>${d.placedCount} / ${d.charmCount}${d.rejectCount ? ` · ${d.rejectCount} rejected` : ""}</dd><dt>Density</dt><dd>${Math.round((d.density || 0) * 100)}% · ${fmt.area(d.freePt2 || 0)} free</dd><dt>Stock</dt><dd>${d.stock ? `${fmt.mm(d.stock.wIn * PT_PER_IN)} × ${fmt.mm(d.stock.hIn * PT_PER_IN)}` : "—"}</dd><dt>Seed · clearance</dt><dd>${d.params ? `${d.params.seed} · ${fmt.mm(d.params.clearancePt)} · ${d.params.angles.length} angles` : "—"}</dd><dt>Verification</dt><dd>${d.verification ? (d.verification.ok ? "passed" : "flagged") + (d.verification.minGapPt != null ? ` · min gap ${fmt.mm(d.verification.minGapPt)}` : "") : "—"}</dd><dt>Sources</dt><dd>${(d.sources || []).map(s => s.url ? `<a href="${s.url}" target="_blank" rel="noopener">${esc(s.name)}</a>` : esc(s.name)).join(", ") || "—"}</dd></dl>
-        <div class="section">Outputs</div><div style="display:flex;gap:6px;flex-wrap:wrap">${d.outputs ? ["ai", "pdf", "labelled", "report"].filter(k => d.outputs[k]).map(k => `<a class="btn ghost xs" href="${d.outputs[k].url}" target="_blank" rel="noopener">${k === "labelled" ? "labelled proof" : k === "report" ? "nest-report.json" : "." + k}</a>`).join("") : "none"}</div></div></div>
+        <div class="section">Outputs</div><div style="display:flex;gap:6px;flex-wrap:wrap">${ProductionExports.sheetControls(d.id)}${d.outputs ? ["labelled", "report"].filter(k => d.outputs[k]).map(k => `<a class="btn ghost xs" href="${d.outputs[k].url}" target="_blank" rel="noopener">${k === "labelled" ? "labelled proof" : k === "report" ? "nest-report.json" : "." + k}</a>`).join("") : "none"}</div></div></div>
       <div class="section">Charms · ${(d.charms || []).length}</div>
       <div class="charmGrid">${(d.charms || []).map(c => `<div class="charmTile hoverItem">${c.thumbUrl ? `<img crossorigin="anonymous" src="${cors(c.thumbUrl)}" loading="lazy" alt="">` : ""}<div class="nm">${esc(c.name || "#" + (c.index + 1))}</div><div class="meta">${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}${c.qty > 1 ? ` · ×${c.qty}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("")}</div>`;
-    $("#lsDownloads").onclick = () => { if (!d.outputs) return; ["ai", "labelled", "report"].forEach((k, i) => d.outputs[k] && setTimeout(() => window.open(d.outputs[k].url, "_blank"), i * 300)); };
+    $("#lsDownloads").onclick = () => ProductionExports.run([d.id], document.getElementById("exportFormat").value);
     $("#lsRestore").onclick = () => restoreSheet(d);
     $("#lsDelete").onclick = async () => {
       const code = prompt(`Delete sheet ${d.folder || d.id} permanently — its record, .ai, proof, report and preview? Enter the passcode to confirm.`);
@@ -3348,6 +3351,7 @@ async function boot() {
 boot();
 </script>
 <script src="charm-nest-bridge.js"></script>
+<script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin" aria-labelledby="owTitle">
   <div class="owBox">

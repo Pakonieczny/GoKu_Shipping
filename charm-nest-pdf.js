@@ -234,7 +234,7 @@
         case "Do": {
           const name = args[0] && args[0].name;
           const x = resolve && name ? resolve(name) : null;
-          const seg = { kind: "xobj", start: ins[i].start, end: ins[i].end, name, bbox: null, depth, children: [], layer: curLayer() };
+          const seg = { kind: "xobj", start: ins[i].start, end: ins[i].end, name, matrix: ctm.slice(), bbox: null, depth, children: [], layer: curLayer() };
           if (x && x.subtype === "Image") {
             seg.bbox = bboxOf([ap(ctm, 0, 0), ap(ctm, 1, 0), ap(ctm, 1, 1), ap(ctm, 0, 1)]);
           } else if (x && x.subtype === "Form" && x.bytes && depth < 6) {
