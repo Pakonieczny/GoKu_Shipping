@@ -154,10 +154,170 @@
     const out = new Float32Array(w * h); for (let i = 0; i < w * h; i++) out[i] = Math.sqrt(f[i]);
     return out;
   }
+  /* Design Studio material-mask core, reused verbatim from
+   * shopify/assets/brites-custom-studio.js: mkEdt1d / mkEdt
+   * netlify/functions/geminiImageProxy-background.js: studioLabel,
+   * studioLargestComponent, studioOuterFace, studioSpecCutMask.
+   * Source revision 83f592c. The adapter below supplies exact Illustrator
+   * cut contours as declared openings; Studio's blue paint convention must
+   * not be applied to blue engraving in these existing production files. */
+  function mkEdt1d(f, n, d, v, z) {
+    let k = 0;
+    v[0] = 0; z[0] = -Infinity; z[1] = Infinity;
+    for (let q = 1; q < n; q++) {
+      let s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+      while (s <= z[k]) {
+        k--;
+        s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+      }
+      k++; v[k] = q; z[k] = s; z[k + 1] = Infinity;
+    }
+    k = 0;
+    for (let q = 0; q < n; q++) {
+      while (z[k + 1] < q) k++;
+      d[q] = (q - v[k]) * (q - v[k]) + f[v[k]];
+    }
+  }
+
+  function mkEdt(mask, w, h) {
+    const INF = 1e12, n = w * h;
+    const g = new Float64Array(n);
+    for (let i = 0; i < n; i++) g[i] = mask[i] ? INF : 0;
+    const m = Math.max(w, h);
+    const f = new Float64Array(m), d = new Float64Array(m);
+    const v = new Int32Array(m), z = new Float64Array(m + 1);
+    for (let x = 0; x < w; x++) {
+      for (let y = 0; y < h; y++) f[y] = g[y * w + x];
+      mkEdt1d(f, h, d, v, z);
+      for (let y = 0; y < h; y++) g[y * w + x] = d[y];
+    }
+    for (let y = 0; y < h; y++) {
+      const o = y * w;
+      for (let x = 0; x < w; x++) f[x] = g[o + x];
+      mkEdt1d(f, w, d, v, z);
+      for (let x = 0; x < w; x++) g[o + x] = Math.sqrt(d[x]);
+    }
+    return g;
+  }
+
+  function studioLabel(mask, w, h) {
+    const labels = new Int32Array(w * h);
+    const stack = new Int32Array(w * h);
+    let count = 0;
+    for (let s = 0; s < w * h; s++) {
+      if (!mask[s] || labels[s]) continue;
+      count++;
+      let top = 0;
+      stack[top++] = s; labels[s] = count;
+      while (top) {
+        const i = stack[--top], x = i % w, y = (i / w) | 0;
+        if (x > 0     && mask[i - 1] && !labels[i - 1]) { labels[i - 1] = count; stack[top++] = i - 1; }
+        if (x < w - 1 && mask[i + 1] && !labels[i + 1]) { labels[i + 1] = count; stack[top++] = i + 1; }
+        if (y > 0     && mask[i - w] && !labels[i - w]) { labels[i - w] = count; stack[top++] = i - w; }
+        if (y < h - 1 && mask[i + w] && !labels[i + w]) { labels[i + w] = count; stack[top++] = i + w; }
+      }
+    }
+    return { labels, count };
+  }
+
+  function studioLargestComponent(mask, w, h) {
+    const { labels, count } = studioLabel(mask, w, h);
+    if (!count) return mask;
+    const size = new Float64Array(count + 1);
+    for (let i = 0; i < w * h; i++) if (labels[i]) size[labels[i]]++;
+    let best = 1;
+    for (let L = 2; L <= count; L++) if (size[L] > size[best]) best = L;
+    const out = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) if (labels[i] === best) out[i] = 1;
+    return out;
+  }
+
+  function studioOuterFace(isWall, w, h) {
+    const n = w * h;
+    const outside = new Uint8Array(n), stack = new Int32Array(n);
+    let top = 0;
+    const push = (i) => { if (!outside[i] && !isWall[i]) { outside[i] = 1; stack[top++] = i; } };
+    for (let x = 0; x < w; x++) { push(x); push((h - 1) * w + x); }
+    for (let y = 0; y < h; y++) { push(y * w); push(y * w + w - 1); }
+    while (top) {
+      const i = stack[--top], x = i % w, y = (i / w) | 0;
+      if (x > 0) push(i - 1);
+      if (x < w - 1) push(i + 1);
+      if (y > 0) push(i - w);
+      if (y < h - 1) push(i + w);
+    }
+    const face = new Uint8Array(n);
+    for (let i = 0; i < n; i++) face[i] = outside[i] ? 0 : 1;
+    /* one continuous piece, by doctrine — so stray marks outside the charm
+       (a label, a speck) cannot distort the bounding box the whole registration
+       depends on */
+    return studioLargestComponent(face, w, h);
+  }
+
+  function studioSpecCutMask(plan, zones) {
+    const { w, h, n, blue, cut } = plan;
+    const out = new Uint8Array(n);
+
+    /* Structured cut-out zones are the customer's own manufacturing data. They
+       do not replace the exact pixels; they tell us WHICH blue pixels are an
+       area when a global line-thickness estimate is ambiguous. This keeps the
+       exact contour from the drawing while the decision 'line or hole?' comes
+       from deterministic data, not from an image model. */
+    const cuts = (Array.isArray(zones) ? zones : []).filter((z) =>
+      z && z.intent === "cutout" && Number(z.w) > 0.004 && Number(z.h) > 0.004);
+    /* When the structured list exists it is the authority. In particular, a
+       filled blue area can physically touch the blue outer perimeter; component
+       analysis then sees one connected blue object and could otherwise erase the
+       whole silhouette. Zones let us take only the exact blue pixels inside the
+       declared area. With no structured list (old/uploaded references), fall
+       back to the image-only fill detector. */
+    if (!cuts.length) {
+      for (let i = 0; i < n; i++) if (cut[i]) out[i] = 1;
+    }
+    for (const z of cuts) {
+      const padX = Math.max(2, Math.round(w * 0.008));
+      const padY = Math.max(2, Math.round(h * 0.008));
+      const x0 = Math.max(0, Math.floor(Number(z.x) * w) - padX);
+      const y0 = Math.max(0, Math.floor(Number(z.y) * h) - padY);
+      const x1 = Math.min(w, Math.ceil((Number(z.x) + Number(z.w)) * w) + padX);
+      const y1 = Math.min(h, Math.ceil((Number(z.y) + Number(z.h)) * h) + padY);
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+        const i = y * w + x;
+        if (blue[i]) out[i] = 1;
+      }
+    }
+    /* ── THERE IS NO FALLBACK HERE, AND THAT IS THE POINT ──────────────────
+       A fallback lived here that punched blue components the image "proved"
+       were filled blobs, whether or not a zone claimed them. It was added to
+       rescue a cut-out that had fallen off a TRUNCATED zone list, and the
+       truncation it was rescuing is gone (see STUDIO_ZONE_LIMIT), so the thing
+       it existed for cannot happen any more.
+
+       It also could not have worked. Measured on a moon-and-star charm, the
+       blue CRESCENT BODY is one filled blob of 105,673px, density 0.34, local
+       thickness 7.0 — indistinguishable, by any measure taken on that
+       component alone, from a declared cut-out of the same shape. It IS
+       declared metal. Density punched it; thickness punched it; the charm came
+       back with its whole body opened out as a through-cut. Opening 33.3% of a
+       face where the customer declared 4.8% is not a rescue.
+
+       The lesson is the general one, so it is written here rather than in a
+       commit message: whether a region is a HOLE or is METAL is not a property
+       of its pixels. It is a fact the customer supplied. A picture cannot
+       recover it, and code that tries will be wrong in exactly the cases that
+       matter most — the big, obvious, load-bearing ones. The declared list is
+       the authority. When it is silent about a region, the answer is that the
+       region is not a hole, not that we should go looking for one.
+
+       If a cut-out is ever missing from a map again, it is missing from the
+       LIST, and the list is what gets fixed. */
+    return out;
+  }
+
   /** Keep only pixels farther than `rPx` from any empty pixel (and from the frame edge). */
   function erode(m, rPx) {
     const out = cloneMask(m); if (!(rPx > 0)) return out;
-    const { w, h } = m; const dt = distanceTransform(m.bits, w, h, v => v === 0);
+    const { w, h } = m; const dt = mkEdt(m.bits, w, h);
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = y * w + x; const edge = Math.min(x + 1, y + 1, w - x, h - y); out.bits[i] = (m.bits[i] && dt[i] > rPx && edge > rPx) ? 1 : 0; }
     return out;
   }
@@ -199,7 +359,7 @@
 
   /* ═══ 3 · the back: an actual flip, verified ═══════════════════════════ */
   const achromatic = c => c && (Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2])) <= 0.15;
-  const isCutLine = m => !!m && m.kind === "path" && !!m.stroke && !!m.closed && achromatic(m.strokeRGB);
+  const isCutLine = m => !!m && m.kind === "path" && !!m.stroke && !!m.closed && (achromatic(m.strokeRGB) || (m.strokeRGB?.[0] >= .65 && m.strokeRGB[1] <= .35 && m.strokeRGB[2] <= .35));
   const FLIP_WHY = { pixels: "the flipped back does not match the front", holes: "a cut-out does not stay open when the charm is flipped", area: "the flipped back covers a different area", detailDropped: "front-only detail would show on the back" };
   class BackViewError extends Error { constructor(checks, images) { const bad = Object.keys(checks).filter(k => !checks[k]); super("flip check failed — " + bad.map(k => FLIP_WHY[k] || k).join("; ")); this.checks = checks; this.failed = bad; this.images = images; } }
 
@@ -222,6 +382,21 @@
     return { angle: ((angle % 360) + 360) % 360, hole: best.hole, source: "hole", centroid: [c.x, c.y] };
   }
 
+  // Resolve outer metal and openings independently, as in Design Studio.
+  // Union openings before subtraction: overlapping/duplicate cut paths must
+  // never XOR back into solid metal. Compound contour openings are retained.
+  function materialMask(cutMembers, outline, frame) {
+    const rim=raster([outline],frame),{w,h}=rim,n=w*h;
+    const face=studioOuterFace(rim.bits,w,h),declared=new Uint8Array(n);
+    for(let i=0;i<n;i++)if(face[i] && !rim.bits[i])declared[i]=1;
+    for(const member of cutMembers)if(member!==outline){
+      const hole=raster([member],frame);for(let i=0;i<n;i++)if(hole.bits[i])declared[i]=1;
+    }
+    const holes=studioSpecCutMask({w,h,n,blue:declared,cut:declared},[]),out=emptyMask(frame);
+    for(let i=0;i<n;i++)out.bits[i]=face[i] && !holes[i] ? 1 : 0;
+    return out;
+  }
+
   /**
    * charm = { outline, members[] }  (the sorter's charm; members are parsed segments)
    * opts  = { res: 6, isCut, upAngle (deg, default from upAngleOf), tolPixels: 0.0005, tolArea: 0.001 }
@@ -233,12 +408,16 @@
     const cut = opts.isCut || isCutLine;
     const originalOutline = charm.outline;
     let outline = originalOutline;
-    if (opts.solidBack && originalOutline.subpaths.length > 1) {
-      // Explicit operator choice: expanded artwork can contain white front detail, not physical cut-outs.
-      // Keep every outer island; separate stroked cut-outs are never removed by this choice.
-      const polys = originalOutline.subpaths.map(sub=>flatten({subpaths:[sub]},24)[0]);
-      const outer = originalOutline.subpaths.filter((sub,i)=>!polys.some((p,j)=>i!==j && Math.abs(polyCentroid(p).area)>Math.abs(polyCentroid(polys[i]).area) && pointInPolys(...interiorPoint([polys[i]]),[p])));
-      outline = Object.assign({}, originalOutline, {subpaths:outer, synthetic:true, transformed:true, stroke:true, fill:false, strokeRGB:[0,0,0], paintOp:"S", start:-1, end:-1});
+    if (opts.solidBack && originalOutline.fill && !originalOutline.stroke && originalOutline.subpaths.length > 1) {
+      // Expanded outline ink can trace the same outside edge twice. Remove only
+      // its narrow inner tracing; retain actual interior openings and every
+      // stroked compound path. Solid back must never fill a physical cut-out.
+      const polys=originalOutline.subpaths.map(sub=>flatten({subpaths:[sub]},24)[0]);
+      const outer=polys.map((poly,i)=>!polys.some((p,j)=>i!==j && Math.abs(polyCentroid(p).area)>Math.abs(polyCentroid(poly).area) && pointInPolys(...interiorPoint([poly]),[p])));
+      const keep=originalOutline.subpaths.filter((sub,i)=>outer[i] || !polys.some((p,j)=>outer[j] &&
+        Math.abs(polyCentroid(polys[i]).area)>.75*Math.abs(polyCentroid(p).area) &&
+        pointInPolys(...interiorPoint([polys[i]]),[p]) && polys[i].every(pt=>distToPolys(pt[0],pt[1],[p])<=.4*PT_PER_MM)));
+      if(keep.length!==originalOutline.subpaths.length)outline=Object.assign({},originalOutline,{subpaths:keep,synthetic:true,transformed:true,stroke:true,fill:false,strokeRGB:[0,0,0],paintOp:"S",start:-1,end:-1});
     }
     const cutMembers = charm.members.filter(m => m === originalOutline || cut(m)).map(m=>m===originalOutline ? outline : m);
     if (!cutMembers.includes(outline)) cutMembers.unshift(outline);
@@ -246,10 +425,10 @@
     const ob = charm.outline.bbox; const cx = (ob[0] + ob[2]) / 2, cy = (ob[1] + ob[3]) / 2;
     const bb = cutMembers.reduce((a, s) => bbUnion(a, s.bbox), null);
     const frame = makeFrame(bb, opts.res, cx, 1);
-    const F = raster(cutMembers, frame);                                                         // STEP 2 · holes open (even-odd)
+    const F = materialMask(cutMembers, outline, frame);                                                         // STEP 2 · holes open (even-odd)
     const M = mirrorX(cx);                                                                       // STEP 3
     const mirrored = cutMembers.map(m => transformSeg(m, M));
-    const B = raster(mirrored, frame);                                                           // STEP 4
+    const B = materialMask(mirrored, mirrored[cutMembers.indexOf(outline)], frame);                                                           // STEP 4
     const holes = cutMembers.filter(m => m !== outline);
     const checks = {                                                                             // STEP 5
       pixels: diffFraction(B, flipX(F)) <= opts.tolPixels,
@@ -265,8 +444,8 @@
     const members = mirrored.map(m => transformSeg(m, R));
     const obb = members.reduce((a, s) => bbUnion(a, s.bbox), null);
     const oframe = makeFrame(obb, opts.res, cx, 1); oframe.cy = cy;
-    const mask = raster(members, oframe);
-    return { members, mask, cx, cy, M, R, angleDeg, upAngle: up, checks, detail, F, B, frame, cutMembers, dropped };
+    const mask = materialMask(members, members[cutMembers.indexOf(outline)], oframe);
+    return { members, outline:members[cutMembers.indexOf(outline)], mask, cx, cy, M, R, angleDeg, upAngle: up, checks, detail, F, B, frame, cutMembers, dropped };
   }
 
   /** The eroded back mask: margin off every cut edge and cut-out, keep-out layers subtracted. */
@@ -355,8 +534,12 @@
       const a=p[j], b=p[i], n=Math.max(1,Math.ceil(Math.hypot(b[0]-a[0],b[1]-a[1])*mask.res*2));
       for(let k=0;k<=n;k++) if(!at(mask,a[0]+(b[0]-a[0])*k/n,a[1]+(b[1]-a[1])*k/n)) return {ok:false,outside:1,total:0};
     }
-    const ink = rasterGlyphs(cmds, mask); let outside = 0, total = 0;
-    for (let i = 0; i < ink.bits.length; i++) if (ink.bits[i]) { total++; if (!mask.bits[i]) outside++; }
+    // Check only the ink's bounding region on the SAME pixel grid. This keeps
+    // continuous dragging responsive without reducing clearance or resolution.
+    const x0=Math.max(0,Math.floor((bb[0]-mask.ox)*mask.res)),y0=Math.max(0,Math.floor((bb[1]-mask.oy)*mask.res));
+    const x1=Math.min(mask.w,Math.ceil((bb[2]-mask.ox)*mask.res)+1),y1=Math.min(mask.h,Math.ceil((bb[3]-mask.oy)*mask.res)+1);
+    const ink=rasterGlyphs(cmds,{w:x1-x0,h:y1-y0,res:mask.res,ox:mask.ox+x0/mask.res,oy:mask.oy+y0/mask.res});let outside=0,total=0;
+    for(let y=0;y<ink.h;y++)for(let x=0;x<ink.w;x++)if(ink.bits[y*ink.w+x]){total++;if(!mask.bits[(y+y0)*mask.w+x+x0])outside++;}
     return { ok: outside === 0 && total > 0, outside, total };
   }
   /** Thinnest stem and smallest inter-stroke gap of rendered ink, in mm, from 1-D runs in four directions. */
@@ -398,7 +581,7 @@
       for (const r of rects) {
         const centre = [(r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2];
         const passes = (size, withStroke) => { const L = layoutLines(lines, font, size, opts.lineGap, 0, centre); if (!fitsIn(L.bbox, r)) return null; if (!verifyInk(L.cmds, mA).ok) return null; if (withStroke && !strokeOk(L)) return null; return L; };
-        let lo = 0.01, hi = Math.min(r.hPt, maxH, r.wPt * 4), size = 0, thin = false;
+        let lo = 0.01, hi = Math.min(r.hPt, maxH, opts.maxSize || Infinity, r.wPt * 4), size = 0, thin = false;
         if (!(hi > lo)) continue;
         for (let withStroke of [true, false]) {
           let l = lo, h = hi; size = 0;
@@ -473,12 +656,12 @@
   function refitAt(lines, font, mask, opts, place) {
     opts = Object.assign({ lineGap: 0.18, maxHeightFrac: 0.4, minCapMm: 1.6, semiboldBelowMm: 2.2 }, opts || {});
     const maxH = opts.maxHeightFrac * (mask.hPt || mask.h / mask.res);
-    let lo = 0.01, hi = Math.min(place.maxSize || maxH, maxH), size = 0;
+    let lo = 0.01, hi = Math.min(place.maxSize || maxH, opts.maxSize || maxH, maxH), size = 0;
     while (hi - lo > 0.002) { const mid = (lo + hi) / 2; const L = layoutLines(lines, font, mid, opts.lineGap, place.angle || 0, place.centre); if (verifyInk(L.cmds, mask).ok) { size = mid; lo = mid; } else hi = mid; }
     if (!size) return { ok: false, reason: "no room at that position" };
     const layout = layoutLines(lines, font, size, opts.lineGap, place.angle || 0, place.centre);
     const capMm = size * capPerEm(font) * MM_PER_PT;
-    return { ok: true, size, capMm, weight: capMm < opts.semiboldBelowMm ? "Semibold" : "Regular", small: capMm < opts.minCapMm, angle: place.angle || 0, centre: place.centre, layout, glyphs: layout.glyphs, cmds: layout.cmds, metrics: strokeMetrics(layout.cmds, 24), lines };
+    return { ok: true, size, capMm, weight: capMm < opts.semiboldBelowMm ? "Semibold" : "Regular", small: capMm < opts.minCapMm, angle: place.angle || 0, centre: place.centre, layout, glyphs: layout.glyphs, cmds: layout.cmds, metrics: opts.measure === false ? null : strokeMetrics(layout.cmds, 24), lines };
   }
   /** Alternative line splits for "Re-split lines": joined, at the customer's breaks, and between a name and a date. */
   // Word boundaries use measured glyph advances; explicit newlines are hard
@@ -503,23 +686,69 @@
     }
     return solve(0,count).lines;
   }
-  function fitMultiline(lines, font, mask, opts, mode='auto') {
-    lines=(lines||[]).flatMap(s=>String(s).split(/\r?\n/)).map(s=>s.trim()).filter(Boolean);
-    if(mode==='preserve'||(mode==='auto'&&lines.length>1))return fitText(lines,font,mask,opts);
-    const text=lines.join(" "), words=text.split(/\s+/).filter(Boolean);
-    if(mode!=='auto')return fitText(wrapLines(text,+mode,font),font,mask,opts);
-    if(words.length<2)return fitText(lines,font,mask,opts);
-    const rects=largestRectangles(mask,6),maxH=(opts?.maxHeightFrac||.4)*(mask.hPt||mask.h/mask.res);
-    const variants=Array.from({length:Math.min(6,words.length)},(_,i)=>wrapLines(text,i+1,font)).map(v=>{
-      const box=layoutLines(v,font,1,.18,0,[0,0]).bbox;
-      return {lines:v,score:Math.max(0,...rects.map(r=>Math.min(r.wPt/(box[2]-box[0]),r.hPt/(box[3]-box[1]),maxH)))};
-    }).sort((a,b)=>b.score-a.score||a.lines.length-b.lines.length);
-    let best=null;
-    for(const v of variants.slice(0,2)) {
-      const fit=fitText(v.lines,font,mask,opts);
-      if(fit.ok&&(!best||fit.size>best.size*1.03))best=fit;
+  // Horizontal whitespace is only a separator, never a requested line break.
+  // Keep the source paragraphs separate from the generated display lines.
+  const flowCache = new WeakMap();
+  function flowVariants(input, font, mode='auto') {
+    const lines=(input || []).flatMap(s=>String(s).split(/\r\n?|\n/u)).map(s=>s.replace(/[^\S\r\n]+/gu,' ').trim()).filter(Boolean);
+    const key=mode+':'+JSON.stringify(lines);let cache=flowCache.get(font);
+    if(!cache){cache=new Map();flowCache.set(font,cache);}if(cache.has(key))return cache.get(key);
+    let variants=[];
+    if(mode==='preserve')variants=[lines];
+    else if(mode!=='auto')variants=[wrapLines(lines.join(' '),+mode,font)];
+    else if(lines.length){
+      const counts=lines.map(()=>1),limits=lines.map(l=>l.split(' ').length);
+      variants.push(lines);
+      // Add a line to the paragraph with the widest remaining row. Explicit
+      // customer newlines remain hard boundaries; automatic wraps can disappear.
+      while(counts.reduce((a,b)=>a+b,0)<Math.max(6,lines.length)){
+        let pick=-1,width=-1;
+        for(let i=0;i<lines.length;i++)if(counts[i]<limits[i]){
+          const w=Math.max(...wrapLines(lines[i],counts[i],font).map(t=>font.getAdvanceWidth(t,1,{kerning:true})));
+          if(w>width){pick=i;width=w;}
+        }
+        if(pick<0)break;counts[pick]++;
+        variants.push(lines.flatMap((line,i)=>wrapLines(line,counts[i],font)));
+      }
     }
-    return best||fitText(lines,font,mask,opts);
+    if(cache.size>=64)cache.delete(cache.keys().next().value);cache.set(key,variants);return variants;
+  }
+  /** Reflow at the operator's centre/angle. Try every wrap at the requested
+   * size before shrinking; at equal size fewer lines win, so it unwraps again. */
+  function reflowAt(input, font, mask, opts, place, mode='auto') {
+    opts=Object.assign({lineGap:.18,maxHeightFrac:.4,minCapMm:1.6,semiboldBelowMm:2.2},opts || {});
+    const limit=opts.maxHeightFrac*(mask.hPt || mask.h/mask.res);
+    const want=Math.min(limit,Math.max(.01,place.size || limit)),angle=place.angle || 0;
+    const variants=flowVariants(input,font,mode);let best=null;
+    for(const lines of variants){
+      const layout=layoutLines(lines,font,want,opts.lineGap,angle,place.centre);
+      if(verifyInk(layout.cmds,mask).ok){best={ok:true,size:want,lines,layout,angle,centre:place.centre};break;}
+    }
+    if(!best)for(const lines of variants){
+      const fit=refitAt(lines,font,mask,{...opts,measure:false},{...place,maxSize:want});
+      if(fit.ok && (!best || fit.size>best.size*1.025))best=fit;
+    }
+    if(!best)return {ok:false,reason:'no room at that position'};
+    const capMm=best.size*capPerEm(font)*MM_PER_PT;
+    const metrics=opts.measure===false ? null : strokeMetrics(best.layout.cmds,24);
+    return {...best,capMm,weight:capMm<opts.semiboldBelowMm?'Semibold':'Regular',small:capMm<opts.minCapMm,
+      glyphs:best.layout.glyphs,cmds:best.layout.cmds,metrics,
+      thin:!!metrics && ((opts.minStrokeMm>0 && metrics.strokeMm<opts.minStrokeMm) || (opts.minGapMm>0 && metrics.gapMm>0 && metrics.gapMm<opts.minGapMm))};
+  }
+  function fitMultiline(lines, font, mask, opts, mode='auto') {
+    opts=opts || {};const variants=flowVariants(lines,font,mode);
+    if(!variants.length)return {ok:false,reason:'no text'};
+    const maxH=(opts.maxHeightFrac || .4)*(mask.hPt || mask.h/mask.res);
+    const want=opts.targetSize || defaultSize(variants[0],maxH,{capPerEm:capPerEm(font),minCapMm:opts.minCapMm || 1.6,
+      charmMinMm:Math.min(mask.w,mask.h)/mask.res*MM_PER_PT,charmMaxMm:Math.max(mask.w,mask.h)/mask.res*MM_PER_PT,
+      usableAreaMm2:area(mask)/mask.res**2*MM_PER_PT**2,advanceOf:t=>font.getAdvanceWidth(t,1,{kerning:true})});
+    let best=null;
+    for(const candidate of variants){
+      const fit=fitText(candidate,font,mask,{...opts,maxSize:want});
+      if(fit.ok && (!best || fit.size>best.size*1.05))best=fit;
+      if(fit.ok && fit.size>=want-.01)break;
+    }
+    return best || {ok:false,reason:'The text could not fit inside the usable back area.'};
   }
   function splitVariants(lines) {
     const joined = lines.join(" ").replace(/\s+/g, " ").trim();
@@ -559,7 +788,7 @@
 
   return { MM_PER_PT, PT_PER_MM, mul, ap, mirrorX, rotateAbout, translate, transformSeg, flatten, polyCentroid, pointInPolys, distToPolys, interiorPoint,
     makeFrame, emptyMask, cloneMask, rasterPolys, raster, area, flipX, diffFraction, at, distanceTransform, erode, subtract, rotateMask, largestRectangles,
-    isCutLine, BackViewError, upAngleOf, backView, engraveMask,
-    glyphCoverage, capPerEm, lineGlyphs, layoutLines, glyphPolys, rasterGlyphs, verifyInk, strokeMetrics, fitText, refitAt, defaultSize, sizeRange, SIZE_RULE, splitVariants, wrapLines, fitMultiline,
+    isCutLine, BackViewError, upAngleOf, backView, engraveMask, materialMask,
+    glyphCoverage, capPerEm, lineGlyphs, layoutLines, glyphPolys, rasterGlyphs, verifyInk, strokeMetrics, fitText, refitAt, defaultSize, sizeRange, SIZE_RULE, splitVariants, wrapLines, flowVariants, reflowAt, fitMultiline,
     svgPathOf, svgPathOfCmds, silhouetteBits };
 });

@@ -1828,7 +1828,7 @@ const Engrave = window.Engrave = (() => {
     job.text = r.text || ""; job.lines = job.text.split(/\r?\n/).map(s => s.trim()).filter(Boolean); job.source = r.source; job.quote = r.sourceQuote; job.confidence = r.confidence; job.requests = r.requests; job.questions = r.questions || []; job.claudeReasoning = r.reasoning || null;
     const originalLines=[(sp.personalization || []).join("\n"),sp.buyerMessage,sp.staffNote,job.quote].filter(Boolean)
       .map(t=>String(t).split(/\r?\n/).map(t=>t.trim()).filter(Boolean))
-      .find(lines=>lines.length>1&&lines.join(" ").replace(/\s+/g," ")===job.text.replace(/\s+/g," ").trim());
+      .find(lines=>lines.length && lines.join(" ").replace(/\s+/g," ")===job.text.replace(/\s+/g," ").trim());
     if(originalLines) {job.lines=originalLines;job.text=originalLines.join("\n");}
     agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}: Claude reads ${r.engrave ? `"${job.text.replace(/\n/g, " / ")}" from ${r.source} (${Math.round(r.confidence * 100)}%)` : "no engraving"}${job.questions.length ? ` · ${job.questions.length} question(s)` : ""}`, { reason: r.reasoning || null });
     if (!r.engrave) { if (job.confidence < (+S.settings.engraveConfidence || 0.8) || job.questions.length) return toWords(job, "Claude is not sure there is no engraving"); setNone(job, "Claude: no engraving requested"); return job; }
@@ -1935,6 +1935,10 @@ const Engrave = window.Engrave = (() => {
       if (fit.size >= fit.fittedMax - 0.01 && (job.lines || []).join(" ").trim().length > 8)
         agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: the words only fit at the largest size the area allows — a different split of the lines may read better`);
     }
+    // The final default size and the display line count are one decision.
+    const flow=G.reflowAt(job.lineInput,fontFor(fit.weight),job.mask,fitOpts(),{centre:fit.centre,angle:fit.angle,size:fit.size},job.lineMode || "auto");
+    if(flow.ok){fit=job.fit=Object.assign({},fit,flow,{weight:fit.weight});job.lines=flow.lines.slice();job.text=job.lines.join("\n");}
+    job.wantSize=fit.size;
     const check = G.verifyInk(fit.cmds, job.mask);                          // 7.4 · geometry: zero ink outside the eroded mask, zero in any hole
     if (!check.ok) { throw new Error(`ink outside the eroded mask after fitting (${check.outside} px) — a bug, not a review item`); }
     job.verify = { geometry: check, at: Date.now() };
@@ -1969,30 +1973,16 @@ const Engrave = window.Engrave = (() => {
   function invalidate(row, why) { const j = items().get(row.key); if (!j) return; if (j.state === "approved" || j.state === "written" || j.state === "review" || j.state === "ready") { revokeBacks(j); j.previous = { text: j.text, fit: j.fit, approvedBy: j.approvedBy }; j.state = "classify"; j.fit = null; j.approvedBy = null; j.approvedAt = null; j.reason = why; Review.remove("eng:" + j.key); } }
 
   /* ── 7.5 · the review controls ── */
-  /* Moving the text is moving the text. It used to be a re-fit with no ceiling, so one tap of a nudge arrow threw away
-     the size a person had just chosen and set the largest that happened to fit at the new spot — and overwrote the
-     slider's own scale on the way out, so they could never get back. The ceiling is recomputed where the text now is,
-     the chosen size is kept, and it only shrinks when the new spot genuinely cannot hold it. */
+  /* One fitting policy for dragging, rotation and manual size: change the
+     wrapping before reducing the requested size, and restore it when room
+     returns. The original words remain separate from generated line breaks. */
   function refit(job, place) {
-    // the size a person chose (or the fit's own default) is what the text goes back to whenever there is room for it:
-    // a nudge into a narrow spot used to bring the lettering down and leave it down
-    const font = fontFor(job.fit.weight), want = job.wantSize != null ? job.wantSize : job.fit.size;
-    const ceil = G.refitAt(job.lines, font, job.mask, fitOpts(), place);
-    if (!ceil.ok) return false;
-    // If the chosen size still fits where the text now is, keep it EXACTLY. Re-fitting with a ceiling of `want` bisects
-    // to just under it, so twenty nudges used to walk the lettering down by a tenth of its size.
-    let f = null;
-    if (ceil.size >= want - 1e-6) {
-      const ang = place.angle != null ? place.angle : (job.fit.angle || 0);
-      const L = G.layoutLines(job.lines, font, want, 0.18, ang, place.centre);
-      const v = G.verifyInk(L.cmds, job.mask);
-      if (v.ok) f = { ok: true, size: want, capMm: want * G.capPerEm(font) * MM, weight: job.fit.weight, angle: ang, centre: place.centre, layout: L, glyphs: L.glyphs, cmds: L.cmds, metrics: G.strokeMetrics(L.cmds, 24), small: want * G.capPerEm(font) * MM < (+S.settings.engraveMinCapMm || 1.6), thin: job.fit.thin };
-    }
-    if (!f) f = ceil.size <= want + 1e-6 ? ceil : G.refitAt(job.lines, font, job.mask, fitOpts(), Object.assign({}, place, { maxSize: want }));
-    if (!f.ok) return false;
-    f.fittedMax = ceil.size; f.weight = job.fit.weight; f.rect = job.fit.rect;
-    if (f.size < want - 0.01) toast(`Only ${f.size.toFixed(2)} pt fits there — the lettering was brought down`, "", 3500);
-    job.fit = f; job.verify = { geometry: G.verifyInk(f.cmds, job.mask), at: Date.now() }; job.nudged = true; job.claude = null;
+    const font=fontFor(job.fit.weight),want=place.size ?? job.wantSize ?? job.fit.size;
+    const f=G.reflowAt(job.lineInput || job.lines,font,job.mask,fitOpts(),{...place,size:want},job.lineMode || 'auto');
+    if(!f.ok)return false;
+    f.fittedMax=Math.max(f.size,job.fit.fittedMax || 0);f.weight=job.fit.weight;f.rect=job.fit.rect;
+    job.wantSize=want;job.lines=f.lines.slice();job.text=job.lines.join("\n");
+    job.fit=f;job.verify={geometry:G.verifyInk(f.cmds,job.mask),at:Date.now()};job.nudged=true;job.claude=null;
     return true;
   }
   function nudge(job, dxMm, dyMm) { if (!job.fit) return; const c = [job.fit.centre[0] + dxMm * PT, job.fit.centre[1] + dyMm * PT]; if (!refit(job, { centre: c, angle: job.fit.angle })) toast("No room there", "bad"); refresh(job); }
@@ -2016,7 +2006,12 @@ const Engrave = window.Engrave = (() => {
     if (!isFinite(x0)) return null;
     return { cx: centre[0], cy: centre[1], lx0: x0, ly0: y0, lx1: x1, ly1: y1, angle: angleDeg || 0 };
   }
-  function resize(job, size) { if (!job.fit) return; size = Math.min(job.fit.fittedMax, Math.max(0.01, size)); job.wantSize = size; const L = G.layoutLines(job.lines, fontFor(job.fit.weight), size, 0.18, job.fit.angle, job.fit.centre); const v = G.verifyInk(L.cmds, job.mask); if (!v.ok) { toast("That size does not verify", "bad"); return; } job.fit = Object.assign({}, job.fit, { size, layout: L, glyphs: L.glyphs, cmds: L.cmds, capMm: size * G.capPerEm(fontFor(job.fit.weight)) * MM, small: size * G.capPerEm(fontFor(job.fit.weight)) * MM < (+S.settings.engraveMinCapMm || 1.6), metrics: G.strokeMetrics(L.cmds, 24) }); job.verify = { geometry: v, at: Date.now() }; job.claude = null; reRead(job); refresh(job); }
+  function resize(job, size) {
+    if(!job.fit || !Number.isFinite(size))return;
+    size=Math.min(fitOpts().maxHeightFrac*(job.mask.hPt || job.mask.h/job.mask.res),Math.max(.01,size));
+    if(!refit(job,{centre:job.fit.centre,angle:job.fit.angle,size})){toast("No room at that size","bad");return;}
+    reRead(job);refresh(job);
+  }
   async function resplit(job) { const vars = G.splitVariants(job.lines); const i = (job.splitIndex || 0) + 1; const pick = vars[i % vars.length]; job.splitIndex = i; job.lineInput=pick.slice(); job.lineMode="preserve"; job.lines = pick; job.text = pick.join("\n"); agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: re-split as "${pick.join(" / ")}"`); await fitJob(job); }
   async function skip(job, by) { by = by || employeeName() || askEmployee(); if (!by) return; revokeBacks(job); job.state = "skipped"; job.approvedBy = null; job.row.engrave = { needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; job.row.flag = `engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`); await Pool.update(job.copies, { engrave: false, engraveSkippedBy: by }); if(job.editingBack) {await backQueue;await syncEditedBack(job);} Orders.render(); render(); if(!job.editingBack) RunCtl.poke(); }
   function sendBack(job, why) { revokeBacks(job); job.state = "words"; job.reason = why || "sent back from the placement review — a decision on the words is needed"; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); Orders.render(); }
@@ -2205,19 +2200,27 @@ const Engrave = window.Engrave = (() => {
   async function verifyBackFile(bytes, job) {
     try {
       const parsed = await P.parseSource(bytes, "back.ai");
-      const g = P.groupCharms(parsed, { minPt: 4 });
-      if (!g.charms.length) return { ok: false, why: "no cut outline found in the written file" };
-      const c = g.charms.reduce((a, b) => (b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1]) > (a.bbox[2] - a.bbox[0]) * (a.bbox[3] - a.bbox[1]) ? b : a);
+      // A back file has one explicit cut-reference layer. Do not mistake a
+      // rectangular charm containing holes for an artboard around many charms.
+      const references=parsed.segments.concat(parsed.nested).filter(m=>m.kind==="path" && m.closed && (m.stroke || m.fill) && /CUT OUTLINE/.test(m.layer || ""));
+      const larger=(a,b)=>(b.bbox[2]-b.bbox[0])*(b.bbox[3]-b.bbox[1])>(a.bbox[2]-a.bbox[0])*(a.bbox[3]-a.bbox[1])?b:a;
+      const g=references.length ? null : P.groupCharms(parsed,{minPt:4});
+      if(!references.length && !g.charms.length)return {ok:false,why:"no cut outline found in the written file"};
+      const c=references.length ? {outline:references.reduce(larger),members:references} : g.charms.reduce(larger);
       const cut = c.members.filter(m => m === c.outline || G.isCutLine(m));
       const bbW = cut.reduce((a, s) => [Math.min(a[0], s.bbox[0]), Math.min(a[1], s.bbox[1]), Math.max(a[2], s.bbox[2]), Math.max(a[3], s.bbox[3])], [Infinity, Infinity, -Infinity, -Infinity]);
       const bbV = job.view.members.reduce((a, s) => [Math.min(a[0], s.bbox[0]), Math.min(a[1], s.bbox[1]), Math.max(a[2], s.bbox[2]), Math.max(a[3], s.bbox[3])], [Infinity, Infinity, -Infinity, -Infinity]);
       const res = 6; const fw = G.makeFrame([0, 0, bbW[2] - bbW[0], bbW[3] - bbW[1]], res, (bbW[2] - bbW[0]) / 2, 1), fv = G.makeFrame([0, 0, bbV[2] - bbV[0], bbV[3] - bbV[1]], res, (bbV[2] - bbV[0]) / 2, 1);
       if (Math.abs(fw.w - fv.w) > 2 || Math.abs(fw.h - fv.h) > 2) return { ok: false, why: `written extent ${fw.w}×${fw.h} px differs from the verified back ${fv.w}×${fv.h} px` };
-      const frame = fv; const W = G.raster(cut.map(m => G.transformSeg(m, G.translate(-bbW[0], -bbW[1]))), frame); const V = G.raster(job.view.members.map(m => G.transformSeg(m, G.translate(-bbV[0], -bbV[1]))), frame);
+      const frame=fv,wc=cut.map(m=>G.transformSeg(m,G.translate(-bbW[0],-bbW[1]))),vc=job.view.members.map(m=>G.transformSeg(m,G.translate(-bbV[0],-bbV[1])));
+      const outlineIndex=job.view.outline ? job.view.members.indexOf(job.view.outline) : job.view.members.reduce((best,m,i,all)=>(m.bbox[2]-m.bbox[0])*(m.bbox[3]-m.bbox[1])>(all[best].bbox[2]-all[best].bbox[0])*(all[best].bbox[3]-all[best].bbox[1])?i:best,0);
+      const W=G.materialMask(wc,wc[cut.indexOf(c.outline)],frame),V=G.materialMask(vc,vc[outlineIndex],frame);
       const front = (S.settings.backFileView || "asSeenFromBack") === "frontCoordinates";
       const diff = G.diffFraction(W, front ? G.flipX(V) : V);
-      const textOk = parsed.segments.concat(parsed.nested).filter(s => s.kind === "path" && s.fill && !s.stroke).length >= 1;
-      return { ok: diff <= 0.01 && textOk, why: diff > 0.01 ? `cut geometry differs by ${(diff * 100).toFixed(2)}%` : (!textOk ? "no engraving paths in the file" : null), pixelDiff: diff, textPaths: textOk };
+      const textPaths=parsed.segments.concat(parsed.nested).filter(s=>s.kind==="path" && s.fill && !s.stroke && !/CUT OUTLINE/.test(s.layer || "")),textOk=textPaths.length>=1;
+      const textCmds=textPaths.flatMap(s=>G.flatten(G.transformSeg(s,G.translate(-bbW[0],-bbW[1])),16).flatMap(poly=>poly.map((p,i)=>({type:i?'L':'M',x:p[0],y:p[1]})).concat({type:'Z'})));
+      const ink=textOk && G.verifyInk(textCmds,G.engraveMask({mask:W},{marginMm:job.mask?.marginMm || 0}));
+      return {ok:diff<=.01 && textOk && ink.ok,why:diff>.01?`cut geometry differs by ${(diff*100).toFixed(2)}%`:!textOk?'no engraving paths in the file':!ink.ok?'engraving intersects a cut-out or cut-edge clearance':null,pixelDiff:diff,textPaths:textOk,ink};
     } catch (e) { return { ok: false, why: e.message }; }
   }
   /** back/back-index.pdf and back/back-report.json for a sheet, rebuilt whenever a back is added. */
@@ -2443,8 +2446,8 @@ const Engrave = window.Engrave = (() => {
     const charm = job.copies.length ? charmFor(job) : null;
     if (charm && (charm.outline.subpaths || []).length > 1) {
       const control = document.createElement("label"); control.className = "why";
-      control.innerHTML = `<input type="checkbox" ${job.solidBack ? "checked" : ""}> Solid back · inner artwork is front detail`;
-      control.title = "Use only the outer contour of compound artwork. Separate cut holes remain open. Check that inner artwork is not a physical cut-out before approving.";
+      control.innerHTML = `<input type="checkbox" ${job.solidBack ? "checked" : ""}> Solid back · ignore front fills, keep cut-outs`;
+      control.title = "Ignore expanded front-outline ink when building the back. Physical cut paths and interior openings remain excluded from engraving.";
       control.querySelector("input").onchange = async e => { job.solidBack = e.target.checked; await fitJob(job); };
       card.querySelector(".pvWords").appendChild(control);
     }
@@ -2490,7 +2493,15 @@ const Engrave = window.Engrave = (() => {
     let mounted = 0, raf = 0;
     if (wordsJob) { /* no back to draw */ }
     const wire = bc => {
-      let drag = null;
+      let drag = null, flowFrame = 0;
+      const paintFlow = () => {
+        flowFrame=0;if(!drag)return;
+        const centre=drag.pending || drag.c,angle=drag.pendingAngle ?? drag.angle,size=drag.pendingSize ?? drag.want;
+        const f=G.reflowAt(job.lineInput || job.lines,fontFor(job.fit.weight),job.mask,{...fitOpts(),measure:false},{centre,angle,size},job.lineMode || "auto");
+        if(f.ok){bc._paint({glyphs:f.glyphs,centre:f.centre,angle:f.angle,mode:drag.mode});const cap=card.querySelector('[data-cap]');if(cap)cap.textContent=f.capMm.toFixed(2)+" mm";}
+        else bc._paint();
+      };
+      const queueFlow = () => {if(!flowFrame)flowFrame=requestAnimationFrame(paintFlow);};
       // the pointer is captured by the canvas, so the handlers live and die with this canvas: every card used to add
       // another pair of listeners to the window and none of them was ever removed
       const near = (p, q2, r) => Math.hypot(p[0] - q2[0], p[1] - q2[1]) <= r;
@@ -2501,7 +2512,7 @@ const Engrave = window.Engrave = (() => {
         const p = local(e), b = bc._box;
         const mode = b && near(p, b.rotate, 10) ? "rotate" : (b && b.corners.some(c => near(p, c, 9))) || e.shiftKey ? "resize" : "move";
         const c0 = job.fit.centre.slice(); const cpx = b ? b.centrePx : bc._map.tx(c0[0], c0[1]);
-        drag = { mode, x: e.clientX, y: e.clientY, c: c0, size: job.fit.size, angle: job.fit.angle || 0, cpx, r0: Math.max(4, Math.hypot(p[0] - cpx[0], p[1] - cpx[1])), a0: Math.atan2(p[1] - cpx[1], p[0] - cpx[0]) };
+        drag = { mode, x: e.clientX, y: e.clientY, c: c0, size: job.fit.size, want:job.wantSize ?? job.fit.size, angle: job.fit.angle || 0, cpx, r0: Math.max(4, Math.hypot(p[0] - cpx[0], p[1] - cpx[1])), a0: Math.atan2(p[1] - cpx[1], p[0] - cpx[0]) };
         bc.classList.add("drag");
       });
       bc.addEventListener("pointermove", e => {
@@ -2512,16 +2523,14 @@ const Engrave = window.Engrave = (() => {
         if (drag.mode === "resize") {
           // a corner pulled away from the centre grows the text, pulled in shrinks it: the size follows the distance
           const r = Math.hypot(p[0] - drag.cpx[0], p[1] - drag.cpx[1]);
-          drag.pendingSize = Math.min(job.fit.fittedMax, Math.max(0.01, drag.size * r / drag.r0));
-          const L = G.layoutLines(job.lines, fontFor(job.fit.weight), drag.pendingSize, 0.18, drag.angle, drag.c);
-          bc._paint({ glyphs: L.glyphs, centre: drag.c, angle: drag.angle, mode: "resize" });
+          drag.pendingSize = Math.min(fitOpts().maxHeightFrac*(job.mask.hPt || job.mask.h/job.mask.res),Math.max(0.01, drag.size * r / drag.r0));
+          queueFlow();
         } else if (drag.mode === "rotate") {
           const a = Math.atan2(p[1] - drag.cpx[1], p[0] - drag.cpx[0]);
           let ang = drag.angle - (a - drag.a0) * 180 / Math.PI;               // screen y points down, so the sign flips
           ang = ((ang % 360) + 360) % 360; for (const snap of [0, 90, 180, 270, 360]) if (Math.abs(ang - snap) < 3) ang = snap % 360;
           drag.pendingAngle = ang;
-          const L = G.layoutLines(job.lines, fontFor(job.fit.weight), job.fit.size, 0.18, ang, drag.c);
-          bc._paint({ glyphs: L.glyphs, centre: drag.c, angle: ang, mode: "rotate" });
+          queueFlow();
           const an = card.querySelector('input[data-a="angle"]'); if (an) an.value = String(Math.round(ang));
         } else {
           const c = [drag.c[0] + dx, drag.c[1] + dy];
@@ -2529,19 +2538,19 @@ const Engrave = window.Engrave = (() => {
           if (Math.abs(c[0] - job.mask.cx) < 0.35 * PT) c[0] = job.mask.cx;
           if (Math.abs(c[1] - job.mask.cy) < 0.35 * PT) c[1] = job.mask.cy;
           drag.pending = c;
-          const L = G.layoutLines(job.lines, fontFor(job.fit.weight), job.fit.size, 0.18, drag.angle, c);
-          bc._paint({ glyphs: L.glyphs, centre: c, angle: drag.angle, mode: "move" });
+          queueFlow();
         }
       });
       bc.addEventListener("pointerup", () => {
         if (!drag) return;
+        cancelAnimationFrame(flowFrame);flowFrame=0;
         const d = drag; drag = null; bc.classList.remove("drag");
         if (d.mode === "resize") { if (d.pendingSize != null) resize(job, d.pendingSize); else bc._paint(); }
         else if (d.mode === "rotate") { if (d.pendingAngle != null) rotateTo(job, d.pendingAngle); else bc._paint(); }
         else if (d.pending) { if (!moveTo(job, d.pending)) { toast("No room there — kept the previous position", "bad"); bc._paint(); } }
         else bc._paint();
       });
-      bc.addEventListener("pointercancel", () => { drag = null; bc.classList.remove("drag"); bc._paint(); });
+      bc.addEventListener("pointercancel", () => { cancelAnimationFrame(flowFrame);flowFrame=0;drag = null; bc.classList.remove("drag"); refresh(job); });
     };
     const mountBack = () => {
       if (wordsJob || !job.view || !backHost.isConnected) return;

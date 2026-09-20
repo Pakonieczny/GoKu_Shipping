@@ -837,10 +837,10 @@
     void parsed;
     return c.topIndices;
   }
-  /** The sorter's cut-line rule: a closed path with an achromatic stroke. Blue and red strokes/fills are front-only detail. */
+  /** The sorter's cut-line rule: a closed path with a black/grey or laser-red stroke. Blue engraving and filled artwork remain front detail. */
   const achromaticCol = col => col && (Math.max(col[0], col[1], col[2]) - Math.min(col[0], col[1], col[2])) <= 0.15;
-  function isCutLine(m) { return !!m && m.kind === "path" && m.stroke && m.closed && achromaticCol(m.strokeRGB); }
-  /** Inner cut lines of a charm: closed achromatic strokes other than its outline (hoop holes, windows). */
+  function isCutLine(m) { return !!m && m.kind === "path" && m.stroke && m.closed && (achromaticCol(m.strokeRGB) || (m.strokeRGB?.[0] >= .65 && m.strokeRGB[1] <= .35 && m.strokeRGB[2] <= .35)); }
+  /** Inner cut lines of a charm: closed black/grey or red strokes other than its outline (hoop holes, windows). */
   function cutLinesOf(c) { return c.members.filter(m => m !== c.outline && isCutLine(m)); }
   /** A segment with every point and Bézier handle mapped through M (points and control points alike). */
   function transformSegment(seg, M) {

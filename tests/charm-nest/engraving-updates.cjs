@@ -12,7 +12,7 @@ const a=font.getPath('A',0,0,20).commands,b=base.getPath('A',0,0,20).commands;as
 assert.equal(Text.graphemes('👨‍👩‍👧‍👦👍🏽❤️').length,3,'complete emoji sequences');
 for(const seq of Object.values(data.sequences))for(const [id] of seq)assert(id>0&&id<emoji.numGlyphs,'valid shaped glyph index');
 const rect=(x,y,w,h)=>[['m',[x,y]],['l',[x+w,y]],['l',[x+w,y+h]],['l',[x,y+h]],['h']];
-const outline={kind:'path',closed:true,stroke:true,strokeRGB:[0,0,0],subpaths:[rect(0,0,40,60),rect(1,1,38,58)],bbox:[0,0,40,60]},hole={kind:'path',closed:true,stroke:true,strokeRGB:[0,0,0],subpaths:[rect(17,52,6,6)],bbox:[17,52,23,58]};
+const outline={kind:'path',closed:true,fill:true,stroke:false,strokeRGB:[0,0,0],subpaths:[rect(0,0,40,60),rect(1,1,38,58)],bbox:[0,0,40,60]},hole={kind:'path',closed:true,stroke:true,strokeRGB:[0,0,0],subpaths:[rect(17,52,6,6)],bbox:[17,52,23,58]};
 const charm={outline,members:[outline,hole],bbox:outline.bbox};
 const ordinary=G.backView(charm,{upAngle:90});const solid=G.backView(charm,{solidBack:true,upAngle:90});
 assert(G.area(solid.mask)>G.area(ordinary.mask)*3,'compound ink outline can use its solid back');
