@@ -919,6 +919,24 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .spacingIcon i{height:2px;background:var(--gold);border-radius:1px}
 .quarterTurns{display:inline-flex;gap:3px;align-items:center}
 @container (max-width:380px){.spacingControl{flex-wrap:wrap}.placeView .ctl .spacingControl input{width:76px}}
+/* Related controls share a group; only the boundaries between tasks get a divider. */
+.controlGroup{display:inline-flex;align-items:center;gap:7px;min-width:0}
+.controlGroup+.controlGroup{border-left:1px solid #d5cdbf;padding-left:11px}
+.ordCompact{flex-wrap:nowrap;gap:11px;overflow-x:auto;scrollbar-width:thin;padding-top:2px;padding-bottom:8px}
+.ordCompact .controlGroup,.ordCompact .chips{flex-wrap:nowrap;flex-shrink:0}
+.ordCompact .ordNarrow{flex:1 0 auto}
+.ordCompact .ordSearch{width:150px;min-width:110px;max-width:230px}
+.ordCompact .ordSort{max-width:162px}
+.ordCompact .ordMetal{max-width:120px;padding:6px 7px}
+.charmTotal{display:inline-flex;gap:5px;align-items:baseline;white-space:nowrap;font:12px var(--sans);color:var(--ink70)}
+.charmTotal b{font:600 12px var(--mono);color:var(--ink)}
+.topbar .topTools{border-left:1px solid #d5cdbf;padding-left:10px}
+.libFilterGroup,.libDateGroup{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.libDateGroup,.libBar #libKind{border-left:1px solid #d5cdbf;padding-left:11px}
+.libBar #libKind{border-radius:0;border-top:0;border-right:0;border-bottom:0;background:transparent}
+.placeView .quarterTurns{border-left:1px solid #d5cdbf;padding-left:9px;margin-left:2px}
+@media(max-width:1100px){.ordCompact{gap:8px}.ordCompact .controlGroup+.controlGroup{padding-left:8px}.ordCompact .ordMetal{max-width:106px}.ordCompact .ordSort{max-width:140px}.ordCompact .ordSearch{width:120px}}
+@media(max-width:700px){.topbar .topTools{border-left:0;padding-left:0}}
 /* Quiet boundaries between tasks; related buttons stay together. */
 .ordBar,.libBar{padding-bottom:10px;border-bottom:1px solid var(--line)}
 .rvItem .rh{padding-bottom:10px;border-bottom:1px solid var(--line)}
@@ -1144,15 +1162,15 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
       <div class="lib hidden" id="libView">
         <div class="libBar">
           <input type="search" id="libSearch" placeholder="Search sheets · charm names, file names, dates">
-          <button class="fchip on" data-m="all">All metals</button>
+          <span class="libFilterGroup"><button class="fchip on" data-m="all">All metals</button>
           <button class="fchip" data-m="gold"><i class="sw"></i>GF 14/20</button>
           <button class="fchip" data-m="silver"><i class="sw"></i>SS</button>
           <button class="fchip" data-m="rose"><i class="sw"></i>RG 14/20</button>
           <button class="fchip" data-m="gold10k"><i class="sw"></i>10K Gold</button>
-          <button class="fchip" data-m="gold14k"><i class="sw"></i>14K Gold</button>
-          <input type="date" id="libFrom" title="From"><input type="date" id="libTo" title="To">
+          <button class="fchip" data-m="gold14k"><i class="sw"></i>14K Gold</button></span>
+          <span class="libDateGroup"><input type="date" id="libFrom" title="From"><input type="date" id="libTo" title="To">
           <button class="btn ghost sm" id="libRefresh">Refresh</button>
-          <span class="pill neutral" id="libCount"></span>
+          <span class="pill neutral" id="libCount"></span></span>
           <span class="seg" id="libKind"><button type="button" class="on" data-k="sheets">Sheets</button><button type="button" data-k="sets">Sets</button></span>
         </div>
         <div id="libBody"><div class="libEmpty">Loading sheets…</div></div>

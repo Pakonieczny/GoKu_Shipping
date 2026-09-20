@@ -573,19 +573,6 @@ const Orders = window.Orders = (() => {
   }
   const STATE_PILL = { pulled: ["neutral", "pulled"], waiting: ["info", "waiting"], noDesign: ["info", "no design"], pooled: ["info", "pooled"], nested: ["ok", "nested"], written: ["ok", "written"], labelled: ["ok", "labelled"], committed: ["ok", "complete"], unmatched: ["bad", "unmatched"], held: ["bad", "held"], contended: ["warn", "other run"], skipped: ["warn", "skipped"], gone: ["bad", "gone"], oversize: ["bad", "oversize"] };
   function engravePill(r) { const e = r.engrave; if (!e) return r.spec && r.spec.engraveCandidate ? ["warn", "words?"] : ["neutral", "—"]; if (!e.needed) return ["neutral", e.state === "skipped" ? "skipped" : "no engraving"]; if (e.approved) return ["ok", "approved"]; if (e.state === "words") return ["warn", "words"]; if (e.state === "review") return ["warn", "review"]; if (e.state === "fitted") return ["info", "fitted"]; if (e.state === "blocked") return ["bad", "blocked"]; return ["info", e.state || "engrave"]; }
-  /* Which pile a line is in. The three the shop asked for — went through, needs a person, needs engraving settled —
-     plus the two that are neither. A line is in exactly one pile, so the counts add up to the lines pulled. */
-  const PILES = [
-    // a due line that needs a decision is first of all a decision: the date is on its card either way
-    { id: "attn", label: "Needs a decision", cls: "warn", of: r => r.problems.length || ["held", "unmatched", "oversize", "gone"].includes(r.state) },
-    { id: "late", label: "Due or overdue", cls: "bad", of: r => dueOf(r).soon && !["committed", "labelled", "skipped"].includes(r.state) },
-    { id: "eng", label: "Engraving to settle", cls: "info", of: r => r.engrave && r.engrave.needed && !r.engrave.approved && r.engrave.state !== "skipped" },
-    { id: "done", label: "Done", cls: "ok", of: r => ["committed", "labelled"].includes(r.state) },
-    { id: "ready", label: "Went through", cls: "ok", of: r => ["pooled", "nested", "written", "noDesign", "skipped"].includes(r.state) },
-    { id: "wait", label: "Waiting", cls: "info", of: r => r.state === "waiting" },
-    { id: "rest", label: "Not started", cls: "neutral", of: r => true },
-  ];
-  const pileOf = r => (PILES.find(g => g.of(r)) || PILES[PILES.length - 1]).id;
   const OV = { pile: null, metal: null, form: null, eng: null, q: "", view: null, sort: "arrival", desc: false };   // what the tab is showing right now
   const FORM_LABEL = { necklace: "Necklaces", earrings: "Earrings", "earring-single": "Single earrings", huggie: "Huggies", charm: "Charms only", bracelet: "Bracelets", anklet: "Anklets", keychain: "Keychains" };
   const viewMode = () => OV.view || S.settings.orderView || "cards";
@@ -593,7 +580,7 @@ const Orders = window.Orders = (() => {
   function visibleRows() {
     const q = OV.q.trim().toLowerCase();
     return rowsOf().filter(r => {
-      if (OV.pile && pileOf(r) !== OV.pile) return false;
+      if (r.state === "gone") return false;
       if (OV.metal && (r.material || "none") !== OV.metal) return false;
       if (OV.form && ((r.spec && r.spec.form) || "none") !== OV.form) return false;
       if (OV.eng) { const needs = !!(r.engrave && r.engrave.needed); if (OV.eng === "yes" ? !needs : needs) return false; }
@@ -770,59 +757,48 @@ const Orders = window.Orders = (() => {
      last line among them, which itself has eighteen callers, and Pool.addAll every five rows. Pooling two hundred lines
      rebuilt the whole tab forty times, and each rebuild took the scroller's position and the caret out of the search box
      with it. The head is built once, what changes is patched, and the body is the only thing ever re-emitted. */
+  function orderTotals(rows) {
+    const receipts=new Set(),lines=new Set();let charms=0;
+    for(const r of rows) {
+      if(r.state==="gone")continue;
+      const receipt=String(r.order?.receiptId ?? "");if(receipt)receipts.add(receipt);
+      const transaction=r.line?.transactionId,key=transaction!=null ? receipt+"/"+transaction : r.key;
+      if(key && lines.has(key))continue;if(key)lines.add(key);
+      if(r.spec?.noDesign || r.state==="noDesign")continue;
+      const qty=Number(r.spec?.quantity ?? r.line?.quantity ?? 1);
+      if(Number.isFinite(qty) && qty>0)charms+=Math.round(qty);
+    }
+    return {orders:receipts.size,charms};
+  }
   function buildHead(v) {
-    /* One row. What a person does here, in the order they do it: bring orders in, narrow them, find one, choose how
-       to look. It wraps on a narrow window and never scrolls sideways; the count of the pull is a line of small type
-       at the end, not a pill in a row of its own. The sandbox's own controls live under the SANDBOX pill up top. */
+    // One compact row: totals, filters/search, then the display controls.
     v.innerHTML = `<div class="ordHead">
-        <div class="ordBar" id="ordBar">
-          <span class="grp"><button class="btn sm" id="ordPull">Pull orders</button><select id="ordPullMode" title="which open orders to bring in"><option value="all">every open order</option><option value="dueBy">due by a date</option><option value="count">the most urgent</option></select><input type="date" id="ordDueBy" title="orders due on or before this date"><input type="number" id="ordCount" min="1" max="500" title="how many of the most urgent orders"></span>
-          <button class="btn gold sm" id="ordRun" title="nest, engrave and label every line that is ready to go">Run set ▶</button>
-          <button class="btn ghost sm" id="ordResume" title="every set on record — open its sheets, its orders and its engraving">Earlier sets…</button>
-          <span class="chips" id="ordChips"></span>
-          <span class="chips" id="ordMetalHost"></span>
-          <input class="ordSearch" id="ordQ" placeholder="order, SKU, words…" title="search the order number, the SKU, the title and everything the customer or the shop wrote">
-          <select class="ordSort" id="ordSort" title="what orders the cards"><option value="arrival">newest arrivals first</option><option value="due">by ship-by</option><option value="order">by order</option><option value="state">by state</option></select>
-          <span class="viewSeg" id="ordViewSeg"></span><span class="ordMeta mono" id="ordMeta"></span>
+        <div class="ordBar ordCompact" id="ordBar">
+          <span class="controlGroup ordSummary"><button class="btn sm" id="ordPull">Pull orders</button><span class="chips" id="ordChips"></span><span class="charmTotal" id="ordCharmTotal"></span></span>
+          <span class="controlGroup ordNarrow"><span class="chips" id="ordMetalHost"></span><input class="ordSearch" id="ordQ" placeholder="order, SKU, words…" title="search the order number, the SKU, the title and everything the customer or the shop wrote"></span>
+          <span class="controlGroup ordDisplay"><select class="ordSort" id="ordSort" title="what orders the cards"><option value="arrival">newest arrivals first</option><option value="due">by ship-by</option><option value="order">by order</option><option value="state">by state</option></select><span class="viewSeg" id="ordViewSeg"></span></span>
         </div>
       </div><div class="ordBody" id="ordBody"></div>`;
     const q = v.querySelector("#ordQ");
     q.oninput = () => { OV.q = q.value; renderBody(); };                 // never rebuilt now, so the caret needs no restoring
-    v.querySelector("#ordPullMode").onchange = e => { S.settings.pullMode = e.target.value; saveSettings(); renderHead(v); };
-    v.querySelector("#ordDueBy").onchange = e => { S.settings.pullDueBy = e.target.value; saveSettings(); };
-    v.querySelector("#ordCount").onchange = e => { S.settings.pullCount = Math.max(1, +e.target.value || 40); saveSettings(); };
     v.querySelector("#ordSort").onchange = e => { OV.sort = e.target.value; OV.desc = false; renderBody(); };
     v.querySelector("#ordPull").onclick = async () => { if (v.querySelector("#ordPull").disabled) return; try { await pull(null); } catch (e) { toast(e.message, "bad", 7000); agent({ bridge: true }, "warn", e.message); } };
-    v.querySelector("#ordRun").onclick = () => RunCtl.start();
-    v.querySelector("#ordResume").onclick = () => RunHistory.show();
     Sandbox.mountPanel(v);
   }
-  /** What changes while a run works: the counts, the chips, the summary, and which run buttons apply. */
+  /** Update totals and filters without rebuilding the search field. */
   function renderHead(v) {
-    const s = S.settings, all = rowsOf();
+    const all = rowsOf().filter(r=>r.state!=="gone"), totals=orderTotals(all);
+    OV.pile=null; // Removed state chips must not leave an invisible saved filter.
     const running = B.run && !["complete", "stopped"].includes(B.run.status);
     const pull = v.querySelector("#ordPull");
     pull.disabled = !!running;
-    pull.title = running ? "a run is open — stop it first, or its lines would be replaced under it" : "ask the Design Station for every open order that matches the rule below";
-    // while a run is open the banner above owns it: repeating Run and Resume here only made it unclear which did what
-    v.querySelector("#ordRun").classList.toggle("hidden", !!running);
-    v.querySelector("#ordPullMode").value = s.pullMode || "all";
-    v.querySelector("#ordDueBy").value = s.pullDueBy || "";
-    v.querySelector("#ordDueBy").classList.toggle("hidden", s.pullMode !== "dueBy");
-    v.querySelector("#ordCount").value = s.pullCount || 40;
-    v.querySelector("#ordCount").classList.toggle("hidden", s.pullMode !== "count");
+    pull.title = running ? "a run is open — stop it first, or its lines would be replaced under it" : "refresh open orders using the pull rule in Settings";
     v.querySelector("#ordSort").value = OV.sort;
-    const meta = v.querySelector("#ordMeta");
-    meta.className = "ordMeta mono" + (B.orders.stale ? " warn" : "");
-    const nOrd = new Set(all.map(r => r.order.receiptId)).size;
-    const full = B.orders.recalled ? `${nOrd} orders · ${all.length} lines · ${B.orders.recalled.seq ? "Set " + B.orders.recalled.seq : "run"}${B.orders.recalled.day ? " · " + B.orders.recalled.day : ""} · from the record` : B.orders.pulledAt ? `${nOrd} orders · ${all.length} lines · pulled ${fmtT(B.orders.pulledAt)}${B.orders.filtered ? ` · ${B.orders.filtered} left out by the rule` : ""}${B.orders.stale ? " · the station's open list has changed since — pull again to catch up" : ""}` : "nothing pulled yet";
-    meta.title = full;
-    meta.textContent = B.orders.recalled ? full : B.orders.pulledAt ? `${nOrd} orders · ${all.length} lines · ${fmtT(B.orders.pulledAt)}${B.orders.stale ? " · stale" : ""}` : "";
-    const counts = {}; for (const r of all) counts[pileOf(r)] = (counts[pileOf(r)] || 0) + 1;
+    const charmTotal=v.querySelector("#ordCharmTotal");
+    charmTotal.innerHTML=`<b>${totals.charms}</b> charms`;
+    charmTotal.title="Total charm quantity across these open orders; chain-only and packaging items are excluded";
     const byMetal = {}; for (const r of all) { const m = r.material || "none"; byMetal[m] = (byMetal[m] || 0) + 1; }
     const chip = (on, id, label, n, cls, title) => `<button class="egTab${on ? " on" : ""}" data-pile="${esc(id)}" title="${esc(title || "")}">${esc(label)}<b class="${cls}">${n}</b></button>`;
-    /* Six state chips and six metal chips wrapped onto two rows above every list. The state is the question a person
-       actually asks; the metal is a narrowing of it, so it is one control, not six, and the row stays one row. */
     const metals = ["gold", "silver", "rose", "gold10k", "gold14k", "none"].filter(m => byMetal[m] || OV.metal === m);
     /* Material, kind of jewellery and "does it get engraved" are the three ways a bench actually narrows a day's work.
        Each one appears only when the lines on screen give it more than one answer — a filter with one option is a
@@ -830,10 +806,7 @@ const Orders = window.Orders = (() => {
     const byForm = {}; for (const r of all) { const f = (r.spec && r.spec.form) || "none"; byForm[f] = (byForm[f] || 0) + 1; }
     const forms = Object.keys(byForm).filter(f => f !== "none" || OV.form === "none").sort((a2, b2) => byForm[b2] - byForm[a2]);
     const engN = all.filter(r => r.engrave && r.engrave.needed).length;
-    v.querySelector("#ordChips").innerHTML =
-      chip(!OV.pile, "", "Everything", all.length, "", "every line that was pulled")
-      + PILES.filter(g => counts[g.id] || OV.pile === g.id).map(g => chip(OV.pile === g.id, g.id, g.label, counts[g.id] || 0, g.cls, g.label)).join("")
-;
+    v.querySelector("#ordChips").innerHTML = chip(true,"","Open Orders",totals.orders,"","Distinct open order numbers, across all materials");
     const sel = (id, ttl, any, opts, cur) => opts.length > 1 || cur ? `<select class="ordMetal" id="${id}" title="${esc(ttl)}">${[`<option value="">${esc(any)}</option>`].concat(opts.map(o => `<option value="${esc(o[0])}"${cur === o[0] ? " selected" : ""}>${esc(o[1])} \u00b7 ${o[2]}</option>`)).join("")}</select>` : "";
     v.querySelector("#ordMetalHost").innerHTML =
       sel("ordMetal", "narrow it to one material", "Any material", metals.map(m => [m, m === "none" ? "No material" : labelOf(m), byMetal[m] || 0]), OV.metal)
@@ -846,11 +819,11 @@ const Orders = window.Orders = (() => {
   }
   function render() {
     const v = document.getElementById("ordersView");
-    if (!v || v.classList.contains("hidden")) { const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(new Set(B.orders.rows.map(r => r.order.receiptId)).size) : ""; return; }
+    if (!v || v.classList.contains("hidden")) { const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(orderTotals(B.orders.rows).orders) : ""; return; }
     if (!v.dataset.built) { v.dataset.built = "1"; buildHead(v); }
     renderHead(v);
     renderBody();
-    const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(new Set(B.orders.rows.map(r => r.order.receiptId)).size) : "";
+    const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(orderTotals(B.orders.rows).orders) : "";
   }
   return { view: () => OV, pull, claim, unclaim, revalidate, render, renderBody, markStale, loadMaps, interpretAll, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, imageFor, wantImage, shipTxt, statePill: r => STATE_PILL[r.state] || ["neutral", r.state], applyPullRule, ctx };
 })();
@@ -2441,9 +2414,9 @@ const Engrave = window.Engrave = (() => {
     const tabBtn = (id, label, n, cls) => `<button class="egTab${tab === id ? " on" : ""}" data-tab="${id}" title="${esc(label)}">${label}${n ? `<b class="${cls}">${n}</b>` : ""}</button>`;
     const working = jobs.filter(j => ["classify", "fitting", "ready"].includes(j.state)).length;
     v.innerHTML = `<div class="ordBar egBar">
-        ${tabBtn("place", "Placements", queue.length, "info")}${tabBtn("done", "Decided", done.length, "ok")}
+        <span class="controlGroup">${tabBtn("place", "Placements", queue.length, "info")}${tabBtn("done", "Decided", done.length, "ok")}
         ${working ? `<span class="egTab working" title="being read and fitted now — they arrive in Words or Placements on their own"><span class="spin"></span>Working<b>${working}</b></span>` : ""}
-        <input class="ordSearch" id="egQ" placeholder="order, SKU, words…" value="${esc(EG.q || "")}" title="search the placements, the words and what has been decided by order number, SKU or the engraved words">
+        </span><span class="controlGroup"><input class="ordSearch" id="egQ" placeholder="order, SKU, words…" value="${esc(EG.q || "")}" title="search the placements, the words and what has been decided by order number, SKU or the engraved words"></span>
         </div>
       <div class="egPane grow"${tab === "place" ? "" : " hidden"}><div class="rvList" id="egQueue"></div>
         <div class="egNext" id="egNext"></div></div>

@@ -537,10 +537,10 @@ const receipts = [
       console.log('card pictures', JSON.stringify(pics));
       assert(pics.n > 0 && /imageProxy/.test(pics.src), 'the cards show the listing pictures through the proxy: ' + JSON.stringify(pics));
       // the toolbar is one row that never scrolls sideways, with nothing of the sandbox in it
-      const bar = await page.evaluate(() => { const b = document.getElementById('ordBar'); const r = b.getBoundingClientRect(); const tops = [...b.children].filter(c => c.getBoundingClientRect().height).map(c => c.getBoundingClientRect().top).sort((x, y) => x - y); let rows = tops.length ? 1 : 0; for (let i = 1; i < tops.length; i++) if (tops[i] - tops[i - 1] > 14) rows++; return { h: r.height, rows, sideScroll: document.documentElement.scrollWidth - document.documentElement.clientWidth, sandboxInBar: !!b.querySelector('#sandboxBar'), pill: !!document.getElementById('ordMeta') }; });
+      const bar = await page.evaluate(() => { const b = document.getElementById('ordBar'); const r = b.getBoundingClientRect(); const tops = [...b.children].filter(c => c.getBoundingClientRect().height).map(c => c.getBoundingClientRect().top).sort((x, y) => x - y); let rows = tops.length ? 1 : 0; for (let i = 1; i < tops.length; i++) if (tops[i] - tops[i - 1] > 14) rows++; return { h: r.height, rows, sideScroll: document.documentElement.scrollWidth - document.documentElement.clientWidth, sandboxInBar: !!b.querySelector('#sandboxBar'), totals: !!document.getElementById('ordCharmTotal') }; });
       console.log('orders toolbar', JSON.stringify(bar));
       await page.screenshot({ path: '/tmp/claude-0/orders.png', clip: { x: 0, y: 0, width: 1500, height: 420 } });
-      assert(bar.rows <= 2 && bar.sideScroll <= 0 && !bar.sandboxInBar, 'one compact toolbar row (two at most on a narrow window), no side scroll: ' + JSON.stringify(bar));
+      assert(bar.rows === 1 && bar.sideScroll <= 0 && !bar.sandboxInBar && bar.totals, 'one compact toolbar row with totals, no page side scroll: ' + JSON.stringify(bar));
 
 
       await page.evaluate(() => { CN.setMode('orders'); Orders.render(); });
@@ -1168,7 +1168,7 @@ const receipts = [
     CN.setMode('nest'); await new Promise(r => setTimeout(r, 300));      // pictures are asked for when their cards are shown
     const canvasDrawn = await new Promise(res => { let n = 0; const t = setInterval(() => { const pg = CN.allSheets().find(p => p.recalled && p.metal === 'silver'); const ok = pg && pg._img && pg._img.complete && pg._img.naturalWidth > 0; if (ok || ++n > 40) { clearInterval(t); res(!!ok); } }, 100); });
     CN.setMode('orders'); await new Promise(r => setTimeout(r, 200));   // the header repaints when the tab is shown
-    const orders = { rows: Orders.rows().length, fromRecord: Orders.rows().every(r => r.fromRecord), meta: (document.getElementById('ordMeta') || {}).textContent };
+    const orders = { rows: Orders.rows().length, fromRecord: Orders.rows().every(r => r.fromRecord), totals: (document.getElementById('ordCharmTotal') || {}).textContent };
     Orders.pull = realPull; RunCtl.start = realStart; RunCtl.resumeRun = realResume; Pool.masterCharm = realMaster;
     return { cards, views, strip, grid, pages, canvasDrawn, orders, did, mode: landed };
   });
@@ -1191,7 +1191,7 @@ const receipts = [
   assert(!fromNest.skip && fromNest.wasOpen && fromNest.mode === 'nest' && fromNest.gold, 'the Nest tab opens the same picker and stays on Nest: ' + JSON.stringify(fromNest));
   assert(recalled.pages.length >= 1 && recalled.pages.every(p => p.name && /Recalled/.test(p.pill) && /recalled/.test(p.prov) && /Rebuild to edit/.test(p.nest) && p.dl), 'the set is on its material card, marked recalled, with its downloads and a way to rebuild: ' + JSON.stringify(recalled.pages));
   assert(recalled.canvasDrawn, 'the saved picture is what the card shows');
-  assert(recalled.orders.rows >= 1 && recalled.orders.fromRecord && /from the record/.test(recalled.orders.meta), "the run's orders are on the Orders tab, said to be from the record: " + JSON.stringify(recalled.orders));
+  assert(recalled.orders.rows >= 1 && recalled.orders.fromRecord && /charms/.test(recalled.orders.totals), "the run's orders are on the Orders tab with charm totals: " + JSON.stringify(recalled.orders));
   assert.deepStrictEqual(recalled.did, [], 'nothing was pulled, started, resumed or rebuilt: ' + JSON.stringify(recalled.did));
   // the recalled set's engraving is on the Engraving tab too: the back that was written, its words, who approved it, and Reopen
   // Set 2 is open now (gold, no engraving); its chip says so, and nothing of Set 1 is on the cards
