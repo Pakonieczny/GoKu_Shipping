@@ -22,6 +22,20 @@
   }
   const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const safeUrl = v => /^(https?:\/\/|data:image\/png;base64,)/i.test(v || '') ? v : '';
+  const previewCache = new Map(), previewRequests = new Map();
+  const previewKey = b => [b.sheetId, b.poolId, +b.approvedAt || 0].join('|');
+  async function recoverPreview(identity, resolve) {
+    const key = previewKey(identity);
+    if (previewCache.has(key)) return previewCache.get(key);
+    if (!previewRequests.has(key)) previewRequests.set(key, Promise.resolve().then(() => resolve(identity)).then(result => {
+      if (!/^data:image\/png;base64,/i.test(result?.dataUrl || '')) throw new Error('Saved preview unavailable');
+      if (identity.approvedAt && +result.approvedAt !== +identity.approvedAt) throw new Error('Engraving changed');
+      previewCache.set(key, result.dataUrl);
+      while (previewCache.size > 200) previewCache.delete(previewCache.keys().next().value);
+      return result.dataUrl;
+    }).finally(() => previewRequests.delete(key)));
+    return previewRequests.get(key);
+  }
   // The station uses COEP require-corp. Storage previews must load in CORS mode,
   // with the same separate cache key as front previews (plain cached responses
   // may lack Access-Control-Allow-Origin). Inline approval previews stay local.
@@ -46,10 +60,10 @@
   function markup(backs, stock = {}) {
     if (!backs?.length) return '';
     return `<section class="sheetBacks" aria-label="Back engravings" data-stock-w="${+stock.wPt || 0}" data-stock-h="${+stock.hPt || 0}"><div class="backPieces">${backs.map(b => {
-      const png = previewUrl(b.preview || b.outputs?.png?.url || b.png), ai = safeUrl(b.outputs?.ai?.url || b.ai);
+      const png = previewCache.get(previewKey(b)) || previewUrl(b.preview || b.outputs?.png?.url || b.png);
       const identity = `${b.order || ''} · ${b.sku || ''} · copy ${b.copy || String(b.poolId).split('_').pop()}`;
       const dims = dimensions(b), label = 'Back: ' + (b.text || '') + ' — ' + identity;
-      return `<figure data-pool-id="${esc(b.poolId)}" data-sheet-id="${esc(b.sheetId)}" data-rid="${esc(b.order)}" ${dims ? `data-preview-w="${dims.w}" data-preview-h="${dims.h}" data-preview-pad="${dims.pad}"` : ''}>${png ? `<button type="button" class="backThumb" aria-label="${esc(label)}"><img crossorigin="anonymous" referrerpolicy="no-referrer" src="${esc(png)}" alt="${esc(label)}"></button>` : '<span class="backPending">Preview pending</span>'}${b.pending ? '<span class="backPending">Saving…</span>' : ''}</figure>`;
+      return `<figure data-pool-id="${esc(b.poolId)}" data-sheet-id="${esc(b.sheetId)}" data-approved-at="${+b.approvedAt || 0}" data-rid="${esc(b.order)}" ${dims ? `data-preview-w="${dims.w}" data-preview-h="${dims.h}" data-preview-pad="${dims.pad}"` : ''}>${png ? `<button type="button" class="backThumb" aria-label="${esc(label)}"><img crossorigin="anonymous" referrerpolicy="no-referrer" src="${esc(png)}" alt=""></button>` : '<span class="backPending">Preview pending</span>'}${b.pending ? '<span class="backPending">Saving…</span>' : ''}</figure>`;
 
     }).join('')}</div></section>`;
   }
@@ -89,7 +103,7 @@
     const sync = () => {
       frame = 0;
       for (const s of observed) if (!s.isConnected) { ro.unobserve(s); observed.delete(s); }
-      document.querySelectorAll('.sheetBacks').forEach(s => { if (!observed.has(s)) { observed.add(s); ro.observe(s); } resize(s); });
+      document.querySelectorAll('.sheetBacks').forEach(s => { if (!observed.has(s)) { observed.add(s); ro.observe(s); } resize(s); s.querySelectorAll('.backThumb img').forEach(img => { if (img.complete && !img.naturalWidth && !img.dataset.recovered) recover(img); }); });
       // Align populated shelves only within their actual responsive grid row.
       // Empty cards never inherit the height of another card's engraving shelf.
       const rows = new Map();
@@ -107,13 +121,29 @@
       if (active && !active.isConnected) hide();
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(sync); };
+    async function recover(img, manual = false) {
+      const fig = img.closest('.backPieces figure'), thumb = img.closest('.backThumb');
+      if (!fig || !thumb || img.dataset.recovering || (!manual && img.dataset.recovered)) return;
+      img.dataset.recovering = '1'; img.dataset.recovered = '1'; img.hidden = true;
+      const note = thumb.querySelector('.backPending') || document.createElement('span');
+      note.className = 'backPending'; note.textContent = 'Loading preview…'; thumb.appendChild(note);
+      try {
+        const src = await recoverPreview({sheetId:fig.dataset.sheetId, poolId:fig.dataset.poolId, approvedAt:+fig.dataset.approvedAt || 0}, id => window.Engrave.loadBackPreview(id));
+        if (!img.isConnected) return;
+        img.src = src; img.hidden = false; delete thumb.dataset.previewFailed; note.remove(); schedule();
+      } catch (_) { thumb.dataset.previewFailed = '1'; note.textContent = 'Retry preview'; }
+      finally { delete img.dataset.recovering; }
+    }
+    // Image errors do not bubble. Capture them on every live/history/dialog shelf.
+    document.addEventListener('error', e => { if (e.target.matches?.('.backThumb img')) recover(e.target); }, true);
+    document.addEventListener('load', e => { if (e.target.matches?.('.backThumb img')) schedule(); }, true);
     function hide() {
       active = null; zoom.classList.remove('visible'); clearTimeout(closeTimer);
       closeTimer = setTimeout(() => { if (!active) { if (zoom.hidePopover) zoom.hidePopover(); else zoom.hidden = true; } }, 180);
     }
     function show(thumb) {
       if (active === thumb) return;
-      const source = thumb.querySelector('img'); if (!source?.src) return;
+      const source = thumb.querySelector('img'); if (!source?.src || source.hidden || !source.naturalWidth) return;
       clearTimeout(closeTimer); active = thumb;
       const img = new Image(); img.crossOrigin = 'anonymous'; img.referrerPolicy = 'no-referrer'; img.src = source.src; img.alt = source.alt;
       zoom.replaceChildren(img);
@@ -124,7 +154,7 @@
       if (zoom.showPopover) { if (!zoom.matches(':popover-open')) zoom.showPopover(); } else zoom.hidden = false;
       requestAnimationFrame(() => { if (active === thumb) zoom.classList.add('visible'); });
     }
-    document.addEventListener('click', e => {const t=e.target.closest?.('.backThumb'); if(!t) return; e.preventDefault();e.stopPropagation();hide();const f=t.closest('figure');window.Engrave?.openBack(f.dataset.poolId,f.dataset.sheetId);},true);
+    document.addEventListener('click', e => {const t=e.target.closest?.('.backThumb'); if(!t) return; e.preventDefault();e.stopPropagation();hide();if(t.dataset.previewFailed){recover(t.querySelector('img'),true);return;}const f=t.closest('figure');window.Engrave?.openBack(f.dataset.poolId,f.dataset.sheetId);},true);
     document.addEventListener('pointerover', e => { const t=e.target.closest?.('.backThumb'); if(t && e.pointerType !== 'touch') show(t); });
     document.addEventListener('pointerout', e => { if(active && active.contains(e.target) && !active.contains(e.relatedTarget)) hide(); });
     document.addEventListener('focusin', e => { const t=e.target.closest?.('.backThumb'); if(t) show(t); });
@@ -136,5 +166,5 @@
   if (typeof document !== 'undefined') {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, {once:true}); else mount();
   }
-  return {placedIds, forSheet, markup, dimensions, previewUrl};
+  return {placedIds, forSheet, markup, dimensions, previewUrl, recoverPreview};
 });

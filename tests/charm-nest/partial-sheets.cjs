@@ -14,12 +14,11 @@ const base = {sheet:{wPt:100,hPt:50,insetPt:1},clearancePt:1,angles:[0,90],fineR
     assert(width>previous); previous=width;
     assert(S.verify(job,result.placements,2).ok);
     assert(result.placements.every(p=>p.wPt===9 && p.hPt===9),'never shrink charms to compact a partial sheet');
-    assert(result.params.compactPartial);
     if(count===12) {
       const portrait={...job,sheet:{wPt:50,hPt:100,insetPt:1}};
       const turned=await S.solve(portrait,{yield:()=>Promise.resolve()});
-      assert.equal(turned.placements.length,count); assert.equal(turned.params.packingAxis,'y');
-      assert(Math.max(...turned.placements.map(p=>p.yPt+p.hPt))<=maxWidth);
+      assert.equal(turned.placements.length,count);
+      assert(S.stripFraction(turned.placements,portrait.sheet)<=maxWidth/100,'portrait stock retains a usable rectangular offcut');
       assert(S.verify(portrait,turned.placements,2).ok);
     }
   }

@@ -111,6 +111,8 @@ For release-policy-2 sets, the sorter rechecks every included sheet's colour rul
 
 ### 4.3 Events (Design Station → sorter, `id: 0`)
 
+Back thumbnails recover failed Storage image loads through the read-only `charmNestLibrary.backPreview` operation. It validates the exact sheet, charm-copy ownership and approval revision, reads that record's saved PNG, and returns an inline image. Cached recovery is shared between views and invalidates on a new approval. Errors remain retryable; a missing or changed file is never replaced with another charm's image. This also avoids clipped broken-image alt text in the compact back shelf. Checks: `back-preview.cjs` and the saved-PNG/ownership/sandbox cases in `functions.cjs`.
+
 `state`, `orders.changed`, `selection`, `filters`, `ui.modal` (`{ open: "listing", transactionId }`), `activity` (every ticker line), `lock.changed`, `complete.done`, `error`. The sorter writes `activity` into its agent log as kind `DS` so one log reads end to end.
 
 ### 4.4 Order shape

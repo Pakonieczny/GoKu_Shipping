@@ -1,0 +1,21 @@
+const assert=require('node:assert/strict'),S=require('../../charm-nest-solver.js');
+function variant(bits,w,h) {const outer=S.ring(bits,w,h,4);return {fine:{bits,w,h,pm:S.packShifted(bits,w,h)},ringFine:S.packShifted(outer.bits,outer.w,outer.h),ringPad:4};}
+const bits=new Uint8Array(100).fill(1),v=variant(bits,10,10);
+const grid=new S.Grid(80,80);for(let x=0;x<80;x++)grid.set(x,0);grid.trackMaterial(true);
+assert.equal(S.contactAt(v,grid,1,1).score,0,'sheet walls never earn neighbour contact');
+grid.stamp(bits,10,10,10,20);
+const touching=S.contactAt(v,grid,20,20),near=S.contactAt(v,grid,22,20),far=S.contactAt(v,grid,30,20);
+assert.equal(touching.neighbors,1);assert.equal(far.neighbors,0);
+assert(touching.close>near.close);assert(touching.score>near.score && near.score>far.score,'smaller real edge separation scores higher');
+grid.stamp(bits,10,10,20,10);const surrounded=S.contactAt(v,grid,20,20);
+assert.equal(surrounded.neighbors,2);assert(surrounded.score>touching.score,'distinct neighbouring charms increase the score');
+const withSelf=grid.clone();withSelf.stamp(bits,10,10,20,20);
+assert.equal(S.contactAt(v,withSelf,20,20).neighbors,2,'a charm never counts itself as a neighbour');
+const u=new Uint8Array(40*40);for(let y=0;y<40;y++)for(let x=0;x<40;x++)u[y*40+x]=+(x<4 || x>=36 || y>=36);
+const concave=new S.Grid(80,80).trackMaterial(true);concave.stamp(u,40,40,10,10);
+const small=variant(new Uint8Array(64).fill(1),8,8);
+assert(concave.fits(small.fine.pm,26,18),'a piece can occupy the actual open contour despite overlapping bounding boxes');
+assert.equal(S.contactAt(small,concave,26,18).neighbors,0,'overlapping virtual boxes are not silhouette contact');
+assert(S.contactAt(small,concave,14,18).score>0,'the real inside edge of a concavity counts as adjacency');
+const clone=concave.clone();assert.equal(S.contactAt(small,clone,14,18).score,S.contactAt(small,concave,14,18).score);
+console.log('Neighbours OK: exact concave masks, distinct charms, minimal gaps, no wall/rectangle rewards and cloned occupancy');

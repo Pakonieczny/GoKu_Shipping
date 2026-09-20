@@ -306,6 +306,18 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   r=await post(lib,{op:'getSheet',id:'edit-test'});assert.equal(r.body.sheet.backPool.find(b=>b.poolId===pid).text,'Updated');assert.equal(r.body.sheet.backPool.find(b=>b.poolId===pid2).text,'Sibling');
   for(const key of ['Charm_Nest_Sheets/edit-test','Charm_Pool_Back/'+pid,'Charm_Pool_Back/'+pid2])store.delete(key);
 
+  // Failed image URLs recover the exact saved PNG without using its old token.
+  const pngBytes=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII=','base64');
+  await bucket.file('test/preview.png').save(pngBytes,{contentType:'image/png'});
+  await post(lib,{op:'putSheet',sheet:{id:'preview-test',poolIds:[pid],backPool:[{poolId:pid,approvedAt:123,outputs:{png:{path:'test/preview.png',url:'https://fixture/expired-token'}}}]}});
+  r=await post(lib,{op:'backPreview',sheetId:'preview-test',poolId:pid,approvedAt:123});
+  assert.equal(r.body.dataUrl,'data:image/png;base64,'+pngBytes.toString('base64'));
+  assert.equal(r.body.approvedAt,123);
+  r=await post(lib,{op:'backPreview',sheetId:'preview-test',poolId:pid2});assert(r.status>=400,'cannot read another copy');
+  r=await post(lib,{op:'backPreview',sheetId:'preview-test',poolId:pid,approvedAt:124});assert(r.status>=400,'cannot substitute a newer engraving for an old preview');
+  r=await post(lib,{op:'backPreview',sheetId:'preview-test',poolId:pid,sandbox:true});assert(r.status>=400,'sandbox cannot read production back records');
+  store.delete('Charm_Nest_Sheets/preview-test');blobs.delete('test/preview.png');
+
   // Run creation date stays stable across ordinary checkpoints.
   store.get('Charm_Nest_Runs/run-H').createdAt = 12345;
   await post(lib, { op:'runPut', run:{ runId:'run-H', status:'complete' }, merge:true });

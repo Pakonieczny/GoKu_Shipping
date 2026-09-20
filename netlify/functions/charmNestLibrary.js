@@ -165,6 +165,29 @@ async function op_getSheet(b) {
   await refreshLinks(d);
   return { sheet: d };
 }
+/** Same-origin recovery of a saved PNG; never accepts an arbitrary caller URL. */
+async function op_backPreview(b) {
+  if (!isId(b.sheetId) || !isId(b.poolId)) return { error: "bad back identity" };
+  const snap = await col(SHEETS).doc(b.sheetId).get();
+  const sheet = snap.exists ? snap.data() : null;
+  const back = (sheet?.backPool || []).find(x => x.poolId === b.poolId);
+  if (!back || !(sheet.poolIds || []).includes(b.poolId)) return { error: "This back no longer belongs to the sheet" };
+  if (b.approvedAt && +b.approvedAt !== +back.approvedAt) return { error: "This engraving changed; refresh the sheet" };
+  const bucket = admin.storage().bucket();
+  let path = back.outputs?.png?.path;
+  if (!path && back.outputs?.png?.url) {
+    try {
+      const url = new URL(back.outputs.png.url), match = url.pathname.match(/^\/v0\/b\/([^/]+)\/o\/(.+)$/);
+      if (url.hostname === "firebasestorage.googleapis.com" && match && decodeURIComponent(match[1]) === bucket.name) path = decodeURIComponent(match[2]);
+    } catch (_) {}
+  }
+  if (!path) return { error: "The saved back preview is unavailable" };
+  const file = bucket.file(path), [meta] = await file.getMetadata();
+  if (+meta.size > 2 * 1024 * 1024) return { error: "Back preview is too large" };
+  const [bytes] = await file.download();
+  if (bytes.length > 2 * 1024 * 1024 || bytes.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a") return { error: "The saved preview is not a PNG" };
+  return { dataUrl: "data:image/png;base64," + bytes.toString("base64"), approvedAt: back.approvedAt || null };
+}
 /** Links in a sheet record are rebuilt from the objects' current download tokens (older records may carry a token
  *  that a later re-upload replaced). Charm links missing at save time are filled from the charm library. */
 async function refreshLinks(d) {
@@ -665,7 +688,7 @@ async function op_optionMapPut(b) {
   return { ok: true };
 }
 
-const OPS = { archiveEmptySheet: op_archiveEmptySheet, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
+const OPS = { archiveEmptySheet: op_archiveEmptySheet, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, startMaster: op_startMaster,
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,
