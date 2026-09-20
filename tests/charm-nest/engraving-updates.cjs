@@ -38,6 +38,13 @@ for(const back of [{png:storagePng},{outputs:{png:{url:storagePng}}},{png:storag
 }
 assert(Backs.markup([{...records[0],preview:'data:image/png;base64,AAAA'}]).includes('src="data:image/png;base64,AAAA"'),'instant approval preview preserved');
 assert(!Backs.markup([{...records[0],png:'https://['}]).includes('<img'),'malformed historical URL cannot break the sheet');
+const compact=Backs.markup([{...records[0],png:storagePng,previewWPt:60,previewHPt:70}],{wPt:283.46,hPt:141.73});
+assert(!compact.includes('<figcaption>'),'order numbers are no longer visible below backs');
+assert(compact.includes('data-pool-id="100_200_1"'),'copy tracking remains');
+assert(compact.includes('data-stock-w="283.46"')&&compact.includes('data-preview-w="60"'),'physical dimensions reach every preview');
+assert.deepEqual(Backs.dimensions({previewWPt:60,previewHPt:70}),{w:60,h:70,pad:3*72/25.4});
+const legacy=Backs.dimensions({pageWPt:60+4*72/25.4+.5,pageHPt:70+4*72/25.4+.5});
+assert(Math.abs(legacy.w-60)<1e-8&&Math.abs(legacy.h-70)<1e-8,'existing back exports have a compatible scale fallback');
 const source=fs.readFileSync('charm-nest-bridge.js','utf8');
 const start=source.indexOf('  function libraryGroups('),end=source.indexOf('  let _cache',start);const context=vm.createContext({O:require("../../charm-nest-orders.js")});vm.runInContext(source.slice(start,end),context);
 const groups=context.libraryGroups([{setId:'released',day:'2026-09-18',orders:{}}],[{id:'1',runId:'work',day:'2026-09-19',metal:'gold'},{id:'2',runId:'work',day:'2026-09-19',metal:'silver'},{id:'3',setId:'released',day:'2026-09-18',metal:'gold'}]);

@@ -1423,8 +1423,11 @@ const Gate = window.Gate = (() => {
     await RunCtl.save(run);
   }
   let assemblyQueue = Promise.resolve();
+  let assemblyPending = 0;
   function assemble(run) {
-    const task = assemblyQueue.catch(() => {}).then(() => assembleNow(run)); assemblyQueue = task; return task;
+    assemblyPending++;
+    const task = assemblyQueue.catch(() => {}).then(() => assembleNow(run)).finally(() => { assemblyPending--; refreshAllCards(); });
+    assemblyQueue = task; return task;
   }
   async function assembleNow(run) {
     if (!modern(run?.runId) || !run) return;
@@ -1439,7 +1442,8 @@ const Gate = window.Gate = (() => {
       sh.draft = true; sh.setId = null; sh.seq = null; sh.sheetIndex = null; sh.label = null;
       for (const row of Orders.rows()) if (row.poolIds.some(id => sh.charms.some(c => c.poolId === id))) row.state = "pooled";
       await Pool.update(sh.charms.map(c => c.poolId).filter(Boolean), { setId:null, sheetId:null, state:"ready" });
-      if (sh.sheetId) await api("charmNestLibrary", { op:"putSheet", sheet:{ id:sh.sheetId, draft:true, setId:null, setSeq:null, label:null } });
+      if (sh.sheetId) await api("charmNestLibrary", { op:"putSheet", sheet:{ id:sh.sheetId, draft:true, setId:null, setSeq:null, sheetIndex:null, label:null, solidIncluded:solid(sh.metal) ? !!selected()[sh.metal] : null } });
+      set.labels = null;
     }
     const included = new Set(allSheets().filter(p => p.setId === set.setId && !p.draft).map(p => p.sheetId));
     set.sheetIds = set.sheetIds.filter(id => included.has(id)); set.labelFiles = set.labelFiles.filter(f => included.has(f.sheetId));
@@ -1449,11 +1453,18 @@ const Gate = window.Gate = (() => {
       if (!Object.keys(order.lines).length) delete set.orders[rid];
     }
     for (const sh of pages) {
-      if (!policy(sh, set.seq).include || sh.setId === set.setId) continue;
+      if (!policy(sh, set.seq).include) continue;
+      // Membership can have been saved before a label upload was interrupted.
+      // Retry the QR alone without re-nesting or publishing the sheet twice.
+      if (sh.setId === set.setId) {
+        if (!Sets.labelsReady(sh, set)) await Sets.onSheetSaved(sh, sh.charms, undefined, {labelsOnly:true});
+        continue;
+      }
       const previous = { draft:sh.draft, setId:sh.setId, setDay:sh.setDay, seq:sh.seq, group:sh.group, sheetIndex:sh.sheetIndex, fileBase:sh.fileBase };
       sh.draft = false; sh.setId = set.setId; sh.setDay = set.day; sh.seq = set.seq; sh.group = "dispatch";
       sh.sheetIndex = 1 + pages.filter(p => p !== sh && p.setId === set.setId && p.metal === sh.metal).length;
       sh.fileBase = CN.sheetFileBase(sh);
+      set.labels = null;
       sh.persistedDone = false;
       try { await CN.persistSheet(sh, sh.charms); sh.persistedDone = true; sh.problem = null; }
       catch (e) { Object.assign(sh, previous); sh.persistedDone = true; sh.problem = "Set files were not saved: " + e.message; throw e; }
@@ -1462,9 +1473,10 @@ const Gate = window.Gate = (() => {
     }
     run.heldSheets = pages.filter(p => p.draft).length;
     await Sets.save(set); refreshAllCards();
+    if (S.mode === "library") await CN.loadLibrary();
   }
   function editable(sh) {
-    return !sh.recalled && !allSheets().some(p => ["nesting", "finishing", "queued"].includes(p.status)) &&
+    return !assemblyPending && !sh.recalled && !allSheets().some(p => ["nesting", "finishing", "queued"].includes(p.status) || p.persisted && !p.persistedDone) &&
       !B.run?.arrivalBusy && !(B.run && Sets.ofRun(B.run.runId).some(s => s.committedAt));
   }
   function changed() {
@@ -1899,7 +1911,7 @@ const Engrave = window.Engrave = (() => {
     const view = job.view, mask = job.mask, fit = job.fit; const cv = document.createElement("canvas"); cv._editable = editable;
     const bb = view.members.reduce((a, s) => [Math.min(a[0], s.bbox[0]), Math.min(a[1], s.bbox[1]), Math.max(a[2], s.bbox[2]), Math.max(a[3], s.bbox[3])], [Infinity, Infinity, -Infinity, -Infinity]);
     const pad = 3 * PT; const w = bb[2] - bb[0] + 2 * pad, h = bb[3] - bb[1] + 2 * pad; const k = px / Math.max(w, h);
-    cv.width = Math.round(w * k); cv.height = Math.round(h * k); const ctx = cv.getContext("2d");
+    cv.width = Math.round(w * k); cv.height = Math.round(h * k); cv._sizePt = {w,h}; const ctx = cv.getContext("2d");
     ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
     const tx = (x, y) => [(x - bb[0] + pad) * k, (bb[3] + pad - y) * k];
     if (grid) { ctx.strokeStyle = "rgba(0,0,0,.09)"; ctx.lineWidth = 1; const x0 = Math.floor((bb[0] - pad) * MM), x1 = Math.ceil((bb[2] + pad) * MM); for (let mm = x0; mm <= x1; mm++) { const p = tx(mm * PT, 0); ctx.beginPath(); ctx.moveTo(p[0], 0); ctx.lineTo(p[0], cv.height); ctx.stroke(); } const y0 = Math.floor((bb[1] - pad) * MM), y1 = Math.ceil((bb[3] + pad) * MM); for (let mm = y0; mm <= y1; mm++) { const p = tx(0, mm * PT); ctx.beginPath(); ctx.moveTo(0, p[1]); ctx.lineTo(cv.width, p[1]); ctx.stroke(); } ctx.fillStyle = "rgba(0,0,0,.4)"; ctx.font = `${Math.max(9, k * 2)}px sans-serif`; ctx.fillText("1 mm grid", 4, 12); }
@@ -1968,8 +1980,8 @@ const Engrave = window.Engrave = (() => {
       if (!j.approvedAt || !["approved", "written"].includes(j.state)) { j.copies.forEach(id => invalid.add(id)); continue; }
       records.push(...(j.backs || []));
       if (j.view && j.fit) {
-        if (!j._backPreview || j._previewAt !== j.approvedAt) { j._backPreview = renderBack(j, 360, {hatch:false}).toDataURL("image/png"); j._previewAt = j.approvedAt; }
-        for (const poolId of j.copies) if (!(j.backs || []).some(b => b.poolId === poolId && b.approvedAt === j.approvedAt)) records.push({poolId, order:j.row.order.receiptId, sku:j.row.spec.designSku, copy:B.pool.rows.get(poolId)?.copy, text:j.text, approvedAt:j.approvedAt, preview:j._backPreview, pending:true});
+        if (!j._backPreview || j._previewAt !== j.approvedAt) { const cv = renderBack(j, 360, {hatch:false}); j._backPreview = cv.toDataURL("image/png"); j._previewSize = cv._sizePt; j._previewAt = j.approvedAt; }
+        for (const poolId of j.copies) if (!(j.backs || []).some(b => b.poolId === poolId && b.approvedAt === j.approvedAt)) records.push({poolId, order:j.row.order.receiptId, sku:j.row.spec.designSku, copy:B.pool.rows.get(poolId)?.copy, text:j.text, approvedAt:j.approvedAt, preview:j._backPreview, previewWPt:j._previewSize?.w, previewHPt:j._previewSize?.h, pending:true});
       }
     }
     // Older compact history records did not include placements; their saved back membership is authoritative.
@@ -1977,7 +1989,10 @@ const Engrave = window.Engrave = (() => {
     const fallback = !live && !Array.isArray(sheet.poolIds) && !sheet.placements ? Object.assign({}, sheet, {poolIds:(sheet.backPool || sheet.backs || []).map(b=>b.poolId)}) : normalized;
     return window.CharmNestBacks.forSheet(fallback, records.filter(b => !invalid.has(b.poolId)));
   }
-  const backsMarkup = sheet => window.CharmNestBacks.markup(sheetBacks(sheet));
+  const backsMarkup = sheet => {
+    const st = sheet.stock || sheet.recalled?.stock || sheet.outputs?.report?.stock || (sheet.metal ? stockFor(sheet.metal) : {});
+    return window.CharmNestBacks.markup(sheetBacks(sheet), {wPt:st.wPt || st.wIn * PT_PER_IN, hPt:st.hPt || st.hIn * PT_PER_IN});
+  };
   function refreshBacks() {
     refreshAllCards();
     for (const el of document.querySelectorAll("[data-back-sheet]")) {
@@ -2021,7 +2036,7 @@ const Engrave = window.Engrave = (() => {
         const name = `${sh.fileBase}_back_${poolId}_${approval}`;
         let ai = null, pngUp = null;
         if (S.cloud.ok && sh.folderPath) { ai = await uploadBytes(`${sh.folderPath}/back/${name}.ai`, built.bytes, "application/illustrator", `Saving back ${copy}`); pngUp = await uploadBytes(`${sh.folderPath}/back/${name}.png`, pngBlob, "image/png"); }
-        const rec = { poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, text: job.text, lines: job.lines, font: "Source Sans 3", weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: job.approvedBy, approvedAt: job.approvedAt, nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: S.settings.backFileView || "asSeenFromBack", reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, pageWPt: built.wPt, pageHPt: built.hPt };
+        const rec = { poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, text: job.text, lines: job.lines, font: "Source Sans 3", weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: job.approvedBy, approvedAt: job.approvedAt, nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: S.settings.backFileView || "asSeenFromBack", reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, previewWPt:png._sizePt.w, previewHPt:png._sizePt.h, pageWPt: built.wPt, pageHPt: built.hPt };
         if (!current()) return;
         if (Pool.sheetOf(poolId) !== sh) throw new Error("The charm moved during approval. Retry on its current sheet.");
         if (!S.cloud.ok || !ai || !pngUp) throw new Error("Reconnect to save the approved back files");
@@ -2426,7 +2441,16 @@ const Sets = window.Sets = (() => {
     const blob = await new Promise(r => cv.toBlob(r, "image/png")); return { blob, dataUrl: cv.toDataURL("image/png"), ecc };
   }
   /** After a sheet is saved: its label(s) beside it, the sheet record and the set record kept current, pool rows → written. */
-  async function onSheetSaved(sh, items, outputs) {
+  function labelsReady(sh, set) {
+    const byId = new Map(sh.charms.map(c => [c.id, c]));
+    const ids = [...new Set(sh.placements.map(p => byId.get(p.id)).filter(Boolean).map(c => String(c.order || c.id).split("/")[0]))];
+    const parts = O.safeChunks(ids, O.CARD_TO_METAL[sh.metal] || sh.metal, 1000, 500, 8);
+    const files = sh.label?.files || [], indexed = (set.labelFiles || []).filter(f => f.sheetId === sh.sheetId);
+    return sh.setId === set.setId && !sh.draft && parts.length > 0 && files.length === parts.length && indexed.length === files.length &&
+      files.every((f, i) => f.url && f.path && f.sheet === sh.fileBase && f.payload === O.encodeOrderList(parts[i], O.CARD_TO_METAL[sh.metal] || sh.metal) &&
+        indexed.some(g => g.path === f.path && g.url === f.url && g.part === f.part));
+  }
+  async function onSheetSaved(sh, items, outputs, {labelsOnly = false} = {}) {
     const set = setOfSheet(sh); if (!set) return;
     const byId = new Map(items.map(c => [c.id, c]));
     const placed = sh.placements.map(p => byId.get(p.id)).filter(Boolean);
@@ -2447,14 +2471,15 @@ const Sets = window.Sets = (() => {
     if (S.cloud.ok && sh.sheetId) await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, label: sh.label, setId: set.setId, setSeq: set.seq, sheetIndex: sh.sheetIndex, orders: ids, runId: sh.runId, poolIds: placed.map(c => c.poolId).filter(Boolean) } });
     // pool rows and order lines
     const poolIds = placed.map(c => c.poolId).filter(Boolean);
-    if (poolIds.length) await Pool.update(poolIds, { sheetId: sh.sheetId, setId: set.setId, state: "written", sheetName: sh.fileBase });
-    for (const row of Orders.rows()) { if (!row.poolIds.length) continue; const allPlaced = row.poolIds.every(pid => { const p = B.pool.rows.get(pid); return p && p.sheetId; }); if (allPlaced && row.state === "pooled") row.state = "written"; }
+    if (!labelsOnly && poolIds.length) await Pool.update(poolIds, { sheetId: sh.sheetId, setId: set.setId, state: "written", sheetName: sh.fileBase });
+    for (const row of labelsOnly ? [] : Orders.rows()) { if (!row.poolIds.length) continue; const allPlaced = row.poolIds.every(pid => { const p = B.pool.rows.get(pid); return p && p.sheetId; }); if (allPlaced && row.state === "pooled") row.state = "written"; }
     // the set record
     if (!set.sheetIds.includes(sh.sheetId)) set.sheetIds.push(sh.sheetId);
     if (!set.materials.includes(sh.metal)) set.materials.push(sh.metal);
     for (const c of placed) { const rid = String(c.order || "").split("/")[0]; if (!rid || !c.orderInfo) continue; const o = set.orders[rid] = set.orders[rid] || { lines: {}, held: null }; const ln = o.lines[c.orderInfo.transactionId] = o.lines[c.orderInfo.transactionId] || { transactionId: c.orderInfo.transactionId, sku: c.orderInfo.sku, copies: [] }; if (!ln.copies.some(x => x.poolId === c.poolId)) ln.copies.push({ copy: c.orderInfo.copy, sheetId: sh.sheetId, sheet: sh.fileBase, poolId: c.poolId, backPoolId: null }); }
     set.labelFiles = set.labelFiles.filter(f => f.sheetId !== sh.sheetId).concat(sh.label.files.map(f => Object.assign({ sheetId: sh.sheetId }, f)));
-    set.status = "nesting";
+    set.labels = null; // A previously collected PDF/manifest no longer describes these sheet labels.
+    if (!labelsOnly) set.status = "nesting";
     await save(set);
     if (window.RunHistory) RunHistory.refreshIfOpen();
     agent({ metal: sh.metal, run: sh.runId }, "cloud", `${sh.fileBase}: ${files.length} label${files.length === 1 ? "" : "s"} saved (${ids.length} order${ids.length === 1 ? "" : "s"}) · set ${set.name} now ${set.sheetIds.length} sheet(s)`);
@@ -2555,13 +2580,15 @@ const Sets = window.Sets = (() => {
     }
     return [...groups.values()].sort((a,b)=>String(b.day || "").localeCompare(String(a.day || "")) || (+b.seq || 0)-(+a.seq || 0) || (+b.updatedAt || 0)-(+a.updatedAt || 0));
   }
-  let _cache = null;
+  let _cache = null, libraryRequest = 0;
   async function renderLibrary(body, opts) {
+    const request = ++libraryRequest;
     const reuse = !!(opts && opts.reuse && _cache);
     if (!reuse) body.innerHTML = `<div class="libEmpty">Loading sets…</div>`;
     try {
       if (!reuse) {
         const [ss, sh] = await Promise.all([api("charmNestLibrary", { op: "setList", from: document.getElementById("libFrom").value || null, to: document.getElementById("libTo").value || null, limit: 200 }), api("charmNestLibrary", { op: "listSheets", from: document.getElementById("libFrom").value || null, to: document.getElementById("libTo").value || null, limit: 500 })]);
+        if (request !== libraryRequest || S.library.kind !== "sets") return;
         _cache = { sets: libraryGroups(ss.sets || [], sh.sheets || []), sheets: sh.sheets || [] };
       }
       if (S.library.kind !== "sets") return;
@@ -2591,9 +2618,9 @@ const Sets = window.Sets = (() => {
         const ub = card.querySelector("[data-undo]"); if (ub) ub.onclick = async () => { if (!confirm(`Undo the completion of ${st.name}? The orders return to the station's list; every file is kept.`)) return; const local = [...byRun().values()].find(x => x.setId === st.setId) || Object.assign({ orders: {}, sheetIds: st.sheetIds || [], materials: st.materials || [], labelFiles: st.labelFiles || [] }, st); byRun().set(local.runId || st.setId, local); try { await undo(local); toast(`${st.name} undone`, "ok"); renderLibrary(body); } catch (e) { toast(e.message, "bad", 6000); } };
         body.appendChild(card);
       }
-    } catch (e) { body.innerHTML = `<div class="libEmpty">Could not load sets: ${esc(e.message)}</div>`; }
+    } catch (e) { if (request === libraryRequest && S.library.kind === "sets") body.innerHTML = `<div class="libEmpty">Could not load sets: ${esc(e.message)}</div>`; }
   }
-  return { ensure, ofRun, keyOf, onSheetSaved, finalize, commit, undo, evaluate, save, renderLibrary, renderLabelPng, sheetsOf, setOfSheet, byRun };
+  return { ensure, ofRun, keyOf, labelsReady, onSheetSaved, finalize, commit, undo, evaluate, save, renderLibrary, renderLabelPng, sheetsOf, setOfSheet, byRun };
 })();
 
 /* ═══ 23 · RunCtl — the two halves, the record, resume, stop, Auto/Manual ═══ */
@@ -3601,7 +3628,7 @@ const Recall = window.Recall = (() => {
         const pg = i === 0 ? prim.pages[0] : CN.addPage(m.key);
         pg.charms = []; pg.placements = []; pg.rejects = []; pg.outputs = null; pg.verification = rec.verification || null; pg.liveInfo = null; pg.dirty = false; pg.problem = null;
         pg.recalled = rec; pg.status = "complete"; pg.sheetId = rec.id; pg.runId = rec.runId || RC.runId; pg.setId = rec.setId; pg.seq = rec.setSeq; pg.setDay = rec.day; pg.sheetIndex = rec.sheetIndex; pg.fileBase = rec.fileBase; pg.group = null;
-        pg.backPool = (rec.backs || []).map(bk => ({ sheetId:rec.id, approvedAt:bk.approvedAt, copy:bk.copy, poolId: bk.poolId, order: bk.order, sku: bk.sku, text: bk.text, lines: bk.lines || (bk.text ? String(bk.text).split("\n") : []), approvedBy: bk.approvedBy, capMm: bk.capMm, outputs: { png: bk.png ? { url: bk.png } : null, ai: bk.ai ? { url: bk.ai } : null } }));
+        pg.backPool = (rec.backs || []).map(bk => ({ sheetId:rec.id, approvedAt:bk.approvedAt, copy:bk.copy, previewWPt:bk.previewWPt, previewHPt:bk.previewHPt, pageWPt:bk.pageWPt, pageHPt:bk.pageHPt, poolId: bk.poolId, order: bk.order, sku: bk.sku, text: bk.text, lines: bk.lines || (bk.text ? String(bk.text).split("\n") : []), approvedBy: bk.approvedBy, capMm: bk.capMm, outputs: { png: bk.png ? { url: bk.png } : null, ai: bk.ai ? { url: bk.ai } : null } }));
         pg.cloud = Object.assign({ preview: rec.preview }, rec.outputs || {});
         pg.persistedDone = true; pg.persisted = Promise.resolve(); pg._img = null;
       });
@@ -4049,7 +4076,7 @@ const SetPicker = window.SetPicker = (() => {
   }
   const counts = sheets => METALS.map(m => { const n = sheets.filter(s => s.metal === m.key).length; return n ? `${labelOf(m.key)} ${n}` : ""; }).filter(Boolean).join(" · ");
   function previewCurrent() {
-    const sheets = allSheets().filter(p => p.charms.length).map(p => ({ id:p.sheetId, poolIds:[...window.CharmNestBacks.placedIds(p)], backs:Engrave.sheetBacks(p), metal:p.metal, fileBase:p.fileBase || labelOf(p.metal), preview:p.cloud?.preview, placedCount:p.placements.length, draft:p.draft || !p.setId, setSeq:p.seq }));
+    const sheets = allSheets().filter(p => p.charms.length).map(p => ({ id:p.sheetId, stock:p.outputs?.report?.stock || stockFor(p.metal), poolIds:[...window.CharmNestBacks.placedIds(p)], backs:Engrave.sheetBacks(p), metal:p.metal, fileBase:p.fileBase || labelOf(p.metal), preview:p.cloud?.preview, placedCount:p.placements.length, draft:p.draft || !p.setId, setSeq:p.seq }));
     preview({ name:"Current workspace", day:B.run?.day || today(), sheets, status:B.run?.status || "manual" });
   }
   function preview(g) {

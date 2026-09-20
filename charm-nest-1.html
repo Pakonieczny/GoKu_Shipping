@@ -269,7 +269,9 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .dayHead{font:15px var(--serif);color:var(--ink70);margin:6px 0 -4px;display:flex;align-items:center;gap:10px}
 .dayHead .n{font:11px var(--mono);color:var(--ink45)}
 .libGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
-.libCard{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);padding:10px 12px;display:grid;gap:6px;--accent:var(--ink25);border-left:5px solid var(--accent);cursor:pointer;min-width:0}
+.libCard{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);padding:10px 12px;display:flex;flex-direction:column;gap:6px;--accent:var(--ink25);border-left:5px solid var(--accent);cursor:pointer;min-width:0}
+.libCard>*{flex-shrink:0}
+.libCard>[data-back-sheet]:empty{display:none}
 .libCard[data-m=gold]{--accent:var(--m-gold)}.libCard[data-m=silver]{--accent:var(--m-silver)}.libCard[data-m=rose]{--accent:var(--m-rose)}.libCard[data-m=gold10k]{--accent:var(--m-gold10k)}.libCard[data-m=gold14k]{--accent:var(--m-gold14k)}
 /* Two hover states, and only two, everywhere there is a list — order cards, order rows, review items, charm tiles,
    SKU tiles, sheet cards, engraving chips and the engraved backs. The first says where the mouse is: a quiet lift, the
@@ -293,7 +295,9 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .fanHead .sws{display:inline-flex;gap:4px;margin-left:6px}
 .libCard .pv{width:100%;aspect-ratio:513/434;object-fit:contain;background:var(--card2);border:1px solid var(--line2);border-radius:8px}
 .libCard .pv.ph{display:flex;align-items:center;justify-content:center;font-size:11.5px;color:var(--ink45)}
-.libCard .m{display:flex;gap:8px;font-size:11px;color:var(--ink70);flex-wrap:wrap}
+.libCard .m{display:flex;align-items:center;align-content:flex-start;gap:6px 8px;font-size:11px;line-height:1.4;color:var(--ink70);flex-wrap:wrap;margin-top:auto;padding-top:2px}
+.libCard .m>span{flex:0 0 auto}
+.libCard .m>.pill{align-self:center;line-height:16px;height:20px;padding:2px 7px;box-sizing:border-box;font-size:11px}
 .libCard .m b{font-family:var(--mono);font-weight:700;color:var(--ink)}
 .libEmpty{padding:40px;text-align:center;color:var(--ink45);font-size:13px;display:flex;flex-direction:column;align-items:center;gap:11px}
 .libEmpty b{font-weight:600;color:var(--ink70);max-width:46ch;line-height:1.5}
@@ -895,11 +899,15 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .placeView .claude{border-left:3px solid var(--gold2);background:var(--goldSoft);padding:6px 9px;border-radius:6px;font-size:12px;overflow-wrap:anywhere}
 .sheetBacks{padding:8px 12px 6px;background:#fff;border-bottom:1px solid var(--line2)}
 .backLabel{font:600 10px var(--sans);color:var(--ink45);letter-spacing:.04em;display:flex;gap:6px}
-.backPieces{display:grid;grid-template-columns:repeat(auto-fit,minmax(56px,1fr));gap:3px;align-items:end}
-.backPieces figure{margin:0;min-width:0;max-width:110px;text-align:center}
-.backPieces img{display:block;width:100%;height:66px;object-fit:contain}
-.backPieces figcaption{font:8px var(--mono);overflow-wrap:anywhere;color:var(--ink45)}
-.backPieces a{color:inherit}.sheetBacks:empty{display:none}
+.backPieces{display:flex;flex-wrap:wrap;gap:5px 3px;align-items:center;padding:3px 0}
+.backPieces figure{margin:0;min-width:0;flex:0 0 max(calc((100% - 15px)/6),var(--back-width,28px));display:flex;justify-content:center;align-items:center;position:relative}
+.backPieces .backThumb{position:relative;display:block;width:var(--back-width,28px);height:var(--back-height,28px);border-radius:3px;overflow:hidden;cursor:zoom-in;color:inherit}
+.backPieces .backThumb:focus-visible{outline:2px solid var(--gold2);outline-offset:3px}
+.backPieces .backThumb img{position:absolute;display:block;width:100%;height:100%;object-fit:contain;border:0;border-radius:0}
+.backPending{font:9px var(--mono);color:var(--ink45)}.sheetBacks:empty{display:none}
+.backZoom{position:fixed;inset:auto;margin:0;padding:8px;box-sizing:border-box;border:1px solid var(--line);border-radius:16px;background:#fff;box-shadow:0 14px 45px rgba(25,20,12,.22);pointer-events:none;opacity:0;transform:scale(.45);transition:opacity .18s ease,transform .24s cubic-bezier(.2,.8,.2,1);z-index:10000}
+.backZoom.visible{opacity:1;transform:scale(1)}.backZoom img{display:block;width:100%;height:100%;object-fit:contain}
+@media(prefers-reduced-motion:reduce){.backZoom{transition:none;transform:none}}
 .backPool{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
 .backPool .bp{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:8px;font-size:11.5px;display:grid;gap:3px}
 .backPool .bp img{width:100%;aspect-ratio:1.5;object-fit:contain;background:#fff;border:1px solid var(--line2);border-radius:6px}
@@ -2590,6 +2598,9 @@ async function persistSheet(sh, items) {
   toast(`${labelOf(sh.metal)}: sheet, proof and report saved to the cloud`, "ok", 3000);
   // the set: one QR label per sheet saved beside it, the set record kept current (design §8.3)
   if (window.Sets) await Sets.onSheetSaved(sh, items, outputs);
+  // The first refresh above shows the saved layout while labels are uploading.
+  // Refresh again only after the sheet QR and its set index have both been saved.
+  if (S.mode === "library") await loadLibrary();
 }
 let pdfjsReady = null;
 function ensurePdfJs() {
@@ -2855,7 +2866,7 @@ function drawPreview(sh) {
 }
 function paintPreview(cv, sh, clean, R) {
   R = R || 0; const ctx = cv.getContext("2d"); const st = stockFor(sh.metal); const W = cv.width - R, H = cv.height - R; const k = W / st.wPt;
-  if (!clean) sh._view = { R, k };   // the on-screen canvas only; offscreen renders must not disturb click mapping
+  if (!clean) { sh._view = { R, k }; cv._backSheetScale = k * cv.clientWidth / cv.width; }   // the on-screen canvas only; offscreen renders must not disturb click mapping
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = sh._forClaude ? "#ece7dc" : "#fffefb"; ctx.fillRect(0, 0, cv.width, cv.height);
   if (R) drawRulers(ctx, R, k, W, H);
   ctx.translate(R, R);
@@ -2996,14 +3007,17 @@ function downloadOutputs(sh) {
 }
 
 /* ═══ 14 · library (recovery) & charms views ════════════════════════════ */
+let libraryLoadId = 0;
 async function loadLibrary() {
+  const loadId = ++libraryLoadId;
   const body = $("#libBody"); body.innerHTML = `<div class="libEmpty">Loading sheets…</div>`;
   if (!S.cloud.ok) { body.innerHTML = `<div class="libEmpty">Cloud offline — the library needs the Netlify functions.</div>`; return; }
   if (S.library.kind === "sets" && window.Sets) return Sets.renderLibrary(body);
   try {
     const r = await api("charmNestLibrary", { op: "listSheets", metal: S.library.metal === "all" ? null : S.library.metal, from: $("#libFrom").value || null, to: $("#libTo").value || null, limit: 300 }, { label: "Loading library" });
+    if (loadId !== libraryLoadId || S.library.kind === "sets") return;
     S.library.rows = r.sheets || []; renderLibrary();
-  } catch (e) { body.innerHTML = `<div class="libEmpty">Could not load: ${esc(e.message)}</div>`; }
+  } catch (e) { if (loadId === libraryLoadId) body.innerHTML = `<div class="libEmpty">Could not load: ${esc(e.message)}</div>`; }
 }
 /* A sheet card leads with what a person looks for — the metal (its colour and short code), the sheet number, the day
    and the time. The file name (GF_Sep.17.26_Set-1_Sheet-2) says the same three things in 26 characters and got cut

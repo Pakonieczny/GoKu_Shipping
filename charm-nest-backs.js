@@ -35,13 +35,89 @@
       return parsed.href;
     } catch (_) { return ''; }
   }
-  function markup(backs) {
+  function dimensions(b) {
+    const pt = 72 / 25.4, pad = 3 * pt;
+    // Older saved backs contain the export page size (5 mm padding + cut stroke).
+    // New records store the exact preview dimensions, including its 3 mm border.
+    const w = +b.previewWPt || (+b.pageWPt > 10 * pt + .5 ? +b.pageWPt - 4 * pt - .5 : 0);
+    const h = +b.previewHPt || (+b.pageHPt > 10 * pt + .5 ? +b.pageHPt - 4 * pt - .5 : 0);
+    return w > 2 * pad && h > 2 * pad ? {w, h, pad} : null;
+  }
+  function markup(backs, stock = {}) {
     if (!backs?.length) return '';
-    return `<section class="sheetBacks" aria-label="Back engravings"><div class="backLabel">Back engraving <span>${backs.length}</span></div><div class="backPieces">${backs.map(b => {
+    return `<section class="sheetBacks" aria-label="Back engravings" data-stock-w="${+stock.wPt || 0}" data-stock-h="${+stock.hPt || 0}"><div class="backLabel">Back engraving <span>${backs.length}</span></div><div class="backPieces">${backs.map(b => {
       const png = previewUrl(b.preview || b.outputs?.png?.url || b.png), ai = safeUrl(b.outputs?.ai?.url || b.ai);
       const identity = `${b.order || ''} · ${b.sku || ''} · copy ${b.copy || String(b.poolId).split('_').pop()}`;
-      return `<figure data-pool-id="${esc(b.poolId)}" title="${esc(identity + '\n' + (b.text || '') + (b.pending ? '\nSaving…' : ''))}">${png ? `<img crossorigin="anonymous" referrerpolicy="no-referrer" src="${esc(png)}" alt="${esc('Back: ' + (b.text || '') + ' — ' + identity)}">` : '<span>Preview pending</span>'}<figcaption>${ai ? `<a href="${esc(ai)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">` : ''}${esc(b.order)} · ${esc(b.copy || String(b.poolId).split('_').pop())}${ai ? '</a>' : ''}${b.pending ? ' · saving' : ''}</figcaption></figure>`;
+      const dims = dimensions(b), label = 'Back: ' + (b.text || '') + ' — ' + identity;
+      return `<figure data-pool-id="${esc(b.poolId)}" data-rid="${esc(b.order)}" ${dims ? `data-preview-w="${dims.w}" data-preview-h="${dims.h}" data-preview-pad="${dims.pad}"` : ''}>${png ? `<a class="backThumb" ${ai ? `href="${esc(ai)}" target="_blank" rel="noopener"` : 'role="button" tabindex="0"'} aria-label="${esc(label)}" onclick="event.stopPropagation()"><img crossorigin="anonymous" referrerpolicy="no-referrer" src="${esc(png)}" alt="${esc(label)}"></a>` : '<span class="backPending">Preview pending</span>'}${b.pending ? '<span class="backPending">Saving…</span>' : ''}</figure>`;
+
     }).join('')}</div></section>`;
   }
-  return {placedIds, forSheet, markup};
+  // One delegated inspector serves live cards, history, Sets and dialogs. Its
+  // top-layer popup cannot be clipped by a horizontal sheet scroller or modal.
+  function mount() {
+    const observed = new Set(); let frame = 0, active = null, closeTimer = 0;
+    const zoom = document.createElement('div'); zoom.className = 'backZoom';
+    zoom.setAttribute('popover', 'manual'); zoom.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(zoom);
+    const resize = section => {
+      const host = section.parentElement, next = host?.nextElementSibling;
+      const front = next?.matches('img,canvas') ? next : next?.querySelector('canvas,img');
+      const sw = +section.dataset.stockW, sh = +section.dataset.stockH;
+      let scale = sw > 0 ? section.clientWidth / sw : 0;
+      if (front && sw > 0 && sh > 0) {
+        const box = front.getBoundingClientRect();
+        scale = Math.min(front.clientWidth / sw, front.clientHeight / sh);
+        // Live canvas includes rulers; saved previews do not.
+        if (front.tagName === 'CANVAS' && front._backSheetScale) scale = front._backSheetScale;
+        if (!box.width) return;
+      }
+      for (const fig of section.querySelectorAll('.backPieces figure')) {
+        const w = +fig.dataset.previewW, h = +fig.dataset.previewH, pad = +fig.dataset.previewPad;
+        const thumb = fig.querySelector('.backThumb'), img = thumb?.querySelector('img');
+        if (!img || !scale || !w || !h) continue;
+        const k = Math.min(scale, section.clientWidth / (w - 2 * pad));
+        const width = (w - 2 * pad) * k, height = (h - 2 * pad) * k;
+        fig.style.setProperty('--back-width', width + 'px');
+        fig.style.setProperty('--back-height', height + 'px');
+        img.style.cssText = `width:${w*k}px;height:${h*k}px;max-width:none;left:${-pad*k}px;top:${-pad*k}px`;
+      }
+    };
+    const ro = new ResizeObserver(entries => entries.forEach(e => resize(e.target)));
+    const sync = () => {
+      frame = 0;
+      for (const s of observed) if (!s.isConnected) { ro.unobserve(s); observed.delete(s); }
+      document.querySelectorAll('.sheetBacks').forEach(s => { if (!observed.has(s)) { observed.add(s); ro.observe(s); } resize(s); });
+      if (active && !active.isConnected) hide();
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(sync); };
+    function hide() {
+      active = null; zoom.classList.remove('visible'); clearTimeout(closeTimer);
+      closeTimer = setTimeout(() => { if (!active) { if (zoom.hidePopover) zoom.hidePopover(); else zoom.hidden = true; } }, 180);
+    }
+    function show(thumb) {
+      if (active === thumb) return;
+      const source = thumb.querySelector('img'); if (!source?.src) return;
+      clearTimeout(closeTimer); active = thumb;
+      const img = new Image(); img.crossOrigin = 'anonymous'; img.referrerPolicy = 'no-referrer'; img.src = source.src; img.alt = source.alt;
+      zoom.replaceChildren(img);
+      const rect = thumb.getBoundingClientRect(), size = Math.min(250, innerWidth - 24, innerHeight - 24);
+      const left = Math.max(12, Math.min(innerWidth - size - 12, rect.left + rect.width / 2 - size / 2));
+      const top = rect.top >= size + 14 ? rect.top - size - 10 : Math.min(innerHeight - size - 12, rect.bottom + 10);
+      zoom.style.cssText = `width:${size}px;height:${size}px;left:${left}px;top:${Math.max(12,top)}px;transform-origin:${rect.left+rect.width/2-left}px ${rect.top+rect.height/2-top}px`;
+      if (zoom.showPopover) { if (!zoom.matches(':popover-open')) zoom.showPopover(); } else zoom.hidden = false;
+      requestAnimationFrame(() => { if (active === thumb) zoom.classList.add('visible'); });
+    }
+    document.addEventListener('pointerover', e => { const t=e.target.closest?.('.backThumb'); if(t && e.pointerType !== 'touch') show(t); });
+    document.addEventListener('pointerout', e => { if(active && active.contains(e.target) && !active.contains(e.relatedTarget)) hide(); });
+    document.addEventListener('focusin', e => { const t=e.target.closest?.('.backThumb'); if(t) show(t); });
+    document.addEventListener('focusout', e => { if(active?.contains(e.target)) hide(); });
+    document.addEventListener('keydown', e => { if(e.key === 'Escape') hide(); });
+    document.addEventListener('scroll', hide, true); window.addEventListener('resize', () => {hide(); schedule();});
+    new MutationObserver(schedule).observe(document.body, {childList:true, subtree:true}); sync();
+  }
+  if (typeof document !== 'undefined') {
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, {once:true}); else mount();
+  }
+  return {placedIds, forSheet, markup, dimensions};
 });

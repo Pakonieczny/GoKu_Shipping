@@ -41,7 +41,7 @@ const Orders={rows:()=>B.orders.rows}, Engrave={items:()=>B.engrave.items,writeB
 const Pool={update:async(ids,p)=>writes.push({ids,p})};
 const RunCtl={onSheetDone(){}};
 const CN={sheetFileBase:sh=>'Set-'+sh.seq+'-'+sh.metal+'-'+sh.sheetIndex,persistSheet:async(sh)=>{writes.push(sh.fileBase);const s=[...B.sets.values()][0];s.sheetIds.push(sh.sheetId);s.materials.push(sh.metal)}};
-const Sets={ofRun:()=>[...B.sets.values()],save:async()=>{},ensure:async(runId,group,o)=>{if(o.roseOnly&&seq%2) return null;allocations++;const s={runId,group,seq:seq++,day:today(),setId:'set-'+allocations,sheetIds:[],labelFiles:[],materials:[],orders:{}};B.sets.set(s.setId,s);return s}};
+const Sets={labelsReady:()=>true,ofRun:()=>[...B.sets.values()],save:async()=>{},ensure:async(runId,group,o)=>{if(o.roseOnly&&seq%2) return null;allocations++;const s={runId,group,seq:seq++,day:today(),setId:'set-'+allocations,sheetIds:[],labelFiles:[],materials:[],orders:{}};B.sets.set(s.setId,s);return s}};
 const page=(metal,full=false)=>({metal,runId:B.run.runId,sheetId:metal+'-id',draft:true,outputs:{},persistedDone:true,placements:[{}],verification:{ok:true},releaseFull:full,charms:[],status:'complete'});
 `,c);
 vm.runInContext(part('Gate','/* ═══ 21'),c);
