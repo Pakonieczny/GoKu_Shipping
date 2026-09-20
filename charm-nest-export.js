@@ -1,6 +1,6 @@
 /* Production exports: original vector AI pages, exact-copy backs, millimetre DXF.
  * DXF R2004: true colour (420), indexed fallback (62), named layers and closed
- * outline polylines. Filled PDF artwork becomes contours for EZCAD hatching.
+ * outline polylines. Filled PDF artwork stays filled using solid HATCH entities.
  * Curves are adaptively flattened to <= 0.002 mm, never resized to fit a page.
  */
 (function(root) {
@@ -33,6 +33,19 @@
       if(!convex||!corners.every(p=>same(pts.map((a,i)=>cross(a,pts[(i+1)%4],p)))))throw new Error('This artwork uses a clipping mask. Expand the clipped artwork before DXF export.');
     }
     return out;
+  }
+  function productionPaths(parsed) {
+    const paths=leaves(parsed),front=paths.filter(p=>!/^BACK(?: |$)|CUT OUTLINE|^SHEET(?: |$)/i.test(p.layer||''));
+    const groups=pdf().groupCharms({...parsed,segments:front,nested:[]});
+    const drop=new Set(),extra=[];
+    for(const charm of groups.charms) {
+      const before=charm.members.slice(),result=pdf().integrateRings(charm);
+      if(result.left.length)throw new Error('A hoop could not join its charm: '+result.left.join('; '));
+      if(!result.welded)continue;
+      before.filter(p=>!charm.members.includes(p)).forEach(p=>drop.add(p));
+      extra.push(...charm.members.filter(p=>!before.includes(p)));
+    }
+    return paths.filter(p=>!drop.has(p)).concat(extra);
   }
   function parentScale(front, sheet, back) {
     const charm = (sheet.charms || []).find(c => c.poolId === back.poolId);
@@ -99,25 +112,8 @@
     const ai=await out.save({useObjectStreams:false});
     return {ai,layout,widthPt:front.pageW,heightPt:page.getHeight(),cutHeightPt:front.pageH};
   }
-  function flatten(sub, tolerance=.002/MM) {
-    const points=[];let current=null,closed=false;
-    const dist=(p,a,b)=>{const dx=b[0]-a[0],dy=b[1]-a[1],l=dx*dx+dy*dy;const t=l?Math.max(0,Math.min(1,((p[0]-a[0])*dx+(p[1]-a[1])*dy)/l)):0;return Math.hypot(p[0]-a[0]-t*dx,p[1]-a[1]-t*dy);};
-    const mid=(a,b)=>[(a[0]+b[0])/2,(a[1]+b[1])/2];
-    function curve(a,b,c,d,depth=0) {
-      if(Math.max(dist(b,a,d),dist(c,a,d))<=tolerance){points.push(d);return;}
-      if(depth>=24)throw new Error('Curve exceeds DXF precision limits.');
-      const ab=mid(a,b),bc=mid(b,c),cd=mid(c,d),abc=mid(ab,bc),bcd=mid(bc,cd),m=mid(abc,bcd);
-      curve(a,ab,abc,m,depth+1);curve(m,bcd,cd,d,depth+1);
-    }
-    for(const op of sub){
-      if(op[0]==='m'){current=op[1];points.push(current);}
-      else if(op[0]==='l'){current=op[1];points.push(current);}
-      else if(op[0]==='c'){if(!current)throw new Error('Invalid curve');curve(current,op[1],op[2],op[3]);current=op[3];}
-      else if(op[0]==='h')closed=true;
-    }
-    if(points.length>2 && Math.hypot(points[0][0]-points.at(-1)[0],points[0][1]-points.at(-1)[1])<1e-8){closed=true;points.pop();}
-    return {points,closed};
-  }
+  const vector = () => root.CharmNestVector || (typeof require==='function' ? require('./charm-nest-vector.js') : null);
+  const flatten = (...args) => vector().flatten(...args);
   // Empty R2004 drawing scaffold generated with ezdxf 1.4.4: standard tables,
   // blocks, layouts and dictionaries with their original ownership handles.
   // Dynamic handles start at 0x1000, above every reserved scaffold handle.
@@ -133,27 +129,39 @@
     const entities=[];const layerColors=new Map();
     for(const name of declaredLayers)layerColors.set(layer(name),[0,0,0]);
     for(const path of paths) {
-      const modes=[];
-      if(path.fill)modes.push({color:rgb(path.fillRGB),fill:true});
-      if(path.stroke && (!path.fill || trueColor(rgb(path.fillRGB))!==trueColor(rgb(path.strokeRGB))))modes.push({color:rgb(path.strokeRGB),fill:false});
-      for(const mode of modes)for(const sub of path.subpaths||[]) {
+      const name=layer(path.layer||'Artwork');
+      if(path.fill) {
+        const loops=vector().filled(path);
+        if(loops.length) {const color=rgb(path.fillRGB);entities.push({type:'HATCH',loops,layer:name,color,fill:true});if(!layerColors.has(name))layerColors.set(name,color);}
+      }
+      if(path.stroke)for(const sub of path.subpaths||[]) {
         const f=flatten(sub);if(f.points.length<2)continue;
-        const name=layer(path.layer||'Artwork');if(!entities.some(e=>e.layer===name))layerColors.set(name,mode.color);
-        entities.push({...f,closed:f.closed||mode.fill,layer:name,...mode});
+        const color=rgb(path.strokeRGB);if(!layerColors.has(name))layerColors.set(name,color);
+        entities.push({...f,type:'LWPOLYLINE',layer:name,color,width:Math.max(0,+path.lwPt||0)*MM,fill:false});
       }
     }
     let text='',handle=0x1000;const add=(...pairs)=>{for(let i=0;i<pairs.length;i+=2)text+=pairs[i]+'\r\n'+pairs[i+1]+'\r\n';};
     for(const [name,c] of layerColors)add(0,'LAYER',5,(handle++).toString(16).toUpperCase(),330,'1',100,'AcDbSymbolTableRecord',100,'AcDbLayerTableRecord',2,name,70,0,62,aci(c),420,trueColor(c),6,'CONTINUOUS',370,-3,390,'13',347,'21');
     const layerText=text; text='';
     let bounds=null;
+    const point = p => {
+      const x=+(p[0]*MM).toFixed(7),y=+(p[1]*MM).toFixed(7);
+      if(!Number.isFinite(x)||!Number.isFinite(y))throw new Error('DXF contains a non-finite coordinate.');
+      add(10,x,20,y);bounds=union(bounds,[x,y,x,y]);
+    };
     for(const ent of entities) {
-      add(0,'LWPOLYLINE',5,(handle++).toString(16).toUpperCase(),330,'17',100,'AcDbEntity',8,ent.layer,62,aci(ent.color),420,trueColor(ent.color),100,'AcDbPolyline',90,ent.points.length,70,ent.closed?1:0);
-      for(const p of ent.points) {
-        const x=+(p[0]*MM).toFixed(7),y=+(p[1]*MM).toFixed(7);
-        if(!Number.isFinite(x)||!Number.isFinite(y))throw new Error('DXF contains a non-finite coordinate.');
-        add(10,x,20,y);bounds=union(bounds,[x,y,x,y]);
+      add(0,ent.type,5,(handle++).toString(16).toUpperCase(),330,'17',100,'AcDbEntity',8,ent.layer,62,aci(ent.color),420,trueColor(ent.color));
+      if(ent.type==='HATCH') {
+        add(100,'AcDbHatch',10,0,20,0,30,0,210,0,220,0,230,1,2,'SOLID',70,1,71,0,91,ent.loops.length);
+        for(const loop of ent.loops) {
+          add(92,loop.hole?2:3,72,0,73,1,93,loop.points.length);
+          loop.points.forEach(point);add(97,0);
+        }
+        add(75,0,76,1,98,0,1001,'BRITES',1000,'SOLID_FILL');
+      } else {
+        add(100,'AcDbPolyline',90,ent.points.length,70,ent.closed?1:0,43,+ent.width.toFixed(7));
+        ent.points.forEach(point);add(1001,'BRITES',1000,'STROKE');
       }
-      add(1001,'BRITES',1000,ent.fill?'FILL_CONTOUR':'STROKE');
     }
     const [minX,minY,maxX,maxY]=bounds||[0,0,100,50],w=Math.max(1,maxX-minX),h=Math.max(1,maxY-minY);
     const values={LAYERS:layerText,ENTITIES:text,LAYER_COUNT:layerColors.size+2,HANDSEED:handle.toString(16).toUpperCase(),MINX:minX,MINY:minY,MAXX:maxX,MAXY:maxY,CENTERX:(minX+maxX)/2,CENTERY:(minY+maxY)/2,VIEWHEIGHT:h*1.1,ASPECT:w/h};
@@ -163,7 +171,7 @@
   function layerNames(parsed) {
     const L=lib();return [...new Set(parsed.doc.context.enumerateIndirectObjects().filter(([,o])=>o instanceof L.PDFDict&&o.get(L.PDFName.of('Type'))?.toString()==='/OCG').map(([,o])=>o.get(L.PDFName.of('Name'))?.decodeText?.()).filter(Boolean))];
   }
-  const api={compose,parentScale,leaves,flatten,dxf,layerNames,MM};
+  const api={compose,parentScale,leaves,productionPaths,flatten,dxf,layerNames,MM};
   root.CharmNestExport=api;
   if(typeof module==='object'&&module.exports)module.exports=api;
 })(typeof window!=='undefined'?window:globalThis);

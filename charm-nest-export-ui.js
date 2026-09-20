@@ -24,7 +24,7 @@
     let data=composed.ai,metadata={sheetId:sheet.id||sheet.sheetId,fileBase:sheet.fileBase,units:'mm',backs:composed.layout};
     if(format==='dxf') {
       const parsed=await CharmNestPDF.parseSource(composed.ai,'Production sheet');
-      const result=CharmNestExport.dxf(CharmNestExport.leaves(parsed),CharmNestExport.layerNames(parsed));
+      const result=CharmNestExport.dxf(CharmNestExport.productionPaths(parsed),CharmNestExport.layerNames(parsed));
       data=new TextEncoder().encode(result.text);
       metadata={...metadata,curveToleranceMm:.002,layers:result.layers,colors:result.colors,entities:result.entityCount};
     }
@@ -55,7 +55,7 @@
         const zip=new JSZip(),used=new Set();
         for(const file of files){let name=file.name;if(used.has(name))name=file.metadata.sheetId+'_'+name;used.add(name);zip.file(name,file.data);}
         zip.file('sheet-manifest.json',JSON.stringify(files.map(f=>f.metadata),null,2));
-        zip.file('IMPORT.txt','Import at 1:1 in millimetres. Back engravings are above the cut sheet, at the parent scale.\nDXF preserves named layers and RGB colours, with indexed colour fallback. Filled artwork is exported as closed contours; apply the intended hatch settings in EZCAD. SHEET and BACK CUT OUTLINE are reference layers, not extra cuts. Verify pen mapping and dimensions in your LaserStar version before marking.\n');
+        zip.file('IMPORT.txt','Import at 1:1 in millimetres. Back engravings are above the cut sheet, at the parent scale.\nDXF preserves named layers and RGB colours, with indexed colour fallback. Filled artwork is exported as solid hatches, with its holes retained. SHEET and BACK CUT OUTLINE are reference layers, not extra cuts. Verify pen mapping and dimensions in your LaserStar version before marking.\n');
         CN.download(await zip.generateAsync({type:'uint8array'}),'charm-sheets-'+format+'.zip','application/zip');
       }
       CN.toast('Downloaded '+files.length+' sheet'+(files.length===1?'':'s')+' · '+format.toUpperCase(),'ok');
@@ -84,7 +84,7 @@
   function mount() {
     const bar=document.querySelector('#libraryView .libBar')||document.getElementById('libKind')?.parentElement;
     if(!bar)return;
-    bar.insertAdjacentHTML('afterend',`<div class="libraryDownloads"><label><input type="checkbox" id="exportVisible"> Select visible</label><select id="exportFormat" aria-label="Download format"><option value="ai">Illustrator .ai</option><option value="dxf">Laser DXF .dxf</option></select><button class="btn sage xs" id="downloadSelected" disabled>Download</button><button class="btn ghost xs" id="clearExportSelection">Clear selection</button><details><summary>DXF import</summary><p>Use millimetres at 1:1. Colours and layers are retained; filled artwork uses closed contours for EZCAD hatching. Check pen mapping in your LaserStar version. Sheet outlines and back outlines are references.</p></details></div>`);
+    bar.insertAdjacentHTML('afterend',`<div class="libraryDownloads"><label><input type="checkbox" id="exportVisible"> Select visible</label><select id="exportFormat" aria-label="Download format"><option value="ai">Illustrator .ai</option><option value="dxf">Laser DXF .dxf</option></select><button class="btn sage xs" id="downloadSelected" disabled>Download</button><button class="btn ghost xs" id="clearExportSelection">Clear selection</button><details><summary>DXF import</summary><p>Use millimetres at 1:1. Colours and layers are retained; filled artwork stays filled and retains its holes. Check pen mapping in your LaserStar version. Sheet outlines and back outlines are references.</p></details></div>`);
     document.getElementById('downloadSelected').onclick=()=>run([...selected],document.getElementById('exportFormat').value);
     document.getElementById('clearExportSelection').onclick=()=>{selected.clear();document.getElementById('exportVisible').checked=false;refresh();};
     document.getElementById('exportVisible').onchange=e=>{document.querySelectorAll('#libBody .libCard[data-id]').forEach(c=>e.target.checked?selected.add(c.dataset.id):selected.delete(c.dataset.id));refresh();};

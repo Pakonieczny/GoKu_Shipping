@@ -1,0 +1,33 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const G=require('../../charm-nest-geom.js'),font=require('../../vendor/opentype-1.3.4.min.js').loadSync('vendor/fonts/SourceSans3-Regular.otf');
+const source=fs.readFileSync('charm-nest-bridge.js','utf8');
+const mask={w:240,h:300,res:4,ox:0,oy:0,cx:30,cy:37.5,wPt:60,hPt:75,bits:new Uint8Array(240*300).fill(1)};
+// A material cut-out remains forbidden at every spacing and quarter turn.
+for(let y=130;y<170;y++)for(let x=190;x<220;x++)mask.bits[y*mask.w+x]=0;
+const fitOpts=job=>({lineGap:job.lineGap??.216,maxHeightFrac:.4,minStrokeMm:0,minGapMm:0,tryRotated:false});
+const lines=['Fluffy &','Hammy'],old=G.layoutLines(lines,font,7,.18,0,[30,37.5]),fresh=G.layoutLines(lines,font,7,undefined,0,[30,37.5]);
+assert(Math.abs((fresh.totalH-2*fresh.capPt)/(old.totalH-2*old.capPt)-1.2)<1e-10,'default gap increases by 20%');
+let saved=0;const ctx={G,fontFor:()=>font,fitOpts,refresh(){},toast(){},Session:{schedule(){saved++;}}};vm.createContext(ctx);
+vm.runInContext(source.slice(source.indexOf('  function refit(job, place)'),source.indexOf('  function nudge(')),ctx);
+vm.runInContext(source.slice(source.indexOf('  function rotateTo(job, angle)'),source.indexOf('  /** The box around')),ctx);
+vm.runInContext(source.slice(source.indexOf('  function setLineSpacing('),source.indexOf('  async function resplit')),ctx);
+const job={state:'review',lineInput:lines,lineMode:'preserve',lines,mask,lineGap:.216,fit:G.reflowAt(lines,font,mask,fitOpts({}),{centre:[30,37.5],size:7},'preserve')};
+assert(ctx.setLineSpacing(job,150));assert.equal(job.lineGap,.27);assert.equal(job.fit.size,7);assert(G.verifyInk(job.fit.cmds,mask).ok);
+const originalCmds=JSON.stringify(job.fit.cmds);assert(ctx.rotateTo(job,90));assert.equal(job.fit.angle,90);assert(G.verifyInk(job.fit.cmds,mask).ok);assert(ctx.rotateTo(job,0));assert.equal(JSON.stringify(job.fit.cmds),originalCmds,'opposite quarter turns preserve the position and size');
+job.backSaving=true;assert.equal(ctx.setLineSpacing(job,200),false);assert.equal(job.lineGap,.27);job.backSaving=false;
+// Run the actual wheel/slider wiring, including navigation's synchronous flush.
+const callbacks={},frames=new Map(),timers=new Map();let id=0;
+const output={},group={style:{setProperty(){}},querySelector:()=>output,addEventListener:(n,f)=>callbacks[n]=f};
+const slider={value:150,closest:()=>group,addEventListener:(n,f)=>callbacks[n]=f};
+const card={isConnected:true,querySelector:()=>slider};
+Object.assign(ctx,{card,job,requestAnimationFrame:f=>{frames.set(++id,f);return id;},cancelAnimationFrame:id=>frames.delete(id),setTimeout:f=>{timers.set(++id,f);return id;},clearTimeout:id=>timers.delete(id)});
+vm.runInContext(source.slice(source.indexOf('    const spacing = card.querySelector'),source.indexOf('    const capOut = card.querySelector')),ctx);
+const wheel=shiftKey=>callbacks.wheel({deltaY:-1,shiftKey,preventDefault(){}});
+wheel(false);wheel(false);wheel(true);assert.equal(frames.size,1,'rapid changes coalesce into one frame');assert.equal(+slider.value,161);
+const tick=[...frames.values()][0];frames.clear();tick();assert.equal(output.textContent,'161%');assert.equal(job.lineGap,.18*1.61);assert(job._spacingActive);
+wheel(false);const before=saved;card._flushSpacing();assert.equal(frames.size,0);assert.equal(timers.size,0);assert(Math.abs(job.lineGap-.18*1.66)<1e-12);assert.equal(saved,before+1);assert.equal(job._spacingActive,false);assert(G.verifyInk(job.fit.cmds,mask).ok);
+card._flushSpacing();assert.equal(saved,before+1,'no duplicate fit when nothing changed');
+assert(source.includes('b.onclick = () => { card._flushSpacing?.();'),'navigation flushes before replacing the card');
+assert(source.includes('lineGap:saved.lineGap ?? .18')&&source.includes('lineGap:bk.lineGap ?? .18')&&source.includes('j.lineGap ??= .18'),'legacy saved placements retain their original gap');
+assert(source.includes('lineGap:fitOpts(job).lineGap'),'approval stores the chosen gap for reopening');
+console.log('Line spacing OK: +20% default, live wheel/slider coalescing, fine adjustment, flush, quarter turns, cut-outs and saved-placement compatibility');

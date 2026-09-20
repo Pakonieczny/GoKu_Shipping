@@ -1328,8 +1328,8 @@
      loose washer. On a finished sheet the hoop is part of the cut line: one outline that runs around the body and over
      the top of the ring, and the ring's inner circle cut as a hole. That is what this does, for every small closed
      circle a charm carries: the ring is moved to touch the body if it does not, the outer circle is welded into the
-     outline (Béziers are kept everywhere but the few operators the circle touches), and the inner circle becomes a
-     black cut line. A ring the outline crosses more than twice even after it is seated is left as drawn and reported. */
+     outline (curves are flattened within 0.002 mm), and the inner circle becomes a
+     black cut line. All contacts are united and all resulting apertures are retained. */
   const ringLike = m => { if (!m || !m.bbox || m.kind !== "path" || !m.stroke || !m.closed) return false; const w = m.bbox[2] - m.bbox[0], h = m.bbox[3] - m.bbox[1]; return Math.abs(w - h) < 1 && w >= 3.5 && w <= 8 && (m.subpaths || []).length >= 1 && (m.subpaths || []).length <= 2 && m.subpaths.every(sp => sp.length <= 8); };
   function circlePath(cx, cy, r) {
     const k = 0.5522847498 * r;
@@ -1386,38 +1386,56 @@
     out.push(["h"]);
     return out;
   }
-  /** Weld every ring the charm carries into its outline. Returns { welded, left: [why…] }. */
+  /** Boolean union handles every body/ring contact, including separate lobes of
+   * a compound outline. Authored overlapping rings keep their original centre.
+   * Detached rings are seated once; the aperture is subtracted after the union. */
   function integrateRings(c) {
-    const res = { welded: 0, left: [] }; if (!c || !c.outline || !c.outline.subpaths) return res;
-    const bodyPolys = flatten(c.outline, 24);
-    for (const ring of c.members.filter(m => m !== c.outline && ringLike(m))) {
-      const w = ring.bbox[2] - ring.bbox[0]; let cx = (ring.bbox[0] + ring.bbox[2]) / 2, cy = (ring.bbox[1] + ring.bbox[3]) / 2; const ro = w / 2;
-      // a small circle whose centre lies inside the body is a hole already cut into it, not a ring
-      if (bodyPolys.some(poly => insidePoly(cx, cy, poly)) && nearestOnPolys(cx, cy, bodyPolys).d > ro * 0.5) continue;
-      let ri = ro * 0.565; if (ring.subpaths.length === 2) { const pts = ring.subpaths[1].flatMap(o => o.slice(1)); if (pts.length) { const xs = pts.map(q => q[0]); ri = (Math.max(...xs) - Math.min(...xs)) / 2 || ri; } }
-      const polys = flatten(c.outline, 24);
-      // seat the ring: it overlaps the body by one point, whatever the artist's hand left
-      const near = nearestOnPolys(cx, cy, polys); if (!near.p) { res.left.push("no outline"); continue; }
-      // seated at one point of overlap; if the outline crosses the circle more than twice there, a shallower seat is tried
-      const ux = (near.p[0] - cx) / (near.d || 1), uy = (near.p[1] - cy) / (near.d || 1); const cx0 = cx, cy0 = cy, d0 = near.d;
-      let welded = null, si = -1;
-      for (const overlap of [1.0, 0.6, 0.3, 1.5]) {
-        const want = ro - overlap; cx = cx0 + ux * (d0 - want); cy = cy0 + uy * (d0 - want);
-        si = -1; for (let i = 0; i < c.outline.subpaths.length; i++) { const pl = flatten({ subpaths: [c.outline.subpaths[i]] }, 24); if (nearestOnPolys(cx, cy, pl).d < ro + 0.5) { si = i; break; } }
-        if (si < 0) continue;
-        welded = weldCircle(c.outline.subpaths[si], cx, cy, ro); if (welded) break;
+    const res={welded:0,left:[]};if(!c?.outline?.subpaths)return res;
+    const V=root.CharmNestVector || (typeof require==='function'?require('./charm-nest-vector.js'):null);
+    if(!V)throw new Error("Vector geometry library is unavailable. Refresh the page.");
+    for(const ring of c.members.filter(m=>m!==c.outline&&ringLike(m))) {
+      if(!c.members.includes(ring))continue;
+      const original=c.outline, polys=original.subpaths.map(sp=>V.flatten(sp).points);
+      const ro=(ring.bbox[2]-ring.bbox[0])/2,cx0=(ring.bbox[0]+ring.bbox[2])/2,cy0=(ring.bbox[1]+ring.bbox[3])/2;
+      const near=nearestOnPolys(cx0,cy0,polys);
+      // Already enclosed circles are cut-outs, not loose jump rings.
+      if(pointInPolys(cx0,cy0,polys)&&near.d>=ro-.01)continue;
+      if(!near.p){res.left.push("ring has no body outline");continue;}
+      let cx=cx0,cy=cy0;
+      if(near.d>=ro-.01) {
+        const distance=near.d-Math.max(.1,ro-Math.min(1,ro*.3));
+        cx+=(near.p[0]-cx)/Math.max(near.d,1e-9)*distance;
+        cy+=(near.p[1]-cy)/Math.max(near.d,1e-9)*distance;
       }
-      if (si < 0) { res.left.push("ring touches no outline"); continue; }
-      if (!welded) { res.left.push("the outline crosses the ring more than twice"); continue; }
-      const subpaths = c.outline.subpaths.slice(); subpaths[si] = welded;
-      const pts = subpaths.flatMap(sp => sp.filter(o => o[0] !== "h").flatMap(o => o.slice(1)));
-      const outline = Object.assign({}, c.outline, { subpaths, bbox: bboxOf(pts), synthetic: true, strokeRGB: [0, 0, 0], stroke: true, fill: false, paintOp: "S", start: -1, end: -1, welded: (c.outline.welded || 0) + 1 });
-      const hole = { kind: "path", synthetic: true, paintOp: "S", stroke: true, fill: false, strokeRGB: [0, 0, 0], fillRGB: [0, 0, 0], lwPt: ring.lwPt || c.outline.lwPt || 0.25, closed: true, subpaths: [circlePath(cx, cy, ri)], bbox: [cx - ri, cy - ri, cx + ri, cy + ri], depth: ring.depth || 0, layer: ring.layer || c.outline.layer || null, index: ring.index, start: -1, end: -1 };
-      // the original outline and ring bytes must not be copied into a file any more
-      const drop = new Set([c.outline.index, ring.index].filter(i => i != null)); c.dropIndices = new Set([...(c.dropIndices || []), ...drop]);
-      c.members = c.members.map(m => m === c.outline ? outline : m === ring ? hole : m); c.outline = outline;
-      c.bbox = c.members.reduce((a, m) => bbUnion(a, m.bbox), null);
-      res.welded++;
+      const translate=sp=>sp.map(op=>[op[0],...op.slice(1).map(p=>[p[0]+cx-cx0,p[1]+cy-cy0])]);
+      const subs=ring.subpaths.map(sp=>({sp,points:V.flatten(sp).points}));
+      const area=ps=>Math.abs(ps.reduce((v,p,i)=>v+p[0]*ps[(i+1)%ps.length][1]-p[1]*ps[(i+1)%ps.length][0],0));
+      subs.sort((a,b)=>area(b.points)-area(a.points));
+      const outer=translate(subs[0].sp);
+      // Some masters store the inner aperture as a separate concentric circle.
+      const innerMember=c.members.find(m=>m!==ring&&m!==original&&ringLike(m)&&
+        Math.hypot((m.bbox[0]+m.bbox[2])/2-cx0,(m.bbox[1]+m.bbox[3])/2-cy0)<.15&&m.bbox[2]-m.bbox[0]<ro*1.8);
+      const inner=translate(subs[1]?.sp || innerMember?.subpaths[0] || circlePath(cx0,cy0,ro*.565));
+      const united=V.boolean(polys,[V.flatten(outer).points],'union',original.fill&&!original.paintOp?.endsWith('*')?'nonzero':'evenodd');
+      if(!united.length){res.left.push("ring union produced no material");continue;}
+      const cut=V.boolean(united.map(p=>p.points),[V.flatten(inner).points],'difference');
+      if(!cut.length){res.left.push("ring aperture removes the entire body");continue;}
+      const exteriors=cut.filter(p=>!p.hole),holes=cut.filter(p=>p.hole);
+      const base={kind:'path',synthetic:true,paintOp:'S',stroke:true,fill:false,strokeRGB:[0,0,0],fillRGB:[0,0,0],lwPt:original.lwPt||ring.lwPt||.25,closed:true,depth:original.depth||0,layer:original.layer||null,start:-1,end:-1};
+      const outline={...original,...base,subpaths:exteriors.map(p=>V.subpath(p.points)),bbox:bboxOf(exteriors.flatMap(p=>p.points)),welded:(original.welded||0)+1};
+      const apertures=holes.map(p=>({...base,subpaths:[V.subpath(p.points)],bbox:bboxOf(p.points)}));
+      const replaced=new Set([original,ring,innerMember,...(original.parts||[])].filter(Boolean));
+      // A replaced path inside a Form must suppress that Form, not a local
+      // child index which may name unrelated top-level artwork. Redraw its
+      // remaining vector members in their already-transformed coordinates.
+      const parents=new Set([...replaced].map(p=>p.parent).filter(i=>i!=null));
+      c.dropIndices=new Set([...(c.dropIndices||[]),...[...replaced].map(p=>p.parent ?? p.index).filter(i=>i!=null)]);
+      for(const m of c.members) if(!replaced.has(m)&&parents.has(m.parent)) {
+        if(m.kind!=="path")throw new Error("Outline text and expand non-vector artwork before joining this hoop.");
+        m.synthetic=true;
+      }
+      c.members=c.members.filter(m=>!replaced.has(m));c.members.push(outline,...apertures);c.outline=outline;
+      c.bbox=c.members.reduce((a,m)=>bbUnion(a,m.bbox),null);res.welded++;
     }
     return res;
   }
@@ -1425,10 +1443,10 @@
   function syntheticOps(members) {
     const f = v => (Math.round(v * 1000) / 1000).toString(); let out = "";
     for (const m of members) {
-      if (!m || !m.synthetic) continue; const rgb = m.strokeRGB || [0, 0, 0];
-      out += `q ${f(rgb[0])} ${f(rgb[1])} ${f(rgb[2])} RG ${f(m.lwPt || 0.25)} w `;
+      if (!m || !m.synthetic) continue; const rgb = m.strokeRGB || [0, 0, 0], fill = m.fillRGB || [0, 0, 0];
+      out += `q ${f(rgb[0])} ${f(rgb[1])} ${f(rgb[2])} RG ${f(fill[0])} ${f(fill[1])} ${f(fill[2])} rg ${f(m.lwPt || 0.25)} w `;
       for (const sp of m.subpaths) for (const o of sp) { if (o[0] === "m" || o[0] === "l") out += `${f(o[1][0])} ${f(o[1][1])} ${o[0]} `; else if (o[0] === "c") out += `${f(o[1][0])} ${f(o[1][1])} ${f(o[2][0])} ${f(o[2][1])} ${f(o[3][0])} ${f(o[3][1])} c `; else if (o[0] === "h") out += "h "; }
-      out += "S Q\n";
+      out += (m.fill ? (m.stroke ? "B" : "f") + (m.paintOp?.endsWith("*") ? "*" : "") : "S") + " Q\n";
     }
     return out;
   }

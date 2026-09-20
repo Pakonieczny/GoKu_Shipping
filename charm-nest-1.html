@@ -906,6 +906,14 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .placeView .sizer b{font-size:11px;min-width:52px;text-align:right}
 .placeView .small{background:var(--goldSoft);color:#7a5a1d;font-weight:700;border-radius:6px;padding:2px 7px;font-size:11px}
 .placeView .claude{border-left:3px solid var(--gold2);background:var(--goldSoft);padding:6px 9px;border-radius:6px;font-size:12px;overflow-wrap:anywhere}
+.spacingControl{--spacing:1.2;display:inline-flex;align-items:center;gap:7px;padding:5px 8px;border:1px solid var(--line);border-radius:9px;background:var(--paper2);font:11.5px var(--sans);cursor:ns-resize}
+.spacingControl:hover,.spacingControl:focus-within{border-color:var(--gold);background:var(--goldSoft)}
+.placeView .ctl .spacingControl input{width:86px;accent-color:var(--gold);cursor:ew-resize}
+.spacingControl output{font:600 12px var(--mono);min-width:4ch;text-align:right;color:var(--ink70)}
+.spacingIcon{display:grid;gap:calc(1px + 2px * var(--spacing));width:15px;align-content:center;min-height:22px}
+.spacingIcon i{height:2px;background:var(--gold);border-radius:1px}
+.quarterTurns{display:inline-flex;gap:3px;align-items:center}
+@container (max-width:380px){.spacingControl{flex-wrap:wrap}.placeView .ctl .spacingControl input{width:76px}}
 /* Quiet boundaries between tasks; related buttons stay together. */
 .ordBar,.libBar{padding-bottom:10px;border-bottom:1px solid var(--line)}
 .rvItem .rh{padding-bottom:10px;border-bottom:1px solid var(--line)}
@@ -1273,6 +1281,8 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-progress.js"></script>
 <script src="charm-nest-operations.js"></script>
 <script src="charm-nest-solver.js"></script>
+<script src="vendor/clipper-6.4.2.js"></script>
+<script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js"></script>
 <script src="charm-nest-geom.js"></script>
 <script src="charm-nest-backs.js"></script>
@@ -1629,6 +1639,10 @@ async function parseSourceFile(src) {
     }
     agent({ srcId: src.id }, "geom", `Geometry found ${g.outlineCount} outlines (rule: ${g.rule})${g.mergedCount ? `, folded ${g.mergedCount} inner closed path(s) into their charms as holes/rings` : ""}${g.frames && g.frames.length ? `, set aside ${g.frames.length} frame rectangle(s)` : ""}${g.orphans.length ? `, ${g.orphans.length} loose element(s) belong to no charm` : ""}`, g.orphans.length ? { kind: "warn" } : {});
     if (!g.charms.length) throw new Error(`no charm outlines found (rule: ${g.rule}). Outlines must be closed, stroked, near-black paths.`);
+    for (const charm of g.charms) {
+      const rings=CharmNestPDF.integrateRings(charm);
+      if(rings.left.length)throw new Error("A hoop could not join its charm: "+rings.left.join("; "));
+    }
     src.state = "silhouettes"; src.progress = [0, g.charms.length]; renderRail();
     if (src.bar) src.bar.label(`Tracing ${g.charms.length} charm(s) · ${src.name}`).note("").set(0, g.charms.length);
     const evS = agent({ srcId: src.id }, "geom", `Tracing ${g.charms.length} silhouettes at ${S.settings.silhouetteRes || 6} px/pt`, { live: true });

@@ -477,7 +477,7 @@
   }
   /** Lay lines out centred on the origin; returns glyph command lists in the local frame plus the ink bbox. */
   function layoutLines(lines, font, size, lineGap, angle, centre) {
-    const cap = size * capPerEm(font), gap = size * (lineGap == null ? 0.18 : lineGap);
+    const cap = size * capPerEm(font), gap = size * (lineGap == null ? 0.216 : lineGap);
     const totalH = lines.length * cap + (lines.length - 1) * gap;
     const rows = lines.map((t, i) => { const g = lineGlyphs(font, t, size); const x = -g.advance / 2, y = totalH / 2 - cap - i * (cap + gap); return { text: t, x, y, glyphs: g, bbox: [g.bbox[0] + x, g.bbox[1] + y, g.bbox[2] + x, g.bbox[3] + y] }; });
     const local = rows.reduce((a, r) => bbUnion(a, r.bbox), null) || [0, 0, 0, 0];
@@ -562,11 +562,11 @@
 
   /**
    * lines[]  the customer's text split into lines; font: an opentype.js Font; mask: the eroded back mask (engraveMask)
-   * opts: { minCapMm 1.6, maxHeightFrac 0.4, lineGap 0.18, minStrokeMm 0.15, minGapMm 0.12, tryRotated true, angles, rects 6, semiboldBelowMm 2.2, fonts:{Regular, Semibold} }
+   * opts: { minCapMm 1.6, maxHeightFrac 0.4, lineGap 0.216, minStrokeMm 0.15, minGapMm 0.12, tryRotated true, angles, rects 6, semiboldBelowMm 2.2, fonts:{Regular, Semibold} }
    * Returns { ok, size, capMm, weight, small, thin, angle, rect, centre, layout, glyphs (cmds, mask frame), metrics, gain } or { ok:false, reason }.
    */
   function fitText(lines, font, mask, opts) {
-    opts = Object.assign({ minCapMm: 1.6, maxHeightFrac: 0.4, lineGap: 0.18, minStrokeMm: 0.15, minGapMm: 0.12, tryRotated: true, rects: 6, semiboldBelowMm: 2.2, rotGain: 0.12 }, opts || {});
+    opts = Object.assign({ minCapMm: 1.6, maxHeightFrac: 0.4, lineGap: 0.216, minStrokeMm: 0.15, minGapMm: 0.12, tryRotated: true, rects: 6, semiboldBelowMm: 2.2, rotGain: 0.12 }, opts || {});
     lines = (lines || []).map(s => String(s)).filter(s => s.trim().length);
     if (!lines.length) return { ok: false, reason: "no text" };
     if (!area(mask)) return { ok: false, reason: "no solid area on the back" };
@@ -654,7 +654,7 @@
   }
   /** Largest size at a fixed centre and angle (a nudge), optionally capped. */
   function refitAt(lines, font, mask, opts, place) {
-    opts = Object.assign({ lineGap: 0.18, maxHeightFrac: 0.4, minCapMm: 1.6, semiboldBelowMm: 2.2 }, opts || {});
+    opts = Object.assign({ lineGap: 0.216, maxHeightFrac: 0.4, minCapMm: 1.6, semiboldBelowMm: 2.2 }, opts || {});
     const maxH = opts.maxHeightFrac * (mask.hPt || mask.h / mask.res);
     let lo = 0.01, hi = Math.min(place.maxSize || maxH, opts.maxSize || maxH, maxH), size = 0;
     while (hi - lo > 0.002) { const mid = (lo + hi) / 2; const L = layoutLines(lines, font, mid, opts.lineGap, place.angle || 0, place.centre); if (verifyInk(L.cmds, mask).ok) { size = mid; lo = mid; } else hi = mid; }
@@ -716,7 +716,7 @@
   /** Reflow at the operator's centre/angle. Try every wrap at the requested
    * size before shrinking; at equal size fewer lines win, so it unwraps again. */
   function reflowAt(input, font, mask, opts, place, mode='auto') {
-    opts=Object.assign({lineGap:.18,maxHeightFrac:.4,minCapMm:1.6,semiboldBelowMm:2.2},opts || {});
+    opts=Object.assign({lineGap:.216,maxHeightFrac:.4,minCapMm:1.6,semiboldBelowMm:2.2},opts || {});
     const limit=opts.maxHeightFrac*(mask.hPt || mask.h/mask.res);
     const want=Math.min(limit,Math.max(.01,place.size || limit)),angle=place.angle || 0;
     const variants=flowVariants(input,font,mode);let best=null;

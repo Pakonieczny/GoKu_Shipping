@@ -976,7 +976,7 @@ const Master = window.Master = (() => {
       job.state = "silhouettes";
       // only the charms that carry a SKU are indexed, so only they are traced: on the real master that is 1,038 of 3,408
       // a ring drawn beside the body is welded into the cut line before the charm is measured or written
-      { let welded = 0, left = 0; for (const c of g.charms) { if (c.mergedInto != null || !c.sku || c.alreadyHeld) continue; const r = P.integrateRings(c); welded += r.welded; left += r.left.length; } if (welded || left) say("MASTER", `${welded} jump ring(s) welded into their charm's cut line${left ? ` · ${left} left as drawn (the outline crosses the ring more than twice)` : ""}`); }
+      { let welded = 0, left = 0; for (const c of g.charms) { if (c.mergedInto != null || !c.sku || c.alreadyHeld) continue; const r = P.integrateRings(c); welded += r.welded; left += r.left.length; } if (welded || left) say("MASTER", `${welded} jump ring(s) welded into their charm's cut line${left ? ` · ${left} need a geometry check` : ""}`); }
       await P.buildSilhouettes(parsed, g.charms.filter(c => c.mergedInto == null && c.sku && !c.alreadyHeld), +S.settings.silhouetteRes || 6, (d, t) => { if (job.bar) job.bar.label(`Tracing charms · ${file.name}`).set(d, t); job.progress = `silhouettes ${d}/${t}`; if (d % 10 === 0) render(); });
       // The SKUs are read from the sheet as text, which is quick, so the library is consulted before any work is done:
       // a charm whose SKUs are all held already is left alone. A charm with even one new SKU is rebuilt whole, so all of
@@ -1717,7 +1717,7 @@ const Engrave = window.Engrave = (() => {
     return F_.loading;
   }
   const fontFor = weight => (weight === "Semibold" && F_.Semibold) || F_.Regular;
-  const fitOpts = () => ({ minCapMm: +S.settings.engraveMinCapMm || 1.6, maxHeightFrac: +S.settings.engraveMaxHeightFrac || 0.4, lineGap: 0.18, minStrokeMm: +S.settings.engraveMinStrokeMm || 0, minGapMm: +S.settings.engraveMinGapMm || 0, tryRotated: S.settings.engraveTryRotated !== "off" });
+  const fitOpts = job => ({ minCapMm: +S.settings.engraveMinCapMm || 1.6, maxHeightFrac: +S.settings.engraveMaxHeightFrac || 0.4, lineGap: job?.lineGap ?? 0.216, minStrokeMm: +S.settings.engraveMinStrokeMm || 0, minGapMm: +S.settings.engraveMinGapMm || 0, tryRotated: S.settings.engraveTryRotated !== "off" });
   const items = () => B.engrave.items;
   const charmFor = job => job.editCharm || Pool.charmOf(job.copies[0]);
   const sheetFor = (job, poolId) => job.editingBack ? (allSheets().find(p=>p.sheetId === job.editSheet.sheetId && p.charms.some(c=>c.poolId === poolId)) || job.editSheet) : Pool.sheetOf(poolId);
@@ -1745,15 +1745,15 @@ const Engrave = window.Engrave = (() => {
       if(!sheet.folderPath) throw new Error("The saved sheet folder is missing");
       const row=existing ? {...existing.row,engrave:{...existing.row.engrave},poolIds:[poolId]} : {key:"back:"+poolId,state:"written",poolIds:[poolId],order:{receiptId:saved.order},line:{transactionId:saved.transactionId,sku:saved.sku},spec:{designSku:saved.sku,personalization:[saved.text || ""]},engrave:{needed:true,state:"review"}};
       const job={key:"back:"+poolId,row,copies:[poolId],editingBack:true,editSheet:sheet,editCharm:charm,editOriginal:saved,expectedApprovedAt:saved.approvedAt,
-        lineMode:saved.lineMode || "preserve",lineInput:saved.lineInput || saved.lines, state:"review",text:saved.text || "",lines:saved.lines?.length ? saved.lines.slice() : String(saved.text || "").split("\n"),
+        lineGap:saved.lineGap ?? .18,lineMode:saved.lineMode || "preserve",lineInput:saved.lineInput || saved.lines, state:"review",text:saved.text || "",lines:saved.lines?.length ? saved.lines.slice() : String(saved.text || "").split("\n"),
         solidBack:!!saved.solidBack,source:saved.source || "personalization",quote:saved.sourceQuote || null,confidence:1,questions:[],requests:{side:"back"},backs:[],t:Date.now()};
       await loadFonts(); if(!F_.ok) throw new Error("Engraving font is unavailable");
       job.view=G.backView(charm,{res:6,upAngle:saved.upAngle ?? charm.upAngle,solidBack:job.solidBack});
       job.mask=G.engraveMask(job.view,{marginMm:+S.settings.engraveMarginMm || .8,keepOut:charm.backKeepOut || []});
-      const font=fontFor(saved.weight),layout=G.layoutLines(job.lines,font,saved.sizePt,.18,saved.angle || 0,saved.centre || [job.mask.cx,job.mask.cy]);
+      const font=fontFor(saved.weight),layout=G.layoutLines(job.lines,font,saved.sizePt,job.lineGap,saved.angle || 0,saved.centre || [job.mask.cx,job.mask.cy]);
       const check=G.verifyInk(layout.cmds,job.mask);
       if(check.ok) {
-        const ceiling=G.refitAt(job.lines,font,job.mask,fitOpts(),{centre:layout.centre,angle:layout.angle});
+        const ceiling=G.refitAt(job.lines,font,job.mask,fitOpts(job),{centre:layout.centre,angle:layout.angle});
         job.fit={ok:true,size:saved.sizePt,fittedMax:Math.max(saved.sizePt,ceiling.ok?ceiling.size:0),weight:saved.weight || "Regular",centre:layout.centre,angle:layout.angle,layout,glyphs:layout.glyphs,cmds:layout.cmds,capMm:saved.capMm || saved.sizePt*G.capPerEm(font)*MM,metrics:saved.metrics,small:!!saved.small,thin:!!saved.thin};
         job.verify={geometry:check,at:Date.now()};
       }
@@ -1785,7 +1785,7 @@ const Engrave = window.Engrave = (() => {
   }
 
   const jobOf = row => items().get(row.key) || null;
-  function ensureJob(row) { let j = items().get(row.key); if (!j) { j = { key: row.key, row, state: "classify", text: null, lines: [], source: null, quote: null, confidence: null, requests: null, questions: [], decision: null, fit: null, view: null, mask: null, claude: null, approvedBy: null, approvedAt: null, backs: [], copies: [], reason: null, t: Date.now() }; items().set(row.key, j); } j.copies = row.poolIds.filter(id=>!(j.copyOverrides || []).includes(id)); return j; }
+  function ensureJob(row) { let j = items().get(row.key); if (!j) { j = { key: row.key, row, lineGap:.216, state: "classify", text: null, lines: [], source: null, quote: null, confidence: null, requests: null, questions: [], decision: null, fit: null, view: null, mask: null, claude: null, approvedBy: null, approvedAt: null, backs: [], copies: [], reason: null, t: Date.now() }; items().set(row.key, j); } j.copies = row.poolIds.filter(id=>!(j.copyOverrides || []).includes(id)); return j; }
   const pendingCount = () => [...items().values()].filter(j => !j.editingBack && ["words", "review", "fitting", "ready", "classify"].includes(j.state) && j.row.state !== "gone").length;
   /** How many placements have already been settled in this run — the numerator of "3 of 9" on the card. */
   const DECIDED = ["approved", "written", "skipped"];                    // the same set the Decided tab lists
@@ -1802,7 +1802,7 @@ const Engrave = window.Engrave = (() => {
         if (!row) continue;
         const j = ensureJob(row);
         const lines = bk.lines && bk.lines.length ? bk.lines : String(bk.text || "").split("\n").filter(Boolean);
-        Object.assign(j, { state: "written", text: lines.join("\n"), lines, approvedBy: bk.approvedBy || null, approvedAt: pg.recalled.updatedAt || null, backs: [{ poolId: bk.poolId, sheet: pg.fileBase, png: bk.outputs && bk.outputs.png && bk.outputs.png.url, ai: bk.outputs && bk.outputs.ai && bk.outputs.ai.url, capMm: bk.capMm }], recalledFrom: pg });
+        Object.assign(j, { state: "written", text: lines.join("\n"), lines, lineGap:bk.lineGap ?? .18, approvedBy: bk.approvedBy || null, approvedAt: pg.recalled.updatedAt || null, backs: [{ poolId: bk.poolId, sheet: pg.fileBase, png: bk.outputs && bk.outputs.png && bk.outputs.png.url, ai: bk.outputs && bk.outputs.ai && bk.outputs.ai.url, capMm: bk.capMm }], recalledFrom: pg });
         row.engrave = { needed: true, state: "written", approved: true, text: j.text };
       }
     }
@@ -1927,9 +1927,9 @@ const Engrave = window.Engrave = (() => {
     job.mask = G.engraveMask(view, { marginMm: +S.settings.engraveMarginMm || 0.8, keepOut: charm.backKeepOut || [] });
     agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: back flipped and verified (pixels ${(view.detail.pixelDiff * 100).toFixed(3)}%, area ${view.detail.areaF} = ${view.detail.areaB}, ${view.detail.dropped} front detail member(s) dropped, ${view.cutMembers.length} cut) · hoop ${Math.round(view.upAngle)}° → up`);
     job.lineInput ||= job.lines.slice();
-    let fit = G.fitMultiline(job.lineInput, F_.Regular, job.mask, fitOpts(), job.lineMode || "auto");
+    let fit = G.fitMultiline(job.lineInput, F_.Regular, job.mask, fitOpts(job), job.lineMode || "auto");
     if (fit.ok) {job.lines=fit.lines.slice();job.text=job.lines.join("\n");}
-    if (fit.ok && fit.weight === "Semibold" && F_.Semibold) { const sb = G.fitText(job.lines, F_.Semibold, job.mask, fitOpts()); if (sb.ok) fit = Object.assign(sb, { weight: "Semibold" }); }
+    if (fit.ok && fit.weight === "Semibold" && F_.Semibold) { const sb = G.fitText(job.lines, F_.Semibold, job.mask, fitOpts(job)); if (sb.ok) fit = Object.assign(sb, { weight: "Semibold" }); }
     if (!fit.ok) { job.state = "review"; job.fit = null; job.reason = fit.reason; job.row.engrave.state = "review"; agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: ${fit.reason}`); if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: job.row, job, why: fit.reason }); render(); return job; }
     fit.fittedMax = fit.size; job.fit = fit; job.fitAt = Date.now();
     // the largest that fits is the ceiling; the default is sized to how much there is to say (design §7.4)
@@ -1944,14 +1944,14 @@ const Engrave = window.Engrave = (() => {
       let want = G.defaultSize(job.lines, fit.fittedMax, sizeOpts(fontFor(fit.weight)));
       // the weight follows the size that will actually be cut, not the ceiling: a name that came down to 2.0 mm is
       // Semibold even though the largest that fitted was 3.7 mm. Advances differ by ~3%, so one re-fit settles it.
-      const semiBelow = fitOpts().semiboldBelowMm || 2.2;
+      const semiBelow = fitOpts(job).semiboldBelowMm || 2.2;
       const wantWeight = want * G.capPerEm(fontFor(fit.weight)) * MM < semiBelow ? "Semibold" : "Regular";
       if (wantWeight !== fit.weight && F_[wantWeight]) {
-        const re = G.fitText(job.lines, F_[wantWeight], job.mask, fitOpts());
+        const re = G.fitText(job.lines, F_[wantWeight], job.mask, fitOpts(job));
         if (re.ok) { re.fittedMax = re.size; fit = Object.assign(re, { weight: wantWeight }); job.fit = fit; want = G.defaultSize(job.lines, fit.fittedMax, sizeOpts(fontFor(fit.weight))); }
       }
       if (want < fit.size - 0.01) {
-        const L = G.layoutLines(job.lines, fontFor(fit.weight), want, 0.18, fit.angle, fit.centre);
+        const L = G.layoutLines(job.lines, fontFor(fit.weight), want, fitOpts(job).lineGap, fit.angle, fit.centre);
         if (G.verifyInk(L.cmds, job.mask).ok) {
           const capMm = want * G.capPerEm(fontFor(fit.weight)) * MM;
           job.fit = fit = Object.assign({}, fit, { size: want, capMm, layout: L, glyphs: L.glyphs, cmds: L.cmds, fittedMax: fit.fittedMax, sized: "default" });
@@ -1962,7 +1962,7 @@ const Engrave = window.Engrave = (() => {
         agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: the words only fit at the largest size the area allows — a different split of the lines may read better`);
     }
     // The final default size and the display line count are one decision.
-    const flow=G.reflowAt(job.lineInput,fontFor(fit.weight),job.mask,fitOpts(),{centre:fit.centre,angle:fit.angle,size:fit.size},job.lineMode || "auto");
+    const flow=G.reflowAt(job.lineInput,fontFor(fit.weight),job.mask,fitOpts(job),{centre:fit.centre,angle:fit.angle,size:fit.size},job.lineMode || "auto");
     if(flow.ok){fit=job.fit=Object.assign({},fit,flow,{weight:fit.weight});job.lines=flow.lines.slice();job.text=job.lines.join("\n");}
     job.wantSize=fit.size;
     const check = G.verifyInk(fit.cmds, job.mask);                          // 7.4 · geometry: zero ink outside the eroded mask, zero in any hole
@@ -2004,7 +2004,7 @@ const Engrave = window.Engrave = (() => {
      returns. The original words remain separate from generated line breaks. */
   function refit(job, place) {
     const font=fontFor(job.fit.weight),want=place.size ?? job.wantSize ?? job.fit.size;
-    const f=G.reflowAt(job.lineInput || job.lines,font,job.mask,fitOpts(),{...place,size:want},job.lineMode || 'auto');
+    const f=G.reflowAt(job.lineInput || job.lines,font,job.mask,{...fitOpts(job),measure:place.measure},{...place,size:want},job.lineMode || 'auto');
     if(!f.ok)return false;
     f.fittedMax=Math.max(f.size,job.fit.fittedMax || 0);f.weight=job.fit.weight;f.rect=job.fit.rect;
     job.wantSize=want;job.lines=f.lines.slice();job.text=job.lines.join("\n");
@@ -2034,15 +2034,23 @@ const Engrave = window.Engrave = (() => {
   }
   function resize(job, size) {
     if(!job.fit || !Number.isFinite(size))return;
-    size=Math.min(fitOpts().maxHeightFrac*(job.mask.hPt || job.mask.h/job.mask.res),Math.max(.01,size));
+    size=Math.min(fitOpts(job).maxHeightFrac*(job.mask.hPt || job.mask.h/job.mask.res),Math.max(.01,size));
     if(!refit(job,{centre:job.fit.centre,angle:job.fit.angle,size})){toast("No room at that size","bad");return;}
     reRead(job);refresh(job);
+  }
+  function setLineSpacing(job, percent, measure = true) {
+    if(!job.fit || !Number.isFinite(percent) || job.backSaving || job.approvalPreparing)return false;
+    const previous=job.lineGap;
+    job.lineGap=.18*Math.max(0,Math.min(300,percent))/100;
+    if(!refit(job,{centre:job.fit.centre,angle:job.fit.angle,measure})) {job.lineGap=previous;return false;}
+    refresh(job);if(measure)Session.schedule();return true;
   }
   async function resplit(job) { const vars = G.splitVariants(job.lines); const i = (job.splitIndex || 0) + 1; const pick = vars[i % vars.length]; job.splitIndex = i; job.lineInput=pick.slice(); job.lineMode="preserve"; job.lines = pick; job.text = pick.join("\n"); agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: re-split as "${pick.join(" / ")}"`); await fitJob(job); }
   async function skip(job, by) { by = by || employeeName() || askEmployee(); if (!by) return; revokeBacks(job); job.state = "skipped"; job.approvedBy = null; job.row.engrave = { needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; job.row.flag = `engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`); await Pool.update(job.copies, { engrave: false, engraveSkippedBy: by }); if(job.editingBack) {await backQueue;await syncEditedBack(job);} Orders.render(); render(); if(!job.editingBack) RunCtl.poke(); }
   function sendBack(job, why) { revokeBacks(job); job.state = "words"; job.reason = why || "sent back from the placement review — a decision on the words is needed"; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); Orders.render(); }
   async function approve(job, by) {
     if(job.backSaving || job.approvalPreparing) return;
+    if(EG.cardKey===job.key) EG.card?._flushSpacing?.();
     job.approvalPreparing=true;
     try {
     if(EG.cardKey===job.key) {
@@ -2096,6 +2104,13 @@ const Engrave = window.Engrave = (() => {
       const centre = prov && prov.centre ? prov.centre : (job.fit ? job.fit.centre : null);
       const angle = prov && prov.angle != null ? prov.angle : (job.fit ? job.fit.angle || 0 : 0);
       if (gl.length) glyphsOf(gl);
+      if(cv._editable && job._spacingActive && job.fit?.layout?.rows.length>1) {
+        const layout=job.fit.layout,a=angle*Math.PI/180,ca=Math.cos(a),sa=Math.sin(a);
+        const at=(x,y)=>tx(centre[0]+x*ca-y*sa,centre[1]+x*sa+y*ca);
+        ctx.save();ctx.strokeStyle="rgba(169,130,63,.65)";ctx.lineWidth=1;ctx.setLineDash([3,3]);
+        for(const row of layout.rows) {const left=at(layout.local[0]-2,row.y),right=at(layout.local[2]+2,row.y);ctx.beginPath();ctx.moveTo(...left);ctx.lineTo(...right);ctx.stroke();}
+        ctx.restore();
+      }
       if (prov && prov.centre && prov.mode === "move") {                     // guides: the charm's own centre lines, lit when the text is on them
         const c = prov.centre, snapX = Math.abs(c[0] - mask.cx) < 0.35 * PT, snapY = Math.abs(c[1] - mask.cy) < 0.35 * PT;
         ctx.save(); ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
@@ -2196,13 +2211,13 @@ const Engrave = window.Engrave = (() => {
       sh.backPool = sh.backPool || [];
       for (const poolId of poolIds) {
         const p = B.pool.rows.get(poolId) || {}; const copy = job.editingBack ? job.editOriginal.copy || 1 : p.copy || 1;
-        const built = await P.buildBackFile({ charm: charm0, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: rel, view: S.settings.backFileView || "asSeenFromBack", title: `${job.row.order.receiptId} · ${job.row.spec.designSku} · back`, meta: { poolId, order: job.row.order.receiptId, sku: job.row.spec.designSku, copy, text: job.text, font: "Source Sans 3", weight: fit.weight, sizePt: fit.size, capMm: fit.capMm, angle: fit.angle, approvedBy: job.approvedBy, approvedAt: job.approvedAt, upAngle: view.upAngle, flipChecks: view.checks } });
+        const built = await P.buildBackFile({ charm: charm0, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: rel, view: S.settings.backFileView || "asSeenFromBack", title: `${job.row.order.receiptId} · ${job.row.spec.designSku} · back`, meta: { poolId, order: job.row.order.receiptId, sku: job.row.spec.designSku, copy, text: job.text, font: "Source Sans 3", weight: fit.weight, sizePt: fit.size, capMm: fit.capMm, lineGap:fitOpts(job).lineGap, angle: fit.angle, approvedBy: job.approvedBy, approvedAt: job.approvedAt, upAngle: view.upAngle, flipChecks: view.checks } });
         const verified = await verifyBackFile(built.bytes, job);                 // 7.4 · flip integrity re-run on the written, re-parsed file
         if (!verified.ok) throw new Error(`the written back file did not re-verify (${verified.why})`);
         const name = `${sh.fileBase}_back_${poolId}_${approval}`;
         let ai = null, pngUp = null;
         if (S.cloud.ok && sh.folderPath) { ai = await uploadBytes(`${sh.folderPath}/back/${name}.ai`, built.bytes, "application/illustrator", `Saving back ${copy}`); pngUp = await uploadBytes(`${sh.folderPath}/back/${name}.png`, pngBlob, "image/png"); }
-        const rec = { lineMode:job.lineMode || "auto", lineInput:job.lineInput || job.lines, solidBack:!!job.solidBack, upAngle:view.upAngle, poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, text: job.text, lines: job.lines, font: "Source Sans 3", weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: job.approvedBy, approvedAt: job.approvedAt, nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: S.settings.backFileView || "asSeenFromBack", reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, previewWPt:png._sizePt.w, previewHPt:png._sizePt.h, pageWPt: built.wPt, pageHPt: built.hPt };
+        const rec = { lineGap:fitOpts(job).lineGap, lineMode:job.lineMode || "auto", lineInput:job.lineInput || job.lines, solidBack:!!job.solidBack, upAngle:view.upAngle, poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, text: job.text, lines: job.lines, font: "Source Sans 3", weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: job.approvedBy, approvedAt: job.approvedAt, nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: S.settings.backFileView || "asSeenFromBack", reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, previewWPt:png._sizePt.w, previewHPt:png._sizePt.h, pageWPt: built.wPt, pageHPt: built.hPt };
         if (!current()) return;
         if (sheetFor(job,poolId) !== sh) throw new Error("The charm moved during approval. Retry on its current sheet.");
         if (!S.cloud.ok || !ai || !pngUp) throw new Error("Reconnect to save the approved back files");
@@ -2324,6 +2339,8 @@ const Engrave = window.Engrave = (() => {
     const sl = c.querySelector('input[data-a="resize"]');
     if (sl && document.activeElement !== sl) { sl.max = f.fittedMax.toFixed(2); sl.min = (0.5 * f.fittedMax).toFixed(2); sl.value = f.size.toFixed(2); }
     else if (sl) { sl.max = f.fittedMax.toFixed(2); sl.min = (0.5 * f.fittedMax).toFixed(2); }
+    const spacing=c.querySelector('[data-a="spacing"]');
+    if(spacing){const pct=Math.round(fitOpts(job).lineGap/.18*100);spacing.value=pct;c.querySelector('[data-spacing]').textContent=pct+'%';spacing.closest('.spacingControl').style.setProperty('--spacing',pct/100);}
     const nums = c.querySelector(".pvNums dd"); if (nums) nums.textContent = `${f.size.toFixed(2)} pt · cap ${f.capMm.toFixed(2)} mm · ${f.weight}${f.angle ? ` · ${f.angle}°` : ""}`;
     const rh = c.querySelector(".reviewIdentity") || c.querySelector(".rh"); if (rh) {
       rh.querySelectorAll(".small").forEach(n => n.remove());
@@ -2464,7 +2481,7 @@ const Engrave = window.Engrave = (() => {
     card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided">${decided + 1} of ${decided + remaining} · ${decided} done</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
         <div class="pvMain"><div class="backHost"></div>
-          <div class="ctl">${f && !wordsJob ? `<button class="btn sage sm" data-a="approve" title="this placement is right — write the back file">${job.editingBack ? "Save changes" : "Approve"} <b class="k">A</b></button><button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${f.capMm.toFixed(2)} mm</span><label class="angle" title="the angle of the text, in degrees — type one, or drag the handle above the text"><input type="number" data-a="angle" min="-359" max="359" step="1" value="${Math.round(f.angle || 0)}">°</label>` : ""}
+          <div class="ctl">${f && !wordsJob ? `<button class="btn sage sm" data-a="approve" title="this placement is right — write the back file">${job.editingBack ? "Save changes" : "Approve"} <b class="k">A</b></button><button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${f.capMm.toFixed(2)} mm</span><label class="spacingControl" title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span>Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="quarterTurns" role="group" aria-label="Rotate text"><button class="btn ghost sm" data-a="turnLeft" title="Rotate text 90° counterclockwise">↶ +90°</button><button class="btn ghost sm" data-a="turnRight" title="Rotate text 90° clockwise">↷ −90°</button></span><label class="angle" title="the angle of the text, in degrees — type one, or drag the handle above the text"><input type="number" data-a="angle" min="-359" max="359" step="1" value="${Math.round(f.angle || 0)}">°</label>` : ""}
             <span class="rest"><button class="btn ghost sm" data-a="skip" title="cut this charm plain — nothing engraved on its back">No engraving <b class="k">S</b></button></span></div>
 </div>
         <div class="pvSide">
@@ -2529,7 +2546,7 @@ const Engrave = window.Engrave = (() => {
       const paintFlow = () => {
         flowFrame=0;if(!drag)return;
         const centre=drag.pending || drag.c,angle=drag.pendingAngle ?? drag.angle,size=drag.pendingSize ?? drag.want;
-        const f=G.reflowAt(job.lineInput || job.lines,fontFor(job.fit.weight),job.mask,{...fitOpts(),measure:false},{centre,angle,size},job.lineMode || "auto");
+        const f=G.reflowAt(job.lineInput || job.lines,fontFor(job.fit.weight),job.mask,{...fitOpts(job),measure:false},{centre,angle,size},job.lineMode || "auto");
         if(f.ok){bc._paint({glyphs:f.glyphs,centre:f.centre,angle:f.angle,mode:drag.mode});const cap=card.querySelector('[data-cap]');if(cap)cap.textContent=f.capMm.toFixed(2)+" mm";}
         else bc._paint();
       };
@@ -2555,7 +2572,7 @@ const Engrave = window.Engrave = (() => {
         if (drag.mode === "resize") {
           // a corner pulled away from the centre grows the text, pulled in shrinks it: the size follows the distance
           const r = Math.hypot(p[0] - drag.cpx[0], p[1] - drag.cpx[1]);
-          drag.pendingSize = Math.min(fitOpts().maxHeightFrac*(job.mask.hPt || job.mask.h/job.mask.res),Math.max(0.01, drag.size * r / drag.r0));
+          drag.pendingSize = Math.min(fitOpts(job).maxHeightFrac*(job.mask.hPt || job.mask.h/job.mask.res),Math.max(0.01, drag.size * r / drag.r0));
           queueFlow();
         } else if (drag.mode === "rotate") {
           const a = Math.atan2(p[1] - drag.cpx[1], p[0] - drag.cpx[0]);
@@ -2598,23 +2615,45 @@ const Engrave = window.Engrave = (() => {
     };
     requestAnimationFrame(mountBack);
     if (window.ResizeObserver) { const ro = new ResizeObserver(() => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; mountBack(); }); }); ro.observe(backHost); card._ro = ro; }
+    const spacing = card.querySelector('[data-a="spacing"]');
+    if(spacing) {
+      const group=spacing.closest('.spacingControl');let pending=+spacing.value,frame=0,settle=0,dirty=false;
+      const apply=measure=>{
+        frame=0;if(!card.isConnected || job.state!=="review")return;
+        if(!setLineSpacing(job,pending,measure)) {pending=Math.round(fitOpts(job).lineGap/.18*100);spacing.value=pending;}
+        const out=group.querySelector('output');out.textContent=pending+'%';
+        out.title=(pending-100>=0?'+':'')+(pending-100)+'% from the original gap';
+        group.style.setProperty('--spacing',pending/100);
+      };
+      const queue=()=>{
+        pending=+spacing.value;dirty=true;job._spacingActive=true;
+        if(!frame)frame=requestAnimationFrame(()=>apply(false));
+        clearTimeout(settle);settle=setTimeout(()=>{card._flushSpacing();job._spacingActive=false;refresh(job);},180);
+      };
+      card._flushSpacing=()=>{if(frame)cancelAnimationFrame(frame);frame=0;clearTimeout(settle);if(dirty){apply(true);dirty=false;}job._spacingActive=false;refresh(job);};
+      spacing.addEventListener('input',queue);
+      spacing.addEventListener('change',()=>card._flushSpacing());
+      group.addEventListener('wheel',e=>{if(!e.deltaY)return;e.preventDefault();spacing.value=Math.max(0,Math.min(300,(frame?pending:Math.round(fitOpts(job).lineGap/.18*100))+(e.deltaY<0?1:-1)*(e.shiftKey?1:5)));queue();},{passive:false});
+      group.style.setProperty('--spacing',pending/100);
+    }
     const capOut = card.querySelector("[data-cap]");
-    card.querySelectorAll("[data-a]").forEach(b => { const a = b.dataset.a; if (a === "usewords" || a === "linecount") return; if (a === "angle") { b.onchange = () => { const v = +b.value; if (Number.isFinite(v)) rotateTo(job, v); }; b.addEventListener("keydown", e => e.stopPropagation()); return; } b.onclick = () => { if (a === "approve") approve(job); else if (a === "centre") centreText(job); else if (a === "close") { if(job.backSaving) return; if(job.editingBack) {items().delete(job.key);Review.remove("eng:"+job.key);} EG.list = true; EG.card = null; EG.cardKey = null; render(); } else if (a === "prev" || a === "next") { const q = [...items().values()].filter(matchesQ).filter(j2 => j2.row.state !== "gone" && ["review", "words", "blocked"].includes(j2.state)); const i = q.findIndex(j2 => j2.key === job.key); const j3 = q[(i + (a === "next" ? 1 : q.length - 1)) % q.length]; if (j3) { EG.focus = j3.key; EG.card = null; EG.cardKey = null; render(); } }
+    card.querySelectorAll("[data-a]").forEach(b => { const a = b.dataset.a; if (a === "usewords" || a === "linecount" || a === "spacing") return; if (a === "angle") { b.onchange = () => { card._flushSpacing?.(); const v = +b.value; if (Number.isFinite(v)) rotateTo(job, v); }; b.addEventListener("keydown", e => e.stopPropagation()); return; } b.onclick = () => { card._flushSpacing?.(); if (a === "approve") approve(job); else if (a === "centre") centreText(job); else if (a === "turnLeft" || a === "turnRight") {rotateTo(job,(job.fit?.angle || 0)+(a === "turnLeft" ? 90 : -90));} else if (a === "close") { if(job.backSaving) return; if(job.editingBack) {items().delete(job.key);Review.remove("eng:"+job.key);} EG.list = true; EG.card = null; EG.cardKey = null; render(); } else if (a === "prev" || a === "next") { const q = [...items().values()].filter(matchesQ).filter(j2 => j2.row.state !== "gone" && ["review", "words", "blocked"].includes(j2.state)); const i = q.findIndex(j2 => j2.key === job.key); const j3 = q[(i + (a === "next" ? 1 : q.length - 1)) % q.length]; if (j3) { EG.focus = j3.key; EG.card = null; EG.cardKey = null; render(); } }
       else if (a === "resplit") resplit(job); else if (a === "skip") skip(job); else if (a === "back") sendBack(job); }; });
     const lineControl=card.querySelector('[data-a="linecount"]');
     if(lineControl) lineControl.onchange=async()=>{
+      card._flushSpacing?.();
       job.lineMode=lineControl.value;
       await applyWords();
     };
     void capOut;
-    card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT" || e.repeat) return; const k = e.key.toLowerCase(); if (k === "a") { e.preventDefault(); approve(job); } else if (k === "s") { e.preventDefault(); skip(job); } else if (e.key === "Escape") { if(job.editingBack && !job.backSaving) {items().delete(job.key);Review.remove("eng:"+job.key);} EG.list = true; EG.card = null; EG.cardKey = null; render(); } else if (e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); rotateTo(job, (job.fit ? job.fit.angle || 0 : 0) + (e.key === "ArrowLeft" ? 1 : -1)); } else if (e.key === "ArrowLeft") { e.preventDefault(); nudge(job, -0.25, 0); } else if (e.key === "ArrowRight") { e.preventDefault(); nudge(job, 0.25, 0); } else if (e.key === "ArrowUp") { e.preventDefault(); nudge(job, 0, 0.25); } else if (e.key === "ArrowDown") { e.preventDefault(); nudge(job, 0, -0.25); } });
+    card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT" || e.repeat) return; const k = e.key.toLowerCase(); if (["a","s","escape","arrowleft","arrowright","arrowup","arrowdown"].includes(k)) card._flushSpacing?.(); if (k === "a") { e.preventDefault(); approve(job); } else if (k === "s") { e.preventDefault(); skip(job); } else if (e.key === "Escape") { if(job.editingBack && !job.backSaving) {items().delete(job.key);Review.remove("eng:"+job.key);} EG.list = true; EG.card = null; EG.cardKey = null; render(); } else if (e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); rotateTo(job, (job.fit ? job.fit.angle || 0 : 0) + (e.key === "ArrowLeft" ? 1 : -1)); } else if (e.key === "ArrowLeft") { e.preventDefault(); nudge(job, -0.25, 0); } else if (e.key === "ArrowRight") { e.preventDefault(); nudge(job, 0.25, 0); } else if (e.key === "ArrowUp") { e.preventDefault(); nudge(job, 0, 0.25); } else if (e.key === "ArrowDown") { e.preventDefault(); nudge(job, 0, -0.25); } });
     // the next card takes focus only when the person was already working in this pane, so a held key cannot run the queue
     const wasHere = document.activeElement && document.activeElement.closest && document.activeElement.closest("#egQueue");
     if (wasHere || !document.activeElement || document.activeElement === document.body) setTimeout(() => { if (card.isConnected) card.focus(); }, 30);
     void it;
     return card;
   }
-  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0 }), loadFonts, classify, classifyAll, fitJob, fitAll, approve, nudge, resize, rotateTo, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
+  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0 }), loadFonts, classify, classifyAll, fitJob, fitAll, approve, nudge, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
@@ -4084,7 +4123,7 @@ const Session = window.Session = (() => {
         prim.active = Math.min(group.active || 0, prim.pages.length - 1); CN.showPage(group.metal, prim.active);
       }
       B.engrave.items = new Map((d.jobs || []).filter(j => j.editingBack && j.editRow || B.orders.byKey.has(j.key)).map(j => {
-        j.row = j.editingBack ? j.editRow : B.orders.byKey.get(j.key); if (j.state === "fitting") j.state = "ready";
+        j.lineGap ??= .18; j.row = j.editingBack ? j.editRow : B.orders.byKey.get(j.key); if (j.state === "fitting") j.state = "ready";
         return [j.key, j];
       }));
       B.review.items = (d.review || []).map(it => Object.assign(it, { row: B.orders.byKey.get(it.rowKey), job: B.engrave.items.get(it.jobKey) }));
