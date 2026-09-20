@@ -1040,8 +1040,8 @@ const Master = window.Master = (() => {
       if (S.cloud.ok) { const bytes = await P.buildSingleCharm(c, parsed); [ai, png] = await Promise.all([uploadBytes(`charmnest/master/${key}.ai`, bytes, "application/illustrator", `Saving ${key}`), uploadBytes(`charmnest/master/${key}.png`, dataUrlToBytes(c.thumb), "image/png")]); }
       const reasons = []; if (c.open) reasons.push("open outline");
       let engravable = true, upAngle = null, upSource = "drawn", flipOk = true;
-      try { const up = G.upAngleOf(c); upAngle = up.angle; upSource = up.source; const view = G.backView(c, { res: 6, upAngle }); const mask = G.engraveMask(view, { marginMm: +S.settings.engraveMarginMm || 0.8, keepOut: keepOutOf(c) }); const r = G.largestRectangles(mask, 1)[0]; engravable = !!r && ((r.wPt * MM >= 6 && r.hPt * MM >= 3) || (r.wPt * MM >= 3 && r.hPt * MM >= 6)); }
-      catch (e) { flipOk = false; engravable = false; reasons.push(e.message); }
+      try { const up = G.upAngleOf(c); upAngle = up.angle; upSource = up.source; G.backView(c, { res: 6, upAngle }); }
+      catch (e) { flipOk = false; reasons.push(e.message); }
       const wMm = c.widthPt * MM, hMm = c.heightPt * MM; const outOfRange = Math.max(wMm, hMm) > (+S.settings.sizeMaxMm || 60) || Math.max(wMm, hMm) < (+S.settings.sizeMinMm || 3);
       entries.push({ sku: c.sku, size: c.skuSize, charmHash: c.hash, widthPt: c.widthPt, heightPt: c.heightPt, areaPt2: c.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: ai && ai.path, aiUrl: ai && ai.url, thumbPath: png && png.path, thumbUrl: png && png.url, open: !!c.open, labelSource: c.labelSource || "text", confidence: c.labelConfidence == null ? null : c.labelConfidence, blocked: reasons.length ? reasons.join("; ") : null, outOfRange, flipOk, backKeepOut: keepOutOf(c).length ? keepOutOf(c).map(m => ({ layer: m.layer })) : null });
       if (reasons.length) blocked.push({ sku: c.sku, reason: reasons.join("; ") }); skus.push(c.sku);
@@ -1260,7 +1260,7 @@ const Master = window.Master = (() => {
         `<div class="meta">${(e.widthPt * MM).toFixed(1)} × ${(e.heightPt * MM).toFixed(1)} mm · ${e.holes} hole(s)${sizes.length ? ` · sizes ${sizes.map(([k]) => k).join("/")}` : ""}${d.skus.length > 1 ? ` · ${d.skus.length} SKUs` : ""}</div>` +
         `<div class="meta">up ${e.upAngle == null ? "as drawn" : Math.round(e.upAngle) + "°"} · ${esc(e.labelSource || "text")}${e.hashSource === "server" ? " · server" : ""}</div>` +
         (blocked ? `<div class="bad">${esc(blocked)}</div>` : "") +
-        `<div class="row"><label style="display:flex;gap:4px;align-items:center;font-size:11px"><input type="checkbox" data-eng="${keys}" ${e.engravable !== false ? "checked" : ""}> engravable</label>` +
+        `<div class="row">` +
         `<input type="number" data-up="${keys}" value="${e.upAngle == null ? "" : Math.round(e.upAngle)}" placeholder="up°" style="width:52px;border:1px solid var(--line);border-radius:6px;padding:2px 4px;font-size:11px">` +
         (blocked ? `<button class="btn ghost xs" data-unblock="${keys}">unblock</button>` : "") +
         (e.aiUrl ? `<a class="btn ghost xs" href="${e.aiUrl}" target="_blank" rel="noopener">.ai</a>`
@@ -1269,7 +1269,6 @@ const Master = window.Master = (() => {
     }).join("") + (rows.length > shown.length ? `<div class="libEmpty">${rows.length - shown.length} more — press &ldquo;Show all&rdquo;, or narrow the search</div>` : "");
     // a charm's settings belong to the charm, so they are written to every SKU that shares it
     const each = (attr, fn) => grid.querySelectorAll(`[data-${attr}]`).forEach(el => fn(el, el.dataset[attr].split("|")));
-    each("eng", (cb, skus) => cb.onchange = () => patchMany(skus, { engravable: cb.checked }).then(() => toast(`${skus.join(", ")}: ${cb.checked ? "engravable" : "not engravable"} (operator)`, "ok")));
     each("up", (inp, skus) => inp.onchange = () => { const v2 = inp.value.trim(); if (v2 === "") return; patchMany(skus, { upAngle: +v2 }).then(() => toast(`${skus.join(", ")}: up = ${+v2}° (operator)`, "ok")); });
     each("unblock", (b, skus) => b.onclick = () => patchMany(skus, { blocked: null }).then(() => toast(`${skus.join(", ")} unblocked`, "ok")));
   }
@@ -1295,7 +1294,7 @@ const Pool = window.Pool = (() => {
     await P.buildSilhouettes(parsed, [charm], +S.settings.silhouetteRes || 6);
     const srcId = "pool:" + key.replace(/[^\w]+/g, "_");
     const src = { id: srcId, pool: true, name: `${entry.sku}${size ? " · " + size : ""} (master)`, sku: entry.sku, bytes, hash: entry.charmHash || charm.hash, parsed, group: g, charms: [charm], metal: null, state: "ready", t0: performance.now(), cloud: { path: geom.aiPath, url }, persisting: null };
-    Object.assign(charm, { id: srcId + ":0", sourceId: srcId, sourceName: src.name, index: 0, name: entry.sku, sku: entry.sku, namedBy: "master", excluded: false, cloud: { ai: url, aiPath: geom.aiPath, png: geom.thumbUrl || null, pngPath: geom.thumbPath || null }, upAngle: entry.upAngle, engravable: entry.engravable !== false, backKeepOut: Master.keepOutOf(charm) });
+    Object.assign(charm, { id: srcId + ":0", sourceId: srcId, sourceName: src.name, index: 0, name: entry.sku, sku: entry.sku, namedBy: "master", excluded: false, cloud: { ai: url, aiPath: geom.aiPath, png: geom.thumbUrl || null, pngPath: geom.thumbPath || null }, upAngle: entry.upAngle, engravable: true, backKeepOut: Master.keepOutOf(charm) });
     S.poolSources[srcId] = src; B.pool.sources.set(key, src);
     return src;
   }
@@ -1815,15 +1814,16 @@ const Engrave = window.Engrave = (() => {
   async function classify(row) {
     const job = ensureJob(row); const sp = row.spec;
     if (!sp.engraveCandidate) { setNone(job, "no personalisation, message or note"); return job; }
-    const entry = Master.entryFor(sp.designSku); const engravable = !entry || entry.engravable !== false;
+    // Etsy offers engraving on these designs; legacy catalog estimates are not eligibility rules.
+    const engravable = true;
     job.state = "classify"; row.engrave = { needed: false, state: "classify" };
     let r = null;
     try { r = await agentCall("engraveIntent", { order: row.order.receiptId, sku: sp.designSku, title: row.line.title, form: sp.form, quantity: sp.quantity, engravable, personalization: sp.personalization, buyerMessage: sp.buyerMessage, staffNote: sp.staffNote, messages: sp.messages }, { label: `Claude reads the words of ${row.order.receiptId}`, background: true }); }
     catch (e) { r = { skipped: e.message }; }
     if (!r || r.skipped || r.error) {
-      // the classifier is unavailable: a person decides, with the verbatim personalisation as the proposal
+      // Keep the verbatim proposal reviewable even when the classifier is unavailable.
       job.text = sp.personalization.join("\n"); job.lines = sp.personalization.slice(); job.source = "personalization"; job.confidence = 0; job.questions = [`Claude was unavailable (${(r && (r.skipped || r.error)) || "no answer"}) — confirm the words`]; job.requests = { side: "back", font: null, handwriting: false, image: false };
-      return toWords(job, "classifier unavailable");
+      return job.lines.length ? setReady(job) : toWords(job, "Enter the requested inscription");
     }
     job.text = r.text || ""; job.lines = job.text.split(/\r?\n/).map(s => s.trim()).filter(Boolean); job.source = r.source; job.quote = r.sourceQuote; job.confidence = r.confidence; job.requests = r.requests; job.questions = r.questions || []; job.claudeReasoning = r.reasoning || null;
     const originalLines=[(sp.personalization || []).join("\n"),sp.buyerMessage,sp.staffNote,job.quote].filter(Boolean)
@@ -1831,24 +1831,25 @@ const Engrave = window.Engrave = (() => {
       .find(lines=>lines.length && lines.join(" ").replace(/\s+/g," ")===job.text.replace(/\s+/g," ").trim());
     if(originalLines) {job.lines=originalLines;job.text=originalLines.join("\n");}
     agent({ engrave: true }, "ENGRAVE", `${row.order.receiptId} · ${sp.designSku}: Claude reads ${r.engrave ? `"${job.text.replace(/\n/g, " / ")}" from ${r.source} (${Math.round(r.confidence * 100)}%)` : "no engraving"}${job.questions.length ? ` · ${job.questions.length} question(s)` : ""}`, { reason: r.reasoning || null });
-    if (!r.engrave) { if (job.confidence < (+S.settings.engraveConfidence || 0.8) || job.questions.length) return toWords(job, "Claude is not sure there is no engraving"); setNone(job, "Claude: no engraving requested"); return job; }
-    const reqBad = job.requests && ((job.requests.side && !["back", "unspecified"].includes(job.requests.side)) || job.requests.font || job.requests.handwriting || job.requests.image);
-    if (job.confidence < (+S.settings.engraveConfidence || 0.8)) return toWords(job, `confidence ${Math.round(job.confidence * 100)}% is under ${Math.round((+S.settings.engraveConfidence || 0.8) * 100)}%`);
-    if (job.questions.length) return toWords(job, "Claude has questions");
-    if (reqBad) return toWords(job, `the customer asks for ${job.requests.side !== "back" && job.requests.side !== "unspecified" ? "the " + job.requests.side : ""}${job.requests.font ? " font " + job.requests.font : ""}${job.requests.handwriting ? " handwriting" : ""}${job.requests.image ? " an image" : ""} — engraving is back only, in the house font only`);
-    if (!engravable) return toWords(job, `${sp.designSku} is marked not engravable in the Master tab`);
-    if (!job.lines.length) return toWords(job, "Claude returned no text");
+    // Confidence describes the interpretation, not whether a preview can be drawn.
+    // Nothing here approves or exports a proposed inscription.
+    if (!r.engrave && !job.lines.length) {
+      if (job.confidence < (+S.settings.engraveConfidence || 0.8) || job.questions.length)
+        return toWords(job, "Check the requested inscription");
+      setNone(job, "No engraving requested"); return job;
+    }
+    if (!job.lines.length) return toWords(job, "Enter the requested inscription");
     return setReady(job);
   }
   function setNone(job, why) { job.state = "none"; job.reason = why; job.row.engrave = { needed: false, state: "none", reason: why, approved: true }; Review.remove("eng:" + job.key); RunCtl.poke(); return job; }
   function toWords(job, why) { job.state = "words"; job.reason = why; job.row.engrave = { needed: true, state: "words", text: job.text, approved: false, reason: why }; Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: job.row, job, why }); RunCtl.poke(); return job; }
-  async function setReady(job) {
+  async function setReady(job, wake = true) {
     await loadFonts();
     if (!F_.ok) { job.state = "blocked"; job.reason = "Source Sans 3 font files are missing"; job.row.engrave = { needed: true, state: "blocked", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "fontMissing", key: "eng:" + job.key, row: job.row, job, why: F_.error }); return job; }
     const cov = G.glyphCoverage(F_.Regular, job.lines.join("\n"));
     if (!cov.ok) { job.state = "words"; job.reason = `Unsupported engraving characters: ${cov.missing.map(c => c + " (" + [...c].map(x=>"U+"+x.codePointAt(0).toString(16).toUpperCase()).join(" ") + ")").join(", ")}${F_.emojiError ? " — " + F_.emojiError : ""}`; job.missing = cov.missing; job.row.engrave = { needed: true, state: "words", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "notRepresentable", key: "eng:" + job.key, row: job.row, job, why: job.reason }); return job; }
     job.state = "ready"; job.reason = null; job.row.engrave = { needed: true, state: "ready", text: job.text, approved: false }; Review.remove("eng:" + job.key);
-    if(!job.editingBack) {Pool.update(job.copies, { engrave: true }).catch(() => {});RunCtl.poke();}                                                        // a waiting run fits it now (the classifier answers asynchronously)
+    if(!job.editingBack) {Pool.update(job.copies, { engrave: true }).catch(() => {});if (wake) RunCtl.poke();}                                                        // a waiting run fits it now (the classifier answers asynchronously)
     return job;
   }
   /** A person's decision on the words (confirm / edit / no engraving), recorded with the name. */
@@ -1862,6 +1863,24 @@ const Engrave = window.Engrave = (() => {
     await setReady(job);
     if (job.state === "ready") { const ch = job.copies.length && sheetFor(job,job.copies[0]); if (ch && ch.fileBase) await fitJob(job); }
     Orders.render(); if(!job.editingBack) RunCtl.poke(); return job;
+  }
+  let previewRecovery = false;
+  async function prepareWaitingPreviews() {
+    if (previewRecovery) return;
+    previewRecovery = true;
+    try {
+      for (const job of items().values()) {
+        if (job.state !== "words" || job.row.state === "gone" || !job.lines?.length || job.missing?.length) continue;
+        job.questions = (job.questions || []).filter(q => !/not engravable|cannot (?:be |take )engrav|design.*engrav/i.test(q));
+        try {
+          await setReady(job, false);
+          if (job.state === "ready" && sheetFor(job, job.copies[0])?.fileBase) await fitJob(job);
+        } catch (e) {
+          job.state = "blocked"; job.reason = e.message;
+          job.row.engrave = { needed:true, state:"blocked", text:job.text, approved:false, reason:e.message };
+        }
+      }
+    } finally { previewRecovery = false; RunCtl.poke(); render(); }
   }
   async function classifyAll(run) {
     await loadFonts();
@@ -1879,7 +1898,14 @@ const Engrave = window.Engrave = (() => {
   }
 
   /* ── 7.2 / 7.3 · the flip and the fit, once per distinct placement (identical copies share it) ── */
-  async function fitJob(job) {
+  const fitTasks = new WeakMap();
+  function fitJob(job) {
+    if (fitTasks.has(job)) return fitTasks.get(job);
+    const task = Promise.resolve().then(() => fitJobOnce(job)).finally(() => fitTasks.delete(job));
+    fitTasks.set(job, task);
+    return task;
+  }
+  async function fitJobOnce(job) {
     EG.card = null; EG.cardKey = null;
     job.reason = null; job.verify = null; job.fit = null;
     await loadFonts();
@@ -1895,7 +1921,7 @@ const Engrave = window.Engrave = (() => {
       job.state = "blocked"; job.reason = e.message; job.flipError = e; job.row.engrave.state = "blocked"; job.row.engrave.reason = job.reason;
       agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: ${job.reason}`);
       Review.add({ kind: "flipFailed", key: "eng:" + job.key, row: job.row, job, why: job.reason, checks: e.checks, images: e.images });
-      RunCtl.stopIfRunning("a back flip failed its checks", "See the Review tab: re-run, mark the SKU not engravable, or hold the order."); return job;
+      RunCtl.stopIfRunning("a back flip failed its checks", "See the Review tab: re-run the checks or hold the order."); return job;
     }
     job.view = view;
     job.mask = G.engraveMask(view, { marginMm: +S.settings.engraveMarginMm || 0.8, keepOut: charm.backKeepOut || [] });
@@ -1958,7 +1984,7 @@ const Engrave = window.Engrave = (() => {
   }
   async function fitAll(run) {
     const jobs = [...items().values()].filter(j => !j.editingBack && j.copies.length && j.state === "ready" && j.row.state !== "gone");
-    for (const j of jobs) { const sh = j.copies.length && Pool.sheetOf(j.copies[0]); if (!sh || !sh.fileBase) continue; try { await fitJob(j); } catch (e) { j.state = "blocked"; j.reason = e.message; j.row.engrave.state = "blocked"; agent({ engrave: true }, "warn", `${j.row.order.receiptId}: ${e.message}`); Review.add({ kind: "flipFailed", key: "eng:" + j.key, row: j.row, job: j, why: e.message }); } }
+    for (const j of jobs) { if (j.state !== "ready") continue; const sh = j.copies.length && Pool.sheetOf(j.copies[0]); if (!sh || !sh.fileBase) continue; try { await fitJob(j); } catch (e) { j.state = "blocked"; j.reason = e.message; j.row.engrave.state = "blocked"; agent({ engrave: true }, "warn", `${j.row.order.receiptId}: ${e.message}`); Review.add({ kind: "flipFailed", key: "eng:" + j.key, row: j.row, job: j, why: e.message }); } }
     if (run) { run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); await RunCtl.save(run); }
     render(); return jobs.length;
   }
@@ -2274,7 +2300,6 @@ const Engrave = window.Engrave = (() => {
   /** Bring the counts and the up-next rail up to date without touching the card a person is working on. */
   function renderChrome(v, queue) {
     const jobs = [...items().values()].filter(j => j.row.state !== "gone").sort((a, b) => (b.row.arrivedAt || 0) - (a.row.arrivedAt || 0) || (+b.row.order.createTs || 0) - (+a.row.order.createTs || 0));
-    { const rw = v.querySelector("#egRun"); if (rw) rw.textContent = runWord(); }
     const n = { place: queue.length, done: decidedJobs().length };
     v.querySelectorAll(".egTab[data-tab]").forEach(b => {
       const k = n[b.dataset.tab]; let t = b.querySelector("b");
@@ -2300,7 +2325,7 @@ const Engrave = window.Engrave = (() => {
     if (sl && document.activeElement !== sl) { sl.max = f.fittedMax.toFixed(2); sl.min = (0.5 * f.fittedMax).toFixed(2); sl.value = f.size.toFixed(2); }
     else if (sl) { sl.max = f.fittedMax.toFixed(2); sl.min = (0.5 * f.fittedMax).toFixed(2); }
     const nums = c.querySelector(".pvNums dd"); if (nums) nums.textContent = `${f.size.toFixed(2)} pt · cap ${f.capMm.toFixed(2)} mm · ${f.weight}${f.angle ? ` · ${f.angle}°` : ""}`;
-    const rh = c.querySelector(".rh"); if (rh) {
+    const rh = c.querySelector(".reviewIdentity") || c.querySelector(".rh"); if (rh) {
       rh.querySelectorAll(".small").forEach(n => n.remove());
       if (f.small) rh.insertAdjacentHTML("beforeend", `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>`);
       if (f.thin) rh.insertAdjacentHTML("beforeend", `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>`);
@@ -2326,6 +2351,8 @@ const Engrave = window.Engrave = (() => {
   function render() {
     LiveStrip.render();
     const v = document.getElementById("engraveView"); if (!v || v.classList.contains("hidden")) return;
+    if (!previewRecovery && [...items().values()].some(j => j.state === "words" && j.row.state !== "gone" && j.lines?.length && !j.missing?.length))
+      void prepareWaitingPreviews();
     // a background fit finishing must not tear down the card someone is judging: when nothing about what this pane holds
     // has changed, only the counts and the rail are brought up to date
     if (EG.card && EG.card.isConnected && EG.tab === "place") {
@@ -2351,13 +2378,11 @@ const Engrave = window.Engrave = (() => {
         ${tabBtn("place", "Placements", queue.length, "info")}${tabBtn("done", "Decided", done.length, "ok")}
         ${working ? `<span class="egTab working" title="being read and fitted now — they arrive in Words or Placements on their own"><span class="spin"></span>Working<b>${working}</b></span>` : ""}
         <input class="ordSearch" id="egQ" placeholder="order, SKU, words…" value="${esc(EG.q || "")}" title="search the placements, the words and what has been decided by order number, SKU or the engraved words">
-        <span class="spacer"></span><button class="btn ghost xs" id="egRun" title="which run this engraving belongs to — click for every run on record">${esc(runWord())}</button><span class="pill ${F_.ok ? "ok" : "bad"}" title="${F_.ok ? "the engraving font is loaded" : esc(F_.error || "the engraving font files are missing")}">${F_.ok ? "Source Sans 3" + (F_.emoji ? " + emoji" : "") : "Source Sans 3 missing"}</span><button class="btn ghost xs" id="egWho" title="every approval is recorded under this name — click to change it">${esc(employeeName() || "set your name")}</button></div>
+        </div>
       <div class="egPane grow"${tab === "place" ? "" : " hidden"}><div class="rvList" id="egQueue"></div>
         <div class="egNext" id="egNext"></div></div>
       <div class="egPane grow scroll"${tab === "done" ? "" : " hidden"}><div id="egBacks"></div></div>`;
     v.querySelectorAll(".egTab[data-tab]").forEach(b => b.onclick = () => { EG.tab = b.dataset.tab; EG.chosen = true; render(); });
-    v.querySelector("#egWho").onclick = () => { askEmployee(); render(); };
-    v.querySelector("#egRun").onclick = () => RunHistory.show();
     { const q = v.querySelector("#egQ"); q.oninput = () => { EG.q = q.value; render(); const q2 = v.querySelector("#egQ"); if (q2) { q2.focus(); q2.setSelectionRange(q2.value.length, q2.value.length); } }; }
     if (tab === "place") {
       const q = v.querySelector("#egQueue");
@@ -2430,7 +2455,13 @@ const Engrave = window.Engrave = (() => {
     const conf = job.source ? `<span class="conf ${pct >= 80 ? "" : pct >= 60 ? "mid" : "low"}" title="how sure Claude is that these are the words to cut, read from ${esc(SOURCE_LABEL[job.source] || job.source)}${job.quote ? ` — “${esc(job.quote)}”` : ""}">${pct}% sure</span>` : "";
     const row2 = (t, v) => v && v !== "—" ? `<dt>${t}</dt><dd>${esc(v)}</dd>` : "";
     const wordsJob = job.state !== "review";
-    card.innerHTML = `<div class="rh"><span class="kind" title="this placement's place in the queue · how many are decided">${decided + 1} of ${decided + remaining} · ${decided} done</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div>
+    const requests = job.requests || {};
+    const reviewNotes = (job.questions || []).filter(q => !/not engravable|cannot (?:be |take )engrav|design.*engrav/i.test(q));
+    if (requests.side && !["back", "unspecified"].includes(requests.side)) reviewNotes.push(`Requested side: ${requests.side}`);
+    if (requests.font) reviewNotes.push(`Requested font: ${requests.font}`);
+    if (requests.handwriting) reviewNotes.push("Customer requested handwriting");
+    if (requests.image) reviewNotes.push("Customer requested an image");
+    card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided">${decided + 1} of ${decided + remaining} · ${decided} done</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
         <div class="pvMain"><div class="backHost"></div>
           <div class="ctl">${f && !wordsJob ? `<button class="btn sage sm" data-a="approve" title="this placement is right — write the back file">${job.editingBack ? "Save changes" : "Approve"} <b class="k">A</b></button><button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${f.capMm.toFixed(2)} mm</span><label class="angle" title="the angle of the text, in degrees — type one, or drag the handle above the text"><input type="number" data-a="angle" min="-359" max="359" step="1" value="${Math.round(f.angle || 0)}">°</label>` : ""}
@@ -2440,6 +2471,7 @@ const Engrave = window.Engrave = (() => {
           <div class="pvWords"><span class="lbl">Words on the back</span><textarea data-f="words" rows="${Math.max(1, Math.min(4, (job.lines || []).length || 1))}" title="Line breaks are preserved. The preview updates after typing.">${esc((job.lineInput || job.lines || []).join("\n"))}</textarea>
             <div class="wordsActs"><button class="btn gold xs" data-a="usewords" title="${wordsJob ? "settle the words and draw the placement" : "re-fit the placement with these words"}">${wordsJob ? "Engrave these words" : "Use these words"}</button>${wordsJob ? `<button class="btn ghost xs" data-a="skip" title="cut this charm plain — nothing engraved on its back">No engraving</button>` : ""}</div>
             ${wordsJob || !f ? `<div class="why">${esc(job.reason || "the words need a decision")}${(job.questions || []).length ? ` — ${esc(job.questions.join(" · "))}` : ""}</div>` : ""}</div>
+          ${!wordsJob && reviewNotes.length ? `<div class="reviewNotes">${esc([...new Set(reviewNotes)].join(" · "))}</div>` : ""}
           ${job.view?.detail.filledArtwork ? `<div class="why">Filled artwork: inspect the back outline and cut-outs before approving.</div>` : ""}<div class="frontHost"></div>
           <dl class="meta">${row2("Customer", (sp.personalization || []).join(" / "))}${row2("Buyer msg", sp.buyerMessage)}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}</dl>
         </div></div>`;
@@ -3392,10 +3424,10 @@ const Review = window.Review = (() => {
       const fb = c.querySelector("[data-a=fonts]"); if (fb) fb.onclick = async () => { B.engrave.fonts.ok = false; B.engrave.fonts.error = null; await Engrave.loadFonts(); if (B.engrave.fonts.ok) { remove(it.key); await Engrave.setReady(j); RunCtl.poke(); } };
     } else if (it.kind === "flipFailed") {
       const j = it.job; const ch = it.checks || (j.flipError && j.flipError.checks) || {};
-      c.innerHTML = head("Flip check failed", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Checks", Object.keys(ch).length ? Object.entries(ch).map(([k, ok]) => `${esc(k)} ${ok ? "✓" : "<b style='color:#8a3a26'>✗</b>"}`).join(" · ") : esc(it.why || ""))}</div><div class="imgs" style="display:flex;gap:8px"></div><div class="why">${esc(it.why || j.reason || "")}</div><div class="fixes"><button class="btn gold sm" data-a="rerun">Re-run</button><button class="btn ghost sm" data-a="noeng">Mark ${esc(sp.designSku)} not engravable</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
+      c.innerHTML = head("Flip check failed", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Checks", Object.keys(ch).length ? Object.entries(ch).map(([k, ok]) => `${esc(k)} ${ok ? "✓" : "<b style='color:#8a3a26'>✗</b>"}`).join(" · ") : esc(it.why || ""))}</div><div class="imgs" style="display:flex;gap:8px"></div><div class="why">${esc(it.why || j.reason || "")}</div><div class="fixes"><button class="btn gold sm" data-a="rerun">Re-run</button><button class="btn ghost sm" data-a="noeng">No engraving for this order</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
       const imgs = it.images || (j.flipError && j.flipError.images); if (imgs) { for (const [k, m] of [["front", imgs.F], ["back", imgs.B], ["front flipped", imgs.flipF]]) { if (!m) continue; const cv = document.createElement("canvas"); cv.width = m.w; cv.height = m.h; cv.style.cssText = "width:150px;border:1px solid var(--line);background:#fff"; cv.title = k; const ctx = cv.getContext("2d"); const img = ctx.createImageData(m.w, m.h); for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) { const i = ((m.h - 1 - y) * m.w + x) * 4, v = m.bits[y * m.w + x] ? 40 : 255; img.data[i] = v; img.data[i + 1] = v; img.data[i + 2] = v; img.data[i + 3] = 255; } ctx.putImageData(img, 0, 0); c.querySelector(".imgs").appendChild(cv); } }
       c.querySelector("[data-a=rerun]").onclick = () => { remove(it.key); j.state = "ready"; Engrave.fitJob(j).catch(e => toast(e.message, "bad")); };
-      c.querySelector("[data-a=noeng]").onclick = async () => { const who = by(); if (!who) return; await Master.patch(sp.designSku, { engravable: false }); remove(it.key); Engrave.decideWords(j, { none: true, by: who }); };
+      c.querySelector("[data-a=noeng]").onclick = async () => { const who = by(); if (!who) return; remove(it.key); Engrave.decideWords(j, { none: true, by: who }); };
     } else if (it.kind === "placement") {
       return Engrave.placementCard(it.job, 1);
     } else if (it.kind === "orderChanged") {

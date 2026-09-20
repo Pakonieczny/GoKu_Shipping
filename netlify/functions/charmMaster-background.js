@@ -84,8 +84,8 @@ exports.handler = async (event) => {
       const charmHash = CharmNestPDF.fnv(CharmNestPDF.signature(sil.bits, sil.w, sil.h) + "|" + Math.round((sil.bboxOuter[2] - sil.bboxOuter[0]) * 2) + "x" + Math.round((sil.bboxOuter[3] - sil.bboxOuter[1]) * 2) + "|" + c.members.length);
       const open = (() => { const polys = Geom.flatten(c.outline, 12); return !polys.length || polys.some(p => Math.hypot(p[0][0] - p[p.length - 1][0], p[0][1] - p[p.length - 1][1]) > 1.5 && !c.outline.closed); })();
       let engravable = true, upAngle = null, upSource = "drawn", flipOk = true, flipWhy = null;
-      try { const up = Geom.upAngleOf(c); upAngle = up.angle; upSource = up.source; const view = Geom.backView(c, { res: 6, upAngle }); const mask = Geom.engraveMask(view, { marginMm: opts.engraveMarginMm || 0.8 }); const r = Geom.largestRectangles(mask, 1)[0]; engravable = !!r && ((r.wPt * MM >= 6 && r.hPt * MM >= 3) || (r.wPt * MM >= 3 && r.hPt * MM >= 6)); }
-      catch (e) { flipOk = false; flipWhy = e.message; engravable = false; }
+      try { const up = Geom.upAngleOf(c); upAngle = up.angle; upSource = up.source; Geom.backView(c, { res: 6, upAngle }); }
+      catch (e) { flipOk = false; flipWhy = e.message; }
       const key = l.size ? `${l.sku}__${l.size}` : l.sku;
       const ai = await CharmNestPDF.buildSingleCharm(c, parsed);
       const aiUp = await save(bucket, `charmnest/master/${key}.ai`, Buffer.from(ai), "application/illustrator");

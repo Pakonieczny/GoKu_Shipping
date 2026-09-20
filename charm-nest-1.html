@@ -906,6 +906,23 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .placeView .sizer b{font-size:11px;min-width:52px;text-align:right}
 .placeView .small{background:var(--goldSoft);color:#7a5a1d;font-weight:700;border-radius:6px;padding:2px 7px;font-size:11px}
 .placeView .claude{border-left:3px solid var(--gold2);background:var(--goldSoft);padding:6px 9px;border-radius:6px;font-size:12px;overflow-wrap:anywhere}
+/* Quiet boundaries between tasks; related buttons stay together. */
+.ordBar,.libBar{padding-bottom:10px;border-bottom:1px solid var(--line)}
+.rvItem .rh{padding-bottom:10px;border-bottom:1px solid var(--line)}
+.rvItem .fixes:not(:empty),.placeView .ctl,.pvSide .meta:not(:empty){padding-top:10px;border-top:1px solid var(--line)}
+.pvSide .meta:empty{display:none}
+.reviewProgress,.reviewIdentity{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}
+.rvItem[data-kind=placement] .rh{--reviewText:15px;gap:12px}
+.rvItem[data-kind=placement] .rh .kind{font-size:var(--reviewText);letter-spacing:.02em;padding:4px 8px;white-space:nowrap}
+.rvItem[data-kind=placement] .rh .ttl{font-size:var(--reviewText)}
+.rvItem[data-kind=placement] .rh .nav{margin:0;padding-left:12px;border-left:1px solid var(--line);gap:6px}
+.rvItem[data-kind=placement] .rh .nav .btn{font-size:var(--reviewText);line-height:1.2;padding:6px 11px}
+.reviewIdentity{padding-left:12px;border-left:1px solid var(--line);flex:1 1 auto}
+.reviewNotes{font:12px/1.45 var(--sans);color:var(--ink70)}
+.shActions{border-top:1px solid var(--line)}
+.skuTile .row{padding-top:7px;border-top:1px solid var(--line)}
+@container (max-width:700px){.reviewProgress{flex:1 1 calc(100% - 32px)}.reviewIdentity{order:100;flex-basis:100%;border-left:0;border-top:1px solid var(--line);padding:9px 0 0}}
+@container (max-width:380px){.rvItem[data-kind=placement] .rh .nav{border-left:0;padding-left:0}}
 .sheetBacks{padding:8px 12px 6px;background:#fff;border-bottom:1px solid var(--line2)}
 .backLabel{font:600 10px var(--sans);color:var(--ink45);letter-spacing:.04em;display:flex;gap:6px}
 .backPieces{display:flex;flex-wrap:wrap;gap:2px 1px;align-items:center;padding:0}
@@ -1212,7 +1229,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
     </div>
     <div class="fieldRow3">
       <div class="field"><label>Engrave margin (mm) · min cap (mm)</label><div class="fieldRow"><input id="stEngraveMarginMm" type="number" min="0" max="5" step="0.05"><input id="stEngraveMinCapMm" type="number" min="0.5" max="10" step="0.1"></div><div class="help">Keep-out from every cut edge and cut-out; below the cap height a placement is flagged small, never dropped.</div></div>
-      <div class="field"><label>Max height (fraction) · confidence</label><div class="fieldRow"><input id="stEngraveMaxHeightFrac" type="number" min="0.1" max="1" step="0.05"><input id="stEngraveConfidence" type="number" min="0" max="1" step="0.05"></div><div class="help">Text block height cap as a fraction of the charm; below the confidence a person decides the words.</div></div>
+      <div class="field"><label>Max height (fraction) · confidence</label><div class="fieldRow"><input id="stEngraveMaxHeightFrac" type="number" min="0.1" max="1" step="0.05"><input id="stEngraveConfidence" type="number" min="0" max="1" step="0.05"></div><div class="help">Text block height cap as a fraction of the charm. Confidence controls uncertain no-engraving decisions; proposed inscriptions always get a placement preview.</div></div>
       <div class="field"><label>Engraver limits: min gap · min stroke (mm)</label><div class="fieldRow"><input id="stEngraveMinGapMm" type="number" min="0" max="2" step="0.01"><input id="stEngraveMinStrokeMm" type="number" min="0" max="2" step="0.01"></div><div class="help">From a test coupon.</div></div>
     </div>
     <div class="fieldRow3">

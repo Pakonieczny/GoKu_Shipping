@@ -151,13 +151,14 @@ const PACKING_SCHEMA = { type: "object", additionalProperties: false, properties
 /* ═══ bridge modes (design §7.1, §7.4, §6.3 item 8) ═══════════════════════ */
 const ENGRAVE_INTENT_INSTRUCTIONS = `You read one Etsy order line for a jewelry engraver and decide, from the customer's own words only, whether the charm is to be engraved and with exactly what text.
 
-You receive: the personalisation field (what the customer typed in the listing's engraving box), the buyer's message on the order, a staff note written by the shop (which OVERRIDES anything the customer wrote when they conflict), and the last internal staff messages about the order. You also receive whether the charm's design can take engraving at all.
+You receive: the personalisation field (what the customer typed in the listing's engraving box), the buyer's message on the order, a staff note written by the shop (which OVERRIDES anything the customer wrote when they conflict), and the last internal staff messages about the order. Every design offered for engraving on Etsy is engravable. Do not question design eligibility or infer it from its shape or a catalog flag. The placement tool handles physical fit and the operator reviews the preview.
 
 Rules, without exception:
 - engrave=true when the personalisation is non-empty, or when the message/note plainly asks for engraving. Otherwise engrave=false.
+- A single letter such as "S" in the engraving box is a valid initial, not a size selection. Size/form options are separate fields. Explicit requests for no engraving still mean engrave=false and text="".
 - text is the customer's words VERBATIM: same spelling, same capitalisation, same punctuation, same symbols. Never invent, translate, correct, expand, abbreviate or "improve" anything. A staff note that gives the text wins over the Etsy field.
 - Separate production instructions from the inscription in any language. VERBATIM applies to the requested inscription, not the surrounding request. Example: "Bitte folgendes wenn es geht hochkant (von unten nach oben des Otters zu lesen) auf die Rückseite gravieren: Always." requests the inscription "Always."; do not engrave the German instructions. Put an explicit orientation/layout request in questions for the operator to confirm, rather than adding it to text. If the boundary is ambiguous, ask instead of guessing.
-- Split lines ONLY at the customer's own line breaks, or between a name and a date. Nothing else. Use "\\n" between lines.
+- Split lines ONLY at the customer's own line breaks. Spaces, including repeated spaces, do not start new lines. Automatic line wrapping and proportional sizing belong to the placement tool. Use "\\n" between typed lines.
 - Engraving is always on the BACK in the shop's standard font. If the customer asks for the front, a particular font, their own handwriting, an image or symbol drawn, say so in requests (side "front", font name, handwriting true, image true) — the shop decides, you never do.
 - Anything ambiguous — two candidate texts, a request you cannot resolve, a date whose format is unclear, "same as last time", a note that contradicts the field — goes into questions, one short question each, and lowers confidence.
 - source names where the text came from: personalization | buyerMessage | staffNote | messages | none. sourceQuote is the exact fragment you took it from.
@@ -223,7 +224,7 @@ function buildRequest(mode, body) {
   if (mode === "engraveIntent") {
     const lines = [];
     lines.push(`Order ${str(body.order, 40)} · SKU ${str(body.sku, 40) || "(none)"} · ${str(body.title, 160)} · form: ${str(body.form, 40) || "unknown"} · quantity ${num(body.quantity) || 1}`);
-    lines.push(`Design can take engraving: ${body.engravable === false ? "NO — the shop will decide what to do" : "yes"}`);
+    lines.push("Design can take engraving: yes. Read the inscription; physical placement is handled separately.");
     lines.push(`Personalisation field: ${JSON.stringify((body.personalization || []).map(x => str(x, 400)))}`);
     lines.push(`Buyer message on the order: ${JSON.stringify(str(body.buyerMessage, 2000))}`);
     lines.push(`Staff note (overrides the customer's text): ${JSON.stringify(str(body.staffNote, 2000))}`);
