@@ -4033,7 +4033,9 @@ const Arrivals = window.Arrivals = (() => {
     box.title = `Unique orders imported, by first arrival time. Last successful check: ${state.lastCheck ? new Date(state.lastCheck).toLocaleString() : "not yet"}. Last check added ${state.lastAdded}. Checks run while this station is open. Click to see newest arrivals.`;
     box.classList.toggle("bad", !!state.error);
     for (const node of document.querySelectorAll("[data-rid]")) {
-      const fresh = at(node.dataset.rid) > now - 3600000;
+      // Preview figures share receipt IDs for order highlighting, not badges.
+      // A generated badge inside their fixed-width flex slot clips the image.
+      const fresh = !node.closest(".sheetBacks") && at(node.dataset.rid) > now - 3600000;
       node.classList.toggle("newArrival", fresh);
       if (fresh) node.setAttribute("data-new-order", "New order"); else node.removeAttribute("data-new-order");
     }
