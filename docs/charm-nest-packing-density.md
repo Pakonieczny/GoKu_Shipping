@@ -1,5 +1,13 @@
 # Packing density investigation — 2026-09-19
 
+## Partial-sheet offcuts — 2026-09-20
+
+The old contact score attracted sparse batches to every sheet wall, leaving a U-shaped layout and unusable central space. Sparse searches now minimise the growing extent of a strip from the left edge (top edge on portrait stock), using contact to fill that strip. Up to eight restarts improve the strip even after every piece fits, within the existing time/trial limits. Alternate ordinary searches remain available for awkward shapes. Piece count, FIFO, whole-order membership, pins, dimensions, clearance and verification stay enforced. Equal-count results, including results from separate browser workers, prefer the largest rectangular offcut over small raster-density differences. Full queues keep the existing dense first-pass search.
+
+Controlled test using the supplied `Half_Sheet.ai`: 43 detected charms, 100 × 50 mm stock, 1.5 pt inset, -0.5 pt clearance, 30-degree rotations, grids 2 / 0.5 pixels per point, seed 1. The prior layout occupied 99.84 mm of the width. The new layout occupies 53.62 mm, leaving about 46 mm clear on the right, with all 43 pieces and no overlap/outside pixels at verification resolution 6. Subsets of 28 and 20 pieces occupy 40.39 mm and 33.69 mm respectively. The original file is not modified. The generated Illustrator output was rendered and visually checked. The dense 81-charm reference below still fits 81/81 in one trial at 73.62%, with zero overlap/outside pixels.
+
+Regression tests: `node tests/charm-nest/partial-sheets.cjs`, `node tests/charm-nest/packing-runtime.cjs`, and `node tests/charm-nest/solver.cjs`. These cover variable strip sizes, portrait stock, unchanged dimensions, positive clearance, exact pins, cancellation and worker result selection. Existing saved sheets require re-nesting to get the new layout; production browser interaction was not used for these checks.
+
 ## Reproduced cause
 
 The FIFO change in `475206b` made order dates control the geometric insertion sequence, as well as sheet membership. It also disabled the 5-degree finishing search and neighbourhood repair for dated orders. Loose Illustrator imports could arrange large/awkward shapes first; production orders could not. A stalled leading worker also cancelled other seeds before their search budgets expired.

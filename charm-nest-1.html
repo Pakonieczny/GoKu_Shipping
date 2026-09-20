@@ -2329,8 +2329,8 @@ function onWorkerMessage(sh, m, idx) {
       const { grids, rec, ...layout } = m.best;
       sh.workers[0].postMessage({ type: "incumbent", jobId: sh.jobId + ":0", layout });
     }
-    const cur = sh.best; const better = !cur || m.best.placements.length > cur.placements.length || (m.best.placements.length === cur.placements.length && m.best.density > cur.density);
-    if (!better && !(sh.nestFlow === "learned" && idx === 0 && cur && m.best.placements.length === cur.placements.length)) { if (idx === leader) { sh.livePlacements = []; } return; }
+    const cur = sh.best; const better = CharmNestSolver.betterLayout(m.best, cur, stockFor(sh.metal));
+    if (!better) { if (idx === leader) { sh.livePlacements = []; } return; }
     sh.bestWorker = idx; m.summary = Object.assign({}, m.summary, { trial: pool.trials.reduce((a, b) => a + b, 0) - 1, worker: idx });
   }
   if (m.type === "error" && pool.n > 1) {
@@ -2351,7 +2351,7 @@ function onWorkerMessage(sh, m, idx) {
     if (pool.winner != null && pool.winner !== idx && pool.done < pool.n) return;
     const results = pool.results.filter(Boolean);
     if (!results.length) { pool.finished = true; finishNest(sh, { error: (pool.errors || ["No search returned a layout"]).join("; ") }); return; }
-    const pick = results.reduce((a, b) => !a ? b : (b.placements.length > a.placements.length || (b.placements.length === a.placements.length && b.density > a.density)) ? b : a, null);
+    const pick = results.reduce((a, b) => CharmNestSolver.betterLayout(b, a, stockFor(sh.metal)) ? b : a, null);
     if (sh.nestFlow === "learned") {
       const source = pick.params?.engine === "learned" ? "learned refinement" : "standard challenger";
       const learned = results.find(r => r.params?.engine === "learned");

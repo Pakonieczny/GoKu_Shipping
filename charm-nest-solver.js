@@ -13,6 +13,10 @@
  *  already-placed material or the sheet wall, breaks ties toward one corner
  *  (gravity), and commits the best. Restarts reshuffle the order, jitter the
  *  gravity weight and add score noise; the best layout is kept.
+ *  Sparse queues instead minimise growth of an occupied strip from the left
+ *  (top on portrait stock). Contact breaks ties inside that strip. A handful
+ *  of restarts compact the result even after all pieces fit, preserving a
+ *  rectangular offcut without changing any piece's dimensions or clearance.
  *
  *  This is the contact-scored, multi-resolution search from the design
  *  document. The design document evaluated feasibility with FFT
@@ -333,6 +337,8 @@
     }
 
     const maxFill = job.maxFill > 0 && job.maxFill < 1 ? job.maxFill : 1;   // hard ceiling on fill (solid cells / usable cells)
+    const stripAxis = FW >= FH ? "x" : "y";
+    const stripOf = rec => ({ axis: stripAxis, end: rec.reduce((n, r) => Math.max(n, stripAxis === "x" ? r.x + r.v.fine.w : r.y + r.v.fine.h), wallFine) });
 
     /* ── finishing push ─────────────────────────────────────────────────────
        A layout one or two pieces short gets a targeted search for exactly those
@@ -362,7 +368,7 @@
           const co = majority(dil.bits, dil.w, dil.h, ratio);
           variants.push({ angle: a, fine: { bits: dil.bits, w: dil.w, h: dil.h, pm: packShifted(dil.bits, dil.w, dil.h) }, cells: areaOf(dil.bits), solid: { bits: rot.bits, w: rot.w, h: rot.h, cx: rot.cx + halfGapFine - erodeFine, cy: rot.cy + halfGapFine - erodeFine }, ringFine: packShifted(rg.bits, rg.w, rg.h), ringPad: Math.max(2, Math.round(2 * fineRes)), coarse: { pm: packShifted(co.bits, co.w, co.h), w: co.w, h: co.h } });
         }
-        const pos = search({ variants }, fine, coarse, ratio, 0.35, 0, random, 0, 0);
+        const pos = search({ variants }, fine, coarse, ratio, 0.35, 0, random, 0, 0, best.stripPacked ? stripOf(best.rec) : null);
         if (!pos) continue;
         const { v, x, y } = pos;
         if ((best.placedCells + v.cells) / usableCellsFine > maxFill) continue;
@@ -430,7 +436,7 @@
         const newRec = keep.slice(); let ok = true, cells = keep.reduce((n,r) => n + r.v.cells, 0);
         for (const p of queue) {
           if (stopped()) { ok = false; break; }
-          const pos = search({ variants: variantsFor(p, angles15) }, fine, coarse, ratio, 0.35, 0.02, random, 0, 0);
+          const pos = search({ variants: variantsFor(p, angles15) }, fine, coarse, ratio, 0.35, 0.02, random, 0, 0, best.stripPacked ? stripOf(newRec) : null);
           if (!pos) { ok = false; break; }
           const { v, x, y } = pos;
           if ((cells + v.cells) / usableCellsFine > maxFill) { ok = false; break; }
@@ -496,6 +502,11 @@
       const front = trial > 0 && lastRejects.length && random() < 0.75 ? new Set(lastRejects) : new Set();
       const targetOrders = fifo && best && failStreak >= 2 && trial % 4 !== 0 ? Math.min(capOrders, prefixCount(best) + 1) : capOrders;
       const candidates = fifo ? byAreaDesc.filter(p => rank.get(p.order) < targetOrders) : byAreaDesc;
+      // Sparse queues should consume a strip from one edge, leaving a rectangular
+      // offcut. Full-sheet searches retain contact scoring; alternate restarts
+      // can still recover an awkward mix that did not fit the compact first pass.
+      const sparse = candidates.reduce((n, p) => n + p.footprintCells, 0) / usableCellsFine < maxFill * 0.9;
+      const stripPacked = (sparse || (trial > 0 && best?.density < maxFill * 0.9)) && trial % 3 !== 2;
       const advice = job.packingHints || {}, priorities = new Map((advice.priority || []).map((id,i,a) => [id, 1 - i / Math.max(1,a.length)]));
       const guided = trial % 3 === 1 && priorities.size;
       if (guided) guidedTrials++;
@@ -537,7 +548,7 @@
           const x = Math.round(p.pinned.cxPt * fineRes - v.solid.cx), y = Math.round(p.pinned.cyPt * fineRes - v.solid.cy);
           if (fine.fits(v.fine.pm, x, y)) bestPos = { v, x, y, score: Infinity };
         } else {
-          bestPos = search(p, fine, coarse, ratio, gravW, noise, random, cornerX, cornerY);
+          bestPos = search(p, fine, coarse, ratio, gravW, noise, random, stripPacked ? 0 : cornerX, stripPacked ? 0 : cornerY, stripPacked ? stripOf(placedRec) : null);
         }
         if (bestPos && !p.pinned && (placedCells + bestPos.v.cells) / usableCellsFine > maxFill) {
           rejects.push(p.id); capped.push(p.id); dropOrder(p, "cap"); await yieldNow(); continue;
@@ -600,11 +611,10 @@
         density: placedCells / usableCellsFine,
         elapsedMs: now() - t0, gravW, noise
       };
-      const better = !best || placements.length > best.placements.length ||
-        (placements.length === best.placements.length && compactness(placements) < compactness(best.placements));
+      const better = betterLayout({ placements, density: summary.density }, best, job.sheet);
       if (better) {
         failStreak = 0; lastBetterAt = now();
-        best = { placements, rejects, capped: capped.slice(), density: summary.density, trial, usablePt2: usableCellsFine / (fineRes * fineRes),
+        best = { placements, rejects, capped: capped.slice(), density: summary.density, trial, stripPacked, usablePt2: usableCellsFine / (fineRes * fineRes),
           freePt2: fine.freeCells() / (fineRes * fineRes), placedPt2: placedCells / (fineRes * fineRes), placedCells,
           pocket: pocketPt(coarse, coarseRes), grids: { fine, coarse }, rec: placedRec.slice() };
         if (cb.onBest) cb.onBest(best, summary);
@@ -612,7 +622,12 @@
         if (repairCandidates(best).length <= 2) await finishPush(best);
       } else failStreak++;
       if (cb.onTrial) cb.onTrial(Object.assign({ better }, summary));
-      if (best && best.placements.length === prepared.length) { endedBy = "complete"; break; }
+      if (best && best.placements.length === prepared.length) {
+        endedBy = "complete";
+        // Seating every piece is not enough on a partial sheet: spend a few
+        // bounded restarts shortening the occupied strip before publishing it.
+        if (!sparse || trials >= Math.min(8, maxTrials)) break;
+      }
       // restarts stalling while the best is a few short → repair the best layout instead
       if (best && repairCandidates(best).length > 0 && repairCandidates(best).length <= 3 && failStreak >= 4) {
         failStreak = 0;
@@ -620,7 +635,7 @@
         const fixed = await ruinRecreate(best, 6);
         if (fixed && best.placements.length === prepared.length) { endedBy = "complete"; break; }
       }
-      if (best && best.rejects.length && best.rejects.every(id => best.capped.includes(id))) { endedBy = "cap"; break; }   // only the ceiling holds pieces back
+      if (best && best.rejects.length && best.rejects.every(id => best.capped.includes(id))) { endedBy = "cap"; if (!sparse || trials >= Math.min(8, maxTrials)) break; }   // only the ceiling holds pieces back
       await yieldNow();
     }
     if (trials >= maxTrials && endedBy === "budget") endedBy = "trials";
@@ -648,7 +663,7 @@
     const cappedPt2 = (best.capped || []).reduce((n, id) => { const p = prepared.find(x => x.id === id); return n + (p ? p.footprintCells / (fineRes * fineRes) : 0); }, 0);
     return Object.assign({}, best, {
       endedBy, trials, elapsedMs: now() - t0, cappedPt2,
-      params: { packingGuided: guidedTrials > 0, guidedTrials, seed: job.seed == null ? 1 : job.seed, angles, clearancePt, insetPt, fineRes, coarseRes, maxFill, pieceOrder: byAreaDesc.map(p => p.id) }
+      params: { compactPartial: !!best.stripPacked, packingAxis: best.stripPacked ? stripAxis : null, packingGuided: guidedTrials > 0, guidedTrials, seed: job.seed == null ? 1 : job.seed, angles, clearancePt, insetPt, fineRes, coarseRes, maxFill, pieceOrder: byAreaDesc.map(p => p.id) }
     });
   }
 
@@ -665,12 +680,24 @@
     return { wPt: p.w / coarseRes, hPt: p.h / coarseRes, xPt: p.x / coarseRes, yPt: p.y / coarseRes };
   }
 
-  /** Lower is tighter: the bounding box of everything placed, normalised. */
-  function compactness(pl) {
-    if (!pl.length) return Infinity;
-    let x1 = 0, y1 = 0;
-    for (const p of pl) { x1 = Math.max(x1, p.xPt + p.wPt); y1 = Math.max(y1, p.yPt + p.hPt); }
-    return x1 * y1;
+  /** Fraction consumed before a straight cut frees a full-width/height offcut.
+   * Compare identical counts by usable leftover stock, not tiny raster-area gains. */
+  function stripFraction(pl, sheet) {
+    if (!pl.length || !sheet?.wPt || !sheet?.hPt) return Infinity;
+    let x0 = Infinity, y0 = Infinity, x1 = 0, y1 = 0;
+    for (const p of pl) {
+      if (![p.xPt,p.yPt,p.wPt,p.hPt].every(Number.isFinite)) return Infinity;
+      x0 = Math.min(x0, p.xPt); y0 = Math.min(y0, p.yPt);
+      x1 = Math.max(x1, p.xPt + p.wPt); y1 = Math.max(y1, p.yPt + p.hPt);
+    }
+    return Math.min(x1 / sheet.wPt, (sheet.wPt - x0) / sheet.wPt, y1 / sheet.hPt, (sheet.hPt - y0) / sheet.hPt);
+  }
+  function betterLayout(candidate, incumbent, sheet) {
+    if (!incumbent) return true;
+    if (candidate.placements.length !== incumbent.placements.length) return candidate.placements.length > incumbent.placements.length;
+    const a = stripFraction(candidate.placements, sheet), b = stripFraction(incumbent.placements, sheet);
+    if (a !== b) return a < b;
+    return candidate.density > incumbent.density;
   }
 
   /** Majority-resample a fine mask to the coarse grid. */
@@ -685,7 +712,7 @@
   }
 
   /** Candidate search for one piece across all its angles. */
-  function search(p, fine, coarse, ratio, gravW, noise, random, cornerX, cornerY) {
+  function search(p, fine, coarse, ratio, gravW, noise, random, cornerX, cornerY, strip = null) {
     const K = 28, TOL = 2;
     let best = null;
     const CW = coarse.W, CH = coarse.H;
@@ -703,7 +730,8 @@
         if (inner > 0) { ov = coarse.overlap(v.coarse.pm, x, y, TOL); if (ov > TOL) continue; }
         const contact = (coarse.boxSum(x - 1, y - 1, x + cw + 1, y + ch + 1) - inner) / perim;
         const gx = cornerX ? (CW - x - cw) : x, gy = cornerY ? (CH - y - ch) : y;
-        const s = contact - gravW * ((gx + gy) / (CW + CH)) - 0.05 * ov + (noise ? noise * random() : 0);
+        const growth = strip ? Math.max(strip.end / ratio, strip.axis === "x" ? x + cw : y + ch) : 0;
+        const s = contact - 4 * growth - gravW * ((gx + gy) / (CW + CH)) - 0.05 * ov + (noise ? noise * random() : 0);
         if (cands.length < K) { cands.push({ x, y, s }); if (cands.length === K) cands.sort((a, b) => b.s - a.s); }
         else if (s > cands[K - 1].s) { cands[K - 1] = { x, y, s }; cands.sort((a, b) => b.s - a.s); }
       }
@@ -719,7 +747,8 @@
           if (!fine.fits(pm, x, y)) continue;
           const contact = fine.overlap(v.ringFine, x - pad, y - pad, 1e9) / rc;
           const gx = cornerX ? (FW - x - pm.w) : x, gy = cornerY ? (FH - y - pm.h) : y;
-          const s = contact - gravW * ((gx + gy) / (FW + FH)) + (noise ? noise * random() : 0);
+          const growth = strip ? Math.max(strip.end, strip.axis === "x" ? x + pm.w : y + pm.h) / ratio : 0;
+          const s = contact - 4 * growth - gravW * ((gx + gy) / (FW + FH)) + (noise ? noise * random() : 0);
           if (!best || s > best.score) best = { v, x, y, score: s, contact };
         }
       }
@@ -735,7 +764,8 @@
           if (x < 0 || y < 0 || x + pm.w > FW || y + pm.h > FH) continue;
           if (!fine.fits(pm, x, y)) continue;
           const contact = fine.overlap(v.ringFine, x - pad, y - pad, 1e9) / rc;
-          const s = contact - gravW * ((x + y) / (FW + FH));
+          const growth = strip ? Math.max(strip.end, strip.axis === "x" ? x + pm.w : y + pm.h) / ratio : 0;
+          const s = contact - 4 * growth - gravW * ((x + y) / (FW + FH));
           if (!best || s > best.score) best = { v, x, y, score: s, contact };
         }
       }
@@ -917,5 +947,5 @@
     const overlap = off ? null : grid.overlap(v.fine.pm, x0, y0, 1e9);
     return { ok: false, x: x0, y: y0, off, overlapPt2: overlap == null ? null : overlap / (res * res) };
   }
-  return { solve, verify, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine };
+  return { solve, verify, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine };
 });

@@ -4,7 +4,7 @@ const root = path.join(__dirname, '../..'), html = fs.readFileSync(path.join(roo
 const section = (from, to) => html.slice(html.indexOf(from), html.indexOf(to, html.indexOf(from)));
 const evaluate = (c, code) => vm.runInContext(code, c);
 (async () => {
-  const c = vm.createContext({ assert, console });
+  const c = vm.createContext({ assert, console, CharmNestSolver: require('../../charm-nest-solver.js') });
   evaluate(c, `
     const finishes=[], messages=[], S={settings:{packingAI:'on',maxFill:.74},cloud:{ok:true}};
     const activeCharms=sh=>sh.charms, agent=()=>({}), agentUpdate=()=>{}, log=()=>{}, finishNest=(sh,r)=>finishes.push(r);
@@ -27,6 +27,12 @@ const evaluate = (c, code) => vm.runInContext(code, c);
     reset();onWorkerMessage(sh,{type:'error',jobId:'a:0',message:'failed 0'},0);
     assert.equal(finishes.length,0);onWorkerMessage(sh,{type:'error',jobId:'a:1',message:'failed 1'},1);
     assert.equal(finishes.length,1);assert.match(finishes[0].error,/failed 0/);
+    reset();
+    const scattered={...short,placements:[{id:'old',xPt:1,yPt:1,wPt:98,hPt:48}],density:.4};
+    const compact={...short,placements:[{id:'old',xPt:1,yPt:1,wPt:24,hPt:48}],density:.399};
+    onWorkerMessage(sh,{type:'done',jobId:'a:0',result:scattered},0);
+    onWorkerMessage(sh,{type:'done',jobId:'a:1',result:compact},1);
+    assert.deepEqual(finishes[0].result.placements,compact.placements,'pool keeps the useful offcut instead of marginally higher raster density');
     reset();
     let resolvePlan,calls=0,existingIds=[];
     const window={}, aiRenderSheet=()=>'', CharmNestPDF={drawSegments(){}}, document={createElement:()=>({getContext:()=>({fillRect(){},save(){},beginPath(){},rect(){},clip(){},fillText(){},restore(){}}),toDataURL:()=>''})};
