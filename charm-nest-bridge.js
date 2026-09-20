@@ -2633,7 +2633,25 @@ const Sets = window.Sets = (() => {
   /** labels/Set-K_labels.pdf (one page per sheet label), Set-K_manifest.pdf, set.json. */
   function validateRelease(set) {
     if (!Gate.modern(set.runId)) return;
-    for (const sh of sheetsOf(set)) if (!Gate.policy(sh, set.seq).include) throw new Error(`${labelOf(sh.metal)}: ${Gate.policy(sh, set.seq).reason}`);
+    const sheets = sheetsOf(set);
+    if (!set.sheetIds.length || sheets.length !== set.sheetIds.length || set.sheetIds.some(id => !sheets.some(sh => sh.sheetId === id))) throw new Error("The set's sheets are not all loaded");
+    for (const sh of sheets) {
+      const policy = Gate.policy(sh, set.seq);
+      if (!policy.include) throw new Error(`${labelOf(sh.metal)}: ${policy.reason}`);
+      if (!sh.persistedDone || !sh.outputs) throw new Error(`${sh.fileBase}: sheet files are not saved`);
+      if (!labelsReady(sh, set)) throw new Error(`${sh.fileBase}: QR labels are missing or out of date`);
+      const placed = new Set(sh.placements.map(p => sh.charms.find(c => c.id === p.id)?.poolId).filter(Boolean));
+      for (const job of Engrave.items().values()) {
+        if (job.copies.some(id => placed.has(id)) && !["none", "skipped", "written"].includes(job.state)) throw new Error(`${sh.fileBase}: back engraving still needs to be finished`);
+      }
+      for (const row of Orders.rows()) {
+        if (!row.engrave?.needed) continue;
+        for (const poolId of row.poolIds.filter(id => placed.has(id))) {
+          const back = (sh.backPool || []).find(b => b.poolId === poolId);
+          if (!row.engrave.approved || row.engrave.state !== "written" || !back?.approvedAt || !back.verified?.file?.ok || !back.outputs?.ai?.path || !back.outputs.ai.url) throw new Error(`${row.order.receiptId}: back engraving is not approved and saved`);
+        }
+      }
+    }
   }
   async function finalize(set) {
     validateRelease(set);
@@ -2679,12 +2697,13 @@ const Sets = window.Sets = (() => {
     const preview = await DesignLink.call("complete.preview", { receiptIds: ids }, { timeoutMs: 120000 });
     agent({ run: run.runId }, "DS", `Station preview: ${preview.jobs.length} label job(s) for ${ids.length} order(s)${preview.notes && preview.notes.skipped && preview.notes.skipped.length ? ` · ${preview.notes.skipped.length} with no recognised metal` : ""}`);
     const labels = { setId: set.setId, folder: `${set.folder}/labels`, files: set.labels.files.map(f => ({ path: f.path, url: f.url, sheet: f.sheet })), pdf: set.labels.pdf ? set.labels.pdf.url : null };
+    validateRelease(set); // Recheck after the station selection/preview awaits.
     const r = await DesignLink.call("complete.commit", { receiptIds: ids, labels, runId: run.runId, setId: set.setId, sheetIds: set.sheetIds, backCount: set.backCount || 0, completedBy: `Charm Sorter (${employeeName() || "operator"})` }, { timeoutMs: 180000 });
     set.committed = r.completed; set.refused = refused.concat(r.refused || []); set.committedAt = Date.now(); set.completedAt = set.committedAt; set.completionDay = today(); set.status = set.refused.length || Object.keys(ev.held).length ? "complete-with-holds" : "complete";
     for (const row of Orders.rows()) if (r.completed.includes(row.order.receiptId) && (row.state === "written" || row.state === "labelled" || row.state === "noDesign")) row.state = "committed";
     await Pool.update([...B.pool.rows.keys()].filter(id => r.completed.includes(B.pool.rows.get(id).orderId)), { state: "committed", committedAt: Date.now() });
     await save(set);
-    agent({ run: run.runId }, "DS", `${set.name} committed: ${r.completed.length} order(s) marked design-complete on the station · ${set.refused.length} refused · ${Object.keys(ev.held).length} held`);
+    agent({ run: run.runId }, "DS", `${set.name} committed: ${r.completed.length} order(s) marked design-complete and sent DESIGNED :) internally · ${set.refused.length} refused · ${Object.keys(ev.held).length} held`);
     return { completed: r.completed, refused: set.refused, held: ev.held };
   }
   async function undo(set) {

@@ -41,7 +41,13 @@ async function functions(st, name, req, res, base) {
       if (Array.isArray(body.rtUnlockIds)) { body.rtUnlockIds.forEach(id => st.put(RT, id, { selected: false, selectedBy: null, at: Date.now() })); return json(res, 200, { success: true }); }
       if (Array.isArray(body.completedIds)) { body.completedIds.forEach(id => st.put(SB + 'Design_Completed Orders', id, { completed: true, at: Date.now() })); return json(res, 200, { success: true }); }
       if (Array.isArray(body.uncompleteIds)) { body.uncompleteIds.forEach(id => st.docs.delete(SB + 'Design_Completed Orders/' + id)); return json(res, 200, { success: true }); }
-      if (typeof body.newMessage === 'string') { st.put(SB + 'Brites_Orders', body.orderNumber, { touched: Date.now() }); st.put(SB + 'Brites_Orders/' + body.orderNumber + '/messages', 'm' + Date.now() + Math.random().toString(36).slice(2, 6), { text: body.newMessage, senderName: body.employeeName || 'Staff', at: Date.now() }); return json(res, 200, { success: true }); }
+      if (typeof body.newMessage === 'string') {
+        const coll = SB + 'Brites_Orders/' + body.orderNumber + '/messages';
+        const messageId = body.designSetId ? 'designed-set-' + encodeURIComponent(body.designSetId) : null;
+        st.put(SB + 'Brites_Orders', body.orderNumber, { touched: Date.now() });
+        if (!messageId || !st.doc(coll, messageId)) st.put(coll, messageId || 'm' + Date.now() + Math.random().toString(36).slice(2, 6), { text: body.newMessage, senderName: body.employeeName || 'Staff', at: Date.now() });
+        return json(res, 200, { success: true, ...(messageId ? {messageId} : {}) });
+      }
       if (body.staffNote !== undefined) { st.put(SB + 'Brites_Orders', body.orderNumber, { 'Staff Note': body.staffNote }); return json(res, 200, { success: true }); }
       return json(res, 200, { success: true });
     }

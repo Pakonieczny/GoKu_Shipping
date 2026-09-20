@@ -107,6 +107,8 @@ Every command gets exactly one `ack`, zero or more `progress`, and one `done` or
 
 Guards enforced by the station whatever the driver: `complete.commit` requires a `complete.preview` of the same ids in this session and a `labels.files` list that is non-empty; it is refused while a grouping review or an Etsy sweep is in flight; commands from any other origin are dropped.
 
+For release-policy-2 sets, the sorter rechecks every included sheet's colour rules, saved front files, current QR membership and approved, verified back files both before completion and after the station preview. Each eligible order receives the original `DESIGNED :)` staff message in its internal Brites chat. The station requires confirmation for every message before clearing the orders or archiving them. A failed delivery leaves completion retryable; `firebaseOrders` uses a transaction and a stable message document per order/set, so retries (including lost responses and reloads) do not duplicate messages. Held orders remain open until their other lines are ready. The original QR-print flow and ordinary chat retain their existing behavior. Regression check: `node tests/charm-nest/completion-messages.cjs`.
+
 ### 4.3 Events (Design Station → sorter, `id: 0`)
 
 `state`, `orders.changed`, `selection`, `filters`, `ui.modal` (`{ open: "listing", transactionId }`), `activity` (every ticker line), `lock.changed`, `complete.done`, `error`. The sorter writes `activity` into its agent log as kind `DS` so one log reads end to end.
@@ -731,4 +733,3 @@ Manifest: add the two functions to `scripts/netlify-function-entries.json`; `bui
 - Draft 1 → 2: labels under charms; back engraving; Myriad Pro; per-piece engraving; sorter completes orders and saves labels; identical copies; same PC.
 - Draft 2 → 3: SKUs colour-agnostic; largest size with mandatory visual review; print button hidden.
 - Draft 3 → 4 (from the plan review): claims during the run, lock at commit · SKU is the design only, material and every other feature from Etsy options via deterministic maps · nothing not exactly representable is engraved, review panel with problem and quick fixes · the flip is real and verified step by step, front detail hidden · one label per sheet, sheets travel in sets with one set number per date across materials and one folder per set · orders held whole · any human employee may approve, name recorded · persistent run record, re-validation of orders, BOM and no-design lists, outlined-label fallback, up-angle, glyph coverage, engraver file orientation setting.
-

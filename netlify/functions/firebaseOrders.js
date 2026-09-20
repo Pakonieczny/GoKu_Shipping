@@ -37,6 +37,7 @@ exports.handler = async (event) => {
         shippingLabelTimestamps,
         employeeName,
         newMessage,
+        designSetId,
         staffNote,
         /* design completion controls */
         designCompleted,
@@ -178,21 +179,34 @@ exports.handler = async (event) => {
             body: JSON.stringify({ error: "orderNumber required for messages" })
           };
         }
-        await db
+        if (designSetId !== undefined && (typeof designSetId !== "string" || !designSetId.trim() || designSetId.length > 80 || newMessage.trim() !== "DESIGNED :)")) {
+          return { statusCode: 400, headers: CORS, body: JSON.stringify({ error: "Invalid design completion message" }) };
+        }
+        const messages = db
           .collection(PREFIX + "Brites_Orders")
           .doc(String(orderNumber))
-          .collection("messages")
-          .add({
+          .collection("messages");
+        const message = {
             text       : newMessage.trim(),
             senderName : employeeName || "Staff",
             senderRole : "staff",
             timestamp  : admin.firestore.FieldValue.serverTimestamp()
+          };
+        // One internal completion message per order and set, even after a lost
+        // response, a station reload or simultaneous retries from two stations.
+        const messageId = designSetId === undefined ? null : "designed-set-" + encodeURIComponent(designSetId);
+        if (messageId) {
+          const ref = messages.doc(messageId);
+          await db.runTransaction(async tx => {
+            const prior = await tx.get(ref);
+            if (!prior.exists) tx.set(ref, { ...message, setId: designSetId });
           });
+        } else await messages.add(message);
 
         return {
           statusCode: 200,
           headers: CORS,
-          body: JSON.stringify({ success: true, message: "Chat doc added." })
+          body: JSON.stringify({ success: true, message: "Chat doc added.", ...(messageId ? { messageId } : {}) })
         };
       }
 

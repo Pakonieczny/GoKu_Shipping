@@ -4463,10 +4463,11 @@ async function resolvePrintPage() {
 }
 
 /** Post "DESIGNED :)" into each order's Brites chat. */
-async function markBritesDesigned(orderIds, senderName) {
+async function markBritesDesigned(orderIds, senderName, setId = null) {
   const ids = Array.from(new Set((orderIds || []).map(String)));
   if (!ids.length) return;
   const staff = (senderName || localStorage.getItem(LS.employee) || "Design").trim();
+  const failed = [];
 
   const chunk = (arr, n = 10) => { const o = []; for (let i = 0; i < arr.length; i += n) o.push(arr.slice(i, i + n)); return o; };
   for (const group of chunk(ids, 10)) {
@@ -4474,10 +4475,17 @@ async function markBritesDesigned(orderIds, senderName) {
       try {
         const resp = await fetch(`${FN}/firebaseOrders`, {
           method:"POST", headers:{ "Content-Type":"application/json" },
-          body:JSON.stringify({ orderNumber: rid, newMessage: "DESIGNED :)", employeeName: staff })
+          body:JSON.stringify({ orderNumber: rid, newMessage: "DESIGNED :)", employeeName: staff, ...(setId ? { designSetId: setId } : {}) })
         });
         if (!resp.ok) throw new Error("HTTP " + resp.status);
+        if (setId) {
+          const result = await resp.json();
+          if (!result.success || result.messageId !== "designed-set-" + encodeURIComponent(setId)) throw new Error("message delivery not confirmed");
+        }
       } catch (err) {
+        // Sorter completion must wait for confirmed delivery. Retry through the
+        // same idempotent endpoint; an unkeyed fallback could post twice.
+        if (setId) { failed.push(rid); return; }
         if (!db) { console.warn("markBritesDesigned failed and no Firestore fallback:", rid, err); return; }
         try {
           await db.collection("Brites_Orders").doc(String(rid)).set({}, { merge:true });
@@ -4489,6 +4497,7 @@ async function markBritesDesigned(orderIds, senderName) {
       }
     }));
   }
+  if (failed.length) throw new Error(`Internal completion message not confirmed for ${failed.length} order(s): ${failed.join(", ")}. Retry Commit set; confirmed messages will not be duplicated.`);
 }
 
 /**
@@ -4618,6 +4627,9 @@ async function commitCompletion(ids, { labels = null, setId = null, sheetIds = n
   if (!printedIDs.length) return { completed: [] };
   __commitInFlight++;
   try {
+    // The sorter has already validated the set's sheets, backs and QR files.
+    // Keep orders open and retryable if any internal notification fails.
+    if (setId) await markBritesDesigned(printedIDs, completedBy, setId);
     lastClearedReceipts = [...printedIDs];
     printedIDs.forEach(rid => {
       removePreviewBoxesForOrder(rid, { force:true });
@@ -4643,7 +4655,7 @@ async function commitCompletion(ids, { labels = null, setId = null, sheetIds = n
     applyMetalFilter();
     refreshChrome();
 
-    try { await markBritesDesigned(printedIDs, completedBy); }
+    try { if (!setId) await markBritesDesigned(printedIDs, completedBy); }
     catch (e) { console.warn("markBritesDesigned failed:", e); }
 
     // Archive last and in the background: the operator is already at the printer
