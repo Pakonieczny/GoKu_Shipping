@@ -231,8 +231,18 @@
   function backView(charm, opts) {
     opts = Object.assign({ res: 6, tolPixels: 0.0005, tolArea: 0.001 }, opts || {});
     const cut = opts.isCut || isCutLine;
-    const cutMembers = charm.members.filter(m => m === charm.outline || cut(m));               // STEP 1
-    const dropped = charm.members.filter(m => !cutMembers.includes(m));
+    const originalOutline = charm.outline;
+    let outline = originalOutline;
+    if (opts.solidBack && originalOutline.subpaths.length > 1) {
+      // Explicit operator choice: expanded artwork can contain white front detail, not physical cut-outs.
+      // Keep every outer island; separate stroked cut-outs are never removed by this choice.
+      const polys = originalOutline.subpaths.map(sub=>flatten({subpaths:[sub]},24)[0]);
+      const outer = originalOutline.subpaths.filter((sub,i)=>!polys.some((p,j)=>i!==j && Math.abs(polyCentroid(p).area)>Math.abs(polyCentroid(polys[i]).area) && pointInPolys(...interiorPoint([polys[i]]),[p])));
+      outline = Object.assign({}, originalOutline, {subpaths:outer, synthetic:true, transformed:true, stroke:true, fill:false, strokeRGB:[0,0,0], paintOp:"S", start:-1, end:-1});
+    }
+    const cutMembers = charm.members.filter(m => m === originalOutline || cut(m)).map(m=>m===originalOutline ? outline : m);
+    if (!cutMembers.includes(outline)) cutMembers.unshift(outline);
+    const dropped = charm.members.filter(m => m !== originalOutline && !cutMembers.includes(m));
     const ob = charm.outline.bbox; const cx = (ob[0] + ob[2]) / 2, cy = (ob[1] + ob[3]) / 2;
     const bb = cutMembers.reduce((a, s) => bbUnion(a, s.bbox), null);
     const frame = makeFrame(bb, opts.res, cx, 1);
@@ -240,16 +250,16 @@
     const M = mirrorX(cx);                                                                       // STEP 3
     const mirrored = cutMembers.map(m => transformSeg(m, M));
     const B = raster(mirrored, frame);                                                           // STEP 4
-    const holes = cutMembers.filter(m => m !== charm.outline);
+    const holes = cutMembers.filter(m => m !== outline);
     const checks = {                                                                             // STEP 5
       pixels: diffFraction(B, flipX(F)) <= opts.tolPixels,
       holes: holes.every(h => { const p = interiorPoint(flatten(h, 12)); return at(B, 2 * cx - p[0], p[1]) === at(F, p[0], p[1]); }),
       area: Math.abs(area(B) - area(F)) / Math.max(1, area(F)) <= opts.tolArea,
-      detailDropped: mirrored.every(m => cut(m) || m.original === charm.outline) && !mirrored.some(m => m.fill && !m.stroke && m.original !== charm.outline) && dropped.every(m => !cutMembers.includes(m))
+      detailDropped: mirrored.every(m => cut(m) || m.original === outline) && !mirrored.some(m => m.fill && !m.stroke && m.original !== outline) && dropped.every(m => !cutMembers.includes(m))
     };
-    const detail = { pixelDiff: diffFraction(B, flipX(F)), areaF: area(F), areaB: area(B), dropped: dropped.length, cut: cutMembers.length };
+    const detail = { filledArtwork: outline !== originalOutline, pixelDiff: diffFraction(B, flipX(F)), areaF: area(F), areaB: area(B), dropped: dropped.length, cut: cutMembers.length };
     if (!Object.values(checks).every(Boolean)) throw new BackViewError(checks, { F, B, flipF: flipX(F), detail });
-    const up = opts.upAngle != null ? +opts.upAngle : upAngleOf(charm, { isCut: cut }).angle;    // STEP 6
+    const up = opts.upAngle != null ? +opts.upAngle : upAngleOf(Object.assign({}, charm, {outline, members:cutMembers}), { isCut: cut }).angle;    // STEP 6
     const angleDeg = 90 - up;
     const R = rotateAbout(cx, cy, angleDeg);
     const members = mirrored.map(m => transformSeg(m, R));
@@ -273,6 +283,7 @@
   /* ═══ 4 · text ═════════════════════════════════════════════════════════ */
   /** Characters the font cannot set exactly. Newlines are line breaks, never characters. */
   function glyphCoverage(font, text) {
+    if (font.coverage) return font.coverage(String(text || ""));
     const missing = [];
     for (const ch of String(text || "")) { if (ch === "\n" || ch === "\r") continue; let gi = 0; try { gi = font.charToGlyphIndex(ch); } catch (_) { gi = 0; } if (!gi && !missing.includes(ch)) missing.push(ch); }
     return { ok: !missing.length, missing };
@@ -310,7 +321,27 @@
     if (poly.length > 1) polys.push(poly);
     return polys;
   }
-  function rasterGlyphs(cmds, frame) { return rasterPolys(glyphPolys(cmds), frame); }
+  function rasterGlyphs(cmds, frame) {
+    // Canvas and exported PDF fill glyphs with nonzero winding. Emoji can have overlapping components;
+    // an even-odd mask would incorrectly erase their overlap during the manufacturing check.
+    const m=emptyMask(frame), edges=[];
+    for (const p of glyphPolys(cmds)) for (let i=0,j=p.length-1;i<p.length;j=i++) {
+      const a=p[j],b=p[i]; if(a[1]===b[1])continue;
+      edges.push(a[1]<b[1]?[a[0],a[1],b[0],b[1],1]:[b[0],b[1],a[0],a[1],-1]);
+    }
+    edges.sort((a,b)=>a[1]-b[1]);
+    for(let py=0;py<m.h;py++) {
+      const y=m.oy+(py+.5)/m.res,row=[];
+      for(const e of edges){if(e[1]>y)break;if(e[3]<=y)continue;row.push([e[0]+(y-e[1])*(e[2]-e[0])/(e[3]-e[1]),e[4]]);}
+      row.sort((a,b)=>a[0]-b[0]);let winding=0;
+      for(let i=0;i+1<row.length;i++) {
+        winding+=row[i][1];if(!winding)continue;
+        const lo=Math.max(0,Math.ceil((row[i][0]-m.ox)*m.res-.5-1e-6)),hi=Math.min(m.w-1,Math.floor((row[i+1][0]-m.ox)*m.res-.5+1e-6));
+        for(let x=lo;x<=hi;x++)m.bits[py*m.w+x]=1;
+      }
+    }
+    return m;
+  }
   /** The hard check: every ink pixel sits on a 1 of the mask. */
   function verifyInk(cmds, mask) {
     const ink = rasterGlyphs(cmds, mask); let outside = 0, total = 0;

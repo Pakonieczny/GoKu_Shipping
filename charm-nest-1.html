@@ -893,6 +893,13 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .placeView .sizer b{font-size:11px;min-width:52px;text-align:right}
 .placeView .small{background:var(--goldSoft);color:#7a5a1d;font-weight:700;border-radius:6px;padding:2px 7px;font-size:11px}
 .placeView .claude{border-left:3px solid var(--gold2);background:var(--goldSoft);padding:6px 9px;border-radius:6px;font-size:12px;overflow-wrap:anywhere}
+.sheetBacks{padding:8px 12px 6px;background:#fff;border-bottom:1px solid var(--line2)}
+.backLabel{font:600 10px var(--sans);color:var(--ink45);letter-spacing:.04em;display:flex;gap:6px}
+.backPieces{display:grid;grid-template-columns:repeat(auto-fit,minmax(56px,1fr));gap:3px;align-items:end}
+.backPieces figure{margin:0;min-width:0;max-width:110px;text-align:center}
+.backPieces img{display:block;width:100%;height:66px;object-fit:contain}
+.backPieces figcaption{font:8px var(--mono);overflow-wrap:anywhere;color:var(--ink45)}
+.backPieces a{color:inherit}.sheetBacks:empty{display:none}
 .backPool{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
 .backPool .bp{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:8px;font-size:11.5px;display:grid;gap:3px}
 .backPool .bp img{width:100%;aspect-ratio:1.5;object-fit:contain;background:#fff;border:1px solid var(--line2);border-radius:6px}
@@ -1213,6 +1220,8 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-solver.js"></script>
 <script src="charm-nest-pdf.js"></script>
 <script src="charm-nest-geom.js"></script>
+<script src="charm-nest-backs.js"></script>
+<script src="charm-nest-text.js"></script>
 <script src="charm-nest-orders.js"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
@@ -2513,7 +2522,7 @@ const dateTag = (d = new Date()) => CharmNestOrders.dateTag(d);
 function sheetFileBase(sh) { if (sh.draft) return `${METAL_TAG[sh.metal]}_working_${sh.sheetId}`; return CharmNestOrders.sheetName(sh.metal, sh.setDay || today(), sh.seq || 1, sh.sheetIndex || sh.page || 1); }
 /** The sheet's set (allocated once per run) and its index within its material in that set. */
 async function nextSheetSeq(sh) {
-  if (window.Gate && Gate.modern(sh.runId)) {
+  if (window.Gate && (Gate.modern(sh.runId) || (["gold10k","gold14k"].includes(sh.metal) && !Gate.solidSelected(sh.metal)))) {
     sh.draft = true; sh.setId = null; sh.setDay = today(); sh.sheetIndex = null; return null;
   }
   const runKey = sh.runId || (sh.runId = "manual-" + uid());
@@ -2527,6 +2536,7 @@ async function persistSheet(sh, items) {
   if (!S.cloud.ok) throw new Error("Cloud offline — sheet is kept in this browser, but has not been saved online");
   const day = sh.setDay || today(), name = sh.fileBase || sheetFileBase(sh), base = sh.setId ? `${CharmNestOrders.setFolder(day, sh.seq)}/${name}` : `charmnest/sheets/${day}/${name}`;
   sh.folderPath = base;
+  if (window.Engrave) Engrave.reconcileSheet(sh);
   const byId = new Map(items.map(c => [c.id, c]));
   const record = (outputs) => ({
     id: sh.sheetId, metal: sh.metal, metalLabel: sheetName(sh), day, folder: name, fileBase: name, seq: sh.seq || sh.page, runId: sh.runId || null, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, elapsedMs: Math.round(sh.elapsedMs || 0), totalMs: Math.round(sh.totalMs || 0),
@@ -2534,7 +2544,7 @@ async function persistSheet(sh, items) {
     charmCount: items.length, placedCount: sh.placements.length, rejectCount: (sh.outputs.report.rejects || []).length, page: sh.page, verification: { ok: !!sh.verification.ok, minGapPt: sh.verification.minGapPt, minEdgePt: sh.verification.minEdgePt, render: sh.verification.render && { ok: sh.verification.render.ok, overlapPx: sh.verification.render.overlapPx, outsidePx: sh.verification.render.outsidePx } },
     outputs,
     sources: [...new Set(items.map(c => c.sourceId))].map(id => { const s = sourceOf(id); return s ? { id: s.id, name: s.name, zipName: s.zipName, hash: s.hash, bytes: s.bytes ? s.bytes.length : 0, path: s.cloud && s.cloud.path, url: s.cloud && s.cloud.url, pool: !!s.pool, sku: s.sku || null } : null; }).filter(Boolean),
-    draft: !!sh.draft, releaseFull: !!sh.releaseFull, setId: sh.setId || null, setSeq: sh.seq || null, sheetIndex: sh.sheetIndex || null, runId: sh.runId || null,
+    draft: !!sh.draft, solidIncluded:["gold10k","gold14k"].includes(sh.metal) ? !!window.Gate?.solidSelected(sh.metal) : null, releaseFull: !!sh.releaseFull, setId: sh.setId || null, setSeq: sh.seq || null, sheetIndex: sh.sheetIndex || null, runId: sh.runId || null,
     orders: [...new Set(sh.placements.map(p => { const c = byId.get(p.id); return c && c.order ? String(c.order).split("/")[0] : null; }).filter(Boolean))],
     poolIds: sh.placements.map(p => byId.get(p.id) && byId.get(p.id).poolId).filter(Boolean), backPool: sh.backPool || [], backOutputs: sh.backOutputs || null, label: sh.label || null,
     charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, order: c.order || c.id, layer: c.layer || null, poolId: c.poolId || null, sku: c.sku || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open })),
@@ -2560,6 +2570,7 @@ async function persistSheet(sh, items) {
   sh.cloud = { ai: outputs.ai && outputs.ai.url, pdf: outputs.pdf && outputs.pdf.url, labelled: outputs.labelled && outputs.labelled.url, report: outputs.report && outputs.report.url, preview: outputs.preview && outputs.preview.url };
   // 3 · the record is complete as soon as the sheet's own files are up: the Library shows it now, not after the charm backups
   await api("charmNestLibrary", { op: "putSheet", sheet: Object.assign(savedRecord(outputs), { saving: false }) }, { label: "Completing sheet record" });
+  if (window.Engrave && sh.jobId === savedJob) await Engrave.saveSheetBacks(sh);
   if (S.mode === "library") loadLibrary();   // the list is open: show the finished record
   // 4 · charm links: once the charms' own permanent copies (started when the file arrived) are done, refresh the record with their links
   const pending = [...new Set(items.map(c => c.sourceId))].map(id => { const x = sourceOf(id); return x && x.persisting; }).filter(Boolean);
@@ -2643,6 +2654,7 @@ function buildCards() {
     el.innerHTML = `
       <div class="shHead"><span class="sw"></span><span class="name">${m.label}</span><span class="stock" data-r="stock"></span><span class="prov" data-r="prov"></span><span class="shTabs hidden" data-r="tabs"></span><span class="pill neutral" data-r="pill">Idle</span></div>
       <div class="shGate hidden" data-r="gate"></div>
+      <div data-r="backs"></div>
       <div class="shPreviewWrap"><canvas data-r="canvas"></canvas>
         <div class="dropHint" data-r="hint"><b>Drop ${m.label} artwork here</b><span>.ai · .pdf · .zip — anything dropped on this card belongs to ${m.long.toLowerCase()}</span><span class="k">or drop on the queue to route by file name</span></div>
         <div class="shOverlay" data-r="overlay"></div><div class="hint" data-r="canvasHint"></div></div>
@@ -2703,6 +2715,7 @@ function refreshAllCards() { for (const sh of allSheets()) { computeSaturation(s
 function renderCard(sh) {
   if (window.Session) Session.schedule();
   const el = sh.el; if (!el) return; const q = r => $(`[data-r="${r}"]`, el); const st = stockFor(sh.metal);
+  if (q("backs")) q("backs").innerHTML = window.Engrave ? Engrave.backsMarkup(sh) : "";
   const rc = sh.recalled && !sh.charms.length ? sh.recalled : null;        // a saved sheet shown from its record
   el.style.setProperty("--ar", `${st.wPt}/${st.hPt}`);
   q("stock").textContent = ""; { const nm = $(".name", el); if (nm) nm.title = `${fmt.mm(st.wPt).replace(/\.0 mm$/, "")} × ${fmt.mm(st.hPt).replace(/\.0 mm$/, " mm")} plate`; }
@@ -2997,7 +3010,7 @@ async function loadLibrary() {
    off at 14; it is the tooltip now, and the sheet dialog's title. */
 const CODE = { gold: "GF", silver: "SS", rose: "RG", gold10k: "10K", gold14k: "14K" };
 const metalOf = r => METALS.find(m => m.key === r.metal) || { color: "#999", label: r.metalLabel || "" };
-const setNo = r => r.setSeq || +((/_Set-(\d+)/.exec(r.folder || r.fileBase || "") || [])[1]) || 0;
+const setNo = r => r.draft || r.solidIncluded === false ? 0 : r.setSeq || +((/_Set-(\d+)/.exec(r.folder || r.fileBase || "") || [])[1]) || 0;
 const sheetNo = r => r.sheetIndex || +((/_Sheet-(\d+)/.exec(r.folder || r.fileBase || "") || [])[1]) || r.page || 1;
 const dayShort = d => d ? new Date(d + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
 const swatch = (m, n) => `<span class="sw" style="--c:${m.color}" title="${esc(m.label)}${n > 1 ? ` · ${n} sheets` : ""}">${esc(CODE[m.key] || m.label)}${n > 1 ? `<i>${n}</i>` : ""}</span>`;
@@ -3010,24 +3023,24 @@ function renderLibrary() {
   const rows = [...newest.values()];
   $("#libCount").textContent = `${rows.length} sheet${rows.length === 1 ? "" : "s"}`;
   const body = $("#libBody"); if (!rows.length) { body.innerHTML = `<div class="libEmpty">No sheets match.</div>`; return; }
-  const card = (r, i) => { const m = metalOf(r), sn = setNo(r); return `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}" title="${esc(r.folder || r.id)}"><div class="h">${swatch(m, 0)}<span class="nm">Sheet ${sheetNo(r)}</span>${sn && !r._inFan ? `<span class="set">Set ${sn}</span>` : ""}<span class="tm">${r._inFan ? "" : dayShort(r.day) + " · "}${r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span></div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${cors(r.preview)}" loading="lazy" alt="">` : `<div class="pv ph">${r.saving ? "saving files…" : "no preview"}</div>`}<div class="m"><span title="charms placed of the charms asked for"><b>${r.placedCount}</b>/${r.charmCount}</span><span title="how full the sheet is"><b>${Math.round((r.density || 0) * 100)}%</b></span><span title="metal left free">${fmt.area(r.freePt2 || 0)}</span>${r.status === "complete" ? "" : `<span class="pill bad" style="padding:2px 7px">${esc(r.status)}</span>`}${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`; };
+  const card = (r, i) => { const m = metalOf(r), sn = setNo(r); return `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}" title="${esc(r.folder || r.id)}"><div class="h">${swatch(m, 0)}<span class="nm">Sheet ${sheetNo(r)}</span>${sn && !r._inFan ? `<span class="set">Set ${sn}</span>` : ""}<span class="tm">${r._inFan ? "" : dayShort(r.day) + " · "}${r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span></div><div data-back-sheet="${esc(r.id)}">${window.Engrave ? Engrave.backsMarkup(r) : ""}</div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${cors(r.preview)}" loading="lazy" alt="">` : `<div class="pv ph">${r.saving ? "saving files…" : "no preview"}</div>`}<div class="m"><span title="charms placed of the charms asked for"><b>${r.placedCount}</b>/${r.charmCount}</span><span title="how full the sheet is"><b>${Math.round((r.density || 0) * 100)}%</b></span><span title="metal left free">${fmt.area(r.freePt2 || 0)}</span>${r.status === "complete" ? "" : `<span class="pill bad" style="padding:2px 7px">${esc(r.status)}</span>`}${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`; };
   // a set = the sheets of one run: same day and the same source files (runId when the record has one)
-  const setKey = r => r.setId ? `set:${r.setId}` : r.runId ? `run:${r.runId}` : `${r.day}|${(r.sources || []).map(x => x.hash || x.name).sort().join("+")}`;
+  const setKey = r => CharmNestOrders.libraryGroup(r).key;
   const byDay = new Map(); for (const r of rows) { if (!byDay.has(r.day)) byDay.set(r.day, []); byDay.get(r.day).push(r); }
   body.innerHTML = [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([day, list]) => {
     const sets = new Map(); for (const r of list) { const k = setKey(r); if (!sets.has(k)) sets.set(k, []); sets.get(k).push(r); }
     const items = [...sets.values()].map(g => {
       g.sort((a, b) => (a.page || 1) - (b.page || 1) || (a.createdAt || 0) - (b.createdAt || 0));
       if (g.length === 1) return card(g[0], 0);
-      const lead = g[0], charms = g.reduce((n, r) => n + (r.charmCount || 0), 0), sn = setNo(lead);
+      const lead = g[0], groupLabel = CharmNestOrders.libraryGroup(lead).name, charms = g.reduce((n, r) => n + (r.charmCount || 0), 0), sn = setNo(lead);
       // one swatch per metal, in the station's order, with a count when the metal has more than one sheet
       const swatches = METALS.filter(m => g.some(r => r.metal === m.key)).map(m => swatch(m, g.filter(r => r.metal === m.key).length)).join("");
       return `<div class="libSet" data-n="${g.length}" tabindex="0" aria-label="Set of ${g.length} sheets">
-        <div class="setDeck" data-m="${lead.metal}"><span class="setTag"><span class="dot"></span>${sn ? `Set ${sn}` : "Set"} · ${g.length} sheets <span class="hint">· hover ▸</span></span>${g.slice(1).map((_, k) => `<div class="ghost" style="--k:${k + 1}"></div>`).join("")}${card(lead, 0)}</div>
-        <div class="setFan" style="--n:${g.length}"><div class="fanHead"><b>${sn ? `Set ${sn}` : "Set"}</b><span class="n">${dayShort(day)} · ${g.length} sheets · ${charms} charms</span><span class="sws">${swatches}</span><button class="x" title="Close" aria-label="Close">×</button></div>${g.map((r, i) => card(Object.assign({}, r, { _inFan: true }), i)).join("")}</div>
+        <div class="setDeck" data-m="${lead.metal}"><span class="setTag"><span class="dot"></span>${esc(groupLabel)} · ${g.length} sheets <span class="hint">· hover ▸</span></span>${g.slice(1).map((_, k) => `<div class="ghost" style="--k:${k + 1}"></div>`).join("")}${card(lead, 0)}</div>
+        <div class="setFan" style="--n:${g.length}"><div class="fanHead"><b>${esc(groupLabel)}</b><span class="n">${dayShort(day)} · ${g.length} sheets · ${charms} charms</span><span class="sws">${swatches}</span><button class="x" title="Close" aria-label="Close">×</button></div>${g.map((r, i) => card(Object.assign({}, r, { _inFan: true }), i)).join("")}</div>
       </div>`;
     });
-    return `<div class="dayHead">${new Date(day + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" })}<span class="n">${list.length} sheet${list.length === 1 ? "" : "s"}${sets.size !== list.length ? ` · ${[...sets.values()].filter(g => g.length > 1).length} set${[...sets.values()].filter(g => g.length > 1).length === 1 ? "" : "s"}` : ""}</span></div><div class="libGrid">${items.join("")}</div>`;
+    return `<div class="dayHead">${new Date(day + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" })}<span class="n">${list.length} sheet${list.length === 1 ? "" : "s"}${sets.size !== list.length ? ` · ${[...sets.values()].filter(g => g.length > 1).length} group${[...sets.values()].filter(g => g.length > 1).length === 1 ? "" : "s"}` : ""}</span></div><div class="libGrid">${items.join("")}</div>`;
   }).join("");
   $$(".libCard", body).forEach(el => el.onclick = (e) => { e.stopPropagation(); openLibrarySheet(el.dataset.id); });
   $$(".libSet", body).forEach(set => {
@@ -3055,7 +3068,7 @@ async function openLibrarySheet(id) {
     $("#lsTitle").textContent = d.folder ? `${d.folder}` : `${d.metalLabel} · ${d.id} · ${d.day}`;
     $("#lsBody").innerHTML = `
       <div style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:16px;align-items:start">
-        <div>${d.outputs && d.outputs.preview ? `<img crossorigin="anonymous" src="${cors(d.outputs.preview.url)}" style="width:100%;border:1px solid var(--line);border-radius:10px;background:#fff">` : `<div class="libEmpty">${d.saving ? "files are still uploading — reopen in a moment" : "no preview"}</div>`}</div>
+        <div><div data-back-sheet="${esc(d.id)}">${window.Engrave ? Engrave.backsMarkup(d) : ""}</div>${d.outputs && d.outputs.preview ? `<img crossorigin="anonymous" src="${cors(d.outputs.preview.url)}" style="width:100%;border:1px solid var(--line);border-radius:10px;background:#fff">` : `<div class="libEmpty">${d.saving ? "files are still uploading — reopen in a moment" : "no preview"}</div>`}</div>
         <div><dl class="kv"><dt>Status</dt><dd>${esc(d.status)} · ${esc(endedText(d.endedBy))}</dd><dt>Placed</dt><dd>${d.placedCount} / ${d.charmCount}${d.rejectCount ? ` · ${d.rejectCount} rejected` : ""}</dd><dt>Density</dt><dd>${Math.round((d.density || 0) * 100)}% · ${fmt.area(d.freePt2 || 0)} free</dd><dt>Stock</dt><dd>${d.stock ? `${fmt.mm(d.stock.wIn * PT_PER_IN)} × ${fmt.mm(d.stock.hIn * PT_PER_IN)}` : "—"}</dd><dt>Seed · clearance</dt><dd>${d.params ? `${d.params.seed} · ${fmt.mm(d.params.clearancePt)} · ${d.params.angles.length} angles` : "—"}</dd><dt>Verification</dt><dd>${d.verification ? (d.verification.ok ? "passed" : "flagged") + (d.verification.minGapPt != null ? ` · min gap ${fmt.mm(d.verification.minGapPt)}` : "") : "—"}</dd><dt>Sources</dt><dd>${(d.sources || []).map(s => s.url ? `<a href="${s.url}" target="_blank" rel="noopener">${esc(s.name)}</a>` : esc(s.name)).join(", ") || "—"}</dd></dl>
         <div class="section">Outputs</div><div style="display:flex;gap:6px;flex-wrap:wrap">${d.outputs ? ["ai", "pdf", "labelled", "report"].filter(k => d.outputs[k]).map(k => `<a class="btn ghost xs" href="${d.outputs[k].url}" target="_blank" rel="noopener">${k === "labelled" ? "labelled proof" : k === "report" ? "nest-report.json" : "." + k}</a>`).join("") : "none"}</div></div></div>
       <div class="section">Charms · ${(d.charms || []).length}</div>

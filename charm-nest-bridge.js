@@ -1618,7 +1618,7 @@ const Gate = window.Gate = (() => {
     el2.className = cls; el2.classList.remove("hidden"); el2.innerHTML = html;
     const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
   }
-  return { load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, upgrade, selected, nestable, renderRelease, state: () => R };
+  return { solidSelected:m => selected()[m] === true, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, upgrade, selected, nestable, renderRelease, state: () => R };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
@@ -1633,8 +1633,20 @@ const Engrave = window.Engrave = (() => {
         try { const r = await fetch(path, { cache: "force-cache" }); if (!r.ok) throw new Error(`HTTP ${r.status}`); const buf = await r.arrayBuffer(); if (buf.byteLength < 1000) throw new Error("empty file"); F_[w] = opentype.parse(buf); }
         catch (e) { if (w === "Regular") F_.error = `${path}: ${e.message}`; else F_.semiboldMissing = `${path}: ${e.message}`; }
       }
+      if (F_.Regular) try {
+        const mapResponse = await fetch("vendor/fonts/emoji-sequences.json", {cache:"no-cache"});
+        if (!mapResponse.ok) throw new Error("Emoji map unavailable");
+        const map = await mapResponse.json();
+        const fontResponse = await fetch("vendor/fonts/NotoEmoji-Regular.ttf?v="+map.fontSha256, {cache:"force-cache"});
+        if (!fontResponse.ok) throw new Error("Emoji font unavailable");
+        const bytes = await fontResponse.arrayBuffer();
+        if (await CN.sha256(new Uint8Array(bytes)) !== map.fontSha256) throw new Error("Emoji font version differs from its shape map");
+        const emoji = opentype.parse(bytes);
+        for (const weight of ["Regular", "Semibold"]) if (F_[weight]) F_[weight] = window.CharmNestText.withEmoji(F_[weight], emoji, map, opentype.Path);
+        F_.emoji = true;
+      } catch (e) { F_.emojiError = e.message; agent({engrave:true}, "warn", "Emoji font could not load: " + e.message); }
       F_.ok = !!F_.Regular; if (!F_.ok) agent({ engrave: true }, "warn", `Source Sans 3 is not available (${F_.error}) — engraving cannot be set exactly; the .otf files belong in vendor/fonts/`);
-      else agent({ engrave: true }, "ENGRAVE", `Source Sans 3 loaded: ${F_.Regular.names.fullName ? Object.values(F_.Regular.names.fullName)[0] : "Regular"}${F_.Semibold ? " + Semibold" : " (Semibold missing — Regular used at every size)"}`);
+      else agent({ engrave: true }, "ENGRAVE", `Engraving fonts loaded: ${F_.Regular.names.fullName ? Object.values(F_.Regular.names.fullName)[0] : "Regular"}${F_.Semibold ? " + Semibold" : " (Semibold missing — Regular used at every size)"}`);
       const h = document.getElementById("stFontsHelp"); if (h) h.innerHTML = F_.ok ? `Loaded: ${esc(Object.values(F_.Regular.names.fullName || {})[0] || "Source Sans 3 Regular")}${F_.Semibold ? ", " + esc(Object.values(F_.Semibold.names.fullName || {})[0] || "Semibold") : " · Semibold missing"}` : `<span style="color:#8a3a26">Not found: ${esc(F_.error)}</span> — SourceSans3-Regular.otf and SourceSans3-Semibold.otf belong in vendor/fonts/`;
     })().finally(() => { F_.loading = null; });
     return F_.loading;
@@ -1699,7 +1711,7 @@ const Engrave = window.Engrave = (() => {
     await loadFonts();
     if (!F_.ok) { job.state = "blocked"; job.reason = "Source Sans 3 font files are missing"; job.row.engrave = { needed: true, state: "blocked", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "fontMissing", key: "eng:" + job.key, row: job.row, job, why: F_.error }); return job; }
     const cov = G.glyphCoverage(F_.Regular, job.lines.join("\n"));
-    if (!cov.ok) { job.state = "words"; job.reason = `characters Source Sans 3 lacks: ${cov.missing.join(" ")}`; job.missing = cov.missing; job.row.engrave = { needed: true, state: "words", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "notRepresentable", key: "eng:" + job.key, row: job.row, job, why: job.reason }); return job; }
+    if (!cov.ok) { job.state = "words"; job.reason = `Unsupported engraving characters: ${cov.missing.map(c => c + " (" + [...c].map(x=>"U+"+x.codePointAt(0).toString(16).toUpperCase()).join(" ") + ")").join(", ")}${F_.emojiError ? " — " + F_.emojiError : ""}`; job.missing = cov.missing; job.row.engrave = { needed: true, state: "words", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "notRepresentable", key: "eng:" + job.key, row: job.row, job, why: job.reason }); return job; }
     job.state = "ready"; job.reason = null; job.row.engrave = { needed: true, state: "ready", text: job.text, approved: false }; Review.remove("eng:" + job.key);
     Pool.update(job.copies, { engrave: true }).catch(() => {});
     RunCtl.poke();                                                        // a waiting run fits it now (the classifier answers asynchronously)
@@ -1734,12 +1746,14 @@ const Engrave = window.Engrave = (() => {
 
   /* ── 7.2 / 7.3 · the flip and the fit, once per distinct placement (identical copies share it) ── */
   async function fitJob(job) {
-    await loadFonts(); if (!F_.ok) return setReady(job);
+    EG.card = null; EG.cardKey = null;
+    job.reason = null; job.verify = null; job.fit = null;
+    await loadFonts(); if (!F_.ok || !G.glyphCoverage(F_.Regular, job.lines.join("\n")).ok) return setReady(job);
     const poolId = job.copies[0]; const charm = Pool.charmOf(poolId); if (!charm) { job.state = "ready"; return job; }
     job.state = "fitting"; job.row.engrave.state = "fitting"; render();
     const entry = Master.entryFor(job.row.spec.designSku) || {};
     let view;
-    try { view = G.backView(charm, { res: 6, upAngle: entry.upAngle == null ? undefined : +entry.upAngle }); }
+    try { view = G.backView(charm, { res: 6, upAngle: entry.upAngle == null ? undefined : +entry.upAngle, solidBack:!!job.solidBack }); }
     catch (e) {
       job.state = "blocked"; job.reason = e.message; job.flipError = e; job.row.engrave.state = "blocked"; job.row.engrave.reason = job.reason;
       agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: ${job.reason}`);
@@ -1805,7 +1819,14 @@ const Engrave = window.Engrave = (() => {
     if (run) { run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); await RunCtl.save(run); }
     render(); return jobs.length;
   }
-  function invalidate(row, why) { const j = items().get(row.key); if (!j) return; if (j.state === "approved" || j.state === "written" || j.state === "review" || j.state === "ready") { j.previous = { text: j.text, fit: j.fit, approvedBy: j.approvedBy }; j.state = "classify"; j.fit = null; j.approvedBy = null; j.approvedAt = null; j.reason = why; Review.remove("eng:" + j.key); } }
+  function revokeBacks(job) {
+    job.approvedAt = null; job.backs = []; delete job._backPreview;
+    for (const sh of allSheets()) sh.backPool = (sh.backPool || []).filter(b=>!job.copies.includes(b.poolId));
+    refreshBacks();
+    const task = backQueue.catch(()=>{}).then(()=>api("charmNestLibrary", {op:"backInvalidate", poolIds:job.copies}));
+    backQueue = task; task.catch(e=>{ job.reason = "Back removal not saved: " + e.message; RunCtl.stopIfRunning(job.reason, "Reconnect and reopen this engraving before continuing."); toast(job.reason,"bad"); });
+  }
+  function invalidate(row, why) { const j = items().get(row.key); if (!j) return; if (j.state === "approved" || j.state === "written" || j.state === "review" || j.state === "ready") { revokeBacks(j); j.previous = { text: j.text, fit: j.fit, approvedBy: j.approvedBy }; j.state = "classify"; j.fit = null; j.approvedBy = null; j.approvedAt = null; j.reason = why; Review.remove("eng:" + j.key); } }
 
   /* ── 7.5 · the review controls ── */
   /* Moving the text is moving the text. It used to be a re-fit with no ceiling, so one tap of a nudge arrow threw away
@@ -1857,16 +1878,19 @@ const Engrave = window.Engrave = (() => {
   }
   function resize(job, size) { if (!job.fit) return; size = Math.max(0.5, Math.min(size, job.fit.fittedMax)); job.wantSize = size; const L = G.layoutLines(job.lines, fontFor(job.fit.weight), size, 0.18, job.fit.angle, job.fit.centre); const v = G.verifyInk(L.cmds, job.mask); if (!v.ok) { toast("That size does not verify", "bad"); return; } job.fit = Object.assign({}, job.fit, { size, layout: L, glyphs: L.glyphs, cmds: L.cmds, capMm: size * G.capPerEm(fontFor(job.fit.weight)) * MM, small: size * G.capPerEm(fontFor(job.fit.weight)) * MM < (+S.settings.engraveMinCapMm || 1.6), metrics: G.strokeMetrics(L.cmds, 24) }); job.verify = { geometry: v, at: Date.now() }; job.claude = null; reRead(job); refresh(job); }
   async function resplit(job) { const vars = G.splitVariants(job.lines); const i = (job.splitIndex || 0) + 1; const pick = vars[i % vars.length]; job.splitIndex = i; job.lines = pick; job.text = pick.join("\n"); agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: re-split as "${pick.join(" / ")}"`); await fitJob(job); }
-  async function skip(job, by) { by = by || employeeName() || askEmployee(); if (!by) return; job.state = "skipped"; job.approvedBy = null; job.row.engrave = { needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; job.row.flag = `engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`); await Pool.update(job.copies, { engrave: false, engraveSkippedBy: by }); Orders.render(); render(); RunCtl.poke(); }
-  function sendBack(job, why) { job.state = "words"; job.reason = why || "sent back from the placement review — a decision on the words is needed"; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); Orders.render(); }
+  async function skip(job, by) { by = by || employeeName() || askEmployee(); if (!by) return; revokeBacks(job); job.state = "skipped"; job.approvedBy = null; job.row.engrave = { needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; job.row.flag = `engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`); await Pool.update(job.copies, { engrave: false, engraveSkippedBy: by }); Orders.render(); render(); RunCtl.poke(); }
+  function sendBack(job, why) { revokeBacks(job); job.state = "words"; job.reason = why || "sent back from the placement review — a decision on the words is needed"; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); Orders.render(); }
   async function approve(job, by) {
+    if (job.backSaving) return;
     by = by || employeeName() || askEmployee(); if (!by) { toast("An employee name is required to approve", "bad"); return; }
     if (!job.fit || !job.verify || !job.verify.geometry.ok) { toast("Nothing verified to approve", "bad"); return; }
     job.state = "approved"; job.approvedBy = by; job.approvedAt = Date.now(); job.row.engrave = Object.assign(job.row.engrave || {}, { needed: true, state: "approved", approved: true, text: job.text, approvedBy: by });
     Review.remove("eng:" + job.key);
     agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: placement approved by ${by} (${job.fit.size.toFixed(2)} pt, cap ${job.fit.capMm.toFixed(2)} mm${job.nudged ? ", nudged" : ""})`);
-    render(); Orders.render();
-    try { await writeBacks(job); } catch (e) { job.state = "review"; job.row.engrave.state = "review"; job.row.engrave.approved = false; job.reason = "back file failed: " + e.message; agent({ engrave: true }, "warn", `${job.row.order.receiptId}: ${job.reason}`); Review.add({ kind: "placement", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); }
+    job.backSaving = true; const approval = job.approvedAt;
+    render(); Orders.render(); refreshBacks();
+    try { await writeBacks(job); } catch (e) { if (job.approvedAt !== approval) { job.backSaving = false; return; } job.state = "review"; job.row.engrave.state = "review"; job.row.engrave.approved = false; job.reason = "back file failed: " + e.message; refreshBacks(); agent({ engrave: true }, "warn", `${job.row.order.receiptId}: ${job.reason}`); Review.add({ kind: "placement", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); }
+    job.backSaving = false; Session.schedule();
     RunCtl.poke();
   }
 
@@ -1933,7 +1957,53 @@ const Engrave = window.Engrave = (() => {
     return cv;
   }
   function renderFront(charm, px) { const cv = document.createElement("canvas"); const b = charm.bbox, pad = 3 * PT; const w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, k = px / Math.max(w, h); cv.width = Math.round(w * k); cv.height = Math.round(h * k); const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height); const tx = (x, y) => [(x - b[0] + pad) * k, (b[3] + pad - y) * k]; P.drawSegments(ctx, charm.members, tx, k); ctx.beginPath(); P.pathToCanvas(ctx, charm.outline, tx); ctx.strokeStyle = "rgba(190,40,40,.9)"; ctx.lineWidth = Math.max(1, 0.5 * k); ctx.stroke(); return cv; }
-  async function writeBacks(job) {
+  // Preview ownership is always derived from placements, never from SKU, order number or a cached sheet name.
+  function sheetBacks(sheet) {
+    const id = sheet.sheetId || sheet.id;
+    const live = id && allSheets().find(p => p.sheetId === id);
+    const target = live || sheet;
+    const records = [...(sheet.backPool || sheet.backs || []), ...allSheets().flatMap(p => p.backPool || [])];
+    const invalid = new Set();
+    for (const j of items().values()) {
+      if (!j.approvedAt || !["approved", "written"].includes(j.state)) { j.copies.forEach(id => invalid.add(id)); continue; }
+      records.push(...(j.backs || []));
+      if (j.view && j.fit) {
+        if (!j._backPreview || j._previewAt !== j.approvedAt) { j._backPreview = renderBack(j, 360, {hatch:false}).toDataURL("image/png"); j._previewAt = j.approvedAt; }
+        for (const poolId of j.copies) if (!(j.backs || []).some(b => b.poolId === poolId && b.approvedAt === j.approvedAt)) records.push({poolId, order:j.row.order.receiptId, sku:j.row.spec.designSku, copy:B.pool.rows.get(poolId)?.copy, text:j.text, approvedAt:j.approvedAt, preview:j._backPreview, pending:true});
+      }
+    }
+    // Older compact history records did not include placements; their saved back membership is authoritative.
+    const normalized = target.recalled && !target.charms?.length ? Object.assign({}, target, {poolIds:target.recalled.poolIds?.length ? target.recalled.poolIds : (target.backPool || []).map(b=>b.poolId)}) : target;
+    const fallback = !live && !Array.isArray(sheet.poolIds) && !sheet.placements ? Object.assign({}, sheet, {poolIds:(sheet.backPool || sheet.backs || []).map(b=>b.poolId)}) : normalized;
+    return window.CharmNestBacks.forSheet(fallback, records.filter(b => !invalid.has(b.poolId)));
+  }
+  const backsMarkup = sheet => window.CharmNestBacks.markup(sheetBacks(sheet));
+  function refreshBacks() {
+    refreshAllCards();
+    for (const el of document.querySelectorAll("[data-back-sheet]")) {
+      const id = el.dataset.backSheet, sh = allSheets().find(p=>p.sheetId === id) || S.library.rows.find(p=>p.id === id);
+      if (sh) el.innerHTML = backsMarkup(sh);
+    }
+    Session.schedule();
+  }
+  function reconcileSheet(sh) {
+    sh.backPool = sheetBacks(sh).filter(b=>!b.pending).map(b => { const out = Object.assign({}, b, {sheetId:sh.sheetId, setId:sh.setId || null, runId:sh.runId || null}); delete out.preview; return out; });
+    return sh.backPool;
+  }
+  async function saveSheetBacks(sh) {
+    const records = reconcileSheet(sh);
+    for (const b of records) await api("charmNestLibrary", {op:"backPut", back:b});
+    refreshBacks();
+  }
+  let backQueue = Promise.resolve();
+  function writeBacks(job) {
+    const task = backQueue.catch(()=>{}).then(()=>writeBacksNow(job)); backQueue = task; return task;
+  }
+  async function writeBacksNow(job) {
+    if (!["approved", "written"].includes(job.state) || !job.fit || !job.view) return;
+    const approval = job.approvedAt;
+    const current = () => approval === job.approvedAt && ["approved", "written"].includes(job.state);
+
     const charm0 = Pool.charmOf(job.copies[0]); const src = sourceOf(charm0.sourceId); const view = job.view, fit = job.fit;
     const rel = fit.glyphs.map(g => ({ cmds: g.cmds.map(c => { const o = { type: c.type }; if (c.type !== "Z") { o.x = c.x - view.cx; o.y = c.y - view.cy; } if (c.type === "C" || c.type === "Q") { o.x1 = c.x1 - view.cx; o.y1 = c.y1 - view.cy; } if (c.type === "C") { o.x2 = c.x2 - view.cx; o.y2 = c.y2 - view.cy; } return o; }) }));
     const bySheet = new Map();
@@ -1948,17 +2018,22 @@ const Engrave = window.Engrave = (() => {
         const built = await P.buildBackFile({ charm: charm0, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: rel, view: S.settings.backFileView || "asSeenFromBack", title: `${job.row.order.receiptId} · ${job.row.spec.designSku} · back`, meta: { poolId, order: job.row.order.receiptId, sku: job.row.spec.designSku, copy, text: job.text, font: "Source Sans 3", weight: fit.weight, sizePt: fit.size, capMm: fit.capMm, angle: fit.angle, approvedBy: job.approvedBy, approvedAt: job.approvedAt, upAngle: view.upAngle, flipChecks: view.checks } });
         const verified = await verifyBackFile(built.bytes, job);                 // 7.4 · flip integrity re-run on the written, re-parsed file
         if (!verified.ok) throw new Error(`the written back file did not re-verify (${verified.why})`);
-        const name = `${sh.fileBase}_back_${job.row.order.receiptId}_${job.row.spec.designSku}_${copy}`;
+        const name = `${sh.fileBase}_back_${poolId}_${approval}`;
         let ai = null, pngUp = null;
         if (S.cloud.ok && sh.folderPath) { ai = await uploadBytes(`${sh.folderPath}/back/${name}.ai`, built.bytes, "application/illustrator", `Saving back ${copy}`); pngUp = await uploadBytes(`${sh.folderPath}/back/${name}.png`, pngBlob, "image/png"); }
         const rec = { poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, text: job.text, lines: job.lines, font: "Source Sans 3", weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: job.approvedBy, approvedAt: job.approvedAt, nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: S.settings.backFileView || "asSeenFromBack", reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, pageWPt: built.wPt, pageHPt: built.hPt };
-        sh.backPool = sh.backPool.filter(b => b.poolId !== poolId).concat([rec]); job.backs.push(rec);
-        if (S.cloud.ok) await api("charmNestLibrary", { op: "backPut", back: rec }).catch(e => agent({ engrave: true }, "warn", `back record: ${e.message}`));
+        if (!current()) return;
+        if (Pool.sheetOf(poolId) !== sh) throw new Error("The charm moved during approval. Retry on its current sheet.");
+        if (!S.cloud.ok || !ai || !pngUp) throw new Error("Reconnect to save the approved back files");
+        await api("charmNestLibrary", { op: "backPut", back: rec });
+        for (const page of allSheets()) page.backPool = (page.backPool || []).filter(b => b.poolId !== poolId);
+        if (!current()) return;
+        sh.backPool.push(rec); job.backs.push(rec); refreshBacks();
         agent({ metal: sh.metal, engrave: true }, "ENGRAVE", `Back file written and re-verified: ${name}.ai (${built.reference.redrawn ? "cut reference redrawn from the exact transformed paths" : "original cut bytes under the mirror matrix"})`);
       }
-      if (S.cloud.ok && sh.sheetId) await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, backPool: sh.backPool } }).catch(() => {});
       await sheetBackOutputs(sh).catch(e => agent({ metal: sh.metal }, "warn", `back index: ${e.message}`));
     }
+    if (!current()) return;
     job.state = "written"; job.row.engrave.state = "written";
     await Pool.update(job.copies, { engrave: true, engraveApprovedBy: job.approvedBy, state: "engraved" });
     render();
@@ -1994,7 +2069,7 @@ const Engrave = window.Engrave = (() => {
         const b = backs[i + j]; const col = j % 2, row = Math.floor(j / 2); const x = 36 + col * 280, y = 720 - row * 230;
         try { if (b.outputs && b.outputs.png && b.outputs.png.url) { const pngBytes = await (await fetch(b.outputs.png.url)).arrayBuffer(); const img = await doc.embedPng(pngBytes); const s = Math.min(150 / img.width, 150 / img.height); page.drawImage(img, { x, y: y - 150, width: img.width * s, height: img.height * s }); } } catch (_) { /* thumbnail optional */ }
         const lines = [`${b.order} · ${b.sku} · copy ${b.copy}`, `"${String(b.text).replace(/\n/g, " / ")}"`, `${b.font} ${b.weight} · ${b.sizePt} pt · cap ${b.capMm} mm${b.angle ? ` · ${b.angle}°` : ""}${b.small ? " · SMALL" : ""}`, `approved by ${b.approvedBy || "—"} ${b.approvedAt ? new Date(b.approvedAt).toLocaleString() : ""}`];
-        lines.forEach((t, k) => page.drawText(t.slice(0, 60), { x, y: y - 165 - k * 12, size: 8, font, color: rgb(0.1, 0.1, 0.1) }));
+        lines.forEach((t, k) => page.drawText([...t].map(c=>font.getCharacterSet().includes(c.codePointAt(0)) ? c : "?").join("").slice(0, 60), { x, y: y - 165 - k * 12, size: 8, font, color: rgb(0.1, 0.1, 0.1) }));
       }
     }
     const pdf = await doc.save({ useObjectStreams: false });
@@ -2110,7 +2185,7 @@ const Engrave = window.Engrave = (() => {
         ${tabBtn("place", "Placements", queue.length, "info")}${tabBtn("done", "Decided", done.length, "ok")}
         ${working ? `<span class="egTab working" title="being read and fitted now — they arrive in Words or Placements on their own"><span class="spin"></span>Working<b>${working}</b></span>` : ""}
         <input class="ordSearch" id="egQ" placeholder="order, SKU, words…" value="${esc(EG.q || "")}" title="search the placements, the words and what has been decided by order number, SKU or the engraved words">
-        <span class="spacer"></span><button class="btn ghost xs" id="egRun" title="which run this engraving belongs to — click for every run on record">${esc(runWord())}</button><span class="pill ${F_.ok ? "ok" : "bad"}" title="${F_.ok ? "the engraving font is loaded" : esc(F_.error || "the engraving font files are missing")}">${F_.ok ? "Source Sans 3" : "Source Sans 3 missing"}</span><button class="btn ghost xs" id="egWho" title="every approval is recorded under this name — click to change it">${esc(employeeName() || "set your name")}</button></div>
+        <span class="spacer"></span><button class="btn ghost xs" id="egRun" title="which run this engraving belongs to — click for every run on record">${esc(runWord())}</button><span class="pill ${F_.ok ? "ok" : "bad"}" title="${F_.ok ? "the engraving font is loaded" : esc(F_.error || "the engraving font files are missing")}">${F_.ok ? "Source Sans 3" + (F_.emoji ? " + emoji" : "") : "Source Sans 3 missing"}</span><button class="btn ghost xs" id="egWho" title="every approval is recorded under this name — click to change it">${esc(employeeName() || "set your name")}</button></div>
       <div class="egPane grow"${tab === "place" ? "" : " hidden"}><div class="rvList" id="egQueue"></div>
         <div class="egNext" id="egNext"></div></div>
       <div class="egPane grow scroll"${tab === "done" ? "" : " hidden"}><div id="egBacks"></div></div>`;
@@ -2150,7 +2225,7 @@ const Engrave = window.Engrave = (() => {
             const open = EG.openDone === j2.key;
             const detail = !open ? "" : `<div class="doneDetail">
                 <div class="dd back">${png ? `<img crossorigin="anonymous" src="${esc(cors(png))}" alt="the back as written" referrerpolicy="no-referrer" data-retry="1">` : `<div class="noPic">${j2.state === "skipped" ? "cut plain — nothing on the back" : "the back picture is written with the sheet"}</div>`}<span class="cap">back${b0.sheet ? " · " + esc(b0.sheet) : ""}</span></div>
-                <div class="dd front"><div class="frontHost"></div><span class="cap">front</span></div>
+                <div class="dd front">${job.view?.detail.filledArtwork ? `<div class="why">Filled artwork: inspect the back outline and cut-outs before approving.</div>` : ""}<div class="frontHost"></div><span class="cap">front</span></div>
                 <dl class="meta">
                   <dt>Words</dt><dd class="serif">${w}</dd>
                   ${j2.fit || b0.capMm ? `<dt>Size</dt><dd>cap ${(+(b0.capMm || (j2.fit && j2.fit.capMm) || 0)).toFixed(2)} mm · Source Sans 3${j2.fit && j2.fit.weight ? " " + esc(j2.fit.weight) : ""}</dd>` : ""}
@@ -2198,11 +2273,19 @@ const Engrave = window.Engrave = (() => {
         <div class="pvSide">
           <div class="pvWords"><span class="lbl">Words on the back</span><textarea data-f="words" rows="${Math.max(1, Math.min(4, (job.lines || []).length || 1))}" title="one line of the engraving per line — change them here and press Use these words">${esc((job.lines || []).join("\n"))}</textarea>
             <div class="wordsActs"><button class="btn gold xs" data-a="usewords" title="${wordsJob ? "settle the words and draw the placement" : "re-fit the placement with these words"}">${wordsJob ? "Engrave these words" : "Use these words"}</button>${wordsJob ? `<button class="btn ghost xs" data-a="skip" title="cut this charm plain — nothing engraved on its back">No engraving</button>` : ""}</div>
-            ${wordsJob ? `<div class="why">${esc(job.reason || "the words need a decision")}${(job.questions || []).length ? ` — ${esc(job.questions.join(" · "))}` : ""}</div>` : ""}</div>
-          <div class="frontHost"></div>
+            ${wordsJob || !f ? `<div class="why">${esc(job.reason || "the words need a decision")}${(job.questions || []).length ? ` — ${esc(job.questions.join(" · "))}` : ""}</div>` : ""}</div>
+          ${job.view?.detail.filledArtwork ? `<div class="why">Filled artwork: inspect the back outline and cut-outs before approving.</div>` : ""}<div class="frontHost"></div>
           <dl class="meta">${row2("Customer", (sp.personalization || []).join(" / "))}${row2("Buyer msg", sp.buyerMessage)}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}</dl>
         </div></div>`;
     const charm = job.copies.length ? Pool.charmOf(job.copies[0]) : null;
+    if (charm && (charm.outline.subpaths || []).length > 1) {
+      const control = document.createElement("label"); control.className = "why";
+      control.innerHTML = `<input type="checkbox" ${job.solidBack ? "checked" : ""}> Solid back · inner artwork is front detail`;
+      control.title = "Use only the outer contour of compound artwork. Separate cut holes remain open. Check that inner artwork is not a physical cut-out before approving.";
+      control.querySelector("input").onchange = async e => { job.solidBack = e.target.checked; await fitJob(job); };
+      card.querySelector(".pvWords").appendChild(control);
+    }
+
     if (charm) card.querySelector(".frontHost").appendChild(renderFront(charm, 420));
     else { const e2 = Master.entryFor(job.row.spec.designSku || job.row.line.sku); const t = e2 && Master.thumbOf(e2); card.querySelector(".frontHost").innerHTML = t ? `<img crossorigin="anonymous" src="${esc(cors(t))}" alt="">` : ""; }
     if (wordsJob) { const bh = card.querySelector(".backHost"); bh.innerHTML = `<div class="noBack">${job.state === "blocked" ? "the flip check failed on this charm — see the log" : "the back is drawn once the words are settled"}</div>`; }
@@ -2293,7 +2376,7 @@ const Engrave = window.Engrave = (() => {
     void it;
     return card;
   }
-  return { view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0 }), loadFonts, classify, classifyAll, fitJob, fitAll, approve, nudge, resize, rotateTo, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
+  return { sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0 }), loadFonts, classify, classifyAll, fitJob, fitAll, approve, nudge, resize, rotateTo, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
@@ -2325,7 +2408,7 @@ const Sets = window.Sets = (() => {
   }
   /** Every set of a run, in set order. */
   const ofRun = runId => [...byRun().values()].filter(x => x.runId === runId).sort((a, b) => (a.seq || 0) - (b.seq || 0));
-  const setOfSheet = sh => sh.draft ? null : sh.runId ? (byRun().get(keyOf(sh.runId, sh.group)) || (sh.setId ? [...byRun().values()].find(x => x.setId === sh.setId) : null) || null) : null;
+  const setOfSheet = sh => sh.draft || (["gold10k","gold14k"].includes(sh.metal) && !Gate.solidSelected(sh.metal)) ? null : sh.runId ? (byRun().get(keyOf(sh.runId, sh.group)) || (sh.setId ? [...byRun().values()].find(x => x.setId === sh.setId) : null) || null) : null;
   /** The QR label, 145 × 145 pt, the print page's exact geometry (QR 85 pt at 3,3 · label 9 pt bold at 1,93 · "Notes:" at 92,0.5), ECC M. */
   async function renderLabelPng(payload, label, scale) {
     const k = scale || 8; const cv = document.createElement("canvas"); cv.width = Math.round(145 * k); cv.height = Math.round(145 * k);
@@ -2460,6 +2543,18 @@ const Sets = window.Sets = (() => {
     Orders.render();
   }
   /** The Library's Sets view: one card per set, its sheets side by side, held orders, engraving count, label thumbnails. */
+  function libraryGroups(sets, sheets) {
+    const groups = new Map(sets.filter(s=>s.status !== "superseded").map(s=>["set:"+s.setId, Object.assign({},s,{sheets:[]})]));
+    for (const sheet of sheets) {
+      const meta=O.libraryGroup(sheet), key=meta.key;
+      if (!groups.has(key)) groups.set(key, {...meta, runId:sheet.runId, day:sheet.day, status:meta.standalone ? "not included in a set" : meta.working ? "held for a later set" : "saved", sheets:[], materials:[], orders:{}});
+      const group=groups.get(key); group.sheets.push(sheet);
+      group.materials=[...new Set([...(group.materials || []),sheet.metal])];
+      group.updatedAt=Math.max(+group.updatedAt || 0,+sheet.updatedAt || 0);
+      for (const id of sheet.orders || []) if (!group.orders?.[id]) (group.orders ||= {})[id]={};
+    }
+    return [...groups.values()].sort((a,b)=>String(b.day || "").localeCompare(String(a.day || "")) || (+b.seq || 0)-(+a.seq || 0) || (+b.updatedAt || 0)-(+a.updatedAt || 0));
+  }
   let _cache = null;
   async function renderLibrary(body, opts) {
     const reuse = !!(opts && opts.reuse && _cache);
@@ -2467,25 +2562,27 @@ const Sets = window.Sets = (() => {
     try {
       if (!reuse) {
         const [ss, sh] = await Promise.all([api("charmNestLibrary", { op: "setList", from: document.getElementById("libFrom").value || null, to: document.getElementById("libTo").value || null, limit: 200 }), api("charmNestLibrary", { op: "listSheets", from: document.getElementById("libFrom").value || null, to: document.getElementById("libTo").value || null, limit: 500 })]);
-        _cache = { sets: ss.sets || [], sheets: sh.sheets || [] };
+        _cache = { sets: libraryGroups(ss.sets || [], sh.sheets || []), sheets: sh.sheets || [] };
       }
+      if (S.library.kind !== "sets") return;
       const sheets = _cache.sheets;
       // the metal chips and the search used to light up and change nothing here: this view read neither
       const metal = S.library.metal && S.library.metal !== "all" ? S.library.metal : null;
       const q = (document.getElementById("libSearch").value || "").trim().toLowerCase();
       let sets = _cache.sets;
       if (metal) sets = sets.filter(st => (st.materials || []).includes(metal));
-      if (q) sets = sets.filter(st => `${st.name || ""} ${st.setId || ""} ${st.day || ""} ${st.runId || ""} ${Object.keys(st.orders || {}).join(" ")}`.toLowerCase().includes(q));
-      document.getElementById("libCount").textContent = `${sets.length} set${sets.length === 1 ? "" : "s"}`;
+      if (q) sets = sets.filter(st => `${st.name || ""} ${st.setId || ""} ${st.day || ""} ${st.runId || ""} ${Object.keys(st.orders || {}).join(" ")} ${(st.sheets || []).flatMap(r=>[r.fileBase,r.names,...(r.backs || []).map(b=>b.text)]).join(" ")}`.toLowerCase().includes(q));
+      const releasedCount = sets.filter(s=>s.setId).length, workingCount = sets.length-releasedCount;
+      document.getElementById("libCount").textContent = `${releasedCount} set${releasedCount === 1 ? "" : "s"}${workingCount ? " · " + workingCount + " working" : ""}`;
       if (!sets.length) { body.innerHTML = `<div class="libEmpty">${q || metal ? "No sets match this filter." : "No sets yet."}</div>`; return; }
       body.innerHTML = "";
       for (const st of sets) {
-        const all = sheets.filter(x => x.setId === st.setId).sort((a, b) => (a.metal || "").localeCompare(b.metal || "") || (a.sheetIndex || 0) - (b.sheetIndex || 0));
+        const all = st.sheets.slice().sort((a, b) => (a.metal || "").localeCompare(b.metal || "") || (a.sheetIndex || 0) - (b.sheetIndex || 0));
         const mine = metal ? all.filter(x => x.metal === metal) : all;
         const held = Object.entries(st.orders || {}).filter(([, o]) => o.held);
         const card = el("div", "setCard");
-        card.innerHTML = `<div class="sh"><span class="nm">${esc(st.name || st.setId)}</span><span class="pill ${/complete/.test(st.status) ? "ok" : st.status === "labelled" ? "info" : "neutral"}">${esc(st.status || "open")}</span><span class="mono" style="font-size:11px;color:var(--ink45)">${esc(st.day)} · run ${esc(st.runId || "—")}</span><span>${mine.length} sheet(s) · ${(st.materials || []).map(m => labelOf(m)).join(", ")}</span><span>${Object.keys(st.orders || {}).length} order(s)</span><span>Engraving · ${st.backCount || mine.reduce((n, x) => n + (x.backCount || 0), 0)}</span><span class="spacer"></span>${st.labels && st.labels.pdf ? `<a class="btn ghost xs" href="${st.labels.pdf.url}" target="_blank" rel="noopener">labels PDF</a>` : ""}${st.labels && st.labels.manifest ? `<a class="btn ghost xs" href="${st.labels.manifest.url}" target="_blank" rel="noopener">manifest</a>` : ""}${st.labels && st.labels.json ? `<a class="btn ghost xs" href="${st.labels.json.url}" target="_blank" rel="noopener">set.json</a>` : ""}${/complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div>
-          <div class="sheetsRow">${mine.map(r => `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}${r.preview ? `<img class="pv" crossorigin="anonymous" src="${cors(r.preview)}" loading="lazy" alt="">` : `<div class="pv ph">no preview</div>`}<div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span>${r.backCount ? `<span>✎ ${r.backCount}</span>` : ""}<span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span></div></div>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
+        card.innerHTML = `<div class="sh"><span class="nm">${esc(st.name || st.setId)}</span><span class="pill ${/complete/.test(st.status) ? "ok" : st.status === "labelled" ? "info" : "neutral"}">${esc(st.status || "open")}</span><span class="mono" style="font-size:11px;color:var(--ink45)">${esc(st.day)} · run ${esc(st.runId || "—")}</span><span>${mine.length} sheet(s) · ${(st.materials || []).map(m => labelOf(m)).join(", ")}</span><span>${Object.keys(st.orders || {}).length} order(s)</span><span>Engraving · ${st.backCount || mine.reduce((n, x) => n + (x.backCount || 0), 0)}</span><span class="spacer"></span>${st.labels && st.labels.pdf ? `<a class="btn ghost xs" href="${st.labels.pdf.url}" target="_blank" rel="noopener">labels PDF</a>` : ""}${st.labels && st.labels.manifest ? `<a class="btn ghost xs" href="${st.labels.manifest.url}" target="_blank" rel="noopener">manifest</a>` : ""}${st.labels && st.labels.json ? `<a class="btn ghost xs" href="${st.labels.json.url}" target="_blank" rel="noopener">set.json</a>` : ""}${st.setId && /complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div>
+          <div class="sheetsRow">${mine.map(r => `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${cors(r.preview)}" loading="lazy" alt="">` : `<div class="pv ph">no preview</div>`}<div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span>${r.backCount ? `<span>✎ ${r.backCount}</span>` : ""}<span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span></div></div>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
           ${held.length ? `<div class="holds"><b>Held:</b> ${held.map(([rid, o]) => `${esc(rid)} — ${esc(o.held.why || "")}`).join(" · ")}</div>` : ""}
           ${st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}
           <div class="labels">${(st.labelFiles || []).map(f => f.url ? `<img crossorigin="anonymous" src="${cors(f.url)}" title="${esc(f.label || f.sheet)}" data-big="${f.url}" alt="">` : "").join("")}</div>`;
@@ -2739,7 +2836,7 @@ const RunCtl = window.RunCtl = (() => {
       pg.persisted = Promise.resolve();
       computeSaturation(pg); renderCard(pg);
       for (const row of Orders.rows()) { if (!row.poolIds.length) continue; if (row.poolIds.every(pid => { const pool = B.pool.rows.get(pid); return pool && pool.setId && ["written", "engraved", "labelled", "committed"].includes(pool.state); })) row.state = "written"; else if (row.poolIds.some(pid => (d.poolIds || []).includes(pid))) row.state = "pooled"; }
-      for (const b of pg.backPool) { const row = Orders.rows().find(x => x.poolIds.includes(b.poolId)); if (row) { const j = Engrave.ensureJob(row); j.state = "written"; j.text = b.text; j.lines = b.lines || String(b.text).split("\n"); j.approvedBy = b.approvedBy; j.approvedAt = b.approvedAt; j.backs.push(b); row.engrave = { needed: true, state: "written", approved: true, text: b.text, approvedBy: b.approvedBy }; } }
+      for (const b of pg.backPool) { const row = Orders.rows().find(x => x.poolIds.includes(b.poolId)); if (row) { const j = Engrave.ensureJob(row); j.backSaving = false; j.state = "written"; j.text = b.text; j.lines = b.lines || String(b.text).split("\n"); j.approvedBy = b.approvedBy; j.approvedAt = b.approvedAt; j.backs.push(b); row.engrave = { needed: true, state: "written", approved: true, text: b.text, approvedBy: b.approvedBy }; } }
       // Cloud-only recovery has file links, not the editable output bytes. A working
       // sheet must be rebuilt and verified before it can acquire set membership.
       if (pg.draft || pg.placements.length !== (d.placements || []).length) {
@@ -3430,18 +3527,18 @@ const RunHistory = window.RunHistory = (() => {
     let lastDay = null, html = "";
     for (const g of seenSets) {
       if (g.day !== lastDay) { html += `<div class="hDay">${esc(dayWord(g.day) || "no date")}</div>`; lastDay = g.day; }
-      const name = g.seq ? `Set ${g.seq}` : (g.draft ? "Working sheets" : g.sheets[0]?.fileBase || "Run " + String(g.runId || "").slice(-8));
+      const name = g.name || (g.seq ? `Set ${g.seq}` : "Working sheets");
       const mats = g.materials.map(m => labelOf(m)).join(" \u00b7 ");
       const isCur = g.runId && g.runId === cur;
       const openBtn = g.sheets.length ? `<button class="btn gold sm" data-a="open" title="Preview the saved sheets without replacing your current workspace">Preview</button>` : "";
       const resumeBtn = g.runId && openRuns.some(r => r.runId === g.runId) ? `<button class="btn ghost sm" data-a="resume" title="pick the unfinished run this set belongs to up where it stopped \u2014 it re-reads every order from Etsy first">Resume the run\u2026</button>` : "";
       html += H.view === "cards"
-        ? `<div class="hSet card hoverItem${isCur ? " cur" : ""}" data-set="${esc(g.setId || "")}" data-run="${esc(g.runId || "")}" tabindex="0">
+        ? `<div class="hSet card hoverItem${isCur ? " cur" : ""}" data-group="${esc(g.key || g.setId || "")}" data-set="${esc(g.setId || "")}" data-run="${esc(g.runId || "")}" tabindex="0">
             ${g.thumb ? `<img crossorigin="anonymous" class="hThumb" loading="lazy" alt="" src="${esc(cors(g.thumb))}" title="${esc(g.thumbOf || "")}" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'hThumb ph',textContent:'no preview'}))">` : `<div class="hThumb ph">no preview</div>`}
             <div class="hRow"><span class="nm">${esc(name)}</span><span class="pill ${g.status === "complete" ? "ok" : "bad"}">${g.status}</span><span class="ct">${g.sheets.length} sheet${g.sheets.length === 1 ? "" : "s"} \u00b7 ${g.orders} order${g.orders === 1 ? "" : "s"}</span></div>
             <div class="hRow sub"><span class="ct">${esc(mats)}</span><span class="sp"></span>${isCur ? `<span class="pill neutral">on the cards</span>` : openBtn}${resumeBtn}</div>
           </div>`
-        : `<div class="hSet row hoverItem${isCur ? " cur" : ""}" data-set="${esc(g.setId || "")}" data-run="${esc(g.runId || "")}"><div class="hRow">
+        : `<div class="hSet row hoverItem${isCur ? " cur" : ""}" data-group="${esc(g.key || g.setId || "")}" data-set="${esc(g.setId || "")}" data-run="${esc(g.runId || "")}"><div class="hRow">
             ${g.thumb ? `<img crossorigin="anonymous" class="hMini" loading="lazy" alt="" src="${esc(cors(g.thumb))}" onerror="this.remove()">` : `<span class="hMini ph"></span>`}
             <span class="nm">${esc(name)}</span><span class="pill ${g.status === "complete" ? "ok" : "bad"}">${g.status}</span>
             <span class="ct">${esc(mats)} \u00b7 ${g.sheets.length} sheet${g.sheets.length === 1 ? "" : "s"} \u00b7 ${g.orders} order${g.orders === 1 ? "" : "s"}</span><span class="sp"></span>${isCur ? `<span class="pill neutral">on the cards</span>` : openBtn}${resumeBtn}</div></div>`;
@@ -3450,10 +3547,10 @@ const RunHistory = window.RunHistory = (() => {
     for (const r of openRuns.filter(r => !seenSets.some(g => g.runId === r.runId))) html += `<div class="hSet row" data-run="${esc(r.runId)}"><div class="hRow"><span class="nm">${r.seq ? "Set " + r.seq : "run " + r.runId.slice(-8)}</span><span class="pill warn">${esc(r.status)}${r.stoppedBy ? " \u00b7 " + esc(r.stoppedBy) : ""}</span><span class="ct">${r.lines} line${r.lines === 1 ? "" : "s"} \u00b7 no sheet written yet</span><span class="sp"></span><button class="btn ghost sm" data-a="resume" title="pick it up where it stopped \u2014 it re-reads every order from Etsy first">Resume the run\u2026</button></div></div>`;
     b.innerHTML = `<div class="hSets ${H.view}">${html}</div>`;
     f.textContent = [H.scanned ? `searched ${H.scanned.runs} runs and ${H.scanned.sheets} sheets` : "",
-      H.nextOffset != null ? `${H.sets.length} of ${H.total} matching sets shown — load older sets below` : ""].filter(Boolean).join(" · ");
+      H.nextOffset != null ? `${H.sets.length} of ${H.total} matching groups shown — load older groups below` : ""].filter(Boolean).join(" · ");
     b.querySelectorAll(".hSet").forEach(node => {
       const setId = node.dataset.set || null, runId = node.dataset.run || null;
-      const o = node.querySelector("[data-a=open]"); if (o) o.onclick = e => { e.stopPropagation(); if (H.dlg.open) H.dlg.close(); SetPicker.preview(H.sets.find(g => g.setId === setId && g.runId === runId)); };
+      const o = node.querySelector("[data-a=open]"); if (o) o.onclick = e => { e.stopPropagation(); if (H.dlg.open) H.dlg.close(); SetPicker.preview(H.sets.find(g => node.dataset.group ? (g.key || g.setId || "") === node.dataset.group : g.setId === setId && g.runId === runId)); };
       const rs = node.querySelector("[data-a=resume]"); if (rs) rs.onclick = e => {
         e.stopPropagation(); const r2 = H.runs.find(x => x.runId === runId) || {};
         if (!confirm(`Pick run ${r2.seq ? "Set " + r2.seq : String(runId).slice(-8)} up again?\n\nIt re-reads all ${r2.orders || ""} orders from Etsy through the Design Station before it can carry on, which takes a few minutes.\n\nTo look at what it already made, press Preview instead \u2014 that reads nothing from Etsy.`)) return;
@@ -3504,7 +3601,7 @@ const Recall = window.Recall = (() => {
         const pg = i === 0 ? prim.pages[0] : CN.addPage(m.key);
         pg.charms = []; pg.placements = []; pg.rejects = []; pg.outputs = null; pg.verification = rec.verification || null; pg.liveInfo = null; pg.dirty = false; pg.problem = null;
         pg.recalled = rec; pg.status = "complete"; pg.sheetId = rec.id; pg.runId = rec.runId || RC.runId; pg.setId = rec.setId; pg.seq = rec.setSeq; pg.setDay = rec.day; pg.sheetIndex = rec.sheetIndex; pg.fileBase = rec.fileBase; pg.group = null;
-        pg.backPool = (rec.backs || []).map(bk => ({ poolId: bk.poolId, order: bk.order, sku: bk.sku, text: bk.text, lines: bk.lines || (bk.text ? String(bk.text).split("\n") : []), approvedBy: bk.approvedBy, capMm: bk.capMm, outputs: { png: bk.png ? { url: bk.png } : null, ai: bk.ai ? { url: bk.ai } : null } }));
+        pg.backPool = (rec.backs || []).map(bk => ({ sheetId:rec.id, approvedAt:bk.approvedAt, copy:bk.copy, poolId: bk.poolId, order: bk.order, sku: bk.sku, text: bk.text, lines: bk.lines || (bk.text ? String(bk.text).split("\n") : []), approvedBy: bk.approvedBy, capMm: bk.capMm, outputs: { png: bk.png ? { url: bk.png } : null, ai: bk.ai ? { url: bk.ai } : null } }));
         pg.cloud = Object.assign({ preview: rec.preview }, rec.outputs || {});
         pg.persistedDone = true; pg.persisted = Promise.resolve(); pg._img = null;
       });
@@ -3593,7 +3690,7 @@ const Kin = window.Kin = (() => {
 const Session = window.Session = (() => {
   let dbP, ready = false, timer = 0, chain = Promise.resolve(), failed = false;
   const key = () => S.settings.sandbox === "on" ? "sandbox" : "production";
-  const OMIT = new Set(["parsed", "worker", "workers", "el", "cardEl", "pages", "persisted", "persisting", "bar", "evNest", "evSearch", "_img", "_geomVerify", "pool", "row", "job", "recalledFrom"]);
+  const OMIT = new Set(["parsed", "worker", "workers", "el", "cardEl", "pages", "persisted", "persisting", "bar", "evNest", "evSearch", "_img", "_geomVerify", "pool", "row", "job", "recalledFrom", "backSaving"]);
   function copy(v, seen = new Map()) {
     if (v == null || typeof v !== "object") return typeof v === "function" ? undefined : v;
     if (seen.has(v)) return seen.get(v);
@@ -3945,21 +4042,21 @@ const SetPicker = window.SetPicker = (() => {
     try {
       const r = await api("charmNestLibrary", { op: "history", limit: 20 }, { quiet: true });
       rows = r.sets || [];
-      list.innerHTML = `<button type="button" data-current>Current workspace · ${allSheets().filter(p => p.charms.length).length} sheets</button><small>${r.setCount || 0} saved sets · ${r.workingCount || 0} working groups · newest first</small>` + rows.map((g,i) => `<button type="button" data-preview="${i}">${g.seq ? "Set " + g.seq : "Working sheets"} · ${esc(g.day || "")}<small>${g.sheets.length} sheets · ${esc(counts(g.sheets))}</small></button>`).join("");
+      list.innerHTML = `<button type="button" data-current>Current workspace · ${allSheets().filter(p => p.charms.length).length} sheets</button><small>${r.setCount || 0} saved sets · ${r.workingCount || 0} working groups · newest first</small>` + rows.map((g,i) => `<button type="button" data-preview="${i}">${esc(g.name || (g.seq ? "Set " + g.seq : "Working sheets"))} · ${esc(g.day || "")}<small>${g.sheets.length} sheets · ${esc(counts(g.sheets))}</small></button>`).join("");
       list.querySelector('[data-current]').onclick = () => previewCurrent();
       list.querySelectorAll('[data-preview]').forEach(b => b.onclick = () => preview(rows[+b.dataset.preview]));
     } catch (e) { list.innerHTML = current + `<small>Could not read saved sets: ${esc(e.message)}</small>`; list.querySelector('[data-current]').onclick = previewCurrent; }
   }
   const counts = sheets => METALS.map(m => { const n = sheets.filter(s => s.metal === m.key).length; return n ? `${labelOf(m.key)} ${n}` : ""; }).filter(Boolean).join(" · ");
   function previewCurrent() {
-    const sheets = allSheets().filter(p => p.charms.length).map(p => ({ metal:p.metal, fileBase:p.fileBase || labelOf(p.metal), preview:p.cloud?.preview, placedCount:p.placements.length, draft:p.draft || !p.setId, setSeq:p.seq }));
+    const sheets = allSheets().filter(p => p.charms.length).map(p => ({ id:p.sheetId, poolIds:[...window.CharmNestBacks.placedIds(p)], backs:Engrave.sheetBacks(p), metal:p.metal, fileBase:p.fileBase || labelOf(p.metal), preview:p.cloud?.preview, placedCount:p.placements.length, draft:p.draft || !p.setId, setSeq:p.seq }));
     preview({ name:"Current workspace", day:B.run?.day || today(), sheets, status:B.run?.status || "manual" });
   }
   function preview(g) {
     if (!g) return;
     mount(); box.open = false;
     if (!dialog) { dialog = el("dialog", "hist"); dialog.id = "setPreview"; document.body.appendChild(dialog); }
-    dialog.innerHTML = `<form method="dialog" class="x"><button class="btn ghost sm">Close preview</button></form><h2>${esc(g.name || (g.seq ? "Set " + g.seq : "Working sheets"))}</h2><p>${esc(g.day || "")} · ${esc(g.status || "")} · ${g.sheets.length} sheets</p><p>${esc(counts(g.sheets))}</p><div class="setPreviewGrid">${g.sheets.map(s => `<figure>${s.preview ? `<img crossorigin="anonymous" src="${esc(cors(s.preview))}" alt="${esc(labelOf(s.metal))} sheet preview">` : `<div class="hEmpty">Preview not saved yet</div>`}<figcaption><b>${esc(labelOf(s.metal))}</b> · ${s.placedCount || 0} pieces · ${s.draft ? "held for a later set" : "Set " + (s.setSeq || g.seq || "—")}<small>${esc(s.fileBase || "")}</small></figcaption></figure>`).join("")}</div><p class="help">Preview only. Your current workspace stays open.</p>`;
+    dialog.innerHTML = `<form method="dialog" class="x"><button class="btn ghost sm">Close preview</button></form><h2>${esc(g.name || (g.seq ? "Set " + g.seq : "Working sheets"))}</h2><p>${esc(g.day || "")} · ${esc(g.status || "")} · ${g.sheets.length} sheets</p><p>${esc(counts(g.sheets))}</p><div class="setPreviewGrid">${g.sheets.map(s => `<figure><div data-back-sheet="${esc(s.id || s.sheetId || "")}">${Engrave.backsMarkup(s)}</div>${s.preview ? `<img crossorigin="anonymous" src="${esc(cors(s.preview))}" alt="${esc(labelOf(s.metal))} sheet preview">` : `<div class="hEmpty">Preview not saved yet</div>`}<figcaption><b>${esc(labelOf(s.metal))}</b> · ${s.placedCount || 0} pieces · ${O.libraryGroup(s).standalone ? "standalone · not in a set" : s.draft ? "held for a later set" : "Set " + (s.setSeq || g.seq || "—")}<small>${esc(s.fileBase || "")}</small></figcaption></figure>`).join("")}</div><p class="help">Preview only. Your current workspace stays open.</p>`;
     dialog.showModal();
   }
   return { mount, previewCurrent, preview };

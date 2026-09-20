@@ -7,3 +7,8 @@ for(const call of worker.matchAll(/importScripts\(([^)]*)\)/g))for(const item of
 }
 assert(worker.includes('if (m.job.learned && !self.CharmNestLearned) importScripts("charm-nest-learned.js")'),'learned dependency must not block standard worker startup');
 console.log('Public assets OK: every worker import ships; learned module loads only for learned jobs');
+
+for(const file of ['charm-nest-backs.js','charm-nest-text.js'])assert(assets.has(file));
+for(const file of ['NotoEmoji-Regular.ttf','emoji-sequences.json','NotoEmoji-OFL.txt'])assert(fs.existsSync('vendor/fonts/'+file));
+
+for(const file of ["vendor/fonts/emoji-sequences.json","vendor/fonts/NotoEmoji-OFL.txt"])assert(assets.has(file));

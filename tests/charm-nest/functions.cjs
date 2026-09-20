@@ -258,6 +258,39 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   arrivals = await post(lib, { op:'arrivalRecord', sandbox:true, orders:[{id:'7001',createTs:123}] });
   assert.equal(arrivals.body.count24,1); assert.equal(arrivals.body.count1,1,'sandbox has its own ledger');
 
+  // Isolated solid nesting never implies selection, even if a caller supplies a stale set id.
+  for(const metal of ['gold10k','gold14k']) {
+    await post(lib,{op:'putSheet',sheet:{id:'standalone-'+metal,metal,day:'2026-09-20',runId:'same-run',solidIncluded:false,setId:'accidental',draft:false}});
+    r=await post(lib,{op:'getSheet',id:'standalone-'+metal});assert.equal(r.body.sheet.setId,null);assert(r.body.sheet.draft);
+  }
+  await post(lib,{op:'putSheet',sheet:{id:'working-gf',metal:'gold',day:'2026-09-20',runId:'same-run',draft:true}});
+  r=await post(lib,{op:'history',q:'same-run'});
+  assert.equal(r.body.sets.length,3,'working GF and the two solid materials are separate groups');
+  assert.equal(new Set(r.body.sets.map(g=>g.key)).size,3,'unique keys prevent previewing the wrong held group');
+  assert.equal(r.body.sets.filter(g=>g.standalone).length,2);
+  for(const id of ['standalone-gold10k','standalone-gold14k','working-gf'])store.delete('Charm_Nest_Sheets/'+id);
+
+  // Exact-copy back ownership: approval, stale sheet save, move, invalidation and reapproval.
+  const pid='91000_92000_1', pid2='91000_92000_2', now=Date.now();
+  await post(lib,{op:'putSheet',sheet:{id:'back-test-a',poolIds:[pid,pid2],backPool:[]}});
+  await post(lib,{op:'putSheet',sheet:{id:'back-test-b',poolIds:[],backPool:[]}});
+  const back={poolId:pid,sheetId:'back-test-a',approvedAt:now,approvedBy:'Tester',text:'❤️ Hecht!',order:'9100',copy:1};
+  r=await post(lib,{op:'backPut',back});assert(r.body.ok,JSON.stringify(r.body));
+  await post(lib,{op:'putSheet',sheet:{id:'back-test-a',backPool:[],poolIds:[pid,pid2]}});
+  r=await post(lib,{op:'getSheet',id:'back-test-a'});assert.equal(r.body.sheet.backPool.length,1,'late front save cannot erase an approval');
+  r=await post(lib,{op:'backPut',back:{...back,poolId:'99999_88888_1'}});assert(r.status>=400,'wrong order copy refused');
+  await post(lib,{op:'putSheet',sheet:{id:'back-test-b',poolIds:[pid]}});
+  r=await post(lib,{op:'backPut',back:{...back,sheetId:'back-test-b'}});assert(r.body.ok);
+  r=await post(lib,{op:'getSheet',id:'back-test-a'});assert.equal(r.body.sheet.backPool.length,0,'old owner no longer displays the back');
+  r=await post(lib,{op:'backList',sheetId:'back-test-b'});assert.equal(r.body.backs[0].poolId,pid);
+  await post(lib,{op:'backInvalidate',poolIds:[pid]});
+  r=await post(lib,{op:'getSheet',id:'back-test-b'});assert.equal(r.body.sheet.backPool.length,0);
+  r=await post(lib,{op:'backPut',back:{...back,sheetId:'back-test-b'}});assert(r.status>=400,'revoked approval cannot return');
+  await post(lib,{op:'putSheet',sheet:{id:'back-test-b',backPool:[{...back,sheetId:'back-test-b'}]}});
+  r=await post(lib,{op:'getSheet',id:'back-test-b'});assert.equal(r.body.sheet.backPool.length,0,'stale sheet cannot resurrect revoked back');
+  r=await post(lib,{op:'backPut',back:{...back,sheetId:'back-test-b',approvedAt:Date.now()+10}});assert(r.body.ok);
+  for(const key of [...store.keys()])if(key.includes('back-test-')||key==='Charm_Pool_Back/'+pid)store.delete(key);
+
   // Run creation date stays stable across ordinary checkpoints.
   store.get('Charm_Nest_Runs/run-H').createdAt = 12345;
   await post(lib, { op:'runPut', run:{ runId:'run-H', status:'complete' }, merge:true });
