@@ -1254,6 +1254,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="lib/qrcode.min.js"></script>
 <script src="brites-progress.js"></script>
 <script src="charm-nest-progress.js"></script>
+<script src="charm-nest-operations.js"></script>
 <script src="charm-nest-solver.js"></script>
 <script src="charm-nest-pdf.js"></script>
 <script src="charm-nest-geom.js"></script>
@@ -2174,8 +2175,17 @@ function startNest(sh) {
     if (window.RunCtl) RunCtl.onSheetDone(sh, e);
   });
 }
-function startNestReady(sh) {
+function startNestReady(sh, context) {
   if (["nesting", "finishing"].includes(sh.status)) return;
+  if (window.CharmNestOperations && !context) {
+    if (sh._operationStarting) return;
+    sh._operationStarting = true; sh.status = "queued"; sh.stage = "Waiting for sheet updates…"; renderCard(sh);
+    return window.CharmNestOperations.run({key:"nest-start:"+(sh.sheetId || sh.metal+":"+sh.page),label:"Starting sheet nesting",resources:["production:"+(sh.runId || sh.sheetId)]}, token => {
+      sh._operationStarting = false;
+      if (!allSheets().includes(sh)) return;
+      startNestReady(sh, token); // Hold the resource only for setup; workers run independently.
+    }).catch(e => { sh._operationStarting = false; sh.status = "error"; sh.problem = e.message; renderCard(sh); toast(e.message,"bad"); if(window.RunCtl)RunCtl.onSheetDone(sh,e); });
+  }
   const items = activeCharms(sh);
   if (!items.length) { toast(`${labelOf(sh.metal)}: nothing to nest`, ""); return; }
   const cores = navigator.hardwareConcurrency || 2;
@@ -2570,7 +2580,9 @@ async function nextSheetSeq(sh) {
   sh.sheetIndex = sh.sheetIndex && !taken.includes(sh.sheetIndex) ? sh.sheetIndex : (taken.length ? Math.max(...taken) + 1 : 1);
   return set.seq;
 }
-async function persistSheet(sh, items) {
+async function persistSheet(sh, items, context) {
+  const ops = window.CharmNestOperations;
+  if (ops && !context) return ops.run({key:'sheet-save:'+sh.sheetId, label:'Saving sheet', resources:['production:'+(sh.runId || sh.sheetId)]}, token=>persistSheet(sh,items,token));
   if (!S.cloud.ok) throw new Error("Cloud offline — sheet is kept in this browser, but has not been saved online");
   const day = sh.setDay || today(), name = sh.fileBase || sheetFileBase(sh), base = sh.setId ? `${CharmNestOrders.setFolder(day, sh.seq)}/${name}` : `charmnest/sheets/${day}/${name}`;
   sh.folderPath = base;
@@ -2630,7 +2642,7 @@ async function persistSheet(sh, items) {
   if (window.Sets) await Sets.onSheetSaved(sh, items, outputs);
   // The first refresh above shows the saved layout while labels are uploading.
   // Refresh again only after the sheet QR and its set index have both been saved.
-  if (S.mode === "library") await loadLibrary();
+  if (S.mode === "library") loadLibrary().catch(e=>console.warn("Library refresh",e));
 }
 let pdfjsReady = null;
 function ensurePdfJs() {
@@ -3030,15 +3042,16 @@ function downloadOutputs(sh) { return ProductionExports.live(sh, "ai"); }
 
 /* ═══ 14 · library (recovery) & charms views ════════════════════════════ */
 let libraryLoadId = 0;
-async function loadLibrary() {
+async function loadLibrary(context) {
+  if(window.CharmNestOperations && !context?.active) return window.CharmNestOperations.run({key:'library-refresh',label:'Refreshing Library',resources:['library-read'],latest:true},token=>loadLibrary(token));
   const loadId = ++libraryLoadId;
-  const body = $("#libBody"); body.innerHTML = `<div class="libEmpty">Loading sheets…</div>`;
+  const body = $("#libBody"); if(!S.library.rows?.length) body.innerHTML = `<div class="libEmpty">Loading sheets…</div>`;
   if (!S.cloud.ok) { body.innerHTML = `<div class="libEmpty">Cloud offline — the library needs the Netlify functions.</div>`; return; }
   if (S.library.kind === "sets" && window.Sets) return Sets.renderLibrary(body);
   try {
     const r = await api("charmNestLibrary", { op: "listSheets", metal: S.library.metal === "all" ? null : S.library.metal, from: $("#libFrom").value || null, to: $("#libTo").value || null, limit: 300 }, { label: "Loading library" });
     if (loadId !== libraryLoadId || S.library.kind === "sets") return;
-    S.library.rows = r.sheets || []; renderLibrary();
+    S.library.rows = window.Gate?.projectLibraryRecords(r.sheets || []) || r.sheets || []; renderLibrary();
   } catch (e) { if (loadId === libraryLoadId) body.innerHTML = `<div class="libEmpty">Could not load: ${esc(e.message)}</div>`; }
 }
 /* A sheet card leads with what a person looks for — the metal (its colour and short code), the sheet number, the day

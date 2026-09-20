@@ -76,6 +76,7 @@ const assets = [
   "lib/jsQR.js",
   "lib/qrcode.min.js",
   "vendor/fabric-7.4.0.min.js",
+  "charm-nest-operations.js",
   "charm-nest-solver.js",
   "charm-nest-learned.js",
   "charm-nest-worker.js",
