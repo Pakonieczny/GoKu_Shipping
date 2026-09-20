@@ -63,7 +63,7 @@ function slim(d) {
     backs: (d.backPool || []).map(bk => ({ poolId: bk.poolId || null, previewWPt:bk.previewWPt || null, previewHPt:bk.previewHPt || null, pageWPt:bk.pageWPt || null, pageHPt:bk.pageHPt || null, sheetId:d.id, copy:bk.copy || null, approvedAt:bk.approvedAt || null, order: bk.order || null, sku: bk.sku || null, text: bk.text || null, lines: bk.lines || null, approvedBy: bk.approvedBy || null, capMm: bk.capMm || null, png: bk.outputs && bk.outputs.png ? bk.outputs.png.url : null, ai: bk.outputs && bk.outputs.ai ? bk.outputs.ai.url : null })),
     names: str(d.names, 2000), sources: (d.sources || []).map(s => ({ name: s.name, hash: s.hash || null })), runId: d.runId || null, page: num(d.page) || 1,
     setId: d.setId || null, setSeq: num(d.setSeq) || null, sheetIndex: num(d.sheetIndex) || null, orders: (d.orders || []).slice(0, 500), backCount: (d.backPool || []).length, label: d.label ? { files: (d.label.files || []).map(f => ({ path: f.path, url: f.url })) } : null,
-    updatedAt: ms(d.updatedAt), createdAt: ms(d.createdAt)
+    cardStartedAt: ms(d.cardStartedAt) || ms(d.createdAt), updatedAt: ms(d.updatedAt), createdAt: ms(d.createdAt)
   };
 }
 
@@ -601,7 +601,7 @@ async function op_runList(b) {
 async function op_history(b) {
   const q = String(b.q || "").trim().toLowerCase(), offset = Math.max(0, num(b.offset)), limit = Math.min(100, Math.max(1, num(b.limit) || 60));
   // Search complete set membership before pagination: a matching order must reveal all of its set's sheets.
-  const [rs, ss, ts] = await Promise.all([col(RUNS).select("runId", "setId", "seq", "day", "status", "step", "lines", "sheets", "errors", "stoppedBy", "createdAt", "updatedAt").get(), col(SHEETS).select("id", "setId", "setSeq", "runId", "day", "metal", "metalLabel", "status", "orders", "sheetIndex", "page", "updatedAt", "archived", "folder", "fileBase", "saving", "draft", "releaseFull", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "outputs", "names", "charms", "poolIds", "backPool", "solidIncluded", "sources", "stock").get(), col(SETS).select("seq", "day", "runId", "status", "updatedAt", "materials", "orders").get()]);
+  const [rs, ss, ts] = await Promise.all([col(RUNS).select("runId", "setId", "seq", "day", "status", "step", "lines", "sheets", "errors", "stoppedBy", "createdAt", "updatedAt").get(), col(SHEETS).select("id", "setId", "setSeq", "runId", "day", "metal", "metalLabel", "status", "orders", "sheetIndex", "page", "updatedAt", "archived", "folder", "fileBase", "saving", "draft", "releaseFull", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "outputs", "names", "charms", "poolIds", "backPool", "solidIncluded", "sources", "stock", "cardStartedAt", "createdAt").get(), col(SETS).select("seq", "day", "runId", "status", "updatedAt", "materials", "orders").get()]);
   const runMap = new Map(rs.docs.map(d => [d.id, d.data()])), sheets = ss.docs.map(d => d.data()).filter(x => !x.archived);
   const groups = new Map(ts.docs.map(d => { const x = d.data(); return ["set:"+d.id, { key:"set:"+d.id, name:"Set "+x.seq, setId: d.id, seq: x.seq, day: x.day, runId: x.runId, status: x.status, updatedAt: ms(x.updatedAt), sheets: [], materials: x.materials || [], orderIds: Object.keys(x.orders || {}), search: [] }]; }));
   for (const x of sheets) {

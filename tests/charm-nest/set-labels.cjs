@@ -15,6 +15,8 @@ const uploads=[],savedSheets=new Map(),savedSets=new Map();let failUpload=false,
 const METAL_TAG={gold10k:'10K',gold14k:'14K'},METALS=Object.keys(METAL_TAG).map(key=>({key}));
 const labelOf=m=>m==='gold10k'?'10K Gold':'14K Gold',today=()=> '2026-09-19',agent=()=>{},toast=()=>{},employeeName=()=> 'Test';
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const document={activeElement:null};
+const checkboxNode=()=>{const elements=new Map();return {contains:()=>false,querySelector:q=>{if(!elements.has(q))elements.set(q,{});return elements.get(q)}}};
 const stockFor=()=>({wIn:1,hIn:1}),Session={schedule(){}},pagesOf=m=>pages.filter(p=>p.metal===m);
 const pages=METALS.map(({key},i)=>({metal:key,runId:B.run.runId,sheetId:key,draft:true,outputs:{},persistedDone:true,placements:[{id:key}],verification:{ok:true},status:'complete',rejects:[],page:1,
  charms:[{id:key,poolId:'4000000001_500000000'+i+'_1',order:'400000000'+i,orderInfo:{transactionId:'500000000'+i,copy:1}}]}));
@@ -30,7 +32,7 @@ const api=async(name,b)=>{
 };
 const uploadBytes=async(path,blob)=>{if(holdUpload)await holdUpload;if(failUpload){failUpload=false;throw Error('label upload interrupted')}uploads.push(path);return {path,url:typeof blob?.arrayBuffer==='function'?await new Promise(r=>{const f=new FileReader();f.onload=()=>r(f.result);f.readAsDataURL(blob)}):'https://example.com/'+path}};
 const CN={sheetFileBase:p=>METAL_TAG[p.metal]+'_Set-1_Sheet-'+p.sheetIndex,
- persistSheet:async p=>{p.folderPath='charmnest/sets/test/'+p.fileBase;await api('',{op:'putSheet',sheet:{id:p.sheetId,metal:p.metal,runId:p.runId,day:today(),setId:p.setId,setSeq:p.seq,sheetIndex:p.sheetIndex,draft:p.draft,solidIncluded:Gate.solidSelected(p.metal),fileBase:p.fileBase,orders:p.charms.map(c=>c.order),placedCount:1,charmCount:1,status:'complete'}});await CN.loadLibrary();await Sets.onSheetSaved(p,p.charms);},
+ persistSheet:async p=>{p.folderPath='charmnest/sets/test/'+p.fileBase;await api('',{op:'putSheet',sheet:{id:p.sheetId,metal:p.metal,runId:p.runId,day:today(),cardStartedAt:p.cardStartedAt,setId:p.setId,setSeq:p.seq,sheetIndex:p.sheetIndex,draft:p.draft,solidIncluded:Gate.solidSelected(p.metal),fileBase:p.fileBase,orders:p.charms.map(c=>c.order),placedCount:1,charmCount:1,status:'complete'}});await CN.loadLibrary();await Sets.onSheetSaved(p,p.charms);},
  loadLibrary:async()=>{refreshes++;}};
 const refreshAllCards=()=>{};
 ${section('Gate','/* ═══ 21')}
@@ -42,7 +44,10 @@ if(require.main===module){
  vm.runInContext(`(async()=>{
  await Gate.assemble(B.run);assert.equal(uploads.length,0,'unchecked solids never get a release QR');
  for(const material of ['gold10k','gold14k']){
-  B.run.solidIncluded[material]=true;await Gate.assemble(B.run);
+  const sheet=pages.find(p=>p.metal===material);sheet.cardStartedAt=1;
+  const node=checkboxNode();Gate.renderRelease(sheet,node);node.querySelector('[data-solid="include"]').onchange({target:{checked:true}});await Gate.assemble(B.run);
+  assert(sheet.cardStartedAt>1,'checking inclusion resets that material date');
+  assert.equal(savedSheets.get(sheet.sheetId).cardStartedAt,sheet.cardStartedAt,'reset date saved with sheet');
   const p=pages.find(p=>p.metal===material),set=Sets.ofRun(B.run.runId)[0];
   assert(Sets.labelsReady(p,set));assert.equal(p.label.files[0].payload,O.encodeOrderList([p.charms[0].order],O.CARD_TO_METAL[material]));
   assert(savedSheets.get(p.sheetId).label.files[0].url);assert(savedSets.get(set.setId).labelFiles.some(f=>f.sheetId===p.sheetId));
@@ -51,7 +56,9 @@ if(require.main===module){
  const set=Sets.ofRun(B.run.runId)[0],p=pages[0];p.label=null;
  failUpload=true;await assert.rejects(Gate.assemble(B.run),/interrupted/);assert.equal(p.setId,set.setId,'failed QR retry keeps sheet membership');
  await Gate.assemble(B.run);assert(Sets.labelsReady(p,set),'existing sheet with missing QR is repaired');
- set.labels={pdf:'old'};B.run.solidIncluded.gold10k=false;await Gate.assemble(B.run);
+ const includedDate=p.cardStartedAt;set.labels={pdf:'old'};
+ const node=checkboxNode();Gate.renderRelease(p,node);node.querySelector('[data-solid="include"]').onchange({target:{checked:false}});await Gate.assemble(B.run);
+ assert.equal(p.cardStartedAt,includedDate,'unchecking does not reset the date');
  assert(!set.labelFiles.some(f=>f.sheetId===p.sheetId));assert.equal(savedSheets.get(p.sheetId).solidIncluded,false);assert.equal(set.labels,null,'old collected labels invalidated');
  B.run.solidIncluded.gold10k=true;await Promise.all([Gate.assemble(B.run),Gate.assemble(B.run)]);
  assert(Sets.labelsReady(p,set));assert.equal(set.labelFiles.filter(f=>f.sheetId===p.sheetId).length,1,'reselect creates one label');

@@ -2547,7 +2547,7 @@ async function persistSheet(sh, items) {
   if (window.Engrave) Engrave.reconcileSheet(sh);
   const byId = new Map(items.map(c => [c.id, c]));
   const record = (outputs) => ({
-    id: sh.sheetId, metal: sh.metal, metalLabel: sheetName(sh), day, folder: name, fileBase: name, seq: sh.seq || sh.page, runId: sh.runId || null, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, elapsedMs: Math.round(sh.elapsedMs || 0), totalMs: Math.round(sh.totalMs || 0),
+    id: sh.sheetId, cardStartedAt: sh.cardStartedAt || null, metal: sh.metal, metalLabel: sheetName(sh), day, folder: name, fileBase: name, seq: sh.seq || sh.page, runId: sh.runId || null, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, elapsedMs: Math.round(sh.elapsedMs || 0), totalMs: Math.round(sh.totalMs || 0),
     stock: sh.outputs.report.stock, params: sh.solveParams, density: sh.density, freePt2: Math.round(sh.liveInfo.freePt2), usablePt2: Math.round(sh.liveInfo.usablePt2), pocket: sh.liveInfo.pocket,
     charmCount: items.length, placedCount: sh.placements.length, rejectCount: (sh.outputs.report.rejects || []).length, page: sh.page, verification: { ok: !!sh.verification.ok, minGapPt: sh.verification.minGapPt, minEdgePt: sh.verification.minEdgePt, render: sh.verification.render && { ok: sh.verification.render.ok, overlapPx: sh.verification.render.overlapPx, outsidePx: sh.verification.render.outsidePx } },
     outputs,
@@ -2724,6 +2724,7 @@ function renderTabs(sh) {
 }
 function refreshAllCards() { for (const sh of allSheets()) { computeSaturation(sh); renderCard(sh); } }
 function renderCard(sh) {
+  if (["gold10k","gold14k"].includes(sh.metal) && sh.charms.length && !sh.cardStartedAt) sh.cardStartedAt = sh.recalled?.cardStartedAt || sh.recalled?.createdAt || (sh.setDay ? new Date(sh.setDay + "T12:00:00").getTime() : Date.now());
   if (window.Session) Session.schedule();
   const el = sh.el; if (!el) return; const q = r => $(`[data-r="${r}"]`, el); const st = stockFor(sh.metal);
   if (q("backs")) q("backs").innerHTML = window.Engrave ? Engrave.backsMarkup(sh) : "";
@@ -2733,7 +2734,7 @@ function renderCard(sh) {
   /* Which run, which set, which day. A finished card used to say only its metal and its size, so a person looking at
      three cards could not tell whether they were this morning's set or yesterday's. */
   const prov = q("prov"); const pages = pagesOf(sh.metal);
-  const dayTxt = sh.setDay ? CharmNestOrders.dateTag(new Date(sh.setDay + "T12:00:00")).replace(/\.\d\d$/, "").replace(/\./g, " ") : "";
+  const dayTxt = ["gold10k","gold14k"].includes(sh.metal) && sh.cardStartedAt ? new Date(sh.cardStartedAt).toLocaleDateString(undefined, {month:"short",day:"numeric"}) : sh.setDay ? CharmNestOrders.dateTag(new Date(sh.setDay + "T12:00:00")).replace(/\.\d\d$/, "").replace(/\./g, " ") : "";
   const bits = [];
   if (sh.draft) bits.push("Working sheet · held");
   if (sh.seq) bits.push(`<b>Set ${sh.seq}</b>`);
@@ -3028,7 +3029,7 @@ const setNo = r => r.draft || r.solidIncluded === false ? 0 : r.setSeq || +((/_S
 const sheetNo = r => r.sheetIndex || +((/_Sheet-(\d+)/.exec(r.folder || r.fileBase || "") || [])[1]) || r.page || 1;
 const dayShort = d => d ? new Date(d + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
 const swatch = (m, n) => `<span class="sw" style="--c:${m.color}" title="${esc(m.label)}${n > 1 ? ` · ${n} sheets` : ""}">${esc(CODE[m.key] || m.label)}${n > 1 ? `<i>${n}</i>` : ""}</span>`;
-function sheetHead(r, o) { o = o || {}; const m = metalOf(r), sn = setNo(r); return `<div class="h">${swatch(m, 0)}<span class="nm">Sheet ${sheetNo(r)}</span>${sn && !o.inFan ? `<span class="set">Set ${sn}</span>` : ""}<span class="tm">${o.inFan ? "" : dayShort(r.day) + " · "}${r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span></div>`; }
+function sheetHead(r, o) { o = o || {}; const m = metalOf(r), sn = setNo(r); return `<div class="h">${swatch(m, 0)}<span class="nm">Sheet ${sheetNo(r)}</span>${sn && !o.inFan ? `<span class="set">Set ${sn}</span>` : ""}<span class="tm">${["gold10k","gold14k"].includes(r.metal) ? (r.cardStartedAt || r.createdAt ? new Date(r.cardStartedAt || r.createdAt).toLocaleDateString(undefined, {month:"short",day:"numeric"}) : dayShort(r.day)) : o.inFan ? "" : dayShort(r.day) + " · "}${!["gold10k","gold14k"].includes(r.metal) && r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span></div>`; }
 function renderLibrary() {
   const q = ($("#libSearch").value || "").trim().toLowerCase();
   const rows0 = S.library.rows.filter(r => !q || `${r.id} ${r.folder || ""} ${r.metalLabel} ${r.day} ${r.setId || ""} ${r.runId || ""} ${r.names || ""} ${(r.sources || []).map(s => s.name).join(" ")}`.toLowerCase().includes(q));
@@ -3037,11 +3038,13 @@ function renderLibrary() {
   const rows = [...newest.values()];
   $("#libCount").textContent = `${rows.length} sheet${rows.length === 1 ? "" : "s"}`;
   const body = $("#libBody"); if (!rows.length) { body.innerHTML = `<div class="libEmpty">No sheets match.</div>`; return; }
-  const card = (r, i) => { const m = metalOf(r), sn = setNo(r); return `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}" title="${esc(r.folder || r.id)}"><div class="h">${swatch(m, 0)}<span class="nm">Sheet ${sheetNo(r)}</span>${sn && !r._inFan ? `<span class="set">Set ${sn}</span>` : ""}<span class="tm">${r._inFan ? "" : dayShort(r.day) + " · "}${r.updatedAt ? new Date(r.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span></div><div data-back-sheet="${esc(r.id)}">${window.Engrave ? Engrave.backsMarkup(r) : ""}</div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${cors(r.preview)}" loading="lazy" alt="">` : `<div class="pv ph">${r.saving ? "saving files…" : "no preview"}</div>`}<div class="m"><span title="charms placed of the charms asked for"><b>${r.placedCount}</b>/${r.charmCount}</span><span title="how full the sheet is"><b>${Math.round((r.density || 0) * 100)}%</b></span><span title="metal left free">${fmt.area(r.freePt2 || 0)}</span>${r.status === "complete" ? "" : `<span class="pill bad" style="padding:2px 7px">${esc(r.status)}</span>`}${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`; };
+  const card = (r, i) => { const m = metalOf(r), sn = setNo(r); return `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}" title="${esc(r.folder || r.id)}">${sheetHead(r, {inFan:r._inFan})}<div data-back-sheet="${esc(r.id)}">${window.Engrave ? Engrave.backsMarkup(r) : ""}</div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${cors(r.preview)}" loading="lazy" alt="">` : `<div class="pv ph">${r.saving ? "saving files…" : "no preview"}</div>`}<div class="m"><span title="charms placed of the charms asked for"><b>${r.placedCount}</b>/${r.charmCount}</span><span title="how full the sheet is"><b>${Math.round((r.density || 0) * 100)}%</b></span><span title="metal left free">${fmt.area(r.freePt2 || 0)}</span>${r.status === "complete" ? "" : `<span class="pill bad" style="padding:2px 7px">${esc(r.status)}</span>`}${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`; };
   // a set = the sheets of one run: same day and the same source files (runId when the record has one)
   const setKey = r => CharmNestOrders.libraryGroup(r).key;
-  const byDay = new Map(); for (const r of rows) { if (!byDay.has(r.day)) byDay.set(r.day, []); byDay.get(r.day).push(r); }
-  body.innerHTML = [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([day, list]) => {
+  const waiting = rows.filter(r => CharmNestOrders.libraryGroup(r).standalone);
+  const waitingHeader = waiting.length ? `<div class="dayHead">14K / 10K Solid Waiting for Approval</div><div class="libGrid">${waiting.sort((a,b)=>(b.cardStartedAt || b.createdAt || 0)-(a.cardStartedAt || a.createdAt || 0)).map(r=>card(r,0)).join("")}</div>` : "";
+  const byDay = new Map(); for (const r of rows.filter(r=>!CharmNestOrders.libraryGroup(r).standalone)) { if (!byDay.has(r.day)) byDay.set(r.day, []); byDay.get(r.day).push(r); }
+  body.innerHTML = waitingHeader + [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([day, list]) => {
     const sets = new Map(); for (const r of list) { const k = setKey(r); if (!sets.has(k)) sets.set(k, []); sets.get(k).push(r); }
     const items = [...sets.values()].map(g => {
       g.sort((a, b) => (a.page || 1) - (b.page || 1) || (a.createdAt || 0) - (b.createdAt || 0));

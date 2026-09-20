@@ -45,7 +45,7 @@
   }
   function markup(backs, stock = {}) {
     if (!backs?.length) return '';
-    return `<section class="sheetBacks" aria-label="Back engravings" data-stock-w="${+stock.wPt || 0}" data-stock-h="${+stock.hPt || 0}"><div class="backLabel">Back engraving <span>${backs.length}</span></div><div class="backPieces">${backs.map(b => {
+    return `<section class="sheetBacks" aria-label="Back engravings" data-stock-w="${+stock.wPt || 0}" data-stock-h="${+stock.hPt || 0}"><div class="backPieces">${backs.map(b => {
       const png = previewUrl(b.preview || b.outputs?.png?.url || b.png), ai = safeUrl(b.outputs?.ai?.url || b.ai);
       const identity = `${b.order || ''} · ${b.sku || ''} · copy ${b.copy || String(b.poolId).split('_').pop()}`;
       const dims = dimensions(b), label = 'Back: ' + (b.text || '') + ' — ' + identity;

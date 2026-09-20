@@ -39,6 +39,7 @@ for(const back of [{png:storagePng},{outputs:{png:{url:storagePng}}},{png:storag
 assert(Backs.markup([{...records[0],preview:'data:image/png;base64,AAAA'}]).includes('src="data:image/png;base64,AAAA"'),'instant approval preview preserved');
 assert(!Backs.markup([{...records[0],png:'https://['}]).includes('<img'),'malformed historical URL cannot break the sheet');
 const compact=Backs.markup([{...records[0],png:storagePng,previewWPt:60,previewHPt:70}],{wPt:283.46,hPt:141.73});
+assert(!compact.includes('backLabel'),'no visible back engraving heading');
 assert(!compact.includes('<figcaption>'),'order numbers are no longer visible below backs');
 assert(compact.includes('data-pool-id="100_200_1"'),'copy tracking remains');
 assert(compact.includes('data-stock-w="283.46"')&&compact.includes('data-preview-w="60"'),'physical dimensions reach every preview');
@@ -78,3 +79,12 @@ const sameWinding=G.rasterGlyphs(square.concat(square),{w:12,h:12,res:1,ox:-1,oy
 assert.equal(G.at(sameWinding,5,5),1,'overlapping emoji components remain ink under PDF nonzero fill');
 
 assert.equal(require("node:crypto").createHash("sha256").update(fs.readFileSync("vendor/fonts/NotoEmoji-Regular.ttf")).digest("hex"),data.fontSha256,"shape map matches exact font build");
+
+const solidGroups=context.libraryGroups([], [
+ {id:'s1',metal:'gold10k',runId:'old-run',day:'2026-09-18',draft:true},
+ {id:'s2',metal:'gold14k',runId:'new-run',day:'2026-09-20',draft:true},
+ {id:'s3',metal:'gold14k',setId:'approved',solidIncluded:true,day:'2026-09-20'}]);
+const waiting=solidGroups.find(g=>g.standalone);
+assert.equal(waiting.name,'14K / 10K Solid Waiting for Approval');
+assert.equal(waiting.sheets.length,2,'waiting solids combine across days and runs, approved sheets stay in their set');
+assert.equal(solidGroups.length,2);
