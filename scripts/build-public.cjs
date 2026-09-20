@@ -85,6 +85,8 @@ const assets = [
   "vendor/clipper-6.4.2.js",
   "vendor/clipper-6.4.2-LICENSE.txt",
   "charm-nest-geom.js",
+  "charm-nest-engrave-fit.js",
+  "charm-nest-engrave-worker.js",
   "charm-nest-assets.js",
   "charm-nest-backs.js",
   "charm-nest-export.js",

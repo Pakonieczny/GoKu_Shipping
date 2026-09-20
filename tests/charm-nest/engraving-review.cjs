@@ -1,7 +1,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const src=fs.readFileSync('charm-nest-bridge.js','utf8');
-let result, sent;
-const ctx={render(){},S:{settings:{engraveConfidence:.65}},Master:{entryFor:()=>({engravable:false})},ensureJob:row=>(row.job ||= {row,copies:['copy']}),agentCall:async(mode,payload)=>{sent=payload;return result},agent(){},setReady:async j=>{j.state='ready';j.row.engrave={needed:true,approved:false};return j},toWords:(j,why)=>{j.state='words';j.reason=why;return j},setNone:(j,why)=>{j.state='none';j.reason=why}};
+let result, sent;const classifiedJobs=new Map();
+const ctx={render(){},S:{settings:{engraveConfidence:.65}},Master:{entryFor:()=>({engravable:false})},items:()=>classifiedJobs,ensureJob:row=>{row.job ||= {key:row,row,copies:['copy']};classifiedJobs.set(row,row.job);return row.job;},agentCall:async(mode,payload)=>{sent=payload;return result},agent(){},setReady:async j=>{j.state='ready';j.row.engrave={needed:true,approved:false};return j},toWords:(j,why)=>{j.state='words';j.reason=why;return j},setNone:(j,why)=>{j.state='none';j.reason=why}};
 vm.createContext(ctx);vm.runInContext(src.slice(src.indexOf('  const classifyTasks ='),src.indexOf('  function setNone(job')),ctx);
 const row=()=>({order:{receiptId:'test'},line:{title:'Sheep'},spec:{engraveCandidate:true,designSku:'SHEEP3',personalization:['S'],size:'M'}});
 (async()=>{
@@ -15,7 +15,7 @@ const row=()=>({order:{receiptId:'test'},line:{title:'Sheep'},spec:{engraveCandi
  const jobs=[{state:'words',row:{},lines:['S'],copies:['1'],questions:['The design is not engravable']},{state:'words',row:{},lines:['?'],copies:['2'],missing:['?']},{state:'written',row:{},lines:['Saved'],copies:['3']},{state:'words',row:{},lines:[],copies:['4']}];
  let fits=0,ready=0,release;const pause=new Promise(r=>release=r);
  jobs.forEach((j,i)=>j.key=i);
- const rc={classifyTasks:new WeakMap(),fitTasks:new WeakMap(),charmFor:()=>({outline:{}}),setTimeout,items:()=>new Map(jobs.map((j,i)=>[i,j])),setReady:async(j,wake)=>{assert.equal(wake,false);ready++;await pause;j.state='ready'},sheetFor:()=>({fileBase:'saved'}),fitJob:async j=>{fits++;j.state='review'},render(){},RunCtl:{poke(){}}};vm.createContext(rc);vm.runInContext(src.slice(src.indexOf('  let previewRecovery ='),src.indexOf('  async function classifyAll(run)')),rc);
+ const rc={classifyTasks:new WeakMap(),fitTasks:new WeakMap(),charmFor:()=>({outline:{}}),setTimeout,items:()=>new Map(jobs.map((j,i)=>[i,j])),setReady:async(j,wake)=>{assert.equal(wake,false);ready++;await pause;j.state='ready'},sheetFor:()=>({fileBase:'saved'}),fitJob:async j=>{fits++;j.state='review'},render(){},RunCtl:{poke(){}}};vm.createContext(rc);vm.runInContext(src.slice(src.indexOf('  let previewRecovery ='),src.indexOf('  let classifyPass =')),rc);
  const first=rc.prepareWaitingPreviews();await rc.prepareWaitingPreviews();await new Promise(r=>setTimeout(r,5));assert.equal(ready,1,'consecutive renders share one recovery pass');release();await first;assert.equal(fits,1);assert.equal(jobs[0].state,'review');assert.equal(jobs[0].questions.length,0);assert.equal(jobs[1].state,'words','unsupported glyph keeps actionable repair');assert.equal(jobs[2].state,'written','saved approval untouched');
  const waiting={key:4,state:'ready',row:{},lines:['Waiting'],copies:['5']};jobs.push(waiting);
  rc.charmFor=()=>null;await rc.prepareWaitingPreviews();assert.equal(fits,1,'missing geometry waits without a retry loop');assert.equal(waiting.state,'ready');

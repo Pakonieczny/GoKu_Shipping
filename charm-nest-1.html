@@ -804,7 +804,9 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .doneRow .mini{width:36px;height:24px;object-fit:contain;background:#fff;border:1px solid var(--line2);border-radius:5px;display:block}
 .egPlacementList{flex:1 1 100%;width:100%;min-width:0;align-content:start;overflow:auto}
 .doneRow.placementRow,.doneRow.decidedRow{width:100%;min-height:108px;box-sizing:border-box;grid-template-columns:88px auto auto minmax(0,1fr);gap:14px;padding:9px 12px}
-.doneRow.decidedRow{grid-template-columns:88px auto auto minmax(0,1fr) auto}
+.doneRow.decidedRow,.doneRow.placementRow{grid-template-columns:88px auto auto minmax(0,1fr) auto}
+.placementRow [data-stage]{font-size:11px;white-space:nowrap}
+.placementRow[aria-busy="true"]{cursor:progress}
 .decisionActions{display:flex;align-items:center;gap:18px;padding-left:18px;border-left:1px solid var(--line);min-height:60px}
 .decisionStatus{display:grid;gap:7px;justify-items:start}
 .decisionActions .btn{min-height:40px;padding:9px 16px;font-size:13px;white-space:nowrap}
@@ -812,7 +814,7 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .placementThumb{width:88px;height:88px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#fff;border:1px solid var(--line2);border-radius:7px;font:10px var(--sans);color:var(--ink45);text-align:center}
 .placementThumb canvas,.placementThumb img{display:block;width:100%;height:100%;object-fit:contain}
 @media(max-width:900px){.decisionActions{gap:10px;padding-left:12px}.decisionActions .by{max-width:130px}}
-@media(max-width:700px){.doneRow.placementRow,.doneRow.decidedRow{grid-template-columns:76px minmax(0,1fr);gap:4px 12px}.placementRow .placementThumb,.decidedRow .placementThumb{grid-row:1/4;width:76px;height:76px}.placementRow .sku,.placementRow .w,.decidedRow .sku,.decidedRow .w{grid-column:2;white-space:normal}.decisionActions{grid-column:1/-1;border-left:0;border-top:1px solid var(--line);padding:8px 0 0;min-height:0;justify-content:space-between}}
+@media(max-width:700px){.doneRow.placementRow,.doneRow.decidedRow{grid-template-columns:76px minmax(0,1fr);gap:4px 12px}.placementRow .placementThumb,.decidedRow .placementThumb{grid-row:1/4;width:76px;height:76px}.placementRow .sku,.placementRow .w,.decidedRow .sku,.decidedRow .w{grid-column:2;white-space:normal}.placementRow [data-stage]{grid-column:2}.decisionActions{grid-column:1/-1;border-left:0;border-top:1px solid var(--line);padding:8px 0 0;min-height:0;justify-content:space-between}}
 .doneRow .sku{white-space:nowrap}
 .doneRow.open{border-color:var(--ink25);cursor:default}
 .doneDetail{grid-column:1/-1;display:grid;grid-template-columns:minmax(200px,1.1fr) minmax(140px,.7fr) minmax(220px,1.2fr);gap:14px 18px;align-items:start;padding:10px 0 4px;border-top:1px solid var(--line);margin-top:4px;cursor:default}
@@ -1312,6 +1314,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js"></script>
 <script src="charm-nest-geom.js"></script>
+<script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
 <script src="charm-nest-backs.js"></script>
 <script src="charm-nest-export.js"></script>
