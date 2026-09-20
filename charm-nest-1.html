@@ -151,7 +151,7 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 /* ── sheets grid ── */
 /* whatever the live view is showing, the screen keeps that much room at the bottom so nothing sits under it */
 .stage{flex:1 1 auto;min-height:0;overflow:auto;padding:16px 16px calc(16px + var(--dockH,0px))}
-.sheets{display:grid;grid-template-columns:repeat(auto-fill,minmax(400px,1fr));gap:16px;align-items:start}
+.sheets{display:grid;grid-template-columns:repeat(auto-fill,minmax(400px,1fr));gap:16px;align-items:stretch}
 @media (max-width:1380px){.sheets{grid-template-columns:repeat(auto-fill,minmax(360px,1fr))}}
 @media (max-width:900px){.sheets{grid-template-columns:1fr}}
 .sheetCard{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh);display:flex;flex-direction:column;min-width:0;position:relative;--accent:var(--ink25);border-top:4px solid var(--accent);transition:box-shadow .15s,outline-color .15s;outline:2px solid transparent;outline-offset:2px}
@@ -914,6 +914,10 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .backPieces .backThumb:focus-visible{outline:2px solid var(--gold2);outline-offset:3px}
 .backPieces .backThumb img{position:absolute;display:block;width:100%;height:100%;object-fit:contain;border:0;border-radius:0}
 .backPending{font:9px var(--mono);color:var(--ink45)}.sheetBacks:empty{display:none}
+/* Shared preview shelf: back artwork never shifts the front sheets or card edges. */
+.sheets:has(.sheetBacks) .sheetCard>[data-r="backs"]{height:clamp(72px,7vw,112px);flex:0 0 auto;overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-gutter:stable both-edges}
+.sheetCard>[data-r="backs"]>.sheetBacks{box-sizing:border-box;min-height:100%;padding:4px 12px;border:0;display:flex;align-items:center}
+.sheetCard .backPieces{width:100%}
 .backZoom{position:fixed;inset:auto;margin:0;padding:8px;box-sizing:border-box;border:1px solid var(--line);border-radius:16px;background:#fff;box-shadow:0 14px 45px rgba(25,20,12,.22);pointer-events:none;opacity:0;transform:scale(.45);transition:opacity .18s ease,transform .24s cubic-bezier(.2,.8,.2,1);z-index:10000}
 .backZoom.visible{opacity:1;transform:scale(1)}.backZoom img{display:block;width:100%;height:100%;object-fit:contain}
 @media(prefers-reduced-motion:reduce){.backZoom{transition:none;transform:none}}
