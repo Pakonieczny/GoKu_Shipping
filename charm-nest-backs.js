@@ -49,7 +49,7 @@
       const png = previewUrl(b.preview || b.outputs?.png?.url || b.png), ai = safeUrl(b.outputs?.ai?.url || b.ai);
       const identity = `${b.order || ''} · ${b.sku || ''} · copy ${b.copy || String(b.poolId).split('_').pop()}`;
       const dims = dimensions(b), label = 'Back: ' + (b.text || '') + ' — ' + identity;
-      return `<figure data-pool-id="${esc(b.poolId)}" data-rid="${esc(b.order)}" ${dims ? `data-preview-w="${dims.w}" data-preview-h="${dims.h}" data-preview-pad="${dims.pad}"` : ''}>${png ? `<a class="backThumb" ${ai ? `href="${esc(ai)}" target="_blank" rel="noopener"` : 'role="button" tabindex="0"'} aria-label="${esc(label)}" onclick="event.stopPropagation()"><img crossorigin="anonymous" referrerpolicy="no-referrer" src="${esc(png)}" alt="${esc(label)}"></a>` : '<span class="backPending">Preview pending</span>'}${b.pending ? '<span class="backPending">Saving…</span>' : ''}</figure>`;
+      return `<figure data-pool-id="${esc(b.poolId)}" data-sheet-id="${esc(b.sheetId)}" data-rid="${esc(b.order)}" ${dims ? `data-preview-w="${dims.w}" data-preview-h="${dims.h}" data-preview-pad="${dims.pad}"` : ''}>${png ? `<button type="button" class="backThumb" aria-label="${esc(label)}"><img crossorigin="anonymous" referrerpolicy="no-referrer" src="${esc(png)}" alt="${esc(label)}"></button>` : '<span class="backPending">Preview pending</span>'}${b.pending ? '<span class="backPending">Saving…</span>' : ''}</figure>`;
 
     }).join('')}</div></section>`;
   }
@@ -108,6 +108,7 @@
       if (zoom.showPopover) { if (!zoom.matches(':popover-open')) zoom.showPopover(); } else zoom.hidden = false;
       requestAnimationFrame(() => { if (active === thumb) zoom.classList.add('visible'); });
     }
+    document.addEventListener('click', e => {const t=e.target.closest?.('.backThumb'); if(!t) return; e.preventDefault();e.stopPropagation();hide();const f=t.closest('figure');window.Engrave?.openBack(f.dataset.poolId,f.dataset.sheetId);},true);
     document.addEventListener('pointerover', e => { const t=e.target.closest?.('.backThumb'); if(t && e.pointerType !== 'touch') show(t); });
     document.addEventListener('pointerout', e => { if(active && active.contains(e.target) && !active.contains(e.relatedTarget)) hide(); });
     document.addEventListener('focusin', e => { const t=e.target.closest?.('.backThumb'); if(t) show(t); });

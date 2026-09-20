@@ -291,6 +291,21 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   r=await post(lib,{op:'backPut',back:{...back,sheetId:'back-test-b',approvedAt:Date.now()+10}});assert(r.body.ok);
   for(const key of [...store.keys()])if(key.includes('back-test-')||key==='Charm_Pool_Back/'+pid)store.delete(key);
 
+  // Completion date, not allocation date, controls history filters and order.
+  await post(lib,{op:'putSheet',sheet:{id:'gold-x',setId:setA,metal:'gold',poolIds:[]}});
+  await post(lib,{op:'setUpdate',setId:setA,patch:{completedAt:Date.parse('2026-09-20T15:00:00Z'),completionDay:'2026-09-20'}});
+  r=await post(lib,{op:'setList',from:'2026-09-20',to:'2026-09-20',includeSheets:true});
+  assert.equal(r.body.sets[0].setId,setA);assert(r.body.sheets.some(s=>s.id==='gold-x'));
+  await post(lib,{op:'setUpdate',setId:setA,patch:{completedAt:null,completionDay:null}});
+  // Editing one copy preserves its sibling and rejects concurrent stale edits.
+  await post(lib,{op:'putSheet',sheet:{id:'edit-test',poolIds:[pid,pid2],backPool:[]}});
+  const first={...back,sheetId:'edit-test',approvedAt:now+1000}, sibling={...first,poolId:pid2,copy:2,text:'Sibling'};
+  await post(lib,{op:'backPut',backs:[first,sibling]});
+  r=await post(lib,{op:'backPut',back:{...first,text:'Updated',approvedAt:now+2000},expectedApprovedAt:first.approvedAt});assert(r.body.ok);
+  r=await post(lib,{op:'backPut',back:{...first,text:'Stale',approvedAt:now+3000},expectedApprovedAt:first.approvedAt});assert(r.status>=400);
+  r=await post(lib,{op:'getSheet',id:'edit-test'});assert.equal(r.body.sheet.backPool.find(b=>b.poolId===pid).text,'Updated');assert.equal(r.body.sheet.backPool.find(b=>b.poolId===pid2).text,'Sibling');
+  for(const key of ['Charm_Nest_Sheets/edit-test','Charm_Pool_Back/'+pid,'Charm_Pool_Back/'+pid2])store.delete(key);
+
   // Run creation date stays stable across ordinary checkpoints.
   store.get('Charm_Nest_Runs/run-H').createdAt = 12345;
   await post(lib, { op:'runPut', run:{ runId:'run-H', status:'complete' }, merge:true });

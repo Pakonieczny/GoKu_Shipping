@@ -1,0 +1,22 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const src=fs.readFileSync('charm-nest-bridge.js','utf8'),Backs=require('../../charm-nest-backs.js'),O=require('../../charm-nest-orders.js');
+const start=src.indexOf('  const items = () => B.engrave.items;'),end=src.indexOf('  const pendingCount =',start);
+const jobs=new Map(), calls=[],live={sheetId:'sheet',charms:[{poolId:'copy1'}],backPool:[]};
+const saved={poolId:'copy1',sheetId:'sheet',text:'Jessica',lines:['Jessica'],sizePt:4,capMm:1,centre:[12,14],angle:15,approvedAt:10,approvedBy:'Tester',copy:1};
+let record={id:'sheet',poolIds:['copy1','copy2'],backPool:[saved,{...saved,poolId:'copy2',text:'Sibling'}],outputs:{ai:{path:'sets/test/front.ai'}},fileBase:'front'};
+const order={key:'batch',poolIds:['copy1','copy2'],order:{receiptId:'order'},line:{transactionId:'line'},spec:{designSku:'sku'},engrave:{state:'written'}};
+jobs.set('batch',{key:'batch',copies:['copy1','copy2'],row:order,state:'written',backs:record.backPool.slice()});
+const context={B:{engrave:{items:jobs}},Pool:{charmOf:()=>({bbox:[0,0,20,30]})},allSheets:()=>[live],api:async(fn,b)=>{calls.push(b);return {sheet:structuredClone(record)};},G:{backView:()=>({}),engraveMask:()=>({cx:0,cy:0}),layoutLines:(lines,font,size,gap,angle,centre)=>({cmds:[],glyphs:[],centre,angle}),verifyInk:()=>({ok:true}),refitAt:()=>({ok:true,size:10})},F_:{ok:true},fontFor:()=>({}),loadFonts:async()=>{},fitOpts:()=>({}),fitJob:async()=>{throw Error('saved valid placement must not be refitted')},S:{settings:{},library:{rows:[]}},document:{querySelectorAll:()=>[]},EG:{},setMode:mode=>calls.push({mode}),render:()=>{},toast:m=>{throw Error(m)},Orders:{rows:()=>[order],render:()=>{}},Review:{remove:()=>{},render:()=>{}},Session:{schedule:()=>{}},refreshBacks:()=>{},MM:25.4/72};
+vm.createContext(context);vm.runInContext(src.slice(start,end),context);
+(async()=>{
+ await context.openBack('copy1','sheet');
+ const job=jobs.get('back:copy1');assert(job);assert.deepEqual([...job.copies],['copy1']);assert.equal(job.text,'Jessica');assert.equal(job.fit.angle,15);assert.deepEqual([...job.fit.centre],[12,14]);assert.equal(job.expectedApprovedAt,10);
+ assert(calls.some(c=>c.mode==='engrave'));assert(calls.every(c=>!c.op||c.op==='getSheet'),'opening never writes or invalidates');assert.equal(order.engrave.state,'written','original approval retained during draft');
+ job.state='written';job.text='Updated';record.backPool[0]={...saved,text:'Updated',approvedAt:20};
+ await context.syncEditedBack(job);
+ assert.deepEqual([...jobs.get('batch').copies],['copy2']);context.ensureJob(order);assert.deepEqual([...jobs.get('batch').copies],['copy2'],'later batch rebuild cannot overwrite individual edit');assert.deepEqual(order.poolIds,['copy1','copy2'],'order tracking intact');assert.equal(live.backPool[0].text,'Updated');assert.equal(live.backPool[1].text,'Sibling');
+ const html=Backs.markup([saved]);assert(html.includes('data-sheet-id="sheet"'));assert(!html.includes('<a'),'thumbnail does not download a file');
+ const dates=[{seq:1,day:'2026-09-18',completionDay:'2026-09-20',completedAt:30},{seq:2,day:'2026-09-19',completionDay:'2026-09-19',completedAt:40}].sort(O.compareCompleted);
+ assert.equal(dates[0].seq,1);assert.equal(O.completedTitle(dates[0]),'Complete Set #1, Sep-20-26');
+ console.log('Back editor OK: exact copy, preserved draft approval/placement, refresh, sibling protection, completion ordering');
+})().catch(e=>{console.error(e);process.exitCode=1;});

@@ -49,7 +49,7 @@ assert(Math.abs(legacy.w-60)<1e-8&&Math.abs(legacy.h-70)<1e-8,'existing back exp
 const source=fs.readFileSync('charm-nest-bridge.js','utf8');
 const start=source.indexOf('  function libraryGroups('),end=source.indexOf('  let _cache',start);const context=vm.createContext({O:require("../../charm-nest-orders.js")});vm.runInContext(source.slice(start,end),context);
 const groups=context.libraryGroups([{setId:'released',day:'2026-09-18',orders:{}}],[{id:'1',runId:'work',day:'2026-09-19',metal:'gold'},{id:'2',runId:'work',day:'2026-09-19',metal:'silver'},{id:'3',setId:'released',day:'2026-09-18',metal:'gold'}]);
-assert.equal(groups.length,2);assert.equal(groups[0].sheets.length,2);assert.equal(groups[0].setId,null);assert.equal(groups[1].sheets.length,1);
+assert.equal(groups.length,2);assert.equal(groups.find(g=>!g.setId).sheets.length,2);assert.equal(groups.find(g=>g.setId).sheets.length,1);
 console.log('Engraving updates OK: emoji vectors, solid back option, exact-copy ownership, historical working groups');
 (async()=>{
  global.window=global;global.PDFLib=require('../../vendor/pdf-lib-1.17.1.min.js');require('../../charm-nest-pdf.js');const P=CharmNestPDF;

@@ -159,7 +159,15 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .sheetCard.dragOver{outline-color:var(--accent);box-shadow:0 0 0 6px color-mix(in srgb,var(--accent) 18%,transparent),var(--sh)}
 .sheetCard.pulse{animation:pulse 1.1s ease}
 @keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 55%,transparent)}100%{box-shadow:0 0 0 22px transparent}}
-.shHead{display:flex;align-items:center;gap:9px;padding:10px 14px 8px;min-width:0;flex-wrap:wrap}
+.shHead{display:flex;align-items:center;gap:7px;padding:9px 14px 5px;min-width:0;flex-wrap:nowrap}
+.shControls{display:flex;align-items:center;gap:6px;padding:0 14px 7px;min-width:0}
+.shControls .shTabs{flex:1;order:0;flex-wrap:nowrap;overflow-x:auto}
+.shControls .shGate{margin:0;padding:0;border:0;background:none;flex:0 0 auto}
+.sheetOptions{position:relative;font-size:11px}
+.sheetOptions>summary{cursor:pointer;list-style:none;border:1px solid var(--line);border-radius:999px;padding:4px 9px;color:var(--ink70)}
+.sheetOptions[open] .solidOptions{position:absolute;right:0;top:calc(100% + 5px);z-index:30;width:min(330px,75vw);padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--card);box-shadow:0 8px 24px #0002}
+.shHead .prov{flex:1}
+.shHead .pill{font-size:10px;flex:0 0 auto;padding:2px 6px}
 .shHead .prov{font-size:11px;color:var(--ink45);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 /* one quiet line under the head: what this material is waiting for, and the way to stop waiting */
 .shGate{display:flex;align-items:center;gap:8px;margin:-2px 14px 7px;padding:5px 9px;border-radius:8px;background:var(--card2);border:1px dashed var(--line);font-size:11.5px;color:var(--ink70);min-width:0}
@@ -181,6 +189,7 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .shHead .name{font:17px var(--serif);min-width:0;white-space:nowrap;flex:0 0 auto}
 .shHead .stock{display:none}
 .shHead .pill{margin-left:auto}
+.shHead .pill[hidden]{display:none}
 .shPreviewWrap{position:relative;margin:0 14px;border:1px solid var(--line);border-radius:10px;background:var(--card2);overflow:hidden;aspect-ratio:var(--ar,513/434)}
 .shPreviewWrap canvas{display:block;width:100%;height:100%}
 .shPreviewWrap .dropHint{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--ink45);font-size:12.5px;text-align:center;padding:20px;pointer-events:none}
@@ -901,7 +910,7 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .backLabel{font:600 10px var(--sans);color:var(--ink45);letter-spacing:.04em;display:flex;gap:6px}
 .backPieces{display:flex;flex-wrap:wrap;gap:5px 3px;align-items:center;padding:3px 0}
 .backPieces figure{margin:0;min-width:0;flex:0 0 max(calc((100% - 15px)/6),var(--back-width,28px));display:flex;justify-content:center;align-items:center;position:relative}
-.backPieces .backThumb{position:relative;display:block;width:var(--back-width,28px);height:var(--back-height,28px);border-radius:3px;overflow:hidden;cursor:zoom-in;color:inherit}
+.backPieces .backThumb{padding:0;border:0;background:transparent;position:relative;display:block;width:var(--back-width,28px);height:var(--back-height,28px);border-radius:3px;overflow:hidden;cursor:zoom-in;color:inherit}
 .backPieces .backThumb:focus-visible{outline:2px solid var(--gold2);outline-offset:3px}
 .backPieces .backThumb img{position:absolute;display:block;width:100%;height:100%;object-fit:contain;border:0;border-radius:0}
 .backPending{font:9px var(--mono);color:var(--ink45)}.sheetBacks:empty{display:none}
@@ -955,6 +964,11 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .setCard{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);padding:12px 14px;display:grid;gap:8px}
 .setCard .sh{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .setCard .sh .nm{font:18px var(--serif)}
+.setDateRow{display:grid;gap:10px;margin-bottom:16px}
+.setDateHeading{margin:4px 0 0;padding:8px 2px;border-bottom:1px solid var(--line);font:600 13px var(--sans);color:var(--ink70)}
+.setActions{margin-left:auto;position:relative}
+.setActions summary{list-style:none;cursor:pointer;padding:0 9px;font-size:22px;line-height:24px}
+.setActions>div{position:absolute;right:0;top:28px;z-index:20;min-width:140px;display:grid;gap:8px;padding:12px;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:var(--sh);font:12px var(--sans)}
 .setCard .sheetsRow{display:flex;gap:10px;overflow:auto;padding-bottom:4px}
 .setCard .sheetsRow .libCard{flex:0 0 250px}
 .setCard .labels{display:flex;gap:8px;flex-wrap:wrap}
@@ -1056,7 +1070,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
   <main class="main">
     <div class="topbar">
       <button class="navBtn" id="btnRail" title="Toggle queue" aria-label="Toggle queue">☰</button>
-      <div class="modeNav" id="modeNav"><button class="modeArrow l" id="modeArrowL" aria-label="Scroll tabs left" tabindex="-1">&lsaquo;</button><div class="modeSeg" id="modeSeg"><button class="on" data-mode="nest">Nest</button><button data-mode="orders">Orders<i class="cnt" id="tabOrdersN"></i></button><button data-mode="engrave"><span class="full">Engraving</span><span class="tight">Engrave</span><i class="cnt" id="tabEngraveN"></i></button><button data-mode="review">Review<i class="cnt" id="tabReviewN"></i></button></div>
+      <div class="modeNav" id="modeNav"><button class="modeArrow l" id="modeArrowL" aria-label="Scroll tabs left" tabindex="-1">&lsaquo;</button><div class="modeSeg" id="modeSeg"><button class="on" data-mode="nest">Nest</button><button data-mode="orders">Orders<i class="cnt" id="tabOrdersN"></i></button><button data-mode="engrave"><span class="full">Engraving</span><span class="tight">Engrave</span><i class="cnt" id="tabEngraveN"></i></button><button data-mode="review">Review<i class="cnt" id="tabReviewN"></i></button><button data-mode="library">Library</button></div>
         <button class="modeArrow r" id="modeArrowR" aria-label="Scroll tabs right" tabindex="-1">&rsaquo;</button></div>
       <div class="topTools">
         <button type="button" class="sandboxPill hidden" id="sandboxPill" title="Sandbox: emulated Etsy; all records and files use sandbox copies">Sandbox</button>
@@ -1066,7 +1080,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
         <details class="moreMenu" id="moreMenu"><summary title="Workspace tools and settings"><span id="moreLabel">Workspace</span><span aria-hidden="true">⌄</span><i class="apiAlert hidden" id="etsyAlert" title="Etsy API needs attention"></i></summary>
           <div class="moreList">
             <div class="menuLabel">Workspace</div>
-            <button data-mode="design">Design Station<i class="cnt" id="tabDesignN"></i></button><button data-mode="master">Master files</button><button data-mode="library">Library</button>
+            <button data-mode="design">Design Station<i class="cnt" id="tabDesignN"></i></button><button data-mode="master">Master files</button>
             <div class="menuSection"><label class="menuLabel" for="stockSel">Sheet preset · GF / SS / Rose</label><select class="topSel" id="stockSel" title="Solid gold uses its own custom size"></select></div>
             <button id="btnSettings">Settings<span class="menuHint">⚙</span></button>
             <div class="menuSection"><div class="menuLabel">Etsy API calls</div><span class="etsyPill" id="etsyPill" title="API calls counted by the Design Station"><b id="etsyPillN">Waiting for station…</b></span></div>
@@ -2663,8 +2677,8 @@ function buildCards() {
     const sh = S.sheets[m.key]; const st = stockFor(m.key);
     const el = document.createElement("section"); el.className = "sheetCard"; el.dataset.m = m.key; el.style.setProperty("--ar", `${st.wPt}/${st.hPt}`);
     el.innerHTML = `
-      <div class="shHead"><span class="sw"></span><span class="name">${m.label}</span><span class="stock" data-r="stock"></span><span class="prov" data-r="prov"></span><span class="shTabs hidden" data-r="tabs"></span><span class="pill neutral" data-r="pill">Idle</span></div>
-      <div class="shGate hidden" data-r="gate"></div>
+      <div class="shHead"><span class="sw"></span><span class="name">${m.label}</span><span class="stock" data-r="stock"></span><span class="prov" data-r="prov"></span><span class="pill neutral" data-r="pill">Idle</span></div>
+      <div class="shControls"><div class="shTabs" data-r="tabs"></div><div class="shGate hidden" data-r="gate"></div></div>
       <div data-r="backs"></div>
       <div class="shPreviewWrap"><canvas data-r="canvas"></canvas>
         <div class="dropHint" data-r="hint"><b>Drop ${m.label} artwork here</b><span>.ai · .pdf · .zip — anything dropped on this card belongs to ${m.long.toLowerCase()}</span><span class="k">or drop on the queue to route by file name</span></div>
@@ -2716,8 +2730,7 @@ function clearMetal(metal) {
 }
 function renderTabs(sh) {
   const el = sh.el; if (!el) return; const tabs = $(`[data-r="tabs"]`, el); const pages = pagesOf(sh.metal);
-  tabs.classList.toggle("hidden", pages.length < 2);
-  if (pages.length < 2) { tabs.innerHTML = ""; return; }
+  tabs.classList.remove("hidden");
   const st = pg => pg.status === "nesting" || pg.status === "finishing" ? `<span class="spin"></span>` : pg.recalled && !pg.charms.length ? `<i>✓ ${pg.recalled.placedCount}</i>` : pg.status === "complete" ? `<i>✓ ${pg.placements.length}</i>` : pg.status === "partial" ? `<i>⚠ ${pg.placements.length}/${activeCharms(pg).length}</i>` : `<i>${activeCharms(pg).length}</i>`;
   tabs.innerHTML = pages.map((pg, i) => `<button type="button" class="${pg === sh ? "on" : ""}" data-i="${i}" title="${esc(sheetName(pg))}">Sheet ${pg.page}${st(pg)}</button>`).join("");
   $$("button", tabs).forEach(b => b.onclick = () => showPage(sh.metal, +b.dataset.i));
@@ -2736,16 +2749,16 @@ function renderCard(sh) {
   const prov = q("prov"); const pages = pagesOf(sh.metal);
   const dayTxt = sh.cardStartedAt ? new Date(sh.cardStartedAt).toLocaleDateString(undefined, {month:"short",day:"numeric"}) : sh.setDay ? CharmNestOrders.dateTag(new Date(sh.setDay + "T12:00:00")).replace(/\.\d\d$/, "").replace(/\./g, " ") : "";
   const bits = [];
-  if (sh.draft) bits.push("Working sheet · held");
+  if (sh.draft) bits.push("Held");
   if (sh.seq) bits.push(`<b>Set ${sh.seq}</b>`);
   if (dayTxt) bits.push(esc(dayTxt));
   if (rc) bits.push("recalled");
-  if (pages.length > 1) bits.push(`sheet ${sh.page} of ${pages.length}`);
+
   prov.innerHTML = bits.length ? "· " + bits.join(" · ") : "";
   prov.title = sh.fileBase ? `Saved as ${sh.fileBase}` : (sh.runId ? `Run ${sh.runId}` : "");
   const items = activeCharms(sh);
   const pillMap = { idle: ["neutral", "Idle"], ready: ["info", `Ready · ${items.length}`], queued: ["warn", "Queued"], nesting: ["warn", `<span class="spin"></span>Nesting`], finishing: ["warn", `<span class="spin"></span>Finishing`], complete: ["ok", rc ? "Recalled" : sh.draft ? "Held" : "Complete"], partial: ["bad", "Partial"] };
-  const [k, t] = pillMap[sh.status] || pillMap.idle; q("pill").className = "pill " + k; q("pill").innerHTML = t;
+  const [k, t] = pillMap[sh.status] || pillMap.idle; q("pill").className = "pill " + k; q("pill").innerHTML = t; q("pill").hidden = ["complete", "idle", "ready"].includes(sh.status);
   renderTabs(sh);
   q("hint").classList.toggle("hidden", items.length > 0 || sh.status !== "idle");
   const reviewing = S.sources.some(s => s.review && s.review.state === "running" && s.charms.some(c => c.metal === sh.metal));

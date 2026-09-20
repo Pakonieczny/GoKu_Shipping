@@ -1495,16 +1495,19 @@ const Gate = window.Gate = (() => {
     if (!solid(m)) {
       node.textContent = sh.setId && !sh.draft ? `In Set ${sh.seq} · ${policy(sh, sh.seq).reason}` : policy(sh, seq).reason;
       if (!sh.charms.length) node.textContent = m === "rose" ? "Joins Sets 2, 4, 6…" : "Full sheets only · partials carry forward";
+      if(sh.el) sh.el.querySelector(".shHead").title = node.textContent;
+      node.className = "shGate hidden";
       return;
     }
     const disabled = !editable(sh), included = selected()[m] === true;
-    node.innerHTML = `<div class="solidOptions"><label><input type="checkbox" data-solid="include" aria-label="Include ${esc(labelOf(m))} in current set" ${included ? "checked" : ""} ${disabled ? "disabled" : ""}> Include in current set</label>
+    node.innerHTML = `<details class="sheetOptions" ${R.optionsOpen?.[m] ? "open" : ""}><summary>Options${included ? " ✓" : ""}</summary><div class="solidOptions"><label><input type="checkbox" data-solid="include" aria-label="Include ${esc(labelOf(m))} in current set" ${included ? "checked" : ""} ${disabled ? "disabled" : ""}> Include in current set</label>
       <details ${R.sizeOpen?.[m] ? "open" : ""}><summary>Custom size · ${(st.wIn * 25.4).toFixed(1)} × ${(st.hIn * 25.4).toFixed(1)} mm</summary><div class="solidSize">
       <label>Width (mm)<input type="number" min="5" max="500" step="0.1" data-solid="w" value="${+(st.wIn * 25.4).toFixed(2)}" ${disabled ? "disabled" : ""}></label>
       <label>Height (mm)<input type="number" min="5" max="500" step="0.1" data-solid="h" value="${+(st.hIn * 25.4).toFixed(2)}" ${disabled ? "disabled" : ""}></label>
       <button type="button" class="btn ghost xs" data-solid="size" ${disabled ? "disabled" : ""}>Apply size</button></div></details>
-      <button type="button" class="btn ghost xs" data-solid="nest" ${disabled || !sh.charms.length ? "disabled" : ""}>Nest ${esc(labelOf(m))} only</button></div>`;
-    node.querySelector("details").ontoggle = e => { (R.sizeOpen ||= {})[m] = e.target.open; };
+      <button type="button" class="btn ghost xs" data-solid="nest" ${disabled || !sh.charms.length ? "disabled" : ""}>Nest ${esc(labelOf(m))} only</button></div></details>`;
+    node.querySelector(".sheetOptions").ontoggle = e => { (R.optionsOpen ||= {})[m] = e.target.open; };
+    node.querySelector(".solidOptions details").ontoggle = e => { (R.sizeOpen ||= {})[m] = e.target.open; };
     node.querySelector('[data-solid="include"]').onchange = e => {
       if (!editable(sh)) return renderRelease(sh, node);
       const choices = B.run ? (B.run.solidIncluded ||= {}) : (R.solidIncluded ||= {});
@@ -1668,12 +1671,77 @@ const Engrave = window.Engrave = (() => {
   const fontFor = weight => (weight === "Semibold" && F_.Semibold) || F_.Regular;
   const fitOpts = () => ({ minCapMm: +S.settings.engraveMinCapMm || 1.6, maxHeightFrac: +S.settings.engraveMaxHeightFrac || 0.4, lineGap: 0.18, minStrokeMm: +S.settings.engraveMinStrokeMm || 0, minGapMm: +S.settings.engraveMinGapMm || 0, tryRotated: S.settings.engraveTryRotated !== "off" });
   const items = () => B.engrave.items;
+  const charmFor = job => job.editCharm || Pool.charmOf(job.copies[0]);
+  const sheetFor = (job, poolId) => job.editingBack ? (allSheets().find(p=>p.sheetId === job.editSheet.sheetId && p.charms.some(c=>c.poolId === poolId)) || job.editSheet) : Pool.sheetOf(poolId);
+  let openingBack = null;
+  async function openBack(poolId, sheetId) {
+    if (openingBack) return openingBack;
+    openingBack = (async()=>{
+      if (!poolId || !sheetId) throw new Error("This preview is missing its saved charm identity");
+      const {sheet:d}=await api("charmNestLibrary",{op:"getSheet",id:sheetId},{label:"Opening back engraving"});
+      const saved=(d?.backPool || []).find(b=>b.poolId===poolId);
+      if (!saved || !(d.poolIds || []).includes(poolId)) throw new Error("This charm moved or its engraving changed. Refresh the Library and reopen it.");
+      const existing=[...items().values()].find(j=>!j.editingBack && j.copies.includes(poolId));
+      let charm=Pool.charmOf(poolId);
+      const savedCharm=(d.charms || []).find(c=>c.poolId===poolId);
+      if (!charm) {
+        const source=(d.sources || []).find(s=>s.id===savedCharm?.sourceId || s.name===savedCharm?.sourceName);
+        if (!source?.pool) throw new Error("Restore this sheet to the Nest workspace before editing backs from a combined source file.");
+        if (!source?.url) throw new Error("The original front design is unavailable. Restore this sheet's source file before editing its back.");
+        const src=await Pool.masterCharm({sku:saved.sku,aiPath:source.path || source.url,aiUrl:source.url,upAngle:saved.upAngle},null);
+        charm=Pool.cloneCharm(src.charms[0],poolId); charm.poolId=poolId;
+        if(savedCharm?.bbox && charm.bbox.some((v,i)=>Math.abs(v-savedCharm.bbox[i])>.5)) throw new Error("The saved source geometry has changed. Rebuild this sheet before editing its back.");
+      }
+      const sheet=Object.assign({},d,{sheetId:d.id,seq:d.setSeq,backPool:d.backPool || [],fileBase:d.fileBase || d.folder,
+        folderPath:d.outputs?.ai?.path?.replace(/\/[^/]+$/,"")});
+      if(!sheet.folderPath) throw new Error("The saved sheet folder is missing");
+      const row=existing ? {...existing.row,engrave:{...existing.row.engrave},poolIds:[poolId]} : {key:"back:"+poolId,state:"written",poolIds:[poolId],order:{receiptId:saved.order},line:{transactionId:saved.transactionId,sku:saved.sku},spec:{designSku:saved.sku,personalization:[saved.text || ""]},engrave:{needed:true,state:"review"}};
+      const job={key:"back:"+poolId,row,copies:[poolId],editingBack:true,editSheet:sheet,editCharm:charm,editOriginal:saved,expectedApprovedAt:saved.approvedAt,
+        state:"review",text:saved.text || "",lines:saved.lines?.length ? saved.lines.slice() : String(saved.text || "").split("\n"),
+        solidBack:!!saved.solidBack,source:saved.source || "personalization",quote:saved.sourceQuote || null,confidence:1,questions:[],requests:{side:"back"},backs:[],t:Date.now()};
+      await loadFonts(); if(!F_.ok) throw new Error("Engraving font is unavailable");
+      job.view=G.backView(charm,{res:6,upAngle:saved.upAngle ?? charm.upAngle,solidBack:job.solidBack});
+      job.mask=G.engraveMask(job.view,{marginMm:+S.settings.engraveMarginMm || .8,keepOut:charm.backKeepOut || []});
+      const font=fontFor(saved.weight),layout=G.layoutLines(job.lines,font,saved.sizePt,.18,saved.angle || 0,saved.centre || [job.mask.cx,job.mask.cy]);
+      const check=G.verifyInk(layout.cmds,job.mask);
+      if(check.ok) {
+        const ceiling=G.refitAt(job.lines,font,job.mask,fitOpts(),{centre:layout.centre,angle:layout.angle});
+        job.fit={ok:true,size:saved.sizePt,fittedMax:Math.max(saved.sizePt,ceiling.ok?ceiling.size:0),weight:saved.weight || "Regular",centre:layout.centre,angle:layout.angle,layout,glyphs:layout.glyphs,cmds:layout.cmds,capMm:saved.capMm || saved.sizePt*G.capPerEm(font)*MM,metrics:saved.metrics,small:!!saved.small,thin:!!saved.thin};
+        job.verify={geometry:check,at:Date.now()};
+      }
+      items().set(job.key,job);
+      for(const dlg of document.querySelectorAll('dialog[open]')) dlg.close();
+      Object.assign(EG,{tab:"place",focus:job.key,list:false,chosen:true,q:"",card:null,cardKey:null});
+      setMode("engrave");
+      if(!job.fit) await fitJob(job); else render();
+    })().catch(e=>toast(e.message,"bad",7000)).finally(()=>{openingBack=null;});
+    return openingBack;
+  }
+  async function syncEditedBack(job) {
+    const {sheet:d}=await api("charmNestLibrary",{op:"getSheet",id:job.editSheet.sheetId});
+    if(!d) return;
+    job.editSheet.backPool=d.backPool || [];
+    for(const p of allSheets()) if(p.sheetId===d.id) {p.backPool=d.backPool || [];p.backOutputs=d.backOutputs || null;if(p.recalled) Object.assign(p.recalled,{backPool:p.backPool,backs:p.backPool});}
+    for(const r of S.library.rows) if(r.id===d.id) Object.assign(r,{backPool:d.backPool || [],backs:d.backPool || [],backCount:(d.backPool || []).length});
+    if(["written","skipped"].includes(job.state)) {
+      for(const other of items().values()) if(other!==job && other.copies.includes(job.copies[0])) {
+        other.copyOverrides=[...new Set([...(other.copyOverrides || []),job.copies[0]])];
+        other.copies=other.copies.filter(id=>id!==job.copies[0]);other.backs=(other.backs || []).filter(b=>b.poolId!==job.copies[0]);
+        if(!other.copies.length) {other.state="written";Review.remove("eng:"+other.key);}
+      }
+      const row=Orders.rows().find(r=>r.poolIds.includes(job.copies[0]));
+      if(row && row.poolIds.length===1) row.engrave={...(row.engrave || {}),text:job.text,state:job.state,needed:job.state!=="skipped",approved:true};
+    }
+    refreshBacks();Orders.render();Review.render();Session.schedule();
+    if(S.mode === "library") await CN.loadLibrary();
+  }
+
   const jobOf = row => items().get(row.key) || null;
-  function ensureJob(row) { let j = items().get(row.key); if (!j) { j = { key: row.key, row, state: "classify", text: null, lines: [], source: null, quote: null, confidence: null, requests: null, questions: [], decision: null, fit: null, view: null, mask: null, claude: null, approvedBy: null, approvedAt: null, backs: [], copies: [], reason: null, t: Date.now() }; items().set(row.key, j); } j.copies = row.poolIds.slice(); return j; }
-  const pendingCount = () => [...items().values()].filter(j => ["words", "review", "fitting", "ready", "classify"].includes(j.state) && j.row.state !== "gone").length;
+  function ensureJob(row) { let j = items().get(row.key); if (!j) { j = { key: row.key, row, state: "classify", text: null, lines: [], source: null, quote: null, confidence: null, requests: null, questions: [], decision: null, fit: null, view: null, mask: null, claude: null, approvedBy: null, approvedAt: null, backs: [], copies: [], reason: null, t: Date.now() }; items().set(row.key, j); } j.copies = row.poolIds.filter(id=>!(j.copyOverrides || []).includes(id)); return j; }
+  const pendingCount = () => [...items().values()].filter(j => !j.editingBack && ["words", "review", "fitting", "ready", "classify"].includes(j.state) && j.row.state !== "gone").length;
   /** How many placements have already been settled in this run — the numerator of "3 of 9" on the card. */
   const DECIDED = ["approved", "written", "skipped"];                    // the same set the Decided tab lists
-  const decidedJobs = () => [...items().values()].filter(j => DECIDED.includes(j.state) && j.row.state !== "gone");
+  const decidedJobs = () => [...items().values()].filter(j => DECIDED.includes(j.state) && j.row.state !== "gone" && j.copies.length);
   /** A recalled set's engraving: each back written on its sheets becomes a decided job on the line it belongs to, with
    *  its words, who approved it and the file, so the Decided list reads the same for a set from March as for today's. */
   function fromRecall() {
@@ -1727,8 +1795,7 @@ const Engrave = window.Engrave = (() => {
     const cov = G.glyphCoverage(F_.Regular, job.lines.join("\n"));
     if (!cov.ok) { job.state = "words"; job.reason = `Unsupported engraving characters: ${cov.missing.map(c => c + " (" + [...c].map(x=>"U+"+x.codePointAt(0).toString(16).toUpperCase()).join(" ") + ")").join(", ")}${F_.emojiError ? " — " + F_.emojiError : ""}`; job.missing = cov.missing; job.row.engrave = { needed: true, state: "words", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "notRepresentable", key: "eng:" + job.key, row: job.row, job, why: job.reason }); return job; }
     job.state = "ready"; job.reason = null; job.row.engrave = { needed: true, state: "ready", text: job.text, approved: false }; Review.remove("eng:" + job.key);
-    Pool.update(job.copies, { engrave: true }).catch(() => {});
-    RunCtl.poke();                                                        // a waiting run fits it now (the classifier answers asynchronously)
+    if(!job.editingBack) {Pool.update(job.copies, { engrave: true }).catch(() => {});RunCtl.poke();}                                                        // a waiting run fits it now (the classifier answers asynchronously)
     return job;
   }
   /** A person's decision on the words (confirm / edit / no engraving), recorded with the name. */
@@ -1736,12 +1803,12 @@ const Engrave = window.Engrave = (() => {
     by = by || employeeName() || askEmployee(); if (!by) { toast("Set your name first", "bad"); return; }
     if (none) { setNone(job, `no engraving — decided by ${by}`); job.decision = { by, at: Date.now(), none: true }; Review.remove("eng:" + job.key); agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: no engraving (${by})`); Orders.render(); RunCtl.poke(); return job; }
     job.text = String(text || "").trim(); job.lines = job.text.split(/\r?\n/).map(s => s.trim()).filter(Boolean); job.decision = { by, at: Date.now(), text: job.text, note: note || null }; job.questions = []; job.requests = { side: "back", font: null, handwriting: false, image: false }; job.confidence = 1;
-    if (job.text && job.text !== (job.row.spec.personalization || []).join("\n")) { try { await DesignLink.call("notes.set", { receiptId: job.row.order.receiptId, text: `${job.row.spec.staffNote ? job.row.spec.staffNote + "\n" : ""}Engrave (${by}): ${job.text.replace(/\n/g, " / ")}` }); } catch (e) { agent({ engrave: true }, "warn", `staff note not saved: ${e.message}`); } }
+    if (!job.editingBack && job.text && job.text !== (job.row.spec.personalization || []).join("\n")) { try { await DesignLink.call("notes.set", { receiptId: job.row.order.receiptId, text: `${job.row.spec.staffNote ? job.row.spec.staffNote + "\n" : ""}Engrave (${by}): ${job.text.replace(/\n/g, " / ")}` }); } catch (e) { agent({ engrave: true }, "warn", `staff note not saved: ${e.message}`); } }
     agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: words decided by ${by}: "${job.text.replace(/\n/g, " / ")}"`);
     Review.remove("eng:" + job.key);
     await setReady(job);
-    if (job.state === "ready") { const ch = job.copies.length && Pool.sheetOf(job.copies[0]); if (ch && ch.fileBase) await fitJob(job); }
-    Orders.render(); RunCtl.poke(); return job;
+    if (job.state === "ready") { const ch = job.copies.length && sheetFor(job,job.copies[0]); if (ch && ch.fileBase) await fitJob(job); }
+    Orders.render(); if(!job.editingBack) RunCtl.poke(); return job;
   }
   async function classifyAll(run) {
     await loadFonts();
@@ -1763,11 +1830,11 @@ const Engrave = window.Engrave = (() => {
     EG.card = null; EG.cardKey = null;
     job.reason = null; job.verify = null; job.fit = null;
     await loadFonts(); if (!F_.ok || !G.glyphCoverage(F_.Regular, job.lines.join("\n")).ok) return setReady(job);
-    const poolId = job.copies[0]; const charm = Pool.charmOf(poolId); if (!charm) { job.state = "ready"; return job; }
+    const poolId = job.copies[0]; const charm = charmFor(job); if (!charm) { job.state = "ready"; return job; }
     job.state = "fitting"; job.row.engrave.state = "fitting"; render();
     const entry = Master.entryFor(job.row.spec.designSku) || {};
     let view;
-    try { view = G.backView(charm, { res: 6, upAngle: entry.upAngle == null ? undefined : +entry.upAngle, solidBack:!!job.solidBack }); }
+    try { view = G.backView(charm, { res: 6, upAngle: job.editingBack ? job.editOriginal.upAngle ?? charm.upAngle : entry.upAngle == null ? undefined : +entry.upAngle, solidBack:!!job.solidBack }); }
     catch (e) {
       job.state = "blocked"; job.reason = e.message; job.flipError = e; job.row.engrave.state = "blocked"; job.row.engrave.reason = job.reason;
       agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: ${job.reason}`);
@@ -1779,7 +1846,7 @@ const Engrave = window.Engrave = (() => {
     agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: back flipped and verified (pixels ${(view.detail.pixelDiff * 100).toFixed(3)}%, area ${view.detail.areaF} = ${view.detail.areaB}, ${view.detail.dropped} front detail member(s) dropped, ${view.cutMembers.length} cut) · hoop ${Math.round(view.upAngle)}° → up`);
     let fit = G.fitText(job.lines, F_.Regular, job.mask, fitOpts());
     if (fit.ok && fit.weight === "Semibold" && F_.Semibold) { const sb = G.fitText(job.lines, F_.Semibold, job.mask, fitOpts()); if (sb.ok) fit = Object.assign(sb, { weight: "Semibold" }); }
-    if (!fit.ok) { job.state = "review"; job.fit = null; job.reason = fit.reason; job.row.engrave.state = "review"; agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: ${fit.reason}`); Review.add({ kind: "placement", key: "eng:" + job.key, row: job.row, job, why: fit.reason }); render(); return job; }
+    if (!fit.ok) { job.state = "review"; job.fit = null; job.reason = fit.reason; job.row.engrave.state = "review"; agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: ${fit.reason}`); if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: job.row, job, why: fit.reason }); render(); return job; }
     fit.fittedMax = fit.size; job.fit = fit; job.fitAt = Date.now();
     // the largest that fits is the ceiling; the default is sized to how much there is to say (design §7.4)
     {
@@ -1815,7 +1882,7 @@ const Engrave = window.Engrave = (() => {
     job.verify = { geometry: check, at: Date.now() };
     job.state = "review"; job.row.engrave.state = "review"; job.claude = null;
     agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: "${job.lines.join(" / ")}" fits at ${fit.size.toFixed(2)} pt (cap ${fit.capMm.toFixed(2)} mm, ${fit.weight}${fit.angle ? `, ${fit.angle}°` : ""}${fit.small ? ", SMALL" : ""}${fit.thin ? ", strokes under the engraver limit" : ""}) — awaiting a person`);
-    Review.add({ kind: "placement", key: "eng:" + job.key, row: job.row, job });
+    if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: job.row, job });
     render(); return job;
   }
   async function claudeRead(job) {
@@ -1828,7 +1895,7 @@ const Engrave = window.Engrave = (() => {
     render();
   }
   async function fitAll(run) {
-    const jobs = [...items().values()].filter(j => j.state === "ready" && j.row.state !== "gone");
+    const jobs = [...items().values()].filter(j => !j.editingBack && j.copies.length && j.state === "ready" && j.row.state !== "gone");
     for (const j of jobs) { const sh = j.copies.length && Pool.sheetOf(j.copies[0]); if (!sh || !sh.fileBase) continue; try { await fitJob(j); } catch (e) { j.state = "blocked"; j.reason = e.message; j.row.engrave.state = "blocked"; agent({ engrave: true }, "warn", `${j.row.order.receiptId}: ${e.message}`); Review.add({ kind: "flipFailed", key: "eng:" + j.key, row: j.row, job: j, why: e.message }); } }
     if (run) { run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); await RunCtl.save(run); }
     render(); return jobs.length;
@@ -1892,9 +1959,17 @@ const Engrave = window.Engrave = (() => {
   }
   function resize(job, size) { if (!job.fit) return; size = Math.min(job.fit.fittedMax, Math.max(0.01, size)); job.wantSize = size; const L = G.layoutLines(job.lines, fontFor(job.fit.weight), size, 0.18, job.fit.angle, job.fit.centre); const v = G.verifyInk(L.cmds, job.mask); if (!v.ok) { toast("That size does not verify", "bad"); return; } job.fit = Object.assign({}, job.fit, { size, layout: L, glyphs: L.glyphs, cmds: L.cmds, capMm: size * G.capPerEm(fontFor(job.fit.weight)) * MM, small: size * G.capPerEm(fontFor(job.fit.weight)) * MM < (+S.settings.engraveMinCapMm || 1.6), metrics: G.strokeMetrics(L.cmds, 24) }); job.verify = { geometry: v, at: Date.now() }; job.claude = null; reRead(job); refresh(job); }
   async function resplit(job) { const vars = G.splitVariants(job.lines); const i = (job.splitIndex || 0) + 1; const pick = vars[i % vars.length]; job.splitIndex = i; job.lines = pick; job.text = pick.join("\n"); agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: re-split as "${pick.join(" / ")}"`); await fitJob(job); }
-  async function skip(job, by) { by = by || employeeName() || askEmployee(); if (!by) return; revokeBacks(job); job.state = "skipped"; job.approvedBy = null; job.row.engrave = { needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; job.row.flag = `engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`); await Pool.update(job.copies, { engrave: false, engraveSkippedBy: by }); Orders.render(); render(); RunCtl.poke(); }
+  async function skip(job, by) { by = by || employeeName() || askEmployee(); if (!by) return; revokeBacks(job); job.state = "skipped"; job.approvedBy = null; job.row.engrave = { needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; job.row.flag = `engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`); await Pool.update(job.copies, { engrave: false, engraveSkippedBy: by }); if(job.editingBack) {await backQueue;await syncEditedBack(job);} Orders.render(); render(); if(!job.editingBack) RunCtl.poke(); }
   function sendBack(job, why) { revokeBacks(job); job.state = "words"; job.reason = why || "sent back from the placement review — a decision on the words is needed"; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); Orders.render(); }
   async function approve(job, by) {
+    if(job.backSaving || job.approvalPreparing) return;
+    job.approvalPreparing=true;
+    try {
+    if(job.editingBack && EG.cardKey===job.key) {
+      const text=EG.card?.querySelector('[data-f="words"]')?.value.trim();
+      if(text && text!==job.text) {job.text=text;job.lines=text.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);await fitJob(job);}
+    }
+    } finally {job.approvalPreparing=false;}
     if (job.backSaving) return;
     by = by || employeeName() || askEmployee(); if (!by) { toast("An employee name is required to approve", "bad"); return; }
     if (!job.fit || !job.verify || !job.verify.geometry.ok) { toast("Nothing verified to approve", "bad"); return; }
@@ -1903,9 +1978,9 @@ const Engrave = window.Engrave = (() => {
     agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: placement approved by ${by} (${job.fit.size.toFixed(2)} pt, cap ${job.fit.capMm.toFixed(2)} mm${job.nudged ? ", nudged" : ""})`);
     job.backSaving = true; const approval = job.approvedAt;
     render(); Orders.render(); refreshBacks();
-    try { await writeBacks(job); } catch (e) { if (job.approvedAt !== approval) { job.backSaving = false; return; } job.state = "review"; job.row.engrave.state = "review"; job.row.engrave.approved = false; job.reason = "back file failed: " + e.message; refreshBacks(); agent({ engrave: true }, "warn", `${job.row.order.receiptId}: ${job.reason}`); Review.add({ kind: "placement", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); }
+    try { await writeBacks(job); } catch (e) { if (job.approvedAt !== approval) { job.backSaving = false; return; } job.state = "review"; job.row.engrave.state = "review"; job.row.engrave.approved = false; job.reason = "back file failed: " + e.message; refreshBacks(); agent({ engrave: true }, "warn", `${job.row.order.receiptId}: ${job.reason}`); if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); }
     job.backSaving = false; Session.schedule();
-    RunCtl.poke();
+    if(!job.editingBack) RunCtl.poke();
   }
 
   /* ── 7.6 · back files, one per piece, only after approval ── */
@@ -1924,7 +1999,7 @@ const Engrave = window.Engrave = (() => {
     }
     const base = document.createElement("canvas"); base.width = cv.width; base.height = cv.height;   // grid + mask tint, drawn once
     base.getContext("2d").drawImage(cv, 0, 0);
-    for (const m of view.members) { ctx.beginPath(); P.pathToCanvas(ctx, m, tx); ctx.strokeStyle = m.original === view.cutMembers[0] || m.original === job.view.cutMembers.find(c => c === Pool.charmOf(job.copies[0]).outline) ? "rgba(190,40,40,.95)" : "rgba(60,60,60,.9)"; ctx.lineWidth = Math.max(1, 0.5 * k); ctx.stroke(); }
+    for (const m of view.members) { ctx.beginPath(); P.pathToCanvas(ctx, m, tx); ctx.strokeStyle = m.original === view.cutMembers[0] || m.original === job.view.cutMembers.find(c => c === charmFor(job).outline) ? "rgba(190,40,40,.95)" : "rgba(60,60,60,.9)"; ctx.lineWidth = Math.max(1, 0.5 * k); ctx.stroke(); }
     if (false && fit) { ctx.fillStyle = "#111"; for (const g of fit.glyphs) { ctx.beginPath(); let cur = null; for (const c of g.cmds) { if (c.type === "M") { const p = tx(c.x, c.y); ctx.moveTo(p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "L") { const p = tx(c.x, c.y); ctx.lineTo(p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "C") { const a = tx(c.x1, c.y1), b = tx(c.x2, c.y2), p = tx(c.x, c.y); ctx.bezierCurveTo(a[0], a[1], b[0], b[1], p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "Q") { const a = tx(c.x1, c.y1), p = tx(c.x, c.y); ctx.quadraticCurveTo(a[0], a[1], p[0], p[1]); cur = [c.x, c.y]; } else ctx.closePath(); } ctx.fill("nonzero"); } }
     const outline = document.createElement("canvas"); outline.width = cv.width; outline.height = cv.height;   // …and the charm itself
     outline.getContext("2d").drawImage(cv, 0, 0);
@@ -1979,6 +2054,7 @@ const Engrave = window.Engrave = (() => {
     const records = [...(sheet.backPool || sheet.backs || []), ...allSheets().flatMap(p => p.backPool || [])];
     const invalid = new Set();
     for (const j of items().values()) {
+      if (j.editingBack && j.state !== "written") continue;
       if (!j.approvedAt || !["approved", "written"].includes(j.state)) { j.copies.forEach(id => invalid.add(id)); continue; }
       records.push(...(j.backs || []));
       if (j.view && j.fit) {
@@ -2021,38 +2097,41 @@ const Engrave = window.Engrave = (() => {
     const approval = job.approvedAt;
     const current = () => approval === job.approvedAt && ["approved", "written"].includes(job.state);
 
-    const charm0 = Pool.charmOf(job.copies[0]); const src = sourceOf(charm0.sourceId); const view = job.view, fit = job.fit;
+    const charm0 = charmFor(job); const src = sourceOf(charm0.sourceId); const view = job.view, fit = job.fit;
     const rel = fit.glyphs.map(g => ({ cmds: g.cmds.map(c => { const o = { type: c.type }; if (c.type !== "Z") { o.x = c.x - view.cx; o.y = c.y - view.cy; } if (c.type === "C" || c.type === "Q") { o.x1 = c.x1 - view.cx; o.y1 = c.y1 - view.cy; } if (c.type === "C") { o.x2 = c.x2 - view.cx; o.y2 = c.y2 - view.cy; } return o; }) }));
     const bySheet = new Map();
-    for (const poolId of job.copies) { const sh = Pool.sheetOf(poolId); if (!sh) continue; if (!bySheet.has(sh)) bySheet.set(sh, []); bySheet.get(sh).push(poolId); }
+    for (const poolId of job.copies) { const sh = sheetFor(job,poolId); if (!sh) continue; if (!bySheet.has(sh)) bySheet.set(sh, []); bySheet.get(sh).push(poolId); }
     if (!bySheet.size) throw new Error("no sheet holds these pieces yet");
     const png = renderBack(job, 500, { grid: false, hatch: false }); const pngBlob = await new Promise(r => png.toBlob(r, "image/png"));
     job.backs = [];
     for (const [sh, poolIds] of bySheet) {
       sh.backPool = sh.backPool || [];
       for (const poolId of poolIds) {
-        const p = B.pool.rows.get(poolId) || {}; const copy = p.copy || 1;
+        const p = B.pool.rows.get(poolId) || {}; const copy = job.editingBack ? job.editOriginal.copy || 1 : p.copy || 1;
         const built = await P.buildBackFile({ charm: charm0, parsed: src.parsed, cutMembers: view.cutMembers, cx: view.cx, cy: view.cy, angleDeg: view.angleDeg, padPt: 5 * PT, glyphs: rel, view: S.settings.backFileView || "asSeenFromBack", title: `${job.row.order.receiptId} · ${job.row.spec.designSku} · back`, meta: { poolId, order: job.row.order.receiptId, sku: job.row.spec.designSku, copy, text: job.text, font: "Source Sans 3", weight: fit.weight, sizePt: fit.size, capMm: fit.capMm, angle: fit.angle, approvedBy: job.approvedBy, approvedAt: job.approvedAt, upAngle: view.upAngle, flipChecks: view.checks } });
         const verified = await verifyBackFile(built.bytes, job);                 // 7.4 · flip integrity re-run on the written, re-parsed file
         if (!verified.ok) throw new Error(`the written back file did not re-verify (${verified.why})`);
         const name = `${sh.fileBase}_back_${poolId}_${approval}`;
         let ai = null, pngUp = null;
         if (S.cloud.ok && sh.folderPath) { ai = await uploadBytes(`${sh.folderPath}/back/${name}.ai`, built.bytes, "application/illustrator", `Saving back ${copy}`); pngUp = await uploadBytes(`${sh.folderPath}/back/${name}.png`, pngBlob, "image/png"); }
-        const rec = { poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, text: job.text, lines: job.lines, font: "Source Sans 3", weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: job.approvedBy, approvedAt: job.approvedAt, nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: S.settings.backFileView || "asSeenFromBack", reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, previewWPt:png._sizePt.w, previewHPt:png._sizePt.h, pageWPt: built.wPt, pageHPt: built.hPt };
+        const rec = { solidBack:!!job.solidBack, upAngle:view.upAngle, poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, text: job.text, lines: job.lines, font: "Source Sans 3", weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: job.approvedBy, approvedAt: job.approvedAt, nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: S.settings.backFileView || "asSeenFromBack", reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, previewWPt:png._sizePt.w, previewHPt:png._sizePt.h, pageWPt: built.wPt, pageHPt: built.hPt };
         if (!current()) return;
-        if (Pool.sheetOf(poolId) !== sh) throw new Error("The charm moved during approval. Retry on its current sheet.");
+        if (sheetFor(job,poolId) !== sh) throw new Error("The charm moved during approval. Retry on its current sheet.");
         if (!S.cloud.ok || !ai || !pngUp) throw new Error("Reconnect to save the approved back files");
-        await api("charmNestLibrary", { op: "backPut", back: rec });
+        await api("charmNestLibrary", { op: "backPut", back: rec, ...(job.editingBack ? {expectedApprovedAt:job.expectedApprovedAt} : {}) });
         for (const page of allSheets()) page.backPool = (page.backPool || []).filter(b => b.poolId !== poolId);
         if (!current()) return;
-        sh.backPool.push(rec); job.backs.push(rec); refreshBacks();
+        sh.backPool = sh.backPool.filter(b=>b.poolId!==poolId); sh.backPool.push(rec); job.backs.push(rec);
+        if(job.editingBack) job.expectedApprovedAt=rec.approvedAt; refreshBacks();
         agent({ metal: sh.metal, engrave: true }, "ENGRAVE", `Back file written and re-verified: ${name}.ai (${built.reference.redrawn ? "cut reference redrawn from the exact transformed paths" : "original cut bytes under the mirror matrix"})`);
       }
+      if(job.editingBack) {const {sheet:latest}=await api("charmNestLibrary",{op:"getSheet",id:sh.sheetId});sh.backPool=latest.backPool || [];}
       await sheetBackOutputs(sh).catch(e => agent({ metal: sh.metal }, "warn", `back index: ${e.message}`));
     }
     if (!current()) return;
     job.state = "written"; job.row.engrave.state = "written";
-    await Pool.update(job.copies, { engrave: true, engraveApprovedBy: job.approvedBy, state: "engraved" });
+    await Pool.update(job.copies, { engrave: true, engraveApprovedBy: job.approvedBy, ...(job.editingBack ? {} : {state:"engraved"}) });
+    if(job.editingBack) {await syncEditedBack(job);toast("Back engraving updated","ok");}
     render();
   }
   /** Parse the written back file and compare its cut geometry with the verified view (mirrored back for the front-coordinates variant). */
@@ -2284,7 +2363,7 @@ const Engrave = window.Engrave = (() => {
     card.innerHTML = `<div class="rh"><span class="kind" title="this placement's place in the queue · how many are decided">${decided + 1} of ${decided + remaining} · ${decided} done</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div>
       <div class="placeView">
         <div class="pvMain"><div class="backHost"></div>
-          <div class="ctl">${f && !wordsJob ? `<button class="btn sage sm" data-a="approve" title="this placement is right — write the back file">Approve <b class="k">A</b></button><button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><span class="mono dim" data-cap title="cap height of the lettering">${f.capMm.toFixed(2)} mm</span><label class="angle" title="the angle of the text, in degrees — type one, or drag the handle above the text"><input type="number" data-a="angle" min="-359" max="359" step="1" value="${Math.round(f.angle || 0)}">°</label>` : ""}
+          <div class="ctl">${f && !wordsJob ? `<button class="btn sage sm" data-a="approve" title="this placement is right — write the back file">${job.editingBack ? "Save changes" : "Approve"} <b class="k">A</b></button><button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><span class="mono dim" data-cap title="cap height of the lettering">${f.capMm.toFixed(2)} mm</span><label class="angle" title="the angle of the text, in degrees — type one, or drag the handle above the text"><input type="number" data-a="angle" min="-359" max="359" step="1" value="${Math.round(f.angle || 0)}">°</label>` : ""}
             <span class="rest"><button class="btn ghost sm" data-a="skip" title="cut this charm plain — nothing engraved on its back">No engraving <b class="k">S</b></button></span></div>
 </div>
         <div class="pvSide">
@@ -2294,7 +2373,7 @@ const Engrave = window.Engrave = (() => {
           ${job.view?.detail.filledArtwork ? `<div class="why">Filled artwork: inspect the back outline and cut-outs before approving.</div>` : ""}<div class="frontHost"></div>
           <dl class="meta">${row2("Customer", (sp.personalization || []).join(" / "))}${row2("Buyer msg", sp.buyerMessage)}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}</dl>
         </div></div>`;
-    const charm = job.copies.length ? Pool.charmOf(job.copies[0]) : null;
+    const charm = job.copies.length ? charmFor(job) : null;
     if (charm && (charm.outline.subpaths || []).length > 1) {
       const control = document.createElement("label"); control.className = "why";
       control.innerHTML = `<input type="checkbox" ${job.solidBack ? "checked" : ""}> Solid back · inner artwork is front detail`;
@@ -2383,17 +2462,17 @@ const Engrave = window.Engrave = (() => {
     requestAnimationFrame(mountBack);
     if (window.ResizeObserver) { const ro = new ResizeObserver(() => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; mountBack(); }); }); ro.observe(backHost); card._ro = ro; }
     const capOut = card.querySelector("[data-cap]");
-    card.querySelectorAll("[data-a]").forEach(b => { const a = b.dataset.a; if (a === "usewords") return; if (a === "angle") { b.onchange = () => { const v = +b.value; if (Number.isFinite(v)) rotateTo(job, v); }; b.addEventListener("keydown", e => e.stopPropagation()); return; } b.onclick = () => { if (a === "approve") approve(job); else if (a === "centre") centreText(job); else if (a === "close") { EG.list = true; EG.card = null; EG.cardKey = null; render(); } else if (a === "prev" || a === "next") { const q = [...items().values()].filter(matchesQ).filter(j2 => j2.row.state !== "gone" && ["review", "words", "blocked"].includes(j2.state)); const i = q.findIndex(j2 => j2.key === job.key); const j3 = q[(i + (a === "next" ? 1 : q.length - 1)) % q.length]; if (j3) { EG.focus = j3.key; EG.card = null; EG.cardKey = null; render(); } }
+    card.querySelectorAll("[data-a]").forEach(b => { const a = b.dataset.a; if (a === "usewords") return; if (a === "angle") { b.onchange = () => { const v = +b.value; if (Number.isFinite(v)) rotateTo(job, v); }; b.addEventListener("keydown", e => e.stopPropagation()); return; } b.onclick = () => { if (a === "approve") approve(job); else if (a === "centre") centreText(job); else if (a === "close") { if(job.backSaving) return; if(job.editingBack) {items().delete(job.key);Review.remove("eng:"+job.key);} EG.list = true; EG.card = null; EG.cardKey = null; render(); } else if (a === "prev" || a === "next") { const q = [...items().values()].filter(matchesQ).filter(j2 => j2.row.state !== "gone" && ["review", "words", "blocked"].includes(j2.state)); const i = q.findIndex(j2 => j2.key === job.key); const j3 = q[(i + (a === "next" ? 1 : q.length - 1)) % q.length]; if (j3) { EG.focus = j3.key; EG.card = null; EG.cardKey = null; render(); } }
       else if (a === "resplit") resplit(job); else if (a === "skip") skip(job); else if (a === "back") sendBack(job); }; });
     void capOut;
-    card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.repeat) return; const k = e.key.toLowerCase(); if (k === "a") { e.preventDefault(); approve(job); } else if (k === "s") { e.preventDefault(); skip(job); } else if (e.key === "Escape") { EG.list = true; EG.card = null; EG.cardKey = null; render(); } else if (e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); rotateTo(job, (job.fit ? job.fit.angle || 0 : 0) + (e.key === "ArrowLeft" ? 1 : -1)); } else if (e.key === "ArrowLeft") { e.preventDefault(); nudge(job, -0.25, 0); } else if (e.key === "ArrowRight") { e.preventDefault(); nudge(job, 0.25, 0); } else if (e.key === "ArrowUp") { e.preventDefault(); nudge(job, 0, 0.25); } else if (e.key === "ArrowDown") { e.preventDefault(); nudge(job, 0, -0.25); } });
+    card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.repeat) return; const k = e.key.toLowerCase(); if (k === "a") { e.preventDefault(); approve(job); } else if (k === "s") { e.preventDefault(); skip(job); } else if (e.key === "Escape") { if(job.editingBack && !job.backSaving) {items().delete(job.key);Review.remove("eng:"+job.key);} EG.list = true; EG.card = null; EG.cardKey = null; render(); } else if (e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); rotateTo(job, (job.fit ? job.fit.angle || 0 : 0) + (e.key === "ArrowLeft" ? 1 : -1)); } else if (e.key === "ArrowLeft") { e.preventDefault(); nudge(job, -0.25, 0); } else if (e.key === "ArrowRight") { e.preventDefault(); nudge(job, 0.25, 0); } else if (e.key === "ArrowUp") { e.preventDefault(); nudge(job, 0, 0.25); } else if (e.key === "ArrowDown") { e.preventDefault(); nudge(job, 0, -0.25); } });
     // the next card takes focus only when the person was already working in this pane, so a held key cannot run the queue
     const wasHere = document.activeElement && document.activeElement.closest && document.activeElement.closest("#egQueue");
     if (wasHere || !document.activeElement || document.activeElement === document.body) setTimeout(() => { if (card.isConnected) card.focus(); }, 30);
     void it;
     return card;
   }
-  return { sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0 }), loadFonts, classify, classifyAll, fitJob, fitAll, approve, nudge, resize, rotateTo, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
+  return { openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0 }), loadFonts, classify, classifyAll, fitJob, fitAll, approve, nudge, resize, rotateTo, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
@@ -2487,7 +2566,7 @@ const Sets = window.Sets = (() => {
     agent({ metal: sh.metal, run: sh.runId }, "cloud", `${sh.fileBase}: ${files.length} label${files.length === 1 ? "" : "s"} saved (${ids.length} order${ids.length === 1 ? "" : "s"}) · set ${set.name} now ${set.sheetIds.length} sheet(s)`);
     Orders.render();
   }
-  async function save(set) { if (!S.cloud.ok || set.offline) return; const orders = {}; for (const [rid, o] of Object.entries(set.orders)) orders[rid] = { held: o.held || null, lines: Object.values(o.lines) }; await api("charmNestLibrary", { op: "setUpdate", setId: set.setId, patch: { runId: set.runId, day: set.day, seq: set.seq, name: set.name, folder: set.folder, materials: set.materials, sheetIds: set.sheetIds, orders, status: set.status, labels: set.labels || null, labelFiles: set.labelFiles.map(f => ({ path: f.path, url: f.url, sheet: f.sheet, sheetId: f.sheetId, part: f.part, parts: f.parts, orders: f.orders, label: f.label })), committed: set.committed || null, refused: set.refused || null, committedAt: set.committedAt || null, backCount: set.backCount || 0 } }); }
+  async function save(set) { if (!S.cloud.ok || set.offline) return; const orders = {}; for (const [rid, o] of Object.entries(set.orders)) orders[rid] = { held: o.held || null, lines: Object.values(o.lines) }; await api("charmNestLibrary", { op: "setUpdate", setId: set.setId, patch: { runId: set.runId, day: set.day, seq: set.seq, name: set.name, folder: set.folder, materials: set.materials, sheetIds: set.sheetIds, orders, status: set.status, labels: set.labels || null, labelFiles: set.labelFiles.map(f => ({ path: f.path, url: f.url, sheet: f.sheet, sheetId: f.sheetId, part: f.part, parts: f.parts, orders: f.orders, label: f.label })), committed: set.committed || null, refused: set.refused || null, completedAt: set.completedAt || null, completionDay: set.completionDay || null, committedAt: set.committedAt || null, backCount: set.backCount || 0 } }); }
   const sheetsOf = set => allSheets().filter(sh => sh.setId === set.setId);
   /** Which orders of the set travel, which are held and why (design §5.4, §8.4). */
   function evaluate(set) {
@@ -2542,7 +2621,7 @@ const Sets = window.Sets = (() => {
     const ev = evaluate(set);
     const committable = ev.committable.filter(rid => set.orders[rid]);
     for (const [rid, h] of Object.entries(ev.held)) Review.add({ kind: "heldOrder", key: "held:" + rid, rid, why: `${rid} held — ${h.why || "unresolved line"}`, line: h.line });
-    if (!committable.length) { agent({ run: run.runId }, "warn", `${set.name}: no committable order — ${Object.keys(ev.held).length} held, ${ev.gone.length} gone`); set.status = "complete-with-holds"; set.committed = []; set.refused = Object.entries(ev.held).map(([id, h]) => ({ id, reason: h.why })); await save(set); return { completed: [], refused: set.refused }; }
+    if (!committable.length) { agent({ run: run.runId }, "warn", `${set.name}: no committable order — ${Object.keys(ev.held).length} held, ${ev.gone.length} gone`); set.status = "complete-with-holds"; set.completedAt = Date.now(); set.completionDay = today(); set.committed = []; set.refused = Object.entries(ev.held).map(([id, h]) => ({ id, reason: h.why })); await save(set); return { completed: [], refused: set.refused }; }
     if (!set.labels || !(set.labels.files || []).length) throw new Error("no saved labels for the set");
     await DesignLink.ensure();
     const sel = await DesignLink.call("ui.select", { receiptIds: committable }, { timeoutMs: 120000 });
@@ -2553,7 +2632,7 @@ const Sets = window.Sets = (() => {
     agent({ run: run.runId }, "DS", `Station preview: ${preview.jobs.length} label job(s) for ${ids.length} order(s)${preview.notes && preview.notes.skipped && preview.notes.skipped.length ? ` · ${preview.notes.skipped.length} with no recognised metal` : ""}`);
     const labels = { setId: set.setId, folder: `${set.folder}/labels`, files: set.labels.files.map(f => ({ path: f.path, url: f.url, sheet: f.sheet })), pdf: set.labels.pdf ? set.labels.pdf.url : null };
     const r = await DesignLink.call("complete.commit", { receiptIds: ids, labels, runId: run.runId, setId: set.setId, sheetIds: set.sheetIds, backCount: set.backCount || 0, completedBy: `Charm Sorter (${employeeName() || "operator"})` }, { timeoutMs: 180000 });
-    set.committed = r.completed; set.refused = refused.concat(r.refused || []); set.committedAt = Date.now(); set.status = set.refused.length || Object.keys(ev.held).length ? "complete-with-holds" : "complete";
+    set.committed = r.completed; set.refused = refused.concat(r.refused || []); set.committedAt = Date.now(); set.completedAt = set.committedAt; set.completionDay = today(); set.status = set.refused.length || Object.keys(ev.held).length ? "complete-with-holds" : "complete";
     for (const row of Orders.rows()) if (r.completed.includes(row.order.receiptId) && (row.state === "written" || row.state === "labelled" || row.state === "noDesign")) row.state = "committed";
     await Pool.update([...B.pool.rows.keys()].filter(id => r.completed.includes(B.pool.rows.get(id).orderId)), { state: "committed", committedAt: Date.now() });
     await save(set);
@@ -2562,7 +2641,7 @@ const Sets = window.Sets = (() => {
   }
   async function undo(set) {
     await DesignLink.ensure(); await DesignLink.call("complete.undo", { receiptIds: (set.committed || []).slice() }, { timeoutMs: 180000 });
-    set.status = "awaiting review"; set.committed = []; set.committedAt = null; await save(set);
+    set.status = "awaiting review"; set.committed = []; set.committedAt = null; set.completedAt = null; set.completionDay = null; await save(set);
     await Pool.update([...B.pool.rows.keys()].filter(id => (B.pool.rows.get(id) || {}).setId === set.setId), { state: "written" });
     for (const row of Orders.rows()) if (row.state === "committed") row.state = "written";
     if (B.run && (B.run.setId === set.setId || (B.run.setIds || []).includes(set.setId))) { B.run.status = "review"; B.run.step = "engrave"; await RunCtl.save(B.run); RunCtl.renderBanner(); }
@@ -2580,7 +2659,7 @@ const Sets = window.Sets = (() => {
       group.updatedAt=Math.max(+group.updatedAt || 0,+sheet.updatedAt || 0);
       for (const id of sheet.orders || []) if (!group.orders?.[id]) (group.orders ||= {})[id]={};
     }
-    return [...groups.values()].sort((a,b)=>String(b.day || "").localeCompare(String(a.day || "")) || (+b.seq || 0)-(+a.seq || 0) || (+b.updatedAt || 0)-(+a.updatedAt || 0));
+    return [...groups.values()].sort((a,b)=>a.setId && b.setId ? O.compareCompleted(a,b) : a.setId ? -1 : b.setId ? 1 : String(b.day || "").localeCompare(String(a.day || "")));
   }
   let _cache = null, libraryRequest = 0;
   async function renderLibrary(body, opts) {
@@ -2589,28 +2668,31 @@ const Sets = window.Sets = (() => {
     if (!reuse) body.innerHTML = `<div class="libEmpty">Loading sets…</div>`;
     try {
       if (!reuse) {
-        const [ss, sh] = await Promise.all([api("charmNestLibrary", { op: "setList", from: document.getElementById("libFrom").value || null, to: document.getElementById("libTo").value || null, limit: 200 }), api("charmNestLibrary", { op: "listSheets", from: document.getElementById("libFrom").value || null, to: document.getElementById("libTo").value || null, limit: 500 })]);
+        const [ss, sh] = await Promise.all([api("charmNestLibrary", {op:"setList", includeSheets:true, limit:200}), api("charmNestLibrary", {op:"listSheets", limit:500})]);
         if (request !== libraryRequest || S.library.kind !== "sets") return;
-        _cache = { sets: libraryGroups(ss.sets || [], sh.sheets || []), sheets: sh.sheets || [] };
+        const records = [...new Map([...(sh.sheets || []), ...(ss.sheets || [])].map(r=>[r.id,r])).values()];
+        _cache = {sets:libraryGroups(ss.sets || [], records), sheets:records};
       }
       if (S.library.kind !== "sets") return;
       const sheets = _cache.sheets;
       // the metal chips and the search used to light up and change nothing here: this view read neither
       const metal = S.library.metal && S.library.metal !== "all" ? S.library.metal : null;
       const q = (document.getElementById("libSearch").value || "").trim().toLowerCase();
-      let sets = _cache.sets;
+      const from=document.getElementById("libFrom").value, to=document.getElementById("libTo").value;
+      let sets = _cache.sets.filter(st=>{const day=st.setId ? O.completionDay(st) : st.day;return (!from || day>=from)&&(!to || day<=to);});
       if (metal) sets = sets.filter(st => (st.materials || []).includes(metal));
-      if (q) sets = sets.filter(st => `${st.name || ""} ${st.setId || ""} ${st.day || ""} ${st.runId || ""} ${Object.keys(st.orders || {}).join(" ")} ${(st.sheets || []).flatMap(r=>[r.fileBase,r.names,...(r.backs || []).map(b=>b.text)]).join(" ")}`.toLowerCase().includes(q));
+      if (q) sets = sets.filter(st => `${st.setId ? O.completedTitle(st) : st.name || ""} ${st.setId || ""} ${st.setId ? O.completionDay(st) : st.day || ""} ${st.runId || ""} ${Object.keys(st.orders || {}).join(" ")} ${(st.sheets || []).flatMap(r=>[r.fileBase,r.names,...(r.backs || []).map(b=>b.text)]).join(" ")}`.toLowerCase().includes(q));
       const releasedCount = sets.filter(s=>s.setId).length, workingCount = sets.length-releasedCount;
       document.getElementById("libCount").textContent = `${releasedCount} set${releasedCount === 1 ? "" : "s"}${workingCount ? " · " + workingCount + " working" : ""}`;
       if (!sets.length) { body.innerHTML = `<div class="libEmpty">${q || metal ? "No sets match this filter." : "No sets yet."}</div>`; return; }
       body.innerHTML = "";
+      const dateRows = new Map();
       for (const st of sets) {
         const all = st.sheets.slice().sort((a, b) => (a.metal || "").localeCompare(b.metal || "") || (a.sheetIndex || 0) - (b.sheetIndex || 0));
         const mine = metal ? all.filter(x => x.metal === metal) : all;
         const held = Object.entries(st.orders || {}).filter(([, o]) => o.held);
         const card = el("div", "setCard");
-        card.innerHTML = `${st.standalone || st.working ? `<div class="sh"><span class="nm">${st.standalone ? "14K / 10K Solid Waiting for Approval" : "Incomplete Sheets: Waiting to be filled!"}</span></div>` : `<div class="sh"><span class="nm">${esc(st.name || st.setId)}</span><span class="pill ${/complete/.test(st.status) ? "ok" : st.status === "labelled" ? "info" : "neutral"}">${esc(st.status || "open")}</span><span class="mono" style="font-size:11px;color:var(--ink45)">${esc(st.day)} · run ${esc(st.runId || "—")}</span><span>${mine.length} sheet(s) · ${(st.materials || []).map(m => labelOf(m)).join(", ")}</span><span>${Object.keys(st.orders || {}).length} order(s)</span><span>Engraving · ${st.backCount || mine.reduce((n, x) => n + (x.backCount || 0), 0)}</span><span class="spacer"></span>${st.labels && st.labels.pdf ? `<a class="btn ghost xs" href="${st.labels.pdf.url}" target="_blank" rel="noopener">labels PDF</a>` : ""}${st.labels && st.labels.manifest ? `<a class="btn ghost xs" href="${st.labels.manifest.url}" target="_blank" rel="noopener">manifest</a>` : ""}${st.labels && st.labels.json ? `<a class="btn ghost xs" href="${st.labels.json.url}" target="_blank" rel="noopener">set.json</a>` : ""}${st.setId && /complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div>`}
+        card.innerHTML = `${st.standalone || st.working ? `<div class="sh"><span class="nm">${st.standalone ? "14K / 10K Solid Waiting for Approval" : "Incomplete Sheets: Waiting to be filled!"}</span></div>` : `<div class="sh"><span class="nm">${esc(O.completedTitle(st))}</span>${st.labels?.pdf || st.labels?.manifest || st.labels?.json || /complete/.test(st.status) ? `<details class="setActions"><summary aria-label="Set file menu">⋯</summary><div>${st.labels?.pdf ? `<a href="${st.labels.pdf.url}" target="_blank" rel="noopener">Labels PDF</a>` : ""}${st.labels?.manifest ? `<a href="${st.labels.manifest.url}" target="_blank" rel="noopener">Manifest</a>` : ""}${st.labels?.json ? `<a href="${st.labels.json.url}" target="_blank" rel="noopener">Set data</a>` : ""}${/complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div></details>` : ""}</div>`}
           <div class="sheetsRow">${mine.map(r => `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${cors(r.preview)}" loading="lazy" alt="">` : `<div class="pv ph">no preview</div>`}<div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span>${r.backCount ? `<span>✎ ${r.backCount}</span>` : ""}<span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span></div></div>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
           ${held.length ? `<div class="holds"><b>Held:</b> ${held.map(([rid, o]) => `${esc(rid)} — ${esc(o.held.why || "")}`).join(" · ")}</div>` : ""}
           ${st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}
@@ -2618,7 +2700,15 @@ const Sets = window.Sets = (() => {
         card.querySelectorAll(".libCard").forEach(x => x.onclick = () => openLibrarySheet(x.dataset.id));
         card.querySelectorAll("[data-big]").forEach(img => img.onclick = () => { const d = document.createElement("dialog"); d.className = "wide"; d.innerHTML = `<div class="dlg"><div class="dlgHead"><h3>${esc(img.title)}</h3><div class="right"><button class="btn ghost xs">Close</button></div></div><div class="dlgBody" style="display:grid;place-items:center"><img crossorigin="anonymous" class="labelBig" src="${cors(img.dataset.big)}" alt=""></div></div>`; d.querySelector("button").onclick = () => d.close(); d.addEventListener("close", () => d.remove()); document.body.appendChild(d); d.showModal(); });
         const ub = card.querySelector("[data-undo]"); if (ub) ub.onclick = async () => { if (!confirm(`Undo the completion of ${st.name}? The orders return to the station's list; every file is kept.`)) return; const local = [...byRun().values()].find(x => x.setId === st.setId) || Object.assign({ orders: {}, sheetIds: st.sheetIds || [], materials: st.materials || [], labelFiles: st.labelFiles || [] }, st); byRun().set(local.runId || st.setId, local); try { await undo(local); toast(`${st.name} undone`, "ok"); renderLibrary(body); } catch (e) { toast(e.message, "bad", 6000); } };
-        body.appendChild(card);
+        if (st.setId) {
+          const day=O.completionDay(st);
+          if (!dateRows.has(day)) {
+            const row=el("section","setDateRow"); row.dataset.day=day;
+            const heading=el("h3","setDateHeading"); heading.textContent=day ? new Date(day+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric",year:"numeric"}) : "Date unavailable";
+            row.appendChild(heading); body.appendChild(row); dateRows.set(day,row);
+          }
+          dateRows.get(day).appendChild(card);
+        } else body.appendChild(card);
       }
     } catch (e) { if (request === libraryRequest && S.library.kind === "sets") body.innerHTML = `<div class="libEmpty">Could not load sets: ${esc(e.message)}</div>`; }
   }
@@ -2699,7 +2789,7 @@ const RunCtl = window.RunCtl = (() => {
       case "plan": { for (const m of METALS) { const pg = activePage(m.key); if (!pg.charms.some(c => c.poolId)) continue; const sat = computeSaturation(pg); agent({ metal: m.key, run: r.runId }, "info", `${labelOf(m.key)}: ${sat.count} piece(s) need ${fmt.pct(sat.totalNeeded / sat.usable)} of the plate — ${sat.recommend ? "over the " + fmt.pct(sat.rho.cap) + " ceiling, the overflow goes to a second sheet" : "under the " + fmt.pct(sat.rho.cap) + " ceiling"}`); } return; }
       case "nest": { await nestAll(r); return; }
       case "checkpoint": { await LiveNest.finish(r); await Gate.assemble(r); const sets = Sets.ofRun(r.runId); for (const set of sets) { set.status = "awaiting review"; await Sets.save(set); } r.setIds = sets.map(x => x.setId); r.setId = r.setIds[0] || r.setId || null; r.status = "running"; await save(r); return; }
-      case "engrave": { for (const j of Engrave.items().values()) if (j.state === "approved" && j.row.poolIds.length && Pool.sheetOf(j.row.poolIds[0])) { j.copies = j.row.poolIds.slice(); await Engrave.writeBacks(j); } await Engrave.classifyAll(r); await Engrave.fitAll(r); await waitForReview(r); return; }
+      case "engrave": { for (const j of Engrave.items().values()) if (!j.editingBack && j.state === "approved" && j.copies.length && Pool.sheetOf(j.copies[0])) { j.copies = j.row.poolIds.filter(id=>!(j.copyOverrides || []).includes(id)); await Engrave.writeBacks(j); } await Engrave.classifyAll(r); await Engrave.fitAll(r); await waitForReview(r); return; }
       case "revalidate": { const v = await Orders.revalidate(r, "before labels"); if (v.changed.length && [...Engrave.items().values()].some(j => j.state === "classify")) { agent({ run: r.runId }, "warn", `${v.changed.length} order(s) changed — back to engraving`); return { goto: "engrave" }; } return; }
       case "labels": { for (const set of Sets.ofRun(r.runId).filter(s => s.sheetIds.length)) await Sets.finalize(set); return; }
       case "commit": {
@@ -2837,7 +2927,7 @@ const RunCtl = window.RunCtl = (() => {
     for (const sid of setIds) {
       const sr = await api("charmNestLibrary", { op: "setGet", setId: sid }); const sd = sr.set; if (!sd) continue;
       const set = { setId: sd.setId, seq: sd.seq, day: sd.day, runId: rec.runId, group: sd.group || null, name: sd.name || O.setLabel(sd.seq), folder: sd.folder || O.setFolder(sd.day, sd.seq), orders: Object.fromEntries(Object.entries(sd.orders || {}).map(([rid, o]) => [rid, { held: o.held || null, lines: Object.fromEntries((o.lines || []).map(l => [l.transactionId, l])) }])), sheetIds: sd.sheetIds || [], materials: sd.materials || [], labelFiles: sd.labelFiles || [], labels: sd.labels || null, status: sd.status || "open", committed: sd.committed || null, refused: sd.refused || null, backCount: sd.backCount || 0 };
-      set.committedAt = sd.committedAt || null;
+      set.committedAt = sd.committedAt || null; set.completedAt = sd.completedAt || null; set.completionDay = sd.completionDay || null;
       Sets.byRun().set(Sets.keyOf(rec.runId, set.group), set); sets.push(set);
     }
     const bySet = new Map(sets.map(x => [x.setId, x]));
@@ -3753,7 +3843,7 @@ const Session = window.Session = (() => {
     return { v: 1, at: Date.now(), carry: copy(B.carry, seen), run: copy(B.run, seen), orders: copy(B.orders, seen),
       sources: copy(S.sources, seen), poolSources: copy(S.poolSources, seen), unassigned: copy(S.unassigned, seen),
       sheets: METALS.map(m => ({ metal: m.key, active: S.sheets[m.key].active, pages: allSheets().filter(p => p.metal === m.key).map(p => copy(p, seen)) })),
-      pools: copy(B.pool.rows, seen), sets: copy(B.sets, seen), jobs: [...B.engrave.items.values()].map(j => copy(j, seen)),
+      pools: copy(B.pool.rows, seen), sets: copy(B.sets, seen), jobs: [...B.engrave.items.values()].map(j => ({...copy(j, seen), ...(j.editingBack ? {editRow:copy(j.row, new WeakMap())} : {})})),
       review: B.review.items.map(it => Object.assign(copy(it, seen), { rowKey: it.row?.key, jobKey: it.job?.key })),
       mode: S.mode, orderView: copy(Orders.view()), engravingView: copy(Engrave.view?.()), reviewView: copy(Review.view?.()), settled: copy(Review.settled?.()), gate: copy(Gate.state()), recall: copy(Recall.state()), logs: copy(LiveStrip.rows) };
   }
@@ -3800,8 +3890,8 @@ const Session = window.Session = (() => {
         }
         prim.active = Math.min(group.active || 0, prim.pages.length - 1); CN.showPage(group.metal, prim.active);
       }
-      B.engrave.items = new Map((d.jobs || []).filter(j => B.orders.byKey.has(j.key)).map(j => {
-        j.row = B.orders.byKey.get(j.key); if (j.state === "fitting") j.state = "ready";
+      B.engrave.items = new Map((d.jobs || []).filter(j => j.editingBack && j.editRow || B.orders.byKey.has(j.key)).map(j => {
+        j.row = j.editingBack ? j.editRow : B.orders.byKey.get(j.key); if (j.state === "fitting") j.state = "ready";
         return [j.key, j];
       }));
       B.review.items = (d.review || []).map(it => Object.assign(it, { row: B.orders.byKey.get(it.rowKey), job: B.engrave.items.get(it.jobKey) }));

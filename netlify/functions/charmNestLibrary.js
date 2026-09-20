@@ -473,6 +473,8 @@ async function op_backPut(b) {
       const old = prior.exists ? prior.data() : {};
       if (!sheet.exists || !(sheet.data().poolIds || []).includes(x.poolId)) throw new Error("The target sheet does not contain this exact charm copy");
       if ((old.invalidated && (+old.approvedAt || 0) >= +x.approvedAt) || (+old.approvedAt || 0) > +x.approvedAt || (+old.invalidatedAt || 0) >= +x.approvedAt) throw new Error("This approval has been superseded; reopen the engraving");
+      const currentBack=(sheet.data().backPool || []).find(v=>v.poolId===x.poolId);
+      if(b.expectedApprovedAt != null && +b.expectedApprovedAt !== +(currentBack?.approvedAt || old.approvedAt || 0)) throw new Error("This back was edited elsewhere. Reopen it before saving your changes.");
       const former = old.sheetId && old.sheetId !== x.sheetId ? col(SHEETS).doc(old.sheetId) : null;
       const previous = former ? await tx.get(former) : null;
       const record = Object.assign({}, x, {invalidated:false, updatedAt:FV.serverTimestamp()});
@@ -530,12 +532,20 @@ async function op_setUpdate(b) {
 }
 async function op_setGet(b) { const id = str(b.setId, 80); if (!isId(id)) return { error: "bad set id" }; const s = await col(SETS).doc(id).get(); if (!s.exists) return { set: null }; const d = s.data(); d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt); d.committedAt = ms(d.committedAt) || d.committedAt || null; return { set: d }; }
 async function op_setList(b) {
-  let q = col(SETS).orderBy("day", "desc");
-  if (isDay(b.from)) q = q.where("day", ">=", b.from); if (isDay(b.to)) q = q.where("day", "<=", b.to);
-  const snap = await q.limit(Math.min(500, num(b.limit) || 200)).get();
-  const rows = snap.docs.map(d => { const r = d.data(); r.updatedAt = ms(r.updatedAt); r.createdAt = ms(r.createdAt); return r; });
-  if (b.status) return { sets: rows.filter(r => r.status === b.status) };
-  return { sets: rows };
+  // Completion can occur days after allocation. Filter and sort before limiting;
+  // legacy sets keep their original saved day until an actual completion exists.
+  const snap = await col(SETS).get();
+  let rows = snap.docs.map(d => { const r=d.data(); r.setId ||= d.id; for(const k of ["updatedAt","createdAt","completedAt","committedAt"]) r[k]=ms(r[k]); return r; });
+  rows=rows.filter(r=>(!isDay(b.from) || OrderRules.completionDay(r)>=b.from)&&(!isDay(b.to) || OrderRules.completionDay(r)<=b.to)&&(!b.status || r.status===b.status)).sort(OrderRules.compareCompleted).slice(0,Math.min(500,num(b.limit)||200));
+  const sheets=[];
+  if(b.includeSheets) {
+    const ids=[...new Set(rows.flatMap(r=>r.sheetIds || []))].filter(isId);
+    for(let i=0;i<ids.length;i+=200) {
+      const docs=await db.getAll(...ids.slice(i,i+200).map(id=>col(SHEETS).doc(id)));
+      for(const d of docs) if(d.exists && !d.data().archived) sheets.push(slim(d.data()));
+    }
+  }
+  return {sets:rows, ...(b.includeSheets ? {sheets} : {})};
 }
 // ── release: when each slow material last went out, and the days a person opened one early (shop-wide, not per browser) ──
 async function op_releaseGet() { const s = await col(RELEASE).doc("current").get(); const d = s.exists ? s.data() : {}; return { lastReleased: d.lastReleased || {}, released: d.released || {}, updatedAt: ms(d.updatedAt) }; }
