@@ -136,5 +136,5 @@
   if (typeof document !== 'undefined') {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, {once:true}); else mount();
   }
-  return {placedIds, forSheet, markup, dimensions};
+  return {placedIds, forSheet, markup, dimensions, previewUrl};
 });
