@@ -31,6 +31,12 @@ for (const name of entries) {
   // A forwarding entry preserves original paths for both esbuild and zisi.
   // zisi does not resolve a symlink's relative imports from its real location.
   const text = fs.readFileSync(path.join(source, name), 'utf8');
+  if (/^export default\b/m.test(text)) {
+    const modernConfig = text.match(/^export const config\s*=\s*(\{[\s\S]*?\});/m);
+    if (/^export const config\b/m.test(text) && !modernConfig) throw new Error('Expected literal function config: ' + name);
+    fs.writeFileSync(path.join(output, name), `import handler from '../functions/${name}';\nexport default handler;\n` + (modernConfig ? modernConfig[0] + '\n' : ''));
+    continue;
+  }
   const config = text.match(/^exports\.config\s*=\s*(\{[\s\S]*?\});/m);
   if (/^exports\.config\s*=/m.test(text) && !config) {
     throw new Error('Expected literal inline function config: ' + name);

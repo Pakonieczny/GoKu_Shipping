@@ -931,8 +931,12 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .charmTotal{display:inline-flex;gap:5px;align-items:baseline;white-space:nowrap;font:12px var(--sans);color:var(--ink70)}
 .charmTotal b{font:600 12px var(--mono);color:var(--ink)}
 .topbar .topTools{border-left:1px solid #d5cdbf;padding-left:10px}
-.libFilterGroup,.libDateGroup{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
-.libDateGroup,.libBar #libKind{border-left:1px solid #d5cdbf;padding-left:11px}
+.libFilterGroup{display:flex;align-items:center;gap:7px;flex-wrap:nowrap;border-left:1px solid #d5cdbf;padding-left:11px}
+.libBar #libKind{border-left:1px solid #d5cdbf;padding-left:11px}
+.libBar{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin}
+.libBar>*{flex-shrink:0}
+.libBar input[type=search]{min-width:150px;width:220px;flex:1 1 220px}
+.assetFailed{cursor:pointer;object-fit:contain;color:var(--clay);font:12px var(--sans)}
 .libBar #libKind{border-radius:0;border-top:0;border-right:0;border-bottom:0;background:transparent}
 .placeView .quarterTurns{border-left:1px solid #d5cdbf;padding-left:9px;margin-left:2px}
 @media(max-width:1100px){.ordCompact{gap:8px}.ordCompact .controlGroup+.controlGroup{padding-left:8px}.ordCompact .ordMetal{max-width:106px}.ordCompact .ordSort{max-width:140px}.ordCompact .ordSearch{width:120px}}
@@ -1098,11 +1102,8 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
   .setMenu{position:fixed;top:auto;right:10px;margin-top:6px}
 }
 .sheetExport{display:inline-flex;gap:3px;align-items:center;margin-left:auto;flex:0 0 auto}
-.sheetExport input,[data-export-group]{accent-color:var(--sage);cursor:pointer}
 .libCard .h{flex-wrap:wrap;gap:6px}.sheetExport .btn{padding:3px 5px;font-size:10px}
-.libraryDownloads{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:0 0 12px;font-size:12px}
-.libraryDownloads label{display:flex;align-items:center;gap:4px}.libraryDownloads select{padding:5px;border:1px solid var(--line);border-radius:6px;background:var(--card)}
-.libraryDownloads details{margin-left:auto;max-width:460px;font-size:11px;color:var(--ink70)}
+
 </style>
 </head>
 <body>
@@ -1168,9 +1169,6 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
           <button class="fchip" data-m="rose"><i class="sw"></i>RG 14/20</button>
           <button class="fchip" data-m="gold10k"><i class="sw"></i>10K Gold</button>
           <button class="fchip" data-m="gold14k"><i class="sw"></i>14K Gold</button></span>
-          <span class="libDateGroup"><input type="date" id="libFrom" title="From"><input type="date" id="libTo" title="To">
-          <button class="btn ghost sm" id="libRefresh">Refresh</button>
-          <span class="pill neutral" id="libCount"></span></span>
           <span class="seg" id="libKind"><button type="button" class="on" data-k="sheets">Sheets</button><button type="button" data-k="sets">Sets</button></span>
         </div>
         <div id="libBody"><div class="libEmpty">Loading sheets…</div></div>
@@ -1285,7 +1283,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <dialog id="dlgSheet" class="wide"><div class="dlg">
   <div class="dlgHead"><h3 id="lsTitle">Sheet</h3><div class="right"><button class="btn ghost xs" id="lsClose">Close</button></div></div>
   <div class="dlgBody" id="lsBody"></div>
-  <div class="dlgFoot"><div class="left"><button class="btn danger sm" id="lsDelete">Delete sheet</button></div><button class="btn ghost sm" id="lsDownloads">Download outputs</button><button class="btn ghost sm" id="lsRestore" title="put this saved sheet back on the nesting card — whatever is queued there now is replaced">Restore into card</button></div>
+  <div class="dlgFoot"><div class="left"><button class="btn danger sm" id="lsDelete">Delete sheet</button></div><button class="btn ghost sm" id="lsDownloads">Download .ai</button><button class="btn ghost sm" id="lsRestore" title="put this saved sheet back on the nesting card — whatever is queued there now is replaced">Restore into card</button></div>
 </div></dialog>
 
 <div class="signin hidden" id="signin"><form class="box" id="signinForm">
@@ -1308,6 +1306,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js"></script>
 <script src="charm-nest-geom.js"></script>
+<script src="charm-nest-assets.js"></script>
 <script src="charm-nest-backs.js"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
@@ -1351,10 +1350,8 @@ const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const MM_PER_PT = 25.4 / PT_PER_IN;
 const fmt = { pct: v => Math.round(v * 100) + "%", area: v => Math.round(v * MM_PER_PT * MM_PER_PT).toLocaleString() + " mm²", mm: v => (v * MM_PER_PT).toFixed(1) + " mm", mmN: v => +(v * MM_PER_PT).toFixed(1), s: ms => ms < 60000 ? Math.round(ms / 1000) + "s" : Math.floor(ms / 60000) + "m " + Math.round(ms % 60000 / 1000) + "s" };
-/* A picture the page loads in CORS mode (every cross-origin one, under this page's embedder policy) gets its own cache
-   key: a copy the browser cached from a plain load carries no CORS headers, and handing it to a CORS load broke every
-   preview and label in the Library one afternoon. */
-const cors = u => { u = u == null ? "" : String(u); return u && /firebasestorage\.googleapis\.com|\/imageProxy\?/.test(u) && !/[?&]c=1\b/.test(u) ? u + (u.includes("?") ? "&" : "?") + "c=1" : u; };
+/* Storage redirects are read through the same-origin production asset route. */
+const cors = u => CharmNestAssets.url(u);
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const uid = () => Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
 const today = () => CharmNestOrders.localDay();   // one local clock decides the folder date and the name date
@@ -1384,7 +1381,7 @@ function closeDlg(el) { if (!el) return; try { el.close(); } catch (_) { el.remo
 function download(bytes, name, type) {
   const blob = bytes instanceof Blob ? bytes : new Blob([bytes], { type: type || "application/octet-stream" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
-  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 60000);
 }
 function ding() {
   if (S.settings.sound !== "on") return;
@@ -2934,14 +2931,13 @@ function drawRecalled(sh, cv) {
   const w = Math.round(wrap.clientWidth * devicePixelRatio), h = Math.round(w * st.hPt / st.wPt);
   if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
   const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
-  if (!r.preview) { ctx.fillStyle = "#9a9388"; ctx.font = `${Math.round(w / 40)}px sans-serif`; ctx.textAlign = "center"; ctx.fillText("no preview was saved for this sheet", w / 2, h / 2); return; }
-  if (sh._img && sh._img.src === r.previewSrc && sh._img.complete && sh._img.naturalWidth) { ctx.drawImage(sh._img, 0, 0, w, h); return; }
-  if (!sh._img || sh._img.src !== r.previewSrc) {
-    r.previewSrc = r.previewSrc || (r.preview + (r.preview.includes("?") ? "&" : "?") + "v=" + (r.updatedAt || 0));
-    const img = new Image(); img.crossOrigin = "anonymous"; img.decoding = "async"; sh._img = img;
+  if (sh._img && sh._imgSource === r.previewSrc && sh._img.complete && sh._img.naturalWidth) { ctx.drawImage(sh._img, 0, 0, w, h); return; }
+  if (!sh._img || sh._imgSource !== r.previewSrc) {
+    r.previewSrc = r.previewSrc || (r.preview ? r.preview + (r.preview.includes("?") ? "&" : "?") + "v=" + (r.updatedAt || 0) : "");
+    const img = new Image(); img.crossOrigin = "anonymous"; img.decoding = "async"; sh._img = img; sh._imgSource=r.previewSrc;
     img.onload = () => { if (sh.el) drawPreview(sh); };
     img.onerror = () => { sh._imgFailed = true; if (sh.el) { const c2 = $(`[data-r="canvas"]`, sh.el); if (c2) { const x = c2.getContext("2d"); x.fillStyle = "#9a9388"; x.font = `${Math.round(c2.width / 40)}px sans-serif`; x.textAlign = "center"; x.fillText("the saved preview could not be loaded", c2.width / 2, c2.height / 2); } } };
-    img.src = r.previewSrc;
+    CharmNestAssets.sheetImage(img,sh.sheetId || r.id,r.previewSrc).then(()=>{sh._imgFailed=false;if(sh.el)drawPreview(sh);}).catch(()=>img.onerror());
   }
   ctx.fillStyle = "#9a9388"; ctx.font = `${Math.round(w / 40)}px sans-serif`; ctx.textAlign = "center"; ctx.fillText("loading the saved sheet…", w / 2, h / 2);
 }
@@ -3103,7 +3099,7 @@ async function loadLibrary(context) {
   if (!S.cloud.ok) { body.innerHTML = `<div class="libEmpty">Cloud offline — the library needs the Netlify functions.</div>`; return; }
   if (S.library.kind === "sets" && window.Sets) return Sets.renderLibrary(body);
   try {
-    const r = await api("charmNestLibrary", { op: "listSheets", metal: S.library.metal === "all" ? null : S.library.metal, from: $("#libFrom").value || null, to: $("#libTo").value || null, limit: 300 }, { label: "Loading library" });
+    const r = await api("charmNestLibrary", { op: "listSheets", metal: S.library.metal === "all" ? null : S.library.metal, limit: 300 }, { label: "Loading library" });
     if (loadId !== libraryLoadId || S.library.kind === "sets") return;
     S.library.rows = window.Gate?.projectLibraryRecords(r.sheets || []) || r.sheets || []; renderLibrary();
   } catch (e) { if (loadId === libraryLoadId) body.innerHTML = `<div class="libEmpty">Could not load: ${esc(e.message)}</div>`; }
@@ -3129,9 +3125,8 @@ function renderLibrary() {
   // one record per sheet name, the newest: a re-nested sheet keeps its name, and the library could hold its stale twin
   const newest = new Map(); for (const r of rows0) { const k = r.folder || r.fileBase || r.id; const had = newest.get(k); if (!had || (r.updatedAt || 0) > (had.updatedAt || 0)) newest.set(k, r); }
   const rows = [...newest.values()];
-  $("#libCount").textContent = `${rows.length} sheet${rows.length === 1 ? "" : "s"}`;
   const body = $("#libBody"); if (!rows.length) { body.innerHTML = `<div class="libEmpty">No sheets match.</div>`; return; }
-  const card = (r, i) => { const m = metalOf(r), sn = setNo(r); return `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}" title="${esc(r.folder || r.id)}">${sheetHead(r, {inFan:r._inFan})}<div data-back-sheet="${esc(r.id)}">${window.Engrave ? Engrave.backsMarkup(r) : ""}</div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${cors(r.preview)}" loading="lazy" alt="">` : `<div class="pv ph">${r.saving ? "saving files…" : "no preview"}</div>`}<div class="m"><span title="charms placed of the charms asked for"><b>${r.placedCount}</b>/${r.charmCount}</span><span title="how full the sheet is"><b>${Math.round((r.density || 0) * 100)}%</b></span><span title="metal left free">${fmt.area(r.freePt2 || 0)}</span>${r.status === "complete" ? "" : `<span class="pill bad" style="padding:2px 7px">${esc(r.status)}</span>`}${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`; };
+  const card = (r, i) => { const m = metalOf(r), sn = setNo(r); return `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}" title="${esc(r.folder || r.id)}">${sheetHead(r, {inFan:r._inFan})}<div data-back-sheet="${esc(r.id)}">${window.Engrave ? Engrave.backsMarkup(r) : ""}</div><img class="pv" data-sheet-preview="${esc(r.id)}" crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span title="charms placed of the charms asked for"><b>${r.placedCount}</b>/${r.charmCount}</span><span title="how full the sheet is"><b>${Math.round((r.density || 0) * 100)}%</b></span><span title="metal left free">${fmt.area(r.freePt2 || 0)}</span>${r.status === "complete" ? "" : `<span class="pill bad" style="padding:2px 7px">${esc(r.status)}</span>`}${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`; };
   // a set = the sheets of one run: same day and the same source files (runId when the record has one)
   const setKey = r => CharmNestOrders.libraryGroup(r).key;
   const waiting = rows.filter(r => CharmNestOrders.libraryGroup(r).standalone);
@@ -3178,12 +3173,12 @@ async function openLibrarySheet(id) {
     $("#lsTitle").textContent = d.folder ? `${d.folder}` : `${d.metalLabel} · ${d.id} · ${d.day}`;
     $("#lsBody").innerHTML = `
       <div style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:16px;align-items:start">
-        <div><div data-back-sheet="${esc(d.id)}">${window.Engrave ? Engrave.backsMarkup(d) : ""}</div>${d.outputs && d.outputs.preview ? `<img crossorigin="anonymous" src="${cors(d.outputs.preview.url)}" style="width:100%;border:1px solid var(--line);border-radius:10px;background:#fff">` : `<div class="libEmpty">${d.saving ? "files are still uploading — reopen in a moment" : "no preview"}</div>`}</div>
+        <div><div data-back-sheet="${esc(d.id)}">${window.Engrave ? Engrave.backsMarkup(d) : ""}</div><img data-sheet-preview="${esc(d.id)}" crossorigin="anonymous"${d.outputs?.preview?.url ? ` src="${esc(cors(d.outputs.preview.url))}"` : ""} style="width:100%;border:1px solid var(--line);border-radius:10px;background:#fff" alt="Sheet preview"></div>
         <div><dl class="kv"><dt>Status</dt><dd>${esc(d.status)} · ${esc(endedText(d.endedBy))}</dd><dt>Placed</dt><dd>${d.placedCount} / ${d.charmCount}${d.rejectCount ? ` · ${d.rejectCount} rejected` : ""}</dd><dt>Density</dt><dd>${Math.round((d.density || 0) * 100)}% · ${fmt.area(d.freePt2 || 0)} free</dd><dt>Stock</dt><dd>${d.stock ? `${fmt.mm(d.stock.wIn * PT_PER_IN)} × ${fmt.mm(d.stock.hIn * PT_PER_IN)}` : "—"}</dd><dt>Seed · clearance</dt><dd>${d.params ? `${d.params.seed} · ${fmt.mm(d.params.clearancePt)} · ${d.params.angles.length} angles` : "—"}</dd><dt>Verification</dt><dd>${d.verification ? (d.verification.ok ? "passed" : "flagged") + (d.verification.minGapPt != null ? ` · min gap ${fmt.mm(d.verification.minGapPt)}` : "") : "—"}</dd><dt>Sources</dt><dd>${(d.sources || []).map(s => s.url ? `<a href="${s.url}" target="_blank" rel="noopener">${esc(s.name)}</a>` : esc(s.name)).join(", ") || "—"}</dd></dl>
         <div class="section">Outputs</div><div style="display:flex;gap:6px;flex-wrap:wrap">${ProductionExports.sheetControls(d.id)}${d.outputs ? ["labelled", "report"].filter(k => d.outputs[k]).map(k => `<a class="btn ghost xs" href="${d.outputs[k].url}" target="_blank" rel="noopener">${k === "labelled" ? "labelled proof" : k === "report" ? "nest-report.json" : "." + k}</a>`).join("") : "none"}</div></div></div>
       <div class="section">Charms · ${(d.charms || []).length}</div>
       <div class="charmGrid">${(d.charms || []).map(c => `<div class="charmTile hoverItem">${c.thumbUrl ? `<img crossorigin="anonymous" src="${cors(c.thumbUrl)}" loading="lazy" alt="">` : ""}<div class="nm">${esc(c.name || "#" + (c.index + 1))}</div><div class="meta">${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}${c.qty > 1 ? ` · ×${c.qty}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("")}</div>`;
-    $("#lsDownloads").onclick = () => ProductionExports.run([d.id], document.getElementById("exportFormat").value);
+    $("#lsDownloads").onclick = () => ProductionExports.run([d.id], "ai");
     $("#lsRestore").onclick = () => restoreSheet(d);
     $("#lsDelete").onclick = async () => {
       const code = prompt(`Delete sheet ${d.folder || d.id} permanently — its record, .ai, proof, report and preview? Enter the passcode to confirm.`);
@@ -3206,7 +3201,7 @@ async function restoreSheet(d) {
   const files = [];
   for (const s of d.sources || []) {
     if (!s.url) { toast(`${s.name}: source file was never backed up`, "bad"); continue; }
-    try { const b = await fetch(s.url).then(r => r.arrayBuffer()); files.push(new File([b], s.name, { type: "application/pdf" })); } catch (e) { toast(`${s.name}: download failed`, "bad"); }
+    try { const b = await CharmNestAssets.bytes(s.url); files.push(new File([b], s.name, { type: "application/pdf" })); } catch (e) { toast(`${s.name}: download failed`, "bad"); }
   }
   const before = new Set(S.sources.map(s => s.id));
   await intake(files, d.metal);
@@ -3397,7 +3392,7 @@ async function boot() {
   $$("#libKind button").forEach(b => b.onclick = () => { $$("#libKind button").forEach(x => x.classList.toggle("on", x === b)); S.library.kind = b.dataset.k; loadLibrary(); });
   $("#rpClose").onclick = () => closeDlg($("#dlgReport")); $("#lsClose").onclick = () => closeDlg($("#dlgSheet"));
   $$("#libView .fchip").forEach(b => b.onclick = () => { $$("#libView .fchip").forEach(x => x.classList.toggle("on", x === b)); S.library.metal = b.dataset.m; if (S.library.kind === "sets" && window.Sets) Sets.renderLibrary($("#libBody"), { reuse: true }); else loadLibrary(); });
-  $("#libSearch").oninput = () => (S.library.kind === "sets" ? Sets.renderLibrary($("#libBody"), { reuse: true }) : renderLibrary()); $("#libRefresh").onclick = loadLibrary; $("#libFrom").onchange = loadLibrary; $("#libTo").onchange = loadLibrary;
+  $("#libSearch").oninput = () => (S.library.kind === "sets" ? Sets.renderLibrary($("#libBody"), { reuse: true }) : renderLibrary());
   // the two search boxes on adjacent tabs must behave the same: type and it searches, and the native × clears it.
   // Debounced rather than per keystroke, because this one is a network call.
   $("#charmRefresh").onclick = loadCharms;

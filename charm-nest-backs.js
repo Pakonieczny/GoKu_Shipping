@@ -40,6 +40,7 @@
   // with the same separate cache key as front previews (plain cached responses
   // may lack Access-Control-Allow-Origin). Inline approval previews stay local.
   function previewUrl(value) {
+    if(typeof CharmNestAssets!=='undefined')return CharmNestAssets.url(safeUrl(value));
     const url = safeUrl(value);
     if (!/^https?:\/\//i.test(url)) return url;
     try {

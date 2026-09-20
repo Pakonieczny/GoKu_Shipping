@@ -9,6 +9,7 @@
     "charmEngrave-background.js",
     "charmMaster-background.js",
     "charmNestAgent-background.js",
+    "charmNestAsset.js",
     "charmNestCheck.js",
     "charmNestLibrary.js",
     "charmNestName.js",
@@ -166,6 +167,7 @@
   ],
   "modules": [
     "_charmNestAgent.js",
+    "_charmNestAsset.js",
     "_charmNestAuth.js",
     "_charmNestMaster.js",
     "_charmNestPdf.js",

@@ -715,7 +715,7 @@ const Orders = window.Orders = (() => {
       if (cards) {
         node.innerHTML =
           '<span class="oimg" data-lid="' + esc(lid) + '"' + (url ? ' data-painted="1"' : "") + '>' +
-            (url ? '<img crossorigin="anonymous" loading="lazy" alt="" src="' + esc(cors(url)) + '" onerror="this.remove()">' : '<span class="ph">' + (lid ? 'loading…' : 'no image') + '</span>') +
+            (url ? '<img crossorigin="anonymous" loading="lazy" alt="" src="' + esc(cors(url)) + '">' : '<span class="ph">' + (lid ? 'loading…' : 'no image') + '</span>') +
             (qty > 1 ? P("qty", "×" + qty) : "") +
             (attn ? '<span class="flag" title="' + esc(why) + '">!</span>' : "") +
           '</span>' +
@@ -1257,7 +1257,7 @@ const Pool = window.Pool = (() => {
     const key = geom.aiPath;
     if (B.pool.sources.has(key)) return B.pool.sources.get(key);
     const url = geom.aiUrl || (await api("charmNestOutput", { op: "url", path: geom.aiPath })).url;
-    const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer());
+    const bytes = await CharmNestAssets.bytes(url);
     const parsed = await P.parseSource(bytes, `${entry.sku}.ai`);
     const g = P.groupCharms(parsed, { minPt: +S.settings.minPt || 6 });
     if (!g.charms.length) throw new Error(`${entry.sku}: no outline in the master copy`);
@@ -2296,7 +2296,7 @@ const Engrave = window.Engrave = (() => {
       const page = doc.addPage([612, 792]); page.drawText(`${sh.fileBase} · engraved backs ${i + 1}–${Math.min(backs.length, i + per)} of ${backs.length}`, { x: 36, y: 756, size: 12, font });
       for (let j = 0; j < per && i + j < backs.length; j++) {
         const b = backs[i + j]; const col = j % 2, row = Math.floor(j / 2); const x = 36 + col * 280, y = 720 - row * 230;
-        try { if (b.outputs && b.outputs.png && b.outputs.png.url) { const pngBytes = await (await fetch(b.outputs.png.url)).arrayBuffer(); const img = await doc.embedPng(pngBytes); const s = Math.min(150 / img.width, 150 / img.height); page.drawImage(img, { x, y: y - 150, width: img.width * s, height: img.height * s }); } } catch (_) { /* thumbnail optional */ }
+        try { if (b.outputs && b.outputs.png && b.outputs.png.url) { const pngBytes = await CharmNestAssets.bytes(b.outputs.png.url); const img = await doc.embedPng(pngBytes); const s = Math.min(150 / img.width, 150 / img.height); page.drawImage(img, { x, y: y - 150, width: img.width * s, height: img.height * s }); } } catch (_) { /* thumbnail optional */ }
         const lines = [`${b.order} · ${b.sku} · copy ${b.copy}`, `"${String(b.text).replace(/\n/g, " / ")}"`, `${b.font} ${b.weight} · ${b.sizePt} pt · cap ${b.capMm} mm${b.angle ? ` · ${b.angle}°` : ""}${b.small ? " · SMALL" : ""}`, `approved by ${b.approvedBy || "—"} ${b.approvedAt ? new Date(b.approvedAt).toLocaleString() : ""}`];
         lines.forEach((t, k) => page.drawText([...t].map(c=>font.getCharacterSet().includes(c.codePointAt(0)) ? c : "?").join("").slice(0, 60), { x, y: y - 165 - k * 12, size: 8, font, color: rgb(0.1, 0.1, 0.1) }));
       }
@@ -2724,10 +2724,12 @@ const Sets = window.Sets = (() => {
       try { make(QRCode.CorrectLevel.M); } catch (e) { make(QRCode.CorrectLevel.L); ecc = "L"; }
       await new Promise(r => setTimeout(r, 30));
       const qcv = holder.querySelector("canvas"); const qimg = holder.querySelector("img");
-      if (qcv) ctx.drawImage(qcv, 3 * k, 3 * k, 85 * k, 85 * k); else if (qimg) { await new Promise(r => { if (qimg.complete) r(); else qimg.onload = r; }); ctx.drawImage(qimg, 3 * k, 3 * k, 85 * k, 85 * k); }
+      if (qcv?.width && qcv?.height) ctx.drawImage(qcv, 3 * k, 3 * k, 85 * k, 85 * k);
+      else if (qimg) { await qimg.decode(); if(!qimg.naturalWidth)throw new Error("QR image did not render"); ctx.drawImage(qimg, 3 * k, 3 * k, 85 * k, 85 * k); }
+      else throw new Error("QR code did not render — retry the label");
     } finally { holder.remove(); }
     ctx.fillStyle = "#000"; ctx.textBaseline = "top"; ctx.font = `bold ${9 * k}px Helvetica, Arial, sans-serif`; ctx.fillText(label, 1 * k, 93 * k, 143 * k); ctx.fillText("Notes:", 92 * k, 0.5 * k);
-    const blob = await new Promise(r => cv.toBlob(r, "image/png")); return { blob, dataUrl: cv.toDataURL("image/png"), ecc };
+    const blob = await new Promise(r => cv.toBlob(r, "image/png")); if(!blob)throw new Error("QR preview could not be saved"); return { blob, dataUrl: cv.toDataURL("image/png"), ecc };
   }
   /** After a sheet is saved: its label(s) beside it, the sheet record and the set record kept current, pool rows → written. */
   function labelsReady(sh, set) {
@@ -2774,7 +2776,7 @@ const Sets = window.Sets = (() => {
     agent({ metal: sh.metal, run: sh.runId }, "cloud", `${sh.fileBase}: ${files.length} label${files.length === 1 ? "" : "s"} saved (${ids.length} order${ids.length === 1 ? "" : "s"}) · set ${set.name} now ${set.sheetIds.length} sheet(s)`);
     Orders.render();
   }
-  async function save(set, context) { if(window.CharmNestOperations && !context)return window.CharmNestOperations.run({key:'set-save:'+set.setId,label:'Saving set record',resources:['set-record:'+set.setId],latest:true},token=>save(set,token)); if (!S.cloud.ok || set.offline) return; const orders = {}; for (const [rid, o] of Object.entries(set.orders)) orders[rid] = { held: o.held || null, lines: Object.values(o.lines) }; await api("charmNestLibrary", { op: "setUpdate", setId: set.setId, patch: { runId: set.runId, day: set.day, seq: set.seq, name: set.name, folder: set.folder, materials: set.materials, sheetIds: set.sheetIds, orders, status: set.status, labels: set.labels || null, labelFiles: set.labelFiles.map(f => ({ path: f.path, url: f.url, sheet: f.sheet, sheetId: f.sheetId, part: f.part, parts: f.parts, orders: f.orders, label: f.label })), committed: set.committed || null, refused: set.refused || null, completedAt: set.completedAt || null, completionDay: set.completionDay || null, committedAt: set.committedAt || null, backCount: set.backCount || 0 } }); }
+  async function save(set, context) { if(window.CharmNestOperations && !context)return window.CharmNestOperations.run({key:'set-save:'+set.setId,label:'Saving set record',resources:['set-record:'+set.setId],latest:true},token=>save(set,token)); if (!S.cloud.ok || set.offline) return; const orders = {}; for (const [rid, o] of Object.entries(set.orders)) orders[rid] = { held: o.held || null, lines: Object.values(o.lines) }; await api("charmNestLibrary", { op: "setUpdate", setId: set.setId, patch: { runId: set.runId, day: set.day, seq: set.seq, name: set.name, folder: set.folder, materials: set.materials, sheetIds: set.sheetIds, orders, status: set.status, labels: set.labels || null, labelFiles: set.labelFiles.map(f => ({ path: f.path, url: f.url, sheet: f.sheet, sheetId: f.sheetId, part: f.part, parts: f.parts, orders: f.orders, payload:f.payload || null, metal:f.metal || null, ecc:f.ecc || null, label: f.label })), committed: set.committed || null, refused: set.refused || null, completedAt: set.completedAt || null, completionDay: set.completionDay || null, committedAt: set.committedAt || null, backCount: set.backCount || 0 } }); }
   const sheetsOf = set => allSheets().filter(sh => sh.setId === set.setId);
   /** Which orders of the set travel, which are held and why (design §5.4, §8.4). */
   function evaluate(set) {
@@ -2820,7 +2822,7 @@ const Sets = window.Sets = (() => {
     const { PDFDocument, StandardFonts, rgb } = PDFLib;
     const files = set.labelFiles.slice().sort((a, b) => a.sheet.localeCompare(b.sheet) || a.part - b.part);
     const labels = await PDFDocument.create();
-    for (const f of files) { const bytes = f.url ? await (await fetch(f.url)).arrayBuffer() : dataUrlToBytes(f.dataUrl); const img = await labels.embedPng(bytes); const page = labels.addPage([145, 145]); page.drawImage(img, { x: 0, y: 0, width: 145, height: 145 }); }
+    for (const f of files) { const bytes = f.url ? await CharmNestAssets.bytes(f.url) : dataUrlToBytes(f.dataUrl); const img = await labels.embedPng(bytes); const page = labels.addPage([145, 145]); page.drawImage(img, { x: 0, y: 0, width: 145, height: 145 }); }
     const ev = evaluate(set);
     const man = await PDFDocument.create(); const font = await man.embedFont(StandardFonts.Helvetica), bold = await man.embedFont(StandardFonts.HelveticaBold);
     let page = man.addPage([612, 792]), y = 756;
@@ -2911,12 +2913,9 @@ const Sets = window.Sets = (() => {
       // the metal chips and the search used to light up and change nothing here: this view read neither
       const metal = S.library.metal && S.library.metal !== "all" ? S.library.metal : null;
       const q = (document.getElementById("libSearch").value || "").trim().toLowerCase();
-      const from=document.getElementById("libFrom").value, to=document.getElementById("libTo").value;
-      let sets = _cache.sets.filter(st=>{const day=st.setId ? O.completionDay(st) : st.day;return (!from || day>=from)&&(!to || day<=to);});
+      let sets = _cache.sets;
       if (metal) sets = sets.filter(st => (st.materials || []).includes(metal));
       if (q) sets = sets.filter(st => `${st.setId ? O.completedTitle(st) : st.name || ""} ${st.setId || ""} ${st.setId ? O.completionDay(st) : st.day || ""} ${st.runId || ""} ${Object.keys(st.orders || {}).join(" ")} ${(st.sheets || []).flatMap(r=>[r.fileBase,r.names,...(r.backs || []).map(b=>b.text)]).join(" ")}`.toLowerCase().includes(q));
-      const releasedCount = sets.filter(s=>s.setId).length, workingCount = sets.length-releasedCount;
-      document.getElementById("libCount").textContent = `${releasedCount} set${releasedCount === 1 ? "" : "s"}${workingCount ? " · " + workingCount + " working" : ""}`;
       if (!sets.length) { body.innerHTML = `<div class="libEmpty">${q || metal ? "No sets match this filter." : "No sets yet."}</div>`; return; }
       body.innerHTML = "";
       const dateRows = new Map();
@@ -2926,12 +2925,12 @@ const Sets = window.Sets = (() => {
         const held = Object.entries(st.orders || {}).filter(([, o]) => o.held);
         const card = el("div", "setCard");
         card.innerHTML = `${st.standalone || st.working ? `<div class="sh"><span class="nm">${st.standalone ? "14K / 10K Solid Waiting for Approval" : "Incomplete Sheets: Waiting to be filled!"}</span></div>` : `<div class="sh"><span class="nm">${esc(O.completedTitle(st))}</span>${st.labels?.pdf || st.labels?.manifest || st.labels?.json || /complete/.test(st.status) ? `<details class="setActions"><summary aria-label="Set file menu">⋯</summary><div>${st.labels?.pdf ? `<a href="${st.labels.pdf.url}" target="_blank" rel="noopener">Labels PDF</a>` : ""}${st.labels?.manifest ? `<a href="${st.labels.manifest.url}" target="_blank" rel="noopener">Manifest</a>` : ""}${st.labels?.json ? `<a href="${st.labels.json.url}" target="_blank" rel="noopener">Set data</a>` : ""}${/complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div></details>` : ""}</div>`}
-          <div class="sheetsRow">${mine.map(r => `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div>${r.preview ? `<img class="pv" crossorigin="anonymous" src="${cors(r.preview)}" loading="lazy" alt="">` : `<div class="pv ph">no preview</div>`}<div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span>${r.backCount ? `<span>✎ ${r.backCount}</span>` : ""}<span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span></div></div>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
+          <div class="sheetsRow">${mine.map(r => `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${esc(r.id)}" crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span>${r.backCount ? `<span>✎ ${r.backCount}</span>` : ""}<span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span></div></div>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
           ${held.length ? `<div class="holds"><b>Held:</b> ${held.map(([rid, o]) => `${esc(rid)} — ${esc(o.held.why || "")}`).join(" · ")}</div>` : ""}
           ${st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}
-          <div class="labels">${(st.labelFiles || []).map(f => f.url ? `<img crossorigin="anonymous" src="${cors(f.url)}" title="${esc(f.label || f.sheet)}" data-big="${f.url}" alt="">` : "").join("")}</div>`;
+          <div class="labels">${(st.labelFiles || []).map(f => `<img data-label-sheet="${esc(f.sheetId || "")}" data-label-path="${esc(f.path || "")}" data-label-part="${+f.part || 1}" crossorigin="anonymous"${f.url ? ` src="${esc(cors(f.url))}"` : ""} title="${esc(f.label || f.sheet)}" data-big="${esc(f.url || "")}" alt="Sheet QR code">`).join("")}</div>`;
         card.querySelectorAll(".libCard").forEach(x => x.onclick = () => openLibrarySheet(x.dataset.id));
-        card.querySelectorAll("[data-big]").forEach(img => img.onclick = () => { const d = document.createElement("dialog"); d.className = "wide"; d.innerHTML = `<div class="dlg"><div class="dlgHead"><h3>${esc(img.title)}</h3><div class="right"><button class="btn ghost xs">Close</button></div></div><div class="dlgBody" style="display:grid;place-items:center"><img crossorigin="anonymous" class="labelBig" src="${cors(img.dataset.big)}" alt=""></div></div>`; d.querySelector("button").onclick = () => d.close(); d.addEventListener("close", () => d.remove()); document.body.appendChild(d); d.showModal(); });
+        card.querySelectorAll("[data-big]").forEach(img => img.onclick = () => { const d = document.createElement("dialog"); d.className = "wide"; d.innerHTML = `<div class="dlg"><div class="dlgHead"><h3>${esc(img.title)}</h3><div class="right"><button class="btn ghost xs">Close</button></div></div><div class="dlgBody" style="display:grid;place-items:center"><img crossorigin="anonymous" class="labelBig" src="${esc(img.src)}" alt=""></div></div>`; d.querySelector("button").onclick = () => d.close(); d.addEventListener("close", () => d.remove()); document.body.appendChild(d); d.showModal(); });
         const ub = card.querySelector("[data-undo]"); if (ub) ub.onclick = async () => { if (!confirm(`Undo the completion of ${st.name}? The orders return to the station's list; every file is kept.`)) return; const local = [...byRun().values()].find(x => x.setId === st.setId) || Object.assign({ orders: {}, sheetIds: st.sheetIds || [], materials: st.materials || [], labelFiles: st.labelFiles || [] }, st); byRun().set(local.runId || st.setId, local); try { await undo(local); toast(`${st.name} undone`, "ok"); renderLibrary(body); } catch (e) { toast(e.message, "bad", 6000); } };
         if (st.setId) {
           const day=O.completionDay(st);
@@ -3912,12 +3911,12 @@ const RunHistory = window.RunHistory = (() => {
       const resumeBtn = g.runId && openRuns.some(r => r.runId === g.runId) ? `<button class="btn ghost sm" data-a="resume" title="pick the unfinished run this set belongs to up where it stopped \u2014 it re-reads every order from Etsy first">Resume the run\u2026</button>` : "";
       html += H.view === "cards"
         ? `<div class="hSet card hoverItem${isCur ? " cur" : ""}" data-group="${esc(g.key || g.setId || "")}" data-set="${esc(g.setId || "")}" data-run="${esc(g.runId || "")}" tabindex="0">
-            ${g.thumb ? `<img crossorigin="anonymous" class="hThumb" loading="lazy" alt="" src="${esc(cors(g.thumb))}" title="${esc(g.thumbOf || "")}" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'hThumb ph',textContent:'no preview'}))">` : `<div class="hThumb ph">no preview</div>`}
+            ${g.thumb ? `<img crossorigin="anonymous" class="hThumb" loading="lazy" alt="" src="${esc(cors(g.thumb))}" title="${esc(g.thumbOf || "")}">` : `<div class="hThumb ph">no preview</div>`}
             <div class="hRow"><span class="nm">${esc(name)}</span><span class="pill ${g.status === "complete" ? "ok" : "bad"}">${g.status}</span><span class="ct">${g.sheets.length} sheet${g.sheets.length === 1 ? "" : "s"} \u00b7 ${g.orders} order${g.orders === 1 ? "" : "s"}</span></div>
             <div class="hRow sub"><span class="ct">${esc(mats)}</span><span class="sp"></span>${isCur ? `<span class="pill neutral">on the cards</span>` : openBtn}${exportButtons}${resumeBtn}</div>
           </div>`
         : `<div class="hSet row hoverItem${isCur ? " cur" : ""}" data-group="${esc(g.key || g.setId || "")}" data-set="${esc(g.setId || "")}" data-run="${esc(g.runId || "")}"><div class="hRow">
-            ${g.thumb ? `<img crossorigin="anonymous" class="hMini" loading="lazy" alt="" src="${esc(cors(g.thumb))}" onerror="this.remove()">` : `<span class="hMini ph"></span>`}
+            ${g.thumb ? `<img crossorigin="anonymous" class="hMini" loading="lazy" alt="" src="${esc(cors(g.thumb))}">` : `<span class="hMini ph"></span>`}
             <span class="nm">${esc(name)}</span><span class="pill ${g.status === "complete" ? "ok" : "bad"}">${g.status}</span>
             <span class="ct">${esc(mats)} \u00b7 ${g.sheets.length} sheet${g.sheets.length === 1 ? "" : "s"} \u00b7 ${g.orders} order${g.orders === 1 ? "" : "s"}</span><span class="sp"></span>${isCur ? `<span class="pill neutral">on the cards</span>` : openBtn}${exportButtons}${resumeBtn}</div></div>`;
     }
