@@ -1,8 +1,8 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const src=fs.readFileSync('charm-nest-bridge.js','utf8');
 let result, sent;
-const ctx={S:{settings:{engraveConfidence:.65}},Master:{entryFor:()=>({engravable:false})},ensureJob:row=>(row.job ||= {row,copies:['copy']}),agentCall:async(mode,payload)=>{sent=payload;return result},agent(){},setReady:async j=>{j.state='ready';j.row.engrave={needed:true,approved:false};return j},toWords:(j,why)=>{j.state='words';j.reason=why;return j},setNone:(j,why)=>{j.state='none';j.reason=why}};
-vm.createContext(ctx);vm.runInContext(src.slice(src.indexOf('  async function classify(row)'),src.indexOf('  function setNone(job')),ctx);
+const ctx={render(){},S:{settings:{engraveConfidence:.65}},Master:{entryFor:()=>({engravable:false})},ensureJob:row=>(row.job ||= {row,copies:['copy']}),agentCall:async(mode,payload)=>{sent=payload;return result},agent(){},setReady:async j=>{j.state='ready';j.row.engrave={needed:true,approved:false};return j},toWords:(j,why)=>{j.state='words';j.reason=why;return j},setNone:(j,why)=>{j.state='none';j.reason=why}};
+vm.createContext(ctx);vm.runInContext(src.slice(src.indexOf('  const classifyTasks ='),src.indexOf('  function setNone(job')),ctx);
 const row=()=>({order:{receiptId:'test'},line:{title:'Sheep'},spec:{engraveCandidate:true,designSku:'SHEEP3',personalization:['S'],size:'M'}});
 (async()=>{
  result={engrave:true,text:'S',source:'personalization',confidence:.5,questions:['The design is listed as not engravable'],requests:{side:'back'}};
@@ -15,10 +15,14 @@ const row=()=>({order:{receiptId:'test'},line:{title:'Sheep'},spec:{engraveCandi
  const jobs=[{state:'words',row:{},lines:['S'],copies:['1'],questions:['The design is not engravable']},{state:'words',row:{},lines:['?'],copies:['2'],missing:['?']},{state:'written',row:{},lines:['Saved'],copies:['3']},{state:'words',row:{},lines:[],copies:['4']}];
  let fits=0,ready=0,release;const pause=new Promise(r=>release=r);
  jobs.forEach((j,i)=>j.key=i);
- const rc={setTimeout,items:()=>new Map(jobs.map((j,i)=>[i,j])),setReady:async(j,wake)=>{assert.equal(wake,false);ready++;await pause;j.state='ready'},sheetFor:()=>({fileBase:'saved'}),fitJob:async j=>{fits++;j.state='review'},render(){},RunCtl:{poke(){}}};vm.createContext(rc);vm.runInContext(src.slice(src.indexOf('  let previewRecovery ='),src.indexOf('  async function classifyAll(run)')),rc);
+ const rc={classifyTasks:new WeakMap(),fitTasks:new WeakMap(),charmFor:()=>({outline:{}}),setTimeout,items:()=>new Map(jobs.map((j,i)=>[i,j])),setReady:async(j,wake)=>{assert.equal(wake,false);ready++;await pause;j.state='ready'},sheetFor:()=>({fileBase:'saved'}),fitJob:async j=>{fits++;j.state='review'},render(){},RunCtl:{poke(){}}};vm.createContext(rc);vm.runInContext(src.slice(src.indexOf('  let previewRecovery ='),src.indexOf('  async function classifyAll(run)')),rc);
  const first=rc.prepareWaitingPreviews();await rc.prepareWaitingPreviews();await new Promise(r=>setTimeout(r,5));assert.equal(ready,1,'consecutive renders share one recovery pass');release();await first;assert.equal(fits,1);assert.equal(jobs[0].state,'review');assert.equal(jobs[0].questions.length,0);assert.equal(jobs[1].state,'words','unsupported glyph keeps actionable repair');assert.equal(jobs[2].state,'written','saved approval untouched');
+ const waiting={key:4,state:'ready',row:{},lines:['Waiting'],copies:['5']};jobs.push(waiting);
+ rc.charmFor=()=>null;await rc.prepareWaitingPreviews();assert.equal(fits,1,'missing geometry waits without a retry loop');assert.equal(waiting.state,'ready');
+ rc.charmFor=()=>({outline:{}});await rc.prepareWaitingPreviews();assert.equal(fits,2,'a restored ready job resumes when its geometry arrives');assert.equal(waiting.state,'review');
+ jobs.push({key:5,state:'fitting',row:{},lines:['Interrupted'],copies:['6']});await rc.prepareWaitingPreviews();assert.equal(fits,3,'interrupted fitting without an active task recovers');
  // Recovery and the run worker share one fit; exceptions release it for retry.
- let fitCalls=0,finish;const fc={fitJobOnce:async()=>{fitCalls++;await new Promise(r=>finish=r)}};vm.createContext(fc);vm.runInContext(src.slice(src.indexOf('  const fitTasks ='),src.indexOf('  async function fitJobOnce(job)')),fc);
+ let fitCalls=0,finish;const fc={render(){},fitJobOnce:async()=>{fitCalls++;await new Promise(r=>finish=r)}};vm.createContext(fc);vm.runInContext(src.slice(src.indexOf('  const fitTasks ='),src.indexOf('  async function fitJobOnce(job)')),fc);
  const shared={};const fitA=fc.fitJob(shared),fitB=fc.fitJob(shared);assert.equal(fitA,fitB);await Promise.resolve();assert.equal(fitCalls,1);finish();await fitA;
  fc.fitJobOnce=async()=>{throw Error('geometry')};await assert.rejects(fc.fitJob(shared),/geometry/);fc.fitJobOnce=async()=>42;assert.equal(await fc.fitJob(shared),42,'failed fitting does not poison later retries');
  // Exercise the actual server prompt builder without credentials or a model call.

@@ -12,7 +12,7 @@ dom.window.HTMLCanvasElement.prototype.getContext = () => ({fillRect(){}});
 let charm = null;
 const c = vm.createContext({window:dom.window, document, console:{error:(...x)=>errors.push(x)}, ResizeObserver:dom.window.ResizeObserver, B:{engrave:{items:jobs,fonts:{ok:true}}},
   S:{settings:{},mode:'engrave'}, PT:72/25.4, MM:25.4/72, SOURCE_LABEL:{},
-  Pool:{charmOf:()=>charm,sheetOf:()=>null}, P:{drawSegments(){throw Error('invalid saved path');}}, Review:{items:()=>[],count:()=>0}, Master:{entryFor:()=>null},
+  Pool:{charmOf:()=>charm,sheetOf:()=>null}, P:{drawSegments(){throw Error('invalid saved path');}}, Review:{items:()=>[],count:()=>0,remove(){}}, Master:{entryFor:()=>null},
   LiveStrip:{render(){}}, RunCtl:{poke(){}}, Orders:{render(){}},
   setTimeout:fn=>(timers.push(fn),timers.length),clearTimeout(){},
   requestAnimationFrame:fn=>(frames.push(fn),frames.length),cancelAnimationFrame(){},
@@ -55,7 +55,33 @@ E.restoreView({tab:'done',chosen:true});E.render();
 document.querySelector('.doneRow').click();
 assert(document.querySelector('.doneDetail'),'legacy decided records expand without detail metadata');
 console.log('Engrave view OK: legacy metadata, missing outlines, local error/retry, observer cleanup, deferred preparation');
-dom.window.close();
+assert(document.querySelector('.decidedRow .placementThumb'),'Decided shares the Placements thumbnail size');
+assert(document.querySelector('.decisionActions .decisionStatus'));
+assert.equal(document.querySelectorAll('.decidedRow [data-a="reopen"]').length,1,'one clear action even with details expanded');
+(async()=>{
+  job.state='review';job.view=null;
+  const waiting={key:'waiting',row:{...row,engrave:{}},copies:['missing'],lines:['Pending'],state:'ready'};
+  jobs.set(waiting.key,waiting);
+  E.restoreView({tab:'place',focus:job.key,chosen:true});E.render();
+  const card=document.querySelector('.rvItem');
+  assert(document.querySelector('[data-eg-working]').hidden,'persisted ready state is not active work');
+  let attempts=0;c.G={glyphCoverage(){attempts++;throw Error('fit failed');}};
+  const task=E.fitJob(waiting);E.render();
+  assert(!document.querySelector('[data-eg-working]').hidden);
+  assert.equal(document.querySelector('[data-eg-working] b').textContent,'1');
+  await assert.rejects(task,/fit failed/);
+  assert(document.querySelector('[data-eg-working]').hidden,'failure clears spinner while another card stays open');
+  assert.equal(document.querySelector('.rvItem'),card,'updating the spinner preserves the active editor');
+  assert.equal(await E.fitAll(null),0,'missing sheet/outline is not retried in a busy loop');
+  assert.equal(attempts,1);
+  let finish;c.agentCall=()=>new Promise(resolve=>finish=resolve);
+  const classified={...row,key:'classify',spec:{designSku:'TEST',engraveCandidate:true,personalization:[]}};
+  const reading=E.classify(classified);
+  assert(!document.querySelector('[data-eg-working]').hidden,'actual classifier request is counted');
+  await Promise.resolve();finish({engrave:false,text:'',confidence:1,questions:[]});await reading;
+  assert(document.querySelector('[data-eg-working]').hidden,'classifier completion clears spinner');
+  console.log('Working indicator OK: active tasks only, completion/failure refresh in place, missing geometry waits without spinning');
+})().catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>dom.window.close());
 
 // Boot must paint a direct Engrave URL before waiting for recovery, and must
 // not save over the checkpoint or start Auto if that recovery fails.
