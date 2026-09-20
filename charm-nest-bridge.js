@@ -1869,13 +1869,16 @@ const Engrave = window.Engrave = (() => {
     if (job.state === "ready") { const ch = job.copies.length && sheetFor(job,job.copies[0]); if (ch && ch.fileBase) await fitJob(job); }
     Orders.render(); if(!job.editingBack) RunCtl.poke(); return job;
   }
-  let previewRecovery = false;
+  let previewRecovery = false, previewRecoveryTimer = null;
   async function prepareWaitingPreviews() {
     if (previewRecovery) return;
     previewRecovery = true;
     try {
       for (const job of items().values()) {
         if (job.state !== "words" || job.row.state === "gone" || !job.lines?.length || job.missing?.length) continue;
+        // Let the tab paint and handle navigation between recovered placements.
+        await new Promise(resolve => setTimeout(resolve, 0));
+        if (items().get(job.key) !== job || job.state !== "words") continue;
         job.questions = (job.questions || []).filter(q => !/not engravable|cannot (?:be |take )engrav|design.*engrav/i.test(q));
         try {
           await setReady(job, false);
@@ -2055,6 +2058,7 @@ const Engrave = window.Engrave = (() => {
   function sendBack(job, why) { revokeBacks(job); job.state = "words"; job.reason = why || "sent back from the placement review — a decision on the words is needed"; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); Orders.render(); }
   async function approve(job, by) {
     if(job.backSaving || job.approvalPreparing) return;
+    if(EG.cardKey === job.key && EG.card?._previewFailed) { toast("Refit the words to restore the preview before approving.", "bad"); return; }
     if(EG.cardKey===job.key) EG.card?._flushSpacing?.();
     job.approvalPreparing=true;
     try {
@@ -2150,7 +2154,11 @@ const Engrave = window.Engrave = (() => {
     cv._paint();
     return cv;
   }
-  function renderFront(charm, px) { const cv = document.createElement("canvas"); const b = charm.bbox, pad = 3 * PT; const w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, k = px / Math.max(w, h); cv.width = Math.round(w * k); cv.height = Math.round(h * k); const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height); const tx = (x, y) => [(x - b[0] + pad) * k, (b[3] + pad - y) * k]; P.drawSegments(ctx, charm.members, tx, k); ctx.beginPath(); P.pathToCanvas(ctx, charm.outline, tx); ctx.strokeStyle = "rgba(190,40,40,.9)"; ctx.lineWidth = Math.max(1, 0.5 * k); ctx.stroke(); return cv; }
+  function renderFront(charm, px) {
+    if (!charm?.outline || !Array.isArray(charm.bbox) || charm.bbox.length !== 4 || !charm.bbox.every(Number.isFinite))
+      return el("div", "noPic", "The charm preview is still loading.");
+    const cv = document.createElement("canvas"); const b = charm.bbox, pad = 3 * PT; const w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, k = px / Math.max(w, h); cv.width = Math.round(w * k); cv.height = Math.round(h * k); const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height); const tx = (x, y) => [(x - b[0] + pad) * k, (b[3] + pad - y) * k]; P.drawSegments(ctx, charm.members || [], tx, k); ctx.beginPath(); P.pathToCanvas(ctx, charm.outline, tx); ctx.strokeStyle = "rgba(190,40,40,.9)"; ctx.lineWidth = Math.max(1, 0.5 * k); ctx.stroke(); return cv;
+  }
   async function mountPlacementThumbnail(host,job) {
     if(!host || !job)return;
     const charm=(job.copies || job.row.poolIds || []).map(id=>Pool.charmOf(id)).find(Boolean);
@@ -2310,6 +2318,11 @@ const Engrave = window.Engrave = (() => {
 
   /* ── the Engraving tab ── */
   const EG = { tab: null, focus: null, chosen: false, card: null, cardKey: null, reread: 0, q: "" };
+  function disposeCards() {
+    const v = document.getElementById("engraveView");
+    v?.querySelectorAll(".rvItem").forEach(c => { c._dispose?.(); clearTimeout(c._wordsTimer); c._ro?.disconnect(); });
+    EG.card = null; EG.cardKey = null;
+  }
   const matchesQ = j => { const q = (EG.q || "").trim().toLowerCase(); if (!q) return true; return [j.row.order.receiptId, j.row.spec && j.row.spec.designSku, j.row.line.sku, j.text, (j.lines || []).join(" "), j.row.line.title].some(x => String(x || "").toLowerCase().includes(q)); };
   /** Which run's engraving this is. A tab that showed a queue and no run left nobody able to say whose queue it was. */
   function runWord() {
@@ -2387,14 +2400,35 @@ const Engrave = window.Engrave = (() => {
       claudeRead(job).catch(() => {}).then(() => { job.rereading = false; refresh(job); });
     }, 700);
   }                                   // which tab is open and which placement is in front
+  let rendering = false;
   function render() {
+    if (rendering) return;
+    rendering = true;
+    try { renderView(); }
+    catch (error) {
+      // A failed preview is local to this tab. In particular, do not let it
+      // reject Session.restore() and prevent the rest of startup from finishing.
+      const v = document.getElementById("engraveView");
+      if (v && !v.classList.contains("hidden")) {
+        disposeCards();
+        v.innerHTML = `<div class="libEmpty" role="alert"><b>This engraving preview could not open.</b><p>Your sheets and decisions are kept.</p><p>${esc(error.message)}</p><button class="btn ghost sm" data-eg-retry>Retry preview</button><button class="btn ghost sm" data-eg-list>Placements</button></div>`;
+        v.querySelector("[data-eg-retry]").onclick = render;
+        v.querySelector("[data-eg-list]").onclick = () => { EG.list = true; EG.tab = "place"; EG.chosen = true; render(); };
+      }
+      console.error("Engrave preview could not render", error);
+    } finally { rendering = false; }
+  }
+  function renderView() {
     LiveStrip.render();
     const v = document.getElementById("engraveView"); if (!v || v.classList.contains("hidden")) return;
-    if (!previewRecovery && [...items().values()].some(j => j.state === "words" && j.row.state !== "gone" && j.lines?.length && !j.missing?.length))
-      void prepareWaitingPreviews();
+    if (!previewRecovery && previewRecoveryTimer === null && [...items().values()].some(j => j.state === "words" && j.row.state !== "gone" && j.lines?.length && !j.missing?.length))
+      previewRecoveryTimer = setTimeout(() => {
+        previewRecoveryTimer = null;
+        if (!v.classList.contains("hidden")) void prepareWaitingPreviews().catch(error => console.error("Engraving preview recovery failed", error));
+      }, 32);
     // a background fit finishing must not tear down the card someone is judging: when nothing about what this pane holds
     // has changed, only the counts and the rail are brought up to date
-    if (EG.card && EG.card.isConnected && EG.tab === "place") {
+    if (EG.card && EG.card.isConnected && EG.card.dataset.state === "review" && !EG.card._previewFailed && EG.tab === "place") {
       const q2 = [...items().values()].filter(j => j.state === "review" && j.row.state !== "gone");
       const f2 = q2.find(j => j.key === EG.focus) || q2[0];
       if (f2 && f2.key === EG.cardKey) { renderChrome(v, q2); return; }
@@ -2413,6 +2447,7 @@ const Engrave = window.Engrave = (() => {
     const focus = queue.find(j2 => j2.key === EG.focus) || queue[0] || null;
     const tabBtn = (id, label, n, cls) => `<button class="egTab${tab === id ? " on" : ""}" data-tab="${id}" title="${esc(label)}">${label}${n ? `<b class="${cls}">${n}</b>` : ""}</button>`;
     const working = jobs.filter(j => ["classify", "fitting", "ready"].includes(j.state)).length;
+    disposeCards();
     v.innerHTML = `<div class="ordBar egBar">
         <span class="controlGroup">${tabBtn("place", "Placements", queue.length, "info")}${tabBtn("done", "Decided", done.length, "ok")}
         ${working ? `<span class="egTab working" title="being read and fitted now — they arrive in Words or Placements on their own"><span class="spin"></span>Working<b>${working}</b></span>` : ""}
@@ -2432,7 +2467,8 @@ const Engrave = window.Engrave = (() => {
         q.querySelectorAll("[data-open]").forEach(rw => {
           const open=()=>{EG.focus=rw.dataset.open;EG.list=false;render();};
           rw.onclick=open;rw.onkeydown=e=>{if(e.key==="Enter" || e.key===" "){e.preventDefault();open();}};
-          mountPlacementThumbnail(rw.querySelector('.placementThumb'),queued.get(rw.dataset.open));
+          const host=rw.querySelector('.placementThumb');
+          mountPlacementThumbnail(host,queued.get(rw.dataset.open)).catch(() => { if(host.isConnected)host.textContent="Preview unavailable"; });
         });
       }
       else if (focus) { const c = placementCard(focus, queue.length); c.classList.add("full"); q.appendChild(c); EG.card = c; EG.cardKey = focus.key; }
@@ -2460,7 +2496,7 @@ const Engrave = window.Engrave = (() => {
             const open = EG.openDone === j2.key;
             const detail = !open ? "" : `<div class="doneDetail">
                 <div class="dd back">${png ? `<img crossorigin="anonymous" src="${esc(cors(png))}" alt="the back as written" referrerpolicy="no-referrer" data-retry="1">` : `<div class="noPic">${j2.state === "skipped" ? "cut plain — nothing on the back" : "the back picture is written with the sheet"}</div>`}<span class="cap">back${b0.sheet ? " · " + esc(b0.sheet) : ""}</span></div>
-                <div class="dd front">${j2.view?.detail.filledArtwork ? `<div class="why">Filled artwork: inspect the back outline and cut-outs before approving.</div>` : ""}<div class="frontHost"></div><span class="cap">front</span></div>
+                <div class="dd front">${j2.view?.detail?.filledArtwork ? `<div class="why">Filled artwork: inspect the back outline and cut-outs before approving.</div>` : ""}<div class="frontHost"></div><span class="cap">front</span></div>
                 <dl class="meta">
                   <dt>Words</dt><dd class="serif">${w}</dd>
                   ${j2.fit || b0.capMm ? `<dt>Size</dt><dd>cap ${(+(b0.capMm || (j2.fit && j2.fit.capMm) || 0)).toFixed(2)} mm · Source Sans 3${j2.fit && j2.fit.weight ? " " + esc(j2.fit.weight) : ""}</dd>` : ""}
@@ -2491,7 +2527,7 @@ const Engrave = window.Engrave = (() => {
   /** The placement review card: front and back side by side, the mask hatch, the text as it will be cut, the controls. */
   function placementCard(job, remaining) {
     const it = Review.items().find(i => i.key === "eng:" + job.key) || { kind: "placement", key: "eng:" + job.key, row: job.row, job };
-    const card = el("div", "rvItem"); card.dataset.kind = "placement"; card.tabIndex = 0;
+    const card = el("div", "rvItem"); card.dataset.kind = "placement"; card.dataset.state = job.state; card.tabIndex = 0;
     const r = job.row, sp = r.spec, f = job.fit;
     const decided = decidedJobs().length;
     // One card, one order, one screen: the back is the work and the right column is everything you need to judge it.
@@ -2516,11 +2552,11 @@ const Engrave = window.Engrave = (() => {
             <div class="wordsActs"><button class="btn gold xs" data-a="usewords" title="${wordsJob ? "settle the words and draw the placement" : "re-fit the placement with these words"}">${wordsJob ? "Engrave these words" : "Use these words"}</button>${wordsJob ? `<button class="btn ghost xs" data-a="skip" title="cut this charm plain — nothing engraved on its back">No engraving</button>` : ""}</div>
             ${wordsJob || !f ? `<div class="why">${esc(job.reason || "the words need a decision")}${(job.questions || []).length ? ` — ${esc(job.questions.join(" · "))}` : ""}</div>` : ""}</div>
           ${!wordsJob && reviewNotes.length ? `<div class="reviewNotes">${esc([...new Set(reviewNotes)].join(" · "))}</div>` : ""}
-          ${job.view?.detail.filledArtwork ? `<div class="why">Filled artwork: inspect the back outline and cut-outs before approving.</div>` : ""}<div class="frontHost"></div>
+          ${job.view?.detail?.filledArtwork ? `<div class="why">Filled artwork: inspect the back outline and cut-outs before approving.</div>` : ""}<div class="frontHost"></div>
           <dl class="meta">${row2("Customer", (sp.personalization || []).join(" / "))}${row2("Buyer msg", sp.buyerMessage)}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}</dl>
         </div></div>`;
     const charm = job.copies.length ? charmFor(job) : null;
-    if (charm && (charm.outline.subpaths || []).length > 1) {
+    if (charm?.outline && (charm.outline.subpaths || []).length > 1) {
       const control = document.createElement("label"); control.className = "why";
       control.innerHTML = `<input type="checkbox" ${job.solidBack ? "checked" : ""}> Solid back · ignore front fills, keep cut-outs`;
       control.title = "Ignore expanded front-outline ink when building the back. Physical cut paths and interior openings remain excluded from engraving.";
@@ -2628,7 +2664,10 @@ const Engrave = window.Engrave = (() => {
       });
       bc.addEventListener("pointercancel", () => { cancelAnimationFrame(flowFrame);flowFrame=0;drag = null; bc.classList.remove("drag"); refresh(job); });
     };
+    let disposed = false;
     const mountBack = () => {
+      if (disposed) return;
+      try {
       if (wordsJob || !job.view || !backHost.isConnected) return;
       const r = backHost.getBoundingClientRect();
       // side by side, the box says how big; stacked on a narrow screen the box has no height of its own, so half
@@ -2639,8 +2678,16 @@ const Engrave = window.Engrave = (() => {
       if (!px || Math.abs(px - mounted) < 12) return;
       mounted = px; backHost.textContent = "";
       const bc = renderBack(job, px, { grid: true, editable: true }); bc.title = "drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys nudge 0.25 mm, with shift they turn 1° · cut-outs and holes stay clear"; backHost.appendChild(bc); wire(bc);
+      } catch (error) {
+        card._previewFailed = true;
+        backHost.textContent = "This back preview could not be drawn. Refit the words to retry.";
+        card.querySelectorAll('[data-a="approve"]').forEach(b => { b.disabled = true; });
+        card._ro?.disconnect();
+        console.error("Engraving back preview failed", error);
+      }
     };
-    requestAnimationFrame(mountBack);
+    raf = requestAnimationFrame(() => { raf = 0; mountBack(); });
+    card._dispose = () => { disposed = true; cancelAnimationFrame(raf); card._ro?.disconnect(); };
     if (window.ResizeObserver) { const ro = new ResizeObserver(() => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; mountBack(); }); }); ro.observe(backHost); card._ro = ro; }
     const spacing = card.querySelector('[data-a="spacing"]');
     if(spacing) {
@@ -4463,12 +4510,20 @@ async function bootBridge() {
   Orders.loadMaps().catch(() => {}); Master.load().catch(() => {});
   Engrave.loadFonts().catch(() => {});
   Kin.mount();
-  const recovered = await Session.restore();
-  Session.listen(); Arrivals.start();
+  // Direct #engrave navigation can happen before the bridge exists. Paint it
+  // now instead of leaving an empty pane throughout checkpoint reconstruction.
+  Views.onShow(S.mode);
+  let recovered = false, recoveryFailed = false;
+  try { recovered = await Session.restore(); }
+  catch (error) { recoveryFailed = true; console.error("Workspace recovery failed; checkpoint retained", error); }
+  // Never overwrite a checkpoint with a partially restored workspace or start
+  // an automatic run over it. Navigation and the saved Library remain usable.
+  if (!recoveryFailed) { Session.listen(); Arrivals.start(); }
+  Views.onShow(S.mode);
   /* The app used to open on an empty Orders tab whatever had happened yesterday, and the only way to anything was to
      pull again. It opens on the last run instead — its orders, its sheets, its engraving, read from the record, with
      one line at the top saying so and a Done that puts it down. An open run is offered for resume as before. */
-  if (!recovered && S.cloud.ok) api("charmNestLibrary", { op: "runList", limit: 10 }).then(r => {
+  if (!recovered && !recoveryFailed && S.cloud.ok) api("charmNestLibrary", { op: "runList", limit: 10 }).then(r => {
     const runs = r.runs || [];
     const open = runs.filter(x => !["complete", "abandoned"].includes(x.status));
     if (open.length) { B.openRuns = open; agent({ bridge: true }, "DS", `${open.length} open run(s) on record — offered on the run banner`); RunCtl.renderBanner(); }
@@ -4476,7 +4531,7 @@ async function bootBridge() {
     if (last && !B.run && !B.orders.rows.length && !Recall.on()) Recall.open({ runId: last.runId, quiet: true }).catch(() => {});
   }).catch(() => {});
   // the Design Station frame mounts on first visit to its tab; Auto mode mounts it now
-  if (!recovered && S.settings.runMode === "auto") { setTimeout(() => { if (!B.openRuns?.length && !Recall.on() && !B.run) RunCtl.setMode("auto"); }, 1500); }
+  if (!recovered && !recoveryFailed && S.settings.runMode === "auto") { setTimeout(() => { if (!B.openRuns?.length && !Recall.on() && !B.run) RunCtl.setMode("auto"); }, 1500); }
   document.addEventListener("keydown", e => { if (e.altKey && e.key === "r") { e.preventDefault(); setMode("review"); } });
   agent({ bridge: true }, "DS", `Bridge ready · station ${DesignLink.origin()} · ${S.settings.runMode} mode`);
 }
