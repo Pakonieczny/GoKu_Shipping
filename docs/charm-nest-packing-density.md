@@ -8,6 +8,12 @@ Controlled test using the supplied `Half_Sheet.ai`: 43 detected charms, 100 × 5
 
 Regression tests: `node tests/charm-nest/partial-sheets.cjs`, `node tests/charm-nest/packing-runtime.cjs`, and `node tests/charm-nest/solver.cjs`. These cover variable strip sizes, portrait stock, unchanged dimensions, positive clearance, exact pins, cancellation and worker result selection. Existing saved sheets require re-nesting to get the new layout; production browser interaction was not used for these checks.
 
+## Supporting edge alignment — 2026-09-20
+
+Following the production screenshot feedback, silhouette edge contact now contributes at **0.25** of neighbour contact weight, in both candidate search and final layout/refinement scoring. The near-contact term remains 0.5 and each distinct neighbouring charm still contributes 0.05. Walls are recorded separately from charms; only real contour pixels touching the inset band or physical boundary earn edge credit, including zero-inset stock. Corner credit is bounded, not inflated by the collision grid's conservative out-of-bounds count. The boundary construction proposal remains available. Piece count, compact offcut ranking, FIFO, whole orders, pins, dimensions and clearance remain unchanged.
+
+The 81-charm dated reference still seats 81/81 at 73.62%, with the same final layout and zero overlap/outside pixels. The 43-charm half-sheet reference occupies 54.50 mm, leaving 45.50 mm clear; mean neighbour score improves from 0.4794 to 0.4915, and mean edge contact from 0.0163 to 0.0210. Its independent resolution-6 geometry check also reports zero overlap/outside pixels. `neighbors.cjs` checks the smaller edge bonus, corners, zero inset, actual concave edges, immutable wall occupancy and clones; existing solver/partial-sheet/worker/release tests pass.
+
 ## Reproduced cause
 
 ### Neighbour contact refinement — 2026-09-20

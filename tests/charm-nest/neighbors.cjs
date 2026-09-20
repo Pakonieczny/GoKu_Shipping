@@ -18,4 +18,17 @@ assert(concave.fits(small.fine.pm,26,18),'a piece can occupy the actual open con
 assert.equal(S.contactAt(small,concave,26,18).neighbors,0,'overlapping virtual boxes are not silhouette contact');
 assert(S.contactAt(small,concave,14,18).score>0,'the real inside edge of a concavity counts as adjacency');
 const clone=concave.clone();assert.equal(S.contactAt(small,clone,14,18).score,S.contactAt(small,concave,14,18).score);
-console.log('Neighbours OK: exact concave masks, distinct charms, minimal gaps, no wall/rectangle rewards and cloned occupancy');
+// Edge credit is separate and weaker than equivalent real charm contact.
+const stock=new S.Grid(80,80);for(let y=0;y<80;y++)for(let x=0;x<80;x++)if(x<2||y<2||x>=78||y>=78)stock.set(x,y);stock.trackMaterial(true);
+const atEdge=S.placementAt(v,stock,2,20),offEdge=S.placementAt(v,stock,5,20);
+assert.equal(atEdge.neighborScore,0);assert(atEdge.score>offEdge.score && offEdge.score>0);
+assert(atEdge.score<touching.score,'an edge is supporting credit, weaker than a real neighbour');
+const corner=S.placementAt(v,stock,2,2);assert(corner.edge<=1 && corner.edgeClose<=1 && corner.score<=.375,'corners cannot inflate the bounded edge reward');
+const edgeBefore=atEdge.edge;stock.stamp(bits,10,10,12,20);
+assert.equal(S.placementAt(v,stock,2,20).edge,edgeBefore,'stamping charms cannot change wall credit');
+assert.equal(S.placementAt(v,stock.clone(),2,20).score,S.placementAt(v,stock,2,20).score);
+const noInset=new S.Grid(80,80).trackMaterial(true);
+assert(S.placementAt(v,noInset,0,20).score>S.placementAt(v,noInset,10,20).score,'physical stock edges count with zero inset');
+const openU=variant(u,40,40),left=S.placementAt(openU,noInset,0,10),openTop=S.placementAt(openU,noInset,10,0);
+assert(left.edge>openTop.edge,'edge alignment follows the actual concave silhouette');
+console.log('Neighbours and edges OK: actual contours, close distinct neighbours, weaker bounded edge credit, zero inset and cloned occupancy');
