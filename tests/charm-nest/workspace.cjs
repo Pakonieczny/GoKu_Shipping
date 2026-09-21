@@ -71,6 +71,24 @@ function context() {
 (async () => {
   const c = context();
   await vm.runInContext(`(async()=>{
+    const p=S.sheets.gold;
+    Object.assign(p,{sheetId:'checkpoint-test',jobId:'search-1',bestKey:'geometry-1',status:'nesting',persistedDone:false,bestRevision:1,best:{placements:[{id:'a',angle:10}],rejects:['b'],density:.2},placements:[{id:'a',angle:10}]});
+    Session.listen();await Session.flush();
+    p.best={placements:[{id:'a',angle:20},{id:'b',angle:30}],rejects:[],density:.4};p.bestRevision=2;p.bestInfo={placed:2};
+    let captured=false;
+    Object.defineProperty(p,'fullWorkspaceTrap',{enumerable:true,configurable:true,get(){captured=true;throw new Error('full workspace copied');}});
+    const writing=Session.checkpointBest(p);
+    p.best.placements[0].angle=350;
+    await writing;assert.equal(captured,false,'best updates save only the small checkpoint');
+    delete p.fullWorkspaceTrap;
+    await Session.restore();
+    assert.equal(p.bestRevision,2);assert.equal(p.placements.length,2);assert.equal(p.placements[0].angle,20,'checkpoint is detached from subsequent mutations');
+    assert.equal(p.status,'ready');assert.match(p.stage,/Recovered best/);
+    Object.assign(p,{status:'nesting',jobId:'search-2',bestKey:'geometry-2',bestRevision:0,best:null,placements:[]});
+    await Session.flush();await Session.restore();assert.equal(p.placements.length,0,'a stale checkpoint cannot enter a new job or changed geometry');
+    Object.assign(p,{status:'idle',sheetId:null,jobId:null,bestKey:null,best:null,bestRevision:0});
+  })()`,c);
+  await vm.runInContext(`(async()=>{
     const bits=new Uint8Array(1024), view=new DataView(bits.buffer,4,8);
     const data=Session.copy({a:bits,b:bits,view});
     assert.equal(data.a,data.b,'shared source masks are copied once per checkpoint');

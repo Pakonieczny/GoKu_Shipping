@@ -30,9 +30,11 @@ function bytes(value, seen = new Set()) {
     }
     messages.push(cloned);
   } }, CharmNestSolver: { ...Solver, solve: (job, cb) => Solver.solve(job, { ...cb, yield: () => Promise.resolve(), onBest(best, summary) {
-    internalBytes = Math.max(internalBytes, bytes(best));
-    cb.onBest(best, summary);
-    assert(best.rec && best.grids, 'publishing must not strip the running solver state');
+    assert.equal(best.rec, undefined, 'solver callbacks also receive detached public checkpoints');
+    const internal={...best,rec:{mask:new Uint8Array(2*1024*1024)},grids:{mask:new Uint8Array(1024)}};
+    internalBytes = Math.max(internalBytes, bytes(internal));
+    cb.onBest(internal, summary);
+    assert(internal.rec && internal.grids, 'publishing must not mutate the producer');
   } }) } });
   vm.runInContext(fs.readFileSync(path.join(root, 'charm-nest-worker.js'), 'utf8'), c);
   await c.self.onmessage({ data: { type: 'solve', jobId: 'dense', job } });

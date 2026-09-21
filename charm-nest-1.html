@@ -1256,7 +1256,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
       <div class="field"><label>Angle step (°)</label><select id="stAngle"><option value="2">2 (180 angles)</option><option value="5">5 (72 angles)</option><option value="10">10 (36 angles)</option></select></div>
     </div>
     <div class="fieldRow3">
-      <div class="field"><label>Time ceiling (s) · parallel searches</label><div class="fieldRow"><input id="stBudget" type="number" step="5" min="10" max="900"><input id="stParallel" type="number" step="1" min="0" max="16"></div><div class="help">Several searches run at once on different seeds. Every search gets time to improve the layout; the best completed result wins. 0 = automatic, adjusted for rotation count and available cores. The ceiling includes compacting sheets after all pieces fit.</div></div>
+      <div class="field"><label>Time ceiling (s) · parallel searches</label><div class="fieldRow"><input id="stBudget" type="number" step="5" min="10" max="900"><input id="stParallel" type="number" step="1" min="0" max="16"></div><div class="help">Several searches run at once on different seeds. Every search gets time to improve the layout; the best valid layout is saved as it improves and remains on screen through completion. 0 = automatic, adjusted for rotation count and available cores. The ceiling includes compacting sheets after all pieces fit.</div></div>
       <div class="field"><label>Seed</label><input id="stSeed" type="number" step="1" min="1"><label><input id="stFreshSeed" type="checkbox"> Explore new arrangements each run</label><div class="help">Enabled by default. Turn off to repeat a recorded seed. Re-nesting retains the previous layout if no better valid arrangement is found.</div></div>
       <div class="field"><label>Server fallback above</label><input id="stServerAbove" type="number" step="1" min="0"><div class="help">Pieces. 0 = never use the server solver.</div></div>
     </div>
@@ -2301,14 +2301,21 @@ function startNestReady(sh, context) {
   sh.nestFlow = S.settings.nestFlow || "standard";
   sh.persistedDone = false;
   sh.movedOn = null; sh.problem = null;
-  sh.nestInitial = sh.placements?.length ? sh.placements.map(p=>({...p})) : null;
+  const bestKey = JSON.stringify([packingKey(sh, items), items.map(c=>[c.id,c.order,c.orderDate,c.pinned])]);
+  const retained = sh.bestKey === bestKey && sh.best ? CharmNestSolver.publicLayout(sh.best) : null;
+  sh.nestInitial = retained?.placements || (sh.placements?.length ? sh.placements.map(p=>({...p})) : null);
   sh.runSeed = S.settings.freshSeed !== false ? (crypto.getRandomValues(new Uint32Array(1))[0] & 0x7fffffff) || 1 : +S.settings.seed || 1;
-  sh.status = "nesting"; sh.startedAt = performance.now(); sh.placements = []; sh.rejects = []; sh.outputs = null; sh.verification = null; sh.best = null; sh.trials = 0; sh.liveInfo = null; sh.endedBy = null;
+  sh.status = "nesting"; sh.startedAt = performance.now(); sh.placements = retained ? retained.placements.map(p=>({...p})) : []; sh.rejects = retained?.rejects?.slice() || []; sh.outputs = null; sh.verification = null; sh.best = retained; sh.bestWorker = 0; sh.trials = 0; sh.liveInfo = retained ? sh.bestInfo : null; sh.endedBy = null;
   sh.jobId = uid(); sh.stage = "Preparing rotations…"; sh.progress = [0, items.length]; sh.dirty = false;
   log(sh, `nest started · ${items.length} pieces · seed ${sh.runSeed} · clearance ${S.settings.clearancePt} pt`);
   sh.evNest = (S.settings.engine || "solver") === "ai" ? null : agent({ metal: sh.metal }, "nest", `Solver: ${items.length} pieces · seed ${sh.runSeed} · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · up to ${S.settings.budgetS}s`, { live: true });
   renderCard(sh); drawPreview(sh);
   const job = buildJob(sh);
+  if (!retained) { sh.bestRevision = 0; sh.bestHistory = []; }
+  sh.bestKey = bestKey;
+  sh.nestParams = { seed:job.seed,angles:job.angles,clearancePt:job.clearancePt,insetPt:job.sheet.insetPt,fineRes:job.fineRes,coarseRes:job.coarseRes,maxFill:job.maxFill };
+  if (window.Session) Session.schedule();
+  if (retained && window.Session) Session.checkpointBest(sh);
   if (sh.nestFlow === "learned") {
     job.learned = { modelDigest: sh._learnedModelDigest, token: localStorage.getItem("cn.learnedKey") || "", budgetMs: S.settings.learnedBudgetS * 1000, stallMs: S.settings.learnedStallS * 1000, checkpoint: sh.learnedCheckpoint || null, initialLayout: sh._beforeLearned?.placements || null };
     const workers = ensureWorkers(sh, 2); sh.pool = { n: 2, done: 0, results: [], trials: [0, 0], winner: null };
@@ -2420,6 +2427,22 @@ async function startAINest(sh, items) {
   } });
 }
 function stopNest(sh) { if (sh.status !== "nesting") return; sh.stage = "Stopping after this piece…"; renderCard(sh); if (sh.nestFlow !== "learned" && (S.settings.engine || "solver") === "ai") { sh.status = "ready"; sh.stage = ""; agent({ metal: sh.metal }, "info", "Stopped by operator"); renderCard(sh); return; } if (sh.serverJob) { api("charmNestLibrary", { op: "stopJob", id: sh.serverJob }).catch(() => {}); } else (sh.workers || []).forEach((w, i) => w.postMessage({ type: "stop", jobId: sh.jobId + ":" + i })); }
+// One replacement gate for live updates, final worker messages and server polls.
+// Layout snapshots never share mutable placements with a trial or the exporter.
+function acceptBestLayout(sh, candidate, meta = {}) {
+  if (!candidate || !CharmNestSolver.betterLayout(candidate, sh.best, stockFor(sh.metal))) return false;
+  sh.best = CharmNestSolver.publicLayout(candidate);
+  sh.bestWorker = meta.worker ?? sh.bestWorker; sh.bestTrial = meta.trial ?? candidate.trial;
+  sh.bestRevision = (sh.bestRevision || 0) + 1;
+  sh.bestHistory = (sh.bestHistory || []).concat({ revision: sh.bestRevision, placed: candidate.placements.length, density: candidate.density, extent: CharmNestSolver.stripFraction(candidate.placements, stockFor(sh.metal)), contact: candidate.contactQuality, trial: sh.bestTrial, worker: sh.bestWorker, at: Date.now() }).slice(-40);
+  sh.placements = sh.best.placements.map(p => ({ ...p })); sh.rejects = (sh.best.rejects || []).slice(); sh.livePlacements = [];
+  sh.bestInfo = { freePt2: candidate.freePt2, usablePt2: candidate.usablePt2, placedPt2: candidate.placedPt2, pocket: candidate.pocket, placed: candidate.placements.length, total: activeCharms(sh).length };
+  sh.liveInfo = sh.bestInfo; sh.progressKind = "place"; sh.progress = [candidate.placements.length, activeCharms(sh).length];
+  sh.stage = `Best #${sh.bestRevision} · ${candidate.placements.length}/${activeCharms(sh).length} placed · searching for an improvement`;
+  if (window.Session) Session.checkpointBest(sh);
+  computeSaturation(sh); renderProgress(sh); renderSat(sh); drawPreview(sh);
+  return true;
+}
 function onWorkerMessage(sh, m, idx) {
   const base = String(m.jobId || "").split(":")[0];
   if (base !== sh.jobId) return;
@@ -2434,7 +2457,8 @@ function onWorkerMessage(sh, m, idx) {
   const items = activeCharms(sh); const byId = new Map(items.map(c => [c.id, c]));
   const pool = sh.pool || { n: 1, done: 0, results: [], trials: [0], winner: null };
   if (pool.finished) { if (m.type === "verified") sh._geomVerify && sh._geomVerify(m.result); return; }   // the sheet is done — late messages from stopped searches are dropped
-  const leader = pool.winner != null ? pool.winner : (sh.bestWorker != null ? sh.bestWorker : 0);   // whose trial is drawn as ghosts
+  if (pool.completed?.[idx] && m.type !== "verified") return;
+  const leader = pool.winner != null ? pool.winner : (sh.bestWorker != null ? sh.bestWorker : 0);   // whose search narrates progress
   if (m.type === "placed" && idx !== leader) return;
   if (m.type === "stage" && (m.stage === "prepare" ? idx !== 0 : idx !== leader)) return;   // one voice for the pool: only the leading search narrates
   if (m.type === "trial") { pool.trials[idx] = m.summary.trial + 1; m.summary = Object.assign({}, m.summary, { trial: pool.trials.reduce((a, b) => a + b, 0) - 1, worker: idx }); }
@@ -2444,9 +2468,8 @@ function onWorkerMessage(sh, m, idx) {
       const { grids, rec, ...layout } = m.best;
       sh.workers[0].postMessage({ type: "incumbent", jobId: sh.jobId + ":0", layout });
     }
-    const cur = sh.best; const better = CharmNestSolver.betterLayout(m.best, cur, stockFor(sh.metal));
-    if (!better) { if (idx === leader) { sh.livePlacements = []; } return; }
-    sh.bestWorker = idx; m.summary = Object.assign({}, m.summary, { trial: pool.trials.reduce((a, b) => a + b, 0) - 1, worker: idx });
+    if (!acceptBestLayout(sh, m.best, { worker: idx, trial: m.summary.trial })) return;
+    m.summary = Object.assign({}, m.summary, { trial: pool.trials.reduce((a, b) => a + b, 0) - 1, worker: idx });
   }
   if (m.type === "error" && pool.n > 1) {
     log(sh, `worker ${idx}: ${m.message}`);
@@ -2454,6 +2477,8 @@ function onWorkerMessage(sh, m, idx) {
     m = { type: "done", jobId: m.jobId, result: null };
   }
   if (m.type === "done") {
+    pool.completed ||= []; pool.completed[idx] = true;
+    if (m.result) acceptBestLayout(sh, m.result, { worker: idx, trial: m.result.trial });
     pool.done++; pool.results[idx] = m.result;
     if (sh.nestFlow === "learned" && idx === 0 && m.result && ["plateau", "budget", "model-unavailable"].includes(m.result.endedBy)) {
       // The measured no-gain window governs both routes, including a challenger making only cosmetic improvements.
@@ -2467,11 +2492,7 @@ function onWorkerMessage(sh, m, idx) {
     let pick = results.reduce((a, b) => CharmNestSolver.betterLayout(b, a, stockFor(sh.metal)) ? b : a, null);
     // Completion is a candidate, not permission to replace the best layout
     // already received. Preserve its worker's parameters and the ending reason.
-    if (sh.best && CharmNestSolver.betterLayout(sh.best, pick, stockFor(sh.metal))) {
-      const completed = pool.results[sh.bestWorker] || pick;
-      pick = { ...completed, ...CharmNestSolver.publicLayout(sh.best), endedBy: completed.endedBy, trials: completed.trials, elapsedMs: completed.elapsedMs, params: sh.best.params || completed.params, retainedBest: true };
-    }
-    sh.best = CharmNestSolver.publicLayout(pick);
+    pick = CharmNestSolver.bestResult(pool.results[sh.bestWorker] || pick, sh.best, stockFor(sh.metal));
     if (sh.nestFlow === "learned") {
       const source = pick.params?.engine === "learned" ? "learned refinement" : "standard challenger";
       const learned = results.find(r => r.params?.engine === "learned");
@@ -2492,18 +2513,9 @@ function onWorkerMessage(sh, m, idx) {
   if (m.type === "error") pool.finished = true;
   switch (m.type) {
     case "placed": {
-      sh.progressKind = "place";
-      // the current trial's pieces land as ghosts over the best layout; the readout follows what is drawn solid
-      if (sh.liveTrial !== m.info.trial) { sh.liveTrial = m.info.trial; sh.livePlacements = []; }
-      if (m.info.finishing) { sh.livePlacements = []; sh.placements = sh.best ? sh.best.placements : []; }
-      else sh.livePlacements.push(m.placement);
-      if (!sh.best) { sh.placements = sh.livePlacements; sh.liveInfo = m.info; }
-      else { sh.placements = sh.best.placements; sh.liveInfo = sh.bestInfo || sh.liveInfo; }
-      sh.progress = [Math.max(m.info.placed, sh.best ? sh.best.placements.length : 0), m.info.total];
-      /* The line is the same width from one piece to the next: it says how far the trial is and what the best is, not
-         which charm just landed (that name made the line grow and shrink with every piece, and the card jumped with it). */
-      sh.stage = m.info.finishing ? `Targeted 5° push · ${m.info.placed}/${m.info.total} landed` : `Trial ${m.info.trial + 1} · ${m.info.placed}/${m.info.total} placed · best ${sh.best ? sh.best.placements.length : m.info.placed}/${m.info.total}`;
-      { const now = performance.now(); if (!sh._liveAt || now - sh._liveAt > 250) { sh._liveAt = now; computeSaturation(sh); renderProgress(sh); renderSat(sh); drawPreview(sh); } else if (!sh._liveT) sh._liveT = setTimeout(() => { sh._liveT = 0; sh._liveAt = performance.now(); computeSaturation(sh); renderProgress(sh); renderSat(sh); drawPreview(sh); }, 260); }
+      // Trial placements are speculative. Only an accepted, complete-order
+      // checkpoint changes the image, counts or fullness indicators.
+      sh.liveTrial = m.info.trial;
       break;
     }
     case "stage": if (m.stage === "finish") { agent({ metal: sh.metal }, "nest", `Best layout is ${m.total - m.done} short — targeted search at 5° steps for the missing piece(s) into that layout`); } else if (m.stage === "repair") { if (m.done === 0) agent({ metal: sh.metal }, "nest", `Restarts stalled — repairing the best layout instead: pulling out the pieces around its largest gap and re-inserting them with the missing piece at 15° steps (${m.total} attempts)`); sh.stage = `Repairing the best layout · attempt ${m.done}/${m.total}`; renderProgress(sh); } else if (m.stage === "prepare") { sh.stage = `Preparing rotations · ${m.done}/${m.total}`; sh.progress = [m.done, m.total]; sh.progressKind = "prepare"; renderProgress(sh); } break;
@@ -2521,11 +2533,8 @@ function onWorkerMessage(sh, m, idx) {
     case "best": {
       if (m.summary.repaired) agent({ metal: sh.metal }, "ok", `Repair worked: removed ${m.summary.removed} piece(s) around the gap and re-inserted them with the missing one — ${m.best.placements.length}/${m.summary.total} placed at ${fmt.pct(m.best.density)}`);
       else if (sh.evNest) agentUpdate(sh.evNest, { text: `Trial ${m.summary.trial + 1}: ${m.best.placements.length}/${m.summary.total} placed at ${fmt.pct(m.best.density)} — best so far`, elapsed: m.summary.elapsedMs });
-      sh.best = m.best; sh.bestTrial = m.summary.trial; sh.placements = m.best.placements; sh.rejects = m.best.rejects.slice(); sh.livePlacements = [];
-      sh.bestInfo = { freePt2: m.best.freePt2, usablePt2: m.best.usablePt2, placedPt2: m.best.placedPt2, pocket: m.best.pocket, placed: m.best.placements.length, total: m.summary.total };
-      sh.liveInfo = sh.bestInfo;
       log(sh, `trial ${m.summary.trial + 1}: ${m.best.placements.length}/${m.summary.total} placed · ${fmt.pct(m.best.density)}`);
-      computeSaturation(sh); renderSat(sh); drawPreview(sh); break;
+      break;
     }
     case "done": finishNest(sh, { result: m.result }); break;
     case "error": finishNest(sh, { error: m.message }); break;
@@ -2548,7 +2557,7 @@ async function startServerNest(sh, job) {
         const j = await api("charmNestLibrary", { op: "getJob", id: r.id });
         if (j.job) {
           const st = j.job; sh.trials = st.trials || 0;
-          if (st.best) { sh.best = st.best; sh.placements = st.best.placements; sh.rejects = st.best.rejects || []; sh.liveInfo = { freePt2: st.best.freePt2, usablePt2: st.best.usablePt2, placedPt2: st.best.placedPt2, pocket: st.best.pocket, placed: st.best.placements.length, total: job.pieces.length }; }
+          if (st.best) acceptBestLayout(sh, st.best, { trial: st.best.trial, worker: 0 });
           sh.progress = [sh.placements.length, job.pieces.length]; sh.progressKind = "place";
           sh.stage = st.status === "running" ? `Server · trial ${sh.trials} · ${sh.placements.length}/${job.pieces.length}` : `Server · ${st.status}`;
           computeSaturation(sh); renderProgress(sh); renderSat(sh); drawPreview(sh);
@@ -2569,6 +2578,14 @@ async function finishNest(sh, { result, error }) {
   // Release the search heaps before PDF export and verification allocate theirs.
   for (const w of sh.workers || []) w.terminate();
   sh.workers = []; sh.worker = null;
+  if (result) {
+    acceptBestLayout(sh, result, { trial: result.trial });
+    result = CharmNestSolver.bestResult(result, sh.best, stockFor(sh.metal));
+  } else if (error && sh.best?.placements.length) {
+    log(sh, `Search interrupted; retaining best #${sh.bestRevision}: ${error}`);
+    result = { ...CharmNestSolver.publicLayout(sh.best), endedBy: "stopped", elapsedMs: performance.now()-sh.startedAt, trials: sh.trials, params: sh.best.params || { ...sh.nestParams, seed: (sh.runSeed || 1)+(sh.bestWorker || 0) } };
+    error = null;
+  }
   const items = activeCharms(sh); const byId = new Map(items.map(c => [c.id, c]));
   if (error && sh._beforeLearned) { Object.assign(sh, sh._beforeLearned); sh._beforeLearned = null; drawPreview(sh); }
   if (error) { sh.status = sh.outputs ? "partial" : items.length ? "ready" : "idle"; sh.stage = ""; log(sh, "error: " + error); toast(`${labelOf(sh.metal)}: nesting failed — ${error}`, "bad", 6000); renderCard(sh); pumpNestQueue(); if (window.RunCtl) RunCtl.onSheetDone(sh, new Error(error)); return; }
@@ -2664,7 +2681,7 @@ const endedText = e => ({ plateau: "paused — no additional pieces during the i
 function buildReport(sh, result, items) {
   const byId = new Map(items.map(c => [c.id, c])); const st = stockFor(sh.metal);
   return {
-    version: 1, sheetId: sh.sheetId, metal: sh.metal, metalLabel: labelOf(sh.metal), createdAt: new Date().toISOString(),
+    version: 1, bestRevision: sh.bestRevision || 0, bestHistory: sh.bestHistory || [], sheetId: sh.sheetId, metal: sh.metal, metalLabel: labelOf(sh.metal), createdAt: new Date().toISOString(),
     stock: { wIn: st.wIn, hIn: st.hIn, wPt: st.wPt, hPt: st.hPt }, params: result.params, endedBy: result.endedBy, trials: result.trials, elapsedMs: Math.round(result.elapsedMs),
     density: +result.density.toFixed(4), usablePt2: Math.round(result.usablePt2), freePt2: Math.round(result.freePt2), placedPt2: Math.round(result.placedPt2), pocket: result.pocket,
     placements: sh.placements.map((p, i) => ({ n: i + 1, id: p.id, layer: p.layerName, name: byId.get(p.id)?.name, hash: byId.get(p.id)?.hash, source: byId.get(p.id)?.sourceName, index: byId.get(p.id)?.index, angle: p.angle, scale: p.scale || 1, cxPt: +p.cxPt.toFixed(3), cyPt: +p.cyPt.toFixed(3), wPt: +p.wPt.toFixed(2), hPt: +p.hPt.toFixed(2), areaPt2: +(byId.get(p.id)?.areaPt2 || 0).toFixed(1) })),
@@ -2939,7 +2956,7 @@ function renderProgress(sh) {
   /* One line under the preview, never two that wrap. While a sheet works it reads as the stage and the clock; once it is
      done it is the whole result — placed, full, verified, elapsed — and the timings that used to take a second line are
      kept in its tooltip instead. The pills over the image would repeat it, so they show only while it is still moving. */
-  const st = q("stage"); const elapsed = ["nesting", "finishing"].includes(sh.status) ? fmt.s(performance.now() - sheetT0(sh)) : (sh.totalMs ? fmt.s(sh.totalMs) : (sh.elapsedMs ? fmt.s(sh.elapsedMs) : ""));
+  const st = q("stage"); const elapsed = ["nesting", "finishing"].includes(sh.status) ? fmt.s(performance.now() - sh.startedAt) : (sh.totalMs ? fmt.s(sh.totalMs) : (sh.elapsedMs ? fmt.s(sh.elapsedMs) : ""));
   const budget = sh.status === "nesting" ? (sh.nestFlow === "learned" ? ` / ${fmt.s((S.settings.learnedBudgetS || 600) * 1000)} ceiling` : (S.settings.engine || "solver") === "ai" ? ` · round ${sh.aiRound || 1}/${S.settings.aiRounds || 10}` : ` / ${S.settings.budgetS}s`) : "";
   const deep = sh.totalMs ? `${fmt.s(sh.totalMs)} from the first file · nest ${fmt.s(sh.elapsedMs || 0)}${sh.trials ? ` · ${sh.trials} trial${sh.trials > 1 ? "s" : ""}` : ""}${sh.optimized ? ` · charms shrunk ${((1 - sh.optimized.scale) * 100).toFixed(1).replace(/\.0$/, "")}%` : ""}` : "";
   const reviewingSrc = S.sources.find(s => s.review && s.review.state === "running" && s.charms.some(c => c.metal === sh.metal));
@@ -2948,7 +2965,7 @@ function renderProgress(sh) {
   st.innerHTML = sh.stage ? `<span class="spin"></span><span>${esc(sh.stage)}</span><span class="r">${elapsed}${budget}</span>`
     : reviewingSrc ? `<span class="spin"></span><span>Claude is reviewing the ${reviewingSrc.charms.length} charms detected in ${esc(reviewingSrc.name)}</span><span class="r">${fmt.s(reviewingSrc.review.elapsed || 0)}</span>`
     : sh.recalled && !sh.charms.length ? `<span>${sh.recalled.placedCount}/${sh.recalled.charmCount} placed · ${fmt.pct(sh.recalled.density || 0)} full${sh.recalled.verification ? (sh.recalled.verification.ok ? " · verified ✓" : " · ⚠ flagged") : ""} · ${esc(sh.recalled.fileBase || "")}</span><span class="r">${sh.recalled.updatedAt ? new Date(sh.recalled.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}</span>`
-    : done ? `<span>${sh.placements.length}/${activeCharms(sh).length} placed${sh.sat ? ` · ${fmt.pct(sh.sat.fullPct)} full` : ""}${sh.verification ? (sh.verification.ok ? " · verified ✓" : " · ⚠ verification flagged") : ""}</span><span class="r">${elapsed}</span>` : "";
+    : done ? `<span>${sh.placements.length}/${activeCharms(sh).length} placed${sh.sat ? ` · ${fmt.pct(sh.sat.fullPct)} full` : ""}${sh.verification ? (sh.verification.ok ? " · verified ✓" : " · ⚠ verification flagged") : ""}</span><span class="r">${fmt.s(sh.elapsedMs || 0)} search · ${elapsed} total</span>` : "";
   const ov = q("overlay");
   const moving = sh.status === "nesting" || sh.status === "finishing";
   ov.innerHTML = moving ? `<span class="pill neutral">${sh.placements.length}/${activeCharms(sh).length} placed</span>${sh.sat ? `<span class="pill neutral">${fmt.pct(sh.sat.fullPct)} full</span>` : ""}` : "";
@@ -3049,19 +3066,7 @@ function paintPreview(cv, sh, clean, R) {
     ctx.restore();
     if (!clean && c.pinned) { ctx.fillStyle = "#caa861"; ctx.beginPath(); ctx.arc(p.cxPt * k, p.cyPt * k, Math.max(3, 2 * k), 0, Math.PI * 2); ctx.fill(); }
   });
-  // the trial in progress: ghost outlines over the best layout, so the search is visible
-  if (!clean && sh.status === "nesting" && sh.best && sh.livePlacements && sh.livePlacements.length) {
-    ctx.save(); ctx.globalAlpha = 0.45;
-    for (const p of sh.livePlacements) {
-      const c = byId.get(p.id); if (!c) continue;
-      ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180);
-      const tx = (x, y) => [(x - c.centerPt[0]) * k, (c.centerPt[1] - y) * k];
-      ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); ctx.fillStyle = "rgba(74,107,120,.18)"; ctx.fill("nonzero"); ctx.strokeStyle = "rgba(74,107,120,.9)"; ctx.lineWidth = 1; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
-      ctx.restore();
-    }
-    ctx.restore();
-    const hint = $(`[data-r="canvasHint"]`, sh.el); if (hint) hint.textContent = `ghosts = trial ${(sh.liveTrial || 0) + 1} in progress · solid = best so far`;
-  }
+  // Only accepted best placements are drawn; trial ghosts are deliberately omitted.
   // largest open pocket
   if (!clean && sh.sat && sh.sat.pocket && sh.liveInfo && sh.sat.pocket.wPt > 6) { const p = sh.sat.pocket; ctx.setLineDash([3, 3]); ctx.strokeStyle = "rgba(95,122,91,.6)"; ctx.lineWidth = 1; ctx.strokeRect(p.xPt * k, p.yPt * k, p.wPt * k, p.hPt * k); ctx.setLineDash([]); }
 }
@@ -3399,7 +3404,7 @@ async function boot() {
   const sel = $("#stockSel"); sel.innerHTML = STOCK_PRESETS.map(p => `<option value="${p.id}">${p.label}</option>`).join(""); sel.value = S.stockPreset;
   sel.onchange = () => { S.stockPreset = sel.value; localStorage.setItem("cn.stock", sel.value); for (const sh of allSheets()) if (!["gold10k", "gold14k"].includes(sh.metal)) sheetDirty(sh); };
   buildCards();
-  $("#railCores").textContent = `${navigator.hardwareConcurrency || "?"} cores${(navigator.hardwareConcurrency || 4) < 4 ? " · sheets nest one at a time" : ` · ${METALS.length} sheets in parallel`}`;
+  $("#railCores").textContent = `${navigator.hardwareConcurrency || "?"} cores · sheets queued · up to ${parallelCount()} searches per sheet`;
   { const rr = $("#railRecent"); if (rr) rr.ontoggle = () => { if (window.LiveStrip) LiveStrip.render(); }; }
   $("#btnRail").onclick = () => { const off = $("#app").classList.toggle("railOff"); railUserClosed = off; railPinned = !off && S.mode !== "nest"; $("#btnRail").title = off ? "show the rail" : "hide the rail"; showActiveTab(); };
   $("#btnPick").onclick = () => $("#fileInput").click();

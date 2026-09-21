@@ -9,7 +9,6 @@
   const angle = a => ((a % 360) + 360) % 360;
   const pause = () => new Promise(r => setTimeout(r, 0));
   const clean = r => { const { grids, rec, ...rest } = r; return rest; };
-  const compact = pl => pl.length ? Math.max(...pl.map(p => p.cxPt + p.wPt / 2)) * Math.max(...pl.map(p => p.cyPt + p.hPt / 2)) : Infinity;
 
   // Trace the largest exterior of a low-resolution silhouette for learned features only.
   // All disconnected components, holes, stock walls and clearances remain in the exact mask.
@@ -124,7 +123,7 @@
         freePt2: g.freeCells() / res ** 2, pocket: { xPt: pocket.x / res, yPt: pocket.y / res, wPt: pocket.w / res, hPt: pocket.h / res } };
     }
     async function accept(layout, source) {
-      if (!layout || best && (layout.placements.length < best.placements.length || layout.placements.length === best.placements.length && compact(layout.placements) >= compact(best.placements) - .1)) return false;
+      if (!layout || !Sv.betterLayout(layout, best, job.sheet)) return false;
       if (!Sv.verify(job, layout.placements, 6).ok) return false;
       const countGain = !best || layout.placements.length > best.placements.length;
       best = clean(layout);
@@ -134,7 +133,7 @@
     }
     async function challenger() {
       const incoming = opts.incumbent; opts.incumbent = null;
-      if (!incoming || baseline && incoming.placements.length <= baseline.placements.length) return;
+      if (!incoming || baseline && !Sv.betterLayout(incoming, baseline, job.sheet)) return;
       const layout = measure(incoming.placements);
       if (!layout || !Sv.verify(job, layout.placements, 6).ok) return;
       baseline = clean(layout);

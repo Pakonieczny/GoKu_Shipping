@@ -116,3 +116,22 @@ A reproducible deadline defect also discarded an earlier legal layout: a trial i
 Regression coverage runs the actual worker message boundary through `structuredClone`, tests coalesced slow workspace writes and recovery, reproduces deadline expiration with a controlled clock, and verifies preservation of an earlier better layout over worse final worker messages. A three-piece/180-angle stress case contains 26,442,377 bytes of internal masks but its largest transmitted best message is only 2,068 bytes. These checks establish bounded message/checkpoint behavior and best-result retention, not a proof of globally optimal nesting or a browser end-to-end performance claim.
 
 The final fresh 10° reference run (seed 1, 60-second ceiling) placed **81/81 at 73.70%**, finished six trials in 57.36 seconds, and retained an occupied extent of **98.778 mm**. Resolution-6 verification reported zero overlap/outside pixels. This run used the retained 0.35 edge weight and no starting layout.
+
+### September 21 follow-up: one best checkpoint throughout the search
+
+The saved sandbox run `run-2026-09-21-ukmouyngbg`, sheet `gold-muaqrgnc`, contained 106 inputs but kept 39 at 40.60%. Its solver used 180,036 ms; the displayed 327,897 ms included preparation and output. Timing now labels search and total separately.
+
+The audit found several independent problems:
+
+- Largest-first construction could seat younger pieces, fail an older order, then remove the younger pieces to satisfy FIFO. Sparse recovery subsequently limited many trials to only one more order than the incumbent. The solver now alternates largest-first and chronological constructions over the eligible queue, publishes complete legal prefixes immediately, and attempts transactional additions of the next whole oldest order. A failed extension cannot mutate the winner. Unfilled, uncapped sheets keep their search budget.
+- Trial ghosts and first-trial placements appeared in the live preview even when they were not accepted results. Only accepted best snapshots now change the image, counts and fullness.
+- Missing contact scores made the previous comparator inconsistent across different result sources. All sources now use the same strict count, offcut, contact, density ordering; absent metrics rank consistently. Equal results keep the earlier checkpoint.
+- Worker completion, duplicate completion, server polling and export preparation now share the same replacement gate. Mutable trial and preview arrays are detached from the saved best. Errors retain the latest accepted layout and hold unfinished work.
+- Every improvement queues a small separate IndexedDB checkpoint, independent of the full source/mask snapshot. Writes coalesce to the newest revision. Reload recovery checks both job identity and geometry/settings identity before restoring it. A bounded 40-entry score history accompanies the final report.
+- The server decoder now preserves whole-order identity and order dates; server snapshots preserve exact coordinates and comparison metrics, including on errors.
+
+The existing 10° base lattice, 0.35 edge credit, clearance, pins, whole orders, FIFO and fill ceiling remain in force. Interlocking-shape regression coverage ensures chronological construction does not replace the largest-first route needed by some concave layouts.
+
+The 106-piece reproduction reconstructs original-sized silhouettes from both saved sheet exports and restores the original queue's order dates. Reconstructed area differs from the report by less than 0.004% on either sheet. This is an export reconstruction, not the original live browser masks. A single-worker unchanged control kept 25/106 in 180 seconds on this host; the earlier live two-worker result was 39/106. These measurements must not be presented as identical execution environments.
+
+The final revised single-worker reconstruction kept **72/106 at 68.64%** in **180.04 seconds** (10 trials, 63 accepted checkpoint updates). Every update and the final result passed the monotonic comparison assertions; final resolution-6 geometry verification found zero overlap/outside pixels. This improves on the saved 39-piece sheet but does not establish a global optimum or promise 81 pieces for this different queue. The separate 81-piece reference also retained all 81 at 73.81% in a 60-second check with zero overlap/outside pixels.

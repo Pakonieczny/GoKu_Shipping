@@ -5,6 +5,10 @@ const layout=(extent,contact)=>({placements:[{id:'a',xPt:1,yPt:1,wPt:extent-1,hP
 const a=layout(30,1),b=layout(30.1,2),c=layout(30.2,3);
 assert(!S.betterLayout(b,a,sheet));assert(!S.betterLayout(c,b,sheet));assert(S.betterLayout(a,c,sheet));
 assert(S.betterLayout(layout(30,2),a,sheet),'contact breaks exact offcut ties');
+const unknown={...a,contactQuality:undefined,density:.9};
+assert(!S.betterLayout(unknown,a,sheet),'missing metrics cannot create a non-transitive replacement cycle');
+const copy=S.publicLayout(a);a.placements[0].xPt=4;assert.equal(copy.placements[0].xPt,1);a.placements[0].xPt=1;
+assert.equal(S.bestResult({...layout(50,9),endedBy:'budget'},copy,sheet).placements[0].wPt,29);
 const piece=(id,w,h)=>({id,order:id,orderDate:+id+1,w,h,scale:1,bits:new Uint8Array(w*h).fill(1),areaPt2:w*h});
 const job={sheet,clearancePt:0,angles:[0,90],fineRes:1,coarseRes:1,maxFill:.74,timeBudgetMs:2500,maxTrials:1,seed:1,pieces:[piece('0',30,10),piece('1',30,10)]};
 (async()=>{

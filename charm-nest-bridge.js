@@ -4253,6 +4253,24 @@ const Kin = window.Kin = (() => {
 const Session = window.Session = (() => {
   let dbP, ready = false, timer = 0, chain = Promise.resolve(), failed = false, saving = false, pending = false;
   const key = () => S.settings.sandbox === "on" ? "sandbox" : "production";
+  const bestPending = new Map(); let bestSaving = false, bestChain = Promise.resolve();
+  function checkpointBest(sh) {
+    if (!ready || !sh.sheetId || !sh.best || !sh.bestKey) return bestChain;
+    const id = key() + ":best:" + sh.sheetId;
+    bestPending.set(id, copy({ jobId: sh.jobId, bestKey: sh.bestKey, best: sh.best, bestRevision: sh.bestRevision, bestHistory: sh.bestHistory, bestWorker: sh.bestWorker, bestTrial: sh.bestTrial, bestInfo: sh.bestInfo }));
+    if (bestSaving) return bestChain;
+    bestSaving = true;
+    bestChain = bestChain.catch(() => {}).then(async () => {
+      try {
+        while (bestPending.size) {
+          const [id, snapshot] = bestPending.entries().next().value; bestPending.delete(id);
+          try { await io(snapshot, id); }
+          catch (e) { toast(`Best layout is kept in this tab, but its checkpoint could not be saved: ${e.message}`, "bad", 10000); }
+        }
+      } finally { bestSaving = false; }
+    });
+    return bestChain;
+  }
   const OMIT = new Set(["parsed", "worker", "workers", "el", "cardEl", "pages", "persisted", "persisting", "bar", "evNest", "evSearch", "_img", "_geomVerify", "pool", "row", "job", "recalledFrom", "backSaving"]);
   function copy(v, seen = new Map()) {
     if (v == null || typeof v !== "object") return typeof v === "function" ? undefined : v;
@@ -4349,10 +4367,19 @@ const Session = window.Session = (() => {
         const saved = group.pages[0]; Object.assign(prim, saved); prim.cardEl = card; prim.pages = [prim];
         for (const p of group.pages.slice(1)) prim.pages.push(p);
         for (const p of prim.pages) {
+          const interrupted = ["nesting", "finishing", "queued"].includes(p.status);
+          if (interrupted && p.sheetId && p.bestKey) {
+            const checkpoint = await io(undefined, key() + ":best:" + p.sheetId).catch(() => null);
+            if (checkpoint?.jobId === p.jobId && checkpoint.bestKey === p.bestKey && checkpoint.bestRevision >= (p.bestRevision || 0)) {
+              Object.assign(p, checkpoint);
+              p.placements = p.best.placements.map(pl => ({ ...pl })); p.rejects = (p.best.rejects || []).slice(); p.liveInfo = p.bestInfo; p.livePlacements = [];
+              p.outputs = null; p.verification = null;
+            }
+          }
           p.worker = null; p.workers = []; p.pool = null; p.el = null; p.persisted = Promise.resolve();
           if (p.persistedDone === false || p.problem) { p.status = "ready"; p.dirty = true; }
           p.persistedDone = true;
-          if (["nesting", "finishing", "queued"].includes(p.status)) { p.status = "ready"; p.dirty = true; p.stage = "Recovered — ready to continue"; }
+          if (interrupted) { p.status = "ready"; p.dirty = true; p.stage = "Recovered best layout — ready to continue"; }
         }
         prim.active = Math.min(group.active || 0, prim.pages.length - 1); CN.showPage(group.metal, prim.active);
       }
@@ -4386,7 +4413,7 @@ const Session = window.Session = (() => {
     window.addEventListener("pagehide", flush);
     document.addEventListener("visibilitychange", () => { if (document.hidden) flush(); });
   }
-  return { copy, capture, restore, listen, flush, schedule };
+  return { copy, capture, restore, listen, flush, schedule, checkpointBest };
 })();
 
 /* Import cadence is independent of run completion. The cloud ledger counts receipt IDs, not API calls. */

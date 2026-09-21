@@ -37,7 +37,7 @@ exports.handler = async (event) => {
     const raw = new Uint8Array(Buffer.from(String(p.bits || ""), "base64"));
     const n = (p.w | 0) * (p.h | 0);
     const bits = p.packed ? unpackBits(raw, n) : raw;
-    return { id: String(p.id), w: p.w | 0, h: p.h | 0, scale: +p.scale || 6, bits, areaPt2: +p.areaPt2 || 0, pinned: p.pinned || null };
+    return { id: String(p.id), order: p.order || p.id, orderDate: +p.orderDate || 0, w: p.w | 0, h: p.h | 0, scale: +p.scale || 6, bits, areaPt2: +p.areaPt2 || 0, pinned: p.pinned || null };
   }).filter(p => p.w > 0 && p.h > 0 && p.bits.length === p.w * p.h);
   const solverJob = Object.assign({}, job, { pieces, timeBudgetMs: Math.min(+job.timeBudgetMs || 180000, MAX_BUDGET_MS) });
 
@@ -52,23 +52,24 @@ exports.handler = async (event) => {
     try { const s = await ref.get(); if (s.exists && s.data().stopRequested) stop = true; } catch (_) { /* ignore */ }
   };
   try {
-    const result = await Solver.solve(solverJob, {
+    let result = await Solver.solve(solverJob, {
       shouldStop: () => stop,
       yield: async () => { await maybePoll(); if (Date.now() - lastWrite > 2500) await write(); },
-      onBest: (b) => { best = b; },
+      onBest: (b) => { if (Solver.betterLayout(b, best, solverJob.sheet)) best = Solver.publicLayout(b); },
       onTrial: (s) => { trials = s.trial + 1; }
     });
+    result = Solver.bestResult(result, best, solverJob.sheet);
     const verification = Solver.verify(solverJob, result.placements, 4);
     await ref.set({ status: "done", trials: result.trials, best: slimBest(result), result: Object.assign(slimBest(result), { endedBy: result.endedBy, trials: result.trials, elapsedMs: Math.round(result.elapsedMs), params: result.params, density: result.density, verification }), finishedAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() }, { merge: true });
     console.log(`[charmNestSolve] ${id}: ${result.placements.length}/${pieces.length} placed · ${result.endedBy} · ${result.trials} trials`);
   } catch (e) {
     console.error("[charmNestSolve]", id, e);
-    await ref.set({ status: "error", error: String(e && e.message || e), updatedAt: FV.serverTimestamp() }, { merge: true });
+    await ref.set({ status: "error", ...(best ? { best: slimBest(best) } : {}), error: String(e && e.message || e), updatedAt: FV.serverTimestamp() }, { merge: true });
   }
   return { statusCode: 200, body: "ok" };
 };
 
 function unpackBits(buf, n) { const out = new Uint8Array(n); for (let i = 0; i < n; i++) out[i] = (buf[i >> 3] >> (i & 7)) & 1; return out; }
 function slimBest(b) {
-  return { placements: (b.placements || []).map(p => ({ id: p.id, angle: p.angle, cxPt: +p.cxPt.toFixed(3), cyPt: +p.cyPt.toFixed(3), xPt: +p.xPt.toFixed(3), yPt: +p.yPt.toFixed(3), wPt: +p.wPt.toFixed(2), hPt: +p.hPt.toFixed(2) })), rejects: b.rejects || [], density: b.density, freePt2: b.freePt2, usablePt2: b.usablePt2, placedPt2: b.placedPt2, pocket: b.pocket || null, trial: b.trial };
+  return JSON.parse(JSON.stringify(Solver.publicLayout(b)));
 }

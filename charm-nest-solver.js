@@ -275,6 +275,17 @@
   function publicLayout(layout) {
     if (!layout) return layout;
     const { grids, rec, ...out } = layout;
+    out.placements = (layout.placements || []).map(p => ({ ...p }));
+    for (const key of ["rejects", "capped", "liftedForOrders"]) if (Array.isArray(layout[key])) out[key] = layout[key].slice();
+    if (layout.pocket) out.pocket = { ...layout.pocket };
+    if (layout.params) out.params = { ...layout.params, ...(layout.params.angles ? { angles: layout.params.angles.slice() } : {}), ...(layout.params.pieceOrder ? { pieceOrder: layout.params.pieceOrder.slice() } : {}) };
+    return out;
+  }
+  function bestResult(result, incumbent, sheet) {
+    if (!incumbent || result && betterLayout(result, incumbent, sheet)) return publicLayout(result);
+    const out = { ...publicLayout(result), ...publicLayout(incumbent), retainedBest: true };
+    for (const key of ["endedBy", "trials", "elapsedMs"]) if (result?.[key] != null) out[key] = result[key];
+    if (result?.params) out.params = { ...result.params, ...incumbent.params };
     return out;
   }
   async function solve(job, cb) {
@@ -294,7 +305,7 @@
     /* A search that has not beaten its best for a while is done: on a sheet given more pieces than it can hold, the
        ceiling used to be spent trying to seat pieces that could not fit, minutes after the layout had settled. */
     const stallMs = +job.stallMs || 0; let lastBetterAt = now(), stalled = false; let best = null;
-    const stopped = () => (cb.shouldStop && cb.shouldStop()) || (now() - t0) > budget || (stalled = !!(stallMs && !job.packingPending && best && (now() - lastBetterAt) > stallMs));
+    const stopped = () => (cb.shouldStop && cb.shouldStop()) || (now() - t0) > budget || (stalled = !!(stallMs && !job.packingPending && best && (!best.rejects.length || best.rejects.every(id => best.capped?.includes(id))) && (now() - lastBetterAt) > stallMs));
 
     /* sheet grids at both levels; the inset band is pre-filled as wall */
     const FW = Math.round(job.sheet.wPt * fineRes), FH = Math.round(job.sheet.hPt * fineRes);
@@ -396,7 +407,7 @@
         best.placedCells += v.cells; best.placedPt2 = best.placedCells / (fineRes * fineRes);
         best.density = best.placedCells / usableCellsFine; best.contactQuality = qualityOf(best.rec, fine); best.freePt2 = fine.freeCells() / (fineRes * fineRes); best.pocket = pocketPt(coarse, coarseRes);
         if (cb.onPlaced) cb.onPlaced(pl, { trial: best.trial, placed: best.placements.length, total, freePt2: best.freePt2, usablePt2: usableCellsFine / (fineRes * fineRes), placedPt2: best.placedPt2, pocket: best.pocket, finishing: true });
-        if (cb.onBest) cb.onBest(best, { trial: best.trial, placed: best.placements.length, total, rejects: best.rejects, density: best.density, elapsedMs: now() - t0, finishing: true });
+        if (cb.onBest) cb.onBest(publicLayout(best), { trial: best.trial, placed: best.placements.length, total, rejects: best.rejects, density: best.density, elapsedMs: now() - t0, finishing: true });
         await yieldNow();
       }
     }
@@ -423,6 +434,34 @@
         }
         return out;
       };
+
+    // Grow a winning FIFO layout in place, one whole oldest order at a time.
+    // A failed group rolls back locally; it never replaces the saved winner.
+    async function extendOldest(best) {
+      if (!fifo || best.extended || !best.rec?.length) return false;
+      best.extended = true; let improved = false;
+      while (!stopped()) {
+        const missing = repairCandidates(best).map(id => prepared.find(p => p.id === id));
+        if (!missing.length || missing.some(p => !p || p.pinned) || (best.placedCells + missing.reduce((n,p)=>n+p.footprintCells,0))/usableCellsFine > maxFill) break;
+        const rec = best.rec.slice(), grids = rebuildGrids(rec); let cells = best.placedCells, ok = true;
+        for (const p of missing.sort((a,b)=>b.areaPt2-a.areaPt2)) {
+          if (stopped()) { ok = false; break; }
+          const variants = variantsFor(p, [...new Set(angles.concat(Array.from({length:72},(_,i)=>i*5)))]);
+          const pos = search({variants}, grids.fine, grids.coarse, ratio, .35, 0, random, 0, 0, null, true);
+          if (!pos || (cells+pos.v.cells)/usableCellsFine > maxFill) { ok = false; break; }
+          rec.push({p,v:pos.v,x:pos.x,y:pos.y}); cells += pos.v.cells;
+          Object.assign(grids, rebuildGrids(rec));
+        }
+        if (!ok) break;
+        const placements = rec.map(r=>({id:r.p.id,angle:r.v.angle,cxPt:(r.x+r.v.solid.cx)/fineRes,cyPt:(r.y+r.v.solid.cy)/fineRes,xPt:(r.x+(r.v.fine.w-r.v.solid.w)/2)/fineRes,yPt:(r.y+(r.v.fine.h-r.v.solid.h)/2)/fineRes,wPt:r.v.solid.w/fineRes,hPt:r.v.solid.h/fineRes}));
+        const ids = new Set(placements.map(p=>p.id));
+        Object.assign(best,{placements,rec,grids,placedCells:cells,placedPt2:cells/(fineRes*fineRes),density:cells/usableCellsFine,freePt2:grids.fine.freeCells()/(fineRes*fineRes),pocket:pocketPt(grids.coarse,coarseRes),contactQuality:qualityOf(rec,grids.fine),rejects:prepared.filter(p=>!ids.has(p.id)).map(p=>p.id)});
+        improved = true; lastBetterAt = now();
+        cb.onBest?.(publicLayout(best),{trial:best.trial,placed:placements.length,total:prepared.length,rejects:best.rejects.slice(),density:best.density,elapsedMs:now()-t0,finishing:true});
+        await yieldNow();
+      }
+      return improved;
+    }
 
     async function ruinRecreate(best, attempts) {
       const missingIds = repairCandidates(best);
@@ -470,7 +509,7 @@
         const placedIds = new Set(placements.map(p => p.id));
         const rejects = prepared.filter(p => !placedIds.has(p.id)).map(p => p.id);
         Object.assign(best, { placements, rejects, capped: (best.capped || []).filter(id => !placedIds.has(id)), density: placedCells / usableCellsFine, placedCells, placedPt2: placedCells / (fineRes * fineRes), freePt2: fine.freeCells() / (fineRes * fineRes), pocket: pocketPt(coarse, coarseRes), grids: { fine, coarse }, rec: newRec, contactQuality:qualityOf(newRec,fine), repaired: true });
-        if (cb.onBest) cb.onBest(best, { trial: best.trial, placed: placements.length, total, rejects, density: best.density, elapsedMs: now() - t0, repaired: true, removed: removed.length });
+        if (cb.onBest) cb.onBest(publicLayout(best), { trial: best.trial, placed: placements.length, total, rejects, density: best.density, elapsedMs: now() - t0, repaired: true, removed: removed.length });
         return true;
       }
       return false;
@@ -489,7 +528,6 @@
       if ((admittedCells + cells) / usableCellsFine > maxFill) { capOrders = r; break; }
       admittedCells += cells;
     }
-    const prefixCount = layout => layout?.placements.length ? new Set(layout.placements.map(pl => prepared.find(p => p.id === pl.id).order)).size : 0;
     function repairCandidates(layout) {
       if (!layout?.rejects?.length) return [];
       if (!fifo) return layout.rejects.filter(id => !(layout.capped || []).includes(id));
@@ -529,7 +567,7 @@
       if (valid && rec.length) {
         const grids = rebuildGrids(rec), placements = rec.map(r=>({id:r.p.id,angle:r.v.angle,cxPt:(r.x+r.v.solid.cx)/fineRes,cyPt:(r.y+r.v.solid.cy)/fineRes,xPt:(r.x+(r.v.fine.w-r.v.solid.w)/2)/fineRes,yPt:(r.y+(r.v.fine.h-r.v.solid.h)/2)/fineRes,wPt:r.v.solid.w/fineRes,hPt:r.v.solid.h/fineRes}));
         best = {placements,rejects:rejects.map(p=>p.id),capped:rejects.filter(p=>fifo && rank.get(p.order)>=capOrders).map(p=>p.id),density:cells/usableCellsFine,contactQuality:qualityOf(rec,grids.fine),trial:-1,stripPacked:cells/usableCellsFine<maxFill*.9,usablePt2:usableCellsFine/(fineRes*fineRes),freePt2:grids.fine.freeCells()/(fineRes*fineRes),placedPt2:cells/(fineRes*fineRes),placedCells:cells,pocket:pocketPt(grids.coarse,coarseRes),grids,rec,retainedInitial:true};
-        if (cb.onBest) cb.onBest(best,{trial:-1,placed:placements.length,total:prepared.length,rejects:best.rejects,density:best.density,elapsedMs:now()-t0});
+        if (cb.onBest) cb.onBest(publicLayout(best),{trial:-1,placed:placements.length,total:prepared.length,rejects:best.rejects,density:best.density,elapsedMs:now()-t0});
       }
     }
     const refinementReserve = Math.min(10000,budget*.2);
@@ -543,7 +581,7 @@
       const sigma = trial === 0 ? 0 : Math.min(0.6, 0.15 + 0.05 * Math.min(failStreak, 8));
       // pieces the previous trial could not place go first (most of the time), so the layout is built around them
       const front = trial > 0 && lastRejects.length && random() < 0.75 ? new Set(lastRejects) : new Set();
-      const targetOrders = fifo && best && failStreak >= 2 && trial % 4 !== 0 ? Math.min(capOrders, prefixCount(best) + 1) : capOrders;
+      const targetOrders = capOrders;
       const candidates = fifo ? byAreaDesc.filter(p => rank.get(p.order) < targetOrders) : byAreaDesc;
       // Sparse queues consume a strip from one edge. Alternate construction
       // seeds escape contact-only local optima; final ranking and refinement
@@ -558,7 +596,11 @@
       const angleOffset = job.exploreRotations && angles.length < 180 ? (trial % Math.max(2, Math.round(360/angles.length/5))) * 5 : 0;
       for (const p of candidates) if (!p.pinned) p.variants = variantsFor(p, angles.map(a=>(a+angleOffset)%360));
       if (guided) for (const p of candidates) if (!p.pinned && advice.angles?.[p.id]) p.variants = variantsFor(p, [...new Set(angles.concat(advice.angles[p.id].filter(Number.isFinite).slice(0,3).map(a => ((a % 360) + 360) % 360)))]);
-      const order = candidates.map(p => ({ p, k: (front.has(p.id) ? 1e9 : 0) + p.areaPt2 * (1 + sigma * (random() * 2 - 1) + (guided ? .8 * (priorities.get(p.id) || 0) : 0)) })).sort((a, b) => b.k - a.k).map(o => o.p);
+      // Some constructions seat complete oldest orders first. A largest-first
+      // full-sheet trial can otherwise fill with younger pieces, fail one old
+      // order, then throw most of the occupied sheet away to enforce FIFO.
+      const chronological = fifo && trial % 3 === 1;
+      const order = candidates.map(p => ({ p, k: (front.has(p.id) ? 1e9 : 0) + p.areaPt2 * (1 + sigma * (random() * 2 - 1) + (guided ? .8 * (priorities.get(p.id) || 0) : 0)) })).sort((a, b) => (chronological ? rank.get(a.p.order) - rank.get(b.p.order) : 0) || b.k - a.k).map(o => o.p);
       const pinnedFirst = order.filter(p => p.pinned).concat(order.filter(p => !p.pinned));
       const gravW = trial === 0 ? 0.35 : 0.1 + random() * 0.8;
       const noise = trial === 0 ? 0 : random() * 0.15;
@@ -625,6 +667,24 @@
             contact: bestPos.contact || 0
           };
           placements.push(pl);
+          // Publish completed legal prefixes during construction, not only at
+          // restart boundaries. Speculative/partial orders never reach the UI.
+          if (placements.length > (best?.placements.length || 0)) {
+            const ids = new Set(placements.map(p => p.id));
+            const incomplete = prepared.filter(p => !ids.has(p.id));
+            const cutoff = fifo && incomplete.length ? Math.min(...incomplete.map(p => rank.get(p.order))) : Infinity;
+            const bad = new Set(incomplete.map(p => p.order));
+            const valid = placedRec.filter(r => !bad.has(r.p.order) && rank.get(r.p.order) < cutoff);
+            if (valid.length > (best?.placements.length || 0)) {
+              const grids = rebuildGrids(valid), cells = valid.reduce((n,r) => n+r.v.cells,0);
+              const validIds = new Set(valid.map(r => r.p.id));
+              if (cells / usableCellsFine <= maxFill) {
+                best = { placements: placements.filter(p => validIds.has(p.id)), rejects: prepared.filter(p => !validIds.has(p.id)).map(p => p.id), capped: capped.slice(), density: cells/usableCellsFine, contactQuality: qualityOf(valid,grids.fine), trial, stripPacked, usablePt2: usableCellsFine/(fineRes*fineRes), freePt2: grids.fine.freeCells()/(fineRes*fineRes), placedPt2: cells/(fineRes*fineRes), placedCells: cells, pocket: pocketPt(grids.coarse,coarseRes), grids, rec: valid.slice() };
+                lastBetterAt = now(); failStreak = 0;
+                cb.onBest?.(publicLayout(best), { trial, placed: best.placements.length, total: prepared.length, rejects: best.rejects.slice(), density: best.density, elapsedMs: now()-t0, incremental: true });
+              }
+            }
+          }
           if (cb.onPlaced) {
             const pocket = coarse.largestPocket();
             cb.onPlaced(pl, {
@@ -637,6 +697,7 @@
           }
         }
         await yieldNow();
+        if (chronological && rejects.some(id => rank.get(prepared.find(p => p.id === id).order) < capOrders)) break;
       }
 
       // A budget/stop during a trial must not make the unvisited pieces disappear.
@@ -672,10 +733,11 @@
         best = { placements, rejects, capped: capped.slice(), density: summary.density, contactQuality, trial, stripPacked, usablePt2: usableCellsFine / (fineRes * fineRes),
           freePt2: fine.freeCells() / (fineRes * fineRes), placedPt2: placedCells / (fineRes * fineRes), placedCells,
           pocket: pocketPt(coarse, coarseRes), grids: { fine, coarse }, rec: placedRec.slice() };
-        if (cb.onBest) cb.onBest(best, summary);
+        if (cb.onBest) cb.onBest(publicLayout(best), summary);
         // one or two short (and not because of the cap): targeted push into this very layout
-        if (repairCandidates(best).length <= 2) await finishPush(best);
+        if (!fifo && repairCandidates(best).length <= 2) await finishPush(best);
       } else failStreak++;
+      if (best && await extendOldest(best)) failStreak = 0;
       if (cb.onTrial) cb.onTrial(Object.assign({ better }, summary));
       if (best && best.placements.length === prepared.length) {
         endedBy = "complete";
@@ -724,7 +786,7 @@
           best = candidate; best.contactRefinements = (best.contactRefinements || 0) + 1;
           best.pocket = pocketPt(nextGrids.coarse,coarseRes);
           best.freePt2 = nextGrids.fine.freeCells()/(fineRes*fineRes);
-          if (cb.onBest) cb.onBest(best,{trial:best.trial,placed:placements.length,total:prepared.length,rejects:best.rejects,density:best.density,elapsedMs:now()-t0,refining:true});
+          if (cb.onBest) cb.onBest(publicLayout(best),{trial:best.trial,placed:placements.length,total:prepared.length,rejects:best.rejects,density:best.density,elapsedMs:now()-t0,refining:true});
         }
         await yieldNow();
       }
@@ -790,8 +852,10 @@
     // Strict ordering prevents epsilon ties from cycling and gradually consuming
     // an offcut as asynchronous workers report higher contact scores.
     if (a !== b) return a < b;
-    if (Number.isFinite(candidate.contactQuality) && Number.isFinite(incumbent.contactQuality) && candidate.contactQuality !== incumbent.contactQuality) return candidate.contactQuality > incumbent.contactQuality;
-    return candidate.density > incumbent.density;
+    const contact = x => Number.isFinite(x.contactQuality) ? x.contactQuality : -Infinity;
+    if (contact(candidate) !== contact(incumbent)) return contact(candidate) > contact(incumbent);
+    const density = x => Number.isFinite(x.density) ? x.density : -Infinity;
+    return density(candidate) > density(incumbent);
   }
 
   /** Majority-resample a fine mask to the coarse grid. */
@@ -1093,5 +1157,5 @@
     const overlap = off ? null : grid.overlap(v.fine.pm, x0, y0, 1e9);
     return { ok: false, x: x0, y: y0, off, overlapPt2: overlap == null ? null : overlap / (res * res) };
   }
-  return { solve, publicLayout, verify, contactAt, placementAt, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine };
+  return { solve, publicLayout, bestResult, verify, contactAt, placementAt, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine };
 });
