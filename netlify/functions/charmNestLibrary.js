@@ -37,6 +37,7 @@ const admin = require("./firebaseAdmin");
 const { json, gate, parseBody, str, num } = require("./_charmNestAuth");
 const db = admin.firestore();
 const OrderRules = require("../../charm-nest-orders.js");
+const Readiness = require("../../charm-nest-readiness.js");
 /* ── sandbox: when a request says sandbox:true, the sorter's OWN records (sheets, pools, backs, sets, counters, runs,
    bridge log) go to Sandbox_-prefixed collections; the master index, the charm library, maps and calibration stay
    shared and are only read. Set per request; a function instance handles one request at a time. ── */
@@ -59,12 +60,34 @@ function slim(d) {
     preview: d.outputs && d.outputs.preview ? d.outputs.preview.url : null,
     // the four files a recalled card offers, so recalling a set is one read of this list and nothing more
     outputs: d.outputs ? Object.fromEntries(["ai", "pdf", "labelled", "report"].filter(k => d.outputs[k] && d.outputs[k].url).map(k => [k, d.outputs[k].url])) : {},
-    stock: d.stock || null, poolIds: d.poolIds || [],
-    backs: (d.backPool || []).map(bk => ({ poolId: bk.poolId || null, previewWPt:bk.previewWPt || null, previewHPt:bk.previewHPt || null, pageWPt:bk.pageWPt || null, pageHPt:bk.pageHPt || null, sheetId:d.id, copy:bk.copy || null, approvedAt:bk.approvedAt || null, order: bk.order || null, sku: bk.sku || null, text: bk.text || null, lines: bk.lines || null, approvedBy: bk.approvedBy || null, capMm: bk.capMm || null, png: bk.outputs && bk.outputs.png ? bk.outputs.png.url : null, ai: bk.outputs && bk.outputs.ai ? bk.outputs.ai.url : null })),
+    stock: d.stock || null, poolIds: d.poolIds || [], engraving:d.engraving || {}, laser:d.laser || null,
+    backs: (d.backPool || []).map(bk => ({ poolId: bk.poolId || null, previewWPt:bk.previewWPt || null, previewHPt:bk.previewHPt || null, pageWPt:bk.pageWPt || null, pageHPt:bk.pageHPt || null, sheetId:bk.sheetId || d.id, invalidated:!!bk.invalidated, copy:bk.copy || null, approvedAt:bk.approvedAt || null, order: bk.order || null, sku: bk.sku || null, text: bk.text || null, lines: bk.lines || null, approvedBy: bk.approvedBy || null, verified:bk.verified || null, outputs:bk.outputs || null, capMm: bk.capMm || null, png: bk.outputs && bk.outputs.png ? bk.outputs.png.url : null, ai: bk.outputs && bk.outputs.ai ? bk.outputs.ai.url : null })),
     names: str(d.names, 2000), sources: (d.sources || []).map(s => ({ name: s.name, hash: s.hash || null })), runId: d.runId || null, page: num(d.page) || 1,
-    setId: d.setId || null, setSeq: num(d.setSeq) || null, sheetIndex: num(d.sheetIndex) || null, orders: (d.orders || []).slice(0, 500), backCount: (d.backPool || []).length, label: d.label ? { files: (d.label.files || []).map(f => ({ path: f.path, url: f.url })) } : null,
+    setId: d.setId || null, setSeq: num(d.setSeq) || null, sheetIndex: num(d.sheetIndex) || null, orders: (d.orders || []).slice(0, 500), backCount: (d.backPool || []).length, label: d.label ? { files: (d.label.files || []).map(f => ({ path: f.path, url: f.url, payload:f.payload || null, orders:f.orders || [], part:f.part || 1 })) } : null,
     cardStartedAt: ms(d.cardStartedAt) || ms(d.createdAt), updatedAt: ms(d.updatedAt), createdAt: ms(d.createdAt)
   };
+}
+
+// One run read per batch supplies the exact per-copy engraving decisions.
+// Old/incomplete records remain pending until evidence is available.
+async function readinessRecords(records) {
+  const runIds=[...new Set(records.map(s=>s.runId).filter(isId))], runs=new Map();
+  for(let i=0;i<runIds.length;i+=100) {
+    const docs=await db.getAll(...runIds.slice(i,i+100).map(id=>col(RUNS).doc(id)));
+    docs.forEach(d=>{if(d.exists)runs.set(d.id,d.data());});
+  }
+  return records.map(s=>{
+    const engraving=Readiness.decisions(Object.values(runs.get(s.runId)?.lines || {}));
+    const record={...s,engraving:Object.fromEntries((s.poolIds || []).map(id=>[id,engraving[id] || {needed:true,state:'unknown',approved:false}]))};
+    record.laser=Readiness.sheet(record);return record;
+  });
+}
+async function op_laserStatus(b) {
+  const ids=[...new Set((b.sheetIds || []).filter(isId))].slice(0,500), records=[];
+  for(let i=0;i<ids.length;i+=100){const docs=await db.getAll(...ids.slice(i,i+100).map(id=>col(SHEETS).doc(id)));for(const d of docs)if(d.exists&&!d.data().archived)records.push({...d.data(),id:d.id});}
+  const setIds=[...new Set(records.map(s=>s.setId).concat(b.setIds || []).filter(isId))].slice(0,500),sets=[];
+  for(let i=0;i<setIds.length;i+=100){const docs=await db.getAll(...setIds.slice(i,i+100).map(id=>col(SETS).doc(id)));for(const d of docs)sets.push({setId:d.id,sheetIds:d.exists?(d.data().sheetIds || []):[]});}
+  return {sheets:(await readinessRecords(records)).map(slim),sets,checkedAt:Date.now()};
 }
 
 async function op_ping() {
@@ -155,7 +178,7 @@ async function op_listSheets(b) {
   if (b.setId) rows = rows.filter(d => d.setId === b.setId);
   if (b.runId) rows = rows.filter(d => d.runId === b.runId);
   rows.sort((x, y) => (ms(y.updatedAt) || 0) - (ms(x.updatedAt) || 0));
-  return { sheets: rows.map(slim) };
+  return { sheets: (await readinessRecords(rows)).map(slim) };
 }
 async function op_getSheet(b) {
   if (!isId(b.id)) return { error: "bad id" };
@@ -163,7 +186,7 @@ async function op_getSheet(b) {
   if (!s.exists) return { sheet: null };
   const d = s.data(); d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt);
   await refreshLinks(d);
-  return { sheet: d };
+  return { sheet: (await readinessRecords([d]))[0] };
 }
 /** Same-origin recovery of a saved PNG; never accepts an arbitrary caller URL. */
 async function op_backPreview(b) {
@@ -550,7 +573,21 @@ async function op_setAllocate(b) {
 }
 async function op_setUpdate(b) {
   const id = str(b.setId, 80); if (!isId(id)) return { error: "bad set id" };
-  await col(SETS).doc(id).set(Object.assign({}, b.patch || {}, { setId: id, updatedAt: FV.serverTimestamp() }), { merge: true });
+  const ref=col(SETS).doc(id);
+  await db.runTransaction(async tx=>{
+    const old=await tx.get(ref),next={...(old.exists?old.data():{}),...(b.patch || {})};
+    if(/^complete/.test(next.status || '')) {
+      const ids=[...new Set(next.sheetIds || [])];
+      if(!ids.length)throw new Error('A set without sheets is not ready for laser');
+      const docs=[];for(const sheetId of ids)docs.push(await tx.get(col(SHEETS).doc(sheetId)));
+      const records=docs.filter(d=>d.exists).map(d=>({...d.data(),id:d.id}));
+      const runIds=[...new Set(records.map(d=>d.runId).filter(Boolean))], runs=new Map();
+      for(const runId of runIds){const run=await tx.get(col(RUNS).doc(runId));runs.set(runId,run.exists?run.data():{});}
+      for(const record of records)record.engraving=Readiness.decisions(Object.values(runs.get(record.runId)?.lines || {}));
+      if(records.some(s=>s.setId!==id) || !Readiness.set(next,records).ready)throw new Error('Set cannot be completed: every sheet needs approved engraving, verified back files, front files and QR labels');
+    }
+    tx.set(ref,Object.assign({}, b.patch || {},{setId:id,updatedAt:FV.serverTimestamp()}),{merge:true});
+  });
   return { ok: true };
 }
 async function op_setGet(b) { const id = str(b.setId, 80); if (!isId(id)) return { error: "bad set id" }; const s = await col(SETS).doc(id).get(); if (!s.exists) return { set: null }; const d = s.data(); d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt); d.committedAt = ms(d.committedAt) || d.committedAt || null; return { set: d }; }
@@ -565,10 +602,10 @@ async function op_setList(b) {
     const ids=[...new Set(rows.flatMap(r=>r.sheetIds || []))].filter(isId);
     for(let i=0;i<ids.length;i+=200) {
       const docs=await db.getAll(...ids.slice(i,i+200).map(id=>col(SHEETS).doc(id)));
-      for(const d of docs) if(d.exists && !d.data().archived) sheets.push(slim(d.data()));
+      for(const d of docs) if(d.exists && !d.data().archived) sheets.push(d.data());
     }
   }
-  return {sets:rows, ...(b.includeSheets ? {sheets} : {})};
+  return {sets:rows, ...(b.includeSheets ? {sheets:(await readinessRecords(sheets)).map(slim)} : {})};
 }
 // ── release: when each slow material last went out, and the days a person opened one early (shop-wide, not per browser) ──
 async function op_releaseGet() { const s = await col(RELEASE).doc("current").get(); const d = s.exists ? s.data() : {}; return { lastReleased: d.lastReleased || {}, released: d.released || {}, updatedAt: ms(d.updatedAt) }; }
@@ -688,7 +725,7 @@ async function op_optionMapPut(b) {
   return { ok: true };
 }
 
-const OPS = { archiveEmptySheet: op_archiveEmptySheet, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
+const OPS = { laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, startMaster: op_startMaster,
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,

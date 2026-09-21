@@ -2271,7 +2271,7 @@ const Engrave = window.Engrave = (() => {
         for (const page of allSheets()) page.backPool = (page.backPool || []).filter(b => b.poolId !== poolId);
         if (!current()) return;
         sh.backPool = sh.backPool.filter(b=>b.poolId!==poolId); sh.backPool.push(rec); job.backs.push(rec);
-        if(job.editingBack) job.expectedApprovedAt=rec.approvedAt; refreshBacks();
+        if(job.editingBack) job.expectedApprovedAt=rec.approvedAt; window.LaserReview?.saved(sh); refreshBacks();
         agent({ metal: sh.metal, engrave: true }, "ENGRAVE", `Back file written and re-verified: ${name}.ai (${built.reference.redrawn ? "cut reference redrawn from the exact transformed paths" : "original cut bytes under the mirror matrix"})`);
       }
       if(job.editingBack) {const {sheet:latest}=await api("charmNestLibrary",{op:"getSheet",id:sh.sheetId});sh.backPool=latest.backPool || [];}
@@ -2478,7 +2478,7 @@ const Engrave = window.Engrave = (() => {
   function render() {
     if (rendering) return;
     rendering = true;
-    try { renderView(); }
+    try { renderView(); window.LaserReview?.changed(); }
     catch (error) {
       // A failed preview is local to this tab. In particular, do not let it
       // reject Session.restore() and prevent the rest of startup from finishing.
@@ -2814,6 +2814,66 @@ const Engrave = window.Engrave = (() => {
   return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0 }), loadFonts, classify, classifyAll, canFit, isWorking, fitJob, fitAll, approve, nudge, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
 })();
 
+/* ═══ 22 · Sets — production evidence and release ═══ */
+const LaserReview = window.LaserReview = (()=>{
+  const R=window.CharmNestReadiness, records=new Map();let frame=0,polling=false,lastPoll=0;
+  function record(s){const id=s.id || s.sheetId,old=records.get(id);if(id && (!old || (s.updatedAt || 0)>=(old.updatedAt || 0)))records.set(id,s);return s;}
+  function projected(s){
+    const id=s.id || s.sheetId,base=records.get(id) || s;
+    const live=allSheets().find(x=>x.sheetId===id && !x.recalled);
+    const ids=base.poolIds || (live?.placements || []).map(p=>live.charms.find(c=>c.id===p.id)?.poolId).filter(Boolean);
+    const d={...base,poolIds:ids,engraving:{...base.engraving},backPool:(base.backPool || base.backs || []).slice()};
+    const rows=R.decisions(Orders.rows());
+    for(const pid of ids)if(rows[pid] && !d.engraving[pid])d.engraving[pid]=rows[pid];
+    for(const j of Engrave.items().values())for(const pid of j.copies || [])if(ids.includes(pid)) {
+      if(j.state==='written' && !j.backSaving)continue; // cloud evidence wins once saved
+      d.engraving[pid]={needed:!['none','skipped'].includes(j.state),state:j.state,approved:['none','skipped','approved'].includes(j.state)};
+      d.backPool=d.backPool.filter(b=>b.poolId!==pid);
+      if(j.state==='approved')d.backPool.push(...(j.backs || []).filter(b=>b.poolId===pid));
+    }
+    if(live?.dirty || live?.saving || ['nesting','finishing'].includes(live?.status))d.dirty=true;
+    return d;
+  }
+  const sheet=s=>R.sheet(projected(s));
+  const group=(st,sheets)=>R.set(st,sheets.map(projected));
+  function labels(s,files){
+    const id=s.id || s.sheetId, fs=files?.length?files:s.label?.files || [];
+    return `<div class="productionRow"><div class="sheetQR">${fs.length?fs.map(f=>`<img data-big title="Sheet QR label" data-label-sheet="${esc(id)}" data-label-path="${esc(f.path || '')}" data-label-part="${+f.part || 1}" crossorigin="anonymous"${f.url?` src="${esc(cors(f.url))}"`:''} alt="Sheet QR code">`).join(''):'<span class="qrWaiting">QR label pending</span>'}</div><div data-laser-sheet="${esc(id)}">${R.panel(sheet(s),'Sheet '+(s.sheetIndex || s.page || 1))}</div></div>`;
+  }
+  function sections(body){
+    body.innerHTML='<section class="laserSection readyArea" data-laser-area="ready"><h2>Ready for laser <span>All production checks complete</span></h2><div class="laserAreaItems"></div></section><section class="laserSection" data-laser-area="pending"><h2>In preparation <span>Approval or saved files still needed</span></h2><div class="laserAreaItems"></div></section>';
+  }
+  function place(card,ready,body){body.querySelector(`[data-laser-area="${ready?'ready':'pending'}"] .laserAreaItems`).appendChild(card);}
+  function refresh(){
+    frame=0;
+    document.querySelectorAll('[data-laser-sheet]').forEach(host=>{const s=records.get(host.dataset.laserSheet);if(!s)return;const html=R.panel(sheet(s),'Sheet '+(s.sheetIndex || s.page || 1));if(host.innerHTML!==html)host.innerHTML=html;});
+    document.querySelectorAll('[data-laser-card]').forEach(card=>{
+      const sheets=(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean),report=card._laserSet?group(card._laserSet,sheets):sheet(sheets[0] || {});
+      const seal=card.querySelector('[data-laser-seal]');if(seal){const html=R.seal(report,card._laserSet?'Set':'Sheet');if(seal.innerHTML!==html)seal.innerHTML=html;}
+      const title=card.querySelector('[data-set-title]');if(title)title.textContent=O.setLabel(card._laserSet.seq)+(card._laserSet.day?' · '+card._laserSet.day:'');
+      card.querySelectorAll('[data-sheet-status]').forEach(n=>{const s=records.get(n.dataset.sheetStatus);if(s){const ready=sheet(s).ready;n.textContent=ready?'Ready for laser':'In preparation';n.classList.toggle('ok',ready);}});
+      const body=card.closest('#libBody');if(body && card.parentElement!==body.querySelector(`[data-laser-area="${report.ready?'ready':'pending'}"] .laserAreaItems`))place(card,report.ready,body);
+    });
+    document.querySelectorAll('[data-laser-area]').forEach(area=>{area.hidden=!area.querySelector('.laserAreaItems')?.children.length;});
+  }
+  function changed(){if(!frame)frame=requestAnimationFrame(refresh);}
+  async function poll(force=false){
+    if(polling || S.mode!=='library' || document.hidden || !S.cloud.ok || (!force && Date.now()-lastPoll<15000))return;
+    const ids=[...new Set([...document.querySelectorAll('[data-laser-sheet]')].map(x=>x.dataset.laserSheet).concat([...document.querySelectorAll('[data-laser-card]')].flatMap(x=>x._laserSheets || [])))];if(!ids.length)return;
+    polling=true;lastPoll=Date.now();
+    try{const response=await api('charmNestLibrary',{op:'laserStatus',sheetIds:ids,setIds:[...document.querySelectorAll('[data-laser-card]')].map(x=>x._laserSet?.setId).filter(Boolean)},{quiet:true});for(const set of response.sets || [])for(const card of document.querySelectorAll('[data-laser-card]'))if(card._laserSet?.setId===set.setId)card._laserSet={...card._laserSet,sheetIds:set.sheetIds};const found=new Set();for(const s of response.sheets || []){found.add(s.id);records.set(s.id,s);}for(const id of ids)if(!found.has(id) && records.has(id))records.set(id,{...records.get(id),archived:true});changed();}
+    catch(e){console.warn('Production readiness refresh',e);}
+    finally{polling=false;}
+  }
+  function saved(sh){
+    const old=records.get(sh.sheetId);if(old)record({...old,backPool:(sh.backPool || []).slice(),engraving:{...old.engraving,...R.decisions(Orders.rows())}});
+    changed();
+  }
+  setInterval(()=>poll(),15000);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)poll(true);});
+  return {record,sheet,group,labels,sections,place,changed,saved,poll,projected};
+})();
+
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
 const Sets = window.Sets = (() => {
   const byRun = () => B.sets;                         // keyed `${runId}|${group}` — a run has one set per kin group
@@ -2925,8 +2985,10 @@ const Sets = window.Sets = (() => {
   }
   /** labels/Set-K_labels.pdf (one page per sheet label), Set-K_manifest.pdf, set.json. */
   function validateRelease(set) {
-    if (!Gate.modern(set.runId)) return;
     const sheets = sheetsOf(set);
+    const reports=sheets.map(sh=>({...sh,id:sh.sheetId,poolIds:(sh.placements || []).map(p=>sh.charms.find(c=>c.id===p.id)?.poolId).filter(Boolean),placedCount:sh.placements.length,outputs:sh.cloud || {},engraving:window.CharmNestReadiness.decisions(Orders.rows())}));
+    if(!window.CharmNestReadiness.set(set,reports).ready)throw new Error("Set is not ready for laser: finish every sheet's engraving approvals, saved back files, layout checks and QR labels");
+    if (!Gate.modern(set.runId)) return;
     if (!set.sheetIds.length || sheets.length !== set.sheetIds.length || set.sheetIds.some(id => !sheets.some(sh => sh.sheetId === id))) throw new Error("The set's sheets are not all loaded");
     for (const sh of sheets) {
       const policy = Gate.policy(sh, set.seq);
@@ -2949,6 +3011,7 @@ const Sets = window.Sets = (() => {
   async function finalize(set, context) {
     const ops=window.CharmNestOperations;
     if(ops && !context){await Gate.flush(B.run);return ops.run({key:'labels:'+set.setId,label:'Saving set labels',resources:['production:'+set.runId]},token=>finalize(set,token));}
+    if(B.run?.runId===set.runId)await RunCtl.save(B.run);
     validateRelease(set);
     const { PDFDocument, StandardFonts, rgb } = PDFLib;
     const files = set.labelFiles.slice().sort((a, b) => a.sheet.localeCompare(b.sheet) || a.part - b.part);
@@ -3039,6 +3102,7 @@ const Sets = window.Sets = (() => {
       }
       if (S.library.kind !== "sets") return;
       _cache.sheets=Gate.projectLibraryRecords(_cache.rawSheets || _cache.sheets);
+      _cache.sheets.forEach(LaserReview.record);
       _cache.sets=libraryGroups(_cache.rawSets || [],_cache.sheets);
       const sheets = _cache.sheets;
       // the metal chips and the search used to light up and change nothing here: this view read neither
@@ -3048,31 +3112,23 @@ const Sets = window.Sets = (() => {
       if (metal) sets = sets.filter(st => (st.materials || []).includes(metal));
       if (q) sets = sets.filter(st => `${st.setId ? O.completedTitle(st) : st.name || ""} ${st.setId || ""} ${st.setId ? O.completionDay(st) : st.day || ""} ${st.runId || ""} ${Object.keys(st.orders || {}).join(" ")} ${(st.sheets || []).flatMap(r=>[r.fileBase,r.names,...(r.backs || []).map(b=>b.text)]).join(" ")}`.toLowerCase().includes(q));
       if (!sets.length) { body.innerHTML = `<div class="libEmpty">${q || metal ? "No sets match this filter." : "No sets yet."}</div>`; return; }
-      body.innerHTML = "";
-      const dateRows = new Map();
+      LaserReview.sections(body);
       for (const st of sets) {
         const all = st.sheets.slice().sort((a, b) => (a.metal || "").localeCompare(b.metal || "") || (a.sheetIndex || 0) - (b.sheetIndex || 0));
         const mine = metal ? all.filter(x => x.metal === metal) : all;
         const held = Object.entries(st.orders || {}).filter(([, o]) => o.held);
-        const card = el("div", "setCard");
-        card.innerHTML = `${st.standalone || st.working ? `<div class="sh"><span class="nm">${st.standalone ? "14K / 10K Solid Waiting for Approval" : "Incomplete Sheets: Waiting to be filled!"}</span></div>` : `<div class="sh"><span class="nm">${esc(O.completedTitle(st))}</span>${st.labels?.pdf || st.labels?.manifest || st.labels?.json || /complete/.test(st.status) ? `<details class="setActions"><summary aria-label="Set file menu">⋯</summary><div>${st.labels?.pdf ? `<a href="${st.labels.pdf.url}" target="_blank" rel="noopener">Labels PDF</a>` : ""}${st.labels?.manifest ? `<a href="${st.labels.manifest.url}" target="_blank" rel="noopener">Manifest</a>` : ""}${st.labels?.json ? `<a href="${st.labels.json.url}" target="_blank" rel="noopener">Set data</a>` : ""}${/complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div></details>` : ""}</div>`}
-          <div class="sheetsRow">${mine.map(r => `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${esc(r.id)}" crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span>${r.backCount ? `<span>✎ ${r.backCount}</span>` : ""}<span class="pill ${r.status === "complete" ? "ok" : "bad"}" style="padding:2px 7px">${esc(r.status)}</span></div></div>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
+        const card = el("div", "setCard"); card.dataset.laserCard="set";card._laserSet=st;card._laserSheets=all.map(r=>r.id);
+        card.innerHTML = `${st.standalone || st.working ? `<div class="sh"><span class="nm">${st.standalone ? "14K / 10K Solid Waiting for Approval" : "Incomplete Sheets: Waiting to be filled!"}</span></div>` : `<div class="sh"><span class="nm" data-set-title>${esc(O.setLabel(st.seq))}${st.day?" · "+esc(st.day):""}</span><span data-laser-seal>${window.CharmNestReadiness.seal(LaserReview.group(st,all),"Set")}</span>${st.labels?.pdf || st.labels?.manifest || st.labels?.json || /complete/.test(st.status) ? `<details class="setActions"><summary aria-label="Set file menu">⋯</summary><div>${st.labels?.pdf ? `<a href="${st.labels.pdf.url}" target="_blank" rel="noopener">Labels PDF</a>` : ""}${st.labels?.manifest ? `<a href="${st.labels.manifest.url}" target="_blank" rel="noopener">Manifest</a>` : ""}${st.labels?.json ? `<a href="${st.labels.json.url}" target="_blank" rel="noopener">Set data</a>` : ""}${/complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div></details>` : ""}</div>`}
+          <div class="sheetsRow">${mine.map(r => `<article class="librarySheet"><div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${esc(r.id)}" crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span>${r.backCount ? `<span>✎ ${r.backCount}</span>` : ""}<span class="pill" data-sheet-status="${esc(r.id)}">${LaserReview.sheet(r).ready?"Ready for laser":"In preparation"}</span></div></div>${LaserReview.labels(r,(st.labelFiles || []).filter(f=>f.sheetId===r.id))}</article>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
           ${held.length ? `<div class="holds"><b>Held:</b> ${held.map(([rid, o]) => `${esc(rid)} — ${esc(o.held.why || "")}`).join(" · ")}</div>` : ""}
           ${st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}
-          <div class="labels">${(st.labelFiles || []).map(f => `<img data-label-sheet="${esc(f.sheetId || "")}" data-label-path="${esc(f.path || "")}" data-label-part="${+f.part || 1}" crossorigin="anonymous"${f.url ? ` src="${esc(cors(f.url))}"` : ""} title="${esc(f.label || f.sheet)}" data-big="${esc(f.url || "")}" alt="Sheet QR code">`).join("")}</div>`;
+          `;
         card.querySelectorAll(".libCard").forEach(x => x.onclick = () => openLibrarySheet(x.dataset.id));
         card.querySelectorAll("[data-big]").forEach(img => img.onclick = () => { const d = document.createElement("dialog"); d.className = "wide"; d.innerHTML = `<div class="dlg"><div class="dlgHead"><h3>${esc(img.title)}</h3><div class="right"><button class="btn ghost xs">Close</button></div></div><div class="dlgBody" style="display:grid;place-items:center"><img crossorigin="anonymous" class="labelBig" src="${esc(img.src)}" alt=""></div></div>`; d.querySelector("button").onclick = () => d.close(); d.addEventListener("close", () => d.remove()); document.body.appendChild(d); d.showModal(); });
         const ub = card.querySelector("[data-undo]"); if (ub) ub.onclick = async () => { if (!confirm(`Undo the completion of ${st.name}? The orders return to the station's list; every file is kept.`)) return; const local = [...byRun().values()].find(x => x.setId === st.setId) || Object.assign({ orders: {}, sheetIds: st.sheetIds || [], materials: st.materials || [], labelFiles: st.labelFiles || [] }, st); byRun().set(local.runId || st.setId, local); try { await undo(local); toast(`${st.name} undone`, "ok"); renderLibrary(body); } catch (e) { toast(e.message, "bad", 6000); } };
-        if (st.setId) {
-          const day=O.completionDay(st);
-          if (!dateRows.has(day)) {
-            const row=el("section","setDateRow"); row.dataset.day=day;
-            const heading=el("h3","setDateHeading"); heading.textContent=day ? new Date(day+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric",year:"numeric"}) : "Date unavailable";
-            row.appendChild(heading); body.appendChild(row); dateRows.set(day,row);
-          }
-          dateRows.get(day).appendChild(card);
-        } else body.appendChild(card);
+        LaserReview.place(card,LaserReview.group(st,all).ready,body);
       }
+      LaserReview.changed();
     } catch (e) { if (request === libraryRequest && S.library.kind === "sets") body.innerHTML = `<div class="libEmpty">Could not load sets: ${esc(e.message)}</div>`; }
   }
   return { ensure, ofRun, keyOf, labelsReady, onSheetSaved, finalize, commit, undo, evaluate, save, renderLibrary, renderLabelPng, sheetsOf, setOfSheet, byRun };

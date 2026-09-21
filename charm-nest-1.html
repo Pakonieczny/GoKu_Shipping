@@ -1112,6 +1112,45 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .sheetExport{display:inline-flex;gap:3px;align-items:center;margin-left:auto;flex:0 0 auto}
 .libCard .h{flex-wrap:wrap;gap:6px}.sheetExport .btn{padding:3px 5px;font-size:10px}
 
+
+/* Production approval evidence: one clear strip beside each QR. */
+.laserSection {margin:0 0 32px;border-top:1px solid var(--line);padding-top:18px}
+.laserSection[hidden] {display:none}
+.laserSection h2 {font:600 22px var(--sans, sans-serif);margin:0 0 18px;display:flex;gap:18px;align-items:baseline;flex-wrap:wrap}
+.laserSection h2 span {font-size:14px;font-weight:400;color:var(--muted,#827b70)}
+.readyArea {border-top:3px solid #718968}
+.readyArea h2 {color:#466440}
+.laserAreaItems {display:grid;gap:20px}
+.setCard .sheetsRow {display:grid;grid-template-columns:1fr;gap:0}
+.librarySheet {min-width:0;padding:20px 0;display:grid;grid-template-columns:minmax(250px,340px) minmax(0,1fr);gap:26px;align-items:center;border-bottom:1px solid var(--line)}
+.librarySheet:last-child {border-bottom:0}
+.librarySheet>.libCard,.setCard .librarySheet>.libCard {width:100%;max-width:none;margin:0}
+.productionRow {display:grid;grid-template-columns:145px minmax(0,1fr);gap:24px;align-items:start;min-width:0}
+#lsBody>.productionRow {margin:24px 0;padding-top:24px;border-top:1px solid var(--line)}
+.sheetQR {display:grid;gap:12px}
+.sheetQR img {width:145px;height:145px;object-fit:contain;border:1px solid var(--line);border-radius:9px;background:#fff}
+.qrWaiting {width:145px;min-height:145px;display:grid;place-items:center;border:1px dashed var(--line);border-radius:9px;color:var(--muted,#827b70);font-size:13px}
+.laserApproval {min-width:0}
+.laserSeal {display:inline-flex;gap:12px;align-items:center;color:#827249}
+.laserSeal svg {width:34px;height:40px;fill:#f6efd9;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.laserSeal b {font-size:19px;font-weight:650;display:block}
+.laserSeal small {font-size:12px;color:var(--muted,#827b70);display:block;margin-top:4px}
+.laserSeal.earned {color:#4e7147}
+.laserSeal.earned svg {fill:#e8f0e2}
+.setCard .sh [data-laser-seal] {margin-left:auto}
+.laserTotals {display:flex;gap:22px;margin:20px 0;padding-bottom:18px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.laserTotals>span {font-size:12px;color:var(--muted,#827b70);display:grid;gap:5px}
+.laserTotals b {font:600 25px var(--sans,sans-serif);color:var(--ink,#28251f);font-variant-numeric:tabular-nums}
+.laserBadges {display:flex;flex-wrap:wrap;gap:14px 20px}
+.laserBadge {display:flex;align-items:center;gap:7px;font-size:12px;color:#938978;min-width:115px}
+.laserBadge svg {width:23px;height:28px;fill:transparent;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.laserBadge small {display:block;font-size:11px;margin-top:3px;font-weight:400}
+.laserBadge.earned {color:#4e7147}
+.laserBadge.earned svg {fill:#edf3e8}
+.laserNote {font-size:12px;color:var(--muted,#827b70);margin:16px 0 0}
+@media(max-width:1150px){.librarySheet {grid-template-columns:1fr}.librarySheet>.libCard,.setCard .librarySheet>.libCard {max-width:380px}.productionRow {gap:18px}}
+@media(max-width:540px){.productionRow {grid-template-columns:100px minmax(0,1fr);gap:14px}.sheetQR img,.qrWaiting {width:100px;height:100px;min-height:100px}.laserTotals {gap:12px}.laserSeal b {font-size:16px}.laserTotals b {font-size:22px}.laserBadges {gap:12px}.laserSection h2 {font-size:20px}}
+
 </style>
 </head>
 <body>
@@ -1317,6 +1356,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
 <script src="charm-nest-backs.js"></script>
+<script src="charm-nest-readiness.js"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-orders.js"></script>
@@ -3135,56 +3175,28 @@ function renderLibrary() {
   const newest = new Map(); for (const r of rows0) { const k = r.folder || r.fileBase || r.id; const had = newest.get(k); if (!had || (r.updatedAt || 0) > (had.updatedAt || 0)) newest.set(k, r); }
   const rows = [...newest.values()];
   const body = $("#libBody"); if (!rows.length) { body.innerHTML = `<div class="libEmpty">No sheets match.</div>`; return; }
-  const card = (r, i) => { const m = metalOf(r), sn = setNo(r); return `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}" title="${esc(r.folder || r.id)}">${sheetHead(r, {inFan:r._inFan})}<div data-back-sheet="${esc(r.id)}">${window.Engrave ? Engrave.backsMarkup(r) : ""}</div><img class="pv" data-sheet-preview="${esc(r.id)}" crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span title="charms placed of the charms asked for"><b>${r.placedCount}</b>/${r.charmCount}</span><span title="how full the sheet is"><b>${Math.round((r.density || 0) * 100)}%</b></span><span title="metal left free">${fmt.area(r.freePt2 || 0)}</span>${r.status === "complete" ? "" : `<span class="pill bad" style="padding:2px 7px">${esc(r.status)}</span>`}${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`; };
-  // a set = the sheets of one run: same day and the same source files (runId when the record has one)
-  const setKey = r => CharmNestOrders.libraryGroup(r).key;
-  const waiting = rows.filter(r => CharmNestOrders.libraryGroup(r).standalone);
-  const waitingHeader = waiting.length ? `<div class="dayHead">14K / 10K Solid Waiting for Approval</div><div class="libGrid">${waiting.sort((a,b)=>(b.cardStartedAt || b.createdAt || 0)-(a.cardStartedAt || a.createdAt || 0)).map(r=>card(r,0)).join("")}</div>` : "";
-  const byDay = new Map(); for (const r of rows.filter(r=>!CharmNestOrders.libraryGroup(r).standalone)) { if (!byDay.has(r.day)) byDay.set(r.day, []); byDay.get(r.day).push(r); }
-  body.innerHTML = waitingHeader + [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([day, list]) => {
-    const sets = new Map(); for (const r of list) { const k = setKey(r); if (!sets.has(k)) sets.set(k, []); sets.get(k).push(r); }
-    const items = [...sets.values()].map(g => {
-      g.sort((a, b) => (a.page || 1) - (b.page || 1) || (a.createdAt || 0) - (b.createdAt || 0));
-      if (g.length === 1) return card(g[0], 0);
-      const lead = g[0], groupLabel = CharmNestOrders.libraryGroup(lead).name, charms = g.reduce((n, r) => n + (r.charmCount || 0), 0), sn = setNo(lead);
-      // one swatch per metal, in the station's order, with a count when the metal has more than one sheet
-      const swatches = METALS.filter(m => g.some(r => r.metal === m.key)).map(m => swatch(m, g.filter(r => r.metal === m.key).length)).join("");
-      return `<div class="libSet" data-n="${g.length}" tabindex="0" aria-label="Set of ${g.length} sheets">
-        <div class="setDeck" data-m="${lead.metal}"><span class="setTag"><span class="dot"></span>${esc(groupLabel)} · ${g.length} sheets <span class="hint">· hover ▸</span></span>${g.slice(1).map((_, k) => `<div class="ghost" style="--k:${k + 1}"></div>`).join("")}${card(lead, 0)}</div>
-        <div class="setFan" style="--n:${g.length}"><div class="fanHead"><b>${esc(groupLabel)}</b><span class="n">${dayShort(day)} · ${g.length} sheets · ${charms} charms</span><span class="sws">${swatches}</span><button class="x" title="Close" aria-label="Close">×</button></div>${g.map((r, i) => card(Object.assign({}, r, { _inFan: true }), i)).join("")}</div>
-      </div>`;
-    });
-    return `<div class="dayHead">${new Date(day + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" })}<span class="n">${list.length} sheet${list.length === 1 ? "" : "s"}${sets.size !== list.length ? ` · ${[...sets.values()].filter(g => g.length > 1).length} group${[...sets.values()].filter(g => g.length > 1).length === 1 ? "" : "s"}` : ""}</span></div><div class="libGrid">${items.join("")}</div>`;
-  }).join("");
-  $$(".libCard", body).forEach(el => el.onclick = (e) => { e.stopPropagation(); openLibrarySheet(el.dataset.id); });
-  $$(".libSet", body).forEach(set => {
-    const fan = $(".setFan", set), grid = set.closest(".libGrid");
-    const place = () => {   // the fan opens over the grid, never past its right edge
-      const n = +set.dataset.n, want = Math.min(n * 272 + 20, grid.clientWidth);
-      fan.style.width = want + "px";
-      const over = set.offsetLeft + want - grid.clientWidth;
-      fan.style.left = (over > 0 ? -over : 0) + "px";
-    };
-    set.addEventListener("mouseenter", place); set.addEventListener("focus", place);
-    const deck = $(".setDeck", set);
-    // the deck's lead card opens the set (a tap on touch screens); the × pins it closed again
-    $(".setDeck .libCard", set).onclick = (e) => { e.stopPropagation(); place(); set.classList.toggle("open"); };
-    $(".setFan .x", set).onclick = (e) => { e.stopPropagation(); set.classList.remove("open"); set.blur(); };
-    set.addEventListener("keydown", e => { if (e.key === "Escape") set.classList.remove("open"); if (e.key === "Enter") { place(); set.classList.toggle("open"); } });
-    void deck;
-  });
-  document.addEventListener("click", e => { if (!e.target.closest(".libSet")) $$(".libSet.open", body).forEach(x => x.classList.remove("open")); }, { once: true });
+  const card = (r, i) => { const m = metalOf(r), sn = setNo(r); return `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}" title="${esc(r.folder || r.id)}">${sheetHead(r, {inFan:r._inFan})}<div data-back-sheet="${esc(r.id)}">${window.Engrave ? Engrave.backsMarkup(r) : ""}</div><img class="pv" data-sheet-preview="${esc(r.id)}" crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span title="charms placed of the charms asked for"><b>${r.placedCount}</b>/${r.charmCount}</span><span title="how full the sheet is"><b>${Math.round((r.density || 0) * 100)}%</b></span><span title="metal left free">${fmt.area(r.freePt2 || 0)}</span><span class="pill" data-sheet-status="${esc(r.id)}">${LaserReview.sheet(r).ready?"Ready for laser":"In preparation"}</span>${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`; };
+  LaserReview.sections(body);
+  for(const r of rows){
+    LaserReview.record(r);
+    const item=document.createElement('article');item.className='librarySheet';item.dataset.laserCard='sheet';item._laserSheets=[r.id];
+    item.innerHTML=card(r,0)+LaserReview.labels(r);
+    item.querySelector('.libCard').onclick=()=>openLibrarySheet(r.id);
+    LaserReview.place(item,LaserReview.sheet(r).ready,body);
+  }
+  LaserReview.changed();
 }
 async function openLibrarySheet(id) {
   const dlg = $("#dlgSheet"); $("#lsTitle").textContent = id; $("#lsBody").innerHTML = `<div class="libEmpty">Loading…</div>`; openDlg(dlg);
   try {
-    const r = await api("charmNestLibrary", { op: "getSheet", id }, { label: "Loading sheet" }); const d = r.sheet; if (!d) throw new Error("not found");
+    const r = await api("charmNestLibrary", { op: "getSheet", id }, { label: "Loading sheet" }); const d = r.sheet; if (!d) throw new Error("not found"); LaserReview.record(d);
     $("#lsTitle").textContent = d.folder ? `${d.folder}` : `${d.metalLabel} · ${d.id} · ${d.day}`;
     $("#lsBody").innerHTML = `
       <div style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:16px;align-items:start">
         <div><div data-back-sheet="${esc(d.id)}">${window.Engrave ? Engrave.backsMarkup(d) : ""}</div><img data-sheet-preview="${esc(d.id)}" crossorigin="anonymous"${d.outputs?.preview?.url ? ` src="${esc(cors(d.outputs.preview.url))}"` : ""} style="width:100%;border:1px solid var(--line);border-radius:10px;background:#fff" alt="Sheet preview"></div>
-        <div><dl class="kv"><dt>Status</dt><dd>${esc(d.status)} · ${esc(endedText(d.endedBy))}</dd><dt>Placed</dt><dd>${d.placedCount} / ${d.charmCount}${d.rejectCount ? ` · ${d.rejectCount} rejected` : ""}</dd><dt>Density</dt><dd>${Math.round((d.density || 0) * 100)}% · ${fmt.area(d.freePt2 || 0)} free</dd><dt>Stock</dt><dd>${d.stock ? `${fmt.mm(d.stock.wIn * PT_PER_IN)} × ${fmt.mm(d.stock.hIn * PT_PER_IN)}` : "—"}</dd><dt>Seed · clearance</dt><dd>${d.params ? `${d.params.seed} · ${fmt.mm(d.params.clearancePt)} · ${d.params.angles.length} angles` : "—"}</dd><dt>Verification</dt><dd>${d.verification ? (d.verification.ok ? "passed" : "flagged") + (d.verification.minGapPt != null ? ` · min gap ${fmt.mm(d.verification.minGapPt)}` : "") : "—"}</dd><dt>Sources</dt><dd>${(d.sources || []).map(s => s.url ? `<a href="${s.url}" target="_blank" rel="noopener">${esc(s.name)}</a>` : esc(s.name)).join(", ") || "—"}</dd></dl>
+        <div><dl class="kv"><dt>Status</dt><dd>${LaserReview.sheet(d).ready?"Ready for laser":"In preparation"}</dd><dt>Placed</dt><dd>${d.placedCount} / ${d.charmCount}${d.rejectCount ? ` · ${d.rejectCount} rejected` : ""}</dd><dt>Density</dt><dd>${Math.round((d.density || 0) * 100)}% · ${fmt.area(d.freePt2 || 0)} free</dd><dt>Stock</dt><dd>${d.stock ? `${fmt.mm(d.stock.wIn * PT_PER_IN)} × ${fmt.mm(d.stock.hIn * PT_PER_IN)}` : "—"}</dd><dt>Seed · clearance</dt><dd>${d.params ? `${d.params.seed} · ${fmt.mm(d.params.clearancePt)} · ${d.params.angles.length} angles` : "—"}</dd><dt>Verification</dt><dd>${d.verification ? (d.verification.ok ? "passed" : "flagged") + (d.verification.minGapPt != null ? ` · min gap ${fmt.mm(d.verification.minGapPt)}` : "") : "—"}</dd><dt>Sources</dt><dd>${(d.sources || []).map(s => s.url ? `<a href="${s.url}" target="_blank" rel="noopener">${esc(s.name)}</a>` : esc(s.name)).join(", ") || "—"}</dd></dl>
         <div class="section">Outputs</div><div style="display:flex;gap:6px;flex-wrap:wrap">${ProductionExports.sheetControls(d.id)}${d.outputs ? ["labelled", "report"].filter(k => d.outputs[k]).map(k => `<a class="btn ghost xs" href="${d.outputs[k].url}" target="_blank" rel="noopener">${k === "labelled" ? "labelled proof" : k === "report" ? "nest-report.json" : "." + k}</a>`).join("") : "none"}</div></div></div>
+      ${LaserReview.labels(d)}
       <div class="section">Charms · ${(d.charms || []).length}</div>
       <div class="charmGrid">${(d.charms || []).map(c => `<div class="charmTile hoverItem">${c.thumbUrl ? `<img crossorigin="anonymous" src="${cors(c.thumbUrl)}" loading="lazy" alt="">` : ""}<div class="nm">${esc(c.name || "#" + (c.index + 1))}</div><div class="meta">${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}${c.qty > 1 ? ` · ×${c.qty}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("")}</div>`;
     $("#lsDownloads").onclick = () => ProductionExports.run([d.id], "ai");

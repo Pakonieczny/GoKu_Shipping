@@ -89,6 +89,7 @@ const assets = [
   "charm-nest-engrave-worker.js",
   "charm-nest-assets.js",
   "charm-nest-backs.js",
+  "charm-nest-readiness.js",
   "charm-nest-export.js",
   "charm-nest-export-ui.js",
   "charm-nest-text.js",
