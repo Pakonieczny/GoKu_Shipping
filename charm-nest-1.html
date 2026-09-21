@@ -1588,9 +1588,14 @@ async function agentCallRemote(mode, payload, opts = {}) {
     if (opts.onTick) opts.onTick(elapsed);
     const j = await api("charmNestLibrary", { op: "getAgent", id }, { label: (opts.label || "Claude") + " · " + fmt.s(elapsed), background: !!opts.background });
     const job = j.job;
-    if (!job) throw new Error("agent job vanished");
+    const failed = !job || job.status === "error" || (job.status === "done" && (job.result?.skipped || job.result?.error));
+    // A recovered terminal failure cannot make Retry replay the same error forever.
+    // Reuse successful/running jobs, and start at most one replacement per explicit retry.
+    if (failed && opts.existingId && opts.retryFailed)
+      return agentCallRemote(mode,payload,{...opts,existingId:null,retryFailed:false});
+    if (!job) throw Object.assign(new Error("agent job vanished"),{agentTerminal:true});
     if (job.status === "done") return job.result || {};
-    if (job.status === "error") throw new Error(job.error || "agent job failed");
+    if (job.status === "error") throw Object.assign(new Error(job.error || "agent job failed"),{agentTerminal:true});
     if (elapsed > 14 * 60 * 1000) throw new Error("timed out after 14 minutes");
   }
 }
@@ -2228,11 +2233,13 @@ async function requestPackingGuidance(sh) {
             ctx.fillStyle="#181818";ctx.font="bold 12px sans-serif";ctx.fillText(String(i),x+5,y+14);ctx.restore();
           });
           const st=stockFor(sh.metal);
-          const plan=await agentCall("packing",{contactSheet:cv.toDataURL("image/png"),preview:aiRenderSheet(sh),wPt:st.wPt,hPt:st.hPt,maxFill:+S.settings.maxFill||.74,density:sh.best?.density||0,
+          let plan;
+          try { plan=await agentCall("packing",{contactSheet:cv.toDataURL("image/png"),preview:aiRenderSheet(sh),wPt:st.wPt,hPt:st.hPt,maxFill:+S.settings.maxFill||.74,density:sh.best?.density||0,
             pieces:chosen.map(c=>({widthPt:c.widthPt,heightPt:c.heightPt,areaPt2:c.areaPt2,cachedProfile:S.packingCatalog[CharmNestSolver.shapeKey(c)]||null}))
-          },{label:"Shape compatibility analysis",sheetId:sh.sheetId,background:true,existingId:batch.jobId,
-            onStarted:id=>{batch.jobId=id;if(window.Session)Session.schedule();},onTick:elapsed=>agentUpdate(ev,{elapsed})});
-          if(plan.skipped || plan.error)throw new Error(plan.skipped || plan.error);
+          },{label:"Shape compatibility analysis",sheetId:sh.sheetId,background:true,existingId:batch.jobId,retryFailed:true,
+            onStarted:id=>{batch.jobId=id;if(window.Session)Session.schedule();},onTick:elapsed=>agentUpdate(ev,{elapsed})}); }
+          catch(e) { if(e.agentTerminal){batch.failure={jobId:batch.jobId,error:e.message};batch.jobId=null;}throw e; }
+          if(plan.skipped || plan.error){batch.failure={jobId:batch.jobId,error:plan.skipped || plan.error};batch.jobId=null;throw new Error(batch.failure.error);}
           const clean=CharmNestSolver.normalizePackingPlan(plan,chosen.length);
           if(clean.profiles.length!==chosen.length){batch.invalidResult=clean;batch.jobId=null;throw new Error(`Shape analysis graded ${clean.profiles.length}/${chosen.length} shapes; placement is held until every shape has guidance`);}
           batch.result={...clean,model:plan.model||null};
@@ -2258,6 +2265,7 @@ async function requestPackingGuidance(sh) {
       agentUpdate(ev,{live:false,text:`Shape guidance ready: ${unique.length} distinct shapes graded; ${items.length} charms follow grades and compatible-neighbor preferences.`});
       return hints;
     } catch(e) {
+      e.stage="shape-analysis";
       Object.assign(advice,{state:"error",error:e.message});
       agentUpdate(ev,{live:false,kind:"warn",text:`Shape-guided placement held: ${e.message}`});
       throw e;
@@ -3479,7 +3487,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260921-material"></script>
+<script src="charm-nest-bridge.js?v=20260921-guidance-retry"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin" aria-labelledby="owTitle">

@@ -147,3 +147,11 @@ The standard geometric solver follows these grades on every guided construction:
 The search budget starts after analysis; analysis time is recorded separately. The charm inspector exposes its grades and perimeter role, and the report includes the guidance map and analysis duration. Tests cover every-trial guided ordering, compatible next-piece selection, cross-batch family matching, duplicate expansion, 161 distinct inputs, cached/resumed analysis, incomplete-analysis holds, pins, FIFO and geometry. This implementation does not prove a density gain for every queue.
 
 Live browser verification of commit `90e26c6`: the supplied reference completed at **81/81, 74% displayed, verified**, with a 55-second search. Re-nesting retained 81; reloading during a subsequent run recovered the best layout, and resuming again finished 81/81 with verification. Search/total timing labels were visible and no workspace out-of-memory warning appeared in these runs.
+
+### 2026-09-21 — shape-analysis schema and retry correction
+
+The first live guided run exposed an API contract regression: Claude structured outputs reject `maxItems`, including constraints nested inside profiles. Removed those unsupported wire-schema keywords; existing `normalizePackingPlan` still bounds profile indices, arrays, scores and angles after generation. All eight agent modes now have a supported-schema regression check, and the background-handler test inspects the actual outbound request.
+
+Retry now replaces a cached terminal failure once, preserving successful/running jobs and retaining job IDs through network interruptions. Failed replacement requests stop without a paid retry loop. Incomplete model output still holds placement until every shape has guidance. The run banner identifies shape-analysis failures rather than reporting a save failure, and simultaneous sheet failures retain individual errors without stacking stop notifications.
+
+Checks: agent-schema, guidance-retry, shape-guidance, shape-guidance-runtime and functions. A live provider/browser check is required separately; mocked responses alone did not detect the original provider incompatibility.

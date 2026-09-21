@@ -3304,7 +3304,14 @@ const RunCtl = window.RunCtl = (() => {
       /* A sheet's trouble belongs on that sheet's card. The banner used to carry the whole message — "GF 14/20 · sheet 3:
          bad row — Fix the cause (see the card's log), then Resume" — across every tab, above every list, for the rest of
          the session. Now the banner names the sheet and offers the way to it; the reason is written where the sheet is. */
-      if (err) { sh.problem = err.message; CN.renderCard(sh); stop(`${sheetName(sh)} could not be saved`, "", { metal: sh.metal, page: sh.page }); return; }
+      if (err) {
+        sh.problem = err.message; CN.renderCard(sh);
+        if(err.stage === "shape-analysis") {
+          if(r.status === "stopped"){save(r).catch(()=>{});return;}
+          stop(`${sheetName(sh)} shape analysis failed`, "Retry Nest or Resume. Your queued charms are retained.", { metal: sh.metal, page: sh.page });
+        } else stop(`${sheetName(sh)} could not be saved`, "", { metal: sh.metal, page: sh.page });
+        return;
+      }
       if (["complete", "partial"].includes(sh.status) && sh.verification && !sh.verification.ok) { sh.problem = "verification flagged — open the report"; CN.renderCard(sh); stop(`${sheetName(sh)} needs a look`, "", { metal: sh.metal, page: sh.page }); return; }
       if (sh.endedBy === "stopped") { sh.problem = "nesting was stopped here"; CN.renderCard(sh); stop(`${sheetName(sh)} was stopped`, "", { metal: sh.metal, page: sh.page }); return; }
       save(r).catch(() => {});
