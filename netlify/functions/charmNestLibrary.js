@@ -48,6 +48,59 @@ const FV = admin.firestore.FieldValue;
 
 const LIB = "Charm_Nest_Library", SHEETS = "Charm_Nest_Sheets", CAL = "Charm_Nest_Calibration", JOBS = "Charm_Nest_Jobs";
 const MAX_PUT = 200;
+// Reusable geometry-only guidance is shared across materials and workspaces.
+// It contains no order/customer data. Sandbox tests use a separate cache.
+const ShapeCache = (() => {
+const crypto = require("crypto");
+const { normalizePackingPlan } = require("../../charm-nest-solver.js");
+const VERSION = 1;
+function validKey(key) {
+  if (typeof key !== "string" || key.length > 512) return false;
+  try {
+    const a = JSON.parse(key);
+    return Array.isArray(a) && a.length === 5 && typeof a[0] === "string" && a[0].length > 0 && a.slice(1).every(n => Number.isFinite(n) && n > 0);
+  } catch (_) { return false; }
+}
+const idFor = key => crypto.createHash("sha256").update(VERSION + ":" + key).digest("hex");
+function cleanProfile(p) {
+  if (!p || (p.cacheVersion != null && p.cacheVersion !== VERSION)) return null;
+  const normalized = normalizePackingPlan({ profiles: [{ ...p, index: 0 }] }, 1).profiles[0];
+  if (!normalized) return null;
+  const { index, ...profile } = normalized;
+  const partners = Object.fromEntries(Object.entries(p.partners || {}).filter(([k, v]) => validKey(k) && Number.isFinite(v)).slice(0,240).map(([k,v]) => [k, Math.max(0,Math.min(100,v))]));
+  return { ...profile, partners, cacheVersion: VERSION, model: typeof p.model === "string" ? p.model.slice(0,100) : null };
+}
+return { VERSION, validKey, idFor, cleanProfile };
+})();
+const SHAPE_CACHE = "Charm_Nest_Shape_Guidance";
+async function op_getShapeGuidance(b) {
+  const keys = [...new Set((Array.isArray(b.keys) ? b.keys : []).filter(ShapeCache.validKey))].slice(0,100);
+  const docs = keys.length ? await db.getAll(...keys.map(k => db.collection(PREFIX + SHAPE_CACHE).doc(ShapeCache.idFor(k)))) : [];
+  const profiles = {};
+  docs.forEach((doc,i) => {
+    const d = doc.exists && doc.data(), p = d && d.key === keys[i] && d.version === ShapeCache.VERSION && ShapeCache.cleanProfile(d.profile);
+    if (p) profiles[keys[i]] = p;
+  });
+  return { profiles, version: ShapeCache.VERSION };
+}
+async function op_putShapeGuidance(b) {
+  const records = (Array.isArray(b.profiles) ? b.profiles : []).slice(0,50);
+  let count = 0;
+  for (let offset = 0; offset < records.length; offset += 10) await Promise.all(records.slice(offset,offset+10).map(async row => {
+    const profile = ShapeCache.cleanProfile(row?.profile);
+    if (!ShapeCache.validKey(row?.key) || !profile) return;
+    const ref = db.collection(PREFIX + SHAPE_CACHE).doc(ShapeCache.idFor(row.key));
+    await db.runTransaction(async tx => {
+      const doc = await tx.get(ref), old = doc.exists && doc.data();
+      const saved = old && old.key === row.key && old.version === ShapeCache.VERSION && ShapeCache.cleanProfile(old.profile);
+      // Concurrent material sheets cannot erase one another's known neighbors.
+      const merged = ShapeCache.cleanProfile({ ...(saved || profile), partners: { ...saved?.partners, ...profile.partners } });
+      tx.set(ref, { key: row.key, version: ShapeCache.VERSION, profile: merged, updatedAt: FV.serverTimestamp() });
+    });
+    count++;
+  }));
+  return { ok:true, count };
+}
 const isHash = h => /^[0-9a-f]{8,64}$/i.test(String(h || ""));
 const isId = s => /^[\w\-]{4,80}$/.test(String(s || ""));
 const ms = v => (v && v.toMillis ? v.toMillis() : (typeof v === "number" ? v : null));
@@ -725,7 +778,7 @@ async function op_optionMapPut(b) {
   return { ok: true };
 }
 
-const OPS = { laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
+const OPS = { getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, startMaster: op_startMaster,
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,

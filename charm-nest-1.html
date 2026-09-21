@@ -2205,24 +2205,67 @@ function sendPackingHints(sh, jobId, hints, pending) {
   if (sh.jobId !== jobId || sh.status !== "nesting" || sh.pool?.finished) return;
   (sh.workers || []).forEach((w,i) => w.postMessage({ type: "packingHints", jobId: jobId + ":" + i, hints, pending }));
 }
+function packingProfileValid(p) {
+  return !!p && (p.cacheVersion == null || p.cacheVersion === 1) && CharmNestSolver.normalizePackingPlan({profiles:[{...p,index:0}]},1).profiles.length === 1;
+}
 async function requestPackingGuidance(sh) {
   if (S.settings.packingAI === "off") return null;
-  if (!S.cloud.ok) throw new Error("Shape guidance needs the cloud connection. Reconnect or turn off AI packing guidance in Settings.");
-  const items = activeCharms(sh), key = packingKey(sh, items), jobId = sh.jobId;
-  const prior = sh.packingAdvice?.version === 1 && sh.packingAdvice.key === key ? sh.packingAdvice : null;
-  if (prior?.state === "done") return prior.hints;
-  if (sh._packingPromise) { const previous=sh._packingPromise; await previous; if(sh._packingPromise===previous)sh._packingPromise=null; return requestPackingGuidance(sh); }
-  const advice = prior || { version:1,key,state:"pending",batches:[],pairs:[],hints:null };
-  sh.packingAdvice = advice;
-  const ev = agent({ metal:sh.metal },"claude","Grading shape adaptability and compatible neighbors before placement",{live:true});
-  const task = (async () => {
+  const items=activeCharms(sh),key=packingKey(sh,items),jobId=sh.jobId;
+  const prior=sh.packingAdvice?.version===1 && sh.packingAdvice.key===key ? sh.packingAdvice : null;
+  if(prior?.state==="done")return prior.hints;
+  if(sh._packingPromise){const previous=sh._packingPromise;await previous;if(sh._packingPromise===previous)sh._packingPromise=null;return requestPackingGuidance(sh);}
+  const advice=prior || {version:1,key,state:"pending",batches:[],hints:null};
+  sh.packingAdvice=advice;
+  const ev=agent({metal:sh.metal},"claude","Loading saved shape grades",{live:true});
+  // Serialize consultations within this workspace: overlapping material sheets reuse
+  // the first completed grades instead of paying to grade the same geometry twice.
+  const task=(S._packingCatalogTask || Promise.resolve()).catch(()=>{}).then(async()=>{
     try {
       S.packingCatalog ||= {};
-      const unique = [...new Map(items.map(c=>[CharmNestSolver.shapeKey(c),c])).values()];
-      for (let offset=0;offset<unique.length;offset+=80) {
-        const chosen=unique.slice(offset,offset+80), batchIndex=offset/80;
-        const batch=advice.batches[batchIndex] ||= {jobId:null,result:null};
-        if (!batch.result) {
+      const unique=[...new Map(items.map(c=>[CharmNestSolver.shapeKey(c),c])).values()];
+      const byKey=new Map(unique.map(c=>[CharmNestSolver.shapeKey(c),c]));
+      const remember=(batch,onlyMissing=false)=>{
+        for(const p of batch.result.profiles){const k=batch.keys[p.index],{index,...profile}=p;
+          if(onlyMissing&&packingProfileValid(S.packingCatalog[k]))continue;
+          S.packingCatalog[k]={...S.packingCatalog[k],...profile,cacheVersion:1,model:batch.result.model||null,_cloudSaved:false};}
+        for(const pair of batch.result.pairs){const a=batch.keys[pair.a],b=batch.keys[pair.b];
+          if(!S.packingCatalog[a]||!S.packingCatalog[b])continue;
+          for(const [x,y] of [[a,b],[b,a]])if(S.packingCatalog[x].partners?.[y]!==pair.score){
+            (S.packingCatalog[x].partners||={})[y]=pair.score;S.packingCatalog[x]._cloudSaved=false;
+          }
+        }
+      };
+      // Recover paid results from older workspaces, including completed first sheets.
+      const pages=typeof allSheets==="function" ? allSheets() : [sh];
+      const knownCharms=new Map(pages.flatMap(page=>page.charms).map(c=>[c.id,c]));
+      for(const page of pages){
+        const saved=page.packingAdvice;if(!saved)continue;
+        let keys;try{keys=[...new Set(JSON.parse(saved.key)[5].map(row=>{
+          const c=knownCharms.get(row[0]);return c && CharmNestSolver.shapeKey(c);
+        }).filter(Boolean))];}catch(_){keys=[];}
+        for(let i=0;i<(saved.batches||[]).length;i++){
+          const batch=saved.batches[i];batch.keys ||= keys.slice(i*80,i*80+80);
+          if(batch.result && batch.keys.length===batch.result.profiles.length)remember(batch,true);
+        }
+      }
+      if(!S.cloud.ok)throw new Error("Reconnect to load and save shape guidance. Existing grades are retained.");
+      const lookup=[...byKey.keys()].filter(k=>!packingProfileValid(S.packingCatalog[k]));
+      for(let i=0;i<lookup.length;i+=100){
+        const found=await api("charmNestLibrary",{op:"getShapeGuidance",keys:lookup.slice(i,i+100)},{background:true,label:"Loading saved shape grades"});
+        for(const [k,p] of Object.entries(found.profiles||{}))if(byKey.has(k)&&packingProfileValid(p))S.packingCatalog[k]={...p,_cloudSaved:true};
+      }
+      // Resume existing paid jobs before creating batches for genuinely unknown shapes.
+      for(let i=0;i<advice.batches.length;i++)advice.batches[i].keys ||= unique.slice(i*80,i*80+80).map(CharmNestSolver.shapeKey);
+      const pending=advice.batches.filter(b=>!b.result && b.keys.some(k=>!packingProfileValid(S.packingCatalog[k])));
+      for(const batch of pending)if(!batch.jobId)batch.keys=batch.keys.filter(k=>!packingProfileValid(S.packingCatalog[k]));
+      const reserved=new Set(pending.flatMap(b=>b.keys));
+      const missing=unique.filter(c=>!packingProfileValid(S.packingCatalog[CharmNestSolver.shapeKey(c)])&&!reserved.has(CharmNestSolver.shapeKey(c)));
+      for(let i=0;i<missing.length;i+=80){const batch={keys:missing.slice(i,i+80).map(CharmNestSolver.shapeKey),jobId:null,result:null};advice.batches.push(batch);pending.push(batch);}
+      const freshCount=pending.reduce((n,b)=>n+b.keys.length,0),reused=unique.length-freshCount;
+      agentUpdate(ev,{text:`${reused} saved shapes reused; ${freshCount} shapes need analysis.`});
+      for(const batch of pending){
+        const chosen=batch.keys.map(k=>byKey.get(k));
+        if(chosen.some(c=>!c))throw new Error("Saved shape batch no longer matches this queue");
           const cv=document.createElement("canvas"),cell=112,cols=8;
           cv.width=cols*cell;cv.height=Math.ceil(chosen.length/cols)*cell;
           const ctx=cv.getContext("2d");ctx.fillStyle="#f3f0ea";ctx.fillRect(0,0,cv.width,cv.height);
@@ -2232,47 +2275,44 @@ async function requestPackingGuidance(sh) {
             if(c.outline?.length){ctx.beginPath();CharmNestPDF.pathToCanvas(ctx,c.outline,(px,py)=>[x+6+(px-b[0])*scale,y+21+(b[3]-py)*scale]);ctx.fillStyle="#181818";ctx.fill("nonzero");}else CharmNestPDF.drawSegments(ctx,c.members,(px,py)=>[x+6+(px-b[0])*scale,y+21+(b[3]-py)*scale],scale);
             ctx.fillStyle="#181818";ctx.font="bold 12px sans-serif";ctx.fillText(String(i),x+5,y+14);ctx.restore();
           });
-          const st=stockFor(sh.metal);
-          let plan;
-          try { plan=await agentCall("packing",{contactSheet:cv.toDataURL("image/png"),preview:aiRenderSheet(sh),wPt:st.wPt,hPt:st.hPt,maxFill:+S.settings.maxFill||.74,density:sh.best?.density||0,
-            pieces:chosen.map(c=>({widthPt:c.widthPt,heightPt:c.heightPt,areaPt2:c.areaPt2,cachedProfile:S.packingCatalog[CharmNestSolver.shapeKey(c)]||null}))
-          },{label:"Shape compatibility analysis",sheetId:sh.sheetId,background:true,existingId:batch.jobId,retryFailed:true,
-            onStarted:id=>{batch.jobId=id;if(window.Session)Session.schedule();},onTick:elapsed=>agentUpdate(ev,{elapsed})}); }
-          catch(e) { if(e.agentTerminal){batch.failure={jobId:batch.jobId,error:e.message};batch.jobId=null;}throw e; }
-          if(plan.skipped || plan.error){batch.failure={jobId:batch.jobId,error:plan.skipped || plan.error};batch.jobId=null;throw new Error(batch.failure.error);}
-          const clean=CharmNestSolver.normalizePackingPlan(plan,chosen.length);
-          if(clean.profiles.length!==chosen.length){batch.invalidResult=clean;batch.jobId=null;throw new Error(`Shape analysis graded ${clean.profiles.length}/${chosen.length} shapes; placement is held until every shape has guidance`);}
-          batch.result={...clean,model:plan.model||null};
-          if(window.Session)Session.schedule();
-        }
-        for(const p of batch.result.profiles){const c=chosen[p.index],{index,...profile}=p;S.packingCatalog[CharmNestSolver.shapeKey(c)]={...profile,model:batch.result.model};}
-        // Rebuild from cached batches, so retry/reload cannot duplicate pairs.
+        const st=stockFor(sh.metal);let plan;
+        try{plan=await agentCall("packing",{contactSheet:cv.toDataURL("image/png"),preview:aiRenderSheet(sh),wPt:st.wPt,hPt:st.hPt,maxFill:+S.settings.maxFill||.74,density:sh.best?.density||0,
+          pieces:chosen.map(c=>({widthPt:c.widthPt,heightPt:c.heightPt,areaPt2:c.areaPt2}))
+        },{label:"Shape compatibility analysis",sheetId:sh.sheetId,background:true,existingId:batch.jobId,retryFailed:true,
+          onStarted:id=>{batch.jobId=id;if(window.Session)Session.schedule();},onTick:elapsed=>agentUpdate(ev,{elapsed})});}
+        catch(e){if(e.agentTerminal){batch.failure={jobId:batch.jobId,error:e.message};batch.jobId=null;}throw e;}
+        if(plan.skipped||plan.error){batch.failure={jobId:batch.jobId,error:plan.skipped||plan.error};batch.jobId=null;throw new Error(batch.failure.error);}
+        const clean=CharmNestSolver.normalizePackingPlan(plan,chosen.length);
+        if(clean.profiles.length!==chosen.length){batch.invalidResult=clean;batch.jobId=null;throw new Error(`Shape analysis graded ${clean.profiles.length}/${chosen.length} shapes; placement is held until every shape has guidance`);}
+        batch.result={...clean,model:plan.model||null};remember(batch);
+        if(window.Session)Session.schedule();
+        // Save each completed batch immediately, before starting any later batch.
+        await savePackingCatalog(batch.keys);
       }
+      await savePackingCatalog([...byKey.keys()]);
       const hints={version:1,profiles:{},partners:{},angles:{},priority:[]};
-      for(const c of items){const profile=S.packingCatalog[CharmNestSolver.shapeKey(c)];if(!profile)throw new Error("Missing shape grade");hints.profiles[c.id]={...profile};hints.angles[c.id]=profile.angles.slice();}
+      for(const c of items){const p=S.packingCatalog[CharmNestSolver.shapeKey(c)];if(!packingProfileValid(p))throw new Error("Missing shape grade");
+        const {partners,_cloudSaved,...profile}=p;hints.profiles[c.id]=profile;hints.angles[c.id]=profile.angles.slice();
+        for(const other of items){const score=partners?.[CharmNestSolver.shapeKey(other)];if(c.id!==other.id && Number.isFinite(score))(hints.partners[c.id]||={})[other.id]=score;}}
       hints.priority=items.slice().sort((a,b)=>hints.profiles[b.id].priority-hints.profiles[a.id].priority).map(c=>c.id);
-      for(let bi=0;bi<advice.batches.length;bi++){
-        const chosen=unique.slice(bi*80,bi*80+80);
-        for(const pair of advice.batches[bi].result.pairs){
-          const a=CharmNestSolver.shapeKey(chosen[pair.a]),b=CharmNestSolver.shapeKey(chosen[pair.b]);
-          for(const x of items.filter(c=>CharmNestSolver.shapeKey(c)===a))for(const y of items.filter(c=>CharmNestSolver.shapeKey(c)===b))if(x.id!==y.id){(hints.partners[x.id]||={})[y.id]=pair.score;(hints.partners[y.id]||={})[x.id]=pair.score;}
-        }
-      }
-      Object.assign(advice,{state:"done",hints,summary:advice.batches.map(b=>b.result.summary).filter(Boolean).join(" ").slice(0,1200)});
-      // Keep a bounded reusable profile cache; active jobs keep their own full map.
-      const keys=Object.keys(S.packingCatalog);for(const k of keys.slice(0,Math.max(0,keys.length-1000)))delete S.packingCatalog[k];
+      Object.assign(advice,{state:"done",hints,reusedShapes:reused,analyzedShapes:freshCount,summary:`${reused} saved shapes reused; ${freshCount} analyzed.`});
+      const keys=Object.keys(S.packingCatalog);for(const k of keys.filter(k=>!byKey.has(k)).slice(0,Math.max(0,keys.length-1000)))delete S.packingCatalog[k];
       if(sh.packingAdvice===advice)sendPackingHints(sh,jobId,hints,false);
-      agentUpdate(ev,{live:false,text:`Shape guidance ready: ${unique.length} distinct shapes graded; ${items.length} charms follow grades and compatible-neighbor preferences.`});
+      agentUpdate(ev,{live:false,text:`Shape guidance ready: ${reused} saved shapes reused; ${freshCount} analyzed; ${items.length} charms follow their grades.`});
       return hints;
-    } catch(e) {
-      e.stage="shape-analysis";
-      Object.assign(advice,{state:"error",error:e.message});
-      agentUpdate(ev,{live:false,kind:"warn",text:`Shape-guided placement held: ${e.message}`});
-      throw e;
-    } finally {if(window.Session)Session.schedule();}
-  })();
-  sh._packingPromise=task;
-  try{return await task;}finally{if(sh._packingPromise===task)sh._packingPromise=null;}
+    }catch(e){e.stage="shape-analysis";Object.assign(advice,{state:"error",error:e.message});agentUpdate(ev,{live:false,kind:"warn",text:`Shape-guided placement held: ${e.message}`});throw e;}
+    finally{if(window.Session)Session.schedule();}
+  });
+  S._packingCatalogTask=task;sh._packingPromise=task;
+  try{return await task;}finally{if(sh._packingPromise===task)sh._packingPromise=null;if(S._packingCatalogTask===task)S._packingCatalogTask=null;}
+}
+async function savePackingCatalog(keys){
+  const dirty=keys.filter(k=>packingProfileValid(S.packingCatalog[k])&&!S.packingCatalog[k]._cloudSaved);
+  for(let i=0;i<dirty.length;i+=50){const chunk=dirty.slice(i,i+50);
+    const result=await api("charmNestLibrary",{op:"putShapeGuidance",profiles:chunk.map(key=>({key,profile:S.packingCatalog[key]}))},{background:true,label:"Saving reusable shape grades"});
+    if(result.count!==chunk.length)throw new Error("Shape grades could not all be saved. Retry will reuse the completed analysis.");
+    for(const k of chunk)S.packingCatalog[k]._cloudSaved=true;
+  }
 }
 function renderNestFlow() {
   const b = $("#btnNestFlow"); if (!b) return;

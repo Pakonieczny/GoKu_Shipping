@@ -96,6 +96,16 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   r = await post(lib, { op: 'lookupCharms', hashes: [H1] }); assert.strictEqual(r.body.charms[H1].name, 'Compass Rose', 'operator name wins');
   r = await post(lib, { op: 'listCharms', q: 'compass' }); assert.strictEqual(r.body.charms.length, 1);
 
+  // Geometry-keyed permanent grades: identity includes dimensions; pairs survive updates.
+  const shapeKey=JSON.stringify([H1,40,40,2,900]), otherKey=JSON.stringify([H2,20,20,2,100]);
+  const shapeGrade={adaptability:40,interlock:50,edgeAffinity:90,priority:70,family:'elongated',edgeRole:'long-edge',mates:['compact'],angles:[0,90],partners:{[otherKey]:85}};
+  r=await post(lib,{op:'putShapeGuidance',profiles:[{key:shapeKey,profile:shapeGrade},{key:'bad',profile:shapeGrade}]});assert.equal(r.body.count,1);
+  r=await post(lib,{op:'getShapeGuidance',keys:[shapeKey,otherKey]});assert.equal(r.body.profiles[shapeKey].partners[otherKey],85);assert(!r.body.profiles[otherKey]);
+  r=await post(lib,{op:'putShapeGuidance',profiles:[{key:shapeKey,profile:{...shapeGrade,partners:{},priority:1}}]});
+  r=await post(lib,{op:'getShapeGuidance',keys:[shapeKey]});assert.equal(r.body.profiles[shapeKey].priority,70);assert.equal(r.body.profiles[shapeKey].partners[otherKey],85,'updates preserve known pairs');
+  r=await post(lib,{op:'getShapeGuidance',sandbox:true,keys:[shapeKey]});assert.equal(Object.keys(r.body.profiles).length,0,'sandbox cache isolated');
+  r=await post(lib,{op:'putShapeGuidance',profiles:[{key:otherKey,profile:{...shapeGrade,cacheVersion:99}}]});assert.equal(r.body.count,0,'stale schema rejected');
+
   // ── sheets ──
   r = await post(lib, { op: 'putSheet', sheet: { id: 'gold-abc123', metal: 'gold', metalLabel: 'GF 14/20', day: '2026-09-15', status: 'complete', charmCount: 21, placedCount: 21, density: 0.71, outputs: { preview: { url: 'u' } }, names: 'compass rose axolotl' } });
   assert.strictEqual(r.status, 200);
