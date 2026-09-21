@@ -1253,11 +1253,11 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
     <div class="fieldRow3">
       <div class="field"><label>Clearance (mm)</label><input id="stClearance" type="number" step="0.01" min="-0.7" max="4.2"><div class="help">Gap between silhouettes. <b>Negative = aggressive:</b> outlines may touch and their strokes overlap by up to that much (−0.18 mm ≈ half a 0.3 mm cut line), bodies never more. 0 = touching. 0.33 pt fit the reference sheet; 1.5 pt did not.</div></div>
       <div class="field"><label>Edge inset (mm)</label><input id="stInset" type="number" step="0.1" min="0" max="12.7"></div>
-      <div class="field"><label>Angle step (°)</label><select id="stAngle"><option value="90">90 (4 angles)</option><option value="45">45 (8)</option><option value="30">30 (12)</option><option value="15">15 (24)</option></select></div>
+      <div class="field"><label>Angle step (°)</label><select id="stAngle"><option value="2">2 (180 angles)</option><option value="5">5 (72 angles)</option><option value="10">10 (36 angles)</option></select></div>
     </div>
     <div class="fieldRow3">
-      <div class="field"><label>Time ceiling (s) · parallel searches</label><div class="fieldRow"><input id="stBudget" type="number" step="5" min="10" max="900"><input id="stParallel" type="number" step="1" min="0" max="16"></div><div class="help">Several searches run at once on different seeds. A completed search stops the rest; a stalled search does not cancel other seeds. 0 = all cores but one. The ceiling only caps a sheet that cannot be completed.</div></div>
-      <div class="field"><label>Seed</label><input id="stSeed" type="number" step="1" min="1"><div class="help">Same seed + same queue = same layout.</div></div>
+      <div class="field"><label>Time ceiling (s) · parallel searches</label><div class="fieldRow"><input id="stBudget" type="number" step="5" min="10" max="900"><input id="stParallel" type="number" step="1" min="0" max="16"></div><div class="help">Several searches run at once on different seeds. Every search gets time to improve the layout; the best completed result wins. 0 = automatic, adjusted for rotation count and available cores. The ceiling includes compacting sheets after all pieces fit.</div></div>
+      <div class="field"><label>Seed</label><input id="stSeed" type="number" step="1" min="1"><label><input id="stFreshSeed" type="checkbox"> Explore new arrangements each run</label><div class="help">Enabled by default. Turn off to repeat a recorded seed. Re-nesting retains the previous layout if no better valid arrangement is found.</div></div>
       <div class="field"><label>Server fallback above</label><input id="stServerAbove" type="number" step="1" min="0"><div class="help">Pieces. 0 = never use the server solver.</div></div>
     </div>
     <div class="fieldRow3">
@@ -1370,8 +1370,8 @@ const DEFAULTS = {
   rail: "md",
   stock: { gold: [100 / 25.4, 50 / 25.4], silver: [100 / 25.4, 50 / 25.4], rose: [100 / 25.4, 50 / 25.4], gold10k: [100 / 25.4, 50 / 25.4], gold14k: [100 / 25.4, 50 / 25.4] },
   nestFlow: "standard", learnedBudgetS: 600, learnedStallS: 300,
-  clearancePt: -0.5, insetPt: 1.5, angleStep: 30, budgetS: 180, seed: 1, serverAbove: 0, parallel: 0,
-  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", packingAI: "on", aiRounds: 10, snapIn: 0.25, maxFill: 0.74, orderView: "cards", v: 18,
+  clearancePt: -0.5, insetPt: 1.5, angleStep: 2, budgetS: 180, seed: 1, freshSeed: true, serverAbove: 0, parallel: 0,
+  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", packingAI: "on", aiRounds: 10, snapIn: 0.25, maxFill: 0.74, orderView: "cards", v: 20,
   // Design Station bridge, orders, run (design doc §14)
   dsOrigin: "https://design-1.goldenspike.app", heartbeatS: 5, heartbeatMiss: 3, autoCommit: "on", runMode: "manual", pullMode: "all", pullDueBy: "", pullCount: 40, autoEvery: 0, pollOrders: "on", pollMinutes: 10, optimizeAt: 85, etsyHourlyCap: 600, sandbox: "off",
   skuPattern: "^[A-Z0-9][A-Z0-9 _.,'&()+\\-]{1,60}$", labelGapMm: 6.4, masterServerAbove: 0, sizeMinMm: 3, sizeMaxMm: 60,
@@ -1454,6 +1454,9 @@ function loadSettings() {
     if ((saved.v || 1) < 17) { if (+saved.angleStep > 30) saved.angleStep = 30; saved.v = 17; }
     if ((saved.v || 1) < 18) { if (+saved.engraveMarginMm === 0.8) saved.engraveMarginMm = 0.3; saved.v = 18; }   // v18: the words run close to the edge, as the shop engraves them   // v17: four angles packed the shop's sheets ten pieces short; twelve is the floor   // v14: the ten-minute ceiling the 81-piece sheets were nested under, back — three minutes left twenty pieces for a second sheet
     if ((saved.v || 1) < 11) { if (!saved.skuPattern || saved.skuPattern === "^[A-Z]{2,4}-[A-Z0-9]{2,6}(-[A-Z0-9]{1,4})?$") saved.skuPattern = DEFAULTS.skuPattern; if (saved.masterServerAbove == null || +saved.masterServerAbove === 300) saved.masterServerAbove = 0; saved.v = 11; }   // v11: SKUs are free text; masters index in the tab (the server route has 1 GB)
+    // v20: use every 2° by default; explicit later speed choices remain available.
+    if ((saved.v || 1) < 20) { saved.angleStep = 2; saved.v = 20; }
+    if (![2,5,10].includes(+saved.angleStep)) saved.angleStep = DEFAULTS.angleStep;
     const out = Object.assign({}, DEFAULTS, saved); out.stock = Object.assign({}, DEFAULTS.stock, saved.stock || {}); return out;
   } catch (_) { return Object.assign({}, DEFAULTS, { v: 2 }); }
 }
@@ -1463,7 +1466,7 @@ function stockFor(metal) {
   const inches = (p && p.id !== "custom" && !["gold10k", "gold14k"].includes(metal)) ? [p.w, p.h] : (S.settings.stock[metal] || DEFAULTS.stock[metal]);
   return { wIn: inches[0], hIn: inches[1], wPt: inches[0] * PT_PER_IN, hPt: inches[1] * PT_PER_IN };
 }
-function angleSet() { const st = +S.settings.angleStep || 30; const a = []; for (let d = 0; d < 360; d += st) a.push(d); return a; }
+function angleSet() { const st = [2,5,10].includes(+S.settings.angleStep) ? +S.settings.angleStep : 2; const a = []; for (let d = 0; d < 360; d += st) a.push(d); return a; }
 
 /* ═══ 3 · cloud client ══════════════════════════════════════════════════ */
 /** Read a response while saying how much has arrived. A long answer (the charm library is over a megabyte) then shows
@@ -2150,7 +2153,13 @@ function computeSaturation(sh) {
 }
 
 /* ═══ 9 · nesting ═══════════════════════════════════════════════════════ */
-function parallelCount() { const want = +S.settings.parallel || 0; const cores = navigator.hardwareConcurrency || 2; return Math.max(1, Math.min(16, want || Math.max(1, cores - 1))); }
+function parallelCount() {
+  const want = +S.settings.parallel || 0, cores = navigator.hardwareConcurrency || 2;
+  // 180 angle masks per piece consume five times the memory of the 36-angle
+  // search. Scale automatic concurrency rather than multiplying that per core.
+  const auto = Math.max(1, Math.floor((cores-1)*Math.min(1,36/angleSet().length)));
+  return Math.max(1, Math.min(16, want || auto));
+}
 function ensureWorker(sh) { return ensureWorkers(sh, 1)[0]; }
 /** A pool of identical workers; each search runs on its own seed. */
 function ensureWorkers(sh, n) {
@@ -2159,7 +2168,7 @@ function ensureWorkers(sh, n) {
     const idx = sh.workers.length;
     const w = new Worker("charm-nest-worker.js");
     w.onmessage = e => onWorkerMessage(sh, e.data, idx);
-    w.onerror = e => { log(sh, `worker ${idx} error: ` + e.message); if (idx === 0) finishNest(sh, { error: e.message }); };
+    w.onerror = e => onWorkerMessage(sh, { type: "error", jobId: sh.jobId + ":" + idx, message: e.message }, idx);
     sh.workers.push(w);
   }
   sh.worker = sh.workers[0];
@@ -2176,7 +2185,8 @@ function buildJob(sh) {
   return {
     sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0 },
     clearancePt: +S.settings.clearancePt || 0, angles: angleSet(), fineRes: 2, coarseRes: 0.5,
-    timeBudgetMs: (+S.settings.budgetS || 180) * 1000, stallMs: 60 * 1000, maxTrials: 2000, seed: +S.settings.seed || 1, maxFill: +S.settings.maxFill || 0.74,
+    timeBudgetMs: (+S.settings.budgetS || 180) * 1000, stallMs: 60 * 1000, maxTrials: 2000, seed: sh.runSeed || +S.settings.seed || 1,
+    initialLayout: sh.nestInitial || null, maxFill: +S.settings.maxFill || 0.74,
     packingHints: S.settings.packingAI !== "off" && sh.packingAdvice?.key === packingKey(sh, items) ? sh.packingAdvice.hints || null : null,
     pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: c.orderDate || 0, pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
   };
@@ -2290,10 +2300,12 @@ function startNestReady(sh, context) {
   sh.nestFlow = S.settings.nestFlow || "standard";
   sh.persistedDone = false;
   sh.movedOn = null; sh.problem = null;
+  sh.nestInitial = sh.placements?.length ? sh.placements.map(p=>({...p})) : null;
+  sh.runSeed = S.settings.freshSeed !== false ? (crypto.getRandomValues(new Uint32Array(1))[0] & 0x7fffffff) || 1 : +S.settings.seed || 1;
   sh.status = "nesting"; sh.startedAt = performance.now(); sh.placements = []; sh.rejects = []; sh.outputs = null; sh.verification = null; sh.best = null; sh.trials = 0; sh.liveInfo = null; sh.endedBy = null;
   sh.jobId = uid(); sh.stage = "Preparing rotations…"; sh.progress = [0, items.length]; sh.dirty = false;
-  log(sh, `nest started · ${items.length} pieces · seed ${S.settings.seed} · clearance ${S.settings.clearancePt} pt`);
-  sh.evNest = (S.settings.engine || "solver") === "ai" ? null : agent({ metal: sh.metal }, "nest", `Solver: ${items.length} pieces · seed ${S.settings.seed} · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · up to ${S.settings.budgetS}s`, { live: true });
+  log(sh, `nest started · ${items.length} pieces · seed ${sh.runSeed} · clearance ${S.settings.clearancePt} pt`);
+  sh.evNest = (S.settings.engine || "solver") === "ai" ? null : agent({ metal: sh.metal }, "nest", `Solver: ${items.length} pieces · seed ${sh.runSeed} · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · up to ${S.settings.budgetS}s`, { live: true });
   renderCard(sh); drawPreview(sh);
   const job = buildJob(sh);
   if (sh.nestFlow === "learned") {
@@ -2309,8 +2321,8 @@ function startNestReady(sh, context) {
   const n = parallelCount();
   const workers = ensureWorkers(sh, n);
   sh.pool = { n, done: 0, results: [], trials: new Array(n).fill(0), winner: null };
-  if (sh.evNest) agentUpdate(sh.evNest, { text: `${n} parallel search${n > 1 ? "es" : ""} on seeds ${job.seed}–${job.seed + n - 1} · ${items.length} pieces · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · shape order is optimized within oldest-first sheet membership · ceiling ${S.settings.budgetS}s` });
-  workers.forEach((w, i) => w.postMessage({ type: "solve", jobId: sh.jobId + ":" + i, job: Object.assign({}, job, { seed: job.seed + i }) }));
+  if (sh.evNest) agentUpdate(sh.evNest, { text: `${n} parallel search${n > 1 ? "es" : ""} on seeds ${job.seed}–${job.seed + n - 1} · ${items.length} pieces · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · standard and broader-rotation searches keep oldest-first sheet membership · ceiling ${S.settings.budgetS}s` });
+  workers.forEach((w, i) => w.postMessage({ type: "solve", jobId: sh.jobId + ":" + i, job: Object.assign({}, job, { seed: job.seed + i, exploreRotations: i % 2 === 1 }) }));
 }
 
 /* ═══ 9b · AI nesting: Claude plans every placement, the geometry measures ═══ */
@@ -2445,11 +2457,9 @@ function onWorkerMessage(sh, m, idx) {
       // The measured no-gain window governs both routes, including a challenger making only cosmetic improvements.
       sh.workers[1]?.postMessage({ type: "stop", jobId: sh.jobId + ":1" });
     }
-    const complete = m.result && m.result.rejects.length === 0 && m.result.placements.length === items.length;
-    // Only a complete layout cancels the other seeds. One stalled seed is not proof that the sheet is full.
-    if (complete && pool.winner == null) { pool.winner = idx; (sh.workers || []).forEach((w, i) => { if (i !== idx) w.postMessage({ type: "stop", jobId: sh.jobId + ":" + i }); }); }
-    if (!(complete && pool.winner === idx) && pool.done < pool.n) return;          // wait for the rest (or the winner)
-    if (pool.winner != null && pool.winner !== idx && pool.done < pool.n) return;
+    // Wait for all workers: a complete sheet can still have a better compact
+    // arrangement in another search. Early completion used to discard it.
+    if (pool.done < pool.n) return;
     const results = pool.results.filter(Boolean);
     if (!results.length) { pool.finished = true; finishNest(sh, { error: (pool.errors || ["No search returned a layout"]).join("; ") }); return; }
     const pick = results.reduce((a, b) => CharmNestSolver.betterLayout(b, a, stockFor(sh.metal)) ? b : a, null);
@@ -2922,7 +2932,7 @@ function renderProgress(sh) {
   const deep = sh.totalMs ? `${fmt.s(sh.totalMs)} from the first file · nest ${fmt.s(sh.elapsedMs || 0)}${sh.trials ? ` · ${sh.trials} trial${sh.trials > 1 ? "s" : ""}` : ""}${sh.optimized ? ` · charms shrunk ${((1 - sh.optimized.scale) * 100).toFixed(1).replace(/\.0$/, "")}%` : ""}` : "";
   const reviewingSrc = S.sources.find(s => s.review && s.review.state === "running" && s.charms.some(c => c.metal === sh.metal));
   const done = sh.status === "complete" || sh.status === "partial";
-  st.title = done ? deep + (sh.nestFlow === "learned" ? ` · ${sh.learnedResult?.model?.model || (sh.learnedResult?.modelError ? "model unavailable" : "model skipped: baseline sufficient")} · selected ${sh.learnedResult?.selectedSource || "best verified layout"} · +${sh.learnedResult?.gainedPieces || 0} vs standard · baseline ${sh.learnedCheckpoint?.baseline?.placements.length || 0} · ${sh.trials} measured candidates` : "") : "";
+  st.title = done ? deep + " · Verification checks geometry; it does not certify optimal packing." + (sh.nestFlow === "learned" ? ` · ${sh.learnedResult?.model?.model || (sh.learnedResult?.modelError ? "model unavailable" : "model skipped: baseline sufficient")} · selected ${sh.learnedResult?.selectedSource || "best verified layout"} · +${sh.learnedResult?.gainedPieces || 0} vs standard · baseline ${sh.learnedCheckpoint?.baseline?.placements.length || 0} · ${sh.trials} measured candidates` : "") : "";
   st.innerHTML = sh.stage ? `<span class="spin"></span><span>${esc(sh.stage)}</span><span class="r">${elapsed}${budget}</span>`
     : reviewingSrc ? `<span class="spin"></span><span>Claude is reviewing the ${reviewingSrc.charms.length} charms detected in ${esc(reviewingSrc.name)}</span><span class="r">${fmt.s(reviewingSrc.review.elapsed || 0)}</span>`
     : sh.recalled && !sh.charms.length ? `<span>${sh.recalled.placedCount}/${sh.recalled.charmCount} placed · ${fmt.pct(sh.recalled.density || 0)} full${sh.recalled.verification ? (sh.recalled.verification.ok ? " · verified ✓" : " · ⚠ flagged") : ""} · ${esc(sh.recalled.fileBase || "")}</span><span class="r">${sh.recalled.updatedAt ? new Date(sh.recalled.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}</span>`
@@ -3309,7 +3319,7 @@ function openSettings() {
   $$("#railSeg button").forEach(b => b.classList.toggle("on", b.dataset.v === s.rail));
   for (const m of METALS) { $(`#st${cap(m.key)}W`).value = +(s.stock[m.key][0] * 25.4).toFixed(1); $(`#st${cap(m.key)}H`).value = +(s.stock[m.key][1] * 25.4).toFixed(1); }   // shown in mm, stored in inches
   $("#stClearance").value = +(s.clearancePt * MM_PER_PT).toFixed(2); $("#stInset").value = +(s.insetPt * MM_PER_PT).toFixed(2);   // shown in mm, stored in pt
-  $("#stAngle").value = s.angleStep; $("#stBudget").value = s.budgetS; $("#stParallel").value = s.parallel || 0; $("#stSeed").value = s.seed; $("#stServerAbove").value = s.serverAbove;
+  $("#stAngle").value = s.angleStep; $("#stBudget").value = s.budgetS; $("#stParallel").value = s.parallel || 0; $("#stSeed").value = s.seed; $("#stFreshSeed").checked = s.freshSeed !== false; $("#stServerAbove").value = s.serverAbove;
   { const rb = $("#stSandboxReset"); if (rb && !rb.dataset.wired) { rb.dataset.wired = "1"; rb.onclick = () => { if (!window.Sandbox || !Sandbox.on()) { toast("The sandbox is off", "bad"); return; } if (confirm("Empty the sandbox's pool, sets, runs and sheets? The real records are never touched.")) Sandbox.reset().then(() => toast("Sandbox emptied", "ok")).catch(e => toast(e.message, "bad", 8000)); }; } }
   { const pb = $("#stPurge"); if (pb && !pb.dataset.wired) { pb.dataset.wired = "1"; pb.onclick = async () => {
       const code = prompt("Purge every run, sheet, set, pool row, back record and counter — production and sandbox? The master files, the SKU index, the mappings and the sandbox snapshot stay.\n\nEnter the passcode to confirm."); if (code == null) return;
@@ -3347,7 +3357,7 @@ function readSettings() {
   const s = S.settings, previousGeometry = JSON.stringify([s.stock,s.clearancePt,s.insetPt,s.maxFill]);
   s.rail = $("#railSeg button.on")?.dataset.v || "md";
   for (const m of METALS) s.stock[m.key] = [(+$(`#st${cap(m.key)}W`).value / 25.4) || DEFAULTS.stock[m.key][0], (+$(`#st${cap(m.key)}H`).value / 25.4) || DEFAULTS.stock[m.key][1]];
-  s.clearancePt = Math.max(-2, Math.min(12, Math.round((+$("#stClearance").value || 0) / MM_PER_PT * 100) / 100)); s.insetPt = Math.max(0, Math.round((+$("#stInset").value || 0) / MM_PER_PT * 100) / 100); s.angleStep = +$("#stAngle").value || 30; s.budgetS = Math.max(10, +$("#stBudget").value || 180); s.parallel = Math.max(0, Math.min(16, Math.round(+$("#stParallel").value || 0))); s.seed = Math.max(1, Math.round(+$("#stSeed").value || 1)); s.serverAbove = Math.max(0, +$("#stServerAbove").value || 0);
+  s.clearancePt = Math.max(-2, Math.min(12, Math.round((+$("#stClearance").value || 0) / MM_PER_PT * 100) / 100)); s.insetPt = Math.max(0, Math.round((+$("#stInset").value || 0) / MM_PER_PT * 100) / 100); s.angleStep = [2,5,10].includes(+$("#stAngle").value) ? +$("#stAngle").value : 2; s.budgetS = Math.max(10, +$("#stBudget").value || 180); s.parallel = Math.max(0, Math.min(16, Math.round(+$("#stParallel").value || 0))); s.seed = Math.max(1, Math.round(+$("#stSeed").value || 1)); s.freshSeed = $("#stFreshSeed").checked; s.serverAbove = Math.max(0, +$("#stServerAbove").value || 0);
   s.pollOrders = $("#stPollOrders").value; s.pollMinutes = Math.max(5, Math.min(1440, +$("#stPollMinutes").value || 10)); s.optimizeAt = Math.max(50, Math.min(100, +$("#stOptimizeAt").value || 85));
   s.dsOrigin = ($("#stDsOrigin").value || DEFAULTS.dsOrigin).trim().replace(/\/+$/, ""); s.heartbeatS = Math.max(2, Math.min(60, +$("#stHeartbeatS").value || 5)); s.heartbeatMiss = Math.max(1, Math.min(10, Math.round(+$("#stHeartbeatMiss").value || 3))); s.autoCommit = $("#stAutoCommit").value; s.cadenceDays = Math.max(1, Math.min(14, Math.round(+$("#stCadenceDays").value || 2))); s.lateDays = Math.max(0, Math.min(14, Math.round(+$("#stLateDays").value ?? 2))); s.pullMode = $("#stPullMode").value; s.pullDueBy = $("#stPullDueBy").value || ""; s.pullCount = Math.max(1, Math.min(500, Math.round(+$("#stPullCount").value || 40))); s.autoEvery = Math.max(0, Math.min(1440, Math.round(+$("#stAutoEvery").value || 0))); if (s.autoEvery > 0 && s.autoEvery < 5) s.autoEvery = 5; s.etsyHourlyCap = Math.max(50, Math.min(5000, Math.round(+$("#stEtsyCap").value || 600))); { const was = s.sandbox === "on"; s.sandbox = $("#stSandbox").value === "on" ? "on" : "off"; if (was !== (s.sandbox === "on")) { saveSettings(); toast(`Sandbox ${s.sandbox === "on" ? "ON" : "off"} — reloading`, "ok", 3000); setTimeout(() => location.reload(), 600); } }
   try { new RegExp($("#stSkuPattern").value); s.skuPattern = $("#stSkuPattern").value.trim() || DEFAULTS.skuPattern; } catch (_) { toast("SKU pattern is not a valid regular expression — kept the previous one", "bad"); }

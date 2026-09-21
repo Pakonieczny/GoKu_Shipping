@@ -59,3 +59,48 @@ Node regression suites: `solver.cjs`, `functions.cjs`, `packing-runtime.cjs`, `w
 Coverage includes concave shapes where strict insertion order blocks a feasible layout, impossible older pieces, whole orders, pinned priorities, interrupted preparation, reclaimed space, finite/capped rotation areas, adversarial AI advice, worker failures, stale results, cached consultations, and pending consultation resumption.
 
 Browser interaction verification remains unavailable because the browser connection times out while listing tabs. The local Illustrator parsing and solver benchmarks are computational tests, not a substitute claim of completed browser testing. Existing saved sheets are not silently rewritten; re-nesting uses the corrected solver.
+
+## Repeated layouts and production rotation mismatch — 2026-09-21
+
+The saved 48-piece silver-sheet report corresponding to the two dachshund discs used **four angles (0/90/180/270), seed 2, -0.51 pt clearance and 1.42 pt inset**. The 81-piece benchmark instead used twelve angles. Settings version 18 could still contain a 90-degree step despite the earlier one-time version-17 migration. At Paul’s request, loading settings now enforces a maximum **10-degree step (36 orientations)**; the UI defaults to 10 degrees and also offers 5 degrees. Existing 90/45/30/15-degree saved settings migrate to 10 degrees. The base solver job always receives all 36 angles.
+
+Further defects found and corrected:
+
+- Re-nesting reused fixed seeds and discarded the previous layout. Fresh seeds are now the default (a reproducible fixed seed remains available), and the prior layout is revalidated against current geometry, whole orders, FIFO, pins and the fill ceiling before becoming the incumbent.
+- The first completed worker stopped other searches and selected only completed results, potentially throwing away a better in-flight worker's layout. The pool now waits for every worker's bounded search; worker errors use the same result-selection path.
+- An epsilon in the offcut comparator let higher contact scores consume up to 0.2% more sheet extent per accepted result. Count, offcut and contact now form a strict ordering. Contact-only refinement also used to reject a smaller offcut when its contact score decreased.
+- Final refinement could move only twelve pieces at their existing angles. It now considers boundary pieces, large pieces and poorly connected pieces across rotations, updates footprint accounting, and preserves pins and the fill ceiling.
+- Complete partial sheets stopped after eight trials regardless of remaining budget. Complete searches now allow a bounded no-improvement window and reserve some remaining time for refinement. Unfinished sheets retain their full search budget.
+- Alternate workers try intermediate angles and less greedy strip-growth weights alongside standard workers. These are proposals, not an assumed improvement; the same comparator chooses the result.
+
+Measured computational checks (no live browser claim):
+
+| Input | Before | After | Geometry check |
+| --- | --- | --- | --- |
+| Supplied `test4_81_Pcs(3).ai`, same bytes as prior reference | 81/81 | 81/81 | zero overlap/outside pixels at resolution 6 |
+| Reconstructed 48-piece silver export, seed 2, original physical sizes restored (initial 30° experiment) | 48/48, occupied extent 77.79 mm, four angles | 48/48, 75.49 mm, twelve angles plus exploratory rotations | zero overlap/outside pixels at resolution 6 |
+| Earlier 43-piece half-sheet fixture | 54.50 mm occupied | 53.45 mm with exploratory search | zero overlap/outside pixels at resolution 6 |
+
+The 48-piece reconstruction isolates each exported Form XObject, reverses its saved rotation and 0.975 output scale, and rebuilds the silhouettes. Its measured area differs from the saved report by +0.13%; this is an export reconstruction, not the original production masks. The two discs change from 0/0 degrees to 185/335 degrees in that candidate. Both comparisons preserve dimensions and clearance. The 2.29 mm reduction is modest and does not establish optimality.
+
+An orientation stress test rotates each of the same 81 input masks by a different angle before solving. The previous solver achieved 65/81 in 60 seconds, compared with 81/81 on the original orientations. Broader-angle prototypes did not consistently improve that count; they must not replace the standard route or be presented as a universal capacity fix. Different queues also have different shape areas and order constraints. A passing geometry verifier certifies neither optimal packing nor an 81-piece capacity.
+
+Regression coverage includes ranking monotonicity, valid incumbent retention, duplicate/unknown/outside incumbent rejection, FIFO, current pins, settings migration, and a complete-worker race where a later result has a better offcut. The cloud browser again timed out when listing tabs; these are local solver/runtime tests, not completed end-to-end browser verification.
+
+The existing `releases.cjs` suite fails with `classifyAll is not defined` on both the unchanged checkout and this branch; it is a pre-existing test-harness failure. The focused packing, worker, neighbor, partial-sheet and solver checks pass.
+
+Final 10° checks requested by Paul: the supplied reference retains **81/81 at 73.65%** with zero overlap/outside pixels at resolution 6. The reconstructed silver sheet retains **48/48**, reduces occupied extent from **77.79 to 73.38 mm** (4.41 mm, 5.67%), and has zero overlap/outside pixels at resolution 6. This candidate keeps both discs upright; the winning whole-sheet arrangement is tighter than the earlier 30° candidate that rotated them. Orientation changes are evaluated rather than forced. These checks used seed 1 for the reference, seed 2 for silver, and a 60-second ceiling; completion took about 52 and 56 seconds respectively on this host.
+
+### Final requested default: 2° / 180 orientations
+
+Paul subsequently requested testing every 2° and explicitly authorized publication to `main`. Version 20 makes 2° the default and migrates older saved rotation settings to it. The Settings selector retains explicit 5° and 10° speed choices after migration. Automatic worker count scales down with angle count to avoid multiplying the fivefold mask-memory increase across every CPU core; an explicit worker count remains respected. Intermediate-angle proposals stop subdividing the already-dense 180-angle construction grid.
+
+Starting with the valid 10° incumbent, the 2° silver test retained 48/48 and reduced occupied extent to **73.025 mm**, down from 73.378 mm at 10° and 77.788 mm in the reconstructed four-angle control. It completed four trials within about 90 seconds and passed resolution-6 verification with zero overlap/outside pixels. This is a measured additional 0.353 mm gain, not a claim that 180 angles guarantees optimal packing. The original sheet data and saved production files were not rewritten by these tests.
+
+The 2° reference test also retained the valid 81-piece incumbent (73.65%) after two trials in its 90-second budget, with zero overlap/outside pixels. That particular test proves incumbent retention, not independent discovery of an 81-piece layout at 2°.
+
+### Supporting edge contact: 0.35
+
+Paul additionally requested a modest edge preference while retaining the other packing rules. `EDGE_WEIGHT` increases from 0.25 to **0.35** of silhouette-neighbor weight, in coarse candidate ranking, fine search and final contact measurement. Piece count and clear offcut remain ahead of contact in final ranking. Physical contour contact still determines the edge term; a corner's combined edge/close-edge contribution is bounded by 0.525, and equivalent true-neighbor contact remains stronger. The neighbor/edge test confirms those bounds and wall immutability.
+
+Final 0.35-edge validation: a **fresh** 2° run independently discovered **81/81 at 73.96%** in the configured three-minute budget (four trials), with zero overlap/outside pixels at resolution 6. The silver 2° run retained 48/48 and 73.025 mm occupied extent under the stronger edge weight, also with zero overlap/outside pixels. The edge change therefore did not sacrifice the best tested offcut to spread pieces along the perimeter.

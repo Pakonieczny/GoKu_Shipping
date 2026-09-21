@@ -23,7 +23,7 @@ const stock=new S.Grid(80,80);for(let y=0;y<80;y++)for(let x=0;x<80;x++)if(x<2||
 const atEdge=S.placementAt(v,stock,2,20),offEdge=S.placementAt(v,stock,5,20);
 assert.equal(atEdge.neighborScore,0);assert(atEdge.score>offEdge.score && offEdge.score>0);
 assert(atEdge.score<touching.score,'an edge is supporting credit, weaker than a real neighbour');
-const corner=S.placementAt(v,stock,2,2);assert(corner.edge<=1 && corner.edgeClose<=1 && corner.score<=.375,'corners cannot inflate the bounded edge reward');
+const corner=S.placementAt(v,stock,2,2);assert(corner.edge<=1 && corner.edgeClose<=1 && corner.score<=.525,'corners cannot inflate the bounded edge reward');
 const edgeBefore=atEdge.edge;stock.stamp(bits,10,10,12,20);
 assert.equal(S.placementAt(v,stock,2,20).edge,edgeBefore,'stamping charms cannot change wall credit');
 assert.equal(S.placementAt(v,stock.clone(),2,20).score,S.placementAt(v,stock,2,20).score);

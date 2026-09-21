@@ -16,7 +16,7 @@
  *  contact with a smaller edge-alignment bonus; final refinement improves both.
  *  Sparse queues instead minimise growth of an occupied strip from the left
  *  (top on portrait stock). Contact breaks ties inside that strip. A handful
- *  of restarts compact the result even after all pieces fit, preserving a
+ *  of restarts plus rotation refinement compact the result after all pieces fit, preserving a
  *  rectangular offcut without changing any piece's dimensions or clearance.
  *
  *  This is the contact-scored, multi-resolution search from the design
@@ -344,7 +344,8 @@
 
     const maxFill = job.maxFill > 0 && job.maxFill < 1 ? job.maxFill : 1;   // hard ceiling on fill (solid cells / usable cells)
     const stripAxis = FW >= FH ? "x" : "y";
-    const stripOf = rec => ({ axis: stripAxis, end: rec.reduce((n, r) => Math.max(n, stripAxis === "x" ? r.x + r.v.fine.w : r.y + r.v.fine.h), wallFine) });
+    let stripWeight = 4;
+    const stripOf = rec => ({ weight:stripWeight, axis: stripAxis, end: rec.reduce((n, r) => Math.max(n, stripAxis === "x" ? r.x + r.v.fine.w : r.y + r.v.fine.h), wallFine) });
     const qualityOf = (rec, fine) => rec.length ? rec.reduce((n, r) => n + placementAt(r.v, fine, r.x, r.y).score, 0) / rec.length : 0;
 
     /* ── finishing push ─────────────────────────────────────────────────────
@@ -386,7 +387,7 @@
         best.rec.push({ p, v, x, y });
         best.placements.push(pl); best.rejects = best.rejects.filter(r => r !== id);
         best.placedCells += v.cells; best.placedPt2 = best.placedCells / (fineRes * fineRes);
-        best.density = best.placedCells / usableCellsFine; best.freePt2 = fine.freeCells() / (fineRes * fineRes); best.pocket = pocketPt(coarse, coarseRes);
+        best.density = best.placedCells / usableCellsFine; best.contactQuality = qualityOf(best.rec, fine); best.freePt2 = fine.freeCells() / (fineRes * fineRes); best.pocket = pocketPt(coarse, coarseRes);
         if (cb.onPlaced) cb.onPlaced(pl, { trial: best.trial, placed: best.placements.length, total, freePt2: best.freePt2, usablePt2: usableCellsFine / (fineRes * fineRes), placedPt2: best.placedPt2, pocket: best.pocket, finishing: true });
         if (cb.onBest) cb.onBest(best, { trial: best.trial, placed: best.placements.length, total, rejects: best.rejects, density: best.density, elapsedMs: now() - t0, finishing: true });
         await yieldNow();
@@ -461,7 +462,7 @@
         const placedCells = newRec.reduce((n, r) => n + r.v.cells, 0);
         const placedIds = new Set(placements.map(p => p.id));
         const rejects = prepared.filter(p => !placedIds.has(p.id)).map(p => p.id);
-        Object.assign(best, { placements, rejects, capped: (best.capped || []).filter(id => !placedIds.has(id)), density: placedCells / usableCellsFine, placedCells, placedPt2: placedCells / (fineRes * fineRes), freePt2: fine.freeCells() / (fineRes * fineRes), pocket: pocketPt(coarse, coarseRes), grids: { fine, coarse }, rec: newRec, repaired: true });
+        Object.assign(best, { placements, rejects, capped: (best.capped || []).filter(id => !placedIds.has(id)), density: placedCells / usableCellsFine, placedCells, placedPt2: placedCells / (fineRes * fineRes), freePt2: fine.freeCells() / (fineRes * fineRes), pocket: pocketPt(coarse, coarseRes), grids: { fine, coarse }, rec: newRec, contactQuality:qualityOf(newRec,fine), repaired: true });
         if (cb.onBest) cb.onBest(best, { trial: best.trial, placed: placements.length, total, rejects, density: best.density, elapsedMs: now() - t0, repaired: true, removed: removed.length });
         return true;
       }
@@ -499,10 +500,38 @@
       for (const r of rec) { fine.stamp(r.v.fine.bits, r.v.fine.w, r.v.fine.h, r.x, r.y); for (let yy = 0; yy < r.v.fine.h; yy++) for (let xx = 0; xx < r.v.fine.w; xx++) if (r.v.fine.bits[yy * r.v.fine.w + xx]) { const gx = Math.floor((r.x + xx) / ratio), gy = Math.floor((r.y + yy) / ratio); if (gx >= 0 && gy >= 0 && gx < coarse.W && gy < coarse.H) coarse.set(gx, gy); } }
       coarse.buildSAT(); return { fine, coarse };
     };
+    // A re-nest may start from an existing layout, but only after rebuilding and
+    // validating it against this job's current shapes, pins, dates and fill cap.
+    if (job.initialLayout?.length && prepared.length === pieces.length) {
+      const rec = [], ids = new Set(); let valid = true;
+      for (const pl of job.initialLayout) {
+        const p = prepared.find(p => p.id === pl.id);
+        if (!p || ids.has(pl.id) || ![pl.cxPt,pl.cyPt,pl.angle].every(Number.isFinite)) { valid = false; break; }
+        if (p.pinned && (pl.cxPt !== p.pinned.cxPt || pl.cyPt !== p.pinned.cyPt || pl.angle !== p.pinned.angle)) { valid = false; break; }
+        const v = variantsFor(p, [((pl.angle % 360) + 360) % 360])[0];
+        if (!v) { valid = false; break; }
+        const x = Math.round(pl.cxPt * fineRes - v.solid.cx), y = Math.round(pl.cyPt * fineRes - v.solid.cy);
+        const grids = rebuildGrids(rec);
+        if (!grids.fine.fits(v.fine.pm,x,y)) { valid = false; break; }
+        ids.add(p.id); rec.push({p,v,x,y});
+      }
+      const rejects = prepared.filter(p => !ids.has(p.id));
+      const cells = rec.reduce((n,r) => n+r.v.cells,0);
+      const cutoff = fifo && rejects.length ? Math.min(...rejects.map(p=>rank.get(p.order))) : Infinity;
+      if (prepared.some(p=>p.pinned && !ids.has(p.id)) || rec.some(r => rank.get(r.p.order) >= cutoff || rejects.some(p=>p.order===r.p.order)) || cells/usableCellsFine > maxFill) valid = false;
+      if (valid && rec.length) {
+        const grids = rebuildGrids(rec), placements = rec.map(r=>({id:r.p.id,angle:r.v.angle,cxPt:(r.x+r.v.solid.cx)/fineRes,cyPt:(r.y+r.v.solid.cy)/fineRes,xPt:(r.x+(r.v.fine.w-r.v.solid.w)/2)/fineRes,yPt:(r.y+(r.v.fine.h-r.v.solid.h)/2)/fineRes,wPt:r.v.solid.w/fineRes,hPt:r.v.solid.h/fineRes}));
+        best = {placements,rejects:rejects.map(p=>p.id),capped:rejects.filter(p=>fifo && rank.get(p.order)>=capOrders).map(p=>p.id),density:cells/usableCellsFine,contactQuality:qualityOf(rec,grids.fine),trial:-1,stripPacked:cells/usableCellsFine<maxFill*.9,usablePt2:usableCellsFine/(fineRes*fineRes),freePt2:grids.fine.freeCells()/(fineRes*fineRes),placedPt2:cells/(fineRes*fineRes),placedCells:cells,pocket:pocketPt(grids.coarse,coarseRes),grids,rec,retainedInitial:true};
+        if (cb.onBest) cb.onBest(best,{trial:-1,placed:placements.length,total:prepared.length,rejects:best.rejects,density:best.density,elapsedMs:now()-t0});
+      }
+    }
+    const refinementReserve = Math.min(10000,budget*.2);
     while (trials < maxTrials) {
       if (job.packingHints && job.packingHints !== lastAdvice) { lastAdvice = job.packingHints; lastBetterAt = now(); }
       if (stopped()) { endedBy = cb.shouldStop && cb.shouldStop() ? "stopped" : stalled ? "stalled" : "budget"; break; }
+      if (best?.placements.length === prepared.length && now()-t0 >= budget-refinementReserve) break;
       const trial = trials++;
+      stripWeight = job.exploreRotations ? [4, .15, .04, .5][trial % 4] : 4;
       // ordering: trial 0 = pure largest-first; later trials add noise growing with the streak
       const sigma = trial === 0 ? 0 : Math.min(0.6, 0.15 + 0.05 * Math.min(failStreak, 8));
       // pieces the previous trial could not place go first (most of the time), so the layout is built around them
@@ -513,10 +542,14 @@
       // seeds escape contact-only local optima; final ranking and refinement
       // always measure contact against the actual silhouettes, never the walls.
       const sparse = candidates.reduce((n, p) => n + p.footprintCells, 0) / usableCellsFine < maxFill * 0.9;
-      const stripPacked = sparse || (trial > 0 && best?.density < maxFill * 0.9);
+      const stripPacked = sparse || ((job.exploreRotations ? trial % 3 === 2 : trial > 0) && best?.density < maxFill * 0.9);
       const advice = job.packingHints || {}, priorities = new Map((advice.priority || []).map((id,i,a) => [id, 1 - i / Math.max(1,a.length)]));
       const guided = trial % 3 === 1 && priorities.size;
       if (guided) guidedTrials++;
+      // Offset the angle lattice between restarts. Imported artwork already has
+      // arbitrary orientations: repeating 0/30/60 forever can exclude good fits.
+      const angleOffset = job.exploreRotations && angles.length < 180 ? (trial % Math.max(2, Math.round(360/angles.length/5))) * 5 : 0;
+      for (const p of candidates) if (!p.pinned) p.variants = variantsFor(p, angles.map(a=>(a+angleOffset)%360));
       if (guided) for (const p of candidates) if (!p.pinned && advice.angles?.[p.id]) p.variants = variantsFor(p, [...new Set(angles.concat(advice.angles[p.id].filter(Number.isFinite).slice(0,3).map(a => ((a % 360) + 360) % 360)))]);
       const order = candidates.map(p => ({ p, k: (front.has(p.id) ? 1e9 : 0) + p.areaPt2 * (1 + sigma * (random() * 2 - 1) + (guided ? .8 * (priorities.get(p.id) || 0) : 0)) })).sort((a, b) => b.k - a.k).map(o => o.p);
       const pinnedFirst = order.filter(p => p.pinned).concat(order.filter(p => !p.pinned));
@@ -555,7 +588,7 @@
           const x = Math.round(p.pinned.cxPt * fineRes - v.solid.cx), y = Math.round(p.pinned.cyPt * fineRes - v.solid.cy);
           if (fine.fits(v.fine.pm, x, y)) bestPos = { v, x, y, score: Infinity };
         } else {
-          bestPos = search(p, fine, coarse, ratio, gravW, noise, random, stripPacked ? 0 : cornerX, stripPacked ? 0 : cornerY, stripPacked ? stripOf(placedRec) : null, sparse ? trial % 3 === 2 : trial === 0);
+          bestPos = search(p, fine, coarse, ratio, gravW, noise, random, stripPacked ? 0 : cornerX, stripPacked ? 0 : cornerY, stripPacked ? stripOf(placedRec) : null, sparse ? trial % 3 === 2 : (job.exploreRotations ? trial % 3 === 0 : trial === 0));
         }
         if (bestPos && !p.pinned && (placedCells + bestPos.v.cells) / usableCellsFine > maxFill) {
           rejects.push(p.id); capped.push(p.id); dropOrder(p, "cap"); await yieldNow(); continue;
@@ -634,37 +667,46 @@
         endedBy = "complete";
         // Seating every piece is not enough on a partial sheet: spend a few
         // bounded restarts shortening the occupied strip before publishing it.
-        if (trials >= Math.min(sparse ? 8 : 3, maxTrials)) break;
+        if (trials >= 8 && now()-lastBetterAt >= Math.min(stallMs || 15000,15000)) break;
       }
       // restarts stalling while the best is a few short → repair the best layout instead
       if (best && repairCandidates(best).length > 0 && repairCandidates(best).length <= 3 && failStreak >= 4) {
         failStreak = 0;
         if (cb.onStage) cb.onStage("repair", 0, 6);
         const fixed = await ruinRecreate(best, 6);
-        if (fixed && best.placements.length === prepared.length) { endedBy = "complete"; break; }
+        if (fixed) { lastBetterAt = now(); if (best.placements.length === prepared.length) endedBy = "complete"; }
       }
-      if (best && best.rejects.length && best.rejects.every(id => best.capped.includes(id))) { endedBy = "cap"; if (!sparse || trials >= Math.min(8, maxTrials)) break; }   // only the ceiling holds pieces back
+      if (best && best.rejects.length && best.rejects.every(id => best.capped.includes(id))) { endedBy = "cap"; if (trials >= 8 && now()-lastBetterAt >= Math.min(stallMs || 15000,15000)) break; }   // only the ceiling holds pieces back
       await yieldNow();
     }
     if (trials >= maxTrials && endedBy === "budget") endedBy = "trials";
     // Construction heuristics propose layouts; neighbour and edge contact judge
-    // them. Improve the least-connected pieces without ever dropping a charm,
-    // changing its angle/size, breaking a pin, or consuming the clear offcut.
+    // them. Reinsert unpinned pieces across rotations, retaining the best layout
+    // by the same count/offcut/contact ordering used by the worker pool.
     if (best?.rec?.length && !(cb.shouldStop && cb.shouldStop())) {
+      stripWeight = 4;
       best.contactQuality = qualityOf(best.rec, best.grids.fine);
       best.contactQualityBefore = best.contactQuality;
-      const loose = best.rec.filter(r => !r.p.pinned).sort((a,b) => placementAt(a.v,best.grids.fine,a.x,a.y).score - placementAt(b.v,best.grids.fine,b.x,b.y).score).slice(0,12);
+      const movable = best.rec.filter(r=>!r.p.pinned);
+      const extent = r => stripAxis === "x" ? r.x+r.v.fine.w : r.y+r.v.fine.h;
+      const loose = [...new Set([
+        ...movable.slice().sort((a,b)=>extent(b)-extent(a)).slice(0,8),
+        ...movable.slice().sort((a,b)=>b.p.areaPt2-a.p.areaPt2).slice(0,6),
+        ...movable.slice().sort((a,b)=>placementAt(a.v,best.grids.fine,a.x,a.y).score-placementAt(b.v,best.grids.fine,b.x,b.y).score).slice(0,12)
+      ])];
       for (const original of loose) {
         if (now() - t0 > budget || (cb.shouldStop && cb.shouldStop())) break;
         const r = best.rec.find(x => x.p.id === original.p.id), keep = best.rec.filter(x => x !== r);
         const grids = rebuildGrids(keep);
-        const pos = search({variants:[r.v]}, grids.fine, grids.coarse, ratio, .1, 0, random, 0, 0, best.density < maxFill * .9 ? stripOf(keep) : null);
-        if (!pos || (pos.x === r.x && pos.y === r.y)) continue;
-        const moved = {...r,x:pos.x,y:pos.y}, rec = best.rec.map(x => x === r ? moved : x);
-        const placements = best.placements.map(p => p.id !== r.p.id ? p : {...p,cxPt:(pos.x+r.v.solid.cx)/fineRes,cyPt:(pos.y+r.v.solid.cy)/fineRes,xPt:(pos.x+(r.v.fine.w-r.v.solid.w)/2)/fineRes,yPt:(pos.y+(r.v.fine.h-r.v.solid.h)/2)/fineRes});
+        const pos = search({variants:variantsFor(r.p,[...new Set(angles.concat(angles.length < 180 ? angles.map(a=>(a+15)%360) : [],r.v.angle))])}, grids.fine, grids.coarse, ratio, .1, 0, random, 0, 0, best.density < maxFill * .9 ? stripOf(keep) : null);
+        if (!pos || (pos.x === r.x && pos.y === r.y && pos.v.angle === r.v.angle)) continue;
+        const moved = {...r,v:pos.v,x:pos.x,y:pos.y}, rec = best.rec.map(x => x === r ? moved : x);
+        const placements = best.placements.map(p => p.id !== r.p.id ? p : {...p,angle:pos.v.angle,cxPt:(pos.x+pos.v.solid.cx)/fineRes,cyPt:(pos.y+pos.v.solid.cy)/fineRes,xPt:(pos.x+(pos.v.fine.w-pos.v.solid.w)/2)/fineRes,yPt:(pos.y+(pos.v.fine.h-pos.v.solid.h)/2)/fineRes,wPt:pos.v.solid.w/fineRes,hPt:pos.v.solid.h/fineRes});
         const nextGrids = rebuildGrids(rec), contactQuality = qualityOf(rec,nextGrids.fine);
-        const candidate = {...best,placements,rec,grids:nextGrids,contactQuality};
-        if (contactQuality > best.contactQuality + 1e-9 && betterLayout(candidate,best,job.sheet)) {
+        const placedCells = best.placedCells-r.v.cells+pos.v.cells;
+        const candidate = {...best,placements,rec,grids:nextGrids,contactQuality,placedCells,placedPt2:placedCells/(fineRes*fineRes),density:placedCells/usableCellsFine};
+        if (candidate.density <= maxFill && betterLayout(candidate,best,job.sheet)) {
+          if (pos.v.angle !== r.v.angle) candidate.rotationRefinements = (best.rotationRefinements || 0)+1;
           best = candidate; best.contactRefinements = (best.contactRefinements || 0) + 1;
           best.pocket = pocketPt(nextGrids.coarse,coarseRes);
           best.freePt2 = nextGrids.fine.freeCells()/(fineRes*fineRes);
@@ -693,11 +735,12 @@
         }
       }
     }
+    if (best.placements.length === pieces.length && endedBy !== "stopped") endedBy = "complete";
     // what the pieces the ceiling held back would add, so the console can say the arithmetic plainly
     const cappedPt2 = (best.capped || []).reduce((n, id) => { const p = prepared.find(x => x.id === id); return n + (p ? p.footprintCells / (fineRes * fineRes) : 0); }, 0);
     return Object.assign({}, best, {
       endedBy, trials, elapsedMs: now() - t0, cappedPt2,
-      params: { contactScoring: "silhouette-neighbors-and-edges", edgeWeight: EDGE_WEIGHT, compactPartial: !!best.stripPacked, packingAxis: best.stripPacked ? stripAxis : null, packingGuided: guidedTrials > 0, guidedTrials, seed: job.seed == null ? 1 : job.seed, angles, clearancePt, insetPt, fineRes, coarseRes, maxFill, pieceOrder: byAreaDesc.map(p => p.id) }
+      params: { exploreRotations: !!job.exploreRotations, contactScoring: "silhouette-neighbors-and-edges", edgeWeight: EDGE_WEIGHT, compactPartial: !!best.stripPacked, packingAxis: best.stripPacked ? stripAxis : null, packingGuided: guidedTrials > 0, guidedTrials, seed: job.seed == null ? 1 : job.seed, angles, clearancePt, insetPt, fineRes, coarseRes, maxFill, pieceOrder: byAreaDesc.map(p => p.id) }
     });
   }
 
@@ -730,8 +773,10 @@
     if (!incumbent) return true;
     if (candidate.placements.length !== incumbent.placements.length) return candidate.placements.length > incumbent.placements.length;
     const a = stripFraction(candidate.placements, sheet), b = stripFraction(incumbent.placements, sheet);
-    if (Math.abs(a - b) <= .002 && Number.isFinite(candidate.contactQuality) && Number.isFinite(incumbent.contactQuality) && candidate.contactQuality !== incumbent.contactQuality) return candidate.contactQuality > incumbent.contactQuality;
+    // Strict ordering prevents epsilon ties from cycling and gradually consuming
+    // an offcut as asynchronous workers report higher contact scores.
     if (a !== b) return a < b;
+    if (Number.isFinite(candidate.contactQuality) && Number.isFinite(incumbent.contactQuality) && candidate.contactQuality !== incumbent.contactQuality) return candidate.contactQuality > incumbent.contactQuality;
     return candidate.density > incumbent.density;
   }
 
@@ -770,10 +815,10 @@
     return {contact, close, neighbors, score:contact + .5 * close + .05 * neighbors};
   }
 
-  // Edge alignment supports neighbour packing at one quarter of its contact
+  // Edge alignment supports neighbour packing at 0.35 of its contact
   // weight. Snapshot walls exclude charms; boundary contact counts only actual
   // ring pixels, so corner credit stays bounded. Strip growth outranks contact.
-  const EDGE_WEIGHT = .25;
+  const EDGE_WEIGHT = .35;
   function edgeContact(pm, walls, x, y) {
     if (!walls) return 0;
     let cells = walls.overlap(pm, x, y, 1e9);
@@ -818,7 +863,7 @@
         const gx = cornerX ? (CW - x - cw) : x, gy = cornerY ? (CH - y - ch) : y;
         const growth = strip ? Math.max(strip.end / ratio, strip.axis === "x" ? x + cw : y + ch) : 0;
         const edge = boundarySeed ? 0 : edgeContact(v.coarse.contactRing, coarse.walls, x - 1, y - 1);
-        const s = contact + EDGE_WEIGHT * edge - 4 * growth - gravW * ((gx + gy) / (CW + CH)) - 0.05 * ov + (noise ? noise * random() : 0);
+        const s = contact + EDGE_WEIGHT * edge - (strip?.weight ?? 4) * growth - gravW * ((gx + gy) / (CW + CH)) - 0.05 * ov + (noise ? noise * random() : 0);
         if (cands.length < K) { cands.push({ x, y, s }); if (cands.length === K) cands.sort((a, b) => b.s - a.s); }
         else if (s > cands[K - 1].s) { cands[K - 1] = { x, y, s }; cands.sort((a, b) => b.s - a.s); }
       }
@@ -835,7 +880,7 @@
           const adjacency = placementAt(v, fine, x, y), contact = adjacency.contact;
           const gx = cornerX ? (FW - x - pm.w) : x, gy = cornerY ? (FH - y - pm.h) : y;
           const growth = strip ? Math.max(strip.end, strip.axis === "x" ? x + pm.w : y + pm.h) / ratio : 0;
-          const s = (boundarySeed ? fine.overlap(v.ringFine, x - pad, y - pad, 1e9) / rc : adjacency.score) - 4 * growth - gravW * ((gx + gy) / (FW + FH)) + (noise ? noise * random() : 0);
+          const s = (boundarySeed ? fine.overlap(v.ringFine, x - pad, y - pad, 1e9) / rc : adjacency.score) - (strip?.weight ?? 4) * growth - gravW * ((gx + gy) / (FW + FH)) + (noise ? noise * random() : 0);
           if (!best || s > best.score) best = { v, x, y, score: s, contact, neighbors:adjacency.neighbors, closeContact:adjacency.close };
         }
       }
@@ -852,7 +897,7 @@
           if (!fine.fits(pm, x, y)) continue;
           const adjacency = placementAt(v, fine, x, y), contact = adjacency.contact;
           const growth = strip ? Math.max(strip.end, strip.axis === "x" ? x + pm.w : y + pm.h) / ratio : 0;
-          const s = (boundarySeed ? fine.overlap(v.ringFine, x - pad, y - pad, 1e9) / rc : adjacency.score) - 4 * growth - gravW * ((x + y) / (FW + FH));
+          const s = (boundarySeed ? fine.overlap(v.ringFine, x - pad, y - pad, 1e9) / rc : adjacency.score) - (strip?.weight ?? 4) * growth - gravW * ((x + y) / (FW + FH));
           if (!best || s > best.score) best = { v, x, y, score: s, contact, neighbors:adjacency.neighbors, closeContact:adjacency.close };
         }
       }
