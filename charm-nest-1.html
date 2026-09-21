@@ -1113,43 +1113,34 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .libCard .h{flex-wrap:wrap;gap:6px}.sheetExport .btn{padding:3px 5px;font-size:10px}
 
 
-/* Production approval evidence: one clear strip beside each QR. */
-.laserSection {margin:0 0 32px;border-top:1px solid var(--line);padding-top:18px}
+/* Compact cards, with QR and engraving statistics below each sheet. */
+.laserSection {margin:0 0 24px;border-top:1px solid var(--line);padding-top:14px}
 .laserSection[hidden] {display:none}
-.laserSection h2 {font:600 22px var(--sans, sans-serif);margin:0 0 18px;display:flex;gap:18px;align-items:baseline;flex-wrap:wrap}
-.laserSection h2 span {font-size:14px;font-weight:400;color:var(--muted,#827b70)}
+.laserSection h2 {font:600 16px var(--sans);margin:0 0 14px;display:flex;gap:14px;align-items:baseline;flex-wrap:wrap}
+.laserSection h2 span {font-size:12px;font-weight:400;color:var(--ink45)}
 .readyArea {border-top:3px solid #718968}
 .readyArea h2 {color:#466440}
-.laserAreaItems {display:grid;gap:20px}
-.setCard .sheetsRow {display:grid;grid-template-columns:1fr;gap:0}
-.librarySheet {min-width:0;padding:20px 0;display:grid;grid-template-columns:minmax(250px,340px) minmax(0,1fr);gap:26px;align-items:center;border-bottom:1px solid var(--line)}
-.librarySheet:last-child {border-bottom:0}
-.librarySheet>.libCard,.setCard .librarySheet>.libCard {width:100%;max-width:none;margin:0}
-.productionRow {display:grid;grid-template-columns:145px minmax(0,1fr);gap:24px;align-items:start;min-width:0}
-#lsBody>.productionRow {margin:24px 0;padding-top:24px;border-top:1px solid var(--line)}
-.sheetQR {display:grid;gap:12px}
-.sheetQR img {width:145px;height:145px;object-fit:contain;border:1px solid var(--line);border-radius:9px;background:#fff}
-.qrWaiting {width:145px;min-height:145px;display:grid;place-items:center;border:1px dashed var(--line);border-radius:9px;color:var(--muted,#827b70);font-size:13px}
-.laserApproval {min-width:0}
-.laserSeal {display:inline-flex;gap:12px;align-items:center;color:#827249}
-.laserSeal svg {width:34px;height:40px;fill:#f6efd9;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
-.laserSeal b {font-size:19px;font-weight:650;display:block}
-.laserSeal small {font-size:12px;color:var(--muted,#827b70);display:block;margin-top:4px}
-.laserSeal.earned {color:#4e7147}
-.laserSeal.earned svg {fill:#e8f0e2}
-.setCard .sh [data-laser-seal] {margin-left:auto}
-.laserTotals {display:flex;gap:22px;margin:20px 0;padding-bottom:18px;border-bottom:1px solid var(--line);flex-wrap:wrap}
-.laserTotals>span {font-size:12px;color:var(--muted,#827b70);display:grid;gap:5px}
-.laserTotals b {font:600 25px var(--sans,sans-serif);color:var(--ink,#28251f);font-variant-numeric:tabular-nums}
-.laserBadges {display:flex;flex-wrap:wrap;gap:14px 20px}
-.laserBadge {display:flex;align-items:center;gap:7px;font-size:12px;color:#938978;min-width:115px}
-.laserBadge svg {width:23px;height:28px;fill:transparent;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
-.laserBadge small {display:block;font-size:11px;margin-top:3px;font-weight:400}
-.laserBadge.earned {color:#4e7147}
-.laserBadge.earned svg {fill:#edf3e8}
-.laserNote {font-size:12px;color:var(--muted,#827b70);margin:16px 0 0}
-@media(max-width:1150px){.librarySheet {grid-template-columns:1fr}.librarySheet>.libCard,.setCard .librarySheet>.libCard {max-width:380px}.productionRow {gap:18px}}
-@media(max-width:540px){.productionRow {grid-template-columns:100px minmax(0,1fr);gap:14px}.sheetQR img,.qrWaiting {width:100px;height:100px;min-height:100px}.laserTotals {gap:12px}.laserSeal b {font-size:16px}.laserTotals b {font-size:22px}.laserBadges {gap:12px}.laserSection h2 {font-size:20px}}
+.laserEmpty {font:12px var(--sans);color:var(--ink45);margin:0 0 4px}
+.laserAreaItems {display:flex;flex-wrap:wrap;align-items:flex-start;gap:16px}
+.laserAreaItems>.setCard {width:100%;min-width:0}
+.setCard .sheetsRow {display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start;overflow:visible}
+.librarySheet {width:300px;max-width:100%;flex:0 0 300px;min-width:0;display:flex;flex-direction:column;gap:12px}
+.librarySheet>.libCard,.setCard .librarySheet>.libCard {width:100%;max-width:none;flex:none;margin:0}
+.productionRow {display:flex;gap:14px;align-items:center;min-width:0}
+#lsBody>.productionRow {margin:18px 0;padding-top:14px;border-top:1px solid var(--line)}
+.sheetQR {display:grid;gap:8px;flex:0 0 112px}
+.sheetQR img {width:112px;height:112px;object-fit:contain;border:1px solid var(--line);border-radius:6px;background:#fff;cursor:zoom-in}
+.qrWaiting {width:112px;min-height:112px;display:grid;place-items:center;border:1px dashed var(--line);border-radius:6px;color:var(--ink45);font-size:11px}
+.laserApproval {display:grid;gap:8px;font:12px var(--sans);color:var(--ink70)}
+.laserApproval b {color:var(--ink);font-variant-numeric:tabular-nums}
+.laserSeal {display:inline-flex;align-items:center;flex-shrink:0;color:#4e7147;vertical-align:middle}
+.laserSeal svg {width:22px;height:27px;fill:#e8f0e2;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.sheetBackStatus {display:inline-flex;align-items:center;gap:7px;margin-left:auto}
+.backSavedCount {display:inline-grid;gap:2px;font-variant-numeric:tabular-nums;line-height:1.1}
+.backSavedCount>b {font-size:15px;font-weight:650}
+.backSavedCount>small {font:10px var(--sans);color:var(--ink45)}
+[data-laser-seal]:empty {display:none}
+@media(max-width:380px){.librarySheet {flex-basis:100%}.productionRow {gap:10px}.laserApproval {font-size:11px}}
 
 </style>
 </head>
@@ -3175,7 +3166,7 @@ function renderLibrary() {
   const newest = new Map(); for (const r of rows0) { const k = r.folder || r.fileBase || r.id; const had = newest.get(k); if (!had || (r.updatedAt || 0) > (had.updatedAt || 0)) newest.set(k, r); }
   const rows = [...newest.values()];
   const body = $("#libBody"); if (!rows.length) { body.innerHTML = `<div class="libEmpty">No sheets match.</div>`; return; }
-  const card = (r, i) => { const m = metalOf(r), sn = setNo(r); return `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}" title="${esc(r.folder || r.id)}">${sheetHead(r, {inFan:r._inFan})}<div data-back-sheet="${esc(r.id)}">${window.Engrave ? Engrave.backsMarkup(r) : ""}</div><img class="pv" data-sheet-preview="${esc(r.id)}" crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span title="charms placed of the charms asked for"><b>${r.placedCount}</b>/${r.charmCount}</span><span title="how full the sheet is"><b>${Math.round((r.density || 0) * 100)}%</b></span><span title="metal left free">${fmt.area(r.freePt2 || 0)}</span><span class="pill" data-sheet-status="${esc(r.id)}">${LaserReview.sheet(r).ready?"Ready for laser":"In preparation"}</span>${r.verification && r.verification.ok === false ? `<span class="pill bad" style="padding:2px 7px">flagged</span>` : ""}</div></div>`; };
+  const card = (r, i) => { const m = metalOf(r), sn = setNo(r); return `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}" title="${esc(r.folder || r.id)}">${sheetHead(r, {inFan:r._inFan})}<div data-back-sheet="${esc(r.id)}">${window.Engrave ? Engrave.backsMarkup(r) : ""}</div><img class="pv" data-sheet-preview="${esc(r.id)}" crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span title="charms placed of the charms asked for"><b>${r.placedCount}</b>/${r.charmCount}</span><span title="how full the sheet is"><b>${Math.round((r.density || 0) * 100)}%</b></span><span title="metal left free">${fmt.area(r.freePt2 || 0)}</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${CharmNestReadiness.counter(LaserReview.sheet(r))}</span></div></div>`; };
   LaserReview.sections(body);
   for(const r of rows){
     LaserReview.record(r);

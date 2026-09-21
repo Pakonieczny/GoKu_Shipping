@@ -45,10 +45,17 @@
   }
   const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const icon=ready=>`<svg viewBox="0 0 32 38" aria-hidden="true"><path d="M8 24 5 36l11-5 11 5-3-12"/><circle cx="16" cy="15" r="12"/>${ready?'<path d="m10 15 4 4 8-9"/>':'<path d="M16 9v7m0 5v.1"/>'}</svg>`;
-  const names={layout:'Layout checked',front:'Front files saved',approval:'Engraving approved',backs:'Back files saved',qr:'QR labels ready'};
-  function seal(r,scope='Sheet'){return `<span class="laserSeal ${r.ready?'earned':'pending'}">${icon(r.ready)}<span><b>${r.ready?'Ready for laser':'Awaiting approval'}</b><small>${escape(scope)} · ${Object.values(r.stages).filter(Boolean).length} / 5 checks complete</small></span></span>`;}
-  function panel(r,title='Sheet'){
-    return `<section class="laserApproval" aria-label="${escape(title)} production approvals">${seal(r,title)}<div class="laserTotals" aria-live="polite"><span><b>${r.waiting}</b>Awaiting approval</span><span><b>${r.approved}</b>Approved charms</span><span><b>${r.saved} / ${r.required}</b>Backs saved</span></div><div class="laserBadges">${Object.entries(names).map(([key,label])=>`<span class="laserBadge ${r.stages[key]?'earned':'pending'}" title="${r.stages[key]?'Complete':'Pending'}: ${label}">${icon(r.stages[key])}<span>${label}<small>${r.stages[key]?'Complete':'Pending'}</small></span></span>`).join('')}</div>${r.plain?`<p class="laserNote">${r.plain} charm${r.plain===1?'':'s'} confirmed without back engraving.</p>`:''}${!r.included?'<p class="laserNote">Sheet selection or set membership still needs attention.</p>':''}</section>`;
+  // A badge is earned only when every production requirement passes.
+  function seal(r,scope='Sheet'){
+    if(!r.ready)return '';
+    const label=escape(scope+' ready for laser cutting');
+    return `<span class="laserSeal earned" role="img" aria-label="${label}" title="${label}">${icon(true)}</span>`;
   }
-  return {idsOf,decisions,sheet,set,panel,seal};
+  function counter(r,scope='Sheet'){
+    return `${seal(r,scope)}<span class="backSavedCount" aria-label="${r.saved} of ${r.required} backs saved"><b>${r.saved} / ${r.required}</b><small>Backs saved</small></span>`;
+  }
+  function panel(r,title='Sheet'){
+    return `<section class="laserApproval" aria-label="${escape(title)} back engraving statistics"><span><b>${r.waiting}</b> awaiting approval</span><span><b>${r.approved}</b> approved</span></section>`;
+  }
+  return {idsOf,decisions,sheet,set,panel,seal,counter};
 });
