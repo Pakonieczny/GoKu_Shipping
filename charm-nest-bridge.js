@@ -2838,7 +2838,7 @@ const LaserReview = window.LaserReview = (()=>{
   const group=(st,sheets)=>R.set(st,sheets.map(projected));
   function labels(s,files){
     const id=s.id || s.sheetId, fs=files?.length?files:s.label?.files || [];
-    return `<div class="productionRow"><div class="sheetQR">${fs.length?fs.map(f=>`<img data-big title="Sheet QR label" data-label-sheet="${esc(id)}" data-label-path="${esc(f.path || '')}" data-label-part="${+f.part || 1}" crossorigin="anonymous"${f.url?` src="${esc(cors(f.url))}"`:''} alt="Sheet QR code">`).join(''):'<span class="qrWaiting">QR label pending</span>'}</div><div data-laser-sheet="${esc(id)}">${R.panel(sheet(s),'Sheet '+(s.sheetIndex || s.page || 1))}</div></div>`;
+    return `<div class="productionRow" data-laser-sheet="${esc(id)}"><div class="sheetQR">${fs.length?fs.map(f=>`<img data-big title="Sheet QR label" data-label-sheet="${esc(id)}" data-label-path="${esc(f.path || '')}" data-label-part="${+f.part || 1}" crossorigin="anonymous"${f.url?` src="${esc(cors(f.url))}"`:''} alt="Sheet QR code">`).join(''):'<span class="qrWaiting">QR label pending</span>'}</div></div>`;
   }
   function sections(body){
     body.innerHTML='<section class="laserSection readyArea" data-laser-area="ready"><h2>Laser cutting <span>Ready sheets and sets</span></h2><p class="laserEmpty">No sheets are ready for cutting yet.</p><div class="laserAreaItems"></div></section><section class="laserSection" data-laser-area="pending"><h2>In progress</h2><div class="laserAreaItems"></div></section>';
@@ -2846,7 +2846,6 @@ const LaserReview = window.LaserReview = (()=>{
   function place(card,ready,body){body.querySelector(`[data-laser-area="${ready?'ready':'pending'}"] .laserAreaItems`).appendChild(card);}
   function refresh(){
     frame=0;
-    document.querySelectorAll('[data-laser-sheet]').forEach(host=>{const s=records.get(host.dataset.laserSheet);if(!s)return;const html=R.panel(sheet(s),'Sheet '+(s.sheetIndex || s.page || 1));if(host.innerHTML!==html)host.innerHTML=html;});
     document.querySelectorAll('[data-laser-card]').forEach(card=>{
       const sheets=(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean),report=card._laserSet?group(card._laserSet,sheets):sheet(sheets[0] || {});
       const seal=card.querySelector('[data-laser-seal]');if(seal){const html=R.seal(report,card._laserSet?'Set':'Sheet');if(seal.innerHTML!==html)seal.innerHTML=html;}

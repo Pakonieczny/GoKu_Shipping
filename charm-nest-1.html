@@ -1113,7 +1113,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .libCard .h{flex-wrap:wrap;gap:6px}.sheetExport .btn{padding:3px 5px;font-size:10px}
 
 
-/* Compact cards, with QR and engraving statistics below each sheet. */
+/* Compact cards, QR below each sheet, readiness beside the footer counter. */
 .laserSection {margin:0 0 24px;border-top:1px solid var(--line);padding-top:14px}
 .laserSection[hidden] {display:none}
 .laserSection h2 {font:600 16px var(--sans);margin:0 0 14px;display:flex;gap:14px;align-items:baseline;flex-wrap:wrap}
@@ -1131,16 +1131,15 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .sheetQR {display:grid;gap:8px;flex:0 0 112px}
 .sheetQR img {width:112px;height:112px;object-fit:contain;border:1px solid var(--line);border-radius:6px;background:#fff;cursor:zoom-in}
 .qrWaiting {width:112px;min-height:112px;display:grid;place-items:center;border:1px dashed var(--line);border-radius:6px;color:var(--ink45);font-size:11px}
-.laserApproval {display:grid;gap:8px;font:12px var(--sans);color:var(--ink70)}
-.laserApproval b {color:var(--ink);font-variant-numeric:tabular-nums}
 .laserSeal {display:inline-flex;align-items:center;flex-shrink:0;color:#4e7147;vertical-align:middle}
-.laserSeal svg {width:22px;height:27px;fill:#e8f0e2;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.laserSeal.pending {color:#a9a59d}
+.laserSeal.pending svg {fill:#efede8}
+.laserSeal svg {width:20px;height:24px;fill:#e8f0e2;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .sheetBackStatus {display:inline-flex;align-items:center;gap:7px;margin-left:auto}
-.backSavedCount {display:inline-grid;gap:2px;font-variant-numeric:tabular-nums;line-height:1.1}
-.backSavedCount>b {font-size:15px;font-weight:650}
-.backSavedCount>small {font:10px var(--sans);color:var(--ink45)}
+.backSavedCount {font:11px var(--sans);font-variant-numeric:tabular-nums;line-height:1.4;white-space:nowrap}
+.backSavedCount>b {font-size:inherit;font-weight:650}
 [data-laser-seal]:empty {display:none}
-@media(max-width:380px){.librarySheet {flex-basis:100%}.productionRow {gap:10px}.laserApproval {font-size:11px}}
+@media(max-width:380px){.librarySheet {flex-basis:100%}.productionRow {gap:10px}}
 
 </style>
 </head>

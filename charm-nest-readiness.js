@@ -45,17 +45,13 @@
   }
   const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const icon=ready=>`<svg viewBox="0 0 32 38" aria-hidden="true"><path d="M8 24 5 36l11-5 11 5-3-12"/><circle cx="16" cy="15" r="12"/>${ready?'<path d="m10 15 4 4 8-9"/>':'<path d="M16 9v7m0 5v.1"/>'}</svg>`;
-  // A badge is earned only when every production requirement passes.
+  // The badge stays visible; only verified readiness lights it up.
   function seal(r,scope='Sheet'){
-    if(!r.ready)return '';
-    const label=escape(scope+' ready for laser cutting');
-    return `<span class="laserSeal earned" role="img" aria-label="${label}" title="${label}">${icon(true)}</span>`;
+    const label=escape(scope+(r.ready?' ready for laser cutting':' not ready for laser cutting'));
+    return `<span class="laserSeal ${r.ready?'earned':'pending'}" role="img" aria-label="${label}" title="${label}">${icon(true)}</span>`;
   }
   function counter(r,scope='Sheet'){
-    return `${seal(r,scope)}<span class="backSavedCount" aria-label="${r.saved} of ${r.required} backs saved"><b>${r.saved} / ${r.required}</b><small>Backs saved</small></span>`;
+    return `<span class="backSavedCount" title="Backs saved" aria-label="${r.saved} of ${r.required} backs saved"><b>${r.saved} / ${r.required}</b></span>${seal(r,scope)}`;
   }
-  function panel(r,title='Sheet'){
-    return `<section class="laserApproval" aria-label="${escape(title)} back engraving statistics"><span><b>${r.waiting}</b> awaiting approval</span><span><b>${r.approved}</b> approved</span></section>`;
-  }
-  return {idsOf,decisions,sheet,set,panel,seal,counter};
+  return {idsOf,decisions,sheet,set,seal,counter};
 });
