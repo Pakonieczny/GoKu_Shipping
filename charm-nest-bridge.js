@@ -4308,7 +4308,7 @@ const Session = window.Session = (() => {
   }
   function capture() {
     const seen = new Map();
-    return { v: 1, at: Date.now(), carry: copy(B.carry, seen), run: copy(B.run, seen), orders: copy(B.orders, seen),
+    return { v: 1, at: Date.now(), packingCatalog:copy(S.packingCatalog, seen), carry: copy(B.carry, seen), run: copy(B.run, seen), orders: copy(B.orders, seen),
       sources: copy(S.sources, seen), poolSources: copy(S.poolSources, seen), unassigned: copy(S.unassigned, seen),
       sheets: METALS.map(m => ({ metal: m.key, active: S.sheets[m.key].active, pages: allSheets().filter(p => p.metal === m.key).map(p => copy(p, seen)) })),
       pools: copy(B.pool.rows, seen), sets: copy(B.sets, seen), jobs: [...B.engrave.items.values()].map(j => ({...copy(j, seen), ...(j.editingBack ? {editRow:copy(j.row, new WeakMap())} : {})})),
@@ -4358,6 +4358,7 @@ const Session = window.Session = (() => {
         src.persisting = null; src.t0 = performance.now();
       }
       await Pool.repairRecoveredGeometry(d);
+      S.packingCatalog = d.packingCatalog || {};
       S.sources = d.sources || []; S.poolSources = d.poolSources || {}; S.unassigned = d.unassigned || [];
       B.carry = d.carry;
       B.run = d.run; B.orders = d.orders; B.orders.byKey = new Map(B.orders.rows.map(r => [r.key, r]));

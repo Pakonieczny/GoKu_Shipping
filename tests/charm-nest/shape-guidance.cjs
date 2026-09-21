@@ -1,0 +1,25 @@
+const assert=require('node:assert/strict'),S=require('../../charm-nest-solver.js');
+const profile=(priority,family='compact',mates=[])=>({priority,family,mates,adaptability:50,interlock:90,edgeAffinity:80,edgeRole:'long-edge',angles:[0,90],note:'geometry'});
+const plan=S.normalizePackingPlan({profiles:[{index:0,...profile(110)},{index:0,...profile(2)},{index:1,...profile(70,'concave',['compact'])},{index:7,...profile(1)}],pairs:[{a:0,b:1,score:150},{a:1,b:0,score:5},{a:0,b:0,score:10},{a:0,b:99,score:10}]},2);
+assert.equal(plan.profiles.length,2);assert.equal(plan.profiles[0].priority,100);assert.equal(plan.pairs.length,1);assert.equal(plan.pairs[0].score,100);
+const piece=(id,w,h)=>({id,order:id,w,h,scale:1,bits:new Uint8Array(w*h).fill(1),areaPt2:w*h});
+(async()=>{
+  const pieces=[piece('large',12,8),piece('anchor',7,3),piece('mate',4,4)];
+  const hints={profiles:{large:profile(0),anchor:profile(100,'elongated',['compact']),mate:profile(50)},partners:{anchor:{mate:100},mate:{anchor:100}},angles:{anchor:[0,90]}};
+  assert(S.guidedOrderScore(pieces[2],[pieces[1]],hints)>S.guidedOrderScore(pieces[0],[pieces[1]],hints));
+  assert.equal(S.packingCompatibility('anchor','mate',hints),1);
+  assert(S.packingCompatibility('a','b',{profiles:{a:profile(50,'concave',['compact']),b:profile(50)}})>0,'AI family guidance connects different analysis batches');
+  const events=[];
+  const job={pieces,sheet:{wPt:40,hPt:25,insetPt:1},angles:[0,90],clearancePt:0,fineRes:1,coarseRes:1,maxFill:.74,timeBudgetMs:3000,maxTrials:3,packingHints:hints};
+  const r=await S.solve(job,{yield:()=>Promise.resolve(),onPlaced:(p,i)=>events.push([i.trial,p.id])});
+  for(const trial of new Set(events.map(x=>x[0])))assert.equal(events.find(x=>x[0]===trial)[1],'anchor','every construction follows shape grades even when a larger piece exists');
+  assert.equal(events[1][1],'mate','compatible neighbor is selected next');
+  assert.equal(r.placements.length,3);assert(S.verify(job,r.placements,2).ok);assert(r.params.shapeGuided);
+  const pinned={...pieces[0],pinned:{cxPt:8,cyPt:7,angle:0}};
+  const p=await S.solve({...job,pieces:[pinned,...pieces.slice(1)]},{yield:()=>Promise.resolve()});
+  const fixed=p.placements.find(x=>x.id==='large');assert.equal(fixed.cxPt,8);assert.equal(fixed.cyPt,7);
+  const impossible={...piece('old',80,80),orderDate:1};
+  const blocked=await S.solve({...job,maxTrials:1,pieces:[impossible,{...pieces[1],orderDate:2}],packingHints:{...hints,profiles:{...hints.profiles,old:profile(0)}}},{yield:()=>Promise.resolve()});
+  assert.equal(blocked.placements.length,0,'high AI priority cannot bypass an impossible older order');
+  console.log('Shape guidance OK: profile validation, every-trial ordering, compatible next charm, cross-batch families, pins, FIFO and geometry');
+})().catch(e=>{console.error(e);process.exit(1);});

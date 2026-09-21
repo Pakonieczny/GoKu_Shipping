@@ -211,9 +211,9 @@
     }
     return n;
   };
-  Grid.prototype.stamp = function (bits, w, h, x, y) {
+  Grid.prototype.stamp = function (bits, w, h, x, y, id) {
     for (let r = 0; r < h; r++) for (let c = 0; c < w; c++) if (bits[r * w + c]) this.set(x + c, y + r);
-    if (this.parts) { const grid = new Grid(w, h); grid.materialOnly = true; grid.stamp(bits, w, h, 0, 0); this.parts.push({x,y,w,h,grid}); }
+    if (this.parts) { const grid = new Grid(w, h); grid.materialOnly = true; grid.stamp(bits, w, h, 0, 0); this.parts.push({x,y,w,h,grid,id}); }
   };
   /** Summed-area table of occupancy; cells outside the grid count as occupied. */
   Grid.prototype.buildSAT = function () {
@@ -287,6 +287,33 @@
     for (const key of ["endedBy", "trials", "elapsedMs"]) if (result?.[key] != null) out[key] = result[key];
     if (result?.params) out.params = { ...result.params, ...incumbent.params };
     return out;
+  }
+  const SHAPE_FAMILIES = ["round", "compact", "elongated", "concave", "branched", "angular"];
+  function normalizePackingPlan(plan, count) {
+    const valid = n => Number.isInteger(n) && n >= 0 && n < count;
+    const score = n => Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
+    const angles = xs => (Array.isArray(xs) ? xs : []).filter(Number.isFinite).slice(0,3).map(a=>((Math.round(a)%360)+360)%360);
+    const seen = new Set(), paired = new Set();
+    const profiles = (Array.isArray(plan.profiles) ? plan.profiles : []).filter(p=>p && valid(p.index) && !seen.has(p.index) && seen.add(p.index) && [p.adaptability,p.interlock,p.edgeAffinity,p.priority].every(Number.isFinite) && SHAPE_FAMILIES.includes(p.family)).map(p=>({index:p.index,adaptability:score(p.adaptability),interlock:score(p.interlock),edgeAffinity:score(p.edgeAffinity),priority:score(p.priority),family:p.family,edgeRole:["long-edge","short-edge","corner","interior","either"].includes(p.edgeRole)?p.edgeRole:"either",mates:(Array.isArray(p.mates)?p.mates:[]).filter(x=>SHAPE_FAMILIES.includes(x)).slice(0,6),angles:angles(p.angles),note:String(p.note||"").slice(0,180)}));
+    const pairs = (Array.isArray(plan.pairs) ? plan.pairs : []).filter(p=>{if(!p || !valid(p.a) || !valid(p.b) || p.a===p.b || !Number.isFinite(p.score))return false;const k=[p.a,p.b].sort((a,b)=>a-b).join(":");if(paired.has(k))return false;paired.add(k);return true;}).slice(0,240).map(p=>({a:p.a,b:p.b,score:score(p.score),reason:String(p.reason||"").slice(0,160)}));
+    const hintsSeen=new Set();
+    const suggestions=(Array.isArray(plan.suggestions)?plan.suggestions:[]).filter(p=>p && valid(p.index) && !hintsSeen.has(p.index) && hintsSeen.add(p.index)).slice(0,24).map(p=>({index:p.index,angles:angles(p.angles)}));
+    return {profiles,pairs,suggestions,summary:String(plan.summary||"").slice(0,700)};
+  }
+  function shapeKey(p) { return JSON.stringify([p.hash || p.id,p.w,p.h,p.scale,p.areaPt2]); }
+  function packingCompatibility(a, b, hints) {
+    const explicit=hints?.partners?.[a]?.[b];
+    if(Number.isFinite(explicit))return Math.max(0,Math.min(1,explicit/100));
+    const x=hints?.profiles?.[a],y=hints?.profiles?.[b];
+    if(!x || !y)return 0;
+    // Family matches are model guidance too, including shapes from different batches.
+    return ((x.mates?.includes(y.family)?1:0)+(y.mates?.includes(x.family)?1:0))*.25 * Math.min(x.interlock,y.interlock)/100;
+  }
+  function guidedOrderScore(p, placed, hints) {
+    const profile=hints?.profiles?.[p.id];
+    if(!profile)return 0;
+    const mate=placed.reduce((n,r)=>Math.max(n,packingCompatibility(p.id,r.p?.id || r.id,hints)),0);
+    return profile.priority + .25*(100-profile.adaptability) + .15*profile.interlock + 100*mate;
   }
   async function solve(job, cb) {
     cb = cb || {};
@@ -398,7 +425,7 @@
         if (!pos) continue;
         const { v, x, y } = pos;
         if ((best.placedCells + v.cells) / usableCellsFine > maxFill) continue;
-        fine.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y);
+        fine.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y, p.id);
         for (let r = 0; r < v.fine.h; r++) for (let c = 0; c < v.fine.w; c++) if (v.fine.bits[r * v.fine.w + c]) { const gx = Math.floor((x + c) / ratio), gy = Math.floor((y + r) / ratio); if (gx >= 0 && gy >= 0 && gx < coarse.W && gy < coarse.H) coarse.set(gx, gy); }
         coarse.buildSAT();
         const pl = { id, angle: v.angle, cxPt: (x + v.solid.cx) / fineRes, cyPt: (y + v.solid.cy) / fineRes, xPt: (x + (v.fine.w - v.solid.w) / 2) / fineRes, yPt: (y + (v.fine.h - v.solid.h) / 2) / fineRes, wPt: v.solid.w / fineRes, hPt: v.solid.h / fineRes, contact: pos.contact || 0, finishing: true };
@@ -444,10 +471,10 @@
         const missing = repairCandidates(best).map(id => prepared.find(p => p.id === id));
         if (!missing.length || missing.some(p => !p || p.pinned) || (best.placedCells + missing.reduce((n,p)=>n+p.footprintCells,0))/usableCellsFine > maxFill) break;
         const rec = best.rec.slice(), grids = rebuildGrids(rec); let cells = best.placedCells, ok = true;
-        for (const p of missing.sort((a,b)=>b.areaPt2-a.areaPt2)) {
+        for (const p of missing.sort((a,b)=>guidedOrderScore(b,rec,job.packingHints)-guidedOrderScore(a,rec,job.packingHints) || b.areaPt2-a.areaPt2)) {
           if (stopped()) { ok = false; break; }
           const variants = variantsFor(p, [...new Set(angles.concat(Array.from({length:72},(_,i)=>i*5)))]);
-          const pos = search({variants}, grids.fine, grids.coarse, ratio, .35, 0, random, 0, 0, null, true);
+          const pos = search({...p,variants}, grids.fine, grids.coarse, ratio, .35, 0, random, 0, 0, null, true);
           if (!pos || (cells+pos.v.cells)/usableCellsFine > maxFill) { ok = false; break; }
           rec.push({p,v:pos.v,x:pos.x,y:pos.y}); cells += pos.v.cells;
           Object.assign(grids, rebuildGrids(rec));
@@ -481,21 +508,21 @@
         const keep = rec.filter(r => !removed.includes(r));
         // rebuild grids from the kept pieces
         const fine = baseFine.clone(), coarse = baseCoarse.clone();
-        for (const r of keep) { fine.stamp(r.v.fine.bits, r.v.fine.w, r.v.fine.h, r.x, r.y); for (let yy = 0; yy < r.v.fine.h; yy++) for (let xx = 0; xx < r.v.fine.w; xx++) if (r.v.fine.bits[yy * r.v.fine.w + xx]) { const gx = Math.floor((r.x + xx) / ratio), gy = Math.floor((r.y + yy) / ratio); if (gx >= 0 && gy >= 0 && gx < coarse.W && gy < coarse.H) coarse.set(gx, gy); } }
+        for (const r of keep) { fine.stamp(r.v.fine.bits, r.v.fine.w, r.v.fine.h, r.x, r.y, r.p.id); for (let yy = 0; yy < r.v.fine.h; yy++) for (let xx = 0; xx < r.v.fine.w; xx++) if (r.v.fine.bits[yy * r.v.fine.w + xx]) { const gx = Math.floor((r.x + xx) / ratio), gy = Math.floor((r.y + yy) / ratio); if (gx >= 0 && gy >= 0 && gx < coarse.W && gy < coarse.H) coarse.set(gx, gy); } }
         coarse.buildSAT();
         // re-insert: missing pieces first, then the removed ones, largest first, at 15° steps
         const missing = missingIds.map(id => prepared.find(x => x.id === id)).filter(Boolean);
         if (missing.some(p => p.pinned)) continue;
-        const queue = missing.concat(removed.map(r => r.p).sort((a, b) => b.areaPt2 - a.areaPt2));
+        const queue = missing.concat(removed.map(r => r.p).sort((a, b) => guidedOrderScore(b,keep,job.packingHints)-guidedOrderScore(a,keep,job.packingHints) || b.areaPt2 - a.areaPt2));
         const newRec = keep.slice(); let ok = true, cells = keep.reduce((n,r) => n + r.v.cells, 0);
         for (const p of queue) {
           if (stopped()) { ok = false; break; }
-          const pos = search({ variants: variantsFor(p, angles15) }, fine, coarse, ratio, 0.35, 0.02, random, 0, 0, best.stripPacked ? stripOf(newRec) : null);
+          const pos = search({ ...p, variants: variantsFor(p, angles15) }, fine, coarse, ratio, 0.35, 0.02, random, 0, 0, best.stripPacked ? stripOf(newRec) : null);
           if (!pos) { ok = false; break; }
           const { v, x, y } = pos;
           if ((cells + v.cells) / usableCellsFine > maxFill) { ok = false; break; }
           cells += v.cells;
-          fine.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y);
+          fine.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y, p.id);
           for (let yy = 0; yy < v.fine.h; yy++) for (let xx = 0; xx < v.fine.w; xx++) if (v.fine.bits[yy * v.fine.w + xx]) { const gx = Math.floor((x + xx) / ratio), gy = Math.floor((y + yy) / ratio); if (gx >= 0 && gy >= 0 && gx < coarse.W && gy < coarse.H) coarse.set(gx, gy); }
           coarse.buildSAT();
           newRec.push({ p, v, x, y });
@@ -542,7 +569,7 @@
     const multi = (p) => (orderSize.get(p.order) || 1) > 1;
     const rebuildGrids = (rec) => {
       const fine = baseFine.clone(), coarse = baseCoarse.clone();
-      for (const r of rec) { fine.stamp(r.v.fine.bits, r.v.fine.w, r.v.fine.h, r.x, r.y); for (let yy = 0; yy < r.v.fine.h; yy++) for (let xx = 0; xx < r.v.fine.w; xx++) if (r.v.fine.bits[yy * r.v.fine.w + xx]) { const gx = Math.floor((r.x + xx) / ratio), gy = Math.floor((r.y + yy) / ratio); if (gx >= 0 && gy >= 0 && gx < coarse.W && gy < coarse.H) coarse.set(gx, gy); } }
+      for (const r of rec) { fine.stamp(r.v.fine.bits, r.v.fine.w, r.v.fine.h, r.x, r.y, r.p.id); for (let yy = 0; yy < r.v.fine.h; yy++) for (let xx = 0; xx < r.v.fine.w; xx++) if (r.v.fine.bits[yy * r.v.fine.w + xx]) { const gx = Math.floor((r.x + xx) / ratio), gy = Math.floor((r.y + yy) / ratio); if (gx >= 0 && gy >= 0 && gx < coarse.W && gy < coarse.H) coarse.set(gx, gy); } }
       coarse.buildSAT(); return { fine, coarse };
     };
     // A re-nest may start from an existing layout, but only after rebuilding and
@@ -589,7 +616,9 @@
       const sparse = candidates.reduce((n, p) => n + p.footprintCells, 0) / usableCellsFine < maxFill * 0.9;
       const stripPacked = sparse || ((job.exploreRotations ? trial % 3 === 2 : trial > 0) && best?.density < maxFill * 0.9);
       const advice = job.packingHints || {}, priorities = new Map((advice.priority || []).map((id,i,a) => [id, 1 - i / Math.max(1,a.length)]));
-      const guided = trial % 3 === 1 && priorities.size;
+      const shaped = !!advice.profiles && candidates.every(p => advice.profiles[p.id]);
+      const guided = shaped || (trial % 3 === 1 && priorities.size);
+      for (const p of prepared) p.guidance = shaped ? advice : null;
       if (guided) guidedTrials++;
       // Offset the angle lattice between restarts. Imported artwork already has
       // arbitrary orientations: repeating 0/30/60 forever can exclude good fits.
@@ -622,6 +651,12 @@
       };
 
       for (let pi = 0; pi < pinnedFirst.length; pi++) {
+        if (shaped && !pinnedFirst[pi].pinned) {
+          // Guidance chooses the next charm on EVERY construction, not just one
+          // occasional restart. Randomness only breaks equal guidance scores.
+          const tail=pinnedFirst.slice(pi).sort((a,b)=>(chronological ? rank.get(a.order)-rank.get(b.order) : 0) || guidedOrderScore(b,placedRec,advice)-guidedOrderScore(a,placedRec,advice));
+          pinnedFirst.splice(pi,tail.length,...tail);
+        }
         const p = pinnedFirst[pi];
         if (stopped()) break;
         let bestPos = null;
@@ -648,7 +683,7 @@
           dropOrder(p, "nofit");
         } else {
           const { v, x, y } = bestPos;
-          fine.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y);
+          fine.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y, p.id);
           const cx0 = Math.floor(x / ratio), cy0 = Math.floor(y / ratio);
           // coarse: mark every coarse cell touched by the fine mask (conservative)
           for (let r = 0; r < v.fine.h; r++) for (let c = 0; c < v.fine.w; c++) if (v.fine.bits[r * v.fine.w + c]) {
@@ -774,7 +809,7 @@
         if (now() - t0 > budget || (cb.shouldStop && cb.shouldStop())) break;
         const r = best.rec.find(x => x.p.id === original.p.id), keep = best.rec.filter(x => x !== r);
         const grids = rebuildGrids(keep);
-        const pos = search({variants:variantsFor(r.p,[...new Set(angles.concat(angles.length < 180 ? angles.map(a=>(a+15)%360) : [],r.v.angle))])}, grids.fine, grids.coarse, ratio, .1, 0, random, 0, 0, best.density < maxFill * .9 ? stripOf(keep) : null);
+        const pos = search({...r.p,variants:variantsFor(r.p,[...new Set(angles.concat(angles.length < 180 ? angles.map(a=>(a+15)%360) : [],r.v.angle))])}, grids.fine, grids.coarse, ratio, .1, 0, random, 0, 0, best.density < maxFill * .9 ? stripOf(keep) : null);
         if (!pos || (pos.x === r.x && pos.y === r.y && pos.v.angle === r.v.angle)) continue;
         const moved = {...r,v:pos.v,x:pos.x,y:pos.y}, rec = best.rec.map(x => x === r ? moved : x);
         const placements = best.placements.map(p => p.id !== r.p.id ? p : {...p,angle:pos.v.angle,cxPt:(pos.x+pos.v.solid.cx)/fineRes,cyPt:(pos.y+pos.v.solid.cy)/fineRes,xPt:(pos.x+(pos.v.fine.w-pos.v.solid.w)/2)/fineRes,yPt:(pos.y+(pos.v.fine.h-pos.v.solid.h)/2)/fineRes,wPt:pos.v.solid.w/fineRes,hPt:pos.v.solid.h/fineRes});
@@ -816,7 +851,7 @@
     const cappedPt2 = (best.capped || []).reduce((n, id) => { const p = prepared.find(x => x.id === id); return n + (p ? p.footprintCells / (fineRes * fineRes) : 0); }, 0);
     return Object.assign({}, best, {
       endedBy, trials, elapsedMs: now() - t0, cappedPt2,
-      params: { exploreRotations: !!job.exploreRotations, contactScoring: "silhouette-neighbors-and-edges", edgeWeight: EDGE_WEIGHT, compactPartial: !!best.stripPacked, packingAxis: best.stripPacked ? stripAxis : null, packingGuided: guidedTrials > 0, guidedTrials, seed: job.seed == null ? 1 : job.seed, angles, clearancePt, insetPt, fineRes, coarseRes, maxFill, pieceOrder: byAreaDesc.map(p => p.id) }
+      params: { exploreRotations: !!job.exploreRotations, contactScoring: "silhouette-neighbors-and-edges", edgeWeight: EDGE_WEIGHT, compactPartial: !!best.stripPacked, packingAxis: best.stripPacked ? stripAxis : null, packingGuided: guidedTrials > 0, shapeGuided: !!job.packingHints?.profiles, guidedTrials, seed: job.seed == null ? 1 : job.seed, angles, clearancePt, insetPt, fineRes, coarseRes, maxFill, pieceOrder: byAreaDesc.map(p => p.id) }
     });
   }
 
@@ -924,6 +959,22 @@
     const K = 28, TOL = 2;
     let best = null;
     const CW = coarse.W, CH = coarse.H;
+    const profile=p.guidance?.profiles?.[p.id];
+    const partners=profile ? (fine.parts || []).map(part=>({part,weight:packingCompatibility(p.id,part.id,p.guidance)})).filter(x=>x.weight>0).sort((a,b)=>b.weight-a.weight).slice(0,4) : [];
+    const pairContact=(v,x,y)=>partners.reduce((n,{part,weight})=>{
+      if(part.x>=x+v.fine.w+v.ringPad || part.x+part.w<=x-v.ringPad || part.y>=y+v.fine.h+v.ringPad || part.y+part.h<=y-v.ringPad)return n;
+      return Math.max(n,weight*part.grid.overlap(v.ringFine,x-v.ringPad-part.x,y-v.ringPad-part.y,1e9)/Math.max(1,v.ringFine.cells));
+    },0);
+    const edgeFit=(x,y,w,h)=>{
+      if(!profile || profile.edgeRole==="interior")return 0;
+      const dx=Math.min(x,fine.W-x-w),dy=Math.min(y,fine.H-y-h),longHorizontal=fine.W>=fine.H;
+      const alongLong=longHorizontal ? dy : dx,alongShort=longHorizontal ? dx : dy;
+      const gap=profile.edgeRole==="long-edge"?alongLong:profile.edgeRole==="short-edge"?alongShort:profile.edgeRole==="corner"?Math.max(dx,dy):Math.min(dx,dy);
+      const parallel=profile.edgeRole==="long-edge" ? (longHorizontal ? w>=h : h>=w) : profile.edgeRole==="short-edge" ? (longHorizontal ? h>=w : w>=h) : true;
+      const alignment=parallel ? 1 : Math.min(w,h)/Math.max(1,w,h);
+      return profile.edgeAffinity/100*alignment/(1+Math.max(0,gap)/ratio);
+    };
+    const pairNear=(x,y,w,h)=>partners.reduce((n,{part,weight})=>{const dx=Math.max(0,part.x-x-w,x-part.x-part.w),dy=Math.max(0,part.y-y-h,y-part.y-part.h);return Math.max(n,weight/(1+Math.hypot(dx,dy)/ratio));},0);
     for (const v of p.variants) {
       // ── coarse exhaustive scan ──
       const cands = [];
@@ -941,7 +992,7 @@
         const gx = cornerX ? (CW - x - cw) : x, gy = cornerY ? (CH - y - ch) : y;
         const growth = strip ? Math.max(strip.end / ratio, strip.axis === "x" ? x + cw : y + ch) : 0;
         const edge = boundarySeed ? 0 : edgeContact(v.coarse.contactRing, coarse.walls, x - 1, y - 1);
-        const s = contact + EDGE_WEIGHT * edge - (strip?.weight ?? 4) * growth - gravW * ((gx + gy) / (CW + CH)) - 0.05 * ov + (noise ? noise * random() : 0);
+        const s = contact + EDGE_WEIGHT * edge + (profile ? 1.2*pairNear(x*ratio,y*ratio,cw*ratio,ch*ratio)+.15*profile.edgeAffinity/100*edge+.25*edgeFit(x*ratio,y*ratio,cw*ratio,ch*ratio) : 0) - (strip?.weight ?? 4) * growth - gravW * ((gx + gy) / (CW + CH)) - 0.05 * ov + (noise ? noise * random() : 0);
         if (cands.length < K) { cands.push({ x, y, s }); if (cands.length === K) cands.sort((a, b) => b.s - a.s); }
         else if (s > cands[K - 1].s) { cands[K - 1] = { x, y, s }; cands.sort((a, b) => b.s - a.s); }
       }
@@ -958,7 +1009,7 @@
           const adjacency = placementAt(v, fine, x, y), contact = adjacency.contact;
           const gx = cornerX ? (FW - x - pm.w) : x, gy = cornerY ? (FH - y - pm.h) : y;
           const growth = strip ? Math.max(strip.end, strip.axis === "x" ? x + pm.w : y + pm.h) / ratio : 0;
-          const s = (boundarySeed ? fine.overlap(v.ringFine, x - pad, y - pad, 1e9) / rc : adjacency.score) - (strip?.weight ?? 4) * growth - gravW * ((gx + gy) / (FW + FH)) + (noise ? noise * random() : 0);
+          const s = (boundarySeed ? fine.overlap(v.ringFine, x - pad, y - pad, 1e9) / rc : adjacency.score) + (profile ? 1.2*pairContact(v,x,y)+.15*profile.edgeAffinity/100*adjacency.edge+.25*edgeFit(x,y,pm.w,pm.h) : 0) - (strip?.weight ?? 4) * growth - gravW * ((gx + gy) / (FW + FH)) + (noise ? noise * random() : 0);
           if (!best || s > best.score) best = { v, x, y, score: s, contact, neighbors:adjacency.neighbors, closeContact:adjacency.close };
         }
       }
@@ -975,7 +1026,7 @@
           if (!fine.fits(pm, x, y)) continue;
           const adjacency = placementAt(v, fine, x, y), contact = adjacency.contact;
           const growth = strip ? Math.max(strip.end, strip.axis === "x" ? x + pm.w : y + pm.h) / ratio : 0;
-          const s = (boundarySeed ? fine.overlap(v.ringFine, x - pad, y - pad, 1e9) / rc : adjacency.score) - (strip?.weight ?? 4) * growth - gravW * ((x + y) / (FW + FH));
+          const s = (boundarySeed ? fine.overlap(v.ringFine, x - pad, y - pad, 1e9) / rc : adjacency.score) + (profile ? 1.2*pairContact(v,x,y)+.15*profile.edgeAffinity/100*adjacency.edge+.25*edgeFit(x,y,pm.w,pm.h) : 0) - (strip?.weight ?? 4) * growth - gravW * ((x + y) / (FW + FH));
           if (!best || s > best.score) best = { v, x, y, score: s, contact, neighbors:adjacency.neighbors, closeContact:adjacency.close };
         }
       }
@@ -1157,5 +1208,5 @@
     const overlap = off ? null : grid.overlap(v.fine.pm, x0, y0, 1e9);
     return { ok: false, x: x0, y: y0, off, overlapPt2: overlap == null ? null : overlap / (res * res) };
   }
-  return { solve, publicLayout, bestResult, verify, contactAt, placementAt, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine };
+  return { solve, publicLayout, bestResult, normalizePackingPlan, shapeKey, packingCompatibility, guidedOrderScore, verify, contactAt, placementAt, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine };
 });

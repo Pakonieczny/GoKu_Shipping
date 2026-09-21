@@ -1237,7 +1237,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
     <div class="field"><div class="help">The reference box measured 181.0 × 153.2 mm (513.03 × 434.19 pt). Change a metal's stock here if it cuts at a different size; the sheet outline in the output follows it.</div></div>
     <div class="section">Nesting engine</div>
     <div class="fieldRow">
-      <div class="field"><label>Engine</label><select id="stEngine"><option value="solver">Geometric nesting + AI packing guidance</option><option value="ai">Claude places every charm itself (experimental — reached 55%)</option></select><div class="help">Recommended: geometry arranges the oldest whole orders using contact scoring and gap repair. AI can advise difficult searches while geometry continues; two independent verifiers check the written result. Grouping review applies when importing source artwork.</div></div>
+      <div class="field"><label>Engine</label><select id="stEngine"><option value="solver">Geometric nesting + AI packing guidance</option><option value="ai">Claude places every charm itself (experimental — reached 55%)</option></select><div class="help">Recommended: geometry arranges the oldest whole orders using contact scoring and gap repair. AI grades shape flexibility, edge roles and compatible neighbors before guided placement; two independent verifiers check the written result. Grouping review applies when importing source artwork.</div></div>
       <div class="field"><label>Fill ceiling (%) · AI rounds · snap (mm)</label><div class="fieldRow3"><input id="stMaxFill" type="number" min="30" max="100" step="1"><input id="stAiRounds" type="number" min="1" max="30" step="1"><input id="stSnapIn" type="number" min="0" max="25" step="0.5"></div><div class="help">The sheet is never filled past the ceiling; pieces that would cross it wait for a second sheet. Rounds and snap apply to the experimental engine only.</div></div>
     </div>
     <details class="learnedSettings"><summary>Learned packing · laptop runner</summary>
@@ -1266,7 +1266,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
       <div class="field"><label>Naming (Claude)</label><select id="stNaming"><option value="on">On</option><option value="off">Off</option></select></div>
     </div>
     <div class="fieldRow">
-      <div class="field"><label for="stPackingAI">AI packing guidance</label><select id="stPackingAI"><option value="on">On — advise difficult browser searches</option><option value="off">Off — geometry only</option></select><div class="help">One AI consultation per unchanged queue when packing struggles. Suggests shape priorities and rotations while the solver keeps working; every placement still passes geometric checks. Advice is cached for re-nesting. The configured time ceiling still applies.</div></div>
+      <div class="field"><label for="stPackingAI">AI packing guidance</label><select id="stPackingAI"><option value="on">On — grade shapes and guide placement</option><option value="off">Off — geometry only</option></select><div class="help">Grades every distinct shape and identifies compatible neighbors and perimeter roles before packing. Geometry follows this guidance on each attempt; saved grades and responses are reused. Incomplete analysis holds the sheet for retry. The search ceiling starts after analysis.</div></div>
     <div class="field"><label>AI review (Claude Opus 5, high effort)</label><select id="stReview"><option value="on">On — review imported grouping</option><option value="off">Off — geometry only</option></select><div class="help">Claude reviews detected charms when importing a source page and can merge fragments. Finished-sheet AI inspection is available separately.</div></div>
     </div>
     <div class="section">Design Station bridge, orders, run</div>
@@ -2187,7 +2187,7 @@ function buildJob(sh) {
     clearancePt: +S.settings.clearancePt || 0, angles: angleSet(), fineRes: 2, coarseRes: 0.5,
     timeBudgetMs: (+S.settings.budgetS || 180) * 1000, stallMs: 60 * 1000, maxTrials: 2000, seed: sh.runSeed || +S.settings.seed || 1,
     initialLayout: sh.nestInitial || null, maxFill: +S.settings.maxFill || 0.74,
-    packingHints: S.settings.packingAI !== "off" && sh.packingAdvice?.key === packingKey(sh, items) ? sh.packingAdvice.hints || null : null,
+    packingHints: S.settings.packingAI !== "off" && sh.packingAdvice?.version === 1 && sh.packingAdvice?.key === packingKey(sh, items) ? sh.packingAdvice.hints || null : null,
     pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: c.orderDate || 0, pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
   };
 }
@@ -2201,54 +2201,70 @@ function sendPackingHints(sh, jobId, hints, pending) {
   (sh.workers || []).forEach((w,i) => w.postMessage({ type: "packingHints", jobId: jobId + ":" + i, hints, pending }));
 }
 async function requestPackingGuidance(sh) {
-  if (S.settings.packingAI === "off" || !S.cloud.ok || sh.serverJob || sh.status !== "nesting") return;
+  if (S.settings.packingAI === "off") return null;
+  if (!S.cloud.ok) throw new Error("Shape guidance needs the cloud connection. Reconnect or turn off AI packing guidance in Settings.");
   const items = activeCharms(sh), key = packingKey(sh, items), jobId = sh.jobId;
-  const prior = sh.packingAdvice?.key === key ? sh.packingAdvice : null;
-  if (prior && prior.state !== "pending") return;
-  if (sh._packingPromise) return;
-  // Persist the agent id so a refresh resumes its result instead of buying another consultation.
-  const advice = prior || { key, state: "pending", jobId: null, hints: null };
+  const prior = sh.packingAdvice?.version === 1 && sh.packingAdvice.key === key ? sh.packingAdvice : null;
+  if (prior?.state === "done") return prior.hints;
+  if (sh._packingPromise) { const previous=sh._packingPromise; await previous; if(sh._packingPromise===previous)sh._packingPromise=null; return requestPackingGuidance(sh); }
+  const advice = prior || { version:1,key,state:"pending",batches:[],pairs:[],hints:null };
   sh.packingAdvice = advice;
-  const ev = agent({ metal: sh.metal }, "claude", "AI is advising shape priorities and rotations; geometric searches continue", { live: true });
-  sendPackingHints(sh, jobId, null, true);
+  const ev = agent({ metal:sh.metal },"claude","Grading shape adaptability and compatible neighbors before placement",{live:true});
   const task = (async () => {
     try {
-      const chosen = items.slice().sort((a,b) => (+a.orderDate || 0) - (+b.orderDate || 0)).slice(0,120);
-      const cv = document.createElement("canvas"), cell = 96, cols = 10;
-      cv.width = cols * cell; cv.height = Math.ceil(chosen.length / cols) * cell;
-      const ctx = cv.getContext("2d"); ctx.fillStyle = "#f3f0ea"; ctx.fillRect(0,0,cv.width,cv.height);
-      chosen.forEach((c,i) => {
-        const x = i % cols * cell, y = Math.floor(i / cols) * cell, b = c.bbox;
-        const scale = Math.min((cell-12) / Math.max(1,b[2]-b[0]), (cell-26) / Math.max(1,b[3]-b[1]));
-        ctx.save(); ctx.beginPath(); ctx.rect(x,y,cell,cell); ctx.clip();
-        CharmNestPDF.drawSegments(ctx,c.members,(px,py) => [x+6+(px-b[0])*scale,y+21+(b[3]-py)*scale],scale);
-        ctx.fillStyle = "#181818"; ctx.font = "bold 12px sans-serif"; ctx.fillText(String(i),x+5,y+14); ctx.restore();
-      });
-      const st = stockFor(sh.metal);
-      const plan = await agentCall("packing", { contactSheet: cv.toDataURL("image/png"), preview: aiRenderSheet(sh),
-        wPt: st.wPt, hPt: st.hPt, maxFill: +S.settings.maxFill || .74, density: sh.best?.density || 0,
-        pieces: chosen.map(c => ({ widthPt:c.widthPt, heightPt:c.heightPt, areaPt2:c.areaPt2 }))
-      }, { label: "AI packing advice", sheetId: sh.sheetId, background: true, existingId: advice.jobId,
-        onStarted: id => { advice.jobId = id; if (window.Session) Session.schedule(); },
-        onTick: elapsed => agentUpdate(ev,{elapsed}) });
-      if (plan.skipped || plan.error) throw new Error(plan.skipped || plan.error);
-      const hints = { priority: [], angles: {} };
-      for (const p of (Array.isArray(plan.suggestions) ? plan.suggestions : []).slice(0,24)) {
-        const c = Number.isInteger(p.index) && chosen[p.index]; if (!c || hints.priority.includes(c.id)) continue;
-        hints.priority.push(c.id); hints.angles[c.id] = (Array.isArray(p.angles) ? p.angles : []).filter(Number.isFinite).slice(0,3).map(a => ((Math.round(a) % 360) + 360) % 360);
+      S.packingCatalog ||= {};
+      const unique = [...new Map(items.map(c=>[CharmNestSolver.shapeKey(c),c])).values()];
+      for (let offset=0;offset<unique.length;offset+=80) {
+        const chosen=unique.slice(offset,offset+80), batchIndex=offset/80;
+        const batch=advice.batches[batchIndex] ||= {jobId:null,result:null};
+        if (!batch.result) {
+          const cv=document.createElement("canvas"),cell=112,cols=8;
+          cv.width=cols*cell;cv.height=Math.ceil(chosen.length/cols)*cell;
+          const ctx=cv.getContext("2d");ctx.fillStyle="#f3f0ea";ctx.fillRect(0,0,cv.width,cv.height);
+          chosen.forEach((c,i)=>{
+            const x=i%cols*cell,y=Math.floor(i/cols)*cell,b=c.bbox,scale=Math.min((cell-12)/Math.max(1,b[2]-b[0]),(cell-26)/Math.max(1,b[3]-b[1]));
+            ctx.save();ctx.beginPath();ctx.rect(x,y,cell,cell);ctx.clip();
+            if(c.outline?.length){ctx.beginPath();CharmNestPDF.pathToCanvas(ctx,c.outline,(px,py)=>[x+6+(px-b[0])*scale,y+21+(b[3]-py)*scale]);ctx.fillStyle="#181818";ctx.fill("nonzero");}else CharmNestPDF.drawSegments(ctx,c.members,(px,py)=>[x+6+(px-b[0])*scale,y+21+(b[3]-py)*scale],scale);
+            ctx.fillStyle="#181818";ctx.font="bold 12px sans-serif";ctx.fillText(String(i),x+5,y+14);ctx.restore();
+          });
+          const st=stockFor(sh.metal);
+          const plan=await agentCall("packing",{contactSheet:cv.toDataURL("image/png"),preview:aiRenderSheet(sh),wPt:st.wPt,hPt:st.hPt,maxFill:+S.settings.maxFill||.74,density:sh.best?.density||0,
+            pieces:chosen.map(c=>({widthPt:c.widthPt,heightPt:c.heightPt,areaPt2:c.areaPt2,cachedProfile:S.packingCatalog[CharmNestSolver.shapeKey(c)]||null}))
+          },{label:"Shape compatibility analysis",sheetId:sh.sheetId,background:true,existingId:batch.jobId,
+            onStarted:id=>{batch.jobId=id;if(window.Session)Session.schedule();},onTick:elapsed=>agentUpdate(ev,{elapsed})});
+          if(plan.skipped || plan.error)throw new Error(plan.skipped || plan.error);
+          const clean=CharmNestSolver.normalizePackingPlan(plan,chosen.length);
+          if(clean.profiles.length!==chosen.length){batch.invalidResult=clean;batch.jobId=null;throw new Error(`Shape analysis graded ${clean.profiles.length}/${chosen.length} shapes; placement is held until every shape has guidance`);}
+          batch.result={...clean,model:plan.model||null};
+          if(window.Session)Session.schedule();
+        }
+        for(const p of batch.result.profiles){const c=chosen[p.index],{index,...profile}=p;S.packingCatalog[CharmNestSolver.shapeKey(c)]={...profile,model:batch.result.model};}
+        // Rebuild from cached batches, so retry/reload cannot duplicate pairs.
       }
-      Object.assign(advice,{state:"done",hints,summary:plan.summary || "",usage:plan.usage || null});
-      if (sh.packingAdvice === advice) sendPackingHints(sh,jobId,hints,false);
-      agentUpdate(ev,{live:false,text:`AI packing advice: ${advice.summary || "shape priorities and rotations ready"}. ${sh.status === "nesting" && sh.jobId === jobId ? "Trying it alongside unguided searches." : "Saved for the next re-nest of this queue."}`});
+      const hints={version:1,profiles:{},partners:{},angles:{},priority:[]};
+      for(const c of items){const profile=S.packingCatalog[CharmNestSolver.shapeKey(c)];if(!profile)throw new Error("Missing shape grade");hints.profiles[c.id]={...profile};hints.angles[c.id]=profile.angles.slice();}
+      hints.priority=items.slice().sort((a,b)=>hints.profiles[b.id].priority-hints.profiles[a.id].priority).map(c=>c.id);
+      for(let bi=0;bi<advice.batches.length;bi++){
+        const chosen=unique.slice(bi*80,bi*80+80);
+        for(const pair of advice.batches[bi].result.pairs){
+          const a=CharmNestSolver.shapeKey(chosen[pair.a]),b=CharmNestSolver.shapeKey(chosen[pair.b]);
+          for(const x of items.filter(c=>CharmNestSolver.shapeKey(c)===a))for(const y of items.filter(c=>CharmNestSolver.shapeKey(c)===b))if(x.id!==y.id){(hints.partners[x.id]||={})[y.id]=pair.score;(hints.partners[y.id]||={})[x.id]=pair.score;}
+        }
+      }
+      Object.assign(advice,{state:"done",hints,summary:advice.batches.map(b=>b.result.summary).filter(Boolean).join(" ").slice(0,1200)});
+      // Keep a bounded reusable profile cache; active jobs keep their own full map.
+      const keys=Object.keys(S.packingCatalog);for(const k of keys.slice(0,Math.max(0,keys.length-1000)))delete S.packingCatalog[k];
+      if(sh.packingAdvice===advice)sendPackingHints(sh,jobId,hints,false);
+      agentUpdate(ev,{live:false,text:`Shape guidance ready: ${unique.length} distinct shapes graded; ${items.length} charms follow grades and compatible-neighbor preferences.`});
+      return hints;
     } catch(e) {
-      Object.assign(advice,{state:"skipped",error:e.message});
-      if (sh.packingAdvice === advice) sendPackingHints(sh,jobId,null,false);
-      agentUpdate(ev,{live:false,kind:"warn",text:`AI packing advice unavailable: ${e.message}. Geometry continues.`});
-    } finally { if (window.Session) Session.schedule(); }
+      Object.assign(advice,{state:"error",error:e.message});
+      agentUpdate(ev,{live:false,kind:"warn",text:`Shape-guided placement held: ${e.message}`});
+      throw e;
+    } finally {if(window.Session)Session.schedule();}
   })();
-  sh._packingPromise = task;
-  await task;
-  if (sh._packingPromise === task) sh._packingPromise = null;
+  sh._packingPromise=task;
+  try{return await task;}finally{if(sh._packingPromise===task)sh._packingPromise=null;}
 }
 function renderNestFlow() {
   const b = $("#btnNestFlow"); if (!b) return;
@@ -2316,21 +2332,33 @@ function startNestReady(sh, context) {
   sh.nestParams = { seed:job.seed,angles:job.angles,clearancePt:job.clearancePt,insetPt:job.sheet.insetPt,fineRes:job.fineRes,coarseRes:job.coarseRes,maxFill:job.maxFill };
   if (window.Session) Session.schedule();
   if (retained && window.Session) Session.checkpointBest(sh);
-  if (sh.nestFlow === "learned") {
-    job.learned = { modelDigest: sh._learnedModelDigest, token: localStorage.getItem("cn.learnedKey") || "", budgetMs: S.settings.learnedBudgetS * 1000, stallMs: S.settings.learnedStallS * 1000, checkpoint: sh.learnedCheckpoint || null, initialLayout: sh._beforeLearned?.placements || null };
-    const workers = ensureWorkers(sh, 2); sh.pool = { n: 2, done: 0, results: [], trials: [0, 0], winner: null };
-    sh.stage = "Starting learned workflow…"; renderProgress(sh);
-    workers[0].postMessage({ type: "solve", jobId: sh.jobId + ":0", job });
-    workers[1].postMessage({ type: "solve", jobId: sh.jobId + ":1", job: { ...job, learned: undefined, verifyResult: true, packingHints: null, timeBudgetMs: S.settings.learnedBudgetS * 1000, stallMs: S.settings.learnedStallS * 1000, maxTrials: 1000000 } }); return;
-  }
-  if ((S.settings.engine || "solver") === "ai") { startAINest(sh, items).catch(e => finishNest(sh, { error: e.message })); return; }
-  const useServer = S.settings.serverAbove > 0 && items.length > S.settings.serverAbove && S.cloud.ok;
-  if (useServer) return startServerNest(sh, job);
-  const n = parallelCount();
-  const workers = ensureWorkers(sh, n);
-  sh.pool = { n, done: 0, results: [], trials: new Array(n).fill(0), winner: null };
-  if (sh.evNest) agentUpdate(sh.evNest, { text: `${n} parallel search${n > 1 ? "es" : ""} on seeds ${job.seed}–${job.seed + n - 1} · ${items.length} pieces · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · standard and broader-rotation searches keep oldest-first sheet membership · ceiling ${S.settings.budgetS}s` });
-  workers.forEach((w, i) => w.postMessage({ type: "solve", jobId: sh.jobId + ":" + i, job: Object.assign({}, job, { seed: job.seed + i, exploreRotations: i % 2 === 1 }) }));
+  const launch = () => {
+    if (sh.status !== "nesting" || sh.jobId !== launchId) return;
+    if(S.settings.packingAI!=="off" && (sh.packingAdvice?.state!=="done" || sh.packingAdvice.key!==packingKey(sh,activeCharms(sh))))throw new Error("Sheet inputs changed during shape analysis — retry Nest");
+    sh.guidanceMs=sh.guidancePending?performance.now()-sh.startedAt:0;
+    sh.guidancePending = false; sh.startedAt = performance.now();
+    job.packingHints = S.settings.packingAI !== "off" ? sh.packingAdvice?.hints || null : null;
+    if (sh.nestFlow === "learned") {
+      job.learned = { modelDigest: sh._learnedModelDigest, token: localStorage.getItem("cn.learnedKey") || "", budgetMs: S.settings.learnedBudgetS * 1000, stallMs: S.settings.learnedStallS * 1000, checkpoint: sh.learnedCheckpoint || null, initialLayout: sh._beforeLearned?.placements || null };
+      const workers = ensureWorkers(sh, 2); sh.pool = { n: 2, done: 0, results: [], trials: [0, 0], winner: null };
+      sh.stage = "Starting learned workflow…"; renderProgress(sh);
+      workers[0].postMessage({ type: "solve", jobId: sh.jobId + ":0", job });
+      workers[1].postMessage({ type: "solve", jobId: sh.jobId + ":1", job: { ...job, learned: undefined, verifyResult: true, packingHints: job.packingHints, timeBudgetMs: S.settings.learnedBudgetS * 1000, stallMs: S.settings.learnedStallS * 1000, maxTrials: 1000000 } }); return;
+    }
+    if ((S.settings.engine || "solver") === "ai") { startAINest(sh, items).catch(e => finishNest(sh, { error: e.message })); return; }
+    const useServer = S.settings.serverAbove > 0 && items.length > S.settings.serverAbove && S.cloud.ok;
+    if (useServer) return startServerNest(sh, job);
+    const n = parallelCount();
+    const workers = ensureWorkers(sh, n);
+    sh.pool = { n, done: 0, results: [], trials: new Array(n).fill(0), winner: null };
+    if (sh.evNest) agentUpdate(sh.evNest, { text: `${n} parallel search${n > 1 ? "es" : ""} on seeds ${job.seed}–${job.seed + n - 1} · ${items.length} pieces · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · standard and broader-rotation searches keep oldest-first sheet membership · ceiling ${S.settings.budgetS}s` });
+    workers.forEach((w, i) => w.postMessage({ type: "solve", jobId: sh.jobId + ":" + i, job: Object.assign({}, job, { seed: job.seed + i, exploreRotations: i % 2 === 1 }) }));
+  };
+  const launchId=sh.jobId;
+  if (S.settings.packingAI !== "off") {
+    sh.guidancePending=true;sh.stage="Analyzing shape grades and compatible neighbors…";renderProgress(sh);
+    requestPackingGuidance(sh).then(launch).catch(e=>{if(sh.jobId!==launchId || sh.status!=="nesting")return;sh.guidancePending=false;sh.status="ready";sh.problem=e.message;sh.stage="Shape analysis incomplete — retry Nest";renderCard(sh);if(window.Session)Session.schedule();pumpNestQueue();if(window.RunCtl)RunCtl.onSheetDone(sh,e);});
+  } else launch();
 }
 
 /* ═══ 9b · AI nesting: Claude plans every placement, the geometry measures ═══ */
@@ -2426,7 +2454,7 @@ async function startAINest(sh, items) {
     params: { seed: 0, angles: [...new Set(sh.placements.map(p => p.angle))], clearancePt: clearance, insetPt: inset, fineRes: 2, coarseRes: 0.5, engine: "claude", rounds }
   } });
 }
-function stopNest(sh) { if (sh.status !== "nesting") return; sh.stage = "Stopping after this piece…"; renderCard(sh); if (sh.nestFlow !== "learned" && (S.settings.engine || "solver") === "ai") { sh.status = "ready"; sh.stage = ""; agent({ metal: sh.metal }, "info", "Stopped by operator"); renderCard(sh); return; } if (sh.serverJob) { api("charmNestLibrary", { op: "stopJob", id: sh.serverJob }).catch(() => {}); } else (sh.workers || []).forEach((w, i) => w.postMessage({ type: "stop", jobId: sh.jobId + ":" + i })); }
+function stopNest(sh) { if (sh.status !== "nesting") return; if(sh.guidancePending){sh.guidancePending=false;sh.status="ready";sh.stage="Shape analysis paused — its response is saved for reuse";renderCard(sh);if(window.Session)Session.schedule();pumpNestQueue();return;} sh.stage = "Stopping after this piece…"; renderCard(sh); if (sh.nestFlow !== "learned" && (S.settings.engine || "solver") === "ai") { sh.status = "ready"; sh.stage = ""; agent({ metal: sh.metal }, "info", "Stopped by operator"); renderCard(sh); return; } if (sh.serverJob) { api("charmNestLibrary", { op: "stopJob", id: sh.serverJob }).catch(() => {}); } else (sh.workers || []).forEach((w, i) => w.postMessage({ type: "stop", jobId: sh.jobId + ":" + i })); }
 // One replacement gate for live updates, final worker messages and server polls.
 // Layout snapshots never share mutable placements with a trial or the exporter.
 function acceptBestLayout(sh, candidate, meta = {}) {
@@ -2522,7 +2550,7 @@ function onWorkerMessage(sh, m, idx) {
     case "reject": log(sh, `trial ${m.trial + 1}: ${byId.get(m.id)?.name || m.id} ${m.reason === "cap" ? "held back by the fill ceiling" : "did not fit"}`); break;
     case "trial": {
       if (sh.nestFlow === "learned") break;
-      if (sh.nestFlow !== "learned" && m.summary.elapsedMs >= 12000 && sh.best?.rejects?.length && sh.best.density < (+S.settings.maxFill || .74) - .01) requestPackingGuidance(sh).catch(e => log(sh, "AI packing: " + e.message));
+      if (sh.nestFlow !== "learned" && !sh.packingAdvice?.hints && m.summary.elapsedMs >= 12000 && sh.best?.rejects?.length && sh.best.density < (+S.settings.maxFill || .74) - .01) requestPackingGuidance(sh).catch(e => log(sh, "AI packing: " + e.message));
       sh.trials = m.summary.trial + 1;
       if (!m.summary.better) sh.stage = `Trial ${sh.trials} · best so far ${sh.best ? sh.best.placements.length : 0}/${m.summary.total} · ${fmt.s(m.summary.elapsedMs)}`;
       // one live line that ticks with every trial, so the search is visible even when no trial beats the best
@@ -2681,7 +2709,7 @@ const endedText = e => ({ plateau: "paused — no additional pieces during the i
 function buildReport(sh, result, items) {
   const byId = new Map(items.map(c => [c.id, c])); const st = stockFor(sh.metal);
   return {
-    version: 1, bestRevision: sh.bestRevision || 0, bestHistory: sh.bestHistory || [], sheetId: sh.sheetId, metal: sh.metal, metalLabel: labelOf(sh.metal), createdAt: new Date().toISOString(),
+    version: 1, shapeGuidance: sh.packingAdvice?.hints || null, guidanceMs: Math.round(sh.guidanceMs || 0), bestRevision: sh.bestRevision || 0, bestHistory: sh.bestHistory || [], sheetId: sh.sheetId, metal: sh.metal, metalLabel: labelOf(sh.metal), createdAt: new Date().toISOString(),
     stock: { wIn: st.wIn, hIn: st.hIn, wPt: st.wPt, hPt: st.hPt }, params: result.params, endedBy: result.endedBy, trials: result.trials, elapsedMs: Math.round(result.elapsedMs),
     density: +result.density.toFixed(4), usablePt2: Math.round(result.usablePt2), freePt2: Math.round(result.freePt2), placedPt2: Math.round(result.placedPt2), pocket: result.pocket,
     placements: sh.placements.map((p, i) => ({ n: i + 1, id: p.id, layer: p.layerName, name: byId.get(p.id)?.name, hash: byId.get(p.id)?.hash, source: byId.get(p.id)?.sourceName, index: byId.get(p.id)?.index, angle: p.angle, scale: p.scale || 1, cxPt: +p.cxPt.toFixed(3), cyPt: +p.cyPt.toFixed(3), wPt: +p.wPt.toFixed(2), hPt: +p.hPt.toFixed(2), areaPt2: +(byId.get(p.id)?.areaPt2 || 0).toFixed(1) })),
@@ -2957,7 +2985,7 @@ function renderProgress(sh) {
      done it is the whole result — placed, full, verified, elapsed — and the timings that used to take a second line are
      kept in its tooltip instead. The pills over the image would repeat it, so they show only while it is still moving. */
   const st = q("stage"); const elapsed = ["nesting", "finishing"].includes(sh.status) ? fmt.s(performance.now() - sh.startedAt) : (sh.totalMs ? fmt.s(sh.totalMs) : (sh.elapsedMs ? fmt.s(sh.elapsedMs) : ""));
-  const budget = sh.status === "nesting" ? (sh.nestFlow === "learned" ? ` / ${fmt.s((S.settings.learnedBudgetS || 600) * 1000)} ceiling` : (S.settings.engine || "solver") === "ai" ? ` · round ${sh.aiRound || 1}/${S.settings.aiRounds || 10}` : ` / ${S.settings.budgetS}s`) : "";
+  const budget = sh.status === "nesting" ? (sh.guidancePending ? " · shape analysis" : sh.nestFlow === "learned" ? ` / ${fmt.s((S.settings.learnedBudgetS || 600) * 1000)} ceiling` : (S.settings.engine || "solver") === "ai" ? ` · round ${sh.aiRound || 1}/${S.settings.aiRounds || 10}` : ` / ${S.settings.budgetS}s`) : "";
   const deep = sh.totalMs ? `${fmt.s(sh.totalMs)} from the first file · nest ${fmt.s(sh.elapsedMs || 0)}${sh.trials ? ` · ${sh.trials} trial${sh.trials > 1 ? "s" : ""}` : ""}${sh.optimized ? ` · charms shrunk ${((1 - sh.optimized.scale) * 100).toFixed(1).replace(/\.0$/, "")}%` : ""}` : "";
   const reviewingSrc = S.sources.find(s => s.review && s.review.state === "running" && s.charms.some(c => c.metal === sh.metal));
   const done = sh.status === "complete" || sh.status === "partial";
@@ -3109,7 +3137,7 @@ function openCharm(sh, c, placement) {
       <img crossorigin="anonymous" src="${cors(c.thumb)}" style="width:200px;aspect-ratio:1;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:10px">
       <div>
         <div class="field"><label>Layer name</label><input id="ciName" value="${esc(c.name || "")}"><div class="help">${c.namedBy === "claude" ? `Named by Claude${c.confidence ? ` (${Math.round(c.confidence * 100)}% sure)` : ""}${c.label ? ` — “${esc(c.label)}”` : ""}` : c.namedBy === "operator" ? "Named by an operator" : c.namedBy === "library" ? "From the charm library" : "File-based name"}. Renames are remembered for this artwork.</div></div>
-        <dl class="kv"><dt>Source</dt><dd>${esc(c.sourceName)} · #${c.index + 1}</dd><dt>Size</dt><dd>${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}</dd><dt>Silhouette</dt><dd>${fmt.area(c.areaPt2)} · ${c.members.length} elements${c.qty > 1 ? ` · ×${c.qty} on this file` : ""}</dd><dt>Geometry hash</dt><dd>${c.hash}</dd>${pl ? `<dt>Placed</dt><dd>${pl.angle}° at ${fmt.mm(pl.cxPt)}, ${fmt.mm(pl.cyPt)} from top-left</dd>` : ""}${c.open ? `<dt>Status</dt><dd style="color:#8a3a26">open path — excluded from nesting</dd>` : ""}</dl>
+        <dl class="kv"><dt>Source</dt><dd>${esc(c.sourceName)} · #${c.index + 1}</dd><dt>Size</dt><dd>${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}</dd><dt>Silhouette</dt><dd>${fmt.area(c.areaPt2)} · ${c.members.length} elements${c.qty > 1 ? ` · ×${c.qty} on this file` : ""}</dd><dt>Geometry hash</dt><dd>${c.hash}</dd>${sh.packingAdvice?.hints?.profiles?.[c.id] ? (()=>{const p=sh.packingAdvice.hints.profiles[c.id];return `<dt>Shape guidance</dt><dd>${esc(p.family)} · adaptability ${p.adaptability}/100 · interlock ${p.interlock}/100 · edge fit ${p.edgeAffinity}/100 · ${esc(p.edgeRole)}<br>${esc(p.note)}</dd>`;})() : ""}${pl ? `<dt>Placed</dt><dd>${pl.angle}° at ${fmt.mm(pl.cxPt)}, ${fmt.mm(pl.cyPt)} from top-left</dd>` : ""}${c.open ? `<dt>Status</dt><dd style="color:#8a3a26">open path — excluded from nesting</dd>` : ""}</dl>
         <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
           ${pl ? `<button class="btn ghost sm" id="ciPin">${c.pinned ? "Unpin" : "Pin here"}</button>` : ""}
           <button class="btn ghost sm" id="ciExclude">${c.excluded ? "Include in nest" : "Exclude from nest"}</button>

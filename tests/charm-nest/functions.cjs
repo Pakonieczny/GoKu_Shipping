@@ -158,11 +158,14 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   assert(agentMod.buildRequest('packing',{}).error);
   const packingRequest=agentMod.buildRequest('packing',packingPayload);
   assert(packingRequest.system.includes('never change membership') && packingRequest.schema.properties.suggestions.maxItems===24);
-  anthro.callClaudeRaw=async()=>({stop_reason:'end_turn',content:[{type:'text',text:JSON.stringify({summary:'Place the long silhouette early.',suggestions:[{index:1,angles:[-30,390]},{index:1,angles:[0]},{index:999,angles:[0]},{index:0,angles:['bad',45]}]})}]});
+  anthro.callClaudeRaw=async()=>({stop_reason:'end_turn',content:[{type:'text',text:JSON.stringify({summary:'Place the long silhouette early.',profiles:[{index:0,adaptability:20,interlock:80,edgeAffinity:95,priority:90,edgeRole:'long-edge',family:'elongated',mates:['concave'],angles:[-90],note:'straight boundary'}],pairs:[{a:0,b:1,score:92,reason:'matching recess'},{a:0,b:55,score:90}],suggestions:[{index:1,angles:[-30,390]},{index:1,angles:[0]},{index:999,angles:[0]},{index:0,angles:['bad',45]}]})}]});
   const packingStart=await post(lib,{op:'startAgent',mode:'packing',payload:packingPayload});assert(packingStart.body.id);
   await agentBg.handler({httpMethod:'POST',headers:{},body:JSON.stringify({id:packingStart.body.id,mode:'packing'})});
   const packingDone=await post(lib,{op:'getAgent',id:packingStart.body.id});
   assert.equal(packingDone.body.job.status,'done');
+  assert.equal(packingDone.body.job.result.profiles[0].edgeRole,'long-edge');
+  assert.deepEqual(packingDone.body.job.result.profiles[0].angles,[270]);
+  assert.equal(packingDone.body.job.result.pairs.length,1);
   assert.deepEqual(packingDone.body.job.result.suggestions,[{index:1,angles:[330,30]},{index:0,angles:[45]}]);
   assert(!blobs.has('charmnest/agent/'+packingStart.body.id+'.json'));
   anthro.callClaudeRaw = realCall; delete process.env.ANTHROPIC_API_KEY;
