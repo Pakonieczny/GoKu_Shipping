@@ -3397,7 +3397,7 @@ const RunCtl = window.RunCtl = (() => {
     if (allSheets().some(pg => pg.runId === r.runId && (pg.problem || pg.dirty || ["ready", "idle"].includes(pg.status)) && pg.charms.length)) {
       r.step = "nest"; for (const pg of allSheets()) if (pg.runId === r.runId && pg.problem) sheetDirty(pg);
     }
-    if (r.awaitCommit) r.commitRequested = true;
+    if (r.awaitCommit && r.status !== "processed") r.commitRequested = true;
     r.status = "running"; r.stoppedBy = null; r.fix = null; await save(r);
     if (["nest"].includes(r.step)) { for (const pg of allSheets()) if (pg.runId === r.runId && ["complete", "partial"].includes(pg.status) && pg.verification && !pg.verification.ok) sheetDirty(pg); }
     if (!r.workspaceRestored && (r.step === "pool" || r.step === "pull" || r.step === "claim")) r.step = "pull";

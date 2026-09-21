@@ -65,6 +65,7 @@ function sheet(id,patch={}){return{sheetId:id,runId:'run',metal:id,page:1,charms
 
   const manual=fixture({autoCommit:'off',pending:0,review:0,sets:[{setId:'ready',sheetIds:['b']}]});await manual.ctl._loop();
   assert.equal(manual.r.status,'processed');assert.equal(manual.r.awaitCommit,true);assert(manual.calls.includes('unclaim'));assert(!manual.calls.includes('commit:ready'));
+  await manual.ctl.resume();await settled(manual);assert.equal(manual.r.status,'processed');assert(!manual.calls.includes('commit:ready'),'Retry pending does not authorize a manual commit');
   await manual.ctl.commitNow();await settled(manual);assert.equal(manual.r.status,'complete');assert(manual.calls.includes('commit:ready'));
 
   const options=fixture();await options.ctl._loop();options.ctl.optionsChanged();await settled(options);
