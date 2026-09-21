@@ -523,8 +523,8 @@ async function op_purgeHistory(b) {
      sheets with it, and the run re-saved its own record afterwards as if nothing had happened. */
   if (!b.force) {
     for (const prefix of ["", "Sandbox_"]) {
-      const snap = await db.collection(prefix + RUNS).where("status", "in", ["running", "review", "paused"]).limit(5).get();
-      const live = snap.docs.map(d => d.data()).filter(r => ["running", "review", "paused"].includes(r.status) && Date.now() - (ms(r.updatedAt) || 0) < 6 * 3600 * 1000);
+      const snap = await db.collection(prefix + RUNS).where("status", "in", ["running", "review", "paused", "processed"]).limit(5).get();
+      const live = snap.docs.map(d => d.data()).filter(r => ["running", "review", "paused", "processed"].includes(r.status) && Date.now() - (ms(r.updatedAt) || 0) < 6 * 3600 * 1000);
       if (live.length) return { error: `a run is still open (${live.map(r => r.runId).join(", ")}) — stop or abandon it first`, status: 409 };
     }
   }

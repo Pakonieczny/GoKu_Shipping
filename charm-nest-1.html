@@ -2047,7 +2047,7 @@ async function reviewLayout(sh, items) {
 function makeSheet(metal, page) {
   return { metal, page: page || 1, runId: null, sheetId: null, charms: [], status: "idle", worker: null, jobId: null, layout: null, placements: [], rejects: [], sat: null, progress: null, stage: "", outputs: null, verification: null, startedAt: 0, endedBy: null, trials: 0, best: null, dirty: true, log: [], liveInfo: null, serverJob: null };
 }
-function sheetDirty(sh) { sh.dirty = true; sh.releaseFull = false; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
+function sheetDirty(sh) { delete sh.runHold; sh.dirty = true; sh.releaseFull = false; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
 function activeCharms(sh) { return sh.charms.filter(c => !c.excluded); }
 /* One card per metal; a metal can hold several sheets ("pages"). The card shows the active page and tabs to switch. */
 const pagesOf = metal => S.sheets[metal].pages;
@@ -2088,7 +2088,7 @@ function orderSummary(charms) {
 function overflowToNextSheet(sh) {
   const ids = new Set(sh.rejects); if (!ids.size) return null;
   const moving = sh.charms.filter(c => ids.has(c.id));
-  if (!sh.placements.length) { sh.problem = "The oldest order cannot fit on an empty sheet at these settings. Review its size or the fill ceiling before continuing."; renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, new Error(sh.problem)); return null; }
+  if (!sh.placements.length) { sh.problem = "The oldest order cannot fit on an empty sheet at these settings. Review its size or the fill ceiling before continuing."; renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(new Error(sh.problem), {sheetPending:true})); return null; }
   sh.charms = sh.charms.filter(c => !ids.has(c.id)); sh.rejects = [];
   sh.movedOn = { n: moving.length, names: moving.map(c => c.name || `#${c.index + 1}`) };
   sh.status = sh.verification && sh.verification.ok ? "complete" : "partial";
@@ -2341,6 +2341,7 @@ function startNest(sh) {
 }
 function startNestReady(sh, context) {
   if (["nesting", "finishing"].includes(sh.status)) return;
+  delete sh.runHold;
   if (window.CharmNestOperations && !context) {
     if (sh._operationStarting) return;
     sh._operationStarting = true; sh.status = "queued"; sh.stage = "Waiting for sheet updates…"; renderCard(sh);
@@ -2502,7 +2503,7 @@ async function startAINest(sh, items) {
     params: { seed: 0, angles: [...new Set(sh.placements.map(p => p.angle))], clearancePt: clearance, insetPt: inset, fineRes: 2, coarseRes: 0.5, engine: "claude", rounds }
   } });
 }
-function stopNest(sh) { if (sh.status !== "nesting") return; if(sh.guidancePending){sh.guidancePending=false;sh.status="ready";sh.stage="Shape analysis paused — its response is saved for reuse";renderCard(sh);if(window.Session)Session.schedule();pumpNestQueue();return;} sh.stage = "Stopping after this piece…"; renderCard(sh); if (sh.nestFlow !== "learned" && (S.settings.engine || "solver") === "ai") { sh.status = "ready"; sh.stage = ""; agent({ metal: sh.metal }, "info", "Stopped by operator"); renderCard(sh); return; } if (sh.serverJob) { api("charmNestLibrary", { op: "stopJob", id: sh.serverJob }).catch(() => {}); } else (sh.workers || []).forEach((w, i) => w.postMessage({ type: "stop", jobId: sh.jobId + ":" + i })); }
+function stopNest(sh) { if (sh.status !== "nesting") return; if(sh.guidancePending){sh.guidancePending=false;sh.status="ready";sh.endedBy="stopped";sh.stage="Shape analysis paused — its response is saved for reuse";renderCard(sh);if(window.Session)Session.schedule();if(window.RunCtl)RunCtl.onSheetDone(sh);pumpNestQueue();return;} sh.stage = "Stopping after this piece…"; renderCard(sh); if (sh.nestFlow !== "learned" && (S.settings.engine || "solver") === "ai") { sh.status = "ready"; sh.endedBy="stopped"; sh.stage = ""; agent({ metal: sh.metal }, "info", "Stopped by operator"); renderCard(sh); if(window.RunCtl)RunCtl.onSheetDone(sh); return; } if (sh.serverJob) { api("charmNestLibrary", { op: "stopJob", id: sh.serverJob }).catch(() => {}); } else (sh.workers || []).forEach((w, i) => w.postMessage({ type: "stop", jobId: sh.jobId + ":" + i })); }
 // One replacement gate for live updates, final worker messages and server polls.
 // Layout snapshots never share mutable placements with a trial or the exporter.
 function acceptBestLayout(sh, candidate, meta = {}) {
@@ -3459,7 +3460,7 @@ function readSettings() {
   s.minPt = Math.max(1, +$("#stMinPt").value || 6); s.verifyRes = +$("#stVerifyRes").value || 6; s.naming = $("#stNaming").value; s.review = $("#stReview").value; s.engine = $("#stEngine").value; s.maxFill = Math.max(0.3, Math.min(1, (+$("#stMaxFill").value || 75) / 100)); s.aiRounds = Math.max(1, Math.min(30, +$("#stAiRounds").value || 10)); s.snapIn = Math.max(0, Math.min(1, (+$("#stSnapIn").value || 0) / 25.4)); s.notify = $("#stNotify").value; s.sound = $("#stSound").value;
   if (previousGeometry !== JSON.stringify([s.stock,s.clearancePt,s.insetPt,s.maxFill])) {
     for (const sh of allSheets()) if (sh.charms.length) sheetDirty(sh);
-    if (window.B?.run && !["complete","abandoned"].includes(B.run.status)) { B.run.step = "nest"; B.run.commitRequested = false; RunCtl.stop("Sheet settings changed", "Resume to nest and verify at the new dimensions."); }
+    if (window.RunCtl) RunCtl.optionsChanged();
   }
   localStorage.setItem("cn.learnedKey", $("#stLearnedKey").value.trim());
   s.learnedBudgetS = Math.max(600, Math.min(36000, +$("#stLearnedBudget").value || 600)); s.learnedStallS = Math.max(120, Math.min(3600, +$("#stLearnedStall").value || 300));
@@ -3527,7 +3528,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260921-guidance-retry"></script>
+<script src="charm-nest-bridge.js?v=20260921-process-completion"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin" aria-labelledby="owTitle">

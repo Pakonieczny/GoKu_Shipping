@@ -72,7 +72,7 @@ const Ladder = window.Ladder = (() => {
     { id: "commit", label: "Commit", covers: ["commit", "complete"], tab: "orders",
       count: () => { const n = B.run && B.run.committed ? B.run.committed.length : 0; const h = B.run && B.run.holds ? Object.keys(B.run.holds).length : 0; return n || h ? `${n} committed${h ? ` · ${h} held` : ""}` : ""; } },
   ];
-  const WORD = { running: ["Running", "go"], review: ["Waiting on you", "wait"], paused: ["Paused", "wait"], stopped: ["Stopped", "stop"], complete: ["Done", "go"] };
+  const WORD = { running: ["Running", "go"], review: ["Waiting on you", "wait"], paused: ["Paused", "wait"], stopped: ["Stopped", "stop"], processed: ["Processing complete", "wait"], complete: ["Done", "go"] };
   const mount = () => document.getElementById("ladder");
   /** Which of the seven the run is standing on, and which of them is waiting on a person. */
   function shape() {
@@ -100,7 +100,7 @@ const Ladder = window.Ladder = (() => {
     const waitRow = r.status === "review" ? (engN ? "engrave" : "pull") : null;
     host.innerHTML = `<div class="ldBand ld-${tone}" title="run ${esc(r.runId)}"><b>${esc(word)}</b><span>${esc(r.setId || r.day || "")}</span></div>`
       + `<div class="ldRows">` + STEPS.map((s, i) => {
-        const state = r.status === "complete" || i < here ? "done" : i === here ? (r.status === "stopped" ? "stop" : "now") : "todo";
+        const state = ["complete","processed"].includes(r.status) || i < here ? "done" : i === here ? (r.status === "stopped" ? "stop" : "now") : "todo";
         const waiting = (s.waits && s.waits()) || (s.id === waitRow && revN);
         const c = s.count() || "";
         return `<button class="ldRow${waiting ? " wait" : ""}${state === "now" ? " now" : ""}" data-tab="${s.tab}" title="${esc(s.label)}${c ? " — " + esc(c) : ""}"><i class="g ${state}"></i><span class="n">${esc(s.label)}</span><span class="c">${esc(c)}</span></button>`;
@@ -1597,9 +1597,7 @@ const Gate = window.Gate = (() => {
   function changed() {
     Session.schedule();
     if (B.run && !["complete", "abandoned"].includes(B.run.status)) {
-      B.run.step = "nest"; B.run.commitRequested = false;
-      RunCtl.stop("Sheet options changed", "Resume to verify the sheets and rebuild this set before committing.");
-      assemble(B.run).then(() => RunCtl.save(B.run)).catch(e => toast(e.message, "bad"));
+      RunCtl.optionsChanged();
     }
     refreshAllCards();
   }
@@ -1638,7 +1636,6 @@ const Gate = window.Gate = (() => {
     };
     node.querySelector('[data-solid="nest"]').onclick = () => {
       if (!editable(sh)) return;
-      if (B.run && !["complete", "abandoned"].includes(B.run.status)) RunCtl.stop("Isolated nesting", "Resume afterwards to rebuild the current set.");
       // Gather this metal's open pages so a smaller custom size cannot strand overflow.
       const pages = pagesOf(m).filter(p => !p.recalled && (!p.runId || p.runId === B.run?.runId));
       const charms = [...new Map(pages.flatMap(p => p.charms).map(c => [c.poolId || c.id, c])).values()];
@@ -1651,6 +1648,7 @@ const Gate = window.Gate = (() => {
       first.charms = charms; first.isolated = true; sheetDirty(first); CN.showPage(m, pagesOf(m).indexOf(first));
       if (B.run) B.run.step = "nest";
       startNest(first);
+      if(B.run)RunCtl.optionsChanged();
     };
   }
 
@@ -2882,7 +2880,7 @@ const LaserReview = window.LaserReview = (()=>{
       d.backPool=d.backPool.filter(b=>b.poolId!==pid);
       if(j.state==='approved')d.backPool.push(...(j.backs || []).filter(b=>b.poolId===pid));
     }
-    if(live?.dirty || live?.saving || ['nesting','finishing'].includes(live?.status))d.dirty=true;
+    if(live?.dirty || live?.runHold || live?.saving || ['nesting','finishing'].includes(live?.status))d.dirty=true;
     return d;
   }
   const sheet=s=>R.sheet(projected(s));
@@ -3035,29 +3033,32 @@ const Sets = window.Sets = (() => {
   }
   /** labels/Set-K_labels.pdf (one page per sheet label), Set-K_manifest.pdf, set.json. */
   function validateRelease(set) {
+    const pendingRelease = message => Object.assign(new Error(message), {releasePending:true});
     const sheets = sheetsOf(set);
+    if (sheets.some(sh => sh.runHold)) throw pendingRelease("A sheet in this set still needs attention");
     const reports=sheets.map(sh=>({...sh,id:sh.sheetId,poolIds:(sh.placements || []).map(p=>sh.charms.find(c=>c.id===p.id)?.poolId).filter(Boolean),placedCount:sh.placements.length,outputs:sh.cloud || {},engraving:window.CharmNestReadiness.decisions(Orders.rows())}));
-    if(!window.CharmNestReadiness.set(set,reports).ready)throw new Error("Set is not ready for laser: finish every sheet's engraving approvals, saved back files, layout checks and QR labels");
+    if(!window.CharmNestReadiness.set(set,reports).ready)throw pendingRelease("Set is not ready for laser: finish every sheet's engraving approvals, saved back files, layout checks and QR labels");
     if (!Gate.modern(set.runId)) return;
-    if (!set.sheetIds.length || sheets.length !== set.sheetIds.length || set.sheetIds.some(id => !sheets.some(sh => sh.sheetId === id))) throw new Error("The set's sheets are not all loaded");
+    if (!set.sheetIds.length || sheets.length !== set.sheetIds.length || set.sheetIds.some(id => !sheets.some(sh => sh.sheetId === id))) throw pendingRelease("The set's sheets are not all loaded");
     for (const sh of sheets) {
       const policy = Gate.policy(sh, set.seq);
-      if (!policy.include) throw new Error(`${labelOf(sh.metal)}: ${policy.reason}`);
-      if (!sh.persistedDone || !sh.outputs) throw new Error(`${sh.fileBase}: sheet files are not saved`);
-      if (!labelsReady(sh, set)) throw new Error(`${sh.fileBase}: QR labels are missing or out of date`);
+      if (!policy.include) throw pendingRelease(`${labelOf(sh.metal)}: ${policy.reason}`);
+      if (!sh.persistedDone || !sh.outputs) throw pendingRelease(`${sh.fileBase}: sheet files are not saved`);
+      if (!labelsReady(sh, set)) throw pendingRelease(`${sh.fileBase}: QR labels are missing or out of date`);
       const placed = new Set(sh.placements.map(p => sh.charms.find(c => c.id === p.id)?.poolId).filter(Boolean));
       for (const job of Engrave.items().values()) {
-        if (job.copies.some(id => placed.has(id)) && !["none", "skipped", "written"].includes(job.state)) throw new Error(`${sh.fileBase}: back engraving still needs to be finished`);
+        if (job.copies.some(id => placed.has(id)) && !["none", "skipped", "written"].includes(job.state)) throw pendingRelease(`${sh.fileBase}: back engraving still needs to be finished`);
       }
       for (const row of Orders.rows()) {
         if (!row.engrave?.needed) continue;
         for (const poolId of row.poolIds.filter(id => placed.has(id))) {
           const back = (sh.backPool || []).find(b => b.poolId === poolId);
-          if (!row.engrave.approved || row.engrave.state !== "written" || !back?.approvedAt || !back.verified?.file?.ok || !back.outputs?.ai?.path || !back.outputs.ai.url) throw new Error(`${row.order.receiptId}: back engraving is not approved and saved`);
+          if (!row.engrave.approved || row.engrave.state !== "written" || !back?.approvedAt || !back.verified?.file?.ok || !back.outputs?.ai?.path || !back.outputs.ai.url) throw pendingRelease(`${row.order.receiptId}: back engraving is not approved and saved`);
         }
       }
     }
   }
+  function releaseIssue(set) { try { validateRelease(set); return null; } catch(e) { if(e.releasePending)return e.message; throw e; } }
   async function finalize(set, context) {
     const ops=window.CharmNestOperations;
     if(ops && !context){await Gate.flush(B.run);return ops.run({key:'labels:'+set.setId,label:'Saving set labels',resources:['production:'+set.runId]},token=>finalize(set,token));}
@@ -3181,19 +3182,19 @@ const Sets = window.Sets = (() => {
       LaserReview.changed();
     } catch (e) { if (request === libraryRequest && S.library.kind === "sets") body.innerHTML = `<div class="libEmpty">Could not load sets: ${esc(e.message)}</div>`; }
   }
-  return { ensure, ofRun, keyOf, labelsReady, onSheetSaved, finalize, commit, undo, evaluate, save, renderLibrary, renderLabelPng, sheetsOf, setOfSheet, byRun };
+  return { releaseIssue, ensure, ofRun, keyOf, labelsReady, onSheetSaved, finalize, commit, undo, evaluate, save, renderLibrary, renderLabelPng, sheetsOf, setOfSheet, byRun };
 })();
 
 /* ═══ 23 · RunCtl — the two halves, the record, resume, stop, Auto/Manual ═══ */
 const RunCtl = window.RunCtl = (() => {
   /* A run used to halt after five of its own steps and ask, with a button named after the source code, whether to do
      the next one. Nobody could answer that question usefully, and nothing was gained by asking it: a run that has been
-     started is a run that should finish. It now runs straight through and stops only where a person is genuinely
-     needed — a decision in Review or Engraving, a commit held back on purpose, or something gone wrong.
+     started is a run that should finish. Processing continues past pending sheets, review and engraving decisions.
+     Release checks remain strict; only an operator stop or a critical failure interrupts the run.
      Manual and Auto still differ, in the one place the difference means anything: Auto starts the next run when this
      one is done, Manual does not. */
   const PAUSE_AFTER = new Set();
-  let waiter = null, reviewWaiter = null, autoTimer = null;
+  let waiter = null, autoTimer = null;
   const run = () => B.run;
   let saveQueue = Promise.resolve();
   async function save(r) {
@@ -3215,7 +3216,7 @@ const RunCtl = window.RunCtl = (() => {
   }
   function newRun(mode) { const day = today(); return { runId: `run-${day}-${uid()}`, day, setId: null, releasePolicy: 2, solidIncluded: Object.assign({}, Gate.state().solidIncluded || {}), step: "pull", status: "running", mode: mode || S.settings.runMode || "manual", startedAt: Date.now(), updatedAt: Date.now(), lines: {}, sheets: {}, holds: {}, errors: [], resumable: true, stoppedBy: null, fix: null, orders: [] }; }
   async function start(opts = {}) {
-    if (B.run && ["running", "review", "paused", "stopped"].includes(B.run.status)) { toast("A run is already open — resume, finish, or abandon it before starting another", "bad"); return B.run; }
+    if (B.run && ["running", "review", "paused", "processed", "stopped"].includes(B.run.status)) { toast("A run is already open — resume, finish, or abandon it before starting another", "bad"); return B.run; }
     if (B.run) await save(B.run);
     if (B.run || Recall.on()) clearRunState();
     const r = newRun(opts.mode); Gate.state().solidIncluded = {}; B.run = r;
@@ -3255,7 +3256,7 @@ const RunCtl = window.RunCtl = (() => {
       if (outcome && outcome.done) break;
       if (outcome && outcome.goto) { r.step = outcome.goto; await save(r); continue; }
       const next = O.nextStep(step);
-      if (!next) { r.status = "complete"; r.finishedAt = Date.now(); await save(r); renderBanner(); onComplete(r); break; }
+      if (!next) { updatePending(r); r.status = hasPending(r) ? "processed" : "complete"; r.processingComplete = true; r.finishedAt = Date.now(); r.processingSignature=workSignature(r); await save(r); renderBanner(); onComplete(r); break; }
       r.step = next;
       if (r.mode === "manual" && PAUSE_AFTER.has(step)) { r.status = "paused"; await save(r); renderBanner(); agent({ run: r.runId }, "DS", `Paused after ${step} — press Next step (${next})`); break; }
       await save(r);
@@ -3265,23 +3266,37 @@ const RunCtl = window.RunCtl = (() => {
   async function doStep(r, step) {
     if (["labels","commit"].includes(step)) await Gate.flush(r);
     switch (step) {
-      case "pull": { const rows = await Orders.pull(r, { silent: true }); if (!rows.length) { stop("no orders match the pull rule", "Change the pull rule on the Orders tab (or in Settings) and start again."); return; } return; }
+      case "pull": { const rows = await Orders.pull(r, { silent: true }); if (!rows.length) { r.nothingToCut=true; return {goto:"complete"}; } return; }
       case "claim": { await Orders.claim([...new Set(Orders.rows().map(x => x.order.receiptId))]); r.claimedAt = Date.now(); return; }
-      case "pool": { const n = await Pool.addAll(r); if (!n) { const w = Orders.rows().filter(x => x.state === "waiting").length; if (w) { r.status = "complete"; r.finishedAt = Date.now(); r.nothingToCut = true; await save(r); renderBanner(); agent({ run: r.runId }, "DS", `Nothing goes to the laser today: ${w} line(s) wait for a full sheet or a slow metal's day`); return { goto: null, done: true }; } stop("nothing could be pooled — every line needs a decision", "Resolve the items in Review, then Resume."); return; } Engrave.classifyAll(r).catch(e => agent({ run: r.runId }, "warn", `classifier: ${e.message}`)); return; }
+      case "pool": { const n=await Pool.addAll(r); if(!n){r.nothingToCut=true;updatePending(r);agent({run:r.runId},"info","No eligible pieces to nest; unresolved items remain available for follow-up.");return {goto:"complete"};} Engrave.classifyAll(r).catch(e=>agent({run:r.runId},"warn",`classifier: ${e.message}`));return; }
       case "plan": { for (const m of METALS) { const pg = activePage(m.key); if (!pg.charms.some(c => c.poolId)) continue; const sat = computeSaturation(pg); agent({ metal: m.key, run: r.runId }, "info", `${labelOf(m.key)}: ${sat.count} piece(s) need ${fmt.pct(sat.totalNeeded / sat.usable)} of the plate — ${sat.recommend ? "over the " + fmt.pct(sat.rho.cap) + " ceiling, the overflow goes to a second sheet" : "under the " + fmt.pct(sat.rho.cap) + " ceiling"}`); } return; }
       case "nest": { await nestAll(r); return; }
-      case "checkpoint": { await LiveNest.finish(r); await Gate.assemble(r); const sets = Sets.ofRun(r.runId); for (const set of sets) { set.status = "awaiting review"; await Sets.save(set); } r.setIds = sets.map(x => x.setId); r.setId = r.setIds[0] || r.setId || null; r.status = "running"; await save(r); return; }
-      case "engrave": { for (const j of Engrave.items().values()) if (!j.editingBack && j.state === "approved" && j.copies.length && Pool.sheetOf(j.copies[0])) { j.copies = j.row.poolIds.filter(id=>!(j.copyOverrides || []).includes(id)); await Engrave.writeBacks(j); } await Engrave.classifyAll(r); await Engrave.fitAll(r); await waitForReview(r); return; }
+      case "checkpoint": { await LiveNest.finish(r); await Gate.assemble(r); const sets = Sets.ofRun(r.runId); for (const set of sets.filter(s=>!s.committedAt)) { set.status = "awaiting review"; await Sets.save(set); } r.setIds = sets.map(x => x.setId); r.setId = r.setIds[0] || r.setId || null; r.status = "running"; await save(r); return; }
+      case "engrave": { for (const j of Engrave.items().values()) if (!j.editingBack && j.state === "approved" && j.copies.length && Pool.sheetOf(j.copies[0])) { j.copies = j.row.poolIds.filter(id=>!(j.copyOverrides || []).includes(id)); await Engrave.writeBacks(j); } await Engrave.classifyAll(r); await Engrave.fitAll(r); updatePending(r); return; }
       case "revalidate": { const v = await Orders.revalidate(r, "before labels"); if (v.changed.length && [...Engrave.items().values()].some(j => j.state === "classify")) { agent({ run: r.runId }, "warn", `${v.changed.length} order(s) changed — back to engraving`); return { goto: "engrave" }; } return; }
-      case "labels": { for (const set of Sets.ofRun(r.runId).filter(s => s.sheetIds.length)) await Sets.finalize(set); return; }
+      case "labels": {
+        r.deferredSets={};
+        for(const set of Sets.ofRun(r.runId).filter(s=>s.sheetIds.length&&!s.committedAt)){
+          const issue=Sets.releaseIssue(set);
+          if(issue){await deferSet(r,set,issue);continue;}
+          try{await Sets.finalize(set);}catch(e){if(!e.releasePending)throw e;await deferSet(r,set,e.message);}
+        }
+        return;
+      }
       case "commit": {
         if (Gate.modern(r.runId) && !Sets.ofRun(r.runId).some(s => s.sheetIds.length)) { r.nothingToCut = true; return; }
-        if (S.settings.autoCommit === "off" && !r.commitRequested) { r.status = "paused"; r.awaitCommit = true; await save(r); renderBanner(); agent({ run: r.runId }, "DS", "Auto-commit is off — press Commit set when ready"); return; }
+        const eligible=[];
+        for(const set of Sets.ofRun(r.runId).filter(s=>s.sheetIds.length&&!s.committedAt)){
+          const issue=Sets.releaseIssue(set);if(issue)await deferSet(r,set,issue);else eligible.push(set);
+        }
+        if(!eligible.length){r.awaitCommit=false;return;}
+        if (S.settings.autoCommit === "off" && !r.commitRequested) { r.awaitCommit = true; agent({ run: r.runId }, "DS", "Processing finished. Ready sets are saved; Commit set remains available."); return; }
+        r.awaitCommit=false;
         const v = await Orders.revalidate(r, "before commit");
         if (v.changed.length && [...Engrave.items().values()].some(j => j.state === "classify")) { agent({ run: r.runId }, "warn", `${v.changed.length} order(s) changed before the commit — back to engraving`); r.commitRequested = false; return { goto: "engrave" }; }
         const all = { completed: [], refused: [], held: {} };
-        for (const set of Sets.ofRun(r.runId).filter(s => s.sheetIds.length)) { const res = await Sets.commit(set, r); if(res.membershipChanged)return {goto:r.membershipNext || 'engrave'}; all.completed.push(...res.completed); all.refused.push(...res.refused); Object.assign(all.held, res.held || {}); }
-        r.committed = all.completed; r.refused = all.refused; r.holds = all.held; return;
+        for (const set of eligible) { try { const res = await Sets.commit(set, r); if(res.membershipChanged)return {goto:r.membershipNext || 'engrave'}; all.completed.push(...res.completed); all.refused.push(...res.refused); Object.assign(all.held, res.held || {}); } catch(e){if(!e.releasePending)throw e;await deferSet(r,set,e.message);} }
+        r.committed = [...new Set([...(r.committed||[]),...all.completed])]; r.refused = all.refused; r.holds = {...r.holds,...all.held}; return;
       }
       case "complete": { try { await Orders.unclaim([...new Set(Orders.rows().map(x => x.order.receiptId))]); } catch (_) {} return; }
       default: return;
@@ -3290,7 +3305,7 @@ const RunCtl = window.RunCtl = (() => {
   /** Nest every card that holds this run's pool charms; wait until every sheet of the run (overflow included) is written, verified and saved. */
   function nestAll(r) {
     return new Promise((resolve, reject) => {
-      const pages = allSheets().filter(pg => pg.runId === r.runId && Gate.nestable(pg, r) && pg.charms.some(c => c.poolId && !c.excluded));
+      const pages = allSheets().filter(pg => pg.runId === r.runId && !pg.runHold && Gate.nestable(pg, r) && pg.charms.some(c => c.poolId && !c.excluded));
       if (!pages.length) return resolve();
       waiter = { r, resolve, reject };
       for (const pg of pages) if (pg.status === "ready" || pg.status === "idle") startNest(pg); else if (["complete", "partial"].includes(pg.status) && pg.persisted) pg.persisted.then(() => onSheetDone(pg));
@@ -3304,7 +3319,9 @@ const RunCtl = window.RunCtl = (() => {
       /* A sheet's trouble belongs on that sheet's card. The banner used to carry the whole message — "GF 14/20 · sheet 3:
          bad row — Fix the cause (see the card's log), then Resume" — across every tab, above every list, for the rest of
          the session. Now the banner names the sheet and offers the way to it; the reason is written where the sheet is. */
-      if (err) {
+      if (err?.sheetPending) {
+        holdSheet(r,sh,err.message);
+      } else if (err) {
         sh.problem = err.message; CN.renderCard(sh);
         if(err.stage === "shape-analysis") {
           if(r.status === "stopped"){save(r).catch(()=>{});return;}
@@ -3312,34 +3329,52 @@ const RunCtl = window.RunCtl = (() => {
         } else stop(`${sheetName(sh)} could not be saved`, "", { metal: sh.metal, page: sh.page });
         return;
       }
-      if (["complete", "partial"].includes(sh.status) && sh.verification && !sh.verification.ok) { sh.problem = "verification flagged — open the report"; CN.renderCard(sh); stop(`${sheetName(sh)} needs a look`, "", { metal: sh.metal, page: sh.page }); return; }
-      if (sh.endedBy === "stopped") { sh.problem = "nesting was stopped here"; CN.renderCard(sh); stop(`${sheetName(sh)} was stopped`, "", { metal: sh.metal, page: sh.page }); return; }
+      if (err?.sheetPending) { /* Keep the local hold while other sheets finish. */ }
+      else if (["complete", "partial"].includes(sh.status) && sh.verification && !sh.verification.ok) holdSheet(r,sh,"Verification flagged — open the report");
+      else if (sh.endedBy === "stopped") holdSheet(r,sh,"This sheet was stopped; retry it when ready");
+      else if(!sh.runHold && sh.verification?.ok && sh.fileBase){delete (r.sheetHolds||{})[sh.sheetId || sh.metal+"-"+sh.page];}
       save(r).catch(() => {});
     }
-    if (!waiter || waiter.r !== r) return;
-    const pages = allSheets().filter(pg => pg.runId === r.runId && Gate.nestable(pg, r) && pg.charms.some(c => c.poolId && !c.excluded));
-    const busy = pages.some(pg => ["nesting", "finishing", "queued", "ready", "idle"].includes(pg.status) || pg.dirty || (pg.persisted && !pg.persistedDone));
-    for (const pg of pages) if (pg.persisted && !pg.persistedDone) pg.persisted.then(() => { pg.persistedDone = true; onSheetDone(null); }, () => { pg.persistedDone = true; onSheetDone(null); });
+    if (!waiter || waiter.r !== r) { poke(); return; }
+    const pages = allSheets().filter(pg => pg.runId === r.runId && !pg.runHold && Gate.nestable(pg, r) && pg.charms.some(c => c.poolId && !c.excluded));
+    const writes = allSheets().filter(pg => pg.runId === r.runId && pg.persisted && !pg.persistedDone);
+    const busy = writes.length || pages.some(pg => ["nesting", "finishing", "queued", "ready", "idle"].includes(pg.status) || pg.dirty);
+    for (const pg of writes) if (pg.persisted && !pg.persistedDone) pg.persisted.then(() => { pg.persistedDone = true; onSheetDone(null); }, () => { pg.persistedDone = true; onSheetDone(null); });
     if (busy) return;
     const notWritten = pages.filter(pg => !pg.fileBase);
-    if (notWritten.length) { const one = notWritten[0]; one.problem = "not written to the cloud"; CN.renderCard(one); stop(`${notWritten.length === 1 ? sheetName(one) : notWritten.length + " sheets"} not written`, "", { metal: one.metal, page: one.page }); waiter = null; return; }
+    for(const pg of notWritten)holdSheet(r,pg,"Sheet unfinished — retry Nest when ready");
     const w = waiter; waiter = null; w.resolve();
   }
-  function waitForReview(r) {
-    return new Promise(resolve => {
-      const check = () => {
-        if (r.arrivalBusy) return;
-        if (Arrivals.state().pending && S.settings.runMode === "auto") { r.status = "review"; Arrivals.processPending().catch(e => stop(e.message, "Resume after fixing intake.")); return; }
-        const open = [...Engrave.items().values()].filter(j => (!Gate.modern() || Pool.sheetOf(j.copies[0])) && j.row.state !== "gone" && ["words", "review", "fitting", "ready", "classify", "blocked"].includes(j.state));
-        const ready = open.filter(j => j.state === "ready" && Engrave.canFit(j) && !Engrave.isWorking(j));
-        if (ready.length) { Engrave.fitAll(r).catch(() => {}).then(() => { if (reviewWaiter === check) setTimeout(check, 50); }); return; }
-        if (!open.length) { if (r.status === "review") { r.status = "running"; save(r).catch(() => {}); } reviewWaiter = null; resolve(); return; }
-        if (r.status !== "review") { r.status = "review"; save(r).catch(() => {}); renderBanner(); notifyPerson("Charm Sorter needs a person", `${open.length} engraving item(s) await a decision`); }
-      };
-      reviewWaiter = check; check();
-    });
+  function holdSheet(r,sh,why){sh.runHold=why;sh.problem=why;(r.sheetHolds||={})[sh.sheetId || sh.metal+"-"+sh.page]=why;CN.renderCard(sh);}
+  async function deferSet(r,set,why){(r.deferredSets||={})[set.setId]=why;set.status="awaiting review";await Sets.save(set);}
+  function updatePending(r){
+    const pages=allSheets().filter(p=>p.runId===r.runId&&p.charms.length);
+    r.pendingWork={orders:Orders.rows().filter(row=>["held","waiting","pulled","pooled"].includes(row.state)).length,sheets:pages.filter(p=>p.runHold || !p.outputs || !p.verification?.ok || p.dirty).length,review:Review.count(),engraving:Engrave.pendingCount(),sets:Object.keys(r.deferredSets||{}).length,commit:!!r.awaitCommit};
+    return r.pendingWork;
   }
-  function poke() { if (reviewWaiter) setTimeout(reviewWaiter, 50); renderBanner(); LiveStrip.render(); }
+  function hasPending(r){return Object.values(r.pendingWork||{}).some(Boolean);}
+  function workSignature(r){return JSON.stringify([r.membershipRevision||0,Orders.rows().map(x=>[x.key,x.state,x.hold,x.engrave?.state,x.engrave?.approved]),[...Engrave.items().values()].map(j=>[j.key,j.state,j.approvedAt]),allSheets().filter(p=>p.runId===r.runId).map(p=>[p.sheetId,p.metal,p.page,p.status,p.dirty,p.runHold,p.placements.length,p.persistedDone])]);}
+  function continueProcessing(r,step){
+    if(r!==B.run || r.status==='stopped' || r.status==='abandoned')return;
+    r.processingComplete=false;r.status='running';r.step=step;
+    save(r).then(()=>loop()).catch(e=>stop(e.message,'Fix the cause and press Resume.'));
+  }
+  function optionsChanged(){
+    const r=B.run;if(!r || ['complete','abandoned'].includes(r.status))return;
+    r.membershipRevision=(r.membershipRevision||0)+1;r.membershipNext='nest';r.membershipDirty=true;r.commitRequested=false;
+    if(r.status==='stopped' && !['Sheet options changed','Sheet settings changed'].includes(r.stoppedBy))return;
+    if(r.status==='running'){membershipUpdated(r);loop().catch(e=>stop(e.message,'Fix the cause and press Resume.'));}
+    else {r.status='running';r.stoppedBy=null;r.fix=null;continueProcessing(r,'nest');}
+  }
+  function poke() {
+    const r=B.run;
+    if(r?.status==='processed' && !r.arrivalBusy && workSignature(r)!==r.processingSignature){
+      r.processingSignature=workSignature(r);
+      const needsNest=allSheets().some(p=>p.runId===r.runId&&!p.runHold&&Gate.nestable(p,r)&&p.charms.length&&(p.dirty||['ready','idle','queued','nesting','finishing'].includes(p.status)));
+      continueProcessing(r,needsNest?'nest':'engrave');
+    }
+    renderBanner();LiveStrip.render();
+  }
   /* Auto used to finish a set, blank the screen and refill it minutes later with no countdown anywhere — a person came
      back from the bench to an empty app and could not tell whether the shift was done or something had crashed. */
   const NEXT = { at: 0, t: 0 };
@@ -3353,11 +3388,12 @@ const RunCtl = window.RunCtl = (() => {
     Orders.unclaim([...new Set(Orders.rows().map(x => x.order.receiptId))]).catch(() => {});
     r.status = "abandoned"; save(r).catch(() => {});
   }
-  function stop(why, fix, at) { const r = B.run; if (!r) return; r.status = "stopped"; r.stoppedBy = why; r.fix = fix || null; r.at = at || null; r.errors.push({ t: Date.now(), why }); if (waiter && waiter.r === r) { const w = waiter; waiter = null; w.resolve(); } reviewWaiter = null; agent({ run: r.runId }, "warn", `Run stopped: ${why}${fix ? " — " + fix : ""}`); toast(`Run stopped: ${why}`, "bad", 8000); notifyPerson("Charm Sorter run stopped", why); save(r).catch(() => {}); renderBanner(); }
+  function stop(why, fix, at) { const r = B.run; if (!r) return; r.status = "stopped"; r.stoppedBy = why; r.fix = fix || null; r.at = at || null; r.errors.push({ t: Date.now(), why }); if (waiter && waiter.r === r) { const w = waiter; waiter = null; w.resolve(); } agent({ run: r.runId }, "warn", `Run stopped: ${why}${fix ? " — " + fix : ""}`); toast(`Run stopped: ${why}`, "bad", 8000); notifyPerson("Charm Sorter run stopped", why); save(r).catch(() => {}); renderBanner(); }
   function stopIfRunning(why, fix) { if (B.run && B.run.status === "running") stop(why, fix); }
   async function resume() {
-    const r = B.run; if (!r || !["stopped", "paused"].includes(r.status)) return;
+    const r = B.run; if (!r || !["stopped", "paused", "processed"].includes(r.status)) return;
     await Gate.upgrade(r);
+    if (r.status === "processed") { r.step = "engrave"; r.processingComplete = false; }
     if (allSheets().some(pg => pg.runId === r.runId && (pg.problem || pg.dirty || ["ready", "idle"].includes(pg.status)) && pg.charms.length)) {
       r.step = "nest"; for (const pg of allSheets()) if (pg.runId === r.runId && pg.problem) sheetDirty(pg);
     }
@@ -3370,16 +3406,16 @@ const RunCtl = window.RunCtl = (() => {
   function membershipUpdated(r) {
     if(r!==B.run)return;
     if(r.step==='nest' && r.status==='running'){
-      for(const pg of allSheets().filter(p=>p.runId===r.runId && Gate.nestable(p,r) && p.charms.length && ['ready','idle'].includes(p.status)))startNest(pg);
+      for(const pg of allSheets().filter(p=>p.runId===r.runId && !p.runHold && Gate.nestable(p,r) && p.charms.length && ['ready','idle'].includes(p.status)))startNest(pg);
       onSheetDone(null);
     }
-    if((r.status==='paused' && r.awaitCommit) || (r.status==='stopped' && r.stoppedBy==='Sheet options changed')){
+    if(r.status==='processed' || (r.status==='paused' && r.awaitCommit) || (r.status==='stopped' && r.stoppedBy==='Sheet options changed')){
       r.awaitCommit=false;r.status='running';r.stoppedBy=null;r.fix=null;r.step=r.membershipNext || 'engrave';delete r.membershipNext;
       save(r).then(()=>loop()).catch(e=>stop(e.message,'Retry after fixing the cause.'));
     }
     poke();
   }
-  async function commitNow() { const r = B.run; if (!r) return; r.commitRequested = true; r.awaitCommit = false; if (r.status === "paused") { r.status = "running"; await save(r); loop().catch(e => stop(e.message, "Fix the cause and press Resume.")); } }
+  async function commitNow() { const r = B.run; if (!r) return; r.commitRequested = true; r.awaitCommit = false; if (["paused","processed"].includes(r.status)) { r.status = "running"; r.processingComplete=false;r.step="labels"; await save(r); loop().catch(e => stop(e.message, "Fix the cause and press Resume.")); } }
   /** Resume a run from its record after a reload or a crash: at or before pool → start over from pull (pool ids are deterministic); later → the set's sheets are restored from their records first. */
   async function pickResume() {
     if (!S.cloud.ok) { toast("Cloud offline — nothing to resume", "bad"); return; }
@@ -3401,6 +3437,7 @@ const RunCtl = window.RunCtl = (() => {
   }
   async function resumeRun(runId) {
     const rr = await api("charmNestLibrary", { op: "runGet", runId }); const rec = rr.run; if (!rec) { toast("Run record not found", "bad"); return; }
+    if (rec.status === "processed") { rec.step = "engrave"; rec.processingComplete = false; }
     B.run = rec; rec.status = "running"; rec.stoppedBy = null; rec.fix = null;
     agent({ run: runId }, "DS", `Resuming ${runId} at step ${rec.step}`);
     if (O.stepIndex(rec.step) <= O.stepIndex("pool")) { rec.step = "pull"; }
@@ -3427,7 +3464,7 @@ const RunCtl = window.RunCtl = (() => {
     const sets = [];
     for (const sid of setIds) {
       const sr = await api("charmNestLibrary", { op: "setGet", setId: sid }); const sd = sr.set; if (!sd) continue;
-      const set = { setId: sd.setId, seq: sd.seq, day: sd.day, runId: rec.runId, group: sd.group || null, name: sd.name || O.setLabel(sd.seq), folder: sd.folder || O.setFolder(sd.day, sd.seq), orders: Object.fromEntries(Object.entries(sd.orders || {}).map(([rid, o]) => [rid, { held: o.held || null, lines: Object.fromEntries((o.lines || []).map(l => [l.transactionId, l])) }])), sheetIds: sd.sheetIds || [], materials: sd.materials || [], labelFiles: sd.labelFiles || [], labels: sd.labels || null, status: sd.status || "open", committed: sd.committed || null, refused: sd.refused || null, backCount: sd.backCount || 0 };
+      const set = { setId: sd.setId, seq: sd.seq, day: sd.day, runId: rec.runId, group: sd.group || null, name: sd.name || O.setLabel(sd.seq), folder: sd.folder || O.setFolder(sd.day, sd.seq), orders: Object.fromEntries(Object.entries(sd.orders || {}).map(([rid, o]) => [rid, { held: o.held || null, lines: Object.fromEntries((o.lines || []).map(l => [l.transactionId, l])) }])), sheetIds: sd.sheetIds || [], materials: sd.materials || [], labelFiles: sd.labelFiles || [], labels: sd.labels || null, status: sd.status || "open", committedAt: sd.committedAt || null, completedAt: sd.completedAt || null, completionDay: sd.completionDay || null, committed: sd.committed || null, refused: sd.refused || null, backCount: sd.backCount || 0 };
       set.committedAt = sd.committedAt || null; set.completedAt = sd.completedAt || null; set.completionDay = sd.completionDay || null;
       Sets.byRun().set(Sets.keyOf(rec.runId, set.group), set); sets.push(set);
     }
@@ -3475,7 +3512,7 @@ const RunCtl = window.RunCtl = (() => {
   }
   function onComplete(r) {
     agent({ run: r.runId }, "ok", `Run ${r.runId} complete: ${(r.committed || []).length} order(s) committed · ${Object.keys(r.holds || {}).length} held · ${(r.refused || []).length} refused`);
-    toast(r.nothingToCut ? "Working sheets saved — held until eligible for a set" : `Set complete — ${(r.committed || []).length} order(s) marked design-complete`, "ok", 7000); ding && ding();
+    toast(r.status==="processed" ? "Processing complete — pending items remain available for follow-up" : r.nothingToCut ? "Working sheets saved — held until eligible for a set" : `Set complete — ${(r.committed || []).length} order(s) marked design-complete`, "ok", 7000); ding && ding();
     Arrivals.start();
   }
   /** After a set is done: clear the cards and pooled lines so the next run starts clean (files and records are kept). */
@@ -3487,8 +3524,8 @@ const RunCtl = window.RunCtl = (() => {
     for (const m of METALS) { const prim = S.sheets[m.key]; if (prim.pages.some(p => p.runId || p.recalled || p.charms.some(c => c.poolId))) { for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms = pg.charms.filter(c => !c.poolId); pg.sheetId = null; pg.fileBase = null; pg.setId = null; pg.runId = null; pg.seq = null; pg.setDay = null; pg.cardStartedAt = null; pg.sheetIndex = null; pg.group = null; pg.draft = false; pg.releaseFull = false; pg.isolated = false; pg.backPool = []; pg.backOutputs = null; pg.label = null; pg.cloud = null; pg.persisted = null; pg.recalled = null; } prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim); } } B.orders.rows = []; B.orders.byKey = new Map(); B.engrave.items = new Map(); B.review.items = []; B.pool.rows = new Map(); B.run = null; B.orders.recalled = null; B.orders.pulledAt = null; B.orders.filtered = 0; B.orders.stale = false; Object.assign(Recall.state(), { runId: null, setId: null, live: null }); Orders.render(); Engrave.render(); Review.render(); renderBanner(); renderRail(); updateTopSub(); }
   function setRunMode(mode) {
     S.settings.runMode = mode === "auto" ? "auto" : "manual"; saveSettings(); renderModeBtn();
-    if (mode === "auto") { agent({ bridge: true }, "DS", "Auto mode on: the sorter pulls the latest orders by the date rule and runs the whole process, stopping only for a person"); if (!B.run || B.run.status === "complete") { if (B.run && B.run.status === "complete") clearRunState(); start({ mode: "auto" }).catch(e => toast(e.message, "bad")); } else if (B.run.status === "stopped") { B.run.mode = "auto"; resume().catch(e => toast(e.message, "bad")); } else if (B.run.status === "paused") { B.run.mode = "auto"; next(); } else B.run.mode = "auto"; }
-    else { clearTimeout(autoTimer); if (B.run) B.run.mode = "manual"; agent({ bridge: true }, "DS", "Manual mode: every step waits for a click"); }
+    if (mode === "auto") { agent({ bridge: true }, "DS", "Auto mode on: the sorter pulls the latest orders by the date rule and runs the whole process, continuing past pending approvals"); if (!B.run || B.run.status === "complete") { if (B.run && B.run.status === "complete") clearRunState(); start({ mode: "auto" }).catch(e => toast(e.message, "bad")); } else if (B.run.status === "stopped") { B.run.mode = "auto"; resume().catch(e => toast(e.message, "bad")); } else if (B.run.status === "paused") { B.run.mode = "auto"; next(); } else B.run.mode = "auto"; }
+    else { clearTimeout(autoTimer); if (B.run) B.run.mode = "manual"; agent({ bridge: true }, "DS", "Manual mode: finish processing; start the next run manually"); }
     renderBanner();
   }
   function renderModeBtn() { const b = document.getElementById("btnRunMode"); if (!b) return; const auto = S.settings.runMode === "auto"; b.classList.toggle("auto", auto); document.getElementById("runModeText").textContent = auto ? "Auto" : "Manual"; }
@@ -3529,12 +3566,12 @@ const RunCtl = window.RunCtl = (() => {
       // nothing is running, so there is nothing to report: the banner is not a place to advertise from
       h.classList.add("hidden"); Dock.schedule(); return;
     }
-    h.classList.remove("hidden"); h.className = "runBanner" + (r.status === "stopped" ? " stopped" : r.status === "complete" ? " done" : r.status === "review" ? " review" : "");
+    h.classList.remove("hidden"); h.className = "runBanner" + (r.status === "stopped" ? " stopped" : r.status === "complete" ? " done" : ["review","processed"].includes(r.status) ? " review" : "");
     const idx = O.stepIndex(r.step);
     const reviewN = Review.count(), engN = Engrave.pendingCount();
     const waitingFor = [reviewN ? `${reviewN} in Review` : "", engN ? `${engN} in Engraving` : ""].filter(Boolean).join(" · ") || "nothing";
     const saveWarning = r.saveError ? `<span class="bad">Not saved online: ${esc(r.saveError)}</span> · ` : "";
-    const why = saveWarning + (r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${r.fix ? ` — <span>${esc(r.fix)}</span>` : ""}` : r.status === "review" ? `<b>Waiting for a person:</b> ${waitingFor}` : r.status === "paused" ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(STEP_WORDS[r.step] || r.step)}</b>${esc(stepDetail(r))}`);
+    const why = saveWarning + (r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${r.fix ? ` — <span>${esc(r.fix)}</span>` : ""}` : r.status === "review" ? `<b>Waiting for a person:</b> ${waitingFor}` : r.status === "processed" ? `<b>Processing complete</b> · ${waitingFor === "nothing" ? "pending sheets or release" : waitingFor}${r.awaitCommit ? " · commit when ready" : ""}` : r.status === "paused" ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(STEP_WORDS[r.step] || r.step)}</b>${esc(stepDetail(r))}`);
     Dock.schedule();
     h.title = `run ${r.runId}`;
     /* Which run is this? Three cards on the Nest tab and a banner that named only a step left no way to tell this
@@ -3544,7 +3581,7 @@ const RunCtl = window.RunCtl = (() => {
     const who = [seqOf(r) ? `Set ${seqOf(r)}` : "", r.day ? new Date(r.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "",
       `${Object.keys(r.lines || {}).length || Orders.rows().filter(x => x.state !== "gone").length} lines`, nSheets ? `${nSheets} sheet${nSheets === 1 ? "" : "s"}` : ""].filter(Boolean).join(" \u00b7 ");
     h.innerHTML = `<button type="button" class="rid" title="run ${esc(r.runId)}${r.setId ? " \u00b7 set " + esc(r.setId) : ""}">${esc([seqOf(r) ? `Set ${seqOf(r)}` : "", r.day ? new Date(r.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "", nSheets ? `${nSheets} sheets` : ""].filter(Boolean).join(" · "))}</button><span class="why">${why}</span><span class="spacer"></span><span class="acts">
-      ${r.status === "paused" && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${r.status === "stopped" && /sign/i.test(r.stoppedBy || "") ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${r.status === "stopped" ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at">Resume</button>` : ""}${["running", "review", "paused"].includes(r.status) ? `<button class="btn ghost sm" id="rbStop" title="stop after the step in progress — the run can be resumed from where it stopped">Stop</button>` : ""}${r.status === "complete" ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}<details class="runMenu" id="runMenu"${menuWasOpen ? " open" : ""}><summary id="runMenuToggle" aria-label="Run options" title="Run options">⋯</summary><div class="runMenuBody"><div class="runDetail"><b>${esc(who)}</b><small>${esc(r.runId)}</small>${why}</div>
+      ${["paused","processed"].includes(r.status) && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${r.status === "stopped" && /sign/i.test(r.stoppedBy || "") ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${["stopped","processed"].includes(r.status) ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at">${r.status === "processed" ? "Retry pending" : "Resume"}</button>` : ""}${["running", "review", "paused"].includes(r.status) ? `<button class="btn ghost sm" id="rbStop" title="stop after the step in progress — the run can be resumed from where it stopped">Stop</button>` : ""}${r.status === "complete" ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}<details class="runMenu" id="runMenu"${menuWasOpen ? " open" : ""}><summary id="runMenuToggle" aria-label="Run options" title="Run options">⋯</summary><div class="runMenuBody"><div class="runDetail"><b>${esc(who)}</b><small>${esc(r.runId)}</small>${why}</div>
       ${r.at ? `<button class="btn ghost sm" id="rbAt">Show the sheet</button>` : ""}<button class="btn ghost sm" id="rbHistory">Run history…</button>
       ${r.status !== "complete" ? `<button class="btn ghost sm" id="rbAbandon" title="Saved sheets and files are kept">Abandon run…</button>` : ""}</div></details></span>`;
     const q = id => h.querySelector("#" + id);
@@ -3562,7 +3599,7 @@ const RunCtl = window.RunCtl = (() => {
     };
     Orders.render();
   }
-  return { membershipUpdated, start, next, resume, stop, stopIfRunning, poke, save, onSheetDone, pickResume, resumeRun, restoreRunSheets, commitNow, setMode: setRunMode, setRunMode, renderBanner, renderModeBtn, clearRunState, run };
+  return { optionsChanged, membershipUpdated, start, next, resume, stop, stopIfRunning, poke, save, onSheetDone, pickResume, resumeRun, restoreRunSheets, commitNow, setMode: setRunMode, setRunMode, renderBanner, renderModeBtn, clearRunState, run };
 })();
 
 /* ═══ 24 · Review — every decision a person must make ═════════════════════ */
@@ -4123,7 +4160,7 @@ const RunHistory = window.RunHistory = (() => {
     H.loading = false; render();
   }
   const dayWord = d => d ? new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "";
-  const STATUS = { complete: ["ok", "finished"], running: ["warn", "running"], review: ["warn", "waiting for a person"], paused: ["warn", "paused"], stopped: ["bad", "stopped"], abandoned: ["neutral", "given up"] };
+  const STATUS = { processed: ["warn", "processing complete · follow-up"], complete: ["ok", "finished"], running: ["warn", "running"], review: ["warn", "waiting for a person"], paused: ["warn", "paused"], stopped: ["bad", "stopped"], abandoned: ["neutral", "given up"] };
   function render() {
     const b = H.dlg && H.dlg.querySelector("#hBody"); if (!b) return;
     const f = H.dlg.querySelector("#hFoot");
@@ -4547,7 +4584,7 @@ const Arrivals = window.Arrivals = (() => {
     const r = B.run;
     if (!r || ["complete", "abandoned"].includes(r.status)) { state.pending = false; save(); await RunCtl.start({ mode: "auto" }); return; }
     // Never alter the data while a run is producing labels or committing, nor revive an operator-stopped run.
-    if (r.status !== "review" || r.step !== "engrave" || r.arrivalBusy) return;
+    if (!((r.status === "review" && r.step === "engrave") || r.status === "processed") || r.arrivalBusy) return;
     state.pending = false; save(); r.arrivalBusy = true;
     try {
       await Orders.claim([...new Set(Orders.rows().filter(x => x.state === "pulled").map(x => x.order.receiptId))]);
@@ -4635,11 +4672,14 @@ const LiveNest = window.LiveNest = (() => {
       const pages = pagesOf(m).filter(p => p.runId === run.runId);
       const all = [...new Map(pages.flatMap(p => p.charms).map(c => [c.poolId || c.id, c])).values()];
       if (!all.some(c => c.poolId && !before.has(c.poolId)) && !pages.some(p => !p.fileBase && p.charms.length)) continue;
+      if (pages.length > 1 && all.some(c => c.pinned && !c.arrivalPin)) {
+        for (const p of pages) RunCtl.onSheetDone(p, Object.assign(new Error("Unpin manually locked pieces before re-optimizing these sheets"), {sheetPending:true}));
+        continue;
+      }
       const near = all.reduce((n, c) => n + inflatedArea(c), 0) >= usableArea(pg) * (+S.settings.maxFill || 0.74) * (+S.settings.optimizeAt || 85) / 100;
       const pins = previousPlacements;
       for (const c of all) {
         const pl = pins.get(c.id);
-        if (pages.length > 1 && c.pinned && !c.arrivalPin) throw new Error("Unpin manually locked pieces before re-optimizing multiple sheets");
         // Repacking the full queue is required when a later sheet already exists: its older orders get first refusal.
         if (!near && pages.length === 1 && pl && !c.pinned && !all.some(x => (x.orderDate || 0) < (c.orderDate || 0) && !before.has(x.poolId))) { c.pinned = { cxPt: pl.cxPt, cyPt: pl.cyPt, angle: pl.angle }; c.arrivalPin = true; }
         else if (c.arrivalPin) { c.pinned = null; delete c.arrivalPin; }
@@ -4670,14 +4710,13 @@ const LiveNest = window.LiveNest = (() => {
     if(window.CharmNestOperations)await window.CharmNestOperations.run({key:'intake:'+run.runId,label:'Adding incoming orders',resources:['production:'+run.runId]},prepare);else await prepare();
     // Never advance to labels/commit until all overflow sheets and all cloud writes have finished.
     while (true) {
-      const pages = allSheets().filter(p => p.runId === run.runId && Gate.nestable(p, run) && p.charms.length);
+      const pages = allSheets().filter(p => p.runId === run.runId && !p.runHold && Gate.nestable(p, run) && p.charms.length);
       for (const p of pages) if (p.persisted && !p.persistedDone) await p.persisted.then(() => { p.persistedDone = true; });
       if (run.status === "stopped") throw new Error(run.stoppedBy || "run stopped");
       if (!pages.some(p => ["nesting", "finishing", "queued"].includes(p.status) || p.dirty || (p.persisted && !p.persistedDone))) break;
       await sleep(250);
     }
     await finish(run);
-    if (allSheets().some(p => p.runId === run.runId && p.problem)) throw new Error("A sheet needs attention before intake can finish");
   }
   // Also called at the normal checkpoint after refresh, so a crash cannot leave obsolete sheets or backs in the set.
   async function finish(run) {
