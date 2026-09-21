@@ -270,6 +270,13 @@
    *   onStage(stage, done, total)  onPlaced(placement, trial)  onReject(id, trial)
    *   onTrial(summary)  onBest(layout)  shouldStop()  yield()  (async, lets a stop arrive)
    */
+  // Search records own every rotation mask. Only layout data may leave the
+  // solver: cloning the records for previews/checkpoints multiplies that memory.
+  function publicLayout(layout) {
+    if (!layout) return layout;
+    const { grids, rec, ...out } = layout;
+    return out;
+  }
   async function solve(job, cb) {
     cb = cb || {};
     const t0 = now();
@@ -634,6 +641,13 @@
 
       // A budget/stop during a trial must not make the unvisited pieces disappear.
       for (const p of prepared) if (!placements.some(pl => pl.id === p.id) && !rejects.includes(p.id)) rejects.push(p.id);
+      // A deadline can interrupt an order before its remaining pieces are even
+      // tried. Remove incomplete orders BEFORE comparing/publishing this trial;
+      // otherwise final cleanup can turn the selected "best" into a worse one.
+      for (const id of rejects.slice()) {
+        const p = prepared.find(p => p.id === id);
+        if (p) dropOrder(p, "unfinished");
+      }
       // Pinned pieces are placed first geometrically, but younger orders must not bypass an older rejection.
       if (fifo && rejects.length) {
         const cutoff = Math.min(...rejects.map(id => rank.get(prepared.find(p => p.id === id).order)));
@@ -1079,5 +1093,5 @@
     const overlap = off ? null : grid.overlap(v.fine.pm, x0, y0, 1e9);
     return { ok: false, x: x0, y: y0, off, overlapPt2: overlap == null ? null : overlap / (res * res) };
   }
-  return { solve, verify, contactAt, placementAt, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine };
+  return { solve, publicLayout, verify, contactAt, placementAt, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine };
 });

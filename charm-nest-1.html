@@ -1370,8 +1370,8 @@ const DEFAULTS = {
   rail: "md",
   stock: { gold: [100 / 25.4, 50 / 25.4], silver: [100 / 25.4, 50 / 25.4], rose: [100 / 25.4, 50 / 25.4], gold10k: [100 / 25.4, 50 / 25.4], gold14k: [100 / 25.4, 50 / 25.4] },
   nestFlow: "standard", learnedBudgetS: 600, learnedStallS: 300,
-  clearancePt: -0.5, insetPt: 1.5, angleStep: 2, budgetS: 180, seed: 1, freshSeed: true, serverAbove: 0, parallel: 0,
-  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", packingAI: "on", aiRounds: 10, snapIn: 0.25, maxFill: 0.74, orderView: "cards", v: 20,
+  clearancePt: -0.5, insetPt: 1.5, angleStep: 10, budgetS: 180, seed: 1, freshSeed: true, serverAbove: 0, parallel: 0,
+  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", packingAI: "on", aiRounds: 10, snapIn: 0.25, maxFill: 0.74, orderView: "cards", v: 21,
   // Design Station bridge, orders, run (design doc §14)
   dsOrigin: "https://design-1.goldenspike.app", heartbeatS: 5, heartbeatMiss: 3, autoCommit: "on", runMode: "manual", pullMode: "all", pullDueBy: "", pullCount: 40, autoEvery: 0, pollOrders: "on", pollMinutes: 10, optimizeAt: 85, etsyHourlyCap: 600, sandbox: "off",
   skuPattern: "^[A-Z0-9][A-Z0-9 _.,'&()+\\-]{1,60}$", labelGapMm: 6.4, masterServerAbove: 0, sizeMinMm: 3, sizeMaxMm: 60,
@@ -1454,8 +1454,8 @@ function loadSettings() {
     if ((saved.v || 1) < 17) { if (+saved.angleStep > 30) saved.angleStep = 30; saved.v = 17; }
     if ((saved.v || 1) < 18) { if (+saved.engraveMarginMm === 0.8) saved.engraveMarginMm = 0.3; saved.v = 18; }   // v18: the words run close to the edge, as the shop engraves them   // v17: four angles packed the shop's sheets ten pieces short; twelve is the floor   // v14: the ten-minute ceiling the 81-piece sheets were nested under, back — three minutes left twenty pieces for a second sheet
     if ((saved.v || 1) < 11) { if (!saved.skuPattern || saved.skuPattern === "^[A-Z]{2,4}-[A-Z0-9]{2,6}(-[A-Z0-9]{1,4})?$") saved.skuPattern = DEFAULTS.skuPattern; if (saved.masterServerAbove == null || +saved.masterServerAbove === 300) saved.masterServerAbove = 0; saved.v = 11; }   // v11: SKUs are free text; masters index in the tab (the server route has 1 GB)
-    // v20: use every 2° by default; explicit later speed choices remain available.
-    if ((saved.v || 1) < 20) { saved.angleStep = 2; saved.v = 20; }
+    // v21: return existing workspaces to Paul's requested 10° search.
+    if ((saved.v || 1) < 21) { saved.angleStep = 10; saved.v = 21; }
     if (![2,5,10].includes(+saved.angleStep)) saved.angleStep = DEFAULTS.angleStep;
     const out = Object.assign({}, DEFAULTS, saved); out.stock = Object.assign({}, DEFAULTS.stock, saved.stock || {}); return out;
   } catch (_) { return Object.assign({}, DEFAULTS, { v: 2 }); }
@@ -1466,7 +1466,7 @@ function stockFor(metal) {
   const inches = (p && p.id !== "custom" && !["gold10k", "gold14k"].includes(metal)) ? [p.w, p.h] : (S.settings.stock[metal] || DEFAULTS.stock[metal]);
   return { wIn: inches[0], hIn: inches[1], wPt: inches[0] * PT_PER_IN, hPt: inches[1] * PT_PER_IN };
 }
-function angleSet() { const st = [2,5,10].includes(+S.settings.angleStep) ? +S.settings.angleStep : 2; const a = []; for (let d = 0; d < 360; d += st) a.push(d); return a; }
+function angleSet() { const st = [2,5,10].includes(+S.settings.angleStep) ? +S.settings.angleStep : 10; const a = []; for (let d = 0; d < 360; d += st) a.push(d); return a; }
 
 /* ═══ 3 · cloud client ══════════════════════════════════════════════════ */
 /** Read a response while saying how much has arrived. A long answer (the charm library is over a megabyte) then shows
@@ -2155,15 +2155,15 @@ function computeSaturation(sh) {
 /* ═══ 9 · nesting ═══════════════════════════════════════════════════════ */
 function parallelCount() {
   const want = +S.settings.parallel || 0, cores = navigator.hardwareConcurrency || 2;
-  // 180 angle masks per piece consume five times the memory of the 36-angle
-  // search. Scale automatic concurrency rather than multiplying that per core.
-  const auto = Math.max(1, Math.floor((cores-1)*Math.min(1,36/angleSet().length)));
+  // Each worker owns its rotation masks; CPU count is not a memory allowance.
+  const auto = angleSet().length >= 72 ? 1 : Math.min(2, Math.max(1, cores - 1));
   return Math.max(1, Math.min(16, want || auto));
 }
 function ensureWorker(sh) { return ensureWorkers(sh, 1)[0]; }
 /** A pool of identical workers; each search runs on its own seed. */
 function ensureWorkers(sh, n) {
   sh.workers = sh.workers || [];
+  for (const w of sh.workers.splice(n)) w.terminate();
   while (sh.workers.length < n) {
     const idx = sh.workers.length;
     const w = new Worker("charm-nest-worker.js");
@@ -2288,9 +2288,10 @@ function startNestReady(sh, context) {
   }
   const items = activeCharms(sh);
   if (!items.length) { toast(`${labelOf(sh.metal)}: nothing to nest`, ""); return; }
-  const cores = navigator.hardwareConcurrency || 2;
-  const running = allSheets().filter(s => s.status === "nesting").length;
-  if ((cores < 4 || S.settings.nestFlow === "learned" || allSheets().some(s => s.status === "nesting" && s.nestFlow === "learned")) && running >= 1) { if (!S.nestQueue.includes(sh)) S.nestQueue.push(sh); sh.status = "queued"; sh.stage = `Queued — waiting for ${labelOf(allSheets().find(s => s.status === "nesting").metal)}`; renderCard(sh); return; }
+  const running = allSheets().filter(s => ["nesting", "finishing"].includes(s.status));
+  // Rotation searches share a browser-wide memory budget across material cards.
+  // Counting finishing sheets also leaves room for verification and export.
+  if (running.length) { if (!S.nestQueue.includes(sh)) S.nestQueue.push(sh); sh.status = "queued"; sh.stage = `Queued — waiting for ${labelOf(running[0].metal)}`; renderCard(sh); return; }
   if (S.settings.notify === "on" && "Notification" in window && Notification.permission === "default") Notification.requestPermission().catch(() => {});
   /* A saved sheet that is nested again used to get a fresh id and, with the same set and index, the same file name —
      two records called GF_Sep.17.26_Set-1_Sheet-1, one of them stale. Once a sheet has a name it keeps its identity:
@@ -2438,6 +2439,7 @@ function onWorkerMessage(sh, m, idx) {
   if (m.type === "stage" && (m.stage === "prepare" ? idx !== 0 : idx !== leader)) return;   // one voice for the pool: only the leading search narrates
   if (m.type === "trial") { pool.trials[idx] = m.summary.trial + 1; m.summary = Object.assign({}, m.summary, { trial: pool.trials.reduce((a, b) => a + b, 0) - 1, worker: idx }); }
   if (m.type === "best") {
+    m.best = CharmNestSolver.publicLayout(m.best);
     if (sh.nestFlow === "learned" && idx === 1) {
       const { grids, rec, ...layout } = m.best;
       sh.workers[0].postMessage({ type: "incumbent", jobId: sh.jobId + ":0", layout });
@@ -2462,7 +2464,14 @@ function onWorkerMessage(sh, m, idx) {
     if (pool.done < pool.n) return;
     const results = pool.results.filter(Boolean);
     if (!results.length) { pool.finished = true; finishNest(sh, { error: (pool.errors || ["No search returned a layout"]).join("; ") }); return; }
-    const pick = results.reduce((a, b) => CharmNestSolver.betterLayout(b, a, stockFor(sh.metal)) ? b : a, null);
+    let pick = results.reduce((a, b) => CharmNestSolver.betterLayout(b, a, stockFor(sh.metal)) ? b : a, null);
+    // Completion is a candidate, not permission to replace the best layout
+    // already received. Preserve its worker's parameters and the ending reason.
+    if (sh.best && CharmNestSolver.betterLayout(sh.best, pick, stockFor(sh.metal))) {
+      const completed = pool.results[sh.bestWorker] || pick;
+      pick = { ...completed, ...CharmNestSolver.publicLayout(sh.best), endedBy: completed.endedBy, trials: completed.trials, elapsedMs: completed.elapsedMs, params: sh.best.params || completed.params, retainedBest: true };
+    }
+    sh.best = CharmNestSolver.publicLayout(pick);
     if (sh.nestFlow === "learned") {
       const source = pick.params?.engine === "learned" ? "learned refinement" : "standard challenger";
       const learned = results.find(r => r.params?.engine === "learned");
@@ -2557,6 +2566,9 @@ async function startServerNest(sh, job) {
 }
 
 async function finishNest(sh, { result, error }) {
+  // Release the search heaps before PDF export and verification allocate theirs.
+  for (const w of sh.workers || []) w.terminate();
+  sh.workers = []; sh.worker = null;
   const items = activeCharms(sh); const byId = new Map(items.map(c => [c.id, c]));
   if (error && sh._beforeLearned) { Object.assign(sh, sh._beforeLearned); sh._beforeLearned = null; drawPreview(sh); }
   if (error) { sh.status = sh.outputs ? "partial" : items.length ? "ready" : "idle"; sh.stage = ""; log(sh, "error: " + error); toast(`${labelOf(sh.metal)}: nesting failed — ${error}`, "bad", 6000); renderCard(sh); pumpNestQueue(); if (window.RunCtl) RunCtl.onSheetDone(sh, new Error(error)); return; }
@@ -2647,7 +2659,7 @@ async function finishNest(sh, { result, error }) {
   }
   pumpNestQueue();
 }
-function pumpNestQueue() { const next = S.nestQueue.shift(); if (next && next.status === "queued") { next.status = "ready"; startNest(next); } }
+function pumpNestQueue() { while (S.nestQueue.length) { const next = S.nestQueue.shift(); if (next.status === "queued") { next.status = "ready"; startNest(next); return; } } }
 const endedText = e => ({ plateau: "paused — no additional pieces during the improvement window", "model-unavailable": "model unavailable — verified baseline retained", complete: "all pieces placed", budget: "time ceiling", stalled: "settled — nothing better for a minute", stopped: "operator stop", trials: "restart cap", cap: "fill ceiling reached", rounds: "planning-round cap", "claude-full": "Claude judged the sheet full" }[e] || e);
 function buildReport(sh, result, items) {
   const byId = new Map(items.map(c => [c.id, c])); const st = stockFor(sh.metal);
@@ -3357,7 +3369,7 @@ function readSettings() {
   const s = S.settings, previousGeometry = JSON.stringify([s.stock,s.clearancePt,s.insetPt,s.maxFill]);
   s.rail = $("#railSeg button.on")?.dataset.v || "md";
   for (const m of METALS) s.stock[m.key] = [(+$(`#st${cap(m.key)}W`).value / 25.4) || DEFAULTS.stock[m.key][0], (+$(`#st${cap(m.key)}H`).value / 25.4) || DEFAULTS.stock[m.key][1]];
-  s.clearancePt = Math.max(-2, Math.min(12, Math.round((+$("#stClearance").value || 0) / MM_PER_PT * 100) / 100)); s.insetPt = Math.max(0, Math.round((+$("#stInset").value || 0) / MM_PER_PT * 100) / 100); s.angleStep = [2,5,10].includes(+$("#stAngle").value) ? +$("#stAngle").value : 2; s.budgetS = Math.max(10, +$("#stBudget").value || 180); s.parallel = Math.max(0, Math.min(16, Math.round(+$("#stParallel").value || 0))); s.seed = Math.max(1, Math.round(+$("#stSeed").value || 1)); s.freshSeed = $("#stFreshSeed").checked; s.serverAbove = Math.max(0, +$("#stServerAbove").value || 0);
+  s.clearancePt = Math.max(-2, Math.min(12, Math.round((+$("#stClearance").value || 0) / MM_PER_PT * 100) / 100)); s.insetPt = Math.max(0, Math.round((+$("#stInset").value || 0) / MM_PER_PT * 100) / 100); s.angleStep = [2,5,10].includes(+$("#stAngle").value) ? +$("#stAngle").value : 10; s.budgetS = Math.max(10, +$("#stBudget").value || 180); s.parallel = Math.max(0, Math.min(16, Math.round(+$("#stParallel").value || 0))); s.seed = Math.max(1, Math.round(+$("#stSeed").value || 1)); s.freshSeed = $("#stFreshSeed").checked; s.serverAbove = Math.max(0, +$("#stServerAbove").value || 0);
   s.pollOrders = $("#stPollOrders").value; s.pollMinutes = Math.max(5, Math.min(1440, +$("#stPollMinutes").value || 10)); s.optimizeAt = Math.max(50, Math.min(100, +$("#stOptimizeAt").value || 85));
   s.dsOrigin = ($("#stDsOrigin").value || DEFAULTS.dsOrigin).trim().replace(/\/+$/, ""); s.heartbeatS = Math.max(2, Math.min(60, +$("#stHeartbeatS").value || 5)); s.heartbeatMiss = Math.max(1, Math.min(10, Math.round(+$("#stHeartbeatMiss").value || 3))); s.autoCommit = $("#stAutoCommit").value; s.cadenceDays = Math.max(1, Math.min(14, Math.round(+$("#stCadenceDays").value || 2))); s.lateDays = Math.max(0, Math.min(14, Math.round(+$("#stLateDays").value ?? 2))); s.pullMode = $("#stPullMode").value; s.pullDueBy = $("#stPullDueBy").value || ""; s.pullCount = Math.max(1, Math.min(500, Math.round(+$("#stPullCount").value || 40))); s.autoEvery = Math.max(0, Math.min(1440, Math.round(+$("#stAutoEvery").value || 0))); if (s.autoEvery > 0 && s.autoEvery < 5) s.autoEvery = 5; s.etsyHourlyCap = Math.max(50, Math.min(5000, Math.round(+$("#stEtsyCap").value || 600))); { const was = s.sandbox === "on"; s.sandbox = $("#stSandbox").value === "on" ? "on" : "off"; if (was !== (s.sandbox === "on")) { saveSettings(); toast(`Sandbox ${s.sandbox === "on" ? "ON" : "off"} — reloading`, "ok", 3000); setTimeout(() => location.reload(), 600); } }
   try { new RegExp($("#stSkuPattern").value); s.skuPattern = $("#stSkuPattern").value.trim() || DEFAULTS.skuPattern; } catch (_) { toast("SKU pattern is not a valid regular expression — kept the previous one", "bad"); }

@@ -8,11 +8,11 @@ const evaluate = (c, code) => vm.runInContext(code, c);
   evaluate(c, `
     const finishes=[], messages=[], S={settings:{packingAI:'on',maxFill:.74},cloud:{ok:true}};
     const activeCharms=sh=>sh.charms, agent=()=>({}), agentUpdate=()=>{}, log=()=>{}, finishNest=(sh,r)=>finishes.push(r);
-    const stockFor=()=>({wPt:100,hPt:50});
+    const stockFor=()=>({wPt:100,hPt:50}), computeSaturation=()=>{}, renderSat=()=>{}, drawPreview=()=>{}, fmt={pct:x=>String(x)};
     const sh={jobId:'a',metal:'gold',status:'nesting',charms:[{id:'old',bbox:[0,0,4,4],members:[],widthPt:4,heightPt:4},{id:'new',bbox:[0,0,5,5],members:[],widthPt:5,heightPt:5}],placements:[],pool:{n:2,done:0,results:[],trials:[1,1],winner:null},workers:[0,1].map(i=>({postMessage:m=>messages.push({i,...m})}))};
     const short={placements:[{id:'old'}],rejects:['new'],density:.4,endedBy:'stalled'};
     const full={placements:[{id:'old'},{id:'new'}],rejects:[],density:.7,endedBy:'complete'};
-    const reset=()=>{finishes.length=messages.length=0;sh.pool={n:2,done:0,results:[],trials:[1,1],winner:null};};
+    const reset=()=>{finishes.length=messages.length=0;sh.best=null;sh.pool={n:2,done:0,results:[],trials:[1,1],winner:null};};
   `);
   evaluate(c, section('function onWorkerMessage(', 'async function startServerNest('));
   evaluate(c, `
@@ -42,6 +42,14 @@ const evaluate = (c, code) => vm.runInContext(code, c);
     onWorkerMessage(sh,{type:'done',jobId:'a:1',result:completeCompact},1);
     assert.deepEqual(finishes[0].result.placements,completeCompact.placements);
     reset();
+    onWorkerMessage(sh,{type:'best',jobId:'a:0',best:{...completeCompact,contactQuality:2},summary:{trial:1,total:2}},0);
+    onWorkerMessage(sh,{type:'best',jobId:'a:1',best:completeWide,summary:{trial:2,total:2}},1);
+    assert.deepEqual(sh.placements,completeCompact.placements,'a later worse trial does not replace the preview incumbent');
+    onWorkerMessage(sh,{type:'done',jobId:'a:0',result:{...completeWide,endedBy:'budget',params:{seed:7}}},0);
+    onWorkerMessage(sh,{type:'done',jobId:'a:1',result:{...short,endedBy:'budget',params:{seed:8}}},1);
+    assert.deepEqual(finishes[0].result.placements,completeCompact.placements,'expiry retains the earlier best even if final worker reports regress');
+    assert.equal(finishes[0].result.params.seed,7);assert.equal(finishes[0].result.retainedBest,true);assert.equal(finishes[0].result.endedBy,'budget');
+    reset();
     let resolvePlan,calls=0,existingIds=[];
     const window={}, aiRenderSheet=()=>'', CharmNestPDF={drawSegments(){}}, document={createElement:()=>({getContext:()=>({fillRect(){},save(){},beginPath(){},rect(){},clip(){},fillText(){},restore(){}}),toDataURL:()=>''})};
     const agentCall=async(mode,payload,opts)=>{calls++;existingIds.push(opts.existingId);opts.onStarted('stored-agent');return new Promise(r=>resolvePlan=r);};
@@ -63,7 +71,7 @@ const evaluate = (c, code) => vm.runInContext(code, c);
   })()`);
 
   let capturedJob, finishSolve;const posted=[];
-  const w=vm.createContext({importScripts(){}, self:{postMessage:m=>posted.push(m)}, CharmNestSolver:{solve:async job=>{capturedJob=job;return new Promise(r=>finishSolve=r);}}});
+  const w=vm.createContext({importScripts(){}, self:{postMessage:m=>posted.push(m)}, CharmNestSolver:{publicLayout:require('../../charm-nest-solver.js').publicLayout,solve:async job=>{capturedJob=job;return new Promise(r=>finishSolve=r);}}});
   evaluate(w,fs.readFileSync(path.join(root,'charm-nest-worker.js'),'utf8'));
   const running=w.self.onmessage({data:{type:'solve',jobId:'current',job:{}}});
   await w.self.onmessage({data:{type:'packingHints',jobId:'previous',hints:{priority:['wrong']},pending:true}});
@@ -74,5 +82,24 @@ const evaluate = (c, code) => vm.runInContext(code, c);
   await w.self.onmessage({data:{type:'packingHints',jobId:'current',hints:{priority:['late']},pending:true}});
   assert.equal(capturedJob.packingHints.priority[0],'right');assert.equal(capturedJob.packingPending,false);
   finishSolve({placements:[]});await running;assert.equal(posted[0].type,'done');
+
+  const q=vm.createContext({assert});
+  evaluate(q, `
+    const window={}, S={settings:{},nestQueue:[]}, renders=[], starts=[];
+    const first={metal:'gold',status:'finishing'}, second={metal:'silver',status:'ready',charms:[{}]}, third={metal:'rose',status:'ready',charms:[{}]};
+    const allSheets=()=>[first,second,third],activeCharms=sh=>sh.charms,labelOf=x=>x,renderCard=sh=>renders.push(sh),startNest=sh=>starts.push(sh);
+    const Worker=function(){this.postMessage=()=>{};this.terminate=()=>{this.terminated=true;};};
+  `);
+  evaluate(q, section('function startNestReady(', '/* ═══ 9b'));
+  evaluate(q, section('function ensureWorker(', '/** When the first file'));
+  evaluate(q, section('function pumpNestQueue()', 'const endedText'));
+  evaluate(q, `
+    startNestReady(second);startNestReady(third);startNestReady(second);
+    assert.equal(S.nestQueue.length,2,'material cards queue once while another sheet exports');
+    S.nestQueue.unshift({status:'idle'});pumpNestQueue();
+    assert.equal(starts[0],second,'a stale queue entry cannot strand waiting sheets');
+    const old=[new Worker(),new Worker(),new Worker()], sh={workers:old.slice()};
+    assert.equal(ensureWorkers(sh,1).length,1);assert(old[1].terminated && old[2].terminated,'lower concurrency releases old workers');
+  `);
   console.log('packing runtime OK · worker failures, completion, advice caching, refresh resume, stale responses and operator stop');
 })().catch(e=>{console.error(e);process.exit(1);});

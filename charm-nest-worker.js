@@ -46,11 +46,11 @@ self.onmessage = async (e) => {
       onPlaced: (placement, info) => post({ type: "placed", placement, info }),
       onReject: (id, trial, reason) => post({ type: "reject", id, trial, reason }),
       onTrial: (summary) => post({ type: "trial", summary }),
-      onBest: (best, summary) => post({ type: "best", best, summary }),
+      onBest: (best, summary) => post({ type: "best", best: CharmNestSolver.publicLayout(best), summary }),
       onLearned: (progress) => post({ type: "learned", progress })
     });
     if (m.job.verifyResult && !CharmNestSolver.verify(m.job, result.placements, 6).ok) throw new Error("Challenger result failed high-resolution verification; retaining the verified refinement result");
-    post({ type: "done", result });
+    post({ type: "done", result: CharmNestSolver.publicLayout(result) });
   } catch (err) {
     post({ type: "error", message: String(err && err.stack || err) });
   } finally {

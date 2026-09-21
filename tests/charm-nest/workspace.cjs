@@ -6,12 +6,17 @@ const vm = require('node:vm');
 const code = fs.readFileSync(require('node:path').join(__dirname, '../../charm-nest-bridge.js'), 'utf8');
 const part = (name, end) => code.slice(code.indexOf(`const ${name} = window.${name} =`), code.indexOf(end, code.indexOf(`const ${name} = window.${name} =`)));
 // Transaction-shaped IDB adapter uses structuredClone, as real IndexedDB does.
-function indexedDB(realm = x => x) {
+function indexedDB(realm = x => x, control = {}) {
   const records = new Map();
   const db = { createObjectStore() {}, transaction() {
     const tx = { objectStore: () => ({
       get(k) { const req = {}; setImmediate(() => { req.result = realm(structuredClone(records.get(k))); tx.oncomplete(); }); return req; },
-      put(v, k) { const req = {}; const saved = structuredClone(v); setImmediate(() => { records.set(k, saved); tx.oncomplete(); }); return req; }
+      put(v, k) {
+        const req = {}; const saved = structuredClone(v); control.puts = (control.puts || 0) + 1;
+        const finish = () => setImmediate(() => { records.set(k, saved); tx.oncomplete(); });
+        if (control.hold) (control.pending ||= []).push(finish); else finish();
+        return req;
+      }
     }) }; return tx;
   } };
   return { open() { const req = {}; setImmediate(() => { req.result = db; req.onupgradeneeded(); req.onsuccess(); }); return req; } };
@@ -19,7 +24,8 @@ function indexedDB(realm = x => x) {
 function context() {
   const c = vm.createContext({ assert, console,  structuredClone, Blob, TextEncoder, performance,
     setTimeout, clearTimeout, setInterval: f => (c.tick = f, 1), clearInterval() {}, setImmediate });
-  c.indexedDB = indexedDB(x => c.rehome(x));
+  c.idbControl = {};
+  c.indexedDB = indexedDB(x => c.rehome(x), c.idbControl);
   c.rehome = vm.runInContext(`(function rehome(x, seen = new Map()) {
     if (!x || typeof x !== 'object' || ArrayBuffer.isView(x) || x instanceof Blob) return x;
     if(seen.has(x)) return seen.get(x);
@@ -64,6 +70,36 @@ function context() {
 }
 (async () => {
   const c = context();
+  await vm.runInContext(`(async()=>{
+    const bits=new Uint8Array(1024), view=new DataView(bits.buffer,4,8);
+    const data=Session.copy({a:bits,b:bits,view});
+    assert.equal(data.a,data.b,'shared source masks are copied once per checkpoint');
+    assert.notEqual(data.a,bits,'checkpoint owns a stable copy');
+    assert.equal(data.view.byteLength,8);
+    const scratch={get masks(){throw new Error('checkpoint traversed solver internals');}};
+    S.sheets.gold.best={placements:[{id:'c',angle:2}],rejects:[],density:.5,contactQuality:1.2,grids:scratch,rec:scratch};
+    const compact=Session.capture().sheets[0].pages[0].best;
+    assert.equal(compact.rec,undefined);assert.equal(compact.grids,undefined);
+    assert.equal(compact.placements[0].angle,2);assert.equal(compact.contactQuality,1.2);
+    delete S.sheets.gold.best;
+
+    let captures=0,latest=0;
+    Object.defineProperty(S.sheets.gold,'checkpointValue',{enumerable:true,configurable:true,get(){captures++;return latest;}});
+    Session.listen();idbControl.hold=true;
+    const first=Session.flush();await new Promise(setImmediate);await new Promise(setImmediate);
+    assert.equal(idbControl.pending.length,1);
+    for(let i=1;i<=100;i++){latest=i;assert.equal(Session.flush(),first);}
+    assert.equal(captures,1,'slow storage does not queue full workspace snapshots');
+    idbControl.pending.shift()();await new Promise(setImmediate);await new Promise(setImmediate);
+    assert.equal(captures,2);assert.equal(idbControl.pending.length,1,'one follow-up checkpoint captures the latest state');
+    idbControl.hold=false;idbControl.pending.shift()();await first;
+    delete S.sheets.gold.checkpointValue;
+    await Session.restore();assert.equal(S.sheets.gold.checkpointValue,100,'coalescing retains the latest edit');
+    delete S.sheets.gold.checkpointValue;
+    // Capture errors are reported through the same recoverable save path.
+    Object.defineProperty(S.sheets.gold,'badCapture',{enumerable:true,configurable:true,get(){throw new Error('capture failed');}});
+    await Session.flush();delete S.sheets.gold.badCapture;await Session.flush();
+  })()`,c);
   await vm.runInContext(`(async()=>{
     const row={key:'100/1',order:{receiptId:'100',createTs:10},line:{transactionId:'1'},state:'written',poolIds:['p1'],arrivedAt:123,engrave:{approved:true}};
     B.orders.rows=[row];B.orders.byKey.set(row.key,row);

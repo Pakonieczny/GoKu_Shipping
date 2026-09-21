@@ -4251,20 +4251,26 @@ const Kin = window.Kin = (() => {
 /* Durable workspace: large geometry stays in IndexedDB, never in the small localStorage quota.
    It is a checkpoint, not a second execution engine. Reload reconstructs PDF objects from the original bytes. */
 const Session = window.Session = (() => {
-  let dbP, ready = false, timer = 0, chain = Promise.resolve(), failed = false;
+  let dbP, ready = false, timer = 0, chain = Promise.resolve(), failed = false, saving = false, pending = false;
   const key = () => S.settings.sandbox === "on" ? "sandbox" : "production";
   const OMIT = new Set(["parsed", "worker", "workers", "el", "cardEl", "pages", "persisted", "persisting", "bar", "evNest", "evSearch", "_img", "_geomVerify", "pool", "row", "job", "recalledFrom", "backSaving"]);
   function copy(v, seen = new Map()) {
     if (v == null || typeof v !== "object") return typeof v === "function" ? undefined : v;
     if (seen.has(v)) return seen.get(v);
-    if (ArrayBuffer.isView(v)) return v.slice ? v.slice() : new Uint8Array(v.buffer.slice(0));
-    if (v instanceof ArrayBuffer) return v.slice(0);
+    if (ArrayBuffer.isView(v)) { const out = v.slice ? v.slice() : new DataView(v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength)); seen.set(v, out); return out; }
+    if (v instanceof ArrayBuffer) { const out = v.slice(0); seen.set(v, out); return out; }
     if (v instanceof Blob) return v;
     if (v instanceof Map) { const out = new Map(); seen.set(v, out); for (const [k, x] of v) out.set(k, copy(x, seen)); return out; }
     if (v instanceof Set) return new Set([...v].map(x => copy(x, seen)));
     if (!Array.isArray(v) && Object.getPrototypeOf(v) !== Object.prototype && Object.getPrototypeOf(v) !== null) return undefined;
     const out = Array.isArray(v) ? [] : {}; seen.set(v, out);
-    for (const [k, x] of Object.entries(v)) if (!(OMIT.has(k) && !(k === "pool" && typeof x === "boolean")) && !k.startsWith("_")) { const y = copy(x, seen); if (y !== undefined) out[k] = y; }
+    for (const [k, x] of Object.entries(v)) if (!(OMIT.has(k) && !(k === "pool" && typeof x === "boolean")) && !k.startsWith("_")) {
+      // Defend checkpoints restored from older builds too: best.rec reaches
+      // all prepared rotations, none of which is needed to recover a layout.
+      let value = x;
+      if (k === "best" && x && typeof x === "object") { const { grids, rec, ...layout } = x; value = layout; }
+      const y = copy(value, seen); if (y !== undefined) out[k] = y;
+    }
     return out;
   }
   function open() {
@@ -4293,10 +4299,25 @@ const Session = window.Session = (() => {
   }
   function flush() {
     clearTimeout(timer); timer = 0; if (!ready) return chain;
-    const snap = capture(), scope = key();
-    chain = chain.catch(() => {}).then(() => io(snap, scope)).then(() => { failed = false; }).catch(e => {
-      if (!failed) toast(`Workspace could not be saved on this browser: ${e.message}. Keep this tab open.`, "bad", 10000);
-      failed = true;
+    pending = true;
+    if (saving) return chain;
+    saving = true;
+    // Keep one snapshot in flight. Frequent updates request a fresh checkpoint
+    // after that write, rather than retaining a queue of full geometry copies.
+    chain = chain.catch(() => {}).then(async () => {
+      try {
+        while (pending) {
+          pending = false;
+          try {
+            const scope = key();
+            await io(capture(), scope);
+            failed = false;
+          } catch (e) {
+            if (!failed) toast(`Workspace could not be saved on this browser: ${e.message}. Keep this tab open.`, "bad", 10000);
+            failed = true;
+          }
+        }
+      } finally { saving = false; }
     });
     return chain;
   }

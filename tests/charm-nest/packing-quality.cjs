@@ -30,29 +30,51 @@ const job={sheet,clearancePt:0,angles:[0,90],fineRes:1,coarseRes:1,maxFill:.74,t
  let accepted=false;
  await S.solve({...job,pieces:[{...job.pieces[0],pinned:{cxPt:70,cyPt:20,angle:0}},job.pieces[1]],initialLayout:incumbent},{yield:()=>Promise.resolve(),onBest:b=>{accepted ||= !!b.retainedInitial;}});
  assert(!accepted);
+ // Expiry halfway through a multi-piece order must not replace a legal
+ // incumbent with an incomplete order that final cleanup then removes.
+ const fs=require('node:fs'), vm=require('node:vm');
+ let clock=0;
+ const realm=vm.createContext({module:{exports:{}},performance:{now:()=>clock}});
+ vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../../charm-nest-solver.js'),'utf8'),realm);
+ const Expiring=realm.module.exports;
+ const pairJob={...job,maxTrials:8,angles:[0],initialLayout:[{id:'solo',cxPt:30,cyPt:5,angle:0}],pieces:[
+  {...piece('solo',2,2),order:'solo',orderDate:0},
+  {...piece('pair-a',10,10),order:'pair',orderDate:0},
+  {...piece('pair-b',10,10),order:'pair',orderDate:0}
+ ]};
+ const published=[];
+ const expired=await Expiring.solve(pairJob,{yield:()=>Promise.resolve(),onPlaced:()=>{clock=10000;},onBest:b=>published.push(structuredClone(S.publicLayout(b)))});
+ assert.equal(expired.endedBy,'budget');assert.equal(expired.placements.length,1);assert.equal(expired.placements[0].id,'solo');
+ assert(published.every(b=>b.placements.every(p=>p.id==='solo')),'incomplete orders cannot be promoted as the best layout');
+ assert(published.every(b=>!S.betterLayout(b,expired,sheet)),'the saved result cannot regress from a published valid best');
+ assert(S.verify(pairJob,expired.placements,2).ok);
  console.log('Packing quality OK: monotonic ranking, incumbent retention, current geometry, FIFO, pins and malformed layouts');
 })().catch(e=>{console.error(e);process.exitCode=1;});
 
-// Saved four/twelve-angle settings must not override the production 2° default.
+// Migrate the released 2° settings back to the requested 10° default.
 {
  const fs=require('node:fs'),vm=require('node:vm');
  const html=fs.readFileSync(require('node:path').join(__dirname,'../../charm-nest-1.html'),'utf8');
  const a=html.indexOf('function loadSettings()'),b=html.indexOf('function saveSettings()',a);
- for(const step of [90,45,30,15,10,5]){
-  const c=vm.createContext({DEFAULTS:{stock:{},angleStep:2},localStorage:{getItem:()=>JSON.stringify({v:18,angleStep:step})}});
-  vm.runInContext(html.slice(a,b),c);assert.equal(vm.runInContext('loadSettings().angleStep',c),2);
+ for(const step of [90,45,30,15,10,5,2]){
+  const c=vm.createContext({DEFAULTS:{stock:{},angleStep:10},localStorage:{getItem:()=>JSON.stringify({v:20,angleStep:step})}});
+  vm.runInContext(html.slice(a,b),c);assert.equal(vm.runInContext('loadSettings().angleStep',c),10);
  }
  const c=vm.createContext({S:{settings:{angleStep:90}}});
  const a2=html.indexOf('function angleSet()'),b2=html.indexOf('\n',a2);
- vm.runInContext(html.slice(a2,b2),c);assert.equal(vm.runInContext('angleSet().length',c),180);
- assert.equal(vm.runInContext('angleSet().join(",")',c),Array.from({length:180},(_,i)=>i*2).join(','));
+ vm.runInContext(html.slice(a2,b2),c);assert.equal(vm.runInContext('angleSet().length',c),36);
+ assert.equal(vm.runInContext('angleSet().join(",")',c),Array.from({length:36},(_,i)=>i*10).join(','));
 }
 {
  const fs=require('node:fs'),vm=require('node:vm');
  const html=fs.readFileSync(require('node:path').join(__dirname,'../../charm-nest-1.html'),'utf8');
  const a=html.indexOf('function parallelCount()'),b=html.indexOf('function ensureWorker(',a);
- for(const [cores,want,expected] of [[8,0,1],[16,0,3],[2,0,1],[8,2,2]]){
+ for(const [cores,want,expected] of [[8,0,1],[16,0,1],[32,0,1],[2,0,1],[8,2,2]]){
   const c=vm.createContext({S:{settings:{parallel:want}},navigator:{hardwareConcurrency:cores},angleSet:()=>Array(180)});
+  vm.runInContext(html.slice(a,b),c);assert.equal(vm.runInContext('parallelCount()',c),expected);
+ }
+ for(const [cores,expected] of [[2,1],[8,2],[32,2]]){
+  const c=vm.createContext({S:{settings:{parallel:0}},navigator:{hardwareConcurrency:cores},angleSet:()=>Array(36)});
   vm.runInContext(html.slice(a,b),c);assert.equal(vm.runInContext('parallelCount()',c),expected);
  }
 }
