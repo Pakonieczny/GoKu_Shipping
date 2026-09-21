@@ -1,7 +1,7 @@
 /* Dedicated initial-fit worker. Fonts arrive once, already hash-verified by
  * the page. No cloud calls, DOM work or production writes happen here. */
 "use strict";
-importScripts("vendor/opentype-1.3.4.min.js", "charm-nest-text.js", "charm-nest-geom.js", "charm-nest-engrave-fit.js");
+importScripts("vendor/opentype-1.3.4.min.js", "charm-nest-text.js", "charm-nest-geom.js?v=20260921-material", "charm-nest-engrave-fit.js");
 let fonts=null, fontError=null;
 self.onmessage=({data})=>{
   if(data.type === "fonts") {

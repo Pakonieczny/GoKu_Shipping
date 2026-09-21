@@ -20,7 +20,7 @@ vm.runInContext(source.slice(source.indexOf('  function refit(job, place)'),sour
 vm.runInContext(source.slice(source.indexOf('  function resize(job, size)'),source.indexOf('  async function resplit')),ctx);
 const j={lineInput:input,lines:['ANNA BEN'],fit:one,mask:m};ctx.resize(j,12);assert.equal(j.wantSize,12);ctx.refit(j,{centre:[25,43],angle:0});assert(j.fit.size<12);assert.equal(j.wantSize,12);ctx.refit(j,{centre:[25,14],angle:0});assert.equal(j.fit.size,12);assert.equal(j.text,j.lines.join('\n'));
 const rect=(x,y,w,h)=>[['m',[x,y]],['l',[x+w,y]],['l',[x+w,y+h]],['l',[x,y+h]],['h']];
-const path=(subpaths,rgb=[1,0,0])=>({kind:'path',closed:true,stroke:true,strokeRGB:rgb,subpaths,bbox:(pts=>[Math.min(...pts.map(p=>p[0])),Math.min(...pts.map(p=>p[1])),Math.max(...pts.map(p=>p[0])),Math.max(...pts.map(p=>p[1]))])(subpaths.flatMap(s=>s.filter(c=>c[1]).map(c=>c[1])))});
+const path=(subpaths,rgb=[1,0,0])=>({kind:'path',layer:rgb[0]===1?'CUT':'ENGRAVE',closed:true,stroke:true,strokeRGB:rgb,subpaths,bbox:(pts=>[Math.min(...pts.map(p=>p[0])),Math.min(...pts.map(p=>p[1])),Math.max(...pts.map(p=>p[0])),Math.max(...pts.map(p=>p[1]))])(subpaths.flatMap(s=>s.filter(c=>c[1]).map(c=>c[1])))});
 const outline=path([[['m',[0,0]],['l',[40,0]],['l',[40,55]],['l',[35,60]],['l',[0,60]],['h']]]),hole=path([rect(16,46,8,8)]),window=path([rect(16,25,8,8)]),detail=path([rect(5,20,5,5)],[0,0,1]);
 const charm={outline,members:[outline,hole,window,detail,{...window}],bbox:outline.bbox};
 for(const solidBack of [false,true]){
@@ -31,7 +31,7 @@ for(const solidBack of [false,true]){
  const noRoom=G.reflowAt(['+'],font,mask,opts,{centre:[20,29],size:6});assert(!noRoom.ok,'automatic shrinking cannot hide text in a hole');
 }
 const compound=path([rect(0,0,40,60),rect(16,46,8,8)]);assert.equal(G.at(G.backView({outline:compound,members:[compound],bbox:compound.bbox},{solidBack:true,upAngle:90}).mask,20,50),0,'Solid back preserves stroked compound openings');
-const expanded={...outline,fill:true,stroke:false,subpaths:[rect(0,0,40,60),rect(1,1,38,58),rect(16,46,8,8)]};const v=G.backView({outline:expanded,members:[expanded],bbox:expanded.bbox},{solidBack:true,upAngle:90});assert(G.at(v.mask,20,20));assert.equal(G.at(v.mask,20,50),0,'simplifying expanded perimeter ink retains an actual inner opening');
+const expanded={...outline,layer:null,fill:true,stroke:false,subpaths:[rect(0,0,40,60),rect(1,1,38,58),rect(16,46,8,8)]};const v=G.backView({outline:expanded,members:[expanded],bbox:expanded.bbox},{solidBack:true,upAngle:90});assert(G.at(v.mask,20,20));assert.equal(G.at(v.mask,20,50),0,'simplifying expanded perimeter ink retains an actual inner opening');
 // Verify the reused production algorithms are identical to Design Studio.
 const geom=fs.readFileSync('charm-nest-geom.js','utf8');const studio=cp.execFileSync('git',['show','83f592c:shopify/assets/brites-custom-studio.js'],{encoding:'utf8',maxBuffer:8e6}),server=cp.execFileSync('git',['show','83f592c:netlify/functions/geminiImageProxy-background.js'],{encoding:'utf8',maxBuffer:8e6});
 function fn(s,name){const m=new RegExp('^([ \t]*)function '+name+'\\(','m').exec(s),a=m.index,b=s.indexOf('\n'+m[1]+'}',a);return s.slice(a,b+m[1].length+2).trim().replace(/\s+/g,' ');}

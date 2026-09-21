@@ -6,7 +6,7 @@ const bytes=p=>{const b=fs.readFileSync(p);return b.buffer.slice(b.byteOffset,b.
 const fontBytes={Regular:bytes('vendor/fonts/SourceSans3-Regular.otf'),Semibold:bytes('vendor/fonts/SourceSans3-Semibold.otf'),emoji:bytes('vendor/fonts/NotoEmoji-Regular.ttf'),emojiMap:require('../../vendor/fonts/emoji-sequences.json')};
 const emoji=ot.parse(fontBytes.emoji),fonts=Object.fromEntries(['Regular','Semibold'].map(w=>[w,T.withEmoji(ot.parse(fontBytes[w]),emoji,fontBytes.emojiMap,ot.Path)]));
 const rect=(x,y,w,h)=>[['m',[x,y]],['l',[x+w,y]],['l',[x+w,y+h]],['l',[x,y+h]],['h']];
-const outline={kind:'path',closed:true,stroke:true,strokeRGB:[1,0,0],subpaths:[rect(0,0,40,60)],bbox:[0,0,40,60]};
+const outline={kind:'path',layer:'CUT',closed:true,stroke:true,strokeRGB:[1,0,0],subpaths:[rect(0,0,40,60)],bbox:[0,0,40,60]};
 const hole={...outline,subpaths:[rect(16,46,8,8)],bbox:[16,46,24,54]};
 const charm={outline,members:[outline,hole],bbox:outline.bbox};
 const input={charm,lines:['Fluffy & Hammy'],lineMode:'auto',viewOptions:{res:6,upAngle:90},maskOptions:{marginMm:.8,keepOut:[]},opts:{minCapMm:1.6,maxHeightFrac:.4,lineGap:.216,minStrokeMm:0,minGapMm:0,tryRotated:false}};
@@ -19,7 +19,7 @@ class Adapter {
       const {parentPort}=require('node:worker_threads'),fs=require('node:fs'),vm=require('node:vm');
       const context=vm.createContext({console,Intl,TextEncoder,TextDecoder,setTimeout,clearTimeout});
       context.self=context; context.postMessage=data=>parentPort.postMessage(data);
-      context.importScripts=(...files)=>files.forEach(file=>vm.runInContext(fs.readFileSync(file,'utf8'),context,{filename:file}));
+      context.importScripts=(...files)=>files.forEach(file=>vm.runInContext(fs.readFileSync(file.split('?')[0],'utf8'),context,{filename:file}));
       context.importScripts('charm-nest-engrave-worker.js');
       parentPort.on('message',data=>context.onmessage({data}));
     `,{eval:true});

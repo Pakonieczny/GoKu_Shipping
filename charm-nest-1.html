@@ -1341,8 +1341,8 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-solver.js"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
-<script src="charm-nest-pdf.js"></script>
-<script src="charm-nest-geom.js"></script>
+<script src="charm-nest-pdf.js?v=20260921-material"></script>
+<script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
 <script src="charm-nest-backs.js"></script>
@@ -3089,7 +3089,7 @@ function paintPreview(cv, sh, clean, R) {
       ctx.fillStyle = sel === c.id ? "rgba(202,168,97,.35)" : "rgba(200,162,78,.10)";
       ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); for (const m of cutLinesOf(c)) CharmNestPDF.pathToCanvas(ctx, m, tx); ctx.fill("evenodd");
     }
-    CharmNestPDF.drawSegments(ctx, c.members, tx, k);
+    CharmNestPDF.drawCharm(ctx, c, tx, k);
     if (sh._forClaude) { ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); ctx.strokeStyle = "rgba(190,40,40,.9)"; ctx.lineWidth = Math.max(1, 0.6 * k); ctx.stroke(); }
     ctx.restore();
     if (!clean && c.pinned) { ctx.fillStyle = "#caa861"; ctx.beginPath(); ctx.arc(p.cxPt * k, p.cyPt * k, Math.max(3, 2 * k), 0, Math.PI * 2); ctx.fill(); }
@@ -3099,7 +3099,7 @@ function paintPreview(cv, sh, clean, R) {
   if (!clean && sh.sat && sh.sat.pocket && sh.liveInfo && sh.sat.pocket.wPt > 6) { const p = sh.sat.pocket; ctx.setLineDash([3, 3]); ctx.strokeStyle = "rgba(95,122,91,.6)"; ctx.lineWidth = 1; ctx.strokeRect(p.xPt * k, p.yPt * k, p.wPt * k, p.hPt * k); ctx.setLineDash([]); }
 }
 /** Inner cut lines of a charm: closed achromatic strokes other than its outline (hoop holes, windows). */
-function cutLinesOf(c) { const ach = col => col && (Math.max(col[0], col[1], col[2]) - Math.min(col[0], col[1], col[2])) <= 0.15; return c.members.filter(m => m !== c.outline && m.kind === "path" && m.stroke && m.closed && ach(m.strokeRGB)); }
+function cutLinesOf(c) { return CharmNestPDF.cutLinesOf(c); }
 /** Millimetre rulers: top and left bands, 1 mm ticks, 5 mm mids, labelled every 10 mm. */
 function drawRulers(ctx, R, k, W, H) {
   const pxPerMm = k / MM_PER_PT; const f = getComputedStyle(document.body).getPropertyValue("--mono") || "monospace";
@@ -3479,7 +3479,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js"></script>
+<script src="charm-nest-bridge.js?v=20260921-material"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin" aria-labelledby="owTitle">

@@ -835,6 +835,25 @@ const Master = window.Master = (() => {
   let reindexAll = false;                                           // by default a SKU the library already holds is left alone
   /** A design drawn only in sizes keeps its picture and file under each size; the entry's own are empty. */
   const thumbOf = e => e.thumbUrl || ((Object.values(e.sizes || {}).find(s => s && s.thumbUrl) || {}).thumbUrl) || "";
+  let previewObserver=null, previewQueue=[], previewRunning=0;
+  function mountMasterPreviews(grid) {
+    previewObserver?.disconnect();previewQueue=[];
+    const paint=async host=>{
+      const entry=entryFor(host.dataset.previewSku);
+      const size=entry?.sizes && Object.keys(entry.sizes)[0] || null;
+      if(!entry || !host.isConnected)return;
+      try {
+        const thumb=await Pool.masterPreview(entry,size);
+        if(!host.isConnected)return;
+        const img=document.createElement("img");img.alt="";img.src=thumb;
+        host.replaceChildren(img);
+      } catch (_) {if(host.isConnected)host.textContent="Preview unavailable";}
+    };
+    const pump=()=>{while(previewRunning<2 && previewQueue.length){const host=previewQueue.shift();if(!host.isConnected)continue;previewRunning++;void paint(host).finally(()=>{previewRunning--;pump();});}};
+    if(typeof IntersectionObserver!=="function") {previewQueue.push(...grid.querySelectorAll('[data-preview-sku]'));pump();return;}
+    previewObserver=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){previewObserver.unobserve(entry.target);previewQueue.push(entry.target);}pump();},{rootMargin:"150px"});
+    grid.querySelectorAll('[data-preview-sku]').forEach(host=>previewObserver.observe(host));
+  }
   async function load(force) {
     if (!S.cloud.ok) return;
     if (!force && Date.now() - B.master.loadedAt < 120000) return B.master.loading || null;
@@ -1227,7 +1246,7 @@ const Master = window.Master = (() => {
       const blocked = [...new Set(d.list.map(x => x.blocked).filter(Boolean))].join("; ");
       const sizes = e.sizes ? Object.entries(e.sizes) : [];
       return `<div class="skuTile hoverItem${blocked ? " blocked" : ""}" data-sku="${esc(e.sku)}">` +
-        (thumbOf(e) ? `<img crossorigin="anonymous" src="${cors(thumbOf(e))}" loading="lazy" alt="">` : `<div style="aspect-ratio:1;background:#fff;border-radius:6px"></div>`) +
+        `<div data-preview-sku="${esc(e.sku)}" style="aspect-ratio:1;background:#fff;border-radius:6px">Loading preview…</div>` +
         `<div class="sku" title="${esc(d.skus.join(", "))}">${esc(e.sku)}</div>` +
         (d.skus.length > 1 ? `<div class="meta">${d.skus.slice(1).map(s => `<div>${esc(s)}</div>`).join("")}</div>` : "") +
         `<div class="meta">${(e.widthPt * MM).toFixed(1)} × ${(e.heightPt * MM).toFixed(1)} mm · ${e.holes} hole(s)${sizes.length ? ` · sizes ${sizes.map(([k]) => k).join("/")}` : ""}${d.skus.length > 1 ? ` · ${d.skus.length} SKUs` : ""}</div>` +
@@ -1240,6 +1259,7 @@ const Master = window.Master = (() => {
                  : sizes.filter(([, s]) => s && s.aiUrl).map(([k, s]) => `<a class="btn ghost xs" href="${s.aiUrl}" target="_blank" rel="noopener">${esc(k)}.ai</a>`).join("")) +
         `</div></div>`;
     }).join("") + (rows.length > shown.length ? `<div class="libEmpty">${rows.length - shown.length} more — press &ldquo;Show all&rdquo;, or narrow the search</div>` : "");
+    mountMasterPreviews(grid);
     // a charm's settings belong to the charm, so they are written to every SKU that shares it
     const each = (attr, fn) => grid.querySelectorAll(`[data-${attr}]`).forEach(el => fn(el, el.dataset[attr].split("|")));
     each("up", (inp, skus) => inp.onchange = () => { const v2 = inp.value.trim(); if (v2 === "") return; patchMany(skus, { upAngle: +v2 }).then(() => toast(`${skus.join(", ")}: up = ${+v2}° (operator)`, "ok")); });
@@ -1252,10 +1272,28 @@ const Master = window.Master = (() => {
 const Pool = window.Pool = (() => {
   const sizeEntry = (entry, size) => (entry.sizes && Object.keys(entry.sizes).length ? (size && entry.sizes[size]) || null : entry);
   /** Fetch the per-SKU .ai once per session, parse it, trace it; every copy shares the geometry. */
+  const masterLoads=new Map();
   async function masterCharm(entry, size) {
+    const key=sizeEntry(entry,size)?.aiPath;
+    if(!key)return loadMasterCharm(entry,size);
+    if(masterLoads.has(key))return masterLoads.get(key);
+    const task=loadMasterCharm(entry,size).finally(()=>masterLoads.delete(key));
+    masterLoads.set(key,task);return task;
+  }
+  async function loadMasterCharm(entry, size) {
     const geom = sizeEntry(entry, size); if (!geom || !geom.aiPath) throw new Error(`no design file for ${entry.sku}${size ? " · " + size : ""}`);
     const key = geom.aiPath;
     if (B.pool.sources.has(key)) return B.pool.sources.get(key);
+    const {url,bytes,parsed,g,charm}=await readMasterCharm(entry,size);
+    await P.buildSilhouettes(parsed, [charm], +S.settings.silhouetteRes || 6);
+    const srcId = "pool:" + key.replace(/[^\w]+/g, "_");
+    const src = { id: srcId, pool: true, name: `${entry.sku}${size ? " · " + size : ""} (master)`, sku: entry.sku, bytes, hash: entry.charmHash || charm.hash, parsed, group: g, charms: [charm], metal: null, state: "ready", t0: performance.now(), cloud: { path: geom.aiPath, url }, persisting: null };
+    Object.assign(charm, { id: srcId + ":0", sourceId: srcId, sourceName: src.name, index: 0, name: entry.sku, sku: entry.sku, namedBy: "master", excluded: false, cloud: { ai: url, aiPath: geom.aiPath, png: geom.thumbUrl || null, pngPath: geom.thumbPath || null }, upAngle: entry.upAngle, engravable: true, backKeepOut: Master.keepOutOf(charm) });
+    S.poolSources[srcId] = src; B.pool.sources.set(key, src);
+    return src;
+  }
+  async function readMasterCharm(entry,size) {
+    const geom=sizeEntry(entry,size);
     const url = geom.aiUrl || (await api("charmNestOutput", { op: "url", path: geom.aiPath })).url;
     const bytes = await CharmNestAssets.bytes(url);
     const parsed = await P.parseSource(bytes, `${entry.sku}.ai`);
@@ -1264,12 +1302,18 @@ const Pool = window.Pool = (() => {
     const charm = g.charms.reduce((a, b) => (b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1]) > (a.bbox[2] - a.bbox[0]) * (a.bbox[3] - a.bbox[1]) ? b : a);
     if (g.charms.length > 1) { for (const c of g.charms) if (c !== charm) { for (const m of c.members) if (!charm.members.includes(m)) charm.members.push(m); charm.topIndices = [...new Set(charm.topIndices.concat(c.topIndices))]; charm.bbox = [Math.min(charm.bbox[0], c.bbox[0]), Math.min(charm.bbox[1], c.bbox[1]), Math.max(charm.bbox[2], c.bbox[2]), Math.max(charm.bbox[3], c.bbox[3])]; /* the silhouette canvas is cut to the bbox: a merged piece outside it would be drawn but never collide */ } agent({ pool: true }, "warn", `${entry.sku}: the master copy split into ${g.charms.length} pieces — folded back into one charm`); }
     { const r = P.integrateRings(charm); if (r.left.length) throw new Error(`${entry.sku}: a hoop could not join its charm — ${r.left[0]}`); }
-    await P.buildSilhouettes(parsed, [charm], +S.settings.silhouetteRes || 6);
-    const srcId = "pool:" + key.replace(/[^\w]+/g, "_");
-    const src = { id: srcId, pool: true, name: `${entry.sku}${size ? " · " + size : ""} (master)`, sku: entry.sku, bytes, hash: entry.charmHash || charm.hash, parsed, group: g, charms: [charm], metal: null, state: "ready", t0: performance.now(), cloud: { path: geom.aiPath, url }, persisting: null };
-    Object.assign(charm, { id: srcId + ":0", sourceId: srcId, sourceName: src.name, index: 0, name: entry.sku, sku: entry.sku, namedBy: "master", excluded: false, cloud: { ai: url, aiPath: geom.aiPath, png: geom.thumbUrl || null, pngPath: geom.thumbPath || null }, upAngle: entry.upAngle, engravable: true, backKeepOut: Master.keepOutOf(charm) });
-    S.poolSources[srcId] = src; B.pool.sources.set(key, src);
-    return src;
+    return {url,bytes,parsed,g,charm};
+  }
+  const masterPreviewCache=new Map();
+  async function masterPreview(entry,size) {
+    const key=sizeEntry(entry,size)?.aiPath;
+    if(!key)throw new Error("No design file");
+    const cached=B.pool.sources.get(key);if(cached)return cached.charms[0].thumb;
+    if(masterPreviewCache.has(key))return masterPreviewCache.get(key);
+    const task=readMasterCharm(entry,size).then(({charm})=>P.thumbnail(charm,168));
+    masterPreviewCache.set(key,task);
+    while(masterPreviewCache.size>80)masterPreviewCache.delete(masterPreviewCache.keys().next().value);
+    try{return await task;}catch(e){masterPreviewCache.delete(key);throw e;}
   }
   /** Upgrade cached geometry before a recovered sheet can be used again. */
   async function repairRecoveredGeometry(d) {
@@ -1279,27 +1323,43 @@ const Pool = window.Pool = (() => {
     const charms=new Set([...sources.flatMap(src=>src.charms || []),...(d.unassigned || []),...pages.flatMap(p=>p.charms || [])]);
     const repaired=new Set(),poolIds=new Set();
     for(const c of charms) {
-      if(c.ringGeometryVersion===2 || !c.outline)continue;
+      if(!c.outline)continue;
+      const src=bySource.get(c.sourceId);
+      let rebuilt=false;
+      if(G.pathRole(c.outline)==="artwork") {
+        if(!src?.parsed)throw new Error("The recovered charm needs its original CUT geometry.");
+        const candidates=P.groupCharms(src.parsed,{minPt:+S.settings.minPt || 6}).charms;
+        const overlap=other=>{const a=c.bbox,b=other.bbox;const intersection=Math.max(0,Math.min(a[2],b[2])-Math.max(a[0],b[0]))*Math.max(0,Math.min(a[3],b[3])-Math.max(a[1],b[1]));return intersection/Math.max(1,(a[2]-a[0])*(a[3]-a[1])+(b[2]-b[0])*(b[3]-b[1])-intersection);};
+        const fresh=candidates.sort((a,b)=>overlap(b)-overlap(a))[0];
+        if(!fresh || overlap(fresh)<.5 || G.pathRole(fresh.outline)!=="cut")throw new Error("The recovered charm has no matching CUT outline.");
+        for(const key of ["outline","members","bbox","topIndices","strokePt","extras","dropIndices"])c[key]=fresh[key];
+        rebuilt=true;
+      }
+      if(c.ringGeometryVersion===3 && !rebuilt)continue;
       const result=P.integrateRings(c);
       if(result.left.length)throw new Error('A recovered hoop needs a geometry check: '+result.left.join('; '));
-      if(!result.welded)continue;
-      const src=bySource.get(c.sourceId);
+      if(!result.welded && !rebuilt) { c.thumb=await P.thumbnail(c,168);continue; }
       await P.buildSilhouettes(src?.parsed,[c],+S.settings.silhouetteRes || 6);
       c.pinned=null;repaired.add(c);if(c.poolId)poolIds.add(c.poolId);
     }
     for(const pg of pages)if(pg.charms?.some(c=>repaired.has(c))) {
-      Object.assign(pg,{dirty:true,status:'ready',placements:[],rejects:[],layout:null,outputs:null,verification:null,liveInfo:null,releaseFull:false,backOutputs:null});
+      Object.assign(pg,{dirty:true,status:'ready',placements:[],rejects:[],layout:null,outputs:null,verification:null,liveInfo:null,best:null,bestResult:null,bestInfo:null,bestKey:null,releaseFull:false,backOutputs:null});
       pg.backPool=(pg.backPool || []).filter(b=>!poolIds.has(b.poolId));
-      pg.stage='Hoops connected — ready to re-nest';
+      pg.stage='Cut geometry updated — ready to re-nest';
     }
     const keys=new Set();
     for(const j of d.jobs || [])if((j.copies || []).some(id=>poolIds.has(id)) && j.state!=='skipped') {
       Object.assign(j,{state:'ready',view:null,mask:null,fit:null,verify:null,backs:[],approvedBy:null,approvedAt:null});keys.add(j.key);
       const row=d.orders?.rows?.find(r=>r.key===j.key);if(row?.engrave)Object.assign(row.engrave,{state:'ready',approved:false});
     }
+    for(const j of d.jobs || [])if(!["approved","written","skipped"].includes(j.state) && j.materialVersion!==2) {
+      Object.assign(j,{view:null,mask:null,fit:null,verify:null,materialVersion:2});
+      if(["review","blocked","fitting"].includes(j.state))j.state="ready";
+      const row=d.orders?.rows?.find(r=>r.key===j.key);if(row?.engrave)row.engrave.state=j.state;
+    }
     if(keys.size)d.review=(d.review || []).filter(it=>!keys.has(it.jobKey));
     if(repaired.size && d.run && d.run.status!=='complete') {
-      Object.assign(d.run,{step:'nest',status:'stopped',stoppedBy:'Recovered hoop geometry updated',fix:'Resume to re-nest the repaired pieces and review their engraving.'});
+      Object.assign(d.run,{step:'nest',status:'stopped',stoppedBy:'Recovered cut geometry updated',fix:'Resume to re-nest the repaired pieces and review their engraving.'});
     }
     return repaired.size;
   }
@@ -1361,7 +1421,7 @@ const Pool = window.Pool = (() => {
   async function update(poolIds, patch) { for (const id of poolIds) { const p = B.pool.rows.get(id); if (p) Object.assign(p, patch); } if (S.cloud.ok) for (let i = 0; i < poolIds.length; i += 400) await api("charmNestLibrary", { op: "poolUpdate", poolIds: poolIds.slice(i, i + 400), patch }); }
   const charmOf = poolId => allSheets().flatMap(sh => sh.charms).find(c => c.poolId === poolId) || null;
   const sheetOf = poolId => allSheets().find(sh => sh.placements.some(p => { const c = sh.charms.find(x => x.id === p.id); return c && c.poolId === poolId; })) || null;
-  return { poolAdd, addAll, masterCharm, cloneCharm, update, charmOf, sheetOf, sizeEntry, repairRecoveredGeometry };
+  return { poolAdd, addAll, masterCharm, masterPreview, cloneCharm, update, charmOf, sheetOf, sizeEntry, repairRecoveredGeometry };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -1937,7 +1997,7 @@ const Engrave = window.Engrave = (() => {
   function fitClient() {
     if (!workerClient) {
       if (!window.Worker || !F_.workerFonts?.Regular) throw new Error("Background engraving could not start. Reload and retry this placement.");
-      workerClient = window.CharmNestEngraveFit.createClient({WorkerClass:window.Worker,url:"charm-nest-engrave-worker.js?v=20260920-stream",fonts:F_.workerFonts});
+      workerClient = window.CharmNestEngraveFit.createClient({WorkerClass:window.Worker,url:"charm-nest-engrave-worker.js?v=20260921-material",fonts:F_.workerFonts});
     }
     return workerClient;
   }
@@ -1946,7 +2006,7 @@ const Engrave = window.Engrave = (() => {
     // objects and any DOM references from the structured-clone payload.
     return {charm:charm && {outline:charm.outline,members:charm.members,bbox:charm.bbox,widthPt:charm.widthPt,heightPt:charm.heightPt,upAngle:charm.upAngle},
       lines:(job.lineInput || job.lines).slice(),lineMode:job.lineMode || "auto",opts:fitOpts(job),
-      viewOptions:{res:6,upAngle:job.editingBack ? job.editOriginal.upAngle ?? charm?.upAngle : entry.upAngle == null ? undefined : +entry.upAngle,solidBack:!!job.solidBack},
+      viewOptions:{res:6,upAngle:job.editingBack ? job.editOriginal.upAngle ?? charm?.upAngle : entry.upAngle == null ? undefined : +entry.upAngle,materialVersion:2},
       maskOptions:{marginMm:+S.settings.engraveMarginMm || .8,keepOut:charm?.backKeepOut || []}};
   }
   const fitStamp = ({charm, ...options}) => JSON.stringify(options);
@@ -2115,7 +2175,7 @@ const Engrave = window.Engrave = (() => {
     }
     const base = document.createElement("canvas"); base.width = cv.width; base.height = cv.height;   // grid + mask tint, drawn once
     base.getContext("2d").drawImage(cv, 0, 0);
-    for (const m of view.members) { ctx.beginPath(); P.pathToCanvas(ctx, m, tx); ctx.strokeStyle = (view.cutMembers || []).includes(m.original) ? "rgba(190,40,40,.95)" : "rgba(60,60,60,.9)"; ctx.lineWidth = Math.max(1, 0.5 * k); ctx.stroke(); }
+    for (const m of view.members) { ctx.beginPath(); P.pathToCanvas(ctx, m, tx); ctx.strokeStyle = "#000"; ctx.lineWidth = Math.max(1, 0.5 * k); ctx.stroke(); }
     if (false && fit) { ctx.fillStyle = "#111"; for (const g of fit.glyphs) { ctx.beginPath(); let cur = null; for (const c of g.cmds) { if (c.type === "M") { const p = tx(c.x, c.y); ctx.moveTo(p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "L") { const p = tx(c.x, c.y); ctx.lineTo(p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "C") { const a = tx(c.x1, c.y1), b = tx(c.x2, c.y2), p = tx(c.x, c.y); ctx.bezierCurveTo(a[0], a[1], b[0], b[1], p[0], p[1]); cur = [c.x, c.y]; } else if (c.type === "Q") { const a = tx(c.x1, c.y1), p = tx(c.x, c.y); ctx.quadraticCurveTo(a[0], a[1], p[0], p[1]); cur = [c.x, c.y]; } else ctx.closePath(); } ctx.fill("nonzero"); } }
     const outline = document.createElement("canvas"); outline.width = cv.width; outline.height = cv.height;   // …and the charm itself
     outline.getContext("2d").drawImage(cv, 0, 0);
@@ -2171,7 +2231,7 @@ const Engrave = window.Engrave = (() => {
   function renderFront(charm, px) {
     if (!charm?.outline || !Array.isArray(charm.bbox) || charm.bbox.length !== 4 || !charm.bbox.every(Number.isFinite))
       return el("div", "noPic", "The charm preview is still loading.");
-    const cv = document.createElement("canvas"); const b = charm.bbox, pad = 3 * PT; const w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, k = px / Math.max(w, h); cv.width = Math.round(w * k); cv.height = Math.round(h * k); const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height); const tx = (x, y) => [(x - b[0] + pad) * k, (b[3] + pad - y) * k]; P.drawSegments(ctx, charm.members || [], tx, k); ctx.beginPath(); P.pathToCanvas(ctx, charm.outline, tx); ctx.strokeStyle = "rgba(190,40,40,.9)"; ctx.lineWidth = Math.max(1, 0.5 * k); ctx.stroke(); return cv;
+    const cv = document.createElement("canvas"); const b = charm.bbox, pad = 3 * PT; const w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, k = px / Math.max(w, h); cv.width = Math.round(w * k); cv.height = Math.round(h * k); const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height); const tx = (x, y) => [(x - b[0] + pad) * k, (b[3] + pad - y) * k]; P.drawCharm(ctx, charm, tx, k); return cv;
   }
   async function mountPlacementThumbnail(host,job) {
     if(!host || !job)return;
@@ -2183,14 +2243,11 @@ const Engrave = window.Engrave = (() => {
     const sku=job.row.spec.designSku || job.row.line.sku;
     const entry=Master.entryFor(sku) || await Master.fetchEntry(sku).catch(()=>null);
     if(!current())return;
-    const geom=entry && Pool.sizeEntry(entry,job.row.spec.size),url=geom?.thumbUrl || (entry && Master.thumbOf(entry));
-    const fallback=async()=>{
-      if(!entry || !geom?.aiPath){host.textContent="Preview unavailable";return;}
-      try{const src=await Pool.masterCharm(entry,job.row.spec.size);if(current())paint(src.charms[0]);}
-      catch(_){if(current())host.textContent="Preview unavailable";}
-    };
-    if(url){const img=document.createElement('img');img.alt='';img.loading='lazy';img.referrerPolicy='no-referrer';img.onerror=()=>{if(!current())return;img.remove();void fallback();};img.src=cors(url);host.replaceChildren(img);}
-    else await fallback();
+    const geom=entry && Pool.sizeEntry(entry,job.row.spec.size);
+    if(!entry || !geom?.aiPath){host.textContent="Preview unavailable";return;}
+    try { const src=await Pool.masterCharm(entry,job.row.spec.size);if(current())paint(src.charms[0]); }
+    catch(_){if(current())host.textContent="Preview unavailable";}
+
   }
   // Preview ownership is always derived from placements, never from SKU, order number or a cached sheet name.
   function sheetBacks(sheet) {
@@ -2263,7 +2320,7 @@ const Engrave = window.Engrave = (() => {
         const name = `${sh.fileBase}_back_${poolId}_${approval}`;
         let ai = null, pngUp = null;
         if (S.cloud.ok && sh.folderPath) { ai = await uploadBytes(`${sh.folderPath}/back/${name}.ai`, built.bytes, "application/illustrator", `Saving back ${copy}`); pngUp = await uploadBytes(`${sh.folderPath}/back/${name}.png`, pngBlob, "image/png"); }
-        const rec = { lineGap:fitOpts(job).lineGap, lineMode:job.lineMode || "auto", lineInput:job.lineInput || job.lines, solidBack:!!job.solidBack, upAngle:view.upAngle, poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, text: job.text, lines: job.lines, font: "Source Sans 3", weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: job.approvedBy, approvedAt: job.approvedAt, nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: S.settings.backFileView || "asSeenFromBack", reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, previewWPt:png._sizePt.w, previewHPt:png._sizePt.h, pageWPt: built.wPt, pageHPt: built.hPt };
+        const rec = { lineGap:fitOpts(job).lineGap, lineMode:job.lineMode || "auto", lineInput:job.lineInput || job.lines, materialVersion:2, upAngle:view.upAngle, poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, text: job.text, lines: job.lines, font: "Source Sans 3", weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: job.approvedBy, approvedAt: job.approvedAt, nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: S.settings.backFileView || "asSeenFromBack", reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, previewWPt:png._sizePt.w, previewHPt:png._sizePt.h, pageWPt: built.wPt, pageHPt: built.hPt };
         if (!current()) return;
         if (sheetFor(job,poolId) !== sh) throw new Error("The charm moved during approval. Retry on its current sheet.");
         if (!S.cloud.ok || !ai || !pngUp) throw new Error("Reconnect to save the approved back files");
@@ -2595,7 +2652,8 @@ const Engrave = window.Engrave = (() => {
         if(!host.querySelector('img')) mountPlacementThumbnail(host,items().get(rw.dataset.key)).catch(()=>{if(host.isConnected)host.textContent="Preview unavailable";});
       });
       { const rw = bk.querySelector(".doneRow.open"); const j2 = rw && items().get(rw.dataset.key); const host = rw && rw.querySelector(".frontHost");
-        if (j2 && host) { const charm = j2.copies && j2.copies.length ? Pool.charmOf(j2.copies[0]) : null; if (charm) host.appendChild(renderFront(charm, 148)); else { const e2 = Master.entryFor(j2.row.spec.designSku || j2.row.line.sku); const t = e2 && Master.thumbOf(e2); host.innerHTML = t ? `<img crossorigin="anonymous" src="${esc(cors(t))}" alt="" referrerpolicy="no-referrer">` : `<div class="noPic">no picture of the front</div>`; } } }
+        if (j2 && host) void mountPlacementThumbnail(host,j2); }
+
       // a picture that will not load is retried once with a fresh request, then says so instead of a broken icon
       bk.querySelectorAll("img").forEach(im => im.addEventListener("error", () => { if (im.dataset.retry) { im.dataset.retry = ""; im.src = im.src.replace(/([?&])_r=\d+/, "$1").replace(/[?&]$/, "") + (im.src.includes("?") ? "&" : "?") + "_r=" + Date.now(); return; } const d = document.createElement("div"); d.className = im.classList.contains("mini") ? "mini" : "noPic"; d.textContent = im.classList.contains("mini") ? "" : "the picture did not load — the .ai file is still there"; im.replaceWith(d); }));
       bk.querySelectorAll("[data-a=reopen]").forEach(b => b.onclick = () => {
@@ -2640,16 +2698,9 @@ const Engrave = window.Engrave = (() => {
           <dl class="meta">${row2("Customer", (sp.personalization || []).join(" / "))}${row2("Buyer msg", sp.buyerMessage)}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}</dl>
         </div></div>`;
     const charm = job.copies.length ? charmFor(job) : null;
-    if (charm?.outline && (charm.outline.subpaths || []).length > 1) {
-      const control = document.createElement("label"); control.className = "why";
-      control.innerHTML = `<input type="checkbox" ${job.solidBack ? "checked" : ""}> Solid back · ignore front fills, keep cut-outs`;
-      control.title = "Ignore expanded front-outline ink when building the back. Physical cut paths and interior openings remain excluded from engraving.";
-      control.querySelector("input").onchange = async e => { job.solidBack = e.target.checked; await fitJob(job); };
-      card.querySelector(".pvWords").appendChild(control);
-    }
 
     if (charm) card.querySelector(".frontHost").appendChild(renderFront(charm, 420));
-    else { const e2 = Master.entryFor(job.row.spec.designSku || job.row.line.sku); const t = e2 && Master.thumbOf(e2); card.querySelector(".frontHost").innerHTML = t ? `<img crossorigin="anonymous" src="${esc(cors(t))}" alt="">` : ""; }
+    else void mountPlacementThumbnail(card.querySelector(".frontHost"),job);
     if (wordsJob) { const bh = card.querySelector(".backHost"); bh.innerHTML = `<div class="noBack">${esc(job.state === "blocked" ? (job.reason || "This preview needs attention — use the words to retry.") : waitingReason(job))}</div>`; }
     const ta = card.querySelector('[data-f="words"]'), use = card.querySelector('[data-a="usewords"]');
     const applyWords = async (keepFocus = false) => {

@@ -21,7 +21,7 @@ The tool reads an Illustrator sheet of loose jewelry charm artwork and splits it
 
 You receive:
 1. An overview image of the whole source sheet on a light grey background. Every detected "charm" is boxed and labelled with its number, and each detected CUT OUTLINE is traced in red (the artwork's own outline may be black, grey or WHITE, so trust the red trace to see where the cut line is).
-2. One cropped image per detected charm, in number order, with its size in inches, with the same red cut-outline trace.
+2. One cropped image per detected charm, in number order, with its size in inches, with black cut lines and the original engraving colours. Red or blue artwork inside the cut outline is engraving, not a hole.
 
 A charm whose red outline encloses engraved text (a date, a name) is complete: the text is engraving on it, not a separate piece. Only text with NO red cut outline around it is a fragment.
 

@@ -12,7 +12,7 @@ dom.window.HTMLCanvasElement.prototype.getContext = () => ({fillRect(){}});
 let charm = null;
 const c = vm.createContext({window:dom.window, document, console:{error:(...x)=>errors.push(x)}, ResizeObserver:dom.window.ResizeObserver, B:{engrave:{items:jobs,fonts:{ok:true}}},
   S:{settings:{},mode:'engrave'}, PT:72/25.4, MM:25.4/72, SOURCE_LABEL:{},
-  Pool:{charmOf:()=>charm,sheetOf:()=>null}, P:{drawSegments(){throw Error('invalid saved path');}}, Review:{items:()=>[],count:()=>0,remove(){}}, Master:{entryFor:()=>null},
+  Pool:{charmOf:()=>charm,sheetOf:()=>null}, P:{drawCharm(){throw Error('invalid saved path');}}, Review:{items:()=>[],count:()=>0,remove(){}}, Master:{entryFor:()=>null,fetchEntry:async()=>null},
   LiveStrip:{render(){}}, RunCtl:{poke(){}}, Orders:{render(){}},
   setTimeout:fn=>(timers.push(fn),timers.length),clearTimeout(){},
   requestAnimationFrame:fn=>(frames.push(fn),frames.length),cancelAnimationFrame(){},

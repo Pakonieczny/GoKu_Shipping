@@ -1,6 +1,6 @@
 const assert=require('node:assert/strict'),fs=require('fs'),vm=require('vm');
 global.self=global;global.PDFLib=require('../../vendor/pdf-lib-1.17.1.min.js');
-vm.runInThisContext(fs.readFileSync('charm-nest-pdf.js','utf8'));
+require('../../charm-nest-pdf.js');
 const E=require('../../charm-nest-export.js'),G=require('../../charm-nest-geom.js'),ot=require('../../vendor/opentype-1.3.4.min.js');
 const font=ot.loadSync('vendor/fonts/SourceSans3-Regular.otf');
 const rect=(x,y,w,h)=>[['m',[x,y]],['l',[x+w,y]],['l',[x+w,y+h]],['l',[x,y+h]],['h']];

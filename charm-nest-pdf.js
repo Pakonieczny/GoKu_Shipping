@@ -574,9 +574,9 @@
     // An outline drawn as several open strokes whose ends meet (a bar from a U-shape plus a line) is one closed outline.
     // Chain single-subpath achromatic open strokes by coincident endpoints; a fully closed chain becomes a synthetic
     // outline whose real parts stay the charm's members (the writer copies the parts; the synthetic path is geometry only).
-    const chained = chainOpenStrokes(preDrawable.filter(s => s.kind === "path" && s.stroke && !s.closed && achromatic0(s.strokeRGB) && s.subpaths && s.subpaths.length === 1), 1.0);
+    const chained = chainOpenStrokes(preDrawable.filter(s => s.kind === "path" && s.stroke && !s.closed && pathRole(s) !== "artwork" && (pathRole(s) === "cut" || achromatic0(s.strokeRGB)) && s.subpaths && s.subpaths.length === 1), 1.0);
     const partOf = new Map(); for (const ch of chained) for (const part of ch.parts) partOf.set(part, ch);
-    const cand0 = preDrawable.concat(chained).filter(s => s.kind === "path" && s.stroke && s.closed && achromatic0(s.strokeRGB) && (s.bbox[2] - s.bbox[0]) >= opts.minPt && (s.bbox[3] - s.bbox[1]) >= opts.minPt);
+    const cand0 = preDrawable.concat(chained).filter(s => s.kind === "path" && isCutLine(s) && (s.bbox[2] - s.bbox[0]) >= opts.minPt && (s.bbox[3] - s.bbox[1]) >= opts.minPt);
     const isRectLike = s => s.kind === "path" && s.closed && s.subpaths.length === 1 && s.subpaths[0].filter(x => x[0] !== "h").length <= 5 && !s.subpaths[0].some(x => x[0] === "c");
     const encloses = (box, s) => s.bbox[0] >= box[0] - 0.5 && s.bbox[1] >= box[1] - 0.5 && s.bbox[2] <= box[2] + 0.5 && s.bbox[3] <= box[3] + 0.5;
     const frames = preDrawable.filter(s => s.kind === "path" && (bbArea(s.bbox) >= pageArea * opts.framePct ||
@@ -590,13 +590,13 @@
     // A solid dark shape with no stroke (an anchor, a star) is cut along its fill edge: it is an outline too.
     // Largest-first containment below turns a dark fill that sits inside a stroked outline back into a detail.
     const isOutline = s => s.kind === "path" && s.closed && (s.bbox[2] - s.bbox[0]) >= opts.minPt && (s.bbox[3] - s.bbox[1]) >= opts.minPt &&
-      ((s.stroke && achromatic(s.strokeRGB)) || (!s.stroke && s.fill && lum(s.fillRGB) <= opts.darkMax));
+      (isCutLine(s) || (pathRole(s) !== "artwork" && !s.stroke && s.fill && lum(s.fillRGB) <= opts.darkMax));
     let frame = frames.length ? frames.reduce((a, b) => bbArea(b.bbox) > bbArea(a.bbox) ? b : a) : null;
     let cands = drawableWithChains.filter(isOutline);
     let rule = "stroked-dark-closed";
     if (!cands.length) {
       rule = "filled-dark-closed";
-      cands = drawable.filter(s => s.kind === "path" && s.fill && s.closed && lum(s.fillRGB) <= opts.darkMax && bbArea(s.bbox) < pageArea * opts.framePct && (s.bbox[2] - s.bbox[0]) >= opts.minPt && (s.bbox[3] - s.bbox[1]) >= opts.minPt);
+      cands = drawable.filter(s => s.kind === "path" && pathRole(s) !== "artwork" && s.fill && s.closed && lum(s.fillRGB) <= opts.darkMax && bbArea(s.bbox) < pageArea * opts.framePct && (s.bbox[2] - s.bbox[0]) >= opts.minPt && (s.bbox[3] - s.bbox[1]) >= opts.minPt);
     }
     const polysCache = new Map();
     const polysOf = s => { let p = polysCache.get(s); if (!p) { p = flatten(s, 8); polysCache.set(s, p); } return p; };
@@ -624,7 +624,7 @@
       if (!host) {
         // an attached ring: ring-sized, one simple subpath, and written next to its charm in the stream
         const maxDim = Math.max(s.bbox[2] - s.bbox[0], s.bbox[3] - s.bbox[1]);
-        const ringLike = maxDim <= opts.ringMaxPt && s.subpaths.length === 1 && s.subpaths[0].length <= 20;
+        const ringLike = maxDim <= opts.ringMaxPt && s.subpaths.length <= 2 && s.subpaths.every(sp => sp.length <= 20);
         const small = ringLike && (bbArea(s.bbox) <= 0.12 * largestArea || maxDim <= 30);
         if (small) {
           let bestD = Infinity, bestO = null, secondD = Infinity;
@@ -837,10 +837,10 @@
     void parsed;
     return c.topIndices;
   }
-  /** The sorter's cut-line rule: a closed path with a black/grey or laser-red stroke. Blue engraving and filled artwork remain front detail. */
-  const achromaticCol = col => col && (Math.max(col[0], col[1], col[2]) - Math.min(col[0], col[1], col[2])) <= 0.15;
-  function isCutLine(m) { return !!m && m.kind === "path" && m.stroke && m.closed && (achromaticCol(m.strokeRGB) || (m.strokeRGB?.[0] >= .65 && m.strokeRGB[1] <= .35 && m.strokeRGB[2] <= .35)); }
-  /** Inner cut lines of a charm: closed black/grey or red strokes other than its outline (hoop holes, windows). */
+  const geometry = () => root.CharmNestGeom || (typeof require === "function" ? require("./charm-nest-geom.js") : null);
+  const pathRole = m => geometry().pathRole(m);
+  const isCutLine = m => geometry().isCutLine(m);
+  /** Only manufacturing cut paths remove material; engraving colours never do. */
   function cutLinesOf(c) { return c.members.filter(m => m !== c.outline && isCutLine(m)); }
   /** A segment with every point and Bézier handle mapped through M (points and control points alike). */
   function transformSegment(seg, M) {
@@ -965,8 +965,7 @@
     for (let y = 0; y < h; y++) { const gy = Math.min(G - 1, (y * G / h) | 0); for (let x = 0; x < w; x++) { const g = gy * G + Math.min(G - 1, (x * G / w) | 0); tot[g]++; if (bits[y * w + x]) cnt[g]++; } }
     let s = ""; for (let i = 0; i < G * G; i++) s += cnt[i] * 2 >= tot[i] ? "1" : "0"; return s;
   }
-  /** Thumbnail for the operator and for Claude: light background so white strokes show,
-   *  and the charm's CUT OUTLINE drawn again in red on top so it is unmistakable. */
+  /** The operator and AI see the same assembled charm: black cuts, original artwork colours. */
   async function thumbnail(c, size) {
     const b = c.bbox, pad = 2;
     const w = b[2] - b[0] + pad * 2, h = b[3] - b[1] + pad * 2, s = size / Math.max(w, h);
@@ -974,9 +973,14 @@
     const cv = makeCanvas(W, H), ctx = cv.getContext("2d");
     ctx.fillStyle = "#ece7dc"; ctx.fillRect(0, 0, W, H);
     const tx = (x, y) => [(x - b[0] + pad) * s, (b[3] + pad - y) * s];
-    drawSegments(ctx, c.members, tx, s);
-    ctx.beginPath(); pathToCanvas(ctx, c.outline, tx); ctx.strokeStyle = "rgba(190,40,40,.9)"; ctx.lineWidth = Math.max(1, 0.6 * s); ctx.stroke();
+    drawCharm(ctx, c, tx, s);
     return cv.convertToBlob ? await blobToDataUrl(await cv.convertToBlob({ type: "image/png" })) : cv.toDataURL("image/png");
+  }
+  function drawCharm(ctx, c, tx, scale) {
+    drawSegments(ctx, c.members.map(m => m === c.outline || isCutLine(m)
+      ? {...m, strokeRGB:[0,0,0], fillRGB:[0,0,0]} : m), tx, scale);
+    ctx.beginPath(); pathToCanvas(ctx, c.outline, tx);
+    ctx.strokeStyle = "#000"; ctx.lineWidth = Math.max(.6, (c.outline.lwPt || .25) * scale); ctx.stroke();
   }
   /** Draw segments; `solid` paints everything opaque black (for silhouettes) instead of in colour. */
   function drawSegments(ctx, segs, tx, s, solid) {
@@ -1330,7 +1334,7 @@
      circle a charm carries: the ring is moved to touch the body if it does not, the outer circle is welded into the
      outline (curves are flattened within 0.002 mm), and the inner circle becomes a
      black cut line. All contacts are united and all resulting apertures are retained. */
-  const ringLike = m => { if (!m || !m.bbox || m.kind !== "path" || !m.stroke || !m.closed) return false; const w = m.bbox[2] - m.bbox[0], h = m.bbox[3] - m.bbox[1]; return Math.abs(w - h) < 1 && w >= 3.5 && w <= 8 && (m.subpaths || []).length >= 1 && (m.subpaths || []).length <= 2 && m.subpaths.every(sp => sp.length <= 8); };
+  const ringLike = m => { if (!m || !m.bbox || m.kind !== "path" || pathRole(m) === "artwork" || !m.stroke || !m.closed) return false; const w = m.bbox[2] - m.bbox[0], h = m.bbox[3] - m.bbox[1]; return Math.abs(w - h) < 1 && w >= 3.5 && w <= 8 && (m.subpaths || []).length >= 1 && (m.subpaths || []).length <= 2 && m.subpaths.every(sp => sp.length <= 8); };
   function circlePath(cx, cy, r) {
     const k = 0.5522847498 * r;
     return [["m", [cx + r, cy]], ["c", [cx + r, cy + k], [cx + k, cy + r], [cx, cy + r]], ["c", [cx - k, cy + r], [cx - r, cy + k], [cx - r, cy]], ["c", [cx - r, cy - k], [cx - k, cy - r], [cx, cy - r]], ["c", [cx + k, cy - r], [cx + r, cy - k], [cx + r, cy]], ["h"]];
@@ -1421,7 +1425,7 @@
       const cut=V.boolean(united.map(p=>p.points),[V.flatten(inner).points],'difference');
       if(!cut.length){res.left.push("ring aperture removes the entire body");continue;}
       const exteriors=cut.filter(p=>!p.hole),holes=cut.filter(p=>p.hole);
-      const base={kind:'path',synthetic:true,paintOp:'S',stroke:true,fill:false,strokeRGB:[0,0,0],fillRGB:[0,0,0],lwPt:original.lwPt||ring.lwPt||.25,closed:true,depth:original.depth||0,layer:original.layer||null,start:-1,end:-1};
+      const base={kind:'path',manufacturingRole:'cut',synthetic:true,paintOp:'S',stroke:true,fill:false,strokeRGB:[0,0,0],fillRGB:[0,0,0],lwPt:original.lwPt||ring.lwPt||.25,closed:true,depth:original.depth||0,layer:original.layer||null,start:-1,end:-1};
       const outline={...original,...base,subpaths:exteriors.map(p=>V.subpath(p.points)),bbox:bboxOf(exteriors.flatMap(p=>p.points)),welded:(original.welded||0)+1};
       const apertures=holes.map(p=>({...base,subpaths:[V.subpath(p.points)],bbox:bboxOf(p.points)}));
       const replaced=new Set([original,ring,innerMember,...(original.parts||[])].filter(Boolean));
@@ -1437,7 +1441,7 @@
       c.members=c.members.filter(m=>!replaced.has(m));c.members.push(outline,...apertures);c.outline=outline;
       c.bbox=c.members.reduce((a,m)=>bbUnion(a,m.bbox),null);res.welded++;
     }
-    c.ringGeometryVersion=2;return res;
+    c.ringGeometryVersion=3;return res;
   }
   /** Content-stream operators for members that have no bytes in the source, in the source's own coordinates. */
   function syntheticOps(members) {
@@ -1450,6 +1454,6 @@
     }
     return out;
   }
-  root.CharmNestPDF = { integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawSegments, pathToCanvas,
+  root.CharmNestPDF = { integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, drawSegments, pathToCanvas,
     parseSkuLabel, labelCharms, recomputeTopIndices, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
 })(typeof window !== "undefined" ? window : self);

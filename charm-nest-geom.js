@@ -359,7 +359,19 @@
 
   /* ═══ 3 · the back: an actual flip, verified ═══════════════════════════ */
   const achromatic = c => c && (Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2])) <= 0.15;
-  const isCutLine = m => !!m && m.kind === "path" && !!m.stroke && !!m.closed && (achromatic(m.strokeRGB) || (m.strokeRGB?.[0] >= .65 && m.strokeRGB[1] <= .35 && m.strokeRGB[2] <= .35));
+  // Manufacturing roles outrank paint. Red/blue are artwork colours, not holes.
+  // Keep legacy unlabelled achromatic cut strokes; labelled artwork is never a cut.
+  function pathRole(m) {
+    const role = String(m?.manufacturingRole || "").toLowerCase();
+    if (["cut", "cutout", "outline"].includes(role)) return "cut";
+    if (["engrave", "hatch", "artwork"].includes(role)) return "artwork";
+    const layer = String(m?.layer || "").trim();
+    if (/^(?:engrave|engraving|hatch|front detail)(?:$|[\s:_()\/-])/i.test(layer)) return "artwork";
+    if (/^(?:cut|cutout|cut-out|cutline|cut line)(?:$|[\s:_()\/-])/i.test(layer)) return "cut";
+    return null;
+  }
+  const isCutLine = m => !!m && m.kind === "path" && !!m.closed && pathRole(m) !== "artwork" &&
+    (pathRole(m) === "cut" ? !!(m.stroke || m.fill) : !!m.stroke && achromatic(m.strokeRGB));
   const FLIP_WHY = { pixels: "the flipped back does not match the front", holes: "a cut-out does not stay open when the charm is flipped", area: "the flipped back covers a different area", detailDropped: "front-only detail would show on the back" };
   class BackViewError extends Error { constructor(checks, images) { const bad = Object.keys(checks).filter(k => !checks[k]); super("flip check failed — " + bad.map(k => FLIP_WHY[k] || k).join("; ")); this.checks = checks; this.failed = bad; this.images = images; } }
 
@@ -407,8 +419,9 @@
     opts = Object.assign({ res: 6, tolPixels: 0.0005, tolArea: 0.001 }, opts || {});
     const cut = opts.isCut || isCutLine;
     const originalOutline = charm.outline;
+    if (pathRole(originalOutline) === "artwork") throw new Error("The charm outline is front artwork. Reload its CUT geometry before fitting engraving.");
     let outline = originalOutline;
-    if (opts.solidBack && originalOutline.fill && !originalOutline.stroke && originalOutline.subpaths.length > 1) {
+    if (pathRole(originalOutline) !== "cut" && originalOutline.fill && !originalOutline.stroke && originalOutline.subpaths.length > 1) {
       // Expanded outline ink can trace the same outside edge twice. Remove only
       // its narrow inner tracing; retain actual interior openings and every
       // stroked compound path. Solid back must never fill a physical cut-out.
@@ -434,7 +447,7 @@
       pixels: diffFraction(B, flipX(F)) <= opts.tolPixels,
       holes: holes.every(h => { const p = interiorPoint(flatten(h, 12)); return at(B, 2 * cx - p[0], p[1]) === at(F, p[0], p[1]); }),
       area: Math.abs(area(B) - area(F)) / Math.max(1, area(F)) <= opts.tolArea,
-      detailDropped: mirrored.every(m => cut(m) || m.original === outline) && !mirrored.some(m => m.fill && !m.stroke && m.original !== outline) && dropped.every(m => !cutMembers.includes(m))
+      detailDropped: mirrored.every(m => cut(m) || m.original === outline) && !mirrored.some(m => m.fill && !m.stroke && m.original !== outline && pathRole(m) !== "cut") && dropped.every(m => !cutMembers.includes(m))
     };
     const detail = { filledArtwork: outline !== originalOutline, pixelDiff: diffFraction(B, flipX(F)), areaF: area(F), areaB: area(B), dropped: dropped.length, cut: cutMembers.length };
     if (!Object.values(checks).every(Boolean)) throw new BackViewError(checks, { F, B, flipF: flipX(F), detail });
@@ -788,7 +801,7 @@
 
   return { MM_PER_PT, PT_PER_MM, mul, ap, mirrorX, rotateAbout, translate, transformSeg, flatten, polyCentroid, pointInPolys, distToPolys, interiorPoint,
     makeFrame, emptyMask, cloneMask, rasterPolys, raster, area, flipX, diffFraction, at, distanceTransform, erode, subtract, rotateMask, largestRectangles,
-    isCutLine, BackViewError, upAngleOf, backView, engraveMask, materialMask,
+    pathRole, isCutLine, BackViewError, upAngleOf, backView, engraveMask, materialMask,
     glyphCoverage, capPerEm, lineGlyphs, layoutLines, glyphPolys, rasterGlyphs, verifyInk, strokeMetrics, fitText, refitAt, defaultSize, sizeRange, SIZE_RULE, splitVariants, wrapLines, flowVariants, reflowAt, fitMultiline,
     svgPathOf, svgPathOfCmds, silhouetteBits };
 });

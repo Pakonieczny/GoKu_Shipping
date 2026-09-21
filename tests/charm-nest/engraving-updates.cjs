@@ -15,7 +15,7 @@ const rect=(x,y,w,h)=>[['m',[x,y]],['l',[x+w,y]],['l',[x+w,y+h]],['l',[x,y+h]],[
 const outline={kind:'path',closed:true,fill:true,stroke:false,strokeRGB:[0,0,0],subpaths:[rect(0,0,40,60),rect(1,1,38,58)],bbox:[0,0,40,60]},hole={kind:'path',closed:true,stroke:true,strokeRGB:[0,0,0],subpaths:[rect(17,52,6,6)],bbox:[17,52,23,58]};
 const charm={outline,members:[outline,hole],bbox:outline.bbox};
 const ordinary=G.backView(charm,{upAngle:90});const solid=G.backView(charm,{solidBack:true,upAngle:90});
-assert(G.area(solid.mask)>G.area(ordinary.mask)*3,'compound ink outline can use its solid back');
+assert.equal(G.area(solid.mask),G.area(ordinary.mask),'expanded perimeter ink is resolved automatically');
 assert.equal(G.at(solid.mask,20,55),0,'physical hole preserved');assert.equal(outline.subpaths.length,2,'front unchanged');
 const mask=G.engraveMask(solid,{marginMm:.3});
 for(const text of ['I dissent','❤️ Hecht!']){const fit=G.fitText([text],font,mask,{minStrokeMm:0,minGapMm:0,tryRotated:false});assert(fit.ok,fit.reason);assert(G.verifyInk(fit.cmds,mask).ok,'every emoji/text path on solid metal');}

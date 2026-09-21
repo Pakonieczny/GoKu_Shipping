@@ -43,10 +43,11 @@ function thumbnailPng(Geom, charm, size) {
   for (const m of charm.members) {
     if (m.kind !== "path") continue;
     const d = Geom.svgPathOf(m); if (!d) continue;
-    const st = m.stroke ? (Math.min(m.strokeRGB[0], m.strokeRGB[1], m.strokeRGB[2]) >= 0.92 ? "#2a2724" : css(m.strokeRGB)) : "none";
-    parts.push(`<path d="${d}" fill="${m.fill ? css(m.fillRGB) : "none"}" fill-rule="${m.paintOp && m.paintOp.endsWith("*") ? "evenodd" : "nonzero"}" stroke="${st}" stroke-width="${Math.max(0.6 / s, m.lwPt || 0.5)}"/>`);
+    const physical = m === charm.outline || Geom.isCutLine(m);
+    const st = m.stroke ? (physical ? "#000" : (Math.min(m.strokeRGB[0], m.strokeRGB[1], m.strokeRGB[2]) >= 0.92 ? "#2a2724" : css(m.strokeRGB))) : "none";
+    parts.push(`<path d="${d}" fill="${m.fill ? (physical ? "#000" : css(m.fillRGB)) : "none"}" fill-rule="${m.paintOp && m.paintOp.endsWith("*") ? "evenodd" : "nonzero"}" stroke="${st}" stroke-width="${Math.max(0.6 / s, m.lwPt || 0.5)}"/>`);
   }
-  parts.push(`<path d="${Geom.svgPathOf(charm.outline)}" fill="none" stroke="rgba(190,40,40,.9)" stroke-width="${Math.max(1 / s, 0.6)}"/>`);
+  parts.push(`<path d="${Geom.svgPathOf(charm.outline)}" fill="none" stroke="#000" stroke-width="${Math.max(1 / s, 0.6)}"/>`);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.max(8, Math.round(w * s))}" height="${Math.max(8, Math.round(h * s))}" viewBox="0 0 ${w} ${h}"><rect width="100%" height="100%" fill="#ece7dc"/><g transform="translate(${pad - b[0]} ${b[3] + pad}) scale(1 -1)">${parts.join("")}</g></svg>`;
   try { return new Resvg(svg, { fitTo: { mode: "width", value: Math.max(8, Math.round(w * s)) } }).render().asPng(); } catch (e) { console.warn("[charmMaster] thumbnail", e.message); return null; }
 }
