@@ -584,7 +584,7 @@ const Orders = window.Orders = (() => {
   function engravePill(r) { const e = r.engrave; if (!e) return r.spec && r.spec.engraveCandidate ? ["warn", "words?"] : ["neutral", "—"]; if (!e.needed) return ["neutral", e.state === "skipped" ? "skipped" : "no engraving"]; if (e.approved) return ["ok", "approved"]; if (e.state === "words") return ["warn", "words"]; if (e.state === "review") return ["warn", "review"]; if (e.state === "fitted") return ["info", "fitted"]; if (e.state === "blocked") return ["bad", "blocked"]; return ["info", e.state || "engrave"]; }
   const OV = { pile: null, metal: null, form: null, eng: null, q: "", view: null, sort: "arrival", desc: false, limit:48 };   // what the tab is showing right now
   const FORM_LABEL = { necklace: "Necklaces", earrings: "Earrings", "earring-single": "Single earrings", huggie: "Huggies", charm: "Charms only", bracelet: "Bracelets", anklet: "Anklets", keychain: "Keychains" };
-  const viewMode = () => OV.view || S.settings.orderView || "cards";
+  const viewMode = () => OV.view || S.settings.orderView || "list";
   /** The lines the filters leave, in ship-by order. */
   function visibleRows() {
     const q = OV.q.trim().toLowerCase();
@@ -4475,7 +4475,7 @@ const Session = window.Session = (() => {
       sheets: METALS.map(m => ({ metal: m.key, active: S.sheets[m.key].active, pages: allSheets().filter(p => p.metal === m.key).map(p => copy(p, seen)) })),
       pools: copy(B.pool.rows, seen), sets: copy(B.sets, seen), jobs: [...B.engrave.items.values()].map(j => ({...copy(j, seen), ...(j.editingBack ? {editRow:copy(j.row, new WeakMap())} : {})})),
       review: B.review.items.map(it => Object.assign(copy(it, seen), { rowKey: it.row?.key, jobKey: it.job?.key })),
-      mode: S.mode, orderView: copy(Orders.view()), engravingView: copy(Engrave.view?.()), reviewView: copy(Review.view?.()), settled: copy(Review.settled?.()), gate: copy(Gate.state()), recall: copy(Recall.state()), logs: copy(LiveStrip.rows) };
+      mode: S.mode, orderViewVersion: 1, orderView: copy(Orders.view()), engravingView: copy(Engrave.view?.()), reviewView: copy(Review.view?.()), settled: copy(Review.settled?.()), gate: copy(Gate.state()), recall: copy(Recall.state()), logs: copy(LiveStrip.rows) };
   }
   function flush() {
     clearTimeout(timer); timer = 0; if (!ready) return chain;
@@ -4554,7 +4554,7 @@ const Session = window.Session = (() => {
       Engrave.restoreView?.(d.engravingView);
       if (Review.view) Object.assign(Review.view(), d.reviewView || {});
       if (Review.settled) Review.settled().splice(0, Review.settled().length, ...(d.settled || []));
-      Object.assign(Gate.state(), d.gate || {}); Object.assign(Recall.state(), d.recall || {}); Object.assign(Orders.view(), d.orderView || {});
+      Object.assign(Gate.state(), d.gate || {}); Object.assign(Recall.state(), d.recall || {}); Object.assign(Orders.view(), d.orderView || {}, {view:d.orderViewVersion === 1 ? (d.orderView?.view || S.settings.orderView) : S.settings.orderView});
       LiveStrip.rows.splice(0, LiveStrip.rows.length, ...(d.logs || []));
       if (B.run && ["running", "review", "paused"].includes(B.run.status)) {
         B.run.arrivalBusy = false;

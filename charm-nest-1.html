@@ -1356,7 +1356,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="brites-progress.js"></script>
 <script src="charm-nest-progress.js"></script>
 <script src="charm-nest-operations.js"></script>
-<script src="charm-nest-solver.js?v=20260922-perimeter"></script>
+<script src="charm-nest-solver.js?v=20260922-corners"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260921-material"></script>
@@ -1367,7 +1367,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-readiness.js"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
-<script src="charm-nest-orders.js?v=20260922-purchase-details"></script>
+<script src="charm-nest-orders.js?v=20260922-list-corners"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
    CHARM NESTING STATION 1 — application
@@ -1389,7 +1389,7 @@ const DEFAULTS = {
   stock: { gold: [100 / 25.4, 50 / 25.4], silver: [100 / 25.4, 50 / 25.4], rose: [100 / 25.4, 50 / 25.4], gold10k: [100 / 25.4, 50 / 25.4], gold14k: [100 / 25.4, 50 / 25.4] },
   nestFlow: "standard", learnedBudgetS: 600, learnedStallS: 300,
   clearancePt: -0.5, insetPt: 1.5, angleStep: 10, budgetS: 180, seed: 1, freshSeed: true, serverAbove: 0, parallel: 0,
-  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", packingAI: "on", aiRounds: 10, snapIn: 0.25, maxFill: 0.74, orderView: "cards", v: 21,
+  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", packingAI: "on", aiRounds: 10, snapIn: 0.25, maxFill: 0.74, orderView: "list", v: 23,
   // Design Station bridge, orders, run (design doc §14)
   dsOrigin: "https://design-1.goldenspike.app", heartbeatS: 5, heartbeatMiss: 3, autoCommit: "on", runMode: "manual", pullMode: "all", pullDueBy: "", pullCount: 40, autoEvery: 0, pollOrders: "on", pollMinutes: 1, finalOptimizeCount: 80, optimizeAt: 85, etsyHourlyCap: 600, sandbox: "off",
   skuPattern: "^[A-Z0-9][A-Z0-9 _.,'&()+\\-]{1,60}$", labelGapMm: 6.4, masterServerAbove: 0, sizeMinMm: 3, sizeMaxMm: 60,
@@ -1476,6 +1476,7 @@ function loadSettings() {
     // v21: return existing workspaces to Paul's requested 10° search.
     if ((saved.v || 1) < 21) { saved.angleStep = 10; saved.v = 21; }
     if ((saved.v || 1) < 22) { if(saved.pollMinutes == null || +saved.pollMinutes === 10)saved.pollMinutes=1; saved.finalOptimizeCount ||= 80; saved.v=22; }
+    if ((saved.v || 1) < 23) { saved.orderView="list"; saved.v=23; }
     if (![2,5,10].includes(+saved.angleStep)) saved.angleStep = DEFAULTS.angleStep;
     const out = Object.assign({}, DEFAULTS, saved); out.stock = Object.assign({}, DEFAULTS.stock, saved.stock || {}); return out;
   } catch (_) { return Object.assign({}, DEFAULTS, { v: 2 }); }
@@ -2191,7 +2192,7 @@ function ensureWorkers(sh, n) {
   for (const w of sh.workers.splice(n)) w.terminate();
   while (sh.workers.length < n) {
     const idx = sh.workers.length;
-    const w = new Worker("charm-nest-worker.js?v=20260922-perimeter");
+    const w = new Worker("charm-nest-worker.js?v=20260922-corners");
     w.onmessage = e => onWorkerMessage(sh, e.data, idx);
     w.onerror = e => onWorkerMessage(sh, { type: "error", jobId: sh.jobId + ":" + idx, message: e.message }, idx);
     sh.workers.push(w);
@@ -3550,7 +3551,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260922-purchase-details"></script>
+<script src="charm-nest-bridge.js?v=20260922-list-corners"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin" aria-labelledby="owTitle">

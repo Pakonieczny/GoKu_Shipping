@@ -490,34 +490,47 @@
       return improved;
     }
 
-    async function ruinRecreate(best, attempts) {
-      const missingIds = repairCandidates(best);
+    async function ruinRecreate(best, attempts, perimeter = null) {
+      let missingIds = repairCandidates(best);
+      if(perimeter && !fifo && missingIds.length){
+        const groups=new Map();
+        for(const id of missingIds){const p=prepared.find(p=>p.id===id);if(p){if(!groups.has(p.order))groups.set(p.order,[]);groups.get(p.order).push(p);}}
+        const eligible=[...groups.values()].filter(ps=>ps.length<=3 && !ps.some(p=>p.pinned)).sort((a,b)=>a.reduce((n,p)=>n+p.footprintCells,0)-b.reduce((n,p)=>n+p.footprintCells,0));
+        missingIds=(eligible[0] || []).map(p=>p.id);
+      }
       if (!best?.rec?.length || !missingIds.length || missingIds.length > 3) return false;
+      const outOfTime=()=>stopped() || (perimeter && now()>=perimeter.deadline);
+      const corners=perimeter ? cornerPockets(best.grids.coarse,Math.max(2,Math.round(12*72/25.4*coarseRes))) : null;
       const total = prepared.length;
-      const angles15 = []; for (let a = 0; a < 360; a += 15) angles15.push(a);
+      const repairAngles = perimeter ? angles : Array.from({length:24},(_,i)=>i*15);
       for (let att = 0; att < attempts; att++) {
-        if (stopped()) return false;
-        // choose the neighbourhood: around the largest gap on even attempts, around a random piece on odd ones
+        if (outOfTime()) return false;
+        // Target the emptiest corners during the final pass; ordinary repairs
+        // alternate between the largest gap and a random neighbourhood.
         const rec = best.rec;
         let anchor;
-        if (att % 2 === 0) { const pk = best.grids.coarse.largestPocket(); anchor = { x: (pk.x + pk.w / 2) * ratio, y: (pk.y + pk.h / 2) * ratio }; }
+        const corner=corners?.[att%corners.length];
+        if(corner)anchor={x:corner.x*ratio,y:corner.y*ratio};
+        else if (att % 2 === 0) { const pk = best.grids.coarse.largestPocket(); anchor = { x: (pk.x + pk.w / 2) * ratio, y: (pk.y + pk.h / 2) * ratio }; }
         else { const r = rec[Math.floor(random() * rec.length)]; anchor = { x: r.x + r.v.fine.w / 2, y: r.y + r.v.fine.h / 2 }; }
-        const k = 2 + Math.floor(random() * 3);                       // remove 2–4 pieces
+        const k = perimeter ? 2+Math.floor(att/4) : 2 + Math.floor(random() * 3); // bounded corner neighbourhoods
         const byDist = rec.slice().sort((a, b) => Math.hypot(a.x + a.v.fine.w / 2 - anchor.x, a.y + a.v.fine.h / 2 - anchor.y) - Math.hypot(b.x + b.v.fine.w / 2 - anchor.x, b.y + b.v.fine.h / 2 - anchor.y));
-        const removed = byDist.slice(0, k).filter(r => !r.p.pinned);
+        const removed = perimeter ? byDist.filter(r=>!r.p.pinned).slice(0,k) : byDist.slice(0, k).filter(r => !r.p.pinned);
+        if(!removed.length)continue;
         const keep = rec.filter(r => !removed.includes(r));
         // rebuild grids from the kept pieces
         const fine = baseFine.clone(), coarse = baseCoarse.clone();
         for (const r of keep) { fine.stamp(r.v.fine.bits, r.v.fine.w, r.v.fine.h, r.x, r.y, r.p.id); for (let yy = 0; yy < r.v.fine.h; yy++) for (let xx = 0; xx < r.v.fine.w; xx++) if (r.v.fine.bits[yy * r.v.fine.w + xx]) { const gx = Math.floor((r.x + xx) / ratio), gy = Math.floor((r.y + yy) / ratio); if (gx >= 0 && gy >= 0 && gx < coarse.W && gy < coarse.H) coarse.set(gx, gy); } }
         coarse.buildSAT();
-        // re-insert: missing pieces first, then the removed ones, largest first, at 15° steps
+        // Reinsert the complete missing order before its removed neighbours.
+        // Corner repair uses the normal rotation set and shape guidance.
         const missing = missingIds.map(id => prepared.find(x => x.id === id)).filter(Boolean);
         if (missing.some(p => p.pinned)) continue;
         const queue = missing.concat(removed.map(r => r.p).sort((a, b) => guidedOrderScore(b,keep,job.packingHints)-guidedOrderScore(a,keep,job.packingHints) || b.areaPt2 - a.areaPt2));
         const newRec = keep.slice(); let ok = true, cells = keep.reduce((n,r) => n + r.v.cells, 0);
         for (const p of queue) {
-          if (stopped()) { ok = false; break; }
-          const pos = search({ ...p, variants: variantsFor(p, angles15) }, fine, coarse, ratio, 0.35, 0.02, random, 0, 0, best.stripPacked ? stripOf(newRec) : null);
+          if (outOfTime()) { ok = false; break; }
+          const pos = search({ ...p, variants: variantsFor(p, repairAngles) }, fine, coarse, ratio, 0.35, perimeter ? 0 : 0.02, random, corner?.right || 0, corner?.bottom || 0, best.stripPacked ? stripOf(newRec) : null);
           if (!pos) { ok = false; break; }
           const { v, x, y } = pos;
           if ((cells + v.cells) / usableCellsFine > maxFill) { ok = false; break; }
@@ -535,7 +548,9 @@
         const placedCells = newRec.reduce((n, r) => n + r.v.cells, 0);
         const placedIds = new Set(placements.map(p => p.id));
         const rejects = prepared.filter(p => !placedIds.has(p.id)).map(p => p.id);
+        if(!betterLayout({placements,density:placedCells/usableCellsFine,contactQuality:qualityOf(newRec,fine)},best,job.sheet))continue;
         Object.assign(best, { placements, rejects, capped: (best.capped || []).filter(id => !placedIds.has(id)), density: placedCells / usableCellsFine, placedCells, placedPt2: placedCells / (fineRes * fineRes), freePt2: fine.freeCells() / (fineRes * fineRes), pocket: pocketPt(coarse, coarseRes), grids: { fine, coarse }, rec: newRec, contactQuality:qualityOf(newRec,fine), repaired: true });
+        if(perimeter)best.cornerRepairs=(best.cornerRepairs || 0)+1;
         if (cb.onBest) cb.onBest(publicLayout(best), { trial: best.trial, placed: placements.length, total, rejects, density: best.density, elapsedMs: now() - t0, repaired: true, removed: removed.length });
         return true;
       }
@@ -791,6 +806,11 @@
       await yieldNow();
     }
     if (trials >= maxTrials && endedBy === "budget") endedBy = "trials";
+    // Make room in the emptiest corners without exposing temporary removals.
+    // Only a fully rebuilt layout containing more complete orders can win.
+    if(best?.rejects?.length && best.rec?.length && !stopped()) {
+      await ruinRecreate(best,8,{deadline:Math.min(t0+budget,now()+refinementReserve*.5)});
+    }
     // Construction heuristics propose layouts; neighbour and edge contact judge
     // them. Reinsert unpinned pieces across rotations, retaining the best layout
     // by the same count/offcut/contact ordering used by the worker pool.
@@ -811,7 +831,8 @@
         if (now() - t0 > budget || (cb.shouldStop && cb.shouldStop())) break;
         const r = best.rec.find(x => x.p.id === original.p.id), keep = best.rec.filter(x => x !== r);
         const grids = rebuildGrids(keep);
-        const pos = search({...r.p,variants:variantsFor(r.p,[...new Set(angles.concat(angles.length < 180 ? angles.map(a=>(a+15)%360) : [],r.v.angle))])}, grids.fine, grids.coarse, ratio, .1, 0, random, 0, 0, best.density < maxFill * .9 ? stripOf(keep) : null);
+        const policy=best.density >= maxFill*.9 ? {band:perimeterBand,minCells:edgeBandCells(r.v.fine,grids.fine,r.x,r.y,perimeterBand)} : null;
+        const pos = search({...r.p,variants:variantsFor(r.p,[...new Set(angles.concat(angles.length < 180 ? angles.map(a=>(a+15)%360) : [],r.v.angle))])}, grids.fine, grids.coarse, ratio, .1, 0, random, 0, 0, best.density < maxFill * .9 ? stripOf(keep) : null,false,policy);
         if (!pos || (pos.x === r.x && pos.y === r.y && pos.v.angle === r.v.angle)) continue;
         // On a full sheet, a one-piece polish must not trade occupied edge
         // space for interior neighbour contact. Sparse sheets still compact
@@ -970,6 +991,14 @@
     while(bottom>top && walls.get(mx,bottom-1))bottom--;
     return walls.edgeBounds={left,top,right,bottom};
   }
+  function cornerPockets(grid,span) {
+    const b=sheetBounds(grid),w=Math.min(span,Math.max(1,Math.ceil((b.right-b.left)/2))),h=Math.min(span,Math.max(1,Math.ceil((b.bottom-b.top)/2)));
+    grid.buildSAT();
+    return [[0,0],[1,0],[0,1],[1,1]].map(([right,bottom])=>{
+      const x=right?b.right-w:b.left,y=bottom?b.bottom-h:b.top;
+      return {right,bottom,x:right?b.right-1:b.left,y:bottom?b.bottom-1:b.top,free:w*h-grid.boxSum(x,y,x+w,y+h)};
+    }).sort((a,b)=>b.free-a.free);
+  }
   function straightEdgeAt(mask,grid,x,y,band) {
     const bounds=sheetBounds(grid),gaps=[x-bounds.left,y-bounds.top,bounds.right-x-mask.w,bounds.bottom-y-mask.h];
     if(gaps.every(g=>g>band || g<0))return 0;
@@ -1005,7 +1034,7 @@
   }
 
   /** Candidate search for one piece across all its angles. */
-  function search(p, fine, coarse, ratio, gravW, noise, random, cornerX, cornerY, strip = null, boundarySeed = false) {
+  function search(p, fine, coarse, ratio, gravW, noise, random, cornerX, cornerY, strip = null, boundarySeed = false, perimeterPolicy = null) {
     const K = 28, TOL = 2;
     // Keep the original construction seed as a competing proposal. Stronger
     // edge alignment is explored on the other trials and on the retained best;
@@ -1064,6 +1093,7 @@
           if (x < 0 || y < 0 || x + pm.w > FW || y + pm.h > FH) return;
           const key = y * FW + x; if (seen.has(key)) return; seen.add(key);
           if (!fine.fits(pm, x, y)) return;
+          if(perimeterPolicy?.minCells && edgeBandCells(v.fine,fine,x,y,perimeterPolicy.band)<perimeterPolicy.minCells)return;
           const adjacency = placementAt(v, fine, x, y), contact = adjacency.contact;
           const gx = cornerX ? (FW - x - pm.w) : x, gy = cornerY ? (FH - y - pm.h) : y;
           const growth = strip ? Math.max(strip.end, strip.axis === "x" ? x + pm.w : y + pm.h) / ratio : 0;
@@ -1106,6 +1136,7 @@
         for (let y = cy * ratio - ratio; y <= cy * ratio + ratio; y++) for (let x = cx * ratio - ratio; x <= cx * ratio + ratio; x++) {
           if (x < 0 || y < 0 || x + pm.w > FW || y + pm.h > FH) continue;
           if (!fine.fits(pm, x, y)) continue;
+          if(perimeterPolicy?.minCells && edgeBandCells(v.fine,fine,x,y,perimeterPolicy.band)<perimeterPolicy.minCells)continue;
           const adjacency = placementAt(v, fine, x, y), contact = adjacency.contact;
           const growth = strip ? Math.max(strip.end, strip.axis === "x" ? x + pm.w : y + pm.h) / ratio : 0;
           const s = (boundarySeed ? fine.overlap(v.ringFine, x - pad, y - pad, 1e9) / rc : adjacency.score) + (profile ? 1.2*pairContact(v,x,y)+.15*profile.edgeAffinity/100*adjacency.edge+.25*edgeFit(x,y,pm.w,pm.h) : 0) - (strip?.weight ?? 4) * growth - gravW * ((x + y) / (FW + FH));
@@ -1290,5 +1321,5 @@
     const overlap = off ? null : grid.overlap(v.fine.pm, x0, y0, 1e9);
     return { ok: false, x: x0, y: y0, off, overlapPt2: overlap == null ? null : overlap / (res * res) };
   }
-  return { solve, publicLayout, bestResult, normalizePackingPlan, shapeKey, packingCompatibility, guidedOrderScore, verify, contactAt, placementAt, straightEdgeAt, edgeBandCells, sheetBounds, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine };
+  return { solve, publicLayout, bestResult, normalizePackingPlan, shapeKey, packingCompatibility, guidedOrderScore, verify, contactAt, placementAt, straightEdgeAt, edgeBandCells, sheetBounds, cornerPockets, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine };
 });
