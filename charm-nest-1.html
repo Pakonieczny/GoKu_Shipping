@@ -1376,7 +1376,8 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
     <div class="section">Nesting engine</div>
     <div class="fieldRow">
       <div class="field"><label>Engine</label><select id="stEngine"><option value="solver">Geometric nesting + AI packing guidance</option><option value="ai">Claude places every charm itself (experimental — reached 55%)</option></select><div class="help">Recommended: geometry arranges the oldest whole orders using contact scoring and gap repair. AI grades shape flexibility, edge roles and compatible neighbors before guided placement; two independent verifiers check the written result. Grouping review applies when importing source artwork.</div></div>
-      <div class="field"><label>Fill ceiling (%) · AI rounds · snap (mm)</label><div class="fieldRow3"><input id="stMaxFill" type="number" min="30" max="100" step="1"><input id="stAiRounds" type="number" min="1" max="30" step="1"><input id="stSnapIn" type="number" min="0" max="25" step="0.5"></div><div class="help">The sheet is never filled past the ceiling; pieces that would cross it wait for a second sheet. Rounds and snap apply to the experimental engine only.</div></div>
+      <div class="field"><label for="stComputePipeline">Charm-sheet processing</label><select id="stComputePipeline"><option value="cpu">CPU · current pipeline</option><option value="gpu">GPU · accelerated pipeline</option></select><div class="help">For geometric nesting, including the learned workflow’s geometric challenger. GPU tests positions and rotations in parallel with the same verification; CPU takes over if unavailable or slower. Applies to the next run.</div><button type="button" class="btn ghost xs" id="stCompareGPU" style="margin-top:8px">Compare speed</button><div class="help" id="stGPUResult" role="status" aria-live="polite">Tests a copy of up to 12 loaded charms, or reference shapes if none are loaded. No sheets are changed and no API requests are made.</div></div>
+      <div class="field" style="grid-column:1 / -1"><label>Fill ceiling (%) · AI rounds · snap (mm)</label><div class="fieldRow3"><input id="stMaxFill" type="number" min="30" max="100" step="1"><input id="stAiRounds" type="number" min="1" max="30" step="1"><input id="stSnapIn" type="number" min="0" max="25" step="0.5"></div><div class="help">The sheet is never filled past the ceiling; pieces that would cross it wait for a second sheet. Rounds and snap apply to the experimental engine only.</div></div>
     </div>
     <details class="learnedSettings"><summary>Learned packing · laptop runner</summary>
       <p class="help">Experimental GFPack++ model proposes positions and rotations; the geometric solver repairs and verifies them. A verified standard baseline is kept. One sheet runs at a time, with two browser workers: refinement and a standard challenger. The best verified result wins. <a href="https://github.com/Pakonieczny/GoKu_Shipping/blob/main/docs/charm-nest-learned.md" target="_blank" rel="noopener">Runner setup and evidence</a></p>
@@ -1478,7 +1479,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-progress.js"></script>
 <script src="charm-nest-operations.js"></script>
 <script src="charm-nest-rose.js?v=20260922-rehearsal"></script>
-<script src="charm-nest-solver.js?v=20260922-remnants"></script>
+<script src="charm-nest-solver.js?v=20260922-gpu"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260921-material"></script>
@@ -1512,7 +1513,7 @@ const DEFAULTS = {
   stock: { gold: [100 / 25.4, 50 / 25.4], silver: [100 / 25.4, 50 / 25.4], rose: [100 / 25.4, 50 / 25.4], gold10k: [100 / 25.4, 50 / 25.4], gold14k: [100 / 25.4, 50 / 25.4] },
   nestFlow: "standard", learnedBudgetS: 600, learnedStallS: 300,
   clearancePt: -0.5, insetPt: 1.5, angleStep: 10, budgetS: 180, seed: 1, freshSeed: true, serverAbove: 0, parallel: 0,
-  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", packingAI: "on", aiRounds: 10, snapIn: 0.25, maxFill: 0.80, orderView: "list", v: 26,
+  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", computePipeline: "cpu", packingAI: "on", aiRounds: 10, snapIn: 0.25, maxFill: 0.80, orderView: "list", v: 26,
   // Design Station bridge, orders, run (design doc §14)
   dsOrigin: "https://design-1.goldenspike.app", heartbeatS: 5, heartbeatMiss: 3, autoCommit: "on", runMode: "manual", pullMode: "all", pullDueBy: "", pullCount: 40, autoEvery: 0, pollOrders: "on", pollMinutes: 10, finalOptimizeCount: 85, optimizeAt: 85, etsyHourlyCap: 600, sandbox: "off",
   skuPattern: "^[A-Z0-9][A-Z0-9 _.,'&()+\\-]{1,60}$", labelGapMm: 6.4, masterServerAbove: 0, sizeMinMm: 3, sizeMaxMm: 60,
@@ -2324,7 +2325,7 @@ function ensureWorkers(sh, n) {
   for (const w of sh.workers.splice(n)) w.terminate();
   while (sh.workers.length < n) {
     const idx = sh.workers.length;
-    const w = new Worker("charm-nest-worker.js?v=20260922-remnants");
+    const w = new Worker("charm-nest-worker.js?v=20260922-gpu");
     w.onmessage = e => onWorkerMessage(sh, e.data, idx);
     w.onerror = e => onWorkerMessage(sh, { type: "error", jobId: sh.jobId + ":" + idx, message: e.message }, idx);
     sh.workers.push(w);
@@ -2520,6 +2521,7 @@ function startNestReady(sh, context) {
   delete sh.rosePlan; delete sh.rosePlanKey; delete sh.rosePlanHash;
   sh._beforeLearned = S.settings.nestFlow === "learned" ? { placements: sh.placements, outputs: sh.outputs, verification: sh.verification, best: sh.best, status: sh.status, rejects: sh.rejects, liveInfo: sh.liveInfo, sat: sh.sat, solveParams: sh.solveParams, endedBy: sh.endedBy, trials: sh.trials, persistedDone: sh.persistedDone } : null;
   sh.nestFlow = S.settings.nestFlow || "standard";
+  cancelGPUComparison();
   sh.persistedDone = false;
   sh.movedOn = null; sh.problem = null;
   if (sh.runId && window.LiveNest) LiveNest.prepareSheet(sh);
@@ -2527,7 +2529,7 @@ function startNestReady(sh, context) {
   const retained = sh.bestKey === bestKey && sh.best ? CharmNestSolver.publicLayout(sh.best) : null;
   sh.nestInitial = retained?.placements || (sh.placements?.length ? sh.placements.map(p=>({...p})) : null);
   sh.runSeed = S.settings.freshSeed !== false ? (crypto.getRandomValues(new Uint32Array(1))[0] & 0x7fffffff) || 1 : +S.settings.seed || 1;
-  sh.status = "nesting"; sh.startedAt = performance.now(); sh.placements = retained ? retained.placements.map(p=>({...p})) : sh.intakePhase ? (sh.nestInitial || []).map(p=>({...p})) : []; sh.rejects = retained?.rejects?.slice() || []; sh.outputs = null; sh.verification = null; sh.best = retained; sh.bestWorker = 0; sh.trials = 0; sh.liveInfo = retained ? sh.bestInfo : null; sh.endedBy = null;
+  sh.status = "nesting"; sh.startedAt = performance.now(); sh.placements = retained ? retained.placements.map(p=>({...p})) : sh.intakePhase ? (sh.nestInitial || []).map(p=>({...p})) : []; sh.rejects = retained?.rejects?.slice() || []; sh.outputs = null; sh.verification = null; sh.best = retained; sh.bestWorker = 0; sh.trials = 0; sh.searchMetrics = null; sh.gpuProgress = null; sh.liveInfo = retained ? sh.bestInfo : null; sh.endedBy = null;
   sh.jobId = uid(); sh.stage = "Preparing rotations…"; sh.progress = [0, items.length]; sh.dirty = false;
   log(sh, `nest started · ${items.length} pieces · seed ${sh.runSeed} · clearance ${S.settings.clearancePt} pt`);
   sh.evNest = (S.settings.engine || "solver") === "ai" ? null : agent({ metal: sh.metal }, "nest", `Solver: ${items.length} pieces · seed ${sh.runSeed} · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · ${sh.intakePhase === "fill" ? "filling draft" : sh.intakePhase === "final" ? "final optimization" : "search"} · up to ${(sh.intakeBudgetMs || S.settings.budgetS*1000)/1000}s`, { live: true });
@@ -2549,16 +2551,16 @@ function startNestReady(sh, context) {
       const workers = ensureWorkers(sh, 2); sh.pool = { n: 2, done: 0, results: [], trials: [0, 0], winner: null };
       sh.stage = "Starting learned workflow…"; renderProgress(sh);
       workers[0].postMessage({ type: "solve", jobId: sh.jobId + ":0", job });
-      workers[1].postMessage({ type: "solve", jobId: sh.jobId + ":1", job: { ...job, learned: undefined, verifyResult: true, packingHints: job.packingHints, timeBudgetMs: S.settings.learnedBudgetS * 1000, stallMs: S.settings.learnedStallS * 1000, maxTrials: 1000000 } }); return;
+      workers[1].postMessage({ type: "solve", jobId: sh.jobId + ":1", job: { ...job, useGPU: S.settings.computePipeline === "gpu", learned: undefined, verifyResult: true, packingHints: job.packingHints, timeBudgetMs: S.settings.learnedBudgetS * 1000, stallMs: S.settings.learnedStallS * 1000, maxTrials: 1000000 } }); return;
     }
     if ((S.settings.engine || "solver") === "ai") { startAINest(sh, items).catch(e => finishNest(sh, { error: e.message })); return; }
-    const useServer = S.settings.serverAbove > 0 && items.length > S.settings.serverAbove && S.cloud.ok;
+    const useServer = S.settings.computePipeline !== "gpu" && S.settings.serverAbove > 0 && items.length > S.settings.serverAbove && S.cloud.ok;
     if (useServer) return startServerNest(sh, job);
     const n = parallelCount();
     const workers = ensureWorkers(sh, n);
     sh.pool = { n, done: 0, results: [], trials: new Array(n).fill(0), winner: null };
     if (sh.evNest) agentUpdate(sh.evNest, { text: `${n} parallel search${n > 1 ? "es" : ""} on seeds ${job.seed}–${job.seed + n - 1} · ${items.length} pieces · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · standard and broader-rotation searches keep oldest-first sheet membership · ceiling ${S.settings.budgetS}s` });
-    workers.forEach((w, i) => w.postMessage({ type: "solve", jobId: sh.jobId + ":" + i, job: Object.assign({}, job, { seed: job.seed + i, exploreRotations: i % 2 === 1 }) }));
+    workers.forEach((w, i) => w.postMessage({ type: "solve", jobId: sh.jobId + ":" + i, job: Object.assign({}, job, { seed: job.seed + i, exploreRotations: i % 2 === 1, useGPU: S.settings.computePipeline === "gpu" && i === n - 1 }) }));
   };
   const launchId=sh.jobId;
   if (S.settings.packingAI !== "off") {
@@ -2677,14 +2679,29 @@ function acceptBestLayout(sh, candidate, meta = {}) {
   computeSaturation(sh); renderProgress(sh); renderSat(sh); drawPreview(sh);
   return true;
 }
+function updateSearchMetrics(sh, idx, metrics) {
+  if(!sh.pool)return;
+  const rows=sh.pool.metrics ||= [], previous=rows[idx] || {};
+  const next={};
+  for(const key of ['layouts','searches','positions','gpuPositions'])next[key]=Math.max(previous[key]||0,Number.isFinite(metrics?.[key])?Math.max(0,metrics[key]):0);
+  rows[idx]=next;
+  sh.pool.trials[idx]=Math.max(sh.pool.trials[idx]||0,next.layouts);
+  sh.trials=sh.pool.trials.reduce((n,x)=>n+(x||0),0);
+  sh.searchMetrics=rows.reduce((out,row)=>{for(const key of Object.keys(out))out[key]+=row?.[key]||0;return out;},{layouts:0,searches:0,positions:0,gpuPositions:0});
+}
 function onWorkerMessage(sh, m, idx) {
   const base = String(m.jobId || "").split(":")[0];
   if (base !== sh.jobId) return;
+  if(m.type==='metrics' || m.type==='gpu'){
+    if(sh.status!=='nesting'||sh.pool?.finished||sh.pool?.completed?.[idx])return;
+    if(m.type==='metrics')updateSearchMetrics(sh,idx,m.metrics);
+    else {sh.gpuProgress={...sh.gpuProgress,...m.progress};log(sh,m.progress.reason);}
+    renderProgress(sh);return;
+  }
   if (m.type === "learned") {
     if (sh.status !== "nesting" || sh.pool?.finished) return;
     const p = m.progress; if (p.checkpoint) sh.learnedCheckpoint = p.checkpoint;
-    sh.learnedProgress = { ...p, checkpoint: undefined }; sh.trials = p.attempts;
-    if (sh.pool) sh.pool.trials[0] = p.attempts;
+    sh.learnedProgress = { ...p, checkpoint: undefined }; updateSearchMetrics(sh,idx,{layouts:p.attempts});
     sh.stage = `${p.stage} · ${p.bestCount} placed · +${Math.max(0, p.bestCount - p.baselineCount)} vs baseline · last gain ${fmt.s(p.sinceGainMs)} ago`;
     renderProgress(sh); return;
   }
@@ -2695,7 +2712,7 @@ function onWorkerMessage(sh, m, idx) {
   const leader = pool.winner != null ? pool.winner : (sh.bestWorker != null ? sh.bestWorker : 0);   // whose search narrates progress
   if (m.type === "placed" && idx !== leader) return;
   if (m.type === "stage" && (m.stage === "prepare" ? idx !== 0 : idx !== leader)) return;   // one voice for the pool: only the leading search narrates
-  if (m.type === "trial") { pool.trials[idx] = m.summary.trial + 1; m.summary = Object.assign({}, m.summary, { trial: pool.trials.reduce((a, b) => a + b, 0) - 1, worker: idx }); }
+  if (m.type === "trial") { updateSearchMetrics(sh,idx,{layouts:m.summary.completedTrials ?? m.summary.trial+1}); pool.trials[idx] = Math.max(pool.trials[idx]||0,m.summary.completedTrials ?? m.summary.trial + 1); m.summary = Object.assign({}, m.summary, { trial: pool.trials.reduce((a, b) => a + b, 0) - 1, worker: idx }); }
   if (m.type === "best") {
     m.best = CharmNestSolver.publicLayout(m.best);
     if (sh.nestFlow === "learned" && idx === 1) {
@@ -2711,6 +2728,7 @@ function onWorkerMessage(sh, m, idx) {
     m = { type: "done", jobId: m.jobId, result: null };
   }
   if (m.type === "done") {
+    if(m.result)updateSearchMetrics(sh,idx,{...m.result.metrics,layouts:m.result.trials||0});
     pool.completed ||= []; pool.completed[idx] = true;
     if (m.result) acceptBestLayout(sh, m.result, { worker: idx, trial: m.result.trial });
     pool.done++; pool.results[idx] = m.result;
@@ -2741,7 +2759,7 @@ function onWorkerMessage(sh, m, idx) {
     }
     const total = pool.trials.reduce((a, b) => a + b, 0);
     pool.finished = true;   // exactly one finish per job
-    m = { type: "done", jobId: sh.jobId, result: Object.assign({}, pick, { trials: total, workers: pool.n, winner: pool.winner }) };
+    m = { type: "done", jobId: sh.jobId, result: Object.assign({}, pick, { trials: total, metrics:sh.searchMetrics, gpu:sh.gpuProgress, workers: pool.n, winner: pool.winner }) };
     agent({ metal: sh.metal }, "nest", pool.winner != null ? `Search ${pool.winner + 1} completed the sheet — the other ${pool.n - 1} were stopped · ${total} trials in total` : `All ${pool.n} searches finished · best ${pick.placements.length}/${items.length} · ${total} trials in total`);
   }
   if (m.type === "error") pool.finished = true;
@@ -2830,7 +2848,7 @@ async function finishNest(sh, { result, error }) {
   }
   sh._beforeLearned = null;
   sh.releaseFull = false;
-  sh.status = "finishing"; sh.endedBy = result.endedBy; sh.trials = result.trials; sh.placements = result.placements; sh.rejects = result.rejects.slice(); sh.livePlacements = [];
+  sh.status = "finishing"; sh.endedBy = result.endedBy; sh.trials = result.trials; sh.searchMetrics=result.metrics||sh.searchMetrics; sh.gpuProgress=result.gpu||sh.gpuProgress; sh.placements = result.placements; sh.rejects = result.rejects.slice(); sh.livePlacements = [];
   keepOrdersWhole(sh, byId);
   if (sh.evSearch && sh.evSearch.live) agentUpdate(sh.evSearch, { live: false, elapsed: 0, html: null, text: `Search ended after ${result.trials} trial(s): ${endedText(result.endedBy)}` });
   if (sh.evNest) agentUpdate(sh.evNest, { live: false, elapsed: 0, text: `Nest ended by ${endedText(result.endedBy)} after ${result.trials} trial(s), ${fmt.s(result.elapsedMs)}: ${result.placements.length}/${items.length} placed at ${fmt.pct(result.density)}${result.rejects.length ? ` · did not fit: ${result.rejects.map(id => byId.get(id)?.name || id).join(", ")}` : ""}` });
@@ -2953,7 +2971,7 @@ async function persistSheet(sh, items, context) {
   if (window.Engrave) Engrave.reconcileSheet(sh);
   const byId = new Map(items.map(c => [c.id, c]));
   const record = (outputs) => ({
-    id: sh.sheetId, cardStartedAt: sh.cardStartedAt || null, metal: sh.metal, metalLabel: sheetName(sh), day, folder: name, fileBase: name, seq: sh.seq || sh.page, runId: sh.runId || null, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, elapsedMs: Math.round(sh.elapsedMs || 0), totalMs: Math.round(sh.totalMs || 0),
+    id: sh.sheetId, cardStartedAt: sh.cardStartedAt || null, metal: sh.metal, metalLabel: sheetName(sh), day, folder: name, fileBase: name, seq: sh.seq || sh.page, runId: sh.runId || null, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, searchMetrics:sh.searchMetrics||null, gpu:sh.gpuProgress||null, elapsedMs: Math.round(sh.elapsedMs || 0), totalMs: Math.round(sh.totalMs || 0),
     stock: sh.outputs.report.stock, params: sh.solveParams, density: sh.density, freePt2: Math.round(sh.liveInfo.freePt2), usablePt2: Math.round(sh.liveInfo.usablePt2), pocket: sh.liveInfo.pocket,
     charmCount: items.length, placedCount: sh.placements.length, rejectCount: (sh.outputs.report.rejects || []).length, page: sh.page, verification: { ok: !!sh.verification.ok, minGapPt: sh.verification.minGapPt, minEdgePt: sh.verification.minEdgePt, render: sh.verification.render && { ok: sh.verification.render.ok, overlapPx: sh.verification.render.overlapPx, outsidePx: sh.verification.render.outsidePx } },
     outputs,
@@ -3197,8 +3215,11 @@ function renderProgress(sh) {
   const deep = sh.totalMs ? `${fmt.s(sh.totalMs)} from the first file · nest ${fmt.s(sh.elapsedMs || 0)}${sh.trials ? ` · ${sh.trials} trial${sh.trials > 1 ? "s" : ""}` : ""}${sh.optimized ? ` · charms shrunk ${((1 - sh.optimized.scale) * 100).toFixed(1).replace(/\.0$/, "")}%` : ""}` : "";
   const reviewingSrc = S.sources.find(s => s.review && s.review.state === "running" && s.charms.some(c => c.metal === sh.metal));
   const done = sh.status === "complete" || sh.status === "partial";
-  st.title = done ? deep + " · Verification checks geometry; it does not certify optimal packing." + (sh.nestFlow === "learned" ? ` · ${sh.learnedResult?.model?.model || (sh.learnedResult?.modelError ? "model unavailable" : "model skipped: baseline sufficient")} · selected ${sh.learnedResult?.selectedSource || "best verified layout"} · +${sh.learnedResult?.gainedPieces || 0} vs standard · baseline ${sh.learnedCheckpoint?.baseline?.placements.length || 0} · ${sh.trials} measured candidates` : "") : "";
-  st.innerHTML = sh.stage ? `<span class="spin"></span><span>${esc(sh.stage)}</span><span class="r">${elapsed}${budget}</span>`
+  st.title = done ? deep + (sh.searchMetrics ? ` · ${sh.searchMetrics.positions.toLocaleString()} position checks (${sh.searchMetrics.gpuPositions.toLocaleString()} on GPU)` : "") + " · Verification checks geometry; it does not certify optimal packing." + (sh.nestFlow === "learned" ? ` · ${sh.learnedResult?.model?.model || (sh.learnedResult?.modelError ? "model unavailable" : "model skipped: baseline sufficient")} · selected ${sh.learnedResult?.selectedSource || "best verified layout"} · +${sh.learnedResult?.gainedPieces || 0} vs standard · baseline ${sh.learnedCheckpoint?.baseline?.placements.length || 0} · ${sh.trials} measured candidates` : "") : "";
+  const measured=sh.status==='nesting' && !sh.guidancePending && !sh.stage?.startsWith('Stopping') && sh.searchMetrics?.positions>0;
+  const searchLabel=measured ? `${sh.gpuProgress?.active?(sh.searchMetrics.gpuPositions?'GPU + CPU':'CPU · GPU ready'):sh.gpuProgress?.phase==='checking'?'CPU · GPU starting':sh.gpuProgress?'CPU fallback':'CPU'} · ${sh.trials.toLocaleString()} trials · ${sh.searchMetrics.positions.toLocaleString()} checks` : sh.stage;
+  if(measured)st.title=`${sh.stage} · ${sh.gpuProgress?.reason||'CPU pipeline'}. Trials count evaluated construction passes; checks count completed coarse/fine position tests across workers, including repair and calibration. Position checks are not whole-sheet layouts.`;
+  st.innerHTML = sh.stage ? `<span class="spin"></span><span>${esc(searchLabel)}</span><span class="r">${elapsed}${budget}</span>`
     : reviewingSrc ? `<span class="spin"></span><span>Claude is reviewing the ${reviewingSrc.charms.length} charms detected in ${esc(reviewingSrc.name)}</span><span class="r">${fmt.s(reviewingSrc.review.elapsed || 0)}</span>`
     : sh.recalled && !sh.charms.length ? `<span>${sh.recalled.placedCount}/${sh.recalled.charmCount} placed · ${fmt.pct(sh.recalled.density || 0)} full${sh.recalled.verification ? (sh.recalled.verification.ok ? " · verified ✓" : " · ⚠ flagged") : ""} · ${esc(sh.recalled.fileBase || "")}</span><span class="r">${sh.recalled.updatedAt ? new Date(sh.recalled.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}</span>`
     : done ? `<span>${sh.placements.length}/${activeCharms(sh).length} placed${sh.sat ? ` · ${fmt.pct(sh.sat.fullPct)} full` : ""}${sh.verification ? (sh.verification.ok ? " · verified ✓" : " · ⚠ verification flagged") : ""}</span><span class="r">${fmt.s(sh.elapsedMs || 0)} search · ${elapsed} total</span>` : "";
@@ -3614,8 +3635,42 @@ function openSettings() {
         on.disabled = true; on.textContent = "Switching on…";
         sb.enable().catch(e => { toast(`Sandbox: ${e.message}`, "bad", 9000); on.disabled = false; on.textContent = "Rehearse a run in the sandbox"; });
       }; } }
-  $("#stMinPt").value = s.minPt; $("#stVerifyRes").value = s.verifyRes; $("#stNaming").value = s.naming; $("#stReview").value = s.review || "on"; $("#stPackingAI").value = s.packingAI || "on"; $("#stEngine").value = s.engine || "solver"; $("#stMaxFill").value = Math.round((s.maxFill || 0.80) * 100); $("#stAiRounds").value = s.aiRounds || 10; $("#stSnapIn").value = +(((s.snapIn == null ? 0.25 : s.snapIn) * 25.4).toFixed(1)); $("#stNotify").value = s.notify; $("#stSound").value = s.sound;
+  $("#stMinPt").value = s.minPt; $("#stVerifyRes").value = s.verifyRes; $("#stNaming").value = s.naming; $("#stReview").value = s.review || "on"; $("#stPackingAI").value = s.packingAI || "on"; $("#stEngine").value = s.engine || "solver"; $("#stComputePipeline").value = s.computePipeline === "gpu" ? "gpu" : "cpu"; $("#stMaxFill").value = Math.round((s.maxFill || 0.80) * 100); $("#stAiRounds").value = s.aiRounds || 10; $("#stSnapIn").value = +(((s.snapIn == null ? 0.25 : s.snapIn) * 25.4).toFixed(1)); $("#stNotify").value = s.notify; $("#stSound").value = s.sound;
+  $("#stComputePipeline").disabled = $("#stEngine").value === "ai";
+  $("#stEngine").onchange = () => { $("#stComputePipeline").disabled = $("#stEngine").value === "ai"; };
   openDlg($("#dlgSettings"));
+}
+let gpuComparison = null;
+function cancelGPUComparison() {
+  if(!gpuComparison)return;
+  gpuComparison.terminate();gpuComparison=null;
+  $("#stCompareGPU").textContent="Compare speed";
+  $("#stGPUResult").textContent="Comparison cancelled. Sheets are unchanged.";
+}
+function compareGPUSpeed() {
+  if(gpuComparison){cancelGPUComparison();return;}
+  const output=$("#stGPUResult"),button=$("#stCompareGPU");
+  if(allSheets().some(sh=>['nesting','finishing','queued'].includes(sh.status))){output.textContent="Compare when nesting finishes so both pipelines have the same resources.";return;}
+  const sh=allSheets().filter(sh=>activeCharms(sh).length).sort((a,b)=>activeCharms(b).length-activeCharms(a).length)[0];
+  const job=sh?buildJob(sh):null,id=uid();
+  let worker;
+  try{worker=new Worker('charm-nest-worker.js?v=20260922-gpu');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
+  gpuComparison=worker;button.textContent="Cancel comparison";output.textContent="Checking GPU availability…";
+  const finish=text=>{if(gpuComparison!==worker)return;output.textContent=text;button.textContent="Compare speed";worker.terminate();gpuComparison=null;};
+  worker.onmessage=({data:m})=>{
+    if(gpuComparison!==worker||m.jobId!==id)return;
+    if(m.type==='benchmarkStage'){output.textContent=m.stage;return;}
+    if(m.type==='benchmarkError'){finish("Comparison unavailable: "+m.message);return;}
+    if(m.type!=='benchmarkDone')return;
+    const r=m.result;
+    if(!r.available){finish(r.reason+". CPU remains available.");return;}
+    if(!r.cpu.verified||!r.gpu.verified){finish("The comparison did not pass geometric verification. Keep the CPU pipeline selected.");return;}
+    if(!r.gpu.gpuChecks){finish("This sample used CPU checks only; it is too small or unsupported for a GPU comparison.");return;}
+    const rate=v=>Math.round(v).toLocaleString(),ratio=r.gpu.checksPerSecond/Math.max(1,r.cpu.checksPerSecond);
+    finish(`${r.pieces} ${r.sample} · CPU ${rate(r.cpu.checksPerSecond)} checks/s · GPU ${rate(r.gpu.checksPerSecond)} checks/s (${ratio.toFixed(2)}×). Verified pieces: CPU ${r.cpu.placed}/${r.pieces}, GPU ${r.gpu.placed}/${r.pieces}; fill ${Math.round(r.cpu.fill*100)}% / ${Math.round(r.gpu.fill*100)}%. Trials ${r.cpu.layouts} / ${r.gpu.layouts}. Includes GPU startup. Position-check throughput is not a whole-sheet speed multiplier.`);
+  };
+  worker.onerror=e=>finish("Comparison unavailable: "+e.message);
+  try{worker.postMessage({type:'benchmark',jobId:id,job});}catch(e){finish("Comparison unavailable: "+e.message);}
 }
 const cap = s => s[0].toUpperCase() + s.slice(1);
 function readSettings() {
@@ -3629,7 +3684,7 @@ function readSettings() {
   try { new RegExp($("#stSkuPattern").value); s.skuPattern = $("#stSkuPattern").value.trim() || DEFAULTS.skuPattern; } catch (_) { toast("SKU pattern is not a valid regular expression — kept the previous one", "bad"); }
   s.labelGapMm = Math.max(1, Math.min(30, +$("#stLabelGapMm").value || 6.4)); s.masterServerAbove = Math.max(0, Math.round(+$("#stMasterServerAbove").value || 0)); s.sizeMinMm = Math.max(0.5, +$("#stSizeMinMm").value || 3); s.sizeMaxMm = Math.max(s.sizeMinMm, +$("#stSizeMaxMm").value || 60);
   s.engraveMarginMm = Math.max(0, Math.min(5, +$("#stEngraveMarginMm").value || 0)); s.engraveMinCapMm = Math.max(0.3, +$("#stEngraveMinCapMm").value || 1.6); s.engraveMaxHeightFrac = Math.max(0.1, Math.min(1, +$("#stEngraveMaxHeightFrac").value || 0.4)); s.engraveConfidence = Math.max(0, Math.min(1, +$("#stEngraveConfidence").value || 0.8)); s.engraveMinGapMm = Math.max(0, +$("#stEngraveMinGapMm").value || 0); s.engraveMinStrokeMm = Math.max(0, +$("#stEngraveMinStrokeMm").value || 0); s.engraveTryRotated = $("#stEngraveTryRotated").value; s.backFileView = $("#stBackFileView").value;
-  s.minPt = Math.max(1, +$("#stMinPt").value || 6); s.verifyRes = +$("#stVerifyRes").value || 6; s.naming = $("#stNaming").value; s.review = $("#stReview").value; s.engine = $("#stEngine").value; s.maxFill = Math.max(0.3, Math.min(1, (+$("#stMaxFill").value || 80) / 100)); s.aiRounds = Math.max(1, Math.min(30, +$("#stAiRounds").value || 10)); s.snapIn = Math.max(0, Math.min(1, (+$("#stSnapIn").value || 0) / 25.4)); s.notify = $("#stNotify").value; s.sound = $("#stSound").value;
+  s.minPt = Math.max(1, +$("#stMinPt").value || 6); s.verifyRes = +$("#stVerifyRes").value || 6; s.naming = $("#stNaming").value; s.review = $("#stReview").value; s.engine = $("#stEngine").value; s.computePipeline = $("#stComputePipeline").value === "gpu" ? "gpu" : "cpu"; s.maxFill = Math.max(0.3, Math.min(1, (+$("#stMaxFill").value || 80) / 100)); s.aiRounds = Math.max(1, Math.min(30, +$("#stAiRounds").value || 10)); s.snapIn = Math.max(0, Math.min(1, (+$("#stSnapIn").value || 0) / 25.4)); s.notify = $("#stNotify").value; s.sound = $("#stSound").value;
   if (previousGeometry !== JSON.stringify([s.stock,s.clearancePt,s.insetPt,s.maxFill])) {
     for (const sh of allSheets()) if (sh.charms.length) sheetDirty(sh);
     if (window.RunCtl) RunCtl.optionsChanged();
@@ -3661,6 +3716,8 @@ async function boot() {
   $("#btnEarlierSets").onclick = () => { if (window.RunHistory) RunHistory.show(""); };
   $("#btnNestAll").onclick = () => allSheets().forEach(sh => { if (activeCharms(sh).length && !["nesting", "finishing"].includes(sh.status)) startNest(sh); });
   $("#btnClearAll").onclick = () => { if (!confirm("Clear every queue and source? Nothing in the cloud is touched.")) return; METALS.forEach(m => clearMetal(m.key)); S.sources = []; S.unassigned = []; renderRail(); updateTopSub(); };
+  $("#stCompareGPU").onclick = compareGPUSpeed;
+  $("#dlgSettings").addEventListener("close", () => cancelGPUComparison());
   $("#btnSettings").onclick = () => { $("#moreMenu").open = false; openSettings(); }; $("#btnSaveSettings").onclick = e => { e.preventDefault(); readSettings(); closeDlg($("#dlgSettings")); };
   $("#btnResetSettings").onclick = () => { S.settings = Object.assign({}, DEFAULTS, { stock: JSON.parse(JSON.stringify(DEFAULTS.stock)) }); saveSettings(); openSettings(); };
   $$("#railSeg button").forEach(b => b.onclick = () => { $$("#railSeg button").forEach(x => x.classList.toggle("on", x === b)); document.documentElement.dataset.rail = b.dataset.v; });
