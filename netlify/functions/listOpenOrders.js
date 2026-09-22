@@ -74,15 +74,16 @@ exports.handler = async (event) => {
       const txt = await resp.text();
       return {
         statusCode: resp.status,
-        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ...(resp.headers?.get?.("retry-after") ? {"Retry-After":resp.headers.get("retry-after")} : {}) },
         body: JSON.stringify({ error: "etsy_error", status: resp.status, body: txt.slice(0, 2000) })
       };
     }
 
     const data = await resp.json();
+    if (!Array.isArray(data.results)) return {statusCode:502,headers:{"Cache-Control":"no-store"},body:JSON.stringify({error:"Etsy returned an invalid receipt list"})};
     return {
       statusCode: 200,
-      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ...(resp.headers?.get?.("retry-after") ? {"Retry-After":resp.headers.get("retry-after")} : {}) },
       body: JSON.stringify(data)
     };
 

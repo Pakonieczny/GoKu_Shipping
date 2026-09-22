@@ -72,7 +72,8 @@ exports.handler = async function (event) {
     if (fn === "listOpenOrders") {
       const offset = Math.max(0, Number(q.offset) || 0);
       // Etsy lists receipts with their transactions; the page shape matches listOpenOrders (results only)
-      return json(200, { results: receipts.slice(offset, offset + PAGE), count: receipts.length, sandbox: true });
+      const open=receipts.filter(r=>r.is_paid!==false && r.was_paid!==false && !r.is_shipped && !r.was_shipped && !r.is_canceled && !r.was_canceled && !/cancel/i.test(r.status || ""));
+      return json(200, { results: open.slice(offset, offset + PAGE), count: open.length, sandbox: true });
     }
     if (fn === "etsyOrderProxy") {
       const id = String(q.orderId || "");

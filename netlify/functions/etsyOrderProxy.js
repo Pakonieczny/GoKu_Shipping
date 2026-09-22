@@ -6,8 +6,9 @@ exports.handler = async function (event) {
     /* ------------------------------------------------------------------
      * 1.  INPUTS & ENV
      * ------------------------------------------------------------------ */
-    const orderId     = event.queryStringParameters.orderId;          // Etsy “receipt_id”
-    const accessToken = event.headers["access-token"] || event.headers["Access-Token"];
+    const orderId     = event.queryStringParameters?.orderId;          // Etsy “receipt_id”
+    const headers=Object.fromEntries(Object.entries(event.headers || {}).map(([k,v])=>[k.toLowerCase(),v]));
+    const accessToken = headers["access-token"];
     const shopId      = process.env.SHOP_ID;
     const clientId    = process.env.CLIENT_ID;
     const clientSecret = process.env.CLIENT_SECRET || process.env.ETSY_SHARED_SECRET;
@@ -46,6 +47,7 @@ exports.handler = async function (event) {
     const payload = await response.json();
     return {
       statusCode: response.status,
+      headers: {"Content-Type":"application/json","Cache-Control":"no-store",...(response.headers?.get?.("retry-after") ? {"Retry-After":response.headers.get("retry-after")} : {})},
       body: JSON.stringify(payload)
     };
 

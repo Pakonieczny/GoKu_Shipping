@@ -276,7 +276,7 @@
 [[headers]]
   for = "/design-1.html"
   [headers.values]
-    Content-Security-Policy = "frame-ancestors 'self' https://brites-charm-sorter.goldenspike.app"
+    Content-Security-Policy = "frame-ancestors 'self' https://brites-charm-sorter.goldenspike.app https://goldenspike.app"
     Cross-Origin-Resource-Policy = "same-site"
     Cache-Control = "max-age=0, no-cache, no-store, must-revalidate"
     Pragma = "no-cache"

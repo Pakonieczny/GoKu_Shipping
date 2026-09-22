@@ -495,7 +495,7 @@ const Orders = window.Orders = (() => {
     const l = row.line, o = row.order;
     return [row.key, { state: row.state, poolIds: row.poolIds, reason: row.reason, hold: row.hold || null, wait: row.wait || null, sku: row.spec && row.spec.designSku, material: row.material || (row.spec && row.spec.material) || null, quantity: row.spec ? row.spec.quantity : 1,
       engrave: row.engrave ? { needed: !!row.engrave.needed, state: row.engrave.state, approved: !!row.engrave.approved, text: row.engrave.text || null } : null,
-      arrivedAt: row.arrivedAt || 0, createTs: o.createTs || 0, materialOverride: row.materialOverride || null, sizeOverride: row.sizeOverride || null, problems: (row.problems || []).map(p => p.kind), updateTs: o.updateTs, orderId: o.receiptId, transactionId: l.transactionId,
+      changePending:!!row.changePending,repoolChanged:!!row.repoolChanged,arrivedAt: row.arrivedAt || 0, createTs: o.createTs || 0, materialOverride: row.materialOverride || null, sizeOverride: row.sizeOverride || null, problems: (row.problems || []).map(p => p.kind), updateTs: o.updateTs, orderId: o.receiptId, transactionId: l.transactionId,
       snap: { title: cap(l.title, 160), listingId: cap(l.listingId, 24), metalKey: cap(l.metalKey, 24), metalLabel: cap(l.metalLabel, 40),
         orderNumber: cap(o.orderNumber, 24), buyer: cap(o.buyer && o.buyer.name, 60), shipBy: +o.shipBy || 0, isGift: !!o.isGift,
         vars: (l.variations || []).slice(0, 8).map(v => cap(v.name, 40) + "\u241f" + cap(v.value, 60)),
@@ -514,7 +514,7 @@ const Orders = window.Orders = (() => {
       metalKey: s2.metalKey || "", metalLabel: s2.metalLabel || (l.material ? labelOf(l.material) : ""), personalization: s2.pers || [], buyerMessage: "", expectedShipDate: 0,
       variations: (s2.vars || []).map(v => { const i = String(v).indexOf("\u241f"); return { name: String(v).slice(0, i < 0 ? 0 : i), value: i < 0 ? String(v) : String(v).slice(i + 1) }; }) };
     order.lines = [line];
-    return { key, order, line, arrivedAt: +l.arrivedAt || 0, sizeOverride: l.sizeOverride || null, spec: null, problems: [], state: l.state || "pulled", reason: l.reason || null, hold: l.hold || null, wait: l.wait || null, claimedBy: null,
+    return { key, order, line, changePending:!!l.changePending,repoolChanged:!!l.repoolChanged, arrivedAt: +l.arrivedAt || 0, sizeOverride: l.sizeOverride || null, spec: null, problems: [], state: l.state || "pulled", reason: l.reason || null, hold: l.hold || null, wait: l.wait || null, claimedBy: null,
       poolIds: l.poolIds || [], engrave: l.engrave || null, metal: l.material || null, materialOverride: l.materialOverride || l.material || null, fromRecord: true };
   }
   /* The claim is a courtesy — a gold dot on the station's rows saying the sorter has these — never a lock. So it goes
@@ -537,32 +537,35 @@ const Orders = window.Orders = (() => {
   async function revalidate(run, why) {
     const orders = [...new Set(rowsOf().map(r => r.order.receiptId))];
     const changed = [], gone = [];
-    if (!DesignLink.etsyBudgetOk(`re-validation ${why}`)) return { changed, gone, skipped: true };
+    if (!DesignLink.etsyBudgetOk(`re-validation ${why}`)) throw new Error("Etsy call budget reached before order revalidation");
     // one paged list sweep tells which orders Etsy touched or closed since the pull; only those get a fresh detail read
     let chk = null;
     try { chk = await DesignLink.call("orders.check", { receiptIds: orders }, { timeoutMs: 10 * 60 * 1000, onProgress: p => { if (p.text) agentLiveLine("Re-validating orders", p.text, p.done, p.total); } }); DesignLink.meter(chk, `the open-list check ${why}`); }
-    catch (e) { agent({ bridge: true }, "warn", `open-list check failed (${e.message}) — orders are taken as unchanged`); return { changed, gone, failed: true }; }
+    catch (e) { throw new Error(`Cannot verify Etsy open orders: ${e.message}`); }
     const need = orders.filter(rid => { const c = chk.orders[rid]; const cur = rowsOf().find(r => r.order.receiptId === rid); return !c || !c.open || c.touched || (cur && c.updateTs && c.updateTs !== cur.order.updateTs); });
     agent({ bridge: true }, "DS", `Re-validation ${why}: ${orders.length} order(s) checked against the open list${chk.swept ? "" : " (list reused)"} · ${need.length} need a fresh read`);
     let done = 0;
     for (const rid of need) {
       let d = null;
-      try { d = await DesignLink.call("orders.detail", { receiptId: rid, fresh: true }, { timeoutMs: 60000 }); DesignLink.meter(d, `re-reading ${rid}`); } catch (e) { agent({ bridge: true }, "warn", `re-validation of ${rid} failed: ${e.message}`); continue; }
+      try { d = await DesignLink.call("orders.detail", { receiptId: rid, fresh: true }, { timeoutMs: 60000 }); DesignLink.meter(d, `re-reading ${rid}`); } catch (e) { throw new Error(`Cannot verify Etsy order ${rid}: ${e.message}`); }
       agentLiveLine("Re-validating orders", `order ${rid}`, ++done, need.length);
       const rows = rowsOf().filter(r => r.order.receiptId === rid);
-      if (!d || !d.order || d.gone) { gone.push(rid); for (const r of rows) { r.state = "gone"; r.reason = d && d.reason ? d.reason : (d && d.isShipped ? "shipped" : d && d.status ? d.status : "no longer open"); } continue; }
-      const before = rows[0].order.updateTs;
-      if (d.order.updateTs !== before) {
+      if (!d || !d.order && !d.gone) throw new Error(`Etsy returned no verifiable state for order ${rid}`);
+      if (d.gone) { gone.push(rid); for (const r of rows) { r.state = "gone"; r.reason = d && d.reason ? d.reason : (d && d.isShipped ? "shipped" : d && d.status ? d.status : "no longer open"); } continue; }
+      if (rows.some(row=>row.order.updateTs !== d.order.updateTs)) {
         changed.push(rid);
         for (const r of rows) {
+          if(r.order.updateTs===d.order.updateTs)continue;
           const nl = d.order.lines.find(l => l.transactionId === r.line.transactionId);
           const oldText = r.engrave && r.engrave.text; const oldSpec = r.spec;
           r.order = d.order; if (nl) r.line = nl; else { r.state = "gone"; r.reason = "line vanished from the order"; continue; }
           r.spec = O.interpretLine(r.order, r.line, ctx()); r.problems = r.spec.problems.slice(); r.material = r.spec.material;
           const textInputsChanged = JSON.stringify([oldSpec && oldSpec.personalization, oldSpec && oldSpec.buyerMessage, oldSpec && oldSpec.staffNote]) !== JSON.stringify([r.spec.personalization, r.spec.buyerMessage, r.spec.staffNote]);
           const materialChanged = oldSpec && oldSpec.material !== r.spec.material, skuChanged = oldSpec && oldSpec.designSku !== r.spec.designSku;
+          const shapeChanged=materialChanged || skuChanged || oldSpec && (oldSpec.size!==r.spec.size || oldSpec.quantity!==r.spec.quantity);
+          r.changePending=true;r.repoolChanged=!!shapeChanged;
           Review.add({ kind: "orderChanged", key: "chg:" + r.key, row: r, old: { text: oldText, spec: oldSpec }, why: `Etsy updated order ${rid} after the pull (${why})${materialChanged ? " · material changed" : ""}${skuChanged ? " · SKU changed" : ""}${textInputsChanged ? " · the customer's words changed" : ""}` });
-          if (textInputsChanged || materialChanged || skuChanged) { if (r.engrave) { r.engrave.invalidatedBy = "order changed"; r.engrave.approved = false; r.engrave.state = "reclassify"; } Engrave.invalidate(r, "order changed"); }
+          if (textInputsChanged || shapeChanged) { if (r.engrave) { r.engrave.invalidatedBy = "order changed"; r.engrave.approved = false; r.engrave.state = "reclassify"; } Engrave.invalidate(r, "order changed"); }
         }
       }
     }
@@ -573,7 +576,7 @@ const Orders = window.Orders = (() => {
   }
   const STATE_PILL = { pulled: ["neutral", "pulled"], waiting: ["info", "waiting"], noDesign: ["info", "no design"], pooled: ["info", "pooled"], nested: ["ok", "nested"], written: ["ok", "written"], labelled: ["ok", "labelled"], committed: ["ok", "complete"], unmatched: ["bad", "unmatched"], held: ["bad", "held"], contended: ["warn", "other run"], skipped: ["warn", "skipped"], gone: ["bad", "gone"], oversize: ["bad", "oversize"] };
   function engravePill(r) { const e = r.engrave; if (!e) return r.spec && r.spec.engraveCandidate ? ["warn", "words?"] : ["neutral", "—"]; if (!e.needed) return ["neutral", e.state === "skipped" ? "skipped" : "no engraving"]; if (e.approved) return ["ok", "approved"]; if (e.state === "words") return ["warn", "words"]; if (e.state === "review") return ["warn", "review"]; if (e.state === "fitted") return ["info", "fitted"]; if (e.state === "blocked") return ["bad", "blocked"]; return ["info", e.state || "engrave"]; }
-  const OV = { pile: null, metal: null, form: null, eng: null, q: "", view: null, sort: "arrival", desc: false };   // what the tab is showing right now
+  const OV = { pile: null, metal: null, form: null, eng: null, q: "", view: null, sort: "arrival", desc: false, limit:48 };   // what the tab is showing right now
   const FORM_LABEL = { necklace: "Necklaces", earrings: "Earrings", "earring-single": "Single earrings", huggie: "Huggies", charm: "Charms only", bracelet: "Bracelets", anklet: "Anklets", keychain: "Keychains" };
   const viewMode = () => OV.view || S.settings.orderView || "cards";
   /** The lines the filters leave, in ship-by order. */
@@ -589,7 +592,7 @@ const Orders = window.Orders = (() => {
       return [r.order.receiptId, sp.designSku, r.line.sku, r.line.title, (sp.personalization || []).join(" "), sp.buyerMessage, sp.staffNote, r.reason]
         .some(x => String(x || "").toLowerCase().includes(q));
     }).sort((x, y) => {
-      const k = OV.sort === "arrival" ? ((y.arrivedAt || 0) - (x.arrivedAt || 0) || (y.order.createTs || 0) - (x.order.createTs || 0)) : OV.sort === "order" ? String(x.order.receiptId).localeCompare(String(y.order.receiptId))
+      const k = OV.sort === "arrival" ? (O.orderPlacedAt(y) - O.orderPlacedAt(x)) : OV.sort === "order" ? String(x.order.receiptId).localeCompare(String(y.order.receiptId))
         : OV.sort === "state" ? String(x.state).localeCompare(String(y.state))
         : (x.order.shipBy || 0) - (y.order.shipBy || 0);
       return (OV.desc ? -k : k) || String(x.order.receiptId).localeCompare(String(y.order.receiptId));
@@ -675,10 +678,16 @@ const Orders = window.Orders = (() => {
     return null;
   }
   /** Everything a person needs to recognise one line, as a card or as a row: the same fields either way. */
+  let listObserver=null, listKey="";
   function renderBody() {
+    if(listObserver)listObserver.disconnect();
     const host = document.getElementById("ordBody"); if (!host) return;
     const at = host.scrollTop;                                             // a run writing to the list must not scroll it away
     const rows = visibleRows();
+    const nextKey=JSON.stringify([OV.q,OV.metal,OV.form,OV.eng,OV.sort,OV.desc,viewMode()]);
+    if(nextKey!==listKey){OV.limit=48;listKey=nextKey;}
+    const anchor=at>0?[...host.querySelectorAll('[data-key]')].find(n=>n.getBoundingClientRect().bottom>host.getBoundingClientRect().top):null;
+    const anchorKey=anchor?.dataset.key, anchorTop=anchor?.getBoundingClientRect().top;
     const restore = () => { if (at) host.scrollTop = at; };
     if (!rowsOf().length) {
       host.innerHTML = '<div class="libEmpty">Nothing pulled yet \u2014 press <b>Pull orders</b> above.</div>';
@@ -699,7 +708,12 @@ const Orders = window.Orders = (() => {
       hdr.querySelectorAll("[data-sort]").forEach(b => b.onclick = () => { if (OV.sort === b.dataset.sort) OV.desc = !OV.desc; else { OV.sort = b.dataset.sort; OV.desc = false; } renderBody(); });
       list.appendChild(hdr);
     }
-    for (const r of rows) {
+    let lastDay=null;
+    const shown=rows.slice(0,OV.limit || 48);
+    const dayCounts=new Map();for(const row of rows){const d=O.orderDay(row);const ids=dayCounts.get(d.key)||new Set();ids.add(row.order.receiptId);dayCounts.set(d.key,ids);}
+    for (const r of shown) {
+      const date=O.orderDay(r);
+      if(OV.sort==='arrival' && date.key!==lastDay){const heading=el('div','ordDay');heading.dataset.day=date.key;heading.innerHTML=`<span>${esc(date.label)}</span><small>${dayCounts.get(date.key).size} orders · Toronto time</small>`;list.appendChild(heading);lastDay=date.key;}
       const sp = r.spec || {}, m = r.material || "none";
       const st = stateWords(r), due = dueOf(r), where = placeOf(r);
       const attn = r.problems.length || ["held", "unmatched", "oversize"].includes(r.state);
@@ -742,6 +756,7 @@ const Orders = window.Orders = (() => {
           (why ? '<span class="cell whyc owhy">' + esc(why) + '</span>' : "") +
           (r.hold ? '<button class="relHold" type="button" title="put this line back in play">Release hold</button>' : "") + gateBtn;
       }
+      const number=node.querySelector('.onum');if(number){const time=el('span','orderTime');time.textContent=date.time;time.title=date.label;number.appendChild(time);}
       node.onclick = e => { if (e.target.closest(".relHold")) return; OrderWin.open(r.key); };
       { const rh = node.querySelector(".relHold:not([data-gate])"); if (rh) rh.onclick = e => { e.stopPropagation(); Review.repool(r); }; }
       { const gb = node.querySelector("[data-gate]"); if (gb) gb.onclick = e => { e.stopPropagation(); gb.disabled = true; (gb.dataset.gate === "release" ? Gate.release(gb.dataset.gm) : Gate.cutAnyway(gb.dataset.gm)).catch(err => toast(err.message, "bad", 6000)); }; }
@@ -749,9 +764,15 @@ const Orders = window.Orders = (() => {
       node.dataset.rid = String(r.order.receiptId);
       list.appendChild(node);
     }
+    if(shown.length<rows.length){
+      const more=el('button','btn ghost ordMore');more.type='button';more.textContent=`Show more · ${shown.length} of ${rows.length} lines`;
+      const expand=()=>{OV.limit=(OV.limit || 48)+48;renderBody();};more.onclick=expand;list.appendChild(more);
+      if(window.IntersectionObserver){listObserver=new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting)){listObserver.disconnect();expand();}},{root:host,rootMargin:'200px'});listObserver.observe(more);}
+    }
     paintImages();
     watchImages(host);
     restore();
+    if(anchorKey){const same=[...host.querySelectorAll('[data-key]')].find(n=>n.dataset.key===anchorKey);if(same)host.scrollTop+=same.getBoundingClientRect().top-anchorTop;}
   }
   /* The tab used to be one `v.innerHTML = …` on every call, and it is called from fifteen places — RunCtl.renderBanner's
      last line among them, which itself has eighteen callers, and Pool.addAll every five rows. Pooling two hundred lines
@@ -776,7 +797,7 @@ const Orders = window.Orders = (() => {
         <div class="ordBar ordCompact" id="ordBar">
           <span class="controlGroup ordSummary"><button class="btn sm" id="ordPull">Pull orders</button><span class="chips" id="ordChips"></span><span class="charmTotal" id="ordCharmTotal"></span></span>
           <span class="controlGroup ordNarrow"><span class="chips" id="ordMetalHost"></span><input class="ordSearch" id="ordQ" placeholder="order, SKU, words…" title="search the order number, the SKU, the title and everything the customer or the shop wrote"></span>
-          <span class="controlGroup ordDisplay"><select class="ordSort" id="ordSort" title="what orders the cards"><option value="arrival">newest arrivals first</option><option value="due">by ship-by</option><option value="order">by order</option><option value="state">by state</option></select><span class="viewSeg" id="ordViewSeg"></span></span>
+          <span class="controlGroup ordDisplay"><select class="ordSort" id="ordSort" title="what orders the cards"><option value="arrival">latest orders · grouped by date</option><option value="due">by ship-by</option><option value="order">by order</option><option value="state">by state</option></select><span class="viewSeg" id="ordViewSeg"></span></span>
         </div>
       </div><div class="ordBody" id="ordBody"></div>`;
     const q = v.querySelector("#ordQ");
@@ -1393,7 +1414,9 @@ const Pool = window.Pool = (() => {
       const r = await api("charmNestLibrary", { op: "poolPut", pools }, { label: "Recording the pool" });
       if (r.contended && r.contended.length) { row.state = "contended"; row.reason = `claimed by run ${r.contended[0].runId}`; agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: a live run (${r.contended[0].runId}) already holds this line — skipped`); return; }
     }
-    const page = activePage(sp.material); if (run) page.runId = run.runId;
+    let page = activePage(sp.material);
+    if (window.LiveNest && LiveNest.closed(page)) { page=pagesOf(sp.material).find(p=>p.runId===run?.runId && !LiveNest.closed(p)) || addPage(sp.material); S.sheets[sp.material].active=pagesOf(sp.material).indexOf(page); }
+    if (run) page.runId = run.runId;
     for (const c of charms) if (!page.charms.includes(c)) page.charms.push(c);
     for (const p of pools) B.pool.rows.set(p.poolId, p);
     row.poolIds = pools.map(p => p.poolId); row.state = "pooled"; row.material = sp.material; row.reason = null;
@@ -1499,8 +1522,9 @@ const Gate = window.Gate = (() => {
     const choices = Object.assign({}, selected());
     const release = (sh, seq) => policy(sh, seq, choices);
     if (!modern(run?.runId) || !run) return;
-    const pages = allSheets().filter(p => p.runId === run.runId && p.outputs && p.persistedDone);
-    let set = Sets.ofRun(run.runId).find(s => s.group === "dispatch");
+    const committedSheets = new Set(Sets.ofRun(run.runId).filter(s => s.committedAt).flatMap(s => s.sheetIds));
+    const pages = allSheets().filter(p => p.runId === run.runId && p.outputs && p.persistedDone && !committedSheets.has(p.sheetId));
+    let set = Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt);
     const regular = pages.filter(p => p.metal !== "rose" && release(p, 2).include);
     const roses = pages.filter(p => p.metal === "rose" && release(p, 2).include);
     if (!set && (regular.length || roses.length)) set = await Sets.ensure(run.runId, "dispatch", { roseOnly: !regular.length });
@@ -2938,6 +2962,8 @@ const Sets = window.Sets = (() => {
   }
   async function allocate(runId, group, opts) {
     const k = keyOf(runId, group);
+    const prior=byRun().get(k);
+    if(group === "dispatch" && prior?.committedAt){byRun().set(keyOf(runId,"committed:"+prior.setId),prior);byRun().delete(k);}
     if (byRun().has(k) && !byRun().get(k).offline) return byRun().get(k);
     if (!S.cloud.ok) throw new Error("Reconnect to the cloud before numbering a new set; the layout is kept locally");
     const day = today();
@@ -2951,7 +2977,7 @@ const Sets = window.Sets = (() => {
   }
   /** Every set of a run, in set order. */
   const ofRun = runId => [...byRun().values()].filter(x => x.runId === runId).sort((a, b) => (a.seq || 0) - (b.seq || 0));
-  const setOfSheet = sh => sh.draft || (["gold10k","gold14k"].includes(sh.metal) && !Gate.solidSelected(sh.metal)) ? null : sh.runId ? (byRun().get(keyOf(sh.runId, sh.group)) || (sh.setId ? [...byRun().values()].find(x => x.setId === sh.setId) : null) || null) : null;
+  const setOfSheet = sh => sh.draft || (["gold10k","gold14k"].includes(sh.metal) && !Gate.solidSelected(sh.metal)) ? null : sh.runId ? ((sh.setId ? [...byRun().values()].find(x => x.setId === sh.setId) : null) || byRun().get(keyOf(sh.runId, sh.group)) || null) : null;
   /** The QR label, 145 × 145 pt, the print page's exact geometry (QR 85 pt at 3,3 · label 9 pt bold at 1,93 · "Notes:" at 92,0.5), ECC M. */
   async function renderLabelPng(payload, label, scale) {
     const k = scale || 8; const cv = document.createElement("canvas"); cv.width = Math.round(145 * k); cv.height = Math.round(145 * k);
@@ -3036,6 +3062,8 @@ const Sets = window.Sets = (() => {
     const pendingRelease = message => Object.assign(new Error(message), {releasePending:true});
     const sheets = sheetsOf(set);
     if (sheets.some(sh => sh.runHold)) throw pendingRelease("A sheet in this set still needs attention");
+    const sheetPools=new Set(sheets.flatMap(sh=>sh.charms.filter(c=>sh.placements.some(p=>p.id===c.id)).map(c=>c.poolId)));
+    if(Orders.rows().some(row=>(row.changePending || row.state === "gone" || row.hold) && row.poolIds.some(id=>sheetPools.has(id))))throw pendingRelease("An order on this sheet changed or needs review");
     const reports=sheets.map(sh=>({...sh,id:sh.sheetId,poolIds:(sh.placements || []).map(p=>sh.charms.find(c=>c.id===p.id)?.poolId).filter(Boolean),placedCount:sh.placements.length,outputs:sh.cloud || {},engraving:window.CharmNestReadiness.decisions(Orders.rows())}));
     if(!window.CharmNestReadiness.set(set,reports).ready)throw pendingRelease("Set is not ready for laser: finish every sheet's engraving approvals, saved back files, layout checks and QR labels");
     if (!Gate.modern(set.runId)) return;
@@ -3271,7 +3299,7 @@ const RunCtl = window.RunCtl = (() => {
       case "pool": { const n=await Pool.addAll(r); if(!n){r.nothingToCut=true;updatePending(r);agent({run:r.runId},"info","No eligible pieces to nest; unresolved items remain available for follow-up.");return {goto:"complete"};} Engrave.classifyAll(r).catch(e=>agent({run:r.runId},"warn",`classifier: ${e.message}`));return; }
       case "plan": { for (const m of METALS) { const pg = activePage(m.key); if (!pg.charms.some(c => c.poolId)) continue; const sat = computeSaturation(pg); agent({ metal: m.key, run: r.runId }, "info", `${labelOf(m.key)}: ${sat.count} piece(s) need ${fmt.pct(sat.totalNeeded / sat.usable)} of the plate — ${sat.recommend ? "over the " + fmt.pct(sat.rho.cap) + " ceiling, the overflow goes to a second sheet" : "under the " + fmt.pct(sat.rho.cap) + " ceiling"}`); } return; }
       case "nest": { await nestAll(r); return; }
-      case "checkpoint": { await LiveNest.finish(r); await Gate.assemble(r); const sets = Sets.ofRun(r.runId); for (const set of sets.filter(s=>!s.committedAt)) { set.status = "awaiting review"; await Sets.save(set); } r.setIds = sets.map(x => x.setId); r.setId = r.setIds[0] || r.setId || null; r.status = "running"; await save(r); return; }
+      case "checkpoint": { await Arrivals.processPending?.({checkpoint:true}); if(r.status!=="running")return; await LiveNest.finish(r); await Gate.assemble(r); const sets = Sets.ofRun(r.runId); for (const set of sets.filter(s=>!s.committedAt)) { set.status = "awaiting review"; await Sets.save(set); } r.setIds = sets.map(x => x.setId); r.setId = r.setIds[0] || r.setId || null; r.status = "running"; await save(r); return; }
       case "engrave": { for (const j of Engrave.items().values()) if (!j.editingBack && j.state === "approved" && j.copies.length && Pool.sheetOf(j.copies[0])) { j.copies = j.row.poolIds.filter(id=>!(j.copyOverrides || []).includes(id)); await Engrave.writeBacks(j); } await Engrave.classifyAll(r); await Engrave.fitAll(r); updatePending(r); return; }
       case "revalidate": { const v = await Orders.revalidate(r, "before labels"); if (v.changed.length && [...Engrave.items().values()].some(j => j.state === "classify")) { agent({ run: r.runId }, "warn", `${v.changed.length} order(s) changed — back to engraving`); return { goto: "engrave" }; } return; }
       case "labels": {
@@ -3353,7 +3381,7 @@ const RunCtl = window.RunCtl = (() => {
     return r.pendingWork;
   }
   function hasPending(r){return Object.values(r.pendingWork||{}).some(Boolean);}
-  function workSignature(r){return JSON.stringify([r.membershipRevision||0,Orders.rows().map(x=>[x.key,x.state,x.hold,x.engrave?.state,x.engrave?.approved]),[...Engrave.items().values()].map(j=>[j.key,j.state,j.approvedAt]),allSheets().filter(p=>p.runId===r.runId).map(p=>[p.sheetId,p.metal,p.page,p.status,p.dirty,p.runHold,p.placements.length,p.persistedDone])]);}
+  function workSignature(r){return JSON.stringify([r.membershipRevision||0,Orders.rows().map(x=>[x.key,x.state,x.hold,x.changePending,x.engrave?.state,x.engrave?.approved]),[...Engrave.items().values()].map(j=>[j.key,j.state,j.approvedAt]),allSheets().filter(p=>p.runId===r.runId).map(p=>[p.sheetId,p.metal,p.page,p.status,p.dirty,p.runHold,p.placements.length,p.persistedDone])]);}
   function continueProcessing(r,step){
     if(r!==B.run || r.status==='stopped' || r.status==='abandoned')return;
     r.processingComplete=false;r.status='running';r.step=step;
@@ -3449,7 +3477,7 @@ const RunCtl = window.RunCtl = (() => {
       for (const row of Orders.rows()) {
         const old = savedLines[row.key];
         if (!old || +old.updateTs !== +row.order.updateTs) continue;
-        for (const key of ["state", "poolIds", "reason", "hold", "wait", "engrave", "materialOverride", "sizeOverride"]) if (old[key] != null) row[key] = old[key];
+        for (const key of ["state", "poolIds", "reason", "hold", "wait", "engrave", "materialOverride", "sizeOverride", "changePending", "repoolChanged"]) if (old[key] != null) row[key] = old[key];
       }
       Orders.interpretAll();
       await restoreRunSheets(rec);
@@ -3466,7 +3494,7 @@ const RunCtl = window.RunCtl = (() => {
       const sr = await api("charmNestLibrary", { op: "setGet", setId: sid }); const sd = sr.set; if (!sd) continue;
       const set = { setId: sd.setId, seq: sd.seq, day: sd.day, runId: rec.runId, group: sd.group || null, name: sd.name || O.setLabel(sd.seq), folder: sd.folder || O.setFolder(sd.day, sd.seq), orders: Object.fromEntries(Object.entries(sd.orders || {}).map(([rid, o]) => [rid, { held: o.held || null, lines: Object.fromEntries((o.lines || []).map(l => [l.transactionId, l])) }])), sheetIds: sd.sheetIds || [], materials: sd.materials || [], labelFiles: sd.labelFiles || [], labels: sd.labels || null, status: sd.status || "open", committedAt: sd.committedAt || null, completedAt: sd.completedAt || null, completionDay: sd.completionDay || null, committed: sd.committed || null, refused: sd.refused || null, backCount: sd.backCount || 0 };
       set.committedAt = sd.committedAt || null; set.completedAt = sd.completedAt || null; set.completionDay = sd.completionDay || null;
-      Sets.byRun().set(Sets.keyOf(rec.runId, set.group), set); sets.push(set);
+      Sets.byRun().set(Sets.keyOf(rec.runId, set.committedAt ? "committed:" + set.setId : set.group), set); sets.push(set);
     }
     const bySet = new Map(sets.map(x => [x.setId, x]));
     const ls = await api("charmNestLibrary", { op: "listSheets", limit: 500, runId: rec.runId });
@@ -3475,7 +3503,7 @@ const RunCtl = window.RunCtl = (() => {
       const d = (await api("charmNestLibrary", { op: "getSheet", id: slim.id })).sheet; if (!d) continue;
       const prim = S.sheets[d.metal]; let pg = prim.pages.find(p => p.sheetId === d.id) || (prim.pages[0].charms.length ? addPage(d.metal) : prim.pages[0]);
       const set = d.draft ? null : bySet.get(d.setId);
-      pg.draft = !!d.draft || !set; pg.releaseFull = !!d.releaseFull;
+      pg.draft = !!d.draft || !set; pg.releaseFull = !!d.releaseFull; pg.intakeFinalized = !!d.intakeFinalized;
       pg.sheetId = d.id; pg.runId = rec.runId; pg.group = set ? set.group || null : "dispatch"; pg.setId = set ? set.setId : null; pg.seq = set ? d.setSeq || set.seq : null; pg.setDay = d.day; pg.cardStartedAt = d.cardStartedAt || d.createdAt || null; pg.sheetIndex = set ? d.sheetIndex : null; pg.fileBase = d.fileBase; pg.folderPath = d.outputs?.ai?.path?.replace(/\/[^/]+$/, "") || (set ? `${set.folder}/${d.fileBase}` : `charmnest/sheets/${d.day}/${d.fileBase}`); pg.label = set ? d.label || null : null; pg.backPool = d.backPool || []; pg.backOutputs = d.backOutputs || null; pg.cloud = d.outputs ? { ai: d.outputs.ai && d.outputs.ai.url, pdf: d.outputs.pdf && d.outputs.pdf.url, labelled: d.outputs.labelled && d.outputs.labelled.url, report: d.outputs.report && d.outputs.report.url, preview: d.outputs.preview && d.outputs.preview.url } : null;
       pg.restored = true; pg.persistedDone = true;
       // the pieces: each placement's pool charm from the master copy, pinned at its cut position
@@ -3667,7 +3695,14 @@ const Review = window.Review = (() => {
     for (const r of rows) await repool(r);
   }
   function focus(rowKey) { RV.filter = null; render(); const c = document.querySelector(`#reviewView [data-row="${CSS.escape(rowKey)}"]`); if (c) { c.scrollIntoView({ behavior: "smooth", block: "center" }); c.classList.add("pulse"); setTimeout(() => c.classList.remove("pulse"), 1300); } }
-  async function repool(row) { row.problems = []; row.state = "pulled"; row.reason = null; row.hold = null; Orders.interpretAll(); if (row.problems.length) { Orders.render(); return; } if (B.run && O.stepIndex(B.run.step) >= O.stepIndex("pool")) { try { await Pool.poolAdd(row, B.run); } catch (e) { row.state = "held"; row.reason = e.message; } if (row.state === "pooled" && row.spec.engraveCandidate) Engrave.classify(row).catch(() => {}); } syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards(); if (OrderWin.isOpen()) OrderWin.paint(); RunCtl.poke(); }
+  async function repool(row) {
+    if(row.repoolChanged){
+      const old=new Set(row.poolIds || []);
+      for(const sh of allSheets())if(sh.charms.some(c=>old.has(c.poolId))){sh.charms=sh.charms.filter(c=>!old.has(c.poolId));sh.placements=sh.placements.filter(pl=>sh.charms.some(c=>c.id===pl.id));sheetDirty(sh);}
+      await Pool.update([...old],{state:"superseded",sheetId:null,setId:null});for(const id of old)B.pool.rows.delete(id);
+      row.poolIds=[];row.repoolChanged=false;
+    }
+    row.changePending=false; row.problems = []; row.state = "pulled"; row.reason = null; row.hold = null; Orders.interpretAll(); if (row.problems.length) { Orders.render(); return; } if (B.run && O.stepIndex(B.run.step) >= O.stepIndex("pool")) { try { await Pool.poolAdd(row, B.run); } catch (e) { row.state = "held"; row.reason = e.message; } if (row.state === "pooled" && row.spec.engraveCandidate) Engrave.classify(row).catch(() => {}); } syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards(); if (OrderWin.isOpen()) OrderWin.paint(); RunCtl.poke(); }
   const by = () => employeeName() || askEmployee();
   /** What Claude decided, in one line and one number: a reading is either text to engrave or a note to the shop. */
   function claudeVerdict(j) {
@@ -3778,7 +3813,7 @@ const Review = window.Review = (() => {
       return Engrave.placementCard(it.job, 1);
     } else if (it.kind === "orderChanged") {
       c.innerHTML = head("Order changed", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Was", `<q>${esc(it.old && it.old.text || (it.old && it.old.spec && it.old.spec.personalization || []).join(" / ") || "—")}</q> · ${esc(it.old && it.old.spec ? `${it.old.spec.designSku} · ${it.old.spec.material || "?"} · ${it.old.spec.form || ""} ${it.old.spec.size || ""}` : "")}`)}${evRow("Now", `<q>${esc((sp.personalization || []).join(" / ") || "—")}</q> · ${esc(`${sp.designSku} · ${sp.material || "?"} · ${sp.form || ""} ${sp.size || ""}`)}`)}${evRow("Buyer / note", `<q>${esc(sp.buyerMessage || "—")}</q> / <q>${esc(sp.staffNote || "—")}</q>`)}</div><div class="why">${esc(it.why)}</div><div class="fixes"><button class="btn gold sm" data-a="accept">Accept the new order (re-read, re-fit)</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
-      c.querySelector("[data-a=accept]").onclick = async () => { remove(it.key); if (r.state === "written" || r.state === "pooled") { if (sp.engraveCandidate) await Engrave.classify(r); else r.engrave = { needed: false, state: "none", approved: true }; } else await repool(r); RunCtl.poke(); };
+      c.querySelector("[data-a=accept]").onclick = async () => { remove(it.key); r.changePending=false; if(r.repoolChanged){await repool(r);RunCtl.poke();return;} if (r.state === "written" || r.state === "pooled") { if (sp.engraveCandidate) await Engrave.classify(r); else r.engrave = { needed: false, state: "none", approved: true }; } else await repool(r); RunCtl.poke(); };
     } else if (it.kind === "heldOrder") {
       c.innerHTML = head("Held order", it.rid, it.why) + `<div class="fixes"><button class="btn ghost sm" data-a="jump">Jump to the line's item</button></div>`;
       c.querySelector("[data-a=jump]").onclick = () => { remove(it.key); focus(it.line); };
@@ -4519,7 +4554,7 @@ const Arrivals = window.Arrivals = (() => {
   state = Object.assign({ seen: {}, lastCheck: 0, nextCheck: 0, lastAdded: 0, error: null }, state || {});
   let tick = 0, busy = false;
   window.addEventListener("storage", e => { if (e.key !== storageKey() || !e.newValue) return; try { const other = JSON.parse(e.newValue); Object.assign(state.seen, other.seen); if (other.lastCheck > state.lastCheck) { state.lastCheck = other.lastCheck; state.nextCheck = other.nextCheck; state.lastAdded = other.lastAdded; } paint(); } catch (_) {} });
-  const interval = () => Math.max(5, Math.min(1440, +S.settings.pollMinutes || 10)) * 60000;
+  const interval = () => Math.max(1, Math.min(1440, +S.settings.pollMinutes || 1)) * 60000;
   const at = id => state.seen[String(id)] || 0;
   const save = () => { try { localStorage.setItem(storageKey(), JSON.stringify(state)); } catch (_) {} };
   async function record(orders) {
@@ -4550,18 +4585,17 @@ const Arrivals = window.Arrivals = (() => {
     const left = Math.max(0, (state.nextCheck || now + interval()) - now);
     const inbox = Recall.on() && state.inbox?.length ? `${state.inbox.length} orders available · click to open · ` : "";
     const tail = state.error ? `Check failed: ${state.error}` : busy ? "Checking…" : S.settings.pollOrders === "off" ? "checks off" : `next ${Math.floor(left / 60000)}:${String(Math.floor(left % 60000 / 1000)).padStart(2, "0")}`;
-    box.textContent = `${Sandbox.on() ? "Sandbox · " : ""}New orders · 24h ${n24} · 1h ${n1} · ${inbox}${tail}`;
+    box.textContent = `${Sandbox.on() ? "Sandbox · " : ""}Orders received · 24h ${n24} · 1h ${n1} · ${inbox}${tail}`;
     box.title = `Unique orders imported, by first arrival time. Last successful check: ${state.lastCheck ? new Date(state.lastCheck).toLocaleString() : "not yet"}. Last check added ${state.lastAdded}. Checks run while this station is open. Click to see newest arrivals.`;
     box.classList.toggle("bad", !!state.error);
-    for (const node of document.querySelectorAll("[data-rid]")) {
-      // Preview figures share receipt IDs for order highlighting, not badges.
-      // A generated badge inside their fixed-width flex slot clips the image.
-      const fresh = !node.closest(".sheetBacks, #engraveView") && at(node.dataset.rid) > now - 3600000;
-      node.classList.toggle("newArrival", fresh);
-      if (fresh) node.setAttribute("data-new-order", "New order"); else node.removeAttribute("data-new-order");
-    }
+    for(const node of document.querySelectorAll('[data-new-order],.newArrival')){node.removeAttribute('data-new-order');node.classList.remove('newArrival');}
+
   }
-  async function merge(orders) {
+  async function merge(orders, openIds) {
+    const current=Orders.rows();
+    const changed=orders.some(o=>current.some(row=>String(row.order.receiptId)===String(o.receiptId) && +row.order.updateTs!==+o.updateTs));
+    const missing=Array.isArray(openIds) && current.some(row=>!["gone","committed"].includes(row.state) && !openIds.includes(String(row.order.receiptId)));
+    if(changed || missing){state.pending=true;state.revalidate=true;}
     const freshIds = await record(orders), added = [];
     for (const order of orders) for (const line of order.lines || []) {
       const key = O.lineKey(order, line);
@@ -4579,15 +4613,16 @@ const Arrivals = window.Arrivals = (() => {
     Orders.render(); Review.render(); Engrave.render(); refreshAllCards(); Session.schedule(); paint();
     return added;
   }
-  async function processPending() {
+  async function processPending({checkpoint=false}={}) {
     if (!state.pending || S.settings.runMode !== "auto" || Recall.on()) return;
     const r = B.run;
     if (!r || ["complete", "abandoned"].includes(r.status)) { state.pending = false; save(); await RunCtl.start({ mode: "auto" }); return; }
     // Never alter the data while a run is producing labels or committing, nor revive an operator-stopped run.
-    if (!((r.status === "review" && r.step === "engrave") || r.status === "processed") || r.arrivalBusy) return;
+    if (!((r.status === "review" && r.step === "engrave") || r.status === "processed" || checkpoint && r.status === "running" && r.step === "checkpoint") || r.arrivalBusy) return;
     state.pending = false; save(); r.arrivalBusy = true;
     try {
       await Orders.claim([...new Set(Orders.rows().filter(x => x.state === "pulled").map(x => x.order.receiptId))]);
+      if(state.revalidate){await Orders.revalidate(r,"during intake");state.revalidate=false;}
       await LiveNest.add(r);
       await Engrave.classifyAll(r); await Engrave.fitAll(r); await RunCtl.save(r);
     } catch (e) { state.pending = true; save(); RunCtl.stop(`New orders could not be added: ${e.message}`, "Resume after fixing the cause. Your earlier work is kept."); }
@@ -4600,14 +4635,15 @@ const Arrivals = window.Arrivals = (() => {
       await DesignLink.ensure();
       if (!DesignLink.etsyBudgetOk("new orders")) throw new Error("Etsy hourly cap reached");
       await Promise.all([Orders.loadMaps(), Master.load()]);
-      const res = await DesignLink.call("orders.snapshot", { hydrate: true, refresh: true }, { timeoutMs: 20 * 60000, quiet: true });
+      const known=Object.fromEntries(Orders.rows().map(row=>[String(row.order.receiptId),+row.order.updateTs || 0]));
+      const res = await DesignLink.call("orders.snapshot", { hydrate: true, refresh: true, intake:true, known }, { timeoutMs: 20 * 60000, quiet: true });
       DesignLink.meter(res, "new orders");
       if (res.hydrated < res.total) throw new Error(`Only ${res.hydrated} of ${res.total} orders could be read`);
       const picked = Orders.applyPullRule(res.orders || []);
       if (Recall.on()) { await record(picked); state.inbox = picked; }
-      else await merge(picked);
+      else await merge(picked, res.openIds);
       state.error = null;
-      await processPending();
+      processPending().catch(e=>{state.error=e.message;save();paint();});
     } catch (e) { state.error = e.message; }
     finally { busy = false; state.nextCheck = Date.now() + interval(); save(); paint(); }
   }
@@ -4629,6 +4665,14 @@ const Arrivals = window.Arrivals = (() => {
 /* A new batch tries the earliest open sheet. Existing sheets with approved backs are pinned; their approvals survive.
    Only uncommitted sheets belong here. The same solver and both existing verifiers still decide acceptance. */
 const LiveNest = window.LiveNest = (() => {
+  function prepareSheet(sh) {
+    const items=activeCharms(sh),capacity=usableArea(sh)*(+S.settings.maxFill || .74);
+    const plan=O.intakePlan({count:items.length,area:items.reduce((n,c)=>n+inflatedArea(c),0),capacity,threshold:+S.settings.finalOptimizeCount || 80,pressure:(+S.settings.optimizeAt || 85)/100,budgetS:+S.settings.budgetS || 180,force:!!sh.intakeForceFinal});
+    sh.intakePhase=plan.phase;sh.intakeBudgetMs=plan.budgetMs;
+    if(plan.phase==='final'){for(const c of items)if(c.arrivalPin){c.pinned=null;delete c.arrivalPin;}sh.optimizationTried=true;}
+    return plan;
+  }
+  const closed = p => !!p.intakeFinalized || Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId));
   async function add(run) {
     const prepare=async()=>{
     run.intakeRecovery = run.intakeRecovery || { retire: [], backs: [] };
@@ -4658,10 +4702,9 @@ const LiveNest = window.LiveNest = (() => {
     const previousPlacements = new Map(allSheets().flatMap(p => p.placements.map(pl => [pl.id, pl])));
     const target = new Map(), force = Object.assign({}, Gate.state().forceFill);
     for (const m of touched) {
-      const prim = S.sheets[m], pages = prim.pages.filter(p => p.runId === run.runId);
+      const prim = S.sheets[m], pages = prim.pages.filter(p => p.runId === run.runId && !closed(p));
       if (pages.some(p => ["nesting", "finishing", "queued"].includes(p.status))) throw new Error("A sheet is still being written");
-      if (Sets.ofRun(run.runId).some(s => s.materials.includes(m) && s.committedAt)) continue;
-      const p = pages[0] || activePage(m); target.set(m, p); prim.active = prim.pages.indexOf(p);
+      const p = pages[0] || (closed(activePage(m)) ? addPage(m) : activePage(m)); target.set(m, p); prim.active = prim.pages.indexOf(p);
       if (pages.some(p => p.charms.length)) Gate.state().forceFill[m] = true;
     }
     try { await Pool.addAll(run); } finally { Gate.state().forceFill = force; }
@@ -4669,14 +4712,14 @@ const LiveNest = window.LiveNest = (() => {
     const rewrites = new Set();
     for (const [m, pg] of target) {
       if (Gate.modern(run.runId) && !Gate.nestable(pg, run)) continue;
-      const pages = pagesOf(m).filter(p => p.runId === run.runId);
+      const pages = pagesOf(m).filter(p => p.runId === run.runId && !closed(p));
       const all = [...new Map(pages.flatMap(p => p.charms).map(c => [c.poolId || c.id, c])).values()];
       if (!all.some(c => c.poolId && !before.has(c.poolId)) && !pages.some(p => !p.fileBase && p.charms.length)) continue;
       if (pages.length > 1 && all.some(c => c.pinned && !c.arrivalPin)) {
         for (const p of pages) RunCtl.onSheetDone(p, Object.assign(new Error("Unpin manually locked pieces before re-optimizing these sheets"), {sheetPending:true}));
         continue;
       }
-      const near = all.reduce((n, c) => n + inflatedArea(c), 0) >= usableArea(pg) * (+S.settings.maxFill || 0.74) * (+S.settings.optimizeAt || 85) / 100;
+      const near = all.length >= (+S.settings.finalOptimizeCount || 80) || all.reduce((n, c) => n + inflatedArea(c), 0) >= usableArea(pg) * (+S.settings.maxFill || 0.74) * (+S.settings.optimizeAt || 85) / 100;
       const pins = previousPlacements;
       for (const c of all) {
         const pl = pins.get(c.id);
@@ -4684,6 +4727,7 @@ const LiveNest = window.LiveNest = (() => {
         if (!near && pages.length === 1 && pl && !c.pinned && !all.some(x => (x.orderDate || 0) < (c.orderDate || 0) && !before.has(x.poolId))) { c.pinned = { cxPt: pl.cxPt, cyPt: pl.cyPt, angle: pl.angle }; c.arrivalPin = true; }
         else if (c.arrivalPin) { c.pinned = null; delete c.arrivalPin; }
       }
+      const seedIds=new Set(pg.placements.map(p=>p.id));
       const retiredIds = pages.map(p => p.sheetId).filter(Boolean);
       if (Gate.modern(run.runId)) {
         const ids = all.map(c => c.poolId).filter(Boolean);
@@ -4695,7 +4739,7 @@ const LiveNest = window.LiveNest = (() => {
         if (Gate.modern(run.runId)) { p.sheetId = null; p.fileBase = null; p.setId = null; p.seq = null; p.draft = true; }
         p.charms = []; p.placements = []; p.outputs = null; p.label = null; p.backPool = []; p.backOutputs = null; p.persisted = null; p.persistedDone = true; p.status = "idle"; p.dirty = false;
       }
-      pg.charms = all; pg.status = "ready"; pg.optimizationTried = near || pages.length > 1;
+      pg.charms = all; pg.placements=all.filter(c=>seedIds.has(c.id)).map(c=>previousPlacements.get(c.id)).filter(Boolean); pg.status = "ready"; pg.optimizationTried = near || pages.length > 1;
       for (const set of Sets.ofRun(run.runId)) {
         const ids = new Set(retiredIds);
         set.sheetIds = set.sheetIds.filter(id => !ids.has(id)); set.labelFiles = set.labelFiles.filter(f => !ids.has(f.sheetId));
@@ -4735,7 +4779,7 @@ const LiveNest = window.LiveNest = (() => {
     for (const set of Sets.ofRun(run.runId)) await Sets.save(set);
     delete run.intakeRecovery; Session.schedule();
   }
-  return { add, finish };
+  return { add, finish, prepareSheet, closed };
 })();
 
 /* Compact, read-only set previews never replace the active bench. */

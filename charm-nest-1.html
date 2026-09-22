@@ -697,7 +697,7 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .sandboxBar.quiet{background:transparent;border:0;padding:0;margin:8px 0 0;font-size:11.5px;color:var(--ink45)}
 .sandboxBar.quiet .off{color:var(--ink45)}
 .sandboxBar .spacer{flex:1 1 auto}
-[data-new-order]::before{content:"New";display:inline-block;background:#e5f0df;color:#35552f;border-radius:6px;padding:2px 5px;font:10px var(--mono);margin-right:5px}.newArrival{outline:1px solid #91ad83;outline-offset:-1px}
+.ordDay{grid-column:1/-1;display:flex;align-items:baseline;gap:12px;border-top:2px solid var(--gold);background:var(--paper,#f3efe6);padding:12px 14px;margin:16px 0 4px;color:var(--ink);font-weight:700}.ordDay:first-child{margin-top:0}.ordDay small,.orderTime{font:11px var(--mono);color:var(--ink70);font-weight:400}.ordMore{grid-column:1/-1;text-align:center;padding:18px}.orderTime{display:block;margin-top:3px}
 .etsyPill.quiet{display:none}
 .etsyPill{display:inline-flex;align-items:center;gap:6px;font:11.5px var(--mono);color:var(--ink70);border:1px solid var(--line);border-radius:999px;padding:5px 10px;background:var(--card);white-space:nowrap;flex:0 1 auto;min-width:0;overflow:hidden}
 .etsyPill b{color:var(--ink);font-weight:650}
@@ -1280,7 +1280,8 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
       <div class="field"><label>Pull orders</label><select id="stPullMode"><option value="all">Every open order</option><option value="dueBy">Orders due by a date</option><option value="count">The N most urgent by date</option></select><div class="help">Auto mode pulls with this rule at each run; Manual shows the same controls on the Orders tab.</div></div>
       <div class="field"><label>Due by · N</label><div class="fieldRow"><input id="stPullDueBy" type="date"><input id="stPullCount" type="number" min="1" max="500" step="1"></div></div>
       <div class="field"><label for="stPollOrders">Check for new Etsy orders</label><select id="stPollOrders"><option value="on">On</option><option value="off">Off</option></select><div class="help">Checks while this station is open, including while a run waits for review. Auto processes arrivals; Manual adds them to the order list.</div></div>
-      <div class="field"><label for="stPollMinutes">Check interval (minutes)</label><input id="stPollMinutes" type="number" min="5" max="1440" step="1"><div class="help">Default 10 minutes. The corner counter shows unique orders imported in the last 24 hours and last hour, plus the next check.</div></div>
+      <div class="field"><label for="stPollMinutes">Check interval (minutes)</label><input id="stPollMinutes" type="number" min="1" max="1440" step="1"><div class="help">Default 1 minute while the station is open. Unchanged order details are reused. This is polling; delivery can take up to a check interval plus processing time.</div></div>
+      <div class="field"><label for="stFinalOptimizeCount">Final optimization at (pieces per material)</label><input id="stFinalOptimizeCount" type="number" min="1" max="1000" step="1"><div class="help">Default 80. Draft sheets fill as orders arrive; reaching this count starts the full search. Capacity pressure can trigger it sooner. Overflow starts the next draft sheet.</div></div>
       <div class="field"><label for="stOptimizeAt">Re-optimize at (% of fill ceiling)</label><input id="stOptimizeAt" type="number" min="50" max="100" step="5"><div class="help">Repack an open sheet near capacity, then try its free space before opening the next sheet. Committed sheets stay fixed.</div></div><input id="stAutoEvery" type="hidden" value="0">
       <div class="field"><label>Sandbox</label><select id="stSandbox"><option value="off">Off — production: real Etsy through the station, real records</option><option value="on">On — emulated Etsy from the stored snapshot, sandbox records only</option></select><div class="help">In the sandbox the Design Station is framed with ?sandbox=1: its Etsy calls go to the emulator that serves the snapshot taken on the Orders tab, and every lock, claim, completion, note, archive row, pool, set, run and file goes to Sandbox_ copies. The master index is shared (read only). Switching reloads the sorter.</div><div class="fixes" style="margin-top:7px"><button class="btn ghost xs" type="button" id="stSbSnap" title="copy today's open orders into the sandbox so a whole run can be rehearsed against them">Take a sandbox snapshot</button><button class="btn ghost xs" type="button" id="stSbReset" title="empty the sandbox pool, sets, runs and sheets — the real records are untouched">Reset sandbox records</button><button class="btn gold xs" type="button" id="stSbOn" title="take a snapshot of today's open orders, switch to the sandbox and reload — one press">Rehearse a run in the sandbox</button><span class="help" id="stSbStatus" style="margin:0"></span></div></div>
       <div class="field"><label>Sandbox records</label><button class="btn ghost sm" id="stSandboxReset" type="button" title="empty the sandbox's own pool, sets, runs and sheets — the real records are never touched">Reset the sandbox…</button></div>
@@ -1373,7 +1374,7 @@ const DEFAULTS = {
   clearancePt: -0.5, insetPt: 1.5, angleStep: 10, budgetS: 180, seed: 1, freshSeed: true, serverAbove: 0, parallel: 0,
   minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", packingAI: "on", aiRounds: 10, snapIn: 0.25, maxFill: 0.74, orderView: "cards", v: 21,
   // Design Station bridge, orders, run (design doc §14)
-  dsOrigin: "https://design-1.goldenspike.app", heartbeatS: 5, heartbeatMiss: 3, autoCommit: "on", runMode: "manual", pullMode: "all", pullDueBy: "", pullCount: 40, autoEvery: 0, pollOrders: "on", pollMinutes: 10, optimizeAt: 85, etsyHourlyCap: 600, sandbox: "off",
+  dsOrigin: "https://design-1.goldenspike.app", heartbeatS: 5, heartbeatMiss: 3, autoCommit: "on", runMode: "manual", pullMode: "all", pullDueBy: "", pullCount: 40, autoEvery: 0, pollOrders: "on", pollMinutes: 1, finalOptimizeCount: 80, optimizeAt: 85, etsyHourlyCap: 600, sandbox: "off",
   skuPattern: "^[A-Z0-9][A-Z0-9 _.,'&()+\\-]{1,60}$", labelGapMm: 6.4, masterServerAbove: 0, sizeMinMm: 3, sizeMaxMm: 60,
   cadenceDays: 2, lateDays: 2,
   engraveMarginMm: 0.3, engraveMinCapMm: 1.6, engraveMaxHeightFrac: 0.4, engraveConfidence: 0.65, engraveTryRotated: "on", engraveMinGapMm: 0.12, engraveMinStrokeMm: 0.15, backFileView: "asSeenFromBack"
@@ -1456,6 +1457,7 @@ function loadSettings() {
     if ((saved.v || 1) < 11) { if (!saved.skuPattern || saved.skuPattern === "^[A-Z]{2,4}-[A-Z0-9]{2,6}(-[A-Z0-9]{1,4})?$") saved.skuPattern = DEFAULTS.skuPattern; if (saved.masterServerAbove == null || +saved.masterServerAbove === 300) saved.masterServerAbove = 0; saved.v = 11; }   // v11: SKUs are free text; masters index in the tab (the server route has 1 GB)
     // v21: return existing workspaces to Paul's requested 10° search.
     if ((saved.v || 1) < 21) { saved.angleStep = 10; saved.v = 21; }
+    if ((saved.v || 1) < 22) { if(saved.pollMinutes == null || +saved.pollMinutes === 10)saved.pollMinutes=1; saved.finalOptimizeCount ||= 80; saved.v=22; }
     if (![2,5,10].includes(+saved.angleStep)) saved.angleStep = DEFAULTS.angleStep;
     const out = Object.assign({}, DEFAULTS, saved); out.stock = Object.assign({}, DEFAULTS.stock, saved.stock || {}); return out;
   } catch (_) { return Object.assign({}, DEFAULTS, { v: 2 }); }
@@ -2047,7 +2049,7 @@ async function reviewLayout(sh, items) {
 function makeSheet(metal, page) {
   return { metal, page: page || 1, runId: null, sheetId: null, charms: [], status: "idle", worker: null, jobId: null, layout: null, placements: [], rejects: [], sat: null, progress: null, stage: "", outputs: null, verification: null, startedAt: 0, endedBy: null, trials: 0, best: null, dirty: true, log: [], liveInfo: null, serverJob: null };
 }
-function sheetDirty(sh) { delete sh.runHold; sh.dirty = true; sh.releaseFull = false; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
+function sheetDirty(sh) { delete sh.runHold; delete sh.intakeFinalized; delete sh.intakeForceFinal; sh.dirty = true; sh.releaseFull = false; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
 function activeCharms(sh) { return sh.charms.filter(c => !c.excluded); }
 /* One card per metal; a metal can hold several sheets ("pages"). The card shows the active page and tabs to switch. */
 const pagesOf = metal => S.sheets[metal].pages;
@@ -2190,7 +2192,7 @@ function buildJob(sh) {
   return {
     sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0 },
     clearancePt: +S.settings.clearancePt || 0, angles: angleSet(), fineRes: 2, coarseRes: 0.5,
-    timeBudgetMs: (+S.settings.budgetS || 180) * 1000, stallMs: 60 * 1000, maxTrials: 2000, seed: sh.runSeed || +S.settings.seed || 1,
+    timeBudgetMs: sh.intakeBudgetMs || (+S.settings.budgetS || 180) * 1000, stallMs: 60 * 1000, maxTrials: 2000, seed: sh.runSeed || +S.settings.seed || 1,
     initialLayout: sh.nestInitial || null, maxFill: +S.settings.maxFill || 0.74,
     packingHints: S.settings.packingAI !== "off" && sh.packingAdvice?.version === 1 && sh.packingAdvice?.key === packingKey(sh, items) ? sh.packingAdvice.hints || null : null,
     pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: c.orderDate || 0, pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
@@ -2366,14 +2368,15 @@ function startNestReady(sh, context) {
   sh.nestFlow = S.settings.nestFlow || "standard";
   sh.persistedDone = false;
   sh.movedOn = null; sh.problem = null;
+  if (sh.runId && window.LiveNest) LiveNest.prepareSheet(sh);
   const bestKey = JSON.stringify([packingKey(sh, items), items.map(c=>[c.id,c.order,c.orderDate,c.pinned])]);
   const retained = sh.bestKey === bestKey && sh.best ? CharmNestSolver.publicLayout(sh.best) : null;
   sh.nestInitial = retained?.placements || (sh.placements?.length ? sh.placements.map(p=>({...p})) : null);
   sh.runSeed = S.settings.freshSeed !== false ? (crypto.getRandomValues(new Uint32Array(1))[0] & 0x7fffffff) || 1 : +S.settings.seed || 1;
-  sh.status = "nesting"; sh.startedAt = performance.now(); sh.placements = retained ? retained.placements.map(p=>({...p})) : []; sh.rejects = retained?.rejects?.slice() || []; sh.outputs = null; sh.verification = null; sh.best = retained; sh.bestWorker = 0; sh.trials = 0; sh.liveInfo = retained ? sh.bestInfo : null; sh.endedBy = null;
+  sh.status = "nesting"; sh.startedAt = performance.now(); sh.placements = retained ? retained.placements.map(p=>({...p})) : sh.intakePhase ? (sh.nestInitial || []).map(p=>({...p})) : []; sh.rejects = retained?.rejects?.slice() || []; sh.outputs = null; sh.verification = null; sh.best = retained; sh.bestWorker = 0; sh.trials = 0; sh.liveInfo = retained ? sh.bestInfo : null; sh.endedBy = null;
   sh.jobId = uid(); sh.stage = "Preparing rotations…"; sh.progress = [0, items.length]; sh.dirty = false;
   log(sh, `nest started · ${items.length} pieces · seed ${sh.runSeed} · clearance ${S.settings.clearancePt} pt`);
-  sh.evNest = (S.settings.engine || "solver") === "ai" ? null : agent({ metal: sh.metal }, "nest", `Solver: ${items.length} pieces · seed ${sh.runSeed} · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · up to ${S.settings.budgetS}s`, { live: true });
+  sh.evNest = (S.settings.engine || "solver") === "ai" ? null : agent({ metal: sh.metal }, "nest", `Solver: ${items.length} pieces · seed ${sh.runSeed} · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · ${sh.intakePhase === "fill" ? "filling draft" : sh.intakePhase === "final" ? "final optimization" : "search"} · up to ${(sh.intakeBudgetMs || S.settings.budgetS*1000)/1000}s`, { live: true });
   renderCard(sh); drawPreview(sh);
   const job = buildJob(sh);
   if (!retained) { sh.bestRevision = 0; sh.bestHistory = []; }
@@ -2666,8 +2669,8 @@ async function finishNest(sh, { result, error }) {
   const items = activeCharms(sh); const byId = new Map(items.map(c => [c.id, c]));
   if (error && sh._beforeLearned) { Object.assign(sh, sh._beforeLearned); sh._beforeLearned = null; drawPreview(sh); }
   if (error) { sh.status = sh.outputs ? "partial" : items.length ? "ready" : "idle"; sh.stage = ""; log(sh, "error: " + error); toast(`${labelOf(sh.metal)}: nesting failed — ${error}`, "bad", 6000); renderCard(sh); pumpNestQueue(); if (window.RunCtl) RunCtl.onSheetDone(sh, new Error(error)); return; }
-  if (result.endedBy !== "stopped" && result.rejects.length && !sh.optimizationTried && sh.charms.some(c => c.arrivalPin)) {
-    sh.optimizationTried = true;
+  if (result.endedBy !== "stopped" && result.rejects.length && (sh.intakePhase === "fill" || !sh.optimizationTried && sh.charms.some(c => c.arrivalPin))) {
+    sh.optimizationTried = true; sh.intakeForceFinal = true;
     for (const c of sh.charms) if (c.arrivalPin) { c.pinned = null; delete c.arrivalPin; }
     sh.status = "ready"; log(sh, "Re-optimizing before overflow: trying a fresh arrangement"); startNest(sh); return;
   }
@@ -2732,6 +2735,7 @@ async function finishNest(sh, { result, error }) {
       ((sh.rejects.length > 0 && ["cap", "stalled", "trials", "claude-full", "plateau"].includes(result.endedBy) &&
         [...new Set(sh.rejects.map(id => byId.get(id)?.order || id))].some(order => items.filter(c => (c.order || c.id) === order).reduce((n,c) => n + inflatedArea(c), 0) <= result.usablePt2 * (+S.settings.maxFill || .74))) ||
         (result.placedPt2 / Math.max(1, result.usablePt2)) >= (+S.settings.maxFill || .74) - 1e-6);
+    sh.intakeFinalized = sh.intakePhase === "final" && result.endedBy !== "stopped" && sh.verification.ok && sh.placements.length > 0;
     sh.seq = await nextSheetSeq(sh); sh.fileBase = sheetFileBase(sh);
     const allPlaced = sh.rejects.length === 0;
     sh.status = allPlaced && sh.verification.ok ? "complete" : "partial";
@@ -2800,7 +2804,7 @@ async function persistSheet(sh, items, context) {
     charmCount: items.length, placedCount: sh.placements.length, rejectCount: (sh.outputs.report.rejects || []).length, page: sh.page, verification: { ok: !!sh.verification.ok, minGapPt: sh.verification.minGapPt, minEdgePt: sh.verification.minEdgePt, render: sh.verification.render && { ok: sh.verification.render.ok, overlapPx: sh.verification.render.overlapPx, outsidePx: sh.verification.render.outsidePx } },
     outputs,
     sources: [...new Set(items.map(c => c.sourceId))].map(id => { const s = sourceOf(id); return s ? { id: s.id, name: s.name, zipName: s.zipName, hash: s.hash, bytes: s.bytes ? s.bytes.length : 0, path: s.cloud && s.cloud.path, url: s.cloud && s.cloud.url, pool: !!s.pool, sku: s.sku || null } : null; }).filter(Boolean),
-    draft: !!sh.draft, solidIncluded:["gold10k","gold14k"].includes(sh.metal) ? !!window.Gate?.solidSelected(sh.metal) : null, releaseFull: !!sh.releaseFull, setId: sh.setId || null, setSeq: sh.seq || null, sheetIndex: sh.sheetIndex || null, runId: sh.runId || null,
+    draft: !!sh.draft, solidIncluded:["gold10k","gold14k"].includes(sh.metal) ? !!window.Gate?.solidSelected(sh.metal) : null, releaseFull: !!sh.releaseFull, intakeFinalized: !!sh.intakeFinalized, setId: sh.setId || null, setSeq: sh.seq || null, sheetIndex: sh.sheetIndex || null, runId: sh.runId || null,
     orders: [...new Set(sh.placements.map(p => { const c = byId.get(p.id); return c && c.order ? String(c.order).split("/")[0] : null; }).filter(Boolean))],
     poolIds: sh.placements.map(p => byId.get(p.id) && byId.get(p.id).poolId).filter(Boolean), backPool: sh.backPool || [], backOutputs: sh.backOutputs || null, label: sh.label || null,
     charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, order: c.order || c.id, layer: c.layer || null, poolId: c.poolId || null, sku: c.sku || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open })),
@@ -3426,7 +3430,7 @@ function openSettings() {
         setTimeout(() => location.reload(), 1200);
       } catch (e) { toast(e.status === 403 ? "Wrong passcode — nothing was purged" : "Purge failed: " + e.message, "bad", 7000); }
     }; } }
-  $("#stPollOrders").value = s.pollOrders || "on"; $("#stPollMinutes").value = s.pollMinutes || 10; $("#stOptimizeAt").value = s.optimizeAt || 85;
+  $("#stPollOrders").value = s.pollOrders || "on"; $("#stPollMinutes").value = s.pollMinutes || 1; $("#stFinalOptimizeCount").value = s.finalOptimizeCount || 80; $("#stOptimizeAt").value = s.optimizeAt || 85;
   $("#stDsOrigin").value = s.dsOrigin || DEFAULTS.dsOrigin; $("#stHeartbeatS").value = s.heartbeatS; $("#stHeartbeatMiss").value = s.heartbeatMiss; $("#stAutoCommit").value = s.autoCommit || "on"; $("#stCadenceDays").value = s.cadenceDays == null ? 2 : s.cadenceDays; $("#stLateDays").value = s.lateDays == null ? 2 : s.lateDays; $("#stPullMode").value = s.pullMode || "all"; $("#stPullDueBy").value = s.pullDueBy || ""; $("#stPullCount").value = s.pullCount || 40; $("#stAutoEvery").value = s.autoEvery || 0; $("#stEtsyCap").value = s.etsyHourlyCap || DEFAULTS.etsyHourlyCap; $("#stSandbox").value = s.sandbox === "on" ? "on" : "off";
   $("#stSkuPattern").value = s.skuPattern || DEFAULTS.skuPattern; $("#stLabelGapMm").value = s.labelGapMm; $("#stMasterServerAbove").value = s.masterServerAbove; $("#stSizeMinMm").value = s.sizeMinMm; $("#stSizeMaxMm").value = s.sizeMaxMm;
   $("#stEngraveMarginMm").value = s.engraveMarginMm; $("#stEngraveMinCapMm").value = s.engraveMinCapMm; $("#stEngraveMaxHeightFrac").value = s.engraveMaxHeightFrac; $("#stEngraveConfidence").value = s.engraveConfidence; $("#stEngraveMinGapMm").value = s.engraveMinGapMm; $("#stEngraveMinStrokeMm").value = s.engraveMinStrokeMm; $("#stEngraveTryRotated").value = s.engraveTryRotated || "on"; $("#stBackFileView").value = s.backFileView || "asSeenFromBack";
@@ -3452,7 +3456,7 @@ function readSettings() {
   s.rail = $("#railSeg button.on")?.dataset.v || "md";
   for (const m of METALS) s.stock[m.key] = [(+$(`#st${cap(m.key)}W`).value / 25.4) || DEFAULTS.stock[m.key][0], (+$(`#st${cap(m.key)}H`).value / 25.4) || DEFAULTS.stock[m.key][1]];
   s.clearancePt = Math.max(-2, Math.min(12, Math.round((+$("#stClearance").value || 0) / MM_PER_PT * 100) / 100)); s.insetPt = Math.max(0, Math.round((+$("#stInset").value || 0) / MM_PER_PT * 100) / 100); s.angleStep = [2,5,10].includes(+$("#stAngle").value) ? +$("#stAngle").value : 10; s.budgetS = Math.max(10, +$("#stBudget").value || 180); s.parallel = Math.max(0, Math.min(16, Math.round(+$("#stParallel").value || 0))); s.seed = Math.max(1, Math.round(+$("#stSeed").value || 1)); s.freshSeed = $("#stFreshSeed").checked; s.serverAbove = Math.max(0, +$("#stServerAbove").value || 0);
-  s.pollOrders = $("#stPollOrders").value; s.pollMinutes = Math.max(5, Math.min(1440, +$("#stPollMinutes").value || 10)); s.optimizeAt = Math.max(50, Math.min(100, +$("#stOptimizeAt").value || 85));
+  s.pollOrders = $("#stPollOrders").value; s.pollMinutes = Math.max(1, Math.min(1440, +$("#stPollMinutes").value || 1)); s.finalOptimizeCount = Math.max(1, Math.min(1000, Math.round(+$("#stFinalOptimizeCount").value || 80))); s.optimizeAt = Math.max(50, Math.min(100, +$("#stOptimizeAt").value || 85));
   s.dsOrigin = ($("#stDsOrigin").value || DEFAULTS.dsOrigin).trim().replace(/\/+$/, ""); s.heartbeatS = Math.max(2, Math.min(60, +$("#stHeartbeatS").value || 5)); s.heartbeatMiss = Math.max(1, Math.min(10, Math.round(+$("#stHeartbeatMiss").value || 3))); s.autoCommit = $("#stAutoCommit").value; s.cadenceDays = Math.max(1, Math.min(14, Math.round(+$("#stCadenceDays").value || 2))); s.lateDays = Math.max(0, Math.min(14, Math.round(+$("#stLateDays").value ?? 2))); s.pullMode = $("#stPullMode").value; s.pullDueBy = $("#stPullDueBy").value || ""; s.pullCount = Math.max(1, Math.min(500, Math.round(+$("#stPullCount").value || 40))); s.autoEvery = Math.max(0, Math.min(1440, Math.round(+$("#stAutoEvery").value || 0))); if (s.autoEvery > 0 && s.autoEvery < 5) s.autoEvery = 5; s.etsyHourlyCap = Math.max(50, Math.min(5000, Math.round(+$("#stEtsyCap").value || 600))); { const was = s.sandbox === "on"; s.sandbox = $("#stSandbox").value === "on" ? "on" : "off"; if (was !== (s.sandbox === "on")) { saveSettings(); toast(`Sandbox ${s.sandbox === "on" ? "ON" : "off"} — reloading`, "ok", 3000); setTimeout(() => location.reload(), 600); } }
   try { new RegExp($("#stSkuPattern").value); s.skuPattern = $("#stSkuPattern").value.trim() || DEFAULTS.skuPattern; } catch (_) { toast("SKU pattern is not a valid regular expression — kept the previous one", "bad"); }
   s.labelGapMm = Math.max(1, Math.min(30, +$("#stLabelGapMm").value || 6.4)); s.masterServerAbove = Math.max(0, Math.round(+$("#stMasterServerAbove").value || 0)); s.sizeMinMm = Math.max(0.5, +$("#stSizeMinMm").value || 3); s.sizeMaxMm = Math.max(s.sizeMinMm, +$("#stSizeMaxMm").value || 60);
@@ -3528,7 +3532,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260921-process-completion"></script>
+<script src="charm-nest-bridge.js?v=20260922-continuous-intake"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin" aria-labelledby="owTitle">

@@ -177,9 +177,22 @@
    * An order is committable only when every line is: nested and written; nested, written and its engraving approved;
    * or on the no-design list. Anything else holds the whole order with the first unresolved line's reason.
    */
+  // Shop-local receipt dates, never the time a historical order was imported.
+  function orderPlacedAt(row) { return (+row.order?.createTs || 0) * 1000 || +row.arrivedAt || 0; }
+  function orderDay(row, timeZone = "America/Toronto") {
+    const at=orderPlacedAt(row);if(!at)return {key:"unknown",label:"Date unavailable",time:""};
+    const date=new Date(at),parts=new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(date);
+    const get=k=>parts.find(p=>p.type===k).value;
+    return {key:`${get('year')}-${get('month')}-${get('day')}`,label:new Intl.DateTimeFormat('en-CA',{timeZone,weekday:'long',year:'numeric',month:'long',day:'numeric'}).format(date),time:new Intl.DateTimeFormat('en-CA',{timeZone,hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(date)};
+  }
+  function intakePlan({count, area=0, capacity=0, threshold=80, pressure=0.85, budgetS=180, force=false}) {
+    const final=force || count>=Math.max(1,threshold) || capacity>0 && area>=capacity*pressure;
+    return {phase:final?'final':'fill',budgetMs:Math.max(1000,final?budgetS*1000:Math.min(budgetS,12)*1000)};
+  }
   const DONE_STATES = new Set(["written", "labelled", "committed"]);
   function evaluateOrder(rows) {
     const lines = rows.map(r => {
+      if (r.changePending || r.hold) return {key:r.key,ok:false,why:r.reason || r.hold || "Etsy changes need review"};
       if (r.spec && r.spec.noDesign) return { key: r.key, ok: true, why: "no design (chain/packaging)" };
       if (r.state === "gone") return { key: r.key, ok: false, why: "order gone from Etsy" };
       if (r.problems && r.problems.length) return { key: r.key, ok: false, why: r.problems[0].kind === "needsMaterial" ? "needs material" : r.problems[0].kind === "needsMapping" ? "needs an option mapped" : r.problems[0].kind === "unmatchedSku" ? "SKU not in a master" : r.problems[0].kind === "missingSize" ? "no design for that size" : r.problems[0].kind };
@@ -311,5 +324,5 @@
     return {key:(solid ? "standalone:"+sheet.metal+":" : "working:")+sheet.day+":"+scope, name:solid ? "Standalone "+(sheet.metal === "gold10k" ? "10K" : "14K") : "Incomplete Sheets: Waiting to be filled!", setId:null, seq:null, standalone:solid, working:true};
   }
   return { libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, interpretLine, lineKey, poolId,
-    completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES };
+    orderPlacedAt, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES };
 });
