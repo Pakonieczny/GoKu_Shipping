@@ -8,7 +8,7 @@
  *       {type:"verify", jobId, job, placements, res}
  *  out: {type:"stage"|"placed"|"reject"|"trial"|"best"|"done"|"verified"|"error", jobId, …}
  */
-importScripts("charm-nest-solver.js?v=20260922-corners");
+importScripts("charm-nest-solver.js?v=20260922-regions");
 
 let current = null;   // { jobId, job, stop }
 

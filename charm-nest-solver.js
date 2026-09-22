@@ -391,7 +391,17 @@
     const stripAxis = FW >= FH ? "x" : "y";
     let stripWeight = 4;
     const stripOf = rec => ({ weight:stripWeight, axis: stripAxis, end: rec.reduce((n, r) => Math.max(n, stripAxis === "x" ? r.x + r.v.fine.w : r.y + r.v.fine.h), wallFine) });
-    const qualityOf = (rec, fine) => rec.length ? rec.reduce((n, r) => n + placementAt(r.v, fine, r.x, r.y).score, 0) / rec.length : 0;
+    const qualityOf = (rec, fine) => {
+      if(!rec.length)return 0;
+      const contact=rec.reduce((n,r)=>n+placementAt(r.v,fine,r.x,r.y).score,0)/rec.length;
+      if(rec.reduce((n,r)=>n+r.v.cells,0)/usableCellsFine<maxFill*.9)return contact;
+      // A full sheet must not trade most of its border coverage for a small
+      // increase in interior contact. Count material, not bounding boxes.
+      const band=Math.max(1,Math.round(2*72/25.4*fineRes)),b=sheetBounds(fine),w=b.right-b.left,h=b.bottom-b.top;
+      const bandArea=w*h-Math.max(0,w-2*band)*Math.max(0,h-2*band);
+      const edgeCells=rec.reduce((n,r)=>n+edgeBandCells(r.v.fine,fine,r.x,r.y,band),0);
+      return contact+EDGE_WEIGHT*edgeCells/Math.max(1,bandArea);
+    };
 
     /* ── finishing push ─────────────────────────────────────────────────────
        A layout one or two pieces short gets a targeted search for exactly those
@@ -557,6 +567,97 @@
       return false;
     }
 
+    // Rebuild a neighbourhood as a small puzzle. Keep several substantially
+    // different partial arrangements when a later charm cannot fit.
+    // Temporary states never leave this function; only complete improvements
+    // replace the incumbent. Fixed pieces, FIFO and the fill cap still apply.
+    async function repairRegions(deadline) {
+      let attempts=0, nodes=0, accepted=0;
+      const stop=()=>stopped() || now()>=deadline;
+      const targets=regionTargets(best.grids.coarse);
+      for(const target of targets){
+        for(let pass=0;pass<3 && !stop();pass++){
+          if(stop())break;
+          let missing=repairCandidates(best).map(id=>prepared.find(p=>p.id===id)).filter(Boolean);
+          if(!fifo){
+            const groups=new Map();
+            for(const p of missing){if(!groups.has(p.order))groups.set(p.order,[]);groups.get(p.order).push(p);}
+            missing=[...groups.values()].filter(ps=>ps.length<=8 && !ps.some(p=>p.pinned)).sort((a,b)=>a.reduce((n,p)=>n+p.footprintCells,0)-b.reduce((n,p)=>n+p.footprintCells,0))[0] || [];
+          }
+          if(!missing.length || missing.length>8 || missing.some(p=>p.pinned))break;
+          if((best.placedCells+missing.reduce((n,p)=>n+p.footprintCells,0))/usableCellsFine>maxFill)break;
+          const ax=target.x*ratio,ay=target.y*ratio;
+          const distance=r=>Math.hypot(Math.max(r.x-ax,0,ax-r.x-r.v.fine.w),Math.max(r.y-ay,0,ay-r.y-r.v.fine.h)) + .2*Math.hypot(r.x+r.v.fine.w/2-ax,r.y+r.v.fine.h/2-ay);
+          const removed=best.rec.filter(r=>!r.p.pinned).sort((a,b)=>distance(a)-distance(b)).slice(0,[4,8,12][pass]);
+          if(!removed.length)continue;
+          const keep=best.rec.filter(r=>!removed.includes(r));
+          const pad=Math.max(2*ratio,...missing.map(p=>Math.sqrt(p.footprintCells)));
+          const bounds=sheetBounds(best.grids.fine);
+          const window={left:Math.max(bounds.left,Math.floor(Math.min(ax,...removed.map(r=>r.x))-pad)),top:Math.max(bounds.top,Math.floor(Math.min(ay,...removed.map(r=>r.y))-pad)),right:Math.min(bounds.right,Math.ceil(Math.max(ax,...removed.map(r=>r.x+r.v.fine.w))+pad)),bottom:Math.min(bounds.bottom,Math.ceil(Math.max(ay,...removed.map(r=>r.y+r.v.fine.h))+pad))};
+          const queue=[...missing,...removed.map(r=>r.p)];
+          for(const p of queue)p.guidance=job.packingHints || null;
+          queue.sort((a,b)=>guidedOrderScore(b,keep,job.packingHints)-guidedOrderScore(a,keep,job.packingHints) || (pass%2 ? b.areaPt2-a.areaPt2 : Number(missing.includes(b))-Number(missing.includes(a)) || b.areaPt2-a.areaPt2));
+          const variants=new Map(queue.map(p=>[p.id,variantsFor(p,[...new Set(angles.concat(removed.find(r=>r.p.id===p.id)?.v.angle ?? [],(job.packingHints?.angles?.[p.id] || []).filter(Number.isFinite).slice(0,3).map(a=>(a%360+360)%360)))])]));
+          let attemptDeadline=Math.min(deadline,now()+Math.max(1000,Math.min(4000,(deadline-now())/3)));
+          const attemptStop=()=>stop() || now()>=attemptDeadline;
+          async function place(){
+            let beam=[{rec:keep,grids:rebuildGrids(keep),cells:keep.reduce((n,r)=>n+r.v.cells,0),score:0}];
+            for(let index=0;index<queue.length;index++){
+              const p=queue[index];
+              const nextBeam=[];
+              for(const state of beam){
+                if(attemptStop())return null;
+                nodes++;
+                const pos=search({...p,variants:variants.get(p.id)},state.grids.fine,state.grids.coarse,ratio,.2,0,random,target.right,target.bottom,null,false,null,{...window,stop:attemptStop,choices:4});
+                if(!pos)continue;
+                if(attemptStop() && index<queue.length-1)return null;
+                for(const {v,x,y,score} of pos.alternatives || [pos]){
+                  if((state.cells+v.cells)/usableCellsFine>maxFill)continue;
+                  const grids={fine:state.grids.fine.clone(),coarse:state.grids.coarse.clone()};
+                  grids.fine.stamp(v.fine.bits,v.fine.w,v.fine.h,x,y,p.id);
+                  for(let yy=0;yy<v.fine.h;yy++)for(let xx=0;xx<v.fine.w;xx++)if(v.fine.bits[yy*v.fine.w+xx])grids.coarse.set(Math.floor((x+xx)/ratio),Math.floor((y+yy)/ratio));
+                  grids.coarse.buildSAT();
+                  nextBeam.push({rec:state.rec.concat({p,v,x,y}),grids,cells:state.cells+v.cells,score:state.score+score});
+                  // A complete legal improvement is retained immediately,
+                  // including when the deadline expires during this search.
+                  if(index===queue.length-1)return nextBeam[nextBeam.length-1];
+                }
+                await yieldNow();
+              }
+              if(!nextBeam.length)return null;
+              // Preserve alternative partial arrangements throughout the
+              // region, instead of exhausting all branches of one early fit.
+              nextBeam.sort((a,b)=>b.score-a.score);beam=nextBeam.slice(0,4);
+            }
+            return beam[0];
+          }
+          attempts++;cb.onStage?.('repair',attempts,targets.length*3);
+          let result=await place();
+          if(!result && pass>0 && !stop()){
+            // If the extra order cannot fit in one move, improve the region
+            // itself as a stepping stone. It must still beat the same global
+            // quality comparison; no temporary worse layout is published.
+            queue.splice(0,queue.length,...removed.map(r=>r.p).sort((a,b)=>guidedOrderScore(b,keep,job.packingHints)-guidedOrderScore(a,keep,job.packingHints) || b.areaPt2-a.areaPt2));
+            attemptDeadline=Math.min(deadline,now()+1500);
+            result=await place();
+          }
+          if(!result)continue;
+          const placements=result.rec.map(r=>({id:r.p.id,angle:r.v.angle,cxPt:(r.x+r.v.solid.cx)/fineRes,cyPt:(r.y+r.v.solid.cy)/fineRes,xPt:(r.x+(r.v.fine.w-r.v.solid.w)/2)/fineRes,yPt:(r.y+(r.v.fine.h-r.v.solid.h)/2)/fineRes,wPt:r.v.solid.w/fineRes,hPt:r.v.solid.h/fineRes}));
+          const candidate={...best,placements,rec:result.rec,grids:result.grids,placedCells:result.cells,placedPt2:result.cells/(fineRes*fineRes),density:result.cells/usableCellsFine,contactQuality:qualityOf(result.rec,result.grids.fine)};
+          if(!betterLayout(candidate,best,job.sheet))continue;
+          const ids=new Set(placements.map(p=>p.id));
+          candidate.rejects=prepared.filter(p=>!ids.has(p.id)).map(p=>p.id);
+          candidate.capped=(best.capped || []).filter(id=>!ids.has(id));
+          candidate.freePt2=result.grids.fine.freeCells()/(fineRes*fineRes);candidate.pocket=pocketPt(result.grids.coarse,coarseRes);
+          candidate.cornerRepairs=(best.cornerRepairs || 0)+1;candidate.extended=false;
+          best=candidate;accepted++;lastBetterAt=now();
+          cb.onBest?.(publicLayout(best),{trial:best.trial,placed:placements.length,total:prepared.length,rejects:best.rejects,density:best.density,elapsedMs:now()-t0,repaired:true,removed:removed.length});
+          await yieldNow();
+        }
+      }
+      best.regionSearch={attempts,nodes,accepted};
+    }
+
     /* ── trials ─────────────────────────────────────────────────────────── */
     best = null; let trials = 0, endedBy = "budget", failStreak = 0, lastRejects = [], lastAdvice = null, guidedTrials = 0;
     const fifo = prepared.some(p => p.orderDate > 0);
@@ -612,7 +713,7 @@
         if (cb.onBest) cb.onBest(publicLayout(best),{trial:-1,placed:placements.length,total:prepared.length,rejects:best.rejects,density:best.density,elapsedMs:now()-t0});
       }
     }
-    const refinementReserve = Math.min(10000,budget*.2);
+    const refinementReserve = Math.min(45000,budget*.3);
     while (trials < maxTrials) {
       if (job.packingHints && job.packingHints !== lastAdvice) { lastAdvice = job.packingHints; lastBetterAt = now(); }
       if (stopped()) { endedBy = cb.shouldStop && cb.shouldStop() ? "stopped" : stalled ? "stalled" : "budget"; break; }
@@ -648,7 +749,7 @@
       const pinnedFirst = order.filter(p => p.pinned).concat(order.filter(p => !p.pinned));
       const gravW = trial === 0 ? 0.35 : 0.1 + random() * 0.8;
       const noise = trial === 0 ? 0 : random() * 0.15;
-      const cornerX = trial === 0 ? 0 : (random() < 0.7 ? 0 : 1), cornerY = trial === 0 ? 0 : (random() < 0.7 ? 0 : 1);
+      const [cornerX,cornerY] = constructionCorner(trial);
       let fine = baseFine.clone(), coarse = baseCoarse.clone();
       let placements = [], placedRec = []; const capped = fifo ? prepared.filter(p => rank.get(p.order) >= capOrders).map(p => p.id) : [], rejects = capped.slice();
       let placedCells = 0;
@@ -806,10 +907,10 @@
       await yieldNow();
     }
     if (trials >= maxTrials && endedBy === "budget") endedBy = "trials";
-    // Make room in the emptiest corners without exposing temporary removals.
-    // Only a fully rebuilt layout containing more complete orders can win.
+    // Make room in fragmented edge and interior regions without exposing temporary removals.
+    // Only a fully rebuilt layout with more pieces or better quality can win.
     if(best?.rejects?.length && best.rec?.length && !stopped()) {
-      await ruinRecreate(best,8,{deadline:Math.min(t0+budget,now()+refinementReserve*.5)});
+      await repairRegions(Math.min(t0+budget,now()+refinementReserve*.8));
     }
     // Construction heuristics propose layouts; neighbour and edge contact judge
     // them. Reinsert unpinned pieces across rotations, retaining the best layout
@@ -915,11 +1016,15 @@
     const a = stripFraction(candidate.placements, sheet), b = stripFraction(incumbent.placements, sheet);
     // Strict ordering prevents epsilon ties from cycling and gradually consuming
     // an offcut as asynchronous workers report higher contact scores.
-    if (a !== b) return a < b;
+    // Preserve useful strips on partial sheets. On almost-full sheets a
+    // sub-10% sliver must not outrank substantially better edge/contact fit.
+    const usefulOffcut=x=>Number.isFinite(x) ? (x<=.9 ? x : 1) : Infinity;
+    if (usefulOffcut(a) !== usefulOffcut(b)) return usefulOffcut(a) < usefulOffcut(b);
     const contact = x => Number.isFinite(x.contactQuality) ? x.contactQuality : -Infinity;
     if (contact(candidate) !== contact(incumbent)) return contact(candidate) > contact(incumbent);
     const density = x => Number.isFinite(x.density) ? x.density : -Infinity;
-    return density(candidate) > density(incumbent);
+    if(density(candidate) !== density(incumbent))return density(candidate) > density(incumbent);
+    return a < b;
   }
 
   /** Majority-resample a fine mask to the coarse grid. */
@@ -999,6 +1104,17 @@
       return {right,bottom,x:right?b.right-1:b.left,y:bottom?b.bottom-1:b.top,free:w*h-grid.boxSum(x,y,x+w,y+h)};
     }).sort((a,b)=>b.free-a.free);
   }
+  function constructionCorner(trial) { return [[0,0],[1,1],[1,0],[0,1]][trial%4]; }
+  function regionTargets(grid) {
+    const b=sheetBounds(grid),w=b.right-b.left,h=b.bottom-b.top;
+    grid.buildSAT();
+    // Equal patches compare fragmented internal gaps as well as the boundary.
+    return [0,1,2].flatMap(row=>[0,1,2].map(col=>{
+      const left=Math.round(b.left+col*w/3),right=Math.round(b.left+(col+1)*w/3),top=Math.round(b.top+row*h/3),bottom=Math.round(b.top+(row+1)*h/3);
+      const cells=(right-left)*(bottom-top);
+      return {x:(left+right)/2,y:(top+bottom)/2,right:col===2?1:0,bottom:row===2?1:0,free:cells-grid.boxSum(left,top,right,bottom),fraction:cells ? 1-grid.boxSum(left,top,right,bottom)/cells : 0};
+    })).sort((a,b)=>b.fraction-a.fraction);
+  }
   function straightEdgeAt(mask,grid,x,y,band) {
     const bounds=sheetBounds(grid),gaps=[x-bounds.left,y-bounds.top,bounds.right-x-mask.w,bounds.bottom-y-mask.h];
     if(gaps.every(g=>g>band || g<0))return 0;
@@ -1034,13 +1150,24 @@
   }
 
   /** Candidate search for one piece across all its angles. */
-  function search(p, fine, coarse, ratio, gravW, noise, random, cornerX, cornerY, strip = null, boundarySeed = false, perimeterPolicy = null) {
+  function search(p, fine, coarse, ratio, gravW, noise, random, cornerX, cornerY, strip = null, boundarySeed = false, perimeterPolicy = null, local = null) {
     const K = 28, TOL = 2;
     // Keep the original construction seed as a competing proposal. Stronger
     // edge alignment is explored on the other trials and on the retained best;
     // it must never force a lower-count layout to replace a denser one.
     const straightWeight = boundarySeed ? 0 : STRAIGHT_EDGE_WEIGHT;
     let best = null;
+    const alternatives=[];
+    const remember=candidate=>{
+      if(!best || candidate.score>best.score)best=candidate;
+      if(!local?.choices)return;
+      // Adjacent raster positions are one choice. Keep distinct orientations
+      // or centres, so backtracking explores another fit instead of a nudge.
+      const same=alternatives.findIndex(a=>Math.hypot(a.x+a.v.fine.w/2-candidate.x-candidate.v.fine.w/2,a.y+a.v.fine.h/2-candidate.y-candidate.v.fine.h/2)<Math.max(2*ratio,Math.min(candidate.v.fine.w,candidate.v.fine.h)*.5) && Math.min(Math.abs(a.v.angle-candidate.v.angle),360-Math.abs(a.v.angle-candidate.v.angle))<30);
+      if(same>=0){if(alternatives[same].score>=candidate.score)return;alternatives.splice(same,1);}
+      alternatives.push(candidate);alternatives.sort((a,b)=>b.score-a.score);alternatives.length=Math.min(alternatives.length,local.choices);
+    };
+    const finish=()=>best && (local?.choices ? {...best,alternatives} : best);
     const CW = coarse.W, CH = coarse.H, bounds=sheetBounds(coarse);
     const profile=p.guidance?.profiles?.[p.id];
     const partners=profile ? (fine.parts || []).map(part=>({part,weight:packingCompatibility(p.id,part.id,p.guidance)})).filter(x=>x.weight>0).sort((a,b)=>b.weight-a.weight).slice(0,4) : [];
@@ -1059,11 +1186,12 @@
     };
     const pairNear=(x,y,w,h)=>partners.reduce((n,{part,weight})=>{const dx=Math.max(0,part.x-x-w,x-part.x-part.w),dy=Math.max(0,part.y-y-h,y-part.y-part.h);return Math.max(n,weight/(1+Math.hypot(dx,dy)/ratio));},0);
     for (const v of p.variants) {
+      if(local?.stop())return finish();
       // ── coarse exhaustive scan ──
       const cands = [], edgeCands=[null,null,null,null];
       const cw = v.coarse.w, ch = v.coarse.h, maskCells = v.coarse.pm.cells, boxCells = cw * ch;
       if (!v.coarse.contactRing) { const r = ring(v.coarse.bits || unpack(v.coarse.pm), cw, ch, 1); v.coarse.contactRing = packShifted(r.bits, r.w, r.h); }
-      for (let y = 0; y + ch <= CH; y++) for (let x = 0; x + cw <= CW; x++) {
+      if(!local)for (let y = 0; y + ch <= CH; y++) for (let x = 0; x + cw <= CW; x++) {
         // O(1) box tests first: the mask cannot fit if the box lacks free cells;
         // an empty box needs no bit test at all.
         const inner = coarse.boxSum(x, y, x + cw, y + ch);
@@ -1091,6 +1219,7 @@
       const seen = new Set();
       const consider=(x,y)=>{
           if (x < 0 || y < 0 || x + pm.w > FW || y + pm.h > FH) return;
+          if(local && (x<local.left || y<local.top || x+pm.w>local.right || y+pm.h>local.bottom))return;
           const key = y * FW + x; if (seen.has(key)) return; seen.add(key);
           if (!fine.fits(pm, x, y)) return;
           if(perimeterPolicy?.minCells && edgeBandCells(v.fine,fine,x,y,perimeterPolicy.band)<perimeterPolicy.minCells)return;
@@ -1098,8 +1227,24 @@
           const gx = cornerX ? (FW - x - pm.w) : x, gy = cornerY ? (FH - y - pm.h) : y;
           const growth = strip ? Math.max(strip.end, strip.axis === "x" ? x + pm.w : y + pm.h) / ratio : 0;
           const s = (boundarySeed ? fine.overlap(v.ringFine, x - pad, y - pad, 1e9) / rc : adjacency.score) + (profile ? 1.2*pairContact(v,x,y)+.15*profile.edgeAffinity/100*adjacency.edge+.25*edgeFit(x,y,pm.w,pm.h) : 0) - (strip?.weight ?? 4) * growth - gravW * ((gx + gy) / (FW + FH)) + (noise ? noise * random() : 0);
-          if (!best || s > best.score) best = { v, x, y, score: s, contact, neighbors:adjacency.neighbors, closeContact:adjacency.close };
+          remember({ v, x, y, score: s, contact, neighbors:adjacency.neighbors, closeContact:adjacency.close });
       };
+      if(local){
+        // Dense interlocks can be rejected by the coarse mask even when
+        // exact silhouettes fit. Scan every fine-grid translation in this
+        // bounded region; retain the contact-rich ends of each legal run.
+        const right=local.right-pm.w,bottom=local.bottom-pm.h;
+        for(let y=local.top;y<=bottom;y++){
+          if((y-local.top)%8===0 && local.stop())return finish();
+          let start=-1;
+          for(let x=local.left;x<=right+1;x++){
+            const legal=x<=right && fine.fits(pm,x,y);
+            if(legal && start<0)start=x;
+            if(!legal && start>=0){consider(start,y);if(x-1!==start)consider(x-1,y);start=-1;}
+          }
+        }
+        continue;
+      }
       for (const c of cands) {
         const x0 = c.x * ratio - ratio, y0 = c.y * ratio - ratio;
         for (let y = y0; y <= y0 + 2 * ratio; y++) for (let x = x0; x <= x0 + 2 * ratio; x++) consider(x,y);
@@ -1109,7 +1254,7 @@
       // Score the ends of each legal run: these nest against its neighbours.
       // Avoid expensive contact grading at thousands of equivalent positions
       // along an empty edge; the coarse shortlist still supplies interior fits.
-      const fb=sheetBounds(fine),right=fb.right-pm.w,bottom=fb.bottom-pm.h;
+      const fb=local || sheetBounds(fine),right=fb.right-pm.w,bottom=fb.bottom-pm.h;
       if((!boundarySeed || !best) && right>=fb.left && bottom>=fb.top){
         const scanWall=(start,end,fixed,horizontal)=>{
           let run=-1;
@@ -1126,7 +1271,7 @@
         if(right!==fb.left)scanWall(fb.top,bottom,right,false);
       }
     }
-    if (best) return best;
+    if (best || local) return finish();
     // ── fallback: widen the coarse tolerance so a tight fit is never missed ──
     for (const v of p.variants) {
       const pm = v.fine.pm, FW = fine.W, FH = fine.H, cw = v.coarse.w, ch = v.coarse.h, rc = Math.max(1, v.ringFine.cells), pad = v.ringPad;
@@ -1140,11 +1285,11 @@
           const adjacency = placementAt(v, fine, x, y), contact = adjacency.contact;
           const growth = strip ? Math.max(strip.end, strip.axis === "x" ? x + pm.w : y + pm.h) / ratio : 0;
           const s = (boundarySeed ? fine.overlap(v.ringFine, x - pad, y - pad, 1e9) / rc : adjacency.score) + (profile ? 1.2*pairContact(v,x,y)+.15*profile.edgeAffinity/100*adjacency.edge+.25*edgeFit(x,y,pm.w,pm.h) : 0) - (strip?.weight ?? 4) * growth - gravW * ((x + y) / (FW + FH));
-          if (!best || s > best.score) best = { v, x, y, score: s, contact, neighbors:adjacency.neighbors, closeContact:adjacency.close };
+          remember({ v, x, y, score: s, contact, neighbors:adjacency.neighbors, closeContact:adjacency.close });
         }
       }
     }
-    return best;
+    return finish();
   }
 
   /* ── independent verification ──────────────────────────────────────────
@@ -1321,5 +1466,5 @@
     const overlap = off ? null : grid.overlap(v.fine.pm, x0, y0, 1e9);
     return { ok: false, x: x0, y: y0, off, overlapPt2: overlap == null ? null : overlap / (res * res) };
   }
-  return { solve, publicLayout, bestResult, normalizePackingPlan, shapeKey, packingCompatibility, guidedOrderScore, verify, contactAt, placementAt, straightEdgeAt, edgeBandCells, sheetBounds, cornerPockets, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine };
+  return { solve, publicLayout, bestResult, normalizePackingPlan, shapeKey, packingCompatibility, guidedOrderScore, verify, contactAt, placementAt, straightEdgeAt, edgeBandCells, sheetBounds, cornerPockets, regionTargets, constructionCorner, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine };
 });
