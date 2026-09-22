@@ -59,7 +59,7 @@ const bridge=fs.readFileSync('charm-nest-bridge.js','utf8'),station=fs.readFileS
 })().catch(e=>{console.error(e);process.exitCode=1});
 
 (async()=>{
- const calls=[],ctx={require:()=>({read:async(id,opts)=>{calls.push({id,...opts});return {images:opts.cacheOnly?[]:[{url_570xN:'https://i.etsystatic.com/'+id+'.jpg'}],source:opts.cacheOnly?'cache-only':'etsy',etsyCalls:opts.cacheOnly?0:1};}})};
+ const calls=[],ctx={require:()=>({readMany:async(ids,opts)=>Object.fromEntries(ids.map(id=>{calls.push({id,...opts});return [id,{images:opts.cacheOnly?[]:[{url_570xN:'https://i.etsystatic.com/'+id+'.jpg'}],source:opts.cacheOnly?'cache-only':'etsy',etsyCalls:opts.cacheOnly?0:1}];}))})};
  const start=server.indexOf('async function op_listingPhotos'),end=server.indexOf('async function op_ping',start);
  vm.runInNewContext(server.slice(start,end)+';this.photos=op_listingPhotos;',ctx);
  const cached=await ctx.photos({listingIds:['123','123','invalid']});assert.equal(calls.length,1);assert.equal(calls[0].cacheOnly,true);assert.equal(cached.etsyCalls,0);

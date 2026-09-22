@@ -146,14 +146,15 @@ async function op_laserStatus(b) {
 // Photo preparation is explicit and budgeted. Ordinary thumbnail reads are cache-only,
 // including in production. Public image metadata is shared across workspaces.
 async function op_listingPhotos(b) {
-  const ids=[...new Set((b.listingIds || []).map(String).filter(id=>/^\d{3,20}$/.test(id)))].slice(0,12);
-  const cache=require('./_etsyImageCache'),images={},states={};let etsyCalls=0,retryAt=0;
+  const ids=[...new Set((b.listingIds || []).map(String).filter(id=>/^\d{3,20}$/.test(id)))].slice(0,100);
+  const cache=require('./_etsyImageCache'),images={},states={},retryAts={};let etsyCalls=0,retryAt=0;
+  const results=await cache.readMany(ids,{cacheOnly:b.prepare!==true});
   for(const id of ids){
-    const r=await cache.read(id,{cacheOnly:b.prepare!==true});
+    const r=results[id];
     const first=r.images?.[0];images[id]=first?.url_570xN||first?.url_fullxfull||first?.url||null;
-    states[id]=r.source;etsyCalls+=r.etsyCalls||0;retryAt=Math.max(retryAt,r.retryAt||0);
+    states[id]=r.source;retryAts[id]=r.retryAt||0;etsyCalls+=r.etsyCalls||0;if(['paused','budget-paused'].includes(r.source))retryAt=Math.max(retryAt,r.retryAt||0);
   }
-  return {images,states,etsyCalls,retryAt};
+  return {images,states,retryAts,etsyCalls,retryAt};
 }
 
 async function op_ping(b={}) {

@@ -28,9 +28,9 @@ function createImageCache({db, fetch, env=process.env, now=Date.now, sleep=ms=>n
     const catalog=(await db.collection('EtsyMail_Listings').doc(id).get()).data()||{};
     const saved=normalize(catalog.images);
     if(saved.length)return result(saved,'catalog');
-    if(cacheOnly)return result([],'sandbox-cache-only');
     if(cached.retryAt>now())return result([],'paused',429,cached.retryAt);
     if(cached.emptyUntil>now())return result([],'cached-empty');
+    if(cacheOnly)return result([],'sandbox-cache-only');
     if(!env.CLIENT_ID)return result([],'unconfigured',503);
     const lease=crypto.randomUUID();
     const reserved=await db.runTransaction(async tx=>{
@@ -78,8 +78,74 @@ function createImageCache({db, fetch, env=process.env, now=Date.now, sleep=ms=>n
     });
     return {...result(output,output.length?'etsy':retryAt?'paused':'empty',status,retryAt),etsyCalls:1};
   }
-  return {read};
+  // Etsy's listing batch endpoint includes Images for up to 100 listing IDs.
+  // One reservation is one HTTP attempt, shared with the single-listing route.
+  async function readMany(input,{cacheOnly=false}={}) {
+    const ids=[...new Set(input.map(String).filter(id=>/^\d{3,20}$/.test(id)))].slice(0,100),out={};
+    for(let i=0;i<ids.length;i+=8)await Promise.all(ids.slice(i,i+8).map(async id=>{out[id]=await read(id,{cacheOnly:true});}));
+    if(cacheOnly)return out;
+    const missing=ids.filter(id=>!out[id].images.length && out[id].source==='sandbox-cache-only');
+    if(!missing.length)return out;
+    if(!env.CLIENT_ID){for(const id of missing)out[id]=result([],'unconfigured',503);return out;}
+    const refs=missing.map(id=>db.collection('Etsy_Listing_Image_Cache').doc(id)),lease=crypto.randomUUID();
+    try{
+      const reserved=await db.runTransaction(async tx=>{
+        const [snapshots,budgetSnap,usageSnap]=await Promise.all([Promise.all(refs.map(r=>tx.get(r))),tx.get(budgetRef),tx.get(db.collection('EtsyApi_Config').doc('usage'))]);
+        const budget=budgetSnap.data()||{},usage=usageSnap.data()||{},t=now(),ready=[],states={};
+        snapshots.forEach((snap,i)=>{const item=snap.data()||{},id=missing[i],images=normalize(item.images);
+          if(images.length)states[id]=result(images,'cache');
+          else if(item.leaseUntil>t)states[id]=result([],'loading',202,item.leaseUntil);
+          else if(item.retryAt>t)states[id]=result([],'paused',429,item.retryAt);
+          else if(item.emptyUntil>t)states[id]=result([],'cached-empty');
+          else ready.push({id,ref:refs[i],item});
+        });
+        if(!ready.length)return {states,ready:[]};
+        const stamps=(budget.attempts||[]).filter(x=>Number.isFinite(x)&&x>t-DAY),etsy=usage.etsy||{};
+        let retryAt=budget.blockedUntil||0;
+        if(stamps.length>=cap)retryAt=Math.max(retryAt,stamps.length?stamps[0]+DAY:t+DAY);
+        if(etsy.reported_at>t-DAY && etsy.remaining_today!=null && etsy.remaining_today<=Math.max(10,(Number(etsy.limit_per_day)||0)*.2))retryAt=Math.max(retryAt,etsy.reported_at+DAY);
+        const startAt=Math.max(t,budget.nextAt||0);
+        if(startAt>t+6000)retryAt=Math.max(retryAt,startAt);
+        if(retryAt>t){ready.forEach(({id})=>{states[id]=result([],'budget-paused',429,retryAt);});return {states,ready:[]};}
+        ready.forEach(({ref,item})=>tx.set(ref,{...item,lease,leaseUntil:t+30000}));
+        tx.set(budgetRef,{...budget,attempts:[...stamps,startAt],nextAt:startAt+1000,cap,updatedAt:t});
+        return {states,ready,startAt};
+      });
+      Object.assign(out,reserved.states);
+      const ready=reserved.ready;
+      if(ready.length){
+        if(reserved.startAt>now())await sleep(reserved.startAt-now());
+        const latest=(await budgetRef.get()).data()||{};
+        if(latest.blockedUntil>now())ready.forEach(({id})=>{out[id]=result([],'budget-paused',429,latest.blockedUntil);});
+        else{
+          let response,status=502,retryAt=0,rows=[];
+          try{
+            const secret=env.CLIENT_SECRET||env.ETSY_SHARED_SECRET;
+            response=await fetch('https://api.etsy.com/v3/application/listings/batch?listing_ids='+ready.map(x=>x.id).join(',')+'&includes=Images',{headers:{'x-api-key':secret?`${env.CLIENT_ID}:${secret}`:env.CLIENT_ID},timeout:10000});
+            status=response.status;
+            if(response.ok){const data=await response.json();rows=Array.isArray(data.results)?data.results:[];}
+            if(status===429){const raw=response.headers?.get?.('retry-after'),seconds=Number(raw);retryAt=Math.max(now()+60000,raw&&Number.isFinite(seconds)?now()+seconds*1000:Date.parse(raw)||now()+3600000);}
+            else if(!response.ok)retryAt=now()+3600000;
+            const remaining=response.headers?.get?.('x-remaining-today');if(remaining!=null&&Number(remaining)<=0)retryAt=Math.max(retryAt,now()+DAY);
+          }catch(_){status=502;retryAt=now()+3600000;}
+          const byId=new Map(rows.map(row=>[String(row.listing_id),normalize(row.images||row.Images)]));
+          if(meter){meter.recordCall('charm-sorter-images',response);await meter.flushNow();}
+          await db.runTransaction(async tx=>{
+            const [snaps,b]=await Promise.all([Promise.all(ready.map(x=>tx.get(x.ref))),tx.get(budgetRef)]);
+            ready.forEach(({id,ref},i)=>{const images=byId.get(id)||[];if(snaps[i].data()?.lease===lease)tx.set(ref,{images,fetchedAt:now(),leaseUntil:0,retryAt,emptyUntil:status===200&&!images.length?now()+DAY:0});});
+            if(status!==200||retryAt)tx.set(budgetRef,{...(b.data()||{}),blockedUntil:Math.max(b.data()?.blockedUntil||0,retryAt)});
+          });
+          ready.forEach(({id},i)=>{const images=byId.get(id)||[];out[id]={...result(images,images.length?'etsy':retryAt?'paused':'empty',status,retryAt),etsyCalls:i===0?1:0};});
+        }
+      }
+    }catch(_){for(const id of missing)if(!out[id].images.length)out[id]=result([],'cache-unavailable',503);}
+    // A cache-only miss must not mask a later successful preparation in this instance.
+    for(const id of missing){const value={...out[id],etsyCalls:0};for(const mode of [true,false])memory.set(id+':'+mode,{value,until:now()+(value.images.length?900000:60000)});}
+    while(memory.size>1000)memory.delete(memory.keys().next().value);
+    return out;
+  }
+  return {read,readMany};
 }
 let singleton;
 function instance(){return singleton||(singleton=createImageCache({db:require('./firebaseAdmin').firestore(),fetch:require('node-fetch'),meter:require('./_etsyApiUsage')}));}
-module.exports={createImageCache,read:(...args)=>instance().read(...args)};
+module.exports={createImageCache,read:(...args)=>instance().read(...args),readMany:(...args)=>instance().readMany(...args)};

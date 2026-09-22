@@ -110,7 +110,7 @@ const ListMedia = (() => {
   const jobs=new WeakMap(), watched=new Set(), queue=[], photos=new Map(), pending=new Map(), wanted=new Set();
   // Firebase is the shared source; this small local index makes refresh instant.
   // Image bytes use the seven-day HTTP cache, not another Etsy metadata lookup.
-  const photoStorage='cn.listingPhotos.v1',photoAttempts=new Map(),warming=new Set(),photoLoading=new Set();
+  const photoStorage='cn.listingPhotos.v1',photoAttempts=new Map(),photoChecks=new Map(),photoStates=new Map(),prepareQueue=new Set(),warming=new Set(),photoLoading=new Set();
   let photoPauseUntil=0;try{photoPauseUntil=Number(localStorage.getItem('cn.listingPhotoPause'))||0;}catch(_){}
   try{for(const [id,url] of JSON.parse(localStorage.getItem(photoStorage)||'[]'))if(typeof url==='string'&&url)photos.set(id,url);}catch(_){}
   let preparing=null,photoTick=0;
@@ -124,30 +124,49 @@ const ListMedia = (() => {
     if(!url||warming.has(url))return;warming.add(url);
     await new Promise(resolve=>{const img=new Image(),done=()=>{clearTimeout(timer);img.onload=img.onerror=null;resolve();},timer=setTimeout(done,10000);img.onload=img.onerror=done;img.src=url;});
   }
+  function photoStatus(id){
+    if(!id)return 'No listing linked';
+    if(photoLoading.has(id))return loading;
+    const state=photoStates.get(id);
+    if(['empty','cached-empty'].includes(state))return 'No listing photo';
+    if(['cache-unavailable','unconfigured'].includes(state))return 'Photo temporarily unavailable';
+    if(photoPauseUntil>Date.now())return '<span>Photo quota paused<br><small>Resumes '+esc(new Date(photoPauseUntil).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}))+'</small></span>';
+    return state==='loading'?'Photo being prepared':'Awaiting photo preparation';
+  }
+  function photoTitle(id){
+    if(photos.get(id))return '';
+    return photoPauseUntil>Date.now()?'New Etsy photo lookups resume '+new Date(photoPauseUntil).toLocaleString()+'. Saved photos remain available.':'Missing photos are checked with the next ten-minute update.';
+  }
+  function acceptPhotos(got,ids){
+    if(got.retryAt>Date.now()){photoPauseUntil=Math.max(photoPauseUntil,got.retryAt);try{localStorage.setItem('cn.listingPhotoPause',String(photoPauseUntil));}catch(_){}}
+    for(const id of ids){photoChecks.set(id,Date.now());photoStates.set(id,got.states?.[id]||'cache-only');if(got.images?.[id])remember(id,photoUrl(got.images[id]));}
+  }
   function refreshPhotos(ids){
     for(const host of document.querySelectorAll('[data-listing]')){const job=jobs.get(host);if(!job||!ids.includes(job.key)||host.querySelector('img'))continue;
       if(photos.get(job.key))watch(host,()=>listing(job.key),job.key,true);
-      else if(job.state==='done'){host.innerHTML=photoLoading.has(job.key)?loading:'Photo queued';host.setAttribute('aria-busy',String(photoLoading.has(job.key)));host.title=photoPauseUntil>Date.now()?'Photo preparation resumes '+new Date(photoPauseUntil).toLocaleString():'';}}
+      else if(job.state==='done'){host.innerHTML=photoStatus(job.key);host.setAttribute('aria-busy',String(photoLoading.has(job.key)));host.title=photoTitle(job.key);}}
   }
   async function prepare(rows){
+    for(const row of rows||[]){const id=String(row.line?.listingId||'');if(id)prepareQueue.add(id);}
     if(preparing||!S.cloud.ok)return preparing;
-    const ids=[...new Set((rows||[]).map(row=>String(row.line?.listingId||'')).filter(Boolean))];
-    const missing=ids.filter(id=>!photos.get(id)&&Date.now()>=photoPauseUntil&&Date.now()-(photoAttempts.get(id)||0)>=600000);
-    missing.forEach(id=>photoLoading.add(id));refreshPhotos(missing);
     preparing=(async()=>{
-      // Preparing a batch never blocks order processing. New image lookups share
-      // the same server-side allowance as production and never retry a 429.
-      for(let i=0;i<missing.length;i+=4){
-        const batch=missing.slice(i,i+4);batch.forEach(id=>photoAttempts.set(id,Date.now()));
-        const got=await api('charmNestLibrary',{op:'listingPhotos',listingIds:batch,prepare:true},{quiet:true});
-        for(const id of batch)if(got.images?.[id])remember(id,photoUrl(got.images[id]));
-        batch.forEach(id=>photoLoading.delete(id));refreshPhotos(batch);
-        if(got.retryAt>Date.now()){photoPauseUntil=got.retryAt;try{localStorage.setItem('cn.listingPhotoPause',String(photoPauseUntil));}catch(_){}for(const id of missing.slice(i))photoAttempts.set(id,got.retryAt-600000);break;}
+      const warmIds=new Set();
+      while(prepareQueue.size){
+        const ids=[...prepareQueue];prepareQueue.clear();ids.forEach(id=>warmIds.add(id));
+        const missing=ids.filter(id=>!photos.get(id)&&(!photoChecks.has(id)||Date.now()-photoChecks.get(id)>=600000||Date.now()>=photoPauseUntil&&Date.now()-(photoAttempts.get(id)||0)>=600000));
+        for(let i=0;i<missing.length;i+=100){
+          const batch=missing.slice(i,i+100),live=Date.now()>=photoPauseUntil;
+          // Cache recovery continues during a quota pause. A live batch spends
+          // at most one Etsy call for 100 distinct missing listings.
+          batch.forEach(id=>{photoLoading.add(id);if(live)photoAttempts.set(id,Date.now());});refreshPhotos(batch);
+          try{const got=await api('charmNestLibrary',{op:'listingPhotos',listingIds:batch,prepare:live},{quiet:true});acceptPhotos(got,batch);}
+          catch(e){batch.forEach(id=>{photoChecks.set(id,Date.now());photoStates.set(id,'cache-unavailable');});console.warn('Listing photo preparation:',e.message);}
+          finally{batch.forEach(id=>photoLoading.delete(id));refreshPhotos(batch);}
+        }
       }
-      // Two image downloads at a time warm the normal browser HTTP cache.
-      const available=ids.map(id=>photos.get(id)).filter(Boolean);let next=0;
+      const available=[...warmIds].map(id=>photos.get(id)).filter(Boolean);let next=0;
       await Promise.all([0,1].map(async()=>{while(next<available.length)await warm(available[next++]);}));
-    })().catch(e=>console.warn('Listing photo preparation:',e.message)).finally(()=>{missing.forEach(id=>photoLoading.delete(id));refreshPhotos(missing);preparing=null;});
+    })().finally(()=>{preparing=null;if(prepareQueue.size)prepare([]);});
     return preparing;
   }
   function start(){clearInterval(photoTick);prepare(Orders.rows());photoTick=setInterval(()=>{if(!document.hidden)prepare(Orders.rows());},600000);}
@@ -184,7 +203,7 @@ const ListMedia = (() => {
             await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{img.onload=img.onerror=null;reject(Error('Image timed out'));},20000);img.onload=()=>{clearTimeout(timer);resolve();};img.onerror=()=>{clearTimeout(timer);reject(Error('Image unavailable'));};img.src=cors(result);host.appendChild(img);});
             if(!host.isConnected || jobs.get(host)!==job)return;host.replaceChildren(img);
           }else if(result?.nodeType)host.replaceChildren(result);
-          else if(host.hasAttribute('data-listing')){host.innerHTML=photoLoading.has(job.key)?loading:'Photo queued';host.title=photoPauseUntil>Date.now()?'Photo preparation resumes '+new Date(photoPauseUntil).toLocaleString():'';}else host.textContent='No vector available';
+          else if(host.hasAttribute('data-listing')){host.innerHTML=photoStatus(job.key);host.title=photoTitle(job.key);}else host.textContent='No vector available';
           ListZoom.bind(host,(host.hasAttribute('data-listing')?'listing:':'vector:')+job.zoomKey);
           job.state='done';
         }catch(_){
@@ -198,17 +217,18 @@ const ListMedia = (() => {
     if(photoBusy || photoTimer || !wanted.size)return;
     photoTimer=setTimeout(async()=>{
       photoTimer=0;photoBusy=true;
-      const ids=[...wanted].slice(0,12);ids.forEach(id=>wanted.delete(id));
+      const ids=[...wanted].slice(0,100);ids.forEach(id=>wanted.delete(id));
       try {
         const got=await api('charmNestLibrary',{op:'listingPhotos',listingIds:ids},{quiet:true});
-        for(const id of ids){const url=photoUrl(got.images?.[id])||photos.get(id)||null;if(url)remember(id,url);else photos.set(id,null);pending.get(id)?.resolve(url);}
+        acceptPhotos(got,ids);for(const id of ids)pending.get(id)?.resolve(photos.get(id)||null);
       }catch(e){for(const id of ids)pending.get(id)?.reject(e);}
       finally{ids.forEach(id=>pending.delete(id));photoBusy=false;flushPhotos();}
     },80);
   }
   function listing(id) {
     id=String(id || '');if(!id)return Promise.resolve(null);
-    if(photos.has(id))return Promise.resolve(photos.get(id));
+    if(photos.get(id))return Promise.resolve(photos.get(id));
+    if(photoChecks.has(id)&&Date.now()-photoChecks.get(id)<600000)return Promise.resolve(null);
     if(pending.has(id))return pending.get(id).promise;
     let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});pending.set(id,{promise,resolve,reject});wanted.add(id);flushPhotos();return promise;
   }

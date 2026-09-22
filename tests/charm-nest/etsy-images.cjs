@@ -5,7 +5,7 @@ function fixture({cap=25,status=200,headers={},broken=false}={}){
  const data=new Map();let clock=Date.UTC(2026,8,22,23,59,50),calls=0,reads=0,serial=Promise.resolve();
  const ref=path=>({path,get:async()=>{reads++;if(broken)throw Error('Firestore unavailable');return{data:()=>structuredClone(data.get(path)),exists:data.has(path)}}});
  const db={collection:name=>({doc:id=>ref(name+'/'+id)}),runTransaction:fn=>{const p=serial.then(async()=>{let wrote=false;const writes=[];const result=await fn({get:r=>{assert(!wrote);return r.get();},set:(r,v)=>{wrote=true;writes.push(()=>data.set(r.path,structuredClone(v)));}});writes.forEach(f=>f());return result});serial=p.catch(()=>{});return p;}};
- const options={db,env:{CLIENT_ID:'test',ETSY_IMAGE_MAX_DAILY_CALLS:String(cap)},now:()=>clock,sleep:async ms=>{clock+=ms;},fetch:async()=>{calls++;if(status==='network')throw Error('network');return {status,ok:status===200,headers:{get:k=>headers[k]??null},json:async()=>({results:[{rank:2,url_570xN:'second.jpg'},{rank:1,url_570xN:'first.jpg'}]})}}};
+ const options={db,env:{CLIENT_ID:'test',ETSY_IMAGE_MAX_DAILY_CALLS:String(cap)},now:()=>clock,sleep:async ms=>{clock+=ms;},fetch:async url=>{calls++;if(status==='network')throw Error('network');return {status,ok:status===200,headers:{get:k=>headers[k]??null},json:async()=>({results:url.includes('/listings/batch?')?new URL(url).searchParams.get('listing_ids').split(',').map(listing_id=>({listing_id,images:[{rank:2,url_570xN:'second.jpg'},{rank:1,url_570xN:'first.jpg'}]})):[{rank:2,url_570xN:'second.jpg'},{rank:1,url_570xN:'first.jpg'}]})}}};
  return {data,api:()=>createImageCache(options),calls:()=>calls,reads:()=>reads,advance:ms=>clock+=ms};
 }
 (async()=>{
@@ -28,6 +28,18 @@ function fixture({cap=25,status=200,headers={},broken=false}={}){
  f=fixture({broken:true});assert.equal((await f.api().read('123')).status,503);assert.equal(f.calls(),0,'cache/budget failures never fall through to Etsy');
  f=fixture({cap:0});await f.api().read('123');assert.equal(f.calls(),0,'zero disables new photo lookups');
  f=fixture();f.data.set('EtsyApi_Config/usage',{etsy:{reported_at:Date.UTC(2026,8,22,23,59,49),remaining_today:4,limit_per_day:100}});await f.api().read('123');assert.equal(f.calls(),0,'known low shared-key quota reserves remaining allowance');
+ // Bulk preparation shares the existing quota, leases and durable image cache.
+ f=fixture();a=f.api();const ids=Array.from({length:100},(_,i)=>String(1000+i));
+ const bulk=await a.readMany(ids);assert.equal(f.calls(),1);assert.equal(Object.values(bulk).reduce((n,r)=>n+(r.etsyCalls||0),0),1);assert(Object.values(bulk).every(r=>r.images[0].url_570xN==='first.jpg'));
+ const reads=f.reads();await a.readMany(ids);assert.equal(f.calls(),1);assert.equal(f.reads(),reads,'warm batches make no Firebase reads');
+ await f.api().readMany(ids);assert.equal(f.calls(),1,'cold instances recover the durable batch without Etsy');
+ f=fixture();await Promise.all([f.api().readMany(ids),f.api().readMany(ids)]);assert.equal(f.calls(),1,'overlapping instances reserve each listing once');
+ f=fixture({cap:1});await f.api().readMany(['123','456']);const paused=await f.api().readMany(['789']);assert.equal(f.calls(),1);assert.equal(paused['789'].source,'budget-paused');
+ f.data.set('EtsyMail_Listings/987',{images:[{url:'cached.jpg'}]});const saved=await f.api().readMany(['987'],{cacheOnly:true});assert.equal(saved['987'].images[0].url_570xN,'cached.jpg');assert.equal(f.calls(),1,'cached photos remain available during a pause');
+ f=fixture({status:429,headers:{'retry-after':'7200'}});await f.api().readMany(['123','456']);await f.api().readMany(['789']);assert.equal(f.calls(),1,'batch 429 shares the single-listing circuit');
+ f=fixture({cap:0});await f.api().readMany(ids);assert.equal(f.calls(),0);
+ f=fixture({broken:true});await f.api().readMany(ids);assert.equal(f.calls(),0,'batch fails closed on Firestore failure');
+ f=fixture();a=f.api();await a.read('123',{cacheOnly:true});await a.readMany(['123']);assert.equal((await a.read('123',{cacheOnly:true})).images.length,2,'preparation replaces a cached miss immediately');
  // Execute the actual front-end loader, proving one request, no OAuth and no retry on 429.
  const source=fs.readFileSync(require.resolve('../../design-1.html'),'utf8');
  const loader=source.slice(source.indexOf('const __imagesCache'),source.indexOf('/** Route an external image'));

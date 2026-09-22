@@ -72,7 +72,7 @@ const firstPair=()=>w.document.querySelector('#ordersView .comparePair');
  w.qa.S.cloud.ok=true;const batchesBefore=w.qa.metrics.batches.length;
  await Promise.all([w.qa.ListMedia.prepare(w.qa.B.orders.rows),w.qa.ListMedia.prepare(w.qa.B.orders.rows)]);
  const batches=w.qa.metrics.batches.slice(batchesBefore).filter(b=>b.prepare);
- assert(batches.length);assert(batches.every(b=>b.ids.length<=4));assert.equal(new Set(batches.flatMap(b=>Array.from(b.ids))).size,batches.flatMap(b=>Array.from(b.ids)).length);
+ assert(batches.length);assert(batches.every(b=>b.ids.length<=100));assert.equal(new Set(batches.flatMap(b=>Array.from(b.ids))).size,batches.flatMap(b=>Array.from(b.ids)).length);
  const preparedCalls=w.qa.metrics.photos;await w.qa.ListMedia.prepare(w.qa.B.orders.rows);assert.equal(w.qa.metrics.photos,preparedCalls,'ten-minute reuse prevents repeat preparations');assert(maxImages<=2);
  console.log('PASS: 126-row runtime; deferred IO thumbnails, paired independent sources, cached photos, exact reference zoom/pan/reset with 2× Etsy default and no row navigation, Orders/Review/Engraving pagination, grouped review controls, edit preservation, stable engraving rows, retry states');
  dom.window.close();
