@@ -50,9 +50,9 @@
  *      piece order). The report carries all of them.
  *  ═══════════════════════════════════════════════════════════════════════ */
 (function (root, factory) {
-  if (typeof module === "object" && module.exports) module.exports = factory();
-  else root.CharmNestSolver = factory();
-})(typeof self !== "undefined" ? self : this, function () {
+  if (typeof module === "object" && module.exports) module.exports = factory(require("./charm-nest-rose.js"));
+  else root.CharmNestSolver = factory(root.CharmNestRose);
+})(typeof self !== "undefined" ? self : this, function (Rose) {
   "use strict";
 
   /* ── seeded RNG (mulberry32) ─────────────────────────────────────────── */
@@ -347,6 +347,10 @@
     }
     for (let y = 0; y < CH; y++) for (let x = 0; x < CW; x++) {
       if (x < wallCoarse || y < wallCoarse || x >= CW - wallCoarse || y >= CH - wallCoarse) baseCoarse.set(x, y); else baseCoarse.free[y * CW + x] = 1;
+    }
+    if(job.sheet.remnant){
+      Rose.stamp(baseFine,job.sheet.remnant,fineRes,Math.max(insetPt,halfGapFine/fineRes));
+      Rose.stamp(baseCoarse,job.sheet.remnant,coarseRes,Math.max(insetPt,halfGapFine/fineRes));
     }
     baseCoarse.buildSAT();
     const usableCellsFine = baseFine.freeCells();
@@ -1159,12 +1163,18 @@
     const FW = Math.round(job.sheet.wPt * res), FH = Math.round(job.sheet.hPt * res);
     const ids = new Int16Array(FW * FH).fill(-1);
     const byId = new Map(job.pieces.map(p => [p.id, p]));
-    let overlapPx = 0, outsidePx = 0; const pairs = new Set();
+    let overlapPx = 0, outsidePx = 0, removedPx = 0;
+    if(job.sheet.remnant)Rose.validate(job.sheet.remnant,job.sheet.wPt,job.sheet.hPt);
+    const pairs = new Set();
     const masks = [];
     placements.forEach((pl, i) => {
       const p = byId.get(pl.id); if (!p) return;
       const r = resample(p.bits, p.w, p.h, p.scale, res);
       const rot0 = rotateBitmap(r.bits, r.w, r.h, pl.angle);
+      if(job.sheet.remnant){
+        const rx=Math.round(pl.cxPt*res-rot0.cx),ry=Math.round(pl.cyPt*res-rot0.cy);
+        for(let y=0;y<rot0.h;y++)for(let x=0;x<rot0.w;x++)if(rot0.bits[y*rot0.w+x]&&Rose.intersects(job.sheet.remnant,(rx+x)/res,(ry+y)/res,1/res,1/res))removedPx++;
+      }
       const rot = erodePx ? Object.assign(erode(rot0.bits, rot0.w, rot0.h, erodePx), { cx: rot0.cx - erodePx, cy: rot0.cy - erodePx }) : rot0;
       const x0 = Math.round(pl.cxPt * res - rot.cx), y0 = Math.round(pl.cyPt * res - rot.cy);
       masks.push({ i, id: pl.id, bits: rot.bits, w: rot.w, h: rot.h, x0, y0 });
@@ -1184,8 +1194,8 @@
       minEdgePt = Math.min(minEdgePt, m.x0 / res, m.y0 / res, (FW - m.x0 - m.w) / res, (FH - m.y0 - m.h) / res);
     }
     return {
-      ok: overlapPx === 0 && outsidePx === 0,
-      overlapPx, outsidePx, res,
+      ok: overlapPx === 0 && outsidePx === 0 && removedPx === 0,
+      overlapPx, outsidePx, removedPx, res,
       overlappingPairs: [...pairs].map(s => s.split(":").map(n => placements[+n].id)),
       minGapPt: masks.length > 1 ? +minGapPt.toFixed(3) : null,
       minEdgePt: masks.length ? +minEdgePt.toFixed(3) : null
@@ -1238,6 +1248,7 @@
     const wall = Math.round(insetPt * fineRes) + halfGap;
     const g = new Grid(FW, FH);
     for (let y = 0; y < FH; y++) for (let x = 0; x < FW; x++) { if (x < wall || y < wall || x >= FW - wall || y >= FH - wall) g.set(x, y); else g.free[y * FW + x] = 1; }
+    if(sheet.remnant)Rose.stamp(g,sheet.remnant,fineRes,Math.max(insetPt,halfGap/fineRes));
     g.buildSAT(); g.fineRes = fineRes; g.usableCells = g.freeCells();
     return g;
   }

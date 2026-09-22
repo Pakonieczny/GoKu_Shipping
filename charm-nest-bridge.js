@@ -27,6 +27,99 @@ function purchaseMarkup(row) {
   const detail=O.purchaseDetails(row.line,row.spec);
   return `<div class="purchaseType"><span class="purchaseLabel">Jewellery</span><strong>${esc(detail.type)}</strong></div><div class="purchaseChoices"><span class="purchaseLabel">Selected options</span>${detail.options.length ? `<dl>${detail.options.map(v=>`<div><dt>${esc(v.name || "Option")}</dt><dd>${esc(v.value)}</dd></div>`).join("")}</dl>` : '<span class="purchaseMissing">Selections unavailable</span>'}</div>`;
 }
+// One viewport-driven loader for the three work queues. A listing photo is never
+// replaced by a vector: these are separate, labelled sources for comparison.
+const ListMedia = (() => {
+  const jobs=new WeakMap(), watched=new Set(), queue=[], photos=new Map(), pending=new Map(), wanted=new Set();
+  let running=0, photoTimer=0, photoBusy=false;
+  const observer=window.IntersectionObserver ? new IntersectionObserver(entries=>{
+    for(const e of entries)if(e.isIntersecting){observer.unobserve(e.target);watched.delete(e.target);queue.push(e.target);}pump();
+  },{rootMargin:"160px 0px"}) : null;
+  const loading='<span class="thumbLoading" role="status"><i class="spin" aria-hidden="true"></i><span class="srOnly">Loading thumbnail</span></span>';
+  function pair(row) {
+    return `<div class="comparePair"><figure><span class="placementThumb" data-vector aria-label="Charm vector design" aria-busy="true">${loading}</span><figcaption>Vector design</figcaption></figure><figure><span class="placementThumb" data-listing aria-label="First Etsy listing image" aria-busy="true">${loading}</span><figcaption>Etsy listing</figcaption></figure></div>`;
+  }
+  function clean() {for(const host of watched)if(!host.isConnected){observer?.unobserve(host);watched.delete(host);}}
+  function watch(host,load,key,force=false) {
+    if(!host)return;
+    const old=jobs.get(host);if(old?.key===key && !force){if(old.state==="waiting" && observer && !watched.has(host)){watched.add(host);observer.observe(host);}return;}
+    observer?.unobserve(host);watched.delete(host);
+    const job={load,key,state:"waiting"};jobs.set(host,job);
+    host.innerHTML=loading;host.setAttribute('aria-busy','true');host.onclick=null;host.removeAttribute('role');host.removeAttribute('tabindex');host.onkeydown=null;
+    if(observer){watched.add(host);observer.observe(host);}else{queue.push(host);pump();}
+  }
+  function pump() {
+    while(running<4 && queue.length){
+      const host=queue.shift(),job=jobs.get(host);if(!host.isConnected || !job || job.state!=="waiting")continue;
+      // A queued row can have left its tab while another preview was loading.
+      if(host.closest('.hidden,[hidden]')){if(observer){watched.add(host);observer.observe(host);}continue;}
+      job.state="loading";running++;
+      setTimeout(async()=>{
+        try {
+          const result=await job.load();if(!host.isConnected || jobs.get(host)!==job)return;
+          if(typeof result==='string' && result){
+            const img=document.createElement('img');img.alt=host.getAttribute('aria-label') || '';img.decoding='async';img.loading='eager';img.referrerPolicy='no-referrer';
+            await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{img.onload=img.onerror=null;reject(Error('Image timed out'));},20000);img.onload=()=>{clearTimeout(timer);resolve();};img.onerror=()=>{clearTimeout(timer);reject(Error('Image unavailable'));};img.src=cors(result);host.appendChild(img);});
+            if(!host.isConnected || jobs.get(host)!==job)return;host.replaceChildren(img);
+          }else if(result?.nodeType)host.replaceChildren(result);
+          else host.textContent=host.hasAttribute('data-listing') ? 'No listing image' : 'No vector available';
+          job.state='done';
+        }catch(_){
+          if(host.isConnected && jobs.get(host)===job){job.state='error';host.textContent='Unavailable · Retry';host.setAttribute('role','button');host.tabIndex=0;
+            host.onclick=e=>{e.stopPropagation();watch(host,job.load,job.key,true);};host.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();watch(host,job.load,job.key,true);}};}
+        }finally{if(jobs.get(host)===job){if(job.state==='loading'){job.state='waiting';if(observer){watched.add(host);observer.observe(host);}}else host.setAttribute('aria-busy','false');}running--;pump();}
+      },0);
+    }
+  }
+  function flushPhotos() {
+    if(photoBusy || photoTimer || !wanted.size)return;
+    photoTimer=setTimeout(async()=>{
+      photoTimer=0;photoBusy=true;
+      const ids=[...wanted].slice(0,12);ids.forEach(id=>wanted.delete(id));
+      try {
+        if(!DesignLink.up())throw Error('Design Station is connecting');
+        const got=await DesignLink.call('orders.images',{listingIds:ids},{timeoutMs:45000,quiet:true});
+        for(const id of ids){const url=got.images?.[id] || null;photos.set(id,url);pending.get(id)?.resolve(url);}
+      }catch(e){for(const id of ids)pending.get(id)?.reject(e);}
+      finally{ids.forEach(id=>pending.delete(id));photoBusy=false;flushPhotos();}
+    },80);
+  }
+  function listing(id) {
+    id=String(id || '');if(!id)return Promise.resolve(null);
+    if(photos.has(id))return Promise.resolve(photos.get(id));
+    if(pending.has(id))return pending.get(id).promise;
+    let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});pending.set(id,{promise,resolve,reject});wanted.add(id);flushPhotos();return promise;
+  }
+  const catalog=new Map();
+  async function vector(row) {
+    if(!row || row.spec?.noDesign)return null;
+    const charm=(row.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length);
+    if(charm)return Engrave.renderFront(charm,220);
+    const sku=row.spec?.designSku || row.line?.sku;if(!sku)return null;
+    let entry=Master.entryFor(sku);
+    if(!entry){if(!catalog.has(sku))catalog.set(sku,Master.fetchEntry(sku).finally(()=>catalog.delete(sku)));entry=await catalog.get(sku);}
+    if(!entry)return null;
+    return Pool.masterPreview(entry,row.spec?.size);
+  }
+  function mount(node,row) {
+    clean();const sku=row?.spec?.designSku || row?.line?.sku || '',lid=String(row?.line?.listingId || '');
+    watch(node.querySelector('[data-vector]'),()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline)]));
+    watch(node.querySelector('[data-listing]'),()=>listing(lid),lid);
+  }
+  // Paged DOM construction as well as deferred image decoding. The observer
+  // honours nested scroll containers, including the dock and hidden tabs.
+  const pages=new Map();
+  function more(host,total,shown,expand) {
+    for(const [node,io] of pages)if(!node.isConnected){io.disconnect();pages.delete(node);}
+    pages.get(host)?.disconnect();pages.delete(host);host.querySelector(':scope > .listMore')?.remove();
+    if(shown>=total)return;
+    const button=el('button','btn ghost listMore');button.type='button';button.textContent=`Show more · ${shown} of ${total}`;
+    let active=true;const go=()=>{if(!active)return;active=false;io?.disconnect();button.innerHTML='<i class="spin" aria-hidden="true"></i> Loading rows…';requestAnimationFrame(expand);};
+    const io=window.IntersectionObserver ? new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))go();},{rootMargin:'160px'}) : null;
+    button.onclick=go;host.appendChild(button);if(io){pages.set(host,io);io.observe(button);}
+  }
+  return {pair,mount,watch,more,listing,peek:id=>photos.get(String(id || '')) || null};
+})();
 const fmtT = t => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const notifyPerson = (title, body) => { if (S.settings.notify === "on" && "Notification" in window && Notification.permission === "granted") { try { new Notification(title, { body }); } catch (_) {} } };
@@ -604,61 +697,12 @@ const Orders = window.Orders = (() => {
       return (OV.desc ? -k : k) || String(x.order.receiptId).localeCompare(String(y.order.receiptId));
     });
   }
-  /* The listing photographs come from the Design Station, which already has them cached and rate limited, so a wall of
-     cards here costs Etsy nothing this page would not already have spent. They are asked for only as a card comes into
-     view, at most a dozen at a time, and remembered for the session. A charm we hold a design for falls back to its own
-     thumbnail, which is the drawing that will actually be cut. */
-  const IMG = { got: new Map(), want: new Set(), timer: 0, io: null, retry: 0 };
-  /** Only a card a person can actually see asks for its photograph: 411 lines must not mean 411 Etsy images. */
-  function watchImages(host) {
-    if (IMG.io) IMG.io.disconnect();
-    if (!window.IntersectionObserver) { host.querySelectorAll("[data-lid]").forEach(n => wantImage(n.dataset.lid)); return; }
-    IMG.io = new IntersectionObserver(es => {
-      for (const e of es) if (e.isIntersecting) { wantImage(e.target.dataset.lid); IMG.io.unobserve(e.target); }
-    }, { root: host, rootMargin: "300px 0px" });
-    host.querySelectorAll("[data-lid]").forEach(n => { if (!n.dataset.painted) IMG.io.observe(n); });
-  }
-  function imageFor(r) {
-    const lid = String(r.line.listingId || "");
-    if (IMG.got.get(lid)) return IMG.got.get(lid);
-    const e = r.spec && r.spec.designSku ? B.master.entries.get(r.spec.designSku) : null;
-    return (e && Master.thumbOf(e)) || null;
-  }
+  function imageFor(r) { return ListMedia.peek(r.line.listingId); }
   function wantImage(lid) {
-    lid = String(lid || ""); if (!lid || IMG.got.has(lid) || IMG.want.has(lid)) return;
-    IMG.want.add(lid);
-    if (IMG.timer) return;
-    IMG.timer = setTimeout(async () => {
-      IMG.timer = 0;
-      const ids = [...IMG.want].slice(0, 12); ids.forEach(id => IMG.want.delete(id));
-      if (!ids.length) return;
-      /* A "no" while the Design Station was still connecting used to be remembered forever, and the cards stayed blank
-         for the rest of the session however long the link had been up since. A link that is down is not an answer:
-         the ids go back in the queue and are asked again when it comes up. */
-      if (!DesignLink.up()) { ids.forEach(id => IMG.want.add(id)); IMG.retry = setTimeout(() => { IMG.retry = 0; const back = [...IMG.want]; IMG.want.clear(); back.forEach(wantImage); }, 4000); return; }
-      try {
-        const got = await DesignLink.call("orders.images", { listingIds: ids }, { timeoutMs: 45000, quiet: true });
-        for (const id of ids) IMG.got.set(id, (got.images && got.images[id]) || null);
-      } catch (e) { if (/timed out|link|closed|no reply/i.test(e.message || "")) ids.forEach(id => IMG.want.add(id)); else ids.forEach(id => IMG.got.set(id, null)); }
-      paintImages();
-      if (IMG.want.size) { const next = [...IMG.want][0]; IMG.want.delete(next); wantImage(next); }
-    }, 120);
-  }
-  /** Fill in every picture that has arrived, without rebuilding the cards under the person's cursor. */
-  function paintImages() {
-    for (const host of document.querySelectorAll("#ordBody [data-lid]")) {
-      const url = IMG.got.get(host.dataset.lid);
-      if (host.dataset.painted === "1") continue;
-      if (!url) { if (IMG.got.has(host.dataset.lid)) { host.dataset.painted = "1"; const p2 = host.querySelector(".ph"); if (p2) p2.textContent = "no image"; } continue; }
-      host.dataset.painted = "1";
-      if (host.tagName === "IMG") { host.onerror = () => { host.removeAttribute("src"); delete host.dataset.painted; }; host.crossOrigin = "anonymous"; host.src = cors(url); continue; }
-      const img = host.querySelector("img") || host.appendChild(el("img"));
-      img.loading = "lazy"; img.alt = ""; img.crossOrigin = "anonymous";
-      img.onerror = () => { img.remove(); delete host.dataset.painted; if (!host.querySelector(".ph")) { const p = el("span", "ph"); p.textContent = "no image"; host.appendChild(p); } };
-      img.src = cors(url);
-      const ph = host.querySelector(".ph"); if (ph) ph.remove();
-      if (IMG.io) IMG.io.unobserve(host);
-    }
+    return ListMedia.listing(lid).then(url=>{
+      for(const host of document.querySelectorAll('[data-lid]'))if(host.dataset.lid===String(lid))
+        ListMedia.watch(host,()=>Promise.resolve(url),'listing:'+lid);
+    }).catch(()=>{});
   }
   /* Thirteen state words in four colours said nothing about order. The five that are progress now carry their place in
      the run, so "3/5 nested" reads as progress; the exceptions stay unnumbered, so a problem reads differently. */
@@ -684,12 +728,13 @@ const Orders = window.Orders = (() => {
     return null;
   }
   /** Everything a person needs to recognise one line, as a card or as a row: the same fields either way. */
-  let listObserver=null, listKey="";
+  let listKey="";
+  const orderNodes=new Map();
   function renderBody() {
-    if(listObserver)listObserver.disconnect();
     const host = document.getElementById("ordBody"); if (!host) return;
     const at = host.scrollTop;                                             // a run writing to the list must not scroll it away
     const rows = visibleRows();
+    const alive=new Set(rowsOf().map(r=>r.key));for(const key of orderNodes.keys())if(!alive.has(key))orderNodes.delete(key);
     const nextKey=JSON.stringify([OV.q,OV.metal,OV.form,OV.eng,OV.sort,OV.desc,viewMode()]);
     if(nextKey!==listKey){OV.limit=48;listKey=nextKey;}
     const anchor=at>0?[...host.querySelectorAll('[data-key]')].find(n=>n.getBoundingClientRect().bottom>host.getBoundingClientRect().top):null;
@@ -707,13 +752,6 @@ const Orders = window.Orders = (() => {
     const cards = viewMode() === "cards";
     host.innerHTML = '<div class="' + (cards ? "ordCards" : "ordList") + '" id="ordItems"></div>';
     const list = host.querySelector("#ordItems");
-    if (!cards) {
-      const th = (k, t) => '<button data-sort="' + k + '" class="' + (OV.sort === k ? "on" : "") + '" title="order the list by this">' + t + (OV.sort === k ? (OV.desc ? " \u25be" : " \u25b4") : "") + '</button>';
-      const hdr = el("div", "olist hdr");
-      hdr.innerHTML = '<span></span>' + th("order", "Order") + '<span>SKU</span><span class="hideSm">Item</span><span>Qty</span><span class="hideSm">Metal</span>' + th("due", "Ship by") + th("state", "State");
-      hdr.querySelectorAll("[data-sort]").forEach(b => b.onclick = () => { if (OV.sort === b.dataset.sort) OV.desc = !OV.desc; else { OV.sort = b.dataset.sort; OV.desc = false; } renderBody(); });
-      list.appendChild(hdr);
-    }
     let lastDay=null;
     const shown=rows.slice(0,OV.limit || 48);
     const dayCounts=new Map();for(const row of rows){const d=O.orderDay(row);const ids=dayCounts.get(d.key)||new Set();ids.add(row.order.receiptId);dayCounts.set(d.key,ids);}
@@ -723,60 +761,28 @@ const Orders = window.Orders = (() => {
       const sp = r.spec || {}, m = r.material || "none";
       const st = stateWords(r), due = dueOf(r), where = placeOf(r);
       const attn = r.problems.length || ["held", "unmatched", "oversize"].includes(r.state);
-      const lid = String(r.line.listingId || "");
-      const url = imageFor(r);
       const why = attn ? (r.problems.map(x => Review.problemText(x)).join(" · ") || r.reason || "") : r.state === "waiting" ? (r.reason || "") : "";
       const gateBtn = r.state === "waiting" && r.wait ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
-      const node = el("button", (cards ? "ocard" : "olist") + " hoverItem" + (attn ? " attn" : ""));
-      node.type = "button"; node.dataset.m = m; node.dataset.key = r.key;
+      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,r.hold,r.wait,why,where,due,date]);
+      const cached=orderNodes.get(r.key);
+      if(cached?.stamp===stamp){list.appendChild(cached.node);ListMedia.mount(cached.node,r);continue;}
+      const node = el("div", (cards ? "ocard" : "doneRow workRow orderListRow") + " hoverItem" + (attn ? " attn" : ""));
+      node.setAttribute("role","button"); node.tabIndex=0; node.dataset.m = m; node.dataset.key = r.key;
       node.title = r.order.receiptId + " · " + (sp.designSku || r.line.sku || "no SKU") + " — " + r.line.title;
       const qty = sp.quantity || r.line.quantity || 1;
-      const P = (c, h) => '<span class="' + c + '">' + h + '</span>';
-      if (cards) {
-        node.innerHTML =
-          '<span class="oimg" data-lid="' + esc(lid) + '"' + (url ? ' data-painted="1"' : "") + '>' +
-            (url ? '<img crossorigin="anonymous" loading="lazy" alt="" src="' + esc(cors(url)) + '">' : '<span class="ph">' + (lid ? 'loading…' : 'no image') + '</span>') +
-            (qty > 1 ? P("qty", "×" + qty) : "") +
-            (attn ? '<span class="flag" title="' + esc(why) + '">!</span>' : "") +
-          '</span>' +
-          '<span class="obody">' +
-            '<span class="orow1"><b class="onum">' + esc(r.order.receiptId) + '</b><span class="spacer"></span><span class="ost ' + st[0] + '">' + esc(st[1]) + '</span></span>' +
-            '<span class="ometal"><i></i><span>' + esc(m === "none" ? "no material yet" : labelOf(m)) + '</span>' +
-              (due.txt !== "\u2014" ? '<span class="due ' + due.cls + '" title="ship by ' + esc(due.txt) + (due.late ? " \u2014 overdue" : due.soon ? " \u2014 due now" : "") + '">' + esc(due.txt) + '</span>' : "") + '</span>' +
-            '<span class="osku"><i>SKU</i><b>' + esc(sp.designSku || r.line.sku || "— none —") + '</b></span>' +
-            (where ? '<span class="owhere" title="the set and sheet this piece was nested on">' + esc(where.set) + (where.sheet ? " · " + esc(where.sheet) : "") + '</span>' : "") +
-            (wordsOf(sp) ? '<span class="opers" title="' + esc(wordsOf(sp)) + '">' + esc(wordsOf(sp)) + '</span>' : "") +
-            (why ? P("owhy", esc(why)) : "") +
-            (r.hold ? '<button class="relHold" type="button" title="put this line back in play">Release hold</button>' : "") + gateBtn +
-          '</span>';
-      } else {
-        node.innerHTML =
-          '<img crossorigin="anonymous" class="th" data-lid="' + esc(lid) + '" alt="" onerror="this.removeAttribute(\'src\')"' + (url ? ' src="' + esc(cors(url)) + '" data-painted="1"' : "") + '>' +
-          P("cell onum", esc(r.order.receiptId)) +
-          '<span class="cell osku"><b>' + esc(sp.designSku || r.line.sku || "— none —") + '</b></span>' +
-          '<span class="cell hideSm" style="font-size:12px;color:var(--ink70)">' + esc(wordsOf(sp) || r.line.title) + '</span>' +
-          P("qtyc", "×" + qty) +
-          '<span class="cell hideSm ometal"><i></i><span>' + esc(m === "none" ? "none" : labelOf(m)) + '</span></span>' +
-          '<span class="cell hideSm due ' + due.cls + '" title="ship by">' + esc(due.txt) + '</span>' +
-          '<span class="ost ' + st[0] + '">' + esc(st[1]) + '</span>' +
-          (why ? '<span class="cell whyc owhy">' + esc(why) + '</span>' : "") +
-          (r.hold ? '<button class="relHold" type="button" title="put this line back in play">Release hold</button>' : "") + gateBtn;
-      }
+      const identity=`<div class="engravingIdentity"><span class="queueLabel">Order</span><div class="engravingOrder"><b class="mono onum">${esc(r.order.receiptId)}</b><span class="sku mono">${esc(sp.designSku || r.line.sku || 'No SKU')}</span></div><span class="purchaseLabel">${wordsOf(sp) ? 'Personalisation' : 'Item'}</span><span class="rowExcerpt" title="${esc(wordsOf(sp) || r.line.title || '')}">${esc(wordsOf(sp) || r.line.title || 'No title')}</span>${where ? `<span class="rowExcerpt dim">${esc(where.set)} · ${esc(where.sheet)}</span>` : ''}</div>`;
+      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions"><span class="ost ${st[0]}">${esc(st[1])}</span><span class="rowFacts">Qty ${qty} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${r.hold ? '<button class="btn ghost sm relHold" type="button">Release hold</button>' : ''}${gateBtn}</div>`;
       const number=node.querySelector('.onum');if(number){const time=el('span','orderTime');time.textContent=date.time;time.title=date.label;number.appendChild(time);}
-      node.onclick = e => { if (e.target.closest(".relHold")) return; OrderWin.open(r.key); };
+      node.onclick = e => { if (e.target.closest("button,[role=button]") !== node && e.target.closest("button,[role=button]")) return; OrderWin.open(r.key); };
+      node.onkeydown=e=>{if(e.target===node && (e.key==="Enter" || e.key===" ")){e.preventDefault();OrderWin.open(r.key);}};
       { const rh = node.querySelector(".relHold:not([data-gate])"); if (rh) rh.onclick = e => { e.stopPropagation(); Review.repool(r); }; }
       { const gb = node.querySelector("[data-gate]"); if (gb) gb.onclick = e => { e.stopPropagation(); gb.disabled = true; (gb.dataset.gate === "release" ? Gate.release(gb.dataset.gm) : Gate.cutAnyway(gb.dataset.gm)).catch(err => toast(err.message, "bad", 6000)); }; }
       // an order can be several lines on several cards: hovering one lifts all of them, the way the station does
       node.dataset.rid = String(r.order.receiptId);
-      list.appendChild(node);
+      list.appendChild(node);orderNodes.set(r.key,{stamp,node});ListMedia.mount(node,r);
     }
-    if(shown.length<rows.length){
-      const more=el('button','btn ghost ordMore');more.type='button';more.textContent=`Show more · ${shown.length} of ${rows.length} lines`;
-      const expand=()=>{OV.limit=(OV.limit || 48)+48;renderBody();};more.onclick=expand;list.appendChild(more);
-      if(window.IntersectionObserver){listObserver=new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting)){listObserver.disconnect();expand();}},{root:host,rootMargin:'200px'});listObserver.observe(more);}
-    }
-    paintImages();
-    watchImages(host);
+    ListMedia.more(list,rows.length,shown.length,()=>{OV.limit=(OV.limit || 48)+48;renderBody();});
+
     restore();
     if(anchorKey){const same=[...host.querySelectorAll('[data-key]')].find(n=>n.dataset.key===anchorKey);if(same)host.scrollTop+=same.getBoundingClientRect().top-anchorTop;}
   }
@@ -1533,7 +1539,7 @@ const Gate = window.Gate = (() => {
     let set = Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt);
     const regular = pages.filter(p => p.metal !== "rose" && release(p, 2).include);
     const roses = pages.filter(p => p.metal === "rose" && release(p, 2).include);
-    if (!set && (regular.length || roses.length)) set = await Sets.ensure(run.runId, "dispatch", { roseOnly: !regular.length });
+    if (!set && (regular.length || roses.length)) set = await Sets.ensure(run.runId, "dispatch", { roseOnly: !regular.length && choices.rose !== true });
     if (!set) { run.heldSheets = pages.length; return; }
     if (set.committedAt) return;
     for (const sh of allSheets().filter(p => p.runId === run.runId && p.setId === set.setId && !release(p, set.seq).include)) {
@@ -1608,6 +1614,7 @@ const Gate = window.Gate = (() => {
     if(run && (['complete','abandoned'].includes(run.status) || Sets.ofRun(run.runId).some(set=>set.committedAt) || window.CharmNestOperations?.running('commit:'+run.runId)))return Promise.reject(new Error('This set is committing or already complete'));
     const choices=run ? (run.solidIncluded ||= {}) : (R.solidIncluded ||= {});
     choices[m]=!!included;
+    if(m==='rose' && included)for(const page of allSheets().filter(p=>p.metal==='rose'&&p.persistedDone&&p.verification?.ok&&!p.roseCutAt))window.RoseStock?.plan(page).catch(e=>toast('Rose Gold contour: '+e.message,'bad'));
     if (run) {
       run.membershipRevision=(run.membershipRevision||0)+1;run.commitRequested=false;run.membershipDirty=true;
       if(O_.stepIndex(run.step)>=O_.stepIndex('checkpoint'))run.membershipNext=allSheets().some(p=>p.runId===run.runId && nestable(p,run) && p.charms.length && (p.dirty || ['idle','ready','queued','nesting','finishing'].includes(p.status) || !p.outputs)) ? 'nest' : 'engrave';
@@ -1623,6 +1630,7 @@ const Gate = window.Gate = (() => {
     if(R.membershipTask && R.membershipRun===run?.runId)await R.membershipTask;
     if(run?.membershipDirty){await assemble(run);run.membershipDirty=false;await RunCtl.save(run);}
     if(R.membershipRun===run?.runId && R.membershipError)throw new Error('Set selection not saved: '+R.membershipError);
+    if(window.RoseStock)for(const sh of allSheets().filter(p=>p.runId===run?.runId && p.metal==='rose' && p.setId && !p.draft && !p.roseCutAt))await RoseStock.ensurePlan(sh);
   }
   function changed() {
     Session.schedule();
@@ -1632,18 +1640,18 @@ const Gate = window.Gate = (() => {
     refreshAllCards();
   }
   function renderRelease(sh, node) {
-    if (node.contains(document.activeElement) && document.activeElement.matches('[data-solid="w"], [data-solid="h"]')) return;
-    const m = sh.metal, st = stockFor(m), seq = Sets.ofRun(B.run?.runId).find(s => s.group === "dispatch")?.seq;
+    if (node.contains(document.activeElement) && document.activeElement.matches('[data-solid="w"], [data-solid="h"], [data-rose-allowance], [data-rose-picker] select')) return;
+    const m = sh.metal, st = stockFor(m,sh), seq = Sets.ofRun(B.run?.runId).find(s => s.group === "dispatch")?.seq;
     node.className = "shGate";
-    if (!solid(m)) {
+    if (!solid(m) && m !== "rose") {
       node.textContent = sh.setId && !sh.draft ? `In Set ${sh.seq} · ${policy(sh, sh.seq).reason}` : policy(sh, seq).reason;
       if (!sh.charms.length) node.textContent = m === "rose" ? "Joins Sets 2, 4, 6…" : "Full sheets only · partials carry forward";
       if(sh.el) sh.el.querySelector(".shHead").title = node.textContent;
       node.className = "shGate hidden";
       return;
     }
-    const disabled = !editable(sh), included = selected()[m] === true;
-    node.innerHTML = `<details class="sheetOptions" ${R.optionsOpen?.[m] ? "open" : ""}><summary>Options${included ? " ✓" : ""}</summary><div class="solidOptions"><label><input type="checkbox" data-solid="include" aria-label="Include ${esc(labelOf(m))} in current set" ${included ? "checked" : ""} ${!membershipEditable(sh) ? "disabled" : ""}> Include in current set</label><span class="help" role="status">${R.membershipError ? "Not saved" : R.membershipPending ? "Updating set…" : ""}</span>${R.membershipError ? '<button class="btn ghost xs" data-solid="retry">Retry selection</button>' : ""}
+    const disabled = !editable(sh) || !!sh.roseCutAt, included = m === "rose" ? policy(sh,seq).include : selected()[m] === true;
+    node.innerHTML = `<details class="sheetOptions" ${R.optionsOpen?.[m] ? "open" : ""}><summary>Options${included ? " ✓" : ""}</summary><div class="solidOptions"><label><input type="checkbox" data-solid="include" aria-label="Include ${esc(labelOf(m))} in current set" ${included ? "checked" : ""} ${!membershipEditable(sh) || sh.roseCutAt ? "disabled" : ""}> Include in current set</label><span class="help" role="status">${R.membershipError ? "Not saved" : R.membershipPending ? "Updating set…" : ""}</span>${R.membershipError ? '<button class="btn ghost xs" data-solid="retry">Retry selection</button>' : ""}
       <details ${R.sizeOpen?.[m] ? "open" : ""}><summary>Custom size · ${(st.wIn * 25.4).toFixed(1)} × ${(st.hIn * 25.4).toFixed(1)} mm</summary><div class="solidSize">
       <label>Width (mm)<input type="number" min="5" max="500" step="0.1" data-solid="w" value="${+(st.wIn * 25.4).toFixed(2)}" ${disabled ? "disabled" : ""}></label>
       <label>Height (mm)<input type="number" min="5" max="500" step="0.1" data-solid="h" value="${+(st.hIn * 25.4).toFixed(2)}" ${disabled ? "disabled" : ""}></label>
@@ -1659,13 +1667,15 @@ const Gate = window.Gate = (() => {
     node.querySelector('[data-solid="size"]').onclick = () => {
       const w = +node.querySelector('[data-solid="w"]').value, h = +node.querySelector('[data-solid="h"]').value;
       if (![w,h].every(n => Number.isFinite(n) && n >= 5 && n <= 500)) return toast("Use a width and height between 5 and 500 mm", "bad");
-      if (!editable(sh)) return;
+      if (!editable(sh) || sh.roseCutAt) return;
+      if(m === "rose" && pagesOf(m).some(p=>p.roseStock))return toast("Release the reserved Rose Gold stock before changing its size", "bad");
       S.settings.stock[m] = [w / 25.4, h / 25.4]; saveSettings();
       for (const p of pagesOf(m)) { for (const c of p.charms) { c.pinned = null; delete c.arrivalPin; } sheetDirty(p); }
       changed();
     };
     node.querySelector('[data-solid="nest"]').onclick = () => {
-      if (!editable(sh)) return;
+      if (!editable(sh) || sh.roseCutAt) return;
+      if(m === "rose"){sh.isolated=true;startNest(sh);return;}
       // Gather this metal's open pages so a smaller custom size cannot strand overflow.
       const pages = pagesOf(m).filter(p => !p.recalled && (!p.runId || p.runId === B.run?.runId));
       const charms = [...new Map(pages.flatMap(p => p.charms).map(c => [c.poolId || c.id, c])).values()];
@@ -1755,7 +1765,7 @@ const Gate = window.Gate = (() => {
    *  sheet has got. Nothing at all when there is nothing to say. */
   function renderCard(sh) {
     const el2 = sh.el && sh.el.querySelector('[data-r="gate"]'); if (!el2) return;
-    if (modern(sh.runId)) { renderRelease(sh, el2); return; }
+    if (modern(sh.runId) || sh.metal === "rose") { renderRelease(sh, el2); return; }
     // the line belongs to an open run: what waits, waits for that run's next sheet. With no run open it says nothing.
     if (!B.run || ["complete", "stopped", "abandoned"].includes(B.run.status)) { el2.classList.add("hidden"); return; }
     const m = sh.metal, p = R.plan && R.plan.materials[m];
@@ -2488,30 +2498,19 @@ const Engrave = window.Engrave = (() => {
   }
   // Keyed rows keep decoded thumbnails, focus and scroll position while each
   // classifier/worker result arrives. Navigation away also retains the cache.
-  const placementRows = new WeakMap(), thumbnailQueue=[];
-  let thumbnailTasks=0;
-  function pumpPlacementThumbnails() {
-    while(thumbnailTasks<2 && thumbnailQueue.length) {
-      const {host,job,row}=thumbnailQueue.shift();thumbnailTasks++;
-      // A separate task for each canvas gives navigation/input a turn between
-      // restored thumbnails. Catalog requests share the existing Master cache.
-      setTimeout(async()=>{
-        try {if(host.isConnected)await mountPlacementThumbnail(host,job);}
-        catch(_) {if(host.isConnected)host.textContent="Preview unavailable";}
-        finally {if(!host.childNodes.length)row._thumbStarted=false;thumbnailTasks--;pumpPlacementThumbnails();}
-      },0);
-    }
-  }
+  const placementRows = new WeakMap();
+  let placementLimit=40, placementQuery=null, doneLimit=40, doneQuery=null;
   function renderPlacementRows(list, queue) {
     const wanted = new Set();
-    queue.forEach((job,index) => {
+    if(placementQuery!==EG.q){placementLimit=40;placementQuery=EG.q;}
+    queue.slice(0,placementLimit).forEach((job,index) => {
       let row = placementRows.get(job);
       if (!row) {
         row = el("div", "doneRow placementRow hoverItem");
         row.setAttribute("role","button"); row.tabIndex=0; row.dataset.open=job.key;
-        row.innerHTML='<span class="placementThumb" role="img"></span><div class="engravingIdentity"><div class="engravingOrder"><b class="mono" data-order></b><span class="sku mono"></span></div><span class="purchaseLabel">Engraving</span><span class="w"></span><span class="dim" data-stage></span></div><div class="purchaseSummary" data-purchase></div>';
+        row.innerHTML=ListMedia.pair(job.row)+'<div class="engravingIdentity"><span class="queueLabel">Engraving</span><div class="engravingOrder"><b class="mono" data-order></b><span class="sku mono"></span></div><span class="purchaseLabel">Engraving</span><span class="w"></span><span class="dim" data-stage></span></div><div class="purchaseSummary" data-purchase></div>';
         const open=()=>{if(isWorking(job))return;EG.focus=job.key;EG.list=false;render();};
-        row.onclick=open; row.onkeydown=e=>{if(e.key==="Enter" || e.key===" "){e.preventDefault();open();}};
+        row.onclick=e=>{if(!e.target.closest('[data-vector][role=button],[data-listing][role=button]'))open();}; row.onkeydown=e=>{if(e.target===row && (e.key==="Enter" || e.key===" ")){e.preventDefault();open();}};
         placementRows.set(job,row);
       }
       wanted.add(row);
@@ -2524,14 +2523,10 @@ const Engrave = window.Engrave = (() => {
       if(row._purchase!==purchase){row.querySelector('[data-purchase]').innerHTML=purchase;row._purchase=purchase;}
       write('[data-stage]',busy ? (job.state === "classify" ? "Reading words…" : "Preparing preview…") : "");
       if(list.children[index] !== row) list.insertBefore(row,list.children[index] || null);
-      const charm=charmFor(job), host=row.querySelector('.placementThumb');
-      // A newly available outline upgrades a cached catalog thumbnail once.
-      if(!row._thumbStarted || (charm?.outline && row._thumbOutline !== charm.outline)) {
-        row._thumbStarted=true; row._thumbOutline=charm?.outline; host.setAttribute("aria-label",`${sku || "Charm"} design`);
-        thumbnailQueue.push({host,job,row});pumpPlacementThumbnails();
-      }
+      ListMedia.mount(row,job.row);
     });
     [...list.children].forEach(row=>{if(!wanted.has(row))row.remove();});
+    ListMedia.more(list,queue.length,Math.min(placementLimit,queue.length),()=>{placementLimit+=40;render();});
   }
   /** Repaint the card in place: the picture, the numbers, the chips. The pane is only rebuilt when what it holds changes. */
   function refresh(job) {
@@ -2617,13 +2612,15 @@ const Engrave = window.Engrave = (() => {
     if (EG.list == null && jobs.some(isWorking)) EG.list = true;
     const tab = EG.tab;
     const focus = queue.find(j2 => j2.key === EG.focus) || queue[0] || null;
-    const doneStamp=tab === "done" ? JSON.stringify([EG.q,EG.openDone,done.map(j=>[j.key,j.state,j.lines,j.approvedAt,j.approvedBy,j.backs,O.purchaseDetails(j.row.line,j.row.spec)])]) : null;
+    if(doneQuery!==EG.q){doneLimit=40;doneQuery=EG.q;}
+    const doneStamp=tab === "done" ? JSON.stringify([EG.q,EG.openDone,doneLimit,done.map(j=>[j.key,j.state,j.lines,j.approvedAt,j.approvedBy,j.backs,O.purchaseDetails(j.row.line,j.row.spec)])]) : null;
     if(tab === "done" && v.dataset.egTab === "done" && v._doneStamp === doneStamp && v.querySelector('#egBacks')) {renderChrome(v,queue);return;}
     v._doneStamp=doneStamp;
     const liveList = v.querySelector('.egPlacementList');
     if(tab === "place" && EG.list && liveList && v.dataset.egTab === "place") {
       renderChrome(v,queue);renderPlacementRows(liveList,queue);return;
     }
+    const oldDoneScroll=v.dataset.egTab===tab ? (v.querySelector(".egPane.scroll")?.scrollTop || 0) : 0;
     v.dataset.egTab=tab;
     const tabBtn = (id, label, n, cls) => `<button class="egTab${tab === id ? " on" : ""}" data-tab="${id}" title="${esc(label)}">${label}${n ? `<b class="${cls}">${n}</b>` : ""}</button>`;
     disposeCards();
@@ -2663,7 +2660,7 @@ const Engrave = window.Engrave = (() => {
          the front it belongs to, the words, the size, who decided and when, which sheet, the file — and Reopen. The
          separate "back files written" grid said the same things a second time, smaller, and is gone. */
       bk.innerHTML = decided.length
-        ? `<div class="section" style="margin-top:2px">Decided · ${decided.length}</div><div class="rvList" id="egDone">` + decided.map(j2 => {
+        ? `<div class="section" style="margin-top:2px">Decided · ${decided.length}</div><div class="rvList" id="egDone">` + decided.slice(0,doneLimit).map(j2 => {
             const w = j2.state === "skipped" ? "cut plain" : esc(j2.lines.join(" / "));
             const who = j2.approvedBy || (j2.decision && j2.decision.by) || "";
             const b0 = (j2.backs || [])[0] || {}; const png = b0.png || (b0.outputs && b0.outputs.png && b0.outputs.png.url) || ""; const ai = b0.ai || (b0.outputs && b0.outputs.ai && b0.outputs.ai.url) || "";
@@ -2680,16 +2677,17 @@ const Engrave = window.Engrave = (() => {
                 </dl>
                 <div class="ctl">${j2.recalledFrom ? `<span class="hint">this set is recalled — reopening rebuilds its sheet from the master files first</span>` : ""}</div>
               </div>`;
-            return `<div class="doneRow decidedRow hoverItem${open ? " open" : ""}" tabindex="0" aria-expanded="${open}" data-rid="${esc(j2.row.order.receiptId)}" data-key="${esc(j2.key)}" title="View engraving details"><span class="placementThumb" role="img" aria-label="${esc(j2.row.spec.designSku || "Charm")} engraving preview">${png ? `<img crossorigin="anonymous" src="${esc(cors(png))}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}</span><div class="engravingIdentity"><div class="engravingOrder"><b class="mono">${esc(j2.row.order.receiptId)}</b><span class="sku mono">${esc(j2.row.spec.designSku || "")}</span></div><span class="purchaseLabel">Engraving</span><span class="w">${w}</span></div><div class="purchaseSummary">${purchaseMarkup(j2.row)}</div><div class="decisionActions"><div class="decisionStatus"><span class="ost ${j2.state === "skipped" ? "warn" : "ok"}" title="${stateWhy(j2)}">${stateWord(j2)}</span><span class="by">${esc(who || "Decision recorded")}${j2.approvedAt ? " · " + fmtT(j2.approvedAt) : ""}</span></div><button class="btn ghost sm" data-a="reopen" title="Reopen this engraving for changes">Reopen</button></div>${detail}</div>`;
+            return `<div class="doneRow decidedRow hoverItem${open ? " open" : ""}" tabindex="0" aria-expanded="${open}" data-rid="${esc(j2.row.order.receiptId)}" data-key="${esc(j2.key)}" title="View engraving details">${ListMedia.pair(j2.row)}<div class="engravingIdentity"><span class="queueLabel">Engraving · decided</span><div class="engravingOrder"><b class="mono">${esc(j2.row.order.receiptId)}</b><span class="sku mono">${esc(j2.row.spec.designSku || "")}</span></div><span class="purchaseLabel">Engraving</span><span class="w">${w}</span></div><div class="purchaseSummary">${purchaseMarkup(j2.row)}</div><div class="decisionActions"><div class="decisionStatus"><span class="ost ${j2.state === "skipped" ? "warn" : "ok"}" title="${stateWhy(j2)}">${stateWord(j2)}</span><span class="by">${esc(who || "Decision recorded")}${j2.approvedAt ? " · " + fmtT(j2.approvedAt) : ""}</span></div><button class="btn ghost sm" data-a="reopen" title="Reopen this engraving for changes">Reopen</button></div>${detail}</div>`;
           }).join("") + `</div>`
         : `<div class="libEmpty">${window.Recall && Recall.on() ? "Nothing in this set was engraved." : "nothing decided yet"}</div>`;
       bk.querySelectorAll(".doneRow").forEach(rw => {
         const toggle=()=>{EG.openDone=EG.openDone===rw.dataset.key?null:rw.dataset.key;render();};
-        rw.addEventListener("click",e=>{if(!e.target.closest("button, a, .doneDetail"))toggle();});
+        rw.addEventListener("click",e=>{if(!e.target.closest("button, a, [role=button], .doneDetail"))toggle();});
         rw.addEventListener("keydown",e=>{if(e.target===rw && (e.key==="Enter" || e.key===" ")){e.preventDefault();toggle();}});
-        const host=rw.querySelector('.placementThumb');
-        if(!host.querySelector('img')) mountPlacementThumbnail(host,items().get(rw.dataset.key)).catch(()=>{if(host.isConnected)host.textContent="Preview unavailable";});
+        ListMedia.mount(rw,items().get(rw.dataset.key)?.row);
       });
+      bk.closest(".egPane.scroll").scrollTop=oldDoneScroll;
+      const doneHost=bk.querySelector("#egDone");if(doneHost)ListMedia.more(doneHost,decided.length,Math.min(doneLimit,decided.length),()=>{doneLimit+=40;render();});
       { const rw = bk.querySelector(".doneRow.open"); const j2 = rw && items().get(rw.dataset.key); const host = rw && rw.querySelector(".frontHost");
         if (j2 && host) void mountPlacementThumbnail(host,j2); }
 
@@ -3081,7 +3079,7 @@ const Sets = window.Sets = (() => {
     if (sheets.some(sh => sh.runHold)) throw pendingRelease("A sheet in this set still needs attention");
     const sheetPools=new Set(sheets.flatMap(sh=>sh.charms.filter(c=>sh.placements.some(p=>p.id===c.id)).map(c=>c.poolId)));
     if(Orders.rows().some(row=>(row.changePending || row.state === "gone" || row.hold) && row.poolIds.some(id=>sheetPools.has(id))))throw pendingRelease("An order on this sheet changed or needs review");
-    const reports=sheets.map(sh=>({...sh,id:sh.sheetId,poolIds:(sh.placements || []).map(p=>sh.charms.find(c=>c.id===p.id)?.poolId).filter(Boolean),placedCount:sh.placements.length,outputs:sh.cloud || {},engraving:window.CharmNestReadiness.decisions(Orders.rows())}));
+    const reports=sheets.map(sh=>({...sh,roseStockId:sh.roseStock?.id,id:sh.sheetId,poolIds:(sh.placements || []).map(p=>sh.charms.find(c=>c.id===p.id)?.poolId).filter(Boolean),placedCount:sh.placements.length,outputs:sh.cloud || {},engraving:window.CharmNestReadiness.decisions(Orders.rows())}));
     if(!window.CharmNestReadiness.set(set,reports).ready)throw pendingRelease("Set is not ready for laser: finish every sheet's engraving approvals, saved back files, layout checks and QR labels");
     if (!Gate.modern(set.runId)) return;
     if (!set.sheetIds.length || sheets.length !== set.sheetIds.length || set.sheetIds.some(id => !sheets.some(sh => sh.sheetId === id))) throw pendingRelease("The set's sheets are not all loaded");
@@ -3538,6 +3536,7 @@ const RunCtl = window.RunCtl = (() => {
       pg.draft = !!d.draft || !set; pg.releaseFull = !!d.releaseFull; pg.intakeFinalized = !!d.intakeFinalized;
       pg.sheetId = d.id; pg.runId = rec.runId; pg.group = set ? set.group || null : "dispatch"; pg.setId = set ? set.setId : null; pg.seq = set ? d.setSeq || set.seq : null; pg.setDay = d.day; pg.cardStartedAt = d.cardStartedAt || d.createdAt || null; pg.sheetIndex = set ? d.sheetIndex : null; pg.fileBase = d.fileBase; pg.folderPath = d.outputs?.ai?.path?.replace(/\/[^/]+$/, "") || (set ? `${set.folder}/${d.fileBase}` : `charmnest/sheets/${d.day}/${d.fileBase}`); pg.label = set ? d.label || null : null; pg.backPool = d.backPool || []; pg.backOutputs = d.backOutputs || null; pg.cloud = d.outputs ? { ai: d.outputs.ai && d.outputs.ai.url, pdf: d.outputs.pdf && d.outputs.pdf.url, labelled: d.outputs.labelled && d.outputs.labelled.url, report: d.outputs.report && d.outputs.report.url, preview: d.outputs.preview && d.outputs.preview.url } : null;
       pg.restored = true; pg.persistedDone = true;
+      if(d.metal==='rose' && d.roseStockId && window.RoseStock)await RoseStock.restore(pg,d);
       // the pieces: each placement's pool charm from the master copy, pinned at its cut position
       for (const p of d.placements || []) {
         const rc = (d.charms || []).find(c => c.id === p.id); if (!rc || !rc.poolId) continue;
@@ -3581,7 +3580,7 @@ const RunCtl = window.RunCtl = (() => {
     // nothing waits for a run that is gone: the rows go back to plain pulled lines, and the gate forgets its plan
     for (const r of Orders.rows()) if (r.state === "waiting") { r.state = "pulled"; r.wait = null; r.reason = null; }
     if (window.Gate) { const g = Gate.state(); g.plan = null; g.forceFill = {}; }
-    for (const m of METALS) { const prim = S.sheets[m.key]; if (prim.pages.some(p => p.runId || p.recalled || p.charms.some(c => c.poolId))) { for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms = pg.charms.filter(c => !c.poolId); pg.sheetId = null; pg.fileBase = null; pg.setId = null; pg.runId = null; pg.seq = null; pg.setDay = null; pg.cardStartedAt = null; pg.sheetIndex = null; pg.group = null; pg.draft = false; pg.releaseFull = false; pg.isolated = false; pg.backPool = []; pg.backOutputs = null; pg.label = null; pg.cloud = null; pg.persisted = null; pg.recalled = null; } prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim); } } B.orders.rows = []; B.orders.byKey = new Map(); B.engrave.items = new Map(); B.review.items = []; B.pool.rows = new Map(); B.run = null; B.orders.recalled = null; B.orders.pulledAt = null; B.orders.filtered = 0; B.orders.stale = false; Object.assign(Recall.state(), { runId: null, setId: null, live: null }); Orders.render(); Engrave.render(); Review.render(); renderBanner(); renderRail(); updateTopSub(); }
+    for (const m of METALS) { const prim = S.sheets[m.key]; if (prim.pages.some(p => p.runId || p.recalled || p.charms.some(c => c.poolId))) { for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms = pg.charms.filter(c => !c.poolId); pg.sheetId = null; pg.fileBase = null; pg.setId = null; pg.runId = null; pg.seq = null; pg.setDay = null; pg.cardStartedAt = null; pg.sheetIndex = null; pg.group = null; pg.draft = false; pg.releaseFull = false; pg.isolated = false; pg.backPool = []; pg.backOutputs = null; pg.label = null; pg.cloud = null; pg.persisted = null; pg.recalled = null; delete pg.roseStock; delete pg.roseHistory; delete pg.rosePlan; delete pg.roseCutAt; delete pg.rosePlanHash; delete pg.rosePlanKey; delete pg.roseFresh; delete pg.roseChoice; pg._roseLoaded=false; } prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim); } } B.orders.rows = []; B.orders.byKey = new Map(); B.engrave.items = new Map(); B.review.items = []; B.pool.rows = new Map(); B.run = null; B.orders.recalled = null; B.orders.pulledAt = null; B.orders.filtered = 0; B.orders.stale = false; Object.assign(Recall.state(), { runId: null, setId: null, live: null }); Orders.render(); Engrave.render(); Review.render(); renderBanner(); renderRail(); updateTopSub(); }
   function setRunMode(mode) {
     S.settings.runMode = mode === "auto" ? "auto" : "manual"; saveSettings(); renderModeBtn();
     if (mode === "auto") { agent({ bridge: true }, "DS", "Auto mode on: the sorter pulls the latest orders by the date rule and runs the whole process, continuing past pending approvals"); if (!B.run || B.run.status === "complete") { if (B.run && B.run.status === "complete") clearRunState(); start({ mode: "auto" }).catch(e => toast(e.message, "bad")); } else if (B.run.status === "stopped") { B.run.mode = "auto"; resume().catch(e => toast(e.message, "bad")); } else if (B.run.status === "paused") { B.run.mode = "auto"; next(); } else B.run.mode = "auto"; }
@@ -3675,7 +3674,7 @@ const Review = window.Review = (() => {
     const gone = items().find(x => x.key === key);
     B.review.items = items().filter(x => x.key !== key);
     if (n === items().length) return;
-    if (gone && !/^(eng|held):/.test(String(key))) settled.unshift({ key, kind: gone.kind, why: gone.why || "", lines: (gone.rows || [gone.row]).filter(Boolean).length, orders: [...new Set((gone.rows || [gone.row]).filter(Boolean).map(r2 => r2.order.receiptId))], by: how || employeeName() || "", t: Date.now() });
+    if (gone && !/^(eng|held):/.test(String(key))) settled.unshift({ key, row:gone.row || gone.rows?.[0] || null, kind: gone.kind, why: gone.why || "", lines: (gone.rows || [gone.row]).filter(Boolean).length, orders: [...new Set((gone.rows || [gone.row]).filter(Boolean).map(r2 => r2.order.receiptId))], by: how || employeeName() || "", t: Date.now() });
     if (settled.length > 200) settled.length = 200;
     render(); LiveStrip.render(); RunCtl.renderBanner();
   }
@@ -3726,7 +3725,13 @@ const Review = window.Review = (() => {
     for (const r of rows) if (before) before(r);
     for (const r of rows) await repool(r);
   }
-  function focus(rowKey) { RV.filter = null; render(); const c = document.querySelector(`#reviewView [data-row="${CSS.escape(rowKey)}"]`); if (c) { c.scrollIntoView({ behavior: "smooth", block: "center" }); c.classList.add("pulse"); setTimeout(() => c.classList.remove("pulse"), 1300); } }
+  function focus(rowKey) {
+    const it=items().find(it=>rowsOf(it).some(r=>r.key===rowKey));
+    RV.filter=null;RV.limit=items().length;reviewFilter=null;RV.open=it?.key || null;render();
+    const c=it && reviewRows.get(it.key)?.node;
+    if(c){const button=c.querySelector('[data-review-open]');if(button?.getAttribute('aria-expanded')==='false')button.click();c.scrollIntoView({behavior:'smooth',block:'center'});c.classList.add('pulse');setTimeout(()=>c.classList.remove('pulse'),1300);}
+  }
+
   async function repool(row) {
     if(row.repoolChanged){
       const old=new Set(row.poolIds || []);
@@ -3862,10 +3867,28 @@ const Review = window.Review = (() => {
     await repoolAll(it);
   }
   const KIND_WORDS = { needsMaterial: "Material", needsMapping: "Options", unmatchedSku: "Unknown SKU", blockedSku: "Blocked SKU", missingSize: "Size", oversize: "Too big", fontMissing: "Font", engraveWords: "Words", notRepresentable: "Characters", flipFailed: "Flip", placement: "Placement", orderChanged: "Changed", heldOrder: "Held" };
-  const RV = { filter: null };
+  const RV = { filter: null, limit:40, open:null };
+  let reviewFilter=null;
+  const reviewRows=new Map();
+  function reviewRow(it) {
+    const row=it.row || rowsOf(it)[0],group=rowsOf(it),open=RV.open===it.key;
+    const stamp=JSON.stringify([it.kind,it.why,it.problem,row?.spec,row?.line,row?.poolIds,group.map(r=>[r.key,r.order.receiptId])]);
+    const cached=reviewRows.get(it.key);if(cached?.stamp===stamp)return cached.node;
+    const node=el('div','doneRow workRow reviewListRow'+(open?' open':''));node.dataset.row=row?.key || '';node.dataset.rid=String(row?.order?.receiptId || '');
+    const orders=new Set(group.map(r=>r.order.receiptId));
+    node.innerHTML=(row?ListMedia.pair(row):'<div class="compareUnavailable">Production review</div>')+`<div class="engravingIdentity"><span class="queueLabel">Review required</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || '')}</span></div><span class="purchaseLabel">${esc(KIND_WORDS[it.kind] || it.kind)}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc(it.why || 'Decision needed')}</span>${group.length>1 ? `<span class="groupScope">${orders.size} orders · ${group.length} lines · first item shown</span>` : ''}</div><div class="purchaseSummary">${row?purchaseMarkup(row):'<span class="purchaseMissing">Sheet-level decision</span>'}</div><div class="rowActions"><button class="btn ghost sm" data-review-open aria-expanded="${open}">${open?'Close details':'Review & resolve'}</button></div><div class="reviewDetails"${open?'':' hidden'}></div>`;
+    const btn=node.querySelector('[data-review-open]'),detail=node.querySelector('.reviewDetails');
+    const show=()=>{if(!detail.childNodes.length)detail.appendChild(card(it));detail.hidden=false;node.classList.add('open');btn.textContent='Close details';btn.setAttribute('aria-expanded','true');};
+    btn.onclick=()=>{if(detail.hidden){RV.open=it.key;show();}else{RV.open=null;detail.hidden=true;node.classList.remove('open');btn.textContent='Review & resolve';btn.setAttribute('aria-expanded','false');}};
+    if(open)show();reviewRows.set(it.key,{stamp,node});return node;
+  }
   function render() {
     const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) return;
+    const active=v.contains(document.activeElement)?document.activeElement:null;
+    const oldScroll=v.querySelector(".egPane.scroll")?.scrollTop || 0;
+    if(reviewFilter!==RV.filter){RV.limit=40;reviewFilter=RV.filter;}
     const all = items().filter(it => mine(it) && !isNotice(it));
+    const alive=new Set(all.map(it=>it.key));for(const key of reviewRows.keys())if(!alive.has(key))reviewRows.delete(key);
     const ORDER = ["needsMaterial", "needsMapping", "unmatchedSku", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "orderChanged", "heldOrder"];
     const arrivalOf = it => Math.max(0, ...(it.rows || [it.row]).filter(Boolean).map(r => r.arrivedAt || 0));
     all.sort((a, b) => arrivalOf(b) - arrivalOf(a) || ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind) || a.t - b.t);
@@ -3881,11 +3904,21 @@ const Review = window.Review = (() => {
     const host = v.querySelector("#rvList");
     if (RV.filter === "done") {
       // what this shift settled: the other half of "what has been approved", which the screen never used to say
-      host.innerHTML = settled.length ? settled.map(d => `<div class="doneRow hoverItem" data-rid="${esc((d.orders || [])[0] || "")}"><b class="mono">${esc((d.orders || []).slice(0, 2).join(" "))}${(d.orders || []).length > 2 ? ` +${d.orders.length - 2}` : ""}</b><span class="sku mono">${esc(KIND_WORDS[d.kind] || d.kind)}</span><span class="w">${esc(d.why)}</span><span class="ost ok">settled</span><span class="by">${esc(d.by)}${d.t ? " · " + fmtT(d.t) : ""}</span><span class="mono" style="font-size:11px;color:var(--ink45)">${d.lines} line${d.lines === 1 ? "" : "s"}</span></div>`).join("") : `<div class="libEmpty">nothing settled yet this session</div>`;
+      host.innerHTML=settled.length ? '' : '<div class="libEmpty">Nothing settled yet this session</div>';
+      for(const d of settled.slice(0,RV.limit)){
+        const node=el('div','doneRow workRow reviewListRow');node.dataset.rid=String(d.orders?.[0] || '');
+        node.innerHTML=(d.row?ListMedia.pair(d.row):'<div class="compareUnavailable">Decision recorded</div>')+`<div class="engravingIdentity"><span class="queueLabel">Review · resolved</span><div class="engravingOrder"><b class="mono">${esc((d.orders || []).slice(0,2).join(' · '))}</b></div><span class="purchaseLabel">${esc(KIND_WORDS[d.kind] || d.kind)}</span><span class="rowExcerpt" title="${esc(d.why)}">${esc(d.why)}</span><span class="groupScope">${d.lines} lines</span></div><div class="purchaseSummary">${d.row?purchaseMarkup(d.row):''}</div><div class="rowActions"><span class="ost ok">Resolved</span><span class="by">${esc(d.by)}${d.t?' · '+fmtT(d.t):''}</span></div>`;
+        host.appendChild(node);if(d.row)ListMedia.mount(node,d.row);
+      }
+      ListMedia.more(host,settled.length,Math.min(RV.limit,settled.length),()=>{RV.limit+=40;render();});
+      v.querySelector('.egPane.scroll').scrollTop=oldScroll;
       return;
     }
     if (!list.length) host.innerHTML = `<div class="libEmpty">Nothing waits for a decision.</div>`;
-    else for (const it of list) host.appendChild(card(it));
+    else for (const it of list.slice(0,RV.limit)){const node=reviewRow(it);host.appendChild(node);if(it.row)ListMedia.mount(node,it.row);}
+    ListMedia.more(host,list.length,Math.min(RV.limit,list.length),()=>{RV.limit+=40;render();});
+    v.querySelector('.egPane.scroll').scrollTop=oldScroll;
+    if(active?.isConnected)active.focus({preventScroll:true});
     const notices = items().filter(isNotice);
     if (notices.length) {
       host.insertAdjacentHTML("beforeend", `<div class="rvNotices"><div class="nHead">Left open on the station — no decision needed here</div>${notices.map(n => `<div class="nRow"><b class="mono">${esc(n.rid)}</b><span class="w">${esc(n.note || String(n.why || "").replace(n.rid + " held — ", ""))}</span><button class="btn ghost xs" data-open="${esc(n.line || "")}" title="open this order on the cards">Open order ↗</button></div>`).join("")}</div>`);
@@ -4325,6 +4358,7 @@ const Recall = window.Recall = (() => {
       mine.forEach((rec, i) => {
         const pg = i === 0 ? prim.pages[0] : CN.addPage(m.key);
         pg.charms = []; pg.placements = []; pg.rejects = []; pg.outputs = null; pg.verification = rec.verification || null; pg.liveInfo = null; pg.dirty = false; pg.problem = null;
+        delete pg.roseStock; delete pg.roseHistory; delete pg.rosePlan; delete pg.rosePlanHash; delete pg.rosePlanKey; pg._roseLoaded=false; pg._roseError=null; pg.roseCutAt=rec.roseCutAt || null;
         pg.recalled = rec; pg.status = "complete"; pg.sheetId = rec.id; pg.runId = rec.runId || RC.runId; pg.setId = rec.setId; pg.seq = rec.setSeq; pg.setDay = rec.day; pg.cardStartedAt = rec.cardStartedAt || rec.createdAt || null; pg.sheetIndex = rec.sheetIndex; pg.fileBase = rec.fileBase; pg.group = null;
         pg.backPool = (rec.backs || []).map(bk => ({ sheetId:rec.id, approvedAt:bk.approvedAt, copy:bk.copy, previewWPt:bk.previewWPt, previewHPt:bk.previewHPt, pageWPt:bk.pageWPt, pageHPt:bk.pageHPt, poolId: bk.poolId, order: bk.order, sku: bk.sku, text: bk.text, lines: bk.lines || (bk.text ? String(bk.text).split("\n") : []), approvedBy: bk.approvedBy, capMm: bk.capMm, outputs: { png: bk.png ? { url: bk.png } : null, ai: bk.ai ? { url: bk.ai } : null } }));
         pg.cloud = Object.assign({ preview: rec.preview }, rec.outputs || {});
@@ -4357,6 +4391,7 @@ const Recall = window.Recall = (() => {
   /** Bring one recalled sheet's charms back from the master files so it can be edited and nested again. On demand only. */
   async function rebuild(pg) {
     const rec = pg.recalled; if (!rec) return;
+    if(rec.roseCutAt || pg.roseCutAt)throw new Error("This layout was already cut. Start a new sheet for its remnant.");
     const bar = window.CNProgress ? CNProgress.start(`Rebuilding ${rec.fileBase || rec.id}`) : null;
     try {
       const d = (await api("charmNestLibrary", { op: "getSheet", id: rec.id })).sheet; if (!d) throw new Error("the sheet record is gone");

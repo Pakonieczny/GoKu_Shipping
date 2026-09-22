@@ -1158,6 +1158,72 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 [data-laser-seal]:empty {display:none}
 @media(max-width:380px){.librarySheet {flex-basis:100%}.productionRow {gap:10px}}
 
+/* Shared work-list rows: engraving proportions, two explicit image sources. */
+.srOnly{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.comparePair{display:grid;grid-template-columns:repeat(2,88px);gap:8px;align-self:center;min-width:0}
+.comparePair figure{margin:0;min-width:0;display:grid;gap:5px}
+.comparePair figcaption{text-align:center;font:500 9px/1.3 var(--sans);color:var(--ink45);letter-spacing:.02em}
+.doneRow .comparePair .placementThumb,.comparePair .placementThumb{width:88px;height:88px;box-sizing:border-box;grid-row:auto;position:relative}
+.comparePair .placementThumb img,.comparePair .placementThumb canvas{object-fit:contain;width:100%;height:100%}
+.thumbLoading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#fff;z-index:1}
+.thumbLoading .spin{width:16px;height:16px;border-width:2px}
+.placementThumb[role=button]{cursor:pointer}.placementThumb:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.doneRow.placementRow{grid-template-columns:184px minmax(160px,.85fr) minmax(260px,1.4fr)}
+.doneRow.decidedRow,.doneRow.workRow{grid-template-columns:184px minmax(150px,.85fr) minmax(240px,1.4fr) minmax(130px,auto);gap:16px;padding:12px 14px;min-height:130px;width:100%;box-sizing:border-box;text-align:left}
+.doneRow.workRow{border-left:3px solid var(--slate)}
+.doneRow.reviewListRow{border-left-color:var(--gold)}
+.queueLabel{font:650 9px/1.4 var(--sans);letter-spacing:.09em;text-transform:uppercase;color:var(--sage)}
+.orderListRow .queueLabel,.ocard .queueLabel{color:var(--slate)}
+.reviewListRow .queueLabel{color:#876422}
+.rowExcerpt{font:12px/1.5 var(--sans);overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.reviewReason{color:#805837}.groupScope{font:10px/1.4 var(--sans);color:var(--ink70)}
+.rowActions{display:grid;justify-items:start;gap:8px;padding-left:14px;border-left:1px solid var(--line2);min-width:0}
+.rowFacts{font:10.5px/1.4 var(--sans);color:var(--ink70)}
+.rowActions .btn{white-space:normal;min-height:36px}
+.doneRow.workRow .engravingOrder{margin-bottom:2px}
+.doneRow.workRow .purchaseSummary{align-self:center}
+.doneRow.workRow .purchaseChoices dl{gap:6px 14px}
+.workRow .onum{display:flex;gap:7px;align-items:baseline;flex-wrap:wrap}
+.reviewDetails{grid-column:1/-1;min-width:0;border-top:1px solid var(--line2);padding-top:12px}
+.reviewDetails[hidden]{display:none}.reviewDetails>.rvItem{border:0;padding:4px;box-shadow:none;background:transparent}
+.compareUnavailable{font:11px var(--sans);color:var(--ink45)}
+.listMore{grid-column:1/-1;justify-self:center;margin:8px auto;min-height:36px}
+.ordCards .ocard{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;padding:14px;text-align:left}
+.ocard .comparePair{justify-content:center}.ocard .purchaseSummary{padding:10px 0 0;border-left:0;border-top:1px solid var(--line2);grid-template-columns:1fr;gap:10px}
+.ocard .rowActions{border-left:0;border-top:1px solid var(--line2);padding:10px 0 0}
+.doneRow.workRow:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+@media(max-width:1250px){
+ .doneRow.decidedRow,.doneRow.workRow{grid-template-columns:184px minmax(140px,.8fr) minmax(220px,1.2fr)}
+ .doneRow .decisionActions,.workRow .rowActions{grid-column:2/-1;border-left:0;border-top:1px solid var(--line2);padding:9px 0 0;display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;min-height:0}
+}
+@media(max-width:1000px){
+ .doneRow.placementRow,.doneRow.decidedRow,.doneRow.workRow{grid-template-columns:160px minmax(0,1fr);gap:12px}
+ .comparePair{grid-template-columns:repeat(2,76px)}
+ .doneRow .comparePair .placementThumb,.comparePair .placementThumb{width:76px;height:76px}
+ .doneRow .purchaseSummary{grid-column:2;border-left:0;border-top:1px solid var(--line2);padding:10px 0 0;margin:0}
+ .doneRow .comparePair{grid-row:1/3;align-self:start}
+}
+@media(max-width:560px){
+ .doneRow.placementRow,.doneRow.decidedRow,.doneRow.workRow{grid-template-columns:140px minmax(0,1fr);gap:10px;padding:10px}
+ .comparePair{grid-template-columns:repeat(2,66px)}
+ .doneRow .comparePair .placementThumb,.comparePair .placementThumb{width:66px;height:66px}
+ .doneRow .comparePair{grid-row:1}.doneRow .purchaseSummary{grid-column:1/-1;grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr)}
+ .doneRow .decisionActions,.workRow .rowActions{grid-column:1/-1}
+ .doneRow .engravingOrder{gap:3px}.engravingIdentity{gap:4px}
+}
+@media(prefers-reduced-motion:reduce){.thumbLoading .spin{animation:none}}
+
+
+.roseHistory{margin:0 14px 10px;font-size:11px;color:var(--ink70)}
+.roseStockHead{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.roseStockHead b{font-family:var(--mono);font-weight:500}.roseLegend{display:flex;gap:5px;align-items:center;font-size:10px}
+.roseLegend i{width:14px;height:2px;background:#008974}.roseLegend i.spent{height:8px;width:8px;background:#c8c3bb;margin-left:6px}
+.roseTimeline{display:flex;list-style:none;padding:0;margin:0 0 8px;overflow-x:auto;border-top:1px solid #77b5a8;gap:0}
+.roseTimeline li{position:relative;flex-basis:0;min-width:130px;padding:8px 10px 3px 0}.roseTimeline time{font-size:10px;white-space:nowrap}.roseTimeline small{display:block;font-size:9px;color:var(--ink45);max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.roseCutNumber{display:inline-grid;place-items:center;border:1px solid #bad3cb;border-radius:50%;width:16px;height:16px;margin-right:5px;color:#326e60;background:#f3f8f5;font-size:9px}
+.roseActions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.roseRecorded{color:#326e60}.roseError{color:#a34838}.roseNote{font-size:10px;color:var(--ink45);margin:7px 0 0;line-height:1.5}
+.roseStockOptions{border-top:1px solid var(--line);padding-top:8px;display:grid;gap:8px;grid-column:1/-1}.roseStockOptions label{display:flex;align-items:center;justify-content:space-between;gap:12px}.roseStockOptions input{width:70px}
+
 </style>
 </head>
 <body>
@@ -1356,7 +1422,8 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="brites-progress.js"></script>
 <script src="charm-nest-progress.js"></script>
 <script src="charm-nest-operations.js"></script>
-<script src="charm-nest-solver.js?v=20260922-corners"></script>
+<script src="charm-nest-rose.js?v=20260922-remnants"></script>
+<script src="charm-nest-solver.js?v=20260922-remnants"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260921-material"></script>
@@ -1482,9 +1549,11 @@ function loadSettings() {
   } catch (_) { return Object.assign({}, DEFAULTS, { v: 2 }); }
 }
 function saveSettings() { localStorage.setItem("cn.settings", JSON.stringify(S.settings)); document.documentElement.dataset.rail = S.settings.rail; }
-function stockFor(metal) {
+function stockFor(metal, sheet) {
+  const saved=sheet?.roseStock || sheet?.recalled?.stock;
+  if(saved?.wPt && saved?.hPt)return {wPt:saved.wPt,hPt:saved.hPt,wIn:saved.wPt/72,hIn:saved.hPt/72};
   const p = STOCK_PRESETS.find(p => p.id === S.stockPreset);
-  const inches = (p && p.id !== "custom" && !["gold10k", "gold14k"].includes(metal)) ? [p.w, p.h] : (S.settings.stock[metal] || DEFAULTS.stock[metal]);
+  const inches = (p && p.id !== "custom" && !["gold10k", "gold14k", "rose"].includes(metal)) ? [p.w, p.h] : (S.settings.stock[metal] || DEFAULTS.stock[metal]);
   return { wIn: inches[0], hIn: inches[1], wPt: inches[0] * PT_PER_IN, hPt: inches[1] * PT_PER_IN };
 }
 function angleSet() { const st = [2,5,10].includes(+S.settings.angleStep) ? +S.settings.angleStep : 10; const a = []; for (let d = 0; d < 360; d += st) a.push(d); return a; }
@@ -2012,7 +2081,7 @@ async function reviewLayout(sh, items) {
   const evL = agent({ metal: sh.metal }, "claude", `Sent Claude the finished ${labelOf(sh.metal)} sheet and its ${sh.placements.length} placements — asking for anything an operator would reject`, { live: true });
   const byId = new Map(items.map(c => [c.id, c]));
   // Claude's copy of the sheet: light background, every cut outline traced in red, numbered
-  const preview = (() => { const cv = document.createElement("canvas"); const st = stockFor(sh.metal); cv.width = 1400; cv.height = Math.round(1400 * st.hPt / st.wPt); sh._forClaude = true; try { paintPreview(cv, sh, true); } finally { sh._forClaude = false; }
+  const preview = (() => { const cv = document.createElement("canvas"); const st = stockFor(sh.metal, sh); cv.width = 1400; cv.height = Math.round(1400 * st.hPt / st.wPt); sh._forClaude = true; try { paintPreview(cv, sh, true); } finally { sh._forClaude = false; }
     const ctx = cv.getContext("2d"), k = cv.width / st.wPt; ctx.font = "bold 16px sans-serif";
     sh.placements.forEach((p, i) => { const t = String(i + 1); const w = ctx.measureText(t).width + 8; ctx.fillStyle = "#b0563f"; ctx.fillRect(p.cxPt * k - w / 2, p.cyPt * k - 10, w, 20); ctx.fillStyle = "#fff"; ctx.fillText(t, p.cxPt * k - w / 2 + 4, p.cyPt * k + 6); });
     return cv.toDataURL("image/jpeg", 0.86); })();
@@ -2068,7 +2137,7 @@ async function reviewLayout(sh, items) {
 function makeSheet(metal, page) {
   return { metal, page: page || 1, runId: null, sheetId: null, charms: [], status: "idle", worker: null, jobId: null, layout: null, placements: [], rejects: [], sat: null, progress: null, stage: "", outputs: null, verification: null, startedAt: 0, endedBy: null, trials: 0, best: null, dirty: true, log: [], liveInfo: null, serverJob: null };
 }
-function sheetDirty(sh) { delete sh.runHold; delete sh.intakeFinalized; delete sh.intakeForceFinal; sh.dirty = true; sh.releaseFull = false; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
+function sheetDirty(sh) { if(sh.roseCutAt)return; delete sh.rosePlan; delete sh.rosePlanHash; delete sh.rosePlanKey; delete sh.runHold; delete sh.intakeFinalized; delete sh.intakeForceFinal; sh.dirty = true; sh.releaseFull = false; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
 function activeCharms(sh) { return sh.charms.filter(c => !c.excluded); }
 /* One card per metal; a metal can hold several sheets ("pages"). The card shows the active page and tabs to switch. */
 const pagesOf = metal => S.sheets[metal].pages;
@@ -2127,7 +2196,11 @@ function overflowToNextSheet(sh) {
   return next;
 }
 function inflatedArea(c) { const g = (+S.settings.clearancePt || 0) / 2; return c.areaPt2 + g * 2 * (c.widthPt + c.heightPt) + Math.PI * g * g; } // silhouette grown by half the clearance
-function usableArea(sh) { const st = stockFor(sh.metal), ins = (+S.settings.insetPt || 0) + Math.max(0, +S.settings.clearancePt || 0) / 2; return Math.max(0, st.wPt - 2 * ins) * Math.max(0, st.hPt - 2 * ins); }
+function usableArea(sh) {
+  const st=stockFor(sh.metal,sh),inset=+S.settings.insetPt||0,clearance=+S.settings.clearancePt||0,ins=inset+Math.max(0,clearance)/2;
+  if(sh.roseStock?.profileJson){const key=[sh.roseStock.id,sh.roseStock.revision,inset,clearance].join(':');if(sh._roseUsableKey!==key){sh._roseUsable=CharmNestSolver.makeSheetGrid({...st,insetPt:inset,remnant:JSON.parse(sh.roseStock.profileJson)},clearance,2).usableCells/4;sh._roseUsableKey=key;}return sh._roseUsable;}
+  return Math.max(0,st.wPt-2*ins)*Math.max(0,st.hPt-2*ins);
+}
 /** ρ_target: 25th percentile of achieved densities among the nearest shape-mix neighbours; seed 0.70. */
 function rhoTarget(sh) {
   const items = activeCharms(sh); const sig = shapeSignature(items);
@@ -2192,7 +2265,7 @@ function ensureWorkers(sh, n) {
   for (const w of sh.workers.splice(n)) w.terminate();
   while (sh.workers.length < n) {
     const idx = sh.workers.length;
-    const w = new Worker("charm-nest-worker.js?v=20260922-corners");
+    const w = new Worker("charm-nest-worker.js?v=20260922-remnants");
     w.onmessage = e => onWorkerMessage(sh, e.data, idx);
     w.onerror = e => onWorkerMessage(sh, { type: "error", jobId: sh.jobId + ":" + idx, message: e.message }, idx);
     sh.workers.push(w);
@@ -2206,10 +2279,10 @@ function log(sh, msg) { sh.log.push(`${new Date().toLocaleTimeString()} ${msg}`)
 /** After nesting, every charm is written and previewed 2.5 % smaller than drawn, scaled about its own centre: the layout is solved at full size and the shrink afterwards makes minor overlaps disappear. */
 const CHARM_SCALE = 0.975;
 function buildJob(sh) {
-  const st = stockFor(sh.metal);
+  const st = stockFor(sh.metal, sh);
   const items = activeCharms(sh);
   return {
-    sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0 },
+    sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0, ...(sh.roseStock?.profileJson ? {remnant:JSON.parse(sh.roseStock.profileJson)} : {}) },
     clearancePt: +S.settings.clearancePt || 0, angles: angleSet(), fineRes: 2, coarseRes: 0.5,
     timeBudgetMs: sh.intakeBudgetMs || (+S.settings.budgetS || 180) * 1000, stallMs: 60 * 1000, maxTrials: 2000, seed: sh.runSeed || +S.settings.seed || 1,
     initialLayout: sh.nestInitial || null, maxFill: +S.settings.maxFill || 0.74,
@@ -2218,8 +2291,8 @@ function buildJob(sh) {
   };
 }
 function packingKey(sh, items) {
-  const st = stockFor(sh.metal);
-  return JSON.stringify([st.wPt, st.hPt, S.settings.clearancePt, S.settings.insetPt, S.settings.maxFill,
+  const st = stockFor(sh.metal, sh);
+  return JSON.stringify([st.wPt, st.hPt, sh.roseStock?.id, sh.roseStock?.revision, S.settings.clearancePt, S.settings.insetPt, S.settings.maxFill,
     items.map(c => [c.id, c.hash, c.w, c.h, c.areaPt2])]);
 }
 function sendPackingHints(sh, jobId, hints, pending) {
@@ -2296,7 +2369,7 @@ async function requestPackingGuidance(sh) {
             if(c.outline?.length){ctx.beginPath();CharmNestPDF.pathToCanvas(ctx,c.outline,(px,py)=>[x+6+(px-b[0])*scale,y+21+(b[3]-py)*scale]);ctx.fillStyle="#181818";ctx.fill("nonzero");}else CharmNestPDF.drawSegments(ctx,c.members,(px,py)=>[x+6+(px-b[0])*scale,y+21+(b[3]-py)*scale],scale);
             ctx.fillStyle="#181818";ctx.font="bold 12px sans-serif";ctx.fillText(String(i),x+5,y+14);ctx.restore();
           });
-        const st=stockFor(sh.metal);let plan;
+        const st=stockFor(sh.metal, sh);let plan;
         try{plan=await agentCall("packing",{contactSheet:cv.toDataURL("image/png"),preview:aiRenderSheet(sh),wPt:st.wPt,hPt:st.hPt,maxFill:+S.settings.maxFill||.74,density:sh.best?.density||0,
           pieces:chosen.map(c=>({widthPt:c.widthPt,heightPt:c.heightPt,areaPt2:c.areaPt2}))
         },{label:"Shape compatibility analysis",sheetId:sh.sheetId,background:true,existingId:batch.jobId,retryFailed:true,
@@ -2352,6 +2425,7 @@ async function checkLearnedRunner(token = localStorage.getItem("cn.learnedKey") 
   finally { clearTimeout(timeout); }
 }
 function startNest(sh) {
+  if(sh.roseCutAt)return toast("This layout has been cut. Start a new sheet to use its remainder.","bad");
   if (S.settings.nestFlow !== "learned") return startNestReady(sh);
   if (sh._learnedStarting || ["nesting", "finishing", "queued"].includes(sh.status)) return;
   sh._learnedStarting = true;
@@ -2366,9 +2440,10 @@ function startNestReady(sh, context) {
   if (window.CharmNestOperations && !context) {
     if (sh._operationStarting) return;
     sh._operationStarting = true; sh.status = "queued"; sh.stage = "Waiting for sheet updates…"; renderCard(sh);
-    return window.CharmNestOperations.run({key:"nest-start:"+(sh.sheetId || sh.metal+":"+sh.page),label:"Starting sheet nesting",resources:["production:"+(sh.runId || sh.sheetId)]}, token => {
+    return window.CharmNestOperations.run({key:"nest-start:"+(sh.sheetId || sh.metal+":"+sh.page),label:"Starting sheet nesting",resources:["production:"+(sh.runId || sh.sheetId)]}, async token => {
       sh._operationStarting = false;
       if (!allSheets().includes(sh)) return;
+      if(sh.metal==="rose" && window.RoseStock)await RoseStock.prepare(sh,{nesting:true});
       startNestReady(sh, token); // Hold the resource only for setup; workers run independently.
     }).catch(e => { sh._operationStarting = false; sh.status = "error"; sh.problem = e.message; renderCard(sh); toast(e.message,"bad"); if(window.RunCtl)RunCtl.onSheetDone(sh,e); });
   }
@@ -2383,6 +2458,7 @@ function startNestReady(sh, context) {
      two records called GF_Sep.17.26_Set-1_Sheet-1, one of them stale. Once a sheet has a name it keeps its identity:
      re-nesting rewrites the same record and the same files. */
   sh.sheetId = sh.sheetId && (sh.fileBase || (sh.status !== "complete" && sh.status !== "partial")) ? sh.sheetId : `${sh.metal}${sh.page > 1 ? "-s" + sh.page : ""}-${Date.now().toString(36)}`;
+  delete sh.rosePlan; delete sh.rosePlanKey; delete sh.rosePlanHash;
   sh._beforeLearned = S.settings.nestFlow === "learned" ? { placements: sh.placements, outputs: sh.outputs, verification: sh.verification, best: sh.best, status: sh.status, rejects: sh.rejects, liveInfo: sh.liveInfo, sat: sh.sat, solveParams: sh.solveParams, endedBy: sh.endedBy, trials: sh.trials, persistedDone: sh.persistedDone } : null;
   sh.nestFlow = S.settings.nestFlow || "standard";
   sh.persistedDone = false;
@@ -2434,7 +2510,7 @@ function startNestReady(sh, context) {
 
 /* ═══ 9b · AI nesting: Claude plans every placement, the geometry measures ═══ */
 function aiRenderSheet(sh) {
-  const st = stockFor(sh.metal); const cv = document.createElement("canvas"); cv.width = 1400; cv.height = Math.round(1400 * st.hPt / st.wPt);
+  const st = stockFor(sh.metal, sh); const cv = document.createElement("canvas"); cv.width = 1400; cv.height = Math.round(1400 * st.hPt / st.wPt);
   sh._forClaude = true; try { paintPreview(cv, sh, true); } finally { sh._forClaude = false; }
   const ctx = cv.getContext("2d"), k = cv.width / st.wPt; ctx.font = "bold 16px sans-serif";
   sh.placements.forEach((p, i) => { const t = String(i + 1); const w = ctx.measureText(t).width + 8; ctx.fillStyle = "#b0563f"; ctx.fillRect(p.cxPt * k - w / 2, p.cyPt * k - 10, w, 20); ctx.fillStyle = "#fff"; ctx.fillText(t, p.cxPt * k - w / 2 + 4, p.cyPt * k + 6); });
@@ -2451,11 +2527,11 @@ function aiPockets(grid, n) {
   grid.free.set(free); return out;
 }
 async function startAINest(sh, items) {
-  const st = stockFor(sh.metal); const clearance = +S.settings.clearancePt || 0; const inset = +S.settings.insetPt || 0;
+  const st = stockFor(sh.metal, sh); const clearance = +S.settings.clearancePt || 0; const inset = +S.settings.insetPt || 0;
   const Sv = CharmNestSolver; const jobId = sh.jobId;
   const alive = () => sh.jobId === jobId && sh.status === "nesting";
   const byId = new Map(items.map(c => [c.id, c]));
-  const grid = Sv.makeSheetGrid({ wPt: st.wPt, hPt: st.hPt, insetPt: inset }, clearance, 2);
+  const grid = Sv.makeSheetGrid({ wPt: st.wPt, hPt: st.hPt, insetPt: inset, ...(sh.roseStock?.profileJson ? {remnant:JSON.parse(sh.roseStock.profileJson)} : {}) }, clearance, 2);
   const variants = new Map();
   const variantFor = (c, angle) => { const key = c.id + "@" + angle; if (!variants.has(key)) variants.set(key, Sv.prepareVariant({ bits: c.bits, w: c.w, h: c.h, scale: c.scale }, angle, clearance, 2)); return variants.get(key); };
   const placedCells = () => sh.placements.reduce((n, p) => n + (variantFor(byId.get(p.id), p.angle)?.cells || 0), 0);
@@ -2529,11 +2605,11 @@ function stopNest(sh) { if (sh.status !== "nesting") return; if(sh.guidancePendi
 // One replacement gate for live updates, final worker messages and server polls.
 // Layout snapshots never share mutable placements with a trial or the exporter.
 function acceptBestLayout(sh, candidate, meta = {}) {
-  if (!candidate || !CharmNestSolver.betterLayout(candidate, sh.best, stockFor(sh.metal))) return false;
+  if (!candidate || !CharmNestSolver.betterLayout(candidate, sh.best, stockFor(sh.metal, sh))) return false;
   sh.best = CharmNestSolver.publicLayout(candidate);
   sh.bestWorker = meta.worker ?? sh.bestWorker; sh.bestTrial = meta.trial ?? candidate.trial;
   sh.bestRevision = (sh.bestRevision || 0) + 1;
-  sh.bestHistory = (sh.bestHistory || []).concat({ revision: sh.bestRevision, placed: candidate.placements.length, density: candidate.density, extent: CharmNestSolver.stripFraction(candidate.placements, stockFor(sh.metal)), contact: candidate.contactQuality, trial: sh.bestTrial, worker: sh.bestWorker, at: Date.now() }).slice(-40);
+  sh.bestHistory = (sh.bestHistory || []).concat({ revision: sh.bestRevision, placed: candidate.placements.length, density: candidate.density, extent: CharmNestSolver.stripFraction(candidate.placements, stockFor(sh.metal, sh)), contact: candidate.contactQuality, trial: sh.bestTrial, worker: sh.bestWorker, at: Date.now() }).slice(-40);
   sh.placements = sh.best.placements.map(p => ({ ...p })); sh.rejects = (sh.best.rejects || []).slice(); sh.livePlacements = [];
   sh.bestInfo = { freePt2: candidate.freePt2, usablePt2: candidate.usablePt2, placedPt2: candidate.placedPt2, pocket: candidate.pocket, placed: candidate.placements.length, total: activeCharms(sh).length };
   sh.liveInfo = sh.bestInfo; sh.progressKind = "place"; sh.progress = [candidate.placements.length, activeCharms(sh).length];
@@ -2588,10 +2664,10 @@ function onWorkerMessage(sh, m, idx) {
     if (pool.done < pool.n) return;
     const results = pool.results.filter(Boolean);
     if (!results.length) { pool.finished = true; finishNest(sh, { error: (pool.errors || ["No search returned a layout"]).join("; ") }); return; }
-    let pick = results.reduce((a, b) => CharmNestSolver.betterLayout(b, a, stockFor(sh.metal)) ? b : a, null);
+    let pick = results.reduce((a, b) => CharmNestSolver.betterLayout(b, a, stockFor(sh.metal, sh)) ? b : a, null);
     // Completion is a candidate, not permission to replace the best layout
     // already received. Preserve its worker's parameters and the ending reason.
-    pick = CharmNestSolver.bestResult(pool.results[sh.bestWorker] || pick, sh.best, stockFor(sh.metal));
+    pick = CharmNestSolver.bestResult(pool.results[sh.bestWorker] || pick, sh.best, stockFor(sh.metal, sh));
     if (sh.nestFlow === "learned") {
       const source = pick.params?.engine === "learned" ? "learned refinement" : "standard challenger";
       const learned = results.find(r => r.params?.engine === "learned");
@@ -2679,7 +2755,7 @@ async function finishNest(sh, { result, error }) {
   sh.workers = []; sh.worker = null;
   if (result) {
     acceptBestLayout(sh, result, { trial: result.trial });
-    result = CharmNestSolver.bestResult(result, sh.best, stockFor(sh.metal));
+    result = CharmNestSolver.bestResult(result, sh.best, stockFor(sh.metal, sh));
   } else if (error && sh.best?.placements.length) {
     log(sh, `Search interrupted; retaining best #${sh.bestRevision}: ${error}`);
     result = { ...CharmNestSolver.publicLayout(sh.best), endedBy: "stopped", elapsedMs: performance.now()-sh.startedAt, trials: sh.trials, params: sh.best.params || { ...sh.nestParams, seed: (sh.runSeed || 1)+(sh.bestWorker || 0) } };
@@ -2707,7 +2783,7 @@ async function finishNest(sh, { result, error }) {
   }
   sh.solveParams = result.params; sh.elapsedMs = result.elapsedMs; sh.density = result.density; sh.t0 = sheetT0(sh);
   computeSaturation(sh); drawPreview(sh);
-  const st = stockFor(sh.metal);
+  const st = stockFor(sh.metal, sh);
   try {
     // 1 · write the sheet
     // 0 · optimize: every assembled charm is scaled about its own centre so minor overlaps disappear
@@ -2779,7 +2855,7 @@ async function finishNest(sh, { result, error }) {
 function pumpNestQueue() { while (S.nestQueue.length) { const next = S.nestQueue.shift(); if (next.status === "queued") { next.status = "ready"; startNest(next); return; } } }
 const endedText = e => ({ plateau: "paused — no additional pieces during the improvement window", "model-unavailable": "model unavailable — verified baseline retained", complete: "all pieces placed", budget: "time ceiling", stalled: "settled — nothing better for a minute", stopped: "operator stop", trials: "restart cap", cap: "fill ceiling reached", rounds: "planning-round cap", "claude-full": "Claude judged the sheet full" }[e] || e);
 function buildReport(sh, result, items) {
-  const byId = new Map(items.map(c => [c.id, c])); const st = stockFor(sh.metal);
+  const byId = new Map(items.map(c => [c.id, c])); const st = stockFor(sh.metal, sh);
   return {
     version: 1, shapeGuidance: sh.packingAdvice?.hints || null, guidanceMs: Math.round(sh.guidanceMs || 0), bestRevision: sh.bestRevision || 0, bestHistory: sh.bestHistory || [], sheetId: sh.sheetId, metal: sh.metal, metalLabel: labelOf(sh.metal), createdAt: new Date().toISOString(),
     stock: { wIn: st.wIn, hIn: st.hIn, wPt: st.wPt, hPt: st.hPt }, params: result.params, endedBy: result.endedBy, trials: result.trials, elapsedMs: Math.round(result.elapsedMs),
@@ -2823,7 +2899,7 @@ async function persistSheet(sh, items, context) {
     charmCount: items.length, placedCount: sh.placements.length, rejectCount: (sh.outputs.report.rejects || []).length, page: sh.page, verification: { ok: !!sh.verification.ok, minGapPt: sh.verification.minGapPt, minEdgePt: sh.verification.minEdgePt, render: sh.verification.render && { ok: sh.verification.render.ok, overlapPx: sh.verification.render.overlapPx, outsidePx: sh.verification.render.outsidePx } },
     outputs,
     sources: [...new Set(items.map(c => c.sourceId))].map(id => { const s = sourceOf(id); return s ? { id: s.id, name: s.name, zipName: s.zipName, hash: s.hash, bytes: s.bytes ? s.bytes.length : 0, path: s.cloud && s.cloud.path, url: s.cloud && s.cloud.url, pool: !!s.pool, sku: s.sku || null } : null; }).filter(Boolean),
-    draft: !!sh.draft, solidIncluded:["gold10k","gold14k"].includes(sh.metal) ? !!window.Gate?.solidSelected(sh.metal) : null, releaseFull: !!sh.releaseFull, intakeFinalized: !!sh.intakeFinalized, setId: sh.setId || null, setSeq: sh.seq || null, sheetIndex: sh.sheetIndex || null, runId: sh.runId || null,
+    dirty:!!sh.dirty, draft: !!sh.draft, solidIncluded:["gold10k","gold14k"].includes(sh.metal) ? !!window.Gate?.solidSelected(sh.metal) : null, releaseFull: !!sh.releaseFull, intakeFinalized: !!sh.intakeFinalized, setId: sh.setId || null, setSeq: sh.seq || null, sheetIndex: sh.sheetIndex || null, runId: sh.runId || null,
     orders: [...new Set(sh.placements.map(p => { const c = byId.get(p.id); return c && c.order ? String(c.order).split("/")[0] : null; }).filter(Boolean))],
     poolIds: sh.placements.map(p => byId.get(p.id) && byId.get(p.id).poolId).filter(Boolean), backPool: sh.backPool || [], backOutputs: sh.backOutputs || null, label: sh.label || null,
     charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, order: c.order || c.id, layer: c.layer || null, poolId: c.poolId || null, sku: c.sku || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open })),
@@ -2879,7 +2955,7 @@ function ensurePdfJs() {
   return pdfjsReady;
 }
 async function previewPng(sh) {
-  try { const cv = document.createElement("canvas"); const st = stockFor(sh.metal); cv.width = 1026; cv.height = Math.round(1026 * st.hPt / st.wPt); paintPreview(cv, sh, true); const blob = await new Promise(r => cv.toBlob(r, "image/png")); return blob; } catch (_) { return null; }
+  try { const cv = document.createElement("canvas"); const st = stockFor(sh.metal, sh); cv.width = 1026; cv.height = Math.round(1026 * st.hPt / st.wPt); paintPreview(cv, sh, true); const blob = await new Promise(r => cv.toBlob(r, "image/png")); return blob; } catch (_) { return null; }
 }
 
 /* ═══ 10 · rendering: rail ══════════════════════════════════════════════ */
@@ -2980,7 +3056,7 @@ const allCharms = () => S.sources.flatMap(s => s.charms).concat(Object.values(S.
 const sourceOf = id => S.sources.find(s => s.id === id) || (S.poolSources && S.poolSources[id]) || null;
 function clearMetal(metal) {
   const prim = S.sheets[metal];
-  for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms.forEach(c => { c.metal = null; }); pg.charms = []; pg.sheetId = null; pg.log = []; if (pg !== prim) { (pg.workers || []).forEach(w => w.terminate()); pg.workers = []; } }
+  for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms.forEach(c => { c.metal = null; }); pg.charms = []; pg.sheetId = null; pg.log = []; delete pg.roseStock; delete pg.roseCutAt; delete pg.roseHistory; delete pg.rosePlan; delete pg.rosePlanHash; delete pg.rosePlanKey; pg._roseLoaded=false; if (pg !== prim) { (pg.workers || []).forEach(w => w.terminate()); pg.workers = []; } }
   prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim);
 }
 function renderTabs(sh) {
@@ -2994,7 +3070,7 @@ function refreshAllCards() { for (const sh of allSheets()) { computeSaturation(s
 function renderCard(sh) {
   if (sh.charms.length && !sh.cardStartedAt) sh.cardStartedAt = sh.recalled?.cardStartedAt || sh.recalled?.createdAt || (sh.setDay ? new Date(sh.setDay + "T12:00:00").getTime() : Date.now());
   if (window.Session) Session.schedule();
-  const el = sh.el; if (!el) return; const q = r => $(`[data-r="${r}"]`, el); const st = stockFor(sh.metal);
+  const el = sh.el; if (!el) return; const q = r => $(`[data-r="${r}"]`, el); const st = stockFor(sh.metal, sh);
   if (q("backs")) q("backs").innerHTML = window.Engrave ? Engrave.backsMarkup(sh) : "";
   const rc = sh.recalled && !sh.charms.length ? sh.recalled : null;        // a saved sheet shown from its record
   el.style.setProperty("--ar", `${st.wPt}/${st.hPt}`);
@@ -3017,7 +3093,7 @@ function renderCard(sh) {
   renderTabs(sh);
   q("hint").classList.toggle("hidden", items.length > 0 || sh.status !== "idle");
   const reviewing = S.sources.some(s => s.review && s.review.state === "running" && s.charms.some(c => c.metal === sh.metal));
-  q("nest").classList.toggle("hidden", ["nesting", "finishing", "queued"].includes(sh.status)); q("nest").disabled = (!items.length && !rc) || reviewing;
+  q("nest").classList.toggle("hidden", ["nesting", "finishing", "queued"].includes(sh.status)); q("nest").disabled = !!sh.roseCutAt || (!items.length && !rc) || reviewing;
   q("nest").title = reviewing ? "Waiting for Claude's grouping review" : rc ? "bring this sheet's charms back from the master files so it can be nested again — the saved picture stays until then" : "";
   q("nest").textContent = rc ? "Rebuild to edit" : (sh.status === "complete" || sh.status === "partial") ? (sh.dirty ? "Nest again" : "Re-nest") : "Nest";
   q("stop").classList.toggle("hidden", sh.status !== "nesting");
@@ -3040,6 +3116,7 @@ function renderCard(sh) {
   q("dxf").classList.toggle("hidden", q("dl").classList.contains("hidden"));
   renderProgress(sh); renderSat(sh); drawPreview(sh); renderAgent(sh);
   if (window.Gate) Gate.renderCard(sh);
+  if(window.RoseStock)RoseStock.render(sh);
 }
 function renderProgress(sh) {
   const el = sh.el; if (!el) return; const q = r => $(`[data-r="${r}"]`, el);
@@ -3074,7 +3151,7 @@ function renderSat(sh) {
   const el = sh.el; if (!el) return; const box = $(`[data-r="sat"]`, el);
   if (sh.recalled && !sh.charms.length) { const r = sh.recalled; box.innerHTML = `<div class="fact"><b>${fmt.pct(r.density || 0)}</b><span>full</span><span class="free">· ${fmt.area(r.freePt2 || 0)} free · ${r.orders || 0} order${r.orders === 1 ? "" : "s"}</span></div><div class="bar"><i style="width:${Math.round((r.density || 0) * 100)}%"></i></div>`; box.title = ""; return; }
   const s = sh.sat || computeSaturation(sh);
-  const stk = stockFor(sh.metal);
+  const stk = stockFor(sh.metal, sh);
   if (!activeCharms(sh).length) { box.innerHTML = `<div class="fact"><b>0%</b><span>full</span><span class="free">· ${fmt.area(s.usable)} usable on ${fmt.mm(stk.wPt)} × ${fmt.mm(stk.hPt)}</span></div>`; return; }
   const live = !!sh.liveInfo;
   /* Four lines of arithmetic used to sit under every preview — the ceiling, the reachable density, how many past sheets
@@ -3105,7 +3182,7 @@ function renderSat(sh) {
    sheets is one read of the sheet list and nine pictures loaded as their cards come into view. The picture is asked for
    once per page, with the record's own time on the address, so a sheet nested again shows its new picture. */
 function drawRecalled(sh, cv) {
-  const r = sh.recalled, wrap = cv.parentElement, st = stockFor(sh.metal);
+  const r = sh.recalled, wrap = cv.parentElement, st = stockFor(sh.metal, sh);
   const w = Math.round(wrap.clientWidth * devicePixelRatio), h = Math.round(w * st.hPt / st.wPt);
   if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
   const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
@@ -3121,8 +3198,8 @@ function drawRecalled(sh, cv) {
 }
 function drawPreview(sh) {
   const cv = sh.el && $(`[data-r="canvas"]`, sh.el); if (!cv) return;
-  const wrap = cv.parentElement; const st = stockFor(sh.metal);
-  if (sh.recalled && !sh.charms.length) { if (wrap.clientWidth >= 40) drawRecalled(sh, cv); else requestAnimationFrame(() => { if (sh.el) drawPreview(sh); }); return; }
+  const wrap = cv.parentElement; const st = stockFor(sh.metal, sh);
+  if (sh.recalled && !sh.charms.length && !(sh.roseCutAt && sh.roseHistory?.length)) { if (wrap.clientWidth >= 40) drawRecalled(sh, cv); else requestAnimationFrame(() => { if (sh.el) drawPreview(sh); }); return; }
   // a card that is not laid out yet (view switch, collapsed rail, first paint) has no width: a bitmap drawn at that
   // size would be stretched to a blur later. Wait for a real width instead.
   if (wrap.clientWidth < 40) { if (!sh._redrawPending) { sh._redrawPending = true; requestAnimationFrame(() => { sh._redrawPending = false; if (sh.el) drawPreview(sh); }); } return; }
@@ -3134,7 +3211,7 @@ function drawPreview(sh) {
   const hint = $(`[data-r="canvasHint"]`, sh.el); hint.textContent = sh.placements.length ? "click a charm to inspect · pin" : "";
 }
 function paintPreview(cv, sh, clean, R) {
-  R = R || 0; const ctx = cv.getContext("2d"); const st = stockFor(sh.metal); const W = cv.width - R, H = cv.height - R; const k = W / st.wPt;
+  R = R || 0; const ctx = cv.getContext("2d"); const st = stockFor(sh.metal, sh); const W = cv.width - R, H = cv.height - R; const k = W / st.wPt;
   if (!clean) { sh._view = { R, k }; cv._backSheetScale = k * cv.clientWidth / cv.width; }   // the on-screen canvas only; offscreen renders must not disturb click mapping
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = sh._forClaude ? "#ece7dc" : "#fffefb"; ctx.fillRect(0, 0, cv.width, cv.height);
   if (R) drawRulers(ctx, R, k, W, H);
@@ -3143,6 +3220,7 @@ function paintPreview(cv, sh, clean, R) {
   const ins = (+S.settings.insetPt || 0) * k;
   ctx.strokeStyle = "rgba(176,86,63,.9)"; ctx.lineWidth = Math.max(1, 0.5 * k); ctx.strokeRect(0.5, 0.5, W - 1, H - 1);
   if (!clean) { ctx.setLineDash([4, 4]); ctx.strokeStyle = "rgba(147,140,128,.35)"; ctx.lineWidth = 1; ctx.strokeRect(ins, ins, W - 2 * ins, H - 2 * ins); ctx.setLineDash([]); }
+  if(window.RoseStock && !sh._forClaude)RoseStock.paint(ctx,sh,k,"history");
   const byId = new Map(sh.charms.map(c => [c.id, c]));
   const sel = sh.selected;
   if (!clean && !sh.placements.length && sh.charms.length) {
@@ -3152,7 +3230,7 @@ function paintPreview(cv, sh, clean, R) {
     ctx.font = `${Math.round(W / 44)}px ${getComputedStyle(document.body).getPropertyValue("--sans")}`; ctx.fillStyle = "rgba(147,140,128,.75)";
     ctx.fillText(sh.status === "nesting" ? (ai ? "its moves will land here one by one" : "rotations and masks") : "press Nest to fill this sheet", W / 2, H / 2 + W / 40);
   }
-  sh.placements.forEach((p, i) => {
+  (sh.roseCutAt ? [] : sh.placements).forEach((p, i) => {
     const c = byId.get(p.id); if (!c) return;
     ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180); if (p.scale) ctx.scale(p.scale, p.scale);
     const cx = c.centerPt[0], cy = c.centerPt[1];
@@ -3166,6 +3244,7 @@ function paintPreview(cv, sh, clean, R) {
     ctx.restore();
     if (!clean && c.pinned) { ctx.fillStyle = "#caa861"; ctx.beginPath(); ctx.arc(p.cxPt * k, p.cyPt * k, Math.max(3, 2 * k), 0, Math.PI * 2); ctx.fill(); }
   });
+  if(window.RoseStock && !sh._forClaude)RoseStock.paint(ctx,sh,k,"lines");
   // Only accepted best placements are drawn; trial ghosts are deliberately omitted.
   // largest open pocket
   if (!clean && sh.sat && sh.sat.pocket && sh.liveInfo && sh.sat.pocket.wPt > 6) { const p = sh.sat.pocket; ctx.setLineDash([3, 3]); ctx.strokeStyle = "rgba(95,122,91,.6)"; ctx.lineWidth = 1; ctx.strokeRect(p.xPt * k, p.yPt * k, p.wPt * k, p.hPt * k); ctx.setLineDash([]); }
@@ -3188,7 +3267,7 @@ function drawRulers(ctx, R, k, W, H) {
 }
 function onPreviewClick(sh, e) {
   if (!sh.placements.length) return;
-  const cv = e.currentTarget, r = cv.getBoundingClientRect(); const v = sh._view || { R: 0, k: cv.width / stockFor(sh.metal).wPt };
+  const cv = e.currentTarget, r = cv.getBoundingClientRect(); const v = sh._view || { R: 0, k: cv.width / stockFor(sh.metal, sh).wPt };
   const sx = cv.width / r.width, sy = cv.height / r.height;
   const x = ((e.clientX - r.left) * sx - v.R) / v.k, y = ((e.clientY - r.top) * sy - v.R) / v.k;
   if (x < 0 || y < 0) return;
@@ -3230,7 +3309,7 @@ function openReport(sh) {
   $("#rpTitle").textContent = `${labelOf(sh.metal)} · ${sh.sheetId || "sheet"} · report`;
   $("#rpDownloadJson").classList.toggle("hidden", !sh.outputs);
   $("#rpDownloadJson").onclick = () => download(new TextEncoder().encode(JSON.stringify(sh.outputs.report, null, 2)), `${sh.sheetId}-nest-report.json`, "application/json");
-  const v = sh.verification, s = sh.sat || computeSaturation(sh), st = stockFor(sh.metal);
+  const v = sh.verification, s = sh.sat || computeSaturation(sh), st = stockFor(sh.metal, sh);
   const byId = new Map(items.map(c => [c.id, c]));
   const srcs = [...new Set(items.map(c => c.sourceId))].map(id => sourceOf(id)).filter(Boolean);
   let html = "";
@@ -3328,6 +3407,7 @@ async function openLibrarySheet(id) {
 }
 /** Bring a saved sheet back into its card: re-fetch the sources, re-parse, re-apply the saved placements as pins. */
 async function restoreSheet(d) {
+  if(d.roseCutAt)return toast("This layout has already been cut. Open its saved set to view the history; use a new layout for the remainder.","bad",7000);
   // the reversible action was passcode-gated and this one, which throws away work in progress, was the gold default
   const live = (activeCharms(S.sheets[d.metal]) || []).length;
   if (live && !confirm(`Restoring this sheet replaces the ${live} charm(s) queued on ${labelOf(d.metal)}. Continue?`)) return;
@@ -3335,7 +3415,10 @@ async function restoreSheet(d) {
   const sh = S.sheets[d.metal]; if (!sh) return;
   if (sh.status === "nesting") { toast(`${labelOf(d.metal)} is nesting — stop it first`, "bad"); return; }
   toast(`Restoring ${d.folder || d.id} into ${labelOf(d.metal)}…`, "");
-  sh.charms = []; sh.sheetId = d.id; sheetDirty(sh);
+  sh.charms = []; sh.sheetId = d.id;
+  delete sh.roseCutAt; delete sh.roseStock; delete sh.rosePlan; delete sh.roseHistory;
+  if(d.metal==='rose' && d.roseStockId && window.RoseStock)await RoseStock.restore(sh,d);
+  sheetDirty(sh);
   const files = [];
   for (const s of d.sources || []) {
     if (!s.url) { toast(`${s.name}: source file was never backed up`, "bad"); continue; }
@@ -3551,7 +3634,8 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260922-list-corners"></script>
+<script src="charm-nest-bridge.js?v=20260922-remnants"></script>
+<script src="charm-nest-rose-ui.js?v=20260922-remnants"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin" aria-labelledby="owTitle">

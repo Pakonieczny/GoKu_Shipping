@@ -172,6 +172,7 @@
     "_charmNestMaster.js",
     "_charmNestPdf.js",
     "_charmNestSolver.js",
+    "_charmNestRoseStock.js",
     "_etsyApiMeter.js",
     "_etsyApiUsage.js",
     "_etsyInventoryCanonical.js",

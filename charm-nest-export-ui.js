@@ -5,7 +5,7 @@
   const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const get=id=>CN.api('charmNestLibrary',{op:'getSheet',id},{label:'Preparing export'}).then(r=>{if(!r.sheet)throw new Error('Sheet not found: '+id);return r.sheet;});
   const bytes=output=>CharmNestAssets.bytes(output);
-  const revision=sheet=>JSON.stringify({updatedAt:sheet.updatedAt,front:sheet.outputs?.ai,poolIds:sheet.poolIds,placements:sheet.placements,backs:(sheet.backPool||[]).map(b=>[b.poolId,b.approvedAt,b.outputs?.ai?.url])});
+  const revision=sheet=>JSON.stringify({updatedAt:sheet.updatedAt,rosePlanHash:sheet.rosePlanHash,front:sheet.outputs?.ai,poolIds:sheet.poolIds,placements:sheet.placements,backs:(sheet.backPool||[]).map(b=>[b.poolId,b.approvedAt,b.outputs?.ai?.url])});
   async function build(sheet,format) {
     const backs=CharmNestBacks.forSheet(sheet,sheet.backPool||sheet.backs||[]);
     const prepared=[];

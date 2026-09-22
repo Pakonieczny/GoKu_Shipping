@@ -35,7 +35,7 @@
     return out;
   }
   function productionPaths(parsed) {
-    const paths=leaves(parsed),front=paths.filter(p=>!/^BACK(?: |$)|CUT OUTLINE|^SHEET(?: |$)/i.test(p.layer||''));
+    const paths=leaves(parsed),front=paths.filter(p=>!/^BACK(?: |$)|CUT OUTLINE|^SHEET(?: |$)|^ROSE SEPARATION CUT$/i.test(p.layer||''));
     const groups=pdf().groupCharms({...parsed,segments:front,nested:[]});
     const drop=new Set(),extra=[];
     for(const charm of groups.charms) {
@@ -107,6 +107,20 @@
     }
     await place(front,0,0,1,'');
     for(const item of inputs) await place(item.parsed,item.x,item.y,item.scale,'BACK '+item.back.poolId+' / ');
+    // History never enters production artwork. Only this layout's new contour
+    // is cut, at 1:1 scale, on its own named laser layer.
+    const rosePlan=sheet.rosePlanJson ? JSON.parse(sheet.rosePlanJson) : sheet.rosePlan;
+    if(sheet.metal==='rose' && sheet.roseStockId && !rosePlan)throw new Error('Prepare the Rose Gold separation contour before exporting');
+    if(rosePlan){
+      root.CharmNestRose.validate(rosePlan.profile,front.pageW,front.pageH);
+      const ref=out.context.register(out.context.obj({Type:'OCG',Name:L.PDFString.of('ROSE SEPARATION CUT')}));
+      const resources=page.node.Resources();resources.set(L.PDFName.of('Properties'),out.context.obj({RoseCut:ref}));
+      page.pushOperators(L.PDFOperator.of('BDC',[L.PDFName.of('OC'),L.PDFName.of('RoseCut')]),L.pushGraphicsState(),L.setStrokingRgbColor(0,.54,.45),L.setLineWidth(.1));
+      for(const path of rosePlan.lines){
+        page.pushOperators(...path.map(([x,y],i)=>i?L.lineTo(x,front.pageH-y):L.moveTo(x,front.pageH-y)),L.stroke());
+      }
+      page.pushOperators(L.popGraphicsState(),L.PDFOperator.of('EMC',[]));
+    }
     const refs=out.context.enumerateIndirectObjects().filter(([,o])=>o instanceof L.PDFDict && o.get(L.PDFName.of('Type'))?.toString()==='/OCG').map(([r])=>r);
     if(refs.length) out.catalog.set(L.PDFName.of('OCProperties'),out.context.obj({OCGs:refs,D:{Order:refs,ON:refs}}));
     const ai=await out.save({useObjectStreams:false});

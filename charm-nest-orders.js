@@ -340,6 +340,8 @@
     if (!sheet.verified || !sheet.placed || sheet.stopped || sheet.dirty) return { include: false, reason: "Nest and verify first" };
     if (FAST_MATERIALS.has(sheet.material)) return sheet.full
       ? { include: true, reason: "Full sheet" } : { include: false, reason: "Partial · held for a later set" };
+    if (sheet.material === "rose" && typeof opts.selected?.rose === "boolean") return opts.selected.rose
+      ? {include:true,reason:"Included by you"} : {include:false,reason:"Not selected for this set"};
     if (sheet.material === "rose") return opts.seq > 0 && opts.seq % 2 === 0
       ? { include: true, reason: "Rose gold · even-numbered set" } : { include: false, reason: "Held for Set 2, 4, 6…" };
     if (["gold10k", "gold14k"].includes(sheet.material)) return opts.selected?.[sheet.material] === true

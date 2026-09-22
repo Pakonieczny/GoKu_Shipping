@@ -28,7 +28,7 @@
     const total=ids.length+unidentified,required=total-plain;
     const labels=s.label?.files || [],covered=new Set(labels.flatMap(f=>f.orders || []).map(String)),orders=s.orders || s.label?.orders || [];
     const stages={
-      layout:total>0 && s.verification?.ok===true && !s.dirty && !s.saving && !['nesting','finishing','queued','error'].includes(s.status),
+      layout:total>0 && !(s.metal==='rose' && s.roseStockId && !s.rosePlanHash) && s.verification?.ok===true && !s.dirty && !s.saving && !['nesting','finishing','queued','error'].includes(s.status),
       front:!!url(s.outputs?.ai) && !!(s.preview || url(s.outputs?.preview)),
       approval:total>0 && waiting===0,
       backs:total>0 && saved===required,
