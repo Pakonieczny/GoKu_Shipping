@@ -154,7 +154,7 @@ const ListMedia = (() => {
       photoTimer=0;photoBusy=true;
       const ids=[...wanted].slice(0,12);ids.forEach(id=>wanted.delete(id));
       try {
-        if(!DesignLink.up())throw Error('Design Station is connecting');
+        if(!DesignLink.up())await DesignLink.ensure();
         const got=await DesignLink.call('orders.images',{listingIds:ids},{timeoutMs:45000,quiet:true});
         for(const id of ids){const url=got.images?.[id] || null;photos.set(id,url);pending.get(id)?.resolve(url);}
       }catch(e){for(const id of ids)pending.get(id)?.reject(e);}
