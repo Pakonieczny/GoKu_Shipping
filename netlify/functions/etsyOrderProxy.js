@@ -45,10 +45,16 @@ exports.handler = async function (event) {
     });
 
     const payload = await response.json();
+    // Etsy v3 returns the receipt directly; the station and sandbox share an
+    // explicit receipt/transactions envelope. Preserve root fields for older callers.
+    const receipt = payload?.receipt || (payload?.receipt_id ? payload : null);
+    const normalized = response.ok && receipt
+      ? { ...payload, receipt, transactions: payload.transactions || receipt.transactions || [] }
+      : payload;
     return {
       statusCode: response.status,
       headers: {"Content-Type":"application/json","Cache-Control":"no-store",...(response.headers?.get?.("retry-after") ? {"Retry-After":response.headers.get("retry-after")} : {})},
-      body: JSON.stringify(payload)
+      body: JSON.stringify(normalized)
     };
 
   } catch (err) {

@@ -11,6 +11,10 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
    assert.equal((await ctx.exports.handler({...req,headers:{}})).statusCode,400);assert.equal(calls.length,0,'no unauthenticated upstream call');
    assert.equal((await ctx.exports.handler(req)).statusCode,200);assert.equal(calls[0].init.headers.Authorization,'Bearer fixture-token');
    if(name==='listOpenOrders'){const url=new URL(calls[0].url);assert.equal(url.searchParams.get('offset'),'100');assert.equal(url.searchParams.get('was_paid'),'true');assert.equal(url.searchParams.get('was_shipped'),'false');assert.equal(url.searchParams.get('was_canceled'),'false');}
+   if(name==='etsyOrderProxy'){
+     upstream=response(200,{receipt_id:123,message_from_buyer:'engrave',transactions:[{transaction_id:9,quantity:1}]});
+     const receipt=JSON.parse((await ctx.exports.handler(req)).body);assert.equal(receipt.receipt.receipt_id,123);assert.equal(receipt.receipt_id,123);assert.equal(receipt.transactions[0].transaction_id,9);assert.equal(receipt.receipt.message_from_buyer,'engrave');
+   }
    upstream=response(401,{error:'expired'});assert.equal((await ctx.exports.handler(req)).statusCode,401);
    upstream=response(429,{error:'limited'},'17');const limited=await ctx.exports.handler(req);assert.equal(limited.statusCode,429);assert.equal(limited.headers['Retry-After'],'17');
  }
