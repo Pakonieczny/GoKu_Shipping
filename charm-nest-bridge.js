@@ -27,6 +27,81 @@ function purchaseMarkup(row) {
   const detail=O.purchaseDetails(row.line,row.spec);
   return `<div class="purchaseType"><span class="purchaseLabel">Jewellery</span><strong>${esc(detail.type)}</strong></div><div class="purchaseChoices"><span class="purchaseLabel">Selected options</span>${detail.options.length ? `<dl>${detail.options.map(v=>`<div><dt>${esc(v.name || "Option")}</dt><dd>${esc(v.value)}</dd></div>`).join("")}</dl>` : '<span class="purchaseMissing">Selections unavailable</span>'}</div>`;
 }
+// Zoom/pan ported from Index(20260922-153718).html, wireTiles review viewer.
+// Keep its transform order, clamp, wheel steps, drag damping and click maths.
+const ListZoom = (() => {
+  const bound=new WeakMap(),observed=new Set(),frames=new Map();
+  const storageKey='cn.listImageFraming.'+(WORKSPACE_SANDBOX?'sandbox':'production');
+  try{for(const [key,value] of JSON.parse(localStorage.getItem(storageKey)||'[]'))if(value&&Number.isFinite(value.s)&&value.s>=1&&value.s<=8&&[value.x,value.y].every(Number.isFinite))frames.set(key,value);}catch(_){}
+  let saveTimer;
+  const resize=typeof ResizeObserver!=='undefined'?new ResizeObserver(entries=>{for(const e of entries)bound.get(e.target)?.apply();}):null;
+  function clean(){for(const box of observed)if(!box.isConnected){resize?.unobserve(box);observed.delete(box);}}
+  function observe(box){if(resize&&!observed.has(box)){observed.add(box);resize.observe(box);}}
+  function detach(box){bound.get(box)?.dispose();bound.delete(box);resize?.unobserve(box);observed.delete(box);box.classList.remove('zoomReady');box.removeAttribute('title');const reset=box.closest('figure')?.querySelector('.thumbReset');if(reset){reset.hidden=true;reset.onclick=null;}}
+  function bind(box,key){
+    const im=box.querySelector('img,canvas');if(!im)return;
+    if(bound.get(box)?.im===im){observe(box);return;}
+    detach(box);const abort=new AbortController(),on=(name,fn,opts={})=>box.addEventListener(name,fn,{...opts,signal:abort.signal});
+    const MAX_SCALE=8,dragThreshold=3;
+    const z=frames.get(key)||{s:box.hasAttribute('data-listing')?2:1,x:0,y:0};
+    const ratio=z.vw&&box.clientWidth?box.clientWidth/z.vw:1;
+    im.dataset.scale=z.s;im.dataset.offsetX=z.x*ratio;im.dataset.offsetY=z.y*ratio;
+    im.style.transform=`scale(${z.s}) translate(${z.x*ratio}px, ${z.y*ratio}px)`;
+    im.draggable=false;box.classList.add('zoomReady');box.tabIndex=0;box.setAttribute('role','group');
+    box.title='Click to zoom at a point · drag to pan · scroll to zoom · reset ↺. Keyboard: + / −, arrows, 0 to reset.';
+    function persistZoom(s,x,y){
+      frames.delete(key);frames.set(key,{s,x,y,vw:box.clientWidth,vh:box.clientHeight});while(frames.size>300)frames.delete(frames.keys().next().value);
+      clearTimeout(saveTimer);saveTimer=setTimeout(()=>{try{localStorage.setItem(storageKey,JSON.stringify([...frames]));}catch(_){}},150);
+    }
+    function clampAndApply(im,scale,offX,offY,persist){
+      const viewportW=box.clientWidth,viewportH=box.clientHeight,baseW=im.clientWidth,baseH=im.clientHeight;
+      if(viewportW&&viewportH&&baseW&&baseH){
+        const maxX=Math.max(0,(baseW*scale-viewportW)/2/scale),maxY=Math.max(0,(baseH*scale-viewportH)/2/scale);
+        offX=Math.max(-maxX,Math.min(maxX,offX));offY=Math.max(-maxY,Math.min(maxY,offY));
+      }
+      im.dataset.scale=scale;im.dataset.offsetX=offX;im.dataset.offsetY=offY;
+      im.style.transform=`scale(${scale}) translate(${offX}px, ${offY}px)`;
+      if(persist)persistZoom(scale,offX,offY);
+    }
+    const apply=()=>clampAndApply(im,parseFloat(im.dataset.scale)||1,parseFloat(im.dataset.offsetX)||0,parseFloat(im.dataset.offsetY)||0);
+    let isDragging=false,isMouseDown=false,dragStartX=0,dragStartY=0,lastX=0,lastY=0;
+    on('wheel',ev=>{
+      ev.preventDefault();ev.stopPropagation();let currentScale=parseFloat(im.dataset.scale)||1,offX=parseFloat(im.dataset.offsetX)||0,offY=parseFloat(im.dataset.offsetY)||0;
+      if(ev.deltaY<0)currentScale*=1.1;else{currentScale/=1.1;if(currentScale<=1){currentScale=1;offX=0;offY=0;}}
+      if(currentScale>MAX_SCALE)currentScale=MAX_SCALE;clampAndApply(im,currentScale,offX,offY,true);
+    },{passive:false});
+    const down=ev=>{if(ev.button!=null&&ev.button!==0)return;ev.stopPropagation();if((parseFloat(im.dataset.scale)||1)<=1)return;ev.preventDefault();isMouseDown=true;isDragging=false;dragStartX=lastX=ev.clientX;dragStartY=lastY=ev.clientY;};
+    const move=ev=>{if(!isMouseDown)return;ev.preventDefault();ev.stopPropagation();if(Math.abs(ev.clientX-dragStartX)>dragThreshold||Math.abs(ev.clientY-dragStartY)>dragThreshold)isDragging=true;
+      clampAndApply(im,parseFloat(im.dataset.scale)||1,(parseFloat(im.dataset.offsetX)||0)+(ev.clientX-lastX)*.5,(parseFloat(im.dataset.offsetY)||0)+(ev.clientY-lastY)*.5);lastX=ev.clientX;lastY=ev.clientY;};
+    const endPan=()=>{if(!isMouseDown)return;isMouseDown=false;persistZoom(parseFloat(im.dataset.scale)||1,parseFloat(im.dataset.offsetX)||0,parseFloat(im.dataset.offsetY)||0);};
+    on('mousedown',down);on('mousemove',move);on('mouseup',endPan);on('mouseleave',endPan);
+    // The reference's single-pointer drag also works on touch/pen devices.
+    on('pointerdown',ev=>{if(ev.pointerType==='mouse')return;down(ev);if(isMouseDown)box.setPointerCapture?.(ev.pointerId);});
+    on('pointermove',ev=>{if(ev.pointerType!=='mouse')move(ev);});on('pointerup',ev=>{if(ev.pointerType!=='mouse')endPan();});on('pointercancel',endPan);
+    on('click',ev=>{
+      ev.preventDefault();ev.stopPropagation();if(isDragging){isDragging=false;return;}
+      const s0=parseFloat(im.dataset.scale)||1,offX0=parseFloat(im.dataset.offsetX)||0,offY0=parseFloat(im.dataset.offsetY)||0;
+      const rect=box.getBoundingClientRect(),cx=rect.left+box.clientWidth/2,cy=rect.top+box.clientHeight/2;
+      const px=(ev.clientX-cx)/s0-offX0,py=(ev.clientY-cy)/s0-offY0,targetOffX=-px,targetOffY=-py;
+      const halfW=(im.clientWidth||120)/2,halfH=(im.clientHeight||120)/2;
+      function requiredScaleFor(delta,half){const ratio=Math.abs(delta)/half;if(ratio>=1)return Infinity;return 1/(1-ratio);}
+      const DESIRED=1.33;let s1=Math.max(DESIRED,s0*1.5,requiredScaleFor(targetOffX,halfW),requiredScaleFor(targetOffY,halfH));
+      if(!Number.isFinite(s1))s1=MAX_SCALE;if(s1>MAX_SCALE)s1=MAX_SCALE;
+      if(s0>1.2&&Math.abs(s1-s0)<.5)s1=1;
+      clampAndApply(im,s1,targetOffX,targetOffY,true);
+    });
+    on('keydown',ev=>{
+      if(!['Enter',' ','+','=','-','0','ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(ev.key))return;ev.preventDefault();ev.stopPropagation();
+      let s=parseFloat(im.dataset.scale)||1,x=parseFloat(im.dataset.offsetX)||0,y=parseFloat(im.dataset.offsetY)||0;
+      if(ev.key==='0'){s=1;x=y=0;}else if(['Enter',' ','+','='].includes(ev.key))s=Math.min(MAX_SCALE,s*1.5);else if(ev.key==='-')s=Math.max(1,s/1.1);else{x+=ev.key==='ArrowLeft'?5:ev.key==='ArrowRight'?-5:0;y+=ev.key==='ArrowUp'?5:ev.key==='ArrowDown'?-5:0;}
+      clampAndApply(im,s,x,y,true);
+    });
+    const reset=box.closest('figure')?.querySelector('.thumbReset');if(reset){reset.hidden=false;reset.onclick=e=>{e.stopPropagation();clampAndApply(im,1,0,0,true);};}
+    bound.set(box,{im,apply,dispose:()=>abort.abort()});observe(box);
+  }
+  return {bind,detach,clean,observe};
+})();
+
 // One viewport-driven loader for the three work queues. A listing photo is never
 // replaced by a vector: these are separate, labelled sources for comparison.
 const ListMedia = (() => {
@@ -37,13 +112,14 @@ const ListMedia = (() => {
   },{rootMargin:"160px 0px"}) : null;
   const loading='<span class="thumbLoading" role="status"><i class="spin" aria-hidden="true"></i><span class="srOnly">Loading thumbnail</span></span>';
   function pair(row) {
-    return `<div class="comparePair"><figure><span class="placementThumb" data-vector aria-label="Charm vector design" aria-busy="true">${loading}</span><figcaption>Vector design</figcaption></figure><figure><span class="placementThumb" data-listing aria-label="First Etsy listing image" aria-busy="true">${loading}</span><figcaption>Etsy listing</figcaption></figure></div>`;
+    return `<div class="comparePair"><figure><span class="placementThumb" data-vector aria-label="Charm vector design" aria-busy="true">${loading}</span><figcaption>Vector design<button class="thumbReset" type="button" aria-label="Reset vector image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure><figure><span class="placementThumb" data-listing aria-label="First Etsy listing image" aria-busy="true">${loading}</span><figcaption>Etsy listing<button class="thumbReset" type="button" aria-label="Reset Etsy image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure></div>`;
   }
-  function clean() {for(const host of watched)if(!host.isConnected){observer?.unobserve(host);watched.delete(host);}}
+  function clean() {ListZoom.clean();for(const host of watched)if(!host.isConnected){observer?.unobserve(host);watched.delete(host);}}
   function watch(host,load,key,force=false) {
     if(!host)return;
-    const old=jobs.get(host);if(old?.key===key && !force){if(old.state==="waiting" && observer && !watched.has(host)){watched.add(host);observer.observe(host);}return;}
+    const old=jobs.get(host);if(old?.key===key && !force){if(old.state==="done")ListZoom.bind(host,(host.hasAttribute('data-listing')?'listing:':'vector:')+key);if(old.state==="waiting" && observer && !watched.has(host)){watched.add(host);observer.observe(host);}return;}
     observer?.unobserve(host);watched.delete(host);
+    ListZoom.detach(host);
     const job={load,key,state:"waiting"};jobs.set(host,job);
     host.innerHTML=loading;host.setAttribute('aria-busy','true');host.onclick=null;host.removeAttribute('role');host.removeAttribute('tabindex');host.onkeydown=null;
     if(observer){watched.add(host);observer.observe(host);}else{queue.push(host);pump();}
@@ -63,6 +139,7 @@ const ListMedia = (() => {
             if(!host.isConnected || jobs.get(host)!==job)return;host.replaceChildren(img);
           }else if(result?.nodeType)host.replaceChildren(result);
           else host.textContent=host.hasAttribute('data-listing') ? 'No listing image' : 'No vector available';
+          ListZoom.bind(host,(host.hasAttribute('data-listing')?'listing:':'vector:')+job.key);
           job.state='done';
         }catch(_){
           if(host.isConnected && jobs.get(host)===job){job.state='error';host.textContent='Unavailable · Retry';host.setAttribute('role','button');host.tabIndex=0;

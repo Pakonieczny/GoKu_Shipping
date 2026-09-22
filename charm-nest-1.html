@@ -1213,6 +1213,49 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 }
 @media(prefers-reduced-motion:reduce){.thumbLoading .spin{animation:none}}
 
+/* One track system for every queue: content never sets a column's width. */
+.ordList,.egPlacementList,#egDone,#rvList{container-type:inline-size}
+.doneRow.placementRow,.doneRow.decidedRow,.doneRow.workRow{--thumb-size:88px;display:grid;grid-template-columns:184px minmax(0,1fr) minmax(0,1.4fr) minmax(0,.6fr);column-gap:20px;row-gap:12px;align-items:start;padding:16px;min-height:138px;border-left:3px solid var(--sage);width:100%;min-width:0;box-sizing:border-box}
+.doneRow.orderListRow{border-left-color:var(--slate)}.doneRow.reviewListRow{border-left-color:var(--gold)}
+.doneRow .comparePair{grid-template-columns:repeat(2,var(--thumb-size));grid-column:1;grid-row:1;align-self:start;gap:8px}
+.doneRow .comparePair .placementThumb{width:var(--thumb-size);height:var(--thumb-size)}
+.doneRow .engravingIdentity{grid-column:2;grid-row:1;align-content:start;gap:6px;overflow:hidden}
+.doneRow .engravingOrder{display:flex;align-items:baseline;flex-wrap:wrap;gap:3px 10px;margin:0 0 4px;min-width:0}
+.doneRow .engravingOrder .onum{font-size:12.5px;min-width:0;flex-wrap:wrap}.doneRow .orderTime{font-size:10px;font-weight:400}
+.doneRow .engravingOrder .sku{font-size:11px;min-width:0;overflow-wrap:anywhere;line-height:1.5}
+.doneRow .purchaseSummary,.doneRow.workRow .purchaseSummary{grid-column:3;grid-row:1;align-self:stretch;display:grid;grid-template-columns:minmax(0,.72fr) minmax(0,1.28fr);gap:20px;border-top:0;border-left:1px solid var(--line2);padding:0 0 0 20px;margin:0;min-width:0;min-height:88px}
+.doneRow .purchaseType,.doneRow .purchaseChoices{align-content:start;gap:8px}.doneRow .purchaseLabel,.doneRow .queueLabel{line-height:1.5}
+.doneRow .purchaseChoices dl,.doneRow.workRow .purchaseChoices dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:16px;row-gap:10px;align-items:start}
+.doneRow .purchaseChoices dl>div{min-width:0}.doneRow .purchaseChoices dt{line-height:1.45}.doneRow .purchaseChoices dd{line-height:1.5;margin:3px 0 0}
+.doneRow .rowActions,.doneRow .decisionActions{grid-column:4;grid-row:1;align-self:stretch;display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:9px;border-top:0;border-left:1px solid var(--line2);padding:0 0 0 20px;margin:0;min-width:0;min-height:88px}
+.doneRow .rowActions>*,.doneRow .decisionActions>*{max-width:100%;min-width:0;box-sizing:border-box;overflow-wrap:anywhere}.doneRow .by,.doneRow .ost{white-space:normal;line-height:1.45}.doneRow .decisionActions .btn{font-size:11px;padding:7px 10px;min-height:34px;white-space:normal}
+.doneRow .rowFacts{line-height:1.6}.doneRow .rowExcerpt{line-height:1.6;-webkit-line-clamp:3}.doneRow .engravingIdentity .w{white-space:pre-wrap;line-height:1.6;font-size:13px;max-width:100%}
+.doneRow .reviewDetails,.doneRow>.doneDetail{grid-column:1/-1;grid-row:2}
+.comparePair figcaption{position:relative;display:flex;justify-content:center;align-items:center;gap:3px;min-height:18px;white-space:nowrap}
+.comparePair .placementThumb{overflow:hidden;display:block;isolation:isolate;text-align:center}.comparePair .placementThumb:not(.zoomReady){display:grid;place-items:center}
+.comparePair .placementThumb img,.comparePair .placementThumb canvas{display:block;width:100%;height:100%;object-fit:contain;transform-origin:center center;transition:transform .3s ease;user-select:none;-webkit-user-drag:none;max-width:none}
+.comparePair .zoomReady{cursor:grab;touch-action:none;user-select:none}.comparePair .zoomReady:active{cursor:grabbing}
+.comparePair .zoomReady::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:2;background-image:linear-gradient(to right,#ffffff2e,#ffffff2e),linear-gradient(to right,#ffffff2e,#ffffff2e),linear-gradient(to bottom,#ffffff2e,#ffffff2e),linear-gradient(to bottom,#ffffff2e,#ffffff2e);background-size:1px 100%,1px 100%,100% 1px,100% 1px;background-position:33.333% 0,66.666% 0,0 33.333%,0 66.666%;background-repeat:no-repeat}
+.thumbReset{appearance:none;border:0;background:transparent;color:var(--ink45);font:14px/1 var(--sans);padding:2px 3px;cursor:pointer;border-radius:3px}.thumbReset:hover{color:var(--ink);background:var(--line2)}.thumbReset[hidden]{display:none}.thumbReset:focus-visible,.zoomReady:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+/* Adapt to the actual queue width, including docked panels and a visible rail. */
+@container(max-width:1100px){
+ .doneRow.placementRow,.doneRow.decidedRow,.doneRow.workRow{grid-template-columns:184px minmax(0,1fr) minmax(0,1.2fr);gap:16px}
+ .doneRow .rowActions,.doneRow .decisionActions{grid-column:2/-1;grid-row:2;flex-direction:row;flex-wrap:wrap;align-items:center;gap:8px 16px;border-left:0;border-top:1px solid var(--line2);padding:10px 0 0;min-height:0}
+ .doneRow .reviewDetails,.doneRow>.doneDetail{grid-row:3}
+}
+@container(max-width:800px){
+ .doneRow.placementRow,.doneRow.decidedRow,.doneRow.workRow{--thumb-size:76px;grid-template-columns:160px minmax(0,1fr);gap:12px 16px}
+ .doneRow .comparePair{grid-row:1/3}.doneRow .purchaseSummary,.doneRow.workRow .purchaseSummary{grid-column:2;grid-row:2;border-left:0;border-top:1px solid var(--line2);padding:12px 0 0;min-height:0;gap:16px}
+ .doneRow .rowActions,.doneRow .decisionActions{grid-column:2;grid-row:3}
+ .doneRow .reviewDetails,.doneRow>.doneDetail{grid-row:4}
+}
+@container(max-width:500px){
+ .doneRow.placementRow,.doneRow.decidedRow,.doneRow.workRow{--thumb-size:66px;grid-template-columns:140px minmax(0,1fr);padding:12px;gap:12px}
+ .doneRow .comparePair{grid-row:1}.doneRow .purchaseSummary,.doneRow.workRow .purchaseSummary{grid-column:1/-1;grid-row:2}
+ .doneRow .rowActions,.doneRow .decisionActions{grid-column:1/-1}
+ .comparePair figcaption{font-size:8px;gap:0}.thumbReset{font-size:12px;padding:2px}
+}
+@media(prefers-reduced-motion:reduce){.comparePair .placementThumb img,.comparePair .placementThumb canvas{transition:none}}
 
 .roseHistory{margin:0 14px 10px;font-size:11px;color:var(--ink70)}
 .roseStockHead{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px}
@@ -3641,7 +3684,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260922-remnants"></script>
+<script src="charm-nest-bridge.js?v=20260922-list-framing"></script>
 <script src="charm-nest-rose-ui.js?v=20260922-rehearsal"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
