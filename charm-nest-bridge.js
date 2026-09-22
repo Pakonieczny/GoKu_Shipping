@@ -1647,12 +1647,10 @@ const Gate = window.Gate = (() => {
     await RunCtl.save(run);
   }
   let assemblyQueue = Promise.resolve();
-  let assemblyPending = 0;
   function assemble(run, context) {
     const ops = window.CharmNestOperations;
     if (ops && !context) return ops.run({key:'membership:'+run?.runId, label:'Updating set membership', resources:['production:'+run?.runId], latest:true, priority:10}, token=>assemble(run,token));
-    assemblyPending++;
-    const task = assemblyQueue.catch(() => {}).then(() => assembleNow(run, context)).finally(() => { assemblyPending--; refreshAllCards(); });
+    const task = assemblyQueue.catch(() => {}).then(() => assembleNow(run, context)).finally(() => { refreshAllCards(); });
     assemblyQueue = task; return task;
   }
   async function assembleNow(run, context) {
@@ -1712,8 +1710,10 @@ const Gate = window.Gate = (() => {
     if (S.mode === "library") CN.loadLibrary().catch(e=>toast("Library refresh: "+e.message,"bad"));
   }
   function editable(sh) {
-    return !window.CharmNestOperations?.busy("production:"+B.run?.runId) && !assemblyPending && !sh.recalled && !allSheets().some(p => ["nesting", "finishing", "queued"].includes(p.status) || p.persisted && !p.persistedDone) &&
-      !B.run?.arrivalBusy && !(B.run && Sets.ofRun(B.run.runId).some(s => s.committedAt));
+    // Stock dimensions are shared only by pages of this material. Independent
+    // nesting, thumbnail work and cloud activity must not disable this control.
+    return !sh.recalled && !pagesOf(sh.metal).some(p => ["nesting", "finishing", "queued"].includes(p.status) || p.persisted && !p.persistedDone || p._rosePlanning || p._roseLoading || p._roseAction) &&
+      !(B.run && (["complete", "abandoned"].includes(B.run.status) || Sets.ofRun(B.run.runId).some(s => s.committedAt) || window.CharmNestOperations?.running('commit:'+B.run.runId)));
   }
   function membershipEditable(sh) {
     return !sh.recalled && !(B.run && (["complete","abandoned"].includes(B.run.status) || Sets.ofRun(B.run.runId).some(set=>set.committedAt) || window.CharmNestOperations?.running('commit:'+B.run.runId)));
@@ -1775,7 +1775,7 @@ const Gate = window.Gate = (() => {
       return;
     }
     const included = m === "rose" ? policy(sh,seq).include : selected()[m] === true;
-    const sizeLocked=!!(sh.recalled || sh.roseCutAt || (m==='rose' && sh.roseStock));
+    const sizeLocked=!!(sh.recalled || sh.roseCutAt || (m==='rose' && pagesOf(m).some(p=>p.roseStock)));
     // Keep the controls mounted: solver ticks, cloud replies and membership saves
     // must not replace a focused input, its draft value, or an open popup.
     if(node._sheetOptionsOwner!==sh){
@@ -1806,15 +1806,32 @@ const Gate = window.Gate = (() => {
       input.disabled=sizeLocked;
       if(!input._draft && input!==document.activeElement)input.value=+(value*25.4).toFixed(2);
     }
-    const apply=node.querySelector('[data-solid="size"]');apply.disabled=sizeLocked||!editable(sh);
-    node.querySelector('[data-solid="size-help"]').textContent=sizeLocked?'Dimensions belong to this saved sheet.':!editable(sh)?'Apply when the current operation finishes.':'5–500 mm per side';
-    apply.onclick=()=>{
+    const apply=node.querySelector('[data-solid="size"]');apply.disabled=sizeLocked||!editable(sh)||!!node._sizeApplying;
+    apply.textContent=node._sizeApplying?'Applying size…':'Apply size';
+    apply.setAttribute('aria-busy',String(!!node._sizeApplying));
+    node.querySelector('[data-solid="size-help"]').textContent=sizeLocked?'Dimensions belong to this saved sheet.':node._sizeApplying?'Your size change is queued for saving.':!editable(sh)?'This material is in use or its set is locked.':'5–500 mm per side';
+    apply.onclick=async()=>{
       const width=node.querySelector('[data-solid="w"]'),height=node.querySelector('[data-solid="h"]'),w=+width.value,h=+height.value;
       if(![w,h].every(n=>Number.isFinite(n)&&n>=5&&n<=500))return toast('Use a width and height between 5 and 500 mm','bad');
-      if(!editable(sh)||sh.roseCutAt||(m==='rose'&&pagesOf(m).some(p=>p.roseStock)))return;
-      S.settings.stock[m]=[w/25.4,h/25.4];saveSettings();width._draft=height._draft=false;
-      for(const p of pagesOf(m)){for(const c of p.charms){c.pinned=null;delete c.arrivalPin;}sheetDirty(p);}
-      changed();
+      if(node._sizeApplying||sizeLocked||!editable(sh))return;
+      const run=B.run;
+      const resize=()=>{
+        // Recheck after any short, conflicting record write finishes. A solver
+        // may have started, or the user may have opened a different run.
+        if(B.run!==run || !editable(sh) || sh.roseCutAt || (m==='rose'&&pagesOf(m).some(p=>p.roseStock)))throw new Error('This material changed while saving. Apply its size again when it is ready.');
+        S.settings.stock[m]=[w/25.4,h/25.4];saveSettings();
+        if(+width.value===w)width._draft=false;
+        if(+height.value===h)height._draft=false;
+        for(const p of pagesOf(m).filter(p=>!p.recalled&&!p.roseCutAt)){for(const c of p.charms){c.pinned=null;delete c.arrivalPin;}sheetDirty(p);}
+        changed();
+      };
+      node._sizeApplying=true;renderRelease(sh,node);
+      try {
+        const ops=window.CharmNestOperations;
+        if(ops)await ops.run({key:'sheet-size:'+m,label:'Applying '+labelOf(m)+' sheet size',resources:['production:'+(run?.runId || sh.runId || sh.sheetId)],priority:20},resize);
+        else resize();
+      } catch(e){toast('Size not applied: '+e.message,'bad');}
+      finally {node._sizeApplying=false;renderRelease(sh,node);}
     };
   }
 
