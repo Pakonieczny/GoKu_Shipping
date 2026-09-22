@@ -11,7 +11,8 @@ module.exports=function({db,col,FV,Readiness}){
     if(!id(b.stockId))throw new Error('Choose a Rose Gold sheet');
     const snap=await stocks().doc(b.stockId).get();if(!snap.exists)throw new Error('Rose Gold sheet not found');
     let q=stocks().doc(b.stockId).collection('cuts').orderBy('revision','desc');if(b.before)q=q.startAfter(+b.before);
-    const cuts=await q.limit(20).get();return {stock:snap.data(),cuts:cuts.docs.map(d=>d.data()),more:cuts.size===20};
+    // Keep even the largest saved contours below the function response limit.
+    const cuts=await q.limit(4).get();return {stock:snap.data(),cuts:cuts.docs.map(d=>d.data()),more:cuts.size===4};
   }
   async function roseList(){const snap=await stocks().where('available','==',true).limit(100).get();return {stocks:snap.docs.map(d=>d.data()).sort((a,b)=>a.createdMs-b.createdMs)};}
   async function roseClaim(b){
