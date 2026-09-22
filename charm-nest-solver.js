@@ -318,7 +318,7 @@
   async function solve(job, cb) {
     cb = cb || {};
     const t0 = now();
-    const metrics={layouts:0,searches:0,positions:0,gpuPositions:0};
+    const metrics={layouts:0,searches:0,positions:0,gpuPositions:0,groups:0,branches:0,pruned:0};
     let lastMetricsAt=-Infinity,gpu=cb.gpu || null,gpuSamples=[],gpuCalls=0;
     const reportMetrics=(force=false)=>{if(force||now()-lastMetricsAt>=150){lastMetricsAt=now();cb.onMetrics?.({...metrics});}};
     const measuredSearch=async(...args)=>{
@@ -686,11 +686,13 @@
       const cornerX = trial === 0 ? 0 : (random() < 0.7 ? 0 : 1), cornerY = trial === 0 ? 0 : (random() < 0.7 ? 0 : 1);
       let fine = baseFine.clone(), coarse = baseCoarse.clone();
       let placements = [], placedRec = []; const capped = fifo ? prepared.filter(p => rank.get(p.order) >= capOrders).map(p => p.id) : [], rejects = capped.slice();
-      let placedCells = 0;
+      let placedCells = 0, groupMoves = [], trialInterrupted = false;
+      const useGroups = !!gpu && !!cb.groupSearch && trial % 2 === 1;
       const deadOrders = new Set();
       // a piece of a multi-piece order failed: the order leaves this sheet whole — its placed siblings are lifted back off
       const dropOrder = (p, why) => {
         if (!multi(p)) return;
+        groupMoves = [];
         deadOrders.add(p.order);
         const lifted = placedRec.filter(r => r.p.order === p.order);
         if (!lifted.length) return;
@@ -707,8 +709,15 @@
           const tail=pinnedFirst.slice(pi).sort((a,b)=>(chronological ? rank.get(a.order)-rank.get(b.order) : 0) || guidedOrderScore(b,placedRec,advice)-guidedOrderScore(a,placedRec,advice));
           pinnedFirst.splice(pi,tail.length,...tail);
         }
+        if (stopped() || (trial > 0 && best?.placements.length && now()-t0 >= budget-refinementReserve)) { trialInterrupted = true; break; }
+        if(useGroups && gpu && !pinnedFirst[pi].pinned && !groupMoves.length){
+          const remaining=pinnedFirst.slice(pi).filter(p=>!p.pinned&&!deadOrders.has(p.order));
+          try{groupMoves=await cb.groupSearch({gpu,pieces:remaining,remaining,fine,coarse,ratio,placedCells,maxCells:usableCellsFine*maxFill,strip:stripPacked?stripOf(placedRec):null,deadline:Math.min(t0+budget-refinementReserve,now()+1200),shouldStop:stopped,metrics,report:reportMetrics,seed:job.seed});}
+          catch(e){gpu?.destroy?.();gpu=null;groupMoves=[];cb.onGPU?.({active:false,reason:'CPU fallback: '+String(e.message||e)});}
+        }
+        if(groupMoves.length){const target=pinnedFirst.findIndex((p,i)=>i>=pi&&p.id===groupMoves[0].p.id);if(target<0)groupMoves=[];else [pinnedFirst[pi],pinnedFirst[target]]=[pinnedFirst[target],pinnedFirst[pi]];}
         const p = pinnedFirst[pi];
-        if (stopped() || (trial > 0 && best?.placements.length && now()-t0 >= budget-refinementReserve)) break;
+        if(stopped()){trialInterrupted=true;break;}
         let bestPos = null;
         if (deadOrders.has(p.order)) { rejects.push(p.id); if (capped.some(id => prepared.find(x => x.id === id && x.order === p.order))) capped.push(p.id); if (cb.onReject) cb.onReject(p.id, trial, "order"); continue; }
         if (!p.pinned && (placedCells + p.footprintCells) / usableCellsFine > maxFill) {
@@ -723,7 +732,9 @@
           if (fine.fits(v.fine.pm, x, y)) bestPos = { v, x, y, score: Infinity };
           metrics.positions++;reportMetrics();
         } else {
-          bestPos = await measuredSearch(p, fine, coarse, ratio, gravW, noise, random, stripPacked ? 0 : cornerX, stripPacked ? 0 : cornerY, stripPacked ? stripOf(placedRec) : null, sparse ? trial % 3 === 2 : (job.exploreRotations ? trial % 3 === 0 : trial === 0));
+          if(groupMoves[0]?.p.id===p.id){const proposed=groupMoves.shift();metrics.positions++;if(fine.fits(proposed.v.fine.pm,proposed.x,proposed.y))bestPos=proposed;else groupMoves=[];}
+          if(!bestPos)bestPos = await measuredSearch(p, fine, coarse, ratio, gravW, noise, random, stripPacked ? 0 : cornerX, stripPacked ? 0 : cornerY, stripPacked ? stripOf(placedRec) : null, sparse ? trial % 3 === 2 : (job.exploreRotations ? trial % 3 === 0 : trial === 0));
+          if(!bestPos&&stopped()){trialInterrupted=true;break;}
         }
         if (bestPos && !p.pinned && (placedCells + bestPos.v.cells) / usableCellsFine > maxFill) {
           rejects.push(p.id); capped.push(p.id); dropOrder(p, "cap"); await yieldNow(); continue;
@@ -807,9 +818,9 @@
         }
       }
       lastRejects = rejects.filter(id => !capped.includes(id));
-      metrics.layouts++;reportMetrics(true);
+      if(!trialInterrupted)metrics.layouts++;reportMetrics(true);
       const summary = {
-        completedTrials:metrics.layouts, trial, placed: placements.length, total: prepared.length, rejects,
+        completedTrials:metrics.layouts, completed:!trialInterrupted, groupTrial:useGroups, trial, placed: placements.length, total: prepared.length, rejects,
         density: placedCells / usableCellsFine,
         elapsedMs: now() - t0, gravW, noise
       };
@@ -1072,7 +1083,7 @@
   }
 
   /** Candidate search for one piece across all its angles. */
-  function search(p, fine, coarse, ratio, gravW, noise, random, cornerX, cornerY, strip = null, boundarySeed = false, perimeterPolicy = null, shortlists = null, metrics = null, reportMetrics = null) {
+  function search(p, fine, coarse, ratio, gravW, noise, random, cornerX, cornerY, strip = null, boundarySeed = false, perimeterPolicy = null, shortlists = null, metrics = null, reportMetrics = null, shortlistOnly = false) {
     const K = 28, TOL = 2;
     // Keep the original construction seed as a competing proposal. Stronger
     // edge alignment is explored on the other trials and on the retained best;
@@ -1097,6 +1108,7 @@
     };
     const pairNear=(x,y,w,h)=>partners.reduce((n,{part,weight})=>{const dx=Math.max(0,part.x-x-w,x-part.x-part.w),dy=Math.max(0,part.y-y-h,y-part.y-part.h);return Math.max(n,weight/(1+Math.hypot(dx,dy)/ratio));},0);
     for (const [vi,v] of p.variants.entries()) {
+      if(shortlistOnly && !shortlists?.[vi]?.length)continue;
       // ── coarse exhaustive scan ──
       const cands = [], edgeCands=[null,null,null,null];
       reportMetrics?.();
@@ -1155,7 +1167,7 @@
       // Avoid expensive contact grading at thousands of equivalent positions
       // along an empty edge; the coarse shortlist still supplies interior fits.
       const fb=sheetBounds(fine),right=fb.right-pm.w,bottom=fb.bottom-pm.h;
-      if((!boundarySeed || !best) && right>=fb.left && bottom>=fb.top){
+      if(!shortlistOnly && (!boundarySeed || !best) && right>=fb.left && bottom>=fb.top){
         const scanWall=(start,end,fixed,horizontal)=>{
           let run=-1;
           const at=t=>consider(horizontal?t:fixed,horizontal?fixed:t);
@@ -1172,7 +1184,7 @@
         if(right!==fb.left)scanWall(fb.top,bottom,right,false);
       }
     }
-    if (best) return best;
+    if (best || shortlistOnly) return best;
     // ── fallback: widen the coarse tolerance so a tight fit is never missed ──
     for (const v of p.variants) {
       const pm = v.fine.pm, FW = fine.W, FH = fine.H, cw = v.coarse.w, ch = v.coarse.h, rc = Math.max(1, v.ringFine.cells), pad = v.ringPad;

@@ -166,17 +166,17 @@ async function benchmark(source,S,cb={}) {
    for(let y=0;y<h;y++)for(let x=0;x<w;x++){const dx=(x-w/2)/(w/2),dy=(y-h/2)/(h/2);bits[y*w+x]=i%3===0?+(dx*dx+dy*dy<1):i%3===1?+(x<w*.45||y>h*.6):+(Math.abs(dx)+Math.abs(dy)<1);}
    return {id:'reference-'+i,w,h,bits,scale:2};
   })});
-  const job={...(source?.pieces?.length?source:reference()),initialLayout:null,seed:317,timeBudgetMs:6000,maxTrials:1,stallMs:0,gpuBenchmark:true,packingPending:false};
+  const job={...(source?.pieces?.length?source:reference()),initialLayout:null,seed:317,timeBudgetMs:6000,maxTrials:1000000,stallMs:0,gpuBenchmark:true,packingPending:false};
   job.pieces=job.pieces.slice(0,12); // A sample, not a production nesting run.
   const results={};
   for(const mode of ['cpu','gpu']){
    if(cb.shouldStop?.())throw new Error('Comparison cancelled');
    cb.onStage?.(`Comparing ${mode.toUpperCase()} · ${job.pieces.length} ${sample}…`);
-   const result=await S.solve(job,{gpu:mode==='gpu'?gpu:null,shouldStop:cb.shouldStop});
+   const result=await S.solve(job,{gpu:mode==='gpu'?gpu:null,groupSearch:mode==='gpu'?cb.groupSearch:null,shouldStop:cb.shouldStop});
    if(cb.shouldStop?.())throw new Error('Comparison cancelled');
    const verified=S.verify(job,result.placements,6).ok;
    const ms=result.elapsedMs+(mode==='gpu'?startupMs:0);
-   results[mode]={ms,layouts:result.trials,checks:result.metrics.positions,gpuChecks:result.metrics.gpuPositions,checksPerSecond:result.metrics.positions/Math.max(.001,ms/1000),placed:result.placements.length,fill:result.density,verified};
+   results[mode]={ms,layouts:result.trials,checks:result.metrics.positions,gpuChecks:result.metrics.gpuPositions,checksPerSecond:result.metrics.positions/Math.max(.001,ms/1000),placed:result.placements.length,fill:result.density,clearRectangleFraction:Math.max(0,(result.pocket?.wPt||0)*(result.pocket?.hPt||0)/(job.sheet.wPt*job.sheet.hPt)),groups:result.metrics.groups,verified};
   }
   return {available:true,sample,pieces:job.pieces.length,adapter:gpu.stats.adapter,startupMs,...results};
  }finally{gpu.destroy();}

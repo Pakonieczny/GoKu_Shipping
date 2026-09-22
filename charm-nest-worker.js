@@ -8,7 +8,7 @@
  *       {type:"verify", jobId, job, placements, res}
  *  out: {type:"stage"|"placed"|"reject"|"trial"|"best"|"done"|"verified"|"error", jobId, …}
  */
-importScripts("charm-nest-rose.js?v=20260922-rehearsal", "charm-nest-solver.js?v=20260922-gpu");
+importScripts("charm-nest-rose.js?v=20260922-rehearsal", "charm-nest-solver.js?v=20260922-groups");
 
 let current = null;   // { jobId, job, stop }
 
@@ -37,8 +37,9 @@ self.onmessage = async (e) => {
     if(current){self.postMessage({type:'benchmarkError',jobId:m.jobId,message:'Worker is already busy'});return;}
     const state=current={jobId:m.jobId,stop:false};
     try{
-      if(!self.CharmNestGPU)importScripts('charm-nest-gpu.js?v=20260922-gpu');
-      const result=await CharmNestGPU.benchmark(m.job,CharmNestSolver,{shouldStop:()=>state.stop,onStage:stage=>self.postMessage({type:'benchmarkStage',jobId:m.jobId,stage})});
+      if(!self.CharmNestGPU)importScripts('charm-nest-gpu.js?v=20260922-groups');
+      if(!self.CharmNestLookahead)importScripts('charm-nest-lookahead.js?v=20260922-groups');
+      const result=await CharmNestGPU.benchmark(m.job,CharmNestSolver,{groupSearch:ctx=>CharmNestLookahead.plan(ctx,CharmNestSolver),shouldStop:()=>state.stop,onStage:stage=>self.postMessage({type:'benchmarkStage',jobId:m.jobId,stage})});
       self.postMessage({type:'benchmarkDone',jobId:m.jobId,result});
     }catch(e){self.postMessage({type:'benchmarkError',jobId:m.jobId,message:String(e.message||e)});}
     finally{if(current===state)current=null;}
@@ -53,15 +54,17 @@ self.onmessage = async (e) => {
     if(m.job.useGPU && !m.job.learned){
       post({type:'gpu',progress:{active:false,phase:'checking',reason:'Checking GPU…'}});
       try {
-        if(!self.CharmNestGPU)importScripts('charm-nest-gpu.js?v=20260922-gpu');
+        if(!self.CharmNestGPU)importScripts('charm-nest-gpu.js?v=20260922-groups');
         gpu=await CharmNestGPU.create();
+        if(!self.CharmNestLookahead)importScripts("charm-nest-lookahead.js?v=20260922-groups");
         post({type:'gpu',progress:{active:true,phase:'measuring',reason:'GPU · measuring performance',adapter:gpu.stats.adapter}});
-      } catch(e){post({type:'gpu',progress:{active:false,phase:'fallback',reason:'CPU fallback: '+String(e.message||e)}});}
+      } catch(e){gpu?.destroy?.();gpu=null;post({type:'gpu',progress:{active:false,phase:'fallback',reason:'CPU fallback: '+String(e.message||e)}});}
     }
     if (m.job.learned && !self.CharmNestLearned) importScripts("charm-nest-learned.js");
     const solver = m.job.learned ? CharmNestLearned : CharmNestSolver;
     const result = await solver.solve(m.job, {
       gpu,
+      groupSearch:self.CharmNestLookahead ? ctx=>CharmNestLookahead.plan(ctx,CharmNestSolver) : null,
       onGPU:progress=>post({type:'gpu',progress:{...progress,phase:progress.active?'active':'fallback'}}),
       onMetrics:metrics=>post({type:'metrics',metrics}),
       shouldStop: () => state.stop,

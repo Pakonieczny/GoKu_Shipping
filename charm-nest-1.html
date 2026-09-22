@@ -1376,7 +1376,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
     <div class="section">Nesting engine</div>
     <div class="fieldRow" style="align-items:start">
       <div class="field"><label>Engine</label><select id="stEngine"><option value="solver">Geometric nesting + AI packing guidance</option><option value="ai">Claude places every charm itself (experimental — reached 55%)</option></select><div class="help">Recommended: geometry arranges the oldest whole orders using contact scoring and gap repair. AI grades shape flexibility, edge roles and compatible neighbors before guided placement; two independent verifiers check the written result. Grouping review applies when importing source artwork.</div></div>
-      <div class="field"><label for="stComputePipeline">Charm-sheet processing</label><select id="stComputePipeline"><option value="cpu">CPU · current pipeline</option><option value="gpu">GPU · accelerated pipeline</option></select><div class="help">For geometric nesting, including the learned workflow’s geometric challenger. GPU tests positions and rotations in parallel with the same verification; CPU takes over if unavailable or slower. Applies to the next run.</div><button type="button" class="btn ghost xs" id="stCompareGPU" style="margin-top:8px">Compare speed</button><div class="help" id="stGPUResult" role="status" aria-live="polite">Tests a copy of up to 12 loaded charms, or reference shapes if none are loaded. No sheets are changed and no API requests are made.</div></div>
+      <div class="field"><label for="stComputePipeline">Charm-sheet processing</label><select id="stComputePipeline"><option value="cpu">CPU · current pipeline</option><option value="gpu">GPU · accelerated pipeline</option></select><div class="help">For geometric nesting, including the learned workflow’s geometric challenger. GPU compares groups of up to seven charms and checks the space left for the rest, alongside baseline searches. CPU takes over if GPU is unavailable or slower. Applies to the next run.</div><button type="button" class="btn ghost xs" id="stCompareGPU" style="margin-top:8px">Compare speed</button><div class="help" id="stGPUResult" role="status" aria-live="polite">Tests a copy of up to 12 loaded charms, or reference shapes if none are loaded. No sheets are changed and no API requests are made.</div></div>
       <div class="field" style="grid-column:1 / -1"><label>Fill ceiling (%) · AI rounds · snap (mm)</label><div class="fieldRow3"><input id="stMaxFill" type="number" min="30" max="100" step="1"><input id="stAiRounds" type="number" min="1" max="30" step="1"><input id="stSnapIn" type="number" min="0" max="25" step="0.5"></div><div class="help">The sheet is never filled past the ceiling; pieces that would cross it wait for a second sheet. Rounds and snap apply to the experimental engine only.</div></div>
     </div>
     <details class="learnedSettings"><summary>Learned packing · laptop runner</summary>
@@ -1479,7 +1479,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-progress.js"></script>
 <script src="charm-nest-operations.js"></script>
 <script src="charm-nest-rose.js?v=20260922-rehearsal"></script>
-<script src="charm-nest-solver.js?v=20260922-gpu"></script>
+<script src="charm-nest-solver.js?v=20260922-groups"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260921-material"></script>
@@ -2325,7 +2325,7 @@ function ensureWorkers(sh, n) {
   for (const w of sh.workers.splice(n)) w.terminate();
   while (sh.workers.length < n) {
     const idx = sh.workers.length;
-    const w = new Worker("charm-nest-worker.js?v=20260922-gpu");
+    const w = new Worker("charm-nest-worker.js?v=20260922-groups");
     w.onmessage = e => onWorkerMessage(sh, e.data, idx);
     w.onerror = e => onWorkerMessage(sh, { type: "error", jobId: sh.jobId + ":" + idx, message: e.message }, idx);
     sh.workers.push(w);
@@ -2683,11 +2683,11 @@ function updateSearchMetrics(sh, idx, metrics) {
   if(!sh.pool)return;
   const rows=sh.pool.metrics ||= [], previous=rows[idx] || {};
   const next={};
-  for(const key of ['layouts','searches','positions','gpuPositions'])next[key]=Math.max(previous[key]||0,Number.isFinite(metrics?.[key])?Math.max(0,metrics[key]):0);
+  for(const key of ['layouts','searches','positions','gpuPositions','groups','branches','pruned'])next[key]=Math.max(previous[key]||0,Number.isFinite(metrics?.[key])?Math.max(0,metrics[key]):0);
   rows[idx]=next;
   sh.pool.trials[idx]=Math.max(sh.pool.trials[idx]||0,next.layouts);
   sh.trials=sh.pool.trials.reduce((n,x)=>n+(x||0),0);
-  sh.searchMetrics=rows.reduce((out,row)=>{for(const key of Object.keys(out))out[key]+=row?.[key]||0;return out;},{layouts:0,searches:0,positions:0,gpuPositions:0});
+  sh.searchMetrics=rows.reduce((out,row)=>{for(const key of Object.keys(out))out[key]+=row?.[key]||0;return out;},{layouts:0,searches:0,positions:0,gpuPositions:0,groups:0,branches:0,pruned:0});
 }
 function onWorkerMessage(sh, m, idx) {
   const base = String(m.jobId || "").split(":")[0];
@@ -3217,8 +3217,8 @@ function renderProgress(sh) {
   const done = sh.status === "complete" || sh.status === "partial";
   st.title = done ? deep + (sh.searchMetrics ? ` · ${sh.searchMetrics.positions.toLocaleString()} position checks (${sh.searchMetrics.gpuPositions.toLocaleString()} on GPU)` : "") + " · Verification checks geometry; it does not certify optimal packing." + (sh.nestFlow === "learned" ? ` · ${sh.learnedResult?.model?.model || (sh.learnedResult?.modelError ? "model unavailable" : "model skipped: baseline sufficient")} · selected ${sh.learnedResult?.selectedSource || "best verified layout"} · +${sh.learnedResult?.gainedPieces || 0} vs standard · baseline ${sh.learnedCheckpoint?.baseline?.placements.length || 0} · ${sh.trials} measured candidates` : "") : "";
   const measured=sh.status==='nesting' && !sh.guidancePending && !sh.stage?.startsWith('Stopping') && sh.searchMetrics?.positions>0;
-  const searchLabel=measured ? `${sh.gpuProgress?.active?(sh.searchMetrics.gpuPositions?'GPU + CPU':'CPU · GPU ready'):sh.gpuProgress?.phase==='checking'?'CPU · GPU starting':sh.gpuProgress?'CPU fallback':'CPU'} · ${sh.trials.toLocaleString()} trials · ${sh.searchMetrics.positions.toLocaleString()} checks` : sh.stage;
-  if(measured)st.title=`${sh.stage} · ${sh.gpuProgress?.reason||'CPU pipeline'}. Trials count evaluated construction passes; checks count completed coarse/fine position tests across workers, including repair and calibration. Position checks are not whole-sheet layouts.`;
+  const searchLabel=measured ? `${sh.gpuProgress?.active?(sh.searchMetrics.gpuPositions?'GPU + CPU':'CPU · GPU ready'):sh.gpuProgress?.phase==='checking'?'CPU · GPU starting':sh.gpuProgress?'CPU fallback':'CPU'} · ${sh.trials.toLocaleString()} layout trials` : sh.stage;
+  if(measured)st.title=`${sh.stage} · ${sh.gpuProgress?.reason||'CPU pipeline'}. Layout trials are completed construction passes across all workers; interrupted passes are excluded. ${sh.searchMetrics.groups||0} complete group plans and ${sh.searchMetrics.branches||0} partial group branches evaluated. Diagnostic only: ${sh.searchMetrics.positions.toLocaleString()} low-level position checks, including repeats and early rejections. These are not distinct sheet arrangements.`;
   st.innerHTML = sh.stage ? `<span class="spin"></span><span>${esc(searchLabel)}</span><span class="r">${elapsed}${budget}</span>`
     : reviewingSrc ? `<span class="spin"></span><span>Claude is reviewing the ${reviewingSrc.charms.length} charms detected in ${esc(reviewingSrc.name)}</span><span class="r">${fmt.s(reviewingSrc.review.elapsed || 0)}</span>`
     : sh.recalled && !sh.charms.length ? `<span>${sh.recalled.placedCount}/${sh.recalled.charmCount} placed · ${fmt.pct(sh.recalled.density || 0)} full${sh.recalled.verification ? (sh.recalled.verification.ok ? " · verified ✓" : " · ⚠ flagged") : ""} · ${esc(sh.recalled.fileBase || "")}</span><span class="r">${sh.recalled.updatedAt ? new Date(sh.recalled.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}</span>`
@@ -3654,7 +3654,7 @@ function compareGPUSpeed() {
   const sh=allSheets().filter(sh=>activeCharms(sh).length).sort((a,b)=>activeCharms(b).length-activeCharms(a).length)[0];
   const job=sh?buildJob(sh):null,id=uid();
   let worker;
-  try{worker=new Worker('charm-nest-worker.js?v=20260922-gpu');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
+  try{worker=new Worker('charm-nest-worker.js?v=20260922-groups');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
   gpuComparison=worker;button.textContent="Cancel comparison";output.textContent="Checking GPU availability…";
   const finish=text=>{if(gpuComparison!==worker)return;output.textContent=text;button.textContent="Compare speed";worker.terminate();gpuComparison=null;};
   worker.onmessage=({data:m})=>{
@@ -3666,8 +3666,8 @@ function compareGPUSpeed() {
     if(!r.available){finish(r.reason+". CPU remains available.");return;}
     if(!r.cpu.verified||!r.gpu.verified){finish("The comparison did not pass geometric verification. Keep the CPU pipeline selected.");return;}
     if(!r.gpu.gpuChecks){finish("This sample used CPU checks only; it is too small or unsupported for a GPU comparison.");return;}
-    const rate=v=>Math.round(v).toLocaleString(),ratio=r.gpu.checksPerSecond/Math.max(1,r.cpu.checksPerSecond);
-    finish(`${r.pieces} ${r.sample} · CPU ${rate(r.cpu.checksPerSecond)} checks/s · GPU ${rate(r.gpu.checksPerSecond)} checks/s (${ratio.toFixed(2)}×). Verified pieces: CPU ${r.cpu.placed}/${r.pieces}, GPU ${r.gpu.placed}/${r.pieces}; fill ${Math.round(r.cpu.fill*100)}% / ${Math.round(r.gpu.fill*100)}%. Trials ${r.cpu.layouts} / ${r.gpu.layouts}. Includes GPU startup. Position-check throughput is not a whole-sheet speed multiplier.`);
+    const seconds=ms=>(ms/1000).toFixed(1);
+    finish(`${r.pieces} ${r.sample} · CPU: ${r.cpu.layouts} completed layout trials in ${seconds(r.cpu.ms)} s. GPU: ${r.gpu.layouts} in ${seconds(r.gpu.ms)} s. Best verified: CPU ${r.cpu.placed}/${r.pieces}, GPU ${r.gpu.placed}/${r.pieces}. Largest clear rectangle: CPU ${Math.round(r.cpu.clearRectangleFraction*100)}%, GPU ${Math.round(r.gpu.clearRectangleFraction*100)}% of sheet area. Same search budget; GPU startup included. A trial is a construction pass, not necessarily a unique layout.`);
   };
   worker.onerror=e=>finish("Comparison unavailable: "+e.message);
   try{worker.postMessage({type:'benchmark',jobId:id,job});}catch(e){finish("Comparison unavailable: "+e.message);}

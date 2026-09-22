@@ -83,6 +83,7 @@ const assets = [
   "charm-nest-learned.js",
   "charm-nest-worker.js",
   "charm-nest-gpu.js",
+  "charm-nest-lookahead.js",
   "charm-nest-background.js",
   "charm-nest-compute-worker.js",
   "charm-nest-pdf.js",

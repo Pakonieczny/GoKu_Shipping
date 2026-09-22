@@ -56,7 +56,7 @@ exports.handler = async (event) => {
       shouldStop: () => stop,
       yield: async () => { await maybePoll(); if (Date.now() - lastWrite > 2500) await write(); },
       onBest: (b) => { if (Solver.betterLayout(b, best, solverJob.sheet)) best = Solver.publicLayout(b); },
-      onTrial: (s) => { trials = s.trial + 1; }
+      onTrial: (s) => { trials = s.completedTrials ?? s.trial + 1; }
     });
     result = Solver.bestResult(result, best, solverJob.sheet);
     const verification = Solver.verify(solverJob, result.placements, 4);
