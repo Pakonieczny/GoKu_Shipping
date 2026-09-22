@@ -138,7 +138,7 @@ const ListMedia = (() => {
             await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{img.onload=img.onerror=null;reject(Error('Image timed out'));},20000);img.onload=()=>{clearTimeout(timer);resolve();};img.onerror=()=>{clearTimeout(timer);reject(Error('Image unavailable'));};img.src=cors(result);host.appendChild(img);});
             if(!host.isConnected || jobs.get(host)!==job)return;host.replaceChildren(img);
           }else if(result?.nodeType)host.replaceChildren(result);
-          else host.textContent=host.hasAttribute('data-listing') ? 'No listing image' : 'No vector available';
+          else host.textContent=host.hasAttribute('data-listing') ? (WORKSPACE_SANDBOX?'No saved listing image':'Listing image unavailable') : 'No vector available';
           ListZoom.bind(host,(host.hasAttribute('data-listing')?'listing:':'vector:')+job.key);
           job.state='done';
         }catch(_){
@@ -4698,7 +4698,7 @@ const Arrivals = window.Arrivals = (() => {
   state = Object.assign({ seen: {}, lastCheck: 0, nextCheck: 0, lastAdded: 0, error: null }, state || {});
   let tick = 0, busy = false;
   window.addEventListener("storage", e => { if (e.key !== storageKey() || !e.newValue) return; try { const other = JSON.parse(e.newValue); Object.assign(state.seen, other.seen); if (other.lastCheck > state.lastCheck) { state.lastCheck = other.lastCheck; state.nextCheck = other.nextCheck; state.lastAdded = other.lastAdded; } paint(); } catch (_) {} });
-  const interval = () => Math.max(1, Math.min(1440, +S.settings.pollMinutes || 1)) * 60000;
+  const interval = () => Math.max(WORKSPACE_SANDBOX ? 1 : 10, Math.min(1440, +S.settings.pollMinutes || 10)) * 60000;
   const at = id => state.seen[String(id)] || 0;
   const save = () => { try { localStorage.setItem(storageKey(), JSON.stringify(state)); } catch (_) {} };
   async function record(orders) {

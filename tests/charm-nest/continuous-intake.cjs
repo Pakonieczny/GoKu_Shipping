@@ -20,19 +20,19 @@ const bridge=fs.readFileSync('charm-nest-bridge.js','utf8'),html=fs.readFileSync
   observe([{isIntersecting:true}]);assert.equal(document.querySelectorAll('[data-key]').length,130);assert.equal(document.querySelector('.listMore'),null);
   // The production bridge handles incremental receipts without dropping the authoritative open-id list.
   const receipts=[{receipt_id:'1',_stamp:10,_hydrated:true},{receipt_id:'2',_stamp:20,_hydrated:true},{receipt_id:'3',_stamp:30,_hydrated:false}];let reads=[],sweeps=0,minimum;
-  const st={Date,allOpenReceipts:receipts,completedOrders:new Set(),etsyMeter:{total:0},etsyBraked:()=>false,sweptRecently:n=>{minimum=n;return false;},SWEEP_MIN_MS:90000,Cursor:{act:async()=>{}},refreshOrders:async()=>{sweeps++;},receiptStamp:r=>r._stamp,detailCache:new Map(),makeQueue:()=>fn=>fn(),hydrateOrder:async rid=>{reads.push(rid);return[];},applyHydration:rid=>{receipts.find(r=>r.receipt_id===rid)._hydrated=true;},orderForBridge:async r=>({receiptId:r.receipt_id,hydrated:r._hydrated,updateTs:r._stamp}),etsyState:()=>({}),S:{}};
+  const st={Date,SANDBOX:false,allOpenReceipts:receipts,completedOrders:new Set(),etsyMeter:{total:0},etsyBraked:()=>false,sweptRecently:n=>{minimum=n;return false;},SWEEP_MIN_MS:90000,Cursor:{act:async()=>{}},refreshOrders:async()=>{sweeps++;},receiptStamp:r=>r._stamp,detailCache:new Map(),makeQueue:()=>fn=>fn(),hydrateOrder:async rid=>{reads.push(rid);return[];},applyHydration:rid=>{receipts.find(r=>r.receipt_id===rid)._hydrated=true;},orderForBridge:async r=>({receiptId:r.receipt_id,hydrated:r._hydrated,updateTs:r._stamp}),etsyState:()=>({}),S:{}};
   const a=station.indexOf('    async "orders.snapshot"'),b=station.indexOf('    /** One paged list sweep',a);
   vm.createContext(st);vm.runInContext('var cmds={'+station.slice(a,b)+'};',st);
   const delta=await st.cmds['orders.snapshot']({refresh:true,intake:true,known:{'1':10,'2':19}},()=>{});
-  assert.equal(minimum,55000);assert.equal(sweeps,1);assert.deepEqual(Array.from(delta.orders,o=>o.receiptId),['2','3']);assert.equal(delta.total,2);assert.equal(delta.hydrated,2);assert.deepEqual(Array.from(delta.openIds),['1','2','3']);assert.deepEqual(reads,['3']);
+  assert.equal(minimum,600000);assert.equal(sweeps,1);assert.deepEqual(Array.from(delta.orders,o=>o.receiptId),['2','3']);assert.equal(delta.total,2);assert.equal(delta.hydrated,2);assert.deepEqual(Array.from(delta.openIds),['1','2','3']);assert.deepEqual(reads,['3']);
   const empty=await st.cmds['orders.snapshot']({intake:true,known:{'1':10,'2':20,'3':30}},()=>{});assert.equal(empty.total,0);assert.equal(empty.openIds.length,3,'empty delta is not an empty shop');
   const full=await st.cmds['orders.snapshot']({hydrate:true},()=>{});assert.equal(full.orders.length,3,'normal initial pull is still complete');
   // Explicit allowed origins must agree with the deployed station frame header.
   const toml=fs.readFileSync('netlify.toml','utf8');const frame=toml.slice(toml.indexOf('for = "/design-1.html"')).split('[[headers]]')[0];
   assert.match(frame,/frame-ancestors 'self' https:\/\/brites-charm-sorter.goldenspike.app https:\/\/goldenspike.app/);assert(!frame.includes('https://*'));
-  // Setting migration keeps opt-outs but upgrades the old default cadence.
+  // Setting migration keeps opt-outs but adopts the conservative live cadence.
   const settings={pollMinutes:10,pollOrders:'off',v:21};const cfg={localStorage:{getItem:()=>JSON.stringify(settings)},DEFAULTS:{stock:{},angleStep:10}};vm.createContext(cfg);vm.runInContext(html.slice(html.indexOf('function loadSettings()'),html.indexOf('function saveSettings()')),cfg);
-  const migrated=cfg.loadSettings();assert.equal(migrated.pollMinutes,1);assert.equal(migrated.pollOrders,'off');assert.equal(migrated.finalOptimizeCount,80);
+  const migrated=cfg.loadSettings();assert.equal(migrated.pollMinutes,10);assert.equal(migrated.pollOrders,'off');assert.equal(migrated.finalOptimizeCount,80);
   console.log('Continuous intake OK: 80-piece threshold, capacity fallback, draft budgets, shop dates/DST, lazy loading, no New badges, delta reuse, complete snapshots and exact frame origins');
 })().catch(e=>{console.error(e);process.exitCode=1;});
 

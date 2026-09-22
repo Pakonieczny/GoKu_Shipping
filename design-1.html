@@ -1605,7 +1605,7 @@ const etsyMeter = { total:0, times:[], maxQps:0, minute:[], buckets:{}, byOrder:
    in 10-minute buckets for the last hour, a per-day total that survives reloads (Etsy's quota is per day), and a watchdog
    that recognises a burst, a hot 10 minutes, the same order re-read over and over, or a 429 — and puts the brakes on:
    the bridge's Etsy-touching commands and the background heal passes wait out the brake; a person's own Refresh still
-   works. Limits live in ETSY_GUARD and are deliberately well under Etsy's 10 000/day. ── */
+   works. Limits live in ETSY_GUARD; actual Etsy allowances vary by API key. ── */
 const ETSY_GUARD = { burstPerMinute: 60, per10Min: 150, sameOrderPer10Min: 4, brakeMs: 5 * 60 * 1000 };
 const ETSY_LS = "designStation.etsyMeter.v1" + NS;
 (function loadEtsyDay() { try { const j = JSON.parse(localStorage.getItem(ETSY_LS) || "null"); const today = new Date().toDateString(); if (j && j.day === today) { etsyMeter.day = j.day; etsyMeter.dayTotal = Number(j.dayTotal) || 0; etsyMeter.buckets = j.buckets || {}; } else etsyMeter.day = today; } catch (_) { etsyMeter.day = new Date().toDateString(); } })();
@@ -1670,10 +1670,12 @@ setInterval(paintEtsyHud, 10000);
   };
   window.fetch = function (input, init) {
     if (SANDBOX) { const routed = sandboxRoute(input); if (routed !== input) { arguments[0] = routed; input = routed; } }
-    if (isEtsyCall(input) || (SANDBOX && /etsySandbox\?fn=(listOpenOrders|etsyOrderProxy)/.test(String(input)))) {
-      etsyRecord((typeof input === "string") ? input : (input && input.url) || "");
+    if (isEtsyCall(input)) {
+      const url=(typeof input === "string") ? input : (input && input.url) || "";
+      const imageRead=/\/etsyImages\b/.test(url);
+      if(!imageRead)etsyRecord(url);
       // the outcome is counted too: a 429 is the strongest signal the watchdog can get
-      return orig.apply(this, arguments).then(resp => { if (resp && resp.status === 429) { etsyMeter.status429++; etsyAlarm("Etsy answered 429 (rate limited)"); } else if (resp && resp.status >= 500) etsyMeter.errors++; return resp; }, err => { etsyMeter.errors++; throw err; });
+      return orig.apply(this, arguments).then(resp => { if(imageRead && Number(resp.headers?.get?.('x-etsy-calls'))>0)etsyRecord(url); if (resp && resp.status === 429 && (!imageRead || Number(resp.headers?.get?.('x-etsy-calls'))>0)) { etsyMeter.status429++; etsyAlarm("Etsy answered 429 (rate limited)"); } else if (resp && resp.status >= 500) etsyMeter.errors++; return resp; }, err => { etsyMeter.errors++; throw err; });
     }
     return orig.apply(this, arguments);
   };
@@ -1709,21 +1711,27 @@ function makeSpacingQueue(spacingMs = 250) {
 
 const isEtsyPath  = p => /^\/(etsy|listOpenOrders|etsyImages)/i.test(p);
 const runEtsyTask = makeSpacingQueue(250);   // ≈4 req/s
-const runImageTask = makeQueue(3);
+const runImageTask = makeQueue(1);
 
 /**
  * Resilient Etsy fetch. Layers, in order:
  *   proactive refresh → token header → 250 ms pacing → 401 refresh+retry →
- *   429 exponential backoff (honours Retry-After).
+ *   429 shared pause (honours Retry-After; no automatic retries).
  */
 async function apiFetch(path, init = {}) {
+  const pause=Math.max(etsyMeter.brakeUntil,Number(localStorage.getItem(ETSY_LS+'.pause'))||0);
+  if(!SANDBOX && isEtsyPath(path) && pause>Date.now())return new Response(JSON.stringify({error:'Etsy reads paused to protect API allowance'}),{status:429,headers:{'Retry-After':String(Math.ceil((pause-Date.now())/1000))}});
   await ensureFreshToken();
 
   let token = localStorage.getItem(TOKEN_KEYS.access) || "";
-  const doFetch = () => fetch(`${FN}${path}`, {
+  const doFetch = () => {
+    const pause=Math.max(etsyMeter.brakeUntil,Number(localStorage.getItem(ETSY_LS+'.pause'))||0);
+    if(!SANDBOX && isEtsyPath(path) && pause>Date.now())return Promise.resolve(new Response(JSON.stringify({error:'Etsy reads paused to protect API allowance'}),{status:429,headers:{'Retry-After':String(Math.ceil((pause-Date.now())/1000))}}));
+    return fetch(`${FN}${path}`, {
     ...init,
     headers: { ...(init.headers || {}), "access-token": token }
   });
+  };
 
   let resp = isEtsyPath(path) ? await runEtsyTask(doFetch) : await doFetch();
 
@@ -1743,15 +1751,12 @@ async function apiFetch(path, init = {}) {
   }
 
   if (resp.status === 429) {
-    let attempt = 0;
-    while (attempt < 4 && resp.status === 429) {
-      const ra = Number(resp.headers?.get?.("retry-after"));
-      const backoff = Math.max(Number.isFinite(ra) ? ra * 1000 : 0, 500 * Math.pow(2, attempt));
-      await sleep(backoff);
-      resp = isEtsyPath(path) ? await runEtsyTask(doFetch) : await doFetch();
-      attempt++;
-    }
+    const raw=resp.headers?.get?.('retry-after'),seconds=Number(raw);
+    const until=raw&&Number.isFinite(seconds)?Date.now()+seconds*1000:Date.parse(raw)||Date.now()+ETSY_GUARD.brakeMs;
+    etsyMeter.brakeUntil=Math.max(etsyMeter.brakeUntil,until);
+    try{localStorage.setItem(ETSY_LS+'.pause',String(etsyMeter.brakeUntil));}catch(_){}
   }
+
   return resp;
 }
 
@@ -1761,13 +1766,14 @@ async function fetchReceiptRobust(rid, { signal, retries = 2 } = {}) {
   while (attempt <= retries) {
     try {
       const resp = await apiFetch(`/etsyOrderProxy?orderId=${encodeURIComponent(rid)}`, { signal });
+      if (resp.status===429) throw Object.assign(new Error("Etsy reads paused to protect API allowance"),{quotaPaused:true});
       if (!resp.ok) throw new Error("HTTP " + resp.status);
       const data = await resp.json();
       const txs = data?.transactions || [];
       if (!Array.isArray(txs) || !txs.length) throw new Error("no-transactions");
       return data;
     } catch (e) {
-      if (e?.name === "AbortError") throw e;
+      if (e?.name === "AbortError" || e?.quotaPaused) throw e;
       lastErr = e;
       await sleep(250 * Math.pow(2, attempt));
     }
@@ -1822,19 +1828,11 @@ async function fetchListingImages(listingId) {
   if (__imagesFlight.has(key)) return __imagesFlight.get(key);
 
   const task = runImageTask(async () => {
-    let attempt = 0;
-    while (attempt < 4) {
-      const resp = await apiFetch(`/etsyImages?listingId=${encodeURIComponent(key)}`);
-      if (resp.status === 429) {
-        const ra = Number(resp.headers?.get?.("retry-after"));
-        await sleep(Math.max(Number.isFinite(ra) ? ra * 1000 : 0, 500 * Math.pow(2, attempt)));
-        attempt++; continue;
-      }
-      if (!resp.ok) return [];
-      const data = await resp.json();
-      return Array.isArray(data) ? data : (data?.results || data?.images || data?.data || []);
-    }
-    return [];
+    // Public cached metadata needs no OAuth refresh, auth retry or 429 retry.
+    const resp = await fetch(`${FN}/etsyImages?listingId=${encodeURIComponent(key)}`);
+    if (!resp.ok || resp.status===202) return [];
+    const data = await resp.json();
+    return Array.isArray(data) ? data : (data?.results || data?.images || data?.data || []);
   });
 
   __imagesFlight.set(key, task);
@@ -6959,7 +6957,7 @@ const Bridge = (() => {
         · re-validation is one paged list sweep (orders.check), not one detail call per order
         · every Etsy-touching reply carries the calls it cost, so the sorter can meter and budget them ── */
   const SWEEP_MIN_MS = 90 * 1000;
-  const sweptRecently = (minimum=SWEEP_MIN_MS) => S.lastSweepAt && Date.now() - S.lastSweepAt < minimum && allOpenReceipts.length > 0;
+  const sweptRecently = (minimum=SWEEP_MIN_MS) => S.lastSweepAt && Date.now() - S.lastSweepAt < minimum;
   function filtersForBridge() { return { metals: [...F.metals], completed: F.completed, sel: F.sel, note: F.note, attn: F.attn, msg: F.msg, due: F.due, free: F.free, iAttn: F.iAttn, iMsg: F.iMsg, iMulti: F.iMulti, iNoSku: F.iNoSku, activeMetal, dateDir, orderDir }; }
   function stateSnapshot() {
     const open = allOpenReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
@@ -7145,7 +7143,7 @@ const Bridge = (() => {
     async "orders.snapshot"(a, progress) {
       if (etsyBraked() && (a.refresh || !allOpenReceipts.length)) throw new Error(`Etsy watchdog brake until ${new Date(etsyMeter.brakeUntil).toLocaleTimeString()}: ${etsyMeter.alarm && etsyMeter.alarm.why}`);
       const calls0 = etsyMeter.total; let refreshSkipped = false;
-      if ((a.refresh && !sweptRecently(a.intake ? 55000 : SWEEP_MIN_MS)) || !allOpenReceipts.length) { progress(0, 0, "Refreshing the open order list from Etsy"); await Cursor.act("refresh", null, "Refresh the order list from Etsy"); await refreshOrders({ heal: false }); }
+      if ((a.refresh && !sweptRecently(a.intake ? (SANDBOX ? 55000 : 10*60000) : SWEEP_MIN_MS)) || !S.lastSweepAt) { progress(0, 0, "Refreshing the open order list from Etsy"); await Cursor.act("refresh", null, "Refresh the order list from Etsy"); await refreshOrders({ heal: false }); }
       else { refreshSkipped = !!a.refresh; await Cursor.act("banner", null, refreshSkipped ? `Open orders as listed ${Math.round((Date.now() - S.lastSweepAt) / 1000)} s ago (no new Etsy sweep)` : "Reading the open orders", { click: false }); }
       let list = allOpenReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
       if (Array.isArray(a.metals) && a.metals.length) list = list.filter(r => !r._hydrated || METAL_ORDER.some(k => a.metals.includes(k) && r._metalCounts && r._metalCounts[k]));

@@ -175,6 +175,7 @@
     "_charmNestRoseStock.js",
     "_etsyApiMeter.js",
     "_etsyApiUsage.js",
+    "_etsyImageCache.js",
     "_etsyInventoryCanonical.js",
     "_etsyMailAnthropic.js",
     "_etsyMailAuth.js",
