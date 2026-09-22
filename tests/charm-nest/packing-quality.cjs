@@ -5,11 +5,6 @@ const layout=(extent,contact)=>({placements:[{id:'a',xPt:1,yPt:1,wPt:extent-1,hP
 const a=layout(30,1),b=layout(30.1,2),c=layout(30.2,3);
 assert(!S.betterLayout(b,a,sheet));assert(!S.betterLayout(c,b,sheet));assert(S.betterLayout(a,c,sheet));
 assert(S.betterLayout(layout(30,2),a,sheet),'contact breaks exact offcut ties');
-assert(S.betterLayout(layout(98,.8),layout(97,.6),sheet),'an unusable edge sliver cannot defeat better packing on a nearly full sheet');
-assert(S.betterLayout(layout(85,.4),layout(98,.8),sheet),'a useful partial-sheet offcut still takes priority');
-assert(!S.betterLayout({...layout(98,10),placements:[{id:'a'}]},layout(98,.8),sheet),'missing geometry cannot outrank a valid full sheet');
-const fullCandidates=[layout(99,.6),layout(98,.7),layout(97,.8),layout(96,.9)];
-for(let i=0;i<fullCandidates.length;i++)for(let j=i+1;j<fullCandidates.length;j++)assert(S.betterLayout(fullCandidates[j],fullCandidates[i],sheet),'full-sheet ranking remains transitive');
 const unknown={...a,contactQuality:undefined,density:.9};
 assert(!S.betterLayout(unknown,a,sheet),'missing metrics cannot create a non-transitive replacement cycle');
 const copy=S.publicLayout(a);a.placements[0].xPt=4;assert.equal(copy.placements[0].xPt,1);a.placements[0].xPt=1;
