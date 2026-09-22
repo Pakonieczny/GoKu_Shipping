@@ -22,6 +22,11 @@ const MM = 25.4 / 72, PT = 72 / 25.4;
 const B = window.B = { link: null, orders: { rows: [], byKey: new Map(), pulledAt: 0, stale: false, snapshot: null, filtered: 0 }, master: { entries: new Map(), files: [], loadedAt: 0, loading: null, error: null, jobs: new Map() }, maps: { optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [], rows: [] }, loadedAt: 0 }, pool: { rows: new Map(), sources: new Map() }, engrave: { items: new Map(), fonts: { ok: false, Regular: null, Semibold: null, error: null, loading: null } }, review: { items: [] }, openRuns: null, run: null, sets: new Map(), employee: (localStorage.getItem("cn.employee") || "").trim() };
 const SOURCE_LABEL = { personalization: "the personalisation box", personalisation: "the personalisation box", buyerMessage: "the buyer's message", staffNote: "the staff note", messages: "the staff messages", none: "", "": "" };
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+// Shared by waiting and decided engravings; choices remain read-only purchase facts.
+function purchaseMarkup(row) {
+  const detail=O.purchaseDetails(row.line,row.spec);
+  return `<div class="purchaseType"><span class="purchaseLabel">Jewellery</span><strong>${esc(detail.type)}</strong></div><div class="purchaseChoices"><span class="purchaseLabel">Selected options</span>${detail.options.length ? `<dl>${detail.options.map(v=>`<div><dt>${esc(v.name || "Option")}</dt><dd>${esc(v.value)}</dd></div>`).join("")}</dl>` : '<span class="purchaseMissing">Selections unavailable</span>'}</div>`;
+}
 const fmtT = t => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const notifyPerson = (title, body) => { if (S.settings.notify === "on" && "Notification" in window && Notification.permission === "granted") { try { new Notification(title, { body }); } catch (_) {} } };
@@ -499,7 +504,7 @@ const Orders = window.Orders = (() => {
       changePending:!!row.changePending,repoolChanged:!!row.repoolChanged,arrivedAt: row.arrivedAt || 0, createTs: o.createTs || 0, materialOverride: row.materialOverride || null, sizeOverride: row.sizeOverride || null, problems: (row.problems || []).map(p => p.kind), updateTs: o.updateTs, orderId: o.receiptId, transactionId: l.transactionId,
       snap: { title: cap(l.title, 160), listingId: cap(l.listingId, 24), metalKey: cap(l.metalKey, 24), metalLabel: cap(l.metalLabel, 40),
         orderNumber: cap(o.orderNumber, 24), buyer: cap(o.buyer && o.buyer.name, 60), shipBy: +o.shipBy || 0, isGift: !!o.isGift,
-        vars: (l.variations || []).slice(0, 8).map(v => cap(v.name, 40) + "\u241f" + cap(v.value, 60)),
+        vars: (l.variations || []).map(v => String(v.name ?? v.formatted_name ?? "") + "\u241f" + String(v.value ?? v.formatted_value ?? "")),
         pers: (l.personalization || []).slice(0, 4).map(x => cap(x, 200)) } }];
   }
   /** The other direction: a recorded line, back to the row shape every card, list, filter and window already reads. */
@@ -2504,7 +2509,7 @@ const Engrave = window.Engrave = (() => {
       if (!row) {
         row = el("div", "doneRow placementRow hoverItem");
         row.setAttribute("role","button"); row.tabIndex=0; row.dataset.open=job.key;
-        row.innerHTML='<span class="placementThumb" role="img"></span><b class="mono" data-order></b><span class="sku mono"></span><span class="w"></span><span class="dim" data-stage></span>';
+        row.innerHTML='<span class="placementThumb" role="img"></span><div class="engravingIdentity"><div class="engravingOrder"><b class="mono" data-order></b><span class="sku mono"></span></div><span class="purchaseLabel">Engraving</span><span class="w"></span><span class="dim" data-stage></span></div><div class="purchaseSummary" data-purchase></div>';
         const open=()=>{if(isWorking(job))return;EG.focus=job.key;EG.list=false;render();};
         row.onclick=open; row.onkeydown=e=>{if(e.key==="Enter" || e.key===" "){e.preventDefault();open();}};
         placementRows.set(job,row);
@@ -2515,6 +2520,8 @@ const Engrave = window.Engrave = (() => {
       row.setAttribute("aria-label",`${busy ? "Preparing" : "Open"} engraving for order ${receipt} · ${sku}`);
       const write=(selector,value)=>{const node=row.querySelector(selector);if(node.textContent!==value)node.textContent=value;};
       write('[data-order]',receipt);write('.sku',sku);write('.w',(job.lines || []).join(' / '));
+      const purchase=purchaseMarkup(job.row);
+      if(row._purchase!==purchase){row.querySelector('[data-purchase]').innerHTML=purchase;row._purchase=purchase;}
       write('[data-stage]',busy ? (job.state === "classify" ? "Reading words…" : "Preparing preview…") : "");
       if(list.children[index] !== row) list.insertBefore(row,list.children[index] || null);
       const charm=charmFor(job), host=row.querySelector('.placementThumb');
@@ -2610,7 +2617,7 @@ const Engrave = window.Engrave = (() => {
     if (EG.list == null && jobs.some(isWorking)) EG.list = true;
     const tab = EG.tab;
     const focus = queue.find(j2 => j2.key === EG.focus) || queue[0] || null;
-    const doneStamp=tab === "done" ? JSON.stringify([EG.q,EG.openDone,done.map(j=>[j.key,j.state,j.lines,j.approvedAt,j.approvedBy,j.backs])]) : null;
+    const doneStamp=tab === "done" ? JSON.stringify([EG.q,EG.openDone,done.map(j=>[j.key,j.state,j.lines,j.approvedAt,j.approvedBy,j.backs,O.purchaseDetails(j.row.line,j.row.spec)])]) : null;
     if(tab === "done" && v.dataset.egTab === "done" && v._doneStamp === doneStamp && v.querySelector('#egBacks')) {renderChrome(v,queue);return;}
     v._doneStamp=doneStamp;
     const liveList = v.querySelector('.egPlacementList');
@@ -2673,7 +2680,7 @@ const Engrave = window.Engrave = (() => {
                 </dl>
                 <div class="ctl">${j2.recalledFrom ? `<span class="hint">this set is recalled — reopening rebuilds its sheet from the master files first</span>` : ""}</div>
               </div>`;
-            return `<div class="doneRow decidedRow hoverItem${open ? " open" : ""}" tabindex="0" aria-expanded="${open}" data-rid="${esc(j2.row.order.receiptId)}" data-key="${esc(j2.key)}" title="View engraving details"><span class="placementThumb" role="img" aria-label="${esc(j2.row.spec.designSku || "Charm")} engraving preview">${png ? `<img crossorigin="anonymous" src="${esc(cors(png))}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}</span><b class="mono">${esc(j2.row.order.receiptId)}</b><span class="sku mono">${esc(j2.row.spec.designSku || "")}</span><span class="w">${w}</span><div class="decisionActions"><div class="decisionStatus"><span class="ost ${j2.state === "skipped" ? "warn" : "ok"}" title="${stateWhy(j2)}">${stateWord(j2)}</span><span class="by">${esc(who || "Decision recorded")}${j2.approvedAt ? " · " + fmtT(j2.approvedAt) : ""}</span></div><button class="btn ghost sm" data-a="reopen" title="Reopen this engraving for changes">Reopen</button></div>${detail}</div>`;
+            return `<div class="doneRow decidedRow hoverItem${open ? " open" : ""}" tabindex="0" aria-expanded="${open}" data-rid="${esc(j2.row.order.receiptId)}" data-key="${esc(j2.key)}" title="View engraving details"><span class="placementThumb" role="img" aria-label="${esc(j2.row.spec.designSku || "Charm")} engraving preview">${png ? `<img crossorigin="anonymous" src="${esc(cors(png))}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}</span><div class="engravingIdentity"><div class="engravingOrder"><b class="mono">${esc(j2.row.order.receiptId)}</b><span class="sku mono">${esc(j2.row.spec.designSku || "")}</span></div><span class="purchaseLabel">Engraving</span><span class="w">${w}</span></div><div class="purchaseSummary">${purchaseMarkup(j2.row)}</div><div class="decisionActions"><div class="decisionStatus"><span class="ost ${j2.state === "skipped" ? "warn" : "ok"}" title="${stateWhy(j2)}">${stateWord(j2)}</span><span class="by">${esc(who || "Decision recorded")}${j2.approvedAt ? " · " + fmtT(j2.approvedAt) : ""}</span></div><button class="btn ghost sm" data-a="reopen" title="Reopen this engraving for changes">Reopen</button></div>${detail}</div>`;
           }).join("") + `</div>`
         : `<div class="libEmpty">${window.Recall && Recall.on() ? "Nothing in this set was engraved." : "nothing decided yet"}</div>`;
       bk.querySelectorAll(".doneRow").forEach(rw => {

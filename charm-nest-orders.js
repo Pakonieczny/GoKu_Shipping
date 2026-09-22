@@ -23,6 +23,56 @@
      after normalisation (lower-case, trimmed, single spaces). The built-in "*" map below covers the plain literal
      values the shop's listings use; anything else is a "Needs mapping" review item until a person maps it once. */
   const norm = s => String(s == null ? "" : s).replace(/&quot;/g, "\"").toLowerCase().replace(/\s+/g, " ").trim();
+  // Display-only order details. Never alter fulfilment mapping or infer a
+  // purchased variant from a design SKU (the same charm can be sold many ways).
+  const optionText = value => String(value ?? "").replace(/&(?:quot|amp|apos|lt|gt|#39|#34);/g, entity => ({"&quot;":'"',"&amp;":"&","&apos;":"'","&#39;":"'","&#34;":'"',"&lt;":"<","&gt;":">"}[entity])).trim();
+  function purchaseOptions(line = {}, spec = {}) {
+    line=line || {};spec=spec || {};
+    const raw = Array.isArray(line.variations) && line.variations.length ? line.variations : (spec.options || []);
+    const seen = new Set();
+    return raw.map(v => ({name:optionText(v.name ?? v.formatted_name),value:optionText(v.value ?? v.formatted_value)})).filter(v => {
+      const key=JSON.stringify([v.name,v.value]);
+      if(!v.value || /personali[sz]ation|engraving text|custom text/i.test(v.name) || seen.has(key))return false;
+      seen.add(key);return true;
+    });
+  }
+  function purchaseDetails(line = {}, spec = {}) {
+    line=line || {};spec=spec || {};
+    const options=purchaseOptions(line,spec);
+    const families=text=>{
+      const s=optionText(text).toLowerCase(),found=[];
+      if(/\bnecklace\b|\bwith chain\b/.test(s))found.push('necklace');
+      if(/\bhuggies?\b/.test(s))found.push('huggie');
+      else if(/\bhoops?\b/.test(s))found.push('hoop');
+      if(/\bstuds?\b/.test(s))found.push('stud');
+      if(/\bbracelets?\b/.test(s))found.push('bracelet');
+      if(/\banklets?\b/.test(s))found.push('anklet');
+      if(/\bkey\s*(chains?|rings?)\b/.test(s))found.push('keychain');
+      return found;
+    };
+    const titleFamilies=families(line.title), titleFamily=titleFamilies.length===1?titleFamilies[0]:null;
+    const label={necklace:'Necklace',stud:'Stud earrings',hoop:'Hoop earrings',huggie:'Huggie hoop earrings',bracelet:'Bracelet',anklet:'Anklet',keychain:'Keychain',earrings:'Earrings','earring-single':'Single earring'};
+    const charmLabel=(family,text='')=>family==='necklace'?'Charm only · Necklace':family==='huggie'||family==='hoop'?'Charm only · '+(family==='huggie'?'Huggie hoop':'Hoop')+(/\bset\b|\bpair\b|\bcharms\b/i.test(text)?' charm set':' charm'):'Charm only';
+    const selected=options.filter(v=>/type|style|product|item|option|select|choose|choice|chain|length/i.test(v.name) && !/metal|colou?r|finish|plating|text/i.test(v.name));
+    const types=[];
+    for(const v of selected){
+      const text=v.value.toLowerCase(),fs=families(text),family=fs.length===1?fs[0]:null;
+      const only=/\b(?:charms?|pendants?)\s*only\b|\bonly\s+(?:charms?|pendants?)\b|\b(?:no|without)\s+(?:a\s+)?(?:chain|hoops?|earrings?)\b|\bloose charms?\b/.test(text) || /^(?:charm|pendant)s?(?:\s*[+&]\s*engraving)?$/.test(text);
+      if(only)types.push(charmLabel(family || titleFamily,text));
+      else if(family)types.push(label[family]);
+      else if(/\bearrings?\b/.test(text))types.push(label[['stud','hoop','huggie'].includes(titleFamily)?titleFamily:'earrings']);
+    }
+    const unique=[...new Set(types)];
+    // Explicit charm-only choices override a listing's generic necklace title.
+    const only=unique.filter(t=>t.startsWith('Charm only'));
+    let type=only.length===1?only[0]:unique.length===1?unique[0]:null;
+    if(!type && !unique.length){
+      if(spec.form==='charm')type=charmLabel(titleFamily,line.title);
+      else if(spec.form==='earrings' && ['stud','hoop','huggie'].includes(titleFamily))type=label[titleFamily];
+      else type=label[spec.form] || label[titleFamily] || (/\bearrings?\b/i.test(line.title || '') && !titleFamilies.length?'Earrings':null);
+    }
+    return {type:type || 'Type not specified',options};
+  }
   const FORM_VALUES = {
     "necklace": "necklace", "pendant necklace": "necklace", "charm necklace": "necklace", "necklace (with chain)": "necklace", "with chain": "necklace", "with necklace": "necklace", "necklace & charm": "necklace", "charm + chain": "necklace", "charm and chain": "necklace", "charm with chain": "necklace",
     "earrings": "earrings", "earring": "earrings", "pair of earrings": "earrings", "earrings (pair)": "earrings", "single earring": "earring-single",
@@ -323,6 +373,6 @@
     if (solid && options.combineSolids) return {key:"solid-waiting", name:"14K / 10K Solid Waiting for Approval", setId:null, seq:null, standalone:true, working:true};
     return {key:(solid ? "standalone:"+sheet.metal+":" : "working:")+sheet.day+":"+scope, name:solid ? "Standalone "+(sheet.metal === "gold10k" ? "10K" : "14K") : "Incomplete Sheets: Waiting to be filled!", setId:null, seq:null, standalone:solid, working:true};
   }
-  return { libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, interpretLine, lineKey, poolId,
+  return { purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, interpretLine, lineKey, poolId,
     orderPlacedAt, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES };
 });

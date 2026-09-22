@@ -11,7 +11,7 @@ dom.window.ResizeObserver = class { constructor(){observers.push(this);} observe
 dom.window.HTMLCanvasElement.prototype.getContext = () => ({fillRect(){}});
 let charm = null;
 const c = vm.createContext({window:dom.window, document, console:{error:(...x)=>errors.push(x)}, ResizeObserver:dom.window.ResizeObserver, B:{engrave:{items:jobs,fonts:{ok:true}}},
-  S:{settings:{},mode:'engrave'}, PT:72/25.4, MM:25.4/72, SOURCE_LABEL:{},
+  O:require('../../charm-nest-orders.js'), S:{settings:{},mode:'engrave'}, PT:72/25.4, MM:25.4/72, SOURCE_LABEL:{},
   Pool:{charmOf:()=>charm,sheetOf:()=>null}, P:{drawCharm(){throw Error('invalid saved path');}}, Review:{items:()=>[],count:()=>0,remove(){}}, Master:{entryFor:()=>null,fetchEntry:async()=>null},
   LiveStrip:{render(){}}, RunCtl:{poke(){}}, Orders:{render(){}},
   setTimeout:fn=>(timers.push(fn),timers.length),clearTimeout(){},
@@ -19,9 +19,10 @@ const c = vm.createContext({window:dom.window, document, console:{error:(...x)=>
   el:(tag,cls,html='')=>{const e=document.createElement(tag);e.className=cls;e.innerHTML=html;return e;},
   esc:v=>String(v ?? '').replace(/[&<>"']/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x])),
   toast(){}, agent(){}, getComputedStyle:()=>({flexGrow:'0'})});
+vm.runInContext(source.slice(source.indexOf('function purchaseMarkup('),source.indexOf('const fmtT =')),c);
 vm.runInContext(source.slice(start,end),c);
 const E=dom.window.Engrave;
-const row={state:'pooled',poolIds:['copy'],order:{receiptId:'test-order'},line:{sku:'TEST'},spec:{designSku:'TEST'}};
+const row={state:'pooled',poolIds:['copy'],order:{receiptId:'test-order'},line:{sku:'TEST',title:'T-Rex necklace',variations:[{name:'Metal / Colour',value:'Gold Filled'},{name:'Style',value:'Charm only'}]},spec:{designSku:'TEST'}};
 const job={key:'test',row,copies:['copy'],state:'blocked',lines:['Test'],questions:[],reason:'Waiting for geometry',view:{}};
 jobs.set(job.key,job);
 assert.doesNotThrow(()=>E.render(),'legacy back views without detail must render');
@@ -56,6 +57,10 @@ document.querySelector('.doneRow').click();
 assert(document.querySelector('.doneDetail'),'legacy decided records expand without detail metadata');
 console.log('Engrave view OK: legacy metadata, missing outlines, local error/retry, observer cleanup, deferred preparation');
 assert(document.querySelector('.decidedRow .placementThumb'),'Decided shares the Placements thumbnail size');
+assert.match(document.querySelector('.purchaseSummary').textContent,/Charm only · Necklace/);
+assert.match(document.querySelector('.purchaseSummary').textContent,/Metal \/ ColourGold Filled/);
+row.line.variations[0].value='Sterling Silver';E.render();
+assert.match(document.querySelector('.purchaseSummary').textContent,/Sterling Silver/,'changed order options invalidate the decided-row cache');
 assert(document.querySelector('.decisionActions .decisionStatus'));
 assert.equal(document.querySelectorAll('.decidedRow [data-a="reopen"]').length,1,'one clear action even with details expanded');
 (async()=>{
@@ -81,6 +86,16 @@ assert.equal(document.querySelectorAll('.decidedRow [data-a="reopen"]').length,1
   await Promise.resolve();finish({engrave:false,text:'',confidence:1,questions:[]});await reading;
   assert(document.querySelector('[data-eg-working]').hidden,'classifier completion clears spinner');
   console.log('Working indicator OK: active tasks only, completion/failure refresh in place, missing geometry waits without spinning');
+  E.restoreView({tab:'place',chosen:true,list:true});E.render();
+  const listRow=document.querySelector('[data-open="test"]');
+  assert.match(listRow.querySelector('.purchaseSummary').textContent,/Charm only · Necklace/);
+  row.line.variations[0].value='<img src=x onerror=alert(1)>';
+  E.render();
+  assert.equal(document.querySelector('[data-open="test"]'),listRow,'option updates preserve the keyed row and thumbnail');
+  assert.equal(listRow.querySelectorAll('.purchaseSummary img').length,0,'customer selections cannot inject markup');
+  assert.match(listRow.querySelector('.purchaseSummary').textContent,/<img src=x/);
+  row.line.variations[0].value='Sterling Silver';E.render();
+  console.log('Purchase rows OK: waiting and decided views, refreshed choices, retained thumbnails and escaped customer text');
 })().catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>dom.window.close());
 
 // Boot must paint a direct Engrave URL before waiting for recovery, and must
