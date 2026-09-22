@@ -3,8 +3,8 @@ const O=require('../../charm-nest-orders.js'),{JSDOM}=require('jsdom');
 const bridge=fs.readFileSync('charm-nest-bridge.js','utf8'),html=fs.readFileSync('charm-nest-1.html','utf8'),station=fs.readFileSync('design-1.html','utf8');
 (async()=>{
   assert.equal(O.intakePlan({count:84}).phase,'fill');assert.equal(O.intakePlan({count:85}).phase,'final');assert.equal(O.intakePlan({count:33}).phase,'fill');
-  assert.equal(O.intakePlan({count:10,area:90,capacity:100}).phase,'final','capacity pressure can precede 85 pieces');
-  assert.equal(O.intakePlan({count:10,force:true}).phase,'final','a draft that cannot fit gets full optimization before spillover');
+  assert.equal(O.intakePlan({count:10,area:90,capacity:100}).phase,'repack','capacity pressure can precede 85 pieces');
+  assert.equal(O.intakePlan({count:10,force:true}).phase,'repack','a draft that cannot fit gets full optimization before spillover');
   assert.equal(O.intakePlan({count:20,budgetS:180}).budgetMs,12000);assert.equal(O.intakePlan({count:85,budgetS:180}).budgetMs,180000);
   const day=(ts)=>O.orderDay({order:{createTs:Date.parse(ts)/1000},arrivedAt:Date.now()});
   assert.equal(day('2026-09-22T03:59:00Z').key,'2026-09-21');assert.equal(day('2026-09-22T04:00:00Z').key,'2026-09-22');
@@ -44,13 +44,13 @@ const bridge=fs.readFileSync('charm-nest-bridge.js','utf8'),html=fs.readFileSync
    const pg={runId:'r',metal:'gold',page:sealed?2:1,charms:Array.from({length:oldCount},(_,i)=>mk(i)),placements:Array.from({length:oldCount},(_,i)=>({id:'c'+i,cxPt:i,cyPt:1,angle:0})),status:'complete',fileBase:'draft',sheetId:'draft',persistedDone:true};
    const done={runId:'r',metal:'gold',page:1,charms:[mk(999)],placements:[{id:'c999'}],status:'complete',fileBase:'sealed',sheetId:'sealed',intakeFinalized:true,persistedDone:true};
    const pages=sealed?[done,pg]:[pg],runs={runId:'r',status:'processed'},row={order:{receiptId:'incoming'},state:'pulled',spec:{material:'gold'},poolIds:[]};let starts=0;
-   const c={window:{},O,S:{settings:{maxFill:.80,optimizeAt:85,finalOptimizeCount:85,budgetS:180},sheets:{gold:{pages,active:0}}},allSheets:()=>pages,pagesOf:()=>pages,activePage:()=>pages[c.S.sheets.gold.active],activeCharms:p=>p.charms,Orders:{rows:()=>[row]},Sets:{ofRun:()=>[]},Gate:{state:()=>({forceFill:{}}),modern:()=>true,nestable:()=>true},Pool:{addAll:async()=>{const p=pages[c.S.sheets.gold.active];for(let i=oldCount;i<oldCount+newCount;i++){const charm=mk(i);p.charms.push(charm);row.poolIds.push(charm.poolId);}row.state='pooled';},update:async()=>{}},usableArea:()=>10000,inflatedArea:x=>x.areaPt2,agent(){},startNest:p=>{starts++;p.status='complete';p.persistedDone=true;p.dirty=false;},sleep:async()=>{throw Error('unexpected unfinished worker');},RunCtl:{onSheetDone(){throw Error('unexpected hold');}}};
+   const c={window:{},O,S:{settings:{maxFill:.80,optimizeAt:85,finalOptimizeCount:85,budgetS:180},sheets:{gold:{pages,active:0}}},allSheets:()=>pages,pagesOf:()=>pages,activePage:()=>pages[c.S.sheets.gold.active],activeCharms:p=>p.charms,Orders:{rows:()=>[row]},Sets:{ofRun:()=>[]},Gate:{state:()=>({forceFill:{}}),modern:()=>true,nestable:()=>true},Pool:{addAll:async()=>{const p=pages[c.S.sheets.gold.active];for(let i=oldCount;i<oldCount+newCount;i++){const charm=mk(i);p.charms.push(charm);row.poolIds.push(charm.poolId);}row.state='pooled';p.placements=[];delete p.intakeOptimized;delete p.intakeOptimizedCount;p.liveInfo=null;},update:async()=>{}},usableArea:()=>10000,inflatedArea:x=>x.areaPt2,agent(){},startNest:p=>{starts++;p.status='complete';p.persistedDone=true;p.dirty=false;},sleep:async()=>{throw Error('unexpected unfinished worker');},RunCtl:{onSheetDone(){throw Error('unexpected hold');}}};
    const a=bridge.indexOf('const LiveNest ='),b=bridge.indexOf('\n/*',a+20);let code=bridge.slice(a,b).replace('    await finish(run);','    /* External storage verified separately. */');vm.createContext(c);vm.runInContext(code,c);
    return {c,pg,done,run:runs,starts:()=>starts,live:c.window.LiveNest};
  }
  const partial=setup(35,10,{sealed:true});await partial.live.add(partial.run);assert.equal(partial.pg.charms.length,45);assert.equal(partial.done.charms.length,1);assert.equal(partial.done.placements[0].id,'c999');assert.equal(partial.starts(),1);assert.equal(partial.live.prepareSheet(partial.pg).phase,'fill');
- const final=setup(80,5);await final.live.add(final.run);const fixed=final.pg.charms[0];fixed.pinned={cxPt:1,cyPt:2,angle:0};const auto=final.pg.charms[1];auto.pinned={cxPt:2,cyPt:2,angle:0};auto.arrivalPin=true;
- assert.equal(final.live.prepareSheet(final.pg).phase,'final');assert(fixed.pinned);assert.equal(auto.pinned,null);assert.equal(final.pg.placements.length,80,'previous layout seeds the next search');
+ const final=setup(80,5);await final.live.add(final.run);const fixed=final.pg.charms[0];fixed.pinned={cxPt:1,cyPt:2,angle:0};delete fixed.arrivalPin;const auto=final.pg.charms[1];auto.pinned={cxPt:2,cyPt:2,angle:0};auto.arrivalPin=true;
+ assert.equal(final.live.prepareSheet(final.pg).phase,'fill','try existing gaps before the threshold search');final.pg.intakeForceFinal=true;assert.equal(final.live.prepareSheet(final.pg).phase,'final');assert(fixed.pinned);assert.equal(auto.pinned,null);assert.equal(final.pg.placements.length,80,'previous layout seeds the next search');
  console.log('Live nesting OK: finalized sheets fixed, arrivals append to draft, full search at 85, operator pins preserved');
 })().catch(e=>{console.error(e);process.exitCode=1;});
 

@@ -324,7 +324,8 @@
     const measuredSearch=async(...args)=>{
       let result;
       if(gpu && args[0].variants.length && args[2].W*args[2].H*args[0].variants.length>=20000 && !stopped()){
-        const probe=!job.gpuBenchmark && (gpuSamples.length<3 || ++gpuCalls%40===0), gpuStart=now();
+        // Explicit GPU selection persists; adaptive callers may still calibrate.
+        const probe=!job.useGPU && !job.gpuBenchmark && (gpuSamples.length<3 || ++gpuCalls%40===0), gpuStart=now();
         try{
           const candidates=await gpu.candidates(args,solverAPI,(job.seed||1)+metrics.searches);
           const tested=args[0].variants.reduce((n,v)=>n+Math.max(0,args[2].W-v.coarse.w+1)*Math.max(0,args[2].H-v.coarse.h+1),0);
@@ -362,7 +363,7 @@
     const yieldNow = cb.yield || (() => new Promise(r => setTimeout(r, 0)));
     /* A search that has not beaten its best for a while is done: on a sheet given more pieces than it can hold, the
        ceiling used to be spent trying to seat pieces that could not fit, minutes after the layout had settled. */
-    const stallMs = +job.stallMs || 0; let lastBetterAt = now(), stalled = false; let best = null;
+    const stallMs = job.fullBudget ? 0 : +job.stallMs || 0; let lastBetterAt = now(), stalled = false; let best = null;
     const stopped = () => (cb.shouldStop && cb.shouldStop()) || (now() - t0) > budget || (stalled = !!(stallMs && !job.packingPending && best && (!best.rejects.length || best.rejects.every(id => best.capped?.includes(id))) && (now() - lastBetterAt) > stallMs));
 
     /* sheet grids at both levels; the inset band is pre-filled as wall */
@@ -841,7 +842,8 @@
         endedBy = "complete";
         // Seating every piece is not enough on a partial sheet: spend a few
         // bounded restarts shortening the occupied strip before publishing it.
-        if (trials >= 8 && now()-lastBetterAt >= Math.min(stallMs || 15000,15000)) break;
+        // A requested full optimization keeps searching through its budget.
+        if (!job.fullBudget && trials >= 8 && now()-lastBetterAt >= Math.min(stallMs || 15000,15000)) break;
       }
       // restarts stalling while the best is a few short → repair the best layout instead
       if (best && now()-t0 < budget-refinementReserve && repairCandidates(best).length > 0 && repairCandidates(best).length <= 3 && failStreak >= 4) {
@@ -850,7 +852,7 @@
         const fixed = await ruinRecreate(best, 6);
         if (fixed) { lastBetterAt = now(); if (best.placements.length === prepared.length) endedBy = "complete"; }
       }
-      if (best && best.rejects.length && best.rejects.every(id => best.capped.includes(id))) { endedBy = "cap"; if (trials >= 8 && now()-lastBetterAt >= Math.min(stallMs || 15000,15000)) break; }   // only the ceiling holds pieces back
+      if (best && best.rejects.length && best.rejects.every(id => best.capped.includes(id))) { endedBy = "cap"; if (!job.fullBudget && trials >= 8 && now()-lastBetterAt >= Math.min(stallMs || 15000,15000)) break; }   // only the ceiling holds pieces back
       await yieldNow();
     }
     if (trials >= maxTrials && endedBy === "budget") endedBy = "trials";

@@ -235,9 +235,13 @@
     const get=k=>parts.find(p=>p.type===k).value;
     return {key:`${get('year')}-${get('month')}-${get('day')}`,label:new Intl.DateTimeFormat('en-CA',{timeZone,weekday:'long',year:'numeric',month:'long',day:'numeric'}).format(date),time:new Intl.DateTimeFormat('en-CA',{timeZone,hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(date)};
   }
-  function intakePlan({count, area=0, capacity=0, threshold=85, pressure=0.85, budgetS=180, force=false}) {
-    const final=force || count>=Math.max(1,threshold) || capacity>0 && area>=capacity*pressure;
-    return {phase:final?'final':'fill',budgetMs:Math.max(1000,final?budgetS*1000:Math.min(budgetS,12)*1000)};
+  function intakePlan({count, area=0, capacity=0, threshold=85, pressure=0.85, budgetS=180, force=false, density=0, target=.74, optimized=false, append=false}) {
+    const targetMet=density+1e-6>=target;
+    // Arrivals first try the saved gaps. Only the measured result can decide
+    // whether that addition still needs the final unrestricted search.
+    const full=!targetMet && !append && (force || count>=Math.max(1,threshold) || !optimized && capacity>0 && area>=capacity*pressure);
+    const phase=full?(count>=Math.max(1,threshold)?'final':'repack'):'fill';
+    return {phase,targetMet,budgetMs:Math.max(1000,full?budgetS*1000:Math.min(budgetS,12)*1000)};
   }
   const DONE_STATES = new Set(["written", "labelled", "committed"]);
   function evaluateOrder(rows) {

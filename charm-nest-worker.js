@@ -8,7 +8,7 @@
  *       {type:"verify", jobId, job, placements, res}
  *  out: {type:"stage"|"placed"|"reject"|"trial"|"best"|"done"|"verified"|"error", jobId, …}
  */
-importScripts("charm-nest-rose.js?v=20260922-rehearsal", "charm-nest-solver.js?v=20260922-groups");
+importScripts("charm-nest-rose.js?v=20260922-rehearsal", "charm-nest-solver.js?v=20260922-intake");
 
 let current = null;   // { jobId, job, stop }
 
@@ -57,7 +57,7 @@ self.onmessage = async (e) => {
         if(!self.CharmNestGPU)importScripts('charm-nest-gpu.js?v=20260922-groups');
         gpu=await CharmNestGPU.create();
         if(!self.CharmNestLookahead)importScripts("charm-nest-lookahead.js?v=20260922-groups");
-        post({type:'gpu',progress:{active:true,phase:'measuring',reason:'GPU · measuring performance',adapter:gpu.stats.adapter}});
+        post({type:'gpu',progress:{active:true,phase:'active',reason:'GPU enabled · CPU baseline searches also running',adapter:gpu.stats.adapter}});
       } catch(e){gpu?.destroy?.();gpu=null;post({type:'gpu',progress:{active:false,phase:'fallback',reason:'CPU fallback: '+String(e.message||e)}});}
     }
     if (m.job.learned && !self.CharmNestLearned) importScripts("charm-nest-learned.js");

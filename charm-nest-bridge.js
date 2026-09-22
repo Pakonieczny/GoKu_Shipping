@@ -3525,7 +3525,7 @@ const RunCtl = window.RunCtl = (() => {
       save(r).catch(() => {});
     }
     if (!waiter || waiter.r !== r) { poke(); return; }
-    const pages = allSheets().filter(pg => pg.runId === r.runId && !pg.runHold && Gate.nestable(pg, r) && pg.charms.some(c => c.poolId && !c.excluded));
+    const pages = allSheets().filter(pg => pg.runId === r.runId && !pg.runHold && Gate.nestable(pg, r) && pg.charms.some(c => !c.excluded));
     const writes = allSheets().filter(pg => pg.runId === r.runId && pg.persisted && !pg.persistedDone);
     const busy = writes.length || pages.some(pg => ["nesting", "finishing", "queued", "ready", "idle"].includes(pg.status) || pg.dirty);
     for (const pg of writes) if (pg.persisted && !pg.persistedDone) pg.persisted.then(() => { pg.persistedDone = true; onSheetDone(null); }, () => { pg.persistedDone = true; onSheetDone(null); });
@@ -3678,7 +3678,7 @@ const RunCtl = window.RunCtl = (() => {
       const d = (await api("charmNestLibrary", { op: "getSheet", id: slim.id })).sheet; if (!d) continue;
       const prim = S.sheets[d.metal]; let pg = prim.pages.find(p => p.sheetId === d.id) || (prim.pages[0].charms.length ? addPage(d.metal) : prim.pages[0]);
       const set = d.draft ? null : bySet.get(d.setId);
-      pg.draft = !!d.draft || !set; pg.releaseFull = !!d.releaseFull; pg.intakeFinalized = !!d.intakeFinalized;
+      pg.draft = !!d.draft || !set; pg.releaseFull = !!d.releaseFull; pg.intakeFinalized = !!d.intakeFinalized; pg.intakeOptimized=!!d.intakeOptimized; pg.intakeOptimizedCount=+d.intakeOptimizedCount||0;
       pg.sheetId = d.id; pg.runId = rec.runId; pg.group = set ? set.group || null : "dispatch"; pg.setId = set ? set.setId : null; pg.seq = set ? d.setSeq || set.seq : null; pg.setDay = d.day; pg.cardStartedAt = d.cardStartedAt || d.createdAt || null; pg.sheetIndex = set ? d.sheetIndex : null; pg.fileBase = d.fileBase; pg.folderPath = d.outputs?.ai?.path?.replace(/\/[^/]+$/, "") || (set ? `${set.folder}/${d.fileBase}` : `charmnest/sheets/${d.day}/${d.fileBase}`); pg.label = set ? d.label || null : null; pg.backPool = d.backPool || []; pg.backOutputs = d.backOutputs || null; pg.cloud = d.outputs ? { ai: d.outputs.ai && d.outputs.ai.url, pdf: d.outputs.pdf && d.outputs.pdf.url, labelled: d.outputs.labelled && d.outputs.labelled.url, report: d.outputs.report && d.outputs.report.url, preview: d.outputs.preview && d.outputs.preview.url } : null;
       pg.restored = true; pg.persistedDone = true;
       if(d.metal==='rose' && d.roseStockId && window.RoseStock)await RoseStock.restore(pg,d);
@@ -4847,7 +4847,7 @@ const Arrivals = window.Arrivals = (() => {
       await LiveNest.add(r);
       await Engrave.classifyAll(r); await Engrave.fitAll(r); await RunCtl.save(r);
     } catch (e) { state.pending = true; save(); RunCtl.stop(`New orders could not be added: ${e.message}`, "Resume after fixing the cause. Your earlier work is kept."); }
-    finally { r.arrivalBusy = false; RunCtl.poke(); Session.schedule(); }
+    finally { r.arrivalBusy = false; RunCtl.poke(); Session.schedule(); window.CN?.flushManualIntake?.(); }
   }
   async function check() {
     if (busy || S.settings.pollOrders === "off") return;
@@ -4888,12 +4888,14 @@ const Arrivals = window.Arrivals = (() => {
 const LiveNest = window.LiveNest = (() => {
   function prepareSheet(sh) {
     const items=activeCharms(sh),capacity=usableArea(sh)*(+S.settings.maxFill || .80);
-    const plan=O.intakePlan({count:items.length,area:items.reduce((n,c)=>n+inflatedArea(c),0),capacity,threshold:+S.settings.finalOptimizeCount || 85,pressure:(+S.settings.optimizeAt || 85)/100,budgetS:+S.settings.budgetS || 180,force:!!sh.intakeForceFinal});
-    sh.intakePhase=plan.phase;sh.intakeBudgetMs=plan.budgetMs;
-    if(plan.phase==='final'){for(const c of items)if(c.arrivalPin){c.pinned=null;delete c.arrivalPin;}sh.optimizationTried=true;}
+    const density=sh.liveInfo?.usablePt2 ? sh.liveInfo.placedPt2/sh.liveInfo.usablePt2 : sh.density || 0;
+    const plan=O.intakePlan({count:items.length,area:items.reduce((n,c)=>n+inflatedArea(c),0),capacity,threshold:+S.settings.finalOptimizeCount || 85,pressure:(+S.settings.optimizeAt || 85)/100,budgetS:+S.settings.budgetS || 180,force:!!sh.intakeForceFinal,density,target:Math.min(.74,+S.settings.maxFill||.80),optimized:!!sh.intakeOptimized,append:!!sh.intakeAppend});
+    sh.intakePhase=plan.phase;sh.intakeBudgetMs=plan.budgetMs;delete sh.intakeAppend;
+    if(plan.phase!=='fill'){for(const c of items)if(c.arrivalPin){c.pinned=null;delete c.arrivalPin;}sh.optimizationTried=true;}
+    else {const placed=new Map((sh.placements||[]).map(p=>[p.id,p]));for(const c of items){const p=placed.get(c.id);if(p&&!c.pinned){c.pinned={cxPt:p.cxPt,cyPt:p.cyPt,angle:p.angle};c.arrivalPin=true;}}}
     return plan;
   }
-  const closed = p => !!p.runHold || !!p.intakeFinalized || Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId));
+  const closed = p => !!p.roseCutAt || !!p.runHold || !!p.intakeFinalized || !!p.releaseFull || Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId));
   async function add(run) {
     const prepare=async()=>{
     run.intakeRecovery = run.intakeRecovery || { retire: [], backs: [] };
@@ -4920,6 +4922,7 @@ const LiveNest = window.LiveNest = (() => {
       run.setIds = Sets.ofRun(run.runId).map(s => s.setId); run.setId = run.setIds[0] || null;
     }
     }
+    const previousSheets=new Map(allSheets().map(p=>[p,{placements:p.placements.slice(),intakeOptimized:p.intakeOptimized,intakeOptimizedCount:p.intakeOptimizedCount,density:p.density,liveInfo:p.liveInfo}]));
     const previousPlacements = new Map(allSheets().flatMap(p => p.placements.map(pl => [pl.id, pl])));
     const target = new Map(), force = Object.assign({}, Gate.state().forceFill);
     for (const m of touched) {
@@ -4940,7 +4943,7 @@ const LiveNest = window.LiveNest = (() => {
         for (const p of pages) RunCtl.onSheetDone(p, Object.assign(new Error("Unpin manually locked pieces before re-optimizing these sheets"), {sheetPending:true}));
         continue;
       }
-      const near = all.length >= (+S.settings.finalOptimizeCount || 85) || all.reduce((n, c) => n + inflatedArea(c), 0) >= usableArea(pg) * (+S.settings.maxFill || 0.80) * (+S.settings.optimizeAt || 85) / 100;
+      const near = pages.length > 1; // A single partial sheet always tries its saved gaps first.
       const pins = previousPlacements;
       for (const c of all) {
         const pl = pins.get(c.id);
@@ -4948,7 +4951,9 @@ const LiveNest = window.LiveNest = (() => {
         if (!near && pages.length === 1 && pl && !c.pinned && !all.some(x => (x.orderDate || 0) < (c.orderDate || 0) && !before.has(x.poolId))) { c.pinned = { cxPt: pl.cxPt, cyPt: pl.cyPt, angle: pl.angle }; c.arrivalPin = true; }
         else if (c.arrivalPin) { c.pinned = null; delete c.arrivalPin; }
       }
-      const seedIds=new Set(pg.placements.map(p=>p.id));
+      const saved=previousSheets.get(pg);
+      const seedIds=new Set((saved?.placements||[]).map(p=>p.id));
+      if(saved){pg.intakeOptimized=saved.intakeOptimized;pg.intakeOptimizedCount=saved.intakeOptimizedCount;pg.density=saved.density;pg.liveInfo=saved.liveInfo;}
       const retiredIds = pages.map(p => p.sheetId).filter(Boolean);
       if (Gate.modern(run.runId)) {
         const ids = all.map(c => c.poolId).filter(Boolean);
@@ -4960,7 +4965,7 @@ const LiveNest = window.LiveNest = (() => {
         if (Gate.modern(run.runId)) { p.sheetId = null; p.fileBase = null; p.setId = null; p.seq = null; p.draft = true; }
         p.charms = []; p.placements = []; p.outputs = null; p.label = null; p.backPool = []; p.backOutputs = null; p.persisted = null; p.persistedDone = true; p.status = "idle"; p.dirty = false;
       }
-      pg.charms = all; pg.placements=all.filter(c=>seedIds.has(c.id)).map(c=>previousPlacements.get(c.id)).filter(Boolean); pg.status = "ready"; pg.optimizationTried = near || pages.length > 1;
+      pg.charms = all; pg.placements=all.filter(c=>seedIds.has(c.id)).map(c=>previousPlacements.get(c.id)).filter(Boolean); pg.status = "ready"; pg.intakeAppend = pages.length === 1 && pg.placements.length > 0; pg.optimizationTried = near || pages.length > 1;
       for (const set of Sets.ofRun(run.runId)) {
         const ids = new Set(retiredIds);
         set.sheetIds = set.sheetIds.filter(id => !ids.has(id)); set.labelFiles = set.labelFiles.filter(f => !ids.has(f.sheetId));
