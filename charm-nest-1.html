@@ -1433,6 +1433,7 @@ const S = {
   settings: loadSettings(), passcode: sessionStorage.getItem("cn.passcode") || "", cloud: { ok: null, locked: false, msg: "", lib: { sheets: 0, charms: 0 } },
   sources: [], poolSources: {}, unassigned: [], sheets: {}, mode: "nest", calibration: [], library: { rows: [], metal: "all", q: "", kind: "sheets" }, nestQueue: [], stockPreset: (v => STOCK_PRESETS.some(p => p.id === v) ? v : DEFAULT_STOCK)(localStorage.getItem("cn.stock"))
 };
+const WORKSPACE_SANDBOX = S.settings.sandbox === "on";
 function loadSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem("cn.settings") || "{}");
@@ -1493,7 +1494,7 @@ async function api(fn, body, opts = {}) {
   const bar = (opts.quiet || opts.silent || !window.CNProgress) ? null : CNProgress.start(opts.label || "Talking to the cloud", { quiet: !!opts.background });
   const done = () => { if (bar) bar.end(); };
   try {
-    const payload = Object.assign({}, body || {}); if (S.settings.sandbox === "on") payload.sandbox = true;   // the sandbox tags every cloud call
+    const payload = Object.assign({}, body || {}); if (WORKSPACE_SANDBOX) payload.sandbox = true;   // the sandbox tags every cloud call
     const res = await fetch(`${FN}/${fn}`, { method: "POST", headers, body: JSON.stringify(payload) });
     const txt = await readBody(res, bar);
     let data = null; try { data = JSON.parse(txt); } catch (_) { data = { error: txt.slice(0, 200) }; }
@@ -2748,7 +2749,7 @@ async function finishNest(sh, { result, error }) {
     setTimeout(() => $$(".sheetCard").find(el => el.dataset.m === sh.metal)?.classList.remove("pulse"), 1300);
     if (document.hidden && S.settings.notify === "on" && "Notification" in window && Notification.permission === "granted") { try { new Notification("Charm Nesting Station", { body: msg }); } catch (_) { /* ignore */ } }
     // 5 · persist everything. The two verifiers above are the acceptance test; no further inspection runs.
-    sh.persisted = persistSheet(sh, items).then(() => { sh.persistedDone = true; if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, e); });
+    sh.persisted = persistSheet(sh, items).then(() => { sh.persistedDone = true; if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e,{stage:"persistence",critical:true})); });
     // 6 · whatever did not fit under the ceiling goes to the next sheet of this metal, which nests on its own
     if (sh.rejects.length && sh.endedBy !== "stopped" && (sh.nestFlow !== "learned" || sh.verification.ok && ["cap", "plateau"].includes(sh.endedBy))) overflowToNextSheet(sh);
   } catch (e) {
@@ -3532,7 +3533,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260922-continuous-intake"></script>
+<script src="charm-nest-bridge.js?v=20260922-pending-continues"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin" aria-labelledby="owTitle">

@@ -73,8 +73,26 @@ function sheet(id,patch={}){return{sheetId:id,runId:'run',metal:id,page:1,charms
 
   const critical=fixture();critical.r.status='stopped';critical.r.step='labels';critical.state.fail='Storage permission denied';
   await critical.ctl.resume();await settled(critical);assert.equal(critical.r.status,'stopped');assert.match(critical.r.stoppedBy,/Storage permission denied/);assert(!critical.calls.includes('commit:ready'));
-  const saveFailure=fixture({pages:[sheet('broken')]});const failedNest=saveFailure.ctl._loop();saveFailure.ctl.onSheetDone(saveFailure.pages[0],Error('write failed'));await failedNest;
+  const saveFailure=fixture({pages:[sheet('broken')]});const failedNest=saveFailure.ctl._loop();saveFailure.ctl.onSheetDone(saveFailure.pages[0],Object.assign(Error('write failed'),{stage:'persistence',critical:true}));await failedNest;
   assert.equal(saveFailure.r.status,'stopped');assert(!saveFailure.calls.includes('fit'));
+
+
+  for(const stage of ['shape-analysis','solver','export']){
+    const failed=sheet(stage,{status:'ready',fileBase:null,outputs:null});const next=sheet('other-metal',{status:'ready'});
+    const local=fixture({pages:[failed,next],sets:[],pending:0,review:0});const task=local.ctl._loop();
+    local.ctl.onSheetDone(failed,Object.assign(Error(stage+' unavailable'),{stage}));
+    assert.equal(local.r.status,'running','one held sheet cannot stop another worker');
+    next.status='complete';local.ctl.onSheetDone(next);await task;
+    assert.equal(local.r.status,'processed');assert(failed.runHold);assert(local.calls.includes('fit'));assert(local.calls.includes('unclaim'));
+  }
+  // Recover the exact legacy stop in Paul's screenshot without re-nesting it.
+  const bad=sheet('gold',{verification:{ok:false},problem:'Verification flagged',page:2});
+  const old=fixture({pages:[bad,sheet('silver')],sets:[],pending:1,review:1});
+  Object.assign(old.r,{status:'stopped',stoppedBy:'GF 14/20 · sheet 2 needs a look',at:{metal:'gold',page:2}});
+  assert.equal(await old.ctl.recoverReviewStop(),true);await settled(old);
+  assert.equal(old.r.status,'processed');assert(bad.runHold);assert(!old.calls.includes('nest:gold'));assert(old.calls.includes('fit'));
+  const operator=fixture();operator.r.status='stopped';operator.r.stoppedBy='stopped by the operator';
+  assert.equal(await operator.ctl.recoverReviewStop(),false);assert.equal(operator.r.status,'stopped');
 
   const empty=fixture({rows:[],sets:[],pending:0,review:0});empty.r.step='pull';await empty.ctl._loop();assert.equal(empty.r.status,'complete');assert.equal(empty.r.errors.length,0);
   const noEligible=fixture({sets:[],pending:0,review:1});noEligible.r.step='pool';await noEligible.ctl._loop();assert.equal(noEligible.r.status,'processed');assert.equal(noEligible.r.errors.length,0);
