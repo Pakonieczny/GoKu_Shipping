@@ -76,10 +76,10 @@ const ListZoom = (() => {
     const move=ev=>{if(!isMouseDown)return;ev.preventDefault();ev.stopPropagation();if(Math.abs(ev.clientX-dragStartX)>dragThreshold||Math.abs(ev.clientY-dragStartY)>dragThreshold)isDragging=true;
       clampAndApply(im,parseFloat(im.dataset.scale)||1,(parseFloat(im.dataset.offsetX)||0)+(ev.clientX-lastX)*.5,(parseFloat(im.dataset.offsetY)||0)+(ev.clientY-lastY)*.5);lastX=ev.clientX;lastY=ev.clientY;};
     const endPan=()=>{if(!isMouseDown)return;isMouseDown=false;persistZoom(parseFloat(im.dataset.scale)||1,parseFloat(im.dataset.offsetX)||0,parseFloat(im.dataset.offsetY)||0);};
-    on('mousedown',down);on('mousemove',move);on('mouseup',endPan);on('mouseleave',endPan);
+    if(!window.PointerEvent){on('mousedown',down);on('mousemove',move);on('mouseup',endPan);on('mouseleave',endPan);}
     // The reference's single-pointer drag also works on touch/pen devices.
-    on('pointerdown',ev=>{if(ev.pointerType==='mouse')return;down(ev);if(isMouseDown)box.setPointerCapture?.(ev.pointerId);});
-    on('pointermove',ev=>{if(ev.pointerType!=='mouse')move(ev);});on('pointerup',ev=>{if(ev.pointerType!=='mouse')endPan();});on('pointercancel',endPan);
+    on('pointerdown',ev=>{down(ev);if(isMouseDown)box.setPointerCapture?.(ev.pointerId);});
+    on('pointermove',move);on('pointerup',endPan);on('pointercancel',endPan);on('lostpointercapture',endPan);
     on('click',ev=>{
       ev.preventDefault();ev.stopPropagation();if(isDragging){isDragging=false;return;}
       const s0=parseFloat(im.dataset.scale)||1,offX0=parseFloat(im.dataset.offsetX)||0,offY0=parseFloat(im.dataset.offsetY)||0;
@@ -162,6 +162,7 @@ const ListMedia = (() => {
   function clean() {ListZoom.clean();for(const host of watched)if(!host.isConnected){observer?.unobserve(host);watched.delete(host);}}
   function watch(host,load,key,force=false,zoomKey=key) {
     if(!host)return;
+    if(window.CharmNestInteraction?.defer(host,()=>watch(host,load,key,force,zoomKey)))return;
     const old=jobs.get(host);if(old?.key===key && !force){if(old.state==="done")ListZoom.bind(host,(host.hasAttribute('data-listing')?'listing:':'vector:')+old.zoomKey);if(old.state==="waiting" && observer && !watched.has(host)){watched.add(host);observer.observe(host);}return;}
     observer?.unobserve(host);watched.delete(host);
     ListZoom.detach(host);
@@ -215,7 +216,7 @@ const ListMedia = (() => {
   async function vector(row) {
     if(!row || row.spec?.noDesign)return null;
     const charm=(row.poolIds || []).map(id=>Pool.charmOf(id)).find(c=>c?.outline && c.members?.length);
-    if(charm)return Engrave.renderFront(charm,220);
+    if(charm)return P.frontPreview ? P.frontPreview(charm,220) : Engrave.renderFront(charm,220);
     const sku=row.spec?.designSku || row.line?.sku;if(!sku)return null;
     let entry=Master.entryFor(sku);
     if(!entry){if(!catalog.has(sku))catalog.set(sku,Master.fetchEntry(sku).finally(()=>catalog.delete(sku)));entry=await catalog.get(sku);}
@@ -852,6 +853,7 @@ const Orders = window.Orders = (() => {
   let listKey="";
   const orderNodes=new Map();
   function renderBody() {
+    if(window.CharmNestInteraction?.defer('orders-list',renderBody))return;
     const host = document.getElementById("ordBody"); if (!host) return;
     const at = host.scrollTop;                                             // a run writing to the list must not scroll it away
     const rows = visibleRows();
@@ -871,14 +873,14 @@ const Orders = window.Orders = (() => {
       return;
     }
     const cards = viewMode() === "cards";
-    host.innerHTML = '<div class="' + (cards ? "ordCards" : "ordList") + '" id="ordItems"></div>';
-    const list = host.querySelector("#ordItems");
+    let list=host.querySelector('#ordItems');if(!list){host.innerHTML='<div id="ordItems"></div>';list=host.firstElementChild;}list.className=cards?'ordCards':'ordList';
+    const wanted=[],place=node=>{const index=wanted.length;wanted.push(node);if(list.children[index]!==node)list.insertBefore(node,list.children[index]||null);};
     let lastDay=null;
     const shown=rows.slice(0,OV.limit || 48);
     const dayCounts=new Map();for(const row of rows){const d=O.orderDay(row);const ids=dayCounts.get(d.key)||new Set();ids.add(row.order.receiptId);dayCounts.set(d.key,ids);}
     for (const r of shown) {
       const date=O.orderDay(r);
-      if(OV.sort==='arrival' && date.key!==lastDay){const heading=el('div','ordDay');heading.dataset.day=date.key;heading.innerHTML=`<span>${esc(date.label)}</span><small>${dayCounts.get(date.key).size} orders · Toronto time</small>`;list.appendChild(heading);lastDay=date.key;}
+      if(OV.sort==='arrival' && date.key!==lastDay){const heading=[...list.querySelectorAll('.ordDay')].find(n=>n.dataset.day===date.key)||el('div','ordDay');heading.dataset.day=date.key;const text=`<span>${esc(date.label)}</span><small>${dayCounts.get(date.key).size} orders · Toronto time</small>`;if(heading.innerHTML!==text)heading.innerHTML=text;place(heading);lastDay=date.key;}
       const sp = r.spec || {}, m = r.material || "none";
       const st = stateWords(r), due = dueOf(r), where = placeOf(r);
       const attn = r.problems.length || ["held", "unmatched", "oversize"].includes(r.state);
@@ -886,7 +888,7 @@ const Orders = window.Orders = (() => {
       const gateBtn = r.state === "waiting" && r.wait ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
       const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,r.hold,r.wait,why,where,due,date]);
       const cached=orderNodes.get(r.key);
-      if(cached?.stamp===stamp){list.appendChild(cached.node);ListMedia.mount(cached.node,r);continue;}
+      if(cached?.stamp===stamp){place(cached.node);ListMedia.mount(cached.node,r);continue;}
       const node = el("div", (cards ? "ocard" : "doneRow workRow orderListRow") + " hoverItem" + (attn ? " attn" : ""));
       node.setAttribute("role","button"); node.tabIndex=0; node.dataset.m = m; node.dataset.key = r.key;
       node.title = r.order.receiptId + " · " + (sp.designSku || r.line.sku || "no SKU") + " — " + r.line.title;
@@ -900,8 +902,10 @@ const Orders = window.Orders = (() => {
       { const gb = node.querySelector("[data-gate]"); if (gb) gb.onclick = e => { e.stopPropagation(); gb.disabled = true; (gb.dataset.gate === "release" ? Gate.release(gb.dataset.gm) : Gate.cutAnyway(gb.dataset.gm)).catch(err => toast(err.message, "bad", 6000)); }; }
       // an order can be several lines on several cards: hovering one lifts all of them, the way the station does
       node.dataset.rid = String(r.order.receiptId);
-      list.appendChild(node);orderNodes.set(r.key,{stamp,node});ListMedia.mount(node,r);
+      if(cached?.node){const pair=cached.node.querySelector('.comparePair');if(pair)node.querySelector('.comparePair')?.replaceWith(pair);}
+      place(node);orderNodes.set(r.key,{stamp,node});ListMedia.mount(node,r);
     }
+    const keep=new Set(wanted);for(const child of [...list.children])if(!keep.has(child))child.remove();
     ListMedia.more(list,rows.length,shown.length,()=>{OV.limit=(OV.limit || 48)+48;renderBody();});
 
     restore();
@@ -1092,7 +1096,7 @@ const Master = window.Master = (() => {
       say("MASTER", "reading…");
       const parsed = await P.parseSource(bytes, file.name);
       if (job.bar) job.bar.note("finding the charms");
-      const g = P.groupCharms(parsed, { minPt: +S.settings.minPt || 6 });
+      const g = await (P.groupCharmsAsync || P.groupCharms)(parsed, { minPt: +S.settings.minPt || 6 });
       say("MASTER", `${g.charms.length} charm outline(s), ${parsed.counts.text} text block(s)`);
       // the server route (a background function with about 1 GB) is opt-in by charm count; 0 keeps every master in this tab
       if (+S.settings.masterServerAbove > 0 && g.charms.length > +S.settings.masterServerAbove && S.cloud.ok) {
@@ -1186,7 +1190,7 @@ const Master = window.Master = (() => {
       if (S.cloud.ok) { const bytes = await P.buildSingleCharm(c, parsed); [ai, png] = await Promise.all([uploadBytes(`charmnest/master/${key}.ai`, bytes, "application/illustrator", `Saving ${key}`), uploadBytes(`charmnest/master/${key}.png`, dataUrlToBytes(c.thumb), "image/png")]); }
       const reasons = []; if (c.open) reasons.push("open outline");
       let engravable = true, upAngle = null, upSource = "drawn", flipOk = true;
-      try { const up = G.upAngleOf(c); upAngle = up.angle; upSource = up.source; G.backView(c, { res: 6, upAngle }); }
+      try { const up = window.CharmNestBackground ? await CharmNestBackground.run('indexGeometry',{charm:{outline:c.outline,members:c.members,bbox:c.bbox,widthPt:c.widthPt,heightPt:c.heightPt}}) : G.upAngleOf(c); upAngle = up.angle; upSource = up.source; if(!window.CharmNestBackground)G.backView(c, { res: 6, upAngle }); }
       catch (e) { flipOk = false; reasons.push(e.message); }
       const wMm = c.widthPt * MM, hMm = c.heightPt * MM; const outOfRange = Math.max(wMm, hMm) > (+S.settings.sizeMaxMm || 60) || Math.max(wMm, hMm) < (+S.settings.sizeMinMm || 3);
       entries.push({ sku: c.sku, size: c.skuSize, charmHash: c.hash, widthPt: c.widthPt, heightPt: c.heightPt, areaPt2: c.areaPt2, members: c.members.length, holes: P.cutLinesOf(c).length, engravable, upAngle, upSource, aiPath: ai && ai.path, aiUrl: ai && ai.url, thumbPath: png && png.path, thumbUrl: png && png.url, open: !!c.open, labelSource: c.labelSource || "text", confidence: c.labelConfidence == null ? null : c.labelConfidence, blocked: reasons.length ? reasons.join("; ") : null, outOfRange, flipOk, backKeepOut: keepOutOf(c).length ? keepOutOf(c).map(m => ({ layer: m.layer })) : null });
@@ -1451,7 +1455,7 @@ const Pool = window.Pool = (() => {
     const url = geom.aiUrl || (await api("charmNestOutput", { op: "url", path: geom.aiPath })).url;
     const bytes = await CharmNestAssets.bytes(url);
     const parsed = await P.parseSource(bytes, `${entry.sku}.ai`);
-    const g = P.groupCharms(parsed, { minPt: +S.settings.minPt || 6 });
+    const g = await (P.groupCharmsAsync || P.groupCharms)(parsed, { minPt: +S.settings.minPt || 6 });
     if (!g.charms.length) throw new Error(`${entry.sku}: no outline in the master copy`);
     const charm = g.charms.reduce((a, b) => (b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1]) > (a.bbox[2] - a.bbox[0]) * (a.bbox[3] - a.bbox[1]) ? b : a);
     if (g.charms.length > 1) { for (const c of g.charms) if (c !== charm) { for (const m of c.members) if (!charm.members.includes(m)) charm.members.push(m); charm.topIndices = [...new Set(charm.topIndices.concat(c.topIndices))]; charm.bbox = [Math.min(charm.bbox[0], c.bbox[0]), Math.min(charm.bbox[1], c.bbox[1]), Math.max(charm.bbox[2], c.bbox[2]), Math.max(charm.bbox[3], c.bbox[3])]; /* the silhouette canvas is cut to the bbox: a merged piece outside it would be drawn but never collide */ } agent({ pool: true }, "warn", `${entry.sku}: the master copy split into ${g.charms.length} pieces — folded back into one charm`); }
@@ -1482,7 +1486,7 @@ const Pool = window.Pool = (() => {
       let rebuilt=false;
       if(G.pathRole(c.outline)==="artwork") {
         if(!src?.parsed)throw new Error("The recovered charm needs its original CUT geometry.");
-        const candidates=P.groupCharms(src.parsed,{minPt:+S.settings.minPt || 6}).charms;
+        const candidates=(await (P.groupCharmsAsync || P.groupCharms)(src.parsed,{minPt:+S.settings.minPt || 6})).charms;
         const overlap=other=>{const a=c.bbox,b=other.bbox;const intersection=Math.max(0,Math.min(a[2],b[2])-Math.max(a[0],b[0]))*Math.max(0,Math.min(a[3],b[3])-Math.max(a[1],b[1]));return intersection/Math.max(1,(a[2]-a[0])*(a[3]-a[1])+(b[2]-b[0])*(b[3]-b[1])-intersection);};
         const fresh=candidates.sort((a,b)=>overlap(b)-overlap(a))[0];
         if(!fresh || overlap(fresh)<.5 || G.pathRole(fresh.outline)!=="cut")throw new Error("The recovered charm has no matching CUT outline.");
@@ -1531,7 +1535,7 @@ const Pool = window.Pool = (() => {
     const src = await masterCharm(entry, sp.size);
     const base = src.charms[0];
     // oversize: the charm cannot fit the plate under the ceiling
-    const st = stockFor(sp.material); const usable = (st.wPt - 2 * (+S.settings.insetPt || 0)) * (st.hPt - 2 * (+S.settings.insetPt || 0)) * (+S.settings.maxFill || 0.74);
+    const st = stockFor(sp.material); const usable = (st.wPt - 2 * (+S.settings.insetPt || 0)) * (st.hPt - 2 * (+S.settings.insetPt || 0)) * (+S.settings.maxFill || 0.80);
     if (base.areaPt2 > usable || Math.min(base.widthPt, base.heightPt) > Math.max(st.wPt, st.hPt) - 2 * (+S.settings.insetPt || 0)) { row.state = "oversize"; row.reason = `charm ${(base.widthPt * MM).toFixed(1)} × ${(base.heightPt * MM).toFixed(1)} mm does not fit the ${labelOf(sp.material)} plate under the ceiling`; row.problems.push({ kind: "oversize", sku: sp.designSku, widthMm: base.widthPt * MM, heightMm: base.heightPt * MM, material: sp.material }); return; }
     const pools = [], charms = [];
     for (let copy = 1; copy <= sp.quantity; copy++) {
@@ -1761,55 +1765,56 @@ const Gate = window.Gate = (() => {
     refreshAllCards();
   }
   function renderRelease(sh, node) {
-    if (node.contains(document.activeElement) && document.activeElement.matches('[data-solid="w"], [data-solid="h"], [data-rose-allowance], [data-rose-picker] select')) return;
     const m = sh.metal, st = stockFor(m,sh), seq = Sets.ofRun(B.run?.runId).find(s => s.group === "dispatch")?.seq;
     node.className = "shGate";
     if (!solid(m) && m !== "rose") {
       node.textContent = sh.setId && !sh.draft ? `In Set ${sh.seq} · ${policy(sh, sh.seq).reason}` : policy(sh, seq).reason;
-      if (!sh.charms.length) node.textContent = m === "rose" ? "Joins Sets 2, 4, 6…" : "Full sheets only · partials carry forward";
+      if (!sh.charms.length) node.textContent = "Full sheets only · partials carry forward";
       if(sh.el) sh.el.querySelector(".shHead").title = node.textContent;
       node.className = "shGate hidden";
       return;
     }
-    const disabled = !editable(sh) || !!sh.roseCutAt, included = m === "rose" ? policy(sh,seq).include : selected()[m] === true;
-    node.innerHTML = `<details class="sheetOptions" ${R.optionsOpen?.[m] ? "open" : ""}><summary>Options${included ? " ✓" : ""}</summary><div class="solidOptions"><label><input type="checkbox" data-solid="include" aria-label="Include ${esc(labelOf(m))} in current set" ${included ? "checked" : ""} ${!membershipEditable(sh) || sh.roseCutAt ? "disabled" : ""}> Include in current set</label><span class="help" role="status">${R.membershipError ? "Not saved" : R.membershipPending ? "Updating set…" : ""}</span>${R.membershipError ? '<button class="btn ghost xs" data-solid="retry">Retry selection</button>' : ""}
-      <details ${R.sizeOpen?.[m] ? "open" : ""}><summary>Custom size · ${(st.wIn * 25.4).toFixed(1)} × ${(st.hIn * 25.4).toFixed(1)} mm</summary><div class="solidSize">
-      <label>Width (mm)<input type="number" min="5" max="500" step="0.1" data-solid="w" value="${+(st.wIn * 25.4).toFixed(2)}" ${disabled ? "disabled" : ""}></label>
-      <label>Height (mm)<input type="number" min="5" max="500" step="0.1" data-solid="h" value="${+(st.hIn * 25.4).toFixed(2)}" ${disabled ? "disabled" : ""}></label>
-      <button type="button" class="btn ghost xs" data-solid="size" ${disabled ? "disabled" : ""}>Apply size</button></div></details>
-      <button type="button" class="btn ghost xs" data-solid="nest" ${disabled || !sh.charms.length ? "disabled" : ""}>Nest ${esc(labelOf(m))} only</button></div></details>`;
-    node.querySelector(".sheetOptions").ontoggle = e => { (R.optionsOpen ||= {})[m] = e.target.open; };
-    node.querySelector(".solidOptions details").ontoggle = e => { (R.sizeOpen ||= {})[m] = e.target.open; };
-    node.querySelector('[data-solid="include"]').onchange = e => {
-      if (!membershipEditable(sh)) return renderRelease(sh, node);
-      changeMembership(m,e.target.checked).catch(()=>{});
-    };
-    const retry=node.querySelector('[data-solid="retry"]');if(retry)retry.onclick=()=>changeMembership(m,!!selected()[m]).catch(()=>{});
-    node.querySelector('[data-solid="size"]').onclick = () => {
-      const w = +node.querySelector('[data-solid="w"]').value, h = +node.querySelector('[data-solid="h"]').value;
-      if (![w,h].every(n => Number.isFinite(n) && n >= 5 && n <= 500)) return toast("Use a width and height between 5 and 500 mm", "bad");
-      if (!editable(sh) || sh.roseCutAt) return;
-      if(m === "rose" && pagesOf(m).some(p=>p.roseStock))return toast("Release the reserved Rose Gold stock before changing its size", "bad");
-      S.settings.stock[m] = [w / 25.4, h / 25.4]; saveSettings();
-      for (const p of pagesOf(m)) { for (const c of p.charms) { c.pinned = null; delete c.arrivalPin; } sheetDirty(p); }
+    const included = m === "rose" ? policy(sh,seq).include : selected()[m] === true;
+    const sizeLocked=!!(sh.recalled || sh.roseCutAt || (m==='rose' && sh.roseStock));
+    // Keep the controls mounted: solver ticks, cloud replies and membership saves
+    // must not replace a focused input, its draft value, or an open popup.
+    if(node._sheetOptionsOwner!==sh){
+      node._sheetOptionsOwner=sh;
+      node.innerHTML = `<details class="sheetOptions" ${R.optionsOpen?.[m] ? "open" : ""}><summary>Options</summary><div class="solidOptions" role="group" aria-label="${esc(labelOf(m))} sheet options">
+        <div class="sheetOptionsHead"><strong>${esc(labelOf(m))} options</strong><button type="button" class="sheetOptionsClose" aria-label="Close sheet options">×</button></div>
+        <section class="sheetOptionSection"><label class="sheetInclude"><input type="checkbox" data-solid="include" aria-label="Include ${esc(labelOf(m))} in current set"> Include in current set</label><span class="help sheetOptionStatus" role="status" data-solid="status"></span><button type="button" class="btn ghost xs" data-solid="retry" hidden>Retry selection</button></section>
+        <section class="sheetOptionSection"><h4>Sheet dimensions</h4><div class="solidSize">
+          <label>Width <span>mm</span><input type="number" min="5" max="500" step="0.1" data-solid="w" value="${+(st.wIn*25.4).toFixed(2)}"></label>
+          <label>Height <span>mm</span><input type="number" min="5" max="500" step="0.1" data-solid="h" value="${+(st.hIn*25.4).toFixed(2)}"></label>
+        </div><div class="sheetSizeAction"><span class="help" data-solid="size-help"></span><button type="button" class="btn ghost xs" data-solid="size">Apply size</button></div></section>
+      </div></details>`;
+      const details=node.querySelector('.sheetOptions');
+      details.ontoggle=()=>{(R.optionsOpen ||= {})[m]=details.open;};
+      const close=()=>{details.open=false;(R.optionsOpen ||= {})[m]=false;node.querySelector('.sheetOptions>summary').focus();};
+      node.querySelector('.sheetOptionsClose').onclick=close;
+      details.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();close();}};
+      for(const axis of ['w','h'])node.querySelector('[data-solid="'+axis+'"]').oninput=e=>{e.target._draft=true;};
+    }
+    node.querySelector('.sheetOptions>summary').textContent='Options'+(included?' ✓':'');
+    const include=node.querySelector('[data-solid="include"]');include.checked=!!included;include.disabled=!membershipEditable(sh)||!!sh.roseCutAt;
+    node.querySelector('[data-solid="status"]').textContent=R.membershipError?'Selection not saved':R.membershipPending?'Saving selection…':'';
+    const retry=node.querySelector('[data-solid="retry"]');retry.hidden=!R.membershipError;
+    retry.onclick=()=>changeMembership(m,!!selected()[m]).catch(()=>{});
+    include.onchange=e=>{if(!membershipEditable(sh))return renderRelease(sh,node);changeMembership(m,e.target.checked).catch(()=>{});};
+    for(const [axis,value] of [['w',st.wIn],['h',st.hIn]]){
+      const input=node.querySelector('[data-solid="'+axis+'"]');
+      input.disabled=sizeLocked;
+      if(!input._draft && input!==document.activeElement)input.value=+(value*25.4).toFixed(2);
+    }
+    const apply=node.querySelector('[data-solid="size"]');apply.disabled=sizeLocked||!editable(sh);
+    node.querySelector('[data-solid="size-help"]').textContent=sizeLocked?'Dimensions belong to this saved sheet.':!editable(sh)?'Apply when the current operation finishes.':'5–500 mm per side';
+    apply.onclick=()=>{
+      const width=node.querySelector('[data-solid="w"]'),height=node.querySelector('[data-solid="h"]'),w=+width.value,h=+height.value;
+      if(![w,h].every(n=>Number.isFinite(n)&&n>=5&&n<=500))return toast('Use a width and height between 5 and 500 mm','bad');
+      if(!editable(sh)||sh.roseCutAt||(m==='rose'&&pagesOf(m).some(p=>p.roseStock)))return;
+      S.settings.stock[m]=[w/25.4,h/25.4];saveSettings();width._draft=height._draft=false;
+      for(const p of pagesOf(m)){for(const c of p.charms){c.pinned=null;delete c.arrivalPin;}sheetDirty(p);}
       changed();
-    };
-    node.querySelector('[data-solid="nest"]').onclick = () => {
-      if (!editable(sh) || sh.roseCutAt) return;
-      if(m === "rose"){sh.isolated=true;startNest(sh);return;}
-      // Gather this metal's open pages so a smaller custom size cannot strand overflow.
-      const pages = pagesOf(m).filter(p => !p.recalled && (!p.runId || p.runId === B.run?.runId));
-      const charms = [...new Map(pages.flatMap(p => p.charms).map(c => [c.poolId || c.id, c])).values()];
-      const first = pages[0] || sh;
-      for (const p of pages) {
-        if (B.run && p.sheetId) { B.run.intakeRecovery ||= { retire:[], backs:[] }; B.run.intakeRecovery.retire.push(p.sheetId); B.run.intakeRecovery.backs.push(...p.charms.map(c => c.poolId).filter(Boolean)); }
-        p.sheetId = null; p.fileBase = null; p.setId = null; p.seq = null; p.label = null; p.draft = true;
-        p.charms = []; sheetDirty(p); p.isolated = true;
-      }
-      first.charms = charms; first.isolated = true; sheetDirty(first); CN.showPage(m, pagesOf(m).indexOf(first));
-      if (B.run) B.run.step = "nest";
-      startNest(first);
-      if(B.run)RunCtl.optionsChanged();
     };
   }
 
@@ -1830,7 +1835,7 @@ const Gate = window.Gate = (() => {
     const g = Pool.sizeEntry(e, sp.size) || e; if (!(g.areaPt2 > 0)) return 0;
     return CN.inflatedArea({ areaPt2: g.areaPt2, widthPt: g.widthPt || 0, heightPt: g.heightPt || 0 }) * Math.max(1, sp.quantity || 1);
   }
-  const capacity = () => Object.fromEntries(METALS.map(m => [m.key, CN.usableArea(S.sheets[m.key]) * (+S.settings.maxFill || 0.74)]));
+  const capacity = () => Object.fromEntries(METALS.map(m => [m.key, CN.usableArea(S.sheets[m.key]) * (+S.settings.maxFill || 0.80)]));
   /** Plan the lines that could pool now, and mark the ones that wait. Returns the plan. */
   async function plan(rows) {
     await load();
@@ -2516,7 +2521,7 @@ const Engrave = window.Engrave = (() => {
       // rectangular charm containing holes for an artboard around many charms.
       const references=parsed.segments.concat(parsed.nested).filter(m=>m.kind==="path" && m.closed && (m.stroke || m.fill) && /CUT OUTLINE/.test(m.layer || ""));
       const larger=(a,b)=>(b.bbox[2]-b.bbox[0])*(b.bbox[3]-b.bbox[1])>(a.bbox[2]-a.bbox[0])*(a.bbox[3]-a.bbox[1])?b:a;
-      const g=references.length ? null : P.groupCharms(parsed,{minPt:4});
+      const g=references.length ? null : await (P.groupCharmsAsync || P.groupCharms)(parsed,{minPt:4});
       if(!references.length && !g.charms.length)return {ok:false,why:"no cut outline found in the written file"};
       const c=references.length ? {outline:references.reduce(larger),members:references} : g.charms.reduce(larger);
       const cut = c.members.filter(m => m === c.outline || G.isCutLine(m));
@@ -2688,6 +2693,7 @@ const Engrave = window.Engrave = (() => {
   }                                   // which tab is open and which placement is in front
   let rendering = false;
   function render() {
+    if(window.CharmNestInteraction?.defer('engraving-view',render))return;
     if (rendering) return;
     rendering = true;
     try { renderView(); window.LaserReview?.changed(); }
@@ -4002,9 +4008,11 @@ const Review = window.Review = (() => {
     const btn=node.querySelector('[data-review-open]'),detail=node.querySelector('.reviewDetails');
     const show=()=>{if(!detail.childNodes.length)detail.appendChild(card(it));detail.hidden=false;node.classList.add('open');btn.textContent='Close details';btn.setAttribute('aria-expanded','true');};
     btn.onclick=()=>{if(detail.hidden){RV.open=it.key;show();}else{RV.open=null;detail.hidden=true;node.classList.remove('open');btn.textContent='Review & resolve';btn.setAttribute('aria-expanded','false');}};
+    if(cached?.node){const pair=cached.node.querySelector('.comparePair');if(pair)node.querySelector('.comparePair')?.replaceWith(pair);}
     if(open)show();reviewRows.set(it.key,{stamp,node});return node;
   }
   function render() {
+    if(window.CharmNestInteraction?.defer('review-view',render))return;
     const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) return;
     const active=v.contains(document.activeElement)?document.activeElement:null;
     const oldScroll=v.querySelector(".egPane.scroll")?.scrollTop || 0;
@@ -4019,8 +4027,8 @@ const Review = window.Review = (() => {
     if (RV.filter && RV.filter !== "done" && !byKind.has(RV.filter)) RV.filter = null;
     const list = RV.filter && RV.filter !== "done" ? all.filter(it => it.kind === RV.filter) : RV.filter === "done" ? [] : all;
     const chip = (id, label, n, cls) => `<button class="egTab${(RV.filter || "") === id ? " on" : ""}" data-k="${esc(id)}" title="${esc(label)}">${esc(label)}${n ? `<b class="${cls || "warn"}">${n}</b>` : ""}</button>`;
-    v.innerHTML = `<div class="ordBar egBar">${chip("", "Everything", all.length, "info")}${ORDER.filter(k => byKind.has(k)).map(k => chip(k, KIND_WORDS[k] || k, byKind.get(k))).join("")}${settled.length ? chip("done", "Decided", settled.length, "ok") : ""}<span class="spacer"></span><button class="btn ghost xs" id="rvName" title="every decision is recorded under this name — click to change it">${esc(employeeName() || "set your name")}</button></div>
-      <div class="egPane grow scroll"><div class="rvList" id="rvList"></div></div>`;
+    if(!v.querySelector('#rvList'))v.innerHTML='<div class="ordBar egBar"></div><div class="egPane grow scroll"><div class="rvList" id="rvList"></div></div>';
+    v.querySelector('.ordBar').innerHTML = `${chip("", "Everything", all.length, "info")}${ORDER.filter(k => byKind.has(k)).map(k => chip(k, KIND_WORDS[k] || k, byKind.get(k))).join("")}${settled.length ? chip("done", "Decided", settled.length, "ok") : ""}<span class="spacer"></span><button class="btn ghost xs" id="rvName" title="every decision is recorded under this name — click to change it">${esc(employeeName() || "set your name")}</button>`;
     v.querySelector("#rvName").onclick = () => { askEmployee(); render(); };
     v.querySelectorAll("[data-k]").forEach(b => b.onclick = () => { RV.filter = b.dataset.k || null; render(); });
     const host = v.querySelector("#rvList");
@@ -4037,7 +4045,7 @@ const Review = window.Review = (() => {
       return;
     }
     if (!list.length) host.innerHTML = `<div class="libEmpty">Nothing waits for a decision.</div>`;
-    else for (const it of list.slice(0,RV.limit)){const node=reviewRow(it);host.appendChild(node);if(it.row)ListMedia.mount(node,it.row);}
+    else {const desired=list.slice(0,RV.limit).map(it=>({it,node:reviewRow(it)})),keep=new Set(desired.map(x=>x.node));desired.forEach(({it,node},i)=>{if(host.children[i]!==node)host.insertBefore(node,host.children[i]||null);if(it.row)ListMedia.mount(node,it.row);});for(const node of [...host.children])if(!keep.has(node))node.remove();}
     ListMedia.more(host,list.length,Math.min(RV.limit,list.length),()=>{RV.limit+=40;render();});
     v.querySelector('.egPane.scroll').scrollTop=oldScroll;
     if(active?.isConnected)active.focus({preventScroll:true});
@@ -4653,6 +4661,7 @@ const Session = window.Session = (() => {
           pending = false;
           try {
             const scope = key();
+            await window.CharmNestInteraction?.idle();
             await io(capture(), scope);
             failed = false;
           } catch (e) {
@@ -4861,8 +4870,8 @@ const Arrivals = window.Arrivals = (() => {
    Only uncommitted sheets belong here. The same solver and both existing verifiers still decide acceptance. */
 const LiveNest = window.LiveNest = (() => {
   function prepareSheet(sh) {
-    const items=activeCharms(sh),capacity=usableArea(sh)*(+S.settings.maxFill || .74);
-    const plan=O.intakePlan({count:items.length,area:items.reduce((n,c)=>n+inflatedArea(c),0),capacity,threshold:+S.settings.finalOptimizeCount || 80,pressure:(+S.settings.optimizeAt || 85)/100,budgetS:+S.settings.budgetS || 180,force:!!sh.intakeForceFinal});
+    const items=activeCharms(sh),capacity=usableArea(sh)*(+S.settings.maxFill || .80);
+    const plan=O.intakePlan({count:items.length,area:items.reduce((n,c)=>n+inflatedArea(c),0),capacity,threshold:+S.settings.finalOptimizeCount || 85,pressure:(+S.settings.optimizeAt || 85)/100,budgetS:+S.settings.budgetS || 180,force:!!sh.intakeForceFinal});
     sh.intakePhase=plan.phase;sh.intakeBudgetMs=plan.budgetMs;
     if(plan.phase==='final'){for(const c of items)if(c.arrivalPin){c.pinned=null;delete c.arrivalPin;}sh.optimizationTried=true;}
     return plan;
@@ -4914,7 +4923,7 @@ const LiveNest = window.LiveNest = (() => {
         for (const p of pages) RunCtl.onSheetDone(p, Object.assign(new Error("Unpin manually locked pieces before re-optimizing these sheets"), {sheetPending:true}));
         continue;
       }
-      const near = all.length >= (+S.settings.finalOptimizeCount || 80) || all.reduce((n, c) => n + inflatedArea(c), 0) >= usableArea(pg) * (+S.settings.maxFill || 0.74) * (+S.settings.optimizeAt || 85) / 100;
+      const near = all.length >= (+S.settings.finalOptimizeCount || 85) || all.reduce((n, c) => n + inflatedArea(c), 0) >= usableArea(pg) * (+S.settings.maxFill || 0.80) * (+S.settings.optimizeAt || 85) / 100;
       const pins = previousPlacements;
       for (const c of all) {
         const pl = pins.get(c.id);

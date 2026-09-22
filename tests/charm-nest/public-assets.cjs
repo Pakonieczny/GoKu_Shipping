@@ -12,3 +12,6 @@ for(const file of ['charm-nest-rose.js','charm-nest-rose-ui.js','charm-nest-asse
 for(const file of ['NotoEmoji-Regular.ttf','emoji-sequences.json','NotoEmoji-OFL.txt'])assert(fs.existsSync('vendor/fonts/'+file));
 
 for(const file of ["vendor/fonts/emoji-sequences.json","vendor/fonts/NotoEmoji-OFL.txt"])assert(assets.has(file));
+
+for(const file of ['charm-nest-background.js','charm-nest-compute-worker.js'])assert(assets.has(file));
+for(const call of fs.readFileSync('charm-nest-compute-worker.js','utf8').matchAll(/importScripts\(([^)]*)\)/g))for(const item of call[1].matchAll(/['"]([^'"]+)['"]/g)){const file=item[1].split('?')[0];assert(assets.has(file),'Missing compute dependency: '+file);assert(fs.existsSync(file));}

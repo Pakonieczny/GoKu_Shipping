@@ -82,6 +82,8 @@ const assets = [
   "charm-nest-rose-ui.js",
   "charm-nest-learned.js",
   "charm-nest-worker.js",
+  "charm-nest-background.js",
+  "charm-nest-compute-worker.js",
   "charm-nest-pdf.js",
   "charm-nest-vector.js",
   "vendor/clipper-6.4.2.js",

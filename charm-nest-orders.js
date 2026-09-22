@@ -235,7 +235,7 @@
     const get=k=>parts.find(p=>p.type===k).value;
     return {key:`${get('year')}-${get('month')}-${get('day')}`,label:new Intl.DateTimeFormat('en-CA',{timeZone,weekday:'long',year:'numeric',month:'long',day:'numeric'}).format(date),time:new Intl.DateTimeFormat('en-CA',{timeZone,hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(date)};
   }
-  function intakePlan({count, area=0, capacity=0, threshold=80, pressure=0.85, budgetS=180, force=false}) {
+  function intakePlan({count, area=0, capacity=0, threshold=85, pressure=0.85, budgetS=180, force=false}) {
     const final=force || count>=Math.max(1,threshold) || capacity>0 && area>=capacity*pressure;
     return {phase:final?'final':'fill',budgetMs:Math.max(1000,final?budgetS*1000:Math.min(budgetS,12)*1000)};
   }

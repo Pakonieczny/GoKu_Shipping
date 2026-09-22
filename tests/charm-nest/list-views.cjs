@@ -39,6 +39,11 @@ const firstPair=()=>w.document.querySelector('#ordersView .comparePair');
  for(let n=0;n<20;n++)listing.dispatchEvent(new w.WheelEvent('wheel',{deltaY:1,bubbles:true,cancelable:true}));assert.equal(+photoImage.dataset.scale,1);assert.equal(+photoImage.dataset.offsetX,0);
  mouse(listing,'click',44,44);await wait(175);const framing=w.localStorage.getItem('cn.listImageFraming.sandbox');resizers[0].fire(listing);await wait(175);assert.equal(w.localStorage.getItem('cn.listImageFraming.sandbox'),framing,'resize never rewrites saved framing');
  const loadedRow=pair.closest('.orderListRow');w.Orders.renderBody();assert.equal(w.document.querySelector('.orderListRow'),loadedRow,'refresh preserves decoded thumbnails');
+ // An unchanged refresh must never detach the image being inspected.
+ const removed=[];const mutations=new w.MutationObserver(records=>records.forEach(r=>removed.push(...r.removedNodes)));mutations.observe(w.document.getElementById('ordersView'),{subtree:true,childList:true});
+ w.Orders.renderBody();await wait(0);assert(!removed.some(n=>n===loadedRow||n.contains?.(pair)),'background refresh keeps active rows attached');mutations.disconnect();
+ w.eval(fs.readFileSync('charm-nest-background.js','utf8'));
+ vector.dispatchEvent(new w.Event('pointerdown',{bubbles:true}));const oldRows=w.document.querySelectorAll('.orderListRow').length;w.Orders.renderBody();assert.equal(w.document.querySelectorAll('.orderListRow').length,oldRows);vector.dispatchEvent(new w.Event('pointerup',{bubbles:true}));await wait(280);assert.equal(w.document.querySelector('.orderListRow'),loadedRow);
  const photo=pair.querySelector('img').src;assert.ok(new URL(photo).searchParams.get('url').startsWith('data:image/svg+xml'));
  const savedPhotos=JSON.parse(w.localStorage.getItem('cn.listingPhotos.v1'));assert(savedPhotos.some(([id])=>id==='9000'));
  mouse(vector,'click',66,44);w.dispatchEvent(new w.Event('pagehide'));

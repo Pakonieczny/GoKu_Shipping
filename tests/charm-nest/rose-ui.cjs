@@ -15,15 +15,28 @@ w.eval(`var C=window.CN,S=C.S,CN=C,B=window.B={run:{runId:'run-test',releasePoli
 const code=fs.readFileSync('charm-nest-bridge.js','utf8');w.eval(code.slice(code.indexOf('const Gate ='),code.indexOf('/* ═══ 21',code.indexOf('const Gate ='))));w.Gate.renderCard(sh);
 w.eval(fs.readFileSync('charm-nest-rose-ui.js','utf8'));
 (async()=>{
- assert.match(sh.el.textContent,/Include in current set/);assert.match(sh.el.textContent,/Custom size/);assert.match(sh.el.textContent,/Nest RG 14\/20 only/);assert.match(sh.el.textContent,/Choose remnant or new sheet/);
+ assert.match(sh.el.textContent,/Include in current set/);assert.match(sh.el.textContent,/Sheet dimensions/);assert(!sh.el.querySelector('[data-solid="nest"]'));assert.equal(sh.el.querySelectorAll('.solidOptions details').length,0);assert.match(sh.el.textContent,/Choose remnant or new sheet/);
  assert.equal(calls.length,0,'rendering never eagerly loads physical stock');
+ const menu=sh.el.querySelector('.sheetOptions'),width=sh.el.querySelector('[data-solid="w"]'),allowance=sh.el.querySelector('[data-rose-allowance]');menu.open=true;
+ width.focus();width.value='125.5';width.dispatchEvent(new w.Event('input'));allowance.value='0.35';allowance.dispatchEvent(new w.Event('input'));
+ for(let n=0;n<10;n++)w.CN.renderCard(sh);
+ assert.equal(sh.el.querySelector('.sheetOptions'),menu);assert(menu.open);assert.equal(w.document.activeElement,width);assert.equal(width.value,'125.5');assert.equal(allowance.value,'0.35');
+ width.blur();w.CN.renderCard(sh);assert.equal(width.value,'125.5','draft survives blur and background refresh');
+ sh.status='nesting';w.CN.renderCard(sh);assert(!width.disabled,'background work does not prevent editing a draft');assert(sh.el.querySelector('[data-solid="size"]').disabled);sh.status='complete';
+ assert(!sh.el.textContent.includes('Physical sheet'));assert(!sh.el.querySelector('[data-rose-release]'));
+
  await w.RoseStock.plan(sh);assert(sh.rosePlan.lines.length);assert.match(sh.el.textContent,/0.2 mm contour allowance/);assert.equal(calls.filter(x=>x==='rosePlan').length,1);
  const ctx=new Proxy({calls:[]},{get(o,k){if(k in o)return o[k];return (...args)=>o.calls.push([k,...args]);},set(o,k,v){o[k]=v;return true;}});
- w.RoseStock.paint(ctx,sh,2,'lines');assert(ctx.calls.some(c=>c[0]==='setLineDash'&&c[1].length),'pending contour is distinguished from completed cut');
- sh.draft=false;sh.setId='set-test';await w.RoseStock.record(sh);assert(sh.roseCutAt);assert.equal(sh.roseHistory.length,1);assert.match(sh.el.textContent,/Cut recorded/);assert.equal(sh.el.querySelectorAll('.roseTimeline time').length,1);assert(sh.el.querySelector('[data-solid="nest"]').disabled);
+ w.RoseStock.paint(ctx,sh,2,'lines');assert(ctx.calls.some(c=>c[0]==='setLineDash'&&c[1].length),'pending contour is distinguished from completed cut');assert.equal(ctx.lineWidth,2.5,'pending contour is twice its previous display width');
+ sh.draft=false;sh.setId='set-test';await w.RoseStock.record(sh);assert(sh.roseCutAt);assert.equal(sh.roseHistory.length,1);assert.match(sh.el.textContent,/Cut recorded/);assert.equal(sh.el.querySelectorAll('.roseTimeline time').length,1);assert(sh.el.querySelector('[data-solid="size"]').disabled);assert(allowance.disabled);assert(!sh.el.textContent.includes('Using sheet'));assert(!sh.el.querySelector('.roseStockHead'));ctx.calls=[];w.RoseStock.paint(ctx,sh,2,'lines');assert.equal(ctx.lineWidth,2,'historical cut line is twice its previous display width');
  ctx.calls=[];w.RoseStock.paint(ctx,sh,2,'history');assert(ctx.calls.some(c=>c[0]==='fillRect'),'removed region is shaded');assert.equal(ctx.fillStyle,'#d8d5d0','cut silhouettes use neutral grey');
  // A recalled sheet starts its history request only when scrolled into view.
  sh.recalled={roseStockId:stock.id};sh.roseStock=null;sh._roseLoaded=false;sh.roseHistory=[];w.RoseStock.render(sh);const reads=calls.filter(x=>x==='roseGet').length;assert.equal(calls.filter(x=>x==='roseGet').length,reads);assert(observers[0].el);
+ for(const metal of ['gold10k','gold14k']){
+   const gate=w.document.createElement('div'),page={...sh,metal,recalled:null,roseCutAt:null,roseStock:null};w.document.body.append(gate);
+   w.Gate.renderRelease(page,gate);assert.equal(gate.querySelectorAll('.solidOptions details').length,0);assert(!gate.querySelector('[data-solid="nest"]'));
+   const input=gate.querySelector('[data-solid="w"]');input.value='30';input.dispatchEvent(new w.Event('input'));w.Gate.renderRelease(page,gate);assert.equal(gate.querySelector('[data-solid="w"]'),input);assert.equal(input.value,'30');
+ }
  console.log('Rose UI OK: matching Options, lazy stock loading, saved contour, pending/cut distinction, dated timeline, grey history and locked completed layouts');
  dom.window.close();
 })().catch(e=>{console.error(e);dom.window.close();process.exit(1)});

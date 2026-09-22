@@ -16,8 +16,7 @@
     const composed=await CharmNestExport.compose(await bytes(sheet.outputs?.ai),sheet,prepared);
     let data=composed.ai,metadata={sheetId:sheet.id||sheet.sheetId,fileBase:sheet.fileBase,units:'mm',backs:composed.layout};
     if(format==='dxf') {
-      const parsed=await CharmNestPDF.parseSource(composed.ai,'Production sheet');
-      const result=CharmNestExport.dxf(CharmNestExport.productionPaths(parsed),CharmNestExport.layerNames(parsed));
+      const result=CharmNestExport.productionDxf ? await CharmNestExport.productionDxf(composed.ai) : await (async()=>{const parsed=await CharmNestPDF.parseSource(composed.ai,'Production sheet');return CharmNestExport.dxf(CharmNestExport.productionPaths(parsed),CharmNestExport.layerNames(parsed));})();
       data=new TextEncoder().encode(result.text);
       metadata={...metadata,curveToleranceMm:.002,layers:result.layers,colors:result.colors,entities:result.entityCount};
     }
