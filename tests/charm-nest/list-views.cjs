@@ -41,9 +41,11 @@ const firstPair=()=>w.document.querySelector('#ordersView .comparePair');
  const loadedRow=pair.closest('.orderListRow');w.Orders.renderBody();assert.equal(w.document.querySelector('.orderListRow'),loadedRow,'refresh preserves decoded thumbnails');
  const photo=pair.querySelector('img').src;assert.ok(new URL(photo).searchParams.get('url').startsWith('data:image/svg+xml'));
  const savedPhotos=JSON.parse(w.localStorage.getItem('cn.listingPhotos.v1'));assert(savedPhotos.some(([id])=>id==='9000'));
+ mouse(vector,'click',66,44);w.dispatchEvent(new w.Event('pagehide'));
+ w.qa.B.master.entries.clear(); // Catalog loads after the saved workspace on a real refresh.
  const beforeReload=w.qa.metrics.photos;w.reloadedMedia=w.reloadMedia();
  assert.equal(await w.reloadedMedia.listing('9000'),w.qa.ListMedia.peek('9000'));assert.equal(w.qa.metrics.photos,beforeReload,'refresh restores photo URLs without any server call');
- const fresh=w.document.createElement('div');fresh.innerHTML=w.reloadedMedia.pair(w.qa.B.orders.rows[0]);w.document.body.append(fresh);w.reloadedMedia.mount(fresh,w.qa.B.orders.rows[0]);const freshPhoto=fresh.querySelector('[data-listing]');io.find(o=>o.nodes.has(freshPhoto)).fire(freshPhoto);await wait(15);finishImages();await wait(15);assert.equal(+freshPhoto.querySelector('img').dataset.scale,+photoImage.dataset.scale,'refresh retains image zoom');fresh.remove();
+ const fresh=w.document.createElement('div');fresh.innerHTML=w.reloadedMedia.pair(w.qa.B.orders.rows[0]);w.document.body.append(fresh);w.reloadedMedia.mount(fresh,w.qa.B.orders.rows[0]);const freshPhoto=fresh.querySelector('[data-listing]');io.find(o=>o.nodes.has(freshPhoto)).fire(freshPhoto);await wait(15);finishImages();await wait(15);assert.equal(+freshPhoto.querySelector('img').dataset.scale,+photoImage.dataset.scale,'refresh retains image zoom');const freshVector=fresh.querySelector('[data-vector]');io.find(o=>o.nodes.has(freshVector)).fire(freshVector);await wait(15);assert.equal(+freshVector.querySelector('canvas').dataset.scale,2,'vector framing survives catalog loading changes and immediate navigation');assert.equal(+freshVector.querySelector('canvas').dataset.offsetX,-22);fresh.remove();
  assert.equal(w.document.querySelectorAll('[data-vector] canvas').length,1);
  w.document.querySelector('.listMore').click();await wait(20);assert.equal(w.document.querySelectorAll('.orderListRow').length,96);
  w.qa.show('review');assert.equal(w.document.querySelectorAll('#rvList .reviewListRow').length,40);

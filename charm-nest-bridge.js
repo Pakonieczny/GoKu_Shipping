@@ -34,6 +34,8 @@ const ListZoom = (() => {
   const storageKey='cn.listImageFraming.'+(WORKSPACE_SANDBOX?'sandbox':'production');
   try{for(const [key,value] of JSON.parse(localStorage.getItem(storageKey)||'[]'))if(value&&Number.isFinite(value.s)&&value.s>=1&&value.s<=8&&[value.x,value.y].every(Number.isFinite))frames.set(key,value);}catch(_){}
   let saveTimer;
+  function saveFrames(){clearTimeout(saveTimer);try{localStorage.setItem(storageKey,JSON.stringify([...frames]));}catch(_){}}
+  window.addEventListener('pagehide',saveFrames);
   const resize=typeof ResizeObserver!=='undefined'?new ResizeObserver(entries=>{for(const e of entries)bound.get(e.target)?.apply();}):null;
   function clean(){for(const box of observed)if(!box.isConnected){resize?.unobserve(box);observed.delete(box);}}
   function observe(box){if(resize&&!observed.has(box)){observed.add(box);resize.observe(box);}}
@@ -51,7 +53,7 @@ const ListZoom = (() => {
     box.title='Click to zoom at a point · drag to pan · scroll to zoom · reset ↺. Keyboard: + / −, arrows, 0 to reset.';
     function persistZoom(s,x,y){
       frames.delete(key);frames.set(key,{s,x,y,vw:box.clientWidth,vh:box.clientHeight});while(frames.size>300)frames.delete(frames.keys().next().value);
-      clearTimeout(saveTimer);saveTimer=setTimeout(()=>{try{localStorage.setItem(storageKey,JSON.stringify([...frames]));}catch(_){}},150);
+      clearTimeout(saveTimer);saveTimer=setTimeout(saveFrames,150);
     }
     function clampAndApply(im,scale,offX,offY,persist){
       const viewportW=box.clientWidth,viewportH=box.clientHeight,baseW=im.clientWidth,baseH=im.clientHeight;
@@ -158,12 +160,12 @@ const ListMedia = (() => {
     return `<div class="comparePair"><figure><span class="placementThumb" data-vector aria-label="Charm vector design" aria-busy="true">${loading}</span><figcaption>Vector design<button class="thumbReset" type="button" aria-label="Reset vector image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure><figure><span class="placementThumb" data-listing aria-label="First Etsy listing image" aria-busy="true">${loading}</span><figcaption>Etsy listing<button class="thumbReset" type="button" aria-label="Reset Etsy image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure></div>`;
   }
   function clean() {ListZoom.clean();for(const host of watched)if(!host.isConnected){observer?.unobserve(host);watched.delete(host);}}
-  function watch(host,load,key,force=false) {
+  function watch(host,load,key,force=false,zoomKey=key) {
     if(!host)return;
-    const old=jobs.get(host);if(old?.key===key && !force){if(old.state==="done")ListZoom.bind(host,(host.hasAttribute('data-listing')?'listing:':'vector:')+key);if(old.state==="waiting" && observer && !watched.has(host)){watched.add(host);observer.observe(host);}return;}
+    const old=jobs.get(host);if(old?.key===key && !force){if(old.state==="done")ListZoom.bind(host,(host.hasAttribute('data-listing')?'listing:':'vector:')+old.zoomKey);if(old.state==="waiting" && observer && !watched.has(host)){watched.add(host);observer.observe(host);}return;}
     observer?.unobserve(host);watched.delete(host);
     ListZoom.detach(host);
-    const job={load,key,state:"waiting"};jobs.set(host,job);
+    const job={load,key,zoomKey,state:"waiting"};jobs.set(host,job);
     host.innerHTML=loading;host.setAttribute('aria-busy','true');host.onclick=null;host.removeAttribute('role');host.removeAttribute('tabindex');host.onkeydown=null;
     if(observer){watched.add(host);observer.observe(host);}else{queue.push(host);pump();}
   }
@@ -181,12 +183,12 @@ const ListMedia = (() => {
             await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{img.onload=img.onerror=null;reject(Error('Image timed out'));},20000);img.onload=()=>{clearTimeout(timer);resolve();};img.onerror=()=>{clearTimeout(timer);reject(Error('Image unavailable'));};img.src=cors(result);host.appendChild(img);});
             if(!host.isConnected || jobs.get(host)!==job)return;host.replaceChildren(img);
           }else if(result?.nodeType)host.replaceChildren(result);
-          else if(host.hasAttribute('data-listing'))host.innerHTML=photoLoading.has(job.key)?loading:'Photo queued';else host.textContent='No vector available';
-          ListZoom.bind(host,(host.hasAttribute('data-listing')?'listing:':'vector:')+job.key);
+          else if(host.hasAttribute('data-listing')){host.innerHTML=photoLoading.has(job.key)?loading:'Photo queued';host.title=photoPauseUntil>Date.now()?'Photo preparation resumes '+new Date(photoPauseUntil).toLocaleString():'';}else host.textContent='No vector available';
+          ListZoom.bind(host,(host.hasAttribute('data-listing')?'listing:':'vector:')+job.zoomKey);
           job.state='done';
         }catch(_){
           if(host.isConnected && jobs.get(host)===job){job.state='error';host.textContent='Unavailable · Retry';host.setAttribute('role','button');host.tabIndex=0;
-            host.onclick=e=>{e.stopPropagation();watch(host,job.load,job.key,true);};host.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();watch(host,job.load,job.key,true);}};}
+            host.onclick=e=>{e.stopPropagation();watch(host,job.load,job.key,true,job.zoomKey);};host.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();watch(host,job.load,job.key,true,job.zoomKey);}};}
         }finally{if(jobs.get(host)===job){if(job.state==='loading'){job.state='waiting';if(observer){watched.add(host);observer.observe(host);}}else host.setAttribute('aria-busy',String(host.hasAttribute('data-listing')&&photoLoading.has(job.key)));}running--;pump();}
       },0);
     }
@@ -222,7 +224,7 @@ const ListMedia = (() => {
   }
   function mount(node,row) {
     clean();const sku=row?.spec?.designSku || row?.line?.sku || '',lid=String(row?.line?.listingId || '');
-    watch(node.querySelector('[data-vector]'),()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline)]));
+    watch(node.querySelector('[data-vector]'),()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline)]),false,JSON.stringify([sku,row?.spec?.size]));
     watch(node.querySelector('[data-listing]'),()=>listing(lid),lid);
   }
   // Paged DOM construction as well as deferred image decoding. The observer
