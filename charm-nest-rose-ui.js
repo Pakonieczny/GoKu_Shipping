@@ -111,3 +111,97 @@
   window.RoseStock={prepare,plan,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record};
   C.allSheets().forEach(render);
 })();
+
+/* Guided rehearsal: real geometry/worker, separate sandbox-only saved state. */
+(function rehearsalInit(){
+  'use strict';
+  if(!window.CN||!window.RoseStock){setTimeout(rehearsalInit,150);return;}
+  const C=window.CN,R=window.CharmNestRose;
+  if(C.S.settings.sandbox!=='on')return;
+  const key='cn.roseRehearsal.sandbox.v1',esc=C.esc;
+  let state=null,busy=false,error='',progress='',pending=null,worker=null,dialog;
+  let demoId;try{demoId=localStorage.getItem(key);}catch(_){}
+  const uid=()=> 'rgdemo-'+crypto.randomUUID();
+  const call=async(action,extra={})=>{
+    // Explicit sandbox flag and server guard remain mandatory even if callers change.
+    const response=await C.api('charmNestLibrary',{op:'roseDemo',sandbox:true,demoId,action,...extra},{label:'Rose Gold rehearsal'});
+    state=response.state;return state;
+  };
+  async function mutate(action,extra={}){
+    pending={action,extra:{...extra,revision:state.revision,requestId:uid()}};
+    await call(pending.action,pending.extra);pending=null;
+  }
+  function shell(){
+    if(dialog)return;
+    dialog=document.createElement('dialog');dialog.className='wide roseDemo';dialog.setAttribute('aria-labelledby','roseDemoTitle');
+    dialog.innerHTML='<div class="dlg"><div class="dlgHead"><h3 id="roseDemoTitle">Rose Gold rehearsal</h3><div class="right"><span class="pill neutral">Sandbox only</span><button class="btn ghost xs" data-demo-close>Close</button></div></div><div class="dlgBody" data-demo-body></div><div class="dlgFoot"><div class="left"><button class="btn ghost sm" data-demo-reload>Reload saved progress</button><button class="btn ghost sm" data-demo-new>Start new rehearsal</button></div><span class="help">Sample charms · no Etsy or laser jobs</span></div></div>';
+    document.body.append(dialog);
+    dialog.querySelector('[data-demo-close]').onclick=()=>C.closeDlg(dialog);
+    dialog.querySelector('[data-demo-reload]').onclick=()=>run(async()=>{pending=null;await call('get');});
+    dialog.querySelector('[data-demo-new]').onclick=()=>{if(state&&!confirm('Start a new Rose Gold rehearsal? Your current sandbox run and physical sheets stay unchanged.'))return;run(start);};
+  }
+  async function start(){demoId=uid();pending=null;try{localStorage.setItem(key,demoId);}catch(_){}await call('start');}
+  async function open(){shell();C.openDlg(dialog);await run(async()=>{if(demoId){await call('get');if(!state)await call('start');}else await start();});}
+  async function run(fn){
+    if(busy)return;busy=true;error='';progress='Loading saved rehearsal…';render();
+    try{await fn();}catch(e){error=e.message||String(e);}finally{busy=false;progress='';render();}
+  }
+  function nest(){return run(async()=>{
+    const {job}=R.demoBatch(state.batch,state.profile);
+    progress='Nesting batch '+state.batch+' into '+(state.profile?'the saved remainder':'a fresh sheet')+'…';render();
+    const placements=await new Promise((resolve,reject)=>{
+      worker=new Worker('charm-nest-worker.js?v=20260922-rehearsal');
+      const timer=setTimeout(()=>finish(new Error('Nesting took too long. Try this batch again.')),60000);
+      function finish(err,result){clearTimeout(timer);worker?.terminate();worker=null;err?reject(err):resolve(result);}
+      worker.onerror=e=>finish(new Error(e.message||'Could not load the nesting worker'));
+      worker.onmessage=e=>{const m=e.data;if(m.type==='done')finish(null,m.result.placements);else if(m.type==='error')finish(new Error(m.message));else if(m.type==='placed'){progress='Placing sample charms · '+(m.info?.placed||'working');const el=dialog.querySelector('[data-demo-status]');if(el)el.textContent=progress;}};
+      worker.postMessage({type:'solve',jobId:demoId+'-'+state.batch,job});
+    });
+    progress='Verifying and saving the sample layout…';render();await mutate('nest',{placements});
+  });}
+  function render(){
+    if(!dialog)return;
+    const body=dialog.querySelector('[data-demo-body]');
+    dialog.querySelectorAll('[data-demo-reload],[data-demo-new]').forEach(b=>b.disabled=busy);
+    if(!state){body.innerHTML=`<p class="help" role="status">${busy?'<i class="spin"></i> Loading rehearsal…':'Start a new rehearsal to try three sample batches.'}</p>${error?'<p class="roseError" role="alert">'+esc(error)+'</p>':''}`;return;}
+    const locked=busy||!!pending;
+    const s=state,done=s.phase==='complete',nested=s.phase==='nested',included=s.phase==='included',canNest=['empty','cut'].includes(s.phase);
+    const remaining=(s.wPt*s.hPt-(s.profile?R.area(s.profile):0))*R.MM*R.MM;
+    const instructions=done?'Three cuts recorded. The grey charms and dated history belong to the same sheet; the white area is the saved reusable remainder.':included?'The dashed teal line is the proposed separation cut. Simulate the completed cut to grey these charms and save the remaining shape.':nested?'Open Options and select “Include in current set” to prepare this batch’s contour.':s.phase==='cut'?'The completed batch is grey. Nest the next seven charms into the white remainder; the previous cut areas are excluded.':'Start with seven sample charms on a fresh 100 × 50 mm sheet. Follow each batch from nesting to its recorded cut.';
+    body.innerHTML=`<p class="roseDemoIntro">Rehearse three batches on one sheet. Progress is saved in the sandbox; you can close this window and return later.</p>
+      <ol class="roseDemoSteps" aria-label="Rehearsal progress">${['Nest sample batch','Include in set','Simulate cut'].map((label,i)=>`<li ${((canNest&&i===0)||(nested&&i===1)||(included&&i===2))?'aria-current="step"':''}>${i+1}. ${label}</li>`).join('')}</ol>
+      <p class="roseDemoGuide">${instructions}</p>
+      <article class="roseDemoSheet"><div class="roseDemoSheetHead"><div><h4>RG 14/20 <span>· ${done?'Rehearsal complete':'Batch '+s.batch+' of 3'}</span></h4><small>Sample sheet ${esc(s.id.slice(-8).toUpperCase())} · 100 × 50 mm · ${Math.round(remaining)} mm² remaining</small></div>
+        <details class="roseDemoOptions"><summary class="btn ghost sm">Options</summary><div><label><input type="checkbox" data-demo-include ${included?'checked':''} ${!nested||locked?'disabled':''}> Include in current set</label><span class="help">Contour allowance · 0.2 mm</span><span class="help">${included?'Contour prepared for this sample batch.':'Available after nesting the sample batch.'}</span></div></details></div>
+      <div class="roseHistory"><div class="roseStockHead"><span>${s.cuts.length} simulated cut${s.cuts.length===1?'':'s'} saved</span><span class="roseLegend"><i></i> Separation cut <i class="spent"></i> Already cut</span></div>
+      ${s.cuts.length?`<ol class="roseTimeline" aria-label="Physical sheet cut history">${s.cuts.map(c=>`<li style="flex-grow:${c.plan.removedPt2}"><span class="roseCutNumber">${c.revision}</span><time datetime="${new Date(c.at).toISOString()}">${esc(new Date(c.at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'}))}</time><small>${esc(c.fileBase)} · ${c.plan.shapes.length} charms</small></li>`).join('')}</ol>`:'<p class="help">Cut dates will appear here after each simulated cut.</p>'}</div>
+      <canvas data-demo-canvas width="1400" height="730" role="img" aria-label="Rose Gold sample sheet: ${s.cuts.length} completed batches in grey and ${s.placements.length} current charms"></canvas>
+      <div class="roseDemoActions">${canNest?`<button class="btn gold" data-demo-nest ${locked?'disabled':''}>Nest ${s.batch===1?'first':'next'} sample batch</button>`:''}${included?`<button class="btn gold" data-demo-cut ${locked?'disabled':''}>Simulate completed cut</button>`:''}${nested?'<span class="help">Next: Options → Include in current set</span>':''}${done?'<span class="roseRecorded">Rehearsal complete · remainder saved</span>':''}${s.plan?`<span class="help">After this cut: ${Math.round(s.plan.remainingPt2*R.MM*R.MM)} mm² reusable</span>`:''}</div></article>
+      <p class="help" role="status" aria-live="polite">${busy?'<i class="spin"></i> ':''}<span data-demo-status>${esc(progress||(error?'Check the message below before continuing.':'Saved to sandbox · '+(done?'3 batches complete':'batch '+s.batch)))}</span></p>
+      ${error?`<p class="roseError" role="alert">${esc(error)}</p>${pending?'<button class="btn ghost sm" data-demo-retry>Retry saving</button>':''}`:''}`;
+    body.querySelector('[data-demo-nest]')?.addEventListener('click',nest);
+    body.querySelector('[data-demo-include]')?.addEventListener('change',()=>run(()=>mutate('include')));
+    body.querySelector('[data-demo-cut]')?.addEventListener('click',()=>run(()=>mutate('cut')));
+    body.querySelector('[data-demo-retry]')?.addEventListener('click',()=>run(async()=>{await call(pending.action,pending.extra);pending=null;}));
+    draw(body.querySelector('canvas'));
+  }
+  function draw(canvas){
+    const ctx=canvas.getContext('2d');if(!ctx)return;
+    const s=state,k=1320/s.wPt;ctx.clearRect(0,0,1400,730);ctx.fillStyle='#f5f1e9';ctx.fillRect(0,0,1400,730);
+    ctx.translate(50,40);ctx.fillStyle='#fff';ctx.fillRect(0,0,s.wPt*k,s.hPt*k);
+    ctx.font='16px monospace';ctx.fillStyle='#827b70';ctx.textAlign='center';
+    for(let mm=0;mm<=100;mm+=10){const x=mm/R.MM*k;ctx.fillText(mm,x,-13);ctx.beginPath();ctx.moveTo(x,-7);ctx.lineTo(x,0);ctx.strokeStyle='#c1b8aa';ctx.stroke();}
+    for(let mm=10;mm<=50;mm+=10){ctx.fillText(mm,-24,mm/R.MM*k+5);}
+    const sh={metal:'rose',roseStock:{profileJson:s.profile?JSON.stringify(s.profile):null},roseHistory:s.cuts,rosePlan:s.plan,dirty:false};
+    RoseStock.paint(ctx,sh,k,'history');
+    for(const shape of s.shapes||[])for(const path of shape.paths){ctx.beginPath();path.forEach(([x,y],i)=>i?ctx.lineTo(x*k,y*k):ctx.moveTo(x*k,y*k));ctx.closePath();ctx.fillStyle='#f2d9ce';ctx.fill();ctx.strokeStyle='#a05244';ctx.lineWidth=1.6;ctx.stroke();}
+    RoseStock.paint(ctx,sh,k,'lines');ctx.strokeStyle='#c08578';ctx.lineWidth=1;ctx.strokeRect(0,0,s.wPt*k,s.hPt*k);
+    ctx.setTransform(1,0,0,1,0,0);
+  }
+  // A visible entry beside the sandbox pill, plus a settings entry. No auto-run.
+  const pill=document.getElementById('sandboxPill');
+  if(pill){const button=document.createElement('button');button.className='btn ghost xs';button.id='roseDemoLaunch';button.textContent='Rose Gold rehearsal';button.onclick=open;pill.after(button);}
+  const reset=document.getElementById('stSandboxReset');
+  if(reset){const button=document.createElement('button');button.className='btn ghost sm';button.type='button';button.textContent='Rose Gold rehearsal';button.onclick=()=>{C.closeDlg(document.getElementById('dlgSettings'));open();};reset.after(button);}
+  window.RoseRehearsal={open};
+})();

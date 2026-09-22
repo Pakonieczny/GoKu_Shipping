@@ -83,6 +83,47 @@ module.exports=function({db,col,FV,Readiness}){
       return {ok:true,cut:{...cut,createdAt:null},stock:{...next,updatedAt:null}};
     });
   }
-  return {roseGet,roseList,roseClaim,roseRelease,rosePlan,roseRecordCut};
+  // A rehearsal has its own collection and cannot reserve physical stock,
+  // create production-ready sheets, export jobs, or complete Etsy orders.
+  async function roseDemo(b){
+    if(b.sandbox!==true)throw new Error('Rose Gold rehearsal is available only in the sandbox');
+    if(!id(b.demoId)||!b.demoId.startsWith('rgdemo-'))throw new Error('Invalid rehearsal ID');
+    const ref=db.collection('Sandbox_Charm_Nest_Rose_Rehearsals').doc(b.demoId);
+    return db.runTransaction(async tx=>{
+      const snap=await tx.get(ref),old=snap.exists?JSON.parse(snap.data().stateJson):null;
+      if(b.action==='get')return {state:old};
+      if(b.action==='start'){
+        if(old)return {state:old};
+        const state={id:b.demoId,version:1,revision:0,batch:1,phase:'empty',wPt:100/Rose.MM,hPt:50/Rose.MM,profile:null,cuts:[],placements:[],plan:null,createdMs:Date.now()};
+        tx.set(ref,{stateJson:JSON.stringify(state),updatedAt:FV.serverTimestamp()});return {state};
+      }
+      if(!old)throw new Error('Start a rehearsal first');
+      // A retry of the same mutation returns the saved result; stale tabs must reload.
+      if(id(b.requestId)&&old.lastRequestId===b.requestId)return {state:old};
+      if(!id(b.requestId)||b.revision!==old.revision)throw new Error('This rehearsal changed. Reload saved progress');
+      const state={...old,revision:old.revision+1,lastRequestId:b.requestId};
+      if(b.action==='nest'){
+        if(!['empty','cut'].includes(old.phase)||old.batch>3)throw new Error('Complete the current batch first');
+        const {charms,job}=Rose.demoBatch(old.batch,old.profile),pp=b.placements;
+        if(!Array.isArray(pp)||pp.length!==job.pieces.length||new Set(pp.map(p=>p.id)).size!==pp.length||pp.some(p=>!job.pieces.some(c=>c.id===p.id)||![p.cxPt,p.cyPt,p.angle].every(Number.isFinite)||Math.abs(p.angle)>360))throw new Error('The complete sample batch must fit before saving');
+        const placements=pp.map(p=>({id:p.id,cxPt:p.cxPt,cyPt:p.cyPt,angle:p.angle,scale:1}));
+        if(!require('../../charm-nest-solver').verify(job,placements,6).ok)throw new Error('Sample layout overlaps a cut area or another charm. Try nesting again');
+        const shapes=Rose.shapes(charms,placements);
+        // Check the vector contour as well as the conservative raster mask.
+        if(old.profile&&shapes.some(s=>s.paths.some(path=>path.some(([x,y])=>Rose.intersects(old.profile,x,y,0,0)))))throw new Error('Sample vector crosses the saved remnant');
+        Object.assign(state,{placements,shapes,phase:'nested',plan:null});
+      }else if(b.action==='include'){
+        if(old.phase!=='nested')throw new Error('Nest the sample batch first');
+        Object.assign(state,{plan:Rose.plan(old.shapes,old.wPt,old.hPt,old.profile,.2),phase:'included'});
+      }else if(b.action==='cut'){
+        if(old.phase!=='included'||!old.plan)throw new Error('Include this sample batch before simulating its cut');
+        const at=Date.now(),cut={revision:old.cuts.length+1,at,plan:old.plan,fileBase:'Sample batch '+old.batch,sheetId:old.id+'-'+old.batch};
+        Object.assign(state,{cuts:[...old.cuts,cut],profile:old.plan.profile,phase:old.batch===3?'complete':'cut',batch:old.batch+1,plan:null,placements:[],shapes:[]});
+      }else throw new Error('Unknown rehearsal action');
+      const stateJson=JSON.stringify(state);if(Buffer.byteLength(stateJson)>900000)throw new Error('Rehearsal history is too large');
+      tx.set(ref,{stateJson,updatedAt:FV.serverTimestamp()});return {state};
+    });
+  }
+  return {roseGet,roseList,roseClaim,roseRelease,rosePlan,roseRecordCut,roseDemo};
 };
 module.exports.fingerprint=fingerprint;

@@ -1224,6 +1224,13 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .roseActions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.roseRecorded{color:#326e60}.roseError{color:#a34838}.roseNote{font-size:10px;color:var(--ink45);margin:7px 0 0;line-height:1.5}
 .roseStockOptions{border-top:1px solid var(--line);padding-top:8px;display:grid;gap:8px;grid-column:1/-1}.roseStockOptions label{display:flex;align-items:center;justify-content:space-between;gap:12px}.roseStockOptions input{width:70px}
 
+.roseDemoIntro{margin:0 0 14px;font-size:13px;color:var(--ink70);line-height:1.6}
+.roseDemoSteps{display:flex;list-style:none;padding:0;margin:0;gap:8px;flex-wrap:wrap}.roseDemoSteps li{padding:7px 12px;border:1px solid var(--line);border-radius:7px;font-size:12px;color:var(--ink45)}.roseDemoSteps [aria-current]{border-color:#c08578;color:#8a4d40;background:#fcf0ea}
+.roseDemoGuide{font-size:13px;line-height:1.6;min-height:42px;margin:14px 0}
+.roseDemoSheet{border:1px solid var(--line);border-top:4px solid #c08578;border-radius:13px;background:#fffefb;overflow:visible}.roseDemoSheetHead{display:flex;justify-content:space-between;align-items:center;padding:16px;gap:10px}.roseDemoSheetHead h4{font:26px var(--serif);margin:0 0 6px}.roseDemoSheetHead h4 span{font:12px var(--mono);color:var(--ink45)}.roseDemoSheetHead small{font-size:11px;color:var(--ink70)}
+.roseDemoOptions{position:relative}.roseDemoOptions summary{list-style:none;cursor:pointer}.roseDemoOptions>div{position:absolute;right:0;top:42px;width:270px;z-index:2;background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 25px #0002;padding:16px;display:grid;gap:12px}.roseDemoOptions label{display:flex;align-items:center;gap:8px;font-size:13px}.roseDemoOptions input{width:18px;height:18px}
+.roseDemo canvas{display:block;width:calc(100% - 28px);height:auto;margin:0 14px;border-radius:8px}.roseDemoActions{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:14px 16px}.roseDemo .dlgFoot{flex-wrap:wrap}.roseDemo .dlgFoot .left{flex-wrap:wrap}.roseDemo .roseTimeline li{min-width:150px}
+@media(max-width:600px){.roseDemoSheetHead{align-items:flex-start;flex-wrap:wrap}.roseDemoSheetHead h4{font-size:22px}.roseDemoSteps li{font-size:11px;padding:6px}.roseDemo .dlgHead .pill{display:none}}
 </style>
 </head>
 <body>
@@ -1422,7 +1429,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="brites-progress.js"></script>
 <script src="charm-nest-progress.js"></script>
 <script src="charm-nest-operations.js"></script>
-<script src="charm-nest-rose.js?v=20260922-remnants"></script>
+<script src="charm-nest-rose.js?v=20260922-rehearsal"></script>
 <script src="charm-nest-solver.js?v=20260922-remnants"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
@@ -3635,7 +3642,7 @@ async function boot() {
 boot();
 </script>
 <script src="charm-nest-bridge.js?v=20260922-remnants"></script>
-<script src="charm-nest-rose-ui.js?v=20260922-remnants"></script>
+<script src="charm-nest-rose-ui.js?v=20260922-rehearsal"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin" aria-labelledby="owTitle">

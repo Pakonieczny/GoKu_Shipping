@@ -63,5 +63,23 @@
     const transform=paths=>paths.map(path=>path.map(([x,y])=>{const dx=(x-c.centerPt[0])*scale,dy=(c.centerPt[1]-y)*scale;return [+(p.cxPt+dx*cos-dy*sin).toFixed(4),+(p.cyPt+dx*sin+dy*cos).toFixed(4)];}));
     return {id:p.id,paths:transform(flatten(c.outline)),ink:transform((c.members||[]).filter(m=>m!==c.outline).flatMap(flatten))};
   });}
-  return {flatten,shapes,validate,area,frontier,intersects,stamp,plan,lines,MM};
+  // Synthetic rehearsal artwork. The same vectors and conservative bitmaps
+  // are used by the browser worker and the server's independent verifier.
+  function demoBatch(batch,prior=null){
+    if(!Number.isInteger(batch)||batch<1||batch>3)throw new Error('Choose rehearsal batch 1–3');
+    const charms=[],pieces=[],scale=2;
+    for(let i=0;i<7;i++){
+      const wPt=24+(i%3)*4,hPt=27+((i+batch)%3)*4,n=40,kind=(i+batch)%3;
+      const points=Array.from({length:n},(_,j)=>{const a=j*Math.PI*2/n,r=kind===0?1:kind===1?.79+.2*Math.cos(a*5):.8+.18*Math.cos(a*2);return [wPt/2+(wPt/2-1)*r*Math.cos(a),hPt/2+(hPt/2-1)*r*Math.sin(a)];});
+      const id='demo-'+batch+'-'+i,outline={subpaths:[[['m',points[0]],...points.slice(1).map(p=>['l',p]),['h']]]};
+      charms.push({id,name:['Oval','Flower','Leaf'][kind],outline,centerPt:[wPt/2,hPt/2],members:[]});
+      const w=wPt*scale,h=hPt*scale,bits=new Uint8Array(w*h);
+      const inside=(x,y)=>{let on=false;for(let a=0,b=points.length-1;a<points.length;b=a++){const p=points[a],q=points[b];if((p[1]>y)!==(q[1]>y)&&x<(q[0]-p[0])*(y-p[1])/(q[1]-p[1])+p[0])on=!on;}return on;};
+      // One-pixel outward guard makes the mask conservative for vector edges.
+      for(let y=0;y<h;y++)for(let x=0;x<w;x++)if(inside((x+.5)/scale,hPt-(y+.5)/scale))for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const xx=x+dx,yy=y+dy;if(xx>=0&&xx<w&&yy>=0&&yy<h)bits[yy*w+xx]=1;}
+      pieces.push({id,w,h,scale,bits,areaPt2:bits.reduce((a,b)=>a+b,0)/(scale*scale)});
+    }
+    return {charms,job:{sheet:{wPt:100/MM,hPt:50/MM,insetPt:1.5,remnant:prior},pieces,angles:Array.from({length:36},(_,i)=>i*10),clearancePt:.6,fineRes:2,coarseRes:.5,maxFill:.95,maxTrials:3,timeBudgetMs:2500,seed:41+batch,verifyResult:true}};
+  }
+  return {flatten,shapes,validate,area,frontier,intersects,stamp,plan,lines,MM,demoBatch};
 });
