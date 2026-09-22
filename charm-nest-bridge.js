@@ -106,6 +106,49 @@ const ListZoom = (() => {
 // replaced by a vector: these are separate, labelled sources for comparison.
 const ListMedia = (() => {
   const jobs=new WeakMap(), watched=new Set(), queue=[], photos=new Map(), pending=new Map(), wanted=new Set();
+  // Firebase is the shared source; this small local index makes refresh instant.
+  // Image bytes use the seven-day HTTP cache, not another Etsy metadata lookup.
+  const photoStorage='cn.listingPhotos.v1',photoAttempts=new Map(),warming=new Set(),photoLoading=new Set();
+  let photoPauseUntil=0;try{photoPauseUntil=Number(localStorage.getItem('cn.listingPhotoPause'))||0;}catch(_){}
+  try{for(const [id,url] of JSON.parse(localStorage.getItem(photoStorage)||'[]'))if(typeof url==='string'&&url)photos.set(id,url);}catch(_){}
+  let preparing=null,photoTick=0;
+  function remember(id,url){
+    if(!url)return;photos.delete(id);photos.set(id,url);
+    while(photos.size>1500)photos.delete(photos.keys().next().value);
+    try{localStorage.setItem(photoStorage,JSON.stringify([...photos].filter(([,u])=>!!u)));}catch(_){}
+  }
+  const photoUrl=url=>url?('/.netlify/functions/imageProxy?url='+encodeURIComponent(url)):null;
+  async function warm(url){
+    if(!url||warming.has(url))return;warming.add(url);
+    await new Promise(resolve=>{const img=new Image(),done=()=>{clearTimeout(timer);img.onload=img.onerror=null;resolve();},timer=setTimeout(done,10000);img.onload=img.onerror=done;img.src=url;});
+  }
+  function refreshPhotos(ids){
+    for(const host of document.querySelectorAll('[data-listing]')){const job=jobs.get(host);if(!job||!ids.includes(job.key)||host.querySelector('img'))continue;
+      if(photos.get(job.key))watch(host,()=>listing(job.key),job.key,true);
+      else if(job.state==='done'){host.innerHTML=photoLoading.has(job.key)?loading:'Photo queued';host.setAttribute('aria-busy',String(photoLoading.has(job.key)));host.title=photoPauseUntil>Date.now()?'Photo preparation resumes '+new Date(photoPauseUntil).toLocaleString():'';}}
+  }
+  async function prepare(rows){
+    if(preparing||!S.cloud.ok)return preparing;
+    const ids=[...new Set((rows||[]).map(row=>String(row.line?.listingId||'')).filter(Boolean))];
+    const missing=ids.filter(id=>!photos.get(id)&&Date.now()>=photoPauseUntil&&Date.now()-(photoAttempts.get(id)||0)>=600000);
+    missing.forEach(id=>photoLoading.add(id));refreshPhotos(missing);
+    preparing=(async()=>{
+      // Preparing a batch never blocks order processing. New image lookups share
+      // the same server-side allowance as production and never retry a 429.
+      for(let i=0;i<missing.length;i+=4){
+        const batch=missing.slice(i,i+4);batch.forEach(id=>photoAttempts.set(id,Date.now()));
+        const got=await api('charmNestLibrary',{op:'listingPhotos',listingIds:batch,prepare:true},{quiet:true});
+        for(const id of batch)if(got.images?.[id])remember(id,photoUrl(got.images[id]));
+        batch.forEach(id=>photoLoading.delete(id));refreshPhotos(batch);
+        if(got.retryAt>Date.now()){photoPauseUntil=got.retryAt;try{localStorage.setItem('cn.listingPhotoPause',String(photoPauseUntil));}catch(_){}for(const id of missing.slice(i))photoAttempts.set(id,got.retryAt-600000);break;}
+      }
+      // Two image downloads at a time warm the normal browser HTTP cache.
+      const available=ids.map(id=>photos.get(id)).filter(Boolean);let next=0;
+      await Promise.all([0,1].map(async()=>{while(next<available.length)await warm(available[next++]);}));
+    })().catch(e=>console.warn('Listing photo preparation:',e.message)).finally(()=>{missing.forEach(id=>photoLoading.delete(id));refreshPhotos(missing);preparing=null;});
+    return preparing;
+  }
+  function start(){clearInterval(photoTick);prepare(Orders.rows());photoTick=setInterval(()=>{if(!document.hidden)prepare(Orders.rows());},600000);}
   let running=0, photoTimer=0, photoBusy=false;
   const observer=window.IntersectionObserver ? new IntersectionObserver(entries=>{
     for(const e of entries)if(e.isIntersecting){observer.unobserve(e.target);watched.delete(e.target);queue.push(e.target);}pump();
@@ -138,13 +181,13 @@ const ListMedia = (() => {
             await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{img.onload=img.onerror=null;reject(Error('Image timed out'));},20000);img.onload=()=>{clearTimeout(timer);resolve();};img.onerror=()=>{clearTimeout(timer);reject(Error('Image unavailable'));};img.src=cors(result);host.appendChild(img);});
             if(!host.isConnected || jobs.get(host)!==job)return;host.replaceChildren(img);
           }else if(result?.nodeType)host.replaceChildren(result);
-          else host.textContent=host.hasAttribute('data-listing') ? (WORKSPACE_SANDBOX?'No saved listing image':'Listing image unavailable') : 'No vector available';
+          else if(host.hasAttribute('data-listing'))host.innerHTML=photoLoading.has(job.key)?loading:'Photo queued';else host.textContent='No vector available';
           ListZoom.bind(host,(host.hasAttribute('data-listing')?'listing:':'vector:')+job.key);
           job.state='done';
         }catch(_){
           if(host.isConnected && jobs.get(host)===job){job.state='error';host.textContent='Unavailable · Retry';host.setAttribute('role','button');host.tabIndex=0;
             host.onclick=e=>{e.stopPropagation();watch(host,job.load,job.key,true);};host.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();watch(host,job.load,job.key,true);}};}
-        }finally{if(jobs.get(host)===job){if(job.state==='loading'){job.state='waiting';if(observer){watched.add(host);observer.observe(host);}}else host.setAttribute('aria-busy','false');}running--;pump();}
+        }finally{if(jobs.get(host)===job){if(job.state==='loading'){job.state='waiting';if(observer){watched.add(host);observer.observe(host);}}else host.setAttribute('aria-busy',String(host.hasAttribute('data-listing')&&photoLoading.has(job.key)));}running--;pump();}
       },0);
     }
   }
@@ -154,9 +197,8 @@ const ListMedia = (() => {
       photoTimer=0;photoBusy=true;
       const ids=[...wanted].slice(0,12);ids.forEach(id=>wanted.delete(id));
       try {
-        if(!DesignLink.up())await DesignLink.ensure();
-        const got=await DesignLink.call('orders.images',{listingIds:ids},{timeoutMs:45000,quiet:true});
-        for(const id of ids){const url=got.images?.[id] || null;photos.set(id,url);pending.get(id)?.resolve(url);}
+        const got=await api('charmNestLibrary',{op:'listingPhotos',listingIds:ids},{quiet:true});
+        for(const id of ids){const url=photoUrl(got.images?.[id])||photos.get(id)||null;if(url)remember(id,url);else photos.set(id,null);pending.get(id)?.resolve(url);}
       }catch(e){for(const id of ids)pending.get(id)?.reject(e);}
       finally{ids.forEach(id=>pending.delete(id));photoBusy=false;flushPhotos();}
     },80);
@@ -195,7 +237,7 @@ const ListMedia = (() => {
     const io=window.IntersectionObserver ? new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))go();},{rootMargin:'160px'}) : null;
     button.onclick=go;host.appendChild(button);if(io){pages.set(host,io);io.observe(button);}
   }
-  return {pair,mount,watch,more,listing,peek:id=>photos.get(String(id || '')) || null};
+  return {pair,mount,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
 })();
 const fmtT = t => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -657,7 +699,7 @@ const Orders = window.Orders = (() => {
     const held = B.orders.rows.filter(x => x.problems.length).length;
     agent({ bridge: true }, "DS", `Pulled ${picked.length} order(s), ${B.orders.rows.length} line(s)${B.orders.filtered ? ` (${B.orders.filtered} more open orders left out by the pull rule)` : ""} · ${held} line(s) need a decision`);
     if (!silent) toast(`${picked.length} orders · ${B.orders.rows.length} lines pulled from the Design Station`, "ok");
-    render();
+    render();ListMedia.prepare(B.orders.rows);
     return B.orders.rows;
     } finally { if (pullBar) pullBar.end(); }
   }
@@ -4470,7 +4512,7 @@ const Recall = window.Recall = (() => {
     B.orders.pulledAt = r.run.updatedAt || r.run.startedAt || null; B.orders.filtered = 0; B.orders.stale = false;
     const first = (sheets || []).find(x => x.setSeq) || {};
     B.orders.recalled = { runId, seq: first.setSeq || r.run.seq || +((/-(\d+)$/.exec(String(r.run.setId || "")) || [])[1] || 0) || null, day: first.day || r.run.day || null };
-    Orders.interpretAll(); Orders.render();
+    Orders.interpretAll(); Orders.render();ListMedia.prepare(Orders.rows());
   }
   /** Bring one recalled sheet's charms back from the master files so it can be edited and nested again. On demand only. */
   async function rebuild(pg) {
@@ -4705,7 +4747,7 @@ const Arrivals = window.Arrivals = (() => {
   state = Object.assign({ seen: {}, lastCheck: 0, nextCheck: 0, lastAdded: 0, error: null }, state || {});
   let tick = 0, busy = false;
   window.addEventListener("storage", e => { if (e.key !== storageKey() || !e.newValue) return; try { const other = JSON.parse(e.newValue); Object.assign(state.seen, other.seen); if (other.lastCheck > state.lastCheck) { state.lastCheck = other.lastCheck; state.nextCheck = other.nextCheck; state.lastAdded = other.lastAdded; } paint(); } catch (_) {} });
-  const interval = () => Math.max(WORKSPACE_SANDBOX ? 1 : 10, Math.min(1440, +S.settings.pollMinutes || 10)) * 60000;
+  const interval = () => Math.max(10, Math.min(1440, +S.settings.pollMinutes || 10)) * 60000;
   const at = id => state.seen[String(id)] || 0;
   const save = () => { try { localStorage.setItem(storageKey(), JSON.stringify(state)); } catch (_) {} };
   async function record(orders) {
@@ -4761,7 +4803,7 @@ const Arrivals = window.Arrivals = (() => {
       toast(`${freshIds.length || new Set(added.map(r => r.order.receiptId)).size} new order(s) arrived`, "ok", 6000);
       notifyPerson("New Etsy orders", `${added.length} new order line(s) added to the sorter`);
     }
-    Orders.render(); Review.render(); Engrave.render(); refreshAllCards(); Session.schedule(); paint();
+    Orders.render(); Review.render(); Engrave.render(); refreshAllCards(); Session.schedule(); paint();ListMedia.prepare(Orders.rows());
     return added;
   }
   async function processPending({checkpoint=false}={}) {
@@ -4998,7 +5040,7 @@ async function bootBridge() {
   catch (error) { recoveryFailed = true; console.error("Workspace recovery failed; checkpoint retained", error); }
   // Never overwrite a checkpoint with a partially restored workspace or start
   // an automatic run over it. Navigation and the saved Library remain usable.
-  if (!recoveryFailed) { Session.listen(); Arrivals.start(); if(recovered)RunCtl.recoverReviewStop().catch(e=>RunCtl.stop(e.message,"Reconnect and Resume.")); }
+  if (!recoveryFailed) { Session.listen(); Arrivals.start(); ListMedia.start(); if(recovered)RunCtl.recoverReviewStop().catch(e=>RunCtl.stop(e.message,"Reconnect and Resume.")); }
   Views.onShow(S.mode);
   /* The app used to open on an empty Orders tab whatever had happened yesterday, and the only way to anything was to
      pull again. It opens on the last run instead — its orders, its sheets, its engraving, read from the record, with

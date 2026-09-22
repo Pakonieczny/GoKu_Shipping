@@ -42,6 +42,6 @@ function fixture({cap=25,status=200,headers={},broken=false}={}){
  const bridge=fs.readFileSync(require.resolve('../../charm-nest-bridge.js'),'utf8');
  const cadence=bridge.match(/const interval = \(\) => ([^;]+);/)[1];
  const interval=(sandbox,minutes)=>vm.runInNewContext(cadence,{WORKSPACE_SANDBOX:sandbox,S:{settings:{pollMinutes:minutes}}});
- assert.equal(interval(false,1),600000);assert.equal(interval(true,1),60000);assert.equal(interval(false,30),1800000);
+ assert.equal(interval(false,1),600000);assert.equal(interval(true,1),600000);assert.equal(interval(false,30),1800000);
  console.log('Etsy image protections OK: sandbox/catalog zero calls, concurrent/cold-start cache, rolling budget, key reserve, shared cooldown, fail-closed storage, no browser retry or token refresh; no live Etsy requests used.');
 })().catch(e=>{console.error(e);process.exitCode=1});

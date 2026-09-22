@@ -32,3 +32,36 @@ const bridge=fs.readFileSync('charm-nest-bridge.js','utf8'),station=fs.readFileS
  a.S.cloud.ok=false;await a.record([{receiptId:'789'}]);a.S.cloud.ok=true;await a.record([{receiptId:'789'}]);assert.equal(sent.at(-1)[0].id,'789','offline first arrivals are still recorded when cloud returns');
  console.log('Firebase thrift OK: aggregation-only counts, 100 concurrent sandbox reads share one lookup/download, browser reload cache, visible-only throttled polling, known-arrival reuse. No live Firebase calls.');
 })().catch(e=>{console.error(e);process.exitCode=1});
+// The linked station's completion checks are viewport-bounded, not all rendered rows.
+{
+ const rows=Array.from({length:120},(_,i)=>({offsetTop:i*100,offsetHeight:90,dataset:{receipt:String(i)}}));
+ const c={document:{hidden:false},$:()=>({scrollTop:1000,clientHeight:400}),$$:()=>rows};
+ const start=station.indexOf('function visibleReceiptIds('),end=station.indexOf('function removeCompletedRows',start);
+ vm.runInNewContext(station.slice(start,end)+';this.visible=visibleReceiptIds;',c);
+ assert.deepEqual(Array.from(c.visible()),Array.from({length:13},(_,i)=>String(i+6)));c.document.hidden=true;assert.equal(c.visible().length,0);
+ const startPoll=station.indexOf('async function pollCompletedTargeted'),endPoll=station.indexOf('function startCompletionPolling',startPoll);
+ const hidden={document:{hidden:true},visibleReceiptIds:()=>{throw Error('Hidden page scanned orders');},fetch:()=>{throw Error('Hidden page made a request');}};
+ vm.runInNewContext(station.slice(startPoll,endPoll)+';this.poll=pollCompletedTargeted;',hidden);hidden.poll().then(r=>assert.equal(r,false));
+}
+(async()=>{
+ const source=fs.readFileSync('netlify/functions/firebaseOrders.js','utf8');
+ const start=source.indexOf('      if (event.queryStringParameters?.dcFor)'),end=source.indexOf('      /* ?staffNotesFor',start);
+ let queries=0;
+ const ctx={CORS:{},COMPLETED_COLL:'completed',parseIds:s=>s.split(','),admin:{firestore:{FieldPath:{documentId:()=> '__name__'}}}};
+ ctx.col=()=>({where:(field,op,ids)=>{
+   assert.equal(field,'__name__');assert.equal(op,'in');assert(ids.length<=10);
+   return {get:async()=>{queries++;return {docs:ids.filter(id=>['3','14'].includes(id)).map(id=>({id}))};}};
+ }});
+
+ vm.runInNewContext('this.lookup=async function(event){'+source.slice(start,end)+'};',ctx);
+ const result=await ctx.lookup({queryStringParameters:{dcFor:Array.from({length:20},(_,i)=>String(i)).join(',')}});
+ assert.equal(queries,2);assert.deepEqual(JSON.parse(result.body).orderNumbers,['3','14']);
+})().catch(e=>{console.error(e);process.exitCode=1});
+
+(async()=>{
+ const calls=[],ctx={require:()=>({read:async(id,opts)=>{calls.push({id,...opts});return {images:opts.cacheOnly?[]:[{url_570xN:'https://i.etsystatic.com/'+id+'.jpg'}],source:opts.cacheOnly?'cache-only':'etsy',etsyCalls:opts.cacheOnly?0:1};}})};
+ const start=server.indexOf('async function op_listingPhotos'),end=server.indexOf('async function op_ping',start);
+ vm.runInNewContext(server.slice(start,end)+';this.photos=op_listingPhotos;',ctx);
+ const cached=await ctx.photos({listingIds:['123','123','invalid']});assert.equal(calls.length,1);assert.equal(calls[0].cacheOnly,true);assert.equal(cached.etsyCalls,0);
+ const prepared=await ctx.photos({listingIds:['123'],prepare:true});assert.equal(calls[1].cacheOnly,false);assert.equal(prepared.etsyCalls,1);assert.match(prepared.images['123'],/^https:/);
+})().catch(e=>{console.error(e);process.exitCode=1});

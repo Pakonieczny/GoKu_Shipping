@@ -2178,7 +2178,7 @@ let rtClaims   = new Map();   // receipt_id → { claimedBy, run } — the Charm
 let __rtSince    = Date.now() - 5 * 60 * 1000;
 let __rtInflight = null;
 let __rtIdleHits = 0;
-const RT_STEPS = [100, 200, 400, 800, 1600, 3200, 6400];
+const RT_STEPS = [2000, 5000, 15000, 30000, 60000];
 const RT_POLL  = { t: null };
 
 function paintLock(id, owner) {
@@ -2284,12 +2284,13 @@ async function fetchAllLocksOnce() {
   } catch (e) { console.warn("hydrate locks failed", e); }
 }
 
-function nextRtDelay() { return RT_STEPS[Math.min(__rtIdleHits, RT_STEPS.length - 1)]; }
+function nextRtDelay() { if(document.hidden)return 60000; return RT_STEPS[Math.min(__rtIdleHits, RT_STEPS.length - 1)]; }
 function scheduleRtPoll() {
   clearTimeout(RT_POLL.t);
   RT_POLL.t = setTimeout(fetchLocksOnce, nextRtDelay());
 }
 function fetchLocksOnce() {
+  if(document.hidden){scheduleRtPoll();return Promise.resolve();}
   if (__rtInflight) return __rtInflight;
   __rtInflight = fetch(`${FN}/firebaseOrders?rtSince=${__rtSince}`)
     .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
@@ -2309,7 +2310,7 @@ function fetchLocksOnce() {
       __rtIdleHits = changed ? 0 : (__rtIdleHits + 1);
       applyAllLocksToDOM();
     })
-    .catch(() => {})
+    .catch(() => { __rtIdleHits++; })
     .finally(() => { __rtInflight = null; scheduleRtPoll(); });
   return __rtInflight;
 }
@@ -2434,21 +2435,21 @@ async function unsetDesignCompletedBulk(ids) {
 }
 
 /* Targeted completion poll — asks only about the orders currently on screen,
-   so another station completing an order makes it vanish here within ~1s. */
-const COMPLETE_STEPS = [750, 1500, 3000, 6000, 12000, 30000];
+   with slower idle checks to avoid repeatedly billing reads for unchanged orders. */
+const COMPLETE_STEPS = [5000, 10000, 30000, 60000];
 let __completeIdle = 0, __completeTimer = null;
 
 /* Rows currently on screen (plus a little either side). Capped, because with
    infinite scroll the rendered list can run to hundreds of rows and these ids
    go into a query string. */
-function visibleReceiptIds(limit = 120) {
+function visibleReceiptIds(limit = 20) {
   const wrap = $("#queueWrap");
   const rows = $$("#newOrderContainer .orderRow");
-  if (!wrap || rows.length <= limit) return rows.map(el => el.dataset.receipt).filter(Boolean);
+  if (!wrap || document.hidden) return [];
 
   const top = wrap.scrollTop - 400, bottom = wrap.scrollTop + wrap.clientHeight + 400;
   const near = rows.filter(el => el.offsetTop + el.offsetHeight >= top && el.offsetTop <= bottom);
-  return (near.length ? near : rows).slice(0, limit).map(el => el.dataset.receipt).filter(Boolean);
+  return near.slice(0, limit).map(el => el.dataset.receipt).filter(Boolean);
 }
 
 function removeCompletedRows(idSet) {
@@ -2472,6 +2473,7 @@ function removeCompletedRows(idSet) {
 }
 
 async function pollCompletedTargeted() {
+  if(document.hidden)return false;
   const ids = visibleReceiptIds();
   if (!ids.length) return false;
   const r = await fetch(`${FN}/firebaseOrders?dcFor=${encodeURIComponent(ids.join(","))}`);

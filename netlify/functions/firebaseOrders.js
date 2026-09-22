@@ -272,11 +272,13 @@ exports.handler = async (event) => {
         if (!ids.length) {
           return { statusCode: 200, headers: CORS, body: JSON.stringify({ success:true, orderNumbers: [] }) };
         }
-        const refs = ids.map(id => col(COMPLETED_COLL).doc(String(id)));
-        const snaps = await Promise.all(refs.map(r => r.get()));
-        const present = snaps
-          .map((snap, i) => (snap.exists ? ids[i] : null))
-          .filter(Boolean);
+        // Query matching completed records, rather than billing a document get
+        // for every not-yet-completed order on every background poll.
+        const present=[];
+        for(let i=0;i<ids.length;i+=10){
+          const snap=await col(COMPLETED_COLL).where(admin.firestore.FieldPath.documentId(),"in",ids.slice(i,i+10)).get();
+          present.push(...snap.docs.map(d=>d.id));
+        }
         return {
           statusCode: 200, headers: CORS,
           body: JSON.stringify({ success:true, orderNumbers: present, now: Date.now() })
