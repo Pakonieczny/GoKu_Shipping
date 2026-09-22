@@ -1662,9 +1662,9 @@ function recountLibrary() {
   if (!S.cloud.ok || recountTimer) return;
   recountTimer = setTimeout(async () => {
     recountTimer = null;
-    try { const r = await api("charmNestLibrary", { op: "ping" }, { quiet: true }); S.cloud.lib = { sheets: r.sheets || 0, charms: r.charms || 0 }; renderCloudStatus(); }
+    try { const r = await api("charmNestLibrary", { op: "ping", calibration:false }, { quiet: true }); S.cloud.lib = { sheets: r.sheets || 0, charms: r.charms || 0 }; renderCloudStatus(); }
     catch (_) { /* keep the last known totals — the dot still says what the connection is doing */ }
-  }, 3000);
+  }, 30000);
 }
 async function cloudProbe() {
   try {
@@ -3685,7 +3685,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260922-etsy-cache"></script>
+<script src="charm-nest-bridge.js?v=20260922-firebase-thrift"></script>
 <script src="charm-nest-rose-ui.js?v=20260922-rehearsal"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->

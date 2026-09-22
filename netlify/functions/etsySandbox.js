@@ -23,21 +23,27 @@ const SANDBOX = "Charm_Sandbox";
 const PAGE = 100;
 
 const json = (statusCode, body) => ({ statusCode, headers: CORS, body: JSON.stringify(body) });
-let cache = { path: null, at: 0, receipts: [] };
+let cache = { path: null, at: 0, receipts: [], meta: null };
+let snapshotFlight=null;
 async function listingImages(listingId) {
   const r=await require('./_etsyImageCache').read(listingId,{cacheOnly:true});
   return r.images;
 }
 
 async function loadSnapshot() {
+  if(cache.at && Date.now()-cache.at<60000)return {meta:cache.meta,receipts:cache.receipts};
+  if(snapshotFlight)return snapshotFlight;
+  snapshotFlight=readSnapshot();try{return await snapshotFlight;}finally{snapshotFlight=null;}
+}
+async function readSnapshot() {
   const doc = await db.collection(SANDBOX).doc("current").get();
-  if (!doc.exists) return { meta: null, receipts: [] };
+  if (!doc.exists) { cache={path:null,at:Date.now(),meta:null,receipts:[]};return {meta:null,receipts:[]}; }
   const meta = doc.data();
-  if (cache.path === meta.path && cache.receipts.length) return { meta, receipts: cache.receipts };
+  if (cache.path === meta.path && cache.meta) {cache.at=Date.now();cache.meta=meta;return { meta, receipts: cache.receipts };}
   const [buf] = await admin.storage().bucket().file(meta.path).download();
   let receipts = [];
   try { const parsed = JSON.parse(buf.toString("utf8")); receipts = Array.isArray(parsed) ? parsed : (parsed.receipts || []); } catch (e) { throw new Error("sandbox snapshot is not valid JSON: " + e.message); }
-  cache = { path: meta.path, at: Date.now(), receipts };
+  cache = { path: meta.path, at: Date.now(), receipts, meta };
   return { meta, receipts };
 }
 const stripTx = r => { const o = Object.assign({}, r); delete o.transactions; return o; };
@@ -48,7 +54,10 @@ exports.handler = async function (event) {
   const fn = String(q.fn || "");
   try {
     if (fn === "refreshEtsyToken") return json(200, { access_token: "sandbox-token", refresh_token: "sandbox-refresh", expires_in: 7200, sandbox: true });
-    if (fn === "etsyImages") return json(200, await listingImages(String(q.listingId || "")));
+    if (fn === "etsyImages") {
+      const images=await listingImages(String(q.listingId || ""));
+      return {...json(200,images),headers:{...CORS,'Cache-Control':images.length?'public, max-age=86400':'public, max-age=300','X-Etsy-Calls':'0'}};
+    }
     const { meta, receipts } = await loadSnapshot();
     if (fn === "status") return json(200, { ok: true, sandbox: true, count: receipts.length, at: meta ? meta.at : null, path: meta ? meta.path : null, takenBy: meta ? meta.takenBy || null : null });
     if (fn === "listOpenOrders") {

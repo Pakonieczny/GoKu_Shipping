@@ -1821,6 +1821,17 @@ async function pullEtsyOrderDetails(orderNumber, { strict = false } = {}) {
 /* Listing images — permanent cache + in-flight dedupe + concurrency cap. */
 const __imagesCache  = new Map();
 const __imagesFlight = new Map();
+const __imagesSaved = new Map(), __imagesKey='designStation.listingImages.v1'+NS;
+try {for(const [id,v] of JSON.parse(localStorage.getItem(__imagesKey)||'[]'))if(v?.until>Date.now()&&Array.isArray(v.images)){__imagesSaved.set(id,v);__imagesCache.set(id,v.images);}}catch(_){}
+function saveListingImages(key,images){
+  try {
+    __imagesSaved.delete(key);__imagesSaved.set(key,{images,until:Date.now()+(images.length?86400000:300000)});
+    while(__imagesSaved.size>200)__imagesSaved.delete(__imagesSaved.keys().next().value);
+    let json=JSON.stringify([...__imagesSaved]);
+    while(json.length>1500000&&__imagesSaved.size){__imagesSaved.delete(__imagesSaved.keys().next().value);json=JSON.stringify([...__imagesSaved]);}
+    localStorage.setItem(__imagesKey,json);
+  }catch(_){} // Storage full/disabled: memory and HTTP caches still work.
+}
 
 async function fetchListingImages(listingId) {
   const key = String(listingId);
@@ -1839,6 +1850,7 @@ async function fetchListingImages(listingId) {
   try {
     const results = await task;
     __imagesCache.set(key, results);
+    saveListingImages(key,results);
     return results;
   } finally { __imagesFlight.delete(key); }
 }

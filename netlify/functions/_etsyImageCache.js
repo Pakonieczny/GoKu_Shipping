@@ -3,7 +3,7 @@
 // Cached images remain available even when the live-read budget is exhausted.
 const DAY = 86400000;
 function createImageCache({db, fetch, env=process.env, now=Date.now, sleep=ms=>new Promise(r=>setTimeout(r,ms)), meter=null}) {
-  const crypto=require('node:crypto'), flights=new Map();
+  const crypto=require('node:crypto'), flights=new Map(),memory=new Map();
   const key=crypto.createHash('sha256').update(String(env.CLIENT_ID||'unconfigured')).digest('hex').slice(0,24);
   const budgetRef=db.collection('EtsyApi_Config').doc('listingImages_'+key);
   const capValue=Number(env.ETSY_IMAGE_MAX_DAILY_CALLS ?? 25);
@@ -13,9 +13,11 @@ function createImageCache({db, fetch, env=process.env, now=Date.now, sleep=ms=>n
   async function read(id,{cacheOnly=false}={}) {
     id=String(id||'');if(!/^\d{3,20}$/.test(id))return result([],'invalid',400);
     const flightKey=id+':'+cacheOnly;
+    const hit=memory.get(flightKey);
+    if(hit && hit.until>now())return {...hit.value,source:hit.value.images.length?'cache':hit.value.source,etsyCalls:0};
     if(flights.has(flightKey))return flights.get(flightKey);
     const task=load(id,cacheOnly).catch(()=>result([],'cache-unavailable',503));
-    flights.set(flightKey,task);try{return await task;}finally{flights.delete(flightKey);}
+    flights.set(flightKey,task);try{const value=await task;memory.delete(flightKey);memory.set(flightKey,{value,until:now()+(value.images.length?900000:60000)});while(memory.size>1000)memory.delete(memory.keys().next().value);return value;}finally{flights.delete(flightKey);}
   }
   async function load(id,cacheOnly) {
     const ref=db.collection('Etsy_Listing_Image_Cache').doc(id);

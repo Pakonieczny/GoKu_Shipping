@@ -143,10 +143,15 @@ async function op_laserStatus(b) {
   return {sheets:(await readinessRecords(records)).map(slim),sets,checkedAt:Date.now()};
 }
 
-async function op_ping() {
-  const [s, c] = await Promise.all([col(SHEETS).where("archived", "==", false).limit(1000).select("id").get(), db.collection(LIB).limit(1000).select("hash").get()]);
-  const cal = await db.collection(CAL).orderBy("createdAt", "desc").limit(200).get();
-  return { ok: true, sheets: s.size, charms: c.size, calibration: cal.docs.map(d => { const r = d.data(); return { sheetId: r.sheetId, metal: r.metal, count: num(r.count), cv: num(r.cv), largestFrac: num(r.largestFrac), density: num(r.density), placedAll: !!r.placedAll }; }) };
+async function op_ping(b={}) {
+  // Count index entries instead of downloading whole collections on every save.
+  const [s,c]=await Promise.all([col(SHEETS).where("archived","==",false).count().get(),db.collection(LIB).count().get()]);
+  let calibration;
+  if(b.calibration!==false){
+    const cal=await db.collection(CAL).orderBy("createdAt","desc").limit(200).get();
+    calibration=cal.docs.map(d=>{const r=d.data();return {sheetId:r.sheetId,metal:r.metal,count:num(r.count),cv:num(r.cv),largestFrac:num(r.largestFrac),density:num(r.density),placedAll:!!r.placedAll};});
+  }
+  return {ok:true,sheets:s.data().count,charms:c.data().count,...(calibration?{calibration}:{})};
 }
 async function op_lookupCharms(b) {
   const hashes = [...new Set((b.hashes || []).filter(isHash))].slice(0, 300);
@@ -503,7 +508,7 @@ async function op_sandboxPut(b) {
 async function op_sandboxStatus() {
   const doc = await db.collection(SANDBOX).doc("current").get();
   const counts = {};
-  for (const name of SANDBOXED) { const s = await db.collection("Sandbox_" + name).limit(500).select().get(); counts[name] = s.size; }
+  for (const name of SANDBOXED) { const s = await db.collection("Sandbox_" + name).count().get(); counts[name] = s.data().count; }
   return { ok: true, snapshot: doc.exists ? doc.data() : null, records: counts };
 }
 async function op_sandboxReset(b) {
@@ -703,10 +708,8 @@ async function op_arrivalRecord(b) {
       });
     }
   }));
-  const recent = await collection.where("firstSeenAt", ">=", now - 86400000).get();
-  const times = recent.docs.map(d => d.data());
-  for (const row of times) firstSeen[row.id] = row.firstSeenAt;
-  return { ok: true, firstSeen, count24: times.length, count1: times.filter(r => r.firstSeenAt > now - 3600000).length, at: now };
+  const [day,hour]=await Promise.all([collection.where("firstSeenAt",">=",now-86400000).count().get(),collection.where("firstSeenAt",">=",now-3600000).count().get()]);
+  return {ok:true,firstSeen,count24:day.data().count,count1:hour.data().count,at:now};
 }
 // ── runs ──
 async function op_runPut(b) {

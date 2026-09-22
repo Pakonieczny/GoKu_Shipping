@@ -2,17 +2,18 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const {createImageCache}=require('../../netlify/functions/_etsyImageCache');
 function fixture({cap=25,status=200,headers={},broken=false}={}){
- const data=new Map();let clock=Date.UTC(2026,8,22,23,59,50),calls=0,serial=Promise.resolve();
- const ref=path=>({path,get:async()=>{if(broken)throw Error('Firestore unavailable');return{data:()=>structuredClone(data.get(path)),exists:data.has(path)}}});
+ const data=new Map();let clock=Date.UTC(2026,8,22,23,59,50),calls=0,reads=0,serial=Promise.resolve();
+ const ref=path=>({path,get:async()=>{reads++;if(broken)throw Error('Firestore unavailable');return{data:()=>structuredClone(data.get(path)),exists:data.has(path)}}});
  const db={collection:name=>({doc:id=>ref(name+'/'+id)}),runTransaction:fn=>{const p=serial.then(async()=>{let wrote=false;const writes=[];const result=await fn({get:r=>{assert(!wrote);return r.get();},set:(r,v)=>{wrote=true;writes.push(()=>data.set(r.path,structuredClone(v)));}});writes.forEach(f=>f());return result});serial=p.catch(()=>{});return p;}};
  const options={db,env:{CLIENT_ID:'test',ETSY_IMAGE_MAX_DAILY_CALLS:String(cap)},now:()=>clock,sleep:async ms=>{clock+=ms;},fetch:async()=>{calls++;if(status==='network')throw Error('network');return {status,ok:status===200,headers:{get:k=>headers[k]??null},json:async()=>({results:[{rank:2,url_570xN:'second.jpg'},{rank:1,url_570xN:'first.jpg'}]})}}};
- return {data,api:()=>createImageCache(options),calls:()=>calls,advance:ms=>clock+=ms};
+ return {data,api:()=>createImageCache(options),calls:()=>calls,reads:()=>reads,advance:ms=>clock+=ms};
 }
 (async()=>{
  let f=fixture(),a=f.api();
  assert.equal((await a.read('123',{cacheOnly:true})).source,'sandbox-cache-only');assert.equal(f.calls(),0);
- f.data.set('EtsyMail_Listings/123',{images:[{url:'saved.jpg'}]});
+ f.data.set('EtsyMail_Listings/123',{images:[{url:'saved.jpg'}]});f.advance(60001);
  assert.equal((await a.read('123',{cacheOnly:true})).images[0].url_570xN,'saved.jpg');assert.equal((await a.read('123')).source,'catalog');assert.equal(f.calls(),0);
+ const warmReads=f.reads();await Promise.all(Array.from({length:100},()=>a.read('123')));assert.equal(f.reads(),warmReads,'warm image requests use no Firebase reads');
  assert.equal((await a.read('../123')).status,400);assert.equal(f.calls(),0);
  f=fixture();a=f.api();const b=f.api();
  await Promise.all(Array.from({length:30},(_,i)=>(i%2?a:b).read('456')));assert.equal(f.calls(),1,'independent instances share one distributed reservation');
@@ -30,7 +31,7 @@ function fixture({cap=25,status=200,headers={},broken=false}={}){
  // Execute the actual front-end loader, proving one request, no OAuth and no retry on 429.
  const source=fs.readFileSync(require.resolve('../../design-1.html'),'utf8');
  const loader=source.slice(source.indexOf('const __imagesCache'),source.indexOf('/** Route an external image'));
- let requests=0;const context={Map,FN:'/fn',runImageTask:fn=>fn(),fetch:async()=>{requests++;return {ok:false,status:429};}};
+ let requests=0;const context={Map,NS:':test',FN:'/fn',runImageTask:fn=>fn(),fetch:async()=>{requests++;return {ok:false,status:429};}};
  vm.runInNewContext(loader+';globalThis.load=fetchListingImages;',context);
  await Promise.all(Array.from({length:30},()=>context.load('123')));await context.load('123');assert.equal(requests,1,'browser dedupes and never retries 429');
  const api=source.slice(source.indexOf('async function apiFetch('),source.indexOf('/** Receipt fetch with retries'));

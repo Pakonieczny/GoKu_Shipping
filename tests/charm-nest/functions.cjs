@@ -25,6 +25,7 @@ function query(coll, filters = [], order = null, lim = 0) {
     orderBy(f, dir) { return query(coll, filters, [f, dir || 'asc'], lim); },
     limit(n) { return query(coll, filters, order, n); },
     select() { return q; },
+    count() { return {get:async()=>{const snap=await q.get();return {data:()=>({count:snap.size})};}}; },
     async get() {
       let rows = [...store.entries()].filter(([k]) => k.startsWith(coll + '/') && !k.slice(coll.length + 1).includes('/')).map(([k, v]) => ({ id: k.slice(coll.length + 1), data: () => ({ ...v }), ref: docRef(coll, k.slice(coll.length + 1)) }));
       for (const [f, op, v] of filters) rows = rows.filter(r => { const x = r.data()[f]; return op === '==' ? x === v : op === '>=' ? x >= v : op === '<=' ? x <= v : true; });

@@ -3022,10 +3022,11 @@ const LaserReview = window.LaserReview = (()=>{
   }
   function changed(){if(!frame)frame=requestAnimationFrame(refresh);}
   async function poll(force=false){
-    if(polling || S.mode!=='library' || document.hidden || !S.cloud.ok || (!force && Date.now()-lastPoll<15000))return;
-    const ids=[...new Set([...document.querySelectorAll('[data-laser-sheet]')].map(x=>x.dataset.laserSheet).concat([...document.querySelectorAll('[data-laser-card]')].flatMap(x=>x._laserSheets || [])))];if(!ids.length)return;
+    if(polling || S.mode!=='library' || document.hidden || !S.cloud.ok || (Date.now()-lastPoll<(force?5000:60000)))return;
+    const cards=[...document.querySelectorAll('[data-laser-card]')].filter(x=>{const r=x.getBoundingClientRect();return r.width>0&&r.height>0&&r.bottom>0&&r.top<innerHeight;});
+    const ids=[...new Set(cards.flatMap(x=>(x._laserSheets || []).concat([...x.querySelectorAll('[data-laser-sheet]')].map(n=>n.dataset.laserSheet))))];if(!ids.length)return;
     polling=true;lastPoll=Date.now();
-    try{const response=await api('charmNestLibrary',{op:'laserStatus',sheetIds:ids,setIds:[...document.querySelectorAll('[data-laser-card]')].map(x=>x._laserSet?.setId).filter(Boolean)},{quiet:true});for(const set of response.sets || [])for(const card of document.querySelectorAll('[data-laser-card]'))if(card._laserSet?.setId===set.setId)card._laserSet={...card._laserSet,sheetIds:set.sheetIds};const found=new Set();for(const s of response.sheets || []){found.add(s.id);records.set(s.id,s);}for(const id of ids)if(!found.has(id) && records.has(id))records.set(id,{...records.get(id),archived:true});changed();}
+    try{const response=await api('charmNestLibrary',{op:'laserStatus',sheetIds:ids,setIds:cards.map(x=>x._laserSet?.setId).filter(Boolean)},{quiet:true});for(const set of response.sets || [])for(const card of document.querySelectorAll('[data-laser-card]'))if(card._laserSet?.setId===set.setId)card._laserSet={...card._laserSet,sheetIds:set.sheetIds};const found=new Set();for(const s of response.sheets || []){found.add(s.id);records.set(s.id,s);}for(const id of ids)if(!found.has(id) && records.has(id))records.set(id,{...records.get(id),archived:true});changed();}
     catch(e){console.warn('Production readiness refresh',e);}
     finally{polling=false;}
   }
@@ -3033,7 +3034,7 @@ const LaserReview = window.LaserReview = (()=>{
     const old=records.get(sh.sheetId);if(old)record({...old,backPool:(sh.backPool || []).slice(),engraving:{...old.engraving,...R.decisions(Orders.rows())}});
     changed();
   }
-  setInterval(()=>poll(),15000);
+  setInterval(()=>poll(),60000);
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)poll(true);});
   return {record,sheet,group,labels,sections,place,changed,saved,poll,projected};
 })();
@@ -4008,8 +4009,12 @@ const Review = window.Review = (() => {
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
 const Sandbox = window.Sandbox = (() => {
   const on = () => WORKSPACE_SANDBOX;
-  let status = null;
-  async function refresh() { if (!S.cloud.ok) return null; try { status = await api("charmNestLibrary", { op: "sandboxStatus" }); } catch (e) { status = { error: e.message }; } render(); return status; }
+  let status = null,refreshTask=null;
+  async function refresh() {
+    if (!S.cloud.ok) return null;if(refreshTask)return refreshTask;
+    refreshTask=(async()=>{try {status=await api("charmNestLibrary",{op:"sandboxStatus"});}catch(e){status={error:e.message};}render();return status;})();
+    try{return await refreshTask;}finally{refreshTask=null;}
+  }
   /** One real read of the open orders through the station (production mode), stored as JSON under charmnest/sandbox/. */
   async function snapshot() {
     if (on()) throw new Error("switch the sandbox OFF first: the snapshot is taken from the real Etsy through the station");
@@ -4173,10 +4178,12 @@ const OrderWin = window.OrderWin = (() => {
     } catch (e) { toast("Message not sent: " + e.message, "bad", 6000); }
   }
   async function loadThread(rid, force) {
-    if (!rid || (!force && W.rid === rid && W.thread.length)) return;
+    if (!rid || W.threadLoading===rid || (!force && W.rid === rid && W.thread.length)) return;
+    W.threadLoading=rid;
     W.rid = rid;
-    try { const res = await DesignLink.call("chat.list", { receiptId: rid, limit: 80 }, { quiet: true }); W.thread = res.messages || []; }
-    catch (_) { const r = rowOf(W.key); W.thread = (r && r.spec.messages) || []; }
+    try { const res = await DesignLink.call("chat.list", { receiptId: rid, limit: 80 }, { quiet: true }); if(W.rid===rid)W.thread = res.messages || []; }
+    catch (_) { const r = rowOf(W.key); if(W.rid===rid)W.thread = (r && r.spec.messages) || []; }
+    if(W.threadLoading===rid)W.threadLoading=null;
     if (W.rid === rid) paintThread();
   }
   function paintThread() {
@@ -4266,7 +4273,7 @@ const OrderWin = window.OrderWin = (() => {
     paintThread();
     loadThread(r.order.receiptId, true);
     clearInterval(W.poll);
-    W.poll = setInterval(() => { if (W.dlg.open && W.key) loadThread(rowOf(W.key) ? rowOf(W.key).order.receiptId : null, true); }, 15000);
+    W.poll = setInterval(() => { if (W.dlg.open && W.key && !document.hidden) loadThread(rowOf(W.key) ? rowOf(W.key).order.receiptId : null, true); }, 60000);
   }
   return { open, paint, close: () => W.dlg && W.dlg.close(), isOpen: () => !!(W.dlg && W.dlg.open), key: () => W.key };
 })();
@@ -4705,8 +4712,8 @@ const Arrivals = window.Arrivals = (() => {
     const now = Date.now(), ids = [...new Set(orders.map(o => String(o.receiptId)))];
     let stamps = Object.fromEntries(ids.map(id => [id, at(id) || now]));
     if (S.cloud.ok) {
-      const r = await api("charmNestLibrary", { op: "arrivalRecord", orders: orders.map(o => ({ id: String(o.receiptId), createTs: +o.createTs || 0 })) }, { quiet: true });
-      stamps = r.firstSeen || stamps; state.count24 = r.count24; state.count1 = r.count1;
+      const r = await api("charmNestLibrary", { op: "arrivalRecord", orders: orders.filter(o=>!state.recorded?.[String(o.receiptId)]).map(o => ({ id: String(o.receiptId), createTs: +o.createTs || 0 })) }, { quiet: true });
+      stamps = {...stamps,...r.firstSeen}; state.recorded ||= {}; for(const id of Object.keys(r.firstSeen || {}))state.recorded[id]=true; state.count24 = r.count24; state.count1 = r.count1;
     }
     const fresh = ids.filter(id => !at(id));
     Object.assign(state.seen, stamps); state.lastAdded = fresh.length;
@@ -4724,13 +4731,13 @@ const Arrivals = window.Arrivals = (() => {
       document.body.appendChild(box);
     }
     const now = Date.now(), times = Object.values(state.seen);
-    // Server counts are refreshed each check; local receipt times roll out live between checks.
-    const n24 = times.filter(t => t > now - 86400000).length, n1 = times.filter(t => t > now - 3600000).length;
+    // Use server aggregate counts; their timestamp is shown in the tooltip.
+    const n24 = state.count24 ?? times.filter(t => t > now - 86400000).length, n1 = state.count1 ?? times.filter(t => t > now - 3600000).length;
     const left = Math.max(0, (state.nextCheck || now + interval()) - now);
     const inbox = Recall.on() && state.inbox?.length ? `${state.inbox.length} orders available · click to open · ` : "";
     const tail = state.error ? `Check failed: ${state.error}` : busy ? "Checking…" : S.settings.pollOrders === "off" ? "checks off" : `next ${Math.floor(left / 60000)}:${String(Math.floor(left % 60000 / 1000)).padStart(2, "0")}`;
     box.textContent = `${Sandbox.on() ? "Sandbox · " : ""}Orders received · 24h ${n24} · 1h ${n1} · ${inbox}${tail}`;
-    box.title = `Unique orders imported, by first arrival time. Last successful check: ${state.lastCheck ? new Date(state.lastCheck).toLocaleString() : "not yet"}. Last check added ${state.lastAdded}. Checks run while this station is open. Click to see newest arrivals.`;
+    box.title = `Unique orders imported, by first arrival time; counts as of the last successful check: ${state.lastCheck ? new Date(state.lastCheck).toLocaleString() : "not yet"}. Last check added ${state.lastAdded}. Checks run while this station is open. Click to see newest arrivals.`;
     box.classList.toggle("bad", !!state.error);
     for(const node of document.querySelectorAll('[data-new-order],.newArrival')){node.removeAttribute('data-new-order');node.classList.remove('newArrival');}
 
