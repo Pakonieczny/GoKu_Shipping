@@ -47,7 +47,8 @@
     const st = document.createElement("style"); st.textContent = CSS; document.head.appendChild(st);
     host = document.createElement("div"); host.className = "cnp"; host.setAttribute("role", "status"); host.setAttribute("aria-live", "polite");
     host.innerHTML = `<div class="cnpRow"><div class="cnpHead"><span class="cnpLabel"></span><span class="cnpNote"></span><span class="cnpPct"></span><span class="cnpMeta"></span><span class="cnpMore"></span></div><div class="cnpTrack"><i class="cnpFill"></i></div></div>`;
-    document.body.appendChild(host);
+    // the sorter page lines it up in its bottom tray, beside the orders counter and the station's strip
+    (document.getElementById("bottomTray") || document.body).appendChild(host);
     return host;
   }
   const secs = ms => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? s + "s" : Math.floor(s / 60) + "m " + String(s % 60).padStart(2, "0") + "s"; };

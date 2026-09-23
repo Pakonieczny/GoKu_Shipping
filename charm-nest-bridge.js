@@ -610,6 +610,7 @@ const Dock = window.Dock = (() => {
     D.el.classList.toggle("full", mode === "full"); D.el.classList.toggle("pip", mode === "pip");
     const dockH = mode === "pip" ? Math.round(D.el.getBoundingClientRect().height) + 12 : 0;
     document.documentElement.style.setProperty("--dockH", dockH + "px");
+    corner(mode);
     // the notices hang under whatever chrome the page currently has
     const stg = document.querySelector(".stage");
     if (stg) document.documentElement.style.setProperty("--chromeH", Math.round(stg.getBoundingClientRect().top + 10) + "px");
@@ -634,6 +635,13 @@ const Dock = window.Dock = (() => {
     } else { f.style.width = D.virtualW + "px"; f.style.height = "800px"; f.style.transform = "none"; }
     const st = D.el.querySelector("#dockState"); if (st) st.textContent = DesignLink.inControl() ? (DesignLink.up() ? (B.run ? `run · ${B.run.step}` : "live") : "link down") : "not in control";
     D.el.classList.toggle("down", DesignLink.inControl() && !DesignLink.up());
+    corner(mode);   // the strip's width follows its status text
+  }
+  /** The bottom tray (orders counter, progress bar) lines up to the left of whatever holds the bottom-right corner, or
+      above it on a narrow screen. */
+  function corner(mode) {
+    const el = mode === "pip" ? D.el : mode === "pilled" ? D.pill : null, r = el ? el.getBoundingClientRect() : null, root = document.documentElement.style;
+    root.setProperty("--dockW", (r ? Math.round(r.width) + 8 : 0) + "px"); root.setProperty("--dockCornerH", (r ? Math.round(r.height) + 8 : 0) + "px");
   }
   return { ensure, setHost, layout, schedule, mode: () => D.mode, _D: D };
 })();
@@ -5004,13 +5012,15 @@ const Arrivals = window.Arrivals = (() => {
   function paint() {
     let box = document.getElementById("arrivalCounter");
     if (!box) {
+      // it lines up in the bottom tray beside the station's strip and the progress bar, not on top of them
+      const tray = document.getElementById("bottomTray");
       box = el("button", "btn ghost sm"); box.id = "arrivalCounter"; box.type = "button";
-      box.style.cssText = "position:fixed;right:14px;bottom:12px;z-index:35;max-width:calc(100vw - 28px);background:var(--card);box-shadow:0 3px 18px #0002;font-size:12px";
+      box.style.cssText = (tray ? "" : "position:fixed;right:14px;bottom:12px;z-index:35;max-width:calc(100vw - 28px);") + "background:var(--card);box-shadow:0 3px 18px #0002;font-size:12px";
       box.onclick = async () => {
         if (Recall.on() && state.inbox?.length) { const incoming = state.inbox; if(RunCtl.clearRunState()===false)return; delete state.inbox; await merge(incoming); }
         setMode("orders"); Orders.view().sort = "arrival"; Orders.view().desc = false; Orders.render();
       };
-      document.body.appendChild(box);
+      (tray || document.body).appendChild(box);
     }
     // while the sandbox stream plays, the counts, the countdown and the label read in its simulated time
     const sim = streaming(), real = Date.now(), now = sim ? SimClock.now() : real, times = Object.values(state.seen);

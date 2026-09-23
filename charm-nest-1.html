@@ -149,8 +149,8 @@ html[data-rail=sm] .brand .tag{display:none}
 select.topSel{border:1px solid var(--line);background:var(--card);border-radius:9px;padding:7px 9px;font-size:12.5px;max-width:172px;text-overflow:ellipsis}
 
 /* ── sheets grid ── */
-/* whatever the live view is showing, the screen keeps that much room at the bottom so nothing sits under it */
-.stage{flex:1 1 auto;min-height:0;overflow:auto;padding:16px 16px calc(16px + var(--dockH,0px))}
+/* whatever the live view and the bottom tray are showing, the screen keeps that much room at the bottom so nothing sits under them */
+.stage{flex:1 1 auto;min-height:0;overflow:auto;padding:16px 16px calc(16px + max(var(--dockH,0px), var(--trayH,0px)))}
 .sheets{display:grid;grid-template-columns:repeat(auto-fill,minmax(400px,1fr));gap:16px;align-items:stretch}
 @media (max-width:1380px){.sheets{grid-template-columns:repeat(auto-fill,minmax(360px,1fr))}}
 @media (max-width:900px){.sheets{grid-template-columns:1fr}}
@@ -742,6 +742,15 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 #dsDock .veil.hidden{display:none}
 #dsDockPill{position:fixed;right:16px;bottom:16px;z-index:70;display:flex;align-items:center;gap:8px;border:1px solid #8a6a2a;background:var(--velvet);color:#fff;border-radius:999px;padding:7px 14px;font:12px var(--mono);cursor:pointer;box-shadow:0 8px 24px rgba(20,16,10,.3)}
 #dsDockPill.hidden{display:none}
+/* The bottom-right corner holds the station's live strip (or its pill). The orders counter and the progress bar sit in
+   one tray beside it, right to left, and wrap upward when the screen is narrow: the three used to be pinned to the same
+   corner and lay over each other (23 Sep). */
+#bottomTray{position:fixed;left:calc(var(--railW,0px) + 16px);right:calc(16px + var(--dockW,0px));bottom:16px;z-index:60;display:flex;flex-direction:row-reverse;flex-wrap:wrap-reverse;align-items:flex-start;gap:8px;pointer-events:none}   /* wrap-reverse turns the cross axis over: flex-start is the bottom edge */
+#bottomTray>*{pointer-events:auto}
+#bottomTray>#arrivalCounter{order:1;flex:0 1 auto;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#bottomTray>.cnp{order:2;position:static;left:auto;bottom:auto;transform:none;width:auto;flex:1 1 420px;max-width:560px;min-width:min(260px,100%);pointer-events:none}
+#bottomTray>.cnp:not(.on){display:none}
+@media (max-width:760px){#bottomTray{left:16px;right:16px;bottom:calc(16px + var(--dockCornerH,0px))}}
 #dsDockPill .dot{width:8px;height:8px;border-radius:50%;background:var(--gold2);animation:cnPulse 1.6s ease-in-out infinite}
 @keyframes cnPulse{0%,100%{box-shadow:0 0 0 3px rgba(202,168,97,.25)}50%{box-shadow:0 0 0 6px rgba(202,168,97,.08)}}
 .dsConsole{display:flex;flex-direction:column;gap:8px;min-height:0}
@@ -1293,6 +1302,8 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 </head>
 <body>
 <div class="app" id="app">
+<div id="bottomTray"></div>
+<script>/* the stage keeps room below its last sheet for the tray */ (() => { const t = document.getElementById("bottomTray"); if (t && window.ResizeObserver) new ResizeObserver(() => document.documentElement.style.setProperty("--trayH", (t.offsetHeight ? t.offsetHeight + 8 : 0) + "px")).observe(t); })();</script>
   <aside class="rail">
     <div class="brand">
       <div><div class="logo">Brites <b>Charm Nest</b></div><div class="tag">Nesting station · 1</div></div>
@@ -1488,7 +1499,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="vendor/opentype-1.3.4.min.js"></script>
 <script src="lib/qrcode.min.js"></script>
 <script src="brites-progress.js"></script>
-<script src="charm-nest-progress.js"></script>
+<script src="charm-nest-progress.js?v=20260923-tray"></script>
 <script src="charm-nest-operations.js"></script>
 <script src="charm-nest-rose.js?v=20260923-edges"></script>
 <script src="charm-nest-solver.js?v=20260923-density"></script>
@@ -3909,7 +3920,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260923-stream"></script>
+<script src="charm-nest-bridge.js?v=20260923-tray"></script>
 <script src="charm-nest-rose-ui.js?v=20260923-density"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
