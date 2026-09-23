@@ -15,7 +15,13 @@
  *  preserves piece count and usable offcuts, then rewards measured silhouette
  *  contact with a smaller edge-alignment bonus; final refinement improves both.
  *  Sparse queues instead minimise growth of an occupied strip from the left
- *  (top on portrait stock). Contact breaks ties inside that strip. A handful
+ *  (top on portrait stock). Contact breaks ties inside that strip. On a
+ *  partial Rose Gold sheet the next green line removes, line by line, all
+ *  stock up to the farthest charm. There every other restart also charges
+ *  a smaller cost for the area that line would add, so charms settle into
+ *  the bays of the previous line instead of leaving gaps along it. Layouts
+ *  still rank by charm count and a straight usable front first; the line
+ *  area only decides between equal fronts, ahead of contact. A handful
  *  of restarts plus rotation refinement compact the result after all pieces fit, preserving a
  *  rectangular offcut without changing any piece's dimensions or clearance.
  *
@@ -445,9 +451,24 @@
     }
 
     const maxFill = job.maxFill > 0 && job.maxFill < 1 ? job.maxFill : 1;   // hard ceiling on fill (solid cells / usable cells)
+    /* ── partial Rose Gold sheet: the next green line's envelope ───────────
+       The contour keeps, on each line of its axis, everything up to the
+       farthest charm. frontier[i] is where free stock starts on line i now;
+       an envelope adds each placed mask's far edge. Its area is the stock the
+       next green line would remove, which layouts on such sheets minimise
+       once the queue is known to leave room (fitLine, set below).            */
+    const roseAxis = job.sheet.remnant ? job.sheet.remnant.axis : null;
+    const frontier = roseAxis ? (() => { const n = roseAxis === "x" ? FH : FW, D = roseAxis === "x" ? FW : FH, f = new Int32Array(n); for (let i = 0; i < n; i++) { let d = 0; while (d < D && (roseAxis === "x" ? baseFine.get(d, i) : baseFine.get(i, d))) d++; f[i] = d; } return f; })() : null;
+    const envelopeOf = rec => { const E = Int32Array.from(frontier); for (const r of rec) { const far = lineProfile(r.v.fine, roseAxis), base = roseAxis === "x" ? r.y : r.x, off = roseAxis === "x" ? r.x : r.y; for (let j = 0; j < far.length; j++) if (far[j] >= 0 && off + far[j] + 1 > E[base + j]) E[base + j] = off + far[j] + 1; } return E; };
+    const envelopePt2 = rec => { if (!fitLine || !rec) return undefined; const E = envelopeOf(rec); let a = 0; for (let i = 0; i < E.length; i++) a += E[i] - frontier[i]; return a / (fineRes * fineRes); };
+    const envelopeStrip = rec => { const fine = envelopeOf(rec), coarse = new Int32Array(Math.ceil(fine.length / ratio)); for (let i = 0; i < fine.length; i++) { const c = Math.floor(i / ratio), d = Math.ceil(fine[i] / ratio); if (d > coarse[c]) coarse[c] = d; } return { axis: roseAxis, fine, coarse }; };
+    const withEnvelope = layout => layout && layout.rec ? { ...layout, envelopePt2: envelopePt2(layout.rec) } : layout;
+    // Every published best carries its envelope, so parallel workers compare alike.
+    if (roseAxis && cb.onBest) { const publish = cb.onBest; cb = { ...cb, onBest: (layout, info) => publish(fitLine && layout && best?.rec && layout.placements?.length === best.rec.length ? { ...layout, envelopePt2: envelopePt2(best.rec) } : layout, info) }; }
+    let fitLine = false, fitNow = false;
     const stripAxis = FW >= FH ? "x" : "y";
     let stripWeight = 4;
-    const stripOf = rec => ({ weight:stripWeight, axis: stripAxis, end: rec.reduce((n, r) => Math.max(n, stripAxis === "x" ? r.x + r.v.fine.w : r.y + r.v.fine.h), wallFine) });
+    const stripOf = rec => ({ weight:stripWeight, axis: stripAxis, end: rec.reduce((n, r) => Math.max(n, stripAxis === "x" ? r.x + r.v.fine.w : r.y + r.v.fine.h), wallFine), ...(fitNow ? { envelope: envelopeStrip(rec) } : {}) });
     const qualityOf = (rec, fine) => rec.length ? rec.reduce((n, r) => n + placementAt(r.v, fine, r.x, r.y).score, 0) / rec.length : 0;
 
     /* ── finishing push ─────────────────────────────────────────────────────
@@ -605,7 +626,7 @@
         const placedCells = newRec.reduce((n, r) => n + r.v.cells, 0);
         const placedIds = new Set(placements.map(p => p.id));
         const rejects = prepared.filter(p => !placedIds.has(p.id)).map(p => p.id);
-        if(!betterLayout({placements,density:placedCells/usableCellsFine,contactQuality:qualityOf(newRec,fine)},best,job.sheet))continue;
+        if(!betterLayout({placements,density:placedCells/usableCellsFine,contactQuality:qualityOf(newRec,fine),envelopePt2:envelopePt2(newRec)},withEnvelope(best),job.sheet))continue;
         Object.assign(best, { placements, rejects, capped: (best.capped || []).filter(id => !placedIds.has(id)), density: placedCells / usableCellsFine, placedCells, placedPt2: placedCells / (fineRes * fineRes), freePt2: fine.freeCells() / (fineRes * fineRes), pocket: pocketPt(coarse, coarseRes), grids: { fine, coarse }, rec: newRec, contactQuality:qualityOf(newRec,fine), repaired: true });
         if(perimeter)best.cornerRepairs=(best.cornerRepairs || 0)+1;
         if (cb.onBest) cb.onBest(publicLayout(best), { trial: best.trial, placed: placements.length, total, rejects, density: best.density, elapsedMs: now() - t0, repaired: true, removed: removed.length });
@@ -627,6 +648,9 @@
       if ((admittedCells + cells) / usableCellsFine > maxFill) { capOrders = r; break; }
       admittedCells += cells;
     }
+    // A partial sheet that the admitted queue leaves room on follows its green
+    // line. A queue that fills the sheet keeps the plain search and ranking.
+    fitLine = !!roseAxis && prepared.filter(p => !fifo || rank.get(p.order) < capOrders).reduce((n, p) => n + p.footprintCells, 0) / usableCellsFine < maxFill * 0.9;
     function repairCandidates(layout) {
       if (!layout?.rejects?.length) return [];
       if (!fifo) return layout.rejects.filter(id => !(layout.capped || []).includes(id));
@@ -686,7 +710,8 @@
       // seeds escape contact-only local optima; final ranking and refinement
       // always measure contact against the actual silhouettes, never the walls.
       const sparse = candidates.reduce((n, p) => n + p.footprintCells, 0) / usableCellsFine < maxFill * 0.9;
-      const stripPacked = sparse || ((job.exploreRotations ? trial % 3 === 2 : trial > 0) && best?.density < maxFill * 0.9);
+      fitNow = fitLine && trial % 2 === 0;
+      const stripPacked = fitNow || sparse || ((job.exploreRotations ? trial % 3 === 2 : trial > 0) && best?.density < maxFill * 0.9);
       const advice = job.packingHints || {}, priorities = new Map((advice.priority || []).map((id,i,a) => [id, 1 - i / Math.max(1,a.length)]));
       const shaped = !!advice.profiles && candidates.every(p => advice.profiles[p.id]);
       const guided = shaped || (trial % 3 === 1 && priorities.size);
@@ -847,7 +872,7 @@
         elapsedMs: now() - t0, gravW, noise
       };
       const contactQuality = qualityOf(placedRec, fine);
-      const better = betterLayout({ placements, density: summary.density, contactQuality }, best, job.sheet);
+      const better = betterLayout({ placements, density: summary.density, contactQuality, envelopePt2: envelopePt2(placedRec) }, withEnvelope(best), job.sheet);
       if (better) {
         failStreak = 0; lastBetterAt = now();
         best = { placements, rejects, capped: capped.slice(), density: summary.density, contactQuality, trial, stripPacked, usablePt2: usableCellsFine / (fineRes * fineRes),
@@ -886,7 +911,7 @@
     // them. Reinsert unpinned pieces across rotations, retaining the best layout
     // by the same count/offcut/contact ordering used by the worker pool.
     if (best?.rec?.length && !(cb.shouldStop && cb.shouldStop())) {
-      stripWeight = 4;
+      stripWeight = 4; fitNow = fitLine;
       best.contactQuality = qualityOf(best.rec, best.grids.fine);
       best.contactQualityBefore = best.contactQuality;
       const movable = best.rec.filter(r=>!r.p.pinned);
@@ -914,7 +939,7 @@
         const nextGrids = rebuildGrids(rec), contactQuality = qualityOf(rec,nextGrids.fine);
         const placedCells = best.placedCells-r.v.cells+pos.v.cells;
         const candidate = {...best,placements,rec,grids:nextGrids,contactQuality,placedCells,placedPt2:placedCells/(fineRes*fineRes),density:placedCells/usableCellsFine};
-        if (candidate.density <= maxFill && betterLayout(candidate,best,job.sheet)) {
+        if (candidate.density <= maxFill && betterLayout(withEnvelope(candidate),withEnvelope(best),job.sheet)) {
           if (pos.v.angle !== r.v.angle) candidate.rotationRefinements = (best.rotationRefinements || 0)+1;
           best = candidate; best.contactRefinements = (best.contactRefinements || 0) + 1;
           best.extended = false; // Moving an edge piece may have opened a slot for the next whole order.
@@ -926,6 +951,7 @@
         await yieldNow();
       }
     }
+    if (best && best.rec && fitLine) best.envelopePt2 = envelopePt2(best.rec);
     if (best && best.grids) delete best.grids;
     if (best && best.rec) delete best.rec;
     if (!best) best = { placements: [], rejects: prepared.map(p => p.id), density: 0, trial: -1, usablePt2: usableCellsFine / (fineRes * fineRes), freePt2: usableCellsFine / (fineRes * fineRes), placedPt2: 0, pocket: pocketPt(baseCoarse, coarseRes) };
@@ -956,6 +982,25 @@
     });
   }
 
+  /** Farthest occupied cell of a mask along each line of the Rose Gold cut
+   *  axis: rows for axis "x", columns for axis "y". Cached per mask. */
+  function lineProfile(mask, axis) {
+    const key = axis === "x" ? "rowsFar" : "colsFar"; if (mask[key]) return mask[key];
+    const bits = mask.bits || unpack(mask.pm), w = mask.w, h = mask.h, far = new Int32Array(axis === "x" ? h : w).fill(-1);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (bits[y * w + x]) {
+      const line = axis === "x" ? y : x, d = axis === "x" ? x : y;
+      if (far[line] < d) far[line] = d;
+    }
+    return mask[key] = far;
+  }
+  // Per coarse cell of mean line advance, against 1 for each cell the strip front grows.
+  const LINE_FIT_WEIGHT = .5;
+  /** Cells a mask at (x, y) adds beyond the envelope E, the depth already consumed on each line. */
+  function envelopeGrowth(E, far, x, y, axis) {
+    let g = 0; const base = axis === "x" ? y : x, off = axis === "x" ? x : y;
+    for (let j = 0; j < far.length; j++) { if (far[j] < 0) continue; const d = off + far[j] + 1 - E[base + j]; if (d > 0) g += d; }
+    return g;
+  }
   /** Verification tolerance for a negative clearance, in pixels at `res`: what the
    *  solver eroded at its own resolution, plus one cell of the solver grid (the
    *  masks are conservative by up to one fine cell) and one pixel of raster slack. */
@@ -988,6 +1033,8 @@
     // Strict ordering prevents epsilon ties from cycling and gradually consuming
     // an offcut as asynchronous workers report higher contact scores.
     if (a !== b) return a < b;
+    // Partial Rose Gold sheets: at an equal front, less stock inside the next green line wins.
+    if (Number.isFinite(candidate.envelopePt2) && Number.isFinite(incumbent.envelopePt2) && candidate.envelopePt2 !== incumbent.envelopePt2) return candidate.envelopePt2 < incumbent.envelopePt2;
     const contact = x => Number.isFinite(x.contactQuality) ? x.contactQuality : -Infinity;
     if (contact(candidate) !== contact(incumbent)) return contact(candidate) > contact(incumbent);
     const density = x => Number.isFinite(x.density) ? x.density : -Infinity;
@@ -1151,7 +1198,7 @@
           const near = coarse.material?.boxSum(x - 1, y - 1, x + cw + 1, y + ch + 1);
           const contact = boundarySeed ? (coarse.boxSum(x - 1, y - 1, x + cw + 1, y + ch + 1) - inner) / (2 * (cw + ch) + 4) : near ? coarse.material.overlap(v.coarse.contactRing, x - 1, y - 1, 1e9) / Math.max(1,v.coarse.contactRing.cells) : 0;
           const gx = cornerX ? (CW - x - cw) : x, gy = cornerY ? (CH - y - ch) : y;
-          const growth = strip ? Math.max(strip.end / ratio, strip.axis === "x" ? x + cw : y + ch) : 0;
+          const growth = strip ? Math.max(strip.end / ratio, strip.axis === "x" ? x + cw : y + ch) + (strip.envelope ? LINE_FIT_WEIGHT * envelopeGrowth(strip.envelope.coarse, lineProfile(v.coarse.bits ? v.coarse : Object.assign(v.coarse, { bits: unpack(v.coarse.pm) }), strip.envelope.axis), x, y, strip.envelope.axis) / Math.sqrt(Math.max(1, maskCells)) : 0) : 0;
           const edge = boundarySeed ? 0 : edgeContact(v.coarse.contactRing, coarse.walls, x - 1, y - 1);
           const nearWall=x<=bounds.left+1 || y<=bounds.top+1 || x+cw>=bounds.right-1 || y+ch>=bounds.bottom-1;
           const s = contact + EDGE_WEIGHT * edge + (straightWeight && nearWall ? straightWeight*straightEdgeAt(v.coarse,coarse,x,y,1) : 0) + (profile ? 1.2*pairNear(x*ratio,y*ratio,cw*ratio,ch*ratio)+.15*profile.edgeAffinity/100*edge+.25*edgeFit(x*ratio,y*ratio,cw*ratio,ch*ratio) : 0) - (strip?.weight ?? 4) * growth - gravW * ((gx + gy) / (CW + CH)) - 0.05 * ov + (noise ? noise * random() : 0);
@@ -1176,7 +1223,7 @@
           if(perimeterPolicy?.minCells && edgeBandCells(v.fine,fine,x,y,perimeterPolicy.band)<perimeterPolicy.minCells)return;
           const adjacency = placementAt(v, fine, x, y), contact = adjacency.contact;
           const gx = cornerX ? (FW - x - pm.w) : x, gy = cornerY ? (FH - y - pm.h) : y;
-          const growth = strip ? Math.max(strip.end, strip.axis === "x" ? x + pm.w : y + pm.h) / ratio : 0;
+          const growth = strip ? Math.max(strip.end, strip.axis === "x" ? x + pm.w : y + pm.h) / ratio + (strip.envelope ? LINE_FIT_WEIGHT * envelopeGrowth(strip.envelope.fine, lineProfile(v.fine, strip.envelope.axis), x, y, strip.envelope.axis) / (ratio * Math.sqrt(Math.max(1, v.cells))) : 0) : 0;
           const s = (boundarySeed ? fine.overlap(v.ringFine, x - pad, y - pad, 1e9) / rc : adjacency.score) + (profile ? 1.2*pairContact(v,x,y)+.15*profile.edgeAffinity/100*adjacency.edge+.25*edgeFit(x,y,pm.w,pm.h) : 0) - (strip?.weight ?? 4) * growth - gravW * ((gx + gy) / (FW + FH)) + (noise ? noise * random() : 0);
           if (!best || s > best.score) best = { v, x, y, score: s, contact, neighbors:adjacency.neighbors, closeContact:adjacency.close };
       };
@@ -1223,7 +1270,7 @@
             if (!fine.fits(pm, x, y)) continue;
             if(perimeterPolicy?.minCells && edgeBandCells(v.fine,fine,x,y,perimeterPolicy.band)<perimeterPolicy.minCells)continue;
             const adjacency = placementAt(v, fine, x, y), contact = adjacency.contact;
-            const growth = strip ? Math.max(strip.end, strip.axis === "x" ? x + pm.w : y + pm.h) / ratio : 0;
+            const growth = strip ? Math.max(strip.end, strip.axis === "x" ? x + pm.w : y + pm.h) / ratio + (strip.envelope ? LINE_FIT_WEIGHT * envelopeGrowth(strip.envelope.fine, lineProfile(v.fine, strip.envelope.axis), x, y, strip.envelope.axis) / (ratio * Math.sqrt(Math.max(1, v.cells))) : 0) : 0;
             const s = (boundarySeed ? fine.overlap(v.ringFine, x - pad, y - pad, 1e9) / rc : adjacency.score) + (profile ? 1.2*pairContact(v,x,y)+.15*profile.edgeAffinity/100*adjacency.edge+.25*edgeFit(x,y,pm.w,pm.h) : 0) - (strip?.weight ?? 4) * growth - gravW * ((x + y) / (FW + FH));
             if (!best || s > best.score) best = { v, x, y, score: s, contact, neighbors:adjacency.neighbors, closeContact:adjacency.close };
           }
