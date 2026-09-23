@@ -8,7 +8,7 @@
  *       {type:"verify", jobId, job, placements, res}
  *  out: {type:"stage"|"placed"|"reject"|"trial"|"best"|"done"|"verified"|"error", jobId, …}
  */
-importScripts("charm-nest-rose.js?v=20260923-edges", "charm-nest-solver.js?v=20260923-density");
+importScripts("charm-nest-rose.js?v=20260923-edges", "charm-nest-solver.js?v=20260923-graded");
 
 let current = null;   // { jobId, job, stop }
 
@@ -70,6 +70,7 @@ self.onmessage = async (e) => {
       shouldStop: () => state.stop,
       onStage: (stage, done, total) => post({ type: "stage", stage, done, total }),
       onPlaced: (placement, info) => post({ type: "placed", placement, info }),
+      onProbe: (probe) => post({ type: "probe", probe }),
       onReject: (id, trial, reason) => post({ type: "reject", id, trial, reason }),
       onTrial: (summary) => post({ type: "trial", summary }),
       onBest: (best, summary) => post({ type: "best", best: CharmNestSolver.publicLayout(best), summary }),

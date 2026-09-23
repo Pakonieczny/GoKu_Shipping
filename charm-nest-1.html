@@ -1502,7 +1502,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-progress.js?v=20260923-tray"></script>
 <script src="charm-nest-operations.js"></script>
 <script src="charm-nest-rose.js?v=20260923-edges"></script>
-<script src="charm-nest-solver.js?v=20260923-density"></script>
+<script src="charm-nest-solver.js?v=20260923-graded"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260923-audit"></script>
@@ -2454,7 +2454,7 @@ function ensureWorkers(sh, n) {
   for (const w of sh.workers.splice(n)) w.terminate();
   while (sh.workers.length < n) {
     const idx = sh.workers.length;
-    const w = new Worker("charm-nest-worker.js?v=20260923-density");
+    const w = new Worker("charm-nest-worker.js?v=20260923-graded");
     w.onmessage = e => onWorkerMessage(sh, e.data, idx);
     w.onerror = e => onWorkerMessage(sh, { type: "error", jobId: sh.jobId + ":" + idx, message: e.message }, idx);
     sh.workers.push(w);
@@ -2476,6 +2476,8 @@ function buildJob(sh) {
     clearancePt: +S.settings.clearancePt || 0, angles: sh.appendOnly && ["gold", "silver"].includes(sh.metal) && angleSet().length < 72 ? Array.from({ length: 72 }, (_, i) => i * 5) : angleSet(), fineRes: 2, coarseRes: 0.5,
     timeBudgetMs: sh.intakeBudgetMs || (+S.settings.budgetS || 180) * 1000, fullBudget: sh.intakePhase !== "fill", stallMs: 60 * 1000, maxTrials: sh.intakePhase === "fill" ? 2000 : 1000000, seed: sh.runSeed || +S.settings.seed || 1,
     protectedRose:sh.roseProtected||null,lockedPlacements:sh.appendOnly?sh.nestInitial||sh.placements:null,
+    // new Gold and Silver charms joining a saved sheet: every spot and angle graded, the best nudged into place
+    careful: !!sh.appendOnly && !sh.roseProtected && ["gold", "silver"].includes(sh.metal),
     initialLayout: sh.nestInitial || null, maxFill: sh.topup && !sh.topup.closedAt ? Math.min(+S.settings.maxFill || 0.80, sh.topup.maxFill) : +S.settings.maxFill || 0.80, nearFullContact: sh.metal !== "rose",
     packingHints: S.settings.packingAI !== "off" && sh.packingAdvice?.version === 1 && sh.packingAdvice?.key === packingKey(sh, items) ? sh.packingAdvice.hints || null : null,
     // topping up, an arrival takes any gap it fits; the fresh arrangement after a miss keeps the charms on the sheet first
@@ -2664,7 +2666,7 @@ function startNestReady(sh, context) {
   const retained = sh.bestKey === bestKey && sh.best ? CharmNestSolver.publicLayout(sh.best) : null;
   sh.nestInitial = retained?.placements || (sh.placements?.length ? sh.placements.map(p=>({...p})) : null);
   sh.runSeed = S.settings.freshSeed !== false ? (crypto.getRandomValues(new Uint32Array(1))[0] & 0x7fffffff) || 1 : +S.settings.seed || 1;
-  sh.status = "nesting"; sh.startedAt = performance.now(); sh.placements = retained ? retained.placements.map(p=>({...p})) : sh.intakePhase ? (sh.nestInitial || []).map(p=>({...p})) : []; sh.rejects = retained?.rejects?.slice() || []; sh.outputs = null; sh.verification = null; sh.best = retained; sh.bestWorker = 0; sh.trials = 0; sh.searchMetrics = null; sh.gpuProgress = null; sh.liveInfo = retained ? sh.bestInfo : sh.intakePhase ? sh.liveInfo : null; sh.endedBy = null;
+  sh.status = "nesting"; sh.startedAt = performance.now(); sh.placements = retained ? retained.placements.map(p=>({...p})) : sh.intakePhase ? (sh.nestInitial || []).map(p=>({...p})) : []; sh.rejects = retained?.rejects?.slice() || []; sh.outputs = null; sh.verification = null; sh.best = retained; sh.bestWorker = 0; sh.probe = null; sh.probePlaced = []; sh.trials = 0; sh.searchMetrics = null; sh.gpuProgress = null; sh.liveInfo = retained ? sh.bestInfo : sh.intakePhase ? sh.liveInfo : null; sh.endedBy = null;
   sh.jobId = uid(); sh.stage = "Preparing rotations…"; sh.progress = [0, items.length]; sh.dirty = false;
   log(sh, `nest started · ${items.length} pieces · seed ${sh.runSeed} · clearance ${S.settings.clearancePt} pt`);
   sh.evNest = (S.settings.engine || "solver") === "ai" ? null : agent({ metal: sh.metal }, "nest", `Solver: ${items.length} pieces · seed ${sh.runSeed} · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · ${sh.intakePhase === "fill" ? "filling draft" : sh.intakePhase === "final" ? "final optimization" : sh.intakePhase === "repack" ? "improving partial sheet" : "search"} · up to ${(sh.intakeBudgetMs || S.settings.budgetS*1000)/1000}s`, { live: true });
@@ -2846,7 +2848,25 @@ function onWorkerMessage(sh, m, idx) {
   if (pool.completed?.[idx] && m.type !== "verified") return;
   const leader = pool.winner != null ? pool.winner : (sh.bestWorker != null ? sh.bestWorker : 0);   // whose search narrates progress
   if (m.type === "placed" && idx !== leader) return;
+  // The careful append reports the spot it is grading: the charm is drawn there, turning and moving, while it searches.
+  if (m.type === "probe") {
+    if (idx !== leader) return;
+    const pr = m.probe;
+    if (pr.stage === "place") { sh.probePlaced = (sh.probePlaced || []).filter(g => g.id !== pr.id).concat(pr); sh.probe = null; } else sh.probe = pr;
+    const t = performance.now();
+    if (pr.stage === "place" || !sh._probeStageAt || t - sh._probeStageAt > 250) {
+      sh._probeStageAt = t;
+      const name = byId.get(pr.id)?.name || "charm";
+      sh.stage = pr.stage === "place" ? `Placed ${name} at ${pr.angle}°` : `${{ turn: "Turning", try: "Trying spots for", nudge: "Nudging" }[pr.stage] || "Trying"} ${name} · ${pr.angle}° · ${pr.graded} spots graded`;
+      renderProgress(sh);
+    }
+    // a full redraw of the sheet about 12 times a second is enough to follow the charm and keeps the page responsive
+    if (pr.stage === "place" || !sh._probeDrawAt || t - sh._probeDrawAt >= 80) { sh._probeDrawAt = t; drawPreview(sh); }
+    return;
+  }
   if (m.type === "stage" && (m.stage === "prepare" ? idx !== 0 : idx !== leader)) return;   // one voice for the pool: only the leading search narrates
+  // the leading search fell back to the usual restarts: its careful spots are no longer the plan
+  if (m.type === "trial" && idx === leader && (sh.probe || sh.probePlaced?.length)) { sh.probe = null; sh.probePlaced = []; drawPreview(sh); }
   if (m.type === "trial") { updateSearchMetrics(sh,idx,{layouts:m.summary.completedTrials ?? m.summary.trial+1}); pool.trials[idx] = Math.max(pool.trials[idx]||0,m.summary.completedTrials ?? m.summary.trial + 1); m.summary = Object.assign({}, m.summary, { trial: pool.trials.reduce((a, b) => a + b, 0) - 1, worker: idx }); }
   if (m.type === "best") {
     m.best = CharmNestSolver.publicLayout(m.best);
@@ -3481,7 +3501,20 @@ function paintPreview(cv, sh, clean, R) {
     if (!clean && c.pinned) { ctx.fillStyle = "#caa861"; ctx.beginPath(); ctx.arc(p.cxPt * k, p.cyPt * k, Math.max(3, 2 * k), 0, Math.PI * 2); ctx.fill(); }
   });
   if(window.RoseStock && !sh._forClaude)RoseStock.paint(ctx,sh,k,"lines");
-  // Only accepted best placements are drawn; trial ghosts are deliberately omitted.
+  // Only accepted best placements are drawn; trial ghosts are deliberately omitted. The careful append is the exception:
+  // its charms settle one at a time (green) and the spot it is grading now is outlined in blue, turning and moving.
+  if (!clean && sh.status === "nesting") {
+    const onSheet = new Set(sh.placements.map(p => p.id));
+    for (const g of (sh.probePlaced || []).concat(sh.probe ? [sh.probe] : [])) {
+      const c = byId.get(g.id); if (!c || onSheet.has(g.id)) continue;
+      const live = g === sh.probe, cx = c.centerPt[0], cy = c.centerPt[1], tx = (x, y) => [(x - cx) * k, (cy - y) * k];
+      ctx.save(); ctx.translate(g.cxPt * k, g.cyPt * k); ctx.rotate(g.angle * Math.PI / 180);
+      ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx);
+      ctx.fillStyle = live ? "rgba(70,120,200,.28)" : "rgba(95,150,90,.30)"; ctx.fill();
+      ctx.strokeStyle = live ? "rgba(40,90,180,.95)" : "rgba(60,120,60,.9)"; ctx.lineWidth = Math.max(1, .45 * k); ctx.stroke();
+      ctx.restore();
+    }
+  }
   // largest open pocket
   if (!clean && sh.sat && sh.sat.pocket && sh.liveInfo && sh.sat.pocket.wPt > 6) { const p = sh.sat.pocket; ctx.setLineDash([3, 3]); ctx.strokeStyle = "rgba(95,122,91,.6)"; ctx.lineWidth = 1; ctx.strokeRect(p.xPt * k, p.yPt * k, p.wPt * k, p.hPt * k); ctx.setLineDash([]); }
 }
@@ -3815,7 +3848,7 @@ function compareGPUSpeed() {
   const sh=allSheets().filter(sh=>activeCharms(sh).length).sort((a,b)=>activeCharms(b).length-activeCharms(a).length)[0];
   const job=sh?buildJob(sh):null,id=uid();
   let worker;
-  try{worker=new Worker('charm-nest-worker.js?v=20260923-density');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
+  try{worker=new Worker('charm-nest-worker.js?v=20260923-graded');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
   gpuComparison=worker;button.textContent="Cancel comparison";output.textContent="Checking GPU availability…";
   const finish=text=>{if(gpuComparison!==worker)return;output.textContent=text;button.textContent="Compare speed";worker.terminate();gpuComparison=null;};
   worker.onmessage=({data:m})=>{

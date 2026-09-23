@@ -721,8 +721,234 @@
         if (cb.onBest) cb.onBest(publicLayout(best),{trial:-1,placed:placements.length,total:prepared.length,rejects:best.rejects,density:best.density,elapsedMs:now()-t0});
       }
     }
+    /* ── careful append ─────────────────────────────────────────────────────
+       A few new charms joining a saved sheet (the live Gold and Silver flow). Restarts of the whole construction
+       rarely change anything there, and each one pushed the charm into the leftmost gap it fitted, however poorly,
+       leaving slivers no later charm could use (the lotus and the sausage dog, 23 Sep). Here every spot the coarse
+       scan finds, at every angle, is graded once, and the charm goes where it leaves the least unusable space:
+         waste   free space it turns into slivers thinner than SLIVER_MM, where none of the shop's charms fits,
+         around  the empty space just outside its outline: each step along the outline adds the free distance to the
+                 nearest charm or edge, up to AROUND_MM, so a charm touching its neighbours all round scores near nothing,
+         growth  how far it widens the occupied part of the sheet, and a little for lying further along it.
+       The best spots are then nudged: slid left against their neighbour, then up or down to the nearer charm or
+       edge, and kept there when that grades no worse. Charms join best fit first. When one does not fit, the usual
+       search runs instead. cb.onProbe reports the spot being graded, so the page can draw the charm turning and
+       moving while it searches.                                                                               */
+    const carefulOn = !!job.careful && !!job.sheet.fixedPieces?.length && !roseAxis;
+    async function carefulAppend() {
+      const admitted = fifo ? prepared.filter(p => rank.get(p.order) < capOrders) : prepared.slice();
+      if (!admitted.length || admitted.some(p => p.pinned)) return null;
+      const MM_PX = fineRes * 72 / 25.4, cellMm2 = 1 / (MM_PX * MM_PX);
+      const sliverMm = +job.sliverMm || SLIVER_MM, weights = { ...FIT_WEIGHTS, ...(job.fitWeights || {}) };
+      const rPx = sliverMm * MM_PX / 2, rU = Math.round(3 * rPx), margin = Math.ceil(2 * rPx) + 2, reach = Math.ceil(2 * rPx) + 2;
+      const aroundU = Math.round(3 * (+job.aroundMm || AROUND_MM) * MM_PX);
+      // the second search takes the angles halfway between the first one's, so the two together try twice as many
+      const turn = job.exploreRotations && angles.length > 1 ? 180 / angles.length : 0;
+      for (const p of admitted) p.careful = variantsFor(p, angles.map(a => (a + turn) % 360));
+      const FW = baseFine.W, FH = baseFine.H, axisX = stripAxis === "x";
+      let fine = baseFine.clone(), coarse = baseCoarse.clone();
+      const rec = []; let cells = 0, fitTotal = 0, wasteTotal = 0, lastProbe = -Infinity, graded = 0;
+      let lastStage = null;
+      // at most one probe every 40 ms, but always the first of each stage, so every step of the search is shown
+      const probe = (p, v, x, y, stage, force) => {
+        const t = now(); if (!cb.onProbe || (!force && stage === lastStage && t - lastProbe < 40)) return; lastProbe = t; lastStage = stage;
+        cb.onProbe({ id: p.id, angle: v.angle, cxPt: (x + v.solid.cx) / fineRes, cyPt: (y + v.solid.cy) / fineRes, stage, graded });
+      };
+      // slivers on the whole sheet before this charm, summed so any window reads them at once
+      const all = { occ: new Uint8Array(FW * FH), A: new Int32Array(FW * FH), B: new Int32Array(FW * FH), out: new Uint8Array(FW * FH) }, deadSAT = new Int32Array((FW + 1) * (FH + 1));
+      const deadIn = (x0, y0, x1, y1) => { x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(FW, x1); y1 = Math.min(FH, y1); if (x1 <= x0 || y1 <= y0) return 0; const W1 = FW + 1; return deadSAT[y1 * W1 + x1] - deadSAT[y0 * W1 + x1] - deadSAT[y1 * W1 + x0] + deadSAT[y0 * W1 + x0]; };
+      const sheetSlivers = () => {
+        for (let y = 0; y < FH; y++) for (let x = 0; x < FW; x++) all.occ[y * FW + x] = fine.get(x, y);
+        sliverCells(all.occ, FW, FH, rU, all.A, all.B, all.out);
+        for (let y = 1; y <= FH; y++) { let row = 0; for (let x = 1; x <= FW; x++) { row += all.out[(y - 1) * FW + x - 1]; deadSAT[y * (FW + 1) + x] = deadSAT[(y - 1) * (FW + 1) + x] + row; } }
+      };
+      // how far the charms already reach along the sheet (the inset band is not a charm)
+      const reachOf = () => {
+        if (axisX) { for (let x = FW - wallFine - 1; x >= wallFine; x--) for (let y = wallFine; y < FH - wallFine; y++) if (fine.get(x, y)) return x + 1; }
+        else { for (let y = FH - wallFine - 1; y >= wallFine; y--) for (let x = wallFine; x < FW - wallFine; x++) if (fine.get(x, y)) return y + 1; }
+        return wallFine;
+      };
+      /** Occupied cells under a packed ring at (x, y); cells off the sheet count as occupied, each once. */
+      const ringOccupied = (pm, x, y) => {
+        const bits = pm.variants[x & 31], wx = x >> 5, gw = fine.words, mw = pm.words, g = fine.occ; let n = 0;
+        for (let r = 0; r < pm.h; r++) {
+          const gy = y + r, mi = r * mw;
+          if (gy < 0 || gy >= fine.H) { for (let k = 0; k < mw; k++) n += popcount32(bits[mi + k]); continue; }
+          const gi = gy * gw + wx;
+          for (let k = 0; k < mw; k++) { const gk = wx + k, a = (gk < 0 || gk >= gw ? 0xFFFFFFFF : g[gi + k]) & bits[mi + k]; if (a) n += popcount32(a); }
+        }
+        return n;
+      };
+      let local = null;
+      /** Sliver cells this charm at (x, y) adds around itself (negative when it covers slivers that were there). */
+      const wasteAt = (v, x, y) => {
+        const cx0 = x - margin, cy0 = y - margin, cx1 = x + v.fine.w + margin, cy1 = y + v.fine.h + margin;
+        const X0 = Math.max(0, cx0 - reach), Y0 = Math.max(0, cy0 - reach), X1 = Math.min(FW, cx1 + reach), Y1 = Math.min(FH, cy1 + reach);
+        const W = X1 - X0, H = Y1 - Y0, n = W * H;
+        if (!local || local.n < n) local = { n, occ: new Uint8Array(n), A: new Int32Array(n), B: new Int32Array(n), out: new Uint8Array(n) };
+        const { occ } = local, words = fine.words, g = fine.occ;
+        for (let yy = 0; yy < H; yy++) { const row = (Y0 + yy) * words; for (let xx = 0, i = yy * W; xx < W; xx++, i++) { const gx = X0 + xx; occ[i] = (g[row + (gx >> 5)] >>> (gx & 31)) & 1; } }
+        const bits = v.fine.bits, mw = v.fine.w;
+        for (let r = 0; r < v.fine.h; r++) { const yy = y + r - Y0; if (yy < 0 || yy >= H) continue; for (let c = 0; c < mw; c++) if (bits[r * mw + c]) { const xx = x + c - X0; if (xx >= 0 && xx < W) occ[yy * W + xx] = 1; } }
+        sliverCells(occ, W, H, rU, local.A, local.B, local.out);
+        let after = 0; const out = local.out;
+        const ax0 = Math.max(cx0, X0) - X0, ay0 = Math.max(cy0, Y0) - Y0, ax1 = Math.min(cx1, X1) - X0, ay1 = Math.min(cy1, Y1) - Y0;
+        for (let yy = ay0; yy < ay1; yy++) for (let i = yy * W + ax0, e = yy * W + ax1; i < e; i++) after += out[i];
+        return after - deadIn(cx0, cy0, cx1, cy1);
+      };
+      /** Empty space around a charm at (x, y), in cells: the free distance beyond each outline cell to the nearest charm
+          or edge on the sheet as it stands, up to aroundU. Off the sheet is the edge. */
+      const aroundAt = (v, x, y) => {
+        const e = v.outline || (v.outline = (() => { const r = ring(v.fine.bits, v.fine.w, v.fine.h, 1), at = []; for (let yy = 0; yy < r.h; yy++) for (let xx = 0; xx < r.w; xx++) if (r.bits[yy * r.w + xx]) at.push(xx - 1, yy - 1); return Int16Array.from(at); })());
+        const A = all.A; let s = 0;
+        for (let k = 0; k < e.length; k += 2) { const gx = x + e[k], gy = y + e[k + 1]; if (gx < 0 || gy < 0 || gx >= FW || gy >= FH) continue; const d = A[gy * FW + gx]; s += d < aroundU ? d : aroundU; }
+        return s / 3;
+      };
+      /** The grade of a spot: higher is better, in mm² of space given up. */
+      const grade = (v, x, y, front) => {
+        const waste = wasteAt(v, x, y) * cellMm2;
+        const around = aroundAt(v, x, y) * cellMm2;
+        const far = axisX ? x + v.fine.w : y + v.fine.h, growth = Math.max(0, far - front) / MM_PX;
+        const along = (axisX ? x + v.fine.w / 2 : y + v.fine.h / 2) / MM_PX;
+        graded++;
+        return { waste, around, growth, fit: -(waste + weights.around * around + weights.growth * growth + weights.along * along) };
+      };
+      /** Legal spots for one charm at every angle: the snuggest few of the coarse scan, spread apart, the ones
+          furthest back along the sheet, and the ends of every run along each wall; each refined on the fine grid. */
+      async function spotsFor(p) {
+        const out = [], seen = new Set(), TOL = 2, K = 12, KB = 4, SEP = 2;
+        const keep = (list, c, k) => {
+          if (list.length === k && c.s <= list[k - 1].s) return;
+          for (let i = 0; i < list.length; i++) { const o = list[i]; if (Math.abs(o.x - c.x) <= SEP && Math.abs(o.y - c.y) <= SEP) { if (c.s > o.s) { list[i] = c; list.sort((a, b) => b.s - a.s); } return; } }
+          if (list.length < k) list.push(c); else list[k - 1] = c;
+          list.sort((a, b) => b.s - a.s);
+        };
+        for (const v of p.careful) {
+          if (stopped()) return out;
+          const cw = v.coarse.w, ch = v.coarse.h, maskCells = v.coarse.pm.cells, boxCells = cw * ch;
+          if (!v.coarse.contactRing) { const r = ring(v.coarse.bits || unpack(v.coarse.pm), cw, ch, 1); v.coarse.contactRing = packShifted(r.bits, r.w, r.h); }
+          const ringCells = Math.max(1, v.coarse.contactRing.cells), snug = [], back = [];
+          for (let y = 0; y + ch <= coarse.H; y++) for (let x = 0; x + cw <= coarse.W; x++) {
+            metrics.positions++;
+            const inner = coarse.boxSum(x, y, x + cw, y + ch);
+            if (boxCells - inner < maskCells - TOL) continue;
+            if (inner > 0 && coarse.overlap(v.coarse.pm, x, y, TOL) > TOL) continue;
+            keep(snug, { x, y, s: coarse.overlap(v.coarse.contactRing, x - 1, y - 1, 1e9) / ringCells }, K);
+            keep(back, { x, y, s: -(axisX ? x + cw : y + ch) }, KB);
+          }
+          const refine = c => {
+            let best = null;
+            for (let fy = c.y * ratio - ratio; fy <= c.y * ratio + ratio; fy++) for (let fx = c.x * ratio - ratio; fx <= c.x * ratio + ratio; fx++) {
+              metrics.positions++;
+              if (!fine.fits(v.fine.pm, fx, fy)) continue;
+              const touch = ringOccupied(v.ringFine, fx - v.ringPad, fy - v.ringPad);
+              if (!best || touch > best.touch || (touch === best.touch && fx + fy < best.x + best.y)) best = { v, x: fx, y: fy, touch };
+            }
+            return best;
+          };
+          const add = s => { if (!s) return; const key = v.angle + ":" + s.x + ":" + s.y; if (seen.has(key)) return; seen.add(key); out.push(s); };
+          for (const c of snug.concat(back)) add(refine(c));
+          // a thin slot along a wall can vanish on the coarse grid: every fine run along each wall, both ends
+          const fb = sheetBounds(fine), right = fb.right - v.fine.w, bottom = fb.bottom - v.fine.h;
+          if (right >= fb.left && bottom >= fb.top) {
+            const wall = (start, end, fixed, horizontal) => {
+              let run = -1;
+              for (let t = start; t <= end + 1; t++) {
+                const x = horizontal ? t : fixed, y = horizontal ? fixed : t, legal = t <= end && fine.fits(v.fine.pm, x, y);
+                if (legal && run < 0) run = t;
+                if (!legal && run >= 0) { for (const e of t - 1 === run ? [run] : [run, t - 1]) add({ v, x: horizontal ? e : fixed, y: horizontal ? fixed : e, touch: 0 }); run = -1; }
+              }
+            };
+            wall(fb.left, right, fb.top, true); if (bottom !== fb.top) wall(fb.left, right, bottom, true);
+            wall(fb.top, bottom, fb.left, false); if (right !== fb.left) wall(fb.top, bottom, right, false);
+          }
+          const shown = snug[0] ? refine(snug[0]) : null; if (shown) probe(p, v, shown.x, shown.y, "turn");
+          reportMetrics();
+          await yieldNow();
+        }
+        return out;
+      }
+      /** Slide left against the neighbour, then up or down to the nearer charm or edge, until it stops moving. */
+      const nudge = (p, v, x, y) => {
+        const fits = (a, b) => fine.fits(v.fine.pm, a, b);
+        for (let round = 0; round < 4; round++) {
+          let moved = false;
+          if (axisX) { while (fits(x - 1, y)) { x--; moved = true; probe(p, v, x, y, "nudge"); } }
+          else { while (fits(x, y - 1)) { y--; moved = true; probe(p, v, x, y, "nudge"); } }
+          let a = 0, b = 0;
+          if (axisX) { while (fits(x, y - a - 1)) a++; while (fits(x, y + b + 1)) b++; }
+          else { while (fits(x - a - 1, y)) a++; while (fits(x + b + 1, y)) b++; }
+          const step = a || b ? (a <= b ? -a : b) : 0;
+          if (step) { if (axisX) y += step; else x += step; moved = true; probe(p, v, x, y, "nudge"); }
+          if (!moved) break;
+        }
+        return { x, y };
+      };
+      /** The best spot for one charm: every candidate graded, then the leaders nudged and graded again. */
+      async function bestSpotFor(p, front) {
+        const spots = await spotsFor(p);
+        if (!spots.length || stopped()) return null;
+        const scored = [];
+        for (let i = 0; i < spots.length; i++) {
+          const s = spots[i]; Object.assign(s, grade(s.v, s.x, s.y, front)); scored.push(s);
+          probe(p, s.v, s.x, s.y, "try");
+          if ((i & 63) === 63) { if (stopped()) return null; reportMetrics(); await yieldNow(); }
+        }
+        scored.sort((a, b) => b.fit - a.fit);
+        if (cb.onGrades) cb.onGrades(p.id, scored.map(s => ({ angle: s.v.angle, cxPt: (s.x + s.v.solid.cx) / fineRes, cyPt: (s.y + s.v.solid.cy) / fineRes, waste: s.waste, around: s.around, growth: s.growth, fit: s.fit })), scored.length);
+        let best = null;
+        for (const s of scored.slice(0, 6)) {
+          const n = nudge(p, s.v, s.x, s.y), g = n.x === s.x && n.y === s.y ? s : { v: s.v, x: n.x, y: n.y, ...grade(s.v, n.x, n.y, front) };
+          const pick = g.fit >= s.fit - .5 ? g : s;
+          if (!best || pick.fit > best.fit) best = pick;
+        }
+        return best;
+      }
+      const left = admitted.slice();
+      if (cb.onStage) cb.onStage("careful", 0, left.length);
+      while (left.length) {
+        if (stopped()) return null;
+        sheetSlivers();
+        const front = reachOf();
+        // best fit first: every waiting charm finds its best spot on the sheet as it is, and the best of those goes in
+        let move = null;
+        for (const p of left.length <= 4 ? left : left.slice().sort((a, b) => b.areaPt2 - a.areaPt2).slice(0, 1)) {
+          const s = await bestSpotFor(p, front);
+          if (!s) { if (stopped()) return null; continue; }
+          if (!move || s.fit > move.fit) move = { p, ...s };
+        }
+        if (!move) return null;
+        {
+          const { p, v, x, y } = move;
+          if (!fine.fits(v.fine.pm, x, y) || (cells + v.cells) / usableCellsFine > maxFill + 1e-9) return null;
+          fine.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y, p.id);
+          for (let yy = 0; yy < v.fine.h; yy++) for (let xx = 0; xx < v.fine.w; xx++) if (v.fine.bits[yy * v.fine.w + xx]) { const gx = Math.floor((x + xx) / ratio), gy = Math.floor((y + yy) / ratio); if (gx >= 0 && gy >= 0 && gx < coarse.W && gy < coarse.H) coarse.set(gx, gy); }
+          coarse.buildSAT();
+          rec.push({ p, v, x, y }); cells += v.cells; fitTotal += move.fit; wasteTotal += move.waste;
+          left.splice(left.indexOf(p), 1);
+          probe(p, v, x, y, "place", true);
+          const pl = { id: p.id, angle: v.angle, cxPt: (x + v.solid.cx) / fineRes, cyPt: (y + v.solid.cy) / fineRes, xPt: (x + (v.fine.w - v.solid.w) / 2) / fineRes, yPt: (y + (v.fine.h - v.solid.h) / 2) / fineRes, wPt: v.solid.w / fineRes, hPt: v.solid.h / fineRes, careful: { waste: +move.waste.toFixed(2), around: +move.around.toFixed(2), growth: +move.growth.toFixed(2) } };
+          if (cb.onPlaced) cb.onPlaced(pl, { trial: 0, placed: rec.length, total: prepared.length, careful: true });
+          if (cb.onStage) cb.onStage("careful", rec.length, admitted.length);
+        }
+      }
+      const placements = rec.map(r => ({ id: r.p.id, angle: r.v.angle, cxPt: (r.x + r.v.solid.cx) / fineRes, cyPt: (r.y + r.v.solid.cy) / fineRes, xPt: (r.x + (r.v.fine.w - r.v.solid.w) / 2) / fineRes, yPt: (r.y + (r.v.fine.h - r.v.solid.h) / 2) / fineRes, wPt: r.v.solid.w / fineRes, hPt: r.v.solid.h / fineRes }));
+      const ids = new Set(placements.map(p => p.id)), capped = fifo ? prepared.filter(p => rank.get(p.order) >= capOrders).map(p => p.id) : [];
+      metrics.layouts++; reportMetrics(true);
+      return { placements, rejects: prepared.filter(p => !ids.has(p.id)).map(p => p.id), capped, density: cells / usableCellsFine, contactQuality: qualityOf(rec, fine), trial: 0, stripPacked: false,
+        usablePt2: usableCellsFine / (fineRes * fineRes), freePt2: fine.freeCells() / (fineRes * fineRes), placedPt2: cells / (fineRes * fineRes), placedCells: cells, pocket: pocketPt(coarse, coarseRes),
+        grids: { fine, coarse }, rec, fitScore: fitTotal, wastePt2: wasteTotal * MM_PX * MM_PX / (fineRes * fineRes), careful: { graded, angles: angles.length, turn } };
+    }
+    let carefulDone = false;
+    if (carefulOn && !best) {
+      const careful = await carefulAppend();
+      if (careful && careful.placements.length && careful.rejects.every(id => careful.capped.includes(id))) {
+        best = careful; carefulDone = true; endedBy = careful.rejects.length ? "cap" : "complete";
+        if (cb.onBest) cb.onBest(publicLayout(best), { trial: 0, placed: best.placements.length, total: prepared.length, rejects: best.rejects.slice(), density: best.density, elapsedMs: now() - t0, careful: true });
+      }
+    }
     const refinementReserve = Math.min(10000,budget*.2);
-    while (trials < maxTrials) {
+    while (!carefulDone && trials < maxTrials) {
       if (job.packingHints && job.packingHints !== lastAdvice) { lastAdvice = job.packingHints; lastBetterAt = now(); }
       if (stopped()) { endedBy = cb.shouldStop && cb.shouldStop() ? "stopped" : stalled ? "stalled" : "budget"; break; }
       if (best?.placements.length && now()-t0 >= budget-refinementReserve) break;
@@ -937,13 +1163,15 @@
     if (trials >= maxTrials && endedBy === "budget") endedBy = "trials";
     // Make room in the emptiest corners without exposing temporary removals.
     // Only a fully rebuilt layout containing more complete orders can win.
-    if(best?.rejects?.length && best.rec?.length && !stopped()) {
+    if(best?.rejects?.length && best.rec?.length && !stopped() && !carefulDone) {
       await ruinRecreate(best,8,{deadline:Math.min(t0+budget,now()+refinementReserve*.5)});
     }
     // Construction heuristics propose layouts; neighbour and edge contact judge
     // them. Reinsert unpinned pieces across rotations, retaining the best layout
-    // by the same count/offcut/contact ordering used by the worker pool.
-    if (best?.rec?.length && !(cb.shouldStop && cb.shouldStop())) {
+    // by the same count/offcut/contact ordering used by the worker pool. A careful
+    // append is already graded and nudged: this polish, which pulls pieces to the
+    // left end of the strip, would undo it.
+    if (best?.rec?.length && !carefulDone && !(cb.shouldStop && cb.shouldStop())) {
       stripWeight = 4; fitNow = fitLine;
       best.contactQuality = qualityOf(best.rec, best.grids.fine);
       best.contactQualityBefore = best.contactQuality;
@@ -1047,6 +1275,44 @@
     return { wPt: p.w / coarseRes, hPt: p.h / coarseRes, xPt: p.x / coarseRes, yPt: p.y / coarseRes };
   }
 
+  /* ── slivers: free space no charm can use ────────────────────────────────
+     A free cell is usable when a disc SLIVER_MM wide fits over it without touching a charm or the inset band; a
+     charm narrower than that has no body to put there (the thickest part of the shop's charms is 5.4 mm across
+     at the median, 3.3 mm for the thinnest 5%). The rest are slivers: gaps between charms and along the edges
+     that stay empty for good. Distances are 3-4 chamfer steps, in thirds of a cell.                      */
+  const SLIVER_MM = 5;
+  // a careful append's grade, in mm² given up: slivers count in full, the empty band around the charm at `around`,
+  // each mm the occupied part of the sheet grows at `growth`, and each mm further along it at `along`
+  const FIT_WEIGHTS = { around: .5, growth: 1.5, along: .02 };
+  // how far out from a charm's outline the empty space around it counts
+  const AROUND_MM = 3;
+  function chamfer(src, W, H, D) {
+    const INF = 1 << 28, n = W * H;
+    for (let i = 0; i < n; i++) D[i] = src[i] ? 0 : INF;
+    for (let y = 0; y < H; y++) for (let x = 0, i = y * W; x < W; x++, i++) {
+      let d = D[i]; if (!d) continue;
+      if (x > 0 && D[i - 1] + 3 < d) d = D[i - 1] + 3;
+      if (y > 0) { const j = i - W; if (D[j] + 3 < d) d = D[j] + 3; if (x > 0 && D[j - 1] + 4 < d) d = D[j - 1] + 4; if (x < W - 1 && D[j + 1] + 4 < d) d = D[j + 1] + 4; }
+      D[i] = d;
+    }
+    for (let y = H - 1; y >= 0; y--) for (let x = W - 1, i = y * W + W - 1; x >= 0; x--, i--) {
+      let d = D[i]; if (!d) continue;
+      if (x < W - 1 && D[i + 1] + 3 < d) d = D[i + 1] + 3;
+      if (y < H - 1) { const j = i + W; if (D[j] + 3 < d) d = D[j] + 3; if (x < W - 1 && D[j + 1] + 4 < d) d = D[j + 1] + 4; if (x > 0 && D[j - 1] + 4 < d) d = D[j - 1] + 4; }
+      D[i] = d;
+    }
+    return D;
+  }
+  /** out[i] = 1 for a free cell that no disc of radius rU (thirds of a cell) clear of occupied cells covers. */
+  function sliverCells(occ, W, H, rU, A, B, out) {
+    const n = W * H;
+    chamfer(occ, W, H, A);
+    for (let i = 0; i < n; i++) out[i] = A[i] >= rU ? 1 : 0;
+    chamfer(out, W, H, B);
+    for (let i = 0; i < n; i++) out[i] = !occ[i] && B[i] > rU ? 1 : 0;
+    return out;
+  }
+
   /** Fraction consumed before a straight cut frees a full-width/height offcut.
    * Compare identical counts by usable leftover stock, not tiny raster-area gains. */
   function stripFraction(pl, sheet) {
@@ -1062,6 +1328,13 @@
   function betterLayout(candidate, incumbent, sheet) {
     if (!incumbent) return true;
     if (candidate.placements.length !== incumbent.placements.length) return candidate.placements.length > incumbent.placements.length;
+    // A careful append is judged by the space its charms leave unusable, not by how short the strip stays (that
+    // squeezed each new charm into the first gap it fitted); with equal counts it also beats a layout without a grade.
+    if (Number.isFinite(candidate.fitScore) || Number.isFinite(incumbent.fitScore)) {
+      if (!Number.isFinite(incumbent.fitScore)) return true;
+      if (!Number.isFinite(candidate.fitScore)) return false;
+      if (candidate.fitScore !== incumbent.fitScore) return candidate.fitScore > incumbent.fitScore;
+    }
     const a = stripFraction(candidate.placements, sheet), b = stripFraction(incumbent.placements, sheet);
     // Strict ordering prevents epsilon ties from cycling and gradually consuming
     // an offcut as asynchronous workers report higher contact scores.
@@ -1507,6 +1780,6 @@
     const overlap = off ? null : grid.overlap(v.fine.pm, x0, y0, 1e9);
     return { ok: false, x: x0, y: y0, off, overlapPt2: overlap == null ? null : overlap / (res * res) };
   }
-  const solverAPI = { search, solve, publicLayout, bestResult, normalizePackingPlan, shapeKey, packingCompatibility, guidedOrderScore, verify, contactAt, placementAt, straightEdgeAt, edgeBandCells, sheetBounds, cornerPockets, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine };
+  const solverAPI = { sliverCells, SLIVER_MM, FIT_WEIGHTS, AROUND_MM, search, solve, publicLayout, bestResult, normalizePackingPlan, shapeKey, packingCompatibility, guidedOrderScore, verify, contactAt, placementAt, straightEdgeAt, edgeBandCells, sheetBounds, cornerPockets, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine };
   return solverAPI;
 });
