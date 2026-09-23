@@ -315,7 +315,26 @@
     const mate=placed.reduce((n,r)=>Math.max(n,packingCompatibility(p.id,r.p?.id || r.id,hints)),0);
     return profile.priority + .25*(100-profile.adaptability) + .15*profile.interlock + 100*mate;
   }
+  // Append searches treat saved placements as obstacles, and Rose Gold
+  // contours as reserved material. Every streamed layout retains the originals.
+  async function solveAppend(job, cb) {
+    const guard=job.protectedRose, fixed=job.lockedPlacements?.length?job.lockedPlacements:guard.placements, ids=new Set(fixed.map(p=>p.id));
+    if(guard)Rose.validate(guard.profile,job.sheet.wPt,job.sheet.hPt);
+    if(ids.size!==fixed.length || fixed.some(p=>!job.pieces.some(c=>c.id===p.id)))throw new Error('Reload the saved charms before appending to this sheet');
+    const usable=makeSheetGrid(job.sheet,job.clearancePt,job.fineRes||2).usableCells/Math.pow(job.fineRes||2,2);
+    const remainderSheet={...job.sheet,...(guard?{remnant:guard.profile}:{}),fixedPieces:fixed.map(placement=>({piece:job.pieces.find(p=>p.id===placement.id),placement}))};
+    const remaining=makeSheetGrid(remainderSheet,job.clearancePt,job.fineRes||2).usableCells/Math.pow(job.fineRes||2,2);
+    const fixedArea=fixed.reduce((n,p)=>{const v=prepareVariant(job.pieces.find(c=>c.id===p.id),p.angle,job.clearancePt,job.fineRes||2);return n+(v?areaOf(v.fine.bits)/Math.pow(job.fineRes||2,2):0);},0);
+    const cap=Math.max(0,usable*(job.maxFill||.8)-fixedArea), pieces=job.pieces.filter(p=>!ids.has(p.id));
+    const merge=r=>({...r,placements:[...fixed.map(p=>({...p})),...(r.placements||[])],placedPt2:fixedArea+(r.placedPt2||0),usablePt2:usable,freePt2:r.freePt2??remaining,placedCells:(fixedArea+(r.placedPt2||0))*Math.pow(job.fineRes||2,2),density:(fixedArea+(r.placedPt2||0))/Math.max(1,usable),params:{seed:job.seed,angles:job.angles,clearancePt:job.clearancePt,insetPt:job.sheet.insetPt,...r.params,maxFill:job.maxFill||.8}});
+    const info=r=>({...r,placed:(r.placed||0)+fixed.length,total:job.pieces.length,...(r.placedPt2!=null?{placedPt2:r.placedPt2+fixedArea,usablePt2:usable}:{}),...(r.density!=null?{density:(r.density*remaining+fixedArea)/Math.max(1,usable)}:{})});
+    if(!pieces.length || cap<=0 || remaining<=0)return merge({placements:[],rejects:pieces.map(p=>p.id),trials:0,elapsedMs:0,endedBy:'cap',params:{maxFill:job.maxFill||.8}});
+    const next={...job,protectedRose:null,lockedPlacements:null,sheet:remainderSheet,pieces,maxFill:Math.min(1,cap/remaining),initialLayout:(job.initialLayout||[]).filter(p=>!ids.has(p.id))};
+    const result=await solve(next,{...cb,onPlaced:(p,i)=>cb.onPlaced?.(p,info(i)),onTrial:i=>cb.onTrial?.(info(i)),onBest:(r,i)=>cb.onBest?.(merge(r),info(i))});
+    return merge(result);
+  }
   async function solve(job, cb) {
+    if(job.protectedRose||job.lockedPlacements?.length)return solveAppend(job,cb||{});
     cb = cb || {};
     const t0 = now();
     const metrics={layouts:0,searches:0,positions:0,gpuPositions:0,groups:0,branches:0,pruned:0};
@@ -384,6 +403,8 @@
       Rose.stamp(baseFine,job.sheet.remnant,fineRes,Math.max(insetPt,halfGapFine/fineRes));
       Rose.stamp(baseCoarse,job.sheet.remnant,coarseRes,Math.max(insetPt,halfGapFine/fineRes));
     }
+    stampFixed(baseFine,job.sheet.fixedPieces,clearancePt,fineRes);
+    stampFixed(baseCoarse,job.sheet.fixedPieces,clearancePt,coarseRes);
     baseCoarse.buildSAT();
     const usableCellsFine = baseFine.freeCells();
     // Walls constrain placement but are never counted as neighbouring charms.
@@ -1226,15 +1247,20 @@
     const byId = new Map(job.pieces.map(p => [p.id, p]));
     let overlapPx = 0, outsidePx = 0, removedPx = 0;
     if(job.sheet.remnant)Rose.validate(job.sheet.remnant,job.sheet.wPt,job.sheet.hPt);
+    const locked=new Map([...(job.protectedRose?.placements||[]),...(job.lockedPlacements||[])].map(p=>[p.id,p]));
+    let protectedMoved=0;
+    if(job.protectedRose)Rose.validate(job.protectedRose.profile,job.sheet.wPt,job.sheet.hPt);
+    for(const p of locked.values()){const actual=placements.filter(x=>x.id===p.id);if(actual.length!==1||['cxPt','cyPt','angle'].some(k=>!Number.isFinite(actual[0][k])||Math.abs(actual[0][k]-p[k])>.001)||Math.abs((actual[0]?.scale||1)-(p.scale||1))>.00001)protectedMoved++;}
     const pairs = new Set();
     const masks = [];
     placements.forEach((pl, i) => {
       const p = byId.get(pl.id); if (!p) return;
       const r = resample(p.bits, p.w, p.h, p.scale, res);
       const rot0 = rotateBitmap(r.bits, r.w, r.h, pl.angle);
-      if(job.sheet.remnant){
+      const remnant=locked.has(pl.id)?job.sheet.remnant:job.protectedRose?.profile||job.sheet.remnant;
+      if(remnant){
         const rx=Math.round(pl.cxPt*res-rot0.cx),ry=Math.round(pl.cyPt*res-rot0.cy);
-        for(let y=0;y<rot0.h;y++)for(let x=0;x<rot0.w;x++)if(rot0.bits[y*rot0.w+x]&&Rose.intersects(job.sheet.remnant,(rx+x)/res,(ry+y)/res,1/res,1/res))removedPx++;
+        for(let y=0;y<rot0.h;y++)for(let x=0;x<rot0.w;x++)if(rot0.bits[y*rot0.w+x]&&Rose.intersects(remnant,(rx+x)/res,(ry+y)/res,1/res,1/res))removedPx++;
       }
       const rot = erodePx ? Object.assign(erode(rot0.bits, rot0.w, rot0.h, erodePx), { cx: rot0.cx - erodePx, cy: rot0.cy - erodePx }) : rot0;
       const x0 = Math.round(pl.cxPt * res - rot.cx), y0 = Math.round(pl.cyPt * res - rot.cy);
@@ -1255,8 +1281,8 @@
       minEdgePt = Math.min(minEdgePt, m.x0 / res, m.y0 / res, (FW - m.x0 - m.w) / res, (FH - m.y0 - m.h) / res);
     }
     return {
-      ok: overlapPx === 0 && outsidePx === 0 && removedPx === 0,
-      overlapPx, outsidePx, removedPx, res,
+      ok: overlapPx === 0 && outsidePx === 0 && removedPx === 0 && protectedMoved === 0,
+      overlapPx, outsidePx, removedPx, protectedMoved, res,
       overlappingPairs: [...pairs].map(s => s.split(":").map(n => placements[+n].id)),
       minGapPt: masks.length > 1 ? +minGapPt.toFixed(3) : null,
       minEdgePt: masks.length ? +minEdgePt.toFixed(3) : null
@@ -1310,8 +1336,15 @@
     const g = new Grid(FW, FH);
     for (let y = 0; y < FH; y++) for (let x = 0; x < FW; x++) { if (x < wall || y < wall || x >= FW - wall || y >= FH - wall) g.set(x, y); else g.free[y * FW + x] = 1; }
     if(sheet.remnant)Rose.stamp(g,sheet.remnant,fineRes,Math.max(insetPt,halfGap/fineRes));
+    stampFixed(g,sheet.fixedPieces,clearancePt,fineRes);
     g.buildSAT(); g.fineRes = fineRes; g.usableCells = g.freeCells();
     return g;
+  }
+  function stampFixed(grid,entries,clearancePt,res){
+    for(const {piece,placement:p} of entries||[]){
+      const v=prepareVariant(piece,p.angle,clearancePt,res);
+      if(v)grid.stamp(v.fine.bits,v.fine.w,v.fine.h,Math.round(p.cxPt*res-v.solid.cx),Math.round(p.cyPt*res-v.solid.cy));
+    }
   }
   function prepareVariant(piece, angle, clearancePt, fineRes) {
     fineRes = fineRes || 2;

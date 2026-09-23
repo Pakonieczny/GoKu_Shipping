@@ -52,6 +52,10 @@ function variants(p){return Array.from({length:36},(_,i)=>{const v=S.prepareVari
   const R=require('../../charm-nest-rose'),remnant=R.plan([{id:'old-cut',paths:[[[0,0],[18,0],[18,22],[12,22],[12,50],[0,50]]]}],100,50,null,.2).profile;
   const partialJob={...job,sheet:{...job.sheet,remnant},pieces:job.pieces.slice(0,5).map((p,i)=>i?p:{...p,pinned:{cxPt:30,cyPt:10,angle:0}}),maxTrials:1,timeBudgetMs:2500};
   const partial=await S.solve(partialJob,{gpu});assert(partial.metrics.gpuPositions>0);assert.equal(partial.placements.find(p=>p.id==='p0').cxPt,30);assert(S.verify(partialJob,partial.placements,4).ok,'GPU cannot refill removed rose-gold stock');
+  const fixed={...partial.placements[0],scale:.975},shape={id:fixed.id,paths:[[[fixed.cxPt-9,fixed.cyPt-9],[fixed.cxPt+9,fixed.cyPt-9],[fixed.cxPt+9,fixed.cyPt+9],[fixed.cxPt-9,fixed.cyPt+9]]]};
+  const contour=R.plan([shape],100,50,null,.2);
+  const append={...job,useGPU:true,protectedRose:{...contour,placements:[fixed]},lockedPlacements:[fixed],maxTrials:1,timeBudgetMs:3000};
+  const appended=await S.solve(append,{gpu});assert(appended.metrics.gpuPositions>0,'GPU actually searches the remainder');assert.deepEqual(appended.placements.find(p=>p.id===fixed.id),fixed);assert(S.verify(append,appended.placements,4).ok,'GPU append preserves the old contour and placements');
   const stopped=await S.solve(job,{gpu,shouldStop:()=>true});assert.equal(stopped.trials,0);assert.equal(stopped.metrics.positions,0);
   const unavailable=await G.benchmark(job,S,{createGPU:async()=>{throw Error('No adapter');}});assert.equal(unavailable.available,false);
   console.log('GPU OK: actual WGSL compute/reduction, legal shortlist, bounded readback, full solve verification, counters and device-failure fallback');

@@ -1480,7 +1480,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-progress.js"></script>
 <script src="charm-nest-operations.js"></script>
 <script src="charm-nest-rose.js?v=20260922-rehearsal"></script>
-<script src="charm-nest-solver.js?v=20260922-intake"></script>
+<script src="charm-nest-solver.js?v=20260923-rose-lock"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260921-material"></script>
@@ -1491,7 +1491,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-readiness.js"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
-<script src="charm-nest-orders.js?v=20260922-intake"></script>
+<script src="charm-nest-orders.js?v=20260923-rose-lock"></script>
 <script src="charm-nest-background.js?v=20260922-background"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
@@ -1921,6 +1921,7 @@ function assignSource(src, metal) {
   flushManualIntake(metal);renderRail();updateTopSub();window.Session?.schedule();
 }
 function manualSheetClosed(sh){
+  if(sh.metal==='rose'&&(sh.rosePlan||sh.roseProtected)&&!sh.releaseFull&&!sh.roseCutAt&&!sh.recalled&&!window.Sets?.ofRun(sh.runId)?.some(set=>set.committedAt&&set.sheetIds.includes(sh.sheetId)))return false;
   return !!sh.roseCutAt || !!sh.recalled || !!sh.intakeFinalized || !!sh.releaseFull || !!sh.runHold || !!window.LiveNest?.closed(sh);
 }
 /** New artwork waits outside the live job. No worker, saved layout or timer is reset. */
@@ -1931,17 +1932,20 @@ function flushManualIntake(metal) {
     if(!sources.length)continue;
     if(S.sources.some(s=>(s.metal===m.key||sources.includes(s))&&(!['ready','error','master'].includes(s.state)||s.review?.state==='running')))continue;
     const current=activePage(m.key),pages=pagesOf(m.key);
-    if(current.endedBy==='stopped')continue;
-    let sh=(!manualSheetClosed(current)?current:null)||pages.find(p=>p.runId===current.runId&&!manualSheetClosed(p));
-    if(sh&&(['nesting','finishing','queued'].includes(sh.status)||sh._operationStarting||sh._learnedStarting||sh.persisted&&!sh.persistedDone))continue;
+    const newest=pages[pages.length-1];
+    if(newest.endedBy==='stopped')continue;
+    let sh=!manualSheetClosed(newest)?newest:null;
+    if(sh&&(['nesting','finishing','queued'].includes(sh.status)||sh._operationStarting||sh._learnedStarting||sh._rosePlanning||sh._roseLoading||sh._roseAction||sh.persisted&&!sh.persistedDone))continue;
     if(window.CharmNestOperations?.busy('production:'+(sh?.runId||current.runId||sh?.sheetId)))continue;
-    if(!sh){sh=addPage(m.key);showPage(m.key,pages.indexOf(sh));}
+    if(!sh){sh=addPage(m.key);if(m.key==='rose'&&newest.roseCutAt&&newest.roseStock?.id)sh.roseChoice=newest.roseStock.id;showPage(m.key,pages.indexOf(sh));}
     const incoming=sources.flatMap(s=>s.charms).filter(c=>c.pendingMetal===m.key);
     if(!incoming.length)continue;
     if(!sh.runId)sh.runId=sources[0].runId||uid();
+    if(activePage(m.key)!==sh)showPage(m.key,pages.indexOf(sh));
+    window.RoseStock?.protect(sh);
     const ids=new Set(sh.charms.map(c=>c.id));
     for(const c of incoming){delete c.pendingMetal;if(!ids.has(c.id)){c.metal=m.key;sh.charms.push(c);ids.add(c.id);}}
-    sh.intakeAppend=sh.placements.length>0;sh.dirty=true;sh.status='ready';sh.problem=null;
+    sh.intakeAppend=sh.placements.length>0;sh.appendOnly=sh.intakeAppend;sh.dirty=true;sh.status='ready';sh.problem=null;
     delete sh.intakeForceFinal;
     computeSaturation(sh);renderCard(sh);renderRail();updateTopSub();window.Session?.schedule();
     if(S.settings.autoNest!=='off')startNest(sh);
@@ -1958,14 +1962,15 @@ function autoNest(metal) {
 }
 function assignCharm(charm, metal) {
   const owner=allSheets().find(p=>p.charms.includes(charm));
-  if(owner){if(owner.metal===metal)return;if(manualSheetClosed(owner)||['nesting','finishing','queued'].includes(owner.status)){toast('Finish the current sheet operation before moving this charm.','bad');return;}owner.charms=owner.charms.filter(c=>c!==charm);charm.pinned=null;delete charm.arrivalPin;sheetDirty(owner);}
+  if(owner){if(owner.metal===metal)return;if(manualSheetClosed(owner)||['nesting','finishing','queued'].includes(owner.status)){toast('Finish the current sheet operation before moving this charm.','bad');return;}if(owner.placements.some(p=>p.id===charm.id)){toast('This charm is already on a saved sheet. Its placement must stay with that sheet.','bad');return;}owner.charms=owner.charms.filter(c=>c!==charm);charm.pinned=null;delete charm.arrivalPin;if(owner.placements.length){owner.appendOnly=true;owner.dirty=true;owner.status='ready';renderCard(owner);}else sheetDirty(owner);}
   S.unassigned=S.unassigned.filter(c=>c!==charm);charm.pendingMetal=metal;charm.arrivedAt ||= Date.now();charm.orderDate ||= charm.arrivedAt/1000;
   flushManualIntake(metal);renderRail();updateTopSub();window.Session?.schedule();
 }
 function removeSource(src) {
+  if(allSheets().some(sh=>sh.placements.some(p=>sh.charms.some(c=>c.id===p.id&&c.sourceId===src.id)))){toast('This file contains charms already placed on a sheet. Keep the saved sheet and its source.','bad');return;}
   S.sources = S.sources.filter(s => s !== src);
   S.unassigned = S.unassigned.filter(c => c.sourceId !== src.id);
-  for (const sh of allSheets()) { const before = sh.charms.length; sh.charms = sh.charms.filter(c => c.sourceId !== src.id); if (sh.charms.length !== before) sheetDirty(sh); }
+  for (const sh of allSheets()) { const before = sh.charms.length; sh.charms = sh.charms.filter(c => c.sourceId !== src.id); if (sh.charms.length !== before) {if(sh.placements.length){sh.appendOnly=true;sh.dirty=true;sh.status='ready';renderCard(sh);}else sheetDirty(sh);} }
   renderRail(); updateTopSub();
 }
 async function persistSource(src) {
@@ -2226,7 +2231,7 @@ async function reviewLayout(sh, items) {
 function makeSheet(metal, page) {
   return { metal, page: page || 1, runId: null, sheetId: null, charms: [], status: "idle", worker: null, jobId: null, layout: null, placements: [], rejects: [], sat: null, progress: null, stage: "", outputs: null, verification: null, startedAt: 0, endedBy: null, trials: 0, best: null, dirty: true, log: [], liveInfo: null, serverJob: null };
 }
-function sheetDirty(sh) { if(sh.roseCutAt)return; delete sh.rosePlan; delete sh.rosePlanHash; delete sh.rosePlanKey; delete sh.runHold; delete sh.intakeFinalized; delete sh.intakeForceFinal; delete sh.intakeOptimized; delete sh.intakeOptimizedCount; delete sh.intakeAppend; sh.dirty = true; sh.releaseFull = false; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
+function sheetDirty(sh) { if(sh.roseCutAt)return; if(sh.metal==='rose'&&(sh.rosePlan||sh.roseProtected)){window.RoseStock?.protect(sh);sh.dirty=true;sh.status='ready';renderCard(sh);return;} delete sh.rosePlan; delete sh.rosePlanHash; delete sh.rosePlanKey; delete sh.runHold; delete sh.intakeFinalized; delete sh.intakeForceFinal; delete sh.intakeOptimized; delete sh.intakeOptimizedCount; delete sh.intakeAppend; delete sh.appendOnly; sh.dirty = true; sh.releaseFull = false; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
 function activeCharms(sh) { return sh.charms.filter(c => !c.excluded); }
 /* One card per metal; a metal can hold several sheets ("pages"). The card shows the active page and tabs to switch. */
 const pagesOf = metal => S.sheets[metal].pages;
@@ -2253,7 +2258,8 @@ function keepOrdersWhole(sh, byId) {
   const bad = new Set(sh.rejects.map(orderOf));
   const dated = [...byId.values()].some(c => c.orderDate > 0);
   const cutoff = dated && sh.rejects.length ? Math.min(...sh.rejects.map(id => byId.get(id)?.orderDate || 0)) : Infinity;
-  const lifted = sh.placements.filter(p => bad.has(orderOf(p.id)) || (dated && (byId.get(p.id)?.orderDate || 0) > cutoff));
+  const locked=new Set([...(sh.roseProtected?.placements||[]),...(sh.appendOnly?sh.nestInitial||[]:[])].map(p=>p.id));
+  const lifted = sh.placements.filter(p => !locked.has(p.id)&&(bad.has(orderOf(p.id)) || (dated && (byId.get(p.id)?.orderDate || 0) > cutoff)));
   if (!lifted.length) return;
   sh.placements = sh.placements.filter(p => !lifted.includes(p));
   sh.rejects.push(...lifted.map(p => p.id));
@@ -2272,9 +2278,9 @@ function overflowToNextSheet(sh) {
   sh.movedOn = { n: moving.length, names: moving.map(c => c.name || `#${c.index + 1}`) };
   sh.status = sh.verification && sh.verification.ok ? "complete" : "partial";
   const prim = S.sheets[sh.metal]; const i = prim.pages.indexOf(sh);
-  let next = prim.pages[i + 1];
+  let next = prim.pages.length-1>i?prim.pages[prim.pages.length-1]:null;
   if (!next || manualSheetClosed(next) || ["nesting", "finishing", "queued"].includes(next.status) || next.persisted&&!next.persistedDone) next = addPage(sh.metal);
-  next.intakeAppend=next.placements.length>0;
+  next.intakeAppend=next.placements.length>0;next.appendOnly=next.intakeAppend;
   moving.forEach(c => { if(c.arrivalPin){c.pinned=null;delete c.arrivalPin;} c.metal = sh.metal; next.charms.push(c); });
   sh.movedOn.page = next.page;
   next.isolated = sh.isolated;
@@ -2355,7 +2361,7 @@ function ensureWorkers(sh, n) {
   for (const w of sh.workers.splice(n)) w.terminate();
   while (sh.workers.length < n) {
     const idx = sh.workers.length;
-    const w = new Worker("charm-nest-worker.js?v=20260922-intake");
+    const w = new Worker("charm-nest-worker.js?v=20260923-rose-lock");
     w.onmessage = e => onWorkerMessage(sh, e.data, idx);
     w.onerror = e => onWorkerMessage(sh, { type: "error", jobId: sh.jobId + ":" + idx, message: e.message }, idx);
     sh.workers.push(w);
@@ -2375,6 +2381,7 @@ function buildJob(sh) {
     sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0, ...(sh.roseStock?.profileJson ? {remnant:JSON.parse(sh.roseStock.profileJson)} : {}) },
     clearancePt: +S.settings.clearancePt || 0, angles: angleSet(), fineRes: 2, coarseRes: 0.5,
     timeBudgetMs: sh.intakeBudgetMs || (+S.settings.budgetS || 180) * 1000, fullBudget: sh.intakePhase !== "fill", stallMs: 60 * 1000, maxTrials: sh.intakePhase === "fill" ? 2000 : 1000000, seed: sh.runSeed || +S.settings.seed || 1,
+    protectedRose:sh.roseProtected||null,lockedPlacements:sh.appendOnly?sh.nestInitial||sh.placements:null,
     initialLayout: sh.nestInitial || null, maxFill: +S.settings.maxFill || 0.80,
     packingHints: S.settings.packingAI !== "off" && sh.packingAdvice?.version === 1 && sh.packingAdvice?.key === packingKey(sh, items) ? sh.packingAdvice.hints || null : null,
     pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: c.orderDate || 0, pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
@@ -2516,7 +2523,7 @@ async function checkLearnedRunner(token = localStorage.getItem("cn.learnedKey") 
 }
 function startNest(sh) {
   if(sh.roseCutAt)return toast("This layout has been cut. Start a new sheet to use its remainder.","bad");
-  if (S.settings.nestFlow !== "learned") return startNestReady(sh);
+  if (S.settings.nestFlow !== "learned" || sh.appendOnly || sh.metal==='rose'&&(sh.rosePlan||sh.roseProtected)) return startNestReady(sh);
   if (sh._learnedStarting || ["nesting", "finishing", "queued"].includes(sh.status)) return;
   sh._learnedStarting = true;
   checkLearnedRunner().then(info => { sh._learnedModelDigest = info.weightsSha256; sh._learnedStarting = false; if (S.settings.nestFlow === "learned" && activeCharms(sh).length) startNestReady(sh); }).catch(e => {
@@ -2548,9 +2555,10 @@ function startNestReady(sh, context) {
      two records called GF_Sep.17.26_Set-1_Sheet-1, one of them stale. Once a sheet has a name it keeps its identity:
      re-nesting rewrites the same record and the same files. */
   sh.sheetId = sh.sheetId && (sh.fileBase || (sh.status !== "complete" && sh.status !== "partial")) ? sh.sheetId : `${sh.metal}${sh.page > 1 ? "-s" + sh.page : ""}-${Date.now().toString(36)}`;
+  window.RoseStock?.protect(sh);
   delete sh.rosePlan; delete sh.rosePlanKey; delete sh.rosePlanHash;
   sh._beforeLearned = S.settings.nestFlow === "learned" ? { placements: sh.placements, outputs: sh.outputs, verification: sh.verification, best: sh.best, status: sh.status, rejects: sh.rejects, liveInfo: sh.liveInfo, sat: sh.sat, solveParams: sh.solveParams, endedBy: sh.endedBy, trials: sh.trials, persistedDone: sh.persistedDone } : null;
-  sh.nestFlow = S.settings.nestFlow || "standard";
+  sh.nestFlow = sh.roseProtected || sh.appendOnly ? "standard" : S.settings.nestFlow || "standard";
   cancelGPUComparison();
   sh.persistedDone = false;
   sh.movedOn = null; sh.problem = null;
@@ -2583,7 +2591,7 @@ function startNestReady(sh, context) {
       workers[0].postMessage({ type: "solve", jobId: sh.jobId + ":0", job });
       workers[1].postMessage({ type: "solve", jobId: sh.jobId + ":1", job: { ...job, useGPU: S.settings.computePipeline === "gpu", learned: undefined, verifyResult: true, packingHints: job.packingHints, timeBudgetMs: S.settings.learnedBudgetS * 1000, stallMs: S.settings.learnedStallS * 1000, maxTrials: 1000000 } }); return;
     }
-    if ((S.settings.engine || "solver") === "ai") { startAINest(sh, items).catch(e => finishNest(sh, { error: e.message })); return; }
+    if (!sh.roseProtected && !sh.appendOnly && (S.settings.engine || "solver") === "ai") { startAINest(sh, items).catch(e => finishNest(sh, { error: e.message })); return; }
     const useServer = S.settings.computePipeline !== "gpu" && S.settings.serverAbove > 0 && items.length > S.settings.serverAbove && S.cloud.ok;
     if (useServer) return startServerNest(sh, job);
     const n = parallelCount();
@@ -2692,7 +2700,7 @@ async function startAINest(sh, items) {
     params: { seed: 0, angles: [...new Set(sh.placements.map(p => p.angle))], clearancePt: clearance, insetPt: inset, fineRes: 2, coarseRes: 0.5, engine: "claude", rounds }
   } });
 }
-function stopNest(sh) { if (sh.status !== "nesting") return; if(sh.guidancePending){sh.guidancePending=false;sh.status="ready";sh.endedBy="stopped";sh.stage="Shape analysis paused — its response is saved for reuse";renderCard(sh);if(window.Session)Session.schedule();if(window.RunCtl)RunCtl.onSheetDone(sh);pumpNestQueue();return;} sh.stage = "Stopping after this piece…"; renderCard(sh); if (sh.nestFlow !== "learned" && (S.settings.engine || "solver") === "ai") { sh.status = "ready"; sh.endedBy="stopped"; sh.stage = ""; agent({ metal: sh.metal }, "info", "Stopped by operator"); renderCard(sh); if(window.RunCtl)RunCtl.onSheetDone(sh); return; } if (sh.serverJob) { api("charmNestLibrary", { op: "stopJob", id: sh.serverJob }).catch(() => {}); } else (sh.workers || []).forEach((w, i) => w.postMessage({ type: "stop", jobId: sh.jobId + ":" + i })); }
+function stopNest(sh) { if (sh.status !== "nesting") return; if(sh.guidancePending){sh.guidancePending=false;sh.status="ready";sh.endedBy="stopped";sh.stage="Shape analysis paused — its response is saved for reuse";renderCard(sh);if(window.Session)Session.schedule();if(window.RunCtl)RunCtl.onSheetDone(sh);pumpNestQueue();return;} sh.stage = "Stopping after this piece…"; renderCard(sh); if (sh.nestFlow !== "learned" && !sh.roseProtected && !sh.appendOnly && (S.settings.engine || "solver") === "ai") { sh.status = "ready"; sh.endedBy="stopped"; sh.stage = ""; agent({ metal: sh.metal }, "info", "Stopped by operator"); renderCard(sh); if(window.RunCtl)RunCtl.onSheetDone(sh); return; } if (sh.serverJob) { api("charmNestLibrary", { op: "stopJob", id: sh.serverJob }).catch(() => {}); } else (sh.workers || []).forEach((w, i) => w.postMessage({ type: "stop", jobId: sh.jobId + ":" + i })); }
 // One replacement gate for live updates, final worker messages and server polls.
 // Layout snapshots never share mutable placements with a trial or the exporter.
 function acceptBestLayout(sh, candidate, meta = {}) {
@@ -2872,7 +2880,7 @@ async function finishNest(sh, { result, error }) {
   if (error && sh._beforeLearned) { Object.assign(sh, sh._beforeLearned); sh._beforeLearned = null; drawPreview(sh); }
   if (error) { sh.status = sh.outputs ? "partial" : items.length ? "ready" : "idle"; sh.stage = ""; log(sh, "error: " + error); toast(`${labelOf(sh.metal)}: nesting failed — ${error}`, "bad", 6000); renderCard(sh); pumpNestQueue(); if (window.RunCtl) RunCtl.onSheetDone(sh, new Error(error)); return; }
   const belowTarget=result.density+1e-6<Math.min(.74,+S.settings.maxFill||.80);
-  const needsRepack=sh.intakePhase==='fill' && belowTarget &&
+  const needsRepack=!sh.roseProtected && !sh.appendOnly && sh.intakePhase==='fill' && belowTarget &&
     (!sh.intakeOptimized || items.length>=(+S.settings.finalOptimizeCount||85) || result.rejects.length && items.length>(sh.intakeOptimizedCount||0));
   if(result.endedBy!=='stopped' && needsRepack){
     sh.optimizationTried=true;sh.intakeForceFinal=true;delete sh.intakeAppend;
@@ -2902,7 +2910,7 @@ async function finishNest(sh, { result, error }) {
     sh.progressKind = "optimize"; sh.progress = [0, sh.placements.length]; sh.stage = `Optimizing charms · shrinking each of ${sh.placements.length} by ${shrinkPct}% about its own centre…`; renderCard(sh);
     const optT0 = performance.now(), optStep = Math.max(12, Math.min(60, 2500 / Math.max(1, sh.placements.length)));   // the pass is watchable: ~2.5 s in all, the preview shrinking charm by charm
     for (let i = 0; i < sh.placements.length; i++) {
-      sh.placements[i].scale = CHARM_SCALE; sh.progress = [i + 1, sh.placements.length];
+      sh.placements[i].scale = (sh.appendOnly?sh.nestInitial:sh.roseProtected?.placements)?.find(p=>p.id===sh.placements[i].id)?.scale || CHARM_SCALE; sh.progress = [i + 1, sh.placements.length];
       sh.stage = `Optimizing charms · ${i + 1}/${sh.placements.length} shrunk ${shrinkPct}% about its centre`;
       renderProgress(sh); drawPreview(sh);
       await new Promise(r => setTimeout(r, optStep));
@@ -3149,7 +3157,7 @@ function buildCards() {
     q("dl").onclick = () => ProductionExports.live(cur(), "ai");
     q("dxf").onclick = () => ProductionExports.live(cur(), "dxf");
     q("second").onclick = () => overflowToNextSheet(cur());
-    q("clear").onclick = () => { const pg = cur(); if (pg.page > 1) { if (pg.status === "nesting") stopNest(pg); pg.charms.forEach(c => { c.metal = null; }); pg.charms = []; removePage(pg); } else clearMetal(m.key); renderRail(); updateTopSub(); };
+    q("clear").onclick = () => { const pg = cur(); if(pg.metal==='rose'&&!pg.roseCutAt&&(pg.rosePlan||pg.roseProtected)){toast('Finish the protected Rose Gold sheet before clearing it. Its green contour and saved positions must remain.','bad');return;} if (pg.page > 1) { if (pg.status === "nesting") stopNest(pg); pg.charms.forEach(c => { c.metal = null; }); pg.charms = []; removePage(pg); } else clearMetal(m.key); renderRail(); updateTopSub(); };
     // drag & drop on the card
     ["dragenter", "dragover"].forEach(ev => el.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); el.classList.add("dragOver"); e.dataTransfer.dropEffect = "copy"; }));
     ["dragleave", "drop"].forEach(ev => el.addEventListener(ev, e => { el.classList.remove("dragOver"); }));
@@ -3169,7 +3177,8 @@ const allCharms = () => S.sources.flatMap(s => s.charms).concat(Object.values(S.
 const sourceOf = id => S.sources.find(s => s.id === id) || (S.poolSources && S.poolSources[id]) || null;
 function clearMetal(metal) {
   const prim = S.sheets[metal];
-  for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms.forEach(c => { c.metal = null; }); pg.charms = []; pg.sheetId = null; pg.log = []; delete pg.roseStock; delete pg.roseCutAt; delete pg.roseHistory; delete pg.rosePlan; delete pg.rosePlanHash; delete pg.rosePlanKey; pg._roseLoaded=false; if (pg !== prim) { (pg.workers || []).forEach(w => w.terminate()); pg.workers = []; } }
+  if(prim.pages.some(pg=>pg.metal==='rose'&&!pg.roseCutAt&&(pg.rosePlan||pg.roseProtected))){toast('Finish the protected Rose Gold sheet before clearing this card. Its green contour and saved positions must remain.','bad');return;}
+  for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms.forEach(c => { c.metal = null; }); pg.charms = []; pg.sheetId = null; pg.log = []; delete pg.roseStock; delete pg.roseProtected; delete pg.roseCutAt; delete pg.roseHistory; delete pg.rosePlan; delete pg.rosePlanHash; delete pg.rosePlanKey; pg._roseLoaded=false; if (pg !== prim) { (pg.workers || []).forEach(w => w.terminate()); pg.workers = []; } }
   prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim);
 }
 function renderTabs(sh) {
@@ -3519,7 +3528,7 @@ async function openLibrarySheet(id) {
       <div class="section">Charms · ${(d.charms || []).length}</div>
       <div class="charmGrid">${(d.charms || []).map(c => `<div class="charmTile hoverItem">${c.thumbUrl ? `<img crossorigin="anonymous" src="${cors(c.thumbUrl)}" loading="lazy" alt="">` : ""}<div class="nm">${esc(c.name || "#" + (c.index + 1))}</div><div class="meta">${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}${c.qty > 1 ? ` · ×${c.qty}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("")}</div>`;
     $("#lsDownloads").onclick = () => ProductionExports.run([d.id], "ai");
-    $("#lsRestore").onclick = () => restoreSheet(d);
+    $("#lsRestore").onclick = () => restoreSheet(d).catch(e => toast('Restore stopped: '+e.message,'bad',7000));
     $("#lsDelete").onclick = async () => {
       const code = prompt(`Delete sheet ${d.folder || d.id} permanently — its record, .ai, proof, report and preview? Enter the passcode to confirm.`);
       if (code == null) return;
@@ -3531,21 +3540,18 @@ async function openLibrarySheet(id) {
 /** Bring a saved sheet back into its card: re-fetch the sources, re-parse, re-apply the saved placements as pins. */
 async function restoreSheet(d) {
   if(d.roseCutAt)return toast("This layout has already been cut. Open its saved set to view the history; use a new layout for the remainder.","bad",7000);
-  // the reversible action was passcode-gated and this one, which throws away work in progress, was the gold default
-  const live = (activeCharms(S.sheets[d.metal]) || []).length;
-  if (live && !confirm(`Restoring this sheet replaces the ${live} charm(s) queued on ${labelOf(d.metal)}. Continue?`)) return;
-  closeDlg($("#dlgSheet")); setMode("nest");
-  const sh = S.sheets[d.metal]; if (!sh) return;
-  if (sh.status === "nesting") { toast(`${labelOf(d.metal)} is nesting — stop it first`, "bad"); return; }
+  const pages=pagesOf(d.metal),existing=pages.find(p=>p.sheetId===d.id),last=pages.at(-1);
+  const sh=existing||(!last.charms.length&&!last.placements.length?last:null);
+  if(existing?.roseCutAt)throw new Error('This sheet was already cut. Reload the saved history');
+  if(sh&&['nesting','finishing','queued'].includes(sh.status))throw new Error('Finish the current sheet operation before restoring');
+  const live=sh?activeCharms(sh).length:0;
+  if(live&&!confirm(`Restoring this sheet replaces the ${live} charm(s) queued on ${labelOf(d.metal)}. Continue?`))return;
+  closeDlg($("#dlgSheet"));setMode("nest");
   toast(`Restoring ${d.folder || d.id} into ${labelOf(d.metal)}…`, "");
-  sh.charms = []; sh.sheetId = d.id;
-  delete sh.roseCutAt; delete sh.roseStock; delete sh.rosePlan; delete sh.roseHistory;
-  if(d.metal==='rose' && d.roseStockId && window.RoseStock)await RoseStock.restore(sh,d);
-  sheetDirty(sh);
   const files = [];
   for (const s of d.sources || []) {
-    if (!s.url) { toast(`${s.name}: source file was never backed up`, "bad"); continue; }
-    try { const b = await CharmNestAssets.bytes(s.url); files.push(new File([b], s.name, { type: "application/pdf" })); } catch (e) { toast(`${s.name}: download failed`, "bad"); }
+    if (!s.url) throw new Error(`${s.name}: source file was never backed up`);
+    try { const b = await CharmNestAssets.bytes(s.url); files.push(new File([b], s.name, { type: "application/pdf" })); } catch (e) { throw new Error(`${s.name}: download failed — ${e.message}`); }
   }
   const before = new Set(S.sources.map(s => s.id));
   await intake(files, d.metal, {deferNest:true});
@@ -3553,17 +3559,29 @@ async function restoreSheet(d) {
   const wait = () => new Promise(res => { const t = setInterval(() => { if (S.sources.filter(s => !before.has(s.id)).every(s => s.ingestReady || s.state === "error")) { clearInterval(t); res(); } }, 300); });
   await wait();
   const newSrcs = S.sources.filter(s => !before.has(s.id));
-  sh.charms=newSrcs.flatMap(s=>s.charms);delete sh.recalled;
-  for(const c of sh.charms)c.metal=d.metal;
-  let pinned = 0;
+  const charms=newSrcs.flatMap(s=>s.charms),used=new Set(),placements=[];
   for (const p of d.placements || []) {
-    const c = newSrcs.flatMap(s => s.charms).find(c => c.hash === p.hash && !c.pinned && c.sourceName === p.source) || newSrcs.flatMap(s => s.charms).find(c => c.hash === p.hash && !c.pinned);
-    if (c) { c.pinned = { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle }; if (p.name) c.name = p.name; pinned++; }
+    const matching=c=>!used.has(c)&&c.hash===p.hash;
+    const c=charms.find(c=>matching(c)&&c.sourceName===p.source&&c.index===p.index)||charms.find(c=>matching(c)&&c.sourceName===p.source)||charms.find(matching);
+    if(!c)continue;
+    used.add(c);c.id=p.id;c.pinned={cxPt:p.cxPt,cyPt:p.cyPt,angle:p.angle};if(p.name)c.name=p.name;
+    placements.push({...p,id:c.id,scale:p.scale||1});
   }
-  sh.placements = (d.placements || []).map(p => { const c = sh.charms.find(c => c.pinned && Math.abs(c.pinned.cxPt - p.cxPt) < 0.01 && Math.abs(c.pinned.cyPt - p.cyPt) < 0.01); return c ? { id: c.id, angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, wPt: p.wPt, hPt: p.hPt, layerName: p.layer } : null; }).filter(Boolean);
-  sh.liveInfo = { freePt2: d.freePt2, usablePt2: d.usablePt2, placedPt2: (d.usablePt2 || 0) - (d.freePt2 || 0), pocket: d.pocket, placed: sh.placements.length, total: sh.charms.length };
-  sh.status = "ready"; computeSaturation(sh); renderCard(sh); drawPreview(sh); renderRail();
-  toast(`${d.folder || d.id} restored · ${pinned} charm(s) pinned at their cut positions · add more and Nest, or Re-nest freely after unpinning`, "ok", 6000);
+  const restored={metal:d.metal,sheetId:d.id};
+  if(d.metal==='rose'&&d.roseStockId&&window.RoseStock)await RoseStock.restore(restored,d);
+  const guarded=new Set([...(restored.roseProtected?.placements||[]).map(p=>p.id),...(restored.rosePlan?.shapes||[]).map(s=>s.id)]);
+  if([...guarded].some(id=>!placements.some(p=>p.id===id)))throw new Error('One or more protected charms could not be restored. The saved sheet was kept untouched');
+  const target=sh||addPage(d.metal);
+  target.charms=charms;target.placements=placements;target.sheetId=d.id;target.runId=d.runId||target.runId;
+  for(const c of charms)c.metal=d.metal;
+  delete target.roseCutAt;delete target.roseProtected;delete target.roseStock;delete target.rosePlan;delete target.roseHistory;
+  Object.assign(target,restored);delete target.recalled;
+  window.RoseStock?.protect(target);
+  target.appendOnly=placements.length>0;target.intakeAppend=target.appendOnly;
+  target.dirty=true;target.persistedDone=true;target.outputs=null;target.verification=null;target.best=null;
+  target.liveInfo={freePt2:d.freePt2,usablePt2:d.usablePt2,placedPt2:(d.usablePt2||0)-(d.freePt2||0),pocket:d.pocket,placed:placements.length,total:charms.length};
+  target.status='ready';showPage(d.metal,pages.indexOf(target));computeSaturation(target);renderCard(target);drawPreview(target);renderRail();
+  toast(`${d.folder || d.id} restored · ${placements.length} charm(s) kept in position · add more and Nest`,"ok",6000);
 }
 async function loadCharms() {
   const body = $("#charmsBody"); body.innerHTML = `<div class="libEmpty">Loading charms…</div>`;
@@ -3692,7 +3710,7 @@ function compareGPUSpeed() {
   const sh=allSheets().filter(sh=>activeCharms(sh).length).sort((a,b)=>activeCharms(b).length-activeCharms(a).length)[0];
   const job=sh?buildJob(sh):null,id=uid();
   let worker;
-  try{worker=new Worker('charm-nest-worker.js?v=20260922-intake');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
+  try{worker=new Worker('charm-nest-worker.js?v=20260923-rose-lock');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
   gpuComparison=worker;button.textContent="Cancel comparison";output.textContent="Checking GPU availability…";
   const finish=text=>{if(gpuComparison!==worker)return;output.textContent=text;button.textContent="Compare speed";worker.terminate();gpuComparison=null;};
   worker.onmessage=({data:m})=>{
@@ -3796,8 +3814,8 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260923-photo-budget"></script>
-<script src="charm-nest-rose-ui.js?v=20260922-sheet-options"></script>
+<script src="charm-nest-bridge.js?v=20260923-rose-lock"></script>
+<script src="charm-nest-rose-ui.js?v=20260923-rose-lock"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin" aria-labelledby="owTitle">

@@ -1502,9 +1502,14 @@ const Pool = window.Pool = (() => {
     const bySource=new Map(sources.map(src=>[src.id,src]));
     const pages=(d.sheets || []).flatMap(g=>g.pages || []);
     const charms=new Set([...sources.flatMap(src=>src.charms || []),...(d.unassigned || []),...pages.flatMap(p=>p.charms || [])]);
+    const protectedIds=new Set(pages.filter(p=>p.metal==='rose' && !p.roseCutAt && (p.rosePlan||p.roseProtected)).flatMap(p=>(p.placements||[]).map(pl=>pl.id)));
     const repaired=new Set(),poolIds=new Set();
     for(const c of charms) {
       if(!c.outline)continue;
+      // A saved cut contour describes the original vectors exactly. A
+      // recovery migration must not silently replace their geometry or clear
+      // the placement list underneath that protected physical sheet.
+      if(protectedIds.has(c.id))continue;
       const src=bySource.get(c.sourceId);
       let rebuilt=false;
       if(G.pathRole(c.outline)==="artwork") {
@@ -1524,6 +1529,14 @@ const Pool = window.Pool = (() => {
       c.pinned=null;repaired.add(c);if(c.poolId)poolIds.add(c.poolId);
     }
     for(const pg of pages)if(pg.charms?.some(c=>repaired.has(c))) {
+      if(pg.metal==='rose' && !pg.roseCutAt && (pg.rosePlan||pg.roseProtected)){
+        // New, unplaced artwork may need a geometry migration. Re-search its
+        // remainder without ever dropping the saved cut or old placements.
+        pg.dirty=true;pg.status='ready';pg.intakeAppend=pg.placements.length>0;pg.appendOnly=pg.intakeAppend;
+        pg.best=null;pg.bestResult=null;pg.bestInfo=null;pg.bestKey=null;
+        pg.stage='New cut geometry updated — old Rose Gold contour and placements kept';
+        continue;
+      }
       Object.assign(pg,{dirty:true,status:'ready',placements:[],rejects:[],layout:null,outputs:null,verification:null,liveInfo:null,best:null,bestResult:null,bestInfo:null,bestKey:null,releaseFull:false,backOutputs:null});
       pg.backPool=(pg.backPool || []).filter(b=>!poolIds.has(b.poolId));
       pg.stage='Cut geometry updated — ready to re-nest';
@@ -1574,13 +1587,14 @@ const Pool = window.Pool = (() => {
       const r = await api("charmNestLibrary", { op: "poolPut", pools }, { label: "Recording the pool" });
       if (r.contended && r.contended.length) { row.state = "contended"; row.reason = `claimed by run ${r.contended[0].runId}`; agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: a live run (${r.contended[0].runId}) already holds this line — skipped`); return; }
     }
-    let page = activePage(sp.material);
-    if (window.LiveNest && LiveNest.closed(page)) { page=pagesOf(sp.material).find(p=>p.runId===run?.runId && !LiveNest.closed(p)) || addPage(sp.material); S.sheets[sp.material].active=pagesOf(sp.material).indexOf(page); }
+    let page=pagesOf(sp.material).at(-1);
+    if((run && page.runId && page.runId!==run.runId) || (window.LiveNest&&LiveNest.closed(page)))page=addPage(sp.material);
+    S.sheets[sp.material].active=pagesOf(sp.material).indexOf(page);
     if (run) page.runId = run.runId;
     for (const c of charms) if (!page.charms.includes(c)) page.charms.push(c);
     for (const p of pools) B.pool.rows.set(p.poolId, p);
     row.poolIds = pools.map(p => p.poolId); row.state = "pooled"; row.material = sp.material; row.reason = null;
-    sheetDirty(page);
+    if(page.placements.length){page.intakeAppend=true;page.appendOnly=true;page.dirty=true;if(!['nesting','finishing','queued'].includes(page.status))page.status='ready';renderCard(page);}else sheetDirty(page);
     agent({ metal: sp.material, pool: true }, "POOL", `${row.order.receiptId} · ${sp.designSku}${sp.quantity > 1 ? " ×" + sp.quantity : ""} → ${labelOf(sp.material)} (${row.engrave && row.engrave.needed ? "engrave" : "plain"})`);
   }
   async function addAll(run) {
@@ -1655,6 +1669,8 @@ const Gate = window.Gate = (() => {
     if (!run || run.releasePolicy === 2) return;
     const prior = Sets.ofRun(run.runId);
     if (prior.some(s => s.committedAt)) return; // A partially released legacy run finishes under its recorded rules; new runs use policy 2.
+    if(allSheets().some(p=>p.runId===run.runId && p.metal==='rose' && !p.roseCutAt && (p.rosePlan||p.roseProtected)))
+      throw new Error('The saved Rose Gold contour must be cut before this older run can change its set rules. Its sheet and stock have been kept.');
     if (!S.cloud.ok) throw new Error("Reconnect before updating this older run's set rules");
     run.intakeRecovery ||= { retire:[], backs:[] };
     for (const set of prior) { set.status = "superseded"; await Sets.save(set); for (const [key, value] of B.sets) if (value === set) B.sets.delete(key); }
@@ -3429,7 +3445,7 @@ const RunCtl = window.RunCtl = (() => {
   async function start(opts = {}) {
     if (B.run && ["running", "review", "paused", "processed", "stopped"].includes(B.run.status)) { toast("A run is already open — resume, finish, or abandon it before starting another", "bad"); return B.run; }
     if (B.run) await save(B.run);
-    if (B.run || Recall.on()) clearRunState();
+    if ((B.run || Recall.on()) && clearRunState()===false) return B.run;
     const r = newRun(opts.mode); Gate.state().solidIncluded = {}; B.run = r;
     agent({ run: r.runId }, "DS", `Run ${r.runId} started (${r.mode} mode)`);
     await save(r); renderBanner();
@@ -3742,16 +3758,48 @@ const RunCtl = window.RunCtl = (() => {
     toast(r.status==="processed" ? "Processing complete — pending items remain available for follow-up" : r.nothingToCut ? "Working sheets saved — held until eligible for a set" : `Set complete — ${(r.committed || []).length} order(s) marked design-complete`, "ok", 7000); ding && ding();
     Arrivals.start();
   }
-  /** After a set is done: clear the cards and pooled lines so the next run starts clean (files and records are kept). */
-  function clearRunState() {
+  /** Clear finished order state while keeping unfinished physical layouts on their material cards. */
+  function clearRunState(beforeClear) {
+    if(allSheets().some(p=>p.metal==='rose' && !p.roseCutAt && (p.rosePlan||p.roseProtected) &&
+      (['nesting','finishing','queued'].includes(p.status) || p.persisted&&!p.persistedDone || p._rosePlanning || p._roseAction || p._operationStarting))){
+      toast('The protected Rose Gold sheet is still being nested or saved. Wait until it finishes before clearing this run.','bad');
+      return false;
+    }
+    beforeClear?.();
     Carry.capture();
     // nothing waits for a run that is gone: the rows go back to plain pulled lines, and the gate forgets its plan
     for (const r of Orders.rows()) if (r.state === "waiting") { r.state = "pulled"; r.wait = null; r.reason = null; }
     if (window.Gate) { const g = Gate.state(); g.plan = null; g.forceFill = {}; }
-    for (const m of METALS) { const prim = S.sheets[m.key]; if (prim.pages.some(p => p.runId || p.recalled || p.charms.some(c => c.poolId))) { for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms = pg.charms.filter(c => !c.poolId); pg.sheetId = null; pg.fileBase = null; pg.setId = null; pg.runId = null; pg.seq = null; pg.setDay = null; pg.cardStartedAt = null; pg.sheetIndex = null; pg.group = null; pg.draft = false; pg.releaseFull = false; pg.isolated = false; pg.backPool = []; pg.backOutputs = null; pg.label = null; pg.cloud = null; pg.persisted = null; pg.recalled = null; delete pg.roseStock; delete pg.roseHistory; delete pg.rosePlan; delete pg.roseCutAt; delete pg.rosePlanHash; delete pg.rosePlanKey; delete pg.roseFresh; delete pg.roseChoice; pg._roseLoaded=false; } prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim); } } B.orders.rows = []; B.orders.byKey = new Map(); B.engrave.items = new Map(); B.review.items = []; B.pool.rows = new Map(); B.run = null; B.orders.recalled = null; B.orders.pulledAt = null; B.orders.filtered = 0; B.orders.stale = false; Object.assign(Recall.state(), { runId: null, setId: null, live: null }); Orders.render(); Engrave.render(); Review.render(); renderBanner(); renderRail(); updateTopSub(); }
+    for (const m of METALS) {
+      const prim=S.sheets[m.key];
+      if (!prim.pages.some(p => p.runId || p.recalled || p.charms.some(c => c.poolId))) continue;
+      // Clearing an order run is not a physical cut. Keep an uncut Rose
+      // contour, its reservation and original orders together, even if its
+      // set has already been committed. Keep other unfinished partial sheets.
+      const retained=prim.pages.filter(p=>p.status!=='nesting' && !p.roseCutAt &&
+        ((p.metal==='rose' && (p.rosePlan || p.roseProtected)) ||
+          (p.placements.length && !p.releaseFull && !p.recalled && !Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId)))));
+      for(const pg of prim.pages.slice())if(!retained.includes(pg)){
+        if(pg.status==='nesting')stopNest(pg);
+        if(pg!==prim){(pg.workers||[]).forEach(w=>w.terminate());pg.workers=[];continue;}
+        pg.charms=pg.charms.filter(c=>!c.poolId);pg.sheetId=null;pg.fileBase=null;pg.setId=null;pg.runId=null;pg.seq=null;pg.setDay=null;pg.cardStartedAt=null;pg.sheetIndex=null;pg.group=null;pg.draft=false;pg.releaseFull=false;pg.isolated=false;pg.backPool=[];pg.backOutputs=null;pg.label=null;pg.cloud=null;pg.persisted=null;pg.recalled=null;
+        delete pg.roseStock;delete pg.roseProtected;delete pg.roseHistory;delete pg.rosePlan;delete pg.roseCutAt;delete pg.rosePlanHash;delete pg.rosePlanKey;delete pg.roseFresh;delete pg.roseChoice;pg._roseLoaded=false;
+        sheetDirty(pg);
+      }
+      prim.pages=retained.includes(prim)?retained:[prim,...retained];
+      prim.pages.forEach((p,i)=>{p.page=i+1;p.el=null;});
+      prim.active=retained.length?prim.pages.indexOf(retained.at(-1)):0;
+      prim.pages[prim.active].el=prim.cardEl;
+    }
+    B.orders.rows=[];B.orders.byKey=new Map();B.engrave.items=new Map();B.review.items=[];B.pool.rows=new Map();B.run=null;B.orders.recalled=null;B.orders.pulledAt=null;B.orders.filtered=0;B.orders.stale=false;
+    Object.assign(Recall.state(),{runId:null,setId:null,live:null});
+    for(const m of METALS)if(S.sheets[m.key].pages.length>1 || S.sheets[m.key].pages[0].placements.length)showPage(m.key,S.sheets[m.key].active);
+    Orders.render();Engrave.render();Review.render();renderBanner();renderRail();updateTopSub();
+    return true;
+  }
   function setRunMode(mode) {
     S.settings.runMode = mode === "auto" ? "auto" : "manual"; saveSettings(); renderModeBtn();
-    if (mode === "auto") { agent({ bridge: true }, "DS", "Auto mode on: the sorter pulls the latest orders by the date rule and runs the whole process, continuing past pending approvals"); if (!B.run || B.run.status === "complete") { if (B.run && B.run.status === "complete") clearRunState(); start({ mode: "auto" }).catch(e => toast(e.message, "bad")); } else if (B.run.status === "stopped") { B.run.mode = "auto"; resume().catch(e => toast(e.message, "bad")); } else if (B.run.status === "paused") { B.run.mode = "auto"; next(); } else B.run.mode = "auto"; }
+    if (mode === "auto") { agent({ bridge: true }, "DS", "Auto mode on: the sorter pulls the latest orders by the date rule and runs the whole process, continuing past pending approvals"); if (!B.run || B.run.status === "complete") { if (B.run && B.run.status === "complete" && clearRunState()===false)return; start({ mode: "auto" }).catch(e => toast(e.message, "bad")); } else if (B.run.status === "stopped") { B.run.mode = "auto"; resume().catch(e => toast(e.message, "bad")); } else if (B.run.status === "paused") { B.run.mode = "auto"; next(); } else B.run.mode = "auto"; }
     else { clearTimeout(autoTimer); if (B.run) B.run.mode = "manual"; agent({ bridge: true }, "DS", "Manual mode: finish processing; start the next run manually"); }
     renderBanner();
   }
@@ -3778,7 +3826,7 @@ const RunCtl = window.RunCtl = (() => {
         const left = Math.max(0, NEXT.at - Date.now()), mm = Math.floor(left / 60000), ss = Math.floor(left % 60000 / 1000);
         h.classList.remove("hidden"); h.className = "runBanner done";
         h.innerHTML = `<span class="why"><b>Set finished</b> · the next run starts in ${mm}:${String(ss).padStart(2, "0")}</span><span class="spacer"></span><span class="acts"><button class="btn gold sm" id="rbNow" title="start the next run now instead of waiting">Run now</button><button class="btn ghost sm" id="rbCancelNext" title="do not start another run on its own">Cancel</button></span>`;
-        h.querySelector("#rbNow").onclick = () => { cancelNext(); clearRunState(); start({ mode: "auto" }).catch(e => toast(e.message, "bad")); };
+        h.querySelector("#rbNow").onclick = () => { cancelNext(); if(clearRunState()===false)return; start({ mode: "auto" }).catch(e => toast(e.message, "bad")); };
         h.querySelector("#rbCancelNext").onclick = () => cancelNext();
         Dock.schedule(); return;
       }
@@ -3822,7 +3870,7 @@ const RunCtl = window.RunCtl = (() => {
       const eng = [...Engrave.items().values()].filter(j => ["approved", "words", "review"].includes(j.state) && !j.backs).length;
       const rev = Review.count();
       const lost = [eng ? `${eng} engraving decision${eng === 1 ? "" : "s"}` : "", rev ? `${rev} review decision${rev === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
-      if (confirm(`Give up run ${r.runId.slice(-8)}?${lost ? `\n\n${lost} made in this run are not yet written and will be lost.` : ""}\n\nThe sheets and files already saved are kept.`)) { releaseRun(r); clearRunState(); }
+      if (confirm(`Give up run ${r.runId.slice(-8)}?${lost ? `\n\n${lost} made in this run are not yet written and will be lost.` : ""}\n\nThe sheets and files already saved are kept.`)) clearRunState(()=>releaseRun(r));
     };
     Orders.render();
   }
@@ -4514,6 +4562,10 @@ const Recall = window.Recall = (() => {
   async function open(sel) { if (opening) await opening.catch(() => {}); opening = openNow(sel); try { return await opening; } finally { opening = null; } }
   async function openNow(sel) {
     const from = S.mode;
+    if(allSheets().some(p=>p.metal==='rose' && !p.roseCutAt && (p.rosePlan||p.roseProtected))){
+      toast('The uncut Rose Gold contour is on the cards. Record its cut before replacing the cards with another set.','bad');
+      return;
+    }
     const q = sel.setId ? { setId: sel.setId } : { runId: sel.runId };
     const ls = await api("charmNestLibrary", Object.assign({ op: "listSheets", limit: 200 }, q), { label: "Reading the set" });
     /* One record per sheet name, the newest: before a re-nested sheet kept its identity, the library could hold two
@@ -4523,7 +4575,7 @@ const Recall = window.Recall = (() => {
     const sheets = [...byName.values()].sort((a, b) => (a.setSeq || 0) - (b.setSeq || 0) || (a.sheetIndex || 0) - (b.sheetIndex || 0));
     if (!sheets.length) { if (!sel.quiet) toast("Nothing is saved under that set", "bad", 5000); return; }
     if (B.run && !["complete", "abandoned"].includes(B.run.status)) { toast("Finish or abandon the current run before opening another set; your current decisions are kept", "bad", 6000); return; }
-    RunCtl.clearRunState();
+    if(RunCtl.clearRunState()===false)return;
     RC.runId = sel.runId || sheets[0].runId || null; RC.setId = sel.setId || null;
     for (const m of METALS) {
       const prim = S.sheets[m.key];
@@ -4534,7 +4586,7 @@ const Recall = window.Recall = (() => {
       mine.forEach((rec, i) => {
         const pg = i === 0 ? prim.pages[0] : CN.addPage(m.key);
         pg.charms = []; pg.placements = []; pg.rejects = []; pg.outputs = null; pg.verification = rec.verification || null; pg.liveInfo = null; pg.dirty = false; pg.problem = null;
-        delete pg.roseStock; delete pg.roseHistory; delete pg.rosePlan; delete pg.rosePlanHash; delete pg.rosePlanKey; pg._roseLoaded=false; pg._roseError=null; pg.roseCutAt=rec.roseCutAt || null;
+        delete pg.roseStock; delete pg.roseProtected; delete pg.roseHistory; delete pg.rosePlan; delete pg.rosePlanHash; delete pg.rosePlanKey; pg._roseLoaded=false; pg._roseError=null; pg.roseCutAt=rec.roseCutAt || null;
         pg.recalled = rec; pg.status = "complete"; pg.sheetId = rec.id; pg.runId = rec.runId || RC.runId; pg.setId = rec.setId; pg.seq = rec.setSeq; pg.setDay = rec.day; pg.cardStartedAt = rec.cardStartedAt || rec.createdAt || null; pg.sheetIndex = rec.sheetIndex; pg.fileBase = rec.fileBase; pg.group = null;
         pg.backPool = (rec.backs || []).map(bk => ({ sheetId:rec.id, approvedAt:bk.approvedAt, copy:bk.copy, previewWPt:bk.previewWPt, previewHPt:bk.previewHPt, pageWPt:bk.pageWPt, pageHPt:bk.pageHPt, poolId: bk.poolId, order: bk.order, sku: bk.sku, text: bk.text, lines: bk.lines || (bk.text ? String(bk.text).split("\n") : []), approvedBy: bk.approvedBy, capMm: bk.capMm, outputs: { png: bk.png ? { url: bk.png } : null, ai: bk.ai ? { url: bk.ai } : null } }));
         pg.cloud = Object.assign({ preview: rec.preview }, rec.outputs || {});
@@ -4818,7 +4870,7 @@ const Arrivals = window.Arrivals = (() => {
       box = el("button", "btn ghost sm"); box.id = "arrivalCounter"; box.type = "button";
       box.style.cssText = "position:fixed;right:14px;bottom:12px;z-index:35;max-width:calc(100vw - 28px);background:var(--card);box-shadow:0 3px 18px #0002;font-size:12px";
       box.onclick = async () => {
-        if (Recall.on() && state.inbox?.length) { const incoming = state.inbox; RunCtl.clearRunState(); delete state.inbox; await merge(incoming); }
+        if (Recall.on() && state.inbox?.length) { const incoming = state.inbox; if(RunCtl.clearRunState()===false)return; delete state.inbox; await merge(incoming); }
         setMode("orders"); Orders.view().sort = "arrival"; Orders.view().desc = false; Orders.render();
       };
       document.body.appendChild(box);
@@ -4906,19 +4958,20 @@ const Arrivals = window.Arrivals = (() => {
   return { start, check, merge, record, at, paint, processPending, state: () => state };
 })();
 
-/* A new batch tries the earliest open sheet. Existing sheets with approved backs are pinned; their approvals survive.
+/* A new batch tries the newest open sheet. Existing sheets with approved backs are pinned; their approvals survive.
    Only uncommitted sheets belong here. The same solver and both existing verifiers still decide acceptance. */
 const LiveNest = window.LiveNest = (() => {
   function prepareSheet(sh) {
     const items=activeCharms(sh),capacity=usableArea(sh)*(+S.settings.maxFill || .80);
     const density=sh.liveInfo?.usablePt2 ? sh.liveInfo.placedPt2/sh.liveInfo.usablePt2 : sh.density || 0;
-    const plan=O.intakePlan({count:items.length,area:items.reduce((n,c)=>n+inflatedArea(c),0),capacity,threshold:+S.settings.finalOptimizeCount || 85,pressure:(+S.settings.optimizeAt || 85)/100,budgetS:+S.settings.budgetS || 180,force:!!sh.intakeForceFinal,density,target:Math.min(.74,+S.settings.maxFill||.80),optimized:!!sh.intakeOptimized,append:!!sh.intakeAppend});
+    const plan=sh.roseProtected||sh.appendOnly?{phase:'fill',budgetMs:(+S.settings.budgetS||180)*1000}:O.intakePlan({count:items.length,area:items.reduce((n,c)=>n+inflatedArea(c),0),capacity,threshold:+S.settings.finalOptimizeCount || 85,pressure:(+S.settings.optimizeAt || 85)/100,budgetS:+S.settings.budgetS || 180,force:!!sh.intakeForceFinal,density,target:Math.min(.74,+S.settings.maxFill||.80),optimized:!!sh.intakeOptimized,append:!!sh.intakeAppend});
     sh.intakePhase=plan.phase;sh.intakeBudgetMs=plan.budgetMs;delete sh.intakeAppend;
     if(plan.phase!=='fill'){for(const c of items)if(c.arrivalPin){c.pinned=null;delete c.arrivalPin;}sh.optimizationTried=true;}
     else {const placed=new Map((sh.placements||[]).map(p=>[p.id,p]));for(const c of items){const p=placed.get(c.id);if(p&&!c.pinned){c.pinned={cxPt:p.cxPt,cyPt:p.cyPt,angle:p.angle};c.arrivalPin=true;}}}
     return plan;
   }
-  const closed = p => !!p.roseCutAt || !!p.runHold || !!p.intakeFinalized || !!p.releaseFull || Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId));
+  const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId)) ||
+    (!(p.metal==='rose'&&(p.rosePlan||p.roseProtected)) && (!!p.runHold || !!p.intakeFinalized));
   async function add(run) {
     const prepare=async()=>{
     run.intakeRecovery = run.intakeRecovery || { retire: [], backs: [] };
@@ -4927,12 +4980,21 @@ const LiveNest = window.LiveNest = (() => {
     // An order can join previously independent material sets. Re-number that connected group together.
     const potential = O.kinGroups(Orders.rows().filter(r => r.spec?.material && !["gone", "noDesign"].includes(r.state)).map(r => ({ orderId: String(r.order.receiptId), material: r.spec.material })));
     for (const m of [...touched]) for (const linked of (potential[m] || m).split("+")) touched.add(linked);
+    // The legacy grouping pass would retire old sheets after Pool.addAll has
+    // already touched them. Refuse an unsafe regroup before claiming orders.
+    if(!Gate.modern(run.runId))for(const group of new Set(Object.values(potential))){
+      const old=Sets.ofRun(run.runId).filter(set=>set.group!==group && set.materials.some(m=>group.split('+').includes(m)));
+      if(old.some(set=>allSheets().some(p=>p.setId===set.setId && p.metal==='rose' && (p.rosePlan||p.roseProtected) && !p.roseCutAt)))
+        throw new Error('The protected Rose Gold contour belongs to an existing set. Finish that set before regrouping its sheets.');
+    }
     async function reconcileGroups() {
     if (Gate.modern(run.runId)) return;
     for (const group of new Set(Object.values(run.groups || {}))) {
       const old = Sets.ofRun(run.runId).filter(s => s.materials.some(m => group.split("+").includes(m)) && s.group !== group);
       if (!old.length) continue;
       if (old.some(s => s.committedAt)) throw new Error("A related material set was already committed; finish this run before adding the new order");
+      if(old.some(set=>allSheets().some(p=>p.setId===set.setId && p.metal==='rose' && (p.rosePlan||p.roseProtected) && !p.roseCutAt)))
+        throw new Error('The protected Rose Gold contour belongs to an existing set. Finish that set before regrouping its sheets.');
       await Sets.ensure(run.runId, group);
       for (const set of old) {
         set.status = "superseded"; await Sets.save(set);
@@ -4946,57 +5008,27 @@ const LiveNest = window.LiveNest = (() => {
     }
     }
     const previousSheets=new Map(allSheets().map(p=>[p,{placements:p.placements.slice(),intakeOptimized:p.intakeOptimized,intakeOptimizedCount:p.intakeOptimizedCount,density:p.density,liveInfo:p.liveInfo}]));
-    const previousPlacements = new Map(allSheets().flatMap(p => p.placements.map(pl => [pl.id, pl])));
     const target = new Map(), force = Object.assign({}, Gate.state().forceFill);
     for (const m of touched) {
       const prim = S.sheets[m], pages = prim.pages.filter(p => p.runId === run.runId && !closed(p));
       if (pages.some(p => ["nesting", "finishing", "queued"].includes(p.status))) throw new Error("A sheet is still being written");
-      const p = pages[0] || (closed(activePage(m)) ? addPage(m) : activePage(m)); target.set(m, p); prim.active = prim.pages.indexOf(p);
+      const newest=prim.pages.at(-1);
+      const p = newest.runId && newest.runId!==run.runId || closed(newest) ? addPage(m) : newest;
+      // addPage inherits the primary page's run id; replace it before
+      // Pool.addAll examines the newest page or it creates yet another page.
+      if(p!==newest)p.runId=run.runId;
+      target.set(m, p); prim.active = prim.pages.indexOf(p);
       if (pages.some(p => p.charms.length)) Gate.state().forceFill[m] = true;
     }
     try { await Pool.addAll(run); } finally { Gate.state().forceFill = force; }
     await reconcileGroups();
-    const rewrites = new Set();
     for (const [m, pg] of target) {
       if (Gate.modern(run.runId) && !Gate.nestable(pg, run)) continue;
-      const pages = pagesOf(m).filter(p => p.runId === run.runId && !closed(p));
-      const all = [...new Map(pages.flatMap(p => p.charms).map(c => [c.poolId || c.id, c])).values()];
-      if (!all.some(c => c.poolId && !before.has(c.poolId)) && !pages.some(p => !p.fileBase && p.charms.length)) continue;
-      if (pages.length > 1 && all.some(c => c.pinned && !c.arrivalPin)) {
-        for (const p of pages) RunCtl.onSheetDone(p, Object.assign(new Error("Unpin manually locked pieces before re-optimizing these sheets"), {sheetPending:true}));
-        continue;
-      }
-      const near = pages.length > 1; // A single partial sheet always tries its saved gaps first.
-      const pins = previousPlacements;
-      for (const c of all) {
-        const pl = pins.get(c.id);
-        // Repacking the full queue is required when a later sheet already exists: its older orders get first refusal.
-        if (!near && pages.length === 1 && pl && !c.pinned && !all.some(x => (x.orderDate || 0) < (c.orderDate || 0) && !before.has(x.poolId))) { c.pinned = { cxPt: pl.cxPt, cyPt: pl.cyPt, angle: pl.angle }; c.arrivalPin = true; }
-        else if (c.arrivalPin) { c.pinned = null; delete c.arrivalPin; }
-      }
-      const saved=previousSheets.get(pg);
-      const seedIds=new Set((saved?.placements||[]).map(p=>p.id));
-      if(saved){pg.intakeOptimized=saved.intakeOptimized;pg.intakeOptimizedCount=saved.intakeOptimizedCount;pg.density=saved.density;pg.liveInfo=saved.liveInfo;}
-      const retiredIds = pages.map(p => p.sheetId).filter(Boolean);
-      if (Gate.modern(run.runId)) {
-        const ids = all.map(c => c.poolId).filter(Boolean);
-        await Pool.update(ids, { state:"ready", sheetId:null, setId:null });
-        for (const row of Orders.rows()) if (row.poolIds.some(id => ids.includes(id))) row.state = "pooled";
-      }
-      for (const p of pages) {
-        for (const c of p.charms) if (c.poolId) rewrites.add(c.poolId);
-        if (Gate.modern(run.runId)) { p.sheetId = null; p.fileBase = null; p.setId = null; p.seq = null; p.draft = true; }
-        p.charms = []; p.placements = []; p.outputs = null; p.label = null; p.backPool = []; p.backOutputs = null; p.persisted = null; p.persistedDone = true; p.status = "idle"; p.dirty = false;
-      }
-      pg.charms = all; pg.placements=all.filter(c=>seedIds.has(c.id)).map(c=>previousPlacements.get(c.id)).filter(Boolean); pg.status = "ready"; pg.intakeAppend = pages.length === 1 && pg.placements.length > 0; pg.optimizationTried = near || pages.length > 1;
-      for (const set of Sets.ofRun(run.runId)) {
-        const ids = new Set(retiredIds);
-        set.sheetIds = set.sheetIds.filter(id => !ids.has(id)); set.labelFiles = set.labelFiles.filter(f => !ids.has(f.sheetId));
-        for (const order of Object.values(set.orders)) for (const line of Object.values(order.lines)) line.copies = line.copies.filter(c => !ids.has(c.sheetId));
-      }
-      agent({ metal: m }, "nest", near || pages.length > 1 ? "Re-optimizing open sheets, oldest orders first; free space is used before the next sheet" : "Adding new pieces around the current layout");
-      run.intakeRecovery.retire = [...new Set(run.intakeRecovery.retire.concat(retiredIds))];
-      run.intakeRecovery.backs = [...new Set(run.intakeRecovery.backs.concat([...rewrites]))];
+      const all=pg.charms,saved=previousSheets.get(pg);
+      if(!all.some(c=>c.poolId&&!before.has(c.poolId))&&pg.fileBase)continue;
+      if(saved){pg.placements=saved.placements;pg.intakeOptimized=saved.intakeOptimized;pg.intakeOptimizedCount=saved.intakeOptimizedCount;pg.density=saved.density;pg.liveInfo=saved.liveInfo;}
+      pg.intakeAppend=pg.placements.length>0;pg.appendOnly=pg.intakeAppend;pg.status='ready';pg.dirty=true;
+      agent({metal:m},'nest','Adding incoming pieces to the newest partial sheet; earlier sheets and saved positions are retained');
       startNest(pg);
     }
     };

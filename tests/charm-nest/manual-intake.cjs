@@ -29,6 +29,22 @@ function setup(){
  sheet.persistedDone=true;c.flushManualIntake();assert.equal(sheet.charms.length,4);assert.equal(starts.length,1);
  c.assignSource(a,'gold');assert.equal(sheet.charms.length,4,'an assigned source cannot be inserted twice');assert.equal(starts.length,1);
 }
+{
+ const {c,sheet,pages,source,live}=setup();sheet.metal='rose';c.METALS[0].key='rose';c.S.sheets.rose=sheet;
+ sheet.rosePlan={profile:{},shapes:[{id:'old'}],lines:[[[0,0],[1,1]]]};sheet.runHold=true;sheet.intakeFinalized=true;
+ c.window.RoseStock={protect:p=>{p.roseProtected={placements:p.placements.map(x=>({...x})),profile:p.rosePlan.profile};}};
+ const before=JSON.stringify(sheet.placements),src=source('rose-drop',3);src.metal='rose';c.assignSource(src,'rose');
+ assert.equal(pages.length,1,'planned contour continues on the existing page even when marked held');assert.equal(sheet.charms.length,4);assert.equal(JSON.stringify(sheet.placements),before);
+ sheet.intakeForceFinal=true;assert.equal(live.prepareSheet(sheet).phase,'fill','protected contours never trigger a full repack');assert(!live.closed(sheet),'automatic intake can keep using an uncut protected sheet');
+}
+for(const metal of ['gold','silver','gold10k','gold14k','rose']){
+ const {c,sheet,pages,source,starts}=setup();sheet.metal=metal;c.METALS[0].key=metal;c.S.sheets[metal]=sheet;
+ const second=c.addPage();second.metal=metal;second.charms=[{id:'second'}];second.placements=[{id:'second',cxPt:4,cyPt:5,angle:0}];second.persistedDone=true;second.status='complete';
+ const first=JSON.stringify(sheet.placements),src=source('latest');src.metal=metal;c.assignSource(src,metal);
+ assert.equal(starts[0],second,metal+' always chooses newest partial even while the first page is selected');assert.equal(second.charms.length,2);assert.equal(JSON.stringify(sheet.placements),first);assert(second.appendOnly);
+ second.status='complete';second.releaseFull=true;const next=source('full');next.metal=metal;c.assignSource(next,metal);
+ assert.equal(pages.length,3,metal+' creates a new page when the newest is full');assert.equal(sheet.charms.length,1);assert.equal(second.charms.length,2);
+}
 for(const lock of ['intakeFinalized','releaseFull','roseCutAt','recalled','runHold']){
  const {c,sheet,pages,source}=setup();sheet[lock]=true;c.assignSource(source(lock),'gold');assert.equal(pages.length,2,lock);assert.equal(sheet.charms.length,1);assert.equal(sheet.placements[0].id,'old');assert.equal(pages[1].charms.length,1);
 }
@@ -38,6 +54,13 @@ for(const lock of ['intakeFinalized','releaseFull','roseCutAt','recalled','runHo
 {
  const {c,sheet,source,starts}=setup(),s=source('single');c.S.settings.autoNest='off';c.S.unassigned.push(s.charms[0]);c.assignCharm(s.charms[0],'gold');assert.equal(sheet.charms.length,2);assert.equal(sheet.placements.length,1);assert.equal(starts.length,0);
 }
+{
+ const {c,sheet,source}=setup(),s=source('saved');sheet.charms[0].sourceId=s.id;sheet.metal='rose';sheet.roseProtected={placements:[{...sheet.placements[0]}]};
+ const old=JSON.stringify(sheet.placements),warnings=[];c.toast=m=>warnings.push(m);
+ vm.runInContext(html.slice(html.indexOf('function removeSource('),html.indexOf('async function persistSource(')),c);
+ c.assignCharm(sheet.charms[0],'silver');c.removeSource(s);
+ assert.equal(JSON.stringify(sheet.placements),old);assert.equal(sheet.charms.length,1);assert(c.S.sources.includes(s));assert.equal(warnings.length,2,'moving or deleting a placed charm is refused before changing the local sheet');
+}
 for(const count of [84,85,86,100])assert.equal(O.intakePlan({count,density:.74,force:true}).phase,'fill','74% skips automatic full searches');
 assert.equal(O.intakePlan({count:85,density:.739}).phase,'final');
 assert.equal(O.intakePlan({count:85,density:.5,append:true}).phase,'fill');
@@ -45,10 +68,11 @@ assert.equal(O.intakePlan({count:40,density:.5,force:true}).phase,'repack');
 assert.equal(O.intakePlan({count:40,density:.5,optimized:true,area:99,capacity:100}).phase,'fill');
 // Exercise the actual completion decision before PDF writing, with no API calls.
 const decision=html.slice(html.indexOf('  const belowTarget=result.density'),html.indexOf('  sh._beforeLearned = null;',html.indexOf('  const belowTarget=result.density')));
-function finish({count=40,density=.5,optimized=false,rejects=[],phase='fill',endedBy='complete',last=0}={}){
- const sh={intakePhase:phase,intakeOptimized:optimized,intakeOptimizedCount:last,status:'nesting',charms:[]},items=Array.from({length:count},()=>({}));let restarts=0;
+function finish({count=40,density=.5,optimized=false,rejects=[],phase='fill',endedBy='complete',last=0,protectedRose=false}={}){
+ const sh={roseProtected:protectedRose,intakePhase:phase,intakeOptimized:optimized,intakeOptimizedCount:last,status:'nesting',charms:[]},items=Array.from({length:count},()=>({}));let restarts=0;
  const c={sh,items,result:{density,rejects,endedBy,placements:[{id:'kept'}],placedPt2:50,usablePt2:100,freePt2:50},S:{settings:{maxFill:.8,finalOptimizeCount:85}},startNest(){restarts++;},log(){}};vm.createContext(c);vm.runInContext('(function(){'+decision+'})();',c);return {sh,restarts};
 }
+assert.equal(finish({protectedRose:true,count:100}).restarts,0,'protected remainder never restarts under 74% or over 85 charms');
 assert.equal(finish().restarts,1,'an initial layout below 74% gets a repack');
 assert.equal(finish({phase:'repack'}).restarts,0,'the same sparse batch cannot loop forever');
 assert.equal(finish({optimized:true}).restarts,0,'after repacking, new pieces fill gaps');
@@ -74,4 +98,19 @@ assert.equal(finish({phase:'final',count:85,rejects:['overflow']}).restarts,0,'f
  const job={sheet:{wPt:30,hPt:20,insetPt:1},pieces:[old,fresh,large],angles:[0,90],fineRes:2,coarseRes:.5,maxFill:.8,timeBudgetMs:400,maxTrials:2};
  const result=await S.solve(job,{});assert(S.verify(job,result.placements,4).ok);assert.equal(result.placements.find(p=>p.id==='old').cxPt,7);assert(result.placements.some(p=>p.id==='fresh'));assert(result.rejects.includes('large'));
  console.log('Manual intake OK: file batches, running progress, identity, save/review waits, frozen stock, pins, real gap filling, overflow, 74%/85 decisions and bounded retries');
+})().catch(e=>{console.error(e);process.exitCode=1;});
+
+(async()=>{
+ const old={metal:'rose',sheetId:'earlier',charms:[{id:'first'}],placements:[{id:'first',cxPt:1,cyPt:2,angle:0}],status:'complete'},pages=[old],notices=[];
+ const saved={id:'saved-rose',metal:'rose',folder:'Saved',runId:'saved-run',sources:[{name:'saved.ai',url:'https://example.test/saved.ai'}],placements:[{id:'saved-id',hash:'same-hash',source:'saved.ai',index:0,cxPt:12,cyPt:13,angle:0,scale:.975}],roseStockId:'physical-rose'};
+ let makeCharms=true;const state={sources:[],sheets:{rose:old}};
+ const c={S:state,window:{RoseStock:{async restore(target){target.roseStock={id:'physical-rose'};target.rosePlan={profile:{},lines:[[[1,1],[2,2]]],shapes:[{id:'saved-id'}]};},protect(target){assert(target.charms.some(x=>x.id==='saved-id'));assert.equal(target.placements[0].scale,.975);target.roseProtected={placements:target.placements.map(p=>({...p})),lines:target.rosePlan.lines};}}},
+  pagesOf:()=>pages,activeCharms:p=>p.charms,labelOf:()=> 'Rose Gold',toast:m=>notices.push(m),closeDlg(){},setMode(){},$(){return null;},confirm:()=>true,
+  CharmNestAssets:{bytes:async()=>new Uint8Array([1])},File:class{constructor(bytes,name){this.name=name;}},
+  async intake(files,metal,opts){assert(opts.deferNest);state.sources.push({id:'new-source',ingestReady:true,state:'ready',charms:makeCharms?[{id:'temporary-id',hash:'same-hash',sourceName:'saved.ai',index:0}]:[]});},
+  setInterval:fn=>setTimeout(fn,0),clearInterval:clearTimeout,addPage(){const page={metal:'rose',charms:[],placements:[],status:'idle'};pages.push(page);return page;},showPage(){},computeSaturation(){},renderCard(){},drawPreview(){},renderRail(){}};
+ c.RoseStock=c.window.RoseStock;vm.createContext(c);vm.runInContext(html.slice(html.indexOf('async function restoreSheet('),html.indexOf('async function loadCharms(')),c);
+ await c.restoreSheet(saved);assert.equal(pages.length,2);assert.equal(old.sheetId,'earlier');assert.equal(old.placements[0].id,'first');assert.equal(pages[1].placements[0].id,'saved-id');assert.equal(pages[1].placements[0].scale,.975);assert.deepEqual({...pages[1].roseProtected.placements[0]}, {...pages[1].placements[0]});
+ makeCharms=false;await assert.rejects(()=>c.restoreSheet({...saved,id:'missing-rose'}),/protected charms could not be restored/);
+ assert.equal(pages.length,2,'a failed restore never clears or replaces an earlier sheet');
 })().catch(e=>{console.error(e);process.exitCode=1;});

@@ -5,6 +5,18 @@ const fingerprint=s=>JSON.stringify((s.placements||[]).map(p=>[p.id,+p.cxPt.toFi
 const hash=s=>crypto.createHash('sha256').update(s).digest('hex');
 const id=s=>typeof s==='string'&&/^[\w-]{4,80}$/.test(s);
 const parse=s=>s?JSON.parse(s):null;
+function protectedLayout(sheet){
+  const plan=parse(sheet.rosePlanJson);
+  return plan?{profile:plan.profile,lines:plan.lines,shapes:plan.shapes,placements:sheet.placements}:parse(sheet.roseProtectedJson);
+}
+function assertProtected(guard,placements){
+  if(!guard)return;
+  if(!Array.isArray(placements))throw new Error('The protected Rose Gold layout cannot be moved or removed');
+  for(const p of guard.placements){
+    const rows=placements.filter(x=>x?.id===p.id),q=rows[0];
+    if(rows.length!==1||['cxPt','cyPt','angle'].some(k=>!Number.isFinite(q[k])||Math.abs(q[k]-p[k])>.001)||Math.abs((q.scale||1)-(p.scale||1))>.00001||(p.hash!=null&&q.hash!==p.hash))throw new Error('The protected Rose Gold layout cannot be moved or removed');
+  }
+}
 module.exports=function({db,col,FV,Readiness}){
   const stocks=()=>col('Charm_Nest_Rose_Stock'),sheets=()=>col('Charm_Nest_Sheets');
   async function roseGet(b){
@@ -31,15 +43,17 @@ module.exports=function({db,col,FV,Readiness}){
       const sd=await tx.get(sheets().doc(b.sheetId));
       if(sd.exists&&sd.data().roseCutAt)throw new Error("This layout was already cut; start a new sheet");
       const next={...(old||{id:ref.id,wPt:b.wPt,hPt:b.hPt,revision:0,profileJson:null,createdMs:Date.now()}),owner:b.sheetId,available:false,updatedAt:FV.serverTimestamp()};
+      const guard=sd.exists?protectedLayout(sd.data()):null,protectedJson=guard?JSON.stringify(guard):null;
       tx.set(ref,next);
-      if(sd.exists)tx.update(sheets().doc(b.sheetId),{roseStockId:ref.id,roseRevision:next.revision,...(b.nesting?{dirty:true,rosePlanJson:null,rosePlanHash:null,roseFingerprint:null}:{})});
-      return {...next,updatedAt:null};
-    });return {stock};
+      if(sd.exists)tx.update(sheets().doc(b.sheetId),{roseStockId:ref.id,roseRevision:next.revision,...(b.nesting?{dirty:true,roseProtectedJson:protectedJson,rosePlanJson:null,rosePlanHash:null,roseFingerprint:null}:{})});
+      return {stock:{...next,updatedAt:null},protectedJson};
+    });return stock;
   }
   async function roseRelease(b){
     if(!id(b.stockId)||!id(b.sheetId))throw new Error('Invalid stock reservation');
     await db.runTransaction(async tx=>{const ref=stocks().doc(b.stockId),d=await tx.get(ref);if(!d.exists||d.data().owner!==b.sheetId)throw new Error('This stock reservation changed');
       const sheet=await tx.get(sheets().doc(b.sheetId));if(sheet.exists&&sheet.data().setId&&!sheet.data().draft)throw new Error('Remove the sheet from its current set before releasing its stock');
+      if(sheet.exists&&(sheet.data().rosePlanJson||sheet.data().roseProtectedJson))throw new Error('A planned or protected Rose Gold contour cannot be released');
       tx.update(ref,{owner:null,available:true,updatedAt:FV.serverTimestamp()});if(sheet.exists)tx.update(sheets().doc(b.sheetId),{rosePlanJson:null,rosePlanHash:null,roseStockId:null});});return {ok:true};
   }
   async function rosePlan(b){
@@ -50,14 +64,20 @@ module.exports=function({db,col,FV,Readiness}){
       if(!sheet||sheet.metal!=='rose'||!sheet.verification?.ok||sheet.saving||sheet.dirty||sheet.roseCutAt||!sheet.outputs?.ai)throw new Error('Save and verify this Rose Gold layout first');
       if(!stock||stock.owner!==b.sheetId||stock.revision!==b.revision)throw new Error('The physical sheet changed. Nest it again');
       if(fingerprint(sheet)!==b.fingerprint||shapes.length!==sheet.placements.length||new Set(shapes.map(s=>s.id)).size!==shapes.length||shapes.some(s=>!sheet.placements.some(p=>p.id===s.id)))throw new Error('The layout changed. Prepare its contour again');
+      const guard=parse(sheet.roseProtectedJson);assertProtected(guard,sheet.placements);
+      const fixed=new Set((guard?.placements||[]).map(p=>p.id));
+      const protectedShapes=new Map((guard?.shapes||[]).map(s=>[s.id,s]));
+      if(guard&&(protectedShapes.size!==fixed.size||shapes.some(s=>fixed.has(s.id)&&JSON.stringify([s.paths,s.ink])!==JSON.stringify([protectedShapes.get(s.id)?.paths,protectedShapes.get(s.id)?.ink]))))throw new Error('The protected Rose Gold charm outlines cannot be changed');
       const prior=parse(stock.profileJson);
       // Recheck physical exclusions at the persistence boundary, too. This
       // catches a stale rectangular layout attached to a previously cut sheet.
-      if(prior)for(const shape of shapes)for(const path of shape.paths||[])for(let i=0;i<path.length;i++){
+      for(const shape of shapes){const exclusion=!fixed.has(shape.id)&&guard?guard.profile:prior;if(!exclusion)continue;for(const path of shape.paths||[])for(let i=0;i<path.length;i++){
         const a=path[i],z=path[(i+1)%path.length],n=Math.max(1,Math.ceil(Math.hypot(z[0]-a[0],z[1]-a[1])*4));
-        for(let j=0;j<=n;j++){const x=a[0]+(z[0]-a[0])*j/n,y=a[1]+(z[1]-a[1])*j/n;if(Rose.intersects(prior,x,y,0,0))throw new Error('A charm crosses previously cut material. Nest again on this remnant');}
-      }
-      const plan=Rose.plan(shapes,stock.wPt,stock.hPt,prior,b.allowanceMm);
+        for(let j=0;j<=n;j++){const x=a[0]+(z[0]-a[0])*j/n,y=a[1]+(z[1]-a[1])*j/n;if(Rose.intersects(exclusion,x,y,0,0))throw new Error('A charm crosses protected or previously cut material. Nest again on this remnant');}
+      }}
+      const fresh=guard?shapes.filter(s=>!fixed.has(s.id)):shapes;
+      const plan=fresh.length?Rose.plan(fresh,stock.wPt,stock.hPt,guard?.profile||prior,b.allowanceMm):{version:1,profile:guard.profile,lines:[],shapes:[],allowanceMm:b.allowanceMm,remainingPt2:stock.wPt*stock.hPt-Rose.area(guard.profile)};
+      if(guard){plan.lines=[...guard.lines,...plan.lines];plan.shapes=shapes.map(s=>protectedShapes.get(s.id)||s);plan.removedPt2=Rose.area(plan.profile)-(prior?Rose.area(prior):0);}
       if(!plan.lines.length)throw new Error('No new material is cut by this layout');
       const planJson=JSON.stringify(plan);if(Buffer.byteLength(JSON.stringify({...sheet,rosePlanJson:planJson}))>950000)throw new Error('Cut geometry is too complex to save');
       const planHash=hash(planJson+fingerprint(sheet)+stock.revision);
@@ -127,3 +147,6 @@ module.exports=function({db,col,FV,Readiness}){
   return {roseGet,roseList,roseClaim,roseRelease,rosePlan,roseRecordCut,roseDemo};
 };
 module.exports.fingerprint=fingerprint;
+
+module.exports.protectedLayout=protectedLayout;
+module.exports.assertProtected=assertProtected;

@@ -50,8 +50,8 @@ const bridge=fs.readFileSync('charm-nest-bridge.js','utf8'),html=fs.readFileSync
  }
  const partial=setup(35,10,{sealed:true});await partial.live.add(partial.run);assert.equal(partial.pg.charms.length,45);assert.equal(partial.done.charms.length,1);assert.equal(partial.done.placements[0].id,'c999');assert.equal(partial.starts(),1);assert.equal(partial.live.prepareSheet(partial.pg).phase,'fill');
  const final=setup(80,5);await final.live.add(final.run);const fixed=final.pg.charms[0];fixed.pinned={cxPt:1,cyPt:2,angle:0};delete fixed.arrivalPin;const auto=final.pg.charms[1];auto.pinned={cxPt:2,cyPt:2,angle:0};auto.arrivalPin=true;
- assert.equal(final.live.prepareSheet(final.pg).phase,'fill','try existing gaps before the threshold search');final.pg.intakeForceFinal=true;assert.equal(final.live.prepareSheet(final.pg).phase,'final');assert(fixed.pinned);assert.equal(auto.pinned,null);assert.equal(final.pg.placements.length,80,'previous layout seeds the next search');
- console.log('Live nesting OK: finalized sheets fixed, arrivals append to draft, full search at 85, operator pins preserved');
+ assert.equal(final.live.prepareSheet(final.pg).phase,'fill','try existing gaps before the threshold search');final.pg.intakeForceFinal=true;assert.equal(final.live.prepareSheet(final.pg).phase,'fill','new intake never restarts an existing partial sheet at 85');assert(fixed.pinned);assert(auto.pinned);assert.equal(final.pg.placements.length,80,'previous layout seeds the next search');
+ console.log('Live nesting OK: finalized sheets fixed, arrivals append to draft, append-only at 85, operator pins preserved');
 })().catch(e=>{console.error(e);process.exitCode=1;});
 
 (async()=>{

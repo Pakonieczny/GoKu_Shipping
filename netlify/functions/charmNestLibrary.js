@@ -221,12 +221,15 @@ async function op_putSheet(b) {
   const doc = Object.assign({}, s, { id: s.id, archived: false, updatedAt: FV.serverTimestamp() });
   delete doc.log;
   // Physical stock and immutable cuts are only changed through transactional stock operations.
-  for(const key of ['roseStockId','roseRevision','rosePlanJson','rosePlanHash','roseFingerprint','roseCutAt','roseCutRevision'])delete doc[key];
+  for(const key of ['roseProtectedJson','roseStockId','roseRevision','rosePlanJson','rosePlanHash','roseFingerprint','roseCutAt','roseCutRevision'])delete doc[key];
   if (["gold10k","gold14k"].includes(s.metal) && s.solidIncluded === false) Object.assign(doc, {draft:true,setId:null,setSeq:null,sheetIndex:null,label:null});
   const ref = col(SHEETS).doc(s.id);
   await db.runTransaction(async tx => {
     const ex = await tx.get(ref), old = ex.exists ? ex.data() : {};
     if(old.roseCutAt && (s.placements || s.stock || s.sources))throw new Error('This layout was already cut. Start a new sheet to use its remnant');
+    const protection=require('./_charmNestRoseStock'),guard=protection.protectedLayout(old);
+    if(Object.prototype.hasOwnProperty.call(s,'placements'))protection.assertProtected(guard,s.placements);
+    if(guard&&Object.prototype.hasOwnProperty.call(s,'charms')&&(!Array.isArray(s.charms)||guard.placements.some(p=>!s.charms.some(c=>c?.id===p.id))))throw new Error('The protected Rose Gold charms cannot be removed');
     if(old.rosePlanJson && s.placements && require('./_charmNestRoseStock').fingerprint(s)!==old.roseFingerprint)Object.assign(doc,{rosePlanJson:null,rosePlanHash:null,roseFingerprint:null});
     if (!ex.exists) doc.createdAt = FV.serverTimestamp();
     if(s.metal==='rose' && !old.roseStockId){const reservation=await tx.get(col('Charm_Nest_Rose_Stock').where('owner','==',s.id).limit(1));if(reservation.docs.length){doc.roseStockId=reservation.docs[0].id;doc.roseRevision=reservation.docs[0].data().revision;}}
@@ -314,14 +317,19 @@ const DELETE_CODE = process.env.CHARM_NEST_DELETE_CODE || "975311";
 async function op_deleteSheet(b) {
   if (!isId(b.id)) return { error: "bad id" };
   if (String(b.code || "") !== DELETE_CODE) return { error: "wrong passcode", status: 403 };
-  const ref = col(SHEETS).doc(b.id); const snap = await ref.get();
-  if (snap.exists) {
-    const d = snap.data(); const bucket = admin.storage().bucket();
+  const ref = col(SHEETS).doc(b.id);
+  const d = await db.runTransaction(async tx => {
+    const snap = await tx.get(ref); if (!snap.exists) return null;
+    const sheet = snap.data();
+    if (!sheet.roseCutAt && (sheet.rosePlanJson || sheet.roseProtectedJson)) throw new Error('A planned or protected Rose Gold contour cannot be deleted');
+    tx.delete(ref); return sheet;
+  });
+  if (d) {
+    const bucket = admin.storage().bucket();
     const paths = ["ai", "pdf", "labelled", "report", "preview"].map(k => d.outputs && d.outputs[k] && d.outputs[k].path).filter(Boolean);
     await Promise.all(paths.map(p => bucket.file(p).delete().catch(() => {})));
-    await ref.delete();
   }
-  return { ok: true, deleted: snap.exists };
+  return { ok: true, deleted: !!d };
 }
 /* A calibration row is a statistic the fill estimate learns from — never part of the sheet record. A sheet that placed
    nothing has nothing to teach, so it is skipped, not refused: an error here used to travel all the way up and stop a run
@@ -696,12 +704,15 @@ async function op_releasePut(b) {
 }
 async function op_archiveEmptySheet(b) {
   if (!isId(b.id) || !isId(b.runId)) return { error: "bad sheet/run id" };
-  const ref = col(SHEETS).doc(b.id), sheet = await ref.get();
-  if (!sheet.exists || sheet.data().runId !== b.runId) return { error: "sheet does not belong to this run" };
-  const run = await col(RUNS).doc(b.runId).get();
-  if (!run.exists || ["complete", "abandoned"].includes(run.data().status)) return { error: "finished sheets cannot be changed by intake" };
-  await ref.set({ archived: true, archivedReason: "open sheets repacked", updatedAt: FV.serverTimestamp() }, { merge: true });
-  return { ok: true };
+  return db.runTransaction(async tx => {
+    const ref = col(SHEETS).doc(b.id), sheet = await tx.get(ref);
+    if (!sheet.exists || sheet.data().runId !== b.runId) return { error: "sheet does not belong to this run" };
+    const run = await tx.get(col(RUNS).doc(b.runId));
+    if (!run.exists || ["complete", "abandoned"].includes(run.data().status)) return { error: "finished sheets cannot be changed by intake" };
+    if (!sheet.data().roseCutAt && (sheet.data().rosePlanJson || sheet.data().roseProtectedJson)) throw new Error('A planned or protected Rose Gold contour cannot be archived');
+    tx.set(ref, { archived: true, archivedReason: "open sheets repacked", updatedAt: FV.serverTimestamp() }, { merge: true });
+    return { ok: true };
+  });
 }
 // ── arrival ledger, separate in production and sandbox ──
 async function op_arrivalRecord(b) {

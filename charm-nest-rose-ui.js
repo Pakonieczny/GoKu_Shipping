@@ -17,21 +17,41 @@
     sh.roseHistory=older?[...(sh.roseHistory||[]),...decode(result.cuts)]:decode(result.cuts);
     sh.roseMore=result.more;sh._roseLoaded=true;
     const completed=sh.roseHistory.find(c=>c.sheetId===sh.sheetId);if(completed){sh.roseCutAt=completed.at;sh.roseStock=result.stock;}
-    if(sh.recalled){const rec=(await api('getSheet',{id:sh.sheetId})).sheet;sh.roseCutAt=rec.roseCutAt||null;sh.rosePlan=parse(rec.rosePlanJson);sh.rosePlanHash=rec.rosePlanHash;sh.roseRevision=rec.roseRevision;}
+    if(sh.recalled){const rec=(await api('getSheet',{id:sh.sheetId})).sheet;sh.roseCutAt=rec.roseCutAt||null;sh.rosePlan=parse(rec.rosePlanJson);sh.rosePlanHash=rec.rosePlanHash;sh.roseRevision=rec.roseRevision;sh.roseProtected=parse(rec.roseProtectedJson);}
     refresh(sh);
   }
   async function restore(sh,rec){
     const result=await api('roseGet',{stockId:rec.roseStockId});
-    sh.roseStock=result.stock;sh.roseHistory=decode(result.cuts);sh.roseMore=result.more;sh.roseCutAt=rec.roseCutAt||null;sh.roseRevision=rec.roseRevision;sh.rosePlan=parse(rec.rosePlanJson);sh.rosePlanHash=rec.rosePlanHash;sh._roseLoaded=true;
+    sh.roseStock=result.stock;sh.roseHistory=decode(result.cuts);sh.roseMore=result.more;sh.roseCutAt=rec.roseCutAt||null;sh.roseRevision=rec.roseRevision;sh.rosePlan=parse(rec.rosePlanJson);sh.rosePlanHash=rec.rosePlanHash;sh.roseProtected=parse(rec.roseProtectedJson);sh._roseLoaded=true;
+  }
+  function protect(sh){
+    if(sh.metal!=='rose'||sh.roseCutAt)return;
+    if(sh.roseProtected)for(const p of sh.roseProtected.placements||[]){
+      const rows=sh.placements.filter(x=>x.id===p.id),q=rows[0];
+      if(rows.length!==1||!sh.charms.some(c=>c.id===p.id)||['cxPt','cyPt','angle'].some(k=>!Number.isFinite(q[k])||Math.abs(q[k]-p[k])>.001)||Math.abs((q.scale||1)-(p.scale||1))>.00001)throw new Error('Reload the saved Rose Gold layout before adding charms');
+    }
+    if(sh.rosePlan?.profile){
+      const ids=new Set(sh.rosePlan.shapes.map(s=>s.id));
+      const placements=sh.placements.filter(p=>ids.has(p.id));
+      if(placements.length!==ids.size)throw new Error('Reload the saved Rose Gold layout before adding charms');
+      sh.roseProtected={profile:sh.rosePlan.profile,lines:sh.rosePlan.lines,placements:placements.map(p=>({...p})),shapes:sh.rosePlan.shapes};
+    }
   }
   async function prepare(sh,opts={}){
     if(sh.metal!=='rose')return;
     if(sh.roseCutAt)throw new Error('This layout has already been cut');
     if(!S.cloud.ok)throw new Error('Reconnect to load the physical Rose Gold sheet before nesting');
     sh.sheetId ||= 'rose-'+Date.now().toString(36)+'-'+C.uid();
+    protect(sh);
     const st=C.stockFor('rose',sh);
     const r=await api('roseClaim',{sheetId:sh.sheetId,wPt:st.wPt,hPt:st.hPt,stockId:sh.roseStock?.id||sh.roseChoice,revision:sh.roseStock?.revision,fresh:!!sh.roseFresh,...opts});
     sh.roseStock=r.stock;sh.roseRevision=r.stock.revision;
+    if(r.protectedJson){
+      const guard=parse(r.protectedJson);
+      for(const p of guard.placements){const q=sh.placements.find(x=>x.id===p.id);if(!q||['cxPt','cyPt','angle'].some(k=>Math.abs(q[k]-p[k])>.001)||Math.abs((q.scale||1)-(p.scale||1))>.00001)throw new Error('Reload the saved Rose Gold layout before adding charms');}
+      sh.roseProtected=guard;
+      if(opts.nesting){delete sh.rosePlan;delete sh.rosePlanHash;delete sh.rosePlanKey;}
+    }
     await load(sh);window.Session?.schedule();
   }
   async function plan(sh){
@@ -48,7 +68,7 @@
       sh.rosePlan=parse(result.planJson);sh.rosePlanHash=result.planHash;sh.rosePlanKey=key;sh.roseRevision=sh.roseStock.revision;
     })();
     sh._rosePlanning=task;refresh(sh);
-    try{await task;}catch(e){sh._roseError=e.message;throw e;}finally{sh._rosePlanning=null;refresh(sh);}
+    try{await task;}catch(e){sh._roseError=e.message;throw e;}finally{sh._rosePlanning=null;refresh(sh);C.flushManualIntake?.('rose');}
   }
   async function record(sh){
     if(!sh.rosePlanHash)await plan(sh);
@@ -71,7 +91,7 @@
       ${history.length?`<ol class="roseTimeline" aria-label="Physical sheet cut history">${history.map(c=>`<li style="flex-grow:${Math.max(1,c.plan?.removedPt2||1)}"><span class="roseCutNumber">${c.revision}</span><time datetime="${new Date(c.at).toISOString()}">${esc(new Date(c.at).toLocaleString(undefined,{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}))}</time><small>${c.plan?.shapes.length||0} charms · ${esc(c.fileBase)}</small></li>`).join('')}</ol>`:''}
       <div class="roseActions">${sh.roseMore?'<button class="btn ghost xs" data-rose="older">Earlier cuts</button>':''}${stockId?'<button class="btn ghost xs" data-rose="refresh">Refresh history</button>':''}${ready?`<button class="btn ghost xs" data-rose="plan" ${busy?'disabled':''}>${sh.rosePlan?'Update contour':'Prepare cut contour'}</button>`:''}${(sh.rosePlan||sh.recalled?.roseStockId)&&!sh.roseCutAt?`<button class="btn ghost xs" data-rose="record" ${busy||!included||(!sh.recalled&&!ready)?'disabled':''}>Record completed cut</button>`:''}${sh.roseCutAt?'<span class="roseRecorded">Cut recorded · remainder saved</span>':''}</div>
       ${sh._roseError?`<p class="roseError" role="alert">${esc(sh._roseError)}</p>`:''}${sh.rosePlan&&!sh.roseCutAt?`<p class="roseNote">${sh.rosePlan.allowanceMm} mm contour allowance · ${Math.round(sh.rosePlan.remainingPt2*R.MM*R.MM)} mm² remaining after this cut. History updates when you record the completed cut.</p>`:''}`;
-    const invoke=fn=>async()=>{if(sh._roseAction)return;sh._roseAction=true;sh._roseError=null;refresh(sh);try{await fn();}catch(e){sh._roseError=e.message;C.toast(e.message,'bad');}finally{sh._roseAction=false;refresh(sh);}};
+    const invoke=fn=>async()=>{if(sh._roseAction)return;sh._roseAction=true;sh._roseError=null;refresh(sh);try{await fn();}catch(e){sh._roseError=e.message;C.toast(e.message,'bad');}finally{sh._roseAction=false;refresh(sh);C.flushManualIntake?.('rose');}};
     host.querySelector('[data-rose="plan"]')?.addEventListener('click',invoke(()=>plan(sh)));
     host.querySelector('[data-rose="record"]')?.addEventListener('click',invoke(()=>record(sh)));
     host.querySelector('[data-rose="refresh"]')?.addEventListener('click',invoke(()=>load(sh)));
@@ -110,11 +130,12 @@
       if(p){ctx.fillStyle='#f0eeeb';p.values.forEach((v,i)=>{if(p.axis==='x')ctx.fillRect(0,i*p.step*k,v*k,p.step*k);else ctx.fillRect(i*p.step*k,0,p.step*k,v*k);});}
       for(const c of cuts)for(const shape of c.plan?.shapes||[]){ctx.fillStyle='#d8d5d0';for(const path of shape.paths){ctx.beginPath();path.forEach(([x,y],i)=>i?ctx.lineTo(x*k,y*k):ctx.moveTo(x*k,y*k));ctx.closePath();ctx.fill();}stroke(ctx,shape.paths,k,'#aaa59c',Math.max(.6,.12*k));stroke(ctx,shape.ink,k,'#aaa59c',Math.max(.5,.1*k));}
     }else{
+      if(!sh.roseCutAt&&sh.roseProtected&&(!sh.rosePlan||sh.dirty))stroke(ctx,sh.roseProtected.lines,k,'#008974',Math.max(2.5,.2*k),true);
       for(const c of cuts){stroke(ctx,c.plan?.lines,k,'#249c8a',Math.max(2,.2*k));const shape=c.plan?.shapes[0],pts=shape?.paths[0];if(pts?.length){const x=pts.reduce((n,p)=>n+p[0],0)/pts.length*k,y=pts.reduce((n,p)=>n+p[1],0)/pts.length*k;ctx.fillStyle='#fffefb';ctx.beginPath();ctx.arc(x,y,7,0,Math.PI*2);ctx.fill();ctx.fillStyle='#55746c';ctx.font='10px sans-serif';ctx.textAlign='center';ctx.fillText(c.revision,x,y+3);}}
       if(!sh.roseCutAt&&sh.rosePlan&&!sh.dirty)stroke(ctx,sh.rosePlan.lines,k,'#008974',Math.max(2.5,.2*k),true);
     }ctx.restore();
   }
-  window.RoseStock={prepare,plan,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record};
+  window.RoseStock={protect,prepare,plan,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record};
   C.allSheets().forEach(render);
 })();
 
