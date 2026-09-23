@@ -67,6 +67,10 @@ const sheet=(id,shapes)=>({id,metal:'rose',verification:{ok:true},status:'comple
     const incoming=shape('new-1',28,8,8,8),nextArgs={...args,fingerprint:create.fingerprint(doc),shapesJson:JSON.stringify([...plannedShapes,incoming])};
     await assert.rejects(()=>api.rosePlan({...nextArgs,shapesJson:JSON.stringify([...plannedShapes,shape('new-1',2,2,3,3)])}),/crosses protected/);
     await assert.rejects(()=>api.rosePlan({...nextArgs,shapesJson:JSON.stringify([shape('locked-1',35,2,8,30),incoming])}),/protected Rose Gold charm outlines/,'the old charm cannot move by changing only its submitted vector');
+ // A reloaded layout rebuilds its saved outline from 3-decimal positions.
+ const nudged=plannedShapes.map(s=>({...s,paths:s.paths.map(path=>path.map(([x,y])=>[+(x+.0004).toFixed(4),+(y-.0003).toFixed(4)]))}));
+ const reloaded=JSON.parse((await api.rosePlan({...nextArgs,shapesJson:JSON.stringify([...nudged,incoming])})).planJson);
+ assert.deepEqual(reloaded.shapes[0],plannedShapes[0],'a reloaded layout keeps the stored protected outline');
  const added=JSON.parse((await api.rosePlan(nextArgs)).planJson);
  assert.deepEqual(added.lines.slice(0,originalPlan.lines.length),originalPlan.lines,'original green line is preserved exactly');
  assert(added.profile.values.every((v,i)=>v>=originalPlan.profile.values[i]));
@@ -81,5 +85,14 @@ const sheet=(id,shapes)=>({id,metal:'rose',verification:{ok:true},status:'comple
  await ctx.put({sheet:{id:planned.id,metadataNote:'safe partial update'}});
  assert.equal(store.get('Charm_Nest_Sheets/'+planned.id).metadataNote,'safe partial update','partial metadata updates need not resend charm geometry');
  const again=await api.roseClaim({...args,wPt:100,hPt:50,nesting:true});assert.equal(JSON.parse(again.protectedJson).placements.length,2,'subsequent imports lock every prepared region');
+ // A third upload after a reload adds a third green line and keeps both earlier ones.
+ const third=store.get('Charm_Nest_Sheets/'+planned.id);third.dirty=false;
+ third.placements=third.placements.map(p=>({...p,cxPt:+(p.cxPt+.0004).toFixed(3),cyPt:+(p.cyPt-.0004).toFixed(3)}));
+ third.placements.push({id:'new-2',cxPt:50,cyPt:12,angle:0,scale:1});
+ const shift=s=>({...s,paths:s.paths.map(path=>path.map(([x,y])=>[+(x+.0004).toFixed(4),+(y-.0004).toFixed(4)]))});
+ const thirdPlan=JSON.parse((await api.rosePlan({...args,fingerprint:create.fingerprint(third),shapesJson:JSON.stringify([...plannedShapes.map(shift),shift(incoming),shape('new-2',46,8,8,8)])})).planJson);
+ assert.deepEqual(thirdPlan.lines.slice(0,added.lines.length),added.lines,'both earlier green lines are preserved exactly');
+ assert(thirdPlan.lines.length>added.lines.length,'the third upload adds its own green line');
+ assert.deepEqual(thirdPlan.shapes.slice(0,2),added.shapes,'stored outlines stay authoritative');
  console.log('Rose stock OK: reservations, recovery, revision conflicts, durable history, idempotent cuts, automatic remnant reuse, re-nest invalidation and explicit new stock');
 })().catch(e=>{console.error(e);process.exit(1)});

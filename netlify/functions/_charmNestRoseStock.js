@@ -17,6 +17,15 @@ function assertProtected(guard,placements){
     if(rows.length!==1||['cxPt','cyPt','angle'].some(k=>!Number.isFinite(q[k])||Math.abs(q[k]-p[k])>.001)||Math.abs((q.scale||1)-(p.scale||1))>.00001||(p.hash!=null&&q.hash!==p.hash))throw new Error('The protected Rose Gold layout cannot be moved or removed');
   }
 }
+const OUTLINE_TOLERANCE_PT=.05;
+function bounds(paths){
+  let box=null;for(const path of paths||[])for(const [x,y] of path){if(!Number.isFinite(x)||!Number.isFinite(y))return null;box=box?[Math.min(box[0],x),Math.min(box[1],y),Math.max(box[2],x),Math.max(box[3],y)]:[x,y,x,y];}
+  return box;
+}
+function sameOutline(a,b){
+  const p=bounds(a?.paths),q=bounds(b?.paths);
+  return !!(p&&q)&&p.every((v,i)=>Math.abs(v-q[i])<=OUTLINE_TOLERANCE_PT);
+}
 module.exports=function({db,col,FV,Readiness}){
   const stocks=()=>col('Charm_Nest_Rose_Stock'),sheets=()=>col('Charm_Nest_Sheets');
   async function roseGet(b){
@@ -67,7 +76,10 @@ module.exports=function({db,col,FV,Readiness}){
       const guard=parse(sheet.roseProtectedJson);assertProtected(guard,sheet.placements);
       const fixed=new Set((guard?.placements||[]).map(p=>p.id));
       const protectedShapes=new Map((guard?.shapes||[]).map(s=>[s.id,s]));
-      if(guard&&(protectedShapes.size!==fixed.size||shapes.some(s=>fixed.has(s.id)&&JSON.stringify([s.paths,s.ink])!==JSON.stringify([protectedShapes.get(s.id)?.paths,protectedShapes.get(s.id)?.ink]))))throw new Error('The protected Rose Gold charm outlines cannot be changed');
+      // Saved placements are rounded to 3 decimals, so a reloaded layout
+      // rebuilds its protected outlines a few thousandths of a point away.
+      // The stored outlines stay authoritative; only a real move is refused.
+      if(guard&&(protectedShapes.size!==fixed.size||shapes.some(s=>fixed.has(s.id)&&!sameOutline(s,protectedShapes.get(s.id)))))throw new Error('The protected Rose Gold charm outlines cannot be changed');
       const prior=parse(stock.profileJson);
       // Recheck physical exclusions at the persistence boundary, too. This
       // catches a stale rectangular layout attached to a previously cut sheet.
