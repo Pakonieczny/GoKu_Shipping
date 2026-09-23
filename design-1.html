@@ -1694,23 +1694,39 @@ function makeQueue(max = 4) {
   return fn => new Promise((resolve, reject) => { q.push({ fn, resolve, reject }); pump(); });
 }
 
-/** Serialises starts `spacingMs` apart — Etsy rate-limit pacing. */
-function makeSpacingQueue(spacingMs = 250) {
+/** Serialises starts `spacingMs` apart — Etsy rate-limit pacing — and, with a `headroom` check, waits for room first.
+    A failed call fails only its own caller: the queue used to keep the rejected promise as its tail, so one network error
+    failed every later Etsy call on this page, unattempted, until a reload. */
+function makeSpacingQueue(spacingMs = 250, headroom = null) {
   let lastStart = 0;
   let chain = Promise.resolve();
   return fn => {
-    chain = chain.then(async () => {
+    const task = chain.then(async () => {
       const wait = Math.max(0, spacingMs - (Date.now() - lastStart));
       if (wait) await sleep(wait);
+      if (headroom) await headroom();
       lastStart = Date.now();
       return fn();
     });
-    return chain;
+    chain = task.catch(() => {});
+    return task;
   };
+}
+/* A backlog (the first check after a night or a weekend closed) used to be read at four calls a second until the
+   watchdog's own burst limit tripped its five-minute brake part-way through, failing the pull. Reads now wait for room
+   under the watchdog's limits, so a large backlog arrives more slowly instead of not at all. */
+async function etsyHeadroom() {
+  for (;;) {
+    const now = Date.now(), minute = etsyMeter.minute.filter(t => t > now - 60000);
+    const burst = minute.length >= ETSY_GUARD.burstPerMinute - 2, window10 = etsyLast10() >= ETSY_GUARD.per10Min - 2;
+    if (!burst && !window10) return;
+    const until = burst ? minute[0] + 60000 : (Math.floor(now / 600000) + 1) * 600000;
+    await sleep(Math.max(250, Math.min(until - now + 50, 60000)));
+  }
 }
 
 const isEtsyPath  = p => /^\/(etsy|listOpenOrders|etsyImages)/i.test(p);
-const runEtsyTask = makeSpacingQueue(250);   // ≈4 req/s
+const runEtsyTask = makeSpacingQueue(250, etsyHeadroom);   // ≈4 req/s, within the watchdog's limits
 const runImageTask = makeQueue(1);
 
 /**
@@ -7030,6 +7046,12 @@ const Bridge = (() => {
     m[runId] = { ids: uniq([...prev.ids, ...ids]), result: Object.assign({}, prev.result, result, { completed: uniq([...(prev.result.completed || []), ...(result.completed || [])]), refused }), at: Date.now() };
     const keys = Object.keys(m).sort((a, b) => m[a].at - m[b].at); while (keys.length > 60) delete m[keys.shift()]; writeJson(LSK.commits, m);
   }
+  /* An undone order can be committed again: its earlier result must not answer the next commit. */
+  function forgetCommits(ids) {
+    const gone = new Set(ids.map(String)), m = readJson(LSK.commits, {});
+    for (const c of Object.values(m)) { c.ids = c.ids.filter(id => !gone.has(String(id))); c.result.completed = (c.result.completed || []).filter(id => !gone.has(String(id))); c.result.refused = (c.result.refused || []).filter(r => !gone.has(String(r.id))); }
+    writeJson(LSK.commits, m);
+  }
   function priorCommit(runId, ids) {
     const m = readJson(LSK.commits, {}); const c = m[runId]; if (!c || !ids.every(id => c.ids.includes(String(id)))) return null;
     const want = new Set(ids.map(String));
@@ -7326,11 +7348,14 @@ const Bridge = (() => {
     },
     async "complete.undo"(a) {
       if (__commitInFlight > 0) throw new Error("a completion is in flight");
-      // the sorter names the set's orders, so an undo works after this page reloaded (the last-cleared list lives in memory only)
-      const ids = (a && Array.isArray(a.receiptIds) ? a.receiptIds : []).map(String).filter(id => completedOrders.has(id));
+      // the sorter names the set's orders, so an undo works after this page reloaded (the last-cleared list lives in memory only).
+      // Named orders are the only ones undone: falling back to the last batch completed here would reopen someone else's orders.
+      const named = !!(a && Array.isArray(a.receiptIds));
+      const ids = (named ? a.receiptIds : []).map(String).filter(id => completedOrders.has(id));
       if (ids.length) lastClearedReceipts = ids;
-      if (!lastClearedReceipts.length) throw new Error("nothing to undo — none of those orders is design-complete here");
+      if ((named && !ids.length) || !lastClearedReceipts.length) throw new Error("nothing to undo — none of those orders is design-complete here");
       const undone = [...lastClearedReceipts];
+      forgetCommits(undone);
       await Cursor.act("undo", null, `Undo the completion of ${undone.length} order${undone.length === 1 ? "" : "s"}`);
       await handleUndoComplete();
       return { restored: undone, selection: [...selectedOrders] };

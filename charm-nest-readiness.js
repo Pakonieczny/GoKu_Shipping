@@ -8,7 +8,11 @@
     const out={};
     for(const row of rows || [])for(const id of row.poolIds || []) {
       const e=row.engrave;
-      out[id]=e ? {needed:!!e.needed,state:e.state,approved:!!e.approved} : row.spec?.engraveCandidate===false ? {needed:false,state:'none',approved:true} : {needed:true,state:'unknown',approved:false};
+      // a cancelled order's piece left on a released sheet is cut and set aside, so it waits on no engraving decision
+      // A line with no personalization, message or note has nothing to engrave, before its engraving check has run too.
+      // The page reads that from the row's reading, the server from the run's line record.
+      const candidate=row.spec ? row.spec.engraveCandidate : row.engraveCandidate;
+      out[id]=row.state==='gone' && !e?.approved ? {needed:false,state:'none',approved:true} : e ? {needed:!!e.needed,state:e.state,approved:!!e.approved} : candidate===false ? {needed:false,state:'none',approved:true} : {needed:true,state:'unknown',approved:false};
     }
     return out;
   }

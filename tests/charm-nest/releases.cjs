@@ -70,12 +70,12 @@ vm.runInContext(part('Gate','/* ═══ 21'),c);
  assert.equal(page.status,'ready','cloud-only draft gets rebuilt and verified before release');
  assert.equal(page.charms[0].pinned,null);
  })()`,recovery);
- const classifier=code.slice(code.indexOf('  async function classifyAll(run)'),code.indexOf('  /* ── 7.2',code.indexOf('  async function classifyAll(run)')));
+ const classifier=code.slice(code.indexOf('  let classifyPass = null'),code.indexOf('  /* ── 7.2',code.indexOf('  let classifyPass = null')));
  const eng=vm.createContext({assert,console});
  vm.runInContext(`
  const rows=[{state:'written',poolIds:['p1'],spec:{engraveCandidate:true},order:{receiptId:'1'},engrave:null}];
  let calls=0;const Orders={rows:()=>rows,render(){}},Gate={modern:()=>true},Pool={sheetOf:()=>({fileBase:'set-1'})};
- const window={},loadFonts=async()=>{},classify=async()=>{calls++},render=()=>{};
+ const jobs=new Map(),items=()=>jobs,window={},loadFonts=async()=>{},classify=async r=>{calls++;r.engrave={needed:true,state:'awaiting'}},render=()=>{};
  `+classifier,eng);
  await vm.runInContext(`(async()=>{await classifyAll();assert.equal(calls,1,'set assembly must not skip personalization after promoting a row to written')})()`,eng);
  const resume=vm.createContext({assert,console});
@@ -85,7 +85,7 @@ vm.runInContext(part('Gate','/* ═══ 21'),c);
  const row={key:'o/a',order:{updateTs:10},poolIds:[],state:'pulled'};let restores=0;
  const api=async()=>({run:rec}),agent=()=>{},toast=()=>{},renderBanner=()=>{},save=async()=>{},loop=async()=>{};
  const Orders={rows:()=>[row],interpretAll(){},pull:async(run,opts)=>{assert.equal(run,null);assert.deepEqual(opts.receiptIds,['o']);}};
- const restoreRunSheets=async()=>restores++,Pool={addAll:async()=>{}},allSheets=()=>[];
+ const restoreRunSheets=async()=>restores++,Pool={addAll:async()=>{}},allSheets=()=>[],reviewStop=()=>false,preservePendingSheets=()=>{};
  `+code.slice(code.indexOf('  async function resumeRun(runId)'),code.indexOf('  async function restoreRunSheets(rec)')),resume);
  await vm.runInContext(`(async()=>{await resumeRun('r1');assert.equal(rec.step,'engrave');assert.equal(restores,1);assert.equal(row.poolIds[0],'p1');assert.equal(row.state,'pooled');})()`,resume);
  await vm.runInContext(`(async()=>{
@@ -102,6 +102,11 @@ vm.runInContext(part('Gate','/* ═══ 21'),c);
  await assert.rejects(Gate.assemble(B.run),/interrupted/);assert.equal(pages[0].draft,true);assert.equal(pages[0].setId,undefined);
  Sets.onSheetSaved=write;await Promise.all([Gate.assemble(B.run),Gate.assemble(B.run)]);
  assert.equal([...B.sets.values()][0].sheetIds.length,1,'failed publication can retry; concurrent checkpoints serialize without duplicate membership');
+ // a sheet that leaves the set does not hand its number to the next one while a later sheet still carries that number
+ B.sets.clear();const g1={...page('gold',true),sheetId:'g1'},g2={...page('gold',true),sheetId:'g2'},g3={...page('gold',true),sheetId:'g3'};
+ pages.splice(0,pages.length,g1,g2);await Gate.assemble(B.run);assert.deepEqual([g1.sheetIndex,g2.sheetIndex],[1,2]);
+ g1.releaseFull=false;await Gate.assemble(B.run);assert.equal(g1.setId,null,'the first sheet left the set');
+ pages.push(g3);await Gate.assemble(B.run);assert.equal(g3.sheetIndex,3,'the next sheet takes a new number, not the one sheet 2 still carries: '+g3.sheetIndex);
  })()`,c);
  vm.runInContext(`const Session={copy:x=>structuredClone(x)};`,c); c.structuredClone=structuredClone;
  vm.runInContext(part('Carry','/* ═══ 20b'),c);
@@ -116,5 +121,57 @@ vm.runInContext(part('Gate','/* ═══ 21'),c);
  assert.equal(B.engrave.items.get('o/b').approvedBy,'Operator');assert.equal(B.engrave.items.get('o/b').state,'approved');assert.equal(B.engrave.items.get('o/b').text,'EXACT WORDS');
  Carry.capture();B.orders.rows=[{...partial,line:{sku:'CHANGED'},state:'pulled'}];B.orders.byKey=new Map();B.engrave.items.clear();Carry.adopt();assert.equal(B.orders.rows[0].line.sku,'CHANGED');assert.equal(B.engrave.items.size,0,'changed Etsy line cannot inherit an old approval');
  })()`,c);
- console.log('releases OK · strict partial holds, verification, manual solids, rose parity, idempotent assembly, deselection, carry-forward approvals and duplicate-cut prevention');
+ // giving up a run gives up its unfinished work only; what a committed set cut stays on record as cut
+ const abandon=vm.createContext({assert,console});
+ vm.runInContext(`
+ const calls=[],unclaimed=[];const B={pool:{rows:new Map([['p1',{state:'committed',setId:'s1'}],['p2',{state:'written',setId:'s1'}],['p3',{state:'written',setId:null}]])}};
+ const rows=[{state:'committed',poolIds:['p1'],order:{receiptId:'1'}},{state:'written',poolIds:['p2'],order:{receiptId:'2'}},{state:'pooled',poolIds:['p3'],order:{receiptId:'3'}}];
+ const Orders={rows:()=>rows,unclaim:async ids=>{unclaimed.push(...ids);}},Sets={ofRun:()=>[{setId:'s1',committedAt:1}]},S={cloud:{ok:true}};
+ const api=async(n,b)=>{calls.push(b);return {};},save=async()=>{};
+ `+code.slice(code.indexOf('  function releaseRun(r)'),code.indexOf('  function stop(why, fix, at)')),abandon);
+ vm.runInContext(`releaseRun({runId:'r'});assert.deepEqual(calls.map(c=>c.poolIds),[['p3']],'only unfinished pieces are abandoned');assert.deepEqual(unclaimed,['3']);`,abandon);
+ // undoing a set reopens that set's own orders at the station and in the sorter, and nobody else's
+ const undo=vm.createContext({assert,console});
+ vm.runInContext(`
+ const calls=[],saved=[],updates=[];const B={run:null,pool:{rows:new Map([['p1',{setId:'s1'}],['p2',{setId:'s2'}]])}};
+ const rows=[{state:'committed',poolIds:['p1'],order:{receiptId:'1'}},{state:'committed',poolIds:['p2'],order:{receiptId:'2'}}];
+ const Orders={rows:()=>rows,render(){}},DesignLink={ensure:async()=>{},call:async(cmd,a)=>{calls.push([cmd,a.receiptIds]);return {};}};
+ const save=async s=>saved.push(s.setId),Pool={update:async(ids,p)=>updates.push([ids,p.state])},RunCtl={save:async()=>{},renderBanner(){}},agent=()=>{};
+ `+code.slice(code.indexOf('  async function undo(set)'),code.indexOf('  /** The Library\'s Sets view')),undo);
+ await vm.runInContext(`(async()=>{
+ await undo({setId:'s1',runId:'r',name:'Set 1',committed:['1'],committedAt:1});
+ assert.deepEqual(calls,[['complete.undo',['1']]],'the station is asked to reopen the orders of this set, by name');
+ assert.deepEqual(rows.map(r=>r.state),['written','committed'],'only the order of this set reopens; the other set stays committed');
+ assert.deepEqual(updates,[[['p1'],'written']]);
+ await undo({setId:'s2',runId:'r',name:'Set 2',committed:[],committedAt:1});
+ assert.equal(calls.length,1,'a set that committed nothing has nothing to reopen at the station');assert.equal(rows[1].state,'committed');
+ })()`,undo);
+ // a commit saves the run's lines before the station marks the orders done: the server checks the set against them
+ // before it records the set as complete, and a set refused after the station commit stopped the run for good
+ const commit=vm.createContext({assert,console});
+ vm.runInContext(`
+ const window={},order=[],B={pool:{rows:new Map([['p1',{orderId:'1'}]])}},rows=[{state:'written',poolIds:['p1'],order:{receiptId:'1'}}];
+ const Orders={rows:()=>rows},Review={add(){}},Pool={update:async()=>{}},agent=()=>{},today=()=>'2026-09-23',employeeName=()=>'Tester';
+ const validateRelease=()=>{},evaluate=()=>({committable:['1'],held:{},gone:[]});
+ const DesignLink={ensure:async()=>{},call:async(cmd,a)=>{order.push(cmd);return cmd==='ui.select'?{selected:a.receiptIds,refused:[]}:cmd==='complete.preview'?{jobs:[]}:{completed:a.receiptIds,refused:[]};}};
+ const RunCtl={save:async()=>{order.push('run saved');}},save=async s=>{order.push('set saved '+s.status);};
+ `+code.slice(code.indexOf('  async function commit(set, run, context)'),code.indexOf('  async function undo(set)')),commit);
+ await vm.runInContext(`(async()=>{
+ await commit({setId:'s1',runId:'r',name:'Set 1',orders:{'1':{}},labels:{files:[{path:'l.png',url:'u',sheet:'S1'}]}},{runId:'r'});
+ assert.deepEqual(order,['ui.select','complete.preview','run saved','complete.commit','set saved complete'],'the run is saved before the station commit');
+ assert.equal(rows[0].state,'committed');
+ })()`,commit);
+ // the next set of a run is numbered only after the committed set it follows is saved as committed: a commit whose record
+ // did not save is saved again first, and a refusal names its cause instead of refusing every later set
+ const sa=code.indexOf('const Sets = window.Sets = (() => {'),sb=code.indexOf('\n})();',code.indexOf('  return { releaseIssue, ensure,',sa))+6;
+ for(const refuse of [false,true]){
+   const calls=[],sets=vm.createContext({window:{},B:{sets:new Map(),run:null},S:{cloud:{ok:true}},O:{setLabel:n=>'Set-'+n,setFolder:(d,n)=>d+'/Set-'+n},today:()=>'2026-09-23',agent(){},RunCtl:{renderBanner(){}},labelOf:m=>m,
+     api:async(fn,b)=>{calls.push(b.op==='setUpdate'?'save '+b.setId+' '+b.patch.status:'number after '+b.after);if(b.op==='setUpdate'&&refuse)throw new Error('Set cannot be completed: every sheet needs approved engraving');return b.op==='setAllocate'?{setId:'set-3',seq:3,day:'2026-09-23'}:{ok:true};}});
+   vm.runInContext(code.slice(sa,sb),sets);
+   const committed={setId:'set-2',runId:'r',group:'dispatch',seq:2,day:'2026-09-23',name:'Set-2',status:'complete',committedAt:5,orders:{},labelFiles:[],sheetIds:['rose-1'],materials:['rose']};
+   sets.B.sets.set('r|dispatch',committed);
+   if(refuse){await assert.rejects(sets.window.Sets.ensure('r','dispatch'),/cannot be completed/);assert.deepEqual(calls,['save set-2 complete'],'no set is numbered after a set the server has not recorded');}
+   else {const next=await sets.window.Sets.ensure('r','dispatch');assert.equal(next.setId,'set-3');assert.deepEqual(calls,['save set-2 complete','number after set-2']);}
+ }
+ console.log('releases OK · strict partial holds, verification, manual solids, rose parity, idempotent assembly, deselection, carry-forward approvals, duplicate-cut prevention, sheet numbering, undo, run lines saved before a commit and the committed set saved before the next is numbered');
 })().catch(e=>{console.error(e);process.exitCode=1});

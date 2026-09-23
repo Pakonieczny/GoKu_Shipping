@@ -739,6 +739,9 @@ const Orders = window.Orders = (() => {
     const l = row.line, o = row.order;
     return [row.key, { state: row.state, poolIds: row.poolIds, reason: row.reason, hold: row.hold || null, wait: row.wait || null, sku: row.spec && row.spec.designSku, material: row.material || (row.spec && row.spec.material) || null, quantity: row.spec ? row.spec.quantity : 1,
       engrave: row.engrave ? { needed: !!row.engrave.needed, state: row.engrave.state, approved: !!row.engrave.approved, text: row.engrave.text || null } : null,
+      // The server reads this record, not the row, before it records a set as complete: a line with nothing to engrave
+      // must read as plain there too, including before its engraving check has run.
+      engraveCandidate: row.spec ? !!row.spec.engraveCandidate : null,
       changePending:!!row.changePending,repoolChanged:!!row.repoolChanged,arrivedAt: row.arrivedAt || 0, createTs: o.createTs || 0, materialOverride: row.materialOverride || null, sizeOverride: row.sizeOverride || null, problems: (row.problems || []).map(p => p.kind), updateTs: o.updateTs, orderId: o.receiptId, transactionId: l.transactionId,
       snap: { title: cap(l.title, 160), listingId: cap(l.listingId, 24), metalKey: cap(l.metalKey, 24), metalLabel: cap(l.metalLabel, 40),
         orderNumber: cap(o.orderNumber, 24), buyer: cap(o.buyer && o.buyer.name, 60), shipBy: +o.shipBy || 0, isGift: !!o.isGift,
@@ -779,7 +782,12 @@ const Orders = window.Orders = (() => {
   async function unclaim(ids) { if (!ids.length) return; try { await DesignLink.call("unclaim", { receiptIds: ids }); } catch (e) { agent({ bridge: true }, "warn", `unclaim: ${e.message}`); } for (const row of rowsOf()) if (ids.includes(row.order.receiptId)) row.claimedBy = null; render(); }
   /** §10.3: every order's update_timestamp re-read through the station; changed → re-interpret; vanished → dropped. */
   async function revalidate(run, why) {
-    const orders = [...new Set(rowsOf().map(r => r.order.receiptId))];
+    // an order found gone stays gone: reading it again at every check cost an Etsy call each time and changed nothing.
+    // A committed line is cut and its order design-complete at the station, which reports it as no longer open: every
+    // check read it again (an Etsy call each, towards the hourly cap that stops the run) and a later Etsy update, such
+    // as its shipping, sent a finished order back to review. It is done here.
+    const settled = r => r.state === "gone" || r.state === "committed";
+    const orders = [...new Set(rowsOf().filter(r => !settled(r)).map(r => r.order.receiptId))];
     const changed = [], gone = [];
     if (!DesignLink.etsyBudgetOk(`re-validation ${why}`)) throw new Error("Etsy call budget reached before order revalidation");
     // one paged list sweep tells which orders Etsy touched or closed since the pull; only those get a fresh detail read
@@ -793,7 +801,7 @@ const Orders = window.Orders = (() => {
       let d = null;
       try { d = await DesignLink.call("orders.detail", { receiptId: rid, fresh: true }, { timeoutMs: 60000 }); DesignLink.meter(d, `re-reading ${rid}`); } catch (e) { throw new Error(`Cannot verify Etsy order ${rid}: ${e.message}`); }
       agentLiveLine("Re-validating orders", `order ${rid}`, ++done, need.length);
-      const rows = rowsOf().filter(r => r.order.receiptId === rid);
+      const rows = rowsOf().filter(r => r.order.receiptId === rid && r.state !== "committed");
       if (!d || !d.order && !d.gone) throw new Error(`Etsy returned no verifiable state for order ${rid}`);
       if (d.gone) { gone.push(rid); for (const r of rows) { r.state = "gone"; r.reason = d && d.reason ? d.reason : (d && d.isShipped ? "shipped" : d && d.status ? d.status : "no longer open"); } continue; }
       if (rows.some(row=>row.order.updateTs !== d.order.updateTs)) {
@@ -813,10 +821,32 @@ const Orders = window.Orders = (() => {
         }
       }
     }
+    await takeOffGone(rowsOf().filter(r => r.state === "gone" && (r.poolIds || []).length));
     if (run) { run.lines = Object.fromEntries(rowsOf().map(lineRecord)); run.revalidatedAt = Date.now(); await RunCtl.save(run); }
     agent({ bridge: true }, "DS", `Re-validated ${orders.length} order(s) ${why}: ${changed.length} changed, ${gone.length} gone`);
     Review.syncOrderItems(); render();
     return { changed, gone };
+  }
+  /* An order that left Etsy (cancelled, refunded) is dropped from its set (§10.3). Its pieces come off every sheet that is
+     still filling, so they are not cut and their room goes to the next order; that sheet is arranged again. A piece on a
+     sheet that is released, cut, or fixed inside a saved Rose Gold green line stays where it is: it is cut with its sheet
+     and set aside. Nothing took these pieces off before, and a cancelled order's piece held its sheet back for good. */
+  async function takeOffGone(rows) {
+    const filling = sh => !(window.LiveNest && LiveNest.closed(sh)) && !(sh.metal === "rose" && (sh.rosePlan || sh.roseProtected)) &&
+      !["nesting", "finishing", "queued"].includes(sh.status) && !(sh.persisted && !sh.persistedDone);
+    for (const row of rows) {
+      const ids = new Set(row.poolIds), off = [];
+      for (const sh of allSheets()) {
+        const mine = sh.charms.filter(c => ids.has(c.poolId)); if (!mine.length || !filling(sh)) continue;
+        sh.charms = sh.charms.filter(c => !ids.has(c.poolId)); sh.placements = sh.placements.filter(p => sh.charms.some(c => c.id === p.id)); sheetDirty(sh);
+        off.push(...mine.map(c => c.poolId));
+        agent({ metal: sh.metal, run: sh.runId }, "POOL", `${row.order.receiptId} is no longer open on Etsy (${row.reason || "gone"}): ${mine.length} piece${mine.length === 1 ? "" : "s"} taken off ${sheetName(sh)}, which is arranged again`);
+      }
+      if (!off.length) continue;
+      row.poolIds = row.poolIds.filter(id => !off.includes(id));
+      try { await Pool.update(off, { state: "abandoned", sheetId: null, setId: null }); } catch (e) { agent({ bridge: true }, "warn", `pool record for ${row.order.receiptId}: ${e.message}`); }
+      for (const id of off) B.pool.rows.delete(id);
+    }
   }
   const STATE_PILL = { pulled: ["neutral", "pulled"], waiting: ["info", "waiting"], noDesign: ["info", "no design"], pooled: ["info", "pooled"], nested: ["ok", "nested"], written: ["ok", "written"], labelled: ["ok", "labelled"], committed: ["ok", "complete"], unmatched: ["bad", "unmatched"], held: ["bad", "held"], contended: ["warn", "other run"], skipped: ["warn", "skipped"], gone: ["bad", "gone"], oversize: ["bad", "oversize"] };
   function engravePill(r) { const e = r.engrave; if (!e) return r.spec && r.spec.engraveCandidate ? ["warn", "words?"] : ["neutral", "—"]; if (!e.needed) return ["neutral", e.state === "skipped" ? "skipped" : "no engraving"]; if (e.approved) return ["ok", "approved"]; if (e.state === "words") return ["warn", "words"]; if (e.state === "review") return ["warn", "review"]; if (e.state === "fitted") return ["info", "fitted"]; if (e.state === "blocked") return ["bad", "blocked"]; return ["info", e.state || "engrave"]; }
@@ -1466,6 +1496,11 @@ const Pool = window.Pool = (() => {
     const key = geom.aiPath;
     if (B.pool.sources.has(key)) return B.pool.sources.get(key);
     const {url,bytes,parsed,g,charm}=await readMasterCharm(entry,size);
+    // A design file indexed while the grouping lost track of the labels (22–23 Sep) kept the SKU written under its charm.
+    // The text stays part of the charm, so the nest keeps its room and no neighbour is placed under it, but it still goes
+    // onto the sheet and stops the sheet's .dxf. Indexing the master again writes the file without it.
+    const label = charm.members.find(m => m.kind === "text" && m.bbox && m.bbox[3] <= charm.outline.bbox[1] + 1 && P.parseSkuLabel(m.str, Master.skuRegex()));
+    if (label) agent({ pool: true }, "warn", `${entry.sku}: its design file still has the SKU label “${String(label.str).trim()}” under the charm, so the label goes onto every sheet with it and the sheet's .dxf fails — index its master again in the Library with “re-index SKUs already held” ticked`);
     await P.buildSilhouettes(parsed, [charm], +S.settings.silhouetteRes || 6);
     const srcId = "pool:" + key.replace(/[^\w]+/g, "_");
     const src = { id: srcId, pool: true, name: `${entry.sku}${size ? " · " + size : ""} (master)`, sku: entry.sku, bytes, hash: entry.charmHash || charm.hash, parsed, group: g, charms: [charm], metal: null, state: "ready", t0: performance.now(), cloud: { path: geom.aiPath, url }, persisting: null };
@@ -1587,7 +1622,7 @@ const Pool = window.Pool = (() => {
       const r = await api("charmNestLibrary", { op: "poolPut", pools }, { label: "Recording the pool" });
       if (r.contended && r.contended.length) { row.state = "contended"; row.reason = `claimed by run ${r.contended[0].runId}`; agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: a live run (${r.contended[0].runId}) already holds this line — skipped`); return; }
     }
-    let page=pagesOf(sp.material).at(-1);
+    let page=window.LiveNest ? LiveNest.intakePage(sp.material, run) : pagesOf(sp.material).at(-1);
     if((run && page.runId && page.runId!==run.runId) || (window.LiveNest&&LiveNest.closed(page)))page=addPage(sp.material);
     S.sheets[sp.material].active=pagesOf(sp.material).indexOf(page);
     if (run) page.runId = run.runId;
@@ -1731,7 +1766,8 @@ const Gate = window.Gate = (() => {
       }
       const previous = { draft:sh.draft, setId:sh.setId, setDay:sh.setDay, seq:sh.seq, group:sh.group, sheetIndex:sh.sheetIndex, fileBase:sh.fileBase };
       sh.draft = false; sh.setId = set.setId; sh.setDay = set.day; sh.seq = set.seq; sh.group = "dispatch";
-      sh.sheetIndex = 1 + pages.filter(p => p !== sh && p.setId === set.setId && p.metal === sh.metal).length;
+      // after the highest number in use: a sheet that left the set must not leave its number to be taken twice
+      sh.sheetIndex = 1 + Math.max(0, ...allSheets().filter(p => p !== sh && p.setId === set.setId && p.metal === sh.metal).map(p => +p.sheetIndex || 0));
       sh.fileBase = CN.sheetFileBase(sh);
       set.labels = null;
       // Membership changes reuse verified artwork and approved backs. Only the
@@ -1804,7 +1840,7 @@ const Gate = window.Gate = (() => {
     refreshAllCards();
   }
   function renderRelease(sh, node) {
-    const m = sh.metal, st = stockFor(m,sh), seq = Sets.ofRun(B.run?.runId).find(s => s.group === "dispatch")?.seq;
+    const m = sh.metal, st = stockFor(m,sh), seq = Sets.ofRun(B.run?.runId).find(s => s.group === "dispatch" && !s.committedAt)?.seq;
     node.className = "shGate";
     if (!solid(m) && m !== "rose") {
       node.textContent = sh.setId && !sh.draft ? `In Set ${sh.seq} · ${policy(sh, sh.seq).reason}` : policy(sh, seq).reason;
@@ -2110,6 +2146,9 @@ const Engrave = window.Engrave = (() => {
     // Etsy offers engraving on these designs; legacy catalog estimates are not eligibility rules.
     const engravable = true;
     job.state = "classify"; row.engrave = { needed: false, state: "classify" };
+    // A fresh reading replaces the line split, size and decision kept for earlier words. The fit restored the first words
+    // it had seen, so an order whose words changed on Etsy showed its new words but was engraved with the old ones.
+    job.lineInput = null; job.lineMode = "auto"; job.wantSize = null; job.decision = null;
     let r = null;
     try { r = await agentCall("engraveIntent", { order: row.order.receiptId, sku: sp.designSku, title: row.line.title, form: sp.form, quantity: sp.quantity, engravable, personalization: sp.personalization, buyerMessage: sp.buyerMessage, staffNote: sp.staffNote, messages: sp.messages }, { label: `Claude reads the words of ${row.order.receiptId}`, background: true }); }
     catch (e) { r = { skipped: e.message }; }
@@ -3166,8 +3205,15 @@ const Sets = window.Sets = (() => {
     if (byRun().has(k) && !byRun().get(k).offline) return byRun().get(k);
     if (!S.cloud.ok) throw new Error("Reconnect to the cloud before numbering a new set; the layout is kept locally");
     const day = today();
+    // A run keeps releasing after a commit: its next dispatch set follows the newest committed one and gets a number of
+    // its own, where asking again for the run's dispatch set would hand back the set already cut.
+    const followed = group === "dispatch" ? ofRun(runId).filter(s => s.group === "dispatch" && s.committedAt).sort((a, b) => (+b.committedAt || 0) - (+a.committedAt || 0))[0] || null : null;
+    const after = followed?.setId || null;
+    // The server numbers a follow-on set only once the set it follows is recorded as committed. A commit whose record
+    // did not save is saved again first: a refusal then names its cause, and every later set used to be refused.
+    if (followed) await save(followed);
     let set;
-    if (S.cloud.ok) { const r = await api("charmNestLibrary", { op: "setAllocate", day, runId, group: group || "", roseOnly: !!opts.roseOnly }, { label: "Numbering the set" }); if (r.deferred) return null; set = { setId: r.setId, seq: r.seq, day: r.day || day, runId, group: group || null, name: O.setLabel(r.seq), folder: O.setFolder(r.day || day, r.seq), orders: {}, sheetIds: [], materials: [], labelFiles: [], status: "open" }; }
+    if (S.cloud.ok) { const r = await api("charmNestLibrary", { op: "setAllocate", day, runId, group: group || "", roseOnly: !!opts.roseOnly, after }, { label: "Numbering the set" }); if (r.deferred) return null; set = { setId: r.setId, seq: r.seq, day: r.day || day, runId, group: group || null, name: O.setLabel(r.seq), folder: O.setFolder(r.day || day, r.seq), orders: {}, sheetIds: [], materials: [], labelFiles: [], status: "open" }; }
 
     byRun().set(k, set);
     if (B.run && B.run.runId === runId) { B.run.setIds = [...new Set((B.run.setIds || []).concat([set.setId]))]; B.run.setId = B.run.setId || set.setId; B.run.day = set.day; B.run.seq = B.run.seq || set.seq; RunCtl.renderBanner(); }
@@ -3262,7 +3308,8 @@ const Sets = window.Sets = (() => {
     const sheets = sheetsOf(set);
     if (sheets.some(sh => sh.runHold)) throw pendingRelease("A sheet in this set still needs attention");
     const sheetPools=new Set(sheets.flatMap(sh=>sh.charms.filter(c=>sh.placements.some(p=>p.id===c.id)).map(c=>c.poolId)));
-    if(Orders.rows().some(row=>(row.changePending || row.state === "gone" || row.hold) && row.poolIds.some(id=>sheetPools.has(id))))throw pendingRelease("An order on this sheet changed or needs review");
+    // A cancelled order is dropped from the set, not waited for: a piece of it that could not come off its sheet is cut with it and set aside
+    if(Orders.rows().some(row=>row.state !== "gone" && (row.changePending || row.hold) && row.poolIds.some(id=>sheetPools.has(id))))throw pendingRelease("An order on this sheet changed or needs review");
     const reports=sheets.map(sh=>({...sh,roseStockId:sh.roseStock?.id,id:sh.sheetId,poolIds:(sh.placements || []).map(p=>sh.charms.find(c=>c.id===p.id)?.poolId).filter(Boolean),placedCount:sh.placements.length,outputs:sh.cloud || {},engraving:window.CharmNestReadiness.decisions(Orders.rows())}));
     if(!window.CharmNestReadiness.set(set,reports).ready)throw pendingRelease("Set is not ready for laser: finish every sheet's engraving approvals, saved back files, layout checks and QR labels");
     if (!Gate.modern(set.runId)) return;
@@ -3274,10 +3321,10 @@ const Sets = window.Sets = (() => {
       if (!labelsReady(sh, set)) throw pendingRelease(`${sh.fileBase}: QR labels are missing or out of date`);
       const placed = new Set(sh.placements.map(p => sh.charms.find(c => c.id === p.id)?.poolId).filter(Boolean));
       for (const job of Engrave.items().values()) {
-        if (job.copies.some(id => placed.has(id)) && !["none", "skipped", "written"].includes(job.state)) throw pendingRelease(`${sh.fileBase}: back engraving still needs to be finished`);
+        if (job.row?.state !== "gone" && job.copies.some(id => placed.has(id)) && !["none", "skipped", "written"].includes(job.state)) throw pendingRelease(`${sh.fileBase}: back engraving still needs to be finished`);
       }
       for (const row of Orders.rows()) {
-        if (!row.engrave?.needed) continue;
+        if (!row.engrave?.needed || row.state === "gone") continue;
         for (const poolId of row.poolIds.filter(id => placed.has(id))) {
           const back = (sh.backPool || []).find(b => b.poolId === poolId);
           if (!row.engrave.approved || row.engrave.state !== "written" || !back?.approvedAt || !back.verified?.file?.ok || !back.outputs?.ai?.path || !back.outputs.ai.url) throw pendingRelease(`${row.order.receiptId}: back engraving is not approved and saved`);
@@ -3336,6 +3383,10 @@ const Sets = window.Sets = (() => {
     agent({ run: run.runId }, "DS", `Station preview: ${preview.jobs.length} label job(s) for ${ids.length} order(s)${preview.notes && preview.notes.skipped && preview.notes.skipped.length ? ` · ${preview.notes.skipped.length} with no recognised metal` : ""}`);
     const labels = { setId: set.setId, folder: `${set.folder}/labels`, files: set.labels.files.map(f => ({ path: f.path, url: f.url, sheet: f.sheet })), pdf: set.labels.pdf ? set.labels.pdf.url : null };
     validateRelease(set); // Recheck after the station selection/preview awaits.
+    // The server checks the set against the run's saved lines before it records the set as complete. Save them first,
+    // so it sees what was checked here: a set refused after the station commit leaves its orders done at the station
+    // and the set open, and the run stopped at every later check.
+    await RunCtl.save(run);
     const r = await DesignLink.call("complete.commit", { receiptIds: ids, labels, runId: run.runId, setId: set.setId, sheetIds: set.sheetIds, backCount: set.backCount || 0, completedBy: `Charm Sorter (${employeeName() || "operator"})` }, { timeoutMs: 180000 });
     set.committed = r.completed; set.refused = refused.concat(r.refused || []); set.committedAt = Date.now(); set.completedAt = set.committedAt; set.completionDay = today(); set.status = set.refused.length || Object.keys(ev.held).length ? "complete-with-holds" : "complete";
     for (const row of Orders.rows()) if (r.completed.includes(row.order.receiptId) && (row.state === "written" || row.state === "labelled" || row.state === "noDesign")) row.state = "committed";
@@ -3345,10 +3396,12 @@ const Sets = window.Sets = (() => {
     return { completed: r.completed, refused: set.refused, held: ev.held };
   }
   async function undo(set) {
-    await DesignLink.ensure(); await DesignLink.call("complete.undo", { receiptIds: (set.committed || []).slice() }, { timeoutMs: 180000 });
+    // a set that committed nothing (every order held or refused) has nothing to reopen at the station
+    const reopened = (set.committed || []).map(String);
+    if (reopened.length) { await DesignLink.ensure(); await DesignLink.call("complete.undo", { receiptIds: reopened }, { timeoutMs: 180000 }); }
     set.status = "awaiting review"; set.committed = []; set.committedAt = null; set.completedAt = null; set.completionDay = null; await save(set);
     await Pool.update([...B.pool.rows.keys()].filter(id => (B.pool.rows.get(id) || {}).setId === set.setId), { state: "written" });
-    for (const row of Orders.rows()) if (row.state === "committed") row.state = "written";
+    for (const row of Orders.rows()) if (row.state === "committed" && reopened.includes(String(row.order.receiptId))) row.state = "written";
     if (B.run && (B.run.setId === set.setId || (B.run.setIds || []).includes(set.setId))) { B.run.status = "review"; B.run.step = "engrave"; await RunCtl.save(B.run); RunCtl.renderBanner(); }
     agent({ run: set.runId }, "DS", `${set.name}: completion undone on the station — set back to awaiting review, every file kept`);
     Orders.render();
@@ -3611,9 +3664,14 @@ const RunCtl = window.RunCtl = (() => {
   /** A run that is given up lets go of its lines: its pool rows are marked abandoned and the station's claims are lifted,
       so the next run can take them without waiting a day for the rows to go stale. */
   function releaseRun(r) {
-    const ids = [...new Set(Orders.rows().filter(x => x.poolIds && x.poolIds.length).flatMap(x => x.poolIds))];
+    // Giving up a run gives up its unfinished work only: a piece already cut in a committed set stays on record as cut,
+    // where it used to be marked abandoned with the rest.
+    const cutSets = new Set(Sets.ofRun(r.runId).filter(s => s.committedAt).map(s => s.setId));
+    const cut = id => { const p = B.pool.rows.get(id) || {}; return p.state === "committed" || cutSets.has(p.setId); };
+    const open = Orders.rows().filter(x => x.state !== "committed" && !(x.poolIds || []).some(cut));
+    const ids = [...new Set(open.filter(x => x.poolIds && x.poolIds.length).flatMap(x => x.poolIds))];
     if (ids.length && S.cloud.ok) api("charmNestLibrary", { op: "poolUpdate", poolIds: ids, patch: { state: "abandoned" } }, { quiet: true }).catch(() => {});
-    Orders.unclaim([...new Set(Orders.rows().map(x => x.order.receiptId))]).catch(() => {});
+    Orders.unclaim([...new Set(open.map(x => x.order.receiptId))]).catch(() => {});
     r.status = "abandoned"; save(r).catch(() => {});
   }
   function stop(why, fix, at) { const r = B.run; if (!r) return; r.status = "stopped"; r.stoppedBy = why; r.fix = fix || null; r.at = at || null; r.errors.push({ t: Date.now(), why }); if (waiter && waiter.r === r) { const w = waiter; waiter = null; w.resolve(); } agent({ run: r.runId }, "warn", `Run stopped: ${why}${fix ? " — " + fix : ""}`); toast(`Run stopped: ${why}`, "bad", 8000); notifyPerson("Charm Sorter run stopped", why); save(r).catch(() => {}); renderBanner(); }
@@ -3845,8 +3903,11 @@ const RunCtl = window.RunCtl = (() => {
     const idx = O.stepIndex(r.step);
     const reviewN = Review.count(), engN = Engrave.pendingCount();
     const waitingFor = [reviewN ? `${reviewN} in Review` : "", engN ? `${engN} in Engraving` : ""].filter(Boolean).join(" · ") || "nothing";
+    // with nothing for a person to do, say what the run is waiting for: lines on sheets that have not been released yet
+    const onCards = r.status === "processed" ? Orders.rows().filter(x => x.state === "pooled").length : 0;
+    const idle = onCards ? `${onCards} line${onCards === 1 ? "" : "s"} wait on sheets not released yet` : "waiting for sheets to release";
     const saveWarning = r.saveError ? `<span class="bad">Not saved online: ${esc(r.saveError)}</span> · ` : "";
-    const why = saveWarning + (r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${r.fix ? ` — <span>${esc(r.fix)}</span>` : ""}` : r.status === "review" ? `<b>Waiting for a person:</b> ${waitingFor}` : r.status === "processed" ? `<b>Processing complete</b> · ${waitingFor === "nothing" ? "pending sheets or release" : waitingFor}${r.awaitCommit ? " · commit when ready" : ""}` : r.status === "paused" ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(STEP_WORDS[r.step] || r.step)}</b>${esc(stepDetail(r))}`);
+    const why = saveWarning + (r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${r.fix ? ` — <span>${esc(r.fix)}</span>` : ""}` : r.status === "review" ? `<b>Waiting for a person:</b> ${waitingFor}` : r.status === "processed" ? `<b>Processing complete</b> · ${waitingFor === "nothing" ? idle : waitingFor}${r.awaitCommit ? " · commit when ready" : ""}` : r.status === "paused" ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(STEP_WORDS[r.step] || r.step)}</b>${esc(stepDetail(r))}`);
     Dock.schedule();
     h.title = `run ${r.runId}`;
     /* Which run is this? Three cards on the Nest tab and a banner that named only a step left no way to tell this
@@ -4862,6 +4923,9 @@ const Arrivals = window.Arrivals = (() => {
     }
     const fresh = ids.filter(id => !at(id));
     Object.assign(state.seen, stamps); state.lastAdded = fresh.length;
+    // first-arrival times are kept for 45 days, far past any open order; the list used to grow by every order ever seen
+    const current = new Set(ids);
+    for (const [id, t] of Object.entries(state.seen)) if (t < now - 45 * 86400000 && !current.has(id)) { delete state.seen[id]; if (state.recorded) delete state.recorded[id]; }
     state.lastCheck = now; state.nextCheck = now + interval(); save(); paint(); return fresh;
   }
   function paint() {
@@ -4972,6 +5036,15 @@ const LiveNest = window.LiveNest = (() => {
   }
   const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId)) ||
     (!(p.metal==='rose'&&(p.rosePlan||p.roseProtected)) && (!!p.runHold || !!p.intakeFinalized));
+  /* Gold and Silver arrivals go to the run's earliest open sheet first (the pool puts them on the same one). An order
+     that misses its gaps moves on to the next sheet, and the earlier sheet stays first in line: once a newer page existed
+     it used to be passed over for good, short of full, so it was never released and its orders, the oldest, never cut.
+     Rose Gold keeps the newest sheet, where its green line is. */
+  function intakePage(m, run) {
+    const pages = pagesOf(m), newest = pages.at(-1);
+    if (!O.FAST_MATERIALS.has(m)) return newest;
+    return pages.find(p => p !== newest && p.charms.length && run && p.runId === run.runId && !closed(p)) || newest;
+  }
   async function add(run) {
     const prepare=async()=>{
     run.intakeRecovery = run.intakeRecovery || { retire: [], backs: [] };
@@ -5012,19 +5085,23 @@ const LiveNest = window.LiveNest = (() => {
     for (const m of touched) {
       const prim = S.sheets[m], pages = prim.pages.filter(p => p.runId === run.runId && !closed(p));
       if (pages.some(p => ["nesting", "finishing", "queued"].includes(p.status))) throw new Error("A sheet is still being written");
-      const newest=prim.pages.at(-1);
-      const p = newest.runId && newest.runId!==run.runId || closed(newest) ? addPage(m) : newest;
+      const pick=intakePage(m, run);
+      const p = pick.runId && pick.runId!==run.runId || closed(pick) ? addPage(m) : pick;
       // addPage inherits the primary page's run id; replace it before
       // Pool.addAll examines the newest page or it creates yet another page.
-      if(p!==newest)p.runId=run.runId;
+      if(p!==pick)p.runId=run.runId;
       target.set(m, p); prim.active = prim.pages.indexOf(p);
       if (pages.some(p => p.charms.length)) Gate.state().forceFill[m] = true;
     }
     try { await Pool.addAll(run); } finally { Gate.state().forceFill = force; }
     await reconcileGroups();
     for (const [m, pg] of target) {
-      if (Gate.modern(run.runId) && !Gate.nestable(pg, run)) continue;
       const all=pg.charms,saved=previousSheets.get(pg);
+      // An order that links materials brings every linked material here, and lines can wait for a later sheet, so a
+      // material can come through with nothing new. A page opened for it above stays empty: it is taken away again,
+      // not nested. After a set was released, the empty page stayed queued and stopped every later arrival.
+      if(!activeCharms(pg).length){if(!saved&&!all.length)removePage(pg);continue;}
+      if (Gate.modern(run.runId) && !Gate.nestable(pg, run)) continue;
       if(!all.some(c=>c.poolId&&!before.has(c.poolId))&&pg.fileBase)continue;
       if(saved){pg.placements=saved.placements;pg.intakeOptimized=saved.intakeOptimized;pg.intakeOptimizedCount=saved.intakeOptimizedCount;pg.density=saved.density;pg.liveInfo=saved.liveInfo;}
       pg.intakeAppend=pg.placements.length>0;pg.appendOnly=pg.intakeAppend;pg.status='ready';pg.dirty=true;
@@ -5034,10 +5111,14 @@ const LiveNest = window.LiveNest = (() => {
     };
     if(window.CharmNestOperations)await window.CharmNestOperations.run({key:'intake:'+run.runId,label:'Adding incoming orders',resources:['production:'+run.runId]},prepare);else await prepare();
     // Never advance to labels/commit until all overflow sheets and all cloud writes have finished.
+    const rearranged = new Set();
     while (true) {
       const pages = allSheets().filter(p => p.runId === run.runId && !p.runHold && Gate.nestable(p, run) && p.charms.length);
       for (const p of pages) if (p.persisted && !p.persistedDone) await p.persisted.then(() => { p.persistedDone = true; });
       if (run.status === "stopped") throw new Error(run.stoppedBy || "run stopped");
+      // A sheet can wait to be arranged again with nothing started on it: a cancelled order's pieces were taken off it and
+      // no order for its metal came in. It is arranged here, once. Waiting on it unstarted stalled every later arrival.
+      for (const p of pages) if (p.dirty && ["ready", "idle"].includes(p.status) && !p._operationStarting && !p._learnedStarting && !rearranged.has(p)) { rearranged.add(p); startNest(p); }
       if (!pages.some(p => ["nesting", "finishing", "queued"].includes(p.status) || p.dirty || (p.persisted && !p.persistedDone))) break;
       await sleep(250);
     }
@@ -5060,7 +5141,7 @@ const LiveNest = window.LiveNest = (() => {
     for (const set of Sets.ofRun(run.runId)) await Sets.save(set);
     delete run.intakeRecovery; Session.schedule();
   }
-  return { add, finish, prepareSheet, closed };
+  return { add, finish, prepareSheet, closed, intakePage };
 })();
 
 /* Compact, read-only set previews never replace the active bench. */

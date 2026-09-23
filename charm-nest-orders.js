@@ -288,7 +288,7 @@
    * →      { take: Set(key), wait: Map(key → { kind, why, material, until, pct }), materials: { material → summary } }
    */
   function planRelease(lines, opts) {
-    const today = opts.today, cadence = Math.max(1, +opts.cadenceDays || 2), lateDays = Math.max(0, +opts.lateDays == null ? 2 : +opts.lateDays);
+    const today = opts.today, cadence = Math.max(1, +opts.cadenceDays || 2), lateDays = Math.max(0, opts.lateDays == null ? 2 : +opts.lateDays);
     const lastRel = opts.lastReleased || {}, released = opts.released || {}, forceFill = opts.forceFill || {}, cap = opts.capacity || {};
     const take = new Set(), wait = new Map(), materials = {};
     const dueSoon = l => l.shipBy > 0 && (l.shipBy * 1000 - Date.parse(today + "T00:00:00")) <= lateDays * 86400000;

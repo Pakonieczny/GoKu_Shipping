@@ -12,6 +12,11 @@ const row=()=>({order:{receiptId:'test'},line:{title:'Sheep'},spec:{engraveCandi
  result={engrave:false,text:'',source:'none',confidence:1,questions:[]};j=await ctx.classify(row());assert.equal(j.state,'none','explicit no-engraving decision retained');
  result={...result,confidence:.3,questions:['Which inscription?']};j=await ctx.classify(row());assert.equal(j.state,'words','no inscription must not be invented');
  result={engrave:true,text:'Anna Ben',source:'personalization',confidence:.9,questions:[]};r=row();r.spec.personalization=['Anna','Ben'];j=await ctx.classify(r);assert.equal(j.text,'Anna\nBen','typed line breaks preserved');
+ // words that changed on Etsy are read afresh: the line split kept from the old words must not bring them back at the fit
+ r=row();r.spec.personalization=['ROSE'];r.job={key:r,row:r,copies:['copy'],text:'LILY',lines:['LILY'],lineInput:['LILY'],lineMode:'preserve',wantSize:9,decision:{by:'Tester',text:'LILY'}};
+ result={engrave:true,text:'ROSE',source:'personalization',confidence:.9,questions:[]};j=await ctx.classify(r);
+ assert.equal(j.lineInput,null,'the old line split is gone');assert.equal(j.lineMode,'auto');assert.equal(j.wantSize,null);assert.equal(j.decision,null);
+ j.lineInput ||= j.lines.slice();assert.deepEqual([...j.lineInput],['ROSE'],'so the fit starts from the new words');
  const jobs=[{state:'words',row:{},lines:['S'],copies:['1'],questions:['The design is not engravable']},{state:'words',row:{},lines:['?'],copies:['2'],missing:['?']},{state:'written',row:{},lines:['Saved'],copies:['3']},{state:'words',row:{},lines:[],copies:['4']}];
  let fits=0,ready=0,release;const pause=new Promise(r=>release=r);
  jobs.forEach((j,i)=>j.key=i);

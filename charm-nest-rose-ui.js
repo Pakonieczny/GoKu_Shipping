@@ -75,7 +75,7 @@
   }
   async function record(sh){
     if(!sh.rosePlanHash)await plan(sh);
-    if(!confirm('Has this exact layout AND its teal separation contour been physically cut?\n\nRecord the completed cut now. Its charms will turn grey and this material will be excluded from all future nesting.'))return;
+    if(!confirm('Has this exact layout AND its green line been physically cut?\n\nRecord the completed cut now. Its charms will turn grey, the area they used is left out of all future nesting, and the rest of the sheet stays available for the next Rose Gold layout.'))return;
     const r=await api('roseRecordCut',{sheetId:sh.sheetId,stockId:sh.roseStock.id,revision:sh.roseRevision,planHash:sh.rosePlanHash,by:window.B?.employee||'operator'});
     sh.roseCutAt=r.cut.at;sh.roseStock=r.stock;sh.roseHistory=[...decode([r.cut]),...(sh.roseHistory||[]).filter(c=>c.sheetId!==sh.sheetId)];
     refresh(sh);C.toast('Cut recorded · the remaining sheet is available for the next Rose Gold layout','ok');
@@ -279,7 +279,7 @@
     const locked=busy||!!pending;
     const s=state,done=s.phase==='complete',nested=s.phase==='nested',included=s.phase==='included',canNest=['empty','cut'].includes(s.phase);
     const remaining=(s.wPt*s.hPt-(s.profile?R.area(s.profile):0))*R.MM*R.MM;
-    const instructions=done?'Three cuts recorded. The grey charms and dated history belong to the same sheet; the white area is the saved reusable remainder.':included?'The dashed teal line is the proposed separation cut. Simulate the completed cut to grey these charms and save the remaining shape.':nested?'Open Options and select “Include in current set” to prepare this batch’s contour.':s.phase==='cut'?'The completed batch is grey. Nest the next seven charms into the white remainder; the previous cut areas are excluded.':'Start with seven sample charms on a fresh 100 × 50 mm sheet. Follow each batch from nesting to its recorded cut.';
+    const instructions=done?'Three cuts recorded. The grey charms and dated history belong to the same sheet; the white area is the saved reusable remainder.':included?'The dashed green line is the proposed cut. Simulate the completed cut to grey these charms and save the remaining shape.':nested?'Open Options and select “Include in current set” to prepare this batch’s contour.':s.phase==='cut'?'The completed batch is grey. Nest the next seven charms into the white remainder; the previous cut areas are excluded.':'Start with seven sample charms on a fresh 100 × 50 mm sheet. Follow each batch from nesting to its recorded cut.';
     body.innerHTML=`<p class="roseDemoIntro">Rehearse three batches on one sheet. Progress is saved in the sandbox; you can close this window and return later.</p>
       <ol class="roseDemoSteps" aria-label="Rehearsal progress">${['Nest sample batch','Include in set','Simulate cut'].map((label,i)=>`<li ${((canNest&&i===0)||(nested&&i===1)||(included&&i===2))?'aria-current="step"':''}>${i+1}. ${label}</li>`).join('')}</ol>
       <p class="roseDemoGuide">${instructions}</p>

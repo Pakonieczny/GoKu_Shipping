@@ -20,8 +20,8 @@ function outline(kind, cx, cy, s, num) {
 }
 
 /**
- * opts: { count, labelled: true, edge: true } → { charms:[{sku, size, kind, cx, cy, s, labelled}], bytes }
- * The SKUs are BR-TST-01 … and the page is 300 × 250 mm-ish so the charms have room; sizes 10–18 mm.
+ * opts: { count, labelled: true, edge: true, scale: 1 } → { charms:[{sku, size, kind, cx, cy, s, labelled}], bytes }
+ * The SKUs are BR-TST-01 … and the page is 300 × 250 mm-ish so the charms have room; sizes 10–18 mm, times scale.
  */
 async function buildMaster(outPath, opts = {}) {
   const layered = !!opts.layered;   // bodies first, rings after — how a master drawn in Illustrator layers reaches the parser
@@ -35,7 +35,7 @@ async function buildMaster(outPath, opts = {}) {
   const charms = []; const later = [];
   const cols = 5, gapX = W / cols, gapY = 55 * MM;
   for (let i = 0; i < count; i++) {
-    const kind = kinds[i % kinds.length]; const s = (10 + (i % 5) * 2) * MM;
+    const kind = kinds[i % kinds.length]; const s = (10 + (i % 5) * 2) * MM * (+opts.scale || 1);
     const cx = gapX * (i % cols) + gapX / 2, cy = H - 40 * MM - Math.floor(i / cols) * gapY;
     const sku = `BR-TST-${String(i + 1).padStart(2, '0')}`;
     ops.push(outline(kind, cx, cy, s, num));

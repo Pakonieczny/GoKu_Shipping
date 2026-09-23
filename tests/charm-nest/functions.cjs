@@ -16,6 +16,7 @@ function docRef(coll, id) {
     async get() { const d = store.get(key); return { exists: !!d, id, data: () => (d ? { ...d } : undefined) }; },
     collection(sub) { return query(coll + '/' + id + '/' + sub); },
     async set(data, opts) { const cur = (opts && opts.merge && store.get(key)) || {}; store.set(key, applyValues({ ...cur }, data)); },
+    async update(data) { const cur = store.get(key); if (!cur) throw new Error('NOT_FOUND: ' + key); store.set(key, applyValues({ ...cur }, data)); },
     async delete() { store.delete(key); }
   };
 }
@@ -28,7 +29,7 @@ function query(coll, filters = [], order = null, lim = 0) {
     count() { return {get:async()=>{const snap=await q.get();return {data:()=>({count:snap.size})};}}; },
     async get() {
       let rows = [...store.entries()].filter(([k]) => k.startsWith(coll + '/') && !k.slice(coll.length + 1).includes('/')).map(([k, v]) => ({ id: k.slice(coll.length + 1), data: () => ({ ...v }), ref: docRef(coll, k.slice(coll.length + 1)) }));
-      for (const [f, op, v] of filters) rows = rows.filter(r => { const x = r.data()[f]; return op === '==' ? x === v : op === '>=' ? x >= v : op === '<=' ? x <= v : true; });
+      for (const [f, op, v] of filters) rows = rows.filter(r => { const x = r.data()[f]; return op === '==' ? x === v : op === '>=' ? x >= v : op === '<=' ? x <= v : op === '>' ? x > v : op === '<' ? x < v : op === '!=' ? x !== v : op === 'in' ? v.includes(x) : true; });
       if (order) rows.sort((a, b) => { const x = a.data()[order[0]], y = b.data()[order[0]]; const c = (x && x.toMillis ? x.toMillis() : x) > (y && y.toMillis ? y.toMillis() : y) ? 1 : -1; return order[1] === 'desc' ? -c : c; });
       if (lim) rows = rows.slice(0, lim);
       return { size: rows.length, docs: rows, empty: !rows.length };
@@ -40,9 +41,9 @@ function query(coll, filters = [], order = null, lim = 0) {
 }
 const db = {
   collection: c => query(c),
-  batch() { const ops = []; return { set(ref, data, opts) { ops.push(() => ref.set(data, opts)); }, delete(ref) { ops.push(() => ref.delete()); }, async commit() { for (const o of ops) await o(); } }; },
+  batch() { const ops = []; return { set(ref, data, opts) { ops.push(() => ref.set(data, opts)); }, update(ref, data) { ops.push(() => ref.update(data)); }, delete(ref) { ops.push(() => ref.delete()); }, async commit() { for (const o of ops) await o(); } }; },
   async getAll(...refs) { return Promise.all(refs.map(r => r.get())); },
-  async runTransaction(fn) { return fn({ get: ref => ref.get(), set: (ref, data, opts) => ref.set(data, opts) }); }
+  async runTransaction(fn) { return fn({ get: ref => ref.get(), set: (ref, data, opts) => ref.set(data, opts), update: (ref, data) => ref.update(data), delete: ref => ref.delete() }); }
 };
 /* ── in-memory Storage ─────────────────────────────────────────────────── */
 const blobs = new Map();
@@ -236,6 +237,16 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   r = await post(lib, { op:'setAllocate', day:'2026-09-14', runId:'rose-only', group:'dispatch', roseOnly:true }); assert.strictEqual(r.body.seq,2);
   r = await post(lib, { op:'setAllocate', day:'2026-09-14', runId:'rose-only', group:'dispatch', roseOnly:true }); assert.strictEqual(r.body.seq,2);
   r = await post(lib, { op:'setAllocate', day:'2026-09-14', runId:'rose-next', group:'dispatch', roseOnly:true }); assert.strictEqual(r.body.deferred,true);
+  // A run keeps releasing after its first set is committed: the next dispatch set follows the committed one and gets a
+  // number of its own, once, instead of the set that was already cut.
+  r = await post(lib, { op:'setAllocate', day:'2026-09-14', runId:'all-day', group:'dispatch' }); const firstSet = r.body; assert.strictEqual(firstSet.seq, 3);
+  r = await post(lib, { op:'setAllocate', day:'2026-09-14', runId:'all-day', group:'dispatch', after:firstSet.setId }); assert.strictEqual(r.status, 400); assert.match(r.body.error, /not a committed set/, 'only a committed set can be followed');
+  r = await post(lib, { op:'setUpdate', setId:firstSet.setId, patch:{ committedAt:Date.now(), committed:['1'] } }); assert(r.body.ok);
+  r = await post(lib, { op:'setAllocate', day:'2026-09-14', runId:'all-day', group:'dispatch' }); assert(r.body.existing && r.body.setId === firstSet.setId, 'without naming it, the committed set is what comes back');
+  r = await post(lib, { op:'setAllocate', day:'2026-09-14', runId:'all-day', group:'dispatch', after:firstSet.setId }); const nextSet = r.body; assert.strictEqual(nextSet.seq, 4, 'the next set of the run is the next number: ' + JSON.stringify(nextSet));
+  r = await post(lib, { op:'setAllocate', day:'2026-09-14', runId:'all-day', group:'dispatch', after:firstSet.setId }); assert(r.body.existing && r.body.setId === nextSet.setId, 'asked again, the same next set');
+  assert(store.get('Charm_Nest_Sets/' + firstSet.setId).committedAt, 'the committed set keeps its record');
+  r = await post(lib, { op:'setAllocate', day:'2026-09-14', runId:'another-run', group:'dispatch', after:firstSet.setId }); assert.strictEqual(r.status, 400, 'another run cannot follow it');
   // the release record is shop-wide and validated
   r = await post(lib, { op: 'releaseGet' }); assert.deepStrictEqual(r.body.lastReleased, {}, 'nothing released yet');
   r = await post(lib, { op: 'releasePut', lastReleased: { rose: '2026-09-17' }, released: { gold14k: '2026-09-18' } }); assert.strictEqual(r.body.lastReleased.rose, '2026-09-17'); assert.strictEqual(r.body.released.gold14k, '2026-09-18');
@@ -250,6 +261,11 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   assert.strictEqual(r.status, 200, 'an empty calibration row is not an error'); assert(r.body.ok && r.body.skipped, 'and it says it was skipped');
   r = await post(lib, { op: 'putCalibration', row: { sheetId: 'gold-x', metal: 'gold', density: 0.61, count: 40, cv: 0.4, largestFrac: 0.1 } });
   assert(r.body.ok && !r.body.skipped, 'a real one is kept'); r = await post(lib, { op: 'getCalibration' }); assert(r.body.rows.some(x => x.sheetId === 'gold-x' && x.count === 40), 'the real one is on record'); assert(!r.body.rows.some(x => !(x.count > 0)), 'and no empty row ever was');
+  // the sandbox reads the shared calibration and charm library but never writes them
+  r = await post(lib, { op: 'putCalibration', sandbox: true, row: { sheetId: 'gold-rehearsal', metal: 'gold', density: 0.7, count: 30, cv: 0.4, largestFrac: 0.1 } });
+  assert(r.body.ok && r.body.skipped, 'a rehearsal sheet is not calibration evidence'); r = await post(lib, { op: 'getCalibration' }); assert(!r.body.rows.some(x => x.sheetId === 'gold-rehearsal'), 'and nothing was written');
+  r = await post(lib, { op: 'putCharms', sandbox: true, charms: [{ hash: H1, name: 'rehearsal-name', namedBy: 'operator' }] }); assert.strictEqual(r.body.count, 0);
+  r = await post(lib, { op: 'lookupCharms', hashes: [H1] }); assert.strictEqual(r.body.charms[H1].name, 'Compass Rose', 'a rehearsal cannot rename a production charm'); assert.strictEqual(r.body.charms[H1].timesUsed, 3, 'nor count its use');
   // history: one search over every run and sheet on record, and an honest count of how far it looked
   await post(lib, { op: 'runPut', run: { runId: 'run-H', step: 'commit', status: 'complete', day: '2026-09-15', seq: 4, setId: 'set-2026-09-15-4', lines: { 'k1': { state: 'pooled', orderId: '9911', sku: 'BR-HIS-01', engrave: { text: 'MAEVE' } } } } });
   r = await post(lib, { op: 'history' }); assert(r.body.runs.some(x => x.runId === 'run-H' && x.seq === 4), 'every run is listed');

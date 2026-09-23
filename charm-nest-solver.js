@@ -190,7 +190,7 @@
   }
   Grid.prototype.set = function (x, y) { this.occ[y * this.words + (x >> 5)] |= (1 << (x & 31)) >>> 0; this.free[y * this.W + x] = 0; if (this.material) this.material.set(x, y); };
   Grid.prototype.get = function (x, y) { return (this.occ[y * this.words + (x >> 5)] >>> (x & 31)) & 1; };
-  Grid.prototype.clone = function () { const g = new Grid(this.W, this.H); g.occ.set(this.occ); g.free.set(this.free); if (this.sat) g.sat = this.sat.slice(); if (this.material) g.material = this.material.clone(); if (this.parts) g.parts = this.parts.slice(); g.walls = this.walls; g.materialOnly = this.materialOnly; return g; };
+  Grid.prototype.clone = function () { const g = new Grid(this.W, this.H); g.occ.set(this.occ); g.free.set(this.free); if (this.sat) g.sat = this.sat.slice(); if (this.material) g.material = this.material.clone(); if (this.parts) g.parts = this.parts.slice(); g.walls = this.walls; g.materialOnly = this.materialOnly; g.remnant = this.remnant; return g; };
   Grid.prototype.trackMaterial = function (owners = false) { this.walls = new Grid(this.W, this.H); this.walls.occ.set(this.occ); this.walls.materialOnly = true; this.material = new Grid(this.W, this.H); this.material.materialOnly = true; if (owners) this.parts = []; return this; };
   /** Legal position test: no overlap between the packed mask and the grid. */
   Grid.prototype.fits = function (pm, x, y) {
@@ -201,8 +201,34 @@
       const gi = (y + r) * gw + wx, mi = r * mw;
       for (let k = 0; k < wmax; k++) if (occ[gi + k] & v[mi + k]) return false;
     }
-    return true;
+    return !this.remnant || !pm.outline || clearOfRemnant(this.remnant, pm.outline, x, y);
   };
+  /* Rose Gold stock that is already cut away is tested against the whole
+     silhouette, not only the eroded mask. Erosion can erase a thin part such
+     as a jump ring entirely, and no pad around the removed stock stands in
+     for a part the mask no longer has. front[i] is how many cells of line i
+     are removed (with the pad); outline holds the silhouette's first filled
+     cell on each row and column, in the eroded mask's frame.               */
+  const NO_CELL = 0x3fffffff;
+  function remnantFront(profile, res, pad, W, H) {
+    const n = profile.axis === "x" ? H : W, front = new Int32Array(n);
+    for (let i = 0; i < n; i++) { const f = Rose.frontier(profile, i / res, (i + 1) / res, pad); front[i] = f > 0 ? Math.ceil(f * res) : 0; }
+    return { axis: profile.axis, front };
+  }
+  function outlineEdges(bits, w, h, off) {
+    const rows = new Int32Array(h).fill(NO_CELL), cols = new Int32Array(w).fill(NO_CELL);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (bits[y * w + x]) { if (rows[y] === NO_CELL) rows[y] = x; if (cols[x] === NO_CELL) cols[x] = y; }
+    return { off, rows, cols };
+  }
+  // The eroded mask already keeps an ordinary edge `pad` from the removed stock, so its silhouette stays `pad` less the erosion away.
+  function outlinePad(pad, erodeFine, res) { return Math.max(0, pad - erodeFine / res); }
+  function fineMask(eroded, rot, erodeFine) { const pm = packShifted(eroded.bits, eroded.w, eroded.h); if (erodeFine) pm.outline = outlineEdges(rot.bits, rot.w, rot.h, -erodeFine); return pm; }
+  function clearOfRemnant(rem, u, x, y) {
+    const f = rem.front, n = f.length, ox = x + u.off, oy = y + u.off;
+    if (rem.axis === "x") { for (let r = 0; r < u.rows.length; r++) { const g = oy + r; if (g >= 0 && g < n && ox + u.rows[r] < f[g]) return false; } }
+    else for (let c = 0; c < u.cols.length; c++) { const g = ox + c; if (g >= 0 && g < n && oy + u.cols[c] < f[g]) return false; }
+    return true;
+  }
   /** Count overlapping cells (used for coarse tolerance + contact scoring). */
   Grid.prototype.overlap = function (pm, x, y, limit) {
     const v = pm.variants[x & 31], wx = x >> 5, gw = this.words, mw = pm.words, occ = this.occ;
@@ -406,8 +432,10 @@
       if (x < wallCoarse || y < wallCoarse || x >= CW - wallCoarse || y >= CH - wallCoarse) baseCoarse.set(x, y); else baseCoarse.free[y * CW + x] = 1;
     }
     if(job.sheet.remnant){
-      Rose.stamp(baseFine,job.sheet.remnant,fineRes,Math.max(insetPt,halfGapFine/fineRes));
-      Rose.stamp(baseCoarse,job.sheet.remnant,coarseRes,Math.max(insetPt,halfGapFine/fineRes));
+      const pad=Math.max(insetPt,halfGapFine/fineRes);
+      Rose.stamp(baseFine,job.sheet.remnant,fineRes,pad);
+      Rose.stamp(baseCoarse,job.sheet.remnant,coarseRes,pad);
+      baseFine.remnant=remnantFront(job.sheet.remnant,fineRes,outlinePad(pad,erodeFine,fineRes),FW,FH);
     }
     stampFixed(baseFine,job.sheet.fixedPieces,clearancePt,fineRes);
     stampFixed(baseCoarse,job.sheet.fixedPieces,clearancePt,coarseRes);
@@ -436,7 +464,7 @@
         const co = majority(dil.bits, dil.w, dil.h, ratio);
         variants.push({
           angle: a,
-          fine: { bits: dil.bits, w: dil.w, h: dil.h, pm: packShifted(dil.bits, dil.w, dil.h) }, cells: areaOf(dil.bits),
+          fine: { bits: dil.bits, w: dil.w, h: dil.h, pm: fineMask(dil, rot, erodeFine) }, cells: areaOf(dil.bits),
           solid: { bits: rot.bits, w: rot.w, h: rot.h, cx: rot.cx + halfGapFine - erodeFine, cy: rot.cy + halfGapFine - erodeFine },
           ringFine: packShifted(rg.bits, rg.w, rg.h), ringPad: Math.max(2, Math.round(2 * fineRes)),
           coarse: { pm: packShifted(co.bits, co.w, co.h), w: co.w, h: co.h }
@@ -497,7 +525,7 @@
           if (!dil.w || !areaOf(dil.bits)) continue;
           const rg = ring(dil.bits, dil.w, dil.h, Math.max(2, Math.round(2 * fineRes)));
           const co = majority(dil.bits, dil.w, dil.h, ratio);
-          variants.push({ angle: a, fine: { bits: dil.bits, w: dil.w, h: dil.h, pm: packShifted(dil.bits, dil.w, dil.h) }, cells: areaOf(dil.bits), solid: { bits: rot.bits, w: rot.w, h: rot.h, cx: rot.cx + halfGapFine - erodeFine, cy: rot.cy + halfGapFine - erodeFine }, ringFine: packShifted(rg.bits, rg.w, rg.h), ringPad: Math.max(2, Math.round(2 * fineRes)), coarse: { pm: packShifted(co.bits, co.w, co.h), w: co.w, h: co.h } });
+          variants.push({ angle: a, fine: { bits: dil.bits, w: dil.w, h: dil.h, pm: fineMask(dil, rot, erodeFine) }, cells: areaOf(dil.bits), solid: { bits: rot.bits, w: rot.w, h: rot.h, cx: rot.cx + halfGapFine - erodeFine, cy: rot.cy + halfGapFine - erodeFine }, ringFine: packShifted(rg.bits, rg.w, rg.h), ringPad: Math.max(2, Math.round(2 * fineRes)), coarse: { pm: packShifted(co.bits, co.w, co.h), w: co.w, h: co.h } });
         }
         const pos = await measuredSearch({ variants }, fine, coarse, ratio, 0.35, 0, random, 0, 0, best.stripPacked ? stripOf(best.rec) : null);
         if (!pos) continue;
@@ -533,7 +561,7 @@
             if (!dil.w || !areaOf(dil.bits)) { p._v15.set(a, null); continue; }
             const rg = ring(dil.bits, dil.w, dil.h, Math.max(2, Math.round(2 * fineRes)));
             const co = majority(dil.bits, dil.w, dil.h, ratio);
-            p._v15.set(a, { angle: a, fine: { bits: dil.bits, w: dil.w, h: dil.h, pm: packShifted(dil.bits, dil.w, dil.h) }, cells: areaOf(dil.bits), solid: { bits: rot.bits, w: rot.w, h: rot.h, cx: rot.cx + halfGapFine - erodeFine, cy: rot.cy + halfGapFine - erodeFine }, ringFine: packShifted(rg.bits, rg.w, rg.h), ringPad: Math.max(2, Math.round(2 * fineRes)), coarse: { pm: packShifted(co.bits, co.w, co.h), w: co.w, h: co.h } });
+            p._v15.set(a, { angle: a, fine: { bits: dil.bits, w: dil.w, h: dil.h, pm: fineMask(dil, rot, erodeFine) }, cells: areaOf(dil.bits), solid: { bits: rot.bits, w: rot.w, h: rot.h, cx: rot.cx + halfGapFine - erodeFine, cy: rot.cy + halfGapFine - erodeFine }, ringFine: packShifted(rg.bits, rg.w, rg.h), ringPad: Math.max(2, Math.round(2 * fineRes)), coarse: { pm: packShifted(co.bits, co.w, co.h), w: co.w, h: co.h } });
           }
           const v = p._v15.get(a); if (v) out.push(v);
         }
@@ -1379,10 +1407,11 @@
     const FW = Math.round(sheet.wPt * fineRes), FH = Math.round(sheet.hPt * fineRes);
     const insetPt = sheet.insetPt == null ? 1.5 : +sheet.insetPt;
     const halfGap = clearancePt >= 0 ? Math.ceil(clearancePt / 2 * fineRes) : 0;
+    const erodeFine = clearancePt < 0 ? Math.round(-clearancePt / 2 * fineRes) : 0;
     const wall = Math.round(insetPt * fineRes) + halfGap;
     const g = new Grid(FW, FH);
     for (let y = 0; y < FH; y++) for (let x = 0; x < FW; x++) { if (x < wall || y < wall || x >= FW - wall || y >= FH - wall) g.set(x, y); else g.free[y * FW + x] = 1; }
-    if(sheet.remnant)Rose.stamp(g,sheet.remnant,fineRes,Math.max(insetPt,halfGap/fineRes));
+    if(sheet.remnant){const pad=Math.max(insetPt,halfGap/fineRes);Rose.stamp(g,sheet.remnant,fineRes,pad);g.remnant=remnantFront(sheet.remnant,fineRes,outlinePad(pad,erodeFine,fineRes),FW,FH);}
     stampFixed(g,sheet.fixedPieces,clearancePt,fineRes);
     g.buildSAT(); g.fineRes = fineRes; g.usableCells = g.freeCells();
     return g;
@@ -1402,7 +1431,7 @@
     if (!rot.w) return null;
     const dil = erodeFine ? erode(rot.bits, rot.w, rot.h, erodeFine) : dilate(rot.bits, rot.w, rot.h, halfGap);
     if (!dil.w || !areaOf(dil.bits)) return null;
-    return { angle, fine: { bits: dil.bits, w: dil.w, h: dil.h, pm: packShifted(dil.bits, dil.w, dil.h) }, solid: { w: rot.w, h: rot.h, cx: rot.cx + halfGap - erodeFine, cy: rot.cy + halfGap - erodeFine }, cells: areaOf(rot.bits) };
+    return { angle, fine: { bits: dil.bits, w: dil.w, h: dil.h, pm: fineMask(dil, rot, erodeFine) }, solid: { w: rot.w, h: rot.h, cx: rot.cx + halfGap - erodeFine, cy: rot.cy + halfGap - erodeFine }, cells: areaOf(rot.bits) };
   }
   /** Try a requested centre (pt, y-down); if it collides, slide to the nearest legal spot within snapPt. */
   function tryPlace(grid, v, cxPt, cyPt, snapPt) {

@@ -626,7 +626,7 @@ Any of: a hydration shortfall, the station down (heartbeat), cloud offline, a sh
 
 ### 10.3 Re-validation
 
-Before engraving and again before commit, every order's `update_timestamp` is re-read through `orders.detail`. A changed order re-runs interpretation and classification and invalidates any fitted or approved placement (the reviewer sees old and new text side by side). A vanished order (shipped, cancelled, refunded) is dropped from the set with a red line and its pieces are marked "order gone" on the sheet report.
+Before engraving and again before commit, every order's `update_timestamp` is re-read through `orders.detail`. A changed order re-runs interpretation and classification and invalidates any fitted or approved placement (the reviewer sees old and new text side by side). A vanished order (shipped, cancelled, refunded) is dropped from the set with a red line and its pieces are marked "order gone" on the sheet report. An order found gone is not read again, and neither is an order already committed: it is cut and design-complete at the station, so a later Etsy update such as its shipping changes nothing here.
 
 ### 10.4 Undo
 

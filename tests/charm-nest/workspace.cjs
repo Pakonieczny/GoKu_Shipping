@@ -45,6 +45,8 @@ function context() {
     const navigator = {};
     const S = {settings:{sandbox:'on',pollMinutes:10,runMode:'manual'},cloud:{ok:false},sources:[],poolSources:{},unassigned:[],sheets:{gold:{metal:'gold',active:0,charms:[],placements:[],status:'idle',cardEl:{node:true}}},mode:'nest'};
     S.sheets.gold.pages=[S.sheets.gold];
+    // the page fixes its mode when it loads; the tests below flip it as a reload into the other mode would
+    let WORKSPACE_SANDBOX = S.settings.sandbox === 'on';
     const METALS=[{key:'gold'}];
     const B={run:null,orders:{rows:[],byKey:new Map()},pool:{rows:new Map()},sets:new Map(),engrave:{items:new Map()},review:{items:[]}};
     const allSheets=()=>METALS.flatMap(m=>S.sheets[m.key].pages);
@@ -59,7 +61,7 @@ function context() {
     const O={lineKey:(o,l)=>o.receiptId+'/'+l.transactionId,stepIndex:s=>['pull','pool','nest','checkpoint','engrave'].indexOf(s)};
     const Sandbox={on:()=>S.settings.sandbox==='on'};
     const DesignLink={ensure:async()=>{},etsyBudgetOk:()=>true,meter(){},call:async()=>{polled++;return {total:0,hydrated:0,orders:[]};}};
-    const Pool={repairRecoveredGeometry:async()=>0};const Master={load:async()=>{}}; const LiveNest={add:async()=>{}};
+    const Pool={repairRecoveredGeometry:async()=>0};const Master={load:async()=>{}}; const LiveNest={add:async()=>{}}; const ListMedia={prepare(){}};
     const apiCalls=[];const api=async(name,body)=>{apiCalls.push(body);return {run:null};};
     const toast=()=>{},notifyPerson=()=>{},refreshAllCards=()=>{},renderRail=()=>{},updateTopSub=()=>{};
     const setMode=m=>{S.mode=m;};
@@ -136,7 +138,7 @@ function context() {
     assert.equal(S.sheets.gold.charms[0].bits[2],1);assert.equal(S.sheets.gold.placements[0].angle,30);
     assert.equal(S.sheets.gold.outputs.previewPng.size,7);assert.equal(parsed,1);
     assert.equal(B.run.arrivalBusy,false);assert.equal(B.run.status,'stopped');assert.equal(B.run.step,'engrave');
-    S.settings.sandbox='off';assert.equal(await Session.restore(),false,'production must not restore sandbox work');S.settings.sandbox='on';
+    S.settings.sandbox='off';WORKSPACE_SANDBOX=false;assert.equal(await Session.restore(),false,'production must not restore sandbox work');S.settings.sandbox='on';WORKSPACE_SANDBOX=true;
   })()`, c);
   await vm.runInContext(`(async()=>{
     B.run.status='review';
@@ -157,12 +159,16 @@ function context() {
     S.settings.pollMinutes=15;Arrivals.start();assert(Arrivals.state().nextCheck>=Date.now()+899000);
     Arrivals.state().seen={'old':Date.now()-25*3600000,'two-hours':Date.now()-2*3600000,'recent':Date.now()-1000};Arrivals.paint();
     assert.match(document.getElementById('arrivalCounter').textContent,/24h 2 · 1h 1/);
+    Arrivals.state().seen.ancient=Date.now()-50*86400000;Arrivals.state().recorded={ancient:true};
+    await Arrivals.record([{receiptId:'300',createTs:30}]);
+    assert.equal(Arrivals.state().seen.ancient,undefined,'first-arrival times older than 45 days are dropped');assert.equal(Arrivals.state().recorded.ancient,undefined);
+    assert(Arrivals.state().seen['300']&&Arrivals.state().seen.recent,'current ones are kept');
     await Session.flush();
   })()`, c);
   c.ordersLogic = require('../../charm-nest-orders.js');
   vm.runInContext(part('LiveNest', '/* ═══ 25').replace('const LiveNest = window.LiveNest =','const RealLiveNest = window.LiveNest ='),c);
   await vm.runInContext(`(async()=>{
-    O.kinGroups=ordersLogic.kinGroups;
+    O.kinGroups=ordersLogic.kinGroups;O.FAST_MATERIALS=ordersLogic.FAST_MATERIALS;
     const force=Gate.state();force.forceFill={};
     B.run={runId:'run-live',status:'review',step:'engrave',sheets:{'sheet-first':{},'sheet-second':{}}};
     S.settings.maxFill=.74;S.settings.optimizeAt=85;
@@ -181,22 +187,32 @@ function context() {
     Pool.addAll=async()=>{activePage('gold').charms.push({id:'new',poolId:'pn',orderDate:3,areaPt2:10});activePage('gold').placements=[];};
     const sleep=async()=>{},agent=()=>{};
     const starts=[];
-    const startNest=p=>{starts.push(p.charms.map(c=>({...c})));p.status='complete';p.dirty=false;p.placements=p.charms.map(c=>({id:c.id}));};
+    const activeCharms=p=>p.charms;
+    // the page's startNest prepares a run's sheet first, which is where earlier positions become pins
+    const startNest=p=>{RealLiveNest.prepareSheet(p);starts.push(p.charms.map(c=>({...c})));p.status='complete';p.dirty=false;p.placements=p.charms.map(c=>({id:c.id,...(c.pinned||{})}));};
   `,c);
   await vm.runInContext(`(async()=>{
     await RealLiveNest.add(B.run);
     assert.equal(starts.length,1);assert.equal(starts[0][0].pinned.angle,30,'incremental intake retains previous placement before pooling dirties the sheet');
-    assert.equal(rewriteCount,1,'approved back is regenerated without losing approval');
+    assert.equal(S.sheets.gold.appendOnly,true,'arrivals fill the gaps around the saved layout');
+    assert.equal(rewriteCount,0,'an approved back stays as written: appending moves no earlier piece');
     const first=S.sheets.gold;
     first.charms=[{id:'c1',poolId:'p1',orderDate:1,areaPt2:10,arrivalPin:true,pinned:{cxPt:1,cyPt:1,angle:0}}];
     first.placements=[{id:'c1',cxPt:1,cyPt:1,angle:0}];
-    first.pages.push({metal:'gold',runId:'run-live',sheetId:'sheet-second',fileBase:'second',group:'gold',status:'complete',dirty:false,charms:[{id:'c2',poolId:'p2',orderDate:2,areaPt2:10}],placements:[{id:'c2'}]});
+    first.pages.push({metal:'gold',runId:'run-live',sheetId:'sheet-second',fileBase:'second',group:'gold',status:'complete',dirty:false,charms:[{id:'c2',poolId:'p2',orderDate:2,areaPt2:10}],placements:[{id:'c2',cxPt:5,cyPt:5,angle:90}]});
     S.cloud.ok=true;
+    const second=first.pages[1];
     await RealLiveNest.add(B.run);
-    assert.equal(starts[1].length,3,'repack sees both earlier sheets and the new piece');
-    assert.equal(starts[1][0].pinned,null,'automatic pins released before multi-sheet optimization');
-    assert(apiCalls.some(x=>x.op==='archiveEmptySheet'&&x.id==='sheet-second'),'emptied overflow record retired');
-    assert.equal(B.run.sheets['sheet-second'],undefined);
+    assert.deepEqual(starts[1].map(c=>c.id),['c1','new'],'arrivals fill the earliest open sheet first, not the newest page');
+    assert.equal(starts[1][0].pinned.angle,0,'that sheet keeps its saved positions');
+    assert.deepEqual(second.charms.map(c=>c.id),['c2'],'the newer sheet is left as it was');
+    assert(!apiCalls.some(x=>x.op==='archiveEmptySheet'),'no sheet is emptied or retired by an arrival');
+    assert.deepEqual(Object.keys(B.run.sheets),['sheet-first','sheet-second']);
+    // once the earlier sheet is full, arrivals go on to the next one
+    first.releaseFull=true;Pool.addAll=async()=>{activePage('gold').charms.push({id:'later',poolId:'pl',orderDate:4,areaPt2:10});};
+    await RealLiveNest.add(B.run);
+    assert.deepEqual(starts[2].map(c=>c.id),['c2','later'],'a full sheet takes no more; the next open sheet does');
+    first.releaseFull=false;
     await Session.flush();
   })()`,c);
   await vm.runInContext(`(async()=>{
@@ -222,5 +238,5 @@ function context() {
     assert.equal(apiCalls.filter(x=>x.op==='archiveEmptySheet'&&x.id==='interrupted-sheet').length,1);
     await Session.flush();
   })()`,c);
-  console.log('workspace OK · layouts, typed geometry, approval links, pending intake, duplicate receipts, dates, cadence, rolling counts, live repack, mixed-material sets');
+  console.log('workspace OK · layouts, typed geometry, approval links, pending intake, duplicate receipts, dates, cadence, rolling counts, live append to the earliest open sheet, mixed-material sets');
 })().catch(e=>{console.error(e);process.exitCode=1;});

@@ -1,0 +1,111 @@
+# Charm Sorter process audit: a simulated day of 100 Etsy orders
+
+Date: 2026-09-23. Scope: Etsy intake at the Design Station, the Charm Sorter's Auto run (pull, claim, pool, plan, nest, checkpoint, engrave, revalidate, labels, commit, complete), the set release rules, and the server functions behind them. Rose Gold charm picking on partial sheets was handled separately in the "Better charm picks for partial sheets" thread and was not changed here.
+
+## Bottom line
+
+- **The biggest problem: Gold and Silver sheets stopped short of full and were never cut.** It had two causes. Once an arriving order missed the gaps on a sheet near 60% full, a new sheet opened and the first one never took another order. And since a change on September 22, a sheet below the 74% target could never count as full, however its orders were arranged. In the first simulated days, no Gold or Silver set was released at all, so the oldest orders of the day never reached the laser. Both are fixed.
+- **Once sets started to be released, the run could stop for the rest of the day.** Two faults did this, and both are fixed. When one order has two metals, the sorter links those metals for the whole run. After a Rose Gold sheet was released, the next order opened an empty Rose Gold sheet that never started, and every check after that stopped with "A sheet is still being written". Separately, a charm with nothing to engrave that joined a sheet just before its set was committed was read as plain by the sorter but as waiting on engraving by the server. The station marked the set's orders done, the server refused to record the set as complete, and every later set was refused.
+- **Since September 22, a master indexed in the browser kept each charm's SKU label as part of the charm.** The label went into the charm's design file, onto every sheet beside the charm, and into the laser file, and it made the sheet's .dxf export fail. This is fixed for every master indexed from now on. If a master was indexed between 12:58 PM EDT on September 22 and this release, it needs indexing again (see "Found, but not changed").
+- **A customer's changed personalization would have been engraved with the old words.** The Engrave screen showed the new words, but the back file was fitted with the first words it had read. This is fixed.
+- A backlog at the first check of the morning tripped the Design Station's own Etsy watchdog and merged nothing. A single failed Etsy call also broke every later Etsy call until the page was reloaded. Both are fixed.
+- A cancelled or refunded order held its sheet back for good, and it was read from Etsy again at every check all day. An order already cut and committed was also read again at every check: each read used up the hourly Etsy allowance that stops the run, and a later Etsy update, such as the order shipping, marked the finished order gone or sent it back to review. All three are fixed.
+- **A Rose Gold charm could be placed on stock that an earlier green line had already cut away.** The nester packs each charm with a slightly shrunk outline so that neighbours can sit close, and a thin part such as a jump ring disappears from that outline. The final check caught it and held the sheet until a person arranged it again. In a stress test of partial Rose Gold sheets, 31 of 120 were held this way before the fix and none of 160 after, with about as many charms placed. This is fixed.
+- Eight smaller process faults are fixed: set numbers, undo, sheet numbering, abandoning a run, sandbox writes, browser storage growth, a planner default, and the Rose Gold cut prompt. They are listed below.
+- The core Charm Sorter tests were failing on main before this work. They pass now, with a new test for each fix.
+- **In the final simulated day, every check of the process passed.** Four sets were released and committed, 55 of the 100 orders were committed, the run never stopped, and every sheet passed its check. That includes a Rose Gold sheet laid out on the stock left after the evening cut, the case that was held before this release.
+
+## How the process is meant to work
+
+1. **Etsy intake.** Every 10 minutes (configurable up to 24 hours), the sorter asks the Design Station, which it runs in a frame, for open Etsy orders. The station reads them with its own sign-in, cache and rate watchdog. The server keeps an arrivals ledger so that no order is counted or pulled twice.
+2. **Pull and claim.** Each new order line is read for its design SKU, metal (Gold Filled, Sterling Silver, Rose Gold, 10K or 14K solid), quantity and personalization, then claimed so that the other bench cannot take it.
+3. **Pool and plan.** Each piece becomes a pool record with its artwork and geometry. The planner groups the pieces by metal. Orders travel whole: an order's pieces always share a sheet.
+4. **Nest.** Arrivals fill the gaps of the metal's open sheet without moving pieces that are already placed, because an engraved back belongs to its piece. Gold and Silver fill the earliest open sheet. Rose Gold fills the newest sheet around its saved green cut line.
+5. **Checkpoint.** Every sheet is verified: no overlaps, inside the stock, and every piece accounted for.
+6. **Engrave.** Personalized lines get their words read and fitted to the back of the piece. A person approves each engraving before its back file is written. A changed order waits in Review until a person accepts it.
+7. **Release.** A Gold or Silver sheet is released only when it is full. Full means it reached the 80% ceiling, or a whole order that would fit an empty sheet no longer fits on it: at or above the 74% target, or below it once a fresh arrangement of the whole sheet has run to the end. Rose Gold joins only even-numbered sets. Solid gold stays out unless it is selected for the run. Released sheets form one dispatch set per run, numbered per day.
+8. **Labels, commit and complete.** QR labels are saved for the set. The Design Station marks the set's orders design-complete, and the set record is closed. A run that keeps taking orders after a commit puts its next full sheets into a new set with the next number.
+9. **Cut.** The sheets of a committed set go to the laser. For Rose Gold, a person records the physical cut, which greys out those charms and keeps the rest of the sheet for the next layout.
+
+## How the day was simulated
+
+The real Charm Sorter and Design Station pages ran in a browser against a stand-in for Etsy and Firestore, on a simulated clock set to the shop's Toronto time, so sets were dated and numbered by the shop's day. The sorter checked for new orders every 10 minutes for 24 hours in Auto mode. A simulated person approved engravings and accepted changed orders between 7 AM and 11 PM, and recorded the Rose Gold cut at 9 PM. The final day had 100 orders (133 lines, 150 pieces): about 44% Gold Filled, 35% Silver and 18% Rose Gold, two 14K solid pieces, two lines with an unclear metal, four lines with an SKU that has no design, and 38 personalized lines. One customer changed their personalization, and orders were cancelled a few hours after they came in: across the last two runs, one before its sheet was cut and one after.
+
+At the end, a script compared the outcome with the intended process:
+
+- every order reached the sorter exactly once;
+- each line was read as its ordered metal;
+- only full Gold and Silver sheets were released;
+- Rose Gold went only to even-numbered sets;
+- solid gold stayed out unless it was selected;
+- set numbers never repeated;
+- no piece sat on two released sheets;
+- every committed order had all of its pieces on committed sheets, with the right engraving;
+- cancelled orders were never committed, unless they were cut before the cancel;
+- no committed order was read from Etsy again and marked gone;
+- every arranged sheet passed its check.
+
+## What the simulated day showed
+
+**Before the fixes.** On the code that was on main, each Gold and Silver sheet stopped taking orders near 60% full and a new sheet opened beside it. By 5 PM, 54 orders had come in and nothing had been released. With the first fixes in place, the sheets filled to 67–70% but still never counted as full. After 24 hours, all 100 orders had reached the sorter and 130 lines were waiting on sheets, but no set had been released and none of the 100 orders was committed. The two cancelled orders had been read from Etsy 200 times, and the changed order's engraving still read LILY, the words the customer had replaced.
+
+**After the fixes.** The final run started at 12:14 PM. The Gold Filled sheet counted as full at 70%, after a fresh arrangement of the whole sheet still left the next order out, and was committed as Set 1 at 8:18 PM. Rose Gold followed as Set 2 at 8:30 PM, and its cut was recorded at 9 PM. The Silver sheet was full at 74% by the next morning and was committed as Set 1 of September 24 at 8:47 AM, followed by a second Rose Gold set on the stock left after the first cut. In all, 55 of the 100 orders were committed, a median of 6.3 hours after they were placed. The other 45 are waiting on sheets that were not full at the end of the run (Gold 58%, Silver 35%, Rose Gold 12%), or are held for a person: four lines whose SKU has no design, two lines with an unclear metal, and two orders with a 14K solid piece, which waits until solid gold is selected for a run. The run never stopped, no order was counted twice, every sheet passed its check, and the changed order was engraved with its new words. The order cancelled after its sheet was cut stayed committed. In the run before it, the order cancelled before its sheet was cut came off the sheet and was read from Etsy only once more.
+
+**Faults the full-day runs caught along the way.** Some faults show only once sets are released, so the day was run again after each fix. Those later runs found the empty linked-metal sheet, the set refused after the station commit, a Rose Gold sheet held because a charm's jump ring sat on stock already cut, and a committed order that a later Etsy read marked gone. All four are in the table below. They also caught a stall in this work's own first fix for cancelled orders: the sheet their pieces came off waited to be arranged again and held up every later arrival. That fix never reached the live site. Each fault was fixed and given a test, and then the whole day was run again.
+
+## What was fixed
+
+| Problem found | What it did | Fix | Test |
+|---|---|---|---|
+| A Gold or Silver sheet stopped taking orders once one arrival missed its gaps | The sheet stayed short of full, so it was never released and its orders, the oldest, were never cut | Arrivals go to the run's earliest open sheet. A miss below the 74% target gets one fresh arrangement of the whole sheet before the order moves on. Overflow goes to the next open sheet in line. | `workspace.cjs`, `manual-intake.cjs` |
+| A September 22 change to the whole-sheet search | A fresh arrangement of a whole sheet now always runs its full time budget, but the full-sheet rule only counted searches that ended early. A sheet below 74% whose fresh arrangement still left an order out could never count as full, so no Gold or Silver set was released all day. | A search that runs to the end of its budget counts as finished. The short gap-only search of an arrival still cannot release a partial sheet. | `manual-intake.cjs` |
+| After a set was released, an order linked to the released metal | Metals that share an order are linked for the whole run, so an order for one brings the other into the intake. Once the other metal's sheet had been released, the intake opened an empty sheet for it. The empty sheet waited to nest with nothing to nest, and every later check stopped the run with "A sheet is still being written". Pressing Resume did not help. | A metal that brings nothing new gets no new sheet, and a sheet with nothing to nest no longer waits in the nesting queue | `bridge-append.cjs` |
+| A charm with nothing to engrave, added to a sheet just before its set was committed | The sorter read it as plain, but the server, reading the run's saved lines, read it as waiting on engraving. The station marked the set's orders done, the server refused to record the set as complete, every later set was refused, and the run stopped at every check. | The run's saved lines say when a line has nothing to engrave, the run is saved before the station commit, and a commit whose record did not save is saved again before the next set is numbered | `laser-readiness.cjs`, `releases.cjs` |
+| SKU labels in design files (since September 22) | The charm grouping moved to a background worker, and labels are matched to charms by identity, so a master indexed in the browser never had its labels taken off. Each design file kept its SKU text: it was drawn beside the charm on every sheet (the grey bars in the sheet previews), used sheet space, went into the laser .ai, and made the sheet's .dxf export fail. | The page takes its own copies of the artwork back from the worker, so labels come off as they did before. A design file written in that window stays as it is until its master is indexed again, and the sorter now says so in its activity log when it loads one. | `bridge-units.cjs` |
+| A customer's changed personalization | After a person accepted the change, the Engrave screen showed the new words, but the back was fitted with the first words it had read | A fresh reading replaces the kept line split, size and decision | `engraving-review.cjs` |
+| A backlog of 90 open orders at the first check | The station read 59, its watchdog braked at the 61st Etsy call, and the check merged nothing | Etsy reads wait for room under the watchdog's limits (60 a minute, 150 in 10 minutes). All 90 were read with no brake. | `etsy-pacing.cjs` |
+| One failed Etsy call | Every later Etsy call on the station failed without being tried, until a reload | A failure fails only its own request | `etsy-pacing.cjs` |
+| A cancelled or refunded order | Its pieces stayed on a filling sheet and blocked that sheet's release for good. It was also read from Etsy again at every check, all day. | Its pieces come off every sheet that is still filling, and that sheet is arranged again. A piece already on a released sheet, or inside a saved Rose Gold green line, is cut and set aside, and no longer waits on an engraving decision. An order found gone is not read again. | `etsy-production.cjs`, `process-completion.cjs`, `laser-readiness.cjs` |
+| An order already cut and committed | The station lists a committed order as no longer open, so every later check read it from Etsy again, one call each towards the hourly limit that stops the run. When Etsy later updated it, for example when it shipped, the sorter marked the finished order gone, or sent it back to review and its engraving back to the Engrave screen. | A committed order is finished for the sorter and is not read from Etsy again | `etsy-production.cjs` |
+| A Rose Gold charm with a thin part, next to stock already cut | The nester packs with outlines shrunk by the negative clearance, so that neighbours can sit close. A thin part such as a jump ring vanishes from the shrunk outline, so the nester could put it on stock that an earlier green line had cut away. The final check caught this and held the sheet until a person arranged it again. | Stock already cut is tested against each charm's whole outline, in every search, append and manual placement | `rose-thin-parts.cjs` |
+| A run that kept releasing after a commit | The next set got the committed set's number back and could overwrite its record | The server numbers the follow-on set once, with the next number of the day | `functions.cjs` |
+| Undoing a set | Every committed order reopened, and the station could fall back to its last completed batch. An undone order could not be committed again. | Only the set's own orders reopen, and an undone order commits normally | `releases.cjs`, `station-commits.cjs` |
+| Sheet numbers within a set | A number could repeat after a sheet left the set | The next number follows the highest in use | `releases.cjs` |
+| Abandoning a run | Pieces already cut in a committed set were marked abandoned | Only unfinished pieces are given up | `releases.cjs` |
+| The sandbox | A rehearsal wrote charm names, use counts and nesting calibration to the shared production records | Sandbox runs read them but no longer write them | `functions.cjs` |
+| Arrival times in the browser | The list grew by every order ever seen | Entries older than 45 days are dropped | `workspace.cjs` |
+| The release planner | An omitted late-days setting read as NaN, so no order was ever due. The sorter always passes the setting, so this was latent. | It defaults to two days | `bridge-units.cjs` |
+| The Rose Gold cut prompt | It asked only whether the layout was cut | It asks whether the layout and its green line were cut, and says what recording the cut does | wording only |
+| The docs | They gave a 74% ceiling, a 5-minute intake minimum and a newest-sheet-only rule, which the code no longer follows | They now match the code | none needed |
+| The core test command | `npm run test:charm-nest` was red on main | Updated to the current design; all four suites pass | itself |
+
+## Screen fixes
+
+- The run banner read "Processing complete · pending sheets or release" whenever nothing needed a person. It now says how many order lines wait on sheets that are not released yet.
+- The grey bars beside the charms in the sheet previews, the Library and the Review cards were the SKU labels described above. Masters indexed from now on do not have them.
+- The Rose Gold cut prompt names the green line and says what recording the cut does (listed above).
+
+## Found, but not changed
+
+| Finding | Why it was left | Suggested next step |
+|---|---|---|
+| A Gold or Silver sheet is released only when it is full. An order that is due to ship waits on a partial sheet like any other, and no button releases a partial Gold or Silver sheet by hand ("Cut it anyway" belongs to the older release rules and no longer shows). In the final simulated day, the Silver sheet took until 8:47 the next morning to fill, so the day's first Silver order waited almost 20 hours, and Silver orders waited about 15 hours at the median. | The release rules say this on purpose: Gold Filled and Silver get no urgency, mixed-order or manual exception. | If a quiet day ever leaves a due order waiting, decide whether a due order, or a person, may release a partial sheet. That is a policy change, so it was not made here. |
+| Each arrival that misses a sheet below target costs one full rearrangement, 180 seconds in production. | That time buys the fill that lets the sheet release. | Watch the Nest tab on a busy morning. If it lags, lower the search budget in Settings. |
+| If a master was indexed between 12:58 PM EDT on September 22 and this release, its design files still carry their SKU labels. | They are the shared library's records, and rewriting them means indexing the master again. | In the Library, index each master added in that window again, with "re-index SKUs already held" ticked. When the sorter loads one of these design files, its activity log names the SKU. |
+| Held or refused orders are cut with their set but stay open at the station. They are kept from a second cut only by the carry record in the workspace. | This is the intended design, and the carry record survives a refresh. Losing browser storage between runs is the only gap. | Store the "already cut" mark on the server's pool record as well. |
+| A refused commit is answered from memory when exactly the same orders are committed again in the same run. | This is deliberate, so that a retried commit after a timeout is not doubled. The sorter never re-commits a refused order in the same run. | None needed now. |
+| Sandbox charm renames and master artwork patches still write to the shared library. | These are deliberate operator edits, and the library is shared by design. | None needed. |
+| Server-side nesting is off by default, and its background start is not awaited. | It is unused unless enabled in Settings. | Await the start before enabling it. |
+| The sorter's server functions are protected only by an optional passcode, and they accept any origin. | Changing access control is outside an audit of the process flow. | Set the passcode in Netlify and limit the allowed origin to goldenspike.app. |
+| Some code is unused: the old Auto timer, an empty pause list, and an "isolated" sheet flag that is never set. | Removing it does not change behavior. | Clean it up in a later tidy-up. |
+| 18 older test files in `tests/charm-nest` fail, on main and after this release alike, for reasons unrelated to this audit. A few need packages this environment lacks (a canvas library, WebGPU), `bridge.cjs` and `sandbox.cjs` still expect the release rules from before September 19, and most of the rest load page code that has since been renamed or moved. On main, 62 of 85 test files pass. After this release, 72 of 90 pass, and every file that passed on main still passes. | Rewriting them is a separate job. The suites in `npm run test:charm-nest` pass. | Bring them up to date with the current page code and release policy 2. |
+
+## Earlier requests in this thread
+
+These shipped in the same release: the Refresh History button and the line labels were removed from the Rose Gold timeline, "Prepare Cut Contour" was renamed "Cut Sheet", the timeline now sits above the ruler lined up with the green lines, Cut Sheet is hidden while the sheet is full, and a later green line no longer runs back to the sheet's left edge.
+
+## Re-running the checks
+
+- `npm run test:charm-nest` runs the solver, server-function, workspace and release suites.
+- `node tests/charm-nest/<name>.cjs` runs the individual tests named above.
+- `node tests/charm-nest/day-sim/day.cjs out.json` replays the simulated day (one to two hours; set `ORDERS`, `HOURS`, `SEED` and `FIXTURE_SCALE` to vary it, and `SIM_TZ` for another shop clock), and `node tests/charm-nest/day-sim/analyze.cjs out.json` checks the outcome against the list above. It drives the real pages against stand-ins for Etsy and Firestore, so it proves the process logic, not live Etsy or Firestore behavior.

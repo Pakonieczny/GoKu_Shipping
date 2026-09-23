@@ -100,6 +100,28 @@ const pass = (name) => console.log('  ✓', name);
     // a label shared between two outlines goes to the nearer bottom edge
     { const t = { kind: 'text', str: 'BR-SHR-01', bbox: [100, 80, 130, 86], chars: 9 }; const fake = { segments: [t], nested: [] }; const near = { index: 0, outline: { bbox: [95, 90, 135, 120] }, members: [] }, far = { index: 1, outline: { bbox: [90, 96, 140, 130] }, members: [] }; const r = P.labelCharms(fake, [far, near], { gapPt: 18 }); assert.strictEqual(r.labels.get(0).sku, 'BR-SHR-01'); assert(!r.labels.has(1)); }
     pass('labels in the master');
+    /* ── the grouping worked out in a worker: the page takes its own segments back, so a label still comes off its charm ── */
+    {
+      const plain = p => { const { doc, page, ...rest } = p; return rest; };
+      const across = p => structuredClone(P.groupForTransfer(structuredClone(plain(p)), { minPt: 6 }));   // what postMessage does both ways
+      const pw = await P.parseSource(new Uint8Array(master.bytes), 'master.ai');
+      const gw = P.adoptGrouping(across(pw), pw);
+      const own = new Set(pw.segments.concat(pw.nested));
+      for (const c of gw.charms) assert(own.has(c.outline) || c.outline.synthetic, 'the outline is the page\'s own segment');
+      for (const c of gw.charms) for (const m of c.members) assert(own.has(m) || m.synthetic, 'every member is the page\'s own segment or one the grouping drew');
+      assert(Array.isArray(pw._frames), 'the page keeps the frames the grouping set aside');
+      P.labelCharms(pw, gw.charms, { gapPt: 6.4 * PT });
+      for (const c of gw.charms) assert(!c.members.some(m => m.kind === 'text'), 'no label text stays a member after a worker grouping');
+      const cw = gw.charms.find(c => c.sku === 'BR-TST-01'); P.integrateRings(cw);
+      const sw = await P.parseSource(new Uint8Array(await P.buildSingleCharm(cw, pw)), 'single.ai');
+      assert(!sw.segments.concat(sw.nested).some(s => s.kind === 'text'), 'the design file written after a worker grouping carries no label');
+      // the fault it replaces: copies from the worker never matched the page's labels, and every label stayed on its charm
+      const pb = await P.parseSource(new Uint8Array(master.bytes), 'master.ai');
+      const gb = structuredClone(P.groupCharms(structuredClone(plain(pb)), { minPt: 6 }));
+      P.labelCharms(pb, gb.charms, { gapPt: 6.4 * PT });
+      assert(gb.charms.some(c => c.members.some(m => m.kind === 'text')), 'control: without the hand-back the label stays on the charm');
+    }
+    pass('labels after a worker grouping');
     /* ── extraction: the per-SKU .ai re-parsed equals the master's charm (member count, silhouette hash) ── */
     const c1 = g.charms.find(c => c.sku === 'BR-TST-01');
     await P.buildSilhouettes(parsed, [c1], 6).catch(() => {});   // no canvas in node: silhouettes come from the geometry module below
@@ -240,6 +262,8 @@ const pass = (name) => console.log('  ✓', name);
     assert.deepStrictEqual([...r.take].sort(), ['a', 'b', 'c'], 'exactly one full sheet goes: ' + [...r.take]); assert(r.wait.has('d'), 'the rest waits'); assert.strictEqual(r.materials.silver.full, 1);
     // 3 · a piece that is due forces the partial sheet, and the sheet is then filled as far as it will go
     r = P([L('a', '1', 'silver', 300, 1), L('b', '2', 'silver', 300, 9)], base);
+    const { lateDays, ...noLate } = base;
+    assert.deepStrictEqual([...P([L('a', '1', 'silver', 300, 1)], noLate).take], ['a'], 'with no late-days setting, the two-day default applies (it read as NaN, so nothing was ever due)');
     assert.deepStrictEqual([...r.take].sort(), ['a', 'b'], 'a due piece cuts the sheet and the other piece rides along'); assert(r.materials.silver.partial && /due/.test(r.materials.silver.forcedBy[0]), 'and the sheet is marked partial with the reason: ' + JSON.stringify(r.materials.silver.forcedBy));
     // 4 · slow metals: whatever there is goes, dates unread, on an open day
     r = P([L('a', '1', 'rose', 50, 30)], base);

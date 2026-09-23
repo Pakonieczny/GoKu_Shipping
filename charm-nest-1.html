@@ -1490,19 +1490,19 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-progress.js"></script>
 <script src="charm-nest-operations.js"></script>
 <script src="charm-nest-rose.js?v=20260923-edges"></script>
-<script src="charm-nest-solver.js?v=20260923-line-fit"></script>
+<script src="charm-nest-solver.js?v=20260923-audit"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
-<script src="charm-nest-pdf.js?v=20260921-material"></script>
+<script src="charm-nest-pdf.js?v=20260923-audit"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
 <script src="charm-nest-backs.js"></script>
-<script src="charm-nest-readiness.js"></script>
+<script src="charm-nest-readiness.js?v=20260923-audit"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
-<script src="charm-nest-orders.js?v=20260923-rose-lock"></script>
-<script src="charm-nest-background.js?v=20260923-slim"></script>
+<script src="charm-nest-orders.js?v=20260923-audit"></script>
+<script src="charm-nest-background.js?v=20260923-audit"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
    CHARM NESTING STATION 1 — application
@@ -2288,7 +2288,9 @@ function overflowToNextSheet(sh) {
   sh.movedOn = { n: moving.length, names: moving.map(c => c.name || `#${c.index + 1}`) };
   sh.status = sh.verification && sh.verification.ok ? "complete" : "partial";
   const prim = S.sheets[sh.metal]; const i = prim.pages.indexOf(sh);
-  let next = prim.pages.length-1>i?prim.pages[prim.pages.length-1]:null;
+  // Gold and Silver move on to the next open sheet in line, so a sheet between is not passed over
+  const busy = p => ["nesting", "finishing", "queued"].includes(p.status) || p.persisted&&!p.persistedDone;
+  let next = ["gold","silver"].includes(sh.metal) ? prim.pages.slice(i+1).find(p => !manualSheetClosed(p) && !busy(p)) || null : prim.pages.length-1>i?prim.pages[prim.pages.length-1]:null;
   if (!next || manualSheetClosed(next) || ["nesting", "finishing", "queued"].includes(next.status) || next.persisted&&!next.persistedDone) next = addPage(sh.metal);
   next.intakeAppend=next.placements.length>0;next.appendOnly=next.intakeAppend;
   moving.forEach(c => { if(c.arrivalPin){c.pinned=null;delete c.arrivalPin;} c.metal = sh.metal; next.charms.push(c); });
@@ -2302,6 +2304,18 @@ function overflowToNextSheet(sh) {
   return next;
 }
 function inflatedArea(c) { const g = (+S.settings.clearancePt || 0) / 2; return c.areaPt2 + g * 2 * (c.widthPt + c.heightPt) + Math.PI * g * g; } // silhouette grown by half the clearance
+/* Full, for release: the ceiling is reached, or a whole order that would fit an empty sheet overflows a search that
+   finished (from the 74% target, any search that overflows one). A fresh arrangement of the whole sheet runs its full
+   budget by design, so ending on time is how it finishes. Only trial and stall endings used to count: once that search
+   stopped ending any other way, a sheet whose fresh arrangement still left an order out below 74% could never be full,
+   and its orders were never released. The quick search of an arrival that only tries the gaps still cannot release it. */
+function sheetFull(sh, result, items) {
+  const cap = +S.settings.maxFill || .80, byId = new Map(items.map(c => [c.id, c]));
+  const finished = ["cap", "stalled", "trials", "claude-full", "plateau"].includes(result.endedBy) || result.endedBy === "budget" && sh.intakePhase !== "fill";
+  const overflow = sh.rejects.length > 0 && (result.density + 1e-6 >= Math.min(.74, cap) || finished) &&
+    [...new Set(sh.rejects.map(id => byId.get(id)?.order || id))].some(order => items.filter(c => (c.order || c.id) === order).reduce((n, c) => n + inflatedArea(c), 0) <= result.usablePt2 * cap);
+  return result.endedBy !== "stopped" && !!sh.verification?.ok && sh.placements.length > 0 && (overflow || result.placedPt2 / Math.max(1, result.usablePt2) >= cap - 1e-6);
+}
 function usableArea(sh) {
   const st=stockFor(sh.metal,sh),inset=+S.settings.insetPt||0,clearance=+S.settings.clearancePt||0,ins=inset+Math.max(0,clearance)/2;
   if(sh.roseStock?.profileJson){const key=[sh.roseStock.id,sh.roseStock.revision,inset,clearance].join(':');if(sh._roseUsableKey!==key){sh._roseUsable=CharmNestSolver.makeSheetGrid({...st,insetPt:inset,remnant:JSON.parse(sh.roseStock.profileJson)},clearance,2).usableCells/4;sh._roseUsableKey=key;}return sh._roseUsable;}
@@ -2371,7 +2385,7 @@ function ensureWorkers(sh, n) {
   for (const w of sh.workers.splice(n)) w.terminate();
   while (sh.workers.length < n) {
     const idx = sh.workers.length;
-    const w = new Worker("charm-nest-worker.js?v=20260923-line-fit");
+    const w = new Worker("charm-nest-worker.js?v=20260923-audit");
     w.onmessage = e => onWorkerMessage(sh, e.data, idx);
     w.onerror = e => onWorkerMessage(sh, { type: "error", jobId: sh.jobId + ":" + idx, message: e.message }, idx);
     sh.workers.push(w);
@@ -2555,7 +2569,9 @@ function startNestReady(sh, context) {
     }).catch(e => { sh._operationStarting = false; sh.status = "error"; sh.problem = e.message; renderCard(sh); toast(e.message,"bad"); if(window.RunCtl)RunCtl.onSheetDone(sh,e); });
   }
   const items = activeCharms(sh);
-  if (!items.length) { toast(`${labelOf(sh.metal)}: nothing to nest`, ""); return; }
+  // A sheet with nothing to nest does not stay queued: arrivals wait while a sheet of their material is queued, and an
+  // empty page left queued stopped every later arrival of the run with "A sheet is still being written".
+  if (!items.length) { if (sh.status === "queued") { sh.status = sh.charms.length ? "ready" : "idle"; sh.stage = ""; renderCard(sh); } toast(`${labelOf(sh.metal)}: nothing to nest`, ""); return; }
   const running = allSheets().filter(s => ["nesting", "finishing"].includes(s.status));
   // Rotation searches share a browser-wide memory budget across material cards.
   // Counting finishing sheets also leaves room for verification and export.
@@ -2892,8 +2908,13 @@ async function finishNest(sh, { result, error }) {
   const belowTarget=result.density+1e-6<Math.min(.74,+S.settings.maxFill||.80);
   const needsRepack=!sh.roseProtected && !sh.appendOnly && sh.intakePhase==='fill' && belowTarget &&
     (!sh.intakeOptimized || items.length>=(+S.settings.finalOptimizeCount||85) || result.rejects.length && items.length>(sh.intakeOptimizedCount||0));
-  if(result.endedBy!=='stopped' && needsRepack){
-    sh.optimizationTried=true;sh.intakeForceFinal=true;delete sh.intakeAppend;
+  // An arrival that misses the gaps of a Gold or Silver sheet short of the target gets one fresh arrangement of the whole
+  // sheet before it moves on: the gaps of a saved layout do not show how full the sheet can get. Nothing on an unreleased
+  // sheet is cut yet, and an engraved back belongs to its piece, not to the piece's position. Moving on at once used to
+  // leave the sheet short of full, so it was never released.
+  const appendMissed=sh.appendOnly && !sh.roseProtected && ["gold","silver"].includes(sh.metal) && sh.intakePhase==='fill' && belowTarget && result.rejects.length>0;
+  if(result.endedBy!=='stopped' && (needsRepack || appendMissed)){
+    sh.optimizationTried=true;sh.intakeForceFinal=true;delete sh.intakeAppend;delete sh.appendOnly;
     sh.placements=result.placements;sh.density=result.density;
     sh.liveInfo={placedPt2:result.placedPt2,usablePt2:result.usablePt2,freePt2:result.freePt2,pocket:result.pocket};
     sh.status='ready';log(sh,'Below 74%: improving the saved layout before accepting this batch');startNest(sh);return;
@@ -2955,10 +2976,7 @@ async function finishNest(sh, { result, error }) {
     sh.outputs = { ai: aiBytes, labelled: labelledBytes, report, previewPng: await previewPng(sh) };
     sh.progress = [4, 5]; sh.stage = "Saving to the cloud…"; renderProgress(sh);
     // Overflow after a complete search closes a sheet; merely placing a small queue does not.
-    sh.releaseFull = result.endedBy !== "stopped" && sh.verification.ok && sh.placements.length > 0 &&
-      ((sh.rejects.length > 0 && (result.density+1e-6>=Math.min(.74,+S.settings.maxFill||.80) || ["cap", "stalled", "trials", "claude-full", "plateau"].includes(result.endedBy)) &&
-        [...new Set(sh.rejects.map(id => byId.get(id)?.order || id))].some(order => items.filter(c => (c.order || c.id) === order).reduce((n,c) => n + inflatedArea(c), 0) <= result.usablePt2 * (+S.settings.maxFill || .80))) ||
-        (result.placedPt2 / Math.max(1, result.usablePt2)) >= (+S.settings.maxFill || .80) - 1e-6);
+    sh.releaseFull = sheetFull(sh, result, items);
     if(sh.intakePhase!=='fill' && result.endedBy!=='stopped' && sh.verification.ok){sh.intakeOptimized=true;sh.intakeOptimizedCount=items.length;}
     delete sh.intakeForceFinal;
     sh.intakeFinalized = sh.intakePhase === "final" && result.endedBy !== "stopped" && sh.verification.ok && sh.placements.length > 0;
@@ -3720,7 +3738,7 @@ function compareGPUSpeed() {
   const sh=allSheets().filter(sh=>activeCharms(sh).length).sort((a,b)=>activeCharms(b).length-activeCharms(a).length)[0];
   const job=sh?buildJob(sh):null,id=uid();
   let worker;
-  try{worker=new Worker('charm-nest-worker.js?v=20260923-line-fit');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
+  try{worker=new Worker('charm-nest-worker.js?v=20260923-audit');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
   gpuComparison=worker;button.textContent="Cancel comparison";output.textContent="Checking GPU availability…";
   const finish=text=>{if(gpuComparison!==worker)return;output.textContent=text;button.textContent="Compare speed";worker.terminate();gpuComparison=null;};
   worker.onmessage=({data:m})=>{
@@ -3824,8 +3842,8 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260923-rose-lock"></script>
-<script src="charm-nest-rose-ui.js?v=20260923-edges"></script>
+<script src="charm-nest-bridge.js?v=20260923-audit"></script>
+<script src="charm-nest-rose-ui.js?v=20260923-audit"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin" aria-labelledby="owTitle">

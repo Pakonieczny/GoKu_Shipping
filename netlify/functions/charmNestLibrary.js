@@ -178,6 +178,8 @@ async function op_lookupCharms(b) {
   return { charms: out };
 }
 async function op_putCharms(b) {
+  // the charm library is shared with production and only read by the sandbox: a rehearsal must not rename or count
+  if (PREFIX) return { ok: true, count: 0, skipped: "the sandbox reads the shared charm library and does not write to it" };
   const rows = (b.charms || []).filter(c => c && isHash(c.hash)).slice(0, MAX_PUT);
   let batch = db.batch(), n = 0, count = 0;
   for (const c of rows) {
@@ -335,6 +337,8 @@ async function op_deleteSheet(b) {
    nothing has nothing to teach, so it is skipped, not refused: an error here used to travel all the way up and stop a run
    whose sheets were already written, verified and saved. */
 async function op_putCalibration(b) {
+  // calibration steers production nesting; a rehearsal's sheets are not evidence for it
+  if (PREFIX) return { ok: true, skipped: "sandbox sheets are not calibration evidence" };
   const r = b.row || {};
   if (!(num(r.density) > 0) || !(num(r.count) > 0)) return { ok: true, skipped: "nothing to learn from this sheet" };
   await db.collection(CAL).add({ sheetId: str(r.sheetId, 80), metal: str(r.metal, 12), count: num(r.count), cv: num(r.cv), largestFrac: num(r.largestFrac), density: num(r.density), placedAll: !!r.placedAll, clearancePt: num(r.clearancePt), createdAt: FV.serverTimestamp() });
@@ -638,9 +642,17 @@ async function op_setAllocate(b) {
   /* Idempotent per (run, kin group): a run's SS set and its GF+14K set are two sets with two numbers, and asking for
      either again returns the one already allocated. Every set of the day counts up the same day counter, so the second
      run of the day is Set-2 whatever the first run made. Nothing is ever renumbered. */
-  const key = group ? `${runId}|${group}` : runId;
+  /* After a commit the run's next dispatch set names the committed set it follows, so it is numbered afresh (once, however
+     often it is asked for) instead of being handed the set that was already cut. */
+  const after = b.after == null || b.after === "" ? "" : str(b.after, 80);
+  if (after) {
+    if (!isId(after) || !runId) return { error: "bad set id" };
+    const prior = await col(SETS).doc(after).get();
+    if (!prior.exists || prior.data().runId !== runId || !prior.data().committedAt) return { error: "the set this one follows is not a committed set of the run" };
+  }
+  const key = (group ? `${runId}|${group}` : runId) + (after ? `|after:${after}` : "");
   if (runId) { const ex = await col(SETS).where("key", "==", key).limit(1).get(); if (!ex.empty) { const d = ex.docs[0].data(); return { ok: true, setId: d.setId, seq: d.seq, day: d.day, existing: true }; }
-    if (!group) { const ex2 = await col(SETS).where("runId", "==", runId).limit(1).get(); if (!ex2.empty) { const d = ex2.docs[0].data(); return { ok: true, setId: d.setId, seq: d.seq, day: d.day, existing: true }; } } }
+    if (!group && !after) { const ex2 = await col(SETS).where("runId", "==", runId).limit(1).get(); if (!ex2.empty) { const d = ex2.docs[0].data(); return { ok: true, setId: d.setId, seq: d.seq, day: d.day, existing: true }; } } }
   const res = await db.runTransaction(async t => {
     const allocation = runId ? col(COUNTERS).doc("allocation-" + require("crypto").createHash("sha256").update(key).digest("hex").slice(0, 40)) : null;
     if (allocation) { const prior = await t.get(allocation); if (prior.exists) return prior.data(); }

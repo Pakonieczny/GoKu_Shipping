@@ -837,6 +837,32 @@
     void parsed;
     return c.topIndices;
   }
+  /* A grouping worked out in a worker names the worker's copies of the page's segments, and the page matches labels,
+     frames and stray marks to charms by identity. Each segment is marked with its place in the page's lists before the
+     grouping, and the page swaps every marked copy for its own object. Without that a SKU label was never taken off its
+     charm: it went into the charm's design file, onto every sheet beside it, and stopped the sheet's .dxf. */
+  function groupForTransfer(parsed, opts) {
+    parsed.segments.forEach((s, i) => { s.pageRef = "s" + i; });
+    (parsed.nested || []).forEach((s, i) => { s.pageRef = "n" + i; });
+    const g = groupCharms(parsed, opts);
+    g.pageFrames = parsed._frames || [];
+    return g;
+  }
+  function adoptGrouping(g, parsed) {
+    const own = v => { const r = v.pageRef; if (typeof r !== "string") return null; const m = (r[0] === "s" ? parsed.segments : parsed.nested || [])[+r.slice(1)]; return m && m.kind === v.kind ? m : null; };
+    const seen = new Map();
+    const walk = v => {
+      if (!v || typeof v !== "object" || ArrayBuffer.isView(v) || v instanceof ArrayBuffer || v instanceof Map || v instanceof Set) return v;
+      if (seen.has(v)) return seen.get(v);
+      const mine = own(v); seen.set(v, mine || v); if (mine) return mine;
+      if (Array.isArray(v)) for (let i = 0; i < v.length; i++) v[i] = walk(v[i]);
+      else for (const k of Object.keys(v)) v[k] = walk(v[k]);
+      return v;
+    };
+    walk(g);
+    if (g.pageFrames) { parsed._frames = g.pageFrames; delete g.pageFrames; }
+    return g;
+  }
   const geometry = () => root.CharmNestGeom || (typeof require === "function" ? require("./charm-nest-geom.js") : null);
   const pathRole = m => geometry().pathRole(m);
   const isCutLine = m => geometry().isCutLine(m);
@@ -1455,5 +1481,5 @@
     return out;
   }
   root.CharmNestPDF = { integrateRings, syntheticOps, ringLike, weldCircle, parseSource, groupCharms, detectWorkArea, buildSilhouettes, buildSheet, buildSingleCharm, buildBackFile, verifyRendered, isPdfBytes, lex, interpret, isolate, thumbnail, drawCharm, drawSegments, pathToCanvas,
-    parseSkuLabel, labelCharms, recomputeTopIndices, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
+    parseSkuLabel, labelCharms, recomputeTopIndices, groupForTransfer, adoptGrouping, isCutLine, cutLinesOf, transformSegment, flatten, parseCMap, glyphNameToChar, SKU_PATTERN_DEFAULT, SKU_PATTERN_LEGACY, mul, ap, signature, fnv };
 })(typeof window !== "undefined" ? window : self);

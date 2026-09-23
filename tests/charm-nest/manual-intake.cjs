@@ -68,8 +68,8 @@ assert.equal(O.intakePlan({count:40,density:.5,force:true}).phase,'repack');
 assert.equal(O.intakePlan({count:40,density:.5,optimized:true,area:99,capacity:100}).phase,'fill');
 // Exercise the actual completion decision before PDF writing, with no API calls.
 const decision=html.slice(html.indexOf('  const belowTarget=result.density'),html.indexOf('  sh._beforeLearned = null;',html.indexOf('  const belowTarget=result.density')));
-function finish({count=40,density=.5,optimized=false,rejects=[],phase='fill',endedBy='complete',last=0,protectedRose=false}={}){
- const sh={roseProtected:protectedRose,intakePhase:phase,intakeOptimized:optimized,intakeOptimizedCount:last,status:'nesting',charms:[]},items=Array.from({length:count},()=>({}));let restarts=0;
+function finish({count=40,density=.5,optimized=false,rejects=[],phase='fill',endedBy='complete',last=0,protectedRose=false,metal='gold',appendOnly=false}={}){
+ const sh={metal,appendOnly,roseProtected:protectedRose,intakePhase:phase,intakeOptimized:optimized,intakeOptimizedCount:last,status:'nesting',charms:[]},items=Array.from({length:count},()=>({}));let restarts=0;
  const c={sh,items,result:{density,rejects,endedBy,placements:[{id:'kept'}],placedPt2:50,usablePt2:100,freePt2:50},S:{settings:{maxFill:.8,finalOptimizeCount:85}},startNest(){restarts++;},log(){}};vm.createContext(c);vm.runInContext('(function(){'+decision+'})();',c);return {sh,restarts};
 }
 assert.equal(finish({protectedRose:true,count:100}).restarts,0,'protected remainder never restarts under 74% or over 85 charms');
@@ -80,12 +80,57 @@ assert.equal(finish({count:85,optimized:true}).restarts,1,'below target at 85 ge
 assert.equal(finish({count:85,density:.74,optimized:true,rejects:['overflow']}).restarts,0,'at target, spill without another full search');
 assert.equal(finish({endedBy:'stopped'}).restarts,0,'operator stop is respected');
 assert.equal(finish({phase:'final',count:85,rejects:['overflow']}).restarts,0,'final attempt never loops');
+// an arrival that misses the gaps of an appended Gold or Silver sheet below 74% gets one fresh arrangement before it moves on
+for(const metal of ['gold','silver']){
+ const missed=finish({metal,appendOnly:true,optimized:true,rejects:['arrival'],endedBy:'budget'});
+ assert.equal(missed.restarts,1,metal+': an append that overflows below the target repacks the sheet first');
+ assert.equal(missed.sh.appendOnly,undefined,'with every piece free to move');assert.equal(missed.sh.intakeForceFinal,true);
+}
+assert.equal(finish({appendOnly:true,optimized:true}).restarts,0,'an append that fits keeps the saved layout');
+assert.equal(finish({appendOnly:true,optimized:true,rejects:['arrival'],endedBy:'trials'}).restarts,1,'a gap search that used up its trials still gets the fresh arrangement: the saved gaps do not show how full the sheet can get');
+assert.equal(finish({appendOnly:true,optimized:true,density:.74,rejects:['arrival']}).restarts,0,'at the target the sheet is full, not repacked');
+assert.equal(finish({appendOnly:true,optimized:true,rejects:['arrival'],endedBy:'stopped'}).restarts,0,'operator stop is respected');
+assert.equal(finish({metal:'rose',appendOnly:true,optimized:true,rejects:['arrival']}).restarts,0,'Rose Gold keeps its append-only layout');
+assert.equal(finish({metal:'gold10k',appendOnly:true,optimized:true,rejects:['arrival']}).restarts,0,'solid gold keeps its append-only layout');
+assert.equal(finish({phase:'repack',optimized:true,rejects:['arrival']}).restarts,0,'the repack itself never loops');
+// what counts as full for release: a fresh arrangement that runs its whole budget and still leaves out an order that fits
+// an empty sheet has finished its search, so the sheet is full even below the 74% target; the quick gap search has not
+{
+ const ctx={S:{settings:{maxFill:.8,clearancePt:0}}};vm.createContext(ctx);
+ vm.runInContext(html.slice(html.indexOf('function inflatedArea('),html.indexOf('function usableArea(')),ctx);
+ const items=[{id:'kept',order:'o1',areaPt2:65,widthPt:8,heightPt:8},{id:'arrival',order:'o2',areaPt2:10,widthPt:3,heightPt:3},{id:'huge',order:'o3',areaPt2:90,widthPt:10,heightPt:9}];
+ const full=({phase='repack',endedBy='budget',density=.65,rejects=['arrival'],placedPt2=65}={})=>ctx.sheetFull({intakePhase:phase,rejects,verification:{ok:true},placements:[{id:'kept'}]},{endedBy,density,usablePt2:100,placedPt2},items);
+ assert.equal(full(),true,'a fresh arrangement that ran its budget and still left an order out is full below the target');
+ assert.equal(full({phase:'final'}),true,'so is the final arrangement');
+ assert.equal(full({phase:'fill'}),false,'the quick search of the gaps ending on time is not enough below the target');
+ assert.equal(full({phase:'fill',endedBy:'trials'}),true,'a gap search that used up its trials finished');
+ assert.equal(full({phase:'fill',density:.74}),true,'from the target, any overflow is full');
+ assert.equal(full({rejects:['huge']}),false,'an order too big for an empty sheet does not make a sheet full');
+ assert.equal(full({endedBy:'stopped'}),false,'a stopped search never releases a sheet');
+ assert.equal(full({rejects:[]}),false,'a sheet that took everything is not full');
+ assert.equal(full({rejects:[],placedPt2:80}),true,'the ceiling is full');
+}
 {
  const {c,sheet,pages}=setup(),next=c.addPage();next.charms=[{id:'next-existing'}];next.placements=[{id:'next-existing',cxPt:4,cyPt:5}];next.status='complete';
  const a={id:'extra-a',order:'pair',arrivalPin:true,pinned:{cxPt:1}},b={id:'extra-b',order:'pair'};sheet.charms.push(a,b);sheet.rejects=[a.id,b.id];sheet.verification={ok:true};
  Object.assign(c,{agent(){},labelOf:()=> 'Gold',orderSummary:()=>({text:'one order'})});
  vm.runInContext(html.slice(html.indexOf('function overflowToNextSheet('),html.indexOf('function inflatedArea(')),c);
  c.overflowToNextSheet(sheet);assert.equal(sheet.placements[0].id,'old');assert.equal(sheet.charms.length,1);assert.deepEqual(Array.from(next.charms,x=>x.id),['next-existing','extra-a','extra-b']);assert.equal(next.placements[0].id,'next-existing');assert.equal(a.pinned,null);assert.equal(pages.length,2);
+}
+{
+ // Gold and Silver: an overflow goes to the next open sheet in line, and later arrivals try the earliest open sheet first
+ const {c,sheet,pages,live}=setup(),second=c.addPage(),third=c.addPage();
+ for(const [p,id] of [[second,'second'],[third,'third']]){p.charms=[{id}];p.placements=[{id,cxPt:1,cyPt:1}];p.status='complete';}
+ const x={id:'x',order:'late'};sheet.charms.push(x);sheet.rejects=['x'];sheet.verification={ok:true};
+ Object.assign(c,{agent(){},labelOf:()=> 'Gold',orderSummary:()=>({text:'one order'})});
+ vm.runInContext(html.slice(html.indexOf('function manualSheetClosed('),html.indexOf('/** New artwork waits outside the live job.')),c);
+ vm.runInContext(html.slice(html.indexOf('function overflowToNextSheet('),html.indexOf('function inflatedArea(')),c);
+ c.overflowToNextSheet(sheet);assert.deepEqual(second.charms.map(p=>p.id),['second','x'],'the overflow joins the next sheet in line');assert.equal(third.charms.length,1);assert.equal(pages.length,3);
+ vm.runInContext(bridge.slice(bridge.indexOf('  function intakePage(m, run)'),bridge.indexOf('  async function add(run)')).replace(/\bclosed\(/g,'window.LiveNest.closed('),c);
+ const run={runId:'existing'};
+ assert.equal(c.intakePage('gold',run),sheet,'arrivals try the earliest open sheet of the run');
+ sheet.releaseFull=true;assert.equal(c.intakePage('gold',run),second,'a full sheet is skipped');
+ sheet.releaseFull=false;assert.equal(c.intakePage('gold',{runId:'another'}),third,'another run starts from the newest sheet');
 }
 (async()=>{
  const {c,sheet}=setup();let id=0;Object.assign(c,{uid:()=> 'file-'+(++id),performance,pumpParse(){},routeByName:()=>null});

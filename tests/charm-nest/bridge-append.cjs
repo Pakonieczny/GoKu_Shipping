@@ -4,7 +4,7 @@ const vm=require('node:vm');
 const bridge=fs.readFileSync('charm-nest-bridge.js','utf8');
 const O=require('../../charm-nest-orders.js');
 
-function liveCase({metal='rose',newRun=false,cut=false,full=false,committed=false,legacy=false}={}){
+function liveCase({metal='rose',newRun=false,cut=false,full=false,committed=false,legacy=false,nothing=false}={}){
   const old={runId:'old-run',metal,page:1,sheetId:'physical-sheet',setId:'old-set',charms:[{id:'old',poolId:'old-pool'}],placements:[{id:'old',cxPt:20,cyPt:10,angle:0}],rosePlan:metal==='rose'?{profile:{axis:'x'},lines:[[[0,20],[40,20]]]}:null,roseProtected:metal==='rose'?{profile:{axis:'x'},placements:[{id:'old',cxPt:20,cyPt:10,angle:0}]}:null,roseStock:{id:'rose-stock',revision:0},roseCutAt:cut?123:null,releaseFull:full,status:'complete',fileBase:'saved',persistedDone:true};
   const prim={pages:[old],active:0},sheets={[metal]:prim};let starts=0,added=0,which;
   const run={runId:newRun?'new-run':'old-run',groups:{rose:'rose'},status:'processed'};
@@ -13,8 +13,9 @@ function liveCase({metal='rose',newRun=false,cut=false,full=false,committed=fals
     Orders:{rows:()=>[{state:'pulled',spec:{material:metal},order:{receiptId:'new'}},...(legacy?[{state:'pulled',spec:{material:'gold'},order:{receiptId:'new'}}]:[])]},
     Sets:{ofRun:()=>committed||legacy?[{setId:'old-set',group:metal,committedAt:committed?123:null,sheetIds:['physical-sheet'],materials:[metal]}]:[],ensure:async()=>{throw Error('unexpected group allocation');},save:async()=>{}},
     Gate:{state:()=>({forceFill:{}}),modern:()=>!legacy,nestable:()=>true},
-    Pool:{addAll:async()=>{const page=prim.pages[prim.active];assert.equal(page.runId,run.runId,'target page must belong to the incoming run before Pool checks it');page.charms.push({id:'new',poolId:'new-pool'});which=page;}},
+    Pool:{addAll:async()=>{const page=prim.pages[prim.active];assert.equal(page.runId,run.runId,'target page must belong to the incoming run before Pool checks it');if(!nothing)page.charms.push({id:'new',poolId:'new-pool'});which=page;}},
     addPage:()=>{added++;const p={runId:prim.pages[0].runId,metal,page:prim.pages.length+1,sheetId:null,charms:[],placements:[],status:'idle'};prim.pages.push(p);return p;},
+    removePage:p=>{const i=prim.pages.indexOf(p);if(i>0)prim.pages.splice(i,1);prim.active=prim.pages.length-1;},
     usableArea:()=>100,inflatedArea:()=>1,agent(){},startNest:p=>{starts++;p.status='complete';p.dirty=false;p.persistedDone=true;p.runHold=false;},sleep:async()=>{throw Error('unexpected worker wait');}};
   vm.createContext(c);
   const a=bridge.indexOf('const LiveNest ='),b=bridge.indexOf('\n/*',a+20);
@@ -37,6 +38,18 @@ function liveCase({metal='rose',newRun=false,cut=false,full=false,committed=fals
     await t.c.window.LiveNest.add(t.run);
     assert.equal(t.added(),1,JSON.stringify(variant));assert.equal(t.old.placements[0].id,'old');
   }
+  // A material linked to an arriving order comes through even when nothing of it arrives. After its sheet was released,
+  // the page opened for it stayed empty and queued, and every later arrival stopped the run.
+  for(const metal of ['rose','gold']){
+    const linked=liveCase({metal,full:true,nothing:true});await linked.c.window.LiveNest.add(linked.run);
+    assert.equal(linked.added(),1,metal);assert.equal(linked.starts(),0,metal+': nothing is nested');
+    assert.deepEqual(linked.prim.pages,[linked.old],metal+': the empty page is taken away again');
+  }
+  // A cancelled order's pieces taken off a filling sheet leave it waiting to be arranged again. With no order for its
+  // metal coming in, nothing started it, and every later arrival waited on it for good.
+  const dirtied=liveCase({metal:'silver',nothing:true});Object.assign(dirtied.old,{dirty:true,status:'ready',placements:[]});
+  await dirtied.c.window.LiveNest.add(dirtied.run);
+  assert.equal(dirtied.starts(),1,'the sheet is arranged again');assert.equal(dirtied.old.dirty,false);
   const cross=liveCase({newRun:true});await cross.c.window.LiveNest.add(cross.run);
   assert.equal(cross.added(),1);assert.notEqual(cross.which(),cross.old);
   assert.equal(cross.old.runId,'old-run');assert.equal(cross.old.sheetId,'physical-sheet');assert.equal(cross.old.roseStock.id,'rose-stock');
@@ -98,5 +111,13 @@ function liveCase({metal='rose',newRun=false,cut=false,full=false,committed=fals
   vm.runInContext(bridge.slice(ua,ub),upgradeContext);
   await assert.rejects(upgradeContext.upgrade(older),/saved Rose Gold contour/);
   assert.equal(oldProtected.sheetId,'same-sheet');assert.equal(older.releasePolicy,1);
-  console.log('Bridge append OK: same-run Rose green contour, cut/full/committed closure, cross-run isolation, retained sheet and stock on run clearing');
+  // A sheet with nothing to nest leaves the queue, whatever started it: arrivals wait on a queued sheet of their material.
+  const html=fs.readFileSync('charm-nest-1.html','utf8'),sa=html.indexOf('function startNestReady('),sb=html.indexOf('/* ═══ 9b',sa);
+  const ops=[],nest={assert,window:{CharmNestOperations:{run:(o,work)=>{const p=Promise.resolve().then(()=>work({resources:o.resources,active:true}));ops.push(p);return p;}}},S:{settings:{},nestQueue:[]},
+    labelOf:x=>x,renderCard(){},toast(){},activeCharms:sh=>sh.charms.filter(c=>!c.excluded)};
+  const empty={metal:'rose',status:'ready',charms:[],placements:[]},excluded={metal:'gold',status:'ready',charms:[{excluded:true}],placements:[]};
+  nest.allSheets=()=>[empty,excluded];vm.createContext(nest);vm.runInContext(html.slice(sa,sb),nest);
+  nest.startNestReady(empty);nest.startNestReady(excluded);await Promise.all(ops);
+  assert.deepEqual([empty.status,excluded.status,nest.S.nestQueue.length],['idle','ready',0],'a sheet with nothing to nest does not stay queued');
+  console.log('Bridge append OK: same-run Rose green contour, cut/full/committed closure, cross-run isolation, retained sheet and stock on run clearing, no empty sheet left queued');
 })().catch(error=>{console.error(error);process.exitCode=1;});
