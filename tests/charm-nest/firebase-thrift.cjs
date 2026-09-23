@@ -27,7 +27,7 @@ const bridge=fs.readFileSync('charm-nest-bridge.js','utf8'),station=fs.readFileS
  await p.poll();await p.poll();assert.equal(polls.length,1);assert.deepEqual(Array.from(polls[0].sheetIds),['visible']);p.document.hidden=true;await p.poll(true);assert.equal(polls.length,1);
  // Known arrivals are not re-read on later checks.
  const a={Date,Object,Set,state:{seen:{}},S:{cloud:{ok:true}},at:id=>a.state.seen[id],interval:()=>600000,save:()=>{},paint:()=>{}};let sent=[];a.api=async(_,b)=>{sent.push(b.orders);return {firstSeen:Object.fromEntries(b.orders.map(o=>[o.id,123])),count24:2,count1:2}};
- const ar=bridge.indexOf('  async function record(orders)',bridge.indexOf('const Arrivals'));vm.runInNewContext(bridge.slice(ar,bridge.indexOf('  function paint()',ar))+';this.record=record;',a);
+ const ar=bridge.indexOf('  async function record(orders',bridge.indexOf('const Arrivals'));vm.runInNewContext(bridge.slice(ar,bridge.indexOf('  function paint()',ar))+';this.record=record;',a);
  await a.record([{receiptId:'123'},{receiptId:'456'}]);await a.record([{receiptId:'123'},{receiptId:'456'}]);assert.equal(sent[0].length,2);assert.equal(sent[1].length,0);assert.equal(a.state.seen['123'],123);
  a.S.cloud.ok=false;await a.record([{receiptId:'789'}]);a.S.cloud.ok=true;await a.record([{receiptId:'789'}]);assert.equal(sent.at(-1)[0].id,'789','offline first arrivals are still recorded when cloud returns');
  console.log('Firebase thrift OK: aggregation-only counts, 100 concurrent sandbox reads share one lookup/download, browser reload cache, visible-only throttled polling, known-arrival reuse. No live Firebase calls.');

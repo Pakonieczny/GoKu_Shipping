@@ -703,7 +703,7 @@ const Orders = window.Orders = (() => {
     Review.syncOrderItems();
   }
   async function pull(run, { silent = false, receiptIds = null } = {}) {
-    await DesignLink.ensure();
+    await DesignLink.ensure(); await Sandbox.ready(true);   // the sandbox order stream must exist before the station sweeps
     if (!DesignLink.etsyBudgetOk("the pull")) throw new Error("Etsy call budget reached — the pull was not started");
     await Promise.all([loadMaps(), Master.load()]);
     const pullBar = window.CNProgress ? CNProgress.start("Pulling orders from Etsy") : null;
@@ -891,7 +891,7 @@ const Orders = window.Orders = (() => {
   /** How the ship-by date reads today: overdue, due, or simply a date. */
   function dueOf(r) {
     const by = r.order.shipBy; if (!by) return { cls: "", txt: "\u2014", late: false, soon: false };
-    const today0 = Math.floor(Date.now() / 1000 / DAY) * DAY, d = Math.floor(by / DAY) * DAY;
+    const today0 = Math.floor((window.SimClock?.now() ?? Date.now()) / 1000 / DAY) * DAY, d = Math.floor(by / DAY) * DAY;   // the sandbox stream's day while it plays
     const txt = new Date(by * 1000).toLocaleDateString("en-US", { month: "short", day: "2-digit" });
     return { cls: d < today0 ? "bad" : d <= today0 + DAY ? "warn" : "", txt, late: d < today0, soon: d <= today0 + DAY };
   }
@@ -4211,6 +4211,38 @@ const Review = window.Review = (() => {
 const Sandbox = window.Sandbox = (() => {
   const on = () => WORKSPACE_SANDBOX;
   let status = null,refreshTask=null;
+  /* ── the order stream: rather than the whole snapshot at once, the emulated Etsy lists 2 to 5 new orders per simulated
+     ten minutes (etsySandbox builds them; charmNestLibrary sandboxStream keeps the seed and the clock). Each arrivals
+     check moves the clock one step; SimClock plays the time between steps at the chosen speed. ── */
+  const streaming = () => on() && S.settings.sandboxStream === "on";
+  const speed = () => Math.max(1, Math.min(1000, Math.round(+S.settings.sandboxSpeed || 50)));
+  let stream = null, readyTask = null;
+  const streamApi = (action, extra) => api("charmNestLibrary", Object.assign({ op: "sandboxStream", action, seed: +S.settings.sandboxSeed || 0, speed: speed() }, extra || {}), { quiet: true });
+  function adopt(s) { stream = s && s.on ? s : null; SimClock.set(stream && streaming() ? { base: stream.simNow, stepMs: stream.stepMs, speed: speed() } : null); render(); return stream; }
+  /** The stream exists before the station's first sweep in the sandbox, or the emulator would list the whole snapshot.
+      `strict` (a sweep about to go ahead): a stream that cannot start is an error, not a warning. */
+  function ready(strict) {
+    if (!streaming()) return Promise.resolve(null);
+    const task = stream ? Promise.resolve(stream) : (readyTask ||= streamApi("ensure").then(r => adopt(r.stream)).finally(() => { readyTask = null; }));
+    return task.then(s => { if (!s) throw new Error("it is off"); return s; }).catch(e => { if (strict) throw new Error(`The sandbox order stream could not start: ${e.message}`); agent({ bridge: true }, "warn", `Sandbox order stream: ${e.message}`); return null; });
+  }
+  /** One simulated step: the next ten minutes of orders become listable. The arrivals check calls it before it sweeps. */
+  async function advance() {
+    const s = await ready(true), r = await streamApi("tick", { expect: s.simNow });
+    if (!r.stream) { adopt(null); throw new Error("The sandbox order stream was reset: the next check starts it again"); }
+    return adopt(r.stream);
+  }
+  /** Settings were saved: the stream switched on or off, or plays at a new speed. */
+  function restream() {
+    if (!on()) return;
+    stream = null;
+    if (streaming()) { ready(); return; }
+    SimClock.set(null); render(); streamApi("off").catch(e => toast(`Sandbox order stream: ${e.message}`, "bad", 6000));
+  }
+  const simText = t => new Date(t).toLocaleString("en-US", { weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  /** What the pill and the arrivals counter say: the mode, and while the stream plays its speed and simulated time. */
+  function label() { return !on() ? "" : streaming() && SimClock.on() ? `Sandbox ${speed()}x · sim ${simText(SimClock.now())}` : "Sandbox"; }
+  function streamText() { return stream && streaming() ? `Order stream: seed ${stream.seed} · step ${stream.tick} · simulated ${new Date(SimClock.now()).toLocaleString()} · ${speed()}x` : on() && !streaming() ? "Orders: the whole snapshot at once" : ""; }
   async function refresh() {
     if (!S.cloud.ok) return null;if(refreshTask)return refreshTask;
     refreshTask=(async()=>{try {status=await api("charmNestLibrary",{op:"sandboxStatus"});}catch(e){status={error:e.message};}render();return status;})();
@@ -4249,25 +4281,51 @@ const Sandbox = window.Sandbox = (() => {
     }
     S.settings.sandbox = "on"; saveSettings();
     try { sessionStorage.setItem("cn.sandboxAutoPull", "1"); } catch (_) {}
-    toast("Sandbox ON — reloading, then pulling the orders from the copy", "ok", 4000);
+    toast(S.settings.sandboxStream === "on" ? "Sandbox ON — reloading; the orders then arrive a few at a time" : "Sandbox ON — reloading, then pulling the orders from the copy", "ok", 4000);
     setTimeout(() => location.reload(), 700);
   }
-  /** After the reload that switched the sandbox on: straight to the Orders tab and a pull (Auto mode starts its run instead). */
+  /** After the reload that switched the sandbox on: straight to the Orders tab and a pull (Auto mode starts its run instead).
+      With the stream the orders come by themselves, one simulated ten minutes per check. */
   function afterReload() {
     let want = false; try { want = sessionStorage.getItem("cn.sandboxAutoPull") === "1"; sessionStorage.removeItem("cn.sandboxAutoPull"); } catch (_) {}
+    if (streaming()) ready(); else if (on()) streamApi("off").catch(() => {});   // this sorter asks for the whole snapshot: a stream left playing would hide it
     if (!want || !on()) return;
-    setTimeout(async () => { setMode("orders"); if (S.settings.runMode === "auto") { agent({ bridge: true }, "DS", "Sandbox on — Auto mode starts the run"); return; } try { await Orders.pull(null); } catch (e) { toast(e.message, "bad", 8000); } }, 900);
+    setTimeout(async () => {
+      setMode("orders");
+      if (S.settings.runMode === "auto") { agent({ bridge: true }, "DS", "Sandbox on — Auto mode starts the run"); return; }
+      if (streaming()) { toast(`Sandbox on — new orders arrive a few at a time, ${speed()}x faster than real time`, "ok", 6000); return; }
+      try { await Orders.pull(null); } catch (e) { toast(e.message, "bad", 8000); }
+    }, 900);
   }
+  /** The station keeps the orders it finished in a browser ledger of its own, which the records' reset cannot reach: an
+      order replayed under the same number would stay hidden there as finished. (A station without the command keeps it.) */
+  const forgetCompletions = () => DesignLink.ensure().then(() => (DesignLink.state()?.commands || []).includes("sandbox.reset") && DesignLink.call("sandbox.reset", {}, { timeoutMs: 15000 }))
+    .catch(e => agent({ bridge: true }, "warn", `Sandbox reset: the station kept its own list of finished orders (${e.message})`));
   async function reset() {
-    if (!confirm("Delete every sandbox record (sandbox pools, sets, runs, sheets, locks, ledger, archive)? Files and the snapshot stay. Production data is untouched.")) return;
-    const r = await api("charmNestLibrary", { op: "sandboxReset" }); toast(`Sandbox reset — ${r.deleted} record(s) removed`, "ok"); await refresh();
+    const replay = streaming();
+    if (!confirm(`Delete every sandbox record (sandbox pools, sets, runs, sheets, locks, ledger, archive)? Files and the snapshot stay. Production data is untouched.${replay ? " The order stream starts over, and the sorter clears its run and reloads." : ""}`)) return;
+    // no arrivals check may sweep while the records go: with the stream deleted the emulator lists the whole snapshot
+    await Arrivals.pause(); let reloading = false;
+    try {
+      if (replay && RunCtl.clearRunState() === false) return;   // a Rose Gold sheet still saving: nothing is deleted
+      const r = await api("charmNestLibrary", { op: "sandboxReset" }); toast(`Sandbox reset — ${r.deleted} record(s) removed`, "ok");
+      await forgetCompletions();
+      // the stream's clock, arrivals and orders went with the records: a replay starts from nothing, as the first one did
+      adopt(null); Arrivals.reset();
+      if (replay) { reloading = true; setTimeout(() => location.reload(), 1200); return; }
+    } finally { if (!reloading) Arrivals.resume(); }
+    await refresh();
   }
   /* No strip of its own any more: the SANDBOX pill in the top bar says the mode, the station's own banner says it again,
      and Reset and the switch live in Settings. */
   function mountPanel(v) { void v; const old = document.getElementById("sandboxBar"); if (old) old.remove(); const pill = document.getElementById("sandboxPill"); if (pill) { pill.style.cursor = "pointer"; pill.onclick = () => { if (window.CN && CN.openSettings) CN.openSettings(); else { const b = document.getElementById("btnSettings"); if (b) b.click(); } }; } if (!status) refresh(); }
-  function statusText() { if (!status || status.error) return status && status.error ? `status: ${status.error}` : ""; const sn = status.snapshot; const rec = status.records || {}; return `${sn ? `snapshot of ${sn.count} order(s) taken ${new Date(sn.at).toLocaleString()}${sn.takenBy ? " by " + sn.takenBy : ""}` : "no snapshot yet"} · sandbox records: ${rec.Charm_Pool || 0} pool, ${rec.Charm_Nest_Sets || 0} sets, ${rec.Charm_Nest_Runs || 0} runs, ${rec.Charm_Nest_Sheets || 0} sheets`; }
-  function render() { const el = document.getElementById("sbStatus"); if (el) el.title = statusText() || el.title; const pill = document.getElementById("sandboxPill"); if (pill) pill.classList.toggle("hidden", !on()); document.documentElement.classList.toggle("sandbox", on()); }
-  return { on, refresh, snapshot, enable, afterReload, reset, mountPanel, render, status: () => status };
+  function statusText() { if (!status || status.error) return status && status.error ? `status: ${status.error}` : ""; const sn = status.snapshot; const rec = status.records || {}; return `${sn ? `snapshot of ${sn.count} order(s) taken ${new Date(sn.at).toLocaleString()}${sn.takenBy ? " by " + sn.takenBy : ""}` : "no snapshot yet"} · sandbox records: ${rec.Charm_Pool || 0} pool, ${rec.Charm_Nest_Sets || 0} sets, ${rec.Charm_Nest_Runs || 0} runs, ${rec.Charm_Nest_Sheets || 0} sheets${streamText() ? " · " + streamText() : ""}`; }
+  function render() {
+    const el = document.getElementById("sbStatus"); if (el) el.title = statusText() || el.title;
+    const pill = document.getElementById("sandboxPill"); if (pill) { pill.classList.toggle("hidden", !on()); if (on()) { const text = label(); if (pill.textContent !== text) pill.textContent = text; pill.title = streamText() ? `Sandbox: emulated Etsy; all records and files use sandbox copies. ${streamText()}` : "Sandbox: emulated Etsy; all records and files use sandbox copies"; } }
+    document.documentElement.classList.toggle("sandbox", on());
+  }
+  return { on, refresh, snapshot, enable, afterReload, reset, mountPanel, render, status: () => status, streaming, speed, ready, advance, restream, label, streamText, seed: () => stream && stream.seed, stream: () => stream };
 })();
 
 
@@ -4909,23 +4967,38 @@ const Arrivals = window.Arrivals = (() => {
   const storageKey = () => "cn.arrivals." + (WORKSPACE_SANDBOX ? "sandbox" : "production");
   let state; try { state = JSON.parse(localStorage.getItem(storageKey()) || "null"); } catch (_) {}
   state = Object.assign({ seen: {}, lastCheck: 0, nextCheck: 0, lastAdded: 0, error: null }, state || {});
-  let tick = 0, busy = false;
+  let tick = 0, busy = false, paused = false, epoch = 0;
   window.addEventListener("storage", e => { if (e.key !== storageKey() || !e.newValue) return; try { const other = JSON.parse(e.newValue); Object.assign(state.seen, other.seen); if (other.lastCheck > state.lastCheck) { state.lastCheck = other.lastCheck; state.nextCheck = other.nextCheck; state.lastAdded = other.lastAdded; } paint(); } catch (_) {} });
-  const interval = () => Math.max(10, Math.min(1440, +S.settings.pollMinutes || 10)) * 60000;
+  // the sandbox order stream checks every simulated ten minutes (12 s at 50x)
+  const interval = () => (WORKSPACE_SANDBOX && S.settings.sandboxStream === "on" ? 600000 / Math.max(1, Math.min(1000, +S.settings.sandboxSpeed || 50)) : Math.max(10, Math.min(1440, +S.settings.pollMinutes || 10)) * 60000);
+  const streaming = () => !!Sandbox.streaming?.();
+  const stamp = () => (streaming() ? Math.round(SimClock.now()) : 0);   // first arrivals carry the stream's simulated time
   const at = id => state.seen[String(id)] || 0;
   const save = () => { try { localStorage.setItem(storageKey(), JSON.stringify(state)); } catch (_) {} };
-  async function record(orders) {
-    const now = Date.now(), ids = [...new Set(orders.map(o => String(o.receiptId)))];
-    let stamps = Object.fromEntries(ids.map(id => [id, at(id) || now]));
+  /* While the stream plays, its next step waits for the sorter: arrivals still being added (or, in Auto, waiting for the
+     run to take them), a run at work, a sheet nesting. The simulated clock waits with it, so a replay never outruns the
+     real processing and the sheets fill as a real day would fill them. Returns why, or "" when the sorter is free. */
+  function held() {
+    if (!streaming()) return "";
+    const r = B.run, auto = S.settings.runMode === "auto" && !Recall.on();
+    if (r?.arrivalBusy) return "adding the last arrivals";
+    if (r?.status === "running") return "the run is at work";
+    if (auto && r?.status === "stopped") return "the run is stopped";
+    if (auto && state.pending) return "the last arrivals wait for the run";
+    return allSheets().some(p => ["nesting", "finishing", "queued"].includes(p.status)) ? "a sheet is nesting" : "";
+  }
+  async function record(orders, simAt) {
+    const now = Date.now(), when = simAt || now, ids = [...new Set(orders.map(o => String(o.receiptId)))];
+    let stamps = Object.fromEntries(ids.map(id => [id, at(id) || when]));
     if (S.cloud.ok) {
-      const r = await api("charmNestLibrary", { op: "arrivalRecord", orders: orders.filter(o=>!state.recorded?.[String(o.receiptId)]).map(o => ({ id: String(o.receiptId), createTs: +o.createTs || 0 })) }, { quiet: true });
+      const r = await api("charmNestLibrary", Object.assign({ op: "arrivalRecord", orders: orders.filter(o=>!state.recorded?.[String(o.receiptId)]).map(o => ({ id: String(o.receiptId), createTs: +o.createTs || 0 })) }, simAt ? { now: simAt } : {}), { quiet: true });
       stamps = {...stamps,...r.firstSeen}; state.recorded ||= {}; for(const id of Object.keys(r.firstSeen || {}))state.recorded[id]=true; state.count24 = r.count24; state.count1 = r.count1;
     }
     const fresh = ids.filter(id => !at(id));
     Object.assign(state.seen, stamps); state.lastAdded = fresh.length;
     // first-arrival times are kept for 45 days, far past any open order; the list used to grow by every order ever seen
     const current = new Set(ids);
-    for (const [id, t] of Object.entries(state.seen)) if (t < now - 45 * 86400000 && !current.has(id)) { delete state.seen[id]; if (state.recorded) delete state.recorded[id]; }
+    for (const [id, t] of Object.entries(state.seen)) if (t < when - 45 * 86400000 && !current.has(id)) { delete state.seen[id]; if (state.recorded) delete state.recorded[id]; }
     state.lastCheck = now; state.nextCheck = now + interval(); save(); paint(); return fresh;
   }
   function paint() {
@@ -4939,14 +5012,16 @@ const Arrivals = window.Arrivals = (() => {
       };
       document.body.appendChild(box);
     }
-    const now = Date.now(), times = Object.values(state.seen);
+    // while the sandbox stream plays, the counts, the countdown and the label read in its simulated time
+    const sim = streaming(), real = Date.now(), now = sim ? SimClock.now() : real, times = Object.values(state.seen);
     // Use server aggregate counts; their timestamp is shown in the tooltip.
     const n24 = state.count24 ?? times.filter(t => t > now - 86400000).length, n1 = state.count1 ?? times.filter(t => t > now - 3600000).length;
-    const left = Math.max(0, (state.nextCheck || now + interval()) - now);
+    const left = Math.max(0, (state.nextCheck || real + interval()) - real) * (sim ? Sandbox.speed() : 1), wait = sim && !busy && !left ? held() : "";
     const inbox = Recall.on() && state.inbox?.length ? `${state.inbox.length} orders available · click to open · ` : "";
-    const tail = state.error ? `Check failed: ${state.error}` : busy ? "Checking…" : S.settings.pollOrders === "off" ? "checks off" : `next ${Math.floor(left / 60000)}:${String(Math.floor(left % 60000 / 1000)).padStart(2, "0")}`;
-    box.textContent = `${Sandbox.on() ? "Sandbox · " : ""}Orders received · 24h ${n24} · 1h ${n1} · ${inbox}${tail}`;
-    box.title = `Unique orders imported, by first arrival time; counts as of the last successful check: ${state.lastCheck ? new Date(state.lastCheck).toLocaleString() : "not yet"}. Last check added ${state.lastAdded}. Checks run while this station is open. Click to see newest arrivals.`;
+    const tail = state.error ? `Check failed: ${state.error}` : busy ? "Checking…" : S.settings.pollOrders === "off" ? "checks off" : wait ? `waiting for the sorter: ${wait}` : `next ${Math.floor(left / 60000)}:${String(Math.floor(left % 60000 / 1000)).padStart(2, "0")}`;
+    box.textContent = `${Sandbox.on() ? (Sandbox.label?.() || "Sandbox") + " · " : ""}Orders received · 24h ${n24} · 1h ${n1} · ${inbox}${tail}`;
+    box.title = `Unique orders imported, by first arrival time; counts as of the last successful check: ${state.lastCheck ? new Date(state.lastCheck).toLocaleString() : "not yet"}. Last check added ${state.lastAdded}. Checks run while this station is open. Click to see newest arrivals.${sim ? ` Sandbox stream at ${Sandbox.speed()}x: each check is a simulated 10 minutes, and the next waits until the sorter has taken in the last.` : ""}`;
+    if (sim) Sandbox.render();
     box.classList.toggle("bad", !!state.error);
     for(const node of document.querySelectorAll('[data-new-order],.newArrival')){node.removeAttribute('data-new-order');node.classList.remove('newArrival');}
 
@@ -4956,7 +5031,7 @@ const Arrivals = window.Arrivals = (() => {
     const changed=orders.some(o=>current.some(row=>String(row.order.receiptId)===String(o.receiptId) && +row.order.updateTs!==+o.updateTs));
     const missing=Array.isArray(openIds) && current.some(row=>!["gone","committed"].includes(row.state) && !openIds.includes(String(row.order.receiptId)));
     if(changed || missing){state.pending=true;state.revalidate=true;}
-    const freshIds = await record(orders), added = [];
+    const freshIds = await record(orders, stamp()), added = [];
     for (const order of orders) for (const line of order.lines || []) {
       const key = O.lineKey(order, line);
       if (B.orders.byKey.has(key)) continue; // Existing human decisions and pool membership belong to the existing row.
@@ -4989,37 +5064,46 @@ const Arrivals = window.Arrivals = (() => {
     finally { r.arrivalBusy = false; RunCtl.poke(); Session.schedule(); window.CN?.flushManualIntake?.(); }
   }
   async function check() {
-    if (busy || S.settings.pollOrders === "off") return;
-    busy = true; paint();
+    if (busy || paused || S.settings.pollOrders === "off") return;
+    busy = true; paint(); const began = Date.now(), gen = epoch;
     try {
       await DesignLink.ensure();
       if (!DesignLink.etsyBudgetOk("new orders")) throw new Error("Etsy hourly cap reached");
+      // the stream's next simulated ten minutes of orders become listable, and the station sweeps for them (no reuse window)
+      const sim = streaming() && await Sandbox.advance();
       await Promise.all([Orders.loadMaps(), Master.load()]);
       const known=Object.fromEntries(Orders.rows().map(row=>[String(row.order.receiptId),+row.order.updateTs || 0]));
-      const res = await DesignLink.call("orders.snapshot", { hydrate: true, refresh: true, intake:true, known }, { timeoutMs: 20 * 60000, quiet: true });
+      const res = await DesignLink.call("orders.snapshot", Object.assign({ hydrate: true, refresh: true, intake:true, known }, sim ? { stream: true } : {}), { timeoutMs: 20 * 60000, quiet: true });
       DesignLink.meter(res, "new orders");
+      if (gen !== epoch) return;   // a sandbox reset while this check was out: its orders went with the records it deleted
       if (res.hydrated < res.total) throw new Error(`Only ${res.hydrated} of ${res.total} orders could be read`);
       const picked = Orders.applyPullRule(res.orders || []);
-      if (Recall.on()) { await record(picked); state.inbox = picked; }
+      if (Recall.on()) { await record(picked, stamp()); state.inbox = picked; }
       else await merge(picked, res.openIds);
       state.error = null;
       processPending().catch(e=>{state.error=e.message;save();paint();});
-    } catch (e) { state.error = e.message; }
-    finally { busy = false; state.nextCheck = Date.now() + interval(); save(); paint(); }
+    } catch (e) { if (gen === epoch) state.error = e.message; }
+    finally { busy = false; if (gen === epoch) { state.nextCheck = (streaming() ? began : Date.now()) + interval(); save(); } paint(); }   // a stream step is timed from its check's start, so the sweep does not stretch it
   }
   function start() {
     clearInterval(tick); state.nextCheck = Math.max(Date.now(), (state.lastCheck || Date.now()) + interval());
     paint();
     tick = setInterval(() => {
       paint();
-      if (busy || S.settings.pollOrders === "off") return;
-      if (Date.now() >= state.nextCheck) {
+      if (busy || paused || S.settings.pollOrders === "off") return;
+      if (Date.now() >= state.nextCheck && !held()) {
         if (navigator.locks) navigator.locks.request(storageKey(), { ifAvailable: true }, lock => { if (!lock) return; let shared; try { shared = JSON.parse(localStorage.getItem(storageKey()) || "null"); } catch (_) {} if (shared?.nextCheck > Date.now()) { Object.assign(state.seen, shared.seen); state.lastCheck = shared.lastCheck; state.nextCheck = shared.nextCheck; return; } return check(); }).catch(e => { state.error = e.message; });
         else check();
       } else processPending().catch(e => { state.error = e.message; });
-    }, 1000);
+    }, streaming() ? 250 : 1000);   // a stream step is 12 s at 50x: a whole second late would be most of a simulated minute
   }
-  return { start, check, merge, record, at, paint, processPending, state: () => state };
+  /** A sandbox reset deletes the records under the checks: none starts meanwhile, and one still out is waited for and its
+      orders dropped (the stream it stepped is gone, and the records its orders would join). */
+  async function pause() { paused = true; epoch++; for (const t = Date.now(); busy && Date.now() - t < 30000;) await new Promise(r => setTimeout(r, 200)); }
+  const resume = () => { paused = false; };
+  /** A sandbox reset starts the counts over with the records they counted. */
+  function reset() { state = { seen: {}, lastCheck: 0, nextCheck: Date.now() + interval(), lastAdded: 0, error: null }; save(); paint(); }
+  return { start, check, merge, record: orders => record(orders, stamp()), at, paint, processPending, held, pause, resume, reset, state: () => state };
 })();
 
 /* A new batch tries the newest open sheet. Existing sheets with approved backs are pinned; their approvals survive.
