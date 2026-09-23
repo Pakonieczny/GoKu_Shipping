@@ -8,6 +8,14 @@
   const refresh=sh=>{window.Session?.schedule();if(sh.el){C.renderCard(sh);C.drawPreview(sh);}};
   const parse=s=>s?JSON.parse(s):null;
   const decode=cuts=>cuts.map(c=>({...c,plan:parse(c.planJson)}));
+  const stamp=at=>Number.isFinite(at)?`<time datetime="${new Date(at).toISOString()}">${esc(new Date(at).toLocaleString(undefined,{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}))}</time>`:'<span class="roseUndated">Time not recorded</span>';
+  // The full detail shows on hover when the entry is too narrow for it.
+  const detail=text=>`<small title="${esc(text)}">${esc(text)}</small>`;
+  // The timeline lists every green line when it was first prepared, then the
+  // cut that removed it, oldest first. Lines keep their dates in the saved
+  // contour and, once cut, in the permanent cut history.
+  const lineEntry=(s,fileBase,cut)=>`<li class="roseLineEntry"><span class="roseLineNumber">${s.n}</span>${stamp(s.at)}${detail(`Green line ${s.n} · ${s.ids.length} charm${s.ids.length===1?'':'s'}${cut?' · cut '+cut:''}${fileBase?' · '+fileBase:''}`)}</li>`;
+  const cutEntry=c=>`<li style="flex-grow:${Math.max(1,c.plan?.removedPt2||1)}"><span class="roseCutNumber">${c.revision}</span>${stamp(c.at)}${detail(`Cut recorded · ${c.plan?.shapes.length||0} charms · ${c.fileBase??''}`)}</li>`;
   async function load(sh,older=false){
     const stockId=sh.roseStock?.id||sh.recalled?.roseStockId;if(!stockId)return;
     const result=await api('roseGet',{stockId,...(older?{before:Math.min(...sh.roseHistory.map(c=>c.revision))}:{})});
@@ -34,7 +42,7 @@
       const ids=new Set(sh.rosePlan.shapes.map(s=>s.id));
       const placements=sh.placements.filter(p=>ids.has(p.id));
       if(placements.length!==ids.size)throw new Error('Reload the saved Rose Gold layout before adding charms');
-      sh.roseProtected={profile:sh.rosePlan.profile,lines:sh.rosePlan.lines,placements:placements.map(p=>({...p})),shapes:sh.rosePlan.shapes};
+      sh.roseProtected={profile:sh.rosePlan.profile,lines:sh.rosePlan.lines,placements:placements.map(p=>({...p})),shapes:sh.rosePlan.shapes,stages:sh.rosePlan.stages};
     }
   }
   async function prepare(sh,opts={}){
@@ -86,11 +94,12 @@
     const stockId=stock?.id||sh.recalled?.roseStockId;
     const ready=!sh.roseCutAt&&!sh.recalled&&sh.persistedDone&&sh.verification?.ok&&!sh.dirty&&sh.placements.length&&!['nesting','finishing','queued'].includes(sh.status);
     const included=!!sh.setId&&!sh.draft;
+    const timeline=[...history.flatMap(c=>[...(c.plan?.stages||[]).map(s=>lineEntry(s,c.fileBase,c.revision)),cutEntry(c)]),...stagesOf(activeLines(sh)).map(s=>lineEntry(s,sh.fileBase))];
     host.hidden=!stockId&&!ready;
     host.innerHTML=`${busy?'<div class="help" role="status"><i class="spin"></i> Loading sheet geometry…</div>':''}
-      ${history.length?`<ol class="roseTimeline" aria-label="Physical sheet cut history">${history.map(c=>`<li style="flex-grow:${Math.max(1,c.plan?.removedPt2||1)}"><span class="roseCutNumber">${c.revision}</span><time datetime="${new Date(c.at).toISOString()}">${esc(new Date(c.at).toLocaleString(undefined,{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}))}</time><small>${c.plan?.shapes.length||0} charms · ${esc(c.fileBase)}</small></li>`).join('')}</ol>`:''}
+      ${timeline.length?`<ol class="roseTimeline" aria-label="Green line and cut history">${timeline.join('')}</ol>`:''}
       <div class="roseActions">${sh.roseMore?'<button class="btn ghost xs" data-rose="older">Earlier cuts</button>':''}${stockId?'<button class="btn ghost xs" data-rose="refresh">Refresh history</button>':''}${ready?`<button class="btn ghost xs" data-rose="plan" ${busy?'disabled':''}>${sh.rosePlan?'Update contour':'Prepare cut contour'}</button>`:''}${(sh.rosePlan||sh.recalled?.roseStockId)&&!sh.roseCutAt?`<button class="btn ghost xs" data-rose="record" ${busy||!included||(!sh.recalled&&!ready)?'disabled':''}>Record completed cut</button>`:''}${sh.roseCutAt?'<span class="roseRecorded">Cut recorded · remainder saved</span>':''}</div>
-      ${sh._roseError?`<p class="roseError" role="alert">${esc(sh._roseError)}</p>`:''}${sh.rosePlan&&!sh.roseCutAt?`<p class="roseNote">${sh.rosePlan.allowanceMm} mm contour allowance · ${Math.round(sh.rosePlan.remainingPt2*R.MM*R.MM)} mm² remaining after this cut. History updates when you record the completed cut.</p>`:''}`;
+      ${sh._roseError?`<p class="roseError" role="alert">${esc(sh._roseError)}</p>`:''}${sh.rosePlan&&!sh.roseCutAt?`<p class="roseNote">${sh.rosePlan.allowanceMm} mm contour allowance · ${Math.round(sh.rosePlan.remainingPt2*R.MM*R.MM)} mm² remaining after this cut.</p>`:''}`;
     const invoke=fn=>async()=>{if(sh._roseAction)return;sh._roseAction=true;sh._roseError=null;refresh(sh);try{await fn();}catch(e){sh._roseError=e.message;C.toast(e.message,'bad');}finally{sh._roseAction=false;refresh(sh);C.flushManualIntake?.('rose');}};
     host.querySelector('[data-rose="plan"]')?.addEventListener('click',invoke(()=>plan(sh)));
     host.querySelector('[data-rose="record"]')?.addEventListener('click',invoke(()=>record(sh)));
@@ -121,6 +130,22 @@
     if(stockId&&!sh._roseLoaded&&!sh._roseLoading){observed.set(host,sh);if(observer)observer.observe(host);}
     if(ready&&included&&!busy&&!sh._roseError&&sh.rosePlanKey!==fingerprint(sh))queueMicrotask(()=>plan(sh).catch(()=>{}));
   }
+  // Lines saved before dates were kept show as one undated line, as the server reads them.
+  const stagesOf=plan=>plan?.stages||(plan?.lines?.length?[{n:1,at:null,ids:(plan.shapes||plan.placements||[]).map(s=>s.id),lines:[0,plan.lines.length]}]:[]);
+  // The green lines drawn now: the saved contour, or the protected lines while new charms are nested.
+  function activeLines(sh){if(sh.roseCutAt)return null;return sh.rosePlan&&!sh.dirty?sh.rosePlan:sh.roseProtected||null;}
+  const length=path=>path.slice(1).reduce((n,p,i)=>n+Math.hypot(p[0]-path[i][0],p[1]-path[i][1]),0);
+  function midpoint(path){let left=length(path)/2;for(let i=1;i<path.length;i++){const a=path[i-1],b=path[i],d=Math.hypot(b[0]-a[0],b[1]-a[1]);if(d>0&&d>=left)return [a[0]+(b[0]-a[0])*left/d,a[1]+(b[1]-a[1])*left/d];left-=d;}return path[0];}
+  // Number each green line where it runs, matching its timeline entry.
+  function numberLines(ctx,plan,k){
+    for(const s of stagesOf(plan)){
+      const paths=(plan.lines||[]).slice(s.lines[0],s.lines[1]).filter(p=>p.length);if(!paths.length)continue;
+      const [x,y]=midpoint(paths.reduce((a,b)=>length(b)>length(a)?b:a));
+      badge(ctx,x*k,y*k,s.n,'#008974','#fff');
+    }
+  }
+  // A numbered dot that stays the same size on screen at any pixel density.
+  function badge(ctx,x,y,text,fill,ink){const d=window.devicePixelRatio||1;ctx.fillStyle=fill;ctx.beginPath();ctx.arc(x,y,7*d,0,Math.PI*2);ctx.fill();ctx.fillStyle=ink;ctx.font=`${10*d}px sans-serif`;ctx.textAlign='center';ctx.fillText(text,x,y+3*d);}
   function stroke(ctx,paths,k,color,width,dashed=false){ctx.strokeStyle=color;ctx.lineWidth=width;ctx.setLineDash(dashed?[4,3]:[]);for(const path of paths||[]){ctx.beginPath();path.forEach(([x,y],i)=>i?ctx.lineTo(x*k,y*k):ctx.moveTo(x*k,y*k));ctx.stroke();}ctx.setLineDash([]);}
   function paint(ctx,sh,k,phase){
     if(sh.metal!=='rose')return;
@@ -130,9 +155,9 @@
       if(p){ctx.fillStyle='#f0eeeb';p.values.forEach((v,i)=>{if(p.axis==='x')ctx.fillRect(0,i*p.step*k,v*k,p.step*k);else ctx.fillRect(i*p.step*k,0,p.step*k,v*k);});}
       for(const c of cuts)for(const shape of c.plan?.shapes||[]){ctx.fillStyle='#d8d5d0';for(const path of shape.paths){ctx.beginPath();path.forEach(([x,y],i)=>i?ctx.lineTo(x*k,y*k):ctx.moveTo(x*k,y*k));ctx.closePath();ctx.fill();}stroke(ctx,shape.paths,k,'#aaa59c',Math.max(.6,.12*k));stroke(ctx,shape.ink,k,'#aaa59c',Math.max(.5,.1*k));}
     }else{
-      if(!sh.roseCutAt&&sh.roseProtected&&(!sh.rosePlan||sh.dirty))stroke(ctx,sh.roseProtected.lines,k,'#008974',Math.max(2.5,.2*k),true);
-      for(const c of cuts){stroke(ctx,c.plan?.lines,k,'#249c8a',Math.max(2,.2*k));const shape=c.plan?.shapes[0],pts=shape?.paths[0];if(pts?.length){const x=pts.reduce((n,p)=>n+p[0],0)/pts.length*k,y=pts.reduce((n,p)=>n+p[1],0)/pts.length*k;ctx.fillStyle='#fffefb';ctx.beginPath();ctx.arc(x,y,7,0,Math.PI*2);ctx.fill();ctx.fillStyle='#55746c';ctx.font='10px sans-serif';ctx.textAlign='center';ctx.fillText(c.revision,x,y+3);}}
-      if(!sh.roseCutAt&&sh.rosePlan&&!sh.dirty)stroke(ctx,sh.rosePlan.lines,k,'#008974',Math.max(2.5,.2*k),true);
+      if(!sh.roseCutAt&&sh.roseProtected&&(!sh.rosePlan||sh.dirty)){stroke(ctx,sh.roseProtected.lines,k,'#008974',Math.max(2.5,.2*k),true);numberLines(ctx,sh.roseProtected,k);}
+      for(const c of cuts){stroke(ctx,c.plan?.lines,k,'#249c8a',Math.max(2,.2*k));const shape=c.plan?.shapes[0],pts=shape?.paths[0];if(pts?.length){const x=pts.reduce((n,p)=>n+p[0],0)/pts.length*k,y=pts.reduce((n,p)=>n+p[1],0)/pts.length*k;badge(ctx,x,y,c.revision,'#fffefb','#55746c');}}
+      if(!sh.roseCutAt&&sh.rosePlan&&!sh.dirty){stroke(ctx,sh.rosePlan.lines,k,'#008974',Math.max(2.5,.2*k),true);numberLines(ctx,sh.rosePlan,k);}
     }ctx.restore();
   }
   window.RoseStock={protect,prepare,plan,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record};

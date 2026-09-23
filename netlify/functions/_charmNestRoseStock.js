@@ -7,7 +7,13 @@ const id=s=>typeof s==='string'&&/^[\w-]{4,80}$/.test(s);
 const parse=s=>s?JSON.parse(s):null;
 function protectedLayout(sheet){
   const plan=parse(sheet.rosePlanJson);
-  return plan?{profile:plan.profile,lines:plan.lines,shapes:plan.shapes,placements:sheet.placements}:parse(sheet.roseProtectedJson);
+  return plan?{profile:plan.profile,lines:plan.lines,shapes:plan.shapes,placements:sheet.placements,stages:plan.stages}:parse(sheet.roseProtectedJson);
+}
+// Every green line keeps the date it was first prepared and the charms it
+// separates. Lines saved before dates were kept show as one undated line.
+function stagesOf(guard){
+  if(!guard)return [];
+  return guard.stages||(guard.lines?.length?[{n:1,at:null,ids:(guard.shapes||guard.placements||[]).map(p=>p.id),lines:[0,guard.lines.length]}]:[]);
 }
 function assertProtected(guard,placements){
   if(!guard)return;
@@ -98,6 +104,14 @@ module.exports=function({db,col,FV,Readiness}){
       const plan=fresh.length?Rose.plan(fresh,stock.wPt,stock.hPt,guard?.profile||prior,b.allowanceMm):{version:1,profile:guard.profile,lines:[],shapes:[],allowanceMm:b.allowanceMm,remainingPt2:stock.wPt*stock.hPt-Rose.area(guard.profile)};
       if(guard){plan.lines=[...guard.lines,...plan.lines];plan.shapes=shapes.map(s=>protectedShapes.get(s.id)||s);plan.removedPt2=Rose.area(plan.profile)-(prior?Rose.area(prior):0);}
       if(!plan.lines.length)throw new Error('No new material is cut by this layout');
+      const earlier=stagesOf(guard),from=guard?guard.lines.length:0;
+      if(plan.lines.length>from){
+        const ids=fresh.map(s=>s.id),saved=stagesOf(parse(sheet.rosePlanJson)),last=saved[saved.length-1],key=list=>JSON.stringify([...list].sort());
+        // Preparing the same batch again (a new allowance, a reload) keeps its
+        // original date, and a line prepared before dates were kept stays undated.
+        const same=last&&last.n===earlier.length+1&&key(last.ids)===key(ids);
+        plan.stages=[...earlier,{n:earlier.length+1,at:same?last.at:Date.now(),ids,lines:[from,plan.lines.length]}];
+      }else plan.stages=earlier;
       const planJson=JSON.stringify(plan);if(Buffer.byteLength(JSON.stringify({...sheet,rosePlanJson:planJson}))>950000)throw new Error('Cut geometry is too complex to save');
       const planHash=hash(planJson+fingerprint(sheet)+stock.revision);
       tx.update(sr,{roseStockId:stock.id,roseRevision:stock.revision,rosePlanJson:planJson,rosePlanHash:planHash,roseFingerprint:fingerprint(sheet),updatedAt:FV.serverTimestamp()});
@@ -168,4 +182,5 @@ module.exports=function({db,col,FV,Readiness}){
 module.exports.fingerprint=fingerprint;
 
 module.exports.protectedLayout=protectedLayout;
+module.exports.stagesOf=stagesOf;
 module.exports.assertProtected=assertProtected;

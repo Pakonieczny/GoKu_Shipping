@@ -1269,6 +1269,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .roseTimeline{display:flex;list-style:none;padding:0;margin:0 0 8px;overflow-x:auto;border-top:1px solid #77b5a8;gap:0}
 .roseTimeline li{position:relative;flex-basis:0;min-width:130px;padding:8px 10px 3px 0}.roseTimeline time{font-size:10px;white-space:nowrap}.roseTimeline small{display:block;font-size:9px;color:var(--ink45);max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .roseCutNumber{display:inline-grid;place-items:center;border:1px solid #bad3cb;border-radius:50%;width:16px;height:16px;margin-right:5px;color:#326e60;background:#f3f8f5;font-size:9px}
+.roseTimeline li.roseLineEntry{flex:0 0 auto}.roseLineNumber{display:inline-grid;place-items:center;border-radius:50%;width:16px;height:16px;margin-right:5px;color:#fff;background:#008974;font-size:9px}.roseUndated{font-size:10px;font-style:italic;color:var(--ink45)}
 .roseActions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.roseRecorded{color:#326e60}.roseError{color:#a34838}.roseNote{font-size:10px;color:var(--ink45);margin:7px 0 0;line-height:1.5}
 .roseStockOptions{border-top:1px solid var(--line);padding-top:8px;display:grid;gap:8px;grid-column:1/-1}.roseStockOptions label{display:flex;align-items:center;justify-content:space-between;gap:12px}.roseStockOptions input{width:70px}
 
@@ -3815,7 +3816,7 @@ async function boot() {
 boot();
 </script>
 <script src="charm-nest-bridge.js?v=20260923-rose-lock"></script>
-<script src="charm-nest-rose-ui.js?v=20260923-rose-lock"></script>
+<script src="charm-nest-rose-ui.js?v=20260923-line-times"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin" aria-labelledby="owTitle">
