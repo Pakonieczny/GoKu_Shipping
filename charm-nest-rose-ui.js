@@ -73,12 +73,14 @@
     sh._rosePlanning=task;refresh(sh);
     try{await task;}catch(e){sh._roseError=e.message;throw e;}finally{sh._rosePlanning=null;refresh(sh);C.flushManualIntake?.('rose');}
   }
+  // Cut Sheet: one press draws this layout's green line with today's date and
+  // records the cut. Its charms turn grey, and the next charms nest past the
+  // line on the same physical sheet until it is full.
   async function record(sh){
-    if(!sh.rosePlanHash)await plan(sh);
-    if(!confirm('Has this exact layout AND its green line been physically cut?\n\nRecord the completed cut now. Its charms will turn grey, the area they used is left out of all future nesting, and the rest of the sheet stays available for the next Rose Gold layout.'))return;
+    if(!sh.rosePlanHash||(!sh.recalled&&sh.rosePlanKey!==fingerprint(sh)))await plan(sh);
     const r=await api('roseRecordCut',{sheetId:sh.sheetId,stockId:sh.roseStock.id,revision:sh.roseRevision,planHash:sh.rosePlanHash,by:window.B?.employee||'operator'});
     sh.roseCutAt=r.cut.at;sh.roseStock=r.stock;sh.roseHistory=[...decode([r.cut]),...(sh.roseHistory||[]).filter(c=>c.sheetId!==sh.sheetId)];
-    refresh(sh);C.toast('Cut recorded · the remaining sheet is available for the next Rose Gold layout','ok');
+    refresh(sh);C.toast('Sheet cut · the next Rose Gold charms nest past this green line','ok');
   }
   const observed=new WeakMap();
   const observer=window.IntersectionObserver?new IntersectionObserver(entries=>{for(const e of entries)if(e.isIntersecting){observer.unobserve(e.target);const sh=observed.get(e.target);if(sh&&!sh._roseLoaded&&!sh._roseLoading){sh._roseLoading=true;load(sh).catch(error=>{sh._roseError=error.message;}).finally(()=>{sh._roseLoading=false;refresh(sh);});}}},{rootMargin:'120px'}):null;
@@ -92,18 +94,18 @@
     // A layout that leaves no room for another charm takes the rest of the
     // sheet, so there is no new green line to cut.
     const full=!!ready&&sheetFull(sh);
-    const note=sh.roseCutAt?'':sh.rosePlan?(sh.rosePlan.full?'This layout uses the rest of the sheet, so it needs no new green line.':`${sh.rosePlan.allowanceMm} mm contour allowance · ${Math.round(sh.rosePlan.remainingPt2*R.MM*R.MM)} mm² remaining after this cut.`):full?'This layout fills the sheet, so it needs no new green line.':'';
+    // One action only. A full or nearly full sheet has no room for another
+    // green line, so it offers nothing.
+    const cuttable=!sh.roseCutAt&&(ready?!full:!!(sh.recalled?.roseStockId&&sh.rosePlan&&!sh.rosePlan.full));
     const marks=timeline(sh,history);
     host.hidden=!stockId&&!ready;
     host.classList.toggle('roseHasTimeline',!!marks);
     // The timeline comes last so it sits directly on the sheet's ruler.
     host.innerHTML=`${busy?'<div class="help" role="status"><i class="spin"></i> Loading sheet geometry…</div>':''}
-      <div class="roseActions">${sh.roseMore?'<button class="btn ghost xs" data-rose="older">Earlier cuts</button>':''}${ready&&!full?`<button class="btn ghost xs" data-rose="plan" ${busy?'disabled':''}>${sh.rosePlan?'Update contour':'Cut Sheet'}</button>`:''}${(sh.rosePlan||sh.recalled?.roseStockId)&&!sh.roseCutAt?`<button class="btn ghost xs" data-rose="record" ${busy||!included||(!sh.recalled&&!ready)?'disabled':''}>Record completed cut</button>`:''}${sh.roseCutAt?'<span class="roseRecorded">Cut recorded · remainder saved</span>':''}</div>
-      ${sh._roseError?`<p class="roseError" role="alert">${esc(sh._roseError)}</p>`:''}${note?`<p class="roseNote">${note}</p>`:''}${marks}`;
+      ${cuttable?`<div class="roseActions"><button class="btn ghost xs" data-rose="cut" ${busy||!included?'disabled':''}${included?'':' title="Include this sheet in the current set to cut it"'}>Cut Sheet</button></div>`:''}
+      ${sh._roseError?`<p class="roseError" role="alert">${esc(sh._roseError)}</p>`:''}${marks}`;
     const invoke=fn=>async()=>{if(sh._roseAction)return;sh._roseAction=true;sh._roseError=null;refresh(sh);try{await fn();}catch(e){sh._roseError=e.message;C.toast(e.message,'bad');}finally{sh._roseAction=false;refresh(sh);C.flushManualIntake?.('rose');}};
-    host.querySelector('[data-rose="plan"]')?.addEventListener('click',invoke(()=>plan(sh)));
-    host.querySelector('[data-rose="record"]')?.addEventListener('click',invoke(()=>record(sh)));
-    host.querySelector('[data-rose="older"]')?.addEventListener('click',invoke(()=>load(sh,true)));
+    host.querySelector('[data-rose="cut"]')?.addEventListener('click',invoke(()=>record(sh)));
     const menu=sh.el.querySelector('.solidOptions');
     if(menu&&!menu.querySelector('[data-rose-options]')){
       const options=document.createElement('div');options.dataset.roseOptions='';options.className='roseStockOptions';
