@@ -6,10 +6,10 @@ function createImageCache({db, fetch, env=process.env, now=Date.now, sleep=ms=>n
   const crypto=require('node:crypto'), flights=new Map(),memory=new Map();
   const key=crypto.createHash('sha256').update(String(env.CLIENT_ID||'unconfigured')).digest('hex').slice(0,24);
   const budgetRef=db.collection('EtsyApi_Config').doc('listingImages_'+key);
-  // At most 100 metadata requests/day by default (2% of a 5,000-call key).
+  // At most 500 metadata requests/day by default (10% of a 5,000-call key).
   // Batch preparation resolves up to 100 listings per request; cached images cost none.
-  const capValue=Number(env.ETSY_IMAGE_MAX_DAILY_CALLS ?? 100);
-  const cap=Number.isFinite(capValue)?Math.max(0,Math.min(1000,Math.floor(capValue))):100;
+  const capValue=Number(env.ETSY_IMAGE_MAX_DAILY_CALLS ?? 500);
+  const cap=Number.isFinite(capValue)?Math.max(0,Math.min(1000,Math.floor(capValue))):500;
   const normalize=data=>(Array.isArray(data)?data:data?.results||data?.images||[]).map((x,i)=>({...x,rank:Number(x.rank)||i+1,url_570xN:x.url_570xN||x.url||x.url_fullxfull||null})).filter(x=>x.url_570xN).sort((a,b)=>a.rank-b.rank);
   const result=(images,source,status=200,retryAt=0)=>({images,source,status,retryAt});
   async function read(id,{cacheOnly=false}={}) {

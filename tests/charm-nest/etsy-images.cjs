@@ -36,9 +36,9 @@ function fixture({cap=25,status=200,headers={},broken=false}={}){
  const recovered=await f.api().readMany(['123','456']);
  assert.equal(f.calls(),1,'legacy 25 attempts do not block the new batch allowance');
  assert.equal(recovered['123'].images[0].url_570xN,'first.jpg');
- assert.equal(f.data.get(budgetKey).cap,100);assert.equal(f.data.get(budgetKey).attempts.length,26,'prior usage is never reset');
+ assert.equal(f.data.get(budgetKey).cap,500);assert.equal(f.data.get(budgetKey).attempts.length,26,'prior usage is never reset');
  assert.deepEqual(f.data.get(budgetKey).attempts.slice(0,25),prior);
- f.data.set(budgetKey,{attempts:Array(100).fill(prior[0])});
+ f.data.set(budgetKey,{attempts:Array(500).fill(prior[0])});
  assert.equal((await f.api().readMany(['789']))['789'].source,'budget-paused');assert.equal(f.calls(),1,'new default remains bounded');
  f=fixture({cap:null});f.data.set(budgetKey,{attempts:prior,blockedUntil:Date.UTC(2026,8,23,2)});
  await f.api().readMany(['123']);assert.equal(f.calls(),0,'migration never clears real server cooldowns');
