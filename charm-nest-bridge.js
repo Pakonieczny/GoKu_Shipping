@@ -3824,8 +3824,12 @@ const RunCtl = window.RunCtl = (() => {
     toast(r.status==="processed" ? "Processing complete — pending items remain available for follow-up" : r.nothingToCut ? "Working sheets saved — held until eligible for a set" : `Set complete — ${(r.committed || []).length} order(s) marked design-complete`, "ok", 7000); ding && ding();
     Arrivals.start();
   }
-  /** Clear finished order state while keeping unfinished physical layouts on their material cards. */
-  function clearRunState(beforeClear) {
+  /** Clear finished order state while keeping unfinished physical layouts on their material cards.
+      drop "released": the run's orders were let go (a run given up, records purged), so a half-filled sheet holding
+      them leaves its card and only an uncut Rose Gold contour, the physical plate, stays. drop "all": every record went
+      with it (sandbox reset), so the cards start empty. A half-filled sheet kept from a run that is gone is never
+      filled again: the next run opened sheet 2 beside it, one charm left on sheet 1 for good (23 Sep). */
+  function clearRunState(beforeClear, { drop = null } = {}) {
     if(allSheets().some(p=>p.metal==='rose' && !p.roseCutAt && (p.rosePlan||p.roseProtected) &&
       (['nesting','finishing','queued'].includes(p.status) || p.persisted&&!p.persistedDone || p._rosePlanning || p._roseAction || p._operationStarting))){
       toast('The protected Rose Gold sheet is still being nested or saved. Wait until it finishes before clearing this run.','bad');
@@ -3842,9 +3846,9 @@ const RunCtl = window.RunCtl = (() => {
       // Clearing an order run is not a physical cut. Keep an uncut Rose
       // contour, its reservation and original orders together, even if its
       // set has already been committed. Keep other unfinished partial sheets.
-      const retained=prim.pages.filter(p=>p.status!=='nesting' && !p.roseCutAt &&
+      const retained=drop==='all'?[]:prim.pages.filter(p=>p.status!=='nesting' && !p.roseCutAt &&
         ((p.metal==='rose' && (p.rosePlan || p.roseProtected)) ||
-          (p.placements.length && !p.releaseFull && !p.recalled && !Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId)))));
+          (!drop && p.placements.length && !p.releaseFull && !p.recalled && !Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId)))));
       for(const pg of prim.pages.slice())if(!retained.includes(pg)){
         if(pg.status==='nesting')stopNest(pg);
         if(pg!==prim){(pg.workers||[]).forEach(w=>w.terminate());pg.workers=[];continue;}
@@ -3939,7 +3943,7 @@ const RunCtl = window.RunCtl = (() => {
       const eng = [...Engrave.items().values()].filter(j => ["approved", "words", "review"].includes(j.state) && !j.backs).length;
       const rev = Review.count();
       const lost = [eng ? `${eng} engraving decision${eng === 1 ? "" : "s"}` : "", rev ? `${rev} review decision${rev === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
-      if (confirm(`Give up run ${r.runId.slice(-8)}?${lost ? `\n\n${lost} made in this run are not yet written and will be lost.` : ""}\n\nThe sheets and files already saved are kept.`)) clearRunState(()=>releaseRun(r));
+      if (confirm(`Give up run ${r.runId.slice(-8)}?${lost ? `\n\n${lost} made in this run are not yet written and will be lost.` : ""}\n\nThe sheets and files already saved are kept.`)) clearRunState(()=>releaseRun(r),{drop:'released'});
     };
     Orders.render();
   }
@@ -4315,7 +4319,7 @@ const Sandbox = window.Sandbox = (() => {
     // no arrivals check may sweep while the records go: with the stream deleted the emulator lists the whole snapshot
     await Arrivals.pause(); let reloading = false;
     try {
-      if (replay && RunCtl.clearRunState() === false) return;   // a Rose Gold sheet still saving: nothing is deleted
+      if (replay && RunCtl.clearRunState(null, { drop: "all" }) === false) return;   // a Rose Gold sheet still saving: nothing is deleted
       const r = await api("charmNestLibrary", { op: "sandboxReset" }); toast(`Sandbox reset — ${r.deleted} record(s) removed`, "ok");
       await forgetCompletions();
       // the stream's clock, arrivals and orders went with the records: a replay starts from nothing, as the first one did

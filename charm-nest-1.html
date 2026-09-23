@@ -3775,7 +3775,7 @@ function openSettings() {
         let r; try { r = await go(false); } catch (e) { if (e.status === 409 && confirm(`${e.message}\n\nGive it up and purge anyway?`)) r = await go(true); else throw e; }
         const n = Object.values(r.docs || {}).reduce((a, b) => a + b, 0);
         toast(`Purged ${n} record(s) — reloading with a clean sheet`, "ok", 4000);
-        if (window.RunCtl && RunCtl.clearRunState) RunCtl.clearRunState();
+        if (window.RunCtl && RunCtl.clearRunState) RunCtl.clearRunState(null, { drop: "released" });
         setTimeout(() => location.reload(), 1200);
       } catch (e) { toast(e.status === 403 ? "Wrong passcode — nothing was purged" : "Purge failed: " + e.message, "bad", 7000); }
     }; } }
@@ -3920,7 +3920,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260923-tray"></script>
+<script src="charm-nest-bridge.js?v=20260923-reset"></script>
 <script src="charm-nest-rose-ui.js?v=20260923-density"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->

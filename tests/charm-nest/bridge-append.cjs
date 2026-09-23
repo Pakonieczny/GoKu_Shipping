@@ -86,6 +86,31 @@ function liveCase({metal='rose',newRun=false,cut=false,full=false,committed=fals
   newer.status='nesting';runState.B.run={status:'complete'};
   assert.equal(runState.clearRunState(),false,'a protected worker must settle before clearing its run');
   assert.equal(runState.B.run.status,'complete');assert.equal(newer.sheetId,'later-green');assert.equal(newer.roseStock.id,'later-stock');
+  // A run given up lets its orders go: its half-filled Gold sheet leaves the card (the next run re-pools those orders
+  // on sheet 1, not on a sheet 2 beside a stranded one), and the uncut Rose contour, the physical plate, stays. A sandbox
+  // reset deletes every record, so the cards start empty.
+  {
+    const cards=()=>{
+      const rose={metal:'rose',runId:'gone',sheetId:'rose-green',page:1,charms:[{id:'r',poolId:'r-pool'}],placements:[{id:'r',cxPt:5,cyPt:5,angle:0}],roseProtected:{profile:{axis:'x'},lines:[[[0,20],[40,20]]]},roseStock:{id:'plate'},status:'complete'};
+      const gold={metal:'gold',runId:'gone',sheetId:'gold-one',page:1,charms:[{id:'g1',poolId:'g1-pool'}],placements:[{id:'g1',cxPt:1,cyPt:1}],status:'complete'};
+      const r={...rose,pages:[rose],active:0,cardEl:{}};Object.assign(r,rose);r.pages[0]=r;
+      const g={...gold,pages:[gold],active:0,cardEl:{}};Object.assign(g,gold);g.pages[0]=g;
+      runState.S.sheets.rose=r;runState.S.sheets.gold=g;runState.B.run={status:'running'};
+      return {r,g};
+    };
+    let {r,g}=cards(),released=0;
+    assert.notEqual(runState.clearRunState(()=>released++,{drop:'released'}),false);
+    assert.equal(released,1,'the run is released before its cards are cleared');
+    assert.equal(g.sheetId,null,'a given-up run leaves no half-filled Gold sheet behind');assert.equal(g.runId,null);assert.equal(g.charms.length,0);
+    assert.equal(r.sheetId,'rose-green');assert.equal(r.roseStock.id,'plate');assert.equal(r.charms.length,1,'the uncut Rose contour stays with its charms');
+    ({r,g}=cards());
+    runState.clearRunState(null,{drop:'all'});
+    assert.equal(g.sheetId,null);assert.equal(g.charms.length,0);
+    assert.equal(r.sheetId,null,'a sandbox reset clears the Rose card too: its stock record went with the rest');assert.equal(r.roseStock,undefined);assert.equal(r.charms.length,0);
+    ({r,g}=cards());
+    runState.clearRunState();
+    assert.equal(g.sheetId,'gold-one','clearing a finished run still keeps its unfinished partial sheet');assert.equal(r.sheetId,'rose-green');
+  }
   const savedCharm={id:'protected',poolId:'protected-pool',sourceId:'old-source',outline:{},ringGeometryVersion:1};
   const savedPage={metal:'rose',charms:[savedCharm],placements:[{id:'protected',cxPt:20,cyPt:15,angle:0}],rosePlan:{profile:{axis:'x'},lines:[[[0,30],[40,30]]]},roseStock:{id:'reserved'},verification:{ok:true},outputs:{ai:'saved'}};
   const recovery={sources:[],poolSources:{},unassigned:[],sheets:[{pages:[savedPage]}],jobs:[]};
