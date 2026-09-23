@@ -343,7 +343,7 @@
   function sheetRelease(sheet, opts = {}) {
     if (!sheet.verified || !sheet.placed || sheet.stopped || sheet.dirty) return { include: false, reason: "Nest and verify first" };
     if (FAST_MATERIALS.has(sheet.material)) return sheet.full
-      ? { include: true, reason: "Full sheet" } : { include: false, reason: "Partial · held for a later set" };
+      ? { include: true, reason: "Full sheet" } : { include: false, reason: sheet.topup ? "Topping up · later orders fill its gaps first" : "Partial · held for a later set" };
     if (sheet.material === "rose" && typeof opts.selected?.rose === "boolean") return opts.selected.rose
       ? {include:true,reason:"Included by you"} : {include:false,reason:"Not selected for this set"};
     if (sheet.material === "rose") return opts.seq > 0 && opts.seq % 2 === 0

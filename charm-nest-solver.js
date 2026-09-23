@@ -737,9 +737,14 @@
       // Sparse queues consume a strip from one edge. Alternate construction
       // seeds escape contact-only local optima; final ranking and refinement
       // always measure contact against the actual silhouettes, never the walls.
-      const sparse = candidates.reduce((n, p) => n + p.footprintCells, 0) / usableCellsFine < maxFill * 0.9;
+      const setCells = candidates.reduce((n, p) => n + p.footprintCells, 0), sparse = setCells / usableCellsFine < maxFill * 0.9;
+      // A queue that fills most of the sheet leaves no offcut to keep, and a left-to-right build can fail to seat it
+      // where a build from the contacts seats every charm (real charms, 23 Sep: 3 of 4 sets whose last order missed
+      // fitted only this way). Such a queue alternates the two builds; of two complete layouts the ranking keeps the
+      // more compact one. Rose Gold keeps its left-to-right build for the stock its green line leaves.
+      const contactBuild = !!job.nearFullContact && sparse && !roseAxis && setCells / usableCellsFine >= maxFill * 0.75 && trial % 2 === 1;
       fitNow = fitLine && trial % 2 === 0;
-      const stripPacked = fitNow || sparse || ((job.exploreRotations ? trial % 3 === 2 : trial > 0) && best?.density < maxFill * 0.9);
+      const stripPacked = !contactBuild && (fitNow || sparse || ((job.exploreRotations ? trial % 3 === 2 : trial > 0) && best?.density < maxFill * 0.9));
       const advice = job.packingHints || {}, priorities = new Map((advice.priority || []).map((id,i,a) => [id, 1 - i / Math.max(1,a.length)]));
       const shaped = !!advice.profiles && candidates.every(p => advice.profiles[p.id]);
       const guided = shaped || (trial % 3 === 1 && priorities.size);

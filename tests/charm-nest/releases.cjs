@@ -21,6 +21,7 @@ for (const material of ['gold','silver']) {
   assert.equal(O.sheetRelease({...base,material,full:true},{seq:1}).include,true);
   assert.equal(O.sheetRelease({...base,material,full:true,stopped:true},{seq:1}).include,false);
   assert.equal(O.sheetRelease({...base,material,full:true,dirty:true},{seq:1}).include,false);
+  assert.deepEqual(O.sheetRelease({...base,material,topup:true},{seq:1}),{include:false,reason:'Topping up · later orders fill its gaps first'},'a topping-up sheet waits and says why');
 }
 for (const material of ['gold10k','gold14k']) {
   assert.equal(O.sheetRelease({...base,material},{seq:2}).include,false);

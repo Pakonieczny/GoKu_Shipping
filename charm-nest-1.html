@@ -2241,7 +2241,7 @@ async function reviewLayout(sh, items) {
 function makeSheet(metal, page) {
   return { metal, page: page || 1, runId: null, sheetId: null, charms: [], status: "idle", worker: null, jobId: null, layout: null, placements: [], rejects: [], sat: null, progress: null, stage: "", outputs: null, verification: null, startedAt: 0, endedBy: null, trials: 0, best: null, dirty: true, log: [], liveInfo: null, serverJob: null };
 }
-function sheetDirty(sh) { if(sh.roseCutAt)return; if(sh.metal==='rose'&&(sh.rosePlan||sh.roseProtected)){window.RoseStock?.protect(sh);sh.dirty=true;sh.status='ready';renderCard(sh);return;} delete sh.rosePlan; delete sh.rosePlanHash; delete sh.rosePlanKey; delete sh.runHold; delete sh.intakeFinalized; delete sh.intakeForceFinal; delete sh.intakeOptimized; delete sh.intakeOptimizedCount; delete sh.intakeAppend; delete sh.appendOnly; sh.dirty = true; sh.releaseFull = false; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
+function sheetDirty(sh) { if(sh.roseCutAt)return; if(sh.metal==='rose'&&(sh.rosePlan||sh.roseProtected)){window.RoseStock?.protect(sh);sh.dirty=true;sh.status='ready';renderCard(sh);return;} delete sh.rosePlan; delete sh.rosePlanHash; delete sh.rosePlanKey; delete sh.runHold; delete sh.intakeFinalized; delete sh.intakeForceFinal; delete sh.intakeOptimized; delete sh.intakeOptimizedCount; delete sh.intakeAppend; delete sh.appendOnly; delete sh.topup; sh.dirty = true; sh.releaseFull = false; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
 function activeCharms(sh) { return sh.charms.filter(c => !c.excluded); }
 /* One card per metal; a metal can hold several sheets ("pages"). The card shows the active page and tabs to switch. */
 const pagesOf = metal => S.sheets[metal].pages;
@@ -2266,7 +2266,8 @@ function removePage(pg) {
 function keepOrdersWhole(sh, byId) {
   const orderOf = id => { const c = byId.get(id); return c ? (c.order || c.id) : id; };
   const bad = new Set(sh.rejects.map(orderOf));
-  const dated = [...byId.values()].some(c => c.orderDate > 0);
+  // a topping-up sheet takes any later order that fits its gaps, so a younger one is not lifted for an older miss
+  const dated = !(sh.topup && !sh.topup.closedAt) && [...byId.values()].some(c => c.orderDate > 0);
   const cutoff = dated && sh.rejects.length ? Math.min(...sh.rejects.map(id => byId.get(id)?.orderDate || 0)) : Infinity;
   const locked=new Set([...(sh.roseProtected?.placements||[]),...(sh.appendOnly?sh.nestInitial||[]:[])].map(p=>p.id));
   const lifted = sh.placements.filter(p => !locked.has(p.id)&&(bad.has(orderOf(p.id)) || (dated && (byId.get(p.id)?.orderDate || 0) > cutoff)));
@@ -2315,6 +2316,44 @@ function sheetFull(sh, result, items) {
   const overflow = sh.rejects.length > 0 && (result.density + 1e-6 >= Math.min(.74, cap) || finished) &&
     [...new Set(sh.rejects.map(id => byId.get(id)?.order || id))].some(order => items.filter(c => (c.order || c.id) === order).reduce((n, c) => n + inflatedArea(c), 0) <= result.usablePt2 * cap);
   return result.endedBy !== "stopped" && !!sh.verification?.ok && sh.placements.length > 0 && (overflow || result.placedPt2 / Math.max(1, result.usablePt2) >= cap - 1e-6);
+}
+/* Top-up. Orders arrive a few at a time, so when the next one no longer fits a Gold or Silver sheet there is no queue of
+   waiting orders to fill the rest: releasing the sheet there left it near 70%. Now the order that missed moves on to the
+   next sheet and goes first there, and this sheet stays first in line while later orders try its gaps, oldest first
+   but any order that fits (Paul, 23 Sep: newer orders may fill up to 5% of a sheet ahead of an older one). It is released
+   when they have filled that 5%, when three updates in a row add nothing, or after six updates, so it never waits long. */
+const TOPUP = { share: .05, idle: 3, updates: 6, ms: 3600000 };
+const topupNow = () => window.SimClock?.now?.() ?? Date.now();   // the sandbox order stream's simulated hour while it plays
+function topupSettle(sh, result, full) {
+  const cap = +S.settings.maxFill || .80, t = sh.topup;
+  if (!["gold", "silver"].includes(sh.metal) || sh.roseProtected || result.endedBy === "stopped" || !sh.verification?.ok || S.settings.topup === "off") return full;
+  const atCeiling = result.placedPt2 / Math.max(1, result.usablePt2) >= cap - .004;
+  // only the live Auto run brings later orders to this sheet; anywhere else a top-up would wait for nothing
+  const live = S.settings.runMode === "auto" && !!sh.runId && window.B?.run?.runId === sh.runId && !["complete", "abandoned"].includes(window.B.run.status);
+  if (!t) {
+    if (!full || atCeiling || !sh.rejects.length || !live) return full;
+    sh.topup = { at: topupNow(), base: +result.density.toFixed(4), maxFill: +(result.density + TOPUP.share).toFixed(4), placed: sh.placements.length, updates: 0, idle: 0 };
+    log(sh, `Topping up at ${fmt.pct(result.density)}: the order that missed moves to the next sheet; later orders may fill up to ${TOPUP.share * 100}% more of this one first`);
+    return false;
+  }
+  if (t.closedAt) return full;
+  const added = sh.placements.length > t.placed;
+  t.updates++; t.idle = added ? 0 : t.idle + 1; t.placed = sh.placements.length;
+  if (!live || atCeiling || t.maxFill - result.density < .004 || t.idle >= TOPUP.idle || t.updates >= TOPUP.updates) {
+    t.closedAt = topupNow(); t.density = +result.density.toFixed(4);
+    log(sh, `Top-up done after ${t.updates} update(s): ${fmt.pct(t.base)} → ${fmt.pct(result.density)}, sheet released`);
+    return true;
+  }
+  return false;
+}
+/** An hour after the miss the sheet is released even if no order of its metal came to fill it. Checked as every update
+ *  of the run starts (LiveNest.add), whose own release step then takes the sheet. */
+function topupExpire(sh, now = topupNow()) {
+  const t = sh.topup;
+  if (!t || t.closedAt || now - t.at < TOPUP.ms || ["nesting", "finishing", "queued"].includes(sh.status)) return false;
+  t.closedAt = now; t.density = +(sh.density || t.base).toFixed(4); sh.releaseFull = true;
+  log(sh, `Top-up done after an hour: ${fmt.pct(t.base)} → ${fmt.pct(t.density)}, sheet released`); renderCard(sh);
+  return true;
 }
 function usableArea(sh) {
   const st=stockFor(sh.metal,sh),inset=+S.settings.insetPt||0,clearance=+S.settings.clearancePt||0,ins=inset+Math.max(0,clearance)/2;
@@ -2403,12 +2442,14 @@ function buildJob(sh) {
   const items = activeCharms(sh);
   return {
     sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0, ...(sh.roseStock?.profileJson ? {remnant:JSON.parse(sh.roseStock.profileJson)} : {}) },
-    clearancePt: +S.settings.clearancePt || 0, angles: angleSet(), fineRes: 2, coarseRes: 0.5,
+    // a Gold or Silver arrival is fitted into the saved gaps at 5° steps: a few new charms, many more slots to try
+    clearancePt: +S.settings.clearancePt || 0, angles: sh.appendOnly && ["gold", "silver"].includes(sh.metal) && angleSet().length < 72 ? Array.from({ length: 72 }, (_, i) => i * 5) : angleSet(), fineRes: 2, coarseRes: 0.5,
     timeBudgetMs: sh.intakeBudgetMs || (+S.settings.budgetS || 180) * 1000, fullBudget: sh.intakePhase !== "fill", stallMs: 60 * 1000, maxTrials: sh.intakePhase === "fill" ? 2000 : 1000000, seed: sh.runSeed || +S.settings.seed || 1,
     protectedRose:sh.roseProtected||null,lockedPlacements:sh.appendOnly?sh.nestInitial||sh.placements:null,
-    initialLayout: sh.nestInitial || null, maxFill: +S.settings.maxFill || 0.80,
+    initialLayout: sh.nestInitial || null, maxFill: sh.topup && !sh.topup.closedAt ? Math.min(+S.settings.maxFill || 0.80, sh.topup.maxFill) : +S.settings.maxFill || 0.80, nearFullContact: sh.metal !== "rose",
     packingHints: S.settings.packingAI !== "off" && sh.packingAdvice?.version === 1 && sh.packingAdvice?.key === packingKey(sh, items) ? sh.packingAdvice.hints || null : null,
-    pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: c.orderDate || 0, pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
+    // topping up, an arrival takes any gap it fits; the fresh arrangement after a miss keeps the charms on the sheet first
+    pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: sh.topup && !sh.topup.closedAt && sh.appendOnly ? 0 : c.orderDate || 0, pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
   };
 }
 function packingKey(sh, items) {
@@ -2911,13 +2952,15 @@ async function finishNest(sh, { result, error }) {
   // An arrival that misses the gaps of a Gold or Silver sheet short of the target gets one fresh arrangement of the whole
   // sheet before it moves on: the gaps of a saved layout do not show how full the sheet can get. Nothing on an unreleased
   // sheet is cut yet, and an engraved back belongs to its piece, not to the piece's position. Moving on at once used to
-  // leave the sheet short of full, so it was never released.
-  const appendMissed=sh.appendOnly && !sh.roseProtected && ["gold","silver"].includes(sh.metal) && sh.intakePhase==='fill' && belowTarget && result.rejects.length>0;
+  // leave the sheet short of full, so it was never released. A sheet topping up gives each later order the same chance
+  // up to its allowance, with the charms already on it kept first.
+  const toppingUp=!!sh.topup && !sh.topup.closedAt;
+  const appendMissed=sh.appendOnly && !sh.roseProtected && !sh.topup?.closedAt && ["gold","silver"].includes(sh.metal) && sh.intakePhase==='fill' && (belowTarget || toppingUp) && result.rejects.length>0;
   if(result.endedBy!=='stopped' && (needsRepack || appendMissed)){
     sh.optimizationTried=true;sh.intakeForceFinal=true;delete sh.intakeAppend;delete sh.appendOnly;
     sh.placements=result.placements;sh.density=result.density;
     sh.liveInfo={placedPt2:result.placedPt2,usablePt2:result.usablePt2,freePt2:result.freePt2,pocket:result.pocket};
-    sh.status='ready';log(sh,'Below 74%: improving the saved layout before accepting this batch');startNest(sh);return;
+    sh.status='ready';log(sh,belowTarget?'Below 74%: improving the saved layout before accepting this batch':'Topping up: re-arranging the sheet so the later order can fit, the charms already on it first');startNest(sh);return;
   }
   sh._beforeLearned = null;
   sh.releaseFull = false;
@@ -2976,7 +3019,7 @@ async function finishNest(sh, { result, error }) {
     sh.outputs = { ai: aiBytes, labelled: labelledBytes, report, previewPng: await previewPng(sh) };
     sh.progress = [4, 5]; sh.stage = "Saving to the cloud…"; renderProgress(sh);
     // Overflow after a complete search closes a sheet; merely placing a small queue does not.
-    sh.releaseFull = sheetFull(sh, result, items);
+    sh.releaseFull = topupSettle(sh, result, sheetFull(sh, result, items));
     if(sh.intakePhase!=='fill' && result.endedBy!=='stopped' && sh.verification.ok){sh.intakeOptimized=true;sh.intakeOptimizedCount=items.length;}
     delete sh.intakeForceFinal;
     sh.intakeFinalized = sh.intakePhase === "final" && result.endedBy !== "stopped" && sh.verification.ok && sh.placements.length > 0;
@@ -3048,7 +3091,7 @@ async function persistSheet(sh, items, context) {
     charmCount: items.length, placedCount: sh.placements.length, rejectCount: (sh.outputs.report.rejects || []).length, page: sh.page, verification: { ok: !!sh.verification.ok, minGapPt: sh.verification.minGapPt, minEdgePt: sh.verification.minEdgePt, render: sh.verification.render && { ok: sh.verification.render.ok, overlapPx: sh.verification.render.overlapPx, outsidePx: sh.verification.render.outsidePx } },
     outputs,
     sources: [...new Set(items.map(c => c.sourceId))].map(id => { const s = sourceOf(id); return s ? { id: s.id, name: s.name, zipName: s.zipName, hash: s.hash, bytes: s.bytes ? s.bytes.length : 0, path: s.cloud && s.cloud.path, url: s.cloud && s.cloud.url, pool: !!s.pool, sku: s.sku || null } : null; }).filter(Boolean),
-    dirty:!!sh.dirty, draft: !!sh.draft, solidIncluded:["gold10k","gold14k"].includes(sh.metal) ? !!window.Gate?.solidSelected(sh.metal) : null, releaseFull: !!sh.releaseFull, intakeFinalized: !!sh.intakeFinalized, intakeOptimized:!!sh.intakeOptimized, intakeOptimizedCount:sh.intakeOptimizedCount||0, setId: sh.setId || null, setSeq: sh.seq || null, sheetIndex: sh.sheetIndex || null, runId: sh.runId || null,
+    dirty:!!sh.dirty, draft: !!sh.draft, solidIncluded:["gold10k","gold14k"].includes(sh.metal) ? !!window.Gate?.solidSelected(sh.metal) : null, releaseFull: !!sh.releaseFull, topup: sh.topup || null, intakeFinalized: !!sh.intakeFinalized, intakeOptimized:!!sh.intakeOptimized, intakeOptimizedCount:sh.intakeOptimizedCount||0, setId: sh.setId || null, setSeq: sh.seq || null, sheetIndex: sh.sheetIndex || null, runId: sh.runId || null,
     orders: [...new Set(sh.placements.map(p => { const c = byId.get(p.id); return c && c.order ? String(c.order).split("/")[0] : null; }).filter(Boolean))],
     poolIds: sh.placements.map(p => byId.get(p.id) && byId.get(p.id).poolId).filter(Boolean), backPool: sh.backPool || [], backOutputs: sh.backOutputs || null, label: sh.label || null,
     charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, order: c.order || c.id, layer: c.layer || null, poolId: c.poolId || null, sku: c.sku || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open })),
@@ -3837,7 +3880,7 @@ async function boot() {
   cloudProbe();
   refreshAllCards(); updateTopSub();
   window.CN = { S, AG, DEFAULTS, METALS, showPage, startNest, intake, flushManualIntake, api, agent, agentUpdate, agentCall, uploadBytes, buildJob, setMode, renderLibrary, loadLibrary, applyGroupingReview, reviewGrouping, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; },
-    activePage, allSheets, pagesOf, addPage, sheetDirty, activeCharms, renderCard, inflatedArea, usableArea, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, openLibrarySheet, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log };   // for tests, the console and charm-nest-bridge.js
+    activePage, allSheets, pagesOf, addPage, sheetDirty, activeCharms, renderCard, inflatedArea, usableArea, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, openLibrarySheet, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log, topupExpire };   // for tests, the console and charm-nest-bridge.js
   window.CharmNestOperations?.subscribe(()=>flushManualIntake());
 }
 boot();

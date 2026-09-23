@@ -1698,7 +1698,7 @@ const Gate = window.Gate = (() => {
   const nestable = (sh, run) => !modern(run?.runId) || !solid(sh.metal) || !!(run?.solidIncluded || selected())[sh.metal] || sh.isolated;
   function policy(sh, seq, choices = selected()) {
     return O_.sheetRelease({ material: sh.metal, verified: !!sh.verification?.ok, placed: sh.placements.length,
-      stopped: sh.endedBy === "stopped", dirty: sh.dirty || ["nesting", "finishing", "queued"].includes(sh.status), full: !!sh.releaseFull }, { seq, selected: choices });
+      stopped: sh.endedBy === "stopped", dirty: sh.dirty || ["nesting", "finishing", "queued"].includes(sh.status), full: !!sh.releaseFull, topup: !!sh.topup && !sh.topup.closedAt }, { seq, selected: choices });
   }
   async function upgrade(run) {
     if (!run || run.releasePolicy === 2) return;
@@ -3775,7 +3775,7 @@ const RunCtl = window.RunCtl = (() => {
       const d = (await api("charmNestLibrary", { op: "getSheet", id: slim.id })).sheet; if (!d) continue;
       const prim = S.sheets[d.metal]; let pg = prim.pages.find(p => p.sheetId === d.id) || (prim.pages[0].charms.length ? addPage(d.metal) : prim.pages[0]);
       const set = d.draft ? null : bySet.get(d.setId);
-      pg.draft = !!d.draft || !set; pg.releaseFull = !!d.releaseFull; pg.intakeFinalized = !!d.intakeFinalized; pg.intakeOptimized=!!d.intakeOptimized; pg.intakeOptimizedCount=+d.intakeOptimizedCount||0;
+      pg.draft = !!d.draft || !set; pg.releaseFull = !!d.releaseFull; pg.intakeFinalized = !!d.intakeFinalized; pg.intakeOptimized=!!d.intakeOptimized; pg.intakeOptimizedCount=+d.intakeOptimizedCount||0; pg.topup=d.topup||null;
       pg.sheetId = d.id; pg.runId = rec.runId; pg.group = set ? set.group || null : "dispatch"; pg.setId = set ? set.setId : null; pg.seq = set ? d.setSeq || set.seq : null; pg.setDay = d.day; pg.cardStartedAt = d.cardStartedAt || d.createdAt || null; pg.sheetIndex = set ? d.sheetIndex : null; pg.fileBase = d.fileBase; pg.folderPath = d.outputs?.ai?.path?.replace(/\/[^/]+$/, "") || (set ? `${set.folder}/${d.fileBase}` : `charmnest/sheets/${d.day}/${d.fileBase}`); pg.label = set ? d.label || null : null; pg.backPool = d.backPool || []; pg.backOutputs = d.backOutputs || null; pg.cloud = d.outputs ? { ai: d.outputs.ai && d.outputs.ai.url, pdf: d.outputs.pdf && d.outputs.pdf.url, labelled: d.outputs.labelled && d.outputs.labelled.url, report: d.outputs.report && d.outputs.report.url, preview: d.outputs.preview && d.outputs.preview.url } : null;
       pg.restored = true; pg.persistedDone = true;
       if(d.metal==='rose' && d.roseStockId && window.RoseStock)await RoseStock.restore(pg,d);
@@ -5048,6 +5048,8 @@ const LiveNest = window.LiveNest = (() => {
   async function add(run) {
     const prepare=async()=>{
     run.intakeRecovery = run.intakeRecovery || { retire: [], backs: [] };
+    // a Gold or Silver sheet topping up for an hour is released now; this update's release step takes it
+    for (const p of allSheets()) if (p.runId === run.runId) window.CN?.topupExpire?.(p);
     const touched = new Set(Orders.rows().filter(r => ["pulled", "waiting"].includes(r.state)).map(r => r.spec?.material).filter(Boolean));
     const before = new Set(allSheets().flatMap(p => p.charms.map(c => c.poolId)).filter(Boolean));
     // An order can join previously independent material sets. Re-number that connected group together.
