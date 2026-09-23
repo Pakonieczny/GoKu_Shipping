@@ -17,7 +17,9 @@ function assertProtected(guard,placements){
     if(rows.length!==1||['cxPt','cyPt','angle'].some(k=>!Number.isFinite(q[k])||Math.abs(q[k]-p[k])>.001)||Math.abs((q.scale||1)-(p.scale||1))>.00001||(p.hash!=null&&q.hash!==p.hash))throw new Error('The protected Rose Gold layout cannot be moved or removed');
   }
 }
-const OUTLINE_TOLERANCE_PT=.05;
+// Requests may carry unsimplified outlines from pages opened before the
+// simplification; the saved record size is checked after slimming.
+const OUTLINE_TOLERANCE_PT=.1,MAX_SHAPES_JSON=3000000;
 function bounds(paths){
   let box=null;for(const path of paths||[])for(const [x,y] of path){if(!Number.isFinite(x)||!Number.isFinite(y))return null;box=box?[Math.min(box[0],x),Math.min(box[1],y),Math.max(box[2],x),Math.max(box[3],y)]:[x,y,x,y];}
   return box;
@@ -66,8 +68,11 @@ module.exports=function({db,col,FV,Readiness}){
       tx.update(ref,{owner:null,available:true,updatedAt:FV.serverTimestamp()});if(sheet.exists)tx.update(sheets().doc(b.sheetId),{rosePlanJson:null,rosePlanHash:null,roseStockId:null});});return {ok:true};
   }
   async function rosePlan(b){
-    if(!id(b.sheetId)||!id(b.stockId)||typeof b.shapesJson!=='string'||b.shapesJson.length>650000)throw new Error('Invalid cut geometry');
-    const shapes=parse(b.shapesJson);
+    if(!id(b.sheetId)||!id(b.stockId))throw new Error('Choose a Rose Gold sheet');
+    if(typeof b.shapesJson!=='string')throw new Error('Invalid cut geometry');
+    if(b.shapesJson.length>MAX_SHAPES_JSON)throw new Error('Too much charm outline detail to save this contour. Nest fewer new charms on this sheet');
+    // Older pages sent unsimplified outlines; store every contour in the same compact form.
+    let shapes;try{shapes=parse(b.shapesJson).map(Rose.slimShape);}catch(_){throw new Error('Invalid cut geometry');}
     return db.runTransaction(async tx=>{
       const ref=stocks().doc(b.stockId),sr=sheets().doc(b.sheetId),d=await tx.get(ref),sd=await tx.get(sr),stock=d.exists&&d.data(),sheet=sd.exists&&sd.data();
       if(!sheet||sheet.metal!=='rose'||!sheet.verification?.ok||sheet.saving||sheet.dirty||sheet.roseCutAt||!sheet.outputs?.ai)throw new Error('Save and verify this Rose Gold layout first');
@@ -75,7 +80,9 @@ module.exports=function({db,col,FV,Readiness}){
       if(fingerprint(sheet)!==b.fingerprint||shapes.length!==sheet.placements.length||new Set(shapes.map(s=>s.id)).size!==shapes.length||shapes.some(s=>!sheet.placements.some(p=>p.id===s.id)))throw new Error('The layout changed. Prepare its contour again');
       const guard=parse(sheet.roseProtectedJson);assertProtected(guard,sheet.placements);
       const fixed=new Set((guard?.placements||[]).map(p=>p.id));
-      const protectedShapes=new Map((guard?.shapes||[]).map(s=>[s.id,s]));
+      // The saved guard is never rewritten; outlines saved before they were
+      // simplified are slimmed only for the new plan copy.
+      const protectedShapes=new Map((guard?.shapes||[]).map(s=>[s.id,Rose.slimShape(s)]));
       // Saved placements are rounded to 3 decimals, so a reloaded layout
       // rebuilds its protected outlines a few thousandths of a point away.
       // The stored outlines stay authoritative; only a real move is refused.

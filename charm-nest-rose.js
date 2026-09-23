@@ -4,6 +4,11 @@
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.CharmNestRose=api;})(typeof self!=='undefined'?self:this,function(){
   'use strict';
   const STEP=.5, MM=25.4/72;
+  // Saved cut outlines are simplified once, so a full sheet fits one saved
+  // record. Every dropped point stays within OUTLINE_PT (plus 3-decimal
+  // rounding) of the kept outline, and contours add that distance back.
+  // Engraving detail is only drawn in the grey history, so it is coarser.
+  const OUTLINE_PT=.015, INK_PT=.05, SLIM_MARGIN_PT=OUTLINE_PT+.001;
   function validate(p,w,h) {
     if(!p||p.version!==1||!['x','y'].includes(p.axis)||!(p.step>0&&p.step<=1)||Math.abs(p.wPt-w)>.01||Math.abs(p.hPt-h)>.01)throw new Error('Invalid Rose Gold remnant dimensions');
     const length=p.axis==='x'?h:w,depth=p.axis==='x'?w:h;
@@ -47,7 +52,7 @@
     if(!(w>0&&h>0&&w<=1420&&h<=1420)||!Array.isArray(shapes)||!shapes.length||!Number.isFinite(allowanceMm)||allowanceMm<.05||allowanceMm>2)throw new Error('Invalid Rose Gold cut plan');
     if(prior)validate(prior,w,h);
     let points=0;for(const s of shapes){if(!s.paths?.length)throw new Error('Missing charm outline');for(const path of s.paths){if(path.length<3)throw new Error('Incomplete charm outline');for(const pt of path){if(++points>120000||pt.length!==2||!pt.every(Number.isFinite)||pt[0]<-.01||pt[1]<-.01||pt[0]>w+.01||pt[1]>h+.01)throw new Error('Charm outline outside Rose Gold sheet');}}}
-    const candidates=(prior?[prior.axis]:['x','y']).map(axis=>profile(shapes,w,h,axis,prior,allowanceMm/MM+.015));
+    const candidates=(prior?[prior.axis]:['x','y']).map(axis=>profile(shapes,w,h,axis,prior,allowanceMm/MM+.015+SLIM_MARGIN_PT));
     candidates.sort((a,b)=>area(a)-area(b));const remaining=candidates[0];
     return {version:1,profile:remaining,lines:lines(remaining,prior),shapes,allowanceMm,removedPt2:area(remaining)-(prior?area(prior):0),remainingPt2:w*h-area(remaining)};
   }
@@ -59,9 +64,27 @@
       if(path.length>2)paths.push(path);
     }return paths;
   }
+  function segmentDistance([x,y],[ax,ay],[bx,by]){
+    const dx=bx-ax,dy=by-ay,l2=dx*dx+dy*dy,t=l2?Math.max(0,Math.min(1,((x-ax)*dx+(y-ay)*dy)/l2)):0;
+    return Math.hypot(x-ax-t*dx,y-ay-t*dy);
+  }
+  // Douglas-Peucker against segments, not infinite lines, so closed loops are safe.
+  function simplify(path,tolerance){
+    if(path.length<=3)return path;
+    const keep=new Uint8Array(path.length),stack=[[0,path.length-1]];keep[0]=keep[path.length-1]=1;
+    while(stack.length){
+      const [a,b]=stack.pop();let far=-1,at=-1;
+      for(let i=a+1;i<b;i++){const d=segmentDistance(path[i],path[a],path[b]);if(d>far){far=d;at=i;}}
+      if(far>tolerance){keep[at]=1;stack.push([a,at],[at,b]);}
+    }
+    return path.filter((_,i)=>keep[i]);
+  }
+  function slimPaths(paths,tolerance){return (paths||[]).map(path=>{const round=pts=>pts.map(([x,y])=>[+x.toFixed(3),+y.toFixed(3)]),slim=round(simplify(path,tolerance));return slim.length>=3||path.length<3?slim:round(path);});}
+  // Idempotent: already slimmed outlines are returned unchanged.
+  function slimShape(s){return s.slim?s:{...s,paths:slimPaths(s.paths,OUTLINE_PT),ink:slimPaths(s.ink,INK_PT),slim:1};}
   function shapes(charms,placements){const byId=new Map(charms.map(c=>[c.id,c]));return placements.map(p=>{const c=byId.get(p.id);if(!c?.outline)throw new Error('Reload the charm vectors before preparing a cut');const angle=p.angle*Math.PI/180,cos=Math.cos(angle),sin=Math.sin(angle),scale=p.scale||.975;
     const transform=paths=>paths.map(path=>path.map(([x,y])=>{const dx=(x-c.centerPt[0])*scale,dy=(c.centerPt[1]-y)*scale;return [+(p.cxPt+dx*cos-dy*sin).toFixed(4),+(p.cyPt+dx*sin+dy*cos).toFixed(4)];}));
-    return {id:p.id,paths:transform(flatten(c.outline)),ink:transform((c.members||[]).filter(m=>m!==c.outline).flatMap(flatten))};
+    return slimShape({id:p.id,paths:transform(flatten(c.outline)),ink:transform((c.members||[]).filter(m=>m!==c.outline).flatMap(flatten))});
   });}
   // Synthetic rehearsal artwork. The same vectors and conservative bitmaps
   // are used by the browser worker and the server's independent verifier.
@@ -81,5 +104,5 @@
     }
     return {charms,job:{sheet:{wPt:100/MM,hPt:50/MM,insetPt:1.5,remnant:prior},pieces,angles:Array.from({length:36},(_,i)=>i*10),clearancePt:.6,fineRes:2,coarseRes:.5,maxFill:.95,maxTrials:3,timeBudgetMs:2500,seed:41+batch,verifyResult:true}};
   }
-  return {flatten,shapes,validate,area,frontier,intersects,stamp,plan,lines,MM,demoBatch};
+  return {flatten,shapes,slimShape,simplify,validate,area,frontier,intersects,stamp,plan,lines,MM,demoBatch};
 });

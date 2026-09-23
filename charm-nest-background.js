@@ -19,7 +19,7 @@
     function end(error,result){if(!current)return;const task=current;current=null;clearTimeout(task.timer);error?task.reject(error):task.resolve(result);setTimeout(pump,0);}
     function fail(error){worker?.terminate();worker=null;end(error instanceof Error?error:new Error(error?.message||'Background calculation stopped. Retry this item.'));}
     function pump(){if(current||!queue.length)return;current=queue.shift();try{
-      if(!worker){worker=new Worker('charm-nest-compute-worker.js?v=20260922-background');const owner=worker;worker.onerror=e=>{if(owner===worker)fail(e);};worker.onmessageerror=()=>{if(owner===worker)fail(new Error('Unreadable background result'));};worker.onmessage=({data})=>{if(!current||data.id!==current.id)return;if(data.progress){current.progress?.(...data.progress);return;}end(data.error?new Error(data.error):null,data.result);};}
+      if(!worker){worker=new Worker('charm-nest-compute-worker.js?v=20260923-slim');const owner=worker;worker.onerror=e=>{if(owner===worker)fail(e);};worker.onmessageerror=()=>{if(owner===worker)fail(new Error('Unreadable background result'));};worker.onmessage=({data})=>{if(!current||data.id!==current.id)return;if(data.progress){current.progress?.(...data.progress);return;}end(data.error?new Error(data.error):null,data.result);};}
       current.timer=setTimeout(()=>fail(new Error('Background calculation timed out. Retry this item.')),120000);worker.postMessage({id:current.id,type:current.type,input:current.input});
     }catch(e){fail(e);}}
     return {run(type,input,progress){return new Promise((resolve,reject)=>{queue.push({id:++id,type,input,progress,resolve,reject});pump();});}};

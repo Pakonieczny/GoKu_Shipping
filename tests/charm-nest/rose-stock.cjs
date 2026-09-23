@@ -70,7 +70,7 @@ const sheet=(id,shapes)=>({id,metal:'rose',verification:{ok:true},status:'comple
  // A reloaded layout rebuilds its saved outline from 3-decimal positions.
  const nudged=plannedShapes.map(s=>({...s,paths:s.paths.map(path=>path.map(([x,y])=>[+(x+.0004).toFixed(4),+(y-.0003).toFixed(4)]))}));
  const reloaded=JSON.parse((await api.rosePlan({...nextArgs,shapesJson:JSON.stringify([...nudged,incoming])})).planJson);
- assert.deepEqual(reloaded.shapes[0],plannedShapes[0],'a reloaded layout keeps the stored protected outline');
+ assert.deepEqual(reloaded.shapes[0].paths,plannedShapes[0].paths,'a reloaded layout keeps the stored protected outline');
  const added=JSON.parse((await api.rosePlan(nextArgs)).planJson);
  assert.deepEqual(added.lines.slice(0,originalPlan.lines.length),originalPlan.lines,'original green line is preserved exactly');
  assert(added.profile.values.every((v,i)=>v>=originalPlan.profile.values[i]));
