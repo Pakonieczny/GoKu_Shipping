@@ -5275,6 +5275,7 @@ const BritesChat = (() => {
   function stage(list) {
     const imgs = Array.from(list || []).filter(f => f.type.startsWith("image/"));
     if (!imgs.length) return;
+    if (SANDBOX) { toast("Image attachments are unavailable in sandbox", ""); return; }
     imgs.forEach(f => {
       if (f.size > 15 * 1024 * 1024) { toast(`${f.name} is over 15 MB`, "bad"); return; }
       S.queue.push({ id:newId(), file:f, url:URL.createObjectURL(f) });
@@ -5319,6 +5320,7 @@ const BritesChat = (() => {
     };
     if (!el.thread) return;
     wired = true;
+    if (SANDBOX) { el.att.disabled = true; el.file.disabled = true; el.att.title = "Image attachments are unavailable in sandbox"; }
     paintWho();
 
     el.who.addEventListener("click", editWho);
@@ -7462,10 +7464,12 @@ window.DesignStation = {
     from "https://www.gstatic.com/firebasejs/9.23.0/firebase-storage.js";
   import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-auth.js";
 
+  // Sandbox has no compat app by design and must never upload to live Storage.
+  if (!SANDBOX) {
   try {
     let app;
     try { app = getApp(); }
-    catch { app = initializeApp(window.firebase.app().options); }
+    catch { app = initializeApp(firebaseConfig); }
 
     const storage = getStorage(app);
     signInAnonymously(getAuth(app)).catch(err => console.warn("Storage anon auth failed", err));
@@ -7481,6 +7485,7 @@ window.DesignStation = {
     };
   } catch (e) {
     console.warn("Storage uploader unavailable — image attachments disabled.", e);
+  }
   }
 </script>
 </body>

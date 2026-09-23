@@ -1466,6 +1466,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <div class="signin hidden" id="signin"><form class="box" id="signinForm">
   <h2>Charm Nesting Station</h2>
   <div style="font-size:12.5px;color:var(--ink70)">Enter the operator passcode to open the console.</div>
+  <input type="text" name="username" value="Charm Nest operator" autocomplete="username" aria-label="Operator account" hidden readonly>
   <input id="signinPc" type="password" placeholder="Passcode" autocomplete="current-password" autofocus>
   <div class="err" id="signinErr"></div>
   <button class="btn gold" type="submit">Sign in</button>
@@ -3795,7 +3796,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260922-photos"></script>
+<script src="charm-nest-bridge.js?v=20260923-status"></script>
 <script src="charm-nest-rose-ui.js?v=20260922-sheet-options"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->

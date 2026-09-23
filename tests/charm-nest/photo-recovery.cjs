@@ -27,6 +27,6 @@ function page({paused=false,saved=new Map()}={}){
  assert.deepEqual(p.calls.map(b=>b.listingIds.length),[100,100,5]);assert.deepEqual(p.calls.map(b=>b.prepare),[true,false,false],'a pause switches remaining batches to cache-only');
  const count=p.calls.length;await p.w.media.prepare(p.rows(['1000']));assert.equal(p.calls.length,count,'paused misses are not polled repeatedly');
  const host=p.w.document.createElement('span');host.setAttribute('data-listing','');p.w.document.body.append(host);p.w.media.watch(host,()=>p.w.media.listing('1000'),'1000');
- await new Promise(r=>setTimeout(r,20));assert(host.textContent.startsWith('Photo quota pausedResumes '));assert(host.title.includes('resume'));assert.equal(host.getAttribute('aria-busy'),'false');p.dom.window.close();
+ await new Promise(r=>setTimeout(r,20));assert(host.textContent.startsWith('Photo lookup pausedResumes '));assert(host.title.includes('resume'));assert.equal(host.getAttribute('aria-busy'),'false');p.dom.window.close();
  console.log('Photo recovery OK: bounded misses, refresh cache, recovery during quota pauses, 100-listing batches, retained arrivals and honest pause status');
 })().catch(e=>{console.error(e);process.exitCode=1;});

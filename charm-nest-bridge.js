@@ -130,7 +130,7 @@ const ListMedia = (() => {
     const state=photoStates.get(id);
     if(['empty','cached-empty'].includes(state))return 'No listing photo';
     if(['cache-unavailable','unconfigured'].includes(state))return 'Photo temporarily unavailable';
-    if(photoPauseUntil>Date.now())return '<span>Photo quota paused<br><small>Resumes '+esc(new Date(photoPauseUntil).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}))+'</small></span>';
+    if(photoPauseUntil>Date.now())return '<span>Photo lookup paused<br><small>Resumes '+esc(new Date(photoPauseUntil).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}))+'</small></span>';
     return state==='loading'?'Photo being prepared':'Awaiting photo preparation';
   }
   function photoTitle(id){
