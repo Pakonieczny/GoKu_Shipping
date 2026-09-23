@@ -1271,6 +1271,15 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .roseCutNumber{display:inline-grid;place-items:center;border:1px solid #bad3cb;border-radius:50%;width:16px;height:16px;margin-right:5px;color:#326e60;background:#f3f8f5;font-size:9px}
 .roseTimeline li.roseLineEntry{flex:0 0 auto}.roseLineNumber{display:inline-grid;place-items:center;border-radius:50%;width:16px;height:16px;margin-right:5px;color:#fff;background:#008974;font-size:9px}.roseUndated{font-size:10px;font-style:italic;color:var(--ink45)}
 .roseActions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.roseRecorded{color:#326e60}.roseError{color:#a34838}.roseNote{font-size:10px;color:var(--ink45);margin:7px 0 0;line-height:1.5}
+/* Green line timeline: sits on the sheet's top ruler, each mark over its line. */
+.roseHistory.roseHasTimeline{margin-bottom:0}
+.roseLineTimeline{position:relative;margin:8px 1px 0}
+.roseMark{position:absolute;z-index:1;display:flex;align-items:center;gap:4px;height:16px;padding-right:3px;white-space:nowrap;transform:translateX(-8px);font-size:10px;color:var(--ink70);background:var(--card);border-radius:8px}
+.roseMark.flip{flex-direction:row-reverse;padding:0 0 0 3px;transform:translateX(calc(-100% + 8px))}
+.roseMark .roseLineNumber,.roseMark .roseCutNumber{margin:0;flex:none}
+.roseMark.cutLine .roseLineNumber{color:#008974;background:var(--card);box-shadow:inset 0 0 0 1px #008974}
+.roseMark .roseUndated{font-size:10px}
+.roseTick{position:absolute;bottom:0;width:1px;margin-left:-.5px;background:#008974}.roseTick.cutLine{background:#77b5a8}.roseTick.cut{background:#bad3cb}
 .roseStockOptions{border-top:1px solid var(--line);padding-top:8px;display:grid;gap:8px;grid-column:1/-1}.roseStockOptions label{display:flex;align-items:center;justify-content:space-between;gap:12px}.roseStockOptions input{width:70px}
 
 .roseDemoIntro{margin:0 0 14px;font-size:13px;color:var(--ink70);line-height:1.6}
@@ -1480,7 +1489,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="brites-progress.js"></script>
 <script src="charm-nest-progress.js"></script>
 <script src="charm-nest-operations.js"></script>
-<script src="charm-nest-rose.js?v=20260923-slim"></script>
+<script src="charm-nest-rose.js?v=20260923-edges"></script>
 <script src="charm-nest-solver.js?v=20260923-line-fit"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
@@ -3816,7 +3825,7 @@ async function boot() {
 boot();
 </script>
 <script src="charm-nest-bridge.js?v=20260923-rose-lock"></script>
-<script src="charm-nest-rose-ui.js?v=20260923-line-times"></script>
+<script src="charm-nest-rose-ui.js?v=20260923-edges"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin" aria-labelledby="owTitle">

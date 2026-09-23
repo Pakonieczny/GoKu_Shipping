@@ -9,6 +9,9 @@
   // rounding) of the kept outline, and contours add that distance back.
   // Engraving detail is only drawn in the grey history, so it is coarser.
   const OUTLINE_PT=.015, INK_PT=.05, SLIM_MARGIN_PT=OUTLINE_PT+.001;
+  // Stock thinner than EDGE_PT beside the sheet's far edge, or narrower than
+  // POCKET_PT between charms or beside the sheet's ends, cannot hold a charm.
+  const EDGE_PT=1/MM, POCKET_PT=3/MM;
   function validate(p,w,h) {
     if(!p||p.version!==1||!['x','y'].includes(p.axis)||!(p.step>0&&p.step<=1)||Math.abs(p.wPt-w)>.01||Math.abs(p.hPt-h)>.01)throw new Error('Invalid Rose Gold remnant dimensions');
     const length=p.axis==='x'?h:w,depth=p.axis==='x'?w:h;
@@ -29,12 +32,75 @@
     for(let y=0;y<grid.H;y++)for(let x=0;x<grid.W;x++)if(intersects(p,x/res,y/res,1/res,1/res,pad)){grid.set(x,y);grid.free[y*grid.W+x]=0;}
   }
   function compact(points){const out=[];for(const p of points){const n=out.length;if(n&&p[0]===out[n-1][0]&&p[1]===out[n-1][1])continue;if(n>1){const a=out[n-2],b=out[n-1];if((a[0]===b[0]&&b[0]===p[0])||(a[1]===b[1]&&b[1]===p[1]))out.pop();}out.push(p);}return out;}
+  // A green line is where the new frontier differs from the one already cut.
+  // It follows the charms from one sheet edge to another, never repeats an
+  // earlier line and never runs along the sheet's own edge.
   function lines(p,prior){
-    const result=[],old=prior?.values||p.values.map(()=>0),swap=(d,t)=>p.axis==='x'?[d,t]:[t,d],len=p.axis==='x'?p.hPt:p.wPt;
-    let i=0;while(i<p.values.length){if(p.values[i]<=old[i]+1e-7){i++;continue;}const start=i,pts=[swap(old[i],i*p.step)];
-      while(i<p.values.length&&p.values[i]>old[i]+1e-7){pts.push(swap(p.values[i],i*p.step),swap(p.values[i],Math.min(len,(i+1)*p.step)));i++;}
-      pts.push(swap(old[i-1],Math.min(len,i*p.step)));result.push(compact(pts));
-    }return result;
+    const v=p.values,o=prior?.values||v.map(()=>0),len=p.axis==='x'?p.hPt:p.wPt,depth=p.axis==='x'?p.wPt:p.hPt,same=(a,b)=>Math.abs(a-b)<=1e-7,result=[];
+    let path=null;
+    const draw=(d0,t0,d1,t1)=>{const end=path?.[path.length-1];if(end&&same(end[0],d0)&&same(end[1],t0))path.push([d1,t1]);else result.push(path=[[d0,t0],[d1,t1]]);};
+    for(let i=0;i<v.length;i++){
+      const t=i*p.step;
+      if(i&&!same(v[i-1],v[i])){
+        // The step between two rows, less any part an earlier line already cut.
+        const a=v[i-1],b=v[i],x0=Math.min(a,b),x1=Math.max(a,b),lo=Math.min(o[i-1],o[i]),hi=Math.max(o[i-1],o[i]),pieces=[];
+        if(x0<lo-1e-7)pieces.push([x0,Math.min(x1,lo)]);
+        if(x1>hi+1e-7)pieces.push([Math.max(x0,hi),x1]);
+        for(const [c,d] of a<b?pieces:pieces.reverse().map(([c,d])=>[d,c]))draw(c,t,d,t);
+      }
+      if(!same(v[i],o[i])&&v[i]<depth-1e-7)draw(v[i],t,v[i],Math.min(len,t+p.step));
+    }
+    return result.map(path=>compact(path.map(([d,t])=>p.axis==='x'?[d,t]:[t,d])));
+  }
+  // Pockets that could never hold a charm go with the cut, so no green line
+  // runs into a narrow gap between charms or along the sheet's edge. Each row
+  // takes the lowest maximum of any POCKET_PT window that holds it (a closing
+  // of the used depth along the sheet). Values only ever grow.
+  function settle(values,step,depth){
+    const n=values.length,k=Math.min(n,Math.max(1,Math.ceil(POCKET_PT/step))),peak=[];
+    const edge=()=>{for(let i=0;i<n;i++)if(values[i]>depth-EDGE_PT)values[i]=depth;};
+    edge();
+    for(let s=0;s+k<=n;s++){let m=0;for(let j=s;j<s+k;j++)m=Math.max(m,values[j]);peak.push(m);}
+    for(let i=0;i<n;i++){let m=Infinity;for(let s=Math.max(0,i-k+1);s<=Math.min(i,n-k);s++)m=Math.min(m,peak[s]);values[i]=Math.max(values[i],m);}
+    edge();
+    return values;
+  }
+  // Side of the largest square of sheet left free beside a profile.
+  function room(p){
+    const depth=p.axis==='x'?p.wPt:p.hPt,free=p.values.map(v=>depth-v);
+    const fits=s=>{const need=Math.max(1,Math.ceil(s/p.step-1e-9));let run=0;for(const f of free){run=f>=s?run+1:0;if(run>=need)return true;}return false;};
+    let lo=0,hi=Math.min(depth,free.length*p.step);
+    for(let k=0;k<40;k++){const mid=(lo+hi)/2;if(fits(mid))lo=mid;else hi=mid;}
+    return lo;
+  }
+  function cross(a,b,c){return (b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);}
+  function apart(a,b,c,d){
+    const d1=cross(c,d,a),d2=cross(c,d,b),d3=cross(a,b,c),d4=cross(a,b,d);
+    if(((d1>0&&d2<0)||(d1<0&&d2>0))&&((d3>0&&d4<0)||(d3<0&&d4>0)))return 0;
+    return Math.min(segmentDistance(a,c,d),segmentDistance(b,c,d),segmentDistance(c,a,b),segmentDistance(d,a,b));
+  }
+  // Contours saved before lines stopped at the sheet's edge can end in a run
+  // along it. That run is dropped and the line carried straight to the edge,
+  // unless that would come within clearPt of a charm. Each dated line keeps its
+  // range. Lines drawn by lines() come back unchanged.
+  function tidy(paths,stages,w,h,shapes,clearPt){
+    const along=(a,b)=>a[1]===b[1]?a[1]<=EDGE_PT||a[1]>=h-EDGE_PT:a[0]===b[0]&&(a[0]<=EDGE_PT||a[0]>=w-EDGE_PT);
+    const onEdge=(a,b)=>(a[1]===b[1]&&(a[1]<=0||a[1]>=h))||(a[0]===b[0]&&(a[0]<=0||a[0]>=w));
+    const clear=(a,b)=>(shapes||[]).every(s=>(s.paths||[]).every(path=>path.every((q,i)=>apart(a,b,q,path[(i+1)%path.length])>=clearPt)));
+    const reach=(end,from)=>{const to=from[1]===end[1]?[end[0],end[1]<=EDGE_PT?0:h]:[end[0]<=EDGE_PT?0:w,end[1]];return (to[0]===end[0]&&to[1]===end[1])||clear(end,to)?to:null;};
+    const fix=path=>{
+      let pts=path;
+      if(pts.length>2&&along(pts[0],pts[1])){const to=reach(pts[1],pts[0]);if(to)pts=[to,...pts.slice(2)];}
+      const n=pts.length;
+      if(n>2&&along(pts[n-2],pts[n-1])){const to=reach(pts[n-2],pts[n-1]);if(to)pts=[...pts.slice(0,n-2),to];}
+      const out=[];let cur=[pts[0]];
+      for(let i=1;i<pts.length;i++){if(onEdge(pts[i-1],pts[i])){if(cur.length>1)out.push(cur);cur=[pts[i]];}else cur.push(pts[i]);}
+      if(cur.length>1)out.push(cur);
+      return out.map(compact);
+    };
+    const parts=(paths||[]).map(fix),at=[0];for(const part of parts)at.push(at[at.length-1]+part.length);
+    const index=i=>at[Math.max(0,Math.min(parts.length,i))];
+    return {lines:parts.flat(),stages:(stages||[]).map(s=>({...s,lines:[index(s.lines[0]),index(s.lines[1])]}))};
   }
   function profile(shapes,w,h,axis,prior,allowancePt){
     const step=prior?.step||STEP,len=axis==='x'?h:w,depth=axis==='x'?w:h,values=prior?prior.values.slice():Array(Math.ceil(len/step)).fill(0);
@@ -46,15 +112,22 @@
         const da=t0===t1?Math.max(d0,d1):d0+(d1-d0)*(ta-t0)/(t1-t0),db=t0===t1?da:d0+(d1-d0)*(tb-t0)/(t1-t0);
         values[i]=Math.min(depth,Math.max(values[i],Math.ceil((Math.max(da,db)+allowancePt)*1000)/1000));
       }
-    }return {version:1,wPt:w,hPt:h,axis,step,values};
+    }return {version:1,wPt:w,hPt:h,axis,step,values:settle(values,step,depth)};
   }
   function plan(shapes,w,h,prior,allowanceMm=.2){
     if(!(w>0&&h>0&&w<=1420&&h<=1420)||!Array.isArray(shapes)||!shapes.length||!Number.isFinite(allowanceMm)||allowanceMm<.05||allowanceMm>2)throw new Error('Invalid Rose Gold cut plan');
     if(prior)validate(prior,w,h);
     let points=0;for(const s of shapes){if(!s.paths?.length)throw new Error('Missing charm outline');for(const path of s.paths){if(path.length<3)throw new Error('Incomplete charm outline');for(const pt of path){if(++points>120000||pt.length!==2||!pt.every(Number.isFinite)||pt[0]<-.01||pt[1]<-.01||pt[0]>w+.01||pt[1]>h+.01)throw new Error('Charm outline outside Rose Gold sheet');}}}
-    const candidates=(prior?[prior.axis]:['x','y']).map(axis=>profile(shapes,w,h,axis,prior,allowanceMm/MM+.015+SLIM_MARGIN_PT));
+    // Earlier contours are read with the same pocket rule as new ones, so a
+    // new line never retraces a pocket an older line already cut around.
+    const base=prior?{...prior,values:settle(prior.values.slice(),prior.step,prior.axis==='x'?w:h)}:null;
+    const candidates=(prior?[prior.axis]:['x','y']).map(axis=>profile(shapes,w,h,axis,base,allowanceMm/MM+.015+SLIM_MARGIN_PT));
     candidates.sort((a,b)=>area(a)-area(b));const remaining=candidates[0];
-    return {version:1,profile:remaining,lines:lines(remaining,prior),shapes,allowanceMm,removedPt2:area(remaining)-(prior?area(prior):0),remainingPt2:w*h-area(remaining)};
+    // A layout that leaves no room for even its smallest charm uses the whole
+    // sheet: it needs no new green line and leaves no remnant.
+    const smallest=Math.min(...shapes.map(s=>{let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;for(const path of s.paths)for(const [x,y] of path){x0=Math.min(x0,x);y0=Math.min(y0,y);x1=Math.max(x1,x);y1=Math.max(y1,y);}return Math.min(x1-x0,y1-y0);}));
+    const full=room(remaining)<smallest;if(full)remaining.values=remaining.values.map(()=>remaining.axis==='x'?w:h);
+    return {version:1,profile:remaining,lines:lines(remaining,base),shapes,allowanceMm,full,removedPt2:area(remaining)-(prior?area(prior):0),remainingPt2:w*h-area(remaining)};
   }
   function flatten(seg){
     const paths=[];for(const sub of seg?.subpaths||[]){let path=[],cur=null;
@@ -104,5 +177,5 @@
     }
     return {charms,job:{sheet:{wPt:100/MM,hPt:50/MM,insetPt:1.5,remnant:prior},pieces,angles:Array.from({length:36},(_,i)=>i*10),clearancePt:.6,fineRes:2,coarseRes:.5,maxFill:.95,maxTrials:3,timeBudgetMs:2500,seed:41+batch,verifyResult:true}};
   }
-  return {flatten,shapes,slimShape,simplify,validate,area,frontier,intersects,stamp,plan,lines,MM,demoBatch};
+  return {flatten,shapes,slimShape,simplify,validate,area,frontier,intersects,stamp,plan,lines,room,tidy,MM,EDGE_PT,POCKET_PT,demoBatch};
 });

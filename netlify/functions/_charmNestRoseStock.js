@@ -102,9 +102,15 @@ module.exports=function({db,col,FV,Readiness}){
       }}
       const fresh=guard?shapes.filter(s=>!fixed.has(s.id)):shapes;
       const plan=fresh.length?Rose.plan(fresh,stock.wPt,stock.hPt,guard?.profile||prior,b.allowanceMm):{version:1,profile:guard.profile,lines:[],shapes:[],allowanceMm:b.allowanceMm,remainingPt2:stock.wPt*stock.hPt-Rose.area(guard.profile)};
-      if(guard){plan.lines=[...guard.lines,...plan.lines];plan.shapes=shapes.map(s=>protectedShapes.get(s.id)||s);plan.removedPt2=Rose.area(plan.profile)-(prior?Rose.area(prior):0);}
-      if(!plan.lines.length)throw new Error('No new material is cut by this layout');
-      const earlier=stagesOf(guard),from=guard?guard.lines.length:0;
+      // Protected lines saved before lines stopped at the sheet's edge lose
+      // their runs along it; lines saved since are kept exactly.
+      const allowance=Number.isFinite(+b.allowanceMm)?Math.min(2,Math.max(.2,+b.allowanceMm)):.2;
+      const kept=guard?Rose.tidy(guard.lines,stagesOf(guard),stock.wPt,stock.hPt,shapes.map(s=>protectedShapes.get(s.id)||s),allowance/Rose.MM):{lines:[],stages:[]};
+      if(guard){plan.lines=[...kept.lines,...plan.lines];plan.shapes=shapes.map(s=>protectedShapes.get(s.id)||s);plan.removedPt2=Rose.area(plan.profile)-(prior?Rose.area(prior):0);}
+      // A layout that uses the rest of the sheet needs no new line, but it
+      // must still cut new material.
+      if(!(plan.removedPt2>0))throw new Error('No new material is cut by this layout');
+      const earlier=kept.stages,from=kept.lines.length;
       if(plan.lines.length>from){
         const ids=fresh.map(s=>s.id),saved=stagesOf(parse(sheet.rosePlanJson)),last=saved[saved.length-1],key=list=>JSON.stringify([...list].sort());
         // Preparing the same batch again (a new allowance, a reload) keeps its
