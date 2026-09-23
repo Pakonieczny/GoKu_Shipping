@@ -73,7 +73,9 @@ function finish({count=40,density=.5,optimized=false,rejects=[],phase='fill',end
  const c={sh,items,result:{density,rejects,endedBy,placements:[{id:'kept'}],placedPt2:50,usablePt2:100,freePt2:50},S:{settings:{maxFill:.8,finalOptimizeCount:85}},startNest(){restarts++;},log(){}};vm.createContext(c);vm.runInContext('(function(){'+decision+'})();',c);return {sh,restarts};
 }
 assert.equal(finish({protectedRose:true,count:100}).restarts,0,'protected remainder never restarts under 74% or over 85 charms');
-assert.equal(finish().restarts,1,'an initial layout below 74% gets a repack');
+assert.equal(finish().restarts,0,'a quick fill that seats every charm is kept, short of 74% or not');
+assert.equal(finish({count:1,density:.01}).restarts,0,'one charm on a new sheet is not searched again (it used to spend the whole budget)');
+assert.equal(finish({rejects:['arrival']}).restarts,1,'a quick fill that leaves charms out gets the fresh arrangement');
 assert.equal(finish({phase:'repack'}).restarts,0,'the same sparse batch cannot loop forever');
 assert.equal(finish({optimized:true}).restarts,0,'after repacking, new pieces fill gaps');
 assert.equal(finish({count:85,optimized:true}).restarts,1,'below target at 85 gets the final attempt');
