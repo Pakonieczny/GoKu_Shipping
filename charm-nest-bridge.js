@@ -111,7 +111,10 @@ const ListMedia = (() => {
   // Firebase is the shared source; this small local index makes refresh instant.
   // Image bytes use the seven-day HTTP cache, not another Etsy metadata lookup.
   const photoStorage='cn.listingPhotos.v1',photoAttempts=new Map(),photoChecks=new Map(),photoStates=new Map(),prepareQueue=new Set(),warming=new Set(),photoLoading=new Set();
-  let photoPauseUntil=0;try{photoPauseUntil=Number(localStorage.getItem('cn.listingPhotoPause'))||0;}catch(_){}
+  // Reassess legacy 25-call pauses once under the batch budget. Server-side
+  // quota/cooldown checks remain authoritative, including genuine Etsy 429s.
+  const photoPauseStorage='cn.listingPhotoPause.v2';
+  let photoPauseUntil=0;try{photoPauseUntil=Number(localStorage.getItem(photoPauseStorage))||0;}catch(_){}
   try{for(const [id,url] of JSON.parse(localStorage.getItem(photoStorage)||'[]'))if(typeof url==='string'&&url)photos.set(id,url);}catch(_){}
   let preparing=null,photoTick=0;
   function remember(id,url){
@@ -138,7 +141,7 @@ const ListMedia = (() => {
     return photoPauseUntil>Date.now()?'New Etsy photo lookups resume '+new Date(photoPauseUntil).toLocaleString()+'. Saved photos remain available.':'Missing photos are checked with the next ten-minute update.';
   }
   function acceptPhotos(got,ids){
-    if(got.retryAt>Date.now()){photoPauseUntil=Math.max(photoPauseUntil,got.retryAt);try{localStorage.setItem('cn.listingPhotoPause',String(photoPauseUntil));}catch(_){}}
+    if(got.retryAt>Date.now()){photoPauseUntil=Math.max(photoPauseUntil,got.retryAt);try{localStorage.setItem(photoPauseStorage,String(photoPauseUntil));}catch(_){}}
     for(const id of ids){photoChecks.set(id,Date.now());photoStates.set(id,got.states?.[id]||'cache-only');if(got.images?.[id])remember(id,photoUrl(got.images[id]));}
   }
   function refreshPhotos(ids){

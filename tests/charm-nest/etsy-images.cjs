@@ -5,7 +5,7 @@ function fixture({cap=25,status=200,headers={},broken=false}={}){
  const data=new Map();let clock=Date.UTC(2026,8,22,23,59,50),calls=0,reads=0,serial=Promise.resolve();
  const ref=path=>({path,get:async()=>{reads++;if(broken)throw Error('Firestore unavailable');return{data:()=>structuredClone(data.get(path)),exists:data.has(path)}}});
  const db={collection:name=>({doc:id=>ref(name+'/'+id)}),runTransaction:fn=>{const p=serial.then(async()=>{let wrote=false;const writes=[];const result=await fn({get:r=>{assert(!wrote);return r.get();},set:(r,v)=>{wrote=true;writes.push(()=>data.set(r.path,structuredClone(v)));}});writes.forEach(f=>f());return result});serial=p.catch(()=>{});return p;}};
- const options={db,env:{CLIENT_ID:'test',ETSY_IMAGE_MAX_DAILY_CALLS:String(cap)},now:()=>clock,sleep:async ms=>{clock+=ms;},fetch:async url=>{calls++;if(status==='network')throw Error('network');return {status,ok:status===200,headers:{get:k=>headers[k]??null},json:async()=>({results:url.includes('/listings/batch?')?new URL(url).searchParams.get('listing_ids').split(',').map(listing_id=>({listing_id,images:[{rank:2,url_570xN:'second.jpg'},{rank:1,url_570xN:'first.jpg'}]})):[{rank:2,url_570xN:'second.jpg'},{rank:1,url_570xN:'first.jpg'}]})}}};
+ const options={db,env:{CLIENT_ID:'test',...(cap===null?{}:{ETSY_IMAGE_MAX_DAILY_CALLS:String(cap)})},now:()=>clock,sleep:async ms=>{clock+=ms;},fetch:async url=>{calls++;if(status==='network')throw Error('network');return {status,ok:status===200,headers:{get:k=>headers[k]??null},json:async()=>({results:url.includes('/listings/batch?')?new URL(url).searchParams.get('listing_ids').split(',').map(listing_id=>({listing_id,images:[{rank:2,url_570xN:'second.jpg'},{rank:1,url_570xN:'first.jpg'}]})):[{rank:2,url_570xN:'second.jpg'},{rank:1,url_570xN:'first.jpg'}]})}}};
  return {data,api:()=>createImageCache(options),calls:()=>calls,reads:()=>reads,advance:ms=>clock+=ms};
 }
 (async()=>{
@@ -28,6 +28,20 @@ function fixture({cap=25,status=200,headers={},broken=false}={}){
  f=fixture({broken:true});assert.equal((await f.api().read('123')).status,503);assert.equal(f.calls(),0,'cache/budget failures never fall through to Etsy');
  f=fixture({cap:0});await f.api().read('123');assert.equal(f.calls(),0,'zero disables new photo lookups');
  f=fixture();f.data.set('EtsyApi_Config/usage',{etsy:{reported_at:Date.UTC(2026,8,22,23,59,49),remaining_today:4,limit_per_day:100}});await f.api().read('123');assert.equal(f.calls(),0,'known low shared-key quota reserves remaining allowance');
+ // Existing attempts are preserved when moving from the old 25-call default.
+ f=fixture({cap:null});
+ const budgetKey='EtsyApi_Config/listingImages_'+require('node:crypto').createHash('sha256').update('test').digest('hex').slice(0,24);
+ const prior=Array.from({length:25},(_,i)=>Date.UTC(2026,8,22,23,58,i));
+ f.data.set(budgetKey,{attempts:prior,cap:25});
+ const recovered=await f.api().readMany(['123','456']);
+ assert.equal(f.calls(),1,'legacy 25 attempts do not block the new batch allowance');
+ assert.equal(recovered['123'].images[0].url_570xN,'first.jpg');
+ assert.equal(f.data.get(budgetKey).cap,100);assert.equal(f.data.get(budgetKey).attempts.length,26,'prior usage is never reset');
+ assert.deepEqual(f.data.get(budgetKey).attempts.slice(0,25),prior);
+ f.data.set(budgetKey,{attempts:Array(100).fill(prior[0])});
+ assert.equal((await f.api().readMany(['789']))['789'].source,'budget-paused');assert.equal(f.calls(),1,'new default remains bounded');
+ f=fixture({cap:null});f.data.set(budgetKey,{attempts:prior,blockedUntil:Date.UTC(2026,8,23,2)});
+ await f.api().readMany(['123']);assert.equal(f.calls(),0,'migration never clears real server cooldowns');
  // Bulk preparation shares the existing quota, leases and durable image cache.
  f=fixture();a=f.api();const ids=Array.from({length:100},(_,i)=>String(1000+i));
  const bulk=await a.readMany(ids);assert.equal(f.calls(),1);assert.equal(Object.values(bulk).reduce((n,r)=>n+(r.etsyCalls||0),0),1);assert(Object.values(bulk).every(r=>r.images[0].url_570xN==='first.jpg'));
