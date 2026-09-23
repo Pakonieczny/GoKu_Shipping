@@ -39,7 +39,8 @@ const PROD = ['Design_Completed Orders', 'Design_RealTime_Selected_Orders', 'Des
   }, { station: stationOrigin, sorter: sorterOrigin });
   const page = await ctx.newPage(); const errors = [];
   page.on('pageerror', e => errors.push('sorter: ' + e.message)); page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text().slice(0, 200)); });
-  const settle = (station) => page.evaluate((station) => { const s = CN.S.settings; s.dsOrigin = station; s.engine = 'solver'; s.budgetS = 12; s.review = 'off'; s.naming = 'off'; s.notify = 'off'; s.sound = 'off'; s.autoCommit = 'on'; s.runMode = 'manual'; s.pullMode = 'all'; s.heartbeatS = 2; s.heartbeatMiss = 2; CN.saveSettings(); }, station);
+  // the whole snapshot at once: the order stream has a test of its own (sandbox-stream.cjs)
+  const settle = (station) => page.evaluate((station) => { const s = CN.S.settings; s.dsOrigin = station; s.engine = 'solver'; s.budgetS = 12; s.review = 'off'; s.naming = 'off'; s.notify = 'off'; s.sound = 'off'; s.autoCommit = 'on'; s.runMode = 'manual'; s.pullMode = 'all'; s.heartbeatS = 2; s.heartbeatMiss = 2; s.sandboxStream = 'off'; CN.saveSettings(); }, station);
 
   // ── production mode: index the master, take the snapshot through the station (one real sweep) ──
   await page.goto(`${sorterOrigin}/charm-nest-1.html`);

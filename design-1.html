@@ -7146,6 +7146,14 @@ const Bridge = (() => {
       return Object.assign(stateSnapshot(), { releasedFromPreviousSession: released, commands: Object.keys(CMDS) });
     },
     async ping() { S.lastPing = Date.now(); if (S.down) { S.down = false; paintBanner(); } return { pong: true, etsy: etsyMeterSnapshot() }; },
+    /** The sorter reset the sandbox's records: the completions this page keeps (in memory and in its sandbox-only browser
+        ledger) go with them, or an order replayed under the same number would pass for one finished before. */
+    async "sandbox.reset"() {
+      if (!SANDBOX) throw new Error("the station is not in the sandbox");
+      completedOrders.clear(); try { localStorage.removeItem(LS.ledger); } catch (_) {}
+      allOpenReceipts = []; S.lastSweepAt = 0;   // the next read sweeps the emulator again
+      return { ok: true };
+    },
     /** The open receipts exactly as Etsy returned them (transactions included), for the sandbox snapshot. */
     async "orders.raw"(a, progress) {
       if (a.refresh || !allOpenReceipts.length) { progress(0, 0, "Refreshing the open order list from Etsy"); await refreshOrders({ heal: false }); }
@@ -7181,7 +7189,8 @@ const Bridge = (() => {
     async "orders.snapshot"(a, progress) {
       if (etsyBraked() && (a.refresh || !allOpenReceipts.length)) throw new Error(`Etsy watchdog brake until ${new Date(etsyMeter.brakeUntil).toLocaleTimeString()}: ${etsyMeter.alarm && etsyMeter.alarm.why}`);
       const calls0 = etsyMeter.total; let refreshSkipped = false;
-      if ((a.refresh && !sweptRecently(a.intake ? (SANDBOX ? 55000 : 10*60000) : SWEEP_MIN_MS)) || !S.lastSweepAt) { progress(0, 0, "Refreshing the open order list from Etsy"); await Cursor.act("refresh", null, "Refresh the order list from Etsy"); await refreshOrders({ heal: false }); }
+      // the sandbox order stream checks every simulated ten minutes (12 s at 50x) and each check must see its step's orders
+      if ((a.refresh && !sweptRecently(a.intake ? (SANDBOX ? (a.stream ? 0 : 55000) : 10*60000) : SWEEP_MIN_MS)) || !S.lastSweepAt) { progress(0, 0, "Refreshing the open order list from Etsy"); await Cursor.act("refresh", null, "Refresh the order list from Etsy"); await refreshOrders({ heal: false }); }
       else { refreshSkipped = !!a.refresh; await Cursor.act("banner", null, refreshSkipped ? `Open orders as listed ${Math.round((Date.now() - S.lastSweepAt) / 1000)} s ago (no new Etsy sweep)` : "Reading the open orders", { click: false }); }
       let list = allOpenReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
       if (Array.isArray(a.metals) && a.metals.length) list = list.filter(r => !r._hydrated || METAL_ORDER.some(k => a.metals.includes(k) && r._metalCounts && r._metalCounts[k]));

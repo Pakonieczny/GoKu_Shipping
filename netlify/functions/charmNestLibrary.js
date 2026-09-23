@@ -547,7 +547,37 @@ async function op_sandboxReset(b) {
     for (const sub of SUBS[name] || []) { const parents = await coll.select().get(); for (const d of parents.docs) deleted += await wipe(d.ref.collection(sub)); }
     deleted += await wipe(coll);
   }
+  await db.collection(SANDBOX).doc("stream").delete();   // the order stream starts over with the records it fed
   void b; return { ok: true, deleted };
+}
+/* ── the sandbox order stream: in place of the whole snapshot at once, the emulated Etsy lists a few new orders per
+   simulated ten minutes (etsySandbox.js builds them from this seed and step). The sorter moves the clock one step per
+   check, and only once it has taken in the last step's orders, so a replay at 50x plays a day out in half an hour.
+   get · ensure (start one for the current snapshot, or resume it) · tick (one step of a playing stream; `expect` is the
+   clock the caller last saw, so two tabs never step twice) · off (the whole snapshot again) · reset. Charm_Sandbox only. ── */
+const STREAM_STEP_MS = 600000;
+async function op_sandboxStream(b) {
+  if (!PREFIX) return { error: "the order stream exists only in the sandbox", status: 403 };
+  const ref = db.collection(SANDBOX).doc("stream"), action = str(b.action, 12) || "get";
+  if (action === "reset") { await ref.delete(); return { ok: true, stream: null }; }
+  if (!["get", "ensure", "tick", "off"].includes(action)) return { error: "unknown stream action: " + action };
+  return db.runTransaction(async t => {
+    const [cur, snap] = await Promise.all([t.get(ref), t.get(db.collection(SANDBOX).doc("current"))]);
+    const was = cur.exists ? cur.data() : null, path = snap.exists ? snap.data().path : null;
+    if (action === "get") return { ok: true, stream: was };
+    if (action === "off") { if (was && was.on) t.set(ref, Object.assign({}, was, { on: false })); return { ok: true, stream: null }; }
+    if (!path) return { error: "no sandbox snapshot yet: take one first", status: 409 };
+    const now = Date.now(), speed = Math.max(1, Math.min(1000, Math.round(num(b.speed)) || 50));
+    let s = was && was.snapshotPath === path ? Object.assign({}, was, { on: true, speed }) : null;
+    // only ensure starts or resumes one: a step asked of a stream a reset deleted (a check still out) starts none
+    if (action === "tick" && !(s && was.on)) return { ok: true, stream: null, advanced: false };
+    // a new stream starts at this ten minutes of the real clock; a seed given in Settings replays a recorded one
+    if (!s) { const simStart = Math.floor(now / STREAM_STEP_MS) * STREAM_STEP_MS; s = { on: true, seed: Math.floor(num(b.seed)) > 0 ? Math.floor(num(b.seed)) % 2147483647 || 1 : 1 + Math.floor(Math.random() * 2147483646), speed, stepMs: STREAM_STEP_MS, min: 2, max: 5, simStart, simNow: simStart, tick: 0, snapshotPath: path, startedAt: now, tickAt: now }; }
+    let advanced = false;
+    if (action === "tick" && (b.expect == null || num(b.expect) === s.simNow)) { s.tick += 1; s.simNow = s.simStart + s.tick * s.stepMs; s.tickAt = now; advanced = true; }
+    if (JSON.stringify(s) !== JSON.stringify(was)) t.set(ref, s);
+    return { ok: true, stream: s, advanced };
+  });
 }
 /* ── purge: every RECORD of past runs, in production and in the sandbox. Master files, the SKU index, aliases, option
    maps, calibration and the sandbox snapshot are not history and stay. Files in Storage are not touched here: a sheet
@@ -730,7 +760,8 @@ async function op_archiveEmptySheet(b) {
 async function op_arrivalRecord(b) {
   const receipts = [...new Map((b.orders || []).filter(o => /^\d{1,30}$/.test(String(o.id))).map(o => [String(o.id), o])).values()];
   if (receipts.length > 5000) return { error: "too many receipts" };
-  const now = Date.now(), collection = col("Charm_Nest_Arrivals"), firstSeen = {};
+  // the sandbox order stream stamps first arrivals with its simulated clock, so its 24 h and 1 h counts read in it
+  const now = [true, 1, "1"].includes(b.sandbox) && num(b.now) > 0 ? num(b.now) : Date.now(), collection = col("Charm_Nest_Arrivals"), firstSeen = {};
   // Existing receipts need one batched read; transact only first arrivals.
   const known = receipts.length ? await db.getAll(...receipts.map(o => collection.doc(String(o.id)))) : [];
   const missing = receipts.filter((o, i) => { if (!known[i].exists) return true; firstSeen[String(o.id)] = known[i].data().firstSeenAt; return false; });
@@ -826,7 +857,7 @@ async function op_optionMapPut(b) {
 const RoseStock = require("./_charmNestRoseStock")({db,col,FV,Readiness});
 const OPS = { ...RoseStock, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, startMaster: op_startMaster,
-  jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset,
+  jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,
   aliasGet: op_aliasGet, aliasPut: op_aliasPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut };
 

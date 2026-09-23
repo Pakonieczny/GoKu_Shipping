@@ -1088,7 +1088,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .topbar .modeSeg .full{display:none}.topbar .modeSeg .tight{display:inline}
 .topTools{display:flex;align-items:center;gap:6px;flex:0 0 auto}
 .topbar .runMode{padding:7px 9px;border-color:transparent;font-size:11.5px;border-radius:6px}
-.topbar .sandboxPill{font:700 9px var(--mono);padding:4px 6px;letter-spacing:0;border-radius:4px}
+.topbar .sandboxPill{font:700 9px var(--mono);padding:4px 6px;letter-spacing:0;border-radius:4px;white-space:nowrap}
 .topbar .moreMenu{margin:0;padding:0;border:0;border-radius:6px;background:transparent}
 .topbar .moreMenu>summary,.topbar .setPicker>summary{display:flex;align-items:center;gap:6px;padding:8px 9px;border:0;border-radius:6px;background:transparent;font:650 12px var(--sans);color:var(--ink70);white-space:nowrap;list-style:none}
 .topbar details>summary::-webkit-details-marker,.runMenu>summary::-webkit-details-marker{display:none}
@@ -1433,6 +1433,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
       <div class="field"><label for="stFinalOptimizeCount">Final optimization at (pieces per sheet)</label><input id="stFinalOptimizeCount" type="number" min="1" max="1000" step="1"><div class="help">Default 85. New arrivals first fill existing gaps. Below 74% fill, the sheet is optimized; at this count it gets its final attempt. Sheets already at 74% skip that extra search. Overflow starts the next sheet.</div></div>
       <div class="field"><label for="stOptimizeAt">Re-optimize at (% of fill ceiling)</label><input id="stOptimizeAt" type="number" min="50" max="100" step="5"><div class="help">Repack an open sheet near capacity, then try its free space before opening the next sheet. Committed sheets stay fixed.</div></div><input id="stAutoEvery" type="hidden" value="0">
       <div class="field"><label>Sandbox</label><select id="stSandbox"><option value="off">Off — production: real Etsy through the station, real records</option><option value="on">On — emulated Etsy from the stored snapshot, sandbox records only</option></select><div class="help">In the sandbox the Design Station is framed with ?sandbox=1: its Etsy calls go to the emulator that serves the snapshot taken on the Orders tab, and every lock, claim, completion, note, archive row, pool, set, run and file goes to Sandbox_ copies. The master index is shared (read only). Switching reloads the sorter.</div><div class="fixes" style="margin-top:7px"><button class="btn ghost xs" type="button" id="stSbSnap" title="copy today's open orders into the sandbox so a whole run can be rehearsed against them">Take a sandbox snapshot</button><button class="btn ghost xs" type="button" id="stSbReset" title="empty the sandbox pool, sets, runs and sheets — the real records are untouched">Reset sandbox records</button><button class="btn gold xs" type="button" id="stSbOn" title="take a snapshot of today's open orders, switch to the sandbox and reload — one press">Rehearse a run in the sandbox</button><span class="help" id="stSbStatus" style="margin:0"></span></div></div>
+      <div class="field"><label for="stSbStream">Sandbox orders · speed · seed</label><div class="fieldRow3"><select id="stSbStream"><option value="on">A few at a time, as Etsy brings them</option><option value="off">The whole snapshot at once</option></select><input id="stSbSpeed" type="number" min="1" max="1000" step="1" title="how many times faster than real time the sandbox day plays"><input id="stSbSeed" type="number" min="0" step="1" placeholder="new each reset" title="the same seed replays the same orders after a sandbox reset"></div><div class="help">A few at a time: every simulated 10 minutes 2 to 5 new orders arrive, each a copy of a random snapshot order under new numbers and the simulated time. At 50x a check comes every 12 s; the next one waits while the sorter is still taking in the last, so the sheets fill as a real day would fill them. Dates and due days follow the simulated clock; nesting keeps its real time. Enter a seed (the status shows the current one) to replay the same orders after a reset.</div></div>
       <div class="field"><label>Sandbox records</label><button class="btn ghost sm" id="stSandboxReset" type="button" title="empty the sandbox's own pool, sets, runs and sheets — the real records are never touched">Reset the sandbox…</button></div>
       <div class="field"><label>Run history</label><button class="btn ghost sm" id="stPurge" type="button" title="delete every run, sheet, set, pool row, back record and set counter — production and sandbox — and start with a clean sheet; the master files, the SKU index, the mappings and the sandbox snapshot stay">Purge all run history…</button><div class="help">Asks for the passcode. A run that is still open is named and has to be given up first, or the purge can be forced.</div></div>
       <div class="field"><label>Etsy calls per hour (cap)</label><input id="stEtsyCap" type="number" min="50" max="5000" step="50"><div class="help">Every Etsy call the sorter causes at the station is metered. A run stops before a pull or re-validation that would pass this cap. A pull costs one list page per 100 open orders plus one detail read per order Etsy changed; a re-validation costs one list sweep (reused when under 90 s old).</div></div>
@@ -1527,6 +1528,7 @@ const DEFAULTS = {
   minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", computePipeline: "cpu", packingAI: "on", aiRounds: 10, snapIn: 0.25, maxFill: 0.80, orderView: "list", v: 26,
   // Design Station bridge, orders, run (design doc §14)
   dsOrigin: "https://design-1.goldenspike.app", heartbeatS: 5, heartbeatMiss: 3, autoCommit: "on", runMode: "manual", pullMode: "all", pullDueBy: "", pullCount: 40, autoEvery: 0, pollOrders: "on", pollMinutes: 10, finalOptimizeCount: 85, optimizeAt: 85, etsyHourlyCap: 600, sandbox: "off",
+  sandboxStream: "on", sandboxSpeed: 50, sandboxSeed: 0,   // in the sandbox, orders arrive a few per simulated 10 minutes, 50x faster than real time
   skuPattern: "^[A-Z0-9][A-Z0-9 _.,'&()+\\-]{1,60}$", labelGapMm: 6.4, masterServerAbove: 0, sizeMinMm: 3, sizeMaxMm: 60,
   cadenceDays: 2, lateDays: 2,
   engraveMarginMm: 0.3, engraveMinCapMm: 1.6, engraveMaxHeightFrac: 0.4, engraveConfidence: 0.65, engraveTryRotated: "on", engraveMinGapMm: 0.12, engraveMinStrokeMm: 0.15, backFileView: "asSeenFromBack"
@@ -1546,7 +1548,7 @@ const fmt = { pct: v => Math.round(v * 100) + "%", area: v => Math.round(v * MM_
 const cors = u => CharmNestAssets.url(u);
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const uid = () => Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
-const today = () => CharmNestOrders.localDay();   // one local clock decides the folder date and the name date
+const today = () => CharmNestOrders.localDay(new Date(SimClock.now()));   // one local clock decides the folder date and the name date (the sandbox stream's simulated one while it plays)
 
 /* ═══ 1 · tiny UI kit ═══════════════════════════════════════════════════ */
 /* A toast is a glance, not a noticeboard. It used to stack without a limit — five of them climbing from the dock to
@@ -1586,6 +1588,23 @@ const S = {
   sources: [], poolSources: {}, unassigned: [], sheets: {}, mode: "nest", calibration: [], library: { rows: [], metal: "all", q: "", kind: "sheets" }, nestQueue: [], stockPreset: (v => STOCK_PRESETS.some(p => p.id === v) ? v : DEFAULT_STOCK)(localStorage.getItem("cn.stock"))
 };
 const WORKSPACE_SANDBOX = S.settings.sandbox === "on";
+/* The sandbox order stream plays the shop's day faster than real time: each check the sorter makes moves its clock ten
+   simulated minutes, and between checks it runs at the chosen speed, never past the next check. The day (set numbers,
+   folders, run dates) and the due dates follow it; nesting searches keep their real seconds. Anywhere else, and
+   whenever the stream is not playing, this is Date.now() and nothing more. */
+const SimClock = window.SimClock = (() => {
+  const KEY = "cn.simClock.sandbox"; let at = null;
+  if (WORKSPACE_SANDBOX && S.settings.sandboxStream === "on") try { const v = JSON.parse(localStorage.getItem(KEY) || "null"); if (v && v.base > 0 && v.speed > 0) at = v; } catch (_) {}
+  const now = () => at ? Math.min(at.sim + Math.max(0, Date.now() - at.real) * at.speed, at.base + at.stepMs) : Date.now();
+  /** base: the stream's clock at its last step; the step's length and the speed. null stops it (the real clock again). */
+  function set(s) {
+    if (!s) { at = null; try { localStorage.removeItem(KEY); } catch (_) {} return; }
+    const t = at && s.base >= at.base ? now() : s.base;   // on from the reading, so a reload or a new speed never runs it backwards; a new stream starts at its own
+    at = { base: s.base, stepMs: s.stepMs, speed: s.speed, sim: Math.max(s.base, Math.min(t, s.base + s.stepMs)), real: Date.now() };
+    try { localStorage.setItem(KEY, JSON.stringify(at)); } catch (_) {}
+  }
+  return { now, set, on: () => !!at };
+})();
 function loadSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem("cn.settings") || "{}");
@@ -3748,10 +3767,11 @@ function openSettings() {
     }; } }
   $("#stPollOrders").value = s.pollOrders || "on"; $("#stPollMinutes").value = s.pollMinutes || 10; $("#stFinalOptimizeCount").value = s.finalOptimizeCount || 85; $("#stOptimizeAt").value = s.optimizeAt || 85;
   $("#stDsOrigin").value = s.dsOrigin || DEFAULTS.dsOrigin; $("#stHeartbeatS").value = s.heartbeatS; $("#stHeartbeatMiss").value = s.heartbeatMiss; $("#stAutoCommit").value = s.autoCommit || "on"; $("#stCadenceDays").value = s.cadenceDays == null ? 2 : s.cadenceDays; $("#stLateDays").value = s.lateDays == null ? 2 : s.lateDays; $("#stPullMode").value = s.pullMode || "all"; $("#stPullDueBy").value = s.pullDueBy || ""; $("#stPullCount").value = s.pullCount || 40; $("#stAutoEvery").value = s.autoEvery || 0; $("#stEtsyCap").value = s.etsyHourlyCap || DEFAULTS.etsyHourlyCap; $("#stSandbox").value = s.sandbox === "on" ? "on" : "off";
+  $("#stSbStream").value = s.sandboxStream === "off" ? "off" : "on"; $("#stSbSpeed").value = s.sandboxSpeed || DEFAULTS.sandboxSpeed; $("#stSbSeed").value = s.sandboxSeed || ""; $("#stSbSeed").placeholder = window.Sandbox?.seed?.() ? `now ${Sandbox.seed()} · new each reset` : "new each reset";
   $("#stSkuPattern").value = s.skuPattern || DEFAULTS.skuPattern; $("#stLabelGapMm").value = s.labelGapMm; $("#stMasterServerAbove").value = s.masterServerAbove; $("#stSizeMinMm").value = s.sizeMinMm; $("#stSizeMaxMm").value = s.sizeMaxMm;
   $("#stEngraveMarginMm").value = s.engraveMarginMm; $("#stEngraveMinCapMm").value = s.engraveMinCapMm; $("#stEngraveMaxHeightFrac").value = s.engraveMaxHeightFrac; $("#stEngraveConfidence").value = s.engraveConfidence; $("#stEngraveMinGapMm").value = s.engraveMinGapMm; $("#stEngraveMinStrokeMm").value = s.engraveMinStrokeMm; $("#stEngraveTryRotated").value = s.engraveTryRotated || "on"; $("#stBackFileView").value = s.backFileView || "asSeenFromBack";
   { const sb = window.Sandbox; const st = $("#stSbStatus");
-    if (st && sb) st.textContent = sb.status && sb.status() ? "" : "";
+    if (st && sb) st.textContent = sb.streamText?.() || "";
     const sn = $("#stSbSnap"), rs = $("#stSbReset");
     if (sn) sn.onclick = () => sb.snapshot().then(() => toast("Snapshot taken", "ok")).catch(e => toast(e.message, "bad", 8000));
     if (rs) rs.onclick = () => sb.reset().then(() => toast("Sandbox records cleared", "ok")).catch(e => toast(e.message, "bad", 8000));
@@ -3808,6 +3828,7 @@ function readSettings() {
   s.clearancePt = Math.max(-2, Math.min(12, Math.round((+$("#stClearance").value || 0) / MM_PER_PT * 100) / 100)); s.insetPt = Math.max(0, Math.round((+$("#stInset").value || 0) / MM_PER_PT * 100) / 100); s.angleStep = [2,5,10].includes(+$("#stAngle").value) ? +$("#stAngle").value : 10; s.budgetS = Math.max(10, +$("#stBudget").value || 180); s.parallel = Math.max(0, Math.min(16, Math.round(+$("#stParallel").value || 0))); s.seed = Math.max(1, Math.round(+$("#stSeed").value || 1)); s.freshSeed = $("#stFreshSeed").checked; s.serverAbove = Math.max(0, +$("#stServerAbove").value || 0);
   s.pollOrders = $("#stPollOrders").value; s.pollMinutes = Math.max(10, Math.min(1440, +$("#stPollMinutes").value || 10)); s.finalOptimizeCount = Math.max(1, Math.min(1000, Math.round(+$("#stFinalOptimizeCount").value || 85))); s.optimizeAt = Math.max(50, Math.min(100, +$("#stOptimizeAt").value || 85));
   s.dsOrigin = ($("#stDsOrigin").value || DEFAULTS.dsOrigin).trim().replace(/\/+$/, ""); s.heartbeatS = Math.max(2, Math.min(60, +$("#stHeartbeatS").value || 5)); s.heartbeatMiss = Math.max(1, Math.min(10, Math.round(+$("#stHeartbeatMiss").value || 3))); s.autoCommit = $("#stAutoCommit").value; s.cadenceDays = Math.max(1, Math.min(14, Math.round(+$("#stCadenceDays").value || 2))); s.lateDays = Math.max(0, Math.min(14, Math.round(+$("#stLateDays").value ?? 2))); s.pullMode = $("#stPullMode").value; s.pullDueBy = $("#stPullDueBy").value || ""; s.pullCount = Math.max(1, Math.min(500, Math.round(+$("#stPullCount").value || 40))); s.autoEvery = Math.max(0, Math.min(1440, Math.round(+$("#stAutoEvery").value || 0))); if (s.autoEvery > 0 && s.autoEvery < 5) s.autoEvery = 5; s.etsyHourlyCap = Math.max(50, Math.min(5000, Math.round(+$("#stEtsyCap").value || 600))); { const was = s.sandbox === "on"; s.sandbox = $("#stSandbox").value === "on" ? "on" : "off"; if (was !== (s.sandbox === "on")) { saveSettings(); toast(`Sandbox ${s.sandbox === "on" ? "ON" : "off"} — reloading`, "ok", 3000); setTimeout(() => location.reload(), 600); } }
+  s.sandboxStream = $("#stSbStream").value === "off" ? "off" : "on"; s.sandboxSpeed = Math.max(1, Math.min(1000, Math.round(+$("#stSbSpeed").value || 50))); s.sandboxSeed = Math.max(0, Math.min(2147483646, Math.round(+$("#stSbSeed").value || 0)));
   try { new RegExp($("#stSkuPattern").value); s.skuPattern = $("#stSkuPattern").value.trim() || DEFAULTS.skuPattern; } catch (_) { toast("SKU pattern is not a valid regular expression — kept the previous one", "bad"); }
   s.labelGapMm = Math.max(1, Math.min(30, +$("#stLabelGapMm").value || 6.4)); s.masterServerAbove = Math.max(0, Math.round(+$("#stMasterServerAbove").value || 0)); s.sizeMinMm = Math.max(0.5, +$("#stSizeMinMm").value || 3); s.sizeMaxMm = Math.max(s.sizeMinMm, +$("#stSizeMaxMm").value || 60);
   s.engraveMarginMm = Math.max(0, Math.min(5, +$("#stEngraveMarginMm").value || 0)); s.engraveMinCapMm = Math.max(0.3, +$("#stEngraveMinCapMm").value || 1.6); s.engraveMaxHeightFrac = Math.max(0.1, Math.min(1, +$("#stEngraveMaxHeightFrac").value || 0.4)); s.engraveConfidence = Math.max(0, Math.min(1, +$("#stEngraveConfidence").value || 0.8)); s.engraveMinGapMm = Math.max(0, +$("#stEngraveMinGapMm").value || 0); s.engraveMinStrokeMm = Math.max(0, +$("#stEngraveMinStrokeMm").value || 0); s.engraveTryRotated = $("#stEngraveTryRotated").value; s.backFileView = $("#stBackFileView").value;
@@ -3818,7 +3839,7 @@ function readSettings() {
   }
   localStorage.setItem("cn.learnedKey", $("#stLearnedKey").value.trim());
   s.learnedBudgetS = Math.max(600, Math.min(36000, +$("#stLearnedBudget").value || 600)); s.learnedStallS = Math.max(120, Math.min(3600, +$("#stLearnedStall").value || 300));
-  saveSettings(); renderNestFlow(); if (window.Arrivals) Arrivals.start(); refreshAllCards(); toast("Settings saved", "ok", 1800);
+  saveSettings(); renderNestFlow(); window.Sandbox?.restream?.(); if (window.Arrivals) Arrivals.start(); refreshAllCards(); toast("Settings saved", "ok", 1800);
 }
 
 /* ═══ 16 · boot ═════════════════════════════════════════════════════════ */
@@ -3885,7 +3906,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260923-audit"></script>
+<script src="charm-nest-bridge.js?v=20260923-stream"></script>
 <script src="charm-nest-rose-ui.js?v=20260923-cutsheet"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
