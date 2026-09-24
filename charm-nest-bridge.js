@@ -4775,12 +4775,16 @@ const Sandbox = window.Sandbox = (() => {
     .catch(e => agent({ bridge: true }, "warn", `Sandbox reset: the station kept its own list of finished orders (${e.message})`));
   async function reset() {
     const replay = streaming();
-    if (!confirm(`Delete every sandbox record (sandbox pools, sets, runs, sheets, locks, ledger, archive)? Files and the snapshot stay. Production data is untouched.${replay ? " The order stream starts over, and the sorter clears its run and reloads." : ""}`)) return;
+    if (!confirm(`Delete every sandbox record (sandbox pools, sets, runs, sheets, locks, ledger, archive) and the sandbox's files? The snapshot stays, and so do the engraving readings Claude was paid for. Production data is untouched.${replay ? " The order stream starts over, and the sorter clears its run and reloads." : ""}`)) return;
     // no arrivals check may sweep while the records go: with the stream deleted the emulator lists the whole snapshot
     await Arrivals.pause(); let reloading = false;
     try {
       if (replay && RunCtl.clearRunState(null, { drop: "all" }) === false) return;   // a Rose Gold sheet still saving: nothing is deleted
-      const r = await api("charmNestLibrary", { op: "sandboxReset" }); toast(`Sandbox reset — ${r.deleted} record(s) removed`, "ok");
+      // a sandbox that streamed for days holds more than one call can delete: each works a few seconds and says if more is left
+      let r = null, records = 0, files = 0;
+      for (let i = 0; i < 400; i++) { r = await api("charmNestLibrary", { op: "sandboxReset" }); records += r.deleted || 0; files += r.files || 0; if (!r.more) break; }
+      if (r.more) throw new Error(`it stopped part way (${records} record(s) and ${files} file(s) removed): press Reset again to finish`);
+      toast(`Sandbox reset — ${records} record(s) and ${files} file(s) removed${r.filesError ? ` · files not deleted: ${r.filesError}` : ""}`, r.filesError ? "bad" : "ok");
       await forgetCompletions();
       // the stream's clock, arrivals and orders went with the records: a replay starts from nothing, as the first one did
       adopt(null); Arrivals.reset();

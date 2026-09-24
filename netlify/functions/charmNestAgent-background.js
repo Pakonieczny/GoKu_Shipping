@@ -15,7 +15,8 @@ exports.handler = async (event) => {
   const id = String(body.id || "").replace(/[^\w\-]/g, "").slice(0, 80);
   const mode = ["grouping", "layout", "name", "place", "packing", "labelRead"].includes(body.mode) ? body.mode : null;
   if (!id || !mode) return { statusCode: 400, body: "bad payload" };
-  const ref = db.collection(COLL).doc(id);
+  // a sandbox job (sandbox:true in the kick) is the sandbox's own record, which its reset clears
+  const ref = db.collection((body.sandbox === true ? "Sandbox_" : "") + COLL).doc(id);
   const snap = await ref.get();
   if (!snap.exists) return { statusCode: 404, body: "unknown job" };
   if (snap.data().status !== "pending") return { statusCode: 200, body: "already handled" };

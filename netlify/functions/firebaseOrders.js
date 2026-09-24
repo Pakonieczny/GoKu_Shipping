@@ -273,12 +273,16 @@ exports.handler = async (event) => {
           return { statusCode: 200, headers: CORS, body: JSON.stringify({ success:true, orderNumbers: [] }) };
         }
         // Query matching completed records, rather than billing a document get
-        // for every not-yet-completed order on every background poll.
-        const present=[];
-        for(let i=0;i<ids.length;i+=10){
-          const snap=await col(COMPLETED_COLL).where(admin.firestore.FieldPath.documentId(),"in",ids.slice(i,i+10)).get();
-          present.push(...snap.docs.map(d=>d.id));
-        }
+        // for every not-yet-completed order on every background poll. The station
+        // now asks about every open order on each sweep (100 ids a request), so the
+        // ten-id queries run five at a time rather than one after another; the
+        // answer keeps the order of the ids asked about.
+        const groups=[];
+        for(let i=0;i<ids.length;i+=10)groups.push(ids.slice(i,i+10));
+        const found=new Array(groups.length);let next=0;
+        const worker=async()=>{while(next<groups.length){const g=next++;const snap=await col(COMPLETED_COLL).where(admin.firestore.FieldPath.documentId(),"in",groups[g]).get();found[g]=snap.docs.map(d=>d.id);}};
+        await Promise.all(Array.from({length:Math.min(5,groups.length)},worker));
+        const present=[].concat(...found);
         return {
           statusCode: 200, headers: CORS,
           body: JSON.stringify({ success:true, orderNumbers: present, now: Date.now() })
@@ -291,15 +295,21 @@ exports.handler = async (event) => {
         if (!ids.length) {
           return { statusCode: 200, headers: CORS, body: JSON.stringify({ success:true, orderNumbers: [] }) };
         }
-        const refs = ids.map(id => db.collection(PREFIX + "Brites_Orders").doc(String(id)));
-        const snaps = await Promise.all(refs.map(r => r.get()));
-        const withNotes = snaps
-          .map((snap, i) => {
-            const v = snap.exists ? (snap.data() || {}) : {};
-            const note = (v["Staff Note"] ?? "").toString().trim();
-            return note ? ids[i] : null;
-          })
-          .filter(Boolean);
+        // Every sweep of the station now asks about all of its open orders (100 ids a
+        // request): ten-id queries, five at a time, return only the orders that have a
+        // record at all, instead of a billed document get per order.
+        const uniq = [...new Set(ids.map(String))], groups = [];
+        for (let i = 0; i < uniq.length; i += 10) groups.push(uniq.slice(i, i + 10));
+        const noted = new Set(); let next = 0;
+        const worker = async () => {
+          while (next < groups.length) {
+            const g = groups[next++];
+            const snap = await db.collection(PREFIX + "Brites_Orders").where(admin.firestore.FieldPath.documentId(), "in", g).get();
+            snap.docs.forEach(d => { const note = ((d.data() || {})["Staff Note"] ?? "").toString().trim(); if (note) noted.add(d.id); });
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(5, groups.length) }, worker));
+        const withNotes = ids.filter(id => noted.has(String(id)));
         return {
           statusCode: 200, headers: CORS,
           body: JSON.stringify({ success:true, orderNumbers: withNotes, now: Date.now() })

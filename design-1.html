@@ -927,6 +927,7 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
       <div class="histListWrap" id="histListWrap">
         <div id="histList"></div>
         <div class="histEmpty hidden" id="histEmpty">Nothing matches.<br>Try a different date or search.</div>
+        <div class="histEmpty hidden" id="histOlderWrap">This browser keeps the newest 50,000 completed orders.<br><button class="btn ghost xs" id="histOlderBtn" title="Read the completed orders before these from the archive (for this session)">Load older orders</button></div>
       </div>
 
       <div class="railFoot">
@@ -1262,7 +1263,34 @@ const LS = {
   printLists: "metalOrderLists",
 };
 
-const LEDGER_TTL_DAYS = 60;
+/* The sandbox streams orders many times faster than the shop, and its ledger shares this origin's storage quota with
+   production: it keeps two days and at most 5,000 orders (sandbox.reset clears it anyway). Production keeps 60 days. */
+const LEDGER_TTL_DAYS = SANDBOX ? 2 : 60;
+const LEDGER_MAX      = SANDBOX ? 5000 : Infinity;
+
+/* localStorage is one quota for the whole origin, production and sandbox alike. When a write that matters (the Etsy
+   sign-in, the label hand-off) finds it full, the bulky caches that are rebuilt on demand go first: the order-detail and
+   listing-photo copies of both namespaces. Nothing dropped here is the only copy of anything. */
+function isQuotaError(e) {
+  return !!e && (e.name === "QuotaExceededError" || e.name === "NS_ERROR_DOM_QUOTA_REACHED" || e.code === 22 || e.code === 1014);
+}
+function dropStorageCaches() {
+  ["designStation.orders.v2", "designStation.listingImages.v1"].forEach(k => {
+    try { localStorage.removeItem(k); } catch (_) {}
+    try { localStorage.removeItem(k + ":sandbox"); } catch (_) {}
+  });
+  try { __imagesSaved.clear(); } catch (_) {}   // or the next photo read writes the whole list straight back
+}
+/** setItem for the writes that must land: on a full quota the caches go and the write is tried once more. */
+function setItemEssential(key, value) {
+  try { localStorage.setItem(key, value); }
+  catch (e) {
+    if (!isQuotaError(e)) throw e;
+    console.warn(`Browser storage full writing ${key}: dropping the order and photo caches and trying again`);
+    dropStorageCaches();
+    localStorage.setItem(key, value);
+  }
+}
 
 /* ═══ 1 · TINY UI KIT (replaces Materialize) ═════════════════════════════ */
 
@@ -1406,8 +1434,16 @@ function applySettings() {
 
 /* ═══ 3 · STATE ══════════════════════════════════════════════════════════ */
 
+/* A Set that also tells each open completion read (restoreCompleted, syncCompletedFor) which ids were completed or undone
+   here while its answer was on its way, so an older answer never reverses them. */
+class CompletedSet extends Set {
+  add(id) { super.add(id); if (this.watchers) this.watchers.forEach(w => w.add(String(id))); return this; }
+  delete(id) { const had = super.delete(id); if (this.watchers) this.watchers.forEach(w => w.add(String(id))); return had; }
+  clear() { if (this.watchers) this.forEach(id => this.watchers.forEach(w => w.add(String(id)))); super.clear(); }
+}
 const selectedOrders  = new Set();   // receipt_id strings currently picked here
-const completedOrders = new Set();   // receipt_id strings marked design-complete
+const completedOrders = new CompletedSet();   // receipt_id strings marked design-complete
+completedOrders.watchers = new Set();
 const orderCache      = {};          // receipt_id → transactions[]
 const gridElements    = new Map();   // transaction_id → tile element   ← keyed by TX, not by size
 const itemsByTx       = new Map();   // transaction_id → transaction object
@@ -1641,6 +1677,9 @@ function etsyRecord(url) {
   etsyMeter.dayTotal++;
   const k = etsyBucketKey(now); etsyMeter.buckets[k] = (etsyMeter.buckets[k] || 0) + 1;
   for (const bk of Object.keys(etsyMeter.buckets)) if (Number(bk) < Number(k) - 6) delete etsyMeter.buckets[bk];
+  // only the last 10 minutes of an order's reads matter: an order not read for 10 minutes leaves the map, which otherwise
+  // kept a key for every order this page ever read
+  for (const [id, ts] of Object.entries(etsyMeter.byOrder)) if (!ts.length || ts[ts.length - 1] <= now - 600000) delete etsyMeter.byOrder[id];
   const m = /orderId=(\d+)/.exec(String(url || "")); if (m) { const o = etsyMeter.byOrder[m[1]] = (etsyMeter.byOrder[m[1]] || []).filter(t => t > now - 600000); o.push(now); if (o.length > ETSY_GUARD.sameOrderPer10Min) etsyAlarm(`order ${m[1]} read ${o.length} times in 10 minutes`); }
   if (etsyMeter.minute.length > ETSY_GUARD.burstPerMinute) etsyAlarm(`${etsyMeter.minute.length} Etsy calls in one minute`);
   else if (etsyMeter.buckets[k] > ETSY_GUARD.per10Min) etsyAlarm(`${etsyMeter.buckets[k]} Etsy calls in 10 minutes`);
@@ -1760,10 +1799,15 @@ async function apiFetch(path, init = {}) {
 
   if (resp.status === 401) {
     try {
-      await refreshAccessToken();
+      await refreshAccessToken({ force: true });
       token = localStorage.getItem(TOKEN_KEYS.access) || "";
       resp = isEtsyPath(path) ? await runEtsyTask(doFetch) : await doFetch();
-    } catch (_) { /* fall through */ }
+    } catch (e) {
+      // A refresh that could not reach Etsy (the network, a 429, a 5xx) is not a sign-out: the tokens stay, the refresh
+      // is retried on its own, and this call fails as a passing error. A refused refresh has already asked for a sign-in.
+      if (!e || !e.signedOut) throw e;
+      throw new Error("Unauthorized – reconnecting Etsy…");
+    }
 
     if (resp.status === 401) {
       try { localStorage.removeItem(TOKEN_KEYS.access); } catch (_) {}
@@ -1841,11 +1885,21 @@ async function pullEtsyOrderDetails(orderNumber, { strict = false } = {}) {
   }
 }
 
-/* Listing images — permanent cache + in-flight dedupe + concurrency cap. */
+/* Listing images — memory cache + in-flight dedupe + concurrency cap. The memory cache keeps the 500 most recently used
+   listings (the station stays open for weeks, and every listing it ever showed used to stay in memory), and a listing
+   that came back with no photos (Etsy still preparing them, or a refused read) is asked again after 5 minutes, as the
+   saved copy below already was. */
 const __imagesCache  = new Map();
+const __imagesMiss   = new Map();   // listing id → when its empty answer may be asked again
 const __imagesFlight = new Map();
+const __IMAGES_MAX = 500;
+function keepListingImages(key, images, missUntil) {
+  __imagesCache.delete(key); __imagesCache.set(key, images);
+  if (images.length) __imagesMiss.delete(key); else __imagesMiss.set(key, missUntil || Date.now() + 300000);
+  while (__imagesCache.size > __IMAGES_MAX) { const old = __imagesCache.keys().next().value; __imagesCache.delete(old); __imagesMiss.delete(old); }
+}
 const __imagesSaved = new Map(), __imagesKey='designStation.listingImages.v1'+NS;
-try {for(const [id,v] of JSON.parse(localStorage.getItem(__imagesKey)||'[]'))if(v?.until>Date.now()&&Array.isArray(v.images)){__imagesSaved.set(id,v);__imagesCache.set(id,v.images);}}catch(_){}
+try {for(const [id,v] of JSON.parse(localStorage.getItem(__imagesKey)||'[]'))if(v?.until>Date.now()&&Array.isArray(v.images)){__imagesSaved.set(id,v);keepListingImages(id,v.images,v.until);}}catch(_){}
 function saveListingImages(key,images){
   try {
     __imagesSaved.delete(key);__imagesSaved.set(key,{images,until:Date.now()+(images.length?86400000:300000)});
@@ -1858,7 +1912,8 @@ function saveListingImages(key,images){
 
 async function fetchListingImages(listingId) {
   const key = String(listingId);
-  if (__imagesCache.has(key))  return __imagesCache.get(key);
+  const retryAt = __imagesMiss.get(key);
+  if (__imagesCache.has(key) && !(retryAt && retryAt <= Date.now())) { const hit = __imagesCache.get(key); __imagesCache.delete(key); __imagesCache.set(key, hit); return hit; }
   if (__imagesFlight.has(key)) return __imagesFlight.get(key);
 
   const task = runImageTask(async () => {
@@ -1872,7 +1927,7 @@ async function fetchListingImages(listingId) {
   __imagesFlight.set(key, task);
   try {
     const results = await task;
-    __imagesCache.set(key, results);
+    keepListingImages(key, results);
     saveListingImages(key,results);
     return results;
   } finally { __imagesFlight.delete(key); }
@@ -1894,6 +1949,13 @@ async function getLocalImageData(imageUrl) {
 /* ═══ 6 · ETSY OAUTH ═════════════════════════════════════════════════════ */
 
 let __refreshPromise = null;
+/* A refresh that fails for a passing reason (the network, a 429, a 5xx) keeps every token and is tried again on its own:
+   after 15 s, 30 s, 60 s and so on, at most every 5 minutes, and at once when the browser comes back online. Callers in
+   the meantime do not each send a refresh of their own. */
+const __refreshRetry = { n: 0, t: null, failedAt: 0 };
+/* Set when this page told the sorter it needs an Etsy sign-in (etsy.signin): a good token later tells it the station is back.
+   The popup's own report and the token it stores reach this copy together, so one etsy.connected answers both. */
+let __etsySigninAsked = false, __etsyConnectedSentAt = 0;
 
 function setConn(kind, text) {
   const dot = $("#connDot"), t = $("#connText");
@@ -1916,56 +1978,144 @@ function refreshConnBadge() {
 function scheduleTokenRefresh() {
   clearTimeout(window.__etsyRefreshTimer);
   const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0);
+  const refresh = () => refreshAccessToken().catch(() => {});   // a failure is reported and retried inside
   if (!exp) {
     if (localStorage.getItem(TOKEN_KEYS.refresh)) {
-      window.__etsyRefreshTimer = setTimeout(refreshAccessToken, 55 * 60 * 1000);
+      window.__etsyRefreshTimer = setTimeout(refresh, 55 * 60 * 1000);
     }
     return;
   }
   const now = Math.floor(Date.now() / 1000);
   const delayMs = Math.max(5000, (exp - now - 120) * 1000);
-  window.__etsyRefreshTimer = setTimeout(refreshAccessToken, delayMs);
+  window.__etsyRefreshTimer = setTimeout(refresh, delayMs);
   refreshConnBadge();
 }
 
 function setTokens({ access_token, refresh_token, expires_in, issued_at }) {
-  if (access_token)  localStorage.setItem(TOKEN_KEYS.access, access_token);
-  if (refresh_token) localStorage.setItem(TOKEN_KEYS.refresh, refresh_token);
+  // a sign-in, or the refresh token Etsy just rotated, must land even when the origin's storage is full
+  if (access_token)  setItemEssential(TOKEN_KEYS.access, access_token);
+  if (refresh_token) setItemEssential(TOKEN_KEYS.refresh, refresh_token);
   const now = Math.floor(Date.now() / 1000);
   const iat = Number(issued_at || now);
-  localStorage.setItem(TOKEN_KEYS.expires, String(iat + Number(expires_in || 3600)));
+  setItemEssential(TOKEN_KEYS.expires, String(iat + Number(expires_in || 3600)));
   scheduleTokenRefresh();
 }
 
-async function refreshAccessToken() {
+/** Only a refresh that was definitively refused signs the station out: a spent or revoked refresh token (Etsy's
+    invalid_grant, passed through by refreshEtsyToken with its 400/401) or none sent. */
+function refreshRefused(status, body) {
+  const code = String((body && body.error) || "");
+  return (status === 400 || status === 401) && (code === "invalid_grant" || /^missing refresh_token$/i.test(code));
+}
+
+/* One refresh at a time across every copy of this page in the browser (the bench tab, a mirror, the sorter's frame): they
+   share the tokens, and Etsy rotates the refresh token, so two copies refreshing at once would spend it twice. */
+function withTokenLock(fn) {
+  const locks = typeof navigator !== "undefined" ? navigator.locks : null;
+  if (!locks || typeof locks.request !== "function") return fn();
+  const opts = typeof AbortSignal !== "undefined" && AbortSignal.timeout ? { signal: AbortSignal.timeout(60000) } : {};
+  return locks.request("etsy-token-refresh", opts, fn);
+}
+
+function retryRefreshLater() {
+  clearTimeout(__refreshRetry.t);
+  const ms = Math.min(300000, 15000 * 2 ** __refreshRetry.n);
+  __refreshRetry.n = Math.min(__refreshRetry.n + 1, 5);
+  __refreshRetry.t = setTimeout(() => { __refreshRetry.t = null; refreshAccessToken({ now: true }).catch(() => {}); }, ms);
+}
+try {
+  window.addEventListener("online", () => {
+    if (!__refreshRetry.t) return;
+    clearTimeout(__refreshRetry.t); __refreshRetry.t = null;
+    refreshAccessToken({ now: true }).catch(() => {});
+  });
+} catch (_) {}
+
+/** The station asked the sorter for a sign-in and holds a good token again (its own refresh, or another tab's refresh or
+    sign-in): tell the sorter, whose stopped run waits for exactly this. */
+function tokenRecovered() {
+  if (!__etsySigninAsked || !localStorage.getItem(TOKEN_KEYS.access)) return;
+  __etsySigninAsked = false;
+  if (Date.now() - __etsyConnectedSentAt < 30000) return;
+  try {
+    if (typeof Bridge !== "undefined" && Bridge.active()) {
+      __etsyConnectedSentAt = Date.now();
+      const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0);
+      Bridge.emit("etsy.connected", { etsy: { signedIn: true, expiresAt: exp ? exp * 1000 : null }, at: Date.now(), reason: "token refreshed" });
+      Bridge.ticker("Etsy connection restored");
+    }
+  } catch (_) {}
+}
+
+/**
+ * Renew the access token with the stored refresh token.
+ *   force: the access token was just refused (a 401), so it is renewed even though its expiry looks fine.
+ *   now:   the scheduled retry or the browser coming back online, exempt from the 15 s spacing after a failure.
+ * Only a definitive refusal signs out (tokens removed, sign-in started, err.signedOut). A network error, a 429 or a 5xx
+ * keeps every token, shows a quiet warning, schedules a retry and fails as "Etsy token refresh failed (network): …".
+ */
+async function refreshAccessToken({ force = false, now = false } = {}) {
   if (__refreshPromise) return __refreshPromise;
-  const rt = localStorage.getItem(TOKEN_KEYS.refresh);
-  if (!rt) return;
+  if (!localStorage.getItem(TOKEN_KEYS.refresh)) return;
+  if (!now && __refreshRetry.t && Date.now() - __refreshRetry.failedAt < 15000) throw new Error("Etsy token refresh failed (network): the retry is scheduled");
+  const seen = localStorage.getItem(TOKEN_KEYS.access) || "";
 
   __refreshPromise = (async () => {
+    let rt = "";
     try {
-      const resp = await fetch(`${FN}/refreshEtsyToken`, {
-        method : "POST",
-        headers: { "Content-Type": "application/json" },
-        body   : JSON.stringify({ refresh_token: rt })
+      const done = await withTokenLock(async () => {
+        // another copy of the station may have refreshed while this one waited: its token is used, not refreshed again
+        const access = localStorage.getItem(TOKEN_KEYS.access) || "";
+        const left = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0) - Math.floor(Date.now() / 1000);
+        if (access && left > 600 && (!force || access !== seen)) { scheduleTokenRefresh(); return "fresh"; }
+        rt = localStorage.getItem(TOKEN_KEYS.refresh) || "";
+        if (!rt) return "none";
+        let resp;
+        try {
+          resp = await fetch(`${FN}/refreshEtsyToken`, {
+            method : "POST",
+            headers: { "Content-Type": "application/json" },
+            body   : JSON.stringify({ refresh_token: rt }),
+            ...(typeof AbortSignal !== "undefined" && AbortSignal.timeout ? { signal: AbortSignal.timeout(30000) } : {})
+          });
+        } catch (e) { throw new Error((e && e.message) || String(e)); }
+        if (!resp.ok) {
+          let body = null; try { body = await resp.json(); } catch (_) {}
+          throw Object.assign(new Error(`HTTP ${resp.status}${body && body.error ? " " + body.error : ""}`), { status: resp.status, signedOut: refreshRefused(resp.status, body) });
+        }
+        const data = await resp.json();
+        if (!data || !data.access_token) throw new Error("the refresh answer carried no access token");
+        setTokens({
+          access_token : data.access_token,
+          refresh_token: data.refresh_token || rt,   // Etsy rotates these
+          expires_in   : data.expires_in,
+          issued_at    : data.issued_at || Math.floor(Date.now() / 1000)
+        });
+        return "refreshed";
       });
-      if (!resp.ok) throw new Error("HTTP " + resp.status);
-      const data = await resp.json();
-      setTokens({
-        access_token : data.access_token,
-        refresh_token: data.refresh_token || rt,   // Etsy rotates these
-        expires_in   : data.expires_in,
-        issued_at    : data.issued_at || Math.floor(Date.now() / 1000)
-      });
+      if (done === "none") return;
+      __refreshRetry.n = 0; __refreshRetry.failedAt = 0; clearTimeout(__refreshRetry.t); __refreshRetry.t = null;
       refreshConnBadge();
+      tokenRecovered();
       return true;
     } catch (err) {
-      console.warn("Token refresh failed:", err);
-      localStorage.removeItem(TOKEN_KEYS.access);
-      localStorage.removeItem(TOKEN_KEYS.expires);
-      setConn("bad", "Reconnecting to Etsy…");
-      await startOAuth("refresh-failed");
-      throw err;
+      if (err && err.signedOut) {
+        // Refused. When another copy of the station has meanwhile stored a newer refresh token (its refresh spent the one
+        // sent here), the station is still signed in; otherwise it is signed out and needs a new sign-in.
+        const current = localStorage.getItem(TOKEN_KEYS.refresh) || "";
+        if (current && current !== rt) { scheduleTokenRefresh(); return true; }
+        console.warn("Etsy refused the token refresh; a new sign-in is needed:", err.message);
+        [TOKEN_KEYS.access, TOKEN_KEYS.refresh, TOKEN_KEYS.expires].forEach(k => { try { localStorage.removeItem(k); } catch (_) {} });
+        setConn("bad", "Reconnecting to Etsy…");
+        await startOAuth("refresh-failed");
+        throw err;
+      }
+      // Not a sign-out: the network, a rate limit or the server. The tokens stay and the refresh is tried again.
+      console.warn("Etsy token refresh failed; retrying:", (err && err.message) || err);
+      __refreshRetry.failedAt = Date.now();
+      setConn("warn", "Etsy: waiting for the network");
+      retryRefreshLater();
+      throw new Error("Etsy token refresh failed (network): " + ((err && err.message) || err));
     } finally { __refreshPromise = null; }
   })();
 
@@ -1976,7 +2126,14 @@ async function ensureFreshToken() {
   if (SANDBOX) return;
   const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0);
   if (!exp) return;
-  if (exp - Math.floor(Date.now() / 1000) <= 120) await refreshAccessToken();
+  if (exp - Math.floor(Date.now() / 1000) > 120) return;
+  try { await refreshAccessToken(); }
+  catch (e) {
+    // the token is renewed two minutes early: while that fails for a passing reason, a token that has not expired yet
+    // still works, and the call goes ahead with it
+    if (e && !e.signedOut && exp - Math.floor(Date.now() / 1000) > 5) return;
+    throw e;
+  }
 }
 
 function randomString(length) {
@@ -2032,6 +2189,7 @@ async function startOAuth(reason = "auto") {
     setConn("bad", "Sign in at the Design Station tab");
     toast("Etsy sign-in is needed — open design-1.goldenspike.app in its own tab and press Connect Etsy", "bad", 8000);
     Bridge.emit("etsy.signin", { reason });
+    __etsySigninAsked = true;   // the next good token (a sign-in or a refresh in any tab) tells the sorter: tokenRecovered
     return;
   }
   if (__oauthInFlight) return;
@@ -2087,8 +2245,10 @@ function connectForSorterDone() {
 }
 /* the framed copy: when the popup reports a sign-in on this origin, refresh the badge and tell the sorter */
 (function watchConnectForSorter() {
-  const relay = raw => { let m = null; try { m = typeof raw === "string" ? JSON.parse(raw) : raw; } catch (_) { return; } if (!m || m.type !== "etsy.connected") return; try { refreshConnBadge(); } catch (_) {} try { if (typeof Bridge !== "undefined" && Bridge.active()) { Bridge.emit("etsy.connected", { etsy: m.etsy, at: m.at }); Bridge.ticker("Etsy signed in (from the station's own window)"); } } catch (_) {} };
+  const relay = raw => { let m = null; try { m = typeof raw === "string" ? JSON.parse(raw) : raw; } catch (_) { return; } if (!m || m.type !== "etsy.connected") return; try { refreshConnBadge(); } catch (_) {} __etsySigninAsked = false; if (Date.now() - __etsyConnectedSentAt < 30000) return; try { if (typeof Bridge !== "undefined" && Bridge.active()) { __etsyConnectedSentAt = Date.now(); Bridge.emit("etsy.connected", { etsy: m.etsy, at: m.at }); Bridge.ticker("Etsy signed in (from the station's own window)"); } } catch (_) {} };
   window.addEventListener("storage", e => { if (e.key === CONNECT_KEY && e.newValue) relay(e.newValue); });
+  // a sign-in or a refresh in another tab of this origin, after this copy asked the sorter for a sign-in
+  window.addEventListener("storage", e => { if (e.key === TOKEN_KEYS.access && e.newValue) { try { refreshConnBadge(); } catch (_) {} tokenRecovered(); } });
   try { new BroadcastChannel("brites-design").addEventListener("message", e => relay(e.data)); } catch (_) {}
 })();
 
@@ -2150,7 +2310,7 @@ function bootOAuth() {
   }
 
   if (localStorage.getItem(TOKEN_KEYS.access))       scheduleTokenRefresh();
-  else if (localStorage.getItem(TOKEN_KEYS.refresh)) refreshAccessToken();
+  else if (localStorage.getItem(TOKEN_KEYS.refresh)) refreshAccessToken().catch(() => {});   // failures are retried inside
   refreshConnBadge();
 }
 
@@ -2204,23 +2364,36 @@ let __rtIdleHits = 0;
 const RT_STEPS = [2000, 5000, 15000, 30000, 60000];
 const RT_POLL  = { t: null };
 
-function paintLock(id, owner) {
+/* One pass over the page for a batch of lock or claim paints: receipt id → its rows and tiles. A claim or un-claim of
+   many orders, and the repaint after every lock poll, used to run a whole-document query per order. */
+function receiptElementIndex() {
+  const idx = new Map();
+  document.querySelectorAll(".orderRow[data-receipt], .tile[data-receipt]").forEach(el => {
+    const id = el.dataset.receipt; let list = idx.get(id);
+    if (!list) idx.set(id, list = []);
+    list.push(el);
+  });
+  return idx;
+}
+const lockRowsOf = (id, idx) => idx ? (idx.get(String(id)) || []).filter(el => el.classList.contains("orderRow")) : $$(`.orderRow[data-receipt='${cssEsc(id)}']`);
+
+function paintLock(id, owner, idx) {
   const mine = owner === RT.clientId;
-  $$(`.orderRow[data-receipt='${cssEsc(id)}']`).forEach(el => {
+  lockRowsOf(id, idx).forEach(el => {
     el.classList.toggle("rtLocked", !mine);
     if (!mine) el.title = "Being worked on at another station";
     else el.removeAttribute("title");
   });
 }
-function clearLock(id) {
-  $$(`.orderRow[data-receipt='${cssEsc(id)}']`).forEach(el => {
+function clearLock(id, idx) {
+  lockRowsOf(id, idx).forEach(el => {
     el.classList.remove("rtLocked");
     el.removeAttribute("title");
   });
 }
-function applyAllLocksToDOM() { rtSelected.forEach((owner, id) => paintLock(id, owner)); rtClaims.forEach((c, id) => paintClaim(id, true)); }
-function paintClaim(id, on) {
-  $$(`.orderRow[data-receipt='${cssEsc(id)}'], .tile[data-receipt='${cssEsc(id)}']`).forEach(el => {
+function applyAllLocksToDOM(idx = receiptElementIndex()) { rtSelected.forEach((owner, id) => paintLock(id, owner, idx)); rtClaims.forEach((c, id) => paintClaim(id, true, idx)); }
+function paintClaim(id, on, idx) {
+  (idx ? (idx.get(String(id)) || []) : $$(`.orderRow[data-receipt='${cssEsc(id)}'], .tile[data-receipt='${cssEsc(id)}']`)).forEach(el => {
     el.classList.toggle("claimed", !!on);
     const c = rtClaims.get(String(id));
     if (on && c) el.dataset.claim = `In a Charm Sorter run${c.run ? " · " + c.run : ""}`; else delete el.dataset.claim;
@@ -2302,36 +2475,41 @@ async function fetchAllLocksOnce() {
     const j = await r.json();
     rtSelected = new Map(Object.entries(j.locks || {}).map(([id, doc]) => [id, doc.selectedBy || null]));
     const prevClaims = rtClaims; rtClaims = new Map(Object.entries(j.claims || {}));
-    prevClaims.forEach((_, id) => { if (!rtClaims.has(id)) paintClaim(id, false); });
-    applyAllLocksToDOM();
+    const idx = receiptElementIndex();
+    prevClaims.forEach((_, id) => { if (!rtClaims.has(id)) paintClaim(id, false, idx); });
+    applyAllLocksToDOM(idx);
   } catch (e) { console.warn("hydrate locks failed", e); }
 }
 
-function nextRtDelay() { if(document.hidden)return 60000; return RT_STEPS[Math.min(__rtIdleHits, RT_STEPS.length - 1)]; }
+/* While the Charm Sorter drives this station its lock view must stay current even when the sorter's tab is in the
+   background: that view refuses a selection or a commit of an order locked at another bench. */
+const lockPollHidden = () => document.hidden && !(typeof Bridge !== "undefined" && Bridge.active());
+function nextRtDelay() { if(lockPollHidden())return 60000; return RT_STEPS[Math.min(__rtIdleHits, RT_STEPS.length - 1)]; }
 function scheduleRtPoll() {
   clearTimeout(RT_POLL.t);
   RT_POLL.t = setTimeout(fetchLocksOnce, nextRtDelay());
 }
 function fetchLocksOnce() {
-  if(document.hidden){scheduleRtPoll();return Promise.resolve();}
+  if(lockPollHidden()){scheduleRtPoll();return Promise.resolve();}
   if (__rtInflight) return __rtInflight;
   __rtInflight = fetch(`${FN}/firebaseOrders?rtSince=${__rtSince}`)
     .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then(json => {
       let changed = 0;
+      const idx = receiptElementIndex();   // one pass over the page for the whole delta
       Object.entries(json.locks || {}).forEach(([id, doc]) => {
         const owner = (doc || {}).selectedBy || null;
-        if (rtSelected.get(id) !== owner) { rtSelected.set(id, owner); paintLock(id, owner); changed++; }
+        if (rtSelected.get(id) !== owner) { rtSelected.set(id, owner); paintLock(id, owner, idx); changed++; }
       });
       (json.unlocks || []).forEach(id => {
-        if (rtSelected.has(id)) { rtSelected.delete(id); clearLock(id); changed++; }
+        if (rtSelected.has(id)) { rtSelected.delete(id); clearLock(id, idx); changed++; }
       });
-      Object.entries(json.claims || {}).forEach(([id, c]) => { rtClaims.set(id, c); paintClaim(id, true); });
-      (json.unclaims || []).forEach(id => { if (rtClaims.has(id)) { rtClaims.delete(id); paintClaim(id, false); } });
+      Object.entries(json.claims || {}).forEach(([id, c]) => { rtClaims.set(id, c); paintClaim(id, true, idx); });
+      (json.unclaims || []).forEach(id => { if (rtClaims.has(id)) { rtClaims.delete(id); paintClaim(id, false, idx); } });
       if (changed && Bridge.active()) Bridge.hooks.locks();
       __rtSince = Number(json.now) || Date.now();
       __rtIdleHits = changed ? 0 : (__rtIdleHits + 1);
-      applyAllLocksToDOM();
+      applyAllLocksToDOM(idx);
     })
     .catch(() => { __rtIdleHits++; })
     .finally(() => { __rtInflight = null; scheduleRtPoll(); });
@@ -2387,11 +2565,19 @@ function loadLocalCompleted() {
     return new Set(Object.keys(m).map(String));
   } catch (_) { return new Set(); }
 }
+/** Past LEDGER_MAX (the sandbox's 5,000) the oldest entries go first. */
+function capLedger(m) {
+  const ids = Object.keys(m);
+  if (ids.length <= LEDGER_MAX) return 0;
+  ids.sort((a, b) => (Number(m[a]) || 0) - (Number(m[b]) || 0)).slice(0, ids.length - LEDGER_MAX).forEach(id => { delete m[id]; });
+  return ids.length - LEDGER_MAX;
+}
 function addToLocalCompleted(ids) {
   try {
     const m = JSON.parse(localStorage.getItem(LS.ledger) || "{}");
     const now = Date.now();
     (ids || []).map(String).forEach(id => { m[id] = now; });
+    capLedger(m);
     localStorage.setItem(LS.ledger, JSON.stringify(m));
   } catch (_) {}
 }
@@ -2403,7 +2589,8 @@ function removeFromLocalCompleted(ids) {
   } catch (_) {}
 }
 /* The old build purged a vestigial month-bucket key but let the real ledger
-   grow forever. This purges the real one instead, once per day. */
+   grow forever. This purges the real one instead, once per day: at boot and from
+   the completion poll, so a tab left open for weeks purges too. */
 function purgeLedger() {
   try {
     const today = new Date().toISOString().slice(0, 10);
@@ -2412,24 +2599,73 @@ function purgeLedger() {
     const cutoff = Date.now() - LEDGER_TTL_DAYS * 864e5;
     let dropped = 0;
     Object.keys(m).forEach(id => { if (!(Number(m[id]) >= cutoff)) { delete m[id]; dropped++; } });
+    dropped += capLedger(m);
     localStorage.setItem(LS.ledger, JSON.stringify(m));
     localStorage.setItem(LS.ledgerPurge, today);
     if (dropped) console.log(`Ledger purge: dropped ${dropped} entries older than ${LEDGER_TTL_DAYS}d`);
   } catch (_) {}
 }
 
+/** The full read of every completion on record: at boot and on the station's own Refresh. The set is replaced only by
+    a complete answer; a failed read keeps the orders already known to be done (clearing first used to leave only the
+    local ledger's last 60 days, so older completed orders came back as open work). An order completed or undone here
+    while the answer was on its way keeps its state here. */
 async function restoreCompleted() {
+  const touched = new Set();
+  completedOrders.watchers.add(touched);
   try {
     const res  = await fetch(`${FN}/firebaseOrders?designCompleted=1`);
     const json = await res.json();
-    completedOrders.clear();
-    if (json.success && Array.isArray(json.orderNumbers)) {
-      json.orderNumbers.forEach(id => completedOrders.add(String(id)));
-    }
-    loadLocalCompleted().forEach(id => completedOrders.add(String(id)));
+    if (!res.ok || !json || !json.success || !Array.isArray(json.orderNumbers)) throw new Error((json && json.error) || "HTTP " + res.status);
+    const next = new Set(json.orderNumbers.map(String));
+    loadLocalCompleted().forEach(id => next.add(String(id)));
+    completedOrders.watchers.delete(touched);
+    [...completedOrders].forEach(id => { if (!next.has(id) && !touched.has(id)) completedOrders.delete(id); });
+    next.forEach(id => { if (!touched.has(id)) completedOrders.add(id); });
+    return true;
   } catch (e) {
-    console.warn("restoreCompleted failed:", e);
-  }
+    console.warn("restoreCompleted failed; keeping the completions already known:", e);
+    return false;
+  } finally { completedOrders.watchers.delete(touched); }
+}
+
+/** Ask firebaseOrders a per-order question (dcFor, staffNotesFor) about many receipts: 100 ids per request, two requests
+    at a time. It rejects if any part fails, so a caller never takes a partial answer for the whole one. */
+async function askFirebaseOrders(route, ids, chunk = 100) {
+  const found = new Set(), parts = [];
+  for (let i = 0; i < ids.length; i += chunk) parts.push(ids.slice(i, i + chunk));
+  const run = makeQueue(2);
+  await Promise.all(parts.map(part => run(async () => {
+    const r = await fetch(`${FN}/firebaseOrders?${route}=${encodeURIComponent(part.join(","))}`);
+    const j = await r.json();
+    if (!r.ok || !j || j.success === false || !Array.isArray(j.orderNumbers)) throw new Error(`firebaseOrders ${route}: ${(j && j.error) || "HTTP " + r.status}`);
+    j.orderNumbers.forEach(id => found.add(String(id)));
+  })));
+  return found;
+}
+
+/** The sorter's sweeps ask only about the open orders: which of them are completed on record (dcFor, ten ids per query
+    on the server), instead of reading every completion ever made on every sweep. For those orders the answer is what the
+    full read gives (on record, or in this browser's ledger); other entries of the set are left as they are. A failed
+    read keeps the set as it was. */
+async function syncCompletedFor(ids) {
+  ids = [...new Set((ids || []).map(String))];
+  if (!ids.length) return true;
+  const touched = new Set();
+  completedOrders.watchers.add(touched);
+  try {
+    const done = await askFirebaseOrders("dcFor", ids);
+    const ledger = loadLocalCompleted();
+    completedOrders.watchers.delete(touched);
+    for (const id of ids) {
+      if (touched.has(id)) continue;   // completed or undone here while the answer was on its way
+      if (done.has(id) || ledger.has(id)) completedOrders.add(id); else completedOrders.delete(id);
+    }
+    return true;
+  } catch (e) {
+    console.warn("Completion check for the open orders failed; keeping the completions already known:", e);
+    return false;
+  } finally { completedOrders.watchers.delete(touched); }
 }
 
 async function persistCompleted(ids) {
@@ -2508,6 +2744,7 @@ async function pollCompletedTargeted() {
 
 function startCompletionPolling() {
   const tick = async () => {
+    purgeLedger();   // once a day (it keeps its own date), so a tab that stays open purges as a fresh one does
     try {
       const changed = await pollCompletedTargeted();
       __completeIdle = changed ? 0 : Math.min(__completeIdle + 1, COMPLETE_STEPS.length - 1);
@@ -2526,20 +2763,24 @@ function wakeCompletionPolling() { __completeIdle = 0; }
    scopes writing to two different bindings, which is why the highlight never
    reflected server data. */
 
+/* mode "all" reads every note on record and is kept for a person's own Refresh. Sweeps ask only about the open orders
+   ({ ids }), in chunks; { merge: true } updates just those ids and keeps the rest (a search result). A failed read keeps
+   the notes already known. */
 async function refreshStaffNoteIDs(opts = {}) {
   const mode = opts.mode || "visible";
   try {
     if (mode === "all") {
       const r = await fetch(`${FN}/firebaseOrders?staffNotes=1`);
       const j = await r.json();
-      staffNoteIDs = new Set((j.orderNumbers || []).map(String));
+      if (!r.ok || !j || j.success === false || !Array.isArray(j.orderNumbers)) throw new Error((j && j.error) || "HTTP " + r.status);
+      staffNoteIDs = new Set(j.orderNumbers.map(String));
       return;
     }
-    const list = Array.isArray(opts.ids) ? opts.ids.map(String) : visibleReceiptIds();
-    if (!list.length) { staffNoteIDs = new Set(); return; }
-    const res  = await fetch(`${FN}/firebaseOrders?staffNotesFor=${encodeURIComponent(list.join(","))}`);
-    const json = await res.json();
-    staffNoteIDs = new Set((json.orderNumbers || []).map(String));
+    const list = [...new Set((Array.isArray(opts.ids) ? opts.ids : visibleReceiptIds()).map(String))];
+    if (!list.length) { if (!opts.merge) staffNoteIDs = new Set(); return; }
+    const found = await askFirebaseOrders("staffNotesFor", list);
+    if (opts.merge) { list.forEach(id => { if (found.has(id)) staffNoteIDs.add(id); else staffNoteIDs.delete(id); }); }
+    else staffNoteIDs = found;
   } catch (e) {
     console.warn("refreshStaffNoteIDs error", e);
   }
@@ -3281,13 +3522,33 @@ function revealOrder(rid, { flash = true } = {}) {
  * Only receipts that are NEW, or that Etsy reports as CHANGED, cost a detail
  * call — and those happen lazily as the operator scrolls.
  */
+/* orderCache holds each order's line items (with their tile photos once shown) and kept every order this page ever read,
+   including the ones that left the open list without being completed here. After each sweep it keeps only the orders
+   still in play: open, selected, on screen, or in the batch Undo would restore. The copy on disk (detailCache) is left
+   alone, so an order that comes back is read from it again. */
+function pruneOrderCache() {
+  const keep = new Set(allOpenReceipts.map(r => String(r.receipt_id)));
+  selectedOrders.forEach(id => keep.add(String(id)));
+  currentReceipts.forEach(r => keep.add(String(r.receipt_id)));
+  (searchSnapshot?.receipts || []).forEach(r => keep.add(String(r.receipt_id)));
+  lastClearedReceipts.forEach(id => keep.add(String(id)));
+  gridElements.forEach(tile => { if (tile.dataset.receipt) keep.add(String(tile.dataset.receipt)); });
+  let n = 0;
+  for (const rid of Object.keys(orderCache)) if (!keep.has(rid)) { delete orderCache[rid]; n++; }
+  return n;
+}
+
 let __sweepInFlight = 0;   // an Etsy sweep in progress: the bridge refuses a commit while one runs
-async function buildNewOrderList() {
+/* syncCompleted: the sorter's sweeps ask which of the fetched open orders are completed (syncCompletedFor) before any
+   row is built, in place of the full read of every completion (restoreCompleted), which a person's own Refresh and the
+   boot keep. allNotes: that same Refresh still reads every staff note; everything else asks about the open orders. */
+async function buildNewOrderList({ syncCompleted = false, allNotes = false } = {}) {
   if (allOpenReceipts.length === 0) {
     __sweepInFlight++;
     Activity.show("Loading open Etsy orders…");
     try {
       const raw = await fetchOpenOrdersSequential(n => Activity.msg(`Loading open Etsy orders… ${n}`));
+      if (syncCompleted) { Activity.msg("Checking which open orders are already done…"); await syncCompletedFor(raw.map(r => String(r.receipt_id))); }
       let fromCache = 0, needFetch = 0;
       raw.forEach(r => {
         const rid = String(r.receipt_id);
@@ -3304,6 +3565,7 @@ async function buildNewOrderList() {
         decorateReceipt(r);
       });
       allOpenReceipts = raw;
+      pruneOrderCache();
       Bridge.hooks.swept();
       console.log(`Open orders: ${raw.length} · ${fromCache} from cache · ${needFetch} need a detail call`);
       window.__lastLoadStats = { total: raw.length, fromCache, needFetch };
@@ -3312,7 +3574,7 @@ async function buildNewOrderList() {
 
   pruneStaleSelection();
   applyFilters({ rerender:true });
-  await refreshStaffNoteIDs({ mode:"all" });
+  await refreshStaffNoteIDs(allNotes ? { mode:"all" } : { ids: allOpenReceipts.map(r => String(r.receipt_id)) });
   markStaffNoteOrders();
   refreshMessageFlags();
   Bridge.hooks.orders();
@@ -4618,8 +4880,9 @@ async function proceedToPrint() {
 
   const nonce = randomString(12);
   try {
-    localStorage.setItem(LS.printJobs,  JSON.stringify({ nonce, jobs }));
-    localStorage.setItem(LS.printLists, JSON.stringify(lists));   // back-compat
+    // a full storage quota drops the rebuildable caches and tries once more (setItemEssential) instead of failing the print
+    setItemEssential(LS.printJobs,  JSON.stringify({ nonce, jobs }));
+    setItemEssential(LS.printLists, JSON.stringify(lists));   // back-compat
   } catch (e) {
     printBtn.disabled = false;
     printBtn.textContent = "Print labels";
@@ -5172,6 +5435,7 @@ const BritesChat = (() => {
         .onSnapshot(snap => {
           if (mySeq !== S.seq) return;                     // stale listener
           el.live?.classList.add("on");
+          S.retries = 0;
           S.docs = snap.docs.map(d => Object.assign({ __docId:d.id }, d.data()));
 
           /* The order being read is the one case where we have live truth,
@@ -5201,8 +5465,12 @@ const BritesChat = (() => {
           if (mySeq !== S.seq) return;
           el.live?.classList.remove("on");
           console.warn("Brites chat listener error:", err);
-          toast("Chat offline — retrying", "bad");
-          setTimeout(() => { if (mySeq === S.seq) subscribe(); }, 4000);
+          // one toast per outage, and the listener is tried again after 4 s, 8 s, 16 s, 32 s, then once a minute
+          // (it used to toast and resubscribe every 4 s for as long as the error lasted)
+          if (!S.retries) toast("Chat offline — retrying", "bad");
+          const wait = Math.min(60000, 4000 * 2 ** Math.min(S.retries || 0, 4));
+          S.retries = (S.retries || 0) + 1;
+          setTimeout(() => { if (mySeq === S.seq) subscribe(); }, wait);
         });
     } catch (e) { console.error("chat subscribe failed", e); }
   }
@@ -5432,7 +5700,7 @@ const BritesChat = (() => {
       S.queue.forEach(q => { try { URL.revokeObjectURL(q.url); } catch (_) {} });
       S.rid = rid;
       S.docs = []; S.pending = []; S.queue = [];
-      S.firstSnap = true; S.atBottom = true; S.unread = 0;
+      S.firstSnap = true; S.atBottom = true; S.unread = 0; S.retries = 0;
 
       el.input.value = readDrafts()[rid] || "";
       autoGrow();
@@ -5493,6 +5761,8 @@ async function runSearch(raw) {
 
   if (!found.length) { toast("No matching orders", "bad"); return; }
 
+  // the sweeps read the notes of the open orders only: a found order that is not open is asked about here
+  await refreshStaffNoteIDs({ ids: found.map(r => String(r.receipt_id)), merge: true });
   currentReceipts = sortReceipts(found);
   renderOrderRows(currentReceipts);
 
@@ -5533,14 +5803,21 @@ async function exitSearch() {
       Etsy   · touched only when the operator asks for live shipping status   */
 
 const ARCHIVE_FN  = `${FN}/designArchive`;
-const IDB_NAME    = "designStationArchive";
+/* The sandbox keeps its archive in its own database (production's name is unchanged, so its copy carries on as it is). */
+const IDB_NAME    = "designStationArchive" + NS;
 const IDB_VERSION = 1;
+/* This browser keeps the newest 50,000 archived orders; older ones stay on the server and are paged in on request
+   (the Older button), for this session only. Opened records are cached for the 200 most recent. */
+const ARCHIVE_LOCAL_MAX  = 50000;
+const ARCHIVE_DETAIL_MAX = 200;
 
 let archiveIndex   = [];        // slim rows, newest first — the search corpus
 let archiveById    = new Map(); // receiptId → slim row
-let archiveDetail  = new Map(); // receiptId → full record (session cache)
+let archiveDetail  = new Map(); // receiptId → full record (session cache, most recently opened last)
 let archiveSyncAt  = 0;
 let archiveReady   = false;
+let archiveFloor   = 0;         // completedAtMs of the oldest row kept here once older ones were let go (0: none were)
+let archiveOlderDone = false;   // paging older found nothing further back
 
 /* ── 19a · IndexedDB ─────────────────────────────────────────────────────
    localStorage is the wrong tool here: the index grows without bound and the
@@ -5583,12 +5860,41 @@ const idbPutAll = (store, rows) => idbTx(store, "readwrite", os => { rows.forEac
 const idbGet    = (store, key) => idbTx(store, "readonly", os => os.get(key));
 const idbPut    = (store, row) => idbTx(store, "readwrite", os => os.put(row));
 const idbClear  = store => idbTx(store, "readwrite", os => os.clear());
+const idbDeleteKeys = (store, keys) => idbTx(store, "readwrite", os => { keys.forEach(k => os.delete(k)); });
+const idbCount  = store => idbTx(store, "readonly", os => os.count());
+/** Replace the whole local index and its sync marks in one transaction: all of it lands, or the old copy stays. */
+function idbReplaceIndex(rows, metas) {
+  return idb().then(d => {
+    if (!d) return null;
+    return new Promise((resolve, reject) => {
+      const tx = d.transaction(["index", "meta"], "readwrite");
+      const os = tx.objectStore("index");
+      os.clear(); rows.forEach(r => os.put(r));
+      metas.forEach(m => tx.objectStore("meta").put(m));
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("aborted"));
+    });
+  });
+}
 
 /* ── 19b · sync ──────────────────────────────────────────────────────────── */
 
 function sortArchive() {
   archiveIndex.sort((a, b) => (b.at || 0) - (a.at || 0));
   archiveById = new Map(archiveIndex.map(r => [String(r.receiptId), r]));
+}
+
+/** Keep the newest ARCHIVE_LOCAL_MAX rows, in memory and on disk; the rest stay on the server (the Older button). */
+async function trimArchive() {
+  if (archiveIndex.length <= ARCHIVE_LOCAL_MAX) return 0;
+  const gone = archiveIndex.splice(ARCHIVE_LOCAL_MAX);   // newest first: the tail is the oldest
+  gone.forEach(r => archiveById.delete(String(r.receiptId)));
+  archiveFloor = archiveIndex[archiveIndex.length - 1].at || 0;
+  archiveOlderDone = false;
+  await idbDeleteKeys("index", gone.map(r => r.receiptId));
+  await idbPut("meta", { k: "floor", at: archiveFloor });
+  return gone.length;
 }
 
 function mergeArchiveRows(rows) {
@@ -5603,14 +5909,21 @@ function mergeArchiveRows(rows) {
   return added;
 }
 
-/** Load whatever we already have on disk so History opens instantly offline. */
-async function loadArchiveFromDisk() {
-  const [rows, meta] = await Promise.all([idbGetAll("index"), idbGet("meta", "sync")]);
-  archiveIndex = Array.isArray(rows) ? rows : [];
-  sortArchive();
-  archiveSyncAt = meta?.at || 0;
-  archiveReady = true;
-  return archiveIndex.length;
+/** Load whatever we already have on disk so History opens instantly offline. Runs when History is first opened, not
+    at boot: a station that stays in the live view (the sorter's frame above all) never holds the archive in memory. */
+let __archiveLoading = null;
+function loadArchiveFromDisk() {
+  if (!__archiveLoading) __archiveLoading = (async () => {
+    const [rows, meta, floor] = await Promise.all([idbGetAll("index"), idbGet("meta", "sync"), idbGet("meta", "floor")]);
+    archiveIndex = Array.isArray(rows) ? rows : [];
+    sortArchive();
+    archiveSyncAt = meta?.at || 0;
+    archiveFloor = Number(floor?.at) || 0;
+    await trimArchive();
+    archiveReady = true;
+    return archiveIndex.length;
+  })().finally(() => { __archiveLoading = null; });
+  return __archiveLoading;
 }
 
 /**
@@ -5623,10 +5936,14 @@ async function syncArchive({ full = false, onProgress } = {}) {
   __archiveSyncing = true;
   setHistSync("syncing", "Syncing…");
 
+  /* A full resync reads the archive from the start into a list of its own, keeping the newest rows as they stream in, and
+     replaces the local copy in one transaction once all of it has arrived. It used to clear the local copy first, so a
+     read that failed part-way left History empty. */
   let since = full ? 0 : archiveSyncAt;
-  if (full) { archiveIndex = []; archiveById.clear(); await idbClear("index"); }
+  const fresh = full ? [] : null;
+  let trimmed = 0;
 
-  let cursor = null, added = 0, pages = 0, newest = archiveSyncAt;
+  let cursor = null, added = 0, pages = 0, newest = full ? 0 : archiveSyncAt;
   try {
     while (pages < 200) {
       const url = `${ARCHIVE_FN}?op=index&limit=400&since=${since}` + (cursor ? `&cursor=${cursor}` : "");
@@ -5635,18 +5952,38 @@ async function syncArchive({ full = false, onProgress } = {}) {
       const j = await r.json();
       const rows = j.rows || [];
       if (rows.length) {
-        added += mergeArchiveRows(rows);
-        await idbPutAll("index", rows);
         newest = Math.max(newest, ...rows.map(x => x.at || 0));
-        onProgress?.(archiveIndex.length);
-        renderHistory();
+        if (fresh) {
+          fresh.push(...rows);   // oldest first: past the limit, the front goes
+          if (fresh.length > ARCHIVE_LOCAL_MAX + 5000) trimmed += fresh.splice(0, fresh.length - ARCHIVE_LOCAL_MAX).length;
+          onProgress?.(fresh.length);
+          setHistSync("syncing", `Resyncing… ${fresh.length.toLocaleString()}`);
+        } else {
+          added += mergeArchiveRows(rows);
+          await idbPutAll("index", rows);
+          onProgress?.(archiveIndex.length);
+          renderHistory();
+        }
       }
       pages++;
       if (!j.nextCursor) break;
       cursor = j.nextCursor;
     }
-    archiveSyncAt = newest ? newest + 1 : Date.now();
-    await idbPut("meta", { k: "sync", at: archiveSyncAt, count: archiveIndex.length });
+    const syncedTo = newest ? newest + 1 : Date.now();
+    if (fresh) {
+      if (fresh.length > ARCHIVE_LOCAL_MAX) trimmed += fresh.splice(0, fresh.length - ARCHIVE_LOCAL_MAX).length;
+      const floor = trimmed && fresh.length ? (fresh[0].at || 0) : 0;
+      await idbReplaceIndex(fresh, [{ k: "sync", at: syncedTo, count: fresh.length }, { k: "floor", at: floor }]);
+      archiveSyncAt = syncedTo;
+      archiveIndex = fresh; sortArchive();
+      archiveFloor = floor; archiveOlderDone = false;
+      added = fresh.length;
+      renderHistory();
+    } else {
+      archiveSyncAt = syncedTo;
+      await trimArchive();
+      await idbPut("meta", { k: "sync", at: archiveSyncAt, count: archiveIndex.length });
+    }
     setHistSync("ok", `${archiveIndex.length.toLocaleString()} archived`);
     return { added, total: archiveIndex.length };
   } catch (e) {
@@ -5657,6 +5994,58 @@ async function syncArchive({ full = false, onProgress } = {}) {
     __archiveSyncing = false;
     renderHistory();
   }
+}
+
+/** Every row with since <= completedAtMs < before, from the server's index (ascending, so the read stops at `before`). */
+async function fetchArchiveWindow(since, before) {
+  const out = [];
+  let cursor = null;
+  for (let pages = 0; pages < 400; pages++) {
+    const r = await fetch(`${ARCHIVE_FN}?op=index&limit=500&since=${since}` + (cursor ? `&cursor=${cursor}` : ""));
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    for (const x of (j.rows || [])) { if ((x.at || 0) >= before) return out; out.push(x); }
+    if (!j.nextCursor) break;
+    cursor = j.nextCursor;
+  }
+  return out;
+}
+
+/** The Older button: the orders just before the oldest one here, a window at a time (14 days, doubled while a window
+    comes back empty). They are held for this session only; the copy on disk stays the newest ARCHIVE_LOCAL_MAX. */
+let __archiveOlder = false;
+async function loadOlderArchive() {
+  if (__archiveOlder || !archiveReady) return 0;
+  __archiveOlder = true;
+  const btn = $("#histOlderBtn"); if (btn) btn.disabled = true;
+  setHistSync("syncing", "Reading older orders…");
+  try {
+    const before = archiveIndex.length ? (archiveIndex[archiveIndex.length - 1].at || 0) : Date.now();
+    let rows = [], span = 14 * 864e5;
+    for (let tries = 0; tries < 16 && !rows.length; tries++, span *= 2) {
+      const since = Math.max(0, before - span);
+      rows = await fetchArchiveWindow(since, before);
+      if (since === 0) break;
+    }
+    if (!rows.length) { archiveOlderDone = true; toast("There are no older orders in the archive"); return 0; }
+    const added = mergeArchiveRows(rows);   // memory only
+    renderHistory();
+    toast(`${added.toLocaleString()} older order${added !== 1 ? "s" : ""} loaded, back to ${fmtDay(dayKey(rows[0].at || 0))}`, "ok");
+    return added;
+  } catch (e) {
+    console.warn("older archive read failed", e);
+    toast("Could not read older orders: " + e.message, "bad", 6000);
+    return 0;
+  } finally {
+    __archiveOlder = false;
+    if (btn) btn.disabled = false;
+    if (!__archiveSyncing) setHistSync("ok", `${archiveIndex.length.toLocaleString()} archived`);
+    paintHistOlder();
+  }
+}
+function paintHistOlder() {
+  const w = $("#histOlderWrap");
+  if (w) w.classList.toggle("hidden", !(archiveReady && archiveFloor && !archiveOlderDone));
 }
 
 function setHistSync(kind, text) {
@@ -5705,7 +6094,7 @@ function buildArchiveRecord(rid, data, { completedBy } = {}) {
     }));
     const pers = Array.isArray(t.personalization) ? t.personalization.join("\n")
                : str(t.personalization);
-    const imgs = __imagesCache.get(String(t.listing_id));
+    const imgs = __imagesCache.get(String(t.listing_id)) || __imagesSaved.get(String(t.listing_id))?.images;   // the memory cache keeps the 500 most recent listings
     const first = Array.isArray(imgs) ? imgs[0] : null;
     return {
       transactionId : str(t.transaction_id),
@@ -5827,9 +6216,13 @@ async function archiveOrders(ids, { completedBy, quiet = false, extra = null } =
         body   : JSON.stringify({ op: "put", orders: chunk }),
       });
       if (!r.ok) throw new Error("HTTP " + r.status);
-      // Reflect it locally straight away so History is correct before the sync.
-      mergeArchiveRows(chunk.map(localSlim));
-      await idbPutAll("index", chunk.map(localSlim));
+      // Reflect it locally straight away so History is correct before the sync. Until History has been opened this
+      // session nothing is loaded to reflect it in: the sync that opens History brings these rows in from the server.
+      if (archiveReady) {
+        mergeArchiveRows(chunk.map(localSlim));
+        await idbPutAll("index", chunk.map(localSlim));
+        if (archiveIndex.length > ARCHIVE_LOCAL_MAX + 1000) await trimArchive();
+      }
     }
 
     renderHistory();
@@ -6155,9 +6548,21 @@ function renderHistory() {
   if (!archiveReady) return;
   renderCalendar();
   runHistSearch({ keepScroll: true });
+  paintHistOlder();
 }
 
 /* ── 19g · detail ───────────────────────────────────────────────────────── */
+
+/* Opened records: the 200 most recent stay in memory, and the copies on disk are let go past 2,000 (every one of them
+   is on the server, read again on the next open). */
+function keepArchiveDetail(rid, rec) {
+  archiveDetail.delete(rid); archiveDetail.set(rid, rec);
+  while (archiveDetail.size > ARCHIVE_DETAIL_MAX) archiveDetail.delete(archiveDetail.keys().next().value);
+}
+async function trimArchiveDetailStore() {
+  const n = await idbCount("detail");
+  if (n > 2000) await idbClear("detail");
+}
 
 async function openArchiveOrder(rid) {
   rid = String(rid);
@@ -6175,12 +6580,12 @@ async function openArchiveOrder(rid) {
     try {
       const r = await fetch(`${ARCHIVE_FN}?op=get&id=${encodeURIComponent(rid)}`);
       const j = await r.json();
-      if (j.success && j.row) { rec = j.row; await idbPut("detail", { receiptId: rid, rec }); }
+      if (j.success && j.row) { rec = j.row; await idbPut("detail", { receiptId: rid, rec }); await trimArchiveDetailStore(); }
     } catch (e) { console.warn("archive detail fetch failed", e); }
   }
   if (!rec) { $("#amBody").innerHTML = `<div class="amLoading err">This order is not in the archive.</div>`; return; }
 
-  archiveDetail.set(rid, rec);
+  keepArchiveDetail(rid, rec);
   paintArchiveDetail(rec);
   $("#amShipBtn").disabled = false;
   $("#amShipBtn").dataset.rid = rid;
@@ -6475,6 +6880,7 @@ function wireHistory() {
   });
 
   $("#histResync")?.addEventListener("click", () => syncArchive({ full:true }));
+  $("#histOlderBtn")?.addEventListener("click", loadOlderArchive);
   $("#histBackfillBtn")?.addEventListener("click", backfillArchive);
   $("#histBackfillStop")?.addEventListener("click", () => { backfillStop = true; toast("Stopping after the current batch…"); });
 
@@ -6749,18 +7155,22 @@ function wireQueueScroll() {
   }, { passive:true });
 }
 
-/** The Refresh button's sequence: one sweep of Etsy's open list, then locks, heals and the selected previews. */
-async function refreshOrders({ heal = true } = {}) {
+/** The Refresh button's sequence: one sweep of Etsy's open list, then locks, heals and the selected previews. A person's
+    own Refresh reads every completion and staff note on record; the sorter's sweeps (targeted) ask only about the open
+    orders they fetched, so their cost does not grow with the shop's history. */
+async function refreshOrders({ heal = true, targeted = false } = {}) {
   const bar = window.CNProgress ? CNProgress.start("Reading the open orders", { note: "asking Etsy" }) : null;
   try {
   abortAllUpdateWork();
   updateRunId++;
   allOpenReceipts = [];
   resetMessageFlags();          // a manual Refresh re-reads message flags
-  if (bar) bar.note("orders already finished");
-  await restoreCompleted();
+  if (!targeted) {
+    if (bar) bar.note("orders already finished");
+    await restoreCompleted();
+  }
   if (bar) bar.note("the open orders");
-  await buildNewOrderList();
+  await buildNewOrderList({ syncCompleted: targeted, allNotes: !targeted });
   if (bar) bar.note("who is working on what");
   await fetchAllLocksOnce();
   if (SETTINGS.autoHeal && heal) {   // the bridge hydrates every order itself, so it asks for no heal passes: one read per order
@@ -6922,23 +7332,32 @@ async function boot() {
 
   startCompletionPolling();
   beginDeltaPolling();
+  askPersistentStorage();
 
+  // Staff notes are read with the open orders (buildNewOrderList): nothing is listed before then.
   try {
     await restoreCompleted();
-    await refreshStaffNoteIDs({ mode:"all" });
   } catch (e) { console.warn("Boot index seed failed", e); }
 
   scheduleHealMissingLocks();
   applyFilters({ rerender:true });
   setInterval(refreshConnBadge, 60000);
 
-  // Warm the archive index in the background so History opens instantly even
-  // on the first click of the session.
-  loadArchiveFromDisk().then(n => {
-    setHistSync(n ? "ok" : "", n ? `${n.toLocaleString()} archived` : "No local copy yet");
-    if (SETTINGS.mode === "history") setMode("history", { force:true });
-    else syncArchive();
-  });
+  // The archive index is loaded when History is first opened (setMode), not at boot: a station that stays in the live
+  // view — the sorter's frame above all — never reads it or holds it in memory.
+  if (SETTINGS.mode === "history") setMode("history", { force:true });
+}
+
+/* The station's saved state (the completion ledger, the History copy, the Etsy sign-in) should not be evicted under disk
+   pressure: ask the browser, once, to keep this origin's storage. Never awaited, and a refusal changes nothing. */
+function askPersistentStorage() {
+  try {
+    if (!navigator.storage || typeof navigator.storage.persist !== "function") return;
+    Promise.resolve(navigator.storage.persisted ? navigator.storage.persisted() : false)
+      .then(already => already || navigator.storage.persist())
+      .then(ok => { if (!ok) console.info("Browser storage is best-effort here (the browser did not grant persistence)"); })
+      .catch(() => {});
+  } catch (_) {}
 }
 
 
@@ -7011,7 +7430,21 @@ const Bridge = (() => {
       buyerMessage: String(tx.message_from_buyer || r.message_from_buyer || ""), expectedShipDate: Number(tx.expected_ship_date) || 0, isPersonalized: !!tx.is_personalized,
       variations: (tx.variations || []).map(v => ({ name: String(v?.formatted_name || ""), value: String(v?.formatted_value || "").replace(/&quot;/g, '"') })) };
   }
-  const notesCache = new Map(), msgCache = new Map();
+  /* Staff notes and messages read for the sorter: an answer is reused for 10 minutes (the sorter used to get a note as it
+     stood when first read, for the life of the tab), for the 500 most recently used orders. */
+  function ttlCache(ttlMs, max) {
+    const m = new Map();
+    const live = k => { const e = m.get(k); if (!e) return null; if (Date.now() - e.at > ttlMs) { m.delete(k); return null; } return e; };
+    return {
+      has: k => !!live(k),
+      get: k => { const e = live(k); if (!e) return undefined; m.delete(k); m.set(k, e); return e.v; },
+      set(k, v) { m.delete(k); m.set(k, { v, at: Date.now() }); while (m.size > max) m.delete(m.keys().next().value); return this; },
+      delete: k => m.delete(k),
+      clear: () => m.clear(),
+      get size() { return m.size; }
+    };
+  }
+  const notesCache = ttlCache(10 * 60000, 500), msgCache = ttlCache(10 * 60000, 500);
   async function staffNoteOf(rid) {
     if (!staffNoteIDs.has(rid)) return "";
     if (notesCache.has(rid)) return notesCache.get(rid);
@@ -7045,13 +7478,20 @@ const Bridge = (() => {
   const writeJson = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} };
   /* A run commits once per set now — its SS set and its GF set are two commits under one run id — so the memory of a
      run's commits accumulates rather than being overwritten by the latest, and a repeat of any subset (or of the whole
-     run) is answered from it. */
+     run) is answered from it. An Auto run can go on for weeks as one run, and its memory was re-read and rewritten whole
+     on every commit: each run now keeps its newest 2,000 orders (never fewer than its latest commit, so a retried commit is
+     still answered from memory), and a run not heard from for 45 days is forgotten. */
+  const COMMIT_MEMORY = { idsPerRun: 2000, days: 45, runs: 60 };
   function rememberCommit(runId, ids, result) {
     const m = readJson(LSK.commits, {}); const prev = m[runId] || { ids: [], result: { completed: [], refused: [] } };
     const uniq = arr => [...new Set(arr.map(String))];
     const refused = [...(prev.result.refused || []), ...(result.refused || [])].filter((r, i, all) => all.findIndex(x => String(x.id) === String(r.id)) === i);
-    m[runId] = { ids: uniq([...prev.ids, ...ids]), result: Object.assign({}, prev.result, result, { completed: uniq([...(prev.result.completed || []), ...(result.completed || [])]), refused }), at: Date.now() };
-    const keys = Object.keys(m).sort((a, b) => m[a].at - m[b].at); while (keys.length > 60) delete m[keys.shift()]; writeJson(LSK.commits, m);
+    const latest = uniq(ids), isLatest = new Set(latest), now = Date.now();
+    const all = [...uniq(prev.ids || []).filter(id => !isLatest.has(id)), ...latest];   // oldest first, this commit last
+    const keep = new Set(all.slice(-Math.max(COMMIT_MEMORY.idsPerRun, latest.length)));
+    m[runId] = { ids: [...keep], result: Object.assign({}, prev.result, result, { completed: uniq([...(prev.result.completed || []), ...(result.completed || [])]).filter(id => keep.has(id)), refused: refused.filter(r => keep.has(String(r.id))) }), at: now };
+    for (const k of Object.keys(m)) if (!(Number(m[k] && m[k].at) > now - COMMIT_MEMORY.days * 864e5)) delete m[k];
+    const keys = Object.keys(m).sort((a, b) => m[a].at - m[b].at); while (keys.length > COMMIT_MEMORY.runs) delete m[keys.shift()]; writeJson(LSK.commits, m);
   }
   /* An undone order can be committed again: its earlier result must not answer the next commit. */
   function forgetCommits(ids) {
@@ -7173,18 +7613,22 @@ const Bridge = (() => {
       Cursor.reset(); Cursor.act("banner", null, "Charm Sorter connected", { click: false }).catch(() => {});
       return Object.assign(stateSnapshot(), { releasedFromPreviousSession: released, commands: Object.keys(CMDS) });
     },
-    async ping() { S.lastPing = Date.now(); if (S.down) { S.down = false; paintBanner(); } return { pong: true, etsy: etsyMeterSnapshot() }; },
+    async ping() { S.lastPing = Date.now(); if (S.down) { S.down = false; paintBanner(); } return { pong: true, etsy: etsyMeterSnapshot(), signedIn: etsyState().signedIn }; },
     /** The sorter reset the sandbox's records: the completions this page keeps (in memory and in its sandbox-only browser
         ledger) go with them, or an order replayed under the same number would pass for one finished before. */
     async "sandbox.reset"() {
       if (!SANDBOX) throw new Error("the station is not in the sandbox");
       completedOrders.clear(); try { localStorage.removeItem(LS.ledger); } catch (_) {}
       allOpenReceipts = []; S.lastSweepAt = 0;   // the next read sweeps the emulator again
+      // and the rest of what the sandbox kept in this browser (its keys all carry the ":sandbox" suffix): the memory of
+      // the sorter's commits, the order-detail copy and the listing photos, so a replayed order is read afresh
+      [LSK.commits, CACHE_KEY, __imagesKey].forEach(k => { try { localStorage.removeItem(k); } catch (_) {} });
+      detailCache.clear(); __imagesCache.clear(); __imagesSaved.clear(); __imagesMiss.clear(); notesCache.clear(); msgCache.clear();
       return { ok: true };
     },
     /** The open receipts exactly as Etsy returned them (transactions included), for the sandbox snapshot. */
     async "orders.raw"(a, progress) {
-      if (a.refresh || !allOpenReceipts.length) { progress(0, 0, "Refreshing the open order list from Etsy"); await refreshOrders({ heal: false }); }
+      if (a.refresh || !allOpenReceipts.length) { progress(0, 0, "Refreshing the open order list from Etsy"); await refreshOrders({ heal: false, targeted: true }); }
       const list = allOpenReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
       const need = list.filter(r => !r._hydrated).map(r => String(r.receipt_id)); let done = 0; const run = makeQueue(4);
       await Promise.all(need.map(rid => run(async () => { try { const txs = await hydrateOrder(rid); applyHydration(rid, txs); } catch (e) { console.warn("raw hydrate", rid, e); } progress(++done, need.length, `Reading order ${rid}`); })));
@@ -7203,7 +7647,8 @@ const Bridge = (() => {
       await cursorRows(ids, "Claim", { max: 3, glide: true });           // a wave over three rows while the claim is written: the sorter is waiting
       const r = await fetch(`${FN}/firebaseOrders`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rtClaimIds: ids, claimedBy: "sorter", claimRun: a.runId || S.runId || null }) });
       if (!r.ok) throw new Error("claim write failed: HTTP " + r.status);
-      ids.forEach(id => { rtClaims.set(id, { claimedBy: "sorter", run: a.runId || S.runId || null, atMs: Date.now() }); paintClaim(id, true); });
+      const idx = receiptElementIndex();   // one pass over the page, not a query per order
+      ids.forEach(id => { rtClaims.set(id, { claimedBy: "sorter", run: a.runId || S.runId || null, atMs: Date.now() }); paintClaim(id, true, idx); });
       return { claimed: ids };
     },
     async unclaim(a) {
@@ -7211,14 +7656,15 @@ const Bridge = (() => {
       await cursorRows(ids, "Release claim on", { max: 3, glide: true });
       const r = await fetch(`${FN}/firebaseOrders`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rtUnclaimIds: ids }) });
       if (!r.ok) throw new Error("unclaim write failed: HTTP " + r.status);
-      ids.forEach(id => { rtClaims.delete(id); paintClaim(id, false); });
+      const idx = receiptElementIndex();
+      ids.forEach(id => { rtClaims.delete(id); paintClaim(id, false, idx); });
       return { unclaimed: ids };
     },
     async "orders.snapshot"(a, progress) {
       if (etsyBraked() && (a.refresh || !allOpenReceipts.length)) throw new Error(`Etsy watchdog brake until ${new Date(etsyMeter.brakeUntil).toLocaleTimeString()}: ${etsyMeter.alarm && etsyMeter.alarm.why}`);
       const calls0 = etsyMeter.total; let refreshSkipped = false;
       // the sandbox order stream checks every simulated ten minutes (12 s at 50x) and each check must see its step's orders
-      if ((a.refresh && !sweptRecently(a.intake ? (SANDBOX ? (a.stream ? 0 : 55000) : 10*60000) : SWEEP_MIN_MS)) || !S.lastSweepAt) { progress(0, 0, "Refreshing the open order list from Etsy"); Cursor.glide("refresh", null, "Refresh the order list from Etsy"); await refreshOrders({ heal: false }); }
+      if ((a.refresh && !sweptRecently(a.intake ? (SANDBOX ? (a.stream ? 0 : 55000) : 10*60000) : SWEEP_MIN_MS)) || !S.lastSweepAt) { progress(0, 0, "Refreshing the open order list from Etsy"); Cursor.glide("refresh", null, "Refresh the order list from Etsy"); await refreshOrders({ heal: false, targeted: true }); }
       else { refreshSkipped = !!a.refresh; Cursor.glide("banner", null, refreshSkipped ? `Open orders as listed ${Math.round((Date.now() - S.lastSweepAt) / 1000)} s ago (no new Etsy sweep)` : "Reading the open orders", { click: false }); }
       let list = allOpenReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
       if (Array.isArray(a.metals) && a.metals.length) list = list.filter(r => !r._hydrated || METAL_ORDER.some(k => a.metals.includes(k) && r._metalCounts && r._metalCounts[k]));

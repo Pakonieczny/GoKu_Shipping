@@ -454,27 +454,51 @@ async function op_stopJob(b) {
 }
 
 /* Claude jobs (review / naming) run in charmNestAgent-background; the payload
-   (images) is passed straight through to the kick so Firestore never stores it. */
-const AGENT = "Charm_Nest_Agent";
+   (images) is passed straight through to the kick so Firestore never stores it.
+   In the sandbox the jobs and their parked payloads are the sandbox's own (Sandbox_Charm_Nest_Agent, marked sandbox:true,
+   and charmnest/sandbox/agent/), which its reset clears. And since the sandbox replays copies of the snapshot's orders,
+   the same words come to Claude again and again: an engraving reading is looked up by what Claude would be asked, less
+   the order number, and one paid for once answers every copy (AGENT_CACHE: written once by charmEngrave-background,
+   never overwritten, and kept by the reset). A hit starts no job at all; its id names the cached reading. Production
+   asks Claude every time, as before. */
+const AGENT = "Charm_Nest_Agent", AGENT_CACHE = "Sandbox_Charm_Nest_Agent_Cache";
+/** The cache key of an engraving reading: a hash of the request Claude would get (instructions, schema, model, effort
+    and the words), built with the order number left out. */
+function agentCacheKey(mode, payload) {
+  const Agent = require("./_charmNestAgent"), req = Agent.buildRequest(mode, Object.assign({}, payload, { order: "" }));
+  if (req.error) return null;
+  return require("crypto").createHash("sha256").update(JSON.stringify([1, mode, Agent.MODEL, req.effort, req.system, req.schema, req.content])).digest("hex").slice(0, 40);
+}
+/** A cached reading told for this order: the order it was first read for is named as this one (its reasoning may say it). */
+const forOrder = (result, from, to) => (result && from && to && from !== to && /^\d{5,20}$/.test(from) ? JSON.parse(JSON.stringify(result).split(from).join(to)) : result);
 async function op_startAgent(b) {
   const mode = ["grouping", "layout", "name", "place", "packing", "labelRead", "engraveIntent", "engraveReview"].includes(b.mode) ? b.mode : null;
   if (!mode || !b.payload) return { error: "mode and payload required" };
   const fnName = /^engrave/.test(mode) ? "charmEngrave-background" : "charmNestAgent-background";
+  const order = String(b.payload.order || "").replace(/\D/g, "").slice(0, 20);
+  const cacheKey = PREFIX && mode === "engraveIntent" ? agentCacheKey(mode, b.payload) : null;
+  if (cacheKey) { const hit = await db.collection(AGENT_CACHE).doc(cacheKey).get(); if (hit.exists && hit.data().result) return { ok: true, id: `agentc-${cacheKey}${order ? "-" + order : ""}`, cached: true }; }
   const id = "agent-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   // Background functions accept only a small request body (the images made the
   // kick 413), so the payload is parked in Storage and the job reads it back.
-  const payloadPath = `charmnest/agent/${id}.json`;
+  const payloadPath = `charmnest/${PREFIX ? "sandbox/" : ""}agent/${id}.json`;
   await admin.storage().bucket().file(payloadPath).save(Buffer.from(JSON.stringify(b.payload)), { resumable: false, contentType: "application/json", metadata: { cacheControl: "no-store" } });
-  await db.collection(AGENT).doc(id).set({ id, mode, status: "pending", payloadPath, sheetId: str(b.sheetId, 80), sourceName: str(b.sourceName, 120), createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() });
+  await db.collection(PREFIX + AGENT).doc(id).set(Object.assign({ id, mode, status: "pending", payloadPath, sheetId: str(b.sheetId, 80), sourceName: str(b.sourceName, 120), createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() }, PREFIX ? { sandbox: true, cacheKey, order: order || null } : {}));
   const fetch = require("node-fetch");
   const base = process.env.URL || process.env.DEPLOY_PRIME_URL || "https://goldenspike.app";
-  const kick = await fetch(`${base}/.netlify/functions/${fnName}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, mode }) }).catch(err => ({ ok: false, status: 0, statusText: err.message }));
-  if (!kick.ok && kick.status !== 202) { await db.collection(AGENT).doc(id).set({ status: "error", error: `kick failed: ${kick.status} ${kick.statusText || ""}`, updatedAt: FV.serverTimestamp() }, { merge: true }); return { error: `could not start the background job (${kick.status})` }; }
+  const kick = await fetch(`${base}/.netlify/functions/${fnName}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(PREFIX ? { id, mode, sandbox: true } : { id, mode }) }).catch(err => ({ ok: false, status: 0, statusText: err.message }));
+  if (!kick.ok && kick.status !== 202) { await db.collection(PREFIX + AGENT).doc(id).set({ status: "error", error: `kick failed: ${kick.status} ${kick.statusText || ""}`, updatedAt: FV.serverTimestamp() }, { merge: true }); return { error: `could not start the background job (${kick.status})` }; }
   return { ok: true, id };
 }
 async function op_getAgent(b) {
   if (!isId(b.id)) return { error: "bad id" };
-  const s = await db.collection(AGENT).doc(b.id).get();
+  const cached = PREFIX && /^agentc-([0-9a-f]{40})(?:-(\d{1,20}))?$/.exec(b.id);
+  if (cached) {
+    const s = await db.collection(AGENT_CACHE).doc(cached[1]).get(); if (!s.exists) return { job: null };
+    const d = s.data(); return { job: { id: b.id, mode: d.mode, status: "done", error: null, result: forOrder(d.result, d.order, cached[2]) || null, startedAt: null, createdAt: ms(d.createdAt), cached: true } };
+  }
+  let s = await db.collection(PREFIX + AGENT).doc(b.id).get();
+  if (!s.exists && PREFIX) s = await db.collection(AGENT).doc(b.id).get();   // a sandbox job started before they had their own collection
   if (!s.exists) return { job: null };
   const d = s.data(); return { job: { id: d.id, mode: d.mode, status: d.status, error: d.error || null, result: d.result || null, startedAt: ms(d.startedAt), createdAt: ms(d.createdAt) } };
 }
@@ -611,18 +635,57 @@ async function op_sandboxStatus() {
   for (const name of SANDBOXED) { const s = await db.collection("Sandbox_" + name).count().get(); counts[name] = s.data().count; }
   return { ok: true, snapshot: doc.exists ? doc.data() : null, records: counts };
 }
+/* The reset works against a clock: a sandbox that streamed for days holds more than one call can delete. A call deletes
+   in pages, a parent only once its subcollections are empty, and answers more:true when its time is up; the page calls
+   again until it is done, and nothing is lost between calls. The records go first, then the sandbox's files (every one
+   under charmnest/sandbox/ but the snapshot the stream plays and the master files the shared index points to), then the
+   stream. The cache of engraving readings Claude was paid for (AGENT_CACHE) is not a record of a replay and stays. */
 async function op_sandboxReset(b) {
-  let deleted = 0;
-  const names = [...SANDBOXED, "Design_Completed Orders", "Design_RealTime_Selected_Orders", "Design_Order_Archive", "Brites_Orders"];
-  const SUBS = { Design_Bridge: ["log"], Brites_Orders: ["messages"] };   // deleting a document never deletes its subcollections
-  const wipe = async q => { let n = 0; for (;;) { const s = await q.limit(300).get(); if (s.empty) break; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); n += s.size; if (s.size < 300) break; } return n; };
-  for (const name of names) {
+  const until = Date.now() + 7000, late = () => Date.now() > until;
+  let deleted = 0, files = 0;
+  const names = ["Brites_Orders", "Design_Completed Orders", "Design_RealTime_Selected_Orders", "Design_Order_Archive", ...SANDBOXED, "Charm_Nest_Rose_Rehearsals", SHAPE_CACHE, AGENT];
+  const SUBS = { Design_Bridge: ["log"], Brites_Orders: ["messages"], Charm_Nest_Rose_Stock: ["cuts"] };   // deleting a document never deletes its subcollections
+  // an order's messages can sit under a Brites_Orders document that was never written (a message posted on its own),
+  // which no query of that collection returns: they go with the order's other records, which name it
+  const KIN = new Set(["Design_Completed Orders", "Design_RealTime_Selected_Orders", "Design_Order_Archive", "Charm_Nest_Arrivals"]), kinDone = new Set();
+  const wipe = async q => { for (;;) { if (late()) return false; const s = await q.select().limit(300).get(); if (s.empty) return true; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); deleted += s.size; if (s.size < 300) return true; } };
+  const more = () => ({ ok: true, more: true, deleted, files });
+  // which collections still hold anything, asked all at once: a call that follows another goes straight to the work left
+  const left = await Promise.all(names.map(name => db.collection("Sandbox_" + name).select().limit(1).get().then(s => !s.empty)));
+  for (const [i, name] of names.entries()) {
+    if (!left[i]) continue;
     const coll = db.collection("Sandbox_" + name);
-    for (const sub of SUBS[name] || []) { const parents = await coll.select().get(); for (const d of parents.docs) deleted += await wipe(d.ref.collection(sub)); }
-    deleted += await wipe(coll);
+    if (!SUBS[name] && !KIN.has(name)) { if (!(await wipe(coll))) return more(); continue; }
+    for (;;) {
+      if (late()) return more();
+      const page = await coll.select().limit(100).get(); if (page.empty) break;
+      const gone = []; let cursor = 0;
+      await Promise.all(Array.from({ length: Math.min(16, page.size) }, async () => {
+        while (cursor < page.docs.length) {
+          const d = page.docs[cursor++]; let clear = true;
+          for (const sub of SUBS[name] || []) clear = (await wipe(d.ref.collection(sub))) && clear;
+          if (KIN.has(name) && !kinDone.has(d.id)) { const ok = await wipe(db.collection("Sandbox_Brites_Orders").doc(d.id).collection("messages")); if (ok) kinDone.add(d.id); clear = ok && clear; }
+          if (clear) gone.push(d.ref);
+        }
+      }));
+      if (gone.length) { const batch = db.batch(); gone.forEach(r => batch.delete(r)); await batch.commit(); deleted += gone.length; }
+      if (gone.length < page.size) return more();   // the clock ran out inside a page
+    }
   }
+  let filesError = null;
+  try {
+    const cur = await db.collection(SANDBOX).doc("current").get(), keep = cur.exists ? cur.data().path : null;
+    const bucket = admin.storage().bucket(); let pageToken;
+    do {
+      if (late()) return more();
+      const [list, next] = await bucket.getFiles({ prefix: "charmnest/sandbox/", autoPaginate: false, maxResults: 500, pageToken });
+      const doomed = list.filter(f => f.name !== keep && !f.name.startsWith("charmnest/sandbox/master/")); let cursor = 0;
+      await Promise.all(Array.from({ length: Math.min(16, doomed.length) }, async () => { while (cursor < doomed.length) { await doomed[cursor++].delete({ ignoreNotFound: true }); files++; } }));
+      pageToken = next && next.pageToken;
+    } while (pageToken);
+  } catch (e) { console.warn("[charmNestLibrary] sandbox files not deleted:", e.message); filesError = e.message; }
   await db.collection(SANDBOX).doc("stream").delete();   // the order stream starts over with the records it fed
-  void b; return { ok: true, deleted };
+  void b; return { ok: true, more: false, deleted, files, filesError };
 }
 /* ── the sandbox order stream: in place of the whole snapshot at once, the emulated Etsy lists a few new orders per
    simulated ten minutes (etsySandbox.js builds them from this seed and step). The sorter moves the clock one step per
@@ -855,6 +918,9 @@ async function op_arrivalRecord(b) {
     }
   }));
   const [day,hour]=await Promise.all([collection.where("firstSeenAt",">=",now-86400000).count().get(),collection.where("firstSeenAt",">=",now-3600000).count().get()]);
+  // the sandbox stream plays days in hours and adds a record per order: those first seen over 45 simulated days ago (far
+  // past any order it still lists, and as long as the sorter keeps its own) go, a page per check. Production keeps its ledger.
+  if ([true, 1, "1"].includes(b.sandbox)) await collection.where("firstSeenAt", "<", now - 45 * 86400000).limit(200).get().then(s => { if (s.empty) return; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); return batch.commit(); }).catch(e => console.warn("[charmNestLibrary] old sandbox arrivals not deleted:", e.message));
   return {ok:true,firstSeen,count24:day.data().count,count1:hour.data().count,at:now};
 }
 // ── runs ──

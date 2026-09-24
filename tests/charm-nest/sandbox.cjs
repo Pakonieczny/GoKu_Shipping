@@ -128,7 +128,10 @@ const PROD = ['Design_Completed Orders', 'Design_RealTime_Selected_Orders', 'Des
   // two sets: the SS order and the GF orders share nothing, so each material is a set of its own
   assert(status.snapshot && status.records.Charm_Pool === 4 && status.records.Charm_Nest_Sets === 2 && status.records.Charm_Nest_Release === 0, 'sandbox status counts its own records: ' + JSON.stringify(status.records));
   const reset = await page.evaluate(() => CN.api('charmNestLibrary', { op: 'sandboxReset' }));
-  assert(reset.deleted >= 10 && ![...st.docs.keys()].some(k => k.startsWith('Sandbox_')), 'reset removed every sandbox record');
+  // the engraving readings Claude was paid for are not a record of the run: the reset keeps them for the next replay
+  assert(!reset.more && reset.deleted >= 10 && ![...st.docs.keys()].some(k => k.startsWith('Sandbox_') && !k.startsWith('Sandbox_Charm_Nest_Agent_Cache/')), 'reset removed every sandbox record: ' + [...st.docs.keys()].filter(k => k.startsWith('Sandbox_')).join(', '));
+  const snapKept = (st.doc('Charm_Sandbox', 'current') || {}).path, leftFiles = [...st.blobs.keys()].filter(k => k.startsWith('charmnest/sandbox/') && k !== snapKept && !k.startsWith('charmnest/sandbox/master/'));
+  assert(!leftFiles.length && (!snapKept || st.blobs.has(snapKept)), 'reset removed every sandbox file but the snapshot (and master files the shared index names): ' + leftFiles.join(', '));
   for (const c of PROD) assert.strictEqual(st.list(c).length, before[c], `reset left production alone: ${c}`);
   // a production sorter refuses a sandbox station and the other way round
   await page.evaluate(() => { CN.S.settings.sandbox = 'off'; CN.saveSettings(); });
