@@ -85,6 +85,14 @@ const FV = admin.firestore.FieldValue;
 
 const DRAFTS_COLL = "EtsyMail_Drafts";
 const AUDIT_COLL  = "EtsyMail_Audit";
+
+// Charm Sorter questions to customers (_etsyMailOrderLink.js) travel through this same slot.
+// A draft finishing tells that module, which records the outcome for the sorter and hands the
+// slot back; it never fails the send it is told about.
+async function tellOrderLink(draftId, threadId) {
+  try { await require("./_etsyMailOrderLink").onDraftSettled(draftId, threadId); }
+  catch (e) { console.warn("orderLink hand-off failed (non-fatal):", e.message); }
+}
 const CONFIG_COLL = "EtsyMail_Config";          // v0.9.1: kill-switch lives here
 
 const MAX_SEND_ATTEMPTS      = 3;
@@ -711,6 +719,10 @@ exports.handler = async (event) => {
         // not block the send.
         allowSendWithoutPendingTracking = false
       } = body;
+      // A Charm Sorter question: { e: engagement id, i: message id } (see _etsyMailOrderLink.js)
+      const orderLink = body.orderLink && typeof body.orderLink === "object" && body.orderLink.e && body.orderLink.i
+        ? { e: String(body.orderLink.e).slice(0, 200), i: String(body.orderLink.i).slice(0, 200) }
+        : null;
 
       if (!threadId || !/^etsy_conv_\d+$/.test(String(threadId))) {
         return bad("threadId must match etsy_conv_<digits>");
@@ -744,7 +756,9 @@ exports.handler = async (event) => {
       // image, even when the inbox UI's chip-promotion poller hasn't
       // fired yet. See reconcileTrackingAttachments for full rationale.
       const draftIdForRecon = "draft_" + threadId;
-      const recon = await reconcileTrackingAttachments(draftIdForRecon, attachments, {
+      // A sorter question carries only its own words: the tracking images waiting on this
+      // conversation's draft belong to the inbox's reply, not to it.
+      const recon = orderLink ? { ok: true, merged: Array.isArray(attachments) ? attachments : [] } : await reconcileTrackingAttachments(draftIdForRecon, attachments, {
         blockOnPending: !(allowSendWithoutPendingTracking === true || inferredSendOriginForRecon === "manual")
       });
       if (!recon.ok) {
@@ -781,6 +795,10 @@ exports.handler = async (event) => {
         const snap = await tx.get(ref);
         const prev = snap.exists ? snap.data() : null;
         if (prev && (prev.status === "sending")) {
+          return { conflict: true, prevStatus: prev.status };
+        }
+        // A sorter question waits its turn behind anything already queued here.
+        if (orderLink && prev && prev.status === "queued") {
           return { conflict: true, prevStatus: prev.status };
         }
 
@@ -902,6 +920,18 @@ exports.handler = async (event) => {
           sentAt             : null
         };
         if (!snap.exists) payload.createdAt = FV.serverTimestamp();
+        if (orderLink) {
+          // Park what the inbox had in this slot; it is put back once the question is done.
+          payload.orderLink          = orderLink;
+          payload.orderLinkParked    = require("./_etsyMailOrderLink").parkedCopy(prev);
+          payload.generatedByAI      = false;
+          payload.aiModel            = null;
+          payload.aiReasoning        = null;
+          payload.aiActiveQuestion   = null;
+        } else {
+          payload.orderLink          = FV.delete();
+          payload.orderLinkParked    = FV.delete();
+        }
         tx.set(ref, payload, { merge: true });
 
         // v1.5: atomic thread finalize. Same shape the auto-pipeline's
@@ -1091,6 +1121,7 @@ exports.handler = async (event) => {
       await audit(result.threadId, draftId, "draft_cancelled", "operator", {
         threadStatusUpdate: result.threadStatusUpdate
       });
+      await tellOrderLink(draftId, result.threadId);
       return ok({ draftId, status: "draft", threadStatus: result.threadStatusUpdate });
     }
 
@@ -1138,6 +1169,7 @@ exports.handler = async (event) => {
               ageMin: Math.round((Date.now() - d.queuedAt.toMillis()) / 60000),
               threadStatusUpdate
             });
+            await tellOrderLink(draftId, d.threadId);
           } catch (e) { console.warn("expire stale queued failed:", e.message); }
           return ok({ queued: false, currentStatus: "failed" });
         }
@@ -1571,6 +1603,7 @@ exports.handler = async (event) => {
         partial, unverified, imagesSent, imagesTotal, listingsSent, listingsTotal, note,
         threadStatusUpdate: result.threadStatusUpdate
       });
+      await tellOrderLink(draftId, result.threadId);
       return ok({ draftId, status: result.status, threadStatus: result.threadStatusUpdate });
     }
 
@@ -1636,6 +1669,7 @@ exports.handler = async (event) => {
         error, errorCode, attempts: result.attempts,
         threadStatusUpdate: result.threadStatusUpdate
       });
+      if (!result.requeued) await tellOrderLink(draftId, result.threadId);
       return ok({
         draftId,
         status      : result.requeued ? "queued" : "failed",
@@ -1705,6 +1739,7 @@ exports.handler = async (event) => {
         threadStatusUpdate: result.threadStatusUpdate
       });
       console.warn(`[etsyMailDraftSend] v1.2 — force-expired wedged draft ${draftId} (reason: ${reason})`);
+      await tellOrderLink(draftId, result.threadId);
       return ok({
         ok          : true,
         status      : "failed",

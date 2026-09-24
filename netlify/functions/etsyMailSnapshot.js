@@ -716,6 +716,27 @@ exports.handler = async (event) => {
       }
 
       await tRef.set(tailPatch, { merge: true });
+
+      // Charm Sorter questions (_etsyMailOrderLink.js): the customer's reply reaches the sorter in
+      // the same moment it reaches the inbox. Best-effort and time-boxed; never fails the scrape.
+      try {
+        const orderLink = require("./_etsyMailOrderLink");
+        const threadNow = Object.assign({}, tSnap.exists ? tSnap.data() : {}, threadPatch);
+        const fresh = toInsert.map(m => ({
+          id        : "etsy_" + m.contentHash,
+          direction : m.direction,
+          senderName: m.senderName,
+          tsMs      : m.timestamp && typeof m.timestamp.toMillis === "function" ? m.timestamp.toMillis() : Date.now(),
+          text      : m.text,
+          hasImages : m.imageUrls.length > 0
+        }));
+        await Promise.race([
+          orderLink.onThreadMessages(threadId, threadNow, fresh),
+          new Promise(resolve => setTimeout(resolve, 4000))
+        ]);
+      } catch (e) {
+        console.warn("orderLink hook failed (non-fatal):", e.message);
+      }
     }
 
     // ─── 4) Session / login-required detection ───

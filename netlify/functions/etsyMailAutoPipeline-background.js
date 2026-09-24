@@ -1740,10 +1740,16 @@ exports.handler = async (event) => {
           // "skipped_acceptance" record but isn't shipped.
           const isAcceptanceSkip = draftDoc.aiDraftStatus === "skipped_acceptance";
 
+          // A Charm Sorter production question is open in this conversation
+          // (_etsyMailOrderLink.js): the customer is answering the workshop,
+          // so a person reviews the AI's reply instead of it going out alone.
+          const productionHold = (threadAfter.orderLinkOpen || 0) > 0;
+
           const safeToAutoSend =
             !draftDoc.readyForHumanApproval &&
             !draftDoc.isNeedsReviewHandoff &&
-            !isAcceptanceSkip;
+            !isAcceptanceSkip &&
+            !productionHold;
 
           if (isAcceptanceSkip) {
             await writeAudit({
@@ -1913,7 +1919,9 @@ exports.handler = async (event) => {
               threadId, draftId,
               eventType: "sales_auto_send_skipped",
               payload  : {
-                reason: draftDoc.readyForHumanApproval
+                reason: productionHold
+                  ? "production_question_open"
+                  : draftDoc.readyForHumanApproval
                   ? "ready_for_human_approval"
                   : "needs_review_handoff"
               }
@@ -2071,7 +2079,16 @@ exports.handler = async (event) => {
     // can't auto-send. Force the route to human review with a clear note.
     const ks = await getKillSwitch();
 
-    const decision = (meetsThreshold && !veto.vetoed && !ks.disabled && !dryRun)
+    // A Charm Sorter production question is open in this conversation
+    // (_etsyMailOrderLink.js): the customer is answering the workshop, so a
+    // person reviews the AI's reply instead of it going out alone.
+    let productionHold = false;
+    try {
+      const holdSnap = await threadRef.get();
+      productionHold = holdSnap.exists && (holdSnap.data().orderLinkOpen || 0) > 0;
+    } catch (e) { console.warn("production-question check failed (non-fatal):", e.message); }
+
+    const decision = (meetsThreshold && !veto.vetoed && !ks.disabled && !dryRun && !productionHold)
       ? "auto_send"
       : "human_review";
 
@@ -2226,6 +2243,8 @@ exports.handler = async (event) => {
     let fallbackReason;
     if (veto.vetoed) {
       fallbackReason = "deterministic veto: " + veto.reasons.join("; ");
+    } else if (productionHold) {
+      fallbackReason = "a Charm Sorter production question is open in this conversation";
     } else if (ks.disabled) {
       fallbackReason = "kill-switch active; not auto-sending";
     } else if (dryRun) {

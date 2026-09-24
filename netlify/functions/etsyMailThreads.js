@@ -526,6 +526,11 @@ exports.handler = async (event) => {
           // Firestore aggregation supports chained .where() clauses;
           // status,!= is well-supported and doesn't require a composite
           // index when combined with orderBy on the same/single field.
+          // The Charm Sorter's "Production questions" folder counts on its
+          // own: a failure there costs only that number, never the rest.
+          const orderLinkCount = baseQ.where("status", "!=", "archived").orderBy("orderLinkOpenAt").count().get()
+            .then(r => r.data().count)
+            .catch(e => { console.warn("[etsyMailThreads:counts] production questions count:", e.message); return null; });
           const aggPromises = [
             ...statusList.map(s => baseQ.where("status", "==", s).count().get()),
             baseQ.where("status", "!=", "archived").orderBy("salesCompletedAt").count().get(),
@@ -540,6 +545,8 @@ exports.handler = async (event) => {
           });
           counts._completedSales = aggResults[statusList.length].data().count;
           counts._refundFlagged  = aggResults[statusList.length + 1].data().count;
+          const linkOpen = await orderLinkCount;
+          if (linkOpen != null) counts._orderLinkOpen = linkOpen;
           return ok({ counts });
         } catch (aggErr) {
           // Fallback to the legacy full-scan path on any aggregation
@@ -552,10 +559,11 @@ exports.handler = async (event) => {
           // the two synthetic counts so it stays consistent with the
           // primary aggregation path above.
           console.warn("[etsyMailThreads:counts] aggregation failed, falling back to scan:", aggErr.message);
-          const snap   = await db.collection(THREADS_COLL).select("status", "salesCompletedAt", "refundFlaggedAt").get();
+          const snap   = await db.collection(THREADS_COLL).select("status", "salesCompletedAt", "refundFlaggedAt", "orderLinkOpenAt").get();
           const counts = {};
           let completedSalesCount = 0;
           let refundFlaggedCount  = 0;
+          let orderLinkOpenCount  = 0;
           snap.forEach(d => {
             const data = d.data() || {};
             const s = data.status || "unknown";
@@ -563,9 +571,11 @@ exports.handler = async (event) => {
             if (s === "archived") return;  // exclude archived from orderByField folder counts
             if (data.salesCompletedAt) completedSalesCount++;
             if (data.refundFlaggedAt)  refundFlaggedCount++;
+            if (data.orderLinkOpenAt)  orderLinkOpenCount++;
           });
           counts._completedSales = completedSalesCount;
           counts._refundFlagged  = refundFlaggedCount;
+          counts._orderLinkOpen  = orderLinkOpenCount;
           return ok({ counts });
         }
       }

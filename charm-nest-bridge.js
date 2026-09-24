@@ -968,7 +968,8 @@ const Orders = window.Orders = (() => {
       const attn = r.problems.length || ["held", "unmatched", "oversize"].includes(r.state);
       const why = attn ? (r.problems.map(x => Review.problemText(x)).join(" · ") || r.reason || "") : r.state === "waiting" ? (r.reason || "") : "";
       const gateBtn = r.state === "waiting" && r.wait ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
-      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,r.hold,r.wait,why,where,due,date]);
+      const mail = window.CustomerMail ? CustomerMail.badgeStamp(r.order.receiptId) : "";
+      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,r.hold,r.wait,why,where,due,date,mail]);
       const cached=orderNodes.get(r.key);
       if(cached?.stamp===stamp){place(cached.node);ListMedia.mount(cached.node,r);continue;}
       const node = el("div", (cards ? "ocard" : "doneRow workRow orderListRow") + " hoverItem" + (attn ? " attn" : ""));
@@ -976,7 +977,7 @@ const Orders = window.Orders = (() => {
       node.title = r.order.receiptId + " · " + (sp.designSku || r.line.sku || "no SKU") + " — " + r.line.title;
       const qty = sp.quantity || r.line.quantity || 1;
       const identity=`<div class="engravingIdentity"><span class="queueLabel">Order</span><div class="engravingOrder"><b class="mono onum">${esc(r.order.receiptId)}</b><span class="sku mono">${esc(sp.designSku || r.line.sku || 'No SKU')}</span></div><span class="purchaseLabel">${wordsOf(sp) ? 'Personalisation' : 'Item'}</span><span class="rowExcerpt" title="${esc(wordsOf(sp) || r.line.title || '')}">${esc(wordsOf(sp) || r.line.title || 'No title')}</span>${where ? `<span class="rowExcerpt dim">${esc(where.set)} · ${esc(where.sheet)}</span>` : ''}</div>`;
-      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions"><span class="ost ${st[0]}">${esc(st[1])}</span><span class="rowFacts">Qty ${qty} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${r.hold ? '<button class="btn ghost sm relHold" type="button">Release hold</button>' : ''}${gateBtn}</div>`;
+      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}<span class="ost ${st[0]}">${esc(st[1])}</span><span class="rowFacts">Qty ${qty} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${r.hold ? '<button class="btn ghost sm relHold" type="button">Release hold</button>' : ''}${gateBtn}</div>`;
       const number=node.querySelector('.onum');if(number){const time=el('span','orderTime');time.textContent=date.time;time.title=date.label;number.appendChild(time);}
       node.onclick = e => { if (e.target.closest("button,[role=button]") !== node && e.target.closest("button,[role=button]")) return; OrderWin.open(r.key); };
       node.onkeydown=e=>{if(e.target===node && (e.key==="Enter" || e.key===" ")){e.preventDefault();OrderWin.open(r.key);}};
@@ -3171,6 +3172,9 @@ const Engrave = window.Engrave = (() => {
 
     if (charm) card.querySelector(".frontHost").appendChild(renderFront(charm, 420));
     else void mountPlacementThumbnail(card.querySelector(".frontHost"),job);
+    // the customer, one question away: the same box follows the placement through every rebuild of this card, so what
+    // was typed stays (charm-nest-mail.js)
+    try { const mb = window.CustomerMail?.lineBox(job); if (mb) card.querySelector(".pvSide").insertBefore(mb, card.querySelector(".frontHost")); } catch (e) { console.warn("customer mail:", e); }
     if (wordsJob) { const bh = card.querySelector(".backHost"); bh.innerHTML = `<div class="noBack">${esc(job.state === "blocked" ? (job.reason || "This preview needs attention — use the words to retry.") : waitingReason(job))}</div>`; }
     const ta = card.querySelector('[data-f="words"]'), use = card.querySelector('[data-a="usewords"]');
     const applyWords = async (keepFocus = false) => {
@@ -4800,7 +4804,7 @@ const OrderWin = window.OrderWin = (() => {
     const close = () => W.dlg.close();
     byId("owClose").onclick = close;
     // a note typed just before the window closed (Escape, ×) is saved too: its timer and its blur both found no order
-    W.dlg.addEventListener("close", () => { clearTimeout(W.noteTimer); saveNote(); clearInterval(W.poll); W.poll = 0; W.key = null; W.tray.forEach(t => { try { URL.revokeObjectURL(t.url); } catch (_) {} }); W.tray = []; });
+    W.dlg.addEventListener("close", () => { clearTimeout(W.noteTimer); saveNote(); clearInterval(W.poll); W.poll = 0; W.key = null; W.tray.forEach(t => { try { URL.revokeObjectURL(t.url); } catch (_) {} }); W.tray = []; try { window.CustomerMail?.orderClosed(); } catch (_) {} });
     byId("owPhoto").onclick = e => e.currentTarget.classList.toggle("zoom");
     byId("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && (r.spec.designSku || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
     byId("owWhoBtn").onclick = () => { askEmployee(); paintWho(); };
@@ -4815,7 +4819,7 @@ const OrderWin = window.OrderWin = (() => {
     byId("owSend").onclick = send;
     byId("owAttach").onclick = () => byId("owFile").click();
     byId("owFile").onchange = e => { addFiles([...e.target.files]); e.target.value = ""; };
-    const pane = W.dlg.querySelector(".owChat");
+    const pane = W.dlg.querySelector("#owPaneTeam") || W.dlg.querySelector(".owChat");
     pane.addEventListener("dragover", e => { e.preventDefault(); });
     pane.addEventListener("drop", e => { e.preventDefault(); addFiles([...(e.dataTransfer.files || [])].filter(f => f.type.startsWith("image/"))); });
     byId("owSkip").onclick = toggleSkip;
@@ -4826,6 +4830,8 @@ const OrderWin = window.OrderWin = (() => {
     };
     byId("owPrev").onclick = () => step(-1);
     byId("owNext").onclick = () => step(1);
+    // the customer's side of the order: its own tab beside the team's chat (charm-nest-mail.js)
+    try { window.CustomerMail?.orderWindow(W.dlg); } catch (e) { console.warn("customer mail:", e); }
   }
   /** The lines the Orders tab is showing, so Previous and Next walk what the person is actually looking at. */
   const siblings = () => Orders.visibleRows();
@@ -4922,18 +4928,20 @@ const OrderWin = window.OrderWin = (() => {
     if(W.threadLoading===rid)W.threadLoading=null;
     if (W.rid === rid) paintThread();
   }
-  function paintThread() {
+  function paintThread(keep) {
     const t = byId("owThread"); if (!t) return;
     if (!W.thread.length) { t.innerHTML = '<div class="owEmpty"><b>No internal messages yet</b>Anything sent here reaches every station working this order. The customer never sees it.</div>'; return; }
-    const mine = me().toLowerCase();
+    const mine = me().toLowerCase(), CM = window.CustomerMail, at = t.scrollTop;
     t.innerHTML = W.thread.map(m => {
       const own = String(m.senderName || "").toLowerCase() === mine && mine;
       const when = m.at ? new Date(m.at).toLocaleString("en-US", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
-      return '<div class="owMsg' + (own ? " me" : "") + '"><span class="who">' + esc(m.senderName || "Staff") + (when ? " · " + esc(when) : "") + '</span>' +
-        (m.text && m.text !== "Image attachment" ? esc(m.text).replace(/\n/g, "<br>") : "") +
-        (m.imageUrl ? '<img crossorigin="anonymous" loading="lazy" alt="" src="' + esc(cors(m.imageUrl)) + '">' : "") + '</div>';
+      const words = m.text && m.text !== "Image attachment" ? m.text : "";
+      // any message can be read in English or Ukrainian: two small buttons, and the translation under the original
+      return '<div class="owMsg' + (own ? " me" : "") + '"' + (words && CM ? ' data-team-text="' + esc(words) + '"' : "") + '><span class="who">' + esc(m.senderName || "Staff") + (when ? " · " + esc(when) : "") + (words && CM ? CM.teamButtons(words) : "") + '</span>' +
+        (words ? esc(words).replace(/\n/g, "<br>") : "") +
+        (m.imageUrl ? '<img crossorigin="anonymous" loading="lazy" alt="" src="' + esc(cors(m.imageUrl)) + '">' : "") + (words && CM ? CM.teamTranslation(words) : "") + '</div>';
     }).join("");
-    t.scrollTop = t.scrollHeight;
+    t.scrollTop = keep ? at : t.scrollHeight;
   }
   function toggleSkip() {
     const r = rowOf(W.key); if (!r) return;
@@ -5004,18 +5012,19 @@ const OrderWin = window.OrderWin = (() => {
     const sw = byId("owSkip"); sw.setAttribute("aria-checked", r.state === "skipped" ? "true" : "false");
     paintWho();
   }
-  function open(key) {
+  function open(key, opts) {
     wire(); if (!W.dlg) return;
     const r = rowOf(key); if (!r) { toast("That line is no longer in the pull", "bad"); return; }
     W.key = key; W.thread = []; W.rid = null;
     paint();
     if (!W.dlg.open) W.dlg.showModal();
+    try { window.CustomerMail?.orderShown(r, opts || {}); } catch (e) { console.warn("customer mail:", e); }
     paintThread();
     loadThread(r.order.receiptId, true);
     clearInterval(W.poll);
     W.poll = setInterval(() => { if (W.dlg.open && W.key && !document.hidden) loadThread(rowOf(W.key) ? rowOf(W.key).order.receiptId : null, true); }, 60000);
   }
-  return { open, paint, close: () => W.dlg && W.dlg.close(), isOpen: () => !!(W.dlg && W.dlg.open), key: () => W.key };
+  return { open, paint, close: () => W.dlg && W.dlg.close(), isOpen: () => !!(W.dlg && W.dlg.open), key: () => W.key, repaintThread: () => paintThread(true) };
 })();
 
 /* ═══ 24c · RunHistory — every run that ever ran, and the way back into one ═══════════════════════════════════════════

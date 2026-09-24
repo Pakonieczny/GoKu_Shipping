@@ -401,12 +401,13 @@ dialog.wide{width:min(980px,95vw)}
 @media (prefers-reduced-motion:reduce){.sheetCard.pulse,.rvItem.pulse,.skuTile.pulse{animation:none}}
 
 /* ── the order window: everything about one line, and the way to settle it ── */
-dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
+dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 .owBox{display:flex;flex-direction:column;max-height:inherit;min-height:0}
 .owHead{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);flex:0 0 auto}
 .owHead h3{margin:0;font:22px var(--serif);font-weight:500;letter-spacing:.01em}
 .owHead .spacer{flex:1 1 auto}
-.owBody{flex:1 1 auto;min-height:0;overflow:hidden;display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr)}
+.owBody{flex:1 1 auto;min-height:0;overflow:hidden;display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr)}
+@media (min-width:901px){.owBody{min-height:min(620px,72vh)}}
 .owMain{min-width:0;min-height:0;overflow:auto;padding:14px 16px;display:grid;grid-template-columns:200px minmax(0,1fr);gap:16px;align-content:start}
 .owChat{min-width:0;min-height:0;display:flex;flex-direction:column;border-left:1px solid var(--line);background:var(--paper)}
 @media (max-width:900px){.owBody{grid-template-columns:minmax(0,1fr);overflow:auto}.owMain{grid-template-columns:minmax(0,1fr);overflow:visible}.owChat{border-left:0;border-top:1px solid var(--line);min-height:320px}}
@@ -467,6 +468,159 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .owSw i{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--ink45);transition:left .15s,background .15s}
 .owSw[aria-checked=true]{background:var(--sageSoft,var(--paper2));border-color:var(--sage,var(--line))}
 .owSw[aria-checked=true] i{left:20px;background:var(--sage,var(--ink))}
+
+/* ── the order window's two conversations: the team's (warm, internal) and the customer's (slate, on Etsy) ── */
+.owTabs{display:flex;gap:2px;padding:6px 10px 0;border-bottom:1px solid var(--line);flex:0 0 auto}
+.owTabs button{position:relative;display:inline-flex;align-items:baseline;gap:6px;border:0;background:transparent;padding:8px 12px 9px;cursor:pointer;color:var(--ink45);font:13px var(--sans)}
+.owTabs button b{font-weight:650}
+.owTabs button span{font:9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45)}
+.owTabs button::after{content:"";position:absolute;left:10px;right:10px;bottom:-1px;height:2px;border-radius:2px;background:transparent}
+.owTabs button:hover{color:var(--ink70)}
+.owTabs button[aria-selected=true]{color:var(--ink)}
+.owTabs button[aria-selected=true]::after{background:var(--velvet)}
+.owTabs button[data-ow-tab=customer][aria-selected=true]{color:var(--slate)}
+.owTabs button[data-ow-tab=customer][aria-selected=true]::after{background:var(--slate)}
+.owTabs button:focus-visible{outline:2px solid var(--slate);outline-offset:-3px;border-radius:8px}
+.owDot{width:7px;height:7px;border-radius:50%;background:var(--slate);align-self:center;box-shadow:0 0 0 3px var(--slateSoft)}
+.owDot.bad{background:var(--clay);box-shadow:0 0 0 3px var(--claySoft)}
+.owPane{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+.owChat [hidden],.cm [hidden],.cmLineBox [hidden]{display:none!important}
+.owMsg .who{display:flex;align-items:center;gap:6px}
+.owMsg.me .cmTr{background:rgba(255,255,255,.1)}
+.owMsg.me .cmTrLbl{color:rgba(255,255,255,.6)}
+.owMsg.me .cmTrB button.on{background:#f2ead9;color:var(--velvet)}
+
+/* ── the customer conversation (charm-nest-mail.js): solid slate is what reached the customer ── */
+.cm{display:flex;flex-direction:column;min-height:0;flex:1 1 auto;background:#f4f7f8}
+.cmHead{display:flex;align-items:center;gap:9px;padding:9px 12px;border-bottom:1px solid #d9e4e8;flex:0 0 auto}
+.cmMark{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:var(--slateSoft);color:var(--slate);flex:0 0 auto}
+.cmMark svg{width:15px;height:15px}
+.cmWho{min-width:0;flex:1 1 auto;display:flex;flex-direction:column;line-height:1.25}
+.cmWho b{font:600 14px var(--sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmWho span{font:10.5px var(--mono);color:var(--ink45);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmLang{display:inline-flex;border:1px solid #cfdde2;border-radius:8px;overflow:hidden;flex:0 0 auto}
+.cmLang button{border:0;background:transparent;padding:3px 7px;font:700 10px var(--mono);color:var(--slate);cursor:pointer}
+.cmLang button+button{border-left:1px solid #cfdde2}
+.cmLang button:hover{background:var(--slateSoft)}
+.cmLang button.on{background:var(--slate);color:#fff}
+.cmState{font:10px var(--mono);letter-spacing:.06em;text-transform:uppercase;font-weight:700;white-space:nowrap}
+.cmState.ok{color:#3f5b3a}.cmState.bad{color:#8a3a26}.cmState.sb{color:var(--gold)}
+.cmMore{position:relative;flex:0 0 auto}
+.cmMore summary{list-style:none;cursor:pointer;width:28px;height:28px;border-radius:8px;display:grid;place-items:center;color:var(--ink70);font-size:16px;line-height:1}
+.cmMore summary::-webkit-details-marker{display:none}
+.cmMore summary:hover,.cmMore[open] summary{background:var(--slateSoft)}
+.cmMenu{position:absolute;right:0;top:32px;z-index:5;min-width:230px;background:var(--card);border:1px solid var(--line);border-radius:11px;box-shadow:0 14px 40px rgba(20,16,10,.16);padding:5px;display:flex;flex-direction:column}
+.cmMenu a,.cmMenu button{display:flex;align-items:center;gap:6px;text-align:left;border:0;background:transparent;padding:7px 10px;border-radius:7px;font:12.5px var(--sans);color:var(--ink);cursor:pointer;text-decoration:none}
+.cmMenu a:hover,.cmMenu button:hover{background:var(--paper2)}
+.cmMenu .soft{color:var(--ink45)}
+.cmMenu svg{width:12px;height:12px}
+.cmQs{display:flex;gap:5px;flex-wrap:wrap;padding:7px 12px;border-bottom:1px solid #d9e4e8;flex:0 0 auto}
+.cmQ{border:1px solid #cfdde2;background:var(--card);border-radius:999px;padding:3px 10px;font:11.5px var(--sans);color:var(--ink70);cursor:pointer;display:inline-flex;align-items:center;gap:5px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmQ.on{background:var(--slate);border-color:var(--slate);color:#fff}
+.cmDot{width:6px;height:6px;border-radius:50%;background:var(--clay);flex:0 0 auto}
+.cmNotice{padding:8px 12px;font-size:12px;line-height:1.45;color:var(--ink70);background:#e9f0f2;border-bottom:1px solid #d9e4e8;flex:0 0 auto}
+.cmThread{flex:1 1 auto;min-height:0;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
+.cmMsg{max-width:86%;align-self:flex-start;background:var(--card);border:1px solid #d9e4e8;border-radius:12px;padding:7px 10px 8px;font-size:13px;line-height:1.45;overflow-wrap:anywhere}
+.cmMsg.us{align-self:flex-end;background:var(--slate);border-color:var(--slate);color:#fff}
+.cmMsg.us.pend{opacity:.78}
+.cmMsg.us.fail,.cmMsg.us.hold{background:var(--card);color:var(--ink)}
+.cmMsg.us.fail{border-color:var(--clay)}
+.cmMsg.us.hold{border:1px dashed var(--slate)}
+.cmMsg.shop{align-self:flex-end;background:var(--slateSoft);border-color:#cfdde2}
+.cmMsg.old{opacity:.7}
+.cmMeta{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font:10px var(--mono);letter-spacing:.03em;color:var(--ink45);margin-bottom:3px}
+.cmMeta b{font-weight:700;color:var(--ink70)}
+.cmMsg.us .cmMeta,.cmMsg.us .cmMeta b{color:rgba(255,255,255,.75)}
+.cmMsg.us.fail .cmMeta,.cmMsg.us.hold .cmMeta{color:var(--ink45)}
+.cmMsg.us.fail .cmMeta b,.cmMsg.us.hold .cmMeta b{color:var(--ink70)}
+.cmSt{font-weight:700}
+.cmSt.ok{color:#3f5b3a}.cmSt.bad{color:#8a3a26}.cmSt.warn{color:#8a6420}.cmSt.go{color:var(--slate)}
+.cmMsg.us .cmSt{color:#fff}
+.cmMsg.us.fail .cmSt{color:#8a3a26}.cmMsg.us.hold .cmSt{color:#8a6420}
+.cmBody{white-space:normal}
+.cmImgs{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.cmImgs img{max-width:180px;max-height:180px;border-radius:8px;display:block;object-fit:cover}
+.cmPhoto{font:11px var(--mono);color:var(--slate)}
+.cmCard{display:inline-flex;align-items:center;gap:5px;margin-top:6px;font-size:12px;color:var(--slate);text-decoration:none;border:1px solid #cfdde2;border-radius:8px;padding:4px 8px;background:var(--card)}
+.cmCard svg,.cmPhoto svg,.cmLH .lnk svg{width:11px;height:11px;vertical-align:-1px}
+.cmErr{margin-top:5px;font-size:12px;color:#8a3a26}
+.cmActs{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px}
+.cmFine{margin-top:4px;font-size:11px;color:var(--ink45)}
+.cmEarlier{display:flex;flex-direction:column;gap:10px}
+.cmSep{display:flex;align-items:center;gap:8px;font:9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--slate);margin:2px 0}
+.cmSep::before,.cmSep::after{content:"";flex:1 1 auto;height:1px;background:#cfdde2}
+.cmMoreBtn{text-align:center}
+.cmEmpty{margin:auto;text-align:center;color:var(--ink45);font-size:12.5px;line-height:1.6;max-width:38ch}
+.cmEmpty b{display:block;color:var(--ink);font-size:14px;margin-bottom:5px}
+.cmEmpty.soft{font-size:12px}
+.cmBtns{display:flex;gap:8px;justify-content:center;margin-top:12px}
+.btn.cmBtn{background:var(--slate);border-color:var(--slate)}
+.cmComp{flex:0 0 auto;border-top:1px solid #d9e4e8;padding:9px 11px;display:grid;gap:6px;background:var(--card)}
+.cmComp.busy{opacity:.6;pointer-events:none}
+.cmLine{display:flex;gap:7px;align-items:flex-end}
+.cmLine textarea{flex:1 1 auto;min-width:0;border:1px solid #cfdde2;border-radius:11px;padding:8px 11px;font:13px var(--sans);resize:none;max-height:160px;background:var(--card);color:var(--ink)}
+.cmLine textarea:focus{outline:none;border-color:var(--slate);box-shadow:0 0 0 3px rgba(74,107,120,.14)}
+.cmSend{width:34px;height:34px;flex:0 0 auto;border:1px solid var(--slate);border-radius:10px;background:var(--slate);color:#fff;display:grid;place-items:center;cursor:pointer}
+.cmSend:disabled{opacity:.4;cursor:default}
+.cmSend svg{width:16px;height:16px}
+.cmHint{display:flex;align-items:center;gap:8px;font:10.5px var(--sans);color:var(--ink45)}
+.cmHint>span:first-child{flex:1 1 auto;min-width:0}
+.cmTrIn{display:inline-flex;align-items:center;gap:3px;white-space:nowrap}
+.cmTrIn button{border:1px solid #cfdde2;background:transparent;border-radius:6px;padding:1px 6px;font:700 9.5px var(--mono);color:var(--slate);cursor:pointer}
+.cmTrIn button:hover{background:var(--slateSoft)}
+.cmUndo{font-size:11.5px;color:var(--ink70)}
+.cm .lnk,.cmLineBox .lnk{border:0;background:none;padding:0;font:inherit;font-size:12px;color:var(--slate);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.cm .lnk.soft,.cmLineBox .lnk.soft{color:var(--ink45)}
+.cm .bad,.cmLineBox .bad{color:#8a3a26}.cm .warn,.cmLineBox .warn{color:#8a6420}
+/* any message, English or Ukrainian: two small buttons, shown where the pointer is */
+.cmTr{margin-top:6px;padding:6px 8px;border-radius:8px;background:rgba(74,107,120,.08);font-size:12.5px;line-height:1.45}
+.cmMsg.us:not(.fail):not(.hold) .cmTr{background:rgba(255,255,255,.14)}
+.cmTr.soft{color:var(--ink45);font-style:italic}
+.cmTrLbl{display:block;font:9px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);margin-bottom:2px}
+.cmMsg.us:not(.fail):not(.hold) .cmTrLbl{color:rgba(255,255,255,.65)}
+.cmTrB{display:inline-flex;gap:2px;margin-left:auto}
+.cmTrB button{border:0;background:transparent;padding:1px 4px;border-radius:5px;font:700 9.5px var(--mono);color:inherit;opacity:.6;cursor:pointer}
+.cmTrB button:hover{opacity:1;background:rgba(74,107,120,.12)}
+.cmTrB button.on{opacity:1;background:var(--slate);color:#fff}
+.cmMsg.us:not(.fail):not(.hold) .cmTrB button.on{background:#fff;color:var(--slate)}
+@media (hover:hover){.cmMsg .cmTrB,.owMsg .cmTrB{opacity:0;transition:opacity .12s}.cmMsg:hover .cmTrB,.owMsg:hover .cmTrB,.cmMsg:focus-within .cmTrB,.owMsg:focus-within .cmTrB,.cmTrB:has(.on){opacity:1}}
+/* the engraving card's short version */
+.cmLineBox{border:1px solid #cfdde2;background:#f4f7f8;border-radius:11px;padding:9px 10px;display:grid;gap:7px;margin:10px 0}
+.cmLineBox.new{border-color:var(--slate);box-shadow:0 0 0 3px rgba(74,107,120,.12)}
+.cmLH{display:flex;align-items:center;gap:7px;font-size:12.5px;min-width:0}
+.cmLH .cmMark{width:22px;height:22px}
+.cmLH .cmMark svg{width:12px;height:12px}
+.cmLH .grow{flex:1 1 auto}
+.cmLS{font:10.5px var(--mono);color:var(--ink45);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmLast{font-size:12px}
+.cmLast .cmMsg{max-width:100%}
+.cmLNote{font-size:11.5px;color:var(--ink70)}
+.cmLineBox .soft{color:var(--ink45)}
+.cmLineBox .cmLine textarea{max-height:120px;font-size:12.5px;padding:7px 10px}
+.cmLineBox .cmSend{width:30px;height:30px}
+/* the envelope in the top bar, its list, and the Orders tab's badge */
+.mailPill{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--slate);background:var(--slate);color:#fff;border-radius:999px;padding:4px 9px 4px 8px;font:700 11.5px var(--mono);cursor:pointer;flex:0 0 auto}
+.mailPill svg{width:14px;height:14px}
+.mailPill.bad{background:var(--claySoft);border-color:var(--clay);color:#8a3a26}
+.mailMenu{position:fixed;z-index:400;width:min(360px,94vw);max-height:min(70vh,520px);overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:13px;box-shadow:0 18px 50px rgba(20,16,10,.18);padding:6px}
+.mmHead{font:10px var(--mono);letter-spacing:.11em;text-transform:uppercase;color:var(--ink45);font-weight:700;padding:6px 9px 4px}
+.mmRow{display:grid;gap:2px;width:100%;text-align:left;border:0;background:transparent;border-radius:9px;padding:8px 9px;cursor:pointer;color:var(--ink)}
+.mmRow:hover{background:var(--paper2)}
+.mmTop{display:flex;align-items:baseline;gap:7px;font-size:12.5px;min-width:0}
+.mmTop .mono{font:10.5px var(--mono);color:var(--ink45)}
+.mmWhen{margin-left:auto;font:10.5px var(--mono);color:var(--ink45);white-space:nowrap}
+.mmLine{font-size:12px;color:var(--ink70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mmRow.new .mmTop b::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--slate);margin-right:6px;vertical-align:middle}
+.mmRow.bad .mmLine{color:#8a3a26}
+.mmEmpty{padding:10px 9px;color:var(--ink45);font-size:12.5px}
+.mailTag{display:inline-flex;align-items:center;gap:3px;border:1px solid #cfdde2;background:var(--slateSoft);color:var(--slate);border-radius:999px;padding:1px 7px 1px 5px;font:700 10.5px var(--mono);white-space:nowrap}
+.mailTag svg{width:12px;height:12px}
+.mailTag.new{background:var(--slate);border-color:var(--slate);color:#fff}
+.mailTag.bad{background:var(--claySoft);border-color:var(--clay);color:#8a3a26}
+/* a conversation whose order is no longer in the pull opens in a window of its own */
+dialog.cmDlg{width:min(660px,96vw);height:min(86vh,820px)}
+dialog.cmDlg .owBox{height:100%}
+.cmSolo{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
 
 /* ── orders: one card per line, or the same line as a row ── */
 #ordersView:not(.hidden){height:100%;min-height:0;gap:0}
@@ -4052,7 +4206,8 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260924-upkeep-topline"></script>
+<script src="charm-nest-bridge.js?v=20260924-customer-mail"></script>
+<script src="charm-nest-mail.js?v=20260924-customer-mail"></script>
 <script src="charm-nest-rose-ui.js?v=20260924-thickness"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
@@ -4078,7 +4233,12 @@ boot();
         </div>
       </div>
       <aside class="owChat">
-        <div class="owChatHead"><span class="owLink ok" id="owLink" title="messages and notes are saving through the Design Station">● live</span><span class="lab">Messages</span><span class="spacer" style="flex:1 1 auto"></span><span class="mono" style="font-size:11px;color:var(--ink45)" id="owWho">—</span><button class="btn ghost xs" id="owWhoBtn">Change name</button></div>
+        <div class="owTabs" role="tablist" aria-label="Conversations about this order">
+          <button type="button" role="tab" id="owTabTeam" data-ow-tab="team" aria-selected="true" aria-controls="owPaneTeam"><b>Team</b><span>internal</span></button>
+          <button type="button" role="tab" id="owTabCust" data-ow-tab="customer" aria-selected="false" aria-controls="owPaneCust" tabindex="-1"><b>Customer</b><span>on Etsy</span><i class="owDot" hidden></i></button>
+        </div>
+        <div class="owPane" id="owPaneTeam" role="tabpanel" aria-labelledby="owTabTeam">
+        <div class="owChatHead"><span class="owLink ok" id="owLink" title="messages and notes are saving through the Design Station">● live</span><span class="lab">Team messages</span><span class="spacer" style="flex:1 1 auto"></span><span class="mono" style="font-size:11px;color:var(--ink45)" id="owWho">—</span><button class="btn ghost xs" id="owWhoBtn">Change name</button></div>
         <div class="owThread" id="owThread"></div>
         <div class="owComp">
           <div class="owTray" id="owTray"></div>
@@ -4090,6 +4250,8 @@ boot();
           <div class="owHint"><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · paste or drop images · the customer never sees this</div>
         </div>
         <input type="file" id="owFile" accept="image/*" multiple hidden>
+        </div>
+        <div class="owPane cmHost" id="owPaneCust" role="tabpanel" aria-labelledby="owTabCust" hidden></div>
       </aside>
     </div>
     <div class="owFoot">

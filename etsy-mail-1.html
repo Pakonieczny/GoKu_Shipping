@@ -359,6 +359,24 @@
     .em-badge.order { background: #dcffe4; color: #116329; }
     .em-badge.category { background: #ddf4ff; color: #0969da; }
     .em-badge.attachment { background: #fff8c5; color: #7d4e00; }
+    /* A Charm Sorter production question is open in the conversation */
+    .em-badge.production-q { background: #e1ebee; color: #2f4a55; font-weight: 600; }
+    .em-orderlink-bar {
+      display: flex; align-items: center; gap: 8px; padding: 7px 16px;
+      background: #eef4f6; border-bottom: 1px solid #cfdde2; color: #2f4a55; font-size: 12.5px;
+    }
+    .em-orderlink-bar .material-icons { font-size: 16px; color: #4a6b78; }
+    .em-orderlink-note { margin-left: auto; font-size: 11.5px; color: #57606a; white-space: nowrap; }
+    @media (max-width: 760px) { .em-orderlink-note { display: none; } }
+    /* The Charm Sorter's connect request (#pair=CODE) */
+    .em-pair .em-modal { max-width: 440px; }
+    .em-pair-lead { margin: 0 0 10px; font-size: 14px; line-height: 1.45; }
+    .em-pair-list { margin: 0 0 16px; padding-left: 18px; font-size: 13px; color: #57606a; line-height: 1.6; }
+    .em-pair-done { font-size: 13.5px; line-height: 1.5; margin-bottom: 14px; }
+    .em-pair-acts { display: flex; justify-content: flex-end; gap: 8px; }
+    .em-pair-btn { border: 1px solid #4a6b78; background: #4a6b78; color: #fff; border-radius: 6px; padding: 7px 14px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .em-pair-btn.ghost { background: #fff; color: #24292f; border-color: #d0d7de; }
+    .em-pair-btn:disabled { opacity: .55; cursor: default; }
     .em-badge.confidence { background: #f6e5ff; color: #6b21a8; }
     .em-badge.hold { background: #ffebe9; color: #a40e26; }
     /* v3.24: Production rush — red, bold, high-visibility. The 🔥
@@ -6431,6 +6449,15 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
       // first.
       { id: "production_rush",      label: "Production Rush", icon: "local_fire_department",
         status: "production_rush" },
+      // ─── Production questions (Charm Sorter) ──────────────────────────
+      // Conversations where the Charm Sorter asked the customer something
+      // about an order being made (netlify/functions/_etsyMailOrderLink.js).
+      // Membership is keyed off orderLinkOpenAt, set while a question is
+      // open and removed when the last one is answered: the same
+      // orderByField pattern as Refunds. Counts come from the synthetic
+      // _orderLinkOpen key. AI auto-replies hold on these conversations.
+      { id: "production_questions", label: "Production questions", icon: "precision_manufacturing",
+        orderByField: "orderLinkOpenAt", countKey: "_orderLinkOpen" },
       // ─── v5.21 — Refunds ───────────────────────────────────────────────
       // Threads where the customer has asked for a refund or return, OR
       // where the staff (AI or operator) has started discussing return
@@ -10436,7 +10463,9 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
       // includes both auto_replied + queued_for_auto_send) sum across
       // their status array.
       let html = '<div class="em-rail-section">Folders</div>';
-      const allCount = Object.values(state.counts).reduce((a, b) => a + (b || 0), 0);
+      // the synthetic folder keys (_completedSales, _refundFlagged, _orderLinkOpen) count threads
+      // already counted under their status: "All" sums the statuses only
+      const allCount = Object.entries(state.counts).reduce((a, [k, b]) => k.charAt(0) === "_" ? a : a + (b || 0), 0);
       const folderCount = (f) => {
         // v4.3 — orderByField folders (e.g. Completed Sales) get their
         // count from a synthetic key in the counts payload (e.g.
@@ -11941,6 +11970,11 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         // Underlying field (t.lastAutoDecision === "stale_claim_recovered")
         // is still set by etsyMailReapers.js — left intact for the
         // audit trail and any future ops dashboard. Just not rendered.
+        // A Charm Sorter production question is open here: the answer goes
+        // back to the sorter, and AI auto-replies wait while it is open.
+        if ((t.orderLinkOpen || 0) > 0) {
+          badges.push(`<span class="em-badge production-q" title="${esc(t.orderLinkTitle || "Question from the Charm Sorter")} · the customer's answer goes back to the sorter; AI auto-replies wait while it is open">sorter question${t.orderLinkOpen > 1 ? " ×" + t.orderLinkOpen : ""}</span>`);
+        }
         if ((t.riskFlags || []).includes("image_attached")) {
           badges.push(`<span class="em-badge attachment">📎 image</span>`);
         }
@@ -12282,6 +12316,72 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
     }
 
     // ───── Detail pane ─────
+    /* ─── The Charm Sorter's links into the inbox ─────────────────────
+     * #pair=CODE — someone pressed "Connect to the inbox" in the sorter;
+     *   a signed-in person approves it here, and only the sorter that
+     *   asked can collect its key (netlify/functions/_etsyMailOrderLink.js).
+     * #thread=ID — the sorter's "Open in the inbox": that conversation.
+     * The sorter reuses one inbox tab, so the link can also arrive as a
+     * hash change on a page that is already open. */
+    let _orderLinkHashBusy = false;
+    function handleOrderLinkHash() {
+      const m = /^#(pair|thread)=([^&]+)/.exec(String(location.hash || ""));
+      if (!m || _orderLinkHashBusy || !document.body.classList.contains("authed")) return;
+      let value = "";
+      try { value = decodeURIComponent(m[2]); } catch (_) { return; }
+      try { history.replaceState(null, "", location.pathname + location.search); } catch (_) {}
+      if (m[1] === "thread") {
+        if (/^[\w.:-]{3,200}$/.test(value)) Promise.resolve().then(() => openThread(value)).catch(() => {});
+        return;
+      }
+      _orderLinkHashBusy = true;
+      showPairCard(value).finally(() => { _orderLinkHashBusy = false; });
+    }
+    window.addEventListener("hashchange", () => { try { handleOrderLinkHash(); } catch (_) {} });
+    function showPairCard(code) {
+      return new Promise(resolve => {
+        const ov = document.createElement("div");
+        ov.className = "em-modal-overlay em-pair";
+        ov.innerHTML = `<div class="em-modal" role="dialog" aria-modal="true" aria-labelledby="emPairTitle">
+            <div class="em-modal-header"><h3 id="emPairTitle">Connect a Charm Sorter</h3><button type="button" class="em-modal-close" data-x aria-label="Close"><i class="material-icons">close</i></button></div>
+            <div class="em-modal-body"><div class="em-modal-loading">Checking the request…</div></div>
+          </div>`;
+        document.body.appendChild(ov);
+        const body = ov.querySelector(".em-modal-body");
+        const onKey = e => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+        const close = () => { ov.remove(); document.removeEventListener("keydown", onKey, true); resolve(); };
+        document.addEventListener("keydown", onKey, true);
+        ov.querySelector("[data-x]").onclick = close;
+        ov.addEventListener("click", e => { if (e.target === ov) close(); });
+        const done = html => {
+          body.innerHTML = `<div class="em-pair-done">${html}</div><div class="em-pair-acts"><button type="button" class="em-pair-btn" data-ok>Close</button></div>`;
+          body.querySelector("[data-ok]").onclick = close;
+        };
+        const again = "Press <b>Connect to the inbox</b> in the sorter again.";
+        api("etsyMailOrderLink", { method: "POST", body: { op: "pair_info", code } }).then(info => {
+          if (!info || !info.found) return done("This connect request is no longer waiting: the sorter may already be connected. If it is not, " + again.charAt(0).toLowerCase() + again.slice(1));
+          if (info.status !== "pending") return done(info.status === "approved" ? "This sorter is already connected." : "This connect request has ended. " + again);
+          const me = (state.currentUser && (state.currentUser.displayName || state.currentUser.username)) || "you";
+          body.innerHTML = `<p class="em-pair-lead"><b>${esc(info.label || "A Charm Sorter")}</b> asks to write to customers through this inbox.</p>
+            <ul class="em-pair-list">
+              <li>Its questions about orders go out on Etsy through this inbox, and are recorded as asked by ${esc(me)}.</li>
+              <li>It sees only the replies to its own questions.</li>
+              <li>It can be disconnected from the sorter at any time.</li>
+            </ul>
+            <div class="em-pair-acts"><button type="button" class="em-pair-btn ghost" data-no>Decline</button><button type="button" class="em-pair-btn" data-yes>Connect</button></div>`;
+          const answer = approve => {
+            body.querySelectorAll("button").forEach(b => { b.disabled = true; });
+            api("etsyMailOrderLink", { method: "POST", body: { op: "pair_answer", code, approve } })
+              .then(() => done(approve ? "Connected. You can go back to the Charm Sorter: it picks this up by itself." : "Declined. Nothing was connected."))
+              .catch(e => done("It did not go through: " + esc(e.message) + ". " + again));
+          };
+          body.querySelector("[data-yes]").onclick = () => answer(true);
+          body.querySelector("[data-no]").onclick = () => answer(false);
+          body.querySelector("[data-yes]").focus();
+        }).catch(e => done("Could not check the request: " + esc(e.message)));
+      });
+    }
+
     async function openThread(threadId) {
       // v5.37 — CRITICAL FIX. Clear state.messages whenever the operator
       // switches to a different thread, so leftover messages from the
@@ -12995,6 +13095,13 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
           ` : ""}
         </div>
         ` : ""}
+
+        ${(t.orderLinkOpen || 0) > 0 ? `
+        <div class="em-orderlink-bar" title="Asked from the Charm Sorter. The customer's answer shows there as soon as this inbox reads it; AI auto-replies wait while the question is open.">
+          <i class="material-icons">precision_manufacturing</i>
+          <span><b>Production question${t.orderLinkOpen > 1 ? "s" : ""} open</b> · ${esc(t.orderLinkTitle || "from the Charm Sorter")}${(t.orderLinkReceipts || []).length ? ` · order ${esc(t.orderLinkReceipts.join(", "))}` : ""}</span>
+          <span class="em-orderlink-note">Answers go back to the Charm Sorter · AI auto-replies wait</span>
+        </div>` : ""}
 
         <div class="em-cust-panel collapsed" id="emCustPanel">
           <div class="em-cust-head" id="emCustHead">
@@ -19968,7 +20075,12 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         badges.push(`<span class="em-badge ai-sending">sending…</span>`);
       }
 
-      // 7. Image attachment indicator
+      // 7. A Charm Sorter production question is open
+      if ((t.orderLinkOpen || 0) > 0) {
+        badges.push(`<span class="em-badge production-q">sorter question${t.orderLinkOpen > 1 ? " ×" + t.orderLinkOpen : ""}</span>`);
+      }
+
+      // 8. Image attachment indicator
       if ((t.riskFlags || []).includes("image_attached")) {
         badges.push(`<span class="em-badge attachment">📎 image</span>`);
       }
@@ -20398,7 +20510,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         if (f.countKey) count = (state.counts || {})[f.countKey] || 0;
         else if (Array.isArray(f.status)) count = f.status.reduce((s, st) => s + ((state.counts || {})[st] || 0), 0);
         else if (f.status) count = (state.counts || {})[f.status] || 0;
-        else count = Object.values(state.counts || {}).reduce((a, b) => a + (b || 0), 0); // "all"
+        else count = Object.entries(state.counts || {}).reduce((a, [k, b]) => k.charAt(0) === "_" ? a : a + (b || 0), 0); // "all": statuses only
         const active = mState.currentFilterId === f.id ? " active" : "";
         return `
           <div class="m-drawer-folder${active}" data-filter="${mEsc(f.id)}">
@@ -20463,6 +20575,8 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         threads = all.filter(t => t && t.salesCompletedAt);
       } else if (filter.countKey === "_refundFlagged") {
         threads = all.filter(t => t && t.refundFlaggedAt);
+      } else if (filter.countKey === "_orderLinkOpen") {
+        threads = all.filter(t => t && t.orderLinkOpenAt && t.status !== "archived");
       } else if (Array.isArray(filter.status)) {
         threads = all.filter(t => t && filter.status.includes(t.status));
       } else if (filter.status) {
@@ -23307,6 +23421,7 @@ const EtsyMailAuth=(()=>{
     try{ startKillSwitchPolling(); }catch(_){}
     try{ if(typeof fetchThreadListNow==="function") fetchThreadListNow({source:"user"}); }catch(_){}
     try{ if(typeof fetchCountsNow==="function") fetchCountsNow(); }catch(_){}
+    try{ handleOrderLinkHash(); }catch(_){}
   };
   A.hooks.onSignedOut=function(){
     state.currentUser=null; state.isOwner=false;

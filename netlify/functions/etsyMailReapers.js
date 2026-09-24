@@ -2439,6 +2439,16 @@ exports.handler = async (event) => {
       }
       catch (e) { errors.push({ pass: "tracking_reconcile", error: e.message }); console.error("trackingReconcile pass:", e); }
     }
+    // Charm Sorter questions to customers (_etsyMailOrderLink.js): settle sends whose hooks were
+    // missed, catch replies a scrape hook missed, link questions to conversations that have
+    // appeared since, and prune old records. Gets whatever this run's time budget has left.
+    if (!op || op === "order_links") {
+      const budgetMs = Math.min(10000, 27000 - (Date.now() - tStart));
+      if (budgetMs > 3000) {
+        try { results.orderLinks = await require("./_etsyMailOrderLink").reconcile({ budgetMs }); }
+        catch (e) { errors.push({ pass: "order_links", error: e.message }); console.error("orderLinks pass:", e); }
+      }
+    }
 
     // v5.31 — Storage TTL pass. EXPLICITLY OPT-IN (no `!op ||` here).
     // Default invocations of this function (the 5-minute cron and any
