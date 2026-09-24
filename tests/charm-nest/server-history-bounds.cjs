@@ -183,14 +183,26 @@ function seedDay(i, extra = {}) {
 
   /* ── F11/F16: every append-only row carries its expiry ── */
   const now = Date.now();
+  // what has outlived its expiry is also removed by the code itself (no TTL policy needed): seeded here, checked below
+  store.set('Design_Bridge/session-old', { sessionId: 'session-old', updatedAt: ts(now - 31 * 864e5) });
+  for (const k of ['a', 'b']) store.set('Design_Bridge/session-old/log/' + k, { t: now - 31 * 864e5, dir: 'evt' });
+  store.set('Design_Bridge/session-abc/log/expired', { t: now - 40 * 864e5, dir: 'evt', expireAt: new Date(now - 864e5) });
+  store.set('Charm_Nest_Arrivals/old-181', { id: 'old-181', firstSeenAt: now - 181 * 864e5 });
+  store.set('Charm_Nest_Arrivals/keep-179', { id: 'keep-179', firstSeenAt: now - 179 * 864e5 });
+  store.set('Design_RealTime_Selected_Orders/tomb-31', { selected: false, at: ts(now - 31 * 864e5) });
+  store.set('Design_RealTime_Selected_Orders/tomb-5', { selected: false, at: ts(now - 5 * 864e5) });
+  store.set('Design_RealTime_Selected_Orders/held-31', { selected: true, selectedBy: 'c9', at: ts(now - 31 * 864e5) });
+  store.set('Design_RealTime_Selected_Orders/held-61', { selected: true, selectedBy: 'c9', at: ts(now - 61 * 864e5) });
   await post({ op: 'bridgeLog', session: 'session-abc', meta: { page: 'x' }, rows: [{ t: 1, dir: 'cmd', type: 'go' }, { t: 2, dir: 'evt', type: 'ok' }] });
   const logRows = [...store.entries()].filter(([k]) => k.startsWith('Design_Bridge/session-abc/log/'));
-  assert.strictEqual(logRows.length, 2);
+  assert.strictEqual(logRows.length, 2, 'the session keeps its new rows, and its expired one went');
+  assert(!store.has('Design_Bridge/session-old') && !store.has('Design_Bridge/session-old/log/a') && !store.has('Design_Bridge/session-old/log/b'), 'a session not written for 30 days went with its log');
   for (const d of [store.get('Design_Bridge/session-abc'), ...logRows.map(([, v]) => v)]) assert(d.expireAt instanceof Date && Math.abs(days(d.expireAt - now) - 30) <= 1, 'log rows expire in 30 days');
   await post({ op: 'bridgeLog', sandbox: true, session: 'session-abc', rows: [{ t: 1, dir: 'cmd', type: 'go' }] });
   assert.strictEqual(days(store.get('Sandbox_Design_Bridge/session-abc').expireAt - now), 3, 'sandbox log rows in 3');
   await post({ op: 'arrivalRecord', orders: [{ id: '9001', createTs: 1 }] });
   assert.strictEqual(days(store.get('Charm_Nest_Arrivals/9001').expireAt - now), 180, 'an arrival is kept 180 days');
+  assert(!store.has('Charm_Nest_Arrivals/old-181') && store.has('Charm_Nest_Arrivals/keep-179'), 'an arrival first seen over 180 days ago goes');
   await post({ op: 'arrivalRecord', sandbox: true, orders: [{ id: '9001', createTs: 1 }] });
   assert.strictEqual(days(store.get('Sandbox_Charm_Nest_Arrivals/9001').expireAt - now), 3);
   const rt = body => call(orders, body);
@@ -199,10 +211,16 @@ function seedDay(i, extra = {}) {
   await rt({ rtUnlockIds: ['4001', '4002'] });
   assert.strictEqual(days(store.get('Design_RealTime_Selected_Orders/4001').expireAt - now), 30, 'an unlock tombstone expires in 30 days');
   assert(!('expireAt' in store.get('Design_RealTime_Selected_Orders/4002')), 'but not while the order is still claimed');
+  assert(!store.has('Design_RealTime_Selected_Orders/tomb-31') && store.has('Design_RealTime_Selected_Orders/tomb-5'), 'a tombstone a month old goes');
+  assert(store.has('Design_RealTime_Selected_Orders/held-31') && !store.has('Design_RealTime_Selected_Orders/held-61'), 'a held lock goes only past 60 days');
   await rt({ rtUnclaimIds: ['4002'] });
   assert.strictEqual(days(store.get('Design_RealTime_Selected_Orders/4002').expireAt - now), 30, 'nor after it is released');
   await rt({ rtLockIds: ['4001'], clientId: 'c2' });
   assert(!('expireAt' in store.get('Design_RealTime_Selected_Orders/4001')), 'a lock taken again clears the expiry');
+  const both = await rt({ rtLockIds: ['4003'], rtUnlockIds: ['4001'], clientId: 'c2' });
+  const bothBody = both.body;
+  assert(store.get('Design_RealTime_Selected_Orders/4003').selected === true && store.get('Design_RealTime_Selected_Orders/4001').selected === false, 'locks and unlocks sent together are both written');
+  assert(bothBody.locked === 1 && bothBody.unlocked === 1 && store.get('Design_RealTime_Selected_Orders/4001').expireAt instanceof Date, 'the unlock is a tombstone with its expiry');
 
   /* ── F12/F18: a new approval archives the old one's files; the sheet keeps a short copy ── */
   const pid = '5000001_7000001_1', folder = `charmnest/sheets/${day(0)}/GF_working_sh-back`;

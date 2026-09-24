@@ -1020,9 +1020,10 @@ async function op_arrivalRecord(b) {
     }
   }));
   const [day,hour]=await Promise.all([collection.where("firstSeenAt",">=",now-86400000).count().get(),collection.where("firstSeenAt",">=",now-3600000).count().get()]);
-  // the sandbox stream plays days in hours and adds a record per order: those first seen over 45 simulated days ago (far
-  // past any order it still lists, and as long as the sorter keeps its own) go, a page per check. Production keeps its ledger.
-  if ([true, 1, "1"].includes(b.sandbox)) await collection.where("firstSeenAt", "<", now - 45 * 86400000).limit(200).get().then(s => { if (s.empty) return; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); return batch.commit(); }).catch(e => console.warn("[charmNestLibrary] old sandbox arrivals not deleted:", e.message));
+  // what the counts no longer read goes, a page per check: the sandbox stream's records first seen over 45 simulated days
+  // ago (it plays days in hours; far past any order it still lists, and as long as the sorter keeps its own), production's
+  // over 180 days ago (a TTL policy on expireAt, if one is switched on, does the same)
+  await collection.where("firstSeenAt", "<", now - ([true, 1, "1"].includes(b.sandbox) ? 45 : 180) * 86400000).limit(200).get().then(s => { if (s.empty) return; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); return batch.commit(); }).catch(e => console.warn("[charmNestLibrary] old arrivals not deleted:", e.message));
   return {ok:true,firstSeen,count24:day.data().count,count1:hour.data().count,at:now};
 }
 // ── runs ──
@@ -1232,7 +1233,30 @@ async function op_bridgeLog(b) {
   let batch = db.batch(), n = 0;
   for (const r of rows) { batch.set(ref.collection("log").doc(), { t: num(r.t) || Date.now(), dir: str(r.dir, 10), type: str(r.type, 40), ms: r.ms == null ? null : num(r.ms), payload: r.payload && typeof r.payload === "object" ? r.payload : (r.payload == null ? null : str(r.payload, 400)), expireAt }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; } }
   if (n) await batch.commit();
+  await sweepBridge(session);
   return { ok: true, rows: rows.length };
+}
+/* Nothing reads an old session's log. A session not written for 30 days (3 in the sandbox) goes with its log, a page per
+   call and at most once every 10 minutes per instance and workspace, and a session left open that long lets go of its own
+   rows past that age (a TTL policy on expireAt, if one is switched on, does the same). */
+const bridgeSweptAt = new Map();
+async function sweepBridge(session) {
+  if (Date.now() - (bridgeSweptAt.get(PREFIX) || 0) < 600000) return 0;
+  bridgeSweptAt.set(PREFIX, Date.now());
+  let gone = 0;
+  try {
+    const keepMs = (PREFIX ? 3 : 30) * 86400000, cutoff = new Date(Date.now() - keepMs);
+    const old = await col(BRIDGE).where("updatedAt", "<", cutoff).limit(3).get();
+    for (const d of old.docs) {
+      if (d.id === session) continue;
+      const logs = await d.ref.collection("log").limit(400).get();
+      const batch = db.batch(); logs.docs.forEach(x => batch.delete(x.ref)); if (logs.size < 400) batch.delete(d.ref);
+      await batch.commit(); gone += logs.size;
+    }
+    const mine = await col(BRIDGE).doc(session).collection("log").where("expireAt", "<", new Date()).limit(400).get();
+    if (!mine.empty) { const batch = db.batch(); mine.docs.forEach(x => batch.delete(x.ref)); await batch.commit(); gone += mine.size; }
+  } catch (e) { console.warn("[charmNestLibrary] old bridge log not deleted:", e && e.message); }
+  return gone;
 }
 // ── learned maps: aliases, no-design list, option maps ──
 async function op_aliasGet() { const snap = await db.collection(ALIASES).limit(3000).get(); const out = {}; snap.docs.forEach(d => { out[d.id] = d.data(); }); return { aliases: out }; }
