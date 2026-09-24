@@ -173,6 +173,10 @@ const ListMedia = (() => {
     return preparing;
   }
   function start(){clearInterval(photoTick);prepare(Orders.rows());photoTick=setInterval(()=>{if(!document.hidden)prepare(Orders.rows());},600000);}
+  // a picture that failed while the network was down (a wake, a blip) loads again when the network is back or the tab is
+  // looked at again, as the sheet previews do (CharmNestAssets); it said "Unavailable · Retry" until each one was clicked
+  const retryFailed=()=>{if(document.hidden)return;for(const host of document.querySelectorAll('[data-vector],[data-listing]')){const job=jobs.get(host);if(job?.state==='error')watch(host,job.load,job.key,true,job.zoomKey);}};
+  window.addEventListener('online',retryFailed);document.addEventListener('visibilitychange',retryFailed);
   let running=0, photoTimer=0, photoBusy=false;
   const observer=window.IntersectionObserver ? new IntersectionObserver(entries=>{
     for(const e of entries)if(e.isIntersecting){observer.unobserve(e.target);watched.delete(e.target);queue.push(e.target);}pump();
@@ -387,7 +391,20 @@ const DesignLink = window.DesignLink = (() => {
     });
     S_.mountedAt = Date.now();
     window.addEventListener("message", onMessage);
+    window.addEventListener("online", () => { if (S_.control && !S_.up) reloadFrame("the network is back"); });
     return f;
+  }
+  /* A frame that loaded while the network was down stays on the browser's error page: only "Reload frame" loaded it again,
+     and every order check and run step waited 45 s on it and failed. It is loaded again when two hellos go unanswered,
+     when the network comes back and when the heartbeat has missed for over 30 s, at most once in 45 s; its load listener
+     opens the session again. A station that has said anything since it loaded is alive, maybe busy with a person's work,
+     and is never reloaded under them: only one silent since its load (an error page, a page that never started) or
+     silent for 5 minutes. */
+  function reloadFrame(why) {
+    if (!S_.frame || S_.up || navigator.onLine === false || Date.now() - (S_.reloadedAt || 0) < 45000) return false;
+    if ((S_.heardAt || 0) > (S_.loadedAt || 0) && Date.now() - S_.heardAt < 300000) return false;
+    S_.reloadedAt = Date.now(); agent({ bridge: true }, "warn", `Loading the Design Station frame again: ${why}`);
+    S_.frame.src = frameUrl(); return true;
   }
   async function open() {
     if (!S_.frame) throw new Error("the Design Station frame is not mounted");
@@ -396,7 +413,9 @@ const DesignLink = window.DesignLink = (() => {
     if (S_.loaded) await Promise.race([S_.loaded, sleep(20000)]);
     let st;
     try { st = await call("hello", { sorterClientId: S_.nonce, runId: B.run ? B.run.runId : null }, { timeoutMs: 15000 }); }
-    catch (e) { if (!/answer in time/.test(e.message)) throw e; agent({ bridge: true }, "warn", "hello unanswered — trying once more"); st = await call("hello", { sorterClientId: S_.nonce, runId: B.run ? B.run.runId : null }, { timeoutMs: 30000 }); }
+    catch (e) { if (!/answer in time/.test(e.message)) throw e; agent({ bridge: true }, "warn", "hello unanswered — trying once more");
+      // (a session opened meanwhile by the frame's reload is the answer; otherwise the frame is loaded again)
+      try { st = await call("hello", { sorterClientId: S_.nonce, runId: B.run ? B.run.runId : null }, { timeoutMs: 30000 }); } catch (e2) { if (S_.up && S_.state) return S_.state; reloadFrame("two hellos went unanswered"); throw e2; } }
     S_.state = st; S_.up = true; S_.misses = 0; S_.lastHello = Date.now(); if (st.etsy && st.etsy.meter) etsyReadout(st.etsy.meter);
     if (!!st.sandbox !== (WORKSPACE_SANDBOX)) { S_.control = false; S_.up = false; const why = `the station is in ${st.sandbox ? "SANDBOX" : "production"} mode but this sorter is in ${WORKSPACE_SANDBOX ? "SANDBOX" : "production"} mode`; agent({ bridge: true }, "warn", `Session refused: ${why}`); toast(`Session refused — ${why}. Reload the frame.`, "bad", 9000); throw new Error(why); }
     if (st.employee && !B.employee) { B.employee = st.employee; localStorage.setItem("cn.employee", st.employee); }
@@ -420,6 +439,7 @@ const DesignLink = window.DesignLink = (() => {
   }
   function onMessage(ev) {
     if (ev.origin !== origin()) { S_.dropped++; return; }
+    S_.heardAt = Date.now();   // the station is alive (reloadFrame)
     const d = ev.data; if (!d || d.source !== "brites-design") return;
     if (d.type === "etsy.connected") { onEtsyConnected(d); return; }
     if (d.nonce !== S_.nonce) { S_.dropped++; renderConsole(); return; }
@@ -440,6 +460,9 @@ const DesignLink = window.DesignLink = (() => {
     if (!S_.frame) { toast("Open the Design Station tab first", "bad"); return null; }
     if (!S_.control) { try { await open(); } catch (e) { toast("Could not open the session: " + e.message, "bad", 6000); return null; } }
     const r = await call("etsy.connect", {}, { timeoutMs: 15000 });
+    // signed in again by itself (its token refreshed once the network was back): a run stopped for the sign-in carries on,
+    // as it does when the popup reports back; it used to answer "already signed in" and stay stopped
+    if (r.signedIn && B.run && B.run.status === "stopped" && /\bsign/i.test(B.run.stoppedBy || "")) { await onEtsyConnected(r); return r; }
     if (r.signedIn) { toast("The Design Station is already signed in to Etsy", "ok"); return r; }
     connectWin = window.open(r.url, "britesEtsyConnect", "popup,width=640,height=780");
     if (!connectWin) { toast("The browser blocked the sign-in window — allow popups for this site and press Connect Etsy again", "bad", 9000); agent({ bridge: true }, "warn", "Connect Etsy: popup blocked"); return r; }
@@ -473,7 +496,9 @@ const DesignLink = window.DesignLink = (() => {
     else if (d.type === "error") agent({ bridge: true }, "warn", `Station reported: ${d.command} — ${d.error}`);
     else if (d.type === "etsy.alarm") { etsyReadout(d); }
     else if (d.type === "etsy.connected") { onEtsyConnected(d); }
-    else if (d.type === "etsy.signin") { agent({ bridge: true }, "warn", "The station needs an Etsy sign-in — press Connect Etsy"); toast("Design Station: press Connect Etsy on the run banner or the Design Station tab", "bad", 8000); if (B.run) RunCtl.stop("the Design Station is not signed in to Etsy", "Press Connect Etsy: the station opens in its own window to sign in, then the run resumes by itself."); }
+    // (only a run at work is stopped: one resting between updates, or complete, used to be turned into a stopped one, and a
+    // complete one stopped kept Auto from starting the next run)
+    else if (d.type === "etsy.signin") { agent({ bridge: true }, "warn", "The station needs an Etsy sign-in — press Connect Etsy"); toast("Design Station: press Connect Etsy on the run banner or the Design Station tab", "bad", 8000); RunCtl.stopIfRunning("the Design Station is not signed in to Etsy", "Press Connect Etsy: the station opens in its own window to sign in, then the run resumes by itself.", "auth"); }
     else if (d.type === "state" && d.ended) { S_.up = false; S_.control = false; stopHeartbeat(); S_.veil && S_.veil.classList.remove("hidden"); agent({ bridge: true }, "warn", `Station ended the session: ${d.reason}`); if (B.run && B.run.status === "running") RunCtl.stop(`the Design Station ended the session (${d.reason})`, "Press Take control, then Resume."); }
     renderConsole();
   }
@@ -498,7 +523,9 @@ const DesignLink = window.DesignLink = (() => {
     if (!S_.flushT) S_.flushT = setTimeout(flushLog, 2500);
     renderConsole();
   }
-  function flushLog() { S_.flushT = null; const rows = S_.logBuf.splice(0, 200); if (!rows.length || !S.cloud.ok || !S_.nonce) return; api("charmNestLibrary", { op: "bridgeLog", session: S_.nonce, rows, meta: { dropped: S_.dropped } }).catch(() => {}); if (S_.logBuf.length) S_.flushT = setTimeout(flushLog, 2500); }
+  // (rows wait in the buffer while the cloud is offline, the newest thousand of them, and go when it is back: they were
+  // taken out first and dropped)
+  function flushLog() { S_.flushT = null; if (!S.cloud.ok || !S_.nonce) { S_.logBuf.splice(0, S_.logBuf.length - 1000); return; } const rows = S_.logBuf.splice(0, 200); if (!rows.length) return; api("charmNestLibrary", { op: "bridgeLog", session: S_.nonce, rows, meta: { dropped: S_.dropped } }).catch(() => {}); if (S_.logBuf.length) S_.flushT = setTimeout(flushLog, 2500); }
   function startHeartbeat() {
     stopHeartbeat();
     const every = Math.max(2, +S.settings.heartbeatS || 5) * 1000;
@@ -511,8 +538,10 @@ const DesignLink = window.DesignLink = (() => {
         // for someone to press Resume while the orders piled up.
         const r = B.run, why = r?.status === "stopped" ? r.stoppedBy || "" : "";
         if (why && S.settings.runMode === "auto" && (/stopped answering the heartbeat/.test(why) || /^Etsy call budget reached/.test(why) && hourCalls() < etsyCap() * 0.9)) { agent({ run: r.runId }, "DS", `Resuming by itself: ${why} — cleared`); RunCtl.resume().catch?.(() => {}); }
+        else if (why) RunCtl.autoResume();   // a passing failure, the Etsy brake lifted, a reload: Auto carries on once it has cleared
       }
-      catch (_) { S_.misses++; if (S_.misses >= (+S.settings.heartbeatMiss || 3) && S_.up) { S_.up = false; agent({ bridge: true }, "warn", `Design Station down — ${S_.misses} heartbeats missed`); if (B.run && B.run.status === "running") RunCtl.stop("the Design Station stopped answering the heartbeat", "Check the Design Station tab; when it answers again, press Resume."); } }
+      catch (_) { S_.misses++; if (S_.misses >= (+S.settings.heartbeatMiss || 3) && S_.up) { S_.up = false; S_.downAt = Date.now(); agent({ bridge: true }, "warn", `Design Station down — ${S_.misses} heartbeats missed`); if (B.run && B.run.status === "running") RunCtl.stop("the Design Station stopped answering the heartbeat", "Check the Design Station tab; when it answers again, press Resume."); }
+        if (!S_.up && S_.misses >= 3 && Date.now() - (S_.downAt || 0) > 30000) reloadFrame("it has not answered the heartbeat for 30 s"); }
       renderConsole(); Dock.schedule();
     }, every);
   }
@@ -533,7 +562,7 @@ const DesignLink = window.DesignLink = (() => {
     // readout stays on the Design Station panel where it always was
     el.classList.toggle("quiet", !m.braked && !hot && !(S_.state && S_.state.sandbox));
     el.title = m.braked ? `Etsy watchdog at the station: ${m.alarm && m.alarm.why} — automatic Etsy work paused until ${new Date(m.brakeUntil).toLocaleTimeString()}` : `Etsy calls counted by the Design Station: ${m.total} this session · ${m.lastMinute} in the last minute · ${m.last10Min} in the current 10-minute window · ${m.lastHour} in the last hour · ${m.today} today · peak ${m.maxQps}/s · ${m.status429} rate-limit answers. Guard: ${m.guard.burstPerMinute}/min, ${m.guard.per10Min}/10 min, ${m.guard.sameOrderPer10Min} reads of one order/10 min.`;
-    if (m.braked && (!E_.alarmed || E_.alarmed !== m.alarm.at)) { E_.alarmed = m.alarm.at; agent({ bridge: true }, "warn", `Etsy watchdog at the station: ${m.alarm.why} — automatic Etsy work is paused for ${Math.round(m.guard.brakeMs / 60000)} min`); if (B.run && ["running", "paused", "review"].includes(B.run.status)) RunCtl.stop(`Etsy watchdog: ${m.alarm.why}`, `The station paused automatic Etsy work until ${new Date(m.brakeUntil).toLocaleTimeString()}. Check the API meter on both apps, then Resume.`); }
+    if (m.braked && (!E_.alarmed || E_.alarmed !== m.alarm.at)) { E_.alarmed = m.alarm.at; agent({ bridge: true }, "warn", `Etsy watchdog at the station: ${m.alarm.why} — automatic Etsy work is paused for ${Math.round(m.guard.brakeMs / 60000)} min`); if (B.run && ["running", "paused", "review"].includes(B.run.status)) RunCtl.stop(`Etsy watchdog: ${m.alarm.why}`, `The station paused automatic Etsy work until ${new Date(m.brakeUntil).toLocaleTimeString()}. Check the API meter on both apps, then Resume.`, null, "watchdog"); }
   }
   function meter(reply, what) {
     const n = reply && Number(reply.etsyCalls) || 0;
@@ -545,12 +574,14 @@ const DesignLink = window.DesignLink = (() => {
     renderConsole();
     return n;
   }
-  const hourCalls = () => E_.window.reduce((a, x) => a + x.n, 0);
+  // the hour rolls over here as well: a budget spent stopped every Etsy step, so meter() never ran again to drop the old
+  // calls, and calls from before a sleep still counted as this hour
+  const hourCalls = () => { const cut = Date.now() - 3600000; while (E_.window.length && E_.window[0].t < cut) E_.window.shift(); return E_.window.reduce((a, x) => a + x.n, 0); };
   const etsyCap = () => Math.max(50, +S.settings.etsyHourlyCap || 600);
   /** Before an Etsy-touching step: false (and a stopped run) when the hour's budget is spent; a warning past 70 %. */
   function etsyBudgetOk(step) {
     const used = hourCalls(), cap = etsyCap();
-    if (used >= cap) { const why = `Etsy call budget reached (${used} of ${cap} this hour) before ${step}`; agent({ bridge: true }, "warn", why); toast(why, "bad", 8000); if (B.run && B.run.status === "running") RunCtl.stop(why, `Wait for the hour to roll over or raise the cap in Settings, then Resume.`); return false; }
+    if (used >= cap) { const why = `Etsy call budget reached (${used} of ${cap} this hour) before ${step}`; agent({ bridge: true }, "warn", why); toast(why, "bad", 8000); if (B.run && B.run.status === "running") RunCtl.stop(why, `Wait for the hour to roll over or raise the cap in Settings, then Resume.`, null, "budget"); return false; }
     if (used >= cap * 0.7) agent({ bridge: true }, "warn", `Etsy calls at ${used} of ${cap} this hour — ${step} goes ahead, the run stops at the cap`);
     return true;
   }
@@ -1789,6 +1820,9 @@ const Carry = window.Carry = (() => {
    waiting and for what, with the button that stops the waiting. */
 const Gate = window.Gate = (() => {
   const R = { lastReleased: {}, released: {}, forceFill: {}, loaded: false, plan: null };
+  // a selection save in progress or just failed is this page's own business: the workspace carried "Saving selection…" and
+  // the old error across a reload, where nothing was saving any more (run.membershipDirty is the lasting record of a save owed)
+  for (const k of ["membershipError", "membershipPending", "membershipTask", "membershipRun"]) Object.defineProperty(R, k, { value: null, writable: true, enumerable: false });
   const O_ = window.CharmNestOrders;
   const modern = runId => (!B.run && !runId) || (!!B.run && B.run.releasePolicy === 2 && (!runId || runId === B.run.runId));
   const selected = () => B.run?.solidIncluded || R.solidIncluded || {};
@@ -1925,9 +1959,15 @@ const Gate = window.Gate = (() => {
     R.membershipTask=task;R.membershipRun=run.runId;return task;
   }
   async function flush(run) {
-    if(R.membershipTask && R.membershipRun===run?.runId)await R.membershipTask;
-    if(run?.membershipDirty){await assemble(run);run.membershipDirty=false;await RunCtl.save(run);}
-    if(R.membershipRun===run?.runId && R.membershipError)throw new Error('Set selection not saved: '+R.membershipError);
+    // A save that failed (the network down, a 5xx, the cloud offline) is tried once more here. Its error used to be thrown
+    // again at every labels and commit step, Resume after Resume, until Retry was pressed in Options.
+    if(R.membershipTask && R.membershipRun===run?.runId)await Promise.resolve(R.membershipTask).catch(()=>{});
+    const failed=R.membershipRun===run?.runId && R.membershipError;
+    if(run?.membershipDirty || failed){
+      try{await assemble(run);run.membershipDirty=false;await RunCtl.save(run);}
+      catch(e){run.membershipDirty=true;if(failed){R.membershipError=e.message;refreshMembership();throw new Error('Set selection not saved: '+e.message);}throw e;}
+      if(failed){R.membershipError=null;refreshMembership();}
+    }
     if(window.RoseStock)for(const sh of allSheets().filter(p=>p.runId===run?.runId && p.metal==='rose' && p.setId && !p.draft && !p.roseCutAt))await RoseStock.ensurePlan(sh);
   }
   function changed() {
@@ -2113,10 +2153,14 @@ const Engrave = window.Engrave = (() => {
   const F_ = B.engrave.fonts;
   // Source Sans 3 (Adobe, SIL Open Font License): a humanist sans drawn in the same tradition as Myriad Pro, shipped with the app
   const FONT_FILES = { Regular: "vendor/fonts/SourceSans3-Regular.otf", Semibold: "vendor/fonts/SourceSans3-Semibold.otf" };
-  async function loadFonts() {
-    if (F_.ok || F_.loading) return F_.loading || F_;
+  async function loadFonts(force) {
+    // An emoji map or font that did not load (a flaky network after a wake) is tried again, at most once a minute and when
+    // the network is back: every engraving with an emoji went to Review as unsupported for the rest of the session.
+    if (F_.loading || F_.ok && (!F_.emojiError || !force && Date.now() - (F_.emojiTriedAt || 0) < 60000)) return F_.loading || F_;
+    const late = F_.ok; F_.emojiTriedAt = Date.now();
     F_.loading = (async () => {
       for (const [w, path] of Object.entries(FONT_FILES)) {
+        if (late) break;
         try { const r = await fetch(path, { cache: "force-cache" }); if (!r.ok) throw new Error(`HTTP ${r.status}`); const buf = await r.arrayBuffer(); if (buf.byteLength < 1000) throw new Error("empty file"); F_[w] = opentype.parse(buf); (F_.workerFonts ||= {})[w] = buf; }
         catch (e) { if (w === "Regular") F_.error = `${path}: ${e.message}`; else F_.semiboldMissing = `${path}: ${e.message}`; }
       }
@@ -2131,7 +2175,10 @@ const Engrave = window.Engrave = (() => {
         const emoji = opentype.parse(bytes);
         for (const weight of ["Regular", "Semibold"]) if (F_[weight]) F_[weight] = window.CharmNestText.withEmoji(F_[weight], emoji, map, opentype.Path);
         F_.workerFonts.emoji = bytes; F_.workerFonts.emojiMap = map; F_.emoji = true;
-      } catch (e) { F_.emojiError = e.message; agent({engrave:true}, "warn", "Emoji font could not load: " + e.message); }
+        // (loaded late: the fitting worker takes it at its next start, and words held for their emoji are looked at again)
+        if (late) { delete F_.emojiError; workerClient = null; agent({ engrave: true }, "ENGRAVE", "Emoji font loaded"); for (const job of items().values()) if (job.state === "words" && job.missing && G.glyphCoverage(F_.Regular, job.lines.join("\n")).ok) setReady(job); return; }
+      } catch (e) { F_.emojiError = e.message; if (!late) agent({engrave:true}, "warn", "Emoji font could not load: " + e.message); }
+      if (late) return;
       F_.ok = !!F_.Regular; if (!F_.ok) agent({ engrave: true }, "warn", `Source Sans 3 is not available (${F_.error}) — engraving cannot be set exactly; the .otf files belong in vendor/fonts/`);
       else agent({ engrave: true }, "ENGRAVE", `Engraving fonts loaded: ${F_.Regular.names.fullName ? Object.values(F_.Regular.names.fullName)[0] : "Regular"}${F_.Semibold ? " + Semibold" : " (Semibold missing — Regular used at every size)"}`);
       const h = document.getElementById("stFontsHelp"); if (h) h.innerHTML = F_.ok ? `Loaded: ${esc(Object.values(F_.Regular.names.fullName || {})[0] || "Source Sans 3 Regular")}${F_.Semibold ? ", " + esc(Object.values(F_.Semibold.names.fullName || {})[0] || "Semibold") : " · Semibold missing"}` : `<span style="color:#8a3a26">Not found: ${esc(F_.error)}</span> — SourceSans3-Regular.otf and SourceSans3-Semibold.otf belong in vendor/fonts/`;
@@ -2253,7 +2300,12 @@ const Engrave = window.Engrave = (() => {
     // it had seen, so an order whose words changed on Etsy showed its new words but was engraved with the old ones.
     job.lineInput = null; job.lineMode = "auto"; job.wantSize = null; job.decision = null;
     let r = null;
-    try { r = await agentCall("engraveIntent", { order: row.order.receiptId, sku: sp.designSku, title: row.line.title, form: sp.form, quantity: sp.quantity, engravable, personalization: sp.personalization, buyerMessage: sp.buyerMessage, staffNote: sp.staffNote, messages: sp.messages }, { label: `Claude reads the words of ${row.order.receiptId}`, background: true }); }
+    // the Claude job already asked about these very words is taken up again (its poll cut off by the network, a reload)
+    // rather than paid for a second time; one that failed is replaced once
+    const ask = { order: row.order.receiptId, sku: sp.designSku, title: row.line.title, form: sp.form, quantity: sp.quantity, engravable, personalization: sp.personalization, buyerMessage: sp.buyerMessage, staffNote: sp.staffNote, messages: sp.messages };
+    let key = 2166136261; for (const ch of JSON.stringify(ask)) key = Math.imul(key ^ ch.charCodeAt(0), 16777619); key = (key >>> 0).toString(36);
+    const prior = job.claudeJob && job.claudeJob.ask === key ? job.claudeJob.id : null;
+    try { r = await agentCall("engraveIntent", ask, { label: `Claude reads the words of ${row.order.receiptId}`, background: true, existingId: prior, retryFailed: !!prior, onStarted: id => { job.claudeJob = { id, ask: key }; } }); }
     catch (e) { r = { skipped: e.message }; }
     if (items() !== owner || items().get(job.key) !== job || row.state === "gone" || job.state !== "classify") return job;
     if (!r || r.skipped || r.error) {
@@ -2571,22 +2623,38 @@ const Engrave = window.Engrave = (() => {
   async function saveBacks(job) {
     job.backSaving = true; const approval = job.approvedAt, was = job.state, had = (job.backs || []).length;
     render(); Orders.render(); refreshBacks();
-    try { await writeBacks(job); } catch (e) { if (job.approvedAt !== approval) { job.backSaving = false; return; } job.state = "review"; job.row.engrave.state = "review"; job.row.engrave.approved = false; job.reason = "back file failed: " + e.message; refreshBacks(); agent({ engrave: true }, "warn", `${job.row.order.receiptId}: ${job.reason}`); if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); }
+    try { await writeBacks(job); if (job.approvedAt === approval && job.backPending) { delete job.backPending; backRetry.n = 0; } } catch (e) { if (job.approvedAt !== approval) { job.backSaving = false; return; }
+      // The network or the cloud gone for a while is not the placement's fault: the approval stands and its back file waits
+      // for the cloud, written when it is back (resumeBacks). It used to undo the approval, and after a wake a person
+      // approved the same words again. Only a file that fails its own checks goes back to review.
+      if (/answer in time|timed out|network|Failed to fetch|HTTP 5\d\d|link is down|no reply|closed|offline|Reconnect to save|PUT failed/i.test(e.message || "") || globalThis.navigator?.onLine === false) {
+        job.backPending = e.message; agent({ engrave: true }, "warn", `${job.row.order.receiptId}: the approved back file waits for the cloud (${e.message})`); retryBacksLater(); render(); }
+      else { job.state = "review"; job.row.engrave.state = "review"; job.row.engrave.approved = false; job.reason = "back file failed: " + e.message; refreshBacks(); agent({ engrave: true }, "warn", `${job.row.order.receiptId}: ${job.reason}`); if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); } }
     job.backSaving = false; Session.schedule();
     // the run looks again only when the save changed something (a save with nothing to write would start it over and over)
     if(!job.editingBack && (job.state !== was || (job.backs || []).length !== had)) RunCtl.backgroundSettled();
   }
+  // back files waiting for the cloud are written when it is back (cn-cloud-back, "online") and, failing that, 30 s, 1, 2
+  // and 5 minutes on, then every 10 minutes
+  const backRetry = { t: 0, n: 0 };
+  function retryBacksLater() { if (backRetry.t) return; backRetry.t = setTimeout(() => { backRetry.t = 0; resumeBacks(true); }, [30000, 60000, 120000, 300000, 600000][Math.min(backRetry.n++, 4)]); }
   /** A reload while an approval's back files were being written left it approved with none, or only some, of them:
       its sheet showed "Saving…" until the run next passed Engraving, and not at all while the run stayed stopped. After the
       workspace is restored those writes run again, as the approval ran them (saveBacks). */
-  function resumeBacks() {
+  function resumeBacks(pendingOnly) {
+    let waiting = 0;
     for (const job of items().values()) {
       if (job.state !== "approved" || job.backSaving || !job.approvedAt || !job.fit || !job.view || !(job.copies || []).length) continue;
       if (job.copies.every(id => (job.backs || []).some(b => b.poolId === id && b.approvedAt === job.approvedAt))) continue;
-      agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: writing the approved back file again, cut short by the reload`);
+      if (pendingOnly && !job.backPending) continue;
+      // (with the cloud still away it waits on: each try builds and checks the file before it finds that out)
+      if (job.backPending && !S.cloud.ok) { waiting++; continue; }
+      agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: writing the approved back file ${job.backPending ? "that waited for the cloud" : "again, cut short by the reload"}`);
       saveBacks(job).catch(e => agent({ engrave: true }, "warn", `${job.row.order.receiptId}: ${e.message}`));
     }
+    if (waiting) retryBacksLater();
   }
+  window.addEventListener("online", () => { resumeBacks(true); if (F_.emojiError) loadFonts(true).catch(() => {}); });
 
   /* ── 7.6 · back files, one per piece, only after approval ── */
   function renderBack(job, px, { grid = false, hatch = true, editable = false } = {}) {
@@ -3035,7 +3103,7 @@ const Engrave = window.Engrave = (() => {
     const tab = EG.tab;
     const focus = queue.find(j2 => j2.key === EG.focus) || queue[0] || null;
     if(doneQuery!==EG.q){doneLimit=40;doneQuery=EG.q;}
-    const doneStamp=tab === "done" ? JSON.stringify([EG.q,EG.openDone,doneLimit,done.map(j=>[j.key,j.state,j.lines,j.approvedAt,j.approvedBy,j.backs,O.purchaseDetails(j.row.line,j.row.spec)])]) : null;
+    const doneStamp=tab === "done" ? JSON.stringify([EG.q,EG.openDone,doneLimit,done.map(j=>[j.key,j.state,j.lines,j.approvedAt,j.approvedBy,j.backs,j.backPending,O.purchaseDetails(j.row.line,j.row.spec)])]) : null;
     if(tab === "done" && v.dataset.egTab === "done" && v._doneStamp === doneStamp && v.querySelector('#egBacks')) {renderChrome(v,queue);return;}
     v._doneStamp=doneStamp;
     const liveList = v.querySelector('.egPlacementList');
@@ -3084,8 +3152,8 @@ const Engrave = window.Engrave = (() => {
     if (tab === "done") {
       const bk = v.querySelector("#egBacks");
       const decided = decidedJobs().filter(matchesQ).sort((a, b) => (b.row.arrivedAt || 0) - (a.row.arrivedAt || 0) || (b.approvedAt || 0) - (a.approvedAt || 0));
-      const stateWord = j2 => j2.state === "written" ? "Saved to sheet" : j2.state === "skipped" ? "No engraving" : "Approved";
-      const stateWhy = j2 => j2.state === "written" ? "the back file is saved with the sheet" : j2.state === "skipped" ? "cut plain, nothing on the back" : "approved — the back file is written when the sheet is";
+      const stateWord = j2 => j2.state === "written" ? "Saved to sheet" : j2.state === "skipped" ? "No engraving" : j2.backPending ? "Approved · back file waits for the cloud" : "Approved";
+      const stateWhy = j2 => j2.state === "written" ? "the back file is saved with the sheet" : j2.state === "skipped" ? "cut plain, nothing on the back" : j2.backPending ? "approved — the back file is written when the cloud answers again (" + esc(j2.backPending) + ")" : "approved — the back file is written when the sheet is";
       const fmtT = t => t ? new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
       /* One row per decision; the row opens into everything there is to know about it — the back as it was written,
          the front it belongs to, the words, the size, who decided and when, which sheet, the file — and Reopen. The
@@ -3930,7 +3998,7 @@ const RunCtl = window.RunCtl = (() => {
          the session. Now the banner names the sheet and offers the way to it; the reason is written where the sheet is. */
       if (err && (err.critical || err.stage === "persistence")) {
         sh.problem = err.message; CN.renderCard(sh);
-        stop(`${sheetName(sh)} could not be saved`, "Reconnect and Resume; existing work is retained.", { metal: sh.metal, page: sh.page });
+        stop(`${sheetName(sh)} could not be saved`, "Reconnect and Resume; existing work is retained.", { metal: sh.metal, page: sh.page }, /answer in time|timed out|network|Failed to fetch|HTTP 5\d\d|link is down|no reply|closed|offline/i.test(err.message || "") ? "transient" : null);
         return;
       }
       if (err) holdSheet(r,sh,err.message);
@@ -4016,8 +4084,9 @@ const RunCtl = window.RunCtl = (() => {
     r.status = "abandoned"; save(r).catch(() => {});
   }
   // a stop the person pressed is answered by the banner; the red toast and the desktop alert are for stops nobody asked for
-  function stop(why, fix, at) { const r = B.run; if (!r) return; r.status = "stopped"; r.stoppedBy = why; r.fix = fix || null; r.at = at || null; r.errors.push({ t: Date.now(), why }); if (waiter && waiter.r === r) { const w = waiter; waiter = null; w.resolve(); } agent({ run: r.runId }, "warn", `Run stopped: ${why}${fix ? " — " + fix : ""}`);
-    if (why !== "stopped by the operator") { toast(`Run stopped: ${why}`, "bad", 8000); notifyPerson("Charm Sorter run stopped", why); }
+  // (a passing failure again while Auto retries it is said on the banner only, not with a toast every few minutes all night)
+  function stop(why, fix, at, kind) { const r = B.run; if (!r) return; kind = kind || kindOf(why); const retrying = auto.runId === r.runId && auto.step === r.step, again = retrying && auto.n > 0 && ["transient", "watchdog"].includes(kind); r.status = "stopped"; r.stoppedBy = why; r.fix = fix || null; r.at = at || null; r.stopKind = kind; r.errors.push({ t: Date.now(), why }); if (retrying) auto.next = Date.now() + AUTO_WAIT[Math.min(auto.n, AUTO_WAIT.length - 1)]; if (waiter && waiter.r === r) { const w = waiter; waiter = null; w.resolve(); } agent({ run: r.runId }, "warn", `Run stopped: ${why}${fix ? " — " + fix : ""}`);
+    if (why !== "stopped by the operator" && !again) { toast(`Run stopped: ${why}`, "bad", 8000); notifyPerson("Charm Sorter run stopped", why); }
     window.CN?.resumeQueueChanged?.();   // the run's queued sheets start on Resume
     save(r).catch(() => {}); renderBanner(); }
   /** Stop on the banner. While new orders are going on (Adding new orders) the run's charm searches end at once as well,
@@ -4026,11 +4095,11 @@ const RunCtl = window.RunCtl = (() => {
   function operatorStop() {
     const r = B.run; if (!r) return;
     const intake = !!r.arrivalBusy;
-    stop("stopped by the operator", "Press Resume to carry on from the recorded step.");
+    stop("stopped by the operator", "Press Resume to carry on from the recorded step.", null, "operator");
     // (a sheet Claude was planning stops on the spot, back to ready: it takes its place in line for Resume too)
     if (intake) for (const sh of allSheets()) if (sh.runId === r.runId && sh.status === "nesting") { sh.resumeWait = true; stopNest(sh); if (sh.status === "ready") startNest(sh); }
   }
-  function stopIfRunning(why, fix) { if (B.run && B.run.status === "running") stop(why, fix); }
+  function stopIfRunning(why, fix, kind) { if (B.run && B.run.status === "running") stop(why, fix, null, kind); }
   function reviewStop(r) { return r?.status === "stopped" && /needs a look|shape analysis failed|a back flip failed its checks|^Sheet options changed|^Sheet settings changed/i.test(r.stoppedBy || ""); }
   function preservePendingSheets(r) {
     for(const pg of allSheets().filter(p=>p.runId===r.runId)) {
@@ -4061,7 +4130,7 @@ const RunCtl = window.RunCtl = (() => {
     if (allSheets().some(pg => pg.runId === r.runId && !(pendingStop && pg.runHold) && (pg.problem || pg.dirty || ["ready", "idle", "queued"].includes(pg.status)) && pg.charms.length)) {
       r.step = "nest"; for (const pg of allSheets()) if (pg.runId === r.runId && pg.problem && !(pendingStop && pg.runHold)) sheetDirty(pg);
     }
-    r.status = "running"; r.stoppedBy = null; r.fix = null; window.CN?.resumeQueueChanged?.(); await save(r);
+    r.status = "running"; r.stoppedBy = null; r.fix = null; delete r.stopKind; window.CN?.resumeQueueChanged?.(); await save(r);
     if (["nest"].includes(r.step)) { for (const pg of allSheets()) if (pg.runId === r.runId && !pg.runHold && ["complete", "partial"].includes(pg.status) && pg.verification && !pg.verification.ok) sheetDirty(pg); }
     if (!r.workspaceRestored && (r.step === "pool" || r.step === "pull" || r.step === "claim")) r.step = "pull";
     loop().catch(e => stop(e.message, "Fix the cause and press Resume."));
@@ -4248,6 +4317,63 @@ const RunCtl = window.RunCtl = (() => {
     if (r.step === "pull" || r.step === "claim") return ` · ${Orders.rows().filter(x => x.state !== "gone").length} lines`;
     return "";
   }
+  /* In Auto nobody may be at the bench. A run stopped by a passing failure (the network after a wake, a function's 5xx, a
+     station that did not answer in time), by the Etsy watchdog's brake or by a reload waited for Resume however long the
+     cause lasted, while the orders piled up. Each stop now has a kind, and Auto takes up the passing ones by itself once
+     the network and the cloud answer: 1, 2, 5 and 10 minutes after the stop, then every 10 minutes, and at once when the
+     network comes back. The operator's Stop, a decision waiting for a person, a sign-in and a spent Etsy budget (the
+     heartbeat lifts that one) are left alone. */
+  const PASSING = /answer in time|timed out|network|Failed to fetch|HTTP 5\d\d|link is down|no reply|closed/i, AUTO_WAIT = [60000, 120000, 300000, 600000];
+  const auto = { runId: null, step: null, n: 0, next: 0, busy: false, t: 0 };   // the retries of one run at one step: a step done starts them afresh
+  function kindOf(why) {
+    why = why || "";
+    return why === "stopped by the operator" ? "operator" : why === "Workspace restored after refresh" ? "restored" : reviewStop({ status: "stopped", stoppedBy: why }) ? "review"
+      : /^Etsy watchdog/.test(why) ? "watchdog" : /^Etsy call budget reached/.test(why) ? "budget" : /\bsign/i.test(why) ? "auth"
+      : PASSING.test(why) || /stopped answering the heartbeat/.test(why) ? "transient" : "error";
+  }
+  // (a run stopped by a reload, or one saved before stops had kinds, is read from its words)
+  function stopKindOf(r) { return !r || r.status !== "stopped" ? null : r.stoppedBy === "Workspace restored after refresh" ? "restored" : r.stopKind || kindOf(r.stoppedBy); }
+  function autoResumable(r) {
+    if (!r || r !== B.run || r.status !== "stopped" || S.settings.runMode !== "auto" || settling === r) return false;
+    const k = stopKindOf(r), m = window.DesignLink?.etsy?.().meter;
+    return k === "transient" || k === "restored" || k === "watchdog" && Date.now() >= ((m && m.braked && m.brakeUntil) || 0);
+  }
+  // two sorter tabs brought back from the same workspace would both carry on with the one run: the first to take its lock does
+  const claimed = new Set();
+  function claimRun(runId) {
+    const locks = globalThis.navigator?.locks; if (claimed.has(runId) || !locks?.request) return Promise.resolve(true);
+    return new Promise(res => locks.request("charm-sorter-run:" + runId, { ifAvailable: true }, lock => { if (!lock) { res(false); return; } claimed.add(runId); res(true); return new Promise(() => {}); }).catch(() => res(true)));
+  }
+  /** Called by the heartbeat, the boot after a reload (now: true) and the network coming back. */
+  async function autoResume(now) {
+    const r = B.run; if (auto.busy || !autoResumable(r)) return false;
+    if (auto.runId !== r.runId || auto.step !== r.step) { Object.assign(auto, { runId: r.runId, step: r.step, n: 0, next: ((r.errors || []).at(-1)?.t || Date.now()) + AUTO_WAIT[0] }); renderBanner(); }
+    clearTimeout(auto.t);
+    if (!now && Date.now() < auto.next) { auto.t = setTimeout(() => autoResume(), Math.max(1000, auto.next - Date.now())); return false; }
+    auto.busy = true; auto.n++; auto.next = Date.now() + AUTO_WAIT[Math.min(auto.n, AUTO_WAIT.length - 1)]; renderBanner();
+    try {
+      if (globalThis.navigator?.onLine === false) throw new Error("the network is down");
+      if (!await claimRun(r.runId)) throw new Error("another sorter tab is carrying on with this run");
+      await api("charmNestLibrary", { op: "ping", calibration: false }, { quiet: true });
+      await DesignLink.ensure();
+      if (!autoResumable(r)) return false;
+      agent({ run: r.runId }, "DS", `Resuming by itself (try ${auto.n}): ${r.stoppedBy}`);
+      try { await resume(); } catch (e) { if (r === B.run && r.status === "running") stop(e.message, "Fix the cause and press Resume."); throw e; }
+      auto.step = r.step; return true;
+    } catch (e) {
+      agent({ run: r.runId }, "info", `Not resumed yet (try ${auto.n}): ${e.message} — next try at ${new Date(auto.next).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+      if (autoResumable(r)) auto.t = setTimeout(() => autoResume(), auto.next - Date.now());
+      return false;
+    } finally { auto.busy = false; renderBanner(); }
+  }
+  // what the banner says in place of "press Resume" while Auto will carry on by itself
+  function autoNote(r) {
+    if (!autoResumable(r)) return "";
+    if (auto.busy) return "Auto is resuming it now…";
+    if (globalThis.navigator?.onLine === false) return "Auto carries on by itself when the network is back.";
+    if (auto.runId !== r.runId || auto.step !== r.step) return "Auto carries on by itself shortly.";
+    return `Auto carries on by itself: next try ${new Date(auto.next).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}${auto.n ? ` (tried ${auto.n}×)` : ""}, or press Resume.`;
+  }
   function renderBanner() {
     const previousMenu = document.getElementById("runMenu");
     const menuWasOpen = !!previousMenu?.open;
@@ -4290,7 +4416,7 @@ const RunCtl = window.RunCtl = (() => {
     const intake = r.status === "processed" && !!r.arrivalBusy;
     const finishing = r.status === "stopped" ? allSheets().filter(p => p.runId === r.runId && (["nesting", "finishing"].includes(p.status) || p.status === "queued" && !window.CN?.heldForResume?.(p))).length : 0;
     // the station can be back (taken again for an arrival) before anyone reads "Press Take control": then Resume is all that is left
-    const fix = r.status === "stopped" && /^Press Take control/.test(r.fix || "") && window.DesignLink?.inControl() && DesignLink.up() ? "The station is back · press Resume." : r.fix;
+    const fix = autoNote(r) || (r.status === "stopped" && /^Press Take control/.test(r.fix || "") && window.DesignLink?.inControl() && DesignLink.up() ? "The station is back · press Resume." : r.fix);
     const why = saveWarning + (r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${fix ? ` — <span>${esc(fix)}</span>` : ""}${finishing ? ` · ${finishing} sheet${finishing === 1 ? "" : "s"} still finishing` : ""}` : intake ? `<b>Adding new orders</b> · nesting them onto the sheets` : r.status === "review" ? `<b>Waiting for a person:</b> ${waitingFor}` : r.status === "processed" ? `<b>Processing complete</b> · ${waitingFor === "nothing" ? idle : waitingFor}${r.awaitCommit ? " · commit when ready" : ""}` : r.status === "paused" ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(STEP_WORDS[r.step] || r.step)}</b>${esc(stepDetail(r))}`);
     Dock.schedule();
     h.title = `run ${r.runId}`;
@@ -4322,7 +4448,7 @@ const RunCtl = window.RunCtl = (() => {
     };
     Orders.render();
   }
-  return { optionsChanged, recoverReviewStop, membershipUpdated, start, next, resume, stop, operatorStop, stopIfRunning, poke, backgroundSettled, save, onSheetDone, pickResume, resumeRun, restoreRunSheets, commitNow, setMode: setRunMode, setRunMode, renderBanner, renderModeBtn, clearRunState, run };
+  return { optionsChanged, recoverReviewStop, membershipUpdated, start, next, resume, stop, operatorStop, stopIfRunning, poke, backgroundSettled, save, onSheetDone, pickResume, resumeRun, restoreRunSheets, commitNow, setMode: setRunMode, setRunMode, renderBanner, renderModeBtn, clearRunState, run, autoResume, stopKind: stopKindOf };
 })();
 
 /* ═══ 24 · Review — every decision a person must make ═════════════════════ */
@@ -5475,7 +5601,9 @@ const Arrivals = window.Arrivals = (() => {
   const storageKey = () => "cn.arrivals." + (WORKSPACE_SANDBOX ? "sandbox" : "production");
   let state; try { state = JSON.parse(localStorage.getItem(storageKey()) || "null"); } catch (_) {}
   state = Object.assign({ seen: {}, lastCheck: 0, nextCheck: 0, lastAdded: 0, error: null }, state || {});
-  let tick = 0, busy = false, paused = false, epoch = 0;
+  let tick = 0, busy = false, paused = false, epoch = 0, fails = 0, lastTick = 0, kept = null;
+  // a check that failed while the network was away is made again as soon as it is back, not a whole interval later
+  window.addEventListener("online", () => { if (state.error) state.nextCheck = Math.min(state.nextCheck || Infinity, Date.now() + 3000); });
   window.addEventListener("storage", e => { if (e.key !== storageKey() || !e.newValue) return; try { const other = JSON.parse(e.newValue); Object.assign(state.seen, other.seen); if (other.lastCheck > state.lastCheck) { state.lastCheck = other.lastCheck; state.nextCheck = other.nextCheck; state.lastAdded = other.lastAdded; } paint(); } catch (_) {} });
   // the sandbox order stream checks every simulated ten minutes (12 s at 50x)
   const interval = () => (WORKSPACE_SANDBOX && S.settings.sandboxStream === "on" ? 600000 / Math.max(1, Math.min(1000, +S.settings.sandboxSpeed || 50)) : Math.max(10, Math.min(1440, +S.settings.pollMinutes || 10)) * 60000);
@@ -5609,8 +5737,10 @@ const Arrivals = window.Arrivals = (() => {
       // (the maps load alongside: the snapshot below needs both, neither needs the other)
       const [sim] = await Promise.all([streaming() && Sandbox.advance(), Orders.loadMaps(), Master.load()]);
       const known=Object.fromEntries(Orders.rows().map(row=>[String(row.order.receiptId),+row.order.updateTs || 0]));
-      const res = await DesignLink.call("orders.snapshot", Object.assign({ hydrate: true, refresh: true, intake:true, known }, sim ? { stream: true } : {}), { timeoutMs: 20 * 60000, quiet: true });
-      DesignLink.meter(res, "new orders");
+      // (the snapshot of a check that failed after it, on the cloud's side, is taken again for 2 minutes: the Etsy calls it
+      // cost are not made a second time)
+      const res = !sim && kept && Date.now() - kept.at < 120000 ? kept.res : await DesignLink.call("orders.snapshot", Object.assign({ hydrate: true, refresh: true, intake:true, known }, sim ? { stream: true } : {}), { timeoutMs: 20 * 60000, quiet: true });
+      if (res !== kept?.res) { DesignLink.meter(res, "new orders"); kept = sim ? null : { res, at: Date.now() }; }
       if (gen !== epoch) return;   // a sandbox reset while this check was out: its orders went with the records it deleted
       // An order Etsy will not return in full waits for the next check, where it is read again; the others come in now.
       // One unreadable receipt used to hold every other arrival back for as long as it stayed unreadable.
@@ -5621,15 +5751,19 @@ const Arrivals = window.Arrivals = (() => {
       const picked = Orders.applyPullRule((res.orders || []).filter(o => o.hydrated));
       if (Recall.on()) { await record(picked, stamp()); state.inbox = picked; }
       else await merge(picked, res.openIds);
-      state.error = null;
+      state.error = null; kept = null;
       processPending().catch(e=>{state.error=e.message;save();paint();});
     } catch (e) { if (gen === epoch) state.error = e.message; }
-    finally { busy = false; if (gen === epoch) { state.nextCheck = eager() ? Date.now() : (streaming() ? began : Date.now()) + interval(); save(); } paint(); }   // a stream step is timed from its check's start, so the sweep does not stretch it
+    // A check that failed for a passing reason (the network not back after a wake, a 5xx, the station slow to answer) is
+    // made again 15 s, 30 s, 1 min, 2 min… later, never later than the usual interval; it used to wait the whole interval.
+    finally { busy = false; if (gen === epoch) { const passing = /answer in time|timed out|network|Failed to fetch|HTTP 5\d\d|link is down|no reply|closed|offline/i.test(state.error || ""); fails = passing ? fails + 1 : 0; state.nextCheck = eager() ? Date.now() : (streaming() ? began : Date.now()) + (passing ? Math.min(interval(), 15000 * 2 ** Math.min(fails - 1, 8)) : interval()); save(); } paint(); }   // a stream step is timed from its check's start, so the sweep does not stretch it
   }
   function start() {
     clearInterval(tick); state.nextCheck = eager() ? Date.now() : Math.max(Date.now(), (state.lastCheck || Date.now()) + interval());
     paint();
     tick = setInterval(() => {
+      // just woken (the machine slept: this tick came over a minute late), the network is given 10 s before the check
+      const t = Date.now(); if (lastTick && t - lastTick > 60000 && state.nextCheck < t + 10000) state.nextCheck = t + 10000; lastTick = t;
       paint();
       if (busy || paused || S.settings.pollOrders === "off") return;
       if (Date.now() >= state.nextCheck && !held()) {
@@ -5848,19 +5982,35 @@ async function bootBridge() {
     // an approval whose back files a reload cut short is written now, not when the run next passes Engraving
     if (recovered) Engrave.resumeBacks();
     if(recovered)RunCtl.recoverReviewStop().catch(e=>RunCtl.stop(e.message,"Reconnect and Resume."));
+    // a reload (a discarded tab, a crash, a browser update) left an Auto run stopped with no station until someone pressed
+    // Resume: Auto takes the station again and carries on, from the step the restore rewound it to
+    if (recovered && S.settings.runMode === "auto") setTimeout(() => RunCtl.autoResume(true), 1500);
+    window.addEventListener("online", () => setTimeout(() => RunCtl.autoResume(true), 5000));
   }
   if (recovered) Engrave.refreshBackIndexes();
   Views.onShow(S.mode);
   /* The app used to open on an empty Orders tab whatever had happened yesterday, and the only way to anything was to
      pull again. It opens on the last run instead — its orders, its sheets, its engraving, read from the record, with
      one line at the top saying so and a Done that puts it down. An open run is offered for resume as before. */
-  if (!recovered && !recoveryFailed && S.cloud.ok) api("charmNestLibrary", { op: "runList", limit: 10 }).then(r => {
+  // (offered when the cloud answers: a page opened while it was offline offered nothing for the rest of the session)
+  let offered = false;
+  const offerRuns = () => { if (offered || recovered || recoveryFailed || !S.cloud.ok || B.run) return; offered = true; api("charmNestLibrary", { op: "runList", limit: 10 }).then(r => {
     const runs = r.runs || [];
     const open = runs.filter(x => !["complete", "abandoned"].includes(x.status));
     if (open.length) { B.openRuns = open; agent({ bridge: true }, "DS", `${open.length} open run(s) on record — offered on the run banner`); RunCtl.renderBanner(); }
     const last = runs.find(x => x.lines > 0);
     if (last && !B.run && !B.orders.rows.length && !Recall.on()) Recall.open({ runId: last.runId, quiet: true }).catch(() => {});
-  }).catch(() => {});
+  }).catch(() => { offered = false; }); };
+  offerRuns();
+  /* The cloud back after a page load, a sleep or an outage it was offline for (the page's cloudRecovered): what the boot
+     skipped without it is done now, the run's record is saved again (its "Not saved online" goes), back files waiting
+     for it are written, and the bridge log kept meanwhile is sent. */
+  window.addEventListener("cn-cloud-back", () => {
+    Orders.loadMaps().catch(() => {}); Master.load().catch(() => {}); offerRuns();
+    if (B.run && B.run.saveError) RunCtl.save(B.run).catch(() => {});
+    if (!recoveryFailed) Engrave.resumeBacks();
+    DesignLink.flushLog();
+  });
   // the Design Station frame mounts on first visit to its tab; Auto mode mounts it now
   if (!recovered && !recoveryFailed && S.settings.runMode === "auto") { setTimeout(() => { if (!B.openRuns?.length && !Recall.on() && !B.run) RunCtl.setMode("auto"); }, 1500); }
   document.addEventListener("keydown", e => { if (e.altKey && e.key === "r") { e.preventDefault(); setMode("review"); } });

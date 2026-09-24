@@ -36,7 +36,7 @@
   if (!worker) return;
   // ids far above the browser's own, so a timer set before this file ran is still cleared by the browser
   let next = 0x40000000;
-  const pending = new Map();   // id -> { fn, args, repeat }
+  const pending = new Map();   // id -> { fn, args, repeat, ms, due }
   const fail = e => native.setTimeout(() => { throw e; }, 0);
   worker.onmessage = e => {
     const id = e.data, t = pending.get(id);
@@ -47,9 +47,9 @@
   worker.onerror = () => { worker = null; window.CharmNestClock.active = false; restore(); };
   const set = repeat => function (fn, ms, ...args) {
     if (typeof fn !== "function" || !worker) return (repeat ? native.setInterval : native.setTimeout)(fn, ms, ...args);
-    const id = ++next;
-    pending.set(id, { fn, args, repeat });
-    worker.postMessage({ id, ms: Math.max(0, +ms || 0), repeat });
+    const id = ++next, wait = Math.max(0, +ms || 0);
+    pending.set(id, { fn, args, repeat, ms: wait, due: performance.now() + wait });
+    worker.postMessage({ id, ms: wait, repeat });
     return id;
   };
   const clear = nativeClear => function (id) {
@@ -87,9 +87,13 @@
     });
   }
   function restore() {
-    // timers still waiting on the stopped worker move to the browser's own
-    for (const [id, t] of pending) { pending.delete(id); if (t.repeat) native.setInterval(t.fn, 1000, ...t.args); else native.setTimeout(t.fn, 0, ...t.args); }
-    Object.assign(window, { setTimeout: native.setTimeout, clearTimeout: native.clearTimeout, setInterval: native.setInterval, clearInterval: native.clearInterval });
+    // Timers still waiting on the stopped worker move to the browser's own, each with its own period (a timeout with what
+    // was left of it), under the ids their owners hold. They were all set again at 1 s, or at once, under new ids nobody
+    // could clear: a heartbeat or a tick restarted after that ran twice, and the 10-minute photo check every second.
+    const moved = new Map(), now = performance.now();   // the id handed out -> { native id, repeat }
+    for (const [id, t] of pending) { pending.delete(id); moved.set(id, { repeat: t.repeat, native: t.repeat ? native.setInterval(t.fn, t.ms, ...t.args) : native.setTimeout(() => { moved.delete(id); t.fn.apply(window, t.args); }, Math.max(0, t.due - now)) }); }
+    const unmove = nativeClear => function (id) { const m = moved.get(id); if (!m) return nativeClear(id); moved.delete(id); (m.repeat ? native.clearInterval : native.clearTimeout)(m.native); };
+    Object.assign(window, { setTimeout: native.setTimeout, clearTimeout: unmove(native.clearTimeout), setInterval: native.setInterval, clearInterval: unmove(native.clearInterval) });
     if (native.requestAnimationFrame) Object.assign(window, { requestAnimationFrame: native.requestAnimationFrame, cancelAnimationFrame: native.cancelAnimationFrame });
   }
   // a page holding a lock is not frozen in the background; the lock is released when the page closes
