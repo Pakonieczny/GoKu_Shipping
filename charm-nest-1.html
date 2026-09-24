@@ -1426,8 +1426,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
       <div class="field"><label>Naming (Claude)</label><select id="stNaming"><option value="on">On</option><option value="off">Off</option></select></div>
     </div>
     <div class="fieldRow">
-      <div class="field"><label for="stPackingAI">AI packing guidance</label><select id="stPackingAI"><option value="on">On — grade shapes and guide placement</option><option value="off">Off — geometry only</option></select><div class="help">Grades every distinct shape and identifies compatible neighbors and perimeter roles before packing. Geometry follows this guidance on each attempt; saved grades and responses are reused. Incomplete analysis holds the sheet for retry. The search ceiling starts after analysis.</div></div>
-    <div class="field"><label>AI review (Claude Opus 5, high effort)</label><select id="stReview"><option value="on">On — review imported grouping</option><option value="off">Off — geometry only</option></select><div class="help">Claude reviews detected charms when importing a source page and can merge fragments. Finished-sheet AI inspection is available separately.</div></div>
+      <div class="field"><label>AI review (Claude Opus 5, high effort)</label><select id="stReview"><option value="on">On — review imported grouping</option><option value="off">Off — geometry only</option></select><div class="help">Claude reviews detected charms when importing a source page and can merge fragments. Finished-sheet AI inspection is available separately.</div></div>
     </div>
     <div class="section">Design Station bridge, orders, run</div>
     <div class="fieldRow3">
@@ -1536,7 +1535,7 @@ const DEFAULTS = {
   stock: { gold: [100 / 25.4, 50 / 25.4], silver: [100 / 25.4, 50 / 25.4], rose: [100 / 25.4, 50 / 25.4], gold10k: [100 / 25.4, 50 / 25.4], gold14k: [100 / 25.4, 50 / 25.4] },
   nestFlow: "standard", learnedBudgetS: 600, learnedStallS: 300,
   clearancePt: -0.5, insetPt: 1.5, angleStep: 10, budgetS: 180, seed: 1, freshSeed: true, serverAbove: 0, parallel: 0,
-  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", computePipeline: "cpu", packingAI: "on", aiRounds: 10, snapIn: 0.25, maxFill: 0.80, orderView: "list", v: 26,
+  minPt: 6, verifyRes: 6, naming: "on", review: "on", notify: "on", sound: "on", silhouetteRes: 6, engine: "solver", computePipeline: "cpu", aiRounds: 10, snapIn: 0.25, maxFill: 0.80, orderView: "list", v: 26,
   // Design Station bridge, orders, run (design doc §14)
   dsOrigin: "https://design-1.goldenspike.app", heartbeatS: 5, heartbeatMiss: 3, autoCommit: "on", runMode: "manual", pullMode: "all", pullDueBy: "", pullCount: 40, autoEvery: 0, pollOrders: "on", pollMinutes: 10, finalOptimizeCount: 85, optimizeAt: 85, etsyHourlyCap: 600, sandbox: "off",
   sandboxStream: "on", sandboxSpeed: 50, sandboxSeed: 0,   // in the sandbox, orders arrive a few per simulated 10 minutes, 50x faster than real time
@@ -2479,7 +2478,6 @@ function buildJob(sh) {
     // new Gold and Silver charms joining a saved sheet: every spot and angle graded, the best nudged into place
     careful: !!sh.appendOnly && !sh.roseProtected && ["gold", "silver"].includes(sh.metal),
     initialLayout: sh.nestInitial || null, maxFill: sh.topup && !sh.topup.closedAt ? Math.min(+S.settings.maxFill || 0.80, sh.topup.maxFill) : +S.settings.maxFill || 0.80, nearFullContact: sh.metal !== "rose",
-    packingHints: S.settings.packingAI !== "off" && sh.packingAdvice?.version === 1 && sh.packingAdvice?.key === packingKey(sh, items) ? sh.packingAdvice.hints || null : null,
     // topping up, an arrival takes any gap it fits; the fresh arrangement after a miss keeps the charms on the sheet first
     pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: sh.topup && !sh.topup.closedAt && sh.appendOnly ? 0 : c.orderDate || 0, pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
   };
@@ -2488,119 +2486,6 @@ function packingKey(sh, items) {
   const st = stockFor(sh.metal, sh);
   return JSON.stringify([st.wPt, st.hPt, sh.roseStock?.id, sh.roseStock?.revision, S.settings.clearancePt, S.settings.insetPt, S.settings.maxFill,
     items.map(c => [c.id, c.hash, c.w, c.h, c.areaPt2])]);
-}
-function sendPackingHints(sh, jobId, hints, pending) {
-  if (sh.jobId !== jobId || sh.status !== "nesting" || sh.pool?.finished) return;
-  (sh.workers || []).forEach((w,i) => w.postMessage({ type: "packingHints", jobId: jobId + ":" + i, hints, pending }));
-}
-function packingProfileValid(p) {
-  return !!p && (p.cacheVersion == null || p.cacheVersion === 1) && CharmNestSolver.normalizePackingPlan({profiles:[{...p,index:0}]},1).profiles.length === 1;
-}
-async function requestPackingGuidance(sh) {
-  if (S.settings.packingAI === "off") return null;
-  const items=activeCharms(sh),key=packingKey(sh,items),jobId=sh.jobId;
-  const prior=sh.packingAdvice?.version===1 && sh.packingAdvice.key===key ? sh.packingAdvice : null;
-  if(prior?.state==="done")return prior.hints;
-  if(sh._packingPromise){const previous=sh._packingPromise;await previous;if(sh._packingPromise===previous)sh._packingPromise=null;return requestPackingGuidance(sh);}
-  const advice=prior || {version:1,key,state:"pending",batches:[],hints:null};
-  sh.packingAdvice=advice;
-  const ev=agent({metal:sh.metal},"claude","Loading saved shape grades",{live:true});
-  // Serialize consultations within this workspace: overlapping material sheets reuse
-  // the first completed grades instead of paying to grade the same geometry twice.
-  const task=(S._packingCatalogTask || Promise.resolve()).catch(()=>{}).then(async()=>{
-    try {
-      S.packingCatalog ||= {};
-      const unique=[...new Map(items.map(c=>[CharmNestSolver.shapeKey(c),c])).values()];
-      const byKey=new Map(unique.map(c=>[CharmNestSolver.shapeKey(c),c]));
-      const remember=(batch,onlyMissing=false)=>{
-        for(const p of batch.result.profiles){const k=batch.keys[p.index],{index,...profile}=p;
-          if(onlyMissing&&packingProfileValid(S.packingCatalog[k]))continue;
-          S.packingCatalog[k]={...S.packingCatalog[k],...profile,cacheVersion:1,model:batch.result.model||null,_cloudSaved:false};}
-        for(const pair of batch.result.pairs){const a=batch.keys[pair.a],b=batch.keys[pair.b];
-          if(!S.packingCatalog[a]||!S.packingCatalog[b])continue;
-          for(const [x,y] of [[a,b],[b,a]])if(S.packingCatalog[x].partners?.[y]!==pair.score){
-            (S.packingCatalog[x].partners||={})[y]=pair.score;S.packingCatalog[x]._cloudSaved=false;
-          }
-        }
-      };
-      // Recover paid results from older workspaces, including completed first sheets.
-      const pages=typeof allSheets==="function" ? allSheets() : [sh];
-      const knownCharms=new Map(pages.flatMap(page=>page.charms).map(c=>[c.id,c]));
-      for(const page of pages){
-        const saved=page.packingAdvice;if(!saved)continue;
-        let keys;try{keys=[...new Set(JSON.parse(saved.key)[5].map(row=>{
-          const c=knownCharms.get(row[0]);return c && CharmNestSolver.shapeKey(c);
-        }).filter(Boolean))];}catch(_){keys=[];}
-        for(let i=0;i<(saved.batches||[]).length;i++){
-          const batch=saved.batches[i];batch.keys ||= keys.slice(i*80,i*80+80);
-          if(batch.result && batch.keys.length===batch.result.profiles.length)remember(batch,true);
-        }
-      }
-      if(!S.cloud.ok)throw new Error("Reconnect to load and save shape guidance. Existing grades are retained.");
-      const lookup=[...byKey.keys()].filter(k=>!packingProfileValid(S.packingCatalog[k]));
-      for(let i=0;i<lookup.length;i+=100){
-        const found=await api("charmNestLibrary",{op:"getShapeGuidance",keys:lookup.slice(i,i+100)},{background:true,label:"Loading saved shape grades"});
-        for(const [k,p] of Object.entries(found.profiles||{}))if(byKey.has(k)&&packingProfileValid(p))S.packingCatalog[k]={...p,_cloudSaved:true};
-      }
-      // Resume existing paid jobs before creating batches for genuinely unknown shapes.
-      for(let i=0;i<advice.batches.length;i++)advice.batches[i].keys ||= unique.slice(i*80,i*80+80).map(CharmNestSolver.shapeKey);
-      const pending=advice.batches.filter(b=>!b.result && b.keys.some(k=>!packingProfileValid(S.packingCatalog[k])));
-      for(const batch of pending)if(!batch.jobId)batch.keys=batch.keys.filter(k=>!packingProfileValid(S.packingCatalog[k]));
-      const reserved=new Set(pending.flatMap(b=>b.keys));
-      const missing=unique.filter(c=>!packingProfileValid(S.packingCatalog[CharmNestSolver.shapeKey(c)])&&!reserved.has(CharmNestSolver.shapeKey(c)));
-      for(let i=0;i<missing.length;i+=80){const batch={keys:missing.slice(i,i+80).map(CharmNestSolver.shapeKey),jobId:null,result:null};advice.batches.push(batch);pending.push(batch);}
-      const freshCount=pending.reduce((n,b)=>n+b.keys.length,0),reused=unique.length-freshCount;
-      agentUpdate(ev,{text:`${reused} saved shapes reused; ${freshCount} shapes need analysis.`});
-      for(const batch of pending){
-        const chosen=batch.keys.map(k=>byKey.get(k));
-        if(chosen.some(c=>!c))throw new Error("Saved shape batch no longer matches this queue");
-          const cv=document.createElement("canvas"),cell=112,cols=8;
-          cv.width=cols*cell;cv.height=Math.ceil(chosen.length/cols)*cell;
-          const ctx=cv.getContext("2d");ctx.fillStyle="#f3f0ea";ctx.fillRect(0,0,cv.width,cv.height);
-          chosen.forEach((c,i)=>{
-            const x=i%cols*cell,y=Math.floor(i/cols)*cell,b=c.bbox,scale=Math.min((cell-12)/Math.max(1,b[2]-b[0]),(cell-26)/Math.max(1,b[3]-b[1]));
-            ctx.save();ctx.beginPath();ctx.rect(x,y,cell,cell);ctx.clip();
-            if(c.outline?.length){ctx.beginPath();CharmNestPDF.pathToCanvas(ctx,c.outline,(px,py)=>[x+6+(px-b[0])*scale,y+21+(b[3]-py)*scale]);ctx.fillStyle="#181818";ctx.fill("nonzero");}else CharmNestPDF.drawSegments(ctx,c.members,(px,py)=>[x+6+(px-b[0])*scale,y+21+(b[3]-py)*scale],scale);
-            ctx.fillStyle="#181818";ctx.font="bold 12px sans-serif";ctx.fillText(String(i),x+5,y+14);ctx.restore();
-          });
-        const st=stockFor(sh.metal, sh);let plan;
-        try{plan=await agentCall("packing",{contactSheet:cv.toDataURL("image/png"),preview:aiRenderSheet(sh),wPt:st.wPt,hPt:st.hPt,maxFill:+S.settings.maxFill||.80,density:sh.best?.density||0,
-          pieces:chosen.map(c=>({widthPt:c.widthPt,heightPt:c.heightPt,areaPt2:c.areaPt2}))
-        },{label:"Shape compatibility analysis",sheetId:sh.sheetId,background:true,existingId:batch.jobId,retryFailed:true,
-          onStarted:id=>{batch.jobId=id;if(window.Session)Session.schedule();},onTick:elapsed=>agentUpdate(ev,{elapsed})});}
-        catch(e){if(e.agentTerminal){batch.failure={jobId:batch.jobId,error:e.message};batch.jobId=null;}throw e;}
-        if(plan.skipped||plan.error){batch.failure={jobId:batch.jobId,error:plan.skipped||plan.error};batch.jobId=null;throw new Error(batch.failure.error);}
-        const clean=CharmNestSolver.normalizePackingPlan(plan,chosen.length);
-        if(clean.profiles.length!==chosen.length){batch.invalidResult=clean;batch.jobId=null;throw new Error(`Shape analysis graded ${clean.profiles.length}/${chosen.length} shapes; placement is held until every shape has guidance`);}
-        batch.result={...clean,model:plan.model||null};remember(batch);
-        if(window.Session)Session.schedule();
-        // Save each completed batch immediately, before starting any later batch.
-        await savePackingCatalog(batch.keys);
-      }
-      await savePackingCatalog([...byKey.keys()]);
-      const hints={version:1,profiles:{},partners:{},angles:{},priority:[]};
-      for(const c of items){const p=S.packingCatalog[CharmNestSolver.shapeKey(c)];if(!packingProfileValid(p))throw new Error("Missing shape grade");
-        const {partners,_cloudSaved,...profile}=p;hints.profiles[c.id]=profile;hints.angles[c.id]=profile.angles.slice();
-        for(const other of items){const score=partners?.[CharmNestSolver.shapeKey(other)];if(c.id!==other.id && Number.isFinite(score))(hints.partners[c.id]||={})[other.id]=score;}}
-      hints.priority=items.slice().sort((a,b)=>hints.profiles[b.id].priority-hints.profiles[a.id].priority).map(c=>c.id);
-      Object.assign(advice,{state:"done",hints,reusedShapes:reused,analyzedShapes:freshCount,summary:`${reused} saved shapes reused; ${freshCount} analyzed.`});
-      const keys=Object.keys(S.packingCatalog);for(const k of keys.filter(k=>!byKey.has(k)).slice(0,Math.max(0,keys.length-1000)))delete S.packingCatalog[k];
-      if(sh.packingAdvice===advice)sendPackingHints(sh,jobId,hints,false);
-      agentUpdate(ev,{live:false,text:`Shape guidance ready: ${reused} saved shapes reused; ${freshCount} analyzed; ${items.length} charms follow their grades.`});
-      return hints;
-    }catch(e){e.stage="shape-analysis";Object.assign(advice,{state:"error",error:e.message});agentUpdate(ev,{live:false,kind:"warn",text:`Shape-guided placement held: ${e.message}`});throw e;}
-    finally{if(window.Session)Session.schedule();}
-  });
-  S._packingCatalogTask=task;sh._packingPromise=task;
-  try{return await task;}finally{if(sh._packingPromise===task)sh._packingPromise=null;if(S._packingCatalogTask===task)S._packingCatalogTask=null;}
-}
-async function savePackingCatalog(keys){
-  const dirty=keys.filter(k=>packingProfileValid(S.packingCatalog[k])&&!S.packingCatalog[k]._cloudSaved);
-  for(let i=0;i<dirty.length;i+=50){const chunk=dirty.slice(i,i+50);
-    const result=await api("charmNestLibrary",{op:"putShapeGuidance",profiles:chunk.map(key=>({key,profile:S.packingCatalog[key]}))},{background:true,label:"Saving reusable shape grades"});
-    if(result.count!==chunk.length)throw new Error("Shape grades could not all be saved. Retry will reuse the completed analysis.");
-    for(const k of chunk)S.packingCatalog[k]._cloudSaved=true;
-  }
 }
 function renderNestFlow() {
   const b = $("#btnNestFlow"); if (!b) return;
@@ -2677,21 +2562,16 @@ function startNestReady(sh, context) {
   sh.nestParams = { seed:job.seed,angles:job.angles,clearancePt:job.clearancePt,insetPt:job.sheet.insetPt,fineRes:job.fineRes,coarseRes:job.coarseRes,maxFill:job.maxFill };
   if (window.Session) Session.schedule();
   if (retained && window.Session) Session.checkpointBest(sh);
-  // Shape grades steer the full searches. A new Gold or Silver charm on a saved sheet is graded spot by spot (the careful
-  // append never reads them), and a sheet's first few charms need no steering: neither waits on an AI shape analysis.
-  const guided = S.settings.packingAI !== "off" && !job.careful && !(sh.runId && sh.intakePhase === "fill" && ["gold", "silver"].includes(sh.metal));
+  // The search starts at once: the AI shape analysis that used to run first (20 to 90 s) was removed; new Gold and Silver
+  // charms are graded spot by spot instead, and full searches go on geometry alone.
   const launch = () => {
     if (sh.status !== "nesting" || sh.jobId !== launchId) return;
-    if(guided && (sh.packingAdvice?.state!=="done" || sh.packingAdvice.key!==packingKey(sh,activeCharms(sh))))throw new Error("Sheet inputs changed during shape analysis — retry Nest");
-    sh.guidanceMs=sh.guidancePending?performance.now()-sh.startedAt:0;
-    sh.guidancePending = false; sh.startedAt = performance.now();
-    job.packingHints = guided ? sh.packingAdvice?.hints || null : null;
     if (sh.nestFlow === "learned") {
       job.learned = { modelDigest: sh._learnedModelDigest, token: localStorage.getItem("cn.learnedKey") || "", budgetMs: S.settings.learnedBudgetS * 1000, stallMs: S.settings.learnedStallS * 1000, checkpoint: sh.learnedCheckpoint || null, initialLayout: sh._beforeLearned?.placements || null };
       const workers = ensureWorkers(sh, 2); sh.pool = { n: 2, done: 0, results: [], trials: [0, 0], winner: null };
       sh.stage = "Starting learned workflow…"; renderProgress(sh);
       workers[0].postMessage({ type: "solve", jobId: sh.jobId + ":0", job });
-      workers[1].postMessage({ type: "solve", jobId: sh.jobId + ":1", job: { ...job, useGPU: S.settings.computePipeline === "gpu", learned: undefined, verifyResult: true, packingHints: job.packingHints, timeBudgetMs: S.settings.learnedBudgetS * 1000, stallMs: S.settings.learnedStallS * 1000, maxTrials: 1000000 } }); return;
+      workers[1].postMessage({ type: "solve", jobId: sh.jobId + ":1", job: { ...job, useGPU: S.settings.computePipeline === "gpu", learned: undefined, verifyResult: true, timeBudgetMs: S.settings.learnedBudgetS * 1000, stallMs: S.settings.learnedStallS * 1000, maxTrials: 1000000 } }); return;
     }
     if (!sh.roseProtected && !sh.appendOnly && (S.settings.engine || "solver") === "ai") { startAINest(sh, items).catch(e => finishNest(sh, { error: e.message })); return; }
     const useServer = S.settings.computePipeline !== "gpu" && S.settings.serverAbove > 0 && items.length > S.settings.serverAbove && S.cloud.ok;
@@ -2703,10 +2583,7 @@ function startNestReady(sh, context) {
     workers.forEach((w, i) => w.postMessage({ type: "solve", jobId: sh.jobId + ":" + i, job: Object.assign({}, job, { seed: job.seed + i, exploreRotations: i % 2 === 1, useGPU: S.settings.computePipeline === "gpu" && i === n - 1 }) }));
   };
   const launchId=sh.jobId;
-  if (guided) {
-    sh.guidancePending=true;sh.stage="Analyzing shape grades and compatible neighbors…";renderProgress(sh);
-    requestPackingGuidance(sh).then(launch).catch(e=>{if(sh.jobId!==launchId || sh.status!=="nesting")return;sh.guidancePending=false;sh.status="ready";sh.problem=e.message;sh.stage="Shape analysis incomplete — retry Nest";renderCard(sh);if(window.Session)Session.schedule();pumpNestQueue();if(window.RunCtl)RunCtl.onSheetDone(sh,e);});
-  } else launch();
+  launch();
 }
 
 /* ═══ 9b · AI nesting: Claude plans every placement, the geometry measures ═══ */
@@ -2802,7 +2679,7 @@ async function startAINest(sh, items) {
     params: { seed: 0, angles: [...new Set(sh.placements.map(p => p.angle))], clearancePt: clearance, insetPt: inset, fineRes: 2, coarseRes: 0.5, engine: "claude", rounds }
   } });
 }
-function stopNest(sh) { if (sh.status !== "nesting") return; if(sh.guidancePending){sh.guidancePending=false;sh.status="ready";sh.endedBy="stopped";sh.stage="Shape analysis paused — its response is saved for reuse";renderCard(sh);if(window.Session)Session.schedule();if(window.RunCtl)RunCtl.onSheetDone(sh);pumpNestQueue();return;} sh.stage = "Stopping after this piece…"; renderCard(sh); if (sh.nestFlow !== "learned" && !sh.roseProtected && !sh.appendOnly && (S.settings.engine || "solver") === "ai") { sh.status = "ready"; sh.endedBy="stopped"; sh.stage = ""; agent({ metal: sh.metal }, "info", "Stopped by operator"); renderCard(sh); if(window.RunCtl)RunCtl.onSheetDone(sh); return; } if (sh.serverJob) { api("charmNestLibrary", { op: "stopJob", id: sh.serverJob }).catch(() => {}); } else (sh.workers || []).forEach((w, i) => w.postMessage({ type: "stop", jobId: sh.jobId + ":" + i })); }
+function stopNest(sh) { if (sh.status !== "nesting") return; sh.stage = "Stopping after this piece…"; renderCard(sh); if (sh.nestFlow !== "learned" && !sh.roseProtected && !sh.appendOnly && (S.settings.engine || "solver") === "ai") { sh.status = "ready"; sh.endedBy="stopped"; sh.stage = ""; agent({ metal: sh.metal }, "info", "Stopped by operator"); renderCard(sh); if(window.RunCtl)RunCtl.onSheetDone(sh); return; } if (sh.serverJob) { api("charmNestLibrary", { op: "stopJob", id: sh.serverJob }).catch(() => {}); } else (sh.workers || []).forEach((w, i) => w.postMessage({ type: "stop", jobId: sh.jobId + ":" + i })); }
 // One replacement gate for live updates, final worker messages and server polls.
 // Layout snapshots never share mutable placements with a trial or the exporter.
 function acceptBestLayout(sh, candidate, meta = {}) {
@@ -2932,7 +2809,6 @@ function onWorkerMessage(sh, m, idx) {
     case "reject": log(sh, `trial ${m.trial + 1}: ${byId.get(m.id)?.name || m.id} ${m.reason === "cap" ? "held back by the fill ceiling" : "did not fit"}`); break;
     case "trial": {
       if (sh.nestFlow === "learned") break;
-      if (sh.nestFlow !== "learned" && !sh.packingAdvice?.hints && m.summary.elapsedMs >= 12000 && sh.best?.rejects?.length && sh.best.density < (+S.settings.maxFill || .80) - .01) requestPackingGuidance(sh).catch(e => log(sh, "AI packing: " + e.message));
       sh.trials = m.summary.trial + 1;
       if (!m.summary.better) sh.stage = `Trial ${sh.trials} · best so far ${sh.best ? sh.best.placements.length : 0}/${m.summary.total} · ${fmt.s(m.summary.elapsedMs)}`;
       // one live line that ticks with every trial, so the search is visible even when no trial beats the best
@@ -3102,7 +2978,7 @@ const endedText = e => ({ plateau: "paused — no additional pieces during the i
 function buildReport(sh, result, items) {
   const byId = new Map(items.map(c => [c.id, c])); const st = stockFor(sh.metal, sh);
   return {
-    version: 1, shapeGuidance: sh.packingAdvice?.hints || null, guidanceMs: Math.round(sh.guidanceMs || 0), bestRevision: sh.bestRevision || 0, bestHistory: sh.bestHistory || [], sheetId: sh.sheetId, metal: sh.metal, metalLabel: labelOf(sh.metal), createdAt: new Date().toISOString(),
+    version: 1, bestRevision: sh.bestRevision || 0, bestHistory: sh.bestHistory || [], sheetId: sh.sheetId, metal: sh.metal, metalLabel: labelOf(sh.metal), createdAt: new Date().toISOString(),
     stock: { wIn: st.wIn, hIn: st.hIn, wPt: st.wPt, hPt: st.hPt }, params: result.params, endedBy: result.endedBy, trials: result.trials, elapsedMs: Math.round(result.elapsedMs),
     density: +result.density.toFixed(4), usablePt2: Math.round(result.usablePt2), freePt2: Math.round(result.freePt2), placedPt2: Math.round(result.placedPt2), pocket: result.pocket,
     placements: sh.placements.map((p, i) => ({ n: i + 1, id: p.id, layer: p.layerName, name: byId.get(p.id)?.name, hash: byId.get(p.id)?.hash, source: byId.get(p.id)?.sourceName, index: byId.get(p.id)?.index, angle: p.angle, scale: p.scale || 1, cxPt: +p.cxPt.toFixed(3), cyPt: +p.cyPt.toFixed(3), wPt: +p.wPt.toFixed(2), hPt: +p.hPt.toFixed(2), areaPt2: +(byId.get(p.id)?.areaPt2 || 0).toFixed(1) })),
@@ -3385,12 +3261,12 @@ function renderProgress(sh) {
      done it is the whole result — placed, full, verified, elapsed — and the timings that used to take a second line are
      kept in its tooltip instead. The pills over the image would repeat it, so they show only while it is still moving. */
   const st = q("stage"); const elapsed = ["nesting", "finishing"].includes(sh.status) ? fmt.s(performance.now() - sh.startedAt) : (sh.totalMs ? fmt.s(sh.totalMs) : (sh.elapsedMs ? fmt.s(sh.elapsedMs) : ""));
-  const budget = sh.status === "nesting" ? (sh.guidancePending ? " · shape analysis" : sh.nestFlow === "learned" ? ` / ${fmt.s((S.settings.learnedBudgetS || 600) * 1000)} ceiling` : (S.settings.engine || "solver") === "ai" ? ` · round ${sh.aiRound || 1}/${S.settings.aiRounds || 10}` : ` / ${fmt.s(sh.intakeBudgetMs || (+S.settings.budgetS || 180)*1000)}`) : "";
+  const budget = sh.status === "nesting" ? (sh.nestFlow === "learned" ? ` / ${fmt.s((S.settings.learnedBudgetS || 600) * 1000)} ceiling` : (S.settings.engine || "solver") === "ai" ? ` · round ${sh.aiRound || 1}/${S.settings.aiRounds || 10}` : ` / ${fmt.s(sh.intakeBudgetMs || (+S.settings.budgetS || 180)*1000)}`) : "";
   const deep = sh.totalMs ? `${fmt.s(sh.totalMs)} from the first file · nest ${fmt.s(sh.elapsedMs || 0)}${sh.trials ? ` · ${sh.trials} trial${sh.trials > 1 ? "s" : ""}` : ""}${sh.optimized ? ` · charms shrunk ${((1 - sh.optimized.scale) * 100).toFixed(1).replace(/\.0$/, "")}%` : ""}` : "";
   const reviewingSrc = S.sources.find(s => s.review && s.review.state === "running" && s.charms.some(c => c.metal === sh.metal));
   const done = sh.status === "complete" || sh.status === "partial";
   st.title = done ? deep + (sh.searchMetrics ? ` · ${sh.searchMetrics.positions.toLocaleString()} position checks (${sh.searchMetrics.gpuPositions.toLocaleString()} on GPU)` : "") + (sh.gpuProgress ? ` · ${sh.gpuProgress.reason}` : "") + " · Verification checks geometry; it does not certify optimal packing." + (sh.nestFlow === "learned" ? ` · ${sh.learnedResult?.model?.model || (sh.learnedResult?.modelError ? "model unavailable" : "model skipped: baseline sufficient")} · selected ${sh.learnedResult?.selectedSource || "best verified layout"} · +${sh.learnedResult?.gainedPieces || 0} vs standard · baseline ${sh.learnedCheckpoint?.baseline?.placements.length || 0} · ${sh.trials} measured candidates` : "") : "";
-  const measured=sh.status==='nesting' && !sh.guidancePending && !sh.stage?.startsWith('Stopping') && sh.searchMetrics?.positions>0;
+  const measured=sh.status==='nesting' && !sh.stage?.startsWith('Stopping') && sh.searchMetrics?.positions>0;
   const searchLabel=measured ? `${sh.gpuProgress?.active?(sh.searchMetrics.gpuPositions?'GPU + CPU':'CPU · GPU ready'):sh.gpuProgress?.phase==='checking'?'CPU · GPU starting':sh.gpuProgress?'CPU · GPU unavailable':'CPU'} · ${sh.trials.toLocaleString()} layout trials` : sh.stage;
   if(measured)st.title=`${sh.stage} · ${sh.gpuProgress?.reason||'CPU pipeline'}. Layout trials are completed construction passes across all workers; interrupted passes are excluded. ${sh.searchMetrics.groups||0} complete group plans and ${sh.searchMetrics.branches||0} partial group branches evaluated. Diagnostic only: ${sh.searchMetrics.positions.toLocaleString()} low-level position checks, including repeats and early rejections. These are not distinct sheet arrangements.`;
   st.innerHTML = sh.stage ? `<span class="spin"></span><span>${esc(searchLabel)}</span><span class="r">${elapsed}${budget}</span>`
@@ -3562,7 +3438,7 @@ function openCharm(sh, c, placement) {
       <img crossorigin="anonymous" src="${cors(c.thumb)}" style="width:200px;aspect-ratio:1;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:10px">
       <div>
         <div class="field"><label>Layer name</label><input id="ciName" value="${esc(c.name || "")}"><div class="help">${c.namedBy === "claude" ? `Named by Claude${c.confidence ? ` (${Math.round(c.confidence * 100)}% sure)` : ""}${c.label ? ` — “${esc(c.label)}”` : ""}` : c.namedBy === "operator" ? "Named by an operator" : c.namedBy === "library" ? "From the charm library" : "File-based name"}. Renames are remembered for this artwork.</div></div>
-        <dl class="kv"><dt>Source</dt><dd>${esc(c.sourceName)} · #${c.index + 1}</dd><dt>Size</dt><dd>${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}</dd><dt>Silhouette</dt><dd>${fmt.area(c.areaPt2)} · ${c.members.length} elements${c.qty > 1 ? ` · ×${c.qty} on this file` : ""}</dd><dt>Geometry hash</dt><dd>${c.hash}</dd>${sh.packingAdvice?.hints?.profiles?.[c.id] ? (()=>{const p=sh.packingAdvice.hints.profiles[c.id];return `<dt>Shape guidance</dt><dd>${esc(p.family)} · adaptability ${p.adaptability}/100 · interlock ${p.interlock}/100 · edge fit ${p.edgeAffinity}/100 · ${esc(p.edgeRole)}<br>${esc(p.note)}</dd>`;})() : ""}${pl ? `<dt>Placed</dt><dd>${pl.angle}° at ${fmt.mm(pl.cxPt)}, ${fmt.mm(pl.cyPt)} from top-left</dd>` : ""}${c.open ? `<dt>Status</dt><dd style="color:#8a3a26">open path — excluded from nesting</dd>` : ""}</dl>
+        <dl class="kv"><dt>Source</dt><dd>${esc(c.sourceName)} · #${c.index + 1}</dd><dt>Size</dt><dd>${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}</dd><dt>Silhouette</dt><dd>${fmt.area(c.areaPt2)} · ${c.members.length} elements${c.qty > 1 ? ` · ×${c.qty} on this file` : ""}</dd><dt>Geometry hash</dt><dd>${c.hash}</dd>${pl ? `<dt>Placed</dt><dd>${pl.angle}° at ${fmt.mm(pl.cxPt)}, ${fmt.mm(pl.cyPt)} from top-left</dd>` : ""}${c.open ? `<dt>Status</dt><dd style="color:#8a3a26">open path — excluded from nesting</dd>` : ""}</dl>
         <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
           ${pl ? `<button class="btn ghost sm" id="ciPin">${c.pinned && !c.arrivalPin ? "Unpin" : "Pin here"}</button>` : ""}
           <button class="btn ghost sm" id="ciExclude">${c.excluded ? "Include in nest" : "Exclude from nest"}</button>
@@ -3834,7 +3710,7 @@ function openSettings() {
         on.disabled = true; on.textContent = "Switching on…";
         sb.enable().catch(e => { toast(`Sandbox: ${e.message}`, "bad", 9000); on.disabled = false; on.textContent = "Rehearse a run in the sandbox"; });
       }; } }
-  $("#stMinPt").value = s.minPt; $("#stVerifyRes").value = s.verifyRes; $("#stNaming").value = s.naming; $("#stReview").value = s.review || "on"; $("#stPackingAI").value = s.packingAI || "on"; $("#stEngine").value = s.engine || "solver"; $("#stComputePipeline").value = s.computePipeline === "gpu" ? "gpu" : "cpu"; $("#stMaxFill").value = Math.round((s.maxFill || 0.80) * 100); $("#stAiRounds").value = s.aiRounds || 10; $("#stSnapIn").value = +(((s.snapIn == null ? 0.25 : s.snapIn) * 25.4).toFixed(1)); $("#stNotify").value = s.notify; $("#stSound").value = s.sound;
+  $("#stMinPt").value = s.minPt; $("#stVerifyRes").value = s.verifyRes; $("#stNaming").value = s.naming; $("#stReview").value = s.review || "on"; $("#stEngine").value = s.engine || "solver"; $("#stComputePipeline").value = s.computePipeline === "gpu" ? "gpu" : "cpu"; $("#stMaxFill").value = Math.round((s.maxFill || 0.80) * 100); $("#stAiRounds").value = s.aiRounds || 10; $("#stSnapIn").value = +(((s.snapIn == null ? 0.25 : s.snapIn) * 25.4).toFixed(1)); $("#stNotify").value = s.notify; $("#stSound").value = s.sound;
   $("#stComputePipeline").disabled = $("#stEngine").value === "ai";
   $("#stEngine").onchange = () => { $("#stComputePipeline").disabled = $("#stEngine").value === "ai"; };
   openDlg($("#dlgSettings"));
@@ -3873,7 +3749,6 @@ function compareGPUSpeed() {
 }
 const cap = s => s[0].toUpperCase() + s.slice(1);
 function readSettings() {
-  S.settings.packingAI = $("#stPackingAI").value === "off" ? "off" : "on";
   const s = S.settings, previousGeometry = JSON.stringify([s.stock,s.clearancePt,s.insetPt,s.maxFill]);
   s.rail = $("#railSeg button.on")?.dataset.v || "md";
   for (const m of METALS) s.stock[m.key] = [(+$(`#st${cap(m.key)}W`).value / 25.4) || DEFAULTS.stock[m.key][0], (+$(`#st${cap(m.key)}H`).value / 25.4) || DEFAULTS.stock[m.key][1]];
