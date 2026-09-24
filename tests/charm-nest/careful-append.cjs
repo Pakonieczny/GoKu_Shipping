@@ -50,14 +50,16 @@ const gap=(a,b)=>{const A=box(a),B=box(b);return Math.max(0,A.x0-B.x1,B.x0-A.x1,
   const placed=probes.filter(p=>p.stage==='place').map(p=>p.id),lifted=probes.filter(p=>p.stage==='lift').map(p=>p.id);
   assert(placed.every(id=>lifted.includes(id)),'a charm drawn in place is taken off again when its order leaves');
  }
- // Two holes: the left one fits both a and b, the right one only a. With five charms waiting the largest, a, goes first,
- // to the left, and strands b; the second pass seats the stranded charm first, so every charm is placed.
- {const blocks=[['r1',50,32,34,17],['r2',8,30,5,24],['r3',44,6,31,36]].map(([id,w,h,cx,cy])=>({p:piece(id,w,h,0),at:{id,cxPt:cx,cyPt:cy,angle:0}}));
-  const a=piece('a',5.5,5.5,0),b=piece('b',3,7.5,0),tiny=['t1','t2','t3'].map(id=>piece(id,1,1,0));
-  const job={...base,maxFill:1,fitWeights:{along:50},pieces:[...blocks.map(x=>x.p),a,b,...tiny],lockedPlacements:blocks.map(x=>x.at)};
+ // Two holes: a narrow one at the left that fits either a or b but not both, and one at the right that fits only a.
+ // Taken alone, a grades best in the left hole. Looking ahead, a is not put where it takes b's only spot: every charm
+ // is seated in one pass. Without the look-ahead a goes left and strands b; the second pass seats the stranded charm
+ // first, so every charm is placed all the same.
+ for(const lookAhead of [true,false]){const blocks=[['r1',54.5,32,31.75,17],['r2',3.5,30,2.75,24],['r3',48.5,6,28.75,36]].map(([id,w,h,cx,cy])=>({p:piece(id,w,h,0),at:{id,cxPt:cx,cyPt:cy,angle:0}}));
+  const a=piece('a',2,2,0),b=piece('b',3,7.5,0);
+  const job={...base,maxFill:1,lookAhead,fitWeights:{along:20},pieces:[...blocks.map(x=>x.p),a,b],lockedPlacements:blocks.map(x=>x.at)};
   const r=await S.solve(job,{});assert(S.verify(job,r.placements,4).ok,JSON.stringify(r.placements));
-  assert.deepEqual(r.rejects,[],'every charm seated: '+JSON.stringify(r.placements));assert.equal(r.careful.passes,2);
-  assert(r.placements.find(p=>p.id==='b').cxPt<10&&r.placements.find(p=>p.id==='a').cxPt>50,'b in the left hole, a in the right');
+  assert.deepEqual(r.rejects,[],'every charm seated: '+JSON.stringify(r.placements));assert.equal(r.careful.passes,lookAhead?1:2,'passes with lookAhead '+lookAhead);
+  assert(r.placements.find(p=>p.id==='b').cxPt<5&&r.placements.find(p=>p.id==='a').cxPt>50,'b in the left hole, a in the right');
  }
  // Stopped at once: only the saved layout comes back.
  {const old=piece('old',8,8,1),fresh=piece('new',7,7),fixed={id:'old',cxPt:5,cyPt:5,angle:0};

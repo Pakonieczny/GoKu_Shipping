@@ -859,7 +859,7 @@
         const far = axisX ? x + v.fine.w : y + v.fine.h, growth = Math.max(0, far - front) / MM_PX;
         const along = (axisX ? x + v.fine.w / 2 : y + v.fine.h / 2) / MM_PX;
         graded++;
-        return { waste, around, growth, fit: -(waste + weights.around * around + weights.growth * growth + weights.along * along) };
+        return { waste, around, growth, along, far, fit: -(waste + weights.around * around + weights.growth * growth + weights.along * along) };
       };
       /* Where a charm can go, exactly. At each angle every position on the fine grid is legal or not; the positions
          are taken 4×4 at a time: a block is out when even the part of the charm all 16 positions share hits
@@ -901,7 +901,7 @@
         const n = PW * PH;
         if (!legal || legal.n < n) legal = { n, L: new Uint8Array(n), C: new Int32Array(n), S: new Int32Array(n) };
         const L = legal.L; L.fill(0, 0, n);
-        const { core, hull } = blockMasks(v), B = ratio;
+        const { core, hull } = v.blocks || (v.blocks = blockMasks(v)), B = ratio;
         for (let by = 0; by < PH; by += B) for (let bx = 0; bx < PW; bx += B) {
           if (core && !fine.fits(core.pm, bx + core.x, by + core.y)) continue;
           const ex = Math.min(PW, bx + B), ey = Math.min(PH, by + B);
@@ -912,14 +912,16 @@
       };
       /** Candidate spots for one charm at every angle: the snuggest corners of every region of legal positions, and
           the snuggest corners at each angle overall. Each spot carries its touch and the gap it sits in. */
+      const SEP = 6;
+      /** Keep the k snuggest spots in `list`, one of any few that lie within SEP cells of each other. */
+      const keep = (list, c, k) => {
+        if (list.length === k && c.touch <= list[k - 1].touch) return;
+        for (let i = 0; i < list.length; i++) { const o = list[i]; if (Math.abs(o.x - c.x) <= SEP && Math.abs(o.y - c.y) <= SEP) { if (c.touch > o.touch) { list[i] = c; list.sort((a, b) => b.touch - a.touch); } return; } }
+        if (list.length < k) list.push(c); else list[k - 1] = c;
+        list.sort((a, b) => b.touch - a.touch);
+      };
       async function spotsFor(p) {
-        const out = [], PER = 3, TOP = 10, SEP = 6;
-        const keep = (list, c, k) => {
-          if (list.length === k && c.touch <= list[k - 1].touch) return;
-          for (let i = 0; i < list.length; i++) { const o = list[i]; if (Math.abs(o.x - c.x) <= SEP && Math.abs(o.y - c.y) <= SEP) { if (c.touch > o.touch) { list[i] = c; list.sort((a, b) => b.touch - a.touch); } return; } }
-          if (list.length < k) list.push(c); else list[k - 1] = c;
-          list.sort((a, b) => b.touch - a.touch);
-        };
+        const out = [], PER = 3, TOP = 10;
         for (const v of p.careful) {
           if (stopped()) return out;
           const map = legalMap(v); if (!map) continue;
@@ -968,18 +970,22 @@
         }
         return { x, y };
       };
-      /** The best spot for one charm: every candidate graded, then the leaders nudged and graded again. */
-      async function bestSpotFor(p, front) {
+      /** Every candidate spot of one charm, graded on the sheet as it stands; null when stopped. */
+      async function gradeAll(p, front) {
         const spots = await spotsFor(p);
-        if (!spots.length || stopped()) return null;
-        const scored = [];
+        if (stopped()) return null;
         for (let i = 0; i < spots.length; i++) {
-          const s = spots[i]; Object.assign(s, grade(s.v, s.x, s.y, front)); scored.push(s);
+          const s = spots[i]; Object.assign(s, grade(s.v, s.x, s.y, front));
           probe(p, s.v, s.x, s.y, "try");
           if ((i & 63) === 63) { if (stopped()) return null; reportMetrics(); await yieldNow(); }
         }
-        scored.sort((a, b) => b.fit - a.fit);
-        if (cb.onGrades) cb.onGrades(p.id, scored.map(s => ({ angle: s.v.angle, cxPt: (s.x + s.v.solid.cx) / fineRes, cyPt: (s.y + s.v.solid.cy) / fineRes, waste: s.waste, around: s.around, growth: s.growth, fit: s.fit })), scored.length);
+        return spots;
+      }
+      /** The best of a charm's graded spots: the leaders nudged and graded again. */
+      const bestOf = (p, spots, front, quiet) => {
+        if (!spots.length) return null;
+        const scored = spots.slice().sort((a, b) => b.fit - a.fit);
+        if (cb.onGrades && !quiet) cb.onGrades(p.id, scored.map(s => ({ angle: s.v.angle, cxPt: (s.x + s.v.solid.cx) / fineRes, cyPt: (s.y + s.v.solid.cy) / fineRes, waste: s.waste, around: s.around, growth: s.growth, fit: s.fit })), scored.length);
         let best = null;
         for (const s of scored.slice(0, 6)) {
           const n = nudge(p, s.v, s.x, s.y), g = n.x === s.x && n.y === s.y ? s : { v: s.v, x: n.x, y: n.y, ...grade(s.v, n.x, n.y, front) };
@@ -987,7 +993,76 @@
           if (!best || pick.fit > best.fit) best = pick;
         }
         return best;
-      }
+      };
+      /* Look-ahead (Paul, 24 Sep: "look ahead for as many charms as you have available to choose the best one for the
+         current situation"). Every waiting charm's spots are graded once on the sheet as it stands, and after each
+         placement only what that placement changed is graded again: spots it covers are dropped, spots whose grading
+         reaches it or the free space whose worth it changed are graded again, and the charm's resting spots against
+         the newly placed charm are added. So every waiting charm, however many, is weighed at every step, not only
+         when four or fewer wait. Before a move is made, the best few are each tried ahead: every other waiting charm
+         takes the best of its graded spots that the move leaves free, and the move that leaves them the best spots
+         goes in, so a charm is not put where it takes the only good spot of another. Trying a move ahead only checks
+         which spots it takes, so it costs next to nothing and the charms keep coming one after another.            */
+      const AHEAD = job.lookAhead === false ? 0 : 6, STRANDS = 1000;   // moves tried ahead; mm² charged for each charm a move leaves no spot
+      const aheadStats = { rounds: 0, changed: 0 };
+      const boxOf = (v, x, y) => [x, y, x + v.fine.w, y + v.fine.h];
+      const meets = (a, b, pad) => a[0] - pad < b[2] && b[0] < a[2] + pad && a[1] - pad < b[3] && b[1] < a[3] + pad;
+      const lossPad = margin + reach + 1, aroundPad = Math.ceil(aroundU / 3) + 2;
+      /** The box of the cells whose worth differs between two sheetValue fields, joined with `box`. */
+      const changedBox = (before, after, box) => {
+        let x0 = box[0], y0 = box[1], x1 = box[2], y1 = box[3];
+        for (let y = 0; y < FH; y++) for (let x = 0, i = y * FW; x < FW; x++, i++) if (before[i] !== after[i]) { if (x < x0) x0 = x; if (x >= x1) x1 = x + 1; if (y < y0) y0 = y; if (y >= y1) y1 = y + 1; }
+        return [x0, y0, x1, y1];
+      };
+      /** The legal positions of a variant with the mask's corner in [x0, x1) × [y0, y1), taken 4×4 as in legalMap. */
+      const legalIn = (v, x0, y0, x1, y1) => {
+        const w = x1 - x0, h = y1 - y0, L = new Uint8Array(w * h), pm = v.fine.pm, B = ratio;
+        const { core, hull } = v.blocks || (v.blocks = blockMasks(v));
+        for (let by = y0; by < y1; by += B) for (let bx = x0; bx < x1; bx += B) {
+          if (core && !fine.fits(core.pm, bx + core.x, by + core.y)) continue;
+          const ex = Math.min(x1, bx + B), ey = Math.min(y1, by + B);
+          if (hull && fine.fits(hull.pm, bx + hull.x, by + hull.y)) { for (let y = by; y < ey; y++) L.fill(1, (y - y0) * w + bx - x0, (y - y0) * w + ex - x0); continue; }
+          for (let y = by; y < ey; y++) for (let x = bx; x < ex; x++) if (fine.fits(pm, x, y)) L[(y - y0) * w + x - x0] = 1;
+        }
+        return L;
+      };
+      /** The snuggest k resting spots of a variant within a cell of box m: corners of its legal positions there. */
+      const restingNear = (v, m, k) => {
+        const pm = v.fine.pm, PW = FW - pm.w + 1, PH = FH - pm.h + 1;
+        if (PW <= 0 || PH <= 0) return [];
+        const x0 = Math.max(0, m[0] - pm.w - 2), y0 = Math.max(0, m[1] - pm.h - 2), x1 = Math.min(PW, m[2] + 2), y1 = Math.min(PH, m[3] + 2);
+        if (x1 <= x0 || y1 <= y0) return [];
+        const w = x1 - x0, L = legalIn(v, x0, y0, x1, y1), list = [];
+        // a neighbour off the sheet is blocked; one inside the sheet but outside the window is unknown (-1)
+        const at = (x, y) => x < 0 || y < 0 || x >= PW || y >= PH ? 0 : x < x0 || y < y0 || x >= x1 || y >= y1 ? -1 : L[(y - y0) * w + x - x0];
+        for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+          if (!L[(y - y0) * w + x - x0]) continue;
+          const l = at(x - 1, y), r = at(x + 1, y), u = at(x, y - 1), d = at(x, y + 1);
+          if (l < 0 || r < 0 || u < 0 || d < 0 || (l && r) || (u && d)) continue;
+          keep(list, { v, x, y, touch: ringOccupied(v.ringFine, x - v.ringPad, y - v.ringPad) }, k);
+        }
+        return list;
+      };
+      /** One charm's graded spots brought up to date with the placements made since ({box, chg} each): a new list, the
+          cached spots are not changed. */
+      const refresh = (p, spots, events, front) => {
+        const out = [], seen = new Set();
+        for (const s of spots) {
+          const b = boxOf(s.v, s.x, s.y);
+          if (events.some(e => meets(b, e.box, 1)) && !fine.fits(s.v.fine.pm, s.x, s.y)) continue;
+          const t = { ...s };
+          if (events.some(e => meets(b, e.chg, lossPad))) t.waste = lossAt(s.v, s.x, s.y) * cellMm2;
+          if (events.some(e => meets(b, e.box, aroundPad))) t.around = aroundAt(s.v, s.x, s.y) * cellMm2;
+          t.growth = Math.max(0, t.far - front) / MM_PX;
+          t.fit = -(t.waste + weights.around * t.around + weights.growth * t.growth + weights.along * t.along);
+          out.push(t); seen.add(t.v.angle + ":" + t.x + ":" + t.y);
+        }
+        for (const e of events) for (const v of p.careful) for (const c of restingNear(v, e.box, 2)) {
+          const key = v.angle + ":" + c.x + ":" + c.y; if (seen.has(key)) continue;
+          seen.add(key); out.push(Object.assign(c, grade(v, c.x, c.y, front))); metrics.positions++;
+        }
+        return out;
+      };
       /* A charm with no legal spot at any angle has none later either: each charm placed after it only takes room. It is
          set aside with the rest of its order, since a sheet never holds part of an order, and so is a charm that would
          take the sheet past its fill ceiling; the others go on, and the pass ends when every charm is placed or set
@@ -1016,31 +1091,75 @@
           return true;
         };
         if (cb.onStage) cb.onStage("careful", 0, left.length);
+        // each waiting charm's graded spots and how many of the placements since the start they have seen
+        const cache = new Map(), events = [];
+        const current = async (p, front) => {
+          let c = cache.get(p);
+          if (!c) { const spots = await gradeAll(p, front); if (!spots) return null; c = { spots, at: events.length }; }
+          else if (c.at < events.length) c = { spots: refresh(p, c.spots, events.slice(c.at), front), at: events.length };
+          cache.set(p, c);
+          return c.spots;
+        };
+        /** What a move leaves the other waiting charms: its own grade and, for each of them, the best of its graded
+            spots the move leaves free, less STRANDS for each one it leaves none. */
+        const ahead = (mv, others) => {
+          const box = boxOf(mv.v, mv.x, mv.y), keepFine = fine;
+          fine = fine.clone(); fine.stamp(mv.v.fine.bits, mv.v.fine.w, mv.v.fine.h, mv.x, mv.y, mv.p.id);
+          probe(mv.p, mv.v, mv.x, mv.y, "try", true);
+          let score = mv.fit;
+          try {
+            for (const q of others) {
+              const c = cache.get(q); if (!c || c.at < events.length) continue;
+              let best = -Infinity;
+              for (const s of c.spots) if (s.fit > best && (!meets(boxOf(s.v, s.x, s.y), box, 1) || fine.fits(s.v.fine.pm, s.x, s.y))) best = s.fit;
+              score += best > -Infinity ? best : -STRANDS;
+            }
+          } finally { fine = keepFine; }
+          return score;
+        };
+        sheetValue();
         while (left.length) {
           if (stopped()) return null;
-          sheetValue();
           const front = reachOf();
-          // best fit first: every waiting charm finds its best spot on the sheet as it is, and the best of those goes in
-          const firsts = left.filter(p => first.has(p));
-          let move = null;
-          for (const p of firsts.length ? firsts : left.length <= 4 ? left.slice() : left.slice().sort((a, b) => b.areaPt2 - a.areaPt2).slice(0, 1)) {
+          // best fit first over every waiting charm: each finds its best spot on the sheet as it is
+          const firsts = left.filter(p => first.has(p)), moves = [];
+          let lifted = false;
+          for (const p of firsts.length ? firsts : left.slice()) {
             if (!left.includes(p)) continue;
-            const s = await bestSpotFor(p, front);
-            if (s) { hadRoom.add(p); if (!move || s.fit > move.fit) move = { p, ...s }; continue; }
+            const spots = await current(p, front);
+            if (!spots) return null;
+            const s = bestOf(p, spots, front);
+            if (s) { hadRoom.add(p); moves.push({ p, ...s }); continue; }
             if (stopped()) return null;
             if (rec.length && (hadRoom.has(p) || fitsOn(p, baseFine))) stranded.push(p);
-            if (setAside(p, noRoom)) { move = null; break; }
-            if (move && !left.includes(move.p)) move = null;
+            cache.delete(p);
+            // lifted charms free their space: every charm's spots are graded afresh
+            if (setAside(p, noRoom)) { lifted = true; break; }
           }
-          if (!move) continue;
+          if (lifted) { cache.clear(); events.length = 0; sheetValue(); continue; }
+          const live = moves.filter(m => left.includes(m.p)).sort((a, b) => b.fit - a.fit);
+          if (!live.length) continue;
+          // the best few moves tried ahead against the other waiting charms
+          let move = live[0];
+          if (AHEAD && left.length > 1 && live.length > 1) {
+            let top = -Infinity;
+            for (const mv of live.slice(0, AHEAD)) {
+              const score = ahead(mv, left.filter(q => q !== mv.p));
+              if (score > top) { top = score; move = mv; }
+            }
+            aheadStats.rounds++; if (move !== live[0]) aheadStats.changed++;
+          }
           const { p, v, x, y } = move;
           if (!fine.fits(v.fine.pm, x, y)) return null;
-          if ((cells + v.cells) / usableCellsFine > maxFill + 1e-9) { setAside(p, over); continue; }
+          if ((cells + v.cells) / usableCellsFine > maxFill + 1e-9) { if (setAside(p, over)) { cache.clear(); events.length = 0; sheetValue(); } continue; }
+          const before = all.val.slice();
           fine.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y, p.id);
           for (let yy = 0; yy < v.fine.h; yy++) for (let xx = 0; xx < v.fine.w; xx++) if (v.fine.bits[yy * v.fine.w + xx]) { const gx = Math.floor((x + xx) / ratio), gy = Math.floor((y + yy) / ratio); if (gx >= 0 && gy >= 0 && gx < coarse.W && gy < coarse.H) coarse.set(gx, gy); }
           coarse.buildSAT();
           rec.push({ p, v, x, y, fit: move.fit, waste: move.waste }); cells += v.cells;
-          left.splice(left.indexOf(p), 1);
+          left.splice(left.indexOf(p), 1); cache.delete(p);
+          sheetValue();
+          const box = boxOf(v, x, y); events.push({ box, chg: changedBox(before, all.val, box) });
           probe(p, v, x, y, "place", true);
           const pl = { id: p.id, angle: v.angle, cxPt: (x + v.solid.cx) / fineRes, cyPt: (y + v.solid.cy) / fineRes, xPt: (x + (v.fine.w - v.solid.w) / 2) / fineRes, yPt: (y + (v.fine.h - v.solid.h) / 2) / fineRes, wPt: v.solid.w / fineRes, hPt: v.solid.h / fineRes, careful: { waste: +move.waste.toFixed(2), around: +move.around.toFixed(2), growth: +move.growth.toFixed(2) } };
           if (cb.onPlaced) cb.onPlaced(pl, { trial: 0, placed: rec.length, total: prepared.length, careful: true });
@@ -1063,7 +1182,7 @@
       metrics.layouts++; reportMetrics(true);
       return { placements, rejects: prepared.filter(p => !ids.has(p.id)).map(p => p.id), capped, noRoom: out.noRoom.map(p => p.id), density: cells / usableCellsFine, contactQuality: qualityOf(rec, fine), trial: 0, stripPacked: false,
         usablePt2: usableCellsFine / (fineRes * fineRes), freePt2: fine.freeCells() / (fineRes * fineRes), placedPt2: cells / (fineRes * fineRes), placedCells: cells, pocket: pocketPt(coarse, coarseRes),
-        grids: { fine, coarse }, rec, fitScore: out.fit, wastePt2: rec.reduce((n, r) => n + r.waste, 0) * MM_PX * MM_PX / (fineRes * fineRes), careful: { graded, angles: angles.length, turn, passes } };
+        grids: { fine, coarse }, rec, fitScore: out.fit, wastePt2: rec.reduce((n, r) => n + r.waste, 0) * MM_PX * MM_PX / (fineRes * fineRes), careful: { graded, angles: angles.length, turn, passes, ahead: aheadStats } };
     }
     let carefulDone = false;
     if (carefulOn && !best) {
