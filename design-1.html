@@ -4789,6 +4789,8 @@ async function markBritesDesigned(orderIds, senderName, setId = null) {
         // Sorter completion must wait for confirmed delivery. Retry through the
         // same idempotent endpoint; an unkeyed fallback could post twice.
         if (setId) { failed.push(rid); return; }
+        // the direct write below goes to the production chat: a sandbox order (a copy under a new number) never goes there
+        if (SANDBOX) { console.warn("markBritesDesigned failed (sandbox, no fallback):", rid, err); return; }
         if (!db) { console.warn("markBritesDesigned failed and no Firestore fallback:", rid, err); return; }
         try {
           await db.collection("Brites_Orders").doc(String(rid)).set({}, { merge:true });
