@@ -45,20 +45,30 @@ exports.handler = async (event) => {
         uncompleteIds   // array of receipt IDs to unset
       } = body;
 
+      /* A released claim or lock stays as a tombstone so delta polls see it, then goes: it carries expireAt (a Firestore
+         TTL policy on that field deletes it 30 days on). A document still claimed or still selected never carries it, so
+         a live claim or lock is never removed. */
+      const TOMBSTONE_DAYS = 30;
+      const expiries = async (ids, stillHeld) => {
+        const snaps = await db.getAll(...ids.map((id) => col(REALTIME_COLL).doc(id)));
+        return snaps.map((s) => (s.exists && stillHeld(s.data() || {}) ? admin.firestore.FieldValue.delete() : new Date(Date.now() + TOMBSTONE_DAYS * 86400000)));
+      };
+
       /* ─── Sorter claims: a gold dot ("in a sorter run"), never a lock. The other bench keeps notes and chat. ─── */
       const { rtClaimIds, rtUnclaimIds, claimedBy, claimRun } = body;
       if (Array.isArray(rtClaimIds) && rtClaimIds.length) {
         const batch = db.batch();
         rtClaimIds.map(String).slice(0, 500).forEach((id) => {
-          batch.set(col(REALTIME_COLL).doc(id), { claimed: true, claimedBy: String(claimedBy || "sorter"), claimRun: claimRun ? String(claimRun) : null, claimAt: admin.firestore.FieldValue.serverTimestamp(), at: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+          batch.set(col(REALTIME_COLL).doc(id), { claimed: true, claimedBy: String(claimedBy || "sorter"), claimRun: claimRun ? String(claimRun) : null, claimAt: admin.firestore.FieldValue.serverTimestamp(), at: admin.firestore.FieldValue.serverTimestamp(), expireAt: admin.firestore.FieldValue.delete() }, { merge: true });
         });
         await batch.commit();
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ success: true, message: "Claimed", count: rtClaimIds.length }) };
       }
       if (Array.isArray(rtUnclaimIds) && rtUnclaimIds.length) {
+        const ids = rtUnclaimIds.map(String).slice(0, 500), expireAt = await expiries(ids, (d) => d.selected === true);
         const batch = db.batch();
-        rtUnclaimIds.map(String).slice(0, 500).forEach((id) => {
-          batch.set(col(REALTIME_COLL).doc(id), { claimed: false, claimedBy: null, claimRun: null, at: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        ids.forEach((id, i) => {
+          batch.set(col(REALTIME_COLL).doc(id), { claimed: false, claimedBy: null, claimRun: null, at: admin.firestore.FieldValue.serverTimestamp(), expireAt: expireAt[i] }, { merge: true });
         });
         await batch.commit();
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ success: true, message: "Unclaimed", count: rtUnclaimIds.length }) };
@@ -74,7 +84,8 @@ exports.handler = async (event) => {
             selected   : true,
             selectedBy : clientId || "server",
             page       : page || "design",
-            at         : admin.firestore.FieldValue.serverTimestamp()
+            at         : admin.firestore.FieldValue.serverTimestamp(),
+            expireAt   : admin.firestore.FieldValue.delete()
           }, { merge:true });
         });
         await batch.commit();
@@ -87,15 +98,16 @@ exports.handler = async (event) => {
 
       /* 🔓 De-select → write a tombstone so delta polls see it */
       if (Array.isArray(rtUnlockIds) && rtUnlockIds.length) {
-        const ids = rtUnlockIds.map(String);
+        const ids = rtUnlockIds.map(String), expireAt = await expiries(ids, (d) => d.claimed === true);
         const batch = db.batch();
-        ids.forEach((id) => {
+        ids.forEach((id, i) => {
           const ref = col(REALTIME_COLL).doc(id);
           batch.set(ref, {
             selected   : false,
             selectedBy : null,
             page       : null,
-            at         : admin.firestore.FieldValue.serverTimestamp()
+            at         : admin.firestore.FieldValue.serverTimestamp(),
+            expireAt   : expireAt[i]
           }, { merge: true });
         });
         await batch.commit();

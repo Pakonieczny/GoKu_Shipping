@@ -26,7 +26,7 @@
  *
  *  OPS (POST JSON {op, …}; X-Edit-Passcode when EDIT_PASSCODE is set)
  *    ping · lookupCharms · putCharms · renameCharm · listCharms
- *    putSheet · listSheets · getSheet · deleteSheet
+ *    putSheet · listSheets · getSheet · deleteSheet · sheetPdf
  *    putCalibration · getCalibration
  *    startJob · getJob · stopJob
  *    + bridge (design doc §13): masterPutIndex · masterGet · masterGetMany · masterList · masterPatch · masterPutFile ·
@@ -292,6 +292,32 @@ async function op_listCharms(b) {
   if (q) rows = rows.filter(r => `${r.name || ""} ${r.label || ""} ${r.sourceName || ""}`.toLowerCase().includes(q));
   return { charms: rows, scanned, truncated: scanned >= limit };
 }
+/* A sheet document keeps a short copy of each approved back: what the Library, laser readiness, the back previews, the set
+   manifest and a recalled Decided list read. The whole record (fit metrics, flip checks, the review, the reference
+   picture) stays in Charm_Pool_Back, and getSheet puts it back for the readers that edit or report a back. A whole copy
+   per back used to count toward the sheet document's 1 MiB. */
+const SHEET_BACK_FIELDS = ["poolId", "sheetId", "setId", "runId", "order", "transactionId", "sku", "copy", "text", "lines", "lineGap", "lineMode", "font", "weight", "sizePt", "capMm", "box", "centre", "angle", "upAngle", "solidBack", "small", "thin", "name", "approvedAt", "approvedBy", "invalidated", "previewWPt", "previewHPt", "pageWPt", "pageHPt", "materialVersion"];
+function sheetBack(bk) {
+  if (!bk || typeof bk !== "object") return bk;
+  const out = {};
+  for (const k of SHEET_BACK_FIELDS) if (bk[k] !== undefined) out[k] = bk[k];
+  if (bk.verified) out.verified = { geometry: { ok: !!(bk.verified.geometry && bk.verified.geometry.ok) }, file: { ok: !!(bk.verified.file && bk.verified.file.ok) } };
+  if (bk.outputs) out.outputs = Object.fromEntries(["ai", "png"].filter(k => bk.outputs[k]).map(k => [k, { path: bk.outputs[k].path || null, url: bk.outputs[k].url || null }]));
+  return out;
+}
+/** The whole record of each back a sheet lists, from Charm_Pool_Back, when it is still the approval the sheet holds. */
+async function withFullBacks(d) {
+  const pool = d.backPool || [], ids = [...new Set(pool.map(bk => bk && bk.poolId).filter(isPoolId))], full = new Map();
+  for (let i = 0; i < ids.length; i += 100) for (const s of await db.getAll(...ids.slice(i, i + 100).map(id => col(BACK).doc(id)))) if (s.exists) full.set(s.id, s.data());
+  d.backPool = pool.map(bk => {
+    const r = bk && full.get(bk.poolId); if (!r || r.invalidated || +r.approvedAt !== +bk.approvedAt) return bk;
+    const { updatedAt, invalidatedAt, superseded, ...rest } = r; void updatedAt; void invalidatedAt; void superseded;
+    return Object.assign(rest, bk, { verified: rest.verified || bk.verified, outputs: bk.outputs || rest.outputs });
+  });
+  return d;
+}
+// Firestore refuses a document over 1 MiB; a sheet record is refused here first, in words, before it gets there.
+const SHEET_DOC_BYTES = 900000;
 async function op_putSheet(b) {
   const s = b.sheet || {}; if (!isId(s.id)) return { error: "bad sheet id" };
   const doc = Object.assign({}, s, { id: s.id, archived: false, updatedAt: FV.serverTimestamp() });
@@ -300,7 +326,7 @@ async function op_putSheet(b) {
   for(const key of ['roseProtectedJson','roseStockId','roseRevision','rosePlanJson','rosePlanHash','roseFingerprint','roseCutAt','roseCutRevision'])delete doc[key];
   if (["gold10k","gold14k"].includes(s.metal) && s.solidIncluded === false) Object.assign(doc, {draft:true,setId:null,setSeq:null,sheetIndex:null,label:null});
   const ref = col(SHEETS).doc(s.id);
-  await db.runTransaction(async tx => {
+  const refused = await db.runTransaction(async tx => {
     const ex = await tx.get(ref), old = ex.exists ? ex.data() : {};
     if(old.roseCutAt && (s.placements || s.stock || s.sources))throw new Error('This layout was already cut. Start a new sheet to use its remnant');
     const protection=require('./_charmNestRoseStock'),guard=protection.protectedLayout(old);
@@ -318,10 +344,13 @@ async function op_putSheet(b) {
       const saved = await tx.get(col(BACK).doc(id));
       if (saved.exists && ((saved.data().invalidated && (+saved.data().approvedAt || 0) >= (+bk.approvedAt || 0)) || (+saved.data().invalidatedAt || 0) >= (+bk.approvedAt || 0))) backs.delete(id);
     }
-    doc.backPool = [...backs.values()];
+    doc.backPool = [...backs.values()].map(sheetBack);
+    const bytes = Buffer.byteLength(JSON.stringify(Object.assign({}, old, doc)));
+    if (bytes > SHEET_DOC_BYTES) return { error: `Sheet ${s.id} was not saved: its record would be ${Math.round(bytes / 1024).toLocaleString("en-US")} KB, over the ${SHEET_DOC_BYTES / 1000} KB one sheet record may hold (Firestore keeps at most 1 MiB in one document). Move some of its charms to another sheet and save again.`, status: 413 };
     tx.set(ref, doc, {merge:true});
+    return null;
   });
-  return { ok: true, id: s.id };
+  return refused || { ok: true, id: s.id };
 }
 async function op_listSheets(b) {
   const limit = Math.min(500, Math.max(1, num(b.limit) || 300));
@@ -341,6 +370,7 @@ async function op_getSheet(b) {
   const s = await col(SHEETS).doc(b.id).get();
   if (!s.exists) return { sheet: null };
   const d = s.data(); d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt);
+  await withFullBacks(d);
   await refreshLinks(d);
   return { sheet: (await readinessRecords([d]))[0] };
 }
@@ -402,10 +432,50 @@ async function op_deleteSheet(b) {
   });
   if (d) {
     const bucket = admin.storage().bucket();
-    const paths = ["ai", "pdf", "labelled", "report", "preview"].map(k => d.outputs && d.outputs[k] && d.outputs[k].path).filter(Boolean);
-    await Promise.all(paths.map(p => bucket.file(p).delete().catch(() => {})));
+    await Promise.all(outputPaths(d).map(p => bucket.file(p).delete().catch(() => {})));
+    // Approved back files are never deleted: those a Charm_Pool_Back record still names stay where they are, and the
+    // rest go to the archive path, as a superseded approval's do.
+    const backs = (d.backPool || []).filter(bk => bk && isPoolId(bk.poolId)), named = new Set();
+    for (let i = 0; i < backs.length; i += 100) for (const s of await db.getAll(...backs.slice(i, i + 100).map(bk => col(BACK).doc(bk.poolId)))) if (s.exists) for (const k of ["ai", "png"]) { const p = s.data().outputs && s.data().outputs[k] && s.data().outputs[k].path; if (p) named.add(p); }
+    await archiveFiles(backs.flatMap(bk => ["ai", "png"].map(k => bk.outputs && bk.outputs[k] && bk.outputs[k].path)).filter(p => p && !named.has(p)).map(from => ({ from, to: archivePath(from) })));
   }
   return { ok: true, deleted: !!d };
+}
+/** A sheet's own five files, and the .pdf beside its .ai, which is written only when the sheet is final (op_sheetPdf). */
+const outputPaths = d => { const o = d.outputs || {}, ai = o.ai && o.ai.path; return [...new Set(["ai", "pdf", "labelled", "report", "preview"].map(k => o[k] && o[k].path).concat(ai && /\.ai$/.test(ai) ? [ai.replace(/\.ai$/, ".pdf")] : []).filter(Boolean))]; };
+/* The archive path of a superseded approved file: charmnest/superseded/<the rest of its path> (the sandbox's stay under
+   charmnest/sandbox/superseded/). Nothing there is read by the app; a bucket lifecycle rule can move it to cold storage. */
+const archivePath = p => /^charmnest\/sandbox\//.test(p) ? p.replace(/^charmnest\/sandbox\//, "charmnest/sandbox/superseded/") : p.replace(/^charmnest\//, "charmnest/superseded/");
+async function archiveFiles(list) {
+  const bucket = list.length ? admin.storage().bucket() : null;
+  await Promise.all(list.filter(f => /^charmnest\//.test(f.from) && !/^charmnest\/(sandbox\/)?superseded\//.test(f.from)).map(async ({ from, to }) => {
+    try { await bucket.file(from).move(to); } catch (e) { if (!(e && (e.code === 404 || e.code === "404"))) console.warn(`[charmNestLibrary] ${from} could not be moved to ${to}: ${e && e.message}`); }
+  }));
+}
+/* A sheet's .pdf is its .ai under a second name (an Illustrator file is a PDF), for whoever opens files by type. It was
+   uploaded again, from the browser, with every save of every sheet; now it is made when the sheet is final (released
+   full, its intake finished) and when its set is released for labels: a copy inside the bucket, made again only when
+   the .ai changed. The record's outputs.pdf says where it is. */
+async function op_sheetPdf(b) {
+  const ids = [...new Set([].concat(b.ids || [], b.id || []).map(x => str(x, 80)).filter(isId))].slice(0, 60);
+  if (!ids.length) return { error: "bad sheet id" };
+  const bucket = admin.storage().bucket(), urls = {};
+  for (const id of ids) {
+    const ref = col(SHEETS).doc(id), snap = await ref.get(); if (!snap.exists) continue;
+    const d = snap.data(), ai = d.outputs && d.outputs.ai && d.outputs.ai.path;
+    if (d.archived || !ai || !/^charmnest\/.+\.ai$/.test(ai)) continue;
+    const path = ai.replace(/\.ai$/, ".pdf"), src = bucket.file(ai), dst = bucket.file(path);
+    try {
+      const [[am], [pm]] = await Promise.all([src.getMetadata(), dst.getMetadata().catch(() => [null])]);
+      const kept = pm && pm.metadata && String(pm.metadata.firebaseStorageDownloadTokens || "").split(",")[0], same = !!(kept && am.md5Hash && pm.md5Hash === am.md5Hash);
+      if (!same) await src.copy(dst);
+      const token = kept || crypto.randomUUID();
+      if (!same) await dst.setMetadata({ contentType: "application/pdf", metadata: { firebaseStorageDownloadTokens: token } });
+      urls[id] = "https://firebasestorage.googleapis.com/v0/b/" + encodeURIComponent(bucket.name) + "/o/" + encodeURIComponent(path) + "?alt=media&token=" + encodeURIComponent(token);
+      await ref.update({ "outputs.pdf": { path, url: urls[id] } });
+    } catch (e) { console.warn(`[charmNestLibrary] sheet ${id}: .pdf not made: ${e && e.message}`); }
+  }
+  return { ok: true, urls };
 }
 /* A calibration row is a statistic the fill estimate learns from — never part of the sheet record. A sheet that placed
    nothing has nothing to teach, so it is skipped, not refused: an error here used to travel all the way up and stop a run
@@ -487,7 +557,11 @@ async function op_startAgent(b) {
   const fetch = require("node-fetch");
   const base = process.env.URL || process.env.DEPLOY_PRIME_URL || "https://goldenspike.app";
   const kick = await fetch(`${base}/.netlify/functions/${fnName}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(PREFIX ? { id, mode, sandbox: true } : { id, mode }) }).catch(err => ({ ok: false, status: 0, statusText: err.message }));
-  if (!kick.ok && kick.status !== 202) { await db.collection(PREFIX + AGENT).doc(id).set({ status: "error", error: `kick failed: ${kick.status} ${kick.statusText || ""}`, updatedAt: FV.serverTimestamp() }, { merge: true }); return { error: `could not start the background job (${kick.status})` }; }
+  if (!kick.ok && kick.status !== 202) {
+    // nothing will read the parked payload now (a retry parks its own); the job record keeps the error
+    await admin.storage().bucket().file(payloadPath).delete().catch(() => {});
+    await db.collection(PREFIX + AGENT).doc(id).set({ status: "error", error: `kick failed: ${kick.status} ${kick.statusText || ""}`, updatedAt: FV.serverTimestamp() }, { merge: true }); return { error: `could not start the background job (${kick.status})` };
+  }
   return { ok: true, id };
 }
 async function op_getAgent(b) {
@@ -767,8 +841,10 @@ async function op_restoreSheet(b) {
 }
 async function op_backPut(b) {
   const rows = (Array.isArray(b.backs) ? b.backs : [b.back]).filter(x => x && isPoolId(x.poolId)).slice(0, 400); if (!rows.length) return { error: "no back rows" };
+  const superseded = [];
   for (const x of rows) {
     if (!isId(x.sheetId) || !x.approvedAt || !x.approvedBy) return {error:"approved back and sheet identity required"};
+    let moved = [];
     await db.runTransaction(async tx => {
       const ref = col(BACK).doc(x.poolId), target = col(SHEETS).doc(x.sheetId);
       const prior = await tx.get(ref), sheet = await tx.get(target);
@@ -780,12 +856,19 @@ async function op_backPut(b) {
       const former = old.sheetId && old.sheetId !== x.sheetId ? col(SHEETS).doc(old.sheetId) : null;
       const previous = former ? await tx.get(former) : null;
       const record = Object.assign({}, x, {invalidated:false, updatedAt:FV.serverTimestamp()});
+      /* A new approval of the same copy replaces the prior one's files. They were approved once, so they are archived, not
+         deleted: moved to the archive path once this commits, and the record says where each went (a file whose move
+         failed is still at `from`). */
+      const next = new Set(["ai", "png"].map(k => x.outputs && x.outputs[k] && x.outputs[k].path).filter(Boolean));
+      moved = old.approvedAt && +old.approvedAt !== +x.approvedAt ? ["ai", "png"].map(k => old.outputs && old.outputs[k] && old.outputs[k].path).filter(p => p && !next.has(p) && /^charmnest\//.test(p)).map(from => ({ from, to: archivePath(from) })) : [];
+      if (moved.length) record.superseded = (Array.isArray(old.superseded) ? old.superseded : []).concat([{ approvedAt: +old.approvedAt, approvedBy: old.approvedBy || null, files: moved, at: Date.now() }]).slice(-20);
       tx.set(ref, record, {merge:true});
-      tx.set(target, {backPool:(sheet.data().backPool || []).filter(b=>b.poolId !== x.poolId).concat([x]), updatedAt:FV.serverTimestamp()}, {merge:true});
+      tx.set(target, {backPool:(sheet.data().backPool || []).filter(b=>b.poolId !== x.poolId).concat([sheetBack(x)]), updatedAt:FV.serverTimestamp()}, {merge:true});
       if (previous?.exists) tx.set(former, {backPool:(previous.data().backPool || []).filter(b=>b.poolId !== x.poolId), updatedAt:FV.serverTimestamp()}, {merge:true});
     });
+    await archiveFiles(moved); superseded.push(...moved);
   }
-  return { ok: true, count: rows.length };
+  return { ok: true, count: rows.length, superseded: superseded.length };
 }
 async function op_backInvalidate(b) {
   for (const id of (b.poolIds || []).filter(isPoolId).slice(0,400)) await db.runTransaction(async tx => {
@@ -862,9 +945,15 @@ async function op_setGet(b) { const id = str(b.setId, 80); if (!isId(id)) return
 async function op_setList(b) {
   // Completion can occur days after allocation. Filter and sort before limiting;
   // legacy sets keep their original saved day until an actual completion exists.
-  const snap = await col(SETS).get();
+  // Only the most recently saved sets are read (completion saves the set again, so a newly completed one is among them),
+  // never every set on record; given `from`, none saved a week before it. The sandbox's days run on a simulated clock, so
+  // there the bound is only the count.
+  const limit = Math.min(500, num(b.limit) || 200);
+  let q = col(SETS).orderBy("updatedAt", "desc");
+  if (isDay(b.from) && !PREFIX) q = q.where("updatedAt", ">=", new Date(Date.parse(b.from + "T00:00:00Z") - 7 * 86400000));
+  const snap = await q.limit(Math.min(1000, 3 * limit)).get();
   let rows = snap.docs.map(d => { const r=d.data(); r.setId ||= d.id; for(const k of ["updatedAt","createdAt","completedAt","committedAt"]) r[k]=ms(r[k]); return r; });
-  rows=rows.filter(r=>(!isDay(b.from) || OrderRules.completionDay(r)>=b.from)&&(!isDay(b.to) || OrderRules.completionDay(r)<=b.to)&&(!b.status || r.status===b.status)).sort(OrderRules.compareCompleted).slice(0,Math.min(500,num(b.limit)||200));
+  rows=rows.filter(r=>(!isDay(b.from) || OrderRules.completionDay(r)>=b.from)&&(!isDay(b.to) || OrderRules.completionDay(r)<=b.to)&&(!b.status || r.status===b.status)).sort(OrderRules.compareCompleted).slice(0,limit);
   const sheets=[];
   if(b.includeSheets) {
     const ids=[...new Set(rows.flatMap(r=>r.sheetIds || []))].filter(isId);
@@ -887,15 +976,25 @@ async function op_releasePut(b) {
 }
 async function op_archiveEmptySheet(b) {
   if (!isId(b.id) || !isId(b.runId)) return { error: "bad sheet/run id" };
-  return db.runTransaction(async tx => {
+  const done = await db.runTransaction(async tx => {
     const ref = col(SHEETS).doc(b.id), sheet = await tx.get(ref);
     if (!sheet.exists || sheet.data().runId !== b.runId) return { error: "sheet does not belong to this run" };
     const run = await tx.get(col(RUNS).doc(b.runId));
     if (!run.exists || ["complete", "abandoned"].includes(run.data().status)) return { error: "finished sheets cannot be changed by intake" };
     if (!sheet.data().roseCutAt && (sheet.data().rosePlanJson || sheet.data().roseProtectedJson)) throw new Error('A planned or protected Rose Gold contour cannot be archived');
-    tx.set(ref, { archived: true, archivedReason: "open sheets repacked", updatedAt: FV.serverTimestamp() }, { merge: true });
-    return { ok: true };
+    // its files go only if it was never cut or released: a cut Rose Gold contour or a sheet of a committed set keeps them
+    const d = sheet.data(), set = isId(d.setId) ? await tx.get(col(SETS).doc(d.setId)) : null, keep = !!d.roseCutAt || !!(set && set.exists && set.data().committedAt);
+    tx.set(ref, Object.assign({ archived: true, archivedReason: "open sheets repacked", updatedAt: FV.serverTimestamp() }, keep ? {} : { outputs: null }), { merge: true });
+    return { ok: true, files: keep ? [] : outputPaths(d) };
   });
+  if (!done.ok) return done;
+  /* The repacked sheet was never cut (a finished run is refused above): its own five files go with it. Its back files and
+     labels stay, as their records still name them. A file another live sheet record also names is left alone. */
+  const ai = done.files.find(p => /\.ai$/.test(p));
+  let shared = true;
+  try { shared = !!ai && (await col(SHEETS).where("outputs.ai.path", "==", ai).limit(5).get()).docs.some(d => d.id !== b.id && !d.data().archived); } catch (_) { shared = true; }
+  if (!shared) { const bucket = admin.storage().bucket(); await Promise.all(done.files.map(p => bucket.file(p).delete().catch(() => {}))); }
+  return { ok: true, deletedFiles: shared ? 0 : done.files.length };
 }
 // ── arrival ledger, separate in production and sandbox ──
 async function op_arrivalRecord(b) {
@@ -903,6 +1002,9 @@ async function op_arrivalRecord(b) {
   if (receipts.length > 5000) return { error: "too many receipts" };
   // the sandbox order stream stamps first arrivals with its simulated clock, so its 24 h and 1 h counts read in it
   const now = [true, 1, "1"].includes(b.sandbox) && num(b.now) > 0 ? num(b.now) : Date.now(), collection = col("Charm_Nest_Arrivals"), firstSeen = {};
+  // the counts read the last 24 hours; a TTL policy on expireAt removes an arrival after 180 days (the sandbox's after 3),
+  // on the real clock, which the sandbox's simulated one runs ahead of
+  const expireAt = new Date(Date.now() + ([true, 1, "1"].includes(b.sandbox) ? 3 : 180) * 86400000);
   // Existing receipts need one batched read; transact only first arrivals.
   const known = receipts.length ? await db.getAll(...receipts.map(o => collection.doc(String(o.id)))) : [];
   const missing = receipts.filter((o, i) => { if (!known[i].exists) return true; firstSeen[String(o.id)] = known[i].data().firstSeenAt; return false; });
@@ -913,7 +1015,7 @@ async function op_arrivalRecord(b) {
       const o = missing[cursor++], id = String(o.id), ref = collection.doc(id);
       firstSeen[id] = await db.runTransaction(async t => {
         const old = await t.get(ref); if (old.exists) return old.data().firstSeenAt;
-        t.set(ref, { id, firstSeenAt: now, createTs: num(o.createTs) }); return now;
+        t.set(ref, { id, firstSeenAt: now, createTs: num(o.createTs), expireAt }); return now;
       });
     }
   }));
@@ -983,49 +1085,152 @@ async function op_runList(b) {
   if (b.status) rows = rows.filter(r => r.status === b.status);
   return { runs: rows };
 }
-/* "Find that order from last Tuesday." There is no index that can answer it: Firestore has no full-text search, and a
-   shop's history of runs is small enough to read. So run summaries and sheet metadata are searched here, before result pagination, and
-   the answer says how many of each it actually looked at — a search that quietly stopped early is worse than none. */
-async function op_history(b) {
-  const q = String(b.q || "").trim().toLowerCase(), offset = Math.max(0, num(b.offset)), limit = Math.min(100, Math.max(1, num(b.limit) || 60));
-  // Search complete set membership before pagination: a matching order must reveal all of its set's sheets.
-  const [rs, ss, ts, ls] = await Promise.all([col(RUNS).select("runId", "setId", "seq", "day", "status", "step", "lines", "sheets", "lineArchive", "errors", "stoppedBy", "createdAt", "updatedAt").get(), col(SHEETS).select("id", "setId", "setSeq", "runId", "day", "metal", "metalLabel", "status", "orders", "sheetIndex", "page", "updatedAt", "archived", "folder", "fileBase", "saving", "draft", "releaseFull", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "outputs", "names", "charms", "poolIds", "backPool", "solidIncluded", "sources", "stock", "cardStartedAt", "createdAt").get(), col(SETS).select("seq", "day", "runId", "status", "updatedAt", "materials", "orders").get(), col(RUN_LINES).select("runId", "json", "at", "seq").get()]);
-  const runMap = new Map(rs.docs.map(d => [d.id, d.data()])), sheets = ss.docs.map(d => d.data()).filter(x => !x.archived);
-  // the lines of the orders a run is done with are in its line archive: searched and counted under the record's own
-  const archive = new Map(); for (const d of ls.docs) { const p = { id: d.id, ...d.data() }; if (!archive.has(p.runId)) archive.set(p.runId, []); archive.get(p.runId).push(p); }
-  for (const [id, parts] of archive) { const r = runMap.get(id); if (r) runMap.set(id, { ...r, lines: Object.assign(mergeParts(parts), r.lines || {}) }); }
-  const groups = new Map(ts.docs.map(d => { const x = d.data(); return ["set:"+d.id, { key:"set:"+d.id, name:"Set "+x.seq, setId: d.id, seq: x.seq, day: x.day, runId: x.runId, status: x.status, updatedAt: ms(x.updatedAt), sheets: [], materials: x.materials || [], orderIds: Object.keys(x.orders || {}), search: [] }]; }));
-  for (const x of sheets) {
-    const meta=OrderRules.libraryGroup(x), key=meta.key;
+/* "Find that order from last Tuesday." Firestore has no full-text search, and a shop's history grows every day, so no
+   answer reads all of it. Groups (sets, working and standalone sheets, runs that wrote none) are read a day at a time,
+   newest first:
+   · a listing reads the newest days that hold a page of groups, each set with its whole membership, and never the line
+     archive;
+   · a search reads the days of one window (30 by default, `days` up to 90, the page's `today` its newest) and the line
+     archive of the runs in it, newest part first, 16 MB of it at most; an order number is also looked up exactly, however
+     old, in the order lists sheets, runs and archive parts keep;
+   · `next` is where the following page starts: the groups on or before its day, after the first `skip` of that day.
+   The answer says what it read (scanned), the days it covered (window) and whether a cap cut it short (truncated).
+   Every query is a single-field equality, range or array-contains: no composite index is needed. */
+const HISTORY_CAP = { sets: 300, sheets: 600, runs: 300, parts: 3000 }, HISTORY_PART_BYTES = 16000000;
+const HISTORY_SET = ["seq", "day", "runId", "status", "updatedAt", "materials", "orders"];
+const HISTORY_SHEET = ["id", "setId", "setSeq", "runId", "day", "metal", "metalLabel", "status", "orders", "sheetIndex", "page", "updatedAt", "archived", "folder", "fileBase", "saving", "draft", "releaseFull", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "outputs", "names", "poolIds", "backPool", "solidIncluded", "sources", "stock", "cardStartedAt", "createdAt"];
+const HISTORY_RUN = ["runId", "setId", "seq", "day", "status", "step", "sheets", "lineArchive", "errors", "stoppedBy", "orders", "createdAt", "updatedAt"];
+const dayOf = x => (isDay(x && x.day) ? x.day : "");
+const dayShift = (day, n) => { const d = new Date(day + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+/** Newest first by day: a range (from, to inclusive) or one day (eq); records without a day are in none. */
+function byDay(name, fields, { from = null, to = null, eq = null, n }) {
+  let q = eq ? col(name).where("day", "==", eq) : col(name).where("day", from ? ">=" : ">", from || "");
+  if (!eq && to) q = q.where("day", "<=", to);
+  if (!eq) q = q.orderBy("day", "desc");
+  return q.limit(n).select(...fields).get();
+}
+/** The newest day on record before a day (or at all), over sets, runs and sheets. */
+async function newestDay(before = null) {
+  const days = await Promise.all([SETS, RUNS, SHEETS].map(async name => { const s = await col(name).where("day", before ? "<" : ">", before || "").orderBy("day", "desc").limit(1).select("day").get(); return s.size ? dayOf(s.docs[0].data()) : ""; }));
+  return days.filter(Boolean).sort().pop() || null;
+}
+async function whereIn(name, field, values, fields, cap) {
+  const chunks = []; for (let i = 0; i < values.length; i += 30) chunks.push(values.slice(i, i + 30));
+  return (await Promise.all(chunks.map(c => col(name).where(field, "in", c).limit(cap).select(...fields).get()))).flatMap(s => s.docs);
+}
+function historyRows(q, sets, sheets, runs) {
+  const groups = new Map([...sets].map(([id, x]) => ["set:" + id, { key: "set:" + id, name: "Set " + x.seq, setId: id, seq: x.seq, day: x.day, runId: x.runId, status: x.status, updatedAt: ms(x.updatedAt), sheets: [], materials: x.materials || [], orderIds: Object.keys(x.orders || {}), search: [], exact: !!x.exact }]));
+  for (const x of sheets.values()) {
+    if (x.archived) continue;
+    const meta = OrderRules.libraryGroup(x), key = meta.key;
     if (!groups.has(key)) groups.set(key, { ...meta, day: x.day, runId: x.runId, status: meta.standalone ? "standalone" : meta.working ? "held" : x.status, draft: meta.working, sheets: [], materials: [], orderIds: [], search: [] });
     const g = groups.get(key); g.sheets.push(Object.assign(slim(x), { orders: (x.orders || []).length, orderIds: x.orders || [], sheetIndex: x.sheetIndex || x.page || 1 }));
     if (!g.materials.includes(x.metal)) g.materials.push(x.metal);
     g.search.push(x.names || "", x.metalLabel || "", ...(x.charms || []).map(c => c.sku || ""));
-    g.orderIds.push(...(x.orders || [])); g.updatedAt = Math.max(g.updatedAt || 0, ms(x.updatedAt) || 0);
+    g.orderIds.push(...(x.orders || [])); g.updatedAt = Math.max(g.updatedAt || 0, ms(x.updatedAt) || 0); if (x.exact) g.exact = true;
   }
-  const runRows = [...runMap.values()].map(r => ({ runId: r.runId, setId: r.setId || null, seq: r.seq || null, day: r.day, status: r.status, step: r.step, lines: Object.keys(r.lines || {}).length, orders: new Set(Object.values(r.lines || {}).map(l => l.orderId)).size, sheets: Object.keys(r.sheets || {}).length + num((r.lineArchive || {}).sheets), updatedAt: ms(r.updatedAt), createdAt: ms(r.createdAt), stoppedBy: r.stoppedBy || null, hitOrders: [...new Set(Object.values(r.lines || {}).map(l => String(l.orderId || "")))].filter(x => q && x.toLowerCase().includes(q)), hitSkus: [...new Set(Object.values(r.lines || {}).map(l => String(l.sku || "")))].filter(x => q && x.toLowerCase().includes(q)) }));
-  for (const r of runRows) if (![...groups.values()].some(g => g.runId === r.runId)) groups.set("run:" + r.runId, { setId: r.setId, seq: r.seq, runId: r.runId, day: r.day, status: r.status, sheets: [], materials: [], orderIds: [], orders: r.orders, updatedAt: r.updatedAt });
-  let rows = [...groups.values()].map(g => {
-    const r = runMap.get(g.runId), ids = new Set(g.orderIds.map(String));
-    const lines = Object.values(r?.lines || {}).filter(l => !ids.size || ids.has(String(l.orderId)));
-    const hay = [g.setId, "Set " + g.seq, g.day, g.runId, g.status, r?.stoppedBy, ...(r?.errors || []).map(e => e.why), ...g.materials, ...(g.search || []), ...ids, ...lines.flatMap(l => [l.orderId, l.sku, l.engrave?.text, l.snap?.title]), ...g.sheets.map(x => x.fileBase)].join(" ").toLowerCase();
+  const hits = (r, k) => [...new Set(Object.values(r.lines || {}).map(l => String((l && l[k]) || "")))].filter(x => q && x.toLowerCase().includes(q));
+  const runRows = [...runs.values()].map(r => ({ runId: r.runId, setId: r.setId || null, seq: r.seq || null, day: r.day, status: r.status, step: r.step, lines: Object.keys(r.recordLines || r.lines || {}).length + num((r.lineArchive || {}).lines), orders: new Set(Object.values(r.lines || {}).map(l => l && l.orderId)).size, sheets: Object.keys(r.sheets || {}).length + num((r.lineArchive || {}).sheets), updatedAt: ms(r.updatedAt), createdAt: ms(r.createdAt), stoppedBy: r.stoppedBy || null, hitOrders: hits(r, "orderId"), hitSkus: hits(r, "sku"), exact: !!r.exact }));
+  const named = new Set([...groups.values()].map(g => g.runId).filter(Boolean));
+  for (const r of runRows) if (!named.has(r.runId)) groups.set("run:" + r.runId, { key: "run:" + r.runId, setId: r.setId, seq: r.seq, runId: r.runId, day: r.day, status: r.status, sheets: [], materials: [], orderIds: [], orders: r.orders, updatedAt: r.updatedAt, exact: r.exact });
+  const rows = [...groups.values()].map(g => {
+    const r = runs.get(g.runId), ids = new Set(g.orderIds.map(String));
+    const lines = Object.values(r?.lines || {}).filter(l => l && (!ids.size || ids.has(String(l.orderId))));
+    const hay = [g.setId, "Set " + g.seq, g.day, g.runId, g.status, r?.stoppedBy, ...(r?.errors || []).map(e => e && e.why), ...g.materials, ...(g.search || []), ...ids, ...lines.flatMap(l => [l.orderId, l.sku, l.engrave?.text, l.snap?.title]), ...g.sheets.map(x => x.fileBase)].join(" ").toLowerCase();
     return Object.assign(g, { orders: ids.size || g.orders || new Set(lines.map(l => l.orderId)).size, status: g.standalone ? "standalone" : g.draft ? "held" : g.status === "superseded" ? g.status : r?.status === "complete" ? (String(g.status).startsWith("complete") ? g.status : "complete") : r?.status || g.status, match: !q || hay.includes(q) });
-  }).filter(g => g.match).sort((a, b) => String(b.day || "").localeCompare(String(a.day || "")) || (b.seq || 0) - (a.seq || 0) || (b.updatedAt || 0) - (a.updatedAt || 0));
-  const total = rows.length, setCount = rows.filter(g => g.setId && g.sheets.length && g.status !== "superseded").length, workingCount = rows.filter(g => g.draft).length; rows = rows.slice(offset, offset + limit);
-  for (const row of rows) { delete row.search; delete row.match; }
-  return { sets: rows, runs: runRows.filter(r => rows.some(g => g.runId === r.runId)), sheets: rows.flatMap(g => g.sheets), total, setCount, workingCount, nextOffset: offset + rows.length < total ? offset + rows.length : null,
-    scanned: { runs: rs.size, sheets: ss.size, lineParts: ls.size }, truncated: { runs: false, sheets: false } };
+  }).filter(g => g.match).sort((a, b) => String(b.day || "").localeCompare(String(a.day || "")) || (b.seq || 0) - (a.seq || 0) || (b.updatedAt || 0) - (a.updatedAt || 0) || String(a.key).localeCompare(String(b.key)));
+  return { rows, runRows };
+}
+async function op_history(b) {
+  const q = String(b.q || "").trim().toLowerCase(), limit = Math.min(100, Math.max(1, num(b.limit) || 60));
+  const cur = b.cursor && isDay(b.cursor.day) ? { day: b.cursor.day, skip: Math.max(0, Math.floor(num(b.cursor.skip))) } : null;
+  const scanned = { runs: 0, sheets: 0, sets: 0, lineParts: 0 }, truncated = { runs: false, sheets: false, sets: false, lineParts: false };
+  const sets = new Map(), sheets = new Map(), runs = new Map(), parts = new Map();
+  const add = (kind, docs, extra) => { scanned[kind] += docs.length; const map = { sets, sheets, runs }[kind]; for (const d of docs) if (!map.has(d.id)) map.set(d.id, Object.assign(d.data(), extra, kind === "runs" ? { runId: d.data().runId || d.id } : {})); };
+  const sheetFields = q ? HISTORY_SHEET.concat(["charms"]) : HISTORY_SHEET, runFields = q ? HISTORY_RUN.concat(["lines"]) : HISTORY_RUN;
+  const hi = cur ? cur.day : null; let lo = null;
+  if (!q) {
+    // the newest (skip + limit) of each kind on or before the cursor's day; every day after the newest day a full read
+    // stopped at is then read whole, and that day too
+    const n = (cur ? cur.skip : 0) + limit, want = [["sets", SETS, HISTORY_SET, n + 1], ["runs", RUNS, runFields, n + 1], ["sheets", SHEETS, sheetFields, Math.min(HISTORY_CAP.sheets, 4 * n + 20)]];
+    const got = await Promise.all(want.map(([, name, fields, cap]) => byDay(name, fields, { to: hi, n: cap })));
+    const stops = want.map((w, i) => (got[i].size >= w[3] ? dayOf(got[i].docs[got[i].size - 1].data()) || null : null));
+    lo = stops.filter(Boolean).sort().pop() || null;
+    got.forEach((s, i) => add(want[i][0], s.docs));
+    if (lo) await Promise.all(want.map(async ([kind, name, fields], i) => { if (stops[i] !== lo) return; const s = await byDay(name, fields, { eq: lo, n: HISTORY_CAP[kind] }); if (s.size >= HISTORY_CAP[kind]) truncated[kind] = true; add(kind, s.docs); }));
+  } else {
+    const span = Math.min(90, Math.max(1, Math.floor(num(b.days)) || 30)), top = hi || (isDay(b.today) ? b.today : await newestDay());
+    if (top) {
+      lo = dayShift(top, -(span - 1));
+      const want = [["sets", SETS, HISTORY_SET], ["runs", RUNS, runFields], ["sheets", SHEETS, sheetFields]];
+      const got = await Promise.all(want.map(([kind, name, fields]) => byDay(name, fields, { from: lo, to: hi, n: HISTORY_CAP[kind] })));
+      got.forEach((s, i) => { if (s.size >= HISTORY_CAP[want[i][0]]) truncated[want[i][0]] = true; add(want[i][0], s.docs); });
+    }
+    // an order number, however old: the sheets and runs that list it, and the archive parts that hold its lines
+    if (!cur && /^\d{4,20}$/.test(q)) {
+      const ids = [q].concat(Number.isSafeInteger(+q) ? [+q] : []), has = x => (x.orders || []).map(String).includes(q);
+      const [ps, xs, rs] = await Promise.all([col(RUN_LINES).where("orders", "array-contains", q).limit(20).select("runId", "json", "at", "seq", "orders").get(), col(SHEETS).where("orders", "array-contains-any", ids).limit(HISTORY_CAP.sheets).select(...sheetFields).get(), col(RUNS).where("orders", "array-contains-any", ids).limit(50).select(...runFields).get()]);
+      const found = ps.docs.filter(d => has(d.data()));
+      scanned.lineParts += found.length; for (const d of found) parts.set(d.id, { id: d.id, ...d.data() });
+      add("sheets", xs.docs.filter(d => has(d.data())), { exact: true }); add("runs", rs.docs.filter(d => has(d.data())), { exact: true });
+      const more = [...new Set(found.map(d => d.data().runId))].filter(id => isId(id) && !runs.has(id));
+      if (more.length) add("runs", await whereIn(RUNS, "runId", more, runFields, 50), { exact: true });
+    }
+  }
+  // each set a sheet here belongs to, with its whole membership, and each run a set or sheet here belongs to: for the
+  // days this answer covers (and an exact order-number match wherever it is), not for the older ones a read ran into
+  const shown = x => x.exact || !lo || String(x.day || "") >= lo;
+  const setIds = [...new Set([...sheets.values()].filter(x => !x.archived && shown(x) && OrderRules.libraryGroup(x).setId).map(x => x.setId))].filter(id => isId(id) && !sets.has(id));
+  for (let i = 0; i < setIds.length; i += 100) add("sets", (await db.getAll(...setIds.slice(i, i + 100).map(id => col(SETS).doc(id)))).filter(d => d.exists));
+  for (const x of sheets.values()) if (x.exact && x.setId && sets.has(x.setId)) sets.get(x.setId).exact = true;
+  const members = [...sets.entries()].filter(([id, x]) => isId(id) && shown(x)).map(([id]) => id);
+  if (members.length) add("sheets", await whereIn(SHEETS, "setId", members, sheetFields, HISTORY_CAP.sheets));
+  const runIds = [...new Set([...sets.values(), ...sheets.values()].filter(shown).map(x => x.runId))].filter(id => isId(id) && !runs.has(id));
+  if (runIds.length) add("runs", await whereIn(RUNS, "runId", runIds, runFields, HISTORY_CAP.runs));
+  const named = new Set([...sets.values(), ...sheets.values()].map(x => x.runId).filter(Boolean));
+  if (!q) {
+    // a listing counts the lines of the runs a person can resume or that wrote no sheet: their own records' lines
+    const open = [...runs.values()].filter(r => !["complete", "abandoned", "superseded"].includes(r.status) || !named.has(r.runId)).map(r => r.runId).filter(isId);
+    for (const d of await whereIn(RUNS, "runId", open, ["runId", "lines"], HISTORY_CAP.runs)) { const r = runs.get(d.data().runId || d.id); if (r) r.lines = d.data().lines || {}; }
+  } else {
+    // a search reads the line archive of the runs in its answer, newest part first, up to HISTORY_PART_BYTES
+    const archived = [...runs.values()].filter(r => r.lineArchive && num(r.lineArchive.parts) > 0).map(r => r.runId).filter(isId), listed = [];
+    for (const d of await whereIn(RUN_LINES, "runId", archived, ["runId", "bytes", "at", "seq"], HISTORY_CAP.parts)) listed.push({ id: d.id, ...d.data() });
+    if (listed.length >= HISTORY_CAP.parts) truncated.lineParts = true;
+    listed.sort((x, y) => num(y.at) - num(x.at) || num(y.seq) - num(x.seq));
+    let bytes = 0; const chosen = [];
+    for (const p of listed) { if (parts.has(p.id)) continue; if (chosen.length && bytes + num(p.bytes) > HISTORY_PART_BYTES) { truncated.lineParts = true; break; } bytes += num(p.bytes); chosen.push(p.id); }
+    for (let i = 0; i < chosen.length; i += 100) for (const d of await db.getAll(...chosen.slice(i, i + 100).map(id => col(RUN_LINES).doc(id)))) if (d.exists) { parts.set(d.id, { id: d.id, ...d.data() }); scanned.lineParts++; }
+    const byRun = new Map(); for (const p of parts.values()) { if (!byRun.has(p.runId)) byRun.set(p.runId, []); byRun.get(p.runId).push(p); }
+    for (const [id, list] of byRun) { const r = runs.get(id); if (r) { r.recordLines = r.lines || {}; r.lines = Object.assign(mergeParts(list), r.lines || {}); } }
+  }
+  const { rows: all, runRows } = historyRows(q, sets, sheets, runs);
+  // this page's days: after the cursor's first `skip` groups of its day, down to the oldest day read whole (and an exact
+  // order-number match wherever it is)
+  let rows = all.filter(g => g.exact || ((!hi || String(g.day || "") <= hi) && (!lo || String(g.day || "") >= lo)));
+  if (cur) { let skip = cur.skip; rows = rows.filter(g => !(g.day === cur.day && skip-- > 0)); }
+  const page = rows.slice(0, limit), last = page[page.length - 1];
+  let next = null;
+  if (rows.length > limit && last && isDay(last.day)) next = { day: last.day, skip: page.filter(g => g.day === last.day).length + (cur && cur.day === last.day ? cur.skip : 0) };
+  else if (lo) { const older = await newestDay(lo); if (older) next = { day: older, skip: 0 }; }
+  const onPage = new Set(page.map(g => g.runId).filter(Boolean));
+  for (const row of page) { delete row.search; delete row.match; delete row.exact; }
+  return { sets: page, runs: runRows.filter(r => onPage.has(r.runId)).map(r => { delete r.exact; return r; }), sheets: page.flatMap(g => g.sheets), total: rows.length, setCount: page.filter(g => g.setId && g.sheets.length && g.status !== "superseded").length, workingCount: page.filter(g => g.draft).length,
+    next, window: { from: lo, to: hi }, scanned, truncated };
 }
 // ── bridge session log: Design_Bridge/{session} + /log rows (ids and counts only, never order text) ──
 async function op_bridgeLog(b) {
   const session = str(b.session, 80); if (!/^[\w\-]{6,80}$/.test(session)) return { error: "bad session" };
   const ref = col(BRIDGE).doc(session);
-  const meta = Object.assign({}, b.meta || {}, { sessionId: session, updatedAt: FV.serverTimestamp() });
+  // nothing reads the log in bulk: a TTL policy on expireAt (collection group log, and the session documents) removes a
+  // row 30 days after it was written, a sandbox row after 3; the session's own date moves with its latest row
+  const expireAt = new Date(Date.now() + (PREFIX ? 3 : 30) * 86400000);
+  const meta = Object.assign({}, b.meta || {}, { sessionId: session, updatedAt: FV.serverTimestamp(), expireAt });
   const rows = (b.rows || []).slice(0, 200);
   if (rows.length) meta.commands = FV.increment(rows.filter(r => r.dir === "cmd").length);
   await ref.set(meta, { merge: true });
   let batch = db.batch(), n = 0;
-  for (const r of rows) { batch.set(ref.collection("log").doc(), { t: num(r.t) || Date.now(), dir: str(r.dir, 10), type: str(r.type, 40), ms: r.ms == null ? null : num(r.ms), payload: r.payload && typeof r.payload === "object" ? r.payload : (r.payload == null ? null : str(r.payload, 400)) }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; } }
+  for (const r of rows) { batch.set(ref.collection("log").doc(), { t: num(r.t) || Date.now(), dir: str(r.dir, 10), type: str(r.type, 40), ms: r.ms == null ? null : num(r.ms), payload: r.payload && typeof r.payload === "object" ? r.payload : (r.payload == null ? null : str(r.payload, 400)), expireAt }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; } }
   if (n) await batch.commit();
   return { ok: true, rows: rows.length };
 }
@@ -1047,7 +1252,7 @@ async function op_optionMapPut(b) {
 }
 
 const RoseStock = require("./_charmNestRoseStock")({db,col,FV,Readiness,decisionsOfRun});
-const OPS = { ...RoseStock, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
+const OPS = { ...RoseStock, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, startMaster: op_startMaster,
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,

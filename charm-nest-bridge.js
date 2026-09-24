@@ -3764,6 +3764,10 @@ const Sets = window.Sets = (() => {
     const backs = sheetsOf(set).flatMap(sh => (sh.backPool || []).map(b => `${sh.fileBase}: ${b.order} ${b.sku} #${b.copy} "${String(b.text).replace(/\n/g, " / ")}" ${b.sizePt} pt · ${b.approvedBy || "?"}`));
     if (backs.length) backs.forEach(b => line(b)); else line("no engraving in this set");
     y -= 6; line("Labels", { font: bold, size: 11 }); files.forEach(f => line(`${f.label}  ${f.path || "(not uploaded)"}`));
+    // released for labels: a sheet without its .pdf yet gets it now, copied from its .ai inside the bucket (op_sheetPdf)
+    const noPdf = sheetsOf(set).filter(sh => sh.sheetId && sh.cloud && sh.cloud.ai && !sh.cloud.pdf);
+    if (S.cloud.ok && !set.offline && noPdf.length) await api("charmNestLibrary", { op: "sheetPdf", ids: noPdf.map(sh => sh.sheetId) }, { label: "Saving the sheets' .pdf", quiet: true })
+      .then(r => { for (const sh of noPdf) if (r && r.urls && r.urls[sh.sheetId]) sh.cloud.pdf = r.urls[sh.sheetId]; }).catch(e => console.warn("sheet .pdf", e));
     const json = { setId: set.setId, runId: set.runId, day: set.day, seq: set.seq, name: set.name, folder: set.folder, materials: set.materials, sheets: sheetsOf(set).map(sh => ({ sheetId: sh.sheetId, name: sh.fileBase, metal: sh.metal, sheetIndex: sh.sheetIndex, folder: sh.folderPath, orders: sh.label ? sh.label.orders : [], placements: sh.placements.length, backs: (sh.backPool || []).map(b => ({ poolId: b.poolId, order: b.order, sku: b.sku, copy: b.copy, text: b.text, approvedBy: b.approvedBy, file: b.outputs && b.outputs.ai && b.outputs.ai.path })), verification: sh.verification && { ok: sh.verification.ok }, outputs: sh.cloud || null })), orders: Object.fromEntries(Object.entries(set.orders).map(([rid, o]) => [rid, { held: ev.held[rid] || null, lines: Object.values(o.lines) }])), held: ev.held, gone: ev.gone, labels: files.map(f => ({ sheet: f.sheet, part: f.part, parts: f.parts, orders: f.orders, payload: f.payload, path: f.path })), approvals: backs.length, generatedAt: new Date().toISOString() };
     set.backCount = sheetsOf(set).reduce((n, sh) => n + (sh.backPool || []).length, 0);
     if (S.cloud.ok && !set.offline) {
@@ -5323,21 +5327,27 @@ const RunHistory = window.RunHistory = (() => {
   }
   async function load(more = false) {
     if (!S.cloud.ok) { H.err = "the cloud is not connected, so there is nothing to read"; H.runs = []; H.sheets = []; render(); return; }
-    H.loading = true; H.err = null; render();
+    H.loading = true; H.err = null; H.readAt = Date.now(); render();
     try {
       const query = H.q, request = (H.request || 0) + 1; H.request = request;
-      const r = await api("charmNestLibrary", { op: "history", q: query, limit: 60, offset: more ? H.nextOffset || 0 : 0 }, { quiet: true });
+      // one page of the newest records (a search looks through 30 days of them, ending at this station's today);
+      // `next` is where the older ones start, read only when asked for
+      const r = await api("charmNestLibrary", { op: "history", q: query, limit: 60, today: today(), cursor: more ? H.next || null : null }, { quiet: true });
       if (H.request !== request || H.q !== query) return;
-      H.runs = more ? H.runs.concat(r.runs || []) : r.runs || []; H.sheets = more ? H.sheets.concat(r.sheets || []) : r.sheets || [];
-      H.scanned = r.scanned; H.nextOffset = r.nextOffset; H.total = r.total;
-      const groups = (r.sets || []).map(g => {
+      const had = more ? H : { runs: [], sheets: [], sets: [] }, runIds = new Set(had.runs.map(x => x.runId)), sheetIds = new Set(had.sheets.map(x => x.id)), keys = new Set(had.sets.map(g => g.key || g.setId || ""));
+      H.runs = had.runs.concat((r.runs || []).filter(x => !runIds.has(x.runId))); H.sheets = had.sheets.concat((r.sheets || []).filter(x => !sheetIds.has(x.id)));
+      H.scanned = more && H.scanned && r.scanned ? Object.fromEntries(Object.keys(r.scanned).map(k => [k, (H.scanned[k] || 0) + (r.scanned[k] || 0)])) : r.scanned;
+      H.next = r.next || null; H.from = r.window?.from || null;
+      const groups = (r.sets || []).filter(g => !keys.has(g.key || g.setId || "")).map(g => {
         g.sheets.sort((a, b) => (a.sheetIndex || 0) - (b.sheetIndex || 0));
         const preview = g.sheets.find(x => x.metal === "gold" && x.preview) || g.sheets.find(x => x.preview);
         g.thumb = preview ? cors(preview.preview) : null; g.thumbOf = preview?.fileBase || null;
         return g;
       });
-      H.sets = more ? H.sets.concat(groups) : groups;
-      const moreButton = H.dlg.querySelector("#hMore"); moreButton.hidden = r.nextOffset == null;
+      // a run shown alone on one page and with its set on another is shown once, with its set
+      const all = had.sets.concat(groups), named = new Set(all.filter(g => !String(g.key || "").startsWith("run:")).map(g => g.runId).filter(Boolean));
+      H.sets = all.filter(g => !(String(g.key || "").startsWith("run:") && named.has(g.runId))).sort((a, b) => String(b.day || "").localeCompare(String(a.day || "")));
+      const moreButton = H.dlg.querySelector("#hMore"); moreButton.hidden = !H.next; moreButton.textContent = query ? "Search older records" : "Load older sets";
 
     } catch (e) { H.err = e.message; H.runs = []; H.sheets = []; }
     H.loading = false; render();
@@ -5350,9 +5360,9 @@ const RunHistory = window.RunHistory = (() => {
     if (H.loading && !H.runs.length) { b.innerHTML = `<div class="hEmpty"><span class="spin"></span> reading the records…</div>`; f.textContent = ""; return; }
     if (H.err) { b.innerHTML = `<div class="hEmpty bad">${esc(H.err)}</div>`; f.textContent = ""; return; }
     if (!H.sets.length && !H.runs.length && !H.sheets.length) {
-      b.innerHTML = `<div class="hEmpty">${H.q ? `nothing matches “${esc(H.q)}”` : "no runs on record yet"}</div>`;
+      b.innerHTML = `<div class="hEmpty">${H.q ? `nothing matches “${esc(H.q)}”${H.from ? ` since ${esc(dayWord(H.from))}` : ""}` : "no runs on record yet"}</div>`;
       H.dlg.querySelector("#hWhen").innerHTML = "";
-      f.textContent = H.scanned ? `searched ${H.scanned.runs} runs and ${H.scanned.sheets} sheets` : "";
+      f.textContent = [H.scanned ? `searched ${H.scanned.runs} runs and ${H.scanned.sheets} sheets` : "", H.next ? "older records below" : ""].filter(Boolean).join(" · ");
       return;
     }
     const cur = B.run && B.run.runId;
@@ -5387,8 +5397,8 @@ const RunHistory = window.RunHistory = (() => {
     // unfinished runs that wrote no sheet yet have nothing to picture, but can still be picked up
     for (const r of openRuns.filter(r => !seenSets.some(g => g.runId === r.runId))) html += `<div class="hSet row" data-run="${esc(r.runId)}"><div class="hRow"><span class="nm">${r.seq ? "Set " + r.seq : "run " + r.runId.slice(-8)}</span><span class="pill warn">${esc(r.status)}${r.stoppedBy ? " \u00b7 " + esc(r.stoppedBy) : ""}</span><span class="ct">${r.lines} line${r.lines === 1 ? "" : "s"} \u00b7 no sheet written yet</span><span class="sp"></span><button class="btn ghost sm" data-a="resume" title="pick it up where it stopped \u2014 it re-reads every order from Etsy first">Resume the run\u2026</button></div></div>`;
     b.innerHTML = `<div class="hSets ${H.view}">${html}</div>`;
-    f.textContent = [H.scanned ? `searched ${H.scanned.runs} runs and ${H.scanned.sheets} sheets` : "",
-      H.nextOffset != null ? `${H.sets.length} of ${H.total} matching groups shown — load older groups below` : ""].filter(Boolean).join(" · ");
+    f.textContent = [H.scanned ? `searched ${H.scanned.runs} runs and ${H.scanned.sheets} sheets${H.from ? ` back to ${dayWord(H.from)}` : ""}` : "",
+      H.next ? `${H.sets.length} groups shown — older records below` : ""].filter(Boolean).join(" · ");
     b.querySelectorAll(".hSet").forEach(node => {
       const setId = node.dataset.set || null, runId = node.dataset.run || null;
       const o = node.querySelector("[data-a=open]"); if (o) o.onclick = e => { e.stopPropagation(); if (H.dlg.open) H.dlg.close(); SetPicker.preview(H.sets.find(g => node.dataset.group ? (g.key || g.setId || "") === node.dataset.group : g.setId === setId && g.runId === runId)); };
@@ -5400,8 +5410,10 @@ const RunHistory = window.RunHistory = (() => {
       if (o) node.onclick = e => { if (e.target.closest("button")) return; o.click(); };
     });
   }
+  // every step of a run asks for a refresh; while the list is open it is read again at most once a minute
   let refreshTimer = 0;
-  return { show, load, refreshIfOpen: () => { if (H.dlg?.open && !refreshTimer) refreshTimer = setTimeout(() => { refreshTimer = 0; if (H.dlg?.open) load(); }, 700); }, runs: () => H.runs };
+  const refreshIfOpen = () => { if (H.dlg?.open && !refreshTimer) refreshTimer = setTimeout(() => { refreshTimer = 0; if (H.dlg?.open) load(); }, Math.max(700, (H.readAt || 0) + 60000 - Date.now())); };
+  return { show, load, refreshIfOpen, runs: () => H.runs };
 })();
 
 /* ═══ 24d · Recall — a saved set back on the cards, from what was saved ═══════════════════════════════════════════════
@@ -6071,7 +6083,7 @@ const SetPicker = window.SetPicker = (() => {
     try {
       const r = await api("charmNestLibrary", { op: "history", limit: 20 }, { quiet: true });
       rows = r.sets || [];
-      list.innerHTML = `<button type="button" data-current>Current workspace · ${allSheets().filter(p => p.charms.length).length} sheets</button><small>${r.setCount || 0} saved sets · ${r.workingCount || 0} working groups · newest first</small>` + rows.map((g,i) => `<button type="button" data-preview="${i}">${esc(g.name || (g.seq ? "Set " + g.seq : "Working sheets"))} · ${esc(g.day || "")}<small>${g.sheets.length} sheets · ${esc(counts(g.sheets))}</small></button>`).join("");
+      list.innerHTML = `<button type="button" data-current>Current workspace · ${allSheets().filter(p => p.charms.length).length} sheets</button><small>${r.setCount || 0} saved sets · ${r.workingCount || 0} working groups · newest first${r.next ? " · older ones under Search all sets" : ""}</small>` + rows.map((g,i) => `<button type="button" data-preview="${i}">${esc(g.name || (g.seq ? "Set " + g.seq : "Working sheets"))} · ${esc(g.day || "")}<small>${g.sheets.length} sheets · ${esc(counts(g.sheets))}</small></button>`).join("");
       list.querySelector('[data-current]').onclick = () => previewCurrent();
       list.querySelectorAll('[data-preview]').forEach(b => b.onclick = () => preview(rows[+b.dataset.preview]));
     } catch (e) { list.innerHTML = current + `<small>Could not read saved sets: ${esc(e.message)}</small>`; list.querySelector('[data-current]').onclick = previewCurrent; }

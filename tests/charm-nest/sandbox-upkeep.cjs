@@ -226,7 +226,7 @@ const docsIn = c => [...store.keys()].filter(k => k.startsWith(c + '/') && !k.sl
   const rec = store.get('Sandbox_Design_Order_Archive/3521000555');
   assert(rec && rec.items[0].imageUrl && !rec.items[0].mirrorUrl, "the sandbox record keeps the listing's own image URL");
   a = await put(false, '3521000556');
-  assert(a.status === 200 && fetched.length === 1 && blobs.has('design-archive/3521000556/1.jpg') && store.get('Design_Order_Archive/3521000556').items[0].mirrorUrl, 'production still mirrors its photos');
+  assert(a.status === 200 && fetched.length === 1 && [...blobs.keys()].some(k => /^design-archive\/listing\/[0-9a-f]{40}\.jpg$/.test(k)) && store.get('Design_Order_Archive/3521000556').items[0].mirrorUrl, 'production still mirrors its photos');
 
   /* ═══ arrivals ═══ */
   const simNow = Date.now() + 90 * 86400e3;

@@ -29,7 +29,9 @@ function query(coll, filters = [], order = null, lim = 0) {
     count() { return {get:async()=>{const snap=await q.get();return {data:()=>({count:snap.size})};}}; },
     async get() {
       let rows = [...store.entries()].filter(([k]) => k.startsWith(coll + '/') && !k.slice(coll.length + 1).includes('/')).map(([k, v]) => ({ id: k.slice(coll.length + 1), data: () => ({ ...v }), ref: docRef(coll, k.slice(coll.length + 1)) }));
-      for (const [f, op, v] of filters) rows = rows.filter(r => { const x = r.data()[f]; return op === '==' ? x === v : op === '>=' ? x >= v : op === '<=' ? x <= v : op === '>' ? x > v : op === '<' ? x < v : op === '!=' ? x !== v : op === 'in' ? v.includes(x) : true; });
+      // a Timestamp and a Date compare by their time, as in Firestore
+      const t = y => (y && y.toMillis ? y.toMillis() : y instanceof Date ? y.getTime() : y);
+      for (const [f, op, v0] of filters) rows = rows.filter(r => { const x = t(r.data()[f]), v = t(v0); return op === '==' ? x === v : op === '>=' ? x >= v : op === '<=' ? x <= v : op === '>' ? x > v : op === '<' ? x < v : op === '!=' ? x !== v : op === 'in' ? v.includes(x) : true; });
       if (order) rows.sort((a, b) => { const x = a.data()[order[0]], y = b.data()[order[0]]; const c = (x && x.toMillis ? x.toMillis() : x) > (y && y.toMillis ? y.toMillis() : y) ? 1 : -1; return order[1] === 'desc' ? -c : c; });
       if (lim) rows = rows.slice(0, lim);
       return { size: rows.length, docs: rows, empty: !rows.length };
@@ -360,7 +362,7 @@ const post = (h, body, headers = {}) => h.handler({ httpMethod: 'POST', headers,
   r=await post(lib,{op:'history',q:'remember me',limit:1});
   assert.equal(r.body.sets.length,1);assert.equal(r.body.sets[0].sheets.length,2,'a match returns the whole set');assert.equal(r.body.sets[0].orders,2);
   r=await post(lib,{op:'listSheets',runId:'run-old',limit:10});assert.equal(r.body.sheets.length,2,'scope before limit');
-  r=await post(lib,{op:'history',limit:2});assert.equal(r.body.sets.length,2);assert.equal(r.body.nextOffset,2);assert.equal(r.body.sets[0].day,'2026-09-19');
+  r=await post(lib,{op:'history',limit:2});assert.equal(r.body.sets.length,2);assert.deepEqual(r.body.next,{day:'2026-09-19',skip:2});assert.equal(r.body.sets[0].day,'2026-09-19');
   r=await post(lib,{op:'history',q:'set 9'});assert(r.body.sets.some(s=>s.setId==='history-old'));
   // Allocation retries reuse the same number, but a different run gets a new number.
   const a1=await post(lib,{op:'setAllocate',day:'2026-09-19',runId:'run-test1',group:'gold'});

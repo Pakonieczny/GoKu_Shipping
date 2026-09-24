@@ -28,6 +28,7 @@
 
 const admin = require("./firebaseAdmin");
 const db    = admin.firestore();
+const crypto = require("crypto");
 
 const COLL       = "Design_Order_Archive";
 let PREFIX = "";                                   // ?sandbox=1 → Sandbox_Design_Order_Archive
@@ -106,12 +107,16 @@ function getBucket() {
  * Copy a listing image into Firebase Storage so the archive survives Etsy
  * rotating or removing the asset. Best effort — a failure never blocks the
  * write, the record just keeps the original URL.
+ * One copy per picture, not per order line: the file is named for the image URL
+ * (design-archive/listing/<sha1 of the URL>.jpg), so a listing photo that a
+ * hundred orders show is stored once. Records archived before keep the per-order
+ * copy they point at. The sandbox's copies stay under design-archive/sandbox/.
  */
 async function mirrorImage(receiptId, transactionId, url) {
   const b = getBucket();
   if (!b || !url || /^data:/i.test(url)) return "";
   try {
-    const path = `design-archive/${receiptId}/${transactionId}.jpg`;
+    const path = `design-archive/${PREFIX ? "sandbox/" : ""}listing/${crypto.createHash("sha1").update(String(url).trim()).digest("hex")}.jpg`;
     const file = b.file(path);
 
     const [exists] = await file.exists();

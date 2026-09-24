@@ -3190,7 +3190,11 @@ async function persistSheet(sh, items, context) {
   const ops = window.CharmNestOperations;
   if (ops && !context) return ops.run({key:'sheet-save:'+sh.sheetId, label:'Saving sheet', resources:['production:'+(sh.runId || sh.sheetId)]}, token=>persistSheet(sh,items,token));
   if (!S.cloud.ok) throw new Error("Cloud offline — sheet is kept in this browser, but has not been saved online");
-  const day = sh.setDay || today(), name = sh.fileBase || sheetFileBase(sh), base = sh.setId ? `${CharmNestOrders.setFolder(day, sh.seq)}/${name}` : `charmnest/sheets/${day}/${name}`;
+  const day = sh.setDay || today(), name = sh.fileBase || sheetFileBase(sh);
+  // a sheet outside a set keeps the folder it was first saved in: saving it again after midnight opened a new day's
+  // folder and left the old one's files behind (its record still moves to the day it was saved)
+  const kept = !sh.setId && /^charmnest\/(sandbox\/)?sheets\/\d{4}-\d{2}-\d{2}\//.test(sh.folderPath || "") && sh.folderPath.endsWith("/" + name) ? sh.folderPath : null;
+  const base = sh.setId ? `${CharmNestOrders.setFolder(day, sh.seq)}/${name}` : kept || `charmnest/sheets/${day}/${name}`;
   sh.folderPath = base;
   if (window.Engrave) Engrave.reconcileSheet(sh);
   const byId = new Map(items.map(c => [c.id, c]));
@@ -3218,19 +3222,23 @@ async function persistSheet(sh, items, context) {
   // 2 · the files, each retried on its own; a failure is reported, never hidden
   const up = async (path, bytes, type, label) => { let err = null; for (let t = 0; t < 3; t++) { try { return await uploadBytes(path, bytes, type, label); } catch (e) { err = e; await new Promise(r => setTimeout(r, 1500 * (t + 1))); } } throw err; };
   const failed = []; const got = async (k, path, bytes, type, label) => { try { const r = await up(path, bytes, type, label); return { path: r.path, url: r.url }; } catch (e) { failed.push(`${k}: ${e.message}`); return null; } };
-  // the five files go up side by side: one after another they held the next charm back by five round trips
-  const [ai, pdf, labelled, report, preview] = await Promise.all([
+  // the four files go up side by side: one after another they held the next charm back by four round trips. The .pdf
+  // (the .ai under a second name) is not uploaded with every save: it is copied in the bucket once the sheet is final
+  const [ai, labelled, report, preview] = await Promise.all([
     got("ai", `${base}/${name}.ai`, savedOutputs.ai, "application/illustrator", "Saving sheet .ai"),
-    got("pdf", `${base}/${name}.pdf`, savedOutputs.ai, "application/pdf", "Saving sheet .pdf"),
     got("labelled proof", `${base}/${name}_labelled.pdf`, savedOutputs.labelled, "application/pdf", "Saving labelled proof"),
     got("report", `${base}/${name}_nest-report.json`, new TextEncoder().encode(JSON.stringify(savedOutputs.report, null, 1)), "application/json", "Saving report"),
     savedOutputs.previewPng ? got("preview", `${base}/preview.png`, savedOutputs.previewPng, "image/png", "Saving preview") : null
   ]);
-  const outputs = { ai, pdf, labelled, report, preview };
+  const outputs = { ai, pdf: null, labelled, report, preview };
   await opened;
-  sh.cloud = { ai: outputs.ai && outputs.ai.url, pdf: outputs.pdf && outputs.pdf.url, labelled: outputs.labelled && outputs.labelled.url, report: outputs.report && outputs.report.url, preview: outputs.preview && outputs.preview.url };
+  sh.cloud = { ai: outputs.ai && outputs.ai.url, pdf: null, labelled: outputs.labelled && outputs.labelled.url, report: outputs.report && outputs.report.url, preview: outputs.preview && outputs.preview.url };
   // 3 · the record is complete as soon as the sheet's own files are up: the Library shows it now, not after the charm backups
   await api("charmNestLibrary", { op: "putSheet", sheet: Object.assign(savedRecord(outputs), { saving: false }) }, { label: "Completing sheet record" });
+  // a final sheet's .pdf, copied from its .ai in the bucket (a set's sheets get theirs when it is released for labels); it never fails the save
+  if (outputs.ai && (sh.releaseFull || sh.intakeFinalized)) await api("charmNestLibrary", { op: "sheetPdf", id: savedId }, { label: "Saving sheet .pdf", quiet: true })
+    .then(r => { const url = r && r.urls && r.urls[savedId]; if (url) { outputs.pdf = { path: outputs.ai.path.replace(/\.ai$/, ".pdf"), url }; if (sh.jobId === savedJob && sh.cloud) sh.cloud.pdf = url; } })
+    .catch(e => log(sh, "sheet .pdf not made yet: " + e.message));
   if (window.Engrave && sh.jobId === savedJob) await Engrave.saveSheetBacks(sh);
   if (S.mode === "library") loadLibrary();   // the list is open: show the finished record
   // 4 · charm links: once the charms' own permanent copies (started when the file arrived) are done, refresh the record with their links
@@ -3247,7 +3255,7 @@ async function persistSheet(sh, items, context) {
   renderCard(sh);
   recountLibrary();                                            // the rail's library count moves with the library
   if (failed.length) { agent({ metal: sh.metal }, "warn", `Saved the record for ${name}, but these files did not upload: ${failed.join("; ")}`); toast(`${labelOf(sh.metal)}: record saved, ${failed.length} file(s) failed to upload — see the log`, "bad", 6000); throw new Error("Sheet files not saved: " + failed.join("; ")); }
-  agent({ metal: sh.metal }, "cloud", `Saved to the cloud in folder ${name}: ${name}.ai, .pdf, labelled proof, report, preview`);
+  agent({ metal: sh.metal }, "cloud", `Saved to the cloud in folder ${name}: ${name}.ai${outputs.pdf ? ", .pdf" : ""}, labelled proof, report, preview`);
   // a run's sheet: the run waits for this save and stops loudly if it fails, so success needs no second toast
   if (!(sh.runId && window.B?.run?.runId === sh.runId)) toast(`${labelOf(sh.metal)}: sheet, proof and report saved to the cloud`, "ok", 3000);
   // the set: one QR label per sheet saved beside it, the set record kept current (design §8.3)
@@ -4154,7 +4162,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260924-churn"></script>
+<script src="charm-nest-bridge.js?v=20260924-history"></script>
 <script src="charm-nest-rose-ui.js?v=20260924-thickness"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
