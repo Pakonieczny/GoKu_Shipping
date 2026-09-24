@@ -54,7 +54,7 @@ function context() {
     let saved=0,parsed=0,polled=0;
     const Orders={view:()=>view,rows:()=>B.orders.rows,render(){},interpretAll(){},claim:async()=>{},applyPullRule:x=>x,loadMaps:async()=>{}};
     const Gate={state:()=>gate,modern:()=>false,nestable:()=>true,assemble:async()=>{}}; const Recall={state:()=>recall,on:()=>!!recall.runId};
-    const Engrave={render(){},classifyAll:async()=>{},fitAll:async()=>{}}; const Review={render(){}};
+    const Engrave={render(){},classifyAll:async()=>{},fitAll:async()=>{},background:()=>Promise.resolve()}; const Review={render(){}};
     const RunCtl={renderBanner(){},save:async()=>saved++,poke(){},stop(){},start:async()=>{},clearRunState(){recall.runId=null;B.orders={rows:[],byKey:new Map()};}};
     const CN={showPage(){}}; const LiveStrip={rows:[]};
     const P={parseSource:async()=>{parsed++;return {rebuilt:true};}};

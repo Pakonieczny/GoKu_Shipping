@@ -20,7 +20,9 @@ function fixture({pending=1, review=1, autoCommit='on', pages=[], sets, rows}={}
   const asyncCall=name=>async()=>{calls.push(name);};
   const ctx={window:{},B:{run:r},S:{cloud:{ok:true},settings:{autoCommit}},O,Date,Promise,Map,Set,JSON,queueMicrotask,setTimeout,clearTimeout,setInterval,clearInterval,
     allSheets:()=>pages,Orders:{rows:()=>rows,lineRecord:x=>[x.key,x],revalidate:async()=>{calls.push('revalidate');return{changed:[]};},unclaim:asyncCall('unclaim'),pull:async()=>rows},
-    Pool:{sheetOf:()=>null,addAll:async()=>0},Engrave:{items:()=>jobs,pendingCount:()=>state.pending,classifyAll:asyncCall('classify'),fitAll:asyncCall('fit')},
+    Pool:{sheetOf:()=>null,addAll:async()=>0},Engrave:{items:()=>jobs,pendingCount:()=>state.pending,classifyAll:asyncCall('classify'),fitAll:asyncCall('fit'),
+      // the words are read and fitted beside the run: the step only starts that work (see Engrave.background)
+      background:()=>{calls.push('classify');calls.push('fit');return Promise.resolve();},saveBacks:asyncCall('backs')},
     Review:{count:()=>state.review},Gate:{flush:asyncCall('flush'),nestable:()=>true,modern:()=>true,assemble:asyncCall('assemble'),upgrade:asyncCall('upgrade')},
     LiveNest:{finish:asyncCall('finish')},Sets:{ofRun:()=>sets,releaseIssue:s=>s.blocked?'Approval pending':null,
       save:asyncCall('set-save'),finalize:async s=>{calls.push('labels:'+s.setId);if(state.fail)throw Error(state.fail);},

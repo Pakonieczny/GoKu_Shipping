@@ -801,10 +801,20 @@ const Orders = window.Orders = (() => {
       for (let attempt = 0; attempt < 2 && !r; attempt++) { try { r = await DesignLink.call("claim", { receiptIds: part, runId: B.run && B.run.runId }, { timeoutMs: 90000 }); } catch (e) { if (attempt) { missed += part.length; agent({ bridge: true }, "warn", `claim: ${e.message} — carrying on without the dot on ${part.length} order(s)`); } } }
       for (const id of (r && r.claimed) || []) got.add(id);
     }
-    for (const row of rowsOf()) if (got.has(row.order.receiptId)) row.claimedBy = "sorter";
+    for (const row of rowsOf()) if (got.has(row.order.receiptId)) { row.claimedBy = "sorter"; delete row.unclaimed; }
     agent({ bridge: true }, "DS", `Claimed ${got.size} order(s) on the station (gold dot)${missed ? ` · ${missed} unanswered` : ""}`); render();
   }
-  async function unclaim(ids) { if (!ids.length) return; try { await DesignLink.call("unclaim", { receiptIds: ids }); } catch (e) { agent({ bridge: true }, "warn", `unclaim: ${e.message}`); } for (const row of rowsOf()) if (ids.includes(row.order.receiptId)) row.claimedBy = null; render(); }
+  /** An order the station has already let go of is not sent again: the run passes its last step after every update, and
+      each pass used to send every finished order of the day again, a list that only grows. */
+  async function unclaim(ids) {
+    const done = new Set(rowsOf().filter(r => r.unclaimed).map(r => String(r.order.receiptId)));
+    ids = ids.filter(id => !done.has(String(id))); if (!ids.length) return;
+    let ok = true;
+    try { await DesignLink.call("unclaim", { receiptIds: ids }); } catch (e) { ok = false; agent({ bridge: true }, "warn", `unclaim: ${e.message}`); }
+    const sent = new Set(ids.map(String));
+    for (const row of rowsOf()) if (sent.has(String(row.order.receiptId))) { row.claimedBy = null; if (ok) row.unclaimed = true; }
+    render();
+  }
   /** §10.3: every order's update_timestamp re-read through the station; changed → re-interpret; vanished → dropped. */
   async function revalidate(run, why) {
     // an order found gone stays gone: reading it again at every check cost an Etsy call each time and changed nothing.
@@ -1687,7 +1697,7 @@ const Pool = window.Pool = (() => {
     if (run) page.runId = run.runId;
     for (const c of charms) if (!page.charms.includes(c)) page.charms.push(c);
     for (const p of pools) B.pool.rows.set(p.poolId, p);
-    row.poolIds = pools.map(p => p.poolId); row.state = "pooled"; row.material = sp.material; row.reason = null;
+    row.poolIds = pools.map(p => p.poolId); row.state = "pooled"; row.material = sp.material; row.reason = null; delete row.poolTry; delete row.poolError;
     if(page.placements.length){page.intakeAppend=true;page.appendOnly=true;page.dirty=true;if(!['nesting','finishing','queued'].includes(page.status))page.status='ready';renderCard(page);}else sheetDirty(page);
     agent({ metal: sp.material, pool: true }, "POOL", `${row.order.receiptId} · ${sp.designSku}${sp.quantity > 1 ? " ×" + sp.quantity : ""} → ${labelOf(sp.material)} (${row.engrave && row.engrave.needed ? "engrave" : "plain"})`);
   }
@@ -1696,24 +1706,46 @@ const Pool = window.Pool = (() => {
     const r = S.cloud.ok ? await api("charmNestLibrary", { op: "poolPut", pools: prep.pools }, { label: "Recording the pool" }) : {};
     attachPool(row, run, prep, r.contended);
   }
+  /* A line that could not go on a sheet (its SKU in no master file or blocked, a size its design lacks, too big for the
+     plate, a design that would not load) is made up again only when something it depends on has changed: the line as
+     read (Etsy or a person), its design in the library, the plate it would go on. One whose design would not load is
+     tried again after RETRY_MS. Every update used to make up each such line again, and look up each unknown SKU again,
+     so an update took longer the longer the open orders list grew (Paul, 24 Sep: "Why do we have to prepare all the
+     orders every single time"). */
+  const RETRY_MS = 5 * 60000;
+  function trySig(row) {
+    const sp = row.spec || {}, e = sp.designSku ? Master.entryFor(sp.designSku) : null, st = sp.material ? stockFor(sp.material) : null;
+    return JSON.stringify([+row.order.updateTs || 0, sp.designSku || "", sp.size || "", sp.material || "", sp.quantity || 0, !!sp.noDesign, (sp.problems || []).map(p => p.kind), row.materialOverride || "", row.sizeOverride || "",
+      e ? [e.masterHash || "", e.updatedAt || 0, e.blocked || "", Object.keys(e.sizes || {}).sort().join(","), sizeEntry(e, sp.size)?.aiPath || ""] : B.master.entries.size,
+      st ? [Math.round(st.wPt), Math.round(st.hPt)] : 0, +S.settings.insetPt || 0, +S.settings.maxFill || 0]);
+  }
+  const due = row => ["pulled", "waiting"].includes(row.state) || row.poolTry !== trySig(row) || (row.poolError > 0 && Date.now() - row.poolError >= RETRY_MS);
   async function addAll(run) {
+    // what goes to the laser today and what waits: full sheets for SS and GF, every other day for the slow metals, orders whole
+    // (read first: whether a line is due compares what it is read as now with what it was read as when it was last tried)
+    Orders.interpretAll();
     // A line a person holds waits for that person (the hold is lifted through Review.repool), and a line whose pieces
     // are all on sheets already has nothing to make. Both used to be made up again at the next intake: "Hold order" on
     // a pooled order put a second copy of each of its pieces on a sheet (same pool id, cut twice).
-    const rows = Orders.rows().filter(r => ["pulled", "held", "unmatched", "oversize", "waiting"].includes(r.state) && !(r.state === "held" && r.hold) && !(onSheets(r) && settle(r))).sort((a, b) => (+a.order.createTs || 0) - (+b.order.createTs || 0));
-    // what goes to the laser today and what waits: full sheets for SS and GF, every other day for the slow metals, orders whole
-    Orders.interpretAll();
+    const rows = Orders.rows().filter(r => ["pulled", "held", "unmatched", "oversize", "waiting"].includes(r.state) && !(r.state === "held" && r.hold) && !(onSheets(r) && settle(r)) && due(r)).sort((a, b) => (+a.order.createTs || 0) - (+b.order.createTs || 0));
     const plan = await Gate.plan(rows);
     const held = [...plan.wait.values()];
     if (held.length) agent({ pool: true }, "POOL", `${held.length} line(s) wait: ${held.filter(w => w.kind === "fill").length} for a full sheet, ${held.filter(w => w.kind === "slow").length} for a slow metal's day`);
     let n = 0;
-    const bar = rows.length && window.CNProgress ? CNProgress.start(`Preparing ${rows.length} order line(s)`, { total: rows.length }) : null;
+    // the bar counts the lines made up now; lines waiting for their day are not made up
+    const work = rows.filter(row => row.state !== "waiting");
+    const bar = work.length && window.CNProgress ? CNProgress.start(`Preparing ${work.length} order line${work.length === 1 ? "" : "s"}`, { total: work.length }) : null;
     // The design files load side by side (each is fetched, read and traced once a session); the lines are then made up in
     // order, oldest first, and recorded in one call rather than one call a line.
-    const hold = (row, e) => { row.state = "held"; row.reason = e.message; agent({ pool: true }, "warn", `${row.order.receiptId} · ${row.spec && row.spec.designSku}: ${e.message}`); };
-    await Promise.allSettled(rows.filter(row => row.state !== "waiting" && row.spec && !row.spec.noDesign).map(row => { const e = Master.entryFor(row.spec.designSku); return e && !e.blocked && sizeEntry(e, row.spec.size)?.aiPath ? masterCharm(e, row.spec.size) : null; }));
+    const hold = (row, e, later) => { row.state = "held"; row.reason = e.message; if (later) { row.poolError = Date.now(); row.poolTry = trySig(row); } agent({ pool: true }, "warn", `${row.order.receiptId} · ${row.spec && row.spec.designSku}: ${e.message}`); };
+    await Promise.allSettled(work.filter(row => row.spec && !row.spec.noDesign).map(row => { const e = Master.entryFor(row.spec.designSku); return e && !e.blocked && sizeEntry(e, row.spec.size)?.aiPath ? masterCharm(e, row.spec.size) : null; }));
     const made = [];
-    for (const row of rows) { if (row.state === "waiting") { n++; continue; } if (bar) bar.set(n, rows.length, row.spec && row.spec.designSku ? String(row.spec.designSku) : ""); try { const prep = await preparePool(row, run); if (prep) made.push([row, prep]); } catch (e) { hold(row, e); } if (++n % 5 === 0) { Orders.render(); } }
+    for (const row of work) {
+      if (bar) bar.set(n, work.length, row.spec && row.spec.designSku ? String(row.spec.designSku) : "");
+      delete row.poolError;
+      try { const prep = await preparePool(row, run); if (prep) made.push([row, prep]); else row.poolTry = trySig(row); } catch (e) { hold(row, e, true); }
+      if (++n % 5 === 0) { Orders.render(); }
+    }
     let contended = [], failure = null;
     if (S.cloud.ok && made.length) {
       const all = made.flatMap(([, prep]) => prep.pools);
@@ -1727,7 +1759,7 @@ const Pool = window.Pool = (() => {
     // the run record follows the work without holding it up (see RunCtl.loopNow); a failed save shows on the banner
     if (run) { run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); RunCtl.save(run).catch(() => {}); }
     const pooled = rows.filter(r => r.state === "pooled").length;
-    agent({ pool: true }, "POOL", `Pool: ${pooled} line(s) queued on the cards · ${rows.filter(r => r.state === "waiting").length} waiting · ${rows.filter(r => !["pooled", "noDesign", "waiting"].includes(r.state)).length} held`);
+    if (rows.length) agent({ pool: true }, "POOL", `Pool: ${pooled} line(s) queued on the cards · ${rows.filter(r => r.state === "waiting").length} waiting · ${rows.filter(r => !["pooled", "noDesign", "waiting"].includes(r.state)).length} held`);
     return pooled;
   }
   async function update(poolIds, patch) { for (const id of poolIds) { const p = B.pool.rows.get(id); if (p) Object.assign(p, patch); } if (S.cloud.ok) for (let i = 0; i < poolIds.length; i += 400) await api("charmNestLibrary", { op: "poolUpdate", poolIds: poolIds.slice(i, i + 400), patch }); }
@@ -2340,7 +2372,11 @@ const Engrave = window.Engrave = (() => {
     if(items() !== owner)return done;
     if(Orders.rows().some(r=>["pooled","written"].includes(r.state) && (!Gate.modern() || Pool.sheetOf(r.poolIds[0])) && r.spec?.engraveCandidate && (!r.engrave || r.engrave.state === "reclassify")))
       return done + await classifyAllOnce(run,owner);
-    for (const r of Orders.rows()) if (r.state === "pooled" && r.spec && !r.spec.engraveCandidate && !r.engrave) r.engrave = { needed: false, state: "none", approved: true };
+    let plain = 0;
+    for (const r of Orders.rows()) if (r.state === "pooled" && r.spec && !r.spec.engraveCandidate && !r.engrave) { r.engrave = { needed: false, state: "none", approved: true }; plain++; }
+    // a pass with nothing to read changes nothing: the lists and the run record are left as they are
+    if (!done && !plain) return 0;
+    done += plain;
     Orders.render(); render();
     // the run record follows the work without holding it up (see RunCtl.loopNow); a failed save shows on the banner
     if (run) { run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); RunCtl.save(run).catch(() => {}); }
@@ -2421,12 +2457,40 @@ const Engrave = window.Engrave = (() => {
     agent({ engrave: true }, r.legible ? "ENGRAVE" : "warn", `${job.row.order.receiptId}: Claude ${r.legible ? "reads it fine" : "finds it hard to read"} — ${r.notes}`);
     render();
   }
+  /** Fits every job whose words are read and whose sheet is written; returns how many it fitted. */
   async function fitAll(run) {
     const jobs = [...items().values()].filter(j => !j.editingBack && j.state === "ready" && j.row.state !== "gone" && canFit(j) && !isWorking(j));
-    for (const j of jobs) { if (j.state !== "ready") continue; const sh = j.copies.length && Pool.sheetOf(j.copies[0]); if (!sh || !sh.fileBase) continue; try { await fitJob(j); } catch (e) { j.state = "blocked"; j.reason = e.message; j.row.engrave.state = "blocked"; agent({ engrave: true }, "warn", `${j.row.order.receiptId}: ${e.message}`); Review.add({ kind: "flipFailed", key: "eng:" + j.key, row: j.row, job: j, why: e.message }); } }
+    let fitted = 0;
+    // a job counts only when the fit moved it on: one left "ready" (its charm not found on the sheet yet) changed nothing
+    for (const j of jobs) { if (j.state !== "ready") continue; const sh = j.copies.length && Pool.sheetOf(j.copies[0]); if (!sh || !sh.fileBase) continue; try { await fitJob(j); } catch (e) { j.state = "blocked"; j.reason = e.message; j.row.engrave.state = "blocked"; agent({ engrave: true }, "warn", `${j.row.order.receiptId}: ${e.message}`); Review.add({ kind: "flipFailed", key: "eng:" + j.key, row: j.row, job: j, why: e.message }); } if (j.state !== "ready") fitted++; }
+    if (!fitted) return 0;
     // the run record follows the work without holding it up (see RunCtl.loopNow); a failed save shows on the banner
     if (run) { run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); RunCtl.save(run).catch(() => {}); }
-    render(); return jobs.length;
+    render(); return fitted;
+  }
+  /* Reading the words and fitting them run beside the placement, never in front of it (Paul, 24 Sep: "it stops the next
+     charm from being placed every time there's a back engraving"). New orders went onto their sheets, and then the
+     next update waited while Claude read every new order's words, about 7 s a line, and the run waited on them at
+     Engraving. Now both only start this pass: the charms keep coming, and a set still waits for its words to be read,
+     fitted and approved before it goes to the laser (Sets.validateRelease). A pass asked for while one runs is run
+     once more when it ends, so a line that arrives meanwhile is read too; when a pass has read or fitted anything the
+     run is told (RunCtl.backgroundSettled), since a line that needs no engraving can let its set go on.            */
+  let backgroundPass = null, backgroundAgain = null, settledPasses = 0;
+  function background(run) {
+    if (backgroundPass) { backgroundAgain = run || backgroundAgain || B.run; return backgroundPass; }
+    backgroundPass = (async () => {
+      let did = 0;
+      try {
+        for (let r = run || B.run; ;) {
+          did += (await classifyAll(r)) || 0;
+          did += (await fitAll(r)) || 0;
+          if (!backgroundAgain) break;
+          r = backgroundAgain; backgroundAgain = null;
+        }
+      } catch (e) { agent({ engrave: true }, "warn", `engraving: ${e.message}`); }
+      finally { backgroundPass = null; if (did) { settledPasses++; RunCtl.backgroundSettled(); } }
+    })();
+    return backgroundPass;
   }
   function revokeBacks(job) {
     job.approvedAt = null; job.backs = []; delete job._backPreview;
@@ -2527,11 +2591,12 @@ const Engrave = window.Engrave = (() => {
   }
   /** An approval's back files are written; one that cannot be written sends the job back to placement review. */
   async function saveBacks(job) {
-    job.backSaving = true; const approval = job.approvedAt;
+    job.backSaving = true; const approval = job.approvedAt, was = job.state, had = (job.backs || []).length;
     render(); Orders.render(); refreshBacks();
     try { await writeBacks(job); } catch (e) { if (job.approvedAt !== approval) { job.backSaving = false; return; } job.state = "review"; job.row.engrave.state = "review"; job.row.engrave.approved = false; job.reason = "back file failed: " + e.message; refreshBacks(); agent({ engrave: true }, "warn", `${job.row.order.receiptId}: ${job.reason}`); if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); }
     job.backSaving = false; Session.schedule();
-    if(!job.editingBack) RunCtl.poke();
+    // the run looks again only when the save changed something (a save with nothing to write would start it over and over)
+    if(!job.editingBack && (job.state !== was || (job.backs || []).length !== had)) RunCtl.backgroundSettled();
   }
   /** A reload while an approval's back files were being written left it approved with none, or only some, of them:
       its sheet showed "Saving…" until the run next passed Engraving, and not at all while the run stayed stopped. After the
@@ -2698,9 +2763,13 @@ const Engrave = window.Engrave = (() => {
         agent({engrave:true},"warn",`${job.row.order.receiptId}: ${e.message}`);render();return false;
       }
     }, ops=window.CharmNestOperations;
-    const task = ops ? ops.run({key:'back-save:'+job.key,label:'Saving engraving',resources:['production:'+(job.editSheet?.runId || B.run?.runId || job.editSheet?.sheetId || 'manual')]},write) : backQueue.catch(()=>{}).then(write);
+    // One engraving's files are written one save at a time; the production lock is held only while each back is
+    // recorded on its sheet (recordBack), so a back being built, checked and uploaded never holds up the next charm
+    // (Paul, 24 Sep). It used to hold the lock the whole time, and the next intake and sheet waited for every back.
+    const task = ops ? ops.run({key:'back-save:'+job.key,label:'Saving engraving',resources:['back:'+job.key]},write) : backQueue.catch(()=>{}).then(write);
     backQueue=task;return task;
   }
+  const recordBack = (job, fn) => { const ops = window.CharmNestOperations; return ops ? ops.run({ key: "back-record:" + job.key, label: "Recording engraving", resources: ["production:" + (job.editSheet?.runId || B.run?.runId || job.editSheet?.sheetId || "manual")] }, fn) : fn(); };
   async function writeBacksNow(job) {
     if (!["approved", "written"].includes(job.state) || !job.fit || !job.view) return;
     const approval = job.approvedAt;
@@ -2724,14 +2793,19 @@ const Engrave = window.Engrave = (() => {
         let ai = null, pngUp = null;
         if (S.cloud.ok && sh.folderPath) { ai = await uploadBytes(`${sh.folderPath}/back/${name}.ai`, built.bytes, "application/illustrator", `Saving back ${copy}`); pngUp = await uploadBytes(`${sh.folderPath}/back/${name}.png`, pngBlob, "image/png"); }
         const rec = { lineGap:fitOpts(job).lineGap, lineMode:job.lineMode || "auto", lineInput:job.lineInput || job.lines, materialVersion:2, upAngle:view.upAngle, poolId, sheetId: sh.sheetId, setId: sh.setId || null, runId: sh.runId || null, order: job.row.order.receiptId, transactionId: job.row.line.transactionId, sku: job.row.spec.designSku, copy, text: job.text, lines: job.lines, font: "Source Sans 3", weight: fit.weight, sizePt: +fit.size.toFixed(3), capMm: +fit.capMm.toFixed(3), box: fit.rect ? [fit.rect.x0, fit.rect.y0, fit.rect.x1, fit.rect.y1].map(v => +v.toFixed(2)) : null, centre: fit.centre.map(v => +v.toFixed(2)), angle: fit.angle, small: !!fit.small, thin: !!fit.thin, metrics: fit.metrics, flipChecks: view.checks, flipDetail: view.detail, verified: { geometry: job.verify.geometry, file: verified }, review: job.claude, approvedBy: job.approvedBy, approvedAt: job.approvedAt, nudged: !!job.nudged, decision: job.decision || null, source: job.source, sourceQuote: job.quote, confidence: job.confidence, view: S.settings.backFileView || "asSeenFromBack", reference: built.reference, outputs: { ai: ai && { path: ai.path, url: ai.url }, png: pngUp && { path: pngUp.path, url: pngUp.url } }, name, previewWPt:png._sizePt.w, previewHPt:png._sizePt.h, pageWPt: built.wPt, pageHPt: built.hPt };
-        if (!current()) return;
-        if (sheetFor(job,poolId) !== sh) throw Object.assign(new Error("The charm moved during approval. Retry on its current sheet."),{engravingPending:true});
-        if (!S.cloud.ok || !ai || !pngUp) throw new Error("Reconnect to save the approved back files");
-        await api("charmNestLibrary", { op: "backPut", back: rec, ...(job.editingBack ? {expectedApprovedAt:job.expectedApprovedAt} : {}) });
-        for (const page of allSheets()) page.backPool = (page.backPool || []).filter(b => b.poolId !== poolId);
-        if (!current()) return;
-        sh.backPool = sh.backPool.filter(b=>b.poolId!==poolId); sh.backPool.push(rec); job.backs.push(rec);
-        if(job.editingBack) job.expectedApprovedAt=rec.approvedAt; window.LaserReview?.saved(sh); refreshBacks();
+        // the sheet's saves write its list of backs too: recording one waits its turn with them, and nothing else does
+        const recorded = await recordBack(job, async () => {
+          if (!current()) return false;
+          if (sheetFor(job,poolId) !== sh) throw Object.assign(new Error("The charm moved during approval. Retry on its current sheet."),{engravingPending:true});
+          if (!S.cloud.ok || !ai || !pngUp) throw new Error("Reconnect to save the approved back files");
+          await api("charmNestLibrary", { op: "backPut", back: rec, ...(job.editingBack ? {expectedApprovedAt:job.expectedApprovedAt} : {}) });
+          for (const page of allSheets()) page.backPool = (page.backPool || []).filter(b => b.poolId !== poolId);
+          if (!current()) return false;
+          sh.backPool = (sh.backPool || []).filter(b=>b.poolId!==poolId); sh.backPool.push(rec); job.backs.push(rec);
+          if(job.editingBack) job.expectedApprovedAt=rec.approvedAt; window.LaserReview?.saved(sh); refreshBacks();
+          return true;
+        });
+        if (!recorded) return;
         agent({ metal: sh.metal, engrave: true }, "ENGRAVE", `Back file written and re-verified: ${name}.ai (${built.reference.redrawn ? "cut reference redrawn from the exact transformed paths" : "original cut bytes under the mirror matrix"})`);
       }
       if(job.editingBack) {const {sheet:latest}=await api("charmNestLibrary",{op:"getSheet",id:sh.sheetId});sh.backPool=latest.backPool || [];}
@@ -3293,7 +3367,7 @@ const Engrave = window.Engrave = (() => {
     void it;
     return card;
   }
-  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: EG.drafts }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, canFit, isWorking, fitJob, fitAll, approve, nudge, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
+  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: EG.drafts }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, nudge, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
 })();
 
 /* ═══ 22 · Sets — production evidence and release ═══ */
@@ -3781,6 +3855,8 @@ const RunCtl = window.RunCtl = (() => {
       if (outcome && outcome.done) break;
       if (outcome && outcome.goto) { r.step = outcome.goto; await save(r); continue; }
       const next = O.nextStep(step);
+      // engraving finished beside the run after it passed Engraving: the steps after it run again before the run rests
+      if (!next && seenAtEngrave !== backgroundDone) { r.step = "engrave"; continue; }
       if (!next) { updatePending(r); r.status = hasPending(r) ? "processed" : "complete"; r.processingComplete = true; r.finishedAt = Date.now(); r.processingSignature=workSignature(r); await save(r); renderBanner(); onComplete(r); break; }
       r.step = next;
       if (r.mode === "manual" && PAUSE_AFTER.has(step)) { r.status = "paused"; await save(r); renderBanner(); agent({ run: r.runId }, "DS", `Paused after ${step} — press Next step (${next})`); break; }
@@ -3796,11 +3872,18 @@ const RunCtl = window.RunCtl = (() => {
     switch (step) {
       case "pull": { const rows = await Orders.pull(r, { silent: true }); if (!rows.length) { r.nothingToCut=true; return {goto:"complete"}; } return; }
       case "claim": { Orders.claim([...new Set(Orders.rows().map(x => x.order.receiptId))]).catch(() => {}); r.claimedAt = Date.now(); return; }
-      case "pool": { const n=await Pool.addAll(r); if(!n){r.nothingToCut=true;updatePending(r);agent({run:r.runId},"info","No eligible pieces to nest; unresolved items remain available for follow-up.");return {goto:"complete"};} Engrave.classifyAll(r).catch(e=>agent({run:r.runId},"warn",`classifier: ${e.message}`));return; }
+      case "pool": { const n=await Pool.addAll(r); if(!n){r.nothingToCut=true;updatePending(r);agent({run:r.runId},"info","No eligible pieces to nest; unresolved items remain available for follow-up.");return {goto:"complete"};} Engrave.background(r);return; }
       case "plan": { for (const m of METALS) { const pg = activePage(m.key); if (!pg.charms.some(c => c.poolId)) continue; const sat = computeSaturation(pg); agent({ metal: m.key, run: r.runId }, "info", `${labelOf(m.key)}: ${sat.count} piece(s) need ${fmt.pct(sat.totalNeeded / sat.usable)} of the plate — ${sat.recommend ? "over the " + fmt.pct(sat.rho.cap) + " ceiling, the overflow goes to a second sheet" : "under the " + fmt.pct(sat.rho.cap) + " ceiling"}`); } return; }
       case "nest": { await nestAll(r); return; }
       case "checkpoint": { await Arrivals.processPending?.({checkpoint:true}); if(r.status!=="running")return; await LiveNest.finish(r); await Gate.assemble(r); const sets = Sets.ofRun(r.runId); for (const set of sets.filter(s=>!s.committedAt)) { set.status = "awaiting review"; await Sets.save(set); } r.setIds = sets.map(x => x.setId); r.setId = r.setIds[0] || r.setId || null; r.status = "running"; await save(r); return; }
-      case "engrave": { for (const j of Engrave.items().values()) if (!j.editingBack && j.state === "approved" && j.copies.length && Pool.sheetOf(j.copies[0])) { j.copies = j.row.poolIds.filter(id=>!(j.copyOverrides || []).includes(id)); await Engrave.writeBacks(j); } await Engrave.classifyAll(r); await Engrave.fitAll(r); updatePending(r); return; }
+      case "engrave": {
+        // Nothing here waits for engraving (Paul, 24 Sep): approved backs not written yet are written, and new lines'
+        // words read and fitted, beside the run. A set still waits for them before it goes to the laser, and the run
+        // looks again when they are done (backgroundSettled).
+        seenAtEngrave = backgroundDone;
+        for (const j of Engrave.items().values()) if (!j.editingBack && j.state === "approved" && !j.backSaving && j.fit && j.view && j.copies.length && Pool.sheetOf(j.copies[0])) { j.copies = j.row.poolIds.filter(id=>!(j.copyOverrides || []).includes(id)); Engrave.saveBacks(j).catch(e => agent({ engrave: true }, "warn", `${j.row.order.receiptId}: ${e.message}`)); }
+        Engrave.background(r); updatePending(r); return;
+      }
       case "revalidate": {
         // Etsy is read again right before labels are made. With no set ready for its labels (sheets still filling, the
         // usual state between arrivals), there is nothing to protect yet and the sweep only held the next orders back.
@@ -3895,7 +3978,8 @@ const RunCtl = window.RunCtl = (() => {
     const w = waiter; waiter = null; w.resolve();
   }
   function holdSheet(r,sh,why){sh.runHold=why;sh.problem=why;(r.sheetHolds||={})[sh.sheetId || sh.metal+"-"+sh.page]=why;CN.renderCard(sh);}
-  async function deferSet(r,set,why){(r.deferredSets||={})[set.setId]=why;set.status="awaiting review";await Sets.save(set);}
+  // a set that already waits for the same reason is not saved again at every pass (engraving read beside the run passes often)
+  async function deferSet(r,set,why){(r.deferredSets||={})[set.setId]=why;if(set.status==="awaiting review"&&set._deferredFor===why)return;set.status="awaiting review";await Sets.save(set);set._deferredFor=why;}
   function updatePending(r){
     const pages=allSheets().filter(p=>p.runId===r.runId&&p.charms.length);
     r.pendingWork={orders:Orders.rows().filter(row=>["held","waiting","pulled","pooled"].includes(row.state)).length,sheets:pages.filter(p=>p.runHold || !p.outputs || !p.verification?.ok || p.dirty).length,review:Review.count(),engraving:Engrave.pendingCount(),sets:Object.keys(r.deferredSets||{}).length,commit:!!r.awaitCommit};
@@ -3921,9 +4005,14 @@ const RunCtl = window.RunCtl = (() => {
     if(r.status==='running'){membershipUpdated(r);loop().catch(e=>stop(e.message,'Fix the cause and press Resume.'));}
     else {r.status='running';r.stoppedBy=null;r.fix=null;continueProcessing(r,'nest');}
   }
-  function poke() {
+  /* Work that runs beside the run (Engrave.background, Engrave.saveBacks) tells it when it is done: a resting run takes
+     up its steps again at once (its record of the work may already hold the change, so it does not wait for one), and
+     a run going through its steps goes through them again before it rests (loopNow). */
+  let backgroundDone = 0, seenAtEngrave = 0;
+  function backgroundSettled() { backgroundDone++; poke(true); }
+  function poke(force) {
     const r=B.run;
-    if(r?.status==='processed' && !r.arrivalBusy && workChanged(r)){
+    if(r?.status==='processed' && !r.arrivalBusy && (force === true || workChanged(r))){
       r.processingSignature=workSignature(r);
       const needsNest=allSheets().some(p=>p.runId===r.runId&&!p.runHold&&Gate.nestable(p,r)&&p.charms.length&&(p.dirty||['ready','idle','queued','nesting','finishing'].includes(p.status)));
       continueProcessing(r,needsNest?'nest':'engrave');
@@ -4255,7 +4344,7 @@ const RunCtl = window.RunCtl = (() => {
     };
     Orders.render();
   }
-  return { optionsChanged, recoverReviewStop, membershipUpdated, start, next, resume, stop, operatorStop, stopIfRunning, poke, save, onSheetDone, pickResume, resumeRun, restoreRunSheets, commitNow, setMode: setRunMode, setRunMode, renderBanner, renderModeBtn, clearRunState, run };
+  return { optionsChanged, recoverReviewStop, membershipUpdated, start, next, resume, stop, operatorStop, stopIfRunning, poke, backgroundSettled, save, onSheetDone, pickResume, resumeRun, restoreRunSheets, commitNow, setMode: setRunMode, setRunMode, renderBanner, renderModeBtn, clearRunState, run };
 })();
 
 /* ═══ 24 · Review — every decision a person must make ═════════════════════ */
@@ -5506,7 +5595,8 @@ const Arrivals = window.Arrivals = (() => {
       Orders.claim([...new Set(Orders.rows().filter(x => x.state === "pulled").map(x => x.order.receiptId))]).catch(() => {});
       if(state.revalidate){await Orders.revalidate(r,"during intake");state.revalidate=false;}
       await LiveNest.add(r);
-      await Engrave.classifyAll(r); await Engrave.fitAll(r); RunCtl.save(r).catch(() => {});
+      // the new lines' words are read and fitted beside the next orders (Engrave.background): the next charm never waits
+      Engrave.background(r); RunCtl.save(r).catch(() => {});
     } catch (e) {
       state.pending = true; save();
       // Stop pressed while the orders went on keeps its own plain reason: the orders not placed yet wait, and this intake

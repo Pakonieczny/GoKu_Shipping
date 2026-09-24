@@ -111,7 +111,7 @@ function controllerFor({ rows = [], sandbox = false } = {}) {
       // a resume pulls the run's orders again: the station answers with the ones still open there
       pull: async (run, { receiptIds }) => { st.pulled = receiptIds.map(String); const want = new Set(st.pulled); st.rows = [...station.values()].filter(o => want.has(o.receiptId) && !closedAtStation(o)).flatMap(o => o.lines.map(l => freshRow(o, l))); return st.rows; } },
     Pool: { sheetOf: () => null, addAll: async () => 0, charmOf: () => ({}) },
-    Engrave: { items: () => new Map(), pendingCount: () => 0, classifyAll: async () => {}, fitAll: async () => {} },
+    Engrave: { items: () => new Map(), pendingCount: () => 0, classifyAll: async () => {}, fitAll: async () => {}, background: () => Promise.resolve(), saveBacks: async () => {} },
     Review: { count: () => 0 }, Gate: { flush: async () => {}, nestable: () => true, modern: () => true, assemble: async () => {}, upgrade: async () => {} },
     LiveNest: { finish: async () => {} }, Sets: { ofRun: () => [], releaseIssue: () => null, save: async () => {}, finalize: async () => {}, byRun: () => new Map(), keyOf: () => '' },
     api, Session: { schedule() {} }, LiveStrip: { render() {} }, Arrivals: { start() {}, processPending: async () => {} },
