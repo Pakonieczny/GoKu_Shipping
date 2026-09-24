@@ -24,9 +24,9 @@ exports.handler = async (event) => {
   if (!snap.exists) return { statusCode: 404, body: "unknown job" };
   if (snap.data().status !== "pending") return { statusCode: 200, body: "already handled" };
   await ref.set({ status: "running", startedAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() }, { merge: true });
+  const payloadPath = snap.data().payloadPath;
   try {
     let payload = body.payload;
-    const payloadPath = snap.data().payloadPath;
     if (!payload && payloadPath) { const [buf] = await admin.storage().bucket().file(payloadPath).download(); payload = JSON.parse(buf.toString("utf8")); }
     if (!payload) throw new Error("no payload");
     const out = await agent.run(mode, payload);
@@ -41,6 +41,8 @@ exports.handler = async (event) => {
     console.log(`[charmEngrave] ${id} ${mode}: ${out.skipped ? "skipped: " + out.skipped : out.error ? "error: " + out.error : "ok"} · in=${out.usage && out.usage.input_tokens} out=${out.usage && out.usage.output_tokens}`);
   } catch (e) {
     console.error("[charmEngrave]", id, e);
+    // a failed job is not run again (a retry parks a new payload): its parked payload goes, its error stays on the record
+    if (payloadPath) { try { await admin.storage().bucket().file(payloadPath).delete(); } catch (_) { /* already gone */ } }
     await ref.set({ status: "error", error: String(e && e.message || e), updatedAt: FV.serverTimestamp() }, { merge: true });
   }
   return { statusCode: 200, body: "ok" };

@@ -9,6 +9,23 @@ const REALTIME_COLL  = "Design_RealTime_Selected_Orders";
 let PREFIX = "";
 const col = name => db.collection(PREFIX + name);
 
+/* Released locks and claims stay as tombstones so delta polls see them; nothing reads one a month on. They go here, a page
+   at a time and at most once every 10 minutes per instance and workspace (a TTL policy on expireAt, if one is switched on,
+   does the same). A lock or claim still held goes only once it is 60 days old: none is held that long. */
+const rtSweptAt = new Map();
+async function sweepRealtime() {
+  if (Date.now() - (rtSweptAt.get(PREFIX) || 0) < 600000) return 0;
+  rtSweptAt.set(PREFIX, Date.now());
+  try {
+    const now = Date.now(), ms = v => (v && typeof v.toMillis === "function" ? v.toMillis() : v instanceof Date ? v.getTime() : Number(v) || 0);
+    const snap = await col(REALTIME_COLL).where("at", "<", new Date(now - 30 * 86400000)).limit(200).get();
+    const doomed = snap.docs.filter(d => { const v = d.data() || {}; return !(v.selected === true || v.claimed === true) || ms(v.at) < now - 60 * 86400000; });
+    if (!doomed.length) return 0;
+    const batch = db.batch(); doomed.forEach(d => batch.delete(d.ref)); await batch.commit();
+    return doomed.length;
+  } catch (e) { console.warn("[firebaseOrders] realtime sweep:", e && e.message); return 0; }
+}
+
 /* Global CORS headers */
 const CORS = {
   "Access-Control-Allow-Origin" : "*",
@@ -45,67 +62,76 @@ exports.handler = async (event) => {
         uncompleteIds   // array of receipt IDs to unset
       } = body;
 
+      /* A released claim or lock stays as a tombstone so delta polls see it, then goes: it carries expireAt (a Firestore
+         TTL policy on that field deletes it 30 days on). A document still claimed or still selected never carries it, so
+         a live claim or lock is never removed. */
+      const TOMBSTONE_DAYS = 30;
+      const expiries = async (ids, stillHeld) => {
+        const snaps = await db.getAll(...ids.map((id) => col(REALTIME_COLL).doc(id)));
+        return snaps.map((s) => (s.exists && stillHeld(s.data() || {}) ? admin.firestore.FieldValue.delete() : new Date(Date.now() + TOMBSTONE_DAYS * 86400000)));
+      };
+
       /* ─── Sorter claims: a gold dot ("in a sorter run"), never a lock. The other bench keeps notes and chat. ─── */
       const { rtClaimIds, rtUnclaimIds, claimedBy, claimRun } = body;
       if (Array.isArray(rtClaimIds) && rtClaimIds.length) {
         const batch = db.batch();
         rtClaimIds.map(String).slice(0, 500).forEach((id) => {
-          batch.set(col(REALTIME_COLL).doc(id), { claimed: true, claimedBy: String(claimedBy || "sorter"), claimRun: claimRun ? String(claimRun) : null, claimAt: admin.firestore.FieldValue.serverTimestamp(), at: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+          batch.set(col(REALTIME_COLL).doc(id), { claimed: true, claimedBy: String(claimedBy || "sorter"), claimRun: claimRun ? String(claimRun) : null, claimAt: admin.firestore.FieldValue.serverTimestamp(), at: admin.firestore.FieldValue.serverTimestamp(), expireAt: admin.firestore.FieldValue.delete() }, { merge: true });
         });
         await batch.commit();
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ success: true, message: "Claimed", count: rtClaimIds.length }) };
       }
       if (Array.isArray(rtUnclaimIds) && rtUnclaimIds.length) {
+        const ids = rtUnclaimIds.map(String).slice(0, 500), expireAt = await expiries(ids, (d) => d.selected === true);
         const batch = db.batch();
-        rtUnclaimIds.map(String).slice(0, 500).forEach((id) => {
-          batch.set(col(REALTIME_COLL).doc(id), { claimed: false, claimedBy: null, claimRun: null, at: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        ids.forEach((id, i) => {
+          batch.set(col(REALTIME_COLL).doc(id), { claimed: false, claimedBy: null, claimRun: null, at: admin.firestore.FieldValue.serverTimestamp(), expireAt: expireAt[i] }, { merge: true });
         });
         await batch.commit();
+        await sweepRealtime();
         return { statusCode: 200, headers: CORS, body: JSON.stringify({ success: true, message: "Unclaimed", count: rtUnclaimIds.length }) };
       }
 
-      /* ─── Realtime selection locks (write via server) ─── */
+      /* ─── Realtime selection locks (write via server) ───
+         The station sends the orders it selected and those it let go in one request: both are written (the unlocks used
+         to be dropped whenever locks came with them, so a let-go order stayed "being worked on at another station"). */
       const { rtLockIds, rtUnlockIds, clientId, page } = body;
-      if (Array.isArray(rtLockIds) && rtLockIds.length) {
-        const batch = db.batch();
-        rtLockIds.map(String).forEach((id) => {
-          const ref = col(REALTIME_COLL).doc(id);
-          batch.set(ref, {
+      const lockIds = Array.isArray(rtLockIds) ? [...new Set(rtLockIds.map(String))] : [];
+      const unlockIds = Array.isArray(rtUnlockIds) ? [...new Set(rtUnlockIds.map(String))].filter((id) => !lockIds.includes(id)) : [];
+      if (lockIds.length || unlockIds.length) {
+        /* 🔓 De-select → write a tombstone so delta polls see it */
+        const expireAt = unlockIds.length ? await expiries(unlockIds, (d) => d.claimed === true) : [];
+        const writes = [
+          ...lockIds.map((id) => [id, {
             selected   : true,
             selectedBy : clientId || "server",
             page       : page || "design",
-            at         : admin.firestore.FieldValue.serverTimestamp()
-          }, { merge:true });
-        });
-        await batch.commit();
-        return {
-          statusCode: 200,
-          headers: CORS,
-          body: JSON.stringify({ success:true, message:"Locked", count: rtLockIds.length })
-        };
-      }
-
-      /* 🔓 De-select → write a tombstone so delta polls see it */
-      if (Array.isArray(rtUnlockIds) && rtUnlockIds.length) {
-        const ids = rtUnlockIds.map(String);
-        const batch = db.batch();
-        ids.forEach((id) => {
-          const ref = col(REALTIME_COLL).doc(id);
-          batch.set(ref, {
+            at         : admin.firestore.FieldValue.serverTimestamp(),
+            expireAt   : admin.firestore.FieldValue.delete()
+          }]),
+          ...unlockIds.map((id, i) => [id, {
             selected   : false,
             selectedBy : null,
             page       : null,
-            at         : admin.firestore.FieldValue.serverTimestamp()
-          }, { merge: true });
-        });
-        await batch.commit();
+            at         : admin.firestore.FieldValue.serverTimestamp(),
+            expireAt   : expireAt[i]
+          }])
+        ];
+        for (let i = 0; i < writes.length; i += 450) {
+          const batch = db.batch();
+          writes.slice(i, i + 450).forEach(([id, v]) => batch.set(col(REALTIME_COLL).doc(id), v, { merge: true }));
+          await batch.commit();
+        }
+        if (unlockIds.length) await sweepRealtime();
         return {
           statusCode: 200,
           headers: CORS,
           body: JSON.stringify({
             success: true,
-            message: "Unlocked (tombstone)",
-            count: ids.length
+            message: lockIds.length && unlockIds.length ? "Locked and unlocked" : lockIds.length ? "Locked" : "Unlocked (tombstone)",
+            count: lockIds.length + unlockIds.length,
+            locked: lockIds.length,
+            unlocked: unlockIds.length
           })
         };
       }

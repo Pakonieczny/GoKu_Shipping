@@ -75,7 +75,7 @@ function context() {
   await vm.runInContext(`(async()=>{
     const p=S.sheets.gold;
     Object.assign(p,{sheetId:'checkpoint-test',jobId:'search-1',bestKey:'geometry-1',status:'nesting',persistedDone:false,bestRevision:1,best:{placements:[{id:'a',angle:10}],rejects:['b'],density:.2},placements:[{id:'a',angle:10}]});
-    Session.listen();await Session.flush();
+    Session.listen();await Session.flush(true);
     p.best={placements:[{id:'a',angle:20},{id:'b',angle:30}],rejects:[],density:.4};p.bestRevision=2;p.bestInfo={placed:2};
     let captured=false;
     Object.defineProperty(p,'fullWorkspaceTrap',{enumerable:true,configurable:true,get(){captured=true;throw new Error('full workspace copied');}});
@@ -87,7 +87,7 @@ function context() {
     assert.equal(p.bestRevision,2);assert.equal(p.placements.length,2);assert.equal(p.placements[0].angle,20,'checkpoint is detached from subsequent mutations');
     assert.equal(p.status,'ready');assert.match(p.stage,/Recovered best/);
     Object.assign(p,{status:'nesting',jobId:'search-2',bestKey:'geometry-2',bestRevision:0,best:null,placements:[]});
-    await Session.flush();await Session.restore();assert.equal(p.placements.length,0,'a stale checkpoint cannot enter a new job or changed geometry');
+    await Session.flush(true);await Session.restore();assert.equal(p.placements.length,0,'a stale checkpoint cannot enter a new job or changed geometry');
     Object.assign(p,{status:'idle',sheetId:null,jobId:null,bestKey:null,best:null,bestRevision:0});
   })()`,c);
   await vm.runInContext(`(async()=>{
@@ -106,19 +106,20 @@ function context() {
     let captures=0,latest=0;
     Object.defineProperty(S.sheets.gold,'checkpointValue',{enumerable:true,configurable:true,get(){captures++;return latest;}});
     Session.listen();idbControl.hold=true;
-    const first=Session.flush();await new Promise(setImmediate);await new Promise(setImmediate);
+    const first=Session.flush(true);await new Promise(setImmediate);await new Promise(setImmediate);
     assert.equal(idbControl.pending.length,1);
-    for(let i=1;i<=100;i++){latest=i;assert.equal(Session.flush(),first);}
+    for(let i=1;i<=100;i++){latest=i;Session.schedule();assert.equal(Session.flush(),first);}
     assert.equal(captures,1,'slow storage does not queue full workspace snapshots');
-    idbControl.pending.shift()();await new Promise(setImmediate);await new Promise(setImmediate);
-    assert.equal(captures,2);assert.equal(idbControl.pending.length,1,'one follow-up checkpoint captures the latest state');
-    idbControl.hold=false;idbControl.pending.shift()();await first;
+    idbControl.pending.shift()();await first;
+    assert.equal(captures,1,'the follow-up waits its turn: one checkpoint every ten seconds at most, never back to back');
+    idbControl.hold=false;await Session.flush(true);
+    assert.equal(captures,2,'one follow-up checkpoint captures the latest state');
     delete S.sheets.gold.checkpointValue;
     await Session.restore();assert.equal(S.sheets.gold.checkpointValue,100,'coalescing retains the latest edit');
     delete S.sheets.gold.checkpointValue;
     // Capture errors are reported through the same recoverable save path.
     Object.defineProperty(S.sheets.gold,'badCapture',{enumerable:true,configurable:true,get(){throw new Error('capture failed');}});
-    await Session.flush();delete S.sheets.gold.badCapture;await Session.flush();
+    await Session.flush(true);delete S.sheets.gold.badCapture;await Session.flush(true);
   })()`,c);
   await vm.runInContext(`(async()=>{
     const row={key:'100/1',order:{receiptId:'100',createTs:10},line:{transactionId:'1'},state:'written',poolIds:['p1'],arrivedAt:123,engrave:{approved:true}};
@@ -129,7 +130,7 @@ function context() {
     Object.assign(S.sheets.gold,{charms:[charm],placements:[{id:'c1',cxPt:4,cyPt:5,angle:30}],status:'complete',persistedDone:true,outputs:{ai:new Uint8Array([1,2]),previewPng:new Blob(['preview'])}});
     B.engrave.items.set(row.key,{key:row.key,row,state:'approved',fit:{capMm:2.1,bits:new Uint8Array([1])},copies:['p1']});
     B.review.items=[{row,job:B.engrave.items.get(row.key),state:'open'}];
-    Session.listen();await Session.flush();
+    Session.listen();await Session.flush(true);
     B.orders.rows=[];B.engrave.items.clear();S.sheets.gold.charms=[];
     assert.equal(await Session.restore(),true);
     assert.equal(B.orders.rows[0].engrave.approved,true);
@@ -163,7 +164,7 @@ function context() {
     await Arrivals.record([{receiptId:'300',createTs:30}]);
     assert.equal(Arrivals.state().seen.ancient,undefined,'first-arrival times older than 45 days are dropped');assert.equal(Arrivals.state().recorded.ancient,undefined);
     assert(Arrivals.state().seen['300']&&Arrivals.state().seen.recent,'current ones are kept');
-    await Session.flush();
+    await Session.flush(true);
   })()`, c);
   c.ordersLogic = require('../../charm-nest-orders.js');
   vm.runInContext(part('LiveNest', '/* ═══ 25').replace('const LiveNest = window.LiveNest =','const RealLiveNest = window.LiveNest ='),c);
@@ -213,7 +214,7 @@ function context() {
     await RealLiveNest.add(B.run);
     assert.deepEqual(starts[2].map(c=>c.id),['c2','later'],'a full sheet takes no more; the next open sheet does');
     first.releaseFull=false;
-    await Session.flush();
+    await Session.flush(true);
   })()`,c);
   await vm.runInContext(`(async()=>{
     const first=S.sheets.gold;first.pages=[first];first.sheetId='original-gold';first.setId='set-gold';first.fileBase='old-gold';first.group='gold';
@@ -228,15 +229,15 @@ function context() {
     assert.equal(goldSet.status,'superseded');assert.equal(silverSet.status,'superseded');assert.equal(B.sets.size,1);
     assert.equal(first.group,'gold+silver');assert.equal(silver.group,'gold+silver');assert.equal(B.run.setIds[0],'combined');
     assert(apiCalls.some(x=>x.op==='archiveEmptySheet'&&x.id==='original-gold'));assert(apiCalls.some(x=>x.op==='archiveEmptySheet'&&x.id==='original-silver'));
-    await Session.flush();
+    await Session.flush(true);
   })()`,c);
   await vm.runInContext(`(async()=>{
     B.run.status='review';B.run.step='engrave';B.run.intakeRecovery={retire:['interrupted-sheet'],backs:['p1']};B.run.sheets['interrupted-sheet']={};
-    await Session.flush();await Session.restore();assert.equal(B.run.step,'checkpoint','refresh must finish repack bookkeeping before engraving/labels');
+    await Session.flush(true);await Session.restore();assert.equal(B.run.step,'checkpoint','refresh must finish repack bookkeeping before engraving/labels');
     await RealLiveNest.finish(B.run);await RealLiveNest.finish(B.run);
     assert.equal(B.run.intakeRecovery,undefined);assert.equal(B.run.sheets['interrupted-sheet'],undefined);
     assert.equal(apiCalls.filter(x=>x.op==='archiveEmptySheet'&&x.id==='interrupted-sheet').length,1);
-    await Session.flush();
+    await Session.flush(true);
   })()`,c);
   console.log('workspace OK · layouts, typed geometry, approval links, pending intake, duplicate receipts, dates, cadence, rolling counts, live append to the earliest open sheet, mixed-material sets');
 })().catch(e=>{console.error(e);process.exitCode=1;});

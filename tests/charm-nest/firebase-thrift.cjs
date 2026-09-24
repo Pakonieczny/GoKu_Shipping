@@ -4,7 +4,7 @@ const bridge=fs.readFileSync('charm-nest-bridge.js','utf8'),station=fs.readFileS
 (async()=>{
  // Run actual handler code against a store that rejects collection downloads.
  let aggregates=0,documentReads=0;
- const query=()=>({where:()=>query(),count:()=>({get:async()=>{aggregates++;return{data:()=>({count:420})}}}),get:async()=>{throw Error('Full collection read forbidden');},doc:()=>({get:async()=>{documentReads++;return {exists:false}}})});
+ const query=()=>({where:()=>query(),limit:()=>({get:async()=>({empty:true,size:0,docs:[]})}),count:()=>({get:async()=>{aggregates++;return{data:()=>({count:420})}}}),get:async()=>{throw Error('Full collection read forbidden');},doc:()=>({get:async()=>{documentReads++;return {exists:false}}})});
  const c={Promise,Map,Date,db:{collection:query,getAll:async()=>[]},col:query,SHEETS:'sheets',LIB:'charms',SANDBOX:'sandbox',SANDBOXED:['pool','sheets','runs'],num:Number};vm.createContext(c);
  for(const [start,end] of [['async function op_ping','async function op_lookupCharms'],['async function op_sandboxStatus','async function op_sandboxReset'],['async function op_arrivalRecord','// ── runs']])vm.runInContext(server.slice(server.indexOf(start),server.indexOf(end)),c);
  const counts=await c.op_ping({calibration:false});assert.equal(counts.sheets,420);assert.equal(aggregates,2);assert.equal(documentReads,0);

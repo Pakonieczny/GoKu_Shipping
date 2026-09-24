@@ -7,7 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%20100%22%3E%3Crect%20width%3D%22100%22%20height%3D%22100%22%20rx%3D%2220%22%20fill%3D%22%23221f1b%22%2F%3E%3Crect%20x%3D%2216%22%20y%3D%2216%22%20width%3D%2230%22%20height%3D%2230%22%20rx%3D%226%22%20fill%3D%22%23c8a24e%22%2F%3E%3Crect%20x%3D%2254%22%20y%3D%2216%22%20width%3D%2230%22%20height%3D%2230%22%20rx%3D%226%22%20fill%3D%22%238d95a0%22%2F%3E%3Crect%20x%3D%2216%22%20y%3D%2254%22%20width%3D%2230%22%20height%3D%2230%22%20rx%3D%226%22%20fill%3D%22%23c08578%22%2F%3E%3Ccircle%20cx%3D%2269%22%20cy%3D%2269%22%20r%3D%2214%22%20fill%3D%22none%22%20stroke%3D%22%23caa861%22%20stroke-width%3D%226%22%2F%3E%3C%2Fsvg%3E">
 <meta name="theme-color" content="#221f1b">
 <!-- first, so every timer and frame the page sets keeps full speed while the tab is out of view -->
-<script src="charm-nest-clock.js?v=20260924-clock"></script>
+<script src="charm-nest-clock.js?v=20260924-recover"></script>
 <link rel="stylesheet" href="brites-progress.css">
 <style>
 /* ═══ BRITES DESIGN SYSTEM — tokens copied verbatim from design-1.html ═══ */
@@ -187,6 +187,7 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .shTabs button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
 .shTabs button i{font-style:normal;opacity:.7;margin-left:6px;font-weight:500}
 .shTabs button .spin{margin-left:6px}
+.shTabs select{flex:0 0 auto;font:600 11px var(--sans);letter-spacing:.02em;padding:3px 8px;border-radius:999px;border:1px solid var(--line);background:var(--card2);color:var(--ink70);max-width:150px;cursor:pointer}
 .shHead .sw{width:12px;height:12px;border-radius:3px;background:var(--accent);flex:0 0 auto}
 .shHead .name{font:17px var(--serif);min-width:0;white-space:nowrap;flex:0 0 auto}
 .shHead .stock{display:none}
@@ -315,6 +316,7 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .libCard .m b{font-family:var(--mono);font-weight:700;color:var(--ink)}
 .libEmpty{padding:40px;text-align:center;color:var(--ink45);font-size:13px;display:flex;flex-direction:column;align-items:center;gap:11px}
 .libEmpty b{font-weight:600;color:var(--ink70);max-width:46ch;line-height:1.5}
+.libStale{display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap;margin:0 0 10px;font-size:12px;color:var(--ink45)}
 /* Sheet sets: the sheets of one run (same day, same source files) sit as one stacked deck; hovering fans them out */
 .libGrid{position:relative;padding-top:14px}
 .libSet{position:relative;min-width:0}
@@ -1752,9 +1754,16 @@ function download(bytes, name, type) {
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 60000);
 }
+// one sound device for the page, made at the first ding and woken if the browser put it to sleep: every ding made a new
+// one and none was closed, and a browser allows only a few (Paul, 24 Sep: the station stays on for days)
+let dingCtx = null;
 function ding() {
   if (S.settings.sound !== "on") return;
-  try { const ac = new (window.AudioContext || window.webkitAudioContext)(); const o = ac.createOscillator(), g = ac.createGain(); o.frequency.value = 880; o.type = "sine"; g.gain.value = 0.0001; o.connect(g); g.connect(ac.destination); o.start(); g.gain.exponentialRampToValueAtTime(0.08, ac.currentTime + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + 0.5); o.stop(ac.currentTime + 0.55); } catch (_) { /* no audio */ }
+  try {
+    if (!dingCtx || dingCtx.state === "closed") dingCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const ac = dingCtx; if (ac.state === "suspended") ac.resume?.()?.catch?.(() => {});
+    const o = ac.createOscillator(), g = ac.createGain(); o.frequency.value = 880; o.type = "sine"; g.gain.value = 0.0001; o.connect(g); g.connect(ac.destination); o.onended = () => { o.disconnect(); g.disconnect(); }; o.start(); g.gain.exponentialRampToValueAtTime(0.08, ac.currentTime + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + 0.5); o.stop(ac.currentTime + 0.55);
+  } catch (_) { /* no audio */ }
 }
 
 /* ═══ 2 · settings ══════════════════════════════════════════════════════ */
@@ -1845,15 +1854,20 @@ async function api(fn, body, opts = {}) {
   if (S.passcode) headers["X-Edit-Passcode"] = S.passcode;
   const bar = (opts.quiet || opts.silent || !window.CNProgress) ? null : CNProgress.start(opts.label || "Talking to the cloud", { quiet: !!opts.background });
   const done = () => { if (bar) bar.end(); };
+  // A request stalled across a sleep (a half-open connection) held its progress bar, and whatever waited on it, for good:
+  // a call now ends within a minute, five for the ones that move files or long lists.
+  const ms = opts.timeoutMs || (fn === "charmNestOutput" || /^(putSheet|getSheet|listSheets|history|runPut|runArchive|restoreSheet|purgeHistory|putCharms|masterPutFile|masterPutIndex|masterGetMany|sandboxPut)$/.test(body && body.op) ? 300000 : 60000);
   try {
     const payload = Object.assign({}, body || {}); if (WORKSPACE_SANDBOX) payload.sandbox = true;   // the sandbox tags every cloud call
-    const res = await fetch(`${FN}/${fn}`, { method: "POST", headers, body: JSON.stringify(payload) });
+    const res = await fetch(`${FN}/${fn}`, { method: "POST", headers, body: JSON.stringify(payload), signal: window.AbortSignal && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined });
     const txt = await readBody(res, bar);
     let data = null; try { data = JSON.parse(txt); } catch (_) { data = { error: txt.slice(0, 200) }; }
     if (res.status === 401) { S.cloud.locked = true; throw Object.assign(new Error("unauthorized"), { status: 401 }); }
     if (!res.ok) throw Object.assign(new Error((data && data.error) || `HTTP ${res.status}`), { status: res.status, data });
+    if (S.cloud.ok === false && !S.cloud.locked) cloudRecovered();   // any answer says the cloud is back
     return data;
-  } finally { done(); }
+  } catch (e) { if (e && e.name === "TimeoutError") throw new Error(`${fn}: no answer in ${Math.round(ms / 1000)} s — timed out`); throw e; }
+  finally { done(); }
 }
 /* The rail's headline said "Cloud ok · 0 sheets · 0 charms" and was written once at boot and never again — so it sat
    three inches from a toast reading "sheet, proof and report saved to the cloud" and flatly contradicted it. The word
@@ -1880,18 +1894,35 @@ function recountLibrary() {
     catch (_) { /* keep the last known totals — the dot still says what the connection is doing */ }
   }, 30000);
 }
-async function cloudProbe() {
+/* One failed probe at page load (the network not back yet after a wake, a function cold start) said "Cloud offline" for
+   the whole session: nothing was saved online and the Library stayed empty, with the network fine an hour later. A
+   probe that fails is made again 5 s, 15 s and 30 s later, then every minute, and at once when the network is back or
+   the tab is looked at again (boot); the retries are quiet, the dot says what the connection is doing. A 401 waits for
+   sign-in as before. */
+let probeTimer = null, probeFails = 0;
+async function cloudProbe(retry) {
+  clearTimeout(probeTimer); probeTimer = null;
   try {
-    const r = await api("charmNestLibrary", { op: "ping" }, { label: "Checking cloud" });
-    S.cloud.ok = true; S.cloud.lib = { sheets: r.sheets || 0, charms: r.charms || 0 }; S.cloud.msg = "Cloud ok";
+    const r = await api("charmNestLibrary", { op: "ping" }, retry ? { quiet: true } : { label: "Checking cloud" });
+    S.cloud.ok = true; S.cloud.lib = { sheets: r.sheets || 0, charms: r.charms || 0 }; S.cloud.msg = "Cloud ok"; probeFails = 0;
     if (r.calibration) S.calibration = r.calibration;
     $("#railSolver").textContent = "solver: browser" + (S.settings.serverAbove > 0 ? ` · server above ${S.settings.serverAbove}` : "");
   } catch (e) {
     S.cloud.ok = false; S.cloud.locked = e.status === 401;
     S.cloud.msg = e.status === 401 ? "Sign-in required" : "Cloud offline — nesting works, nothing is saved";
+    if (!S.cloud.locked) probeTimer = setTimeout(() => cloudProbe(true), [5000, 15000, 30000][probeFails++] || 60000);
   }
   renderCloudStatus();
   refreshAllCards();
+}
+/** The cloud answers again (api, after any reply while it was offline): the dot, the cards and the Library say so, and
+    the bridge does what it could not do without it (cn-cloud-back: maps, library, the run's record, waiting back files). */
+function cloudRecovered() {
+  if (S.cloud.ok || S.cloud.locked) return;
+  S.cloud.ok = true; S.cloud.msg = "Cloud ok"; probeFails = 0; clearTimeout(probeTimer); probeTimer = null;
+  renderCloudStatus(); refreshAllCards(); recountLibrary();
+  if (S.mode === "library") loadLibrary().catch(() => {}); else if (S.mode === "charms") loadCharms();
+  window.dispatchEvent(new Event("cn-cloud-back"));
 }
 /** Upload bytes to Storage: signed URL first, base64 through the function as fallback. */
 /** A PUT that reports how much has gone up: XHR is used because fetch cannot report upload progress. */
@@ -1905,6 +1936,8 @@ function putWithProgress(url, headers, body, label) {
     xhr.open("PUT", url, true);
     for (const [k, v] of Object.entries(headers || {})) xhr.setRequestHeader(k, v);
     if (xhr.upload) xhr.upload.onprogress = e => { if (bar && e.lengthComputable) bar.set(e.loaded, e.total); };
+    // (an upload stalled across a sleep ends, and is tried again by whoever asked for it, instead of holding its bar for good)
+    xhr.timeout = 600000; xhr.ontimeout = () => { end(); reject(new Error("PUT timed out")); };
     xhr.onload = () => { end(); (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error("PUT " + xhr.status)); };
     xhr.onerror = () => { end(); reject(new Error("PUT failed")); };
     xhr.onabort = () => { end(); reject(new Error("PUT aborted")); };
@@ -1936,12 +1969,17 @@ async function agentCall(mode, payload, opts = {}) {
 async function agentCallRemote(mode, payload, opts = {}) {
   const started = performance.now();
   const r = opts.existingId ? { id: opts.existingId } : await api("charmNestLibrary", { op: "startAgent", mode, payload, sheetId: opts.sheetId || null, sourceName: opts.sourceName || null }, { label: opts.label || "Starting Claude", background: !!opts.background });
-  const id = r.id; if (opts.onStarted) opts.onStarted(id); let tick = 0;
+  const id = r.id; if (opts.onStarted) opts.onStarted(id); let tick = 0, misses = 0;
   for (;;) {
-    await new Promise(res => setTimeout(res, tick++ < 4 ? 2000 : 3500));
+    // A poll that fails for a passing reason (a Wi-Fi blip, a sleep in the middle of the job, a 5xx) is made again, up to
+    // 30 s apart, while the job carries on on the server: one failed poll used to drop an answer already paid for. A 4xx,
+    // thirty failures in a row or the 14 minutes end the wait; the caller keeps the id to pick the job up again (existingId).
+    await new Promise(res => setTimeout(res, misses ? Math.min(30000, 2000 * 2 ** misses) : tick++ < 4 ? 2000 : 3500));
     const elapsed = performance.now() - started;
     if (opts.onTick) opts.onTick(elapsed);
-    const j = await api("charmNestLibrary", { op: "getAgent", id }, { label: (opts.label || "Claude") + " · " + fmt.s(elapsed), background: !!opts.background });
+    let j;
+    try { j = await api("charmNestLibrary", { op: "getAgent", id }, { label: (opts.label || "Claude") + " · " + fmt.s(elapsed), background: !!opts.background }); misses = 0; }
+    catch (e) { if (e.agentTerminal || e.status >= 400 && e.status < 500 || ++misses >= 30 || elapsed > 14 * 60 * 1000) throw e; continue; }
     const job = j.job;
     const failed = !job || job.status === "error" || (job.status === "done" && (job.result?.skipped || job.result?.error));
     // A recovered terminal failure cannot make Retry replay the same error forever.
@@ -2380,7 +2418,7 @@ async function unmergeCharm(src, fragIndex, ev) {
 }
 /** Optional, not part of the loop: Claude inspects a finished sheet (kept for the console; `CN.reviewLayout(metal)`). */
 async function reviewLayout(sh, items) {
-  if (S.settings.review === "off" || !S.cloud.ok || !sh.outputs || !sh.outputs.previewPng) return;
+  if (S.settings.review === "off" || !S.cloud.ok || !sh.outputs || !(sh.outputs.previewPng || sh.cloud?.preview)) return;
   sh.aiReview = { state: "running" }; renderCard(sh);
   const evL = agent({ metal: sh.metal }, "claude", `Sent Claude the finished ${labelOf(sh.metal)} sheet and its ${sh.placements.length} placements — asking for anything an operator would reject`, { live: true });
   const byId = new Map(items.map(c => [c.id, c]));
@@ -2578,15 +2616,21 @@ function usableArea(sh) {
   return Math.max(0,st.wPt-2*ins)*Math.max(0,st.hPt-2*ins);
 }
 /** ρ_target: 25th percentile of achieved densities among the nearest shape-mix neighbours; seed 0.70. */
+/* The calibration scored and sorted against a sheet's mix was worked out again at every card refresh of every page. The
+   answer is kept per sheet until its mix (the shape signature) or the calibration changes (a row added, the list
+   replaced: its length and its first and last rows say so). */
+const rhoKept = new WeakMap();
 function rhoTarget(sh) {
   const items = activeCharms(sh); const sig = shapeSignature(items);
   const rows = S.calibration || [];
   if (!rows.length || !items.length) return { rho: 0.70, lo: 0.62, hi: 0.74, n: 0 };
+  const key = [rows, rows.length, rows[0], rows[rows.length - 1], sig.count, sig.cv, sig.largestFrac], kept = rhoKept.get(sh);
+  if (kept && kept.key.every((v, i) => Object.is(v, key[i]))) return Object.assign({}, kept.out);
   const scored = rows.map(r => ({ r, d: Math.abs(Math.log((r.count || 1) / (sig.count || 1))) + Math.abs((r.cv || 0) - sig.cv) * 2 + Math.abs((r.largestFrac || 0) - sig.largestFrac) * 4 })).sort((a, b) => a.d - b.d).slice(0, 12);
   const d = scored.map(s => s.r.density).filter(x => x > 0).sort((a, b) => a - b);
-  if (d.length < 3) return { rho: 0.70, lo: 0.62, hi: 0.74, n: d.length };
   const q = p => d[Math.min(d.length - 1, Math.floor(p * (d.length - 1)))];
-  return { rho: q(0.25), lo: q(0.10), hi: q(0.50), n: d.length };
+  const out = d.length < 3 ? { rho: 0.70, lo: 0.62, hi: 0.74, n: d.length } : { rho: q(0.25), lo: q(0.10), hi: q(0.50), n: d.length };
+  rhoKept.set(sh, { key, out }); return Object.assign({}, out);
 }
 function shapeSignature(items) {
   const a = items.map(inflatedArea); const n = a.length; if (!n) return { count: 0, cv: 0, largestFrac: 0 };
@@ -3191,7 +3235,7 @@ async function finishNest(sh, { result, error }) {
         renderCard(sh); drawPreview(sh);
         agent({ metal: sh.metal }, "nest", `${sheetName(sh)}: no room for ${sh.rejects.length === 1 ? "the new piece" : `the ${sh.rejects.length} new pieces`}; the layout and its saved files stand as they are`);
         sh.persisted = api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, releaseFull: !!sh.releaseFull, topup: sh.topup || null, intakeFinalized: !!sh.intakeFinalized } }, { label: "Updating sheet record", quiet: true })
-          .then(() => { sh.persistedDone = true; flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); })
+          .then(() => { sh.persistedDone = true; releaseSavedOutputs(sh); window.Session?.dropBest?.(sh.sheetId); flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); })
           .catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e, { stage: "persistence", critical: true })); });
         // in Auto the move is routine and shows on both cards; a toast for it covered the next card's controls
         if (sh.rejects.length && (sh.nestFlow !== "learned" || ["cap", "plateau"].includes(sh.endedBy))) overflowToNextSheet(sh, !(S.settings.runMode === "auto" && !!sh.runId && window.B?.run?.runId === sh.runId));
@@ -3255,7 +3299,7 @@ async function finishNest(sh, { result, error }) {
     setTimeout(() => $$(".sheetCard").find(el => el.dataset.m === sh.metal)?.classList.remove("pulse"), 1300);
     if (document.hidden && S.settings.notify === "on" && "Notification" in window && Notification.permission === "granted") { try { new Notification("Charm Nesting Station", { body: msg }); } catch (_) { /* ignore */ } }
     // 5 · persist everything. The two verifiers above are the acceptance test; no further inspection runs.
-    sh.persisted = persistSheet(sh, items).then(() => { if (sh.jobId === writtenJob) sh._written = written; sh.persistedDone = true; if (sh.resumeWait && sh.jobId === writtenJob && sh.rejects.length) resumeLater(sh); flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e,{stage:"persistence",critical:true})); });
+    sh.persisted = persistSheet(sh, items).then(() => { if (sh.jobId === writtenJob) sh._written = written; sh.persistedDone = true; if (sh.jobId === writtenJob) { releaseSavedOutputs(sh); window.Session?.dropBest?.(sh.sheetId); } if (sh.resumeWait && sh.jobId === writtenJob && sh.rejects.length) resumeLater(sh); flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e,{stage:"persistence",critical:true})); });
     // 6 · whatever did not fit under the ceiling goes to the next sheet of this metal, which nests on its own
     if (sh.rejects.length && sh.endedBy !== "stopped" && (sh.nestFlow !== "learned" || sh.verification.ok && ["cap", "plateau"].includes(sh.endedBy))) overflowToNextSheet(sh, false);
   } catch (e) {
@@ -3263,6 +3307,18 @@ async function finishNest(sh, { result, error }) {
     if (window.RunCtl) RunCtl.onSheetDone(sh, e);
   }
   pumpNestQueue();
+}
+/* Paul, 24 Sep: "nothing may accumulate". A sheet saved to the cloud keeps the links, and the bytes behind them leave this
+   page and its checkpoint: the .ai and the labelled proof (a download reads the saved sheet, ProductionExports) and the
+   preview picture (the card draws its own). The report and the verification stay. A sheet closed for good (full, cut,
+   committed or recalled) also lets go of its kept render areas, which only speed up writing it again. */
+function releaseSavedOutputs(sh) {
+  const o = sh.outputs, c = sh.cloud;
+  if (!o || !c || !sh.persistedDone || sh.problem || sh.dirty || ["nesting", "finishing", "queued"].includes(sh.status)) return;
+  if (c.ai) delete o.ai;
+  if (c.labelled) delete o.labelled;
+  if (c.preview) delete o.previewPng;
+  if (sh._renderAreas && (sh.releaseFull || sh.roseCutAt || sh.recalled || [...(window.B?.sets?.values?.() || [])].some(set => set.committedAt && (set.sheetIds || []).includes(sh.sheetId)))) sh._renderAreas = null;
 }
 function pumpNestQueue() {
   flushManualIntake();
@@ -3307,7 +3363,11 @@ async function persistSheet(sh, items, context) {
   const ops = window.CharmNestOperations;
   if (ops && !context) return ops.run({key:'sheet-save:'+sh.sheetId, label:'Saving sheet', resources:['production:'+(sh.runId || sh.sheetId)]}, token=>persistSheet(sh,items,token));
   if (!S.cloud.ok) throw new Error("Cloud offline — sheet is kept in this browser, but has not been saved online");
-  const day = sh.setDay || today(), name = sh.fileBase || sheetFileBase(sh), base = sh.setId ? `${CharmNestOrders.setFolder(day, sh.seq)}/${name}` : `charmnest/sheets/${day}/${name}`;
+  const day = sh.setDay || today(), name = sh.fileBase || sheetFileBase(sh);
+  // a sheet outside a set keeps the folder it was first saved in: saving it again after midnight opened a new day's
+  // folder and left the old one's files behind (its record still moves to the day it was saved)
+  const kept = !sh.setId && /^charmnest\/(sandbox\/)?sheets\/\d{4}-\d{2}-\d{2}\//.test(sh.folderPath || "") && sh.folderPath.endsWith("/" + name) ? sh.folderPath : null;
+  const base = sh.setId ? `${CharmNestOrders.setFolder(day, sh.seq)}/${name}` : kept || `charmnest/sheets/${day}/${name}`;
   sh.folderPath = base;
   if (window.Engrave) Engrave.reconcileSheet(sh);
   const byId = new Map(items.map(c => [c.id, c]));
@@ -3335,19 +3395,23 @@ async function persistSheet(sh, items, context) {
   // 2 · the files, each retried on its own; a failure is reported, never hidden
   const up = async (path, bytes, type, label) => { let err = null; for (let t = 0; t < 3; t++) { try { return await uploadBytes(path, bytes, type, label); } catch (e) { err = e; await new Promise(r => setTimeout(r, 1500 * (t + 1))); } } throw err; };
   const failed = []; const got = async (k, path, bytes, type, label) => { try { const r = await up(path, bytes, type, label); return { path: r.path, url: r.url }; } catch (e) { failed.push(`${k}: ${e.message}`); return null; } };
-  // the five files go up side by side: one after another they held the next charm back by five round trips
-  const [ai, pdf, labelled, report, preview] = await Promise.all([
+  // the four files go up side by side: one after another they held the next charm back by four round trips. The .pdf
+  // (the .ai under a second name) is not uploaded with every save: it is copied in the bucket once the sheet is final
+  const [ai, labelled, report, preview] = await Promise.all([
     got("ai", `${base}/${name}.ai`, savedOutputs.ai, "application/illustrator", "Saving sheet .ai"),
-    got("pdf", `${base}/${name}.pdf`, savedOutputs.ai, "application/pdf", "Saving sheet .pdf"),
     got("labelled proof", `${base}/${name}_labelled.pdf`, savedOutputs.labelled, "application/pdf", "Saving labelled proof"),
     got("report", `${base}/${name}_nest-report.json`, new TextEncoder().encode(JSON.stringify(savedOutputs.report, null, 1)), "application/json", "Saving report"),
     savedOutputs.previewPng ? got("preview", `${base}/preview.png`, savedOutputs.previewPng, "image/png", "Saving preview") : null
   ]);
-  const outputs = { ai, pdf, labelled, report, preview };
+  const outputs = { ai, pdf: null, labelled, report, preview };
   await opened;
-  sh.cloud = { ai: outputs.ai && outputs.ai.url, pdf: outputs.pdf && outputs.pdf.url, labelled: outputs.labelled && outputs.labelled.url, report: outputs.report && outputs.report.url, preview: outputs.preview && outputs.preview.url };
+  sh.cloud = { ai: outputs.ai && outputs.ai.url, pdf: null, labelled: outputs.labelled && outputs.labelled.url, report: outputs.report && outputs.report.url, preview: outputs.preview && outputs.preview.url };
   // 3 · the record is complete as soon as the sheet's own files are up: the Library shows it now, not after the charm backups
   await api("charmNestLibrary", { op: "putSheet", sheet: Object.assign(savedRecord(outputs), { saving: false }) }, { label: "Completing sheet record" });
+  // a final sheet's .pdf, copied from its .ai in the bucket (a set's sheets get theirs when it is released for labels); it never fails the save
+  if (outputs.ai && (sh.releaseFull || sh.intakeFinalized)) await api("charmNestLibrary", { op: "sheetPdf", id: savedId }, { label: "Saving sheet .pdf", quiet: true })
+    .then(r => { const url = r && r.urls && r.urls[savedId]; if (url) { outputs.pdf = { path: outputs.ai.path.replace(/\.ai$/, ".pdf"), url }; if (sh.jobId === savedJob && sh.cloud) sh.cloud.pdf = url; } })
+    .catch(e => log(sh, "sheet .pdf not made yet: " + e.message));
   if (window.Engrave && sh.jobId === savedJob) await Engrave.saveSheetBacks(sh);
   if (S.mode === "library") loadLibrary();   // the list is open: show the finished record
   // 4 · charm links: once the charms' own permanent copies (started when the file arrived) are done, refresh the record with their links
@@ -3359,12 +3423,13 @@ async function persistSheet(sh, items, context) {
   if (cal.density > 0 && cal.count > 0) {
     api("charmNestLibrary", { op: "putCalibration", row: Object.assign({ sheetId: sh.sheetId, metal: sh.metal, clearancePt: +S.settings.clearancePt }, cal) }, { label: "Saving calibration", quiet: true })
       .catch(e => log(sh, "calibration not recorded: " + e.message));
-    S.calibration.push(Object.assign({ sheetId: sh.sheetId }, cal));
+    // newest first and the newest 200, as the server keeps and returns them (ping): one was added per sheet for as long as the page stayed open
+    S.calibration.unshift(Object.assign({ sheetId: sh.sheetId }, cal)); if (S.calibration.length > 200) S.calibration.length = 200;
   }
   renderCard(sh);
   recountLibrary();                                            // the rail's library count moves with the library
   if (failed.length) { agent({ metal: sh.metal }, "warn", `Saved the record for ${name}, but these files did not upload: ${failed.join("; ")}`); toast(`${labelOf(sh.metal)}: record saved, ${failed.length} file(s) failed to upload — see the log`, "bad", 6000); throw new Error("Sheet files not saved: " + failed.join("; ")); }
-  agent({ metal: sh.metal }, "cloud", `Saved to the cloud in folder ${name}: ${name}.ai, .pdf, labelled proof, report, preview`);
+  agent({ metal: sh.metal }, "cloud", `Saved to the cloud in folder ${name}: ${name}.ai${outputs.pdf ? ", .pdf" : ""}, labelled proof, report, preview`);
   // a run's sheet: the run waits for this save and stops loudly if it fails, so success needs no second toast
   if (!(sh.runId && window.B?.run?.runId === sh.runId)) toast(`${labelOf(sh.metal)}: sheet, proof and report saved to the cloud`, "ok", 3000);
   // the set: one QR label per sheet saved beside it, the set record kept current (design §8.3)
@@ -3508,14 +3573,38 @@ function clearMetal(metal) {
   for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms.forEach(c => { c.metal = null; }); pg.charms = []; pg.sheetId = null; pg.log = []; delete pg.roseStock; delete pg.roseProtected; delete pg.roseCutAt; delete pg.roseHistory; delete pg.rosePlan; delete pg.rosePlanHash; delete pg.rosePlanKey; pg._roseLoaded=false; if (pg !== prim) { (pg.workers || []).forEach(w => w.terminate()); pg.workers = []; } }
   prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim);
 }
+/* A metal's sheets were a tab each, all written again at every card refresh and every second while one nested out of
+   sight: a long day made a long row, rebuilt over and over. The newest ten are tabs (and the page on the card, if it is
+   older); the earlier ones are a pick away, in the same pill as the tabs. The row is written only when it reads
+   differently, and the one-second tick writes only the marks that changed (tabMarks). */
+const TABS_SHOWN = 10;
+const tabStatus = pg => pg.status === "nesting" || pg.status === "finishing" ? `<span class="spin"></span>` : pg.recalled && !pg.charms.length ? `<i>✓ ${pg.recalled.placedCount}</i>` : pg.status === "complete" ? `<i>✓ ${pg.placements.length}</i>` : pg.status === "partial" ? `<i>⚠ ${pg.placements.length}/${activeCharms(pg).length}</i>` : `<i>${activeCharms(pg).length}</i>`;
 function renderTabs(sh) {
   const el = sh.el; if (!el) return; const tabs = $(`[data-r="tabs"]`, el); const pages = pagesOf(sh.metal);
   tabs.classList.remove("hidden");
-  const st = pg => pg.status === "nesting" || pg.status === "finishing" ? `<span class="spin"></span>` : pg.recalled && !pg.charms.length ? `<i>✓ ${pg.recalled.placedCount}</i>` : pg.status === "complete" ? `<i>✓ ${pg.placements.length}</i>` : pg.status === "partial" ? `<i>⚠ ${pg.placements.length}/${activeCharms(pg).length}</i>` : `<i>${activeCharms(pg).length}</i>`;
-  tabs.innerHTML = pages.map((pg, i) => `<button type="button" class="${pg === sh ? "on" : ""}" data-i="${i}" title="${esc(sheetName(pg))}">Sheet ${pg.page}${st(pg)}</button>`).join("");
+  const from = Math.max(0, pages.length - TABS_SHOWN), older = pages.slice(0, from);
+  const html = (older.length ? `<select data-older title="the earlier sheets of this metal"><option value="">Earlier · ${older.length}</option>${older.map((pg, i) => `<option value="${i}"${pg === sh ? " selected" : ""}>${esc(sheetName(pg))}</option>`).join("")}</select>` : "")
+    + pages.map((pg, i) => i < from && pg !== sh ? "" : `<button type="button" class="${pg === sh ? "on" : ""}" data-i="${i}" title="${esc(sheetName(pg))}">Sheet ${pg.page}<span data-st>${tabStatus(pg)}</span></button>`).join("");
+  tabs._of = pages; tabs._n = pages.length;
+  if (tabs._html === html) return;
+  tabs._html = html; tabs.innerHTML = html;
   $$("button", tabs).forEach(b => b.onclick = () => showPage(sh.metal, +b.dataset.i));
+  const pick = $("[data-older]", tabs); if (pick) pick.onchange = () => { if (pick.value !== "") showPage(sh.metal, +pick.value); };
 }
-function refreshAllCards() { for (const sh of allSheets()) { computeSaturation(sh); renderCard(sh); } }
+/** The tabs' marks (a spinner while a sheet nests, its count after), written where they changed; a new or removed page redraws the row. */
+function tabMarks(sh) {
+  const el = sh.el; if (!el) return; const tabs = $(`[data-r="tabs"]`, el), pages = pagesOf(sh.metal);
+  if (tabs._of !== pages || tabs._n !== pages.length) return renderTabs(sh);
+  for (const b of $$("button[data-i]", tabs)) {
+    const pg = pages[+b.dataset.i], mark = b.querySelector("[data-st]"); if (!pg || !mark) return renderTabs(sh);
+    const html = tabStatus(pg); if (mark._st !== html) { mark._st = html; mark.innerHTML = html; tabs._html = null; }
+  }
+}
+/* Only pages with a card to draw are drawn, and their fill worked out; one off screen is worked out when it is shown
+   (showPage), nested or finished, and here only when it changed (dirty). Every page of every metal was worked out and
+   drawn at each refresh, and a long day keeps many. renderCard still runs for each page: without a card it only notes
+   when the card's work began and schedules the checkpoint. */
+function refreshAllCards() { for (const sh of allSheets()) { if (sh.el || sh.dirty) computeSaturation(sh); renderCard(sh); } }
 function renderCard(sh) {
   if (sh.charms.length && !sh.cardStartedAt) sh.cardStartedAt = sh.recalled?.cardStartedAt || sh.recalled?.createdAt || (sh.setDay ? new Date(sh.setDay + "T12:00:00").getTime() : Date.now());
   if (window.Session) Session.schedule();
@@ -3826,13 +3915,44 @@ async function loadLibrary(context) {
   if(window.CharmNestOperations && !context?.active) return window.CharmNestOperations.run({key:'library-refresh',label:'Refreshing Library',resources:['library-read'],latest:true},token=>loadLibrary(token));
   const loadId = ++libraryLoadId;
   const body = $("#libBody"); if(!S.library.rows?.length) body.innerHTML = `<div class="libEmpty">Loading sheets…</div>`;
-  if (!S.cloud.ok) { body.innerHTML = `<div class="libEmpty">Cloud offline — the library needs the Netlify functions.</div>`; return; }
+  // a refresh that fails keeps the list on screen, with its time and a Retry: it used to be replaced by "Could not load"
+  // while the rows were still here (a click on Library just after a wake, the network not back yet)
+  const kept = S.library.kind !== "sets" && S.library.rows?.length && S.library.loadedFor === S.library.metal;
+  const stale = why => { if (!body.querySelector(".librarySheet")) renderLibrary(); libraryStale(why); };
+  if (!S.cloud.ok) { if (kept) stale("the cloud is offline"); else body.innerHTML = `<div class="libEmpty">Cloud offline — the library needs the Netlify functions.</div>`; return; }
   if (S.library.kind === "sets" && window.Sets) return Sets.renderLibrary(body);
   try {
     const r = await api("charmNestLibrary", { op: "listSheets", metal: S.library.metal === "all" ? null : S.library.metal, limit: 300 }, { label: "Loading library" });
     if (loadId !== libraryLoadId || S.library.kind === "sets") return;
-    S.library.rows = window.Gate?.projectLibraryRecords(r.sheets || []) || r.sheets || []; renderLibrary();
-  } catch (e) { if (loadId === libraryLoadId) body.innerHTML = `<div class="libEmpty">Could not load: ${esc(e.message)}</div>`; }
+    S.library.rows = window.Gate?.projectLibraryRecords(r.sheets || []) || r.sheets || []; S.library.loadedAt = Date.now(); S.library.loadedFor = S.library.metal; renderLibrary();
+  } catch (e) { if (loadId === libraryLoadId) { if (kept) stale(e.message); else body.innerHTML = `<div class="libEmpty">Could not load: ${esc(e.message)}</div>`; } }
+}
+function libraryStale(why) {
+  const body = $("#libBody"); body.querySelector(".libStale")?.remove();
+  const n = document.createElement("div"); n.className = "libStale";
+  n.innerHTML = `List from ${esc(new Date(S.library.loadedAt || Date.now()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))} · not refreshed: ${esc(why)} <button class="btn ghost xs" type="button">Retry</button>`;
+  n.querySelector("button").onclick = () => loadLibrary().catch(() => {});
+  body.prepend(n);
+}
+/* A click on Library fetched 300 sheets and rebuilt every card, and the list jumped back to its top. A list loaded under
+   a minute ago is shown as it is; an older one is shown at once and refreshed behind it, in place. The tabs share one
+   scroller, so the place (the card at the top of the view) is kept when the Library is left and after each rebuild. */
+function showLibrary() {
+  const shown = S.library.kind !== "sets" && S.library.rows?.length && S.library.loadedFor === S.library.metal;
+  if (shown && !$("#libBody .librarySheet")) renderLibrary();
+  if (shown) libraryReturn(S.library.place);
+  if (shown && Date.now() - (S.library.loadedAt || 0) < 60000) return;
+  loadLibrary().catch(() => {});
+}
+function libraryPlace() {
+  const stage = $("#stage"), top = stage.getBoundingClientRect().top;
+  const card = [...document.querySelectorAll("#libBody .libCard")].find(c => c.getBoundingClientRect().bottom > top);
+  return { scroll: stage.scrollTop, id: card ? card.dataset.id : null, at: card ? card.getBoundingClientRect().top - top : 0, q: $("#libSearch").value };
+}
+function libraryReturn(place) {
+  if (!place || place.q !== $("#libSearch").value) return;
+  const stage = $("#stage"), card = place.id && [...document.querySelectorAll("#libBody .libCard")].find(c => c.dataset.id === place.id);
+  stage.scrollTop = card ? stage.scrollTop + card.getBoundingClientRect().top - stage.getBoundingClientRect().top - place.at : place.scroll;
 }
 /* A sheet card leads with what a person looks for — the metal (its colour and short code), the sheet number, the day
    and the time. The file name (GF_Sep.17.26_Set-1_Sheet-2) says the same three things in 26 characters and got cut
@@ -3856,6 +3976,7 @@ function renderLibrary() {
   const newest = new Map(); for (const r of rows0) { const k = r.folder || r.fileBase || r.id; const had = newest.get(k); if (!had || (r.updatedAt || 0) > (had.updatedAt || 0)) newest.set(k, r); }
   const rows = [...newest.values()];
   const body = $("#libBody"); if (!rows.length) { body.innerHTML = `<div class="libEmpty">No sheets match.</div>`; return; }
+  const place = S.mode === "library" && body.querySelector(".libCard") ? libraryPlace() : null;
   const card = (r, i) => { const m = metalOf(r), sn = setNo(r); return `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}" title="${esc(r.folder || r.id)}">${sheetHead(r, {inFan:r._inFan})}<div data-back-sheet="${esc(r.id)}">${window.Engrave ? Engrave.backsMarkup(r) : ""}</div><img class="pv" data-sheet-preview="${esc(r.id)}" crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span title="charms placed of the charms asked for"><b>${r.placedCount}</b>/${r.charmCount}</span><span title="how full the sheet is"><b>${Math.round((r.density || 0) * 100)}%</b></span><span title="metal left free">${fmt.area(r.freePt2 || 0)}</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${CharmNestReadiness.counter(LaserReview.sheet(r))}</span></div></div>`; };
   LaserReview.sections(body);
   for(const r of rows){
@@ -3866,6 +3987,7 @@ function renderLibrary() {
     LaserReview.place(item,LaserReview.sheet(r).ready,body);
   }
   LaserReview.changed();
+  libraryReturn(place);
 }
 async function openLibrarySheet(id) {
   const dlg = $("#dlgSheet"); $("#lsTitle").textContent = id; $("#lsBody").innerHTML = `<div class="libEmpty">Loading…</div>`; openDlg(dlg);
@@ -3915,7 +4037,9 @@ async function restoreSheet(d) {
   const before = new Set(S.sources.map(s => s.id));
   await intake(files, d.metal, {deferNest:true});
   // wait for parsing, then re-apply the recorded placements as pins
-  const wait = () => new Promise(res => { const t = setInterval(() => { if (S.sources.filter(s => !before.has(s.id)).every(s => s.ingestReady || s.state === "error")) { clearInterval(t); res(); } }, 300); });
+  // a file that is never read (or is taken for a master file, which is indexed instead) kept this check running every
+  // 0.3 s for as long as the tab stayed open: after ten minutes it is marked failed, and the restore says so
+  const wait = () => new Promise((res, rej) => { const until = Date.now() + 600000; const t = setInterval(() => { const mine = S.sources.filter(s => !before.has(s.id)); if (mine.every(s => s.ingestReady || s.state === "error")) { clearInterval(t); res(); return; } if (Date.now() < until) return; clearInterval(t); const stuck = mine.filter(s => !s.ingestReady && s.state !== "error"); for (const s of stuck) { s.state = "error"; s.error = `${s.name} was still not read after 10 minutes — remove it and restore the sheet again`; } renderRail(); rej(new Error(stuck.map(s => s.error).join("; "))); }, 300); });
   await wait();
   const newSrcs = S.sources.filter(s => !before.has(s.id));
   const charms=newSrcs.flatMap(s=>s.charms),used=new Set(),placements=[];
@@ -3943,8 +4067,9 @@ async function restoreSheet(d) {
   toast(`${d.folder || d.id} restored · ${placements.length} charm(s) kept in position · add more and Nest`,"ok",6000);
 }
 async function loadCharms() {
-  const body = $("#charmsBody"); body.innerHTML = `<div class="libEmpty">Loading charms…</div>`;
-  if (!S.cloud.ok) { body.innerHTML = `<div class="libEmpty">Cloud offline.</div>`; return; }
+  // (the grid on screen stays while it refreshes, and when the refresh fails: it was blanked on every click)
+  const body = $("#charmsBody"), had = !!body.querySelector(".charmTile"); if (!had) body.innerHTML = `<div class="libEmpty">Loading charms…</div>`;
+  if (!S.cloud.ok) { if (!had) body.innerHTML = `<div class="libEmpty">Cloud offline.</div>`; return; }
   try {
     const q = ($("#charmSearch").value || "").trim();
     const r = await api("charmNestLibrary", { op: "listCharms", q, limit: q ? 1000 : 400 }, { label: "Loading charms" });
@@ -3970,15 +4095,16 @@ async function loadCharms() {
       inp.onblur = () => done(true);
       inp.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); inp.blur(); } else if (e.key === "Escape") { e.preventDefault(); inp.onblur = null; done(false); } };
     });
-  } catch (e) { body.innerHTML = `<div class="libEmpty">${esc(e.message)}</div>`; }
+  } catch (e) { if (!had) body.innerHTML = `<div class="libEmpty">${esc(e.message)}</div>`; else toast("Charms not refreshed: " + e.message, "bad", 4000); }
 }
 function setMode(mode) {
+  if (S.mode === "library" && mode !== "library" && $("#libBody .libCard")) S.library.place = libraryPlace();
   S.mode = mode; renderNestFlow(); $$(".topbar button[data-mode]").forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
   { const mm = $("#moreMenu"); if (mm) { const inMore = mm.querySelector(`button[data-mode="${mode}"]`); mm.classList.toggle("on", !!inMore); mm.querySelector("summary").title = inMore ? "Workspace · " + inMore.textContent.trim() : "Workspace tools and settings"; mm.open = false; } }
   // on a narrow window the tab strip scrolls: the tab you are on is always brought into view
   $("#sheets").classList.toggle("hidden", mode !== "nest"); if (mode === "nest") requestAnimationFrame(() => METALS.forEach(m => drawPreview(activePage(m.key)))); $("#libView").classList.toggle("hidden", mode !== "library"); $("#charmsView").classList.toggle("hidden", mode !== "charms");
   for (const [m, id] of [["orders", "ordersView"], ["design", "designView"], ["master", "masterView"], ["engrave", "engraveView"], ["review", "reviewView"]]) $("#" + id).classList.toggle("hidden", mode !== m);
-  if (mode === "library") loadLibrary(); if (mode === "charms") loadCharms();
+  if (mode === "library") showLibrary(); if (mode === "charms") loadCharms();
   // The rail is the nesting station's own bench — files in, sheets out. On every other tab it was 344 px (a quarter of a
   // 1500 px screen) of controls that do not apply there, taking two columns off the order grid. It folds away unless a
   // person has pinned it open, and the hamburger brings it back anywhere.
@@ -4195,9 +4321,15 @@ async function boot() {
   document.addEventListener("dragover", e => e.preventDefault());
   document.addEventListener("drop", e => { e.preventDefault(); dragDepth = 0; $("#dropAll").classList.remove("on"); if (e.dataTransfer.files && e.dataTransfer.files.length) intake(e.dataTransfer.files, null); });
   window.addEventListener("resize", () => METALS.forEach(m => drawPreview(activePage(m.key))));
-  setInterval(() => { for (const sh of allSheets()) { if (["nesting", "finishing"].includes(sh.status)) renderProgress(sh); } if (allSheets().some(sh => sh.status === "nesting" && !sh.el)) METALS.forEach(m => renderTabs(activePage(m.key))); }, 1000);
+  // a sheet nesting out of sight shows on its tab: each second the tabs' marks of its metal are brought up to date (and once
+  // more after it stops, so its tab does not keep the spinner); the whole row of every metal used to be written again
+  const tabsWatched = new Set();
+  setInterval(() => { for (const sh of allSheets()) { if (["nesting", "finishing"].includes(sh.status)) renderProgress(sh); } for (const m of METALS) { const busy = pagesOf(m.key).some(sh => sh.status === "nesting" && !sh.el); if (!busy && !tabsWatched.has(m.key)) continue; if (busy) tabsWatched.add(m.key); else tabsWatched.delete(m.key); tabMarks(activePage(m.key)); } }, 1000);
   await gate();
   cloudProbe();
+  // (the cloud offline: the network back, or the tab looked at again after a sleep, checks it at once)
+  const probeNow = () => { if (S.cloud.ok === false && !S.cloud.locked) cloudProbe(true); };
+  window.addEventListener("online", probeNow); document.addEventListener("visibilitychange", () => { if (!document.hidden) probeNow(); });
   refreshAllCards(); updateTopSub();
   window.CN = { S, AG, DEFAULTS, METALS, showPage, startNest, intake, flushManualIntake, api, agent, agentUpdate, agentCall, uploadBytes, buildJob, setMode, renderLibrary, loadLibrary, applyGroupingReview, reviewGrouping, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; },
     activePage, allSheets, pagesOf, addPage, sheetDirty, activeCharms, renderCard, inflatedArea, usableArea, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, openLibrarySheet, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log,
@@ -4206,7 +4338,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260924-customer-mail"></script>
+<script src="charm-nest-bridge.js?v=20260924-retain-mail"></script>
 <script src="charm-nest-mail.js?v=20260924-customer-mail"></script>
 <script src="charm-nest-rose-ui.js?v=20260924-thickness"></script>
 <script src="charm-nest-export-ui.js"></script>
