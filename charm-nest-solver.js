@@ -732,13 +732,13 @@
                  nearest charm or edge, up to AROUND_MM, so a charm touching its neighbours all round scores near nothing,
          growth  how far it widens the occupied part of the sheet, and a little for lying further along it.
        The best spots are then nudged: slid left against their neighbour, then up or down to the nearer charm or
-       edge, and kept there when that grades no worse. Charms join best fit first. When one does not fit, the usual
-       search runs instead. cb.onProbe reports the spot being graded, so the page can draw the charm turning and
-       moving while it searches.                                                                               */
+       edge, and kept there when that grades no worse. Charms join best fit first. One that fits nowhere is set aside
+       with its order and reported at once (see pass). cb.onProbe reports the spot being graded, so the page can draw
+       the charm turning and moving while it searches.                                                           */
     const carefulOn = !!job.careful && !!job.sheet.fixedPieces?.length && !roseAxis;
     async function carefulAppend() {
       const admitted = fifo ? prepared.filter(p => rank.get(p.order) < capOrders) : prepared.slice();
-      if (!admitted.length || admitted.some(p => p.pinned)) return null;
+      if (admitted.some(p => p.pinned)) return null;
       const MM_PX = fineRes * 72 / 25.4, cellMm2 = 1 / (MM_PX * MM_PX);
       const sliverMm = +job.sliverMm || SLIVER_MM, weights = { ...FIT_WEIGHTS, ...(job.fitWeights || {}) };
       const rPx = sliverMm * MM_PX / 2, rU = Math.round(3 * rPx), margin = Math.ceil(2 * rPx) + 2, reach = Math.ceil(2 * rPx) + 2;
@@ -748,7 +748,7 @@
       for (const p of admitted) p.careful = variantsFor(p, angles.map(a => (a + turn) % 360));
       const FW = baseFine.W, FH = baseFine.H, axisX = stripAxis === "x";
       let fine = baseFine.clone(), coarse = baseCoarse.clone();
-      const rec = []; let cells = 0, fitTotal = 0, wasteTotal = 0, lastProbe = -Infinity, graded = 0;
+      let rec = [], cells = 0, lastProbe = -Infinity, graded = 0;
       let lastStage = null;
       // at most one probe every 40 ms, but always the first of each stage, so every step of the search is shown
       const probe = (p, v, x, y, stage, force) => {
@@ -941,46 +941,89 @@
         }
         return best;
       }
-      const left = admitted.slice();
-      if (cb.onStage) cb.onStage("careful", 0, left.length);
-      while (left.length) {
-        if (stopped()) return null;
-        sheetSlivers();
-        const front = reachOf();
-        // best fit first: every waiting charm finds its best spot on the sheet as it is, and the best of those goes in
-        let move = null;
-        for (const p of left.length <= 4 ? left : left.slice().sort((a, b) => b.areaPt2 - a.areaPt2).slice(0, 1)) {
-          const s = await bestSpotFor(p, front);
-          if (!s) { if (stopped()) return null; continue; }
-          if (!move || s.fit > move.fit) move = { p, ...s };
-        }
-        if (!move) return null;
-        {
+      /* A charm with no legal spot at any angle has none later either: each charm placed after it only takes room. It is
+         set aside with the rest of its order, since a sheet never holds part of an order, and so is a charm that would
+         take the sheet past its fill ceiling; the others go on, and the pass ends when every charm is placed or set
+         aside. The usual search used to run its whole budget for such a charm, and a sheet with no room left searched
+         for minutes at every later order (Paul, 24 Sep). A charm that fitted the sheet as it was, but lost its spot to a
+         charm placed before it, gets a second pass that seats it first; the pass seating more charms is kept.      */
+      const hadRoom = new Set();
+      const fitsOn = (p, grid) => {
+        const keep = fine; fine = grid;
+        try { return p.careful.some(v => { const m = legalMap(v); if (!m) return false; for (let i = 0; i < m.n; i++) if (m.L[i]) return true; return false; }); }
+        finally { fine = keep; }
+      };
+      async function pass(first) {
+        for (const r of rec) probe(r.p, r.v, r.x, r.y, "lift", true);
+        fine = baseFine.clone(); coarse = baseCoarse.clone(); rec = []; cells = 0;
+        const left = admitted.slice(), noRoom = [], over = [], stranded = [];
+        // p and the rest of its order leave; true when charms already placed were lifted, so the sheet changed
+        const setAside = (p, list) => {
+          const order = multi(p) ? p.order : null;
+          for (const q of left.slice()) if (q === p || (order != null && q.order === order)) { left.splice(left.indexOf(q), 1); list.push(q); }
+          const lifted = order == null ? [] : rec.filter(r => r.p.order === order);
+          if (!lifted.length) return false;
+          rec = rec.filter(r => !lifted.includes(r)); cells = rec.reduce((n, r) => n + r.v.cells, 0);
+          ({ fine, coarse } = rebuildGrids(rec));
+          for (const r of lifted) { list.push(r.p); probe(r.p, r.v, r.x, r.y, "lift", true); }
+          return true;
+        };
+        if (cb.onStage) cb.onStage("careful", 0, left.length);
+        while (left.length) {
+          if (stopped()) return null;
+          sheetSlivers();
+          const front = reachOf();
+          // best fit first: every waiting charm finds its best spot on the sheet as it is, and the best of those goes in
+          const firsts = left.filter(p => first.has(p));
+          let move = null;
+          for (const p of firsts.length ? firsts : left.length <= 4 ? left.slice() : left.slice().sort((a, b) => b.areaPt2 - a.areaPt2).slice(0, 1)) {
+            if (!left.includes(p)) continue;
+            const s = await bestSpotFor(p, front);
+            if (s) { hadRoom.add(p); if (!move || s.fit > move.fit) move = { p, ...s }; continue; }
+            if (stopped()) return null;
+            if (rec.length && (hadRoom.has(p) || fitsOn(p, baseFine))) stranded.push(p);
+            if (setAside(p, noRoom)) { move = null; break; }
+            if (move && !left.includes(move.p)) move = null;
+          }
+          if (!move) continue;
           const { p, v, x, y } = move;
-          if (!fine.fits(v.fine.pm, x, y) || (cells + v.cells) / usableCellsFine > maxFill + 1e-9) return null;
+          if (!fine.fits(v.fine.pm, x, y)) return null;
+          if ((cells + v.cells) / usableCellsFine > maxFill + 1e-9) { setAside(p, over); continue; }
           fine.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y, p.id);
           for (let yy = 0; yy < v.fine.h; yy++) for (let xx = 0; xx < v.fine.w; xx++) if (v.fine.bits[yy * v.fine.w + xx]) { const gx = Math.floor((x + xx) / ratio), gy = Math.floor((y + yy) / ratio); if (gx >= 0 && gy >= 0 && gx < coarse.W && gy < coarse.H) coarse.set(gx, gy); }
           coarse.buildSAT();
-          rec.push({ p, v, x, y }); cells += v.cells; fitTotal += move.fit; wasteTotal += move.waste;
+          rec.push({ p, v, x, y, fit: move.fit, waste: move.waste }); cells += v.cells;
           left.splice(left.indexOf(p), 1);
           probe(p, v, x, y, "place", true);
           const pl = { id: p.id, angle: v.angle, cxPt: (x + v.solid.cx) / fineRes, cyPt: (y + v.solid.cy) / fineRes, xPt: (x + (v.fine.w - v.solid.w) / 2) / fineRes, yPt: (y + (v.fine.h - v.solid.h) / 2) / fineRes, wPt: v.solid.w / fineRes, hPt: v.solid.h / fineRes, careful: { waste: +move.waste.toFixed(2), around: +move.around.toFixed(2), growth: +move.growth.toFixed(2) } };
           if (cb.onPlaced) cb.onPlaced(pl, { trial: 0, placed: rec.length, total: prepared.length, careful: true });
           if (cb.onStage) cb.onStage("careful", rec.length, admitted.length);
         }
+        return { rec, fine, coarse, cells, noRoom, over, stranded, fit: rec.reduce((n, r) => n + r.fit, 0) };
       }
+      let out = await pass(new Set()), passes = 1;
+      if (out && out.stranded.length) {
+        passes = 2;
+        const again = await pass(new Set(out.stranded));
+        if (!again) return null;
+        if (again.rec.length > out.rec.length || (again.rec.length === out.rec.length && again.fit > out.fit)) out = again;
+        else { for (const r of again.rec) probe(r.p, r.v, r.x, r.y, "lift", true); for (const r of out.rec) probe(r.p, r.v, r.x, r.y, "place", true); }
+      }
+      if (!out) return null;
+      ({ rec, fine, coarse, cells } = out);
       const placements = rec.map(r => ({ id: r.p.id, angle: r.v.angle, cxPt: (r.x + r.v.solid.cx) / fineRes, cyPt: (r.y + r.v.solid.cy) / fineRes, xPt: (r.x + (r.v.fine.w - r.v.solid.w) / 2) / fineRes, yPt: (r.y + (r.v.fine.h - r.v.solid.h) / 2) / fineRes, wPt: r.v.solid.w / fineRes, hPt: r.v.solid.h / fineRes }));
-      const ids = new Set(placements.map(p => p.id)), capped = fifo ? prepared.filter(p => rank.get(p.order) >= capOrders).map(p => p.id) : [];
+      const ids = new Set(placements.map(p => p.id)), capped = (fifo ? prepared.filter(p => rank.get(p.order) >= capOrders).map(p => p.id) : []).concat(out.over.map(p => p.id));
       metrics.layouts++; reportMetrics(true);
-      return { placements, rejects: prepared.filter(p => !ids.has(p.id)).map(p => p.id), capped, density: cells / usableCellsFine, contactQuality: qualityOf(rec, fine), trial: 0, stripPacked: false,
+      return { placements, rejects: prepared.filter(p => !ids.has(p.id)).map(p => p.id), capped, noRoom: out.noRoom.map(p => p.id), density: cells / usableCellsFine, contactQuality: qualityOf(rec, fine), trial: 0, stripPacked: false,
         usablePt2: usableCellsFine / (fineRes * fineRes), freePt2: fine.freeCells() / (fineRes * fineRes), placedPt2: cells / (fineRes * fineRes), placedCells: cells, pocket: pocketPt(coarse, coarseRes),
-        grids: { fine, coarse }, rec, fitScore: fitTotal, wastePt2: wasteTotal * MM_PX * MM_PX / (fineRes * fineRes), careful: { graded, angles: angles.length, turn } };
+        grids: { fine, coarse }, rec, fitScore: out.fit, wastePt2: rec.reduce((n, r) => n + r.waste, 0) * MM_PX * MM_PX / (fineRes * fineRes), careful: { graded, angles: angles.length, turn, passes } };
     }
     let carefulDone = false;
     if (carefulOn && !best) {
       const careful = await carefulAppend();
-      if (careful && careful.placements.length && careful.rejects.every(id => careful.capped.includes(id))) {
-        best = careful; carefulDone = true; endedBy = careful.rejects.length ? "cap" : "complete";
+      // every charm is placed, held back by the fill ceiling, or shown to have no spot at any angle: nothing is left to search
+      if (careful && careful.rejects.every(id => careful.capped.includes(id) || careful.noRoom.includes(id))) {
+        best = careful; carefulDone = true; endedBy = !careful.rejects.length ? "complete" : careful.noRoom.length ? "no-room" : "cap";
         if (cb.onBest) cb.onBest(publicLayout(best), { trial: 0, placed: best.placements.length, total: prepared.length, rejects: best.rejects.slice(), density: best.density, elapsedMs: now() - t0, careful: true });
       }
     }

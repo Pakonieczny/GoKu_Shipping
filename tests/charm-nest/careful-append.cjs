@@ -28,10 +28,36 @@ const gap=(a,b)=>{const A=box(a),B=box(b);return Math.max(0,A.x0-B.x1,B.x0-A.x1,
   const n=r.placements.find(p=>p.id==='new');
   assert(n.cyPt>16&&n.cyPt<24&&n.cxPt<12,`the charm fills the notch between the saved ones: ${JSON.stringify(n)}`);
  }
- // A charm with no room anywhere: the graded placement gives way to the usual search, which reports it.
+ // A charm held back by the fill ceiling is reported at once, with no search for it.
  {const old=piece('old',8,8,1),huge=piece('huge',70,50),fixed={id:'old',cxPt:5,cyPt:5,angle:0};
-  const job={...base,timeBudgetMs:400,maxTrials:3,pieces:[old,huge],lockedPlacements:[fixed]};
-  const r=await S.solve(job,{});assert.deepEqual(r.placements,[fixed]);assert(r.rejects.includes('huge'));assert(!Number.isFinite(r.fitScore));
+  const job={...base,pieces:[old,huge],lockedPlacements:[fixed]};
+  const r=await S.solve(job,{});assert.deepEqual(r.placements,[fixed]);assert.deepEqual(r.rejects,['huge']);
+  assert.equal(r.endedBy,'cap');assert.equal(r.trials,1,'no restarts');assert(r.elapsedMs<5000,'at once: '+r.elapsedMs);
+ }
+ // A charm with no spot at any angle is set aside and reported at once; the charm that fits is placed. The usual search
+ // used to run its whole budget for it, and a full sheet searched for minutes at every later order (24 Sep).
+ {const old=piece('old',8,8,1),huge=piece('huge',70,50,0),small=piece('small',7,7,0),fixed={id:'old',cxPt:5,cyPt:5,angle:0};
+  const job={...base,pieces:[old,huge,small],lockedPlacements:[fixed]};
+  const r=await S.solve(job,{});assert(S.verify(job,r.placements,4).ok);
+  assert.deepEqual(r.placements.map(p=>p.id).sort(),['old','small']);assert.deepEqual(r.rejects,['huge']);
+  assert.equal(r.endedBy,'no-room');assert.equal(r.trials,1,'no restarts');assert(r.elapsedMs<5000,'at once: '+r.elapsedMs);
+ }
+ // A sheet never holds part of an order: when one of its charms fits nowhere, the rest of the order is not placed either.
+ {const old=piece('old',8,8,1),huge=piece('huge',70,50,0),small=piece('small',7,7,0),fixed={id:'old',cxPt:5,cyPt:5,angle:0};
+  huge.order=small.order='o1';
+  const probes=[],r=await S.solve({...base,pieces:[old,small,huge],lockedPlacements:[fixed]},{onProbe:p=>probes.push(p)});
+  assert.deepEqual(r.placements,[fixed]);assert.deepEqual(r.rejects.sort(),['huge','small']);assert.equal(r.endedBy,'no-room');
+  const placed=probes.filter(p=>p.stage==='place').map(p=>p.id),lifted=probes.filter(p=>p.stage==='lift').map(p=>p.id);
+  assert(placed.every(id=>lifted.includes(id)),'a charm drawn in place is taken off again when its order leaves');
+ }
+ // Two holes: the left one fits both a and b, the right one only a. With five charms waiting the largest, a, goes first,
+ // to the left, and strands b; the second pass seats the stranded charm first, so every charm is placed.
+ {const blocks=[['r1',50,32,34,17],['r2',8,30,5,24],['r3',44,6,31,36]].map(([id,w,h,cx,cy])=>({p:piece(id,w,h,0),at:{id,cxPt:cx,cyPt:cy,angle:0}}));
+  const a=piece('a',5.5,5.5,0),b=piece('b',3,7.5,0),tiny=['t1','t2','t3'].map(id=>piece(id,1,1,0));
+  const job={...base,maxFill:1,fitWeights:{along:50},pieces:[...blocks.map(x=>x.p),a,b,...tiny],lockedPlacements:blocks.map(x=>x.at)};
+  const r=await S.solve(job,{});assert(S.verify(job,r.placements,4).ok,JSON.stringify(r.placements));
+  assert.deepEqual(r.rejects,[],'every charm seated: '+JSON.stringify(r.placements));assert.equal(r.careful.passes,2);
+  assert(r.placements.find(p=>p.id==='b').cxPt<10&&r.placements.find(p=>p.id==='a').cxPt>50,'b in the left hole, a in the right');
  }
  // Stopped at once: only the saved layout comes back.
  {const old=piece('old',8,8,1),fresh=piece('new',7,7),fixed={id:'old',cxPt:5,cyPt:5,angle:0};
@@ -48,5 +74,5 @@ const gap=(a,b)=>{const A=box(a),B=box(b);return Math.max(0,A.x0-B.x1,B.x0-A.x1,
  // Layouts compare by charms seated first, then by grade.
  assert(S.betterLayout({placements:[1,2],rejects:[],fitScore:-50},{placements:[1,2],rejects:[],fitScore:-80},base.sheet));
  assert(!S.betterLayout({placements:[1],rejects:[2],fitScore:-5},{placements:[1,2],rejects:[],fitScore:-80},base.sheet));
- console.log('Careful append OK: saved charm fixed, new charm against its neighbour at the left, probes for the live view, notch filled, fallback, stop, several charms, grade ranking');
+ console.log('Careful append OK: saved charm fixed, new charm against its neighbour at the left, probes for the live view, notch filled, ceiling and no-room reported at once, orders kept whole, stranded charm seated, stop, several charms, grade ranking');
 })().catch(e=>{console.error(e);process.exitCode=1});

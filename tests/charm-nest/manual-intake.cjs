@@ -68,8 +68,8 @@ assert.equal(O.intakePlan({count:40,density:.5,force:true}).phase,'repack');
 assert.equal(O.intakePlan({count:40,density:.5,optimized:true,area:99,capacity:100}).phase,'fill');
 // Exercise the actual completion decision before PDF writing, with no API calls.
 const decision=html.slice(html.indexOf('  const belowTarget=result.density'),html.indexOf('  sh._beforeLearned = null;',html.indexOf('  const belowTarget=result.density')));
-function finish({count=40,density=.5,optimized=false,rejects=[],phase='fill',endedBy='complete',last=0,protectedRose=false,metal='gold',appendOnly=false,topup=null}={}){
- const sh={metal,appendOnly,topup,roseProtected:protectedRose,intakePhase:phase,intakeOptimized:optimized,intakeOptimizedCount:last,status:'nesting',charms:[]},items=Array.from({length:count},()=>({}));let restarts=0;
+function finish({count=40,density=.5,optimized=false,rejects=[],phase='fill',endedBy='complete',last=0,protectedRose=false,metal='gold',appendOnly=false,topup=null,missRearranged=false}={}){
+ const sh={metal,appendOnly,topup,missRearranged,roseProtected:protectedRose,intakePhase:phase,intakeOptimized:optimized,intakeOptimizedCount:last,status:'nesting',charms:[]},items=Array.from({length:count},()=>({}));let restarts=0;
  const c={sh,items,result:{density,rejects,endedBy,placements:[{id:'kept'}],placedPt2:50,usablePt2:100,freePt2:50},S:{settings:{maxFill:.8,finalOptimizeCount:85}},startNest(){restarts++;},log(){}};vm.createContext(c);vm.runInContext('(function(){'+decision+'})();',c);return {sh,restarts};
 }
 assert.equal(finish({protectedRose:true,count:100}).restarts,0,'protected remainder never restarts under 74% or over 85 charms');
@@ -89,7 +89,9 @@ for(const metal of ['gold','silver']){
  assert.equal(missed.sh.appendOnly,undefined,'with every piece free to move');assert.equal(missed.sh.intakeForceFinal,true);
 }
 assert.equal(finish({appendOnly:true,optimized:true}).restarts,0,'an append that fits keeps the saved layout');
-assert.equal(finish({appendOnly:true,optimized:true,rejects:['arrival'],endedBy:'budget',topup:{base:.7,maxFill:.75}}).restarts,1,'a topping-up sheet gives a later order that misses its gaps the fresh arrangement too');
+assert.equal(finish({appendOnly:true,optimized:true,rejects:['arrival'],endedBy:'no-room',topup:{base:.7,maxFill:.75}}).restarts,0,'a topping-up sheet only offers its gaps: a later order that misses them moves on at once');
+assert.equal(finish({appendOnly:true,optimized:true,rejects:['arrival'],endedBy:'no-room',missRearranged:true}).restarts,0,'one fresh arrangement per sheet: a later miss moves on at once (a full sheet searched for minutes at every update, 24 Sep)');
+{const first=finish({appendOnly:true,optimized:true,rejects:['arrival'],endedBy:'no-room'});assert.equal(first.restarts,1,'the first miss below the target still gets it');assert.equal(first.sh.missRearranged,true,'and the sheet remembers it');}
 assert.equal(finish({appendOnly:true,optimized:true,rejects:['arrival'],endedBy:'budget',topup:{base:.7,maxFill:.75,closedAt:1}}).restarts,0,'a released top-up takes nothing more');
 assert.equal(finish({appendOnly:true,optimized:true,rejects:['arrival'],endedBy:'trials'}).restarts,1,'a gap search that used up its trials still gets the fresh arrangement: the saved gaps do not show how full the sheet can get');
 assert.equal(finish({appendOnly:true,optimized:true,density:.74,rejects:['arrival']}).restarts,0,'at the target the sheet is full, not repacked');
@@ -108,6 +110,7 @@ assert.equal(finish({phase:'repack',optimized:true,rejects:['arrival']}).restart
  assert.equal(full({phase:'final'}),true,'so is the final arrangement');
  assert.equal(full({phase:'fill'}),false,'the quick search of the gaps ending on time is not enough below the target');
  assert.equal(full({phase:'fill',endedBy:'trials'}),true,'a gap search that used up its trials finished');
+ assert.equal(full({phase:'fill',endedBy:'no-room'}),true,'a graded gap search that found no spot at any angle for the order finished');
  assert.equal(full({phase:'fill',density:.74}),true,'from the target, any overflow is full');
  assert.equal(full({rejects:['huge']}),false,'an order too big for an empty sheet does not make a sheet full');
  assert.equal(full({endedBy:'stopped'}),false,'a stopped search never releases a sheet');

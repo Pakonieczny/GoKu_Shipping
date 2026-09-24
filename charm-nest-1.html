@@ -1501,7 +1501,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-progress.js?v=20260923-tray"></script>
 <script src="charm-nest-operations.js"></script>
 <script src="charm-nest-rose.js?v=20260923-edges"></script>
-<script src="charm-nest-solver.js?v=20260924-gaps"></script>
+<script src="charm-nest-solver.js?v=20260924-noroom"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260924-speed"></script>
@@ -2270,7 +2270,7 @@ async function reviewLayout(sh, items) {
 function makeSheet(metal, page) {
   return { metal, page: page || 1, runId: null, sheetId: null, charms: [], status: "idle", worker: null, jobId: null, layout: null, placements: [], rejects: [], sat: null, progress: null, stage: "", outputs: null, verification: null, startedAt: 0, endedBy: null, trials: 0, best: null, dirty: true, log: [], liveInfo: null, serverJob: null };
 }
-function sheetDirty(sh) { if(sh.roseCutAt)return; if(sh.metal==='rose'&&(sh.rosePlan||sh.roseProtected)){window.RoseStock?.protect(sh);sh.dirty=true;sh.status='ready';renderCard(sh);return;} delete sh.rosePlan; delete sh.rosePlanHash; delete sh.rosePlanKey; delete sh.runHold; delete sh.intakeFinalized; delete sh.intakeForceFinal; delete sh.intakeOptimized; delete sh.intakeOptimizedCount; delete sh.intakeAppend; delete sh.appendOnly; delete sh.topup; sh.dirty = true; sh.releaseFull = false; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
+function sheetDirty(sh) { if(sh.roseCutAt)return; if(sh.metal==='rose'&&(sh.rosePlan||sh.roseProtected)){window.RoseStock?.protect(sh);sh.dirty=true;sh.status='ready';renderCard(sh);return;} delete sh.rosePlan; delete sh.rosePlanHash; delete sh.rosePlanKey; delete sh.runHold; delete sh.intakeFinalized; delete sh.intakeForceFinal; delete sh.intakeOptimized; delete sh.intakeOptimizedCount; delete sh.intakeAppend; delete sh.appendOnly; delete sh.topup; delete sh.missRearranged; sh.dirty = true; sh.releaseFull = false; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
 function activeCharms(sh) { return sh.charms.filter(c => !c.excluded); }
 /* One card per metal; a metal can hold several sheets ("pages"). The card shows the active page and tabs to switch. */
 const pagesOf = metal => S.sheets[metal].pages;
@@ -2338,10 +2338,11 @@ function inflatedArea(c) { const g = (+S.settings.clearancePt || 0) / 2; return 
    finished (from the 74% target, any search that overflows one). A fresh arrangement of the whole sheet runs its full
    budget by design, so ending on time is how it finishes. Only trial and stall endings used to count: once that search
    stopped ending any other way, a sheet whose fresh arrangement still left an order out below 74% could never be full,
-   and its orders were never released. The quick search of an arrival that only tries the gaps still cannot release it. */
+   and its orders were never released. The quick search of an arrival that only tries the gaps cannot release it, unless
+   its graded search showed that the order fits no gap at any angle ("no-room"): nothing is left to try then. */
 function sheetFull(sh, result, items) {
   const cap = +S.settings.maxFill || .80, byId = new Map(items.map(c => [c.id, c]));
-  const finished = ["cap", "stalled", "trials", "claude-full", "plateau"].includes(result.endedBy) || result.endedBy === "budget" && sh.intakePhase !== "fill";
+  const finished = ["cap", "stalled", "trials", "claude-full", "plateau", "no-room"].includes(result.endedBy) || result.endedBy === "budget" && sh.intakePhase !== "fill";
   const overflow = sh.rejects.length > 0 && (result.density + 1e-6 >= Math.min(.74, cap) || finished) &&
     [...new Set(sh.rejects.map(id => byId.get(id)?.order || id))].some(order => items.filter(c => (c.order || c.id) === order).reduce((n, c) => n + inflatedArea(c), 0) <= result.usablePt2 * cap);
   return result.endedBy !== "stopped" && !!sh.verification?.ok && sh.placements.length > 0 && (overflow || result.placedPt2 / Math.max(1, result.usablePt2) >= cap - 1e-6);
@@ -2453,7 +2454,7 @@ function ensureWorkers(sh, n) {
   for (const w of sh.workers.splice(n)) w.terminate();
   while (sh.workers.length < n) {
     const idx = sh.workers.length;
-    const w = new Worker("charm-nest-worker.js?v=20260924-gaps");
+    const w = new Worker("charm-nest-worker.js?v=20260924-noroom");
     w.onmessage = e => onWorkerMessage(sh, e.data, idx);
     w.onerror = e => onWorkerMessage(sh, { type: "error", jobId: sh.jobId + ":" + idx, message: e.message }, idx);
     sh.workers.push(w);
@@ -2732,16 +2733,19 @@ function onWorkerMessage(sh, m, idx) {
   if (m.type === "probe") {
     if (idx !== leader) return;
     const pr = m.probe;
-    if (pr.stage === "place") { sh.probePlaced = (sh.probePlaced || []).filter(g => g.id !== pr.id).concat(pr); sh.probe = null; } else sh.probe = pr;
+    // a lifted charm leaves the sheet again: its order has a charm that fits nowhere, or a second pass starts over
+    if (pr.stage === "place") { sh.probePlaced = (sh.probePlaced || []).filter(g => g.id !== pr.id).concat(pr); sh.probe = null; }
+    else if (pr.stage === "lift") { sh.probePlaced = (sh.probePlaced || []).filter(g => g.id !== pr.id); if (sh.probe?.id === pr.id) sh.probe = null; }
+    else sh.probe = pr;
     const t = performance.now();
-    if (pr.stage === "place" || !sh._probeStageAt || t - sh._probeStageAt > 250) {
+    if (pr.stage === "place" || pr.stage === "lift" || !sh._probeStageAt || t - sh._probeStageAt > 250) {
       sh._probeStageAt = t;
       const name = byId.get(pr.id)?.name || "charm";
-      sh.stage = pr.stage === "place" ? `Placed ${name} at ${pr.angle}°` : `${{ turn: "Turning", try: "Trying spots for", nudge: "Nudging" }[pr.stage] || "Trying"} ${name} · ${pr.angle}° · ${pr.graded} spots graded`;
+      sh.stage = pr.stage === "place" ? `Placed ${name} at ${pr.angle}°` : pr.stage === "lift" ? `Took ${name} off again` : `${{ turn: "Turning", try: "Trying spots for", nudge: "Nudging" }[pr.stage] || "Trying"} ${name} · ${pr.angle}° · ${pr.graded} spots graded`;
       renderProgress(sh);
     }
     // a full redraw of the sheet about 12 times a second is enough to follow the charm and keeps the page responsive
-    if (pr.stage === "place" || !sh._probeDrawAt || t - sh._probeDrawAt >= 80) { sh._probeDrawAt = t; drawPreview(sh); }
+    if (pr.stage === "place" || pr.stage === "lift" || !sh._probeDrawAt || t - sh._probeDrawAt >= 80) { sh._probeDrawAt = t; drawPreview(sh); }
     return;
   }
   if (m.type === "stage" && (m.stage === "prepare" ? idx !== 0 : idx !== leader)) return;   // one voice for the pool: only the leading search narrates
@@ -2881,18 +2885,19 @@ async function finishNest(sh, { result, error }) {
   // charms out, and the last try at the final count, still get the fresh arrangement.
   const needsRepack=!sh.roseProtected && !sh.appendOnly && sh.intakePhase==='fill' && belowTarget &&
     (items.length>=(+S.settings.finalOptimizeCount||85) || result.rejects.length && items.length>(sh.intakeOptimizedCount||0));
-  // An arrival that misses the gaps of a Gold or Silver sheet short of the target gets one fresh arrangement of the whole
-  // sheet before it moves on: the gaps of a saved layout do not show how full the sheet can get. Nothing on an unreleased
-  // sheet is cut yet, and an engraved back belongs to its piece, not to the piece's position. Moving on at once used to
-  // leave the sheet short of full, so it was never released. A sheet topping up gives each later order the same chance
-  // up to its allowance, with the charms already on it kept first.
-  const toppingUp=!!sh.topup && !sh.topup.closedAt;
-  const appendMissed=sh.appendOnly && !sh.roseProtected && !sh.topup?.closedAt && ["gold","silver"].includes(sh.metal) && sh.intakePhase==='fill' && (belowTarget || toppingUp) && result.rejects.length>0;
+  // The first arrival that misses the gaps of a Gold or Silver sheet short of the target gets one fresh arrangement of
+  // the whole sheet before it moves on: the gaps of a saved layout do not show how full the sheet can get. Nothing on an
+  // unreleased sheet is cut yet, and an engraved back belongs to its piece, not to the piece's position. Once per sheet:
+  // when the fresh arrangement seated that order, every later miss started another, and a sheet topping up started one
+  // for each later order too, so a sheet with no room left searched for minutes at every update (Paul, 24 Sep). Later
+  // misses, and a sheet topping up, only offer their gaps; an order that fits none moves on at once.
+  const appendMissed=sh.appendOnly && !sh.roseProtected && !sh.topup && !sh.missRearranged && ["gold","silver"].includes(sh.metal) && sh.intakePhase==='fill' && belowTarget && result.rejects.length>0;
   if(result.endedBy!=='stopped' && (needsRepack || appendMissed)){
+    if(appendMissed)sh.missRearranged=true;
     sh.optimizationTried=true;sh.intakeForceFinal=true;delete sh.intakeAppend;delete sh.appendOnly;
     sh.placements=result.placements;sh.density=result.density;
     sh.liveInfo={placedPt2:result.placedPt2,usablePt2:result.usablePt2,freePt2:result.freePt2,pocket:result.pocket};
-    sh.status='ready';log(sh,belowTarget?'Below 74%: improving the saved layout before accepting this batch':'Topping up: re-arranging the sheet so the later order can fit, the charms already on it first');startNest(sh);return;
+    sh.status='ready';log(sh,'Below 74%: improving the saved layout before accepting this batch');startNest(sh);return;
   }
   sh._beforeLearned = null;
   sh.releaseFull = false;
@@ -2974,7 +2979,7 @@ async function finishNest(sh, { result, error }) {
   pumpNestQueue();
 }
 function pumpNestQueue() { flushManualIntake(); while (S.nestQueue.length) { const next = S.nestQueue.shift(); if (next.status === "queued") { next.status = "ready"; startNest(next); return; } } }
-const endedText = e => ({ plateau: "paused — no additional pieces during the improvement window", "model-unavailable": "model unavailable — verified baseline retained", complete: "all pieces placed", budget: "time ceiling", stalled: "settled — nothing better for a minute", stopped: "operator stop", trials: "restart cap", cap: "fill ceiling reached", rounds: "planning-round cap", "claude-full": "Claude judged the sheet full" }[e] || e);
+const endedText = e => ({ plateau: "paused — no additional pieces during the improvement window", "model-unavailable": "model unavailable — verified baseline retained", complete: "all pieces placed", budget: "time ceiling", stalled: "settled — nothing better for a minute", stopped: "operator stop", trials: "restart cap", cap: "fill ceiling reached", "no-room": "no room left for the rest", rounds: "planning-round cap", "claude-full": "Claude judged the sheet full" }[e] || e);
 function buildReport(sh, result, items) {
   const byId = new Map(items.map(c => [c.id, c])); const st = stockFor(sh.metal, sh);
   return {
@@ -3020,7 +3025,7 @@ async function persistSheet(sh, items, context) {
     charmCount: items.length, placedCount: sh.placements.length, rejectCount: (sh.outputs.report.rejects || []).length, page: sh.page, verification: { ok: !!sh.verification.ok, minGapPt: sh.verification.minGapPt, minEdgePt: sh.verification.minEdgePt, render: sh.verification.render && { ok: sh.verification.render.ok, overlapPx: sh.verification.render.overlapPx, outsidePx: sh.verification.render.outsidePx } },
     outputs,
     sources: [...new Set(items.map(c => c.sourceId))].map(id => { const s = sourceOf(id); return s ? { id: s.id, name: s.name, zipName: s.zipName, hash: s.hash, bytes: s.bytes ? s.bytes.length : 0, path: s.cloud && s.cloud.path, url: s.cloud && s.cloud.url, pool: !!s.pool, sku: s.sku || null } : null; }).filter(Boolean),
-    dirty:!!sh.dirty, draft: !!sh.draft, solidIncluded:["gold10k","gold14k"].includes(sh.metal) ? !!window.Gate?.solidSelected(sh.metal) : null, releaseFull: !!sh.releaseFull, topup: sh.topup || null, intakeFinalized: !!sh.intakeFinalized, intakeOptimized:!!sh.intakeOptimized, intakeOptimizedCount:sh.intakeOptimizedCount||0, setId: sh.setId || null, setSeq: sh.seq || null, sheetIndex: sh.sheetIndex || null, runId: sh.runId || null,
+    dirty:!!sh.dirty, draft: !!sh.draft, solidIncluded:["gold10k","gold14k"].includes(sh.metal) ? !!window.Gate?.solidSelected(sh.metal) : null, releaseFull: !!sh.releaseFull, topup: sh.topup || null, intakeFinalized: !!sh.intakeFinalized, intakeOptimized:!!sh.intakeOptimized, intakeOptimizedCount:sh.intakeOptimizedCount||0, missRearranged:!!sh.missRearranged, setId: sh.setId || null, setSeq: sh.seq || null, sheetIndex: sh.sheetIndex || null, runId: sh.runId || null,
     orders: [...new Set(sh.placements.map(p => { const c = byId.get(p.id); return c && c.order ? String(c.order).split("/")[0] : null; }).filter(Boolean))],
     poolIds: sh.placements.map(p => byId.get(p.id) && byId.get(p.id).poolId).filter(Boolean), backPool: sh.backPool || [], backOutputs: sh.backOutputs || null, label: sh.label || null,
     charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, order: c.order || c.id, layer: c.layer || null, poolId: c.poolId || null, sku: c.sku || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open })),
@@ -3729,7 +3734,7 @@ function compareGPUSpeed() {
   const sh=allSheets().filter(sh=>activeCharms(sh).length).sort((a,b)=>activeCharms(b).length-activeCharms(a).length)[0];
   const job=sh?buildJob(sh):null,id=uid();
   let worker;
-  try{worker=new Worker('charm-nest-worker.js?v=20260924-gaps');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
+  try{worker=new Worker('charm-nest-worker.js?v=20260924-noroom');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
   gpuComparison=worker;button.textContent="Cancel comparison";output.textContent="Checking GPU availability…";
   const finish=text=>{if(gpuComparison!==worker)return;output.textContent=text;button.textContent="Compare speed";worker.terminate();gpuComparison=null;};
   worker.onmessage=({data:m})=>{
@@ -3833,8 +3838,8 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260924-speed"></script>
-<script src="charm-nest-rose-ui.js?v=20260923-density"></script>
+<script src="charm-nest-bridge.js?v=20260924-noroom"></script>
+<script src="charm-nest-rose-ui.js?v=20260924-noroom"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin" aria-labelledby="owTitle">
