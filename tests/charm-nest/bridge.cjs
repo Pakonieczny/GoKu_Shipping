@@ -915,8 +915,10 @@ const receipts = [
   for (const sh of sheets) { assert(sh.label && sh.label.files.length && sh.label.files.every(f => /^B36\|(gold|silver|rose|gold10k|gold14k)\|/.test(f.payload) && f.ecc === 'M'), 'sheet label payload: ' + JSON.stringify(sh.label)); }
   const backs = st.list('Charm_Pool_Back');
   assert(backs.length === 1 && backs[0].text === 'ANNA' && st.blobs.has(backs[0].outputs && backs[0].outputs.ai && backs[0].outputs.ai.path || ''), 'the back file record and .ai: ' + JSON.stringify(backs[0]));
-  const silverSheet = sheets.find(s => s.metal === 'silver');
-  assert(silverSheet && silverSheet.backOutputs && st.blobs.has(silverSheet.backOutputs.index.path), 'the silver sheet has a back-index.pdf');
+  // the back index is drawn a moment after the last approval, once per sheet, so it is waited for
+  const indexed = () => st.list('Charm_Nest_Sheets').find(s => s.metal === 'silver' && sets.some(x => x.setId === s.setId) && s.backOutputs && st.blobs.has(s.backOutputs.index.path));
+  for (let i = 0; i < 100 && !indexed(); i++) await new Promise(r => setTimeout(r, 100));
+  assert(indexed(), 'the silver sheet has a back-index.pdf');
   // the label payload decodes to the sheet's orders
   const O = require(path.join(root, 'charm-nest-orders.js'));
   for (const sh of sheets) for (const f of sh.label.files) { const parts = f.payload.split('|'); assert.strictEqual(parts[0], 'B36'); const ids = parts[2].split('.').map(s => String(parseInt(s, 36))); assert.deepStrictEqual(ids.sort(), f.orders.slice().sort(), 'label decodes to the sheet orders'); }

@@ -11,13 +11,17 @@ const context = vm.createContext({ card, job, wordsJob: false, document: { activ
   setTimeout: fn => { const id = timers.size + 1; timers.set(id, fn); return id; }, clearTimeout: id => timers.delete(id),
   toast: text => calls.push(text), render: () => {},
   fitJob: async j => { calls.push('fit'); j.fit = { ok: true }; j.verify = { geometry: { ok: true } }; j.lines = j.lineInput.slice(); },
-  employeeName: () => null, askEmployee: () => null });
+  employeeName: () => null, askEmployee: () => null, refit: () => true, refresh: () => {}, Session: { schedule() {} } });
 const start = source.indexOf('    const ta = card.querySelector(\'[data-f="words"]\'), use =');
 const end = source.indexOf('    // the back preview', start);
 assert(start > 0 && end > start);
 vm.runInContext(source.slice(start, end), context);
 const a = source.indexOf('  async function approve(job, by)'), b = source.indexOf('  /* ── 7.6', a);
 vm.runInContext(source.slice(a, b), context);
+// new words are fitted through the one path that also keeps a moved placement where it was put
+const f = source.indexOf('  async function fitNewWords(job)'), g = source.indexOf('  function nudge(', f);
+assert(f > 0 && g > f);
+vm.runInContext(source.slice(f, g), context);
 (async () => {
   listeners.input(); assert(approveButton.disabled, 'typing cannot approve stale geometry');
   assert.equal(timers.size, 1); await [...timers.values()][0]();

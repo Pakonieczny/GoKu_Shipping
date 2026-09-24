@@ -231,11 +231,18 @@
    */
   // Shop-local receipt dates, never the time a historical order was imported.
   function orderPlacedAt(row) { return (+row.order?.createTs || 0) * 1000 || +row.arrivedAt || 0; }
+  // one set of formatters per time zone: making one costs far more than using it, and each Orders list drew three per line
+  const dayFormats = new Map();
+  function dayFormat(timeZone) {
+    let f = dayFormats.get(timeZone);
+    if (!f) dayFormats.set(timeZone, f = { parts: new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}), label: new Intl.DateTimeFormat('en-CA',{timeZone,weekday:'long',year:'numeric',month:'long',day:'numeric'}), time: new Intl.DateTimeFormat('en-CA',{timeZone,hour:'numeric',minute:'2-digit',timeZoneName:'short'}) });
+    return f;
+  }
   function orderDay(row, timeZone = "America/Toronto") {
     const at=orderPlacedAt(row);if(!at)return {key:"unknown",label:"Date unavailable",time:""};
-    const date=new Date(at),parts=new Intl.DateTimeFormat('en-CA',{timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(date);
+    const f=dayFormat(timeZone),date=new Date(at),parts=f.parts.formatToParts(date);
     const get=k=>parts.find(p=>p.type===k).value;
-    return {key:`${get('year')}-${get('month')}-${get('day')}`,label:new Intl.DateTimeFormat('en-CA',{timeZone,weekday:'long',year:'numeric',month:'long',day:'numeric'}).format(date),time:new Intl.DateTimeFormat('en-CA',{timeZone,hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(date)};
+    return {key:`${get('year')}-${get('month')}-${get('day')}`,label:f.label.format(date),time:f.time.format(date)};
   }
   function intakePlan({count, area=0, capacity=0, threshold=85, pressure=0.85, budgetS=180, force=false, density=0, target=.74, optimized=false, append=false}) {
     const targetMet=density+1e-6>=target;
@@ -374,6 +381,66 @@
   const nextStep = s => { const i = RUN_STEPS.indexOf(s); return i < 0 || i === RUN_STEPS.length - 1 ? null : RUN_STEPS[i + 1]; };
   const stepIndex = s => RUN_STEPS.indexOf(s);
 
+  /* ═══ 9 · the run record and its line archive ═════════════════════════
+     A run's record is one Firestore document: 1 MiB and 40,000 index entries at most. A run left in Auto stays open for
+     days (new orders join it), and every line it ever took stayed in its record at about 0.9 KB each, until the record
+     could not be saved and the run stopped (at 1,100–1,400 lines). The lines of an order the run is done with go to the
+     run's line archive instead (Charm_Nest_Run_Lines, written by the page, read by the server under the record). These
+     say which orders those are, and measure a record the way Firestore will. */
+  const RUN_RECORD = { bytes: 1048576, entries: 40000, warn: 0.7, partBytes: 262144, keepSheets: 100 };
+  // the states the run is done with: the complete step lets go of these orders' station dots too
+  const FINISHED_LINE = new Set(["committed", "gone", "skipped", "noDesign"]);
+  /** The orders a run is done with, as orderId → their line keys: every line finished, and the order closed (committed
+      at the station, or every line gone from Etsy). An order still open at the station (only skipped or no-design
+      lines, or a single line gone) stays in the record: a run resumed from its record would otherwise meet it again
+      as a new arrival and cut it. A line without an order id is never counted. */
+  function closedOrders(lines) {
+    const by = new Map();
+    for (const [key, l] of Object.entries(lines || {})) {
+      const id = l && l.orderId != null ? String(l.orderId) : "";
+      if (!id) continue;
+      const o = by.get(id) || { keys: [], done: true, committed: false, gone: true };
+      o.keys.push(key);
+      if (!FINISHED_LINE.has(l.state)) o.done = false;
+      if (l.state === "committed") o.committed = true;
+      if (l.state !== "gone") o.gone = false;
+      by.set(id, o);
+    }
+    return new Map([...by].filter(([, o]) => o.done && (o.committed || o.gone)).map(([id, o]) => [id, o.keys]));
+  }
+  /** A text's size in UTF-8 bytes, as Firestore counts a string (no TextEncoder: the run controller runs without one). */
+  function utf8Bytes(text) {
+    const s = String(text); let n = s.length;
+    for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); if (c >= 0x80) n += c >= 0xd800 && c <= 0xdbff ? 0 : c >= 0x800 ? 2 : 1; }
+    return n;
+  }
+  /** A short fingerprint of a text (16 hex digits), to tell two versions apart. Not for secrets. */
+  function textHash(text) {
+    const s = String(text); let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+    for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (h2 >>> 0).toString(16).padStart(8, "0") + (h1 >>> 0).toString(16).padStart(8, "0");
+  }
+  /** Firestore's automatic index entries for a stored value, near enough: two per field, one per array element. */
+  function indexEntries(v) {
+    if (Array.isArray(v)) return v.length;
+    if (v && typeof v === "object") { let n = 0; for (const k of Object.keys(v)) if (v[k] !== undefined) n += indexEntries(v[k]); return n; }
+    return 2;
+  }
+  /** [key, line] pairs in parts of at most `limit` bytes of JSON each: [{ json, keys }]. A larger line is a part alone. */
+  function archiveParts(entries, limit = RUN_RECORD.partBytes) {
+    const parts = []; let cur = [], size = 2;
+    const close = () => { if (cur.length) parts.push({ json: JSON.stringify(Object.fromEntries(cur)), keys: cur.map(([k]) => k) }); cur = []; size = 2; };
+    for (const [k, l] of entries) {
+      const n = utf8Bytes(JSON.stringify(String(k))) + utf8Bytes(JSON.stringify(l)) + 2;
+      if (cur.length && size + n > limit) close();
+      cur.push([String(k), l]); size += n;
+    }
+    close();
+    return parts;
+  }
+
   /** A saved working sheet is not a released set. Isolated solids stay separate even in the same run. */
   function libraryGroup(sheet, options = {}) {
     if (sheet.setId && !sheet.draft && sheet.solidIncluded !== false) return {key:"set:"+sheet.setId, name:"Set "+(sheet.setSeq || sheet.seq || ""), setId:sheet.setId, seq:sheet.setSeq || sheet.seq || null, standalone:false, working:false};
@@ -382,5 +449,6 @@
     return {key:(solid ? "standalone:"+sheet.metal+":" : "working:")+sheet.day+":"+scope, name:solid ? "Standalone "+(sheet.metal === "gold10k" ? "10K" : "14K") : "Incomplete Sheets: Waiting to be filled!", setId:null, seq:null, standalone:solid, working:true};
   }
   return { purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, interpretLine, lineKey, poolId,
-    orderPlacedAt, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES };
+    orderPlacedAt, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
+    RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });

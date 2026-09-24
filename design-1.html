@@ -5214,7 +5214,7 @@ const BritesChat = (() => {
     return true;
   }
   async function directWrite(rid, payload) {
-    if (!db) throw new Error("no-firestore");
+    if (!db) throw new Error(SANDBOX ? "the sandbox does not write to the order chat" : "the station's order database did not load · reload the Design Station");
     await db.collection(COLL).doc(rid).set({}, { merge:true });
     await db.collection(COLL).doc(rid).collection("messages")
       .add(Object.assign({ timestamp: firebase.firestore.FieldValue.serverTimestamp() }, payload));
@@ -7297,6 +7297,8 @@ const Bridge = (() => {
       }));
       return { images: out };
     },
+    // Selecting a set's orders for its labels: the pointer shows each row while the selection goes on, as the order
+    // checks do (Cursor.glide). Waiting for a glide to every row held a 45-order release about 11 s.
     async "ui.select"(a) {
       const selected = [], refused = [];
       for (const id of (a.receiptIds || []).map(String)) {
@@ -7304,14 +7306,14 @@ const Bridge = (() => {
         if (!row) { refused.push({ id, reason: "order is not in the list" }); continue; }
         if (isLockedElsewhere(id)) { refused.push({ id, reason: "order is locked at another station" }); continue; }
         if (completedOrders.has(id)) { refused.push({ id, reason: "order is already design-complete" }); continue; }
-        await Cursor.act("row", id, `Select ${id}`);
+        Cursor.glide("row", id, `Select ${id}`);
         await selectRow(row, { silent: true }); S.sorterSelected.add(id); selected.push(id);
       }
       rememberSorterSelection(); flushRtBatch();
       return { selected, refused, selection: [...selectedOrders] };
     },
     async "ui.deselect"(a) {
-      for (const id of (a.receiptIds || []).map(String)) { await Cursor.act("row", id, `Deselect ${id}`); const row = rowFor(id); if (row) deselectRow(row); else if (selectedOrders.has(id)) { selectedOrders.delete(id); rtQueueUnlock(id); } S.sorterSelected.delete(id); }
+      for (const id of (a.receiptIds || []).map(String)) { Cursor.glide("row", id, `Deselect ${id}`); const row = rowFor(id); if (row) deselectRow(row); else if (selectedOrders.has(id)) { selectedOrders.delete(id); rtQueueUnlock(id); } S.sorterSelected.delete(id); }
       rememberSorterSelection(); persistSelection(); refreshChrome(); flushRtBatch();
       return { selection: [...selectedOrders] };
     },

@@ -958,6 +958,7 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .placeView .claude{border-left:3px solid var(--gold2);background:var(--goldSoft);padding:6px 9px;border-radius:6px;font-size:12px;overflow-wrap:anywhere}
 .spacingControl{--spacing:1.2;display:inline-flex;align-items:center;gap:7px;padding:5px 8px;border:1px solid var(--line);border-radius:9px;background:var(--paper2);font:11.5px var(--sans);cursor:ns-resize}
 .spacingControl:hover,.spacingControl:focus-within{border-color:var(--gold);background:var(--goldSoft)}
+.spacingControl[hidden]{display:none}
 .placeView .ctl .spacingControl input{width:86px;accent-color:var(--gold);cursor:ew-resize}
 .spacingControl output{font:600 12px var(--mono);min-width:4ch;text-align:right;color:var(--ink70)}
 .spacingIcon{display:grid;gap:calc(1px + 2px * var(--spacing));width:15px;align-content:center;min-height:22px}
@@ -1503,13 +1504,13 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="vendor/opentype-1.3.4.min.js"></script>
 <script src="lib/qrcode.min.js"></script>
 <script src="brites-progress.js"></script>
-<script src="charm-nest-progress.js?v=20260923-tray"></script>
+<script src="charm-nest-progress.js?v=20260924-followup"></script>
 <script src="charm-nest-operations.js"></script>
 <script src="charm-nest-rose.js?v=20260923-edges"></script>
 <script src="charm-nest-solver.js?v=20260924-onebyone"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
-<script src="charm-nest-pdf.js?v=20260924-onebyone"></script>
+<script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
@@ -1517,8 +1518,8 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-readiness.js?v=20260923-audit"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
-<script src="charm-nest-orders.js?v=20260924-onebyone"></script>
-<script src="charm-nest-background.js?v=20260923-audit"></script>
+<script src="charm-nest-orders.js?v=20260924-followup"></script>
+<script src="charm-nest-background.js?v=20260924-followup"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
    CHARM NESTING STATION 1 — application
@@ -1992,7 +1993,8 @@ function flushManualIntake(metal) {
     sh.intakeAppend=sh.placements.length>0;sh.appendOnly=sh.intakeAppend;sh.dirty=true;sh.status='ready';sh.problem=null;
     delete sh.intakeForceFinal;
     computeSaturation(sh);renderCard(sh);renderRail();updateTopSub();window.Session?.schedule();
-    if(S.settings.autoNest!=='off')startNest(sh);
+    // artwork a person dropped nests at once, a stopped run or not (heldForResume)
+    if(S.settings.autoNest!=='off'){sh._byHand=true;startNest(sh);}
   }
 }
 /** Start only after all files for this material have been parsed and reviewed. */
@@ -2477,7 +2479,7 @@ function ensureWorkers(sh, n) {
   for (const w of sh.workers.splice(n)) w.terminate();
   while (sh.workers.length < n) {
     const idx = sh.workers.length;
-    const w = new Worker("charm-nest-worker.js?v=20260924-onebyone");
+    const w = new Worker("charm-nest-worker.js?v=20260924-followup");
     w.onmessage = e => onWorkerMessage(sh, e.data, idx);
     w.onerror = e => onWorkerMessage(sh, { type: "error", jobId: sh.jobId + ":" + idx, message: e.message }, idx);
     sh.workers.push(w);
@@ -2546,6 +2548,8 @@ function startNest(sh) {
 }
 function startNestReady(sh, context) {
   if (["nesting", "finishing"].includes(sh.status)) return;
+  // a stopped run starts none of its sheets: this one keeps its place in line and starts on Resume
+  if (heldForResume(sh)) return holdForResume(sh);
   delete sh.runHold;
   if (window.CharmNestOperations && !context) {
     if (sh._operationStarting) return;
@@ -2553,6 +2557,7 @@ function startNestReady(sh, context) {
     return window.CharmNestOperations.run({key:"nest-start:"+(sh.sheetId || sh.metal+":"+sh.page),label:"Starting sheet nesting",resources:["production:"+(sh.runId || sh.sheetId)]}, async token => {
       sh._operationStarting = false;
       if (!allSheets().includes(sh)) return;
+      if (heldForResume(sh)) return holdForResume(sh);
       if(sh.metal==="rose" && window.RoseStock)await RoseStock.prepare(sh,{nesting:true});
       startNestReady(sh, token); // Hold the resource only for setup; workers run independently.
     }).catch(e => { sh._operationStarting = false; sh.status = "error"; sh.problem = e.message; renderCard(sh); toast(e.message,"bad"); if(window.RunCtl)RunCtl.onSheetDone(sh,e); });
@@ -2560,7 +2565,7 @@ function startNestReady(sh, context) {
   const items = activeCharms(sh);
   // A sheet with nothing to nest does not stay queued: arrivals wait while a sheet of their material is queued, and an
   // empty page left queued stopped every later arrival of the run with "A sheet is still being written".
-  if (!items.length) { if (sh.status === "queued") { sh.status = sh.charms.length ? "ready" : "idle"; sh.stage = ""; renderCard(sh); } toast(`${labelOf(sh.metal)}: nothing to nest`, ""); return; }
+  if (!items.length) { delete sh._byHand; if (sh.status === "queued") { sh.status = sh.charms.length ? "ready" : "idle"; sh.stage = ""; renderCard(sh); } toast(`${labelOf(sh.metal)}: nothing to nest`, ""); return; }
   const running = allSheets().filter(s => ["nesting", "finishing"].includes(s.status));
   // Rotation searches share a browser-wide memory budget across material cards.
   // Counting finishing sheets also leaves room for verification and export.
@@ -2573,10 +2578,12 @@ function startNestReady(sh, context) {
   window.RoseStock?.protect(sh);
   delete sh.rosePlan; delete sh.rosePlanKey; delete sh.rosePlanHash;
   sh._beforeLearned = S.settings.nestFlow === "learned" ? { placements: sh.placements, outputs: sh.outputs, verification: sh.verification, best: sh.best, status: sh.status, rejects: sh.rejects, liveInfo: sh.liveInfo, sat: sh.sat, solveParams: sh.solveParams, endedBy: sh.endedBy, trials: sh.trials, persistedDone: sh.persistedDone } : null;
+  // how the sheet stands before this search: Stop on the run banner puts it back when the search placed nothing new
+  sh._beforeNest = { placements: sh.placements, rejects: sh.rejects, outputs: sh.outputs, verification: sh.verification, liveInfo: sh.liveInfo, sat: sh.sat, best: sh.best, bestKey: sh.bestKey, bestInfo: sh.bestInfo, bestRevision: sh.bestRevision, bestHistory: sh.bestHistory, solveParams: sh.solveParams, endedBy: sh.endedBy, trials: sh.trials, persistedDone: sh.persistedDone, density: sh.density, elapsedMs: sh.elapsedMs, totalMs: sh.totalMs, searchMetrics: sh.searchMetrics, gpuProgress: sh.gpuProgress, movedOn: sh.movedOn };
   sh.nestFlow = sh.roseProtected || sh.appendOnly ? "standard" : S.settings.nestFlow || "standard";
   cancelGPUComparison();
   sh.persistedDone = false;
-  sh.movedOn = null; sh.problem = null;
+  sh.movedOn = null; sh.problem = null; delete sh._byHand; delete sh.resumeWait;
   if (sh.runId && window.LiveNest) LiveNest.prepareSheet(sh);
   const bestKey = JSON.stringify([packingKey(sh, items), items.map(c=>[c.id,c.order,c.orderDate,c.pinned])]);
   const retained = sh.bestKey === bestKey && sh.best ? CharmNestSolver.publicLayout(sh.best) : null;
@@ -2619,6 +2626,58 @@ function startNestReady(sh, context) {
   };
   const launchId=sh.jobId;
   launch();
+}
+/* A stopped run starts none of its sheets (24 Sep). A sheet queued behind the one nesting, or still waiting to start,
+   used to start as soon as the sheet ahead finished, stopped run or not. It now keeps its place in line, its card says
+   it waits for Resume, and it starts on Resume. A person's own Nest (the card, Nest all ready, dropped artwork) still
+   starts a sheet at once. */
+const RESUME_STAGE = "Waits for Resume";
+function heldForResume(sh) {
+  const r = window.B?.run;
+  return !!(r && sh.runId && sh.runId === r.runId && r.status === "stopped" && !sh._byHand);
+}
+function holdForResume(sh) {
+  if (!S.nestQueue.includes(sh)) S.nestQueue.push(sh);
+  sh.status = "queued"; sh.stage = RESUME_STAGE; renderCard(sh);
+}
+/** The run stopped or carried on: its queued sheets say they wait for Resume, or take their turn again. */
+function resumeQueueChanged() {
+  let freed = false;
+  for (const sh of allSheets()) {
+    if (sh.status !== "queued") continue;
+    if (heldForResume(sh)) { if (sh.stage !== RESUME_STAGE) { sh.stage = RESUME_STAGE; renderCard(sh); } }
+    else if (sh.stage === RESUME_STAGE) { sh.stage = sh._operationStarting ? "Waiting for sheet updates…" : "Queued"; freed = true; renderCard(sh); }
+  }
+  if (freed && !allSheets().some(s => ["nesting", "finishing"].includes(s.status))) pumpNestQueue();
+}
+/** The run is put down (abandoned or cleared): its sheets stop waiting for a Resume that will not come. */
+function dropResumeQueue() {
+  for (const sh of allSheets()) if (sh.status === "queued" && sh.stage === RESUME_STAGE) {
+    S.nestQueue = S.nestQueue.filter(p => p !== sh);
+    sh.status = activeCharms(sh).length ? "ready" : "idle"; sh.stage = ""; sh.dirty = true; renderCard(sh);
+  }
+}
+/* Stop on the run banner while new orders go on ends the run's charm searches at once (RunCtl.operatorStop). Nothing
+   placed moves, and the orders not placed yet wait on their sheet for Resume: not moved on to the next sheet, not
+   written down as "did not fit", not counted among the orders that tried a sheet's gaps (topupSettle). */
+/** The search ended before it placed anything new: the sheet stands as it did before it (its charms where they were,
+    its files and checks), and the new pieces wait on it. */
+function resumeUnchanged(sh) {
+  if (sh._beforeNest) Object.assign(sh, sh._beforeNest);
+  sh._beforeNest = null; sh.probe = null; sh.probePlaced = []; sh.livePlacements = []; sh.stage = "";
+  for (const ev of [sh.evSearch, sh.evNest]) if (ev && ev.live) agentUpdate(ev, { live: false, elapsed: 0, html: null, text: "Stopped with the run before anything new was placed · the new pieces wait for Resume" });
+  log(sh, "stopped with the run: nothing new placed, the new pieces wait for Resume");
+  sh.appendOnly = sh.intakeAppend = sh.placements.length > 0; sh.dirty = true; sh.status = "ready";
+  computeSaturation(sh); drawPreview(sh);
+  startNest(sh);   // held by the stopped run until Resume
+  pumpNestQueue();
+  if (window.RunCtl) RunCtl.poke();
+}
+/** The search ended after it placed some (a finished first pass stands) and the sheet was written: they stay where they
+    are, and the pieces not placed wait on this sheet. */
+function resumeLater(sh) {
+  sh.appendOnly = sh.intakeAppend = sh.placements.length > 0; sh.dirty = true; sh.status = "ready";
+  startNest(sh);   // held by the stopped run until Resume
 }
 
 /* ═══ 9b · AI nesting: Claude plans every placement, the geometry measures ═══ */
@@ -2912,7 +2971,11 @@ async function finishNest(sh, { result, error }) {
   }
   const items = activeCharms(sh); const byId = new Map(items.map(c => [c.id, c]));
   if (error && sh._beforeLearned) { Object.assign(sh, sh._beforeLearned); sh._beforeLearned = null; drawPreview(sh); }
-  if (error) { sh.status = sh.outputs ? "partial" : items.length ? "ready" : "idle"; sh.stage = ""; log(sh, "error: " + error); toast(`${labelOf(sh.metal)}: nesting failed — ${error}`, "bad", 6000); renderCard(sh); pumpNestQueue(); if (window.RunCtl) RunCtl.onSheetDone(sh, new Error(error)); return; }
+  if (error) { sh._beforeNest = null; sh.status = sh.outputs ? "partial" : items.length ? "ready" : "idle"; sh.stage = ""; log(sh, "error: " + error); toast(`${labelOf(sh.metal)}: nesting failed — ${error}`, "bad", 6000); renderCard(sh); pumpNestQueue(); if (window.RunCtl) RunCtl.onSheetDone(sh, new Error(error)); return; }
+  // Stop on the run banner while new orders went on ended this search (resumeUnchanged, resumeLater)
+  if (sh.resumeWait && result.endedBy === "stopped" && result.placements.every(p => (sh.nestInitial || []).some(q => q.id === p.id))) return resumeUnchanged(sh);
+  sh._beforeNest = null;   // (it holds the previous files: not kept once this search stands)
+  if (result.endedBy !== "stopped") delete sh.resumeWait;
   // The layout stands as placed: charms go in one at a time and a sheet is never re-arranged afterwards, since that
   // loses capacity (Paul, 24 Sep). An order that finds no room moves on to the next sheet.
   // A search that ran out of time before it placed a single charm shows nothing about whether they fit: the sheet is
@@ -2927,7 +2990,7 @@ async function finishNest(sh, { result, error }) {
   sh.status = "finishing"; sh.endedBy = result.endedBy; sh.trials = result.trials; sh.searchMetrics=result.metrics||sh.searchMetrics; sh.gpuProgress=result.gpu||sh.gpuProgress; sh.placements = result.placements; sh.rejects = result.rejects.slice(); sh.livePlacements = [];
   keepOrdersWhole(sh, byId);
   if (sh.evSearch && sh.evSearch.live) agentUpdate(sh.evSearch, { live: false, elapsed: 0, html: null, text: `Search ended after ${result.trials} trial(s): ${endedText(result.endedBy)}` });
-  if (sh.evNest) agentUpdate(sh.evNest, { live: false, elapsed: 0, text: `Nest ended by ${endedText(result.endedBy)} after ${result.trials} trial(s), ${fmt.s(result.elapsedMs)}: ${result.placements.length}/${items.length} placed at ${fmt.pct(result.density)}${result.rejects.length ? ` · did not fit: ${result.rejects.map(id => byId.get(id)?.name || id).join(", ")}` : ""}` });
+  if (sh.evNest) agentUpdate(sh.evNest, { live: false, elapsed: 0, text: `Nest ended by ${endedText(result.endedBy)} after ${result.trials} trial(s), ${fmt.s(result.elapsedMs)}: ${result.placements.length}/${items.length} placed at ${fmt.pct(result.density)}${result.rejects.length ? ` · ${sh.resumeWait ? "waiting for Resume" : "did not fit"}: ${result.rejects.map(id => byId.get(id)?.name || id).join(", ")}` : ""}` });
   sh.liveInfo = { freePt2: result.freePt2, usablePt2: result.usablePt2, placedPt2: result.placedPt2, pocket: result.pocket, placed: result.placements.length, total: items.length };
   if (result.endedBy === "cap" && result.rejects.length && result.usablePt2) {
     // the ceiling is arithmetic, not luck: the held-back pieces would push the total past it in any arrangement
@@ -2957,6 +3020,7 @@ async function finishNest(sh, { result, error }) {
       if (sheetFileBase(sh) === was.fileBase) {
         sh.fileBase = was.fileBase; sh.outputs = was.outputs; sh.verification = was.verification;
         sh.releaseFull = topupSettle(sh, result, sheetFull(sh, result, items));
+        if (sh.releaseFull) sh._renderAreas = null;
         if (sh.intakePhase !== "fill") { sh.intakeOptimized = true; sh.intakeOptimizedCount = items.length; }
         delete sh.intakeForceFinal;
         sh.intakeFinalized = sh.intakePhase === "final" && sh.placements.length > 0;
@@ -2980,14 +3044,18 @@ async function finishNest(sh, { result, error }) {
     const specBase = { sheet: { wPt: st.wPt, hPt: st.hPt, strokeRGB: [1, 0, 0], strokePt: 0.5 }, placements: sh.placements.map(p => ({ charm: byId.get(p.id), angle: p.angle, cxPt: p.cxPt, cyPt: p.cyPt, scale: p.scale || 1 })), sources, title: `${labelOf(sh.metal)} sheet ${sh.sheetId}`, meta: { sheetId: sh.sheetId, metal: sh.metal, seed: result.params.seed, clearancePt: result.params.clearancePt, charmScale: CHARM_SCALE } };
     const aiBytes = await CharmNestPDF.buildSheet(specBase);
     sh.placements.forEach((p, i) => { p.layerName = specBase.placements[i].layerName; p.name = byId.get(p.id)?.name; });
+    // 2 · verify — geometry (worker) and render (pdf.js), independently of the solver. The geometry check runs in the
+    // sheet's worker while this page writes the proof and renders the file, instead of after them.
+    const geomDone = new Promise(res => { sh._geomVerify = res; ensureWorker(sh).postMessage({ type: "verify", jobId: sh.jobId, job: buildJob(sh), placements: sh.placements, res: +S.settings.verifyRes || 6 }); });
     sh.progress = [2, 5]; sh.stage = "Writing labelled proof…"; renderProgress(sh);
     const labelledBytes = await CharmNestPDF.buildSheet(Object.assign({}, specBase, { labelled: true, placements: specBase.placements.map(p => Object.assign({}, p)) }));
-    // 2 · verify — geometry (worker) and render (pdf.js), independently of the solver
     sh.stage = "Verifying · re-rendering each charm alone…"; sh.progress = [3, 5]; renderProgress(sh);
-    const geom = await new Promise(res => { sh._geomVerify = res; ensureWorker(sh).postMessage({ type: "verify", jobId: sh.jobId, job: buildJob(sh), placements: sh.placements, res: +S.settings.verifyRes || 6 }); });
     let render = null;
-    try { await ensurePdfJs(); render = await CharmNestPDF.verifyRendered(aiBytes, { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0, res: +S.settings.verifyRes || 6, erodePt: (+S.settings.clearancePt || 0) < 0 ? Math.round(-S.settings.clearancePt / 2 * 2) / 2 : 0, onProgress: (d, t) => { sh.stage = `Verifying · charm ${d}/${t} re-rendered from the output file`; renderProgress(sh); } }); }
-    catch (e) { render = { ok: false, error: e.message }; log(sh, "render verify failed: " + e.message); }
+    // each charm's layer is rendered once while it stays as it is (layerSig); what it covers is kept with the sheet
+    const layerSigs = new Map(specBase.placements.map(p => [p.layerName, p.layerSig])), areas = sh._renderAreas || (sh._renderAreas = new Map());
+    try { await ensurePdfJs(); render = await CharmNestPDF.verifyRendered(aiBytes, { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0, res: +S.settings.verifyRes || 6, erodePt: (+S.settings.clearancePt || 0) < 0 ? Math.round(-S.settings.clearancePt / 2 * 2) / 2 : 0, layerSigs, cache: areas, onProgress: (d, t) => { sh.stage = `Verifying · charm ${d}/${t} re-rendered from the output file`; renderProgress(sh); } }); }
+    catch (e) { render = { ok: false, error: e.message }; areas.clear(); log(sh, "render verify failed: " + e.message); }
+    const geom = await geomDone;
     sh.verification = { geom, render, ok: geom.ok && !!(render && render.ok), minGapPt: geom.minGapPt, minEdgePt: geom.minEdgePt };
     {
       const allow = (+S.settings.clearancePt || 0) < 0 ? fmt.mm(-S.settings.clearancePt) + " stroke share" : "0";
@@ -3003,6 +3071,7 @@ async function finishNest(sh, { result, error }) {
     sh.progress = [4, 5]; sh.stage = "Saving to the cloud…"; renderProgress(sh);
     // Overflow after a complete search closes a sheet; merely placing a small queue does not.
     sh.releaseFull = topupSettle(sh, result, sheetFull(sh, result, items));
+    if (sh.releaseFull) sh._renderAreas = null;   // a released sheet takes no more charms: its kept layer areas (MBs) go
     if(sh.intakePhase!=='fill' && result.endedBy!=='stopped' && sh.verification.ok){sh.intakeOptimized=true;sh.intakeOptimizedCount=items.length;}
     delete sh.intakeForceFinal;
     sh.intakeFinalized = sh.intakePhase === "final" && result.endedBy !== "stopped" && sh.verification.ok && sh.placements.length > 0;
@@ -3014,16 +3083,16 @@ async function finishNest(sh, { result, error }) {
     sh.stage = ""; sh.progress = [5, 5]; sh.totalMs = performance.now() - sh.t0;   // file in → sheet written and verified, Claude's review included
     renderCard(sh); drawPreview(sh);
     // 4 · announce
-    const msg = `${sheetName(sh)} · ${allPlaced ? "sheet complete" : sh.releaseFull ? "sheet full" : "best layout saved"} — ${sh.placements.length} of ${items.length} placed, ${fmt.pct(sh.sat ? sh.sat.fullPct : sh.density)} full` + (sh.verification.ok ? "" : " · verification flagged, see report") + (allPlaced ? ` · ended by: ${endedText(sh.endedBy)}` : ` · ${sh.rejects.length} still waiting${sh.nestFlow !== "learned" || ["cap", "plateau"].includes(sh.endedBy) ? ` for sheet ${sh.page + 1}` : " on this sheet"}`);
+    const msg = `${sheetName(sh)} · ${allPlaced ? "sheet complete" : sh.releaseFull ? "sheet full" : "best layout saved"} — ${sh.placements.length} of ${items.length} placed, ${fmt.pct(sh.sat ? sh.sat.fullPct : sh.density)} full` + (sh.verification.ok ? "" : " · verification flagged, see report") + (allPlaced ? ` · ended by: ${endedText(sh.endedBy)}` : ` · ${sh.rejects.length} still waiting${sh.endedBy !== "stopped" && (sh.nestFlow !== "learned" || ["cap", "plateau"].includes(sh.endedBy)) ? ` for sheet ${sh.page + 1}` : " on this sheet"}`);
     // Auto's own sheets finish several times an arrival: a clean one is on its card and in the ladder, and its toast only
-    // covered the next card's controls. One that needs a look still says so.
-    const routine = allPlaced && sh.verification.ok && S.settings.runMode === "auto" && !!sh.runId && window.B?.run?.runId === sh.runId;
-    if (!routine) toast(msg, allPlaced && sh.verification.ok ? "ok" : "", 6500); ding();
+    // covered the next card's controls. One that needs a look still says so. One the run's Stop ended says so on its card.
+    const routine = !!sh.resumeWait || allPlaced && sh.verification.ok && S.settings.runMode === "auto" && !!sh.runId && window.B?.run?.runId === sh.runId;
+    if (!routine) toast(msg, allPlaced && sh.verification.ok ? "ok" : "", 6500); if (!sh.resumeWait) ding();
     $$(".sheetCard").find(el => el.dataset.m === sh.metal)?.classList.add("pulse");
     setTimeout(() => $$(".sheetCard").find(el => el.dataset.m === sh.metal)?.classList.remove("pulse"), 1300);
     if (document.hidden && S.settings.notify === "on" && "Notification" in window && Notification.permission === "granted") { try { new Notification("Charm Nesting Station", { body: msg }); } catch (_) { /* ignore */ } }
     // 5 · persist everything. The two verifiers above are the acceptance test; no further inspection runs.
-    sh.persisted = persistSheet(sh, items).then(() => { if (sh.jobId === writtenJob) sh._written = written; sh.persistedDone = true; flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e,{stage:"persistence",critical:true})); });
+    sh.persisted = persistSheet(sh, items).then(() => { if (sh.jobId === writtenJob) sh._written = written; sh.persistedDone = true; if (sh.resumeWait && sh.jobId === writtenJob && sh.rejects.length) resumeLater(sh); flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e,{stage:"persistence",critical:true})); });
     // 6 · whatever did not fit under the ceiling goes to the next sheet of this metal, which nests on its own
     if (sh.rejects.length && sh.endedBy !== "stopped" && (sh.nestFlow !== "learned" || sh.verification.ok && ["cap", "plateau"].includes(sh.endedBy))) overflowToNextSheet(sh, false);
   } catch (e) {
@@ -3032,7 +3101,13 @@ async function finishNest(sh, { result, error }) {
   }
   pumpNestQueue();
 }
-function pumpNestQueue() { flushManualIntake(); while (S.nestQueue.length) { const next = S.nestQueue.shift(); if (next.status === "queued") { next.status = "ready"; startNest(next); return; } } }
+function pumpNestQueue() {
+  flushManualIntake();
+  // a sheet of a stopped run keeps its place in line and starts on Resume (heldForResume)
+  S.nestQueue = S.nestQueue.filter(p => p.status === "queued" && allSheets().includes(p));
+  const next = S.nestQueue.find(p => !heldForResume(p));
+  if (next) { S.nestQueue.splice(S.nestQueue.indexOf(next), 1); next.status = "ready"; startNest(next); }
+}
 const endedText = e => ({ plateau: "paused — no additional pieces during the improvement window", "model-unavailable": "model unavailable — verified baseline retained", complete: "all pieces placed", budget: "time ceiling", stalled: "settled — nothing better for a minute", stopped: "operator stop", trials: "restart cap", cap: "fill ceiling reached", "no-room": "no room left for the rest", rounds: "planning-round cap", "claude-full": "Claude judged the sheet full" }[e] || e);
 function buildReport(sh, result, items) {
   const byId = new Map(items.map(c => [c.id, c])); const st = stockFor(sh.metal, sh);
@@ -3220,7 +3295,7 @@ function buildCards() {
       </div>`;
     host.appendChild(el); sh.el = el; sh.cardEl = el;
     const q = r => $(`[data-r="${r}"]`, el); const cur = () => activePage(m.key);   // buttons act on the sheet the tab shows
-    q("nest").onclick = () => { const pg = cur(); if (pg.recalled && !pg.charms.length) { if (window.Recall) Recall.rebuild(pg).catch(e => toast(e.message, "bad", 7000)); return; } startNest(pg); }; q("stop").onclick = () => stopNest(cur());
+    q("nest").onclick = () => { const pg = cur(); if (pg.recalled && !pg.charms.length) { if (window.Recall) Recall.rebuild(pg).catch(e => toast(e.message, "bad", 7000)); return; } pg._byHand = true; startNest(pg); }; q("stop").onclick = () => stopNest(cur());
     q("dl").onclick = () => ProductionExports.live(cur(), "ai");
     q("dxf").onclick = () => ProductionExports.live(cur(), "dxf");
     q("second").onclick = () => overflowToNextSheet(cur());
@@ -3311,14 +3386,15 @@ function renderCard(sh) {
   q("nest").textContent = rc ? "Rebuild to edit" : (sh.status === "complete" || sh.status === "partial") ? (sh.dirty ? "Nest again" : "Re-nest") : "Nest";
   q("stop").classList.toggle("hidden", sh.status !== "nesting");
   q("dl").classList.toggle("hidden", !sh.outputs && !(rc && rc.outputs && rc.outputs.ai)); q("dl").textContent = sh.verification && !sh.verification.ok ? "Download .ai (flagged)" : "Download .ai";
-  q("second").classList.toggle("hidden", !(sh.status === "partial" && sh.rejects.length));
+  q("second").classList.toggle("hidden", !(sh.status === "partial" && sh.rejects.length && !sh.resumeWait));
   paintClear(sh);
   // "see the report" is said by the verification flag and by the outlines left out; this is the way to it
   q("report").classList.toggle("hidden", !(sh.verification && !sh.verification.ok) && !sh.charms.some(c => c.open) && !S.sources.some(src => src.group?.orphans?.length && sh.charms.some(c => c.sourceId === src.id)));
   // rejects tray
   const rj = q("rejects"); const byId = new Map(sh.charms.map(c => [c.id, c]));
   if (sh.movedOn && sh.movedOn.n) { rj.classList.remove("hidden"); rj.title = sh.movedOn.names.join(", "); rj.innerHTML = `<b>${sh.movedOn.n} moved to sheet ${sh.movedOn.page}</b><button type="button" class="btn ghost xs" data-goto="${sh.movedOn.page - 1}">open it</button>`; $("[data-goto]", rj).onclick = e => showPage(sh.metal, +e.currentTarget.dataset.goto); }
-  else if ((sh.status === "partial" || sh.status === "complete") && sh.rejects.length) { rj.classList.remove("hidden"); rj.title = sh.rejects.map(id => byId.get(id)?.name || id).join(", "); rj.innerHTML = `<b>${sh.rejects.length} need another sheet${sh.endedBy === "cap" ? ", held back by the fill ceiling" : ""}</b><button type="button" class="btn ghost xs" data-r2="second">Move them on</button>`; $("[data-r2=second]", rj).onclick = () => overflowToNextSheet(sh); }
+  // (the pieces a Stop on the run banner left unplaced wait for Resume on this sheet: see resumeLater)
+  else if ((sh.status === "partial" || sh.status === "complete") && sh.rejects.length && !sh.resumeWait) { rj.classList.remove("hidden"); rj.title = sh.rejects.map(id => byId.get(id)?.name || id).join(", "); rj.innerHTML = `<b>${sh.rejects.length} need another sheet${sh.endedBy === "cap" ? ", held back by the fill ceiling" : ""}</b><button type="button" class="btn ghost xs" data-r2="second">Move them on</button>`; $("[data-r2=second]", rj).onclick = () => overflowToNextSheet(sh); }
   else { rj.classList.add("hidden"); rj.title = ""; }
   // queue thumbnails
   const placed = new Set(sh.placements.map(p => p.id)), rejected = new Set(sh.rejects);
@@ -3358,10 +3434,12 @@ function renderProgress(sh) {
   const measured=sh.status==='nesting' && !sh.stage?.startsWith('Stopping') && sh.searchMetrics?.positions>0;
   const searchLabel=measured ? `${sh.gpuProgress?.active?(sh.searchMetrics.gpuPositions?'GPU + CPU':'CPU · GPU ready'):sh.gpuProgress?.phase==='checking'?'CPU · GPU starting':sh.gpuProgress?'CPU · GPU unavailable':'CPU'} · ${sh.trials.toLocaleString()} layout trial${sh.trials === 1 ? "" : "s"}` : sh.stage;
   if(measured)st.title=`${sh.stage} · ${sh.gpuProgress?.reason||'CPU pipeline'}. Layout trials are completed construction passes across all workers; interrupted passes are excluded. ${sh.searchMetrics.groups||0} complete group plans and ${sh.searchMetrics.branches||0} partial group branches evaluated. Diagnostic only: ${sh.searchMetrics.positions.toLocaleString()} low-level position checks, including repeats and early rejections. These are not distinct sheet arrangements.`;
-  st.innerHTML = sh.stage ? `<span class="spin"></span><span>${esc(searchLabel)}</span><span class="r">${elapsed}${budget}</span>`
+  // a sheet waiting for the run's Resume is not at work: no spinner
+  const waits = sh.status === "queued" && sh.stage === RESUME_STAGE;
+  st.innerHTML = sh.stage ? `${waits ? "" : `<span class="spin"></span>`}<span>${esc(searchLabel)}</span><span class="r">${elapsed}${budget}</span>`
     : reviewingSrc ? `<span class="spin"></span><span>Claude is reviewing the ${reviewingSrc.charms.length} charms detected in ${esc(reviewingSrc.name)}</span><span class="r">${fmt.s(reviewingSrc.review.elapsed || 0)}</span>`
     : sh.recalled && !sh.charms.length ? `<span>${sh.recalled.placedCount}/${sh.recalled.charmCount} placed · ${fmt.pct(sh.recalled.density || 0)} full${sh.recalled.verification ? (sh.recalled.verification.ok ? " · verified ✓" : " · ⚠ flagged") : ""} · ${esc(sh.recalled.fileBase || "")}</span><span class="r">${sh.recalled.updatedAt ? new Date(sh.recalled.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}</span>`
-    : done ? `<span>${sh.placements.length}/${activeCharms(sh).length} placed${sh.sat ? ` · ${fmt.pct(sh.sat.fullPct)} full` : ""}${sh.verification ? (sh.verification.ok ? " · verified ✓" : " · ⚠ verification flagged") : ""}</span><span class="r">${fmt.s(sh.elapsedMs || 0)} search · ${elapsed} total</span>` : "";
+    : done ? `<span>${sh.placements.length}/${activeCharms(sh).length} placed${sh.sat ? ` · ${fmt.pct(sh.sat.fullPct)} full` : ""}${sh.verification ? (sh.verification.ok ? " · verified ✓" : " · ⚠ verification flagged") : ""}</span><span class="r">${fmt.s(sh.elapsedMs || 0)} search · ${elapsed} from the first file</span>` : "";   // "total" read as the nesting time
   const ov = q("overlay");
   const moving = sh.status === "nesting" || sh.status === "finishing";
   ov.innerHTML = moving ? `<span class="pill neutral">${sh.placements.length}/${activeCharms(sh).length} placed</span>${sh.sat ? `<span class="pill neutral">${fmt.pct(sh.sat.fullPct)} full</span>` : ""}` : "";
@@ -3841,7 +3919,7 @@ function compareGPUSpeed() {
   const sh=allSheets().filter(sh=>activeCharms(sh).length).sort((a,b)=>activeCharms(b).length-activeCharms(a).length)[0];
   const job=sh?buildJob(sh):null,id=uid();
   let worker;
-  try{worker=new Worker('charm-nest-worker.js?v=20260924-onebyone');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
+  try{worker=new Worker('charm-nest-worker.js?v=20260924-followup');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
   gpuComparison=worker;button.textContent="Cancel comparison";output.textContent="Checking GPU availability…";
   const finish=text=>{if(gpuComparison!==worker)return;output.textContent=text;button.textContent="Compare speed";worker.terminate();gpuComparison=null;};
   worker.onmessage=({data:m})=>{
@@ -3870,7 +3948,8 @@ function readSettings() {
   s.sandboxStream = $("#stSbStream").value === "off" ? "off" : "on"; s.sandboxSpeed = Math.max(1, Math.min(1000, Math.round(+$("#stSbSpeed").value || 50))); s.sandboxSeed = Math.max(0, Math.min(2147483646, Math.round(+$("#stSbSeed").value || 0)));
   try { new RegExp($("#stSkuPattern").value); s.skuPattern = $("#stSkuPattern").value.trim() || DEFAULTS.skuPattern; } catch (_) { toast("SKU pattern is not a valid regular expression — kept the previous one", "bad"); }
   s.labelGapMm = Math.max(1, Math.min(30, +$("#stLabelGapMm").value || 6.4)); s.masterServerAbove = Math.max(0, Math.round(+$("#stMasterServerAbove").value || 0)); s.sizeMinMm = Math.max(0.5, +$("#stSizeMinMm").value || 3); s.sizeMaxMm = Math.max(s.sizeMinMm, +$("#stSizeMaxMm").value || 60);
-  s.engraveMarginMm = Math.max(0, Math.min(5, +$("#stEngraveMarginMm").value || 0)); s.engraveMinCapMm = Math.max(0.3, +$("#stEngraveMinCapMm").value || 1.6); s.engraveMaxHeightFrac = Math.max(0.1, Math.min(1, +$("#stEngraveMaxHeightFrac").value || 0.4)); s.engraveConfidence = Math.max(0, Math.min(1, +$("#stEngraveConfidence").value || 0.8)); s.engraveMinGapMm = Math.max(0, +$("#stEngraveMinGapMm").value || 0); s.engraveMinStrokeMm = Math.max(0, +$("#stEngraveMinStrokeMm").value || 0); s.engraveTryRotated = $("#stEngraveTryRotated").value; s.backFileView = $("#stBackFileView").value;
+  // engraving confidence 0 is a setting (trust every reading), not an empty field
+  s.engraveMarginMm = Math.max(0, Math.min(5, +$("#stEngraveMarginMm").value || 0)); s.engraveMinCapMm = Math.max(0.3, +$("#stEngraveMinCapMm").value || 1.6); s.engraveMaxHeightFrac = Math.max(0.1, Math.min(1, +$("#stEngraveMaxHeightFrac").value || 0.4)); { const v = $("#stEngraveConfidence").value.trim(); s.engraveConfidence = v !== "" && Number.isFinite(+v) ? Math.max(0, Math.min(1, +v)) : DEFAULTS.engraveConfidence; } s.engraveMinGapMm = Math.max(0, +$("#stEngraveMinGapMm").value || 0); s.engraveMinStrokeMm = Math.max(0, +$("#stEngraveMinStrokeMm").value || 0); s.engraveTryRotated = $("#stEngraveTryRotated").value; s.backFileView = $("#stBackFileView").value;
   s.minPt = Math.max(1, +$("#stMinPt").value || 6); s.verifyRes = +$("#stVerifyRes").value || 6; s.naming = $("#stNaming").value; s.review = $("#stReview").value; s.engine = $("#stEngine").value; s.computePipeline = $("#stComputePipeline").value === "gpu" ? "gpu" : "cpu"; if (!untouched("stMaxFill")) s.maxFill = Math.max(0.3, Math.min(1, (+$("#stMaxFill").value || 80) / 100)); s.aiRounds = Math.max(1, Math.min(30, +$("#stAiRounds").value || 10)); s.snapIn = Math.max(0, Math.min(1, (+$("#stSnapIn").value || 0) / 25.4)); s.notify = $("#stNotify").value; s.sound = $("#stSound").value;
   if (previousGeometry !== JSON.stringify([s.stock,s.clearancePt,s.insetPt,s.maxFill])) {
     for (const sh of allSheets()) if (sh.charms.length && !layoutFixed(sh)) sheetDirty(sh);
@@ -3909,7 +3988,7 @@ async function boot() {
   $("#btnPick").onclick = () => $("#fileInput").click();
   $("#fileInput").onchange = e => { intake(e.target.files); e.target.value = ""; };
   $("#btnEarlierSets").onclick = () => { if (window.RunHistory) RunHistory.show(""); };
-  $("#btnNestAll").onclick = () => allSheets().forEach(sh => { if (activeCharms(sh).length && !["nesting", "finishing"].includes(sh.status)) startNest(sh); });
+  $("#btnNestAll").onclick = () => allSheets().forEach(sh => { if (activeCharms(sh).length && !["nesting", "finishing"].includes(sh.status)) { sh._byHand = true; startNest(sh); } });
   $("#btnClearAll").onclick = () => { if (!confirm("Clear every queue and source? Nothing in the cloud is touched.")) return; METALS.forEach(m => clearMetal(m.key)); S.sources = []; S.unassigned = []; renderRail(); updateTopSub(); };
   $("#stCompareGPU").onclick = compareGPUSpeed;
   $("#dlgSettings").addEventListener("close", () => { cancelGPUComparison(); document.documentElement.dataset.rail = S.settings.rail; });   // a density tried and not saved goes back
@@ -3958,13 +4037,14 @@ async function boot() {
   cloudProbe();
   refreshAllCards(); updateTopSub();
   window.CN = { S, AG, DEFAULTS, METALS, showPage, startNest, intake, flushManualIntake, api, agent, agentUpdate, agentCall, uploadBytes, buildJob, setMode, renderLibrary, loadLibrary, applyGroupingReview, reviewGrouping, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; },
-    activePage, allSheets, pagesOf, addPage, sheetDirty, activeCharms, renderCard, inflatedArea, usableArea, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, openLibrarySheet, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log };   // for tests, the console and charm-nest-bridge.js
+    activePage, allSheets, pagesOf, addPage, sheetDirty, activeCharms, renderCard, inflatedArea, usableArea, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, openLibrarySheet, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log,
+    RESUME_STAGE, heldForResume, resumeQueueChanged, dropResumeQueue };   // for tests, the console and charm-nest-bridge.js
   window.CharmNestOperations?.subscribe(()=>flushManualIntake());
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260924-onebyone"></script>
-<script src="charm-nest-rose-ui.js?v=20260924-onebyone"></script>
+<script src="charm-nest-bridge.js?v=20260924-followup"></script>
+<script src="charm-nest-rose-ui.js?v=20260924-followup"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin" aria-labelledby="owTitle">

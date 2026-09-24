@@ -12,20 +12,26 @@
  *      t.end();                      // always, including on failure
  *
  *  A task with no total still shows: a moving bar, the label and the time
- *  spent. One bar only: the task that began first is drawn, the others are
- *  a "+N", and the bar goes when the last one ends. A task started with
- *  { quiet: true } is never drawn at all.
+ *  spent. One bar only: the newest task a person asked for (one that began
+ *  within a moment of a click or key press) is drawn, else the task that
+ *  began first; the others are a "+N", and the bar goes when the last one
+ *  ends. A task started with { quiet: true } is never drawn at all.
  *  ═══════════════════════════════════════════════════════════════════════ */
 (function (root) {
   "use strict";
   if (root.CNProgress) return;
   const tasks = new Map();
-  let seq = 0, host = null, timer = null;
+  let seq = 0, host = null, timer = null, lastInput = -Infinity;
+  // A task that begins within a moment of a click or key press is the person's own, and it is the one drawn: under a
+  // long background task (indexing a master, pulling orders) their own action used to show only as "+1".
+  const ASKED_MS = 1500;
+  if (typeof document !== "undefined") for (const type of ["pointerdown", "keydown"]) document.addEventListener(type, () => { lastInput = Date.now(); }, true);
 
   const CSS = `
 /* One bar for the whole page. It sits on the bottom edge, clear of the rail and of the station dock, and never stands
-   between a person and what they are doing: pointer events pass through it. Only the task that began first is drawn —
-   the rest are a count — so nothing stacks, jumps or pops in while a hand is moving something on the screen. */
+   between a person and what they are doing: pointer events pass through it. One task is drawn (what the person just
+   asked for, else the one that began first) and the rest are a count, so nothing stacks, jumps or pops in while a hand
+   is moving something on the screen. */
 .cnp{position:fixed;left:50%;transform:translateX(-50%);bottom:10px;z-index:60;width:min(560px,calc(100vw - 32px));pointer-events:none;font:12.5px/1.35 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;opacity:0;transition:opacity .18s ease}
 .cnp.on{opacity:1}
 .cnp .cnpRow{background:var(--ink,#221f1b);color:var(--paper,#f7f4ee);border-radius:12px;padding:7px 14px 9px;box-shadow:0 8px 24px -8px rgba(0,0,0,.5)}
@@ -59,7 +65,7 @@
     const list = [...tasks.values()].filter(t => !t.quiet);
     if (!list.length) { h.classList.remove("on"); if (timer) { clearInterval(timer); timer = null; } return; }
     h.classList.add("on");
-    const t = list[0];                                                        // the one that began first; the rest are a count
+    const t = list.filter(x => x.asked).pop() || list[0];                    // the newest one asked for, else the first; the rest are a count
     const q = s => h.querySelector(s);
     const known = t.total > 0;
     const frac = known ? Math.max(0, Math.min(1, t.done / t.total)) : 0;
@@ -80,6 +86,7 @@
   /** start(label, opts?) → { set, note, end }. opts: { total, note, quiet } — a quiet task is counted but never drawn */
   function start(label, opts) {
     const t = { id: ++seq, label: String(label || "Working"), total: (opts && +opts.total) || 0, done: 0, noteText: (opts && opts.note) || "", t0: Date.now(), quiet: !!(opts && opts.quiet) };
+    t.asked = t.t0 - lastInput < ASKED_MS;
     tasks.set(t.id, t);
     draw();
     const api = {

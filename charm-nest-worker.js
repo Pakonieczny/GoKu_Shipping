@@ -12,6 +12,15 @@ importScripts("charm-nest-rose.js?v=20260923-edges", "charm-nest-solver.js?v=202
 
 let current = null;   // { jobId, job, stop }
 
+/* The solver yields between steps so a stop or packing hints can arrive. A chain of zero-delay timers is clamped to
+   4 ms from the fifth on, about 200 of them for every new charm; a message to itself lets this worker read its
+   messages in order with no clamp (the solver's own timer where there is no MessageChannel). */
+const yieldNow = typeof MessageChannel === "function" ? (() => {
+  const port = new MessageChannel(), waiting = [];
+  port.port1.onmessage = () => { const r = waiting.shift(); if (r) r(); };
+  return () => new Promise(r => { waiting.push(r); port.port2.postMessage(0); });
+})() : undefined;
+
 self.onmessage = async (e) => {
   const m = e.data || {};
   if (m.type === "stop") { if (current && (!m.jobId || current.jobId === m.jobId)) current.stop = true; return; }
@@ -68,6 +77,7 @@ self.onmessage = async (e) => {
       onGPU:progress=>post({type:'gpu',progress:{...progress,phase:progress.active?'active':'fallback'}}),
       onMetrics:metrics=>post({type:'metrics',metrics}),
       shouldStop: () => state.stop,
+      yield: yieldNow,
       onStage: (stage, done, total) => post({ type: "stage", stage, done, total }),
       onPlaced: (placement, info) => post({ type: "placed", placement, info }),
       onProbe: (probe) => post({ type: "probe", probe }),

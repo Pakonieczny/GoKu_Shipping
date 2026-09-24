@@ -1104,6 +1104,18 @@
     return out;
   }
 
+  /* What one charm's layer draws on a sheet: its own content bytes, its box, its place and turn, and the master it takes
+     its resources from (one parsed master is one object for the page's life). verifyRendered reuses what it found for a
+     layer while this fingerprint is unchanged. Two 32-bit hashes of the bytes with their length, next to the exact
+     numbers, so two different drawings do not share one. */
+  const masterTags = new WeakMap(); let masterTagNext = 0;
+  const masterTag = parsed => { if (!parsed || typeof parsed !== "object") return "?"; let t = masterTags.get(parsed); if (!t) masterTags.set(parsed, t = ++masterTagNext); return t; };
+  function fingerprint(bytes) {
+    let a = 0x811c9dc5, b = 0x9e3779b9;
+    for (let i = 0; i < bytes.length; i++) { const v = bytes[i]; a = Math.imul(a ^ v, 0x01000193); b = Math.imul(((b << 5) | (b >>> 27)) ^ v, 0x27d4eb2f); }
+    return (a >>> 0).toString(36) + "." + (b >>> 0).toString(36) + "." + bytes.length;
+  }
+
   function ocgOps(tag) {
     const { PDFOperator, PDFOperatorNames, PDFName } = L();
     return PDFOperator.of(PDFOperatorNames.BeginMarkedContentSequence, [PDFName.of("OC"), PDFName.of(tag)]);
@@ -1177,6 +1189,7 @@
       const e = ox - (cs * cx - sn * cy), f = oy - (sn * cx + cs * cy);
       page.pushOperators(ocgOps(tag), pushGraphicsState(), concatTransformationMatrix(cs, sn, -sn, cs, e, f), drawObject(key), popGraphicsState(), endMarkedContent());
       pl.layerName = name;
+      pl.layerSig = [c.sourceId, masterTag(src.parsed), fingerprint(bytes), bb.join(","), [cs, sn, e, f].join(",")].join("|");
     });
     if (spec.labelled) {
       addOCG("LABELS (do not cut)", "ocLabels");
@@ -1323,7 +1336,10 @@
     const pdfjs = root.pdfjsLib;
     if (!pdfjs) throw new Error("pdf.js not loaded");
     const res = spec.res || 6;
-    const doc = await pdfjs.getDocument({ data: bytes.slice(), isEvalSupported: false }).promise;
+    /* Warnings off: every charm carries its master's own layer markers, which pdf.js cannot find on the sheet and
+       reported once per marker per render, about 30 000 console lines for each check of a full sheet (this setting of
+       pdf.js holds for the whole page). */
+    const doc = await pdfjs.getDocument({ data: bytes.slice(), isEvalSupported: false, verbosity: 0 }).promise;
     const page = await doc.getPage(1);
     const occ = await doc.getOptionalContentConfig();
     const flat = (o) => (o || []).flatMap(x => Array.isArray(x) ? flat(x) : (x && x.order) ? flat(x.order) : [x]);
@@ -1332,12 +1348,21 @@
     const charmLayers = layers.filter(l => !/^SHEET|^LABELS/.test(l.name));
     const vp = page.getViewport({ scale: res });
     const W = Math.ceil(vp.width), H = Math.ceil(vp.height);
-    const cv = makeCanvas(W, H), ctx = cv.getContext("2d", { willReadFrequently: true });
+    let cv = null, ctx = null;
     const idGrid = new Int16Array(W * H).fill(-1);
     const inset = Math.floor((spec.insetPt || 0) * res * 0.999);
     const erodePx = spec.erodePt > 0 ? Math.ceil(spec.erodePt * res) + 1 : 0;   // negative clearance: strokes may overlap this much (+1 px raster slack)
-    let overlapPx = 0, outsidePx = 0; const pairs = new Set(), empty = [], detail = {};
-    for (let li = 0; li < charmLayers.length; li++) {
+    /* A layer draws the same pixels while its drawing is the same: buildSheet gives each charm a fingerprint of its own
+       content, box, place, turn and master (layerSig). With spec.layerSigs (layer name → fingerprint) and spec.cache (a
+       Map kept with the sheet), a layer found in the cache is not drawn again: after each new charm only the new charms
+       are rendered. What each layer covers is kept, not the result, so the overlap and edge tests below run in full
+       every time. Drawing every layer again made the check after each new charm grow with the sheet (3 s on a full one). */
+    const sigs = spec.layerSigs instanceof Map ? spec.layerSigs : null, cache = spec.cache instanceof Map ? spec.cache : null;
+    const keyOf = name => { const sig = sigs && cache ? sigs.get(name) : null; return sig ? [sig, W, H, res, inset, erodePx].join("|") : null; };
+    const used = new Set(); let reused = 0;
+    /* One layer alone: the material it covers inside its ink's box grown by a pixel, or { empty } when it has no ink. */
+    async function covered(li) {
+      if (!cv) { cv = makeCanvas(W, H); ctx = cv.getContext("2d", { willReadFrequently: true }); }
       for (const l of layers) occ.setVisibility(l.id, l.id === charmLayers[li].id);
       ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
       await page.render({ canvasContext: ctx, viewport: vp, optionalContentConfigPromise: Promise.resolve(occ), background: "rgba(255,255,255,1)" }).promise;
@@ -1352,7 +1377,7 @@
         if (px[i] === 0xFFFFFFFF || img[j] + img[j + 1] + img[j + 2] >= 720) continue;
         ink++; if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y;
       }
-      if (!ink) { empty.push(charmLayers[li].name); continue; }
+      if (!ink) return { empty: true };
       const X0 = Math.max(0, bx0 - 1), Y0 = Math.max(0, by0 - 1), X1 = Math.min(W - 1, bx1 + 1), Y1 = Math.min(H - 1, by1 + 1), bw = X1 - X0 + 1, bh = Y1 - Y0 + 1;
       const open = new Uint8Array(bw * bh);
       for (let y = 0, b = 0; y < bh; y++) for (let x = 0, j = ((Y0 + y) * W + X0) * 4; x < bw; x++, b++, j += 4) if (img[j] + img[j + 1] + img[j + 2] >= 720) open[b] = 1;
@@ -1375,20 +1400,34 @@
           for (let x = 0; x < bw; x++) { const run = colRun[x] = rowOk[row + x] ? colRun[x] + 1 : 0; if (run >= span) solid[row - erodePx * bw + x] = 0; }
         }
       }
-      for (let y = Y0; y <= Y1; y++) for (let x = X0; x <= X1; x++) {
-        const b = (y - Y0) * bw + (x - X0); if (reached[b]) continue;
-        if (solid[b]) continue;                               // eroded rim: allowed to overlap / enter the inset band
-        const i = y * W + x;
-        if (x < inset || y < inset || x >= W - inset || y >= H - inset) { outsidePx++; }
-        if (idGrid[i] >= 0) { overlapPx++; const key = charmLayers[idGrid[i]].name + " ↔ " + charmLayers[li].name; pairs.add(key); const d = detail[key] || (detail[key] = { px: 0, x0: 1e9, y0: 1e9, x1: -1, y1: -1 }); d.px++; if (x < d.x0) d.x0 = x; if (y < d.y0) d.y0 = y; if (x > d.x1) d.x1 = x; if (y > d.y1) d.y1 = y; }
+      // material that counts: not reached from outside, and not the eroded rim (allowed to overlap / enter the inset band)
+      const core = new Uint8Array(bw * bh);
+      for (let b = 0; b < core.length; b++) if (!reached[b] && !solid[b]) core[b] = 1;
+      await new Promise(r => setTimeout(r, 0));
+      return { X0, Y0, bw, bh, core };
+    }
+    let overlapPx = 0, outsidePx = 0; const pairs = new Set(), empty = [], detail = {};
+    for (let li = 0; li < charmLayers.length; li++) {
+      const key = keyOf(charmLayers[li].name);
+      let area = key ? cache.get(key) : null;
+      if (area) reused++;
+      else { area = await covered(li); if (key) cache.set(key, area); }
+      if (key) used.add(key);
+      if (area.empty) { empty.push(charmLayers[li].name); if (spec.onProgress) spec.onProgress(li + 1, charmLayers.length); continue; }
+      const { X0, Y0, bw, bh, core } = area;
+      for (let y = 0, b = 0; y < bh; y++) for (let x = 0; x < bw; x++, b++) {
+        if (!core[b]) continue;
+        const X = X0 + x, Y = Y0 + y, i = Y * W + X;
+        if (X < inset || Y < inset || X >= W - inset || Y >= H - inset) { outsidePx++; }
+        if (idGrid[i] >= 0) { overlapPx++; const pair = charmLayers[idGrid[i]].name + " ↔ " + charmLayers[li].name; pairs.add(pair); const d = detail[pair] || (detail[pair] = { px: 0, x0: 1e9, y0: 1e9, x1: -1, y1: -1 }); d.px++; if (X < d.x0) d.x0 = X; if (Y < d.y0) d.y0 = Y; if (X > d.x1) d.x1 = X; if (Y > d.y1) d.y1 = Y; }
         idGrid[i] = li;
       }
       if (spec.onProgress) spec.onProgress(li + 1, charmLayers.length);
-      await new Promise(r => setTimeout(r, 0));
     }
+    if (cache) for (const k of [...cache.keys()]) if (!used.has(k)) cache.delete(k);   // only this sheet's current charms are kept
     try { doc.destroy(); } catch (_) { /* ignore */ }
     const overlapDetail = Object.fromEntries(Object.entries(detail).map(([k, d]) => [k, { px: d.px, boxPt: [d.x0, d.y0, d.x1, d.y1].map(v => +(v / res).toFixed(1)) }]));
-    return { ok: overlapPx === 0 && outsidePx === 0 && empty.length === 0, overlapPx, outsidePx, emptyLayers: empty, overlappingPairs: [...pairs], overlapDetail, layers: charmLayers.length, res, erodePx };
+    return { ok: overlapPx === 0 && outsidePx === 0 && empty.length === 0, overlapPx, outsidePx, emptyLayers: empty, overlappingPairs: [...pairs], overlapDetail, layers: charmLayers.length, rendered: charmLayers.length - reused, res, erodePx };
   }
 
   /* ═══ 6c · hoops welded into the cut line ════════════════════════════════════════════════════════════════

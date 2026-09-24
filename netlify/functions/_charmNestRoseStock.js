@@ -34,7 +34,7 @@ function sameOutline(a,b){
   const p=bounds(a?.paths),q=bounds(b?.paths);
   return !!(p&&q)&&p.every((v,i)=>Math.abs(v-q[i])<=OUTLINE_TOLERANCE_PT);
 }
-module.exports=function({db,col,FV,Readiness}){
+module.exports=function({db,col,FV,Readiness,decisionsOfRun}){
   const stocks=()=>col('Charm_Nest_Rose_Stock'),sheets=()=>col('Charm_Nest_Sheets');
   async function roseGet(b){
     if(!id(b.stockId))throw new Error('Choose a Rose Gold sheet');
@@ -131,8 +131,9 @@ module.exports=function({db,col,FV,Readiness}){
       const d=await tx.get(ref),sd=await tx.get(sr),ed=await tx.get(er),stock=d.exists&&d.data(),sheet=sd.exists&&sd.data();
       if(ed.exists){if(ed.data().planHash!==b.planHash)throw new Error('This cut was already recorded with a different plan');return {ok:true,cut:ed.data(),stock};}
       if(!stock||stock.owner!==b.sheetId||stock.revision!==b.revision||!sheet||sheet.rosePlanHash!==b.planHash||sheet.roseFingerprint!==fingerprint(sheet)||sheet.roseCutAt)throw new Error('The layout or remnant changed. Refresh before recording a cut');
-      const run=sheet.runId?await tx.get(col('Charm_Nest_Runs').doc(sheet.runId)):null;
-      const engraving=Readiness.decisions(Object.values(run?.exists?run.data().lines||{}:{}));
+      const run=sheet.runId?await tx.get(col('Charm_Nest_Runs').doc(sheet.runId)):null,runData=run?.exists?run.data():null;
+      // the lines of orders the run is done with are in its line archive (charmNestLibrary: decisionsOfRun)
+      const engraving=decisionsOfRun?await decisionsOfRun(sheet.runId,runData,sheet.poolIds||[]):Readiness.decisions(Object.values(runData?.lines||{}));
       if(!Readiness.sheet({...sheet,engraving}).ready)throw new Error('Complete the sheet’s production checks before recording its cut');
       const plan=parse(sheet.rosePlanJson);Rose.validate(plan.profile,stock.wPt,stock.hPt);
       const at=Date.now(),revision=stock.revision+1;

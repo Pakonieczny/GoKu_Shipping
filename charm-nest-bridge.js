@@ -265,7 +265,8 @@ const ListMedia = (() => {
   }
   return {pair,mount,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
 })();
-const fmtT = t => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const clockFormat = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });   // made once: a formatter costs far more to make than to use
+const fmtT = t => clockFormat.format(new Date(t));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 // only for someone not looking at the sorter, as the sheet-complete alert does: on screen, the toast already says it
 const notifyPerson = (title, body) => { if (document.hidden && S.settings.notify === "on" && "Notification" in window && Notification.permission === "granted") { try { new Notification(title, { body }); } catch (_) {} } };
@@ -315,7 +316,7 @@ const Ladder = window.Ladder = (() => {
     { id: "labels", label: "Labels", covers: ["labels"], tab: "nest",
       count: () => { const n = B.run && Sets.ofRun ? Sets.ofRun(B.run.runId).reduce((k, s2) => k + (s2.labelFiles ? s2.labelFiles.length : 0), 0) : 0; return n ? `${n} saved` : ""; } },
     { id: "commit", label: "Commit", covers: ["commit", "complete"], tab: "orders",
-      count: () => { const n = B.run && B.run.committed ? B.run.committed.length : 0; const h = B.run && B.run.holds ? Object.keys(B.run.holds).length : 0; return n || h ? `${n} committed${h ? ` · ${h} held` : ""}` : ""; } },
+      count: () => { const out = (B.run && B.run.lineArchive && B.run.lineArchive.base) || {}; const n = (B.run && B.run.committed ? B.run.committed.length : 0) + (+out.committed || 0); const h = (B.run && B.run.holds ? Object.keys(B.run.holds).length : 0) + (+out.held || 0); return n || h ? `${n} committed${h ? ` · ${h} held` : ""}` : ""; } },
   ];
   const WORD = { running: ["Running", "go"], review: ["Waiting on you", "wait"], paused: ["Paused", "wait"], stopped: ["Stopped", "stop"], processed: ["Processing complete", "wait"], complete: ["Done", "go"] };
   const wordOf = r => r.status === "processed" && r.arrivalBusy ? ["Adding new orders", "go"] : WORD[r.status] || ["Running", "go"];   // as the banner says it
@@ -926,15 +927,16 @@ const Orders = window.Orders = (() => {
   }
   /** How the ship-by date reads today: overdue, due, or simply a date. Days are the shop's local days, the same days
    *  the date is written in: counted in UTC, from 8 pm in Toronto an order due that day showed red as overdue. */
+  const shipDay = new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit" });   // made once, used for every line
   function dueOf(r) {
     const by = r.order.shipBy; if (!by) return { cls: "", txt: "\u2014", late: false, soon: false };
     const dayOf = t => { const x = new Date(t); return new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime(); };
     const now = new Date(window.SimClock?.now() ?? Date.now());   // the sandbox stream's day while it plays
     const today0 = dayOf(now.getTime()), tomorrow0 = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime(), d = dayOf(by * 1000);
-    const txt = new Date(by * 1000).toLocaleDateString("en-US", { month: "short", day: "2-digit" });
+    const txt = shipDay.format(new Date(by * 1000));
     return { cls: d < today0 ? "bad" : d <= tomorrow0 ? "warn" : "", txt, late: d < today0, soon: d <= tomorrow0 };
   }
-  const shipTxt = r => r.order.shipBy ? new Date(r.order.shipBy * 1000).toLocaleDateString("en-US", { month: "short", day: "2-digit" }) : "—";
+  const shipTxt = r => r.order.shipBy ? shipDay.format(new Date(r.order.shipBy * 1000)) : "—";
   const wordsOf = sp => (sp.personalization || []).join(" / ") || sp.buyerMessage || "";
   /** Where this line physically is: the set and the sheet it was nested on. "What's where", answered on the line itself. */
   function placeOf(r) {
@@ -1026,7 +1028,7 @@ const Orders = window.Orders = (() => {
         <div class="ordBar ordCompact" id="ordBar">
           <span class="controlGroup ordSummary"><button class="btn sm" id="ordPull">Pull orders</button><span class="chips" id="ordChips"></span><span class="charmTotal" id="ordCharmTotal"></span></span>
           <span class="controlGroup ordNarrow"><span class="chips" id="ordMetalHost"></span><input class="ordSearch" id="ordQ" placeholder="order, SKU, words…" title="search the order number, the SKU, the title and everything the customer or the shop wrote"></span>
-          <span class="controlGroup ordDisplay"><select class="ordSort" id="ordSort" title="what orders the cards"><option value="arrival">latest orders · grouped by date</option><option value="due">by ship-by</option><option value="order">by order</option><option value="state">by state</option></select><span class="viewSeg" id="ordViewSeg"></span></span>
+          <span class="controlGroup ordDisplay"><select class="ordSort" id="ordSort" title="what orders the cards"><option value="arrival">newest first</option><option value="due">by ship-by</option><option value="order">by order</option><option value="state">by state</option></select><span class="viewSeg" id="ordViewSeg"></span></span>
         </div>
       </div><div class="ordBody" id="ordBody"></div>`;
     const q = v.querySelector("#ordQ");
@@ -2131,9 +2133,11 @@ const Engrave = window.Engrave = (() => {
   const items = () => B.engrave.items;
   const charmFor = job => job.editCharm || Pool.charmOf(job.copies[0]);
   const sheetFor = (job, poolId) => job.editingBack ? (allSheets().find(p=>p.sheetId === job.editSheet.sheetId && p.charms.some(c=>c.poolId === poolId)) || job.editSheet) : Pool.sheetOf(poolId);
-  let openingBack = null;
+  let openingBack = null, openingBackId = null;
   async function openBack(poolId, sheetId) {
-    if (openingBack) return openingBack;
+    // a press on another back while one is opening says so (it used to be dropped without a word)
+    if (openingBack) { if (poolId !== openingBackId) toast("Another back is still opening · press again in a moment", "", 3500); return openingBack; }
+    openingBackId = poolId;
     openingBack = (async()=>{
       if (!poolId || !sheetId) throw new Error("This preview is missing its saved charm identity");
       const {sheet:d}=await api("charmNestLibrary",{op:"getSheet",id:sheetId},{label:"Opening back engraving"});
@@ -2172,7 +2176,7 @@ const Engrave = window.Engrave = (() => {
       Object.assign(EG,{tab:"place",focus:job.key,list:false,chosen:true,q:"",card:null,cardKey:null});
       setMode("engrave");
       if(!job.fit) await fitJob(job); else render();
-    })().catch(e=>toast(e.message,"bad",7000)).finally(()=>{openingBack=null;});
+    })().catch(e=>toast(e.message,"bad",7000)).finally(()=>{openingBack=null;openingBackId=null;});
     return openingBack;
   }
   async function syncEditedBack(job) {
@@ -2256,7 +2260,9 @@ const Engrave = window.Engrave = (() => {
     // Confidence describes the interpretation, not whether a preview can be drawn.
     // Nothing here approves or exports a proposed inscription.
     if (!r.engrave && !job.lines.length) {
-      if (job.confidence < (+S.settings.engraveConfidence || 0.8) || job.questions.length)
+      // Settings' engraving confidence: 0 is a setting (trust every reading); it used to be read as 0.8, like an empty field
+      const trust = S.settings.engraveConfidence;
+      if (job.confidence < (trust != null && trust !== "" && Number.isFinite(+trust) ? +trust : 0.65) || job.questions.length)
         return toWords(job, "Check the requested inscription");
       setNone(job, "No engraving requested"); return job;
     }
@@ -2445,6 +2451,16 @@ const Engrave = window.Engrave = (() => {
     job.fit=f;job.verify={geometry:G.verifyInk(f.cmds,job.mask),at:Date.now()};job.nudged=true;job.claude=null;
     return true;
   }
+  /** New words on a placement someone moved or turned: they are fitted afresh, then put back where that person had
+   *  them, at the size the fresh fit found (smaller there if it must be). They used to go back to the automatic spot,
+   *  and the move and turn were lost. False when they had to be placed again somewhere else. */
+  async function fitNewWords(job) {
+    const keep = job.nudged && job.fit ? { centre: job.fit.centre.slice(), angle: job.fit.angle } : null;
+    job.wantSize = null; await fitJob(job);
+    if (!keep || !job.fit || job.state !== "review") return true;
+    if (refit(job, keep)) { Session.schedule(); refresh(job); return true; }
+    job.nudged = false; toast("The new words do not fit where they had been moved, so they were placed again", "", 6000); return false;
+  }
   function nudge(job, dxMm, dyMm) { if (!job.fit) return; const c = [job.fit.centre[0] + dxMm * PT, job.fit.centre[1] + dyMm * PT]; if (!refit(job, { centre: c, angle: job.fit.angle })) toast("No room there", "bad"); else Session.schedule(); refresh(job); }   // an arrow key raises no input/pointerup to checkpoint on
   /** The middle of the area the text may use: the centre of gravity of the solid pixels, not of the bounding box, so a
       cat's head with ears puts the name where the metal actually is. */
@@ -2495,21 +2511,38 @@ const Engrave = window.Engrave = (() => {
       if(text != null) delete EG.drafts?.[job.key];
       if(text != null && text!==(job.lineInput || job.lines).join("\n")) {
         job.text=text;job.lineInput=text.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-        job.lines=job.lineInput.slice();job.wantSize=null;await fitJob(job);
+        // placed somewhere new, the words are shown before anyone approves them
+        job.lines=job.lineInput.slice();if(!(await fitNewWords(job)))return;
       }
     }
     } finally {job.approvalPreparing=false;}
     if (job.backSaving) return;
     by = by || employeeName() || askEmployee(); if (!by) { toast("An employee name is required to approve", "bad"); return; }
-    if (!job.fit || !job.verify || !job.verify.geometry.ok) { toast("Nothing verified to approve", "bad"); return; }
+    // says which step is missing (it read "Nothing verified to approve" whatever the reason)
+    if (!job.fit || !job.verify || !job.verify.geometry.ok) { toast(!job.fit ? "Not approved: the words are not placed on the charm yet" : !job.verify ? "Not approved: the placement is still being checked" : "Not approved: the placement failed its check · move or resize the words first", "bad"); return; }
     job.state = "approved"; job.approvedBy = by; job.approvedAt = Date.now(); job.row.engrave = Object.assign(job.row.engrave || {}, { needed: true, state: "approved", approved: true, text: job.text, approvedBy: by });
     Review.remove("eng:" + job.key);
     agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: placement approved by ${by} (${job.fit.size.toFixed(2)} pt, cap ${job.fit.capMm.toFixed(2)} mm${job.nudged ? ", nudged" : ""})`);
+    await saveBacks(job);
+  }
+  /** An approval's back files are written; one that cannot be written sends the job back to placement review. */
+  async function saveBacks(job) {
     job.backSaving = true; const approval = job.approvedAt;
     render(); Orders.render(); refreshBacks();
     try { await writeBacks(job); } catch (e) { if (job.approvedAt !== approval) { job.backSaving = false; return; } job.state = "review"; job.row.engrave.state = "review"; job.row.engrave.approved = false; job.reason = "back file failed: " + e.message; refreshBacks(); agent({ engrave: true }, "warn", `${job.row.order.receiptId}: ${job.reason}`); if (!job.editingBack) Review.add({ kind: "placement", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); }
     job.backSaving = false; Session.schedule();
     if(!job.editingBack) RunCtl.poke();
+  }
+  /** A reload while an approval's back files were being written left it approved with none, or only some, of them:
+      its sheet showed "Saving…" until the run next passed Engraving, and not at all while the run stayed stopped. After the
+      workspace is restored those writes run again, as the approval ran them (saveBacks). */
+  function resumeBacks() {
+    for (const job of items().values()) {
+      if (job.state !== "approved" || job.backSaving || !job.approvedAt || !job.fit || !job.view || !(job.copies || []).length) continue;
+      if (job.copies.every(id => (job.backs || []).some(b => b.poolId === id && b.approvedAt === job.approvedAt))) continue;
+      agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: writing the approved back file again, cut short by the reload`);
+      saveBacks(job).catch(e => agent({ engrave: true }, "warn", `${job.row.order.receiptId}: ${e.message}`));
+    }
   }
 
   /* ── 7.6 · back files, one per piece, only after approval ── */
@@ -2520,7 +2553,7 @@ const Engrave = window.Engrave = (() => {
     cv.width = Math.round(w * k); cv.height = Math.round(h * k); cv._sizePt = {w,h}; const ctx = cv.getContext("2d");
     ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
     const tx = (x, y) => [(x - bb[0] + pad) * k, (bb[3] + pad - y) * k];
-    if (grid) { ctx.strokeStyle = "rgba(0,0,0,.09)"; ctx.lineWidth = 1; const x0 = Math.floor((bb[0] - pad) * MM), x1 = Math.ceil((bb[2] + pad) * MM); for (let mm = x0; mm <= x1; mm++) { const p = tx(mm * PT, 0); ctx.beginPath(); ctx.moveTo(p[0], 0); ctx.lineTo(p[0], cv.height); ctx.stroke(); } const y0 = Math.floor((bb[1] - pad) * MM), y1 = Math.ceil((bb[3] + pad) * MM); for (let mm = y0; mm <= y1; mm++) { const p = tx(0, mm * PT); ctx.beginPath(); ctx.moveTo(0, p[1]); ctx.lineTo(cv.width, p[1]); ctx.stroke(); } ctx.fillStyle = "rgba(0,0,0,.4)"; ctx.font = `${Math.max(9, k * 2)}px sans-serif`; ctx.fillText("1 mm grid", 4, 12); }
+    if (grid) { ctx.strokeStyle = "rgba(0,0,0,.09)"; ctx.lineWidth = 1; const x0 = Math.floor((bb[0] - pad) * MM), x1 = Math.ceil((bb[2] + pad) * MM); for (let mm = x0; mm <= x1; mm++) { const p = tx(mm * PT, 0); ctx.beginPath(); ctx.moveTo(p[0], 0); ctx.lineTo(p[0], cv.height); ctx.stroke(); } const y0 = Math.floor((bb[1] - pad) * MM), y1 = Math.ceil((bb[3] + pad) * MM); for (let mm = y0; mm <= y1; mm++) { const p = tx(0, mm * PT); ctx.beginPath(); ctx.moveTo(0, p[1]); ctx.lineTo(cv.width, p[1]); ctx.stroke(); } ctx.save(); ctx.fillStyle = "rgba(0,0,0,.4)"; ctx.font = `${Math.max(9, k * 2)}px sans-serif`; ctx.textBaseline = "top"; ctx.fillText("1 mm grid", 4, 4); ctx.restore(); }   // hung from the top edge: a large preview's label was cut off
     if (hatch && mask) { // the eroded mask as a light tint: where text may go
       const img = ctx.createImageData(cv.width, cv.height); const d = img.data;
       for (let py = 0; py < cv.height; py++) for (let pxx = 0; pxx < cv.width; pxx++) { const x = bb[0] - pad + pxx / k, y = bb[3] + pad - py / k; if (G.at(mask, x, y)) { const i = (py * cv.width + pxx) * 4; d[i] = 231; d[i + 1] = 237; d[i + 2] = 223; d[i + 3] = 255; } }
@@ -2702,7 +2735,7 @@ const Engrave = window.Engrave = (() => {
         agent({ metal: sh.metal, engrave: true }, "ENGRAVE", `Back file written and re-verified: ${name}.ai (${built.reference.redrawn ? "cut reference redrawn from the exact transformed paths" : "original cut bytes under the mirror matrix"})`);
       }
       if(job.editingBack) {const {sheet:latest}=await api("charmNestLibrary",{op:"getSheet",id:sh.sheetId});sh.backPool=latest.backPool || [];}
-      await sheetBackOutputs(sh).catch(e => agent({ metal: sh.metal }, "warn", `back index: ${e.message}`));
+      scheduleBackOutputs(sh);
     }
     if (!current()) return;
     job.state = "written"; job.row.engrave.state = "written";
@@ -2737,26 +2770,36 @@ const Engrave = window.Engrave = (() => {
       return {ok:diff<=.01 && textOk && ink.ok,why:diff>.01?`cut geometry differs by ${(diff*100).toFixed(2)}%`:!textOk?'no engraving paths in the file':!ink.ok?'engraving intersects a cut-out or cut-edge clearance':null,pixelDiff:diff,textPaths:textOk,ink};
     } catch (e) { return { ok: false, why: e.message }; }
   }
-  /** back/back-index.pdf and back/back-report.json for a sheet, rebuilt whenever a back is added. */
+  /** back/back-index.pdf and back/back-report.json for a sheet: a summary for people, drawn once after a run of
+   *  approvals has settled, in the background worker, after the approval's save has let go of the run. It used to be
+   *  drawn again inside every approval, on the page's own thread (0.1 to 0.6 s, longer with every back on the sheet),
+   *  while the run's nesting and sheet saves waited for the approval to finish. */
+  function scheduleBackOutputs(sh) {
+    clearTimeout(sh._backIndexTimer);
+    sh._backIndexTimer = setTimeout(() => {
+      sh._backIndexTimer = null;
+      if (sh._backIndexRun) { sh._backIndexAgain = true; return; }
+      sh._backIndexRun = sheetBackOutputs(sh).catch(e => agent({ metal: sh.metal }, "warn", `back index: ${e.message}`))
+        .finally(() => { sh._backIndexRun = null; if (sh._backIndexAgain) { sh._backIndexAgain = false; scheduleBackOutputs(sh); } });
+    }, 2500);
+  }
+  /** A back index that was still to be drawn when the page was left (a reload within those seconds) is drawn now. */
+  function refreshBackIndexes() {
+    for (const sh of allSheets()) if (!sh.recalled && (sh.backPool || []).length && (!sh.backOutputs || sh.backOutputs.count !== sh.backPool.length) && !sh._backIndexTimer && !sh._backIndexRun) scheduleBackOutputs(sh);
+  }
   async function sheetBackOutputs(sh) {
     if (!S.cloud.ok || !sh.folderPath || !(sh.backPool || []).length) return;
-    const { PDFDocument, StandardFonts, rgb } = PDFLib;
-    const doc = await PDFDocument.create(); const font = await doc.embedFont(StandardFonts.Helvetica);
-    const per = 6; const backs = sh.backPool;
-    for (let i = 0; i < backs.length; i += per) {
-      const page = doc.addPage([612, 792]); page.drawText(`${sh.fileBase} · engraved backs ${i + 1}–${Math.min(backs.length, i + per)} of ${backs.length}`, { x: 36, y: 756, size: 12, font });
-      for (let j = 0; j < per && i + j < backs.length; j++) {
-        const b = backs[i + j]; const col = j % 2, row = Math.floor(j / 2); const x = 36 + col * 280, y = 720 - row * 230;
-        try { if (b.outputs && b.outputs.png && b.outputs.png.url) { const pngBytes = await CharmNestAssets.bytes(b.outputs.png.url); const img = await doc.embedPng(pngBytes); const s = Math.min(150 / img.width, 150 / img.height); page.drawImage(img, { x, y: y - 150, width: img.width * s, height: img.height * s }); } } catch (_) { /* thumbnail optional */ }
-        const lines = [`${b.order} · ${b.sku} · copy ${b.copy}`, `"${String(b.text).replace(/\n/g, " / ")}"`, `${b.font} ${b.weight} · ${b.sizePt} pt · cap ${b.capMm} mm${b.angle ? ` · ${b.angle}°` : ""}${b.small ? " · SMALL" : ""}`, `approved by ${b.approvedBy || "—"} ${b.approvedAt ? new Date(b.approvedAt).toLocaleString() : ""}`];
-        lines.forEach((t, k) => page.drawText([...t].map(c=>font.getCharacterSet().includes(c.codePointAt(0)) ? c : "?").join("").slice(0, 60), { x, y: y - 165 - k * 12, size: 8, font, color: rgb(0.1, 0.1, 0.1) }));
-      }
-    }
-    const pdf = await doc.save({ useObjectStreams: false });
+    const backs = sh.backPool.slice(), when = at => at ? new Date(at).toLocaleString() : "";
+    const items = await Promise.all(backs.map(async b => ({
+      png: b.outputs && b.outputs.png && b.outputs.png.url ? await CharmNestAssets.bytes(b.outputs.png.url).catch(() => null) : null,
+      lines: [`${b.order} · ${b.sku} · copy ${b.copy}`, `"${String(b.text).replace(/\n/g, " / ")}"`, `${b.font} ${b.weight} · ${b.sizePt} pt · cap ${b.capMm} mm${b.angle ? ` · ${b.angle}°` : ""}${b.small ? " · SMALL" : ""}`, `approved by ${b.approvedBy || "—"} ${when(b.approvedAt)}`]
+    })));
+    const pdf = await CharmNestExport.backIndexPdf({ title: sh.fileBase, backs: items });
     const report = backs.map(b => ({ poolId: b.poolId, order: b.order, sku: b.sku, copy: b.copy, text: b.text, font: b.font, weight: b.weight, sizePt: b.sizePt, capMm: b.capMm, box: b.box, centre: b.centre, angle: b.angle, flipChecks: b.flipChecks, verified: b.verified, review: b.review, approvedBy: b.approvedBy, approvedAt: b.approvedAt, file: b.outputs && b.outputs.ai && b.outputs.ai.path }));
     const [idx, rep] = await Promise.all([uploadBytes(`${sh.folderPath}/back/back-index.pdf`, pdf, "application/pdf", "Saving back index"), uploadBytes(`${sh.folderPath}/back/back-report.json`, new TextEncoder().encode(JSON.stringify(report, null, 1)), "application/json")]);
     sh.backOutputs = { index: { path: idx.path, url: idx.url }, report: { path: rep.path, url: rep.url }, count: backs.length };
-    if (sh.sheetId) await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, backOutputs: sh.backOutputs } }).catch(() => {});
+    // the record is written in turn with the run's own sheet saves, which carry backOutputs too
+    if (sh.sheetId) { const put = () => api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, backOutputs: sh.backOutputs } }), ops = window.CharmNestOperations; await (ops ? ops.run({ key: "back-index:" + sh.sheetId, label: "Saving back index", resources: ["production:" + (sh.runId || sh.sheetId)] }, put) : put()).catch(() => {}); }
   }
 
   /* ── the Engraving tab ── */
@@ -2865,7 +2908,8 @@ const Engrave = window.Engrave = (() => {
     if (sl && document.activeElement !== sl) { sl.max = f.fittedMax.toFixed(2); sl.min = (0.5 * f.fittedMax).toFixed(2); sl.value = f.size.toFixed(2); }
     else if (sl) { sl.max = f.fittedMax.toFixed(2); sl.min = (0.5 * f.fittedMax).toFixed(2); }
     const spacing=c.querySelector('[data-a="spacing"]');
-    if(spacing){const pct=Math.round(fitOpts(job).lineGap/.18*100);spacing.value=pct;c.querySelector('[data-spacing]').textContent=pct+'%';spacing.closest('.spacingControl').style.setProperty('--spacing',pct/100);}
+    // line spacing means something only with two lines or more: it shows when a refit wraps the words, and hides again
+    if(spacing){const pct=Math.round(fitOpts(job).lineGap/.18*100);spacing.value=pct;c.querySelector('[data-spacing]').textContent=pct+'%';const group=spacing.closest('.spacingControl');group.style.setProperty('--spacing',pct/100);group.hidden=(job.lines || []).length<2;}
     const nums = c.querySelector(".pvNums dd"); if (nums) nums.textContent = `${f.size.toFixed(2)} pt · cap ${f.capMm.toFixed(2)} mm · ${f.weight}${f.angle ? ` · ${f.angle}°` : ""}`;
     const rh = c.querySelector(".reviewIdentity") || c.querySelector(".rh"); if (rh) {
       rh.querySelectorAll(".small").forEach(n => n.remove());
@@ -3033,7 +3077,9 @@ const Engrave = window.Engrave = (() => {
         const who = employeeName() || askEmployee(); if (!who) return;
         if (!confirm(`Reopen ${j2.row.order.receiptId}? It goes back to the words step, and any back file already written for it is superseded.`)) return;
         const go = () => { sendBack(j2, `reopened by ${who}`); EG.tab = "place"; EG.focus = j2.key; EG.list = false; EG.chosen = true; render(); };
-        if (j2.recalledFrom && j2.recalledFrom.recalled) { Recall.rebuild(j2.recalledFrom).then(() => { const pool = B.pool.rows; for (const [pid, p] of pool) if (String(p.orderId) === String(j2.row.order.receiptId) && (p.sku === (j2.row.spec && j2.row.spec.designSku) || p.sku === j2.row.line.sku) && !j2.row.poolIds.includes(pid)) j2.row.poolIds.push(pid); go(); }).catch(e => toast(`Could not rebuild the sheet: ${e.message}`, "bad", 7000)); return; }
+        // a recalled set's sheet is rebuilt from the master files first: the button says so while it runs (it used to
+        // sit there as if nothing had been pressed)
+        if (j2.recalledFrom && j2.recalledFrom.recalled) { if (b.disabled) return; b.disabled = true; b.textContent = "Rebuilding the sheet…"; Recall.rebuild(j2.recalledFrom).then(() => { const pool = B.pool.rows; for (const [pid, p] of pool) if (String(p.orderId) === String(j2.row.order.receiptId) && (p.sku === (j2.row.spec && j2.row.spec.designSku) || p.sku === j2.row.line.sku) && !j2.row.poolIds.includes(pid)) j2.row.poolIds.push(pid); go(); }).catch(e => { if (b.isConnected) { b.disabled = false; b.textContent = "Reopen"; } toast(`Could not rebuild the sheet: ${e.message}`, "bad", 7000); }); return; }
         go();
       });
     }
@@ -3058,7 +3104,7 @@ const Engrave = window.Engrave = (() => {
     card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided">${decided + 1} of ${decided + remaining} · ${decided} done</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
         <div class="pvMain"><div class="backHost"></div>
-          <div class="ctl">${f && !wordsJob ? `<button class="btn sage sm" data-a="approve" title="this placement is right — write the back file">${job.editingBack ? "Save changes" : "Approve"} <b class="k">A</b></button><button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${f.capMm.toFixed(2)} mm</span><label class="spacingControl" title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span>Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="quarterTurns" role="group" aria-label="Rotate text"><button class="btn ghost sm" data-a="turnLeft" title="Rotate text 90° counterclockwise">↶ +90°</button><button class="btn ghost sm" data-a="turnRight" title="Rotate text 90° clockwise">↷ −90°</button></span><label class="angle" title="the angle of the text, in degrees — type one, or drag the handle above the text"><input type="number" data-a="angle" min="-359" max="359" step="1" value="${Math.round(f.angle || 0)}">°</label>` : ""}
+          <div class="ctl">${f && !wordsJob ? `<button class="btn sage sm" data-a="approve" title="this placement is right — write the back file">${job.editingBack ? "Save changes" : "Approve"} <b class="k">A</b></button><button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${f.capMm.toFixed(2)} mm</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span>Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="quarterTurns" role="group" aria-label="Rotate text"><button class="btn ghost sm" data-a="turnLeft" title="Rotate text 90° counterclockwise">↶ +90°</button><button class="btn ghost sm" data-a="turnRight" title="Rotate text 90° clockwise">↷ −90°</button></span><label class="angle" title="the angle of the text, in degrees — type one, or drag the handle above the text"><input type="number" data-a="angle" min="-359" max="359" step="1" value="${Math.round(f.angle || 0)}">°</label>` : ""}
             <span class="rest"><button class="btn ghost sm" data-a="skip" title="cut this charm plain — nothing engraved on its back">No engraving <b class="k">S</b></button></span></div>
 </div>
         <div class="pvSide">
@@ -3087,8 +3133,8 @@ const Engrave = window.Engrave = (() => {
         if (wordsJob) await decideWords(job, { text, note: text !== (job.text || "").trim() ? "edited" : "confirmed" });
         else {
           job.lineInput = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-          job.lines = job.lineInput.slice(); job.text = text; job.wantSize = null; job.edited = true;
-          await fitJob(job);
+          job.lines = job.lineInput.slice(); job.text = text; job.edited = true;
+          await fitNewWords(job);
         }
       } catch (e) { toast(e.message, "bad"); }
       use.disabled = false; render();
@@ -3247,7 +3293,7 @@ const Engrave = window.Engrave = (() => {
     void it;
     return card;
   }
-  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: EG.drafts }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, canFit, isWorking, fitJob, fitAll, approve, nudge, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
+  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: EG.drafts }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, canFit, isWorking, fitJob, fitAll, approve, nudge, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
 })();
 
 /* ═══ 22 · Sets — production evidence and release ═══ */
@@ -3606,17 +3652,85 @@ const RunCtl = window.RunCtl = (() => {
      one is done, Manual does not. */
   const PAUSE_AFTER = new Set();
   let waiter = null, autoTimer = null;
+  let settling = null;   // a stopped run whose Resume waits for its new orders' step to wind down (resume)
   const run = () => B.run;
   let saveQueue = Promise.resolve();
+  /* The record is one Firestore document: 1 MiB and 40,000 index entries at most. It kept every line the run ever took,
+     and a run left in Auto for days (new arrivals join the open run) stopped saving at 1,100–1,400 lines and stopped
+     with it. The lines of an order the run is done with (O.closedOrders: cut and committed, or gone from Etsy) are now
+     written once to the run's line archive and left out of the record, with that order's committed id and hold; the
+     oldest sheet notes are left out too, and lineArchive counts what is outside. The server reads the archive under the
+     record wherever a finished line is still wanted: laser readiness, a set's completion, a Rose Gold cut, history, a
+     recalled set's orders. A resume takes the orders still in progress, which are all in the record. This page keeps
+     every line in memory and in the browser workspace, as before. A record that still nears the limit is said once. */
+  const warned = new Set();
+  const finishedHashes = lines => { const out = new Map(); for (const keys of O.closedOrders(lines).values()) for (const k of keys) out.set(k, O.textHash(JSON.stringify(lines[k]))); return out; };
+  /** Each finished line the archive does not hold in its current form goes there, in parts of at most 256 KB. */
+  async function archiveFinished(r, lines, hashes) {
+    const done = r.archivedLines || (r.archivedLines = {});
+    const due = [...hashes].filter(([k, h]) => done[k] !== h).map(([k]) => [k, lines[k]]);
+    if (!due.length) return;
+    const parts = O.archiveParts(due);
+    try {
+      for (let i = 0; i < parts.length; i += 4) {
+        const batch = parts.slice(i, i + 4);
+        await api("charmNestLibrary", { op: "runArchive", runId: r.runId, parts: batch.map(p => ({ json: p.json })) }, { quiet: true });
+        for (const p of batch) for (const k of p.keys) done[k] = hashes.get(k);
+        const la = r.lineArchive || (r.lineArchive = {}); la.parts = (la.parts || 0) + batch.length; la.at = Date.now();
+      }
+    } catch (e) {
+      // what was not archived stays in the record, as it always did, and is tried again at the next save
+      if (!warned.has("archive:" + r.runId)) { warned.add("archive:" + r.runId); agent({ run: r.runId }, "warn", `Finished orders could not be moved out of the run record (${e.message}). They stay in it and are tried again at the next save.`); }
+    }
+  }
+  /** The record as it is stored online: the lines of the orders still in progress (and any finished line the archive does
+      not hold yet), and lineArchive, which counts what was left out. */
+  function recordOf(r) {
+    const lines = r.lines || {}, done = r.archivedLines || {}, la = r.lineArchive || null;
+    const rest = Object.assign({}, r, { errors: (r.errors || []).slice(-50) }); delete rest.lines; delete rest.archivedLines; delete rest.lineArchive;
+    const rec = JSON.parse(JSON.stringify(rest));
+    delete rec._wait; delete rec.saveError;
+    // an order leaves the record only when the archive holds each of its lines exactly as they are now
+    const out = new Set(), hashes = finishedHashes(lines);
+    for (const [id, keys] of O.closedOrders(lines)) if (keys.every(k => done[k] && done[k] === hashes.get(k))) out.add(id);
+    const kept = {}; let left = 0;
+    for (const [k, l] of Object.entries(lines)) { if (l && out.has(String(l.orderId))) left++; else kept[k] = l; }
+    rec.lines = JSON.parse(JSON.stringify(kept));
+    const isOut = id => out.has(String(id));
+    let committed = 0, held = 0, sheets = 0;
+    if (Array.isArray(rec.orders)) rec.orders = rec.orders.filter(id => !isOut(id));
+    if (Array.isArray(rec.committed)) { const n = rec.committed.length; rec.committed = rec.committed.filter(id => !isOut(id)); committed = n - rec.committed.length; }
+    if (rec.holds && typeof rec.holds === "object") for (const id of Object.keys(rec.holds)) if (isOut(id)) { delete rec.holds[id]; held++; }
+    // one note per sheet the run wrote, read only for counts: the newest hundred stay
+    const notes = Object.keys(rec.sheets || {}), keep = O.RUN_RECORD.keepSheets;
+    if (notes.length > keep) { for (const k of notes.slice(0, notes.length - keep)) delete rec.sheets[k]; sheets = notes.length - keep; }
+    // a record written before the work signature was a hash carries the whole text of it
+    if (typeof rec.processingSignature === "string" && rec.processingSignature.length > 64) rec.processingSignature = O.textHash(rec.processingSignature);
+    const base = (la && la.base) || {};
+    if (la || left || committed || held || sheets) rec.lineArchive = { lines: (+base.lines || 0) + left, committed: (+base.committed || 0) + committed, held: (+base.held || 0) + held, sheets: (+base.sheets || 0) + sheets, parts: (la && la.parts) || 0, at: (la && la.at) || null };
+    return rec;
+  }
+  /** Said once a run: a record past 70% of what one document holds. The run stops the day it is full. */
+  function sizeCheck(r, rec) {
+    if (warned.has(r.runId)) return;
+    const bytes = O.utf8Bytes(JSON.stringify(rec)), entries = O.indexEntries(rec), L = O.RUN_RECORD;
+    const share = Math.max(bytes / L.bytes, entries / L.entries);
+    if (share < L.warn) return;
+    warned.add(r.runId);
+    const text = `The online record of run ${r.runId} is ${Math.round(share * 100)}% full (${Math.round(bytes / 1024).toLocaleString()} KB of 1,024 KB; ${entries.toLocaleString()} of 40,000 index entries), with ${Object.keys(rec.lines || {}).length} order lines still in progress in it. Finish or skip the orders waiting in this run, or give it up and start a new one, before it fills: a full record cannot be saved and the run stops.`;
+    agent({ run: r.runId }, "warn", text); toast(text, "bad", 15000);
+  }
   async function save(r) {
     r = r || B.run; if (!r) return;
     r.updatedAt = Date.now();
     if (r === B.run && Orders.rows().length) { const ids = new Set((r.orders || []).map(String)); r.lines = Object.fromEntries(Orders.rows().filter(row => ids.has(String(row.order.receiptId))).map(Orders.lineRecord)); }
     Session.schedule();
     if (!S.cloud.ok) { r.saveError = "Cloud offline — work is saved on this browser; reconnect to save the run online"; renderBanner(); return; }
-    const persist=()=>{
-      const rec=JSON.parse(JSON.stringify(Object.assign({},r,{errors:(r.errors || []).slice(-50)})));
-      delete rec._wait;delete rec.saveError;
+    const persist=async()=>{
+      const lines=r.lines || {},hashes=finishedHashes(lines);
+      if(hashes.size)await archiveFinished(r,lines,hashes);
+      const rec=recordOf(r);
+      sizeCheck(r,rec);
       return api("charmNestLibrary",{op:"runPut",run:rec});
     };
     const write=window.CharmNestOperations ? window.CharmNestOperations.run({key:'run-save:'+r.runId,label:'Saving run',resources:['run-record:'+r.runId],latest:true},persist) : saveQueue.catch(()=>{}).then(persist);
@@ -3761,7 +3875,8 @@ const RunCtl = window.RunCtl = (() => {
       if (err) holdSheet(r,sh,err.message);
       if (err) { /* Keep the local hold while other sheets finish. */ }
       else if (["complete", "partial"].includes(sh.status) && sh.verification && !sh.verification.ok) holdSheet(r,sh,"Verification flagged — open the report");
-      else if (sh.endedBy === "stopped") holdSheet(r,sh,"This sheet was stopped; retry it when ready");
+      // (one the run's own Stop ended waits for Resume instead, which carries on with it: see finishNest)
+      else if (sh.endedBy === "stopped" && !sh.resumeWait) holdSheet(r,sh,"This sheet was stopped; retry it when ready");
       else if(!sh.runHold && sh.verification?.ok && sh.fileBase){delete (r.sheetHolds||{})[sh.sheetId || sh.metal+"-"+sh.page];}
       save(r).catch(() => {});
     }
@@ -3787,10 +3902,14 @@ const RunCtl = window.RunCtl = (() => {
     return r.pendingWork;
   }
   function hasPending(r){return Object.values(r.pendingWork||{}).some(Boolean);}
-  function workSignature(r){return JSON.stringify([r.membershipRevision||0,Orders.rows().map(x=>[x.key,x.state,x.hold,x.changePending,x.engrave?.state,x.engrave?.approved]),[...Engrave.items().values()].map(j=>[j.key,j.state,j.approvedAt]),allSheets().filter(p=>p.runId===r.runId).map(p=>[p.sheetId,p.metal,p.page,p.status,p.dirty,p.runHold,p.placements.length,p.persistedDone])]);}
+  function workText(r){return JSON.stringify([r.membershipRevision||0,Orders.rows().map(x=>[x.key,x.state,x.hold,x.changePending,x.engrave?.state,x.engrave?.approved]),[...Engrave.items().values()].map(j=>[j.key,j.state,j.approvedAt]),allSheets().filter(p=>p.runId===r.runId).map(p=>[p.sheetId,p.metal,p.page,p.status,p.dirty,p.runHold,p.placements.length,p.persistedDone])]);}
+  // the state of the work as a short hash: its whole text, kept in the record, grew with every order the run took
+  function workSignature(r){return O.textHash(workText(r));}
+  // a signature saved before it was a hash is the whole text, and still compares
+  function workChanged(r){const text=workText(r);return r.processingSignature!==O.textHash(text) && r.processingSignature!==text;}
   function continueProcessing(r,step){
     if(r!==B.run || r.status==='stopped' || r.status==='abandoned')return;
-    r.processingComplete=false;r.status='running';r.step=step;
+    r.processingComplete=false;r.status='running';r.step=step;window.CN?.resumeQueueChanged?.();
     // the steps start at once and the record follows them, as between steps (loopNow); a record that cannot be saved still stops the run
     save(r).catch(e=>stop(e.message,'Fix the cause and press Resume.'));
     loop().catch(e=>stop(e.message,'Fix the cause and press Resume.'));
@@ -3804,7 +3923,7 @@ const RunCtl = window.RunCtl = (() => {
   }
   function poke() {
     const r=B.run;
-    if(r?.status==='processed' && !r.arrivalBusy && workSignature(r)!==r.processingSignature){
+    if(r?.status==='processed' && !r.arrivalBusy && workChanged(r)){
       r.processingSignature=workSignature(r);
       const needsNest=allSheets().some(p=>p.runId===r.runId&&!p.runHold&&Gate.nestable(p,r)&&p.charms.length&&(p.dirty||['ready','idle','queued','nesting','finishing'].includes(p.status)));
       continueProcessing(r,needsNest?'nest':'engrave');
@@ -3832,7 +3951,18 @@ const RunCtl = window.RunCtl = (() => {
   // a stop the person pressed is answered by the banner; the red toast and the desktop alert are for stops nobody asked for
   function stop(why, fix, at) { const r = B.run; if (!r) return; r.status = "stopped"; r.stoppedBy = why; r.fix = fix || null; r.at = at || null; r.errors.push({ t: Date.now(), why }); if (waiter && waiter.r === r) { const w = waiter; waiter = null; w.resolve(); } agent({ run: r.runId }, "warn", `Run stopped: ${why}${fix ? " — " + fix : ""}`);
     if (why !== "stopped by the operator") { toast(`Run stopped: ${why}`, "bad", 8000); notifyPerson("Charm Sorter run stopped", why); }
+    window.CN?.resumeQueueChanged?.();   // the run's queued sheets start on Resume
     save(r).catch(() => {}); renderBanner(); }
+  /** Stop on the banner. While new orders are going on (Adding new orders) the run's charm searches end at once as well,
+      as the card's own Stop ends one: every charm already placed stays where it is, and the orders not placed yet wait on
+      their sheets for Resume (finishNest). Otherwise the sheets already nesting finish and save, as before. */
+  function operatorStop() {
+    const r = B.run; if (!r) return;
+    const intake = !!r.arrivalBusy;
+    stop("stopped by the operator", "Press Resume to carry on from the recorded step.");
+    // (a sheet Claude was planning stops on the spot, back to ready: it takes its place in line for Resume too)
+    if (intake) for (const sh of allSheets()) if (sh.runId === r.runId && sh.status === "nesting") { sh.resumeWait = true; stopNest(sh); if (sh.status === "ready") startNest(sh); }
+  }
   function stopIfRunning(why, fix) { if (B.run && B.run.status === "running") stop(why, fix); }
   function reviewStop(r) { return r?.status === "stopped" && /needs a look|shape analysis failed|a back flip failed its checks|^Sheet options changed|^Sheet settings changed/i.test(r.stoppedBy || ""); }
   function preservePendingSheets(r) {
@@ -3847,14 +3977,24 @@ const RunCtl = window.RunCtl = (() => {
   }
   async function resume() {
     const r = B.run; if (!r || !["stopped", "paused", "processed"].includes(r.status)) return;
+    // Stopped while new orders went on: that step winds down first (a few tenths of a second) so it cannot carry on
+    // beside the resumed run. Resume takes Stop's place on the banner, where a double click lands.
+    if (r.status === "stopped" && r.arrivalBusy) {
+      if (settling === r) return;
+      settling = r; renderBanner();
+      try { for (const t = Date.now(); r.arrivalBusy && Date.now() - t < 60000;) await new Promise(res => setTimeout(res, 100)); }
+      finally { settling = null; }
+      if (r !== B.run || r.status !== "stopped") { renderBanner(); return; }
+    }
     const pendingStop=reviewStop(r);
     if(pendingStop)preservePendingSheets(r);
     await Gate.upgrade(r);
     if (r.status === "processed") { r.step = "engrave"; r.processingComplete = false; }
-    if (allSheets().some(pg => pg.runId === r.runId && !(pendingStop && pg.runHold) && (pg.problem || pg.dirty || ["ready", "idle"].includes(pg.status)) && pg.charms.length)) {
+    // a sheet the stop left queued (waiting for Resume) is nested again as well
+    if (allSheets().some(pg => pg.runId === r.runId && !(pendingStop && pg.runHold) && (pg.problem || pg.dirty || ["ready", "idle", "queued"].includes(pg.status)) && pg.charms.length)) {
       r.step = "nest"; for (const pg of allSheets()) if (pg.runId === r.runId && pg.problem && !(pendingStop && pg.runHold)) sheetDirty(pg);
     }
-    r.status = "running"; r.stoppedBy = null; r.fix = null; await save(r);
+    r.status = "running"; r.stoppedBy = null; r.fix = null; window.CN?.resumeQueueChanged?.(); await save(r);
     if (["nest"].includes(r.step)) { for (const pg of allSheets()) if (pg.runId === r.runId && !pg.runHold && ["complete", "partial"].includes(pg.status) && pg.verification && !pg.verification.ok) sheetDirty(pg); }
     if (!r.workspaceRestored && (r.step === "pool" || r.step === "pull" || r.step === "claim")) r.step = "pull";
     loop().catch(e => stop(e.message, "Fix the cause and press Resume."));
@@ -3866,7 +4006,7 @@ const RunCtl = window.RunCtl = (() => {
       onSheetDone(null);
     }
     if(r.status==='processed' || (r.status==='paused' && r.awaitCommit) || (r.status==='stopped' && r.stoppedBy==='Sheet options changed')){
-      r.awaitCommit=false;r.status='running';r.stoppedBy=null;r.fix=null;r.step=r.membershipNext || 'engrave';delete r.membershipNext;
+      r.awaitCommit=false;r.status='running';r.stoppedBy=null;r.fix=null;r.step=r.membershipNext || 'engrave';delete r.membershipNext;window.CN?.resumeQueueChanged?.();
       save(r).then(()=>loop()).catch(e=>stop(e.message,'Retry after fixing the cause.'));
     }
     poke();
@@ -3893,6 +4033,8 @@ const RunCtl = window.RunCtl = (() => {
   }
   async function resumeRun(runId) {
     const rr = await api("charmNestLibrary", { op: "runGet", runId }); const rec = rr.run; if (!rec) { toast("Run record not found", "bad"); return; }
+    // the orders the run is done with are in its line archive, outside the record: still counted, never taken in again
+    if (rec.lineArchive) { const la = rec.lineArchive; rec.lineArchive = { parts: +la.parts || 0, at: la.at || null, base: { lines: +la.lines || 0, committed: +la.committed || 0, held: +la.held || 0, sheets: +la.sheets || 0 } }; }
     if (rec.status === "processed") { rec.step = "engrave"; rec.processingComplete = false; }
     const pendingStop=reviewStop(rec);
     B.run = rec; rec.status = "running"; rec.stoppedBy = null; rec.fix = null;
@@ -3973,8 +4115,9 @@ const RunCtl = window.RunCtl = (() => {
     // In Auto this ends every arrival: the banner already reads "Processing complete · …", and a toast and a chime
     // every ten minutes said it again. The log line said "complete" of a run that stays open.
     const processed = r.status === "processed";
-    agent({ run: r.runId }, "ok", `Run ${r.runId} ${processed ? "processed" : "complete"}: ${(r.committed || []).length} order(s) committed · ${Object.keys(r.holds || {}).length} held · ${(r.refused || []).length} refused`);
-    if (!processed) { toast(r.nothingToCut ? "Working sheets saved — held until eligible for a set" : `Set complete — ${(r.committed || []).length} order(s) marked design-complete`, "ok", 7000); ding && ding(); }
+    const out = (r.lineArchive && r.lineArchive.base) || {}, committed = (r.committed || []).length + (+out.committed || 0);   // with those in the line archive after a resume
+    agent({ run: r.runId }, "ok", `Run ${r.runId} ${processed ? "processed" : "complete"}: ${committed} order(s) committed · ${Object.keys(r.holds || {}).length + (+out.held || 0)} held · ${(r.refused || []).length} refused`);
+    if (!processed) { toast(r.nothingToCut ? "Working sheets saved — held until eligible for a set" : `Set complete — ${committed} order(s) marked design-complete`, "ok", 7000); ding && ding(); }
     Arrivals.start();
   }
   /** Clear finished order state while keeping unfinished physical layouts on their material cards.
@@ -3983,11 +4126,13 @@ const RunCtl = window.RunCtl = (() => {
       with it (sandbox reset), so the cards start empty. A half-filled sheet kept from a run that is gone is never
       filled again: the next run opened sheet 2 beside it, one charm left on sheet 1 for good (23 Sep). */
   function clearRunState(beforeClear, { drop = null } = {}) {
+    // (a sheet waiting for the stopped run's Resume is not at work: it does not keep the run from being put down)
     if(allSheets().some(p=>p.metal==='rose' && !p.roseCutAt && (p.rosePlan||p.roseProtected) &&
-      (['nesting','finishing','queued'].includes(p.status) || p.persisted&&!p.persistedDone || p._rosePlanning || p._roseAction || p._operationStarting))){
+      (['nesting','finishing','queued'].includes(p.status) && !window.CN?.heldForResume?.(p) || p.persisted&&!p.persistedDone || p._rosePlanning || p._roseAction || p._operationStarting))){
       toast('The protected Rose Gold sheet is still being nested or saved. Wait until it finishes before clearing this run.','bad');
       return false;
     }
+    window.CN?.dropResumeQueue?.();
     beforeClear?.();
     Carry.capture();
     // nothing waits for a run that is gone: the rows go back to plain pulled lines, and the gate forgets its plan
@@ -4003,6 +4148,7 @@ const RunCtl = window.RunCtl = (() => {
         ((p.metal==='rose' && (p.rosePlan || p.roseProtected)) ||
           (!drop && p.placements.length && !p.releaseFull && !p.recalled && !Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId)))));
       for(const pg of prim.pages.slice())if(!retained.includes(pg)){
+        delete pg.resumeWait;
         if(pg.status==='nesting')stopNest(pg);
         if(pg!==prim){(pg.workers||[]).forEach(w=>w.terminate());pg.workers=[];continue;}
         pg.charms=pg.charms.filter(c=>!c.poolId);pg.sheetId=null;pg.fileBase=null;pg.setId=null;pg.runId=null;pg.seq=null;pg.setDay=null;pg.cardStartedAt=null;pg.sheetIndex=null;pg.group=null;pg.draft=false;pg.releaseFull=false;pg.isolated=false;pg.backPool=[];pg.backOutputs=null;pg.label=null;pg.cloud=null;pg.persisted=null;pg.recalled=null;
@@ -4073,9 +4219,9 @@ const RunCtl = window.RunCtl = (() => {
     const idle = onCards ? `${onCards} line${onCards === 1 ? "" : "s"} wait on sheets not released yet` : "waiting for sheets to release";
     const saveWarning = r.saveError ? `<span class="bad">Not saved online: ${esc(r.saveError)}</span> · ` : "";
     // Arrivals being nested read "Processing complete · … wait" beside Retry pending; and after Stop the sheets already
-    // nesting carry on and save (a queued one still starts), which "Stopped" alone did not say.
+    // nesting carry on and save, which "Stopped" alone did not say. A queued one waits for Resume (its card says so).
     const intake = r.status === "processed" && !!r.arrivalBusy;
-    const finishing = r.status === "stopped" ? allSheets().filter(p => p.runId === r.runId && ["nesting", "finishing", "queued"].includes(p.status)).length : 0;
+    const finishing = r.status === "stopped" ? allSheets().filter(p => p.runId === r.runId && (["nesting", "finishing"].includes(p.status) || p.status === "queued" && !window.CN?.heldForResume?.(p))).length : 0;
     // the station can be back (taken again for an arrival) before anyone reads "Press Take control": then Resume is all that is left
     const fix = r.status === "stopped" && /^Press Take control/.test(r.fix || "") && window.DesignLink?.inControl() && DesignLink.up() ? "The station is back · press Resume." : r.fix;
     const why = saveWarning + (r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${fix ? ` — <span>${esc(fix)}</span>` : ""}${finishing ? ` · ${finishing} sheet${finishing === 1 ? "" : "s"} still finishing` : ""}` : intake ? `<b>Adding new orders</b> · nesting them onto the sheets` : r.status === "review" ? `<b>Waiting for a person:</b> ${waitingFor}` : r.status === "processed" ? `<b>Processing complete</b> · ${waitingFor === "nothing" ? idle : waitingFor}${r.awaitCommit ? " · commit when ready" : ""}` : r.status === "paused" ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(STEP_WORDS[r.step] || r.step)}</b>${esc(stepDetail(r))}`);
@@ -4083,12 +4229,12 @@ const RunCtl = window.RunCtl = (() => {
     h.title = `run ${r.runId}`;
     /* Which run is this? Three cards on the Nest tab and a banner that named only a step left no way to tell this
        morning's set from yesterday's. The set, the day and the size of the run now lead it. */
-    const nSheets = Object.keys(r.sheets || {}).length;
+    const outside = (r.lineArchive && r.lineArchive.base) || {}, nSheets = Object.keys(r.sheets || {}).length + (+outside.sheets || 0);   // with what a resumed run's record left out
     const seqOf = x => x.seq || +((/-(\d+)$/.exec(String(x.setId || "")) || [])[1] || 0) || null;
     const who = [seqOf(r) ? `Set ${seqOf(r)}` : "", r.day ? new Date(r.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "",
-      `${Object.keys(r.lines || {}).length || Orders.rows().filter(x => x.state !== "gone").length} lines`, nSheets ? `${nSheets} sheet${nSheets === 1 ? "" : "s"}` : ""].filter(Boolean).join(" \u00b7 ");
+      `${(Object.keys(r.lines || {}).length || Orders.rows().filter(x => x.state !== "gone").length) + (+outside.lines || 0)} lines`, nSheets ? `${nSheets} sheet${nSheets === 1 ? "" : "s"}` : ""].filter(Boolean).join(" \u00b7 ");
     h.innerHTML = `<button type="button" class="rid" title="run ${esc(r.runId)}${r.setId ? " \u00b7 set " + esc(r.setId) : ""}">${esc([seqOf(r) ? `Set ${seqOf(r)}` : "", r.day ? new Date(r.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "", nSheets ? `${nSheets} sheets` : ""].filter(Boolean).join(" · "))}</button><span class="why">${why}</span><span class="spacer"></span><span class="acts">
-      ${["paused","processed"].includes(r.status) && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${r.status === "stopped" && /\bsign/i.test(r.stoppedBy || "") ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${["stopped","processed"].includes(r.status) && !intake ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at">${r.status === "processed" ? "Retry pending" : "Resume"}</button>` : ""}${["running", "review", "paused"].includes(r.status) ? `<button class="btn ghost sm" id="rbStop" title="stop after the step in progress — the run can be resumed from where it stopped">Stop</button>` : ""}${r.status === "complete" ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}<details class="runMenu" id="runMenu"${menuWasOpen ? " open" : ""}><summary id="runMenuToggle" aria-label="Run options" title="Run options">⋯</summary><div class="runMenuBody"><div class="runDetail"><b>${esc(who)}</b><small>${esc(r.runId)}</small>${why}</div>
+      ${["paused","processed"].includes(r.status) && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${r.status === "stopped" && /\bsign/i.test(r.stoppedBy || "") ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${["stopped","processed"].includes(r.status) && !intake ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at"${settling === r ? " disabled" : ""}>${r.status === "processed" ? "Retry pending" : settling === r ? "Resuming…" : "Resume"}</button>` : ""}${["running", "review", "paused"].includes(r.status) || intake ? `<button class="btn ghost sm" id="rbStop" title="${r.arrivalBusy ? "stop now — the charms already placed stay where they are, and the new orders wait for Resume" : "stop after the step in progress — the run can be resumed from where it stopped"}">Stop</button>` : ""}${r.status === "complete" ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}<details class="runMenu" id="runMenu"${menuWasOpen ? " open" : ""}><summary id="runMenuToggle" aria-label="Run options" title="Run options">⋯</summary><div class="runMenuBody"><div class="runDetail"><b>${esc(who)}</b><small>${esc(r.runId)}</small>${why}</div>
       ${r.at ? `<button class="btn ghost sm" id="rbAt">Show the sheet</button>` : ""}<button class="btn ghost sm" id="rbHistory">Run history…</button>
       ${r.status !== "complete" ? `<button class="btn ghost sm" id="rbAbandon" title="Saved sheets and files are kept">Abandon run…</button>` : ""}</div></details></span>`;
     const q = id => h.querySelector("#" + id);
@@ -4097,7 +4243,7 @@ const RunCtl = window.RunCtl = (() => {
     const rid = h.querySelector(".rid"); if (rid) { rid.tabIndex = 0; rid.title += " \u2014 click for every run on record"; rid.onclick = () => RunHistory.show(); rid.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); RunHistory.show(); } }; }
     if (q("rbAt")) q("rbAt").onclick = () => { CN.setMode("nest"); const i = CN.pagesOf(r.at.metal).findIndex(p => p.page === r.at.page); CN.showPage(r.at.metal, Math.max(0, i)); };
     if (q("rbConnect")) q("rbConnect").onclick = () => DesignLink.connectEtsy().catch(e => toast(e.message, "bad", 6000)); 
-    if (q("rbCommit")) q("rbCommit").onclick = () => commitNow(); if (q("rbResume")) q("rbResume").onclick = () => resume(); if (q("rbStop")) q("rbStop").onclick = () => stop("stopped by the operator", "Press Resume to carry on from the recorded step."); if (q("rbClear")) q("rbClear").onclick = () => { if (confirm("Clear the finished run from the cards? Files and records are kept.")) clearRunState(); };
+    if (q("rbCommit")) q("rbCommit").onclick = () => commitNow(); if (q("rbResume")) q("rbResume").onclick = () => resume(); if (q("rbStop")) q("rbStop").onclick = () => operatorStop(); if (q("rbClear")) q("rbClear").onclick = () => { if (confirm("Clear the finished run from the cards? Files and records are kept.")) clearRunState(); };
     if (q("rbAbandon")) q("rbAbandon").onclick = () => {
       // a person's decision with no back file written yet: an approval, confirmed words, a placement moved by hand
       const eng = [...Engrave.items().values()].filter(j => ["approved", "words", "review"].includes(j.state) && !(j.backs && j.backs.length) && (j.state === "approved" || j.decision || j.nudged || j.edited)).length;
@@ -4109,7 +4255,7 @@ const RunCtl = window.RunCtl = (() => {
     };
     Orders.render();
   }
-  return { optionsChanged, recoverReviewStop, membershipUpdated, start, next, resume, stop, stopIfRunning, poke, save, onSheetDone, pickResume, resumeRun, restoreRunSheets, commitNow, setMode: setRunMode, setRunMode, renderBanner, renderModeBtn, clearRunState, run };
+  return { optionsChanged, recoverReviewStop, membershipUpdated, start, next, resume, stop, operatorStop, stopIfRunning, poke, save, onSheetDone, pickResume, resumeRun, restoreRunSheets, commitNow, setMode: setRunMode, setRunMode, renderBanner, renderModeBtn, clearRunState, run };
 })();
 
 /* ═══ 24 · Review — every decision a person must make ═════════════════════ */
@@ -4368,9 +4514,24 @@ const Review = window.Review = (() => {
   const RV = { filter: null, limit:40, open:null };
   let reviewFilter=null;
   const reviewRows=new Map();
+  /** What a decision card is drawn from: while it reads the same, the card (and whatever is typed in it) is kept. */
+  function stampOf(it) {
+    const row=it.row || rowsOf(it)[0],group=rowsOf(it);
+    return JSON.stringify([it.kind,it.why,it.problem,row?.spec,row?.line,row?.poolIds,group.map(r=>[r.key,r.order.receiptId])]);
+  }
+  /** The decision card inside another view (the order window): rebuilt only when its decision changed, and then with
+   *  what was typed or picked carried over, as the Review list does. The window used to rebuild it on every repaint, so
+   *  a repool elsewhere emptied the field being typed in. */
+  function cardIn(host, it) {
+    const stamp=stampOf(it);
+    if(host._rvStamp===stamp&&host._rvKey===it.key&&host.firstChild)return;
+    const was=host._rvKey===it.key?typedIn(host):[];
+    host.innerHTML='';host.appendChild(card(it));host._rvStamp=stamp;host._rvKey=it.key;
+    const refocus=putTyped(host,was);if(refocus)refocus();
+  }
   function reviewRow(it) {
     const row=it.row || rowsOf(it)[0],group=rowsOf(it),open=RV.open===it.key;
-    const stamp=JSON.stringify([it.kind,it.why,it.problem,row?.spec,row?.line,row?.poolIds,group.map(r=>[r.key,r.order.receiptId])]);
+    const stamp=stampOf(it);
     const cached=reviewRows.get(it.key);if(cached?.stamp===stamp)return cached.node;
     const was=typedIn(cached?.node?.querySelector('.reviewDetails'));   // carried into the rebuilt card
     const node=el('div','doneRow workRow reviewListRow'+(open?' open':''));node.dataset.row=row?.key || '';node.dataset.rid=String(row?.order?.receiptId || '');
@@ -4426,7 +4587,7 @@ const Review = window.Review = (() => {
       host.querySelectorAll("[data-open]").forEach(b => b.onclick = () => { if (b.dataset.open) OrderWin.open(b.dataset.open); });
     }
   }
-  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, problemText, syncOrderItems, focus, repool };
+  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, problemText, syncOrderItems, focus, repool };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -4752,18 +4913,22 @@ const OrderWin = window.OrderWin = (() => {
       (sp.options || []).filter(o => o.mapped).map(o => mcell(o.name, o.value)).join("") +
       mcell("Listing", String(r.line.listingId || "—")) +
       mcell("Title", r.line.title || "—");
-    // the decision this line is waiting on, answered here
-    const fix = byId("owFix"); fix.innerHTML = "";
+    // the decision this line is waiting on, answered here; its card stays while the decision is the same, so a repaint
+    // (a repool, another order arriving) never empties a field being typed in
+    const fix = byId("owFix");
     const item = Review.items().find(x => (x.rows || [x.row]).some(y => y && y.key === r.key) && !String(x.key).startsWith("eng:"));
     if (item) {
-      const box = el("div", "owFix", '<div class="t">This line is waiting on a decision</div>');
-      box.appendChild(Review.card(item));
-      fix.appendChild(box);
-    } else if (r.engrave && r.engrave.needed && !r.engrave.approved) {
-      const box = el("div", "owFix", '<div class="t">Its engraving is still to be settled</div>');
-      const b = el("button", "btn ghost sm", "Open it in Engraving");
-      b.onclick = () => { W.dlg.close(); setMode("engrave"); Engrave.render(); };
-      box.appendChild(b); fix.appendChild(box);
+      let slot = fix.querySelector(".owFix > .owFixCard");
+      if (!slot) { fix.innerHTML = ""; const box = el("div", "owFix", '<div class="t">This line is waiting on a decision</div>'); slot = el("div", "owFixCard"); box.appendChild(slot); fix.appendChild(box); }
+      Review.cardIn(slot, item);
+    } else {
+      fix.innerHTML = "";
+      if (r.engrave && r.engrave.needed && !r.engrave.approved) {
+        const box = el("div", "owFix", '<div class="t">Its engraving is still to be settled</div>');
+        const b = el("button", "btn ghost sm", "Open it in Engraving");
+        b.onclick = () => { W.dlg.close(); setMode("engrave"); Engrave.render(); };
+        box.appendChild(b); fix.appendChild(box);
+      }
     }
     const sw = byId("owSkip"); sw.setAttribute("aria-checked", r.state === "skipped" ? "true" : "false");
     paintWho();
@@ -4967,11 +5132,14 @@ const Recall = window.Recall = (() => {
     Engrave.render(); Review.render();
   }
   async function ordersOf(runId, sheets) {
-    const r = await api("charmNestLibrary", { op: "runGet", runId }, { quiet: true }); if (!r.run) return;
-    await Orders.loadMaps().catch(() => {}); await Master.load().catch(() => {});
-    let rows = Object.entries(r.run.lines || {}).map(([k, l]) => Orders.rowFromRecord(k, l));
     // opened as a set, the Orders tab is that set's parcels: the orders the recalled sheets name
     const named = new Set((sheets || []).flatMap(x => (x.orders || []).map(String)));
+    // the lines of orders the run was done with are in its line archive (RunCtl.save): asked for with the record's own,
+    // for a set only those of its orders
+    const r = await api("charmNestLibrary", Object.assign({ op: "runGet", runId, archived: true }, RC.setId && named.size ? { orders: [...named] } : {}), { quiet: true }); if (!r.run) return;
+    await Orders.loadMaps().catch(() => {}); await Master.load().catch(() => {});
+    let rows = Object.entries(r.run.lines || {}).map(([k, l]) => Orders.rowFromRecord(k, l));
+    if (r.run.archiveTruncated) agent({ run: runId }, "info", `This run took more orders than one view shows: its ${rows.length} newest lines are listed. Open one of its sets for that set's orders, or search the run history.`);
     if (RC.setId && named.size) { const mine = rows.filter(x => named.has(String(x.order.receiptId))); if (mine.length) rows = mine; }
     B.orders.rows = rows;
     B.orders.byKey = new Map(B.orders.rows.map(x => [x.key, x]));
@@ -4981,7 +5149,14 @@ const Recall = window.Recall = (() => {
     Orders.interpretAll(); Orders.render();ListMedia.prepare(Orders.rows());
   }
   /** Bring one recalled sheet's charms back from the master files so it can be edited and nested again. On demand only. */
-  async function rebuild(pg) {
+  // one rebuild per page at a time: a second press, or a button drawn again while it runs, joins the first instead of
+  // adding every charm to the page twice
+  function rebuild(pg) {
+    if (pg._rebuilding) return pg._rebuilding;
+    const task = rebuildOnce(pg).finally(() => { pg._rebuilding = null; });
+    pg._rebuilding = task; return task;
+  }
+  async function rebuildOnce(pg) {
     const rec = pg.recalled; if (!rec) return;
     if(rec.roseCutAt || pg.roseCutAt)throw new Error("This layout was already cut. Start a new sheet for its remnant.");
     const bar = window.CNProgress ? CNProgress.start(`Rebuilding ${rec.fileBase || rec.id}`) : null;
@@ -5250,7 +5425,9 @@ const Arrivals = window.Arrivals = (() => {
     if (r?.status === "running") return "the run is at work";
     if (auto && r?.status === "stopped") return "the run is stopped";
     if (auto && state.pending) return "the last arrivals wait for the run";
-    return allSheets().some(p => ["nesting", "finishing", "queued"].includes(p.status)) ? "a sheet is nesting" : "";
+    if (allSheets().some(p => ["nesting", "finishing"].includes(p.status) || p.status === "queued" && !window.CN?.heldForResume?.(p))) return "a sheet is nesting";
+    // a sheet waiting for the stopped run's Resume holds the stream with it
+    return allSheets().some(p => p.status === "queued") ? "the run is stopped" : "";
   }
   async function record(orders, simAt) {
     const now = Date.now(), when = simAt || now, ids = [...new Set(orders.map(o => String(o.receiptId)))];
@@ -5330,7 +5507,13 @@ const Arrivals = window.Arrivals = (() => {
       if(state.revalidate){await Orders.revalidate(r,"during intake");state.revalidate=false;}
       await LiveNest.add(r);
       await Engrave.classifyAll(r); await Engrave.fitAll(r); RunCtl.save(r).catch(() => {});
-    } catch (e) { state.pending = true; save(); RunCtl.stop(`New orders could not be added: ${e.message}`, "Resume after fixing the cause. Your earlier work is kept."); }
+    } catch (e) {
+      state.pending = true; save();
+      // Stop pressed while the orders went on keeps its own plain reason: the orders not placed yet wait, and this intake
+      // runs again after Resume. It used to be stopped a second time, as "New orders could not be added: stopped by the
+      // operator", with a red toast and an alert.
+      if (r.status !== "stopped") RunCtl.stop(`New orders could not be added: ${e.message}`, "Resume after fixing the cause. Your earlier work is kept.");
+    }
     finally { r.arrivalBusy = false; RunCtl.poke(); Session.schedule(); window.CN?.flushManualIntake?.(); }
   }
   async function check() {
@@ -5408,6 +5591,8 @@ const LiveNest = window.LiveNest = (() => {
   }
   async function add(run) {
     const prepare=async()=>{
+    // stopped before these orders went on: they wait as they are, and the intake runs again after Resume
+    if (run.status === "stopped") throw new Error(run.stoppedBy || "run stopped");
     run.intakeRecovery = run.intakeRecovery || { retire: [], backs: [] };
     const touched = new Set(Orders.rows().filter(r => ["pulled", "waiting"].includes(r.state)).map(r => r.spec?.material).filter(Boolean));
     const before = new Set(allSheets().flatMap(p => p.charms.map(c => c.poolId)).filter(Boolean));
@@ -5575,7 +5760,13 @@ async function bootBridge() {
   catch (error) { recoveryFailed = true; console.error("Workspace recovery failed; checkpoint retained", error); }
   // Never overwrite a checkpoint with a partially restored workspace or start
   // an automatic run over it. Navigation and the saved Library remain usable.
-  if (!recoveryFailed) { Session.listen(); Arrivals.start(); ListMedia.start(); if(recovered)RunCtl.recoverReviewStop().catch(e=>RunCtl.stop(e.message,"Reconnect and Resume.")); }
+  if (!recoveryFailed) {
+    Session.listen(); Arrivals.start(); ListMedia.start();
+    // an approval whose back files a reload cut short is written now, not when the run next passes Engraving
+    if (recovered) Engrave.resumeBacks();
+    if(recovered)RunCtl.recoverReviewStop().catch(e=>RunCtl.stop(e.message,"Reconnect and Resume."));
+  }
+  if (recovered) Engrave.refreshBackIndexes();
   Views.onShow(S.mode);
   /* The app used to open on an empty Orders tab whatever had happened yesterday, and the only way to anything was to
      pull again. It opens on the last run instead — its orders, its sheets, its engraving, read from the record, with

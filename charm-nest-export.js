@@ -185,7 +185,23 @@
   function layerNames(parsed) {
     const L=lib();return [...new Set(parsed.doc.context.enumerateIndirectObjects().filter(([,o])=>o instanceof L.PDFDict&&o.get(L.PDFName.of('Type'))?.toString()==='/OCG').map(([,o])=>o.get(L.PDFName.of('Name'))?.decodeText?.()).filter(Boolean))];
   }
-  const api={compose,parentScale,leaves,productionPaths,flatten,dxf,layerNames,MM};
+  /** back/back-index.pdf: six engraved backs a page, each with its picture (PNG bytes, or null) and its lines of text.
+   *  Drawn in the background worker; the page used to draw it on its own thread after every approval. */
+  async function backIndexPdf({title, backs}) {
+    const {PDFDocument, StandardFonts, rgb} = lib();
+    const doc = await PDFDocument.create(), font = await doc.embedFont(StandardFonts.Helvetica), charset = new Set(font.getCharacterSet());
+    const per = 6;
+    for (let i = 0; i < backs.length; i += per) {
+      const page = doc.addPage([612, 792]); page.drawText(`${title} · engraved backs ${i + 1}–${Math.min(backs.length, i + per)} of ${backs.length}`, {x: 36, y: 756, size: 12, font});
+      for (let j = 0; j < per && i + j < backs.length; j++) {
+        const b = backs[i + j], col = j % 2, row = Math.floor(j / 2), x = 36 + col * 280, y = 720 - row * 230;
+        try { if (b.png) { const img = await doc.embedPng(b.png), s = Math.min(150 / img.width, 150 / img.height); page.drawImage(img, {x, y: y - 150, width: img.width * s, height: img.height * s}); } } catch (_) { /* thumbnail optional */ }
+        (b.lines || []).forEach((t, k) => page.drawText([...String(t)].map(c => charset.has(c.codePointAt(0)) ? c : '?').join('').slice(0, 60), {x, y: y - 165 - k * 12, size: 8, font, color: rgb(0.1, 0.1, 0.1)}));
+      }
+    }
+    return doc.save({useObjectStreams: false});
+  }
+  const api={compose,parentScale,leaves,productionPaths,flatten,dxf,layerNames,backIndexPdf,MM};
   root.CharmNestExport=api;
   if(typeof module==='object'&&module.exports)module.exports=api;
 })(typeof window!=='undefined'?window:globalThis);

@@ -101,10 +101,13 @@
     host.hidden=!stockId&&!ready;
     host.classList.toggle('roseHasTimeline',!!marks);
     // The timeline comes last so it sits directly on the sheet's ruler.
-    host.innerHTML=`${busy?'<div class="help" role="status"><i class="spin"></i> Loading sheet geometry…</div>':''}
+    // the busy line names the step under way (it read "Loading sheet geometry…" while a cut was being recorded)
+    const busyWord=sh._rosePlanning?'Planning the green line…':sh._roseAction?'Recording the cut…':'Loading sheet geometry…';
+    host.innerHTML=`${busy?`<div class="help" role="status"><i class="spin"></i> ${busyWord}</div>`:''}
       ${cuttable?`<div class="roseActions"><button class="btn ghost xs" data-rose="cut" ${busy||!included?'disabled':''}${included?'':' title="Include this sheet in the current set to cut it"'}>Cut Sheet</button></div>`:''}
       ${sh._roseError?`<p class="roseError" role="alert">${esc(sh._roseError)}</p>`:''}${marks}`;
-    const invoke=fn=>async()=>{if(sh._roseAction)return;sh._roseAction=true;sh._roseError=null;refresh(sh);try{await fn();}catch(e){sh._roseError=e.message;C.toast(e.message,'bad');}finally{sh._roseAction=false;refresh(sh);C.flushManualIntake?.('rose');}};
+    // a failure is shown once, where it happened (the alert under the button); a pop-up used to repeat it
+    const invoke=fn=>async()=>{if(sh._roseAction)return;sh._roseAction=true;sh._roseError=null;refresh(sh);try{await fn();}catch(e){sh._roseError=e.message;}finally{sh._roseAction=false;refresh(sh);C.flushManualIntake?.('rose');}};
     host.querySelector('[data-rose="cut"]')?.addEventListener('click',invoke(()=>record(sh)));
     const menu=sh.el.querySelector('.solidOptions');
     if(menu&&!menu.querySelector('[data-rose-options]')){
@@ -125,7 +128,8 @@
       input.disabled=!!(sh.roseCutAt||sh.recalled||busy);
       if(input!==document.activeElement&&!input._draft)input.value=sh.roseAllowanceMm||.2;
       input.oninput=()=>{input._draft=true;};
-      input.onchange=e=>{const n=+e.target.value;if(!Number.isFinite(n)||n<.05||n>2){e.target.value=sh.roseAllowanceMm||.2;input._draft=false;return;}sh.roseAllowanceMm=n;input._draft=false;delete sh.rosePlanKey;window.Session?.schedule();if(ready)invoke(()=>plan(sh))();else refresh(sh);};
+      // a value outside 0.05 to 2 mm goes back to the one in use, and the field says why (it used to snap back in silence)
+      input.onchange=e=>{const n=+e.target.value;if(!Number.isFinite(n)||n<.05||n>2){e.target.value=sh.roseAllowanceMm||.2;input._draft=false;input.title='The allowance is 0.05 to 2 mm';C.toast(`Contour allowance stays ${sh.roseAllowanceMm||.2} mm: it can be 0.05 to 2 mm`,'bad');return;}input.title='';sh.roseAllowanceMm=n;input._draft=false;delete sh.rosePlanKey;window.Session?.schedule();if(ready)invoke(()=>plan(sh))();else refresh(sh);};
       options.querySelector('[data-rose-stock-choice]').hidden=!!(stockId||sh.recalled);
     }
     if(stockId&&!sh._roseLoaded&&!sh._roseLoading){observed.set(host,sh);if(observer)observer.observe(host);}
@@ -264,7 +268,7 @@
     const {job}=R.demoBatch(state.batch,state.profile);
     progress='Nesting batch '+state.batch+' into '+(state.profile?'the saved remainder':'a fresh sheet')+'…';render();
     const placements=await new Promise((resolve,reject)=>{
-      worker=new Worker('charm-nest-worker.js?v=20260924-onebyone');
+      worker=new Worker('charm-nest-worker.js?v=20260924-followup');
       const timer=setTimeout(()=>finish(new Error('Nesting took too long. Try this batch again.')),60000);
       function finish(err,result){clearTimeout(timer);worker?.terminate();worker=null;err?reject(err):resolve(result);}
       worker.onerror=e=>finish(new Error(e.message||'Could not load the nesting worker'));

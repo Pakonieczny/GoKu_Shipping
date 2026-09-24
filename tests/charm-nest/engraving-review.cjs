@@ -11,6 +11,9 @@ const row=()=>({order:{receiptId:'test'},line:{title:'Sheep'},spec:{engraveCandi
  result={skipped:'offline'};j=await ctx.classify(row());assert.equal(j.state,'ready');assert.equal(j.text,'S','offline proposal is verbatim');
  result={engrave:false,text:'',source:'none',confidence:1,questions:[]};j=await ctx.classify(row());assert.equal(j.state,'none','explicit no-engraving decision retained');
  result={...result,confidence:.3,questions:['Which inscription?']};j=await ctx.classify(row());assert.equal(j.state,'words','no inscription must not be invented');
+ // Settings' engraving confidence 0 trusts every reading (it used to be read as 0.8, like an empty field)
+ ctx.S.settings.engraveConfidence=0;result={engrave:false,text:'',source:'none',confidence:.3,questions:[]};j=await ctx.classify(row());assert.equal(j.state,'none','confidence 0 trusts the reading');
+ ctx.S.settings.engraveConfidence=.65;j=await ctx.classify(row());assert.equal(j.state,'words','a reading below the confidence set is checked');
  result={engrave:true,text:'Anna Ben',source:'personalization',confidence:.9,questions:[]};r=row();r.spec.personalization=['Anna','Ben'];j=await ctx.classify(r);assert.equal(j.text,'Anna\nBen','typed line breaks preserved');
  // words that changed on Etsy are read afresh: the line split kept from the old words must not bring them back at the fit
  r=row();r.spec.personalization=['ROSE'];r.job={key:r,row:r,copies:['copy'],text:'LILY',lines:['LILY'],lineInput:['LILY'],lineMode:'preserve',wantSize:9,decision:{by:'Tester',text:'LILY'}};
