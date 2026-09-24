@@ -724,8 +724,9 @@
     /* ── careful append ─────────────────────────────────────────────────────
        A few new charms joining a saved sheet (the live Gold and Silver flow). Restarts of the whole construction
        rarely change anything there, and each one pushed the charm into the leftmost gap it fitted, however poorly,
-       leaving slivers no later charm could use (the lotus and the sausage dog, 23 Sep). Here every spot the coarse
-       scan finds, at every angle, is graded once, and the charm goes where it leaves the least unusable space:
+       leaving slivers no later charm could use (the lotus and the sausage dog, 23 Sep). Here the charm's resting
+       spots in every gap it fits, at every angle, are graded once (see spotsFor: tight slots and voids far back
+       included, 24 Sep), and the charm goes where it leaves the least unusable space:
          waste   free space it turns into slivers thinner than SLIVER_MM, where none of the shop's charms fits,
          around  the empty space just outside its outline: each step along the outline adds the free distance to the
                  nearest charm or edge, up to AROUND_MM, so a charm touching its neighbours all round scores near nothing,
@@ -813,56 +814,92 @@
         graded++;
         return { waste, around, growth, fit: -(waste + weights.around * around + weights.growth * growth + weights.along * along) };
       };
-      /** Legal spots for one charm at every angle: the snuggest few of the coarse scan, spread apart, the ones
-          furthest back along the sheet, and the ends of every run along each wall; each refined on the fine grid. */
+      /* Where a charm can go, exactly. At each angle every position on the fine grid is legal or not; the positions
+         are taken 4×4 at a time: a block is out when even the part of the charm all 16 positions share hits
+         something, in when everything any of them covers is clear, and only the rest are tested one by one. So a
+         spot the charm fits with no room to spare, which the coarse scan could not see, is found like any other.
+         The legal positions form regions, one for each gap, pocket or open area the charm fits in at that angle.
+         A region's corners (positions stopped both across and along the sheet) are where the charm rests against
+         its neighbours; the snuggest few corners of every region are kept, so no gap, however far back or however
+         tight, goes untried, and the snuggest corners at each angle are kept on top of those.                     */
+      const cropped = (bits, W, H) => {
+        let x0 = W, y0 = H, x1 = -1, y1 = -1;
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (bits[y * W + x]) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+        if (x1 < 0) return null;
+        const w = x1 - x0 + 1, h = y1 - y0 + 1, out = new Uint8Array(w * h);
+        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) out[y * w + x] = bits[(y + y0) * W + x + x0];
+        return { pm: packShifted(out, w, h), x: x0, y: y0 };
+      };
+      /** What all positions of a ratio×ratio block cover (core) and what any of them covers (hull). */
+      const blockMasks = v => {
+        const w = v.fine.w, h = v.fine.h, b = v.fine.bits, B = ratio, W2 = w + B - 1, H2 = h + B - 1;
+        const rAll = new Uint8Array(W2 * h), rAny = new Uint8Array(W2 * h), core = new Uint8Array(W2 * H2), hull = new Uint8Array(W2 * H2);
+        for (let y = 0; y < h; y++) for (let x = 0; x < W2; x++) {
+          let all = 1, any = 0;
+          for (let o = 0; o < B; o++) { const mx = x - o; if (mx >= 0 && mx < w && b[y * w + mx]) any = 1; else all = 0; }
+          rAll[y * W2 + x] = all; rAny[y * W2 + x] = any;
+        }
+        for (let y = 0; y < H2; y++) for (let x = 0; x < W2; x++) {
+          let all = 1, any = 0;
+          for (let o = 0; o < B; o++) { const my = y - o; if (my >= 0 && my < h) { if (rAny[my * W2 + x]) any = 1; if (!rAll[my * W2 + x]) all = 0; } else all = 0; }
+          core[y * W2 + x] = all; hull[y * W2 + x] = any;
+        }
+        return { core: cropped(core, W2, H2), hull: cropped(hull, W2, H2) };
+      };
+      let legal = null;
+      /** Every legal position of one variant on the sheet as it stands: L[y * PW + x] for the mask's corner at (x, y). */
+      const legalMap = v => {
+        const pm = v.fine.pm, PW = FW - pm.w + 1, PH = FH - pm.h + 1;
+        if (PW <= 0 || PH <= 0) return null;
+        const n = PW * PH;
+        if (!legal || legal.n < n) legal = { n, L: new Uint8Array(n), C: new Int32Array(n), S: new Int32Array(n) };
+        const L = legal.L; L.fill(0, 0, n);
+        const { core, hull } = blockMasks(v), B = ratio;
+        for (let by = 0; by < PH; by += B) for (let bx = 0; bx < PW; bx += B) {
+          if (core && !fine.fits(core.pm, bx + core.x, by + core.y)) continue;
+          const ex = Math.min(PW, bx + B), ey = Math.min(PH, by + B);
+          if (hull && fine.fits(hull.pm, bx + hull.x, by + hull.y)) { for (let y = by; y < ey; y++) L.fill(1, y * PW + bx, y * PW + ex); continue; }
+          for (let y = by; y < ey; y++) for (let x = bx; x < ex; x++) if (fine.fits(pm, x, y)) L[y * PW + x] = 1;
+        }
+        return { L, C: legal.C, S: legal.S, PW, PH, n };
+      };
+      /** Candidate spots for one charm at every angle: the snuggest corners of every region of legal positions, and
+          the snuggest corners at each angle overall. Each spot carries its touch and the gap it sits in. */
       async function spotsFor(p) {
-        const out = [], seen = new Set(), TOL = 2, K = 12, KB = 4, SEP = 2;
+        const out = [], PER = 3, TOP = 10, SEP = 6;
         const keep = (list, c, k) => {
-          if (list.length === k && c.s <= list[k - 1].s) return;
-          for (let i = 0; i < list.length; i++) { const o = list[i]; if (Math.abs(o.x - c.x) <= SEP && Math.abs(o.y - c.y) <= SEP) { if (c.s > o.s) { list[i] = c; list.sort((a, b) => b.s - a.s); } return; } }
+          if (list.length === k && c.touch <= list[k - 1].touch) return;
+          for (let i = 0; i < list.length; i++) { const o = list[i]; if (Math.abs(o.x - c.x) <= SEP && Math.abs(o.y - c.y) <= SEP) { if (c.touch > o.touch) { list[i] = c; list.sort((a, b) => b.touch - a.touch); } return; } }
           if (list.length < k) list.push(c); else list[k - 1] = c;
-          list.sort((a, b) => b.s - a.s);
+          list.sort((a, b) => b.touch - a.touch);
         };
         for (const v of p.careful) {
           if (stopped()) return out;
-          const cw = v.coarse.w, ch = v.coarse.h, maskCells = v.coarse.pm.cells, boxCells = cw * ch;
-          if (!v.coarse.contactRing) { const r = ring(v.coarse.bits || unpack(v.coarse.pm), cw, ch, 1); v.coarse.contactRing = packShifted(r.bits, r.w, r.h); }
-          const ringCells = Math.max(1, v.coarse.contactRing.cells), snug = [], back = [];
-          for (let y = 0; y + ch <= coarse.H; y++) for (let x = 0; x + cw <= coarse.W; x++) {
-            metrics.positions++;
-            const inner = coarse.boxSum(x, y, x + cw, y + ch);
-            if (boxCells - inner < maskCells - TOL) continue;
-            if (inner > 0 && coarse.overlap(v.coarse.pm, x, y, TOL) > TOL) continue;
-            keep(snug, { x, y, s: coarse.overlap(v.coarse.contactRing, x - 1, y - 1, 1e9) / ringCells }, K);
-            keep(back, { x, y, s: -(axisX ? x + cw : y + ch) }, KB);
-          }
-          const refine = c => {
-            let best = null;
-            for (let fy = c.y * ratio - ratio; fy <= c.y * ratio + ratio; fy++) for (let fx = c.x * ratio - ratio; fx <= c.x * ratio + ratio; fx++) {
+          const map = legalMap(v); if (!map) continue;
+          const { L, C, S, PW, PH, n } = map, top = [], here = [];
+          C.fill(-1, 0, n);
+          let regions = 0;
+          for (let i0 = 0; i0 < n; i0++) {
+            if (!L[i0] || C[i0] >= 0) continue;
+            const id = regions++, best = []; let sp = 0; S[sp++] = i0; C[i0] = id;
+            while (sp) {
+              const i = S[--sp], x = i % PW, y = (i - x) / PW;
+              const l = x > 0 && L[i - 1], r = x < PW - 1 && L[i + 1], u = y > 0 && L[i - PW], d = y < PH - 1 && L[i + PW];
+              if (l && C[i - 1] < 0) { C[i - 1] = id; S[sp++] = i - 1; }
+              if (r && C[i + 1] < 0) { C[i + 1] = id; S[sp++] = i + 1; }
+              if (u && C[i - PW] < 0) { C[i - PW] = id; S[sp++] = i - PW; }
+              if (d && C[i + PW] < 0) { C[i + PW] = id; S[sp++] = i + PW; }
+              if ((l && r) || (u && d)) continue;   // free to move both ways along one axis: not resting on anything there
               metrics.positions++;
-              if (!fine.fits(v.fine.pm, fx, fy)) continue;
-              const touch = ringOccupied(v.ringFine, fx - v.ringPad, fy - v.ringPad);
-              if (!best || touch > best.touch || (touch === best.touch && fx + fy < best.x + best.y)) best = { v, x: fx, y: fy, touch };
+              const c = { v, x, y, touch: ringOccupied(v.ringFine, x - v.ringPad, y - v.ringPad) };
+              keep(best, c, PER); keep(top, c, TOP);
             }
-            return best;
-          };
-          const add = s => { if (!s) return; const key = v.angle + ":" + s.x + ":" + s.y; if (seen.has(key)) return; seen.add(key); out.push(s); };
-          for (const c of snug.concat(back)) add(refine(c));
-          // a thin slot along a wall can vanish on the coarse grid: every fine run along each wall, both ends
-          const fb = sheetBounds(fine), right = fb.right - v.fine.w, bottom = fb.bottom - v.fine.h;
-          if (right >= fb.left && bottom >= fb.top) {
-            const wall = (start, end, fixed, horizontal) => {
-              let run = -1;
-              for (let t = start; t <= end + 1; t++) {
-                const x = horizontal ? t : fixed, y = horizontal ? fixed : t, legal = t <= end && fine.fits(v.fine.pm, x, y);
-                if (legal && run < 0) run = t;
-                if (!legal && run >= 0) { for (const e of t - 1 === run ? [run] : [run, t - 1]) add({ v, x: horizontal ? e : fixed, y: horizontal ? fixed : e, touch: 0 }); run = -1; }
-              }
-            };
-            wall(fb.left, right, fb.top, true); if (bottom !== fb.top) wall(fb.left, right, bottom, true);
-            wall(fb.top, bottom, fb.left, false); if (right !== fb.left) wall(fb.top, bottom, right, false);
+            here.push(...best);
           }
-          const shown = snug[0] ? refine(snug[0]) : null; if (shown) probe(p, v, shown.x, shown.y, "turn");
+          const seen = new Set(here.map(c => c.x + ":" + c.y));
+          for (const c of top) if (!seen.has(c.x + ":" + c.y)) here.push(c);
+          for (const c of here) out.push(c);
+          if (top[0]) probe(p, v, top[0].x, top[0].y, "turn");
           reportMetrics();
           await yieldNow();
         }
