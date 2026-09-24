@@ -158,7 +158,7 @@ function context() {
     S.settings.pollOrders='on';await Arrivals.check();assert.equal(polled,1);
     S.settings.pollMinutes=15;Arrivals.start();assert(Arrivals.state().nextCheck>=Date.now()+899000);
     Arrivals.state().seen={'old':Date.now()-25*3600000,'two-hours':Date.now()-2*3600000,'recent':Date.now()-1000};Arrivals.paint();
-    assert.match(document.getElementById('arrivalCounter').textContent,/24h 2 · 1h 1/);
+    assert.match(Arrivals.text(),/24h 2 · 1h 1/);
     Arrivals.state().seen.ancient=Date.now()-50*86400000;Arrivals.state().recorded={ancient:true};
     await Arrivals.record([{receiptId:'300',createTs:30}]);
     assert.equal(Arrivals.state().seen.ancient,undefined,'first-arrival times older than 45 days are dropped');assert.equal(Arrivals.state().recorded.ancient,undefined);

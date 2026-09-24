@@ -588,76 +588,54 @@ const DesignLink = window.DesignLink = (() => {
   return { mount, open, call, release, ensure, feed, meter, etsyBudgetOk, etsyReadout, connectEtsy, etsy: () => ({ hour: hourCalls(), cap: etsyCap(), session: E_.sessionTotal, station: E_.stationTotal, meter: E_.station }), state: () => S_.state, log: S_.log, up: () => S_.up, inControl: () => S_.control, nonce: () => S_.nonce, renderConsole, flushLog, origin, frameUrl, _S: S_, _E: E_ };
 })();
 
-/* ── the dock: where the station frame is shown. "full" over the Design Station tab's placeholder, "pip" as a live panel
-   in the corner of every other tab while the sorter is in control, hidden otherwise. The station is always rendered at a
-   desktop width and scaled to fit, so its order rail, tiles and dialogs look as they do on its own screen. ── */
+/* ── the dock: where the station frame is kept. "full" over the Design Station tab's placeholder; "live", out of sight on
+   every other tab while the sorter is in control (or a run is on): the frame stays laid out at a desktop width inside a
+   dock of no size, so the station keeps hydrating and working as it did behind the old corner strip; hidden otherwise.
+   The strip and its pill are gone (Paul, 24 Sep: "remove the overlay for the Design Station"): the run banner and the rail
+   say what the run is doing, and the Design Station is in the Workspace menu. ── */
 const Dock = window.Dock = (() => {
-  const D = { el: null, body: null, bar: null, host: null, mode: "hidden", hiddenByUser: false, shownByUser: false, pill: null, virtualW: 1200, ro: null, raf: 0 };
+  const D = { el: null, body: null, host: null, mode: "hidden", virtualW: 1200, ro: null, raf: 0 };
   function ensure() {
     if (D.el) return D;
     const el = document.createElement("div"); el.id = "dsDock"; el.className = "hidden";
-    el.innerHTML = `<div class="dockBar"><span class="dot"></span><b>Design Station</b><span class="st" id="dockState">live</span><span class="spacer"></span><button type="button" class="dockBtn" id="dockOpen" title="Open the Design Station tab">Open ⤢</button><button type="button" class="dockBtn" id="dockHide" title="Hide the live view">Hide</button></div><div class="dockBody"></div>`;
+    el.innerHTML = `<div class="dockBody"></div>`;
     document.body.appendChild(el);
-    D.el = el; D.body = el.querySelector(".dockBody"); D.bar = el.querySelector(".dockBar");
-    el.querySelector("#dockOpen").onclick = () => setMode("design");
-    el.querySelector("#dockHide").onclick = () => { D.hiddenByUser = true; layout(); };
-    D.bar.addEventListener("dblclick", () => setMode("design"));
-    const pill = document.createElement("button"); pill.type = "button"; pill.id = "dsDockPill"; pill.className = "hidden"; pill.innerHTML = `<span class="dot"></span>Design Station live view`; pill.onclick = () => { D.hiddenByUser = false; layout(); };
-    pill.title = "the Design Station is live — click to show the status strip";
-    document.body.appendChild(pill); D.pill = pill;
+    D.el = el; D.body = el.querySelector(".dockBody");
     window.addEventListener("resize", schedule); document.addEventListener("scroll", schedule, true);
     return D;
   }
   function setHost(host) { D.host = host; if (D.ro) D.ro.disconnect(); if (host && window.ResizeObserver) { D.ro = new ResizeObserver(schedule); D.ro.observe(host); } schedule(); }
   function schedule() { if (D.raf) return; D.raf = requestAnimationFrame(() => { D.raf = 0; layout(); }); }
-  /** Which mode applies now: the Design Station tab shows the frame full size; any other tab shows the panel while the link is in control (or a run is on). */
+  /** Which mode applies now: the Design Station tab shows the frame full size; any other tab keeps it laid out out of sight while the link is in control (or a run is on). */
   function wanted() {
     if (!D.el || !document.getElementById("dsFrame")) return "hidden";
     if (S.mode === "design") return "full";
     const live = DesignLink.inControl() || (B.run && ["running", "review", "paused"].includes(B.run.status));
-    return live ? (D.hiddenByUser ? "pilled" : "pip") : "hidden";
+    return live ? "live" : "hidden";
   }
   function layout() {
     if (!D.el) return;
     const mode = wanted(); D.mode = mode;
     const f = document.getElementById("dsFrame");
-    D.pill.classList.toggle("hidden", mode !== "pilled");
-    D.el.classList.toggle("hidden", mode === "hidden" || mode === "pilled");
-    D.el.classList.toggle("full", mode === "full"); D.el.classList.toggle("pip", mode === "pip");
-    const dockH = mode === "pip" ? Math.round(D.el.getBoundingClientRect().height) + 12 : 0;
-    document.documentElement.style.setProperty("--dockH", dockH + "px");
-    corner(mode);
+    D.el.classList.toggle("hidden", mode === "hidden");
+    D.el.classList.toggle("full", mode === "full"); D.el.classList.toggle("live", mode === "live");
     // the notices hang under whatever chrome the page currently has
     const stg = document.querySelector(".stage");
     if (stg) document.documentElement.style.setProperty("--chromeH", Math.round(stg.getBoundingClientRect().top + 10) + "px");
-    if (mode === "hidden" || mode === "pilled" || !f) return;
-    let w, h;
+    if (mode === "hidden" || !f) return;
     if (mode === "full") {
       const host = D.host; if (!host) return; const r = host.getBoundingClientRect();
       D.el.style.left = r.left + "px"; D.el.style.top = r.top + "px"; D.el.style.width = r.width + "px"; D.el.style.height = r.height + "px"; D.el.style.right = ""; D.el.style.bottom = "";
-      w = r.width; h = r.height;
-    } else {
-      D.el.style.left = ""; D.el.style.top = ""; D.el.style.width = ""; D.el.style.height = ""; D.el.style.right = "16px"; D.el.style.bottom = "16px";
-      const r = D.body.getBoundingClientRect(); w = r.width; h = r.height;
-    }
-    // the station renders at a desktop width and is scaled to the dock; the veil and cursor scale with it
-    // The frame was always laid out at 1200 px and scaled down to fit, so on the Design Station tab the app being
-    // supervised rendered at 34–61 % — its 10 px order rows at 4–7 px. It is laid out at the width it is given, down to
-    // the narrowest the station itself is built for, and only the small corner view is ever scaled.
-    if (mode === "full") {
-      // the station you are supervising is laid out at the width it is given, never scaled below 1
-      const vw = Math.max(980, Math.round(w)); const k = w / vw;
+      // The frame was always laid out at 1200 px and scaled down to fit, so on the Design Station tab the app being
+      // supervised rendered at 34–61 % — its 10 px order rows at 4–7 px. It is laid out at the width it is given, down to
+      // the narrowest the station itself is built for, and never scaled below 1.
+      const w = r.width, h = r.height, vw = Math.max(980, Math.round(w)), k = w / vw;
       f.style.width = vw + "px"; f.style.height = Math.round(h / k) + "px"; f.style.transform = `scale(${k})`;
-    } else { f.style.width = D.virtualW + "px"; f.style.height = "800px"; f.style.transform = "none"; }
-    const st = D.el.querySelector("#dockState"); if (st) st.textContent = DesignLink.inControl() ? (DesignLink.up() ? (B.run ? `run · ${B.run.status === "running" || !window.Ladder?.word ? B.run.step : Ladder.word(B.run).toLowerCase()}` : "live") : "link down") : "not in control";
-    D.el.classList.toggle("down", DesignLink.inControl() && !DesignLink.up());
-    corner(mode);   // the strip's width follows its status text
-  }
-  /** The bottom tray (orders counter, progress bar) lines up to the left of whatever holds the bottom-right corner, or
-      above it on a narrow screen. */
-  function corner(mode) {
-    const el = mode === "pip" ? D.el : mode === "pilled" ? D.pill : null, r = el ? el.getBoundingClientRect() : null, root = document.documentElement.style;
-    root.setProperty("--dockW", (r ? Math.round(r.width) + 8 : 0) + "px"); root.setProperty("--dockCornerH", (r ? Math.round(r.height) + 8 : 0) + "px");
+    } else {
+      // out of sight: the dock has no size of its own (the stylesheet's .live), the frame keeps its desktop layout
+      D.el.style.left = ""; D.el.style.top = ""; D.el.style.width = ""; D.el.style.height = ""; D.el.style.right = ""; D.el.style.bottom = "";
+      f.style.width = D.virtualW + "px"; f.style.height = "800px"; f.style.transform = "none";
+    }
   }
   return { ensure, setHost, layout, schedule, mode: () => D.mode, _D: D };
 })();
@@ -5536,19 +5514,9 @@ const Arrivals = window.Arrivals = (() => {
     for (const [id, t] of Object.entries(state.seen)) if (t < when - 45 * 86400000 && !current.has(id)) { delete state.seen[id]; if (state.recorded) delete state.recorded[id]; }
     state.lastCheck = now; state.nextCheck = now + interval(); save(); paint(); return fresh;
   }
-  function paint() {
-    let box = document.getElementById("arrivalCounter");
-    if (!box) {
-      // it lines up in the bottom tray beside the station's strip and the progress bar, not on top of them
-      const tray = document.getElementById("bottomTray");
-      box = el("button", "btn ghost sm"); box.id = "arrivalCounter"; box.type = "button";
-      box.style.cssText = (tray ? "" : "position:fixed;right:14px;bottom:12px;z-index:35;max-width:calc(100vw - 28px);") + "background:var(--card);box-shadow:0 3px 18px #0002;font-size:12px";
-      box.onclick = async () => {
-        if (Recall.on() && state.inbox?.length) { const incoming = state.inbox; if(RunCtl.clearRunState()===false)return; delete state.inbox; await merge(incoming); }
-        setMode("orders"); Orders.view().sort = "arrival"; Orders.view().desc = false; Orders.render();
-      };
-      (tray || document.body).appendChild(box);
-    }
+  /* What the orders counter at the bottom of the page used to say. The counter is gone (Paul, 24 Sep: "completely remove
+     that sandbox update, I don't wanna see any of that"); the text stays as the tooltip of the chip below, and for tests. */
+  function text() {
     // while the sandbox stream plays, the counts, the countdown and the label read in its simulated time
     const sim = streaming(), real = Date.now(), now = sim ? SimClock.now() : real, times = Object.values(state.seen);
     // Use server aggregate counts; their timestamp is shown in the tooltip.
@@ -5557,12 +5525,33 @@ const Arrivals = window.Arrivals = (() => {
     const inbox = Recall.on() && state.inbox?.length ? `${state.inbox.length} orders available · click to open · ` : "";
     const unread = !state.error && state.unread?.length ? `${state.unread.length} order${state.unread.length === 1 ? "" : "s"} unreadable, tried again next check · ` : "";
     const tail = state.error ? `Check failed: ${state.error}` : busy ? "Checking…" : S.settings.pollOrders === "off" ? "checks off" : wait ? `${unread}waiting for the sorter: ${wait}` : `${unread}next ${Math.floor(left / 60000)}:${String(Math.floor(left % 60000 / 1000)).padStart(2, "0")}`;
-    box.textContent = `${Sandbox.on() ? (Sandbox.label?.() || "Sandbox") + " · " : ""}Orders received · 24h ${n24} · 1h ${n1} · ${inbox}${tail}`;
-    box.title = `Unique orders imported, by first arrival time; counts as of the last successful check: ${state.lastCheck ? new Date(state.lastCheck).toLocaleString() : "not yet"}. Last check added ${state.lastAdded}. Checks run while this station is open. Click to see newest arrivals.${sim ? ` Sandbox stream at ${Sandbox.speed()}x: each check is a simulated 10 minutes, and the next waits until the sorter has taken in the last.` : ""}`;
-    if (sim) Sandbox.render();
-    box.classList.toggle("bad", !!state.error);
+    return `${Sandbox.on() ? (Sandbox.label?.() || "Sandbox") + " · " : ""}Orders received · 24h ${n24} · 1h ${n1} · ${inbox}${tail}`;
+  }
+  /* Only what needs a person shows, as a small chip among the tools at the top right: new orders waiting behind an opened
+     earlier set (a click puts the set away and brings them in), or order checks that fail (a click checks again now). The
+     routine counts and countdown are not shown. */
+  function paint() {
+    if (streaming()) Sandbox.render();   // the sandbox pill keeps its simulated time
     for(const node of document.querySelectorAll('[data-new-order],.newArrival')){node.removeAttribute('data-new-order');node.classList.remove('newArrival');}
-
+    const inbox = Recall.on() && state.inbox?.length ? state.inbox.length : 0, failed = !inbox && !!state.error && S.settings.pollOrders !== "off";
+    let chip = document.getElementById("ordersChip");
+    if (!inbox && !failed) { if (chip) chip.remove(); return; }
+    const tools = document.querySelector(".topTools"); if (!tools) return;
+    if (!chip) {
+      chip = el("button", "ordersChip"); chip.id = "ordersChip"; chip.type = "button";
+      chip.onclick = async () => {
+        if (Recall.on() && state.inbox?.length) { const incoming = state.inbox; if (RunCtl.clearRunState() === false) return; delete state.inbox; await merge(incoming); return; }
+        // the next tick checks, under the same lock as every check, so two open sorters still check once
+        if (state.error && !busy) { state.nextCheck = Date.now(); save(); chip.disabled = true; }
+      };
+      tools.insertBefore(chip, document.getElementById("setPickerSlot"));   // among the tools, after the sandbox pill
+    }
+    chip.classList.toggle("bad", failed);
+    chip.disabled = failed && busy;
+    const label = inbox ? `${inbox} new order${inbox === 1 ? "" : "s"}` : busy ? "Checking orders…" : "Order check failed";
+    if (chip.textContent !== label) chip.textContent = label;
+    chip.title = inbox ? `${inbox} new order${inbox === 1 ? "" : "s"} came in while this earlier set is open. Click to put the set away and bring them in.`
+      : `New orders could not be checked: ${state.error}. The sorter checks again by itself; click to check now.\n${text()}`;
   }
   async function merge(orders, openIds) {
     const current=Orders.rows();
@@ -5657,7 +5646,7 @@ const Arrivals = window.Arrivals = (() => {
   function reset() { state = { seen: {}, lastCheck: 0, nextCheck: Date.now() + interval(), lastAdded: 0, error: null }; save(); paint(); }
   /** An intake interrupted by a page refresh runs again at the next tick (Session.restore). */
   function requeue() { state.pending = true; save(); paint(); }
-  return { start, check, merge, record: orders => record(orders, stamp()), at, paint, processPending, held, pause, resume, reset, requeue, state: () => state };
+  return { start, check, merge, record: orders => record(orders, stamp()), at, paint, text, processPending, held, pause, resume, reset, requeue, state: () => state };
 })();
 
 /* A new batch tries the newest open sheet. Existing sheets with approved backs are pinned; their approvals survive.
