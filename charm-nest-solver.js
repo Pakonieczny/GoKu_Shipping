@@ -439,6 +439,10 @@
       Rose.stamp(baseCoarse,job.sheet.remnant,coarseRes,pad);
       baseFine.remnant=remnantFront(job.sheet.remnant,fineRes,outlinePad(pad,erodeFine,fineRes),FW,FH);
     }
+    // the inset band and cut stock, which the thickness of free space looks past (see THICK): a gap is thin between charms,
+    // not against the sheet's edge or the cut line, so an empty corner is not a cheap place to put a charm
+    const edgeFine = new Uint8Array(FW * FH);
+    for (let y = 0; y < FH; y++) for (let x = 0; x < FW; x++) edgeFine[y * FW + x] = baseFine.get(x, y) ? 1 : 0;
     stampFixed(baseFine,job.sheet.fixedPieces,clearancePt,fineRes);
     stampFixed(baseCoarse,job.sheet.fixedPieces,clearancePt,coarseRes);
     baseCoarse.buildSAT();
@@ -751,6 +755,28 @@
       const sliverMm = +job.sliverMm || SLIVER_MM, weights = { ...FIT_WEIGHTS, ...(job.fitWeights || {}) };
       const rPx = sliverMm * MM_PX / 2, rU = Math.round(3 * rPx), reach = Math.ceil(2 * rPx) + 2, margin = Math.max(reach, Math.ceil(POCKET_MM * MM_PX));
       const aroundU = Math.round(3 * (+job.aroundMm || AROUND_MM) * MM_PX);
+      /* Thickness (see THICK): a free cell a disc of TH.mm[k] covers is worth TH.worth[k + 1], one only the sliver disc
+         covers TH.worth[0], a sliver nothing, capped by the share of its region as before. Measured on a grid thF times
+         coarser than the fine one, where a coarse cell is taken when all its fine cells are.                          */
+      const TH = job.thick || THICK, thF = TH.f || 2, thW = TH.worth;
+      const thR = TH.mm.map(d => Math.max(1, Math.round(3 * d * MM_PX / 2 / thF)));
+      const Dmax = Math.max(...TH.mm), bigMargin = Math.max(margin, Math.ceil(Dmax * MM_PX)), thReach = Math.ceil(Dmax * MM_PX) + 2 * thF;
+      const thick2 = (occ2, W2, H2, A2, B2, M2, T2) => {
+        const n = W2 * H2;
+        chamfer(occ2, W2, H2, A2);
+        for (let i = 0; i < n; i++) T2[i] = occ2[i] ? 0 : thW[0];
+        for (let k = 0; k < thR.length; k++) {
+          const r = thR[k]; let any = 0;
+          for (let i = 0; i < n; i++) { const c = A2[i] >= r ? 1 : 0; M2[i] = c; any |= c; }
+          if (!any) break;
+          chamfer(M2, W2, H2, B2);
+          const w = thW[k + 1];
+          for (let i = 0; i < n; i++) if (B2[i] <= r && !occ2[i]) T2[i] = w;
+        }
+      };
+      const FW2 = Math.ceil(baseFine.W / thF), FH2 = Math.ceil(baseFine.H / thF);
+      const all2 = { occ: new Uint8Array(FW2 * FH2), A: new Int32Array(FW2 * FH2), B: new Int32Array(FW2 * FH2), M: new Uint8Array(FW2 * FH2), T: new Float32Array(FW2 * FH2) };
+      let big = null;
       // the second search takes the angles halfway between the first one's, so the two together try twice as many
       const turn = job.exploreRotations && angles.length > 1 ? 180 / angles.length : 0;
       for (const p of admitted) p.careful = variantsFor(p, angles.map(a => (a + turn) % 360));
@@ -764,7 +790,9 @@
         cb.onProbe({ id: p.id, angle: v.angle, cxPt: (x + v.solid.cx) / fineRes, cyPt: (y + v.solid.cy) / fineRes, stage, graded });
       };
       // what the free space on the whole sheet is worth before this charm (see PROBES), summed so any window reads it at once
-      const all = { occ: new Uint8Array(FW * FH), A: new Int32Array(FW * FH), B: new Int32Array(FW * FH), out: new Uint8Array(FW * FH), label: new Int32Array(FW * FH), stack: new Int32Array(FW * FH), val: new Float32Array(FW * FH), regions: [] }, valSAT = new Float64Array((FW + 1) * (FH + 1));
+      const all = { sh: new Float32Array(FW * FH), occ: new Uint8Array(FW * FH), A: new Int32Array(FW * FH), B: new Int32Array(FW * FH), out: new Uint8Array(FW * FH), label: new Int32Array(FW * FH), stack: new Int32Array(FW * FH), val: new Float32Array(FW * FH), regions: [] }, valSAT = new Float64Array((FW + 1) * (FH + 1)), valSATL = new Float64Array((FW + 1) * (FH + 1));
+      let exactN = 0, lastBonus = 0;
+      const valueInL = (x0, y0, x1, y1) => { x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(FW, x1); y1 = Math.min(FH, y1); if (x1 <= x0 || y1 <= y0) return 0; const W1 = FW + 1; return valSATL[y1 * W1 + x1] - valSATL[y0 * W1 + x1] - valSATL[y1 * W1 + x0] + valSATL[y0 * W1 + x0]; };
       const probes = probeVariants(fineRes, erodeFine, halfGapFine), padCells = Math.round(MM_PX), openU = OPEN_MM * MM_PX * 1.5;
       const valueIn = (x0, y0, x1, y1) => { x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(FW, x1); y1 = Math.min(FH, y1); if (x1 <= x0 || y1 <= y0) return 0; const W1 = FW + 1; return valSAT[y1 * W1 + x1] - valSAT[y0 * W1 + x1] - valSAT[y1 * W1 + x0] + valSAT[y0 * W1 + x0]; };
       /** Label the regions of free cells a SLIVER_MM disc sweeps (4-connected) inside [x0, x1) × [y0, y1) of a domain;
@@ -797,8 +825,18 @@
         all.regions = regionsOf(all.occ, all.out, all.A, all.label, all.stack, FW, 0, 0, FW, FH);
         const D = { W: FW, H: FH, occ: all.occ, label: all.label };
         for (let id = 0; id < all.regions.length; id++) { const r = all.regions[id]; r.share = r.maxA >= openU ? 1 : regionShare(D, id, r.bb, probes, padCells); }
-        for (let i = 0; i < FW * FH; i++) all.val[i] = all.label[i] >= 0 ? all.regions[all.label[i]].share : 0;
+        for (let y2 = 0; y2 < FH2; y2++) for (let x2 = 0; x2 < FW2; x2++) {
+          let o = 1;
+          for (let dy = 0; dy < thF && o; dy++) for (let dx = 0; dx < thF; dx++) { const gx = x2 * thF + dx, gy = y2 * thF + dy, gi = gy * FW + gx; if (gx < FW && gy < FH && (!all.occ[gi] || edgeFine[gi])) { o = 0; break; } }
+          all2.occ[y2 * FW2 + x2] = o;
+        }
+        thick2(all2.occ, FW2, FH2, all2.A, all2.B, all2.M, all2.T);
+        for (let y = 0; y < FH; y++) for (let x = 0; x < FW; x++) {
+          const i = y * FW + x, sh = all.label[i] >= 0 ? all.regions[all.label[i]].share : 0, t = all2.T[((y / thF) | 0) * FW2 + ((x / thF) | 0)];
+          all.sh[i] = sh; all.val[i] = sh < t ? sh : t;
+        }
         for (let y = 1; y <= FH; y++) { let row = 0; for (let x = 1; x <= FW; x++) { row += all.val[(y - 1) * FW + x - 1]; valSAT[y * (FW + 1) + x] = valSAT[(y - 1) * (FW + 1) + x] + row; } }
+        for (let y = 1; y <= FH; y++) { let row = 0; for (let x = 1; x <= FW; x++) { row += all.sh[(y - 1) * FW + x - 1]; valSATL[y * (FW + 1) + x] = valSATL[(y - 1) * (FW + 1) + x] + row; } }
       };
       // how far the charms already reach along the sheet (the inset band is not a charm)
       const reachOf = () => {
@@ -821,6 +859,41 @@
       /** What a charm at (x, y) costs the free space around it beyond its own area, in cells: the worth of the space
           it covers and of the space it leaves in pockets no longer open to the rest, less its own area. Filling
           space few charms could use costs less than nothing; closing off a pocket costs what the pocket was worth. */
+      const lossLive = (v, x, y) => {
+        const cx0 = x - margin, cy0 = y - margin, cx1 = x + v.fine.w + margin, cy1 = y + v.fine.h + margin;
+        const X0 = Math.max(0, cx0 - reach), Y0 = Math.max(0, cy0 - reach), X1 = Math.min(FW, cx1 + reach), Y1 = Math.min(FH, cy1 + reach);
+        const W = X1 - X0, H = Y1 - Y0, n = W * H;
+        if (!local || local.n < n) local = { n, occ: new Uint8Array(n), A: new Int32Array(n), B: new Int32Array(n), out: new Uint8Array(n), label: new Int32Array(n), stack: new Int32Array(n) };
+        const { occ } = local, words = fine.words, g = fine.occ;
+        for (let yy = 0; yy < H; yy++) { const row = (Y0 + yy) * words; for (let xx = 0, i = yy * W; xx < W; xx++, i++) { const gx = X0 + xx; occ[i] = (g[row + (gx >> 5)] >>> (gx & 31)) & 1; } }
+        const bits = v.fine.bits, mw = v.fine.w;
+        for (let r = 0; r < v.fine.h; r++) { const yy = y + r - Y0; if (yy < 0 || yy >= H) continue; for (let c = 0; c < mw; c++) if (bits[r * mw + c]) { const xx = x + c - X0; if (xx >= 0 && xx < W) occ[yy * W + xx] = 1; } }
+        sliverCells(occ, W, H, rU, local.A, local.B, local.out);
+        const ax0 = Math.max(cx0, X0) - X0, ay0 = Math.max(cy0, Y0) - Y0, ax1 = Math.min(cx1, X1) - X0, ay1 = Math.min(cy1, Y1) - Y0;
+        local.label.fill(-1, 0, n);
+        const regions = regionsOf(occ, local.out, local.A, local.label, local.stack, W, ax0, ay0, ax1, ay1, (r, i) => {
+          const gi = (Y0 + ((i / W) | 0)) * FW + X0 + (i % W), gl = all.label[gi];
+          r.kept += all.sh[gi]; r.same = r.same === -2 ? gl : r.same === gl ? gl : -1;
+        });
+        let after = 0;
+        const D = { W, H, occ, label: local.label };
+        for (let id = 0; id < regions.length; id++) {
+          const r = regions[id];
+          if (r.edge) after += r.kept;
+          else if (r.same >= 0 && all.regions[r.same].size === r.size) { after += r.size * all.regions[r.same].share; r.keep = true; }
+          else after += r.size * (r.maxA >= openU ? 1 : regionShare(D, id, r.bb, probes, padCells));
+        }
+        // the bound: share less thickness worth over the cells whose worth the charm can take (covered, sliver, changed pocket)
+        let bonus = 0;
+        for (let yy = ay0; yy < ay1; yy++) for (let xx = ax0, i = yy * W + ax0, gi = (Y0 + yy) * FW + X0 + ax0; xx < ax1; xx++, i++, gi++) {
+          const d = all.sh[gi] - all.val[gi]; if (d <= 0) continue;
+          if (occ[i] || local.out[i]) { bonus += d; continue; }
+          const id = local.label[i]; if (id < 0) { bonus += d; continue; }
+          const r = regions[id]; if (!r.edge && !r.keep) bonus += d;
+        }
+        lastBonus = bonus;
+        return valueInL(X0 + ax0, Y0 + ay0, X0 + ax1, Y0 + ay1) - after - v.cells;
+      };
       const lossAt = (v, x, y) => {
         const cx0 = x - margin, cy0 = y - margin, cx1 = x + v.fine.w + margin, cy1 = y + v.fine.h + margin;
         const X0 = Math.max(0, cx0 - reach), Y0 = Math.max(0, cy0 - reach), X1 = Math.min(FW, cx1 + reach), Y1 = Math.min(FH, cy1 + reach);
@@ -839,15 +912,48 @@
           const gi = (Y0 + ((i / W) | 0)) * FW + X0 + (i % W), gl = all.label[gi];
           r.kept += all.val[gi]; r.same = r.same === -2 ? gl : r.same === gl ? gl : -1;
         });
-        let after = 0;
         const D = { W, H, occ, label: local.label };
+        const cap = new Float32Array(regions.length);
         for (let id = 0; id < regions.length; id++) {
           const r = regions[id];
-          if (r.edge) after += r.kept;
-          else if (r.same >= 0 && all.regions[r.same].size === r.size) after += r.size * all.regions[r.same].share;
-          else after += r.size * (r.maxA >= openU ? 1 : regionShare(D, id, r.bb, probes, padCells));
+          cap[id] = r.edge ? -1 : r.same >= 0 && all.regions[r.same].size === r.size ? all.regions[r.same].share : r.maxA >= openU ? 1 : regionShare(D, id, r.bb, probes, padCells);
         }
-        return valueIn(X0 + ax0, Y0 + ay0, X0 + ax1, Y0 + ay1) - after - v.cells;
+        // the bigger counting window (thickness reaches further), aligned to the coarse grid, and its coarse domain
+        const bx0 = Math.max(0, x - bigMargin), by0 = Math.max(0, y - bigMargin), bx1 = Math.min(FW, x + v.fine.w + bigMargin), by1 = Math.min(FH, y + v.fine.h + bigMargin);
+        const qx0 = Math.floor(Math.max(0, bx0 - thReach) / thF), qy0 = Math.floor(Math.max(0, by0 - thReach) / thF), qx1 = Math.ceil(Math.min(FW, bx1 + thReach) / thF), qy1 = Math.ceil(Math.min(FH, by1 + thReach) / thF);
+        const W2 = qx1 - qx0, H2 = qy1 - qy0, n2 = W2 * H2;
+        if (!big || big.n < n2) big = { n: n2, occ: new Uint8Array(n2), A: new Int32Array(n2), B: new Int32Array(n2), M: new Uint8Array(n2), T: new Float32Array(n2) };
+        const occ2 = big.occ;
+        for (let y2 = 0; y2 < H2; y2++) for (let x2 = 0; x2 < W2; x2++) {
+          let o = 1;
+          for (let dy = 0; dy < thF && o; dy++) for (let dx = 0; dx < thF; dx++) {
+            const gx = (qx0 + x2) * thF + dx, gy = (qy0 + y2) * thF + dy;
+            if (gx >= FW || gy >= FH) continue;
+            if (((g[gy * words + (gx >> 5)] >>> (gx & 31)) & 1) && !edgeFine[gy * FW + gx]) continue;
+            const mx = gx - x, my = gy - y;
+            if (mx >= 0 && my >= 0 && mx < mw && my < v.fine.h && bits[my * mw + mx]) continue;
+            o = 0; break;
+          }
+          occ2[y2 * W2 + x2] = o;
+        }
+        thick2(occ2, W2, H2, big.A, big.B, big.M, big.T);
+        const T2 = big.T, lab = local.label, sx0 = X0 + ax0, sy0 = Y0 + ay0, sx1 = X0 + ax1, sy1 = Y0 + ay1;
+        let after = 0;
+        for (let gy = by0; gy < by1; gy++) {
+          const trow = (((gy / thF) | 0) - qy0) * W2 - qx0, inY = gy >= sy0 && gy < sy1;
+          for (let gx = bx0; gx < bx1; gx++) {
+            if ((g[gy * words + (gx >> 5)] >>> (gx & 31)) & 1) continue;
+            const t = T2[trow + ((gx / thF) | 0)];
+            let c;
+            if (inY && gx >= sx0 && gx < sx1) {
+              const i = (gy - Y0) * W + gx - X0; if (occ[i]) continue;
+              const id = lab[i]; if (id < 0) continue;
+              c = cap[id] < 0 ? all.sh[gy * FW + gx] : cap[id];
+            } else { const gi = gy * FW + gx; if (all.out[gi]) continue; c = all.sh[gi]; }
+            after += c < t ? c : t;
+          }
+        }
+        return valueIn(bx0, by0, bx1, by1) - after - v.cells;
       };
       /** Empty space around a charm at (x, y), in cells: the free distance beyond each outline cell to the nearest charm
           or edge on the sheet as it stands, up to aroundU. Off the sheet is the edge. */
@@ -1004,9 +1110,23 @@
         const spots = await spotsFor(p);
         if (stopped()) return null;
         for (let i = 0; i < spots.length; i++) {
-          const s = spots[i]; Object.assign(s, grade(s.v, s.x, s.y, front));
+          const s = spots[i], v = s.v;
+          const lb = (lossLive(v, s.x, s.y) - lastBonus) * cellMm2, around = aroundAt(v, s.x, s.y) * cellMm2;
+          const far = axisX ? s.x + v.fine.w : s.y + v.fine.h, growth = Math.max(0, far - front) / MM_PX, along = (axisX ? s.x + v.fine.w / 2 : s.y + v.fine.h / 2) / MM_PX;
+          Object.assign(s, { waste: lb, around, growth, along, far, fit: -(lb + weights.around * around + weights.growth * growth + weights.along * along), staleWaste: true });
+          graded++;
           probe(p, s.v, s.x, s.y, "try");
           if ((i & 63) === 63) { if (stopped()) return null; reportMetrics(); await yieldNow(); }
+        }
+        // exact thickness waste from the best bound down, until no bound left can reach the LEADERS best exact fits
+        spots.sort((a, b) => b.fit - a.fit);
+        const tops = [];
+        for (let i = 0; i < spots.length; i++) {
+          const s = spots[i];
+          if (tops.length >= LEADERS && s.fit <= tops[LEADERS - 1]) break;
+          s.waste = lossAt(s.v, s.x, s.y) * cellMm2; s.fit = fitOf(s); s.staleWaste = false; exactN++;
+          let k = tops.length; tops.push(s.fit); while (k > 0 && tops[k - 1] < s.fit) { tops[k] = tops[k - 1]; k--; } tops[k] = s.fit;
+          if ((i & 63) === 63) { if (stopped()) return null; await yieldNow(); }
         }
         return spots;
       }
@@ -1038,7 +1158,7 @@
       const aheadStats = { rounds: 0, changed: 0 };
       const boxOf = (v, x, y) => [x, y, x + v.fine.w, y + v.fine.h];
       const meets = (a, b, pad) => a[0] - pad < b[2] && b[0] < a[2] + pad && a[1] - pad < b[3] && b[1] < a[3] + pad;
-      const lossPad = margin + reach + 1, aroundPad = Math.ceil(aroundU / 3) + 2;
+      const lossPad = bigMargin + thReach + 1, aroundPad = Math.ceil(aroundU / 3) + 2;
       /** The box of the cells whose worth differs between two sheetValue fields, joined with `box`. */
       const changedBox = (before, after, box) => {
         let x0 = box[0], y0 = box[1], x1 = box[2], y1 = box[3];
@@ -1273,7 +1393,7 @@
       metrics.layouts++; reportMetrics(true);
       return { placements, rejects: prepared.filter(p => !ids.has(p.id)).map(p => p.id), capped, noRoom: out.noRoom.map(p => p.id), density: cells / usableCellsFine, contactQuality: qualityOf(rec, fine), trial: 0, stripPacked: false,
         usablePt2: usableCellsFine / (fineRes * fineRes), freePt2: fine.freeCells() / (fineRes * fineRes), placedPt2: cells / (fineRes * fineRes), placedCells: cells, pocket: pocketPt(coarse, coarseRes),
-        grids: { fine, coarse }, rec, fitScore: out.fit, wastePt2: rec.reduce((n, r) => n + r.waste, 0) * MM_PX * MM_PX / (fineRes * fineRes), timedOut: out.timedOut, smallRoom, careful: { graded, angles: angles.length, turn, passes, ahead: aheadStats } };
+        grids: { fine, coarse }, rec, fitScore: out.fit, wastePt2: rec.reduce((n, r) => n + r.waste, 0) * MM_PX * MM_PX / (fineRes * fineRes), timedOut: out.timedOut, smallRoom, careful: { graded, exact: exactN, angles: angles.length, turn, passes, ahead: aheadStats } };
     }
     let carefulDone = false;
     if (carefulOn && !best) {
@@ -1625,6 +1745,10 @@
   const FIT_WEIGHTS = { around: .5, growth: 1.5, along: .02 };
   // how far out from a charm's outline the empty space around it counts
   const AROUND_MM = 3;
+  // free space by the widest disc that fits over it (mm): worth[0] for a cell only the SLIVER_MM disc covers, worth[k + 1]
+  // for one a disc of mm[k] covers. The shop's charms are 5.4 to 11.6 mm at their narrowest (8.3 median) and need a
+  // circle of 9 to 16 mm (12.4 median): a gap a 7 mm disc fills takes few of them, one a 13 mm disc fills nearly all.
+  const THICK = { mm: [7, 9, 11, 13], worth: [0.05, 0.2, 0.45, 0.75, 1], f: 2 };
 
   /* ── what free space is worth ──────────────────────────────────────────────
      A gap is worth what later charms can do with it. The free space a disc SLIVER_MM wide can sweep splits into
@@ -1710,7 +1834,13 @@
       for (let a = 0; a < 360; a += 45) {
         const rot = rotateBitmap(f.bits, f.w, f.h, a); if (!rot.w) continue;
         const m = erodeFine ? erode(rot.bits, rot.w, rot.h, erodeFine) : dilate(rot.bits, rot.w, rot.h, halfGapFine);
-        if (m.w && areaOf(m.bits)) out.push({ pm: packShifted(m.bits, m.w, m.h), w: m.w, h: m.h, cells: areaOf(m.bits) });
+        if (m.w && areaOf(m.bits)) {
+          const W2 = m.w + 2, H2 = m.h + 2, o = new Uint8Array(W2 * H2).fill(1);
+          for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) if (m.bits[y * m.w + x]) o[(y + 1) * W2 + x + 1] = 0;
+          const D = chamfer(o, W2, H2, new Int32Array(W2 * H2)); let r = -1, bi = 0;
+          for (let i = 0; i < W2 * H2; i++) if (D[i] > r) { r = D[i]; bi = i; }
+          out.push({ pm: packShifted(m.bits, m.w, m.h), w: m.w, h: m.h, cells: areaOf(m.bits), ax: (bi % W2) - 1, ay: ((bi / W2) | 0) - 1, r });
+        }
       }
       return out;
     }));
@@ -1735,15 +1865,18 @@
         dist[j] = d + 1; q[tail++] = j;
       }
     }
-    const grid = new Grid(w, h);
-    for (let i = 0; i < n; i++) if (dist[i] < 0) grid.set(i % w, (i / w) | 0);
+    const grid = new Grid(w, h), oc = new Uint8Array(n);
+    for (let i = 0; i < n; i++) if (dist[i] < 0) { grid.set(i % w, (i / w) | 0); oc[i] = 1; }
     grid.buildSAT();
+    const Dp = chamfer(oc, w, h, new Int32Array(n)); let deep = 0;
+    for (let i = 0; i < n; i++) if (!oc[i] && Dp[i] > deep) deep = Dp[i];
     let fit = 0;
     for (const vs of probes) {
       let ok = false;
       for (const v of vs) {
-        if (v.w > w || v.h > h || v.cells > open) continue;
-        for (let y = 0; y + v.h <= h && !ok; y++) for (let x = 0; x + v.w <= w; x++) {
+        if (v.w > w || v.h > h || v.cells > open || v.r > deep) continue;
+        for (let y = 0; y + v.h <= h && !ok; y++) for (let x = 0, a = (y + v.ay) * w + v.ax; x + v.w <= w; x++, a++) {
+          if (Dp[a] < v.r) continue;
           if (v.w * v.h - grid.boxSum(x, y, x + v.w, y + v.h) < v.cells) continue;
           if (grid.fits(v.pm, x, y)) { ok = true; break; }
         }
