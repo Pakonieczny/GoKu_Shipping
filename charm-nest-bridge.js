@@ -1363,7 +1363,20 @@ const Master = window.Master = (() => {
       job.finishedAt = Date.now(); job.state = "done"; say("ok", `indexed ${job.written} SKU(s)${job.held ? ` · ${job.held} charm(s) were already in the library` : ""}${job.vision.length ? ` · ${job.vision.length} label(s) read by Claude await confirmation` : ""}`);
       render(); return job;
     } catch (e) { job.finishedAt = Date.now(); job.state = "error"; job.error = e.message; say("warn", `indexing failed: ${e.message}`); render(); throw e; }
-    finally { if (job.bar) { job.bar.end(); job.bar = null; } }
+    finally { if (job.bar) { job.bar.end(); job.bar = null; } settleJob(job); }
+  }
+  /** A finished index keeps what its row and its report show. The parsed file, its traced charms and its bytes (the
+      largest things this page holds: a master of thousands of charms) go once no label Claude read waits for a person,
+      and only the newest twenty finished rows stay (Paul, 24 Sep: nothing may pile up on a page left open). */
+  function settleJob(job) {
+    if (!["done", "error"].includes(job.state) || (job.vision || []).some(v => !v.confirmed)) return;
+    const l = job.lab;
+    if (l && l.labels instanceof Map) job.lab = Object.assign({}, l, { labels: { size: l.labels.size } });   // each label held a piece of the parsed file
+    if (job.charms) job.charmCount = job.charms.length;
+    if (job.vision) job.vision = job.vision.map(v => ({ index: v.index, sku: v.sku, size: v.size, confidence: v.confidence, confirmed: v.confirmed }));
+    job.parsed = job.src = job.charms = null;
+    const done = [...B.master.jobs.values()].filter(j => ["done", "error"].includes(j.state) && !(j.vision || []).some(v => !v.confirmed));
+    for (const old of done.slice(0, Math.max(0, done.length - 20))) B.master.jobs.delete(old.masterHash);
   }
   /** Per labelled charm: the per-SKU .ai + thumbnail, the geometry, the derived flags; then the index and file records. */
   async function writeIndex(job) {
@@ -1404,14 +1417,14 @@ const Master = window.Master = (() => {
     job.state = "writing"; render();
     await writeIndex(job);
     for (const v of reads) await api("charmNestLibrary", { op: "masterPatch", sku: v.sku, patch: { labelSource: "vision", confirmedBy: employeeName() || "operator" } }).catch(() => {});
-    job.state = "done"; await load(true); render();
+    job.state = "done"; await load(true); settleJob(job); render();
   }
   /** The same patch on every SKU of one charm, with a single redraw. */
   /** Everything the run found, as a file: the lists are too long to read on screen but belong somewhere. */
   function saveReport(job) {
     const l = job.lab || {};
     const rep = { file: job.name, masterHash: job.masterHash, at: new Date().toISOString(),
-      charms: job.charms ? job.charms.length : null, labelled: l.labels ? l.labels.size : null, skuLines: l.skuCount || null, written: job.written || 0,
+      charms: job.charms ? job.charms.length : job.charmCount ?? null, labelled: l.labels ? l.labels.size : null, skuLines: l.skuCount || null, written: job.written || 0,
       unlabelledCharmIndices: l.unlabelled || [], linesWithNoCharmAbove: (l.orphans || []).map(o => ({ sku: o.sku, size: o.size || null })),
       skusUnderTwoCharms: l.duplicates || [], blocked: job.blocked || [], alsoInAnotherMaster: job.conflicts || [], readByClaude: (job.vision || []).map(v => ({ index: v.index, sku: v.sku, size: v.size, confidence: v.confidence, confirmed: v.confirmed })) };
     const url = URL.createObjectURL(new Blob([JSON.stringify(rep, null, 1)], { type: "application/json" }));
@@ -1723,7 +1736,7 @@ const Pool = window.Pool = (() => {
     }
     const keys=new Set();
     for(const j of d.jobs || [])if((j.copies || []).some(id=>poolIds.has(id)) && j.state!=='skipped') {
-      Object.assign(j,{state:'ready',view:null,mask:null,fit:null,verify:null,backs:[],approvedBy:null,approvedAt:null});keys.add(j.key);
+      Object.assign(j,{state:'ready',view:null,mask:null,fit:null,writtenFit:null,verify:null,backs:[],approvedBy:null,approvedAt:null});keys.add(j.key);
       const row=d.orders?.rows?.find(r=>r.key===j.key);if(row?.engrave)Object.assign(row.engrave,{state:'ready',approved:false});
     }
     for(const j of d.jobs || [])if(!["approved","written","skipped"].includes(j.state) && j.materialVersion!==2) {
@@ -2532,7 +2545,7 @@ const Engrave = window.Engrave = (() => {
   }
   async function fitJobOnce(job) {
     if (EG.cardKey === job.key) { EG.card = null; EG.cardKey = null; }
-    job.reason = null; job.verify = null; job.fit = null;
+    job.reason = null; job.verify = null; job.fit = null; delete job.writtenFit;
     await loadFonts();
     job.lineInput ||= job.lines.slice();
     job.lines = job.lineInput.slice();
@@ -2615,14 +2628,14 @@ const Engrave = window.Engrave = (() => {
     return backgroundPass;
   }
   function revokeBacks(job) {
-    job.approvedAt = null; job.backs = []; delete job._backPreview;
+    job.approvedAt = null; job.backs = []; delete job._backPreview; delete job.writtenFit; delete job._shelveTried;
     for (const sh of allSheets()) sh.backPool = (sh.backPool || []).filter(b=>!job.copies.includes(b.poolId));
     refreshBacks();
     const invalidate=()=>api("charmNestLibrary", {op:"backInvalidate", poolIds:job.copies});
     const task = window.CharmNestOperations ? window.CharmNestOperations.run({key:'back-remove:'+job.key,label:'Updating engraving',resources:['production:'+(job.editSheet?.runId || B.run?.runId || job.editSheet?.sheetId || 'manual')]},invalidate) : backQueue.catch(()=>{}).then(invalidate);
     backQueue = task; task.catch(e=>{ job.reason = "Back removal not saved: " + e.message; RunCtl.stopIfRunning(job.reason, "Reconnect and reopen this engraving before continuing."); toast(job.reason,"bad"); });
   }
-  function invalidate(row, why) { const j = items().get(row.key); if (!j) return; if (j.state === "approved" || j.state === "written" || j.state === "review" || j.state === "ready") { revokeBacks(j); j.previous = { text: j.text, fit: j.fit, approvedBy: j.approvedBy }; j.state = "classify"; j.fit = null; j.approvedBy = null; j.approvedAt = null; j.reason = why; Review.remove("eng:" + j.key); } }
+  function invalidate(row, why) { const j = items().get(row.key); if (!j) return; if (j.state === "approved" || j.state === "written" || j.state === "review" || j.state === "ready") { revokeBacks(j); j.previous = { text: j.text, fit: j.fit && (({ layout, glyphs, cmds, ...f }) => f)(j.fit), approvedBy: j.approvedBy }; j.state = "classify"; j.fit = null; j.approvedBy = null; j.approvedAt = null; j.reason = why; Review.remove("eng:" + j.key); } }
 
   /* ── 7.5 · the review controls ── */
   /* One fitting policy for dragging, rotation and manual size: change the
@@ -2736,7 +2749,7 @@ const Engrave = window.Engrave = (() => {
   function resumeBacks(pendingOnly) {
     let waiting = 0;
     for (const job of items().values()) {
-      if (job.state !== "approved" || job.backSaving || !job.approvedAt || !job.fit || !job.view || !(job.copies || []).length) continue;
+      if (job.state !== "approved" || job.backSaving || !job.approvedAt || !(job.fit && job.view || job.writtenFit && job.writtenFit.approvedAt === job.approvedAt) || !(job.copies || []).length) continue;
       if (job.copies.every(id => (job.backs || []).some(b => b.poolId === id && b.approvedAt === job.approvedAt))) continue;
       if (pendingOnly && !job.backPending) continue;
       // (with the cloud still away it waits on: each try builds and checks the file before it finds that out)
@@ -2850,6 +2863,7 @@ const Engrave = window.Engrave = (() => {
       if (j.editingBack && j.state !== "written") continue;
       if (!j.approvedAt || !["approved", "written"].includes(j.state)) { j.copies.forEach(id => invalid.add(id)); continue; }
       records.push(...(j.backs || []));
+      if (!(j.view && j.fit) && F_.ok && hasPlacement(j) && j.copies.some(id=>owned.has(id) && !(j.backs || []).some(b=>b.poolId===id && b.approvedAt===j.approvedAt))) { try { restoreWritten(j); } catch (_) { /* written when it can be (writeBacks says why) */ } }
       if (j.view && j.fit && j.copies.some(id=>owned.has(id) && !(j.backs || []).some(b=>b.poolId===id && b.approvedAt===j.approvedAt))) {
         if (!j._backPreview || j._previewAt !== j.approvedAt) { const cv = renderBack(j, 360, {hatch:false}); j._backPreview = cv.toDataURL("image/png"); j._previewSize = cv._sizePt; j._previewAt = j.approvedAt; }
         for (const poolId of j.copies) if (!(j.backs || []).some(b => b.poolId === poolId && b.approvedAt === j.approvedAt)) records.push({poolId, order:j.row.order.receiptId, sku:j.row.spec.designSku, copy:B.pool.rows.get(poolId)?.copy, text:j.text, approvedAt:j.approvedAt, preview:j._backPreview, previewWPt:j._previewSize?.w, previewHPt:j._previewSize?.h, pending:true});
@@ -2909,6 +2923,13 @@ const Engrave = window.Engrave = (() => {
   }
   const recordBack = (job, fn) => { const ops = window.CharmNestOperations; return ops ? ops.run({ key: "back-record:" + job.key, label: "Recording engraving", resources: ["production:" + (job.editSheet?.runId || B.run?.runId || job.editSheet?.sheetId || "manual")] }, fn) : fn(); };
   async function writeBacksNow(job) {
+    if (!["approved", "written"].includes(job.state) || !hasPlacement(job)) return;
+    // counted while it runs, so the upkeep never lets go of a placement a write is using (shelveWritten)
+    job._writingBacks = (job._writingBacks || 0) + 1;
+    try { if (!job.fit || !job.view) { await loadFonts(); restoreWritten(job); } return await writeBacksOnce(job); }
+    finally { job._writingBacks--; }
+  }
+  async function writeBacksOnce(job) {
     if (!["approved", "written"].includes(job.state) || !job.fit || !job.view) return;
     const approval = job.approvedAt;
     const current = () => approval === job.approvedAt && ["approved", "written"].includes(job.state);
@@ -2955,9 +2976,49 @@ const Engrave = window.Engrave = (() => {
     } finally { if (shown) refreshBacks(); }
     if (!current()) return;
     job.state = "written"; job.row.engrave.state = "written";
+    delete job._backPreview; delete job._previewSize; delete job._previewAt;   // the saved picture stands for it from now on
     await Pool.update(job.copies, { engrave: true, engraveApprovedBy: job.approvedBy, ...(job.editingBack ? {} : {state:"engraved"}) });
     if(job.editingBack) {await syncEditedBack(job);toast("Back engraving updated","ok");}
     render();
+  }
+  /* Paul, 24 Sep: "nothing may accumulate". A written engraving whose every copy has its back saved in the cloud (the .ai
+     and its picture) keeps its placement as numbers (writtenFit) and lets go of the back geometry, the mask and the letter
+     outlines, in memory and in the checkpoint: the Decided list shows the saved picture and file, and writing its backs
+     again (a piece moved to another sheet, a carried line) builds them again from the charm, as they were fitted
+     (restoreWritten). A placement this page could not build again exactly is kept whole. */
+  const hasPlacement = job => !!(job.fit && job.view) || !!(job.writtenFit && job.approvedAt && job.writtenFit.approvedAt === job.approvedAt);
+  const maskKey = m => { let h = 2166136261; for (let i = 0; i < m.bits.length; i++) h = Math.imul(h ^ m.bits[i], 16777619) >>> 0; return [m.w, m.h, m.res, m.ox, m.oy, h].join(":"); };
+  function restoreWritten(job) {
+    const w = job.writtenFit, again = why => Object.assign(new Error(why), { engravingPending: true });
+    if (!w || w.approvedAt !== job.approvedAt) throw again("This engraving's placement is not kept — fit the words again");
+    if (!F_.ok) throw new Error("Engraving font is unavailable");
+    const charm = charmFor(job); if (!charm) throw again("The charm is being moved between sheets; retry saving its engraving after nesting finishes");
+    let view; try { view = G.backView(charm, { res: 6, upAngle: w.upAngle }); } catch (e) { throw again(`This charm's back could not be read again (${e.message}) — fit the words again`); }
+    const mask = G.engraveMask(view, { marginMm: w.marginMm, keepOut: charm.backKeepOut || [] });
+    // the charm's back is not what the words were approved on (its drawing or keep-out changed): a person fits them again
+    if (maskKey(mask) !== w.maskKey) throw again("This charm's back changed since the words were approved — fit the words again");
+    const layout = G.layoutLines(w.lines, fontFor(w.weight), w.size, w.lineGap, w.angle || 0, w.centre), geometry = G.verifyInk(layout.cmds, mask);
+    if (!geometry.ok) throw again("The approved words no longer fit this charm's back — fit the words again");
+    const { approvedAt, upAngle, marginMm, lineGap, filledArtwork, maskKey: k, ...fit } = w;
+    job.view = view; job.mask = mask; job.fit = Object.assign(fit, { layout, glyphs: layout.glyphs, cmds: layout.cmds }); job.verify = { geometry, at: Date.now() };
+  }
+  function shelveWritten() {
+    if (!F_.ok) return 0;
+    let n = 0;
+    for (const job of items().values()) {
+      if (job.state !== "written" || job.editingBack || job.backSaving || job.approvalPreparing || job._writingBacks > 0 || isWorking(job) || EG.cardKey === job.key) continue;
+      if (!job.fit || !job.view || !job.mask || !job.approvedAt || job._shelveTried === job.approvedAt || !(job.copies || []).length) continue;
+      if (!job.copies.every(id => (job.backs || []).some(b => b.poolId === id && b.approvedAt === job.approvedAt && b.outputs?.ai?.url && b.outputs?.png?.url))) continue;
+      const fit = job.fit, lines = (fit.lines || job.lines).slice(), lineGap = fitOpts(job).lineGap;
+      let same = false;
+      try { same = JSON.stringify(G.layoutLines(lines, fontFor(fit.weight), fit.size, lineGap, fit.angle || 0, fit.centre).cmds) === JSON.stringify(fit.cmds); } catch (_) {}
+      if (!same) { job._shelveTried = job.approvedAt; continue; }
+      const { layout, glyphs, cmds, ...rest } = fit;
+      job.writtenFit = Object.assign({}, rest, { lines, approvedAt: job.approvedAt, upAngle: job.view.upAngle, marginMm: job.mask.marginMm, lineGap, filledArtwork: !!job.view.detail?.filledArtwork, maskKey: maskKey(job.mask) });
+      job.view = job.mask = job.fit = job.verify = null; delete job.flipError;
+      delete job._backPreview; delete job._previewSize; delete job._previewAt; n++;
+    }
+    return n;
   }
   /** Parse the written back file and compare its cut geometry with the verified view (mirrored back for the front-coordinates variant). */
   async function verifyBackFile(bytes, job) {
@@ -3022,6 +3083,9 @@ const Engrave = window.Engrave = (() => {
   // drafts: words typed on a card and not yet applied, per job. A card is rebuilt whenever its job changes state (an
   // auto-refit, a background render, a tab switch, a reload); the typing it held must come back with it.
   const EG = { tab: null, focus: null, chosen: false, card: null, cardKey: null, reread: 0, q: "", drafts: {} };
+  // a draft outlives its card only while its job waits in the list: one left by a job decided, removed or gone was kept,
+  // and saved with every checkpoint, for as long as the tab stayed open (Paul, 24 Sep: nothing may accumulate)
+  function pruneDrafts() { for (const k of Object.keys(EG.drafts || {})) { const j = items().get(k); if (!j || j.row?.state === "gone" || !queuedJobs([j]).length) delete EG.drafts[k]; } return EG.drafts; }
   function disposeCards() {
     const v = document.getElementById("engraveView");
     v?.querySelectorAll(".rvItem").forEach(c => { c._dispose?.(); clearTimeout(c._wordsTimer); c._ro?.disconnect(); });
@@ -3262,10 +3326,10 @@ const Engrave = window.Engrave = (() => {
             const open = EG.openDone === j2.key;
             const detail = !open ? "" : `<div class="doneDetail">
                 <div class="dd back">${png ? `<img crossorigin="anonymous" src="${esc(cors(png))}" alt="the back as written" referrerpolicy="no-referrer" data-retry="1">` : `<div class="noPic">${j2.state === "skipped" ? "cut plain — nothing on the back" : "the back picture is written with the sheet"}</div>`}<span class="cap">back${b0.sheet ? " · " + esc(b0.sheet) : ""}</span></div>
-                <div class="dd front">${j2.view?.detail?.filledArtwork ? `<div class="why">Filled artwork: inspect the back outline and cut-outs before approving.</div>` : ""}<div class="frontHost"></div><span class="cap">front</span></div>
+                <div class="dd front">${j2.view?.detail?.filledArtwork || j2.writtenFit?.filledArtwork ? `<div class="why">Filled artwork: inspect the back outline and cut-outs before approving.</div>` : ""}<div class="frontHost"></div><span class="cap">front</span></div>
                 <dl class="meta">
                   <dt>Words</dt><dd class="serif">${w}</dd>
-                  ${j2.fit || b0.capMm ? `<dt>Size</dt><dd>cap ${(+(b0.capMm || (j2.fit && j2.fit.capMm) || 0)).toFixed(2)} mm · Source Sans 3${j2.fit && j2.fit.weight ? " " + esc(j2.fit.weight) : ""}</dd>` : ""}
+                  ${j2.fit || j2.writtenFit || b0.capMm ? `<dt>Size</dt><dd>cap ${(+(b0.capMm || (j2.fit || j2.writtenFit || {}).capMm || 0)).toFixed(2)} mm · Source Sans 3${(j2.fit || j2.writtenFit || b0).weight ? " " + esc((j2.fit || j2.writtenFit || b0).weight) : ""}</dd>` : ""}
                   <dt>Decided</dt><dd>${esc(who || "—")}${j2.approvedAt ? " · " + esc(new Date(j2.approvedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })) : ""}${j2.decision && j2.decision.why ? " · " + esc(j2.decision.why) : ""}</dd>
                   ${(j2.backs || []).length ? `<dt>File</dt><dd>${(j2.backs || []).map(b => { const u = b.ai || (b.outputs && b.outputs.ai && b.outputs.ai.url); return u ? `<a href="${esc(u)}" target="_blank" rel="noopener" title="the back file, as it went to the laser">${esc((b.name || "back") + ".ai")}</a>` : "not saved to the cloud"; }).join(" · ")}</dd>` : ""}
                   ${j2.copies && j2.copies.length ? `<dt>Pieces</dt><dd>${j2.copies.length} on ${[...new Set(j2.copies.map(pid => (Pool.sheetOf(pid) || {}).fileBase).filter(Boolean))].map(esc).join(", ") || "the sheet"}</dd>` : ""}
@@ -3509,7 +3573,7 @@ const Engrave = window.Engrave = (() => {
     void it;
     return card;
   }
-  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: EG.drafts }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, nudge, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
+  return { loadBackPreview: identity => api("charmNestLibrary", {op:"backPreview", ...identity}, {quiet:true}), openBack, sheetBacks, backsMarkup, refreshBacks, reconcileSheet, saveSheetBacks, refreshBackIndexes, view: () => ({ tab: EG.tab, focus: EG.focus, chosen: EG.chosen, q: EG.q, list: EG.list, drafts: pruneDrafts() }), restoreView: v => Object.assign(EG, v || {}, { card: null, cardKey: null, reread: 0, drafts: Object.assign({}, v?.drafts || EG.drafts || {}) }), loadFonts, classify, classifyAll, background, settled: () => settledPasses, canFit, isWorking, fitJob, fitAll, approve, nudge, hasPlacement, shelveWritten, resize, rotateTo, setLineSpacing, resplit, skip, sendBack, decideWords, invalidate, render, fromRecall, placementCard, renderBack, renderFront, pendingCount, reviewedCount, items, jobOf, ensureJob, setReady, writeBacks, saveBacks, resumeBacks, verifyBackFile, sheetBackOutputs, fonts: F_ };
 })();
 
 /* ═══ 22 · Sets — production evidence and release ═══ */
@@ -3544,6 +3608,7 @@ const LaserReview = window.LaserReview = (()=>{
   function place(card,ready,body){body.querySelector(`[data-laser-area="${ready?'ready':'pending'}"] .laserAreaItems`).appendChild(card);}
   function refresh(){
     frame=0;
+    if(S.mode!=='library')return;   // its cards are the Library's: a closed Library has let its records go (below)
     document.querySelectorAll('[data-laser-card]').forEach(card=>{
       const sheets=(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean),report=card._laserSet?group(card._laserSet,sheets):sheet(sheets[0] || {});
       const seal=card.querySelector('[data-laser-seal]');if(seal){const html=R.seal(report,card._laserSet?'Set':'Sheet');if(seal.innerHTML!==html)seal.innerHTML=html;}
@@ -3567,7 +3632,9 @@ const LaserReview = window.LaserReview = (()=>{
     const old=records.get(sh.sheetId);if(old)record({...old,backPool:(sh.backPool || []).slice(),engraving:{...old.engraving,...R.decisions(Orders.rows())}});
     changed();
   }
-  setInterval(()=>poll(),60000);
+  // Paul, 24 Sep: nothing may pile up on a page left open. The records are the Library's, read again each time it opens
+  // (renderLibrary, openLibrarySheet); while it is closed they are let go at the minute's check.
+  setInterval(()=>{if(S.mode!=='library')records.clear();poll();},60000);
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)poll(true);});
   return {record,sheet,group,labels,sections,place,changed,saved,poll,projected};
 })();
@@ -3775,6 +3842,7 @@ const Sets = window.Sets = (() => {
       set.labels = { pdf: { path: lp.path, url: lp.url }, manifest: { path: mp.path, url: mp.url }, json: { path: jp.path, url: jp.url }, files: files.map(f => ({ path: f.path, url: f.url, sheet: f.sheet })) };
     } else set.labels = { files: files.map(f => ({ path: f.path, url: f.url, sheet: f.sheet })) };
     set.status = "labelled"; await save(set);
+    for (const id of set.sheetIds || []) window.Session?.dropBest?.(id);   // released: its sheets' best-layout records go
     agent({ run: set.runId }, "cloud", `${set.name}: ${files.length} label(s) collected in labels/${set.name}_labels.pdf · manifest and set.json saved`);
     return set;
   }
@@ -3806,6 +3874,7 @@ const Sets = window.Sets = (() => {
     for (const row of Orders.rows()) if (r.completed.includes(row.order.receiptId) && (row.state === "written" || row.state === "labelled" || row.state === "noDesign")) row.state = "committed";
     await Pool.update([...B.pool.rows.keys()].filter(id => r.completed.includes(B.pool.rows.get(id).orderId)), { state: "committed", committedAt: Date.now() });
     await save(set);
+    for (const id of set.sheetIds || []) window.Session?.dropBest?.(id);
     agent({ run: run.runId }, "DS", `${set.name} committed: ${r.completed.length} order(s) marked design-complete and sent DESIGNED :) internally · ${set.refused.length} refused · ${Object.keys(ev.held).length} held`);
     return { completed: r.completed, refused: set.refused, held: ev.held };
   }
@@ -3905,6 +3974,8 @@ const RunCtl = window.RunCtl = (() => {
   /** Each finished line the archive does not hold in its current form goes there, in parts of at most 256 KB. */
   async function archiveFinished(r, lines, hashes) {
     const done = r.archivedLines || (r.archivedLines = {});
+    // a mark is read only for a line in the run's lines (here and in recordOf): one whose line and row are gone goes too
+    for (const k of Object.keys(done)) if (!(k in lines) && !B.orders?.byKey?.has(k)) delete done[k];
     const due = [...hashes].filter(([k, h]) => done[k] !== h).map(([k]) => [k, lines[k]]);
     if (!due.length) return;
     const parts = O.archiveParts(due);
@@ -4050,7 +4121,7 @@ const RunCtl = window.RunCtl = (() => {
         // words read and fitted, beside the run. A set still waits for them before it goes to the laser, and the run
         // looks again when they are done (backgroundSettled).
         seenAtEngrave = backgroundDone;
-        for (const j of Engrave.items().values()) if (!j.editingBack && j.state === "approved" && !j.backSaving && j.fit && j.view && j.copies.length && Pool.sheetOf(j.copies[0])) { j.copies = j.row.poolIds.filter(id=>!(j.copyOverrides || []).includes(id)); Engrave.saveBacks(j).catch(e => agent({ engrave: true }, "warn", `${j.row.order.receiptId}: ${e.message}`)); }
+        for (const j of Engrave.items().values()) if (!j.editingBack && j.state === "approved" && !j.backSaving && (j.fit && j.view || j.writtenFit && j.writtenFit.approvedAt === j.approvedAt) && j.copies.length && Pool.sheetOf(j.copies[0])) { j.copies = j.row.poolIds.filter(id=>!(j.copyOverrides || []).includes(id)); Engrave.saveBacks(j).catch(e => agent({ engrave: true }, "warn", `${j.row.order.receiptId}: ${e.message}`)); }
         Engrave.background(r); updatePending(r); return;
       }
       case "revalidate": {
@@ -4116,6 +4187,9 @@ const RunCtl = window.RunCtl = (() => {
     const r = B.run; if (!r) return;
     if (sh && sh.runId === r.runId) {
       r.sheets[sh.sheetId || sh.metal + "-" + sh.page] = { metal: sh.metal, page: sh.page, status: sh.status, verified: !!(sh.verification && sh.verification.ok), placed: sh.placements.length, rejects: sh.rejects.length, fileBase: sh.fileBase || null, error: err ? err.message : null };
+      // the notes are read only for counts: memory keeps the newest hundred, as the record does, and counts the rest with
+      // what a resumed run's record left out (lineArchive.base), so a run left on for weeks does not grow (Paul, 24 Sep)
+      { const notes = Object.keys(r.sheets), over = notes.length - ((O.RUN_RECORD && O.RUN_RECORD.keepSheets) || 100); if (over > 0) { for (const k of notes.slice(0, over)) delete r.sheets[k]; const la = r.lineArchive || (r.lineArchive = {}), base = la.base || (la.base = {}); base.sheets = (+base.sheets || 0) + over; } }
       /* A sheet's trouble belongs on that sheet's card. The banner used to carry the whole message — "GF 14/20 · sheet 3:
          bad row — Fix the cause (see the card's log), then Resume" — across every tab, above every list, for the rest of
          the session. Now the banner names the sheet and offers the way to it; the reason is written where the sheet is. */
@@ -4212,6 +4286,7 @@ const RunCtl = window.RunCtl = (() => {
   // a stop the person pressed is answered by the banner; the red toast and the desktop alert are for stops nobody asked for
   // (a passing failure again while Auto retries it is said on the banner only, not with a toast every few minutes all night)
   function stop(why, fix, at, kind) { const r = B.run; if (!r) return; kind = kind || kindOf(why); const retrying = auto.runId === r.runId && auto.step === r.step, again = retrying && auto.n > 0 && ["transient", "watchdog"].includes(kind); r.status = "stopped"; r.stoppedBy = why; r.fix = fix || null; r.at = at || null; r.stopKind = kind; r.errors.push({ t: Date.now(), why }); if (retrying) auto.next = Date.now() + AUTO_WAIT[Math.min(auto.n, AUTO_WAIT.length - 1)]; if (waiter && waiter.r === r) { const w = waiter; waiter = null; w.resolve(); } agent({ run: r.runId }, "warn", `Run stopped: ${why}${fix ? " — " + fix : ""}`);
+    if (r.errors.length > 50) r.errors.splice(0, r.errors.length - 50);   // memory keeps the last fifty, as the record does (recordOf): a run left on for weeks kept every stop
     if (why !== "stopped by the operator" && !again) { toast(`Run stopped: ${why}`, "bad", 8000); notifyPerson("Charm Sorter run stopped", why); }
     window.CN?.resumeQueueChanged?.();   // the run's queued sheets start on Resume
     save(r).catch(() => {}); renderBanner(); }
@@ -4410,6 +4485,7 @@ const RunCtl = window.RunCtl = (() => {
         ((p.metal==='rose' && (p.rosePlan || p.roseProtected)) ||
           (!drop && p.placements.length && !p.releaseFull && !p.recalled && !Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId)))));
       for(const pg of prim.pages.slice())if(!retained.includes(pg)){
+        window.Session?.dropBest?.(pg.sheetId);   // put down with the run: its best-layout record is not needed again
         delete pg.resumeWait;
         if(pg.status==='nesting')stopNest(pg);
         if(pg!==prim){(pg.workers||[]).forEach(w=>w.terminate());pg.workers=[];continue;}
@@ -4533,6 +4609,9 @@ const RunCtl = window.RunCtl = (() => {
         h.querySelector("#rbLater").onclick = () => { B.openRuns = null; renderBanner(); };
         Dock.schedule(); return;
       }
+      // with no run open, a failed save of this browser's workspace is still said, once, until the next save works
+      const unsaved = window.Session?.failure?.();
+      if (unsaved) { h.classList.remove("hidden"); h.className = "runBanner stopped"; h.innerHTML = `<span class="why"><span class="bad">Not saved on this browser: ${esc(unsaved.message)}</span> — keep this tab open; it is tried again by itself</span>`; Dock.schedule(); return; }
       // nothing is running, so there is nothing to report: the banner is not a place to advertise from
       h.classList.add("hidden"); Dock.schedule(); return;
     }
@@ -4543,7 +4622,8 @@ const RunCtl = window.RunCtl = (() => {
     // with nothing for a person to do, say what the run is waiting for: lines on sheets that have not been released yet
     const onCards = r.status === "processed" ? Orders.rows().filter(x => x.state === "pooled").length : 0;
     const idle = onCards ? `${onCards} line${onCards === 1 ? "" : "s"} wait on sheets not released yet` : "waiting for sheets to release";
-    const saveWarning = r.saveError ? `<span class="bad">Not saved online: ${esc(r.saveError)}</span> · ` : "";
+    const local = window.Session?.failure?.();   // a failed save of this browser's workspace stands here until the next one works
+    const saveWarning = (r.saveError ? `<span class="bad">Not saved online: ${esc(r.saveError)}</span> · ` : "") + (local ? `<span class="bad">Not saved on this browser: ${esc(local.message)}</span> · ` : "");
     // Arrivals being nested read "Processing complete · … wait" beside Retry pending; and after Stop the sheets already
     // nesting carry on and save, which "Stopped" alone did not say. A queued one waits for Resume (its card says so).
     const intake = r.status === "processed" && !!r.arrivalBusy;
@@ -4629,6 +4709,8 @@ const Review = window.Review = (() => {
     // new decisions join the queue here and the queue is drawn once, below: it used to be drawn again for each one
     for (const [key, it] of keep) { const had = items().find(x => x.key === key); if (had) Object.assign(had, { rows: it.rows, row: it.row, problem: it.problem, why: it.why }); else put(it); }
     B.review.items = items().filter(x => !x.key.startsWith("ord:") || keep.has(x.key));
+    // a changed-order notice goes with its line: one whose line left Etsy, was cut and committed, or left the list was kept for good
+    B.review.items = items().filter(x => { if (!String(x.key).startsWith("chg:")) return true; const cur = x.row && B.orders.byKey?.get(x.row.key); return !!cur && !["gone", "committed"].includes(cur.state); });
     // a held notice is a notice, not a decision: it goes when the order it names is committed, gone, or no longer held
     const byRid = new Map();
     for (const r of Orders.rows()) { const k = r.order.receiptId; if (!byRid.has(k)) byRid.set(k, []); byRid.get(k).push(r); }
@@ -5557,31 +5639,66 @@ const Kin = window.Kin = (() => {
 /* Durable workspace: large geometry stays in IndexedDB, never in the small localStorage quota.
    It is a checkpoint, not a second execution engine. Reload reconstructs PDF objects from the original bytes. */
 const Session = window.Session = (() => {
-  let dbP, db0 = null, ready = false, timer = 0, chain = Promise.resolve(), failed = false, saving = false, pending = false;
+  let dbP, db0 = null, ready = false, timer = 0, chain = Promise.resolve(), saving = false, forced = false, listening = false, quiet = false;
   const key = () => WORKSPACE_SANDBOX ? "sandbox" : "production";
+  /* The sorter stays on for days (Paul, 24 Sep: "everything must be able to stay on indefinitely"). A checkpoint copies
+     every sheet, order and decision, and one used to be written a second after every change, back to back while a sheet
+     nested. Now one is written at most every ten seconds, never straight after the last, and not at all when nothing
+     changed since it: rev counts the changes schedule() is told of, savedRev is the one the stored checkpoint holds. */
+  const EVERY = 10000;
+  let rev = 1, savedRev = 0, lastStart = 0, lastEnd = 0, lastMs = 0, failures = 0, failure = null, bestFailure = null;
   const bestPending = new Map(); let bestSaving = false, bestChain = Promise.resolve();
-  function checkpointBest(sh) {
-    if (!ready || !sh.sheetId || !sh.best || !sh.bestKey) return bestChain;
-    const id = key() + ":best:" + sh.sheetId;
-    bestPending.set(id, copy({ jobId: sh.jobId, bestKey: sh.bestKey, best: sh.best, bestRevision: sh.bestRevision, bestHistory: sh.bestHistory, bestWorker: sh.bestWorker, bestTrial: sh.bestTrial, bestInfo: sh.bestInfo }));
+  const DROP = {};                                                      // a best-layout record to delete, in turn with the writes
+  function queueBest(id, value) {
+    bestPending.set(id, value);
     if (bestSaving) return bestChain;
     bestSaving = true;
     bestChain = bestChain.catch(() => {}).then(async () => {
       try {
         while (bestPending.size) {
           const [id, snapshot] = bestPending.entries().next().value; bestPending.delete(id);
-          try { await io(snapshot, id); }
-          catch (e) { toast(`Best layout is kept in this tab, but its checkpoint could not be saved: ${e.message}`, "bad", 10000); }
+          if (snapshot === DROP) { await remove(id).catch(() => {}); continue; }
+          try { await io(snapshot, id); if (bestFailure) { bestFailure = null; banner(); } }
+          catch (e) { if (!bestFailure) toast(`Best layout is kept in this tab, but its checkpoint could not be saved: ${e.message}`, "bad", 10000); bestFailure = { message: `best layout — ${e.message}`, at: Date.now() }; banner(); }
         }
       } finally { bestSaving = false; }
     });
     return bestChain;
   }
+  function checkpointBest(sh) {
+    if (!ready || !sh.sheetId || !sh.best || !sh.bestKey) return bestChain;
+    return queueBest(key() + ":best:" + sh.sheetId, copy({ jobId: sh.jobId, bestKey: sh.bestKey, best: sh.best, bestRevision: sh.bestRevision, bestHistory: sh.bestHistory, bestWorker: sh.bestWorker, bestTrial: sh.bestTrial, bestInfo: sh.bestInfo }));
+  }
+  /** A best-layout record is read only to recover a sheet cut short while it nested, and one was kept for every sheet ever
+      nested, for as long as the browser kept the workspace. Once the sheet is saved with its final layout, released or
+      cleared, its record is deleted after the next checkpoint that no longer shows the sheet cut short (a crash before
+      that still finds it), and never while the sheet is nesting again; a later write of the same sheet wins. */
+  const afterSave = new Set(), cutShortIn = pages => new Set(pages.filter(p => ["nesting", "finishing", "queued"].includes(p.status) && p.sheetId).map(p => p.sheetId));
+  function dropBest(sheetId) { if (sheetId) afterSave.add(sheetId); }
+  function dropSaved(snapshot) {
+    if (!afterSave.size) return;
+    const held = new Set([...cutShortIn((snapshot.sheets || []).flatMap(g => g.pages || [])), ...cutShortIn(allSheets())]);
+    for (const id of [...afterSave]) if (!held.has(id)) { afterSave.delete(id); queueBest(key() + ":best:" + id, DROP); }
+  }
+  /** At start, every best-layout record whose sheet is not one cut short in the restored workspace is left from a sheet
+      saved, released or cleared long ago, or from a workspace that was not restored: it is deleted (keep: sheet ids). */
+  async function sweepBest(keep) {
+    try {
+      const db = await open(), prefix = key() + ":best:";
+      const keys = await new Promise((resolve, reject) => { const store = db.transaction("workspaces", "readonly").objectStore("workspaces"); if (typeof store.getAllKeys !== "function") return resolve([]); const req = store.getAllKeys(); req.onsuccess = () => resolve(req.result || []); req.onerror = () => reject(req.error); });
+      const live = cutShortIn(allSheets());   // a sheet that started nesting since keeps the record it writes
+      for (const k of keys) if (typeof k === "string" && k.startsWith(prefix) && !keep.has(k.slice(prefix.length)) && !live.has(k.slice(prefix.length))) queueBest(k, DROP);
+    } catch (_) { /* tried again at the next start */ }
+    return bestChain;
+  }
   const OMIT = new Set(["parsed", "worker", "workers", "el", "cardEl", "pages", "persisted", "persisting", "bar", "evNest", "evSearch", "_img", "_geomVerify", "pool", "row", "job", "recalledFrom", "backSaving"]);
-  function copy(v, seen = new Map()) {
+  // Bytes nothing changes once they are made (a file as read, a written sheet, a traced silhouette) go into the checkpoint
+  // as they are: put() copies them itself, in the same task as the capture. Copying each here first held every one twice.
+  const SHARED = new Set(["bits", "bytes", "ai", "labelled"]);
+  function copy(v, seen = new Map(), k0) {
     if (v == null || typeof v !== "object") return typeof v === "function" ? undefined : v;
     if (seen.has(v)) return seen.get(v);
-    if (ArrayBuffer.isView(v)) { const out = v.slice ? v.slice() : new DataView(v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength)); seen.set(v, out); return out; }
+    if (ArrayBuffer.isView(v)) { const out = SHARED.has(k0) && v.slice ? v : v.slice ? v.slice() : new DataView(v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength)); seen.set(v, out); return out; }
     if (v instanceof ArrayBuffer) { const out = v.slice(0); seen.set(v, out); return out; }
     if (v instanceof Blob) return v;
     if (v instanceof Map) { const out = new Map(); seen.set(v, out); for (const [k, x] of v) out.set(k, copy(x, seen)); return out; }
@@ -5593,7 +5710,7 @@ const Session = window.Session = (() => {
       // all prepared rotations, none of which is needed to recover a layout.
       let value = x;
       if (k === "best" && x && typeof x === "object") { const { grids, rec, ...layout } = x; value = layout; }
-      const y = copy(value, seen); if (y !== undefined) out[k] = y;
+      const y = copy(value, seen, k); if (y !== undefined) out[k] = y;
     }
     return out;
   }
@@ -5605,73 +5722,136 @@ const Session = window.Session = (() => {
     });
     return dbP;
   }
+  function put(db, value, scope) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("workspaces", "readwrite"); tx.objectStore("workspaces").put(value, scope);
+      tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error || new Error("Workspace save interrupted"));
+    });
+  }
   async function io(value, scope = key()) {
-    const db = await open(); return new Promise((resolve, reject) => {
-      const tx = db.transaction("workspaces", value === undefined ? "readonly" : "readwrite");
-      const req = value === undefined ? tx.objectStore("workspaces").get(scope) : tx.objectStore("workspaces").put(value, scope);
+    const db = await open(); if (value !== undefined) return put(db, value, scope);
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("workspaces", "readonly"), req = tx.objectStore("workspaces").get(scope);
       tx.oncomplete = () => resolve(req.result); tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error || new Error("Workspace save interrupted"));
     });
   }
+  async function remove(scope) {
+    const db = await open(); return new Promise((resolve, reject) => {
+      const tx = db.transaction("workspaces", "readwrite"), store = tx.objectStore("workspaces");
+      if (typeof store.delete !== "function") return resolve();
+      store.delete(scope); tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error || new Error("Workspace clean-up interrupted"));
+    });
+  }
+  /* Master designs that no sheet charm, pool row, open order line or back being edited uses are left out: a line that
+     needs one again fetches it from the library (Pool.masterCharm; restore does not bring back that cache either), and
+     the checkpoint kept every master ever loaded, bytes and all. */
+  function poolSourcesInUse() {
+    const all = S.poolSources || {}, ids = Object.keys(all); if (!ids.length) return all;
+    const keep = new Set(), viaPath = p => { if (p) keep.add("pool:" + String(p).replace(/[^\w]+/g, "_")); };
+    for (const p of allSheets()) for (const c of p.charms || []) keep.add(c.sourceId);
+    for (const c of S.unassigned || []) keep.add(c.sourceId);
+    for (const p of B.pool.rows.values()) if (p.state !== "committed") viaPath(p.aiPath);
+    if (B.carry?.pools instanceof Map) for (const p of B.carry.pools.values()) viaPath(p.aiPath);
+    for (const r of B.orders.rows || []) if (r.spec?.designSku && !["gone", "committed"].includes(r.state)) { try { const e = window.Master?.entryFor?.(r.spec.designSku); viaPath(e && window.Pool?.sizeEntry?.(e, r.spec.size)?.aiPath); } catch (_) {} }
+    for (const j of B.engrave.items.values()) if (j.editCharm) keep.add(j.editCharm.sourceId);
+    return ids.every(id => keep.has(id)) ? all : Object.fromEntries(ids.filter(id => keep.has(id)).map(id => [id, all[id]]));
+  }
+  /* The run's lines of orders it is done with (cut and committed, or gone) are left out where their rows are kept here:
+     restore makes them again from those rows (Orders.lineRecord), as each run save does, and the run record keeps them
+     in its line archive online. The lines of orders still in progress are kept as they are. */
+  function runCopy(seen) {
+    const r = B.run; if (!r || !r.lines) return copy(r, seen);
+    const rows = new Set((B.orders?.rows || []).map(row => row.key)), from = new Set();
+    try { for (const keys of O.closedOrders(r.lines).values()) for (const k of keys) if (rows.has(k)) from.add(k); } catch (_) { return copy(r, seen); }
+    if (!from.size) return copy(r, seen);
+    const out = copy(Object.assign({}, r, { lines: Object.fromEntries(Object.entries(r.lines).filter(([k]) => !from.has(k))) }), seen);
+    out.linesFromRows = [...from]; return out;
+  }
   function capture() {
     const seen = new Map();
-    return { v: 1, at: Date.now(), packingCatalog:copy(S.packingCatalog, seen), carry: copy(B.carry, seen), run: copy(B.run, seen), orders: copy(B.orders, seen),
-      sources: copy(S.sources, seen), poolSources: copy(S.poolSources, seen), unassigned: copy(S.unassigned, seen),
+    return { v: 1, at: Date.now(), packingCatalog:copy(S.packingCatalog, seen), carry: copy(B.carry, seen), run: runCopy(seen), orders: copy(B.orders, seen),
+      sources: copy(S.sources, seen), poolSources: copy(poolSourcesInUse(), seen), unassigned: copy(S.unassigned, seen),
       sheets: METALS.map(m => ({ metal: m.key, active: S.sheets[m.key].active, pages: allSheets().filter(p => p.metal === m.key).map(p => copy(p, seen)) })),
       pools: copy(B.pool.rows, seen), sets: copy(B.sets, seen), jobs: [...B.engrave.items.values()].map(j => ({...copy(j, seen), ...(j.editingBack ? {editRow:copy(j.row, new WeakMap())} : {})})),
       review: B.review.items.map(it => Object.assign(copy(it, seen), { rowKey: it.row?.key, jobKey: it.job?.key })),
       mode: S.mode, orderViewVersion: 1, orderView: copy(Orders.view()), engravingView: copy(Engrave.view?.()), reviewView: copy(Review.view?.()), settled: copy(Review.settled?.()), gate: copy(Gate.state()), recall: copy(Recall.state()), logs: copy(LiveStrip.rows) };
   }
-  function flush() {
+  /** Before each checkpoint, what is saved elsewhere leaves memory: written engravings keep only their placement
+      (Engrave.shelveWritten) and saved sheets their cloud links (releaseSavedOutputs). */
+  function tidy() {
+    try { window.Engrave?.shelveWritten?.(); } catch (e) { console.warn("engraving upkeep", e); }
+    try { if (window.releaseSavedOutputs) for (const p of allSheets()) window.releaseSavedOutputs(p); } catch (e) { console.warn("sheet upkeep", e); }
+  }
+  /** A save that failed is one standing line on the run banner (never a toast at each try), until the next one works. */
+  function banner() { quiet = true; try { window.RunCtl?.renderBanner?.(); } catch (_) {} finally { quiet = false; } }
+  function saved(e) {
+    const was = failure;
+    if (!e) { failures = 0; failure = null; if (was) banner(); return; }
+    failures++; failure = { message: e.message || String(e), count: failures, at: Date.now() };
+    if (failures === 1) toast(`Workspace could not be saved on this browser: ${failure.message}. Keep this tab open — it is tried again by itself.`, "bad", 10000);
+    if (!was || was.message !== failure.message) banner();
+  }
+  /** When the next pass may start: ten seconds after the last one started, and never before the last has rested as long
+      as it took (a second at least); after a failure, 15 s doubling to 5 min. */
+  function due() {
+    const t = Math.max(lastStart + EVERY, lastEnd + Math.max(1000, lastMs));
+    return failures ? Math.max(t, lastEnd + Math.min(300000, 15000 * 2 ** (failures - 1))) : t;
+  }
+  function arm(delay) {
+    if (!ready || timer || saving || rev === savedRev) return;
+    timer = setTimeout(() => { timer = 0; flush(); }, Math.max(delay, due() - Date.now(), 0));
+  }
+  async function pass() {
+    const scope = key(); lastStart = Date.now();
+    try {
+      await window.CharmNestInteraction?.idle();
+      tidy();
+      const db = await open(), at = rev, t0 = Date.now(), snapshot = capture();
+      // captured and handed to IndexedDB in one task: nothing can change the shared bytes in between
+      await put(db, snapshot, scope); lastMs = Date.now() - t0; savedRev = Math.max(savedRev, at); saved(null); dropSaved(snapshot);
+    } catch (e) { saved(e); }
+    finally { lastEnd = Date.now(); }
+  }
+  /** flush(true) writes now (after a pass in flight); flush() only when something changed and the pace allows. */
+  function flush(force) {
     clearTimeout(timer); timer = 0; if (!ready) return chain;
-    pending = true;
+    if (force) forced = true;
+    else if (rev === savedRev) return chain;
+    else if (due() > Date.now()) { arm(0); return chain; }
     if (saving) return chain;
     saving = true;
-    // Keep one snapshot in flight. Frequent updates request a fresh checkpoint
-    // after that write, rather than retaining a queue of full geometry copies.
     chain = chain.catch(() => {}).then(async () => {
-      try {
-        while (pending) {
-          pending = false;
-          try {
-            const scope = key();
-            await window.CharmNestInteraction?.idle();
-            await io(capture(), scope);
-            failed = false;
-          } catch (e) {
-            if (!failed) toast(`Workspace could not be saved on this browser: ${e.message}. Keep this tab open.`, "bad", 10000);
-            failed = true;
-          }
-        }
-      } finally { saving = false; }
+      try { do { forced = false; await pass(); } while (forced); }
+      finally { saving = false; arm(1000); }
     });
     return chain;
   }
-  function schedule() { if (ready && !timer) timer = setTimeout(flush, 1000); }
+  function schedule() { if (quiet) return; rev++; arm(1000); }
   /** Leaving the page (reload, close, another tab): write the workspace now. flush() first waits for the pointer and the
       keyboard to rest and for a save already in flight, and a reloading page is gone before either happens, so whatever
       was done in the last second before a reload (a nudge, a word, a decision) was lost. The write is issued here, in the
-      same task; IndexedDB orders it after any earlier write. */
+      same task; IndexedDB orders it after any earlier write. Nothing changed since the last checkpoint: nothing to write. */
   function flushNow() {
-    clearTimeout(timer); timer = 0; if (!ready) return;
-    let snapshot; const scope = key();
-    try { snapshot = capture(); } catch (_) { flush(); return; }
+    clearTimeout(timer); timer = 0; if (!ready || rev === savedRev) return;
+    let snapshot; const scope = key(), at = rev;
+    try { snapshot = capture(); } catch (_) { flush(true); return; }
     // synchronously on the open connection and committed at once: a transaction left to auto-commit, or created a
     // microtask later, is dropped with the unloading page
-    const write = db => { const tx = db.transaction("workspaces", "readwrite"); tx.objectStore("workspaces").put(snapshot, scope); tx.commit?.(); };
-    if (db0) { try { write(db0); } catch (_) { flush(); } } else open().then(write).catch(() => {});
+    const write = db => { const tx = db.transaction("workspaces", "readwrite"); tx.objectStore("workspaces").put(snapshot, scope); tx.oncomplete = () => { savedRev = Math.max(savedRev, at); saved(null); }; tx.onerror = () => saved(tx.error || new Error("Workspace save interrupted")); tx.commit?.(); };
+    if (db0) { try { write(db0); } catch (_) { flush(true); } } else open().then(write).catch(() => {});
   }
   async function restore() {
     let d; try { d = await io(); } catch (e) { toast(`Workspace recovery unavailable: ${e.message}`, "bad"); return false; }
-    if (!d || d.v !== 1) return false;
+    if (!d || d.v !== 1) { sweepBest(new Set()); return false; }
+    // the sheets cut short while nesting, whose best-layout records restore reads (and a reload before the next checkpoint reads again)
+    const cutShort = cutShortIn((d.sheets || []).flatMap(g => g.pages || []));
     try {
       // A purged/abandoned cloud run must never be resurrected by an old browser checkpoint.
       if (d.run && S.cloud.ok) {
         let cloud;
         try { cloud = await api("charmNestLibrary", { op: "runGet", runId: d.run.runId }, { quiet: true }); }
         catch (e) { d.run.saveError = "Cloud check unavailable: " + e.message; }
-        if (cloud?.run?.status === "abandoned") return false;
-        if (cloud?.run?.status === "complete" && d.run.status !== "complete") return false;
-        if (cloud && !cloud.run && d.run.cloudSavedAt && !d.run.saveError) return false;
+        if (cloud?.run?.status === "abandoned" || cloud?.run?.status === "complete" && d.run.status !== "complete" || cloud && !cloud.run && d.run.cloudSavedAt && !d.run.saveError) { sweepBest(new Set()); return false; }
       }
       for (const src of (d.sources || []).concat(Object.values(d.poolSources || {}))) {
         if (src.bytes?.length) src.parsed = await P.parseSource(src.bytes, src.name);
@@ -5682,6 +5862,8 @@ const Session = window.Session = (() => {
       S.sources = d.sources || []; S.poolSources = d.poolSources || {}; S.unassigned = d.unassigned || [];
       B.carry = d.carry;
       B.run = d.run; B.orders = d.orders; B.orders.byKey = new Map(B.orders.rows.map(r => [r.key, r]));
+      // the lines of orders the run is done with come back from their rows (left out of the checkpoint, runCopy)
+      if (B.run?.linesFromRows) { const lines = B.run.lines || (B.run.lines = {}); for (const k of B.run.linesFromRows) { const row = B.orders.byKey.get(k); if (row) lines[k] = Orders.lineRecord(row)[1]; } delete B.run.linesFromRows; }
       B.pool.rows = d.pools || new Map(); B.sets = d.sets || new Map();
       for (const group of d.sheets) {
         const prim = S.sheets[group.metal], card = prim.cardEl;
@@ -5728,17 +5910,21 @@ const Session = window.Session = (() => {
       }
       Orders.render(); Engrave.render(); Review.render(); RunCtl.renderBanner(); refreshAllCards(); renderRail(); updateTopSub();
       setMode(d.mode || "nest");
+      sweepBest(cutShort);
       toast("Workspace restored — sheets, orders and decisions kept", "ok", 4000);
       return true;
     } catch (e) { toast(`Workspace recovery stopped: ${e.message}. The saved checkpoint is kept.`, "bad", 10000); throw e; }
   }
   function listen() {
     ready = true;
-    for (const type of ["input", "change", "pointerup"]) document.addEventListener(type, schedule, true);
+    if (listening) return; listening = true;
+    for (const type of ["input", "change", "pointerup", "keyup"]) document.addEventListener(type, schedule, true);
     window.addEventListener("pagehide", flushNow);
     document.addEventListener("visibilitychange", () => { if (document.hidden) flushNow(); });
+    // asked once, never waited for: a browser short of space may otherwise clear this workspace while the tab is closed
+    try { navigator.storage?.persisted?.().then(p => p || navigator.storage.persist?.()).catch(() => {}); } catch (_) {}
   }
-  return { copy, capture, restore, listen, flush, schedule, checkpointBest };
+  return { copy, capture, restore, listen, flush, schedule, checkpointBest, dropBest, failure: () => failure || bestFailure };
 })();
 
 /* Import cadence is independent of run completion. The cloud ledger counts receipt IDs, not API calls. */

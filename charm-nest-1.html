@@ -1600,9 +1600,16 @@ function download(bytes, name, type) {
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 60000);
 }
+// one sound device for the page, made at the first ding and woken if the browser put it to sleep: every ding made a new
+// one and none was closed, and a browser allows only a few (Paul, 24 Sep: the station stays on for days)
+let dingCtx = null;
 function ding() {
   if (S.settings.sound !== "on") return;
-  try { const ac = new (window.AudioContext || window.webkitAudioContext)(); const o = ac.createOscillator(), g = ac.createGain(); o.frequency.value = 880; o.type = "sine"; g.gain.value = 0.0001; o.connect(g); g.connect(ac.destination); o.start(); g.gain.exponentialRampToValueAtTime(0.08, ac.currentTime + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + 0.5); o.stop(ac.currentTime + 0.55); } catch (_) { /* no audio */ }
+  try {
+    if (!dingCtx || dingCtx.state === "closed") dingCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const ac = dingCtx; if (ac.state === "suspended") ac.resume?.()?.catch?.(() => {});
+    const o = ac.createOscillator(), g = ac.createGain(); o.frequency.value = 880; o.type = "sine"; g.gain.value = 0.0001; o.connect(g); g.connect(ac.destination); o.onended = () => { o.disconnect(); g.disconnect(); }; o.start(); g.gain.exponentialRampToValueAtTime(0.08, ac.currentTime + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + 0.5); o.stop(ac.currentTime + 0.55);
+  } catch (_) { /* no audio */ }
 }
 
 /* ═══ 2 · settings ══════════════════════════════════════════════════════ */
@@ -2257,7 +2264,7 @@ async function unmergeCharm(src, fragIndex, ev) {
 }
 /** Optional, not part of the loop: Claude inspects a finished sheet (kept for the console; `CN.reviewLayout(metal)`). */
 async function reviewLayout(sh, items) {
-  if (S.settings.review === "off" || !S.cloud.ok || !sh.outputs || !sh.outputs.previewPng) return;
+  if (S.settings.review === "off" || !S.cloud.ok || !sh.outputs || !(sh.outputs.previewPng || sh.cloud?.preview)) return;
   sh.aiReview = { state: "running" }; renderCard(sh);
   const evL = agent({ metal: sh.metal }, "claude", `Sent Claude the finished ${labelOf(sh.metal)} sheet and its ${sh.placements.length} placements — asking for anything an operator would reject`, { live: true });
   const byId = new Map(items.map(c => [c.id, c]));
@@ -3074,7 +3081,7 @@ async function finishNest(sh, { result, error }) {
         renderCard(sh); drawPreview(sh);
         agent({ metal: sh.metal }, "nest", `${sheetName(sh)}: no room for ${sh.rejects.length === 1 ? "the new piece" : `the ${sh.rejects.length} new pieces`}; the layout and its saved files stand as they are`);
         sh.persisted = api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, releaseFull: !!sh.releaseFull, topup: sh.topup || null, intakeFinalized: !!sh.intakeFinalized } }, { label: "Updating sheet record", quiet: true })
-          .then(() => { sh.persistedDone = true; flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); })
+          .then(() => { sh.persistedDone = true; releaseSavedOutputs(sh); window.Session?.dropBest?.(sh.sheetId); flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); })
           .catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e, { stage: "persistence", critical: true })); });
         // in Auto the move is routine and shows on both cards; a toast for it covered the next card's controls
         if (sh.rejects.length && (sh.nestFlow !== "learned" || ["cap", "plateau"].includes(sh.endedBy))) overflowToNextSheet(sh, !(S.settings.runMode === "auto" && !!sh.runId && window.B?.run?.runId === sh.runId));
@@ -3138,7 +3145,7 @@ async function finishNest(sh, { result, error }) {
     setTimeout(() => $$(".sheetCard").find(el => el.dataset.m === sh.metal)?.classList.remove("pulse"), 1300);
     if (document.hidden && S.settings.notify === "on" && "Notification" in window && Notification.permission === "granted") { try { new Notification("Charm Nesting Station", { body: msg }); } catch (_) { /* ignore */ } }
     // 5 · persist everything. The two verifiers above are the acceptance test; no further inspection runs.
-    sh.persisted = persistSheet(sh, items).then(() => { if (sh.jobId === writtenJob) sh._written = written; sh.persistedDone = true; if (sh.resumeWait && sh.jobId === writtenJob && sh.rejects.length) resumeLater(sh); flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e,{stage:"persistence",critical:true})); });
+    sh.persisted = persistSheet(sh, items).then(() => { if (sh.jobId === writtenJob) sh._written = written; sh.persistedDone = true; if (sh.jobId === writtenJob) { releaseSavedOutputs(sh); window.Session?.dropBest?.(sh.sheetId); } if (sh.resumeWait && sh.jobId === writtenJob && sh.rejects.length) resumeLater(sh); flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e,{stage:"persistence",critical:true})); });
     // 6 · whatever did not fit under the ceiling goes to the next sheet of this metal, which nests on its own
     if (sh.rejects.length && sh.endedBy !== "stopped" && (sh.nestFlow !== "learned" || sh.verification.ok && ["cap", "plateau"].includes(sh.endedBy))) overflowToNextSheet(sh, false);
   } catch (e) {
@@ -3146,6 +3153,18 @@ async function finishNest(sh, { result, error }) {
     if (window.RunCtl) RunCtl.onSheetDone(sh, e);
   }
   pumpNestQueue();
+}
+/* Paul, 24 Sep: "nothing may accumulate". A sheet saved to the cloud keeps the links, and the bytes behind them leave this
+   page and its checkpoint: the .ai and the labelled proof (a download reads the saved sheet, ProductionExports) and the
+   preview picture (the card draws its own). The report and the verification stay. A sheet closed for good (full, cut,
+   committed or recalled) also lets go of its kept render areas, which only speed up writing it again. */
+function releaseSavedOutputs(sh) {
+  const o = sh.outputs, c = sh.cloud;
+  if (!o || !c || !sh.persistedDone || sh.problem || sh.dirty || ["nesting", "finishing", "queued"].includes(sh.status)) return;
+  if (c.ai) delete o.ai;
+  if (c.labelled) delete o.labelled;
+  if (c.preview) delete o.previewPng;
+  if (sh._renderAreas && (sh.releaseFull || sh.roseCutAt || sh.recalled || [...(window.B?.sets?.values?.() || [])].some(set => set.committedAt && (set.sheetIds || []).includes(sh.sheetId)))) sh._renderAreas = null;
 }
 function pumpNestQueue() {
   flushManualIntake();
@@ -3250,7 +3269,8 @@ async function persistSheet(sh, items, context) {
   if (cal.density > 0 && cal.count > 0) {
     api("charmNestLibrary", { op: "putCalibration", row: Object.assign({ sheetId: sh.sheetId, metal: sh.metal, clearancePt: +S.settings.clearancePt }, cal) }, { label: "Saving calibration", quiet: true })
       .catch(e => log(sh, "calibration not recorded: " + e.message));
-    S.calibration.push(Object.assign({ sheetId: sh.sheetId }, cal));
+    // newest first and the newest 200, as the server keeps and returns them (ping): one was added per sheet for as long as the page stayed open
+    S.calibration.unshift(Object.assign({ sheetId: sh.sheetId }, cal)); if (S.calibration.length > 200) S.calibration.length = 200;
   }
   renderCard(sh);
   recountLibrary();                                            // the rail's library count moves with the library
@@ -3863,7 +3883,9 @@ async function restoreSheet(d) {
   const before = new Set(S.sources.map(s => s.id));
   await intake(files, d.metal, {deferNest:true});
   // wait for parsing, then re-apply the recorded placements as pins
-  const wait = () => new Promise(res => { const t = setInterval(() => { if (S.sources.filter(s => !before.has(s.id)).every(s => s.ingestReady || s.state === "error")) { clearInterval(t); res(); } }, 300); });
+  // a file that is never read (or is taken for a master file, which is indexed instead) kept this check running every
+  // 0.3 s for as long as the tab stayed open: after ten minutes it is marked failed, and the restore says so
+  const wait = () => new Promise((res, rej) => { const until = Date.now() + 600000; const t = setInterval(() => { const mine = S.sources.filter(s => !before.has(s.id)); if (mine.every(s => s.ingestReady || s.state === "error")) { clearInterval(t); res(); return; } if (Date.now() < until) return; clearInterval(t); const stuck = mine.filter(s => !s.ingestReady && s.state !== "error"); for (const s of stuck) { s.state = "error"; s.error = `${s.name} was still not read after 10 minutes — remove it and restore the sheet again`; } renderRail(); rej(new Error(stuck.map(s => s.error).join("; "))); }, 300); });
   await wait();
   const newSrcs = S.sources.filter(s => !before.has(s.id));
   const charms=newSrcs.flatMap(s=>s.charms),used=new Set(),placements=[];
@@ -4162,7 +4184,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260924-history"></script>
+<script src="charm-nest-bridge.js?v=20260924-retain"></script>
 <script src="charm-nest-rose-ui.js?v=20260924-thickness"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
