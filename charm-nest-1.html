@@ -1824,10 +1824,14 @@ function routeByName(name, folder) {
   const n = (folder ? folder + "/" : "") + name;
   const s = n.toLowerCase().replace(/[_\s]+/g, "-");
   const has = re => re.test(s);
-  if (has(/(^|[^a-z0-9])(10-?k|10-?kt|10k-?gold|solid-?10k)([^a-z]|$)/)) return "gold10k";
-  if (has(/(^|[^a-z0-9])(14-?k|14-?kt|14k-?gold|solid-?14k)([^a-z0-9]|$)/) && !has(/14\/?20/)) return "gold14k";
-  if (has(/(^|[^a-z])(gf|gold-?filled|14\/?20-?g|gf-?1420)([^a-z]|$)/)) return "gold";
-  if (has(/(^|[^a-z])(rg|rose|rose-?gold|14\/?20-?r|rg-?1420)([^a-z]|$)/)) return "rose";
+  const rose = has(/(^|[^a-z])(rg|rose|rose-?gold|14\/?20-?r|rg-?1420)([^a-z]|$)/);
+  if (has(/(^|[^a-z])(gf|gold-?filled|14\/?20-?g|gf-?1420)([^a-z]|$)/)) return rose ? "rose" : "gold";
+  // "10k Gold"/"14k Gold" denotes GF stock here. A bare karat is
+  // ambiguous; only an explicit solid-gold phrase selects a solid sheet.
+  if (has(/(^|[^a-z0-9])(?:solid-(?:gold-?)?10-?k(?:t)?|10-?k(?:t)?-(?:solid(?:-gold)?|gold-solid))([^a-z0-9]|$)/)) return "gold10k";
+  if (has(/(^|[^a-z0-9])(?:solid-(?:gold-?)?14-?k(?:t)?|14-?k(?:t)?-(?:solid(?:-gold)?|gold-solid))([^a-z0-9]|$)/)) return "gold14k";
+  if (rose) return "rose";
+  if (has(/(^|[^a-z0-9])(?:10|14)-?k(?:t)?-?gold([^a-z0-9]|$)/)) return "gold";
   if (has(/(^|[^a-z])(ss|sterling|silver|925)([^a-z]|$)/)) return "silver";
   return null;
 }

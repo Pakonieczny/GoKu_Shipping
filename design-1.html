@@ -1200,14 +1200,14 @@ const FN = window.location.origin + "/.netlify/functions";
 
    IMPORTANT SOLID-GOLD INVARIANT:
    10K and 14K are SOLID-GOLD benches, not generic karat words. They may only
-   match when the SAME source string contains BOTH the karat and the word
-   "solid". Therefore "14k Gold", "10k Gold" and "14k Gold Filled" are not
+   match when "solid" describes that karat in the SAME source string.
+   Therefore "14k Gold", "10k Gold" and "14k Gold Filled" are not
    solid-gold pieces; they continue through the normal rose/silver/gold rules.
 
    Precedence: 14k solid → 10k solid → rose → silver → gold.                 */
 const METALS = [
-  { key:"14k",    label:"14K",    short:"14", match:[/(?=.*\b14\s*k(?:t|arat)?\b)(?=.*\bsolid\b)/] },
-  { key:"10k",    label:"10K",    short:"10", match:[/(?=.*\b10\s*k(?:t|arat)?\b)(?=.*\bsolid\b)/] },
+  { key:"14k",    label:"14K",    short:"14", match:[/\b14\s*k(?:t|arat)?\s*(?:solid(?:\s+gold)?|gold\s+solid)\b/, /\bsolid(?:\s+gold)?\s*14\s*k(?:t|arat)?\b/] },
+  { key:"10k",    label:"10K",    short:"10", match:[/\b10\s*k(?:t|arat)?\s*(?:solid(?:\s+gold)?|gold\s+solid)\b/, /\bsolid(?:\s+gold)?\s*10\s*k(?:t|arat)?\b/] },
   { key:"rose",   label:"Rose",   short:"R",  match:[/rose/] },
   { key:"silver", label:"Silver", short:"S",  match:[/silv(?:er|r)/, /sterling/] },
   { key:"gold",   label:"Gold",   short:"G",  match:[/gold/, /yellow/] },
@@ -1220,7 +1220,7 @@ const METAL_KEYS   = METALS.map(m => m.key);
 
 /* "SOLID" IS A REQUIRED GATE FOR BOTH KARAT BENCHES.
    10K and 14K are only valid when "solid" and the matching karat occur in the
-   SAME source string. A bare karat must never imply solid gold:
+   SAME source phrase. A bare karat must never imply solid gold:
 
      "14k Solid Gold"  → 14k
      "Solid Gold 10k"  → 10k
@@ -1228,11 +1228,11 @@ const METAL_KEYS   = METALS.map(m => m.key);
      "10k Gold Filled" → gold
      "solid", no karat → SOLID_UNKNOWN, deliberately unclassified
 
-   Requiring co-occurrence in one source value also prevents a title containing
-   "solid" from combining with an unrelated variation containing "14k" and
-   fabricating a solid-gold classification.                                  */
+   Requiring a direct phrase also prevents "solid" in chain or listing copy
+   from turning an unrelated "14k Gold" option into solid gold.             */
 const SOLID_RE       = /\bsolid\b/;
 const KARAT_RE       = /\b(?:10|14)\s*k(?:t|arat)?\b/;
+const GOLD_FILLED_RE = /\bgold\s*fill(?:ed)?\b|\bgf\b|\b14\s*20\b/;
 const SOLID_UNKNOWN  = "__solid_unknown__";
 
 const PAGE_SIZE = 100;
@@ -1471,6 +1471,10 @@ function metalKeyFromText(raw, { solidStrict = false } = {}) {
   const t = normMetalText(raw);
   if (!t) return "";
 
+  // An explicit Gold Filled specification wins even when other words in a
+  // listing mention solid parts. Rose Gold Filled stays on the rose bench.
+  if (GOLD_FILLED_RE.test(t)) return /\brose\b/.test(t) ? "rose" : "gold";
+
   // "Solid" gates on the karat: read it, then let 10K/14K make the call. A
   // solid piece with no karat is never guessed onto a bench.
   if (solidStrict && SOLID_RE.test(t) && !KARAT_RE.test(t)) return SOLID_UNKNOWN;
@@ -1541,8 +1545,9 @@ function metalKeyForTx(tx, { wide = false } = {}) {
   // the caller can surface it rather than bucket it.
   if (sawSolidUnknown) return SOLID_UNKNOWN;
 
-  const cached = metalKeyFromText(tx._metalKey || "");
-  return cached;
+  // _metalKey is derived data from earlier versions; it is not evidence that
+  // a transaction was solid gold when its source fields are inconclusive.
+  return "";
 }
 
 /** True only for a key that names a real bench. SOLID_UNKNOWN and "" are not. */
