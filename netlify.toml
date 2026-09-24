@@ -273,11 +273,16 @@
 # the explicit path /design-1.html rather than the subdomain root, because
 # header rules match the REQUEST path and the root is a rewrite (see the
 # SKU_List_V1 caveat above). Always revalidate, like the sorter page.
+# Origin-Agent-Cluster keeps the framed station off the sorter's main thread: a
+# same-site frame shares it otherwise, and each page froze the other for up to
+# 1.5 s at a time (measured September 2026; 15-28 ms with the header). It costs
+# one more renderer process. Neither page uses document.domain, which it turns off.
 [[headers]]
   for = "/design-1.html"
   [headers.values]
     Content-Security-Policy = "frame-ancestors 'self' https://brites-charm-sorter.goldenspike.app https://goldenspike.app"
     Cross-Origin-Resource-Policy = "same-site"
+    Origin-Agent-Cluster = "?1"
     Cache-Control = "max-age=0, no-cache, no-store, must-revalidate"
     Pragma = "no-cache"
     Expires = "0"
