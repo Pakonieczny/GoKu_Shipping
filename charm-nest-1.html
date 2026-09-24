@@ -187,6 +187,7 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .shTabs button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
 .shTabs button i{font-style:normal;opacity:.7;margin-left:6px;font-weight:500}
 .shTabs button .spin{margin-left:6px}
+.shTabs select{flex:0 0 auto;font:600 11px var(--sans);letter-spacing:.02em;padding:3px 8px;border-radius:999px;border:1px solid var(--line);background:var(--card2);color:var(--ink70);max-width:150px;cursor:pointer}
 .shHead .sw{width:12px;height:12px;border-radius:3px;background:var(--accent);flex:0 0 auto}
 .shHead .name{font:17px var(--serif);min-width:0;white-space:nowrap;flex:0 0 auto}
 .shHead .stock{display:none}
@@ -2454,15 +2455,21 @@ function usableArea(sh) {
   return Math.max(0,st.wPt-2*ins)*Math.max(0,st.hPt-2*ins);
 }
 /** ρ_target: 25th percentile of achieved densities among the nearest shape-mix neighbours; seed 0.70. */
+/* The calibration scored and sorted against a sheet's mix was worked out again at every card refresh of every page. The
+   answer is kept per sheet until its mix (the shape signature) or the calibration changes (a row added, the list
+   replaced: its length and its first and last rows say so). */
+const rhoKept = new WeakMap();
 function rhoTarget(sh) {
   const items = activeCharms(sh); const sig = shapeSignature(items);
   const rows = S.calibration || [];
   if (!rows.length || !items.length) return { rho: 0.70, lo: 0.62, hi: 0.74, n: 0 };
+  const key = [rows, rows.length, rows[0], rows[rows.length - 1], sig.count, sig.cv, sig.largestFrac], kept = rhoKept.get(sh);
+  if (kept && kept.key.every((v, i) => Object.is(v, key[i]))) return Object.assign({}, kept.out);
   const scored = rows.map(r => ({ r, d: Math.abs(Math.log((r.count || 1) / (sig.count || 1))) + Math.abs((r.cv || 0) - sig.cv) * 2 + Math.abs((r.largestFrac || 0) - sig.largestFrac) * 4 })).sort((a, b) => a.d - b.d).slice(0, 12);
   const d = scored.map(s => s.r.density).filter(x => x > 0).sort((a, b) => a - b);
-  if (d.length < 3) return { rho: 0.70, lo: 0.62, hi: 0.74, n: d.length };
   const q = p => d[Math.min(d.length - 1, Math.floor(p * (d.length - 1)))];
-  return { rho: q(0.25), lo: q(0.10), hi: q(0.50), n: d.length };
+  const out = d.length < 3 ? { rho: 0.70, lo: 0.62, hi: 0.74, n: d.length } : { rho: q(0.25), lo: q(0.10), hi: q(0.50), n: d.length };
+  rhoKept.set(sh, { key, out }); return Object.assign({}, out);
 }
 function shapeSignature(items) {
   const a = items.map(inflatedArea); const n = a.length; if (!n) return { count: 0, cv: 0, largestFrac: 0 };
@@ -3384,14 +3391,38 @@ function clearMetal(metal) {
   for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms.forEach(c => { c.metal = null; }); pg.charms = []; pg.sheetId = null; pg.log = []; delete pg.roseStock; delete pg.roseProtected; delete pg.roseCutAt; delete pg.roseHistory; delete pg.rosePlan; delete pg.rosePlanHash; delete pg.rosePlanKey; pg._roseLoaded=false; if (pg !== prim) { (pg.workers || []).forEach(w => w.terminate()); pg.workers = []; } }
   prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim);
 }
+/* A metal's sheets were a tab each, all written again at every card refresh and every second while one nested out of
+   sight: a long day made a long row, rebuilt over and over. The newest ten are tabs (and the page on the card, if it is
+   older); the earlier ones are a pick away, in the same pill as the tabs. The row is written only when it reads
+   differently, and the one-second tick writes only the marks that changed (tabMarks). */
+const TABS_SHOWN = 10;
+const tabStatus = pg => pg.status === "nesting" || pg.status === "finishing" ? `<span class="spin"></span>` : pg.recalled && !pg.charms.length ? `<i>✓ ${pg.recalled.placedCount}</i>` : pg.status === "complete" ? `<i>✓ ${pg.placements.length}</i>` : pg.status === "partial" ? `<i>⚠ ${pg.placements.length}/${activeCharms(pg).length}</i>` : `<i>${activeCharms(pg).length}</i>`;
 function renderTabs(sh) {
   const el = sh.el; if (!el) return; const tabs = $(`[data-r="tabs"]`, el); const pages = pagesOf(sh.metal);
   tabs.classList.remove("hidden");
-  const st = pg => pg.status === "nesting" || pg.status === "finishing" ? `<span class="spin"></span>` : pg.recalled && !pg.charms.length ? `<i>✓ ${pg.recalled.placedCount}</i>` : pg.status === "complete" ? `<i>✓ ${pg.placements.length}</i>` : pg.status === "partial" ? `<i>⚠ ${pg.placements.length}/${activeCharms(pg).length}</i>` : `<i>${activeCharms(pg).length}</i>`;
-  tabs.innerHTML = pages.map((pg, i) => `<button type="button" class="${pg === sh ? "on" : ""}" data-i="${i}" title="${esc(sheetName(pg))}">Sheet ${pg.page}${st(pg)}</button>`).join("");
+  const from = Math.max(0, pages.length - TABS_SHOWN), older = pages.slice(0, from);
+  const html = (older.length ? `<select data-older title="the earlier sheets of this metal"><option value="">Earlier · ${older.length}</option>${older.map((pg, i) => `<option value="${i}"${pg === sh ? " selected" : ""}>${esc(sheetName(pg))}</option>`).join("")}</select>` : "")
+    + pages.map((pg, i) => i < from && pg !== sh ? "" : `<button type="button" class="${pg === sh ? "on" : ""}" data-i="${i}" title="${esc(sheetName(pg))}">Sheet ${pg.page}<span data-st>${tabStatus(pg)}</span></button>`).join("");
+  tabs._of = pages; tabs._n = pages.length;
+  if (tabs._html === html) return;
+  tabs._html = html; tabs.innerHTML = html;
   $$("button", tabs).forEach(b => b.onclick = () => showPage(sh.metal, +b.dataset.i));
+  const pick = $("[data-older]", tabs); if (pick) pick.onchange = () => { if (pick.value !== "") showPage(sh.metal, +pick.value); };
 }
-function refreshAllCards() { for (const sh of allSheets()) { computeSaturation(sh); renderCard(sh); } }
+/** The tabs' marks (a spinner while a sheet nests, its count after), written where they changed; a new or removed page redraws the row. */
+function tabMarks(sh) {
+  const el = sh.el; if (!el) return; const tabs = $(`[data-r="tabs"]`, el), pages = pagesOf(sh.metal);
+  if (tabs._of !== pages || tabs._n !== pages.length) return renderTabs(sh);
+  for (const b of $$("button[data-i]", tabs)) {
+    const pg = pages[+b.dataset.i], mark = b.querySelector("[data-st]"); if (!pg || !mark) return renderTabs(sh);
+    const html = tabStatus(pg); if (mark._st !== html) { mark._st = html; mark.innerHTML = html; tabs._html = null; }
+  }
+}
+/* Only pages with a card to draw are drawn, and their fill worked out; one off screen is worked out when it is shown
+   (showPage), nested or finished, and here only when it changed (dirty). Every page of every metal was worked out and
+   drawn at each refresh, and a long day keeps many. renderCard still runs for each page: without a card it only notes
+   when the card's work began and schedules the checkpoint. */
+function refreshAllCards() { for (const sh of allSheets()) { if (sh.el || sh.dirty) computeSaturation(sh); renderCard(sh); } }
 function renderCard(sh) {
   if (sh.charms.length && !sh.cardStartedAt) sh.cardStartedAt = sh.recalled?.cardStartedAt || sh.recalled?.createdAt || (sh.setDay ? new Date(sh.setDay + "T12:00:00").getTime() : Date.now());
   if (window.Session) Session.schedule();
@@ -4106,7 +4137,10 @@ async function boot() {
   document.addEventListener("dragover", e => e.preventDefault());
   document.addEventListener("drop", e => { e.preventDefault(); dragDepth = 0; $("#dropAll").classList.remove("on"); if (e.dataTransfer.files && e.dataTransfer.files.length) intake(e.dataTransfer.files, null); });
   window.addEventListener("resize", () => METALS.forEach(m => drawPreview(activePage(m.key))));
-  setInterval(() => { for (const sh of allSheets()) { if (["nesting", "finishing"].includes(sh.status)) renderProgress(sh); } if (allSheets().some(sh => sh.status === "nesting" && !sh.el)) METALS.forEach(m => renderTabs(activePage(m.key))); }, 1000);
+  // a sheet nesting out of sight shows on its tab: each second the tabs' marks of its metal are brought up to date (and once
+  // more after it stops, so its tab does not keep the spinner); the whole row of every metal used to be written again
+  const tabsWatched = new Set();
+  setInterval(() => { for (const sh of allSheets()) { if (["nesting", "finishing"].includes(sh.status)) renderProgress(sh); } for (const m of METALS) { const busy = pagesOf(m.key).some(sh => sh.status === "nesting" && !sh.el); if (!busy && !tabsWatched.has(m.key)) continue; if (busy) tabsWatched.add(m.key); else tabsWatched.delete(m.key); tabMarks(activePage(m.key)); } }, 1000);
   await gate();
   cloudProbe();
   // (the cloud offline: the network back, or the tab looked at again after a sleep, checks it at once)
@@ -4120,7 +4154,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260924-recover"></script>
+<script src="charm-nest-bridge.js?v=20260924-churn"></script>
 <script src="charm-nest-rose-ui.js?v=20260924-thickness"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->

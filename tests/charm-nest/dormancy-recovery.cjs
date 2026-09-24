@@ -200,13 +200,15 @@ async function chromiumChecks() {
         const transient = await h.page.evaluate(async () => {
           B.run = Object.assign({}, B.run, { runId: B.run.runId + '-t', status: 'running', step: 'complete', errors: [] });
           RunCtl.stop('New orders could not be added: Failed to fetch', 'Resume after fixing the cause. Your earlier work is kept.');
+          RunCtl.renderBanner();   // (the page draws its banner once a frame; the exported call draws it now)
           const r = { kind: RunCtl.stopKind(B.run), banner: document.getElementById('runBanner').textContent };
           r.resumed = await RunCtl.autoResume(true); r.status = B.run.status; return r;
         });
         assert.equal(transient.kind, 'transient'); assert.match(transient.banner, /Auto carries on by itself/, 'the banner says Auto will carry on'); assert.equal(transient.resumed, true); assert.notEqual(transient.status, 'stopped');
         const operator = await h.page.evaluate(async () => {
           B.run = Object.assign({}, B.run, { runId: B.run.runId + '-o', status: 'running', step: 'complete', errors: [] }); RunCtl.operatorStop();
-          return { kind: RunCtl.stopKind(B.run), resumed: await RunCtl.autoResume(true), status: B.run.status, banner: document.getElementById('runBanner').textContent };
+          const resumed = await RunCtl.autoResume(true); RunCtl.renderBanner();
+          return { kind: RunCtl.stopKind(B.run), resumed, status: B.run.status, banner: document.getElementById('runBanner').textContent };
         });
         assert.equal(operator.kind, 'operator'); assert.equal(operator.resumed, false); assert.equal(operator.status, 'stopped', 'the operator\'s Stop is never lifted by Auto'); assert.doesNotMatch(operator.banner, /Auto carries on/);
         const watchdog = await h.page.evaluate(async () => {

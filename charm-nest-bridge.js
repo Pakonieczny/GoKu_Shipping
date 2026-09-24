@@ -281,20 +281,42 @@ function askEmployee() {
   if (v && v.trim()) { B.employee = v.trim(); localStorage.setItem("cn.employee", B.employee); }
   return employeeName();
 }
+/* One drawing a frame. The run banner, the rail's strip and ladder and the Orders tab were each drawn in full at every
+   call, and a run step, a poke, an arrival, a log line or a pool pass called them, often several times in one go. A
+   request now draws once, at the next animation frame. A hidden tab gets its frames from the page clock's 16 ms timer
+   (charm-nest-clock.js swaps requestAnimationFrame while the tab is hidden, which is why it is looked up at each call);
+   without the clock the browser holds them until the tab is shown, and a request is kept once, not piled up. */
+const CNFrame = window.CNFrame = (() => {
+  const due = new Map(); let asked = false;
+  // the banner draws the strip with itself, and the strip the ladder: asked for, they wait behind it, which draws them
+  // (and takes them off), so each is drawn once in a frame whichever was asked for first
+  const WITH = { banner: ["strip", "ladder"], strip: ["ladder"] };
+  // a drawing asked for by another in the same frame is drawn in it too; one asked for again after it ran waits a frame
+  function flush() { asked = false; const ran = new Set(); for (const [key, f] of due) { if (ran.has(key)) continue; ran.add(key); due.delete(key); try { f(); } catch (e) { console.error(e); } } }
+  function later(key, f) {
+    due.set(key, f);
+    for (const k of WITH[key] || []) if (due.has(k)) { const g = due.get(k); due.delete(k); due.set(k, g); }
+    if (asked) return; asked = true; if (typeof requestAnimationFrame === "function") requestAnimationFrame(flush); else setTimeout(flush, 16);
+  }
+  return { later, cancel: key => due.delete(key) };
+})();
 
 /* ═══ 17 · DesignLink — the Design Station as a slave ═════════════════════ */
 const LiveStrip = window.LiveStrip = (() => {
   const rows = [];
   function push(ev) { rows.push({ t: ev.t || Date.now(), kind: ev.kind, text: ev.text || (ev.html ? ev.html.replace(/<[^>]+>/g, "") : "") }); if (rows.length > 40) rows.shift(); render(); }
-  function render() {
+  // every log line and state change asked for this: drawn once a frame (CNFrame); the banner draws it with itself (now)
+  const render = () => CNFrame.later("strip", now);
+  function now() {
+    CNFrame.cancel("strip");
     const b = document.getElementById("railRecentBody");
     // newest first, and only drawn while the disclosure is open — it used to be a permanent band that clipped the newest line
     if (b && b.parentElement && b.parentElement.open) b.innerHTML = rows.length ? rows.slice().reverse().map(r => `<div><i>${fmtT(r.t)}</i><b>${esc(r.kind)}</b> ${esc(r.text).slice(0, 160)}</div>`).join("") : "<div>nothing yet</div>";
     const n = Review.count(); const rb = document.getElementById("tabReviewN"); if (rb) rb.textContent = n ? String(n) : "";
     const eb = document.getElementById("tabEngraveN"); if (eb) { const k = Engrave.pendingCount(); eb.textContent = k ? String(k) : ""; }
-    if (window.Ladder) Ladder.render();
+    if (window.Ladder) Ladder.now();
   }
-  return { push, render, rows };
+  return { push, render, now, rows };
 })();
 
 /* ═══ 17b · Ladder — where the work is, on every screen ══════════════════════
@@ -333,7 +355,9 @@ const Ladder = window.Ladder = (() => {
     const revN = Review.count(), engN = Engrave.pendingCount();
     return { r, idx, here, revN, engN };
   }
-  function render() {
+  const render = () => CNFrame.later("ladder", now);   // once a frame (CNFrame); the strip draws it with itself
+  function now() {
+    CNFrame.cancel("ladder");
     const host = mount(); if (!host) return;
     const { r, here, revN, engN } = shape();
     if (!r) {
@@ -362,7 +386,7 @@ const Ladder = window.Ladder = (() => {
   function wire(host) {
     host.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { setMode(b.dataset.tab); if (b.dataset.tab === "engrave" && window.Engrave) Engrave.render(); });
   }
-  return { render, STEPS, word: r => wordOf(r)[0] };
+  return { render, now, STEPS, word: r => wordOf(r)[0] };
 })();
 
 const DesignLink = window.DesignLink = (() => {
@@ -705,7 +729,7 @@ const Views = window.Views = (() => {
   function onShow(mode) {
     if (mode === "design") { const host = designHost(); if (!document.getElementById("dsFrame")) DesignLink.mount(host); else Dock.setHost(host); DesignLink.renderConsole(); }
     Dock.schedule();
-    if (mode === "orders") Orders.render();
+    if (mode === "orders") Orders.renderNow();
     if (mode === "master") Master.render();
     if (mode === "engrave") Engrave.render();
     if (mode === "review") Review.render();
@@ -721,8 +745,13 @@ const Orders = window.Orders = (() => {
     if (!S.cloud.ok) return;
     if (!force && Date.now() - B.maps.loadedAt < 60000) return;
     const [om, al, nd] = await Promise.all([api("charmNestLibrary", { op: "optionMapGet" }), api("charmNestLibrary", { op: "aliasGet" }), api("charmNestLibrary", { op: "noDesignGet" })]);
-    B.maps.optionMaps = om.maps || {}; B.maps.aliases = al.aliases || {}; B.maps.noDesign = nd.list || { patterns: [], skus: [], rows: [] }; B.maps.loadedAt = Date.now();
+    // the maps are replaced only when what was read differs: a new map object is what makes interpretAll read lines again
+    const next = [om.maps || {}, al.aliases || {}, nd.list || { patterns: [], skus: [], rows: [] }], sig = JSON.stringify(next);
+    if (sig !== mapsSig || !mapsSame()) { mapsSig = sig; [B.maps.optionMaps, B.maps.aliases, B.maps.noDesign] = next; mapsRead = next; }
+    B.maps.loadedAt = Date.now();
   }
+  let mapsSig = "", mapsRead = [];
+  const mapsSame = () => mapsRead[0] === B.maps.optionMaps && mapsRead[1] === B.maps.aliases && mapsRead[2] === B.maps.noDesign;
   const ctx = () => ({ optionMaps: B.maps.optionMaps, aliases: B.maps.aliases, noDesign: B.maps.noDesign, masterEntry: sku => Master.entryFor(sku) });
   /** The pull rule (Settings → Pull orders): every open order, those due by a date, or the N most urgent by ship-by date. */
   function applyPullRule(orders) {
@@ -732,8 +761,24 @@ const Orders = window.Orders = (() => {
     if (mode === "count") list = list.slice(0, Math.max(1, +S.settings.pullCount || 40));
     return list;
   }
+  /* A line reads the same until something it is read from changes, and every update read every line again. It is read
+     again when its order (a new copy, update time or note), its line, a person's override, the option maps (a new object,
+     see loadMaps) or what the library says of its SKUs changes; the rest of the pass (problems, overrides) runs as before. */
+  const readAs = new WeakMap();
+  const libFacts = sku => { const e = sku ? Master.entryFor(sku) : null; return e ? `${e.blocked ? "b:" + e.blocked : "ok"}|${e.sizes ? Object.entries(e.sizes).map(([k, v]) => (v ? "+" : "-") + k).join("\n") : ""}` : ""; };
+  function inputsOf(row) {
+    const o = row.order, l = row.line, m = B.maps, a = m.aliases && m.aliases[String(l.listingId)];
+    return [o, +o.updateTs, o.staffNote, l, l.staffNote, row.materialOverride, row.sizeOverride, m.optionMaps, m.aliases, m.noDesign,
+      libFacts(String(l.sku || "").trim().toUpperCase()), libFacts(a && a.sku ? String(a.sku).trim().toUpperCase() : "")];
+  }
   function interpretAll() {
-    for (const row of rowsOf()) { if (row.state === "gone") continue; row.spec = O.interpretLine(row.order, row.line, ctx()); row.problems = row.spec.problems.slice(); if (row.spec.noDesign) row.state = row.state === "pulled" ? "noDesign" : row.state; if (row.materialOverride) { row.spec.material = row.materialOverride; row.problems = row.problems.filter(p => p.kind !== "needsMaterial"); } if (row.sizeOverride) { row.spec.size = row.sizeOverride; row.problems = row.problems.filter(p => p.kind !== "missingSize"); } row.material = row.spec.material; }
+    for (const row of rowsOf()) {
+      // a line cut and committed is done: a later change to the maps or the library could only raise a decision on it
+      if (row.state === "gone" || (row.state === "committed" && row.spec)) continue;
+      const inputs = inputsOf(row), was = readAs.get(row);
+      if (!was || was.spec !== row.spec || inputs.some((v, i) => !Object.is(v, was.inputs[i]))) { row.spec = O.interpretLine(row.order, row.line, ctx()); readAs.set(row, { spec: row.spec, inputs }); }
+      row.problems = row.spec.problems.slice(); if (row.spec.noDesign) row.state = row.state === "pulled" ? "noDesign" : row.state; if (row.materialOverride) { row.spec.material = row.materialOverride; row.problems = row.problems.filter(p => p.kind !== "needsMaterial"); } if (row.sizeOverride) { row.spec.size = row.sizeOverride; row.problems = row.problems.filter(p => p.kind !== "missingSize"); } row.material = row.spec.material;
+    }
     Review.syncOrderItems();
   }
   async function pull(run, { silent = false, receiptIds = null } = {}) {
@@ -818,10 +863,15 @@ const Orders = window.Orders = (() => {
   async function unclaim(ids) {
     const done = new Set(rowsOf().filter(r => r.unclaimed).map(r => String(r.order.receiptId)));
     ids = ids.filter(id => !done.has(String(id))); if (!ids.length) return;
-    let ok = true;
-    try { await DesignLink.call("unclaim", { receiptIds: ids }); } catch (e) { ok = false; agent({ bridge: true }, "warn", `unclaim: ${e.message}`); }
-    const sent = new Set(ids.map(String));
-    for (const row of rowsOf()) if (sent.has(String(row.order.receiptId))) { row.claimedBy = null; if (ok) row.unclaimed = true; }
+    // a hundred per message, like the claim: a long day's list in one message could run past the reply limit. A batch the
+    // station does not answer stops the rest, which stay unmarked and go again at the next pass, as one failed call did.
+    const sent = new Map(); let ok = true;
+    for (let i = 0; i < ids.length; i += 100) {
+      const part = ids.slice(i, i + 100);
+      if (ok) try { await DesignLink.call("unclaim", { receiptIds: part }); } catch (e) { ok = false; agent({ bridge: true }, "warn", `unclaim: ${e.message}`); }
+      for (const id of part) if (!sent.get(String(id))) sent.set(String(id), ok);
+    }
+    for (const row of rowsOf()) { const k = String(row.order.receiptId); if (sent.has(k)) { row.claimedBy = null; if (sent.get(k)) row.unclaimed = true; } }
     render();
   }
   /** §10.3: every order's update_timestamp re-read through the station; changed → re-interpret; vanished → dropped. */
@@ -838,7 +888,8 @@ const Orders = window.Orders = (() => {
     let chk = null;
     try { chk = await DesignLink.call("orders.check", { receiptIds: orders }, { timeoutMs: 10 * 60 * 1000, onProgress: p => { if (p.text) agentLiveLine("Re-validating orders", p.text, p.done, p.total); } }); DesignLink.meter(chk, `the open-list check ${why}`); }
     catch (e) { throw new Error(`Cannot verify Etsy open orders: ${e.message}`); }
-    const need = orders.filter(rid => { const c = chk.orders[rid]; const cur = rowsOf().find(r => r.order.receiptId === rid); return !c || !c.open || c.touched || (cur && c.updateTs && c.updateTs !== cur.order.updateTs); });
+    const first = new Map(); for (const r of rowsOf()) if (!first.has(r.order.receiptId)) first.set(r.order.receiptId, r);   // an order's first line, found once rather than a search of every line per order
+    const need = orders.filter(rid => { const c = chk.orders[rid]; const cur = first.get(rid); return !c || !c.open || c.touched || (cur && c.updateTs && c.updateTs !== cur.order.updateTs); });
     agent({ bridge: true }, "DS", `Re-validation ${why}: ${orders.length} order(s) checked against the open list${chk.swept ? "" : " (list reused)"} · ${need.length} need a fresh read`);
     let done = 0;
     for (const rid of need) {
@@ -892,15 +943,18 @@ const Orders = window.Orders = (() => {
     const filling = sh => !(window.LiveNest && LiveNest.closed(sh)) && !(sh.metal === "rose" && (sh.rosePlan || sh.roseProtected)) &&
       !["nesting", "finishing", "queued"].includes(sh.status) && !(sh.persisted && !sh.persistedDone);
     for (const row of rows) {
-      const ids = new Set(row.poolIds), off = [];
+      // only the pages that hold its pieces are looked at: a gone order's pieces on a cut sheet stay there for good, and
+      // every check used to search every charm of every sheet for them again
+      const ids = new Set(row.poolIds), off = [], on = Pool.holding?.(ids);
       for (const sh of allSheets()) {
+        if (on && !on.has(sh)) continue;
         const mine = sh.charms.filter(c => ids.has(c.poolId)); if (!mine.length || !filling(sh)) continue;
         sh.charms = sh.charms.filter(c => !ids.has(c.poolId)); sh.placements = sh.placements.filter(p => sh.charms.some(c => c.id === p.id)); keepRest(sh);
         off.push(...mine.map(c => c.poolId));
         agent({ metal: sh.metal, run: sh.runId }, "POOL", `${row.order.receiptId} is no longer open on Etsy (${row.reason || "gone"}): ${mine.length} piece${mine.length === 1 ? "" : "s"} taken off ${sheetName(sh)}; the rest stay where they are`);
       }
       if (!off.length) continue;
-      row.poolIds = row.poolIds.filter(id => !off.includes(id));
+      const offSet = new Set(off); row.poolIds = row.poolIds.filter(id => !offSet.has(id));
       try { await Pool.update(off, { state: "abandoned", sheetId: null, setId: null }); } catch (e) { agent({ bridge: true }, "warn", `pool record for ${row.order.receiptId}: ${e.message}`); }
       for (const id of off) B.pool.rows.delete(id);
     }
@@ -964,7 +1018,11 @@ const Orders = window.Orders = (() => {
   }
   /** Everything a person needs to recognise one line, as a card or as a row: the same fields either way. */
   let listKey="";
-  const orderNodes=new Map();
+  /* A line's day (its heading and time) depends only on its order's time, the zone being fixed: it is worked out once a
+     line, not for every line at every drawing. Nodes are kept for the lines drawn lately, two hundred beyond those on
+     screen: one used to be kept for every line ever drawn, until its line left the list. */
+  const orderNodes=new Map(),NODES_KEPT=200;
+  const dayMemo=new WeakMap(),dayOf=r=>{const at=O.orderPlacedAt(r),m=dayMemo.get(r);if(m&&m.at===at)return m.day;const day=O.orderDay(r);dayMemo.set(r,{at,day});return day;};
   function renderBody() {
     if(window.CharmNestInteraction?.defer('orders-list',renderBody))return;
     const host = document.getElementById("ordBody"); if (!host) return;
@@ -990,9 +1048,11 @@ const Orders = window.Orders = (() => {
     const wanted=[],place=node=>{const index=wanted.length;wanted.push(node);if(list.children[index]!==node)list.insertBefore(node,list.children[index]||null);};
     let lastDay=null;
     const shown=rows.slice(0,OV.limit || 48);
-    const dayCounts=new Map();for(const row of rows){const d=O.orderDay(row);const ids=dayCounts.get(d.key)||new Set();ids.add(row.order.receiptId);dayCounts.set(d.key,ids);}
+    // a heading counts its day's orders in the list: counted only where headings are drawn, for the days on screen
+    const dayCounts=new Map();
+    if(OV.sort==='arrival'){for(const r of shown)dayCounts.set(dayOf(r).key,new Set());for(const row of rows){const ids=dayCounts.get(dayOf(row).key);if(ids)ids.add(row.order.receiptId);}}
     for (const r of shown) {
-      const date=O.orderDay(r);
+      const date=dayOf(r);
       if(OV.sort==='arrival' && date.key!==lastDay){const heading=[...list.querySelectorAll('.ordDay')].find(n=>n.dataset.day===date.key)||el('div','ordDay');heading.dataset.day=date.key;const text=`<span>${esc(date.label)}</span><small>${dayCounts.get(date.key).size} orders · Toronto time</small>`;if(heading.innerHTML!==text)heading.innerHTML=text;place(heading);lastDay=date.key;}
       const sp = r.spec || {}, m = r.material || "none";
       const st = stateWords(r), due = dueOf(r), where = placeOf(r);
@@ -1001,7 +1061,7 @@ const Orders = window.Orders = (() => {
       const gateBtn = r.state === "waiting" && r.wait ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
       const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,r.hold,r.wait,why,where,due,date]);
       const cached=orderNodes.get(r.key);
-      if(cached?.stamp===stamp){place(cached.node);ListMedia.mount(cached.node,r);continue;}
+      if(cached?.stamp===stamp){orderNodes.delete(r.key);orderNodes.set(r.key,cached);place(cached.node);ListMedia.mount(cached.node,r);continue;}
       const node = el("div", (cards ? "ocard" : "doneRow workRow orderListRow") + " hoverItem" + (attn ? " attn" : ""));
       node.setAttribute("role","button"); node.tabIndex=0; node.dataset.m = m; node.dataset.key = r.key;
       node.title = r.order.receiptId + " · " + (sp.designSku || r.line.sku || "no SKU") + " — " + r.line.title;
@@ -1016,8 +1076,9 @@ const Orders = window.Orders = (() => {
       // an order can be several lines on several cards: hovering one lifts all of them, the way the station does
       node.dataset.rid = String(r.order.receiptId);
       if(cached?.node){const pair=cached.node.querySelector('.comparePair');if(pair)node.querySelector('.comparePair')?.replaceWith(pair);}
-      place(node);orderNodes.set(r.key,{stamp,node});ListMedia.mount(node,r);
+      place(node);orderNodes.delete(r.key);orderNodes.set(r.key,{stamp,node});ListMedia.mount(node,r);
     }
+    if(orderNodes.size>NODES_KEPT){const onList=new Set(shown.map(r=>r.key));for(const key of orderNodes.keys()){if(orderNodes.size<=NODES_KEPT)break;if(!onList.has(key))orderNodes.delete(key);}}
     const keep=new Set(wanted);for(const child of [...list.children])if(!keep.has(child))child.remove();
     ListMedia.more(list,rows.length,shown.length,()=>{OV.limit=(OV.limit || 48)+48;renderBody();});
 
@@ -1089,15 +1150,26 @@ const Orders = window.Orders = (() => {
     v.querySelector("#ordViewSeg").innerHTML = ["cards", "list"].map(k => `<button data-view="${k}"${viewMode() === k ? ' class="on"' : ""} title="${k === "cards" ? "a card for every line, with its picture" : "the same lines as rows"}">${k === "cards" ? "Cards" : "List"}</button>`).join("");
     v.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { OV.view = b.dataset.view; S.settings.orderView = OV.view; saveSettings(); renderHead(v); renderBody(); });
   }
+  /* Drawn once a frame (CNFrame): a run step, the banner, each arrival and the pool pass every five lines asked for it,
+     many times in one go. A hidden tab draws only its count, and is drawn when shown (Views.onShow); one asked for while
+     it was shown is drawn in full even if it is hidden by the frame, as it was when it was drawn at once. */
+  let bodyWanted = false;
+  const onScreen = () => { const v = document.getElementById("ordersView"); return !!v && !v.classList.contains("hidden"); };
   function render() {
-    const v = document.getElementById("ordersView");
-    if (!v || v.classList.contains("hidden")) { const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(orderTotals(B.orders.rows).orders) : ""; return; }
+    if (!window.CNFrame) return renderNow();
+    if (onScreen()) bodyWanted = true;
+    CNFrame.later("orders", renderNow);
+  }
+  function renderNow() {
+    window.CNFrame?.cancel("orders");
+    const v = document.getElementById("ordersView"), wanted = bodyWanted; bodyWanted = false;
+    if (!v || (v.classList.contains("hidden") && !wanted)) { const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(orderTotals(B.orders.rows).orders) : ""; return; }
     if (!v.dataset.built) { v.dataset.built = "1"; buildHead(v); }
     renderHead(v);
     renderBody();
     const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(orderTotals(B.orders.rows).orders) : "";
   }
-  return { view: () => OV, pull, claim, unclaim, revalidate, render, renderBody, markStale, loadMaps, interpretAll, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, imageFor, wantImage, shipTxt, statePill: r => STATE_PILL[r.state] || ["neutral", r.state], applyPullRule, ctx, keepRest };
+  return { view: () => OV, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, interpretAll, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, imageFor, wantImage, shipTxt, statePill: r => STATE_PILL[r.state] || ["neutral", r.state], applyPullRule, ctx, keepRest };
 })();
 
 /* ═══ 19 · Master — SKU labels under charms, per-SKU designs, the index ══════ */
@@ -1772,17 +1844,36 @@ const Pool = window.Pool = (() => {
     return pooled;
   }
   async function update(poolIds, patch) { for (const id of poolIds) { const p = B.pool.rows.get(id); if (p) Object.assign(p, patch); } if (S.cloud.ok) for (let i = 0; i < poolIds.length; i += 400) await api("charmNestLibrary", { op: "poolUpdate", poolIds: poolIds.slice(i, i + 400), patch }); }
-  const charmOf = poolId => allSheets().flatMap(sh => sh.charms).find(c => c.poolId === poolId) || null;
-  const sheetOf = poolId => allSheets().find(sh => sh.placements.some(p => { const c = sh.charms.find(x => x.id === p.id); return c && c.poolId === poolId; })) || null;
+  /* charmOf and sheetOf walked every charm of every sheet at each call (sheetOf every placement against every charm), and
+     a classify pass or a restore asks once a line, so an update took longer the more sheets the table held. One index
+     answers both, first match first as the walks did; it is made again when a page comes or goes or a sheet's charms or
+     placements change (a new list or a new length, the only ways they change), which costs a glance at each page. */
+  let idx = null;
+  function index() {
+    const sheets = allSheets(), f = idx && idx.pages;
+    if (f && f.length === sheets.length * 5 && sheets.every((sh, i) => f[i * 5] === sh && f[i * 5 + 1] === sh.charms && f[i * 5 + 2] === sh.charms.length && f[i * 5 + 3] === sh.placements && f[i * 5 + 4] === sh.placements.length)) return idx;
+    const charm = new Map(), sheet = new Map(), where = new Map(), pages = [];
+    for (const sh of sheets) {
+      const byId = new Map();
+      for (const c of sh.charms) { if (!charm.has(c.poolId)) charm.set(c.poolId, c); if (!byId.has(c.id)) byId.set(c.id, c); const w = where.get(c.poolId); if (!w) where.set(c.poolId, [sh]); else if (w.at(-1) !== sh) w.push(sh); }
+      for (const p of sh.placements) { const c = byId.get(p.id); if (c && !sheet.has(c.poolId)) sheet.set(c.poolId, sh); }
+      pages.push(sh, sh.charms, sh.charms.length, sh.placements, sh.placements.length);
+    }
+    return idx = { pages, charm, sheet, where };
+  }
+  const charmOf = poolId => index().charm.get(poolId) || null;
+  const sheetOf = poolId => index().sheet.get(poolId) || null;
+  /** The pages holding any of these pieces. */
+  function holding(ids) { const w = index().where, out = new Set(); for (const id of ids) for (const sh of w.get(id) || []) out.add(sh); return out; }
   /** Every piece of the line already sits on a sheet. */
-  function onSheets(row) { const ids = row.poolIds || []; if (!ids.length) return false; const all = new Set(allSheets().flatMap(sh => sh.charms.map(c => c.poolId)).filter(Boolean)); return ids.every(id => all.has(id)); }
+  function onSheets(row) { const ids = row.poolIds || []; if (!ids.length) return false; const on = index().charm; return ids.every(id => !!id && on.has(id)); }
   /** Such a line goes back to where its pieces are: committed, written into a set, or pooled on a sheet still filling. */
   function settle(row) {
     const recs = (row.poolIds || []).map(id => B.pool.rows.get(id) || {});
     row.state = recs.length && recs.every(p => p.state === "committed") ? "committed" : recs.length && recs.every(p => p.sheetId) ? "written" : "pooled";
     row.reason = null; return true;
   }
-  return { poolAdd, addAll, masterCharm, masterPreview, cloneCharm, update, charmOf, sheetOf, sizeEntry, repairRecoveredGeometry, onSheets, settle };
+  return { poolAdd, addAll, masterCharm, masterPreview, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */
@@ -2392,7 +2483,8 @@ const Engrave = window.Engrave = (() => {
   async function classifyAllOnce(run,owner) {
     await loadFonts();
     if(items() !== owner)return 0;
-    const rows = Orders.rows().filter(r => ["pooled", "written"].includes(r.state) && (!Gate.modern() || Pool.sheetOf(r.poolIds[0])) && r.spec && r.spec.engraveCandidate && (!r.engrave || r.engrave.state === "reclassify" || r.engrave.state === "classify"));
+    // the line's own fields first: most lines have nothing to read, and those need not be looked for on the sheets
+    const rows = Orders.rows().filter(r => ["pooled", "written"].includes(r.state) && r.spec && r.spec.engraveCandidate && (!r.engrave || r.engrave.state === "reclassify" || r.engrave.state === "classify") && (!Gate.modern() || Pool.sheetOf(r.poolIds[0])));
     const q = rows.slice(); let done = 0;
     // one bar for the whole pass, not one per order: what a person needs to know is how far along the reading is
     const bar = rows.length && window.CNProgress ? CNProgress.start(`Reading the words of ${rows.length} order line${rows.length === 1 ? "" : "s"}`, { total: rows.length }) : null;
@@ -2400,7 +2492,7 @@ const Engrave = window.Engrave = (() => {
       await Promise.all(Array.from({ length: 3 }, async () => { while (q.length && items() === owner) { const r = q.shift(); try { await classify(r); } catch (e) { if(items() !== owner)break; agent({ engrave: true }, "warn", `${r.order.receiptId}: classifier failed — ${e.message}`); toWords(ensureJob(r), e.message); } done++; if (bar) bar.set(done, rows.length, r.order.receiptId); render(); } }));
     } finally { if (bar) bar.end(); }
     if(items() !== owner)return done;
-    if(Orders.rows().some(r=>["pooled","written"].includes(r.state) && (!Gate.modern() || Pool.sheetOf(r.poolIds[0])) && r.spec?.engraveCandidate && (!r.engrave || r.engrave.state === "reclassify")))
+    if(Orders.rows().some(r=>["pooled","written"].includes(r.state) && r.spec?.engraveCandidate && (!r.engrave || r.engrave.state === "reclassify") && (!Gate.modern() || Pool.sheetOf(r.poolIds[0]))))
       return done + await classifyAllOnce(run,owner);
     let plain = 0;
     for (const r of Orders.rows()) if (r.state === "pooled" && r.spec && !r.spec.engraveCandidate && !r.engrave) { r.engrave = { needed: false, state: "none", approved: true }; plain++; }
@@ -2828,6 +2920,9 @@ const Engrave = window.Engrave = (() => {
     if (!bySheet.size) throw Object.assign(new Error("no sheet holds these pieces yet"),{engravingPending:true});
     const png = renderBack(job, 500, { grid: false, hatch: false }); const pngBlob = await new Promise(r => png.toBlob(r, "image/png"));
     job.backs = [];
+    // the cards and back lists are drawn again once, after the copies are recorded (or one fails), not once a copy
+    let shown = false;
+    try {
     for (const [sh, poolIds] of bySheet) {
       sh.backPool = sh.backPool || [];
       for (const poolId of poolIds) {
@@ -2848,7 +2943,7 @@ const Engrave = window.Engrave = (() => {
           for (const page of allSheets()) page.backPool = (page.backPool || []).filter(b => b.poolId !== poolId);
           if (!current()) return false;
           sh.backPool = (sh.backPool || []).filter(b=>b.poolId!==poolId); sh.backPool.push(rec); job.backs.push(rec);
-          if(job.editingBack) job.expectedApprovedAt=rec.approvedAt; window.LaserReview?.saved(sh); refreshBacks();
+          if(job.editingBack) job.expectedApprovedAt=rec.approvedAt; window.LaserReview?.saved(sh); shown = true;
           return true;
         });
         if (!recorded) return;
@@ -2857,6 +2952,7 @@ const Engrave = window.Engrave = (() => {
       if(job.editingBack) {const {sheet:latest}=await api("charmNestLibrary",{op:"getSheet",id:sh.sheetId});sh.backPool=latest.backPool || [];}
       scheduleBackOutputs(sh);
     }
+    } finally { if (shown) refreshBacks(); }
     if (!current()) return;
     job.state = "written"; job.row.engrave.state = "written";
     await Pool.update(job.copies, { engrave: true, engraveApprovedBy: job.approvedBy, ...(job.editingBack ? {} : {state:"engraved"}) });
@@ -3478,7 +3574,24 @@ const LaserReview = window.LaserReview = (()=>{
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
 const Sets = window.Sets = (() => {
-  const byRun = () => B.sets;                         // keyed `${runId}|${group}` — a run has one set per kin group
+  /* ofRun and setOfSheet searched every set the session holds at each call, and a page's closed() asks once a page. The
+     sets are grouped by run and by id once, and again only when the map is replaced or changed (its set, delete and
+     clear count the changes; a set's run and id never change after it is made). */
+  let groups = null, groupsOf = null, groupsAt = -1, changes = 0;
+  function watched(m) {
+    if (m && !Object.prototype.hasOwnProperty.call(m, "set")) for (const k of ["set", "delete", "clear"]) { const f = Map.prototype[k]; Object.defineProperty(m, k, { value(...a) { changes++; return f.apply(this, a); }, configurable: true, writable: true }); }
+    return m;
+  }
+  function grouped() {
+    const m = watched(B.sets);
+    if (groupsOf !== m || groupsAt !== changes) {
+      const runs = new Map(), ids = new Map();
+      for (const x of m.values()) { const l = runs.get(x.runId); if (l) l.push(x); else runs.set(x.runId, [x]); if (!ids.has(x.setId)) ids.set(x.setId, x); }
+      groups = { runs, ids }; groupsOf = m; groupsAt = changes;
+    }
+    return groups;
+  }
+  const byRun = () => watched(B.sets);                // keyed `${runId}|${group}` — a run has one set per kin group
   const keyOf = (runId, group) => `${runId}|${group || "all"}`;
   /* A set used to be "the run": every sheet of every material a run made, under one number. But the only thing that
      ties two sheets together is an order with a piece on each, and the shop said so: a material no order ties to
@@ -3516,8 +3629,8 @@ const Sets = window.Sets = (() => {
     return set;
   }
   /** Every set of a run, in set order. */
-  const ofRun = runId => [...byRun().values()].filter(x => x.runId === runId).sort((a, b) => (a.seq || 0) - (b.seq || 0));
-  const setOfSheet = sh => sh.draft || (["gold10k","gold14k"].includes(sh.metal) && !Gate.solidSelected(sh.metal)) ? null : sh.runId ? ((sh.setId ? [...byRun().values()].find(x => x.setId === sh.setId) : null) || byRun().get(keyOf(sh.runId, sh.group)) || null) : null;
+  const ofRun = runId => (grouped().runs.get(runId) || []).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
+  const setOfSheet = sh => sh.draft || (["gold10k","gold14k"].includes(sh.metal) && !Gate.solidSelected(sh.metal)) ? null : sh.runId ? ((sh.setId ? grouped().ids.get(sh.setId) : null) || byRun().get(keyOf(sh.runId, sh.group)) || null) : null;
   /** The QR label, 145 × 145 pt, the print page's exact geometry (QR 85 pt at 3,3 · label 9 pt bold at 1,93 · "Notes:" at 92,0.5), ECC M. */
   async function renderLabelPng(payload, label, scale) {
     const k = scale || 8; const cv = document.createElement("canvas"); cv.width = Math.round(145 * k); cv.height = Math.round(145 * k);
@@ -3805,17 +3918,21 @@ const RunCtl = window.RunCtl = (() => {
   }
   /** The record as it is stored online: the lines of the orders still in progress (and any finished line the archive does
       not hold yet), and lineArchive, which counts what was left out. */
-  function recordOf(r) {
+  function recordOf(r, hashes) {
     const lines = r.lines || {}, done = r.archivedLines || {}, la = r.lineArchive || null;
-    const rest = Object.assign({}, r, { errors: (r.errors || []).slice(-50) }); delete rest.lines; delete rest.archivedLines; delete rest.lineArchive;
-    const rec = JSON.parse(JSON.stringify(rest));
+    /* The record goes out as JSON the moment it is made (api writes the text before anything else runs), so it shares the
+       run's own lines and lists; only what is changed below is copied (holds, sheet notes). Two deep copies of the
+       whole run used to be made at every save. */
+    const rec = Object.assign({}, r, { errors: (r.errors || []).slice(-50) }); delete rec.lines; delete rec.archivedLines; delete rec.lineArchive;
     delete rec._wait; delete rec.saveError;
     // an order leaves the record only when the archive holds each of its lines exactly as they are now
-    const out = new Set(), hashes = finishedHashes(lines);
+    const out = new Set(); hashes = hashes || finishedHashes(lines);
     for (const [id, keys] of O.closedOrders(lines)) if (keys.every(k => done[k] && done[k] === hashes.get(k))) out.add(id);
     const kept = {}; let left = 0;
     for (const [k, l] of Object.entries(lines)) { if (l && out.has(String(l.orderId))) left++; else kept[k] = l; }
-    rec.lines = JSON.parse(JSON.stringify(kept));
+    rec.lines = kept;
+    if (rec.holds && typeof rec.holds === "object") rec.holds = Object.assign({}, rec.holds);
+    if (rec.sheets && typeof rec.sheets === "object") rec.sheets = Object.assign({}, rec.sheets);
     const isOut = id => out.has(String(id));
     let committed = 0, held = 0, sheets = 0;
     if (Array.isArray(rec.orders)) rec.orders = rec.orders.filter(id => !isOut(id));
@@ -3847,9 +3964,11 @@ const RunCtl = window.RunCtl = (() => {
     Session.schedule();
     if (!S.cloud.ok) { r.saveError = "Cloud offline — work is saved on this browser; reconnect to save the run online"; renderBanner(); return; }
     const persist=async()=>{
-      const lines=r.lines || {},hashes=finishedHashes(lines);
-      if(hashes.size)await archiveFinished(r,lines,hashes);
-      const rec=recordOf(r);
+      const lines=r.lines || {},hashes=finishedHashes(lines),done=r.archivedLines || {};
+      // the finished lines are hashed once a save: only a save that writes to the archive (and so waits) hashes them again
+      const moving=[...hashes].some(([k,h])=>done[k]!==h);
+      if(moving)await archiveFinished(r,lines,hashes);
+      const rec=recordOf(r,moving?null:hashes);
       sizeCheck(r,rec);
       return api("charmNestLibrary",{op:"runPut",run:rec});
     };
@@ -4032,7 +4151,10 @@ const RunCtl = window.RunCtl = (() => {
     return r.pendingWork;
   }
   function hasPending(r){return Object.values(r.pendingWork||{}).some(Boolean);}
-  function workText(r){return JSON.stringify([r.membershipRevision||0,Orders.rows().map(x=>[x.key,x.state,x.hold,x.changePending,x.engrave?.state,x.engrave?.approved]),[...Engrave.items().values()].map(j=>[j.key,j.state,j.approvedAt]),allSheets().filter(p=>p.runId===r.runId).map(p=>[p.sheetId,p.metal,p.page,p.status,p.dirty,p.runHold,p.placements.length,p.persistedDone])]);}
+  /* The work still to do: the lines not finished, their engraving (and any back being edited), the run's sheets not cut.
+     A finished line (committed, gone, skipped, no design) gives the run work only by leaving that state, which changes
+     the text as well; the text used to hold every line and job the run ever took, and grew with its history. */
+  function workText(r){const done=new Set(),rows=[];for(const x of Orders.rows()){if(O.FINISHED_LINE.has(x.state))done.add(x.key);else rows.push([x.key,x.state,x.hold,x.changePending,x.engrave?.state,x.engrave?.approved]);}const cut=new Set(Sets.ofRun(r.runId).filter(s=>s.committedAt).flatMap(s=>s.sheetIds||[]));return JSON.stringify([r.membershipRevision||0,rows,[...Engrave.items().values()].filter(j=>j.editingBack||!done.has(j.key)).map(j=>[j.key,j.state,j.approvedAt]),allSheets().filter(p=>p.runId===r.runId&&!(p.sheetId&&cut.has(p.sheetId))).map(p=>[p.sheetId,p.metal,p.page,p.status,p.dirty,p.runHold,p.placements.length,p.persistedDone])]);}
   // the state of the work as a short hash: its whole text, kept in the record, grew with every order the run took
   function workSignature(r){return O.textHash(workText(r));}
   // a signature saved before it was a hash is the whole text, and still compares
@@ -4309,6 +4431,9 @@ const RunCtl = window.RunCtl = (() => {
     renderBanner();
   }
   function renderModeBtn() { const b = document.getElementById("btnRunMode"); if (!b) return; const auto = S.settings.runMode === "auto"; b.classList.toggle("auto", auto); document.getElementById("runModeText").textContent = auto ? "Auto" : "Manual"; }
+  // the banner drawn at once: a caller outside the run may read it straight after (the run's own calls wait for the frame)
+  let bannerDrawing = false;
+  const bannerNow = () => { bannerDrawing = true; try { renderBanner(); } finally { bannerDrawing = false; } };
   const STEP_WORDS = { pull: "Pulling orders", claim: "Claiming", pool: "Pooling", plan: "Planning", nest: "Nesting", checkpoint: "Checking the sheets", engrave: "Engraving", revalidate: "Re-checking the orders", labels: "Writing labels", commit: "Committing", complete: "Complete" };
   function stepDetail(r) {
     const sh = allSheets().filter(p => p.runId === r.runId);
@@ -4375,13 +4500,17 @@ const RunCtl = window.RunCtl = (() => {
     return `Auto carries on by itself: next try ${new Date(auto.next).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}${auto.n ? ` (tried ${auto.n}×)` : ""}, or press Resume.`;
   }
   function renderBanner() {
+    // what the banner keeps up besides its drawing (the workspace checkpoint, the bench buttons) is done at every call;
+    // the drawing is done once a frame (CNFrame), or at once for a caller outside the run (RunCtl.renderBanner)
+    if (window.Session) Session.schedule();
+    if (window.guardBench) guardBench();
+    if (!bannerDrawing && window.CNFrame) { CNFrame.later("banner", bannerNow); return; }
+    window.CNFrame?.cancel("banner");
     const previousMenu = document.getElementById("runMenu");
     const menuWasOpen = !!previousMenu?.open;
     const focusId = previousMenu?.contains(document.activeElement) ? document.activeElement.id : null;
-    if (window.Session) Session.schedule();
-    if (window.guardBench) guardBench();
     const h = document.getElementById("runBanner"); if (!h) return; const r = B.run;
-    LiveStrip.render();                                     // one path: the banner and the ladder can never disagree
+    LiveStrip.now();                                        // one path: the banner and the ladder can never disagree
     if (!r) {
       // a set has finished and Auto will start another: the banner stays, so nobody comes back to a blank app
       if (NEXT.at > Date.now()) {
@@ -4448,7 +4577,7 @@ const RunCtl = window.RunCtl = (() => {
     };
     Orders.render();
   }
-  return { optionsChanged, recoverReviewStop, membershipUpdated, start, next, resume, stop, operatorStop, stopIfRunning, poke, backgroundSettled, save, onSheetDone, pickResume, resumeRun, restoreRunSheets, commitNow, setMode: setRunMode, setRunMode, renderBanner, renderModeBtn, clearRunState, run, autoResume, stopKind: stopKindOf };
+  return { optionsChanged, recoverReviewStop, membershipUpdated, start, next, resume, stop, operatorStop, stopIfRunning, poke, backgroundSettled, save, onSheetDone, pickResume, resumeRun, restoreRunSheets, commitNow, setMode: setRunMode, setRunMode, renderBanner: bannerNow, renderModeBtn, clearRunState, run, autoResume, stopKind: stopKindOf };
 })();
 
 /* ═══ 24 · Review — every decision a person must make ═════════════════════ */
@@ -4457,7 +4586,10 @@ const Review = window.Review = (() => {
   const mine = it => !String(it.key || "").startsWith("eng:") && !(it.row && it.row.state === "gone");   // engraving is the Engraving tab's
   const isNotice = it => String(it.key || "").startsWith("held:");        // an order left open, not a decision to make
   const count = () => items().filter(it => mine(it) && !isNotice(it)).length;
-  function add(it) { const i = items().findIndex(x => x.key === it.key); const fresh = i < 0; if (fresh) items().push(Object.assign({ t: Date.now() }, it)); else items()[i] = Object.assign(items()[i], it); if (fresh && B.run && ["review", "paused", "stopped"].includes(B.run.status)) notifyPerson("Charm Sorter needs a person", it.why || it.kind); render(); LiveStrip.render(); RunCtl.renderBanner(); }
+  function put(it) { const i = items().findIndex(x => x.key === it.key); const fresh = i < 0; if (fresh) items().push(Object.assign({ t: Date.now() }, it)); else items()[i] = Object.assign(items()[i], it); if (fresh && B.run && ["review", "paused", "stopped"].includes(B.run.status)) notifyPerson("Charm Sorter needs a person", it.why || it.kind); }
+  // the list at once (a person may be working in it); the strip and the banner once a frame (CNFrame)
+  function redraw() { render(); LiveStrip.render(); if (window.CNFrame) CNFrame.later("banner", RunCtl.renderBanner); else RunCtl.renderBanner(); }
+  function add(it) { put(it); redraw(); }
   const settled = [];                                                     // what this shift has answered, newest first
   function remove(key, how) {
     const n = items().length;
@@ -4466,7 +4598,7 @@ const Review = window.Review = (() => {
     if (n === items().length) return;
     if (gone && !/^(eng|held):/.test(String(key))) settled.unshift({ key, row:gone.row || gone.rows?.[0] || null, kind: gone.kind, why: gone.why || "", lines: (gone.rows || [gone.row]).filter(Boolean).length, orders: [...new Set((gone.rows || [gone.row]).filter(Boolean).map(r2 => r2.order.receiptId))], by: how || employeeName() || "", t: Date.now() });
     if (settled.length > 200) settled.length = 200;
-    render(); LiveStrip.render(); RunCtl.renderBanner();
+    redraw();
   }
   function problemText(p) { return p.kind === "needsMaterial" ? `needs material (${p.metalLabel || "none"})` : p.kind === "needsMapping" ? `option "${p.optionName}: ${p.optionValue}" not mapped` : p.kind === "unmatchedSku" ? `SKU ${p.sku || "?"}: ${p.reason}` : p.kind === "blockedSku" ? `SKU ${p.sku} blocked: ${p.reason}` : p.kind === "missingSize" ? `no design for size ${p.size || "(none)"} (have ${(p.available || []).join(", ")})` : p.kind === "oversize" ? `oversize for the ${labelOf(p.material)} plate` : p.kind; }
   /** The key of the DECISION a problem asks for, not of the line that raised it. An unknown SKU is one decision however
@@ -4490,7 +4622,8 @@ const Review = window.Review = (() => {
       if (!keep.has(key)) keep.set(key, { kind: p.kind, key, row, problem: p, rows: [], why: problemText(p) });
       const it = keep.get(key); if (!it.rows.includes(row)) it.rows.push(row);
     } }
-    for (const [key, it] of keep) { const had = items().find(x => x.key === key); if (had) Object.assign(had, { rows: it.rows, row: it.row, problem: it.problem, why: it.why }); else add(it); }
+    // new decisions join the queue here and the queue is drawn once, below: it used to be drawn again for each one
+    for (const [key, it] of keep) { const had = items().find(x => x.key === key); if (had) Object.assign(had, { rows: it.rows, row: it.row, problem: it.problem, why: it.why }); else put(it); }
     B.review.items = items().filter(x => !x.key.startsWith("ord:") || keep.has(x.key));
     // a held notice is a notice, not a decision: it goes when the order it names is committed, gone, or no longer held
     const byRid = new Map();
@@ -4505,7 +4638,7 @@ const Review = window.Review = (() => {
       x.line = held ? held.key : (lines.find(l => l.problems && l.problems.length) || lines[0]).key;
       return true;
     });
-    render(); LiveStrip.render(); RunCtl.renderBanner();
+    redraw();
   }
   /** Every line the item speaks for — the group when it has one, the single row otherwise. */
   const rowsOf = it => (it.rows && it.rows.length ? it.rows : it.row ? [it.row] : []).filter(r => r.state !== "gone");
@@ -5683,8 +5816,12 @@ const Arrivals = window.Arrivals = (() => {
   }
   async function merge(orders, openIds) {
     const current=Orders.rows();
-    const changed=orders.some(o=>current.some(row=>String(row.order.receiptId)===String(o.receiptId) && +row.order.updateTs!==+o.updateTs));
-    const missing=Array.isArray(openIds) && current.some(row=>!["gone","committed"].includes(row.state) && !openIds.includes(String(row.order.receiptId)));
+    // the rows' update times by order and the open list as a set: each arrival was compared with every row, and each row
+    // looked for in the whole open list
+    const times=new Map();for(const row of current){const k=String(row.order.receiptId);if(!times.has(k))times.set(k,[]);times.get(k).push(+row.order.updateTs);}
+    const changed=orders.some(o=>(times.get(String(o.receiptId))||[]).some(t=>t!==+o.updateTs));
+    const open=Array.isArray(openIds)?new Set(openIds):null;
+    const missing=!!open && current.some(row=>!["gone","committed"].includes(row.state) && !open.has(String(row.order.receiptId)));
     if(changed || missing){state.pending=true;state.revalidate=true;}
     const freshIds = await record(orders, stamp()), added = [];
     for (const order of orders) for (const line of order.lines || []) {
@@ -5795,8 +5932,9 @@ const LiveNest = window.LiveNest = (() => {
     const placed=new Map((sh.placements||[]).map(p=>[p.id,p]));for(const c of items){const p=placed.get(c.id);if(p&&!c.pinned){c.pinned={cxPt:p.cxPt,cyPt:p.cyPt,angle:p.angle};c.arrivalPin=true;}}
     return plan;
   }
-  const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId)) ||
-    (!(p.metal==='rose'&&(p.rosePlan||p.roseProtected)) && (!!p.runHold || !!p.intakeFinalized));
+  // the page's own marks first; the sets of its run are looked at only when none says so
+  const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || (!(p.metal==='rose'&&(p.rosePlan||p.roseProtected)) && (!!p.runHold || !!p.intakeFinalized)) ||
+    Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId));
   /* Gold and Silver arrivals go to the run's earliest open sheet first (the pool puts them on the same one). An order
      that misses its gaps moves on to the next sheet, and the earlier sheet stays first in line: once a newer page existed
      it used to be passed over for good, short of full, so it was never released and its orders, the oldest, never cut.
@@ -5843,13 +5981,15 @@ const LiveNest = window.LiveNest = (() => {
       run.setIds = Sets.ofRun(run.runId).map(s => s.setId); run.setId = run.setIds[0] || null;
     }
     }
-    const previousSheets=new Map(allSheets().map(p=>[p,{placements:p.placements.slice(),intakeOptimized:p.intakeOptimized,intakeOptimizedCount:p.intakeOptimizedCount,density:p.density,liveInfo:p.liveInfo}]));
+    // the layout each page to be filled had before, kept for that page only (every page's placements used to be copied)
+    const previousSheets=new Map();
     const target = new Map(), force = Object.assign({}, Gate.state().forceFill);
     for (const m of touched) {
       const prim = S.sheets[m], pages = prim.pages.filter(p => p.runId === run.runId && !closed(p));
       if (pages.some(p => ["nesting", "finishing", "queued"].includes(p.status))) throw new Error("A sheet is still being written");
       const pick=intakePage(m, run);
       const p = pick.runId && pick.runId!==run.runId || closed(pick) ? addPage(m) : pick;
+      if(p===pick)previousSheets.set(p,{placements:p.placements.slice(),intakeOptimized:p.intakeOptimized,intakeOptimizedCount:p.intakeOptimizedCount,density:p.density,liveInfo:p.liveInfo});
       // addPage inherits the primary page's run id; replace it before
       // Pool.addAll examines the newest page or it creates yet another page.
       if(p!==pick)p.runId=run.runId;
