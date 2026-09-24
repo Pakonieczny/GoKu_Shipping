@@ -592,14 +592,32 @@
     const isOutline = s => s.kind === "path" && s.closed && (s.bbox[2] - s.bbox[0]) >= opts.minPt && (s.bbox[3] - s.bbox[1]) >= opts.minPt &&
       (isCutLine(s) || (pathRole(s) !== "artwork" && !s.stroke && s.fill && lum(s.fillRGB) <= opts.darkMax));
     let frame = frames.length ? frames.reduce((a, b) => bbArea(b.bbox) > bbArea(a.bbox) ? b : a) : null;
+    const polysCache = new Map();
+    const polysOf = s => { let p = polysCache.get(s); if (!p) { p = flatten(s, 8); polysCache.set(s, p); } return p; };
+    // A body drawn on an engraving layer. Some masters keep a charm's black cut line on HATCH or ENGRAVE, with only its
+    // jump ring on CUT, or nothing on CUT at all. Labelled artwork alone left such a charm as its 2 mm ring, which the
+    // nest packed its neighbours over while the sheet drew the whole body, or with no outline. A closed black, grey or
+    // white stroke on an artwork layer that no cut line holds, and that dwarfs every cut line it meets, is that body: it
+    // takes the outline role (its ring then joins it as usual). An engraving border drawn around a cut body of about its
+    // own size is not one, and neither is a straight-sided box.
+    {
+      const cut0 = drawableWithChains.filter(isOutline), bodies = [];
+      const art = drawable.filter(s => s.kind === "path" && s.closed && s.stroke && achromatic(s.strokeRGB) && pathRole(s) === "artwork" &&
+        (s.bbox[2] - s.bbox[0]) >= opts.minPt && (s.bbox[3] - s.bbox[1]) >= opts.minPt && bbArea(s.bbox) < pageArea * opts.framePct && !isRectLike(s))
+        .sort((a, b) => bbArea(b.bbox) - bbArea(a.bbox));
+      for (const s of art) {
+        const pts = samples(s, polysCache);
+        if (cut0.concat(bodies).some(c => bbInter(s.bbox, c.bbox) && insideFrac(pts, polysOf(c)) >= 0.6)) continue;
+        if (cut0.some(c => bbInter(s.bbox, c.bbox) && bbArea(c.bbox) * 3 > bbArea(s.bbox))) continue;
+        s.manufacturingRole = "outline"; bodies.push(s);
+      }
+    }
     let cands = drawableWithChains.filter(isOutline);
     let rule = "stroked-dark-closed";
     if (!cands.length) {
       rule = "filled-dark-closed";
       cands = drawable.filter(s => s.kind === "path" && pathRole(s) !== "artwork" && s.fill && s.closed && lum(s.fillRGB) <= opts.darkMax && bbArea(s.bbox) < pageArea * opts.framePct && (s.bbox[2] - s.bbox[0]) >= opts.minPt && (s.bbox[3] - s.bbox[1]) >= opts.minPt);
     }
-    const polysCache = new Map();
-    const polysOf = s => { let p = polysCache.get(s); if (!p) { p = flatten(s, 8); polysCache.set(s, p); } return p; };
     // 1 · outlines vs details: largest first; a candidate geometrically inside an
     //     accepted outline is a detail (hole, engraving frame, inner ring); a small
     //     candidate touching an accepted outline's stroke is an attached ring.
@@ -1323,24 +1341,37 @@
       for (const l of layers) occ.setVisibility(l.id, l.id === charmLayers[li].id);
       ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
       await page.render({ canvasContext: ctx, viewport: vp, optionalContentConfigPromise: Promise.resolve(occ), background: "rgba(255,255,255,1)" }).promise;
-      const img = ctx.getImageData(0, 0, W, H).data;
-      const open = new Uint8Array(W * H); let ink = 0;
-      for (let i = 0, j = 0; i < W * H; i++, j += 4) { if (img[j] + img[j + 1] + img[j + 2] < 720) ink++; else open[i] = 1; }
+      const img = ctx.getImageData(0, 0, W, H).data, px = new Uint32Array(img.buffer, img.byteOffset, W * H);
+      /* One charm inks a small part of the page. Its ink and the box around it are found in one pass (plain white paper,
+         nearly all of it, is one comparison), and the rest works inside that box grown by a pixel: every pixel outside it
+         is open paper with a straight run to the page's edge, so the flood from the box's own border reaches exactly what
+         the flood from the page's edge reached, and nothing outside it is material. Flooding the whole page for every
+         charm made the check after each new charm grow with the sheet, several seconds on a full one. */
+      let ink = 0, bx0 = W, by0 = H, bx1 = -1, by1 = -1;
+      for (let y = 0, i = 0, j = 0; y < H; y++) for (let x = 0; x < W; x++, i++, j += 4) {
+        if (px[i] === 0xFFFFFFFF || img[j] + img[j + 1] + img[j + 2] >= 720) continue;
+        ink++; if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y;
+      }
       if (!ink) { empty.push(charmLayers[li].name); continue; }
-      const reached = floodFromBorder(open, W, H);
+      const X0 = Math.max(0, bx0 - 1), Y0 = Math.max(0, by0 - 1), X1 = Math.min(W - 1, bx1 + 1), Y1 = Math.min(H - 1, by1 + 1), bw = X1 - X0 + 1, bh = Y1 - Y0 + 1;
+      const open = new Uint8Array(bw * bh);
+      for (let y = 0, b = 0; y < bh; y++) for (let x = 0, j = ((Y0 + y) * W + X0) * 4; x < bw; x++, b++, j += 4) if (img[j] + img[j + 1] + img[j + 2] >= 720) open[b] = 1;
+      const reached = floodFromBorder(open, bw, bh);         // inside the box; everything outside it is reached
+      const reachedAt = (x, y) => x < X0 || y < Y0 || x > X1 || y > Y1 || reached[(y - Y0) * bw + (x - X0)] === 1;
       let solid = reached;                                   // 1 = not material
       if (erodePx) {                                          // shrink the silhouette by erodePx before the overlap test
-        solid = new Uint8Array(W * H);
-        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-          const i = y * W + x; if (reached[i]) { solid[i] = 1; continue; }
+        solid = new Uint8Array(bw * bh);
+        for (let y = Y0; y <= Y1; y++) for (let x = X0; x <= X1; x++) {
+          const b = (y - Y0) * bw + (x - X0); if (reached[b]) { solid[b] = 1; continue; }
           let keep = 1;
-          for (let dy = -erodePx; dy <= erodePx && keep; dy++) for (let dx = -erodePx; dx <= erodePx; dx++) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= W || yy >= H || reached[yy * W + xx]) { keep = 0; break; } }
-          if (!keep) solid[i] = 1;
+          for (let dy = -erodePx; dy <= erodePx && keep; dy++) for (let dx = -erodePx; dx <= erodePx; dx++) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= W || yy >= H || reachedAt(xx, yy)) { keep = 0; break; } }
+          if (!keep) solid[b] = 1;
         }
       }
-      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-        const i = y * W + x; if (reached[i]) continue;
-        if (solid[i]) continue;                               // eroded rim: allowed to overlap / enter the inset band
+      for (let y = Y0; y <= Y1; y++) for (let x = X0; x <= X1; x++) {
+        const b = (y - Y0) * bw + (x - X0); if (reached[b]) continue;
+        if (solid[b]) continue;                               // eroded rim: allowed to overlap / enter the inset band
+        const i = y * W + x;
         if (x < inset || y < inset || x >= W - inset || y >= H - inset) { outsidePx++; }
         if (idGrid[i] >= 0) { overlapPx++; const key = charmLayers[idGrid[i]].name + " ↔ " + charmLayers[li].name; pairs.add(key); const d = detail[key] || (detail[key] = { px: 0, x0: 1e9, y0: 1e9, x1: -1, y1: -1 }); d.px++; if (x < d.x0) d.x0 = x; if (y < d.y0) d.y0 = y; if (x > d.x1) d.x1 = x; if (y > d.y1) d.y1 = y; }
         idGrid[i] = li;

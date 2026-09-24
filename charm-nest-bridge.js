@@ -1525,6 +1525,17 @@ const Pool = window.Pool = (() => {
     if (!g.charms.length) throw new Error(`${entry.sku}: no outline in the master copy`);
     const charm = g.charms.reduce((a, b) => (b.bbox[2] - b.bbox[0]) * (b.bbox[3] - b.bbox[1]) > (a.bbox[2] - a.bbox[0]) * (a.bbox[3] - a.bbox[1]) ? b : a);
     if (g.charms.length > 1) { for (const c of g.charms) if (c !== charm) { for (const m of c.members) if (!charm.members.includes(m)) charm.members.push(m); charm.topIndices = [...new Set(charm.topIndices.concat(c.topIndices))]; charm.bbox = [Math.min(charm.bbox[0], c.bbox[0]), Math.min(charm.bbox[1], c.bbox[1]), Math.max(charm.bbox[2], c.bbox[2]), Math.max(charm.bbox[3], c.bbox[3])]; /* the silhouette canvas is cut to the bbox: a merged piece outside it would be drawn but never collide */ } agent({ pool: true }, "warn", `${entry.sku}: the master copy split into ${g.charms.length} pieces — folded back into one charm`); }
+    // The sheet draws this charm's whole drawing, cut to its box, so whatever ink the grouping left loose inside that
+    // drawing and within reach of the box is part of the charm too: the nest must pack around everything the sheet shows.
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const m of g.orphans) {
+        if (!m.bbox || charm.members.includes(m) || !charm.topIndices.includes(m.parent ?? m.index)) continue;
+        const pad = Math.max(charm.strokePt || 0.5, m.lwPt || 0) / 2 + 1, b = charm.bbox;
+        if (m.bbox[2] < b[0] - pad || m.bbox[0] > b[2] + pad || m.bbox[3] < b[1] - pad || m.bbox[1] > b[3] + pad) continue;
+        charm.members.push(m); charm.bbox = [Math.min(b[0], m.bbox[0]), Math.min(b[1], m.bbox[1]), Math.max(b[2], m.bbox[2]), Math.max(b[3], m.bbox[3])]; grew = true;
+      }
+    }
     { const r = P.integrateRings(charm); if (r.left.length) throw new Error(`${entry.sku}: a hoop could not join its charm — ${r.left[0]}`); }
     return {url,bytes,parsed,g,charm};
   }
@@ -1602,20 +1613,22 @@ const Pool = window.Pool = (() => {
   }
   function cloneCharm(c, id) { const k = Object.assign({}, c, { id, pinned: null }); return k; }
   /** §6.4 · one pooled charm per copy of the line, on the material card the ORDER says. */
-  async function poolAdd(row, run) {
+  /** A line's copies, made from its traced design, ready to record; null when the line is held, has no design or does
+      not fit (row.state says which). */
+  async function preparePool(row, run) {
     const sp = row.spec;
-    if (!sp || sp.noDesign) { row.state = "noDesign"; return; }
+    if (!sp || sp.noDesign) { row.state = "noDesign"; return null; }
     row.problems = row.problems.filter(p => !["unmatchedSku", "blockedSku", "missingSize", "oversize"].includes(p.kind));   // re-derived below on every attempt
-    if (row.problems.length) { row.state = "held"; row.reason = Review.problemText(row.problems[0]); return; }
+    if (row.problems.length) { row.state = "held"; row.reason = Review.problemText(row.problems[0]); return null; }
     let entry = Master.entryFor(sp.designSku) || await Master.fetchEntry(sp.designSku);
-    if (!entry) { row.state = "unmatched"; row.reason = "not in any master file"; row.problems.push({ kind: "unmatchedSku", reason: "not in any master file", sku: sp.designSku, listingId: String(row.line.listingId || ""), title: row.line.title }); agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: not in any master file`); return; }
-    if (entry.blocked) { row.state = "held"; row.reason = `SKU blocked: ${entry.blocked}`; row.problems.push({ kind: "blockedSku", reason: entry.blocked, sku: sp.designSku }); return; }
-    if (entry.sizes && Object.keys(entry.sizes).length && !(sp.size && entry.sizes[sp.size])) { row.state = "held"; row.reason = `no design for size ${sp.size || "(none)"}`; row.problems.push({ kind: "missingSize", sku: sp.designSku, size: sp.size, available: Object.keys(entry.sizes) }); return; }
+    if (!entry) { row.state = "unmatched"; row.reason = "not in any master file"; row.problems.push({ kind: "unmatchedSku", reason: "not in any master file", sku: sp.designSku, listingId: String(row.line.listingId || ""), title: row.line.title }); agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: not in any master file`); return null; }
+    if (entry.blocked) { row.state = "held"; row.reason = `SKU blocked: ${entry.blocked}`; row.problems.push({ kind: "blockedSku", reason: entry.blocked, sku: sp.designSku }); return null; }
+    if (entry.sizes && Object.keys(entry.sizes).length && !(sp.size && entry.sizes[sp.size])) { row.state = "held"; row.reason = `no design for size ${sp.size || "(none)"}`; row.problems.push({ kind: "missingSize", sku: sp.designSku, size: sp.size, available: Object.keys(entry.sizes) }); return null; }
     const src = await masterCharm(entry, sp.size);
     const base = src.charms[0];
     // oversize: the charm cannot fit the plate under the ceiling
     const st = stockFor(sp.material); const usable = (st.wPt - 2 * (+S.settings.insetPt || 0)) * (st.hPt - 2 * (+S.settings.insetPt || 0)) * (+S.settings.maxFill || 0.80);
-    if (base.areaPt2 > usable || Math.min(base.widthPt, base.heightPt) > Math.max(st.wPt, st.hPt) - 2 * (+S.settings.insetPt || 0)) { row.state = "oversize"; row.reason = `charm ${(base.widthPt * MM).toFixed(1)} × ${(base.heightPt * MM).toFixed(1)} mm does not fit the ${labelOf(sp.material)} plate under the ceiling`; row.problems.push({ kind: "oversize", sku: sp.designSku, widthMm: base.widthPt * MM, heightMm: base.heightPt * MM, material: sp.material }); return; }
+    if (base.areaPt2 > usable || Math.min(base.widthPt, base.heightPt) > Math.max(st.wPt, st.hPt) - 2 * (+S.settings.insetPt || 0)) { row.state = "oversize"; row.reason = `charm ${(base.widthPt * MM).toFixed(1)} × ${(base.heightPt * MM).toFixed(1)} mm does not fit the ${labelOf(sp.material)} plate under the ceiling`; row.problems.push({ kind: "oversize", sku: sp.designSku, widthMm: base.widthPt * MM, heightMm: base.heightPt * MM, material: sp.material }); return null; }
     const pools = [], charms = [];
     for (let copy = 1; copy <= sp.quantity; copy++) {
       const poolId = O.poolId(row.order, row.line, copy);
@@ -1626,10 +1639,13 @@ const Pool = window.Pool = (() => {
       pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: row.order.receiptId, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, transactionId: row.line.transactionId, sku: sp.designSku, material: sp.material, size: sp.size || null, form: sp.form || null, chain: sp.chain || null, copy, quantity: sp.quantity, charmHash: charm.hash, masterHash: entry.masterHash || null, aiPath: sizeEntry(entry, sp.size).aiPath, engrave: !!(row.engrave && row.engrave.needed), state: "ready", lineKey: row.key, updateTs: row.order.updateTs });
       charms.push(charm);
     }
-    if (S.cloud.ok) {
-      const r = await api("charmNestLibrary", { op: "poolPut", pools }, { label: "Recording the pool" });
-      if (r.contended && r.contended.length) { row.state = "contended"; row.reason = `claimed by run ${r.contended[0].runId}`; agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: a live run (${r.contended[0].runId}) already holds this line — skipped`); return; }
-    }
+    return { sp, pools, charms };
+  }
+  /** The recorded line joins its sheet. A line a live run already holds (a pool row the record refused) is skipped. */
+  function attachPool(row, run, prep, contended) {
+    const { sp, pools, charms } = prep;
+    const taken = (contended || []).filter(c => pools.some(p => p.poolId === c.poolId));
+    if (taken.length) { row.state = "contended"; row.reason = `claimed by run ${taken[0].runId}`; agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: a live run (${taken[0].runId}) already holds this line — skipped`); return; }
     let page=window.LiveNest ? LiveNest.intakePage(sp.material, run) : pagesOf(sp.material).at(-1);
     if((run && page.runId && page.runId!==run.runId) || (window.LiveNest&&LiveNest.closed(page)))page=addPage(sp.material);
     S.sheets[sp.material].active=pagesOf(sp.material).indexOf(page);
@@ -1640,6 +1656,11 @@ const Pool = window.Pool = (() => {
     if(page.placements.length){page.intakeAppend=true;page.appendOnly=true;page.dirty=true;if(!['nesting','finishing','queued'].includes(page.status))page.status='ready';renderCard(page);}else sheetDirty(page);
     agent({ metal: sp.material, pool: true }, "POOL", `${row.order.receiptId} · ${sp.designSku}${sp.quantity > 1 ? " ×" + sp.quantity : ""} → ${labelOf(sp.material)} (${row.engrave && row.engrave.needed ? "engrave" : "plain"})`);
   }
+  async function poolAdd(row, run) {
+    const prep = await preparePool(row, run); if (!prep) return;
+    const r = S.cloud.ok ? await api("charmNestLibrary", { op: "poolPut", pools: prep.pools }, { label: "Recording the pool" }) : {};
+    attachPool(row, run, prep, r.contended);
+  }
   async function addAll(run) {
     const rows = Orders.rows().filter(r => ["pulled", "held", "unmatched", "oversize", "waiting"].includes(r.state)).sort((a, b) => (+a.order.createTs || 0) - (+b.order.createTs || 0));
     // what goes to the laser today and what waits: full sheets for SS and GF, every other day for the slow metals, orders whole
@@ -1649,11 +1670,24 @@ const Pool = window.Pool = (() => {
     if (held.length) agent({ pool: true }, "POOL", `${held.length} line(s) wait: ${held.filter(w => w.kind === "fill").length} for a full sheet, ${held.filter(w => w.kind === "slow").length} for a slow metal's day`);
     let n = 0;
     const bar = rows.length && window.CNProgress ? CNProgress.start(`Preparing ${rows.length} order line(s)`, { total: rows.length }) : null;
-    for (const row of rows) { if (row.state === "waiting") { n++; continue; } if (bar) bar.set(n, rows.length, row.spec && row.spec.designSku ? String(row.spec.designSku) : ""); try { await poolAdd(row, run); } catch (e) { row.state = "held"; row.reason = e.message; agent({ pool: true }, "warn", `${row.order.receiptId} · ${row.spec && row.spec.designSku}: ${e.message}`); } if (++n % 5 === 0) { Orders.render(); } }
+    // The design files load side by side (each is fetched, read and traced once a session); the lines are then made up in
+    // order, oldest first, and recorded in one call rather than one call a line.
+    const hold = (row, e) => { row.state = "held"; row.reason = e.message; agent({ pool: true }, "warn", `${row.order.receiptId} · ${row.spec && row.spec.designSku}: ${e.message}`); };
+    await Promise.allSettled(rows.filter(row => row.state !== "waiting" && row.spec && !row.spec.noDesign).map(row => { const e = Master.entryFor(row.spec.designSku); return e && !e.blocked && sizeEntry(e, row.spec.size)?.aiPath ? masterCharm(e, row.spec.size) : null; }));
+    const made = [];
+    for (const row of rows) { if (row.state === "waiting") { n++; continue; } if (bar) bar.set(n, rows.length, row.spec && row.spec.designSku ? String(row.spec.designSku) : ""); try { const prep = await preparePool(row, run); if (prep) made.push([row, prep]); } catch (e) { hold(row, e); } if (++n % 5 === 0) { Orders.render(); } }
+    let contended = [], failure = null;
+    if (S.cloud.ok && made.length) {
+      const all = made.flatMap(([, prep]) => prep.pools);
+      try { for (let i = 0; i < all.length; i += 400) contended = contended.concat((await api("charmNestLibrary", { op: "poolPut", pools: all.slice(i, i + 400) }, { label: "Recording the pool" })).contended || []); }
+      catch (e) { failure = e; }
+    }
+    for (const [row, prep] of made) { if (failure) { hold(row, failure); continue; } try { attachPool(row, run, prep, contended); } catch (e) { hold(row, e); } }
     if (bar) bar.end();
     await Gate.afterPool(run);
     Review.syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards();
-    if (run) { run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); await RunCtl.save(run); }
+    // the run record follows the work without holding it up (see RunCtl.loopNow); a failed save shows on the banner
+    if (run) { run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); RunCtl.save(run).catch(() => {}); }
     const pooled = rows.filter(r => r.state === "pooled").length;
     agent({ pool: true }, "POOL", `Pool: ${pooled} line(s) queued on the cards · ${rows.filter(r => r.state === "waiting").length} waiting · ${rows.filter(r => !["pooled", "noDesign", "waiting"].includes(r.state)).length} held`);
     return pooled;
@@ -2255,7 +2289,8 @@ const Engrave = window.Engrave = (() => {
       return done + await classifyAllOnce(run,owner);
     for (const r of Orders.rows()) if (r.state === "pooled" && r.spec && !r.spec.engraveCandidate && !r.engrave) r.engrave = { needed: false, state: "none", approved: true };
     Orders.render(); render();
-    if (run) { run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); await RunCtl.save(run); }
+    // the run record follows the work without holding it up (see RunCtl.loopNow); a failed save shows on the banner
+    if (run) { run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); RunCtl.save(run).catch(() => {}); }
     return done;
   }
 
@@ -2334,7 +2369,8 @@ const Engrave = window.Engrave = (() => {
   async function fitAll(run) {
     const jobs = [...items().values()].filter(j => !j.editingBack && j.state === "ready" && j.row.state !== "gone" && canFit(j) && !isWorking(j));
     for (const j of jobs) { if (j.state !== "ready") continue; const sh = j.copies.length && Pool.sheetOf(j.copies[0]); if (!sh || !sh.fileBase) continue; try { await fitJob(j); } catch (e) { j.state = "blocked"; j.reason = e.message; j.row.engrave.state = "blocked"; agent({ engrave: true }, "warn", `${j.row.order.receiptId}: ${e.message}`); Review.add({ kind: "flipFailed", key: "eng:" + j.key, row: j.row, job: j, why: e.message }); } }
-    if (run) { run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); await RunCtl.save(run); }
+    // the run record follows the work without holding it up (see RunCtl.loopNow); a failed save shows on the banner
+    if (run) { run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); RunCtl.save(run).catch(() => {}); }
     render(); return jobs.length;
   }
   function revokeBacks(job) {
@@ -3547,7 +3583,10 @@ const RunCtl = window.RunCtl = (() => {
       if (!next) { updatePending(r); r.status = hasPending(r) ? "processed" : "complete"; r.processingComplete = true; r.finishedAt = Date.now(); r.processingSignature=workSignature(r); await save(r); renderBanner(); onComplete(r); break; }
       r.step = next;
       if (r.mode === "manual" && PAUSE_AFTER.has(step)) { r.status = "paused"; await save(r); renderBanner(); agent({ run: r.runId }, "DS", `Paused after ${step} — press Next step (${next})`); break; }
-      await save(r);
+      // The record follows the steps without holding them up: step saves coalesce into the latest one, and the run waits
+      // for its record only where it comes to rest (processed, complete, paused, stopped). Every step can be run again,
+      // so a record one step behind after a crash only repeats a step. A save that fails says so on the banner.
+      save(r).catch(() => {});
     }
   }
   async function next() { const r = B.run; if (!r || r.status !== "paused") return; r.status = "running"; await save(r); loop().catch(e => stop(e.message, "Fix the cause and press Resume.")); }
@@ -3555,13 +3594,17 @@ const RunCtl = window.RunCtl = (() => {
     if (["labels","commit"].includes(step)) await Gate.flush(r);
     switch (step) {
       case "pull": { const rows = await Orders.pull(r, { silent: true }); if (!rows.length) { r.nothingToCut=true; return {goto:"complete"}; } return; }
-      case "claim": { await Orders.claim([...new Set(Orders.rows().map(x => x.order.receiptId))]); r.claimedAt = Date.now(); return; }
+      case "claim": { Orders.claim([...new Set(Orders.rows().map(x => x.order.receiptId))]).catch(() => {}); r.claimedAt = Date.now(); return; }
       case "pool": { const n=await Pool.addAll(r); if(!n){r.nothingToCut=true;updatePending(r);agent({run:r.runId},"info","No eligible pieces to nest; unresolved items remain available for follow-up.");return {goto:"complete"};} Engrave.classifyAll(r).catch(e=>agent({run:r.runId},"warn",`classifier: ${e.message}`));return; }
       case "plan": { for (const m of METALS) { const pg = activePage(m.key); if (!pg.charms.some(c => c.poolId)) continue; const sat = computeSaturation(pg); agent({ metal: m.key, run: r.runId }, "info", `${labelOf(m.key)}: ${sat.count} piece(s) need ${fmt.pct(sat.totalNeeded / sat.usable)} of the plate — ${sat.recommend ? "over the " + fmt.pct(sat.rho.cap) + " ceiling, the overflow goes to a second sheet" : "under the " + fmt.pct(sat.rho.cap) + " ceiling"}`); } return; }
       case "nest": { await nestAll(r); return; }
       case "checkpoint": { await Arrivals.processPending?.({checkpoint:true}); if(r.status!=="running")return; await LiveNest.finish(r); await Gate.assemble(r); const sets = Sets.ofRun(r.runId); for (const set of sets.filter(s=>!s.committedAt)) { set.status = "awaiting review"; await Sets.save(set); } r.setIds = sets.map(x => x.setId); r.setId = r.setIds[0] || r.setId || null; r.status = "running"; await save(r); return; }
       case "engrave": { for (const j of Engrave.items().values()) if (!j.editingBack && j.state === "approved" && j.copies.length && Pool.sheetOf(j.copies[0])) { j.copies = j.row.poolIds.filter(id=>!(j.copyOverrides || []).includes(id)); await Engrave.writeBacks(j); } await Engrave.classifyAll(r); await Engrave.fitAll(r); updatePending(r); return; }
-      case "revalidate": { const v = await Orders.revalidate(r, "before labels"); if (v.changed.length && [...Engrave.items().values()].some(j => j.state === "classify")) { agent({ run: r.runId }, "warn", `${v.changed.length} order(s) changed — back to engraving`); return { goto: "engrave" }; } return; }
+      case "revalidate": {
+        // Etsy is read again right before labels are made. With no set ready for its labels (sheets still filling, the
+        // usual state between arrivals), there is nothing to protect yet and the sweep only held the next orders back.
+        if (!Sets.ofRun(r.runId).some(s => { try { return s.sheetIds.length && !s.committedAt && !Sets.releaseIssue(s); } catch (_) { return true; } })) return;
+        const v = await Orders.revalidate(r, "before labels"); if (v.changed.length && [...Engrave.items().values()].some(j => j.state === "classify")) { agent({ run: r.runId }, "warn", `${v.changed.length} order(s) changed — back to engraving`); return { goto: "engrave" }; } return; }
       case "labels": {
         r.deferredSets={};
         for(const set of Sets.ofRun(r.runId).filter(s=>s.sheetIds.length&&!s.committedAt)){
@@ -3586,7 +3629,7 @@ const RunCtl = window.RunCtl = (() => {
         for (const set of eligible) { try { const res = await Sets.commit(set, r); if(res.membershipChanged)return {goto:r.membershipNext || 'engrave'}; all.completed.push(...res.completed); all.refused.push(...res.refused); Object.assign(all.held, res.held || {}); } catch(e){if(!e.releasePending)throw e;await deferSet(r,set,e.message);} }
         r.committed = [...new Set([...(r.committed||[]),...all.completed])]; r.refused = all.refused; r.holds = {...r.holds,...all.held}; return;
       }
-      case "complete": { try { await Orders.unclaim([...new Set(Orders.rows().map(x => x.order.receiptId))]); } catch (_) {} return; }
+      case "complete": { Orders.unclaim([...new Set(Orders.rows().map(x => x.order.receiptId))]).catch(() => {}); return; }
       default: return;
     }
   }
@@ -3646,7 +3689,9 @@ const RunCtl = window.RunCtl = (() => {
   function continueProcessing(r,step){
     if(r!==B.run || r.status==='stopped' || r.status==='abandoned')return;
     r.processingComplete=false;r.status='running';r.step=step;
-    save(r).then(()=>loop()).catch(e=>stop(e.message,'Fix the cause and press Resume.'));
+    // the steps start at once and the record follows them, as between steps (loopNow); a record that cannot be saved still stops the run
+    save(r).catch(e=>stop(e.message,'Fix the cause and press Resume.'));
+    loop().catch(e=>stop(e.message,'Fix the cause and press Resume.'));
   }
   function optionsChanged(){
     const r=B.run;if(!r || ['complete','abandoned'].includes(r.status))return;
@@ -5055,7 +5100,7 @@ const Arrivals = window.Arrivals = (() => {
     Orders.interpretAll(); B.orders.pulledAt = Date.now();
     if (added.length) {
       state.pending = true; save();
-      if (B.run && !["complete", "abandoned"].includes(B.run.status)) { B.run.orders = [...new Set((B.run.orders || []).concat(added.map(r => r.order.receiptId)))]; await RunCtl.save(); }
+      if (B.run && !["complete", "abandoned"].includes(B.run.status)) { B.run.orders = [...new Set((B.run.orders || []).concat(added.map(r => r.order.receiptId)))]; RunCtl.save().catch(() => {}); }
       toast(`${freshIds.length || new Set(added.map(r => r.order.receiptId)).size} new order(s) arrived`, "ok", 6000);
       notifyPerson("New Etsy orders", `${added.length} new order line(s) added to the sorter`);
     }
@@ -5070,10 +5115,12 @@ const Arrivals = window.Arrivals = (() => {
     if (!((r.status === "review" && r.step === "engrave") || r.status === "processed" || checkpoint && r.status === "running" && r.step === "checkpoint") || r.arrivalBusy) return;
     state.pending = false; save(); r.arrivalBusy = true;
     try {
-      await Orders.claim([...new Set(Orders.rows().filter(x => x.state === "pulled").map(x => x.order.receiptId))]);
+      // The gold dot is a courtesy, never a lock (Orders.claim), and the station waves its cursor over the rows before it
+      // writes it: the new charms go onto their sheets meanwhile, where they used to wait seconds for the wave.
+      Orders.claim([...new Set(Orders.rows().filter(x => x.state === "pulled").map(x => x.order.receiptId))]).catch(() => {});
       if(state.revalidate){await Orders.revalidate(r,"during intake");state.revalidate=false;}
       await LiveNest.add(r);
-      await Engrave.classifyAll(r); await Engrave.fitAll(r); await RunCtl.save(r);
+      await Engrave.classifyAll(r); await Engrave.fitAll(r); RunCtl.save(r).catch(() => {});
     } catch (e) { state.pending = true; save(); RunCtl.stop(`New orders could not be added: ${e.message}`, "Resume after fixing the cause. Your earlier work is kept."); }
     finally { r.arrivalBusy = false; RunCtl.poke(); Session.schedule(); window.CN?.flushManualIntake?.(); }
   }
@@ -5084,8 +5131,8 @@ const Arrivals = window.Arrivals = (() => {
       await DesignLink.ensure();
       if (!DesignLink.etsyBudgetOk("new orders")) throw new Error("Etsy hourly cap reached");
       // the stream's next simulated ten minutes of orders become listable, and the station sweeps for them (no reuse window)
-      const sim = streaming() && await Sandbox.advance();
-      await Promise.all([Orders.loadMaps(), Master.load()]);
+      // (the maps load alongside: the snapshot below needs both, neither needs the other)
+      const [sim] = await Promise.all([streaming() && Sandbox.advance(), Orders.loadMaps(), Master.load()]);
       const known=Object.fromEntries(Orders.rows().map(row=>[String(row.order.receiptId),+row.order.updateTs || 0]));
       const res = await DesignLink.call("orders.snapshot", Object.assign({ hydrate: true, refresh: true, intake:true, known }, sim ? { stream: true } : {}), { timeoutMs: 20 * 60000, quiet: true });
       DesignLink.meter(res, "new orders");

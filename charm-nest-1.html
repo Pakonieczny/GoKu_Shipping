@@ -1505,7 +1505,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-solver.js?v=20260923-graded"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
-<script src="charm-nest-pdf.js?v=20260923-audit"></script>
+<script src="charm-nest-pdf.js?v=20260924-speed"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
@@ -2677,12 +2677,15 @@ function startNestReady(sh, context) {
   sh.nestParams = { seed:job.seed,angles:job.angles,clearancePt:job.clearancePt,insetPt:job.sheet.insetPt,fineRes:job.fineRes,coarseRes:job.coarseRes,maxFill:job.maxFill };
   if (window.Session) Session.schedule();
   if (retained && window.Session) Session.checkpointBest(sh);
+  // Shape grades steer the full searches. A new Gold or Silver charm on a saved sheet is graded spot by spot (the careful
+  // append never reads them), and a sheet's first few charms need no steering: neither waits on an AI shape analysis.
+  const guided = S.settings.packingAI !== "off" && !job.careful && !(sh.runId && sh.intakePhase === "fill" && ["gold", "silver"].includes(sh.metal));
   const launch = () => {
     if (sh.status !== "nesting" || sh.jobId !== launchId) return;
-    if(S.settings.packingAI!=="off" && (sh.packingAdvice?.state!=="done" || sh.packingAdvice.key!==packingKey(sh,activeCharms(sh))))throw new Error("Sheet inputs changed during shape analysis — retry Nest");
+    if(guided && (sh.packingAdvice?.state!=="done" || sh.packingAdvice.key!==packingKey(sh,activeCharms(sh))))throw new Error("Sheet inputs changed during shape analysis — retry Nest");
     sh.guidanceMs=sh.guidancePending?performance.now()-sh.startedAt:0;
     sh.guidancePending = false; sh.startedAt = performance.now();
-    job.packingHints = S.settings.packingAI !== "off" ? sh.packingAdvice?.hints || null : null;
+    job.packingHints = guided ? sh.packingAdvice?.hints || null : null;
     if (sh.nestFlow === "learned") {
       job.learned = { modelDigest: sh._learnedModelDigest, token: localStorage.getItem("cn.learnedKey") || "", budgetMs: S.settings.learnedBudgetS * 1000, stallMs: S.settings.learnedStallS * 1000, checkpoint: sh.learnedCheckpoint || null, initialLayout: sh._beforeLearned?.placements || null };
       const workers = ensureWorkers(sh, 2); sh.pool = { n: 2, done: 0, results: [], trials: [0, 0], winner: null };
@@ -2700,7 +2703,7 @@ function startNestReady(sh, context) {
     workers.forEach((w, i) => w.postMessage({ type: "solve", jobId: sh.jobId + ":" + i, job: Object.assign({}, job, { seed: job.seed + i, exploreRotations: i % 2 === 1, useGPU: S.settings.computePipeline === "gpu" && i === n - 1 }) }));
   };
   const launchId=sh.jobId;
-  if (S.settings.packingAI !== "off") {
+  if (guided) {
     sh.guidancePending=true;sh.stage="Analyzing shape grades and compatible neighbors…";renderProgress(sh);
     requestPackingGuidance(sh).then(launch).catch(e=>{if(sh.jobId!==launchId || sh.status!=="nesting")return;sh.guidancePending=false;sh.status="ready";sh.problem=e.message;sh.stage="Shape analysis incomplete — retry Nest";renderCard(sh);if(window.Session)Session.schedule();pumpNestQueue();if(window.RunCtl)RunCtl.onSheetDone(sh,e);});
   } else launch();
@@ -3035,13 +3038,10 @@ async function finishNest(sh, { result, error }) {
     // 0 · optimize: every assembled charm is scaled about its own centre so minor overlaps disappear
     const shrinkPct = ((1 - CHARM_SCALE) * 100).toFixed(1).replace(/\.0$/, "");
     sh.progressKind = "optimize"; sh.progress = [0, sh.placements.length]; sh.stage = `Optimizing charms · shrinking each of ${sh.placements.length} by ${shrinkPct}% about its own centre…`; renderCard(sh);
-    const optT0 = performance.now(), optStep = Math.max(12, Math.min(60, 2500 / Math.max(1, sh.placements.length)));   // the pass is watchable: ~2.5 s in all, the preview shrinking charm by charm
-    for (let i = 0; i < sh.placements.length; i++) {
-      sh.placements[i].scale = (sh.appendOnly?sh.nestInitial:sh.roseProtected?.placements)?.find(p=>p.id===sh.placements[i].id)?.scale || CHARM_SCALE; sh.progress = [i + 1, sh.placements.length];
-      sh.stage = `Optimizing charms · ${i + 1}/${sh.placements.length} shrunk ${shrinkPct}% about its centre`;
-      renderProgress(sh); drawPreview(sh);
-      await new Promise(r => setTimeout(r, optStep));
-    }
+    // all at once: the pass used to be played charm by charm over ~2.5 s, which only delayed the next charm
+    const optT0 = performance.now(), kept = new Map(((sh.appendOnly ? sh.nestInitial : sh.roseProtected?.placements) || []).map(p => [p.id, p.scale]));
+    for (const p of sh.placements) p.scale = kept.get(p.id) || CHARM_SCALE;
+    sh.progress = [sh.placements.length, sh.placements.length]; renderProgress(sh); drawPreview(sh);
     sh.optimized = { count: sh.placements.length, scale: CHARM_SCALE, ms: Math.round(performance.now() - optT0) };
     agent({ metal: sh.metal }, "ok", `Optimized: ${sh.placements.length} charms shrunk ${shrinkPct}% about their centres (positions and angles unchanged)`);
     // 1 · write the sheet
@@ -3155,18 +3155,23 @@ async function persistSheet(sh, items, context) {
   const snapshot = record(null);
   // Freeze membership before overflow moves rejected charms to another page.
   const savedRecord = outputs => Object.assign({}, snapshot, { outputs });
-  // 1 · the Library record first, so the sheet is on record even if a file upload fails
-  await api("charmNestLibrary", { op: "putSheet", sheet: Object.assign(savedRecord(null), { saving: true }) }, { label: "Saving sheet record" });
+  // 1 · the Library record, so the sheet is on record even if a file upload fails; it goes out with the files, which
+  //     take two round trips each, and is waited for before the record is completed
+  const opened = api("charmNestLibrary", { op: "putSheet", sheet: Object.assign(savedRecord(null), { saving: true }) }, { label: "Saving sheet record" });
+  opened.catch(() => {});
   // 2 · the files, each retried on its own; a failure is reported, never hidden
   const up = async (path, bytes, type, label) => { let err = null; for (let t = 0; t < 3; t++) { try { return await uploadBytes(path, bytes, type, label); } catch (e) { err = e; await new Promise(r => setTimeout(r, 1500 * (t + 1))); } } throw err; };
   const failed = []; const got = async (k, path, bytes, type, label) => { try { const r = await up(path, bytes, type, label); return { path: r.path, url: r.url }; } catch (e) { failed.push(`${k}: ${e.message}`); return null; } };
-  const outputs = {
-    ai: await got("ai", `${base}/${name}.ai`, savedOutputs.ai, "application/illustrator", "Saving sheet .ai"),
-    pdf: await got("pdf", `${base}/${name}.pdf`, savedOutputs.ai, "application/pdf", "Saving sheet .pdf"),
-    labelled: await got("labelled proof", `${base}/${name}_labelled.pdf`, savedOutputs.labelled, "application/pdf", "Saving labelled proof"),
-    report: await got("report", `${base}/${name}_nest-report.json`, new TextEncoder().encode(JSON.stringify(savedOutputs.report, null, 1)), "application/json", "Saving report"),
-    preview: savedOutputs.previewPng ? await got("preview", `${base}/preview.png`, savedOutputs.previewPng, "image/png", "Saving preview") : null
-  };
+  // the five files go up side by side: one after another they held the next charm back by five round trips
+  const [ai, pdf, labelled, report, preview] = await Promise.all([
+    got("ai", `${base}/${name}.ai`, savedOutputs.ai, "application/illustrator", "Saving sheet .ai"),
+    got("pdf", `${base}/${name}.pdf`, savedOutputs.ai, "application/pdf", "Saving sheet .pdf"),
+    got("labelled proof", `${base}/${name}_labelled.pdf`, savedOutputs.labelled, "application/pdf", "Saving labelled proof"),
+    got("report", `${base}/${name}_nest-report.json`, new TextEncoder().encode(JSON.stringify(savedOutputs.report, null, 1)), "application/json", "Saving report"),
+    savedOutputs.previewPng ? got("preview", `${base}/preview.png`, savedOutputs.previewPng, "image/png", "Saving preview") : null
+  ]);
+  const outputs = { ai, pdf, labelled, report, preview };
+  await opened;
   sh.cloud = { ai: outputs.ai && outputs.ai.url, pdf: outputs.pdf && outputs.pdf.url, labelled: outputs.labelled && outputs.labelled.url, report: outputs.report && outputs.report.url, preview: outputs.preview && outputs.preview.url };
   // 3 · the record is complete as soon as the sheet's own files are up: the Library shows it now, not after the charm backups
   await api("charmNestLibrary", { op: "putSheet", sheet: Object.assign(savedRecord(outputs), { saving: false }) }, { label: "Completing sheet record" });
@@ -3953,7 +3958,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260923-reset"></script>
+<script src="charm-nest-bridge.js?v=20260924-speed"></script>
 <script src="charm-nest-rose-ui.js?v=20260923-density"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
