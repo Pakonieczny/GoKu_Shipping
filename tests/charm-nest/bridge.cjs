@@ -118,7 +118,7 @@ const receipts = [
     const snap = () => {
       const rows = [...document.querySelectorAll('.cnp.on .cnpRow')].map(r => ({
         label: r.querySelector('.cnpLabel').textContent, pct: r.querySelector('.cnpPct').textContent,
-        meta: r.querySelector('.cnpMeta').textContent, width: r.querySelector('.cnpFill').style.width
+        meta: r.querySelector('.cnpMeta').textContent, width: r.querySelector('.cnpFill').style.width, title: r.closest('.cnp').title
       }));
       if (rows.length) shots.push(rows);
     };
@@ -133,12 +133,14 @@ const receipts = [
   console.log('progress rows seen', seen.length, JSON.stringify(seen[0] || null));
   assert(seen.length, 'a bar is shown while the library loads');
   assert(seen.some(r => /charm library/i.test(r.label)), 'and it names what is loading: ' + JSON.stringify(seen.slice(0, 3)));
-  assert(seen.every(r => r.meta), 'and always shows the time spent');
+  // the small line in the top bar shows the percentage, or the time spent while there is nothing to count; the tooltip has both
+  assert(seen.every(r => (r.pct || r.meta) && /\d+s/.test(r.title)), 'and always shows how far along or how long: ' + JSON.stringify(seen.slice(0, 3)));
+  assert.strictEqual(await page.evaluate(() => !!document.querySelector('#cnpSlot > .cnp.mini')), true, 'the line sits in the top bar, not at the bottom of the page');
   const counted = await page.evaluate(() => {
     const t = CNProgress.start('Writing the charm library', { total: 200 });
     t.set(50, 200);
     const r = document.querySelector('.cnp .cnpRow');
-    const out = { pct: r.querySelector('.cnpPct').textContent, meta: r.querySelector('.cnpMeta').textContent, width: r.querySelector('.cnpFill').style.width };
+    const out = { pct: r.querySelector('.cnpPct').textContent, meta: r.closest('.cnp').title, width: r.querySelector('.cnpFill').style.width };
     t.end();
     return { out, left: document.querySelector('.cnp').classList.contains('on') ? 1 : 0 };
   });
@@ -206,27 +208,19 @@ const receipts = [
   await page.evaluate(() => CN.setMode('orders'));
   await page.evaluate(() => RunCtl.setMode('auto'));
   await page.waitForFunction(() => B.run && B.run.status !== undefined, null, { timeout: 10000 });
-  // §5.7 · the live view: a status pill while the run works, the panel when a person asks for it, never re-parented
-  await page.waitForFunction(() => Dock.mode() === 'pip', null, { timeout: 5000 });
+  // §5.7 · the live link off its own tab: nothing of the station shows (Paul, 24 Sep: no overlay), and the frame stays
+  // laid out out of sight, never re-parented, so the station keeps hydrating and working
+  await page.waitForFunction(() => Dock.mode() === 'live', null, { timeout: 5000 });
   const hellosAtStart = await page.evaluate(() => DesignLink.log.filter(r => r.dir === 'cmd' && r.type === 'hello').length);
   const dock = await page.evaluate(() => {
-    const d = document.getElementById('dsDock'), r2 = d.getBoundingClientRect();
-    return { mode: Dock.mode(), visible: !d.classList.contains('hidden'), h: Math.round(r2.height), w: Math.round(r2.width),
-      bar: !!d.querySelector('.dockBar'), state: (document.getElementById('dockState') || {}).textContent || '',
-      framed: !!document.getElementById('dsFrame'), hellos: DesignLink.log.filter(r => r.dir === 'cmd' && r.type === 'hello').length };
+    const d = document.getElementById('dsDock'), r2 = d.getBoundingClientRect(), f = document.getElementById('dsFrame');
+    return { mode: Dock.mode(), shown: !d.classList.contains('hidden'), h: Math.round(r2.height), w: Math.round(r2.width),
+      laidOut: !!f && f.offsetWidth >= 980 && f.offsetHeight >= 600, strip: !!document.querySelector('#dsDock .dockBar, #dsDockPill'),
+      hellos: DesignLink.log.filter(r => r.dir === 'cmd' && r.type === 'hello').length };
   });
-  assert(dock.mode === 'pip' && dock.visible && dock.hellos === hellosAtStart, 'the live link is shown while running on another tab: ' + JSON.stringify(dock));
-  // off its own tab it is a status strip: it says what the station is doing without taking a fifth of the screen
-  assert(dock.h <= 64, 'the dock is a strip, not a mirror: ' + dock.h + 'px tall');
-  assert(dock.bar && dock.state, 'and it says what the station is doing: ' + JSON.stringify(dock.state));
-  assert(dock.framed, 'the frame stays laid out behind it, so the station keeps hydrating');
-  // and the screen keeps room for it, so it never sits on top of the work
-  const clear = await page.evaluate(() => {
-    const d = document.getElementById('dsDock').getBoundingClientRect();
-    const st = document.querySelector('.stage');
-    return { pad: Math.round(parseFloat(getComputedStyle(st).paddingBottom)), dockH: Math.round(d.height) };
-  });
-  assert(clear.pad >= clear.dockH, 'the stage reserves the live view\'s height: ' + JSON.stringify(clear));
+  assert(dock.mode === 'live' && dock.shown && dock.hellos === hellosAtStart, 'the live link keeps working while running on another tab: ' + JSON.stringify(dock));
+  assert(dock.h === 0 && dock.w === 0 && !dock.strip, 'and nothing of it lays over the work: ' + JSON.stringify(dock));
+  assert(dock.laidOut, 'the frame stays laid out out of sight, so the station keeps hydrating: ' + JSON.stringify(dock));
   const approvals = [];
   let engChecked = false;                      // the placement-card checks below must actually have run
   let t0 = Date.now(), lastStep = '', lastJobs = '', lastDone = '';

@@ -110,7 +110,7 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   const meta = st.doc('Charm_Sandbox', 'current');
   const expectStep = (s, k) => emulator.batch(s, snapshot, k, meta);
   const seen = { toasts: new Set(), counter: '', pill: '' };
-  const watch = async () => { const v = await page.evaluate(() => ({ toasts: [...document.querySelectorAll('#toasts > *')].map(n => n.textContent), counter: document.getElementById('arrivalCounter')?.textContent || '', pill: document.getElementById('sandboxPill').textContent })); v.toasts.forEach(t => seen.toasts.add(t)); seen.counter = v.counter; seen.pill = v.pill; return v; };
+  const watch = async () => { const v = await page.evaluate(() => ({ toasts: [...document.querySelectorAll('#toasts > *')].map(n => n.textContent), counter: Arrivals.text(), pill: document.getElementById('sandboxPill').textContent })); v.toasts.forEach(t => seen.toasts.add(t)); seen.counter = v.counter; seen.pill = v.pill; return v; };
   const ticks = [];
   for (const t = Date.now(); Date.now() - t < 150000;) {
     const s = stream(); if (s.tick && (!ticks.length || ticks[ticks.length - 1].tick !== s.tick)) ticks.push({ tick: s.tick, at: Date.now() });
@@ -169,7 +169,7 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   await page.evaluate(() => RunCtl.setMode('auto'));
   let sawRunning = false, heldSeen = new Set(), rest = null;
   for (const t = Date.now(); Date.now() - t < 420000;) {
-    const r = await page.evaluate(() => ({ run: B.run && { status: B.run.status, step: B.run.step, busy: !!B.run.arrivalBusy, stoppedBy: B.run.stoppedBy, fix: B.run.fix }, held: Arrivals.held(), counter: document.getElementById('arrivalCounter').textContent, n: __advances.length }));
+    const r = await page.evaluate(() => ({ run: B.run && { status: B.run.status, step: B.run.step, busy: !!B.run.arrivalBusy, stoppedBy: B.run.stoppedBy, fix: B.run.fix }, held: Arrivals.held(), counter: Arrivals.text(), n: __advances.length }));
     if (r.run && r.run.status === 'running') sawRunning = true;
     if (r.held) heldSeen.add(r.held);
     if (r.run && r.run.status === 'stopped') throw new Error(`run stopped: ${r.run.stoppedBy} — ${r.run.fix}\n` + (await page.evaluate(() => CN.AG.events.slice(-12).map(e => e.text))).join('\n'));
@@ -192,11 +192,11 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   // the stream steps as soon as the sorter is free, so an intake may be under way: the hold goes on only between intakes
   // (an intake in flight clears the flag as it ends, and the stream would step)
   await page.waitForFunction(() => { if (B.run.arrivalBusy) return false; B.run.arrivalBusy = true; return true; }, null, { timeout: 60000, polling: 100 });
-  await page.waitForFunction(() => !/Checking/.test(document.getElementById('arrivalCounter').textContent), null, { timeout: 60000 });
+  await page.waitForFunction(() => !/Checking/.test(Arrivals.text()), null, { timeout: 60000 });
   await page.waitForTimeout(500);
   const hold0 = stream();
   await page.waitForTimeout(26000);
-  const during = await page.evaluate(() => ({ counter: document.getElementById('arrivalCounter').textContent, sim: SimClock.now() }));
+  const during = await page.evaluate(() => ({ counter: Arrivals.text(), sim: SimClock.now() }));
   assert.strictEqual(stream().tick, hold0.tick, 'no step while the sorter is still adding arrivals (two check intervals passed)');
   assert.match(during.counter, /waiting for the sorter: adding the last arrivals/, 'the counter says why it waits');
   assert(during.sim <= hold0.simNow + STEP, 'the simulated clock waits at the next step');
@@ -228,7 +228,7 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   await settle({ sandbox: 'on', sandboxStream: 'on', sandboxSpeed: 50, sandboxSeed: seed });
   const reloaded = page.waitForEvent('load', { timeout: 90000 });
   // pressed while a check is out: that check's step goes with the stream it stepped, and no sweep lists the whole snapshot
-  const midCheck = await page.evaluate(() => new Promise((res, rej) => { const t0 = Date.now(), t = setInterval(() => { const out = /Checking/.test(document.getElementById('arrivalCounter').textContent); if (out || Date.now() - t0 > 40000) { clearInterval(t); Sandbox.reset().then(() => res(out), rej); } }, 10); }));
+  const midCheck = await page.evaluate(() => new Promise((res, rej) => { const t0 = Date.now(), t = setInterval(() => { const out = /Checking/.test(Arrivals.text()); if (out || Date.now() - t0 > 40000) { clearInterval(t); Sandbox.reset().then(() => res(out), rej); } }, 10); }));
   assert(midCheck, 'the reset was pressed while an arrivals check was out');
   assert(!stream() && !st.list('Sandbox_Charm_Nest_Arrivals').length && !st.list('Sandbox_Charm_Nest_Runs').length, 'reset removed the stream with the sandbox records');
   await reloaded; await booted();
@@ -252,7 +252,7 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   const callsProd = st.calls.length;
   await page.reload(); await booted(); await settle(); await page.evaluate(() => CN.setMode('design')); await page.evaluate(() => DesignLink.ensure());
   await page.waitForTimeout(3000);
-  const prod = await page.evaluate(() => ({ sim: SimClock.on(), skew: Math.abs(SimClock.now() - Date.now()), today: today(), real: CharmNestOrders.localDay(), pill: document.getElementById('sandboxPill').classList.contains('hidden'), label: Sandbox.label(), counter: document.getElementById('arrivalCounter').textContent, next: Arrivals.state().nextCheck - Date.now(), frame: document.getElementById('dsFrame').src, stored: localStorage.getItem('cn.simClock.sandbox') }));
+  const prod = await page.evaluate(() => ({ sim: SimClock.on(), skew: Math.abs(SimClock.now() - Date.now()), today: today(), real: CharmNestOrders.localDay(), pill: document.getElementById('sandboxPill').classList.contains('hidden'), label: Sandbox.label(), counter: Arrivals.text(), next: Arrivals.state().nextCheck - Date.now(), frame: document.getElementById('dsFrame').src, stored: localStorage.getItem('cn.simClock.sandbox') }));
   console.log('production', prod);
   assert(!prod.sim && prod.skew < 1000 && prod.today === prod.real && prod.pill && prod.label === '' && !/Sandbox/.test(prod.counter), 'production runs on the real clock with no sandbox label');
   assert(prod.next > 9 * 60000 && /sandbox=0/.test(prod.frame), 'production checks every ten minutes, through the real station');

@@ -77,7 +77,7 @@ const stripPrivate = r => Object.assign({}, r, { transactions: r.transactions.ma
     const by = {}; for (const x of rows) by[x.state] = (by[x.state] || 0) + 1;
     const sheets = allSheets().map(sh => ({ metal: sh.metal, status: sh.status, n: sh.placements.length, fill: sh.liveInfo ? Math.round(100 * (sh.liveInfo.placedPt2 || 0) / Math.max(1, sh.liveInfo.usablePt2 || 1)) : null, full: !!sh.releaseFull, set: sh.setId || null, fb: sh.fileBase || null, cut: !!sh.roseCutAt,
       charms: sh.charms.length, rejects: (sh.rejects || []).length, endedBy: sh.endedBy || null, hold: sh.runHold || null, fin: !!sh.intakeFinalized, append: !!sh.appendOnly, phase: sh.intakePhase || null, problem: sh.problem || null, ver: sh.verification ? !!sh.verification.ok : null, run: sh.runId ? sh.runId.slice(-6) : null, closed: window.LiveNest ? LiveNest.closed(sh) : null, density: sh.density != null ? Math.round(sh.density * 100) : null }));
-    return { run: r && { id: r.runId, status: r.status, step: r.step, stoppedBy: r.stoppedBy || null, committed: (r.committed || []).length }, rows: by, sheets, engrave: [...Engrave.items().values()].reduce((m, j) => (m[j.state] = (m[j.state] || 0) + 1, m), {}), arrivals: (document.getElementById('arrivalCounter') || {}).textContent || '', etsy: DesignLink.state() && DesignLink.state().etsy && DesignLink.state().etsy.meter && { total: DesignLink.state().etsy.meter.total, alarm: DesignLink.state().etsy.meter.alarm, braked: DesignLink.state().etsy.meter.braked } };
+    return { run: r && { id: r.runId, status: r.status, step: r.step, stoppedBy: r.stoppedBy || null, committed: (r.committed || []).length }, rows: by, sheets, engrave: [...Engrave.items().values()].reduce((m, j) => (m[j.state] = (m[j.state] || 0) + 1, m), {}), arrivals: window.Arrivals?.text?.() || '', etsy: DesignLink.state() && DesignLink.state().etsy && DesignLink.state().etsy.meter && { total: DesignLink.state().etsy.meter.total, alarm: DesignLink.state().etsy.meter.alarm, braked: DesignLink.state().etsy.meter.braked } };
   });
   async function idle(maxMs = 8 * 60000) {
     const s0 = realNow(); let calm = 0, s = null;
@@ -87,7 +87,7 @@ const stripPrivate = r => Object.assign({}, r, { transactions: r.transactions.ma
         const nesting = sheets.filter(sh => ['nesting', 'queued', 'finishing'].includes(sh.status) || sh._operationStarting || sh.guidancePending || sh.persisted && !sh.persistedDone).length;
         const ops = window.CharmNestOperations && CharmNestOperations.snapshot ? CharmNestOperations.snapshot() : null;
         const busyOps = ops ? (Array.isArray(ops) ? ops.length : (ops.active || []).length + (ops.queued || []).length) : 0;
-        return { run: r && r.status, step: r && r.step, busy: !!(r && r.arrivalBusy), pending: !!Arrivals.state().pending, checking: /Checking/.test((document.getElementById('arrivalCounter') || {}).textContent || ''), nesting, busyOps, engraving: [...Engrave.items().values()].filter(j => ['classify', 'fitting', 'ready'].includes(j.state) || j.backSaving).length };
+        return { run: r && r.status, step: r && r.step, busy: !!(r && r.arrivalBusy), pending: !!Arrivals.state().pending, checking: /Checking/.test(window.Arrivals?.text?.() || ''), nesting, busyOps, engraving: [...Engrave.items().values()].filter(j => ['classify', 'fitting', 'ready'].includes(j.state) || j.backSaving).length };
       });
       const quiet = !s.checking && !s.busy && !s.nesting && s.run !== 'running' && !s.busyOps;
       calm = quiet ? calm + 1 : 0;
