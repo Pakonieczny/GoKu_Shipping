@@ -86,6 +86,10 @@ const PROD = ['Design_Completed Orders', 'Design_RealTime_Selected_Orders', 'Des
   const snapCalls = st.calls.length;
   const s2 = await page.evaluate(() => DesignLink.call('orders.snapshot', { hydrate: true, refresh: true, withNotes: false }));
   assert(s2.total === 3 && s2.hydrated === 3, 'the emulator serves the snapshot: ' + JSON.stringify({ total: s2.total, hydrated: s2.hydrated }));
+  // the list swept moments ago is reused (a 90 s cooldown), so the snapshot may read nothing new; a fresh read of one
+  // order always goes out, and it must reach the emulator, never Etsy
+  const fresh = await page.evaluate(id => DesignLink.call('orders.detail', { receiptId: id, fresh: true }), s2.orders[0].receiptId);
+  assert(fresh.order && !fresh.gone, 'a fresh read of one order is served: ' + JSON.stringify({ gone: fresh.gone, has: !!fresh.order }));
   const since = st.calls.slice(snapCalls);
   assert(since.some(c => c.name === 'etsySandbox') && !since.some(c => /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$/.test(c.name)), 'Etsy is emulated: ' + [...new Set(since.map(c => c.name))].join(','));
 

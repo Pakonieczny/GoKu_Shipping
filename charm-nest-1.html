@@ -6,6 +6,8 @@
 <title>Brites · Charm Nesting Station 1</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%20100%22%3E%3Crect%20width%3D%22100%22%20height%3D%22100%22%20rx%3D%2220%22%20fill%3D%22%23221f1b%22%2F%3E%3Crect%20x%3D%2216%22%20y%3D%2216%22%20width%3D%2230%22%20height%3D%2230%22%20rx%3D%226%22%20fill%3D%22%23c8a24e%22%2F%3E%3Crect%20x%3D%2254%22%20y%3D%2216%22%20width%3D%2230%22%20height%3D%2230%22%20rx%3D%226%22%20fill%3D%22%238d95a0%22%2F%3E%3Crect%20x%3D%2216%22%20y%3D%2254%22%20width%3D%2230%22%20height%3D%2230%22%20rx%3D%226%22%20fill%3D%22%23c08578%22%2F%3E%3Ccircle%20cx%3D%2269%22%20cy%3D%2269%22%20r%3D%2214%22%20fill%3D%22none%22%20stroke%3D%22%23caa861%22%20stroke-width%3D%226%22%2F%3E%3C%2Fsvg%3E">
 <meta name="theme-color" content="#221f1b">
+<!-- first, so every timer and frame the page sets keeps full speed while the tab is out of view -->
+<script src="charm-nest-clock.js?v=20260924-clock"></script>
 <link rel="stylesheet" href="brites-progress.css">
 <style>
 /* ═══ BRITES DESIGN SYSTEM — tokens copied verbatim from design-1.html ═══ */
@@ -202,6 +204,9 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .shProg{padding:4px 14px 0}
 .shProg progress{margin:6px 0 0}
 .shProg .bp-note{margin:2px 0 0}
+/* the card writes its own words on the bar; the shared progress script's plain percentage and its session-long clock
+   used to take turns with them every half second */
+.shProg .bp-meter::before,.shProg .bp-meter::after{content:attr(data-cn-label)}
 .shStage{flex-wrap:nowrap}
 .shStage>span:not(.spin):not(.r){flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .shStage .r{flex:0 0 auto}
@@ -542,6 +547,7 @@ dialog.owin{width:min(1180px,96vw);max-height:min(92vh,980px)}
 .modeSeg button.on .cnt{background:var(--gold2);color:#2a2013}
 .runMode .sw{width:8px;height:8px;border-radius:50%;background:var(--ink25);display:inline-block;margin-right:6px;vertical-align:0}
 .runMode.auto{background:var(--velvet);color:#fff;border-color:var(--velvet)}
+.btn.runMode.auto:hover{background:var(--velvet)}   /* the ghost hover tint left white "Auto" on cream under the pointer */
 .runMode.auto .sw{background:var(--sage);box-shadow:0 0 0 3px rgba(95,122,91,.25);animation:bbPulse 1.6s ease-in-out infinite}
 @keyframes bbPulse{50%{box-shadow:0 0 0 6px rgba(95,122,91,.08)}}
 .setPicker{grid-column:1/-1;position:relative;justify-self:end;font-size:12px}.setPicker summary{cursor:pointer;list-style:none;border:1px solid var(--line);border-radius:18px;padding:6px 16px;background:var(--card)}.setMenu{position:absolute;right:0;top:34px;width:330px;max-height:55vh;overflow:auto;z-index:20;padding:10px;background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}.setMenu button{display:block;text-align:left;width:100%;padding:9px;border:0;border-radius:8px;background:transparent;color:var(--ink);cursor:pointer}.setMenu button:hover{background:var(--goldSoft)}.setMenu small,.setPreviewGrid small{display:block;color:var(--ink45);font-size:11px}.setPreviewGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}.setPreviewGrid figure{margin:0;overflow:hidden}.setPreviewGrid img{width:100%;border:1px solid var(--line);border-radius:10px}.setPreviewGrid figcaption{padding:8px 0;overflow-wrap:anywhere}
@@ -755,7 +761,7 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 @keyframes cnPulse{0%,100%{box-shadow:0 0 0 3px rgba(202,168,97,.25)}50%{box-shadow:0 0 0 6px rgba(202,168,97,.08)}}
 .dsConsole{display:flex;flex-direction:column;gap:8px;min-height:0}
 .dsConsole .card{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);padding:10px 12px;display:grid;gap:6px}
-.dsConsole .kv{font-size:12px}
+.dsConsole .kv{font-size:12px;display:block}   /* running text with line breaks, not the two-column term list .kv is elsewhere */
 .dsConsole .log{flex:1 1 auto;min-height:0;overflow:auto;background:var(--velvet);color:var(--rTxt2);border-radius:12px;padding:6px 0;font:11px var(--mono)}
 .dsConsole .log .row{display:grid;grid-template-columns:58px 44px 1fr 46px;gap:6px;padding:2px 10px;align-items:baseline}
 .dsConsole .log .row .d{color:var(--rDim)}
@@ -1413,10 +1419,10 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
     <div class="fieldRow3">
       <div class="field"><label>Clearance (mm)</label><input id="stClearance" type="number" step="0.01" min="-0.7" max="4.2"><div class="help">Gap between silhouettes. <b>Negative = aggressive:</b> outlines may touch and their strokes overlap by up to that much (−0.18 mm ≈ half a 0.3 mm cut line), bodies never more. 0 = touching. 0.33 pt fit the reference sheet; 1.5 pt did not.</div></div>
       <div class="field"><label>Edge inset (mm)</label><input id="stInset" type="number" step="0.1" min="0" max="12.7"></div>
-      <div class="field"><label>Angle step (°)</label><select id="stAngle"><option value="2">2 (180 angles)</option><option value="5">5 (72 angles)</option><option value="10">10 (36 angles)</option></select></div>
+      <div class="field"><label>Angle step (°)</label><select id="stAngle"><option value="2">2 (180 angles)</option><option value="5">5 (72 angles)</option><option value="10">10 (36 angles)</option></select><div class="help">For the learned search. Charms placed one at a time always turn in 2° steps.</div></div>
     </div>
     <div class="fieldRow3">
-      <div class="field"><label>Time ceiling (s) · parallel searches</label><div class="fieldRow"><input id="stBudget" type="number" step="5" min="10" max="900"><input id="stParallel" type="number" step="1" min="0" max="16"></div><div class="help">Several searches run at once on different seeds. Every search gets time to improve the layout; the best valid layout is saved as it improves and remains on screen through completion. 0 = automatic, adjusted for rotation count and available cores. The ceiling includes compacting sheets after all pieces fit.</div></div>
+      <div class="field"><label>Time ceiling (s) · parallel searches</label><div class="fieldRow"><input id="stBudget" type="number" step="5" min="10" max="900"><input id="stParallel" type="number" step="1" min="0" max="16"></div><div class="help">Several searches run at once on different seeds. Every search gets time to improve the layout; the best valid layout is saved as it improves and remains on screen through completion. 0 = automatic, adjusted for rotation count and available cores. The ceiling includes compacting sheets after all pieces fit. Charms placed one at a time get at least 30 s each, so a big batch is never cut short.</div></div>
       <div class="field"><label>Seed</label><input id="stSeed" type="number" step="1" min="1"><label><input id="stFreshSeed" type="checkbox"> Explore new arrangements each run</label><div class="help">Enabled by default. Turn off to repeat a recorded seed. Re-nesting retains the previous layout if no better valid arrangement is found.</div></div>
       <div class="field"><label>Server fallback above</label><input id="stServerAbove" type="number" step="1" min="0"><div class="help">Pieces. 0 = never use the server solver.</div></div>
     </div>
@@ -1440,10 +1446,9 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
       <div class="field"><label>Due by · N</label><div class="fieldRow"><input id="stPullDueBy" type="date"><input id="stPullCount" type="number" min="1" max="500" step="1"></div></div>
       <div class="field"><label for="stPollOrders">Check for new Etsy orders</label><select id="stPollOrders"><option value="on">On</option><option value="off">Off</option></select><div class="help">Checks while this station is open, including while a run waits for review. Auto processes arrivals; Manual adds them to the order list.</div></div>
       <div class="field"><label for="stPollMinutes">Check interval (minutes)</label><input id="stPollMinutes" type="number" min="10" max="1440" step="1"><div class="help">Orders and listing photos refresh in batches every 10 minutes by default. Longer intervals can further reduce background traffic. Unchanged order details are reused; new orders appear after the next check.</div></div>
-      <div class="field"><label for="stFinalOptimizeCount">Final optimization at (pieces per sheet)</label><input id="stFinalOptimizeCount" type="number" min="1" max="1000" step="1"><div class="help">Default 85. New arrivals first fill existing gaps. A sheet is searched again only when charms do not fit, and at this count it gets its final attempt. Sheets already at 74% skip that extra search. Overflow starts the next sheet.</div></div>
-      <div class="field"><label for="stOptimizeAt">Re-optimize at (% of fill ceiling)</label><input id="stOptimizeAt" type="number" min="50" max="100" step="5"><div class="help">Repack an open sheet near capacity, then try its free space before opening the next sheet. Committed sheets stay fixed.</div></div><input id="stAutoEvery" type="hidden" value="0">
+      <input id="stAutoEvery" type="hidden" value="0">
       <div class="field"><label>Sandbox</label><select id="stSandbox"><option value="off">Off — production: real Etsy through the station, real records</option><option value="on">On — emulated Etsy from the stored snapshot, sandbox records only</option></select><div class="help">In the sandbox the Design Station is framed with ?sandbox=1: its Etsy calls go to the emulator that serves the snapshot taken on the Orders tab, and every lock, claim, completion, note, archive row, pool, set, run and file goes to Sandbox_ copies. The master index is shared (read only). Switching reloads the sorter.</div><div class="fixes" style="margin-top:7px"><button class="btn ghost xs" type="button" id="stSbSnap" title="copy today's open orders into the sandbox so a whole run can be rehearsed against them">Take a sandbox snapshot</button><button class="btn ghost xs" type="button" id="stSbReset" title="empty the sandbox pool, sets, runs and sheets — the real records are untouched">Reset sandbox records</button><button class="btn gold xs" type="button" id="stSbOn" title="take a snapshot of today's open orders, switch to the sandbox and reload — one press">Rehearse a run in the sandbox</button><span class="help" id="stSbStatus" style="margin:0"></span></div></div>
-      <div class="field"><label for="stSbStream">Sandbox orders · speed · seed</label><div class="fieldRow3"><select id="stSbStream"><option value="on">A few at a time, as Etsy brings them</option><option value="off">The whole snapshot at once</option></select><input id="stSbSpeed" type="number" min="1" max="1000" step="1" title="how many times faster than real time the sandbox day plays"><input id="stSbSeed" type="number" min="0" step="1" placeholder="new each reset" title="the same seed replays the same orders after a sandbox reset"></div><div class="help">A few at a time: every simulated 10 minutes 2 to 5 new orders arrive, each a copy of a random snapshot order under new numbers and the simulated time. At 50x a check comes every 12 s; the next one waits while the sorter is still taking in the last, so the sheets fill as a real day would fill them. Dates and due days follow the simulated clock; nesting keeps its real time. Enter a seed (the status shows the current one) to replay the same orders after a reset.</div></div>
+      <div class="field"><label for="stSbStream">Sandbox orders · speed · seed</label><div class="fieldRow3"><select id="stSbStream"><option value="on">A few at a time, as Etsy brings them</option><option value="off">The whole snapshot at once</option></select><input id="stSbSpeed" type="number" min="1" max="1000" step="1" title="how many times faster than real time the sandbox day plays"><input id="stSbSeed" type="number" min="0" step="1" placeholder="new each reset" title="the same seed replays the same orders after a sandbox reset"></div><div class="help">A few at a time: every simulated 10 minutes 2 to 5 new orders arrive, each a copy of a random snapshot order under new numbers and the simulated time. In Auto the next check starts as soon as the sorter has placed the last orders, so no time is spent waiting between them; in Manual one comes every simulated 10 minutes at this speed (12 s at 50x). Dates and due days follow the simulated clock; nesting keeps its real time. Enter a seed (the status shows the current one) to replay the same orders after a reset.</div></div>
       <div class="field"><label>Sandbox records</label><button class="btn ghost sm" id="stSandboxReset" type="button" title="empty the sandbox's own pool, sets, runs and sheets — the real records are never touched">Reset the sandbox…</button></div>
       <div class="field"><label>Run history</label><button class="btn ghost sm" id="stPurge" type="button" title="delete every run, sheet, set, pool row, back record and set counter — production and sandbox — and start with a clean sheet; the master files, the SKU index, the mappings and the sandbox snapshot stay">Purge all run history…</button><div class="help">Asks for the passcode. A run that is still open is named and has to be given up first, or the purge can be forced.</div></div>
       <div class="field"><label>Etsy calls per hour (cap)</label><input id="stEtsyCap" type="number" min="50" max="5000" step="50"><div class="help">Every Etsy call the sorter causes at the station is metered. A run stops before a pull or re-validation that would pass this cap. A pull costs one list page per 100 open orders plus one detail read per order Etsy changed; a re-validation costs one list sweep (reused when under 90 s old).</div></div>
@@ -1468,7 +1473,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
     <div class="fieldRow"><div class="field"><label>Desktop notification when a sheet finishes</label><select id="stNotify"><option value="on">On (when tab hidden)</option><option value="off">Off</option></select></div>
     <div class="field"><label>Sound on completion</label><select id="stSound"><option value="on">On</option><option value="off">Off</option></select></div></div>
   </div>
-  <div class="dlgFoot"><div class="left"><span class="pill neutral" id="stSaved">saved locally</span></div><button class="btn ghost" value="cancel">Close</button><button class="btn gold" id="btnSaveSettings" value="save">Save</button></div>
+  <div class="dlgFoot"><div class="left"><span class="pill neutral" id="stSaved">saved locally</span></div><button class="btn ghost" value="cancel" formnovalidate>Close</button><button class="btn gold" id="btnSaveSettings" value="save">Save</button></div>
 </form></dialog>
 
 <!-- ═══ Sheet report / contact sheet ═══ -->
@@ -1501,10 +1506,10 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-progress.js?v=20260923-tray"></script>
 <script src="charm-nest-operations.js"></script>
 <script src="charm-nest-rose.js?v=20260923-edges"></script>
-<script src="charm-nest-solver.js?v=20260924-ahead"></script>
+<script src="charm-nest-solver.js?v=20260924-onebyone"></script>
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
-<script src="charm-nest-pdf.js?v=20260924-speed"></script>
+<script src="charm-nest-pdf.js?v=20260924-onebyone"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
@@ -1512,7 +1517,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-readiness.js?v=20260923-audit"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
-<script src="charm-nest-orders.js?v=20260923-density"></script>
+<script src="charm-nest-orders.js?v=20260924-onebyone"></script>
 <script src="charm-nest-background.js?v=20260923-audit"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
@@ -2074,7 +2079,8 @@ async function renameCharm(charm, name) {
   name = String(name || "").trim(); if (!name) return;
   for (const src of S.sources) for (const c of src.charms) if (c.hash === charm.hash) { c.name = name; c.slug = name; c.namedBy = "operator"; }
   refreshAllCards();
-  if (S.cloud.ok) api("charmNestLibrary", { op: "renameCharm", hash: charm.hash, name }).catch(() => {});
+  // a rename the library refused says so: it used to be dropped in silence, the new name showing only on this screen
+  if (S.cloud.ok) api("charmNestLibrary", { op: "renameCharm", hash: charm.hash, name }).catch(e => toast(`“${name}” is shown here but not saved to the library: ${e.message}`, "bad", 7000));
 }
 
 /* ═══ 7a · agent activity log — everything the geometry and Claude do, as it happens ═══ */
@@ -2270,6 +2276,13 @@ async function reviewLayout(sh, items) {
 function makeSheet(metal, page) {
   return { metal, page: page || 1, runId: null, sheetId: null, charms: [], status: "idle", worker: null, jobId: null, layout: null, placements: [], rejects: [], sat: null, progress: null, stage: "", outputs: null, verification: null, startedAt: 0, endedBy: null, trials: 0, best: null, dirty: true, log: [], liveInfo: null, serverJob: null };
 }
+/** A sheet whose layout has gone out as it is (cut, released to the laser, recalled from the library, or in a set)
+    keeps it: a new plate or new sheet settings apply to the sheets still filling. Arranging such a sheet again rewrote
+    its files under the same name after its labels and pieces had gone to the laser. */
+function layoutFixed(sh) {
+  return !!sh.roseCutAt || !!sh.releaseFull || !!sh.recalled || !!(window.Sets && Sets.ofRun(sh.runId).some(set => set.committedAt && set.sheetIds.includes(sh.sheetId))) ||
+    !!(window.Gate && Gate.modern(sh.runId) && sh.setId && !sh.draft);
+}
 function sheetDirty(sh) { if(sh.roseCutAt)return; if(sh.metal==='rose'&&(sh.rosePlan||sh.roseProtected)){window.RoseStock?.protect(sh);sh.dirty=true;sh.status='ready';renderCard(sh);return;} delete sh.rosePlan; delete sh.rosePlanHash; delete sh.rosePlanKey; delete sh.runHold; delete sh.intakeFinalized; delete sh.intakeForceFinal; delete sh.intakeOptimized; delete sh.intakeOptimizedCount; delete sh.intakeAppend; delete sh.appendOnly; delete sh.topup; delete sh.missRearranged; sh.dirty = true; sh.releaseFull = false; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
 function activeCharms(sh) { return sh.charms.filter(c => !c.excluded); }
 /* One card per metal; a metal can hold several sheets ("pages"). The card shows the active page and tabs to switch. */
@@ -2310,7 +2323,7 @@ function orderSummary(charms) {
   const multi = [...by.values()].filter(n => n > 1).length;
   return { orders: by.size, multi, text: `${by.size} order(s)${multi ? `, ${multi} multi-piece` : ""}` };
 }
-function overflowToNextSheet(sh) {
+function overflowToNextSheet(sh, announce = true) {
   const ids = new Set(sh.rejects); if (!ids.size) return null;
   const moving = sh.charms.filter(c => ids.has(c.id));
   if (!sh.placements.length) { sh.problem = "The oldest order cannot fit on an empty sheet at these settings. Review its size or the fill ceiling before continuing."; renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(new Error(sh.problem), {sheetPending:true})); return null; }
@@ -2328,7 +2341,7 @@ function overflowToNextSheet(sh) {
   next.isolated = sh.isolated;
   computeSaturation(sh); computeSaturation(next); renderCard(sh);
   agent({ metal: sh.metal }, "nest", `Sheet ${sh.page} retained its best verified layout — ${moving.length} charm(s) in ${orderSummary(moving).text} moved whole to sheet ${next.page}: ${sh.movedOn.names.slice(0, 6).join(", ")}${moving.length > 6 ? "…" : ""}`);
-  toast(`${labelOf(sh.metal)}: ${moving.length} charm(s) moved to sheet ${next.page} — nesting it now`, "ok", 4200);
+  if (announce) toast(`${labelOf(sh.metal)}: ${moving.length} charm(s) moved to sheet ${next.page} — nesting it now`, "ok", 4200);   // after a nest, its own toast already said "… still waiting for sheet N"
   renderRail(); updateTopSub();
   startNest(next);
   return next;
@@ -2342,48 +2355,57 @@ function inflatedArea(c) { const g = (+S.settings.clearancePt || 0) / 2; return 
    its graded search showed that the order fits no gap at any angle ("no-room"): nothing is left to try then. */
 function sheetFull(sh, result, items) {
   const cap = +S.settings.maxFill || .80, byId = new Map(items.map(c => [c.id, c]));
-  const finished = ["cap", "stalled", "trials", "claude-full", "plateau", "no-room"].includes(result.endedBy) || result.endedBy === "budget" && sh.intakePhase !== "fill";
-  const overflow = sh.rejects.length > 0 && (result.density + 1e-6 >= Math.min(.74, cap) || finished) &&
-    [...new Set(sh.rejects.map(id => byId.get(id)?.order || id))].some(order => items.filter(c => (c.order || c.id) === order).reduce((n, c) => n + inflatedArea(c), 0) <= result.usablePt2 * cap);
+  // a search that ran out of time before one trial ended tried nothing: it shows no order to be too big for the sheet
+  const finished = ["cap", "stalled", "trials", "claude-full", "plateau", "no-room"].includes(result.endedBy) || result.endedBy === "budget" && sh.intakePhase !== "fill" && result.trials !== 0;
+  // an order a search that ran out of time never reached shows nothing about the room left either
+  const missed = sh.rejects.filter(id => !untriedIds(result).has(id));
+  const overflow = missed.length > 0 && (result.density + 1e-6 >= Math.min(.74, cap) || finished) &&
+    [...new Set(missed.map(id => byId.get(id)?.order || id))].some(order => items.filter(c => (c.order || c.id) === order).reduce((n, c) => n + inflatedArea(c), 0) <= result.usablePt2 * cap);
   return result.endedBy !== "stopped" && !!sh.verification?.ok && sh.placements.length > 0 && (overflow || result.placedPt2 / Math.max(1, result.usablePt2) >= cap - 1e-6);
 }
-/* Top-up. Orders arrive a few at a time, so when the next one no longer fits a Gold or Silver sheet there is no queue of
-   waiting orders to fill the rest: releasing the sheet there left it near 70%. Now the order that missed moves on to the
-   next sheet and goes first there, and this sheet stays first in line while later orders try its gaps, oldest first
-   but any order that fits (Paul, 23 Sep: newer orders may fill up to 5% of a sheet ahead of an older one). It is released
-   when they have filled that 5%, when three updates in a row add nothing, or after six updates, so it never waits long. */
-const TOPUP = { share: .05, idle: 3, updates: 6, ms: 3600000 };
-const topupNow = () => window.SimClock?.now?.() ?? Date.now();   // the sandbox order stream's simulated hour while it plays
+/* Gap fill (Paul, 24 Sep), Gold and Silver. Orders arrive a few at a time, so when the next one no longer fits a nearly
+   full sheet there is no queue of waiting orders to fill the rest. The order that missed moves on to the next sheet and
+   goes first there; this sheet stays first in line, and each of the next 35 orders of its metal tries its gaps before
+   any later sheet, any order that fits, up to the fill ceiling. The sheet, and with it its set, goes to the laser once
+   it shows 75% full or those 35 orders have tried it, and at once when not even one of the shop's smallest charms (its
+   smallest 7% by size) would still fit (the solver's smallRoom). This replaced the 5% allowance that was released after
+   three quiet updates, six updates or an hour (23 Sep). */
+const TOPUP = { orders: 35, target: .75 };
+const topupNow = () => window.SimClock?.now?.() ?? Date.now();   // the sandbox order stream's simulated time while it plays
+/** The fill the sheet card shows, rounded as it shows it. */
+const shownFull = result => Math.round(100 * (result.usablePt2 ? 1 - result.freePt2 / result.usablePt2 : result.density)) / 100;
+/** The charms a one-by-one fill that ran out of time never reached: turned away without being shown to have no room
+    (noRoom) or to be over the fill ceiling (capped). They are not evidence that the sheet is full, and an order among
+    them has not tried the sheet's gaps. */
+const untriedIds = result => new Set(result.timedOut ? (result.rejects || []).filter(id => !(result.noRoom || []).includes(id) && !(result.capped || []).includes(id)) : []);
 function topupSettle(sh, result, full) {
   const cap = +S.settings.maxFill || .80, t = sh.topup;
   if (!["gold", "silver"].includes(sh.metal) || sh.roseProtected || result.endedBy === "stopped" || !sh.verification?.ok || S.settings.topup === "off") return full;
   const atCeiling = result.placedPt2 / Math.max(1, result.usablePt2) >= cap - .004;
-  // only the live Auto run brings later orders to this sheet; anywhere else a top-up would wait for nothing
+  const reached = shownFull(result) + 1e-9 >= Math.min(TOPUP.target, cap);
+  const noRoom = result.smallRoom === false;
+  // only the live Auto run brings later orders to this sheet; anywhere else it would wait for nothing
   const live = S.settings.runMode === "auto" && !!sh.runId && window.B?.run?.runId === sh.runId && !["complete", "abandoned"].includes(window.B.run.status);
   if (!t) {
-    if (!full || atCeiling || !sh.rejects.length || !live) return full;
-    sh.topup = { at: topupNow(), base: +result.density.toFixed(4), maxFill: +(result.density + TOPUP.share).toFixed(4), placed: sh.placements.length, updates: 0, idle: 0 };
-    log(sh, `Topping up at ${fmt.pct(result.density)}: the order that missed moves to the next sheet; later orders may fill up to ${TOPUP.share * 100}% more of this one first`);
+    if (!full || atCeiling || reached || noRoom || !sh.rejects.length || !live) return full;
+    sh.topup = { at: topupNow(), base: +result.density.toFixed(4), tried: [], placed: sh.placements.length };
+    log(sh, `Filling its gaps at ${fmt.pct(result.density)}: the order that missed moves to the next sheet, and the next ${TOPUP.orders} orders try this sheet first`);
     return false;
   }
   if (t.closedAt) return full;
-  const added = sh.placements.length > t.placed;
-  t.updates++; t.idle = added ? 0 : t.idle + 1; t.placed = sh.placements.length;
-  if (!live || atCeiling || t.maxFill - result.density < .004 || t.idle >= TOPUP.idle || t.updates >= TOPUP.updates) {
+  // every order new to the sheet in this update has now tried its gaps, placed or not, unless the search ran out of time
+  // before it reached that order
+  const before = new Set((sh.nestInitial || []).map(p => p.id)), tried = new Set(t.tried || []), untried = untriedIds(result);
+  const skipped = new Set(activeCharms(sh).filter(c => untried.has(c.id)).map(c => c.order || c.id));
+  for (const c of activeCharms(sh)) if (!before.has(c.id) && !skipped.has(c.order || c.id)) tried.add(c.order || c.id);
+  t.tried = [...tried]; t.placed = sh.placements.length;
+  if (!live || atCeiling || reached || noRoom || t.tried.length >= TOPUP.orders) {
     t.closedAt = topupNow(); t.density = +result.density.toFixed(4);
-    log(sh, `Top-up done after ${t.updates} update(s): ${fmt.pct(t.base)} → ${fmt.pct(result.density)}, sheet released`);
+    const why = reached ? `${fmt.pct(shownFull(result))} full` : atCeiling ? "at the fill ceiling" : noRoom ? "no room left for even the smallest charms" : !live ? "the run stopped bringing orders" : `${TOPUP.orders} later orders tried`;
+    log(sh, `Gap fill done, ${why}: ${fmt.pct(t.base)} → ${fmt.pct(result.density)}, sheet released`);
     return true;
   }
   return false;
-}
-/** An hour after the miss the sheet is released even if no order of its metal came to fill it. Checked as every update
- *  of the run starts (LiveNest.add), whose own release step then takes the sheet. */
-function topupExpire(sh, now = topupNow()) {
-  const t = sh.topup;
-  if (!t || t.closedAt || now - t.at < TOPUP.ms || ["nesting", "finishing", "queued"].includes(sh.status)) return false;
-  t.closedAt = now; t.density = +(sh.density || t.base).toFixed(4); sh.releaseFull = true;
-  log(sh, `Top-up done after an hour: ${fmt.pct(t.base)} → ${fmt.pct(t.density)}, sheet released`); renderCard(sh);
-  return true;
 }
 function usableArea(sh) {
   const st=stockFor(sh.metal,sh),inset=+S.settings.insetPt||0,clearance=+S.settings.clearancePt||0,ins=inset+Math.max(0,clearance)/2;
@@ -2441,10 +2463,11 @@ function computeSaturation(sh) {
 }
 
 /* ═══ 9 · nesting ═══════════════════════════════════════════════════════ */
-function parallelCount() {
+function parallelCount(angles = angleSet().length) {
   const want = +S.settings.parallel || 0, cores = navigator.hardwareConcurrency || 2;
-  // Each worker owns its rotation masks; CPU count is not a memory allowance.
-  const auto = angleSet().length >= 72 ? 1 : Math.min(2, Math.max(1, cores - 1));
+  // Each worker owns its rotation masks; CPU count is not a memory allowance. A search at fine steps (every charm placed
+  // one at a time is graded at 2°) gains nothing from a second worker at the half steps, so the page keeps that core.
+  const auto = angles >= 72 ? 1 : Math.min(2, Math.max(1, cores - 1));
   return Math.max(1, Math.min(16, want || auto));
 }
 function ensureWorker(sh) { return ensureWorkers(sh, 1)[0]; }
@@ -2454,7 +2477,7 @@ function ensureWorkers(sh, n) {
   for (const w of sh.workers.splice(n)) w.terminate();
   while (sh.workers.length < n) {
     const idx = sh.workers.length;
-    const w = new Worker("charm-nest-worker.js?v=20260924-ahead");
+    const w = new Worker("charm-nest-worker.js?v=20260924-onebyone");
     w.onmessage = e => onWorkerMessage(sh, e.data, idx);
     w.onerror = e => onWorkerMessage(sh, { type: "error", jobId: sh.jobId + ":" + idx, message: e.message }, idx);
     sh.workers.push(w);
@@ -2467,19 +2490,26 @@ function sheetT0(sh) { const ids = new Set(sh.charms.map(c => c.sourceId)); cons
 function log(sh, msg) { sh.log.push(`${new Date().toLocaleTimeString()} ${msg}`); if (sh.log.length > 200) sh.log.shift(); if (window.DesignLink && DesignLink.feed) DesignLink.feed({ kind: (METAL_TAG && METAL_TAG[sh.metal]) || sh.metal, text: msg }); }
 /** After nesting, every charm is written and previewed 2.5 % smaller than drawn, scaled about its own centre: the layout is solved at full size and the shrink afterwards makes minor overlaps disappear. */
 const CHARM_SCALE = 0.975;
+/** What a sheet's written files depend on: each placed charm, where and how it lies, and its artwork and name. */
+const layoutKey = (sh, byId) => JSON.stringify([sh.sheetId, (sh.placements || []).map(p => { const c = byId.get(p.id); return [String(p.id), +(+p.cxPt).toFixed(3), +(+p.cyPt).toFixed(3), p.angle, p.scale || 1, c ? c.hash : null, c ? c.name : null]; }).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)]);
+/** One charm at a time on every sheet (Paul, 24 Sep): Gold, Silver, Rose Gold past its green line, a sheet's first
+    charms as much as later ones. Each is graded spot by spot at 2° steps with the others looked ahead, nudged into
+    place, and never moved again; a sheet is never re-arranged. */
+const CAREFUL_ANGLES = Array.from({ length: 180 }, (_, i) => i * 2);
+const carefulNest = sh => sh.nestFlow !== "learned";
 function buildJob(sh) {
   const st = stockFor(sh.metal, sh);
-  const items = activeCharms(sh);
+  const items = activeCharms(sh), careful = carefulNest(sh);
   return {
     sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0, ...(sh.roseStock?.profileJson ? {remnant:JSON.parse(sh.roseStock.profileJson)} : {}) },
-    // a Gold or Silver arrival is fitted into the saved gaps at 5° steps: a few new charms, many more slots to try
-    clearancePt: +S.settings.clearancePt || 0, angles: sh.appendOnly && ["gold", "silver"].includes(sh.metal) && angleSet().length < 72 ? Array.from({ length: 72 }, (_, i) => i * 5) : angleSet(), fineRes: 2, coarseRes: 0.5,
+    clearancePt: +S.settings.clearancePt || 0, angles: careful && angleSet().length < CAREFUL_ANGLES.length ? CAREFUL_ANGLES : angleSet(), fineRes: 2, coarseRes: 0.5,
     timeBudgetMs: sh.intakeBudgetMs || (+S.settings.budgetS || 180) * 1000, fullBudget: sh.intakePhase !== "fill", stallMs: 60 * 1000, maxTrials: sh.intakePhase === "fill" ? 2000 : 1000000, seed: sh.runSeed || +S.settings.seed || 1,
-    protectedRose:sh.roseProtected||null,lockedPlacements:sh.appendOnly?sh.nestInitial||sh.placements:null,
-    // new Gold and Silver charms joining a saved sheet: every spot and angle graded, the best nudged into place
-    careful: !!sh.appendOnly && !sh.roseProtected && ["gold", "silver"].includes(sh.metal),
-    initialLayout: sh.nestInitial || null, maxFill: sh.topup && !sh.topup.closedAt ? Math.min(+S.settings.maxFill || 0.80, sh.topup.maxFill) : +S.settings.maxFill || 0.80, nearFullContact: sh.metal !== "rose",
-    // topping up, an arrival takes any gap it fits; the fresh arrangement after a miss keeps the charms on the sheet first
+    // charms already on the sheet stay exactly where they are
+    protectedRose:sh.roseProtected||null,lockedPlacements:sh.appendOnly?sh.nestInitial||sh.placements:careful&&sh.nestInitial?.length?sh.nestInitial:null,
+    // a Gold or Silver sheet also reports whether one of the shop's smallest charms could still go in (see topupSettle)
+    careful, roomCheck: careful && ["gold", "silver"].includes(sh.metal),
+    initialLayout: sh.nestInitial || null, maxFill: +S.settings.maxFill || 0.80, nearFullContact: sh.metal !== "rose",
+    // filling its gaps, a sheet takes any later order that fits, not only the oldest
     pieces: items.map(c => ({ id: c.id, w: c.w, h: c.h, scale: c.scale, bits: c.bits, areaPt2: c.areaPt2, order: c.order || c.id, orderDate: sh.topup && !sh.topup.closedAt && sh.appendOnly ? 0 : c.orderDate || 0, pinned: c.pinned ? { cxPt: c.pinned.cxPt, cyPt: c.pinned.cyPt, angle: c.pinned.angle } : null }))
   };
 }
@@ -2550,12 +2580,16 @@ function startNestReady(sh, context) {
   if (sh.runId && window.LiveNest) LiveNest.prepareSheet(sh);
   const bestKey = JSON.stringify([packingKey(sh, items), items.map(c=>[c.id,c.order,c.orderDate,c.pinned])]);
   const retained = sh.bestKey === bestKey && sh.best ? CharmNestSolver.publicLayout(sh.best) : null;
-  sh.nestInitial = retained?.placements || (sh.placements?.length ? sh.placements.map(p=>({...p})) : null);
+  // only charms still on the sheet: one taken off while a search ran is not held in place by the next
+  const onSheet = new Set(items.map(c => c.id)), kept = (retained?.placements || sh.placements || []).filter(p => onSheet.has(p.id));
+  sh.nestInitial = kept.length ? kept.map(p=>({...p})) : null;
   sh.runSeed = S.settings.freshSeed !== false ? (crypto.getRandomValues(new Uint32Array(1))[0] & 0x7fffffff) || 1 : +S.settings.seed || 1;
   sh.status = "nesting"; sh.startedAt = performance.now(); sh.placements = retained ? retained.placements.map(p=>({...p})) : sh.intakePhase ? (sh.nestInitial || []).map(p=>({...p})) : []; sh.rejects = retained?.rejects?.slice() || []; sh.outputs = null; sh.verification = null; sh.best = retained; sh.bestWorker = 0; sh.probe = null; sh.probePlaced = []; sh.trials = 0; sh.searchMetrics = null; sh.gpuProgress = null; sh.liveInfo = retained ? sh.bestInfo : sh.intakePhase ? sh.liveInfo : null; sh.endedBy = null;
   sh.jobId = uid(); sh.stage = "Preparing rotations…"; sh.progress = [0, items.length]; sh.dirty = false;
   log(sh, `nest started · ${items.length} pieces · seed ${sh.runSeed} · clearance ${S.settings.clearancePt} pt`);
-  sh.evNest = (S.settings.engine || "solver") === "ai" ? null : agent({ metal: sh.metal }, "nest", `Solver: ${items.length} pieces · seed ${sh.runSeed} · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · ${sh.intakePhase === "fill" ? "filling draft" : sh.intakePhase === "final" ? "final optimization" : sh.intakePhase === "repack" ? "improving partial sheet" : "search"} · up to ${(sh.intakeBudgetMs || S.settings.budgetS*1000)/1000}s`, { live: true });
+  sh.evNest = (S.settings.engine || "solver") === "ai" ? null : agent({ metal: sh.metal }, "nest", carefulNest(sh)
+    ? `Solver: ${items.length} pieces · one at a time, each turned in ${360 / CAREFUL_ANGLES.length}° steps · clearance ${S.settings.clearancePt} pt`
+    : `Solver: ${items.length} pieces · seed ${sh.runSeed} · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · ${sh.intakePhase === "fill" ? "filling draft" : sh.intakePhase === "final" ? "final optimization" : sh.intakePhase === "repack" ? "improving partial sheet" : "search"} · up to ${(sh.intakeBudgetMs || S.settings.budgetS*1000)/1000}s`, { live: true });
   renderCard(sh); drawPreview(sh);
   const job = buildJob(sh);
   if (!retained) { sh.bestRevision = 0; sh.bestHistory = []; }
@@ -2577,10 +2611,10 @@ function startNestReady(sh, context) {
     if (!sh.roseProtected && !sh.appendOnly && (S.settings.engine || "solver") === "ai") { startAINest(sh, items).catch(e => finishNest(sh, { error: e.message })); return; }
     const useServer = S.settings.computePipeline !== "gpu" && S.settings.serverAbove > 0 && items.length > S.settings.serverAbove && S.cloud.ok;
     if (useServer) return startServerNest(sh, job);
-    const n = parallelCount();
+    const n = parallelCount(job.angles.length);
     const workers = ensureWorkers(sh, n);
     sh.pool = { n, done: 0, results: [], trials: new Array(n).fill(0), winner: null };
-    if (sh.evNest) agentUpdate(sh.evNest, { text: `${n} parallel search${n > 1 ? "es" : ""} on seeds ${job.seed}–${job.seed + n - 1} · ${items.length} pieces · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · standard and broader-rotation searches keep oldest-first sheet membership · ceiling ${fmt.s(job.timeBudgetMs)}` });
+    if (sh.evNest && !job.careful) agentUpdate(sh.evNest, { text: `${n} parallel search${n > 1 ? "es" : ""} on seeds ${job.seed}–${job.seed + n - 1} · ${items.length} pieces · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · standard and broader-rotation searches keep oldest-first sheet membership · ceiling ${fmt.s(job.timeBudgetMs)}` });
     workers.forEach((w, i) => w.postMessage({ type: "solve", jobId: sh.jobId + ":" + i, job: Object.assign({}, job, { seed: job.seed + i, exploreRotations: i % 2 === 1, useGPU: S.settings.computePipeline === "gpu" && i === n - 1 }) }));
   };
   const launchId=sh.jobId;
@@ -2879,26 +2913,15 @@ async function finishNest(sh, { result, error }) {
   const items = activeCharms(sh); const byId = new Map(items.map(c => [c.id, c]));
   if (error && sh._beforeLearned) { Object.assign(sh, sh._beforeLearned); sh._beforeLearned = null; drawPreview(sh); }
   if (error) { sh.status = sh.outputs ? "partial" : items.length ? "ready" : "idle"; sh.stage = ""; log(sh, "error: " + error); toast(`${labelOf(sh.metal)}: nesting failed — ${error}`, "bad", 6000); renderCard(sh); pumpNestQueue(); if (window.RunCtl) RunCtl.onSheetDone(sh, new Error(error)); return; }
-  const belowTarget=result.density+1e-6<Math.min(.74,+S.settings.maxFill||.80);
-  // A quick fill that seats every charm is kept: a sheet short of the target is not searched again just for being short
-  // (a lone charm on a new sheet spent the whole 180 s on it, 23 Sep; Paul asked for that run to go). A fill that leaves
-  // charms out, and the last try at the final count, still get the fresh arrangement.
-  const needsRepack=!sh.roseProtected && !sh.appendOnly && sh.intakePhase==='fill' && belowTarget &&
-    (items.length>=(+S.settings.finalOptimizeCount||85) || result.rejects.length && items.length>(sh.intakeOptimizedCount||0));
-  // The first arrival that misses the gaps of a Gold or Silver sheet short of the target gets one fresh arrangement of
-  // the whole sheet before it moves on: the gaps of a saved layout do not show how full the sheet can get. Nothing on an
-  // unreleased sheet is cut yet, and an engraved back belongs to its piece, not to the piece's position. Once per sheet:
-  // when the fresh arrangement seated that order, every later miss started another, and a sheet topping up started one
-  // for each later order too, so a sheet with no room left searched for minutes at every update (Paul, 24 Sep). Later
-  // misses, and a sheet topping up, only offer their gaps; an order that fits none moves on at once.
-  const appendMissed=sh.appendOnly && !sh.roseProtected && !sh.topup && !sh.missRearranged && ["gold","silver"].includes(sh.metal) && sh.intakePhase==='fill' && belowTarget && result.rejects.length>0;
-  if(result.endedBy!=='stopped' && (needsRepack || appendMissed)){
-    if(appendMissed)sh.missRearranged=true;
-    sh.optimizationTried=true;sh.intakeForceFinal=true;delete sh.intakeAppend;delete sh.appendOnly;
-    sh.placements=result.placements;sh.density=result.density;
-    sh.liveInfo={placedPt2:result.placedPt2,usablePt2:result.usablePt2,freePt2:result.freePt2,pocket:result.pocket};
-    sh.status='ready';log(sh,'Below 74%: improving the saved layout before accepting this batch');startNest(sh);return;
+  // The layout stands as placed: charms go in one at a time and a sheet is never re-arranged afterwards, since that
+  // loses capacity (Paul, 24 Sep). An order that finds no room moves on to the next sheet.
+  // A search that ran out of time before it placed a single charm shows nothing about whether they fit: the sheet is
+  // searched once more at once (a busy machine), instead of being held as "cannot fit on an empty sheet".
+  if(result.endedBy==='budget' && (result.timedOut || result.trials===0) && !result.placements.length && items.length && !sh.timeoutRetried){
+    sh.timeoutRetried=true;sh.status='ready';
+    log(sh,'Ran out of time before placing a charm — searching the sheet again');startNest(sh);return;
   }
+  if(result.placements.length)delete sh.timeoutRetried;
   sh._beforeLearned = null;
   sh.releaseFull = false;
   sh.status = "finishing"; sh.endedBy = result.endedBy; sh.trials = result.trials; sh.searchMetrics=result.metrics||sh.searchMetrics; sh.gpuProgress=result.gpu||sh.gpuProgress; sh.placements = result.placements; sh.rejects = result.rejects.slice(); sh.livePlacements = [];
@@ -2924,6 +2947,32 @@ async function finishNest(sh, { result, error }) {
     for (const p of sh.placements) p.scale = kept.get(p.id) || CHARM_SCALE;
     sh.progress = [sh.placements.length, sh.placements.length]; renderProgress(sh); drawPreview(sh);
     sh.optimized = { count: sh.placements.length, scale: CHARM_SCALE, ms: Math.round(performance.now() - optT0) };
+    // Nothing new went in (a Gold or Silver sheet filling its gaps, whose new orders all found no room): the layout is
+    // exactly as last written, so its files, verification and cloud record stand. Writing, verifying and uploading them
+    // again held the next charm back several seconds at every try (Paul, 24 Sep: no waiting between charms); only the
+    // record's state is brought up to date.
+    const was = sh._written;
+    if (was && ["gold", "silver"].includes(sh.metal) && result.endedBy !== "stopped" && was.key === layoutKey(sh, byId)) {
+      sh.seq = await nextSheetSeq(sh);
+      if (sheetFileBase(sh) === was.fileBase) {
+        sh.fileBase = was.fileBase; sh.outputs = was.outputs; sh.verification = was.verification;
+        sh.releaseFull = topupSettle(sh, result, sheetFull(sh, result, items));
+        if (sh.intakePhase !== "fill") { sh.intakeOptimized = true; sh.intakeOptimizedCount = items.length; }
+        delete sh.intakeForceFinal;
+        sh.intakeFinalized = sh.intakePhase === "final" && sh.placements.length > 0;
+        sh.status = sh.rejects.length ? "partial" : "complete"; sh.stage = ""; sh.progress = [5, 5]; sh.totalMs = performance.now() - sh.t0;
+        renderCard(sh); drawPreview(sh);
+        agent({ metal: sh.metal }, "nest", `${sheetName(sh)}: no room for ${sh.rejects.length === 1 ? "the new piece" : `the ${sh.rejects.length} new pieces`}; the layout and its saved files stand as they are`);
+        sh.persisted = api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, releaseFull: !!sh.releaseFull, topup: sh.topup || null, intakeFinalized: !!sh.intakeFinalized } }, { label: "Updating sheet record", quiet: true })
+          .then(() => { sh.persistedDone = true; flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); })
+          .catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e, { stage: "persistence", critical: true })); });
+        // in Auto the move is routine and shows on both cards; a toast for it covered the next card's controls
+        if (sh.rejects.length && (sh.nestFlow !== "learned" || ["cap", "plateau"].includes(sh.endedBy))) overflowToNextSheet(sh, !(S.settings.runMode === "auto" && !!sh.runId && window.B?.run?.runId === sh.runId));
+        pumpNestQueue();
+        return;
+      }
+    }
+    sh._written = null;
     agent({ metal: sh.metal }, "ok", `Optimized: ${sh.placements.length} charms shrunk ${shrinkPct}% about their centres (positions and angles unchanged)`);
     // 1 · write the sheet
     sh.stage = "Writing .ai…"; sh.progressKind = "finish"; sh.progress = [1, 5]; renderProgress(sh);
@@ -2958,20 +3007,25 @@ async function finishNest(sh, { result, error }) {
     delete sh.intakeForceFinal;
     sh.intakeFinalized = sh.intakePhase === "final" && result.endedBy !== "stopped" && sh.verification.ok && sh.placements.length > 0;
     sh.seq = await nextSheetSeq(sh); sh.fileBase = sheetFileBase(sh);
+    // kept once saved, so a later try that places nothing reuses what was written (see above)
+    const written = ["gold", "silver"].includes(sh.metal) && sh.verification.ok ? { key: layoutKey(sh, byId), fileBase: sh.fileBase, outputs: sh.outputs, verification: sh.verification } : null, writtenJob = sh.jobId;
     const allPlaced = sh.rejects.length === 0;
     sh.status = allPlaced && sh.verification.ok ? "complete" : "partial";
     sh.stage = ""; sh.progress = [5, 5]; sh.totalMs = performance.now() - sh.t0;   // file in → sheet written and verified, Claude's review included
     renderCard(sh); drawPreview(sh);
     // 4 · announce
     const msg = `${sheetName(sh)} · ${allPlaced ? "sheet complete" : sh.releaseFull ? "sheet full" : "best layout saved"} — ${sh.placements.length} of ${items.length} placed, ${fmt.pct(sh.sat ? sh.sat.fullPct : sh.density)} full` + (sh.verification.ok ? "" : " · verification flagged, see report") + (allPlaced ? ` · ended by: ${endedText(sh.endedBy)}` : ` · ${sh.rejects.length} still waiting${sh.nestFlow !== "learned" || ["cap", "plateau"].includes(sh.endedBy) ? ` for sheet ${sh.page + 1}` : " on this sheet"}`);
-    toast(msg, allPlaced && sh.verification.ok ? "ok" : "", 6500); ding();
+    // Auto's own sheets finish several times an arrival: a clean one is on its card and in the ladder, and its toast only
+    // covered the next card's controls. One that needs a look still says so.
+    const routine = allPlaced && sh.verification.ok && S.settings.runMode === "auto" && !!sh.runId && window.B?.run?.runId === sh.runId;
+    if (!routine) toast(msg, allPlaced && sh.verification.ok ? "ok" : "", 6500); ding();
     $$(".sheetCard").find(el => el.dataset.m === sh.metal)?.classList.add("pulse");
     setTimeout(() => $$(".sheetCard").find(el => el.dataset.m === sh.metal)?.classList.remove("pulse"), 1300);
     if (document.hidden && S.settings.notify === "on" && "Notification" in window && Notification.permission === "granted") { try { new Notification("Charm Nesting Station", { body: msg }); } catch (_) { /* ignore */ } }
     // 5 · persist everything. The two verifiers above are the acceptance test; no further inspection runs.
-    sh.persisted = persistSheet(sh, items).then(() => { sh.persistedDone = true; flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e,{stage:"persistence",critical:true})); });
+    sh.persisted = persistSheet(sh, items).then(() => { if (sh.jobId === writtenJob) sh._written = written; sh.persistedDone = true; flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e,{stage:"persistence",critical:true})); });
     // 6 · whatever did not fit under the ceiling goes to the next sheet of this metal, which nests on its own
-    if (sh.rejects.length && sh.endedBy !== "stopped" && (sh.nestFlow !== "learned" || sh.verification.ok && ["cap", "plateau"].includes(sh.endedBy))) overflowToNextSheet(sh);
+    if (sh.rejects.length && sh.endedBy !== "stopped" && (sh.nestFlow !== "learned" || sh.verification.ok && ["cap", "plateau"].includes(sh.endedBy))) overflowToNextSheet(sh, false);
   } catch (e) {
     sh.status = "partial"; sh.stage = ""; log(sh, "finish error: " + (e.stack || e)); toast(`${labelOf(sh.metal)}: output failed — ${e.message}`, "bad", 7000); renderCard(sh);
     if (window.RunCtl) RunCtl.onSheetDone(sh, e);
@@ -3073,7 +3127,8 @@ async function persistSheet(sh, items, context) {
   recountLibrary();                                            // the rail's library count moves with the library
   if (failed.length) { agent({ metal: sh.metal }, "warn", `Saved the record for ${name}, but these files did not upload: ${failed.join("; ")}`); toast(`${labelOf(sh.metal)}: record saved, ${failed.length} file(s) failed to upload — see the log`, "bad", 6000); throw new Error("Sheet files not saved: " + failed.join("; ")); }
   agent({ metal: sh.metal }, "cloud", `Saved to the cloud in folder ${name}: ${name}.ai, .pdf, labelled proof, report, preview`);
-  toast(`${labelOf(sh.metal)}: sheet, proof and report saved to the cloud`, "ok", 3000);
+  // a run's sheet: the run waits for this save and stops loudly if it fails, so success needs no second toast
+  if (!(sh.runId && window.B?.run?.runId === sh.runId)) toast(`${labelOf(sh.metal)}: sheet, proof and report saved to the cloud`, "ok", 3000);
   // the set: one QR label per sheet saved beside it, the set record kept current (design §8.3)
   if (window.Sets) await Sets.onSheetSaved(sh, items, outputs);
   // The first refresh above shows the saved layout while labels are uploading.
@@ -3129,7 +3184,8 @@ function fillSrcRow(el, src) {
 function updateTopSub() {
   const total = allSheets().reduce((n, sh) => n + activeCharms(sh).length, 0);
   const running = allSheets().filter(s => s.status === "nesting").length;
-  S.topSummary = `${allSheets().length} sheets · ${total} charms queued${S.unassigned.length ? ` · ${S.unassigned.length} unassigned` : ""}${running ? ` · ${running} nesting` : ""}`;
+  const nSheets = allSheets().length;
+  S.topSummary = `${nSheets} sheet${nSheets === 1 ? "" : "s"} · ${total} charm${total === 1 ? "" : "s"} queued${S.unassigned.length ? ` · ${S.unassigned.length} unassigned` : ""}${running ? ` · ${running} nesting` : ""}`;
   if (window.Ladder) Ladder.render();
   document.title = (running ? "⏳ " : "") + "Brites · Charm Nesting Station 1";
 }
@@ -3148,7 +3204,7 @@ function buildCards() {
         <div class="dropHint" data-r="hint"><b>Drop ${m.label} artwork here</b><span>.ai · .pdf · .zip — anything dropped on this card belongs to ${m.long.toLowerCase()}</span><span class="k">or drop on the queue to route by file name</span></div>
         <div class="shOverlay" data-r="overlay"></div><div class="hint" data-r="canvasHint"></div></div>
       <div class="shStage" data-r="stage"></div>
-      <div class="shProg"><progress data-r="prog" aria-label="${m.label} nesting progress" max="1" hidden></progress></div>
+      <div class="shProg" data-bp-managed><progress data-r="prog" aria-label="${m.label} nesting progress" max="1" hidden></progress></div>
       <div class="shSat" data-r="sat"></div>
       <div hidden data-r="rejects"></div>
       <div class="shQueue" data-r="queue"></div>
@@ -3159,6 +3215,7 @@ function buildCards() {
         <button class="btn danger sm hidden" data-r="stop">Stop</button>
         <button class="btn sage sm hidden" data-r="dl">Download .ai</button>
         <button class="btn ghost sm hidden" data-r="dxf">.dxf</button>
+        <button class="btn ghost sm hidden" data-r="report" title="what was placed, what the verification measured, and what was left out">Report</button>
         <div class="right"><button class="btn ghost xs hidden" data-r="second">Move the rest to the next sheet</button><button class="btn ghost xs" data-r="clear">Clear</button></div>
       </div>`;
     host.appendChild(el); sh.el = el; sh.cardEl = el;
@@ -3167,7 +3224,13 @@ function buildCards() {
     q("dl").onclick = () => ProductionExports.live(cur(), "ai");
     q("dxf").onclick = () => ProductionExports.live(cur(), "dxf");
     q("second").onclick = () => overflowToNextSheet(cur());
-    q("clear").onclick = () => { const pg = cur(); if(pg.metal==='rose'&&!pg.roseCutAt&&(pg.rosePlan||pg.roseProtected)){toast('Finish the protected Rose Gold sheet before clearing it. Its green contour and saved positions must remain.','bad');return;} if (pg.page > 1) { if (pg.status === "nesting") stopNest(pg); pg.charms.forEach(c => { c.metal = null; }); pg.charms = []; removePage(pg); } else clearMetal(m.key); renderRail(); updateTopSub(); };
+    q("report").onclick = () => openReport(cur());
+    /* Clear on sheet 1 empties every sheet of the metal. It took an open run's sheets with it — in Auto, between two
+       arrivals, the orders on them were stranded as "waiting" — and it asked nothing first. */
+    q("clear").onclick = () => { const pg = cur(); const block = clearBlock(pg); if (block) { paintClear(pg); return; }
+      const pages = pg.page > 1 ? [pg] : pagesOf(m.key), n = pages.reduce((k, p) => k + p.charms.length, 0);
+      if (n && !confirm(`Clear ${pg.page > 1 ? sheetName(pg) : pages.length > 1 ? `all ${pages.length} ${m.label} sheets` : m.label} — ${n} charm${n === 1 ? "" : "s"}? Sheets already saved to the cloud stay in the Library.`)) return;
+      if (pg.page > 1) { if (pg.status === "nesting") stopNest(pg); pg.charms.forEach(c => { c.metal = null; }); pg.charms = []; removePage(pg); } else clearMetal(m.key); renderRail(); updateTopSub(); };
     // drag & drop on the card
     ["dragenter", "dragover"].forEach(ev => el.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); el.classList.add("dragOver"); e.dataTransfer.dropEffect = "copy"; }));
     ["dragleave", "drop"].forEach(ev => el.addEventListener(ev, e => { el.classList.remove("dragOver"); }));
@@ -3185,6 +3248,22 @@ function buildCards() {
 const allCharms = () => S.sources.flatMap(s => s.charms).concat(Object.values(S.poolSources || {}).flatMap(s => s.charms || []));
 /** A charm's source: a dropped file, or a per-SKU master copy fetched for an order line (pool). */
 const sourceOf = id => S.sources.find(s => s.id === id) || (S.poolSources && S.poolSources[id]) || null;
+/** Why the card's Clear may not take this page (on sheet 1: every page of the metal) away, or "" when it may. */
+function clearBlock(pg) {
+  const pages = pg.page > 1 ? [pg] : pagesOf(pg.metal), r = window.B?.run;
+  if (r && !["complete", "abandoned"].includes(r.status) && pages.some(p => p.runId === r.runId && p.charms.length)) return "The open run's orders are on this card. Abandon the run first (⋯ on the run banner) to clear it.";
+  if (pages.some(p => p.metal === "rose" && !p.roseCutAt && (p.rosePlan || p.roseProtected))) return "The protected Rose Gold sheet keeps its green contour and saved positions until it is cut.";
+  return "";
+}
+/** The open run's page that holds this saved sheet, if one does. */
+function openRunPage(sheetId) {
+  const r = window.B?.run; if (!r || ["complete", "abandoned"].includes(r.status)) return null;
+  return allSheets().find(p => p.sheetId === sheetId && p.runId === r.runId && (p.charms.length || p.placements.length)) || null;
+}
+function paintClear(sh) {
+  const b = sh && sh.el && $(`[data-r="clear"]`, sh.el); if (!b) return;
+  const why = clearBlock(sh); b.disabled = !sh.charms.length || !!why; b.title = why;
+}
 function clearMetal(metal) {
   const prim = S.sheets[metal];
   if(prim.pages.some(pg=>pg.metal==='rose'&&!pg.roseCutAt&&(pg.rosePlan||pg.roseProtected))){toast('Finish the protected Rose Gold sheet before clearing this card. Its green contour and saved positions must remain.','bad');return;}
@@ -3216,6 +3295,8 @@ function renderCard(sh) {
   if (sh.seq) bits.push(`<b>Set ${sh.seq}</b>`);
   if (dayTxt) bits.push(esc(dayTxt));
   if (rc) bits.push("recalled");
+  // a Gold or Silver sheet filling its gaps is not released yet: say so where the set is named (see topupSettle)
+  if (sh.topup && !sh.topup.closedAt) bits.push(`<span title="Goes to the laser at ${TOPUP.target * 100}% full or once ${TOPUP.orders} later orders have tried its gaps">filling gaps · ${(sh.topup.tried || []).length} of ${TOPUP.orders} orders tried</span>`);
 
   prov.innerHTML = bits.length ? "· " + bits.join(" · ") : "";
   prov.title = sh.fileBase ? `Saved as ${sh.fileBase}` : (sh.runId ? `Run ${sh.runId}` : "");
@@ -3231,7 +3312,9 @@ function renderCard(sh) {
   q("stop").classList.toggle("hidden", sh.status !== "nesting");
   q("dl").classList.toggle("hidden", !sh.outputs && !(rc && rc.outputs && rc.outputs.ai)); q("dl").textContent = sh.verification && !sh.verification.ok ? "Download .ai (flagged)" : "Download .ai";
   q("second").classList.toggle("hidden", !(sh.status === "partial" && sh.rejects.length));
-  q("clear").disabled = !sh.charms.length;
+  paintClear(sh);
+  // "see the report" is said by the verification flag and by the outlines left out; this is the way to it
+  q("report").classList.toggle("hidden", !(sh.verification && !sh.verification.ok) && !sh.charms.some(c => c.open) && !S.sources.some(src => src.group?.orphans?.length && sh.charms.some(c => c.sourceId === src.id)));
   // rejects tray
   const rj = q("rejects"); const byId = new Map(sh.charms.map(c => [c.id, c]));
   if (sh.movedOn && sh.movedOn.n) { rj.classList.remove("hidden"); rj.title = sh.movedOn.names.join(", "); rj.innerHTML = `<b>${sh.movedOn.n} moved to sheet ${sh.movedOn.page}</b><button type="button" class="btn ghost xs" data-goto="${sh.movedOn.page - 1}">open it</button>`; $("[data-goto]", rj).onclick = e => showPage(sh.metal, +e.currentTarget.dataset.goto); }
@@ -3253,26 +3336,27 @@ function renderCard(sh) {
 function renderProgress(sh) {
   const el = sh.el; if (!el) return; const q = r => $(`[data-r="${r}"]`, el);
   const p = q("prog");
-  const showing = ["nesting", "finishing", "queued"].includes(sh.status);
+  // a queued sheet still held the last nest's [n, n]: "3/3 placed · 100%" under "Queued — waiting for SS"
+  const showing = ["nesting", "finishing"].includes(sh.status);
   if (!showing || !sh.progress) { p.hidden = true; if (p.parentElement.classList.contains("bp-meter")) p.parentElement.hidden = true; }
   else {
     p.hidden = false; if (p.parentElement.classList.contains("bp-meter")) p.parentElement.hidden = false;
     // Percentages come only from completed work: pieces placed / pieces queued (or prep pieces, or finish steps).
     p.max = Math.max(1, sh.progress[1]); p.value = Math.min(sh.progress[0], sh.progress[1]);
     p.setAttribute("value", p.value);
-    if (p.parentElement.classList.contains("bp-meter")) { const pct = Math.round(p.value / p.max * 100); p.parentElement.dataset.label = sh.progressKind === "prepare" ? `preparing ${pct}%` : sh.progressKind === "optimize" ? `optimizing charms ${p.value}/${p.max}` : sh.progressKind === "finish" ? `finishing ${pct}%` : `${p.value}/${p.max} placed · ${pct}%`; p.parentElement.style.setProperty("--bp-pct", pct + "%"); p.parentElement.dataset.determinate = "true"; }
+    if (p.parentElement.classList.contains("bp-meter")) { const pct = Math.round(p.value / p.max * 100); p.parentElement.dataset.cnLabel = sh.progressKind === "prepare" ? `preparing ${pct}%` : sh.progressKind === "optimize" ? `optimizing charms ${p.value}/${p.max}` : sh.progressKind === "finish" ? `finishing ${pct}%` : `${p.value}/${p.max} placed · ${pct}%`; p.parentElement.style.setProperty("--bp-pct", pct + "%"); p.parentElement.dataset.determinate = "true"; }
   }
   /* One line under the preview, never two that wrap. While a sheet works it reads as the stage and the clock; once it is
      done it is the whole result — placed, full, verified, elapsed — and the timings that used to take a second line are
      kept in its tooltip instead. The pills over the image would repeat it, so they show only while it is still moving. */
-  const st = q("stage"); const elapsed = ["nesting", "finishing"].includes(sh.status) ? fmt.s(performance.now() - sh.startedAt) : (sh.totalMs ? fmt.s(sh.totalMs) : (sh.elapsedMs ? fmt.s(sh.elapsedMs) : ""));
-  const budget = sh.status === "nesting" ? (sh.nestFlow === "learned" ? ` / ${fmt.s((S.settings.learnedBudgetS || 600) * 1000)} ceiling` : (S.settings.engine || "solver") === "ai" ? ` · round ${sh.aiRound || 1}/${S.settings.aiRounds || 10}` : ` / ${fmt.s(sh.intakeBudgetMs || (+S.settings.budgetS || 180)*1000)}`) : "";
+  const st = q("stage"); const elapsed = ["nesting", "finishing"].includes(sh.status) ? fmt.s(performance.now() - sh.startedAt) : sh.status === "queued" ? "" : (sh.totalMs ? fmt.s(sh.totalMs) : (sh.elapsedMs ? fmt.s(sh.elapsedMs) : ""));
+  const budget = sh.status === "nesting" ? (sh.nestFlow === "learned" ? ` / ${fmt.s((S.settings.learnedBudgetS || 600) * 1000)} ceiling` : (S.settings.engine || "solver") === "ai" ? ` · round ${sh.aiRound || 1}/${S.settings.aiRounds || 10}` : "") : "";   // placed one at a time, a sheet has no ceiling worth showing: the solver's CAREFUL_MS only guards
   const deep = sh.totalMs ? `${fmt.s(sh.totalMs)} from the first file · nest ${fmt.s(sh.elapsedMs || 0)}${sh.trials ? ` · ${sh.trials} trial${sh.trials > 1 ? "s" : ""}` : ""}${sh.optimized ? ` · charms shrunk ${((1 - sh.optimized.scale) * 100).toFixed(1).replace(/\.0$/, "")}%` : ""}` : "";
   const reviewingSrc = S.sources.find(s => s.review && s.review.state === "running" && s.charms.some(c => c.metal === sh.metal));
   const done = sh.status === "complete" || sh.status === "partial";
   st.title = done ? deep + (sh.searchMetrics ? ` · ${sh.searchMetrics.positions.toLocaleString()} position checks (${sh.searchMetrics.gpuPositions.toLocaleString()} on GPU)` : "") + (sh.gpuProgress ? ` · ${sh.gpuProgress.reason}` : "") + " · Verification checks geometry; it does not certify optimal packing." + (sh.nestFlow === "learned" ? ` · ${sh.learnedResult?.model?.model || (sh.learnedResult?.modelError ? "model unavailable" : "model skipped: baseline sufficient")} · selected ${sh.learnedResult?.selectedSource || "best verified layout"} · +${sh.learnedResult?.gainedPieces || 0} vs standard · baseline ${sh.learnedCheckpoint?.baseline?.placements.length || 0} · ${sh.trials} measured candidates` : "") : "";
   const measured=sh.status==='nesting' && !sh.stage?.startsWith('Stopping') && sh.searchMetrics?.positions>0;
-  const searchLabel=measured ? `${sh.gpuProgress?.active?(sh.searchMetrics.gpuPositions?'GPU + CPU':'CPU · GPU ready'):sh.gpuProgress?.phase==='checking'?'CPU · GPU starting':sh.gpuProgress?'CPU · GPU unavailable':'CPU'} · ${sh.trials.toLocaleString()} layout trials` : sh.stage;
+  const searchLabel=measured ? `${sh.gpuProgress?.active?(sh.searchMetrics.gpuPositions?'GPU + CPU':'CPU · GPU ready'):sh.gpuProgress?.phase==='checking'?'CPU · GPU starting':sh.gpuProgress?'CPU · GPU unavailable':'CPU'} · ${sh.trials.toLocaleString()} layout trial${sh.trials === 1 ? "" : "s"}` : sh.stage;
   if(measured)st.title=`${sh.stage} · ${sh.gpuProgress?.reason||'CPU pipeline'}. Layout trials are completed construction passes across all workers; interrupted passes are excluded. ${sh.searchMetrics.groups||0} complete group plans and ${sh.searchMetrics.branches||0} partial group branches evaluated. Diagnostic only: ${sh.searchMetrics.positions.toLocaleString()} low-level position checks, including repeats and early rejections. These are not distinct sheet arrangements.`;
   st.innerHTML = sh.stage ? `<span class="spin"></span><span>${esc(searchLabel)}</span><span class="r">${elapsed}${budget}</span>`
     : reviewingSrc ? `<span class="spin"></span><span>Claude is reviewing the ${reviewingSrc.charms.length} charms detected in ${esc(reviewingSrc.name)}</span><span class="r">${fmt.s(reviewingSrc.review.elapsed || 0)}</span>`
@@ -3300,7 +3384,7 @@ function renderSat(sh) {
   const room = !s.saturated && s.nEst > 0 ? `<span class="free">· room for about <b>${s.nEst} more</b></span>` : s.saturated ? `<span class="free">· full</span>` : "";
   const fact = live
     ? `<div class="fact"><b>${fmt.pct(s.fullPct)}</b><span>full</span><span class="free">· ${fmt.area(s.freeFact)} free</span>${room}</div><div class="bar"><i style="width:${Math.round(s.fullPct * 100)}%"></i><em style="left:${Math.round(s.rho.cap * 100)}%" title="fill ceiling"></em></div>`
-    : `<div class="fact"><b>${fmt.pct(Math.min(1, s.totalNeeded / s.usable))}</b><span>needed</span><span class="free">· ${s.count} charms</span>${room}</div><div class="bar"><i style="width:${Math.round(Math.min(1, needPct) * 100)}%;${needPct > s.rho.rho ? "background:var(--clay)" : ""}"></i><em style="left:${Math.round(s.rho.cap * 100)}%" title="fill ceiling"></em></div>`;
+    : `<div class="fact"><b>${fmt.pct(Math.min(1, s.totalNeeded / s.usable))}</b><span>needed</span><span class="free">· ${s.count} charm${s.count === 1 ? "" : "s"}</span>${room}</div><div class="bar"><i style="width:${Math.round(Math.min(1, needPct) * 100)}%;${needPct > s.rho.rho ? "background:var(--clay)" : ""}"></i><em style="left:${Math.round(s.rho.cap * 100)}%" title="fill ceiling"></em></div>`;
   // and a second line only when there is something to decide, never to restate the first
   let note = "";
   if (s.recommend) {
@@ -3370,7 +3454,7 @@ function paintPreview(cv, sh, clean, R) {
     const ai = (S.settings.engine || "solver") === "ai";
     ctx.fillText(sh.status === "nesting" ? (ai ? `Claude is planning round ${sh.aiRound || 1}` : "Preparing…") : `${n} charm${n === 1 ? "" : "s"} queued`, W / 2, H / 2 - W / 60);
     ctx.font = `${Math.round(W / 44)}px ${getComputedStyle(document.body).getPropertyValue("--sans")}`; ctx.fillStyle = "rgba(147,140,128,.75)";
-    ctx.fillText(sh.status === "nesting" ? (ai ? "its moves will land here one by one" : "rotations and masks") : "press Nest to fill this sheet", W / 2, H / 2 + W / 40);
+    ctx.fillText(sh.status === "nesting" ? (ai ? "its moves will land here one by one" : "rotations and masks") : sh.status === "queued" ? "it starts on its own" : "press Nest to fill this sheet", W / 2, H / 2 + W / 40);
   }
   (sh.roseCutAt ? [] : sh.placements).forEach((p, i) => {
     const c = byId.get(p.id); if (!c) return;
@@ -3435,6 +3519,10 @@ function onPreviewClick(sh, e) {
 /* ═══ 13 · dialogs: charm inspector, report ═════════════════════════════ */
 function openCharm(sh, c, placement) {
   if (!c) return;
+  /* An order line's metal is the customer's choice and its name is its order and SKU. The inspector offered it the
+     metal moves (refused with an error once placed), Exclude (which cleared the run's saved layout and dropped the line
+     from its sheet) and a rename (which renamed the shared master artwork in the charm library, not the line). */
+  const line = !!c.poolId;
   const pl = placement || sh.placements.find(p => p.id === c.id);
   const dlg = $("#dlgReport"); $("#rpTitle").textContent = c.name || `Charm #${c.index + 1}`;
   $("#rpDownloadJson").classList.add("hidden");
@@ -3442,19 +3530,20 @@ function openCharm(sh, c, placement) {
     <div style="display:grid;grid-template-columns:200px 1fr;gap:18px;align-items:start">
       <img crossorigin="anonymous" src="${cors(c.thumb)}" style="width:200px;aspect-ratio:1;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:10px">
       <div>
-        <div class="field"><label>Layer name</label><input id="ciName" value="${esc(c.name || "")}"><div class="help">${c.namedBy === "claude" ? `Named by Claude${c.confidence ? ` (${Math.round(c.confidence * 100)}% sure)` : ""}${c.label ? ` — “${esc(c.label)}”` : ""}` : c.namedBy === "operator" ? "Named by an operator" : c.namedBy === "library" ? "From the charm library" : "File-based name"}. Renames are remembered for this artwork.</div></div>
+        <div class="field"><label>Layer name</label><input id="ciName" value="${esc(c.name || "")}"${line ? " readonly" : ""}><div class="help">${line ? "An order line: named by its order and SKU." : ""}${line ? "" : c.namedBy === "claude" ? `Named by Claude${c.confidence ? ` (${Math.round(c.confidence * 100)}% sure)` : ""}${c.label ? ` — “${esc(c.label)}”` : ""}` : c.namedBy === "operator" ? "Named by an operator" : c.namedBy === "library" ? "From the charm library" : "File-based name"}${line ? "" : ". Renames are remembered for this artwork."}</div></div>
         <dl class="kv"><dt>Source</dt><dd>${esc(c.sourceName)} · #${c.index + 1}</dd><dt>Size</dt><dd>${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}</dd><dt>Silhouette</dt><dd>${fmt.area(c.areaPt2)} · ${c.members.length} elements${c.qty > 1 ? ` · ×${c.qty} on this file` : ""}</dd><dt>Geometry hash</dt><dd>${c.hash}</dd>${pl ? `<dt>Placed</dt><dd>${pl.angle}° at ${fmt.mm(pl.cxPt)}, ${fmt.mm(pl.cyPt)} from top-left</dd>` : ""}${c.open ? `<dt>Status</dt><dd style="color:#8a3a26">open path — excluded from nesting</dd>` : ""}</dl>
         <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
           ${pl ? `<button class="btn ghost sm" id="ciPin">${c.pinned && !c.arrivalPin ? "Unpin" : "Pin here"}</button>` : ""}
-          <button class="btn ghost sm" id="ciExclude">${c.excluded ? "Include in nest" : "Exclude from nest"}</button>
+          ${line ? "" : `<button class="btn ghost sm" id="ciExclude">${c.excluded ? "Include in nest" : "Exclude from nest"}</button>`}
           <button class="btn ghost sm" id="ciSingle">Download this charm as .ai</button>
-          ${METALS.filter(m => m.key !== sh.metal).map(m => `<button class="btn ghost sm" data-move="${m.key}">Move to ${m.label}</button>`).join("")}
+          ${line ? "" : METALS.filter(m => m.key !== sh.metal).map(m => `<button class="btn ghost sm" data-move="${m.key}">Move to ${m.label}</button>`).join("")}
         </div>
         <div class="help" style="margin-top:8px;font-size:11px;color:var(--ink45)">Pin locks this charm at its current position and angle; the next nest places everything else around it.</div>
       </div></div>`;
-  $("#ciName").onchange = e => renameCharm(c, e.target.value);
+  $("#ciName").onchange = line ? null : e => renameCharm(c, e.target.value);
   const pin = $("#ciPin"); if (pin) pin.onclick = () => { c.pinned = c.pinned && !c.arrivalPin ? null : { cxPt: pl.cxPt, cyPt: pl.cyPt, angle: pl.angle }; delete c.arrivalPin; closeDlg(dlg); renderCard(sh); toast(c.pinned ? `${c.name}: pinned — Re-nest places the others around it` : `${c.name}: unpinned`, ""); };
-  $("#ciExclude").onclick = () => { c.excluded = !c.excluded; closeDlg(dlg); sheetDirty(sh); };
+  // leaving a charm out takes it off and keeps the others where they are; taking it back adds it to the gaps
+  const ex = $("#ciExclude"); if (ex) ex.onclick = () => { c.excluded = !c.excluded; closeDlg(dlg); sh.placements = sh.placements.filter(p => p.id !== c.id); if (sh.placements.length && !(sh.metal === "rose" && (sh.rosePlan || sh.roseProtected))) { sh.appendOnly = true; sh.dirty = true; if (!["nesting", "finishing", "queued"].includes(sh.status)) sh.status = "ready"; renderCard(sh); } else sheetDirty(sh); };
   $("#ciSingle").onclick = async () => { const src = sourceOf(c.sourceId); const b = await CharmNestPDF.buildSingleCharm(c, src.parsed); download(b, `${safeName(c.name || "charm")}.ai`, "application/illustrator"); };
   $$("[data-move]", $("#rpBody")).forEach(b => b.onclick = () => { closeDlg(dlg); assignCharm(c, b.dataset.move); });
   openDlg(dlg);
@@ -3471,7 +3560,7 @@ function openReport(sh) {
   if (sh.outputs) {
     html += `<div class="section">Result</div><dl class="kv">
       <dt>Placed</dt><dd>${sh.placements.length} of ${activeCharms(sh).length} · ${fmt.pct(sh.density || 0)} density · ended by ${esc(endedText(sh.endedBy))} after ${sh.trials} trial(s), ${fmt.s(sh.elapsedMs || 0)}</dd>
-      <dt>Seed · angles · clearance</dt><dd>${sh.solveParams.seed} · ${sh.solveParams.angles.length} angles (${S.settings.angleStep}° step) · clearance ${fmt.mm(sh.solveParams.clearancePt)} · inset ${fmt.mm(sh.solveParams.insetPt)}</dd>
+      <dt>Seed · angles · clearance</dt><dd>${sh.solveParams.seed} · ${sh.solveParams.angles.length} angles (${+(360 / sh.solveParams.angles.length).toFixed(2)}° step) · clearance ${fmt.mm(sh.solveParams.clearancePt)} · inset ${fmt.mm(sh.solveParams.insetPt)}</dd>
       <dt>Free area</dt><dd>${fmt.area(s.freeFact)} of ${fmt.area(s.usable)} usable · largest open pocket ${s.pocket ? `${fmt.mm(s.pocket.wPt)} × ${fmt.mm(s.pocket.hPt)}` : "—"}</dd></dl>`;
     if (v) {
       html += `<div class="callout ${v.ok ? "ok" : "bad"}"><b>Verification ${v.ok ? "passed" : "FLAGGED"}</b> — geometry re-rasterised at ${v.geom.res} px/pt: ${v.geom.overlapPx} overlapping px, ${v.geom.outsidePx} px outside the sheet, tightest charm-to-charm gap ${v.minGapPt == null ? "—" : fmt.mm(v.minGapPt)}, tightest charm-to-edge ${v.minEdgePt == null ? "—" : fmt.mm(v.minEdgePt)}.${v.geom.overlappingPairs.length ? ` Overlapping: ${v.geom.overlappingPairs.map(p => p.map(id => byId.get(id)?.name || id).join(" ↔ ")).join("; ")}.` : ""}<br>Output file re-rendered layer by layer (pdf.js): ${v.render ? (v.render.error ? `could not run — ${esc(v.render.error)}` : `${v.render.layers} layers · ${v.render.overlapPx} overlapping px · ${v.render.outsidePx} px outside${v.render.emptyLayers && v.render.emptyLayers.length ? ` · empty layers: ${esc(v.render.emptyLayers.join(", "))}` : ""}${v.render.overlappingPairs.length ? ` · ${esc(v.render.overlappingPairs.join("; "))}` : ""}`) : "not run"}.</div>`;
@@ -3539,6 +3628,9 @@ function renderLibrary() {
 }
 async function openLibrarySheet(id) {
   const dlg = $("#dlgSheet"); $("#lsTitle").textContent = id; $("#lsBody").innerHTML = `<div class="libEmpty">Loading…</div>`; openDlg(dlg);
+  // the footer keeps the previous sheet's handlers until this one loads: it waits instead of acting on that sheet
+  const foot = ["#lsDownloads", "#lsRestore", "#lsDelete"].map(s => $(s)); foot.forEach(b => { b.disabled = true; });
+  const rb = $("#lsRestore"); if (rb.dataset.t == null) rb.dataset.t = rb.title; rb.title = rb.dataset.t;
   try {
     const r = await api("charmNestLibrary", { op: "getSheet", id }, { label: "Loading sheet" }); const d = r.sheet; if (!d) throw new Error("not found"); LaserReview.record(d);
     $("#lsTitle").textContent = d.folder ? `${d.folder}` : `${d.metalLabel} · ${d.id} · ${d.day}`;
@@ -3552,6 +3644,9 @@ async function openLibrarySheet(id) {
       <div class="charmGrid">${(d.charms || []).map(c => `<div class="charmTile hoverItem">${c.thumbUrl ? `<img crossorigin="anonymous" src="${cors(c.thumbUrl)}" loading="lazy" alt="">` : ""}<div class="nm">${esc(c.name || "#" + (c.index + 1))}</div><div class="meta">${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}${c.qty > 1 ? ` · ×${c.qty}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("")}</div>`;
     $("#lsDownloads").onclick = () => ProductionExports.run([d.id], "ai");
     $("#lsRestore").onclick = () => restoreSheet(d).catch(e => toast('Restore stopped: '+e.message,'bad',7000));
+    foot.forEach(b => { b.disabled = false; });
+    // Restoring a sheet the open run holds replaced its order lines with bare master charms and threw its files away
+    { const live = openRunPage(d.id); if (live) { rb.disabled = true; rb.title = `Already on the ${labelOf(d.metal)} card${live.page > 1 ? ` · sheet ${live.page}` : ""}, where the open run is using it`; } }
     $("#lsDelete").onclick = async () => {
       const code = prompt(`Delete sheet ${d.folder || d.id} permanently — its record, .ai, proof, report and preview? Enter the passcode to confirm.`);
       if (code == null) return;
@@ -3663,13 +3758,18 @@ function showActiveTab() { const seg = $("#modeSeg"), on = $("#modeSeg button.on
    on — both were live during a run, and the confirm on the first said "Nothing in the cloud is touched", which is true
    and beside the point: it had just killed the set in progress. */
 function guardBench() {
-  const busy = !!(window.B && B.run && ["running", "review", "paused"].includes(B.run.status));
+  const r = window.B && B.run;
+  const busy = !!(r && ["running", "review", "paused"].includes(r.status));
+  // Between arrivals (processed) and after a stop the run still owns its sheets: Clear queues emptied them there too
+  const held = !!(r && !["complete", "abandoned"].includes(r.status) && allSheets().some(p => p.runId === r.runId && p.charms.length));
   for (const id of ["btnNestAll", "btnClearAll", "btnPick"]) {
     const b = $("#" + id); if (!b) continue;
-    b.disabled = busy;
-    b.title = busy ? "a run is open — stop it first, or the cards it is working from would be taken away" : (b.dataset.t || b.title || "");
-    if (!b.dataset.t && !busy) b.dataset.t = b.title;
+    if (b.dataset.t == null) b.dataset.t = b.title || "";   // the button's own tooltip, kept before the first busy one replaces it
+    const off = busy || (id === "btnClearAll" && held);
+    b.disabled = off;
+    b.title = !off ? b.dataset.t : busy ? "a run is open — stop it first, or the cards it is working from would be taken away" : "the open run's orders are on these cards — abandon the run first (⋯ on the run banner) to clear them";
   }
+  for (const m of METALS) if (S.sheets[m.key]) paintClear(activePage(m.key));
 }
 
 /* ═══ 15 · settings dialog ══════════════════════════════════════════════ */
@@ -3686,7 +3786,8 @@ function openSettings() {
   for (const m of METALS) { $(`#st${cap(m.key)}W`).value = +(s.stock[m.key][0] * 25.4).toFixed(1); $(`#st${cap(m.key)}H`).value = +(s.stock[m.key][1] * 25.4).toFixed(1); }   // shown in mm, stored in inches
   $("#stClearance").value = +(s.clearancePt * MM_PER_PT).toFixed(2); $("#stInset").value = +(s.insetPt * MM_PER_PT).toFixed(2);   // shown in mm, stored in pt
   $("#stAngle").value = s.angleStep; $("#stBudget").value = s.budgetS; $("#stParallel").value = s.parallel || 0; $("#stSeed").value = s.seed; $("#stFreshSeed").checked = s.freshSeed !== false; $("#stServerAbove").value = s.serverAbove;
-  { const rb = $("#stSandboxReset"); if (rb && !rb.dataset.wired) { rb.dataset.wired = "1"; rb.onclick = () => { if (!window.Sandbox || !Sandbox.on()) { toast("The sandbox is off", "bad"); return; } if (confirm("Empty the sandbox's pool, sets, runs and sheets? The real records are never touched.")) Sandbox.reset().then(() => toast("Sandbox emptied", "ok")).catch(e => toast(e.message, "bad", 8000)); }; } }
+  // Sandbox.reset asks once and says what it removed, or why it removed nothing
+  { const rb = $("#stSandboxReset"); if (rb && !rb.dataset.wired) { rb.dataset.wired = "1"; rb.onclick = () => { if (!window.Sandbox || !Sandbox.on()) { toast("The sandbox is off", "bad"); return; } Sandbox.reset().catch(e => toast("The sandbox was not reset: " + e.message, "bad", 8000)); }; } }
   { const pb = $("#stPurge"); if (pb && !pb.dataset.wired) { pb.dataset.wired = "1"; pb.onclick = async () => {
       const code = prompt("Purge every run, sheet, set, pool row, back record and counter — production and sandbox? The master files, the SKU index, the mappings and the sandbox snapshot stay.\n\nEnter the passcode to confirm."); if (code == null) return;
       const go = async (force) => { const r = await api("charmNestLibrary", { op: "purgeHistory", code: String(code).trim(), force }, { label: "Purging run history" }); return r; };
@@ -3698,7 +3799,7 @@ function openSettings() {
         setTimeout(() => location.reload(), 1200);
       } catch (e) { toast(e.status === 403 ? "Wrong passcode — nothing was purged" : "Purge failed: " + e.message, "bad", 7000); }
     }; } }
-  $("#stPollOrders").value = s.pollOrders || "on"; $("#stPollMinutes").value = s.pollMinutes || 10; $("#stFinalOptimizeCount").value = s.finalOptimizeCount || 85; $("#stOptimizeAt").value = s.optimizeAt || 85;
+  $("#stPollOrders").value = s.pollOrders || "on"; $("#stPollMinutes").value = s.pollMinutes || 10;
   $("#stDsOrigin").value = s.dsOrigin || DEFAULTS.dsOrigin; $("#stHeartbeatS").value = s.heartbeatS; $("#stHeartbeatMiss").value = s.heartbeatMiss; $("#stAutoCommit").value = s.autoCommit || "on"; $("#stCadenceDays").value = s.cadenceDays == null ? 2 : s.cadenceDays; $("#stLateDays").value = s.lateDays == null ? 2 : s.lateDays; $("#stPullMode").value = s.pullMode || "all"; $("#stPullDueBy").value = s.pullDueBy || ""; $("#stPullCount").value = s.pullCount || 40; $("#stAutoEvery").value = s.autoEvery || 0; $("#stEtsyCap").value = s.etsyHourlyCap || DEFAULTS.etsyHourlyCap; $("#stSandbox").value = s.sandbox === "on" ? "on" : "off";
   $("#stSbStream").value = s.sandboxStream === "off" ? "off" : "on"; $("#stSbSpeed").value = s.sandboxSpeed || DEFAULTS.sandboxSpeed; $("#stSbSeed").value = s.sandboxSeed || ""; $("#stSbSeed").placeholder = window.Sandbox?.seed?.() ? `now ${Sandbox.seed()} · new each reset` : "new each reset";
   $("#stSkuPattern").value = s.skuPattern || DEFAULTS.skuPattern; $("#stLabelGapMm").value = s.labelGapMm; $("#stMasterServerAbove").value = s.masterServerAbove; $("#stSizeMinMm").value = s.sizeMinMm; $("#stSizeMaxMm").value = s.sizeMaxMm;
@@ -3718,8 +3819,14 @@ function openSettings() {
   $("#stMinPt").value = s.minPt; $("#stVerifyRes").value = s.verifyRes; $("#stNaming").value = s.naming; $("#stReview").value = s.review || "on"; $("#stEngine").value = s.engine || "solver"; $("#stComputePipeline").value = s.computePipeline === "gpu" ? "gpu" : "cpu"; $("#stMaxFill").value = Math.round((s.maxFill || 0.80) * 100); $("#stAiRounds").value = s.aiRounds || 10; $("#stSnapIn").value = +(((s.snapIn == null ? 0.25 : s.snapIn) * 25.4).toFixed(1)); $("#stNotify").value = s.notify; $("#stSound").value = s.sound;
   $("#stComputePipeline").disabled = $("#stEngine").value === "ai";
   $("#stEngine").onchange = () => { $("#stComputePipeline").disabled = $("#stEngine").value === "ai"; };
+  // What each sheet-geometry field showed. Save keeps the stored value of a field nobody changed: the mm ↔ pt rounding
+  // alone turned the −0.5 pt clearance (shown as −0.18 mm) into −0.51 pt, and that "change" re-nested every sheet.
+  for (const id of geomFields()) $("#" + id).dataset.shown = $("#" + id).value;
+  $("#stSaved").textContent = "saved locally";
   openDlg($("#dlgSettings"));
 }
+const geomFields = () => METALS.flatMap(m => [`st${cap(m.key)}W`, `st${cap(m.key)}H`]).concat(["stClearance", "stInset", "stMaxFill"]);
+const untouched = id => { const f = $("#" + id); return f.dataset.shown != null && f.value === f.dataset.shown; };
 let gpuComparison = null;
 function cancelGPUComparison() {
   if(!gpuComparison)return;
@@ -3734,7 +3841,7 @@ function compareGPUSpeed() {
   const sh=allSheets().filter(sh=>activeCharms(sh).length).sort((a,b)=>activeCharms(b).length-activeCharms(a).length)[0];
   const job=sh?buildJob(sh):null,id=uid();
   let worker;
-  try{worker=new Worker('charm-nest-worker.js?v=20260924-ahead');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
+  try{worker=new Worker('charm-nest-worker.js?v=20260924-onebyone');}catch(e){output.textContent="Comparison unavailable: "+e.message;return;}
   gpuComparison=worker;button.textContent="Cancel comparison";output.textContent="Checking GPU availability…";
   const finish=text=>{if(gpuComparison!==worker)return;output.textContent=text;button.textContent="Compare speed";worker.terminate();gpuComparison=null;};
   worker.onmessage=({data:m})=>{
@@ -3756,17 +3863,17 @@ const cap = s => s[0].toUpperCase() + s.slice(1);
 function readSettings() {
   const s = S.settings, previousGeometry = JSON.stringify([s.stock,s.clearancePt,s.insetPt,s.maxFill]);
   s.rail = $("#railSeg button.on")?.dataset.v || "md";
-  for (const m of METALS) s.stock[m.key] = [(+$(`#st${cap(m.key)}W`).value / 25.4) || DEFAULTS.stock[m.key][0], (+$(`#st${cap(m.key)}H`).value / 25.4) || DEFAULTS.stock[m.key][1]];
-  s.clearancePt = Math.max(-2, Math.min(12, Math.round((+$("#stClearance").value || 0) / MM_PER_PT * 100) / 100)); s.insetPt = Math.max(0, Math.round((+$("#stInset").value || 0) / MM_PER_PT * 100) / 100); s.angleStep = [2,5,10].includes(+$("#stAngle").value) ? +$("#stAngle").value : 10; s.budgetS = Math.max(10, +$("#stBudget").value || 180); s.parallel = Math.max(0, Math.min(16, Math.round(+$("#stParallel").value || 0))); s.seed = Math.max(1, Math.round(+$("#stSeed").value || 1)); s.freshSeed = $("#stFreshSeed").checked; s.serverAbove = Math.max(0, +$("#stServerAbove").value || 0);
-  s.pollOrders = $("#stPollOrders").value; s.pollMinutes = Math.max(10, Math.min(1440, +$("#stPollMinutes").value || 10)); s.finalOptimizeCount = Math.max(1, Math.min(1000, Math.round(+$("#stFinalOptimizeCount").value || 85))); s.optimizeAt = Math.max(50, Math.min(100, +$("#stOptimizeAt").value || 85));
+  for (const m of METALS) s.stock[m.key] = [untouched(`st${cap(m.key)}W`) ? s.stock[m.key][0] : (+$(`#st${cap(m.key)}W`).value / 25.4) || DEFAULTS.stock[m.key][0], untouched(`st${cap(m.key)}H`) ? s.stock[m.key][1] : (+$(`#st${cap(m.key)}H`).value / 25.4) || DEFAULTS.stock[m.key][1]];
+  if (!untouched("stClearance")) s.clearancePt = Math.max(-2, Math.min(12, Math.round((+$("#stClearance").value || 0) / MM_PER_PT * 100) / 100)); if (!untouched("stInset")) s.insetPt = Math.max(0, Math.round((+$("#stInset").value || 0) / MM_PER_PT * 100) / 100); s.angleStep = [2,5,10].includes(+$("#stAngle").value) ? +$("#stAngle").value : 10; s.budgetS = Math.max(10, +$("#stBudget").value || 180); s.parallel = Math.max(0, Math.min(16, Math.round(+$("#stParallel").value || 0))); s.seed = Math.max(1, Math.round(+$("#stSeed").value || 1)); s.freshSeed = $("#stFreshSeed").checked; s.serverAbove = Math.max(0, +$("#stServerAbove").value || 0);
+  s.pollOrders = $("#stPollOrders").value; s.pollMinutes = Math.max(10, Math.min(1440, +$("#stPollMinutes").value || 10));
   s.dsOrigin = ($("#stDsOrigin").value || DEFAULTS.dsOrigin).trim().replace(/\/+$/, ""); s.heartbeatS = Math.max(2, Math.min(60, +$("#stHeartbeatS").value || 5)); s.heartbeatMiss = Math.max(1, Math.min(10, Math.round(+$("#stHeartbeatMiss").value || 3))); s.autoCommit = $("#stAutoCommit").value; s.cadenceDays = Math.max(1, Math.min(14, Math.round(+$("#stCadenceDays").value || 2))); s.lateDays = Math.max(0, Math.min(14, Math.round(+$("#stLateDays").value ?? 2))); s.pullMode = $("#stPullMode").value; s.pullDueBy = $("#stPullDueBy").value || ""; s.pullCount = Math.max(1, Math.min(500, Math.round(+$("#stPullCount").value || 40))); s.autoEvery = Math.max(0, Math.min(1440, Math.round(+$("#stAutoEvery").value || 0))); if (s.autoEvery > 0 && s.autoEvery < 5) s.autoEvery = 5; s.etsyHourlyCap = Math.max(50, Math.min(5000, Math.round(+$("#stEtsyCap").value || 600))); { const was = s.sandbox === "on"; s.sandbox = $("#stSandbox").value === "on" ? "on" : "off"; if (was !== (s.sandbox === "on")) { saveSettings(); toast(`Sandbox ${s.sandbox === "on" ? "ON" : "off"} — reloading`, "ok", 3000); setTimeout(() => location.reload(), 600); } }
   s.sandboxStream = $("#stSbStream").value === "off" ? "off" : "on"; s.sandboxSpeed = Math.max(1, Math.min(1000, Math.round(+$("#stSbSpeed").value || 50))); s.sandboxSeed = Math.max(0, Math.min(2147483646, Math.round(+$("#stSbSeed").value || 0)));
   try { new RegExp($("#stSkuPattern").value); s.skuPattern = $("#stSkuPattern").value.trim() || DEFAULTS.skuPattern; } catch (_) { toast("SKU pattern is not a valid regular expression — kept the previous one", "bad"); }
   s.labelGapMm = Math.max(1, Math.min(30, +$("#stLabelGapMm").value || 6.4)); s.masterServerAbove = Math.max(0, Math.round(+$("#stMasterServerAbove").value || 0)); s.sizeMinMm = Math.max(0.5, +$("#stSizeMinMm").value || 3); s.sizeMaxMm = Math.max(s.sizeMinMm, +$("#stSizeMaxMm").value || 60);
   s.engraveMarginMm = Math.max(0, Math.min(5, +$("#stEngraveMarginMm").value || 0)); s.engraveMinCapMm = Math.max(0.3, +$("#stEngraveMinCapMm").value || 1.6); s.engraveMaxHeightFrac = Math.max(0.1, Math.min(1, +$("#stEngraveMaxHeightFrac").value || 0.4)); s.engraveConfidence = Math.max(0, Math.min(1, +$("#stEngraveConfidence").value || 0.8)); s.engraveMinGapMm = Math.max(0, +$("#stEngraveMinGapMm").value || 0); s.engraveMinStrokeMm = Math.max(0, +$("#stEngraveMinStrokeMm").value || 0); s.engraveTryRotated = $("#stEngraveTryRotated").value; s.backFileView = $("#stBackFileView").value;
-  s.minPt = Math.max(1, +$("#stMinPt").value || 6); s.verifyRes = +$("#stVerifyRes").value || 6; s.naming = $("#stNaming").value; s.review = $("#stReview").value; s.engine = $("#stEngine").value; s.computePipeline = $("#stComputePipeline").value === "gpu" ? "gpu" : "cpu"; s.maxFill = Math.max(0.3, Math.min(1, (+$("#stMaxFill").value || 80) / 100)); s.aiRounds = Math.max(1, Math.min(30, +$("#stAiRounds").value || 10)); s.snapIn = Math.max(0, Math.min(1, (+$("#stSnapIn").value || 0) / 25.4)); s.notify = $("#stNotify").value; s.sound = $("#stSound").value;
+  s.minPt = Math.max(1, +$("#stMinPt").value || 6); s.verifyRes = +$("#stVerifyRes").value || 6; s.naming = $("#stNaming").value; s.review = $("#stReview").value; s.engine = $("#stEngine").value; s.computePipeline = $("#stComputePipeline").value === "gpu" ? "gpu" : "cpu"; if (!untouched("stMaxFill")) s.maxFill = Math.max(0.3, Math.min(1, (+$("#stMaxFill").value || 80) / 100)); s.aiRounds = Math.max(1, Math.min(30, +$("#stAiRounds").value || 10)); s.snapIn = Math.max(0, Math.min(1, (+$("#stSnapIn").value || 0) / 25.4)); s.notify = $("#stNotify").value; s.sound = $("#stSound").value;
   if (previousGeometry !== JSON.stringify([s.stock,s.clearancePt,s.insetPt,s.maxFill])) {
-    for (const sh of allSheets()) if (sh.charms.length) sheetDirty(sh);
+    for (const sh of allSheets()) if (sh.charms.length && !layoutFixed(sh)) sheetDirty(sh);
     if (window.RunCtl) RunCtl.optionsChanged();
   }
   localStorage.setItem("cn.learnedKey", $("#stLearnedKey").value.trim());
@@ -3786,9 +3893,17 @@ async function boot() {
   document.documentElement.dataset.rail = S.settings.rail;
   for (const m of METALS) { const sh = makeSheet(m.key); sh.pages = [sh]; sh.active = 0; S.sheets[m.key] = sh; }
   const sel = $("#stockSel"); sel.innerHTML = STOCK_PRESETS.map(p => `<option value="${p.id}">${p.label}</option>`).join(""); sel.value = S.stockPreset;
-  sel.onchange = () => { S.stockPreset = sel.value; localStorage.setItem("cn.stock", sel.value); for (const sh of allSheets()) if (!["gold10k", "gold14k"].includes(sh.metal)) sheetDirty(sh); };
+  /* A new plate clears every Gold, Silver and Rose layout. With a run open it did so to the run's saved sheets without a
+     word, and the run was not told: its cards sat at "Ready" with no files while the banner read "Processing complete". */
+  sel.onchange = () => {
+    const r = window.B?.run, open = !!(r && !["complete", "abandoned"].includes(r.status));
+    const n = open ? allSheets().filter(p => p.runId === r.runId && p.placements.length && !["gold10k", "gold14k"].includes(p.metal) && !layoutFixed(p)).length : 0;
+    if (n && !confirm(`The open run has ${n} nested sheet${n === 1 ? "" : "s"} on the current plate. A new plate arranges ${n === 1 ? "it" : "them"} again from the start.\n\nChange the plate?`)) { sel.value = S.stockPreset; return; }
+    S.stockPreset = sel.value; localStorage.setItem("cn.stock", sel.value); for (const sh of allSheets()) if (!["gold10k", "gold14k"].includes(sh.metal) && !layoutFixed(sh)) sheetDirty(sh);
+    if (open && window.RunCtl) RunCtl.optionsChanged();   // as a plate size changed in Settings does
+  };
   buildCards();
-  $("#railCores").textContent = `${navigator.hardwareConcurrency || "?"} cores · sheets queued · up to ${parallelCount()} searches per sheet`;
+  $("#railCores").textContent = `${navigator.hardwareConcurrency || "?"} cores · sheets queued · up to ${parallelCount(CAREFUL_ANGLES.length)} searches per sheet`;
   { const rr = $("#railRecent"); if (rr) rr.ontoggle = () => { if (window.LiveStrip) LiveStrip.render(); }; }
   $("#btnRail").onclick = () => { const off = $("#app").classList.toggle("railOff"); railUserClosed = off; railPinned = !off && S.mode !== "nest"; $("#btnRail").title = off ? "show the rail" : "hide the rail"; showActiveTab(); };
   $("#btnPick").onclick = () => $("#fileInput").click();
@@ -3797,9 +3912,19 @@ async function boot() {
   $("#btnNestAll").onclick = () => allSheets().forEach(sh => { if (activeCharms(sh).length && !["nesting", "finishing"].includes(sh.status)) startNest(sh); });
   $("#btnClearAll").onclick = () => { if (!confirm("Clear every queue and source? Nothing in the cloud is touched.")) return; METALS.forEach(m => clearMetal(m.key)); S.sources = []; S.unassigned = []; renderRail(); updateTopSub(); };
   $("#stCompareGPU").onclick = compareGPUSpeed;
-  $("#dlgSettings").addEventListener("close", () => cancelGPUComparison());
+  $("#dlgSettings").addEventListener("close", () => { cancelGPUComparison(); document.documentElement.dataset.rail = S.settings.rail; });   // a density tried and not saved goes back
   $("#btnSettings").onclick = () => { $("#moreMenu").open = false; openSettings(); }; $("#btnSaveSettings").onclick = e => { e.preventDefault(); readSettings(); closeDlg($("#dlgSettings")); };
-  $("#btnResetSettings").onclick = () => { S.settings = Object.assign({}, DEFAULTS, { stock: JSON.parse(JSON.stringify(DEFAULTS.stock)) }); saveSettings(); openSettings(); };
+  // Enter in a field pressed the form's first button, Close, and dropped what was typed: the form now stays open for Save
+  $("#dlgSettings").addEventListener("keydown", e => { if (e.key === "Enter" && e.target.tagName === "INPUT") e.preventDefault(); });
+  /* Reset used to save the defaults at once — Close did not undo it, Auto was switched to Manual behind a top bar still
+     showing Auto, and none of Save's follow-ups ran. It fills the form now: Save applies the defaults, Close keeps yours. */
+  $("#btnResetSettings").onclick = () => {
+    // the sandbox switch is not a default to restore: shown as "off", Save would move a sandbox session to production and reload
+    const mine = S.settings; S.settings = Object.assign({}, DEFAULTS, { stock: JSON.parse(JSON.stringify(DEFAULTS.stock)), sandbox: mine.sandbox });
+    try { openSettings(); } finally { S.settings = mine; }
+    for (const id of geomFields()) delete $("#" + id).dataset.shown;
+    $("#stSaved").textContent = "defaults shown · Save applies them";
+  };
   $$("#railSeg button").forEach(b => b.onclick = () => { $$("#railSeg button").forEach(x => x.classList.toggle("on", x === b)); document.documentElement.dataset.rail = b.dataset.v; });
   $$(".topbar button[data-mode]").forEach(b => b.onclick = () => { modeFromUser = true; setMode(b.dataset.mode); });
   // Shared behavior also covers the dynamically mounted set and run menus.
@@ -3833,13 +3958,13 @@ async function boot() {
   cloudProbe();
   refreshAllCards(); updateTopSub();
   window.CN = { S, AG, DEFAULTS, METALS, showPage, startNest, intake, flushManualIntake, api, agent, agentUpdate, agentCall, uploadBytes, buildJob, setMode, renderLibrary, loadLibrary, applyGroupingReview, reviewGrouping, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; },
-    activePage, allSheets, pagesOf, addPage, sheetDirty, activeCharms, renderCard, inflatedArea, usableArea, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, openLibrarySheet, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log, topupExpire };   // for tests, the console and charm-nest-bridge.js
+    activePage, allSheets, pagesOf, addPage, sheetDirty, activeCharms, renderCard, inflatedArea, usableArea, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, openLibrarySheet, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log };   // for tests, the console and charm-nest-bridge.js
   window.CharmNestOperations?.subscribe(()=>flushManualIntake());
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260924-noroom"></script>
-<script src="charm-nest-rose-ui.js?v=20260924-ahead"></script>
+<script src="charm-nest-bridge.js?v=20260924-onebyone"></script>
+<script src="charm-nest-rose-ui.js?v=20260924-onebyone"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin" aria-labelledby="owTitle">

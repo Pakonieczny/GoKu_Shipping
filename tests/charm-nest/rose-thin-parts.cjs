@@ -36,5 +36,23 @@ const sheet={wPt:W,hPt:H,insetPt:1.5,remnant},clearancePt=-.5;
   const job={sheet,pieces:[stickCharm('k'),stickCharm('n1'),stickCharm('n2')],clearancePt,angles:Array.from({length:36},(_,i)=>i*10),fineRes:2,coarseRes:.5,maxFill:.8,maxTrials:40,timeBudgetMs:1500,stallMs:60000,seed:5,lockedPlacements:[kept],initialLayout:[kept]};
   const r=await S.solve(job,{});
   assert.equal(S.verify(job,r.placements,6).removedPx,0,'an appended charm keeps its stick off the cut stock');
-  console.log('Rose Gold thin parts OK: a thin stick the eroded mask loses still stays off stock already cut, in single tests, whole searches and appends');
+  // Rose Gold charms are placed one by one like Gold and Silver (Paul, 24 Sep), under the same rule.
+  for(const seed of [5,6]){
+    const job2={...job,careful:true,seed},r2=await S.solve(job2,{}),check=S.verify(job2,r2.placements,6);
+    assert(r2.careful&&r2.trials===1,'the Rose Gold append is placed one charm at a time, with no trial search');
+    assert.equal(r2.placements.length,3,`seed ${seed}: both new charms seated`);
+    assert.equal(check.removedPx,0,`seed ${seed}: a stick was placed on cut stock: ${JSON.stringify(r2.placements.map(p=>[p.cxPt,p.cyPt,p.angle]))}`);
+    assert(check.ok,`seed ${seed}: ${JSON.stringify(check)}`);
+  }
+  // On stock with nothing placed past the cut yet, charms start against the cut edge. Their sticks point into the cut,
+  // so the spots next to it are legal only where the whole silhouette clears the cut: the quick 4×4 block test of the
+  // spot search must check that too, or the charm is sent to a spot it cannot take and the trial search runs instead.
+  for(const angles of [[0],[0,90,180,270]]){
+   const job3={sheet,pieces:['f','g','h'].map(stickCharm),clearancePt,angles,fineRes:2,coarseRes:.5,maxFill:.8,maxTrials:40,timeBudgetMs:5000,stallMs:60000,seed:1,careful:true};
+   const r3=await S.solve(job3,{}),check=S.verify(job3,r3.placements,6);
+   assert(r3.careful&&r3.trials===1&&r3.placements.length===3,`placed one by one on a fresh stretch at ${angles}: ${JSON.stringify({careful:!!r3.careful,trials:r3.trials,placed:r3.placements.length})}`);
+   assert(check.ok&&check.removedPx===0,JSON.stringify(check));
+   assert(Math.min(...r3.placements.map(p=>p.cxPt))<80,`against the cut edge: ${JSON.stringify(r3.placements)}`);
+  }
+  console.log('Rose Gold thin parts OK: a thin stick the eroded mask loses still stays off stock already cut, in single tests, whole searches, appends and one-by-one placement');
 })().catch(e=>{console.error(e);process.exitCode=1;});

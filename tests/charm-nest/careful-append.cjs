@@ -73,8 +73,72 @@ const gap=(a,b)=>{const A=box(a),B=box(b);return Math.max(0,A.x0-B.x1,B.x0-A.x1,
   assert.equal(r.placements.length,5);assert(S.verify(job,r.placements,4).ok,JSON.stringify(r.placements));assert(r.trials===1);
   assert(Math.max(...r.placements.filter(p=>p.id!=='old').map(p=>box(p).x1))<40,'four small charms stay at the left end with the saved one: '+JSON.stringify(r.placements));
  }
+ // Saved charms leave one 9-pt hole (top left) and a 3-pt corridor: only one of two new charms fits. The older order is
+ // seated and the younger one waits, whichever grades better (the look-ahead used to give the hole to the younger).
+ const holeAndCorridor=[['r1',10,1,56,39],['r2',1,10,10,39]].map(([id,x0,y0,x1,y1])=>({p:piece(id,x1-x0,y1-y0,0),at:{id,cxPt:(x0+x1)/2,cyPt:(y0+y1)/2,angle:0}}));
+ for(const [aw,bw] of [[8,8.5],[8.5,8],[7,8.8],[8.8,7]]){const A=piece('A',aw,aw,1),B=piece('B',bw,bw,2);
+  const job={...base,maxFill:1,pieces:[...holeAndCorridor.map(x=>x.p),A,B],lockedPlacements:holeAndCorridor.map(x=>x.at)};
+  const r=await S.solve(job,{});assert(S.verify(job,r.placements,4).ok);
+  assert.deepEqual(r.placements.filter(p=>p.id.length===1).map(p=>p.id),['A'],`the older order is seated (A ${aw} pt, B ${bw} pt)`);assert.deepEqual(r.rejects,['B']);assert.equal(r.endedBy,'no-room');
+ }
+ // One 21-pt hole takes any one of X or the two charms of order O, not both of O: O leaves whole, and X, turned away while
+ // O held the hole, is tried again and seated.
+ {const bl=[['rA',22,1,30,39],['r2',1,22,22,39],['rC',30,1,45,39]].map(([id,x0,y0,x1,y1])=>({p:piece(id,x1-x0,y1-y0,0),at:{id,cxPt:(x0+x1)/2,cyPt:(y0+y1)/2,angle:0}}));
+  for(const [xs,o1s,o2s] of [[14.5,15.5,15],[14.5,15,15.5],[15.5,14.5,15]]){const X=piece('X',xs,xs,0),O1=piece('O1',o1s,o1s,0),O2=piece('O2',o2s,o2s,0);O1.order=O2.order='O';
+   const job={...base,maxFill:.8,pieces:[...bl.map(x=>x.p),X,O1,O2],lockedPlacements:bl.map(x=>x.at)};
+   const r=await S.solve(job,{});assert(S.verify(job,r.placements,4).ok);
+   assert.deepEqual(r.placements.filter(p=>!p.id.startsWith('r')).map(p=>p.id),['X'],`X is seated once O leaves (X ${xs}, O ${o1s}/${o2s})`);assert.deepEqual([...r.rejects].sort(),['O1','O2']);assert.equal(r.endedBy,'no-room');
+  }
+ }
+ // A stop during the second pass (for a charm the first pass stranded) keeps the first pass: the charm it seated stays.
+ {const mk=()=>({...base,maxFill:1,timeBudgetMs:180000,pieces:[...holeAndCorridor.map(x=>x.p),piece('A',8,8,0),piece('B',8.5,8.5,0)],lockedPlacements:holeAndCorridor.map(x=>x.at)});
+  const full=await S.solve(mk(),{});const seated=full.placements.filter(p=>!p.id.startsWith('r')).map(p=>p.id);assert.equal(seated.length,1);assert.equal(full.careful.passes,2);
+  let stop=false,lifts=0;const r=await S.solve(mk(),{shouldStop:()=>stop,onProbe:p=>{if(p.stage==='lift'&&!lifts++)stop=true;}});
+  assert(lifts>0,'the second pass started');assert.deepEqual(r.placements.filter(p=>!p.id.startsWith('r')).map(p=>p.id),seated,'the first pass is kept');assert.equal(r.endedBy,'stopped');assert(S.verify(mk(),r.placements,4).ok);
+ }
+ // The probes that score pockets keep their size at every angle, shrunk or grown like a piece (drawn up from 1 px/pt by
+ // resampling, 3 cells in 4 stayed empty and a probe shrunk for a negative clearance vanished at most angles).
+ for(const [clearancePt,erodeFine,halfGapFine] of [[-1,1,0],[0,0,0],[1,0,1]]){const vs=S.probeVariants(2,erodeFine,halfGapFine);
+  assert.equal(vs.length,S.PROBES.length);
+  vs.forEach((list,k)=>{const cells=list.map(v=>v.cells),[w,h,b]=S.PROBES[k];assert.equal(list.length,8,`probe ${k} at every 45° step`);
+   assert(Math.min(...cells)>=.8*Math.max(...cells),`probe ${k} keeps its size when turned: ${cells}`);
+   // the same charm as a real piece, drawn at 4 px/pt and prepared like any other
+   const src=S.bitsFromBase64(b,w*h),bits=new Uint8Array(w*h*16);for(let y=0;y<h*4;y++)for(let x=0;x<w*4;x++)bits[y*w*4+x]=src[(y>>2)*w+(x>>2)];
+   const v=S.prepareVariant({id:'probe',w:w*4,h:h*4,scale:4,bits,areaPt2:w*h},0,clearancePt,2);
+   assert(Math.abs(cells[0]-v.fine.pm.cells)<=.15*v.fine.pm.cells,`probe ${k} is the size of the charm it stands for: ${cells[0]} vs ${v.fine.pm.cells} cells (clearance ${clearancePt})`);});
+ }
+ {const small=S.smallProbeVariants(2,1,0);assert.equal(small.length,S.SMALL_PROBES*24,'the smallest charms at every 15° step');assert(small.every(v=>v.fine.pm&&v.fine.w>0));}
+ // Room check (Gold and Silver): does one of the shop's smallest charms still fit anywhere on the sheet? A sheet whose one
+ // hole is smaller reports no room, and is released without waiting for later orders to try its gaps.
+ {const withHole=(W,H)=>[['r1',1+W,1,59,39],['r2',1,1+H,1+W,39]].map(([id,x0,y0,x1,y1])=>({p:piece(id,x1-x0,y1-y0,0),at:{id,cxPt:(x0+x1)/2,cyPt:(y0+y1)/2,angle:0}}));
+  const strip=piece('strip',50,3,5),room=async(W,H,roomCheck=true)=>{const bl=withHole(W,H),job={...base,maxFill:1,roomCheck,pieces:[...bl.map(x=>x.p),strip],lockedPlacements:bl.map(x=>x.at)};const r=await S.solve(job,{});assert.deepEqual(r.rejects,['strip']);return r.smallRoom;};
+  assert.equal(await room(32,24),true,'a hole a small charm fits');
+  assert.equal(await room(12,10),false,'a hole smaller than the smallest charms');
+  assert.equal(await room(32,24,false),undefined,'not asked, not checked');
+ }
+ // Out of time, the charms already placed stay: a time-out used to lift every charm of an order younger than one not yet
+ // tried, and a 60 s ceiling at 2° on a busy machine left a sheet of 17 charms empty (24 Sep). One at a time, the ceiling
+ // also grows with the charms waiting, so a batch longer than the usual ceiling is placed whole.
+ {
+  const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');let clock=0;
+  const realm=vm.createContext({module:{exports:{}},require:m=>require(path.join(__dirname,'../..',m)),performance:{now:()=>clock}});
+  vm.runInContext(fs.readFileSync(path.resolve(__dirname,process.env.CN_SOLVER||'../../charm-nest-solver.js'),'utf8'),realm);
+  const T=realm.module.exports,fast={yield:()=>Promise.resolve()};
+  // the oldest order is the largest, so a smaller, younger one goes in first
+  const pcs=()=>[piece('o1',14,14,1),piece('o2',4,4,2),piece('o3',5,5,3),piece('o4',6,6,4)];
+  const placed=[];clock=0;
+  const r=await T.solve({...base,timeBudgetMs:1000,pieces:pcs()},{...fast,onPlaced:p=>{placed.push(p.id);clock=1e9;}});
+  assert.equal(r.endedBy,'budget');assert.equal(placed.length,1);
+  assert.notEqual(placed[0],'o1','a younger order went in while the oldest was still waiting');
+  assert.deepEqual([...r.placements].map(p=>p.id),placed,'the charm placed before time ran out stays on the sheet');
+  assert.deepEqual([...r.rejects].sort(),pcs().map(p=>p.id).filter(id=>id!==placed[0]));
+  // each step costs 0.4 s of this clock: the whole batch takes far longer than the 1 s ceiling and is still placed whole
+  clock=0;
+  const r2=await T.solve({...base,timeBudgetMs:1000,pieces:pcs()},{yield:()=>{clock+=400;return Promise.resolve();}});
+  assert.equal(r2.endedBy,'complete');assert.equal(r2.placements.length,4);assert(clock>1000,'the batch ran past the usual ceiling: '+clock);
+ }
  // Layouts compare by charms seated first, then by grade.
  assert(S.betterLayout({placements:[1,2],rejects:[],fitScore:-50},{placements:[1,2],rejects:[],fitScore:-80},base.sheet));
  assert(!S.betterLayout({placements:[1],rejects:[2],fitScore:-5},{placements:[1,2],rejects:[],fitScore:-80},base.sheet));
- console.log('Careful append OK: saved charm fixed, new charm against its neighbour at the left, probes for the live view, notch filled, ceiling and no-room reported at once, orders kept whole, stranded charm seated, stop, several charms, grade ranking');
+ console.log('Careful append OK: saved charm fixed, new charm against its neighbour at the left, probes for the live view, notch filled, ceiling and no-room reported at once, orders kept whole, stranded charm seated, stop, several charms, oldest order first, retry after an order leaves, time-out keeps what is placed, stop keeps the first pass, solid probes, room check, grade ranking');
 })().catch(e=>{console.error(e);process.exitCode=1});

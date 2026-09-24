@@ -2,7 +2,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 const html=fs.readFileSync('charm-nest-1.html','utf8');
 const settings={budgetS:180,maxFill:.8,seed:1};
 const ctx=vm.createContext({S:{settings},stockFor:()=>({wPt:30,hPt:20}),activeCharms:s=>s.charms,angleSet:()=>[0]});
-vm.runInContext(html.slice(html.indexOf('function buildJob('),html.indexOf('function packingKey(')),ctx);
+vm.runInContext(html.slice(html.indexOf('const CAREFUL_ANGLES'),html.indexOf('function packingKey(')),ctx);
 const piece={id:'one',w:4,h:4,scale:1,bits:new Uint8Array(16).fill(1)};
 for(const phase of ['fill','repack','final']){
  const job=ctx.buildJob({intakePhase:phase,intakeBudgetMs:phase==='fill'?12000:180000,charms:[piece]});
@@ -14,8 +14,10 @@ Object.assign(ctx,{$:s=>nodes[/data-r="([^"]+)"/.exec(s)[1]],performance:{now:()
 ctx.S.sources=[];
 vm.runInContext(html.slice(html.indexOf('function renderProgress('),html.indexOf('function renderSat(')),ctx);
 const sheet={el:{},status:'nesting',startedAt:0,intakeBudgetMs:12000,stage:'Searching',charms:[piece],placements:[],trials:3,searchMetrics:{positions:50,gpuPositions:10},gpuProgress:{active:true,reason:'GPU enabled'}};
-ctx.renderProgress(sheet);assert(nodes.stage.innerHTML.includes('/ 12s'));assert(nodes.stage.innerHTML.includes('GPU + CPU'));
-sheet.intakeBudgetMs=180000;ctx.renderProgress(sheet);assert(nodes.stage.innerHTML.includes('/ 180s'));
+// placed one charm at a time, the card shows the time spent and no ceiling (the solver's only guards against a runaway)
+ctx.renderProgress(sheet);assert(nodes.stage.innerHTML.includes('5s'));assert(!nodes.stage.innerHTML.includes('/ 12s'));assert(nodes.stage.innerHTML.includes('GPU + CPU'));
+// the learned search still shows its ceiling
+sheet.nestFlow='learned';ctx.S.settings.learnedBudgetS=600;ctx.renderProgress(sheet);assert(nodes.stage.innerHTML.includes('/ 600s ceiling'));delete sheet.nestFlow;
 sheet.gpuProgress={active:false,reason:'CPU fallback: GPU device lost',phase:'fallback'};ctx.renderProgress(sheet);
 assert(nodes.stage.innerHTML.includes('GPU unavailable'));assert(nodes.stage.title.includes('GPU device lost'));
 
@@ -36,5 +38,5 @@ async function solve(fullBudget,stopAt=Infinity){
  assert(full.elapsedMs>=170000,'full optimization uses the search budget before final refinement');
  assert(full.trials>brief.trials,'a sparse fully seated sheet continues trying layouts');
  assert(cancelled.elapsedMs<170000,'Stop still interrupts full-budget work');
- console.log(`Search budget OK: actual 12s/180s display, GPU diagnostics, full optimization ${full.elapsedMs/1000}s vs early finish ${brief.elapsedMs/1000}s on a controlled clock, accurate trials and cancellation`);
+ console.log(`Search budget OK: time shown without a ceiling one at a time and with the learned ceiling, GPU diagnostics, full optimization ${full.elapsedMs/1000}s vs early finish ${brief.elapsedMs/1000}s on a controlled clock, accurate trials and cancellation`);
 })().catch(e=>{console.error(e);process.exitCode=1;});

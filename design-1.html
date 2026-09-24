@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Brites · Design Station 1</title>
+<!-- framed by the Charm Sorter, the station keeps full speed while the sorter's tab is out of view (charm-nest-clock.js) -->
+<script src="charm-nest-clock.js?v=20260924-clock" data-framed-only></script>
 
 <!-- ══ Tab icon ═══════════════════════════════════════════════════════════
      Bench 1 runs the identical app as the main station against the same order
@@ -7063,7 +7065,7 @@ const Bridge = (() => {
         sees the sorter work the way a colleague would. Targets are looked up by role; anything not on screen falls back to
         the banner. The log of every motion is kept for the console and the tests. ── */
   const Cursor = (() => {
-    const C = { el: null, tag: null, x: -200, y: -200, log: [], moves: 0, hideT: null, enabled: !/[?&]cursor=0/.test(location.search), speed: 340 };
+    const C = { el: null, tag: null, x: -200, y: -200, log: [], moves: 0, hideT: null, enabled: !/[?&]cursor=0/.test(location.search), speed: 340, bg: Promise.resolve(), bgPending: 0, bgSeq: 0, bgGen: 0 };
     const SVG = `<svg viewBox="0 0 30 36" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M3 3 L27 15 L17 18.5 L23.5 30 L18.5 32.5 L12 21 L4.5 28.5 Z" fill="#fff" stroke="#1d4ed8" stroke-width="2.2" stroke-linejoin="round"/><circle cx="3.5" cy="3.5" r="2.6" fill="#3b82f6" stroke="#fff" stroke-width="1.2"/></svg>`;
     function ensure() { if (C.el) return C.el; const el = document.createElement("div"); el.id = "rcCursor"; el.innerHTML = SVG + `<span class="rcTag"></span>`; document.body.appendChild(el); C.el = el; C.tag = el.querySelector(".rcTag"); return el; }
     const ROLE = {
@@ -7074,13 +7076,32 @@ const Bridge = (() => {
     const visible = el => { if (!el || !el.isConnected) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
     function find(role, arg) { const f = ROLE[role]; return f ? f(arg) : null; };
     /** Move to a control and (optionally) press it. Resolves when the motion is over, so the command acts right after. */
-    async function act(role, arg, caption, { click = true, dwell = 0 } = {}) {
+    async function act(role, arg, caption, opts = {}) {
       if (!C.enabled) return null;
+      C.bgGen++; await C.bg;                                  // a glide still playing ends first; glides waiting to play are left out
+      return move(role, arg, caption, opts);
+    }
+    /* The same motion without holding up the command it shows. The sorter waits for every order check (the open-list
+       read, a claim, a release, a re-read), and a pointer that glides over three rows before the claim is written held
+       each check 1 to 2 s. These play while the command goes on, one after another; when checks come faster than they
+       can be shown, the oldest waiting ones are left out, and a row gone by its turn is skipped rather than shown on the
+       banner. */
+    function glide(role, arg, caption, opts = {}) {
+      if (!C.enabled) return;
+      const seq = ++C.bgSeq, gen = C.bgGen, o = Object.assign({}, opts, { skipMissing: true });
+      const play = () => gen === C.bgGen && C.bgSeq - seq < 6 ? move(role, arg, caption, o) : null;
+      const p = C.bgPending++ ? C.bg.then(play) : Promise.resolve(play());   // nothing playing: it starts now, on the control as it is
+      C.bg = p.catch(() => null).then(() => { C.bgPending--; });
+    }
+    async function move(role, arg, caption, { click = true, dwell = 0, skipMissing = false } = {}) {
       if (typeof mirrorCursor === "function") mirrorCursor(role, arg, caption, { click, dwell });   // the mirror tab moves its pointer too
+      // out of view (the sorter's tab in the background) nobody sees this page's pointer: the motion is only noted
+      if (document.hidden) { C.log.push({ t: Date.now(), role, arg: arg == null ? null : String(arg), caption: caption || "", click: !!click, fallback: false, hidden: true, x: null, y: null }); if (C.log.length > 300) C.log.shift(); return null; }
       const el = ensure(); let target = find(role, arg); let fallback = false;
       // a row hidden behind a collapsed order rail: open the rail the way a person would, then look again
-      if (target && !visible(target) && role !== "rail" && typeof setRailOpen === "function" && !SETTINGS.railOpen) { const tg = $("#railToggle"); if (tg) { await act("rail", null, "Open the order list"); setRailOpen(true); await sleep(220); } target = find(role, arg); }
+      if (target && !visible(target) && role !== "rail" && typeof setRailOpen === "function" && !SETTINGS.railOpen) { const tg = $("#railToggle"); if (tg) { await move("rail", null, "Open the order list"); setRailOpen(true); await sleep(220); } target = find(role, arg); }
       if (target && !visible(target)) target = null;
+      if (!target && skipMissing && role !== "banner") return null;
       if (!target) { target = find("banner"); fallback = true; }
       if (!target) return null;
       if (!fallback) { try { const r = target.getBoundingClientRect(); if (r.top < 60 || r.bottom > innerHeight - 20) target.scrollIntoView({ block: "center", behavior: "instant" }); } catch (_) {} }
@@ -7100,17 +7121,19 @@ const Bridge = (() => {
     function hide() { if (C.el) { C.el.classList.remove("on"); C.tag.textContent = ""; } C.moves = 0; }
     function reset() { hide(); C.x = -200; C.y = -200; if (C.el) C.el.style.transform = "translate(-200px,-200px)"; }
     const sleep = ms => new Promise(r => setTimeout(r, ms));
-    return { act, hide, reset, log: C.log, state: () => ({ enabled: C.enabled, moves: C.moves, x: C.x, y: C.y, shown: !!(C.el && C.el.classList.contains("on")) }) };
+    return { act, glide, hide, reset, log: C.log, state: () => ({ enabled: C.enabled, moves: C.moves, x: C.x, y: C.y, shown: !!(C.el && C.el.classList.contains("on")) }) };
   })();
   const idsCaption = (ids, verb) => `${verb} ${ids.length === 1 ? ids[0] : ids.length + " orders"}`;
-  /** Walk a list of rows with the cursor: the first few are pressed one by one, the rest in one sweep with a count. */
-  async function cursorRows(ids, verb, { click = true, max = 6 } = {}) {
+  /** Walk a list of rows with the cursor: the first few are pressed one by one, the rest in one sweep with a count. With
+      glide the command goes on while they play (Cursor.glide). */
+  async function cursorRows(ids, verb, { click = true, max = 6, glide = false } = {}) {
+    const show = glide ? Cursor.glide : Cursor.act;
     const onScreen = ids.filter(id => rowFor(id)); let n = 0;
     /* The first few rows get the cursor; the rest get one line in the banner. Every row used to get its own animated
        visit even past the cap, so a claim on 408 orders ran for minutes while the sorter waited for the answer. */
-    for (const id of onScreen) { if (n++ < max) await Cursor.act("row", id, `${verb} ${id}`, { click }); else break; }
-    if (onScreen.length > max) await Cursor.act("banner", null, `${verb} ${onScreen.length} orders`, { click: false });
-    if (!onScreen.length) await Cursor.act("banner", null, `${verb} ${ids.length === 1 ? ids[0] : ids.length + " orders"} (no longer listed here)`, { click: false });
+    for (const id of onScreen) { if (n++ < max) await show("row", id, `${verb} ${id}`, { click }); else break; }
+    if (onScreen.length > max) await show("banner", null, `${verb} ${onScreen.length} orders`, { click: false });
+    if (!onScreen.length) await show("banner", null, `${verb} ${ids.length === 1 ? ids[0] : ids.length + " orders"} (no longer listed here)`, { click: false });
   }
 
   /** The sorter's activity feed under the banner: newest line in white, the three before it dimmed. */
@@ -7172,7 +7195,7 @@ const Bridge = (() => {
     },
     async claim(a) {
       const ids = (a.receiptIds || []).map(String); if (!ids.length) return { claimed: [] };
-      await cursorRows(ids, "Claim", { max: 3 });                        // a wave over three rows, not a tour of 357: the sorter is waiting
+      await cursorRows(ids, "Claim", { max: 3, glide: true });           // a wave over three rows while the claim is written: the sorter is waiting
       const r = await fetch(`${FN}/firebaseOrders`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rtClaimIds: ids, claimedBy: "sorter", claimRun: a.runId || S.runId || null }) });
       if (!r.ok) throw new Error("claim write failed: HTTP " + r.status);
       ids.forEach(id => { rtClaims.set(id, { claimedBy: "sorter", run: a.runId || S.runId || null, atMs: Date.now() }); paintClaim(id, true); });
@@ -7180,7 +7203,7 @@ const Bridge = (() => {
     },
     async unclaim(a) {
       const ids = (a.receiptIds || []).map(String); if (!ids.length) return { unclaimed: [] };
-      await cursorRows(ids, "Release claim on", { max: 3 });
+      await cursorRows(ids, "Release claim on", { max: 3, glide: true });
       const r = await fetch(`${FN}/firebaseOrders`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rtUnclaimIds: ids }) });
       if (!r.ok) throw new Error("unclaim write failed: HTTP " + r.status);
       ids.forEach(id => { rtClaims.delete(id); paintClaim(id, false); });
@@ -7190,8 +7213,8 @@ const Bridge = (() => {
       if (etsyBraked() && (a.refresh || !allOpenReceipts.length)) throw new Error(`Etsy watchdog brake until ${new Date(etsyMeter.brakeUntil).toLocaleTimeString()}: ${etsyMeter.alarm && etsyMeter.alarm.why}`);
       const calls0 = etsyMeter.total; let refreshSkipped = false;
       // the sandbox order stream checks every simulated ten minutes (12 s at 50x) and each check must see its step's orders
-      if ((a.refresh && !sweptRecently(a.intake ? (SANDBOX ? (a.stream ? 0 : 55000) : 10*60000) : SWEEP_MIN_MS)) || !S.lastSweepAt) { progress(0, 0, "Refreshing the open order list from Etsy"); await Cursor.act("refresh", null, "Refresh the order list from Etsy"); await refreshOrders({ heal: false }); }
-      else { refreshSkipped = !!a.refresh; await Cursor.act("banner", null, refreshSkipped ? `Open orders as listed ${Math.round((Date.now() - S.lastSweepAt) / 1000)} s ago (no new Etsy sweep)` : "Reading the open orders", { click: false }); }
+      if ((a.refresh && !sweptRecently(a.intake ? (SANDBOX ? (a.stream ? 0 : 55000) : 10*60000) : SWEEP_MIN_MS)) || !S.lastSweepAt) { progress(0, 0, "Refreshing the open order list from Etsy"); Cursor.glide("refresh", null, "Refresh the order list from Etsy"); await refreshOrders({ heal: false }); }
+      else { refreshSkipped = !!a.refresh; Cursor.glide("banner", null, refreshSkipped ? `Open orders as listed ${Math.round((Date.now() - S.lastSweepAt) / 1000)} s ago (no new Etsy sweep)` : "Reading the open orders", { click: false }); }
       let list = allOpenReceipts.filter(r => !completedOrders.has(String(r.receipt_id)));
       if (Array.isArray(a.metals) && a.metals.length) list = list.filter(r => !r._hydrated || METAL_ORDER.some(k => a.metals.includes(k) && r._metalCounts && r._metalCounts[k]));
       if (a.onlyAttention) list = list.filter(r => r._attn);
@@ -7223,14 +7246,14 @@ const Bridge = (() => {
       if (!sweptRecently() && etsyBraked()) throw new Error(`Etsy watchdog brake until ${new Date(etsyMeter.brakeUntil).toLocaleTimeString()}: ${etsyMeter.alarm && etsyMeter.alarm.why}`);
       if (!sweptRecently()) {
         progress(0, 0, "Checking the open order list on Etsy");
-        await Cursor.act("refresh", null, `Check ${ids.length} order${ids.length === 1 ? "" : "s"} against Etsy's open list`);
+        Cursor.glide("refresh", null, `Check ${ids.length} order${ids.length === 1 ? "" : "s"} against Etsy's open list`);
         const raw = await fetchOpenOrdersSequential(n => progress(n, 0, `Listing open orders… ${n}`));
         const byId = new Map(raw.map(r => [String(r.receipt_id), r]));
         // stamps are refreshed in place; a receipt whose stamp moved is marked so its next detail read is a real one
         for (const r of allOpenReceipts) { const nr = byId.get(String(r.receipt_id)); if (!nr) { r._goneFromList = true; continue; } const ns = receiptStamp(nr); if (ns !== r._stamp) { r.update_timestamp = nr.update_timestamp; r._stamp = ns; r._touched = true; } }
         for (const nr of raw) if (!allOpenReceipts.some(r => String(r.receipt_id) === String(nr.receipt_id))) { decorateReceipt(nr); allOpenReceipts.push(nr); }
         Bridge.hooks.swept(); swept = true;
-      } else await Cursor.act("banner", null, `Open list checked ${Math.round((Date.now() - S.lastSweepAt) / 1000)} s ago — reused`, { click: false });
+      } else Cursor.glide("banner", null, `Open list checked ${Math.round((Date.now() - S.lastSweepAt) / 1000)} s ago — reused`, { click: false });
       const out = {};
       for (const id of ids) { const r = allOpenReceipts.find(x => String(x.receipt_id) === id); out[id] = { open: !!r && !r._goneFromList && !completedOrders.has(id), updateTs: r ? Number(r._stamp || receiptStamp(r)) || 0 : 0, touched: !!(r && r._touched) }; }
       return { orders: out, swept, sweptAt: S.lastSweepAt, etsyCalls: etsyMeter.total - calls0, etsy: etsyState() };
@@ -7238,7 +7261,7 @@ const Bridge = (() => {
     async "orders.detail"(a) {
       const rid = String(a.receiptId || ""); const calls0 = etsyMeter.total;
       let r = allOpenReceipts.find(x => String(x.receipt_id) === rid) || currentReceipts.find(x => String(x.receipt_id) === rid);
-      await Cursor.act("row", rid, `Read order ${rid}${a.fresh ? " again from Etsy" : ""}`, { click: false });
+      Cursor.glide("row", rid, `Read order ${rid}${a.fresh ? " again from Etsy" : ""}`, { click: false });
       if (r) r._touched = false;
       if ((a.fresh || !r) && etsyBraked()) throw new Error(`Etsy watchdog brake until ${new Date(etsyMeter.brakeUntil).toLocaleTimeString()}: ${etsyMeter.alarm && etsyMeter.alarm.why}`);
       if (a.fresh || !r) {

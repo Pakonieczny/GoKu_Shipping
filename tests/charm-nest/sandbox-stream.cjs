@@ -189,7 +189,9 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   const autoIds = streamedIds(stream());
   assert((await rows()).every(r => autoIds.has(r.rid)), 'nothing but streamed orders reached the sorter in Auto either');
   // hold by hand: while arrivals are being added the clock stops at the next step; once they are in, one step, ten minutes
-  await page.evaluate(() => { B.run.arrivalBusy = true; });
+  // the stream steps as soon as the sorter is free, so an intake may be under way: the hold goes on only between intakes
+  // (an intake in flight clears the flag as it ends, and the stream would step)
+  await page.waitForFunction(() => { if (B.run.arrivalBusy) return false; B.run.arrivalBusy = true; return true; }, null, { timeout: 60000, polling: 100 });
   await page.waitForFunction(() => !/Checking/.test(document.getElementById('arrivalCounter').textContent), null, { timeout: 60000 });
   await page.waitForTimeout(500);
   const hold0 = stream();

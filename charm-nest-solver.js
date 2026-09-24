@@ -415,7 +415,9 @@
     /* A search that has not beaten its best for a while is done: on a sheet given more pieces than it can hold, the
        ceiling used to be spent trying to seat pieces that could not fit, minutes after the layout had settled. */
     const stallMs = job.fullBudget ? 0 : +job.stallMs || 0; let lastBetterAt = now(), stalled = false; let best = null;
-    const stopped = () => (cb.shouldStop && cb.shouldStop()) || (now() - t0) > budget || (stalled = !!(stallMs && !job.packingPending && best && (!best.rejects.length || best.rejects.every(id => best.capped?.includes(id))) && (now() - lastBetterAt) > stallMs));
+    // placing one charm at a time, the charms are prepared and placed under a ceiling that grows with them (CAREFUL_MS)
+    let ceiling = job.careful ? Math.max(budget, (job.pieces || []).length * CAREFUL_MS) : budget;
+    const stopped = () => (cb.shouldStop && cb.shouldStop()) || (now() - t0) > ceiling || (stalled = !!(stallMs && !job.packingPending && best && (!best.rejects.length || best.rejects.every(id => best.capped?.includes(id))) && (now() - lastBetterAt) > stallMs));
 
     /* sheet grids at both levels; the inset band is pre-filled as wall */
     const FW = Math.round(job.sheet.wPt * fineRes), FH = Math.round(job.sheet.hPt * fineRes);
@@ -738,9 +740,12 @@
        edge, and kept there when that grades no worse. Charms join best fit first. One that fits nowhere is set aside
        with its order and reported at once (see pass). cb.onProbe reports the spot being graded, so the page can draw
        the charm turning and moving while it searches.                                                           */
-    const carefulOn = !!job.careful && !!job.sheet.fixedPieces?.length && !roseAxis;
+    // one charm at a time, graded spot by spot: on any sheet, empty or not, Rose Gold past its green line included
+    const carefulOn = !!job.careful;
     async function carefulAppend() {
-      const admitted = fifo ? prepared.filter(p => rank.get(p.order) < capOrders) : prepared.slice();
+      // dated charms wait oldest first, so the window below always holds the oldest orders still waiting
+      const byAge = (a, b) => rank.get(a.order) - rank.get(b.order) || a.idx - b.idx;
+      const admitted = fifo ? prepared.filter(p => rank.get(p.order) < capOrders).sort(byAge) : prepared.slice();
       if (admitted.some(p => p.pinned)) return null;
       const MM_PX = fineRes * 72 / 25.4, cellMm2 = 1 / (MM_PX * MM_PX);
       const sliverMm = +job.sliverMm || SLIVER_MM, weights = { ...FIT_WEIGHTS, ...(job.fitWeights || {}) };
@@ -749,7 +754,7 @@
       // the second search takes the angles halfway between the first one's, so the two together try twice as many
       const turn = job.exploreRotations && angles.length > 1 ? 180 / angles.length : 0;
       for (const p of admitted) p.careful = variantsFor(p, angles.map(a => (a + turn) % 360));
-      const FW = baseFine.W, FH = baseFine.H, axisX = stripAxis === "x";
+      const FW = baseFine.W, FH = baseFine.H, axisX = (roseAxis || stripAxis) === "x";
       let fine = baseFine.clone(), coarse = baseCoarse.clone();
       let rec = [], cells = 0, lastProbe = -Infinity, graded = 0;
       let lastStage = null;
@@ -893,6 +898,24 @@
         }
         return { core: cropped(core, W2, H2), hull: cropped(hull, W2, H2) };
       };
+      /** What any of 16×16 positions covers (the hull of blockMasks, four blocks wide): on an empty sheet nearly every
+          position is legal, and at 2° the 4×4 blocks alone took a third of a charm's time (24 Sep). */
+      const wideHull = v => {
+        const w = v.fine.w, h = v.fine.h, b = v.fine.bits, S = ratio * 4, W2 = w + S - 1, H2 = h + S - 1;
+        const rAny = new Uint8Array(W2 * h), out = new Uint8Array(W2 * H2);
+        for (let y = 0; y < h; y++) for (let x = 0; x < W2; x++) { for (let o = 0; o < S; o++) { const mx = x - o; if (mx >= 0 && mx < w && b[y * w + mx]) { rAny[y * W2 + x] = 1; break; } } }
+        for (let y = 0; y < H2; y++) for (let x = 0; x < W2; x++) { for (let o = 0; o < S; o++) { const my = y - o; if (my >= 0 && my < h && rAny[my * W2 + x]) { out[y * W2 + x] = 1; break; } } }
+        return cropped(out, W2, H2);
+      };
+      /** Whether every position of a block clears the Rose Gold stock already cut away (see clearOfRemnant): the block
+          masks carry no outline, so the charm's own is tested at the block's positions nearest the cut. */
+      const blockClear = (v, bx, by, ex, ey) => {
+        const rem = fine.remnant, u = v.fine.pm.outline;
+        if (!rem || !u) return true;
+        if (rem.axis === "x") { for (let y = by; y < ey; y++) if (!clearOfRemnant(rem, u, bx, y)) return false; }
+        else for (let x = bx; x < ex; x++) if (!clearOfRemnant(rem, u, x, by)) return false;
+        return true;
+      };
       let legal = null;
       /** Every legal position of one variant on the sheet as it stands: L[y * PW + x] for the mask's corner at (x, y). */
       const legalMap = v => {
@@ -902,11 +925,17 @@
         if (!legal || legal.n < n) legal = { n, L: new Uint8Array(n), C: new Int32Array(n), S: new Int32Array(n) };
         const L = legal.L; L.fill(0, 0, n);
         const { core, hull } = v.blocks || (v.blocks = blockMasks(v)), B = ratio;
-        for (let by = 0; by < PH; by += B) for (let bx = 0; bx < PW; bx += B) {
-          if (core && !fine.fits(core.pm, bx + core.x, by + core.y)) continue;
-          const ex = Math.min(PW, bx + B), ey = Math.min(PH, by + B);
-          if (hull && fine.fits(hull.pm, bx + hull.x, by + hull.y)) { for (let y = by; y < ey; y++) L.fill(1, y * PW + bx, y * PW + ex); continue; }
-          for (let y = by; y < ey; y++) for (let x = bx; x < ex; x++) if (fine.fits(pm, x, y)) L[y * PW + x] = 1;
+        // open space is taken 16×16 positions at a time first: everything any of them covers is clear, so all are legal
+        const wide = v.wide === undefined ? (v.wide = wideHull(v)) : v.wide, SB = B * 4;
+        for (let sy = 0; sy < PH; sy += SB) for (let sx = 0; sx < PW; sx += SB) {
+          const sx1 = Math.min(PW, sx + SB), sy1 = Math.min(PH, sy + SB);
+          if (wide && fine.fits(wide.pm, sx + wide.x, sy + wide.y) && blockClear(v, sx, sy, sx1, sy1)) { for (let y = sy; y < sy1; y++) L.fill(1, y * PW + sx, y * PW + sx1); continue; }
+          for (let by = sy; by < sy1; by += B) for (let bx = sx; bx < sx1; bx += B) {
+            if (core && !fine.fits(core.pm, bx + core.x, by + core.y)) continue;
+            const ex = Math.min(PW, bx + B), ey = Math.min(PH, by + B);
+            if (hull && fine.fits(hull.pm, bx + hull.x, by + hull.y) && blockClear(v, bx, by, ex, ey)) { for (let y = by; y < ey; y++) L.fill(1, y * PW + bx, y * PW + ex); continue; }
+            for (let y = by; y < ey; y++) for (let x = bx; x < ex; x++) if (fine.fits(pm, x, y)) L[y * PW + x] = 1;
+          }
         }
         return { L, C: legal.C, S: legal.S, PW, PH, n };
       };
@@ -1004,6 +1033,8 @@
          goes in, so a charm is not put where it takes the only good spot of another. Trying a move ahead only checks
          which spots it takes, so it costs next to nothing and the charms keep coming one after another.            */
       const AHEAD = job.lookAhead === false ? 0 : 6, STRANDS = 1000;   // moves tried ahead; mm² charged for each charm a move leaves no spot
+      const WINDOW = 12;   // the oldest charms weighed together; the next join as these go in, so each step stays quick
+      const userStop = () => !!(cb.shouldStop && cb.shouldStop());
       const aheadStats = { rounds: 0, changed: 0 };
       const boxOf = (v, x, y) => [x, y, x + v.fine.w, y + v.fine.h];
       const meets = (a, b, pad) => a[0] - pad < b[2] && b[0] < a[2] + pad && a[1] - pad < b[3] && b[1] < a[3] + pad;
@@ -1021,7 +1052,7 @@
         for (let by = y0; by < y1; by += B) for (let bx = x0; bx < x1; bx += B) {
           if (core && !fine.fits(core.pm, bx + core.x, by + core.y)) continue;
           const ex = Math.min(x1, bx + B), ey = Math.min(y1, by + B);
-          if (hull && fine.fits(hull.pm, bx + hull.x, by + hull.y)) { for (let y = by; y < ey; y++) L.fill(1, (y - y0) * w + bx - x0, (y - y0) * w + ex - x0); continue; }
+          if (hull && fine.fits(hull.pm, bx + hull.x, by + hull.y) && blockClear(v, bx, by, ex, ey)) { for (let y = by; y < ey; y++) L.fill(1, (y - y0) * w + bx - x0, (y - y0) * w + ex - x0); continue; }
           for (let y = by; y < ey; y++) for (let x = bx; x < ex; x++) if (fine.fits(pm, x, y)) L[(y - y0) * w + x - x0] = 1;
         }
         return L;
@@ -1044,22 +1075,38 @@
         return list;
       };
       /** One charm's graded spots brought up to date with the placements made since ({box, chg} each): a new list, the
-          cached spots are not changed. */
+          cached spots are not changed. Spots a placement covers are dropped, and the snuggest few spots resting
+          against it, over all angles, are added and graded. A spot whose grade a placement changes is only marked:
+          grades are brought up to date from the top of the list down until its leaders are all current, since only
+          the leaders are ever picked, and a marked spot is graded when it rises among them. So each placement costs
+          the other waiting charms a few dozen grades, not hundreds.                                               */
+      const LEADERS = 16, RESTING = 24;
+      const fitOf = t => -(t.waste + weights.around * t.around + weights.growth * t.growth + weights.along * t.along);
       const refresh = (p, spots, events, front) => {
-        const out = [], seen = new Set();
+        const out = [], seen = new Set(), key = c => c.v.angle + ":" + c.x + ":" + c.y;
         for (const s of spots) {
           const b = boxOf(s.v, s.x, s.y);
           if (events.some(e => meets(b, e.box, 1)) && !fine.fits(s.v.fine.pm, s.x, s.y)) continue;
           const t = { ...s };
-          if (events.some(e => meets(b, e.chg, lossPad))) t.waste = lossAt(s.v, s.x, s.y) * cellMm2;
-          if (events.some(e => meets(b, e.box, aroundPad))) t.around = aroundAt(s.v, s.x, s.y) * cellMm2;
-          t.growth = Math.max(0, t.far - front) / MM_PX;
-          t.fit = -(t.waste + weights.around * t.around + weights.growth * t.growth + weights.along * t.along);
-          out.push(t); seen.add(t.v.angle + ":" + t.x + ":" + t.y);
+          if (events.some(e => meets(b, e.chg, lossPad))) t.staleWaste = true;
+          if (events.some(e => meets(b, e.box, aroundPad))) t.staleAround = true;
+          t.growth = Math.max(0, t.far - front) / MM_PX; t.fit = fitOf(t);
+          out.push(t); seen.add(key(t));
         }
-        for (const e of events) for (const v of p.careful) for (const c of restingNear(v, e.box, 2)) {
-          const key = v.angle + ":" + c.x + ":" + c.y; if (seen.has(key)) continue;
-          seen.add(key); out.push(Object.assign(c, grade(v, c.x, c.y, front))); metrics.positions++;
+        for (const e of events) {
+          const near = [];
+          for (const v of p.careful) for (const c of restingNear(v, e.box, 2)) if (!seen.has(key(c))) near.push(c);
+          near.sort((a, b) => b.touch - a.touch);
+          for (const c of near.slice(0, RESTING)) { if (seen.has(key(c))) continue; seen.add(key(c)); out.push(Object.assign(c, grade(c.v, c.x, c.y, front))); metrics.positions++; }
+        }
+        for (let changed = true; changed;) {
+          out.sort((a, b) => b.fit - a.fit); changed = false;
+          for (let i = 0; i < Math.min(LEADERS, out.length); i++) {
+            const t = out[i]; if (!t.staleWaste && !t.staleAround) continue;
+            if (t.staleWaste) { t.waste = lossAt(t.v, t.x, t.y) * cellMm2; t.staleWaste = false; }
+            if (t.staleAround) { t.around = aroundAt(t.v, t.x, t.y) * cellMm2; t.staleAround = false; }
+            t.fit = fitOf(t); graded++; changed = true;
+          }
         }
         return out;
       };
@@ -1078,8 +1125,10 @@
       async function pass(first) {
         for (const r of rec) probe(r.p, r.v, r.x, r.y, "lift", true);
         fine = baseFine.clone(); coarse = baseCoarse.clone(); rec = []; cells = 0;
-        const left = admitted.slice(), noRoom = [], over = [], stranded = [];
-        // p and the rest of its order leave; true when charms already placed were lifted, so the sheet changed
+        const left = admitted.slice(), noRoom = [], over = [], stranded = [], liftedOrders = new Set();
+        // p and the rest of its order leave; true when charms already placed were lifted, so the sheet changed. The room
+        // they leave may now seat a charm set aside before, so those wait again, except the charms of an order lifted
+        // once: an order is never lifted twice, so this ends.
         const setAside = (p, list) => {
           const order = multi(p) ? p.order : null;
           for (const q of left.slice()) if (q === p || (order != null && q.order === order)) { left.splice(left.indexOf(q), 1); list.push(q); }
@@ -1088,15 +1137,19 @@
           rec = rec.filter(r => !lifted.includes(r)); cells = rec.reduce((n, r) => n + r.v.cells, 0);
           ({ fine, coarse } = rebuildGrids(rec));
           for (const r of lifted) { list.push(r.p); probe(r.p, r.v, r.x, r.y, "lift", true); }
+          liftedOrders.add(order);
+          for (const l of [noRoom, over]) for (let i = l.length - 1; i >= 0; i--) if (!liftedOrders.has(l[i].order)) left.push(...l.splice(i, 1));
+          if (fifo) left.sort(byAge);
           return true;
         };
         if (cb.onStage) cb.onStage("careful", 0, left.length);
         // each waiting charm's graded spots and how many of the placements since the start they have seen
         const cache = new Map(), events = [];
+        // a charm whose known spots were all taken is searched afresh, so "no spot" always means none on the sheet
         const current = async (p, front) => {
           let c = cache.get(p);
+          if (c && c.at < events.length) { const spots = refresh(p, c.spots, events.slice(c.at), front); c = spots.length ? { spots, at: events.length } : null; }
           if (!c) { const spots = await gradeAll(p, front); if (!spots) return null; c = { spots, at: events.length }; }
-          else if (c.at < events.length) c = { spots: refresh(p, c.spots, events.slice(c.at), front), at: events.length };
           cache.set(p, c);
           return c.spots;
         };
@@ -1117,25 +1170,27 @@
           } finally { fine = keepFine; }
           return score;
         };
+        // out of time, the charms placed so far are kept and the rest wait; stopped by the operator, nothing is kept
+        let timedOut = false;
         sheetValue();
         while (left.length) {
-          if (stopped()) return null;
+          if (stopped()) { if (userStop()) return null; timedOut = true; break; }
           const front = reachOf();
           // best fit first over every waiting charm: each finds its best spot on the sheet as it is
           const firsts = left.filter(p => first.has(p)), moves = [];
           let lifted = false;
-          for (const p of firsts.length ? firsts : left.slice()) {
+          for (const p of firsts.length ? firsts : left.slice(0, WINDOW)) {
             if (!left.includes(p)) continue;
             const spots = await current(p, front);
-            if (!spots) return null;
+            if (!spots || stopped()) { if (userStop()) return null; timedOut = true; break; }
             const s = bestOf(p, spots, front);
             if (s) { hadRoom.add(p); moves.push({ p, ...s }); continue; }
-            if (stopped()) return null;
             if (rec.length && (hadRoom.has(p) || fitsOn(p, baseFine))) stranded.push(p);
             cache.delete(p);
             // lifted charms free their space: every charm's spots are graded afresh
             if (setAside(p, noRoom)) { lifted = true; break; }
           }
+          if (timedOut) break;
           if (lifted) { cache.clear(); events.length = 0; sheetValue(); continue; }
           const live = moves.filter(m => left.includes(m.p)).sort((a, b) => b.fit - a.fit);
           if (!live.length) continue;
@@ -1165,34 +1220,72 @@
           if (cb.onPlaced) cb.onPlaced(pl, { trial: 0, placed: rec.length, total: prepared.length, careful: true });
           if (cb.onStage) cb.onStage("careful", rec.length, admitted.length);
         }
-        return { rec, fine, coarse, cells, noRoom, over, stranded, fit: rec.reduce((n, r) => n + r.fit, 0) };
+        /* A sheet never holds part of an order, nor, with dated orders, an order younger than one it leaves out: the page
+           lifts those off (oldest first, 23 Sep). Charms are placed best fit first whatever their dates, so a younger
+           order can take the only spot an older one had. Such orders are lifted here, and the older charm, which had
+           room, is seated first in the second pass; the pass that keeps more charms wins. */
+        /* Out of time, a charm still waiting was never tried, so no order was left out for it: the charms placed stay,
+           except the rest of an order it belongs to (24 Sep: a 60 s ceiling at 2° lifted all 17 charms of a sheet,
+           since the oldest order had not had its turn). */
+        const shown = noRoom.concat(over), waiting = shown.concat(timedOut ? left : []);
+        if (waiting.length) {
+          const whole = new Set(waiting.map(q => q.order)), cutoff = fifo && shown.length ? Math.min(...shown.map(q => rank.get(q.order))) : Infinity;
+          const off = rec.filter(r => whole.has(r.p.order) || rank.get(r.p.order) > cutoff);
+          if (off.length) {
+            rec = rec.filter(r => !off.includes(r)); cells = rec.reduce((n, r) => n + r.v.cells, 0);
+            ({ fine, coarse } = rebuildGrids(rec));
+            // they wait for the reason the oldest order left out waits (out of time, only part of an order was placed)
+            const to = [noRoom, over, left].find(l => l.some(q => rank.get(q.order) === cutoff)) || left;
+            for (const r of off) { to.push(r.p); probe(r.p, r.v, r.x, r.y, "lift", true); }
+          }
+        }
+        return { rec, fine, coarse, cells, noRoom, over, stranded: stranded.filter(q => !rec.some(r => r.p === q)), timedOut, fit: rec.reduce((n, r) => n + r.fit, 0) };
       }
       let out = await pass(new Set()), passes = 1;
-      if (out && out.stranded.length) {
+      if (out && out.stranded.length && !out.timedOut) {
         passes = 2;
         const again = await pass(new Set(out.stranded));
-        if (!again) return null;
-        if (again.rec.length > out.rec.length || (again.rec.length === out.rec.length && again.fit > out.fit)) out = again;
-        else { for (const r of again.rec) probe(r.p, r.v, r.x, r.y, "lift", true); for (const r of out.rec) probe(r.p, r.v, r.x, r.y, "place", true); }
+        // stopped during the second pass, the finished first one stands
+        if (again && (again.rec.length > out.rec.length || (again.rec.length === out.rec.length && again.fit > out.fit))) out = again;
+        else { for (const r of again ? again.rec : rec) probe(r.p, r.v, r.x, r.y, "lift", true); for (const r of out.rec) probe(r.p, r.v, r.x, r.y, "place", true); }
       }
       if (!out) return null;
       ({ rec, fine, coarse, cells } = out);
+      /* Room for later orders (Paul, 24 Sep): a nearly full Gold or Silver sheet lets the next 35 orders try its gaps
+         before it is released, unless not even one of the shop's smallest charms (see SMALL_PROBES) fits it. Each is
+         tried at 15° steps over the whole sheet, 4×4 positions at a time as in legalMap. */
+      const smallRoom = !job.roomCheck ? undefined : (() => {
+        for (const v of smallProbeVariants(fineRes, erodeFine, halfGapFine)) {
+          const pm = v.fine.pm, PW = FW - pm.w + 1, PH = FH - pm.h + 1;
+          if (PW <= 0 || PH <= 0) continue;
+          const { core, hull } = v.blocks || (v.blocks = blockMasks(v)), B = ratio;
+          for (let by = 0; by < PH; by += B) for (let bx = 0; bx < PW; bx += B) {
+            if (core && !fine.fits(core.pm, bx + core.x, by + core.y)) continue;
+            const ex = Math.min(PW, bx + B), ey = Math.min(PH, by + B);
+            if (hull && fine.fits(hull.pm, bx + hull.x, by + hull.y) && blockClear(v, bx, by, ex, ey)) return true;
+            for (let y = by; y < ey; y++) for (let x = bx; x < ex; x++) if (fine.fits(pm, x, y)) return true;
+          }
+        }
+        return false;
+      })();
       const placements = rec.map(r => ({ id: r.p.id, angle: r.v.angle, cxPt: (r.x + r.v.solid.cx) / fineRes, cyPt: (r.y + r.v.solid.cy) / fineRes, xPt: (r.x + (r.v.fine.w - r.v.solid.w) / 2) / fineRes, yPt: (r.y + (r.v.fine.h - r.v.solid.h) / 2) / fineRes, wPt: r.v.solid.w / fineRes, hPt: r.v.solid.h / fineRes }));
       const ids = new Set(placements.map(p => p.id)), capped = (fifo ? prepared.filter(p => rank.get(p.order) >= capOrders).map(p => p.id) : []).concat(out.over.map(p => p.id));
       metrics.layouts++; reportMetrics(true);
       return { placements, rejects: prepared.filter(p => !ids.has(p.id)).map(p => p.id), capped, noRoom: out.noRoom.map(p => p.id), density: cells / usableCellsFine, contactQuality: qualityOf(rec, fine), trial: 0, stripPacked: false,
         usablePt2: usableCellsFine / (fineRes * fineRes), freePt2: fine.freeCells() / (fineRes * fineRes), placedPt2: cells / (fineRes * fineRes), placedCells: cells, pocket: pocketPt(coarse, coarseRes),
-        grids: { fine, coarse }, rec, fitScore: out.fit, wastePt2: rec.reduce((n, r) => n + r.waste, 0) * MM_PX * MM_PX / (fineRes * fineRes), careful: { graded, angles: angles.length, turn, passes, ahead: aheadStats } };
+        grids: { fine, coarse }, rec, fitScore: out.fit, wastePt2: rec.reduce((n, r) => n + r.waste, 0) * MM_PX * MM_PX / (fineRes * fineRes), timedOut: out.timedOut, smallRoom, careful: { graded, angles: angles.length, turn, passes, ahead: aheadStats } };
     }
     let carefulDone = false;
     if (carefulOn && !best) {
-      const careful = await carefulAppend();
+      const careful = await carefulAppend(), overran = now() - t0 > budget;
       // every charm is placed, held back by the fill ceiling, or shown to have no spot at any angle: nothing is left to search
-      if (careful && careful.rejects.every(id => careful.capped.includes(id) || careful.noRoom.includes(id))) {
-        best = careful; carefulDone = true; endedBy = !careful.rejects.length ? "complete" : careful.noRoom.length ? "no-room" : "cap";
+      // (and past the usual ceiling, no time is left for a search either)
+      if (careful && (careful.timedOut || overran || careful.rejects.every(id => careful.capped.includes(id) || careful.noRoom.includes(id)))) {
+        best = careful; carefulDone = true; endedBy = cb.shouldStop && cb.shouldStop() ? "stopped" : careful.timedOut ? "budget" : !careful.rejects.length ? "complete" : careful.noRoom.length ? "no-room" : "cap";
         if (cb.onBest) cb.onBest(publicLayout(best), { trial: 0, placed: best.placements.length, total: prepared.length, rejects: best.rejects.slice(), density: best.density, elapsedMs: now() - t0, careful: true });
       }
     }
+    ceiling = budget;   // a search after it keeps the usual ceiling
     const refinementReserve = Math.min(10000,budget*.2);
     while (!carefulDone && trials < maxTrials) {
       if (job.packingHints && job.packingHints !== lastAdvice) { lastAdvice = job.packingHints; lastBetterAt = now(); }
@@ -1579,12 +1672,41 @@
     }
     return out;
   }
-  const probeCache = new Map();
+  const probeCache = new Map(), smallCache = new Map();
+  /** One PROBE on a grid of `fineRes` px/pt: each 1 px/pt pixel fills its fineRes × fineRes cells (resample only thins
+      a bitmap: going up it left 3 cells in 4 empty). */
+  function probeBits([w, h, b], fineRes) {
+    const src = bitsFromBase64(b, w * h), f = { w: Math.round(w * fineRes), h: Math.round(h * fineRes) };
+    f.bits = new Uint8Array(f.w * f.h);
+    for (let y = 0; y < f.h; y++) for (let x = 0; x < f.w; x++) f.bits[y * f.w + x] = src[Math.min(h - 1, (y / fineRes) | 0) * w + Math.min(w - 1, (x / fineRes) | 0)];
+    return f;
+  }
+  // the first SMALL_PROBES of PROBES lie in the smallest 7% of the library by area (the middles of its first two 24ths)
+  const SMALL_PROBES = 2;
+  /* Placing charms one at a time always ends: each step seats a charm or sets one aside. Its time ceiling is only a
+     guard, so it grows with the charms waiting: a big first batch at 2° on an empty sheet ran past the 60 s and 12 s
+     ceilings of two tests on a busy machine and was cut short (24 Sep). A charm takes a few seconds; this allows 30. */
+  const CAREFUL_MS = 30000;
+  /** The library's smallest charms (see SMALL_PROBES) as variants on a grid of `fineRes` px/pt, grown or shrunk like
+      the pieces, at 15° steps: { angle, fine: { bits, w, h, pm } } like a piece's. */
+  function smallProbeVariants(fineRes, erodeFine, halfGapFine) {
+    const key = fineRes + ":" + erodeFine + ":" + halfGapFine;
+    if (!smallCache.has(key)) smallCache.set(key, PROBES.slice(0, SMALL_PROBES).flatMap(probe => {
+      const f = probeBits(probe, fineRes), out = [];
+      for (let a = 0; a < 360; a += 15) {
+        const rot = rotateBitmap(f.bits, f.w, f.h, a); if (!rot.w) continue;
+        const m = erodeFine ? erode(rot.bits, rot.w, rot.h, erodeFine) : dilate(rot.bits, rot.w, rot.h, halfGapFine);
+        if (m.w && areaOf(m.bits)) out.push({ angle: a, fine: { bits: m.bits, w: m.w, h: m.h, pm: packShifted(m.bits, m.w, m.h) } });
+      }
+      return out;
+    }));
+    return smallCache.get(key);
+  }
   /** The PROBES as packed masks on a grid of `fineRes` px/pt, grown or shrunk like the pieces, at 45° steps. */
   function probeVariants(fineRes, erodeFine, halfGapFine) {
     const key = fineRes + ":" + erodeFine + ":" + halfGapFine;
-    if (!probeCache.has(key)) probeCache.set(key, PROBES.map(([w, h, b]) => {
-      const f = resample(bitsFromBase64(b, w * h), w, h, 1, fineRes), out = [];
+    if (!probeCache.has(key)) probeCache.set(key, PROBES.map(probe => {
+      const f = probeBits(probe, fineRes), out = [];
       for (let a = 0; a < 360; a += 45) {
         const rot = rotateBitmap(f.bits, f.w, f.h, a); if (!rot.w) continue;
         const m = erodeFine ? erode(rot.bits, rot.w, rot.h, erodeFine) : dilate(rot.bits, rot.w, rot.h, halfGapFine);
@@ -2125,6 +2247,6 @@
     const overlap = off ? null : grid.overlap(v.fine.pm, x0, y0, 1e9);
     return { ok: false, x: x0, y: y0, off, overlapPt2: overlap == null ? null : overlap / (res * res) };
   }
-  const solverAPI = { sliverCells, SLIVER_MM, FIT_WEIGHTS, AROUND_MM, search, solve, publicLayout, bestResult, normalizePackingPlan, shapeKey, packingCompatibility, guidedOrderScore, verify, contactAt, placementAt, straightEdgeAt, edgeBandCells, sheetBounds, cornerPockets, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine };
+  const solverAPI = { sliverCells, SLIVER_MM, FIT_WEIGHTS, AROUND_MM, search, solve, publicLayout, bestResult, normalizePackingPlan, shapeKey, packingCompatibility, guidedOrderScore, verify, contactAt, placementAt, straightEdgeAt, edgeBandCells, sheetBounds, cornerPockets, betterLayout, stripFraction, erosionPx, rotateBitmap, dilate, erode, ring, resample, packShifted, Grid, rng, popcount32, makeSheetGrid, prepareVariant, tryPlace, tryPlaceTight, stampVariant, bestSpots, coarseFromFine, PROBES, SMALL_PROBES, probeVariants, smallProbeVariants, bitsFromBase64 };
   return solverAPI;
 });

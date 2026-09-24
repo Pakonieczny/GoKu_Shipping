@@ -38,7 +38,7 @@ const job={sheet,clearancePt:0,angles:[0,90],fineRes:1,coarseRes:1,maxFill:.74,t
  // incumbent with an incomplete order that final cleanup then removes.
  const fs=require('node:fs'), vm=require('node:vm');
  let clock=0;
- const realm=vm.createContext({module:{exports:{}},performance:{now:()=>clock}});
+ const realm=vm.createContext({module:{exports:{}},require:m=>require(require('node:path').join(__dirname,'../..',m)),performance:{now:()=>clock}});
  vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../../charm-nest-solver.js'),'utf8'),realm);
  const Expiring=realm.module.exports;
  const pairJob={...job,maxTrials:8,angles:[0],initialLayout:[{id:'solo',cxPt:30,cyPt:5,angle:0}],pieces:[
@@ -72,7 +72,7 @@ const job={sheet,clearancePt:0,angles:[0,90],fineRes:1,coarseRes:1,maxFill:.74,t
 {
  const fs=require('node:fs'),vm=require('node:vm');
  const html=fs.readFileSync(require('node:path').join(__dirname,'../../charm-nest-1.html'),'utf8');
- const a=html.indexOf('function parallelCount()'),b=html.indexOf('function ensureWorker(',a);
+ const a=html.indexOf('function parallelCount('),b=html.indexOf('function ensureWorker(',a);
  for(const [cores,want,expected] of [[8,0,1],[16,0,1],[32,0,1],[2,0,1],[8,2,2]]){
   const c=vm.createContext({S:{settings:{parallel:want}},navigator:{hardwareConcurrency:cores},angleSet:()=>Array(180)});
   vm.runInContext(html.slice(a,b),c);assert.equal(vm.runInContext('parallelCount()',c),expected);
@@ -81,4 +81,7 @@ const job={sheet,clearancePt:0,angles:[0,90],fineRes:1,coarseRes:1,maxFill:.74,t
   const c=vm.createContext({S:{settings:{parallel:0}},navigator:{hardwareConcurrency:cores},angleSet:()=>Array(36)});
   vm.runInContext(html.slice(a,b),c);assert.equal(vm.runInContext('parallelCount()',c),expected);
  }
+ // a search at 2° steps, one charm at a time, keeps to one worker whatever the angle setting
+ const c=vm.createContext({S:{settings:{parallel:0}},navigator:{hardwareConcurrency:8},angleSet:()=>Array(36)});
+ vm.runInContext(html.slice(a,b),c);assert.equal(vm.runInContext('parallelCount(180)',c),1);assert.equal(vm.runInContext('parallelCount(36)',c),2);
 }

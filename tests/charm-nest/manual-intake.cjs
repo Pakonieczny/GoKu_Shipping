@@ -66,39 +66,67 @@ assert.equal(O.intakePlan({count:85,density:.739}).phase,'final');
 assert.equal(O.intakePlan({count:85,density:.5,append:true}).phase,'fill');
 assert.equal(O.intakePlan({count:40,density:.5,force:true}).phase,'repack');
 assert.equal(O.intakePlan({count:40,density:.5,optimized:true,area:99,capacity:100}).phase,'fill');
-// Exercise the actual completion decision before PDF writing, with no API calls.
-const decision=html.slice(html.indexOf('  const belowTarget=result.density'),html.indexOf('  sh._beforeLearned = null;',html.indexOf('  const belowTarget=result.density')));
-function finish({count=40,density=.5,optimized=false,rejects=[],phase='fill',endedBy='complete',last=0,protectedRose=false,metal='gold',appendOnly=false,topup=null,missRearranged=false}={}){
- const sh={metal,appendOnly,topup,missRearranged,roseProtected:protectedRose,intakePhase:phase,intakeOptimized:optimized,intakeOptimizedCount:last,status:'nesting',charms:[]},items=Array.from({length:count},()=>({}));let restarts=0;
- const c={sh,items,result:{density,rejects,endedBy,placements:[{id:'kept'}],placedPt2:50,usablePt2:100,freePt2:50},S:{settings:{maxFill:.8,finalOptimizeCount:85}},startNest(){restarts++;},log(){}};vm.createContext(c);vm.runInContext('(function(){'+decision+'})();',c);return {sh,restarts};
+// The layout stands as placed: finishing a nest never starts another search of the same sheet, not after a miss, not at
+// 85 charms, not below 74% (Paul, 24 Sep: a sheet re-arranged loses room). An order that misses moves to the next sheet.
+{
+ const at=html.indexOf('async function finishNest('),fn=html.slice(at,html.indexOf('\n}\n',at)+2);
+ assert(fn.length>2000,'finishNest found');
+ // the one search it may start is a second try of a sheet a time-out left with nothing placed (nothing to re-arrange)
+ const calls=fn.match(/\bstartNest(Ready)?\(/g)||[];
+ assert(calls.length<=1,'finishing a nest starts no second search');
+ if(calls.length){const i=fn.search(/\bstartNest(Ready)?\(/),guard=fn.slice(Math.max(0,i-400),i);assert(/!result\.placements\.length/.test(guard)&&/timeoutRetried/.test(guard)&&/timedOut/.test(guard),'only a sheet a time-out left empty is searched again, once');}
+ assert(!/intakeForceFinal\s*=\s*true|delete sh\.appendOnly|missRearranged\s*=\s*true|needsRepack|appendMissed/.test(fn),'and never frees the placed charms to move');
 }
-assert.equal(finish({protectedRose:true,count:100}).restarts,0,'protected remainder never restarts under 74% or over 85 charms');
-assert.equal(finish().restarts,0,'a quick fill that seats every charm is kept, short of 74% or not');
-assert.equal(finish({count:1,density:.01}).restarts,0,'one charm on a new sheet is not searched again (it used to spend the whole budget)');
-assert.equal(finish({rejects:['arrival']}).restarts,1,'a quick fill that leaves charms out gets the fresh arrangement');
-assert.equal(finish({phase:'repack'}).restarts,0,'the same sparse batch cannot loop forever');
-assert.equal(finish({optimized:true}).restarts,0,'after repacking, new pieces fill gaps');
-assert.equal(finish({count:85,optimized:true}).restarts,1,'below target at 85 gets the final attempt');
-assert.equal(finish({count:85,density:.74,optimized:true,rejects:['overflow']}).restarts,0,'at target, spill without another full search');
-assert.equal(finish({endedBy:'stopped'}).restarts,0,'operator stop is respected');
-assert.equal(finish({phase:'final',count:85,rejects:['overflow']}).restarts,0,'final attempt never loops');
-// an arrival that misses the gaps of an appended Gold or Silver sheet below 74% gets one fresh arrangement before it moves on
-for(const metal of ['gold','silver']){
- const missed=finish({metal,appendOnly:true,optimized:true,rejects:['arrival'],endedBy:'budget'});
- assert.equal(missed.restarts,1,metal+': an append that overflows below the target repacks the sheet first');
- assert.equal(missed.sh.appendOnly,undefined,'with every piece free to move');assert.equal(missed.sh.intakeForceFinal,true);
+// A Gold or Silver sheet filling its gaps: a try that places nothing keeps the files, verification and record it has; a
+// try that places something writes the sheet again (Paul, 24 Sep: no waiting between charms)
+{
+ const counts={build:0,verify:0,persist:0,put:[],overflow:0,done:0};
+ const fx={
+  S:{settings:{maxFill:.8,clearancePt:0,runMode:'auto'},mode:'nest'},window:{B:{run:{runId:'run-1',status:'processed'}}},performance,Map,Set,JSON,Math,Promise,Object,Error,
+  document:{hidden:false},Notification:undefined,
+  activeCharms:p=>p.charms.filter(x=>!x.excluded),agent(){},agentUpdate(){},log(){},renderCard(){},renderProgress(){},drawPreview(){},computeSaturation(){},toast(){},ding(){},$$:()=>[],
+  stockFor:()=>({wPt:100,hPt:50}),labelOf:m=>m,sheetName:()=>'Gold sheet 1',endedText:e=>e,sheetT0:()=>0,fmt:{pct:v=>Math.round(v*100)+'%',s:v=>v+'ms',mm:v=>v+'mm'},
+  CharmNestSolver:{bestResult:r=>r,publicLayout:r=>r},acceptBestLayout(){},
+  CharmNestPDF:{buildSheet:async()=>{counts.build++;return new Uint8Array([1]);},verifyRendered:async()=>{counts.verify++;return {ok:true};}},
+  ensurePdfJs:async()=>{},sourceOf:()=>({parsed:{}}),previewPng:async()=>new Uint8Array([2]),buildReport:()=>({rejects:[],calibration:{}}),buildJob:()=>({}),
+  ensureWorker:sh=>({postMessage:()=>setTimeout(()=>sh._geomVerify({ok:true,overlappingPairs:[],res:6,minGapPt:1,minEdgePt:1}),0)}),
+  nextSheetSeq:async sh=>sh.seq||1,sheetFileBase:sh=>'GF_Sheet-'+(sh.seq||1),
+  persistSheet:async()=>{counts.persist++;},api:async(fn,body)=>{counts.put.push(body.sheet);return {ok:true};},
+  overflowToNextSheet:sh=>{counts.overflow++;sh.charms=sh.charms.filter(c=>!sh.rejects.includes(c.id));},pumpNestQueue(){},flushManualIntake(){},RunCtl:{onSheetDone:()=>counts.done++},
+  keepOrdersWhole(){},sheetFull:()=>true
+ };
+ fx.window.RunCtl=fx.RunCtl;fx.setTimeout=setTimeout;
+ vm.createContext(fx);
+ vm.runInContext(html.slice(html.indexOf('/* Gap fill (Paul, 24 Sep)'),html.indexOf('function usableArea(')),fx);
+ vm.runInContext(html.slice(html.indexOf('const CHARM_SCALE'),html.indexOf('/** One charm at a time on every sheet')),fx);
+ vm.runInContext(html.slice(html.indexOf('async function finishNest('),html.indexOf('function pumpNestQueue()')),fx);
+ const charms=Array.from({length:40},(_,i)=>({id:'p'+i,order:'o'+i,hash:'h'+i,name:'n'+i}));
+ const sh={metal:'gold',runId:'run-1',sheetId:'s1',seq:1,page:1,charms:charms.slice(),placements:[],rejects:[],log:[],status:'nesting',nestFlow:'standard',intakePhase:'fill',appendOnly:true,verification:null,outputs:null};
+ const place=ids=>ids.map((id,i)=>({id,cxPt:5+i,cyPt:5,angle:0,scale:.975}));
+ const res=(placements,rejects,density)=>({placements,rejects,density,placedPt2:density*100,usablePt2:100,freePt2:(1-density)*100,endedBy:rejects.length?'no-room':'complete',trials:1,elapsedMs:10,params:{},smallRoom:true});
+ const finish=async r=>{sh.status='nesting';sh.persistedDone=false;sh.jobId=Math.random().toString(36);sh.nestInitial=sh.placements.map(p=>({...p}));await fx.finishNest(sh,{result:r});await sh.persisted;};
+ (async()=>{
+  // the first write: files built, verified and saved
+  await finish(res(place(charms.map(c=>c.id)),[],.70));
+  assert.equal(counts.build,2);assert.equal(counts.persist,1);assert(sh._written,'kept once saved');
+  // a new order misses: nothing new placed, so nothing is written again; the record's state is updated and the order moves on
+  sh.charms.push({id:'late',order:'late',hash:'hl',name:'late'});
+  await finish(res(sh.placements.map(p=>({...p})),['late'],.70));
+  assert.equal(counts.build,2,'no second .ai');assert.equal(counts.verify,1,'no second render check');assert.equal(counts.persist,1,'no second upload');
+  assert.equal(counts.put.length,1);assert.equal(counts.put[0].id,'s1');assert(!('placements' in counts.put[0]),'only the record state goes up');
+  assert.equal(counts.overflow,1,'the order moves on to the next sheet');assert.equal(counts.done,2,'the run hears the sheet is done');assert.equal(sh.status,'partial');assert(sh.verification.ok);assert.equal(sh.outputs.ai[0],1);
+  assert(sh.topup&&!sh.topup.closedAt,'the sheet is filling its gaps');
+  // an order that fits: the sheet is written again
+  sh.charms.push({id:'small',order:'small',hash:'hs',name:'small'});
+  await finish(res([...sh.placements.map(p=>({...p})),{id:'small',cxPt:90,cyPt:40,angle:0}],[],.72));
+  assert.equal(counts.build,4,'a placed charm writes the sheet again');assert.equal(counts.persist,2);
+  // renamed artwork is written again even with nothing new placed
+  sh.charms.find(c=>c.id==='p3').name='renamed';sh.charms.push({id:'late2',order:'late2',hash:'hl2',name:'late2'});
+  await finish(res(sh.placements.map(p=>({...p})),['late2'],.72));
+  assert.equal(counts.build,6,'a renamed charm is written again');
+  console.log('Gap-fill tries that place nothing keep the written sheet OK');
+ })().catch(e=>{console.error(e);process.exitCode=1;});
 }
-assert.equal(finish({appendOnly:true,optimized:true}).restarts,0,'an append that fits keeps the saved layout');
-assert.equal(finish({appendOnly:true,optimized:true,rejects:['arrival'],endedBy:'no-room',topup:{base:.7,maxFill:.75}}).restarts,0,'a topping-up sheet only offers its gaps: a later order that misses them moves on at once');
-assert.equal(finish({appendOnly:true,optimized:true,rejects:['arrival'],endedBy:'no-room',missRearranged:true}).restarts,0,'one fresh arrangement per sheet: a later miss moves on at once (a full sheet searched for minutes at every update, 24 Sep)');
-{const first=finish({appendOnly:true,optimized:true,rejects:['arrival'],endedBy:'no-room'});assert.equal(first.restarts,1,'the first miss below the target still gets it');assert.equal(first.sh.missRearranged,true,'and the sheet remembers it');}
-assert.equal(finish({appendOnly:true,optimized:true,rejects:['arrival'],endedBy:'budget',topup:{base:.7,maxFill:.75,closedAt:1}}).restarts,0,'a released top-up takes nothing more');
-assert.equal(finish({appendOnly:true,optimized:true,rejects:['arrival'],endedBy:'trials'}).restarts,1,'a gap search that used up its trials still gets the fresh arrangement: the saved gaps do not show how full the sheet can get');
-assert.equal(finish({appendOnly:true,optimized:true,density:.74,rejects:['arrival']}).restarts,0,'at the target the sheet is full, not repacked');
-assert.equal(finish({appendOnly:true,optimized:true,rejects:['arrival'],endedBy:'stopped'}).restarts,0,'operator stop is respected');
-assert.equal(finish({metal:'rose',appendOnly:true,optimized:true,rejects:['arrival']}).restarts,0,'Rose Gold keeps its append-only layout');
-assert.equal(finish({metal:'gold10k',appendOnly:true,optimized:true,rejects:['arrival']}).restarts,0,'solid gold keeps its append-only layout');
-assert.equal(finish({phase:'repack',optimized:true,rejects:['arrival']}).restarts,0,'the repack itself never loops');
 // what counts as full for release: a fresh arrangement that runs its whole budget and still leaves out an order that fits
 // an empty sheet has finished its search, so the sheet is full even below the 74% target; the quick gap search has not
 {
@@ -117,55 +145,69 @@ assert.equal(finish({phase:'repack',optimized:true,rejects:['arrival']}).restart
  assert.equal(full({rejects:[]}),false,'a sheet that took everything is not full');
  assert.equal(full({rejects:[],placedPt2:80}),true,'the ceiling is full');
 }
-// top-up: a Gold or Silver sheet that overflows stays first in line while later orders fill up to 5% more of it
+// gap fill: a nearly full Gold or Silver sheet whose next order missed stays first in line while the next 35 orders try its
+// gaps; it goes to the laser at 75% shown full, once those 35 have tried it, or at once when not even one of the shop's
+// smallest charms would still fit (Paul, 24 Sep)
 {
- const logs=[],ctx={S:{settings:{maxFill:.8,runMode:'auto'}},window:{B:{run:{runId:'run-1',status:'processed'}}},fmt:{pct:v=>Math.round(v*100)+'%'},log:(sh,m)=>logs.push(m),renderCard(){}};vm.createContext(ctx);
- vm.runInContext(html.slice(html.indexOf('/* Top-up. Orders arrive'),html.indexOf('function usableArea(')),ctx);
- const sheet=(extra={})=>({metal:'gold',runId:'run-1',rejects:['late'],placements:Array.from({length:60},(_,i)=>({id:'p'+i})),verification:{ok:true},...extra});
- const res=(density,extra={})=>({density,placedPt2:density*100,usablePt2:100,endedBy:'budget',...extra});
+ const logs=[],ctx={S:{settings:{maxFill:.8,runMode:'auto'}},window:{B:{run:{runId:'run-1',status:'processed'}}},fmt:{pct:v=>Math.round(v*100)+'%'},log:(sh,m)=>logs.push(m),renderCard(){},activeCharms:p=>p.charms.filter(x=>!x.excluded)};vm.createContext(ctx);
+ vm.runInContext(html.slice(html.indexOf('/* Gap fill (Paul, 24 Sep)'),html.indexOf('function usableArea(')),ctx);
+ const sheet=(extra={})=>{const charms=Array.from({length:60},(_,i)=>({id:'p'+i,order:'o'+i}));return {metal:'gold',runId:'run-1',rejects:['late'],charms,placements:charms.map(c=>({id:c.id})),verification:{ok:true},...extra};};
+ const res=(density,extra={})=>({density,placedPt2:density*100,usablePt2:100,freePt2:(1-density)*100,endedBy:'no-room',smallRoom:true,...extra});
+ // one update of the live run: the orders that reach the sheet try its gaps; those that miss move on to the next sheet
+ const update=(sh,orders,placed=[])=>{sh.nestInitial=sh.placements.map(p=>({...p}));sh.rejects=[];for(const o of orders){sh.charms.push({id:'c-'+o,order:o});if(placed.includes(o))sh.placements.push({id:'c-'+o});else sh.rejects.push('c-'+o);}};
+ const moveOn=sh=>{sh.charms=sh.charms.filter(c=>!sh.rejects.includes(c.id));};
  const sh=sheet();
- assert.equal(ctx.topupSettle(sh,res(.70),true),false,'the sheet that overflowed stays open');
- assert.equal(sh.topup.base,.7);assert.equal(sh.topup.maxFill,.75,'later orders may add 5% of the sheet');assert.match(logs[0],/Topping up at 70%/);
- sh.placements.push({id:'young'});sh.rejects=[];
- assert.equal(ctx.topupSettle(sh,res(.715),false),false,'an update that adds an order keeps it open');assert.equal(sh.topup.idle,0);assert.equal(sh.topup.updates,1);
- sh.rejects=['big'];
- assert.equal(ctx.topupSettle(sh,res(.715),false),false);assert.equal(ctx.topupSettle(sh,res(.715),true),false);
- assert.equal(ctx.topupSettle(sh,res(.715),true),true,'three updates in a row that add nothing release it');assert(sh.topup.closedAt);assert.equal(sh.topup.density,.715);
- assert.equal(ctx.topupSettle(sh,res(.715),false),false,'a released top-up does not restart');
- const filled=sheet();ctx.topupSettle(filled,res(.70),true);filled.placements.push({id:'a'},{id:'b'});
- assert.equal(ctx.topupSettle(filled,res(.747),false),true,'the 5% is used up');
- const slow=sheet();ctx.topupSettle(slow,res(.70),true);
- for(let i=0;i<5;i++){slow.placements.push({id:'s'+i});assert.equal(ctx.topupSettle(slow,res(.70+.001*(i+1)),false),false);}
- slow.placements.push({id:'s5'});assert.equal(ctx.topupSettle(slow,res(.706),false),true,'six updates at most');
- const quiet=sheet();ctx.topupSettle(quiet,res(.70),true);quiet.density=.71;
- assert.equal(ctx.topupExpire(quiet,quiet.topup.at+59*60000),false);assert.equal(quiet.releaseFull,undefined);
- quiet.status='nesting';assert.equal(ctx.topupExpire(quiet,quiet.topup.at+61*60000),false,'never while its search runs');quiet.status='complete';
- assert.equal(ctx.topupExpire(quiet,quiet.topup.at+61*60000),true,'an hour after the miss the sheet is released even with no new order');assert.equal(quiet.releaseFull,true);assert.equal(quiet.topup.density,.71);
- assert.equal(ctx.topupExpire(quiet,quiet.topup.at+99*60000),false);assert.equal(ctx.topupExpire(sheet(),Date.now()),false);
+ assert.equal(ctx.topupSettle(sh,res(.70),true),false,'the nearly full sheet stays open');
+ assert.equal(sh.topup.base,.7);assert.equal(sh.topup.tried.length,0);assert.match(logs.at(-1),/next 35 orders try this sheet first/);
+ moveOn(sh);update(sh,['a','b'],['a']);
+ assert.equal(ctx.topupSettle(sh,res(.705),false),false,'two orders tried, one placed: still open');assert.deepEqual([...sh.topup.tried].sort(),['a','b']);assert.equal(sh.topup.placed,61);
+ moveOn(sh);update(sh,[]);assert.equal(ctx.topupSettle(sh,res(.705),false),false,'an update that brings nothing counts nothing');assert.equal(sh.topup.tried.length,2);
+ for(let i=0;i<32;i++){moveOn(sh);update(sh,['x'+i]);assert.equal(ctx.topupSettle(sh,res(.705),false),false);}
+ assert.equal(sh.topup.tried.length,34);assert(!sh.topup.closedAt,'34 orders tried: still waiting');
+ moveOn(sh);update(sh,['x0']);assert.equal(ctx.topupSettle(sh,res(.705),false),false,'the same order again is not a new try');
+ moveOn(sh);update(sh,['last']);assert.equal(ctx.topupSettle(sh,res(.705),false),true,'the 35th order releases it');assert(sh.topup.closedAt);assert.equal(sh.topup.density,.705);assert.match(logs.at(-1),/35 later orders tried/);
+ assert.equal(ctx.topupSettle(sh,res(.705),false),false,'a finished gap fill does not start again');
+ const full=sheet();ctx.topupSettle(full,res(.70),true);moveOn(full);update(full,['a','b'],['a','b']);
+ assert.equal(ctx.topupSettle(full,res(.745),false),true,'75% shown full releases it at once');assert.match(logs.at(-1),/75% full/);
+ const short=sheet();ctx.topupSettle(short,res(.70),true);moveOn(short);update(short,['a'],['a']);
+ assert.equal(ctx.topupSettle(short,res(.7449),false),false,'74% shown is not yet 75%');
+ assert.equal(ctx.topupSettle(sheet(),res(.76),true),true,'a sheet already at 75% is released as full');
+ assert.equal(ctx.topupSettle(sheet(),res(.70,{smallRoom:false}),true),true,'no room for even the smallest charms: no 35-order wait');
+ const tight=sheet();ctx.topupSettle(tight,res(.70),true);moveOn(tight);update(tight,['a'],['a']);
+ assert.equal(ctx.topupSettle(tight,res(.72,{smallRoom:false}),false),true,'and a gap fill ends once the smallest charms no longer fit');assert.match(logs.at(-1),/no room left for even the smallest charms/);
+ assert.equal(ctx.topupSettle(sheet(),res(.70,{smallRoom:undefined}),true),false,'a search that did not look (no room check) keeps the 35-order rule');
  assert.equal(ctx.topupSettle(sheet(),res(.797),true),true,'a sheet at the ceiling is simply full');
  assert.equal(ctx.topupSettle(sheet({metal:'rose'}),res(.70),true),true,'Rose Gold keeps its green-line flow');
  assert.equal(ctx.topupSettle(sheet({metal:'gold10k'}),res(.70),true),true,'solid gold is released as before');
  assert.equal(ctx.topupSettle(sheet({roseProtected:{}}),res(.70),true),true);
  assert.equal(ctx.topupSettle(sheet(),res(.70,{endedBy:'stopped'}),false),false,'a stopped search starts nothing');
  assert.equal(ctx.topupSettle(sheet({verification:{ok:false}}),res(.70),true),true);
- assert.equal(ctx.topupSettle(sheet(),res(.60),false),false,'no overflow, no top-up');
+ assert.equal(ctx.topupSettle(sheet(),res(.60),false),false,'not full, no gap fill');
+ assert.equal(ctx.topupSettle(sheet({rejects:[]}),res(.70),true),true,'nothing missed: nothing to wait for');
  ctx.S.settings.topup='off';assert.equal(ctx.topupSettle(sheet(),res(.70),true),true,'the setting turns it off');delete ctx.S.settings.topup;
  assert.equal(ctx.topupSettle(sheet({runId:'other'}),res(.70),true),true,'only the live run brings later orders');
  ctx.S.settings.runMode='manual';assert.equal(ctx.topupSettle(sheet(),res(.70),true),true,'Manual mode releases as before');
  const switched=sheet();ctx.S.settings.runMode='auto';ctx.topupSettle(switched,res(.70),true);ctx.S.settings.runMode='manual';
- assert.equal(ctx.topupSettle(switched,res(.70),false),true,'leaving Auto ends a top-up: the sheet is released as it would have been');ctx.S.settings.runMode='auto';
- // while it tops up: the arrival's search is capped at the allowance and takes any order that fits, not only the oldest
+ assert.equal(ctx.topupSettle(switched,res(.70),false),true,'leaving Auto ends a gap fill: the sheet is released as it would have been');ctx.S.settings.runMode='auto';
+ ctx.window.B.run.status='complete';const ended=sheet();assert.equal(ctx.topupSettle(ended,res(.70),true),true,'a finished run brings no more orders');ctx.window.B.run.status='processed';
+ // while it fills its gaps: any later order that fits may go in, not only the oldest, up to the usual fill ceiling
  const jc={S:{settings:{maxFill:.8,clearancePt:0,insetPt:1.5,budgetS:180,packingAI:'off'}},stockFor:()=>({wPt:283,hPt:142}),activeCharms:s=>s.charms,angleSet:()=>[0,10],packingKey:()=>''};vm.createContext(jc);
- vm.runInContext(html.slice(html.indexOf('function buildJob('),html.indexOf('function packingKey(')),jc);
- const topping={metal:'gold',intakePhase:'fill',appendOnly:true,placements:[{id:'old'}],topup:{base:.7,maxFill:.75},charms:[{id:'old',orderDate:5},{id:'new',orderDate:9}]};
- let job=jc.buildJob(topping);assert.equal(job.maxFill,.75);assert.deepEqual(job.pieces.map(p=>p.orderDate),[0,0]);
- assert.equal(job.angles.length,72,'a Gold or Silver arrival is fitted at 5° steps');assert.equal(jc.buildJob({...topping,appendOnly:false}).angles.length,2,'a fresh arrangement keeps the set step');assert.equal(jc.buildJob({...topping,metal:'rose'}).angles.length,2);
+ vm.runInContext(html.slice(html.indexOf('const CAREFUL_ANGLES'),html.indexOf('function packingKey(')),jc);
+ const topping={metal:'gold',intakePhase:'fill',appendOnly:true,placements:[{id:'old'}],nestInitial:[{id:'old'}],topup:{base:.7,tried:[]},charms:[{id:'old',orderDate:5},{id:'new',orderDate:9}]};
+ let job=jc.buildJob(topping);assert.equal(job.maxFill,.8,'the gap fill is not capped below the ceiling');assert.deepEqual(job.pieces.map(p=>p.orderDate),[0,0]);
+ // one charm at a time at 2° steps on every sheet (Paul, 24 Sep), Rose Gold and a sheet's first charms included
+ assert.equal(job.angles.length,180,'a Gold or Silver arrival is fitted at 2° steps');assert.equal(job.angles[1],2);assert.equal(job.careful,true);
+ assert.equal(jc.buildJob({...topping,appendOnly:false}).angles.length,180,'so is a sheet that starts empty');assert.equal(jc.buildJob({...topping,metal:'rose'}).angles.length,180,'and Rose Gold');
+ assert.equal(jc.buildJob({...topping,nestFlow:'learned'}).angles.length,2,'the learned flow keeps the set step');assert.equal(jc.buildJob({...topping,nestFlow:'learned'}).careful,false);
+ assert.equal(job.roomCheck,true,'Gold and Silver report whether the smallest charms still fit');assert.equal(jc.buildJob({...topping,metal:'rose'}).roomCheck,false);
+ assert.deepEqual(job.lockedPlacements.map(p=>p.id),['old'],'the charms already placed stay where they are');
+ assert.deepEqual(jc.buildJob({...topping,appendOnly:false}).lockedPlacements.map(p=>p.id),['old'],'on every sheet, not only an appended one');
  assert.equal(job.nearFullContact,true,'a near-full Gold or Silver queue may be built from the contacts');assert.equal(jc.buildJob({...topping,metal:'rose'}).nearFullContact,false,'Rose Gold keeps its left-to-right build');
- assert.deepEqual(jc.buildJob({...topping,appendOnly:false,intakePhase:'repack'}).pieces.map(p=>p.orderDate),[5,9],'the fresh arrangement after a miss keeps the charms on the sheet first');
+ assert.deepEqual(jc.buildJob({...topping,appendOnly:false,intakePhase:'repack'}).pieces.map(p=>p.orderDate),[5,9],'oldest first again outside the gap fill');
  topping.topup.closedAt=1;job=jc.buildJob(topping);assert.equal(job.maxFill,.8);assert.deepEqual(job.pieces.map(p=>p.orderDate),[5,9]);
  const kc={agent(){}};vm.createContext(kc);vm.runInContext(html.slice(html.indexOf('function keepOrdersWhole('),html.indexOf('function orderSummary(')),kc);
  const byId=new Map([['old',{id:'old',order:'o1',orderDate:1}],['miss',{id:'miss',order:'o2',orderDate:2}],['young',{id:'young',order:'o3',orderDate:3}]]);
- const kept={placements:[{id:'old'},{id:'young'}],rejects:['miss'],topup:{base:.7,maxFill:.75}};kc.keepOrdersWhole(kept,byId);assert.deepEqual(kept.placements.map(p=>p.id),['old','young'],'a younger order that fits is kept while topping up');
+ const kept={placements:[{id:'old'},{id:'young'}],rejects:['miss'],topup:{base:.7,tried:[]}};kc.keepOrdersWhole(kept,byId);assert.deepEqual(kept.placements.map(p=>p.id),['old','young'],'a younger order that fits is kept while topping up');
  const fifo={placements:[{id:'old'},{id:'young'}],rejects:['miss']};kc.keepOrdersWhole(fifo,byId);assert.deepEqual(fifo.placements.map(p=>p.id),['old'],'otherwise oldest first, as before');
 }
 {
@@ -200,7 +242,7 @@ assert.equal(finish({phase:'repack',optimized:true,rejects:['arrival']}).restart
  const old={...shape('old',12,10,1),pinned:{cxPt:7,cyPt:6,angle:0}},fresh=shape('fresh',6,6,2),large=shape('large',50,50,3);
  const job={sheet:{wPt:30,hPt:20,insetPt:1},pieces:[old,fresh,large],angles:[0,90],fineRes:2,coarseRes:.5,maxFill:.8,timeBudgetMs:400,maxTrials:2};
  const result=await S.solve(job,{});assert(S.verify(job,result.placements,4).ok);assert.equal(result.placements.find(p=>p.id==='old').cxPt,7);assert(result.placements.some(p=>p.id==='fresh'));assert(result.rejects.includes('large'));
- console.log('Manual intake OK: file batches, running progress, identity, save/review waits, frozen stock, pins, real gap filling, overflow, 74%/85 decisions and bounded retries');
+ console.log('Manual intake OK: file batches, running progress, identity, save/review waits, frozen stock, pins, real gap filling, overflow, no re-arrangement, 35-order gap fill and 2° steps');
 })().catch(e=>{console.error(e);process.exitCode=1;});
 
 (async()=>{

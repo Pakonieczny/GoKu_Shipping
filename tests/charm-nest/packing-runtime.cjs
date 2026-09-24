@@ -67,22 +67,7 @@ const evaluate = (c, code) => vm.runInContext(code, c);
     const aiRenderSheet=()=>'', CharmNestPDF={drawSegments(){}}, document={createElement:()=>({getContext:()=>({fillRect(){},save(){},beginPath(){},rect(){},clip(){},fillText(){},restore(){}}),toDataURL:()=>''})};
     const agentCall=async(mode,payload,opts)=>{calls++;existingIds.push(opts.existingId);opts.onStarted('stored-agent');return new Promise(r=>resolvePlan=r);};
   `);
-  evaluate(c, section('function packingKey(', 'function startNest('));
-  await evaluate(c, `(async()=>{
-    const first=requestPackingGuidance(sh), concurrent=requestPackingGuidance(sh);
-    assert.equal(calls,1,'only one consultation for concurrent worker requests');assert.equal(sh.packingAdvice.batches[0].jobId,'stored-agent');
-    const profile=(index,angles=[])=>({index,angles,adaptability:50,interlock:80,edgeAffinity:70,priority:60,family:'concave',mates:['compact'],note:'pair recesses'});
-    resolvePlan({profiles:[profile(0,[-30,390,NaN,20]),profile(1)],pairs:[{a:0,b:1,score:90,reason:'complementary'}],summary:'try a rotation'});await Promise.all([first,concurrent]);
-    assert.deepEqual(sh.packingAdvice.hints.angles.old,[330,30,20]);
-    assert.equal(messages.filter(m=>m.hints).length,2);await requestPackingGuidance(sh);assert.equal(calls,1,'advice is reused for an unchanged queue');
-    sh.packingAdvice.state='pending';sh.packingAdvice.hints=null;sh.packingAdvice.batches[0].result=null;
-    const resumed=requestPackingGuidance(sh);assert.equal(existingIds[1],'stored-agent','a refreshed pending consultation polls its existing id');
-    sh.jobId='b';const before=messages.length;
-    resolvePlan({profiles:[profile(0),profile(1,[45])],pairs:[]});await resumed;
-    assert.equal(messages.length,before,'late advice cannot touch the next worker job');
-    assert.equal(sh.packingAdvice.state,'done','late advice is cached for the next re-nest');
-    S.settings.packingAI='off';await requestPackingGuidance(sh);assert.equal(calls,2);
-  })()`);
+  // the AI packing advice (requestPackingGuidance) was removed with the AI shape analysis (24 Sep)
 
   let capturedJob, finishSolve;const posted=[];
   const w=vm.createContext({importScripts(){}, self:{postMessage:m=>posted.push(m)}, CharmNestSolver:{publicLayout:require('../../charm-nest-solver.js').publicLayout,solve:async job=>{capturedJob=job;return new Promise(r=>finishSolve=r);}}});
@@ -101,7 +86,7 @@ const evaluate = (c, code) => vm.runInContext(code, c);
   evaluate(q, `
     const window={}, S={settings:{},nestQueue:[]}, renders=[], starts=[];
     const first={metal:'gold',status:'finishing'}, second={metal:'silver',status:'ready',charms:[{}]}, third={metal:'rose',status:'ready',charms:[{}]};
-    const allSheets=()=>[first,second,third],activeCharms=sh=>sh.charms,labelOf=x=>x,renderCard=sh=>renders.push(sh),startNest=sh=>starts.push(sh);
+    const allSheets=()=>[first,second,third],activeCharms=sh=>sh.charms,labelOf=x=>x,renderCard=sh=>renders.push(sh),startNest=sh=>starts.push(sh),flushManualIntake=()=>{};
     const Worker=function(){this.postMessage=()=>{};this.terminate=()=>{this.terminated=true;};};
   `);
   evaluate(q, section('function startNestReady(', '/* ═══ 9b'));
@@ -115,5 +100,5 @@ const evaluate = (c, code) => vm.runInContext(code, c);
     const old=[new Worker(),new Worker(),new Worker()], sh={workers:old.slice()};
     assert.equal(ensureWorkers(sh,1).length,1);assert(old[1].terminated && old[2].terminated,'lower concurrency releases old workers');
   `);
-  console.log('packing runtime OK · worker failures, completion, advice caching, refresh resume, stale responses and operator stop');
+  console.log('packing runtime OK · worker failures, completion, stale responses and operator stop');
 })().catch(e=>{console.error(e);process.exit(1);});

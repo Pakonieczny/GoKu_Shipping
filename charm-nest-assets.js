@@ -22,7 +22,11 @@
         const length=Number(r.headers?.get('content-length'));
         if(length && length!==data.length)throw Error('Artwork download was interrupted.');
         return {data,range:r.headers?.get('content-range'),etag:r.headers?.get('etag'),status:r.status};
-      }catch(e){if(attempt>=2 || (e.status && ![408,429,500,502,503,504].includes(e.status)))throw e;await pause(250*2**attempt);}
+      }catch(e){
+        // a download cut off by the 25 s limit says so, in words the run's step retry knows ("timed out"): the bare
+        // AbortError read "signal is aborted without reason" and stopped the run on a slow link
+        if(e && e.name==='AbortError')e=Error('Artwork download timed out after 25 s.');
+        if(attempt>=2 || (e.status && ![408,429,500,502,503,504].includes(e.status)))throw e;await pause(250*2**attempt);}
       finally{clearTimeout(timer);}
     }
   }

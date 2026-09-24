@@ -119,12 +119,14 @@
     for (const p of (noDesign && noDesign.patterns) || []) { try { if (new RegExp(p, "i").test(s)) return true; } catch (_) { /* a bad pattern never matches */ } }
     return false;
   }
-  /** The transaction's SKU, or the alias learned for its listing. */
-  function resolveSku(line, aliases) {
+  /** The transaction's SKU, or the alias learned for its listing. The alias also stands in for a SKU of the line's own
+   *  that no master file holds (when the master can be asked): "Use this charm" on an unknown SKU saved an alias that the
+   *  unknown SKU then always beat, so the decision said "remembered" and the line stayed unmatched. */
+  function resolveSku(line, aliases, masterEntry, noDesign) {
     const raw = String(line.sku || "").trim().toUpperCase();
-    if (raw) return { sku: raw, source: "transaction" };
-    const a = aliases && aliases[String(line.listingId)];
-    if (a && a.sku) return { sku: String(a.sku).trim().toUpperCase(), source: "alias" };
+    const a = aliases && aliases[String(line.listingId)], aliased = a && a.sku ? String(a.sku).trim().toUpperCase() : "";
+    if (raw && !(aliased && masterEntry && !masterEntry(raw) && !isNoDesign(raw, noDesign))) return { sku: raw, source: "transaction" };
+    if (aliased) return { sku: aliased, source: "alias" };
     return { sku: "", source: null };
   }
 
@@ -138,7 +140,7 @@
   function interpretLine(order, line, ctx) {
     ctx = ctx || {};
     const problems = [];
-    const { sku, source: skuSource } = resolveSku(line, ctx.aliases);
+    const { sku, source: skuSource } = resolveSku(line, ctx.aliases, ctx.masterEntry, ctx.noDesign);
     const noDesign = isNoDesign(sku, ctx.noDesign) || (!sku && isNoDesign(line.title, ctx.noDesign));
     const metalKey = String(line.metalKey || "");
     const material = METAL_TO_CARD[metalKey] || null;
@@ -343,7 +345,7 @@
   function sheetRelease(sheet, opts = {}) {
     if (!sheet.verified || !sheet.placed || sheet.stopped || sheet.dirty) return { include: false, reason: "Nest and verify first" };
     if (FAST_MATERIALS.has(sheet.material)) return sheet.full
-      ? { include: true, reason: "Full sheet" } : { include: false, reason: sheet.topup ? "Topping up · later orders fill its gaps first" : "Partial · held for a later set" };
+      ? { include: true, reason: "Full sheet" } : { include: false, reason: sheet.topup ? (typeof sheet.topup === "object" ? `Filling its gaps · ${sheet.topup.tried} of ${sheet.topup.of} later orders tried` : "Topping up · later orders fill its gaps first") : "Partial · held for a later set" };
     if (sheet.material === "rose" && typeof opts.selected?.rose === "boolean") return opts.selected.rose
       ? {include:true,reason:"Included by you"} : {include:false,reason:"Not selected for this set"};
     if (sheet.material === "rose") return opts.seq > 0 && opts.seq % 2 === 0

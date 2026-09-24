@@ -1357,15 +1357,22 @@
       const open = new Uint8Array(bw * bh);
       for (let y = 0, b = 0; y < bh; y++) for (let x = 0, j = ((Y0 + y) * W + X0) * 4; x < bw; x++, b++, j += 4) if (img[j] + img[j + 1] + img[j + 2] >= 720) open[b] = 1;
       const reached = floodFromBorder(open, bw, bh);         // inside the box; everything outside it is reached
-      const reachedAt = (x, y) => x < X0 || y < Y0 || x > X1 || y > Y1 || reached[(y - Y0) * bw + (x - X0)] === 1;
       let solid = reached;                                   // 1 = not material
       if (erodePx) {                                          // shrink the silhouette by erodePx before the overlap test
-        solid = new Uint8Array(bw * bh);
-        for (let y = Y0; y <= Y1; y++) for (let x = X0; x <= X1; x++) {
-          const b = (y - Y0) * bw + (x - X0); if (reached[b]) { solid[b] = 1; continue; }
-          let keep = 1;
-          for (let dy = -erodePx; dy <= erodePx && keep; dy++) for (let dx = -erodePx; dx <= erodePx; dx++) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= W || yy >= H || reachedAt(xx, yy)) { keep = 0; break; } }
-          if (!keep) solid[b] = 1;
+        /* A pixel stays material only when the whole (2·erodePx+1)² square around it is material: inside the box (all
+           outside it is reached) and not reached. The square is tested as two runs of material, along each row and then
+           down each column, so a pixel costs two steps instead of (2·erodePx+1)² look-ups (81 at the default clearance)
+           and the result is the same pixel for pixel. This runs on the page's main thread once per charm layer, where the
+           square test was the largest part of the work. */
+        const span = 2 * erodePx + 1, rowOk = new Uint8Array(bw * bh), colRun = new Int32Array(bw);
+        for (let y = 0; y < bh; y++) {
+          const row = y * bw; let run = 0;
+          for (let x = 0; x < bw; x++) { run = reached[row + x] ? 0 : run + 1; if (run >= span) rowOk[row + x - erodePx] = 1; }
+        }
+        solid = new Uint8Array(bw * bh).fill(1);
+        for (let y = 0; y < bh; y++) {
+          const row = y * bw;
+          for (let x = 0; x < bw; x++) { const run = colRun[x] = rowOk[row + x] ? colRun[x] + 1 : 0; if (run >= span) solid[row - erodePx * bw + x] = 0; }
         }
       }
       for (let y = Y0; y <= Y1; y++) for (let x = X0; x <= X1; x++) {

@@ -43,7 +43,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
  const filling={metal:'gold',status:'complete',charms:[{id:'c1',poolId:'p'},{id:'c2',poolId:'x'}],placements:[{id:'c1'},{id:'c2'}]};
  const released={metal:'silver',status:'complete',releaseFull:true,charms:[{id:'c3',poolId:'q'}],placements:[{id:'c3'}]};
  const dirty=[],updates=[];
- Object.assign(c,{allSheets:()=>[filling,released],LiveNest:{closed:sh=>!!sh.releaseFull},sheetDirty:sh=>dirty.push(sh),sheetName:sh=>sh.metal,
+ Object.assign(c,{allSheets:()=>[filling,released],LiveNest:{closed:sh=>!!sh.releaseFull},sheetDirty:sh=>dirty.push(sh),renderCard:()=>{},sheetName:sh=>sh.metal,
    Pool:{update:async(ids,patch)=>updates.push([ids,patch])},B:{pool:{rows:new Map([['p',{}],['q',{}],['x',{}]])}}});c.window={LiveNest:c.LiveNest};
  vm.createContext(c);vm.runInContext(bridge.slice(start,end),c);
  const reads=[],call=c.DesignLink.call;c.DesignLink.call=async(type,a)=>{reads.push(type==='orders.check'?'check:'+a.receiptIds.join(','):type);return call(type,a);};
@@ -53,12 +53,14 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
  mode='changed';await c.revalidate(null,'test');assert.equal(row.changePending,true);assert.equal(row.repoolChanged,true);assert.equal(invalidated,1);assert.equal(review,1);
  assert.equal(dirty.length,0,'an order that is still open leaves every sheet as it is');
  row.poolIds=['p','q'];mode='gone';await c.revalidate(null,'test');assert.equal(row.state,'gone');
- // the cancelled order comes off the sheet that is still filling, so its piece is not cut and the sheet is arranged again
- assert.deepEqual(filling.charms.map(x=>x.id),['c2']);assert.deepEqual(filling.placements.map(x=>x.id),['c2']);assert.deepEqual(dirty,[filling]);
+ // the cancelled order comes off the sheet that is still filling, so its piece is not cut; the other charms stay where
+ // they are (Paul, 24 Sep: a sheet is never arranged again) and the sheet is written again without it
+ assert.deepEqual(filling.charms.map(x=>x.id),['c2']);assert.deepEqual(filling.placements.map(x=>x.id),['c2']);assert.deepEqual(dirty,[]);
+ assert(filling.appendOnly&&filling.dirty&&filling.status==='ready','the rest stay where they are and the sheet is written again');
  assert.equal(JSON.stringify(updates),JSON.stringify([[['p'],{state:'abandoned',sheetId:null,setId:null}]]));assert(!c.B.pool.rows.has('p'));
  // a piece on a released sheet stays: it is cut with the sheet and set aside, and the order no longer holds the sheet back
  assert.deepEqual(released.charms.map(x=>x.id),['c3']);assert.equal(JSON.stringify(row.poolIds),'["q"]');assert(c.B.pool.rows.has('q'));
- reads.length=0;await c.revalidate(null,'test');assert.equal(dirty.length,1,'a second check takes nothing more off');
+ reads.length=0;await c.revalidate(null,'test');assert.equal(dirty.length,0,'a second check takes nothing more off');assert.deepEqual(filling.placements.map(x=>x.id),['c2']);
  assert.deepEqual(reads,['check:'],'and an order found gone is not read from Etsy again: '+reads.join(' '));
  // A committed line is cut and its order design-complete at the station, which lists it as no longer open. It is not read
  // from Etsy again, so its shipping or a later edit cannot send a finished order back to review or mark it gone.
