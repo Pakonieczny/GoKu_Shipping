@@ -827,7 +827,7 @@ async function sandboxBuyer(receiptId) {
   if (hit && Date.now() - hit.at < (hit.buyer ? 30 : 2) * MIN) return hit.buyer;
   let buyer = null;
   try {
-    const r = await require("./etsySandbox").handler({ httpMethod: "GET", queryStringParameters: { fn: "etsyOrderProxy", orderId: receiptId } });
+    const r = await require("./etsySandbox").serve({ httpMethod: "GET", queryStringParameters: { fn: "etsyOrderProxy", orderId: receiptId } });
     const d = r && r.statusCode === 200 ? JSON.parse(r.body) : null;
     const b = d && d.receipt && d.receipt.buyer_user_id;
     buyer = b ? String(b) : null;

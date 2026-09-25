@@ -805,6 +805,13 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
 .orderRow.claimed{background-color:rgba(202,168,97,.06)}
 .tile.claimed .tOrder::after{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--gold2);margin-left:5px;vertical-align:1px}
 .qrSorterNote{font-size:12px;color:var(--ink70);background:var(--goldSoft);border-left:3px solid var(--gold2);border-radius:6px;padding:8px 10px;margin-bottom:10px;line-height:1.45}
+/* the operator passcode, asked once per browser session when one is set (Passcode), as the sorter asks */
+.pcGate{position:fixed;inset:0;z-index:2147483000;background:var(--paper);display:grid;place-items:center}
+.pcGate .box{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:var(--sh);padding:26px 28px;width:min(380px,92vw);display:grid;gap:12px}
+.pcGate h2{margin:0;font:24px var(--serif);font-weight:500;color:var(--ink)}
+.pcGate .pcNote{font-size:12.5px;color:var(--ink70)}
+.pcGate input{border:1px solid var(--line);border-radius:9px;padding:10px 12px;font-size:14px;background:var(--card);color:var(--ink)}
+.pcGate .err{color:#8a3a26;font-size:12px;min-height:16px}
 </style>
 </head>
 <body>
@@ -1696,6 +1703,69 @@ function paintEtsyHud() {
 }
 // the 10-minute window rolls on its own even when nothing is being called, and the brake clears itself
 setInterval(paintEtsyHud, 10000);
+/* ── the operator passcode (EDIT_PASSCODE, the sorter's). The emulated Etsy and the order archive hold real buyers'
+   names and addresses, so once a passcode is set both refuse a call without it. A station on its own asks for it once
+   per browser session, as the sorter does, and keeps it for this tab only; the sorter hands it to the station it frames.
+   Every call to the two carries it (the sandbox's rerouted Etsy calls too: this sits under the
+   meter's rerouting), and a refusal waits for one and goes once more.
+   With no passcode set nothing is asked and nothing changes. ── */
+const Passcode = (() => {
+  const KEY = "designStation.passcode", GUARDED = /\/\.netlify\/functions\/(etsySandbox|designArchive)\b/;
+  const framed = (() => { try { return window.self !== window.top; } catch (_) { return true; } })();
+  let pc = "", waiting = null, wake = null;
+  try { pc = sessionStorage.getItem(KEY) || ""; } catch (_) {}
+  function set(v) {
+    pc = String(v || "");
+    try { if (pc) sessionStorage.setItem(KEY, pc); else sessionStorage.removeItem(KEY); } catch (_) {}
+    if (pc && wake) { const w = wake; wake = null; waiting = null; w(pc); }
+  }
+  const verify = v => fetch(`${FN}/authGate`, { method: "POST", headers: { "X-Edit-Passcode": v, "Content-Type": "application/json" }, body: JSON.stringify({ app: "design-1", passcode: v }) }).then(r => r.ok);
+  /** The sign-in box: one at a time, gone once a passcode is accepted. */
+  function ask() {
+    if (document.getElementById("pcGate")) return;
+    const box = document.createElement("div"); box.id = "pcGate"; box.className = "pcGate";
+    box.innerHTML = `<form class="box"><h2>Design Station</h2><div class="pcNote">Enter the operator passcode to open the station.</div><input type="text" name="username" value="Design Station operator" autocomplete="username" aria-label="Operator account" hidden readonly><input class="pcInput" type="password" placeholder="Passcode" autocomplete="current-password" aria-label="Passcode"><div class="err" role="alert"></div><button class="btn gold" type="submit">Sign in</button></form>`;
+    const form = box.querySelector("form"), input = box.querySelector(".pcInput"), err = box.querySelector(".err"), btn = box.querySelector("button");
+    form.onsubmit = async e => {
+      e.preventDefault(); const v = input.value.trim(); err.textContent = ""; if (!v) return;
+      btn.disabled = true;
+      try { if (await verify(v)) { box.remove(); set(v); } else { err.textContent = "That passcode was not accepted."; input.select(); } }
+      catch (_) { err.textContent = "Could not reach the sign-in service."; }
+      finally { btn.disabled = false; }
+    };
+    (document.body || document.documentElement).appendChild(box); setTimeout(() => input.focus(), 0);
+  }
+  /** A passcode, once there is one: from the box here, or in a frame from the sorter (none within a minute: ""). */
+  function need() {
+    if (!waiting) waiting = new Promise(res => {
+      wake = res;
+      if (!framed) ask();
+      else setTimeout(() => { if (wake === res) { wake = null; waiting = null; res(""); } }, 60000);
+    });
+    return waiting;
+  }
+  /** At boot, a station on its own: with a passcode set and none here that works, the box first. */
+  async function gate() {
+    if (framed) return;
+    let locked = false;
+    try { locked = !!(await (await fetch(`${FN}/authGate`, { cache: "no-store" })).json()).locked; } catch (_) { return; }   // no door: open
+    if (!locked) return;
+    if (pc) { try { if (await verify(pc)) return; } catch (_) { return; } set(""); }
+    await need();
+  }
+  const orig = window.fetch;
+  window.fetch = async function (input, init) {
+    const url = typeof input === "string" ? input : (input && input.url) || "";
+    if (!GUARDED.test(url)) return orig.apply(this, arguments);
+    const send = () => { const h = new Headers((init && init.headers) || (typeof input !== "string" && input && input.headers) || undefined); if (pc) h.set("X-Edit-Passcode", pc); return orig.call(this, input, Object.assign({}, init, { headers: h })); };
+    const used = pc, res = await send();
+    if (res.status !== 401) return res;
+    if (used && pc === used) set("");   // refused: that one is stale
+    const next = pc || await need();    // another call may have brought a new one meanwhile
+    return next ? send() : res;
+  };
+  return { set, gate, need };
+})();
 (function wrapFetchForMeter() {
   if (window.__etsyFetchWrapped) return;
   window.__etsyFetchWrapped = true;
@@ -7325,6 +7395,10 @@ function wireUI() {
 }
 
 async function boot() {
+  // the operator passcode, when one is set: asked before anything else, once per browser session (not in the Etsy
+  // sign-in window the sorter opens: it only signs in and closes)
+  let connecting = false; try { connecting = new URLSearchParams(location.search).get("connect") === "1" || sessionStorage.getItem(CONNECT_FLAG) === "1"; } catch (_) {}
+  if (!connecting) await Passcode.gate();
   loadSettings();
   APP_MODE = SETTINGS.mode === "history" ? "history" : "live";
   applyMode();                       // before anything paints, so only one mode's panes exist
@@ -7923,6 +7997,8 @@ const Bridge = (() => {
     const d = ev.data;
     if (!d || typeof d !== "object" || d.source !== "brites-sorter") return;
     if (!originOk(ev.origin)) { S.dropped++; if (active()) paintBanner(); return; }
+    // the sorter's operator passcode, handed over as the frame loads (Passcode); never a command, never logged
+    if (d.type === "passcode") { if (typeof d.passcode === "string" && d.passcode) Passcode.set(d.passcode.slice(0, 200)); return; }
     if (d.type !== "hello" && (!S.master || d.nonce !== S.nonce)) { S.dropped++; if (active()) paintBanner(); return; }
     const fn = CMDS[d.type]; if (!fn) return;                                   // unknown types are ignored, never executed
     const reply = (msg) => { try { ev.source.postMessage(Object.assign({ source: "brites-design", nonce: d.type === "hello" ? d.nonce : S.nonce }, msg), ev.origin); } catch (_) {} };

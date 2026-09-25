@@ -29,6 +29,7 @@
 const admin = require("./firebaseAdmin");
 const db    = admin.firestore();
 const crypto = require("crypto");
+const { gate } = require("./_charmNestAuth");
 
 const COLL       = "Design_Order_Archive";
 let PREFIX = "";                                   // ?sandbox=1 → Sandbox_Design_Order_Archive
@@ -39,7 +40,7 @@ const MAX_MIRROR = 24;          // images mirrored per request, keeps us inside 
 
 const CORS = {
   "Access-Control-Allow-Origin" : "*",
-  "Access-Control-Allow-Headers": "Content-Type,Authorization",
+  "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Edit-Passcode",
   "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
 };
 const json = (statusCode, body) => ({ statusCode, headers: CORS, body: JSON.stringify(body) });
@@ -144,6 +145,9 @@ async function mirrorImage(receiptId, transactionId, url) {
 
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: CORS, body: "ok" };
+  // every record holds a real buyer's name, shipping address and order: the operator passcode first (EDIT_PASSCODE, the
+  // sorter's; unset, open as before). The Design Stations ask for it once per browser session.
+  const denied = gate(event); if (denied) return Object.assign(denied, { headers: Object.assign({}, denied.headers, CORS) });
 
   try {
     PREFIX = (event.queryStringParameters && event.queryStringParameters.sandbox === "1") || (event.headers && (event.headers["x-sandbox"] === "1" || event.headers["X-Sandbox"] === "1")) ? "Sandbox_" : "";

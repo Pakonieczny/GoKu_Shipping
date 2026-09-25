@@ -400,6 +400,10 @@ const DesignLink = window.DesignLink = (() => {
   const S_ = { frame: null, nonce: null, id: 0, pending: new Map(), state: null, log: [], logBuf: [], up: false, control: false, misses: 0, hb: null, flushT: null, dropped: 0, lastHello: 0, count: 0, replies: 0, errors: 0 };
   const origin = () => (S.settings.dsOrigin || DEFAULTS.dsOrigin).replace(/\/+$/, "");
   const frameUrl = () => `${origin()}/design-1.html?bridge=1${WORKSPACE_SANDBOX ? "&sandbox=1" : "&sandbox=0"}`;
+  /* The station's calls to the emulated Etsy and the order archive need the operator passcode once one is set: it goes
+     to the frame as it loads and before each hello, straight to the station's origin and never as a command (commands
+     are logged). */
+  function sendPasscode() { if (!S.passcode || !S_.frame || !S_.frame.contentWindow) return; try { S_.frame.contentWindow.postMessage({ source: "brites-sorter", type: "passcode", passcode: S.passcode }, origin()); } catch (_) {} }
   function mount(host) {
     if (S_.frame) return S_.frame;
     // the frame lives in a fixed dock on <body>, never inside a tab: re-parenting an iframe reloads it and would end the
@@ -414,6 +418,7 @@ const DesignLink = window.DesignLink = (() => {
     // of the station) re-open the session by themselves
     S_.loaded = new Promise(resolve => f.addEventListener("load", () => resolve(), { once: true }));
     f.addEventListener("load", () => {
+      sendPasscode();
       S_.loadedAt = Date.now(); S_.loads = (S_.loads || 0) + 1; agent({ bridge: true }, "DS", `Design Station frame loaded (${frameUrl()})`);
       // A reloaded station has forgotten every command it was working on: nothing will answer them. They used to wait out
       // their own time limits (a new-orders check 20 minutes, a commit 3 minutes) with the intake or the run held behind them.
@@ -442,6 +447,7 @@ const DesignLink = window.DesignLink = (() => {
     if (!S_.nonce) S_.nonce = uid() + uid();
     S_.control = true;
     if (S_.loaded) await Promise.race([S_.loaded, sleep(20000)]);
+    sendPasscode();
     let st;
     try { st = await call("hello", { sorterClientId: S_.nonce, runId: B.run ? B.run.runId : null }, { timeoutMs: 15000 }); }
     catch (e) { if (!/answer in time/.test(e.message)) throw e; agent({ bridge: true }, "warn", "hello unanswered — trying once more");

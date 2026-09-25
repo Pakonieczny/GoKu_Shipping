@@ -23,7 +23,7 @@
  *  ═══════════════════════════════════════════════════════════════════════ */
 "use strict";
 const admin = require("./firebaseAdmin");
-const { CORS } = require("./_charmNestAuth");
+const { CORS, gate } = require("./_charmNestAuth");
 const db = admin.firestore();
 const SANDBOX = "Charm_Sandbox";
 const PAGE = 100;
@@ -230,8 +230,14 @@ async function orderAlone(s, receipts, meta, id) {
 // for the tests: the limits, and how many orders this instance holds
 exports.upkeep = { SHIP_MS, GRACE_S, ASK_MS, size: () => (held ? [...held.steps.values()].reduce((n, l) => n + l.length, 0) : 0) };
 
+// The snapshot holds real buyers' names, shipping addresses and orders: a call from outside shows the operator passcode
+// first (EDIT_PASSCODE, the sorter's; unset, open as before). This site's own functions call serve() in process.
 exports.handler = async function (event) {
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: CORS, body: "" };
+  const denied = gate(event); if (denied) return denied;
+  return serve(event);
+};
+async function serve(event) {
   const q = event.queryStringParameters || {};
   const fn = String(q.fn || "");
   try {
@@ -270,4 +276,5 @@ exports.handler = async function (event) {
     console.error("[etsySandbox]", fn, e);
     return json(500, { error: e.message || String(e), sandbox: true });
   }
-};
+}
+exports.serve = serve;
