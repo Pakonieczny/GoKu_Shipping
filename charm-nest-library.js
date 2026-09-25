@@ -33,7 +33,7 @@
     lists: new Map(),       // list key → a Completed list (its rows, its cursor and its drawn rows, kept while switching)
     list: null,             // the Completed list on screen
     scroll: { current: 0, done: 0 },
-    currentQ: null, located: '', flash: null,
+    currentQ: null, located: '', flash: null, entered: '',
     timer: 0, leftAt: 0, busy: new Set(), io: null
   };
 
@@ -337,14 +337,26 @@
   const query = () => ((byId('libSearch') || {}).value || '').trim();
   /** A search that is a number (4 to 20 digits, "#" and spaces allowed): an order or a listing. */
   const digits = q => { const d = String(q || '').replace(/^#/, '').replace(/[\s,]/g, ''); return /^\d{4,20}$/.test(d) ? d : ''; };
+  const numeric = q => { const d = String(q || '').replace(/^#/, '').replace(/[\s,]/g, ''); return /^\d{1,20}$/.test(d) ? d : ''; };
+  /* The number looked up in every sheet (findSheets, which may read a month of runs): one that looks whole (9 digits or
+     more: Etsy's order and listing numbers have 10) once the typing pauses, a shorter one once Enter is pressed. Every
+     prefix of a number being typed used to run the whole lookup. While a shorter one is typed, Current follows the box
+     as it does for words and Completed keeps its whole list; neither asks the cloud. */
+  const WHOLE = 9;
+  const lookup = () => { const n = digits(query()); return n && (n.length >= WHOLE || L.entered === n) ? n : ''; };
+  const typing = () => { const d = numeric(query()); return !!d && d.length < WHOLE && L.entered !== d; };
   const foldText = s => String(s == null ? '' : s).toLowerCase().replace(/[._\-/·,:]+/g, ' ').replace(/\s+/g, ' ').trim();
   function input() {
-    clearTimeout(L.timer); searching(true);
-    L.timer = setTimeout(apply, 250);
+    clearTimeout(L.timer); searching(!typing());
+    L.timer = setTimeout(apply, 500);
+  }
+  function enter() {
+    L.entered = numeric(query()); clearTimeout(L.timer);
+    apply();
   }
   function apply() {
     L.timer = 0; L.located = '';
-    const n = digits(query());
+    const n = lookup();
     if (n) startFind(n);
     if (L.tab === 'done') showDone(); else renderCurrent();
     syncSearching();
@@ -365,20 +377,20 @@
       f.res = res; f.at = Date.now();
       for (const s of res.sheets || []) LaserReview.record(s);
     }, e => { f.error = e; f.at = Date.now(); }).then(() => {
-      if (digits(query()) !== q || S.mode !== 'library') return;
+      if (lookup() !== q || S.mode !== 'library') return;
       try { if (L.tab === 'done') showDone(); else renderCurrent(); } catch (e) { console.warn('Library search', e); }
     }).finally(syncSearching);
     return f;
   }
   function searching(on) { const i = byId('libSearch'); if (i) i.classList.toggle('searching', !!on); }
   function syncSearching() {
-    if (L.timer) return searching(true);
-    const n = digits(query()), f = n && L.finds.get(n);
+    if (L.timer && !typing()) return searching(true);
+    const n = lookup(), f = n && L.finds.get(n);
     searching(!!(f && !f.res && !f.error) || !!(L.tab === 'done' && query() && L.list && L.list.loading && !L.list.rows.length));
   }
   /** The number searched for and what the search found, for the Library's two views (renderLibrary, Sets). */
   function focus() {
-    const q = digits(query()); if (!q) return null;
+    const q = lookup(); if (!q) return null;
     const f = L.finds.get(q), res = f && f.res;
     const ids = new Set(res ? [...(res.sheets || []), ...(res.rows || [])].map(s => s.id) : []);
     const has = list => (list || []).some(v => String(v) === q);
@@ -398,7 +410,7 @@
   }
   function clearSearch() {
     const i = byId('libSearch'); if (!i) return;
-    i.value = ''; clearTimeout(L.timer); L.timer = 0; L.located = '';
+    i.value = ''; clearTimeout(L.timer); L.timer = 0; L.located = ''; L.entered = '';
     if (L.tab === 'done') showDone(); else renderCurrent();
     syncSearching(); i.focus();
   }
@@ -427,11 +439,16 @@
           ? `<span class="ldFoundT"><b>${plural(mine.length, kind)}</b> ${mine.length === 1 ? 'holds' : 'hold'} ${word} <b>${esc(f.q)}</b>${sets ? ` · in ${plural(sets, 'set')}` : ''}</span>`
           : `<span class="ldFoundT">No ${tab === 'done' ? 'completed' : 'current'} sheet${metal ? ` of ${esc(metalOf({ metal }).label || metal)}` : ''} holds order or listing <b>${esc(f.q)}</b></span>`;
         if (other.length) html += `<button type="button" class="ldGo" data-t="${tab === 'done' ? 'current' : 'done'}">${other.length} in ${tab === 'done' ? 'Current' : 'Completed'} ›</button>`;
+        // older sheets record no listing: whenever their runs were read, the line says which days (found or not)
         const fb = res.fallback;
-        if (fb && fb.capped) html += `<span class="ldNote" title="Older sheets record no listing: their orders were read from the runs of ${esc(fb.window ? fb.window.from + ' to ' + fb.window.to : 'the last days')}, and not all of them">older sheets: searched in part</span>`;
-        else if (fb && fb.window && fb.orders) html += `<span class="ldNote" title="Older sheets record no listing: their orders were read from the runs of these days">older sheets: since ${esc(dayShort(fb.window.from))}</span>`;
-        if (res.truncated) html += '<span class="ldNote">the first 400 shown</span>';
+        if (fb && fb.window) html += `<span class="ldNote" title="Older sheets record no listing: their orders were read from the runs of ${esc(fb.window.from + ' to ' + fb.window.to)}${fb.capped ? ', and not all of them' : ''}">older sheets: since ${esc(dayShort(fb.window.from))}${fb.capped ? ', in part' : ''}</span>`;
+        if (res.truncated) html += '<span class="ldNote">only the first shown</span>';
       }
+    } else if (typing()) {
+      // a short number is looked up on Enter (lookup): until then Current follows the box, and Completed shows its list
+      const body = byId('libBody'), n = tab === 'done' || !body ? -1 : (S.library.kind === 'sets' ? body.querySelectorAll('.setCard').length : body.querySelectorAll('.libCard[data-id]').length);
+      html = (n < 0 ? '' : `<span class="ldFoundT"><b>${plural(n, S.library.kind === 'sets' ? 'set' : 'sheet')}</b> ${n === 1 ? 'matches' : 'match'} “${esc(q)}”</span>`)
+        + `<span class="${n < 0 ? 'ldFoundT' : 'ldNote'}">Enter looks up order or listing <b>${esc(numeric(q))}</b></span>`;
     } else if (tab === 'done') {
       if (!st) return null;
       const n = st.rows.length, what = st.kind === 'sets' ? 'set' : 'sheet';
@@ -477,8 +494,8 @@
   /* ── Completed: the list ── */
   const rowKey = r => r.kind === 'set' ? 'set:' + r.setId : 'sheet:' + r.id;
   function listKey() {
-    const q = query(), n = digits(q), m = metalNow() || 'all';
-    return `${S.library.kind === 'sets' ? 'sets' : 'sheets'}|${m}|${n ? '#' + n : foldText(q)}`;
+    const q = query(), n = lookup(), m = metalNow() || 'all';
+    return `${S.library.kind === 'sets' ? 'sets' : 'sheets'}|${m}|${n ? '#' + n : typing() ? '' : foldText(q)}`;
   }
   function newList(key) {
     const [kind, metal, q] = key.split('|');
@@ -754,6 +771,8 @@
       e.preventDefault(); const next = e.key === 'Home' ? 'current' : e.key === 'End' ? 'done' : L.tab === 'done' ? 'current' : 'done';
       setTab(next); const b = bar.querySelector(`[data-t="${next}"]`); if (b) b.focus();
     });
+    // Enter looks up a number however short (the box looks up one of 9 digits or more by itself)
+    { const box = byId('libSearch'); if (box) box.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); enter(); } }); }
     body.addEventListener('click', onMarkClick, true); done.addEventListener('click', onMarkClick, true);
     done.addEventListener('click', onDoneClick); done.addEventListener('keydown', onDoneKey);
     done.addEventListener('load', e => { const i = e.target; if (i && i.tagName === 'IMG' && i.parentElement && i.parentElement.classList.contains('ldThumb')) i.classList.add('on'); }, true);
