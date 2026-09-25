@@ -358,5 +358,15 @@ function seedDay(i, extra = {}) {
   const hs = await post({ op: 'history', limit: 40 });
   assert(!('sheets' in hs.body), 'no second list of the sheets'); assert(Buffer.byteLength(JSON.stringify(hs.body)) < 4.5e6 && hs.body.truncated.size === true && hs.body.next, 'a page of groups that would pass the cap stops short and says where to go on');
 
-  console.log(`server-history-bounds OK · listing ${first.total} reads (0 line parts) at 120 and 300 days · order found 100 days back · search window 30 days · expiries, archive moves, slim backs, 900 KB guard, .pdf copy, payload cleanup, listing mirrors · 3,500 SKUs in ${ixParts} parts · set list in ${slParts} parts of ≤ ${(maxBytes / 1e6).toFixed(1)} MB`);
+  /* ── a set's patch replaces each field it names: an order taken off the set leaves its record ── */
+  store.set('Charm_Nest_Sets/set-orders', { setId: 'set-orders', day: day(0), status: 'open', name: 'Set 70', orders: { 4001: { held: null, lines: [1] }, 4002: { held: null, lines: [2] } }, labels: { a: 1, b: 2 }, updatedAt: ts(T0) });
+  r = await post({ op: 'setUpdate', setId: 'set-orders', patch: { orders: { 4001: { held: null, lines: [1] } }, labels: { a: 1 } } });
+  assert(r.body.ok, JSON.stringify(r.body));
+  const saved = store.get('Charm_Nest_Sets/set-orders');
+  assert.deepStrictEqual(Object.keys(saved.orders), ['4001'], 'the order taken off is gone: ' + Object.keys(saved.orders)); assert.deepStrictEqual(saved.labels, { a: 1 });
+  assert.strictEqual(saved.name, 'Set 70', 'a field the patch leaves out stays');
+  await post({ op: 'setUpdate', setId: 'set-orders-new', patch: { status: 'open', orders: { 4003: {} } } });
+  assert.deepStrictEqual(store.get('Charm_Nest_Sets/set-orders-new').orders, { 4003: {} }, 'a set not on record yet is made from its patch');
+
+  console.log(`server-history-bounds OK · listing ${first.total} reads (0 line parts) at 120 and 300 days · order found 100 days back · search window 30 days · expiries, archive moves, slim backs, 900 KB guard, .pdf copy, payload cleanup, listing mirrors · 3,500 SKUs in ${ixParts} parts · set list in ${slParts} parts of ≤ ${(maxBytes / 1e6).toFixed(1)} MB · set patch replaces`);
 })().catch(e => { console.error(e); process.exit(1); });

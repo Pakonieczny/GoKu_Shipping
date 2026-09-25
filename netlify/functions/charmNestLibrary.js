@@ -1076,7 +1076,10 @@ async function op_setUpdate(b) {
       for(const record of records)record.engraving=decided.get(record.runId) || {};
       if(records.some(s=>s.setId!==id) || !Readiness.set(next,records).ready)throw new Error('Set cannot be completed: every sheet needs approved engraving, verified back files, front files and QR labels');
     }
-    tx.set(ref,Object.assign({}, b.patch || {},{setId:id,updatedAt:FV.serverTimestamp()}),{merge:true});
+    // each field the patch names replaces the stored one whole, and a field it leaves out stays as it was: a set with merge
+    // merged a map into the stored one key by key, so an order taken off a set stayed on its record for good
+    const doc=Object.assign({}, b.patch || {},{setId:id,updatedAt:FV.serverTimestamp()});
+    if(old.exists)tx.update(ref,doc);else tx.set(ref,doc);
   });
   return { ok: true };
 }
