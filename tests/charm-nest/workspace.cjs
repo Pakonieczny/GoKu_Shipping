@@ -39,7 +39,7 @@ function context() {
   vm.runInContext(`
     const nodes = new Map(), storage = new Map();
     const window = {addEventListener() {}};
-    const document = { hidden:false, addEventListener() {}, getElementById:id=>nodes.get(id), querySelectorAll:()=>[], body:{appendChild:x=>nodes.set(x.id,x)} };
+    const document = { hidden:false, addEventListener() {}, getElementById:id=>nodes.get(id), querySelector:()=>null, querySelectorAll:()=>[], body:{appendChild:x=>nodes.set(x.id,x)} };
     const el = () => ({style:{},classList:{toggle(){}},setAttribute(){},removeAttribute(){}});
     const localStorage = {getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v)};
     const navigator = {};
