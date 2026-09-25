@@ -1224,17 +1224,22 @@ const Master = window.Master = (() => {
     if (!S.cloud.ok) return;
     if (!o.force && Date.now() - B.master.loadedAt < 120000) return B.master.loading || null;
     if (B.master.loading) return B.master.loading;
+    // a background reload redraws the tab only when it brought something new: a redraw rebuilds every tile, so an angle
+    // being typed, a ticked label or an open file row was lost every ten minutes to a check that found nothing
+    let changed = !o.quiet;
     B.master.loading = (async () => {
-      render();
+      if (changed) render();
       try {
         const sig = x => JSON.stringify(x || null), first = o.quiet && B.master.index ? await api("charmNestLibrary", { op: "masterListFiles" }, quiet) : null;
         const unchanged = !!(first && first.index && sig(first.index) === sig(B.master.index));
         const [ix, fl] = await Promise.all([unchanged ? null : api("charmNestLibrary", { op: "masterList", limit: 3000 }, Object.assign({ label: "Loading the charm library", all: "entries" }, quiet)), first || api("charmNestLibrary", { op: "masterListFiles" }, quiet)]);
-        if (ix) { B.master.entries = new Map((ix.entries || []).map(e => [e.sku, e])); B.master.index = ix.index || null; }
+        if (ix) { B.master.entries = new Map((ix.entries || []).map(e => [e.sku, e])); B.master.index = ix.index || null; changed = true; }
+        if (!changed && sig(fl.files) !== sig(B.master.files)) changed = true;
         B.master.files = fl.files || []; B.master.loadedAt = Date.now();
+        if (B.master.error) changed = true;
         B.master.error = null;
-      } catch (e) { B.master.error = e.message; throw e; }   // a failed load must not look like an empty library
-    })().finally(() => { B.master.loading = null; render(); });
+      } catch (e) { if (B.master.error !== e.message) changed = true; B.master.error = e.message; throw e; }   // a failed load must not look like an empty library
+    })().finally(() => { B.master.loading = null; if (changed) render(); });
     return B.master.loading;
   }
   async function fetchEntry(sku) { sku = String(sku || "").toUpperCase(); if (!sku) return null; const r = await api("charmNestLibrary", { op: "masterGet", sku }); if (r.entry) B.master.entries.set(sku, r.entry); return r.entry; }

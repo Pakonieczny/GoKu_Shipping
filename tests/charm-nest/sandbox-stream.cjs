@@ -150,7 +150,7 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   assert.strictEqual(JSON.stringify(expectStep(s1, 2)), JSON.stringify(expectStep(Object.assign({}, s1), 2)), 'the same seed and step give the same orders');
   assert.notStrictEqual(JSON.stringify(expectStep(s1, 2).map(r => r.receipt_id)), JSON.stringify(expectStep(Object.assign({}, s1, { seed: s1.seed + 1 }), 2).map(r => r.receipt_id)), 'another seed gives other orders');
   // the illusion: production's toasts and counter, with the speed and simulated time; the sorter's day is the simulated one
-  assert([...seen.toasts].some(t => /new order\(s\) arrived/.test(t)), 'the new-order toast shows as in production: ' + [...seen.toasts].join(' | '));
+  assert([...seen.toasts].some(t => /new orders? arrived/.test(t)), 'the new-order toast shows as in production: ' + [...seen.toasts].join(' | '));
   assert.match(seen.counter, /^Sandbox 50x · sim [A-Z][a-z]{2} \d{2}:\d{2} · Orders received · 24h \d+ · 1h \d+ · /, 'the counter shows the speed and simulated time');
   assert.match(seen.pill, /^Sandbox 50x · sim [A-Z][a-z]{2} \d{2}:\d{2}$/, 'the pill shows the speed and simulated time');
   const form = await page.evaluate(() => { openSettings(); const v = { stream: $('#stSbStream').value, speed: $('#stSbSpeed').value, seed: $('#stSbSeed').placeholder, status: $('#stSbStatus').textContent }; closeDlg($('#dlgSettings')); return v; });
