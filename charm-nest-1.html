@@ -2619,19 +2619,23 @@ function overflowToNextSheet(sh, announce = true) {
   sh.movedOn = { n: moving.length, names: moving.map(c => c.name || `#${c.index + 1}`) };
   sh.status = sh.verification && sh.verification.ok ? "complete" : "partial";
   const prim = S.sheets[sh.metal]; const i = prim.pages.indexOf(sh);
-  // Gold and Silver move on to the next open sheet in line, so a sheet between is not passed over
-  const busy = p => ["nesting", "finishing", "queued"].includes(p.status) || p.persisted&&!p.persistedDone;
-  let next = ["gold","silver"].includes(sh.metal) ? prim.pages.slice(i+1).find(p => !manualSheetClosed(p) && !busy(p)) || null : prim.pages.length-1>i?prim.pages[prim.pages.length-1]:null;
-  if (!next || manualSheetClosed(next) || ["nesting", "finishing", "queued"].includes(next.status) || next.persisted&&!next.persistedDone) next = addPage(sh.metal);
-  next.intakeAppend=next.placements.length>0;next.appendOnly=next.intakeAppend;
+  // Gold and Silver move on to the next open sheet in line, so a sheet between is not passed over. One still placing or
+  // saving the few orders before these takes them right after (feedWait, feedOn): a new sheet used to be opened for them,
+  // which a batch coming in a few orders at a time would do again and again, leaving sheets half empty (25 Sep).
+  const inLine = ["gold","silver"].includes(sh.metal), writing = p => ["nesting", "finishing"].includes(p.status) || p.persisted&&!p.persistedDone;
+  let next = inLine ? prim.pages.slice(i+1).find(p => !manualSheetClosed(p)) || null : prim.pages.length-1>i?prim.pages[prim.pages.length-1]:null;
+  if (!next || manualSheetClosed(next) || !inLine && (["nesting", "finishing", "queued"].includes(next.status) || next.persisted&&!next.persistedDone)) next = addPage(sh.metal);
+  const after = inLine && writing(next);
+  if (!after) { next.intakeAppend=next.placements.length>0;next.appendOnly=next.intakeAppend; }
   moving.forEach(c => { if(c.arrivalPin){c.pinned=null;delete c.arrivalPin;} c.metal = sh.metal; next.charms.push(c); });
+  if (after) { next.feedWait = (next.feedWait || []).concat(moving.map(c => c.id)); next.dirty = true; }
   sh.movedOn.page = next.page;
   next.isolated = sh.isolated;
   computeSaturation(sh); computeSaturation(next); renderCard(sh);
   agent({ metal: sh.metal }, "nest", `Sheet ${sh.page} retained its best verified layout — ${moving.length} charm(s) in ${orderSummary(moving).text} moved whole to sheet ${next.page}: ${sh.movedOn.names.slice(0, 6).join(", ")}${moving.length > 6 ? "…" : ""}`);
   if (announce) toast(`${labelOf(sh.metal)}: ${moving.length} charm(s) moved to sheet ${next.page} — nesting it now`, "ok", 4200);   // after a nest, its own toast already said "… still waiting for sheet N"
   renderRail(); updateTopSub();
-  startNest(next);
+  if (!after) startNest(next);
   return next;
 }
 function inflatedArea(c) { const g = (+S.settings.clearancePt || 0) / 2; return c.areaPt2 + g * 2 * (c.widthPt + c.heightPt) + Math.PI * g * g; } // silhouette grown by half the clearance
@@ -2684,8 +2688,8 @@ function topupSettle(sh, result, full) {
   // every order new to the sheet in this update has now tried its gaps, placed or not, unless the search ran out of time
   // before it reached that order
   const before = new Set((sh.nestInitial || []).map(p => p.id)), tried = new Set(t.tried || []), untried = untriedIds(result);
-  const skipped = new Set(activeCharms(sh).filter(c => untried.has(c.id)).map(c => c.order || c.id));
-  for (const c of activeCharms(sh)) if (!before.has(c.id) && !skipped.has(c.order || c.id)) tried.add(c.order || c.id);
+  const skipped = new Set(nestItems(sh).filter(c => untried.has(c.id)).map(c => c.order || c.id));
+  for (const c of nestItems(sh)) if (!before.has(c.id) && !skipped.has(c.order || c.id)) tried.add(c.order || c.id);
   t.tried = [...tried]; t.placed = sh.placements.length;
   if (!live || atCeiling || reached || noRoom || t.tried.length >= TOPUP.orders) {
     t.closedAt = topupNow(); t.density = +result.density.toFixed(4);
@@ -2793,7 +2797,7 @@ const CAREFUL_ANGLES = Array.from({ length: 180 }, (_, i) => i * 2);
 const carefulNest = sh => sh.nestFlow !== "learned";
 function buildJob(sh) {
   const st = stockFor(sh.metal, sh);
-  const items = activeCharms(sh), careful = carefulNest(sh);
+  const items = nestItems(sh), careful = carefulNest(sh);
   return {
     sheet: { wPt: st.wPt, hPt: st.hPt, insetPt: +S.settings.insetPt || 0, ...(sh.roseStock?.profileJson ? {remnant:JSON.parse(sh.roseStock.profileJson)} : {}) },
     clearancePt: +S.settings.clearancePt || 0, angles: careful && angleSet().length < CAREFUL_ANGLES.length ? CAREFUL_ANGLES : angleSet(), fineRes: 2, coarseRes: 0.5,
@@ -2854,7 +2858,7 @@ function startNestReady(sh, context) {
       startNestReady(sh, token); // Hold the resource only for setup; workers run independently.
     }).catch(e => { sh._operationStarting = false; sh.status = "error"; sh.problem = e.message; renderCard(sh); toast(e.message,"bad"); if(window.RunCtl)RunCtl.onSheetDone(sh,e); });
   }
-  const items = activeCharms(sh);
+  let items = activeCharms(sh);
   // A sheet with nothing to nest does not stay queued: arrivals wait while a sheet of their material is queued, and an
   // empty page left queued stopped every later arrival of the run with "A sheet is still being written".
   if (!items.length) { delete sh._byHand; if (sh.status === "queued") { sh.status = sh.charms.length ? "ready" : "idle"; sh.stage = ""; renderCard(sh); } toast(`${labelOf(sh.metal)}: nothing to nest`, ""); return; }
@@ -2877,6 +2881,8 @@ function startNestReady(sh, context) {
   sh.persistedDone = false;
   sh.movedOn = null; sh.problem = null; delete sh._byHand; delete sh.resumeWait;
   if (sh.runId && window.LiveNest) LiveNest.prepareSheet(sh);
+  // a big batch: the oldest few orders now, the next few once they are placed (feedTurn)
+  const all = items.length; items = feedTurn(sh, items);
   const bestKey = JSON.stringify([packingKey(sh, items), items.map(c=>[c.id,c.order,c.orderDate,c.pinned])]);
   const retained = sh.bestKey === bestKey && sh.best ? CharmNestSolver.publicLayout(sh.best) : null;
   // only charms still on the sheet: one taken off while a search ran is not held in place by the next
@@ -2884,8 +2890,8 @@ function startNestReady(sh, context) {
   sh.nestInitial = kept.length ? kept.map(p=>({...p})) : null;
   sh.runSeed = S.settings.freshSeed !== false ? (crypto.getRandomValues(new Uint32Array(1))[0] & 0x7fffffff) || 1 : +S.settings.seed || 1;
   sh.status = "nesting"; sh.startedAt = performance.now(); sh.placements = retained ? retained.placements.map(p=>({...p})) : sh.intakePhase ? (sh.nestInitial || []).map(p=>({...p})) : []; sh.rejects = retained?.rejects?.slice() || []; sh.outputs = null; sh.verification = null; sh.best = retained; sh.bestWorker = 0; sh.probe = null; sh.probePlaced = []; sh.trials = 0; sh.searchMetrics = null; sh.gpuProgress = null; sh.liveInfo = retained ? sh.bestInfo : sh.intakePhase ? sh.liveInfo : null; sh.endedBy = null;
-  sh.jobId = uid(); sh.stage = "Preparing rotations…"; sh.progress = [0, items.length]; sh.dirty = false;
-  log(sh, `nest started · ${items.length} pieces · seed ${sh.runSeed} · clearance ${S.settings.clearancePt} pt`);
+  sh.jobId = uid(); sh.stage = "Preparing rotations…"; sh.progress = [sh.placements.length, all]; sh.dirty = false;
+  log(sh, `nest started · ${items.length} pieces${all > items.length ? ` (the next ${new Set(items.filter(c => !(sh.nestInitial || []).some(p => p.id === c.id)).map(orderKey)).size} orders; ${all - items.length} wait their turn)` : ""} · seed ${sh.runSeed} · clearance ${S.settings.clearancePt} pt`);
   sh.evNest = (S.settings.engine || "solver") === "ai" ? null : agent({ metal: sh.metal }, "nest", carefulNest(sh)
     ? `Solver: ${items.length} pieces · one at a time, each turned in ${360 / CAREFUL_ANGLES.length}° steps · clearance ${S.settings.clearancePt} pt`
     : `Solver: ${items.length} pieces · seed ${sh.runSeed} · clearance ${S.settings.clearancePt} pt · ${angleSet().length} angles · ${sh.intakePhase === "fill" ? "filling draft" : sh.intakePhase === "final" ? "final optimization" : sh.intakePhase === "repack" ? "improving partial sheet" : "search"} · up to ${(sh.intakeBudgetMs || S.settings.budgetS*1000)/1000}s`, { live: true });
@@ -2918,6 +2924,46 @@ function startNestReady(sh, context) {
   };
   const launchId=sh.jobId;
   launch();
+}
+/* A big batch goes onto a sheet a few orders at a time, oldest first, the way orders come in from Etsy (Paul, 25 Sep:
+   "the charms were coming in a few at a time and then the system was placing them"). A run that took every open order
+   put 138 charms on one sheet, and its one-by-one fill weighed them all together, drawn as masks, before the sheet was
+   written. Now the oldest few orders are placed and the sheet written, then the next few come in (feedOn); the charms of
+   the later orders wait on the sheet for their turn, as later orders wait at Etsy, and each few is placed exactly as an
+   update's new orders are, gap fill included. Gold, Silver and the solid golds of a run; Rose Gold keeps its own flow. */
+const FEED_ORDERS = 3;
+const orderKey = c => String(c.order || c.id);
+/** The charms this search places, and those it leaves waiting for their turn (sh.feedWait). */
+function feedTurn(sh, items) {
+  sh.feedWait = null;
+  if (!carefulNest(sh) || sh.metal === "rose" || !sh.runId || (S.settings.engine || "solver") === "ai") return items;
+  const placed = new Set(sh.placements.map(p => p.id));
+  const fresh = items.filter(c => !placed.has(c.id)).sort((a, b) => (+a.orderDate || 0) - (+b.orderDate || 0) || orderKey(a).localeCompare(orderKey(b)));
+  const turn = new Set([...new Set(fresh.map(orderKey))].slice(0, FEED_ORDERS)), wait = fresh.filter(c => !turn.has(orderKey(c)));
+  if (!wait.length) return items;
+  sh.feedWait = wait.map(c => c.id);
+  const later = new Set(sh.feedWait);
+  return items.filter(c => !later.has(c.id));
+}
+/** The charms on the sheet less those waiting for their turn: what the search places, is judged by and writes. */
+function nestItems(sh) {
+  const items = activeCharms(sh); if (!sh.feedWait?.length) return items;
+  const later = new Set(sh.feedWait); return items.filter(c => !later.has(c.id));
+}
+/** The few orders placed and the sheet saved, the next few come in. A sheet that is full, or whose check flagged it,
+    passes the orders still waiting on to the next sheet, where they come in the same way. Run's Stop: they wait for
+    Resume; a sheet stopped by hand or in trouble keeps them for its next Nest. */
+function feedOn(sh) {
+  const later = new Set(sh.feedWait || []); sh.feedWait = null;
+  if (!later.size || !allSheets().includes(sh)) return false;
+  const placed = new Set(sh.placements.map(p => p.id)), left = activeCharms(sh).filter(c => later.has(c.id) && !placed.has(c.id));
+  if (!left.length || sh.problem || sh.runHold || sh.endedBy === "stopped" && !sh.resumeWait) return false;
+  if ((sh.releaseFull || !sh.verification?.ok) && sh.placements.length && sh.endedBy !== "stopped") { sh.rejects = left.map(c => c.id); overflowToNextSheet(sh, false); return true; }
+  // (already on its way: the run's Stop put it back in line for Resume, resumeLater)
+  if (["nesting", "finishing", "queued"].includes(sh.status) || sh._operationStarting) return true;
+  sh.appendOnly = sh.intakeAppend = sh.placements.length > 0; sh.dirty = true; sh.status = "ready";
+  startNest(sh);
+  return true;
 }
 /* A stopped run starts none of its sheets (24 Sep). A sheet queued behind the one nesting, or still waiting to start,
    used to start as soon as the sheet ahead finished, stopped run or not. It now keeps its place in line, its card says
@@ -3264,7 +3310,7 @@ async function finishNest(sh, { result, error }) {
     result = { ...CharmNestSolver.publicLayout(sh.best), endedBy: "stopped", elapsedMs: performance.now()-sh.startedAt, trials: sh.trials, params: sh.best.params || { ...sh.nestParams, seed: (sh.runSeed || 1)+(sh.bestWorker || 0) } };
     error = null;
   }
-  const items = activeCharms(sh); const byId = new Map(items.map(c => [c.id, c]));
+  const items = nestItems(sh); const byId = new Map(items.map(c => [c.id, c]));
   if (error && sh._beforeLearned) { Object.assign(sh, sh._beforeLearned); sh._beforeLearned = null; drawPreview(sh); }
   if (error) { sh._beforeNest = null; sh.status = sh.outputs ? "partial" : items.length ? "ready" : "idle"; sh.stage = ""; log(sh, "error: " + error); toast(`${labelOf(sh.metal)}: nesting failed — ${error}`, "bad", 6000); renderCard(sh); pumpNestQueue(); if (window.RunCtl) RunCtl.onSheetDone(sh, new Error(error)); return; }
   // Stop on the run banner while new orders went on ended this search (resumeUnchanged, resumeLater)
@@ -3322,8 +3368,9 @@ async function finishNest(sh, { result, error }) {
         sh.status = sh.rejects.length ? "partial" : "complete"; sh.stage = ""; sh.progress = [5, 5]; sh.totalMs = performance.now() - sh.t0;
         renderCard(sh); drawPreview(sh);
         agent({ metal: sh.metal }, "nest", `${sheetName(sh)}: no room for ${sh.rejects.length === 1 ? "the new piece" : `the ${sh.rejects.length} new pieces`}; the layout and its saved files stand as they are`);
+        const updatedJob = sh.jobId;
         sh.persisted = api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, releaseFull: !!sh.releaseFull, topup: sh.topup || null, intakeFinalized: !!sh.intakeFinalized } }, { label: "Updating sheet record", quiet: true })
-          .then(() => { sh.persistedDone = true; releaseSavedOutputs(sh); window.Session?.dropBest?.(sh.sheetId); flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); })
+          .then(() => { sh.persistedDone = true; releaseSavedOutputs(sh); window.Session?.dropBest?.(sh.sheetId); if (sh.jobId === updatedJob) feedOn(sh); flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); })
           .catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e, { stage: "persistence", critical: true })); });
         // in Auto the move is routine and shows on both cards; a toast for it covered the next card's controls
         if (sh.rejects.length && (sh.nestFlow !== "learned" || ["cap", "plateau"].includes(sh.endedBy))) overflowToNextSheet(sh, !(S.settings.runMode === "auto" && !!sh.runId && window.B?.run?.runId === sh.runId));
@@ -3381,13 +3428,15 @@ async function finishNest(sh, { result, error }) {
     const msg = `${sheetName(sh)} · ${allPlaced ? "sheet complete" : sh.releaseFull ? "sheet full" : "best layout saved"} — ${sh.placements.length} of ${items.length} placed, ${fmt.pct(sh.sat ? sh.sat.fullPct : sh.density)} full` + (sh.verification.ok ? "" : " · verification flagged, see report") + (allPlaced ? ` · ended by: ${endedText(sh.endedBy)}` : ` · ${sh.rejects.length} still waiting${sh.endedBy !== "stopped" && (sh.nestFlow !== "learned" || ["cap", "plateau"].includes(sh.endedBy)) ? ` for sheet ${sh.page + 1}` : " on this sheet"}`);
     // Auto's own sheets finish several times an arrival: a clean one is on its card and in the ladder, and its toast only
     // covered the next card's controls. One that needs a look still says so. One the run's Stop ended says so on its card.
-    const routine = !!sh.resumeWait || allPlaced && sh.verification.ok && S.settings.runMode === "auto" && !!sh.runId && window.B?.run?.runId === sh.runId;
-    if (!routine) toast(msg, allPlaced && sh.verification.ok ? "ok" : "", 6500); if (!sh.resumeWait) ding();
+    // (a few orders of a bigger batch placed, the next few still to come: the card shows it, and the ding waits for the last)
+    const feeding = !!sh.feedWait?.length && sh.verification.ok;
+    const routine = !!sh.resumeWait || feeding || allPlaced && sh.verification.ok && S.settings.runMode === "auto" && !!sh.runId && window.B?.run?.runId === sh.runId;
+    if (!routine) toast(msg, allPlaced && sh.verification.ok ? "ok" : "", 6500); if (!sh.resumeWait && !feeding) ding();
     $$(".sheetCard").find(el => el.dataset.m === sh.metal)?.classList.add("pulse");
     setTimeout(() => $$(".sheetCard").find(el => el.dataset.m === sh.metal)?.classList.remove("pulse"), 1300);
     if (document.hidden && S.settings.notify === "on" && "Notification" in window && Notification.permission === "granted") { try { new Notification("Charm Nesting Station", { body: msg }); } catch (_) { /* ignore */ } }
     // 5 · persist everything. The two verifiers above are the acceptance test; no further inspection runs.
-    sh.persisted = persistSheet(sh, items).then(() => { if (sh.jobId === writtenJob) sh._written = written; sh.persistedDone = true; if (sh.jobId === writtenJob) { releaseSavedOutputs(sh); window.Session?.dropBest?.(sh.sheetId); } if (sh.resumeWait && sh.jobId === writtenJob && sh.rejects.length) resumeLater(sh); flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e,{stage:"persistence",critical:true})); });
+    sh.persisted = persistSheet(sh, activeCharms(sh)).then(() => { if (sh.jobId === writtenJob) sh._written = written; sh.persistedDone = true; if (sh.jobId === writtenJob) { releaseSavedOutputs(sh); window.Session?.dropBest?.(sh.sheetId); } if (sh.resumeWait && sh.jobId === writtenJob && sh.rejects.length) resumeLater(sh); if (sh.jobId === writtenJob) feedOn(sh); flushManualIntake(sh.metal); if (window.RunCtl) RunCtl.onSheetDone(sh); }).catch(e => { sh.problem = "not saved to the cloud — " + e.message; log(sh, "cloud save failed: " + e.message); renderCard(sh); if (window.RunCtl) RunCtl.onSheetDone(sh, Object.assign(e,{stage:"persistence",critical:true})); });
     // 6 · whatever did not fit under the ceiling goes to the next sheet of this metal, which nests on its own
     if (sh.rejects.length && sh.endedBy !== "stopped" && (sh.nestFlow !== "learned" || sh.verification.ok && ["cap", "plateau"].includes(sh.endedBy))) overflowToNextSheet(sh, false);
   } catch (e) {
@@ -3890,24 +3939,27 @@ function paintPreview(cv, sh, clean, R) {
     if (!clean && c.pinned) { ctx.fillStyle = "#caa861"; ctx.beginPath(); ctx.arc(p.cxPt * k, p.cyPt * k, Math.max(3, 2 * k), 0, Math.PI * 2); ctx.fill(); }
   });
   if(window.RoseStock && !sh._forClaude)RoseStock.paint(ctx,sh,k,"lines");
-  // Only accepted best placements are drawn; trial ghosts are deliberately omitted. The careful append is the exception:
-  // its charms settle one at a time (green) and the spot it is grading now is outlined in blue, turning and moving.
+  // Only accepted best placements are drawn; trial ghosts are deliberately omitted. The one-by-one fill is the exception:
+  // each charm it puts down is drawn as it lands, in its own line colours like any placed charm, and the one it is trying
+  // now is drawn the same way, turning and moving, with a thin blue line round it. (Green and blue masks were drawn over
+  // them instead until 25 Sep; Paul: "put it back to the way it was where I could actually see the charms appearing
+  // with their full line colours".)
   if (!clean && sh.status === "nesting") {
     const onSheet = new Set(sh.placements.map(p => p.id));
     for (const g of (sh.probePlaced || []).concat(sh.probe ? [sh.probe] : [])) {
       const c = byId.get(g.id); if (!c || onSheet.has(g.id)) continue;
       const live = g === sh.probe, cx = c.centerPt[0], cy = c.centerPt[1], tx = (x, y) => [(x - cx) * k, (cy - y) * k];
       ctx.save(); ctx.translate(g.cxPt * k, g.cyPt * k); ctx.rotate(g.angle * Math.PI / 180);
-      ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx);
-      ctx.fillStyle = live ? "rgba(70,120,200,.28)" : "rgba(95,150,90,.30)"; ctx.fill();
-      ctx.strokeStyle = live ? "rgba(40,90,180,.95)" : "rgba(60,120,60,.9)"; ctx.lineWidth = Math.max(1, .45 * k); ctx.stroke();
+      ctx.fillStyle = "rgba(200,162,78,.10)"; ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); for (const m of cutLinesOf(c)) CharmNestPDF.pathToCanvas(ctx, m, tx); ctx.fill("evenodd");
+      CharmNestPDF.drawCharm(ctx, c, tx, k);
+      if (live) { ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); ctx.strokeStyle = "rgba(40,90,180,.9)"; ctx.lineWidth = Math.max(1, .3 * k); ctx.stroke(); }
       ctx.restore();
     }
   }
   // largest open pocket
   if (!clean && sh.sat && sh.sat.pocket && sh.liveInfo && sh.sat.pocket.wPt > 6) { const p = sh.sat.pocket; ctx.setLineDash([3, 3]); ctx.strokeStyle = "rgba(95,122,91,.6)"; ctx.lineWidth = 1; ctx.strokeRect(p.xPt * k, p.yPt * k, p.wPt * k, p.hPt * k); ctx.setLineDash([]); }
 }
-/** What a sheet holds while the careful fill puts its charms down one at a time (drawn green until the layout lands):
+/** What a sheet holds while the careful fill puts its charms down one at a time (drawn as they land, before the layout does):
     its placements and those charms, counted, and how full they make it by their own areas. Null when there are none. */
 function carefulSoFar(sh) {
   const on = new Set(sh.placements.map(p => p.id)), extra = (sh.probePlaced || []).filter(g => !on.has(g.id));

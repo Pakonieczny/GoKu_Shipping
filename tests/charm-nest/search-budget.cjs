@@ -2,6 +2,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 const html=fs.readFileSync('charm-nest-1.html','utf8');
 const settings={budgetS:180,maxFill:.8,seed:1};
 const ctx=vm.createContext({S:{settings},stockFor:()=>({wPt:30,hPt:20}),activeCharms:s=>s.charms,angleSet:()=>[0]});
+vm.runInContext(html.slice(html.indexOf('/* A big batch goes onto a sheet'),html.indexOf('/* A stopped run starts none')),ctx);
 vm.runInContext(html.slice(html.indexOf('const CAREFUL_ANGLES'),html.indexOf('function packingKey(')),ctx);
 const piece={id:'one',w:4,h:4,scale:1,bits:new Uint8Array(16).fill(1)};
 for(const phase of ['fill','repack','final']){
@@ -13,6 +14,7 @@ const nodes={prog:{hidden:false,parentElement:{classList:{contains:()=>false}}},
 Object.assign(ctx,{$:s=>nodes[/data-r="([^"]+)"/.exec(s)[1]],performance:{now:()=>5000},fmt:{s:n=>Math.round(n/1000)+'s',pct:n=>Math.round(n*100)+'%'},esc:s=>s});
 ctx.S.sources=[];
 vm.runInContext(html.slice(html.indexOf('function renderProgress('),html.indexOf('function renderSat(')),ctx);
+ctx.usableArea=()=>100;vm.runInContext(html.slice(html.indexOf('function carefulSoFar(sh) {'),html.indexOf('/** Inner cut lines of a charm')),ctx);
 const sheet={el:{},status:'nesting',startedAt:0,intakeBudgetMs:12000,stage:'Searching',charms:[piece],placements:[],trials:3,searchMetrics:{positions:50,gpuPositions:10},gpuProgress:{active:true,reason:'GPU enabled'}};
 // placed one charm at a time, the card shows the time spent and no ceiling (the solver's only guards against a runaway)
 ctx.renderProgress(sheet);assert(nodes.stage.innerHTML.includes('5s'));assert(!nodes.stage.innerHTML.includes('/ 12s'));assert(nodes.stage.innerHTML.includes('GPU + CPU'));

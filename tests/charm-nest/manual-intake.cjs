@@ -1,6 +1,8 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const O=require('../../charm-nest-orders');
 const html=fs.readFileSync('charm-nest-1.html','utf8'),bridge=fs.readFileSync('charm-nest-bridge.js','utf8');
+// a big batch goes on a sheet a few orders at a time (feedTurn, nestItems, feedOn)
+const FEED=html.slice(html.indexOf('/* A big batch goes onto a sheet'),html.indexOf('/* A stopped run starts none'));
 function setup(){
  const old={id:'old',areaPt2:20},placement={id:'old',cxPt:10,cyPt:10,angle:0};
  const sheet={metal:'gold',page:1,runId:'existing',charms:[old],placements:[placement],status:'complete',intakeOptimized:true,intakeOptimizedCount:1,density:.5,trials:23,jobId:'active-job',best:{placements:[placement]},outputs:{ai:'saved'},persistedDone:true};
@@ -97,6 +99,7 @@ assert.equal(O.intakePlan({count:40,density:.5,optimized:true,area:99,capacity:1
  };
  fx.window.RunCtl=fx.RunCtl;fx.setTimeout=setTimeout;
  vm.createContext(fx);
+ vm.runInContext(FEED,fx);
  vm.runInContext(html.slice(html.indexOf('/* Gap fill (Paul, 24 Sep)'),html.indexOf('function usableArea(')),fx);
  vm.runInContext(html.slice(html.indexOf('const CHARM_SCALE'),html.indexOf('/** One charm at a time on every sheet')),fx);
  vm.runInContext(html.slice(html.indexOf('async function finishNest('),html.indexOf('function pumpNestQueue()')),fx);
@@ -150,6 +153,7 @@ assert.equal(O.intakePlan({count:40,density:.5,optimized:true,area:99,capacity:1
 // smallest charms would still fit (Paul, 24 Sep)
 {
  const logs=[],ctx={S:{settings:{maxFill:.8,runMode:'auto'}},window:{B:{run:{runId:'run-1',status:'processed'}}},fmt:{pct:v=>Math.round(v*100)+'%'},log:(sh,m)=>logs.push(m),renderCard(){},activeCharms:p=>p.charms.filter(x=>!x.excluded)};vm.createContext(ctx);
+ vm.runInContext(FEED,ctx);
  vm.runInContext(html.slice(html.indexOf('/* Gap fill (Paul, 24 Sep)'),html.indexOf('function usableArea(')),ctx);
  const sheet=(extra={})=>{const charms=Array.from({length:60},(_,i)=>({id:'p'+i,order:'o'+i}));return {metal:'gold',runId:'run-1',rejects:['late'],charms,placements:charms.map(c=>({id:c.id})),verification:{ok:true},...extra};};
  const res=(density,extra={})=>({density,placedPt2:density*100,usablePt2:100,freePt2:(1-density)*100,endedBy:'no-room',smallRoom:true,...extra});
@@ -192,6 +196,7 @@ assert.equal(O.intakePlan({count:40,density:.5,optimized:true,area:99,capacity:1
  ctx.window.B.run.status='complete';const ended=sheet();assert.equal(ctx.topupSettle(ended,res(.70),true),true,'a finished run brings no more orders');ctx.window.B.run.status='processed';
  // while it fills its gaps: any later order that fits may go in, not only the oldest, up to the usual fill ceiling
  const jc={S:{settings:{maxFill:.8,clearancePt:0,insetPt:1.5,budgetS:180,packingAI:'off'}},stockFor:()=>({wPt:283,hPt:142}),activeCharms:s=>s.charms,angleSet:()=>[0,10],packingKey:()=>''};vm.createContext(jc);
+ vm.runInContext(FEED,jc);
  vm.runInContext(html.slice(html.indexOf('const CAREFUL_ANGLES'),html.indexOf('function packingKey(')),jc);
  const topping={metal:'gold',intakePhase:'fill',appendOnly:true,placements:[{id:'old'}],nestInitial:[{id:'old'}],topup:{base:.7,tried:[]},charms:[{id:'old',orderDate:5},{id:'new',orderDate:9}]};
  let job=jc.buildJob(topping);assert.equal(job.maxFill,.8,'the gap fill is not capped below the ceiling');assert.deepEqual(job.pieces.map(p=>p.orderDate),[0,0]);
