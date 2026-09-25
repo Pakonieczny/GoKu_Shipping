@@ -1093,7 +1093,7 @@ const Orders = window.Orders = (() => {
     if(OV.sort==='arrival'){for(const r of shown)dayCounts.set(dayOf(r).key,new Set());for(const row of rows){const ids=dayCounts.get(dayOf(row).key);if(ids)ids.add(row.order.receiptId);}}
     for (const r of shown) {
       const date=dayOf(r);
-      if(OV.sort==='arrival' && date.key!==lastDay){const heading=[...list.querySelectorAll('.ordDay')].find(n=>n.dataset.day===date.key)||el('div','ordDay');heading.dataset.day=date.key;const text=`<span>${esc(date.label)}</span><small>${dayCounts.get(date.key).size} orders · Toronto time</small>`;if(heading.innerHTML!==text)heading.innerHTML=text;place(heading);lastDay=date.key;}
+      if(OV.sort==='arrival' && date.key!==lastDay){const heading=[...list.querySelectorAll('.ordDay')].find(n=>n.dataset.day===date.key)||el('div','ordDay');heading.dataset.day=date.key;const text=`<span>${esc(date.label)}</span><small>${dayCounts.get(date.key).size} order${dayCounts.get(date.key).size === 1 ? "" : "s"} · Toronto time</small>`;if(heading.innerHTML!==text)heading.innerHTML=text;place(heading);lastDay=date.key;}
       const sp = r.spec || {}, m = r.material || "none";
       const st = stateWords(r), due = dueOf(r), where = placeOf(r);
       const attn = r.problems.length || ["held", "unmatched", "oversize"].includes(r.state);
@@ -1173,7 +1173,7 @@ const Orders = window.Orders = (() => {
     charmTotal.innerHTML=`<b>${totals.charms}</b> charms`;
     charmTotal.title="Total charm quantity across these open orders; chain-only and packaging items are excluded";
     const byMetal = {}; for (const r of all) { const m = r.material || "none"; byMetal[m] = (byMetal[m] || 0) + 1; }
-    const chip = (on, id, label, n, cls, title) => `<button class="egTab${on ? " on" : ""}" data-pile="${esc(id)}" title="${esc(title || "")}">${esc(label)}<b class="${cls}">${n}</b></button>`;
+    const chip = (on, id, label, n, cls, title) => `<button class="egTab${on ? " on" : ""}" data-pile="${esc(id)}" title="${esc(title || "")}">${label === "Open Orders" ? 'Open<span class="ordLong"> Orders</span>' : esc(label)}<b class="${cls}">${n}</b></button>`;
     const metals = ["gold", "silver", "rose", "gold10k", "gold14k", "none"].filter(m => byMetal[m] || OV.metal === m);
     /* Material, kind of jewellery and "does it get engraved" are the three ways a bench actually narrows a day's work.
        Each one appears only when the lines on screen give it more than one answer — a filter with one option is a

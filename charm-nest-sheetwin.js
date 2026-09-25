@@ -296,7 +296,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
 .cxWhat{display:flex;flex-wrap:wrap;gap:4px}.cxWhat span{font:600 10.5px var(--mono);background:var(--paper2);border-radius:999px;padding:2px 8px;color:var(--ink70)}
 .cxWhy{font:12px/1.4 var(--sans);color:var(--ink70);display:grid}.cxWhy small{font:11px var(--sans);color:var(--ink45)}
 @media (max-width:900px){.cxRow{grid-template-columns:minmax(0,1fr) auto}.cxWhat,.cxWhy{grid-column:1}}
-.swFindRow{display:flex;gap:6px;align-items:center}.swFindRow .swFind{flex:1;min-width:0}
+.swFindRow{display:flex;gap:6px;align-items:center}.swFindRow .swFind{flex:1;min-width:0}.swFindRow .swIcon[hidden]{display:none}
 .swFill .a{display:flex;align-items:center;gap:3px}
 .swFill .a .swIcon{width:26px;height:26px;border-radius:8px}.swFill .a .swIcon svg{width:14px;height:14px}
 .swFill .a .swWait svg{width:13px;height:13px;color:var(--sage)}
@@ -514,7 +514,8 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
       const ready = !done && window.LaserReview && LaserReview.sheet(r).ready;
       E.state.className = "swState" + (done ? " done" : ready ? " ready" : "");
       st.textContent = done ? "Completed" : ready ? "Ready for laser" : (r.releaseFull || r.intakeFinalized) ? "Released" : "In progress";
-      E.done.hidden = !window.LibraryDone || !window.LibraryDone.mark;
+      // a sheet still filling is not cut yet: it can be marked completed once it is released (or taken back when it was)
+      E.done.hidden = !window.LibraryDone || !window.LibraryDone.mark || (!done && working && !ready);
       E.done.textContent = done ? "Move back to current" : "Mark completed";
       E.done.onclick = () => markDone(!done);
     }
