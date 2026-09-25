@@ -22,7 +22,7 @@
   // "test": questions to the Etsy account of our own set up as the test account; real in the sandbox too
   const TEST = "test";
   const sbOf = rid => SANDBOX && String(rid) !== TEST;
-  const LS = { key: "cn.mail.station", who: "cn.mail.operator", drafts: "cn.mail.drafts", out: "cn.mail.outbox", told: "cn.mail.told", tab: "cn.mail.tab", tr: "cn.mail.tr", health: "cn.mail.health" };
+  const LS = { key: "cn.mail.station", who: "cn.mail.operator", drafts: "cn.mail.drafts", out: "cn.mail.outbox", told: "cn.mail.told", tab: "cn.mail.tab", tr: "cn.mail.tr", health: "cn.mail.health", wait: "cn.mail.waiting" };
   try { localStorage.removeItem("cn.mail.test"); } catch (_) {}   // the test box is gone from the details; its saved view with it
   const PAIR = "cn.mail.pair";   // sessionStorage: a connect request survives this tab's reload, not the tab
 
@@ -88,7 +88,7 @@
   function forget(message) {
     put(LS.key, null); put(LS.who, null);
     M.key = null; M.who = null; M.store.clear(); M.link = "off"; M.n = -1; M.since = 0; M.needFull = true; M.first = true;
-    clearTimeout(syncTimer); clearTimeout(healthTimer); closeHealth();
+    clearTimeout(syncTimer); clearTimeout(healthTimer); clearTimeout(waitTimer); waitTimer = 0; M.wait = null; put(LS.wait, null); closeHealth();
     if (message) say(message, "bad");
     paintAll();
   }
@@ -184,6 +184,7 @@
     } finally {
       syncing = false;
       if (M.key) kick(M.fails ? Math.max(pace(), Math.min(60000, 2500 * 2 ** Math.min(M.fails, 5))) : pace());
+      if (M.key && !waitTimer && !waitBusy) waitLater();
     }
   }
   if (bc) bc.onmessage = e => {
@@ -191,8 +192,9 @@
     if (d.t === "sync" && d.sandbox === SANDBOX && d.res && M.key) { M.lastOkAt = Date.now(); M.fails = 0; setLink("ok"); apply(d.res, false); kick(); }
     else if (d.t === "out") flushOut();
     else if (d.t === "health" && d.h && d.h.res && M.key) { M.health = d.h; paintLights(); healthLater(); }
+    else if (d.t === "wait" && d.x && d.x.sb === SANDBOX && M.key) { setWait(d.x); waitLater(); }
   };
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) { clearTitle(); if (M.key) kick(300); for (const P of M.panes) if (P.visible()) markRead(P); healthSoon(); } });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { clearTitle(); if (M.key) kick(300); for (const P of M.panes) if (P.visible()) markRead(P); healthSoon(); waitLater(); } });
   window.addEventListener("online", () => { if (M.key) kick(200); flushOut(); });
 
   function setLink(state) { if (M.link === state) return; M.link = state; for (const P of M.panes) paintState(P); paintLights(); }
@@ -450,23 +452,94 @@
       const all = badgeAll, set = badgeRids; badgeAll = false; badgeRids = new Set();
       const rows = (window.Orders && Orders.rows && Orders.rows()) || [];
       if (all || rows.some(r => set.has(String(r.order.receiptId)))) { try { (Orders.renderBody || Orders.render)(); } catch (_) {} }
+      paintSlots();
     }, 400);
   }
+  // ─── buyers waiting for an answer: marked on the Orders and Engraving lists ──
+  /* The server marks every order whose buyer wrote last in one of their inbox conversations and has no answer yet
+     (awaiting in _etsyMailOrderLink.js; a sandbox order through its real buyer). Asked for every three minutes while the
+     sorter is looked at, once for all tabs; an answer sent from this sorter clears the mark at once. */
+  const WAIT_EVERY = 3 * 60000;
+  let waitTimer = 0, waitBusy = false;
+  M.wait = get(LS.wait, null);   // { at, sb, d: { buyers: { key: { sinceMs, name } }, receipts: { receiptId: key } } }
+  function waitLater() {
+    clearTimeout(waitTimer); waitTimer = 0;
+    if (!M.key || document.hidden) return;   // a hidden page asks again when it is looked at
+    const x = get(LS.wait, null), age = x && x.sb === SANDBOX ? Date.now() - x.at : Infinity;
+    waitTimer = setTimeout(checkWait, Math.max(500, WAIT_EVERY - age));
+  }
+  async function checkWait() {
+    waitTimer = 0;
+    if (!M.key || waitBusy || document.hidden) return;
+    const shared = get(LS.wait, null);
+    if (shared && shared.sb === SANDBOX && Date.now() - shared.at < WAIT_EVERY - 5000) { setWait(shared); waitLater(); return; }
+    waitBusy = true;
+    try {
+      const d = await call("awaiting", { sandbox: SANDBOX }, { timeout: 30000 });
+      const x = { at: Date.now(), sb: SANDBOX, d: { buyers: d.buyers || {}, receipts: d.receipts || {} } };
+      put(LS.wait, x); setWait(x);
+      if (bc) try { bc.postMessage({ t: "wait", x }); } catch (_) {}
+    } catch (e) { authLost(e); }
+    finally { waitBusy = false; waitLater(); }
+  }
+  function setWait(x) {
+    const was = JSON.stringify(M.wait && M.wait.d);
+    M.wait = x;
+    if (JSON.stringify(x && x.d) !== was) { badgesChanged(null); paintTabDots(); }
+  }
+  /** The buyer of this order is waiting: when they wrote, unless this sorter has answered since. */
+  function waitingOf(rid) {
+    const x = M.wait;
+    if (!x || !M.key || x.sb !== SANDBOX || Date.now() - x.at > 20 * 60000) return null;
+    const k = x.d.receipts[rid], w = k && x.d.buyers[k];
+    if (!w) return null;
+    if (forReceipt(rid).some(s => Math.max(s.lastOutboundAtMs || 0, s.lastShopReplyAtMs || 0, (s.lastOut && (s.lastOut.sentAtMs || s.lastOut.atMs)) || 0) > w.sinceMs)) return null;
+    return w;
+  }
   function badgeState(rid) {
-    const list = forReceipt(rid).filter(s => s.status === "open");
-    if (!list.length || !M.key) return null;
+    if (!M.key) return null;
+    rid = String(rid);
+    const list = forReceipt(rid).filter(s => s.status === "open"), w = waitingOf(rid);
+    if (!list.length && !w) return null;
     const unread = list.reduce((n, s) => n + (s.unread || 0), 0);
     const bad = list.some(s => s.failed > 0 || s.manual > 0);
     const pending = list.some(s => s.pending > 0);
-    return { unread, bad, pending, n: list.length };
+    return { unread, bad, pending, n: list.length, wait: w ? w.sinceMs : 0 };
   }
+  /** The mark on a list row: a click opens the order's Customer tab. */
   function badge(rid) {
     const b = badgeState(rid); if (!b) return "";
-    if (b.unread) return `<span class="mailTag new" title="${b.unread} new ${b.unread === 1 ? "reply" : "replies"} from the customer">${ICON.mail}${b.unread}</span>`;
-    if (b.bad) return `<span class="mailTag bad" title="a message to this customer did not go">${ICON.mail}!</span>`;
-    return `<span class="mailTag" title="${b.pending ? "a message to the customer is on its way" : "a question to the customer is open"}">${ICON.mail}</span>`;
+    const tag = (cls, title, words) => `<span class="mailTag${cls}" role="button" tabindex="0" data-mail-open="${E(String(rid))}" title="${E(title)} Click to open the conversation.">${ICON.mail}${words}</span>`;
+    if (b.unread) return tag(" new", `${b.unread} new ${b.unread === 1 ? "reply" : "replies"} from the customer.`, `${b.unread} new ${b.unread === 1 ? "reply" : "replies"}`);
+    if (b.wait) return tag(" wait", `The buyer wrote ${when(b.wait)} and has no answer yet.`, "Buyer waiting");
+    if (b.bad) return tag(" bad", "A message to this customer did not go.", "Not sent");
+    return tag("", b.pending ? "A message to the customer is on its way." : "A question to the customer is open.", b.pending ? "Sending" : "Asked");
   }
   const badgeStamp = rid => JSON.stringify(badgeState(rid));
+  /** A place for the mark in a list drawn elsewhere (the Engraving list): kept up to date from here. */
+  function slot(el, rid) {
+    if (!el) return;
+    el.dataset.mailRid = String(rid);
+    const v = badge(rid);
+    if (el.dataset.v !== v) { el.dataset.v = v; el.innerHTML = v; }
+    el.hidden = !v;
+  }
+  const paintSlots = () => document.querySelectorAll(".mailSlot[data-mail-rid]").forEach(el => slot(el, el.dataset.mailRid));
+  function openFromList(rid) {
+    const r = ((window.Orders && Orders.rows && Orders.rows()) || []).find(x => String(x.order.receiptId) === rid);
+    const b = badgeState(rid);
+    if (r && window.OrderWin && OrderWin.open) OrderWin.open(r.key, { tab: "customer", pull: !!(b && b.wait && !b.unread && !b.n) });
+    else openConversation({ receiptId: rid, scope: "order" });
+  }
+  document.addEventListener("click", e => {
+    const t = e.target.closest && e.target.closest("[data-mail-open]"); if (!t) return;
+    e.preventDefault(); e.stopPropagation(); openFromList(t.dataset.mailOpen);
+  }, true);
+  document.addEventListener("keydown", e => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const t = e.target.closest && e.target.closest("[data-mail-open]"); if (!t || t !== e.target) return;
+    e.preventDefault(); e.stopPropagation(); openFromList(t.dataset.mailOpen);
+  }, true);
 
   // ─── what someone typed is kept: drafts, and sends that have not reached the server yet ──
   const drafts = get(LS.drafts, {});
@@ -1139,7 +1212,7 @@
     if (opts.pull) pullWhenReady(OW.P);
     const b = badgeState(rid);
     if (opts.tab) setTab(opts.tab, false);
-    else if (b && (b.unread || b.bad)) setTab("customer", false);
+    else if (b && (b.unread || b.bad || b.wait)) setTab("customer", false);
     else setTab(get(LS.tab, "team"), false);
     paintTabDots();
   }
@@ -1269,9 +1342,10 @@
   function paintLinePull(L) {
     const b = L.el.pull;
     const c = hcount.get(L.rid), n = c && c.info ? c.info.total : null;
-    b.hidden = !M.key || !(n > 0 || (c && c.busy && n == null));
-    const v = n == null ? `<span class="cmSpin" aria-hidden="true"></span>Counting messages…` : `Pull all messages · ${n}`;
+    b.hidden = !M.key || (n == null && !(c && c.busy));
+    const v = n == null ? `<span class="cmSpin" aria-hidden="true"></span>Counting messages…` : n ? `Pull all messages · ${n}` : "No messages with this buyer yet";
     if (b.dataset.v !== v) { b.dataset.v = v; b.innerHTML = v; }
+    b.disabled = !n;
   }
   // an engraving card that comes into view counts its buyer's messages (cards scrolled past cost nothing)
   const lineSeen = "IntersectionObserver" in window ? new IntersectionObserver(entries => {
@@ -1347,7 +1421,7 @@
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else setTimeout(boot, 0);
 
   window.CustomerMail = {
-    orderWindow, orderShown, orderClosed, setTab, lineBox, badge, badgeStamp, teamButtons, teamTranslation,
+    orderWindow, orderShown, orderClosed, setTab, lineBox, badge, badgeStamp, slot, teamButtons, teamTranslation,
     openConversation, connect, connected: () => !!M.key,
     _state: M
   };

@@ -15,6 +15,7 @@
  *    resolve, reopen, lang, link_url, simulate, translate, health,
  *    history_info { receiptId, engagementId }    → { threads: [{ threadId, count, lastAtMs }], total }
  *    history { receiptId, threadId, after }      → { messages, next }  (the buyer's whole history, a page at a time)
+ *    awaiting { sandbox }                        → { buyers, receipts }  (orders whose buyer waits for an answer)
  *    test_info, test_start, test_cancel          → { ready, customer, pending: { code, expiresAtMs } }  (the test account;
  *                                                  a question with receiptId "test" goes only to it)
  */
@@ -75,6 +76,7 @@ exports.handler = async (event) => {
       case "health":     return json(200, await link.health(body));
       case "history_info": return json(200, await link.historyInfo(body));
       case "history":    return json(200, await link.history(body));
+      case "awaiting":   return json(200, await link.awaiting(body));
       case "test_info":  return json(200, await link.testInfo());
       case "test_start": return json(200, await link.testStart(station));
       case "test_cancel": return json(200, await link.testCancel());

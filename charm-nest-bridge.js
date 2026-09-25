@@ -3192,7 +3192,7 @@ const Engrave = window.Engrave = (() => {
       if (!row) {
         row = el("div", "doneRow placementRow hoverItem");
         row.setAttribute("role","button"); row.tabIndex=0; row.dataset.open=job.key;
-        row.innerHTML=ListMedia.pair(job.row)+'<div class="engravingIdentity"><span class="queueLabel">Engraving</span><div class="engravingOrder"><b class="mono" data-order></b><span class="sku mono"></span></div><span class="purchaseLabel">Engraving</span><span class="w"></span><span class="dim" data-stage></span></div><div class="purchaseSummary" data-purchase></div>';
+        row.innerHTML=ListMedia.pair(job.row)+'<div class="engravingIdentity"><span class="queueLabel">Engraving</span><div class="engravingOrder"><b class="mono" data-order></b><span class="sku mono"></span><span class="mailSlot" hidden></span></div><span class="purchaseLabel">Engraving</span><span class="w"></span><span class="dim" data-stage></span></div><div class="purchaseSummary" data-purchase></div>';
         const open=()=>{if(isWorking(job))return;EG.focus=job.key;EG.list=false;render();};
         row.onclick=e=>{if(!e.target.closest('[data-vector][role=button],[data-listing][role=button]'))open();}; row.onkeydown=e=>{if(e.target===row && (e.key==="Enter" || e.key===" ")){e.preventDefault();open();}};
         placementRows.set(job,row);
@@ -3203,6 +3203,7 @@ const Engrave = window.Engrave = (() => {
       row.setAttribute("aria-label",`${busy ? "Preparing" : "Open"} engraving for order ${receipt} · ${sku}`);
       const write=(selector,value)=>{const node=row.querySelector(selector);if(node.textContent!==value)node.textContent=value;};
       write('[data-order]',receipt);write('.sku',sku);write('.w',(job.lines || []).join(' / '));
+      if(window.CustomerMail?.slot)CustomerMail.slot(row.querySelector('.mailSlot'),receipt);
       const purchase=purchaseMarkup(job.row);
       if(row._purchase!==purchase){row.querySelector('[data-purchase]').innerHTML=purchase;row._purchase=purchase;}
       write('[data-stage]',busy ? (job.state === "classify" ? "Reading words…" : "Preparing preview…") : "");

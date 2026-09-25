@@ -873,6 +873,77 @@ async function history(body) {
   return { threadId, messages, read: s.size, next: s.size === limit ? s.docs[s.docs.length - 1].id : null };
 }
 
+// ─── buyers waiting for an answer, marked on the sorter's lists ─────────────
+
+/* A buyer is waiting when their newest message in a conversation came after the shop's newest answer there (the inbox's
+   own marks: lastInboundAt against lastOutboundAt and lastOperatorReplyAt), within three weeks, and the conversation is
+   not archived or closed. One scan of the newest conversations serves every sorter for three minutes (kept in
+   EtsyMail_OrderLinkMeta/awaiting, so instances share it); the waiting buyers' orders come from the inbox's receipt
+   mirror. A sandbox order is a copy of a real one with the real buyer, matched through the sandbox's open orders. */
+const AWAIT_MS = 21 * DAY, AWAIT_TTL = 3 * MIN, AWAIT_SCAN = 400;
+const AWAIT_CLOSED = new Set(["archived", "sales_completed", "sales_abandoned"]);
+let _await = null, _awaitFlight = null, _sbOpen = null;
+async function awaitingScan() {
+  const since = admin.firestore.Timestamp.fromMillis(Date.now() - AWAIT_MS);
+  const q = await db.collection(COLL.threads).where("lastInboundAt", ">=", since).orderBy("lastInboundAt", "desc").limit(AWAIT_SCAN).get();
+  const buyers = {}, receipts = {};
+  for (const d of q.docs) {
+    if (!isThreadId(d.id)) continue;
+    const t = d.data(), inAt = tsMs(t.lastInboundAt);
+    if (!(inAt > Math.max(tsMs(t.lastOutboundAt), tsMs(t.lastOperatorReplyAt))) || AWAIT_CLOSED.has(t.status) || t.orderLinkTest === true) continue;
+    const key = t.buyerUserId ? String(t.buyerUserId) : "t_" + d.id;
+    const cur = buyers[key];
+    if (!cur || inAt > cur.sinceMs) buyers[key] = { sinceMs: inAt, threadId: d.id, name: cleanText(t.customerName, 60) || "" };
+    if (t.etsyOrderId) receipts[String(t.etsyOrderId)] = key;
+  }
+  const ids = Object.keys(buyers).filter(k => !k.startsWith("t_"));
+  for (let i = 0; i < ids.length; i += 30) {
+    const r = await db.collection(COLL.receipts).where("buyer_user_id", "in", ids.slice(i, i + 30)).limit(900).get();
+    for (const x of r.docs) { const b = String(x.data().buyer_user_id || ""); if (buyers[b]) receipts[x.id] = b; }
+  }
+  return { at: Date.now(), buyers, receipts };
+}
+async function awaitingData() {
+  if (_await && Date.now() - _await.at < AWAIT_TTL) return _await;
+  if (_awaitFlight) return _awaitFlight;
+  _awaitFlight = (async () => {
+    const ref = db.collection(COLL.meta).doc("awaiting");
+    const s = await ref.get().catch(() => null);
+    const d = s && s.exists ? s.data() : null;
+    if (d && Date.now() - (d.at || 0) < AWAIT_TTL) return (_await = d);
+    const fresh = await awaitingScan();
+    await ref.set(fresh).catch(e => console.warn("orderLink awaiting save:", e.message));
+    return (_await = fresh);
+  })();
+  try { return await _awaitFlight; } finally { _awaitFlight = null; }
+}
+/** The sandbox's open orders and their real buyers, from its own copy (never from Etsy). */
+async function sandboxOpenBuyers() {
+  if (_sbOpen && Date.now() - _sbOpen.at < AWAIT_TTL) return _sbOpen.map;
+  const map = {}, sb = require("./etsySandbox");
+  for (let offset = 0; offset < 3000; offset += 100) {
+    const r = await sb.handler({ httpMethod: "GET", queryStringParameters: { fn: "listOpenOrders", offset: String(offset) } });
+    const list = (r && r.statusCode === 200 && JSON.parse(r.body).results) || [];
+    for (const x of list) if (x.buyer_user_id) map[String(x.receipt_id)] = String(x.buyer_user_id);
+    if (list.length < 100) break;
+  }
+  _sbOpen = { at: Date.now(), map };
+  return map;
+}
+/** Which orders' buyers are waiting: { buyers: { key: { sinceMs, threadId, name } }, receipts: { receiptId: key } }. */
+async function awaiting(body) {
+  const d = await awaitingData();
+  let receipts = d.receipts || {};
+  if (body.sandbox === true) {
+    const m = await sandboxOpenBuyers().catch(e => { console.warn("orderLink sandbox open orders:", e.message); return {}; });
+    receipts = {};
+    for (const [rid, b] of Object.entries(m)) if (d.buyers[b]) receipts[rid] = b;
+  }
+  const buyers = {};
+  for (const b of Object.values(receipts)) if (d.buyers[b]) buyers[b] = d.buyers[b];
+  return { at: d.at, sandbox: body.sandbox === true, buyers, receipts };
+}
+
 // ─── who is asking: a sorter connected to the inbox ───────────────────────
 
 const _stations = new Map();
@@ -1639,7 +1710,7 @@ module.exports = {
   sync: withFlush(sync), order: withFlush(order), thread, ask: withFlush(ask), retry: withFlush(retry),
   cancel: withFlush(cancel), markCopied: withFlush(markCopied), markSent: withFlush(markSent), read: withFlush(read),
   setStatus: withFlush(setStatus), setLang: withFlush(setLang), linkUrl: withFlush(linkUrl),
-  simulateReply: withFlush(simulateReply), translate, health, historyInfo, history,
+  simulateReply: withFlush(simulateReply), translate, health, historyInfo, history, awaiting,
   testInfo: withFlush(testInfo), testStart: withFlush(testStart), testCancel,
   // exposed for tests
   _internal: { foldMessages, sameText, normText, summary, cleanText, cleanId, applyPatch, friendlyFailure, parkedCopy, isDelete }
