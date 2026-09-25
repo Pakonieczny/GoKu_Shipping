@@ -12,7 +12,9 @@
  *    pair_info  { code }            (inbox)      → { found, status, label, createdAtMs }
  *    pair_answer { code, approve }  (inbox)      → { ok, status }
  *    whoami, disconnect, sync, order, thread, ask, retry, cancel, copied, sent, read,
- *    resolve, reopen, lang, link_url, simulate, translate, health    (sorter)
+ *    resolve, reopen, lang, link_url, simulate, translate, health,
+ *    history_info { receiptId, engagementId }    → { threads: [{ threadId, count, lastAtMs }], total }
+ *    history { receiptId, threadId, after }      → { messages, next }  (the buyer's whole history, a page at a time)
  */
 "use strict";
 
@@ -69,6 +71,8 @@ exports.handler = async (event) => {
       case "simulate":   return json(200, await link.simulateReply(body));
       case "translate":  return json(200, await link.translate(body));
       case "health":     return json(200, await link.health(body));
+      case "history_info": return json(200, await link.historyInfo(body));
+      case "history":    return json(200, await link.history(body));
       default:           return json(400, { error: "Unknown op" });
     }
   } catch (e) {

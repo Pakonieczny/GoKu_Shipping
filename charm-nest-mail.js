@@ -367,7 +367,7 @@
       }
     }
     for (const L of M.lines.values()) if (L.node.isConnected && (all || rids.has(String(L.rid)))) paintLine(L);
-    for (const L of M.lines.values()) if (!L.node.isConnected && Date.now() - L.at > 10 * 60000) M.lines.delete(L.key);
+    for (const L of M.lines.values()) if (!L.node.isConnected && Date.now() - L.at > 10 * 60000) { M.lines.delete(L.key); if (lineSeen) lineSeen.unobserve(L.node); }
     paintTabDots();
     badgesChanged(all ? null : rids);
   }
@@ -414,14 +414,16 @@
   }
 
   /** Show one question: in the order window when its order is in the pull, otherwise in a window of its own. */
-  function openConversation(s, rowKey) {
+  function openConversation(s, rowKey, extra = {}) {
     const rows = (window.Orders && Orders.rows && Orders.rows()) || [];
     const row = rows.find(r => r.key === rowKey)
       || (s.lineId && rows.find(r => String(r.order.receiptId) === String(s.receiptId) && String(r.line.transactionId) === String(s.lineId)))
       || rows.find(r => String(r.order.receiptId) === String(s.receiptId));
-    if (row && window.OrderWin) { OrderWin.open(row.key, { tab: "customer", engagementId: s.id }); return; }
-    standalone(s);
+    if (row && window.OrderWin) { OrderWin.open(row.key, Object.assign({ tab: "customer", engagementId: s.id || null }, extra)); return; }
+    standalone(s, extra);
   }
+  /** "Pull all messages" pressed somewhere else: it runs in the pane once the conversation there has loaded. */
+  function pullWhenReady(P) { if (P.loading) P.pullOnLoad = true; else pullAll(P); }
 
   // ─── Orders tab badges ───────────────────────────────────────────────────
   let badgeTimer = 0, badgeRids = new Set(), badgeAll = false;
@@ -571,7 +573,7 @@
   function Pane(host, opts = {}) {
     const P = {
       host, opts, rid: null, ctx: {}, eng: null, engId: null, data: null, fresh: false, loading: false, err: null, seq: 0,
-      earlier: null, lang: null, trOpen: new Map(), undo: null, waitingFor: null, stick: true,
+      earlier: null, lang: null, trOpen: new Map(), undo: null, waitingFor: null, stick: true, hist: null, view: "question", hseq: 0, pullOnLoad: false,
       visible: () => host.isConnected && !host.closest("[hidden]") && !!(host.offsetWidth || host.offsetHeight) && !document.hidden && (!opts.visible || opts.visible())
     };
     host.classList.add("cm");
@@ -585,6 +587,7 @@
       </div>
       <div class="cmQs" data-cm="qs" hidden></div>
       <div class="cmNotice" data-cm="notice" hidden></div>
+      <div class="cmHist" data-cm="hist" hidden></div>
       <div class="cmThread" data-cm="thread" aria-live="polite"></div>
       <div class="cmComp" data-cm="comp">
         <div class="cmHBox" data-cm="hbox" role="dialog" aria-label="Email link" hidden></div>
@@ -594,7 +597,7 @@
         <div class="cmHint"><span class="cmLive" data-cm="live"></span><span class="cmHintT" data-cm="hint">Goes to the customer on Etsy, through the inbox</span><span class="cmTrIn">Translate mine <button type="button" data-cm="trIn" data-l="en" title="Translate what you wrote into English">EN</button><button type="button" data-cm="trIn" data-l="uk" title="Translate what you wrote into Ukrainian">УКР</button></span></div>
       </div>`;
     const $ = n => host.querySelector(`[data-cm="${n}"]`);
-    P.el = { name: $("name"), sub: $("sub"), state: $("state"), menu: $("menu"), more: host.querySelector(".cmMore"), lang: host.querySelector(".cmLang"), qs: $("qs"), notice: $("notice"), thread: $("thread"), comp: $("comp"), input: $("input"), send: $("send"), hint: $("hint"), undo: $("undo"), live: $("live"), warn: $("warn"), hbox: $("hbox") };
+    P.el = { name: $("name"), sub: $("sub"), state: $("state"), menu: $("menu"), more: host.querySelector(".cmMore"), lang: host.querySelector(".cmLang"), qs: $("qs"), notice: $("notice"), thread: $("thread"), comp: $("comp"), input: $("input"), send: $("send"), hint: $("hint"), undo: $("undo"), live: $("live"), warn: $("warn"), hbox: $("hbox"), hist: $("hist") };
     const input = P.el.input;
     const grow = () => { input.style.height = "auto"; const hh = input.scrollHeight; input.style.height = hh ? Math.min(160, hh + 2) + "px" : ""; P.el.send.disabled = !input.value.trim(); };
     input.addEventListener("input", () => { grow(); setDraft(draftKey(P), input.value); if (P.undo && input.value !== P.undo.to) { P.undo = null; paintUndo(P); } });
@@ -613,7 +616,7 @@
     const rid = String(ctx.receiptId || "");
     const same = P.rid === rid;
     P.ctx = ctx;
-    if (!same) { P.rid = rid; P.eng = null; P.engId = engagementId; P.data = null; P.fresh = false; P.err = null; P.earlier = null; P.trOpen = new Map(); P.stick = true; P.undo = null; }
+    if (!same) { P.rid = rid; P.eng = null; P.engId = engagementId; P.data = null; P.fresh = false; P.err = null; P.earlier = null; P.trOpen = new Map(); P.stick = true; P.undo = null; P.hist = null; P.view = "question"; P.hseq++; }
     else if (engagementId && engagementId !== P.engId) { P.engId = engagementId; P.eng = null; P.fresh = false; P.earlier = null; P.stick = true; }
     if (!same || engagementId || !P.eng) { input0(P); load(P); } else paintPane(P);
     healthSoon();
@@ -637,7 +640,12 @@
       if (P.eng && P.lang == null) P.lang = P.eng.lang || null;
       input0(P);
     } catch (e) { if (seq === P.seq && !authLost(e)) P.err = e.message; }
-    finally { if (seq === P.seq) { P.loading = false; paintPane(P); markRead(P); if (P.lang) translateAll(P); } }
+    finally {
+      if (seq === P.seq) {
+        P.loading = false; paintPane(P); markRead(P); if (P.lang) translateAll(P);
+        if (P.pullOnLoad) { P.pullOnLoad = false; pullAll(P); }
+      }
+    }
   }
   async function refreshEng(P, earlier) {
     if (!P.engId || !M.key) return;
@@ -683,7 +691,7 @@
     e.lang.hidden = e.more.hidden = !M.key;
     // not connected: one clear way in, and nothing else
     if (!M.key) {
-      e.qs.hidden = true; e.notice.hidden = true; e.comp.hidden = true;
+      e.qs.hidden = true; e.notice.hidden = true; e.comp.hidden = true; e.hist.hidden = true;
       e.thread.innerHTML = connectCard();
       e.thread.querySelectorAll("[data-cm-do]").forEach(b => b.onclick = () => { const a = b.dataset.cmDo; if (a === "connect") connect(); else if (a === "inbox" && M.pair) openInbox(M.pair.url); else if (a === "cancel") cancelPair(); });
       return;
@@ -710,6 +718,7 @@
       SANDBOX && s ? `<button type="button" data-cm-do="simulate">Play a customer reply</button>` : "",
       `<button type="button" data-cm-do="disconnect" class="soft">Disconnect this sorter</button>`
     ].filter(Boolean).join("");
+    paintHist(P);
     paintThread(P, s);
     paintUndo(P);
     paintLight(P.el, P.host, "cmWarn");
@@ -757,10 +766,14 @@
     }
     if (P.loading && !s) { t.innerHTML = `<div class="cmEmpty soft">Loading the conversation…</div>`; return; }
     const msgs = (P.eng && P.eng.messages) || [];
+    if (showingAll(P)) {
+      t.innerHTML = allHtml(P);
+      t.querySelectorAll("img[data-cm-img]").forEach(im => im.addEventListener("error", () => { const a = h("a", "cmPhoto", "photo"); a.href = im.dataset.href || im.src; a.target = "_blank"; a.rel = "noopener"; im.replaceWith(a); }, { once: true }));
+      if (stick) t.scrollTop = t.scrollHeight; else t.scrollTop = wasAt;
+      return;
+    }
     if (P.earlier && P.earlier.length) {
       rows.push(`<div class="cmEarlier">${P.earlier.map(r => msgHtml(P, Object.assign({}, r, { old: true }))).join("")}</div><div class="cmSep"><span>Question asked${P.eng && P.eng.startedAtMs ? " · " + E(when(P.eng.startedAtMs)) : ""}</span></div>`);
-    } else if (P.eng && P.eng.threadId && !SANDBOX && P.earlier == null) {
-      rows.push(`<div class="cmMoreBtn"><button type="button" class="lnk" data-cm-do="earlier">Show what was said before this question</button></div>`);
     }
     for (const m of msgs) rows.push(msgHtml(P, m));
     for (const r of localRows(P)) rows.push(msgHtml(P, r));
@@ -812,7 +825,7 @@
 
   /** Every text a pane shows, for translating the lot. */
   function paneTexts(P) {
-    const msgs = [].concat(P.earlier || [], (P.eng && P.eng.messages) || []);
+    const msgs = showingAll(P) ? P.hist.rows.slice(-60).concat((P.eng && P.eng.messages) || []) : [].concat(P.earlier || [], (P.eng && P.eng.messages) || []);
     return msgs.map(m => ({ id: m.id, text: plain(m.text || "") })).filter(x => x.text.trim());
   }
   async function translateAll(P) {
@@ -837,7 +850,7 @@
       if (cur === lang) { if (P.lang) P.trOpen.set(id, "__off"); else P.trOpen.delete(id); }
       else P.trOpen.set(id, lang);
       const want = P.trOpen.get(id);
-      const m = [].concat(P.earlier || [], (P.eng && P.eng.messages) || []).find(x => x.id === id);
+      const m = [].concat(P.earlier || [], (P.eng && P.eng.messages) || [], (P.hist && P.hist.rows) || []).find(x => x.id === id);
       paintThread(P, P.eng);
       if (m && want && want !== "__off" && !trCached(m.text, want)) {
         try { await translateTexts([m.text], want); } catch (err) { say("Translation: " + err.message, "bad"); P.trOpen.delete(id); }
@@ -866,6 +879,10 @@
     const act = async (op, body) => { b.disabled = true; try { const d = await call(op, body); if (d && d.id) received(d); } catch (err) { if (!authLost(err)) say(err.message, "bad"); } finally { b.disabled = false; } };
     switch (a) {
       case "reload": P.err = null; load(P); break;
+      case "pull": pullAll(P); break;
+      case "only": P.view = "question"; P.stick = true; paintHist(P); paintThread(P, P.eng); break;
+      case "showall": P.view = "all"; P.stick = true; paintHist(P); paintThread(P, P.eng); if (P.lang) translateAll(P); break;
+      case "recount": histCount(P.rid, P.engId, true); break;
       case "earlier": refreshEng(P, true); break;
       case "undo": if (P.undo) { P.el.input.value = P.undo.from; P.undo = null; P.grow(); setDraft(draftKey(P), P.el.input.value); paintUndo(P); } break;
       case "new": P.fresh = true; P.eng = null; P.earlier = null; P.stick = true; input0(P); paintPane(P); P.el.input.focus(); break;
@@ -937,6 +954,118 @@
     paintPane(P);
   }
 
+  // ─── the buyer's whole history: counted first, pulled on request ─────────
+  /* "Pull all messages" reads every message this buyer and the shop ever wrote, from the inbox's own copy of each of
+     their conversations (never from Etsy). The count shows before anything is pulled; pulling shows how far along it is;
+     afterwards the pane can switch between the whole history and just this question. Counts are shared by every pane
+     and engraving card of the same order for five minutes. */
+  const HCOUNT_TTL = 5 * 60000;
+  const hcount = new Map();   // receipt → { at, info, busy, err }
+  const showingAll = P => P.view === "all" && !!P.hist && P.hist.done && P.hist.rid === P.rid && !P.fresh;
+  const histWanted = P => !!M.key && !SANDBOX && !!P.rid && !P.fresh && !!((P.eng && P.eng.threadId) || (P.data && P.data.conversation));
+  async function histCount(rid, engId, force) {
+    rid = String(rid || "");
+    const c = hcount.get(rid);
+    if (!rid || !M.key || SANDBOX || (c && (c.busy || (!force && Date.now() - c.at < HCOUNT_TTL)))) return c || null;
+    const cur = { at: Date.now(), info: (c && c.info) || null, busy: true, err: null };
+    hcount.set(rid, cur);
+    if (hcount.size > 100) hcount.delete(hcount.keys().next().value);
+    paintHistFor(rid);
+    try { cur.info = await call("history_info", { receiptId: rid, engagementId: engId || null, sandbox: SANDBOX }, { timeout: 20000 }); cur.at = Date.now(); }
+    catch (e) { if (!authLost(e)) cur.err = e.message; cur.at = Date.now() - HCOUNT_TTL + 30000; }
+    finally { cur.busy = false; paintHistFor(rid); }
+    return cur;
+  }
+  function paintHistFor(rid) {
+    for (const P of M.panes) if (String(P.rid) === rid && P.host.isConnected) paintHist(P);
+    for (const L of M.lines.values()) if (L.rid === rid && L.node.isConnected) paintLinePull(L);
+  }
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  function paintHist(P) {
+    const el = P.el.hist;
+    if (!histWanted(P)) { el.hidden = true; return; }
+    const c = hcount.get(String(P.rid));
+    if (!c || (!c.busy && Date.now() - c.at > HCOUNT_TTL)) setTimeout(() => histCount(P.rid, P.engId), 0);
+    const H = P.hist && P.hist.rid === P.rid ? P.hist : null;
+    let v;
+    if (H && H.busy) {
+      const got = Math.min(H.got, H.total || H.got), pct = H.total ? Math.round(got / H.total * 100) : 0;
+      v = `<span class="cmHistT"><span class="cmSpin" aria-hidden="true"></span>Pulling all messages… ${got} of ${H.total}</span><span class="cmBar" role="progressbar" aria-label="Pulling all messages" aria-valuemin="0" aria-valuemax="${H.total}" aria-valuenow="${got}"><i style="width:${pct}%"></i></span>`;
+    } else if (H && H.err) v = `<span class="cmHistT bad">Could not pull all the messages: ${E(H.err)}</span><button type="button" class="lnk" data-cm-do="pull">Try again</button>`;
+    else if (H && H.done) v = showingAll(P)
+      ? `<span class="cmHistT">All <b>${plural(H.rows.length, "message", "messages")}</b> with this buyer</span><button type="button" class="lnk" data-cm-do="only">Only this question</button>`
+      : `<span class="cmHistT">Only this question</span><button type="button" class="lnk" data-cm-do="showall">Show all ${H.rows.length}</button>`;
+    else if (!c || (c.busy && !c.info)) v = `<span class="cmHistT soft"><span class="cmSpin" aria-hidden="true"></span>Counting this buyer's messages…</span>`;
+    else if (!c.info) v = `<span class="cmHistT soft">Could not count this buyer's messages.</span><button type="button" class="lnk" data-cm-do="recount">Try again</button>`;
+    else if (!c.info.total) { el.hidden = true; return; }
+    else v = `<span class="cmHistT">This buyer's full history: <b>${plural(c.info.total, "message", "messages")}</b>${c.info.threads.length > 1 ? ` in ${c.info.threads.length} conversations` : ""}</span><button type="button" class="cmPull" data-cm-do="pull">Pull all messages</button>`;
+    if (el.dataset.v !== v) { el.dataset.v = v; el.innerHTML = v; }
+    el.hidden = false;
+  }
+  /** Every message of every conversation of this buyer, a page at a time, then the whole history on screen. */
+  async function pullAll(P) {
+    if (!histWanted(P) || (P.hist && P.hist.busy && P.hist.rid === P.rid)) return;
+    const rid = String(P.rid), seq = ++P.hseq;
+    let c = hcount.get(rid);
+    P.hist = { rid, rows: [], got: 0, total: (c && c.info && c.info.total) || 0, busy: true, err: null, done: false };
+    paintHist(P);
+    try {
+      if (!c || !c.info || Date.now() - c.at > 60000) c = await histCount(rid, P.engId, true);
+      if (seq !== P.hseq) return;
+      if (!c || !c.info) throw new Error((c && c.err) || "the count did not come back");
+      P.hist.total = c.info.total;
+      const threads = c.info.threads.slice().sort((a, b) => a.lastAtMs - b.lastAtMs);
+      for (const t of threads) {
+        let after = null;
+        do {
+          const r = await call("history", { receiptId: rid, threadId: t.threadId, engagementId: P.engId || null, after, limit: 200 }, { timeout: 25000 });
+          if (seq !== P.hseq) return;
+          P.hist.rows.push(...(r.messages || []));
+          P.hist.got += r.read || (r.messages || []).length;
+          after = r.next || null;
+          paintHist(P);
+        } while (after);
+      }
+      P.hist.busy = false; P.hist.done = true; P.view = "all"; P.stick = true;
+    } catch (e) {
+      if (seq !== P.hseq) return;
+      if (authLost(e)) return;
+      P.hist.busy = false; P.hist.err = e.message;
+    }
+    paintHist(P); paintThread(P, P.eng);
+    if (showingAll(P) && P.lang) translateAll(P);
+  }
+  const dayOf = ms => ms ? new Date(ms).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }) : "";
+  /** The whole history: one block per conversation, oldest first, this question's messages in theirs. */
+  function allHtml(P) {
+    const eng = P.eng, q = (eng && eng.threadId) || (P.data && P.data.conversation && P.data.conversation.threadId) || "_";
+    const groups = new Map();
+    const add = (k, r) => { if (!groups.has(k)) groups.set(k, new Map()); groups.get(k).set(r.id, r); };
+    for (const r of P.hist.rows) add(r.threadId || q, r);
+    const ours = [];
+    for (const m of (eng && eng.messages) || []) { if (m.side === "us") ours.push(m); else add(q, m); }
+    // a sorter message that reached Etsy shows once: as ours, with its state, not again as the inbox's copy
+    for (const m of ours) if (m.msgId) for (const g of groups.values()) g.delete(m.msgId);
+    for (const m of ours.concat(localRows(P))) add(q, m);
+    const info = (hcount.get(String(P.rid)) || {}).info;
+    const list = [...groups.entries()].map(([k, g]) => ({ k, rows: [...g.values()].sort((a, b) => a.atMs - b.atMs) }))
+      .filter(g => g.rows.length).sort((a, b) => a.rows[0].atMs - b.rows[0].atMs);
+    const start = eng ? (eng.startedAtMs || eng.createdAtMs || 0) : 0;
+    const out = [];
+    for (const g of list) {
+      if (list.length > 1) {
+        const t = info && info.threads.find(x => x.threadId === g.k);
+        out.push(`<div class="cmSep conv"><span>${g.k === q ? "This conversation" : "Another conversation"}${t && t.orderId ? " · order " + E(t.orderId) : ""} · since ${E(dayOf(g.rows[0].atMs))}</span></div>`);
+      }
+      let marked = !start || g.k !== q;
+      for (const r of g.rows) {
+        if (!marked && r.atMs >= start - 120000) { out.push(`<div class="cmSep"><span>Question asked · ${E(when(start))}</span></div>`); marked = true; }
+        out.push(msgHtml(P, Object.assign({}, r, { old: g.k !== q || (start && r.atMs < start - 120000) })));
+      }
+    }
+    return out.join("") || `<div class="cmEmpty soft">No messages with this buyer in the inbox yet.</div>`;
+  }
+
   // ─── the order window: a Customer tab beside the team's chat ────────────
   const OW = { dlg: null, P: null, tab: get(LS.tab, "team"), rowKey: null };
   function orderWindow(dlg) {
@@ -983,6 +1112,7 @@
     };
     OW.rowKey = row.key;
     show(OW.P, ctx, { engagementId: opts.engagementId || null });
+    if (opts.pull) pullWhenReady(OW.P);
     const b = badgeState(rid);
     if (opts.tab) setTab(opts.tab, false);
     else if (b && (b.unread || b.bad)) setTab("customer", false);
@@ -993,7 +1123,7 @@
 
   // ─── a window of its own, for an order that is no longer in the pull ────
   let SA = null;
-  function standalone(s) {
+  function standalone(s, extra = {}) {
     if (!SA) {
       const d = h("dialog", "owin cmDlg"); d.setAttribute("aria-label", "Customer conversation");
       d.innerHTML = `<div class="owBox"><div class="owHead"><h3>Customer</h3><span class="spacer"></span><button type="button" class="btn ghost sm" data-x>✕ Close</button></div><div class="cmSolo"></div></div>`;
@@ -1003,7 +1133,8 @@
     }
     SA.d.querySelector("h3").textContent = "Order " + s.receiptId;
     if (!SA.d.open) { try { SA.d.showModal(); } catch (_) { SA.d.setAttribute("open", ""); } }
-    show(SA.P, { receiptId: s.receiptId, scope: s.scope, lineId: s.lineId, lineLabel: s.lineLabel || "" }, { engagementId: s.id });
+    show(SA.P, { receiptId: s.receiptId, scope: s.scope, lineId: s.lineId, lineLabel: s.lineLabel || "" }, { engagementId: s.id || null });
+    if (extra.pull) pullWhenReady(SA.P);
   }
 
   // ─── the engraving card's customer box ──────────────────────────────────
@@ -1018,12 +1149,12 @@
       node.innerHTML = `<div class="cmLH"><span class="cmMark">${ICON.mail}</span><b>Customer</b><span class="cmLS" data-l="sub"></span><span class="grow"></span><button type="button" class="lnk" data-l="open">Conversation ${ICON.out}</button></div>
         <div class="cmLast" data-l="last" hidden></div>
         <div class="cmLine" data-l="comp"><textarea rows="1" data-l="input" aria-label="Question to the customer"></textarea><button type="button" class="cmSend" data-l="send" title="Send to the customer (Enter)" aria-label="Send to the customer" disabled>${ICON.send}</button></div>
-        <div class="cmLFoot" data-l="foot" hidden><span class="cmLive" data-l="live" hidden></span><span class="cmLWarn" data-l="warn" hidden></span></div>
+        <div class="cmLFoot" data-l="foot" hidden><span class="cmLive" data-l="live" hidden></span><span class="cmLWarn" data-l="warn" hidden></span><button type="button" class="lnk cmLPull" data-l="pull" data-l-do="pull" title="Every message with this buyer, from the inbox" hidden></button></div>
         <div class="cmHBox" data-l="hbox" role="dialog" aria-label="Email link" hidden></div>
         <div class="cmLNote" data-l="note" hidden></div>`;
       L = { key, node, row, job, at: Date.now() };
       const q = n => node.querySelector(`[data-l="${n}"]`);
-      L.el = { sub: q("sub"), open: q("open"), last: q("last"), comp: q("comp"), input: q("input"), send: q("send"), note: q("note"), live: q("live"), warn: q("warn"), hbox: q("hbox"), foot: q("foot") };
+      L.el = { sub: q("sub"), open: q("open"), last: q("last"), comp: q("comp"), input: q("input"), send: q("send"), note: q("note"), live: q("live"), warn: q("warn"), hbox: q("hbox"), foot: q("foot"), pull: q("pull") };
       const input = L.el.input;
       const grow = () => { input.style.height = "auto"; const hh = input.scrollHeight; input.style.height = hh ? Math.min(120, hh + 2) + "px" : ""; L.el.send.disabled = !input.value.trim(); };
       L.grow = grow;
@@ -1040,9 +1171,12 @@
         if (c.dataset.lDo === "connect") connect();
         else if (c.dataset.lDo === "inbox" && M.pair) openInbox(M.pair.url);
         else if (c.dataset.lDo === "tr") lineTranslate(L, c.dataset.lang);
+        else if (c.dataset.lDo === "pull") { const s = lineEng(L); openConversation(s || { receiptId: L.rid, scope: "engraving", lineId: lineIdOf(L.row) }, L.row.key, { pull: true }); }
       });
       M.lines.set(key, L);
       input.value = draftOf(lineDraftKey(L)); grow();
+      node.dataset.key = key;
+      if (lineSeen) lineSeen.observe(node);
     }
     // a card coming on screen checks the line if a check is due (once, however many cards are drawn)
     if (!healthSoonQueued) { healthSoonQueued = true; setTimeout(() => { healthSoonQueued = false; healthSoon(); }, 0); }
@@ -1104,7 +1238,25 @@
     e.note.hidden = !note; e.note.innerHTML = note;
     e.input.placeholder = s && s.status === "open" ? "Reply…" : suggestion(L);
     paintLight(e, L.node, "cmLWarn");
+    if (!lineSeen) histCount(L.rid, s && s.id);
+    paintLinePull(L);
   }
+  /** The engraving card's way into the whole history: the count once it is known, then one press to pull it all. */
+  function paintLinePull(L) {
+    const b = L.el.pull;
+    const c = hcount.get(L.rid), n = c && c.info ? c.info.total : null;
+    b.hidden = !M.key || SANDBOX || !(n > 0 || (c && c.busy && n == null));
+    const v = n == null ? `<span class="cmSpin" aria-hidden="true"></span>Counting messages…` : `Pull all messages · ${n}`;
+    if (b.dataset.v !== v) { b.dataset.v = v; b.innerHTML = v; }
+  }
+  // an engraving card that comes into view counts its buyer's messages (cards scrolled past cost nothing)
+  const lineSeen = "IntersectionObserver" in window ? new IntersectionObserver(entries => {
+    for (const en of entries) {
+      if (!en.isIntersecting) continue;
+      const L = M.lines.get(en.target.dataset.key);
+      if (L && M.key && !SANDBOX) histCount(L.rid, (lineEng(L) || {}).id);
+    }
+  }) : null;
   async function lineTranslate(L, lang) {
     L.tr = L.tr === lang ? null : lang;
     paintLine(L);

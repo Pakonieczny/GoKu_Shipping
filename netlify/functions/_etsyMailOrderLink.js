@@ -768,11 +768,81 @@ async function conversation(e, { earlier = false } = {}) {
     rows.push({
       id: "out_" + x.id, itemId: x.id, side: "us", who: x.by || "Sorter", atMs: x.atMs || 0, text: x.text, images: [], cards: [],
       status: x.status, error: x.error || null, note: x.note || null, unverified: !!x.unverified, delivered: !!(x.deliveredAtMs || x.msgId),
-      sentAtMs: x.sentAtMs || 0, waitReason: x.waitReason || null, copied: !!x.copiedAtMs, manualSent: !!x.manualSent
+      sentAtMs: x.sentAtMs || 0, waitReason: x.waitReason || null, copied: !!x.copiedAtMs, manualSent: !!x.manualSent,
+      msgId: x.msgId || null
     });
   }
   rows.sort((a, b) => a.atMs - b.atMs);
   return { messages: rows, earlier: before };
+}
+
+// ─── the buyer's whole history, from the inbox's own copy of it ─────────────
+
+/* "Pull all messages": everything this buyer and the shop ever wrote, in every conversation the inbox holds for them.
+   It is read only from the inbox's stored messages (EtsyMail_Threads/{id}/messages), never from Etsy. First the count
+   (cheap aggregation queries), then pages of up to 200 messages, so the sorter can show how far along it is. */
+const _histThreads = new Map();
+async function historyThreads(receiptId, engagementId) {
+  const key = receiptId + "|" + (engagementId || "");
+  const hit = _histThreads.get(key);
+  if (hit && Date.now() - hit.at < 2 * MIN) return hit.list;
+  const found = new Map();
+  const take = docs => { for (const d of docs) if (d.exists !== false && isThreadId(d.id)) found.set(d.id, Object.assign({ id: d.id }, d.data())); };
+  let buyer = null;
+  const want = cleanId(engagementId);
+  if (want) {
+    const s = await engRef(want).get();
+    const e = s.exists ? s.data() : null;
+    if (e && String(e.receiptId) === receiptId && !e.sandbox) {
+      buyer = (e.customer && e.customer.buyerUserId) || null;
+      if (isThreadId(e.threadId)) take([await db.collection(COLL.threads).doc(e.threadId).get()]);
+    }
+  }
+  take((await db.collection(COLL.threads).where("etsyOrderId", "==", receiptId).limit(10).get()).docs);
+  for (const t of found.values()) buyer = buyer || t.buyerUserId || null;
+  if (!buyer) buyer = await buyerOf(receiptId);
+  if (buyer) take((await db.collection(COLL.threads).where("buyerUserId", "==", String(buyer)).limit(25).get()).docs);
+  const list = [...found.values()];
+  _histThreads.set(key, { at: Date.now(), list });
+  if (_histThreads.size > 200) _histThreads.delete(_histThreads.keys().next().value);
+  return list;
+}
+const threadAt = t => Math.max(tsMs(t.lastInboundAt), tsMs(t.lastOutboundAt), tsMs(t.lastOperatorReplyAt), tsMs(t.updatedAt));
+/** How many messages the buyer's history holds, per conversation, before anything is pulled. */
+async function historyInfo(body) {
+  const receiptId = cleanId(body.receiptId);
+  if (!receiptId) throw httpError(400, "Which order?");
+  if (body.sandbox === true) return { receiptId, sandbox: true, total: 0, threads: [] };
+  const list = await historyThreads(receiptId, body.engagementId);
+  const msgs = t => db.collection(COLL.threads).doc(t.id).collection("messages");
+  const [counts, ghosts] = await Promise.all([
+    Promise.all(list.map(t => msgs(t).count().get().then(s => s.data().count).catch(() => null))),
+    // the inbox keeps one "just sent" stand-in per conversation (optim_draft_<id>); it is not a message of its own
+    list.length ? db.getAll(...list.map(t => msgs(t).doc("optim_draft_" + t.id))).catch(() => []) : []
+  ]);
+  const threads = list.map((t, i) => ({
+    threadId: t.id, count: counts[i] == null ? null : Math.max(0, counts[i] - (ghosts[i] && ghosts[i].exists ? 1 : 0)),
+    lastAtMs: threadAt(t), orderId: t.etsyOrderId || null, customer: customerFrom(t, null)
+  })).sort((a, b) => b.lastAtMs - a.lastAtMs);
+  return { receiptId, threads, total: threads.reduce((n, t) => n + (t.count || 0), 0), exact: threads.every(t => t.count != null) };
+}
+/** One page of one of the buyer's conversations, oldest first. */
+async function history(body) {
+  const receiptId = cleanId(body.receiptId), threadId = String(body.threadId || "");
+  if (!receiptId || !isThreadId(threadId)) throw httpError(400, "Which conversation?");
+  const list = await historyThreads(receiptId, body.engagementId);
+  if (!list.some(t => t.id === threadId)) throw httpError(404, "That conversation is not this buyer's");
+  const limit = Math.min(200, Math.max(20, Number(body.limit) || 150));
+  const col = db.collection(COLL.threads).doc(threadId).collection("messages");
+  let q = col.orderBy("timestamp").limit(limit);
+  const after = cleanId(body.after);
+  if (after) { const a = await col.doc(after).get(); if (a.exists) q = q.startAfter(a); }
+  const s = await q.get();
+  const messages = s.docs.map(messageFromDoc).filter(m => !m.optimistic).map(m => ({
+    id: m.id, threadId, side: m.direction === "inbound" ? "customer" : "shop", who: m.senderName || "", atMs: m.tsMs,
+    text: m.text, images: imageList(m.raw), cards: cardList(m.raw)
+  }));
+  return { threadId, messages, read: s.size, next: s.size === limit ? s.docs[s.docs.length - 1].id : null };
 }
 
 // ─── who is asking: a sorter connected to the inbox ───────────────────────
@@ -1421,7 +1491,7 @@ module.exports = {
   sync: withFlush(sync), order: withFlush(order), thread, ask: withFlush(ask), retry: withFlush(retry),
   cancel: withFlush(cancel), markCopied: withFlush(markCopied), markSent: withFlush(markSent), read: withFlush(read),
   setStatus: withFlush(setStatus), setLang: withFlush(setLang), linkUrl: withFlush(linkUrl),
-  simulateReply: withFlush(simulateReply), translate, health,
+  simulateReply: withFlush(simulateReply), translate, health, historyInfo, history,
   // exposed for tests
   _internal: { foldMessages, sameText, normText, summary, cleanText, cleanId, applyPatch, friendlyFailure, parkedCopy, isDelete }
 };
