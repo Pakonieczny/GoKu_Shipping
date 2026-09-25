@@ -1059,7 +1059,7 @@ const Orders = window.Orders = (() => {
       const attn = r.problems.length || ["held", "unmatched", "oversize"].includes(r.state);
       const why = attn ? (r.problems.map(x => Review.problemText(x)).join(" · ") || r.reason || "") : r.state === "waiting" ? (r.reason || "") : "";
       const gateBtn = r.state === "waiting" && r.wait ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
-      const mail = window.CustomerMail ? CustomerMail.badgeStamp(r.order.receiptId) : "", team = TeamMail.stamp(r);
+      const mail = window.CustomerMail ? CustomerMail.badgeStamp(r.order.receiptId) : "", team = window.TeamMail ? TeamMail.stamp(r) : "";
       const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,r.hold,r.wait,why,where,due,date,mail,team]);
       const cached=orderNodes.get(r.key);
       if(cached?.stamp===stamp){orderNodes.delete(r.key);orderNodes.set(r.key,cached);place(cached.node);ListMedia.mount(cached.node,r);continue;}
@@ -3204,7 +3204,7 @@ const Engrave = window.Engrave = (() => {
       const write=(selector,value)=>{const node=row.querySelector(selector);if(node.textContent!==value)node.textContent=value;};
       write('[data-order]',receipt);write('.sku',sku);write('.w',(job.lines || []).join(' / '));
       if(window.CustomerMail?.slot)CustomerMail.slot(row.querySelector('.mailSlot'),receipt);
-      TeamMail.slot(row.querySelector('.teamSlot'),job.row);
+      window.TeamMail?.slot(row.querySelector('.teamSlot'),job.row);
       const purchase=purchaseMarkup(job.row);
       if(row._purchase!==purchase){row.querySelector('[data-purchase]').innerHTML=purchase;row._purchase=purchase;}
       write('[data-stage]',busy ? (job.state === "classify" ? "Reading words…" : "Preparing preview…") : "");
@@ -3413,7 +3413,7 @@ const Engrave = window.Engrave = (() => {
     const conf = job.source ? `<span class="conf ${pct >= 80 ? "" : pct >= 60 ? "mid" : "low"}" title="how sure Claude is that these are the words to cut, read from ${esc(SOURCE_LABEL[job.source] || job.source)}${job.quote ? ` — “${esc(job.quote)}”` : ""}">${pct}% sure</span>` : "";
     const row2 = (t, v) => v && v !== "—" ? `<dt>${t}</dt><dd>${esc(v)}</dd>` : "";
     // what the other stations wrote about this order: the last two lines, and the way to the whole thread
-    const said = (sp.messages || []).filter(m => !TeamMail.auto(m) && m.text && m.text !== "Image attachment").slice(-2);
+    const said = (sp.messages || []).filter(m => !(window.TeamMail && TeamMail.auto(m)) && m.text && m.text !== "Image attachment").slice(-2);
     const teamRows = said.length ? `<dt>Team messages</dt><dd>${said.map(m => `<span class="pvTm"><b>${esc(m.senderName || "Staff")}</b> ${esc(m.text)}</span>`).join("")}<button type="button" class="pvAll" data-team-open="${esc(job.row.key)}">Open the team's thread</button></dd>` : "";
     const wordsJob = job.state !== "review";
     const requests = job.requests || {};
