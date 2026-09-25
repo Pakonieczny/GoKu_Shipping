@@ -777,7 +777,7 @@
     const sb = sbOf(P.rid), test = P.rid === TEST, away = P === OW.P && !!OW.back;
     e.back.hidden = !away; e.mark.hidden = away;
     // the order window already names its order; a window of its own, or a visit, says which
-    e.sub.textContent = [test ? "your test account" : P.rid && (P !== OW.P || away) ? "order " + P.rid : "", cust.username && cust.name ? "@" + cust.username : "", sb ? "sandbox" : ""].filter(Boolean).join(" · ");
+    e.sub.textContent = [test ? "your test account" : P.rid && !P.opts.card && (P !== OW.P || away) ? "order " + P.rid : "", cust.username && cust.name ? "@" + cust.username : "", sb ? "sandbox" : ""].filter(Boolean).join(" · ");
     e.sub.hidden = !e.sub.textContent;
     host0(P);
     e.lang.hidden = e.more.hidden = !M.key;
@@ -799,7 +799,7 @@
     const notice = noticeFor(P, s, conv);
     e.notice.hidden = !notice; e.notice.innerHTML = notice || "";
     e.hint.textContent = sb ? "Sandbox: stays in the sorter" : test ? ((s && s.threadId) || conv ? "Test: only to your own Etsy account" : "No test account yet") : s && s.status === "resolved" ? "Sending reopens this question" : (s && s.link === "waiting") || (!s && P.data && !conv) ? "No Etsy conversation yet: you send it by hand" : "";
-    e.input.placeholder = P.fresh || !s ? `Ask ${firstName(name) || "the customer"} something…` : `Write to ${firstName(name) || "the customer"}…`;
+    e.input.placeholder = P.fresh || !s ? `Ask ${firstName(name) || "the customer"} ${P.opts.card ? "about the engraving" : "something"}…` : `Write to ${firstName(name) || "the customer"}…`;
     // the menu
     e.menu.innerHTML = [
       s && s.threadId && !sb ? `<a href="${E(INBOX + "#thread=" + encodeURIComponent(s.threadId))}" target="cn-mail-inbox" rel="noopener">Open in the inbox ${ICON.out}</a>` : "",
@@ -1380,6 +1380,64 @@
     paintLine(L);
   }
 
+  // ─── the engraving card's messages: the whole conversation beside the work ──
+  /* The engraving card gives the buyer's messages a full column: the same pane as the order window, pointed at this
+     line's engraving question, with the count, Pull all messages and translation. The pane follows its placement
+     through every rebuild of the card (what was typed, where it was scrolled and the focus stay); the six most recent
+     are kept, older ones let go. */
+  const cardPanes = new Map();   // job key → { key, host, P, ck, shownAt, scroll }
+  let cardBlur = null;
+  function cardPane(job) {
+    if (!job || !job.row) return null;
+    const row = job.row, key = String(job.key);
+    let C = cardPanes.get(key);
+    if (!C) {
+      const host = h("div", "cmEng");
+      C = { key, host, P: Pane(host, { card: true }), ck: "", shownAt: 0, scroll: 0 };
+      const input = C.P.el.input, thread = C.P.el.thread;
+      // a blur with nowhere to go is a rebuild taking the pane away, not the person leaving it
+      input.addEventListener("blur", e => { cardBlur = e.relatedTarget ? null : { key, at: Date.now(), start: input.selectionStart, end: input.selectionEnd }; });
+      thread.addEventListener("scroll", () => { if (host.isConnected && thread.clientHeight) C.scroll = thread.scrollTop; }, { passive: true });
+      cardPanes.set(key, C);
+      for (const [k, x] of cardPanes) { if (cardPanes.size <= 6) break; if (!x.host.isConnected && x !== C) { M.panes.delete(x.P); cardPanes.delete(k); } }
+    }
+    const rid = String(row.order.receiptId), lid = lineIdOf(row);
+    const sibs = ((window.Orders && Orders.rows && Orders.rows()) || []).filter(r => String(r.order.receiptId) === rid);
+    const at = sibs.findIndex(r => r.key === row.key);
+    const ctx = { receiptId: rid, scope: "engraving", lineId: lid, buyerName: row.order.buyerName || row.order.name || "",
+      lineLabel: (row.spec && row.spec.designSku || row.line.sku || "") + (sibs.length > 1 ? ` · line ${at + 1} of ${sibs.length}` : "") };
+    const ck = rid + "|" + (lid || "");
+    // the card is drawn again often: the question is read again only when it is another line, or two minutes on
+    if (ck !== C.ck || Date.now() - C.shownAt > 2 * 60000) { C.ck = ck; C.shownAt = Date.now(); show(C.P, ctx); }
+    else C.P.ctx = ctx;
+    const b = cardBlur && cardBlur.key === key && Date.now() - cardBlur.at < 400 ? cardBlur : null;
+    setTimeout(() => {
+      if (!C.host.isConnected) return;
+      paintPane(C.P);
+      const t = C.P.el.thread;
+      t.scrollTop = C.P.stick ? t.scrollHeight : C.scroll;
+      if (b) {
+        cardBlur = null;
+        const a = document.activeElement, i = C.P.el.input;
+        if (a !== i && (!a || a === document.body)) { i.focus({ preventScroll: true }); try { i.setSelectionRange(b.start, b.end); } catch (_) {} }
+      }
+    }, 0);
+    healthSoon();
+    return C.host;
+  }
+  /** A question from the card ("Ask"): into this line's message box, ready to send or change. */
+  function cardAsk(job, text) {
+    const C = job && cardPanes.get(String(job.key));
+    text = String(text || "").trim();
+    if (!C || !text) return;
+    if (!M.key) { connect(); return; }
+    const i = C.P.el.input, cur = i.value.trim();
+    if (cur.includes(text)) { i.focus(); return; }
+    i.value = cur ? cur + "\n" + text : text;
+    C.P.grow(); setDraft(draftKey(C.P), i.value);
+    i.focus(); i.setSelectionRange(i.value.length, i.value.length);
+  }
+
   // ─── the team's chat: any message, translated with a click ──────────────
   /* Internal messages get the same two buttons. They are drawn by the order window; the translations live here. */
   const teamTr = new Map();   // message text → language shown
@@ -1421,7 +1479,7 @@
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else setTimeout(boot, 0);
 
   window.CustomerMail = {
-    orderWindow, orderShown, orderClosed, setTab, lineBox, badge, badgeStamp, slot, teamButtons, teamTranslation,
+    orderWindow, orderShown, orderClosed, setTab, lineBox, cardPane, cardAsk, badge, badgeStamp, slot, teamButtons, teamTranslation,
     openConversation, connect, connected: () => !!M.key,
     _state: M
   };

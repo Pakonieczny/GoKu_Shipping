@@ -3413,32 +3413,41 @@ const Engrave = window.Engrave = (() => {
     const row2 = (t, v) => v && v !== "—" ? `<dt>${t}</dt><dd>${esc(v)}</dd>` : "";
     const wordsJob = job.state !== "review";
     const requests = job.requests || {};
-    const reviewNotes = (job.questions || []).filter(q => !/not engravable|cannot (?:be |take )engrav|design.*engrav/i.test(q));
-    if (requests.side && !["back", "unspecified"].includes(requests.side)) reviewNotes.push(`Requested side: ${requests.side}`);
-    if (requests.font) reviewNotes.push(`Requested font: ${requests.font}`);
-    if (requests.handwriting) reviewNotes.push("Customer requested handwriting");
-    if (requests.image) reviewNotes.push("Customer requested an image");
+    // what to check with the buyer: Claude's questions from reading the order (each one a click away from the message
+    // box) and what the buyer asked for that the words alone do not carry
+    const asks = [...new Set((job.questions || []).filter(q => q && !/not engravable|cannot (?:be |take )engrav|design.*engrav/i.test(q)))];
+    const wants = [];
+    if (requests.side && !["back", "unspecified"].includes(requests.side)) wants.push(`Requested side: ${requests.side}`);
+    if (requests.font) wants.push(`Requested font: ${requests.font}`);
+    if (requests.handwriting) wants.push("Requested handwriting");
+    if (requests.image) wants.push("Requested an image");
+    const fromOrder = `${row2("Personalization", (sp.personalization || []).join(" / "))}${row2("Buyer's note", sp.buyerMessage)}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}`;
     card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided">${decided + 1} of ${decided + remaining} · ${decided} done</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
-        <div class="pvMain"><div class="backHost"></div>
+        <div class="pvMain"><h4 class="pvH">Back · engraving</h4><div class="backHost"></div>
           <div class="ctl">${f && !wordsJob ? `<button class="btn sage sm" data-a="approve" title="this placement is right — write the back file">${job.editingBack ? "Save changes" : "Approve"} <b class="k">A</b></button><button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${f.capMm.toFixed(2)} mm</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span>Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="quarterTurns" role="group" aria-label="Rotate text"><button class="btn ghost sm" data-a="turnLeft" title="Rotate text 90° counterclockwise">↶ +90°</button><button class="btn ghost sm" data-a="turnRight" title="Rotate text 90° clockwise">↷ −90°</button></span><label class="angle" title="the angle of the text, in degrees — type one, or drag the handle above the text"><input type="number" data-a="angle" min="-359" max="359" step="1" value="${Math.round(f.angle || 0)}">°</label>` : ""}
             <span class="rest"><button class="btn ghost sm" data-a="skip" title="cut this charm plain — nothing engraved on its back">No engraving <b class="k">S</b></button></span></div>
 </div>
         <div class="pvSide">
+          <section class="pvSec pvRef"><h4 class="pvH">Front · reference</h4><div class="frontHost"></div></section>
           <div class="pvWords"><span class="lbl">Words on the back</span><textarea data-f="words" rows="${Math.max(1, Math.min(4, (job.lines || []).length || 1))}" title="Line breaks are preserved. The preview updates after typing.">${esc((job.lineInput || job.lines || []).join("\n"))}</textarea>
             <div class="wordsActs"><button class="btn gold xs" data-a="usewords" title="${wordsJob ? "settle the words and draw the placement" : "re-fit the placement with these words"}">${wordsJob ? "Engrave these words" : "Use these words"}</button>${wordsJob ? `<button class="btn ghost xs" data-a="skip" title="cut this charm plain — nothing engraved on its back">No engraving</button>` : ""}</div>
-            ${wordsJob || !f ? `<div class="why">${esc(job.reason || waitingReason(job))}${(job.questions || []).length ? ` — ${esc(job.questions.join(" · "))}` : ""}</div>` : ""}</div>
-          ${!wordsJob && reviewNotes.length ? `<div class="reviewNotes">${esc([...new Set(reviewNotes)].join(" · "))}</div>` : ""}
-          ${job.view?.detail?.filledArtwork ? `<div class="why">Filled artwork: inspect the back outline and cut-outs before approving.</div>` : ""}<div class="frontHost"></div>
-          <dl class="meta">${row2("Customer", (sp.personalization || []).join(" / "))}${row2("Buyer msg", sp.buyerMessage)}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}</dl>
-        </div></div>`;
+            ${wordsJob || !f ? `<div class="why">${esc(job.reason || waitingReason(job))}</div>` : ""}</div>
+          ${job.view?.detail?.filledArtwork ? `<div class="why">Filled artwork: inspect the back outline and cut-outs before approving.</div>` : ""}
+          ${fromOrder ? `<section class="pvSec pvOrder"><h4 class="pvH">From the order</h4><dl class="meta">${fromOrder}</dl></section>` : ""}
+          ${asks.length || wants.length ? `<section class="pvSec pvCheck"><h4 class="pvH">To check with the buyer</h4><ul>${asks.map(q => `<li><span>${esc(q)}</span><button type="button" class="pvAsk" data-ask="${esc(q)}" title="put this question in the message to the buyer">Ask</button></li>`).join("")}${wants.map(w => `<li class="want"><span>${esc(w)}</span></li>`).join("")}</ul></section>` : ""}
+        </div>
+        <section class="pvMail"><h4 class="pvH">Messages with the buyer</h4></section></div>`;
     const charm = job.copies.length ? charmFor(job) : null;
 
     if (charm) card.querySelector(".frontHost").appendChild(renderFront(charm, 420));
     else void mountPlacementThumbnail(card.querySelector(".frontHost"),job);
     // the customer, one question away: the same box follows the placement through every rebuild of this card, so what
     // was typed stays (charm-nest-mail.js)
-    try { const mb = window.CustomerMail?.lineBox(job); if (mb) card.querySelector(".pvSide").insertBefore(mb, card.querySelector(".frontHost")); } catch (e) { console.warn("customer mail:", e); }
+    // the buyer's whole conversation beside the work: the same pane follows the placement through every rebuild of this
+    // card, so what was typed stays (charm-nest-mail.js)
+    try { const mp = window.CustomerMail?.cardPane?.(job); if (mp) card.querySelector(".pvMail").appendChild(mp); else card.querySelector(".pvMail").remove(); } catch (e) { console.warn("customer mail:", e); }
+    card.querySelectorAll("[data-ask]").forEach(b => b.onclick = () => window.CustomerMail?.cardAsk?.(job, b.dataset.ask));
     if (wordsJob) { const bh = card.querySelector(".backHost"); bh.innerHTML = `<div class="noBack">${esc(job.state === "blocked" ? (job.reason || "This preview needs attention — use the words to retry.") : waitingReason(job))}</div>`; }
     const ta = card.querySelector('[data-f="words"]'), use = card.querySelector('[data-a="usewords"]');
     const applyWords = async (keepFocus = false) => {
@@ -3604,7 +3613,7 @@ const Engrave = window.Engrave = (() => {
       await applyWords();
     };
     void capOut;
-    card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT" || e.repeat) return; const k = e.key.toLowerCase(); if (["a","s","escape","arrowleft","arrowright","arrowup","arrowdown"].includes(k)) card._flushSpacing?.(); if (k === "a") { e.preventDefault(); approve(job); } else if (k === "s") { e.preventDefault(); skip(job); } else if (e.key === "Escape") { if(job.editingBack && !job.backSaving) {items().delete(job.key);Review.remove("eng:"+job.key);} EG.list = true; EG.card = null; EG.cardKey = null; render(); } else if (e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); rotateTo(job, (job.fit ? job.fit.angle || 0 : 0) + (e.key === "ArrowLeft" ? 1 : -1)); } else if (e.key === "ArrowLeft") { e.preventDefault(); nudge(job, -0.25, 0); } else if (e.key === "ArrowRight") { e.preventDefault(); nudge(job, 0.25, 0); } else if (e.key === "ArrowUp") { e.preventDefault(); nudge(job, 0, 0.25); } else if (e.key === "ArrowDown") { e.preventDefault(); nudge(job, 0, -0.25); } });
+    card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT" || e.repeat || e.target.closest?.(".pvMail")) return; const k = e.key.toLowerCase(); if (["a","s","escape","arrowleft","arrowright","arrowup","arrowdown"].includes(k)) card._flushSpacing?.(); if (k === "a") { e.preventDefault(); approve(job); } else if (k === "s") { e.preventDefault(); skip(job); } else if (e.key === "Escape") { if(job.editingBack && !job.backSaving) {items().delete(job.key);Review.remove("eng:"+job.key);} EG.list = true; EG.card = null; EG.cardKey = null; render(); } else if (e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); rotateTo(job, (job.fit ? job.fit.angle || 0 : 0) + (e.key === "ArrowLeft" ? 1 : -1)); } else if (e.key === "ArrowLeft") { e.preventDefault(); nudge(job, -0.25, 0); } else if (e.key === "ArrowRight") { e.preventDefault(); nudge(job, 0.25, 0); } else if (e.key === "ArrowUp") { e.preventDefault(); nudge(job, 0, 0.25); } else if (e.key === "ArrowDown") { e.preventDefault(); nudge(job, 0, -0.25); } });
     // the next card takes focus only when the person was already working in this pane, so a held key cannot run the queue.
     // It never takes focus from a field someone is typing in: the card's single-key shortcuts (A approve, S no engraving,
     // arrows nudge) would otherwise receive the rest of what they type.
