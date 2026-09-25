@@ -1743,7 +1743,8 @@ exports.handler = async (event) => {
           // A Charm Sorter production question is open in this conversation
           // (_etsyMailOrderLink.js): the customer is answering the workshop,
           // so a person reviews the AI's reply instead of it going out alone.
-          const productionHold = (threadAfter.orderLinkOpen || 0) > 0;
+          // The same for the sorter's own test account (orderLinkTest).
+          const productionHold = (threadAfter.orderLinkOpen || 0) > 0 || threadAfter.orderLinkTest === true;
 
           const safeToAutoSend =
             !draftDoc.readyForHumanApproval &&
@@ -2081,11 +2082,12 @@ exports.handler = async (event) => {
 
     // A Charm Sorter production question is open in this conversation
     // (_etsyMailOrderLink.js): the customer is answering the workshop, so a
-    // person reviews the AI's reply instead of it going out alone.
+    // person reviews the AI's reply instead of it going out alone. The same
+    // for the sorter's own test account (orderLinkTest).
     let productionHold = false;
     try {
       const holdSnap = await threadRef.get();
-      productionHold = holdSnap.exists && (holdSnap.data().orderLinkOpen || 0) > 0;
+      productionHold = holdSnap.exists && ((holdSnap.data().orderLinkOpen || 0) > 0 || holdSnap.data().orderLinkTest === true);
     } catch (e) { console.warn("production-question check failed (non-fatal):", e.message); }
 
     const decision = (meetsThreshold && !veto.vetoed && !ks.disabled && !dryRun && !productionHold)

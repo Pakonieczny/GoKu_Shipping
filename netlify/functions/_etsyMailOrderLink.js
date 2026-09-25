@@ -58,6 +58,8 @@ const AUTO_RESOLVE_IDLE_MS = 21 * DAY;
 const KEEP_RESOLVED_MS = 180 * DAY;
 const KEEP_TRANSLATION_MS = 60 * DAY;
 const INBOX_URL = "https://etsy-mail-1.goldenspike.app/";
+// the sorter's "Send a test" questions: never an order, only the conversation with our own test account (see testing)
+const TEST_RID = "test";
 
 const UNSENT = new Set(["new", "waiting"]);
 const IN_FLIGHT = new Set(["queued", "sending"]);
@@ -232,7 +234,7 @@ async function engagementsForReceipt(receiptId, sandbox) {
 const scopeKey = (scope, lineId) => scope === "engraving" ? "l" + (lineId || "") : "o";
 
 async function createEngagement(station, o) {
-  const conv = o.sandbox ? { thread: null, buyerUserId: null, by: null } : await findConversation(o.receiptId);
+  const conv = o.sandbox ? { thread: null, buyerUserId: null, by: null } : o.test ? await testConversation(o.test) : await findConversation(o.receiptId);
   const now = Date.now();
   const t = conv.thread;
   const id = (o.sandbox ? "olsb_" : "ol_") + o.receiptId + "_" + scopeKey(o.scope, o.lineId) + "_" + now.toString(36) + crypto.randomBytes(2).toString("hex");
@@ -323,7 +325,7 @@ async function syncThreadFlags(threadId) {
       orderLinkIds: open.map(e => e.id),
       orderLinkOpen: open.length,
       orderLinkTitle: open.length ? (open[0].title || "Production question") : FV.delete(),
-      orderLinkReceipts: [...new Set(open.map(e => String(e.receiptId)))],
+      orderLinkReceipts: [...new Set(open.map(e => String(e.receiptId)).filter(r => r !== TEST_RID))],
       orderLinkOpenAt: open.length ? TS.fromMillis(open[0].createdAtMs || Date.now()) : FV.delete(),
       updatedAt: FV.serverTimestamp()
     });
@@ -673,6 +675,7 @@ async function onThreadMessages(threadId, thread, messages) {
   try {
     if (!isThreadId(threadId) || !Array.isArray(messages) || !messages.length) return;
     thread = thread || {};
+    await checkTestCode(threadId, thread, messages).catch(e => console.warn("orderLink test code:", e.message));
     const ids = Array.isArray(thread.orderLinkIds) ? thread.orderLinkIds.filter(x => typeof x === "string" && x).slice(0, 20) : [];
     let engs = [];
     if (ids.length) engs = (await db.getAll(...ids.map(engRef))).filter(s => s.exists).map(s => s.data()).filter(e => e.status === "open" && e.threadId === threadId);
@@ -784,7 +787,7 @@ async function conversation(e, { earlier = false } = {}) {
 const _histThreads = new Map();
 async function historyThreads(receiptId, engagementId) {
   const key = receiptId + "|" + (engagementId || "");
-  const hit = _histThreads.get(key);
+  const hit = receiptId === TEST_RID ? null : _histThreads.get(key);   // the test account can change at any moment
   if (hit && Date.now() - hit.at < 2 * MIN) return hit.list;
   const found = new Map();
   const take = docs => { for (const d of docs) if (d.exists !== false && isThreadId(d.id)) found.set(d.id, Object.assign({ id: d.id }, d.data())); };
@@ -798,10 +801,16 @@ async function historyThreads(receiptId, engagementId) {
       if (isThreadId(e.threadId)) take([await db.collection(COLL.threads).doc(e.threadId).get()]);
     }
   }
-  take((await db.collection(COLL.threads).where("etsyOrderId", "==", receiptId).limit(10).get()).docs);
-  for (const t of found.values()) buyer = buyer || t.buyerUserId || null;
-  if (!buyer) buyer = await buyerOf(receiptId);
-  if (buyer) take((await db.collection(COLL.threads).where("buyerUserId", "==", String(buyer)).limit(25).get()).docs);
+  if (receiptId === TEST_RID) {
+    // the test account's conversation, and never anyone's orders
+    const t = await testDoc();
+    if (t && isThreadId(t.threadId)) take([await db.collection(COLL.threads).doc(t.threadId).get()]);
+  } else {
+    take((await db.collection(COLL.threads).where("etsyOrderId", "==", receiptId).limit(10).get()).docs);
+    for (const t of found.values()) buyer = buyer || t.buyerUserId || null;
+    if (!buyer) buyer = await buyerOf(receiptId);
+    if (buyer) take((await db.collection(COLL.threads).where("buyerUserId", "==", String(buyer)).limit(25).get()).docs);
+  }
   const list = [...found.values()];
   _histThreads.set(key, { at: Date.now(), list });
   if (_histThreads.size > 200) _histThreads.delete(_histThreads.keys().next().value);
@@ -976,7 +985,8 @@ async function sync(body) {
   }
   let v = since;
   for (const e of docs) if ((e.v || 0) > v) v = e.v;
-  return { n, v, changes: docs.filter(e => !!e.sandbox === sandbox).map(summary), full, now };
+  // a test to our own account is real in any sorter, the sandbox's included
+  return { n, v, changes: docs.filter(e => !!e.sandbox === sandbox || (sandbox && e.receiptId === TEST_RID)).map(summary), full, now };
 }
 
 /** Everything the Customer panel of one order needs, in one round trip. */
@@ -986,7 +996,10 @@ async function order(body) {
   const sandbox = body.sandbox === true;
   const list = await engagementsForReceipt(receiptId, sandbox);
   let conv = null;
-  if (!sandbox) {
+  if (!sandbox && receiptId === TEST_RID) {
+    const t = await testDoc({ fresh: true });
+    conv = t && isThreadId(t.threadId) ? { threadId: t.threadId, customer: t.customer || null, by: "test" } : null;
+  } else if (!sandbox) {
     const withThread = list.find(e => e.threadId);
     if (withThread) conv = { threadId: withThread.threadId, customer: withThread.customer || null, by: withThread.linkedBy || "order" };
     else {
@@ -1033,18 +1046,23 @@ async function ask(station, body) {
   if (!text) throw httpError(400, "Write a message first");
   const clientId = cleanId(body.clientId) || ("m" + crypto.randomBytes(8).toString("hex"));
   const sandbox = body.sandbox === true;
-  const scope = body.scope === "engraving" ? "engraving" : "order";
+  // a test goes only to the conversation with our own test account, and only once there is one
+  const test = receiptId === TEST_RID ? await testDoc({ fresh: true }) : null;
+  if (receiptId === TEST_RID && (sandbox || !test || !isThreadId(test.threadId))) throw httpError(409, sandbox ? "The sandbox never sends tests" : "Set up a test account first", "NO_TEST_ACCOUNT");
+  const onTest = x => !test || x.threadId === test.threadId;
+  const scope = !test && body.scope === "engraving" ? "engraving" : "order";
   const lineId = scope === "engraving" ? cleanId(body.lineId) : null;
   let e = null;
   const want = cleanId(body.engagementId);
   if (want) {
     const s = await engRef(want).get();
-    if (s.exists && s.data().receiptId === receiptId && !!s.data().sandbox === sandbox) e = s.data();
+    if (s.exists && s.data().receiptId === receiptId && !!s.data().sandbox === sandbox && onTest(s.data())) e = s.data();
   }
-  if (!e && !body.newQuestion) e = (await engagementsForReceipt(receiptId, sandbox)).find(x => x.status === "open" && x.scope === scope && (scope !== "engraving" || x.lineId === lineId)) || null;
+  if (!e && !body.newQuestion) e = (await engagementsForReceipt(receiptId, sandbox)).find(x => x.status === "open" && x.scope === scope && (scope !== "engraving" || x.lineId === lineId) && onTest(x)) || null;
   if (!e) e = await createEngagement(station, {
-    receiptId, scope, lineId, sandbox, text,
-    lineLabel: cleanText(body.lineLabel, 120), orderNumber: cleanText(body.orderNumber, 40), buyerName: cleanText(body.buyerName, 80)
+    receiptId, scope, lineId, sandbox, text, test,
+    lineLabel: test ? "" : cleanText(body.lineLabel, 120), orderNumber: test ? "" : cleanText(body.orderNumber, 40),
+    buyerName: test ? ((test.customer && test.customer.name) || "") : cleanText(body.buyerName, 80)
   });
   const wasOpen = e.status === "open";
   const r = await change(e.id, cur => {
@@ -1274,6 +1292,117 @@ async function health(body = {}) {
   return value;
 }
 
+// ─── testing the line with an Etsy account of our own ───────────────────
+
+/* "Send a test" goes through every real part (this server, the inbox, the Etsy helper, Etsy, the Gmail watcher and the
+   scrape) but only ever reaches one conversation: the shop's conversation with an Etsy account of our own. A code picks
+   it, never a guess: the sorter shows "SORTER TEST 1234", someone sends that to the shop from their own account, and the
+   conversation it arrives in becomes the test conversation (checked as the inbox reads each new message, and again while
+   a sorter waits). Only a connected sorter sees the code, and a test question can only be written to that conversation.
+   The inbox's AI never answers there by itself: orderLinkTest on the conversation holds it, as an open question does. */
+const TEST_CODE_TTL_MS = HOUR;
+const TEST_SLACK_MS = 10 * MIN;       // Etsy's message times are rough: a code sent just outside its hour still counts
+const testRef = () => db.collection(COLL.meta).doc("test");
+let _test = { at: 0, value: null };
+async function testDoc({ fresh = false } = {}) {
+  if (!fresh && _test.at && Date.now() - _test.at < 30 * 1000) return _test.value;
+  const s = await testRef().get();
+  _test = { at: Date.now(), value: s.exists ? s.data() : null };
+  return _test.value;
+}
+const hasCode = (text, code) => /^\d{4}$/.test(String(code || "")) && new RegExp("sorter[\\s_.:,-]*test[\\s_.:,#-]*" + code + "(?!\\d)", "i").test(String(text || ""));
+const codeLive = p => !!(p && p.code && Date.now() < (p.expiresAtMs || 0) + DAY);
+const inCodeWindow = (p, ms) => !ms || (ms >= p.createdAtMs - TEST_SLACK_MS && ms <= p.expiresAtMs + TEST_SLACK_MS);
+
+/** The conversation a test question is written to. */
+async function testConversation(t) {
+  const s = await db.collection(COLL.threads).doc(t.threadId).get();
+  if (!s.exists) throw httpError(409, "The inbox no longer has the test account's conversation. Set up the test account again.", "NO_TEST_ACCOUNT");
+  const thread = Object.assign({ id: s.id }, s.data());
+  return { thread, buyerUserId: thread.buyerUserId || null, by: "test" };
+}
+function testView(t) {
+  const ready = !!(t && isThreadId(t.threadId));
+  const p = t && codeLive(t.pending) ? t.pending : null;
+  return {
+    ready, threadId: ready ? t.threadId : null, customer: ready ? (t.customer || null) : null,
+    setAtMs: ready ? (t.setAtMs || 0) : 0, setBy: ready ? (t.setBy || "") : "",
+    pending: p ? { code: "SORTER TEST " + p.code, createdAtMs: p.createdAtMs, expiresAtMs: p.expiresAtMs, expired: Date.now() > p.expiresAtMs } : null
+  };
+}
+/** The code's conversation becomes the test conversation; test questions still open with the account it replaces close. */
+async function adoptTestThread(threadId, thread, code) {
+  let was = null, done = false;
+  await db.runTransaction(async tx => {
+    was = null; done = false;
+    const s = await tx.get(testRef());
+    const d = s.exists ? s.data() : null;
+    if (!d || !d.pending || d.pending.code !== code) return;
+    was = isThreadId(d.threadId) ? d.threadId : null;
+    tx.set(testRef(), { threadId, customer: customerFrom(thread, null), setAtMs: Date.now(), setBy: d.pending.by || "", pending: FV.delete() }, { merge: true });
+    done = true;
+  });
+  _test.at = 0;
+  if (!done) return false;
+  await db.collection(COLL.threads).doc(threadId).update({ orderLinkTest: true }).catch(e => console.warn("orderLink test flag:", e.message));
+  if (was && was !== threadId) {
+    await db.collection(COLL.threads).doc(was).update({ orderLinkTest: FV.delete() }).catch(() => {});
+    const q = await db.collection(COLL.eng).where("threadId", "==", was).limit(60).get();
+    let closed = 0;
+    for (const d of q.docs) {
+      if (d.data().receiptId !== TEST_RID || d.data().status !== "open") continue;
+      if ((await change(d.id, cur => cur.status === "open" ? { status: "resolved", resolvedAtMs: Date.now(), resolvedBy: "Test account changed", unread: 0 } : null)).changed) closed++;
+    }
+    if (closed) await syncThreadFlags(was);
+  }
+  return true;
+}
+/** Hook, from onThreadMessages: the code arrived in a conversation the inbox just read. */
+async function checkTestCode(threadId, thread, messages) {
+  const t = await testDoc();
+  const p = t && t.pending;
+  if (!codeLive(p)) return false;
+  if (!messages.some(m => m && m.direction === "inbound" && inCodeWindow(p, m.tsMs) && hasCode(m.text, p.code))) return false;
+  return adoptTestThread(threadId, thread, p.code);
+}
+/** The same, while a sorter waits for its code: the conversations someone wrote in since the code was made. */
+let _testScanAt = 0;
+async function scanForTestCode(p) {
+  if (Date.now() - _testScanAt < 20 * 1000) return false;
+  _testScanAt = Date.now();
+  const since = TS.fromMillis(p.createdAtMs - TEST_SLACK_MS);
+  const q = await db.collection(COLL.threads).where("lastInboundAt", ">=", since).orderBy("lastInboundAt", "desc").limit(20).get();
+  for (const d of q.docs) {
+    const t = d.data();
+    // the inbox keeps each conversation's recent text for its search: only a conversation holding the code is read
+    if (!isThreadId(d.id) || (typeof t.searchableMessageText === "string" && !hasCode(t.searchableMessageText, p.code))) continue;
+    const ms = await d.ref.collection("messages").where("timestamp", ">=", since).orderBy("timestamp").limit(60).get();
+    if (ms.docs.map(messageFromDoc).some(m => !m.optimistic && m.direction === "inbound" && inCodeWindow(p, m.tsMs) && hasCode(m.text, p.code)))
+      return adoptTestThread(d.id, t, p.code);
+  }
+  return false;
+}
+async function testInfo() {
+  let t = await testDoc({ fresh: true });
+  if (t && codeLive(t.pending) && await scanForTestCode(t.pending).catch(e => { console.warn("orderLink test scan:", e.message); return false; }))
+    t = await testDoc({ fresh: true });
+  return testView(t);
+}
+async function testStart(station) {
+  const now = Date.now();
+  const t = await testDoc({ fresh: true });
+  // a code with time left is shown again, so one already sent from another tab still counts
+  if (!(t && t.pending && t.pending.code && t.pending.expiresAtMs - now > 15 * MIN)) {
+    const pending = { code: String(crypto.randomInt(1000, 10000)), createdAtMs: now, expiresAtMs: now + TEST_CODE_TTL_MS, by: station.name };
+    await testRef().set({ pending }, { merge: true });
+  }
+  return testView(await testDoc({ fresh: true }));
+}
+async function testCancel() {
+  await testRef().set({ pending: FV.delete() }, { merge: true });
+  return testView(await testDoc({ fresh: true }));
+}
+
 // ─── translation ──────────────────────────────────────────────────────────
 
 const LANG_NAMES = { en: "English", uk: "Ukrainian" };
@@ -1420,7 +1549,7 @@ async function reconcile({ budgetMs = 20000 } = {}) {
     for (const d of open.docs) {
       if (left() < 3000) break;
       const e = d.data();
-      if (e.sandbox || e.threadId) continue;
+      if (e.sandbox || e.threadId || e.receiptId === TEST_RID) continue;
       if (Date.now() - Math.max(e.createdAtMs || 0, e.lastOutboundAtMs || 0, e.reopenedAtMs || 0) > AUTO_RESOLVE_IDLE_MS) {
         const r = await change(e.id, cur => cur.status === "open" && !cur.threadId ? { status: "resolved", resolvedAtMs: Date.now(), resolvedBy: "Quiet for three weeks" } : null);
         if (r.changed) { await removeWaiting(e); out.autoResolved++; }
@@ -1492,6 +1621,7 @@ module.exports = {
   cancel: withFlush(cancel), markCopied: withFlush(markCopied), markSent: withFlush(markSent), read: withFlush(read),
   setStatus: withFlush(setStatus), setLang: withFlush(setLang), linkUrl: withFlush(linkUrl),
   simulateReply: withFlush(simulateReply), translate, health, historyInfo, history,
+  testInfo: withFlush(testInfo), testStart: withFlush(testStart), testCancel,
   // exposed for tests
   _internal: { foldMessages, sameText, normText, summary, cleanText, cleanId, applyPatch, friendlyFailure, parkedCopy, isDelete }
 };

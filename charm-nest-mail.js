@@ -229,11 +229,10 @@
     } catch (e) { if (!authLost(e)) healthErr = e.message; }
     finally { healthBusy = false; paintLights(); healthLater(); }
   }
-  /** What the light says: tone (ok, warn, down, sb, wait), its word, and the sentence under the box when it is not ok. */
+  /** What the light says: tone (ok, warn, down, wait; the same in the sandbox), its word, and the sentence under the box when it is not ok. */
   function lightState() {
     const h = M.health && Date.now() - M.health.at < 5 * 60000 ? M.health.res : null;
     if (M.link === "offline") return { tone: "down", word: "Offline", text: "This sorter cannot reach the inbox's server right now. What you write is kept, and goes as soon as it answers again." };
-    if (SANDBOX) return { tone: "sb", word: "Sandbox", text: "" };
     if (!h) return { tone: "wait", word: "Checking…", text: "" };
     if (h.level === "ok") return { tone: "ok", word: "Active", text: "" };
     return { tone: h.level === "down" ? "down" : "warn", word: h.short || "Problem", text: h.problem || "" };
@@ -257,7 +256,7 @@
     else rows.push(`<li class="wait"><i></i><b>Checking the rest</b><span>${healthErr ? E(healthErr) : "…"}</span></li>`);
     const when0 = healthBusy ? `<span class="cmSpin" aria-hidden="true"></span>checking` : M.health ? "checked " + when(M.health.at) : "";
     return `<div class="cmHBh"><b>Email link</b><span class="cmHBat">${when0}</span><button type="button" class="lnk" data-hcheck${healthBusy ? " disabled" : ""}>Check now</button></div><ul class="cmHBl">${rows.join("")}</ul>`
-      + (SANDBOX ? `<div class="cmHBf">Sandbox is on: questions stay in this sorter and never reach a customer.</div>` : "");
+      + (SANDBOX ? `<div class="cmHBf">Sandbox is on: questions about sandbox orders stay in this sorter and never reach anyone. The light still shows the real link.</div>` : "");
   }
   function toggleHealth(box, owner) {
     if (healthBox && healthBox.box === box) { closeHealth(); return; }
