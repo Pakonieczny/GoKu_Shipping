@@ -4426,6 +4426,7 @@ function renderLibrary() {
   libraryReturn(place);
 }
 async function openLibrarySheet(id) {
+  if (window.SheetWin) return SheetWin.open(id);   // the sheet window (charm-nest-sheetwin.js); the dialog below is its fallback
   const dlg = $("#dlgSheet"); $("#lsTitle").textContent = id; $("#lsBody").innerHTML = `<div class="libEmpty">Loading…</div>`; openDlg(dlg);
   // the footer keeps the previous sheet's handlers until this one loads: it waits instead of acting on that sheet
   const foot = ["#lsDownloads", "#lsRestore", "#lsDelete"].map(s => $(s)); foot.forEach(b => { b.disabled = true; });
@@ -4775,6 +4776,7 @@ async function boot() {
 boot();
 </script>
 <script src="charm-nest-bridge.js?v=20260925-custom-orders"></script>
+<script src="charm-nest-sheetwin.js?v=20260925-sw2"></script>
 <script src="charm-nest-mail.js?v=20260925-card-tabs"></script>
 <script src="charm-nest-rose-ui.js?v=20260925-audit"></script>
 <script src="charm-nest-export-ui.js"></script>
