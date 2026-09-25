@@ -1743,6 +1743,31 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .roseDemoOptions{position:relative}.roseDemoOptions summary{list-style:none;cursor:pointer}.roseDemoOptions>div{position:absolute;right:0;top:42px;width:270px;z-index:2;background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 25px #0002;padding:16px;display:grid;gap:12px}.roseDemoOptions label{display:flex;align-items:center;gap:8px;font-size:13px}.roseDemoOptions input{width:18px;height:18px}
 .roseDemo canvas{display:block;width:calc(100% - 28px);height:auto;margin:0 14px;border-radius:8px}.roseDemoActions{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:14px 16px}.roseDemo .dlgFoot{flex-wrap:wrap}.roseDemo .dlgFoot .left{flex-wrap:wrap}.roseDemo .roseTimeline li{min-width:150px}
 @media(max-width:600px){.roseDemoSheetHead{align-items:flex-start;flex-wrap:wrap}.roseDemoSheetHead h4{font-size:22px}.roseDemoSteps li{font-size:11px;padding:6px}.roseDemo .dlgHead .pill{display:none}}
+/* Custom Orders (Review): its Open / Completed switch sits in the bar beside its chip, no row of its own */
+.ordBar .rvSeg{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--card)}
+.ordBar .rvSeg button{border:0;background:transparent;font:600 11px var(--sans);color:var(--ink70);padding:3px 9px;display:inline-flex;align-items:center;gap:5px;cursor:pointer}
+.ordBar .rvSeg button+button{border-left:1px solid var(--line)}
+.ordBar .rvSeg button.on{background:var(--goldSoft);color:var(--ink)}
+.ordBar .rvSeg b{font:700 10px var(--mono);border-radius:999px;padding:0 5px;background:var(--paper2)}
+.ordBar .rvSeg button.on b{background:var(--card)}
+.doneRow.reviewListRow.cuRow{border-left-color:var(--gold2)}.doneRow.reviewListRow.cuInfo{border-left-color:var(--slate)}.doneRow.reviewListRow.cuDone{border-left-color:var(--sage)}
+.doneRow.cuRow:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.cuStat{display:inline-flex;align-items:center;gap:6px;font:600 11.5px var(--sans);color:var(--ink70);white-space:nowrap}
+.cuStat .spin{width:11px;height:11px;border:2px solid rgba(0,0,0,.15);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite;flex:0 0 11px}
+.rvItem .cuStep>.rvItem{border:0;box-shadow:none;background:transparent;padding:0;border-left:0}
+.rvItem .cuStep>.rvItem>.rh .ttl,.rvItem .cuStep>.rvItem>.rh .sub,.rvItem .cuStep>.rvItem>.ev,.rvItem .cuStep>.rvItem>.why{display:none}
+.rvItem .cuStep>.rvItem>.rh{padding-bottom:0;border-bottom:0}
+/* the order window: a custom order's one line, and notes left for the next person */
+.owCustom{display:flex;align-items:center;gap:8px;min-width:0;border:1px solid var(--goldLine);background:var(--goldSoft);border-radius:10px;padding:5px 8px 5px 10px;margin-bottom:10px}
+.owCustom[hidden]{display:none}
+.owCustom.done{border-color:var(--sage);background:var(--sageSoft)}
+.owCustom .tag{font:700 10px var(--mono);letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;color:#6b4f1d}
+.owCustom.done .tag{color:#3f5b3a}
+.owCustom .w{flex:1 1 auto;min-width:0;font-size:12px;color:var(--ink70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.owCustom .btn{flex:0 0 auto}
+.owNoteField .fLabel{color:var(--ink)}
+.owNoteField .owIn{border-color:var(--goldLine)}
+.owNoteField .owIn.has{background:#fdf7e6;border-color:var(--gold2);font-size:13.5px}
 </style>
 </head>
 <body>
@@ -1955,7 +1980,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-readiness.js?v=20260925-audit"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
-<script src="charm-nest-orders.js?v=20260925-visible"></script>
+<script src="charm-nest-orders.js?v=20260925-custom-orders"></script>
 <script src="charm-nest-background.js?v=20260924-followup"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
@@ -4749,7 +4774,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260925-qr-tile"></script>
+<script src="charm-nest-bridge.js?v=20260925-custom-orders"></script>
 <script src="charm-nest-mail.js?v=20260925-card-tabs"></script>
 <script src="charm-nest-rose-ui.js?v=20260925-audit"></script>
 <script src="charm-nest-export-ui.js"></script>
@@ -4770,9 +4795,10 @@ boot();
           <div class="owSku"><b id="owSku">SKU: —</b><button class="btn ghost xs" id="owCopy">Copy</button></div>
         </div>
         <div>
+          <div id="owCustom" class="owCustom" aria-live="polite" hidden></div>
           <div id="owFix"></div>
           <div class="owField"><label class="fLabel">What the customer wrote</label><div class="owSaid" id="owNotes">— No notes —</div></div>
-          <div class="owField"><label class="fLabel" for="owNote">Staff note <span class="soft">— saved automatically, visible to every station</span></label><textarea class="owIn" id="owNote" rows="3" placeholder="Add a note for this order…"></textarea></div>
+          <div class="owField owNoteField"><label class="fLabel" for="owNote">Order notes <span class="soft">— for whoever opens this order next · saved to the order by itself, every station and sorter sees them</span></label><textarea class="owIn" id="owNote" rows="3" placeholder="Leave a note on this order for the next person who opens it…"></textarea></div>
           <div class="owMeta" id="owMeta"></div>
         </div>
       </div>

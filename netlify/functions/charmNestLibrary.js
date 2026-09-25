@@ -32,7 +32,7 @@
  *    + bridge (design doc §13): masterPutIndex · masterGet · masterGetMany · masterList · masterPatch · masterPutFile ·
  *      masterListFiles · masterRemoveFile · startMaster · poolPut · poolUpdate · poolList · poolGet · backPut · backList ·
  *      setAllocate · setUpdate · setGet · setList · runPut · runArchive · runGet · runList · bridgeLog · aliasGet · aliasPut ·
- *      noDesignGet · noDesignPut · noDesignDelete · optionMapGet · optionMapPut
+ *      noDesignGet · noDesignPut · noDesignDelete · optionMapGet · optionMapPut · customGet · customPut · customDelete
  *  ═══════════════════════════════════════════════════════════════════════ */
 "use strict";
 const admin = require("./firebaseAdmin");
@@ -1547,12 +1547,46 @@ async function op_optionMapPut(b) {
   return { ok: true };
 }
 
+// ── Custom Orders: a special line (custom, rework, chain only, add-on…) finished by hand ──
+/* Review → Custom Orders prints the sorting station's QR sticker for a special line and marks it completed: the line is
+   then never pooled and no longer holds its order. One document per order line (its sorter key, "{receipt}_{transaction}"),
+   kept with the sticker it printed so it can be printed again after the order has left the pull. Every sorter browser
+   reads the same records (customGet); reopening deletes one (customDelete). Sandboxed with the sorter's own records. */
+const CUSTOM = "Charm_Custom_Orders";
+SANDBOXED.add(CUSTOM);
+const CUSTOM_DAYS = 180;
+const lineKeyOk = s => /^[\w\-]{3,120}$/.test(String(s || ""));
+// the list every sorter reads with its maps carries no stickers (hasLabel says one is kept); one line's record, with its
+// sticker, is read by its key when that sticker is printed again
+const customRow = (d, withLabel) => { const x = Object.assign({}, d); delete x.updatedAt; if (!withLabel) { x.hasLabel = !!x.label; delete x.label; } return x; };
+async function op_customGet(b) {
+  if (b.key != null) { const key = String(b.key); if (!lineKeyOk(key)) return { error: "bad key" }; const s = await col(CUSTOM).doc(key).get(); return { record: s.exists ? customRow(s.data(), true) : null }; }
+  const since = Date.now() - Math.max(1, Math.min(CUSTOM_DAYS, b.days == null ? CUSTOM_DAYS : num(b.days))) * 86400000;
+  const snap = await col(CUSTOM).where("updatedAtMs", ">=", since).orderBy("updatedAtMs", "desc").limit(1000).get();
+  const records = {}; snap.docs.forEach(d => { records[d.id] = customRow(d.data(), false); });
+  return { records, truncated: snap.size >= 1000 };
+}
+async function op_customPut(b) {
+  const key = String(b.key || ""); if (!lineKeyOk(key)) return { error: "key (the line's receipt_transaction) required" };
+  const label = b.label && typeof b.label === "object" ? b.label : null, labelJson = label ? JSON.stringify(label) : "";
+  const now = Date.now(), ref = col(CUSTOM).doc(key), snap = await ref.get(), cur = snap.exists ? snap.data() : null;
+  const doc = { key, receiptId: str(b.receiptId, 40), transactionId: str(b.transactionId, 40), sku: str(b.sku, 60), title: str(b.title, 200),
+    category: str(b.category, 60), kind: str(b.kind, 40), state: "completed", lastPrintedAt: now, lastPrintedBy: str(b.by || "operator", 80),
+    prints: ((cur && +cur.prints) || 0) + 1, updatedAtMs: now, updatedAt: FV.serverTimestamp() };
+  if (!cur || !cur.printedAt) Object.assign(doc, { printedAt: now, printedBy: doc.lastPrintedBy });
+  if (labelJson && labelJson.length <= 20000) doc.label = labelJson;
+  await ref.set(doc, { merge: true });
+  return { ok: true, record: customRow(Object.assign({}, cur || {}, doc), false) };
+}
+async function op_customDelete(b) { const key = String(b.key || ""); if (!lineKeyOk(key)) return { error: "bad key" }; await col(CUSTOM).doc(key).delete(); return { ok: true }; }
+
 const RoseStock = require("./_charmNestRoseStock")({db,col,FV,Readiness,decisionsOfRun});
 const OPS = { ...RoseStock, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, startMaster: op_startMaster,
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,
-  aliasGet: op_aliasGet, aliasPut: op_aliasPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut };
+  aliasGet: op_aliasGet, aliasPut: op_aliasPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut,
+  customGet: op_customGet, customPut: op_customPut, customDelete: op_customDelete };
 
 exports.ops = OPS;   // the connections check runs the same queries the app runs
 exports.handler = async (event) => {
