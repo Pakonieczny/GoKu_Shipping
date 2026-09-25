@@ -873,77 +873,6 @@ async function history(body) {
   return { threadId, messages, read: s.size, next: s.size === limit ? s.docs[s.docs.length - 1].id : null };
 }
 
-// ─── buyers waiting for an answer, marked on the sorter's lists ─────────────
-
-/* A buyer is waiting when their newest message in a conversation came after the shop's newest answer there (the inbox's
-   own marks: lastInboundAt against lastOutboundAt and lastOperatorReplyAt), within three weeks, and the conversation is
-   not archived or closed. One scan of the newest conversations serves every sorter for three minutes (kept in
-   EtsyMail_OrderLinkMeta/awaiting, so instances share it); the waiting buyers' orders come from the inbox's receipt
-   mirror. A sandbox order is a copy of a real one with the real buyer, matched through the sandbox's open orders. */
-const AWAIT_MS = 21 * DAY, AWAIT_TTL = 3 * MIN, AWAIT_SCAN = 400;
-const AWAIT_CLOSED = new Set(["archived", "sales_completed", "sales_abandoned"]);
-let _await = null, _awaitFlight = null, _sbOpen = null;
-async function awaitingScan() {
-  const since = admin.firestore.Timestamp.fromMillis(Date.now() - AWAIT_MS);
-  const q = await db.collection(COLL.threads).where("lastInboundAt", ">=", since).orderBy("lastInboundAt", "desc").limit(AWAIT_SCAN).get();
-  const buyers = {}, receipts = {};
-  for (const d of q.docs) {
-    if (!isThreadId(d.id)) continue;
-    const t = d.data(), inAt = tsMs(t.lastInboundAt);
-    if (!(inAt > Math.max(tsMs(t.lastOutboundAt), tsMs(t.lastOperatorReplyAt))) || AWAIT_CLOSED.has(t.status) || t.orderLinkTest === true) continue;
-    const key = t.buyerUserId ? String(t.buyerUserId) : "t_" + d.id;
-    const cur = buyers[key];
-    if (!cur || inAt > cur.sinceMs) buyers[key] = { sinceMs: inAt, threadId: d.id, name: cleanText(t.customerName, 60) || "" };
-    if (t.etsyOrderId) receipts[String(t.etsyOrderId)] = key;
-  }
-  const ids = Object.keys(buyers).filter(k => !k.startsWith("t_"));
-  for (let i = 0; i < ids.length; i += 30) {
-    const r = await db.collection(COLL.receipts).where("buyer_user_id", "in", ids.slice(i, i + 30)).limit(900).get();
-    for (const x of r.docs) { const b = String(x.data().buyer_user_id || ""); if (buyers[b]) receipts[x.id] = b; }
-  }
-  return { at: Date.now(), buyers, receipts };
-}
-async function awaitingData() {
-  if (_await && Date.now() - _await.at < AWAIT_TTL) return _await;
-  if (_awaitFlight) return _awaitFlight;
-  _awaitFlight = (async () => {
-    const ref = db.collection(COLL.meta).doc("awaiting");
-    const s = await ref.get().catch(() => null);
-    const d = s && s.exists ? s.data() : null;
-    if (d && Date.now() - (d.at || 0) < AWAIT_TTL) return (_await = d);
-    const fresh = await awaitingScan();
-    await ref.set(fresh).catch(e => console.warn("orderLink awaiting save:", e.message));
-    return (_await = fresh);
-  })();
-  try { return await _awaitFlight; } finally { _awaitFlight = null; }
-}
-/** The sandbox's open orders and their real buyers, from its own copy (never from Etsy). */
-async function sandboxOpenBuyers() {
-  if (_sbOpen && Date.now() - _sbOpen.at < AWAIT_TTL) return _sbOpen.map;
-  const map = {}, sb = require("./etsySandbox");
-  for (let offset = 0; offset < 3000; offset += 100) {
-    const r = await sb.handler({ httpMethod: "GET", queryStringParameters: { fn: "listOpenOrders", offset: String(offset) } });
-    const list = (r && r.statusCode === 200 && JSON.parse(r.body).results) || [];
-    for (const x of list) if (x.buyer_user_id) map[String(x.receipt_id)] = String(x.buyer_user_id);
-    if (list.length < 100) break;
-  }
-  _sbOpen = { at: Date.now(), map };
-  return map;
-}
-/** Which orders' buyers are waiting: { buyers: { key: { sinceMs, threadId, name } }, receipts: { receiptId: key } }. */
-async function awaiting(body) {
-  const d = await awaitingData();
-  let receipts = d.receipts || {};
-  if (body.sandbox === true) {
-    const m = await sandboxOpenBuyers().catch(e => { console.warn("orderLink sandbox open orders:", e.message); return {}; });
-    receipts = {};
-    for (const [rid, b] of Object.entries(m)) if (d.buyers[b]) receipts[rid] = b;
-  }
-  const buyers = {};
-  for (const b of Object.values(receipts)) if (d.buyers[b]) buyers[b] = d.buyers[b];
-  return { at: d.at, sandbox: body.sandbox === true, buyers, receipts };
-}
-
 // ─── who is asking: a sorter connected to the inbox ───────────────────────
 
 const _stations = new Map();
@@ -1332,19 +1261,30 @@ async function health(body = {}) {
   // pri: which problem the light names when several are equally bad (the switch, then the helper, then the rest)
   const add = (id, label, level, text, short, pri) => checks.push({ id, label, level, text, short: short || "", pri: pri == null ? 9 : pri });
 
-  // the Etsy helper: the inbox's Chrome extension, which sends on Etsy and reads new messages
+  // the work waiting for the helper: messages to send, and new Etsy messages to read in
+  const queued = drafts ? drafts.docs.map(d => tsMs(d.data().queuedAt) || now) : [];
+  const oldest = queued.length ? now - Math.min(...queued) : 0;
+  const nq = queued.length;
+  const scrapes = jobs ? jobs.docs.map(d => d.data()).filter(j => j.jobType === "scrape") : [];
+  const ns = scrapes.length;
+  const late = ns ? Math.max(...scrapes.map(j => now - (tsMs(j.createdAt) || now))) : 0;
+
+  // the Etsy helper: the inbox's Chrome extension, which sends on Etsy and reads new messages. With nothing to do it can
+  // go quiet for ten minutes or so, which is no fault; a silent helper with work waiting for it is. On its own, only a
+  // long silence counts against it.
   const hp = data(helper);
   const seen = hp && hp.seenAtMs ? now - hp.seenAtMs : null;
+  const stuck = Math.max(oldest, late);
+  const offline = `The inbox's Etsy helper (its Chrome extension) last checked in ${ago(seen)} ago. Until it is back, messages wait and answers are not read.`;
   if (seen == null) add("helper", "Etsy helper", "unknown", "Not heard from yet");
-  else if (seen > 15 * MIN) add("helper", "Etsy helper", "down", `The inbox's Etsy helper (its Chrome extension) last checked in ${ago(seen)} ago. Until it is back, messages wait and answers are not read.`, "Helper offline", 1);
-  else if (seen > 5 * MIN) add("helper", "Etsy helper", "warn", `The inbox's Etsy helper last checked in ${ago(seen)} ago.`, "Helper slow", 1);
+  else if (seen > 5 * MIN && stuck > 15 * MIN) add("helper", "Etsy helper", "down", offline, "Helper offline", 1);
+  else if (seen > 5 * MIN && stuck > 5 * MIN) add("helper", "Etsy helper", "warn", `The inbox's Etsy helper last checked in ${ago(seen)} ago, and work is waiting for it.`, "Helper slow", 1);
+  else if (seen > 2 * HOUR) add("helper", "Etsy helper", "down", offline, "Helper offline", 1);
+  else if (seen > 45 * MIN) add("helper", "Etsy helper", "warn", `The inbox's Etsy helper last checked in ${ago(seen)} ago. Is a browser with the inbox's extension open?`, "Helper quiet", 1);
   else add("helper", "Etsy helper", "ok", `Checked in ${ago(seen)} ago`);
 
   // sending: the inbox's switch, and messages waiting for the helper
   const g = data(inboxCfg) || {};
-  const queued = drafts ? drafts.docs.map(d => tsMs(d.data().queuedAt) || now) : [];
-  const oldest = queued.length ? now - Math.min(...queued) : 0;
-  const nq = queued.length;
   if (g.sendDisabled) add("send", "Sending", "down", "Sending is switched off in the inbox" + (g.sendDisabledReason ? ` (${cleanText(g.sendDisabledReason, 120)})` : "") + ". Messages wait here until it is on again.", "Sending paused", 0);
   else if (!drafts) add("send", "Sending", "unknown", "Could not look at the messages waiting to go out");
   else if (oldest > 15 * MIN) add("send", "Sending", "down", `A message has waited ${ago(oldest)} for the inbox's Etsy helper to send it.`, "Not sending", 2);
@@ -1363,9 +1303,6 @@ async function health(body = {}) {
   else add("notice", "Noticing answers", "ok", `Checked for new Etsy messages ${ago(now - done)} ago`);
 
   // reading answers in: each new message is a scrape job for the helper
-  const scrapes = jobs ? jobs.docs.map(d => d.data()).filter(j => j.jobType === "scrape") : [];
-  const ns = scrapes.length;
-  const late = ns ? Math.max(...scrapes.map(j => now - (tsMs(j.createdAt) || now))) : 0;
   const waitText = `${ns}${ns >= 40 ? "+" : ""} new Etsy ${ns === 1 ? "message is" : "messages are"} waiting to be read into the inbox, the oldest for ${ago(late)}.`;
   if (!jobs) add("read", "Reading answers", "unknown", "Could not look at the messages waiting to be read");
   else if (late > 30 * MIN) add("read", "Reading answers", "down", waitText, "Answers delayed", 4);
@@ -1710,7 +1647,7 @@ module.exports = {
   sync: withFlush(sync), order: withFlush(order), thread, ask: withFlush(ask), retry: withFlush(retry),
   cancel: withFlush(cancel), markCopied: withFlush(markCopied), markSent: withFlush(markSent), read: withFlush(read),
   setStatus: withFlush(setStatus), setLang: withFlush(setLang), linkUrl: withFlush(linkUrl),
-  simulateReply: withFlush(simulateReply), translate, health, historyInfo, history, awaiting,
+  simulateReply: withFlush(simulateReply), translate, health, historyInfo, history,
   testInfo: withFlush(testInfo), testStart: withFlush(testStart), testCancel,
   // exposed for tests
   _internal: { foldMessages, sameText, normText, summary, cleanText, cleanId, applyPatch, friendlyFailure, parkedCopy, isDelete }

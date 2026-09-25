@@ -22,8 +22,9 @@
   // "test": questions to the Etsy account of our own set up as the test account; real in the sandbox too
   const TEST = "test";
   const sbOf = rid => SANDBOX && String(rid) !== TEST;
-  const LS = { key: "cn.mail.station", who: "cn.mail.operator", drafts: "cn.mail.drafts", out: "cn.mail.outbox", told: "cn.mail.told", tab: "cn.mail.tab", tr: "cn.mail.tr", health: "cn.mail.health", wait: "cn.mail.waiting" };
-  try { localStorage.removeItem("cn.mail.test"); } catch (_) {}   // the test box is gone from the details; its saved view with it
+  const LS = { key: "cn.mail.station", who: "cn.mail.operator", drafts: "cn.mail.drafts", out: "cn.mail.outbox", told: "cn.mail.told", tab: "cn.mail.tab", tr: "cn.mail.tr", health: "cn.mail.health" };
+  // gone from the page, and their saved copies with them: the test box, and the inbox-wide "waiting" marks
+  try { localStorage.removeItem("cn.mail.test"); localStorage.removeItem("cn.mail.waiting"); } catch (_) {}
   const PAIR = "cn.mail.pair";   // sessionStorage: a connect request survives this tab's reload, not the tab
 
   // ─── small helpers ───────────────────────────────────────────────────────
@@ -88,7 +89,7 @@
   function forget(message) {
     put(LS.key, null); put(LS.who, null);
     M.key = null; M.who = null; M.store.clear(); M.link = "off"; M.n = -1; M.since = 0; M.needFull = true; M.first = true;
-    clearTimeout(syncTimer); clearTimeout(healthTimer); clearTimeout(waitTimer); waitTimer = 0; M.wait = null; put(LS.wait, null); closeHealth();
+    clearTimeout(syncTimer); clearTimeout(healthTimer); closeHealth();
     if (message) say(message, "bad");
     paintAll();
   }
@@ -184,7 +185,6 @@
     } finally {
       syncing = false;
       if (M.key) kick(M.fails ? Math.max(pace(), Math.min(60000, 2500 * 2 ** Math.min(M.fails, 5))) : pace());
-      if (M.key && !waitTimer && !waitBusy) waitLater();
     }
   }
   if (bc) bc.onmessage = e => {
@@ -192,9 +192,8 @@
     if (d.t === "sync" && d.sandbox === SANDBOX && d.res && M.key) { M.lastOkAt = Date.now(); M.fails = 0; setLink("ok"); apply(d.res, false); kick(); }
     else if (d.t === "out") flushOut();
     else if (d.t === "health" && d.h && d.h.res && M.key) { M.health = d.h; paintLights(); healthLater(); }
-    else if (d.t === "wait" && d.x && d.x.sb === SANDBOX && M.key) { setWait(d.x); waitLater(); }
   };
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) { clearTitle(); if (M.key) kick(300); for (const P of M.panes) if (P.visible()) markRead(P); healthSoon(); waitLater(); } });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { clearTitle(); if (M.key) kick(300); for (const P of M.panes) if (P.visible()) markRead(P); healthSoon(); } });
   window.addEventListener("online", () => { if (M.key) kick(200); flushOut(); });
 
   function setLink(state) { if (M.link === state) return; M.link = state; for (const P of M.panes) paintState(P); paintLights(); }
@@ -455,63 +454,29 @@
       paintSlots();
     }, 400);
   }
-  // ─── buyers waiting for an answer: marked on the Orders and Engraving lists ──
-  /* The server marks every order whose buyer wrote last in one of their inbox conversations and has no answer yet
-     (awaiting in _etsyMailOrderLink.js; a sandbox order through its real buyer). Asked for every three minutes while the
-     sorter is looked at, once for all tabs; an answer sent from this sorter clears the mark at once. */
-  const WAIT_EVERY = 3 * 60000;
-  let waitTimer = 0, waitBusy = false;
-  M.wait = get(LS.wait, null);   // { at, sb, d: { buyers: { key: { sinceMs, name } }, receipts: { receiptId: key } } }
-  function waitLater() {
-    clearTimeout(waitTimer); waitTimer = 0;
-    if (!M.key || document.hidden) return;   // a hidden page asks again when it is looked at
-    const x = get(LS.wait, null), age = x && x.sb === SANDBOX ? Date.now() - x.at : Infinity;
-    waitTimer = setTimeout(checkWait, Math.max(500, WAIT_EVERY - age));
-  }
-  async function checkWait() {
-    waitTimer = 0;
-    if (!M.key || waitBusy || document.hidden) return;
-    const shared = get(LS.wait, null);
-    if (shared && shared.sb === SANDBOX && Date.now() - shared.at < WAIT_EVERY - 5000) { setWait(shared); waitLater(); return; }
-    waitBusy = true;
-    try {
-      const d = await call("awaiting", { sandbox: SANDBOX }, { timeout: 30000 });
-      const x = { at: Date.now(), sb: SANDBOX, d: { buyers: d.buyers || {}, receipts: d.receipts || {} } };
-      put(LS.wait, x); setWait(x);
-      if (bc) try { bc.postMessage({ t: "wait", x }); } catch (_) {}
-    } catch (e) { authLost(e); }
-    finally { waitBusy = false; waitLater(); }
-  }
-  function setWait(x) {
-    const was = JSON.stringify(M.wait && M.wait.d);
-    M.wait = x;
-    if (JSON.stringify(x && x.d) !== was) { badgesChanged(null); paintTabDots(); }
-  }
-  /** The buyer of this order is waiting: when they wrote, unless this sorter has answered since. */
-  function waitingOf(rid) {
-    const x = M.wait;
-    if (!x || !M.key || x.sb !== SANDBOX || Date.now() - x.at > 20 * 60000) return null;
-    const k = x.d.receipts[rid], w = k && x.d.buyers[k];
-    if (!w) return null;
-    if (forReceipt(rid).some(s => Math.max(s.lastOutboundAtMs || 0, s.lastShopReplyAtMs || 0, (s.lastOut && (s.lastOut.sentAtMs || s.lastOut.atMs)) || 0) > w.sinceMs)) return null;
-    return w;
-  }
+  // ─── the marks on the Orders and Engraving lists: this sorter's own questions only ──
+  /* A mark speaks only about a question sent from this sorter, never about the buyer's other messages to the shop:
+     "New reply" when the buyer answered and nobody has read it here yet, "Buyer waiting" once it is read but nobody has
+     answered it (from the sorter or in the inbox), and quietly "Asked", "Sending" or "Not sent" for the question itself. */
+  const lastOurs = s => Math.max(s.lastOutboundAtMs || 0, s.lastShopReplyAtMs || 0, (s.lastOut && (s.lastOut.sentAtMs || s.lastOut.atMs)) || 0);
+  const repliedTo = s => !!s.lastInboundAtMs && s.lastInboundAtMs > lastOurs(s);
   function badgeState(rid) {
     if (!M.key) return null;
     rid = String(rid);
-    const list = forReceipt(rid).filter(s => s.status === "open"), w = waitingOf(rid);
-    if (!list.length && !w) return null;
+    const list = forReceipt(rid).filter(s => s.status === "open");
+    if (!list.length) return null;
     const unread = list.reduce((n, s) => n + (s.unread || 0), 0);
     const bad = list.some(s => s.failed > 0 || s.manual > 0);
     const pending = list.some(s => s.pending > 0);
-    return { unread, bad, pending, n: list.length, wait: w ? w.sinceMs : 0 };
+    const wait = Math.max(0, ...list.filter(repliedTo).map(s => s.lastInboundAtMs));
+    return { unread, bad, pending, n: list.length, wait };
   }
   /** The mark on a list row: a click opens the order's Customer tab. */
   function badge(rid) {
     const b = badgeState(rid); if (!b) return "";
     const tag = (cls, title, words) => `<span class="mailTag${cls}" role="button" tabindex="0" data-mail-open="${E(String(rid))}" title="${E(title)} Click to open the conversation.">${ICON.mail}${words}</span>`;
     if (b.unread) return tag(" new", `${b.unread} new ${b.unread === 1 ? "reply" : "replies"} from the customer.`, `${b.unread} new ${b.unread === 1 ? "reply" : "replies"}`);
-    if (b.wait) return tag(" wait", `The buyer wrote ${when(b.wait)} and has no answer yet.`, "Buyer waiting");
+    if (b.wait) return tag(" wait", `The buyer answered your question ${when(b.wait)} and has no reply yet.`, "Buyer waiting");
     if (b.bad) return tag(" bad", "A message to this customer did not go.", "Not sent");
     return tag("", b.pending ? "A message to the customer is on its way." : "A question to the customer is open.", b.pending ? "Sending" : "Asked");
   }
@@ -527,8 +492,7 @@
   const paintSlots = () => document.querySelectorAll(".mailSlot[data-mail-rid]").forEach(el => slot(el, el.dataset.mailRid));
   function openFromList(rid) {
     const r = ((window.Orders && Orders.rows && Orders.rows()) || []).find(x => String(x.order.receiptId) === rid);
-    const b = badgeState(rid);
-    if (r && window.OrderWin && OrderWin.open) OrderWin.open(r.key, { tab: "customer", pull: !!(b && b.wait && !b.unread && !b.n) });
+    if (r && window.OrderWin && OrderWin.open) OrderWin.open(r.key, { tab: "customer" });
     else openConversation({ receiptId: rid, scope: "order" });
   }
   document.addEventListener("click", e => {
@@ -1061,14 +1025,19 @@
   async function histCount(rid, engId, force) {
     rid = String(rid || "");
     const c = hcount.get(rid);
-    if (!rid || !M.key || (c && (c.busy || (!force && Date.now() - c.at < HCOUNT_TTL)))) return c || null;
-    const cur = { at: Date.now(), info: (c && c.info) || null, busy: true, err: null };
+    // a count already on its way is waited for, not taken as missing ("the count did not come back")
+    if (c && c.busy && c.flight) { await c.flight; return hcount.get(rid) || c; }
+    if (!rid || !M.key || (c && !force && Date.now() - c.at < HCOUNT_TTL)) return c || null;
+    const cur = { at: Date.now(), info: (c && c.info) || null, busy: true, err: null, flight: null };
     hcount.set(rid, cur);
     if (hcount.size > 100) hcount.delete(hcount.keys().next().value);
     paintHistFor(rid);
-    try { cur.info = await call("history_info", { receiptId: rid, engagementId: engId || null, sandbox: sbOf(rid) }, { timeout: 20000 }); cur.at = Date.now(); }
-    catch (e) { if (!authLost(e)) cur.err = e.message; cur.at = Date.now() - HCOUNT_TTL + 30000; }
-    finally { cur.busy = false; paintHistFor(rid); }
+    cur.flight = (async () => {
+      try { cur.info = await call("history_info", { receiptId: rid, engagementId: engId || null, sandbox: sbOf(rid) }, { timeout: 30000 }); cur.at = Date.now(); }
+      catch (e) { if (!authLost(e)) cur.err = e.message; cur.at = Date.now() - HCOUNT_TTL + 30000; }
+      finally { cur.busy = false; cur.flight = null; paintHistFor(rid); }
+    })();
+    await cur.flight;
     return cur;
   }
   function paintHistFor(rid) {
