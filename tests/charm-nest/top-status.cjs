@@ -1,7 +1,10 @@
 // What the sorter is busy with sits at the right of its top bar, small (Paul, 24 Sep): the progress bar, the orders counter
 // and the Design Station strip used to share the bottom of the screen. Opens the page in headless Chromium with a run on,
-// two tasks and a failed order check, and checks at five widths that nothing is left at the bottom, that the line and the
+// two tasks and a failed order check, and checks at seven widths that nothing is left at the bottom, that the line and the
 // chip sit inside the top bar without covering a tab or a tool, and that the station frame stays laid out out of sight.
+// The run's own state is a small pill beside the line (Paul, 25 Sep; it was a band across the page under the top bar):
+// it is checked at the same widths (in the bar, beside the line, every tab still in view from 1280 px with the rail and
+// the sandbox pill, its menu on screen), and at one width for its tints, its buttons, Stop from its menu, and no run.
 //   node tests/charm-nest/top-status.cjs [playwright-core dir]
 const http = require('http'), fs = require('fs'), path = require('path'), assert = require('assert');
 const root = path.join(__dirname, '../..');
@@ -18,34 +21,43 @@ const server = http.createServer((req, res) => {
 (async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   try {
-    for (const [w, h] of [[1500, 900], [1200, 800], [980, 800], [700, 800], [420, 800]]) {
+    for (const [w, h, sbx] of [[1500, 900], [1352, 860, true], [1280, 800, true], [1200, 800], [980, 800], [700, 800], [420, 800]]) {
       const page = await browser.newPage({ viewport: { width: w, height: h } });
       const errors = []; page.on('pageerror', e => errors.push(e.message));
       await page.goto(`http://127.0.0.1:${server.address().port}/charm-nest-1.html`);
       await page.waitForFunction(() => window.CN && window.Dock && window.Arrivals && window.CNProgress);
-      const got = await page.evaluate(async () => {
+      const got = await page.evaluate(async sbx => {
         const app = document.getElementById('app'); if (innerWidth < 760 && !app.classList.contains('railOff')) document.getElementById('btnRail').click();
         Dock.ensure(); const f = document.createElement('iframe'); f.id = 'dsFrame'; Dock._D.body.appendChild(f);
-        B.run = { status: 'running', step: 'nesting sheet 1' }; Dock.layout();
+        B.run = { runId: 'run-20260925-a1b2c3d4', day: '2026-09-25', setId: 'set-2026-09-25-3', seq: 3, step: 'nest', status: 'running', mode: 'auto', startedAt: Date.now(), updatedAt: Date.now(),
+          lines: { a: {}, b: {} }, sheets: { a: {} }, holds: {}, errors: [], committed: [], resumable: true };
+        Dock.layout(); RunCtl.renderBanner();
         CNProgress.start('Talking to the cloud');
         const t = CNProgress.start('Preparing 8 order line(s)', { total: 8 }); t.set(3, 8, 'READER_97110');
         Arrivals.state().error = 'orders.snapshot: the Design Station did not answer in time'; Arrivals.paint();
         await new Promise(r => setTimeout(r, 300));
+        // the sandbox pill as Sandbox.render draws it while orders stream in (set once the page's own start has drawn it),
+        // and a few frames for the line to fit itself to the room left
+        if (sbx) { const p = document.getElementById('sandboxPill'); p.classList.remove('hidden'); p.innerHTML = '<span>Sandbox<span class="sbSpeed"> 50x</span><span class="sbTime"> · <span class="sbSim">sim </span>Fri 07:30</span></span>'; await new Promise(r => setTimeout(r, 200)); }
         const box = el => { if (!el) return null; const b = el.getBoundingClientRect(); return { x: b.left, y: b.top, r: b.right, b: b.bottom, w: b.width, h: b.height }; };
-        const bar = document.querySelector('.topbar'), line = document.querySelector('#cnpSlot > .cnp.mini.on'), row = line && line.querySelector('.cnpRow'), chip = document.getElementById('ordersChip');
+        const bar = document.querySelector('.topbar'), line = document.querySelector('#cnpSlot > .cnp.mini.on'), row = line && line.querySelector('.cnpRow'), chip = document.getElementById('ordersChip'), pill = document.getElementById('runBanner');
         // the tabs as far as they show (the strip scrolls), and the tools
         const seg = document.getElementById('modeSeg').getBoundingClientRect(), clip = b => ({ ...b, x: Math.max(b.x, seg.left), r: Math.min(b.r, seg.right) });
         const others = [...document.querySelectorAll('#modeSeg button')].map(e => ({ name: e.dataset.mode, ...clip(box(e)) })).filter(b => b.r > b.x)
-          .concat([...document.querySelectorAll('.topTools > *')].filter(e => e.getClientRects().length).map(e => ({ name: e.id || e.textContent.trim().slice(0, 14), ...box(e) })));
+          .concat([...document.querySelectorAll('.topTools > *, .topbar > #runBanner')].filter(e => e.getClientRects().length).map(e => ({ name: e.id || e.textContent.trim().slice(0, 14), ...box(e) })));
+        const seg2 = document.getElementById('modeSeg'), menu = document.getElementById('runMenu');
+        menu.open = true; await new Promise(r => setTimeout(r, 50)); const menuBox = box(menu.querySelector('.runMenuBody')); menu.open = false;
         const out = { bar: box(bar), tight: !!line && line.classList.contains('tight'), row: box(row), track: box(line && line.querySelector('.cnpTrack')), label: box(row && row.querySelector('.cnpLabel')),
           chip: box(chip), chipText: chip && chip.textContent, chipTitle: chip && chip.title, title: line && line.title,
           others, vw: innerWidth, dock: box(document.getElementById('dsDock')), frame: { w: f.offsetWidth, h: f.offsetHeight },
           gone: ['#bottomTray', '#arrivalCounter', '#dsDockPill', '#dsDock .dockBar'].filter(s => document.querySelector(s)),
-          fixedCnp: getComputedStyle(document.querySelector('.cnp')).position, pad: parseFloat(getComputedStyle(document.querySelector('.stage')).paddingBottom) };
+          fixedCnp: getComputedStyle(document.querySelector('.cnp')).position, pad: parseFloat(getComputedStyle(document.querySelector('.stage')).paddingBottom),
+          pill: box(pill), pillText: pill.querySelector('.rbText').textContent, menuBox, stage: box(document.getElementById('stage')),
+          sandbox: box(document.getElementById('sandboxPill')) };
         Arrivals.state().error = null; Arrivals.paint(); out.chipAfter = !!document.getElementById('ordersChip');
+        out.tabsCut = seg2.scrollWidth - seg2.clientWidth;   // (with the chip gone: a failed order check takes a tab's room of its own)
         return out;
-      });
-      await page.close();
+      }, !!sbx);
       const at = `${w}px`;
       assert.deepStrictEqual(errors, [], `no page errors (${at})`);
       assert.deepStrictEqual(got.gone, [], `nothing of the bottom tray or the station strip is left (${at})`);
@@ -75,7 +87,44 @@ const server = http.createServer((req, res) => {
       assert(/did not answer in time/.test(got.chipTitle) && /Orders received · 24h/.test(got.chipTitle), `and its tooltip says why and what was received (${at}): ${got.chipTitle}`);
       assert(/Talking to the cloud|Preparing 8 order line/.test(got.title) && /\d+s/.test(got.title), `the line's tooltip has the task and its time (${at}): ${got.title}`);
       assert.strictEqual(got.chipAfter, false, `the chip goes when the checks work again (${at})`);
+      // the run's pill: in the top bar, beside the line, over nothing, with its words where there is room
+      const p = got.pill;
+      assert(p && p.w >= 40, `the run shows as a pill (${at}): ${JSON.stringify(p)}`);
+      assert(p.y >= got.bar.y - 0.5 && p.b <= got.bar.b + 0.5 && p.x >= -0.5 && p.r <= got.vw + 0.5 && p.h <= 28, `the pill sits small inside the top bar, on screen (${at}): ${JSON.stringify([p, got.bar])}`);
+      for (const o of got.others) if (o.name !== 'runBanner') assert(!(p.x < o.r - 0.5 && o.x < p.r - 0.5 && p.y < o.b - 0.5 && o.y < p.b - 0.5), `the pill covers no tab or tool (${at}): ${o.name}`);
+      if (!got.tight) assert(p.x >= got.row.r - 0.5 && p.x - got.row.r <= 24 && Math.abs((p.y + p.b) / 2 - (got.row.y + got.row.b) / 2) <= 12, `the pill is beside the line (${at}): ${JSON.stringify([got.row, p])}`);
+      assert.strictEqual(got.pillText, 'Nesting', `and says what the run is doing (${at})`);
+      assert(got.stage.y - got.bar.b <= 1, `no band under the top bar: the work starts right below it (${at}): ${got.stage.y} vs ${got.bar.b}`);
+      assert(got.menuBox && got.menuBox.x >= -0.5 && got.menuBox.r <= got.vw + 0.5 && got.menuBox.y >= p.b, `its menu opens below it, on screen (${at}): ${JSON.stringify(got.menuBox)}`);
+      if (w >= 1280) assert(got.tabsCut <= 1, `every tab stays in view beside the pill, the rail${sbx ? ' and the sandbox pill' : ''} (${at}): ${got.tabsCut}px cut`);
+      if (sbx) assert(got.sandbox && got.sandbox.w >= 40, `and the sandbox pill still shows (${at})`);
+      if (w === 1500) {
+        const states = await page.evaluate(async () => {
+          const r = B.run, look = () => { const h = document.getElementById('runBanner'), s = h.querySelector('summary'); return { hidden: h.classList.contains('hidden'), text: h.querySelector('.rbText').textContent, tip: s.title, bg: getComputedStyle(s).backgroundColor, ids: [...h.querySelectorAll('button')].map(b => b.id || 'resume ' + b.dataset.rbres), untitled: [...h.querySelectorAll('button')].filter(b => !b.title).map(b => b.id), open: h.querySelector('#runMenu').open }; };
+          const out = { running: look() };
+          Review.count = () => 3; r.status = 'review'; r.step = 'engrave'; RunCtl.renderBanner(); out.review = look(); Review.count = () => 0;
+          r.status = 'running'; r.step = 'nest'; RunCtl.renderBanner();
+          // Stop from the open menu: the run stops, and Resume takes Stop's place at once, in the menu still open
+          document.getElementById('runMenu').open = true; document.getElementById('rbStop').click(); out.stopped = look(); out.status = r.status;
+          document.getElementById('runMenu').open = false;
+          B.run = null; RunCtl.renderBanner(); out.none = look();
+          return out;
+        });
+        console.log(at, 'pill states', JSON.stringify(states));
+        assert.strictEqual(states.running.bg, 'rgba(0, 0, 0, 0)', 'a run at work is a quiet pill, untinted');
+        assert(/Set 3 · Sep 25/.test(states.running.tip) && /Nesting/.test(states.running.tip), 'its tooltip names the set and says what is going on: ' + states.running.tip);
+        for (const id of ['rbStop', 'rbHistory', 'rbAbandon']) assert(states.running.ids.includes(id), `its menu has ${id}: ${states.running.ids}`);
+        assert.strictEqual(states.review.text, 'Waiting on you · 3 in Review', 'waiting on a person says so, with what it waits on');
+        assert.notStrictEqual(states.review.bg, states.running.bg, 'and is tinted, so it is noticed');
+        assert.strictEqual(states.status, 'stopped', 'Stop in the menu stops the run');
+        assert(/Stopped/.test(states.stopped.text) && states.stopped.ids.includes('rbResume') && !states.stopped.ids.includes('rbStop'), 'and Resume takes its place at once: ' + JSON.stringify(states.stopped));
+        assert(states.stopped.open, 'in the menu, which stays open');
+        assert.notStrictEqual(states.stopped.bg, states.running.bg, 'a stopped run is tinted');
+        for (const st of ['running', 'review', 'stopped']) assert.deepStrictEqual(states[st].untitled, [], `every button in the menu says what it does on hover (${st})`);
+        assert(states.none.hidden, 'with no run the pill is gone');
+      }
+      await page.close();
     }
   } finally { await browser.close(); server.close(); }
-  console.log('top status OK · the progress line and the orders chip sit small in the top bar, nothing is left at the bottom, the station frame stays laid out unseen, 1500 to 420 px');
+  console.log('top status OK · the progress line, the run pill and the orders chip sit small in the top bar, nothing is left at the bottom or under the bar, every tab shows from 1280 px, the station frame stays laid out unseen, 1500 to 420 px');
 })().catch(e => { console.error(e); process.exit(1); });
