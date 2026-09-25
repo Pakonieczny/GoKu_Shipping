@@ -1949,6 +1949,7 @@ function cloudWords(text, status) {
     : +status && +status < 500 ? `The cloud answered with an error page${code}` : `The cloud is not answering right now${code}`;
 }
 async function api(fn, body, opts = {}) {
+  if (opts.all) return apiAll(fn, body, opts);
   const headers = { "Content-Type": "application/json" };
   if (S.passcode) headers["X-Edit-Passcode"] = S.passcode;
   const bar = (opts.quiet || opts.silent || !window.CNProgress) ? null : CNProgress.start(opts.label || "Talking to the cloud", { quiet: !!opts.background });
@@ -1975,6 +1976,21 @@ async function api(fn, body, opts = {}) {
     throw e;
   }
   finally { done(); }
+}
+/* A list that grows with the shop (the sheets of a year, a set list with its sheets, the SKU index) comes from the cloud
+   in parts, each what one answer holds: api(fn, body, { all }) names the answer's lists (one name or several) and asks for
+   part after part, each with the last one's `next` as its cursor, until there is none. The lists are joined, the rest of
+   the answer is the first part's; a part that fails fails the whole, so nothing is taken for the whole list that is not. */
+async function apiAll(fn, body, opts) {
+  const keys = [].concat(opts.all), one = Object.assign({}, opts, { all: null });
+  let out = null, cursor = null;
+  for (let part = 0; part < 500; part++) {
+    const r = await api(fn, part ? Object.assign({}, body, { cursor }) : body, part ? Object.assign({}, one, { label: `${opts.label || "Talking to the cloud"} · part ${part + 1}` }) : one);
+    if (!out) out = r || {}; else for (const k of keys) if (r && Array.isArray(r[k])) out[k] = (out[k] || []).concat(r[k]);
+    cursor = r && r.next;
+    if (cursor == null) return Object.assign(out, { next: null, truncated: false });
+  }
+  throw new Error(`${fn}: the list did not end after 500 parts`);
 }
 /* The rail's headline said "Cloud ok · 0 sheets · 0 charms" and was written once at boot and never again — so it sat
    three inches from a toast reading "sheet, proof and report saved to the cloud" and flatly contradicted it. The word

@@ -109,6 +109,24 @@ async function op_putShapeGuidance(b) {
 const isHash = h => /^[0-9a-f]{8,64}$/i.test(String(h || ""));
 const isId = s => /^[\w\-]{4,80}$/.test(String(s || ""));
 const ms = v => (v && v.toMillis ? v.toMillis() : (typeof v === "number" ? v : null));
+/* A function's answer is sent whole and may be at most 6 MB, and a sync function has seconds to give it. A list that grows
+   with the shop (a year of sheets, a set list with its sheets, the SKU index, the learned maps) used to be read and sent
+   whole, or cut at a count with the rest dropped without a word. Such a list now goes in parts: a part holds what fits in
+   ANSWER_BYTES and was read within ANSWER_MS of the call (always at least one item, so every part moves the list on);
+   `next` says where the rest starts, the page sends it back as `cursor` until there is none, and `truncated` says the
+   answer was cut short. */
+const ANSWER_BYTES = 4000000, ANSWER_MS = 5000;
+const bytesOf = v => Buffer.byteLength(JSON.stringify(v));
+/** What one part of an answer may still take: fits(item) counts the item in, or says it is for the next part; late()
+    says the part has had its time (never before it holds an item). */
+function answerBudget(began = Date.now()) {
+  let used = 0, items = 0;
+  return {
+    fits(item) { const n = bytesOf(item); if (items && used + n > ANSWER_BYTES) return false; used += n; items++; return true; },
+    late: () => items > 0 && Date.now() - began > ANSWER_MS
+  };
+}
+const docOrder = () => admin.firestore.FieldPath.documentId();
 
 function slim(d) {
   return {
@@ -641,15 +659,41 @@ async function op_masterGetMany(b) {
   for (let i = 0; i < skus.length; i += 30) { const snaps = await db.getAll(...skus.slice(i, i + 30).map(s => db.collection(Master.INDEX).doc(s))); for (const s of snaps) if (s.exists) out[s.id] = await withLinks(Master.slimEntry(s.data())); }
   return { entries: out };
 }
+/** What changes whenever the index does: how many entries it holds, and when one was last indexed and last edited
+    (masterPatch). A background reload of the library that finds these as they were reads nothing more (Master.load). */
+async function masterIndexSig() {
+  const ix = db.collection(Master.INDEX);
+  const [n, indexed, edited] = await Promise.all([ix.count().get(), ix.orderBy("indexedAt", "desc").limit(1).select("indexedAt").get(), ix.orderBy("updatedAt", "desc").limit(1).select("updatedAt").get()]);
+  return { count: n.data().count, indexedAt: indexed.size ? ms(indexed.docs[0].data().indexedAt) : null, updatedAt: edited.size ? ms(edited.docs[0].data().updatedAt) : null };
+}
+/* The index in parts, in SKU (document id) order: a part holds up to `limit` entries, what fits in ANSWER_BYTES and what
+   was read within ANSWER_MS, and `next` is the SKU after which the next part starts (null at the end of the index). It
+   used to be the first 3,000 documents Firestore handed out, in no set order, and a library past that lost the rest
+   without a word. The first part says the index's signature (index), read before any entry is: a change made while the
+   parts are read shows as a change the next time. */
 async function op_masterList(b) {
-  const q = str(b.q, 80).toUpperCase(); const limit = Math.min(3000, Math.max(1, num(b.limit) || 1500));
-  const snap = await db.collection(Master.INDEX).limit(limit).get();
-  let rows = snap.docs.filter(d => d.data().sku).map(d => Master.slimEntry(d.data()));   // a shell without a SKU (a patch on an unindexed SKU) is not an entry
-  if (b.masterHash) rows = rows.filter(r => r.masterHash === b.masterHash);
-  if (q) rows = rows.filter(r => String(r.sku || "").includes(q));
+  const began = Date.now(), q = str(b.q, 80).toUpperCase(), limit = Math.min(3000, Math.max(1, num(b.limit) || 1500));
+  const index = b.cursor ? null : await masterIndexSig(), rows = [], size = q || b.masterHash ? 500 : Math.min(500, limit);   // a few entries (the connections check) read a few
+  let after = b.cursor ? str(b.cursor, 80) : null, used = 0, next = null, truncated = false;
+  read: for (;;) {
+    let page = db.collection(Master.INDEX).orderBy(docOrder()).limit(size); if (after) page = page.startAfter(after);
+    const snap = await page.get();
+    for (const d of snap.docs) {
+      const e = d.data(), r = e.sku ? Master.slimEntry(e) : null;   // a shell without a SKU (a patch on an unindexed SKU) is not an entry
+      if (r && (!b.masterHash || r.masterHash === b.masterHash) && (!q || String(r.sku || "").includes(q))) {
+        const n = bytesOf(r);
+        if (rows.length && used + n > ANSWER_BYTES) { next = after; truncated = true; break read; }
+        rows.push(r); used += n;
+      }
+      after = d.id;
+      if (rows.length >= limit) { next = after; break read; }
+    }
+    if (snap.size < size) break;
+    if (Date.now() - began > ANSWER_MS) { next = after; truncated = true; break; }
+  }
   rows.sort((x, y) => x.sku.localeCompare(y.sku));
   if (b.links) for (const r of rows) await withLinks(r);
-  return { entries: rows };
+  return Object.assign({ entries: rows, next, truncated }, index ? { index } : {});
 }
 async function op_masterPatch(b) {
   const sku = String(b.sku || "").trim().toUpperCase(); if (!Master.isSku(sku)) return { error: "bad sku" };
@@ -665,7 +709,14 @@ async function op_masterPatch(b) {
   return { ok: true };
 }
 async function op_masterPutFile(b) { return Master.putFile(db, FV, b); }
-async function op_masterListFiles() { const snap = await db.collection(Master.FILES).limit(200).get(); const rows = snap.docs.map(d => { const r = d.data(); r.indexedAt = ms(r.indexedAt); return r; }); rows.sort((a, b2) => (b2.indexedAt || 0) - (a.indexedAt || 0)); return { files: rows }; }
+/** The 200 master files indexed last, newest first (it took the first 200 Firestore handed out and sorted those), as many
+    as fit in one answer (a file's record keeps lists of up to 2,000 SKUs); and the index's signature (masterIndexSig). */
+async function op_masterListFiles() {
+  const [snap, index] = await Promise.all([db.collection(Master.FILES).orderBy("indexedAt", "desc").limit(200).get(), masterIndexSig()]);
+  const rows = snap.docs.map(d => { const r = d.data(); r.indexedAt = ms(r.indexedAt); return r; }), budget = answerBudget();
+  let n = 0; while (n < rows.length && budget.fits(rows[n])) n++;
+  return { files: rows.slice(0, n), index, truncated: n < rows.length };
+}
 /** Remove one SKU from the index (a stray record, a SKU that should never have been read). */
 async function op_masterRemoveSku(b) {
   const sku = String(b.sku || "").trim().toUpperCase(); if (!Master.isSku(sku)) return { error: "bad sku" };
@@ -1331,12 +1382,25 @@ async function sweepBridge(session) {
   return gone;
 }
 // ── learned maps: aliases, no-design list, option maps ──
-async function op_aliasGet() { const snap = await db.collection(ALIASES).limit(3000).get(); const out = {}; snap.docs.forEach(d => { out[d.id] = d.data(); }); return { aliases: out }; }
+/** Every document of a map, read 500 at a time in document order, as much as fits in one answer and is read within
+    ANSWER_MS (truncated says what that left out). Each map used to stop at a count (3,000 aliases, 2,000 option maps,
+    1,000 no-design rows) and a map past it lost the rest without a word. */
+async function mapDocs(name) {
+  const budget = answerBudget(), docs = []; let after = null;
+  for (;;) {
+    let page = db.collection(name).orderBy(docOrder()).limit(500); if (after) page = page.startAfter(after);
+    const snap = await page.get();
+    for (const d of snap.docs) { if (!budget.fits([d.id, d.data()])) return { docs, truncated: true }; docs.push(d); after = d.id; }
+    if (snap.size < 500) return { docs, truncated: false };
+    if (budget.late()) return { docs, truncated: true };
+  }
+}
+async function op_aliasGet() { const { docs, truncated } = await mapDocs(ALIASES); const out = {}; docs.forEach(d => { out[d.id] = d.data(); }); return { aliases: out, truncated }; }
 async function op_aliasPut(b) { const lid = str(b.listingId, 30).replace(/\D/g, ""); const sku = String(b.sku || "").trim().toUpperCase(); if (!lid || !Master.isSku(sku)) return { error: "listingId and sku required" }; await db.collection(ALIASES).doc(lid).set({ listingId: lid, sku, by: str(b.by || "operator", 80), title: str(b.title, 200), updatedAt: FV.serverTimestamp() }, { merge: true }); return { ok: true }; }
-async function op_noDesignGet() { const snap = await db.collection(NODESIGN).limit(1000).get(); const rows = snap.docs.map(d => Object.assign({ id: d.id }, d.data())); return { list: { patterns: rows.filter(r => r.pattern).map(r => r.pattern), skus: rows.filter(r => r.sku).map(r => r.sku), rows } }; }
+async function op_noDesignGet() { const { docs, truncated } = await mapDocs(NODESIGN); const rows = docs.map(d => Object.assign({ id: d.id }, d.data())); return { list: { patterns: rows.filter(r => r.pattern).map(r => r.pattern), skus: rows.filter(r => r.sku).map(r => r.sku), rows }, truncated }; }
 async function op_noDesignPut(b) { const doc = { by: str(b.by || "operator", 80), note: str(b.note, 200), createdAt: FV.serverTimestamp() }; if (b.pattern) { try { new RegExp(String(b.pattern)); } catch (_) { return { error: "bad pattern" }; } doc.pattern = str(b.pattern, 120); } else if (b.sku) doc.sku = String(b.sku).trim().toUpperCase().slice(0, 40); else return { error: "pattern or sku required" }; const ref = await db.collection(NODESIGN).add(doc); return { ok: true, id: ref.id }; }
 async function op_noDesignDelete(b) { if (!isId(b.id)) return { error: "bad id" }; await db.collection(NODESIGN).doc(b.id).delete(); return { ok: true }; }
-async function op_optionMapGet() { const snap = await db.collection(OPTMAP).limit(2000).get(); const out = {}; snap.docs.forEach(d => { out[d.id] = d.data().map || {}; }); return { maps: out }; }
+async function op_optionMapGet() { const { docs, truncated } = await mapDocs(OPTMAP); const out = {}; docs.forEach(d => { out[d.id] = d.data().map || {}; }); return { maps: out, truncated }; }
 async function op_optionMapPut(b) {
   const lid = b.listingId === "*" ? "*" : str(b.listingId, 30).replace(/\D/g, ""); const name = str(b.optionName, 80).toLowerCase().trim(), value = str(b.optionValue, 200).toLowerCase().replace(/\s+/g, " ").trim();
   if (!lid || !name || !value) return { error: "listingId, optionName and optionValue required" };

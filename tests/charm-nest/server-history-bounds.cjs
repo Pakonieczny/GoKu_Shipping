@@ -41,12 +41,13 @@ function docRef(coll, id) {
     async delete() { store.delete(key); }
   };
 }
-function query(coll, filters = [], order = null, lim = 0, mask = null) {
+function query(coll, filters = [], order = null, lim = 0, mask = null, after = null) {
   const q = {
-    where(f, op, v) { return query(coll, filters.concat([[f, op, v]]), order, lim, mask); },
-    orderBy(f, dir) { return query(coll, filters, [f, dir || 'asc'], lim, mask); },
-    limit(n) { return query(coll, filters, order, n, mask); },
-    select(...fields) { return query(coll, filters, order, lim, fields); },
+    where(f, op, v) { return query(coll, filters.concat([[f, op, v]]), order, lim, mask, after); },
+    orderBy(f, dir) { return query(coll, filters, [f, dir || 'asc'], lim, mask, after); },
+    limit(n) { return query(coll, filters, order, n, mask, after); },
+    select(...fields) { return query(coll, filters, order, lim, fields, after); },
+    startAfter(v) { return query(coll, filters, order, lim, mask, v); },
     doc(id) { return docRef(coll, id || 'auto' + crypto.randomBytes(6).toString('hex')); },
     async add(data) { const r = q.doc(); await r.set(data); return r; },
     count() { return { get: async () => ({ data: () => ({ count: q.rows().length }) }) }; },   // an aggregate hands out no documents
@@ -65,7 +66,10 @@ function query(coll, filters = [], order = null, lim = 0, mask = null) {
         if (x === undefined || x === null || typeof x !== typeof v) return false;   // a range never matches a missing field
         return op === '<' ? x < v : op === '<=' ? x <= v : op === '>' ? x > v : op === '>=' ? x >= v : false;
       });
-      if (order) { rows = rows.filter(r => getPath(r.v, order[0]) !== undefined); rows.sort((a, b) => { const x = norm(getPath(a.v, order[0])), y = norm(getPath(b.v, order[0])); const c = x > y ? 1 : x < y ? -1 : 0; return order[1] === 'desc' ? -c : c; }); }
+      // FieldPath.documentId() orders by the document's id; startAfter starts past the value given
+      const key = r => (order[0] === '__name__' ? r.id : getPath(r.v, order[0]));
+      if (order) { rows = rows.filter(r => key(r) !== undefined); rows.sort((a, b) => { const x = norm(key(a)), y = norm(key(b)); const c = x > y ? 1 : x < y ? -1 : 0; return order[1] === 'desc' ? -c : c; }); }
+      if (order && after != null) rows = rows.filter(r => (order[1] === 'desc' ? norm(key(r)) < norm(after) : norm(key(r)) > norm(after)));
       return lim ? rows.slice(0, lim) : rows;
     }
   };
@@ -101,7 +105,7 @@ const bucket = {
     return f;
   }
 };
-const fakeAdmin = { firestore: Object.assign(() => db, { FieldValue, Timestamp: { fromMillis: ts } }), storage: () => ({ bucket: () => bucket }) };
+const fakeAdmin = { firestore: Object.assign(() => db, { FieldValue, FieldPath: { documentId: () => '__name__' }, Timestamp: { fromMillis: ts } }), storage: () => ({ bucket: () => bucket }) };
 let kick = { ok: true, status: 202 };
 const Module = require('module'), realLoad = Module._load;
 Module._load = function (req, ...rest) {
@@ -302,5 +306,20 @@ function seedDay(i, extra = {}) {
   assert.deepStrictEqual(mirrors, ['design-archive/listing/' + crypto.createHash('sha1').update('https://i.etsystatic.com/a.jpg').digest('hex') + '.jpg'], 'one file per picture: ' + mirrors);
   assert.strictEqual(fetched.length, 1, 'fetched once');
 
-  console.log(`server-history-bounds OK · listing ${first.total} reads (0 line parts) at 120 and 300 days · order found 100 days back · search window 30 days · expiries, archive moves, slim backs, 900 KB guard, .pdf copy, payload cleanup, listing mirrors`);
+  /* ── the SKU index past 3,000 comes back whole, in parts; its signature says when a reload can be skipped ── */
+  for (let i = 0; i < 3500; i++) { const sku = 'IX-' + String(i).padStart(5, '0'); store.set('Charm_Master_Index/' + sku, { sku, masterHash: 'm1', masterName: 'M.ai', indexedAt: ts(T0 + i), widthPt: 10, heightPt: 10 }); }
+  store.set('Charm_Master_Index/SHELL-ONLY', { updatedAt: ts(1) });   // a patch on a SKU never indexed: not an entry
+  let ix = await post({ op: 'masterList', limit: 3000 }), skus = ix.body.entries.map(e => e.sku), ixParts = 1;
+  const sig = ix.body.index;
+  assert(sig && sig.count === 3501 && sig.indexedAt === T0 + 3499, 'the first part says the index signature: ' + JSON.stringify(sig));
+  assert.strictEqual(ix.body.entries.length, 3000); assert(ix.body.next, 'and where the rest starts');
+  while (ix.body.next) { ix = await post({ op: 'masterList', limit: 3000, cursor: ix.body.next }); skus.push(...ix.body.entries.map(e => e.sku)); ixParts++; assert(!ix.body.index && !ix.body.truncated); }
+  assert.strictEqual(skus.length, 3500, 'all 3,500 entries come back: ' + skus.length); assert.strictEqual(new Set(skus).size, 3500, 'each once'); assert.strictEqual(ixParts, 2);
+  assert.deepStrictEqual((await post({ op: 'masterListFiles' })).body.index, sig, 'the files list says the same signature while nothing changed');
+  await post({ op: 'masterPatch', sku: 'IX-00007', patch: { engravable: false } });
+  assert.notDeepStrictEqual((await post({ op: 'masterListFiles' })).body.index, sig, 'an edit changes it');
+  store.delete('Charm_Master_Index/IX-00008');
+  assert.strictEqual((await post({ op: 'masterListFiles' })).body.index.count, 3500, 'and so does a removal');
+
+  console.log(`server-history-bounds OK · listing ${first.total} reads (0 line parts) at 120 and 300 days · order found 100 days back · search window 30 days · expiries, archive moves, slim backs, 900 KB guard, .pdf copy, payload cleanup, listing mirrors · 3,500 SKUs in ${ixParts} parts`);
 })().catch(e => { console.error(e); process.exit(1); });

@@ -108,8 +108,14 @@ async function main(argv, log = console.log) {
   const supersede = new Set(); let heldCount = 0;
   if (!o.dry) {
     const held = new Map();
-    const list = await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterList", limit: 3000 });
-    for (const e of list.entries || []) if (e && e.sku) held.set(String(e.sku).toUpperCase(), e);
+    // the index comes in parts (each answer says where the next starts): every part is read, or a library past the
+    // first part would be taken for one without the rest
+    for (let cursor = null, part = 0; ; part++) {
+      if (part === 500) throw new Error("the SKU index did not end after 500 parts");
+      const list = await api(o.origin, o.passcode, "charmNestLibrary", Object.assign({ op: "masterList", limit: 3000 }, cursor ? { cursor } : {}));
+      for (const e of list.entries || []) if (e && e.sku) held.set(String(e.sku).toUpperCase(), e);
+      if (!(cursor = list.next || null)) break;
+    }
     // Whichever master a SKU belongs to now is superseded by this one, or the two would block each other as the same SKU
     // in two files. This is read even when every charm is being rebuilt, because the clash does not depend on skipping.
     const files = await api(o.origin, o.passcode, "charmNestLibrary", { op: "masterListFiles" });
