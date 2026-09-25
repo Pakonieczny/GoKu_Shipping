@@ -1665,6 +1665,110 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .laserSection{margin-bottom:12px;padding-top:8px}
 .laserSection h2{font-size:14.5px;margin-bottom:8px}
 .laserAreaItems{gap:12px}
+/* ═══ the Library's Current | Completed tabs (charm-nest-library.js) ═══
+   The tabs sit at the left of the Library's one bar, no taller than the chips beside them: the bar keeps its one line. A
+   narrow workspace shortens the metal chips' names ("GF 14/20" to "GF") rather than let the bar scroll or wrap. */
+.libTabs{display:inline-flex;align-items:center;gap:2px;padding:2px;border:1px solid var(--line);border-radius:999px;background:var(--card2);flex:0 0 auto}
+.libTabs button{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;border-radius:999px;padding:3px 11px;font:650 11px var(--sans);line-height:16px;color:var(--ink70);white-space:nowrap;transition:background-color .18s ease,color .18s ease}
+.libTabs button:hover{color:var(--ink);background:var(--paper2)}
+.libTabs button.on{background:var(--ink);color:var(--paper)}
+.libTabs button:focus-visible{outline:2px solid var(--gold2);outline-offset:1px}
+.libTabs .cnt{font:700 9.5px/14px var(--mono);min-width:18px;padding:0 5px;border-radius:999px;background:var(--sageSoft);color:#3c5a39;text-align:center;font-variant-numeric:tabular-nums}
+.libTabs .cnt:empty{display:none}
+.libTabs button.on .cnt{background:rgba(255,255,255,.2);color:var(--paper)}
+.libTabs .cnt.pulse{animation:ldPulse .62s cubic-bezier(.2,.8,.2,1)}
+@keyframes ldPulse{0%{transform:none}30%{transform:scale(1.4);background:var(--sage);color:#fff}100%{transform:none}}
+@container workspace (max-width:1100px){.libBar .fchip .lng{display:none}}
+@container workspace (max-width:900px){.libBar{gap:6px}.libTabs button{padding:3px 8px}.libBar .libFilterGroup{gap:4px;padding-left:8px}.libBar .fchip{padding:4px 7px;gap:4px}.libBar #libKind{padding-left:8px}.libBar .seg button{padding:4px 8px}.libBar input[type=search]{min-width:110px;flex-basis:130px}}
+@container workspace (max-width:760px){.libTabs button{padding:3px 7px}.libBar .libFilterGroup{gap:3px}.libBar .fchip .sw{display:none}.libBar input[type=search]{min-width:100px}}
+/* a search waiting for its answer turns in the field, beside the field's own × */
+.libBar input[type=search].searching{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='none' stroke='%23c4bdb0' stroke-width='2'/%3E%3Cpath d='M8 2a6 6 0 0 1 6 6' fill='none' stroke='%235b554c' stroke-width='2' stroke-linecap='round'%3E%3CanimateTransform attributeName='transform' type='rotate' from='0 8 8' to='360 8 8' dur='.7s' repeatCount='indefinite'/%3E%3C/path%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 26px center;background-size:12px 12px;padding-right:44px}
+#libBody[hidden],#libDone[hidden]{display:none}
+#libBody.ldSwap,#libDone.ldSwap{animation:ldFade .18s ease}
+@keyframes ldFade{from{opacity:0;transform:translateY(3px)}}
+/* the mark on each card: a check in a circle at its corner, shown on hover or focus, and always on a touch screen */
+#libBody .libCard,#libDone .libCard{position:relative}
+.ldMark{position:absolute;top:-9px;right:-9px;z-index:2;width:26px;height:26px;border-radius:50%;border:1px solid var(--ink25);background:var(--card);color:var(--ink70);display:grid;place-items:center;padding:0;cursor:pointer;box-shadow:0 2px 6px rgba(30,26,20,.14);opacity:0;transform:scale(.8);transition:opacity .14s ease,transform .14s ease,background-color .14s,color .14s,border-color .14s}
+.ldMark svg{width:14px;height:14px;display:block}
+.libCard:hover>.ldMark,.libCard:focus-within>.ldMark,.ldMark:focus-visible,.ldMark.busy{opacity:1;transform:none}
+.ldMark:hover,.ldMark:focus-visible{background:var(--sage);border-color:var(--sage);color:#fff;outline:none}
+.ldMark[data-done="1"]:hover,.ldMark[data-done="1"]:focus-visible{background:var(--ink);border-color:var(--ink)}
+.ldMark.busy{pointer-events:none;color:var(--ink45)}
+.ldMark.busy svg{display:none}
+.ldMark.busy::after{content:"";width:10px;height:10px;border:2px solid var(--line);border-top-color:var(--ink70);border-radius:50%;animation:spin .7s linear infinite}
+@media (hover:none){.ldMark{opacity:1;transform:none}}
+.ldMark.ldMarkSet{position:static;width:auto;height:24px;border-radius:999px;padding:0 10px 0 7px;display:inline-flex;gap:5px;align-items:center;font:650 11px var(--sans);color:var(--ink70);opacity:1;transform:none;box-shadow:none;background:var(--card2)}
+.ldMark.ldMarkSet.busy::after{margin-left:2px}
+.ldPartial{font:600 10.5px var(--mono);color:#3c5a39;background:var(--sageSoft);border-radius:999px;padding:2px 8px;white-space:nowrap}
+/* the line a search answers with, first in the list, with its × */
+.ldFound{display:flex;align-items:center;gap:10px;min-height:32px;padding:5px 6px 5px 12px;margin:0 0 8px;background:var(--card2);border:1px solid var(--line);border-radius:10px;font-size:12px;color:var(--ink70);animation:ldFade .18s ease}
+.ldFound b{color:var(--ink);font-weight:650}
+.ldFound .ldFoundT{min-width:0;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ldFound .ldNote{color:var(--ink45);white-space:nowrap}
+.ldFound .ldGo{border:0;background:transparent;color:var(--sage);font:650 11.5px var(--sans);cursor:pointer;white-space:nowrap;padding:3px 6px;border-radius:7px}
+.ldFound .ldGo:hover{background:var(--sageSoft)}
+.ldFound .ldClear{flex:0 0 auto;width:22px;height:22px;border-radius:50%;border:0;background:transparent;color:var(--ink45);font-size:15px;line-height:1;cursor:pointer;display:grid;place-items:center}
+.ldFound .ldClear:hover{background:var(--paper2);color:var(--ink)}
+.ldFound .spin,.ldMore .spin,.ldPanelIn .spin{width:11px;height:11px;border:2px solid var(--line);border-top-color:var(--ink70);border-radius:50%;animation:spin .7s linear infinite;flex:0 0 11px}
+.libCard.ldHit,.setCard.ldHit,.ldRow.ldHit{box-shadow:0 0 0 2px var(--gold2),0 0 18px 4px rgba(202,168,97,.38);animation:ldHit 1.6s ease 2}
+@keyframes ldHit{50%{box-shadow:0 0 0 2px var(--gold2),0 0 26px 8px rgba(202,168,97,.5)}}
+.ldIn{animation:ldIn .26s cubic-bezier(.2,.8,.2,1)}
+@keyframes ldIn{from{opacity:0;transform:translateY(6px) scale(.98)}}
+/* Completed: a list by the day the laser finished, newest first */
+.ldList{display:flex;flex-direction:column}
+.ldDay{display:block}
+.ldDayHead{position:sticky;top:-6px;z-index:3;display:flex;align-items:baseline;gap:9px;margin:0;padding:9px 2px 6px;background:var(--paper);font:650 12.5px var(--sans);color:var(--ink);box-shadow:0 7px 9px -9px rgba(30,26,20,.35)}
+.ldDayHead span{font-weight:400;color:var(--ink45);font-size:12px}
+.ldDayHead i{margin-left:auto;font:600 10.5px var(--mono);font-style:normal;color:var(--ink45)}
+.ldDayRows{display:flex;flex-direction:column;gap:5px;padding:2px 0 8px}
+.ldItem{content-visibility:auto;contain-intrinsic-size:auto 66px;border-radius:11px}
+.ldItem.open{content-visibility:visible}
+.ldRow{display:grid;grid-template-columns:64px minmax(170px,1fr) 178px minmax(110px,200px) auto 18px;align-items:center;gap:14px;min-height:62px;padding:5px 10px 5px 6px;background:var(--card2);border:1px solid var(--line);border-left:4px solid var(--accent,var(--ink25));border-radius:11px;cursor:pointer;transition:background-color .13s ease,border-color .13s ease,box-shadow .16s ease}
+.ldRow:hover,.ldRow:focus-visible{background:var(--card);border-color:var(--ink25);border-left-color:var(--accent,var(--ink45));box-shadow:var(--hoverLift);outline:none}
+.ldRow[data-m=gold]{--accent:var(--m-gold)}.ldRow[data-m=silver]{--accent:var(--m-silver)}.ldRow[data-m=rose]{--accent:var(--m-rose)}.ldRow[data-m=gold10k]{--accent:var(--m-gold10k)}.ldRow[data-m=gold14k]{--accent:var(--m-gold14k)}
+.ldItem[data-kind=set]>.ldRow{--accent:var(--ink45);grid-template-columns:64px minmax(170px,1fr) 256px minmax(110px,200px) auto 18px}
+.ldItem.open>.ldRow{background:var(--card);border-bottom-left-radius:0;border-bottom-right-radius:0;border-bottom-color:transparent}
+.ldThumb{position:relative;width:64px;height:52px;border-radius:7px;background:var(--paper2);border:1px solid var(--line2);overflow:hidden;display:block}
+.ldThumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#fff;opacity:0;transition:opacity .2s ease}
+.ldThumb img.on{opacity:1}
+.ldThumbs{position:relative;width:64px;height:52px}
+.ldThumbs .ldThumb{position:absolute;width:52px;height:44px;box-shadow:0 1px 3px rgba(30,26,20,.14)}
+.ldThumbs .ldThumb:nth-child(1){left:0;top:8px;z-index:3}.ldThumbs .ldThumb:nth-child(2){left:6px;top:4px;z-index:2}.ldThumbs .ldThumb:nth-child(3){left:12px;top:0;z-index:1}
+.ldName{display:flex;align-items:center;gap:7px;min-width:0;white-space:nowrap}
+.ldName b{font:650 13px var(--sans);color:var(--ink)}
+.ldName .ldSet{font:600 10.5px var(--mono);color:var(--ink70);background:var(--paper2);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+.ldName .ldDate{font:10.5px var(--mono);color:var(--ink45)}
+.ldName .sws{display:inline-flex;gap:3px}
+.ldNums{display:flex;gap:12px;font-size:11.5px;color:var(--ink70);white-space:nowrap;min-width:0;overflow:hidden}
+.ldNums b{font:700 11.5px var(--mono);color:var(--ink)}
+.ldWho{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink70);white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.ldWho svg{flex:0 0 13px;width:13px;height:13px;color:var(--sage)}
+.ldWho time{font:10.5px var(--mono);color:var(--ink45)}
+.ldBack{border:1px solid var(--line);background:transparent;border-radius:999px;padding:3px 10px;font:650 10.5px var(--sans);color:var(--ink70);cursor:pointer;white-space:nowrap;opacity:.72;transition:opacity .13s,background-color .13s,color .13s,border-color .13s}
+.ldRow:hover .ldBack,.ldBack:focus-visible{opacity:1}
+.ldBack:hover,.ldBack:focus-visible{background:var(--ink);border-color:var(--ink);color:var(--paper);outline:none}
+.ldBack.busy{pointer-events:none;opacity:1}
+.ldChev{width:18px;height:18px;color:var(--ink45);transition:transform .22s cubic-bezier(.2,.8,.2,1)}
+.ldItem[data-kind=sheet] .ldChev{transform:rotate(-90deg)}
+.ldItem.open .ldChev{transform:rotate(180deg)}
+.ldPanel{display:grid;grid-template-rows:0fr;transition:grid-template-rows .26s cubic-bezier(.2,.8,.2,1)}
+.ldItem.open>.ldPanel{grid-template-rows:1fr}
+.ldPanelIn{overflow:hidden;min-height:0}
+.ldItem.open .ldPanelIn{border:1px solid var(--line);border-top:0;border-left:4px solid var(--ink45);border-radius:0 0 11px 11px;background:var(--card)}
+.ldPanelIn>.setCard{border:0;box-shadow:none;border-radius:0 0 11px 11px;background:transparent}
+.ldPanelIn>.ldWait{display:flex;gap:8px;align-items:center;justify-content:center;padding:18px;font-size:12px;color:var(--ink45)}
+.ldItem.skel .ldRow{cursor:default;box-shadow:none;border-left-color:var(--line)}
+.ldItem.skel .ldRow>i{display:block;height:10px;border-radius:5px;background:linear-gradient(90deg,var(--paper2) 25%,var(--card2) 50%,var(--paper2) 75%);background-size:200% 100%;animation:ldShine 1.1s linear infinite}
+.ldItem.skel .ldRow>i:first-child{height:52px;border-radius:7px}
+@keyframes ldShine{to{background-position:-200% 0}}
+.ldMore{display:flex;gap:9px;align-items:center;justify-content:center;min-height:44px;padding:10px;font-size:12px;color:var(--ink45)}
+.ldMore .btn{font-size:11px}
+@container workspace (max-width:1100px){.ldRow,.ldItem[data-kind=set]>.ldRow{gap:12px}.ldItem[data-kind=set]>.ldRow{grid-template-columns:64px minmax(150px,1fr) 236px minmax(100px,170px) auto 18px}.ldItem[data-kind=set] .ldNums{gap:9px}}
+@container workspace (max-width:760px){.ldRow,.ldItem[data-kind=set]>.ldRow{grid-template-columns:56px minmax(0,1fr) minmax(80px,130px) auto 18px;gap:10px}.ldRow .ldNums{display:none}.ldThumb,.ldThumbs{width:56px}}
+@container workspace (max-width:520px){.ldRow,.ldItem[data-kind=set]>.ldRow{grid-template-columns:56px minmax(0,1fr) auto 18px}.ldRow .ldWho{display:none}}
+.toast .toastUndo{border:1px solid rgba(244,236,220,.35);background:transparent;color:#f4ecdc;border-radius:7px;padding:1px 9px;font:650 11.5px var(--sans);cursor:pointer;margin-left:2px;flex:0 0 auto;align-self:center}
+.toast .toastUndo:hover{background:#f4ecdc;color:var(--velvet)}
+@media (prefers-reduced-motion:reduce){.ldMark,.ldRow,.ldChev,.ldPanel,.ldThumb img,.libTabs button{transition:none}.ldIn,.ldHit,.ldFound,.libTabs .cnt.pulse,#libBody.ldSwap,#libDone.ldSwap{animation:none}}
 /* the sheet cards: the same sheet with less around it */
 .sheets{gap:10px}
 .shHead{padding-top:6px;padding-bottom:3px}
@@ -1827,16 +1931,18 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
       <div class="lib hidden" id="reviewView"></div>
       <div class="lib hidden" id="libView">
         <div class="libBar">
-          <input type="search" id="libSearch" placeholder="Search sheets · charm names, file names, dates">
-          <span class="libFilterGroup"><button class="fchip on" data-m="all">All metals</button>
-          <button class="fchip" data-m="gold"><i class="sw"></i>GF 14/20</button>
+          <span class="libTabs" id="libTab" role="tablist" aria-label="Library"><button type="button" role="tab" class="on" aria-selected="true" aria-controls="libBody" data-t="current">Current</button><button type="button" role="tab" aria-selected="false" aria-controls="libDone" data-t="done" title="Sheets and sets the laser has cut">Completed<b class="cnt" id="libDoneCount" aria-label="completed"></b></button></span>
+          <input type="search" id="libSearch" placeholder="Search current · order, listing, SKU" aria-label="Search the Library" title="An order or a listing number, a SKU, a file name or a date">
+          <span class="libFilterGroup"><button class="fchip on" data-m="all">All<span class="lng"> metals</span></button>
+          <button class="fchip" data-m="gold"><i class="sw"></i>GF<span class="lng"> 14/20</span></button>
           <button class="fchip" data-m="silver"><i class="sw"></i>SS</button>
-          <button class="fchip" data-m="rose"><i class="sw"></i>RG 14/20</button>
-          <button class="fchip" data-m="gold10k"><i class="sw"></i>10K Gold</button>
-          <button class="fchip" data-m="gold14k"><i class="sw"></i>14K Gold</button></span>
+          <button class="fchip" data-m="rose"><i class="sw"></i>RG<span class="lng"> 14/20</span></button>
+          <button class="fchip" data-m="gold10k"><i class="sw"></i>10K<span class="lng"> Gold</span></button>
+          <button class="fchip" data-m="gold14k"><i class="sw"></i>14K<span class="lng"> Gold</span></button></span>
           <span class="seg" id="libKind"><button type="button" class="on" data-k="sheets">Sheets</button><button type="button" data-k="sets">Sets</button></span>
         </div>
-        <div id="libBody"><div class="libEmpty">Loading sheets…</div></div>
+        <div id="libBody" role="tabpanel"><div class="libEmpty">Loading sheets…</div></div>
+        <div id="libDone" role="tabpanel" hidden></div>
       </div>
       <div class="lib hidden" id="charmsView">
         <div class="libBar"><input type="search" id="charmSearch" placeholder="Search charms by name"><button class="btn ghost sm" id="charmRefresh">Refresh</button><span class="pill neutral" id="charmCount"></span></div>
@@ -2245,7 +2351,10 @@ async function cloudProbe(retry) {
   clearTimeout(probeTimer); probeTimer = null;
   try {
     const r = await api("charmNestLibrary", { op: "ping" }, retry ? { quiet: true } : { label: "Checking cloud" });
+    const first = S.cloud.ok !== true;
     S.cloud.ok = true; S.cloud.lib = { sheets: r.sheets || 0, charms: r.charms || 0 }; S.cloud.msg = "Cloud ok"; probeFails = 0;
+    // a page opened on the Library (its address says #library) showed "Cloud offline" until it was clicked again
+    if (first && S.mode === "library") loadLibrary().catch(() => {});
     if (r.calibration) S.calibration = r.calibration;
     $("#railSolver").textContent = "solver: browser" + (S.settings.serverAbove > 0 ? ` · server above ${S.settings.serverAbove}` : "");
   } catch (e) {
@@ -2514,7 +2623,7 @@ function assignSource(src, metal) {
   flushManualIntake(metal);renderRail();updateTopSub();window.Session?.schedule();
 }
 function manualSheetClosed(sh){
-  if(sh.metal==='rose'&&(sh.rosePlan||sh.roseProtected)&&!sh.releaseFull&&!sh.roseCutAt&&!sh.recalled&&!window.Sets?.ofRun(sh.runId)?.some(set=>set.committedAt&&set.sheetIds.includes(sh.sheetId)))return false;
+  if(sh.metal==='rose'&&(sh.rosePlan||sh.roseProtected)&&!sh.releaseFull&&!sh.roseCutAt&&!sh.recalled&&!sh.laserDoneAt&&!window.Sets?.ofRun(sh.runId)?.some(set=>set.committedAt&&set.sheetIds.includes(sh.sheetId)))return false;
   return !!sh.roseCutAt || !!sh.recalled || !!sh.intakeFinalized || !!sh.releaseFull || !!sh.runHold || !!window.LiveNest?.closed(sh);
 }
 /** New artwork waits outside the live job. No worker, saved layout or timer is reset. */
@@ -2830,7 +2939,7 @@ function makeSheet(metal, page) {
     keeps it: a new plate or new sheet settings apply to the sheets still filling. Arranging such a sheet again rewrote
     its files under the same name after its labels and pieces had gone to the laser. */
 function layoutFixed(sh) {
-  return !!sh.roseCutAt || !!sh.releaseFull || !!sh.recalled || !!(window.Sets && Sets.ofRun(sh.runId).some(set => set.committedAt && set.sheetIds.includes(sh.sheetId))) ||
+  return !!sh.roseCutAt || !!sh.releaseFull || !!sh.recalled || !!sh.laserDoneAt || !!(window.Sets && Sets.ofRun(sh.runId).some(set => set.committedAt && set.sheetIds.includes(sh.sheetId))) ||
     !!(window.Gate && Gate.modern(sh.runId) && sh.setId && !sh.draft);
 }
 function sheetDirty(sh) { if(sh.roseCutAt)return; if(sh.metal==='rose'&&(sh.rosePlan||sh.roseProtected)){window.RoseStock?.protect(sh);sh.dirty=true;sh.status='ready';renderCard(sh);return;} delete sh.rosePlan; delete sh.rosePlanHash; delete sh.rosePlanKey; delete sh.runHold; delete sh.intakeFinalized; delete sh.intakeForceFinal; delete sh.intakeOptimized; delete sh.intakeOptimizedCount; delete sh.intakeAppend; delete sh.appendOnly; delete sh.topup; delete sh.missRearranged; sh.dirty = true; sh.releaseFull = false; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
@@ -3773,6 +3882,19 @@ async function nextSheetSeq(sh) {
   sh.sheetIndex = sh.sheetIndex && !taken.includes(sh.sheetIndex) ? sh.sheetIndex : (taken.length ? Math.max(...taken) + 1 : 1);
   return set.seq;
 }
+/** The listings a sheet's pieces were bought from, for the Library's listing search: each piece's order line, looked up
+    in the lines the bridge holds (read only). null when a piece's line is not loaded, and its record keeps what it had;
+    a piece from a file dropped on the card has no listing. */
+function listingsOf(charms) {
+  const lines = window.B && B.orders && B.orders.byKey, out = new Set();
+  for (const c of charms || []) {
+    if (!c || !c.poolId) continue;
+    const row = lines && lines.get(c.lineKey || String(c.poolId).replace(/_[^_]*$/, "")), id = row && row.line && row.line.listingId;
+    if (!id) return null;
+    out.add(String(id));
+  }
+  return [...out];
+}
 async function persistSheet(sh, items, context) {
   const ops = window.CharmNestOperations;
   if (ops && !context) return ops.run({key:'sheet-save:'+sh.sheetId, label:'Saving sheet', resources:['production:'+(sh.runId || sh.sheetId)]}, token=>persistSheet(sh,items,token));
@@ -3793,6 +3915,7 @@ async function persistSheet(sh, items, context) {
     sources: [...new Set(items.map(c => c.sourceId))].map(id => { const s = sourceOf(id); return s ? { id: s.id, name: s.name, zipName: s.zipName, hash: s.hash, bytes: s.bytes ? s.bytes.length : 0, path: s.cloud && s.cloud.path, url: s.cloud && s.cloud.url, pool: !!s.pool, sku: s.sku || null } : null; }).filter(Boolean),
     dirty:!!sh.dirty, draft: !!sh.draft, solidIncluded:["gold10k","gold14k"].includes(sh.metal) ? !!window.Gate?.solidSelected(sh.metal) : null, releaseFull: !!sh.releaseFull, topup: sh.topup || null, intakeFinalized: !!sh.intakeFinalized, intakeOptimized:!!sh.intakeOptimized, intakeOptimizedCount:sh.intakeOptimizedCount||0, missRearranged:!!sh.missRearranged, setId: sh.setId || null, setSeq: sh.seq || null, sheetIndex: sh.sheetIndex || null, runId: sh.runId || null,
     orders: [...new Set(sh.placements.map(p => { const c = byId.get(p.id); return c && c.order ? String(c.order).split("/")[0] : null; }).filter(Boolean))],
+    ...(listings => listings ? { listings } : {})(listingsOf(sh.placements.map(p => byId.get(p.id)))),
     poolIds: sh.placements.map(p => byId.get(p.id) && byId.get(p.id).poolId).filter(Boolean), backPool: sh.backPool || [], backOutputs: sh.backOutputs || null, label: sh.label || null,
     charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, order: c.order || c.id, layer: c.layer || null, poolId: c.poolId || null, sku: c.sku || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open })),
     placements: sh.outputs.report.placements, rejects: sh.outputs.report.rejects,
@@ -3986,7 +4109,7 @@ function paintClear(sh) {
 function clearMetal(metal) {
   const prim = S.sheets[metal];
   if(prim.pages.some(pg=>pg.metal==='rose'&&!pg.roseCutAt&&(pg.rosePlan||pg.roseProtected))){toast('Finish the protected Rose Gold sheet before clearing this card. Its green contour and saved positions must remain.','bad');return;}
-  for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms.forEach(c => { c.metal = null; }); pg.charms = []; pg.sheetId = null; pg.log = []; delete pg.roseStock; delete pg.roseProtected; delete pg.roseCutAt; delete pg.roseHistory; delete pg.rosePlan; delete pg.rosePlanHash; delete pg.rosePlanKey; pg._roseLoaded=false; if (pg !== prim) { (pg.workers || []).forEach(w => w.terminate()); pg.workers = []; } }
+  for (const pg of prim.pages.slice()) { if (pg.status === "nesting") stopNest(pg); pg.charms.forEach(c => { c.metal = null; }); pg.charms = []; pg.sheetId = null; delete pg.laserDoneAt; pg.log = []; delete pg.roseStock; delete pg.roseProtected; delete pg.roseCutAt; delete pg.roseHistory; delete pg.rosePlan; delete pg.rosePlanHash; delete pg.rosePlanKey; pg._roseLoaded=false; if (pg !== prim) { (pg.workers || []).forEach(w => w.terminate()); pg.workers = []; } }
   prim.pages = [prim]; prim.active = 0; prim.el = prim.cardEl; sheetDirty(prim);
 }
 /* A metal's sheets were a tab each, all written again at every card refresh and every second while one nested out of
@@ -4344,6 +4467,8 @@ function downloadOutputs(sh) { return ProductionExports.live(sh, "ai"); }
 /* ═══ 14 · library (recovery) & charms views ════════════════════════════ */
 let libraryLoadId = 0;
 async function loadLibrary(context) {
+  // the Completed tab keeps its own pages (charm-nest-library.js)
+  if (window.LibraryDone && LibraryDone.tab() === "done") return LibraryDone.show();
   if(window.CharmNestOperations && !context?.active) return window.CharmNestOperations.run({key:'library-refresh',label:'Refreshing Library',resources:['library-read'],latest:true},token=>loadLibrary(token));
   const loadId = ++libraryLoadId;
   const body = $("#libBody"); if(!S.library.rows?.length) body.innerHTML = `<div class="libEmpty">Loading sheets…</div>`;
@@ -4354,7 +4479,7 @@ async function loadLibrary(context) {
   if (!S.cloud.ok) { if (kept) stale("the cloud is offline"); else body.innerHTML = `<div class="libEmpty">Cloud offline — the library needs the Netlify functions.</div>`; return; }
   if (S.library.kind === "sets" && window.Sets) return Sets.renderLibrary(body);
   try {
-    const r = await api("charmNestLibrary", { op: "listSheets", metal: S.library.metal === "all" ? null : S.library.metal, limit: 300 }, { label: "Loading library", all: "sheets" });
+    const r = await api("charmNestLibrary", { op: "listSheets", metal: S.library.metal === "all" ? null : S.library.metal, limit: 300, excludeDone: true }, { label: "Loading library", all: "sheets" });
     if (loadId !== libraryLoadId || S.library.kind === "sets") return;
     S.library.rows = window.Gate?.projectLibraryRecords(r.sheets || []) || r.sheets || []; S.library.loadedAt = Date.now(); S.library.loadedFor = S.library.metal; renderLibrary();
   } catch (e) { if (loadId === libraryLoadId) { if (kept) stale(e.message); else body.innerHTML = `<div class="libEmpty">Could not load: ${esc(e.message)}</div>`; } }
@@ -4370,6 +4495,7 @@ function libraryStale(why) {
    a minute ago is shown as it is; an older one is shown at once and refreshed behind it, in place. The tabs share one
    scroller, so the place (the card at the top of the view) is kept when the Library is left and after each rebuild. */
 function showLibrary() {
+  if (window.LibraryDone && LibraryDone.tab() === "done") return LibraryDone.show();
   const shown = S.library.kind !== "sets" && S.library.rows?.length && S.library.loadedFor === S.library.metal;
   if (shown && !$("#libBody .librarySheet")) renderLibrary();
   if (shown) libraryReturn(S.library.place);
@@ -4406,12 +4532,15 @@ function sheetHead(r, o) {
   return `<div class="h">${swatch(m, 0)}<span class="nm">Sheet ${sheetNo(r)}</span>${sn && !o.inFan ? `<span class="set">Set ${sn}</span>` : ""}<span class="tm" title="Sheet started">${esc(date)}</span></div>`;
 }
 function renderLibrary() {
-  const q = ($("#libSearch").value || "").trim().toLowerCase();
-  const rows0 = S.library.rows.filter(r => !q || `${r.id} ${r.folder || ""} ${r.metalLabel} ${r.day} ${r.setId || ""} ${r.runId || ""} ${r.names || ""} ${(r.sources || []).map(s => s.name).join(" ")}`.toLowerCase().includes(q));
+  // Current (the Completed tab is charm-nest-library.js's): what the laser has not cut yet
+  const LD = window.LibraryDone; if (LD && LD.tab() === "done") return;
+  const q = ($("#libSearch").value || "").trim().toLowerCase(), focus = LD ? LD.focus() : null;
+  // a number searched for (an order, a listing) shows the sheets that hold it, those loaded and those the search found
+  const rows0 = (LD ? LD.rows(S.library.rows, focus) : S.library.rows).filter(r => !(LD && LD.isDone(r)) && (focus ? focus.test(r) : !q || `${r.id} ${r.folder || ""} ${r.metalLabel} ${r.day} ${r.setId || ""} ${r.runId || ""} ${r.names || ""} ${(r.sources || []).map(s => s.name).join(" ")} ${(r.orders || []).join(" ")} ${(r.listings || []).join(" ")}`.toLowerCase().includes(q)));
   // one record per sheet name, the newest: a re-nested sheet keeps its name, and the library could hold its stale twin
   const newest = new Map(); for (const r of rows0) { const k = r.folder || r.fileBase || r.id; const had = newest.get(k); if (!had || (r.updatedAt || 0) > (had.updatedAt || 0)) newest.set(k, r); }
   const rows = [...newest.values()];
-  const body = $("#libBody"); if (!rows.length) { body.innerHTML = `<div class="libEmpty">No sheets match.</div>`; return; }
+  const body = $("#libBody"); if (!rows.length) { body.innerHTML = `<div class="libEmpty">${focus ? "" : "No sheets match."}</div>`; if (LD) LD.decorate(body); return; }
   const place = S.mode === "library" && body.querySelector(".libCard") ? libraryPlace() : null;
   const card = (r, i) => { const m = metalOf(r), sn = setNo(r); return `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}" title="${esc(r.folder || r.id)}">${sheetHead(r, {inFan:r._inFan})}<div data-back-sheet="${esc(r.id)}">${window.Engrave ? Engrave.backsMarkup(r) : ""}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${pvRatio(r)} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span title="charms placed of the charms asked for"><b>${r.placedCount}</b>/${r.charmCount}</span><span title="how full the sheet is"><b>${Math.round((r.density || 0) * 100)}%</b></span><span title="metal left free">${fmt.area(r.freePt2 || 0)} free</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${CharmNestReadiness.counter(LaserReview.sheet(r))}</span></div></div>`; };
   LaserReview.sections(body);
@@ -4424,6 +4553,7 @@ function renderLibrary() {
   }
   LaserReview.changed();
   libraryReturn(place);
+  if (LD) LD.decorate(body);
 }
 async function openLibrarySheet(id) {
   if (window.SheetWin) return SheetWin.open(id);   // the sheet window (charm-nest-sheetwin.js); the dialog below is its fallback
@@ -4548,7 +4678,8 @@ function setMode(mode) {
   $("#app").classList.toggle("nestMode", mode === "nest");
   // eight screens and none of them addressable: Back threw a person out of the station, a reload lost the tab they were
   // on, and "look at this" had to be said out loud. The tab is the hash now.
-  try { if ((location.hash || "").slice(1) !== mode) history[modeFromUser ? "pushState" : "replaceState"](null, "", "#" + mode); } catch (_) {}
+  // (the Library's tab rides along: #library/completed)
+  try { if ((location.hash || "").slice(1).split("/")[0] !== mode) history[modeFromUser ? "pushState" : "replaceState"](null, "", "#" + mode + (mode === "library" && window.LibraryDone && LibraryDone.tab() === "done" ? "/completed" : "")); } catch (_) {}
   modeFromUser = false;
   if (!railPinned && !railUserClosed) $("#app").classList.toggle("railOff", false);   // the ladder belongs on every tab; only a person folds it
   guardBench();
@@ -4741,12 +4872,13 @@ async function boot() {
   $("#modeArrowL").onclick = () => $("#modeSeg").scrollBy({ left: -160, behavior: "smooth" });
   $("#modeArrowR").onclick = () => $("#modeSeg").scrollBy({ left: 160, behavior: "smooth" });
   if (window.ResizeObserver) new ResizeObserver(showActiveTab).observe($("#modeSeg"));
-  window.addEventListener("popstate", () => { const m = (location.hash || "").slice(1); if (m && m !== S.mode) setMode(m); });
-  { const m = (location.hash || "").slice(1); if (m && $(`.topbar button[data-mode="${m}"]`)) setMode(m); }
+  window.addEventListener("popstate", () => { const m = (location.hash || "").slice(1).split("/")[0]; window.LibraryDone?.fromHash(); if (m && m !== S.mode) setMode(m); });
+  { const m = (location.hash || "").slice(1).split("/")[0]; if (m && $(`.topbar button[data-mode="${m}"]`)) setMode(m); }
   $$("#libKind button").forEach(b => b.onclick = () => { $$("#libKind button").forEach(x => x.classList.toggle("on", x === b)); S.library.kind = b.dataset.k; loadLibrary(); });
   $("#rpClose").onclick = () => closeDlg($("#dlgReport")); $("#lsClose").onclick = () => closeDlg($("#dlgSheet"));
-  $$("#libView .fchip").forEach(b => b.onclick = () => { $$("#libView .fchip").forEach(x => x.classList.toggle("on", x === b)); S.library.metal = b.dataset.m; if (S.library.kind === "sets" && window.Sets) Sets.renderLibrary($("#libBody"), { reuse: true }); else loadLibrary(); });
-  $("#libSearch").oninput = () => (S.library.kind === "sets" ? Sets.renderLibrary($("#libBody"), { reuse: true }) : renderLibrary());
+  $$("#libView .fchip").forEach(b => b.onclick = () => { $$("#libView .fchip").forEach(x => x.classList.toggle("on", x === b)); S.library.metal = b.dataset.m; if (window.LibraryDone && LibraryDone.tab() === "done") LibraryDone.show(); else if (S.library.kind === "sets" && window.Sets) Sets.renderLibrary($("#libBody"), { reuse: true }); else loadLibrary(); });
+  // (a search in either tab is debounced, and a number is looked up as an order and as a listing: charm-nest-library.js)
+  $("#libSearch").oninput = () => (window.LibraryDone ? LibraryDone.input() : S.library.kind === "sets" ? Sets.renderLibrary($("#libBody"), { reuse: true }) : renderLibrary());
   // the two search boxes on adjacent tabs must behave the same: type and it searches, and the native × clears it.
   // Debounced rather than per keystroke, because this one is a network call.
   $("#charmRefresh").onclick = loadCharms;
@@ -4775,11 +4907,12 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260925-custom-orders"></script>
-<script src="charm-nest-sheetwin.js?v=20260925-sw2"></script>
+<script src="charm-nest-bridge.js?v=20260925-hold-cancel"></script>
+<script src="charm-nest-sheetwin.js?v=20260925-sw3"></script>
 <script src="charm-nest-mail.js?v=20260925-card-tabs"></script>
 <script src="charm-nest-rose-ui.js?v=20260925-audit"></script>
-<script src="charm-nest-export-ui.js"></script>
+<script src="charm-nest-export-ui.js?v=20260925-done"></script>
+<script src="charm-nest-library.js?v=20260925-done"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin" aria-labelledby="owTitle">
   <div class="owBox">
