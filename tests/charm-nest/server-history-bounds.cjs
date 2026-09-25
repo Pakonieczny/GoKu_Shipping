@@ -83,8 +83,9 @@ const db = {
   collection: c => query(c),
   batch() { const ops = []; return { set(ref, d, o) { ops.push(() => ref.set(d, o)); }, update(ref, d) { ops.push(() => ref.update(d)); }, delete(ref) { ops.push(() => ref.delete()); }, async commit() { for (const o of ops) await o(); } }; },
   async getAll(...refs) { const o = refs.length && typeof refs[refs.length - 1].get !== 'function' ? refs.pop() : null; return Promise.all(refs.map(r => r.get(o && o.fieldMask))); },
-  async runTransaction(fn) { return fn({ get: r => r.get(), set: (r, d, o) => r.set(d, o), update: (r, d) => r.update(d), delete: r => r.delete() }); }
+  async runTransaction(fn) { txCount.n++; return fn({ get: r => r.get(), getAll: (...refs) => db.getAll(...refs), set: (r, d, o) => r.set(d, o), update: (r, d) => r.update(d), delete: r => r.delete() }); }
 };
+const txCount = { n: 0 };
 /* ── in-memory Storage (copy and move as GCS does them: metadata travels with the bytes) ── */
 const blobs = new Map(), gcs = { copies: 0, moves: 0 };
 const md5 = buf => crypto.createHash('md5').update(buf).digest('base64');
@@ -368,5 +369,37 @@ function seedDay(i, extra = {}) {
   await post({ op: 'setUpdate', setId: 'set-orders-new', patch: { status: 'open', orders: { 4003: {} } } });
   assert.deepStrictEqual(store.get('Charm_Nest_Sets/set-orders-new').orders, { 4003: {} }, 'a set not on record yet is made from its patch');
 
-  console.log(`server-history-bounds OK · listing ${first.total} reads (0 line parts) at 120 and 300 days · order found 100 days back · search window 30 days · expiries, archive moves, slim backs, 900 KB guard, .pdf copy, payload cleanup, listing mirrors · 3,500 SKUs in ${ixParts} parts · set list in ${slParts} parts of ≤ ${(maxBytes / 1e6).toFixed(1)} MB · set patch replaces`);
+  /* ── a sheet's 90 backs are recorded in one call and one transaction; a refused one is reported, the rest written ── */
+  const pids = Array.from({ length: 90 }, (_, k) => `6000001_${7000000 + k}_1`), dir90 = `charmnest/sheets/${day(0)}/GF_working_sh-90/back`;
+  store.set('Charm_Nest_Sheets/sh-90', { id: 'sh-90', day: day(0), metal: 'gold', poolIds: pids, backPool: [] });
+  const backsAt = at => pids.map((poolId, k) => ({ poolId, sheetId: 'sh-90', setId: null, runId: 'run-90', approvedAt: at + k, approvedBy: 'Paul', text: 'W' + k, lines: ['W' + k], outputs: { ai: { path: `${dir90}/${poolId}_${at}.ai`, url: 'u' }, png: { path: `${dir90}/${poolId}_${at}.png`, url: 'u' } }, verified: { geometry: { ok: true }, file: { ok: true } }, metrics: { fill: 0.5 } }));
+  txCount.n = 0;
+  r = await post({ op: 'backPut', backs: backsAt(5000) });
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body)); assert.strictEqual(r.body.written, 90); assert.strictEqual(txCount.n, 1, 'one transaction for the sheet: ' + txCount.n);
+  assert.strictEqual(store.get('Charm_Nest_Sheets/sh-90').backPool.length, 90); assert(pids.every(p => store.get('Charm_Pool_Back/' + p).sheetId === 'sh-90' && store.get('Charm_Pool_Back/' + p).metrics.fill === 0.5));
+  const sheet90 = store.get('Charm_Nest_Sheets/sh-90'), back90 = store.get('Charm_Pool_Back/' + pids[0]);   // (a write stores a new object)
+  r = await post({ op: 'backPut', backs: backsAt(5000) });
+  assert.strictEqual(r.body.skipped, 90, JSON.stringify(r.body)); assert.strictEqual(r.body.written, 0);
+  assert(store.get('Charm_Nest_Sheets/sh-90') === sheet90 && store.get('Charm_Pool_Back/' + pids[0]) === back90, 'sent again as they are, nothing is written');
+  // the same approval with anything in it changed (here its set, as when its sheet joins one) is written, not skipped
+  r = await post({ op: 'backPut', backs: [Object.assign({}, backsAt(5000)[1], { setId: 'set-later' })] });
+  assert.strictEqual(r.body.written, 1, 'a back whose set changed is written'); assert.strictEqual(store.get('Charm_Pool_Back/' + pids[1]).setId, 'set-later');
+  const next90 = backsAt(9000); next90[10] = Object.assign({}, next90[10], { poolId: '6000001_7999999_1' });   // a copy this sheet does not hold
+  txCount.n = 0;
+  r = await post({ op: 'backPut', backs: next90 });
+  assert(r.status >= 400 && /does not contain this exact charm copy/.test(r.body.error), JSON.stringify(r.body).slice(0, 300));
+  assert.deepStrictEqual(r.body.errors.map(e => e.poolId), ['6000001_7999999_1'], 'the refused back is named'); assert.strictEqual(r.body.written, 89, 'and the backs after it are still written');
+  assert.strictEqual(txCount.n, 1); assert.strictEqual(store.get('Charm_Pool_Back/' + pids[11]).approvedAt, 9011); assert.strictEqual(store.get('Charm_Pool_Back/' + pids[10]).approvedAt, 5010);
+  assert.strictEqual(r.body.superseded, 89 * 2, 'the replaced approvals are archived'); assert.strictEqual(store.get('Charm_Pool_Back/' + pids[0]).superseded[0].approvedAt, 5000);
+  r = await post({ op: 'backPut', backs: [Object.assign({}, next90[0], { approvedBy: '' })] });
+  assert.strictEqual(r.status, 400); assert.strictEqual(r.body.errors[0].error, 'approved back and sheet identity required');
+  // a copy sent twice in one call is recorded as the two would have left it, one after the other
+  const twice = backsAt(9500)[20], again20 = Object.assign({}, twice, { approvedAt: twice.approvedAt + 1, text: 'Second', outputs: { ai: { path: `${dir90}/twice.ai`, url: 'u' }, png: { path: `${dir90}/twice.png`, url: 'u' } } });
+  r = await post({ op: 'backPut', backs: [twice, again20] });
+  const rec20 = store.get('Charm_Pool_Back/' + pids[20]);
+  assert.strictEqual(r.body.written, 2, JSON.stringify(r.body)); assert(rec20.approvedAt === 9521 && rec20.text === 'Second' && rec20.metrics.fill === 0.5, JSON.stringify(rec20).slice(0, 300));
+  assert.deepStrictEqual(rec20.superseded.map(s => s.approvedAt), [5020, 9020, 9520], 'each replaced approval is on its record');
+  assert.strictEqual(store.get('Charm_Nest_Sheets/sh-90').backPool.find(b => b.poolId === pids[20]).text, 'Second');
+
+  console.log(`server-history-bounds OK · listing ${first.total} reads (0 line parts) at 120 and 300 days · order found 100 days back · search window 30 days · expiries, archive moves, slim backs, 900 KB guard, .pdf copy, payload cleanup, listing mirrors · 3,500 SKUs in ${ixParts} parts · set list in ${slParts} parts of ≤ ${(maxBytes / 1e6).toFixed(1)} MB · set patch replaces · 90 backs in one transaction`);
 })().catch(e => { console.error(e); process.exit(1); });

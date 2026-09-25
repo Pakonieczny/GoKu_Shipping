@@ -50,7 +50,7 @@ const db = {
   batch() { const ops = []; return { set(ref, data, opts) { ops.push(() => ref.set(data, opts)); }, update(ref, data) { ops.push(() => ref.update(data)); }, delete(ref) { ops.push(() => ref.delete()); }, async commit() { for (const o of ops) await o(); } }; },
   // (a trailing read option, { fieldMask }, is not a document)
   async getAll(...refs) { if (refs.length && typeof refs[refs.length - 1].get !== 'function') refs.pop(); return Promise.all(refs.map(r => r.get())); },
-  async runTransaction(fn) { return fn({ get: ref => ref.get(), set: (ref, data, opts) => ref.set(data, opts), update: (ref, data) => ref.update(data), delete: ref => ref.delete() }); }
+  async runTransaction(fn) { return fn({ get: ref => ref.get(), getAll: (...refs) => db.getAll(...refs), set: (ref, data, opts) => ref.set(data, opts), update: (ref, data) => ref.update(data), delete: ref => ref.delete() }); }
 };
 /* ── in-memory Storage ─────────────────────────────────────────────────── */
 const blobs = new Map();

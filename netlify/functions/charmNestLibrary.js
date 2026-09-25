@@ -978,36 +978,86 @@ async function op_restoreSheet(b) {
   if (setId) { const st = col(SETS).doc(setId); const sd = await st.get(); if (sd.exists) { const ids = new Set(sd.data().sheetIds || []); ids.add(id); await st.set({ sheetIds: [...ids] }, { merge: true }); } }
   return { ok: true, id, fileBase: name, placed: placements.length, orders: orders.length, outputs: Object.fromEntries(Object.entries(out).map(([k, v]) => [k, !!v])) };
 }
+/* A sheet's backs are recorded in one transaction (at most BACKS_PER_TX in each): the sheet, the backs' records and the
+   sheets they leave are read once, each back is checked as it always was, in the order sent, and each record and each
+   sheet is written once. A transaction per back ran past the function's time limit at about 85 backs, and one refused
+   back stopped every back after it. Now a refused back is reported in `errors` (its copy, its sheet and why) and the
+   others are still recorded; and one recorded already as it is sent (the same approval on the same sheet, nothing in it
+   changed) is not written again, so sending a sheet's backs again costs a read. */
+const BACKS_PER_TX = 200;
+// a map as Firestore keeps one (not a list, a timestamp or a field value), from whichever context made it
+const plainMap = v => !!v && typeof v === "object" && !Array.isArray(v) && (p => p === null || Object.getPrototypeOf(p) === null)(Object.getPrototypeOf(v));
+/** Whether two values are the same, lists and maps entry by entry. */
+function sameValue(a, b) {
+  if (Array.isArray(a) || Array.isArray(b)) return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => sameValue(v, b[i]));
+  if (plainMap(a) || plainMap(b)) { if (!plainMap(a) || !plainMap(b)) return false; const k = Object.keys(a); return k.length === Object.keys(b).length && k.every(key => sameValue(a[key], b[key])); }
+  return a === b;
+}
+/** Whether a set with merge of `patch` would leave `stored` as it is: a map merges key by key, anything else (an empty map
+    too) replaces. */
+const merges = v => plainMap(v) && Object.keys(v).length > 0;
+const holds = (stored, patch) => (merges(patch) ? plainMap(stored) && Object.keys(patch).every(k => holds(stored[k], patch[k])) : sameValue(stored, patch));
+/** `patch` merged into `into` as a set with merge does it; a map of `into` it changes is copied first. */
+function mergeInto(into, patch) { for (const [k, v] of Object.entries(patch)) into[k] = merges(v) && plainMap(into[k]) ? mergeInto(Object.assign({}, into[k]), v) : v; return into; }
+/** One transaction's backs, every one for the sheet `sheetId`. Returns how many were written and skipped, the refused
+    ones (errors) and the files to archive once it commits. */
+async function putBacks(tx, sheetId, list, expected) {
+  const target = col(SHEETS).doc(sheetId), ids = [...new Set(list.map(x => x.poolId))];
+  const [sheet, ...priors] = await tx.getAll(target, ...ids.map(id => col(BACK).doc(id)));
+  const stored = new Map(priors.map((s, i) => [ids[i], s.exists ? s.data() : {}]));
+  const formerIds = [...new Set([...stored.values()].map(r => r.sheetId).filter(id => id && id !== sheetId))];
+  const formers = new Map(formerIds.length ? (await tx.getAll(...formerIds.map(id => col(SHEETS).doc(id)))).filter(s => s.exists).map(s => [s.id, s.data().backPool || []]) : []);
+  const poolIds = sheet.exists ? sheet.data().poolIds || [] : [], patches = new Map(), leaving = new Set(), out = { written: 0, skipped: 0, errors: [], moved: [] };
+  let pool = sheet.exists ? sheet.data().backPool || [] : null;
+  for (const x of list) {
+    const old = stored.get(x.poolId), currentBack = pool && pool.find(v => v.poolId === x.poolId);
+    const refused = !sheet.exists || !poolIds.includes(x.poolId) ? "The target sheet does not contain this exact charm copy"
+      : (old.invalidated && (+old.approvedAt || 0) >= +x.approvedAt) || (+old.approvedAt || 0) > +x.approvedAt || (+old.invalidatedAt || 0) >= +x.approvedAt ? "This approval has been superseded; reopen the engraving"
+      : expected != null && +expected !== +(currentBack?.approvedAt || old.approvedAt || 0) ? "This back was edited elsewhere. Reopen it before saving your changes."
+      : null;
+    if (refused) { out.errors.push({ row: x, error: refused }); continue; }
+    const copy = sheetBack(x);
+    // already recorded as sent, and the sheet already lists it so: nothing would change but the time stamps
+    if (old.invalidated === false && old.sheetId === sheetId && holds(old, x) && sameValue(currentBack, copy)) { out.skipped++; continue; }
+    const record = Object.assign({}, x, {invalidated:false, updatedAt:FV.serverTimestamp()});
+    /* A new approval of the same copy replaces the prior one's files. They were approved once, so they are archived, not
+       deleted: moved to the archive path once this commits, and the record says where each went (a file whose move
+       failed is still at `from`). */
+    const next = new Set(["ai", "png"].map(k => x.outputs && x.outputs[k] && x.outputs[k].path).filter(Boolean));
+    const moved = old.approvedAt && +old.approvedAt !== +x.approvedAt ? ["ai", "png"].map(k => old.outputs && old.outputs[k] && old.outputs[k].path).filter(p => p && !next.has(p) && /^charmnest\//.test(p)).map(from => ({ from, to: archivePath(from) })) : [];
+    if (moved.length) record.superseded = (Array.isArray(old.superseded) ? old.superseded : []).concat([{ approvedAt: +old.approvedAt, approvedBy: old.approvedBy || null, files: moved, at: Date.now() }]).slice(-20);
+    // a later row for the same copy is checked against this one, as when each was its own transaction; a copy sent twice is
+    // written once, whole, as the two writes would have left it (null)
+    patches.set(x.poolId, patches.has(x.poolId) ? null : record); stored.set(x.poolId, mergeInto(Object.assign({}, old), record));
+    pool = pool.filter(b => b.poolId !== x.poolId).concat([copy]);
+    if (old.sheetId && old.sheetId !== sheetId && formers.has(old.sheetId)) { formers.set(old.sheetId, formers.get(old.sheetId).filter(b => b.poolId !== x.poolId)); leaving.add(old.sheetId); }
+    out.moved.push(...moved); out.written++;
+  }
+  for (const [id, patch] of patches) if (patch) tx.set(col(BACK).doc(id), patch, {merge:true}); else tx.set(col(BACK).doc(id), stored.get(id));
+  if (patches.size) tx.set(target, {backPool:pool, updatedAt:FV.serverTimestamp()}, {merge:true});
+  for (const id of leaving) tx.set(col(SHEETS).doc(id), {backPool:formers.get(id), updatedAt:FV.serverTimestamp()}, {merge:true});
+  return out;
+}
 async function op_backPut(b) {
   const rows = (Array.isArray(b.backs) ? b.backs : [b.back]).filter(x => x && isPoolId(x.poolId)).slice(0, 400); if (!rows.length) return { error: "no back rows" };
-  const superseded = [];
+  const bySheet = new Map(), errors = [], moved = []; let written = 0, skipped = 0;
   for (const x of rows) {
-    if (!isId(x.sheetId) || !x.approvedAt || !x.approvedBy) return {error:"approved back and sheet identity required"};
-    let moved = [];
-    await db.runTransaction(async tx => {
-      const ref = col(BACK).doc(x.poolId), target = col(SHEETS).doc(x.sheetId);
-      const prior = await tx.get(ref), sheet = await tx.get(target);
-      const old = prior.exists ? prior.data() : {};
-      if (!sheet.exists || !(sheet.data().poolIds || []).includes(x.poolId)) throw new Error("The target sheet does not contain this exact charm copy");
-      if ((old.invalidated && (+old.approvedAt || 0) >= +x.approvedAt) || (+old.approvedAt || 0) > +x.approvedAt || (+old.invalidatedAt || 0) >= +x.approvedAt) throw new Error("This approval has been superseded; reopen the engraving");
-      const currentBack=(sheet.data().backPool || []).find(v=>v.poolId===x.poolId);
-      if(b.expectedApprovedAt != null && +b.expectedApprovedAt !== +(currentBack?.approvedAt || old.approvedAt || 0)) throw new Error("This back was edited elsewhere. Reopen it before saving your changes.");
-      const former = old.sheetId && old.sheetId !== x.sheetId ? col(SHEETS).doc(old.sheetId) : null;
-      const previous = former ? await tx.get(former) : null;
-      const record = Object.assign({}, x, {invalidated:false, updatedAt:FV.serverTimestamp()});
-      /* A new approval of the same copy replaces the prior one's files. They were approved once, so they are archived, not
-         deleted: moved to the archive path once this commits, and the record says where each went (a file whose move
-         failed is still at `from`). */
-      const next = new Set(["ai", "png"].map(k => x.outputs && x.outputs[k] && x.outputs[k].path).filter(Boolean));
-      moved = old.approvedAt && +old.approvedAt !== +x.approvedAt ? ["ai", "png"].map(k => old.outputs && old.outputs[k] && old.outputs[k].path).filter(p => p && !next.has(p) && /^charmnest\//.test(p)).map(from => ({ from, to: archivePath(from) })) : [];
-      if (moved.length) record.superseded = (Array.isArray(old.superseded) ? old.superseded : []).concat([{ approvedAt: +old.approvedAt, approvedBy: old.approvedBy || null, files: moved, at: Date.now() }]).slice(-20);
-      tx.set(ref, record, {merge:true});
-      tx.set(target, {backPool:(sheet.data().backPool || []).filter(b=>b.poolId !== x.poolId).concat([sheetBack(x)]), updatedAt:FV.serverTimestamp()}, {merge:true});
-      if (previous?.exists) tx.set(former, {backPool:(previous.data().backPool || []).filter(b=>b.poolId !== x.poolId), updatedAt:FV.serverTimestamp()}, {merge:true});
-    });
-    await archiveFiles(moved); superseded.push(...moved);
+    if (!isId(x.sheetId) || !x.approvedAt || !x.approvedBy) { errors.push({ row: x, error: "approved back and sheet identity required", identity: true }); continue; }
+    if (!bySheet.has(x.sheetId)) bySheet.set(x.sheetId, []); bySheet.get(x.sheetId).push(x);
   }
-  return { ok: true, count: rows.length, superseded: superseded.length };
+  for (const [sheetId, list] of bySheet) for (let i = 0; i < list.length; i += BACKS_PER_TX) {
+    const part = list.slice(i, i + BACKS_PER_TX); let out;
+    try { out = await db.runTransaction(tx => putBacks(tx, sheetId, part, b.expectedApprovedAt)); }
+    catch (e) { errors.push(...part.map(x => ({ row: x, error: e.message || String(e) }))); continue; }
+    await archiveFiles(out.moved); moved.push(...out.moved); written += out.written; skipped += out.skipped; errors.push(...out.errors);
+  }
+  const done = { count: rows.length, written, skipped, superseded: moved.length };
+  if (!errors.length) return Object.assign({ ok: true }, done);
+  // what went wrong, back by back in the order sent; the rest were recorded. Refused as before: 400 when a back said
+  // nothing of whose it is, 500 otherwise
+  const order = new Map(rows.map((x, i) => [x, i])); errors.sort((p, q) => order.get(p.row) - order.get(q.row));
+  return Object.assign({ error: errors[0].error + (errors.length > 1 ? ` (and ${errors.length - 1} more of the ${rows.length} backs)` : ""), status: errors.every(x => x.identity) ? 400 : 500,
+    errors: errors.map(x => ({ poolId: x.row.poolId, sheetId: str(x.row.sheetId, 80) || null, error: x.error })) }, done);
 }
 async function op_backInvalidate(b) {
   for (const id of (b.poolIds || []).filter(isPoolId).slice(0,400)) await db.runTransaction(async tx => {
