@@ -3764,7 +3764,7 @@ const LaserReview = window.LaserReview = (()=>{
     const id=s.id || s.sheetId, fs=files?.length?files:s.label?.files || [];
     // a sheet still filling has no label to wait for: every card in progress carried an empty "QR label pending" box
     if(!fs.length && !sheet(s).ready)return '';
-    return `<div class="productionRow" data-laser-sheet="${esc(id)}"><div class="sheetQR">${fs.length?fs.map(f=>`<img data-big title="Sheet QR label" data-label-sheet="${esc(id)}" data-label-path="${esc(f.path || '')}" data-label-part="${+f.part || 1}" crossorigin="anonymous"${f.url?` src="${esc(cors(f.url))}"`:''} alt="Sheet QR code">`).join(''):'<span class="qrWaiting">QR label pending</span>'}</div></div>`;
+    return `<div class="productionRow" data-laser-sheet="${esc(id)}"><div class="sheetQR">${fs.length?fs.map(f=>{const n=(f.orders || []).length;return `<figure class="qrPart"><div class="qrTile"><img data-big title="Sheet QR label" data-label-sheet="${esc(id)}" data-label-path="${esc(f.path || '')}" data-label-part="${+f.part || 1}" crossorigin="anonymous"${f.url?` src="${esc(cors(f.url))}"`:''} alt="Sheet QR code"></div><figcaption><b>QR label${f.parts>1?` ${+f.part}/${+f.parts}`:''}</b>${n?`${n} order${n===1?'':'s'}`:''}</figcaption></figure>`;}).join(''):'<span class="qrWaiting">QR label pending</span>'}</div></div>`;
   }
   function sections(body){
     body.innerHTML='<section class="laserSection readyArea" data-laser-area="ready"><h2>Laser cutting <span>Ready sheets and sets</span></h2><p class="laserEmpty">No sheets are ready for cutting yet.</p><div class="laserAreaItems"></div></section><section class="laserSection" data-laser-area="pending"><h2>In progress</h2><div class="laserAreaItems"></div></section>';

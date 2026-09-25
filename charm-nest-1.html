@@ -1515,9 +1515,14 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .librarySheet>.libCard,.setCard .librarySheet>.libCard {width:100%;max-width:none;flex:none;margin:0}
 .productionRow {display:flex;gap:14px;align-items:center;min-width:0}
 #lsBody>.productionRow {margin:18px 0;padding-top:14px;border-top:1px solid var(--line)}
-.sheetQR {display:grid;gap:8px;flex:0 0 112px}
-.sheetQR img {width:112px;height:112px;object-fit:contain;border:1px solid var(--line);border-radius:6px;background:#fff;cursor:zoom-in}
-.qrWaiting {width:112px;min-height:112px;display:grid;place-items:center;border:1px dashed var(--line);border-radius:6px;color:var(--ink45);font-size:11px}
+.sheetQR {display:grid;gap:6px;flex:none}
+/* the label PNG is the printed 145 pt sticker: the tile shows only its QR square (0-91 pt, an even 3 pt margin); the zoom opens the whole label */
+.qrPart {display:flex;align-items:center;gap:10px;margin:0}
+.qrTile {width:84px;height:84px;flex:none;overflow:hidden;border:1px solid var(--line);border-radius:6px;background:#fff}
+.qrTile img {display:block;width:130.7px;max-width:none;height:auto;cursor:zoom-in}
+.qrPart figcaption {font-size:11px;line-height:1.35;color:var(--ink45);white-space:nowrap}
+.qrPart figcaption b {display:block;font-weight:600;color:var(--ink70)}
+.qrWaiting {width:84px;height:84px;display:grid;place-items:center;text-align:center;padding:6px;border:1px dashed var(--line);border-radius:6px;color:var(--ink45);font-size:11px}
 .laserSeal {display:inline-flex;align-items:center;flex-shrink:0;color:#4e7147;vertical-align:middle}
 .laserSeal.pending {color:#a9a59d}
 .laserSeal.pending svg {fill:#efede8}
@@ -4744,7 +4749,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260925-card-tabs"></script>
+<script src="charm-nest-bridge.js?v=20260925-qr-tile"></script>
 <script src="charm-nest-mail.js?v=20260925-card-tabs"></script>
 <script src="charm-nest-rose-ui.js?v=20260925-audit"></script>
 <script src="charm-nest-export-ui.js"></script>
