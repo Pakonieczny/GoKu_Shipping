@@ -4251,6 +4251,10 @@ const RunCtl = window.RunCtl = (() => {
       else if (sh.endedBy === "stopped" && !sh.resumeWait) holdSheet(r,sh,"This sheet was stopped; retry it when ready");
       else if(!sh.runHold && sh.verification?.ok && sh.fileBase){delete (r.sheetHolds||{})[sh.sheetId || sh.metal+"-"+sh.page];}
       save(r).catch(() => {});
+      // The words of the orders just placed are read and fitted now, beside the next few orders (Paul, 25 Sep: "the
+      // engraving tab... it's completely not being filled in"). They were read only once every sheet of the run was
+      // done, so while a big batch went on a few orders at a time the Engraving tab stayed empty for the whole of it.
+      if (!err && sh.placements.length && r.status !== "stopped" && window.Engrave?.background) Engrave.background(r);
     }
     if (!waiter || waiter.r !== r) { poke(); return; }
     const pages = allSheets().filter(pg => pg.runId === r.runId && !pg.runHold && Gate.nestable(pg, r) && pg.charms.some(c => !c.excluded));
