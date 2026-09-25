@@ -774,7 +774,8 @@ const Orders = window.Orders = (() => {
   /** The pull rule (Settings → Pull orders): every open order, those due by a date, or the N most urgent by ship-by date. */
   function applyPullRule(orders) {
     const mode = S.settings.pullMode || "all";
-    let list = orders.slice().sort((a, b) => (a.shipBy || 9e12) - (b.shipBy || 9e12));
+    // an order the operator cancelled stays out of every list (its record is under Orders › Cancelled)
+    let list = orders.filter(o => !(window.Cancelled && Cancelled.has(o.receiptId))).sort((a, b) => (a.shipBy || 9e12) - (b.shipBy || 9e12));
     if (mode === "dueBy" && S.settings.pullDueBy) { const [y, m, d] = S.settings.pullDueBy.split("-").map(Number); const end = new Date(y, m - 1, d, 23, 59, 59).getTime() / 1000; list = list.filter(o => o.shipBy && o.shipBy <= end); }
     if (mode === "count") list = list.slice(0, Math.max(1, +S.settings.pullCount || 40));
     return list;
@@ -802,7 +803,7 @@ const Orders = window.Orders = (() => {
   async function pull(run, { silent = false, receiptIds = null } = {}) {
     await DesignLink.ensure(); await Sandbox.ready(true);   // the sandbox order stream must exist before the station sweeps
     if (!DesignLink.etsyBudgetOk("the pull")) throw new Error("Etsy call budget reached — the pull was not started");
-    await Promise.all([loadMaps(), Master.load()]);
+    await Promise.all([loadMaps(), Master.load(), window.Cancelled && Cancelled.load()]);
     const pullBar = window.CNProgress ? CNProgress.start("Pulling orders from Etsy") : null;
     try {
     const r = await DesignLink.call("orders.snapshot", { hydrate: true, refresh: true }, { timeoutMs: 20 * 60 * 1000, onProgress: p => { if (pullBar) { if (p.done != null && p.total) pullBar.set(p.done, p.total, p.text || ""); else if (p.text) pullBar.note(p.text); } if (p.text) agentLiveLine("Pulling orders", p.text, p.done, p.total); } });
@@ -810,7 +811,7 @@ const Orders = window.Orders = (() => {
     B.orders.snapshot = { total: r.total, hydrated: r.hydrated, etsy: r.etsy, at: Date.now() }; B.orders.recalled = null;
     if (r.hydrated < r.total) throw new Error(`only ${r.hydrated} of ${r.total} orders could be read from Etsy — ${r.etsy && !r.etsy.signedIn ? "the station is not signed in: press Connect Etsy" : "check the Design Station and pull again"}`);
     const wanted = receiptIds && new Set(receiptIds.map(String));
-    const picked = wanted ? r.orders.filter(o => wanted.has(String(o.receiptId))) : applyPullRule(r.orders);
+    const picked = wanted ? r.orders.filter(o => wanted.has(String(o.receiptId)) && !(window.Cancelled && Cancelled.has(o.receiptId))) : applyPullRule(r.orders);
     B.orders.filtered = r.orders.length - picked.length;
     await Arrivals.record(picked);
     B.orders.rows = picked.flatMap(o => o.lines.map(l => ({ arrivedAt: Arrivals.at(o.receiptId), key: O.lineKey(o, l), order: o, line: l, spec: null, problems: [], state: "pulled", reason: null, claimedBy: null, poolIds: [], engrave: null, metal: null })));
@@ -987,6 +988,7 @@ const Orders = window.Orders = (() => {
     const q = OV.q.trim().toLowerCase();
     return rowsOf().filter(r => {
       if (r.state === "gone") return false;
+      if (OV.pile === "hold" && !r.hold) return false;
       if (OV.metal && (r.material || "none") !== OV.metal) return false;
       if (OV.form && ((r.spec && r.spec.form) || "none") !== OV.form) return false;
       if (OV.eng) { const needs = !!(r.engrave && r.engrave.needed); if (OV.eng === "yes" ? !needs : needs) return false; }
@@ -1050,7 +1052,8 @@ const Orders = window.Orders = (() => {
     const at = host.scrollTop;                                             // a run writing to the list must not scroll it away
     const rows = visibleRows();
     const alive=new Set(rowsOf().map(r=>r.key));for(const key of orderNodes.keys())if(!alive.has(key))orderNodes.delete(key);
-    const nextKey=JSON.stringify([OV.q,OV.metal,OV.form,OV.eng,OV.sort,OV.desc,viewMode()]);
+    if (OV.pile === "cancelled") { listKey = "cancelled"; if (window.Cancelled) Cancelled.renderInto(host, () => { const v = document.getElementById("ordersView"); if (v && v.querySelector("#ordChips")) renderHead(v); }); else host.innerHTML = '<div class="libEmpty">The cancelled orders open with the sheet window script.</div>'; return; }
+    const nextKey=JSON.stringify([OV.pile,OV.q,OV.metal,OV.form,OV.eng,OV.sort,OV.desc,viewMode()]);
     if(nextKey!==listKey){OV.limit=48;listKey=nextKey;}
     const anchor=at>0?[...host.querySelectorAll('[data-key]')].find(n=>n.getBoundingClientRect().bottom>host.getBoundingClientRect().top):null;
     const anchorKey=anchor?.dataset.key, anchorTop=anchor?.getBoundingClientRect().top;
@@ -1059,6 +1062,7 @@ const Orders = window.Orders = (() => {
       host.innerHTML = '<div class="libEmpty"><span>Nothing pulled yet \u2014 press <b>Pull orders</b> above.</span></div>';   // one line: .libEmpty stacks its children
       return;
     }
+    if (!rows.length && OV.pile === "hold" && !OV.q && !OV.metal && !OV.form && !OV.eng) { host.innerHTML = '<div class="libEmpty">No order is on hold. An order taken off a sheet, or held from Review, waits here until someone puts it back.</div>'; return; }
     if (!rows.length) {
       host.innerHTML = '<div class="libEmpty">Nothing matches these filters.<br><button class="btn ghost sm" id="ordClear" style="margin-top:10px">Show everything</button></div>';
       host.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.form = null; OV.eng = null; OV.q = ""; render(); };
@@ -1142,7 +1146,8 @@ const Orders = window.Orders = (() => {
   /** Update totals and filters without rebuilding the search field. */
   function renderHead(v) {
     const all = rowsOf().filter(r=>r.state!=="gone"), totals=orderTotals(all);
-    OV.pile=null; // Removed state chips must not leave an invisible saved filter.
+    // Open Orders, and beside it On hold and Cancelled when there are any (or one is being shown)
+    if (OV.pile && !["hold", "cancelled"].includes(OV.pile)) OV.pile = null;
     const running = B.run && !["complete", "stopped"].includes(B.run.status);
     const pull = v.querySelector("#ordPull");
     pull.disabled = !!running;
@@ -1161,13 +1166,16 @@ const Orders = window.Orders = (() => {
     const byForm = {}; for (const r of all) { const f = (r.spec && r.spec.form) || "none"; byForm[f] = (byForm[f] || 0) + 1; }
     const forms = Object.keys(byForm).filter(f => f !== "none" || OV.form === "none").sort((a2, b2) => byForm[b2] - byForm[a2]);
     const engN = all.filter(r => r.engrave && r.engrave.needed).length;
-    v.querySelector("#ordChips").innerHTML = chip(true,"","Open Orders",totals.orders,"","Distinct open order numbers, across all materials");
+    const heldN = new Set(all.filter(r => r.hold).map(r => String(r.order.receiptId))).size, cxN = window.Cancelled ? Cancelled.count() : 0;
+    v.querySelector("#ordChips").innerHTML = chip(!OV.pile,"","Open Orders",totals.orders,"","Distinct open order numbers, across all materials")
+      + (heldN || OV.pile === "hold" ? chip(OV.pile === "hold","hold","On hold",heldN,"","Orders a person put on hold or took off a sheet; release them from here or from the sheet window") : "")
+      + (cxN || OV.pile === "cancelled" ? chip(OV.pile === "cancelled","cancelled","Cancelled",cxN,"","Orders cancelled from the sorter, kept as a record; restore one to bring it back") : "");
     const sel = (id, ttl, any, opts, cur) => opts.length > 1 || cur ? `<select class="ordMetal" id="${id}" title="${esc(ttl)}">${[`<option value="">${esc(any)}</option>`].concat(opts.map(o => `<option value="${esc(o[0])}"${cur === o[0] ? " selected" : ""}>${esc(o[1])} \u00b7 ${o[2]}</option>`)).join("")}</select>` : "";
     v.querySelector("#ordMetalHost").innerHTML =
       sel("ordMetal", "narrow it to one material", "Any material", metals.map(m => [m, m === "none" ? "No material" : labelOf(m), byMetal[m] || 0]), OV.metal)
       + sel("ordForm", "narrow it to one kind of jewellery", "Any kind", forms.map(f => [f, FORM_LABEL[f] || (f === "none" ? "Kind not set" : f), byForm[f] || 0]), OV.form)
       + (engN && engN < all.length || OV.eng ? sel("ordEng", "engraved or not", "Engraved or not", [["yes", "Engraved", engN], ["no", "Not engraved", all.length - engN]], OV.eng) : "");
-    v.querySelectorAll("[data-pile]").forEach(b => b.onclick = () => { OV.pile = b.dataset.pile || null; renderHead(v); renderBody(); });
+    v.querySelectorAll("[data-pile]").forEach(b => b.onclick = () => { OV.pile = b.dataset.pile || null; renderHead(v); renderBody(); document.getElementById("ordBody")?.scrollTo?.(0, 0); });
     for (const [id, k] of [["ordMetal", "metal"], ["ordForm", "form"], ["ordEng", "eng"]]) { const n = v.querySelector("#" + id); if (n) n.onchange = () => { OV[k] = n.value || null; renderHead(v); renderBody(); }; }
     v.querySelector("#ordViewSeg").innerHTML = ["cards", "list"].map(k => `<button data-view="${k}"${viewMode() === k ? ' class="on"' : ""} title="${k === "cards" ? "a card for every line, with its picture" : "the same lines as rows"}">${k === "cards" ? "Cards" : "List"}</button>`).join("");
     v.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { OV.view = b.dataset.view; S.settings.orderView = OV.view; saveSettings(); renderHead(v); renderBody(); });
@@ -1191,7 +1199,13 @@ const Orders = window.Orders = (() => {
     renderBody();
     const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(orderTotals(B.orders.rows).orders) : "";
   }
-  return { view: () => OV, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, interpretAll, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, imageFor, wantImage, shipTxt, statePill: stateWords, applyPullRule, ctx, keepRest };
+  /** The Orders tab on one pile (the sheet window's "In Orders"), with the search set to an order when one is given. */
+  function showPile(pile, q) {
+    OV.pile = ["hold", "cancelled"].includes(pile) ? pile : null; OV.metal = OV.form = OV.eng = null; OV.q = q ? String(q) : "";
+    const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = OV.q;
+    render();
+  }
+  return { view: () => OV, showPile, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, interpretAll, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, imageFor, wantImage, shipTxt, statePill: stateWords, applyPullRule, ctx, keepRest };
 })();
 
 /* ═══ 19 · Master — SKU labels under charms, per-SKU designs, the index ══════ */
@@ -6694,7 +6708,7 @@ const Arrivals = window.Arrivals = (() => {
       // the stream's next simulated ten minutes of orders become listable, and the station sweeps for them (no reuse window)
       // (the maps load alongside: the snapshot below needs both, neither needs the other; the library is read again only
       // when its index changed, without a progress bar)
-      const [sim] = await Promise.all([streaming() && Sandbox.advance(), Orders.loadMaps(), Master.load({ quiet: true })]);
+      const [sim] = await Promise.all([streaming() && Sandbox.advance(), Orders.loadMaps(), Master.load({ quiet: true }), window.Cancelled && Cancelled.load()]);
       const known=Object.fromEntries(Orders.rows().map(row=>[String(row.order.receiptId),+row.order.updateTs || 0]));
       // (the snapshot of a check that failed after it, on the cloud's side, is taken again for 2 minutes: the Etsy calls it
       // cost are not made a second time)

@@ -47,7 +47,7 @@ const DECISIONS_VERSION = require("crypto").createHash("sha256").update(String(R
    bridge log) go to Sandbox_-prefixed collections; the master index, the charm library, maps and calibration stay
    shared and are only read. Set per request; a function instance handles one request at a time. ── */
 let PREFIX = "";
-const SANDBOXED = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Design_Bridge"]);
+const SANDBOXED = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Design_Bridge"]);
 const col = name => db.collection(SANDBOXED.has(name) ? PREFIX + name : name);
 const FV = admin.firestore.FieldValue;
 
@@ -1548,10 +1548,31 @@ async function op_optionMapPut(b) {
 }
 
 const RoseStock = require("./_charmNestRoseStock")({db,col,FV,Readiness,decisionsOfRun});
+/* ── cancelled orders (Paul, 25 Sep 19:05): an order the operator cancels leaves every screen of the sorter, and one
+   record of it is kept here as history. The sorter reads the ids to keep such an order out of every later pull. ── */
+const CANCELLED = "Charm_Nest_Cancelled";
+const orderIdOf = v => String(v == null ? "" : v).replace(/\D/g, "").slice(0, 30);
+async function op_cancelPut(b) {
+  const id = orderIdOf(b.orderId); if (!id) return { error: "orderId required" };
+  const r = b.record && typeof b.record === "object" ? b.record : {};
+  const lines = (Array.isArray(r.lines) ? r.lines : []).slice(0, 60).map(l => ({ transactionId: str(l && l.transactionId, 30), sku: str(l && l.sku, 80), title: str(l && l.title, 200), quantity: Math.max(1, Math.round(num(l && l.quantity)) || 1), material: str(l && l.material, 40) }));
+  const doc = { orderId: id, by: str(b.by || "operator", 80), why: str(b.why, 400), at: Date.now(), buyer: str(r.buyer, 120), placedAt: num(r.placedAt), shipBy: num(r.shipBy),
+    sheets: (Array.isArray(r.sheets) ? r.sheets : []).slice(0, 30).map(x => str(x, 100)), lines, createdAt: FV.serverTimestamp() };
+  await col(CANCELLED).doc(id).set(doc);
+  delete doc.createdAt; return { ok: true, record: doc };
+}
+async function op_cancelList(b) {
+  const n = Math.max(1, Math.min(500, Math.round(num(b.limit)) || 200));
+  if (b.idsOnly) { const s = await col(CANCELLED).select("orderId").limit(5000).get(); return { ids: s.docs.map(d => d.id), truncated: s.size >= 5000 }; }
+  const s = await col(CANCELLED).orderBy("at", "desc").limit(n).get();
+  return { list: s.docs.map(d => { const x = d.data(); delete x.createdAt; return x; }), truncated: s.size >= n };
+}
+async function op_cancelRestore(b) { const id = orderIdOf(b.orderId); if (!id) return { error: "orderId required" }; await col(CANCELLED).doc(id).delete(); return { ok: true }; }
 const OPS = { ...RoseStock, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, startMaster: op_startMaster,
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,
+  cancelPut: op_cancelPut, cancelList: op_cancelList, cancelRestore: op_cancelRestore,
   aliasGet: op_aliasGet, aliasPut: op_aliasPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut };
 
 exports.ops = OPS;   // the connections check runs the same queries the app runs

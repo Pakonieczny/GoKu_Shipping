@@ -23,6 +23,8 @@
   const h = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
   const animate = (el, frames, ms, opts) => { if (!el || still() || !el.animate) return Promise.resolve(); try { return el.animate(frames, Object.assign({ duration: ms, easing: EASE, fill: "both" }, opts || {})).finished.catch(() => {}); } catch (_) { return Promise.resolve(); } };
   const ICON = {
+    pause: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4v8M10 4v8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    fill: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="2.6 2"/><path d="M8 5.5v5M5.5 8h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
     off: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.2c.05.7.6 1.3 1.3 1.3h3.2c.7 0 1.25-.6 1.3-1.3l.6-8.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     back: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     next: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -52,6 +54,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
 .swTitle span{font:10.5px var(--mono);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .swSheets{display:flex;align-items:center;gap:4px;min-width:0;overflow-x:auto;scrollbar-width:none;padding:2px 2px 2px 10px;margin-left:4px;border-left:1px solid var(--line)}
 .swSheets::-webkit-scrollbar{display:none}
+.swSheets[hidden]{display:none}
 .swChip{position:relative;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--card);border-radius:999px;padding:3px 10px 3px 6px;font:600 11.5px var(--sans);color:var(--ink70);cursor:pointer;white-space:nowrap;transition:background .15s,border-color .15s,color .15s,box-shadow .2s}
 .swChip i{width:9px;height:9px;border-radius:50%;background:var(--c)}
 .swChip:hover{background:var(--paper2)}
@@ -107,16 +110,17 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
 .swToggle{border:1px solid var(--line);background:var(--card);border-radius:999px;padding:3px 10px;font:600 11px var(--sans);color:var(--ink70);cursor:pointer}
 .swToggle[aria-pressed=true]{background:var(--claySoft);border-color:#e7b9aa;color:#8a3a26}
 .swSide{position:relative;border-left:1px solid var(--line);background:var(--card);min-width:0;min-height:0;overflow:hidden}
-.swPane{position:absolute;inset:0;display:grid;grid-template-rows:auto minmax(0,1fr) auto;min-height:0}
+.swPane{position:absolute;inset:0;display:grid;grid-template-rows:auto minmax(0,1fr) auto;grid-template-columns:minmax(0,1fr);min-height:0}
 .swPane[hidden]{display:none}
-.swPane[data-pane=sheet]{grid-template-rows:auto auto minmax(0,1fr) auto}
+.swPane[data-pane=sheet]{grid-template-rows:auto auto auto minmax(0,1fr) auto}
 .swPaneHead{padding:12px 14px 10px;border-bottom:1px solid var(--line2);display:grid;gap:9px}
 .swFind{position:relative}
 .swFind svg{position:absolute;left:10px;top:50%;width:14px;height:14px;transform:translateY(-50%);color:var(--ink45)}
 .swFind input{width:100%;border:1px solid var(--line);border-radius:9px;padding:7px 10px 7px 30px;font:13px var(--sans);background:var(--card2);color:var(--ink)}
 .swFind input:focus{outline:2px solid rgba(74,107,120,.35);border-color:var(--slate);background:var(--card)}
-.swSeg{display:flex;gap:3px;background:var(--paper2);border-radius:9px;padding:3px}
-.swSeg button{flex:1;border:0;background:transparent;border-radius:7px;padding:5px 6px;font:600 11.5px var(--sans);color:var(--ink70);cursor:pointer;white-space:nowrap}
+.swSeg{display:flex;gap:3px;background:var(--paper2);border-radius:9px;padding:3px;min-width:0}
+.swSeg[hidden]{display:none}
+.swSeg button{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;border:0;background:transparent;border-radius:7px;padding:5px 6px;font:600 11.5px var(--sans);color:var(--ink70);cursor:pointer;white-space:nowrap}
 .swSeg button i{font-style:normal;font:600 10px var(--mono);color:var(--ink45);margin-left:4px}
 .swSeg button[aria-pressed=true]{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(30,26,20,.10)}
 .swScroll{overflow:auto;min-height:0;overscroll-behavior:contain}
@@ -246,21 +250,63 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
 .swWork.done{border-color:#b9cdb5;background:linear-gradient(0deg,rgba(221,233,218,.35),rgba(221,233,218,.35)),var(--card)}
 .swWork.failed{border-color:#e7b9aa}
 .swSheetMsg{margin:10px 14px 0}
+.swSheetMsg[hidden]{display:none}
+.swOff .then{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.swOff .then .fLabel{margin:0 4px 0 0}
+.swOff .then button{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--card);border-radius:999px;padding:4px 11px 4px 9px;font:500 12px var(--sans);color:var(--ink70);cursor:pointer;transition:border-color .12s,background .12s,color .12s}
+.swOff .then button svg{width:13px;height:13px}
+.swOff .then button[data-then=hold][aria-checked=true]{border-color:var(--slate);background:var(--slateSoft);color:#2f4a55}
+.swOff .then button[data-then=cancel][aria-checked=true]{border-color:#c98a74;background:var(--claySoft);color:#8a3a26}
+.swOff .then button:disabled{opacity:.45;cursor:not-allowed}
+.swOff .acts .btn svg{width:13px;height:13px}
+.swNote{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:9px;padding:6px 9px;font:12.5px var(--sans);background:var(--card);color:var(--ink)}
+.swNote:focus{outline:2px solid rgba(74,107,120,.3);border-color:var(--slate)}
+.swFill{border:1px solid #b9cdb5;border-radius:12px;background:linear-gradient(0deg,rgba(221,233,218,.28),rgba(221,233,218,.28)),var(--card);padding:8px 8px 7px 12px;display:grid;gap:6px;animation:swDrop .24s ${EASE} both}
+.swFill h4{margin:0;display:flex;align-items:center;gap:7px;font:600 13px var(--sans);color:var(--ink);min-height:24px}
+.swFill h4 svg{width:15px;height:15px;color:var(--sage);flex:none}
+.swFill h4 small{font:500 10.5px var(--sans);color:var(--ink45)}
+.swFill h4 .swIcon{margin-left:auto;width:24px;height:24px}
+.swFill h4 .swIcon svg{width:12px;height:12px;color:var(--ink45)}
+.swFill ol{list-style:none;margin:0 0 0 -8px;padding:0;display:grid;gap:2px}
+.swFill li{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:9px;align-items:center;padding:4px 4px 4px 4px;border-radius:9px;transition:background .12s;animation:swDrop .26s ${EASE} both;animation-delay:calc(var(--i) * 45ms)}
+.swFill li:hover{background:rgba(95,122,91,.11)}
+.swFill .th{width:44px;height:44px;border:1px solid var(--line2);border-radius:8px;background:#fff}
+.swFill .t{display:grid;min-width:0;line-height:1.3}
+.swFill .t b{font:600 12.5px var(--mono);color:var(--ink)}
+.swFill .t small{font:11px var(--sans);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.swFill .note{font:11.5px/1.45 var(--sans);color:var(--ink45)}
+.swHeld{display:grid;gap:5px;padding:9px 10px;border-radius:10px;border:1px solid var(--line2);margin:0 0 6px;background:var(--card);animation:swDrop .22s ${EASE} both}
+.swHeld .top{display:flex;align-items:baseline;gap:8px;min-width:0}
+.swHeld .no{font:600 13px var(--mono);color:var(--ink)}
+.swHeld .what{font:11.5px var(--sans);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}
+.swHeld .when{font:10.5px var(--mono);color:var(--ink45);flex:none}
+.swHeld .why{font:11.5px/1.4 var(--sans);color:var(--ink70);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.swHeld .acts{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.swHeld .acts.confirm .swNote{flex:1 1 100%}
+.swChip[data-freed]::after{content:"";position:absolute;left:-2px;bottom:-2px;width:7px;height:7px;border-radius:2px;border:1.5px dashed var(--clay);background:var(--card)}
+.cxWait{display:flex;align-items:center;gap:8px;justify-content:center;padding:40px;color:var(--ink45);font:12.5px var(--sans)}
+.cxList{display:grid;gap:6px;padding:8px 10px}
+.cxRow{display:grid;grid-template-columns:minmax(140px,200px) minmax(0,1fr) minmax(0,1.4fr) auto;gap:14px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:9px 12px;background:var(--card)}
+.cxId{display:grid;line-height:1.3}.cxId b{font:600 13px var(--mono)}.cxId span{font:11.5px var(--sans);color:var(--ink45)}
+.cxWhat{display:flex;flex-wrap:wrap;gap:4px}.cxWhat span{font:600 10.5px var(--mono);background:var(--paper2);border-radius:999px;padding:2px 8px;color:var(--ink70)}
+.cxWhy{font:12px/1.4 var(--sans);color:var(--ink70);display:grid}.cxWhy small{font:11px var(--sans);color:var(--ink45)}
+@media (max-width:900px){.cxRow{grid-template-columns:minmax(0,1fr) auto}.cxWhat,.cxWhy{grid-column:1}}
 @keyframes swSpin{to{transform:rotate(360deg)}}
-{grid-template-columns:minmax(0,1fr)}.swSide{border-left:0;border-top:1px solid var(--line);min-height:46vh}.swBox{overflow:auto}.swSheets{display:none}}
+@media (max-width:980px){.swBody{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(300px,1fr) auto}.swSide{border-left:0;border-top:1px solid var(--line);min-height:46vh}.swBox{overflow:auto}.swSheets{display:none}}
 @media (prefers-reduced-motion:reduce){dialog.sheetWin[open],dialog.sheetWin.closing,dialog.sheetWin::backdrop,.swReturn{animation:none}}
 `;
+
+  { const style = h("style"); style.textContent = STYLE; document.head.appendChild(style); }   // (the Orders tab's Cancelled list uses it too)
 
   /* ── state ── */
   const W = {
     dlg: null, el: {}, id: null, rec: null, live: null, st: null, pieces: [], byId: new Map(), byPool: new Map(), orders: new Map(),
     set: null, setSheets: [], sel: null, hover: null, view: "sheet", q: "", filter: "all", token: 0, geom: false, view0: null,
-    k: 1, R: 0, dpr: 1, showBacks: true, fx: [], raf: 0, pools: new Map(), trailFor: null, from: null, ro: null, freed: [], work: null
+    k: 1, R: 0, dpr: 1, showBacks: true, fx: [], raf: 0, pools: new Map(), trailFor: null, from: null, ro: null, freed: [], work: null, fill: null, fillRun: 0, ghost: null
   };
 
   function build() {
     if (W.dlg) return;
-    const style = h("style"); style.textContent = STYLE; document.head.appendChild(style);
     const d = h("dialog", "sheetWin"); d.setAttribute("aria-label", "Sheet");
     d.innerHTML = `<div class="swBox" tabindex="-1" autofocus>
       <header class="swHead">
@@ -283,6 +329,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
           <div class="swPane" data-pane="sheet">
             <div class="swPaneHead"><label class="swFind">${ICON.search}<input data-r="find" type="search" placeholder="Find an order or SKU on this sheet" autocomplete="off" spellcheck="false"></label><div class="swSeg" data-r="seg" role="group" aria-label="Show"></div></div>
             <div class="swSheetMsg" data-r="work" hidden></div>
+            <div class="swSheetMsg" data-r="fill" hidden></div>
             <div class="swScroll"><ol class="swOrders" data-r="orders"></ol></div>
             <div class="swFoot" data-r="foot"></div>
           </div>
@@ -332,8 +379,10 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     if (fresh) resetView();
     W.id = id; W.rec = null; W.live = null; W.geom = false; W.pieces = []; W.byId = new Map(); W.byPool = new Map(); W.orders = new Map();
     W.sel = null; W.hover = null; W.fx = []; W.set = W.set && opts.keepSet ? W.set : null;
-    if (!opts.keepWork) { W.freed = []; W.work = null; } else W.freed = (opts.freed || W.freed).map(g => Object.assign({}, g, { t0: 0 }));
-    renderWork();
+    if (!opts.keepWork) W.work = null;
+    W.freed = (FREED.get(id) || []).filter(g => Date.now() - (g.at || 0) < 12 * 3600e3).map(g => Object.assign(g, { t0: 0 }));
+    W.fill = null; W.ghost = null; W.fillRun++;
+    renderWork(); renderFill();
     const lib = (S.library.rows || []).find(r => r.id === id) || null;
     head(lib || { id, metal: "gold" }, true);
     // (read again after pieces came off it: the plate on screen stays until the saved sheet is drawn over it)
@@ -356,13 +405,14 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
       const rec = r.sheet; if (!rec) throw new Error("This sheet is no longer in the Library.");
       if (window.LaserReview) LaserReview.record(rec);
       W.rec = rec; W.st = stockOf(rec); W.live = liveOf(id);
-      head(rec, false); indexPieces(); fitPlate(); renderStrip(); renderSheetPane(); renderFoot(); renderMenu();
+      head(rec, false); indexPieces(); pruneFreed(); fitPlate(); renderStrip(); renderSheetPane(); renderFoot(); renderMenu();
       if (!rec.outputs?.preview?.url && !W.live) E.pv.removeAttribute("src"); else if (rec.outputs?.preview?.url && !E.pv.getAttribute("src")) E.pv.src = cors(rec.outputs.preview.url);
       loadSet(tok);
       await loadGeometry(tok);
       if (tok !== W.token) return;
       veil(null);
       if (opts.select) { const p = W.byPool.get(opts.select) || W.byId.get(opts.select); if (p) selectPiece(p, { from: opts.from || "open", flash: opts.flash }); }
+      suggest();
     } catch (e) {
       if (tok !== W.token) return;
       veil(null); E.orders.innerHTML = `<li class="swNone"><b>This sheet could not open.</b><br>${esc(e.message)}<br><br><button class="btn ghost sm" data-r2="retry">Try again</button></li>`;
@@ -472,7 +522,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
   function renderSheetChips() {
     const E = W.el, list = W.setSheets.length ? W.setSheets : (W.rec ? [{ id: W.rec.id, metal: W.rec.metal, n: sheetNoOf(W.rec) }] : []);
     E.sheets.hidden = list.length < 2;
-    E.sheets.innerHTML = list.map(s => `<button type="button" class="swChip" data-sheet="${esc(s.id)}" style="--c:${colorOf(s.metal)}"${s.id === W.id ? ' aria-current="true"' : ""} title="${esc(s.name || "")}"><i></i>${esc(CODE[s.metal] || "")} ${s.n}<b></b></button>`).join("");
+    E.sheets.innerHTML = list.map(s => `<button type="button" class="swChip" data-sheet="${esc(s.id)}" style="--c:${colorOf(s.metal)}"${s.id === W.id ? ' aria-current="true"' : ""} title="${esc(s.name || "")}${FREED.get(s.id)?.length ? " · has freed room" : ""}"${FREED.get(s.id)?.length ? " data-freed" : ""}><i></i>${esc(CODE[s.metal] || "")} ${s.n}<b></b></button>`).join("");
     E.sheets.querySelectorAll("[data-sheet]").forEach(b => b.onclick = () => { if (b.dataset.sheet !== W.id) switchSheet(b.dataset.sheet); });
   }
   function lightChips(rid) {
@@ -509,6 +559,12 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     for (const x of pieces) x.eng = engOf(x);
   }
   const liveOf = id => allSheets().find(p => p.sheetId === id && p.placements.length) || null;
+  // room that something has gone into since (an arrival, a move, a restore) is no longer shown as free
+  function pruneFreed() {
+    const live = W.pieces.filter(x => !x.gone);
+    W.freed = W.freed.filter(g => !live.some(x => Math.hypot(x.p.cxPt - g.x.p.cxPt, x.p.cyPt - g.x.p.cyPt) < Math.min(g.x.p.wPt || 20, g.x.p.hPt || 20) / 2));
+    setFreed(W.id, W.freed);
+  }
 
   /* ── geometry: the live page's charms, or the master designs placed as recorded ── */
   const fileGeoms = new Map();
@@ -649,6 +705,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
         ctx.setLineDash([4 * W.dpr, 3 * W.dpr]); outlinePath(ctx, x); ctx.strokeStyle = `rgba(176,86,63,${.3 + .5 * t})`; ctx.lineWidth = 1.2 * W.dpr; ctx.stroke(); ctx.setLineDash([]);
       });
     }
+    paintGhost(ctx, now);
     // back engraving: a small mark on each charm that has one (clay: still to approve, sage: approved)
     if (W.showBacks) for (const x of W.pieces) {
       if (x.gone || !x.eng || x.eng.kind === "none" || x.eng.kind === "skipped") continue;
@@ -772,13 +829,19 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     const E = W.el, all = [...W.orders.entries()];
     const engN = all.filter(([, xs]) => xs.some(x => x.eng && ["approve", "words", "preparing"].includes(x.eng.kind))).length;
     const multi = all.filter(([rid]) => rid !== "—" && otherSheets(rid).length).length;
-    const seg = [["all", "All", all.length], ["backs", "Backs to approve", engN], ["multi", "On other sheets", multi]];
-    E.seg.innerHTML = seg.map(([id, label, n]) => `<button type="button" data-f="${id}" aria-pressed="${W.filter === id}">${label}<i>${n}</i></button>`).join("");
+    const held = heldOrders().length;
+    // a view shows only when it has something in it (or is the one open): an empty choice is clutter
+    const seg = [["all", "All", all.length, ""], ["backs", "Backs", engN, "Orders whose back engraving still needs approving"], ["multi", "Other sheets", multi, "Orders with pieces on other sheets too"], ["hold", "On hold", held, "Orders a person put on hold or took off a sheet, from every sheet"]]
+      .filter(([id, , n]) => id === "all" || n || W.filter === id);
+    if (W.filter !== "all" && !seg.some(([id, , n]) => id === W.filter && n) && !W.q) { W.filter = "all"; return renderSheetPane(); }
+    E.seg.hidden = seg.length < 2;
+    E.seg.innerHTML = seg.map(([id, label, n, t]) => `<button type="button" data-f="${id}" aria-pressed="${W.filter === id}"${t ? ` title="${t}"` : ""}>${label}<i>${n}</i></button>`).join("");
     E.seg.querySelectorAll("[data-f]").forEach(b => b.onclick = () => { W.filter = b.dataset.f; renderSheetPane(); });
     renderOrders();
   }
   function renderOrders() {
     const E = W.el, q = W.q;
+    if (W.filter === "hold") return renderHeld();
     let list = [...W.orders.entries()].filter(([, xs]) => xs.some(x => !x.gone));
     if (W.filter === "backs") list = list.filter(([, xs]) => xs.some(x => x.eng && ["approve", "words", "preparing"].includes(x.eng.kind)));
     if (W.filter === "multi") list = list.filter(([rid]) => rid !== "—" && otherSheets(rid).length);
@@ -977,6 +1040,8 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
       const s = p.sheetId && (W.setSheets.find(z => z.id === p.sheetId) || { metal: p.material, n: +((/_Sheet-(\d+)/.exec(p.sheetName || "") || [])[1]) || "?" });
       add(p.poolId, { poolId: p.poolId, sku: p.sku, copy: p.copy, qty: p.quantity, sheetId: p.sheetId || null, metal: s ? s.metal : p.material, n: s ? s.n : null, name: p.sheetName || "", state: p.state });
     }
+    // a piece the pool has not put on a sheet yet may already sit on one this sorter holds
+    for (const it of items.values()) if (!it.sheetId && it.poolId && window.Pool) { const sh = Pool.sheetOf(it.poolId); if (sh && sh.sheetId) Object.assign(it, { sheetId: sh.sheetId, metal: sh.metal, n: sh.sheetIndex || sh.page || 1 }); }
     const list = [...items.values()].sort((a, b) => (a.sheetId === W.id ? 0 : 1) - (b.sheetId === W.id ? 0 : 1) || String(a.sku).localeCompare(String(b.sku)) || (a.copy || 0) - (b.copy || 0));
     headN.textContent = `This order · ${list.length} piece${list.length === 1 ? "" : "s"}`;
     host.innerHTML = list.map((it, i) => {
@@ -1153,25 +1218,33 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     const host = W.el.detail.querySelector("[data-r2=off]"); if (!host) return;
     const mates = x.rid ? offPlan(x, true) : null, one = offPlan(x, false);
     const many = mates && mates.ids.size > 1;
-    let pick = many ? "all" : "one", why = "";
+    let pick = many ? "all" : "one", then = "hold", note = "";
     const paint = () => {
       const plan = pick === "all" ? mates : one, n = plan.ok.length;
+      // only a whole order is cancelled: one charm of it comes off and waits on hold
+      const whole = !!x.rid && (pick === "all" || !many);
+      if (!whole) then = "hold";
       const stay = plan.stay.length ? `<div class="stay"><b>${plan.stay.length === 1 ? "1 piece stays" : plan.stay.length + " pieces stay"}</b>: ${plan.stay.map(o => `${esc(o.sku)} on ${esc(o.where)} (${esc(o.why)})`).join("; ")}.</div>` : "";
-      const note = !n ? "" : pick === "all"
-        ? `The order is held in Orders, so the run does not place it again; release it there to nest it again. Every other charm stays exactly where it is, and each sheet is rewritten with a new QR label.`
-        : many ? `The order's other pieces stay and are cut. If this was its line's last piece, the order stays open on the station.` : `The order is held in Orders, so the run does not place it again. Every other charm stays where it is, and the sheet gets a new QR label.`;
+      const text = then === "cancel"
+        ? `The order leaves every list in the sorter. Its record is kept under Orders › Cancelled, where it can be restored.${n ? " Every other charm stays where it is, and each sheet gets a new QR label." : ""}`
+        : !n ? "" : whole ? `The order waits under On hold, here and in Orders, until someone puts it back. Every other charm stays exactly where it is, and each sheet gets a new QR label.`
+        : `Only this charm waits under On hold; the order's other pieces stay and are cut.`;
+      const label = then === "cancel" ? (n ? "Take off and cancel" : "Cancel the order") : "Take off and hold";
       host.innerHTML = `<div class="swOff" role="group" aria-label="Take off the sheet"><h4>Take off the sheet</h4>
-        <div class="pick">${many ? `<label class="opt"><input type="radio" name="swOffWho" value="all"${pick === "all" ? " checked" : ""}><b>The whole order · ${mates.ids.size} pieces</b><small>${esc(listWhere(mates.ok.concat(mates.stay)))} · recommended when an order is cancelled</small></label>` : ""}
+        <div class="pick">${many ? `<label class="opt"><input type="radio" name="swOffWho" value="all"${pick === "all" ? " checked" : ""}><b>The whole order · ${mates.ids.size} pieces</b><small>${esc(listWhere(mates.ok.concat(mates.stay)))}</small></label>` : ""}
         <label class="opt"><input type="radio" name="swOffWho" value="one"${pick === "one" ? " checked" : ""}><b>${many ? "Only this charm" : "This charm"}</b><small>${esc(x.sku || x.name)}${x.qty > 1 ? ` · copy ${x.copy} of ${x.qty}` : ""} · ${esc(sheetWord(W.id, W.rec.fileBase))}</small></label></div>
-        <div class="why"><span class="fLabel">Why</span>${["Cancelled", "Changed", "On hold"].map(w => `<button type="button" data-why="${w}" aria-pressed="${why === w}">${w}</button>`).join("")}</div>
-        ${stay}${note ? `<div class="note">${note}</div>` : ""}
-        <div class="acts">${n ? `<button type="button" class="btn danger sm" data-o="go">${ICON.off}Take off ${n === 1 ? "1 piece" : n + " pieces"}</button>` : ""}<button type="button" class="btn ghost sm" data-o="keep">${n ? "Keep" : "Close"}</button></div></div>`;
+        ${x.rid ? `<div class="then" role="radiogroup" aria-label="Then"><span class="fLabel">Then</span><button type="button" role="radio" data-then="hold" aria-checked="${then === "hold"}">${ICON.pause}Put on hold</button><button type="button" role="radio" data-then="cancel" aria-checked="${then === "cancel"}"${whole ? "" : ' disabled title="Only a whole order can be cancelled"'}>${ICON.off}Cancel the order</button></div>` : ""}
+        <input class="swNote" type="text" maxlength="200" placeholder="${then === "cancel" ? "Why it was cancelled (optional)" : "Note for whoever puts it back (optional)"}" value="${esc(note)}" aria-label="Note">
+        ${stay}${text ? `<div class="note">${text}</div>` : ""}
+        <div class="acts">${n || then === "cancel" ? `<button type="button" class="btn ${then === "cancel" ? "danger" : "velvet"} sm" data-o="go">${then === "cancel" ? ICON.off : ICON.pause}${label}</button>` : ""}<button type="button" class="btn ghost sm" data-o="keep">${n || then === "cancel" ? "Keep" : "Close"}</button></div></div>`;
       host.querySelectorAll("input[name=swOffWho]").forEach(r => r.onchange = () => { pick = r.value; paint(); });
-      host.querySelectorAll("[data-why]").forEach(b => b.onclick = () => { why = why === b.dataset.why ? "" : b.dataset.why; paint(); });
+      host.querySelectorAll("[data-then]").forEach(b => b.onclick = () => { if (b.disabled) return; then = b.dataset.then; paint(); host.querySelector(".swNote")?.focus(); });
+      const ni = host.querySelector(".swNote"); ni.oninput = () => { note = ni.value; }; ni.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); host.querySelector("[data-o=go]")?.click(); } };
       host.querySelector("[data-o=keep]").onclick = () => { animate(host.firstElementChild, [{ opacity: 1 }, { opacity: 0, transform: "translateY(-4px)" }], 140).then(() => renderOffBtn(x)); };
       const go = host.querySelector("[data-o=go]"); if (go) go.onclick = () => {
         const who = whoAmI() || askWho(); if (!who) return;
-        takeOff(pick === "all" ? offPlan(x, true) : offPlan(x, false), why, who).catch(e => { console.error("sheet window: take off", e); toast("Not taken off: " + e.message, "bad", 8000); });
+        const p = pick === "all" ? offPlan(x, true) : offPlan(x, false), opt = { then, note: note.trim() };
+        (p.ok.length ? takeOff(p, opt, who) : cancelOnly(p.rid, opt, who)).catch(e => { console.error("sheet window: take off", e); toast((then === "cancel" ? "Not cancelled: " : "Not taken off: ") + e.message, "bad", 8000); });
       };
     };
     paint();
@@ -1187,60 +1260,136 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     const b = E.work.querySelector("[data-w=ok]"); if (b) b.onclick = () => { const el = E.work.firstElementChild; animate(el, [{ opacity: 1 }, { opacity: 0, transform: "translateY(-4px)" }], 160).then(() => { W.work = null; renderWork(); }); };
   }
   const pause = ms => new Promise(r => setTimeout(r, ms));
-  async function takeOff(plan, why, who) {
+  const stepOf = (text, state, detail) => ({ text, state: state || "", detail: detail || "" });
+  const rowsOfOrder = rid => (window.Orders ? Orders.rows() : []).filter(r => String(r.order.receiptId) === String(rid) && r.state !== "gone");
+  const ridOf = c => String(c.order || c.poolId || "").split(/[/_]/)[0];
+  const nowT = () => (window.SimClock && SimClock.now ? SimClock.now() : Date.now());
+  function ago(t) {
+    if (!t) return "";
+    const m = Math.max(0, (nowT() - t) / 60000);
+    return m < 60 ? `${Math.max(1, Math.round(m))} min ago` : m < 48 * 60 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+  }
+  // a sheet in the middle of a search or a save finishes that first (three minutes at most)
+  async function waitIdle(pages, st, paint) {
+    if (!pages.some(busy)) return;
+    st.state = "now"; paint();
+    const until = Date.now() + 180000;
+    while (pages.some(busy) && Date.now() < until) { const b = pages.find(busy); st.detail = `${sheetWord(b.sheetId, b.fileBase, b)}: ${b.stage || b.status}`; paint(); await pause(400); }
+    if (pages.some(busy)) throw new Error("a sheet is still busy after three minutes; try again once it has saved");
+    st.state = "ok"; st.detail = "";
+  }
+  // one sheet written again as it now stands: the pieces already on it stay put, and it is verified and saved
+  async function rewritePage(sh, st, paint) {
+    st.state = "now"; paint();
+    if (!allSheets().includes(sh) || !sh.placements.length && !activeCharms(sh).length) { st.state = "ok"; st.detail = "nothing left to write"; return true; }
+    // the run may already have started it on its own (the sheet was left to be written): that search is this one
+    const job0 = sh.jobId, running = busy(sh);
+    if (!running) { sh._byHand = true; startNest(sh); }
+    const until = Date.now() + 240000;
+    while (Date.now() < until) {
+      if ((running || sh.jobId !== job0) && !busy(sh) && (sh.persistedDone || sh.problem)) break;
+      st.detail = sh.stage || (sh.status === "queued" ? "waiting its turn" : sh.status); paint(); await pause(350);
+    }
+    if (sh.problem) throw new Error(`${sheetWord(sh.sheetId, sh.fileBase, sh)}: ${sh.problem}`);
+    if (!running && sh.jobId === job0 || busy(sh) || !sh.persistedDone) { st.state = "now"; st.detail = "still saving; it finishes on its card in the Nest tab"; return false; }
+    st.state = "ok"; st.detail = sh.verification && !sh.verification.ok ? "verification flagged, see its report" : ""; return true;
+  }
+  // A sheet of a run under the set rules is a working sheet again once it is written, and the set takes it back with a
+  // new label while it is still ready for the laser (Gate.assemble, as at every check); one that is no longer full
+  // enough fills again first, and the label it had (the old orders) goes. An older run's sheet got its label as it saved.
+  async function remakeLabels(pages, st, paint) {
+    st.state = "now"; paint();
+    const run = window.B && B.run;
+    if (run && window.Gate && Gate.modern(run.runId) && pages.some(sh => sh.runId === run.runId)) {
+      try { await Gate.assemble(run); } catch (e) { st.state = "bad"; st.detail = e.message; }
+    }
+    for (const sh of pages) if (allSheets().includes(sh) && sh.draft && sh.label && sh.sheetId) {
+      sh.label = null;
+      await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, label: null } }, { quiet: true }).catch(e => console.warn("sheet window: label", e));
+    }
+    if (st.state === "now") st.state = "ok";
+  }
+  // What was saved is read back: each piece is on the sheet it should be on and on no other, and the piece records
+  // agree. Only then is the change stamped as verified on the pieces.
+  async function verifySaved(want, ids, pool, st, paint) {
+    st.state = "now"; paint();
+    const bad = [];
+    for (const w of want) {
+      if (!w.sh.sheetId || !allSheets().includes(w.sh)) continue;
+      const r = await api("charmNestLibrary", { op: "getSheet", id: w.sh.sheetId }, { quiet: true }).catch(e => ({ error: e.message }));
+      const rec = r && r.sheet; if (!rec) { bad.push(`${w.name} could not be read back`); continue; }
+      const byId = new Map((rec.charms || []).map(c => [c.id, c])), placed = new Set((rec.placements || []).map(p => byId.get(p.id)?.poolId).filter(Boolean));
+      const missing = [...(w.on || [])].filter(id => !placed.has(id)).length, extra = [...(w.off || [])].filter(id => placed.has(id)).length;
+      if (missing) bad.push(`${w.name} is missing ${missing === 1 ? "1 piece" : missing + " pieces"}`);
+      if (extra) bad.push(`${w.name} still lists ${extra === 1 ? "1 piece" : extra + " pieces"}`);
+    }
+    if (pool) {
+      const r = await api("charmNestLibrary", { op: "poolGet", poolIds: [...ids].slice(0, 300) }, { quiet: true }).catch(() => null);
+      const off = r ? Object.values(r.pools || {}).filter(p => !pool(p)).length : 0;
+      if (!r) bad.push("the piece records could not be read");
+      else if (off) bad.push(`${off === 1 ? "1 piece record disagrees" : off + " piece records disagree"}`);
+    }
+    if (bad.length) { st.state = "bad"; st.detail = bad.join("; "); return false; }
+    st.state = "ok"; st.detail = "the saved sheets and piece records match";
+    return true;
+  }
+  function doneStep(st) { if (st && st.state === "now") st.state = "bad"; }
+
+  async function takeOff(plan, opt, who) {
     const list = plan.ok; if (!list.length) return;
+    const cancel = opt.then === "cancel" && !!plan.rid, note = opt.note || "";
     const ids = new Set(list.map(o => o.id)), rid = plan.rid;
     const pages = [...new Set(list.map(o => o.sh).filter(Boolean))];
     const sheetId = W.id, names = listWhere(list.filter(o => o.sh));
-    const step = (text, state, detail) => ({ text, state: state || "", detail: detail || "" });
-    const rewrite = pages.map(sh => ({ sh, name: sheetWord(sh.sheetId, sh.fileBase, sh), st: step(`Rewriting ${sheetWord(sh.sheetId, sh.fileBase, sh)}`) }));
-    const labels = step(`Remaking the QR label${pages.length === 1 ? "" : "s"}`);
-    const wait = step("Waiting for the sheets to finish their current step");
-    const off = step(`Taking ${list.length === 1 ? "1 piece" : list.length + " pieces"} off${names ? " " + names : ""}`);
-    W.work = { state: "working", title: `Taking off ${plan.whole && rid ? "order " + rid : (list[0].sku || "the charm")}`, steps: [wait, off, ...rewrite.map(r => r.st), ...(pages.length ? [labels] : [])], note: "" };
+    const rewrite = pages.map(sh => ({ sh, name: sheetWord(sh.sheetId, sh.fileBase, sh), st: stepOf(`Rewriting ${sheetWord(sh.sheetId, sh.fileBase, sh)}`) }));
+    const labels = stepOf(`Remaking the QR label${pages.length === 1 ? "" : "s"}`), check = stepOf("Checking the saved sheets");
+    const wait = stepOf("Waiting for the sheets to finish their current step");
+    const off = stepOf(`Taking ${list.length === 1 ? "1 piece" : list.length + " pieces"} off${names ? " " + names : ""}`);
+    const keep = stepOf("Keeping its record under Cancelled orders"), gone = stepOf("Taking it off every list");
+    W.work = { state: "working", title: cancel ? `Cancelling order ${rid}` : `Taking off ${plan.whole && rid ? "order " + rid : (list[0].sku || "the charm")}`, steps: [wait, off, ...rewrite.map(r => r.st), ...(pages.length ? [labels, check] : []), ...(cancel ? [keep, gone] : [])], note: "" };
     if (!pages.some(busy)) W.work.steps.shift();
-    // the pieces leave this plate at once, in clay, and leave their outline
+    // the pieces leave the plates at once, in clay, and leave the outline of the room they freed (kept per sheet)
     const t0 = performance.now();
-    for (const o of list) { const y = W.byPool.get(o.id); if (y && !y.gone) { y.gone = true; W.freed.push({ x: y, t0, rid: y.rid, sku: y.sku }); } }
-    W.hover = null; tip(null); W.el.plate.classList.remove("onCharm");
+    for (const o of list) { const y = W.byPool.get(o.id); if (y && !y.gone) { y.gone = true; W.freed.push({ x: y, t0, rid: y.rid, sku: y.sku, at: Date.now() }); } }
+    setFreed(sheetId, W.freed);
+    for (const sh of pages) if (sh.sheetId && sh.sheetId !== sheetId) {
+      const g = (FREED.get(sh.sheetId) || []).slice();
+      for (const c of sh.charms) if (ids.has(c.poolId)) { const p = sh.placements.find(q => q.id === c.id); if (p) g.push({ x: { id: c.id, c, gone: true, p: { cxPt: p.cxPt, cyPt: p.cyPt, angle: p.angle || 0, scale: p.scale || 1, wPt: p.wPt || c.widthPt || 20, hPt: p.hPt || c.heightPt || 20 } }, t0: 0, rid: ridOf(c), sku: c.sku || c.name, at: Date.now() }); }
+      setFreed(sh.sheetId, g);
+    }
+    W.hover = null; tip(null); W.el.plate.classList.remove("onCharm"); W.ghost = null;
     W.fx.push({ kind: "freed", t0, ms: 720 }); fxLoop(); paintBase();
     if (W.view === "piece") showSheetPane(); else { renderStrip(); renderSheetPane(); }
-    renderWork();
+    renderWork(); renderFill();
     const paint = () => { if (W.id === sheetId && W.dlg.open) renderWork(); };
     try {
-      // 1 · a sheet in the middle of a search or a save finishes that first
-      if (pages.some(busy)) {
-        wait.state = "now"; paint();
-        const until = Date.now() + 180000;
-        while (pages.some(busy) && Date.now() < until) { const b = pages.find(busy); wait.detail = `${sheetWord(b.sheetId, b.fileBase, b)}: ${b.stage || b.status}`; paint(); await pause(400); }
-        if (pages.some(busy)) throw new Error("a sheet is still busy after three minutes; try again once it has saved");
-        wait.state = "ok"; wait.detail = "";
-      }
+      await waitIdle(pages, wait, paint);
       off.state = "now"; paint();
-      // 2 · off the sheets this sorter holds (the rest of each sheet stays as placed: Orders.keepRest)
+      // 1 · off the sheets this sorter holds (the rest of each sheet stays as placed: Orders.keepRest)
       for (const sh of pages) {
-        const gone = sh.charms.filter(c => ids.has(c.poolId));
+        const gone2 = sh.charms.filter(c => ids.has(c.poolId));
         sh.charms = sh.charms.filter(c => !ids.has(c.poolId));
         sh.placements = sh.placements.filter(p => sh.charms.some(c => c.id === p.id));
         sh.rejects = (sh.rejects || []).filter(id => sh.charms.some(c => c.id === id));
         if (Array.isArray(sh.feedWait)) sh.feedWait = sh.feedWait.filter(id => sh.charms.some(c => c.id === id || c.poolId === id));
         if (sh.backPool) sh.backPool = sh.backPool.filter(b => !ids.has(b.poolId));
         Orders.keepRest(sh);
-        agent({ metal: sh.metal, run: sh.runId }, "POOL", `${gone.length} piece${gone.length === 1 ? "" : "s"} of ${rid || "an order"} taken off ${sheetName(sh)} by ${who}${why ? " (" + why.toLowerCase() + ")" : ""}; the rest stay where they are`);
+        agent({ metal: sh.metal, run: sh.runId }, "POOL", `${gone2.length} piece${gone2.length === 1 ? "" : "s"} of ${rid || "an order"} taken off ${sheetName(sh)} by ${who}${note ? " (" + note + ")" : ""}${cancel ? " to cancel the order" : ", on hold"}; the rest stay where they are`);
       }
-      // 3 · the order's lines: held, so the run does not place them again; their engraving goes with the pieces
-      const text = `Taken off ${names || "its sheet"} by ${who}${why ? " · " + why.toLowerCase() : ""}`;
+      // 2 · the order's lines wait on hold, so the run does not place them again; their engraving goes with the pieces
+      //     (a cancel takes them off every list once its record is kept, below)
+      const text = `Taken off ${names || "its sheet"} by ${who}${note ? ": " + note : ""}`;
       for (const r of Orders.rows()) {
         const mineRow = plan.whole && rid && String(r.order.receiptId) === rid;
         if (!mineRow && !(r.poolIds || []).some(id => ids.has(id))) continue;
         r.poolIds = (r.poolIds || []).filter(id => !ids.has(id));
         const j = Engrave.items().get(r.key);
         if (j) { j.copies = (j.copies || []).filter(id => !ids.has(id)); if (!j.copies.length) { Engrave.items().delete(r.key); Review.remove("eng:" + r.key); } }
-        if (!r.poolIds.length && r.state !== "gone") { r.state = "held"; r.hold = r.reason = `${text} — release the line to nest it again`; }
+        if (!r.poolIds.length && r.state !== "gone") { r.state = "held"; r.hold = r.reason = text; r.heldAt = Date.now(); }
       }
-      await Pool.update([...ids], { state: "abandoned", sheetId: null, setId: null, removedBy: who, removedReason: why || null, removedAt: Date.now() });
+      await Pool.update([...ids], { state: "abandoned", sheetId: null, setId: null, removedBy: who, removedReason: cancel ? "cancelled" + (note ? ": " + note : "") : note || "on hold", removedAt: Date.now() });
       for (const id of ids) B.pool.rows.delete(id);
-      // 4 · the set: the order leaves the sheets it was on (labels are remade when each sheet is saved again)
+      // 3 · the set: the order leaves the sheets it was on (labels are remade when each sheet is saved again)
       for (const set of [...(B.sets?.values?.() || [])]) {
         let touched = false;
         for (const [k, o] of Object.entries(set.orders || {})) {
@@ -1254,52 +1403,31 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
       if (B.run) { B.run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); await RunCtl.save(B.run).catch(e => console.warn("sheet window: run lines", e)); }
       Review.syncOrderItems(); Orders.render(); Engrave.render();
       off.state = "ok"; paint();
-      // 5 · each sheet written again as it now stands, verified and saved; its QR label is remade with it
-      for (const r of rewrite) {
-        const sh = r.sh; r.st.state = "now"; paint();
-        if (!allSheets().includes(sh) || !sh.placements.length) { r.st.state = "ok"; r.st.detail = "nothing left to write"; continue; }
-        const job0 = sh.jobId; sh._byHand = true;
-        startNest(sh);
-        const until = Date.now() + 240000;
-        while (Date.now() < until) {
-          if (sh.jobId !== job0 && !busy(sh) && (sh.persistedDone || sh.problem)) break;
-          r.st.detail = sh.stage || (sh.status === "queued" ? "waiting its turn" : sh.status); paint(); await pause(350);
-        }
-        if (sh.problem) throw new Error(`${sheetWord(sh.sheetId, sh.fileBase, sh)}: ${sh.problem}`);
-        if (sh.jobId === job0 || busy(sh) || !sh.persistedDone) { r.st.state = "now"; r.st.detail = "still saving; it finishes on its card in the Nest tab"; continue; }
-        r.st.state = "ok"; r.st.detail = sh.verification && !sh.verification.ok ? "verification flagged, see its report" : "";
-      }
-      // 6 · the QR labels. A sheet of a run under the set rules is a working sheet again once it is written, and the set
-      //     takes it back with a new label while it is still ready for the laser (Gate.assemble, as at every check);
-      //     one that is no longer full enough fills again first. An older run's sheet got its label as it was saved.
+      // 4 · each sheet written again as it now stands, with a new QR label, and read back
+      for (const r of rewrite) await rewritePage(r.sh, r.st, paint);
       if (pages.length) {
-        labels.state = "now"; paint();
-        const run = window.B && B.run;
-        if (run && window.Gate && Gate.modern(run.runId) && pages.some(sh => sh.runId === run.runId)) {
-          try { await Gate.assemble(run); } catch (e) { labels.state = "bad"; labels.detail = e.message; }
-        }
-        // a sheet filling again is out of its set until it is full: the label it had lists the old orders, so it goes
-        for (const sh of pages) if (allSheets().includes(sh) && sh.draft && sh.label && sh.sheetId) {
-          sh.label = null;
-          await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, label: null } }, { quiet: true }).catch(e => console.warn("sheet window: label", e));
-        }
-        if (labels.state === "now") labels.state = "ok";
+        await remakeLabels(pages, labels, paint);
+        const ok = await verifySaved(rewrite.filter(r => r.st.state === "ok").map(r => ({ sh: r.sh, name: r.name, off: ids })), ids, p => p.state === "abandoned", check, paint);
+        if (ok) await Pool.update([...ids], { removedVerifiedAt: Date.now() }).catch(() => {});
       }
+      // 5 · a cancel: the record is kept first, then the order leaves every list
+      if (cancel) await cancelRecord(rid, { note, who, sheets: names }, keep, gone, paint);
       if (window.RunCtl) RunCtl.poke();
       const open = rewrite.some(r => r.st.state === "now");
       const fates = rewrite.filter(r => allSheets().includes(r.sh) && r.sh.placements.length).map(r => {
         const sh = r.sh, set = sh.setId && !sh.draft && window.Sets && [...(B.sets?.values?.() || [])].find(z => z.setId === sh.setId);
-        return set ? `${esc(r.name)} stays in ${esc(set.name || "its set")} with a new QR label.` : `${esc(r.name)} is filling again (${fmt.pct(sh.density || 0)} full): the next orders that fit go into the freed room before it goes to the laser.`;
+        return set ? `${esc(r.name)} stays in ${esc(set.name || "its set")} with a new QR label.` : `${esc(r.name)} is filling again (${fmt.pct(sh.density || 0)} full); new orders that fit go into the freed room.`;
       });
-      W.work.state = "done"; W.work.title = open ? "Taken off · a sheet is still saving" : "Taken off";
-      W.work.note = fates.join(" ") + (plan.whole && rid ? ` Order ${esc(rid)} is held in Orders.` : "") +
-        (plan.stay.length ? ` ${plan.stay.length === 1 ? "1 piece" : plan.stay.length + " pieces"} stayed (${esc(plan.stay.map(o => o.where + ": " + o.why).join("; "))}).` : "");
+      W.work.state = "done";
+      W.work.title = cancel ? `Order ${rid} cancelled` : open ? "Taken off · a sheet is still saving" : "Taken off";
+      W.work.note = fates.join(" ") + (cancel ? ` The record is under Orders › Cancelled.` : rid && rowsOfOrder(rid).some(r => r.hold) ? ` Order ${esc(rid)} is under On hold.` : "") +
+        (plan.stay.length ? ` ${plan.stay.length === 1 ? "1 piece" : plan.stay.length + " pieces"} stayed (${esc(plan.stay.map(o => o.where + ": " + o.why).join("; "))})${cancel ? ": set them aside once cut" : ""}.` : "");
       paint();
       if (W.id === sheetId && W.dlg.open) open2(sheetId);
     } catch (e) {
-      for (const st of W.work.steps) if (st.state === "now") st.state = "bad";
-      W.work.state = "failed"; W.work.title = "Not everything came off";
-      W.work.note = esc(e.message) + ". Pieces already taken off stay off; the sheet window shows the sheet as saved now.";
+      for (const st of W.work.steps) doneStep(st);
+      W.work.state = "failed"; W.work.title = cancel ? "Not cancelled" : "Not everything came off";
+      W.work.note = esc(e.message) + (cancel ? ". The order is under On hold; cancel it from there." : ". Pieces already taken off stay off; the sheet window shows the sheet as saved now.");
       paint();
       if (W.id === sheetId && W.dlg.open) open2(sheetId);
       throw e;
@@ -1307,6 +1435,427 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
   }
   // the sheet as it is saved now, with the room the pieces freed marked on it
   function open2(id) { return open(id, { keepWork: true, keepSet: false }); }
+
+  /* ── cancelled orders: kept as a record (Charm_Nest_Cancelled), taken off every list, left out of every later pull ── */
+  const Cancelled = window.Cancelled = (() => {
+    let ids = new Set(), at = 0, loading = null, list = null;
+    function load(force) {
+      if (loading) return loading;
+      if (!force && at && Date.now() - at < 60000) return Promise.resolve(ids);
+      loading = api("charmNestLibrary", { op: "cancelList", idsOnly: true }, { quiet: true })
+        .then(r => { ids = new Set((r.ids || []).map(String)); at = Date.now(); return ids; })
+        .catch(e => { console.warn("cancelled orders", e.message); return ids; })
+        .finally(() => { loading = null; });
+      return loading;
+    }
+    const has = rid => ids.has(String(rid));
+    async function history() {
+      const r = await api("charmNestLibrary", { op: "cancelList", limit: 300 }, { quiet: true });
+      list = r.list || []; for (const c of list) ids.add(String(c.orderId)); return list;
+    }
+    async function put(rec) { await api("charmNestLibrary", Object.assign({ op: "cancelPut" }, rec), { quiet: true }); ids.add(String(rec.orderId)); list = null; }
+    async function restore(rid) { await api("charmNestLibrary", { op: "cancelRestore", orderId: String(rid) }, { quiet: true }); ids.delete(String(rid)); if (list) list = list.filter(c => String(c.orderId) !== String(rid)); }
+    // the Orders tab's Cancelled list: newest first, each with what was ordered, who cancelled it, and Restore
+    async function renderInto(host, onChange) {
+      if (!list) host.innerHTML = `<div class="cxWait"><span class="owSpin"></span>Reading the cancelled orders…</div>`;
+      try { await history(); } catch (e) { host.innerHTML = `<div class="libEmpty">The cancelled orders could not be read: ${esc(e.message)}</div>`; return; }
+      if (!host.isConnected) return;
+      if (!list.length) { host.innerHTML = `<div class="libEmpty">No order has been cancelled.</div>`; return; }
+      const when = t => t ? new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+      host.innerHTML = `<div class="cxList">${list.map(c => `<div class="cxRow" data-rid="${esc(c.orderId)}">
+        <div class="cxId"><b class="mono">${esc(c.orderId)}</b><span>${esc(c.buyer || "")}</span></div>
+        <div class="cxWhat">${(c.lines || []).map(l => `<span class="mono">${esc(l.sku || "no SKU")}${l.quantity > 1 ? ` ×${l.quantity}` : ""}</span>`).join("") || "<span>no lines kept</span>"}</div>
+        <div class="cxWhy">Cancelled ${esc(when(c.at))} by ${esc(c.by || "someone")}${c.why ? ` · ${esc(c.why)}` : ""}${(c.sheets || []).length ? `<small>was on ${esc(c.sheets.join(", "))}</small>` : ""}</div>
+        <button class="btn ghost sm" type="button" data-cx="restore" title="Bring the order back: it returns with the next orders check if it is still open on Etsy">Restore</button></div>`).join("")}</div>`;
+      host.querySelectorAll("[data-cx=restore]").forEach(b => b.onclick = async () => {
+        const row = b.closest(".cxRow"), rid = row.dataset.rid;
+        b.disabled = true; b.innerHTML = `<span class="spin"></span>Restoring`;
+        try {
+          await restore(rid);
+          agent({ bridge: true }, "DS", `Order ${rid} restored by ${whoAmI() || "someone"}: it comes back with the next orders check if it is still open on Etsy`);
+          toast(`Order ${rid} restored · it comes back with the next orders check`, "ok", 6000);
+          await animate(row, [{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateX(12px)" }], 200);
+          row.remove(); if (!host.querySelector(".cxRow")) host.innerHTML = `<div class="libEmpty">No order has been cancelled.</div>`;
+          if (onChange) onChange();
+        } catch (e) { b.disabled = false; b.textContent = "Restore"; toast("Not restored: " + e.message, "bad", 7000); }
+      });
+    }
+    return { load, has, history, put, restore, renderInto, count: () => ids.size };
+  })();
+  // the order's record is kept first; only then does it leave every list, so an interruption leaves it on hold
+  async function cancelRecord(rid, o, keepSt, goneSt, paint) {
+    rid = String(rid);
+    const rows = rowsOfOrder(rid), r0 = rows[0], ord = r0 ? r0.order : { receiptId: rid };
+    keepSt.state = "now"; paint();
+    await Cancelled.put({ orderId: rid, by: o.who, why: o.note || "", record: {
+      buyer: (ord.buyer && ord.buyer.name) || ord.buyerName || ord.name || "", placedAt: r0 && window.CharmNestOrders ? CharmNestOrders.orderPlacedAt(r0) : 0, shipBy: ord.shipBy ? ord.shipBy * 1000 : 0,
+      sheets: o.sheets ? String(o.sheets).split(", ") : [],
+      lines: rows.map(r => ({ transactionId: String(r.line.transactionId || ""), sku: (r.spec && r.spec.designSku) || r.line.sku || "", title: r.line.title || "", quantity: (r.spec && r.spec.quantity) || r.line.quantity || 1, material: r.material || "" })) } });
+    keepSt.state = "ok"; goneSt.state = "now"; paint();
+    dropOrder(rid);
+    agent({ bridge: true }, "DS", `Order ${rid} cancelled by ${o.who}${o.note ? " (" + o.note + ")" : ""}: taken off every list; its record is kept under Orders › Cancelled`);
+    goneSt.state = "ok"; paint();
+  }
+  function dropOrder(rid) {
+    const rows = rowsOfOrder(rid), keys = new Set(rows.map(r => r.key));
+    for (const r of rows) { B.orders.byKey.delete(r.key); Engrave.items().delete(r.key); for (const id of r.poolIds || []) if (!Pool.sheetOf(id)) B.pool.rows.delete(id); }
+    B.orders.rows = B.orders.rows.filter(r => !keys.has(r.key));
+    if (B.review && Array.isArray(B.review.items)) B.review.items = B.review.items.filter(it => String(it.rid || "") !== rid && !keys.has(it.line) && !keys.has(it.jobKey) && !(it.row && keys.has(it.row.key)) && !(it.rows || []).some(r => keys.has(r.key)));
+    const run = B.run;
+    if (run) {
+      run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord));
+      if (Array.isArray(run.orders)) run.orders = run.orders.filter(id => String(id) !== rid);
+      if (run.holds && typeof run.holds === "object") delete run.holds[rid];
+      RunCtl.save(run).catch(e => console.warn("sheet window: run after cancel", e));
+    }
+    Review.syncOrderItems(); Orders.render(); Engrave.render(); Review.render();
+    if (window.Session && Session.schedule) Session.schedule();
+  }
+  async function cancelOnly(rid, opt, who) {
+    if (!rid) return;
+    const keep = stepOf("Keeping its record under Cancelled orders"), gone = stepOf("Taking it off every list");
+    W.work = { state: "working", title: `Cancelling order ${rid}`, steps: [keep, gone], note: "" };
+    if (W.view === "piece") showSheetPane(); else renderSheetPane();
+    renderWork();
+    const paint = () => { if (W.dlg.open) renderWork(); };
+    try { await cancelRecord(rid, { note: opt.note, who, sheets: "" }, keep, gone, paint); }
+    catch (e) { for (const st of W.work.steps) doneStep(st); W.work.state = "failed"; W.work.title = "Not cancelled"; W.work.note = esc(e.message) + ". Nothing changed; try again."; paint(); throw e; }
+    W.work.state = "done"; W.work.title = `Order ${rid} cancelled`; W.work.note = `The record is under Orders › Cancelled, where it can be restored.`;
+    paint(); renderSheetPane();
+  }
+
+  /* ── the freed room: which orders fit it, found with the nest's own collision grid, oldest order first ── */
+  // sheetId → the room pieces left on it; kept in this browser (per workspace) for 12 hours, so a reload keeps it
+  const FREED = new Map(), FREED_KEY = () => "cn.sheetwin.freed" + (typeof WORKSPACE_SANDBOX !== "undefined" && WORKSPACE_SANDBOX ? ":sandbox" : "");
+  function setFreed(id, list) {
+    if (list && list.length) FREED.set(id, list); else FREED.delete(id);
+    try { const o = {}; for (const [k, gs] of FREED) o[k] = gs.map(g => ({ p: g.x.p, rid: g.rid || "", sku: g.sku || "", at: g.at || Date.now() })); localStorage.setItem(FREED_KEY(), JSON.stringify(o)); } catch (_) {}
+  }
+  try {
+    const o = JSON.parse(localStorage.getItem(FREED_KEY()) || "{}");
+    for (const [k, gs] of Object.entries(o)) { const list = (gs || []).filter(g => g && g.p && Date.now() - (+g.at || 0) < 12 * 3600e3).map(g => ({ x: { p: g.p, c: null, gone: true }, rid: g.rid, sku: g.sku, at: +g.at, t0: 0 })); if (list.length) FREED.set(k, list); }
+  } catch (_) {}
+  const SV = () => window.CharmNestSolver;
+  const bitsOf = c => typeof c.bits === "string" ? SV().bitsFromBase64(c.bits, c.w * c.h) : c.bits;
+  const VARS = new WeakMap();
+  function variantOf(c, angle, clearancePt) {
+    let m = VARS.get(c); if (!m) VARS.set(c, m = new Map());
+    const k = angle + "@" + clearancePt;
+    if (!m.has(k)) m.set(k, SV().prepareVariant({ bits: bitsOf(c), w: c.w, h: c.h, scale: c.scale }, angle, clearancePt, 2));
+    return m.get(k);
+  }
+  // the sheet this window can fill: held in this sorter, not Rose Gold (its green line decides), not cut or sent
+  function fillTarget() {
+    const sh = allSheets().find(p => p.sheetId === W.id);
+    if (!sh || !sh.placements.length || sh.metal === "rose" || sh.roseCutAt || sh.recalled || sentToStation(sh) || !SV() || !SV().makeSheetGrid) return null;
+    return sh;
+  }
+  // an order comes from a sheet still filling in the Nest tab, never from one in a set, released, cut or sent
+  function movableFrom(src, target) {
+    if (src === target || src.metal !== target.metal || src.roseCutAt || src.recalled || sentToStation(src)) return false;
+    if (window.LiveNest && LiveNest.closed(src)) return false;
+    if (window.Gate && Gate.modern(src.runId) && src.setId && !src.draft) return false;
+    return true;
+  }
+  function candidatesFor(target) {
+    const by = new Map();
+    for (const src of allSheets()) {
+      if (!movableFrom(src, target)) continue;
+      const placed = new Set(src.placements.map(p => p.id));
+      for (const c of activeCharms(src)) {
+        const rid = ridOf(c); if (!/^\d+$/.test(rid) || !c.poolId || !c.bits || !c.w) continue;
+        let k = by.get(rid); if (!k) by.set(rid, k = { rid, pieces: [], srcs: new Set() });
+        k.pieces.push({ c, src, placed: placed.has(c.id) }); k.srcs.add(src);
+      }
+    }
+    const rows = new Map(); for (const r of window.Orders ? Orders.rows() : []) { const k = String(r.order.receiptId); if (!rows.has(k)) rows.set(k, []); rows.get(k).push(r); }
+    const out = [];
+    for (const k of by.values()) {
+      const rs = rows.get(k.rid) || [];
+      if (rs.some(r => r.hold || ["held", "skipped", "gone"].includes(r.state)) || Cancelled.has(k.rid)) continue;
+      // a saved sheet is never emptied by a move: its record would still name the pieces
+      if ([...k.srcs].some(src => src.sheetId && src.placements.length && src.placements.every(p => k.pieces.some(z => z.src === src && z.c.id === p.id)))) continue;
+      const at = rs.map(r => window.CharmNestOrders ? CharmNestOrders.orderPlacedAt(r) : 0).concat(k.pieces.map(z => +z.c.orderDate > 1e11 ? +z.c.orderDate : 0)).filter(Boolean);
+      k.at = at.length ? Math.min(...at) : 0;
+      k.row = rs[0] || null; k.area = k.pieces.reduce((n, z) => n + (+z.c.areaPt2 || 0), 0);
+      k.waiting = k.pieces.every(z => !z.placed);
+      out.push(k);
+    }
+    return out.sort((a, b) => (a.at || 9e15) - (b.at || 9e15) || a.rid.localeCompare(b.rid));
+  }
+  function plateGrid(target) {
+    const job = buildJob(target), byId = new Map(target.charms.map(c => [c.id, c]));
+    const fixed = []; for (const p of target.placements) { const c = byId.get(p.id); if (c && c.bits) fixed.push({ piece: { bits: bitsOf(c), w: c.w, h: c.h, scale: c.scale }, placement: p }); }
+    const grid = SV().makeSheetGrid(Object.assign({}, job.sheet, { fixedPieces: fixed }), job.clearancePt, 2);
+    const angles = [...new Set((job.angles && job.angles.length && job.angles.length <= 36 ? job.angles : Array.from({ length: 36 }, (_, i) => i * 10)).map(a => ((a % 360) + 360) % 360))];
+    return { grid, clearancePt: job.clearancePt, angles, key: target.placements.map(p => p.id + p.cxPt + p.cyPt + p.angle).join() };
+  }
+  function roomBoxes(ghosts) {
+    return ghosts.map(g => { const p = g.x.p, hw = (p.wPt || 20) / 2 + 1.5, hh = (p.hPt || 20) / 2 + 1.5; return { cx: p.cxPt, cy: p.cyPt, x0: p.cxPt - hw, x1: p.cxPt + hw, y0: p.cyPt - hh, y1: p.cyPt + hh }; });
+  }
+  // every piece of the order placed in the room, one after another, each at the tightest legal spot (most contact with
+  // its neighbours, nearest the freed outline), exactly as the nest would test it
+  async function fitOrder(k, G, boxes, breathe) {
+    const grid = G.grid.clone(), res = 2, ringR = 4, spots = [], Sv = SV();
+    for (const z of k.pieces.slice().sort((a, b) => (+b.c.areaPt2 || 0) - (+a.c.areaPt2 || 0))) {
+      let best = null;
+      const score = (v, x, y, b) => {
+        if (!grid.fits(v.fine.pm, x, y)) return null;
+        const contact = grid.overlap(v._ring, x - ringR, y - ringR, 1e9) / Math.max(1, v._ring.cells);
+        return contact - 0.004 * Math.hypot((x + v.solid.cx) / res - b.cx, (y + v.solid.cy) / res - b.cy);
+      };
+      for (const a of G.angles) {
+        const v = variantOf(z.c, a, G.clearancePt); if (!v) continue;
+        if (!v._ring) { const rg = Sv.ring(v.fine.bits, v.fine.w, v.fine.h, ringR); v._ring = Sv.packShifted(rg.bits, rg.w, rg.h); }
+        for (const b of boxes) {
+          const X0 = Math.round(b.x0 * res - v.solid.cx), X1 = Math.round(b.x1 * res - v.solid.cx), Y0 = Math.round(b.y0 * res - v.solid.cy), Y1 = Math.round(b.y1 * res - v.solid.cy);
+          for (let y = Y0; y <= Y1; y += 2) for (let x = X0; x <= X1; x += 2) { const s = score(v, x, y, b); if (s != null && (!best || s > best.s)) best = { v, x, y, s, b }; }
+        }
+        await breathe();
+      }
+      if (!best) return null;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const s = score(best.v, best.x + dx, best.y + dy, best.b); if (s != null && s > best.s) best = Object.assign({}, best, { x: best.x + dx, y: best.y + dy, s }); }
+      grid.stamp(best.v.fine.bits, best.v.fine.w, best.v.fine.h, best.x, best.y);
+      spots.push({ c: z.c, src: z.src, placed: z.placed, cxPt: (best.x + best.v.solid.cx) / res, cyPt: (best.y + best.v.solid.cy) / res, angle: best.v.angle });
+    }
+    return spots;
+  }
+  // the search runs in slices, so the window stays smooth; a newer search or another sheet ends it
+  async function suggest() {
+    const target = fillTarget(), ghosts = (FREED.get(W.id) || []);
+    if (!target || !ghosts.length || (W.work && W.work.state === "working")) { W.fill = null; renderFill(); return; }
+    const tok = W.token, run = W.fillRun = (W.fillRun || 0) + 1;
+    const live = () => tok === W.token && run === W.fillRun && W.dlg.open;
+    const cands = candidatesFor(target), boxes = roomBoxes(ghosts);
+    W.fill = { state: "looking", tried: 0, total: cands.length, list: [] }; renderFill();
+    if (!cands.length) { W.fill.state = "none"; renderFill(); return; }
+    let G; try { G = plateGrid(target); } catch (e) { console.warn("sheet window: fill grid", e); W.fill = null; renderFill(); return; }
+    let last = performance.now();
+    const breathe = async () => { if (performance.now() - last > 12) { await pause(0); last = performance.now(); } if (!live()) throw new Error("stale"); };
+    const freeArea = boxes.reduce((n, b) => n + (b.x1 - b.x0) * (b.y1 - b.y0), 0), t0 = performance.now();
+    try {
+      for (const k of cands) {
+        if (W.fill.list.length >= 4 || performance.now() - t0 > 8000) break;
+        W.fill.tried++;
+        if (k.area > freeArea * 1.6) continue;
+        const spots = await fitOrder(k, G, boxes, breathe);
+        if (spots) { W.fill.list.push({ k, spots }); renderFill(); }
+        else if (W.fill.tried % 3 === 0) renderFill();
+      }
+    } catch (e) { if (e.message === "stale") return; console.warn("sheet window: fill search", e); }
+    if (!live()) return;
+    W.fill.state = W.fill.list.length ? "ready" : "none"; W.fill.key = G.key; renderFill();
+  }
+  function renderFill() {
+    const E = W.el, f = W.fill; if (!E.fill) return;
+    if (!f || (W.work && W.work.state === "working")) { E.fill.hidden = true; E.fill.innerHTML = ""; setGhost(null); return; }
+    E.fill.hidden = false;
+    const target = fillTarget();
+    const head = `<h4>${ICON.fill}<span>Fill the freed room</span><small>${f.state === "looking" ? "" : f.list.length ? "fits, oldest order first" : ""}</small><button type="button" class="swIcon" data-fl="x" title="Hide suggestions" aria-label="Hide suggestions">${ICON.close}</button></h4>`;
+    const rows = f.list.map((s, i) => {
+      const k = s.k, skus = new Map(); for (const z of k.pieces) { const n = z.c.sku || z.c.name || ""; skus.set(n, (skus.get(n) || 0) + 1); }
+      const src = [...k.srcs][0], from = k.waiting ? `waiting on ${sheetWord(src.sheetId, src.fileBase, src)}` : `on ${sheetWord(src.sheetId, src.fileBase, src)}${src.draft || !src.setId ? " · filling" : ""}`;
+      return `<li data-i="${i}" style="--i:${i}"><canvas class="th" width="88" height="88"></canvas><span class="t"><b>${esc(k.rid)}</b><small>${esc([...skus].map(([n, c]) => n + (c > 1 ? " ×" + c : "")).join(", "))}</small><small>${esc([k.at ? "ordered " + ago(k.at) : "", from].filter(Boolean).join(" · "))}</small></span><button type="button" class="btn sage xs" data-fl="place">Place</button></li>`;
+    }).join("");
+    const looking = f.state === "looking" ? `<div class="swWait"><span class="owSpin"></span>Trying the waiting orders in the room · ${f.tried} of ${f.total}</div>` : "";
+    const none = f.state === "none" ? `<div class="note">No waiting order fits this room yet.${target && (target.draft || !target.setId) ? " New orders that fit go into it as they arrive." : ""}</div>` : "";
+    E.fill.innerHTML = `<div class="swFill">${head}${rows ? `<ol>${rows}</ol>` : ""}${looking}${none}</div>`;
+    E.fill.querySelector("[data-fl=x]").onclick = () => { setFreed(W.id, []); W.freed = []; W.fill = null; W.fillRun = (W.fillRun || 0) + 1; renderFill(); renderStrip(); renderSheetChips(); paintFx(); };
+    E.fill.querySelectorAll("li[data-i]").forEach(li => {
+      const s = f.list[+li.dataset.i];
+      drawThumb(li.querySelector("canvas"), { c: s.spots[0].c });
+      li.onmouseenter = () => setGhost(s); li.onmouseleave = () => setGhost(null);
+      li.querySelector("[data-fl=place]").onclick = () => {
+        const who = whoAmI() || askWho(); if (!who || !target) return;
+        setGhost(null);
+        moveIn(s.k, s.spots, target, who).catch(e => { console.error("sheet window: move", e); toast("Not moved: " + e.message, "bad", 8000); });
+      };
+    });
+  }
+  // the order drawn where it would go, in sage, before anything moves
+  function setGhost(s) {
+    if ((W.ghost && W.ghost.s) === s) return;
+    W.ghost = s ? { s, spots: s.spots, t0: performance.now() } : null;
+    if (s && !still()) { W.fx.push({ kind: "ghost", t0: W.ghost.t0, ms: 240 }); fxLoop(); } else paintFx();
+  }
+  function paintGhost(ctx, now) {
+    const g = W.ghost; if (!g || !W.geom) return;
+    const t = still() ? 1 : Math.min(1, ((now || performance.now()) - g.t0) / 240), k = W.k;
+    for (const s of g.spots) {
+      const x = { p: { cxPt: s.cxPt, cyPt: s.cyPt, angle: s.angle, scale: 1 }, c: s.c };
+      withPiece(ctx, x, () => {
+        ctx.globalAlpha = t; const sc = .92 + .08 * t; ctx.scale(sc, sc);
+        ctx.fillStyle = "rgba(95,122,91,.24)"; outlinePath(ctx, x, true); ctx.fill("evenodd");
+        CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), k);
+        outlinePath(ctx, x); ctx.strokeStyle = "#5f7a5b"; ctx.lineWidth = 1.8 * W.dpr / sc; ctx.stroke();
+        ctx.globalAlpha = 1;
+      });
+    }
+  }
+
+  /* ── moving an order onto this sheet: off its filling sheet (saved first), onto this one at the spot found, read
+     back and stamped. At no point does a saved sheet name a piece another saved sheet names; interrupted between the
+     two saves, the pieces are on no sheet and the run places them again (restoreRunSheets), so nothing is lost. ── */
+  const JOURNAL = () => "cn.sheetwin.moves" + (typeof WORKSPACE_SANDBOX !== "undefined" && WORKSPACE_SANDBOX ? ":sandbox" : "");
+  function journal(rid, entry) {
+    try { const j = JSON.parse(localStorage.getItem(JOURNAL()) || "{}"); if (entry) j[rid] = entry; else delete j[rid]; localStorage.setItem(JOURNAL(), JSON.stringify(j)); } catch (_) {}
+  }
+  async function moveIn(k, spots, target, who) {
+    const rid = k.rid, ids = new Set(spots.map(s => s.c.poolId)), sheetId = W.id;
+    const srcs = [...new Set(spots.map(s => s.src))], tName = sheetWord(target.sheetId, target.fileBase, target);
+    const sName = sh => sheetWord(sh.sheetId, sh.fileBase, sh);
+    const wait = stepOf("Waiting for the sheets to finish their current step");
+    const off = stepOf(`Taking order ${rid} off ${srcs.map(sName).join(", ")}`);
+    const saves = srcs.map(sh => ({ sh, name: sName(sh), st: stepOf(`Saving ${sName(sh)} without it`) }));
+    const put = stepOf(`Placing it on ${tName}`), labels = stepOf("Remaking the QR labels"), check = stepOf("Checking the saved sheets");
+    W.work = { state: "working", title: `Moving order ${rid} to ${tName}`, steps: [wait, off, ...saves.map(r => r.st), put, labels, check], note: "" };
+    const all = [target, ...srcs];
+    if (!all.some(busy)) W.work.steps.shift();
+    W.fill = null; renderFill(); renderWork();
+    const paint = () => { if (W.id === sheetId && W.dlg.open) renderWork(); };
+    const moved = [];
+    let stage = "start";
+    journal(rid, { rid, ids: [...ids], from: srcs.map(s => s.sheetId || null), to: target.sheetId, by: who, at: Date.now(), stage });
+    try {
+      await waitIdle(all, wait, paint);
+      // the room is tested again as the sheet now stands: something else may have gone into it meanwhile
+      const G = plateGrid(target), g2 = G.grid;
+      for (const s of spots) {
+        const v = variantOf(s.c, s.angle, G.clearancePt), x = Math.round(s.cxPt * 2 - v.solid.cx), y = Math.round(s.cyPt * 2 - v.solid.cy);
+        if (!v || !g2.fits(v.fine.pm, x, y)) throw new Error("the room changed while the sheets saved; pick again from the new suggestions");
+        g2.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y);
+      }
+      // 1 · off the filling sheets
+      off.state = "now"; paint();
+      for (const src of srcs) {
+        const charms = src.charms.filter(c => ids.has(c.poolId)), cids = new Set(charms.map(c => c.id));
+        const placements = src.placements.filter(p => cids.has(p.id)), backs = (src.backPool || []).filter(b => ids.has(b.poolId));
+        src.charms = src.charms.filter(c => !cids.has(c.id)); src.placements = src.placements.filter(p => !cids.has(p.id));
+        src.rejects = (src.rejects || []).filter(id => !cids.has(id));
+        if (Array.isArray(src.feedWait)) src.feedWait = src.feedWait.filter(id => !cids.has(id));
+        if (src.backPool) src.backPool = src.backPool.filter(b => !ids.has(b.poolId));
+        moved.push({ src, charms, placements, backs });
+        Orders.keepRest(src);
+      }
+      off.state = "ok"; paint();
+      // 2 · each filling sheet saved without it first
+      stage = "sources"; journal(rid, { rid, ids: [...ids], from: srcs.map(s => s.sheetId || null), to: target.sheetId, by: who, at: Date.now(), stage });
+      for (const r of saves) if (!(await rewritePage(r.sh, r.st, paint))) throw new Error(`${r.name} is still saving; order ${rid} stays on it`);
+      // 3 · onto this sheet, each piece pinned at the spot it was tested in
+      stage = "target"; journal(rid, { rid, ids: [...ids], from: srcs.map(s => s.sheetId || null), to: target.sheetId, by: who, at: Date.now(), stage });
+      for (const s of spots) { const c = s.c; delete c.arrivalPin; c.pinned = { cxPt: s.cxPt, cyPt: s.cyPt, angle: s.angle }; if (!target.charms.includes(c)) target.charms.push(c); }
+      for (const m of moved) if (m.backs.length) target.backPool = (target.backPool || []).concat(m.backs);
+      Orders.keepRest(target);
+      const saved = await rewritePage(target, put, paint);
+      // a sheet that feeds its orders in turns places these on its next turn
+      for (const until = Date.now() + 240000; Date.now() < until && (target.feedWait || []).some(id => spots.some(s => s.c.id === id)) || busy(target) && Date.now() < until;) { put.state = "now"; put.detail = "its turn to be placed"; paint(); await pause(400); }
+      const placed = new Set(target.placements.map(p => p.id)), missed = spots.filter(s => !placed.has(s.c.id));
+      if (missed.length) throw Object.assign(new Error(`order ${rid} did not go in when ${tName} was written`), { putBack: true });
+      if (!saved && !target.persistedDone) throw Object.assign(new Error(`${tName} is still saving`), { later: true });
+      put.state = "ok"; put.detail = ""; paint();
+      await Pool.update([...ids], { sheetId: target.sheetId, sheetName: target.fileBase || null, movedFrom: srcs.map(s => s.sheetId).filter(Boolean).join(",") || null, movedTo: target.sheetId, movedBy: who, movedAt: Date.now() }).catch(e => console.warn("sheet window: pool after move", e));
+      // 4 · labels, then read back: on this sheet, off the others
+      await remakeLabels(all, labels, paint);
+      const ok = await verifySaved([{ sh: target, name: tName, on: ids }, ...saves.map(r => ({ sh: r.sh, name: r.name, off: ids }))], ids, p => p.state !== "abandoned" && p.state !== "superseded", check, paint);
+      if (ok) await Pool.update([...ids], { moveVerifiedAt: Date.now() }).catch(() => {});
+      journal(rid, null);
+      agent({ metal: target.metal, run: target.runId }, "POOL", `Order ${rid} moved by ${who} from ${srcs.map(sheetName).join(", ")} to ${sheetName(target)} into the room freed there${ok ? "; both saved sheets read back and match" : "; the read-back flagged: " + check.detail}`);
+      // the room it took is no longer free
+      const left = (FREED.get(sheetId) || []).filter(gh => !spots.some(s => Math.hypot(s.cxPt - gh.x.p.cxPt, s.cyPt - gh.x.p.cyPt) < Math.max(gh.x.p.wPt || 20, gh.x.p.hPt || 20) / 2));
+      setFreed(sheetId, left);
+      W.work.state = "done"; W.work.title = `Order ${rid} moved to ${tName}`;
+      W.work.note = (ok ? "Verified: the saved sheets and piece records match. " : "") + `${srcs.map(s => esc(sName(s))).join(", ")} keep${srcs.length === 1 ? "s" : ""} filling with the next orders.`;
+      paint();
+      if (window.RunCtl) RunCtl.poke();
+      if (W.id === sheetId && W.dlg.open) open2(sheetId);
+    } catch (e) {
+      for (const st of W.work.steps) doneStep(st);
+      let back = "";
+      if (e.later) back = ` It finishes on its card in the Nest tab; the order is on ${tName}.`;
+      else if (moved.length) { back = await putBack(moved, target, spots).then(() => ` Order ${rid} went back to ${srcs.map(sName).join(", ")}.`).catch(e2 => ` Putting it back stopped too (${e2.message}); the run places order ${rid} again.`); }
+      journal(rid, null);
+      W.work.state = "failed"; W.work.title = `Order ${rid} not moved`; W.work.note = esc(e.message) + "." + esc(back);
+      paint();
+      if (W.id === sheetId && W.dlg.open) open2(sheetId);
+      throw e;
+    }
+  }
+  // undo a move that did not complete: off this sheet first (if it went on), then back where each piece was
+  async function putBack(moved, target, spots) {
+    const cids = new Set(spots.map(s => s.c.id)), quiet = stepOf(""), none = () => {};
+    for (const s of spots) s.c.pinned = null;
+    if (target.charms.some(c => cids.has(c.id))) {
+      target.charms = target.charms.filter(c => !cids.has(c.id)); target.placements = target.placements.filter(p => !cids.has(p.id));
+      target.rejects = (target.rejects || []).filter(id => !cids.has(id)); if (Array.isArray(target.feedWait)) target.feedWait = target.feedWait.filter(id => !cids.has(id));
+      const bids = new Set(moved.flatMap(m => m.backs.map(b => b.poolId))); if (target.backPool) target.backPool = target.backPool.filter(b => !bids.has(b.poolId));
+      Orders.keepRest(target); await rewritePage(target, quiet, none);
+    }
+    for (const m of moved) {
+      for (const c of m.charms) if (!m.src.charms.includes(c)) m.src.charms.push(c);
+      for (const p of m.placements) if (!m.src.placements.some(q => q.id === p.id)) m.src.placements.push(p);
+      if (m.backs.length) m.src.backPool = (m.src.backPool || []).concat(m.backs);
+      Orders.keepRest(m.src); await rewritePage(m.src, quiet, none);
+    }
+  }
+  // a move this browser was making when it was closed: its pieces are wherever the saved sheets put them (a piece on
+  // no sheet is placed again by the run); the interruption is written to the run's log once
+  setTimeout(() => {
+    let j = {}; try { j = JSON.parse(localStorage.getItem(JOURNAL()) || "{}"); } catch (_) {}
+    for (const e of Object.values(j)) {
+      const where = new Set((e.ids || []).map(id => { const sh = window.Pool && Pool.sheetOf(id); return sh ? sheetName(sh) : "no sheet yet (placed again by the run)"; }));
+      try { agent({ pool: true }, "warn", `A move of order ${e.rid} by ${e.by || "someone"} was interrupted (${e.stage}); its pieces are on ${[...where].join(", ") || "no sheet"}.`); } catch (_) {}
+      journal(e.rid, null);
+    }
+  }, 30000);
+
+  /* ── On hold, in the sheet window: every order a person put on hold or took off a sheet, with Put back and Cancel ── */
+  function heldOrders() {
+    const by = new Map();
+    for (const r of window.Orders ? Orders.rows() : []) {
+      if (!r.hold || r.state === "gone") continue;
+      const rid = String(r.order.receiptId); if (!by.has(rid)) by.set(rid, []); by.get(rid).push(r);
+    }
+    return [...by].map(([rid, rows]) => ({ rid, rows, at: Math.max(0, ...rows.map(r => +r.heldAt || 0)) }))
+      .sort((a, b) => b.at - a.at || a.rid.localeCompare(b.rid));
+  }
+  function renderHeld() {
+    const E = W.el, q = W.q, list = heldOrders().filter(h => !q || h.rid.includes(q) || h.rows.some(r => `${r.spec?.designSku || r.line.sku} ${r.hold}`.toLowerCase().includes(q)));
+    if (!list.length) { E.orders.innerHTML = `<li class="swNone">${q ? "No order on hold matches." : "No order is on hold."}</li>`; return; }
+    E.orders.innerHTML = list.map(h => {
+      const skus = new Map(); for (const r of h.rows) { const n = r.spec?.designSku || r.line.sku || "no SKU"; skus.set(n, (skus.get(n) || 0) + (r.spec?.quantity || r.line.quantity || 1)); }
+      const why = h.rows[0].hold;
+      return `<li class="swHeld" data-rid="${esc(h.rid)}"><div class="top"><span class="no">${esc(h.rid)}</span><span class="what">${esc([...skus].map(([n, c]) => n + (c > 1 ? " ×" + c : "")).join(", "))}</span>${h.at ? `<span class="when">${esc(ago(h.at))}</span>` : ""}</div>
+        <div class="why" title="${esc(why)}">${esc(why)}</div>
+        <div class="acts"><button type="button" class="btn ghost xs" data-h="back" title="Back in line: the run places it on the next sheet that fits">Release hold</button><button type="button" class="btn ghost xs" data-h="cancel">Cancel order…</button><button type="button" class="btn ghost xs" data-h="orders" title="Show it in the Orders tab">In Orders</button></div></li>`;
+    }).join("");
+    E.orders.querySelectorAll(".swHeld").forEach(li => {
+      const rid = li.dataset.rid, rows = () => rowsOfOrder(rid).filter(r => r.hold);
+      li.querySelector("[data-h=back]").onclick = async ev => {
+        const b = ev.currentTarget; b.disabled = true; b.innerHTML = `<span class="spin"></span>Releasing`;
+        try {
+          for (const r of rows()) { r.heldAt = null; await Review.repool(r); }
+          if (window.RunCtl) RunCtl.poke();
+          agent({ bridge: true }, "DS", `Order ${rid} put back in line by ${whoAmI() || "someone"}`);
+          await animate(li, [{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateX(14px)" }], 200);
+          toast(`Order ${rid} is back in line`, "ok", 5000);
+        } catch (e) { toast("Hold not released: " + e.message, "bad", 7000); }
+        renderSheetPane();
+      };
+      li.querySelector("[data-h=orders]").onclick = () => { close().then(() => { setMode("orders"); if (Orders.showPile) Orders.showPile("hold", rid); }); };
+      li.querySelector("[data-h=cancel]").onclick = () => {
+        const acts = li.querySelector(".acts");
+        acts.innerHTML = `<input class="swNote" type="text" maxlength="200" placeholder="Why it was cancelled (optional)" aria-label="Why"><button type="button" class="btn danger xs" data-h="yes">Cancel the order</button><button type="button" class="btn ghost xs" data-h="no">Keep</button>`;
+        acts.classList.add("confirm"); const inp = acts.querySelector("input"); inp.focus();
+        inp.onkeydown = e => { if (e.key === "Enter") acts.querySelector("[data-h=yes]").click(); if (e.key === "Escape") { e.stopPropagation(); e.preventDefault(); renderHeld(); } };
+        acts.querySelector("[data-h=no]").onclick = () => renderHeld();
+        acts.querySelector("[data-h=yes]").onclick = () => {
+          const who = whoAmI() || askWho(); if (!who) return;
+          const opt = { then: "cancel", note: inp.value.trim() }, plan = offPlan({ rid, poolId: null }, true);
+          (plan.ok.length ? takeOff(plan, opt, who) : cancelOnly(rid, opt, who)).catch(e => toast("Not cancelled: " + e.message, "bad", 8000));
+        };
+      };
+    });
+  }
 
   /* re-read the engraving marks when Engrave settles something while the window is open */
   setInterval(() => {
