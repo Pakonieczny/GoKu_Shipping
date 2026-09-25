@@ -831,7 +831,7 @@
     const msgs = (P.eng && P.eng.messages) || [];
     if (showingAll(P)) {
       t.innerHTML = allHtml(P);
-      t.querySelectorAll("img[data-cm-img]").forEach(im => im.addEventListener("error", () => { const a = h("a", "cmPhoto", "photo"); a.href = im.dataset.href || im.src; a.target = "_blank"; a.rel = "noopener"; im.replaceWith(a); }, { once: true }));
+      photoFallback(t);
       if (stick) t.scrollTop = t.scrollHeight; else t.scrollTop = wasAt;
       return;
     }
@@ -842,8 +842,18 @@
     for (const r of localRows(P)) rows.push(msgHtml(P, r));
     if (!msgs.length && !localRows(P).length) rows.push(`<div class="cmEmpty soft">No messages yet.</div>`);
     t.innerHTML = rows.join("");
-    t.querySelectorAll("img[data-cm-img]").forEach(im => im.addEventListener("error", () => { const a = h("a", "cmPhoto", "photo"); a.href = im.dataset.href || im.src; a.target = "_blank"; a.rel = "noopener"; im.replaceWith(a); }, { once: true }));
+    photoFallback(t);
     if (stick) t.scrollTop = t.scrollHeight; else t.scrollTop = wasAt;
+  }
+  /** A photo that will not load tries Etsy's copy, then says so, with the way to the original. */
+  function photoFallback(t) {
+    t.querySelectorAll("img[data-cm-img]").forEach(im => im.addEventListener("error", function failed() {
+      const b = im.closest("[data-photo]");
+      if (im.dataset.back) { const u = im.dataset.back; delete im.dataset.back; if (b) { b.dataset.photo = u; delete b.dataset.photoBack; } im.src = u; return; }
+      im.removeEventListener("error", failed);
+      const a = h("a", "cmPhoto", "Photo did not load · open it " + ICON.out); a.href = (b && b.dataset.photo) || im.src; a.target = "_blank"; a.rel = "noopener";
+      (b || im).replaceWith(a);
+    }));
   }
   /** Messages still in this browser's outbox for this pane's question. */
   function localRows(P) {
@@ -878,12 +888,16 @@
       else if (st === "failed") acts = "";
     }
     const who = side === "cust" ? (m.who || "Customer") : side === "shop" ? (m.who ? m.who + " · inbox" : "Inbox") : (m.who || "You");
-    const images = (m.images || []).map(im => im.src ? `<a href="${E(im.href || im.src)}" target="_blank" rel="noopener"><img data-cm-img data-href="${E(im.href || "")}" loading="lazy" alt="photo from the customer" src="${E(im.src)}"></a>` : `<a class="cmPhoto" href="${E(im.href)}" target="_blank" rel="noopener">photo ${ICON.out}</a>`).join("");
+    // a photo opens large in the viewer (PhotoView, below); Etsy's own copy stands in when the inbox's will not load
+    const pics = m.images || [], cap = who + (m.atMs ? " · " + when(m.atMs) : "");
+    const images = pics.map(im => im.src
+      ? `<button type="button" class="cmPic" data-photo="${E(im.href || im.src)}"${im.back ? ` data-photo-back="${E(im.back)}"` : ""} data-photo-cap="${E(cap)}" title="Open large"><img data-cm-img${im.back ? ` data-back="${E(im.back)}"` : ""} loading="lazy" alt="Photo from ${E(who)}" src="${E(im.src)}"></button>`
+      : `<a class="cmPhoto" href="${E(im.href)}" target="_blank" rel="noopener">Photo on Etsy ${ICON.out}</a>`).join("");
     const cards = (m.cards || []).map(c => `<a class="cmCard" href="${E(c.url)}" target="_blank" rel="noopener">${E(c.title)} ${ICON.out}</a>`).join("");
     const trBox = tr && !tr.same ? `<div class="cmTr"><span class="cmTrLbl">${E(LANG[tro])}${tr.from && tr.from !== tro ? " · from " + E(langName(tr.from)) : ""}</span>${html(tr.text)}</div>`
       : tro && text.trim() && !tr ? `<div class="cmTr soft">Translating…</div>` : "";
     const trBtns = text.trim() && !m.local ? `<span class="cmTrB" role="group" aria-label="Translate this message"><button type="button" data-cm-tr="en" data-id="${E(m.id)}" class="${tro === "en" ? "on" : ""}" title="Translate into English">EN</button><button type="button" data-cm-tr="uk" data-id="${E(m.id)}" class="${tro === "uk" ? "on" : ""}" title="Translate into Ukrainian">УКР</button></span>` : "";
-    return `<div class="cmMsg ${side}${tone}${m.old ? " old" : ""}" data-id="${E(m.id)}"><div class="cmMeta"><b>${E(who)}</b><span>${E(when(m.atMs))}</span>${status}${trBtns}</div>${text.trim() ? `<div class="cmBody">${html(text)}</div>` : ""}${images ? `<div class="cmImgs">${images}</div>` : ""}${cards}${trBox}${acts}</div>`;
+    return `<div class="cmMsg ${side}${tone}${m.old ? " old" : ""}" data-id="${E(m.id)}"><div class="cmMeta"><b>${E(who)}</b><span>${E(when(m.atMs))}</span>${status}${trBtns}</div>${text.trim() ? `<div class="cmBody">${html(text)}</div>` : ""}${images ? `<div class="cmImgs${pics.length > 1 ? " many" : ""}">${images}</div>` : ""}${cards}${trBox}${acts}</div>`;
   }
 
   /** Every text a pane shows, for translating the lot. */
@@ -1440,6 +1454,175 @@
       if (window.OrderWin && OrderWin.repaintThread) OrderWin.repaintThread();
     }
   });
+
+  // ─── photos: any picture in a conversation opens large ─────────────────
+  /* One viewer for the Customer and Team conversations, in the order window, its own window or an engraving card. It
+     covers the screen over whatever is open (a dialog of its own, in the top layer), so what is underneath stays as it
+     was: the draft, the tab, the scroll. It fits the photo to the screen, zooms with the wheel, a pinch, a double-click
+     (or double-tap) and + −, moves by dragging, steps through every photo of that conversation with ← → and the side
+     buttons, and closes with Esc, the × or a click beside the photo. */
+  const PhotoView = (() => {
+    const SVG = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+    let dlg = null, stage = null, img = null, note = null, list = [], at = 0, opener = null;
+    let W = 0, H = 0, s = 1, tx = 0, ty = 0, fit = 1, ready = false;
+    const pts = new Map(); let pinch = null, down = null, moved = false, tap = null, tapped = 0;
+    const maxS = () => Math.max(fit * 6, 4);
+    function build() {
+      dlg = h("dialog", "phv");
+      dlg.setAttribute("aria-label", "Photo");
+      dlg.innerHTML = `<div class="phvStage"><img class="phvImg" alt="" draggable="false"><div class="phvNote" hidden></div></div>
+        <button type="button" class="phvBtn phvX" data-phv="close" title="Close (Esc)" aria-label="Close">${SVG('<path d="M6 6l12 12M18 6 6 18"/>')}</button>
+        <button type="button" class="phvBtn phvNav prev" data-phv="prev" title="Previous photo (←)" aria-label="Previous photo">${SVG('<path d="M15 5l-7 7 7 7"/>')}</button>
+        <button type="button" class="phvBtn phvNav next" data-phv="next" title="Next photo (→)" aria-label="Next photo">${SVG('<path d="M9 5l7 7-7 7"/>')}</button>
+        <div class="phvBar"><span class="phvCap"></span><span class="phvN"></span>
+          <span class="phvZ" role="group" aria-label="Zoom"><button type="button" data-phv="out" title="Zoom out (−)" aria-label="Zoom out">${SVG('<path d="M6 12h12"/>')}</button><button type="button" class="phvPct" data-phv="fit" title="Fit to the screen (0)">100%</button><button type="button" data-phv="in" title="Zoom in (+)" aria-label="Zoom in">${SVG('<path d="M12 6v12M6 12h12"/>')}</button></span>
+          <a class="phvOrig" target="_blank" rel="noopener">Original ${ICON.out}</a></div>`;
+      document.body.appendChild(dlg);
+      stage = dlg.querySelector(".phvStage"); img = dlg.querySelector(".phvImg"); note = dlg.querySelector(".phvNote");
+      dlg.addEventListener("cancel", e => { e.preventDefault(); close(); });
+      dlg.addEventListener("click", e => {
+        const b = e.target.closest("[data-phv]"); if (!b) return;
+        const c = center(), act = b.dataset.phv;
+        if (act === "close") close();
+        else if (act === "prev" || act === "next") step(act === "next" ? 1 : -1);
+        else if (act === "fit") toFit(true);
+        else zoomAt(s * (act === "in" ? 1.6 : 1 / 1.6), c.x, c.y, true);
+      });
+      dlg.addEventListener("keydown", e => {
+        const k = e.key, c = center();
+        e.stopPropagation();   // the page's own shortcuts wait while a photo is open; Esc still closes (cancel, above)
+        if (k === "ArrowRight" || k === "ArrowLeft") step(k === "ArrowRight" ? 1 : -1);
+        else if (k === "+" || k === "=") zoomAt(s * 1.6, c.x, c.y, true);
+        else if (k === "-" || k === "_") zoomAt(s / 1.6, c.x, c.y, true);
+        else if (k === "0") toFit(true);
+        else return;
+        e.preventDefault();
+      });
+      stage.addEventListener("wheel", e => {
+        e.preventDefault(); if (!ready) return;
+        const unit = e.deltaMode === 1 ? 0.05 : e.deltaMode === 2 ? 1 : 0.002;
+        const k = Math.min(2, Math.max(0.5, Math.exp(-e.deltaY * unit * (e.ctrlKey ? 5 : 1))));
+        const r = stage.getBoundingClientRect(); zoomAt(s * k, e.clientX - r.left, e.clientY - r.top);
+      }, { passive: false });
+      stage.addEventListener("pointerdown", e => {
+        if (e.pointerType === "mouse" && e.button !== 0) return;
+        try { stage.setPointerCapture(e.pointerId); } catch (_) {}
+        pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pts.size === 1) { moved = false; down = { x: e.clientX, y: e.clientY, onImg: e.target === img }; }
+        if (pts.size === 2) { const [a, b] = [...pts.values()], r = stage.getBoundingClientRect(); pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, mx: (a.x + b.x) / 2 - r.left, my: (a.y + b.y) / 2 - r.top, s, tx, ty }; moved = true; }
+        stage.classList.toggle("drag", s > fit * 1.01);
+      });
+      stage.addEventListener("pointermove", e => {
+        const p = pts.get(e.pointerId); if (!p) return;
+        const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
+        if (!ready) return;
+        if (pts.size >= 2 && pinch) {
+          const [a, b] = [...pts.values()], r = stage.getBoundingClientRect();
+          const mx = (a.x + b.x) / 2 - r.left, my = (a.y + b.y) / 2 - r.top;
+          const ns = Math.min(maxS(), Math.max(fit, pinch.s * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d));
+          // the point of the photo that was under the fingers stays under them
+          tx = mx - (pinch.mx - pinch.tx) * ns / pinch.s; ty = my - (pinch.my - pinch.ty) * ns / pinch.s; s = ns;
+          place();
+        } else if (pts.size === 1) {
+          if (!moved && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 5) moved = true;
+          if (moved) { tx += dx; ty += dy; place(); }
+        }
+      });
+      const up = e => {
+        if (!pts.delete(e.pointerId)) return;
+        if (pts.size < 2) pinch = null;
+        if (pts.size) return;
+        stage.classList.remove("drag");
+        if (e.type !== "pointerup" || moved || !down) return;
+        if (e.pointerType !== "mouse") {
+          // a second tap on the same spot zooms; a first one beside the photo closes
+          const now = Date.now();
+          if (tap && now - tap.t < 320 && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 30) { tap = null; tapped = now; toggle(e.clientX, e.clientY); return; }
+          tap = { t: now, x: e.clientX, y: e.clientY };
+        }
+        if (!down.onImg) close();
+      };
+      stage.addEventListener("pointerup", up); stage.addEventListener("pointercancel", up);
+      // a double-tap already zoomed: the double-click some browsers send after it does not undo that
+      stage.addEventListener("dblclick", e => { e.preventDefault(); if (Date.now() - tapped > 500) toggle(e.clientX, e.clientY); });
+      window.addEventListener("resize", () => { if (dlg.open && ready) { const was = s <= fit * 1.01; measure(); if (was) toFit(); else { s = Math.max(s, fit); place(); } } });
+    }
+    const center = () => ({ x: stage.clientWidth / 2, y: stage.clientHeight / 2 });
+    function measure() {
+      const vw = stage.clientWidth, vh = stage.clientHeight, side = vw < 700 ? 12 : 76;
+      fit = W && H ? Math.min((vw - 2 * side) / W, (vh - 2 * 58) / H, 4) : 1;
+    }
+    function place(anim) {
+      const vw = stage.clientWidth, vh = stage.clientHeight, w = W * s, hh = H * s;
+      tx = w <= vw ? (vw - w) / 2 : Math.min(0, Math.max(vw - w, tx));
+      ty = hh <= vh ? (vh - hh) / 2 : Math.min(0, Math.max(vh - hh, ty));
+      img.classList.toggle("anim", !!anim);
+      img.style.transform = `translate(${tx}px,${ty}px) scale(${s})`;
+      dlg.querySelector(".phvPct").textContent = Math.round(s * 100) + "%";
+      stage.classList.toggle("zoomed", s > fit * 1.01);
+    }
+    function toFit(anim) { s = fit; place(anim); }
+    function zoomAt(ns, px, py, anim) {
+      if (!ready) return;
+      ns = Math.min(maxS(), Math.max(fit, ns));
+      tx = px - (px - tx) * ns / s; ty = py - (py - ty) * ns / s; s = ns; place(anim);
+    }
+    function toggle(x, y) {
+      if (!ready) return;
+      const r = stage.getBoundingClientRect();
+      if (s > fit * 1.05) toFit(true); else zoomAt(Math.max(fit * 2.5, 1), x - r.left, y - r.top, true);
+    }
+    function say(t) { note.hidden = !t; note.innerHTML = t; }
+    function show(i) {
+      at = (i + list.length) % list.length;
+      const p = list[at];
+      ready = false; img.style.visibility = "hidden"; say("Loading the photo…");
+      if (p.cors) img.crossOrigin = "anonymous"; else img.removeAttribute("crossorigin");
+      img.onload = () => {
+        if (list[at] !== p) return;
+        W = img.naturalWidth || 1; H = img.naturalHeight || 1; ready = true; say("");
+        img.style.width = W + "px"; img.style.height = H + "px"; img.style.visibility = "";
+        measure(); toFit();
+      };
+      img.onerror = () => {
+        if (list[at] !== p) return;
+        if (p.back && !p.triedBack) { p.triedBack = true; p.src = p.back; img.src = p.back; dlg.querySelector(".phvOrig").href = p.back; return; }
+        say(`This photo could not be loaded. <a href="${E(p.src)}" target="_blank" rel="noopener">Try the original ${ICON.out}</a>`);
+      };
+      img.src = p.src;
+      dlg.querySelector(".phvCap").textContent = p.cap || "";
+      dlg.querySelector(".phvN").textContent = list.length > 1 ? `${at + 1} of ${list.length}` : "";
+      dlg.querySelector(".phvOrig").href = p.src;
+      dlg.querySelectorAll(".phvNav").forEach(b => b.hidden = list.length < 2);
+      // the neighbours load while this one is looked at
+      for (const d of [1, -1]) { const q = list[(at + d + list.length) % list.length]; if (q && q !== p && !q.warm) { q.warm = new Image(); if (q.cors) q.warm.crossOrigin = "anonymous"; q.warm.src = q.src; } }
+    }
+    function step(d) { if (list.length > 1) show(at + d); }
+    function open(el) {
+      const scope = el.closest(".cmThread,.owThread,[data-photo-scope]") || el.parentElement || document.body;
+      const all = [...scope.querySelectorAll("[data-photo]")];
+      list = all.map(b => ({ src: b.dataset.photo, back: b.dataset.photoBack || null, cap: b.dataset.photoCap || "", cors: b.dataset.photoCors === "1" }));
+      if (!list.length) return;
+      opener = el;
+      if (!dlg) build();
+      if (!dlg.open) { try { dlg.showModal(); } catch (_) { dlg.show(); } }
+      show(Math.max(0, all.indexOf(el)));
+      dlg.querySelector(".phvX").focus({ preventScroll: true });
+    }
+    function close() {
+      if (!dlg || !dlg.open) return;
+      dlg.close();
+      img.onload = img.onerror = null; img.removeAttribute("src"); list = []; pts.clear(); pinch = null; ready = false;
+      const o = opener; opener = null;
+      if (o && o.isConnected) o.focus({ preventScroll: true });
+    }
+    document.addEventListener("click", e => {
+      const b = e.target.closest && e.target.closest("[data-photo]"); if (!b) return;
+      e.preventDefault(); e.stopPropagation(); open(b);
+    }, true);
+    return { open, close, isOpen: () => !!(dlg && dlg.open) };
+  })();
+  window.PhotoView = PhotoView;
 
   // ─── start ───────────────────────────────────────────────────────────────
   function boot() {
