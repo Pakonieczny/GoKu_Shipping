@@ -495,6 +495,10 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 /* ── the customer conversation (charm-nest-mail.js): solid slate is what reached the customer ── */
 .cm{display:flex;flex-direction:column;min-height:0;flex:1 1 auto;background:#f4f7f8}
 .cmHead{display:flex;align-items:center;gap:9px;padding:9px 12px;border-bottom:1px solid #d9e4e8;flex:0 0 auto}
+.cmBack{border:1px solid #cfdde2;background:#fff;color:var(--slate);border-radius:999px;padding:3px 10px 3px 8px;font:600 11.5px var(--sans);cursor:pointer;white-space:nowrap;flex:0 0 auto}
+.cmBack:hover{background:var(--slateSoft)}
+.cmBack:focus-visible{outline:2px solid var(--slate);outline-offset:1px}
+.cmBack[hidden],.cmMark[hidden]{display:none}
 .cmMark{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:var(--slateSoft);color:var(--slate);flex:0 0 auto}
 .cmMark svg{width:15px;height:15px}
 .cmWho{min-width:0;flex:1 1 auto;display:flex;flex-direction:column;line-height:1.25}
@@ -4405,7 +4409,7 @@ async function boot() {
 boot();
 </script>
 <script src="charm-nest-bridge.js?v=20260925-liverec"></script>
-<script src="charm-nest-mail.js?v=20260925-test-account"></script>
+<script src="charm-nest-mail.js?v=20260925-one-window"></script>
 <script src="charm-nest-rose-ui.js?v=20260924-thickness"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->

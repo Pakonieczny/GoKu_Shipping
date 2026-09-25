@@ -355,7 +355,7 @@
   }
   /** The test conversation: the newest question to the current test account, if there is one. */
   const testEng = () => { const v = testV(); return v && v.ready ? [...M.store.values()].filter(s => String(s.receiptId) === TEST && s.threadId === v.threadId).sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0))[0] || null : null; };
-  function openTest() { closeHealth(); const s = testEng(); standalone({ receiptId: TEST, scope: "order", id: s ? s.id : null }); }
+  function openTest() { closeHealth(); const s = testEng(); return openConversation({ receiptId: TEST, scope: "order", id: s ? s.id : null }); }
   function sendTest() {
     const v = testV(); if (!v || !v.ready) return;
     const s = testEng(), clientId = uidOf();
@@ -365,8 +365,8 @@
       text: `Email link test from the Charm Sorter (${at}). Reply to this message to check that answers come back.`,
       lineLabel: "", orderNumber: "", buyerName: (v.customer && v.customer.name) || ""
     });
-    openTest();
-    if (SA && SA.P) SA.P.waitingFor = clientId;
+    const P = openTest();
+    if (P) P.waitingFor = clientId;
   }
   document.addEventListener("click", async e => {
     const b = e.target.closest("[data-t]");
@@ -499,14 +499,26 @@
     pillMenu.querySelectorAll(".mmRow").forEach(x => x.onclick = () => { const s = M.store.get(x.dataset.id); pillMenu.remove(); pillMenu = null; if (s) openConversation(s); });
   }
 
-  /** Show one question: in the order window when its order is in the pull, otherwise in a window of its own. */
+  /** Show one question: in the order window when its order is in the pull, otherwise in the order window that is
+   *  already open (one window, never a second on top), otherwise in a window of its own. Returns the pane. */
   function openConversation(s, rowKey, extra = {}) {
     const rows = (window.Orders && Orders.rows && Orders.rows()) || [];
     const row = rows.find(r => r.key === rowKey)
       || (s.lineId && rows.find(r => String(r.order.receiptId) === String(s.receiptId) && String(r.line.transactionId) === String(s.lineId)))
       || rows.find(r => String(r.order.receiptId) === String(s.receiptId));
-    if (row && window.OrderWin) { OrderWin.open(row.key, Object.assign({ tab: "customer", engagementId: s.id || null }, extra)); return; }
+    if (row && window.OrderWin) { OrderWin.open(row.key, Object.assign({ tab: "customer", engagementId: s.id || null }, extra)); return OW.P; }
+    if (OW.dlg && OW.dlg.open && OW.P) { visit(s, extra); return OW.P; }
     standalone(s, extra);
+    return SA.P;
+  }
+  /** The order window's Customer tab shows another conversation for a while, with a way back to its own order's. */
+  function visit(s, extra = {}) {
+    const P = OW.P, rid = String(s.receiptId);
+    if (OW.back && String(OW.back.ctx.receiptId) === rid) OW.back = null;
+    else if (!OW.back && P.rid && P.rid !== rid) OW.back = { ctx: P.ctx, engId: P.engId };
+    show(P, { receiptId: rid, scope: s.scope || "order", lineId: s.lineId || null, lineLabel: s.lineLabel || "" }, { engagementId: s.id || null });
+    setTab("customer", false);
+    if (extra.pull) pullWhenReady(P);
   }
   /** "Pull all messages" pressed somewhere else: it runs in the pane once the conversation there has loaded. */
   function pullWhenReady(P) { if (P.loading) P.pullOnLoad = true; else pullAll(P); }
@@ -665,6 +677,7 @@
     host.classList.add("cm");
     host.innerHTML = `
       <div class="cmHead">
+        <button type="button" class="cmBack" data-cm-do="back" title="Back to this order's customer" hidden>‹ Back</button>
         <span class="cmMark">${ICON.mail}</span>
         <div class="cmWho"><b data-cm="name">Customer</b><span data-cm="sub"></span></div>
         <span class="cmLang" role="group" aria-label="Translate this conversation" title="Show every message in this conversation translated"><button type="button" data-cm="all" data-l="en">EN</button><button type="button" data-cm="all" data-l="uk">УКР</button></span>
@@ -683,7 +696,7 @@
         <div class="cmHint"><span class="cmLive" data-cm="live"></span><span class="cmHintT" data-cm="hint">Goes to the customer on Etsy, through the inbox</span><span class="cmTrIn">Translate mine <button type="button" data-cm="trIn" data-l="en" title="Translate what you wrote into English">EN</button><button type="button" data-cm="trIn" data-l="uk" title="Translate what you wrote into Ukrainian">УКР</button></span></div>
       </div>`;
     const $ = n => host.querySelector(`[data-cm="${n}"]`);
-    P.el = { name: $("name"), sub: $("sub"), state: $("state"), menu: $("menu"), more: host.querySelector(".cmMore"), lang: host.querySelector(".cmLang"), qs: $("qs"), notice: $("notice"), thread: $("thread"), comp: $("comp"), input: $("input"), send: $("send"), hint: $("hint"), undo: $("undo"), live: $("live"), warn: $("warn"), hbox: $("hbox"), hist: $("hist") };
+    P.el = { back: host.querySelector(".cmBack"), mark: host.querySelector(".cmMark"), name: $("name"), sub: $("sub"), state: $("state"), menu: $("menu"), more: host.querySelector(".cmMore"), lang: host.querySelector(".cmLang"), qs: $("qs"), notice: $("notice"), thread: $("thread"), comp: $("comp"), input: $("input"), send: $("send"), hint: $("hint"), undo: $("undo"), live: $("live"), warn: $("warn"), hbox: $("hbox"), hist: $("hist") };
     const input = P.el.input;
     const grow = () => { input.style.height = "auto"; const hh = input.scrollHeight; input.style.height = hh ? Math.min(160, hh + 2) + "px" : ""; P.el.send.disabled = !input.value.trim(); };
     input.addEventListener("input", () => { grow(); setDraft(draftKey(P), input.value); if (P.undo && input.value !== P.undo.to) { P.undo = null; paintUndo(P); } });
@@ -772,8 +785,11 @@
     const cust = (s && s.customer) || (conv && conv.customer) || {};
     const name = cust.name || cust.username || P.ctx.buyerName || "Customer";
     e.name.textContent = name;
-    const sb = sbOf(P.rid), test = P.rid === TEST;
-    e.sub.textContent = [test ? "your test account" : P.rid ? "order " + P.rid : "", cust.username && cust.name ? "@" + cust.username : "", sb ? "sandbox" : "via Etsy"].filter(Boolean).join(" · ");
+    const sb = sbOf(P.rid), test = P.rid === TEST, away = P === OW.P && !!OW.back;
+    e.back.hidden = !away; e.mark.hidden = away;
+    // the order window already names its order; a window of its own, or a visit, says which
+    e.sub.textContent = [test ? "your test account" : P.rid && (P !== OW.P || away) ? "order " + P.rid : "", cust.username && cust.name ? "@" + cust.username : "", sb ? "sandbox" : ""].filter(Boolean).join(" · ");
+    e.sub.hidden = !e.sub.textContent;
     host0(P);
     e.lang.hidden = e.more.hidden = !M.key;
     // not connected: one clear way in, and nothing else
@@ -793,7 +809,7 @@
     // the state of the question itself, in one line where it matters
     const notice = noticeFor(P, s, conv);
     e.notice.hidden = !notice; e.notice.innerHTML = notice || "";
-    e.hint.textContent = sb ? "Sandbox: kept here, never sent to a real customer" : test ? ((s && s.threadId) || conv ? `Test: goes only to ${name}, your own Etsy account` : "No test account yet") : s && s.status === "resolved" ? "Sending reopens this question" : (s && s.link === "waiting") || (!s && P.data && !conv) ? "No Etsy conversation with this buyer yet: you send it on Etsy by hand" : `Goes to ${firstName(name) || "the customer"} on Etsy, through the inbox`;
+    e.hint.textContent = sb ? "Sandbox: stays in the sorter" : test ? ((s && s.threadId) || conv ? "Test: only to your own Etsy account" : "No test account yet") : s && s.status === "resolved" ? "Sending reopens this question" : (s && s.link === "waiting") || (!s && P.data && !conv) ? "No Etsy conversation yet: you send it by hand" : "";
     e.input.placeholder = P.fresh || !s ? `Ask ${firstName(name) || "the customer"} something…` : `Write to ${firstName(name) || "the customer"}…`;
     // the menu
     e.menu.innerHTML = [
@@ -824,7 +840,7 @@
     if (P.err && !s) return `<span class="bad">${E(P.err)}</span> <button type="button" class="lnk" data-cm-do="reload">Try again</button>`;
     if (!s) {
       if (!P.data) return "";
-      if (sbOf(P.rid)) return "Sandbox: questions here are kept apart from real customers.";
+      if (sbOf(P.rid)) return "";
       if (!conv && P.rid === TEST) return "No test account yet: open the light under the message box and press Set up a test account.";
       if (!conv) return "This buyer has not written to the shop yet, so the inbox has no conversation to send through. What you write here is kept, and you send it on Etsy by hand.";
       return "";
@@ -848,7 +864,7 @@
     const wasAt = t.scrollTop, stick = P.stick;
     const rows = [];
     if (P.fresh) {
-      t.innerHTML = `<div class="cmEmpty"><b>A new question</b>Only the answers from now on show here, so the earlier conversation stays out of the way.</div>` + localRows(P).map(r => msgHtml(P, r)).join("");
+      t.innerHTML = `<div class="cmEmpty soft">A new question: only answers from now on show here.</div>` + localRows(P).map(r => msgHtml(P, r)).join("");
       if (stick) t.scrollTop = t.scrollHeight;
       return;
     }
@@ -865,7 +881,7 @@
     }
     for (const m of msgs) rows.push(msgHtml(P, m));
     for (const r of localRows(P)) rows.push(msgHtml(P, r));
-    if (!msgs.length && !localRows(P).length) rows.push(s ? `<div class="cmEmpty soft">Nothing in this conversation yet.</div>` : `<div class="cmEmpty"><b>No questions to this customer yet</b>Write below: it reaches ${E(firstName(P.el.name.textContent) || "the customer")} on Etsy through the inbox, and the answer shows up here.</div>`);
+    if (!msgs.length && !localRows(P).length) rows.push(`<div class="cmEmpty soft">No messages yet.</div>`);
     t.innerHTML = rows.join("");
     t.querySelectorAll("img[data-cm-img]").forEach(im => im.addEventListener("error", () => { const a = h("a", "cmPhoto", "photo"); a.href = im.dataset.href || im.src; a.target = "_blank"; a.rel = "noopener"; im.replaceWith(a); }, { once: true }));
     if (stick) t.scrollTop = t.scrollHeight; else t.scrollTop = wasAt;
@@ -967,6 +983,7 @@
     const act = async (op, body) => { b.disabled = true; try { const d = await call(op, body); if (d && d.id) received(d); } catch (err) { if (!authLost(err)) say(err.message, "bad"); } finally { b.disabled = false; } };
     switch (a) {
       case "reload": P.err = null; load(P); break;
+      case "back": { const bk = OW.back; OW.back = null; if (bk && P === OW.P) show(P, bk.ctx, { engagementId: bk.engId }); break; }
       case "pull": pullAll(P); break;
       case "only": P.view = "question"; P.stick = true; paintHist(P); paintThread(P, P.eng); break;
       case "showall": P.view = "all"; P.stick = true; paintHist(P); paintThread(P, P.eng); if (P.lang) translateAll(P); break;
@@ -1156,7 +1173,7 @@
   }
 
   // ─── the order window: a Customer tab beside the team's chat ────────────
-  const OW = { dlg: null, P: null, tab: get(LS.tab, "team"), rowKey: null };
+  const OW = { dlg: null, P: null, tab: get(LS.tab, "team"), rowKey: null, back: null };
   function orderWindow(dlg) {
     if (OW.dlg || !dlg) return;
     OW.dlg = dlg;
@@ -1191,6 +1208,7 @@
   /** The order window shows a line: the Customer tab follows its order. */
   function orderShown(row, opts = {}) {
     if (!OW.P || !row) return;
+    OW.back = null;
     const rid = String(row.order.receiptId);
     const lineIds = ((window.Orders && Orders.rows && Orders.rows()) || []).filter(r => String(r.order.receiptId) === rid);
     const at = lineIds.findIndex(r => r.key === row.key);
