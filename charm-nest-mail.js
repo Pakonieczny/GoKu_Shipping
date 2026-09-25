@@ -19,7 +19,7 @@
   const ENDPOINT = location.origin + "/.netlify/functions/etsyMailOrderLink";
   const INBOX = "https://etsy-mail-1.goldenspike.app/";
   const SANDBOX = typeof S !== "undefined" && S.settings && S.settings.sandbox === "on";
-  const LS = { key: "cn.mail.station", who: "cn.mail.operator", drafts: "cn.mail.drafts", out: "cn.mail.outbox", told: "cn.mail.told", tab: "cn.mail.tab", tr: "cn.mail.tr" };
+  const LS = { key: "cn.mail.station", who: "cn.mail.operator", drafts: "cn.mail.drafts", out: "cn.mail.outbox", told: "cn.mail.told", tab: "cn.mail.tab", tr: "cn.mail.tr", health: "cn.mail.health" };
   const PAIR = "cn.mail.pair";   // sessionStorage: a connect request survives this tab's reload, not the tab
 
   // ─── small helpers ───────────────────────────────────────────────────────
@@ -84,7 +84,7 @@
   function forget(message) {
     put(LS.key, null); put(LS.who, null);
     M.key = null; M.who = null; M.store.clear(); M.link = "off"; M.n = -1; M.since = 0; M.needFull = true; M.first = true;
-    clearTimeout(syncTimer);
+    clearTimeout(syncTimer); clearTimeout(healthTimer); closeHealth();
     if (message) say(message, "bad");
     paintAll();
   }
@@ -129,7 +129,7 @@
     M.key = key; M.who = who || null; M.n = -1; M.since = 0; M.needFull = true; M.first = true;
     cancelPair();
     say("Connected to the inbox" + (who && who.name ? " as " + who.name : ""), "ok", 4000);
-    kick(0); flushOut(); paintAll();
+    kick(0); flushOut(); paintAll(); healthSoon();
     for (const P of M.panes) load(P);
   }
   async function disconnect() {
@@ -186,11 +186,114 @@
     const d = e.data || {};
     if (d.t === "sync" && d.sandbox === SANDBOX && d.res && M.key) { M.lastOkAt = Date.now(); M.fails = 0; setLink("ok"); apply(d.res, false); kick(); }
     else if (d.t === "out") flushOut();
+    else if (d.t === "health" && d.h && d.h.res && M.key) { M.health = d.h; paintLights(); healthLater(); }
   };
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) { clearTitle(); if (M.key) kick(300); for (const P of M.panes) if (P.visible()) markRead(P); } });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { clearTitle(); if (M.key) kick(300); for (const P of M.panes) if (P.visible()) markRead(P); healthSoon(); } });
   window.addEventListener("online", () => { if (M.key) kick(200); flushOut(); });
 
-  function setLink(state) { if (M.link === state) return; M.link = state; for (const P of M.panes) paintState(P); }
+  function setLink(state) { if (M.link === state) return; M.link = state; for (const P of M.panes) paintState(P); paintLights(); }
+
+  // ─── is the line working: the light where messages are written ─────────
+  /* Green "Active" when every part a message passes through is working: this sorter reaches the inbox, sending is on,
+     the inbox's Etsy helper checks in, and the inbox notices and reads new Etsy messages (the server reads the evidence;
+     see health in _etsyMailOrderLink.js). Anything wrong turns it amber or red, with one plain sentence under the box
+     being written in. It is checked about once a minute while a place to write is on screen, once for all tabs. */
+  const HEALTH_EVERY = 60000;
+  let healthTimer = 0, healthBusy = false, healthErr = "";
+  M.health = get(LS.health, null);
+  const writingShown = () => !!M.key && ([...M.panes].some(P => P.visible()) || [...M.lines.values()].some(L => L.node.isConnected && !!L.node.offsetParent));
+  function healthLater() {
+    clearTimeout(healthTimer); healthTimer = 0;
+    if (!writingShown()) return;
+    const age = M.health ? Date.now() - M.health.at : Infinity;
+    healthTimer = setTimeout(() => checkHealth(false), Math.max(1000, (document.hidden ? 3 * HEALTH_EVERY : HEALTH_EVERY) - age));
+  }
+  /** A place to write came on screen: a check that is due happens now. */
+  function healthSoon() {
+    if (!M.key) return;
+    const shared = get(LS.health, null);
+    if (shared && (!M.health || shared.at > M.health.at)) { M.health = shared; paintLights(); }
+    if (writingShown() && (!M.health || Date.now() - M.health.at > HEALTH_EVERY - 2000)) checkHealth(false);
+    else healthLater();
+  }
+  async function checkHealth(fresh) {
+    if (!M.key || healthBusy) return;
+    const shared = get(LS.health, null);
+    if (!fresh && shared && Date.now() - shared.at < HEALTH_EVERY - 5000) { M.health = shared; paintLights(); healthLater(); return; }
+    healthBusy = true; paintLights();
+    try {
+      const res = await call("health", { fresh: !!fresh }, { timeout: 15000 });
+      M.health = { at: Date.now(), res }; healthErr = "";
+      put(LS.health, M.health);
+      if (bc) try { bc.postMessage({ t: "health", h: M.health }); } catch (_) {}
+    } catch (e) { if (!authLost(e)) healthErr = e.message; }
+    finally { healthBusy = false; paintLights(); healthLater(); }
+  }
+  /** What the light says: tone (ok, warn, down, sb, wait), its word, and the sentence under the box when it is not ok. */
+  function lightState() {
+    const h = M.health && Date.now() - M.health.at < 5 * 60000 ? M.health.res : null;
+    if (M.link === "offline") return { tone: "down", word: "Offline", text: "This sorter cannot reach the inbox's server right now. What you write is kept, and goes as soon as it answers again." };
+    if (SANDBOX) return { tone: "sb", word: "Sandbox", text: "" };
+    if (!h) return { tone: "wait", word: "Checking…", text: "" };
+    if (h.level === "ok") return { tone: "ok", word: "Active", text: "" };
+    return { tone: h.level === "down" ? "down" : "warn", word: h.short || "Problem", text: h.problem || "" };
+  }
+  function lightHtml(st) {
+    const tip = st.tone === "ok" ? "Connected: sending and receiving are working. Click for details."
+      : st.tone === "sb" ? "Sandbox: nothing here reaches a real customer. Click for details."
+      : st.tone === "wait" ? "Checking the email link…" : st.text + " Click for details.";
+    return `<button type="button" class="cmLight ${st.tone}" data-health title="${E(tip)}" aria-label="Email link: ${E(st.word)}. Details"><i></i>${E(st.word)}</button>`;
+  }
+  function warnHtml(st) {
+    if (st.tone !== "warn" && st.tone !== "down") return "";
+    return `<span>${E(st.text)}</span> <button type="button" class="lnk" data-health>Details</button>`;
+  }
+  let healthBox = null;   // { box, owner } — the one details panel open, if any
+  function healthRows() {
+    const h = M.health && M.health.res;
+    const row = (level, label, text) => `<li class="${E(level)}"><i></i><b>${E(label)}</b><span>${E(text)}</span></li>`;
+    const rows = [row(M.link === "offline" ? "down" : "ok", "Sorter to inbox", M.link === "offline" ? "Not answering right now; what you write is kept" : "Connected" + (M.who && M.who.name ? " as " + M.who.name : ""))];
+    if (h) for (const c of h.checks) rows.push(row(c.level, c.label, c.text));
+    else rows.push(`<li class="wait"><i></i><b>Checking the rest</b><span>${healthErr ? E(healthErr) : "…"}</span></li>`);
+    const when0 = healthBusy ? `<span class="cmSpin" aria-hidden="true"></span>checking` : M.health ? "checked " + when(M.health.at) : "";
+    return `<div class="cmHBh"><b>Email link</b><span class="cmHBat">${when0}</span><button type="button" class="lnk" data-hcheck${healthBusy ? " disabled" : ""}>Check now</button></div><ul class="cmHBl">${rows.join("")}</ul>`
+      + (SANDBOX ? `<div class="cmHBf">Sandbox is on: questions stay in this sorter and never reach a customer.</div>` : "");
+  }
+  function toggleHealth(box, owner) {
+    if (healthBox && healthBox.box === box) { closeHealth(); return; }
+    closeHealth();
+    healthBox = { box, owner };
+    box.hidden = false; box.innerHTML = healthRows();
+    owner.querySelectorAll("[data-health]").forEach(b => b.setAttribute("aria-expanded", "true"));
+    if (!M.health || Date.now() - M.health.at > 20000) checkHealth(true);
+  }
+  function closeHealth() {
+    if (!healthBox) return;
+    healthBox.box.hidden = true; healthBox.box.innerHTML = "";
+    healthBox.owner.querySelectorAll("[data-health]").forEach(b => b.setAttribute("aria-expanded", "false"));
+    healthBox = null;
+  }
+  document.addEventListener("pointerdown", e => { if (healthBox && !healthBox.box.contains(e.target) && !e.target.closest("[data-health]")) closeHealth(); }, true);
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && healthBox) { e.preventDefault(); e.stopPropagation(); closeHealth(); } }, true);
+  document.addEventListener("click", e => { const b = e.target.closest("[data-hcheck]"); if (b && healthBox && healthBox.box.contains(b)) checkHealth(true); });
+  /** One place to write: its light and its sentence, redrawn only when they changed (a redrawn button loses focus). */
+  function paintLight(el, owner, cls, st) {
+    st = st || lightState();
+    const light = M.key ? lightHtml(st) : "", warn = M.key ? warnHtml(st) : "";
+    if (el.live.dataset.v !== light) {
+      el.live.dataset.v = light; el.live.innerHTML = light;
+      if (healthBox && healthBox.owner === owner) el.live.querySelectorAll("[data-health]").forEach(b => b.setAttribute("aria-expanded", "true"));
+    }
+    if (el.warn.dataset.v !== warn) { el.warn.dataset.v = warn; el.warn.innerHTML = warn; }
+    el.live.hidden = !light; el.warn.hidden = !warn; el.warn.className = cls + " " + st.tone;
+    if (el.foot) el.foot.hidden = !light;
+  }
+  function paintLights() {
+    const st = lightState();
+    for (const P of M.panes) if (P.host.isConnected) paintLight(P.el, P.host, "cmWarn", st);
+    for (const L of M.lines.values()) if (L.node.isConnected) paintLight(L.el, L.node, "cmLWarn", st);
+    if (healthBox) { if (healthBox.box.isConnected && M.key) healthBox.box.innerHTML = healthRows(); else closeHealth(); }
+  }
 
   function apply(res, mine) {
     if (!res || typeof res !== "object") return;
@@ -484,12 +587,14 @@
       <div class="cmNotice" data-cm="notice" hidden></div>
       <div class="cmThread" data-cm="thread" aria-live="polite"></div>
       <div class="cmComp" data-cm="comp">
+        <div class="cmHBox" data-cm="hbox" role="dialog" aria-label="Email link" hidden></div>
+        <div class="cmWarn" data-cm="warn" hidden></div>
         <div class="cmUndo" data-cm="undo" hidden></div>
         <div class="cmLine"><textarea data-cm="input" rows="1" placeholder="Write to the customer…" aria-label="Message to the customer"></textarea><button type="button" class="cmSend" data-cm="send" title="Send to the customer (Enter)" aria-label="Send to the customer" disabled>${ICON.send}</button></div>
-        <div class="cmHint"><span data-cm="hint">Goes to the customer on Etsy, through the inbox</span><span class="cmTrIn">Translate mine <button type="button" data-cm="trIn" data-l="en" title="Translate what you wrote into English">EN</button><button type="button" data-cm="trIn" data-l="uk" title="Translate what you wrote into Ukrainian">УКР</button></span></div>
+        <div class="cmHint"><span class="cmLive" data-cm="live"></span><span class="cmHintT" data-cm="hint">Goes to the customer on Etsy, through the inbox</span><span class="cmTrIn">Translate mine <button type="button" data-cm="trIn" data-l="en" title="Translate what you wrote into English">EN</button><button type="button" data-cm="trIn" data-l="uk" title="Translate what you wrote into Ukrainian">УКР</button></span></div>
       </div>`;
     const $ = n => host.querySelector(`[data-cm="${n}"]`);
-    P.el = { name: $("name"), sub: $("sub"), state: $("state"), menu: $("menu"), more: host.querySelector(".cmMore"), lang: host.querySelector(".cmLang"), qs: $("qs"), notice: $("notice"), thread: $("thread"), comp: $("comp"), input: $("input"), send: $("send"), hint: $("hint"), undo: $("undo") };
+    P.el = { name: $("name"), sub: $("sub"), state: $("state"), menu: $("menu"), more: host.querySelector(".cmMore"), lang: host.querySelector(".cmLang"), qs: $("qs"), notice: $("notice"), thread: $("thread"), comp: $("comp"), input: $("input"), send: $("send"), hint: $("hint"), undo: $("undo"), live: $("live"), warn: $("warn"), hbox: $("hbox") };
     const input = P.el.input;
     const grow = () => { input.style.height = "auto"; const hh = input.scrollHeight; input.style.height = hh ? Math.min(160, hh + 2) + "px" : ""; P.el.send.disabled = !input.value.trim(); };
     input.addEventListener("input", () => { grow(); setDraft(draftKey(P), input.value); if (P.undo && input.value !== P.undo.to) { P.undo = null; paintUndo(P); } });
@@ -511,6 +616,7 @@
     if (!same) { P.rid = rid; P.eng = null; P.engId = engagementId; P.data = null; P.fresh = false; P.err = null; P.earlier = null; P.trOpen = new Map(); P.stick = true; P.undo = null; }
     else if (engagementId && engagementId !== P.engId) { P.engId = engagementId; P.eng = null; P.fresh = false; P.earlier = null; P.stick = true; }
     if (!same || engagementId || !P.eng) { input0(P); load(P); } else paintPane(P);
+    healthSoon();
   }
   function input0(P) {
     const d = draftOf(draftKey(P));
@@ -558,11 +664,8 @@
   }
 
   function paintState(P) {
-    const st = P.el.state;
-    const text = !M.key ? "" : P.loading && !P.eng ? "loading…" : M.link === "offline" ? "reconnecting…" : SANDBOX ? "sandbox" : "live";
-    st.textContent = text ? "● " + text : "";
-    st.className = "cmState " + (M.link === "offline" ? "bad" : SANDBOX ? "sb" : "ok");
-    st.title = M.link === "offline" ? "The inbox link is not answering; what you write is kept and goes as soon as it answers again" : SANDBOX ? "Sandbox: nothing reaches a real customer" : "Replies appear here as soon as the inbox reads them from Etsy";
+    // whether the line works is the light under the box being written in; up here only a first load shows
+    P.el.state.textContent = M.key && P.loading && !P.eng ? "loading…" : "";
   }
 
   function paintPane(P) {
@@ -609,6 +712,7 @@
     ].filter(Boolean).join("");
     paintThread(P, s);
     paintUndo(P);
+    paintLight(P.el, P.host, "cmWarn");
   }
   function host0(P) { P.host.dataset.state = !M.key ? "off" : P.fresh ? "new" : P.eng ? (P.eng.status || "open") : "empty"; }
   const qLabel = x => x.scope === "engraving" ? "Engraving" + (x.lineLabel ? " · " + x.lineLabel : "") : x.title ? x.title.slice(0, 36) : "Order question";
@@ -723,6 +827,7 @@
   function paintLangBtns(P) { P.host.querySelectorAll('[data-cm="all"]').forEach(b => b.classList.toggle("on", b.dataset.l === P.lang)); }
 
   async function onPaneClick(P, e) {
+    if (e.target.closest("[data-health]")) { toggleHealth(P.el.hbox, P.host); return; }
     const tr = e.target.closest("[data-cm-tr]");
     if (tr) {
       const id = tr.dataset.id, lang = tr.dataset.cmTr;
@@ -856,7 +961,7 @@
     if (cust) cust.hidden = OW.tab !== "customer";
     if (team) team.hidden = OW.tab !== "team";
     d.classList.toggle("owCustOn", OW.tab === "customer");
-    if (OW.tab === "customer" && OW.P) { paintPane(OW.P); markRead(OW.P); if (M.key) kick(300); }
+    if (OW.tab === "customer" && OW.P) { paintPane(OW.P); markRead(OW.P); if (M.key) kick(300); healthSoon(); }
     paintTabDots();
   }
   function paintTabDots() {
@@ -903,7 +1008,7 @@
 
   // ─── the engraving card's customer box ──────────────────────────────────
   /* The same node follows its placement through every rebuild of the card, so what was typed, and the caret, stay put. */
-  let lastBlur = null;
+  let lastBlur = null, healthSoonQueued = false;
   function lineBox(job) {
     if (!job || !job.row) return null;
     const row = job.row, key = String(job.key);
@@ -913,10 +1018,12 @@
       node.innerHTML = `<div class="cmLH"><span class="cmMark">${ICON.mail}</span><b>Customer</b><span class="cmLS" data-l="sub"></span><span class="grow"></span><button type="button" class="lnk" data-l="open">Conversation ${ICON.out}</button></div>
         <div class="cmLast" data-l="last" hidden></div>
         <div class="cmLine" data-l="comp"><textarea rows="1" data-l="input" aria-label="Question to the customer"></textarea><button type="button" class="cmSend" data-l="send" title="Send to the customer (Enter)" aria-label="Send to the customer" disabled>${ICON.send}</button></div>
+        <div class="cmLFoot" data-l="foot" hidden><span class="cmLive" data-l="live" hidden></span><span class="cmLWarn" data-l="warn" hidden></span></div>
+        <div class="cmHBox" data-l="hbox" role="dialog" aria-label="Email link" hidden></div>
         <div class="cmLNote" data-l="note" hidden></div>`;
       L = { key, node, row, job, at: Date.now() };
       const q = n => node.querySelector(`[data-l="${n}"]`);
-      L.el = { sub: q("sub"), open: q("open"), last: q("last"), comp: q("comp"), input: q("input"), send: q("send"), note: q("note") };
+      L.el = { sub: q("sub"), open: q("open"), last: q("last"), comp: q("comp"), input: q("input"), send: q("send"), note: q("note"), live: q("live"), warn: q("warn"), hbox: q("hbox"), foot: q("foot") };
       const input = L.el.input;
       const grow = () => { input.style.height = "auto"; const hh = input.scrollHeight; input.style.height = hh ? Math.min(120, hh + 2) + "px" : ""; L.el.send.disabled = !input.value.trim(); };
       L.grow = grow;
@@ -928,6 +1035,7 @@
       L.el.send.onclick = () => lineSend(L);
       L.el.open.onclick = () => { const s = lineEng(L); openConversation(s || { receiptId: L.row.order.receiptId, scope: "engraving", lineId: lineIdOf(L.row) }, L.row.key); };
       node.addEventListener("click", e => {
+        if (e.target.closest("[data-health]")) { toggleHealth(L.el.hbox, node); return; }
         const c = e.target.closest("[data-l-do]"); if (!c) return;
         if (c.dataset.lDo === "connect") connect();
         else if (c.dataset.lDo === "inbox" && M.pair) openInbox(M.pair.url);
@@ -936,6 +1044,8 @@
       M.lines.set(key, L);
       input.value = draftOf(lineDraftKey(L)); grow();
     }
+    // a card coming on screen checks the line if a check is due (once, however many cards are drawn)
+    if (!healthSoonQueued) { healthSoonQueued = true; setTimeout(() => { healthSoonQueued = false; healthSoon(); }, 0); }
     L.row = row; L.job = job; L.rid = String(row.order.receiptId); L.at = Date.now();
     paintLine(L);
     if (L.el.input.value) setTimeout(L.grow, 0);
@@ -970,6 +1080,7 @@
         ? `<span class="soft">Approve the connection in the inbox tab.</span> <button type="button" class="lnk" data-l-do="inbox">Open the inbox</button>`
         : `<span class="soft">Ask this customer about the engraving without leaving the card.</span> <button type="button" class="lnk" data-l-do="connect">Connect to the inbox</button>`;
       e.comp.hidden = true; e.note.hidden = true; e.open.hidden = true;
+      paintLight(e, L.node, "cmLWarn");
       return;
     }
     e.comp.hidden = false; e.open.hidden = false;
@@ -992,6 +1103,7 @@
       : out && out.status === "sent" && !s.lastInboundAtMs ? "Sent " + when(out.sentAtMs || out.atMs) + " · waiting for the answer" : "";
     e.note.hidden = !note; e.note.innerHTML = note;
     e.input.placeholder = s && s.status === "open" ? "Reply…" : suggestion(L);
+    paintLight(e, L.node, "cmLWarn");
   }
   async function lineTranslate(L, lang) {
     L.tr = L.tr === lang ? null : lang;

@@ -790,7 +790,7 @@ async function requireStation(event) {
   const st = snap.data();
   const op = await db.collection(COLL.operators).doc(String(st.username || "_")).get();
   if (!op.exists || op.data().revokedAt) return { ok: false, status: 401, code: "OPERATOR_REVOKED", error: "The inbox account that connected this sorter is no longer active" };
-  const station = { id, username: st.username, name: String(op.data().displayName || st.displayName || st.username).slice(0, 60) };
+  const station = { id, username: st.username, name: String(op.data().displayName || st.displayName || st.username).slice(0, 60), owner: op.data().role === "owner" };
   if (Date.now() - (st.lastSeenAtMs || 0) > HOUR) snap.ref.set({ lastSeenAtMs: Date.now() }, { merge: true }).catch(() => {});
   _stations.set(id, { station, at: Date.now() });
   if (_stations.size > 200) _stations.delete(_stations.keys().next().value);
@@ -1124,6 +1124,86 @@ async function simulateReply(body) {
   return Object.assign(summary(r.e), await conversation(r.e));
 }
 
+// ─── is the line working? the sorter's Active light ──────────────────────
+
+/* Every part a message passes through, read from what that part leaves behind: the inbox's send switch, the drafts
+   waiting for the Etsy helper, the helper's last check-in (etsyMailJobs notes it), the Gmail watcher that notices a
+   customer's answer, and the scrape jobs that read it into the inbox. A part is called broken only on evidence (a switch
+   turned off, work waiting too long, a watcher that stopped or failed), never because a signal is merely missing.
+   Nothing here writes, and every sorter shares one answer per server instance for 20 seconds. */
+const HEALTH_TTL_MS = 20 * 1000;
+const RANK = { ok: 0, unknown: 0, warn: 1, down: 2 };
+const ago = ms => ms < 90 * 1000 ? Math.max(1, Math.round(ms / 1000)) + " s"
+  : ms < 90 * MIN ? Math.round(ms / MIN) + " min" : ms < 48 * HOUR ? Math.round(ms / HOUR) + " h" : Math.round(ms / DAY) + " days";
+let _health = null, _healthForcedAt = 0;
+async function health(body = {}) {
+  const now = Date.now();
+  const force = body.fresh === true && now - _healthForcedAt > 10 * 1000;
+  if (!force && _health && now - _health.at < HEALTH_TTL_MS) return _health.value;
+  if (force) _healthForcedAt = now;
+  const soft = p => p.catch(e => { console.warn("orderLink health:", e.message); return null; });
+  const cfg = db.collection("EtsyMail_Config");
+  const [inboxCfg, watcher, gmail, helper, drafts, jobs] = await Promise.all([
+    soft(cfg.doc("global").get()), soft(cfg.doc("gmailWatcher").get()), soft(cfg.doc("gmailSyncState").get()),
+    soft(db.collection(COLL.meta).doc("helper").get()),
+    soft(db.collection(COLL.drafts).where("status", "==", "queued").limit(25).get()),
+    soft(db.collection("EtsyMail_Jobs").where("status", "==", "queued").limit(40).get())
+  ]);
+  const data = s => s && s.exists ? s.data() : null;
+  const checks = [];
+  // pri: which problem the light names when several are equally bad (the switch, then the helper, then the rest)
+  const add = (id, label, level, text, short, pri) => checks.push({ id, label, level, text, short: short || "", pri: pri == null ? 9 : pri });
+
+  // the Etsy helper: the inbox's Chrome extension, which sends on Etsy and reads new messages
+  const hp = data(helper);
+  const seen = hp && hp.seenAtMs ? now - hp.seenAtMs : null;
+  if (seen == null) add("helper", "Etsy helper", "unknown", "Not heard from yet");
+  else if (seen > 15 * MIN) add("helper", "Etsy helper", "down", `The inbox's Etsy helper (its Chrome extension) last checked in ${ago(seen)} ago. Until it is back, messages wait and answers are not read.`, "Helper offline", 1);
+  else if (seen > 5 * MIN) add("helper", "Etsy helper", "warn", `The inbox's Etsy helper last checked in ${ago(seen)} ago.`, "Helper slow", 1);
+  else add("helper", "Etsy helper", "ok", `Checked in ${ago(seen)} ago`);
+
+  // sending: the inbox's switch, and messages waiting for the helper
+  const g = data(inboxCfg) || {};
+  const queued = drafts ? drafts.docs.map(d => tsMs(d.data().queuedAt) || now) : [];
+  const oldest = queued.length ? now - Math.min(...queued) : 0;
+  const nq = queued.length;
+  if (g.sendDisabled) add("send", "Sending", "down", "Sending is switched off in the inbox" + (g.sendDisabledReason ? ` (${cleanText(g.sendDisabledReason, 120)})` : "") + ". Messages wait here until it is on again.", "Sending paused", 0);
+  else if (!drafts) add("send", "Sending", "unknown", "Could not look at the messages waiting to go out");
+  else if (oldest > 15 * MIN) add("send", "Sending", "down", `A message has waited ${ago(oldest)} for the inbox's Etsy helper to send it.`, "Not sending", 2);
+  else if (oldest > 5 * MIN) add("send", "Sending", "warn", `A message has waited ${ago(oldest)} for the inbox's Etsy helper.`, "Sending slowly", 2);
+  else add("send", "Sending", "ok", nq ? `${nq} ${nq === 1 ? "message" : "messages"} on the way` : "Nothing waiting to go out");
+
+  // noticing answers: the Gmail watcher sees Etsy's email about each new message within a minute or two
+  const w = data(watcher), gs = data(gmail);
+  const done = gs ? tsMs(gs.lastSyncCompletedAt) : 0;
+  const failed = gs && gs.lastSyncError && tsMs(gs.lastSyncErrorAt) > done ? cleanText(gs.lastSyncError, 140) : "";
+  if (watcher && (!w || w.enabled !== true)) add("notice", "Noticing answers", "down", "The inbox is not watching for new Etsy messages (its Gmail watcher is off), so answers will not arrive.", "Not receiving", 3);
+  else if (!done) add("notice", "Noticing answers", failed ? "warn" : "unknown", failed ? `The inbox's check for new Etsy messages failed: ${failed}` : "No check for new Etsy messages recorded yet", "Answers delayed", 3);
+  else if (now - done > 30 * MIN) add("notice", "Noticing answers", "down", `The inbox last checked for new Etsy messages ${ago(now - done)} ago${failed ? ", and then failed: " + failed : ""}.`, "Not receiving", 3);
+  else if (failed) add("notice", "Noticing answers", "warn", `The inbox's last check for new Etsy messages failed: ${failed}`, "Answers delayed", 3);
+  else if (now - done > 10 * MIN) add("notice", "Noticing answers", "warn", `The inbox last checked for new Etsy messages ${ago(now - done)} ago.`, "Answers delayed", 3);
+  else add("notice", "Noticing answers", "ok", `Checked for new Etsy messages ${ago(now - done)} ago`);
+
+  // reading answers in: each new message is a scrape job for the helper
+  const scrapes = jobs ? jobs.docs.map(d => d.data()).filter(j => j.jobType === "scrape") : [];
+  const ns = scrapes.length;
+  const late = ns ? Math.max(...scrapes.map(j => now - (tsMs(j.createdAt) || now))) : 0;
+  const waitText = `${ns}${ns >= 40 ? "+" : ""} new Etsy ${ns === 1 ? "message is" : "messages are"} waiting to be read into the inbox, the oldest for ${ago(late)}.`;
+  if (!jobs) add("read", "Reading answers", "unknown", "Could not look at the messages waiting to be read");
+  else if (late > 30 * MIN) add("read", "Reading answers", "down", waitText, "Answers delayed", 4);
+  else if (late > 10 * MIN) add("read", "Reading answers", "warn", waitText, "Answers delayed", 4);
+  else add("read", "Reading answers", "ok", ns ? `${ns} being read now` : "Nothing waiting to be read");
+
+  const worst = checks.slice().sort((a, b) => RANK[b.level] - RANK[a.level] || a.pri - b.pri)[0];
+  const level = RANK[worst.level] ? worst.level : "ok";
+  const value = {
+    at: now, level, short: level === "ok" ? "" : worst.short, problem: level === "ok" ? "" : worst.text,
+    checks: checks.map(({ id, label, level, text }) => ({ id, label, level, text }))
+  };
+  _health = { at: now, value };
+  return value;
+}
+
 // ─── translation ──────────────────────────────────────────────────────────
 
 const LANG_NAMES = { en: "English", uk: "Ukrainian" };
@@ -1341,7 +1421,7 @@ module.exports = {
   sync: withFlush(sync), order: withFlush(order), thread, ask: withFlush(ask), retry: withFlush(retry),
   cancel: withFlush(cancel), markCopied: withFlush(markCopied), markSent: withFlush(markSent), read: withFlush(read),
   setStatus: withFlush(setStatus), setLang: withFlush(setLang), linkUrl: withFlush(linkUrl),
-  simulateReply: withFlush(simulateReply), translate,
+  simulateReply: withFlush(simulateReply), translate, health,
   // exposed for tests
   _internal: { foldMessages, sameText, normText, summary, cleanText, cleanId, applyPatch, friendlyFailure, parkedCopy, isDelete }
 };

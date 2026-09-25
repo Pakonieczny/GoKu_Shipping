@@ -36,6 +36,17 @@ const AUDIT_COLL = "EtsyMail_Audit";
 // machine-down cycles before we permanently give up.
 const MAX_ATTEMPTS = 10;
 
+// The Charm Sorter's "Active" light shows when this helper last asked for work (see health in
+// _etsyMailOrderLink.js). The helper asks every 20 seconds; one small write a minute per instance is plenty.
+let _helperSeenAt = 0;
+async function helperSeen() {
+  const now = Date.now();
+  if (now - _helperSeenAt < 60 * 1000) return;
+  _helperSeenAt = now;
+  await db.collection("EtsyMail_OrderLinkMeta").doc("helper").set({ seenAtMs: now }, { merge: true })
+    .catch(e => console.warn("helper check-in not recorded:", e.message));
+}
+
 function json(statusCode, body) { return { statusCode, headers: CORS, body: JSON.stringify(body) }; }
 function bad(msg, code = 400)    { return json(code, { error: msg }); }
 
@@ -121,6 +132,7 @@ exports.handler = async (event) => {
 
   const { op } = body;
   if (!op) return bad("Missing op");
+  await helperSeen();
 
   try {
     /* ── claim ── */

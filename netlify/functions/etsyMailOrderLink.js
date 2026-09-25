@@ -12,7 +12,7 @@
  *    pair_info  { code }            (inbox)      → { found, status, label, createdAtMs }
  *    pair_answer { code, approve }  (inbox)      → { ok, status }
  *    whoami, disconnect, sync, order, thread, ask, retry, cancel, copied, sent, read,
- *    resolve, reopen, lang, link_url, simulate, translate            (sorter)
+ *    resolve, reopen, lang, link_url, simulate, translate, health    (sorter)
  */
 "use strict";
 
@@ -68,6 +68,7 @@ exports.handler = async (event) => {
       case "link_url":   return json(200, await link.linkUrl(body));
       case "simulate":   return json(200, await link.simulateReply(body));
       case "translate":  return json(200, await link.translate(body));
+      case "health":     return json(200, await link.health(body));
       default:           return json(400, { error: "Unknown op" });
     }
   } catch (e) {
