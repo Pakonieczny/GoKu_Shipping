@@ -1405,6 +1405,9 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .topbar .modeSeg button .cnt{margin-left:0;font-size:10px;padding:1px 4px}
 .topbar .modeSeg .full{display:none}.topbar .modeSeg .tight{display:inline}
 @container workspace (max-width:1100px){.topbar .modeSeg button{padding-inline:8px}}
+/* the sandbox pill drops its speed and the word "sim" where the bar is narrow ("Sandbox · Fri 07:30"): at 1280 px it took
+   the room of the last tab */
+@container workspace (max-width:1000px){.topbar .sandboxPill .sbSpeed,.topbar .sandboxPill .sbSim{display:none}}
 .topTools{display:flex;align-items:center;gap:6px;flex:0 0 auto}
 .topbar .runMode{padding:7px 9px;border-color:transparent;font-size:11.5px;border-radius:6px}
 .topbar .sandboxPill{font:700 9px var(--mono);padding:4px 6px;letter-spacing:0;border-radius:4px;white-space:nowrap}

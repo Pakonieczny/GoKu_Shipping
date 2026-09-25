@@ -5230,7 +5230,10 @@ const Sandbox = window.Sandbox = (() => {
   function statusText() { if (!status || status.error) return status && status.error ? `status: ${status.error}` : ""; const sn = status.snapshot; const rec = status.records || {}; return `${sn ? `snapshot of ${sn.count} order(s) taken ${new Date(sn.at).toLocaleString()}${sn.takenBy ? " by " + sn.takenBy : ""}` : "no snapshot yet"} · sandbox records: ${rec.Charm_Pool || 0} pool, ${rec.Charm_Nest_Sets || 0} sets, ${rec.Charm_Nest_Runs || 0} runs, ${rec.Charm_Nest_Sheets || 0} sheets${streamText() ? " · " + streamText() : ""}`; }
   function render() {
     const el = document.getElementById("sbStatus"); if (el) el.title = statusText() || el.title;
-    const pill = document.getElementById("sandboxPill"); if (pill) { pill.classList.toggle("hidden", !on()); if (on()) { const text = label(); if (pill.textContent !== text) pill.textContent = text; pill.title = streamText() ? `Sandbox: emulated Etsy; all records and files use sandbox copies. ${streamText()}` : "Sandbox: emulated Etsy; all records and files use sandbox copies"; } }
+    // the speed and the word "sim" are their own spans, so a narrow top bar can leave them out (the pill took the room of
+    // the last tab at 1280 px) and still read "Sandbox · Fri 07:30"; the text is the label's all the same (one inline span
+    // holds it all: the pill is a flex box, which would trim the spaces around each piece)
+    const pill = document.getElementById("sandboxPill"); if (pill) { pill.classList.toggle("hidden", !on()); if (on()) { const text = label(), m = /^Sandbox (\S+) · sim (.+)$/.exec(text); if (pill.dataset.label !== text) { pill.dataset.label = text; pill.innerHTML = m ? `<span>Sandbox<span class="sbSpeed"> ${esc(m[1])}</span> · <span class="sbSim">sim </span>${esc(m[2])}</span>` : esc(text); } pill.title = streamText() ? `Sandbox: emulated Etsy; all records and files use sandbox copies. ${streamText()}` : "Sandbox: emulated Etsy; all records and files use sandbox copies"; } }
     document.documentElement.classList.toggle("sandbox", on());
   }
   return { on, refresh, snapshot, enable, afterReload, reset, mountPanel, render, status: () => status, streaming, speed, ready, advance, restream, label, streamText, seed: () => stream && stream.seed, stream: () => stream };
