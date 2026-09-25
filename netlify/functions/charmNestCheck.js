@@ -23,7 +23,7 @@ const COLLECTIONS = [
   ["Charm_Nest_Calibration", "nesting calibration"], ["Charm_Nest_Jobs", "server solver and master-index jobs"], ["Charm_Nest_Agent", "model jobs (grouping, engraving, labels)"],
   ["Charm_Master_Index", "one entry per SKU from the master files"], ["Charm_Master_Files", "one record per indexed master file"],
   ["Charm_Pool", "one row per order line and copy"], ["Charm_Pool_Back", "engraved backs, one per piece"],
-  ["Charm_Nest_Sets", "sets numbered per date"], ["Charm_Nest_Counters", "the per-date set counter (transaction)"], ["Charm_Nest_Runs", "run records, resumable"], ["Charm_Nest_Run_Lines", "the lines of orders a run is done with, kept out of its record"],
+  ["Charm_Nest_Sets", "sets numbered per date"], ["Charm_Nest_Counters", "the per-date set counter (transaction)"], ["Charm_Nest_Runs", "run records, resumable"], ["Charm_Nest_Run_Lines", "the lines of orders a run is done with, kept out of its record"], ["Charm_Nest_Run_Live", "the lines of orders a run still has in progress, kept beside its record"],
   ["Design_Bridge", "bridge sessions and their command log"], ["Charm_Sku_Aliases", "listing → SKU aliases"], ["Charm_Sku_NoDesign", "SKUs and patterns with no design"], ["Charm_Option_Map", "Etsy option → form/size maps"],
   ["Design_RealTime_Selected_Orders", "station locks and sorter claims"], ["Design_Completed Orders", "the station's design-complete ledger"], ["Design_Order_Archive", "completed orders with labels, set and run"], ["Brites_Orders", "order metadata and chat"]
 ];

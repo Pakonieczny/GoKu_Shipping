@@ -3971,8 +3971,9 @@ const RunCtl = window.RunCtl = (() => {
      written once to the run's line archive and left out of the record, with that order's committed id and hold; the
      oldest sheet notes are left out too, and lineArchive counts what is outside. The server reads the archive under the
      record wherever a finished line is still wanted: laser readiness, a set's completion, a Rose Gold cut, history, a
-     recalled set's orders. A resume takes the orders still in progress, which are all in the record. This page keeps
-     every line in memory and in the browser workspace, as before. A record that still nears the limit is said once. */
+     recalled set's orders. A resume takes the orders still in progress, which the server keeps beside the record and
+     reads back into it (sizeCheck). This page keeps every line in memory and in the browser workspace, as before. A
+     record that still nears the limit is said once. */
   const warned = new Set();
   const finishedHashes = lines => { const out = new Map(); for (const keys of O.closedOrders(lines).values()) for (const k of keys) out.set(k, O.textHash(JSON.stringify(lines[k]))); return out; };
   /** Each finished line the archive does not hold in its current form goes there, in parts of at most 256 KB. */
@@ -4026,14 +4027,20 @@ const RunCtl = window.RunCtl = (() => {
     if (la || left || committed || held || sheets) rec.lineArchive = { lines: (+base.lines || 0) + left, committed: (+base.committed || 0) + committed, held: (+base.held || 0) + held, sheets: (+base.sheets || 0) + sheets, parts: (la && la.parts) || 0, at: (la && la.at) || null };
     return rec;
   }
-  /** Said once a run: a record past 70% of what one document holds. The run stops the day it is full. */
+  /* Said once a run: a record past 70% of what one document holds, or lines in progress past 70% of what one save can
+     send (a function takes 6 MB; SEND_BYTES leaves room for the rest). The lines of the orders in progress are no
+     longer stored in the record: the server keeps them beside it as text (op_runPut, liveLines), where they cost two
+     index entries a part instead of some sixty a line. They filled a run that took every open order (541 lines, 76%)
+     before it had placed a charm (Paul, 25 Sep). */
+  const SEND_BYTES = 5000000;
   function sizeCheck(r, rec) {
     if (warned.has(r.runId)) return;
-    const bytes = O.utf8Bytes(JSON.stringify(rec)), entries = O.indexEntries(rec), L = O.RUN_RECORD;
-    const share = Math.max(bytes / L.bytes, entries / L.entries);
+    const bare = Object.assign({}, rec); delete bare.lines;
+    const bytes = O.utf8Bytes(JSON.stringify(bare)), entries = O.indexEntries(bare), sent = O.utf8Bytes(JSON.stringify(rec.lines || {})), L = O.RUN_RECORD;
+    const share = Math.max(bytes / L.bytes, entries / L.entries, sent / SEND_BYTES);
     if (share < L.warn) return;
     warned.add(r.runId);
-    const text = `The online record of run ${r.runId} is ${Math.round(share * 100)}% full (${Math.round(bytes / 1024).toLocaleString()} KB of 1,024 KB; ${entries.toLocaleString()} of 40,000 index entries), with ${Object.keys(rec.lines || {}).length} order lines still in progress in it. Finish or skip the orders waiting in this run, or give it up and start a new one, before it fills: a full record cannot be saved and the run stops.`;
+    const text = `The online record of run ${r.runId} is ${Math.round(share * 100)}% full (${Math.round(bytes / 1024).toLocaleString()} KB of 1,024 KB; ${entries.toLocaleString()} of 40,000 index entries; ${(sent / 1e6).toFixed(1)} of 5 MB of order lines in progress, ${Object.keys(rec.lines || {}).length.toLocaleString()} lines). Finish or skip some of the orders waiting in this run before it fills: a record that cannot be saved stops the run.`;
     agent({ run: r.runId }, "warn", text); toast(text, "bad", 15000);
   }
   async function save(r) {
@@ -5168,11 +5175,6 @@ const OrderWin = window.OrderWin = (() => {
     pane.addEventListener("dragover", e => { e.preventDefault(); });
     pane.addEventListener("drop", e => { e.preventDefault(); addFiles([...(e.dataTransfer.files || [])].filter(f => f.type.startsWith("image/"))); });
     byId("owSkip").onclick = toggleSkip;
-    byId("owFind").onclick = async () => {
-      const r = rowOf(W.key); if (!r) return;
-      try { await DesignLink.call("ui.scrollTo", { receiptId: r.order.receiptId }); toast("Shown on the Design Station", "ok", 2200); }
-      catch (e) { toast(e.message, "bad", 5000); }
-    };
     byId("owPrev").onclick = () => step(-1);
     byId("owNext").onclick = () => step(1);
     // the customer's side of the order: its own tab beside the team's chat (charm-nest-mail.js)

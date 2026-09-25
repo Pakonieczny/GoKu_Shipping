@@ -18,13 +18,20 @@ const SERVER_TS = { __ts: true };
 const FieldValue = { serverTimestamp: () => SERVER_TS, increment: n => ({ __inc: n }), delete: () => ({ __del: true }) };
 let clock = 1727000000000;
 function applyValues(target, src) { for (const [k, v] of Object.entries(src)) { if (v && v.__inc != null) target[k] = (target[k] || 0) + v.__inc; else if (v && v.__del) delete target[k]; else if (v === SERVER_TS) { const t = ++clock; target[k] = { toMillis: () => t }; } else target[k] = v; } return target; }
+// Firestore refuses a document past 1 MiB or 40,000 index entries, and so does this store: a run whose record fills stops
+// here as it does online (a store that took anything let a record of 541 lines in progress pass, 76% full, 24 Sep)
+function withinLimits(key, doc) {
+  const bytes = Buffer.byteLength(JSON.stringify(doc)), entries = O.indexEntries(doc);
+  if (bytes > O.RUN_RECORD.bytes || entries > O.RUN_RECORD.entries) throw new Error(`INVALID_ARGUMENT: ${key} is ${bytes} bytes and ${entries} index entries, past what a document holds`);
+  return doc;
+}
 function docRef(coll, id) {
   const key = coll + '/' + id;
   return { id, path: key,
     async get() { const d = store.get(key); return { exists: !!d, id, ref: docRef(coll, id), data: () => (d ? JSON.parse(JSON.stringify(d, (k, v) => v && v.toMillis ? v.toMillis() : v)) : undefined) }; },
     collection(sub) { return query(coll + '/' + id + '/' + sub); },
-    async set(data, opts) { const cur = (opts && opts.merge && store.get(key)) || {}; store.set(key, applyValues({ ...cur }, JSON.parse(JSON.stringify(data, (k, v) => v === SERVER_TS ? '__TS__' : v), (k, v) => v === '__TS__' ? SERVER_TS : v))); },
-    async update(data) { const cur = store.get(key); if (!cur) throw new Error('NOT_FOUND: ' + key); store.set(key, applyValues({ ...cur }, data)); },
+    async set(data, opts) { const cur = (opts && opts.merge && store.get(key)) || {}; store.set(key, withinLimits(key, applyValues({ ...cur }, JSON.parse(JSON.stringify(data, (k, v) => v === SERVER_TS ? '__TS__' : v), (k, v) => v === '__TS__' ? SERVER_TS : v)))); },
+    async update(data) { const cur = store.get(key); if (!cur) throw new Error('NOT_FOUND: ' + key); store.set(key, withinLimits(key, applyValues({ ...cur }, data))); },
     async delete() { store.delete(key); } };
 }
 // a projection, as Firestore's select() and getAll's fieldMask return: only the fields named
@@ -81,6 +88,8 @@ const post = async body => { const r = await lib.handler({ httpMethod: 'POST', h
 const docs = prefix => [...store.keys()].filter(k => k.startsWith(prefix + '/'));
 const bytesOf = v => Buffer.byteLength(JSON.stringify(v));
 const runDoc = id => store.get('Charm_Nest_Runs/' + id);
+// the lines of a run's orders still in progress: beside its record (liveLines, one text a part), or in it (a record from before)
+const liveOf = rec => rec.liveLines ? Object.assign({}, ...rec.liveLines.ids.map(id => JSON.parse(store.get('Charm_Nest_Run_Live/' + id).json))) : (rec.lines || {});
 
 /* ── the page's run controller, as in tests/charm-nest/process-completion.cjs, with the page's own line record ── */
 const source = fs.readFileSync(path.join(root, 'charm-nest-bridge.js'), 'utf8');
@@ -193,14 +202,14 @@ function syncRow(row) {
   assert(perLine > 700 && perLine < 1300, `a line record is about 0.9 KB (${Math.round(perLine)} B)`);
   assert(bytesOf(everyLine) > O.RUN_RECORD.bytes, 'kept whole, these lines alone are past the 1 MiB a document holds: the record that used to stop the run');
   const saved = runDoc(runId), maxBytes = Math.max(...sizes), maxEntries = Math.max(...sizes2);
-  console.log(`2,000 lines: ${Math.round(bytesOf(everyLine) / 1024)} KB kept whole; the saved record peaked at ${Math.round(maxBytes / 1024)} KB and ${maxEntries} index entries (${[24, 49, 74, 99].map(u => Math.round(sizes[u] / 1024) + ' KB').join(' / ')} after updates 25, 50, 75, 100), ending with ${Object.keys(saved.lines).length} working lines`);
+  console.log(`2,000 lines: ${Math.round(bytesOf(everyLine) / 1024)} KB kept whole; the saved record peaked at ${Math.round(maxBytes / 1024)} KB and ${maxEntries} index entries (${[24, 49, 74, 99].map(u => Math.round(sizes[u] / 1024) + ' KB').join(' / ')} after updates 25, 50, 75, 100), ending with ${Object.keys(liveOf(saved)).length} working lines`);
   assert(maxBytes < 0.25 * O.RUN_RECORD.bytes, `the record stays well under the limit (${maxBytes} B)`);
   assert(maxEntries < 0.5 * O.RUN_RECORD.entries, `and under the index-entry limit (${maxEntries})`);
   assert(sizes[99] < 1.5 * sizes[49] && sizes[99] < 1.5 * sizes[24], `it follows the work in hand, not the run's age (${sizes[24]} / ${sizes[49]} / ${sizes[99]} B)`);
   assert(!main.st.logs.some(e => /full/.test(e.text)), 'nothing near the limit, nothing said');
   // what the record keeps: every line of every order still open, nothing of a closed one
   const open = [...station.values()].filter(o => !closedAtStation(o)), shut = [...station.values()].filter(closedAtStation);
-  assert.deepEqual(Object.keys(saved.lines).sort(), open.flatMap(o => o.lines.map(l => O.lineKey(o, l))).sort(), 'the record holds exactly the lines of the orders still open');
+  assert.deepEqual(Object.keys(liveOf(saved)).sort(), open.flatMap(o => o.lines.map(l => O.lineKey(o, l))).sort(), 'the record holds exactly the lines of the orders still open');
   assert.deepEqual([...saved.orders].sort(), open.map(o => o.receiptId).sort(), 'and exactly their orders, which a resume pulls again');
   assert(!saved.committed.length && !Object.keys(saved.holds).some(id => shut.some(o => o.receiptId === id)), 'committed ids and holds of closed orders leave with them');
   assert.equal(Object.keys(saved.sheets).length, O.RUN_RECORD.keepSheets, 'the newest sheet notes stay');
@@ -246,7 +255,7 @@ function syncRow(row) {
   assert(res.body.run.archiveTruncated && Object.keys(res.body.run.lines).length > 900, 'a whole run is answered with its newest megabyte of lines, and says so');
   read = partReads.slice(mark);
   assert(read.filter(x => x.fields.includes('json')).length < parts.length && read.reduce((n, x) => n + x.bytes, 0) < 1300000, `and reads that megabyte, not the whole archive (${read.reduce((n, x) => n + x.bytes, 0)} B)`);
-  assert(Object.keys(saved.lines).every(k => res.body.run.lines[k]), 'the working lines always among them');
+  assert(Object.keys(liveOf(saved)).every(k => res.body.run.lines[k]), 'the working lines always among them');
   res = await post({ op: 'history', q: done.receiptId });
   const hit = res.body.runs.find(x => x.runId === runId);
   assert(hit && hit.hitOrders.includes(done.receiptId) && hit.lines === 2000 && hit.sheets === 400, 'history finds an archived order by its number and counts every line and sheet');
@@ -343,18 +352,18 @@ function syncRow(row) {
   for (const row of main.st.rows) if (row.order === undone) row.state = 'written';
   await main.ctl.save(r);
   let rec = runDoc(runId);
-  assert(undone.lines.every(l => rec.lines[O.lineKey(undone, l)]?.state === 'written') && rec.orders.includes(undone.receiptId), 'an undone order is back in the record, which a resume reads');
+  assert(undone.lines.every(l => liveOf(rec)[O.lineKey(undone, l)]?.state === 'written') && rec.orders.includes(undone.receiptId), 'an undone order is back in the record, which a resume reads');
   res = await post({ op: 'runGet', runId, archived: true, orders: [undone.receiptId] });
   assert.equal(res.body.run.lines[O.lineKey(undone, undone.lines[0])].state, 'written', 'the record\'s own line wins over its archived copy');
   const before = docs('Charm_Nest_Run_Lines').length;
   for (const row of main.st.rows) if (row.order === undone) row.state = 'committed';
   await main.ctl.save(r);
   rec = runDoc(runId);
-  assert(!rec.lines[O.lineKey(undone, undone.lines[0])] && docs('Charm_Nest_Run_Lines').length === before, 'committed again as it was, it leaves the record with no new archive part');
+  assert(!liveOf(rec)[O.lineKey(undone, undone.lines[0])] && docs('Charm_Nest_Run_Lines').length === before, 'committed again as it was, it leaves the record with no new archive part');
   assert.equal(rec.lineArchive.lines, saved.lineArchive.lines, 'and the count is unchanged');
 
   /* ═══ 6 · resume on another browser, from the record alone ═══ */
-  const archivedCount = rec.lineArchive.lines, working = Object.keys(rec.lines).length, partsBefore = docs('Charm_Nest_Run_Lines').length;
+  const archivedCount = rec.lineArchive.lines, working = Object.keys(liveOf(rec)).length, partsBefore = docs('Charm_Nest_Run_Lines').length;
   const other = controllerFor();
   await other.ctl.resumeRun(runId); await settle(other.ctx);
   const rr = other.ctx.B.run;
@@ -366,7 +375,7 @@ function syncRow(row) {
   assert.equal(rr.lineArchive.base.lines, archivedCount, 'the archived lines are still counted');
   rec = runDoc(runId);
   assert.equal(rec.lineArchive.lines, archivedCount, 'and the record saved after the resume counts them once');
-  assert.equal(Object.keys(rec.lines).length, working);
+  assert.equal(Object.keys(liveOf(rec)).length, working);
   res = await post({ op: 'runList' });
   assert.equal(res.body.runs.find(x => x.runId === runId).lines, 2000, 'the run list still counts 2,000 lines');
   assert.equal(rr.status, 'processed', 'the resumed run comes to rest, its held orders still pending');
@@ -376,19 +385,66 @@ function syncRow(row) {
   assert.equal(rr.status, 'processed', 'unchanged work under an old whole-text signature is not processed again');
   other.st.rows[0].state = 'pulled'; other.ctl.poke(); assert.equal(rr.status, 'running', 'changed work is'); await settle(other.ctx);
 
-  /* ═══ 7 · the guard: a record that nears the limit is said once, in words ═══ */
+  /* ═══ 7 · a run that takes every open order at once: 1,500 lines in progress, none finished ═══
+     They were kept in the record at some sixty index entries a line: 541 of them filled 76% of it before a charm was
+     placed (Paul, 25 Sep), and about 700 stopped the run. They are kept beside it now, and nothing is said. */
   const big = controllerFor();
-  const bigRun = { runId: 'run-2026-09-21-heavy1', day: '2026-09-21', step: 'engrave', status: 'processed', mode: 'auto', lines: {}, sheets: {}, holds: {}, errors: [], orders: [] };
+  const bigRun = { runId: 'run-2026-09-21-heavy1', day: '2026-09-21', step: 'pool', status: 'running', mode: 'auto', lines: {}, sheets: {}, holds: {}, errors: [], orders: [] };
   big.ctx.B.run = bigRun;
-  for (let i = 0; i < 400; i++) { const o = newOrder(2, 200); for (const l of o.lines) big.st.rows.push({ key: O.lineKey(o, l), order: o, line: l, arrivedAt: o.arrivedAt, spec: { designSku: l.sku, material: 'silver', quantity: 1, engraveCandidate: true }, problems: [{ kind: 'needsMapping' }], state: 'held', reason: 'needs an option mapped', hold: 'needs an option mapped', wait: null, poolIds: [], engrave: null, material: 'silver' }); bigRun.orders.push(o.receiptId); }
+  for (let i = 0; i < 750; i++) { const o = newOrder(2, 200); for (const l of o.lines) big.st.rows.push({ key: O.lineKey(o, l), order: o, line: l, arrivedAt: o.arrivedAt, spec: { designSku: l.sku, material: 'silver', quantity: 1, engraveCandidate: true }, problems: i % 2 ? [{ kind: 'needsMapping' }] : [], state: i % 2 ? 'held' : 'pulled', reason: i % 2 ? 'needs an option mapped' : null, hold: i % 2 ? 'needs an option mapped' : null, wait: null, poolIds: [], engrave: null, material: 'silver' }); bigRun.orders.push(o.receiptId); }
+  const heavyLines = Object.fromEntries(big.st.rows.map(row => big.ctx.lineRecord(row)));
+  assert(O.indexEntries(heavyLines) > O.RUN_RECORD.entries, `kept in the record, these 1,500 lines alone are past the 40,000 index entries a document holds (${O.indexEntries(heavyLines)})`);
   await big.ctl.save(bigRun); await big.ctl.save(bigRun);
-  const said = big.st.logs.filter(e => e.kind === 'warn' && /% full/.test(e.text));
-  assert.equal(said.length, 1, 'said once: ' + big.st.logs.map(e => e.text).join(' | '));
-  assert.match(said[0].text, /online record of run run-2026-09-21-heavy1 is \d+% full \([\d,]+ KB of 1,024 KB; [\d,]+ of 40,000 index entries\), with 800 order lines still in progress/);
-  assert.match(said[0].text, /a full record cannot be saved and the run stops/);
-  assert.equal(big.st.toasts.filter(t => /% full/.test(t)).length, 1, 'and shown once');
-  assert.equal(serverWarnings.filter(t => /run-2026-09-21-heavy1/.test(t)).length, bytesOf(runDoc('run-2026-09-21-heavy1')) > 0.7 * O.RUN_RECORD.bytes ? 1 : 0, 'the function log says it once when the bytes are near the limit');
-  assert(!main.st.logs.concat(other.st.logs).some(e => /% full/.test(e.text)), 'a small record says nothing');
+  const heavy = runDoc(bigRun.runId), heavyParts = () => docs('Charm_Nest_Run_Live').filter(k => store.get(k).runId === bigRun.runId);
+  assert(!('lines' in heavy) && heavy.liveLines.lines === 1500 && heavy.liveLines.ids.length >= 2, 'the record keeps its 1,500 lines in progress beside it, in parts');
+  assert(O.indexEntries(heavy) < 0.1 * O.RUN_RECORD.entries && bytesOf(heavy) < 0.1 * O.RUN_RECORD.bytes, `and stays small (${O.indexEntries(heavy)} index entries, ${Math.round(bytesOf(heavy) / 1024)} KB)`);
+  assert.deepEqual(liveOf(heavy), JSON.parse(JSON.stringify(heavyLines)), 'every line is kept as the page sent it');
+  assert.equal(heavyParts().length, heavy.liveLines.ids.length, 'in the parts the record lists, and no others');
+  res = await post({ op: 'runGet', runId: bigRun.runId });
+  assert.deepEqual(res.body.run.lines, JSON.parse(JSON.stringify(heavyLines)), 'a resume reads every one of them back');
+  assert(!('liveLines' in res.body.run), 'with none of the server\'s bookkeeping');
+  res = await post({ op: 'runList', limit: 200 }); assert.equal(res.body.runs.find(x => x.runId === bigRun.runId).lines, 1500, 'the run list counts them');
+  // a save that changes one line writes the part that holds it, and the part it replaced goes
+  const was = new Set(heavy.liveLines.ids); big.st.rows[0].state = 'pooled'; big.st.rows[0].poolIds = ['p1'];
+  await big.ctl.save(bigRun);
+  const changed = runDoc(bigRun.runId);
+  assert.equal(changed.liveLines.ids.filter(id => !was.has(id)).length, 1, 'one changed line rewrites one part');
+  assert.equal(heavyParts().length, changed.liveLines.ids.length, 'and the part it replaced is gone');
+  assert.equal(liveOf(changed)[big.st.rows[0].key].state, 'pooled');
+  assert(!big.st.logs.some(e => /% full/.test(e.text)) && !big.st.toasts.some(t => /% full/.test(t)), 'nothing near a limit, nothing said');
+  assert(!serverWarnings.some(t => /heavy1/.test(t)), 'nor in the function log');
+  res = await post({ op: 'runPut', run: { runId: bigRun.runId, status: 'abandoned' }, merge: true });
+  assert.deepEqual(runDoc(bigRun.runId).liveLines.ids, changed.liveLines.ids, 'an abandon, a few fields merged, keeps the lines');
+  assert.equal(runDoc(bigRun.runId).status, 'abandoned');
+
+  /* the record of a run written before (541 lines in it, 76% full, as Paul's of 24 Sep): read as it was, and the next
+     save of the page moves its lines beside it */
+  const legacyId = 'run-2026-09-24-cuoxv1', legacyRows = big.st.rows.slice(2, 543), legacyLines = Object.fromEntries(legacyRows.map(row => big.ctx.lineRecord(row)));
+  const legacyOrders = [...new Set(legacyRows.map(row => row.order.receiptId))];
+  store.set('Charm_Nest_Runs/' + legacyId, { runId: legacyId, day: '2026-09-24', step: 'pool', status: 'running', mode: 'auto', lines: legacyLines, sheets: {}, holds: {}, errors: [], orders: legacyOrders, createdAt: 77 });
+  const legacyShare = O.indexEntries(runDoc(legacyId)) / O.RUN_RECORD.entries;
+  assert(legacyShare > 0.7 && legacyShare < 1, `that record is ${Math.round(100 * legacyShare)}% full of index entries`);
+  res = await post({ op: 'runGet', runId: legacyId }); assert.deepEqual(res.body.run.lines, JSON.parse(JSON.stringify(legacyLines)), 'read as it always was');
+  const leg = controllerFor({ rows: legacyRows }); leg.ctx.B.run = res.body.run;
+  await leg.ctl.save(leg.ctx.B.run);
+  const moved = runDoc(legacyId);
+  assert(!('lines' in moved) && moved.liveLines.lines === 541 && moved.createdAt === 77, 'the next save keeps its lines beside it, and its start');
+  assert(O.indexEntries(moved) < 0.05 * O.RUN_RECORD.entries, `and the record is small again (${O.indexEntries(moved)} index entries)`);
+  res = await post({ op: 'runGet', runId: legacyId }); assert.deepEqual(res.body.run.lines, JSON.parse(JSON.stringify(legacyLines)), 'and reads back the same');
+  assert(!leg.st.logs.some(e => /% full/.test(e.text)), 'and nothing is said');
+  // a line that grows as it is worked on (pool ids, engraving) never fills the record: 1,500 lines of three times the size
+  for (const row of big.st.rows) { row.poolIds = [row.key + '_1', row.key + '_2']; row.engrave = { needed: true, state: 'written', approved: false, text: 'FOREVER AND ALWAYS '.repeat(8) }; }
+  bigRun.status = 'running'; await big.ctl.save(bigRun);
+  const grown = runDoc(bigRun.runId);
+  assert(grown.liveLines.lines === 1500 && O.indexEntries(grown) < 0.1 * O.RUN_RECORD.entries, 'grown lines are kept beside the record too');
+  assert(heavyParts().every(k => bytesOf(store.get(k)) < O.RUN_RECORD.bytes), 'each part under what a document holds');
+  assert(!big.st.logs.some(e => /% full/.test(e.text)), 'and nothing is said');
+  // laser readiness decides a sheet's copies from the lines in progress, read from the parts
+  const liveRow = big.st.rows[4], livePool = liveRow.poolIds[0];
+  store.set('Charm_Nest_Sheets/sheet-live-1', { id: 'sheet-live-1', runId: bigRun.runId, day: '2026-09-21', metal: 'silver', status: 'complete', archived: false, poolIds: [livePool], orders: [liveRow.order.receiptId] });
+  res = await post({ op: 'laserStatus', sheetIds: ['sheet-live-1'] });
+  assert.deepEqual(res.body.sheets[0].engraving[livePool], Readiness.decisions([liveOf(grown)[liveRow.key]])[livePool], 'laser readiness reads a line in progress from beside the record');
+  assert.notEqual(res.body.sheets[0].engraving[livePool].state, 'unknown');
 
   /* ═══ 8 · an archive that cannot be written loses nothing ═══ */
   const flaky = controllerFor();
@@ -397,10 +453,10 @@ function syncRow(row) {
   for (let i = 0; i < 10; i++) { const o = newOrder(2, 300); advance(o, 330); for (const l of o.lines) { const row = { key: O.lineKey(o, l), order: o, line: l, arrivedAt: o.arrivedAt, spec: { designSku: l.sku, material: 'silver', quantity: 1, engraveCandidate: l.engraved }, problems: [], state: 'pulled', reason: null, hold: null, wait: null, poolIds: [], engrave: null, material: 'silver' }; syncRow(row); flaky.st.rows.push(row); } flakyRun.orders.push(o.receiptId); }
   flaky.st.failArchive = 1;
   await flaky.ctl.save(flakyRun);
-  assert.equal(Object.keys(runDoc(flakyRun.runId).lines).length, 20, 'every line stays in the record while the archive cannot be written');
+  assert.equal(Object.keys(liveOf(runDoc(flakyRun.runId))).length, 20, 'every line stays in the record while the archive cannot be written');
   assert.equal(flaky.st.logs.filter(e => /could not be moved out of the run record/.test(e.text)).length, 1, 'said once');
   await flaky.ctl.save(flakyRun);
-  assert.equal(Object.keys(runDoc(flakyRun.runId).lines).length, 0, 'the next save moves them');
+  assert.equal(Object.keys(liveOf(runDoc(flakyRun.runId))).length, 0, 'the next save moves them');
   assert.equal(runDoc(flakyRun.runId).lineArchive.lines, 20);
 
   /* ═══ 9 · the sandbox keeps its own archive; old records read as before; purge takes the archive too ═══ */
@@ -418,5 +474,5 @@ function syncRow(row) {
   res = await post({ op: 'purgeHistory', code: '975311', force: true });
   assert(!docs('Charm_Nest_Run_Lines').length && !docs('Sandbox_Charm_Nest_Run_Lines').length && !docs('Charm_Nest_Runs').length, 'a purge of history takes the line archive with the runs');
 
-  console.log('Run record size OK: 2,000 lines over 100 updates stay out of the record once their orders close, bounded by the work in hand; resume, run list, history, recalled sets, laser readiness, set completion, undo, sandbox, old records and a failed archive all still find every line; a record near the limit is said once');
+  console.log('Run record size OK: 2,000 lines over 100 updates stay out of the record once their orders close, bounded by the work in hand; 1,500 lines in progress at once are kept beside the record, which stays small; a 541-line record from before moves them out at its next save; resume, run list, history, recalled sets, laser readiness, set completion, undo, sandbox, old records and a failed archive all still find every line');
 })().catch(e => { console.error(e); process.exitCode = 1; });

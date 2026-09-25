@@ -47,7 +47,7 @@ const DECISIONS_VERSION = require("crypto").createHash("sha256").update(String(R
    bridge log) go to Sandbox_-prefixed collections; the master index, the charm library, maps and calibration stay
    shared and are only read. Set per request; a function instance handles one request at a time. ── */
 let PREFIX = "";
-const SANDBOXED = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Design_Bridge"]);
+const SANDBOXED = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Design_Bridge"]);
 const col = name => db.collection(SANDBOXED.has(name) ? PREFIX + name : name);
 const FV = admin.firestore.FieldValue;
 
@@ -189,11 +189,49 @@ async function archivedLines(runId, { orders = null, maxBytes = 1000000 } = {}) 
   for (let i = 0; i < newest.length; i += 100) for (const d of await db.getAll(...newest.slice(i, i + 100), { fieldMask: ["json", "at", "seq"] })) if (d.exists) parts.push({ id: d.id, ...d.data() });
   return { lines: mergeParts(parts), truncated: from > 0 };
 }
+/* A run's orders still in progress were kept in its record as fields, some sixty index entries a line, and one document
+   holds 40,000: a run that took every open order (541 lines, 24 Sep) was 76% full before it had placed a charm, and a
+   run fills and stops at about 700. They are now kept beside the record as JSON text (two index entries a part), in
+   parts of at most 900 KB named by their content (Charm_Nest_Run_Live), which the record lists (liveLines). op_runPut
+   writes a save's new parts, the record and the removal of the parts it replaced in one transaction. A record written
+   before holds its lines itself and is read as it always was. */
+const LIVE_PART_BYTES = 900000;
+function liveParts(runId, lines) {
+  const parts = []; let cur = {}, n = 0, size = 2;
+  // in key order, so a save that changes a few lines rewrites only the parts that hold them
+  for (const k of Object.keys(lines).sort()) {
+    if (lines[k] === undefined) continue;
+    const add = Buffer.byteLength(JSON.stringify(k)) + Buffer.byteLength(JSON.stringify(lines[k])) + 2;
+    if (n && size + add > LIVE_PART_BYTES) { parts.push(cur); cur = {}; n = 0; size = 2; }
+    cur[k] = lines[k]; n++; size += add;
+  }
+  if (n) parts.push(cur);
+  return parts.map((p, seq) => { const json = JSON.stringify(p); return { id: `${runId}~${require("crypto").createHash("sha256").update(json).digest("hex").slice(0, 40)}`, json, bytes: Buffer.byteLength(json), lines: Object.keys(p).length, seq }; });
+}
+/** A run's record with the lines of its orders still in progress in lines: its own (a record written before they moved
+    out), or its live parts'. A part is missing only when a newer save replaced it after this record was read: the newer
+    record is read then, with its parts. */
+async function withLiveLines(runId, run) {
+  for (let tries = 0; run && run.liveLines && Array.isArray(run.liveLines.ids) && isId(runId); tries++) {
+    const ids = run.liveLines.ids, docs = ids.length ? await db.getAll(...ids.map(x => col(RUN_LIVE).doc(x))) : [];
+    if (tries < 3 && docs.some(d => !d.exists)) { const s = await col(RUNS).doc(runId).get(); run = s.exists ? s.data() : null; continue; }
+    const lines = {};
+    for (const d of docs) if (d.exists) { try { Object.assign(lines, JSON.parse(d.data().json || "{}")); } catch (_) { /* unreadable: its lines are left out */ } }
+    return Object.assign({}, run, { lines });
+  }
+  return run;
+}
+/** withLiveLines for many runs, a few at a time: only a run with lines in progress reads anything. */
+async function eachWithLiveLines(runs) {
+  const want = runs.filter(r => r && r.liveLines && Array.isArray(r.liveLines.ids) && r.liveLines.ids.length && !r.lines);
+  for (let i = 0; i < want.length; i += 20) await Promise.all(want.slice(i, i + 20).map(async r => { r.lines = ((await withLiveLines(r.runId, r)) || {}).lines || {}; }));
+}
 /** The engraving decisions of a run's copies: its record's lines', and — for the copies asked for (poolIds) that those
     do not decide — the archive's, read from the parts holding those copies' lines, or from every part when the run has
     fewer parts than that takes queries. The record's lines are newer than any part and win; a later part wins over an
     earlier one. A part decided under another readiness policy (DECISIONS_VERSION) is decided again from its lines. */
 async function decisionsOfRun(runId, run, poolIds = null) {
+  if (run && run.liveLines && !run.lines) run = await withLiveLines(runId, run);
   const lines = (run && run.lines) || {}, live = Readiness.decisions(Object.values(lines));
   if (!run || !run.lineArchive || !isId(runId)) return live;
   let keys = null;
@@ -581,7 +619,7 @@ async function op_getAgent(b) {
 /* ═══ Charm Sorter ⇄ Design Station bridge — master index, pool, backs, sets, runs, maps (design §12, §13) ═══
    Every query below is a single-field equality or range, like the rest of this file: no composite indexes. */
 const Master = require("./_charmNestMaster");
-const POOL = "Charm_Pool", BACK = "Charm_Pool_Back", SETS = "Charm_Nest_Sets", COUNTERS = "Charm_Nest_Counters", RUNS = "Charm_Nest_Runs", RUN_LINES = "Charm_Nest_Run_Lines", RELEASE = "Charm_Nest_Release", BRIDGE = "Design_Bridge", ALIASES = "Charm_Sku_Aliases", NODESIGN = "Charm_Sku_NoDesign", OPTMAP = "Charm_Option_Map";
+const POOL = "Charm_Pool", BACK = "Charm_Pool_Back", SETS = "Charm_Nest_Sets", COUNTERS = "Charm_Nest_Counters", RUNS = "Charm_Nest_Runs", RUN_LINES = "Charm_Nest_Run_Lines", RUN_LIVE = "Charm_Nest_Run_Live", RELEASE = "Charm_Nest_Release", BRIDGE = "Design_Bridge", ALIASES = "Charm_Sku_Aliases", NODESIGN = "Charm_Sku_NoDesign", OPTMAP = "Charm_Option_Map";
 const isDay = d => /^\d{4}-\d{2}-\d{2}$/.test(String(d || ""));
 const isPoolId = s => /^\d{5,20}_\d{5,20}_\d{1,3}$/.test(String(s || ""));
 const tokenUrl = async (path) => { if (!path) return null; try { const bucket = admin.storage().bucket(); const [meta] = await bucket.file(path).getMetadata(); let t = meta.metadata && meta.metadata.firebaseStorageDownloadTokens; if (!t) return null; t = String(t).split(",")[0]; return "https://firebasestorage.googleapis.com/v0/b/" + encodeURIComponent(bucket.name) + "/o/" + encodeURIComponent(path) + "?alt=media&token=" + encodeURIComponent(t); } catch (_) { return null; } };
@@ -805,7 +843,7 @@ async function op_purgeHistory(b) {
       if (live.length) return { error: `a run is still open (${live.map(r => r.runId).join(", ")}) — stop or abandon it first`, status: 409 };
     }
   }
-  const names = [RUNS, RUN_LINES, SHEETS, SETS, POOL, BACK, COUNTERS, RELEASE, BRIDGE];
+  const names = [RUNS, RUN_LINES, RUN_LIVE, SHEETS, SETS, POOL, BACK, COUNTERS, RELEASE, BRIDGE];
   const SUBS = { [BRIDGE]: ["log"] };
   const wipe = async q => { let n = 0; for (;;) { const s = await q.limit(300).get(); if (s.empty) break; const batch = db.batch(); s.docs.forEach(d => batch.delete(d.ref)); await batch.commit(); n += s.size; if (s.size < 300) break; } return n; };
   const docs = {};
@@ -1027,16 +1065,32 @@ async function op_arrivalRecord(b) {
   return {ok:true,firstSeen,count24:day.data().count,count1:hour.data().count,at:now};
 }
 // ── runs ──
-// The page keeps a run's record small (RunCtl.save); one that still nears Firestore's 1 MiB document limit is said once
-// per function instance in the log, in words, before the day it can no longer be saved.
-const RUN_DOC_BYTES = 1048576, runSizeWarned = new Set();
+// The page keeps a run's record small (RunCtl.save): the lines of the orders it is done with go to its line archive, and
+// those still in progress are kept beside it (liveLines). A record that still nears a document's limits (1 MiB, 40,000
+// index entries) is said once per function instance in the log, in words, before the day it can no longer be saved.
+const RUN_DOC_BYTES = 1048576, RUN_DOC_ENTRIES = 40000, runSizeWarned = new Set();
 async function op_runPut(b) {
   const r = b.run || {}; const id = str(r.runId, 80); if (!isId(id)) return { error: "bad run id" };
-  const bytes = Buffer.byteLength(JSON.stringify(r));
-  if (bytes > 0.7 * RUN_DOC_BYTES && !runSizeWarned.has(PREFIX + id)) { runSizeWarned.add(PREFIX + id); console.warn(`[charmNestLibrary] run ${id}${PREFIX ? " (sandbox)" : ""}: its record is ${Math.round(bytes / 1024)} KB, ${Math.round(100 * bytes / RUN_DOC_BYTES)}% of the 1,024 KB one Firestore document can hold, with ${Object.keys(r.lines || {}).length} lines in it. A full record cannot be saved, and the run stops.`); }
-  const doc = Object.assign({}, r, { runId: id, updatedAt: FV.serverTimestamp() });
-  const ref = col(RUNS).doc(id); const ex = await ref.get(); doc.createdAt = ex.exists ? (ex.data().createdAt || FV.serverTimestamp()) : FV.serverTimestamp();
-  await ref.set(doc, { merge: !!b.merge });
+  const doc = Object.assign({}, r, { runId: id, updatedAt: FV.serverTimestamp() }); delete doc.liveLines;
+  const parts = r.lines && typeof r.lines === "object" && !Array.isArray(r.lines) ? liveParts(id, r.lines) : null;
+  if (parts && parts.some(p => p.bytes > 1000000)) return { error: "an order line of this run is too large to save" };
+  if (parts) { delete doc.lines; doc.liveLines = { ids: parts.map(p => p.id), lines: parts.reduce((n, p) => n + p.lines, 0), bytes: parts.reduce((n, p) => n + p.bytes, 0) }; }
+  const bytes = Buffer.byteLength(JSON.stringify(doc)), entries = OrderRules.indexEntries(doc);
+  if (Math.max(bytes / RUN_DOC_BYTES, entries / RUN_DOC_ENTRIES) > 0.7 && !runSizeWarned.has(PREFIX + id)) { runSizeWarned.add(PREFIX + id); console.warn(`[charmNestLibrary] run ${id}${PREFIX ? " (sandbox)" : ""}: its record is ${Math.round(bytes / 1024)} KB of the 1,024 KB and ${entries} of the 40,000 index entries one Firestore document can hold. A full record cannot be saved, and the run stops.`); }
+  const ref = col(RUNS).doc(id);
+  await db.runTransaction(async tx => {
+    const ex = await tx.get(ref), old = ex.exists ? ex.data() : null, put = Object.assign({}, doc);
+    put.createdAt = old ? (old.createdAt || FV.serverTimestamp()) : FV.serverTimestamp();
+    const had = old && old.liveLines && Array.isArray(old.liveLines.ids) ? old.liveLines.ids : [];
+    if (parts) {
+      // a part is named by its content: one the record already lists is there as it is
+      const keep = new Set(put.liveLines.ids), have = new Set(had);
+      for (const p of parts) if (!have.has(p.id)) tx.set(col(RUN_LIVE).doc(p.id), { runId: id, json: p.json, bytes: p.bytes, lines: p.lines, seq: p.seq, createdAt: FV.serverTimestamp() });
+      for (const x of had) if (!keep.has(x)) tx.delete(col(RUN_LIVE).doc(x));
+      if (b.merge) put.lines = FV.delete();
+    } else if (!b.merge && had.length) put.liveLines = old.liveLines;   // a whole record sent without its lines keeps those it had
+    tx.set(ref, put, { merge: !!b.merge });
+  });
   return { ok: true, runId: id };
 }
 /* ── a run's line archive: the lines of the orders a run is done with, sent by the page before it leaves them out of the
@@ -1068,7 +1122,9 @@ async function op_runArchive(b) {
 async function op_runGet(b) {
   const id = str(b.runId, 80); if (!isId(id)) return { error: "bad run id" };
   const s = await col(RUNS).doc(id).get(); if (!s.exists) return { run: null };
-  const d = s.data(); d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt);
+  // the lines of the orders still in progress, kept beside the record, come back in it as they always did
+  const d = await withLiveLines(id, s.data()); if (!d) return { run: null };
+  delete d.liveLines; d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt);
   // Asked for, the lines of the orders the run is done with come back from its line archive under the record's own: those
   // of the orders named, or the newest megabyte of them, about as many as a record held before it filled. A resume never
   // asks: it takes the orders still in progress, which are the record's.
@@ -1082,7 +1138,7 @@ async function op_runGet(b) {
 async function op_runList(b) {
   const snap = await col(RUNS).orderBy("updatedAt", "desc").limit(Math.min(200, num(b.limit) || 50)).get();
   // counts include what the record left out for its line archive
-  let rows = snap.docs.map(d => { const r = d.data(), out = r.lineArchive || {}; return { runId: r.runId, setId: r.setId || null, day: r.day, step: r.step, status: r.status, mode: r.mode || null, lines: (r.lines ? Object.keys(r.lines).length : 0) + num(out.lines), holds: (r.holds ? Object.keys(r.holds).length : 0) + num(out.held), errors: (r.errors || []).length, updatedAt: ms(r.updatedAt), createdAt: ms(r.createdAt), stoppedBy: r.stoppedBy || null }; });
+  let rows = snap.docs.map(d => { const r = d.data(), out = r.lineArchive || {}; return { runId: r.runId, setId: r.setId || null, day: r.day, step: r.step, status: r.status, mode: r.mode || null, lines: (r.lines ? Object.keys(r.lines).length : num((r.liveLines || {}).lines)) + num(out.lines), holds: (r.holds ? Object.keys(r.holds).length : 0) + num(out.held), errors: (r.errors || []).length, updatedAt: ms(r.updatedAt), createdAt: ms(r.createdAt), stoppedBy: r.stoppedBy || null }; });
   if (b.status) rows = rows.filter(r => r.status === b.status);
   return { runs: rows };
 }
@@ -1100,7 +1156,7 @@ async function op_runList(b) {
 const HISTORY_CAP = { sets: 300, sheets: 600, runs: 300, parts: 3000 }, HISTORY_PART_BYTES = 16000000;
 const HISTORY_SET = ["seq", "day", "runId", "status", "updatedAt", "materials", "orders"];
 const HISTORY_SHEET = ["id", "setId", "setSeq", "runId", "day", "metal", "metalLabel", "status", "orders", "sheetIndex", "page", "updatedAt", "archived", "folder", "fileBase", "saving", "draft", "releaseFull", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "outputs", "names", "poolIds", "backPool", "solidIncluded", "sources", "stock", "cardStartedAt", "createdAt"];
-const HISTORY_RUN = ["runId", "setId", "seq", "day", "status", "step", "sheets", "lineArchive", "errors", "stoppedBy", "orders", "createdAt", "updatedAt"];
+const HISTORY_RUN = ["runId", "setId", "seq", "day", "status", "step", "sheets", "lineArchive", "liveLines", "errors", "stoppedBy", "orders", "createdAt", "updatedAt"];
 const dayOf = x => (isDay(x && x.day) ? x.day : "");
 const dayShift = (day, n) => { const d = new Date(day + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 /** Newest first by day: a range (from, to inclusive) or one day (eq); records without a day are in none. */
@@ -1131,7 +1187,7 @@ function historyRows(q, sets, sheets, runs) {
     g.orderIds.push(...(x.orders || [])); g.updatedAt = Math.max(g.updatedAt || 0, ms(x.updatedAt) || 0); if (x.exact) g.exact = true;
   }
   const hits = (r, k) => [...new Set(Object.values(r.lines || {}).map(l => String((l && l[k]) || "")))].filter(x => q && x.toLowerCase().includes(q));
-  const runRows = [...runs.values()].map(r => ({ runId: r.runId, setId: r.setId || null, seq: r.seq || null, day: r.day, status: r.status, step: r.step, lines: Object.keys(r.recordLines || r.lines || {}).length + num((r.lineArchive || {}).lines), orders: new Set(Object.values(r.lines || {}).map(l => l && l.orderId)).size, sheets: Object.keys(r.sheets || {}).length + num((r.lineArchive || {}).sheets), updatedAt: ms(r.updatedAt), createdAt: ms(r.createdAt), stoppedBy: r.stoppedBy || null, hitOrders: hits(r, "orderId"), hitSkus: hits(r, "sku"), exact: !!r.exact }));
+  const runRows = [...runs.values()].map(r => ({ runId: r.runId, setId: r.setId || null, seq: r.seq || null, day: r.day, status: r.status, step: r.step, lines: (r.recordLines || r.lines ? Object.keys(r.recordLines || r.lines).length : num((r.liveLines || {}).lines)) + num((r.lineArchive || {}).lines), orders: new Set(Object.values(r.lines || {}).map(l => l && l.orderId)).size, sheets: Object.keys(r.sheets || {}).length + num((r.lineArchive || {}).sheets), updatedAt: ms(r.updatedAt), createdAt: ms(r.createdAt), stoppedBy: r.stoppedBy || null, hitOrders: hits(r, "orderId"), hitSkus: hits(r, "sku"), exact: !!r.exact }));
   const named = new Set([...groups.values()].map(g => g.runId).filter(Boolean));
   for (const r of runRows) if (!named.has(r.runId)) groups.set("run:" + r.runId, { key: "run:" + r.runId, setId: r.setId, seq: r.seq, runId: r.runId, day: r.day, status: r.status, sheets: [], materials: [], orderIds: [], orders: r.orders, updatedAt: r.updatedAt, exact: r.exact });
   const rows = [...groups.values()].map(g => {
@@ -1192,9 +1248,12 @@ async function op_history(b) {
   if (!q) {
     // a listing counts the lines of the runs a person can resume or that wrote no sheet: their own records' lines
     const open = [...runs.values()].filter(r => !["complete", "abandoned", "superseded"].includes(r.status) || !named.has(r.runId)).map(r => r.runId).filter(isId);
-    for (const d of await whereIn(RUNS, "runId", open, ["runId", "lines"], HISTORY_CAP.runs)) { const r = runs.get(d.data().runId || d.id); if (r) r.lines = d.data().lines || {}; }
+    for (const d of await whereIn(RUNS, "runId", open, ["runId", "lines"], HISTORY_CAP.runs)) { const r = runs.get(d.data().runId || d.id); if (r && d.data().lines) r.lines = d.data().lines; }
+    await eachWithLiveLines(open.map(id => runs.get(id)));
   } else {
-    // a search reads the line archive of the runs in its answer, newest part first, up to HISTORY_PART_BYTES
+    // a search reads the lines in progress of the runs in its answer, and their line archive, newest part first, up to
+    // HISTORY_PART_BYTES
+    await eachWithLiveLines([...runs.values()]);
     const archived = [...runs.values()].filter(r => r.lineArchive && num(r.lineArchive.parts) > 0).map(r => r.runId).filter(isId), listed = [];
     for (const d of await whereIn(RUN_LINES, "runId", archived, ["runId", "bytes", "at", "seq"], HISTORY_CAP.parts)) listed.push({ id: d.id, ...d.data() });
     if (listed.length >= HISTORY_CAP.parts) truncated.lineParts = true;
