@@ -125,6 +125,7 @@ html[data-rail=sm] .brand .tag{display:none}
 .moreMenu .moreList button{display:flex;align-items:center;gap:6px;justify-content:flex-start;border:0;background:transparent;border-radius:8px;padding:8px 11px;font:700 12.5px var(--sans);color:var(--ink);cursor:pointer;white-space:nowrap}
 .moreMenu .moreList button:hover{background:var(--paper2)}
 .moreMenu .moreList button.on{background:var(--velvet);color:#fff}
+html:not(.sandbox) .moreList .sandboxOnly{display:none}
 .btn{border:1px solid var(--ink);background:var(--ink);color:#fff;border-radius:9px;padding:8px 13px;font-weight:650;transition:opacity .15s,transform .08s;white-space:nowrap}
 .btn:hover{opacity:.9}.btn:active{transform:translateY(1px)}
 .btn:disabled{opacity:.45;cursor:default;transform:none}
@@ -198,6 +199,7 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .shPreviewWrap .dropHint{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--ink45);font-size:12.5px;text-align:center;padding:20px;pointer-events:none}
 .shPreviewWrap .dropHint b{font:20px var(--serif);color:var(--ink70);font-weight:400}
 .shPreviewWrap .dropHint .k{font-size:11px}
+.shPreviewWrap .dropHint>span{text-wrap:balance}
 .shPreviewWrap .shOverlay{position:absolute;left:8px;bottom:6px;display:flex;gap:5px;flex-wrap:wrap;pointer-events:none}
 .shPreviewWrap .shOverlay .pill{box-shadow:0 1px 3px rgba(0,0,0,.08);font-size:10.5px;padding:3px 8px}
 @media (max-width:1300px){.shPreviewWrap .hint{display:none}}
@@ -237,7 +239,8 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .shRejects .btn{margin-left:auto;flex:0 0 auto}
 .shRejects .thumbs{display:flex;gap:4px}
 .shRejects img{width:26px;height:26px;background:#fff;border-radius:4px;object-fit:contain;border:1px solid #e3c8bf}
-.shQueue{display:flex;gap:4px;padding:4px 14px 0;margin-top:4px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}
+/* inset by margin, not padding: a scroller clips at its padding edge, so padded tiles ran on to the card's own edge */
+.shQueue{display:flex;gap:4px;padding:4px 0 0;margin:4px 14px 0;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin}
 .shQueue img{flex:0 0 auto}
 .shQueue img{width:30px;height:30px;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:6px;cursor:pointer;transition:transform .1s}
 .shQueue img:hover{transform:scale(1.35);z-index:2;box-shadow:var(--sh);position:relative}
@@ -1401,6 +1404,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .topbar .modeSeg button{padding:8px 10px;border-radius:6px;font-size:12px;gap:5px}
 .topbar .modeSeg button .cnt{margin-left:0;font-size:10px;padding:1px 4px}
 .topbar .modeSeg .full{display:none}.topbar .modeSeg .tight{display:inline}
+@container workspace (max-width:1100px){.topbar .modeSeg button{padding-inline:8px}}
 .topTools{display:flex;align-items:center;gap:6px;flex:0 0 auto}
 .topbar .runMode{padding:7px 9px;border-color:transparent;font-size:11.5px;border-radius:6px}
 .topbar .sandboxPill{font:700 9px var(--mono);padding:4px 6px;letter-spacing:0;border-radius:4px;white-space:nowrap}

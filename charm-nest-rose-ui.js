@@ -333,9 +333,11 @@
     RoseStock.paint(ctx,sh,k,'lines');ctx.strokeStyle='#c08578';ctx.lineWidth=1;ctx.strokeRect(0,0,s.wPt*k,s.hPt*k);
     ctx.setTransform(1,0,0,1,0,0);
   }
-  // A visible entry beside the sandbox pill, plus a settings entry. No auto-run.
-  const pill=document.getElementById('sandboxPill');
-  if(pill){const button=document.createElement('button');button.className='btn ghost xs';button.id='roseDemoLaunch';button.textContent='Rose Gold rehearsal';button.onclick=open;pill.after(button);}
+  /* An entry in the Workspace menu, plus a settings entry. No auto-run. It sat beside the sandbox pill, where it
+     pushed Review and Library behind the tab arrow on a laptop screen. */
+  const menu=document.querySelector('#moreMenu .moreList'),pill=document.getElementById('sandboxPill');
+  if(menu){const button=document.createElement('button');button.type='button';button.id='roseDemoLaunch';button.className='sandboxOnly';button.innerHTML='Rose Gold rehearsal<span class="menuHint">sandbox</span>';button.onclick=()=>{const more=document.getElementById('moreMenu');if(more)more.open=false;open();};(menu.querySelector('[data-mode="master"]')||menu.firstElementChild).after(button);}
+  else if(pill){const button=document.createElement('button');button.className='btn ghost xs';button.id='roseDemoLaunch';button.textContent='Rose Gold rehearsal';button.onclick=open;pill.after(button);}
   const reset=document.getElementById('stSandboxReset');
   if(reset){const button=document.createElement('button');button.className='btn ghost sm';button.type='button';button.textContent='Rose Gold rehearsal';button.onclick=()=>{C.closeDlg(document.getElementById('dlgSettings'));open();};reset.after(button);}
   window.RoseRehearsal={open};
