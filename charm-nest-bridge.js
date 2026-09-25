@@ -2840,16 +2840,18 @@ const Engrave = window.Engrave = (() => {
   window.addEventListener("online", () => { resumeBacks(true); if (F_.emojiError) loadFonts(true).catch(() => {}); });
 
   /* ── 7.6 · back files, one per piece, only after approval ── */
-  function renderBack(job, px, { grid = false, hatch = true, editable = false } = {}) {
+  function renderBack(job, px, { grid = false, hatch = true, editable = false, include = null } = {}) {
     const view = job.view, mask = job.mask, fit = job.fit; const cv = document.createElement("canvas"); cv._editable = editable;
     const handles = view.members.reduce((a, s) => [Math.min(a[0], s.bbox[0]), Math.min(a[1], s.bbox[1]), Math.max(a[2], s.bbox[2]), Math.max(a[3], s.bbox[3])], [Infinity, Infinity, -Infinity, -Infinity]);
     /* px is the long side, framed as before on the members' bounds with 3 mm around them (the pictures written with a
        sheet keep their framing), or the editor's [width, height] box. That one frames the outline as drawn, and the
        text's box and turning handle so they can be reached, with 1 mm around them: the 3 mm of empty grid on every side
-       took a quarter of the preview (Paul, 25 Sep: "almost 0 margins"). */
+       took a quarter of the preview (Paul, 25 Sep: "almost 0 margins"). `include` is the frame the card had before, so
+       a turn that takes the handle past the edge widens the frame once and it never shrinks back while the card is open */
     const box = Array.isArray(px);
     let bb = handles;
-    if (box) { bb = drawnBounds(view.members) || handles; const r = editable && boxReach(fit); if (r) bb = [Math.min(bb[0], r[0]), Math.min(bb[1], r[1]), Math.max(bb[2], r[2]), Math.max(bb[3], r[3])]; }
+    const join = (a, b) => b ? [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])] : a;
+    if (box) bb = join(join(drawnBounds(view.members) || handles, editable && boxReach(fit)), include);
     const pad = (box ? 1 : 3) * PT; const w = bb[2] - bb[0] + 2 * pad, h = bb[3] - bb[1] + 2 * pad; const k = box ? Math.min(px[0] / w, px[1] / h) : px / Math.max(w, h);
     cv.width = Math.round(w * k); cv.height = Math.round(h * k); cv._sizePt = {w,h}; const ctx = cv.getContext("2d");
     ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
@@ -2909,6 +2911,9 @@ const Engrave = window.Engrave = (() => {
         ctx.beginPath(); ctx.arc(hp[0], hp[1], 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
         ctx.restore();
         cv._box = { box, corners: pts, rotate: hp, centrePx: tx(centre[0], centre[1]) };
+        // framed with the box where it was drawn first: a move or a turn that takes a corner or the handle past the edge
+        // frames the preview again (the editor's canvas sets _reframe; never while a hand is still dragging)
+        if (!prov && cv._reframe && [...pts, hp].some(p => p[0] < 0 || p[1] < 0 || p[0] > cv.width || p[1] > cv.height)) cv._reframe();
       }
     };
     cv._map = { bb, pad, k, tx, base, outline, inv: (px, py) => [bb[0] - pad + px / k, bb[3] + pad - py / k] };
@@ -3561,7 +3566,7 @@ const Engrave = window.Engrave = (() => {
     // the back preview is drawn to the box it is actually given, and redrawn when that box changes: no fixed number,
     // nothing cut off on a short laptop screen, nothing left blurry after the window is resized
     const backHost = card.querySelector(".backHost");
-    let mounted = [0, 0], raf = 0;
+    let mounted = [0, 0], raf = 0, framed = null;
     if (wordsJob) { /* no back to draw */ }
     const wire = bc => {
       let drag = null, flowFrame = 0;
@@ -3637,7 +3642,8 @@ const Engrave = window.Engrave = (() => {
       const px = [side(r.width || 320), side(stacked ? (window.innerHeight || 700) * 0.55 : r.height || 320)];
       if (Math.abs(px[0] - mounted[0]) < 12 && Math.abs(px[1] - mounted[1]) < 12) return;
       mounted = px; backHost.textContent = "";
-      const bc = renderBack(job, px, { grid: true, editable: true }); bc.title = "drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys nudge 0.25 mm, with shift they turn 1° · cut-outs and holes stay clear"; backHost.appendChild(bc); wire(bc);
+      const bc = renderBack(job, px, { grid: true, editable: true, include: framed }); framed = bc._map.bb; bc.title = "drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys nudge 0.25 mm, with shift they turn 1° · cut-outs and holes stay clear"; backHost.appendChild(bc); wire(bc);
+      bc._reframe = () => { if (raf || disposed || bc.classList.contains("drag")) return; mounted = [0, 0]; raf = requestAnimationFrame(() => { raf = 0; mountBack(); }); };
       } catch (error) {
         card._previewFailed = true;
         backHost.textContent = "This back preview could not be drawn. Refit the words to retry.";
