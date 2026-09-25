@@ -109,6 +109,24 @@ async function op_putShapeGuidance(b) {
 const isHash = h => /^[0-9a-f]{8,64}$/i.test(String(h || ""));
 const isId = s => /^[\w\-]{4,80}$/.test(String(s || ""));
 const ms = v => (v && v.toMillis ? v.toMillis() : (typeof v === "number" ? v : null));
+/* A function's answer is sent whole and may be at most 6 MB, and a sync function has seconds to give it. A list that grows
+   with the shop (a year of sheets, a set list with its sheets, the SKU index, the learned maps) used to be read and sent
+   whole, or cut at a count with the rest dropped without a word. Such a list now goes in parts: a part holds what fits in
+   ANSWER_BYTES and was read within ANSWER_MS of the call (always at least one item, so every part moves the list on);
+   `next` says where the rest starts, the page sends it back as `cursor` until there is none, and `truncated` says the
+   answer was cut short. */
+const ANSWER_BYTES = 4000000, ANSWER_MS = 5000;
+const bytesOf = v => Buffer.byteLength(JSON.stringify(v));
+/** What one part of an answer may still take: fits(item) counts the item in, or says it is for the next part; late()
+    says the part has had its time (never before it holds an item). */
+function answerBudget(began = Date.now()) {
+  let used = 0, items = 0;
+  return {
+    fits(item) { const n = bytesOf(item); if (items && used + n > ANSWER_BYTES) return false; used += n; items++; return true; },
+    late: () => items > 0 && Date.now() - began > ANSWER_MS
+  };
+}
+const docOrder = () => admin.firestore.FieldPath.documentId();
 
 function slim(d) {
   return {
@@ -124,6 +142,36 @@ function slim(d) {
     setId: d.setId || null, setSeq: num(d.setSeq) || null, sheetIndex: num(d.sheetIndex) || null, orders: (d.orders || []).slice(0, 500), backCount: (d.backPool || []).length, label: d.label ? { files: (d.label.files || []).map(f => ({ path: f.path, url: f.url, payload:f.payload || null, orders:f.orders || [], part:f.part || 1 })) } : null,
     cardStartedAt: ms(d.cardStartedAt) || ms(d.createdAt), updatedAt: ms(d.updatedAt), createdAt: ms(d.createdAt)
   };
+}
+/* The fields of a sheet record that its list entry (slim) and its laser readiness (Readiness.sheet) read, and the lists
+   filter on. A list reads only these: the rest of a record (its charms with their outlines, its placements) is most of
+   its up to 900 KB, and a list of 500 sheets used to read all of it to send none of it. */
+const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "cardStartedAt", "createdAt", "updatedAt"];
+/** Readiness counts a record's placements where it has no placedCount (Readiness.sheet): read for those alone. */
+async function withPlacements(rows) {
+  const want = rows.filter(([, d]) => !(+d.placedCount)), byId = new Map(want);
+  for (let i = 0; i < want.length; i += 100) for (const s of await db.getAll(...want.slice(i, i + 100).map(([id]) => col(SHEETS).doc(id)), { fieldMask: ["placements"] })) { const p = s.exists && s.data().placements; if (p && byId.has(s.id)) byId.get(s.id).placements = p; }
+}
+/** The list entries (slim, laser readiness and all) of sheets, in the order given, a hundred at a time while the answer
+    has room and time: a row is [id, its record read with SLIM_SHEET], or [id] for one read here. A sheet deleted or
+    archived since it was listed is left out. Returns { sheets, rest }, rest being the ids left for the next part. */
+async function sheetEntries(rows, budget) {
+  const sheets = [];
+  for (let i = 0; i < rows.length; i += 100) {
+    if (budget.late()) return { sheets, rest: rows.slice(i).map(r => r[0]) };
+    let chunk = rows.slice(i, i + 100);
+    const unread = chunk.filter(r => r.length === 1);
+    if (unread.length) {
+      const read = new Map((await db.getAll(...unread.map(r => col(SHEETS).doc(r[0])), { fieldMask: SLIM_SHEET })).filter(s => s.exists).map(s => [s.id, s.data()]));
+      chunk = chunk.map(r => (r.length === 1 ? [r[0], read.get(r[0])] : r)).filter(r => r[1] && !r[1].archived);
+    }
+    await withPlacements(chunk);
+    const all = (await readinessRecords(chunk.map(r => r[1]))).map(slim);
+    let n = 0; while (n < all.length && budget.fits(all[n])) n++;
+    sheets.push(...all.slice(0, n));
+    if (n < all.length) return { sheets, rest: chunk.slice(n).map(r => r[0]).concat(rows.slice(i + 100).map(r => r[0])) };
+  }
+  return { sheets, rest: [] };
 }
 
 // One run read per batch supplies the exact per-copy engraving decisions.
@@ -390,18 +438,25 @@ async function op_putSheet(b) {
   });
   return refused || { ok: true, id: s.id };
 }
+/* The newest sheets, or a run's or a set's, in parts (ANSWER_BYTES): the first part reads the records the list is made of
+   (their SLIM_SHEET fields) and sends as many as fit; `next` names the rest in order, and a later part reads those by id. */
 async function op_listSheets(b) {
-  const limit = Math.min(500, Math.max(1, num(b.limit) || 300));
-  let q = b.runId ? col(SHEETS).where("runId", "==", b.runId) : b.setId ? col(SHEETS).where("setId", "==", b.setId) : col(SHEETS).orderBy("day", "desc");
-  if (b.from && /^\d{4}-\d{2}-\d{2}$/.test(b.from)) q = q.where("day", ">=", b.from);
-  if (b.to && /^\d{4}-\d{2}-\d{2}$/.test(b.to)) q = q.where("day", "<=", b.to);
-  const snap = await q.limit(limit).get();
-  let rows = snap.docs.map(d => d.data()).filter(d => !d.archived);
-  if (b.metal && /^(gold|silver|rose|gold10k|gold14k)$/.test(b.metal)) rows = rows.filter(d => d.metal === b.metal);
-  if (b.setId) rows = rows.filter(d => d.setId === b.setId);
-  if (b.runId) rows = rows.filter(d => d.runId === b.runId);
-  rows.sort((x, y) => (ms(y.updatedAt) || 0) - (ms(x.updatedAt) || 0));
-  return { sheets: (await readinessRecords(rows)).map(slim) };
+  let rows;
+  if (b.cursor && Array.isArray(b.cursor.sheets)) rows = b.cursor.sheets.filter(isId).slice(0, 500).map(id => [id]);
+  else {
+    const limit = Math.min(500, Math.max(1, num(b.limit) || 300));
+    let q = b.runId ? col(SHEETS).where("runId", "==", b.runId) : b.setId ? col(SHEETS).where("setId", "==", b.setId) : col(SHEETS).orderBy("day", "desc");
+    if (b.from && /^\d{4}-\d{2}-\d{2}$/.test(b.from)) q = q.where("day", ">=", b.from);
+    if (b.to && /^\d{4}-\d{2}-\d{2}$/.test(b.to)) q = q.where("day", "<=", b.to);
+    const snap = await q.limit(limit).select(...SLIM_SHEET).get();
+    rows = snap.docs.map(d => [d.id, d.data()]).filter(([, d]) => !d.archived);
+    if (b.metal && /^(gold|silver|rose|gold10k|gold14k)$/.test(b.metal)) rows = rows.filter(([, d]) => d.metal === b.metal);
+    if (b.setId) rows = rows.filter(([, d]) => d.setId === b.setId);
+    if (b.runId) rows = rows.filter(([, d]) => d.runId === b.runId);
+    rows.sort(([, x], [, y]) => (ms(y.updatedAt) || 0) - (ms(x.updatedAt) || 0));
+  }
+  const { sheets, rest } = await sheetEntries(rows, answerBudget());
+  return { sheets, next: rest.length ? { sheets: rest } : null, truncated: rest.length > 0 };
 }
 async function op_getSheet(b) {
   if (!isId(b.id)) return { error: "bad id" };
@@ -641,15 +696,41 @@ async function op_masterGetMany(b) {
   for (let i = 0; i < skus.length; i += 30) { const snaps = await db.getAll(...skus.slice(i, i + 30).map(s => db.collection(Master.INDEX).doc(s))); for (const s of snaps) if (s.exists) out[s.id] = await withLinks(Master.slimEntry(s.data())); }
   return { entries: out };
 }
+/** What changes whenever the index does: how many entries it holds, and when one was last indexed and last edited
+    (masterPatch). A background reload of the library that finds these as they were reads nothing more (Master.load). */
+async function masterIndexSig() {
+  const ix = db.collection(Master.INDEX);
+  const [n, indexed, edited] = await Promise.all([ix.count().get(), ix.orderBy("indexedAt", "desc").limit(1).select("indexedAt").get(), ix.orderBy("updatedAt", "desc").limit(1).select("updatedAt").get()]);
+  return { count: n.data().count, indexedAt: indexed.size ? ms(indexed.docs[0].data().indexedAt) : null, updatedAt: edited.size ? ms(edited.docs[0].data().updatedAt) : null };
+}
+/* The index in parts, in SKU (document id) order: a part holds up to `limit` entries, what fits in ANSWER_BYTES and what
+   was read within ANSWER_MS, and `next` is the SKU after which the next part starts (null at the end of the index). It
+   used to be the first 3,000 documents Firestore handed out, in no set order, and a library past that lost the rest
+   without a word. The first part says the index's signature (index), read before any entry is: a change made while the
+   parts are read shows as a change the next time. */
 async function op_masterList(b) {
-  const q = str(b.q, 80).toUpperCase(); const limit = Math.min(3000, Math.max(1, num(b.limit) || 1500));
-  const snap = await db.collection(Master.INDEX).limit(limit).get();
-  let rows = snap.docs.filter(d => d.data().sku).map(d => Master.slimEntry(d.data()));   // a shell without a SKU (a patch on an unindexed SKU) is not an entry
-  if (b.masterHash) rows = rows.filter(r => r.masterHash === b.masterHash);
-  if (q) rows = rows.filter(r => String(r.sku || "").includes(q));
+  const began = Date.now(), q = str(b.q, 80).toUpperCase(), limit = Math.min(3000, Math.max(1, num(b.limit) || 1500));
+  const index = b.cursor ? null : await masterIndexSig(), rows = [], size = q || b.masterHash ? 500 : Math.min(500, limit);   // a few entries (the connections check) read a few
+  let after = b.cursor ? str(b.cursor, 80) : null, used = 0, next = null, truncated = false;
+  read: for (;;) {
+    let page = db.collection(Master.INDEX).orderBy(docOrder()).limit(size); if (after) page = page.startAfter(after);
+    const snap = await page.get();
+    for (const d of snap.docs) {
+      const e = d.data(), r = e.sku ? Master.slimEntry(e) : null;   // a shell without a SKU (a patch on an unindexed SKU) is not an entry
+      if (r && (!b.masterHash || r.masterHash === b.masterHash) && (!q || String(r.sku || "").includes(q))) {
+        const n = bytesOf(r);
+        if (rows.length && used + n > ANSWER_BYTES) { next = after; truncated = true; break read; }
+        rows.push(r); used += n;
+      }
+      after = d.id;
+      if (rows.length >= limit) { next = after; break read; }
+    }
+    if (snap.size < size) break;
+    if (Date.now() - began > ANSWER_MS) { next = after; truncated = true; break; }
+  }
   rows.sort((x, y) => x.sku.localeCompare(y.sku));
   if (b.links) for (const r of rows) await withLinks(r);
-  return { entries: rows };
+  return Object.assign({ entries: rows, next, truncated }, index ? { index } : {});
 }
 async function op_masterPatch(b) {
   const sku = String(b.sku || "").trim().toUpperCase(); if (!Master.isSku(sku)) return { error: "bad sku" };
@@ -665,7 +746,14 @@ async function op_masterPatch(b) {
   return { ok: true };
 }
 async function op_masterPutFile(b) { return Master.putFile(db, FV, b); }
-async function op_masterListFiles() { const snap = await db.collection(Master.FILES).limit(200).get(); const rows = snap.docs.map(d => { const r = d.data(); r.indexedAt = ms(r.indexedAt); return r; }); rows.sort((a, b2) => (b2.indexedAt || 0) - (a.indexedAt || 0)); return { files: rows }; }
+/** The 200 master files indexed last, newest first (it took the first 200 Firestore handed out and sorted those), as many
+    as fit in one answer (a file's record keeps lists of up to 2,000 SKUs); and the index's signature (masterIndexSig). */
+async function op_masterListFiles() {
+  const [snap, index] = await Promise.all([db.collection(Master.FILES).orderBy("indexedAt", "desc").limit(200).get(), masterIndexSig()]);
+  const rows = snap.docs.map(d => { const r = d.data(); r.indexedAt = ms(r.indexedAt); return r; }), budget = answerBudget();
+  let n = 0; while (n < rows.length && budget.fits(rows[n])) n++;
+  return { files: rows.slice(0, n), index, truncated: n < rows.length };
+}
 /** Remove one SKU from the index (a stray record, a SKU that should never have been read). */
 async function op_masterRemoveSku(b) {
   const sku = String(b.sku || "").trim().toUpperCase(); if (!Master.isSku(sku)) return { error: "bad sku" };
@@ -890,36 +978,86 @@ async function op_restoreSheet(b) {
   if (setId) { const st = col(SETS).doc(setId); const sd = await st.get(); if (sd.exists) { const ids = new Set(sd.data().sheetIds || []); ids.add(id); await st.set({ sheetIds: [...ids] }, { merge: true }); } }
   return { ok: true, id, fileBase: name, placed: placements.length, orders: orders.length, outputs: Object.fromEntries(Object.entries(out).map(([k, v]) => [k, !!v])) };
 }
+/* A sheet's backs are recorded in one transaction (at most BACKS_PER_TX in each): the sheet, the backs' records and the
+   sheets they leave are read once, each back is checked as it always was, in the order sent, and each record and each
+   sheet is written once. A transaction per back ran past the function's time limit at about 85 backs, and one refused
+   back stopped every back after it. Now a refused back is reported in `errors` (its copy, its sheet and why) and the
+   others are still recorded; and one recorded already as it is sent (the same approval on the same sheet, nothing in it
+   changed) is not written again, so sending a sheet's backs again costs a read. */
+const BACKS_PER_TX = 200;
+// a map as Firestore keeps one (not a list, a timestamp or a field value), from whichever context made it
+const plainMap = v => !!v && typeof v === "object" && !Array.isArray(v) && (p => p === null || Object.getPrototypeOf(p) === null)(Object.getPrototypeOf(v));
+/** Whether two values are the same, lists and maps entry by entry. */
+function sameValue(a, b) {
+  if (Array.isArray(a) || Array.isArray(b)) return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => sameValue(v, b[i]));
+  if (plainMap(a) || plainMap(b)) { if (!plainMap(a) || !plainMap(b)) return false; const k = Object.keys(a); return k.length === Object.keys(b).length && k.every(key => sameValue(a[key], b[key])); }
+  return a === b;
+}
+/** Whether a set with merge of `patch` would leave `stored` as it is: a map merges key by key, anything else (an empty map
+    too) replaces. */
+const merges = v => plainMap(v) && Object.keys(v).length > 0;
+const holds = (stored, patch) => (merges(patch) ? plainMap(stored) && Object.keys(patch).every(k => holds(stored[k], patch[k])) : sameValue(stored, patch));
+/** `patch` merged into `into` as a set with merge does it; a map of `into` it changes is copied first. */
+function mergeInto(into, patch) { for (const [k, v] of Object.entries(patch)) into[k] = merges(v) && plainMap(into[k]) ? mergeInto(Object.assign({}, into[k]), v) : v; return into; }
+/** One transaction's backs, every one for the sheet `sheetId`. Returns how many were written and skipped, the refused
+    ones (errors) and the files to archive once it commits. */
+async function putBacks(tx, sheetId, list, expected) {
+  const target = col(SHEETS).doc(sheetId), ids = [...new Set(list.map(x => x.poolId))];
+  const [sheet, ...priors] = await tx.getAll(target, ...ids.map(id => col(BACK).doc(id)));
+  const stored = new Map(priors.map((s, i) => [ids[i], s.exists ? s.data() : {}]));
+  const formerIds = [...new Set([...stored.values()].map(r => r.sheetId).filter(id => id && id !== sheetId))];
+  const formers = new Map(formerIds.length ? (await tx.getAll(...formerIds.map(id => col(SHEETS).doc(id)))).filter(s => s.exists).map(s => [s.id, s.data().backPool || []]) : []);
+  const poolIds = sheet.exists ? sheet.data().poolIds || [] : [], patches = new Map(), leaving = new Set(), out = { written: 0, skipped: 0, errors: [], moved: [] };
+  let pool = sheet.exists ? sheet.data().backPool || [] : null;
+  for (const x of list) {
+    const old = stored.get(x.poolId), currentBack = pool && pool.find(v => v.poolId === x.poolId);
+    const refused = !sheet.exists || !poolIds.includes(x.poolId) ? "The target sheet does not contain this exact charm copy"
+      : (old.invalidated && (+old.approvedAt || 0) >= +x.approvedAt) || (+old.approvedAt || 0) > +x.approvedAt || (+old.invalidatedAt || 0) >= +x.approvedAt ? "This approval has been superseded; reopen the engraving"
+      : expected != null && +expected !== +(currentBack?.approvedAt || old.approvedAt || 0) ? "This back was edited elsewhere. Reopen it before saving your changes."
+      : null;
+    if (refused) { out.errors.push({ row: x, error: refused }); continue; }
+    const copy = sheetBack(x);
+    // already recorded as sent, and the sheet already lists it so: nothing would change but the time stamps
+    if (old.invalidated === false && old.sheetId === sheetId && holds(old, x) && sameValue(currentBack, copy)) { out.skipped++; continue; }
+    const record = Object.assign({}, x, {invalidated:false, updatedAt:FV.serverTimestamp()});
+    /* A new approval of the same copy replaces the prior one's files. They were approved once, so they are archived, not
+       deleted: moved to the archive path once this commits, and the record says where each went (a file whose move
+       failed is still at `from`). */
+    const next = new Set(["ai", "png"].map(k => x.outputs && x.outputs[k] && x.outputs[k].path).filter(Boolean));
+    const moved = old.approvedAt && +old.approvedAt !== +x.approvedAt ? ["ai", "png"].map(k => old.outputs && old.outputs[k] && old.outputs[k].path).filter(p => p && !next.has(p) && /^charmnest\//.test(p)).map(from => ({ from, to: archivePath(from) })) : [];
+    if (moved.length) record.superseded = (Array.isArray(old.superseded) ? old.superseded : []).concat([{ approvedAt: +old.approvedAt, approvedBy: old.approvedBy || null, files: moved, at: Date.now() }]).slice(-20);
+    // a later row for the same copy is checked against this one, as when each was its own transaction; a copy sent twice is
+    // written once, whole, as the two writes would have left it (null)
+    patches.set(x.poolId, patches.has(x.poolId) ? null : record); stored.set(x.poolId, mergeInto(Object.assign({}, old), record));
+    pool = pool.filter(b => b.poolId !== x.poolId).concat([copy]);
+    if (old.sheetId && old.sheetId !== sheetId && formers.has(old.sheetId)) { formers.set(old.sheetId, formers.get(old.sheetId).filter(b => b.poolId !== x.poolId)); leaving.add(old.sheetId); }
+    out.moved.push(...moved); out.written++;
+  }
+  for (const [id, patch] of patches) if (patch) tx.set(col(BACK).doc(id), patch, {merge:true}); else tx.set(col(BACK).doc(id), stored.get(id));
+  if (patches.size) tx.set(target, {backPool:pool, updatedAt:FV.serverTimestamp()}, {merge:true});
+  for (const id of leaving) tx.set(col(SHEETS).doc(id), {backPool:formers.get(id), updatedAt:FV.serverTimestamp()}, {merge:true});
+  return out;
+}
 async function op_backPut(b) {
   const rows = (Array.isArray(b.backs) ? b.backs : [b.back]).filter(x => x && isPoolId(x.poolId)).slice(0, 400); if (!rows.length) return { error: "no back rows" };
-  const superseded = [];
+  const bySheet = new Map(), errors = [], moved = []; let written = 0, skipped = 0;
   for (const x of rows) {
-    if (!isId(x.sheetId) || !x.approvedAt || !x.approvedBy) return {error:"approved back and sheet identity required"};
-    let moved = [];
-    await db.runTransaction(async tx => {
-      const ref = col(BACK).doc(x.poolId), target = col(SHEETS).doc(x.sheetId);
-      const prior = await tx.get(ref), sheet = await tx.get(target);
-      const old = prior.exists ? prior.data() : {};
-      if (!sheet.exists || !(sheet.data().poolIds || []).includes(x.poolId)) throw new Error("The target sheet does not contain this exact charm copy");
-      if ((old.invalidated && (+old.approvedAt || 0) >= +x.approvedAt) || (+old.approvedAt || 0) > +x.approvedAt || (+old.invalidatedAt || 0) >= +x.approvedAt) throw new Error("This approval has been superseded; reopen the engraving");
-      const currentBack=(sheet.data().backPool || []).find(v=>v.poolId===x.poolId);
-      if(b.expectedApprovedAt != null && +b.expectedApprovedAt !== +(currentBack?.approvedAt || old.approvedAt || 0)) throw new Error("This back was edited elsewhere. Reopen it before saving your changes.");
-      const former = old.sheetId && old.sheetId !== x.sheetId ? col(SHEETS).doc(old.sheetId) : null;
-      const previous = former ? await tx.get(former) : null;
-      const record = Object.assign({}, x, {invalidated:false, updatedAt:FV.serverTimestamp()});
-      /* A new approval of the same copy replaces the prior one's files. They were approved once, so they are archived, not
-         deleted: moved to the archive path once this commits, and the record says where each went (a file whose move
-         failed is still at `from`). */
-      const next = new Set(["ai", "png"].map(k => x.outputs && x.outputs[k] && x.outputs[k].path).filter(Boolean));
-      moved = old.approvedAt && +old.approvedAt !== +x.approvedAt ? ["ai", "png"].map(k => old.outputs && old.outputs[k] && old.outputs[k].path).filter(p => p && !next.has(p) && /^charmnest\//.test(p)).map(from => ({ from, to: archivePath(from) })) : [];
-      if (moved.length) record.superseded = (Array.isArray(old.superseded) ? old.superseded : []).concat([{ approvedAt: +old.approvedAt, approvedBy: old.approvedBy || null, files: moved, at: Date.now() }]).slice(-20);
-      tx.set(ref, record, {merge:true});
-      tx.set(target, {backPool:(sheet.data().backPool || []).filter(b=>b.poolId !== x.poolId).concat([sheetBack(x)]), updatedAt:FV.serverTimestamp()}, {merge:true});
-      if (previous?.exists) tx.set(former, {backPool:(previous.data().backPool || []).filter(b=>b.poolId !== x.poolId), updatedAt:FV.serverTimestamp()}, {merge:true});
-    });
-    await archiveFiles(moved); superseded.push(...moved);
+    if (!isId(x.sheetId) || !x.approvedAt || !x.approvedBy) { errors.push({ row: x, error: "approved back and sheet identity required", identity: true }); continue; }
+    if (!bySheet.has(x.sheetId)) bySheet.set(x.sheetId, []); bySheet.get(x.sheetId).push(x);
   }
-  return { ok: true, count: rows.length, superseded: superseded.length };
+  for (const [sheetId, list] of bySheet) for (let i = 0; i < list.length; i += BACKS_PER_TX) {
+    const part = list.slice(i, i + BACKS_PER_TX); let out;
+    try { out = await db.runTransaction(tx => putBacks(tx, sheetId, part, b.expectedApprovedAt)); }
+    catch (e) { errors.push(...part.map(x => ({ row: x, error: e.message || String(e) }))); continue; }
+    await archiveFiles(out.moved); moved.push(...out.moved); written += out.written; skipped += out.skipped; errors.push(...out.errors);
+  }
+  const done = { count: rows.length, written, skipped, superseded: moved.length };
+  if (!errors.length) return Object.assign({ ok: true }, done);
+  // what went wrong, back by back in the order sent; the rest were recorded. Refused as before: 400 when a back said
+  // nothing of whose it is, 500 otherwise
+  const order = new Map(rows.map((x, i) => [x, i])); errors.sort((p, q) => order.get(p.row) - order.get(q.row));
+  return Object.assign({ error: errors[0].error + (errors.length > 1 ? ` (and ${errors.length - 1} more of the ${rows.length} backs)` : ""), status: errors.every(x => x.identity) ? 400 : 500,
+    errors: errors.map(x => ({ poolId: x.row.poolId, sheetId: str(x.row.sheetId, 80) || null, error: x.error })) }, done);
 }
 async function op_backInvalidate(b) {
   for (const id of (b.poolIds || []).filter(isPoolId).slice(0,400)) await db.runTransaction(async tx => {
@@ -988,7 +1126,10 @@ async function op_setUpdate(b) {
       for(const record of records)record.engraving=decided.get(record.runId) || {};
       if(records.some(s=>s.setId!==id) || !Readiness.set(next,records).ready)throw new Error('Set cannot be completed: every sheet needs approved engraving, verified back files, front files and QR labels');
     }
-    tx.set(ref,Object.assign({}, b.patch || {},{setId:id,updatedAt:FV.serverTimestamp()}),{merge:true});
+    // each field the patch names replaces the stored one whole, and a field it leaves out stays as it was: a set with merge
+    // merged a map into the stored one key by key, so an order taken off a set stayed on its record for good
+    const doc=Object.assign({}, b.patch || {},{setId:id,updatedAt:FV.serverTimestamp()});
+    if(old.exists)tx.update(ref,doc);else tx.set(ref,doc);
   });
   return { ok: true };
 }
@@ -999,21 +1140,29 @@ async function op_setList(b) {
   // Only the most recently saved sets are read (completion saves the set again, so a newly completed one is among them),
   // never every set on record; given `from`, none saved a week before it. The sandbox's days run on a simulated clock, so
   // there the bound is only the count.
-  const limit = Math.min(500, num(b.limit) || 200);
-  let q = col(SETS).orderBy("updatedAt", "desc");
-  if (isDay(b.from) && !PREFIX) q = q.where("updatedAt", ">=", new Date(Date.parse(b.from + "T00:00:00Z") - 7 * 86400000));
-  const snap = await q.limit(Math.min(1000, 3 * limit)).get();
-  let rows = snap.docs.map(d => { const r=d.data(); r.setId ||= d.id; for(const k of ["updatedAt","createdAt","completedAt","committedAt"]) r[k]=ms(r[k]); return r; });
-  rows=rows.filter(r=>(!isDay(b.from) || OrderRules.completionDay(r)>=b.from)&&(!isDay(b.to) || OrderRules.completionDay(r)<=b.to)&&(!b.status || r.status===b.status)).sort(OrderRules.compareCompleted).slice(0,limit);
-  const sheets=[];
-  if(b.includeSheets) {
-    const ids=[...new Set(rows.flatMap(r=>r.sheetIds || []))].filter(isId);
-    for(let i=0;i<ids.length;i+=200) {
-      const docs=await db.getAll(...ids.slice(i,i+200).map(id=>col(SHEETS).doc(id)));
-      for(const d of docs) if(d.exists && !d.data().archived) sheets.push(d.data());
-    }
+  // The answer comes in parts (ANSWER_BYTES): the sets first, then their sheets, read for what their list entries show
+  // (SLIM_SHEET) where every sheet used to be read whole; `next` names the sets and sheets left, in order, and a later part
+  // reads those by id.
+  const setRow = d => { const r=d.data(); r.setId ||= d.id; for(const k of ["updatedAt","createdAt","completedAt","committedAt"]) r[k]=ms(r[k]); return [d.id, r]; };
+  const budget = answerBudget(), cur = b.cursor && typeof b.cursor === "object" ? b.cursor : null;
+  let rows = [], sheetIds = [];
+  if (cur) {
+    const ids = (Array.isArray(cur.sets) ? cur.sets : []).filter(isId).slice(0, 500);
+    for (let i = 0; i < ids.length; i += 100) for (const d of await db.getAll(...ids.slice(i, i + 100).map(id => col(SETS).doc(id)))) if (d.exists) rows.push(setRow(d));
+    sheetIds = (Array.isArray(cur.sheets) ? cur.sheets : []).filter(isId).slice(0, 20000);
+  } else {
+    const limit = Math.min(500, num(b.limit) || 200);
+    let q = col(SETS).orderBy("updatedAt", "desc");
+    if (isDay(b.from) && !PREFIX) q = q.where("updatedAt", ">=", new Date(Date.parse(b.from + "T00:00:00Z") - 7 * 86400000));
+    const snap = await q.limit(Math.min(1000, 3 * limit)).get();
+    rows = snap.docs.map(setRow);
+    rows=rows.filter(([,r])=>(!isDay(b.from) || OrderRules.completionDay(r)>=b.from)&&(!isDay(b.to) || OrderRules.completionDay(r)<=b.to)&&(!b.status || r.status===b.status)).sort(([,x],[,y])=>OrderRules.compareCompleted(x,y)).slice(0,limit);
+    if (b.includeSheets) sheetIds = [...new Set(rows.flatMap(([,r])=>r.sheetIds || []))].filter(isId);
   }
-  return {sets:rows, ...(b.includeSheets ? {sheets:(await readinessRecords(sheets)).map(slim)} : {})};
+  let n = 0; while (n < rows.length && budget.fits(rows[n][1])) n++;
+  const part = b.includeSheets && n === rows.length ? await sheetEntries(sheetIds.map(id => [id]), budget) : { sheets: [], rest: sheetIds };
+  const next = n < rows.length || part.rest.length ? { sets: rows.slice(n).map(([id]) => id), sheets: part.rest } : null;
+  return {sets:rows.slice(0, n).map(([,r])=>r), ...(b.includeSheets ? {sheets:part.sheets} : {}), next, truncated: !!next};
 }
 // ── release: when each slow material last went out, and the days a person opened one early (shop-wide, not per browser) ──
 async function op_releaseGet() { const s = await col(RELEASE).doc("current").get(); const d = s.exists ? s.data() : {}; return { lastReleased: d.lastReleased || {}, released: d.released || {}, updatedAt: ms(d.updatedAt) }; }
@@ -1163,7 +1312,8 @@ async function op_runList(b) {
    · a search reads the days of one window (30 by default, `days` up to 90, the page's `today` its newest) and the line
      archive of the runs in it, newest part first, 16 MB of it at most; an order number is also looked up exactly, however
      old, in the order lists sheets, runs and archive parts keep;
-   · `next` is where the following page starts: the groups on or before its day, after the first `skip` of that day.
+   · `next` is where the following page starts: the groups on or before its day, after the first `skip` of that day;
+   · a page is `limit` groups, fewer when their sheets would pass ANSWER_BYTES (truncated.size), each sheet in its group.
    The answer says what it read (scanned), the days it covered (window) and whether a cap cut it short (truncated).
    Every query is a single-field equality, range or array-contains: no composite index is needed. */
 const HISTORY_CAP = { sets: 300, sheets: 600, runs: 300, parts: 3000 }, HISTORY_PART_BYTES = 16000000;
@@ -1214,7 +1364,7 @@ function historyRows(q, sets, sheets, runs) {
 async function op_history(b) {
   const q = String(b.q || "").trim().toLowerCase(), limit = Math.min(100, Math.max(1, num(b.limit) || 60));
   const cur = b.cursor && isDay(b.cursor.day) ? { day: b.cursor.day, skip: Math.max(0, Math.floor(num(b.cursor.skip))) } : null;
-  const scanned = { runs: 0, sheets: 0, sets: 0, lineParts: 0 }, truncated = { runs: false, sheets: false, sets: false, lineParts: false };
+  const scanned = { runs: 0, sheets: 0, sets: 0, lineParts: 0 }, truncated = { runs: false, sheets: false, sets: false, lineParts: false, size: false };
   const sets = new Map(), sheets = new Map(), runs = new Map(), parts = new Map();
   const add = (kind, docs, extra) => { scanned[kind] += docs.length; const map = { sets, sheets, runs }[kind]; for (const d of docs) if (!map.has(d.id)) map.set(d.id, Object.assign(d.data(), extra, kind === "runs" ? { runId: d.data().runId || d.id } : {})); };
   const sheetFields = q ? HISTORY_SHEET.concat(["charms"]) : HISTORY_SHEET, runFields = q ? HISTORY_RUN.concat(["lines"]) : HISTORY_RUN;
@@ -1282,13 +1432,19 @@ async function op_history(b) {
   // order-number match wherever it is)
   let rows = all.filter(g => g.exact || ((!hi || String(g.day || "") <= hi) && (!lo || String(g.day || "") >= lo)));
   if (cur) { let skip = cur.skip; rows = rows.filter(g => !(g.day === cur.day && skip-- > 0)); }
-  const page = rows.slice(0, limit), last = page[page.length - 1];
+  for (const row of rows) { delete row.search; delete row.match; delete row.exact; }
+  // a page is `limit` groups, or fewer where they would pass ANSWER_BYTES (a group carries its sheets, and they their
+  // backs): `next` then starts at the first group left out, as after `limit` groups
+  const budget = answerBudget(); let n = 0;
+  while (n < Math.min(limit, rows.length) && budget.fits(rows[n])) n++;
+  if (n < Math.min(limit, rows.length)) truncated.size = true;
+  const page = rows.slice(0, n), last = page[page.length - 1];
   let next = null;
-  if (rows.length > limit && last && isDay(last.day)) next = { day: last.day, skip: page.filter(g => g.day === last.day).length + (cur && cur.day === last.day ? cur.skip : 0) };
+  if (rows.length > page.length && last && isDay(last.day)) next = { day: last.day, skip: page.filter(g => g.day === last.day).length + (cur && cur.day === last.day ? cur.skip : 0) };
   else if (lo) { const older = await newestDay(lo); if (older) next = { day: older, skip: 0 }; }
   const onPage = new Set(page.map(g => g.runId).filter(Boolean));
-  for (const row of page) { delete row.search; delete row.match; delete row.exact; }
-  return { sets: page, runs: runRows.filter(r => onPage.has(r.runId)).map(r => { delete r.exact; return r; }), sheets: page.flatMap(g => g.sheets), total: rows.length, setCount: page.filter(g => g.setId && g.sheets.length && g.status !== "superseded").length, workingCount: page.filter(g => g.draft).length,
+  // each sheet is sent once, in its group (the page reads them there): a second list of them used to double the answer
+  return { sets: page, runs: runRows.filter(r => onPage.has(r.runId)).map(r => { delete r.exact; return r; }), total: rows.length, setCount: page.filter(g => g.setId && g.sheets.length && g.status !== "superseded").length, workingCount: page.filter(g => g.draft).length,
     next, window: { from: lo, to: hi }, scanned, truncated };
 }
 // ── bridge session log: Design_Bridge/{session} + /log rows (ids and counts only, never order text) ──
@@ -1331,12 +1487,25 @@ async function sweepBridge(session) {
   return gone;
 }
 // ── learned maps: aliases, no-design list, option maps ──
-async function op_aliasGet() { const snap = await db.collection(ALIASES).limit(3000).get(); const out = {}; snap.docs.forEach(d => { out[d.id] = d.data(); }); return { aliases: out }; }
+/** Every document of a map, read 500 at a time in document order, as much as fits in one answer and is read within
+    ANSWER_MS (truncated says what that left out). Each map used to stop at a count (3,000 aliases, 2,000 option maps,
+    1,000 no-design rows) and a map past it lost the rest without a word. */
+async function mapDocs(name) {
+  const budget = answerBudget(), docs = []; let after = null;
+  for (;;) {
+    let page = db.collection(name).orderBy(docOrder()).limit(500); if (after) page = page.startAfter(after);
+    const snap = await page.get();
+    for (const d of snap.docs) { if (!budget.fits([d.id, d.data()])) return { docs, truncated: true }; docs.push(d); after = d.id; }
+    if (snap.size < 500) return { docs, truncated: false };
+    if (budget.late()) return { docs, truncated: true };
+  }
+}
+async function op_aliasGet() { const { docs, truncated } = await mapDocs(ALIASES); const out = {}; docs.forEach(d => { out[d.id] = d.data(); }); return { aliases: out, truncated }; }
 async function op_aliasPut(b) { const lid = str(b.listingId, 30).replace(/\D/g, ""); const sku = String(b.sku || "").trim().toUpperCase(); if (!lid || !Master.isSku(sku)) return { error: "listingId and sku required" }; await db.collection(ALIASES).doc(lid).set({ listingId: lid, sku, by: str(b.by || "operator", 80), title: str(b.title, 200), updatedAt: FV.serverTimestamp() }, { merge: true }); return { ok: true }; }
-async function op_noDesignGet() { const snap = await db.collection(NODESIGN).limit(1000).get(); const rows = snap.docs.map(d => Object.assign({ id: d.id }, d.data())); return { list: { patterns: rows.filter(r => r.pattern).map(r => r.pattern), skus: rows.filter(r => r.sku).map(r => r.sku), rows } }; }
+async function op_noDesignGet() { const { docs, truncated } = await mapDocs(NODESIGN); const rows = docs.map(d => Object.assign({ id: d.id }, d.data())); return { list: { patterns: rows.filter(r => r.pattern).map(r => r.pattern), skus: rows.filter(r => r.sku).map(r => r.sku), rows }, truncated }; }
 async function op_noDesignPut(b) { const doc = { by: str(b.by || "operator", 80), note: str(b.note, 200), createdAt: FV.serverTimestamp() }; if (b.pattern) { try { new RegExp(String(b.pattern)); } catch (_) { return { error: "bad pattern" }; } doc.pattern = str(b.pattern, 120); } else if (b.sku) doc.sku = String(b.sku).trim().toUpperCase().slice(0, 40); else return { error: "pattern or sku required" }; const ref = await db.collection(NODESIGN).add(doc); return { ok: true, id: ref.id }; }
 async function op_noDesignDelete(b) { if (!isId(b.id)) return { error: "bad id" }; await db.collection(NODESIGN).doc(b.id).delete(); return { ok: true }; }
-async function op_optionMapGet() { const snap = await db.collection(OPTMAP).limit(2000).get(); const out = {}; snap.docs.forEach(d => { out[d.id] = d.data().map || {}; }); return { maps: out }; }
+async function op_optionMapGet() { const { docs, truncated } = await mapDocs(OPTMAP); const out = {}; docs.forEach(d => { out[d.id] = d.data().map || {}; }); return { maps: out, truncated }; }
 async function op_optionMapPut(b) {
   const lid = b.listingId === "*" ? "*" : str(b.listingId, 30).replace(/\D/g, ""); const name = str(b.optionName, 80).toLowerCase().trim(), value = str(b.optionValue, 200).toLowerCase().replace(/\s+/g, " ").trim();
   if (!lid || !name || !value) return { error: "listingId, optionName and optionValue required" };

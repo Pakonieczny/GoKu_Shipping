@@ -20,11 +20,12 @@ function docRef(coll, id) {
     async delete() { store.delete(key); }
   };
 }
-function query(coll, filters = [], order = null, lim = 0) {
+function query(coll, filters = [], order = null, lim = 0, after = null) {
   const q = {
-    where(f, op, v) { return query(coll, filters.concat([[f, op, v]]), order, lim); },
-    orderBy(f, dir) { return query(coll, filters, [f, dir || 'asc'], lim); },
-    limit(n) { return query(coll, filters, order, n); },
+    where(f, op, v) { return query(coll, filters.concat([[f, op, v]]), order, lim, after); },
+    orderBy(f, dir) { return query(coll, filters, [f, dir || 'asc'], lim, after); },
+    limit(n) { return query(coll, filters, order, n, after); },
+    startAfter(v) { return query(coll, filters, order, lim, v); },
     select() { return q; },
     count() { return {get:async()=>{const snap=await q.get();return {data:()=>({count:snap.size})};}}; },
     async get() {
@@ -32,7 +33,10 @@ function query(coll, filters = [], order = null, lim = 0) {
       // a Timestamp and a Date compare by their time, as in Firestore
       const t = y => (y && y.toMillis ? y.toMillis() : y instanceof Date ? y.getTime() : y);
       for (const [f, op, v0] of filters) rows = rows.filter(r => { const x = t(r.data()[f]), v = t(v0); return op === '==' ? x === v : op === '>=' ? x >= v : op === '<=' ? x <= v : op === '>' ? x > v : op === '<' ? x < v : op === '!=' ? x !== v : op === 'in' ? v.includes(x) : true; });
-      if (order) rows.sort((a, b) => { const x = a.data()[order[0]], y = b.data()[order[0]]; const c = (x && x.toMillis ? x.toMillis() : x) > (y && y.toMillis ? y.toMillis() : y) ? 1 : -1; return order[1] === 'desc' ? -c : c; });
+      // FieldPath.documentId() orders by the document's id
+      const key = (r, f) => (f === '__name__' ? r.id : r.data()[f]);
+      if (order) rows.sort((a, b) => { const x = key(a, order[0]), y = key(b, order[0]); const c = (x && x.toMillis ? x.toMillis() : x) > (y && y.toMillis ? y.toMillis() : y) ? 1 : -1; return order[1] === 'desc' ? -c : c; });
+      if (order && after != null) rows = rows.filter(r => { const x = t(key(r, order[0])); return order[1] === 'desc' ? x < t(after) : x > t(after); });
       if (lim) rows = rows.slice(0, lim);
       return { size: rows.length, docs: rows, empty: !rows.length };
     },
@@ -44,8 +48,9 @@ function query(coll, filters = [], order = null, lim = 0) {
 const db = {
   collection: c => query(c),
   batch() { const ops = []; return { set(ref, data, opts) { ops.push(() => ref.set(data, opts)); }, update(ref, data) { ops.push(() => ref.update(data)); }, delete(ref) { ops.push(() => ref.delete()); }, async commit() { for (const o of ops) await o(); } }; },
-  async getAll(...refs) { return Promise.all(refs.map(r => r.get())); },
-  async runTransaction(fn) { return fn({ get: ref => ref.get(), set: (ref, data, opts) => ref.set(data, opts), update: (ref, data) => ref.update(data), delete: ref => ref.delete() }); }
+  // (a trailing read option, { fieldMask }, is not a document)
+  async getAll(...refs) { if (refs.length && typeof refs[refs.length - 1].get !== 'function') refs.pop(); return Promise.all(refs.map(r => r.get())); },
+  async runTransaction(fn) { return fn({ get: ref => ref.get(), getAll: (...refs) => db.getAll(...refs), set: (ref, data, opts) => ref.set(data, opts), update: (ref, data) => ref.update(data), delete: ref => ref.delete() }); }
 };
 /* ── in-memory Storage ─────────────────────────────────────────────────── */
 const blobs = new Map();
@@ -63,7 +68,7 @@ const bucket = {
     };
   }
 };
-const fakeAdmin = { firestore: Object.assign(() => db, { FieldValue }), storage: () => ({ bucket: () => bucket }) };
+const fakeAdmin = { firestore: Object.assign(() => db, { FieldValue, FieldPath: { documentId: () => '__name__' } }), storage: () => ({ bucket: () => bucket }) };
 require.cache[require.resolve(path.join(fnDir, 'firebaseAdmin.js'))] = { id: 'fake', filename: 'firebaseAdmin.js', loaded: true, exports: fakeAdmin };
 // node-fetch is only used to kick the background function; stub it
 const Module = require('module'), realLoad = Module._load;

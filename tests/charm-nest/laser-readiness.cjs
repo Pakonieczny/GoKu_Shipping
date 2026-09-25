@@ -20,7 +20,7 @@ const source=fs.readFileSync('netlify/functions/charmNestLibrary.js','utf8');
 const data=new Map([['sheets/sheet1',ready],['sets/set1',{setId:'set1',sheetIds:['sheet1'],status:'open'}],['runs/run1',{lines:{}}]]);
 let writes=0;
 const snap=ref=>({id:ref.split('/')[1],exists:data.has(ref),data:()=>clone(data.get(ref))});
-const context=vm.createContext({Readiness:R,str:String,isId:()=>true,SETS:'sets',SHEETS:'sheets',RUNS:'runs',col:n=>({doc:id=>n+'/'+id}),FV:{serverTimestamp:()=>100},db:{runTransaction:async fn=>fn({get:async ref=>snap(ref),set:(ref,patch)=>{writes++;data.set(ref,{...data.get(ref),...patch});}}),getAll:async(...refs)=>refs.map(snap)}});
+const context=vm.createContext({Readiness:R,str:String,isId:()=>true,SETS:'sets',SHEETS:'sheets',RUNS:'runs',col:n=>({doc:id=>n+'/'+id}),FV:{serverTimestamp:()=>100},db:{runTransaction:async fn=>fn({get:async ref=>snap(ref),set:(ref,patch)=>{writes++;data.set(ref,{...data.get(ref),...patch});},update:(ref,patch)=>{writes++;data.set(ref,{...data.get(ref),...patch});}}),getAll:async(...refs)=>refs.map(snap)}});
 vm.runInContext(source.slice(source.indexOf('async function op_setUpdate'),source.indexOf('async function op_setGet')),context);
 vm.runInContext(source.slice(source.indexOf('async function readinessRecords'),source.indexOf('async function op_laserStatus')),context);
 (async()=>{

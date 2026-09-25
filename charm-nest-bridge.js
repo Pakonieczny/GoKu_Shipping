@@ -19,7 +19,7 @@
 const O = CharmNestOrders, G = CharmNestGeom, P = CharmNestPDF;
 const WORKSPACE_SANDBOX = S.settings.sandbox === "on";
 const MM = 25.4 / 72, PT = 72 / 25.4;
-const B = window.B = { link: null, orders: { rows: [], byKey: new Map(), pulledAt: 0, stale: false, snapshot: null, filtered: 0 }, master: { entries: new Map(), files: [], loadedAt: 0, loading: null, error: null, jobs: new Map() }, maps: { optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [], rows: [] }, loadedAt: 0 }, pool: { rows: new Map(), sources: new Map() }, engrave: { items: new Map(), fonts: { ok: false, Regular: null, Semibold: null, error: null, loading: null } }, review: { items: [] }, openRuns: null, run: null, sets: new Map(), employee: (localStorage.getItem("cn.employee") || "").trim() };
+const B = window.B = { link: null, orders: { rows: [], byKey: new Map(), pulledAt: 0, stale: false, snapshot: null, filtered: 0 }, master: { entries: new Map(), files: [], index: null, loadedAt: 0, loading: null, error: null, jobs: new Map() }, maps: { optionMaps: {}, aliases: {}, noDesign: { patterns: [], skus: [], rows: [] }, loadedAt: 0 }, pool: { rows: new Map(), sources: new Map() }, engrave: { items: new Map(), fonts: { ok: false, Regular: null, Semibold: null, error: null, loading: null } }, review: { items: [] }, openRuns: null, run: null, sets: new Map(), employee: (localStorage.getItem("cn.employee") || "").trim() };
 const SOURCE_LABEL = { personalization: "the personalisation box", personalisation: "the personalisation box", buyerMessage: "the buyer's message", staffNote: "the staff note", messages: "the staff messages", none: "", "": "" };
 const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
 // Shared by waiting and decided engravings; choices remain read-only purchase facts.
@@ -756,8 +756,13 @@ const Orders = window.Orders = (() => {
     const next = [om.maps || {}, al.aliases || {}, nd.list || { patterns: [], skus: [], rows: [] }], sig = JSON.stringify(next);
     if (sig !== mapsSig || !mapsSame()) { mapsSig = sig; [B.maps.optionMaps, B.maps.aliases, B.maps.noDesign] = next; mapsRead = next; }
     B.maps.loadedAt = Date.now();
+    // a map larger than one answer holds comes back cut short (truncated), where it used to stop at a count in silence: said
+    // once, not at every reload
+    const cut = [["option maps", om], ["SKU aliases", al], ["no-design list", nd]].filter(([, r]) => r.truncated).map(([name]) => name).join(", ");
+    if (cut && cut !== mapsCut) agent({ pool: true }, "warn", `The ${cut} came back cut short: the cloud sent what fits in one answer. A line the missing part would have matched is read without it.`);
+    mapsCut = cut;
   }
-  let mapsSig = "", mapsRead = [];
+  let mapsSig = "", mapsRead = [], mapsCut = "";
   const mapsSame = () => mapsRead[0] === B.maps.optionMaps && mapsRead[1] === B.maps.aliases && mapsRead[2] === B.maps.noDesign;
   const ctx = () => ({ optionMaps: B.maps.optionMaps, aliases: B.maps.aliases, noDesign: B.maps.noDesign, masterEntry: sku => Master.entryFor(sku) });
   /** The pull rule (Settings → Pull orders): every open order, those due by a date, or the N most urgent by ship-by date. */
@@ -1209,15 +1214,24 @@ const Master = window.Master = (() => {
     previewObserver=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){previewObserver.unobserve(entry.target);previewQueue.push(entry.target);}pump();},{rootMargin:"150px"});
     grid.querySelectorAll('[data-preview-sku]').forEach(host=>previewObserver.observe(host));
   }
-  async function load(force) {
+  /* The index comes in parts (masterList's `next`; it used to stop at 3,000 SKUs without a word), and the library held is
+     replaced only once every part has come: a part that fails leaves it as it was. A background reload ({ quiet: true },
+     the arrivals check every ten minutes) shows no progress, and reads the entries again only when the index's signature
+     (its count and when it was last indexed or edited, sent with the files list) changed since they were read.
+     load(true) reads everything now. */
+  async function load(opts) {
+    const o = opts && typeof opts === "object" ? opts : { force: !!opts }, quiet = { quiet: !!o.quiet };
     if (!S.cloud.ok) return;
-    if (!force && Date.now() - B.master.loadedAt < 120000) return B.master.loading || null;
+    if (!o.force && Date.now() - B.master.loadedAt < 120000) return B.master.loading || null;
     if (B.master.loading) return B.master.loading;
     B.master.loading = (async () => {
       render();
       try {
-        const [ix, fl] = await Promise.all([api("charmNestLibrary", { op: "masterList", limit: 3000 }, { label: "Loading the charm library" }), api("charmNestLibrary", { op: "masterListFiles" })]);
-        B.master.entries = new Map((ix.entries || []).map(e => [e.sku, e])); B.master.files = fl.files || []; B.master.loadedAt = Date.now();
+        const sig = x => JSON.stringify(x || null), first = o.quiet && B.master.index ? await api("charmNestLibrary", { op: "masterListFiles" }, quiet) : null;
+        const unchanged = !!(first && first.index && sig(first.index) === sig(B.master.index));
+        const [ix, fl] = await Promise.all([unchanged ? null : api("charmNestLibrary", { op: "masterList", limit: 3000 }, Object.assign({ label: "Loading the charm library", all: "entries" }, quiet)), first || api("charmNestLibrary", { op: "masterListFiles" }, quiet)]);
+        if (ix) { B.master.entries = new Map((ix.entries || []).map(e => [e.sku, e])); B.master.index = ix.index || null; }
+        B.master.files = fl.files || []; B.master.loadedAt = Date.now();
         B.master.error = null;
       } catch (e) { B.master.error = e.message; throw e; }   // a failed load must not look like an empty library
     })().finally(() => { B.master.loading = null; render(); });
@@ -3987,7 +4001,8 @@ const Sets = window.Sets = (() => {
     if (!reuse && !_cache) body.innerHTML = `<div class="libEmpty">Loading sets…</div>`;
     try {
       if (!reuse) {
-        const [ss, sh] = await Promise.all([api("charmNestLibrary", {op:"setList", includeSheets:true, limit:200}), api("charmNestLibrary", {op:"listSheets", limit:500})]);
+        // both come in parts when they pass what one answer holds (apiAll), and are read to the end before any is shown
+        const [ss, sh] = await Promise.all([api("charmNestLibrary", {op:"setList", includeSheets:true, limit:200}, {all:["sets", "sheets"]}), api("charmNestLibrary", {op:"listSheets", limit:500}, {all:"sheets"})]);
         if (request !== libraryRequest || S.library.kind !== "sets") return;
         const records = [...new Map([...(sh.sheets || []), ...(ss.sheets || [])].map(r=>[r.id,r])).values()];
         _cache = {rawSets:ss.sets || [], rawSheets:records, sets:[], sheets:records};
@@ -4495,7 +4510,7 @@ const RunCtl = window.RunCtl = (() => {
       Sets.byRun().set(Sets.keyOf(rec.runId, set.committedAt ? "committed:" + set.setId : set.group), set); sets.push(set);
     }
     const bySet = new Map(sets.map(x => [x.setId, x]));
-    const ls = await api("charmNestLibrary", { op: "listSheets", limit: 500, runId: rec.runId });
+    const ls = await api("charmNestLibrary", { op: "listSheets", limit: 500, runId: rec.runId }, { all: "sheets" });
 
     for (const slim of ls.sheets || []) {
       const d = (await api("charmNestLibrary", { op: "getSheet", id: slim.id })).sheet; if (!d) continue;
@@ -5749,7 +5764,8 @@ const RunHistory = window.RunHistory = (() => {
       const r = await api("charmNestLibrary", { op: "history", q: query, limit: 60, today: today(), cursor: more ? H.next || null : null }, { quiet: true });
       if (H.request !== request || H.q !== query) return;
       const had = more ? H : { runs: [], sheets: [], sets: [] }, runIds = new Set(had.runs.map(x => x.runId)), sheetIds = new Set(had.sheets.map(x => x.id)), keys = new Set(had.sets.map(g => g.key || g.setId || ""));
-      H.runs = had.runs.concat((r.runs || []).filter(x => !runIds.has(x.runId))); H.sheets = had.sheets.concat((r.sheets || []).filter(x => !sheetIds.has(x.id)));
+      // each sheet comes once, in its group (a second list of them doubled the answer)
+      H.runs = had.runs.concat((r.runs || []).filter(x => !runIds.has(x.runId))); H.sheets = had.sheets.concat((r.sheets || (r.sets || []).flatMap(g => g.sheets || [])).filter(x => !sheetIds.has(x.id)));
       H.scanned = more && H.scanned && r.scanned ? Object.fromEntries(Object.keys(r.scanned).map(k => [k, (H.scanned[k] || 0) + (r.scanned[k] || 0)])) : r.scanned;
       H.next = r.next || null; H.from = r.window?.from || null;
       const groups = (r.sets || []).filter(g => !keys.has(g.key || g.setId || "")).map(g => {
@@ -5852,7 +5868,7 @@ const Recall = window.Recall = (() => {
       return;
     }
     const q = sel.setId ? { setId: sel.setId } : { runId: sel.runId };
-    const ls = await api("charmNestLibrary", Object.assign({ op: "listSheets", limit: 200 }, q), { label: "Reading the set" });
+    const ls = await api("charmNestLibrary", Object.assign({ op: "listSheets", limit: 200 }, q), { label: "Reading the set", all: "sheets" });
     /* One record per sheet name, the newest: before a re-nested sheet kept its identity, the library could hold two
        GF_Sep.17.26_Set-1_Sheet-1 records, one stale. */
     const byName = new Map();
@@ -6403,8 +6419,9 @@ const Arrivals = window.Arrivals = (() => {
       await DesignLink.ensure();
       if (!DesignLink.etsyBudgetOk("new orders")) throw new Error("Etsy hourly cap reached");
       // the stream's next simulated ten minutes of orders become listable, and the station sweeps for them (no reuse window)
-      // (the maps load alongside: the snapshot below needs both, neither needs the other)
-      const [sim] = await Promise.all([streaming() && Sandbox.advance(), Orders.loadMaps(), Master.load()]);
+      // (the maps load alongside: the snapshot below needs both, neither needs the other; the library is read again only
+      // when its index changed, without a progress bar)
+      const [sim] = await Promise.all([streaming() && Sandbox.advance(), Orders.loadMaps(), Master.load({ quiet: true })]);
       const known=Object.fromEntries(Orders.rows().map(row=>[String(row.order.receiptId),+row.order.updateTs || 0]));
       // (the snapshot of a check that failed after it, on the cloud's side, is taken again for 2 minutes: the Etsy calls it
       // cost are not made a second time)

@@ -24,12 +24,16 @@ function merge(target, src, deep) {
 }
 const getPath = (o, f) => f.split('.').reduce((x, k) => (x == null ? undefined : x[k]), o);
 const norm = v => (v && v.toMillis ? v.toMillis() : v instanceof Date ? v.getTime() : v);
-const count = (coll, d) => { const c = coll.split('/')[0].includes('Run_Lines') ? 'Charm_Nest_Run_Lines' : coll.split('/').length > 1 ? coll.split('/')[0] + '/' + coll.split('/').slice(-1)[0] : coll; reads.set(c, (reads.get(c) || 0) + 1); if (d && d.json != null && /Run_Lines/.test(coll)) jsonReads.n++; };
+// (sheetCharms counts sheet records handed out with their charms: the lists read only the fields they send)
+const sheetCharms = { n: 0 };
+const count = (coll, d) => { const c = coll.split('/')[0].includes('Run_Lines') ? 'Charm_Nest_Run_Lines' : coll.split('/').length > 1 ? coll.split('/')[0] + '/' + coll.split('/').slice(-1)[0] : coll; reads.set(c, (reads.get(c) || 0) + 1); if (d && d.json != null && /Run_Lines/.test(coll)) jsonReads.n++; if (d && d.charms && coll === 'Charm_Nest_Sheets') sheetCharms.n++; };
+const pick = (d, fields) => Object.fromEntries(fields.filter(f => d[f] !== undefined).map(f => [f, d[f]]));
 function docRef(coll, id) {
   const key = coll + '/' + id;
   return {
     id, path: key, parent: { id: coll },
-    async get() { const d = store.get(key); if (d) count(coll, d); return { exists: !!d, id, ref: this, data: () => (d ? clone(d) : undefined) }; },
+    // (getAll passes its fieldMask: only those fields are handed out)
+    async get(mask) { const d0 = store.get(key), d = d0 && mask ? pick(d0, mask) : d0; if (d) count(coll, d); return { exists: !!d, id, ref: this, data: () => (d ? clone(d) : undefined) }; },
     collection(sub) { return query(key + '/' + sub); },
     async set(data, opts) { store.set(key, merge(opts && opts.merge ? clone(store.get(key) || {}) : {}, data, !!(opts && opts.merge))); },
     async update(data) {
@@ -41,12 +45,13 @@ function docRef(coll, id) {
     async delete() { store.delete(key); }
   };
 }
-function query(coll, filters = [], order = null, lim = 0, mask = null) {
+function query(coll, filters = [], order = null, lim = 0, mask = null, after = null) {
   const q = {
-    where(f, op, v) { return query(coll, filters.concat([[f, op, v]]), order, lim, mask); },
-    orderBy(f, dir) { return query(coll, filters, [f, dir || 'asc'], lim, mask); },
-    limit(n) { return query(coll, filters, order, n, mask); },
-    select(...fields) { return query(coll, filters, order, lim, fields); },
+    where(f, op, v) { return query(coll, filters.concat([[f, op, v]]), order, lim, mask, after); },
+    orderBy(f, dir) { return query(coll, filters, [f, dir || 'asc'], lim, mask, after); },
+    limit(n) { return query(coll, filters, order, n, mask, after); },
+    select(...fields) { return query(coll, filters, order, lim, fields, after); },
+    startAfter(v) { return query(coll, filters, order, lim, mask, v); },
     doc(id) { return docRef(coll, id || 'auto' + crypto.randomBytes(6).toString('hex')); },
     async add(data) { const r = q.doc(); await r.set(data); return r; },
     count() { return { get: async () => ({ data: () => ({ count: q.rows().length }) }) }; },   // an aggregate hands out no documents
@@ -65,7 +70,10 @@ function query(coll, filters = [], order = null, lim = 0, mask = null) {
         if (x === undefined || x === null || typeof x !== typeof v) return false;   // a range never matches a missing field
         return op === '<' ? x < v : op === '<=' ? x <= v : op === '>' ? x > v : op === '>=' ? x >= v : false;
       });
-      if (order) { rows = rows.filter(r => getPath(r.v, order[0]) !== undefined); rows.sort((a, b) => { const x = norm(getPath(a.v, order[0])), y = norm(getPath(b.v, order[0])); const c = x > y ? 1 : x < y ? -1 : 0; return order[1] === 'desc' ? -c : c; }); }
+      // FieldPath.documentId() orders by the document's id; startAfter starts past the value given
+      const key = r => (order[0] === '__name__' ? r.id : getPath(r.v, order[0]));
+      if (order) { rows = rows.filter(r => key(r) !== undefined); rows.sort((a, b) => { const x = norm(key(a)), y = norm(key(b)); const c = x > y ? 1 : x < y ? -1 : 0; return order[1] === 'desc' ? -c : c; }); }
+      if (order && after != null) rows = rows.filter(r => (order[1] === 'desc' ? norm(key(r)) < norm(after) : norm(key(r)) > norm(after)));
       return lim ? rows.slice(0, lim) : rows;
     }
   };
@@ -74,9 +82,10 @@ function query(coll, filters = [], order = null, lim = 0, mask = null) {
 const db = {
   collection: c => query(c),
   batch() { const ops = []; return { set(ref, d, o) { ops.push(() => ref.set(d, o)); }, update(ref, d) { ops.push(() => ref.update(d)); }, delete(ref) { ops.push(() => ref.delete()); }, async commit() { for (const o of ops) await o(); } }; },
-  async getAll(...refs) { return Promise.all(refs.map(r => r.get())); },
-  async runTransaction(fn) { return fn({ get: r => r.get(), set: (r, d, o) => r.set(d, o), update: (r, d) => r.update(d), delete: r => r.delete() }); }
+  async getAll(...refs) { const o = refs.length && typeof refs[refs.length - 1].get !== 'function' ? refs.pop() : null; return Promise.all(refs.map(r => r.get(o && o.fieldMask))); },
+  async runTransaction(fn) { txCount.n++; return fn({ get: r => r.get(), getAll: (...refs) => db.getAll(...refs), set: (r, d, o) => r.set(d, o), update: (r, d) => r.update(d), delete: r => r.delete() }); }
 };
+const txCount = { n: 0 };
 /* ── in-memory Storage (copy and move as GCS does them: metadata travels with the bytes) ── */
 const blobs = new Map(), gcs = { copies: 0, moves: 0 };
 const md5 = buf => crypto.createHash('md5').update(buf).digest('base64');
@@ -101,7 +110,7 @@ const bucket = {
     return f;
   }
 };
-const fakeAdmin = { firestore: Object.assign(() => db, { FieldValue, Timestamp: { fromMillis: ts } }), storage: () => ({ bucket: () => bucket }) };
+const fakeAdmin = { firestore: Object.assign(() => db, { FieldValue, FieldPath: { documentId: () => '__name__' }, Timestamp: { fromMillis: ts } }), storage: () => ({ bucket: () => bucket }) };
 let kick = { ok: true, status: 202 };
 const Module = require('module'), realLoad = Module._load;
 Module._load = function (req, ...rest) {
@@ -302,5 +311,95 @@ function seedDay(i, extra = {}) {
   assert.deepStrictEqual(mirrors, ['design-archive/listing/' + crypto.createHash('sha1').update('https://i.etsystatic.com/a.jpg').digest('hex') + '.jpg'], 'one file per picture: ' + mirrors);
   assert.strictEqual(fetched.length, 1, 'fetched once');
 
-  console.log(`server-history-bounds OK · listing ${first.total} reads (0 line parts) at 120 and 300 days · order found 100 days back · search window 30 days · expiries, archive moves, slim backs, 900 KB guard, .pdf copy, payload cleanup, listing mirrors`);
+  /* ── the SKU index past 3,000 comes back whole, in parts; its signature says when a reload can be skipped ── */
+  for (let i = 0; i < 3500; i++) { const sku = 'IX-' + String(i).padStart(5, '0'); store.set('Charm_Master_Index/' + sku, { sku, masterHash: 'm1', masterName: 'M.ai', indexedAt: ts(T0 + i), widthPt: 10, heightPt: 10 }); }
+  store.set('Charm_Master_Index/SHELL-ONLY', { updatedAt: ts(1) });   // a patch on a SKU never indexed: not an entry
+  let ix = await post({ op: 'masterList', limit: 3000 }), skus = ix.body.entries.map(e => e.sku), ixParts = 1;
+  const sig = ix.body.index;
+  assert(sig && sig.count === 3501 && sig.indexedAt === T0 + 3499, 'the first part says the index signature: ' + JSON.stringify(sig));
+  assert.strictEqual(ix.body.entries.length, 3000); assert(ix.body.next, 'and where the rest starts');
+  while (ix.body.next) { ix = await post({ op: 'masterList', limit: 3000, cursor: ix.body.next }); skus.push(...ix.body.entries.map(e => e.sku)); ixParts++; assert(!ix.body.index && !ix.body.truncated); }
+  assert.strictEqual(skus.length, 3500, 'all 3,500 entries come back: ' + skus.length); assert.strictEqual(new Set(skus).size, 3500, 'each once'); assert.strictEqual(ixParts, 2);
+  assert.deepStrictEqual((await post({ op: 'masterListFiles' })).body.index, sig, 'the files list says the same signature while nothing changed');
+  await post({ op: 'masterPatch', sku: 'IX-00007', patch: { engravable: false } });
+  assert.notDeepStrictEqual((await post({ op: 'masterListFiles' })).body.index, sig, 'an edit changes it');
+  store.delete('Charm_Master_Index/IX-00008');
+  assert.strictEqual((await post({ op: 'masterListFiles' })).body.index.count, 3500, 'and so does a removal');
+
+  /* ── a set list with its sheets comes in parts under the answer cap, each sheet read for its list fields only ── */
+  const bigBacks = (sid, n) => Array.from({ length: n }, (_, k) => ({ poolId: `${8000000 + k}_${9000000 + k}_1`, sheetId: sid, approvedAt: 1000 + k, approvedBy: 'Paul', text: 'x'.repeat(200), outputs: { ai: { path: 'charmnest/a.ai', url: 'https://u/a.ai' }, png: { path: 'charmnest/a.png', url: 'https://u/a.png' } }, verified: { geometry: { ok: true }, file: { ok: true } } }));
+  const bigSheetIds = [], bigDay = day(-1);   // the newest day on record: these forty are the list's newest sets
+  for (let s = 0; s < 40; s++) {
+    const setId = 'set-big-' + s, ids = [1, 2, 3].map(k => `sh-big-${s}-${k}`);
+    store.set('Charm_Nest_Sets/' + setId, { setId, seq: s + 1, day: bigDay, runId: 'run-big', status: 'open', updatedAt: ts(T0 + 1000 + s), sheetIds: ids, orders: {} });
+    for (const id of ids) { bigSheetIds.push(id); store.set('Charm_Nest_Sheets/' + id, { id, setId, runId: 'run-big', day: bigDay, metal: 'gold', status: 'complete', placedCount: 150, poolIds: [], backPool: bigBacks(id, 150), charms: [{ outline: 'c'.repeat(50000) }], updatedAt: ts(T0 + 1000 + s) }); }
+  }
+  // a record from before placedCount: readiness counts its placements, read for it alone
+  Object.assign(store.get('Charm_Nest_Sheets/sh-big-0-1'), { placedCount: 0, placements: Array.from({ length: 150 }, (_, k) => ({ id: 'p' + k })) });
+  sheetCharms.n = 0;
+  let sl = await post({ op: 'setList', includeSheets: true, limit: 40 }), slParts = 1, maxBytes = 0;
+  const gotSets = [...sl.body.sets], gotSheets = [...sl.body.sheets];
+  for (;;) {
+    maxBytes = Math.max(maxBytes, Buffer.byteLength(JSON.stringify(sl.body)));
+    if (!sl.body.next) break;
+    assert.strictEqual(sl.body.truncated, true, 'a part that is not the last says so');
+    sl = await post({ op: 'setList', includeSheets: true, limit: 40, cursor: sl.body.next }); slParts++; gotSets.push(...sl.body.sets); gotSheets.push(...sl.body.sheets);
+  }
+  assert.deepStrictEqual(gotSets.map(s => s.setId).sort(), Array.from({ length: 40 }, (_, s) => 'set-big-' + s).sort(), 'every set of the list, once');
+  assert.deepStrictEqual(gotSheets.map(s => s.id).sort(), bigSheetIds.slice().sort(), 'and every sheet of theirs, once');
+  assert(slParts >= 3 && maxBytes < 4.5e6, `the list (about ${Math.round(gotSheets.length * Buffer.byteLength(JSON.stringify(gotSheets[0])) / 1e6)} MB) came in ${slParts} parts of at most ${(maxBytes / 1e6).toFixed(2)} MB`);
+  assert(gotSheets.every(s => s.backs.length === 150 && s.laser && s.laser.total === 150), 'each with its backs and its laser readiness');
+  assert.strictEqual(sheetCharms.n, 0, 'no sheet was read with its charms');
+  // the Library's sheet list of a run the same way
+  let ls = await post({ op: 'listSheets', runId: 'run-big', limit: 500 }), lsSheets = [...ls.body.sheets];
+  while (ls.body.next) { ls = await post({ op: 'listSheets', cursor: ls.body.next }); lsSheets.push(...ls.body.sheets); }
+  assert.deepStrictEqual(lsSheets.map(s => s.id).sort(), bigSheetIds.slice().sort(), 'listSheets comes back whole, in parts');
+  assert.strictEqual(sheetCharms.n, 0);
+  // the history sends each sheet once, in its group, and a page under the cap
+  const hs = await post({ op: 'history', limit: 40 });
+  assert(!('sheets' in hs.body), 'no second list of the sheets'); assert(Buffer.byteLength(JSON.stringify(hs.body)) < 4.5e6 && hs.body.truncated.size === true && hs.body.next, 'a page of groups that would pass the cap stops short and says where to go on');
+
+  /* ── a set's patch replaces each field it names: an order taken off the set leaves its record ── */
+  store.set('Charm_Nest_Sets/set-orders', { setId: 'set-orders', day: day(0), status: 'open', name: 'Set 70', orders: { 4001: { held: null, lines: [1] }, 4002: { held: null, lines: [2] } }, labels: { a: 1, b: 2 }, updatedAt: ts(T0) });
+  r = await post({ op: 'setUpdate', setId: 'set-orders', patch: { orders: { 4001: { held: null, lines: [1] } }, labels: { a: 1 } } });
+  assert(r.body.ok, JSON.stringify(r.body));
+  const saved = store.get('Charm_Nest_Sets/set-orders');
+  assert.deepStrictEqual(Object.keys(saved.orders), ['4001'], 'the order taken off is gone: ' + Object.keys(saved.orders)); assert.deepStrictEqual(saved.labels, { a: 1 });
+  assert.strictEqual(saved.name, 'Set 70', 'a field the patch leaves out stays');
+  await post({ op: 'setUpdate', setId: 'set-orders-new', patch: { status: 'open', orders: { 4003: {} } } });
+  assert.deepStrictEqual(store.get('Charm_Nest_Sets/set-orders-new').orders, { 4003: {} }, 'a set not on record yet is made from its patch');
+
+  /* ── a sheet's 90 backs are recorded in one call and one transaction; a refused one is reported, the rest written ── */
+  const pids = Array.from({ length: 90 }, (_, k) => `6000001_${7000000 + k}_1`), dir90 = `charmnest/sheets/${day(0)}/GF_working_sh-90/back`;
+  store.set('Charm_Nest_Sheets/sh-90', { id: 'sh-90', day: day(0), metal: 'gold', poolIds: pids, backPool: [] });
+  const backsAt = at => pids.map((poolId, k) => ({ poolId, sheetId: 'sh-90', setId: null, runId: 'run-90', approvedAt: at + k, approvedBy: 'Paul', text: 'W' + k, lines: ['W' + k], outputs: { ai: { path: `${dir90}/${poolId}_${at}.ai`, url: 'u' }, png: { path: `${dir90}/${poolId}_${at}.png`, url: 'u' } }, verified: { geometry: { ok: true }, file: { ok: true } }, metrics: { fill: 0.5 } }));
+  txCount.n = 0;
+  r = await post({ op: 'backPut', backs: backsAt(5000) });
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body)); assert.strictEqual(r.body.written, 90); assert.strictEqual(txCount.n, 1, 'one transaction for the sheet: ' + txCount.n);
+  assert.strictEqual(store.get('Charm_Nest_Sheets/sh-90').backPool.length, 90); assert(pids.every(p => store.get('Charm_Pool_Back/' + p).sheetId === 'sh-90' && store.get('Charm_Pool_Back/' + p).metrics.fill === 0.5));
+  const sheet90 = store.get('Charm_Nest_Sheets/sh-90'), back90 = store.get('Charm_Pool_Back/' + pids[0]);   // (a write stores a new object)
+  r = await post({ op: 'backPut', backs: backsAt(5000) });
+  assert.strictEqual(r.body.skipped, 90, JSON.stringify(r.body)); assert.strictEqual(r.body.written, 0);
+  assert(store.get('Charm_Nest_Sheets/sh-90') === sheet90 && store.get('Charm_Pool_Back/' + pids[0]) === back90, 'sent again as they are, nothing is written');
+  // the same approval with anything in it changed (here its set, as when its sheet joins one) is written, not skipped
+  r = await post({ op: 'backPut', backs: [Object.assign({}, backsAt(5000)[1], { setId: 'set-later' })] });
+  assert.strictEqual(r.body.written, 1, 'a back whose set changed is written'); assert.strictEqual(store.get('Charm_Pool_Back/' + pids[1]).setId, 'set-later');
+  const next90 = backsAt(9000); next90[10] = Object.assign({}, next90[10], { poolId: '6000001_7999999_1' });   // a copy this sheet does not hold
+  txCount.n = 0;
+  r = await post({ op: 'backPut', backs: next90 });
+  assert(r.status >= 400 && /does not contain this exact charm copy/.test(r.body.error), JSON.stringify(r.body).slice(0, 300));
+  assert.deepStrictEqual(r.body.errors.map(e => e.poolId), ['6000001_7999999_1'], 'the refused back is named'); assert.strictEqual(r.body.written, 89, 'and the backs after it are still written');
+  assert.strictEqual(txCount.n, 1); assert.strictEqual(store.get('Charm_Pool_Back/' + pids[11]).approvedAt, 9011); assert.strictEqual(store.get('Charm_Pool_Back/' + pids[10]).approvedAt, 5010);
+  assert.strictEqual(r.body.superseded, 89 * 2, 'the replaced approvals are archived'); assert.strictEqual(store.get('Charm_Pool_Back/' + pids[0]).superseded[0].approvedAt, 5000);
+  r = await post({ op: 'backPut', backs: [Object.assign({}, next90[0], { approvedBy: '' })] });
+  assert.strictEqual(r.status, 400); assert.strictEqual(r.body.errors[0].error, 'approved back and sheet identity required');
+  // a copy sent twice in one call is recorded as the two would have left it, one after the other
+  const twice = backsAt(9500)[20], again20 = Object.assign({}, twice, { approvedAt: twice.approvedAt + 1, text: 'Second', outputs: { ai: { path: `${dir90}/twice.ai`, url: 'u' }, png: { path: `${dir90}/twice.png`, url: 'u' } } });
+  r = await post({ op: 'backPut', backs: [twice, again20] });
+  const rec20 = store.get('Charm_Pool_Back/' + pids[20]);
+  assert.strictEqual(r.body.written, 2, JSON.stringify(r.body)); assert(rec20.approvedAt === 9521 && rec20.text === 'Second' && rec20.metrics.fill === 0.5, JSON.stringify(rec20).slice(0, 300));
+  assert.deepStrictEqual(rec20.superseded.map(s => s.approvedAt), [5020, 9020, 9520], 'each replaced approval is on its record');
+  assert.strictEqual(store.get('Charm_Nest_Sheets/sh-90').backPool.find(b => b.poolId === pids[20]).text, 'Second');
+
+  console.log(`server-history-bounds OK · listing ${first.total} reads (0 line parts) at 120 and 300 days · order found 100 days back · search window 30 days · expiries, archive moves, slim backs, 900 KB guard, .pdf copy, payload cleanup, listing mirrors · 3,500 SKUs in ${ixParts} parts · set list in ${slParts} parts of ≤ ${(maxBytes / 1e6).toFixed(1)} MB · set patch replaces · 90 backs in one transaction`);
 })().catch(e => { console.error(e); process.exit(1); });
