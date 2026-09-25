@@ -77,11 +77,22 @@
   // records the cut. Its charms turn grey, and the next charms nest past the
   // line on the same physical sheet until it is full.
   async function record(sh){
+    // A held sheet joins the current set first (Paul, 25 Sep: "the Cut Sheet button is not working"): it was greyed
+    // until the sheet was ticked in Options, with only a hover note to say so. A cut sheet stays in its set, and its
+    // charms must be made, so pressing Cut Sheet is taken as including it.
+    if(!inSet(sh)){
+      const G=window.Gate;if(!G?.changeMembership)throw new Error('Sets are not loaded yet · try again in a moment');
+      sh._roseStep='include';refresh(sh);
+      try{await G.changeMembership('rose',true);}finally{sh._roseStep=null;}
+      if(!inSet(sh))throw new Error('Not cut: '+(G.policy?.(sh)?.reason||'this sheet is not in a set yet'));
+      refresh(sh);
+    }
     if(!sh.rosePlanHash||(!sh.recalled&&sh.rosePlanKey!==fingerprint(sh)))await plan(sh);
     const r=await api('roseRecordCut',{sheetId:sh.sheetId,stockId:sh.roseStock.id,revision:sh.roseRevision,planHash:sh.rosePlanHash,by:window.B?.employee||'operator'});
     sh.roseCutAt=r.cut.at;sh.roseStock=r.stock;sh.roseHistory=[...decode([r.cut]),...(sh.roseHistory||[]).filter(c=>c.sheetId!==sh.sheetId)];
     refresh(sh);C.toast('Sheet cut · the next Rose Gold charms nest past this green line','ok');
   }
+  const inSet=sh=>!!sh.setId&&!sh.draft;
   const observed=new WeakMap();
   const observer=window.IntersectionObserver?new IntersectionObserver(entries=>{for(const e of entries)if(e.isIntersecting){observer.unobserve(e.target);const sh=observed.get(e.target);if(sh&&!sh._roseLoaded&&!sh._roseLoading){sh._roseLoading=true;load(sh).catch(error=>{sh._roseError=error.message;}).finally(()=>{sh._roseLoading=false;refresh(sh);});}}},{rootMargin:'120px'}):null;
   function render(sh){
@@ -102,9 +113,9 @@
     host.classList.toggle('roseHasTimeline',!!marks);
     // The timeline comes last so it sits directly on the sheet's ruler.
     // the busy line names the step under way (it read "Loading sheet geometry…" while a cut was being recorded)
-    const busyWord=sh._rosePlanning?'Planning the green line…':sh._roseAction?'Recording the cut…':'Loading sheet geometry…';
+    const busyWord=sh._roseStep==='include'?'Adding the sheet to the set…':sh._rosePlanning?'Planning the green line…':sh._roseAction?'Recording the cut…':'Loading sheet geometry…';
     host.innerHTML=`${busy?`<div class="help" role="status"><i class="spin"></i> ${busyWord}</div>`:''}
-      ${cuttable?`<div class="roseActions"><button class="btn ghost xs" data-rose="cut" ${busy||!included?'disabled':''}${included?'':' title="Include this sheet in the current set to cut it"'}>Cut Sheet</button></div>`:''}
+      ${cuttable?`<div class="roseActions"><button class="btn ghost xs" data-rose="cut" ${busy?'disabled':''}>Cut Sheet</button></div>`:''}
       ${sh._roseError?`<p class="roseError" role="alert">${esc(sh._roseError)}</p>`:''}${marks}`;
     // a failure is shown once, where it happened (the alert under the button); a pop-up used to repeat it
     const invoke=fn=>async()=>{if(sh._roseAction)return;sh._roseAction=true;sh._roseError=null;refresh(sh);try{await fn();}catch(e){sh._roseError=e.message;}finally{sh._roseAction=false;refresh(sh);C.flushManualIntake?.('rose');}};
@@ -268,7 +279,7 @@
     const {job}=R.demoBatch(state.batch,state.profile);
     progress='Nesting batch '+state.batch+' into '+(state.profile?'the saved remainder':'a fresh sheet')+'…';render();
     const placements=await new Promise((resolve,reject)=>{
-      worker=new Worker('charm-nest-worker.js?v=20260924-thickness');
+      worker=new Worker('charm-nest-worker.js?v=20260925-fill-holes');
       const timer=setTimeout(()=>finish(new Error('Nesting took too long. Try this batch again.')),60000);
       function finish(err,result){clearTimeout(timer);worker?.terminate();worker=null;err?reject(err):resolve(result);}
       worker.onerror=e=>finish(new Error(e.message||'Could not load the nesting worker'));
