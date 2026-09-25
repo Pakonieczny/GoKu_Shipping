@@ -288,6 +288,7 @@ function askEmployee() {
   if (v && v.trim()) { B.employee = v.trim(); localStorage.setItem("cn.employee", B.employee); }
   return employeeName();
 }
+window.CNEmployee = { name: employeeName, ask: askEmployee };   // (the Library's Completed marks record who, charm-nest-library.js)
 /* One drawing a frame. The run banner, the rail's strip and ladder and the Orders tab were each drawn in full at every
    call, and a run step, a poke, an arrival, a log line or a pool pass called them, often several times in one go. A
    request now draws once, at the next animation frame. A hidden tab gets its frames from the page clock's 16 ms timer
@@ -2026,7 +2027,7 @@ const Gate = window.Gate = (() => {
     for (const p of allSheets().filter(p => p.runId === run.runId)) {
       if (p.sheetId) run.intakeRecovery.retire.push(p.sheetId);
       run.intakeRecovery.backs.push(...p.charms.map(c => c.poolId).filter(Boolean));
-      p.sheetId = null; p.fileBase = null; p.setId = null; p.seq = null; p.label = null; p.group = "dispatch"; p.draft = true;
+      p.sheetId = null; delete p.laserDoneAt; p.fileBase = null; p.setId = null; p.seq = null; p.label = null; p.group = "dispatch"; p.draft = true;
       sheetDirty(p);
     }
     await Pool.update(allSheets().filter(p => p.runId === run.runId).flatMap(p => p.charms.map(c => c.poolId).filter(Boolean)), { state:"ready", sheetId:null, setId:null });
@@ -3908,7 +3909,9 @@ const Sets = window.Sets = (() => {
     }
     sh.label = { files: files.map(f => ({ path: f.path, url: f.url, sheet: f.sheet, part: f.part, parts: f.parts, orders: f.orders, payload: f.payload, ecc: f.ecc, label: f.label })), orders: ids };
     sh.setId = set.setId; sh.setSeq = set.seq;
-    if (S.cloud.ok && sh.sheetId) await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, label: sh.label, setId: set.setId, setSeq: set.seq, sheetIndex: sh.sheetIndex, orders: ids, runId: sh.runId, poolIds: placed.map(c => c.poolId).filter(Boolean) } });
+    // (listings: the Library's listing search; left out when a piece's order line is not loaded, so the record keeps its own)
+    const listings = typeof listingsOf === "function" ? listingsOf(placed) : null;
+    if (S.cloud.ok && sh.sheetId) await api("charmNestLibrary", { op: "putSheet", sheet: Object.assign({ id: sh.sheetId, label: sh.label, setId: set.setId, setSeq: set.seq, sheetIndex: sh.sheetIndex, orders: ids, runId: sh.runId, poolIds: placed.map(c => c.poolId).filter(Boolean) }, listings ? { listings } : {}) });
     // pool rows and order lines
     const poolIds = placed.map(c => c.poolId).filter(Boolean);
     if (!labelsOnly && poolIds.length) await Pool.update(poolIds, { sheetId: sh.sheetId, setId: set.setId, state: "written", sheetName: sh.fileBase });
@@ -4067,50 +4070,65 @@ const Sets = window.Sets = (() => {
     return [...groups.values()].sort((a,b)=>a.setId && b.setId ? O.compareCompleted(a,b) : a.setId ? -1 : b.setId ? 1 : String(b.day || "").localeCompare(String(a.day || "")));
   }
   let _cache = null, libraryRequest = 0;
+  /** One set's card, its sheets side by side with their QR labels (the Library's Sets view, and a set opened in its
+      Completed list): `shown` are the sheets drawn, `all` every sheet of the set (its laser readiness reads them all). */
+  function libraryCard(st, all, shown, {onUndo = null} = {}) {
+    const held = Object.entries(st.orders || {}).filter(([, o]) => o && o.held);
+    const card = el("div", "setCard"); card.dataset.laserCard="set";card._laserSet=st;card._laserSheets=all.map(r=>r.id);card._sheets=all;
+    card.innerHTML = `${st.standalone || st.working ? `<div class="sh"><span class="nm">${st.standalone ? "14K / 10K Solid Sheets" : "Sheets"}</span></div>` : `<div class="sh"><span class="nm" data-set-title>${esc(O.setLabel(st.seq))}${st.day?" · "+esc(st.day):""}</span>${st.labels?.pdf || st.labels?.manifest || st.labels?.json || /complete/.test(st.status) ? `<details class="setActions"><summary aria-label="Set file menu">⋯</summary><div>${st.labels?.pdf ? `<a href="${st.labels.pdf.url}" target="_blank" rel="noopener">Labels PDF</a>` : ""}${st.labels?.manifest ? `<a href="${st.labels.manifest.url}" target="_blank" rel="noopener">Manifest</a>` : ""}${st.labels?.json ? `<a href="${st.labels.json.url}" target="_blank" rel="noopener">Set data</a>` : ""}${/complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div></details>` : ""}</div>`}
+          <div class="sheetsRow">${shown.map(r => `<article class="librarySheet"><div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${window.pvRatio ? pvRatio(r) : ""} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${window.CharmNestReadiness.counter(LaserReview.sheet(r))}</span></div></div>${LaserReview.labels(r,(st.labelFiles || []).filter(f=>f.sheetId===r.id))}</article>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
+          ${held.length ? `<div class="holds"><b>Held:</b> ${held.map(([rid, o]) => `${esc(rid)} — ${esc(o.held.why || "")}`).join(" · ")}</div>` : ""}
+          ${st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}
+          `;
+    card.querySelectorAll(".libCard").forEach(x => x.onclick = () => openLibrarySheet(x.dataset.id));
+    // a QR label ([data-big]) opens in the zoom viewer, wherever it is shown (PhotoView, charm-nest-mail.js)
+    const ub = card.querySelector("[data-undo]"); if (ub) ub.onclick = async () => { if (!confirm(`Undo the completion of ${st.name}? The orders return to the station's list; every file is kept.`)) return; const local = [...byRun().values()].find(x => x.setId === st.setId) || Object.assign({ orders: {}, sheetIds: st.sheetIds || [], materials: st.materials || [], labelFiles: st.labelFiles || [] }, st); byRun().set(local.runId || st.setId, local); try { await undo(local); toast(`${st.name} undone`, "ok"); if (onUndo) onUndo(); } catch (e) { toast(e.message, "bad", 6000); } };
+    return card;
+  }
   async function renderLibrary(body, opts) {
+    // the Completed tab is drawn by charm-nest-library.js; this is the Current tab's Sets view
+    const LD = window.LibraryDone; if (LD && LD.tab() === "done") return;
     const request = ++libraryRequest;
     const reuse = !!(opts && opts.reuse && _cache);
     if (!reuse && !_cache) body.innerHTML = `<div class="libEmpty">Loading sets…</div>`;
     try {
       if (!reuse) {
-        // both come in parts when they pass what one answer holds (apiAll), and are read to the end before any is shown
-        const [ss, sh] = await Promise.all([api("charmNestLibrary", {op:"setList", includeSheets:true, limit:200}, {all:["sets", "sheets"]}), api("charmNestLibrary", {op:"listSheets", limit:500}, {all:"sheets"})]);
+        // both come in parts when they pass what one answer holds (apiAll), and are read to the end before any is shown;
+        // what the laser has cut is left out (it is under Completed), save the cut sheets of a set still in progress
+        const [ss, sh] = await Promise.all([api("charmNestLibrary", {op:"setList", includeSheets:true, limit:200, excludeDone:true}, {all:["sets", "sheets"]}), api("charmNestLibrary", {op:"listSheets", limit:500, excludeDone:true}, {all:"sheets"})]);
         if (request !== libraryRequest || S.library.kind !== "sets") return;
         const records = [...new Map([...(sh.sheets || []), ...(ss.sheets || [])].map(r=>[r.id,r])).values()];
         _cache = {rawSets:ss.sets || [], rawSheets:records, sets:[], sheets:records};
       }
-      if (S.library.kind !== "sets") return;
+      if (S.library.kind !== "sets" || (LD && LD.tab() === "done")) return;
       _cache.sheets=Gate.projectLibraryRecords(_cache.rawSheets || _cache.sheets);
       _cache.sheets.forEach(LaserReview.record);
-      _cache.sets=libraryGroups(_cache.rawSets || [],_cache.sheets);
-      const sheets = _cache.sheets;
+      // a number searched for (an order, a listing): the sets that hold it, loaded or found by the search
+      const focus = LD ? LD.focus() : null, pool = LD ? LD.rows(_cache.sheets, focus, {allMetals:true}) : _cache.sheets;
+      if (pool !== _cache.sheets) pool.forEach(LaserReview.record);
+      const rawSets = focus && focus.sets.length ? [...new Map([...focus.sets, ...(_cache.rawSets || [])].map(x=>[x.setId,x])).values()] : (_cache.rawSets || []);
+      _cache.sets=libraryGroups(rawSets,pool);
+      const done = r => !!(LD && LD.isDone(r));
       // the metal chips and the search used to light up and change nothing here: this view read neither
       const metal = S.library.metal && S.library.metal !== "all" ? S.library.metal : null;
       const q = (document.getElementById("libSearch").value || "").trim().toLowerCase();
-      let sets = _cache.sets;
+      // Current: a set the laser has cut, and a group each of whose sheets it has cut, are under Completed
+      let sets = _cache.sets.filter(st => !done(st) && st.sheets.some(r => !done(r)));
       if (metal) sets = sets.filter(st => (st.materials || []).includes(metal));
-      if (q) sets = sets.filter(st => `${st.setId ? O.completedTitle(st) : st.name || ""} ${st.setId || ""} ${st.setId ? O.completionDay(st) : st.day || ""} ${st.runId || ""} ${Object.keys(st.orders || {}).join(" ")} ${(st.sheets || []).flatMap(r=>[r.fileBase,r.names,...(r.backs || []).map(b=>b.text)]).join(" ")}`.toLowerCase().includes(q));
-      if (!sets.length) { body.innerHTML = `<div class="libEmpty">${q || metal ? "No sets match this filter." : "No sets yet."}</div>`; return; }
+      if (focus) sets = sets.filter(st => st.sheets.some(r => !done(r) && focus.test(r)));
+      else if (q) sets = sets.filter(st => `${st.setId ? O.completedTitle(st) : st.name || ""} ${st.setId || ""} ${st.setId ? O.completionDay(st) : st.day || ""} ${st.runId || ""} ${Object.keys(st.orders || {}).join(" ")} ${(st.sheets || []).flatMap(r=>[r.fileBase,r.names,(r.listings || []).join(" "),...(r.backs || []).map(b=>b.text)]).join(" ")}`.toLowerCase().includes(q));
+      if (!sets.length) { body.innerHTML = `<div class="libEmpty">${focus ? "" : q || metal ? "No sets match this filter." : "No sets yet."}</div>`; if (LD) LD.decorate(body); return; }
       LaserReview.sections(body);
       for (const st of sets) {
         const all = st.sheets.slice().sort((a, b) => (a.metal || "").localeCompare(b.metal || "") || (a.sheetIndex || 0) - (b.sheetIndex || 0));
-        const mine = metal ? all.filter(x => x.metal === metal) : all;
-        const held = Object.entries(st.orders || {}).filter(([, o]) => o.held);
-        const card = el("div", "setCard"); card.dataset.laserCard="set";card._laserSet=st;card._laserSheets=all.map(r=>r.id);
-        card.innerHTML = `${st.standalone || st.working ? `<div class="sh"><span class="nm">${st.standalone ? "14K / 10K Solid Sheets" : "Sheets"}</span></div>` : `<div class="sh"><span class="nm" data-set-title>${esc(O.setLabel(st.seq))}${st.day?" · "+esc(st.day):""}</span>${st.labels?.pdf || st.labels?.manifest || st.labels?.json || /complete/.test(st.status) ? `<details class="setActions"><summary aria-label="Set file menu">⋯</summary><div>${st.labels?.pdf ? `<a href="${st.labels.pdf.url}" target="_blank" rel="noopener">Labels PDF</a>` : ""}${st.labels?.manifest ? `<a href="${st.labels.manifest.url}" target="_blank" rel="noopener">Manifest</a>` : ""}${st.labels?.json ? `<a href="${st.labels.json.url}" target="_blank" rel="noopener">Set data</a>` : ""}${/complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div></details>` : ""}</div>`}
-          <div class="sheetsRow">${mine.map(r => `<article class="librarySheet"><div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${window.pvRatio ? pvRatio(r) : ""} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${window.CharmNestReadiness.counter(LaserReview.sheet(r))}</span></div></div>${LaserReview.labels(r,(st.labelFiles || []).filter(f=>f.sheetId===r.id))}</article>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
-          ${held.length ? `<div class="holds"><b>Held:</b> ${held.map(([rid, o]) => `${esc(rid)} — ${esc(o.held.why || "")}`).join(" · ")}</div>` : ""}
-          ${st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}
-          `;
-        card.querySelectorAll(".libCard").forEach(x => x.onclick = () => openLibrarySheet(x.dataset.id));
-        // a QR label ([data-big]) opens in the zoom viewer, wherever it is shown (PhotoView, charm-nest-mail.js)
-        const ub = card.querySelector("[data-undo]"); if (ub) ub.onclick = async () => { if (!confirm(`Undo the completion of ${st.name}? The orders return to the station's list; every file is kept.`)) return; const local = [...byRun().values()].find(x => x.setId === st.setId) || Object.assign({ orders: {}, sheetIds: st.sheetIds || [], materials: st.materials || [], labelFiles: st.labelFiles || [] }, st); byRun().set(local.runId || st.setId, local); try { await undo(local); toast(`${st.name} undone`, "ok"); renderLibrary(body); } catch (e) { toast(e.message, "bad", 6000); } };
+        const card = libraryCard(st, all, all.filter(x => (!metal || x.metal === metal) && !done(x)), {onUndo: () => renderLibrary(body)});
         LaserReview.place(card,LaserReview.group(st,all).ready,body);
       }
       LaserReview.changed();
+      if (LD) LD.decorate(body);
     } catch (e) { if (request === libraryRequest && S.library.kind === "sets") body.innerHTML = `<div class="libEmpty">Could not load sets: ${esc(e.message)}</div>`; }
   }
-  return { releaseIssue, ensure, ofRun, keyOf, labelsReady, onSheetSaved, finalize, commit, undo, evaluate, save, renderLibrary, renderLabelPng, sheetsOf, setOfSheet, byRun };
+  return { releaseIssue, ensure, ofRun, keyOf, labelsReady, onSheetSaved, finalize, commit, undo, evaluate, save, renderLibrary, libraryCard, renderLabelPng, sheetsOf, setOfSheet, byRun };
 })();
 
 /* ═══ 23 · RunCtl — the two halves, the record, resume, stop, Auto/Manual ═══ */
@@ -4588,7 +4606,7 @@ const RunCtl = window.RunCtl = (() => {
       const d = (await api("charmNestLibrary", { op: "getSheet", id: slim.id })).sheet; if (!d) continue;
       const prim = S.sheets[d.metal]; let pg = prim.pages.find(p => p.sheetId === d.id) || (prim.pages[0].charms.length ? addPage(d.metal) : prim.pages[0]);
       const set = d.draft ? null : bySet.get(d.setId);
-      pg.draft = !!d.draft || !set; pg.releaseFull = !!d.releaseFull; pg.intakeFinalized = !!d.intakeFinalized; pg.intakeOptimized=!!d.intakeOptimized; pg.intakeOptimizedCount=+d.intakeOptimizedCount||0; pg.missRearranged=!!d.missRearranged; pg.topup=d.topup||null;
+      pg.draft = !!d.draft || !set; pg.releaseFull = !!d.releaseFull; pg.laserDoneAt = +d.laserDoneAt || null; pg.intakeFinalized = !!d.intakeFinalized; pg.intakeOptimized=!!d.intakeOptimized; pg.intakeOptimizedCount=+d.intakeOptimizedCount||0; pg.missRearranged=!!d.missRearranged; pg.topup=d.topup||null;
       pg.sheetId = d.id; pg.runId = rec.runId; pg.group = set ? set.group || null : "dispatch"; pg.setId = set ? set.setId : null; pg.seq = set ? d.setSeq || set.seq : null; pg.setDay = d.day; pg.cardStartedAt = d.cardStartedAt || d.createdAt || null; pg.sheetIndex = set ? d.sheetIndex : null; pg.fileBase = d.fileBase; pg.folderPath = d.outputs?.ai?.path?.replace(/\/[^/]+$/, "") || (set ? `${set.folder}/${d.fileBase}` : `charmnest/sheets/${d.day}/${d.fileBase}`); pg.label = set ? d.label || null : null; pg.backPool = d.backPool || []; pg.backOutputs = d.backOutputs || null; pg.cloud = d.outputs ? { ai: d.outputs.ai && d.outputs.ai.url, pdf: d.outputs.pdf && d.outputs.pdf.url, labelled: d.outputs.labelled && d.outputs.labelled.url, report: d.outputs.report && d.outputs.report.url, preview: d.outputs.preview && d.outputs.preview.url } : null;
       pg.restored = true; pg.persistedDone = true;
       if(d.metal==='rose' && d.roseStockId && window.RoseStock)await RoseStock.restore(pg,d);
@@ -4659,13 +4677,13 @@ const RunCtl = window.RunCtl = (() => {
       // set has already been committed. Keep other unfinished partial sheets.
       const retained=drop==='all'?[]:prim.pages.filter(p=>p.status!=='nesting' && !p.roseCutAt &&
         ((p.metal==='rose' && (p.rosePlan || p.roseProtected)) ||
-          (!drop && p.placements.length && !p.releaseFull && !p.recalled && !Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId)))));
+          (!drop && p.placements.length && !p.releaseFull && !p.laserDoneAt && !p.recalled && !Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId)))));
       for(const pg of prim.pages.slice())if(!retained.includes(pg)){
         window.Session?.dropBest?.(pg.sheetId);   // put down with the run: its best-layout record is not needed again
         delete pg.resumeWait;
         if(pg.status==='nesting')stopNest(pg);
         if(pg!==prim){(pg.workers||[]).forEach(w=>w.terminate());pg.workers=[];continue;}
-        pg.charms=pg.charms.filter(c=>!c.poolId);pg.sheetId=null;pg.fileBase=null;pg.setId=null;pg.runId=null;pg.seq=null;pg.setDay=null;pg.cardStartedAt=null;pg.sheetIndex=null;pg.group=null;pg.draft=false;pg.releaseFull=false;pg.isolated=false;pg.backPool=[];pg.backOutputs=null;pg.label=null;pg.cloud=null;pg.persisted=null;pg.recalled=null;
+        pg.charms=pg.charms.filter(c=>!c.poolId);pg.sheetId=null;delete pg.laserDoneAt;pg.fileBase=null;pg.setId=null;pg.runId=null;pg.seq=null;pg.setDay=null;pg.cardStartedAt=null;pg.sheetIndex=null;pg.group=null;pg.draft=false;pg.releaseFull=false;pg.isolated=false;pg.backPool=[];pg.backOutputs=null;pg.label=null;pg.cloud=null;pg.persisted=null;pg.recalled=null;
         delete pg.roseStock;delete pg.roseProtected;delete pg.roseHistory;delete pg.rosePlan;delete pg.roseCutAt;delete pg.rosePlanHash;delete pg.rosePlanKey;delete pg.roseFresh;delete pg.roseChoice;pg._roseLoaded=false;
         sheetDirty(pg);
       }
@@ -6755,7 +6773,7 @@ const LiveNest = window.LiveNest = (() => {
     return plan;
   }
   // the page's own marks first; the sets of its run are looked at only when none says so
-  const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || (!(p.metal==='rose'&&(p.rosePlan||p.roseProtected)) && (!!p.runHold || !!p.intakeFinalized)) ||
+  const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || !!p.laserDoneAt || (!(p.metal==='rose'&&(p.rosePlan||p.roseProtected)) && (!!p.runHold || !!p.intakeFinalized)) ||
     Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId));
   /* Gold and Silver arrivals go to the run's earliest open sheet first (the pool puts them on the same one). An order
      that misses its gaps moves on to the next sheet, and the earlier sheet stays first in line: once a newer page existed
@@ -6797,7 +6815,7 @@ const LiveNest = window.LiveNest = (() => {
         for (const [key, value] of B.sets) if (value === set) B.sets.delete(key);
         for (const p of allSheets().filter(p => p.setId === set.setId)) {
           if (p.sheetId) { run.intakeRecovery.retire.push(p.sheetId); }
-          p.sheetId = null; p.fileBase = null; p.setId = null; p.seq = null; p.sheetIndex = null; p.group = group;
+          p.sheetId = null; delete p.laserDoneAt; p.fileBase = null; p.setId = null; p.seq = null; p.sheetIndex = null; p.group = group;
         }
       }
       run.setIds = Sets.ofRun(run.runId).map(s => s.setId); run.setId = run.setIds[0] || null;
@@ -6870,7 +6888,7 @@ const LiveNest = window.LiveNest = (() => {
       if (!S.cloud.ok) throw new Error("Reconnect to finish saving the re-optimized set");
       await api("charmNestLibrary", { op: "archiveEmptySheet", id, runId: run.runId });
       delete run.sheets[id];
-      if (page) { page.cloud = null; page.fileBase = null; page.sheetId = null; }
+      if (page) { page.cloud = null; page.fileBase = null; page.sheetId = null; delete page.laserDoneAt; }
     }
     const rewrites = new Set(recovery.backs);
     for (const j of Engrave.items().values()) if (j.copies.some(id => rewrites.has(id)) && ["approved", "written"].includes(j.state) && (!Gate.modern(run.runId) || j.copies.every(id => Pool.sheetOf(id)?.fileBase))) await Engrave.writeBacks(j);

@@ -58,14 +58,17 @@
   function refresh() {
     document.querySelectorAll('[data-export-one],[data-export-set]').forEach(b=>{b.disabled=busy;});
   }
+  // the Library's two tabs: Current (#libBody) and a set opened in the Completed list (#libDone)
+  const bodies=()=>['libBody','libDone'].map(id=>document.getElementById(id)).filter(Boolean);
   function sync() {
-    const body=document.getElementById('libBody');if(!body)return;
+    for(const body of bodies()){
     body.querySelectorAll('.libCard[data-id]').forEach(card=>{if(!card.querySelector('[data-export-controls]'))card.querySelector('.h')?.insertAdjacentHTML('beforeend',sheetControls(card.dataset.id));});
     body.querySelectorAll('.setCard,.libSet').forEach(group=>{
       const head=group.querySelector('.sh,.fanHead');if(!head)return;
       const ids=[...new Set([...group.querySelectorAll('.libCard[data-id]')].map(c=>c.dataset.id))];
       if(!head.querySelector('[data-export-set]'))head.insertAdjacentHTML('beforeend',`<span class="sheetExport"><button class="btn ghost xs" data-export-set="${esc(JSON.stringify(ids))}" data-format="ai">Download .ai</button><button class="btn ghost xs" data-export-set="${esc(JSON.stringify(ids))}" data-format="dxf">.dxf</button></span>`);
-    });refresh();
+    });
+    }refresh();
   }
   function mount() {
     document.addEventListener('click',e=>{
@@ -74,7 +77,7 @@
       if(one){e.preventDefault();run([one.dataset.exportOne],one.dataset.format);}
       if(set){e.preventDefault();run(JSON.parse(set.dataset.exportSet),set.dataset.format || 'ai');}
     },true);
-    let queued=false;new MutationObserver(()=>{if(!queued){queued=true;requestAnimationFrame(()=>{queued=false;sync();});}}).observe(document.getElementById('libBody'),{childList:true,subtree:true});sync();
+    let queued=false;const seen=new MutationObserver(()=>{if(!queued){queued=true;requestAnimationFrame(()=>{queued=false;sync();});}});for(const body of bodies())seen.observe(body,{childList:true,subtree:true});sync();
   }
   window.ProductionExports={run,live:(sheet,format)=>run([],format,sheet),sheetControls,build};
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',mount);else mount();
