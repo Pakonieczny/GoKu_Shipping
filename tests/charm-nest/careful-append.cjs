@@ -28,6 +28,22 @@ const gap=(a,b)=>{const A=box(a),B=box(b);return Math.max(0,A.x0-B.x1,B.x0-A.x1,
   const n=r.placements.find(p=>p.id==='new');
   assert(n.cyPt>16&&n.cyPt<24&&n.cxPt<12,`the charm fills the notch between the saved ones: ${JSON.stringify(n)}`);
  }
+ // A hole among saved charms is space they already claimed: a charm put in it is charged its area less (Paul, 25 Sep:
+ // charms tried in a big hole went "everywhere else except inside"). One at the open end claims new space.
+ {const saved=[['t',120,24,63,15],['b',120,24,63,105],['l',18,66,12,60],['r',30,66,108,60],['far',60,20,153,13]];
+  const fixed=saved.map(([id,,,cx,cy])=>({id,cxPt:cx,cyPt:cy,angle:0})),placed=[];
+  const job={...base,sheet:{wPt:240,hPt:120,insetPt:1},pieces:[...saved.map(([id,w,h],i)=>piece(id,w,h,i)),piece('new',21,21)],lockedPlacements:fixed};
+  const r=await S.solve(job,{onPlaced:p=>placed.push(p)});assert(S.verify(job,r.placements,4).ok);
+  const n=r.placements.find(p=>p.id==='new'),g=placed.find(p=>p.id==='new').careful,area=21*21*(25.4/72)**2;
+  assert(n.xPt>=21&&n.xPt+n.wPt<=93&&n.yPt>=27&&n.yPt+n.hPt<=93,`the charm goes in the hole: ${JSON.stringify(n)}`);
+  assert(Math.abs(g.claim+area)<1,`and claims no new space, its area back: ${g.claim} vs ${-area}`);
+ }
+ // Rose Gold (block): the charms go on as one block from the left, the strip growing only when nothing fits behind it
+ {const pieces=[piece('a',22,30,1),piece('b',26,18,2),piece('c',20,20,3),piece('d',30,14,4),piece('e',18,26,5),piece('f',24,24,6),piece('g',16,34,7)];
+  const job={...base,sheet:{wPt:240,hPt:120,insetPt:1},pieces,block:true};
+  const r=await S.solve(job,{});assert.equal(r.placements.length,7);assert(S.verify(job,r.placements,4).ok);
+  const maxX=Math.max(...r.placements.map(p=>p.xPt+p.wPt));assert(maxX<=42,`a strip two charms wide: ${maxX}`);
+ }
  // A charm held back by the fill ceiling is reported at once, with no search for it.
  {const old=piece('old',8,8,1),huge=piece('huge',70,50),fixed={id:'old',cxPt:5,cyPt:5,angle:0};
   const job={...base,pieces:[old,huge],lockedPlacements:[fixed]};

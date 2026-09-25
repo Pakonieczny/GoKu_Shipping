@@ -752,7 +752,7 @@
       const admitted = fifo ? prepared.filter(p => rank.get(p.order) < capOrders).sort(byAge) : prepared.slice();
       if (admitted.some(p => p.pinned)) return null;
       const MM_PX = fineRes * 72 / 25.4, cellMm2 = 1 / (MM_PX * MM_PX);
-      const sliverMm = +job.sliverMm || SLIVER_MM, weights = { ...FIT_WEIGHTS, ...(job.fitWeights || {}) };
+      const sliverMm = +job.sliverMm || SLIVER_MM, weights = { ...FIT_WEIGHTS, ...(job.block ? BLOCK_WEIGHTS(baseFine, wallFine, MM_PX, (roseAxis || stripAxis) === "x") : {}), ...(job.fitWeights || {}) };
       const rPx = sliverMm * MM_PX / 2, rU = Math.round(3 * rPx), reach = Math.ceil(2 * rPx) + 2, margin = Math.max(reach, Math.ceil(POCKET_MM * MM_PX));
       const aroundU = Math.round(3 * (+job.aroundMm || AROUND_MM) * MM_PX);
       /* Thickness (see THICK): a free cell a disc of TH.mm[k] covers is worth TH.worth[k + 1], one only the sliver disc
@@ -781,6 +781,25 @@
       const turn = job.exploreRotations && angles.length > 1 ? 180 / angles.length : 0;
       for (const p of admitted) p.careful = variantsFor(p, angles.map(a => (a + turn) % 360));
       const FW = baseFine.W, FH = baseFine.H, axisX = (roseAxis || stripAxis) === "x";
+      /* The space the charms have claimed (Paul, 25 Sep: charms tried in a big hole among the charms went "everywhere
+         else except inside", and partial Rose Gold sheets spread along the edges). Along each line of the sheet (a row
+         when it fills from the left), the charms claim everything up to the farthest one: env[i]. A hole among them
+         is claimed space and costs nothing to fill; a charm that reaches past the line claims new space, all of it,
+         the gap it leaves behind included. So a charm is charged, at `env`, for the new space it claims less its own
+         area: filling a hole earns its area, a snug charm at the open end costs about nothing, and one that leaves a
+         gap behind it pays for the gap. That only moves charms toward holes; which spot in a hole is still graded as
+         before.                                                                                                      */
+      const envAxis = axisX ? "x" : "y", envN = axisX ? FH : FW, envD = axisX ? FW : FH, env = new Int32Array(envN);
+      const envelope = () => {
+        for (let i = 0; i < envN; i++) {
+          let d = 0; while (d < envD && (axisX ? fine.get(d, i) : fine.get(i, d))) d++;
+          let e = d;
+          for (let k = envD - 1; k >= d; k--) { const gx = axisX ? k : i, gy = axisX ? i : k; if (fine.get(gx, gy) && !edgeFine[gy * FW + gx]) { e = k + 1; break; } }
+          env[i] = e;
+        }
+      };
+      /** New space claimed by a charm at (x, y), less its own area, in cells (see env). */
+      const envAt = (v, x, y) => envelopeGrowth(env, lineProfile(v.fine, envAxis), x, y, envAxis) - v.cells;
       let fine = baseFine.clone(), coarse = baseCoarse.clone();
       let rec = [], cells = 0, lastProbe = -Infinity, graded = 0;
       let lastStage = null;
@@ -837,6 +856,7 @@
         }
         for (let y = 1; y <= FH; y++) { let row = 0; for (let x = 1; x <= FW; x++) { row += all.val[(y - 1) * FW + x - 1]; valSAT[y * (FW + 1) + x] = valSAT[(y - 1) * (FW + 1) + x] + row; } }
         for (let y = 1; y <= FH; y++) { let row = 0; for (let x = 1; x <= FW; x++) { row += all.sh[(y - 1) * FW + x - 1]; valSATL[y * (FW + 1) + x] = valSATL[(y - 1) * (FW + 1) + x] + row; } }
+        envelope();
       };
       // how far the charms already reach along the sheet (the inset band is not a charm)
       const reachOf = () => {
@@ -968,9 +988,9 @@
         const waste = lossAt(v, x, y) * cellMm2;
         const around = aroundAt(v, x, y) * cellMm2;
         const far = axisX ? x + v.fine.w : y + v.fine.h, growth = Math.max(0, far - front) / MM_PX;
-        const along = (axisX ? x + v.fine.w / 2 : y + v.fine.h / 2) / MM_PX;
+        const along = (axisX ? x + v.fine.w / 2 : y + v.fine.h / 2) / MM_PX, claim = envAt(v, x, y) * cellMm2;
         graded++;
-        return { waste, around, growth, along, far, fit: -(waste + weights.around * around + weights.growth * growth + weights.along * along) };
+        return { waste, around, growth, along, claim, far, fit: -(waste + weights.around * around + weights.growth * growth + weights.along * along + weights.env * claim) };
       };
       /* Where a charm can go, exactly. At each angle every position on the fine grid is legal or not; the positions
          are taken 4×4 at a time: a block is out when even the part of the charm all 16 positions share hits
@@ -1112,8 +1132,8 @@
         for (let i = 0; i < spots.length; i++) {
           const s = spots[i], v = s.v;
           const lb = (lossLive(v, s.x, s.y) - lastBonus) * cellMm2, around = aroundAt(v, s.x, s.y) * cellMm2;
-          const far = axisX ? s.x + v.fine.w : s.y + v.fine.h, growth = Math.max(0, far - front) / MM_PX, along = (axisX ? s.x + v.fine.w / 2 : s.y + v.fine.h / 2) / MM_PX;
-          Object.assign(s, { waste: lb, around, growth, along, far, fit: -(lb + weights.around * around + weights.growth * growth + weights.along * along), staleWaste: true });
+          const far = axisX ? s.x + v.fine.w : s.y + v.fine.h, growth = Math.max(0, far - front) / MM_PX, along = (axisX ? s.x + v.fine.w / 2 : s.y + v.fine.h / 2) / MM_PX, claim = envAt(v, s.x, s.y) * cellMm2;
+          Object.assign(s, { waste: lb, around, growth, along, claim, far, fit: -(lb + weights.around * around + weights.growth * growth + weights.along * along + weights.env * claim), staleWaste: true });
           graded++;
           probe(p, s.v, s.x, s.y, "try");
           if ((i & 63) === 63) { if (stopped()) return null; reportMetrics(); await yieldNow(); }
@@ -1201,7 +1221,7 @@
           the leaders are ever picked, and a marked spot is graded when it rises among them. So each placement costs
           the other waiting charms a few dozen grades, not hundreds.                                               */
       const LEADERS = 16, RESTING = 24;
-      const fitOf = t => -(t.waste + weights.around * t.around + weights.growth * t.growth + weights.along * t.along);
+      const fitOf = t => -(t.waste + weights.around * t.around + weights.growth * t.growth + weights.along * t.along + weights.env * t.claim);
       const refresh = (p, spots, events, front) => {
         const out = [], seen = new Set(), key = c => c.v.angle + ":" + c.x + ":" + c.y;
         for (const s of spots) {
@@ -1210,7 +1230,7 @@
           const t = { ...s };
           if (events.some(e => meets(b, e.chg, lossPad))) t.staleWaste = true;
           if (events.some(e => meets(b, e.box, aroundPad))) t.staleAround = true;
-          t.growth = Math.max(0, t.far - front) / MM_PX; t.fit = fitOf(t);
+          t.growth = Math.max(0, t.far - front) / MM_PX; t.claim = envAt(t.v, t.x, t.y) * cellMm2; t.fit = fitOf(t);
           out.push(t); seen.add(key(t));
         }
         for (const e of events) {
@@ -1336,7 +1356,7 @@
           sheetValue();
           const box = boxOf(v, x, y); events.push({ box, chg: changedBox(before, all.val, box) });
           probe(p, v, x, y, "place", true);
-          const pl = { id: p.id, angle: v.angle, cxPt: (x + v.solid.cx) / fineRes, cyPt: (y + v.solid.cy) / fineRes, xPt: (x + (v.fine.w - v.solid.w) / 2) / fineRes, yPt: (y + (v.fine.h - v.solid.h) / 2) / fineRes, wPt: v.solid.w / fineRes, hPt: v.solid.h / fineRes, careful: { waste: +move.waste.toFixed(2), around: +move.around.toFixed(2), growth: +move.growth.toFixed(2) } };
+          const pl = { id: p.id, angle: v.angle, cxPt: (x + v.solid.cx) / fineRes, cyPt: (y + v.solid.cy) / fineRes, xPt: (x + (v.fine.w - v.solid.w) / 2) / fineRes, yPt: (y + (v.fine.h - v.solid.h) / 2) / fineRes, wPt: v.solid.w / fineRes, hPt: v.solid.h / fineRes, careful: { waste: +move.waste.toFixed(2), around: +move.around.toFixed(2), growth: +move.growth.toFixed(2), claim: +move.claim.toFixed(2) } };
           if (cb.onPlaced) cb.onPlaced(pl, { trial: 0, placed: rec.length, total: prepared.length, careful: true });
           if (cb.onStage) cb.onStage("careful", rec.length, admitted.length);
         }
@@ -1742,7 +1762,13 @@
   const SLIVER_MM = 5;
   // a careful append's grade, in mm² given up: slivers count in full, the empty band around the charm at `around`,
   // each mm the occupied part of the sheet grows at `growth`, and each mm further along it at `along`
-  const FIT_WEIGHTS = { around: .5, growth: 1.5, along: .02 };
+  // and each mm² of new space it claims beyond its own area at `env` (see env in carefulAppend)
+  const FIT_WEIGHTS = { around: .5, growth: 1.5, along: .02, env: .5 };
+  /* Rose Gold (job.block): the charms go on as one tight block from the sheet's start, the way a jeweller cuts a
+     rectangle off the sheet (Paul, 25 Sep: "perfect rectangular ... not given part of the sheet without spreading
+     along the edges and leaving gaps"). Each mm the block grows costs the whole strip of stock across the sheet, so
+     it grows only when no charm fits behind its edge, and new space claimed costs what it is, stock.            */
+  const BLOCK_WEIGHTS = (grid, wall, mmPx, axisX) => ({ growth: Math.max(1, ((axisX ? grid.H : grid.W) - 2 * wall) / mmPx), env: 1 });
   // how far out from a charm's outline the empty space around it counts
   const AROUND_MM = 3;
   // free space by the widest disc that fits over it (mm): worth[0] for a cell only the SLIVER_MM disc covers, worth[k + 1]

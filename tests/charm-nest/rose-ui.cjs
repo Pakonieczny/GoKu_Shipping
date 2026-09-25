@@ -35,9 +35,19 @@ w.eval(fs.readFileSync('charm-nest-rose-ui.js','utf8'));
  const ctx=new Proxy({calls:[]},{get(o,k){if(k in o)return o[k];return (...args)=>o.calls.push([k,...args]);},set(o,k,v){o[k]=v;return true;}});
  w.RoseStock.paint(ctx,sh,2,'lines');assert(ctx.calls.some(c=>c[0]==='setLineDash'&&c[1].length),'pending contour is distinguished from completed cut');assert.equal(ctx.lineWidth,2.5,'pending contour is twice its previous display width');
  const original=JSON.stringify(sh.placements),lines=JSON.stringify(sh.rosePlan.lines);w.RoseStock.protect(sh);sh.dirty=true;sh.rosePlan=null;ctx.calls=[];w.RoseStock.paint(ctx,sh,2,'lines');assert(ctx.calls.some(c=>c[0]==='lineTo'),'protected line stays visible during new intake');assert.equal(JSON.stringify(sh.roseProtected.lines),lines);assert.equal(JSON.stringify(sh.roseProtected.placements),original);sh.dirty=false;sh.rosePlan=saved;
+ // a held sheet: Cut Sheet is not greyed out (Paul, 25 Sep: "the Cut Sheet button is not working"); pressing it puts
+ // the sheet in the current set first, and when it cannot join one the reason shows under the button
+ sh.draft=true;sh.setId=null;w.CN.renderCard(sh);
+ const heldCut=sh.el.querySelector('[data-rose="cut"]');assert(heldCut&&!heldCut.disabled,'a held sheet can be cut');assert(!heldCut.title,'no hover-only note');
+ const realInclude=w.Gate.changeMembership,included=[];
+ w.Gate.changeMembership=async(m,v)=>{included.push([m,v]);};
+ heldCut.click();for(let n=0;n<50&&!sh._roseError;n++)await new Promise(r=>setTimeout(r,5));
+ assert.match(sh._roseError,/^Not cut: /);assert.match(sh.el.querySelector('.roseError[role="alert"]').textContent,/Not cut/);assert(!sh.roseCutAt);sh._roseError=null;
  // a failed cut is shown once, under the button; no pop-up repeats it
- sh.draft=false;sh.setId='set-test';w.CN.renderCard(sh);w.failCut=true;const shown=toasts.length;sh.el.querySelector('[data-rose="cut"]').click();
+ w.Gate.changeMembership=async(m,v)=>{included.push([m,v]);sh.draft=false;sh.setId='set-test';};
+ w.CN.renderCard(sh);w.failCut=true;const shown=toasts.length;sh.el.querySelector('[data-rose="cut"]').click();
  for(let n=0;n<50&&!sh._roseError;n++)await new Promise(r=>setTimeout(r,5));
+ assert.deepEqual(included,[['rose',true],['rose',true]],'pressing Cut Sheet on a held sheet includes Rose Gold in the set');assert(sh.setId&&!sh.draft);w.Gate.changeMembership=realInclude;
  assert.equal(sh._roseError,'The sheet changed elsewhere');assert.match(sh.el.querySelector('.roseError[role="alert"]').textContent,/changed elsewhere/);assert.equal(toasts.length,shown,'no pop-up repeats the alert');assert(!sh.roseCutAt);sh._roseError=null;
  await w.RoseStock.record(sh);assert(sh.roseCutAt);assert.equal(sh.roseHistory.length,1);assert(!sh.el.querySelector('.roseHistory button'),'a cut sheet offers no more buttons');assert.equal(sh.el.querySelectorAll('.roseLineTimeline time').length,1);assert(sh.el.querySelector('[data-solid="size"]').disabled);assert(allowance.disabled);assert(!sh.el.textContent.includes('Using sheet'));assert(!sh.el.querySelector('.roseStockHead'));ctx.calls=[];w.RoseStock.paint(ctx,sh,2,'lines');assert.equal(ctx.lineWidth,2,'historical cut line is twice its previous display width');
  ctx.calls=[];w.RoseStock.paint(ctx,sh,2,'history');assert(ctx.calls.some(c=>c[0]==='fillRect'),'removed region is shaded');assert.equal(ctx.fillStyle,'#d8d5d0','cut silhouettes use neutral grey');
