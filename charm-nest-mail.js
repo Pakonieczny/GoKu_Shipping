@@ -19,10 +19,11 @@
   const ENDPOINT = location.origin + "/.netlify/functions/etsyMailOrderLink";
   const INBOX = "https://etsy-mail-1.goldenspike.app/";
   const SANDBOX = typeof S !== "undefined" && S.settings && S.settings.sandbox === "on";
-  // "test": the questions of "Send a test", which go only to our own Etsy account and are real in the sandbox too
+  // "test": questions to the Etsy account of our own set up as the test account; real in the sandbox too
   const TEST = "test";
   const sbOf = rid => SANDBOX && String(rid) !== TEST;
-  const LS = { key: "cn.mail.station", who: "cn.mail.operator", drafts: "cn.mail.drafts", out: "cn.mail.outbox", told: "cn.mail.told", tab: "cn.mail.tab", tr: "cn.mail.tr", health: "cn.mail.health", test: "cn.mail.test" };
+  const LS = { key: "cn.mail.station", who: "cn.mail.operator", drafts: "cn.mail.drafts", out: "cn.mail.outbox", told: "cn.mail.told", tab: "cn.mail.tab", tr: "cn.mail.tr", health: "cn.mail.health" };
+  try { localStorage.removeItem("cn.mail.test"); } catch (_) {}   // the test box is gone from the details; its saved view with it
   const PAIR = "cn.mail.pair";   // sessionStorage: a connect request survives this tab's reload, not the tab
 
   // ─── small helpers ───────────────────────────────────────────────────────
@@ -87,7 +88,7 @@
   function forget(message) {
     put(LS.key, null); put(LS.who, null);
     M.key = null; M.who = null; M.store.clear(); M.link = "off"; M.n = -1; M.since = 0; M.needFull = true; M.first = true;
-    clearTimeout(syncTimer); clearTimeout(healthTimer); clearTimeout(testTimer); closeHealth();
+    clearTimeout(syncTimer); clearTimeout(healthTimer); closeHealth();
     if (message) say(message, "bad");
     paintAll();
   }
@@ -190,9 +191,8 @@
     if (d.t === "sync" && d.sandbox === SANDBOX && d.res && M.key) { M.lastOkAt = Date.now(); M.fails = 0; setLink("ok"); apply(d.res, false); kick(); }
     else if (d.t === "out") flushOut();
     else if (d.t === "health" && d.h && d.h.res && M.key) { M.health = d.h; paintLights(); healthLater(); }
-    else if (d.t === "test" && d.x && d.x.v && M.key) { const was = testV(); M.test = d.x; testNews(was, d.x.v); paintTest(); testLater(); }
   };
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) { clearTitle(); if (M.key) kick(300); for (const P of M.panes) if (P.visible()) markRead(P); healthSoon(); if (testWaiting()) testCall("test_info"); } });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { clearTitle(); if (M.key) kick(300); for (const P of M.panes) if (P.visible()) markRead(P); healthSoon(); } });
   window.addEventListener("online", () => { if (M.key) kick(200); flushOut(); });
 
   function setLink(state) { if (M.link === state) return; M.link = state; for (const P of M.panes) paintState(P); paintLights(); }
@@ -259,9 +259,7 @@
     if (h) for (const c of h.checks) rows.push(row(c.level, c.label, c.text));
     else rows.push(`<li class="wait"><i></i><b>Checking the rest</b><span>${healthErr ? E(healthErr) : "…"}</span></li>`);
     const when0 = healthBusy ? `<span class="cmSpin" aria-hidden="true"></span>checking` : M.health ? "checked " + when(M.health.at) : "";
-    return `<div class="cmHBh"><b>Email link</b><span class="cmHBat">${when0}</span><button type="button" class="lnk" data-hcheck${healthBusy ? " disabled" : ""}>Check now</button></div><ul class="cmHBl">${rows.join("")}</ul>`
-      + testHtml()
-      + (SANDBOX ? `<div class="cmHBf">Sandbox is on: questions about sandbox orders stay in this sorter and never reach anyone. The light still shows the real link.</div>` : "");
+    return `<div class="cmHBh"><b>Email link</b><span class="cmHBat">${when0}</span><button type="button" class="lnk" data-hcheck${healthBusy ? " disabled" : ""}>Check now</button></div><ul class="cmHBl">${rows.join("")}</ul>`;
   }
   function toggleHealth(box, owner) {
     if (healthBox && healthBox.box === box) { closeHealth(); return; }
@@ -270,7 +268,6 @@
     box.hidden = false; box.innerHTML = healthRows();
     owner.querySelectorAll("[data-health]").forEach(b => b.setAttribute("aria-expanded", "true"));
     if (!M.health || Date.now() - M.health.at > 20000) checkHealth(true);
-    if (!testV() || testWaiting() || Date.now() - M.test.at > 60000) testCall("test_info"); else testLater();
   }
   function closeHealth() {
     if (!healthBox) return;
@@ -295,91 +292,10 @@
   }
   function paintLights() {
     const st = lightState();
-    for (const P of M.panes) if (P.host.isConnected) paintLight(P.el, P.host, "cmWarn", st);
+    for (const P of M.panes) if (P.host.isConnected) { paintLight(P.el, P.host, "cmWarn", st); if (P.visible()) paintHist(P); }
     for (const L of M.lines.values()) if (L.node.isConnected) paintLight(L.el, L.node, "cmLWarn", st);
     if (healthBox) { if (healthBox.box.isConnected && M.key) healthBox.box.innerHTML = healthRows(); else closeHealth(); }
   }
-
-  // ─── a test without a customer: an Etsy account of our own ──────────────
-  /* "Send a test" goes the whole real way (the inbox, its Etsy helper, Etsy, and the answer back through the inbox's
-     scrape) but only to the shop's conversation with an Etsy account of our own. The server picks that conversation by
-     a code sent from it, never by a guess (testing in _etsyMailOrderLink.js), and a question on "test" can only go
-     there. Set up once, in the light's details; shared by every tab; asked about only while a code waits. */
-  M.test = get(LS.test, null);   // { at, v: { ready, threadId, customer, pending: { code, expiresAtMs, expired } } }
-  let testBusy = false, testErr = "", testTimer = 0;
-  const testV = () => (M.test && M.test.v) || null;
-  const testWaiting = () => { const v = testV(); return !!(M.key && v && v.pending && !v.pending.expired); };
-  const testWho = v => { const c = (v && v.customer) || {}; return c.name && c.username ? `${c.name} (@${c.username})` : c.name || (c.username ? "@" + c.username : "your test account"); };
-  const clock = ms => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  async function testCall(op) {
-    if (!M.key || testBusy) return;
-    testBusy = true; testErr = ""; paintTest();
-    try {
-      const v = await call(op, {}, { timeout: 20000 });
-      const was = testV();
-      M.test = { at: Date.now(), v }; put(LS.test, M.test);
-      if (bc) try { bc.postMessage({ t: "test", x: M.test }); } catch (_) {}
-      testNews(was, v);
-    } catch (e) { if (!authLost(e)) testErr = e.message; }
-    finally { testBusy = false; paintTest(); testLater(); }
-  }
-  /** The code reached the inbox: said once, where someone is looking. */
-  function testNews(was, v) {
-    if (!document.hidden && v && v.ready && was && was.pending && !was.pending.expired && (!was.ready || was.threadId !== v.threadId))
-      say(`Test account set: tests go only to ${testWho(v)}.`, "ok", 9000);
-  }
-  function testLater() {
-    clearTimeout(testTimer); testTimer = 0;
-    if (!testWaiting() || (document.hidden && !healthBox)) return;   // a hidden page asks again when it is looked at
-    testTimer = setTimeout(() => testCall("test_info"), healthBox ? 5000 : 20000);
-  }
-  function paintTest() { if (healthBox && healthBox.box.isConnected && M.key) healthBox.box.innerHTML = healthRows(); }
-  function testHtml() {
-    if (!M.key) return "";
-    const v = testV(), spin = `<span class="cmSpin" aria-hidden="true"></span>`;
-    let body;
-    if (!v) body = testErr ? `<p class="bad">${E(testErr)}</p><div class="cmHTb"><button type="button" class="lnk" data-t="info">Try again</button></div>` : `<p class="soft">${spin} Looking…</p>`;
-    else if (v.pending && !v.pending.expired) body =
-      `<p>Send this code to the shop as an Etsy message, from your own Etsy account (not the shop's):</p>`
-      + `<div class="cmHTc"><code>${E(v.pending.code)}</code><button type="button" class="btn ghost sm" data-t="copy">Copy</button></div>`
-      + `<p class="soft">${spin} Waiting for the inbox to read it, usually a minute or two.${v.ready ? ` Until then, tests still go to ${E(testWho(v))}.` : ""}</p>`
-      + `<div class="cmHTb"><span class="soft">The code works until ${E(clock(v.pending.expiresAtMs))}.</span><button type="button" class="lnk soft" data-t="cancel">Cancel</button></div>`;
-    else if (v.ready) body =
-      `<p>Tests go only to <b>${E(testWho(v))}</b> on Etsy, never to a customer.</p>`
-      + `<div class="cmHTb"><button type="button" class="btn sm cmBtn" data-t="send">Send a test</button><button type="button" class="btn ghost sm" data-t="open">Open the test conversation</button><button type="button" class="lnk soft" data-t="start">Change</button></div>`
-      + (v.pending ? `<p class="soft">The code for another account ran out before it reached the inbox.</p>` : "");
-    else body =
-      (v.pending ? `<p class="bad">The code ran out before it reached the inbox.</p>` : `<p>Real messages through the inbox, but only to an Etsy account of your own. Set it up once:</p>`)
-      + `<div class="cmHTb"><button type="button" class="btn sm cmBtn" data-t="start">${v.pending ? "Get a new code" : "Set up a test account"}</button></div>`;
-    return `<div class="cmHT"><div class="cmHTh"><b>Test without a customer</b>${testBusy && v ? spin : ""}</div>${body}${testErr && v ? `<p class="bad">${E(testErr)}</p>` : ""}</div>`;
-  }
-  /** The test conversation: the newest question to the current test account, if there is one. */
-  const testEng = () => { const v = testV(); return v && v.ready ? [...M.store.values()].filter(s => String(s.receiptId) === TEST && s.threadId === v.threadId).sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0))[0] || null : null; };
-  function openTest() { closeHealth(); const s = testEng(); return openConversation({ receiptId: TEST, scope: "order", id: s ? s.id : null }); }
-  function sendTest() {
-    const v = testV(); if (!v || !v.ready) return;
-    const s = testEng(), clientId = uidOf();
-    const at = new Date().toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-    queueOut({
-      receiptId: TEST, clientId, sandbox: false, scope: "order", lineId: null, engagementId: s ? s.id : null, newQuestion: false,
-      text: `Email link test from the Charm Sorter (${at}). Reply to this message to check that answers come back.`,
-      lineLabel: "", orderNumber: "", buyerName: (v.customer && v.customer.name) || ""
-    });
-    const P = openTest();
-    if (P) P.waitingFor = clientId;
-  }
-  document.addEventListener("click", async e => {
-    const b = e.target.closest("[data-t]");
-    if (!b || !healthBox || !healthBox.box.contains(b)) return;
-    const a = b.dataset.t;
-    if (a === "info" || a === "start" || a === "cancel") testCall("test_" + a);
-    else if (a === "send") sendTest();
-    else if (a === "open") openTest();
-    else if (a === "copy") {
-      const v = testV(), code = v && v.pending ? v.pending.code : "";
-      try { await navigator.clipboard.writeText(code); say("Copied: " + code, "ok", 3000); } catch (_) { say("Select the code and copy it yourself", "bad"); }
-    }
-  });
 
   function apply(res, mine) {
     if (!res || typeof res !== "object") return;
@@ -841,7 +757,7 @@
     if (!s) {
       if (!P.data) return "";
       if (sbOf(P.rid)) return "";
-      if (!conv && P.rid === TEST) return "No test account yet: open the light under the message box and press Set up a test account.";
+      if (!conv && P.rid === TEST) return "No test account is set up.";
       if (!conv) return "This buyer has not written to the shop yet, so the inbox has no conversation to send through. What you write here is kept, and you send it on Etsy by hand.";
       return "";
     }
@@ -1063,15 +979,16 @@
   /* "Pull all messages" reads every message this buyer and the shop ever wrote, from the inbox's own copy of each of
      their conversations (never from Etsy). The count shows before anything is pulled; pulling shows how far along it is;
      afterwards the pane can switch between the whole history and just this question. Counts are shared by every pane
-     and engraving card of the same order for five minutes. */
-  const HCOUNT_TTL = 5 * 60000;
+     and engraving card of the same order and counted again every two minutes while shown. A sandbox order counts its
+     real buyer's messages (read only; what is written there still stays in the sorter). */
+  const HCOUNT_TTL = 2 * 60000;
   const hcount = new Map();   // receipt → { at, info, busy, err }
   const showingAll = P => P.view === "all" && !!P.hist && P.hist.done && P.hist.rid === P.rid && !P.fresh;
-  const histWanted = P => !!M.key && !sbOf(P.rid) && !!P.rid && !P.fresh && !!((P.eng && P.eng.threadId) || (P.data && P.data.conversation));
+  const histWanted = P => !!M.key && !!P.rid && !P.fresh;
   async function histCount(rid, engId, force) {
     rid = String(rid || "");
     const c = hcount.get(rid);
-    if (!rid || !M.key || sbOf(rid) || (c && (c.busy || (!force && Date.now() - c.at < HCOUNT_TTL)))) return c || null;
+    if (!rid || !M.key || (c && (c.busy || (!force && Date.now() - c.at < HCOUNT_TTL)))) return c || null;
     const cur = { at: Date.now(), info: (c && c.info) || null, busy: true, err: null };
     hcount.set(rid, cur);
     if (hcount.size > 100) hcount.delete(hcount.keys().next().value);
@@ -1103,7 +1020,7 @@
       : `<span class="cmHistT">Only this question</span><button type="button" class="lnk" data-cm-do="showall">Show all ${H.rows.length}</button>`;
     else if (!c || (c.busy && !c.info)) v = `<span class="cmHistT soft"><span class="cmSpin" aria-hidden="true"></span>Counting ${whose} messages…</span>`;
     else if (!c.info) v = `<span class="cmHistT soft">Could not count ${whose} messages.</span><button type="button" class="lnk" data-cm-do="recount">Try again</button>`;
-    else if (!c.info.total) { el.hidden = true; return; }
+    else if (!c.info.total) v = `<span class="cmHistT soft">No messages with ${P.rid === TEST ? "the test account" : "this buyer"} in the inbox yet</span>`;
     else v = `<span class="cmHistT">${P.rid === TEST ? "The test account's" : "This buyer's"} full history: <b>${plural(c.info.total, "message", "messages")}</b>${c.info.threads.length > 1 ? ` in ${c.info.threads.length} conversations` : ""}</span><button type="button" class="cmPull" data-cm-do="pull">Pull all messages</button>`;
     if (el.dataset.v !== v) { el.dataset.v = v; el.innerHTML = v; }
     el.hidden = false;
@@ -1124,7 +1041,7 @@
       for (const t of threads) {
         let after = null;
         do {
-          const r = await call("history", { receiptId: rid, threadId: t.threadId, engagementId: P.engId || null, after, limit: 200 }, { timeout: 25000 });
+          const r = await call("history", { receiptId: rid, threadId: t.threadId, engagementId: P.engId || null, sandbox: sbOf(rid), after, limit: 200 }, { timeout: 25000 });
           if (seq !== P.hseq) return;
           P.hist.rows.push(...(r.messages || []));
           P.hist.got += r.read || (r.messages || []).length;
@@ -1352,7 +1269,7 @@
   function paintLinePull(L) {
     const b = L.el.pull;
     const c = hcount.get(L.rid), n = c && c.info ? c.info.total : null;
-    b.hidden = !M.key || SANDBOX || !(n > 0 || (c && c.busy && n == null));
+    b.hidden = !M.key || !(n > 0 || (c && c.busy && n == null));
     const v = n == null ? `<span class="cmSpin" aria-hidden="true"></span>Counting messages…` : `Pull all messages · ${n}`;
     if (b.dataset.v !== v) { b.dataset.v = v; b.innerHTML = v; }
   }
@@ -1361,7 +1278,7 @@
     for (const en of entries) {
       if (!en.isIntersecting) continue;
       const L = M.lines.get(en.target.dataset.key);
-      if (L && M.key && !SANDBOX) histCount(L.rid, (lineEng(L) || {}).id);
+      if (L && M.key) histCount(L.rid, (lineEng(L) || {}).id);
     }
   }) : null;
   async function lineTranslate(L, lang) {

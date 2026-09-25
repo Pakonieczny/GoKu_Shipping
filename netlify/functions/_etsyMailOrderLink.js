@@ -785,8 +785,8 @@ async function conversation(e, { earlier = false } = {}) {
    It is read only from the inbox's stored messages (EtsyMail_Threads/{id}/messages), never from Etsy. First the count
    (cheap aggregation queries), then pages of up to 200 messages, so the sorter can show how far along it is. */
 const _histThreads = new Map();
-async function historyThreads(receiptId, engagementId) {
-  const key = receiptId + "|" + (engagementId || "");
+async function historyThreads(receiptId, engagementId, sandbox) {
+  const key = (sandbox ? "sb:" : "") + receiptId + "|" + (engagementId || "");
   const hit = receiptId === TEST_RID ? null : _histThreads.get(key);   // the test account can change at any moment
   if (hit && Date.now() - hit.at < 2 * MIN) return hit.list;
   const found = new Map();
@@ -805,6 +805,10 @@ async function historyThreads(receiptId, engagementId) {
     // the test account's conversation, and never anyone's orders
     const t = await testDoc();
     if (t && isThreadId(t.threadId)) take([await db.collection(COLL.threads).doc(t.threadId).get()]);
+  } else if (sandbox) {
+    // a sandbox order is a copy of a real one under a new number, with the real buyer: their real history, read only
+    const b = await sandboxBuyer(receiptId);
+    if (b) take((await db.collection(COLL.threads).where("buyerUserId", "==", b).limit(25).get()).docs);
   } else {
     take((await db.collection(COLL.threads).where("etsyOrderId", "==", receiptId).limit(10).get()).docs);
     for (const t of found.values()) buyer = buyer || t.buyerUserId || null;
@@ -816,13 +820,28 @@ async function historyThreads(receiptId, engagementId) {
   if (_histThreads.size > 200) _histThreads.delete(_histThreads.keys().next().value);
   return list;
 }
+const _sbBuyers = new Map();
+/** The buyer of a sandbox order, from the sandbox's own copy of it (never from Etsy). */
+async function sandboxBuyer(receiptId) {
+  const hit = _sbBuyers.get(receiptId);
+  if (hit && Date.now() - hit.at < (hit.buyer ? 30 : 2) * MIN) return hit.buyer;
+  let buyer = null;
+  try {
+    const r = await require("./etsySandbox").handler({ httpMethod: "GET", queryStringParameters: { fn: "etsyOrderProxy", orderId: receiptId } });
+    const d = r && r.statusCode === 200 ? JSON.parse(r.body) : null;
+    const b = d && d.receipt && d.receipt.buyer_user_id;
+    buyer = b ? String(b) : null;
+  } catch (e) { console.warn("orderLink sandbox buyer:", receiptId, e.message); }
+  _sbBuyers.set(receiptId, { at: Date.now(), buyer });
+  if (_sbBuyers.size > 300) _sbBuyers.delete(_sbBuyers.keys().next().value);
+  return buyer;
+}
 const threadAt = t => Math.max(tsMs(t.lastInboundAt), tsMs(t.lastOutboundAt), tsMs(t.lastOperatorReplyAt), tsMs(t.updatedAt));
 /** How many messages the buyer's history holds, per conversation, before anything is pulled. */
 async function historyInfo(body) {
   const receiptId = cleanId(body.receiptId);
   if (!receiptId) throw httpError(400, "Which order?");
-  if (body.sandbox === true) return { receiptId, sandbox: true, total: 0, threads: [] };
-  const list = await historyThreads(receiptId, body.engagementId);
+  const list = await historyThreads(receiptId, body.engagementId, body.sandbox === true && receiptId !== TEST_RID);
   const msgs = t => db.collection(COLL.threads).doc(t.id).collection("messages");
   const [counts, ghosts] = await Promise.all([
     Promise.all(list.map(t => msgs(t).count().get().then(s => s.data().count).catch(() => null))),
@@ -839,7 +858,7 @@ async function historyInfo(body) {
 async function history(body) {
   const receiptId = cleanId(body.receiptId), threadId = String(body.threadId || "");
   if (!receiptId || !isThreadId(threadId)) throw httpError(400, "Which conversation?");
-  const list = await historyThreads(receiptId, body.engagementId);
+  const list = await historyThreads(receiptId, body.engagementId, body.sandbox === true && receiptId !== TEST_RID);
   if (!list.some(t => t.id === threadId)) throw httpError(404, "That conversation is not this buyer's");
   const limit = Math.min(200, Math.max(20, Number(body.limit) || 150));
   const col = db.collection(COLL.threads).doc(threadId).collection("messages");
