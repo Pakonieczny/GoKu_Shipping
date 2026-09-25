@@ -1815,10 +1815,41 @@ const Pool = window.Pool = (() => {
       st ? [Math.round(st.wPt), Math.round(st.hPt)] : 0, +S.settings.insetPt || 0, +S.settings.maxFill || 0]);
   }
   const due = row => ["pulled", "waiting"].includes(row.state) || row.poolTry !== trySig(row) || (row.poolError > 0 && Date.now() - row.poolError >= RETRY_MS);
+  /* A failure that passes by itself (the cloud slow to answer, the edge's HTML "Inactivity Timeout" page, a 5xx or a
+     gateway fault, the network gone for a moment) is no problem with the line. Holding the line over one left order
+     4330132720 held with that page as its reason and nothing to lift it (25 Sep). Such a line stays pulled, in progress,
+     and the intake takes it up again 30 s, 1 and 2 minutes, then every 5 minutes after the failure while it lasts; only a
+     real problem holds a line. api() marks these failures e.transient; a reason kept from before says so only in words. */
+  const PAGE = /<(?:!doctype|html|head|body|title)\b/i, PASSING = /inactivity timeout|timed out|answer in time|not answering right now|HTTP (?:408|429|5\d\d)\b|\((?:408|429|5\d\d)\)|failed to fetch|networkerror|load failed/i;
+  const passing = e => !!e && (e.transient === true || +e.status >= 500 || [408, 429].includes(+e.status) || PAGE.test(String(e.message ?? e)) || PASSING.test(String(e.message ?? e)));
+  let retryT = 0, retries = 0;
+  function retryLater() {
+    if (retryT) return;
+    retryT = setTimeout(() => { retryT = 0; if (Orders.rows().some(r => r.state === "pulled" && r.poolError > 0)) window.Arrivals?.requeue?.(); }, [30000, 60000, 120000][retries++] || RETRY_MS);
+  }
+  /** A passing failure leaves the line in progress, to be tried again (true); a real problem is the caller's to hold. */
+  function tryLater(row, e) {
+    if (!passing(e)) return false;
+    const why = String((e && e.message) ?? e);
+    row.state = "pulled"; row.reason = `${PAGE.test(why) ? (typeof cloudWords === "function" ? cloudWords(why) : "The cloud did not answer") : why} — trying again`; row.poolError = Date.now(); delete row.poolTry;
+    agent({ pool: true }, "warn", `${row.order.receiptId} · ${row.spec && row.spec.designSku}: ${row.reason} (not held)`);
+    retryLater(); return true;
+  }
+  /** Lines a passing failure stopped are in progress again: those it held before 25 Sep, and (after a reload) those still
+      waiting to be tried again. Returns how many, for the intake to take them up. A person's hold and a problem stay. */
+  function recover(rows) {
+    let n = 0;
+    for (const r of rows) {
+      if (r.state === "held" && !r.hold && !(r.problems && r.problems.length) && passing(r.reason)) { r.state = "pulled"; r.reason = null; r.poolError = Date.now(); delete r.poolTry; }
+      if (r.state === "pulled" && r.poolError > 0) n++;
+    }
+    return n;
+  }
   async function addAll(run) {
     // what goes to the laser today and what waits: full sheets for SS and GF, every other day for the slow metals, orders whole
     // (read first: whether a line is due compares what it is read as now with what it was read as when it was last tried)
     Orders.interpretAll();
+    recover(Orders.rows());
     // A line a person holds waits for that person (the hold is lifted through Review.repool), and a line whose pieces
     // are all on sheets already has nothing to make. Both used to be made up again at the next intake: "Hold order" on
     // a pooled order put a second copy of each of its pieces on a sheet (same pool id, cut twice).
@@ -1832,7 +1863,8 @@ const Pool = window.Pool = (() => {
     const bar = work.length && window.CNProgress ? CNProgress.start(`Preparing ${work.length} order line${work.length === 1 ? "" : "s"}`, { total: work.length }) : null;
     // The design files load side by side (each is fetched, read and traced once a session); the lines are then made up in
     // order, oldest first, and recorded in one call rather than one call a line.
-    const hold = (row, e, later) => { row.state = "held"; row.reason = e.message; if (later) { row.poolError = Date.now(); row.poolTry = trySig(row); } agent({ pool: true }, "warn", `${row.order.receiptId} · ${row.spec && row.spec.designSku}: ${e.message}`); };
+    let passed = false;
+    const hold = (row, e, later) => { if (tryLater(row, e)) { passed = true; return; } row.state = "held"; row.reason = e.message; if (later) { row.poolError = Date.now(); row.poolTry = trySig(row); } agent({ pool: true }, "warn", `${row.order.receiptId} · ${row.spec && row.spec.designSku}: ${e.message}`); };
     await Promise.allSettled(work.filter(row => row.spec && !row.spec.noDesign).map(row => { const e = Master.entryFor(row.spec.designSku); return e && !e.blocked && sizeEntry(e, row.spec.size)?.aiPath ? masterCharm(e, row.spec.size) : null; }));
     const made = [];
     for (const row of work) {
@@ -1844,7 +1876,9 @@ const Pool = window.Pool = (() => {
     let contended = [], failure = null;
     if (S.cloud.ok && made.length) {
       const all = made.flatMap(([, prep]) => prep.pools);
-      try { for (let i = 0; i < all.length; i += 400) contended = contended.concat((await api("charmNestLibrary", { op: "poolPut", pools: all.slice(i, i + 400) }, { label: "Recording the pool" })).contended || []); }
+      // four hundred rows read and written one after another ran past the edge's patience (its "Inactivity Timeout" page,
+      // 25 Sep); the server now reads a call's rows together and writes them in a batch, and a call carries two hundred
+      try { for (let i = 0; i < all.length; i += 200) contended = contended.concat((await api("charmNestLibrary", { op: "poolPut", pools: all.slice(i, i + 200) }, { label: "Recording the pool" })).contended || []); }
       catch (e) { failure = e; }
     }
     for (const [row, prep] of made) { if (failure) { hold(row, failure); continue; } try { attachPool(row, run, prep, contended); } catch (e) { hold(row, e); } }
@@ -1853,8 +1887,9 @@ const Pool = window.Pool = (() => {
     Review.syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards();
     // the run record follows the work without holding it up (see RunCtl.loopNow); a failed save shows on the banner
     if (run) { run.lines = Object.fromEntries(Orders.rows().map(Orders.lineRecord)); RunCtl.save(run).catch(() => {}); }
-    const pooled = rows.filter(r => r.state === "pooled").length;
-    if (rows.length) agent({ pool: true }, "POOL", `Pool: ${pooled} line(s) queued on the cards · ${rows.filter(r => r.state === "waiting").length} waiting · ${rows.filter(r => !["pooled", "noDesign", "waiting"].includes(r.state)).length} held`);
+    const pooled = rows.filter(r => r.state === "pooled").length, again = rows.filter(r => r.state === "pulled").length;
+    if (!passed) retries = 0;   // the retries start again from 30 s after a pass the cloud answered
+    if (rows.length) agent({ pool: true }, "POOL", `Pool: ${pooled} line(s) queued on the cards · ${rows.filter(r => r.state === "waiting").length} waiting · ${rows.filter(r => !["pooled", "noDesign", "waiting", "pulled"].includes(r.state)).length} held${again ? ` · ${again} tried again shortly` : ""}`);
     return pooled;
   }
   async function update(poolIds, patch) { for (const id of poolIds) { const p = B.pool.rows.get(id); if (p) Object.assign(p, patch); } if (S.cloud.ok) for (let i = 0; i < poolIds.length; i += 400) await api("charmNestLibrary", { op: "poolUpdate", poolIds: poolIds.slice(i, i + 400), patch }); }
@@ -1887,7 +1922,7 @@ const Pool = window.Pool = (() => {
     row.state = recs.length && recs.every(p => p.state === "committed") ? "committed" : recs.length && recs.every(p => p.sheetId) ? "written" : "pooled";
     row.reason = null; return true;
   }
-  return { poolAdd, addAll, masterCharm, masterPreview, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle };
+  return { poolAdd, addAll, masterCharm, masterPreview, cloneCharm, update, charmOf, sheetOf, holding, sizeEntry, repairRecoveredGeometry, onSheets, settle, tryLater, recover };
 })();
 
 /* Carry-forward is keyed by immutable order-line identity. A changed Etsy line is always re-interpreted. */

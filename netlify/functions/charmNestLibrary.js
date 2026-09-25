@@ -704,12 +704,21 @@ async function op_poolPut(b) {
      out of today's on the strength of rows it never finished, so the run itself is asked, once per run. */
   const runLive = new Map();
   const liveRun = async runId => { if (runLive.has(runId)) return runLive.get(runId); let live = true; try { const s = await col(RUNS).doc(runId).get(); const r = s.exists ? s.data() : null; live = !r ? true : (!["stopped", "complete", "abandoned"].includes(r.status) && r.step !== "complete"); /* no record at all: assume live */ } catch (_) {} runLive.set(runId, live); return live; };
-  for (const p of rows) {
-    const ref = col(POOL).doc(p.poolId); const ex = await ref.get(); const cur = ex.exists ? ex.data() : null;
+  /* The rows are read together and written in batches. Read and written one after another, two round trips each, the
+     four hundred rows of a run that took every open order ran past the edge's patience, and its HTML "Inactivity
+     Timeout" page came back as the reason the orders were held (25 Sep). A row sent twice is written once, merged. */
+  const byId = new Map(); for (const p of rows) byId.set(p.poolId, Object.assign(byId.get(p.poolId) || {}, p));
+  const list = [...byId.values()], found = [];
+  for (let i = 0; i < list.length; i += 100) found.push(...await db.getAll(...list.slice(i, i + 100).map(p => col(POOL).doc(p.poolId))));
+  let batch = db.batch(), n = 0;
+  for (const [i, p] of list.entries()) {
+    const ex = found[i], cur = ex && ex.exists ? ex.data() : null;
     if (cur && cur.runId && p.runId && cur.runId !== p.runId && !["complete", "abandoned", "committed"].includes(cur.state) && (Date.now() - (ms(cur.updatedAt) || 0)) < 24 * 3600 * 1000 && await liveRun(cur.runId)) { out.contended.push({ poolId: p.poolId, runId: cur.runId }); continue; }
     const doc = Object.assign({}, p, { poolId: p.poolId, updatedAt: FV.serverTimestamp() }); if (!cur) doc.createdAt = FV.serverTimestamp();
-    await ref.set(doc, { merge: true }); out.written++;
+    batch.set(col(POOL).doc(p.poolId), doc, { merge: true }); out.written++;
+    if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; }
   }
+  if (n) await batch.commit();
   return Object.assign({ ok: true }, out);
 }
 async function op_poolUpdate(b) {

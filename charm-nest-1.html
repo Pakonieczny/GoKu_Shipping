@@ -1919,6 +1919,16 @@ async function readBody(res, bar) {
   const all = new Uint8Array(got); let o = 0; for (const c of chunks) { all.set(c, o); o += c.length; }
   return new TextDecoder().decode(all);
 }
+/* An answer that is not JSON is not the function's own: it is the edge's page (its HTML "Inactivity Timeout" when a
+   function says nothing for too long, a 502/503/504) or nothing at all. Its markup became the error's message and was
+   shown as the reason order 4330132720 was held (25 Sep). It reads as plain words here; plain text passes as it is. */
+function cloudWords(text, status) {
+  const t = String(text ?? "").trim(), code = +status ? ` (HTTP ${+status})` : "";
+  if (t && !/<(?:!doctype|html|head|body|title)\b/i.test(t)) return t;
+  const title = (/<title[^>]*>([^<]*)/i.exec(t) || [])[1] || "";
+  return /time.?out/i.test(title) || [408, 504, 524].includes(+status) ? `The cloud did not answer in time${code}`
+    : +status && +status < 500 ? `The cloud answered with an error page${code}` : `The cloud is not answering right now${code}`;
+}
 async function api(fn, body, opts = {}) {
   const headers = { "Content-Type": "application/json" };
   if (S.passcode) headers["X-Edit-Passcode"] = S.passcode;
@@ -1931,12 +1941,17 @@ async function api(fn, body, opts = {}) {
     const payload = Object.assign({}, body || {}); if (WORKSPACE_SANDBOX) payload.sandbox = true;   // the sandbox tags every cloud call
     const res = await fetch(`${FN}/${fn}`, { method: "POST", headers, body: JSON.stringify(payload), signal: window.AbortSignal && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined });
     const txt = await readBody(res, bar);
-    let data = null; try { data = JSON.parse(txt); } catch (_) { data = { error: txt.slice(0, 200) }; }
+    let data = null, page = false; try { data = JSON.parse(txt); } catch (_) { page = true; data = { error: txt.trim() ? cloudWords(txt, res.status).slice(0, 200) : "" }; }
     if (res.status === 401) { S.cloud.locked = true; throw Object.assign(new Error("unauthorized"), { status: 401 }); }
-    if (!res.ok) throw Object.assign(new Error((data && data.error) || `HTTP ${res.status}`), { status: res.status, data });
+    // such a page, a 5xx or a timeout passes by itself (e.transient): whoever asked tries again and holds nothing over it
+    if (!res.ok) throw Object.assign(new Error(page ? data.error || cloudWords("", res.status) : cloudWords(String((data && data.error) || `HTTP ${res.status}`), res.status)), { status: res.status, data, transient: page || res.status >= 500 || res.status === 408 || res.status === 429 });
     if (S.cloud.ok === false && !S.cloud.locked) cloudRecovered();   // any answer says the cloud is back
     return data;
-  } catch (e) { if (e && e.name === "TimeoutError") throw new Error(`${fn}: no answer in ${Math.round(ms / 1000)} s — timed out`); throw e; }
+  } catch (e) {
+    if (e && e.name === "TimeoutError") throw Object.assign(new Error(`${fn}: no answer in ${Math.round(ms / 1000)} s — timed out`), { transient: true });
+    if (e && e.name === "TypeError" && /fetch|network|load failed/i.test(e.message)) e.transient = true;   // the network, not an answer
+    throw e;
+  }
   finally { done(); }
 }
 /* The rail's headline said "Cloud ok · 0 sheets · 0 charms" and was written once at boot and never again — so it sat
@@ -3107,6 +3122,9 @@ function onWorkerMessage(sh, m, idx) {
     if (pr.stage === "place") { sh.probePlaced = (sh.probePlaced || []).filter(g => g.id !== pr.id).concat(pr); sh.probe = null; }
     else if (pr.stage === "lift") { sh.probePlaced = (sh.probePlaced || []).filter(g => g.id !== pr.id); if (sh.probe?.id === pr.id) sh.probe = null; }
     else sh.probe = pr;
+    // the bar counts the charms as they land, not the rotations prepared before the first one (it read "preparing 100%"
+    // and "0/134 placed" over a sheet filling up, 25 Sep)
+    if (pr.stage === "place" || pr.stage === "lift" || sh.progressKind === "prepare") { const so = carefulSoFar(sh); sh.progressKind = "place"; sh.progress = [so ? so.placed : sh.placements.length, items.length]; }
     const t = performance.now();
     if (pr.stage === "place" || pr.stage === "lift" || !sh._probeStageAt || t - sh._probeStageAt > 250) {
       sh._probeStageAt = t;
@@ -3754,7 +3772,7 @@ function renderProgress(sh) {
   const done = sh.status === "complete" || sh.status === "partial";
   st.title = done ? deep + (sh.searchMetrics ? ` · ${sh.searchMetrics.positions.toLocaleString()} position checks (${sh.searchMetrics.gpuPositions.toLocaleString()} on GPU)` : "") + (sh.gpuProgress ? ` · ${sh.gpuProgress.reason}` : "") + " · Verification checks geometry; it does not certify optimal packing." + (sh.nestFlow === "learned" ? ` · ${sh.learnedResult?.model?.model || (sh.learnedResult?.modelError ? "model unavailable" : "model skipped: baseline sufficient")} · selected ${sh.learnedResult?.selectedSource || "best verified layout"} · +${sh.learnedResult?.gainedPieces || 0} vs standard · baseline ${sh.learnedCheckpoint?.baseline?.placements.length || 0} · ${sh.trials} measured candidates` : "") : "";
   const measured=sh.status==='nesting' && !sh.stage?.startsWith('Stopping') && sh.searchMetrics?.positions>0;
-  const searchLabel=measured ? `${sh.gpuProgress?.active?(sh.searchMetrics.gpuPositions?'GPU + CPU':'CPU · GPU ready'):sh.gpuProgress?.phase==='checking'?'CPU · GPU starting':sh.gpuProgress?'CPU · GPU unavailable':'CPU'} · ${sh.trials.toLocaleString()} layout trial${sh.trials === 1 ? "" : "s"}` : sh.stage;
+  const searchLabel=measured && !carefulSoFar(sh) && !sh.probe ? `${sh.gpuProgress?.active?(sh.searchMetrics.gpuPositions?'GPU + CPU':'CPU · GPU ready'):sh.gpuProgress?.phase==='checking'?'CPU · GPU starting':sh.gpuProgress?'CPU · GPU unavailable':'CPU'} · ${sh.trials.toLocaleString()} layout trial${sh.trials === 1 ? "" : "s"}` : sh.stage;
   if(measured)st.title=`${sh.stage} · ${sh.gpuProgress?.reason||'CPU pipeline'}. Layout trials are completed construction passes across all workers; interrupted passes are excluded. ${sh.searchMetrics.groups||0} complete group plans and ${sh.searchMetrics.branches||0} partial group branches evaluated. Diagnostic only: ${sh.searchMetrics.positions.toLocaleString()} low-level position checks, including repeats and early rejections. These are not distinct sheet arrangements.`;
   // a sheet waiting for the run's Resume is not at work: no spinner
   const waits = sh.status === "queued" && sh.stage === RESUME_STAGE;
@@ -3764,7 +3782,8 @@ function renderProgress(sh) {
     : done ? `<span>${sh.placements.length}/${activeCharms(sh).length} placed${sh.sat ? ` · ${fmt.pct(sh.sat.fullPct)} full` : ""}${sh.verification ? (sh.verification.ok ? " · verified ✓" : " · ⚠ verification flagged") : ""}</span><span class="r">${fmt.s(sh.elapsedMs || 0)} search · ${elapsed} from the first file</span>` : "";   // "total" read as the nesting time
   const ov = q("overlay");
   const moving = sh.status === "nesting" || sh.status === "finishing";
-  ov.innerHTML = moving ? `<span class="pill neutral">${sh.placements.length}/${activeCharms(sh).length} placed</span>${sh.sat ? `<span class="pill neutral">${fmt.pct(sh.sat.fullPct)} full</span>` : ""}` : "";
+  const so = sh.status === "nesting" ? carefulSoFar(sh) : null;
+  ov.innerHTML = moving ? `<span class="pill neutral">${so ? so.placed : sh.placements.length}/${activeCharms(sh).length} placed</span>${so ? `<span class="pill neutral">${fmt.pct(so.full)} full</span>` : sh.sat ? `<span class="pill neutral">${fmt.pct(sh.sat.fullPct)} full</span>` : ""}` : "";
 }
 function renderSat(sh) {
   const el = sh.el; if (!el) return; const box = $(`[data-r="sat"]`, el);
@@ -3849,7 +3868,7 @@ function paintPreview(cv, sh, clean, R) {
   if(window.RoseStock && !sh._forClaude)RoseStock.paint(ctx,sh,k,"history");
   const byId = new Map(sh.charms.map(c => [c.id, c]));
   const sel = sh.selected;
-  if (!clean && !sh.placements.length && sh.charms.length) {
+  if (!clean && !sh.placements.length && sh.charms.length && !sh.probe && !sh.probePlaced?.length) {
     const n = activeCharms(sh).length; ctx.fillStyle = "rgba(147,140,128,.9)"; ctx.textAlign = "center"; ctx.font = `${Math.round(W / 26)}px ${getComputedStyle(document.body).getPropertyValue("--serif")}`;
     const ai = (S.settings.engine || "solver") === "ai";
     ctx.fillText(sh.status === "nesting" ? (ai ? `Claude is planning round ${sh.aiRound || 1}` : "Preparing…") : `${n} charm${n === 1 ? "" : "s"} queued`, W / 2, H / 2 - W / 60);
@@ -3887,6 +3906,14 @@ function paintPreview(cv, sh, clean, R) {
   }
   // largest open pocket
   if (!clean && sh.sat && sh.sat.pocket && sh.liveInfo && sh.sat.pocket.wPt > 6) { const p = sh.sat.pocket; ctx.setLineDash([3, 3]); ctx.strokeStyle = "rgba(95,122,91,.6)"; ctx.lineWidth = 1; ctx.strokeRect(p.xPt * k, p.yPt * k, p.wPt * k, p.hPt * k); ctx.setLineDash([]); }
+}
+/** What a sheet holds while the careful fill puts its charms down one at a time (drawn green until the layout lands):
+    its placements and those charms, counted, and how full they make it by their own areas. Null when there are none. */
+function carefulSoFar(sh) {
+  const on = new Set(sh.placements.map(p => p.id)), extra = (sh.probePlaced || []).filter(g => !on.has(g.id));
+  if (!extra.length) return null;
+  const byId = new Map(sh.charms.map(c => [c.id, c])), area = sh.placements.concat(extra).reduce((a, p) => a + (+byId.get(p.id)?.areaPt2 || 0), 0);
+  return { placed: sh.placements.length + extra.length, full: Math.min(1, area / Math.max(1, usableArea(sh))) };
 }
 /** Inner cut lines of a charm: closed achromatic strokes other than its outline (hoop holes, windows). */
 function cutLinesOf(c) { return CharmNestPDF.cutLinesOf(c); }
@@ -4408,7 +4435,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260925-liverec"></script>
+<script src="charm-nest-bridge.js?v=20260925-timeout"></script>
 <script src="charm-nest-mail.js?v=20260925-one-window"></script>
 <script src="charm-nest-rose-ui.js?v=20260924-thickness"></script>
 <script src="charm-nest-export-ui.js"></script>
