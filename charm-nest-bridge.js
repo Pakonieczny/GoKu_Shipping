@@ -5639,7 +5639,9 @@ const OrderWin = window.OrderWin = (() => {
     // a message the server already has shows once, as itself
     const out = rid ? TeamMail.pending(rid).filter(x => !got.has("c-" + x.id)) : [];
     const up = (rid && W.sending.get(rid)) || 0;
-    const key = JSON.stringify([rid, mine, W.thread.map(m => m.id), out.map(x => [x.id, x.tries, x.error || "", !!x.next]), up, TeamMail.ok(), !!(W.readErr && W.thread.length)]);
+    // what is drawn depends on whether a read has finished or failed too: an order with no messages at all must move on
+    // from "Reading…" to "No internal messages yet" although its (empty) list did not change
+    const key = JSON.stringify([rid, mine, W.thread.map(m => m.id), out.map(x => [x.id, x.tries, x.error || "", !!x.next]), up, TeamMail.ok(), !!W.fullAt, W.readErr || ""]);
     const visible = W.dlg && W.dlg.open && !byId("owPaneTeam")?.hidden;
     if (visible && rid) TeamMail.markSeen(rid, W.thread);
     paintTeamDot();
