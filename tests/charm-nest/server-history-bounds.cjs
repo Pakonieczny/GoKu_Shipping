@@ -24,12 +24,16 @@ function merge(target, src, deep) {
 }
 const getPath = (o, f) => f.split('.').reduce((x, k) => (x == null ? undefined : x[k]), o);
 const norm = v => (v && v.toMillis ? v.toMillis() : v instanceof Date ? v.getTime() : v);
-const count = (coll, d) => { const c = coll.split('/')[0].includes('Run_Lines') ? 'Charm_Nest_Run_Lines' : coll.split('/').length > 1 ? coll.split('/')[0] + '/' + coll.split('/').slice(-1)[0] : coll; reads.set(c, (reads.get(c) || 0) + 1); if (d && d.json != null && /Run_Lines/.test(coll)) jsonReads.n++; };
+// (sheetCharms counts sheet records handed out with their charms: the lists read only the fields they send)
+const sheetCharms = { n: 0 };
+const count = (coll, d) => { const c = coll.split('/')[0].includes('Run_Lines') ? 'Charm_Nest_Run_Lines' : coll.split('/').length > 1 ? coll.split('/')[0] + '/' + coll.split('/').slice(-1)[0] : coll; reads.set(c, (reads.get(c) || 0) + 1); if (d && d.json != null && /Run_Lines/.test(coll)) jsonReads.n++; if (d && d.charms && coll === 'Charm_Nest_Sheets') sheetCharms.n++; };
+const pick = (d, fields) => Object.fromEntries(fields.filter(f => d[f] !== undefined).map(f => [f, d[f]]));
 function docRef(coll, id) {
   const key = coll + '/' + id;
   return {
     id, path: key, parent: { id: coll },
-    async get() { const d = store.get(key); if (d) count(coll, d); return { exists: !!d, id, ref: this, data: () => (d ? clone(d) : undefined) }; },
+    // (getAll passes its fieldMask: only those fields are handed out)
+    async get(mask) { const d0 = store.get(key), d = d0 && mask ? pick(d0, mask) : d0; if (d) count(coll, d); return { exists: !!d, id, ref: this, data: () => (d ? clone(d) : undefined) }; },
     collection(sub) { return query(key + '/' + sub); },
     async set(data, opts) { store.set(key, merge(opts && opts.merge ? clone(store.get(key) || {}) : {}, data, !!(opts && opts.merge))); },
     async update(data) {
@@ -78,7 +82,7 @@ function query(coll, filters = [], order = null, lim = 0, mask = null, after = n
 const db = {
   collection: c => query(c),
   batch() { const ops = []; return { set(ref, d, o) { ops.push(() => ref.set(d, o)); }, update(ref, d) { ops.push(() => ref.update(d)); }, delete(ref) { ops.push(() => ref.delete()); }, async commit() { for (const o of ops) await o(); } }; },
-  async getAll(...refs) { return Promise.all(refs.map(r => r.get())); },
+  async getAll(...refs) { const o = refs.length && typeof refs[refs.length - 1].get !== 'function' ? refs.pop() : null; return Promise.all(refs.map(r => r.get(o && o.fieldMask))); },
   async runTransaction(fn) { return fn({ get: r => r.get(), set: (r, d, o) => r.set(d, o), update: (r, d) => r.update(d), delete: r => r.delete() }); }
 };
 /* ── in-memory Storage (copy and move as GCS does them: metadata travels with the bytes) ── */
@@ -321,5 +325,38 @@ function seedDay(i, extra = {}) {
   store.delete('Charm_Master_Index/IX-00008');
   assert.strictEqual((await post({ op: 'masterListFiles' })).body.index.count, 3500, 'and so does a removal');
 
-  console.log(`server-history-bounds OK · listing ${first.total} reads (0 line parts) at 120 and 300 days · order found 100 days back · search window 30 days · expiries, archive moves, slim backs, 900 KB guard, .pdf copy, payload cleanup, listing mirrors · 3,500 SKUs in ${ixParts} parts`);
+  /* ── a set list with its sheets comes in parts under the answer cap, each sheet read for its list fields only ── */
+  const bigBacks = (sid, n) => Array.from({ length: n }, (_, k) => ({ poolId: `${8000000 + k}_${9000000 + k}_1`, sheetId: sid, approvedAt: 1000 + k, approvedBy: 'Paul', text: 'x'.repeat(200), outputs: { ai: { path: 'charmnest/a.ai', url: 'https://u/a.ai' }, png: { path: 'charmnest/a.png', url: 'https://u/a.png' } }, verified: { geometry: { ok: true }, file: { ok: true } } }));
+  const bigSheetIds = [], bigDay = day(-1);   // the newest day on record: these forty are the list's newest sets
+  for (let s = 0; s < 40; s++) {
+    const setId = 'set-big-' + s, ids = [1, 2, 3].map(k => `sh-big-${s}-${k}`);
+    store.set('Charm_Nest_Sets/' + setId, { setId, seq: s + 1, day: bigDay, runId: 'run-big', status: 'open', updatedAt: ts(T0 + 1000 + s), sheetIds: ids, orders: {} });
+    for (const id of ids) { bigSheetIds.push(id); store.set('Charm_Nest_Sheets/' + id, { id, setId, runId: 'run-big', day: bigDay, metal: 'gold', status: 'complete', placedCount: 150, poolIds: [], backPool: bigBacks(id, 150), charms: [{ outline: 'c'.repeat(50000) }], updatedAt: ts(T0 + 1000 + s) }); }
+  }
+  // a record from before placedCount: readiness counts its placements, read for it alone
+  Object.assign(store.get('Charm_Nest_Sheets/sh-big-0-1'), { placedCount: 0, placements: Array.from({ length: 150 }, (_, k) => ({ id: 'p' + k })) });
+  sheetCharms.n = 0;
+  let sl = await post({ op: 'setList', includeSheets: true, limit: 40 }), slParts = 1, maxBytes = 0;
+  const gotSets = [...sl.body.sets], gotSheets = [...sl.body.sheets];
+  for (;;) {
+    maxBytes = Math.max(maxBytes, Buffer.byteLength(JSON.stringify(sl.body)));
+    if (!sl.body.next) break;
+    assert.strictEqual(sl.body.truncated, true, 'a part that is not the last says so');
+    sl = await post({ op: 'setList', includeSheets: true, limit: 40, cursor: sl.body.next }); slParts++; gotSets.push(...sl.body.sets); gotSheets.push(...sl.body.sheets);
+  }
+  assert.deepStrictEqual(gotSets.map(s => s.setId).sort(), Array.from({ length: 40 }, (_, s) => 'set-big-' + s).sort(), 'every set of the list, once');
+  assert.deepStrictEqual(gotSheets.map(s => s.id).sort(), bigSheetIds.slice().sort(), 'and every sheet of theirs, once');
+  assert(slParts >= 3 && maxBytes < 4.5e6, `the list (about ${Math.round(gotSheets.length * Buffer.byteLength(JSON.stringify(gotSheets[0])) / 1e6)} MB) came in ${slParts} parts of at most ${(maxBytes / 1e6).toFixed(2)} MB`);
+  assert(gotSheets.every(s => s.backs.length === 150 && s.laser && s.laser.total === 150), 'each with its backs and its laser readiness');
+  assert.strictEqual(sheetCharms.n, 0, 'no sheet was read with its charms');
+  // the Library's sheet list of a run the same way
+  let ls = await post({ op: 'listSheets', runId: 'run-big', limit: 500 }), lsSheets = [...ls.body.sheets];
+  while (ls.body.next) { ls = await post({ op: 'listSheets', cursor: ls.body.next }); lsSheets.push(...ls.body.sheets); }
+  assert.deepStrictEqual(lsSheets.map(s => s.id).sort(), bigSheetIds.slice().sort(), 'listSheets comes back whole, in parts');
+  assert.strictEqual(sheetCharms.n, 0);
+  // the history sends each sheet once, in its group, and a page under the cap
+  const hs = await post({ op: 'history', limit: 40 });
+  assert(!('sheets' in hs.body), 'no second list of the sheets'); assert(Buffer.byteLength(JSON.stringify(hs.body)) < 4.5e6 && hs.body.truncated.size === true && hs.body.next, 'a page of groups that would pass the cap stops short and says where to go on');
+
+  console.log(`server-history-bounds OK · listing ${first.total} reads (0 line parts) at 120 and 300 days · order found 100 days back · search window 30 days · expiries, archive moves, slim backs, 900 KB guard, .pdf copy, payload cleanup, listing mirrors · 3,500 SKUs in ${ixParts} parts · set list in ${slParts} parts of ≤ ${(maxBytes / 1e6).toFixed(1)} MB`);
 })().catch(e => { console.error(e); process.exit(1); });

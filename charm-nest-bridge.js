@@ -3979,7 +3979,8 @@ const Sets = window.Sets = (() => {
     if (!reuse && !_cache) body.innerHTML = `<div class="libEmpty">Loading sets…</div>`;
     try {
       if (!reuse) {
-        const [ss, sh] = await Promise.all([api("charmNestLibrary", {op:"setList", includeSheets:true, limit:200}), api("charmNestLibrary", {op:"listSheets", limit:500})]);
+        // both come in parts when they pass what one answer holds (apiAll), and are read to the end before any is shown
+        const [ss, sh] = await Promise.all([api("charmNestLibrary", {op:"setList", includeSheets:true, limit:200}, {all:["sets", "sheets"]}), api("charmNestLibrary", {op:"listSheets", limit:500}, {all:"sheets"})]);
         if (request !== libraryRequest || S.library.kind !== "sets") return;
         const records = [...new Map([...(sh.sheets || []), ...(ss.sheets || [])].map(r=>[r.id,r])).values()];
         _cache = {rawSets:ss.sets || [], rawSheets:records, sets:[], sheets:records};
@@ -4487,7 +4488,7 @@ const RunCtl = window.RunCtl = (() => {
       Sets.byRun().set(Sets.keyOf(rec.runId, set.committedAt ? "committed:" + set.setId : set.group), set); sets.push(set);
     }
     const bySet = new Map(sets.map(x => [x.setId, x]));
-    const ls = await api("charmNestLibrary", { op: "listSheets", limit: 500, runId: rec.runId });
+    const ls = await api("charmNestLibrary", { op: "listSheets", limit: 500, runId: rec.runId }, { all: "sheets" });
 
     for (const slim of ls.sheets || []) {
       const d = (await api("charmNestLibrary", { op: "getSheet", id: slim.id })).sheet; if (!d) continue;
@@ -5498,7 +5499,8 @@ const RunHistory = window.RunHistory = (() => {
       const r = await api("charmNestLibrary", { op: "history", q: query, limit: 60, today: today(), cursor: more ? H.next || null : null }, { quiet: true });
       if (H.request !== request || H.q !== query) return;
       const had = more ? H : { runs: [], sheets: [], sets: [] }, runIds = new Set(had.runs.map(x => x.runId)), sheetIds = new Set(had.sheets.map(x => x.id)), keys = new Set(had.sets.map(g => g.key || g.setId || ""));
-      H.runs = had.runs.concat((r.runs || []).filter(x => !runIds.has(x.runId))); H.sheets = had.sheets.concat((r.sheets || []).filter(x => !sheetIds.has(x.id)));
+      // each sheet comes once, in its group (a second list of them doubled the answer)
+      H.runs = had.runs.concat((r.runs || []).filter(x => !runIds.has(x.runId))); H.sheets = had.sheets.concat((r.sheets || (r.sets || []).flatMap(g => g.sheets || [])).filter(x => !sheetIds.has(x.id)));
       H.scanned = more && H.scanned && r.scanned ? Object.fromEntries(Object.keys(r.scanned).map(k => [k, (H.scanned[k] || 0) + (r.scanned[k] || 0)])) : r.scanned;
       H.next = r.next || null; H.from = r.window?.from || null;
       const groups = (r.sets || []).filter(g => !keys.has(g.key || g.setId || "")).map(g => {
@@ -5601,7 +5603,7 @@ const Recall = window.Recall = (() => {
       return;
     }
     const q = sel.setId ? { setId: sel.setId } : { runId: sel.runId };
-    const ls = await api("charmNestLibrary", Object.assign({ op: "listSheets", limit: 200 }, q), { label: "Reading the set" });
+    const ls = await api("charmNestLibrary", Object.assign({ op: "listSheets", limit: 200 }, q), { label: "Reading the set", all: "sheets" });
     /* One record per sheet name, the newest: before a re-nested sheet kept its identity, the library could hold two
        GF_Sep.17.26_Set-1_Sheet-1 records, one stale. */
     const byName = new Map();

@@ -4128,7 +4128,7 @@ async function loadLibrary(context) {
   if (!S.cloud.ok) { if (kept) stale("the cloud is offline"); else body.innerHTML = `<div class="libEmpty">Cloud offline — the library needs the Netlify functions.</div>`; return; }
   if (S.library.kind === "sets" && window.Sets) return Sets.renderLibrary(body);
   try {
-    const r = await api("charmNestLibrary", { op: "listSheets", metal: S.library.metal === "all" ? null : S.library.metal, limit: 300 }, { label: "Loading library" });
+    const r = await api("charmNestLibrary", { op: "listSheets", metal: S.library.metal === "all" ? null : S.library.metal, limit: 300 }, { label: "Loading library", all: "sheets" });
     if (loadId !== libraryLoadId || S.library.kind === "sets") return;
     S.library.rows = window.Gate?.projectLibraryRecords(r.sheets || []) || r.sheets || []; S.library.loadedAt = Date.now(); S.library.loadedFor = S.library.metal; renderLibrary();
   } catch (e) { if (loadId === libraryLoadId) { if (kept) stale(e.message); else body.innerHTML = `<div class="libEmpty">Could not load: ${esc(e.message)}</div>`; } }
