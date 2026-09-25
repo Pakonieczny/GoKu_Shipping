@@ -1301,7 +1301,7 @@ async function health(body = {}) {
    a sorter waits). Only a connected sorter sees the code, and a test question can only be written to that conversation.
    The inbox's AI never answers there by itself: orderLinkTest on the conversation holds it, as an open question does. */
 const TEST_CODE_TTL_MS = HOUR;
-const TEST_SLACK_MS = 10 * MIN;       // Etsy's message times are rough: a code sent just outside its hour still counts
+const TEST_SLACK_MS = DAY;            // the times the scrape reads off Etsy can be hours out (time zones): the code itself is the check
 const testRef = () => db.collection(COLL.meta).doc("test");
 let _test = { at: 0, value: null };
 async function testDoc({ fresh = false } = {}) {
