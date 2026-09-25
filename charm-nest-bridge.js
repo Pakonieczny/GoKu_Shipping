@@ -5381,7 +5381,7 @@ const OrderWin = window.OrderWin = (() => {
       if (sent && !W.thread.some(m => m.id === "c-" + sent.id)) { W.thread = W.thread.concat([{ id: "c-" + sent.id, senderName: sent.who, text: sent.text, imageUrl: sent.imageUrl, at: Date.now(), local: true, sandbox: WORKSPACE_SANDBOX || undefined }]); setTimeout(() => loadThread(rid), 300); }
       paintThread(true); paintWho();
     });
-    byId("owTabTeam")?.addEventListener("click", () => setTimeout(() => paintThread(true), 0));
+    byId("owTabTeam")?.addEventListener("click", () => setTimeout(() => { paintThread(true); grow(); }, 0));
     document.addEventListener("visibilitychange", () => { if (!document.hidden && W.dlg.open && W.rid) loadThread(W.rid); });
     window.addEventListener("online", () => { if (W.dlg.open && W.rid) loadThread(W.rid); });
     // the customer's side of the order: its own tab beside the team's chat (charm-nest-mail.js)
@@ -5389,8 +5389,11 @@ const OrderWin = window.OrderWin = (() => {
   }
   function grow() {
     const input = byId("owInput"); if (!input) return;
-    input.style.height = "auto"; input.style.height = Math.min(120, input.scrollHeight) + "px";
     byId("owSend").disabled = !input.value.trim() && !W.tray.length;
+    // a box not on screen (the window still closed, the Customer tab in front) has no height to read: it keeps its own
+    // until it is shown, and is sized then
+    if (!input.offsetParent) { input.style.height = ""; return; }
+    input.style.height = "auto"; input.style.height = Math.min(120, input.scrollHeight) + "px";
   }
   /** Each order keeps its own draft and its own images: another order opened (Next, Previous, the list) never takes them. */
   function stashTray() {
@@ -5655,7 +5658,7 @@ const OrderWin = window.OrderWin = (() => {
     paint();
     if (!W.dlg.open) W.dlg.showModal();
     try { window.CustomerMail?.orderShown(r, opts || {}); } catch (e) { console.warn("customer mail:", e); }
-    paintThread();
+    grow(); paintThread();
     loadThread(rid, true);
     // what the other stations write shows within about 20 s while the window is open and in view
     clearInterval(W.poll);
