@@ -167,9 +167,9 @@ exports.handler = async (event) => {
 
         const items = Array.isArray(o.items) ? o.items : [];
 
-        // Mirror the primary image of each item, up to the per-request budget. Not in the sandbox: its orders are copies
-        // of a few snapshot orders under new numbers, so every copy made a new full-size photo under the production
-        // design-archive/ prefix that nothing ever deleted. A sandbox record keeps the listing's own image URL.
+        // Mirror the primary image of each item, up to the per-request budget. Not in the sandbox: every rehearsal (and
+        // every replay after a reset) made new full-size photos under the production design-archive/ prefix that nothing
+        // ever deleted. A sandbox record keeps the listing's own image URL.
         for (const it of items) {
           if (PREFIX) break;
           if (mirrored >= MAX_MIRROR) break;

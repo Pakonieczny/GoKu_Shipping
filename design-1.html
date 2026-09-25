@@ -5301,7 +5301,7 @@ const BritesChat = (() => {
      Interruptions are the norm at a bench, and re-typing a message because
      you glanced at another order is the kind of small loss that stops
      people using a tool.                                                  */
-  const DRAFTS = "designStation.chatDrafts.v1";
+  const DRAFTS = "designStation.chatDrafts.v1" + NS;   // the sandbox's own: its orders carry the real Etsy numbers
   function readDrafts() {
     try { return JSON.parse(localStorage.getItem(DRAFTS) || "{}"); } catch (_) { return {}; }
   }

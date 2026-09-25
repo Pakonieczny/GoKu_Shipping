@@ -22,7 +22,9 @@
   // "test": questions to the Etsy account of our own set up as the test account; real in the sandbox too
   const TEST = "test";
   const sbOf = rid => SANDBOX && String(rid) !== TEST;
-  const LS = { key: "cn.mail.station", who: "cn.mail.operator", drafts: "cn.mail.drafts", out: "cn.mail.outbox", told: "cn.mail.told", tab: "cn.mail.tab", tr: "cn.mail.tr", health: "cn.mail.health" };
+  // drafts are the sandbox's own there: its orders carry the real Etsy numbers, and words typed in a rehearsal must never
+  // wait in the real order's box (a message in the outbox carries its own sandbox mark to the server)
+  const LS = { key: "cn.mail.station", who: "cn.mail.operator", drafts: "cn.mail.drafts" + (SANDBOX ? ":sandbox" : ""), out: "cn.mail.outbox", told: "cn.mail.told", tab: "cn.mail.tab", tr: "cn.mail.tr", health: "cn.mail.health" };
   // gone from the page, and their saved copies with them: the test box, and the inbox-wide "waiting" marks
   try { localStorage.removeItem("cn.mail.test"); localStorage.removeItem("cn.mail.waiting"); } catch (_) {}
   const PAIR = "cn.mail.pair";   // sessionStorage: a connect request survives this tab's reload, not the tab
@@ -528,6 +530,8 @@
      closed window or a dropped connection in between only delays it: the server takes each message once, by its id. */
   let outBusy = false;
   const pendingOut = () => get(LS.out, []);
+  // what this page shows of the outbox: its own side's (a sandbox order carries the real order's number)
+  const shownOut = () => pendingOut().filter(x => !!x.body.sandbox === sbOf(x.body.receiptId));
   function queueOut(body) {
     const list = pendingOut();
     list.push({ id: body.clientId, body, at: Date.now(), tries: 0 });
@@ -853,7 +857,7 @@
   }
   /** Messages still in this browser's outbox for this pane's question. */
   function localRows(P) {
-    return pendingOut().filter(x => String(x.body.receiptId) === String(P.rid) && (
+    return shownOut().filter(x => String(x.body.receiptId) === String(P.rid) && (
       x.body.engagementId ? x.body.engagementId === P.engId && !P.fresh
         : P.fresh ? x.body.newQuestion : !P.engId && (x.body.scope || "order") === (P.ctx.scope || "order")))
       .map(x => ({ id: "local_" + x.id, local: x, side: "us", who: (M.who && M.who.name) || "You", atMs: x.at, text: x.body.text, status: x.error ? "local_failed" : "local", error: x.error || null }));
@@ -1311,7 +1315,7 @@
       e.last.innerHTML = `<div class="cmMsg cust mini"><div class="cmMeta"><b>${E(s.lastInboundBy || cust || "Customer")}</b><span>${E(when(s.lastInboundAtMs))}</span><span class="cmTrB"><button type="button" data-l-do="tr" data-lang="en" class="${L.tr === "en" ? "on" : ""}">EN</button><button type="button" data-l-do="tr" data-lang="uk" class="${L.tr === "uk" ? "on" : ""}">УКР</button></span></div><div class="cmBody">${html(text)}</div>${tl && !tl.same ? `<div class="cmTr"><span class="cmTrLbl">${E(LANG[L.tr])}</span>${html(tl.text)}</div>` : ""}</div>`;
     } else e.last.hidden = true;
     const out = s && s.lastOut;
-    const local = pendingOut().find(x => String(x.body.receiptId) === L.rid && x.body.scope === "engraving" && String(x.body.lineId || "") === String(lineIdOf(L.row) || ""));
+    const local = shownOut().find(x => String(x.body.receiptId) === L.rid && x.body.scope === "engraving" && String(x.body.lineId || "") === String(lineIdOf(L.row) || ""));
     const note = local ? (local.error ? `<span class="bad">Not sent: ${E(local.error)}</span>` : "Sending…")
       : out && out.status === "failed" ? `<span class="bad">The last message did not go.</span> Open the conversation to try again.`
       : out && out.status === "manual" ? `<span class="warn">No Etsy conversation with this buyer yet:</span> open the conversation to send it by hand.`

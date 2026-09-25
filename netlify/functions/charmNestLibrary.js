@@ -900,12 +900,38 @@ async function op_sandboxReset(b) {
   await db.collection(SANDBOX).doc("stream").delete();   // the order stream starts over with the records it fed
   void b; return { ok: true, more: false, deleted, files, filesError };
 }
-/* ── the sandbox order stream: in place of the whole snapshot at once, the emulated Etsy lists a few new orders per
-   simulated ten minutes (etsySandbox.js builds them from this seed and step). The sorter moves the clock one step per
-   check, and only once it has taken in the last step's orders, so a replay at 50x plays a day out in half an hour.
+/* ── the sandbox order stream: in place of the whole snapshot at once, the emulated Etsy lists a few of the snapshot's own
+   orders per simulated ten minutes, oldest first, under their real Etsy numbers (etsySandbox.js plans them from this seed
+   and step). The sorter moves the clock one step per check, and only once it has taken in the last step's orders, so a
+   replay at 50x plays a day out in half an hour. Each order comes once: when all of them have come (`total`, the
+   snapshot's open orders) the clock stops at that step, so nothing ships by hand while the last ones are worked, and `done`
+   tells the sorter to stop hurrying its checks.
    get · ensure (start one for the current snapshot, or resume it) · tick (one step of a playing stream; `expect` is the
    clock the caller last saw, so two tabs never step twice) · off (the whole snapshot again) · reset. Charm_Sandbox only. ── */
 const STREAM_STEP_MS = 600000;
+// v2: the snapshot's own orders under their real numbers. A stream of the old kind (copies under made-up numbers) is not
+// resumed: the next ensure, or the next check's step, starts a new one in its place.
+const STREAM_V = 2;
+const streamHash = t => { let h = 2166136261; for (let i = 0; i < t.length; i++) h = Math.imul(h ^ t.charCodeAt(i), 16777619); return h >>> 0; };
+/** How many orders step k brings: the first draw of the step's own generator, exactly as etsySandbox.js draws it. */
+function streamCount(s, k) {
+  let a = streamHash(`${s.seed}:${k}`); a = (a + 0x6D2B79F5) | 0;
+  let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return s.min + Math.floor((((t ^ (t >>> 14)) >>> 0) / 4294967296) * (s.max - s.min + 1));
+}
+/** How many of the snapshot's orders have come by step k: at most its count. */
+function streamBrought(s, k) { const total = +s.total || Infinity; let n = 0; for (let j = 1; j <= k && n < total; j++) n += streamCount(s, j); return Math.min(n, total); }
+/** How many of a snapshot's orders the stream brings: its open ones, as etsySandbox.js picks them. Read from the file once
+    per snapshot and instance, when a stream starts; the count recorded with the snapshot if the file cannot be read. */
+const streamOpen = r => !!r && r.is_paid !== false && r.was_paid !== false && !r.is_shipped && !r.was_shipped && !r.is_canceled && !r.was_canceled && !/cancel/i.test(r.status || "");
+const snapshotOpen = new Map();
+async function streamTotal(path, recorded) {
+  if (!snapshotOpen.has(path)) {
+    try { const [buf] = await admin.storage().bucket().file(path).download(), parsed = JSON.parse(buf.toString("utf8")); snapshotOpen.set(path, (Array.isArray(parsed) ? parsed : parsed.receipts || []).filter(streamOpen).length); }
+    catch (e) { console.warn("[sandboxStream] snapshot not read, its recorded count stands:", e.message); return recorded; }
+  }
+  return snapshotOpen.get(path);
+}
 async function op_sandboxStream(b) {
   if (!PREFIX) return { error: "the order stream exists only in the sandbox", status: 403 };
   const ref = db.collection(SANDBOX).doc("stream"), action = str(b.action, 12) || "get";
@@ -918,13 +944,18 @@ async function op_sandboxStream(b) {
     if (action === "off") { if (was && was.on) t.set(ref, Object.assign({}, was, { on: false })); return { ok: true, stream: null }; }
     if (!path) return { error: "no sandbox snapshot yet: take one first", status: 409 };
     const now = Date.now(), speed = Math.max(1, Math.min(1000, Math.round(num(b.speed)) || 50));
-    let s = was && was.snapshotPath === path ? Object.assign({}, was, { on: true, speed }) : null;
-    // only ensure starts or resumes one: a step asked of a stream a reset deleted (a check still out) starts none
-    if (action === "tick" && !(s && was.on)) return { ok: true, stream: null, advanced: false };
+    const mine = !!was && was.snapshotPath === path && was.v === STREAM_V;
+    let s = mine ? Object.assign({}, was, { on: true, speed }) : null;
+    // only ensure starts or resumes one: a step asked of a stream a reset deleted (a check still out) starts none, but a
+    // step asked of a playing stream of the old kind starts the new kind in its place, at step 0
+    if (action === "tick" && !(s && was.on) && !(was && was.on && !mine)) return { ok: true, stream: null, advanced: false };
     // a new stream starts at this ten minutes of the real clock; a seed given in Settings replays a recorded one
-    if (!s) { const simStart = Math.floor(now / STREAM_STEP_MS) * STREAM_STEP_MS; s = { on: true, seed: Math.floor(num(b.seed)) > 0 ? Math.floor(num(b.seed)) % 2147483647 || 1 : 1 + Math.floor(Math.random() * 2147483646), speed, stepMs: STREAM_STEP_MS, min: 2, max: 5, simStart, simNow: simStart, tick: 0, snapshotPath: path, startedAt: now, tickAt: now }; }
+    if (!s) { const simStart = Math.floor(now / STREAM_STEP_MS) * STREAM_STEP_MS; s = { on: true, v: STREAM_V, seed: Math.floor(num(b.seed)) > 0 ? Math.floor(num(b.seed)) % 2147483647 || 1 : 1 + Math.floor(Math.random() * 2147483646), speed, stepMs: STREAM_STEP_MS, min: 2, max: 5, simStart, simNow: simStart, tick: 0, snapshotPath: path, total: await streamTotal(path, Math.max(0, Math.floor(num(snap.data().count)))), startedAt: now, tickAt: now }; }
     let advanced = false;
-    if (action === "tick" && (b.expect == null || num(b.expect) === s.simNow)) { s.tick += 1; s.simNow = s.simStart + s.tick * s.stepMs; s.tickAt = now; advanced = true; }
+    // every order of the snapshot has come by this step: the clock stays here
+    const done = !!s.total && streamBrought(s, s.tick) >= s.total;
+    if (action === "tick" && mine && !done && (b.expect == null || num(b.expect) === s.simNow)) { s.tick += 1; s.simNow = s.simStart + s.tick * s.stepMs; s.tickAt = now; advanced = true; }
+    s.brought = streamBrought(s, s.tick); s.done = !!s.total && s.brought >= s.total;
     if (JSON.stringify(s) !== JSON.stringify(was)) t.set(ref, s);
     return { ok: true, stream: s, advanced };
   });

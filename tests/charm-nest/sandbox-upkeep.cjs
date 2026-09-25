@@ -3,6 +3,7 @@
 //  · the emulated Etsy lists, and holds, only the streamed orders not shipped yet (finished at the station: shipped a
 //    little later, an undo keeps it open; nobody finishing it: shipped by hand two days past its ship date), reads a shipped
 //    order alone as shipped, gives the same orders from the same seed, and a cold instance never replays every step;
+//  · the stream brings each open snapshot order once, under its own number, and its clock stops when all have come;
 //  · an engraving reading Claude was paid for in the sandbox answers every copy of the same words, sandbox jobs and their
 //    payloads are the sandbox's own, a paid reading is never overwritten, and production asks Claude exactly as before;
 //  · the sandbox archive copies no photo into the production design-archive/ prefix;
@@ -106,12 +107,14 @@ const docsIn = c => [...store.keys()].filter(k => k.startsWith(c + '/') && !k.sl
   /* ═══ the emulated Etsy while the stream plays ═══ */
   const STEP = 600000, DAY = 86400, snapAt = Date.now() - 3600e3, T0 = Date.now();
   const receipt = (rid, leadDays, hoursAgo, extra) => { const created = Math.floor(snapAt / 1000) - hoursAgo * 3600, ship = created + leadDays * DAY; return Object.assign({ receipt_id: rid, order_number: rid, create_timestamp: created, created_timestamp: created, update_timestamp: created, status: 'Paid', is_paid: true, is_shipped: false, transactions: [{ transaction_id: rid * 10 + 1, receipt_id: rid, listing_id: 1718001, sku: 'BR-TST-0' + (rid % 10), title: 'charm', quantity: 1, create_timestamp: created, expected_ship_date: ship }] }, extra || {}); };
-  const snapshot = [receipt(3521000101, 1, 5), receipt(3521000102, 2, 3), receipt(3521000103, 3, 1), receipt(3521000104, 2, 2, { is_shipped: true, status: 'Completed' })];
+  // forty open orders, taken one an hour (the oldest first here), due 1 to 40 days after they were taken, and a shipped one
+  // the stream never brings
+  const snapshot = Array.from({ length: 40 }, (_, i) => receipt(3521000101 + i, i + 1, 80 - i)).concat([receipt(3521000999, 2, 90, { is_shipped: true, status: 'Completed' })]);
   blobs.set('charmnest/sandbox/orders-cur.json', { buf: Buffer.from(JSON.stringify({ at: snapAt, count: snapshot.length, receipts: snapshot })), contentType: 'application/json' });
   const meta = { path: 'charmnest/sandbox/orders-cur.json', count: snapshot.length, at: snapAt, takenBy: 'test' };
   store.set('Charm_Sandbox/current', meta);
   const simStart = Math.floor(T0 / STEP) * STEP;
-  const streamAt = (tick, startedAt = T0) => ({ on: true, seed: 4242, speed: 50, stepMs: STEP, min: 2, max: 5, simStart, simNow: simStart + tick * STEP, tick, snapshotPath: meta.path, startedAt, tickAt: T0 });
+  const streamAt = (tick, startedAt = T0) => ({ on: true, v: 2, seed: 4242, speed: 50, stepMs: STEP, min: 2, max: 5, simStart, simNow: simStart + tick * STEP, tick, snapshotPath: meta.path, startedAt, tickAt: T0 });
   const load = () => { delete require.cache[require.resolve(path.join(fnDir, 'etsySandbox.js'))]; return require(path.join(fnDir, 'etsySandbox.js')); };
   let etsy = load();
   const call = q => etsy.handler({ httpMethod: 'GET', queryStringParameters: q }).then(r => ({ status: r.statusCode, body: JSON.parse(r.body) }));
@@ -119,13 +122,21 @@ const docsIn = c => [...store.keys()].filter(k => k.startsWith(c + '/') && !k.sl
   const ids = l => l.map(r => String(r.receipt_id));
   const dueOf = r => Math.max(0, ...['expected_ship_date', 'dispatch_date', 'ship_by_date'].map(f => +r[f] || 0), ...(r.transactions || []).map(t => +t.expected_ship_date || 0));
   const arrived = s => Array.from({ length: s.tick }, (_, i) => etsy.batch(s, snapshot, i + 1, meta).length).reduce((a, b) => a + b, 0);
-  /** What the stream should list: the look-back's orders, newest first, less those two days past their ship date and those shipped. */
+  /** The step that brings the snapshot's last open order: no step after it brings any. */
+  const lastK = s => { let k = 1; while (etsy.batch(s, snapshot, k + 1, meta).length) k++; return k; };
+  /** What the stream should list: the orders come by now, newest first, less those two days past their ship date and those shipped. */
   function expected(s, shipped) {
-    const { MAX_BACK, GRACE_S } = etsy.upkeep, simS = (s.simStart + s.tick * s.stepMs) / 1000, out = [];
-    for (let k = s.tick; k >= Math.max(1, s.tick - MAX_BACK + 1); k--) out.push(...etsy.batch(s, snapshot, k, meta).filter(r => dueOf(r) + GRACE_S >= simS && !shipped.has(String(r.receipt_id))).reverse());
+    const { GRACE_S } = etsy.upkeep, simS = (s.simStart + s.tick * s.stepMs) / 1000, out = [];
+    for (let k = Math.min(s.tick, lastK(s)); k >= 1; k--) out.push(...etsy.batch(s, snapshot, k, meta).filter(r => dueOf(r) + GRACE_S >= simS && !shipped.has(String(r.receipt_id))).reverse());
     return out;
   }
 
+  // the stream brings every open order once, oldest first, under its own receipt and transaction numbers
+  const openIds = snapshot.filter(r => !r.is_shipped).map(r => String(r.receipt_id));
+  const brought = Array.from({ length: 30 }, (_, k) => etsy.batch(streamAt(k + 1), snapshot, k + 1, meta)).flat();
+  assert.deepStrictEqual(ids(brought), openIds, 'every open snapshot order comes once, oldest first, under its own number');
+  const own = r => snapshot.find(o => o.receipt_id === r.receipt_id).transactions.map(x => x.transaction_id);
+  assert(brought.every(r => JSON.stringify(r.transactions.map(x => x.transaction_id)) === JSON.stringify(own(r))), 'with its own transaction numbers');
   // three weeks of simulated time played: the list is the orders not shipped, not every order since the first step
   let s = streamAt(3000); store.set('Charm_Sandbox/stream', s);
   let listed = await listAll();
@@ -135,7 +146,7 @@ const docsIn = c => [...store.keys()].filter(k => k.startsWith(c + '/') && !k.sl
   console.log(`step ${s.tick}: ${total} orders arrived, ${listed.length} listed (expected ${want.length}), ${etsy.upkeep.size()} held`);
   assert.deepStrictEqual(ids(listed), ids(want), 'the list is the arrived orders not shipped yet, newest first');
   assert.strictEqual(JSON.stringify(listed), JSON.stringify(want), 'the same seed gives the same orders, built again from their step');
-  assert(listed.length < total * 0.6 && listed.length <= etsy.upkeep.MAX_BACK * 5, `the list stays bounded: ${listed.length} of ${total}`);
+  assert(listed.length > 0 && listed.length < total, `orders two days past their ship date have shipped by hand: ${listed.length} of ${total} listed`);
   assert.strictEqual(etsy.upkeep.size(), listed.length, 'the instance holds only what it lists');
   assert.strictEqual((await call({ fn: 'status' })).body.stream.arrived, listed.length, 'status counts the orders listed now');
 
@@ -155,11 +166,13 @@ const docsIn = c => [...store.keys()].filter(k => k.startsWith(c + '/') && !k.sl
   assert(one.status === 200 && one.body.receipt.is_shipped === true && one.body.transactions.length === 1, 'a shipped order read alone reads as shipped, as Etsy reads it');
   one = await call({ fn: 'etsyOrderProxy', orderId: B });
   assert(one.status === 200 && !one.body.receipt.is_shipped, 'an order still listed reads as open');
-  const early = etsy.batch(s, snapshot, 5, meta)[0];
+  const early = etsy.batch(s, snapshot, 1, meta)[0];
   one = await call({ fn: 'etsyOrderProxy', orderId: String(early.receipt_id) });
-  assert(one.status === 200 && one.body.receipt.is_shipped === true && JSON.stringify(one.body.transactions) === JSON.stringify(early.transactions), 'an order from the first hour, long shipped, is built again from its number alone');
-  const later = etsy.batch(s, snapshot, s.tick + 1, meta)[0];
-  assert.strictEqual((await call({ fn: 'etsyOrderProxy', orderId: String(later.receipt_id) })).status, 404, 'an order of a step not come yet does not exist');
+  assert(one.status === 200 && one.body.receipt.is_shipped === true && JSON.stringify(one.body.transactions) === JSON.stringify(early.transactions), 'an order from the first step, long shipped, is built again from its number alone');
+  assert.strictEqual(etsy.batch(s, snapshot, s.tick + 1, meta).length, 0, 'once every order has come, a step brings none');
+  store.set('Charm_Sandbox/stream', streamAt(2));
+  assert.strictEqual((await call({ fn: 'etsyOrderProxy', orderId: openIds[openIds.length - 1] })).status, 404, 'an order of a step not come yet does not exist');
+  store.set('Charm_Sandbox/stream', s);
 
   // a cold instance lists the same orders: it plans the steps it looks back at and reads which orders are finished
   etsy = load(); reads = 0;
@@ -170,11 +183,34 @@ const docsIn = c => [...store.keys()].filter(k => k.startsWith(c + '/') && !k.sl
   s = streamAt(400000); store.set('Charm_Sandbox/stream', s); etsy = load();
   let t = realNow(); const far = (await call({ fn: 'listOpenOrders' })).body; t = realNow() - t;
   console.log(`step ${s.tick} from cold: ${far.count} listed in ${t} ms`);
-  assert(t < 5000 && far.count === expected(s, new Set()).length && far.count <= etsy.upkeep.MAX_BACK * 5, `a cold instance at step 400000 answers in ${t} ms with the look-back only`);
+  assert(t < 5000 && far.count === expected(s, new Set()).length, `a cold instance at step 400000 answers in ${t} ms, planning only the steps that brought orders`);
   // a reset starts a new stream (step 0 again, a new start): the first step's orders, as from the first
   s = streamAt(1, T0 + 1); store.set('Charm_Sandbox/stream', s);
   assert.deepStrictEqual(ids(await listAll()), ids(etsy.batch(s, snapshot, 1, meta)).reverse(), 'a new stream lists its own first step');
   assert.strictEqual(etsy.upkeep.size(), etsy.batch(s, snapshot, 1, meta).length, 'and holds nothing of the old one');
+
+  /* ═══ the stream's clock stops once every order of the snapshot has come ═══ */
+  {
+    const lib0 = require(path.join(fnDir, 'charmNestLibrary.js'));
+    const op = b => lib0.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(Object.assign({ op: 'sandboxStream', sandbox: true }, b)) }).then(r => JSON.parse(r.body));
+    const saved = store.get('Charm_Sandbox/stream'); store.delete('Charm_Sandbox/stream');
+    let r = await op({ action: 'ensure', seed: 31 });
+    assert(r.stream.v === 2 && r.stream.total === openIds.length && r.stream.tick === 0 && r.stream.brought === 0 && !r.stream.done, 'a new stream knows how many open orders the snapshot holds (its shipped one never comes): ' + JSON.stringify(r.stream));
+    let n = 0; while (!r.stream.done && n++ < 100) r = await op({ action: 'tick', expect: r.stream.simNow });
+    const last = r.stream;
+    assert(last.done && last.brought === openIds.length && last.tick < 30, 'the steps bring them all, 2 to 5 at a time: ' + JSON.stringify(last));
+    assert(etsy.batch(last, snapshot, last.tick, meta).length > 0 && etsy.batch(last, snapshot, last.tick + 1, meta).length === 0, 'the clock stops at the step that brings the last order');
+    const status = (await call({ fn: 'status' })).body.stream;
+    assert(status.left === 0 && status.total === openIds.length, 'the emulator has none left to bring: ' + JSON.stringify(status));
+    r = await op({ action: 'tick', expect: last.simNow });
+    assert(!r.advanced && r.stream.tick === last.tick && r.stream.simNow === last.simNow && r.stream.done, 'then the clock stays where it is');
+    // a stream of the old kind (copies under made-up numbers) still playing: the next check's step starts a new one, at step 0
+    store.set('Charm_Sandbox/stream', { on: true, seed: 5, speed: 50, stepMs: STEP, min: 2, max: 5, simStart, simNow: simStart + 166 * STEP, tick: 166, snapshotPath: meta.path, startedAt: T0, tickAt: T0 });
+    assert.strictEqual((await call({ fn: 'listOpenOrders' })).body.results.length, 0, 'the emulator lists nothing of a stream of the old kind');
+    r = await op({ action: 'tick', expect: simStart + 166 * STEP });
+    assert(r.stream && r.stream.v === 2 && r.stream.tick === 0 && !r.advanced && r.stream.on, 'a step asked of a stream of the old kind starts a new one in its place: ' + JSON.stringify(r));
+    if (saved) store.set('Charm_Sandbox/stream', saved); else store.delete('Charm_Sandbox/stream');
+  }
 
   /* ═══ Claude's engraving readings in the sandbox ═══ */
   const lib = require(path.join(fnDir, 'charmNestLibrary.js')), engrave = require(path.join(fnDir, 'charmEngrave-background.js'));

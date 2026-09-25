@@ -11,11 +11,11 @@ const bridge=fs.readFileSync('charm-nest-bridge.js','utf8'),station=fs.readFileS
  await c.op_sandboxStatus();assert.equal(documentReads,1);assert.equal(aggregates,5);
  const arrivals=await c.op_arrivalRecord({orders:[]});assert.equal(arrivals.count24,420);assert.equal(arrivals.count1,420);assert.equal(aggregates,7);assert.equal(documentReads,1,'no downloads of all historical arrivals');
  // Simultaneous sandbox receipt calls share one metadata read and Storage download.
- let metaReads=0,downloads=0;const sandbox={exports:{},console,Date,require:name=>{
-  if(name==='./firebaseAdmin')return{firestore:()=>({collection:()=>({doc:()=>({get:async()=>{metaReads++;return{exists:true,data:()=>({path:'snapshot.json'})}}})})}),storage:()=>({bucket:()=>({file:()=>({download:async()=>{downloads++;return[Buffer.from(JSON.stringify([{receipt_id:123,transactions:[]}]))]}})})})};
+ let metaReads=0,streamReads=0,downloads=0;const sandbox={exports:{},console,Date,require:name=>{
+  if(name==='./firebaseAdmin')return{firestore:()=>({collection:()=>({doc:id=>({get:async()=>{if(id==='stream'){streamReads++;return{exists:false}}metaReads++;return{exists:true,data:()=>({path:'snapshot.json'})}}})})}),storage:()=>({bucket:()=>({file:()=>({download:async()=>{downloads++;return[Buffer.from(JSON.stringify([{receipt_id:123,transactions:[]}]))]}})})})};
   if(name==='./_charmNestAuth')return{CORS:{}};throw Error('Unexpected dependency '+name);
  }};vm.runInNewContext(fs.readFileSync('netlify/functions/etsySandbox.js','utf8'),sandbox);
- await Promise.all(Array.from({length:100},()=>sandbox.exports.handler({queryStringParameters:{fn:'etsyOrderProxy',orderId:'123'}})));assert.equal(metaReads,1);assert.equal(downloads,1);
+ await Promise.all(Array.from({length:100},()=>sandbox.exports.handler({queryStringParameters:{fn:'etsyOrderProxy',orderId:'123'}})));assert.equal(metaReads,1);assert.equal(downloads,1);assert.equal(streamReads,1,'and one read of the order stream');
  // Browser photo cache survives reload and shields BOTH services.
  const loader=station.slice(station.indexOf('const __imagesCache'),station.indexOf('/** Route an external image'));const saved=new Map();let requests=0;
  const page=()=>{const ctx={Map,NS:':sandbox',Date,JSON,FN:'/fn',localStorage:{getItem:k=>saved.get(k),setItem:(k,v)=>saved.set(k,v)},runImageTask:fn=>fn(),fetch:async()=>{requests++;return{ok:true,status:200,json:async()=>({results:[{url_570xN:'saved.jpg'}]})}}};vm.runInNewContext(loader+';this.load=fetchListingImages;',ctx);return ctx;};
@@ -30,7 +30,7 @@ const bridge=fs.readFileSync('charm-nest-bridge.js','utf8'),station=fs.readFileS
  const ar=bridge.indexOf('  async function record(orders',bridge.indexOf('const Arrivals'));vm.runInNewContext(bridge.slice(ar,bridge.indexOf('  function paint()',ar))+';this.record=record;',a);
  await a.record([{receiptId:'123'},{receiptId:'456'}]);await a.record([{receiptId:'123'},{receiptId:'456'}]);assert.equal(sent[0].length,2);assert.equal(sent[1].length,0);assert.equal(a.state.seen['123'],123);
  a.S.cloud.ok=false;await a.record([{receiptId:'789'}]);a.S.cloud.ok=true;await a.record([{receiptId:'789'}]);assert.equal(sent.at(-1)[0].id,'789','offline first arrivals are still recorded when cloud returns');
- console.log('Firebase thrift OK: aggregation-only counts, 100 concurrent sandbox reads share one lookup/download, browser reload cache, visible-only throttled polling, known-arrival reuse. No live Firebase calls.');
+ console.log('Firebase thrift OK: aggregation-only counts, 100 concurrent sandbox reads share one lookup/stream read/download, browser reload cache, visible-only throttled polling, known-arrival reuse. No live Firebase calls.');
 })().catch(e=>{console.error(e);process.exitCode=1});
 // The linked station's completion checks are viewport-bounded, not all rendered rows.
 {
