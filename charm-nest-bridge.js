@@ -4110,7 +4110,8 @@ const Sets = window.Sets = (() => {
           `;
     card.querySelectorAll(".libCard").forEach(x => x.onclick = () => openLibrarySheet(x.dataset.id));
     // a QR label ([data-big]) opens in the zoom viewer, wherever it is shown (PhotoView, charm-nest-mail.js)
-    const ub = card.querySelector("[data-undo]"); if (ub) ub.onclick = async () => { if (!confirm(`Undo the completion of ${st.name}? The orders return to the station's list; every file is kept.`)) return; const local = [...byRun().values()].find(x => x.setId === st.setId) || Object.assign({ orders: {}, sheetIds: st.sheetIds || [], materials: st.materials || [], labelFiles: st.labelFiles || [] }, st); byRun().set(local.runId || st.setId, local); try { await undo(local); toast(`${st.name} undone`, "ok"); if (onUndo) onUndo(); } catch (e) { toast(e.message, "bad", 6000); } };
+    // (a set a Library search found comes with only what this card shows, `partial`: its whole record is read before undoing)
+    const ub = card.querySelector("[data-undo]"); if (ub) ub.onclick = async () => { if (!confirm(`Undo the completion of ${st.name}? The orders return to the station's list; every file is kept.`)) return; try { const known = [...byRun().values()].find(x => x.setId === st.setId), whole = known || !st.partial ? null : (await api("charmNestLibrary", { op: "setGet", setId: st.setId }, { label: "Reading the set" })).set; if (!known && st.partial && !whole) throw new Error(`${st.name} could not be read — nothing was undone`); const local = known || Object.assign({ setId: st.setId, name: st.name, orders: {}, sheetIds: st.sheetIds || [], materials: st.materials || [], labelFiles: st.labelFiles || [] }, whole || st); byRun().set(local.runId || st.setId, local); await undo(local); toast(`${st.name} undone`, "ok"); if (onUndo) onUndo(); } catch (e) { toast(e.message, "bad", 6000); } };
     return card;
   }
   async function renderLibrary(body, opts) {

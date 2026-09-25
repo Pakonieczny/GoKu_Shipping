@@ -1224,7 +1224,8 @@ async function op_archiveEmptySheet(b) {
     if (!sheet.data().roseCutAt && (sheet.data().rosePlanJson || sheet.data().roseProtectedJson)) throw new Error('A planned or protected Rose Gold contour cannot be archived');
     // its files go only if it was never cut or released: a cut Rose Gold contour or a sheet of a committed set keeps them
     const d = sheet.data(), set = isId(d.setId) ? await tx.get(col(SETS).doc(d.setId)) : null, keep = !!d.roseCutAt || !!(set && set.exists && set.data().committedAt);
-    tx.set(ref, Object.assign({ archived: true, archivedReason: "open sheets repacked", updatedAt: FV.serverTimestamp() }, keep ? {} : { outputs: null }), { merge: true });
+    // a laser mark is kept beside it (archivedLaserDoneAt/By): an archived sheet is in no list, nor in the Completed count
+    tx.set(ref, Object.assign({ archived: true, archivedReason: "open sheets repacked", updatedAt: FV.serverTimestamp() }, keep ? {} : { outputs: null }, num(d.laserDoneAt) > 0 ? archivedMark(d) : {}), { merge: true });
     return { ok: true, files: keep ? [] : outputPaths(d) };
   });
   if (!done.ok) return done;
@@ -1497,6 +1498,8 @@ const DONE_FIND = DONE_SHEET.concat(["names", "sources", "listings", "runId"]);
 const DONE_SET = ["setId", "seq", "day", "runId", "name", "sheetIds", "materials", "status", "laserDoneAt", "laserDoneBy"];
 const DONE_MEMBER = ["metal", "sheetIndex", "page", "density", "placedCount", "orders", "outputs", "archived", "laserDoneAt"];
 const DONE_SCAN = { sheets: 800, sets: 240 };          // the records one call of a search or a metal may read
+// an archived sheet's laser mark, kept aside where the one-field Completed count and list do not read it (doneCounts)
+const archivedMark = d => ({ laserDoneAt: FV.delete(), laserDoneBy: FV.delete(), archivedLaserDoneAt: num(d.laserDoneAt), archivedLaserDoneBy: d.laserDoneBy || null });
 const METAL_CODE = { gold: "GF", silver: "SS", rose: "RG", gold10k: "10K", gold14k: "14K" };
 const isMetal = m => Object.prototype.hasOwnProperty.call(METAL_CODE, String(m || ""));
 const previewOf = d => (d.outputs && d.outputs.preview && d.outputs.preview.url) || null;
@@ -1521,6 +1524,9 @@ async function doneMembers(sets, fields) {
   for (let i = 0; i < ids.length; i += 100) for (const s of await db.getAll(...ids.slice(i, i + 100).map(id => col(SHEETS).doc(id)), { fieldMask: fields })) if (s.exists) read.set(s.id, Object.assign({ id: s.id }, s.data()));
   return new Map(sets.map(([id, d]) => [id, (d.sheetIds || []).map(x => read.get(x)).filter(Boolean)]));
 }
+/* What the tab counts is what Completed lists: sheets not archived. A sheet is never marked while archived (op_laserDone)
+   and one archived with a mark keeps it as archivedLaserDoneAt/By (op_archiveEmptySheet; laserDoneList moves one marked
+   before that as it reads it), so the one-field count below holds no archived sheet, with no composite index. */
 async function doneCounts() {
   const [s, t] = await Promise.all([SHEETS, SETS].map(name => col(name).where("laserDoneAt", ">", 0).count().get()));
   return { sheets: s.data().count, sets: t.data().count };
@@ -1538,6 +1544,8 @@ async function op_laserDone(b) {
     let setRef = null, set = null;
     const own = kind === "sheet" ? await tx.get(col(SHEETS).doc(id)) : null;
     if (own && !own.exists) return { error: "There is no such sheet", status: 404 };
+    // a sheet repacked into others (archived) is in no list: it is not marked, so the count stays what the list shows
+    if (own && done && own.data().archived) return { error: "That sheet was repacked into other sheets: it is no longer in the Library", status: 409 };
     if (kind === "set") setRef = col(SETS).doc(id);
     else if (isId(own.data().setId) && !own.data().draft && own.data().solidIncluded !== false) setRef = col(SETS).doc(own.data().setId);
     if (setRef) { const s = await tx.get(setRef); if (s.exists) set = s.data(); else if (kind === "set") return { error: "There is no such set", status: 404 }; else setRef = null; }
@@ -1572,7 +1580,7 @@ async function op_laserDoneList(b) {
   if (b.countOnly) return { counts };
   const limit = Math.min(200, Math.max(1, Math.floor(num(b.limit)) || 60)), q = foldText(str(b.q, 120)), metal = isMetal(b.metal) ? b.metal : null;
   const cap = q || metal ? DONE_SCAN[kind] : limit, fields = kind === "sets" ? DONE_SET : q ? DONE_FIND : DONE_SHEET;
-  const rows = []; let at = cur ? cur.at : null, skip = cur ? cur.skip : 0, scanned = 0, end = false;
+  const rows = [], repair = []; let at = cur ? cur.at : null, skip = cur ? cur.skip : 0, scanned = 0, end = false;
   while (rows.length < limit && scanned < cap && !end) {
     const want = Math.max(1, Math.min(cap - scanned, q || metal ? Math.max(100, limit) : limit - rows.length)), skipped = skip;
     const snap = await col(name).where("laserDoneAt", at == null ? ">" : "<=", at == null ? 0 : at).orderBy("laserDoneAt", "desc").limit(skipped + want).select(...fields).get();
@@ -1583,7 +1591,8 @@ async function op_laserDoneList(b) {
       const d = docs[i].data(), t = num(d.laserDoneAt); scanned++;
       if (t === at) skip++; else { at = t; skip = 1; }
       if (kind === "sheets") {
-        if (d.archived || (metal && d.metal !== metal) || (q && !foldText(sheetHay(docs[i].id, d)).includes(q))) continue;
+        if (d.archived) { if (repair.length < 20) repair.push([docs[i].id, d, t]); continue; }
+        if ((metal && d.metal !== metal) || (q && !foldText(sheetHay(docs[i].id, d)).includes(q))) continue;
         rows.push(doneSheetRow(docs[i].id, d));
       } else {
         const list = members.get(docs[i].id); if (!list) continue;
@@ -1594,6 +1603,10 @@ async function op_laserDoneList(b) {
     }
     if (i === docs.length && snap.size < skipped + want) end = true;
   }
+  // a sheet archived with its mark before archiving kept the mark aside: kept aside now, so the count comes to what the
+  // list shows (one at the page's last moment stays, as the next page's cursor counts it among those it passes)
+  const fix = repair.filter(([, , t]) => t !== at);
+  if (fix.length) { const batch = db.batch(); for (const [id, d] of fix) batch.set(col(SHEETS).doc(id), archivedMark(d), { merge: true }); await batch.commit().catch(() => {}); }
   return { kind, rows, next: end ? null : { at, skip }, scanned, ...(counts ? { counts } : {}) };
 }
 /* "Where is order 3712345?" and "Which sheets hold listing 1718000?" A number is looked up as both, however old:
@@ -1603,12 +1616,16 @@ async function op_laserDoneList(b) {
      from the runs of the window's sheets without `listings` (their lines, those kept beside them and their line archive,
      newest part first, capped as the history search caps it), then the sheets that list those orders. `fallback` says
      what that read and whether a cap cut it short. A number found as an order is not looked for as a listing that way.
+     A sheet found that way whose every piece's line was read is given its `listings` (a few a search, FIND_CAP.fill), so
+     the next search finds it directly, whatever its day.
    The answer gives each sheet with how it matched (match: order, listing): the ones not completed as the Library's cards
    show them (sheets, with laser readiness) and the completed ones as the Completed list shows them (rows), and the sets
-   they belong to (sets; setRows for the completed ones). */
-const FIND_CAP = { sheets: 400, window: 600, runs: 120 };
+   they belong to (sets, those not completed, with only what the Library's Sets view reads; setRows for the completed
+   ones), all in one answer's room (answerBudget): what does not fit is left out and `truncated` says so. */
+const FIND_CAP = { sheets: 400, window: 600, runs: 120, fill: 20 };
 async function legacyListingOrders(q, b) {
-  const out = { orders: new Set(), window: null, runs: 0, parts: 0, capped: false };
+  // listingOf: each line read, by its key ("{order}_{transaction}"), to the listing it was bought from
+  const out = { orders: new Set(), listingOf: new Map(), window: null, runs: 0, parts: 0, capped: false };
   const span = Math.min(90, Math.max(1, Math.floor(num(b.days)) || 30)), top = isDay(b.today) ? b.today : await newestDay();
   if (!top) return out;
   const lo = dayShift(top, -(span - 1)); out.window = { from: lo, to: top };
@@ -1620,7 +1637,13 @@ async function legacyListingOrders(q, b) {
   const runs = (await whereIn(RUNS, "runId", runIds.slice(0, FIND_CAP.runs), ["runId", "lines", "liveLines", "lineArchive"], FIND_CAP.runs)).map(d => Object.assign({}, d.data(), { runId: d.data().runId || d.id }));
   out.runs = runs.length;
   await eachWithLiveLines(runs);
-  const take = lines => { for (const l of Object.values(lines || {})) if (l && l.snap && String(l.snap.listingId || "") === q && l.orderId != null && String(l.orderId)) out.orders.add(String(l.orderId)); };
+  const take = lines => {
+    for (const [key, l] of Object.entries(lines || {})) {
+      const lid = l && l.snap ? String(l.snap.listingId || "") : "";
+      if (/^\d{1,24}$/.test(lid) && out.listingOf.size < 200000) out.listingOf.set(l.orderId != null && l.transactionId != null ? `${l.orderId}_${l.transactionId}` : key, lid);
+      if (lid === q && l.orderId != null && String(l.orderId)) out.orders.add(String(l.orderId));
+    }
+  };
   for (const r of runs) take(r.lines);
   const archived = runs.filter(r => r.lineArchive && num(r.lineArchive.parts) > 0).map(r => r.runId).filter(isId);
   const listed = (await whereIn(RUN_LINES, "runId", archived, ["runId", "bytes", "at", "seq"], HISTORY_CAP.parts)).map(d => ({ id: d.id, ...d.data() }));
@@ -1644,25 +1667,49 @@ async function op_findSheets(b) {
   add(byOrder.docs, "order", d => listed(d.orders, mine)); add(byListing.docs, "listing", d => listed(d.listings, mine));
   let truncated = byOrder.size >= FIND_CAP.sheets || byListing.size >= FIND_CAP.sheets, fallback = null;
   if (!byOrder.docs.some(s => listed(s.data().orders, mine)) && b.fallback !== false) {
-    const legacy = await legacyListingOrders(q, b), orders = [...legacy.orders];
-    fallback = { window: legacy.window, runs: legacy.runs, parts: legacy.parts, orders: orders.length, capped: legacy.capped };
+    const legacy = await legacyListingOrders(q, b), orders = [...legacy.orders], before = new Set(found.keys());
+    fallback = { window: legacy.window, runs: legacy.runs, parts: legacy.parts, orders: orders.length, capped: legacy.capped, filled: 0 };
     for (let i = 0; i < orders.length && i < 600; i += 15) {
       const chunk = orders.slice(i, i + 15), snap = await col(SHEETS).where("orders", "array-contains-any", chunk.flatMap(forms)).limit(FIND_CAP.sheets).select(...SLIM_SHEET).get();
       if (snap.size >= FIND_CAP.sheets) truncated = true;
       const bought = new Set(chunk); add(snap.docs, "listing", d => listed(d.orders, bought));
     }
     if (orders.length > 600) fallback.capped = true;
+    // the sheets found through their run's lines, each piece's line read: their listings are written, a few a search
+    const fill = [];
+    for (const [id, f] of found) {
+      if (fill.length >= FIND_CAP.fill) break;
+      if (before.has(id) || Array.isArray(f.d.listings) || !(f.d.poolIds || []).length) continue;
+      const ids = f.d.poolIds.map(p => legacy.listingOf.get(String(p).replace(/_[^_]*$/, "")));
+      if (ids.every(Boolean)) fill.push([id, [...new Set(ids)].slice(0, 500)]);
+    }
+    const wrote = await Promise.all(fill.map(([id, listings]) => col(SHEETS).doc(id).update({ listings }).then(() => { found.get(id).d.listings = listings; return 1; }, () => 0)));
+    fallback.filled = wrote.reduce((n, x) => n + x, 0);
   }
   const all = [...found.entries()], isDone = f => num(f.d.laserDoneAt) > 0;
-  const open = all.filter(([, f]) => !isDone(f)), { sheets, rest } = await sheetEntries(open.map(([id, f]) => [id, f.d]), answerBudget());
+  // one answer's room for all of it, in the order the page needs it: the cards, the completed rows, then the sets
+  const budget = answerBudget(); let cut = false;
+  const fitting = list => { let n = 0; while (n < list.length && budget.fits(list[n])) n++; if (n < list.length) cut = true; return list.slice(0, n); };
+  const open = all.filter(([, f]) => !isDone(f)), { sheets, rest } = await sheetEntries(open.map(([id, f]) => [id, f.d]), budget);
   for (const s of sheets) s.match = [...found.get(s.id).match];
-  const rows = all.filter(([, f]) => isDone(f)).map(([id, f]) => Object.assign(doneSheetRow(id, f.d), { match: [...f.match] })).sort((x, y) => y.at - x.at);
-  const setIds = [...new Set(all.map(([, f]) => f.d.setId))].filter(isId).slice(0, 200), sets = [];
-  for (let i = 0; i < setIds.length; i += 100) for (const d of await db.getAll(...setIds.slice(i, i + 100).map(id => col(SETS).doc(id)))) if (d.exists) { const r = d.data(); r.setId ||= d.id; for (const k of ["updatedAt", "createdAt", "completedAt", "committedAt"]) r[k] = ms(r[k]); sets.push(r); }
-  const doneSets = sets.filter(s => num(s.laserDoneAt) > 0).map(s => [s.setId, s]), members = await doneMembers(doneSets, DONE_MEMBER);
-  const setRows = doneSets.map(([id, s]) => doneSetRow(id, s, members.get(id) || [])).sort((x, y) => y.at - x.at);
+  const rows = fitting(all.filter(([, f]) => isDone(f)).map(([id, f]) => Object.assign(doneSheetRow(id, f.d), { match: [...f.match] })).sort((x, y) => y.at - x.at));
+  const setIds = [...new Set(all.map(([, f]) => f.d.setId))].filter(isId).slice(0, 200), read = [];
+  for (let i = 0; i < setIds.length; i += 100) for (const d of await db.getAll(...setIds.slice(i, i + 100).map(id => col(SETS).doc(id)), { fieldMask: FIND_SET })) if (d.exists) read.push([d.id, d.data()]);
+  const doneSets = read.filter(([, s]) => num(s.laserDoneAt) > 0), members = await doneMembers(doneSets, DONE_MEMBER);
+  const sets = fitting(read.filter(([, s]) => !(num(s.laserDoneAt) > 0)).map(([id, s]) => findSetRow(id, s)));
+  const setRows = fitting(doneSets.map(([id, s]) => doneSetRow(id, s, members.get(id) || [])).sort((x, y) => y.at - x.at));
   const count = why => all.filter(([, f]) => f.match.has(why)).length;
-  return { q, sheets, rows, sets, setRows, matches: { order: count("order"), listing: count("listing") }, fallback, truncated: truncated || rest.length > 0 };
+  return { q, sheets, rows, sets, setRows, matches: { order: count("order"), listing: count("listing") }, fallback, truncated: truncated || cut || rest.length > 0 };
+}
+/* A set the search found that is not completed, for the Library's Sets view (Sets.libraryGroups and libraryCard): what they
+   read, and no more — its orders' held notes but not their lines, its label files but not their payloads. `partial` says
+   so: undoing its completion reads the whole record first (setGet). */
+const FIND_SET = DONE_SET.concat(["orders", "labels", "labelFiles", "refused", "completionDay", "completedAt", "committedAt", "updatedAt"]);
+function findSetRow(id, d) {
+  const orders = {}; for (const [rid, o] of Object.entries(d.orders || {})) orders[rid] = o && o.held ? { held: o.held } : {};
+  return { setId: d.setId || id, seq: num(d.seq) || null, day: d.day || null, name: d.name || null, runId: d.runId || null, status: d.status || null, sheetIds: d.sheetIds || [], materials: d.materials || [], orders,
+    labels: d.labels || null, labelFiles: (d.labelFiles || []).map(f => ({ path: f.path || null, url: f.url || null, sheetId: f.sheetId || null, part: f.part || 1, parts: f.parts || 1, orders: f.orders || [] })),
+    refused: d.refused || null, completionDay: d.completionDay || null, completedAt: ms(d.completedAt), committedAt: ms(d.committedAt), updatedAt: ms(d.updatedAt), partial: true };
 }
 // ── bridge session log: Design_Bridge/{session} + /log rows (ids and counts only, never order text) ──
 async function op_bridgeLog(b) {

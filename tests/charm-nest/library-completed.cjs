@@ -223,6 +223,16 @@ store.set('Charm_Nest_Runs/run-A', { runId: 'run-A', day: DAY, status: 'complete
   assert.deepStrictEqual(found, ['Fold'], 'and the next call carries on');
   for (let i = 0; i < 900; i++) store.delete('Charm_Nest_Sheets/fill' + i);
   store.delete('Charm_Nest_Sheets/Fold');
+  // an archived (repacked) sheet is in no list and not in the count: it is not marked, and one marked before keeps its
+  // mark aside once the list has read it
+  sheet('shArch', { archived: true, fileBase: 'GF_repacked' });
+  assert.strictEqual((await post({ op: 'laserDone', kind: 'sheet', id: 'shArch', by: 'Paul' })).status, 409, 'an archived sheet is not marked');
+  const listed0 = (await ok({ op: 'laserDoneList', countOnly: true })).counts.sheets;
+  Object.assign(store.get('Charm_Nest_Sheets/shArch'), { laserDoneAt: Date.now() + 60000, laserDoneBy: 'Old' });
+  assert(!(await ok({ op: 'laserDoneList', limit: 60 })).rows.some(x => x.id === 'shArch'), 'the list leaves it out');
+  assert(!('laserDoneAt' in doc('Charm_Nest_Sheets', 'shArch')) && doc('Charm_Nest_Sheets', 'shArch').archivedLaserDoneBy === 'Old', 'its mark is kept aside');
+  assert.strictEqual((await ok({ op: 'laserDoneList', countOnly: true })).counts.sheets, listed0, 'the count is what the list shows');
+  store.delete('Charm_Nest_Sheets/shArch');
 
   /* ── find: an order, a listing, and a listing on sheets saved before `listings` ── */
   assert.strictEqual((await post({ op: 'findSheets', q: 'BR-TST' })).status, 400);
@@ -230,14 +240,24 @@ store.set('Charm_Nest_Runs/run-A', { runId: 'run-A', day: DAY, status: 'complete
   assert.deepStrictEqual(f.rows.map(x => x.id).sort(), ['shA1', 'shA3'], 'an order: its completed sheets as Completed rows');
   assert(f.rows.every(x => x.match.includes('order'))); assert.strictEqual(f.matches.order, 2);
   assert.strictEqual(f.fallback, null, 'a number found as an order is not looked for in run lines');
-  assert.deepStrictEqual(f.setRows.map(x => x.setId), ['set-A']); assert(f.sets.some(s => s.setId === 'set-A'));
+  assert.deepStrictEqual(f.setRows.map(x => x.setId), ['set-A']); assert.deepStrictEqual(f.sets, [], 'a completed set comes as a Completed row, not as a card');
   f = await ok({ op: 'findSheets', q: '1718001' });
   assert.deepStrictEqual(f.rows.map(x => x.id).sort(), ['shA1', 'shA2'], 'a listing, from the sheets\' listings');
   assert(f.rows.every(x => x.match.includes('listing'))); assert.strictEqual(f.matches.listing, 2);
+  // (their pieces: shB1 holds line 3700000010_1, shB2 lines 3700000011_2 and 3700000012_3; set B holds a note and lines)
+  doc('Charm_Nest_Sheets', 'shB1').poolIds = ['3700000010_1_1']; doc('Charm_Nest_Sheets', 'shB2').poolIds = ['3700000011_2_1', '3700000012_3_1'];
+  doc('Charm_Nest_Sets', 'set-B').orders = { '3700000011': { held: { why: 'waiting for a chain' }, lines: [{ note: 'x'.repeat(5000) }] } };
   f = await ok({ op: 'findSheets', q: '1719999', today: DAY });
   assert.deepStrictEqual(f.sheets.map(x => x.id).sort(), ['shB1', 'shB2'], 'older sheets through their run\'s live and archived lines: ' + JSON.stringify(f));
   assert(f.sheets.every(x => x.match.includes('listing') && x.laser && 'ready' in x.laser), 'a sheet not completed comes as a Library card, with its readiness');
   assert.deepStrictEqual(f.fallback.window, { from: '2026-08-26', to: DAY }); assert.strictEqual(f.fallback.capped, false); assert.strictEqual(f.fallback.orders, 2); assert.strictEqual(f.fallback.parts, 1);
+  const sB = f.sets.find(s => s.setId === 'set-B');
+  assert(sB && sB.partial && sB.name === 'Set-2' && sB.sheetIds.length === 2, 'the set not completed comes for the Sets view: ' + JSON.stringify(f.sets));
+  assert.deepStrictEqual(sB.orders, { '3700000011': { held: { why: 'waiting for a chain' } } }, 'with its held notes, not its lines');
+  // what the run lines said is written on the sheets, and the next search finds them without reading any run
+  assert.strictEqual(f.fallback.filled, 2);
+  assert.deepStrictEqual(doc('Charm_Nest_Sheets', 'shB1').listings, ['1719999']); assert.deepStrictEqual(doc('Charm_Nest_Sheets', 'shB2').listings, ['1719999', '1718555']);
+  assert.deepStrictEqual((await ok({ op: 'findSheets', q: '1719999', today: DAY, fallback: false })).sheets.map(x => x.id).sort(), ['shB1', 'shB2'], 'found by their listings now');
   f = await ok({ op: 'findSheets', q: '1718555', today: DAY });
   assert.deepStrictEqual(f.sheets.map(x => x.id), ['shB2'], 'an archived line');
   assert.deepStrictEqual(f.rows.map(x => x.id), ['shS1'], 'and a line kept in the run record, whatever the sheet\'s metal or set');
