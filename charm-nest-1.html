@@ -358,7 +358,7 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 /* ── toasts, dialogs ── */
 /* Notices used to pile up in the bottom-right, which is where the live view sits and where every screen keeps its
    controls — a toast was an invisible click shield over the button underneath it. They come down from under the
-   run banner instead, where no screen puts anything. */
+   top bar instead, where no screen puts anything. */
 .toasts{position:fixed;right:18px;top:var(--chromeH,96px);z-index:300;display:flex;flex-direction:column;gap:8px;pointer-events:none;max-width:min(420px,42vw)}
 .toast .m{min-width:0}
 .toast .x{font:700 11px var(--mono);opacity:.7}
@@ -366,8 +366,8 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .toast .c:hover{opacity:1}
 .toast{cursor:pointer}
 /* an open menu is never under a toast: "2 new orders arrived" covered Design Station and Master files in Workspace, and the
-   run menu under the banner (audit, 25 Sep). While a header menu or a sheet's Options is open the toasts step aside. */
-body:has(.topbar details[open],.runBanner details[open],.sheetOptions[open]) .toasts{opacity:0;visibility:hidden;transition:opacity .12s,visibility 0s .12s}
+   run menu (audit, 25 Sep). While a header menu or a sheet's Options is open the toasts step aside. */
+body:has(.topbar details[open],.sheetOptions[open]) .toasts{opacity:0;visibility:hidden;transition:opacity .12s,visibility 0s .12s}
 /* Orders and the Library end their first row with controls (sort, Cards | List, the metal chips), and a notice there
    covered them (audit, 25 Sep): on those two tabs notices start under that row. */
 body:has(#ordersView:not(.hidden)) .toasts,body:has(#libView:not(.hidden)) .toasts{top:calc(var(--chromeH,96px) + 56px)}
@@ -829,16 +829,6 @@ dialog.cmDlg .owBox{height:100%}
 .sheetOptionSection,.solidOptions .roseStockOptions{padding:17px 18px;display:grid;gap:12px;border:0}.sheetOptionSection+.sheetOptionSection,.solidOptions .roseStockOptions{border-top:1px solid var(--line)}.sheetOptionSection h4,.solidOptions .roseStockOptions h4{font-size:10px;letter-spacing:.11em;text-transform:uppercase;font-weight:600;color:var(--ink45);margin:0}.sheetInclude{display:flex;align-items:center;gap:10px;color:var(--ink);font-size:13px}.sheetInclude input{width:17px;height:17px;margin:0;accent-color:var(--m-rose)}.sheetOptionStatus:empty{display:none}.sheetSizeAction{display:flex;align-items:center;justify-content:space-between;gap:12px}.sheetSizeAction .help{font-size:11px;line-height:1.5;flex:1}.sheetSizeAction button{flex:none}
 .solidSize{display:grid;grid-template-columns:1fr 1fr;gap:14px}.solidSize label{display:grid;grid-template-columns:1fr auto;gap:6px;font-size:12px}.solidSize label span,.roseAllowance>span{color:var(--ink45);font-size:11px}.solidSize input{grid-column:1/-1;width:100%;min-width:0;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:var(--card);font:13px var(--mono);color:var(--ink)}.solidOptions input:focus-visible,.solidOptions select:focus-visible{outline:2px solid #c08578;outline-offset:2px}.solidOptions input:disabled{background:var(--paper);color:var(--ink45)}.solidOptions [hidden]{display:none!important}.solidOptions .roseAllowance{display:grid;grid-template-columns:1fr auto 88px;gap:10px;align-items:center}.solidOptions .roseAllowance input{width:88px;padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--card);font:13px var(--mono)}.solidOptions .roseStockOptions p{margin:0;font-size:11px;line-height:1.5}.solidOptions [data-rose-stock-choice]{display:grid;gap:10px}.solidOptions [data-rose-picker] select{width:100%;min-width:0;padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--card);font-size:12px}
 
-
-.runBanner .acts{display:flex;gap:7px;align-items:center;flex:0 0 auto;white-space:nowrap}
-.runBanner .spacer{flex:1 1 auto;min-width:8px}
-.runBanner .rid{font:700 10.5px var(--mono);letter-spacing:.04em;background:var(--card);border:1px solid var(--line);border-radius:7px;padding:3px 8px;color:var(--ink70);white-space:nowrap;flex:0 0 auto}
-.runBanner .rid:empty{display:none}
-.runBanner .why{min-width:0;overflow:hidden;text-overflow:ellipsis}
-.runBanner{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:8px 16px;background:var(--goldSoft);border-bottom:1px solid var(--goldLine);font-size:12.5px;flex-wrap:nowrap}
-.runBanner .rid[tabindex]{cursor:pointer}
-.runBanner .rid[tabindex]:hover{border-color:var(--ink45);color:var(--ink)}
-
 /* the door back into every run that ever ran */
 dialog.hist{border:0;border-radius:var(--r);box-shadow:0 24px 70px rgba(0,0,0,.26);padding:0;width:min(980px,94vw);max-height:88vh;background:var(--card);color:var(--ink)}
 dialog.hist[open]{display:flex;flex-direction:column}
@@ -903,15 +893,6 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .hSet .pill{padding:2px 7px;font-size:10px}
 
 .hEmpty.bad{color:#8a3a26}
-.runBanner.stopped{background:var(--claySoft);border-color:#e3c8bf}
-.runBanner.done{background:var(--sageSoft);border-color:#cfdcc9}
-.runBanner.review{background:var(--slateSoft);border-color:#cbd9de}
-.runBanner .step{font:700 10.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;background:var(--velvet);color:#fff;border-radius:6px;padding:2px 7px}
-.runBanner .why{flex:1 1 auto;min-width:0}
-.runBanner .why b{font-weight:700}
-.runBanner .steps{display:flex;gap:3px}
-.runBanner .steps i{width:9px;height:9px;border-radius:2px;background:var(--ink25);display:block}
-.runBanner .steps i.done{background:var(--sage)}.runBanner .steps i.now{background:var(--gold);animation:bbPulse 1.4s infinite}.runBanner .steps i.stop{background:var(--clay)}
 /* ── Orders tab ── */
 .ordBar{display:flex;gap:6px 8px;align-items:center;flex-wrap:wrap;min-width:0}
 .ordBar>.grp{display:inline-flex;align-items:center;gap:0;border:1px solid var(--line);border-radius:999px;background:var(--card2);padding:2px}
@@ -1027,15 +1008,53 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .ordersChip.bad{border-color:#e3c3b8;background:var(--claySoft);color:var(--clay)}
 .ordersChip.bad::before{background:var(--clay)}
 .ordersChip:hover{filter:brightness(.97)}
-/* On a narrow screen the tools take their own row: the line joins it, between the sandbox pill and the tools, in the room
-   they leave (the tools keep to the right as before). */
+/* The run's own state sits beside that line (Paul, 25 Sep; it was a band across the page under the top bar): a dot, a
+   few words and a caret, shown only while there is something to say, with the rest and every button in its menu. It
+   takes only the room the tabs and the tools leave (before the line does), down to its dot and caret, so it never
+   pushes a tab out of sight or a tool onto another row, and it is tinted while it needs a person (stopped, waiting on
+   Review or Engraving, ready to commit), so it is not missed up there. With no room for the line's words, the line's
+   empty slot gives back its gap. */
+.cnpSlot:has(>.cnp.tight){margin-right:-8px}
+.runBanner{display:flex;align-items:center;flex:100000 1 0;min-width:48px;max-width:max-content}
+.runMenu{position:relative;flex:0 1 auto;min-width:0;max-width:290px}
+.runMenu>summary{display:flex;align-items:center;gap:6px;min-width:0;list-style:none;cursor:pointer;padding:4px 8px 4px 9px;border:1px solid transparent;border-radius:999px;font:600 11px/1.3 var(--sans);color:var(--ink70);white-space:nowrap}
+.topbar .runMenu>summary:hover,.topbar .runMenu[open]>summary{background:var(--paper2);color:var(--ink)}
+.runMenu .rbDot{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:var(--ink45)}
+.runMenu .rbText{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.runBanner.bare .rbText{visibility:hidden}
+.runMenu .rbCaret{flex:0 0 auto;color:var(--ink45)}
+.runBanner.go .rbDot{background:var(--gold2)}
+.topbar .runBanner.wait>.runMenu>summary{background:var(--slateSoft);border-color:#cbd9de;color:#33525d}
+.topbar .runBanner.stop>.runMenu>summary{background:var(--claySoft);border-color:#e3c8bf;color:#8a3a26}
+.topbar .runBanner.done>.runMenu>summary{background:var(--sageSoft);border-color:#cfdcc9;color:#3c5a39}
+.runBanner.wait .rbDot{background:var(--slate)}.runBanner.stop .rbDot{background:var(--clay)}.runBanner.done .rbDot{background:var(--sage)}
+.runBanner:is(.wait,.stop,.done) .rbCaret{color:inherit;opacity:.6}
+.runBanner:is(.wait,.stop,.done)>.runMenu>summary:hover,.runBanner:is(.wait,.stop,.done)>.runMenu[open]>summary{filter:brightness(.97)}
+.runMenuBody{position:absolute;right:0;top:calc(100% + 6px);z-index:40;width:300px;max-width:calc(100vw - 24px);max-height:65vh;overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:11px;box-shadow:var(--sh);padding:10px;white-space:normal;color:var(--ink)}
+.runDetail{padding:2px 4px 10px;font-size:11.5px;line-height:1.55;overflow-wrap:anywhere}
+.runDetail>b{display:block;font-size:12px}
+.runDetail small{display:block;margin-bottom:5px;color:var(--ink45);font:10px var(--mono)}
+.runDetail .bad{color:#8a3a26}
+.rbActs{display:flex;flex-wrap:wrap;gap:6px;padding:0 4px 10px}
+.rbMore{display:grid;gap:1px;border-top:1px solid var(--line);padding-top:6px}
+.rbActs:empty,.rbMore:empty{display:none}
+.rbMore .btn{display:block;width:100%;text-align:left;border:0;background:transparent}
+.rbMore .btn:hover{background:var(--paper2)}
+.rbMore #rbAbandon{color:var(--clay)}
+/* On a narrow screen the tools take their own row: the line and the run's pill join it, between the sandbox pill and the
+   tools, in the room they leave (the tools keep to the right as before). */
 @container workspace (max-width:680px){
   .topbar .topTools{display:contents}
   .topTools>*{order:3}
   .topTools>.sandboxPill{order:1}
-  .topbar .cnpSlot{order:2}
+  .topbar .cnpSlot,.topbar .runBanner{order:2}
   .topTools>#setPickerSlot,.topTools>#ordersChip{margin-left:auto}
   .topTools>#ordersChip+#setPickerSlot{margin-left:0}
+  .topbar .runBanner{margin-left:auto}
+  .cnpSlot:has(>.cnp.tight){margin-right:-6px}
+  .topbar:has(>.runBanner:not(.hidden)) .topTools>:is(#setPickerSlot,#ordersChip){margin-left:0}
+  /* the pill can sit anywhere along that row: its menu keeps to the right edge, on screen, as the set menu does */
+  .runMenuBody{position:fixed;top:auto;right:10px;margin-top:6px}
 }
 @keyframes cnPulse{0%,100%{box-shadow:0 0 0 3px rgba(202,168,97,.25)}50%{box-shadow:0 0 0 6px rgba(202,168,97,.08)}}
 .dsConsole{display:flex;flex-direction:column;gap:8px;min-height:0}
@@ -1408,12 +1427,15 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 /* the sandbox pill drops its speed and the word "sim" where the bar is narrow ("Sandbox · Fri 07:30"): at 1280 px it took
    the room of the last tab */
 @container workspace (max-width:1000px){.topbar .sandboxPill .sbSpeed,.topbar .sandboxPill .sbSim{display:none}}
+/* and while the run's pill is showing, up to 1100 px, it leaves out its clock as well ("Sandbox"; the clock stays in its
+   tooltip): at 1280 and 1352 px the two pills together took the room of the last tab */
+@container workspace (max-width:1100px){.topbar:has(>.runBanner:not(.hidden)) .sandboxPill .sbTime{display:none}}
 .topTools{display:flex;align-items:center;gap:6px;flex:0 0 auto}
 .topbar .runMode{padding:7px 9px;border-color:transparent;font-size:11.5px;border-radius:6px}
 .topbar .sandboxPill{font:700 9px var(--mono);padding:4px 6px;letter-spacing:0;border-radius:4px;white-space:nowrap}
 .topbar .moreMenu{margin:0;padding:0;border:0;border-radius:6px;background:transparent}
 .topbar .moreMenu>summary,.topbar .setPicker>summary{display:flex;align-items:center;gap:6px;padding:8px 9px;border:0;border-radius:6px;background:transparent;font:650 12px var(--sans);color:var(--ink70);white-space:nowrap;list-style:none}
-.topbar details>summary::-webkit-details-marker,.runMenu>summary::-webkit-details-marker{display:none}
+.topbar details>summary::-webkit-details-marker{display:none}
 .topbar details[open]>summary,.topbar details>summary:hover{background:var(--paper2);color:var(--ink)}
 .topbar .moreMenu.on>summary{color:var(--ink);background:var(--paper2)}
 .topbar .moreList{left:auto;right:0;width:270px;max-width:calc(100vw - 24px);padding:7px;gap:1px}
@@ -1427,22 +1449,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .setPicker{position:relative;font-size:12px}
 .setMenu{top:calc(100% + 6px);border-radius:11px;box-shadow:var(--sh);max-width:calc(100vw - 24px);z-index:40}
 .setMenu [data-setlist]>small{padding:0 9px 8px}.setMenu .nw{white-space:nowrap}
-.runBanner{position:relative;z-index:25;padding:3px 12px;gap:10px;min-height:34px;font-size:11.5px}
-.runBanner .rid{border:0;background:transparent;padding:3px 0;font:600 11px var(--sans);letter-spacing:0}
-.runBanner .why{white-space:nowrap}
-.runBanner .spacer{display:none}
-.runBanner .acts{gap:5px;min-width:0}
-.runBanner .btn.sm{padding:5px 9px;font-size:11px;border-radius:5px}
-.runMenu{position:relative;flex:0 0 auto}
-.runMenu>summary{list-style:none;cursor:pointer;padding:2px 9px;border-radius:5px;font-size:18px;line-height:22px}
-.runMenu>summary:hover,.runMenu[open]>summary{background:#0000000a}
-.runMenuBody{position:absolute;right:0;top:calc(100% + 6px);width:300px;max-width:calc(100vw - 24px);max-height:65vh;overflow:auto;background:var(--card);border:1px solid var(--line);border-radius:11px;box-shadow:var(--sh);padding:10px;white-space:normal}
-.runMenuBody .runDetail{padding:4px 6px 10px;font-size:11.5px;line-height:1.6;overflow-wrap:anywhere}
-.runMenuBody small{display:block;color:var(--ink45);font-size:10px}
-.runMenuBody .btn{display:block;width:100%;text-align:left;margin-top:3px;border:0;background:transparent}
-.runMenuBody .btn:hover{background:var(--paper2)}
-.runMenuBody #rbAbandon{color:var(--clay)}
-.topbar :is(button,summary,select):focus-visible,.runBanner :is(button,summary):focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.topbar :is(button,summary,select):focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .stage{padding-top:12px}
 @container workspace (max-width:680px){
   .topbar{flex-wrap:wrap;gap:2px 6px;padding:4px 10px}
@@ -1450,8 +1457,6 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
   .topTools{width:100%;justify-content:flex-end;gap:5px}
   .topTools .sandboxPill{margin-right:auto}
   .topbar .modeSeg{flex:1}.topbar .modeSeg button{flex:1;justify-content:center;padding-inline:7px}
-  .runBanner{gap:7px;padding-inline:10px}.runBanner .rid{max-width:40%;overflow:hidden;text-overflow:ellipsis}
-  .runBanner .acts{flex-shrink:1}.runBanner .acts>.btn{max-width:140px;overflow:hidden;text-overflow:ellipsis}
   .setMenu{position:fixed;top:auto;right:10px;margin-top:6px}
 }
 .sheetExport{display:inline-flex;gap:3px;align-items:center;margin-left:auto;flex:0 0 auto}
@@ -1726,6 +1731,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
       <div class="modeNav" id="modeNav"><button class="modeArrow l" id="modeArrowL" aria-label="Scroll tabs left" tabindex="-1">&lsaquo;</button><div class="modeSeg" id="modeSeg"><button class="on" data-mode="nest">Nest</button><button data-mode="orders">Orders<i class="cnt" id="tabOrdersN"></i></button><button data-mode="engrave"><span class="full">Engraving</span><span class="tight">Engrave</span><i class="cnt" id="tabEngraveN"></i></button><button data-mode="review">Review<i class="cnt" id="tabReviewN"></i></button><button data-mode="library">Library</button></div>
         <button class="modeArrow r" id="modeArrowR" aria-label="Scroll tabs right" tabindex="-1">&rsaquo;</button></div>
       <div class="cnpSlot" id="cnpSlot"></div>
+      <div class="runBanner hidden" id="runBanner"></div>
       <div class="topTools">
         <button type="button" class="sandboxPill hidden" id="sandboxPill" title="Sandbox: emulated Etsy; all records and files use sandbox copies">Sandbox</button>
         <div id="setPickerSlot"></div>
@@ -1742,7 +1748,6 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
         </details>
       </div>
     </div>
-    <div class="runBanner hidden" id="runBanner"></div>
     <div class="stage" id="stage">
       <div class="sheets" id="sheets"></div>
       <div class="lib hidden" id="ordersView"></div>
@@ -4657,7 +4662,7 @@ async function boot() {
   $$("#railSeg button").forEach(b => b.onclick = () => { $$("#railSeg button").forEach(x => x.classList.toggle("on", x === b)); document.documentElement.dataset.rail = b.dataset.v; });
   $$(".topbar button[data-mode]").forEach(b => b.onclick = () => { modeFromUser = true; setMode(b.dataset.mode); });
   // Shared behavior also covers the dynamically mounted set and run menus.
-  const headerMenus = ".topbar details, .runBanner details";
+  const headerMenus = ".topbar details";
   document.addEventListener("pointerdown", e => { $$(headerMenus).forEach(menu => { if (menu.open && !menu.contains(e.target)) menu.open = false; }); }, true);
   document.addEventListener("toggle", e => { if (e.target.matches?.(headerMenus) && e.target.open) $$(headerMenus).forEach(menu => { if (menu !== e.target) menu.open = false; }); }, true);
   document.addEventListener("keydown", e => { if (e.key !== "Escape" || document.querySelector("dialog[open]")) return; const menu = $$(headerMenus).find(x => x.open); if (menu) { menu.open = false; menu.querySelector("summary").focus(); e.preventDefault(); } });

@@ -4709,6 +4709,13 @@ const RunCtl = window.RunCtl = (() => {
     if (auto.runId !== r.runId || auto.step !== r.step) return "Auto carries on by itself shortly.";
     return `Auto carries on by itself: next try ${new Date(auto.next).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}${auto.n ? ` (tried ${auto.n}×)` : ""}, or press Resume.`;
   }
+  /* The run's state used to be a band across the page under the top bar, with its buttons in it. Paul, 25 Sep: "remove
+     this menu and condense it into a small little action menu beside the current new progress bar … only showing when
+     needed". It is a pill at the right of the top bar now, beside the progress line: a dot, a few words of what is going
+     on, and a caret that opens the rest (the set, the whole sentence, and every button the band had). It is there only
+     while a run is open, Auto counts down to the next one, runs were left open, or this browser could not save, and it is
+     tinted whenever a person is needed (stopped, waiting on Review or Engraving, ready to commit). Each part is written
+     only when it changed, so an open menu stays open, and a button keeps its focus, through the countdown's redraws. */
   function renderBanner() {
     // what the banner keeps up besides its drawing (the workspace checkpoint, the bench buttons) is done at every call;
     // the drawing is done once a frame (CNFrame), or at once for a caller outside the run (RunCtl.renderBanner)
@@ -4716,39 +4723,37 @@ const RunCtl = window.RunCtl = (() => {
     if (window.guardBench) guardBench();
     if (!bannerDrawing && window.CNFrame) { CNFrame.later("banner", bannerNow); return; }
     window.CNFrame?.cancel("banner");
-    const previousMenu = document.getElementById("runMenu");
-    const menuWasOpen = !!previousMenu?.open;
-    const focusId = previousMenu?.contains(document.activeElement) ? document.activeElement.id : null;
     const h = document.getElementById("runBanner"); if (!h) return; const r = B.run;
     LiveStrip.now();                                        // one path: the banner and the ladder can never disagree
-    if (!r) {
-      // a set has finished and Auto will start another: the banner stays, so nobody comes back to a blank app
-      if (NEXT.at > Date.now()) {
-        const left = Math.max(0, NEXT.at - Date.now()), mm = Math.floor(left / 60000), ss = Math.floor(left % 60000 / 1000);
-        h.classList.remove("hidden"); h.className = "runBanner done";
-        h.innerHTML = `<span class="why"><b>Set finished</b> · the next run starts in ${mm}:${String(ss).padStart(2, "0")}</span><span class="spacer"></span><span class="acts"><button class="btn gold sm" id="rbNow" title="start the next run now instead of waiting">Run now</button><button class="btn ghost sm" id="rbCancelNext" title="do not start another run on its own">Cancel</button></span>`;
-        h.querySelector("#rbNow").onclick = () => { cancelNext(); if(clearRunState()===false)return; start({ mode: "auto" }).catch(e => toast(e.message, "bad")); };
-        h.querySelector("#rbCancelNext").onclick = () => cancelNext();
-        Dock.schedule(); return;
-      }
-      // a run left open by a reload or a closed tab is offered here, not in a toast pointing at another tab's button
-      if (B.openRuns && B.openRuns.length) {
-        h.classList.remove("hidden"); h.className = "runBanner review";
-        h.innerHTML = `<span class="why"><b>${B.openRuns.length} open run${B.openRuns.length === 1 ? "" : "s"}</b> · left from an earlier session</span><span class="spacer"></span><span class="acts">${B.openRuns.slice(0, 3).map(x => `<button class="btn gold sm" data-rbres="${esc(x.runId)}" title="carry on from ${esc(x.step)} · ${x.lines} line(s) · ${new Date(x.updatedAt).toLocaleString()}">Resume ${esc(x.runId.slice(-8))} · ${esc(x.step)}</button>`).join("")}<button class="btn ghost sm" id="rbLater" title="leave these for later — they stay on record">Not now</button></span>`;
-        h.querySelectorAll("[data-rbres]").forEach(b => b.onclick = () => { B.openRuns = null; resumeRun(b.dataset.rbres).catch(e => toast(e.message, "bad", 7000)); });
-        h.querySelector("#rbLater").onclick = () => { B.openRuns = null; renderBanner(); };
-        Dock.schedule(); return;
-      }
-      // with no run open, a failed save of this browser's workspace is still said, once, until the next save works
-      const unsaved = window.Session?.failure?.();
-      if (unsaved) { h.classList.remove("hidden"); h.className = "runBanner stopped"; h.innerHTML = `<span class="why"><span class="bad">Not saved on this browser: ${esc(unsaved.message)}</span> — keep this tab open; it is tried again by itself</span>`; Dock.schedule(); return; }
-      // nothing is running, so there is nothing to report: the banner is not a place to advertise from
-      h.classList.add("hidden"); Dock.schedule(); return;
+    const v = r ? runView(r) : idleView();
+    Dock.schedule();
+    if (!v) { const m = h.querySelector("#runMenu"); if (m) m.open = false; h.classList.add("hidden"); return; }
+    drawPill(h, v);
+    if (r) Orders.render();
+  }
+  // with no run open: Auto's countdown to the next run, runs left open by an earlier session, a failed save of this browser
+  function idleView() {
+    // a set has finished and Auto will start another: the pill stays, so nobody comes back to a blank app
+    if (NEXT.at > Date.now()) {
+      const left = Math.max(0, NEXT.at - Date.now()), at = `${Math.floor(left / 60000)}:${String(Math.floor(left % 60000 / 1000)).padStart(2, "0")}`;
+      return { tone: "done", short: `Next run in ${at}`, why: `<b>Set finished</b> · the next run starts in ${at}`,
+        acts: `<button class="btn gold sm" id="rbNow" title="start the next run now instead of waiting">Run now</button><button class="btn ghost sm" id="rbCancelNext" title="do not start another run on its own">Cancel</button>` };
     }
-    h.classList.remove("hidden"); h.className = "runBanner" + (r.status === "stopped" ? " stopped" : r.status === "complete" ? " done" : ["review","processed"].includes(r.status) ? " review" : "");
-    const idx = O.stepIndex(r.step);
+    // a run left open by a reload or a closed tab is offered here, not in a toast pointing at another tab's button
+    if (B.openRuns && B.openRuns.length) {
+      const n = B.openRuns.length, runs = `${n} open run${n === 1 ? "" : "s"}`;
+      return { tone: "wait", short: runs, why: `<b>${runs}</b> · left from an earlier session`,
+        acts: B.openRuns.slice(0, 3).map(x => `<button class="btn gold sm" data-rbres="${esc(x.runId)}" title="carry on from ${esc(x.step)} · ${x.lines} line(s) · ${new Date(x.updatedAt).toLocaleString()}">Resume ${esc(x.runId.slice(-8))} · ${esc(x.step)}</button>`).join("") + `<button class="btn ghost sm" id="rbLater" title="leave these for later — they stay on record">Not now</button>` };
+    }
+    // with no run open, a failed save of this browser's workspace is still said, once, until the next save works
+    const unsaved = window.Session?.failure?.();
+    if (unsaved) return { tone: "stop", short: "Not saved", why: `<span class="bad">Not saved on this browser: ${esc(unsaved.message)}</span> — keep this tab open; it is tried again by itself` };
+    // nothing is running, so there is nothing to report: the pill is not a place to advertise from
+    return null;
+  }
+  function runView(r) {
     const reviewN = Review.count(), engN = Engrave.pendingCount();
-    const waitingFor = [reviewN ? `${reviewN} in Review` : "", engN ? `${engN} in Engraving` : ""].filter(Boolean).join(" · ") || "nothing";
+    const waiting = [reviewN ? `${reviewN} in Review` : "", engN ? `${engN} in Engraving` : ""].filter(Boolean).join(" · "), waitingFor = waiting || "nothing";
     // with nothing for a person to do, say what the run is waiting for: lines on sheets that have not been released yet
     const onCards = r.status === "processed" ? Orders.rows().filter(x => x.state === "pooled").length : 0;
     const idle = onCards ? `${onCards} line${onCards === 1 ? "" : "s"} wait on sheets not released yet` : "waiting for sheets to release";
@@ -4761,35 +4766,87 @@ const RunCtl = window.RunCtl = (() => {
     // the station can be back (taken again for an arrival) before anyone reads "Press Take control": then Resume is all that is left
     const fix = autoNote(r) || (r.status === "stopped" && /^Press Take control/.test(r.fix || "") && window.DesignLink?.inControl() && DesignLink.up() ? "The station is back · press Resume." : r.fix);
     const why = saveWarning + (r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${fix ? ` — <span>${esc(fix)}</span>` : ""}${finishing ? ` · ${finishing} sheet${finishing === 1 ? "" : "s"} still finishing` : ""}` : intake ? `<b>Adding new orders</b> · nesting them onto the sheets` : r.status === "review" ? `<b>Waiting for a person:</b> ${waitingFor}` : r.status === "processed" ? `<b>Processing complete</b> · ${waitingFor === "nothing" ? idle : waitingFor}${r.awaitCommit ? " · commit when ready" : ""}` : r.status === "paused" ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(STEP_WORDS[r.step] || r.step)}</b>${esc(stepDetail(r))}`);
-    Dock.schedule();
-    h.title = `run ${r.runId}`;
+    // the few words on the pill, and its tint: a person is needed when it stopped, waits on Review or Engraving, or is ready to commit
+    const retry = autoResumable(r), sign = r.status === "stopped" && /\bsign/i.test(r.stoppedBy || "");
+    let tone = "go", short = `${STEP_WORDS[r.step] || r.step}${stepDetail(r)}`;
+    if (r.status === "stopped") { tone = "stop"; short = settling === r || retry && auto.busy ? "Resuming…" : retry ? "Stopped · retrying" : sign ? "Stopped · sign in to Etsy" : "Stopped"; }
+    else if (intake) short = "Adding new orders";
+    else if (r.status === "complete") { tone = "done"; short = `Complete · ${(r.committed || []).length} committed`; }
+    else if (r.status === "paused" || r.status === "processed" && r.awaitCommit) { tone = "wait"; short = "Ready to commit"; }
+    else if (r.status === "review" || r.status === "processed" && waiting) { tone = "wait"; short = waiting ? `Waiting on you · ${waiting}` : "Waiting on you"; }
+    else if (r.status === "processed") { tone = "idle"; short = onCards ? `Processed · ${onCards} line${onCards === 1 ? "" : "s"} on open sheets` : "Processed · sheets filling"; }
+    if (r.saveError || local) { tone = "stop"; short = "Not saved · " + short; }
     /* Which run is this? Three cards on the Nest tab and a banner that named only a step left no way to tell this
-       morning's set from yesterday's. The set, the day and the size of the run now lead it. */
+       morning's set from yesterday's. The set, the day and the size of the run lead the menu. */
     const outside = (r.lineArchive && r.lineArchive.base) || {}, nSheets = Object.keys(r.sheets || {}).length + (+outside.sheets || 0);   // with what a resumed run's record left out
     const seqOf = x => x.seq || +((/-(\d+)$/.exec(String(x.setId || "")) || [])[1] || 0) || null;
     const who = [seqOf(r) ? `Set ${seqOf(r)}` : "", r.day ? new Date(r.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "",
-      `${(Object.keys(r.lines || {}).length || Orders.rows().filter(x => x.state !== "gone").length) + (+outside.lines || 0)} lines`, nSheets ? `${nSheets} sheet${nSheets === 1 ? "" : "s"}` : ""].filter(Boolean).join(" \u00b7 ");
-    h.innerHTML = `<button type="button" class="rid" title="run ${esc(r.runId)}${r.setId ? " \u00b7 set " + esc(r.setId) : ""}">${esc([seqOf(r) ? `Set ${seqOf(r)}` : "", r.day ? new Date(r.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "", nSheets ? `${nSheets} sheets` : ""].filter(Boolean).join(" · "))}</button><span class="why">${why}</span><span class="spacer"></span><span class="acts">
-      ${["paused","processed"].includes(r.status) && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${r.status === "stopped" && /\bsign/i.test(r.stoppedBy || "") ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${["stopped","processed"].includes(r.status) && !intake ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at"${settling === r ? " disabled" : ""}>${r.status === "processed" ? "Retry pending" : settling === r ? "Resuming…" : "Resume"}</button>` : ""}${["running", "review", "paused"].includes(r.status) || intake ? `<button class="btn ghost sm" id="rbStop" title="${r.arrivalBusy ? "stop now — the charms already placed stay where they are, and the new orders wait for Resume" : "stop after the step in progress — the run can be resumed from where it stopped"}">Stop</button>` : ""}${r.status === "complete" ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}<details class="runMenu" id="runMenu"${menuWasOpen ? " open" : ""}><summary id="runMenuToggle" aria-label="Run options" title="Run options">⋯</summary><div class="runMenuBody"><div class="runDetail"><b>${esc(who)}</b><small>${esc(r.runId)}</small>${why}</div>
-      ${r.at ? `<button class="btn ghost sm" id="rbAt">Show the sheet</button>` : ""}<button class="btn ghost sm" id="rbHistory">Run history…</button>
-      ${r.status !== "complete" ? `<button class="btn ghost sm" id="rbAbandon" title="Saved sheets and files are kept">Abandon run…</button>` : ""}</div></details></span>`;
-    const q = id => h.querySelector("#" + id);
-    if (focusId) q(focusId)?.focus({ preventScroll: true });
-    q("rbHistory").onclick = () => { q("runMenu").open = false; RunHistory.show(); };
-    const rid = h.querySelector(".rid"); if (rid) { rid.tabIndex = 0; rid.title += " \u2014 click for every run on record"; rid.onclick = () => RunHistory.show(); rid.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); RunHistory.show(); } }; }
-    if (q("rbAt")) q("rbAt").onclick = () => { CN.setMode("nest"); const i = CN.pagesOf(r.at.metal).findIndex(p => p.page === r.at.page); CN.showPage(r.at.metal, Math.max(0, i)); };
-    if (q("rbConnect")) q("rbConnect").onclick = () => DesignLink.connectEtsy().catch(e => toast(e.message, "bad", 6000)); 
-    if (q("rbCommit")) q("rbCommit").onclick = () => commitNow(); if (q("rbResume")) q("rbResume").onclick = () => resume(); if (q("rbStop")) q("rbStop").onclick = () => operatorStop(); if (q("rbClear")) q("rbClear").onclick = () => { if (confirm("Clear the finished run from the cards? Files and records are kept.")) clearRunState(); };
-    if (q("rbAbandon")) q("rbAbandon").onclick = () => {
-      // a person's decision with no back file written yet: an approval, confirmed words, a placement moved by hand
-      const eng = [...Engrave.items().values()].filter(j => ["approved", "words", "review"].includes(j.state) && !(j.backs && j.backs.length) && (j.state === "approved" || j.decision || j.nudged || j.edited)).length;
-      // Review.count() is what still waits for a decision, not decisions made: it used to be added to the work "lost"
-      const rev = Review.count();
-      const lost = eng ? `\n\n${eng} engraving decision${eng === 1 ? "" : "s"} made in this run ${eng === 1 ? "is" : "are"} not written yet and will be lost.` : "";
-      const open = rev ? `\n\n${rev} review item${rev === 1 ? " still waits" : "s still wait"} for a decision.` : "";
-      if (confirm(`Give up run ${r.runId.slice(-8)}?${lost}${open}\n\nThe sheets and files already saved are kept.`)) clearRunState(()=>releaseRun(r),{drop:'released'});
-    };
-    Orders.render();
+      `${(Object.keys(r.lines || {}).length || Orders.rows().filter(x => x.state !== "gone").length) + (+outside.lines || 0)} lines`, nSheets ? `${nSheets} sheet${nSheets === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
+    return { tone, short, who, why, runId: r.runId + (r.setId ? " · set " + r.setId : ""),
+      acts: `${["paused","processed"].includes(r.status) && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${sign ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${["stopped","processed"].includes(r.status) && !intake ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at"${settling === r ? " disabled" : ""}>${r.status === "processed" ? "Retry pending" : settling === r ? "Resuming…" : "Resume"}</button>` : ""}${["running", "review", "paused"].includes(r.status) || intake ? `<button class="btn ghost sm" id="rbStop" title="${r.arrivalBusy ? "stop now — the charms already placed stay where they are, and the new orders wait for Resume" : "stop after the step in progress — the run can be resumed from where it stopped"}">Stop</button>` : ""}${r.status === "complete" ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}`,
+      more: `${r.at ? `<button class="btn ghost sm" id="rbAt" title="open the sheet this is about">Show the sheet</button>` : ""}<button class="btn ghost sm" id="rbHistory" title="every run on record">Run history…</button>${r.status !== "complete" ? `<button class="btn ghost sm" id="rbAbandon" title="give up this run — the sheets and files already saved are kept">Abandon run…</button>` : ""}` };
+  }
+  // one part of the pill, written only when it changed
+  const part = (el, html) => { if (el._html === html) return false; el._html = html; el.innerHTML = html; return true; };
+  function drawPill(h, v) {
+    let menu = h.querySelector("#runMenu");
+    if (!menu) {
+      h.innerHTML = `<details class="runMenu" id="runMenu"><summary id="runMenuToggle"><i class="rbDot"></i><span class="rbText"></span><span class="rbCaret" aria-hidden="true">⌄</span></summary><div class="runMenuBody"><div class="runDetail"></div><div class="rbActs"></div><div class="rbMore"></div></div></details>`;
+      menu = h.querySelector("#runMenu"); h.onclick = pillClick;
+      menu.addEventListener("toggle", () => placeMenu(menu));
+      if (window.ResizeObserver) new ResizeObserver(() => fitPill(h)).observe(h);
+    }
+    const focusId = h.contains(document.activeElement) ? document.activeElement.id : "";
+    h.className = "runBanner " + v.tone;
+    const text = menu.querySelector(".rbText"); if (text.textContent !== v.short) text.textContent = v.short;
+    fitPill(h);
+    const detail = menu.querySelector(".runDetail");
+    const changed = [part(detail, `${v.who ? `<b>${esc(v.who)}</b><small>${esc(v.runId)}</small>` : ""}<span class="rbWhy">${v.why}</span>`), part(menu.querySelector(".rbActs"), v.acts || ""), part(menu.querySelector(".rbMore"), v.more || "")].some(Boolean);
+    // the whole sentence on hover, for when the pill has room for its first words only
+    const full = (v.who ? v.who + " — " : "") + detail.querySelector(".rbWhy").textContent.replace(/\s+/g, " ").trim();
+    const summary = menu.querySelector("summary"); if (summary.title !== full) summary.title = full;
+    if (changed && focusId && document.activeElement?.id !== focusId) h.querySelector("#" + CSS.escape(focusId))?.focus({ preventScroll: true });
+  }
+  // squeezed to its dot and caret, the pill shows no sliver of a letter between them (its size is left as it is)
+  function fitPill(h) { const t = h.querySelector(".rbText"); if (t) h.classList.toggle("bare", t.clientWidth < 18 && t.scrollWidth > t.clientWidth + 1); }
+  // the menu hangs from the pill's right edge; where the pill sits near the left edge of a narrow window it moves back on screen
+  function placeMenu(menu) {
+    const body = menu.querySelector(".runMenuBody"); body.style.right = "";
+    if (menu.open) { const left = body.getBoundingClientRect().left; if (left < 8) body.style.right = `${Math.round(left - 8)}px`; }
+  }
+  /* The pill's buttons act on the run as it is when pressed. The menu stays open on Stop, Resume, Commit and Connect,
+     where the next button takes the pressed one's place (a double click lands there, as it did on the band), and closes
+     on a button that leads elsewhere or ends what the pill was showing. */
+  function pillClick(e) {
+    const b = e.target.closest("button"); if (!b || b.disabled) return;
+    const r = B.run, close = () => { const m = document.getElementById("runMenu"); if (m) m.open = false; };
+    // a question asked once the menu has closed, never over it
+    const ask = f => { close(); requestAnimationFrame(() => setTimeout(f)); };
+    if (b.dataset.rbres) { close(); B.openRuns = null; resumeRun(b.dataset.rbres).catch(err => toast(err.message, "bad", 7000)); }
+    else switch (b.id) {
+      case "rbNow": close(); cancelNext(); if (clearRunState() === false) return; start({ mode: "auto" }).catch(err => toast(err.message, "bad")); break;
+      case "rbCancelNext": close(); cancelNext(); break;
+      case "rbLater": close(); B.openRuns = null; break;
+      case "rbCommit": commitNow().catch(err => toast(err.message, "bad", 7000)); break;
+      case "rbConnect": DesignLink.connectEtsy().catch(err => toast(err.message, "bad", 6000)); break;
+      case "rbResume": resume().catch(err => toast(err.message, "bad", 7000)); break;
+      case "rbStop": operatorStop(); break;
+      case "rbClear": ask(() => { if (confirm("Clear the finished run from the cards? Files and records are kept.")) clearRunState(); }); return;
+      case "rbAbandon": if (r) ask(() => { if (r === B.run) abandon(r); }); return;
+      case "rbAt": close(); if (r?.at) { CN.setMode("nest"); const i = CN.pagesOf(r.at.metal).findIndex(p => p.page === r.at.page); CN.showPage(r.at.metal, Math.max(0, i)); } break;
+      case "rbHistory": close(); RunHistory.show(); break;
+      default: return;
+    }
+    bannerNow();
+  }
+  function abandon(r) {
+    // a person's decision with no back file written yet: an approval, confirmed words, a placement moved by hand
+    const eng = [...Engrave.items().values()].filter(j => ["approved", "words", "review"].includes(j.state) && !(j.backs && j.backs.length) && (j.state === "approved" || j.decision || j.nudged || j.edited)).length;
+    // Review.count() is what still waits for a decision, not decisions made: it used to be added to the work "lost"
+    const rev = Review.count();
+    const lost = eng ? `\n\n${eng} engraving decision${eng === 1 ? "" : "s"} made in this run ${eng === 1 ? "is" : "are"} not written yet and will be lost.` : "";
+    const open = rev ? `\n\n${rev} review item${rev === 1 ? " still waits" : "s still wait"} for a decision.` : "";
+    if (confirm(`Give up run ${r.runId.slice(-8)}?${lost}${open}\n\nThe sheets and files already saved are kept.`)) clearRunState(()=>releaseRun(r),{drop:'released'});
   }
   return { optionsChanged, recoverReviewStop, membershipUpdated, start, next, resume, stop, operatorStop, stopIfRunning, poke, backgroundSettled, save, onSheetDone, pickResume, resumeRun, restoreRunSheets, commitNow, setMode: setRunMode, setRunMode, renderBanner: bannerNow, renderModeBtn, clearRunState, run, autoResume, stopKind: stopKindOf };
 })();
@@ -5252,9 +5309,10 @@ const Sandbox = window.Sandbox = (() => {
   function render() {
     const el = document.getElementById("sbStatus"); if (el) el.title = statusText() || el.title;
     // the speed and the word "sim" are their own spans, so a narrow top bar can leave them out (the pill took the room of
-    // the last tab at 1280 px) and still read "Sandbox · Fri 07:30"; the text is the label's all the same (one inline span
-    // holds it all: the pill is a flex box, which would trim the spaces around each piece)
-    const pill = document.getElementById("sandboxPill"); if (pill) { pill.classList.toggle("hidden", !on()); if (on()) { const text = label(), m = /^Sandbox (\S+) · sim (.+)$/.exec(text); if (pill.dataset.label !== text) { pill.dataset.label = text; pill.innerHTML = m ? `<span>Sandbox<span class="sbSpeed"> ${esc(m[1])}</span> · <span class="sbSim">sim </span>${esc(m[2])}</span>` : esc(text); } pill.title = streamText() ? `Sandbox: emulated Etsy; all records and files use sandbox copies. ${streamText()}` : "Sandbox: emulated Etsy; all records and files use sandbox copies"; } }
+    // the last tab at 1280 px) and still read "Sandbox · Fri 07:30", and so is the clock, left out beside the run's pill;
+    // the text is the label's all the same (one inline span holds it all: the pill is a flex box, which would trim the
+    // spaces around each piece)
+    const pill = document.getElementById("sandboxPill"); if (pill) { pill.classList.toggle("hidden", !on()); if (on()) { const text = label(), m = /^Sandbox (\S+) · sim (.+)$/.exec(text); if (pill.dataset.label !== text) { pill.dataset.label = text; pill.innerHTML = m ? `<span>Sandbox<span class="sbSpeed"> ${esc(m[1])}</span><span class="sbTime"> · <span class="sbSim">sim </span>${esc(m[2])}</span></span>` : esc(text); } pill.title = streamText() ? `Sandbox: emulated Etsy; all records and files use sandbox copies. ${streamText()}` : "Sandbox: emulated Etsy; all records and files use sandbox copies"; } }
     document.documentElement.classList.toggle("sandbox", on());
   }
   return { on, refresh, snapshot, enable, afterReload, reset, mountPanel, render, status: () => status, streaming, speed, ready, advance, restream, label, streamText, seed: () => stream && stream.seed, stream: () => stream };
@@ -5602,7 +5660,9 @@ const OrderWin = window.OrderWin = (() => {
     // a message the server already has shows once, as itself
     const out = rid ? TeamMail.pending(rid).filter(x => !got.has("c-" + x.id)) : [];
     const up = (rid && W.sending.get(rid)) || 0;
-    const key = JSON.stringify([rid, mine, W.thread.map(m => m.id), out.map(x => [x.id, x.tries, x.error || "", !!x.next]), up, TeamMail.ok(), !!(W.readErr && W.thread.length)]);
+    // what is drawn depends on whether a read has finished or failed too: an order with no messages at all must move on
+    // from "Reading…" to "No internal messages yet" although its (empty) list did not change
+    const key = JSON.stringify([rid, mine, W.thread.map(m => m.id), out.map(x => [x.id, x.tries, x.error || "", !!x.next]), up, TeamMail.ok(), !!W.fullAt, W.readErr || ""]);
     const visible = W.dlg && W.dlg.open && !byId("owPaneTeam")?.hidden;
     if (visible && rid) TeamMail.markSeen(rid, W.thread);
     paintTeamDot();
