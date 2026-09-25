@@ -37,6 +37,15 @@
  *     - date, order number
  *     - 3-line notes (Metal / Title / Match) **aggregated across ALL items**
  ********************************************************/
+/* A page that loads this one in a frame may ask to be told how it went by adding #notify=<nonce> to the address (the
+   Charm Sorter's Custom Orders does, to mark an order printed only once its label reached the print dialog). Loaded the
+   way sorting.html loads it, with no nonce, it posts nothing and behaves exactly as before. */
+const NOTIFY_NONCE = (/[#&]notify=([\w-]{6,40})/.exec(location.hash) || [])[1] || null;
+function notifyParent(msg) {
+  if (!NOTIFY_NONCE || window.parent === window) return;
+  try { window.parent.postMessage(Object.assign({ source: "qr-printer", nonce: NOTIFY_NONCE }, msg), location.origin); } catch (_) {}
+}
+
 window.addEventListener("load", async () => {
   try {
     // 1) Load from localStorage
@@ -57,6 +66,7 @@ window.addEventListener("load", async () => {
     const dataStr = localStorage.getItem("qrPrintAll");
     if (!dataStr) {
       console.error("No 'qrPrintAll' found in localStorage. Nothing to print.");
+      notifyParent({ phase: "done", ok: false, error: "no label data was handed to the printer" });
       return;
     }
 
@@ -64,6 +74,7 @@ window.addEventListener("load", async () => {
     const dataObj = JSON.parse(dataStr);
     if (!dataObj || !Array.isArray(dataObj.items) || !dataObj.items.length) {
       console.error("'qrPrintAll' missing items or is empty.");
+      notifyParent({ phase: "done", ok: false, error: "the label data has no items" });
       return;
     }
 
@@ -92,10 +103,12 @@ window.addEventListener("load", async () => {
     const notes = buildAggregatedNotes(dataObj, items);
 
     // 5) Build & print the PDF label (with notes)
+    notifyParent({ phase: "started", orderNum });
     await buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes);
 
   } catch (err) {
     console.error("Error in QR Printer auto-run:", err);
+    notifyParent({ phase: "done", ok: false, error: String((err && err.message) || err) });
   }
 });
 
@@ -297,6 +310,7 @@ async function buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes) {
   }
   if (!qrImg) {
     console.error("No QR image rendered for order:", orderNum);
+    notifyParent({ phase: "done", ok: false, error: "no QR image could be drawn for " + orderNum });
     return;
   }
 
@@ -323,6 +337,7 @@ async function buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes) {
 
     hiddenIframe.onload = function() {
       hiddenIframe.contentWindow.print();
+      notifyParent({ phase: "done", ok: true, orderNum });
     };
 
     hiddenIframe.src = blobUrl;

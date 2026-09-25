@@ -106,6 +106,10 @@
   const looksLikeLength = v => /^\s*\d+(\.\d+)?\s*("|''|\u201d|\u2033|in\b|inch|cm\b|mm\b)/i.test(String(v || "")) || /^\s*\d{1,2}(\.\d)?\s*$/.test(String(v || ""));
   const bareValue = v => norm(String(v || "").replace(/[^\w\s.+&-]+/g, " ")).split(/[\s+&]+/).filter(w => w && !FORM_FILLER.has(w)).join(" ");
   const looksLikeSize = v => /^(xs|s|m|l|xl|xxl|\d{1,2}(\.\d)?\s*(mm|cm)?( us)?)$/i.test(bareValue(v));
+  // a made-to-order listing prices each order with an option of its own ("Price: 28"): it says what was paid, never what
+  // is made, so it is read as nothing to map (it held every custom line under Options as well as under Material)
+  const isPriceOption = name => /^\s*(price|amount|total|cost|payment|deposit|balance)\s*$/i.test(String(name || ""));
+  const looksLikePrice = v => /^\s*(?:[$€£]|usd|cad|eur|gbp)?\s*\d{1,6}(?:[.,]\d{1,2})?\s*(?:[$€£]|usd|cad|eur|gbp)?\s*$/i.test(String(v || ""));
 
   /** { field, value, source } for one option, or null when nothing deterministic applies. */
   function optionLookup(maps, listingId, name, value) {
@@ -133,6 +137,108 @@
     return { sku: "", source: null };
   }
 
+  /* ═══ 3b · special orders: not a regular listing purchase ══════════════
+     Custom charms and custom pieces, rework, chain-only orders, add-ons and other one-off purchases are made or handled
+     by hand, not picked from the catalogue: each is one card under Review → Custom Orders. Read from what the shop itself
+     wrote (the SKU it gave the listing, the listing title, a "Price" option, a buyer's "Chain only" choice), deterministic,
+     no model. A title alone never makes a line special when its SKU has a design in a master file: shop titles say
+     "custom" for personalised catalogue charms. Only chain only is never cut; everything else waits for a person. */
+  const SPECIAL = {
+    customCharm:    { label: "Custom charm", group: "custom" },
+    customNecklace: { label: "Custom necklace", group: "custom" },
+    customHuggies:  { label: "Custom huggies", group: "custom" },
+    customEarrings: { label: "Custom earrings", group: "custom" },
+    customBracelet: { label: "Custom bracelet", group: "custom" },
+    customOther:    { label: "Custom order", group: "custom" },
+    rework:         { label: "Rework", group: "rework" },
+    chainOnly:      { label: "Chain only", group: "chain", notCut: true },
+    addOn:          { label: "Add-on", group: "addon" },
+    special:        { label: "Special order", group: "other" }
+  };
+  const SEP_ = "(?:[\\s_\\-.]|\\d|$)";
+  const SKU_RULES = [
+    // CUSTOM_6673, CUSTOM-N-001-665441, CUSTOM-H-020-660181, CSTM-…, CUST_…
+    ["custom", new RegExp("^(?:CUSTOM|CSTM|CUST)" + SEP_), false],
+    // RE_5460, RE-…, RW_…, REWORK, REPAIR, MOD_…: only without a design of their own (a catalogue SKU is its design)
+    ["rework", /^R[EW][\s_\-.]?\d/, true],
+    ["rework", new RegExp("^(?:RE|RW)[\\s_\\-.]|^(?:REWORK|RE-WORK|REPAIR|MODIFICATION|MODIFY|MOD|FIX|REMAKE)" + SEP_), true],
+    // CHAIN_8941, CHAIN-17IN, CHAIN_ONLY, EXT-2IN: a chain product's SKU and nothing else, because chain only is never cut
+    // (CHAIN-HEART, a charm whose design is not indexed yet, stays an Unknown SKU question)
+    ["chainOnly", /^(?:CHAIN|CHN|EXTENDER|EXT)(?:[\s_\-.]*(?:\d+(?:\.\d+)?(?:IN|INCH|INCHES|CM|MM)?|ONLY|REPL|REPLACE|REPLACEMENT|GF|SS|RG|YG|WG|14K|10K|GOLD|SILVER|ROSE|STERLING))*$/, true],
+    ["addOn", new RegExp("^(?:ADD|ADDON|ADD-ON|EXTRA|UPGRADE|UPG|GIFT|GIFTBOX|GIFTWRAP|GIFTBAG|BOX|POUCH|BAG|WRAP|RUSH|EXPRESS|PRIORITY|INSURANCE|SHIP|SHIPPING|CARD)" + SEP_), true],
+    ["special", new RegExp("^(?:SPECIAL|SPCL|PRIVATE|RESERVED|MTO|BESPOKE|DEPOSIT|PAYMENT|BALANCE|DIFF|DIFFERENCE|ORDER)" + SEP_), true]
+  ];
+  /* [kind, phrase, how]. 0: the phrase names the purchase itself wherever it stands in the title. 1: it must start the
+     title (a "Chain Replacement" listing, not "Butterfly Charm Necklace, Chain Only Option"), with or without a SKU —
+     chain only is never cut, so it is read only where it cannot be a charm's title. 2: the phrase is also how shop
+     titles describe regular listings ("… Charm Necklace with Gift Box", "Custom Charm Necklace, Personalized…", "Made to
+     Order"): it counts only for a line with no SKU at all, and only as the start of the title (a "Gift Box" or "Rush
+     Order Fee" listing), so an unknown catalogue SKU stays an Unknown SKU question. */
+  const TITLE_RULES = [
+    ["chainOnly", /\bchain\s*only\b|\bonly\s+(?:the\s+)?chain\b|\bjust\s+(?:the\s+)?chain\b|\bchain\s+replacement\b|\breplacement\s+chain\b|\b(?:chain|necklace)\s+extender\b|\bextender\s+chain\b|\bchain\s+without\s+(?:a\s+)?(?:charm|pendant)\b/, 1],
+    ["rework", /\bre-?work\b|\bmodification\b|\brepair\b|\bre-?engrav\w*|\balteration\b/, 0],
+    ["rework", /\bmodify\b|\bre-?make\b|\bre-?siz(?:e|ing)\b/, 2],
+    ["custom", /\bcustom(?:i[sz]ed)?\s+(?:order|request|listing|commission)\b|\bbespoke\b|\bcommission(?:ed)?\s+(?:piece|work|order|charm|design)\b/, 0],
+    ["custom", /\bcustom(?:i[sz]ed)?\s+(?:design|piece|work|made|charm|jewel(?:le)?ry|necklace|earrings?|huggies?|hoops?|bracelet)\b|\bmade\s+to\s+order\b|\bone\s+of\s+a\s+kind\b/, 2],
+    ["addOn", /\badd[\s-]?on\b/, 0],
+    ["addOn", /\badditional\s+(?:item|charm|piece|pendant|letter|initial|birthstone|disc|name)s?\b|\bextra\s+(?:charm|item|piece|pendant|letter|initial|birthstone|disc)s?\b|\bgift\s*(?:wrap(?:ping)?|box|bag|pouch)\b|\brush\s+(?:order|processing|fee|service)\b|\b(?:express|expedited|priority)\s+(?:shipping|processing|delivery)\b|\bshipping\s+upgrade\b|\bupgrade\b/, 2],
+    ["special", /\bspecial\s+order\b|\bprivate\s+listing\b|\breserved\s+(?:for|listing)\b|\bdeposit\b|\bbalance\s+(?:payment|due)\b|\bprice\s+difference\b|\bdifference\s+in\s+price\b|\bpayment\s+for\b/, 0]
+  ];
+  // the product name a title starts with: Etsy titles are lists of phrases, the first is what the listing is
+  const titleLead = lower => lower.split(/\s*[,|•·:;–—(\[]\s*|\s+-\s+|\s+\/\s+/)[0].replace(/^\s*(?:add(?:\s+an?)?|optional|\+)\s+/, "").trim();
+  // a buyer's own choice of no charm at all, on a charm listing
+  const CHAIN_ONLY_VALUE = /^(?:(?:necklace\s+)?chain\s*only|(?:just|only)\s+(?:the\s+)?chain|chain\s+(?:without|no)\s+(?:a\s+)?(?:charm|pendant)s?|no\s+(?:charm|pendant)s?|chain\s*\(\s*no\s+(?:charm|pendant)s?\s*\))$/i;
+  const CUSTOM_LETTER = { N: "customNecklace", H: "customHuggies", E: "customEarrings", S: "customEarrings", B: "customBracelet", A: "customBracelet", C: "customCharm", P: "customCharm" };
+  function customKind(sku, title, options) {
+    const m = /^(?:CUSTOM|CSTM|CUST)[\s_\-.]([A-Z])[\s_\-.]/.exec(sku || "");
+    if (m && CUSTOM_LETTER[m[1]]) return CUSTOM_LETTER[m[1]];
+    const t = (String(title || "") + " " + (options || []).map(o => o.value).join(" ")).toLowerCase();
+    if (/\bhuggies?\b/.test(t)) return "customHuggies";
+    if (/\bnecklaces?\b|\bpendant necklace\b/.test(t)) return "customNecklace";
+    if (/\bearrings?\b|\bstuds?\b|\bhoops?\b/.test(t)) return "customEarrings";
+    if (/\bbracelets?\b|\banklets?\b/.test(t)) return "customBracelet";
+    if (/\bcharms?\b|\bpendants?\b/.test(t)) return "customCharm";
+    return "customOther";
+  }
+  /**
+   * Is this line a special (non-catalogue) purchase? → null, or
+   * { kind, label, group, notCut, why, signals[] }. opts: { sku (the resolved SKU), masterEntry?, optionMaps? }.
+   * A SKU with a design in a master file is a catalogue charm unless its own SKU or the buyer says otherwise.
+   */
+  function specialOf(line, opts) {
+    line = line || {}; opts = opts || {};
+    const raw = String(line.sku || "").trim().toUpperCase(), sku = String(opts.sku || raw).trim().toUpperCase();
+    const known = !!(sku && opts.masterEntry && opts.masterEntry(sku));
+    const title = String(line.title || ""), lower = title.toLowerCase();
+    const vars = (line.variations || []).map(v => ({ name: String(v.name != null ? v.name : v.formatted_name || ""), value: String(v.value != null ? v.value : v.formatted_value || "").replace(/&quot;/g, "\"").trim() })).filter(v => v.name && v.value);
+    const make = (kind, why, signal) => Object.assign({ kind, why, signals: [signal] }, SPECIAL[kind]);
+    // 1 · the buyer chose no charm (a stored map for that value is a person's decision and stands)
+    for (const v of vars) {
+      if (!CHAIN_ONLY_VALUE.test(v.value.trim())) continue;
+      const hit = optionLookup(opts.optionMaps, line.listingId, v.name, v.value);
+      if (hit && hit.source !== "default") continue;
+      return make("chainOnly", `option “${v.name}: ${v.value}”`, "option");
+    }
+    // 2 · the SKU the shop gave the listing
+    for (const s of [...new Set([raw, sku].filter(Boolean))]) {
+      for (const [kind, re, onlyLoose] of SKU_RULES) {
+        if (!re.test(s) || (onlyLoose && known)) continue;
+        return make(kind === "custom" ? customKind(s, title, vars) : kind, `SKU ${s}`, "sku");
+      }
+    }
+    // 3 · the listing title, only for a line with no design of its own
+    const lead = titleLead(lower), leads = re => { const m = re.exec(lead); return !!m && m.index === 0; };
+    const noSku = !raw && !sku;
+    if (!known) for (const [kind, re, how] of TITLE_RULES) {
+      if (how === 0 ? !re.test(lower) : how === 1 ? !leads(re) : !(noSku && leads(re))) continue;
+      return make(kind === "custom" ? customKind("", title, vars) : kind, `listing “${title.length > 48 ? title.slice(0, 47) + "…" : title}”`, "title");
+    }
+    // 4 · a price chosen as an option: a made-to-order or private listing
+    const price = vars.find(v => isPriceOption(v.name) && looksLikePrice(v.value));
+    if (price) return make("special", `“${price.name}” option`, "price");
+    return null;
+  }
+
   /* ═══ 4 · the line spec ════════════════════════════════════════════════ */
   /**
    * order: the bridge order (design §4.4); line: one of its lines
@@ -144,11 +250,19 @@
     ctx = ctx || {};
     const problems = [];
     const { sku, source: skuSource } = resolveSku(line, ctx.aliases, ctx.masterEntry, ctx.noDesign);
-    const noDesign = isNoDesign(sku, ctx.noDesign) || (!sku && isNoDesign(line.title, ctx.noDesign));
+    const listed = isNoDesign(sku, ctx.noDesign) || (!sku && isNoDesign(line.title, ctx.noDesign));
+    // a special purchase (custom, rework, chain only, add-on…): chain only is never cut, and a special line a person
+    // finished by hand (its QR label printed from Custom Orders) is done; either reads as the no-design list does
+    const special = specialOf(line, { sku, masterEntry: ctx.masterEntry, optionMaps: ctx.optionMaps });
+    const done = (ctx.customDone && ctx.customDone[lineKey(order, line)]) || null;
+    const noDesign = listed || !!(special && special.notCut) || !!done;
     const metalKey = String(line.metalKey || "");
     const material = METAL_TO_CARD[metalKey] || null;
     if (!noDesign && !material) problems.push({ kind: "needsMaterial", metalKey: metalKey || null, metalLabel: line.metalLabel || "", listingId: String(line.listingId || ""), options: (line.variations || []).map(v => `${v.name}: ${v.value}`), title: line.title || "" });
     const spec = { designSku: sku || null, skuSource, material, materialKey: metalKey || null, materialLabel: line.metalLabel || (material ? CARD_LABEL[material] : ""), form: null, size: null, chain: null, quantity: Math.max(1, Math.round(+line.quantity || 1)), personalization: (line.personalization || []).map(s => visible(s).trim()).filter(Boolean), buyerMessage: visible(line.buyerMessage || order.buyerMessage || ""), staffNote: String(line.staffNote || order.staffNote || ""), messages: (line.messages || order.messages || []).slice(-5), updateTs: +order.updateTs || 0, options: [], problems, noDesign, sources: { material: "station classifier (Metal/Colour option first)", sku: skuSource } };
+    if (special) spec.special = special;
+    if (done) spec.customDone = done;
+    if (noDesign) spec.noDesignWhy = done ? "completed by hand (Custom Orders)" : listed ? "on the no-design list" : special.label.toLowerCase() + " · not laser cut";
     for (const v of line.variations || []) {
       const name = v.name || v.formatted_name, value = String(v.value != null ? v.value : v.formatted_value || "").replace(/&quot;/g, "\"").trim();
       if (!name || !value || isMetalOption(name) || isPersonalisation(name)) continue;
@@ -161,6 +275,7 @@
         else if (isChainOption(name) && asForm) mapped = { field: "form", value: asForm, source: "rule:form" };
         else if (isFormOption(name) && looksLikeLength(value)) mapped = { field: "chain", value, source: "rule:length" };
         else if (isFormOption(name) && asForm) mapped = { field: "form", value: asForm, source: "rule:form" };
+        else if (isPriceOption(name) && looksLikePrice(value)) mapped = { field: "ignore", value: null, source: "rule:price" };
       }
       spec.options.push({ name, value, mapped });
       if (!mapped) { if (!noDesign) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: value, title: line.title || "" }); continue; }
@@ -444,6 +559,62 @@
     return parts;
   }
 
+  /* ═══ 9b · the sorting station's order sticker ═════════════════════════════════════════════════════════════════════
+     The 1 × 1 in QR sticker is printed by QR Printer.html, the page the sorting station (sorting.html) loads in a hidden
+     frame: it reads the object below from localStorage "qrPrintAll", draws the order number's QR (ECC H) with the
+     dispatch date, the order number, one or two dots (earrings/studs/rings two, everything else one) and three note lines
+     (Metal / Title / Match) on a 72 × 72 pt page, and opens the print dialog. This builds that object exactly as
+     sorting.html's buildQrDataForCell does from the same Etsy order (its fillPreviewBoxes reads the metal and the
+     keywords), so a sticker printed from the sorter is the sorting station's sticker. Nothing in it is written anywhere. */
+  const SORT_GROUP_A = ["stud", "studs", "stud earrings", "ring", "rings", "earrings"];
+  const SORT_GROUP_B = ["necklace", "necklaces", "huggie", "huggies", "huggie earrings", "hoop", "hoops", "hoop earrings", "bracelet", "bracelets", "extender", "extenders", "chain", "chains"];
+  const SORT_METAL_NAMES = ["metal", "metal choice", "metal - engraving", "metal colour", "color", "metal choice / engraving option", "metal choice / necklace length", "number of discs / metal", "number of discs/metal", "metal/necklace length", "metal/necklace length/engrave"];
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  function sortPhrase(str, phrase) { return new RegExp("\\b" + phrase.trim().replace(/\s+/g, "[\\s\\W]+") + "\\b", "i").test(String(str || "").toLowerCase()); }
+  /** The metal sorting.html shows under an item (its "Metal:" box), from the buyer's choices; "" when none is found. */
+  function sortingMetal(variations) {
+    const vars = (variations || []).map(v => ({ formatted_name: String(v.formatted_name != null ? v.formatted_name : v.name || ""), formatted_value: String(v.formatted_value != null ? v.formatted_value : v.value || "") }));
+    let metalVar = vars.find(v => { const n = v.formatted_name.trim().toLowerCase(); return n.includes("metal") || n.startsWith("color") || n.startsWith("colour") || SORT_METAL_NAMES.includes(n); });
+    if (!metalVar) metalVar = vars.find(v => /rose\s*gold|rosegold|rosefilled|gold\s*filled|goldfilled|\bgold\b|silv[ae]?r|sterling\s*silver|14k|white\s*gold/.test(v.formatted_value.toLowerCase()));
+    if (!metalVar || !metalVar.formatted_value) return "";
+    let m = metalVar.formatted_value.replace(/\+\s*engraving/gi, "").replace(/\+\s*engrave/gi, "").replace(/\b1-5\s*Characters\b/gi, "").replace(/\b6-10\s*Characters\b/gi, "").replace(/\b11\s*\+\s*Characters\b/gi, "")
+      .replace(/\b1-5\s*·\s*Character(?:s)?\b/gi, "").replace(/\b6-10\s*·\s*Character(?:s)?\b/gi, "").replace(/\b11\+\s*·\s*Character(?:s)?\b/gi, "").replace(/\s{2,}/g, " ").trim();
+    m = m.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/\bnecklace\s*length\b[\s\/:]*/gi, "").replace(/\s*-\s*\d+(\.\d+)?\s*$/g, "").trim();
+    m = m.replace(/[·•]/g, " ").trim();
+    const n = m.toLowerCase();
+    if (/(?:14k\s*)?(?:rose\s*gold|rosegold|rose\s*gold\s*filled|rosegold\s*filled|rosefilled)\b/.test(n)) m = "Rose Gold";
+    else if (/(?:14k\s*)?(?:gold\s*filled|goldfilled)\b/.test(n)) m = "Gold Filled";
+    else if (/(?:color\s*)?sterling\s*silver\b|silv[ae]?r\b/.test(n)) m = "Silver";
+    else if (/\b14k\b/.test(n)) m = "14K";
+    else if (/\bgold\b/.test(n)) m = "Gold Filled";
+    return m.replace(/\s{2,}/g, " ").trim();
+  }
+  /** order: { receiptId, lines[] } as the sorter holds it; line: the line the sticker is printed from (any of them: the
+   *  sticker is the whole order's). → the object QR Printer.html prints (localStorage "qrPrintAll"). */
+  function sortingLabel(order, line) {
+    order = order || {}; const lines = (order.lines && order.lines.length ? order.lines : [line]).filter(Boolean);
+    const rid = String(order.receiptId || (line && line.receiptId) || "");
+    // the transaction's expected ship date, as sorting.html reads it; a line restored from a saved run has only its
+    // order's (the station takes that from the same field)
+    const exp = +(lines[0] && lines[0].expectedShipDate) || +order.shipBy || 0;
+    const d = exp ? new Date(exp * 1000) : null;
+    const dispatchDate = d ? `${("0" + d.getDate()).slice(-2)} ${MONTHS[d.getMonth()]} ${d.getFullYear()}` : "N/A";
+    const items = lines.map(l => {
+      const title = String(l.title || "");
+      const keywords = [];
+      if (title) { SORT_GROUP_A.forEach(p => { if (sortPhrase(title, p)) keywords.push(p); }); SORT_GROUP_B.forEach(p => { if (sortPhrase(title, p)) keywords.push(p); }); }
+      if (!keywords.length) keywords.push("groupB");
+      const variations = (l.variations || []).map(v => ({ formatted_name: String(v.formatted_name != null ? v.formatted_name : v.name || ""), formatted_value: String(v.formatted_value != null ? v.formatted_value : v.value || "") }));
+      const it = { receipt_id: /^\d+$/.test(rid) ? Number(rid) : rid, transaction_id: l.transactionId, listing_id: l.listingId, title, sku: l.sku || "", quantity: Math.max(1, +l.quantity || 1), qty: Math.max(1, +l.quantity || 1), variations, keywords, typedOrderNumber: rid };
+      if (exp) it.dispatch_date = dispatchDate;
+      return it;
+    });
+    const firstWords = s => String(s || "").replace(/\s+/g, " ").trim().split(" ").slice(0, 2).join(" ");
+    const metal = items.map(it => sortingMetal(it.variations) || "No Metal").join(", ");
+    const at = Math.max(0, line ? lines.findIndex(l => l === line || (l.transactionId && String(l.transactionId) === String(line.transactionId))) : 0);
+    return { dispatchDate, items, userTypedOrderNum: rid || "UnknownOrder", primaryItemIndex: at, notesBlock: { metal, title4: items.map(it => firstWords(it.title)).join(", "), matrixNums: "", matrixTitle: "" } };
+  }
+
   /** A saved working sheet is not a released set. Isolated solids stay separate even in the same run. */
   function libraryGroup(sheet, options = {}) {
     if (sheet.setId && !sheet.draft && sheet.solidIncluded !== false) return {key:"set:"+sheet.setId, name:"Set "+(sheet.setSeq || sheet.seq || ""), setId:sheet.setId, seq:sheet.setSeq || sheet.seq || null, standalone:false, working:false};
@@ -451,7 +622,7 @@
     if (solid && options.combineSolids) return {key:"solid-waiting", name:"14K / 10K Solid Waiting for Approval", setId:null, seq:null, standalone:true, working:true};
     return {key:(solid ? "standalone:"+sheet.metal+":" : "working:")+sheet.day+":"+scope, name:solid ? "Standalone "+(sheet.metal === "gold10k" ? "10K" : "14K") : "Incomplete Sheets: Waiting to be filled!", setId:null, seq:null, standalone:solid, working:true};
   }
-  return { visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, interpretLine, lineKey, poolId,
+  return { SPECIAL, specialOf, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, interpretLine, lineKey, poolId,
     orderPlacedAt, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });
