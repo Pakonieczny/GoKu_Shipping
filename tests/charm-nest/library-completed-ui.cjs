@@ -154,8 +154,9 @@ function seed(st, blobUrl) {
   await shot('07-completed-set-open');
   // a sheet in it opens as a Library sheet does
   await page.click(`#libDone .ldItem[data-set="${setId}"] .ldPanelIn .libCard[data-id="${inCard[0]}"] .pv`);
-  await page.waitForFunction(() => document.querySelector('#dlgSheet').open, null, { timeout: 5000 });
-  await page.evaluate(() => document.querySelector('#lsClose').click());
+  // (the sheet window, charm-nest-sheetwin.js; the older dialog where that script is missing)
+  await page.waitForFunction(() => (window.SheetWin && SheetWin.isOpen()) || document.querySelector('#dlgSheet').open, null, { timeout: 5000 });
+  await page.evaluate(async () => { if (window.SheetWin && SheetWin.isOpen()) { await SheetWin.close(); await new Promise(r => setTimeout(r, 250)); } else document.querySelector('#lsClose').click(); });
   ok.push('Completed: in the address (#library/completed) and remembered; newest first under "Today"; a set opens in place into its full card');
 
   // Sheets in Completed: paged as the list scrolls, by day
