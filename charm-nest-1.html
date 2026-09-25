@@ -475,6 +475,11 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 .owDay::before,.owDay::after{content:"";flex:1 1 auto;height:1px;background:var(--line)}
 .owEmpty{margin:auto;text-align:center;color:var(--ink45);font-size:12.5px;line-height:1.6;max-width:30ch}
 .owEmpty b{display:block;color:var(--ink);font-size:14px;margin-bottom:5px}
+.owWait{display:flex;align-items:center;justify-content:center;gap:8px}
+.owWait.small{margin:2px auto 0;font-size:11.5px;color:var(--ink45)}
+.owSpin{width:14px;height:14px;flex:0 0 14px;border:2px solid var(--line);border-top-color:var(--ink70);border-radius:50%;animation:spin .7s linear infinite}
+.owWait.small .owSpin{width:11px;height:11px;flex-basis:11px}
+@media (prefers-reduced-motion:reduce){.owSpin{animation-duration:1.6s}}
 .owMsg{max-width:86%;align-self:flex-start;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:7px 10px 8px;font-size:13px;line-height:1.45;overflow-wrap:anywhere}
 .owMsg.me{align-self:flex-end;background:var(--velvet);color:#eee7da;border-color:var(--velvetLine)}
 .owMsg .who{display:block;font:10px var(--mono);letter-spacing:.03em;color:var(--ink45);margin-bottom:3px}
@@ -764,8 +769,6 @@ dialog.phv::backdrop{background:rgba(16,14,12,.95)}
 .teamTag{display:inline-flex;align-items:center;gap:3px;border:1px solid var(--velvetLine);background:var(--velvet);color:#f2ead9;border-radius:999px;padding:1px 8px;font:700 10.5px var(--mono);white-space:nowrap;cursor:pointer}
 .teamTag:hover{filter:brightness(1.15)}.teamTag:focus-visible{outline:2px solid var(--velvet);outline-offset:2px}
 .teamSlot{align-self:center}
-.pvTm{display:block;margin-bottom:3px}.pvTm b{font-weight:600;margin-right:3px}
-.pvAll{border:0;background:none;padding:0;font:12px var(--sans);color:var(--ink70);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
 /* a conversation whose order is no longer in the pull opens in a window of its own */
 dialog.cmDlg{width:min(660px,96vw);height:min(86vh,820px)}
 dialog.cmDlg .owBox{height:100%}
@@ -1263,8 +1266,13 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .pvAsk{flex:0 0 auto;border:1px solid #cfdde2;background:var(--card);color:var(--slate);border-radius:999px;padding:2px 10px;font:600 11.5px var(--sans);cursor:pointer}
 .pvAsk:hover{background:var(--slateSoft)}
 .pvMail{display:flex;flex-direction:column;min-height:0}
-.pvMail>.cm{flex:1 1 auto;min-height:0;border:1px solid #d9e4e8;border-radius:12px;overflow:hidden}
-.rvItem:not(.full) .pvMail>.cm{flex:0 0 auto;height:480px}
+.pvMail>.pvMsgs{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--paper)}
+.rvItem:not(.full) .pvMail>.pvMsgs{flex:0 0 auto;height:480px}
+.pvMsgs [hidden]{display:none!important}
+.pvMsgs>.cm{border-top:1px solid var(--line)}
+.pvMsgs>.owTabs{padding:4px 8px 0}
+.tmCard{background:var(--paper)}
+.tmCard .owThread{padding:10px 12px}
 .egChip{flex:0 0 auto;min-width:12ch}
 .egChip b{white-space:nowrap}
 .pvWords textarea{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:7px;padding:6px 8px;font:600 15px var(--serif);background:var(--card);resize:vertical;margin-top:2px}
@@ -1277,9 +1285,9 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .placeView .ctl .angle input{width:52px;border:1px solid var(--line);border-radius:7px;padding:3px 4px;font:12px var(--mono);background:var(--card);text-align:right}
 .placeView .noBack{width:100%;min-height:200px;display:flex;align-items:center;justify-content:center;color:var(--ink45);font-size:12.5px;border:1px dashed var(--line);border-radius:10px;padding:16px;text-align:center}
 /* a narrower card: the front and the back side by side, the conversation full width below them (the card scrolls) */
-@container (max-width:900px){.rvItem.full .placeView{flex:0 0 auto}.placeView{grid-template-columns:clamp(220px,32%,300px) minmax(0,1fr);grid-template-areas:"side main" "mail mail";grid-template-rows:min(70vh,620px) auto}.pvMail>.cm{flex:0 0 auto;height:min(64vh,520px)}}
-@container (max-width:700px){.placeView{display:flex;flex-direction:column;flex:0 0 auto}.pvSide{overflow:visible}.backHost{flex:0 0 auto;min-height:0;height:auto}.pvMail>.cm{height:460px}}
-@media (max-width:920px){.placeView{display:flex;flex-direction:column;flex:0 0 auto}.pvSide{overflow:visible}.backHost{flex:0 0 auto;min-height:0;height:auto}.pvMail>.cm{flex:0 0 auto;height:460px}}
+@container (max-width:900px){.rvItem.full .placeView{flex:0 0 auto}.placeView{grid-template-columns:clamp(220px,32%,300px) minmax(0,1fr);grid-template-areas:"side main" "mail mail";grid-template-rows:min(70vh,620px) auto}.pvMail>.pvMsgs{flex:0 0 auto;height:min(64vh,520px)}}
+@container (max-width:700px){.placeView{display:flex;flex-direction:column;flex:0 0 auto}.pvSide{overflow:visible}.backHost{flex:0 0 auto;min-height:0;height:auto}.pvMail>.pvMsgs{height:460px}}
+@media (max-width:920px){.placeView{display:flex;flex-direction:column;flex:0 0 auto}.pvSide{overflow:visible}.backHost{flex:0 0 auto;min-height:0;height:auto}.pvMail>.pvMsgs{flex:0 0 auto;height:460px}}
 /* the canvas is drawn at the size it will be shown, so it is sharp and never stretched to fill a wide window */
 .placeView canvas{width:auto;max-width:100%;height:auto;max-height:100%;background:#fff;border:1px solid var(--line);border-radius:10px;display:block;margin-inline:auto}
 .placeView .back canvas{cursor:grab}
@@ -1432,7 +1440,6 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .setCard .labels{display:flex;gap:8px;flex-wrap:wrap}
 .setCard .labels img{width:96px;height:96px;border:1px solid var(--line);border-radius:6px;background:#fff;cursor:zoom-in}
 .setCard .holds{font-size:12px;color:#8a3a26}
-.labelBig{width:min(90vw,90vh);height:min(90vw,90vh);background:#fff;display:block;image-rendering:pixelated}
 .noteBox{background:var(--card2);border:1px solid var(--line);border-radius:9px;padding:8px 10px;font-size:12px;color:var(--ink70);line-height:1.45}
 details.noteBox{padding:6px 10px}
 details.noteBox>summary{cursor:pointer;font-size:11.5px;color:var(--ink45);list-style:none}
@@ -1943,7 +1950,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-readiness.js?v=20260925-audit"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
-<script src="charm-nest-orders.js?v=20260924-followup"></script>
+<script src="charm-nest-orders.js?v=20260925-visible"></script>
 <script src="charm-nest-background.js?v=20260924-followup"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
@@ -4737,8 +4744,8 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260925-passcode-photos"></script>
-<script src="charm-nest-mail.js?v=20260925-passcode-photos"></script>
+<script src="charm-nest-bridge.js?v=20260925-card-tabs"></script>
+<script src="charm-nest-mail.js?v=20260925-card-tabs"></script>
 <script src="charm-nest-rose-ui.js?v=20260925-audit"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->

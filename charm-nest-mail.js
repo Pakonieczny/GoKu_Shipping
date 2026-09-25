@@ -1558,6 +1558,8 @@
       ty = hh <= vh ? (vh - hh) / 2 : Math.min(0, Math.max(vh - hh, ty));
       img.classList.toggle("anim", !!anim);
       img.style.transform = `translate(${tx}px,${ty}px) scale(${s})`;
+      // a QR label enlarged stays crisp, square by square
+      img.style.imageRendering = list[at] && list[at].sharp && s > 1 ? "pixelated" : "";
       dlg.querySelector(".phvPct").textContent = Math.round(s * 100) + "%";
       stage.classList.toggle("zoomed", s > fit * 1.01);
     }
@@ -1598,10 +1600,15 @@
       for (const d of [1, -1]) { const q = list[(at + d + list.length) % list.length]; if (q && q !== p && !q.warm) { q.warm = new Image(); if (q.cors) q.warm.crossOrigin = "anonymous"; q.warm.src = q.src; } }
     }
     function step(d) { if (list.length > 1) show(at + d); }
+    // photos in a conversation, and the sheets' QR labels (img[data-big]: their picture is whatever the page loaded)
+    const ANY = "[data-photo],img[data-big]";
+    const itemOf = b => b.dataset.photo
+      ? { src: b.dataset.photo, back: b.dataset.photoBack || null, cap: b.dataset.photoCap || "", cors: b.dataset.photoCors === "1" }
+      : { src: b.currentSrc || b.getAttribute("src") || "", back: null, cap: b.dataset.photoCap || b.title || b.alt || "", cors: b.crossOrigin === "anonymous", sharp: true };
     function open(el) {
-      const scope = el.closest(".cmThread,.owThread,[data-photo-scope]") || el.parentElement || document.body;
-      const all = [...scope.querySelectorAll("[data-photo]")];
-      list = all.map(b => ({ src: b.dataset.photo, back: b.dataset.photoBack || null, cap: b.dataset.photoCap || "", cors: b.dataset.photoCors === "1" }));
+      const scope = el.closest(".cmThread,.owThread,.sheetQR,[data-photo-scope]") || el.parentElement || document.body;
+      const all = [...scope.querySelectorAll(ANY)].filter(b => itemOf(b).src);
+      list = all.map(itemOf);
       if (!list.length) return;
       opener = el;
       if (!dlg) build();
@@ -1617,7 +1624,7 @@
       if (o && o.isConnected) o.focus({ preventScroll: true });
     }
     document.addEventListener("click", e => {
-      const b = e.target.closest && e.target.closest("[data-photo]"); if (!b) return;
+      const b = e.target.closest && e.target.closest(ANY); if (!b || !itemOf(b).src) return;
       e.preventDefault(); e.stopPropagation(); open(b);
     }, true);
     return { open, close, isOpen: () => !!(dlg && dlg.open) };
@@ -1638,6 +1645,8 @@
 
   window.CustomerMail = {
     orderWindow, orderShown, orderClosed, setTab, lineBox, cardPane, cardAsk, badge, badgeStamp, slot, teamButtons, teamTranslation,
+    // for the engraving card's Customer tab dot: a new reply, or a message that did not go
+    tabNews: rid => { const b = badgeState(String(rid)); return b ? { unread: !!b.unread, bad: !!b.bad } : null; },
     openConversation, connect, connected: () => !!M.key,
     _state: M
   };
