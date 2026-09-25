@@ -482,6 +482,32 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 .owMsg .who>em{font-style:normal;font-weight:700;color:#7a5d17;background:#f6efd9;border-radius:4px;padding:0 4px;letter-spacing:.06em;text-transform:uppercase;font-size:9px}
 .owMsg.me .who{color:rgba(255,255,255,.62)}
 .owMsg img{max-width:100%;max-height:260px;border-radius:8px;display:block;margin-top:5px}
+.owPic{max-width:100%}.owPic img{margin-top:0}.owMsg .owPic{margin-top:5px}
+/* the photo viewer: the whole screen, over whatever is open */
+dialog.phv{position:fixed;inset:0;width:100vw;height:100vh;height:100dvh;max-width:none;max-height:none;margin:0;border-radius:0;box-shadow:none;background:transparent;color:#f3efe8;overflow:hidden}
+dialog.phv::backdrop{background:rgba(16,14,12,.95)}
+.phvStage{position:absolute;inset:0;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;cursor:zoom-in}
+.phvStage.zoomed{cursor:grab}.phvStage.zoomed.drag{cursor:grabbing}
+.phvImg{position:absolute;left:0;top:0;max-width:none;max-height:none;transform-origin:0 0;will-change:transform;-webkit-user-drag:none;box-shadow:0 10px 50px rgba(0,0,0,.45);background:#fff}
+.phvImg.anim{transition:transform .2s ease}
+.phvNote{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font:13px var(--sans);color:rgba(243,239,232,.8);text-align:center;max-width:80vw}
+.phvNote a{color:#fff}
+.phvNote svg,.phvOrig svg{width:12px;height:12px;vertical-align:-1px}
+.phvBtn{position:absolute;display:grid;place-items:center;width:40px;height:40px;border:0;border-radius:50%;background:rgba(255,255,255,.1);color:#f3efe8;cursor:pointer;padding:0;transition:background .12s}
+.phvBtn:hover{background:rgba(255,255,255,.2)}.phvBtn:focus-visible,.phvBar button:focus-visible,.phvOrig:focus-visible{outline:2px solid #f3efe8;outline-offset:2px}
+.phvBtn svg{width:20px;height:20px}
+.phvX{top:12px;right:12px}
+.phvNav{top:50%;margin-top:-20px}.phvNav.prev{left:16px}.phvNav.next{right:16px}.phvNav[hidden]{display:none}
+.phvBar{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);display:flex;align-items:center;gap:12px;max-width:calc(100vw - 24px);padding:5px 6px 5px 14px;border-radius:999px;background:rgba(0,0,0,.5);font:12px var(--sans);white-space:nowrap}
+.phvCap{overflow:hidden;text-overflow:ellipsis;min-width:0;color:rgba(243,239,232,.85)}
+.phvN{font:11px var(--mono);color:rgba(243,239,232,.6)}.phvN:empty{display:none}
+.phvZ{display:inline-flex;align-items:center;gap:2px}
+.phvZ button{display:grid;place-items:center;min-width:28px;height:28px;border:0;border-radius:999px;background:transparent;color:#f3efe8;cursor:pointer;padding:0 6px;font:11px var(--mono)}
+.phvZ button:hover{background:rgba(255,255,255,.14)}.phvZ svg{width:15px;height:15px}
+.phvOrig{color:#f3efe8;text-decoration:none;padding:5px 10px;border-radius:999px;background:rgba(255,255,255,.1)}
+.phvOrig:hover{background:rgba(255,255,255,.2)}
+@media (max-width:600px){.phvNav{top:auto;bottom:62px;margin:0}.phvCap{display:none}.phvBar{gap:8px}}
+@media (prefers-reduced-motion:reduce){.phvImg.anim{transition:none}}
 /* the Design Station's own "DESIGNED :)" line: kept, but quiet */
 .owMsg.auto{background:transparent;border-style:dashed;color:var(--ink70);font-size:12px;padding:5px 10px}
 .owMsg.me.auto{align-self:flex-end;background:transparent;color:var(--ink70);border-color:var(--line)}
@@ -608,7 +634,11 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 .cmMsg.us.fail .cmSt{color:#8a3a26}.cmMsg.us.hold .cmSt{color:#8a6420}
 .cmBody{white-space:normal}
 .cmImgs{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
-.cmImgs img{max-width:180px;max-height:180px;border-radius:8px;display:block;object-fit:cover}
+.cmPic,.owPic{display:block;padding:0;border:0;background:none;border-radius:8px;cursor:zoom-in;line-height:0;position:relative}
+.cmPic img{max-width:min(240px,100%);max-height:220px;border-radius:8px;display:block;border:1px solid rgba(0,0,0,.08);background:var(--card2)}
+.cmImgs.many img{width:104px;height:104px;object-fit:cover}
+.cmPic:hover img,.owPic:hover img{filter:brightness(.94)}
+.cmPic:focus-visible,.owPic:focus-visible{outline:2px solid var(--slate);outline-offset:2px}
 .cmPhoto{font:11px var(--mono);color:var(--slate)}
 .cmCard{display:inline-flex;align-items:center;gap:5px;margin-top:6px;font-size:12px;color:var(--slate);text-decoration:none;border:1px solid #cfdde2;border-radius:8px;padding:4px 8px;background:var(--card)}
 .cmCard svg,.cmPhoto svg,.cmLH .lnk svg{width:11px;height:11px;vertical-align:-1px}
@@ -4707,8 +4737,8 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260925-room"></script>
-<script src="charm-nest-mail.js?v=20260925-team-direct"></script>
+<script src="charm-nest-bridge.js?v=20260925-photos"></script>
+<script src="charm-nest-mail.js?v=20260925-photos"></script>
 <script src="charm-nest-rose-ui.js?v=20260925-audit"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->

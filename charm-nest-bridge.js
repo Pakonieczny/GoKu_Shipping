@@ -5691,18 +5691,20 @@ const OrderWin = window.OrderWin = (() => {
       // any message can be read in English or Ukrainian: two small buttons, and the translation under the original
       return sep + '<div class="owMsg' + (own ? " me" : "") + (TeamMail.auto(m) ? " auto" : "") + '"' + (words && CM ? ' data-team-text="' + esc(words) + '"' : "") + '><span class="who">' + esc(own ? "You" : m.senderName || "Staff") + '<i>' + esc(clockOf(m.at)) + '</i>' + (m.sandbox ? '<em title="written in the sandbox: only sandbox stations see it">sandbox</em>' : "") + (words && CM ? CM.teamButtons(words) : "") + '</span>' +
         (words ? esc(words).replace(/\n/g, "<br>") : "") +
-        (m.imageUrl ? '<img crossorigin="anonymous" loading="lazy" alt="" src="' + esc(cors(m.imageUrl)) + '">' : "") + (words && CM ? CM.teamTranslation(words) : "") + '</div>';
+        (m.imageUrl ? teamPic(cors(m.imageUrl), (own ? "You" : m.senderName || "Staff") + " · " + clockOf(m.at)) : "") + (words && CM ? CM.teamTranslation(words) : "") + '</div>';
     }).join("") + out.map(x => {
       const state = x.error ? `Not sent: ${esc(x.error)}` : x.tries ? (TeamMail.ok() ? "Sending again…" : "Waiting for the connection — it goes by itself") : "Sending…";
       const acts = x.error ? `<button type="button" data-tm="retry" data-id="${esc(x.id)}">Try again</button>${x.imageUrl ? "" : `<button type="button" data-tm="edit" data-id="${esc(x.id)}">Edit</button>`}<button type="button" data-tm="drop" data-id="${esc(x.id)}">Delete</button>`
         : x.tries ? `<button type="button" data-tm="retry" data-id="${esc(x.id)}">Try now</button>` : "";
-      return `<div class="owMsg me pending${x.error ? " failed" : ""}"><span class="who">You<i>${esc(state)}</i></span>${x.imageUrl ? `<img crossorigin="anonymous" alt="" src="${esc(cors(x.imageUrl))}">` : esc(x.text).replace(/\n/g, "<br>")}${acts ? `<span class="owAct">${acts}</span>` : ""}</div>`;
+      return `<div class="owMsg me pending${x.error ? " failed" : ""}"><span class="who">You<i>${esc(state)}</i></span>${x.imageUrl ? teamPic(cors(x.imageUrl), "You") : esc(x.text).replace(/\n/g, "<br>")}${acts ? `<span class="owAct">${acts}</span>` : ""}</div>`;
     }).join("") + (up ? `<div class="owMsg me pending"><span class="who">You<i>Sending ${up} image${up === 1 ? "" : "s"}…</i></span></div>` : "");
     t.innerHTML = html;
     t.scrollTop = stick ? t.scrollHeight : at;
     if (stick) t.querySelectorAll("img").forEach(img => { if (!img.complete) img.addEventListener("load", () => { t.scrollTop = t.scrollHeight; }, { once: true }); });
   }
   const clockOf = at => at ? new Date(at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+  // a photo in the thread opens large in the viewer (PhotoView, charm-nest-mail.js), with every photo of this order's thread
+  const teamPic = (src, cap) => `<button type="button" class="owPic" data-photo="${esc(src)}" data-photo-cors="1" data-photo-cap="${esc(cap)}" title="Open large"><img crossorigin="anonymous" loading="lazy" alt="" src="${esc(src)}"></button>`;
   function dayWords(at) {
     const d = new Date(at), today = new Date(), y = new Date(Date.now() - 86400000);
     if (d.toDateString() === today.toDateString()) return "Today";

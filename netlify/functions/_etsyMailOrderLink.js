@@ -725,12 +725,35 @@ async function pullMissed(e, activityMs) {
 
 // ─── what the sorter shows: the engagement's stretch of the conversation ─────
 
+/* A message's photos, from the inbox's own copies in Storage first. The mirror names each copy by the first 16 hex of
+   the sha1 of its Etsy URL (etsyMailMirrorImage) and appends paths in the order uploads finish, so a copy is matched to
+   its photo by that name. Other copies (the inbox's own attachments) go to the photos left, in order, and any still left
+   over show on their own. A photo the inbox has not copied yet shows straight from Etsy's image server, which lets any
+   page embed it (Cross-Origin-Resource-Policy: cross-origin). src: what to show, href: full size, back: Etsy's copy. */
+const STORED = /^etsymail(-collateral)?\/[^\\]+$/;
+const ETSY_IMG = /^https:\/\/([a-z0-9-]+\.)*etsystatic\.(com|net)\//i;
 function imageList(m) {
-  const urls = Array.isArray(m.imageUrls) ? m.imageUrls : [];
-  const paths = Array.isArray(m.storageImagePaths) ? m.storageImagePaths : [];
-  return urls.slice(0, 8).map((u, i) => paths[i]
-    ? { src: "/.netlify/functions/etsyMailImage?path=" + encodeURIComponent(paths[i]), href: "/.netlify/functions/etsyMailImage?path=" + encodeURIComponent(paths[i]) }
-    : { src: null, href: String(u || "") }).filter(x => x.src || /^https:\/\//.test(x.href));
+  const list = v => Array.isArray(v) ? v.map(x => String(x || "")) : [];
+  const urls = list(m.imageUrls), thumbs = list(m.thumbnailUrls);
+  const paths = list(m.storageImagePaths).filter(p => STORED.test(p) && !p.includes(".."));
+  const stored = p => "/.netlify/functions/etsyMailImage?path=" + encodeURIComponent(p);
+  const nameOf = p => (p.split("/").pop() || "").replace(/\.[a-z0-9]+$/i, "");
+  const byName = new Map(paths.map(p => [nameOf(p), p]));
+  const used = new Set(), out = [];
+  const own = urls.map(u => { const p = /^https?:\/\//i.test(u) ? byName.get(crypto.createHash("sha1").update(u).digest("hex").slice(0, 16)) : null; if (p) used.add(p); return p || null; });
+  const spare = paths.filter(p => !used.has(p));
+  urls.forEach((u, i) => {
+    let p = own[i];
+    if (!p && spare.length) p = spare.shift();   // a copy under another name (the inbox's own attachments): in order
+    if (p) used.add(p);
+    const etsy = ETSY_IMG.test(u) ? u : null;
+    const small = etsy && ETSY_IMG.test(thumbs[i] || "") ? thumbs[i] : etsy;
+    if (p) out.push({ src: stored(p), href: stored(p), back: etsy });
+    else if (etsy) out.push({ src: small, href: etsy, back: null });
+    else if (/^https:\/\//i.test(u)) out.push({ src: null, href: u, back: null });
+  });
+  for (const p of paths) if (!used.has(p)) out.push({ src: stored(p), href: stored(p), back: null });
+  return out.slice(0, 12);
 }
 function cardList(m) {
   return (Array.isArray(m.listingCards) ? m.listingCards : []).slice(0, 4)
