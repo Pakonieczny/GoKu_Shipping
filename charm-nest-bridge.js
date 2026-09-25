@@ -5199,10 +5199,13 @@ const Review = window.Review = (() => {
 const Sandbox = window.Sandbox = (() => {
   const on = () => WORKSPACE_SANDBOX;
   let status = null,refreshTask=null;
-  /* ── the order stream: rather than the whole snapshot at once, the emulated Etsy lists 2 to 5 new orders per simulated
-     ten minutes (etsySandbox builds them; charmNestLibrary sandboxStream keeps the seed and the clock). Each arrivals
-     check moves the clock one step; SimClock plays the time between steps at the chosen speed. ── */
+  /* ── the order stream: rather than the whole snapshot at once, the emulated Etsy lists 2 to 5 of the snapshot's own
+     orders per simulated ten minutes, oldest first, under their real Etsy numbers (etsySandbox builds them;
+     charmNestLibrary sandboxStream keeps the seed and the clock). Each arrivals check moves the clock one step; SimClock
+     plays the time between steps at the chosen speed. Each order comes once: when all have come, the clock stops (done). ── */
   const streaming = () => on() && S.settings.sandboxStream === "on";
+  /** Every order of the snapshot has come: nothing more arrives (a new snapshot brings more). */
+  const done = () => !!(stream && stream.done && streaming());
   const speed = () => Math.max(1, Math.min(1000, Math.round(+S.settings.sandboxSpeed || 50)));
   let stream = null, readyTask = null;
   const streamApi = (action, extra) => api("charmNestLibrary", Object.assign({ op: "sandboxStream", action, seed: +S.settings.sandboxSeed || 0, speed: speed() }, extra || {}), { quiet: true });
@@ -5229,8 +5232,8 @@ const Sandbox = window.Sandbox = (() => {
   }
   const simText = t => new Date(t).toLocaleString("en-US", { weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   /** What the pill and the arrivals counter say: the mode, and while the stream plays its speed and simulated time. */
-  function label() { return !on() ? "" : streaming() && SimClock.on() ? `Sandbox ${speed()}x · sim ${simText(SimClock.now())}` : "Sandbox"; }
-  function streamText() { return stream && streaming() ? `Order stream: seed ${stream.seed} · step ${stream.tick} · simulated ${new Date(SimClock.now()).toLocaleString()} · ${speed()}x` : on() && !streaming() ? "Orders: the whole snapshot at once" : ""; }
+  function label() { return !on() ? "" : streaming() && SimClock.on() ? `Sandbox ${speed()}x · sim ${simText(SimClock.now())}${done() ? " · all orders in" : ""}` : "Sandbox"; }
+  function streamText() { return stream && streaming() ? `Order stream: seed ${stream.seed} · step ${stream.tick} · ${stream.total ? `${stream.brought || 0} of ${stream.total}` : stream.brought || 0} orders in · simulated ${new Date(SimClock.now()).toLocaleString()} · ${speed()}x` : on() && !streaming() ? "Orders: the whole snapshot at once" : ""; }
   async function refresh() {
     if (!S.cloud.ok) return null;if(refreshTask)return refreshTask;
     refreshTask=(async()=>{try {status=await api("charmNestLibrary",{op:"sandboxStatus"});}catch(e){status={error:e.message};}render();return status;})();
@@ -5318,10 +5321,10 @@ const Sandbox = window.Sandbox = (() => {
     // the last tab at 1280 px) and still read "Sandbox · Fri 07:30", and so is the clock, left out beside the run's pill;
     // the text is the label's all the same (one inline span holds it all: the pill is a flex box, which would trim the
     // spaces around each piece)
-    const pill = document.getElementById("sandboxPill"); if (pill) { pill.classList.toggle("hidden", !on()); if (on()) { const text = label(), m = /^Sandbox (\S+) · sim (.+)$/.exec(text); if (pill.dataset.label !== text) { pill.dataset.label = text; pill.innerHTML = m ? `<span>Sandbox<span class="sbSpeed"> ${esc(m[1])}</span><span class="sbTime"> · <span class="sbSim">sim </span>${esc(m[2])}</span></span>` : esc(text); } pill.title = streamText() ? `Sandbox: emulated Etsy; all records and files use sandbox copies. ${streamText()}` : "Sandbox: emulated Etsy; all records and files use sandbox copies"; } }
+    const pill = document.getElementById("sandboxPill"); if (pill) { pill.classList.toggle("hidden", !on()); if (on()) { const text = label(), m = /^Sandbox (\S+) · sim (.+?)( · all orders in)?$/.exec(text); if (pill.dataset.label !== text) { pill.dataset.label = text; pill.innerHTML = m ? `<span>Sandbox<span class="sbSpeed"> ${esc(m[1])}</span><span class="sbTime"> · <span class="sbSim">sim </span>${esc(m[2])}</span>${m[3] ? esc(m[3]) : ""}</span>` : esc(text); } pill.title = streamText() ? `Sandbox: emulated Etsy; all records and files use sandbox copies. ${streamText()}` : "Sandbox: emulated Etsy; all records and files use sandbox copies"; } }
     document.documentElement.classList.toggle("sandbox", on());
   }
-  return { on, refresh, snapshot, enable, afterReload, reset, mountPanel, render, status: () => status, streaming, speed, ready, advance, restream, label, streamText, seed: () => stream && stream.seed, stream: () => stream };
+  return { on, refresh, snapshot, enable, afterReload, reset, mountPanel, render, status: () => status, streaming, done, speed, ready, advance, restream, label, streamText, seed: () => stream && stream.seed, stream: () => stream };
 })();
 
 
@@ -5333,7 +5336,10 @@ const Sandbox = window.Sandbox = (() => {
    message goes into this browser's outbox before it is sent and leaves it only when the server has it: a reload, a closed
    window, another order opened or a dropped connection only delays it, and the server writes it once, by its id. */
 const TeamMail = window.TeamMail = (() => {
-  const LS_D = "cn.team.drafts", LS_O = "cn.team.outbox", LS_S = "cn.team.seen";
+  // the sandbox keeps its own: its orders carry the real Etsy numbers, so a sandbox draft or a message still in the outbox
+  // must never show on, or be sent to, the real order in a production tab of this browser
+  const NS = WORKSPACE_SANDBOX ? ":sandbox" : "";
+  const LS_D = "cn.team.drafts" + NS, LS_O = "cn.team.outbox" + NS, LS_S = "cn.team.seen" + NS;
   const get = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch (_) { return d; } };
   const put = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} };
   const url = q => `${FN}/firebaseOrders${q || ""}${WORKSPACE_SANDBOX ? (q ? "&" : "?") + "sandbox=1" : ""}`;
@@ -6383,8 +6389,9 @@ const Arrivals = window.Arrivals = (() => {
   const interval = () => (WORKSPACE_SANDBOX && S.settings.sandboxStream === "on" ? 600000 / Math.max(1, Math.min(1000, +S.settings.sandboxSpeed || 50)) : Math.max(10, Math.min(1440, +S.settings.pollMinutes || 10)) * 60000);
   const streaming = () => !!Sandbox.streaming?.();
   /* In Auto the stream's next step starts as soon as the sorter has taken in the last one: the charms come one after
-     another with no time spent waiting between them (Paul, 24 Sep). Manual keeps a step every simulated ten minutes. */
-  const eager = () => streaming() && S.settings.runMode === "auto" && !Recall.on();
+     another with no time spent waiting between them (Paul, 24 Sep). Manual keeps a step every simulated ten minutes, and
+     so does Auto once every order of the snapshot has come (nothing more to hurry for). */
+  const eager = () => streaming() && S.settings.runMode === "auto" && !Recall.on() && !Sandbox.done?.();
   const stamp = () => (streaming() ? Math.round(SimClock.now()) : 0);   // first arrivals carry the stream's simulated time
   const at = id => state.seen[String(id)] || 0;
   const save = () => { try { localStorage.setItem(storageKey(), JSON.stringify(state)); } catch (_) {} };

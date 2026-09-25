@@ -1,10 +1,10 @@
-// The sandbox order stream: instead of the whole snapshot at once, the emulated Etsy lists 2 to 5 new orders per simulated
-// ten minutes, each a copy of a random open snapshot receipt under fresh numbers and the simulated time, and the sorter
-// plays that day at 50x — a check every 12 s — while its next check waits for it to finish taking in the last. This test
-// replays a short day against the real sorter, station, emulator and library code, and proves: the counts and the
-// randomness per step, fresh numbers, simulated timestamps and lead times, the clock held while the sorter is busy, the
-// replay repeated by its seed after a reset (pressed while a check is out, with orders finished at the station), and
-// that nothing lands in a production collection, file or Etsy call.
+// The sandbox order stream: instead of the whole snapshot at once, the emulated Etsy lists 2 to 5 of the snapshot's own
+// open orders per simulated ten minutes, oldest first, under their real Etsy numbers and the simulated time, and the
+// sorter plays that day at 50x — a check every 12 s — while its next check waits for it to finish taking in the last. This
+// test replays a short day against the real sorter, station, emulator and library code, and proves: the counts and the
+// randomness per step, each open order once under its own numbers, simulated timestamps and lead times, the clock held
+// while the sorter is busy, the replay repeated by its seed after a reset (pressed while a check is out, with orders
+// finished at the station), and that nothing lands in a production collection, file or Etsy call.
 //   node tests/charm-nest/sandbox-stream.cjs [playwright-core dir]
 const fs = require('fs'), path = require('path'), assert = require('assert'), os = require('os');
 const root = path.join(__dirname, '../..');
@@ -14,22 +14,18 @@ const { start } = require('./bridge-server.cjs');
 const { buildMaster } = require('./fixture-master.cjs');
 
 const STEP = 600000, day = Math.floor(Date.now() / 1000);
-// six open orders, each with a lead time of its own (2…7 days to ship) so a copy shows which one it came from, and one
-// shipped and one cancelled order that must never be streamed
+// 120 open orders, taken three hours apart (the oldest first), in six patterns of lines each with a lead time of its own
+// (2…7 days to ship), and one shipped and one cancelled order that must never be streamed
 const GF = '14k Gold Filled', SS = 'Sterling Silver';
 const tx = (rid, i, sku, metal, created, ship, extra = {}) => Object.assign({ transaction_id: Number(`${rid}${i}`), listing_id: 1718000 + i, receipt_id: rid, sku, title: `${sku} charm`, quantity: 1, create_timestamp: created, created_timestamp: created, paid_timestamp: created, expected_ship_date: ship, shipped_timestamp: null, variations: [{ formatted_name: 'Metal', formatted_value: metal }], is_personalized: false }, extra);
 const receipt = (rid, hoursAgo, leadDays, lines, extra = {}) => { const created = day - hoursAgo * 3600, ship = created + leadDays * 86400; return Object.assign({ receipt_id: rid, order_number: rid, name: 'Buyer ' + rid, country_iso: 'US', city: 'Austin', message_from_buyer: '', create_timestamp: created, created_timestamp: created, update_timestamp: created + 60, updated_timestamp: created + 60, status: 'Paid', is_paid: true, is_shipped: false, transactions: lines.map(([sku, metal], i) => tx(rid, i + 1, sku, metal, created, ship)) }, extra); };
-const snapshot = [
-  receipt(3521000101, 30, 2, [['BR-TST-01', GF]]),
-  receipt(3521000102, 26, 3, [['BR-TST-02', SS], ['BR-TST-03', SS]]),
-  receipt(3521000103, 20, 4, [['BR-TST-03', GF]]),
-  receipt(3521000104, 12, 5, [['BR-TST-04', GF], ['BR-TST-05', GF]]),
-  receipt(3521000105, 6, 6, [['BR-TST-05', SS]]),
-  receipt(3521000106, 2, 7, [['BR-TST-06', GF], ['BR-TST-01', SS]]),
-  receipt(3521000107, 40, 8, [['BR-TST-02', GF]], { is_shipped: true, status: 'Completed' }),
-  receipt(3521000108, 40, 9, [['BR-TST-04', SS]], { is_canceled: true, status: 'Canceled' })
-];
+const LINES = [[['BR-TST-01', GF]], [['BR-TST-02', SS], ['BR-TST-03', SS]], [['BR-TST-03', GF]], [['BR-TST-04', GF], ['BR-TST-05', GF]], [['BR-TST-05', SS]], [['BR-TST-06', GF], ['BR-TST-01', SS]]];
 const OPEN_LEADS = [2, 3, 4, 5, 6, 7];
+const snapshot = Array.from({ length: 120 }, (_, i) => receipt(3521000101 + i, 400 - 3 * i, OPEN_LEADS[i % 6], LINES[i % 6])).concat([
+  receipt(3521000907, 420, 8, [['BR-TST-02', GF]], { is_shipped: true, status: 'Completed' }),
+  receipt(3521000908, 420, 9, [['BR-TST-04', SS]], { is_canceled: true, status: 'Canceled' })
+]);
+const openIds = snapshot.filter(r => !r.is_shipped && !r.is_canceled).map(r => String(r.receipt_id));
 const leadOf = r => Math.round((r.transactions[0].expected_ship_date - r.create_timestamp) / 86400);
 const PROD = ['Design_Completed Orders', 'Design_RealTime_Selected_Orders', 'Design_Order_Archive', 'Brites_Orders', 'Brites_Messages', 'Charm_Pool', 'Charm_Pool_Back', 'Charm_Nest_Sets', 'Charm_Nest_Counters', 'Charm_Nest_Runs', 'Charm_Nest_Sheets', 'Charm_Nest_Release', 'Charm_Nest_Arrivals', 'Design_Bridge'];
 const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$/;
@@ -84,9 +80,10 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   assert(listed.every(x => x.transactions.length && x.is_paid && !x.is_shipped), 'with their transactions, open and paid');
   const alone = await etsy({ fn: 'etsyOrderProxy', orderId: String(listed[0].receipt_id) });
   assert(alone.status === 200 && alone.body.transactions.length === listed[0].transactions.length && !alone.body.receipt.transactions, 'a streamed order also reads on its own');
-  const status = (await etsy({ fn: 'status' })).body; assert(status.stream && status.stream.tick === 1 && status.stream.arrived === step1.length && status.count === snapshot.length);
+  assert.deepStrictEqual(step1.map(x => String(x.receipt_id)), openIds.slice(0, step1.length), 'the first step brings the oldest open orders, under their own numbers');
+  const status = (await etsy({ fn: 'status' })).body; assert(status.stream && status.stream.tick === 1 && status.stream.arrived === step1.length && status.count === snapshot.length && status.stream.total === openIds.length && status.stream.left === openIds.length - step1.length, 'status: ' + JSON.stringify(status.stream));
   await lib({ op: 'sandboxStream', action: 'off', sandbox: true });
-  assert.strictEqual((await etsy({ fn: 'listOpenOrders' })).body.results.length, 6, 'stream off: the whole open snapshot at once again');
+  assert.strictEqual((await etsy({ fn: 'listOpenOrders' })).body.count, openIds.length, 'stream off: the whole open snapshot at once again');
   const offTick = await lib({ op: 'sandboxStream', action: 'tick', sandbox: true, expect: op.body.stream.simNow });
   assert(!offTick.body.stream && !offTick.body.advanced && !st.doc('Charm_Sandbox', 'stream').on, 'a stream switched off is not stepped (or switched on) by a check');
   op = await lib({ op: 'sandboxStream', action: 'ensure', sandbox: true, seed: 5 });
@@ -104,7 +101,7 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   const t0 = Date.now(); await page.reload(); await booted();
   await page.waitForFunction(() => Sandbox.stream() && SimClock.on() && CN.S.mode === 'orders', null, { timeout: 20000 });
   const s0 = stream(); console.log('stream started', s0);
-  assert(s0 && s0.on && s0.tick === 0 && s0.min === 2 && s0.max === 5 && s0.stepMs === STEP && s0.seed > 0 && s0.snapshotPath === snapPath, 'a fresh stream starts at step 0 with a random seed');
+  assert(s0 && s0.on && s0.tick === 0 && s0.min === 2 && s0.max === 5 && s0.stepMs === STEP && s0.seed > 0 && s0.snapshotPath === snapPath && s0.total === openIds.length && s0.brought === 0, 'a fresh stream starts at step 0 with a random seed, its open orders all still to come');
   assert(Math.abs(s0.simStart - Math.floor(t0 / STEP) * STEP) <= STEP, 'the simulated day starts at the real ten minutes it began in');
   assert.strictEqual((await rows()).length, 0, 'no pull of the whole snapshot: the stream starts empty');
   const meta = st.doc('Charm_Sandbox', 'current');
@@ -125,36 +122,38 @@ const REAL_ETSY = /^(listOpenOrders|etsyOrderProxy|etsyImages|refreshEtsyToken)$
   const period = (ticks[ticks.length - 1].at - ticks[0].at) / (ticks[ticks.length - 1].tick - ticks[0].tick); console.log('real seconds per simulated ten minutes', (period / 1000).toFixed(1));
   assert(period > 10000 && period < 16000, 'a check every simulated ten minutes: about 12 s apart at 50x');
   const byRid = new Map(); for (const r of got) { if (!byRid.has(r.rid)) byRid.set(r.rid, []); byRid.get(r.rid).push(r); }
-  const snapIds = new Set(snapshot.map(r => String(r.receipt_id))), snapTx = new Set(snapshot.flatMap(r => r.transactions.map(t => String(t.transaction_id))));
   const leads = new Set();
   for (let k = 1; k <= s1.tick; k++) {
     const step = expectStep(s1, k), from = (s1.simStart + (k - 1) * STEP) / 1000, to = (s1.simStart + k * STEP) / 1000;
     assert(step.length >= 2 && step.length <= 5, `step ${k} brings 2 to 5 orders: ${step.length}`);
     for (const r of step) {
-      const rid = String(r.receipt_id), mine = byRid.get(rid);
+      const rid = String(r.receipt_id), mine = byRid.get(rid), own = snapshot.find(o => String(o.receipt_id) === rid);
       assert(mine, `step ${k}: order ${rid} reached the sorter`);
-      assert(!snapIds.has(rid) && mine.every(l => !snapTx.has(l.tx)), 'fresh receipt and transaction numbers');
+      assert(own && mine.length === own.transactions.length && mine.every(l => own.transactions.some(t => String(t.transaction_id) === l.tx)), `step ${k}: order ${rid} is the snapshot's own, under its real receipt and transaction numbers`);
       assert(mine.every(l => l.createTs > from && l.createTs <= to && l.updateTs === l.createTs), `step ${k}: created at the simulated arrival time, inside its ten minutes`);
       const lead = Math.round((mine[0].expected - mine[0].createTs) / 86400); leads.add(lead);
-      assert(OPEN_LEADS.includes(lead) && Math.abs(mine[0].expected - mine[0].createTs - lead * 86400) < 1, `the ship date keeps the original's lead time (${lead} days)`);
+      assert(lead === leadOf(own) && Math.abs(mine[0].expected - mine[0].createTs - lead * 86400) < 1, `the ship date keeps the order's own lead time (${lead} days)`);
       assert(mine.every(l => l.arrivedAt >= l.createTs * 1000 && l.arrivedAt <= s1.simNow + STEP), 'the arrival is stamped on the simulated clock');
     }
   }
   assert.strictEqual(byRid.size, new Set(got.map(r => r.rid)).size); assert.strictEqual(new Set(got.map(r => r.tx)).size, got.length, 'every line number is unique');
+  const came = Array.from({ length: s1.tick }, (_, i) => expectStep(s1, i + 1)).flat().map(r => String(r.receipt_id));
+  assert.deepStrictEqual(came, openIds.slice(0, came.length), 'the oldest open orders first, each once');
   assert([...byRid.keys()].every(rid => Array.from({ length: s1.tick }, (_, i) => expectStep(s1, i + 1)).flat().some(r => String(r.receipt_id) === rid)), 'nothing but streamed orders reached the sorter');
-  // randomness, deterministic in the seed: over many seeds every count from 2 to 5 and every open order turn up, never a shipped or cancelled one
-  const counts = new Set(), sources = new Set();
-  for (let seed = 1; seed <= 40; seed++) for (let k = 1; k <= 6; k++) { const b = expectStep(Object.assign({}, s1, { seed }), k); counts.add(b.length); b.forEach(r => sources.add(leadOf(r))); }
+  // randomness, deterministic in the seed: over many seeds every count from 2 to 5 turns up; every seed brings each open
+  // order once, oldest first, and never a shipped or cancelled one
+  const counts = new Set();
+  for (let seed = 1; seed <= 40; seed++) for (let k = 1; k <= 6; k++) counts.add(expectStep(Object.assign({}, s1, { seed }), k).length);
   assert.deepStrictEqual([...counts].sort(), [2, 3, 4, 5], 'the counts per step vary over the whole range');
-  assert.deepStrictEqual([...sources].sort((a, b) => a - b), OPEN_LEADS, 'every open snapshot order is copied, and no shipped or cancelled one');
+  for (const seed of [s1.seed, 1, 2]) { const all = []; for (let k = 1, b; (b = expectStep(Object.assign({}, s1, { seed }), k)).length; k++) all.push(...b.map(r => String(r.receipt_id))); assert.deepStrictEqual(all, openIds, `seed ${seed} brings every open order once, oldest first, and no shipped or cancelled one`); }
   assert.strictEqual(JSON.stringify(expectStep(s1, 2)), JSON.stringify(expectStep(Object.assign({}, s1), 2)), 'the same seed and step give the same orders');
-  assert.notStrictEqual(JSON.stringify(expectStep(s1, 2).map(r => r.receipt_id)), JSON.stringify(expectStep(Object.assign({}, s1, { seed: s1.seed + 1 }), 2).map(r => r.receipt_id)), 'another seed gives other orders');
+  assert.notStrictEqual(JSON.stringify(expectStep(s1, 2).map(r => r.create_timestamp)), JSON.stringify(expectStep(Object.assign({}, s1, { seed: s1.seed + 1 }), 2).map(r => r.create_timestamp)), 'another seed gives other arrival times');
   // the illusion: production's toasts and counter, with the speed and simulated time; the sorter's day is the simulated one
   assert([...seen.toasts].some(t => /new orders? arrived/.test(t)), 'the new-order toast shows as in production: ' + [...seen.toasts].join(' | '));
   assert.match(seen.counter, /^Sandbox 50x · sim [A-Z][a-z]{2} \d{2}:\d{2} · Orders received · 24h \d+ · 1h \d+ · /, 'the counter shows the speed and simulated time');
   assert.match(seen.pill, /^Sandbox 50x · sim [A-Z][a-z]{2} \d{2}:\d{2}$/, 'the pill shows the speed and simulated time');
   const form = await page.evaluate(() => { openSettings(); const v = { stream: $('#stSbStream').value, speed: $('#stSbSpeed').value, seed: $('#stSbSeed').placeholder, status: $('#stSbStatus').textContent }; closeDlg($('#dlgSettings')); return v; });
-  assert(form.stream === 'on' && +form.speed === 50 && form.seed.includes(String(s1.seed)) && /^Order stream: seed \d+ · step \d+ · simulated .+ · 50x$/.test(form.status), 'Settings show the stream, its speed and its seed: ' + JSON.stringify(form));
+  assert(form.stream === 'on' && +form.speed === 50 && form.seed.includes(String(s1.seed)) && new RegExp(`^Order stream: seed \\d+ · step \\d+ · \\d+ of ${openIds.length} orders in · simulated .+ · 50x$`).test(form.status), 'Settings show the stream, its speed and its seed: ' + JSON.stringify(form));
   const clock = await page.evaluate(() => ({ sim: SimClock.now(), real: Date.now(), today: today(), simDay: CharmNestOrders.localDay(new Date(SimClock.now())) }));
   assert(clock.sim > clock.real + 20 * 60000 && clock.sim <= stream().simNow + STEP, 'the simulated clock runs ahead of the real one, never past the next step: ' + JSON.stringify(clock));
   assert.strictEqual(clock.today, clock.simDay, "the sorter's day is the simulated day");
