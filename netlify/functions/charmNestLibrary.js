@@ -523,7 +523,11 @@ async function op_putCalibration(b) {
   if (PREFIX) return { ok: true, skipped: "sandbox sheets are not calibration evidence" };
   const r = b.row || {};
   if (!(num(r.density) > 0) || !(num(r.count) > 0)) return { ok: true, skipped: "nothing to learn from this sheet" };
-  await db.collection(CAL).add({ sheetId: str(r.sheetId, 80), metal: str(r.metal, 12), count: num(r.count), cv: num(r.cv), largestFrac: num(r.largestFrac), density: num(r.density), placedAll: !!r.placedAll, clearancePt: num(r.clearancePt), createdAt: FV.serverTimestamp() });
+  // one row per sheet, the newest saving it: a sheet saved again as it fills replaces its row instead of adding one, so
+  // the collection grows with the sheets made, not with every save (the station runs for days)
+  const row = { sheetId: str(r.sheetId, 80), metal: str(r.metal, 12), count: num(r.count), cv: num(r.cv), largestFrac: num(r.largestFrac), density: num(r.density), placedAll: !!r.placedAll, clearancePt: num(r.clearancePt), createdAt: FV.serverTimestamp() };
+  if (/^[\w.\-]{1,80}$/.test(row.sheetId)) await db.collection(CAL).doc(row.sheetId).set(row);
+  else await db.collection(CAL).add(row);
   return { ok: true };
 }
 async function op_getCalibration(b) {

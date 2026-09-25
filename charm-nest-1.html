@@ -362,6 +362,9 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .toast .c{border:0;background:transparent;color:inherit;opacity:.55;cursor:pointer;font-size:13px;line-height:1;padding:0 0 0 4px}
 .toast .c:hover{opacity:1}
 .toast{cursor:pointer}
+/* an open menu is never under a toast: "2 new orders arrived" covered Design Station and Master files in Workspace, and the
+   run menu under the banner (audit, 25 Sep). While a header menu or a sheet's Options is open the toasts step aside. */
+body:has(.topbar details[open],.runBanner details[open],.sheetOptions[open]) .toasts{opacity:0;visibility:hidden;transition:opacity .12s,visibility 0s .12s}
 .toast{background:var(--velvet);color:#f4ecdc;border:1px solid var(--velvetLine);border-radius:11px;padding:10px 14px;box-shadow:0 10px 30px rgba(0,0,0,.24);max-width:380px;display:flex;gap:9px;align-items:flex-start;font-size:12.5px;animation:tin .18s ease;pointer-events:auto}
 @keyframes tin{from{opacity:0;transform:translateY(8px)}}
 .toast .d{width:8px;height:8px;border-radius:50%;background:var(--gold2);margin-top:4px;flex:0 0 auto}
@@ -1166,6 +1169,9 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .egChip b{white-space:nowrap}
 .pvWords textarea{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:7px;padding:6px 8px;font:600 15px var(--serif);background:var(--card);resize:vertical;margin-top:2px}
 .pvWords .wordsActs{display:flex;gap:6px;margin-top:6px}
+.pvWords .wordsActs .btn{font-family:var(--sans)}   /* the words box is set in the serif; its buttons are buttons like the rest of the card */
+.placeView .ctl .lineControl{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--ink45)}
+.placeView .ctl .lineControl select{border:1px solid var(--line);border-radius:7px;padding:3px 6px;font:12px var(--sans);color:var(--ink);background:var(--card)}
 .pvWords .why{font:12px var(--sans);color:var(--warn,#a2591c);margin-top:6px}
 .placeView .ctl .angle{display:inline-flex;align-items:center;gap:2px;font:11.5px var(--mono);color:var(--ink45)}
 .placeView .ctl .angle input{width:52px;border:1px solid var(--line);border-radius:7px;padding:3px 4px;font:12px var(--mono);background:var(--card);text-align:right}
@@ -1217,7 +1223,7 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .ordCompact .ordNarrow{flex:1 0 auto}
 .ordCompact .ordSearch{width:150px;min-width:110px;max-width:230px}
 .ordCompact .ordSort{max-width:162px}
-.ordCompact .ordMetal{max-width:120px;padding:6px 7px}
+.ordCompact .ordMetal{max-width:170px;padding:6px 7px}
 .charmTotal{display:inline-flex;gap:5px;align-items:baseline;white-space:nowrap;font:12px var(--sans);color:var(--ink70)}
 .charmTotal b{font:600 12px var(--mono);color:var(--ink)}
 .topbar .topTools{border-left:1px solid #d5cdbf;padding-left:10px}
@@ -1924,8 +1930,10 @@ async function readBody(res, bar) {
     const { done, value } = await reader.read();
     if (done) break;
     chunks.push(value); got += value.length;
-    if (total) bar.set(got, total, `${(got / 1048576).toFixed(1)} MB of ${(total / 1048576).toFixed(1)} MB`);
-    else bar.note(`${(got / 1048576).toFixed(1)} MB`);
+    // a small answer is counted in KB: "0.0 MB" said nothing
+    const size = n => n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(1)} MB`;
+    if (total) bar.set(got, total, `${size(got)} of ${size(total)}`);
+    else bar.note(size(got));
   }
   const all = new Uint8Array(got); let o = 0; for (const c of chunks) { all.set(c, o); o += c.length; }
   return new TextDecoder().decode(all);
@@ -1956,6 +1964,9 @@ async function api(fn, body, opts = {}) {
     if (res.status === 401) { S.cloud.locked = true; throw Object.assign(new Error("unauthorized"), { status: 401 }); }
     // such a page, a 5xx or a timeout passes by itself (e.transient): whoever asked tries again and holds nothing over it
     if (!res.ok) throw Object.assign(new Error(page ? data.error || cloudWords("", res.status) : cloudWords(String((data && data.error) || `HTTP ${res.status}`), res.status)), { status: res.status, data, transient: page || res.status >= 500 || res.status === 408 || res.status === 429 });
+    // a 2xx that is not the function's JSON (an empty body, a proxy's or the edge's page) is no answer either: it was
+    // returned as the result, so a sheet or a run record counted as saved when nothing was (audit, 25 Sep)
+    if (page) throw Object.assign(new Error(data.error || "The cloud sent back an empty answer"), { status: res.status, data, transient: true });
     if (S.cloud.ok === false && !S.cloud.locked) cloudRecovered();   // any answer says the cloud is back
     return data;
   } catch (e) {
@@ -1972,7 +1983,7 @@ function renderCloudStatus() {
   const dot = $("#cloudDot"), txt = $("#cloudText"), n = S.cloud.lib || { sheets: 0, charms: 0 };
   if (S.cloud.ok) {
     dot.className = "dot ok";
-    txt.textContent = `Library · ${n.sheets} sheet${n.sheets === 1 ? "" : "s"} · ${n.charms} charm${n.charms === 1 ? "" : "s"}`;
+    txt.textContent = `Library · ${n.sheets} sheet${n.sheets === 1 ? "" : "s"}${n.charms ? ` · ${n.charms} charm${n.charms === 1 ? "" : "s"}` : ""}`;
     txt.title = "Cloud ok — everything on record, every day, not just this screen";
   } else {
     dot.className = S.cloud.locked ? "dot warn" : "dot bad";
@@ -2726,7 +2737,10 @@ function rhoTarget(sh) {
   if (!rows.length || !items.length) return { rho: 0.70, lo: 0.62, hi: 0.74, n: 0 };
   const key = [rows, rows.length, rows[0], rows[rows.length - 1], sig.count, sig.cv, sig.largestFrac], kept = rhoKept.get(sh);
   if (kept && kept.key.every((v, i) => Object.is(v, key[i]))) return Object.assign({}, kept.out);
-  const scored = rows.map(r => ({ r, d: Math.abs(Math.log((r.count || 1) / (sig.count || 1))) + Math.abs((r.cv || 0) - sig.cv) * 2 + Math.abs((r.largestFrac || 0) - sig.largestFrac) * 4 })).sort((a, b) => a.d - b.d).slice(0, 12);
+  // a row teaches what a sheet can take only if the sheet filled: one that turned a charm away, or took everything and
+  // still came out at least half full. A sheet saved while it was still filling (every arrival saves it) is no evidence:
+  // those rows pulled the estimate down to a few percent, and an empty 14K card read "room for about 2 more" (25 Sep)
+  const scored = rows.filter(r => r.density > 0 && (r.placedAll === false || r.density >= 0.5)).map(r => ({ r, d: Math.abs(Math.log((r.count || 1) / (sig.count || 1))) + Math.abs((r.cv || 0) - sig.cv) * 2 + Math.abs((r.largestFrac || 0) - sig.largestFrac) * 4 })).sort((a, b) => a.d - b.d).slice(0, 12);
   const d = scored.map(s => s.r.density).filter(x => x > 0).sort((a, b) => a - b);
   const q = p => d[Math.min(d.length - 1, Math.floor(p * (d.length - 1)))];
   const out = d.length < 3 ? { rho: 0.70, lo: 0.62, hi: 0.74, n: d.length } : { rho: q(0.25), lo: q(0.10), hi: q(0.50), n: d.length };
@@ -2767,7 +2781,10 @@ function computeSaturation(sh) {
     recommend = { overPt2: over, removeN: n, removeNames: sorted.slice(0, n).map(c => c.name || `#${c.index + 1}`), swapArea, largest: sorted[0] };
   }
   const pocket = live && live.pocket ? live.pocket : null;
-  sh.sat = { usable, fullPct, freeFact, placedArea, queuedArea, totalNeeded, nEst, lo, hi, rho: Object.assign({}, rt, { rho, cap }), saturated, recommend, pocket, count: items.length, placed: placedIds.size };
+  // "room for about N more": with the sheet moving, what still fits beside the charms on it; before it moves, what fits
+  // beside the queue (nEst alone counts the whole sheet, and read as "more" on a card whose queue it already included)
+  const more = saturated ? 0 : live ? nEst : Math.max(0, nEst - remaining.length);
+  sh.sat = { usable, fullPct, freeFact, placedArea, queuedArea, totalNeeded, nEst, more, lo, hi, rho: Object.assign({}, rt, { rho, cap }), saturated, recommend, pocket, count: items.length, placed: placedIds.size };
   return sh.sat;
 }
 
@@ -3342,6 +3359,11 @@ async function finishNest(sh, { result, error }) {
   sh._beforeLearned = null;
   sh.releaseFull = false;
   sh.status = "finishing"; sh.endedBy = result.endedBy; sh.trials = result.trials; sh.searchMetrics=result.metrics||sh.searchMetrics; sh.gpuProgress=result.gpu||sh.gpuProgress; sh.placements = result.placements; sh.rejects = result.rejects.slice(); sh.livePlacements = [];
+  // A piece taken off the sheet while it was searched (a Review decision re-pooled its line) is not written: the search
+  // still placed it, the files had no charm for it, and the sheet stopped on "Cannot read properties of undefined". Its
+  // place stays free and the sheet is marked to be arranged again, which the run does once this search stands.
+  { const gone = sh.placements.filter(p => !byId.has(p.id)).length + sh.rejects.filter(id => !byId.has(id)).length;
+    if (gone) { sh.placements = sh.placements.filter(p => byId.has(p.id)); sh.rejects = sh.rejects.filter(id => byId.has(id)); sh.dirty = true; log(sh, `${gone === 1 ? "A piece" : gone + " pieces"} left the sheet while it was searched; the sheet is arranged again next`); } }
   keepOrdersWhole(sh, byId);
   if (sh.evSearch && sh.evSearch.live) agentUpdate(sh.evSearch, { live: false, elapsed: 0, html: null, text: `Search ended after ${result.trials} trial(s): ${endedText(result.endedBy)}` });
   if (sh.evNest) agentUpdate(sh.evNest, { live: false, elapsed: 0, text: `Nest ended by ${endedText(result.endedBy)} after ${result.trials} trial(s), ${fmt.s(result.elapsedMs)}: ${result.placements.length}/${items.length} placed at ${fmt.pct(result.density)}${result.rejects.length ? ` · ${sh.resumeWait ? "waiting for Resume" : "did not fit"}: ${result.rejects.map(id => byId.get(id)?.name || id).join(", ")}` : ""}` });
@@ -3569,8 +3591,10 @@ async function persistSheet(sh, items, context) {
   if (pending.length) Promise.allSettled(pending).then(() => { if (sh.jobId === savedJob) return api("charmNestLibrary", { op: "putSheet", sheet: { id: savedId, charms: record(outputs).charms } }, { label: "Linking charm copies" }); }).catch(e => console.warn("charm links", e));
   // The calibration row only teaches the fill estimate. A sheet that placed nothing has nothing to teach, and a refused
   // statistic must never travel up as a failure: this used to stop a run whose sheets were already written and verified.
+  // Only a sheet that filled teaches it (full for release, or one that turned a charm away): charms arrive a few at a time
+  // and every arrival saves the sheet, so a row per save taught "a sheet holds 6%" and grew the collection without end.
   const cal = savedOutputs.report.calibration || {};
-  if (cal.density > 0 && cal.count > 0) {
+  if (cal.density > 0 && cal.count > 0 && (sh.releaseFull || cal.placedAll === false)) {
     api("charmNestLibrary", { op: "putCalibration", row: Object.assign({ sheetId: sh.sheetId, metal: sh.metal, clearancePt: +S.settings.clearancePt }, cal) }, { label: "Saving calibration", quiet: true })
       .catch(e => log(sh, "calibration not recorded: " + e.message));
     // newest first and the newest 200, as the server keeps and returns them (ping): one was added per sheet for as long as the page stayed open
@@ -3768,7 +3792,9 @@ function renderCard(sh) {
   const prov = q("prov"); const pages = pagesOf(sh.metal);
   const dayTxt = sh.cardStartedAt ? new Date(sh.cardStartedAt).toLocaleDateString(undefined, {month:"short",day:"numeric"}) : sh.setDay ? CharmNestOrders.dateTag(new Date(sh.setDay + "T12:00:00")).replace(/\.\d\d$/, "").replace(/\./g, " ") : "";
   const bits = [];
-  if (sh.draft) bits.push("Held");
+  // "Held" stood on every sheet still taking charms, so a sheet filling as it should read as stopped (audit, 25 Sep):
+  // one still filling says so, and "Held" is kept for a full sheet the release rules keep back (its reason on hover)
+  if (sh.draft && !(sh.topup && !sh.topup.closedAt)) bits.push(sh.releaseFull ? "Held" : "Filling");
   if (sh.seq) bits.push(`<b>Set ${sh.seq}</b>`);
   if (dayTxt) bits.push(esc(dayTxt));
   if (rc) bits.push("recalled");
@@ -3822,7 +3848,7 @@ function renderProgress(sh) {
     // Percentages come only from completed work: pieces placed / pieces queued (or prep pieces, or finish steps).
     p.max = Math.max(1, sh.progress[1]); p.value = Math.min(sh.progress[0], sh.progress[1]);
     p.setAttribute("value", p.value);
-    if (p.parentElement.classList.contains("bp-meter")) { const pct = Math.round(p.value / p.max * 100); p.parentElement.dataset.cnLabel = sh.progressKind === "prepare" ? `preparing ${pct}%` : sh.progressKind === "optimize" ? `optimizing charms ${p.value}/${p.max}` : sh.progressKind === "finish" ? `finishing ${pct}%` : `${p.value}/${p.max} placed · ${pct}%`; p.parentElement.style.setProperty("--bp-pct", pct + "%"); p.parentElement.dataset.determinate = "true"; }
+    if (p.parentElement.classList.contains("bp-meter")) { const pct = Math.round(p.value / p.max * 100); p.parentElement.dataset.cnLabel = sh.progressKind === "prepare" ? `preparing ${pct}%` : sh.progressKind === "optimize" ? `optimizing charms ${p.value}/${p.max}` : sh.progressKind === "finish" ? `finishing ${pct}%` : `${p.value} of ${p.max} placed`; p.parentElement.style.setProperty("--bp-pct", pct + "%"); p.parentElement.dataset.determinate = "true"; }
   }
   /* One line under the preview, never two that wrap. While a sheet works it reads as the stage and the clock; once it is
      done it is the whole result — placed, full, verified, elapsed — and the timings that used to take a second line are
@@ -3862,7 +3888,7 @@ function renderSat(sh) {
     s.rho.n ? `reachable density ${fmt.pct(s.rho.rho)}, learned from ${s.rho.n} past sheets of this shape` : "no past sheets of this shape to learn from yet",
     s.pocket && s.pocket.wPt > 4 && s.pocket.hPt > 4 ? `largest empty rectangle ${fmt.mm(s.pocket.wPt)} × ${fmt.mm(s.pocket.hPt)} — a charm up to that size still fits` : ""].filter(Boolean).join(" · ");
   const needPct = Math.min(1.6, s.totalNeeded / s.usable);
-  const room = !s.saturated && s.nEst > 0 ? `<span class="free">· room for about <b>${s.nEst} more</b></span>` : s.saturated ? `<span class="free">· full</span>` : "";
+  const room = !s.saturated && s.more > 0 ? `<span class="free">· room for about <b>${s.more} more</b></span>` : s.saturated ? `<span class="free">· full</span>` : "";
   const fact = live
     ? `<div class="fact"><b>${fmt.pct(s.fullPct)}</b><span>full</span><span class="free">· ${fmt.area(s.freeFact)} free</span>${room}</div><div class="bar"><i style="width:${Math.round(s.fullPct * 100)}%"></i><em style="left:${Math.round(s.rho.cap * 100)}%" title="fill ceiling"></em></div>`
     : `<div class="fact"><b>${fmt.pct(Math.min(1, s.totalNeeded / s.usable))}</b><span>needed</span><span class="free">· ${s.count} charm${s.count === 1 ? "" : "s"}</span>${room}</div><div class="bar"><i style="width:${Math.round(Math.min(1, needPct) * 100)}%;${needPct > s.rho.rho ? "background:var(--clay)" : ""}"></i><em style="left:${Math.round(s.rho.cap * 100)}%" title="fill ceiling"></em></div>`;
@@ -3935,7 +3961,9 @@ function paintPreview(cv, sh, clean, R) {
     const ai = (S.settings.engine || "solver") === "ai";
     ctx.fillText(sh.status === "nesting" ? (ai ? `Claude is planning round ${sh.aiRound || 1}` : "Preparing…") : `${n} charm${n === 1 ? "" : "s"} queued`, W / 2, H / 2 - W / 60);
     ctx.font = `${Math.round(W / 44)}px ${getComputedStyle(document.body).getPropertyValue("--sans")}`; ctx.fillStyle = "rgba(147,140,128,.75)";
-    ctx.fillText(sh.status === "nesting" ? (ai ? "its moves will land here one by one" : "rotations and masks") : sh.status === "queued" ? "it starts on its own" : "press Nest to fill this sheet", W / 2, H / 2 + W / 40);
+    // a 10K or 14K sheet waits for a person to include it in a set (Options), even in Auto: "press Nest" was not the answer
+    const waitsForYou = window.Gate && Gate.modern(sh.runId) && !Gate.nestable(sh, window.B?.run) && !["nesting", "queued"].includes(sh.status);
+    ctx.fillText(sh.status === "nesting" ? (ai ? "its moves will land here one by one" : "the first charm lands here") : sh.status === "queued" ? "it starts on its own" : waitsForYou ? "waiting for you · tick Include in Options" : "press Nest to fill this sheet", W / 2, H / 2 + W / 40);
   }
   (sh.roseCutAt ? [] : sh.placements).forEach((p, i) => {
     const c = byId.get(p.id); if (!c) return;
@@ -4124,6 +4152,10 @@ const metalOf = r => METALS.find(m => m.key === r.metal) || { color: "#999", lab
 const setNo = r => r.draft || r.solidIncluded === false ? 0 : r.setSeq || +((/_Set-(\d+)/.exec(r.folder || r.fileBase || "") || [])[1]) || 0;
 const sheetNo = r => r.sheetIndex || +((/_Sheet-(\d+)/.exec(r.folder || r.fileBase || "") || [])[1]) || r.page || 1;
 const dayShort = d => d ? new Date(d + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+// a sheet preview is framed at its own plate's shape: the frame kept the old 181 × 153 mm reference box, and a 100 × 50 mm
+// sheet sat in the middle of a tall grey box (audit, 25 Sep)
+const pvRatio = r => { const st = r && r.stock; return st && st.wIn > 0 && st.hIn > 0 ? ` style="aspect-ratio:${+st.wIn.toFixed(4)}/${+st.hIn.toFixed(4)}"` : ""; };
+window.pvRatio = pvRatio;
 const swatch = (m, n) => `<span class="sw" style="--c:${m.color}" title="${esc(m.label)}${n > 1 ? ` · ${n} sheets` : ""}">${esc(CODE[m.key] || m.label)}${n > 1 ? `<i>${n}</i>` : ""}</span>`;
 function sheetHead(r, o) {
   o = o || {}; const m = metalOf(r), sn = setNo(r);
@@ -4139,7 +4171,7 @@ function renderLibrary() {
   const rows = [...newest.values()];
   const body = $("#libBody"); if (!rows.length) { body.innerHTML = `<div class="libEmpty">No sheets match.</div>`; return; }
   const place = S.mode === "library" && body.querySelector(".libCard") ? libraryPlace() : null;
-  const card = (r, i) => { const m = metalOf(r), sn = setNo(r); return `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}" title="${esc(r.folder || r.id)}">${sheetHead(r, {inFan:r._inFan})}<div data-back-sheet="${esc(r.id)}">${window.Engrave ? Engrave.backsMarkup(r) : ""}</div><img class="pv" data-sheet-preview="${esc(r.id)}" crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span title="charms placed of the charms asked for"><b>${r.placedCount}</b>/${r.charmCount}</span><span title="how full the sheet is"><b>${Math.round((r.density || 0) * 100)}%</b></span><span title="metal left free">${fmt.area(r.freePt2 || 0)}</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${CharmNestReadiness.counter(LaserReview.sheet(r))}</span></div></div>`; };
+  const card = (r, i) => { const m = metalOf(r), sn = setNo(r); return `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}" title="${esc(r.folder || r.id)}">${sheetHead(r, {inFan:r._inFan})}<div data-back-sheet="${esc(r.id)}">${window.Engrave ? Engrave.backsMarkup(r) : ""}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${pvRatio(r)} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span title="charms placed of the charms asked for"><b>${r.placedCount}</b>/${r.charmCount}</span><span title="how full the sheet is"><b>${Math.round((r.density || 0) * 100)}%</b></span><span title="metal left free">${fmt.area(r.freePt2 || 0)} free</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${CharmNestReadiness.counter(LaserReview.sheet(r))}</span></div></div>`; };
   LaserReview.sections(body);
   for(const r of rows){
     LaserReview.record(r);
@@ -4433,7 +4465,7 @@ async function boot() {
     if (open && window.RunCtl) RunCtl.optionsChanged();   // as a plate size changed in Settings does
   };
   buildCards();
-  $("#railCores").textContent = `${navigator.hardwareConcurrency || "?"} cores · sheets queued · up to ${parallelCount(CAREFUL_ANGLES.length)} searches per sheet`;
+  { const n = parallelCount(CAREFUL_ANGLES.length); $("#railCores").textContent = `${navigator.hardwareConcurrency || "?"} cores · one sheet at a time · ${n === 1 ? "one search" : `up to ${n} searches`} per sheet`; }
   { const rr = $("#railRecent"); if (rr) rr.ontoggle = () => { if (window.LiveStrip) LiveStrip.render(); }; }
   $("#btnRail").onclick = () => { const off = $("#app").classList.toggle("railOff"); railUserClosed = off; railPinned = !off && S.mode !== "nest"; $("#btnRail").title = off ? "show the rail" : "hide the rail"; showActiveTab(); };
   $("#btnPick").onclick = () => $("#fileInput").click();

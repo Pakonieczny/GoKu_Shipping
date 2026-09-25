@@ -55,7 +55,8 @@
     return `<span class="laserSeal ${r.ready?'earned':'pending'}" role="img" aria-label="${label}" title="${label}">${icon(true)}</span>`;
   }
   function counter(r,scope='Sheet'){
-    return `<span class="backSavedCount" title="Backs saved" aria-label="${r.saved} of ${r.required} backs saved"><b>${r.saved} / ${r.required}</b></span>${seal(r,scope)}`;
+    // a sheet with no engraved backs has nothing to count: its cards read "0 / 0" beside the seal
+    return (r.required ? `<span class="backSavedCount" title="Engraved backs saved" aria-label="${r.saved} of ${r.required} backs saved"><b>${r.saved} / ${r.required}</b></span>` : '')+seal(r,scope);
   }
   return {idsOf,decisions,sheet,set,seal,counter};
 });

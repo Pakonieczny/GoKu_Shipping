@@ -162,7 +162,12 @@
     document.addEventListener('focusout', e => { if(active?.contains(e.target)) hide(); });
     document.addEventListener('keydown', e => { if(e.key === 'Escape') hide(); });
     document.addEventListener('scroll', hide, true); window.addEventListener('resize', () => {hide(); schedule();});
-    new MutationObserver(schedule).observe(document.body, {childList:true, subtree:true}); sync();
+    // Text that changes several times a second (the progress line, a sheet's stage line and its live pills, toasts) moves
+    // no shelf: re-measuring every card for it forced a layout about four times a second while anything was busy, even in
+    // a hidden tab (audit, 25 Sep).
+    const busyText = '.cnp, .toasts, [data-r="stage"], [data-r="overlay"]';
+    const moves = m => { const n = m.target.nodeType === 1 ? m.target : m.target.parentElement; return !n || !n.closest(busyText); };
+    new MutationObserver(list => { if (list.some(moves)) schedule(); }).observe(document.body, {childList:true, subtree:true}); sync();
   }
   if (typeof document !== 'undefined') {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, {once:true}); else mount();

@@ -210,7 +210,9 @@ const ListMedia = (() => {
             await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{img.onload=img.onerror=null;reject(Error('Image timed out'));},20000);img.onload=()=>{clearTimeout(timer);resolve();};img.onerror=()=>{clearTimeout(timer);reject(Error('Image unavailable'));};img.src=cors(result);host.appendChild(img);});
             if(!host.isConnected || jobs.get(host)!==job)return;host.replaceChildren(img);
           }else if(result?.nodeType)host.replaceChildren(result);
-          else if(host.hasAttribute('data-listing')){host.innerHTML=photoStatus(job.key);host.title=photoTitle(job.key);}else host.textContent='No vector available';
+          else if(host.hasAttribute('data-listing')){host.innerHTML=photoStatus(job.key);host.title=photoTitle(job.key);}
+          // the order window's listing photo (data-lid): a listing with no photo said "No vector available" there
+          else if(host.hasAttribute('data-lid')){host.innerHTML='<span class="ph">'+photoStatus(host.dataset.lid)+'</span>';host.title=photoTitle(host.dataset.lid);}else host.textContent='No vector available';
           ListZoom.bind(host,(host.hasAttribute('data-listing')?'listing:':'vector:')+job.zoomKey);
           job.state='done';
         }catch(_){
@@ -994,8 +996,11 @@ const Orders = window.Orders = (() => {
      the run, so "3/5 nested" reads as progress; the exceptions stay unnumbered, so a problem reads differently. */
   const PROGRESS = ["pooled", "nested", "written", "labelled", "committed"];
   function stateWords(r) {
-    const [k, t] = STATE_PILL[r.state] || ["neutral", r.state];
-    const i = PROGRESS.indexOf(r.state);
+    // a line stays "pooled" in the record until its set is written; once every piece of it sits on a sheet it reads as
+    // nested (the list said "1/5 pooled" for a charm already cut into a sheet: audit, 25 Sep)
+    const state = r.state === "pooled" && window.Pool && (r.poolIds || []).length && r.poolIds.every(id => Pool.sheetOf(id)) ? "nested" : r.state;
+    const [k, t] = STATE_PILL[state] || ["neutral", state];
+    const i = PROGRESS.indexOf(state);
     return [k, i < 0 ? t : `${i + 1}/${PROGRESS.length} ${t}`];
   }
   /** How the ship-by date reads today: overdue, due, or simply a date. Days are the shop's local days, the same days
@@ -1060,7 +1065,7 @@ const Orders = window.Orders = (() => {
       const why = attn ? (r.problems.map(x => Review.problemText(x)).join(" · ") || r.reason || "") : r.state === "waiting" ? (r.reason || "") : "";
       const gateBtn = r.state === "waiting" && r.wait ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
       const mail = window.CustomerMail ? CustomerMail.badgeStamp(r.order.receiptId) : "";
-      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,r.hold,r.wait,why,where,due,date,mail]);
+      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,r.wait,why,where,due,date,mail]);
       const cached=orderNodes.get(r.key);
       if(cached?.stamp===stamp){orderNodes.delete(r.key);orderNodes.set(r.key,cached);place(cached.node);ListMedia.mount(cached.node,r);continue;}
       const node = el("div", (cards ? "ocard" : "doneRow workRow orderListRow") + " hoverItem" + (attn ? " attn" : ""));
@@ -1170,7 +1175,7 @@ const Orders = window.Orders = (() => {
     renderBody();
     const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(orderTotals(B.orders.rows).orders) : "";
   }
-  return { view: () => OV, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, interpretAll, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, imageFor, wantImage, shipTxt, statePill: r => STATE_PILL[r.state] || ["neutral", r.state], applyPullRule, ctx, keepRest };
+  return { view: () => OV, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, interpretAll, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, imageFor, wantImage, shipTxt, statePill: stateWords, applyPullRule, ctx, keepRest };
 })();
 
 /* ═══ 19 · Master — SKU labels under charms, per-SKU designs, the index ══════ */
@@ -1539,7 +1544,7 @@ const Master = window.Master = (() => {
     const byDay = new Map();
     for (const f of B.master.files) {
       const at = f.indexedAt ? new Date(f.indexedAt) : null;
-      const day = at ? at.toLocaleDateString() : "no date";
+      const day = at ? at.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "no date";
       if (!byDay.has(day)) byDay.set(day, []);
       byDay.get(day).push(f);
     }
@@ -1548,12 +1553,12 @@ const Master = window.Master = (() => {
     files.innerHTML = days.map(([day, list], di) => {
       list.sort((a, b) => (b.indexedAt || 0) - (a.indexedAt || 0));
       const skus = list.reduce((n, f) => n + (f.skus ? f.skus.length : 0), 0);
-      return `<details class="masterDay"${di === 0 ? " open" : ""}><summary>${esc(day)} · ${list.length} file${list.length === 1 ? "" : "s"} · ${skus} SKU line(s)</summary>` +
+      return `<details class="masterDay"${di === 0 ? " open" : ""}><summary>${esc(day)} · ${list.length} file${list.length === 1 ? "" : "s"} · ${skus} SKU line${skus === 1 ? "" : "s"}</summary>` +
         list.map(f => {
           const at = f.indexedAt ? new Date(f.indexedAt) : null;
           const u = num(f.unlabelledCount, f.unlabelled), o = num(f.orphanCount, f.orphans), b = num(f.blockedCount, f.blocked);
           return `<details class="masterFileRow"><summary><b>${esc(f.name || f.masterHash)}</b><span class="hash">${at ? at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span><span>${f.labelled || 0} of ${f.charms || 0} labelled</span>${b ? `<span style="color:#8a3a26">${b} blocked</span>` : ""}</summary>` +
-            `<div class="fh" style="margin:6px 0 4px"><span class="hash">${esc((f.masterHash || "").slice(0, 12))}</span>${u ? `<span style="color:#8a3a26">${u} charm(s) with no SKU under them</span>` : ""}${o ? `<span style="color:#8a3a26">${o} line(s) with no charm above</span>` : ""}<span class="hash">${esc(f.indexedBy || "")}</span></div>` +
+            `<div class="fh" style="margin:6px 0 4px"><span class="hash">${esc((f.masterHash || "").slice(0, 12))}</span>${u ? `<span style="color:#8a3a26">${u} charm${u === 1 ? "" : "s"} with no SKU under ${u === 1 ? "it" : "them"}</span>` : ""}${o ? `<span style="color:#8a3a26">${o} line${o === 1 ? "" : "s"} with no charm above</span>` : ""}<span class="hash">${esc(f.indexedBy || "")}</span></div>` +
             `<button class="btn ghost xs" data-rm="${esc(f.masterHash || "")}">Remove every SKU from this file</button></details>`;
         }).join("") + `</details>`;
     }).join("");
@@ -1572,7 +1577,7 @@ const Master = window.Master = (() => {
       .sort((a, b) => (q ? rank(a) - rank(b) : 0) || a.skus[0].localeCompare(b.skus[0]));
     const cap = showAll ? rows.length : 600;
     const shown = rows.slice(0, cap);
-    v.querySelector("#mCount").innerHTML = `${designs.length} charm(s) · ${B.master.entries.size} SKU(s) indexed${q ? ` · ${rows.length} match &ldquo;${esc(q)}&rdquo;` : ""}` +
+    v.querySelector("#mCount").innerHTML = `${designs.length} charm${designs.length === 1 ? "" : "s"} · ${B.master.entries.size} SKU${B.master.entries.size === 1 ? "" : "s"} indexed${q ? ` · ${rows.length} match &ldquo;${esc(q)}&rdquo;` : ""}` +
       (rows.length > shown.length ? ` · <b>showing ${shown.length}</b> <button class="btn sm" id="mAll" style="margin-left:6px">Show all ${rows.length}</button>` : "");
     const all = v.querySelector("#mAll"); if (all) all.onclick = () => { showAll = true; render(); };
     const grid = v.querySelector("#mGrid");
@@ -1591,7 +1596,7 @@ const Master = window.Master = (() => {
           : q
             ? `<div class="libEmpty">No indexed SKU contains &ldquo;${esc(raw)}&rdquo;.` +
               (wanted ? ` ${wanted.lines} order line(s) are waiting on it — the master file that carries it has not been indexed yet.` : ` Check the spelling, or index the master file that carries it.`) +
-              `<br><button class="btn ghost sm" id="mClear" style="margin-top:10px">Show all ${designs.length} charm(s)</button>` +
+              `<br><button class="btn ghost sm" id="mClear" style="margin-top:10px">Show all ${designs.length} charm${designs.length === 1 ? "" : "s"}</button>` +
               `<button class="btn gold sm" id="mEmptyAdd" style="margin:10px 0 0 6px">＋ Add a master file</button></div>`
             : `<div class="libEmpty">No charms indexed yet — drop a master file here, or press Add.<br><button class="btn gold sm" id="mEmptyAdd" style="margin-top:10px">＋ Add a master file</button></div>`;
       const c2 = grid.querySelector("#mClear"); if (c2) c2.onclick = () => { const f = v.querySelector("#mSearch"); f.value = ""; f.focus(); render(); };
@@ -1607,7 +1612,7 @@ const Master = window.Master = (() => {
         `<div data-preview-sku="${esc(e.sku)}" style="aspect-ratio:1;background:#fff;border-radius:6px">Loading preview…</div>` +
         `<div class="sku" title="${esc(d.skus.join(", "))}">${esc(e.sku)}</div>` +
         (d.skus.length > 1 ? `<div class="meta">${d.skus.slice(1).map(s => `<div>${esc(s)}</div>`).join("")}</div>` : "") +
-        `<div class="meta">${(e.widthPt * MM).toFixed(1)} × ${(e.heightPt * MM).toFixed(1)} mm · ${e.holes} hole(s)${sizes.length ? ` · sizes ${sizes.map(([k]) => k).join("/")}` : ""}${d.skus.length > 1 ? ` · ${d.skus.length} SKUs` : ""}</div>` +
+        `<div class="meta">${(e.widthPt * MM).toFixed(1)} × ${(e.heightPt * MM).toFixed(1)} mm · ${e.holes} hole${e.holes === 1 ? "" : "s"}${sizes.length ? ` · sizes ${sizes.map(([k]) => k).join("/")}` : ""}${d.skus.length > 1 ? ` · ${d.skus.length} SKUs` : ""}</div>` +
         `<div class="meta">up ${e.upAngle == null ? "as drawn" : Math.round(e.upAngle) + "°"} · ${esc(e.labelSource || "text")}${e.hashSource === "server" ? " · server" : ""}</div>` +
         (blocked ? `<div class="bad">${esc(blocked)}</div>` : "") +
         `<div class="row">` +
@@ -2805,7 +2810,7 @@ const Engrave = window.Engrave = (() => {
     cv.width = Math.round(w * k); cv.height = Math.round(h * k); cv._sizePt = {w,h}; const ctx = cv.getContext("2d");
     ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
     const tx = (x, y) => [(x - bb[0] + pad) * k, (bb[3] + pad - y) * k];
-    if (grid) { ctx.strokeStyle = "rgba(0,0,0,.09)"; ctx.lineWidth = 1; const x0 = Math.floor((bb[0] - pad) * MM), x1 = Math.ceil((bb[2] + pad) * MM); for (let mm = x0; mm <= x1; mm++) { const p = tx(mm * PT, 0); ctx.beginPath(); ctx.moveTo(p[0], 0); ctx.lineTo(p[0], cv.height); ctx.stroke(); } const y0 = Math.floor((bb[1] - pad) * MM), y1 = Math.ceil((bb[3] + pad) * MM); for (let mm = y0; mm <= y1; mm++) { const p = tx(0, mm * PT); ctx.beginPath(); ctx.moveTo(0, p[1]); ctx.lineTo(cv.width, p[1]); ctx.stroke(); } ctx.save(); ctx.fillStyle = "rgba(0,0,0,.4)"; ctx.font = `${Math.max(9, k * 2)}px sans-serif`; ctx.textBaseline = "top"; ctx.fillText("1 mm grid", 4, 4); ctx.restore(); }   // hung from the top edge: a large preview's label was cut off
+    if (grid) { ctx.strokeStyle = "rgba(0,0,0,.09)"; ctx.lineWidth = 1; const x0 = Math.floor((bb[0] - pad) * MM), x1 = Math.ceil((bb[2] + pad) * MM); for (let mm = x0; mm <= x1; mm++) { const p = tx(mm * PT, 0); ctx.beginPath(); ctx.moveTo(p[0], 0); ctx.lineTo(p[0], cv.height); ctx.stroke(); } const y0 = Math.floor((bb[1] - pad) * MM), y1 = Math.ceil((bb[3] + pad) * MM); for (let mm = y0; mm <= y1; mm++) { const p = tx(0, mm * PT); ctx.beginPath(); ctx.moveTo(0, p[1]); ctx.lineTo(cv.width, p[1]); ctx.stroke(); } ctx.save(); ctx.fillStyle = "rgba(0,0,0,.4)"; ctx.font = `${Math.round(Math.max(10, Math.min(15, cv.width / 55)))}px sans-serif`; ctx.textBaseline = "top"; ctx.fillText("1 mm grid", 6, 6); ctx.restore(); }   // hung from the top edge: a large preview's label was cut off; sized by the canvas, not the charm (a small charm's big zoom wrote it at 24 px)
     if (hatch && mask) { // the eroded mask as a light tint: where text may go
       const img = ctx.createImageData(cv.width, cv.height); const d = img.data;
       for (let py = 0; py < cv.height; py++) for (let pxx = 0; pxx < cv.width; pxx++) { const x = bb[0] - pad + pxx / k, y = bb[3] + pad - py / k; if (G.at(mask, x, y)) { const i = (py * cv.width + pxx) * 4; d[i] = 231; d[i + 1] = 237; d[i + 2] = 223; d[i + 3] = 255; } }
@@ -3649,6 +3654,8 @@ const LaserReview = window.LaserReview = (()=>{
   const group=(st,sheets)=>R.set(st,sheets.map(projected));
   function labels(s,files){
     const id=s.id || s.sheetId, fs=files?.length?files:s.label?.files || [];
+    // a sheet still filling has no label to wait for: every card in progress carried an empty "QR label pending" box
+    if(!fs.length && !sheet(s).ready)return '';
     return `<div class="productionRow" data-laser-sheet="${esc(id)}"><div class="sheetQR">${fs.length?fs.map(f=>`<img data-big title="Sheet QR label" data-label-sheet="${esc(id)}" data-label-path="${esc(f.path || '')}" data-label-part="${+f.part || 1}" crossorigin="anonymous"${f.url?` src="${esc(cors(f.url))}"`:''} alt="Sheet QR code">`).join(''):'<span class="qrWaiting">QR label pending</span>'}</div></div>`;
   }
   function sections(body){
@@ -3982,7 +3989,7 @@ const Sets = window.Sets = (() => {
         const held = Object.entries(st.orders || {}).filter(([, o]) => o.held);
         const card = el("div", "setCard"); card.dataset.laserCard="set";card._laserSet=st;card._laserSheets=all.map(r=>r.id);
         card.innerHTML = `${st.standalone || st.working ? `<div class="sh"><span class="nm">${st.standalone ? "14K / 10K Solid Sheets" : "Sheets"}</span></div>` : `<div class="sh"><span class="nm" data-set-title>${esc(O.setLabel(st.seq))}${st.day?" · "+esc(st.day):""}</span>${st.labels?.pdf || st.labels?.manifest || st.labels?.json || /complete/.test(st.status) ? `<details class="setActions"><summary aria-label="Set file menu">⋯</summary><div>${st.labels?.pdf ? `<a href="${st.labels.pdf.url}" target="_blank" rel="noopener">Labels PDF</a>` : ""}${st.labels?.manifest ? `<a href="${st.labels.manifest.url}" target="_blank" rel="noopener">Manifest</a>` : ""}${st.labels?.json ? `<a href="${st.labels.json.url}" target="_blank" rel="noopener">Set data</a>` : ""}${/complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div></details>` : ""}</div>`}
-          <div class="sheetsRow">${mine.map(r => `<article class="librarySheet"><div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${esc(r.id)}" crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${window.CharmNestReadiness.counter(LaserReview.sheet(r))}</span></div></div>${LaserReview.labels(r,(st.labelFiles || []).filter(f=>f.sheetId===r.id))}</article>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
+          <div class="sheetsRow">${mine.map(r => `<article class="librarySheet"><div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${window.pvRatio ? pvRatio(r) : ""} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${window.CharmNestReadiness.counter(LaserReview.sheet(r))}</span></div></div>${LaserReview.labels(r,(st.labelFiles || []).filter(f=>f.sheetId===r.id))}</article>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
           ${held.length ? `<div class="holds"><b>Held:</b> ${held.map(([rid, o]) => `${esc(rid)} — ${esc(o.held.why || "")}`).join(" · ")}</div>` : ""}
           ${st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}
           `;
@@ -6092,7 +6099,7 @@ const Arrivals = window.Arrivals = (() => {
     if (added.length) {
       state.pending = true; save();
       if (B.run && !["complete", "abandoned"].includes(B.run.status)) { B.run.orders = [...new Set((B.run.orders || []).concat(added.map(r => r.order.receiptId)))]; RunCtl.save().catch(() => {}); }
-      toast(`${freshIds.length || new Set(added.map(r => r.order.receiptId)).size} new order(s) arrived`, "ok", 6000);
+      { const n = freshIds.length || new Set(added.map(r => r.order.receiptId)).size; toast(`${n} new order${n === 1 ? "" : "s"} arrived`, "ok", 6000); }
       notifyPerson("New Etsy orders", `${added.length} new order line(s) added to the sorter`);
     }
     Orders.render(); Review.render(); Engrave.render(); refreshAllCards(); Session.schedule(); paint();ListMedia.prepare(Orders.rows());
@@ -6274,7 +6281,7 @@ const LiveNest = window.LiveNest = (() => {
     };
     if(window.CharmNestOperations)await window.CharmNestOperations.run({key:'intake:'+run.runId,label:'Adding incoming orders',resources:['production:'+run.runId]},prepare);else await prepare();
     // Never advance to labels/commit until all overflow sheets and all cloud writes have finished.
-    const rearranged = new Set();
+    const rearranged = new Set(), again = new Map();
     while (true) {
       const pages = allSheets().filter(p => p.runId === run.runId && !p.runHold && Gate.nestable(p, run) && p.charms.length);
       for (const p of pages) if (p.persisted && !p.persistedDone) await p.persisted.then(() => { p.persistedDone = true; });
@@ -6282,7 +6289,16 @@ const LiveNest = window.LiveNest = (() => {
       // A sheet can wait to be arranged again with nothing started on it: a cancelled order's pieces were taken off it and
       // no order for its metal came in. It is arranged here, once. Waiting on it unstarted stalled every later arrival.
       for (const p of pages) if (p.dirty && ["ready", "idle"].includes(p.status) && !p._operationStarting && !p._learnedStarting && !rearranged.has(p)) { rearranged.add(p); startNest(p); }
-      if (!pages.some(p => ["nesting", "finishing", "queued"].includes(p.status) || p.dirty || (p.persisted && !p.persistedDone))) break;
+      // A sheet that took new pieces while it was nesting (a Review decision re-pooled a line onto it) finishes on the
+      // layout it started with and stays dirty. The step waiter arranges such a sheet again (onSheetDone); this wait did
+      // not, and every later arrival was taken in but never placed, the banner on "Adding new orders" for good (audit,
+      // 25 Sep). Its placed pieces stay pinned; a sheet that keeps coming back dirty is held with the reason, not waited on.
+      for (const p of pages) if (p.dirty && ["complete", "partial"].includes(p.status) && !(p.persisted && !p.persistedDone) && !p._operationStarting && !p._learnedStarting) {
+        const n = (again.get(p) || 0) + 1; again.set(p, n);
+        if (n > 3) { const why = "This sheet kept changing while it was arranged; press Nest on it once the changes settle"; p.runHold = why; p.problem = why; (run.sheetHolds ||= {})[p.sheetId || p.metal + "-" + p.page] = why; CN.renderCard(p); continue; }
+        p.status = "ready"; startNest(p);
+      }
+      if (!pages.some(p => !p.runHold && (["nesting", "finishing", "queued"].includes(p.status) || p.dirty || (p.persisted && !p.persistedDone)))) break;
       await sleep(250);
     }
     await finish(run);
@@ -6328,8 +6344,11 @@ const SetPicker = window.SetPicker = (() => {
     list.querySelector('[data-current]').onclick = previewCurrent;
     try {
       const r = await api("charmNestLibrary", { op: "history", limit: 20 }, { quiet: true });
-      rows = r.sets || [];
-      list.innerHTML = `<button type="button" data-current>Current workspace · ${allSheets().filter(p => p.charms.length).length} sheets</button><small>${r.setCount || 0} saved sets · ${r.workingCount || 0} working groups · newest first${r.next ? " · older ones under Search all sets" : ""}</small>` + rows.map((g,i) => `<button type="button" data-preview="${i}">${esc(g.name || (g.seq ? "Set " + g.seq : "Working sheets"))} · ${esc(g.day || "")}<small>${g.sheets.length} sheets · ${esc(counts(g.sheets))}</small></button>`).join("");
+      // a run that wrote no sheet is a group with nothing to preview: the menu listed "Working sheets · 0 sheets" once for
+      // every such run of the day (audit, 25 Sep). They stay findable under Search all sets.
+      rows = (r.sets || []).filter(g => (g.sheets || []).length);
+      const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+      list.innerHTML = `<button type="button" data-current>Current workspace · ${n(allSheets().filter(p => p.charms.length).length, "sheet", "sheets")}</button><small>${n(r.setCount || 0, "saved set", "saved sets")} · ${n(rows.filter(g => g.draft).length, "working group", "working groups")} · newest first${r.next ? " · older ones under Search all sets" : ""}</small>` + rows.map((g,i) => `<button type="button" data-preview="${i}">${esc(g.name || (g.seq ? "Set " + g.seq : "Working sheets"))} · ${esc(g.day || "")}<small>${n(g.sheets.length, "sheet", "sheets")} · ${esc(counts(g.sheets))}</small></button>`).join("");
       list.querySelector('[data-current]').onclick = () => previewCurrent();
       list.querySelectorAll('[data-preview]').forEach(b => b.onclick = () => preview(rows[+b.dataset.preview]));
     } catch (e) { list.innerHTML = current + `<small>Could not read saved sets: ${esc(e.message)}</small>`; list.querySelector('[data-current]').onclick = previewCurrent; }
