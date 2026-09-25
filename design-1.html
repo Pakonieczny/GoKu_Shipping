@@ -5478,21 +5478,33 @@ const BritesChat = (() => {
   }
 
   /* ── sending ──────────────────────────────────────────────────────── */
-  async function postText(rid, text, staff) {
+  async function postText(rid, text, staff, clientId) {
     const r = await fetch(`${FN}/firebaseOrders`, {
       method:"POST", headers:{ "Content-Type":"application/json" },
-      body:JSON.stringify({ orderNumber:rid, newMessage:text, employeeName:staff })
+      body:JSON.stringify(Object.assign({ orderNumber:rid, newMessage:text, employeeName:staff }, clientId ? { clientMessageId:clientId } : {}))
     });
     if (!r.ok) throw new Error("HTTP " + r.status);
     const j = await r.json().catch(() => ({}));
     if (j && j.success === false) throw new Error(j.error || "rejected");
     return true;
   }
-  async function directWrite(rid, payload) {
+  async function directWrite(rid, payload, clientId) {
     if (!db) throw new Error(SANDBOX ? "the sandbox does not write to the order chat" : "the station's order database did not load · reload the Design Station");
     await db.collection(COLL).doc(rid).set({}, { merge:true });
-    await db.collection(COLL).doc(rid).collection("messages")
-      .add(Object.assign({ timestamp: firebase.firestore.FieldValue.serverTimestamp() }, payload));
+    const msgs = db.collection(COLL).doc(rid).collection("messages");
+    const doc = Object.assign({ timestamp: firebase.firestore.FieldValue.serverTimestamp() }, payload);
+    // a message with its own id is written once, however often a lost answer makes the sender try again
+    if (clientId) { const ref = msgs.doc("c-" + clientId); if (!(await ref.get()).exists) await ref.set(doc); }
+    else await msgs.add(doc);
+  }
+  /** The internal threads of some orders through the server: the sandbox has no Firestore client, and the server reads the
+      real thread (only reads it) beside the sandbox's own copy. */
+  async function listViaServer(ids, limit) {
+    const r = await fetch(`${FN}/firebaseOrders?messagesFor=${encodeURIComponent(ids.join(","))}&limit=${Math.max(1, Math.min(200, limit || 80))}`);
+    if (!r.ok) throw new Error("internal messages not read: HTTP " + r.status);
+    const j = await r.json();
+    if (!j || !j.success) throw new Error("internal messages not read");
+    return j.byOrder || {};
   }
 
   async function sendAll() {
@@ -5679,17 +5691,18 @@ const BritesChat = (() => {
 
   return {
     /** Post one internal message under a given sender name (the Charm Sorter posts as "Charm Sorter"). */
-    async postAs(rid, text, sender, imageUrl) {
+    async postAs(rid, text, sender, imageUrl, clientId) {
       rid = String(rid || "").trim(); text = String(text || "").trim(); sender = String(sender || "Charm Sorter").trim();
+      clientId = /^[\w-]{8,80}$/.test(String(clientId || "")) ? String(clientId) : null;
       if (!rid || (!text && !imageUrl)) throw new Error("receipt and text required");
-      if (imageUrl) await directWrite(rid, { imageUrl: String(imageUrl), text: text || "Image attachment", senderName: sender, senderRole: "staff" });
-      else { try { await postText(rid, text, sender); } catch (_) { await directWrite(rid, { text, senderName: sender, senderRole: "staff" }); } }
+      if (imageUrl) await directWrite(rid, { imageUrl: String(imageUrl), text: text || "Image attachment", senderName: sender, senderRole: "staff" }, clientId);
+      else { try { await postText(rid, text, sender, clientId); } catch (e) { if (!db) throw e; await directWrite(rid, { text, senderName: sender, senderRole: "staff" }, clientId); } }
       try { setMessageFlag(rid, true); } catch (_) {}
       return true;
     },
     /** The whole internal thread for one order, oldest first — what the sorter's own order window shows. */
     async listAll(rid, limit) {
-      if (!db) return [];
+      if (!db) return (await listViaServer([String(rid)], limit))[String(rid)] || [];
       const snap = await db.collection(COLL).doc(String(rid)).collection("messages").orderBy("timestamp", "desc").limit(Math.max(1, Math.min(200, limit || 80))).get();
       return snap.docs.map(d => { const m = d.data() || {}; const t = m.timestamp; return { id: d.id, senderName: String(m.senderName || "Staff"), senderRole: String(m.senderRole || "staff"), text: String(m.text || ""), imageUrl: m.imageUrl || null, at: t && t.toMillis ? t.toMillis() : (t && t.seconds ? t.seconds * 1000 : null) }; }).reverse();
     },
@@ -5724,6 +5737,7 @@ const BritesChat = (() => {
       if (el.send)   el.send.disabled = true;
       if (el.lb)     closeDlg(el.lb);
     },
+    listViaServer,
     _state: S,
   };
 })();
@@ -7452,9 +7466,23 @@ const Bridge = (() => {
     if (notesCache.has(rid)) return notesCache.get(rid);
     try { const r = await fetch(`${FN}/firebaseOrders?orderId=${encodeURIComponent(rid)}`); const j = await r.json(); const t = j && j.success && j.data ? String(j.data["Staff Note"] || "") : ""; notesCache.set(rid, t); return t; } catch (_) { return ""; }
   }
+  // the sandbox has no Firestore client: the orders asked about within a moment share one server read
+  let msgBatch = null;
+  function messagesViaServer(rid) {
+    if (!msgBatch) {
+      const b = msgBatch = { ids: new Set(), wait: null };
+      b.wait = new Promise(res => setTimeout(res, 60)).then(() => { msgBatch = null; return BritesChat.listViaServer([...b.ids], 5); });
+    }
+    const b = msgBatch; b.ids.add(rid);
+    if (b.ids.size >= 40) msgBatch = null;
+    return b.wait.then(byOrder => byOrder[rid] || []);
+  }
   async function messagesOf(rid) {
-    if (!db) return [];
     if (msgCache.has(rid)) return msgCache.get(rid);
+    if (!db) {
+      try { const rows = await messagesViaServer(rid); msgCache.set(rid, rows); if (rows.length) setMessageFlag(rid, true); return rows; }
+      catch (_) { return []; }
+    }
     try {
       const snap = await db.collection("Brites_Orders").doc(rid).collection("messages").orderBy("timestamp", "desc").limit(5).get();
       const rows = snap.docs.map(d => { const m = d.data() || {}; const t = m.timestamp; return { senderName: String(m.senderName || "Staff"), text: String(m.text || ""), at: t && t.toMillis ? t.toMillis() : (t && t.seconds ? t.seconds * 1000 : null), imageUrl: m.imageUrl || null }; }).reverse();
@@ -7795,7 +7823,9 @@ const Bridge = (() => {
       const note = $("#modalStaffNote"); if (note && note.dataset.rid === rid) note.value = text;
       return { receiptId: rid, hasNote: !!text.trim() };
     },
-    async "chat.post"(a) { const rid = String(a.receiptId || ""); await Cursor.act("row", rid, `Post a chat message on ${rid}`); await BritesChat.postAs(rid, String(a.text || ""), a.sender || "Charm Sorter", a.imageUrl || null); msgCache.delete(rid); return { receiptId: rid }; },
+    async "chat.post"(a) { const rid = String(a.receiptId || ""); await Cursor.act("row", rid, `Post a chat message on ${rid}`); await BritesChat.postAs(rid, String(a.text || ""), a.sender || "Charm Sorter", a.imageUrl || null, a.clientId || null); msgCache.delete(rid); return { receiptId: rid }; },
+    /** The sorter wrote to an order's internal thread itself: what this station keeps about that thread is read again. */
+    async "chat.touched"(a) { const rid = String(a.receiptId || ""); if (!rid) throw new Error("receiptId required"); msgCache.delete(rid); try { setMessageFlag(rid, true); } catch (_) {} return { receiptId: rid }; },
     async "chat.list"(a) { const rid = String(a.receiptId || ""); if (!rid) throw new Error("receiptId required"); return { receiptId: rid, messages: await BritesChat.listAll(rid, a.limit) }; },
     async "complete.preview"(a) {
       const ids = (a.receiptIds || []).map(String);
