@@ -4860,12 +4860,12 @@ const RunCtl = window.RunCtl = (() => {
     const why = saveWarning + (r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${fix ? ` — <span>${esc(fix)}</span>` : ""}${finishing ? ` · ${finishing} sheet${finishing === 1 ? "" : "s"} still finishing` : ""}` : intake ? `<b>Adding new orders</b> · nesting them onto the sheets` : r.status === "review" ? `<b>Waiting for a person:</b> ${waitingFor}` : r.status === "processed" ? `<b>Processing complete</b> · ${waitingFor === "nothing" ? idle : waitingFor}${r.awaitCommit ? " · commit when ready" : ""}` : r.status === "paused" ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(STEP_WORDS[r.step] || r.step)}</b>${esc(stepDetail(r))}`);
     // the few words on the pill, and its tint: a person is needed when it stopped, waits on Review or Engraving, or is ready to commit
     const retry = autoResumable(r), sign = r.status === "stopped" && /\bsign/i.test(r.stoppedBy || "");
-    let tone = "go", short = `${STEP_WORDS[r.step] || r.step}${stepDetail(r)}`;
+    let tone = "go", short = `${STEP_WORDS[r.step] || r.step}${stepDetail(r)}`, lead = "";
     if (r.status === "stopped") { tone = "stop"; short = settling === r || retry && auto.busy ? "Resuming…" : retry ? "Stopped · retrying" : sign ? "Stopped · sign in to Etsy" : "Stopped"; }
     else if (intake) short = "Adding new orders";
     else if (r.status === "complete") { tone = "done"; short = `Complete · ${(r.committed || []).length} committed`; }
     else if (r.status === "paused" || r.status === "processed" && r.awaitCommit) { tone = "wait"; short = "Ready to commit"; }
-    else if (r.status === "review" || r.status === "processed" && waiting) { tone = "wait"; short = waiting ? `Waiting on you · ${waiting}` : "Waiting on you"; }
+    else if (r.status === "review" || r.status === "processed" && waiting) { tone = "wait"; short = waiting ? `Waiting on you · ${waiting}` : "Waiting on you"; if (waiting) lead = "Waiting on you · "; }
     else if (r.status === "processed") { tone = "idle"; short = onCards ? `Processed · ${onCards} line${onCards === 1 ? "" : "s"} on open sheets` : "Processed · sheets filling"; }
     if (r.saveError || local) { tone = "stop"; short = "Not saved · " + short; }
     /* Which run is this? Three cards on the Nest tab and a banner that named only a step left no way to tell this
@@ -4874,7 +4874,7 @@ const RunCtl = window.RunCtl = (() => {
     const seqOf = x => x.seq || +((/-(\d+)$/.exec(String(x.setId || "")) || [])[1] || 0) || null;
     const who = [seqOf(r) ? `Set ${seqOf(r)}` : "", r.day ? new Date(r.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "",
       `${(Object.keys(r.lines || {}).length || Orders.rows().filter(x => x.state !== "gone").length) + (+outside.lines || 0)} lines`, nSheets ? `${nSheets} sheet${nSheets === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
-    return { tone, short, who, why, runId: r.runId + (r.setId ? " · set " + r.setId : ""),
+    return { tone, short, lead, who, why, runId: r.runId + (r.setId ? " · set " + r.setId : ""),
       acts: `${["paused","processed"].includes(r.status) && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${sign ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${["stopped","processed"].includes(r.status) && !intake ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at"${settling === r ? " disabled" : ""}>${r.status === "processed" ? "Retry pending" : settling === r ? "Resuming…" : "Resume"}</button>` : ""}${["running", "review", "paused"].includes(r.status) || intake ? `<button class="btn ghost sm" id="rbStop" title="${r.arrivalBusy ? "stop now — the charms already placed stay where they are, and the new orders wait for Resume" : "stop after the step in progress — the run can be resumed from where it stopped"}">Stop</button>` : ""}${r.status === "complete" ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}`,
       more: `${r.at ? `<button class="btn ghost sm" id="rbAt" title="open the sheet this is about">Show the sheet</button>` : ""}<button class="btn ghost sm" id="rbHistory" title="every run on record">Run history…</button>${r.status !== "complete" ? `<button class="btn ghost sm" id="rbAbandon" title="give up this run — the sheets and files already saved are kept">Abandon run…</button>` : ""}` };
   }
@@ -4890,7 +4890,9 @@ const RunCtl = window.RunCtl = (() => {
     }
     const focusId = h.contains(document.activeElement) ? document.activeElement.id : "";
     h.className = "runBanner " + v.tone;
-    const text = menu.querySelector(".rbText"); if (text.textContent !== v.short) text.textContent = v.short;
+    // on a narrow bar the tint says "waiting" and the words keep what is waiting ("1 in Engraving")
+    const text = menu.querySelector(".rbText"), words = v.lead && v.short.startsWith(v.lead) ? `<span class="rbLead">${esc(v.lead)}</span>${esc(v.short.slice(v.lead.length))}` : esc(v.short);
+    if (text._html !== words) { text._html = words; text.innerHTML = words; }
     fitPill(h);
     const detail = menu.querySelector(".runDetail");
     const changed = [part(detail, `${v.who ? `<b>${esc(v.who)}</b><small>${esc(v.runId)}</small>` : ""}<span class="rbWhy">${v.why}</span>`), part(menu.querySelector(".rbActs"), v.acts || ""), part(menu.querySelector(".rbMore"), v.more || "")].some(Boolean);

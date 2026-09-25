@@ -438,7 +438,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
       if (window.LaserReview) LaserReview.record(rec);
       W.rec = rec; W.st = stockOf(rec); W.live = liveOf(id);
       head(rec, false); indexPieces(); pruneFreed(); fitPlate(); renderStrip(); renderSheetPane(); renderFoot(); renderMenu();
-      E.addBtn.hidden = !fillTarget();
+      E.addBtn.hidden = !canAdd();
       if (!rec.outputs?.preview?.url && !W.live) E.pv.removeAttribute("src"); else if (rec.outputs?.preview?.url && !E.pv.getAttribute("src")) E.pv.src = cors(rec.outputs.preview.url);
       loadSet(tok);
       await loadGeometry(tok);
@@ -1297,6 +1297,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
   }
   function renderWork() {
     const E = W.el, w = W.work; if (!E.work) return;
+    if (E.addBtn && W.rec) E.addBtn.hidden = !!(w && w.state === "working") || !canAdd();
     if (!w) { E.work.innerHTML = ""; E.work.hidden = true; return; }
     E.work.hidden = false;
     E.work.innerHTML = `<div class="swWork${w.state === "done" ? " done" : w.state === "failed" ? " failed" : ""}" role="status"><h4>${w.state === "working" ? '<span class="owSpin"></span>' : w.state === "done" ? ICON.check.replace("<svg", '<svg style="width:15px;height:15px;color:var(--sage)"') : ""}${esc(w.title)}</h4>
@@ -1563,7 +1564,9 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     if (W.view === "piece") showSheetPane(); else renderSheetPane();
     renderWork();
     const paint = () => { if (W.dlg.open) renderWork(); };
-    try { await cancelRecord(rid, { note: opt.note, who, sheets: "" }, keep, gone, paint); }
+    // a held order remembers the sheets it was taken off (its hold says so): the record keeps them
+    const was = [...new Set(rowsOfOrder(rid).map(r => (/^Taken off (.+?) by /.exec(r.hold || "") || [])[1]).filter(n => n && n !== "its sheet"))].join(", ");
+    try { await cancelRecord(rid, { note: opt.note, who, sheets: was }, keep, gone, paint); }
     catch (e) { for (const st of W.work.steps) doneStep(st); W.work.state = "failed"; W.work.title = "Not cancelled"; W.work.note = esc(e.message) + ". Nothing changed; try again."; paint(); throw e; }
     W.work.state = "done"; W.work.title = `Order ${rid} cancelled`; W.work.note = `The record is under Orders › Cancelled, where it can be restored.`;
     paint(); renderSheetPane();
@@ -1572,13 +1575,19 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
   /* ── the freed room: which orders fit it, found with the nest's own collision grid, oldest order first ── */
   // sheetId → the room pieces left on it; kept in this browser (per workspace) for 12 hours, so a reload keeps it
   const FREED = new Map(), FREED_KEY = () => "cn.sheetwin.freed" + (typeof WORKSPACE_SANDBOX !== "undefined" && WORKSPACE_SANDBOX ? ":sandbox" : "");
+  // a freed spot keeps the charm's own outline (points to 0.01 pt), so after a reload it still reads as that charm's room
+  const r2 = v => Math.round(v * 100) / 100;
+  function shapeOf(c) {
+    if (!c) return null; if (c.mini) return { centerPt: c.centerPt, outline: c.outline, members: [] };
+    try { return { centerPt: c.centerPt, outline: { subpaths: c.outline.subpaths.map(sub => sub.map(s => [s[0], ...s.slice(1).map(q => [r2(q[0]), r2(q[1])])])) }, members: [] }; } catch (_) { return null; }
+  }
   function setFreed(id, list) {
     if (list && list.length) FREED.set(id, list); else FREED.delete(id);
-    try { const o = {}; for (const [k, gs] of FREED) o[k] = gs.map(g => ({ p: g.x.p, rid: g.rid || "", sku: g.sku || "", at: g.at || Date.now() })); localStorage.setItem(FREED_KEY(), JSON.stringify(o)); } catch (_) {}
+    try { const o = {}; for (const [k, gs] of FREED) o[k] = gs.map(g => ({ p: g.x.p, rid: g.rid || "", sku: g.sku || "", at: g.at || Date.now(), s: shapeOf(g.x.c) })); localStorage.setItem(FREED_KEY(), JSON.stringify(o)); } catch (_) {}
   }
   try {
     const o = JSON.parse(localStorage.getItem(FREED_KEY()) || "{}");
-    for (const [k, gs] of Object.entries(o)) { const list = (gs || []).filter(g => g && g.p && Date.now() - (+g.at || 0) < 12 * 3600e3).map(g => ({ x: { p: g.p, c: null, gone: true }, rid: g.rid, sku: g.sku, at: +g.at, t0: 0 })); if (list.length) FREED.set(k, list); }
+    for (const [k, gs] of Object.entries(o)) { const list = (gs || []).filter(g => g && g.p && Date.now() - (+g.at || 0) < 12 * 3600e3).map(g => ({ x: { p: g.p, c: g.s && g.s.outline ? Object.assign({}, g.s, { mini: true }) : null, gone: true }, rid: g.rid, sku: g.sku, at: +g.at, t0: 0 })); if (list.length) FREED.set(k, list); }
   } catch (_) {}
   const SV = () => window.CharmNestSolver;
   const bitsOf = c => typeof c.bits === "string" ? SV().bitsFromBase64(c.bits, c.w * c.h) : c.bits;
@@ -1748,6 +1757,8 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
      put it where its own grading says; the hand button lets the operator move and turn it into a spot. Either way it
      moves exactly as a suggestion does (saved off its sheet first, read back, stamped). Size never changes: a charm is
      cut at its product's size. ── */
+  // the + shows only when some order could come onto this sheet
+  function canAdd() { const t = fillTarget(); return !!t && candidatesFor(t).length > 0; }
   function openAdd(q) {
     if (W.work && W.work.state === "working") return toast("One change at a time: this sheet is still being saved", "", 3500);
     const target = fillTarget(); if (!target) return;
@@ -1942,6 +1953,9 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     journal(rid, { rid, ids: [...ids], from: srcs.map(s => s.sheetId || null), to: target.sheetId, by: who, at: Date.now(), stage });
     try {
       await waitIdle(all, wait, paint);
+      // its sheet may have been released, cut or sent while this waited: then the order stays where it is
+      const shut = srcs.find(src => !movableFrom(src, target));
+      if (shut) throw new Error(`${sName(shut)} was released or sent meanwhile, so order ${rid} stays on it`);
       // the room is tested again as the sheet now stands: something else may have gone into it meanwhile
       const G = plateGrid(target), g2 = G.grid;
       if (o.free) { if (!(await roomFor(k, G, async () => { await pause(0); }))) throw new Error(`there is no room for it on ${tName} now`); }
