@@ -19,7 +19,10 @@
   const ENDPOINT = location.origin + "/.netlify/functions/etsyMailOrderLink";
   const INBOX = "https://etsy-mail-1.goldenspike.app/";
   const SANDBOX = typeof S !== "undefined" && S.settings && S.settings.sandbox === "on";
-  const LS = { key: "cn.mail.station", who: "cn.mail.operator", drafts: "cn.mail.drafts", out: "cn.mail.outbox", told: "cn.mail.told", tab: "cn.mail.tab", tr: "cn.mail.tr", health: "cn.mail.health" };
+  // "test": the questions of "Send a test", which go only to our own Etsy account and are real in the sandbox too
+  const TEST = "test";
+  const sbOf = rid => SANDBOX && String(rid) !== TEST;
+  const LS = { key: "cn.mail.station", who: "cn.mail.operator", drafts: "cn.mail.drafts", out: "cn.mail.outbox", told: "cn.mail.told", tab: "cn.mail.tab", tr: "cn.mail.tr", health: "cn.mail.health", test: "cn.mail.test" };
   const PAIR = "cn.mail.pair";   // sessionStorage: a connect request survives this tab's reload, not the tab
 
   // ─── small helpers ───────────────────────────────────────────────────────
@@ -84,7 +87,7 @@
   function forget(message) {
     put(LS.key, null); put(LS.who, null);
     M.key = null; M.who = null; M.store.clear(); M.link = "off"; M.n = -1; M.since = 0; M.needFull = true; M.first = true;
-    clearTimeout(syncTimer); clearTimeout(healthTimer); closeHealth();
+    clearTimeout(syncTimer); clearTimeout(healthTimer); clearTimeout(testTimer); closeHealth();
     if (message) say(message, "bad");
     paintAll();
   }
@@ -187,8 +190,9 @@
     if (d.t === "sync" && d.sandbox === SANDBOX && d.res && M.key) { M.lastOkAt = Date.now(); M.fails = 0; setLink("ok"); apply(d.res, false); kick(); }
     else if (d.t === "out") flushOut();
     else if (d.t === "health" && d.h && d.h.res && M.key) { M.health = d.h; paintLights(); healthLater(); }
+    else if (d.t === "test" && d.x && d.x.v && M.key) { const was = testV(); M.test = d.x; testNews(was, d.x.v); paintTest(); testLater(); }
   };
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) { clearTitle(); if (M.key) kick(300); for (const P of M.panes) if (P.visible()) markRead(P); healthSoon(); } });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { clearTitle(); if (M.key) kick(300); for (const P of M.panes) if (P.visible()) markRead(P); healthSoon(); if (testWaiting()) testCall("test_info"); } });
   window.addEventListener("online", () => { if (M.key) kick(200); flushOut(); });
 
   function setLink(state) { if (M.link === state) return; M.link = state; for (const P of M.panes) paintState(P); paintLights(); }
@@ -256,6 +260,7 @@
     else rows.push(`<li class="wait"><i></i><b>Checking the rest</b><span>${healthErr ? E(healthErr) : "…"}</span></li>`);
     const when0 = healthBusy ? `<span class="cmSpin" aria-hidden="true"></span>checking` : M.health ? "checked " + when(M.health.at) : "";
     return `<div class="cmHBh"><b>Email link</b><span class="cmHBat">${when0}</span><button type="button" class="lnk" data-hcheck${healthBusy ? " disabled" : ""}>Check now</button></div><ul class="cmHBl">${rows.join("")}</ul>`
+      + testHtml()
       + (SANDBOX ? `<div class="cmHBf">Sandbox is on: questions about sandbox orders stay in this sorter and never reach anyone. The light still shows the real link.</div>` : "");
   }
   function toggleHealth(box, owner) {
@@ -265,6 +270,7 @@
     box.hidden = false; box.innerHTML = healthRows();
     owner.querySelectorAll("[data-health]").forEach(b => b.setAttribute("aria-expanded", "true"));
     if (!M.health || Date.now() - M.health.at > 20000) checkHealth(true);
+    if (!testV() || testWaiting() || Date.now() - M.test.at > 60000) testCall("test_info"); else testLater();
   }
   function closeHealth() {
     if (!healthBox) return;
@@ -294,6 +300,87 @@
     if (healthBox) { if (healthBox.box.isConnected && M.key) healthBox.box.innerHTML = healthRows(); else closeHealth(); }
   }
 
+  // ─── a test without a customer: an Etsy account of our own ──────────────
+  /* "Send a test" goes the whole real way (the inbox, its Etsy helper, Etsy, and the answer back through the inbox's
+     scrape) but only to the shop's conversation with an Etsy account of our own. The server picks that conversation by
+     a code sent from it, never by a guess (testing in _etsyMailOrderLink.js), and a question on "test" can only go
+     there. Set up once, in the light's details; shared by every tab; asked about only while a code waits. */
+  M.test = get(LS.test, null);   // { at, v: { ready, threadId, customer, pending: { code, expiresAtMs, expired } } }
+  let testBusy = false, testErr = "", testTimer = 0;
+  const testV = () => (M.test && M.test.v) || null;
+  const testWaiting = () => { const v = testV(); return !!(M.key && v && v.pending && !v.pending.expired); };
+  const testWho = v => { const c = (v && v.customer) || {}; return c.name && c.username ? `${c.name} (@${c.username})` : c.name || (c.username ? "@" + c.username : "your test account"); };
+  const clock = ms => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  async function testCall(op) {
+    if (!M.key || testBusy) return;
+    testBusy = true; testErr = ""; paintTest();
+    try {
+      const v = await call(op, {}, { timeout: 20000 });
+      const was = testV();
+      M.test = { at: Date.now(), v }; put(LS.test, M.test);
+      if (bc) try { bc.postMessage({ t: "test", x: M.test }); } catch (_) {}
+      testNews(was, v);
+    } catch (e) { if (!authLost(e)) testErr = e.message; }
+    finally { testBusy = false; paintTest(); testLater(); }
+  }
+  /** The code reached the inbox: said once, where someone is looking. */
+  function testNews(was, v) {
+    if (!document.hidden && v && v.ready && was && was.pending && !was.pending.expired && (!was.ready || was.threadId !== v.threadId))
+      say(`Test account set: tests go only to ${testWho(v)}.`, "ok", 9000);
+  }
+  function testLater() {
+    clearTimeout(testTimer); testTimer = 0;
+    if (!testWaiting() || (document.hidden && !healthBox)) return;   // a hidden page asks again when it is looked at
+    testTimer = setTimeout(() => testCall("test_info"), healthBox ? 5000 : 20000);
+  }
+  function paintTest() { if (healthBox && healthBox.box.isConnected && M.key) healthBox.box.innerHTML = healthRows(); }
+  function testHtml() {
+    if (!M.key) return "";
+    const v = testV(), spin = `<span class="cmSpin" aria-hidden="true"></span>`;
+    let body;
+    if (!v) body = testErr ? `<p class="bad">${E(testErr)}</p><div class="cmHTb"><button type="button" class="lnk" data-t="info">Try again</button></div>` : `<p class="soft">${spin} Looking…</p>`;
+    else if (v.pending && !v.pending.expired) body =
+      `<p>Send this code to the shop as an Etsy message, from your own Etsy account (not the shop's):</p>`
+      + `<div class="cmHTc"><code>${E(v.pending.code)}</code><button type="button" class="btn ghost sm" data-t="copy">Copy</button></div>`
+      + `<p class="soft">${spin} Waiting for the inbox to read it, usually a minute or two.${v.ready ? ` Until then, tests still go to ${E(testWho(v))}.` : ""}</p>`
+      + `<div class="cmHTb"><span class="soft">The code works until ${E(clock(v.pending.expiresAtMs))}.</span><button type="button" class="lnk soft" data-t="cancel">Cancel</button></div>`;
+    else if (v.ready) body =
+      `<p>Tests go only to <b>${E(testWho(v))}</b> on Etsy, never to a customer.</p>`
+      + `<div class="cmHTb"><button type="button" class="btn sm cmBtn" data-t="send">Send a test</button><button type="button" class="btn ghost sm" data-t="open">Open the test conversation</button><button type="button" class="lnk soft" data-t="start">Change</button></div>`
+      + (v.pending ? `<p class="soft">The code for another account ran out before it reached the inbox.</p>` : "");
+    else body =
+      (v.pending ? `<p class="bad">The code ran out before it reached the inbox.</p>` : `<p>Real messages through the inbox, but only to an Etsy account of your own. Set it up once:</p>`)
+      + `<div class="cmHTb"><button type="button" class="btn sm cmBtn" data-t="start">${v.pending ? "Get a new code" : "Set up a test account"}</button></div>`;
+    return `<div class="cmHT"><div class="cmHTh"><b>Test without a customer</b>${testBusy && v ? spin : ""}</div>${body}${testErr && v ? `<p class="bad">${E(testErr)}</p>` : ""}</div>`;
+  }
+  /** The test conversation: the newest question to the current test account, if there is one. */
+  const testEng = () => { const v = testV(); return v && v.ready ? [...M.store.values()].filter(s => String(s.receiptId) === TEST && s.threadId === v.threadId).sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0))[0] || null : null; };
+  function openTest() { closeHealth(); const s = testEng(); standalone({ receiptId: TEST, scope: "order", id: s ? s.id : null }); }
+  function sendTest() {
+    const v = testV(); if (!v || !v.ready) return;
+    const s = testEng(), clientId = uidOf();
+    const at = new Date().toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    queueOut({
+      receiptId: TEST, clientId, sandbox: false, scope: "order", lineId: null, engagementId: s ? s.id : null, newQuestion: false,
+      text: `Email link test from the Charm Sorter (${at}). Reply to this message to check that answers come back.`,
+      lineLabel: "", orderNumber: "", buyerName: (v.customer && v.customer.name) || ""
+    });
+    openTest();
+    if (SA && SA.P) SA.P.waitingFor = clientId;
+  }
+  document.addEventListener("click", async e => {
+    const b = e.target.closest("[data-t]");
+    if (!b || !healthBox || !healthBox.box.contains(b)) return;
+    const a = b.dataset.t;
+    if (a === "info" || a === "start" || a === "cancel") testCall("test_" + a);
+    else if (a === "send") sendTest();
+    else if (a === "open") openTest();
+    else if (a === "copy") {
+      const v = testV(), code = v && v.pending ? v.pending.code : "";
+      try { await navigator.clipboard.writeText(code); say("Copied: " + code, "ok", 3000); } catch (_) { say("Select the code and copy it yourself", "bad"); }
+    }
+  });
+
   function apply(res, mine) {
     if (!res || typeof res !== "object") return;
     const changed = new Set();
@@ -311,7 +398,7 @@
   }
   /** One summary into the store; true when it is news. */
   function merge(s) {
-    if (!s || !s.id || !!s.sandbox !== SANDBOX) return false;
+    if (!s || !s.id || !!s.sandbox !== sbOf(s.receiptId)) return false;
     const cur = M.store.get(s.id);
     if (cur && (cur.v || 0) >= (s.v || 0) && !cur.local) return false;
     M.store.set(s.id, s);
@@ -341,7 +428,7 @@
     const s = fresh[0];
     const who = (s.customer && (firstName(s.customer.name) || s.customer.username)) || "The customer";
     const more = fresh.length > 1 ? ` (and ${fresh.length - 1} more)` : "";
-    say(`✉ ${who} replied about order ${s.receiptId}${s.scope === "engraving" ? " (engraving)" : ""}: “${plain(s.lastInboundPreview || "a photo").slice(0, 90)}”${more}`, "ok", 9000);
+    say(`✉ ${String(s.receiptId) === TEST ? "Your test account replied" : `${who} replied about order ${s.receiptId}${s.scope === "engraving" ? " (engraving)" : ""}`}: “${plain(s.lastInboundPreview || "a photo").slice(0, 90)}”${more}`, "ok", 9000);
     try { if (typeof ding === "function") ding(); } catch (_) {}
     if (document.hidden) { titleN += fresh.length; if (titleBase == null) titleBase = document.title; document.title = `(${titleN}) ✉ ${titleBase}`; }
   }
@@ -407,7 +494,7 @@
     pillMenu.innerHTML = `<div class="mmHead">Customers</div>` + (open.length ? open.slice(0, 12).map(s => {
       const who = (s.customer && (s.customer.name || s.customer.username)) || "Customer";
       const line = s.unread > 0 ? `“${E(plain(s.lastInboundPreview || "a photo"))}”` : s.failed > 0 ? "A message did not go — open it to retry" : "Waiting to be sent by hand on Etsy";
-      return `<button type="button" class="mmRow${s.unread > 0 ? " new" : " bad"}" data-id="${E(s.id)}"><span class="mmTop"><b>${E(who)}</b><span class="mono">${E(s.receiptId)}${s.scope === "engraving" ? " · engraving" : ""}</span><span class="mmWhen">${E(when(s.lastInboundAtMs || s.updatedAtMs))}</span></span><span class="mmLine">${line}</span></button>`;
+      return `<button type="button" class="mmRow${s.unread > 0 ? " new" : " bad"}" data-id="${E(s.id)}"><span class="mmTop"><b>${E(who)}</b><span class="mono">${String(s.receiptId) === TEST ? "email link test" : E(s.receiptId)}${s.scope === "engraving" ? " · engraving" : ""}</span><span class="mmWhen">${E(when(s.lastInboundAtMs || s.updatedAtMs))}</span></span><span class="mmLine">${line}</span></button>`;
     }).join("") : `<div class="mmEmpty">Nothing waiting.</div>`);
     pillMenu.querySelectorAll(".mmRow").forEach(x => x.onclick = () => { const s = M.store.get(x.dataset.id); pillMenu.remove(); pillMenu = null; if (s) openConversation(s); });
   }
@@ -631,7 +718,7 @@
     const seq = ++P.seq;
     P.loading = true; paintState(P);
     try {
-      const d = await call("order", { receiptId: P.rid, sandbox: SANDBOX, scope: P.ctx.scope || "order", lineId: P.ctx.lineId || null, engagementId: P.engId || null });
+      const d = await call("order", { receiptId: P.rid, sandbox: sbOf(P.rid), scope: P.ctx.scope || "order", lineId: P.ctx.lineId || null, engagementId: P.engId || null });
       if (seq !== P.seq) return;
       P.data = d; P.err = null;
       for (const s of d.engagements || []) merge(s);
@@ -650,7 +737,7 @@
     if (!P.engId || !M.key) return;
     const seq = ++P.seq;
     try {
-      const d = await call("thread", { engagementId: P.engId, sandbox: SANDBOX, earlier: !!earlier });
+      const d = await call("thread", { engagementId: P.engId, sandbox: sbOf(P.rid), earlier: !!earlier });
       if (seq !== P.seq) return;
       P.eng = d; P.err = null; merge(Object.assign({}, d, { messages: undefined, earlier: undefined }));
       if (earlier) P.earlier = d.earlier || [];
@@ -685,7 +772,8 @@
     const cust = (s && s.customer) || (conv && conv.customer) || {};
     const name = cust.name || cust.username || P.ctx.buyerName || "Customer";
     e.name.textContent = name;
-    e.sub.textContent = [P.rid ? "order " + P.rid : "", cust.username && cust.name ? "@" + cust.username : "", SANDBOX ? "sandbox" : "via Etsy"].filter(Boolean).join(" · ");
+    const sb = sbOf(P.rid), test = P.rid === TEST;
+    e.sub.textContent = [test ? "your test account" : P.rid ? "order " + P.rid : "", cust.username && cust.name ? "@" + cust.username : "", sb ? "sandbox" : "via Etsy"].filter(Boolean).join(" · ");
     host0(P);
     e.lang.hidden = e.more.hidden = !M.key;
     // not connected: one clear way in, and nothing else
@@ -705,16 +793,16 @@
     // the state of the question itself, in one line where it matters
     const notice = noticeFor(P, s, conv);
     e.notice.hidden = !notice; e.notice.innerHTML = notice || "";
-    e.hint.textContent = SANDBOX ? "Sandbox: kept here, never sent to a real customer" : s && s.status === "resolved" ? "Sending reopens this question" : (s && s.link === "waiting") || (!s && P.data && !conv) ? "No Etsy conversation with this buyer yet: you send it on Etsy by hand" : `Goes to ${firstName(name) || "the customer"} on Etsy, through the inbox`;
+    e.hint.textContent = sb ? "Sandbox: kept here, never sent to a real customer" : test ? ((s && s.threadId) || conv ? `Test: goes only to ${name}, your own Etsy account` : "No test account yet") : s && s.status === "resolved" ? "Sending reopens this question" : (s && s.link === "waiting") || (!s && P.data && !conv) ? "No Etsy conversation with this buyer yet: you send it on Etsy by hand" : `Goes to ${firstName(name) || "the customer"} on Etsy, through the inbox`;
     e.input.placeholder = P.fresh || !s ? `Ask ${firstName(name) || "the customer"} something…` : `Write to ${firstName(name) || "the customer"}…`;
     // the menu
     e.menu.innerHTML = [
-      s && s.threadId && !SANDBOX ? `<a href="${E(INBOX + "#thread=" + encodeURIComponent(s.threadId))}" target="cn-mail-inbox" rel="noopener">Open in the inbox ${ICON.out}</a>` : "",
+      s && s.threadId && !sb ? `<a href="${E(INBOX + "#thread=" + encodeURIComponent(s.threadId))}" target="cn-mail-inbox" rel="noopener">Open in the inbox ${ICON.out}</a>` : "",
       s && s.status === "open" ? `<button type="button" data-cm-do="resolve">Mark as answered</button>` : "",
       s && s.status === "resolved" ? `<button type="button" data-cm-do="reopen">Reopen</button>` : "",
       s && !P.fresh ? `<button type="button" data-cm-do="new">Ask a new question</button>` : "",
-      s && s.link === "waiting" && !SANDBOX ? `<button type="button" data-cm-do="link">Link an Etsy conversation…</button>` : "",
-      SANDBOX && s ? `<button type="button" data-cm-do="simulate">Play a customer reply</button>` : "",
+      s && s.link === "waiting" && !sb ? `<button type="button" data-cm-do="link">Link an Etsy conversation…</button>` : "",
+      sb && s ? `<button type="button" data-cm-do="simulate">Play a customer reply</button>` : "",
       `<button type="button" data-cm-do="disconnect" class="soft">Disconnect this sorter</button>`
     ].filter(Boolean).join("");
     paintHist(P);
@@ -736,12 +824,13 @@
     if (P.err && !s) return `<span class="bad">${E(P.err)}</span> <button type="button" class="lnk" data-cm-do="reload">Try again</button>`;
     if (!s) {
       if (!P.data) return "";
-      if (SANDBOX) return "Sandbox: questions here are kept apart from real customers.";
+      if (sbOf(P.rid)) return "Sandbox: questions here are kept apart from real customers.";
+      if (!conv && P.rid === TEST) return "No test account yet: open the light under the message box and press Set up a test account.";
       if (!conv) return "This buyer has not written to the shop yet, so the inbox has no conversation to send through. What you write here is kept, and you send it on Etsy by hand.";
       return "";
     }
     if (s.status === "resolved") return `Answered${s.resolvedBy ? " · marked by " + E(s.resolvedBy) : ""}${s.resolvedAtMs ? " · " + E(when(s.resolvedAtMs)) : ""}. <button type="button" class="lnk" data-cm-do="reopen">Reopen</button> · <button type="button" class="lnk" data-cm-do="new">Ask a new question</button>`;
-    if (s.link === "waiting" && !SANDBOX) return "This buyer has no Etsy conversation with the shop yet. Messages wait here: send them on Etsy by hand, or they go by themselves as soon as the customer writes to the shop.";
+    if (s.link === "waiting" && !sbOf(P.rid)) return "This buyer has no Etsy conversation with the shop yet. Messages wait here: send them on Etsy by hand, or they go by themselves as soon as the customer writes to the shop.";
     if (s.linkedBy === "buyer") return "Sent through this buyer's latest conversation with the shop (it does not name this order).";
     return "";
   }
@@ -940,7 +1029,7 @@
     const s = P.eng;
     const clientId = uidOf();
     const body = {
-      receiptId: P.rid, text, clientId, sandbox: SANDBOX,
+      receiptId: P.rid, text, clientId, sandbox: sbOf(P.rid),
       scope: P.fresh ? "order" : (s ? s.scope : P.ctx.scope) || "order",
       lineId: P.fresh ? null : (s ? s.lineId : P.ctx.lineId) || null,
       engagementId: P.fresh ? null : (s ? s.id : null), newQuestion: !!P.fresh,
@@ -961,16 +1050,16 @@
   const HCOUNT_TTL = 5 * 60000;
   const hcount = new Map();   // receipt → { at, info, busy, err }
   const showingAll = P => P.view === "all" && !!P.hist && P.hist.done && P.hist.rid === P.rid && !P.fresh;
-  const histWanted = P => !!M.key && !SANDBOX && !!P.rid && !P.fresh && !!((P.eng && P.eng.threadId) || (P.data && P.data.conversation));
+  const histWanted = P => !!M.key && !sbOf(P.rid) && !!P.rid && !P.fresh && !!((P.eng && P.eng.threadId) || (P.data && P.data.conversation));
   async function histCount(rid, engId, force) {
     rid = String(rid || "");
     const c = hcount.get(rid);
-    if (!rid || !M.key || SANDBOX || (c && (c.busy || (!force && Date.now() - c.at < HCOUNT_TTL)))) return c || null;
+    if (!rid || !M.key || sbOf(rid) || (c && (c.busy || (!force && Date.now() - c.at < HCOUNT_TTL)))) return c || null;
     const cur = { at: Date.now(), info: (c && c.info) || null, busy: true, err: null };
     hcount.set(rid, cur);
     if (hcount.size > 100) hcount.delete(hcount.keys().next().value);
     paintHistFor(rid);
-    try { cur.info = await call("history_info", { receiptId: rid, engagementId: engId || null, sandbox: SANDBOX }, { timeout: 20000 }); cur.at = Date.now(); }
+    try { cur.info = await call("history_info", { receiptId: rid, engagementId: engId || null, sandbox: sbOf(rid) }, { timeout: 20000 }); cur.at = Date.now(); }
     catch (e) { if (!authLost(e)) cur.err = e.message; cur.at = Date.now() - HCOUNT_TTL + 30000; }
     finally { cur.busy = false; paintHistFor(rid); }
     return cur;
@@ -986,18 +1075,19 @@
     const c = hcount.get(String(P.rid));
     if (!c || (!c.busy && Date.now() - c.at > HCOUNT_TTL)) setTimeout(() => histCount(P.rid, P.engId), 0);
     const H = P.hist && P.hist.rid === P.rid ? P.hist : null;
+    const whose = P.rid === TEST ? "the test account's" : "this buyer's";
     let v;
     if (H && H.busy) {
       const got = Math.min(H.got, H.total || H.got), pct = H.total ? Math.round(got / H.total * 100) : 0;
       v = `<span class="cmHistT"><span class="cmSpin" aria-hidden="true"></span>Pulling all messages… ${got} of ${H.total}</span><span class="cmBar" role="progressbar" aria-label="Pulling all messages" aria-valuemin="0" aria-valuemax="${H.total}" aria-valuenow="${got}"><i style="width:${pct}%"></i></span>`;
     } else if (H && H.err) v = `<span class="cmHistT bad">Could not pull all the messages: ${E(H.err)}</span><button type="button" class="lnk" data-cm-do="pull">Try again</button>`;
     else if (H && H.done) v = showingAll(P)
-      ? `<span class="cmHistT">All <b>${plural(H.rows.length, "message", "messages")}</b> with this buyer</span><button type="button" class="lnk" data-cm-do="only">Only this question</button>`
+      ? `<span class="cmHistT">All <b>${plural(H.rows.length, "message", "messages")}</b> with ${P.rid === TEST ? "the test account" : "this buyer"}</span><button type="button" class="lnk" data-cm-do="only">Only this question</button>`
       : `<span class="cmHistT">Only this question</span><button type="button" class="lnk" data-cm-do="showall">Show all ${H.rows.length}</button>`;
-    else if (!c || (c.busy && !c.info)) v = `<span class="cmHistT soft"><span class="cmSpin" aria-hidden="true"></span>Counting this buyer's messages…</span>`;
-    else if (!c.info) v = `<span class="cmHistT soft">Could not count this buyer's messages.</span><button type="button" class="lnk" data-cm-do="recount">Try again</button>`;
+    else if (!c || (c.busy && !c.info)) v = `<span class="cmHistT soft"><span class="cmSpin" aria-hidden="true"></span>Counting ${whose} messages…</span>`;
+    else if (!c.info) v = `<span class="cmHistT soft">Could not count ${whose} messages.</span><button type="button" class="lnk" data-cm-do="recount">Try again</button>`;
     else if (!c.info.total) { el.hidden = true; return; }
-    else v = `<span class="cmHistT">This buyer's full history: <b>${plural(c.info.total, "message", "messages")}</b>${c.info.threads.length > 1 ? ` in ${c.info.threads.length} conversations` : ""}</span><button type="button" class="cmPull" data-cm-do="pull">Pull all messages</button>`;
+    else v = `<span class="cmHistT">${P.rid === TEST ? "The test account's" : "This buyer's"} full history: <b>${plural(c.info.total, "message", "messages")}</b>${c.info.threads.length > 1 ? ` in ${c.info.threads.length} conversations` : ""}</span><button type="button" class="cmPull" data-cm-do="pull">Pull all messages</button>`;
     if (el.dataset.v !== v) { el.dataset.v = v; el.innerHTML = v; }
     el.hidden = false;
   }
@@ -1130,7 +1220,7 @@
       d.querySelector("[data-x]").onclick = () => d.close();
       SA = { d, P: Pane(d.querySelector(".cmSolo"), { visible: () => d.open }) };
     }
-    SA.d.querySelector("h3").textContent = "Order " + s.receiptId;
+    SA.d.querySelector("h3").textContent = String(s.receiptId) === TEST ? "Email link test" : "Order " + s.receiptId;
     if (!SA.d.open) { try { SA.d.showModal(); } catch (_) { SA.d.setAttribute("open", ""); } }
     show(SA.P, { receiptId: s.receiptId, scope: s.scope, lineId: s.lineId, lineLabel: s.lineLabel || "" }, { engagementId: s.id || null });
     if (extra.pull) pullWhenReady(SA.P);

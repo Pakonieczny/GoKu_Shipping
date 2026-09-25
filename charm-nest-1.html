@@ -652,6 +652,17 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 .cmHBl li span{color:var(--ink70)}
 .cmHBl li.warn span{color:#6f5019}.cmHBl li.down span{color:#7a3322}
 .cmHBf{font-size:11.5px;color:var(--ink45);border-top:1px solid var(--line);padding-top:7px}
+.cmHT{border-top:1px solid var(--line);padding-top:8px;display:grid;gap:7px}
+.cmHTh{display:flex;align-items:center;gap:6px}
+.cmHTh b{font:600 12.5px var(--sans)}
+.cmHT p{margin:0;line-height:1.45;color:var(--ink70)}
+.cmHT p.soft,.cmHT .soft{color:var(--ink45)}
+.cmHT p.bad{color:#7a3322}
+.cmHT p .cmSpin{vertical-align:-1px;margin-right:2px}
+.cmHTc{display:flex;align-items:center;gap:8px}
+.cmHTc code{font:700 14px var(--mono);letter-spacing:.06em;background:#eef3f5;border:1px solid #cfdde2;border-radius:6px;padding:4px 9px;user-select:all;color:var(--ink)}
+.cmHTb{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.cmHTb .soft{flex:1 1 auto}
 .cmSpin{width:9px;height:9px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;display:inline-block;flex:0 0 auto;animation:cmSpin .8s linear infinite}
 @keyframes cmSpin{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){.cmSpin{animation-duration:2.4s}}
@@ -4394,7 +4405,7 @@ async function boot() {
 boot();
 </script>
 <script src="charm-nest-bridge.js?v=20260925-liverec"></script>
-<script src="charm-nest-mail.js?v=20260925-sandbox-light"></script>
+<script src="charm-nest-mail.js?v=20260925-test-account"></script>
 <script src="charm-nest-rose-ui.js?v=20260924-thickness"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
