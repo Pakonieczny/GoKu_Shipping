@@ -1069,8 +1069,8 @@ const Orders = window.Orders = (() => {
       const attn = r.problems.length || ["held", "unmatched", "oversize"].includes(r.state);
       const why = attn ? (r.problems.map(x => Review.problemText(x)).join(" · ") || r.reason || "") : r.state === "waiting" ? (r.reason || "") : "";
       const gateBtn = r.state === "waiting" && r.wait ? `<button class="relHold" type="button" data-gate="${r.wait.kind === "slow" ? "release" : "cut"}" data-gm="${esc(r.wait.material)}" title="${r.wait.kind === "slow" ? "send " + esc(labelOf(r.wait.material)) + " to the laser with this set instead of waiting" : "cut the partial " + esc(labelOf(r.wait.material)) + " sheet now"}">${r.wait.kind === "slow" ? "Send now" : "Cut it anyway"}</button>` : "";
-      const mail = window.CustomerMail ? CustomerMail.badgeStamp(r.order.receiptId) : "";
-      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,r.wait,why,where,due,date,mail]);
+      const mail = window.CustomerMail ? CustomerMail.badgeStamp(r.order.receiptId) : "", team = TeamMail.stamp(r);
+      const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,r.wait,why,where,due,date,mail,team]);
       const cached=orderNodes.get(r.key);
       if(cached?.stamp===stamp){orderNodes.delete(r.key);orderNodes.set(r.key,cached);place(cached.node);ListMedia.mount(cached.node,r);continue;}
       const node = el("div", (cards ? "ocard" : "doneRow workRow orderListRow") + " hoverItem" + (attn ? " attn" : ""));
@@ -1078,7 +1078,7 @@ const Orders = window.Orders = (() => {
       node.title = r.order.receiptId + " · " + (sp.designSku || r.line.sku || "no SKU") + " — " + r.line.title;
       const qty = sp.quantity || r.line.quantity || 1;
       const identity=`<div class="engravingIdentity"><span class="queueLabel">Order</span><div class="engravingOrder"><b class="mono onum">${esc(r.order.receiptId)}</b><span class="sku mono">${esc(sp.designSku || r.line.sku || 'No SKU')}</span></div><span class="purchaseLabel">${wordsOf(sp) ? 'Personalisation' : 'Item'}</span><span class="rowExcerpt" title="${esc(wordsOf(sp) || r.line.title || '')}">${esc(wordsOf(sp) || r.line.title || 'No title')}</span>${where ? `<span class="rowExcerpt dim">${esc(where.set)} · ${esc(where.sheet)}</span>` : ''}</div>`;
-      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}<span class="ost ${st[0]}">${esc(st[1])}</span><span class="rowFacts">Qty ${qty} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${r.hold ? '<button class="btn ghost sm relHold" type="button">Release hold</button>' : ''}${gateBtn}</div>`;
+      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}<span class="ost ${st[0]}">${esc(st[1])}</span><span class="rowFacts">Qty ${qty} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${r.hold ? '<button class="btn ghost sm relHold" type="button">Release hold</button>' : ''}${gateBtn}</div>`;
       const number=node.querySelector('.onum');if(number){const time=el('span','orderTime');time.textContent=date.time;time.title=date.label;number.appendChild(time);}
       node.onclick = e => { if (e.target.closest("button,[role=button]") !== node && e.target.closest("button,[role=button]")) return; OrderWin.open(r.key); };
       node.onkeydown=e=>{if(e.target===node && (e.key==="Enter" || e.key===" ")){e.preventDefault();OrderWin.open(r.key);}};
@@ -3215,7 +3215,7 @@ const Engrave = window.Engrave = (() => {
       if (!row) {
         row = el("div", "doneRow placementRow hoverItem");
         row.setAttribute("role","button"); row.tabIndex=0; row.dataset.open=job.key;
-        row.innerHTML=ListMedia.pair(job.row)+'<div class="engravingIdentity"><span class="queueLabel">Engraving</span><div class="engravingOrder"><b class="mono" data-order></b><span class="sku mono"></span><span class="mailSlot" hidden></span></div><span class="purchaseLabel">Engraving</span><span class="w"></span><span class="dim" data-stage></span></div><div class="purchaseSummary" data-purchase></div>';
+        row.innerHTML=ListMedia.pair(job.row)+'<div class="engravingIdentity"><span class="queueLabel">Engraving</span><div class="engravingOrder"><b class="mono" data-order></b><span class="sku mono"></span><span class="mailSlot" hidden></span><span class="teamSlot" hidden></span></div><span class="purchaseLabel">Engraving</span><span class="w"></span><span class="dim" data-stage></span></div><div class="purchaseSummary" data-purchase></div>';
         const open=()=>{if(isWorking(job))return;EG.focus=job.key;EG.list=false;render();};
         row.onclick=e=>{if(!e.target.closest('[data-vector][role=button],[data-listing][role=button]'))open();}; row.onkeydown=e=>{if(e.target===row && (e.key==="Enter" || e.key===" ")){e.preventDefault();open();}};
         placementRows.set(job,row);
@@ -3227,6 +3227,7 @@ const Engrave = window.Engrave = (() => {
       const write=(selector,value)=>{const node=row.querySelector(selector);if(node.textContent!==value)node.textContent=value;};
       write('[data-order]',receipt);write('.sku',sku);write('.w',(job.lines || []).join(' / '));
       if(window.CustomerMail?.slot)CustomerMail.slot(row.querySelector('.mailSlot'),receipt);
+      TeamMail.slot(row.querySelector('.teamSlot'),job.row);
       const purchase=purchaseMarkup(job.row);
       if(row._purchase!==purchase){row.querySelector('[data-purchase]').innerHTML=purchase;row._purchase=purchase;}
       write('[data-stage]',busy ? (job.state === "classify" ? "Reading words…" : "Preparing preview…") : "");
@@ -3434,6 +3435,9 @@ const Engrave = window.Engrave = (() => {
     const pct = Math.round((job.confidence != null ? job.confidence : 0) * 100);
     const conf = job.source ? `<span class="conf ${pct >= 80 ? "" : pct >= 60 ? "mid" : "low"}" title="how sure Claude is that these are the words to cut, read from ${esc(SOURCE_LABEL[job.source] || job.source)}${job.quote ? ` — “${esc(job.quote)}”` : ""}">${pct}% sure</span>` : "";
     const row2 = (t, v) => v && v !== "—" ? `<dt>${t}</dt><dd>${esc(v)}</dd>` : "";
+    // what the other stations wrote about this order: the last two lines, and the way to the whole thread
+    const said = (sp.messages || []).filter(m => !TeamMail.auto(m) && m.text && m.text !== "Image attachment").slice(-2);
+    const teamRows = said.length ? `<dt>Team messages</dt><dd>${said.map(m => `<span class="pvTm"><b>${esc(m.senderName || "Staff")}</b> ${esc(m.text)}</span>`).join("")}<button type="button" class="pvAll" data-team-open="${esc(job.row.key)}">Open the team's thread</button></dd>` : "";
     const wordsJob = job.state !== "review";
     const requests = job.requests || {};
     // what to check with the buyer: Claude's questions from reading the order (each one a click away from the message
@@ -3444,7 +3448,7 @@ const Engrave = window.Engrave = (() => {
     if (requests.font) wants.push(`Requested font: ${requests.font}`);
     if (requests.handwriting) wants.push("Requested handwriting");
     if (requests.image) wants.push("Requested an image");
-    const fromOrder = `${row2("Personalization", (sp.personalization || []).join(" / "))}${row2("Buyer's note", sp.buyerMessage)}${row2("Staff note", sp.staffNote)}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}`;
+    const fromOrder = `${row2("Personalization", (sp.personalization || []).join(" / "))}${row2("Buyer's note", sp.buyerMessage)}${row2("Staff note", sp.staffNote)}${teamRows}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}`;
     card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided">${decided + 1} of ${decided + remaining} · ${decided} done</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
         <div class="pvMain"><h4 class="pvH">Back · engraving</h4><div class="backHost"></div>
@@ -4978,7 +4982,7 @@ const Review = window.Review = (() => {
         <div class="fixes"><button class="btn gold sm" data-a="confirm">Engrave this text</button>${miss.length ? `<button class="btn ghost sm" data-a="drop">Drop the character${miss.length > 1 ? "s" : ""} ${esc(miss.join(" "))}</button>` : ""}<button class="btn ghost sm" data-a="msg">Ask the customer</button><button class="btn ghost sm" data-a="none">Don't engrave</button>${it.kind === "fontMissing" ? `<button class="btn ghost sm" data-a="fonts">Retry font files</button>` : ""}</div>`;
       c.querySelector("[data-a=confirm]").onclick = () => Engrave.decideWords(j, { text: c.querySelector("[data-f=text]").value, note: c.querySelector("[data-f=text]").value.trim() !== (j.text || "").trim() ? "edited" : "confirmed" });
       const dr = c.querySelector("[data-a=drop]"); if (dr) dr.onclick = () => { let t = c.querySelector("[data-f=text]").value; for (const ch of miss) t = t.split(ch).join(""); c.querySelector("[data-f=text]").value = t.replace(/[ ]{2,}/g, " ").trim(); };
-      c.querySelector("[data-a=msg]").onclick = async () => { const who = by(); if (!who) return; const draft = prompt("Message to post in the order's internal chat (the station staff will contact the customer):", `${who}: please confirm the engraving text for ${sp.designSku} — we read "${(j.text || "").replace(/\n/g, " / ")}"${miss.length ? `; the symbol ${miss.join(" ")} cannot be engraved exactly` : ""}.`); if (!draft) return; try { await DesignLink.call("chat.post", { receiptId: r.order.receiptId, text: draft, sender: "Charm Sorter" }); toast("Posted to the station chat", "ok"); } catch (e) { toast(e.message, "bad"); } };
+      c.querySelector("[data-a=msg]").onclick = async () => { const who = by(); if (!who) return; const draft = prompt("Message to post in the order's internal chat (the station staff will contact the customer):", `${who}: please confirm the engraving text for ${sp.designSku} — we read "${(j.text || "").replace(/\n/g, " / ")}"${miss.length ? `; the symbol ${miss.join(" ")} cannot be engraved exactly` : ""}.`); if (!draft) return; TeamMail.queue(r.order.receiptId, draft, "Charm Sorter"); toast("Posted to the order's Team messages", "ok"); };
       c.querySelector("[data-a=none]").onclick = () => Engrave.decideWords(j, { none: true });
       const fb = c.querySelector("[data-a=fonts]"); if (fb) fb.onclick = async () => { B.engrave.fonts.ok = false; B.engrave.fonts.error = null; await Engrave.loadFonts(); if (B.engrave.fonts.ok) { remove(it.key); await Engrave.setReady(j); RunCtl.poke(); } };
     } else if (it.kind === "flipFailed") {
@@ -5213,13 +5217,148 @@ const Sandbox = window.Sandbox = (() => {
 })();
 
 
+/* ═══ 24a · TeamMail — an order's internal thread, read and written at the order's record ═══════════════════════════
+   The Team tab used to go through the Design Station, so it went quiet whenever that link was down, and in the sandbox it
+   read nothing at all (the station has no Firestore client there): what the other stations wrote never showed, and a
+   message sent from here vanished. It now talks to the order's record itself (firebaseOrders): the real thread is always
+   read (only read), beside the sandbox's own copy when the sandbox is on. What someone types is kept per order, and a
+   message goes into this browser's outbox before it is sent and leaves it only when the server has it: a reload, a closed
+   window, another order opened or a dropped connection only delays it, and the server writes it once, by its id. */
+const TeamMail = window.TeamMail = (() => {
+  const LS_D = "cn.team.drafts", LS_O = "cn.team.outbox", LS_S = "cn.team.seen";
+  const get = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? d : v; } catch (_) { return d; } };
+  const put = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} };
+  const url = q => `${FN}/firebaseOrders${q || ""}${WORKSPACE_SANDBOX ? (q ? "&" : "?") + "sandbox=1" : ""}`;
+  const timeout = ms => (window.AbortSignal && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined);
+  const T = { busy: false, timer: 0, ok: true, err: null, subs: new Set() };
+  const changed = (rid, sent) => T.subs.forEach(f => { try { f(rid == null ? null : String(rid), sent || null); } catch (_) {} });
+  const health = (ok, err) => { const was = T.ok; T.ok = ok; T.err = ok ? null : err; if (was !== ok) changed(null); };
+
+  // ── drafts: one per order, written as it is typed ──
+  const draftOf = rid => { const d = get(LS_D, {})[String(rid)]; return d ? d.t : ""; };
+  function setDraft(rid, text) {
+    if (!rid) return;
+    const all = get(LS_D, {}), cut = Date.now() - 30 * 86400000;
+    if (text && text.trim()) all[rid] = { t: text, at: Date.now() }; else delete all[rid];
+    const keep = {}; Object.keys(all).filter(k => all[k].at > cut).sort((a, b) => all[b].at - all[a].at).slice(0, 60).forEach(k => keep[k] = all[k]);
+    put(LS_D, keep);
+  }
+
+  // ── the outbox ──
+  const outbox = () => get(LS_O, []);
+  const newId = () => Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+  const pending = rid => outbox().filter(x => x.rid === String(rid));
+  function queue(rid, text, who, imageUrl) {
+    const x = { id: newId(), rid: String(rid), text: String(text || ""), who: String(who || "Staff"), imageUrl: imageUrl || null, at: Date.now(), tries: 0 };
+    put(LS_O, outbox().concat([x])); changed(x.rid); flush();
+    return x;
+  }
+  function drop(id) { const x = outbox().find(y => y.id === id); put(LS_O, outbox().filter(y => y.id !== id)); if (x) changed(x.rid); return x || null; }
+  function retry(id) { const all = outbox(), x = all.find(y => y.id === id); if (!x) return; delete x.error; delete x.next; put(LS_O, all); changed(x.rid); flush(); }
+  async function post(x) {
+    const body = { orderNumber: x.rid, newMessage: x.text || "Image attachment", employeeName: x.who, clientMessageId: x.id };
+    if (x.imageUrl) body.imageUrl = x.imageUrl;
+    const res = await fetch(url(), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: timeout(30000) });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || (j && j.success === false)) throw Object.assign(new Error((j && j.error) || `the order's record answered ${res.status}`), { status: res.status });
+  }
+  async function flush() {
+    if (T.busy) return;
+    T.busy = true; clearTimeout(T.timer);
+    try {
+      for (;;) {
+        const x = outbox().find(y => !y.error && !(y.next > Date.now()));
+        if (!x) break;
+        try {
+          await post(x);
+          drop(x.id); health(true); changed(x.rid, x);
+          // the station keeps a copy of each thread's last few messages for its cards: it reads this one again
+          try { if (DesignLink.up() && (DesignLink.state()?.commands || []).includes("chat.touched")) DesignLink.call("chat.touched", { receiptId: x.rid }, { quiet: true }).catch(() => {}); } catch (_) {}
+        } catch (e) {
+          const all = outbox(), it = all.find(y => y.id === x.id);
+          if (it) {
+            it.tries = (it.tries || 0) + 1;
+            // a refusal is final and shown on the message; anything else (no network, a timeout, a server hiccup) is tried again
+            if (e.status >= 400 && e.status < 500 && e.status !== 408 && e.status !== 429) it.error = e.message;
+            else it.next = Date.now() + Math.min(60000, 2000 * 2 ** Math.min(it.tries, 5));
+            put(LS_O, all); changed(it.rid);
+          }
+          if (!(e.status >= 400 && e.status < 500)) { health(false, e.message); break; }
+        }
+      }
+    } finally {
+      T.busy = false;
+      const due = outbox().filter(y => !y.error && y.next).map(y => y.next - Date.now());
+      if (due.length) T.timer = setTimeout(flush, Math.max(400, Math.min(...due)));
+    }
+  }
+  const now = () => { const all = outbox(); let n = 0; all.forEach(x => { if (x.next) { delete x.next; n++; } }); if (n) put(LS_O, all); flush(); };
+  window.addEventListener("online", now);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && outbox().length) now(); });
+  // another tab of the sorter sent or queued something: this one repaints
+  window.addEventListener("storage", e => { if (e.key === LS_S) seen = get(LS_S, seen); if (e.key === LS_O || e.key === LS_S) changed(null); });
+  setTimeout(flush, 1500);   // what a closed tab left behind goes now
+
+  // ── reading ──
+  async function read(rids, opts = {}) {
+    const ids = [].concat(rids).map(String).filter(Boolean);
+    if (!ids.length) return {};
+    const q = `?messagesFor=${encodeURIComponent(ids.join(","))}&limit=${opts.limit || 80}${opts.since ? "&since=" + Math.floor(opts.since) : ""}`;
+    try {
+      const res = await fetch(url(q), { signal: timeout(20000) });
+      const j = await res.json().catch(() => null);
+      if (!res.ok || !j || !j.success) throw new Error((j && j.error) || `the order's record answered ${res.status}`);
+      health(true);
+      return j.byOrder || {};
+    } catch (e) { health(false, e.name === "TimeoutError" ? "no answer in 20 s" : e.message); throw e; }
+  }
+
+  // ── what is new: messages from someone else, since this browser last had the order's Team tab open ──
+  let seen = get(LS_S, null);
+  if (!seen || !seen.since) { seen = { since: Date.now(), by: {} }; put(LS_S, seen); }   // messages from before this browser kept track are not "new"
+  const auto = m => /^DESIGNED :\)$/.test(String(m.text || "").trim());   // the Design Station's own completion line
+  function newest(msgs) {
+    const me = String(employeeName() || "").toLowerCase();
+    let t = 0; for (const m of msgs || []) if (m.at && !auto(m) && String(m.senderName || "").toLowerCase() !== me) t = Math.max(t, m.at);
+    return t;
+  }
+  const isNew = (rid, msgs) => { const t = newest(msgs); return !!t && t > Math.max(seen.since, (seen.by || {})[String(rid)] || 0); };
+  function markSeen(rid, msgs) {
+    rid = String(rid);
+    if (!isNew(rid, msgs)) return;
+    // the later of the message and this clock: a station clock ahead of this one must not leave it "new"
+    const by = Object.assign({}, seen.by, { [rid]: Math.max(newest(msgs), Date.now()) });
+    const keep = {}; Object.keys(by).sort((a, b) => by[b] - by[a]).slice(0, 400).forEach(k => keep[k] = by[k]);
+    seen = { since: seen.since, by: keep }; put(LS_S, seen); changed(rid);
+  }
+  /** The small mark on a list row: new internal messages on this order. */
+  function mark(row) {
+    const rid = String(row.order.receiptId), msgs = (row.spec && row.spec.messages) || [];
+    if (!isNew(rid, msgs)) return "";
+    const last = msgs.filter(m => !auto(m)).slice(-1)[0];
+    return `<span class="teamTag" role="button" tabindex="0" data-team-open="${esc(row.key)}" title="${esc(last ? `${last.senderName}: ${last.text}` : "New internal message")}">Team · new</span>`;
+  }
+  function slot(node, row) { if (!node) return; node._row = row; const h = mark(row); if (node._h === h) return; node._h = h; node.innerHTML = h; node.hidden = !h; }
+  // a thread read or marked seen: the list marks follow at the next frame
+  let listTimer = 0;
+  T.subs.add(() => { clearTimeout(listTimer); listTimer = setTimeout(() => { try { window.Orders && Orders.render(); } catch (_) {} document.querySelectorAll(".teamSlot").forEach(n => n._row && slot(n, n._row)); }, 60); });
+  const stamp = row => (isNew(String(row.order.receiptId), (row.spec && row.spec.messages) || []) ? "n" : "");
+  const openFrom = t => { const key = t.dataset.teamOpen; if (key && window.OrderWin) OrderWin.open(key, { tab: "team" }); };
+  document.addEventListener("click", e => { const t = e.target.closest && e.target.closest("[data-team-open]"); if (!t) return; e.preventDefault(); e.stopPropagation(); openFrom(t); }, true);
+  document.addEventListener("keydown", e => { if (e.key !== "Enter" && e.key !== " ") return; const t = e.target.closest && e.target.closest("[data-team-open]"); if (!t) return; e.preventDefault(); e.stopPropagation(); openFrom(t); }, true);
+
+  return { draftOf, setDraft, queue, pending, drop, retry, flush, read, isNew, markSeen, mark, slot, stamp, auto,
+    ok: () => T.ok, error: () => T.err, waiting: rid => pending(rid).filter(x => !x.error).length, on: f => { T.subs.add(f); return () => T.subs.delete(f); } };
+})();
+
 /* ═══ 24b · OrderWin — one line, everything about it, and the way to settle it ═══
    The Design Station's own order window, here: the picture, the SKU, what the customer typed, the staff note that saves
    itself, the internal thread every station shares, and — the reason it is worth having here — the review decision the
    line is waiting on, answered without leaving the order. Messages go over the bridge, so the station keeps the one Etsy
    session and the one Firestore listener and this page never grows a second of either. */
 const OrderWin = window.OrderWin = (() => {
-  const W = { key: null, rid: null, at: 0, dlg: null, thread: [], tray: [], poll: 0, noteTimer: 0, wired: false };
+  const W = { key: null, rid: null, at: 0, dlg: null, thread: [], tray: [], poll: 0, noteTimer: 0, wired: false,
+    trays: new Map(), threads: new Map(), fullAt: 0, readErr: null, sending: new Map(), painted: "" };
   const byId = id => document.getElementById(id);
   const rowOf = key => Orders.rows().find(r => r.key === key) || null;
   const me = () => employeeName() || "";
@@ -5230,7 +5369,8 @@ const OrderWin = window.OrderWin = (() => {
     const close = () => W.dlg.close();
     byId("owClose").onclick = close;
     // a note typed just before the window closed (Escape, ×) is saved too: its timer and its blur both found no order
-    W.dlg.addEventListener("close", () => { clearTimeout(W.noteTimer); saveNote(); clearInterval(W.poll); W.poll = 0; W.key = null; W.tray.forEach(t => { try { URL.revokeObjectURL(t.url); } catch (_) {} }); W.tray = []; try { window.CustomerMail?.orderClosed(); } catch (_) {} });
+    // images waiting beside the message box stay with their order for when it is opened again
+    W.dlg.addEventListener("close", () => { clearTimeout(W.noteTimer); saveNote(); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray(); try { window.CustomerMail?.orderClosed(); } catch (_) {} });
     byId("owPhoto").onclick = e => e.currentTarget.classList.toggle("zoom");
     byId("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && (r.spec.designSku || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
     byId("owWhoBtn").onclick = () => { askEmployee(); paintWho(); };
@@ -5238,8 +5378,7 @@ const OrderWin = window.OrderWin = (() => {
     note.oninput = () => { clearTimeout(W.noteTimer); W.noteTimer = setTimeout(saveNote, 700); };
     note.onblur = () => { clearTimeout(W.noteTimer); saveNote(); };
     const input = byId("owInput");
-    const grow = () => { input.style.height = "auto"; input.style.height = Math.min(120, input.scrollHeight) + "px"; byId("owSend").disabled = !input.value.trim() && !W.tray.length; };
-    input.oninput = grow;
+    input.oninput = () => { grow(); TeamMail.setDraft(W.rid, input.value); };
     input.onkeydown = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
     input.addEventListener("paste", e => { const f = [...(e.clipboardData || {}).items || []].filter(i => i.type.startsWith("image/")).map(i => i.getAsFile()).filter(Boolean); if (f.length) { e.preventDefault(); addFiles(f); } });
     byId("owSend").onclick = send;
@@ -5251,8 +5390,47 @@ const OrderWin = window.OrderWin = (() => {
     byId("owSkip").onclick = toggleSkip;
     byId("owPrev").onclick = () => step(-1);
     byId("owNext").onclick = () => step(1);
+    // a message still on its way: try it again now, take it back into the box, or let it go
+    byId("owThread").addEventListener("click", e => {
+      const b = e.target.closest("[data-tm]"); if (!b) return;
+      const id = b.dataset.id, act = b.dataset.tm;
+      if (act === "retry") TeamMail.retry(id);
+      else if (act === "edit" || act === "drop") {
+        const x = TeamMail.drop(id);
+        if (x && act === "edit" && x.text && !x.imageUrl) { input.value = input.value.trim() ? input.value.replace(/\s+$/, "") + "\n" + x.text : x.text; grow(); TeamMail.setDraft(W.rid, input.value); input.focus(); }
+      }
+    });
+    TeamMail.on((rid, sent) => {
+      if (!W.dlg.open || (rid != null && rid !== W.rid)) return;
+      // a message the server now has shows as sent at once, and the thread is read again for its real time
+      if (sent && !W.thread.some(m => m.id === "c-" + sent.id)) { W.thread = W.thread.concat([{ id: "c-" + sent.id, senderName: sent.who, text: sent.text, imageUrl: sent.imageUrl, at: Date.now(), local: true, sandbox: WORKSPACE_SANDBOX || undefined }]); setTimeout(() => loadThread(rid), 300); }
+      paintThread(true); paintWho();
+    });
+    byId("owTabTeam")?.addEventListener("click", () => setTimeout(() => paintThread(true), 0));
+    document.addEventListener("visibilitychange", () => { if (!document.hidden && W.dlg.open && W.rid) loadThread(W.rid); });
+    window.addEventListener("online", () => { if (W.dlg.open && W.rid) loadThread(W.rid); });
     // the customer's side of the order: its own tab beside the team's chat (charm-nest-mail.js)
     try { window.CustomerMail?.orderWindow(W.dlg); } catch (e) { console.warn("customer mail:", e); }
+  }
+  function grow() {
+    const input = byId("owInput"); if (!input) return;
+    input.style.height = "auto"; input.style.height = Math.min(120, input.scrollHeight) + "px";
+    byId("owSend").disabled = !input.value.trim() && !W.tray.length;
+  }
+  /** Each order keeps its own draft and its own images: another order opened (Next, Previous, the list) never takes them. */
+  function stashTray() {
+    if (W.rid && W.tray.length) { W.trays.delete(W.rid); W.trays.set(W.rid, W.tray); }
+    W.tray = [];
+    while (W.trays.size > 10) { const [k, v] = W.trays.entries().next().value; v.forEach(t => { try { URL.revokeObjectURL(t.url); } catch (_) {} }); W.trays.delete(k); }
+  }
+  function showOrder(rid) {
+    if (rid === W.rid && W.key) return;
+    if (rid !== W.rid) stashTray();
+    W.tray = W.trays.get(rid) || []; W.trays.delete(rid);
+    W.rid = rid; W.thread = W.threads.get(rid) || []; W.fullAt = 0; W.readErr = null; W.painted = "";
+    const input = byId("owInput");
+    if (input) { input.value = TeamMail.draftOf(rid); grow(); }
+    paintTray();
   }
   /** The lines the Orders tab is showing, so Previous and Next walk what the person is actually looking at. */
   const siblings = () => Orders.visibleRows();
@@ -5266,17 +5444,15 @@ const OrderWin = window.OrderWin = (() => {
     if (next && next.key !== W.key) open(next.key);
   }
   function paintWho() {
-    const w = byId("owWho"); if (w) w.textContent = me() || "— no name set —";
-    // the thread and the staff note both travel through the Design Station: when that link is down, say so here rather
-    // than letting a person type a message and meet an error
+    const w = byId("owWho"); if (w) w.textContent = me() || "Set your name";
+    // messages and the staff note go to the order's record itself: this says whether it can be reached right now, and a
+    // message typed meanwhile waits here and goes by itself
     const st = byId("owLink"); if (!st) return;
-    const up = DesignLink.inControl() && DesignLink.up();
-    const etsy = DesignLink.state() && DesignLink.state().etsy;
-    const bad = !up ? "the Design Station link is down — messages and notes cannot be saved"
-      : etsy && etsy.signedIn === false ? "the Design Station is not signed in to Etsy" : "";
-    st.textContent = bad ? "● offline" : "● live";
+    const waiting = W.rid ? TeamMail.waiting(W.rid) : 0, bad = !TeamMail.ok() || (W.readErr && !W.thread.length);
+    st.innerHTML = bad ? "<i></i>Offline" : "<i></i>Live";
     st.className = "owLink " + (bad ? "bad" : "ok");
-    st.title = bad || "messages and notes are saving through the Design Station";
+    st.title = bad ? `The order's record cannot be reached (${TeamMail.error() || W.readErr || "no connection"}).${waiting ? ` ${waiting} message(s) wait here and go by themselves when it is back.` : " Anything you send waits here and goes by itself when it is back."}`
+      : "Messages and the staff note save straight to the order's record, where every station reads them";
   }
 
   async function saveNote() {
@@ -5286,7 +5462,7 @@ const OrderWin = window.OrderWin = (() => {
     if (text === (r.spec.staffNote || "") && r.noteUnsaved == null) return;
     r.spec.staffNote = text; r.noteUnsaved = text;
     try {
-      await DesignLink.call("notes.set", { receiptId: r.order.receiptId, text }, { quiet: true });
+      await saveNoteAt(r.order.receiptId, text);
       // the order carries it too: each arrival re-reads the lines from their orders, which put the old note back
       r.order.staffNote = text; if (r.line.staffNote) r.line.staffNote = text;
       if (r.noteUnsaved === text) delete r.noteUnsaved;
@@ -5295,6 +5471,13 @@ const OrderWin = window.OrderWin = (() => {
       if (r.noteFailed) { delete r.noteFailed; toast("Staff note saved", "ok", 1800); }
     } catch (e) { r.noteFailed = true; toast(`Staff note not saved: ${String(e.message).replace(/^staff note not saved:\s*/i, "")} — it is sent again when you leave the note or close this window`, "bad", 6000); }
     if (W.key === r.key) paintNote(r);
+  }
+  /** Through the station while it is linked (it keeps its own copy of the note), else straight to the order's record. */
+  async function saveNoteAt(rid, text) {
+    // the same note written twice is the same note: a station that fails for any reason leaves it to the direct route
+    if (DesignLink.inControl() && DesignLink.up()) { try { await DesignLink.call("notes.set", { receiptId: rid, text }, { quiet: true }); return; } catch (_) {} }
+    const res = await fetch(`${FN}/firebaseOrders${WORKSPACE_SANDBOX ? "?sandbox=1" : ""}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ orderNumber: String(rid), staffNote: text }), signal: window.AbortSignal && AbortSignal.timeout ? AbortSignal.timeout(20000) : undefined });
+    if (!res.ok) throw new Error(`the order's record answered ${res.status}`);
   }
   /** The note box shows what was typed; one that has not reached the station yet says so on the box itself. */
   function paintNote(r) {
@@ -5320,49 +5503,103 @@ const OrderWin = window.OrderWin = (() => {
   async function send() {
     const r = rowOf(W.key); if (!r) return;
     const who = me() || askEmployee(); if (!who) return;
-    const text = byId("owInput").value.trim(), files = W.tray.slice();
+    const rid = String(r.order.receiptId), input = byId("owInput");
+    const text = input.value.trim(), files = W.tray.slice();
     if (!text && !files.length) return;
-    byId("owInput").value = ""; byId("owInput").style.height = "auto"; W.tray = []; paintTray(); byId("owSend").disabled = true;
-    const rid = r.order.receiptId, unsent = files.slice(); let textSent = !text;
-    try {
-      for (const f of files) {
+    // the words go into the outbox before the box empties: from here a reload or a lost connection only delays them
+    if (text) TeamMail.queue(rid, text, who);
+    input.value = ""; TeamMail.setDraft(rid, ""); W.tray = []; paintTray(); grow();
+    if (!files.length) return;
+    W.sending.set(rid, (W.sending.get(rid) || 0) + files.length); paintThread();
+    const left = [];
+    for (const f of files) {
+      try {
         const bytes = new Uint8Array(await f.file.arrayBuffer());
         const up = await uploadBytes("chatImages/" + rid + "/" + Date.now() + "_" + f.file.name.replace(/[^\w.\-]+/g, "_"), bytes, f.file.type || "image/png", "Sending image");
-        await DesignLink.call("chat.post", { receiptId: rid, text: "Image attachment", sender: who, imageUrl: up.url });
-        unsent.shift(); try { URL.revokeObjectURL(f.url); } catch (_) {}
-      }
-      if (text) { await DesignLink.call("chat.post", { receiptId: rid, text, sender: who }); textSent = true; }
-      await loadThread(rid, true);
-    } catch (e) {
-      // what did not go goes back in the box to send again: the box was emptied before the send, and a failure lost it
-      const back = W.key === r.key && W.dlg.open, input = byId("owInput");
-      if (back) { if (!textSent && !input.value.trim()) input.value = text; W.tray = unsent.concat(W.tray); paintTray(); input.dispatchEvent(new Event("input")); }
-      toast(`Message not sent: ${e.message}${back ? " — it is back in the box" : ""}`, "bad", 6000);
+        TeamMail.queue(rid, "Image attachment", who, up.url);
+        try { URL.revokeObjectURL(f.url); } catch (_) {}
+      } catch (e) { left.push(f); toast(`Image not sent: ${e.message} — it is back beside the message box`, "bad", 6000); }
+      W.sending.set(rid, Math.max(0, (W.sending.get(rid) || 1) - 1));
     }
+    if (!W.sending.get(rid)) W.sending.delete(rid);
+    // an image that did not go goes back beside the box of its own order, wherever the window is now
+    if (left.length) { if (W.rid === rid) { W.tray = left.concat(W.tray); paintTray(); grow(); } else W.trays.set(rid, left.concat(W.trays.get(rid) || [])); }
+    paintThread(true);
   }
+  /** The thread: read in full when the order is opened and every few minutes, and in between only what is newer. */
   async function loadThread(rid, force) {
-    if (!rid || W.threadLoading===rid || (!force && W.rid === rid && W.thread.length)) return;
-    W.threadLoading=rid;
-    W.rid = rid;
-    try { const res = await DesignLink.call("chat.list", { receiptId: rid, limit: 80 }, { quiet: true }); if(W.rid===rid)W.thread = res.messages || []; }
-    catch (_) { const r = rowOf(W.key); if(W.rid===rid)W.thread = (r && r.spec.messages) || []; }
-    if(W.threadLoading===rid)W.threadLoading=null;
-    if (W.rid === rid) paintThread();
+    if (!rid || W.threadLoading === rid) return;
+    W.threadLoading = rid;
+    const full = force || !W.fullAt || Date.now() - W.fullAt > 180000 || !W.thread.length;
+    try {
+      // this clock's guess at a sent message's time never moves the reading point: only the server's times do
+      const since = full ? 0 : W.thread.reduce((t, m) => m.local ? t : Math.max(t, m.at || 0), 0);
+      const got = (await TeamMail.read(rid, { since, limit: 80 }))[rid] || [];
+      if (W.rid !== rid) return;
+      if (full) { const ids = new Set(got.map(m => m.id)); W.thread = got.concat(W.thread.filter(m => m.local && !ids.has(m.id))); W.fullAt = Date.now(); }
+      else if (got.length) { const by = new Map(W.thread.map(m => [m.id, m])); got.forEach(m => by.set(m.id, m)); W.thread = [...by.values()].sort((x, y) => (x.at || 0) - (y.at || 0)); }
+      W.readErr = null;
+      W.threads.delete(rid); W.threads.set(rid, W.thread); while (W.threads.size > 12) W.threads.delete(W.threads.keys().next().value);
+    } catch (e) {
+      if (W.rid !== rid) return;
+      W.readErr = e.message;
+      // the record unreachable: what the station last read of this order stands in until it answers
+      if (!W.thread.length) { const r = rowOf(W.key); W.thread = ((r && r.spec.messages) || []).map((m, i) => Object.assign({ id: "spec" + i }, m)); }
+    } finally { if (W.threadLoading === rid) W.threadLoading = null; }
+    if (W.rid === rid) { paintThread(!full); paintWho(); }
   }
   function paintThread(keep) {
     const t = byId("owThread"); if (!t) return;
-    if (!W.thread.length) { t.innerHTML = '<div class="owEmpty"><b>No internal messages yet</b>Anything sent here reaches every station working this order. The customer never sees it.</div>'; return; }
-    const mine = me().toLowerCase(), CM = window.CustomerMail, at = t.scrollTop;
-    t.innerHTML = W.thread.map(m => {
-      const own = String(m.senderName || "").toLowerCase() === mine && mine;
-      const when = m.at ? new Date(m.at).toLocaleString("en-US", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+    const rid = W.rid, CM = window.CustomerMail, mine = me().toLowerCase();
+    const got = new Set(W.thread.map(m => m.id));
+    // a message the server already has shows once, as itself
+    const out = rid ? TeamMail.pending(rid).filter(x => !got.has("c-" + x.id)) : [];
+    const up = (rid && W.sending.get(rid)) || 0;
+    const key = JSON.stringify([rid, mine, W.thread.map(m => m.id), out.map(x => [x.id, x.tries, x.error || "", !!x.next]), up, TeamMail.ok(), !!(W.readErr && W.thread.length)]);
+    const visible = W.dlg && W.dlg.open && !byId("owPaneTeam")?.hidden;
+    if (visible && rid) TeamMail.markSeen(rid, W.thread);
+    paintTeamDot();
+    if (key === W.painted) return;
+    W.painted = key;
+    const stick = !keep || t.scrollHeight - t.scrollTop - t.clientHeight < 48, at = t.scrollTop;
+    if (!W.thread.length && !out.length && !up) {
+      t.innerHTML = W.readErr ? `<div class="owEmpty"><b>Messages could not be read</b>The order's record did not answer (${esc(W.readErr)}). It is tried again by itself; anything you send waits here until it goes.</div>`
+        : W.fullAt ? '<div class="owEmpty"><b>No internal messages yet</b>Anything sent here reaches every station working this order. The customer never sees it.</div>'
+        : '<div class="owEmpty">Reading the team\'s messages…</div>';
+      return;
+    }
+    let day = "";
+    const html = W.thread.map(m => {
+      const own = !!mine && String(m.senderName || "").toLowerCase() === mine;
+      const d = m.at ? new Date(m.at).toDateString() : "";
+      const sep = d && d !== day ? `<div class="owDay"><span>${esc(dayWords(m.at))}</span></div>` : "";
+      if (d) day = d;
       const words = m.text && m.text !== "Image attachment" ? m.text : "";
       // any message can be read in English or Ukrainian: two small buttons, and the translation under the original
-      return '<div class="owMsg' + (own ? " me" : "") + '"' + (words && CM ? ' data-team-text="' + esc(words) + '"' : "") + '><span class="who">' + esc(m.senderName || "Staff") + (when ? " · " + esc(when) : "") + (words && CM ? CM.teamButtons(words) : "") + '</span>' +
+      return sep + '<div class="owMsg' + (own ? " me" : "") + (TeamMail.auto(m) ? " auto" : "") + '"' + (words && CM ? ' data-team-text="' + esc(words) + '"' : "") + '><span class="who">' + esc(own ? "You" : m.senderName || "Staff") + '<i>' + esc(clockOf(m.at)) + '</i>' + (m.sandbox ? '<em title="written in the sandbox: only sandbox stations see it">sandbox</em>' : "") + (words && CM ? CM.teamButtons(words) : "") + '</span>' +
         (words ? esc(words).replace(/\n/g, "<br>") : "") +
         (m.imageUrl ? '<img crossorigin="anonymous" loading="lazy" alt="" src="' + esc(cors(m.imageUrl)) + '">' : "") + (words && CM ? CM.teamTranslation(words) : "") + '</div>';
-    }).join("");
-    t.scrollTop = keep ? at : t.scrollHeight;
+    }).join("") + out.map(x => {
+      const state = x.error ? `Not sent: ${esc(x.error)}` : x.tries ? (TeamMail.ok() ? "Sending again…" : "Waiting for the connection — it goes by itself") : "Sending…";
+      const acts = x.error ? `<button type="button" data-tm="retry" data-id="${esc(x.id)}">Try again</button>${x.imageUrl ? "" : `<button type="button" data-tm="edit" data-id="${esc(x.id)}">Edit</button>`}<button type="button" data-tm="drop" data-id="${esc(x.id)}">Delete</button>`
+        : x.tries ? `<button type="button" data-tm="retry" data-id="${esc(x.id)}">Try now</button>` : "";
+      return `<div class="owMsg me pending${x.error ? " failed" : ""}"><span class="who">You<i>${esc(state)}</i></span>${x.imageUrl ? `<img crossorigin="anonymous" alt="" src="${esc(cors(x.imageUrl))}">` : esc(x.text).replace(/\n/g, "<br>")}${acts ? `<span class="owAct">${acts}</span>` : ""}</div>`;
+    }).join("") + (up ? `<div class="owMsg me pending"><span class="who">You<i>Sending ${up} image${up === 1 ? "" : "s"}…</i></span></div>` : "");
+    t.innerHTML = html;
+    t.scrollTop = stick ? t.scrollHeight : at;
+    if (stick) t.querySelectorAll("img").forEach(img => { if (!img.complete) img.addEventListener("load", () => { t.scrollTop = t.scrollHeight; }, { once: true }); });
+  }
+  const clockOf = at => at ? new Date(at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : "";
+  function dayWords(at) {
+    const d = new Date(at), today = new Date(), y = new Date(Date.now() - 86400000);
+    if (d.toDateString() === today.toDateString()) return "Today";
+    if (d.toDateString() === y.toDateString()) return "Yesterday";
+    return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+  }
+  /** The Team tab's dot: something new from another station while the Customer tab is in front. */
+  function paintTeamDot() {
+    const dot = byId("owTabTeam")?.querySelector(".owDot"); if (!dot) return;
+    dot.hidden = !(W.rid && byId("owPaneTeam")?.hidden && TeamMail.isNew(W.rid, W.thread));
   }
   function toggleSkip() {
     const r = rowOf(W.key); if (!r) return;
@@ -5398,7 +5635,7 @@ const OrderWin = window.OrderWin = (() => {
     const said = [];
     if ((sp.personalization || []).length) said.push(["Personalisation", sp.personalization.join("\n")]);
     if (sp.buyerMessage) said.push(["Buyer message", sp.buyerMessage]);
-    if (sp.messages && sp.messages.length) said.push(["Staff messages", sp.messages.map(m => `${m.senderName}: ${m.text}`).join("\n")]);
+    // the team's messages are in the Team tab beside this, in full: not repeated here among what the customer wrote
     const notes = byId("owNotes");
     notes.className = said.length ? "owSaid" : "owSaid none";
     notes.innerHTML = said.length ? said.map(([k, v2]) => `<span class="lbl">${esc(k)}</span>${esc(v2)}`).join("") : "— the customer wrote nothing —";
@@ -5439,14 +5676,18 @@ const OrderWin = window.OrderWin = (() => {
   function open(key, opts) {
     wire(); if (!W.dlg) return;
     const r = rowOf(key); if (!r) { toast("That line is no longer in the pull", "bad"); return; }
-    W.key = key; W.thread = []; W.rid = null;
+    const rid = String(r.order.receiptId);
+    if (!W.dlg.open) W.key = null;
+    showOrder(rid);
+    W.key = key;
     paint();
     if (!W.dlg.open) W.dlg.showModal();
     try { window.CustomerMail?.orderShown(r, opts || {}); } catch (e) { console.warn("customer mail:", e); }
     paintThread();
-    loadThread(r.order.receiptId, true);
+    loadThread(rid, true);
+    // what the other stations write shows within about 20 s while the window is open and in view
     clearInterval(W.poll);
-    W.poll = setInterval(() => { if (W.dlg.open && W.key && !document.hidden) loadThread(rowOf(W.key) ? rowOf(W.key).order.receiptId : null, true); }, 60000);
+    W.poll = setInterval(() => { if (W.dlg.open && W.rid && !document.hidden) loadThread(W.rid); }, 20000);
   }
   return { open, paint, close: () => W.dlg && W.dlg.close(), isOpen: () => !!(W.dlg && W.dlg.open), key: () => W.key, repaintThread: () => paintThread(true) };
 })();

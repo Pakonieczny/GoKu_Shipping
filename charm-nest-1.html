@@ -449,21 +449,53 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 .owFix .t{font:700 11px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:#8a3a26;margin-bottom:5px}
 .owFix .rvItem{border:0;box-shadow:none;background:transparent;padding:0;border-left:0}
 .owFix .rvItem .rh .ttl,.owFix .rvItem .rh .sub{display:none}
-.owChatHead{display:flex;align-items:center;gap:8px;padding:11px 13px;border-bottom:1px solid var(--line);flex:0 0 auto}
-.owChatHead .lab{font:10px var(--mono);letter-spacing:.11em;text-transform:uppercase;color:var(--ink45);font-weight:700}
-.owLink{font:10px var(--mono);letter-spacing:.06em;text-transform:uppercase;font-weight:700}
-.owLink.ok{color:#3f5b3a}.owLink.bad{color:#8a3a26}
-.owThread{flex:1 1 auto;min-height:0;overflow:auto;padding:12px 13px;display:flex;flex-direction:column;gap:9px}
+/* the team's conversation is laid out as the customer's is (head, thread, box, one status pill), in the warm colours */
+.owChatHead{display:flex;align-items:center;gap:9px;padding:9px 12px;border-bottom:1px solid var(--line);flex:0 0 auto}
+.owMark{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:var(--paper2);color:var(--ink70);flex:0 0 auto}
+.owMark svg{width:15px;height:15px}
+.owTitle{min-width:0;flex:1 1 auto;display:flex;flex-direction:column;line-height:1.25}
+.owTitle b{font:600 14px var(--sans)}
+.owTitle span{font:10.5px var(--mono);color:var(--ink45);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.owName{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--card);border-radius:999px;padding:3px 10px;font:600 11.5px var(--sans);color:var(--ink70);cursor:pointer;white-space:nowrap;max-width:45%;flex:0 1 auto}
+.owName span{overflow:hidden;text-overflow:ellipsis}
+.owName svg{width:12px;height:12px;flex:0 0 auto;color:var(--ink45)}
+.owName:hover{background:var(--paper2)}
+.owName:focus-visible{outline:2px solid var(--velvet);outline-offset:1px}
+.owLink{display:inline-flex;align-items:center;gap:5px;border:1px solid transparent;border-radius:999px;padding:1px 8px 1px 6px;font:700 9.5px var(--mono);letter-spacing:.07em;text-transform:uppercase;white-space:nowrap;line-height:16px;flex:0 0 auto;cursor:default}
+.owLink i{width:7px;height:7px;border-radius:50%;background:currentColor}
+.owLink.ok{color:#2f6b3a;background:#e6f3e4;border-color:#c5e1c1}
+.owLink.ok i{background:#2ea043}
+.owLink.bad{color:#8a3a26;background:#f8e4dd;border-color:#e7b9aa}
+.owLink.bad i{background:#c4442a}
+.owThread{flex:1 1 auto;min-height:0;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
+.owDay{display:flex;align-items:center;gap:8px;font:9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);margin:2px 0}
+.owDay::before,.owDay::after{content:"";flex:1 1 auto;height:1px;background:var(--line)}
 .owEmpty{margin:auto;text-align:center;color:var(--ink45);font-size:12.5px;line-height:1.6;max-width:30ch}
 .owEmpty b{display:block;color:var(--ink);font-size:14px;margin-bottom:5px}
-.owMsg{max-width:86%;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:7px 10px;font-size:12.5px;overflow-wrap:anywhere}
+.owMsg{max-width:86%;align-self:flex-start;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:7px 10px 8px;font-size:13px;line-height:1.45;overflow-wrap:anywhere}
 .owMsg.me{align-self:flex-end;background:var(--velvet);color:#eee7da;border-color:var(--velvetLine)}
-.owMsg .who{display:block;font:10px var(--mono);letter-spacing:.06em;color:var(--ink45);margin-bottom:2px}
-.owMsg.me .who{color:rgba(255,255,255,.6)}
-.owMsg img{max-width:100%;border-radius:8px;display:block;margin-top:5px}
+.owMsg .who{display:block;font:10px var(--mono);letter-spacing:.03em;color:var(--ink45);margin-bottom:3px}
+.owMsg .who>i{font-style:normal;font-weight:400;opacity:.85}
+.owMsg .who>em{font-style:normal;font-weight:700;color:#7a5d17;background:#f6efd9;border-radius:4px;padding:0 4px;letter-spacing:.06em;text-transform:uppercase;font-size:9px}
+.owMsg.me .who{color:rgba(255,255,255,.62)}
+.owMsg img{max-width:100%;max-height:260px;border-radius:8px;display:block;margin-top:5px}
+/* the Design Station's own "DESIGNED :)" line: kept, but quiet */
+.owMsg.auto{background:transparent;border-style:dashed;color:var(--ink70);font-size:12px;padding:5px 10px}
+.owMsg.me.auto{align-self:flex-end;background:transparent;color:var(--ink70);border-color:var(--line)}
+.owMsg.me.auto .who{color:var(--ink45)}
+/* on its way: the words are safe in this browser; a refusal says why and offers the way on */
+.owMsg.pending{background:var(--velvet2);opacity:.9}
+.owMsg.pending .who>i{font-style:italic}
+.owMsg.failed{background:var(--card);color:var(--ink);border-color:var(--clay);opacity:1}
+.owMsg.failed .who{color:#8a3a26}
+.owAct{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px}
+.owAct button{border:0;background:none;padding:0;font:12px var(--sans);color:inherit;text-decoration:underline;text-underline-offset:2px;cursor:pointer;opacity:.85}
+.owAct button:hover{opacity:1}
+.owMsg.failed .owAct button:first-child{color:var(--slate)}
 .owComp{flex:0 0 auto;border-top:1px solid var(--line);padding:9px 11px;display:grid;gap:6px;background:var(--card)}
 .owCompLine{display:flex;gap:7px;align-items:flex-end}
 .owCompLine textarea{flex:1 1 auto;min-width:0;border:1px solid var(--line);border-radius:11px;padding:8px 11px;font:13px var(--sans);resize:none;max-height:120px;background:var(--card);color:var(--ink)}
+.owCompLine textarea:focus{outline:none;border-color:var(--ink45);box-shadow:0 0 0 3px rgba(34,31,27,.08)}
 .owIco{width:34px;height:34px;flex:0 0 auto;border:1px solid var(--line);border-radius:10px;background:var(--card);display:grid;place-items:center;cursor:pointer;color:var(--ink70)}
 .owIco:hover{background:var(--paper2)}
 .owIco.send{background:var(--velvet);border-color:var(--velvet);color:#f2ead9}
@@ -473,7 +505,8 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 .owTray .chip{display:flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:8px;padding:2px 6px;font:11px var(--mono);background:var(--paper2)}
 .owTray .chip img{width:26px;height:26px;object-fit:cover;border-radius:4px}
 .owTray .chip button{border:0;background:transparent;cursor:pointer;color:var(--ink45);font-size:13px;line-height:1}
-.owHint{font:10.5px var(--sans);color:var(--ink45)}
+.owHint{display:flex;align-items:center;gap:8px;font:10.5px var(--sans);color:var(--ink45)}
+.owHintT{flex:1 1 auto;min-width:0;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .owHint kbd{font:10px var(--mono);border:1px solid var(--line);border-radius:4px;padding:0 4px;background:var(--paper2)}
 .owFoot{display:flex;align-items:center;gap:10px;padding:10px 16px;border-top:1px solid var(--line);flex:0 0 auto;background:var(--card)}
 .owFoot .spacer{flex:1 1 auto}
@@ -497,6 +530,7 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 .owTabs button:focus-visible{outline:2px solid var(--slate);outline-offset:-3px;border-radius:8px}
 .owDot{width:7px;height:7px;border-radius:50%;background:var(--slate);align-self:center;box-shadow:0 0 0 3px var(--slateSoft)}
 .owDot.bad{background:var(--clay);box-shadow:0 0 0 3px var(--claySoft)}
+.owTabs button[data-ow-tab=team] .owDot{background:var(--velvet);box-shadow:0 0 0 3px var(--paper2)}
 .owPane{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
 .owChat [hidden],.cm [hidden],.cmLineBox [hidden]{display:none!important}
 .owMsg .who{display:flex;align-items:center;gap:6px}
@@ -694,6 +728,11 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 .mailTag.wait{background:#fbf1dc;border-color:#e2c27a;color:#6f5019}
 .mailTag[data-mail-open]{cursor:pointer}.mailTag[data-mail-open]:hover{filter:brightness(.96)}.mailTag[data-mail-open]:focus-visible{outline:2px solid var(--slate);outline-offset:2px}
 .mailSlot{align-self:center}
+.teamTag{display:inline-flex;align-items:center;gap:3px;border:1px solid var(--velvetLine);background:var(--velvet);color:#f2ead9;border-radius:999px;padding:1px 8px;font:700 10.5px var(--mono);white-space:nowrap;cursor:pointer}
+.teamTag:hover{filter:brightness(1.15)}.teamTag:focus-visible{outline:2px solid var(--velvet);outline-offset:2px}
+.teamSlot{align-self:center}
+.pvTm{display:block;margin-bottom:3px}.pvTm b{font-weight:600;margin-right:3px}
+.pvAll{border:0;background:none;padding:0;font:12px var(--sans);color:var(--ink70);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
 /* a conversation whose order is no longer in the pull opens in a window of its own */
 dialog.cmDlg{width:min(660px,96vw);height:min(86vh,820px)}
 dialog.cmDlg .owBox{height:100%}
@@ -4556,8 +4595,8 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260925-card-layout"></script>
-<script src="charm-nest-mail.js?v=20260925-own-questions"></script>
+<script src="charm-nest-bridge.js?v=20260925-team-direct"></script>
+<script src="charm-nest-mail.js?v=20260925-team-direct"></script>
 <script src="charm-nest-rose-ui.js?v=20260925-fill-holes"></script>
 <script src="charm-nest-export-ui.js"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
@@ -4585,11 +4624,11 @@ boot();
       </div>
       <aside class="owChat">
         <div class="owTabs" role="tablist" aria-label="Conversations about this order">
-          <button type="button" role="tab" id="owTabTeam" data-ow-tab="team" aria-selected="true" aria-controls="owPaneTeam"><b>Team</b><span>internal</span></button>
+          <button type="button" role="tab" id="owTabTeam" data-ow-tab="team" aria-selected="true" aria-controls="owPaneTeam"><b>Team</b><span>internal</span><i class="owDot" hidden></i></button>
           <button type="button" role="tab" id="owTabCust" data-ow-tab="customer" aria-selected="false" aria-controls="owPaneCust" tabindex="-1"><b>Customer</b><span>on Etsy</span><i class="owDot" hidden></i></button>
         </div>
         <div class="owPane" id="owPaneTeam" role="tabpanel" aria-labelledby="owTabTeam">
-        <div class="owChatHead"><span class="owLink ok" id="owLink" title="messages and notes are saving through the Design Station">● live</span><span class="lab">Team messages</span><span class="spacer" style="flex:1 1 auto"></span><span class="mono" style="font-size:11px;color:var(--ink45)" id="owWho">—</span><button class="btn ghost xs" id="owWhoBtn">Change name</button></div>
+        <div class="owChatHead"><span class="owMark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="owTitle"><b>Team messages</b><span>Every station on this order · never the customer</span></span><button type="button" class="owName" id="owWhoBtn" title="The name your messages carry · press to change it"><span id="owWho">—</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button></div>
         <div class="owThread" id="owThread"></div>
         <div class="owComp">
           <div class="owTray" id="owTray"></div>
@@ -4598,7 +4637,7 @@ boot();
             <textarea id="owInput" rows="1" placeholder="Message every station working this order…"></textarea>
             <button type="button" class="owIco send" id="owSend" title="Send (Enter)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg></button>
           </div>
-          <div class="owHint"><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · paste or drop images · the customer never sees this</div>
+          <div class="owHint"><span class="owLink ok" id="owLink" title="Messages and the staff note save straight to the order's record"><i></i>Live</span><span class="owHintT"><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · paste or drop images</span></div>
         </div>
         <input type="file" id="owFile" accept="image/*" multiple hidden>
         </div>

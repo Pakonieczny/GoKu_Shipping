@@ -521,6 +521,8 @@
     }, 300);
   }
   const draftOf = key => (drafts[key] && drafts[key].t) || "";
+  // a reload or a closed tab inside the short wait still keeps the last words typed
+  window.addEventListener("pagehide", () => { if (draftTimer) { clearTimeout(draftTimer); draftTimer = 0; put(LS.drafts, drafts); } });
 
   /* A message is written to this browser's outbox before it is sent, and leaves it when the server has it. A reload, a
      closed window or a dropped connection in between only delays it: the server takes each message once, by its id. */

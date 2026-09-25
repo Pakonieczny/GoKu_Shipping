@@ -218,14 +218,19 @@ exports.handler = async (event) => {
             senderRole : "staff",
             timestamp  : admin.firestore.FieldValue.serverTimestamp()
           };
+        // an image the sender uploaded first (the stations write the same field themselves)
+        if (typeof body.imageUrl === "string" && /^https:\/\/[^\s"<>]{8,1900}$/.test(body.imageUrl)) message.imageUrl = body.imageUrl;
         // One internal completion message per order and set, even after a lost
         // response, a station reload or simultaneous retries from two stations.
-        const messageId = designSetId === undefined ? null : "designed-set-" + encodeURIComponent(designSetId);
+        // A message sent from a browser's outbox carries its own id, so a send retried after a reload, a lost answer or a
+        // dropped connection is written once.
+        const clientId = typeof body.clientMessageId === "string" && /^[\w-]{8,80}$/.test(body.clientMessageId) ? body.clientMessageId : null;
+        const messageId = designSetId !== undefined ? "designed-set-" + encodeURIComponent(designSetId) : clientId ? "c-" + clientId : null;
         if (messageId) {
           const ref = messages.doc(messageId);
           await db.runTransaction(async tx => {
             const prior = await tx.get(ref);
-            if (!prior.exists) tx.set(ref, { ...message, setId: designSetId });
+            if (!prior.exists) tx.set(ref, designSetId !== undefined ? { ...message, setId: designSetId } : message);
           });
         } else await messages.add(message);
 
@@ -291,6 +296,33 @@ exports.handler = async (event) => {
           .split(",")
           .map(x => x.trim())
           .filter(Boolean);
+
+      /* ?messagesFor=rid1,rid2[&limit=80][&since=ms] → the internal thread of each order, oldest first. The real thread is
+         always read (only read), so a sandbox run shows what the stations wrote on the real order; the sandbox's own
+         messages come from its copy and carry sandbox: true. */
+      if (event.queryStringParameters?.messagesFor) {
+        const q = event.queryStringParameters;
+        const ids = [...new Set(parseIds(q.messagesFor))].filter(id => /^[\w-]{1,40}$/.test(id)).slice(0, 40);
+        const limit = Math.max(1, Math.min(200, Number(q.limit) || 80));
+        const since = Number(q.since) || 0;
+        const ms = t => (t && typeof t.toMillis === "function" ? t.toMillis() : t && t.seconds ? t.seconds * 1000 : null);
+        const read = async (coll, id, sandbox) => {
+          let ref = db.collection(coll).doc(id).collection("messages");
+          if (since) ref = ref.where("timestamp", ">", admin.firestore.Timestamp.fromMillis(since));
+          const snap = await ref.orderBy("timestamp", "desc").limit(limit).get();
+          return snap.docs.map(d => { const m = d.data() || {}; return Object.assign({ id: d.id, senderName: String(m.senderName || "Staff"), senderRole: String(m.senderRole || "staff"), text: String(m.text || ""), imageUrl: m.imageUrl || null, at: ms(m.timestamp) }, sandbox ? { sandbox: true } : {}); });
+        };
+        const byOrder = {}; let next = 0;
+        const worker = async () => {
+          while (next < ids.length) {
+            const id = ids[next++];
+            const parts = await Promise.all([read("Brites_Orders", id, false)].concat(PREFIX ? [read(PREFIX + "Brites_Orders", id, true)] : []));
+            byOrder[id] = [].concat(...parts).sort((a, b) => (a.at || 0) - (b.at || 0)).slice(-limit);
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(5, ids.length) }, worker));
+        return { statusCode: 200, headers: CORS, body: JSON.stringify({ success: true, byOrder, now: Date.now() }) };
+      }
 
       /* ?dcFor=rid1,rid2 → return subset that exist in Design_Completed Orders */
       if (event.queryStringParameters?.dcFor) {
