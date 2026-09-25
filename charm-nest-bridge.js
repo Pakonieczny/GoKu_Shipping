@@ -1509,7 +1509,7 @@ const Master = window.Master = (() => {
     const v = document.getElementById("masterView"); if (!v || v.classList.contains("hidden")) return;
     if (!v.dataset.built) {
       v.dataset.built = "1";
-      v.innerHTML = `<div class="masterHead"><input type="file" id="mFile" accept=".ai,.pdf" class="hidden"><button class="btn gold sm" id="mAdd" title="index another master .ai into the charm library">＋ Add a master file</button><input type="search" id="mSearch" placeholder="Search SKUs" style="border:1px solid var(--line);border-radius:9px;padding:7px 10px"><label style="display:flex;gap:5px;align-items:center;font-size:11px" title="Off: a SKU the library already holds is left as it is, and only new charms are built. On: every charm on the sheet is rebuilt and rewritten."><input type="checkbox" id="mAllSkus"> re-index SKUs already held</label><span class="pill neutral" id="mCount"></span></div>
+      v.innerHTML = `<div class="masterHead"><input type="file" id="mFile" accept=".ai,.pdf" class="hidden"><button class="btn gold sm" id="mAdd" title="index another master .ai into the charm library">＋ Add a master file</button><input type="search" id="mSearch" placeholder="Search SKUs" style="border:1px solid var(--line);border-radius:9px;padding:5px 10px;font-size:12px"><label style="display:flex;gap:5px;align-items:center;font-size:11px" title="Off: a SKU the library already holds is left as it is, and only new charms are built. On: every charm on the sheet is rebuilt and rewritten."><input type="checkbox" id="mAllSkus"> re-index SKUs already held</label><span class="pill neutral" id="mCount"></span></div>
         <details class="noteBox"><summary>How a master file is read</summary>Drop a master file here, or press Add. Each charm in it has its SKU as text directly under it (within ${S.settings.labelGapMm} mm, centred under the outline). A SKU is one design whatever colour it is ordered in; the material comes from the order. Labels are never part of the charm. Unlabelled charms, orphan labels and duplicates are listed in red; a SKU present in two masters is blocked until fixed.</details>
         <div id="mJobs" style="display:grid;gap:10px"></div><div id="mFiles" style="display:grid;gap:10px"></div><div class="section">Indexed SKUs</div><div class="skuGrid" id="mGrid"></div>`;
       { const cb = v.querySelector("#mAllSkus"); cb.checked = reindexAll; cb.onchange = () => { reindexAll = cb.checked; toast(reindexAll ? "every charm on the next sheet will be rebuilt" : "charms already in the library will be skipped", "ok"); }; }
@@ -2842,8 +2842,15 @@ const Engrave = window.Engrave = (() => {
   /* ── 7.6 · back files, one per piece, only after approval ── */
   function renderBack(job, px, { grid = false, hatch = true, editable = false } = {}) {
     const view = job.view, mask = job.mask, fit = job.fit; const cv = document.createElement("canvas"); cv._editable = editable;
-    const bb = view.members.reduce((a, s) => [Math.min(a[0], s.bbox[0]), Math.min(a[1], s.bbox[1]), Math.max(a[2], s.bbox[2]), Math.max(a[3], s.bbox[3])], [Infinity, Infinity, -Infinity, -Infinity]);
-    const pad = 3 * PT; const w = bb[2] - bb[0] + 2 * pad, h = bb[3] - bb[1] + 2 * pad; const k = px / Math.max(w, h);
+    const handles = view.members.reduce((a, s) => [Math.min(a[0], s.bbox[0]), Math.min(a[1], s.bbox[1]), Math.max(a[2], s.bbox[2]), Math.max(a[3], s.bbox[3])], [Infinity, Infinity, -Infinity, -Infinity]);
+    /* px is the long side, framed as before on the members' bounds with 3 mm around them (the pictures written with a
+       sheet keep their framing), or the editor's [width, height] box. That one frames the outline as drawn, and the
+       text's box and turning handle so they can be reached, with 1 mm around them: the 3 mm of empty grid on every side
+       took a quarter of the preview (Paul, 25 Sep: "almost 0 margins"). */
+    const box = Array.isArray(px);
+    let bb = handles;
+    if (box) { bb = drawnBounds(view.members) || handles; const r = editable && boxReach(fit); if (r) bb = [Math.min(bb[0], r[0]), Math.min(bb[1], r[1]), Math.max(bb[2], r[2]), Math.max(bb[3], r[3])]; }
+    const pad = (box ? 1 : 3) * PT; const w = bb[2] - bb[0] + 2 * pad, h = bb[3] - bb[1] + 2 * pad; const k = box ? Math.min(px[0] / w, px[1] / h) : px / Math.max(w, h);
     cv.width = Math.round(w * k); cv.height = Math.round(h * k); cv._sizePt = {w,h}; const ctx = cv.getContext("2d");
     ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
     const tx = (x, y) => [(x - bb[0] + pad) * k, (bb[3] + pad - y) * k];
@@ -2907,6 +2914,20 @@ const Engrave = window.Engrave = (() => {
     cv._map = { bb, pad, k, tx, base, outline, inv: (px, py) => [bb[0] - pad + px / k, bb[3] + pad - py / k] };
     cv._paint();
     return cv;
+  }
+  function drawnBounds(members) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const m of members) for (const poly of G.flatten(m, 16)) for (const p of poly) { if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0]; if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1]; }
+    return x1 > x0 && y1 > y0 ? [x0, y0, x1, y1] : null;
+  }
+  /** Where the editor draws the text's box and its turning handle (cv._paint), in points. */
+  function boxReach(fit) {
+    const box = fit && fit.glyphs && fit.glyphs.length && fit.centre ? textBox(fit.glyphs, fit.centre, fit.angle || 0) : null; if (!box) return null;
+    const m = 3 * PT, a = (box.angle || 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+    const world = ([lx, ly]) => [box.cx + lx * ca - ly * sa, box.cy + lx * sa + ly * ca];
+    const pts = [[box.lx0 - m, box.ly0 - m], [box.lx1 + m, box.ly0 - m], [box.lx1 + m, box.ly1 + m], [box.lx0 - m, box.ly1 + m]].map(world);
+    const top = world([(box.lx0 + box.lx1) / 2, box.ly1 + m]); pts.push([top[0] - sa * 2 * PT, top[1] + ca * 2 * PT]);
+    return [Math.min(...pts.map(p => p[0])), Math.min(...pts.map(p => p[1])), Math.max(...pts.map(p => p[0])), Math.max(...pts.map(p => p[1]))];
   }
   function renderFront(charm, px) {
     if (!charm?.outline || !Array.isArray(charm.bbox) || charm.bbox.length !== 4 || !charm.bbox.every(Number.isFinite))
@@ -3470,10 +3491,9 @@ const Engrave = window.Engrave = (() => {
     const fromOrder = `${row2("Personalization", (sp.personalization || []).join(" / "))}${row2("Buyer's note", sp.buyerMessage)}${row2("Staff note", sp.staffNote)}${teamRows}${job.decision ? `<dt>Decided by</dt><dd>${esc(job.decision.by)}</dd>` : ""}`;
     card.innerHTML = `<div class="rh"><div class="reviewProgress"><span class="kind" title="this placement's place in the queue · how many are decided">${decided + 1} of ${decided + remaining} · ${decided} done</span><span class="nav"><button class="btn ghost xs" data-a="prev" title="the previous placement in the queue">‹ Back</button><button class="btn ghost xs" data-a="next" title="the next placement in the queue">Next ›</button></span></div><div class="reviewIdentity"><span class="ttl">${esc(r.order.receiptId)}</span><span class="sub">${esc(sp.designSku)}${sp.form ? " · " + esc(sp.form) : ""}${sp.size ? " · " + esc(sp.size) : ""}${job.copies.length > 1 ? ` · ${job.copies.length} copies` : ""}</span>${conf}${f && f.small ? `<span class="small" title="the cap height is under the engraver minimum in Settings">SMALL · cap ${f.capMm.toFixed(2)} mm</span>` : ""}${f && f.thin ? `<span class="small" title="the thinnest stroke is under the engraver limit">THIN STROKES</span>` : ""}</div><button class="x" data-a="close" title="back to the list of placements" aria-label="close">×</button></div>
       <div class="placeView">
-        <div class="pvMain"><h4 class="pvH">Back · engraving</h4><div class="backHost"></div>
-          <div class="ctl">${f && !wordsJob ? `<button class="btn sage sm" data-a="approve" title="this placement is right — write the back file">${job.editingBack ? "Save changes" : "Approve"} <b class="k">A</b></button><button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${f.capMm.toFixed(2)} mm</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span>Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="quarterTurns" role="group" aria-label="Rotate text"><button class="btn ghost sm" data-a="turnLeft" title="Rotate text 90° counterclockwise">↶ +90°</button><button class="btn ghost sm" data-a="turnRight" title="Rotate text 90° clockwise">↷ −90°</button></span><label class="angle" title="the angle of the text, in degrees — type one, or drag the handle above the text"><input type="number" data-a="angle" min="-359" max="359" step="1" value="${Math.round(f.angle || 0)}">°</label>` : ""}
-            <span class="rest"><button class="btn ghost sm" data-a="skip" title="cut this charm plain — nothing engraved on its back">No engraving <b class="k">S</b></button></span></div>
-</div>
+        <div class="pvMain"><h4 class="pvH">Back · engraving</h4><div class="backHost"></div></div>
+        <div class="ctl">${f && !wordsJob ? `<button class="btn sage sm" data-a="approve" title="this placement is right — write the back file">${job.editingBack ? "Save changes" : "Approve"} <b class="k">A</b></button><button class="btn ghost sm" data-a="centre" title="put the text in the middle of the metal it may use">Centre</button><label class="lineControl">Lines <select data-a="linecount" aria-label="Engraving line count">${["auto","preserve",1,2,3,4,5,6].map(n=>`<option value="${n}" ${String(job.lineMode || "auto")===String(n)?"selected":""}>${n==="auto"?"Auto":n==="preserve"?"As typed":n}</option>`).join("")}</select></label><span class="mono dim" data-cap title="cap height of the lettering">${f.capMm.toFixed(2)} mm</span><label class="spacingControl" ${(job.lines || []).length > 1 ? "" : "hidden"} title="Scroll here to change line spacing; Shift scroll for fine adjustment. 100% is the original gap."><span class="spacingIcon" aria-hidden="true"><i></i><i></i><i></i></span><span class="spacingWord">Line spacing</span><input type="range" data-a="spacing" aria-label="Line spacing" min="0" max="300" step="1" value="${Math.round(fitOpts(job).lineGap/.18*100)}"><output data-spacing>${Math.round(fitOpts(job).lineGap/.18*100)}%</output></label><span class="quarterTurns" role="group" aria-label="Rotate text"><button class="btn ghost sm" data-a="turnLeft" title="Rotate text 90° counterclockwise" aria-label="Rotate text 90° counterclockwise">↶<span class="turnDeg"> +90°</span></button><button class="btn ghost sm" data-a="turnRight" title="Rotate text 90° clockwise" aria-label="Rotate text 90° clockwise">↷<span class="turnDeg"> −90°</span></button></span><label class="angle" title="the angle of the text, in degrees — type one, or drag the handle above the text"><input type="number" data-a="angle" min="-359" max="359" step="1" value="${Math.round(f.angle || 0)}">°</label>` : ""}
+          <span class="rest"><button class="btn ghost sm" data-a="skip" title="cut this charm plain — nothing engraved on its back">No engraving <b class="k">S</b></button></span></div>
         <div class="pvSide">
           <section class="pvSec pvRef"><h4 class="pvH">Front · reference</h4><div class="frontHost"></div></section>
           <div class="pvWords"><span class="lbl">Words on the back</span><textarea data-f="words" rows="${Math.max(1, Math.min(4, (job.lines || []).length || 1))}" title="Line breaks are preserved. The preview updates after typing.">${esc((job.lineInput || job.lines || []).join("\n"))}</textarea>
@@ -3541,7 +3561,7 @@ const Engrave = window.Engrave = (() => {
     // the back preview is drawn to the box it is actually given, and redrawn when that box changes: no fixed number,
     // nothing cut off on a short laptop screen, nothing left blurry after the window is resized
     const backHost = card.querySelector(".backHost");
-    let mounted = 0, raf = 0;
+    let mounted = [0, 0], raf = 0;
     if (wordsJob) { /* no back to draw */ }
     const wire = bc => {
       let drag = null, flowFrame = 0;
@@ -3609,12 +3629,13 @@ const Engrave = window.Engrave = (() => {
       try {
       if (wordsJob || !job.view || !backHost.isConnected) return;
       const r = backHost.getBoundingClientRect();
-      // side by side, the box says how big; stacked on a narrow screen the box has no height of its own, so half
-      // the window is the ceiling and the charm keeps its shape either way
+      // side by side, the box says how big; stacked on a narrow screen the box has no height of its own, so a little
+      // over half the window is the ceiling and the charm keeps its shape either way. The charm's own shape is fitted into the
+      // box, so a tall charm takes the whole height and a wide one the whole width (it used to be the square that fits)
       const stacked = getComputedStyle(backHost).flexGrow === "0";
-      const room = stacked ? Math.min(r.width || 320, (window.innerHeight || 700) * 0.46) : Math.min(r.width || 320, r.height || 320);
-      const px = Math.round(Math.min(1400, Math.max(200, room - 4)));
-      if (!px || Math.abs(px - mounted) < 12) return;
+      const side = v => Math.round(Math.min(1400, Math.max(200, v - 4)));
+      const px = [side(r.width || 320), side(stacked ? (window.innerHeight || 700) * 0.55 : r.height || 320)];
+      if (Math.abs(px[0] - mounted[0]) < 12 && Math.abs(px[1] - mounted[1]) < 12) return;
       mounted = px; backHost.textContent = "";
       const bc = renderBack(job, px, { grid: true, editable: true }); bc.title = "drag the words to move them · drag a corner to resize · drag the handle above to turn · arrow keys nudge 0.25 mm, with shift they turn 1° · cut-outs and holes stay clear"; backHost.appendChild(bc); wire(bc);
       } catch (error) {

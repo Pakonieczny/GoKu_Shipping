@@ -1585,6 +1585,87 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 }
 @media(prefers-reduced-motion:reduce){.comparePair .placementThumb img,.comparePair .placementThumb canvas{transition:none}}
 
+/* ── Room for the work (Paul, 25 Sep: "maximize the work area"). The menus are secondary, so every tab gives its height
+   to what the tab is for: the list, the sheets, the charm being engraved. The bars are thinner with their controls about
+   a tenth smaller, the air between them is about half, and the engraving card's controls sit on one row under the back
+   and the buyer's messages, with the back preview taking the whole column above them. ── */
+.main>.stage{padding:6px 10px 8px}
+.masterHead{top:-6px;margin-top:-6px;padding:6px 0}
+.masterHead .btn.sm{padding:4px 9px;font-size:11px}
+#masterView{gap:8px}
+.ordBar,.libBar{padding-bottom:5px}
+.ordCompact{padding-top:0;gap:9px}
+.ordBar .btn.sm{padding:4px 9px;font-size:11px}
+.egTab{padding:3px 11px;font-size:11px;gap:6px}
+.egTab b{font-size:10px;padding:1px 6px}
+.ordBar .egTab{padding:3px 9px}
+.ordSearch{padding:4px 11px;font-size:11.5px}
+.ordBar select,.ordBar input[type=date],.ordBar input[type=number]{padding:4px 8px;font-size:11.5px}
+.ordCompact .ordMetal{padding:4px 7px}
+.viewSeg{padding:1px}
+.viewSeg button{padding:3px 10px;font-size:10.5px}
+.charmTotal,.charmTotal b{font-size:11px}
+.egPane,.ordBody{margin-top:5px}
+.ordDay{padding:5px 12px;margin:10px 0 3px;font-size:13px}
+.ordDay small{font-size:10.5px}
+#libView{gap:6px}
+.libBar input[type=search]{padding:5px 10px;font-size:12px}
+.libBar .fchip{padding:4px 10px;font-size:10.5px}
+.libBar .seg button{padding:4px 11px;font-size:11px}
+.laserSection{margin-bottom:12px;padding-top:8px}
+.laserSection h2{font-size:14.5px;margin-bottom:8px}
+.laserAreaItems{gap:12px}
+/* the sheet cards: the same sheet with less around it */
+.sheets{gap:10px}
+.shHead{padding-top:6px;padding-bottom:3px}
+.shControls{padding-bottom:5px;min-height:28px}
+.shTabs button{padding:3px 9px;font-size:10.5px}
+.shTabs select{padding:2px 7px;font-size:10.5px}
+.sheetOptions>summary{padding:3px 8px}
+.shStage{padding-top:4px}
+.shSat{margin-top:5px;padding-block:5px}
+.shActions{padding-top:6px;padding-bottom:8px;gap:6px}
+.shActions .btn.sm{padding:4px 9px;font-size:11px}
+/* the engraving card */
+.rvItem.full{padding:6px 10px 7px;gap:6px}
+.rvItem.full .rh{padding-bottom:6px}
+.rvItem[data-kind=placement] .rh{--reviewText:13.5px;gap:10px}
+.rvItem[data-kind=placement] .rh .kind{padding:3px 7px}
+.rvItem[data-kind=placement] .rh .nav .btn{padding:4px 10px}
+.placeView{grid-template-columns:clamp(180px,19%,270px) minmax(0,1fr) clamp(260px,28%,400px);grid-template-areas:"side main mail" "side ctl ctl";grid-template-rows:minmax(0,1fr) auto;gap:4px 12px}
+.placeView>.ctl{grid-area:ctl}
+.pvH{margin-bottom:5px}
+.pvMain{gap:5px}
+.pvSide{gap:12px}
+.rvItem.full .backHost{min-height:160px}
+/* one row: the controls get smaller before they would wrap (the row is its own container, measured below) */
+.placeView .ctl{flex-wrap:nowrap;gap:5px;padding-top:5px;container:egctl/inline-size}
+.placeView .ctl>*{flex:0 0 auto}
+.placeView .ctl .btn.sm{padding:4px 9px;font-size:11px}
+.placeView .ctl .btn .k{font-size:9px;padding:1px 3px;margin-left:4px}
+.placeView .ctl .lineControl{gap:4px;font-size:11px;flex:0 1 auto;min-width:0}
+.placeView .ctl .lineControl select{padding:2px 4px;font-size:11px;min-width:0}
+.placeView .ctl .dim{font-size:11px;padding:0 2px;white-space:nowrap}
+.placeView .ctl .spacingControl{padding:2px 7px;gap:5px;font-size:11px;flex:0 1 auto;flex-wrap:nowrap;min-width:0}
+.placeView .ctl .spacingControl input{width:72px;flex:0 1 72px;min-width:34px}
+.placeView .ctl .spacingControl output{font-size:11px}
+.placeView .ctl .spacingIcon{min-height:18px}
+.placeView .quarterTurns{padding-left:7px;margin-left:1px;gap:2px}
+.placeView .ctl .quarterTurns .btn.sm{padding:4px 7px}
+.placeView .ctl .angle input{width:46px;padding:2px 3px;font-size:11px}
+.placeView .ctl .rest{flex-wrap:nowrap}
+@container egctl (max-width:640px){.placeView .ctl .btn .k{display:none}}
+@container egctl (max-width:600px){.placeView .ctl .turnDeg{display:none}}
+@container egctl (max-width:860px){.placeView .ctl:has(.spacingControl:not([hidden])) .btn .k{display:none}}
+@container egctl (max-width:820px){.placeView .ctl .spacingWord{display:none}}
+@container egctl (max-width:760px){.placeView .ctl:has(.spacingControl:not([hidden])) .turnDeg{display:none}}
+/* a narrower card: the front and the back side by side, the controls under both, the conversation below (the card scrolls) */
+@container (max-width:900px){.placeView{grid-template-columns:clamp(200px,28%,280px) minmax(0,1fr);grid-template-areas:"side main" "ctl ctl" "mail mail";grid-template-rows:clamp(300px,calc(100vh - 240px),660px) auto auto}}
+/* stacked on a narrow screen, the back is sized from the window (see mountBack): the rule for the full card used to keep
+   its box at the minimum height, so the preview stayed thumbnail-sized there */
+@container (max-width:700px){.placeView .ctl{flex-wrap:wrap}.rvItem.full .backHost{flex:0 0 auto;min-height:0;height:auto}}
+@media (max-width:920px){.placeView .ctl{flex-wrap:wrap}.rvItem.full .backHost{flex:0 0 auto;min-height:0;height:auto}}
+
 .roseHistory{margin:0 14px 10px;font-size:11px;color:var(--ink70)}
 .roseStockHead{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px}
 .roseStockHead b{font-family:var(--mono);font-weight:500}.roseLegend{display:flex;gap:5px;align-items:center;font-size:10px}
@@ -4618,7 +4699,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260925-audit"></script>
+<script src="charm-nest-bridge.js?v=20260925-room"></script>
 <script src="charm-nest-mail.js?v=20260925-team-direct"></script>
 <script src="charm-nest-rose-ui.js?v=20260925-audit"></script>
 <script src="charm-nest-export-ui.js"></script>
