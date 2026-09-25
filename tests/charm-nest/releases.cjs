@@ -129,7 +129,7 @@ vm.runInContext(part('Gate','/* ═══ 21'),c);
  const rows=[{state:'committed',poolIds:['p1'],order:{receiptId:'1'}},{state:'written',poolIds:['p2'],order:{receiptId:'2'}},{state:'pooled',poolIds:['p3'],order:{receiptId:'3'}}];
  const Orders={rows:()=>rows,unclaim:async ids=>{unclaimed.push(...ids);}},Sets={ofRun:()=>[{setId:'s1',committedAt:1}]},S={cloud:{ok:true}};
  const api=async(n,b)=>{calls.push(b);return {};},save=async()=>{};
- `+code.slice(code.indexOf('  function releaseRun(r)'),code.indexOf('  function stop(why, fix, at)')),abandon);
+ `+code.slice(code.indexOf('  function releaseRun(r)'),code.indexOf('  function stop(why, fix, at')),abandon);
  vm.runInContext(`releaseRun({runId:'r'});assert.deepEqual(calls.map(c=>c.poolIds),[['p3']],'only unfinished pieces are abandoned');assert.deepEqual(unclaimed,['3']);`,abandon);
  // undoing a set reopens that set's own orders at the station and in the sorter, and nobody else's
  const undo=vm.createContext({assert,console});

@@ -18,7 +18,11 @@ vm.createContext(ctx);vm.runInContext(source.slice(start,end),ctx);const Gate=ct
  const originalApi=ctx.api;let detaches=0;ctx.api=async(name,body)=>{if(body.sheet?.draft){detaches++;throw Error('detach offline');}return originalApi(name,body);};
  await assert.rejects(Gate.changeMembership('gold14k',false),/detach offline/);assert.equal(page.setId,'set');assert.equal(run.solidIncluded.gold14k,false);assert.equal(detaches,1);
  ctx.api=originalApi;await Gate.changeMembership('gold14k',false);assert.equal(page.setId,null);await Gate.changeMembership('gold14k',true);
- let unlock;const commit=ops.run({key:'commit:r',resources:['production:r']},()=>new Promise(r=>unlock=r));await Promise.resolve();await Promise.resolve();await assert.rejects(Gate.changeMembership('gold14k',false),/committing/);unlock();await commit;
+ let unlock;const commit=ops.run({key:'commit:r',resources:['production:r']},()=>new Promise(r=>unlock=r));await Promise.resolve();await Promise.resolve();await assert.rejects(Gate.changeMembership('gold14k',false),/being committed/);unlock();await commit;
+ // Auto commits one set after another: a committed earlier set of the run no longer locks the open set's sheets (audit, 25 Sep)
+ await new Promise(r=>setTimeout(r,0));sets.unshift({setId:'earlier',runId:'r',seq:0,committedAt:Date.now(),sheetIds:['other'],orders:{}});
+ await Gate.changeMembership('gold14k',false);assert.equal(page.setId,null,'a sheet outside the committed set can leave the open set');
+ await Gate.changeMembership('gold14k',true);assert.equal(page.setId,'set','and join it again');sets.shift();
  // Historical/cached preview views render even when their live charm moved.
  const a=source.indexOf('  function renderBack('),b=source.indexOf('  function renderFront(',a);const noop=()=>{};const canvas=()=>({getContext:()=>new Proxy({},{get:(t,k)=>t[k]||noop}),width:0,height:0});
  const cut={},job={view:{members:[{bbox:[0,0,10,10],original:cut}],cutMembers:[cut]},fit:null};

@@ -35,7 +35,7 @@ const numbers=sheet=>{const c=canvas();w.RoseStock.paint(c.ctx,sheet,2,'lines');
 (async()=>{
   // Before its contour is prepared, the sheet offers one plain action.
   w.RoseStock.render(sh);
-  assert.deepEqual([...sh.el.querySelectorAll('.roseActions button')].map(b=>b.textContent),['Cut Sheet']);
+  assert.deepEqual([...sh.el.querySelectorAll('.roseCut button')].map(b=>b.textContent),['Cut Sheet']);
   await w.RoseStock.plan(sh);
   assert.deepEqual(entries().map(e=>[e.time,e.line]),[[new Date(T1).toISOString(),true]]);
   assert.match(entries()[0].text,/Green line 1 · 1 charm/);
@@ -55,7 +55,7 @@ const numbers=sheet=>{const c=canvas();w.RoseStock.paint(c.ctx,sheet,2,'lines');
   assert.match(entries()[1].text,/Green line 2 · 1 charm/);
   assert(Math.abs(entries()[1].left-over(topOf(plan.lines.slice(...plan.stages[1].lines))))<.01,'mark 2 sits over green line 2');
   assert(entries()[1].left>entries()[0].left+10,'line 2 is marked well right of line 1, where it runs');
-  assert.deepEqual([...sh.el.querySelectorAll('.roseHistory button')].map(b=>b.textContent),['Cut Sheet'],'one button only: no Update contour, Record completed cut or history button');
+  assert.deepEqual([...sh.el.querySelectorAll('.roseCut button, .roseHistory button')].map(b=>b.textContent),['Cut Sheet'],'one button only: no Update contour, Record completed cut or history button');
   assert(!/contour allowance|remaining after this cut/.test(sh.el.querySelector('.roseHistory').textContent),'no allowance or remaining-area line');
   assert.deepEqual(numbers(sh),['1','2']);
   // After the physical cut, the same dates stay in the permanent history, followed by the cut.
@@ -81,7 +81,7 @@ const numbers=sheet=>{const c=canvas();w.RoseStock.paint(c.ctx,sheet,2,'lines');
     w.RoseStock.render(d);return d;};
   const dense=layout(9),open=layout(8);
   assert(!dense.el.querySelector('[data-rose="cut"]'),'a full sheet offers no Cut Sheet');
-  assert(!dense.el.querySelector('.roseNote')&&!dense.el.querySelector('.roseActions'),'a full sheet shows no button and no note');
+  assert(!dense.el.querySelector('.roseNote')&&!dense.el.querySelector('.roseCut button')&&dense.el.querySelector('.roseCut').hidden,'a full sheet shows no button and no note');
   assert.equal(open.el.querySelector('[data-rose="cut"]').textContent,'Cut Sheet','a sheet with room left can be cut');
   // One press draws the dated green line and records the cut: no second button, no confirmation.
   const ops=[],api=w.CN.api;w.CN.api=async(name,b)=>{if(b.sheetId==='rose-press')ops.push(b.op);return api(name,b);};plan=null;at.push(Date.UTC(2026,8,23,18,0));
@@ -89,7 +89,7 @@ const numbers=sheet=>{const c=canvas();w.RoseStock.paint(c.ctx,sheet,2,'lines');
   fresh.el.querySelector('[data-rose="cut"]').click();
   for(let i=0;i<50&&!fresh.roseCutAt;i++)await new Promise(r=>setTimeout(r,5));
   assert.deepEqual(ops,['rosePlan','roseRecordCut'],'Cut Sheet plans the line, then records the cut');
-  assert(fresh.roseCutAt&&!fresh.el.querySelector('.roseHistory button'),'after the cut the sheet offers no buttons');w.CN.api=api;
+  assert(fresh.roseCutAt&&!fresh.el.querySelector('.roseHistory button, .roseCut button'),'after the cut the sheet offers no buttons');w.CN.api=api;
   console.log('Rose line timeline OK: dated marks on the ruler over each green line, Cut Sheet only while there is room, numbered preview lines, protected nesting, permanent cut history and undated earlier lines, including contours saved before dates were kept');
   dom.window.close();
 })().catch(e=>{console.error(e);dom.window.close();process.exit(1)});

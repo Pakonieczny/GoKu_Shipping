@@ -250,11 +250,16 @@ const ListMedia = (() => {
     let entry=Master.entryFor(sku);
     if(!entry){if(!catalog.has(sku))catalog.set(sku,Master.fetchEntry(sku).finally(()=>catalog.delete(sku)));entry=await catalog.get(sku);}
     if(!entry)return null;
-    return Pool.masterPreview(entry,row.spec?.size);
+    return Pool.masterPreview(entry,row.spec?.size,true);
+  }
+  /** A line's vector design into one box: a list row's, or the order window's beside its listing photo. */
+  function vectorInto(host,row) {
+    const sku=row?.spec?.designSku || row?.line?.sku || '';
+    watch(host,()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline)]),false,JSON.stringify([sku,row?.spec?.size]));
   }
   function mount(node,row) {
-    clean();const sku=row?.spec?.designSku || row?.line?.sku || '',lid=String(row?.line?.listingId || '');
-    watch(node.querySelector('[data-vector]'),()=>vector(row),JSON.stringify([sku,row?.spec?.size,row?.poolIds,!!Master.entryFor(sku),Master.entryFor(sku)?.updatedAt,!!(row?.poolIds || []).find(id=>Pool.charmOf(id)?.outline)]),false,JSON.stringify([sku,row?.spec?.size]));
+    clean();const lid=String(row?.line?.listingId || '');
+    vectorInto(node.querySelector('[data-vector]'),row);
     watch(node.querySelector('[data-listing]'),()=>listing(lid),lid);
   }
   // Paged DOM construction as well as deferred image decoding. The observer
@@ -269,7 +274,7 @@ const ListMedia = (() => {
     const io=window.IntersectionObserver ? new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))go();},{rootMargin:'160px'}) : null;
     button.onclick=go;host.appendChild(button);if(io){pages.set(host,io);io.observe(button);}
   }
-  return {pair,mount,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
+  return {pair,mount,vectorInto,watch,more,listing,prepare,start,peek:id=>photos.get(String(id || '')) || null};
 })();
 const clockFormat = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });   // made once: a formatter costs far more to make than to use
 const fmtT = t => clockFormat.format(new Date(t));
@@ -1609,7 +1614,7 @@ const Master = window.Master = (() => {
       const blocked = [...new Set(d.list.map(x => x.blocked).filter(Boolean))].join("; ");
       const sizes = e.sizes ? Object.entries(e.sizes) : [];
       return `<div class="skuTile hoverItem${blocked ? " blocked" : ""}" data-sku="${esc(e.sku)}">` +
-        `<div data-preview-sku="${esc(e.sku)}" style="aspect-ratio:1;background:#fff;border-radius:6px">Loading preview…</div>` +
+        `<div data-preview-sku="${esc(e.sku)}" style="aspect-ratio:1;background:#ece7dc;border-radius:6px;overflow:hidden;display:grid;place-items:center;color:var(--ink45)">Loading preview…</div>` +
         `<div class="sku" title="${esc(d.skus.join(", "))}">${esc(e.sku)}</div>` +
         (d.skus.length > 1 ? `<div class="meta">${d.skus.slice(1).map(s => `<div>${esc(s)}</div>`).join("")}</div>` : "") +
         `<div class="meta">${(e.widthPt * MM).toFixed(1)} × ${(e.heightPt * MM).toFixed(1)} mm · ${e.holes} hole${e.holes === 1 ? "" : "s"}${sizes.length ? ` · sizes ${sizes.map(([k]) => k).join("/")}` : ""}${d.skus.length > 1 ? ` · ${d.skus.length} SKUs` : ""}</div>` +
@@ -1647,7 +1652,7 @@ const Pool = window.Pool = (() => {
   async function loadMasterCharm(entry, size) {
     const geom = sizeEntry(entry, size); if (!geom || !geom.aiPath) throw new Error(`no design file for ${entry.sku}${size ? " · " + size : ""}`);
     const key = geom.aiPath;
-    if (B.pool.sources.has(key)) return B.pool.sources.get(key);
+    if (B.pool.sources.has(key)) { const src = B.pool.sources.get(key); src.usedAt = Date.now(); return src; }   // (Upkeep lets idle ones go)
     const {url,bytes,parsed,g,charm}=await readMasterCharm(entry,size);
     // A design file indexed while the grouping lost track of the labels (22–23 Sep) kept the SKU written under its charm.
     // The text stays part of the charm, so the nest keeps its room and no neighbour is placed under it, but it still goes
@@ -1656,7 +1661,7 @@ const Pool = window.Pool = (() => {
     if (label) agent({ pool: true }, "warn", `${entry.sku}: its design file still has the SKU label “${String(label.str).trim()}” under the charm, so the label goes onto every sheet with it and the sheet's .dxf fails — index its master again in the Library with “re-index SKUs already held” ticked`);
     await P.buildSilhouettes(parsed, [charm], +S.settings.silhouetteRes || 6);
     const srcId = "pool:" + key.replace(/[^\w]+/g, "_");
-    const src = { id: srcId, pool: true, name: `${entry.sku}${size ? " · " + size : ""} (master)`, sku: entry.sku, bytes, hash: entry.charmHash || charm.hash, parsed, group: g, charms: [charm], metal: null, state: "ready", t0: performance.now(), cloud: { path: geom.aiPath, url }, persisting: null };
+    const src = { id: srcId, pool: true, name: `${entry.sku}${size ? " · " + size : ""} (master)`, sku: entry.sku, bytes, hash: entry.charmHash || charm.hash, parsed, group: g, charms: [charm], metal: null, state: "ready", t0: performance.now(), cloud: { path: geom.aiPath, url }, persisting: null, usedAt: Date.now() };
     Object.assign(charm, { id: srcId + ":0", sourceId: srcId, sourceName: src.name, index: 0, name: entry.sku, sku: entry.sku, namedBy: "master", excluded: false, cloud: { ai: url, aiPath: geom.aiPath, png: geom.thumbUrl || null, pngPath: geom.thumbPath || null }, upAngle: entry.upAngle, engravable: true, backKeepOut: Master.keepOutOf(charm) });
     S.poolSources[srcId] = src; B.pool.sources.set(key, src);
     return src;
@@ -1685,12 +1690,16 @@ const Pool = window.Pool = (() => {
     return {url,bytes,parsed,g,charm};
   }
   const masterPreviewCache=new Map();
-  async function masterPreview(entry,size) {
-    const key=sizeEntry(entry,size)?.aiPath;
-    if(!key)throw new Error("No design file");
-    const cached=B.pool.sources.get(key);if(cached)return cached.charms[0].thumb;
+  // `front` draws the charm as the Orders and Engrave lists show a pooled charm (white, a 3 mm margin), so an order's
+  // picture keeps its look and size when its charm reaches the pool; the Master tab's tiles keep the tight thumbnail.
+  async function masterPreview(entry,size,front) {
+    const path=sizeEntry(entry,size)?.aiPath;
+    if(!path)throw new Error("No design file");
+    const draw=charm=>front&&P.frontPreview?P.frontPreview(charm,220):P.thumbnail(charm,168);
+    const cached=B.pool.sources.get(path);if(cached)return front&&P.frontPreview?draw(cached.charms[0]):cached.charms[0].thumb;
+    const key=(front&&P.frontPreview?"front:":"")+path;
     if(masterPreviewCache.has(key))return masterPreviewCache.get(key);
-    const task=readMasterCharm(entry,size).then(({charm})=>P.thumbnail(charm,168));
+    const task=readMasterCharm(entry,size).then(({charm})=>draw(charm));
     masterPreviewCache.set(key,task);
     while(masterPreviewCache.size>80)masterPreviewCache.delete(masterPreviewCache.keys().next().value);
     try{return await task;}catch(e){masterPreviewCache.delete(key);throw e;}
@@ -1870,7 +1879,10 @@ const Pool = window.Pool = (() => {
     // order, oldest first, and recorded in one call rather than one call a line.
     let passed = false;
     const hold = (row, e, later) => { if (tryLater(row, e)) { passed = true; return; } row.state = "held"; row.reason = e.message; if (later) { row.poolError = Date.now(); row.poolTry = trySig(row); } agent({ pool: true }, "warn", `${row.order.receiptId} · ${row.spec && row.spec.designSku}: ${e.message}`); };
-    await Promise.allSettled(work.filter(row => row.spec && !row.spec.noDesign).map(row => { const e = Master.entryFor(row.spec.designSku); return e && !e.blocked && sizeEntry(e, row.spec.size)?.aiPath ? masterCharm(e, row.spec.size) : null; }));
+    // six at a time: a big batch after a reload started every design download at once, and they timed out against each
+    // other while the page parsed them all together (audit, 25 Sep)
+    const loads = work.filter(row => row.spec && !row.spec.noDesign).map(row => { const e = Master.entryFor(row.spec.designSku); return e && !e.blocked && sizeEntry(e, row.spec.size)?.aiPath ? () => masterCharm(e, row.spec.size) : null; }).filter(Boolean);
+    { let next = 0; await Promise.all(Array.from({ length: Math.min(6, loads.length) }, async () => { while (next < loads.length) await loads[next++]().catch(() => {}); })); }
     const made = [];
     for (const row of work) {
       if (bar) bar.set(n, work.length, row.spec && row.spec.designSku ? String(row.spec.designSku) : "");
@@ -2067,8 +2079,14 @@ const Gate = window.Gate = (() => {
     return !sh.recalled && !pagesOf(sh.metal).some(p => ["nesting", "finishing", "queued"].includes(p.status) || p.persisted && !p.persistedDone || p._rosePlanning || p._roseLoading || p._roseAction) &&
       !(B.run && (["complete", "abandoned"].includes(B.run.status) || Sets.ofRun(B.run.runId).some(s => s.committedAt) || window.CharmNestOperations?.running('commit:'+B.run.runId)));
   }
+  /* A run left in Auto commits one set after another, and its next set stays open to changes: only a sheet already in a
+     committed set keeps its place. "Any set of this run committed" locked every later set from the day's first commit
+     on: Include greyed out ("A set of this run is committed") and Cut Sheet on a held Rose Gold sheet refused with "This
+     set is committing or already complete" (audit, 25 Sep). */
+  const committedSheet = sh => !!sh.sheetId && Sets.ofRun(sh.runId).some(set => set.committedAt && (set.sheetIds || []).includes(sh.sheetId));
+  const committing = run => !!window.CharmNestOperations?.running('commit:' + run?.runId);
   function membershipEditable(sh) {
-    return !sh.recalled && !(B.run && (["complete","abandoned"].includes(B.run.status) || Sets.ofRun(B.run.runId).some(set=>set.committedAt) || window.CharmNestOperations?.running('commit:'+B.run.runId)));
+    return !sh.recalled && !committedSheet(sh) && !(B.run && (["complete","abandoned"].includes(B.run.status) || committing(B.run)));
   }
   function projectLibraryRecords(rows) {
     const run = B.run; if (!run || !modern(run.runId) || ["complete","abandoned"].includes(run.status)) return rows;
@@ -2088,7 +2106,7 @@ const Gate = window.Gate = (() => {
   }
   function changeMembership(m, included) {
     const run=B.run;
-    if(run && (['complete','abandoned'].includes(run.status) || Sets.ofRun(run.runId).some(set=>set.committedAt) || window.CharmNestOperations?.running('commit:'+run.runId)))return Promise.reject(new Error('This set is committing or already complete'));
+    if(run && (['complete','abandoned'].includes(run.status) || committing(run)))return Promise.reject(new Error(committing(run) ? 'The set is being committed · try again when it finishes' : 'This run is finished'));
     const choices=run ? (run.solidIncluded ||= {}) : (R.solidIncluded ||= {});
     choices[m]=!!included;
     if(m==='rose' && included)for(const page of allSheets().filter(p=>p.metal==='rose'&&p.persistedDone&&p.verification?.ok&&!p.roseCutAt))window.RoseStock?.plan(page).catch(e=>toast('Rose Gold contour: '+e.message,'bad'));
@@ -2156,7 +2174,7 @@ const Gate = window.Gate = (() => {
     node.querySelector('.sheetOptions>summary').textContent='Options'+(included?' ✓':'');
     const include=node.querySelector('[data-solid="include"]');include.checked=!!included;include.disabled=!membershipEditable(sh)||!!sh.roseCutAt;
     // a locked checkbox says why, as the size control below it does
-    const runNow=B.run,locked=!include.disabled?'':sh.roseCutAt?'Cut · it stays in its set':sh.recalled?'A saved sheet · its set is fixed':runNow&&['complete','abandoned'].includes(runNow.status)?'The run is finished':window.CharmNestOperations?.running('commit:'+runNow?.runId)?'The set is being committed':'A set of this run is committed · the selection is locked';
+    const runNow=B.run,locked=!include.disabled?'':sh.roseCutAt?'Cut · it stays in its set':sh.recalled?'A saved sheet · its set is fixed':runNow&&['complete','abandoned'].includes(runNow.status)?'The run is finished':committing(runNow)?'The set is being committed':'This sheet is in a committed set · it stays there';
     node.querySelector('[data-solid="status"]').textContent=R.membershipError?'Selection not saved':R.membershipPending?'Saving selection…':locked;
     if(sh.el)sh.el.querySelector(".shHead").title=policy(sh,seq).reason;   // the same hover answer the Gold and Silver cards give
     const retry=node.querySelector('[data-solid="retry"]');retry.hidden=!R.membershipError;
@@ -5372,6 +5390,9 @@ const OrderWin = window.OrderWin = (() => {
     ph.classList.remove("zoom");
     ph.innerHTML = url ? '<img crossorigin="anonymous" alt="" src="' + esc(cors(url)) + '">' : '<span class="ph">no image</span>';
     ph.dataset.lid = String(r.line.listingId || ""); if (url) ph.dataset.painted = "1"; else { delete ph.dataset.painted; Orders.wantImage(r.line.listingId); }
+    // the charm's vector design under the listing photo, as the lists show the two side by side (the window showed the
+    // photo alone, or "no image" while the photo was not ready)
+    const vh = byId("owVector"); if (vh) ListMedia.vectorInto(vh, r);
     byId("owSku").textContent = "SKU: " + (sp.designSku || r.line.sku || "—");
     // the one field that must be read exactly: labelled, whole, and never boxed into a scroller under the staff note
     const said = [];
@@ -5991,7 +6012,7 @@ const Session = window.Session = (() => {
     // asked once, never waited for: a browser short of space may otherwise clear this workspace while the tab is closed
     try { navigator.storage?.persisted?.().then(p => p || navigator.storage.persist?.()).catch(() => {}); } catch (_) {}
   }
-  return { copy, capture, restore, listen, flush, schedule, checkpointBest, dropBest, failure: () => failure || bestFailure };
+  return { copy, capture, restore, listen, flush, schedule, checkpointBest, dropBest, poolSourcesInUse, failure: () => failure || bestFailure };
 })();
 
 /* Import cadence is independent of run completion. The cloud ledger counts receipt IDs, not API calls. */
@@ -6099,7 +6120,9 @@ const Arrivals = window.Arrivals = (() => {
     if (added.length) {
       state.pending = true; save();
       if (B.run && !["complete", "abandoned"].includes(B.run.status)) { B.run.orders = [...new Set((B.run.orders || []).concat(added.map(r => r.order.receiptId)))]; RunCtl.save().catch(() => {}); }
-      { const n = freshIds.length || new Set(added.map(r => r.order.receiptId)).size; toast(`${n} new order${n === 1 ? "" : "s"} arrived`, "ok", 6000); }
+      // one notice counts the arrivals while it shows, rather than one notice a batch
+      { const was = document.querySelector('#toasts .toast[data-key="arrivals"]'), n = (freshIds.length || new Set(added.map(r => r.order.receiptId)).size) + (was && was.style.opacity !== "0" ? +was.dataset.count || 0 : 0);
+        const note = toast(`${n} new order${n === 1 ? "" : "s"} arrived`, "ok", 6000, "arrivals"); if (note) note.dataset.count = n; }
       notifyPerson("New Etsy orders", `${added.length} new order line(s) added to the sorter`);
     }
     Orders.render(); Review.render(); Engrave.render(); refreshAllCards(); Session.schedule(); paint();ListMedia.prepare(Orders.rows());
@@ -6348,7 +6371,7 @@ const SetPicker = window.SetPicker = (() => {
       // every such run of the day (audit, 25 Sep). They stay findable under Search all sets.
       rows = (r.sets || []).filter(g => (g.sheets || []).length);
       const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
-      list.innerHTML = `<button type="button" data-current>Current workspace · ${n(allSheets().filter(p => p.charms.length).length, "sheet", "sheets")}</button><small>${n(r.setCount || 0, "saved set", "saved sets")} · ${n(rows.filter(g => g.draft).length, "working group", "working groups")} · newest first${r.next ? " · older ones under Search all sets" : ""}</small>` + rows.map((g,i) => `<button type="button" data-preview="${i}">${esc(g.name || (g.seq ? "Set " + g.seq : "Working sheets"))} · ${esc(g.day || "")}<small>${n(g.sheets.length, "sheet", "sheets")} · ${esc(counts(g.sheets))}</small></button>`).join("");
+      list.innerHTML = `<button type="button" data-current>Current workspace · ${n(allSheets().filter(p => p.charms.length).length, "sheet", "sheets")}</button><small>${n(r.setCount || 0, "saved set", "saved sets")} · ${n(rows.filter(g => g.draft).length, "working group", "working groups")} · newest first${r.next ? " · older ones under Search all sets" : ""}</small>` + rows.map((g,i) => `<button type="button" data-preview="${i}">${esc(g.name || (g.seq ? "Set " + g.seq : "Working sheets"))}${g.day ? ` · <span class="nw">${esc(new Date(g.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }))}</span>` : ""}<small>${n(g.sheets.length, "sheet", "sheets")} · ${esc(counts(g.sheets))}</small></button>`).join("");
       list.querySelector('[data-current]').onclick = () => previewCurrent();
       list.querySelectorAll('[data-preview]').forEach(b => b.onclick = () => preview(rows[+b.dataset.preview]));
     } catch (e) { list.innerHTML = current + `<small>Could not read saved sets: ${esc(e.message)}</small>`; list.querySelector('[data-current]').onclick = previewCurrent; }
@@ -6366,6 +6389,150 @@ const SetPicker = window.SetPicker = (() => {
     dialog.showModal();
   }
   return { mount, previewCurrent, preview };
+})();
+
+/* ═══ 24f · Upkeep — a run left on for days holds only what it still works on ════════════════════════════════════
+   An Auto run takes in every new order and stays open for as long as orders keep coming, and everything it made stayed
+   on the page: every line, sheet, pool row, engraving job, set and master design, all of it copied into each workspace
+   checkpoint. The charms on the cards alone came to about 24 MB a day, so a station left on for weeks slowed at every
+   save and checkpoint until the tab ran out of memory (audit, 25 Sep; Paul, 24 Sep: "everything must be able to stay
+   on indefinitely"). A day after its set is committed, a sheet leaves the page with the orders on it. The Library keeps
+   the sheet and the run's line archive the lines (so a line goes only once the archive holds it as it is now), and the
+   run counts them the way a resumed run counts what its record left out (lineArchive.base). What stays: the first sheet
+   of each metal (it is the card itself), the sheet on the card, every sheet not committed yet, a Rose Gold sheet not yet
+   cut, the newest four committed sheets of each metal, every order with a piece on a sheet that stays, and any order
+   with an open review item, engraving work under way or its window open. A committed order is off the station's open
+   list, so it never comes back as a new arrival. Master designs no sheet or order needs go after six idle hours. */
+const Upkeep = window.Upkeep = (() => {
+  const GRACE = 24 * 3600000, KEEP = 4, IDLE_SOURCE = 6 * 3600000, MAX_SOURCES = 150, EVERY = 30 * 60000;
+  // the sandbox stream's simulated day, like the arrival stamps: a day of played orders is put away as a real day is
+  const now = () => (window.Sandbox?.streaming?.() && window.SimClock ? SimClock.now() : Date.now());
+  let timer = 0, running = false, last = null;
+  const roseKept = p => p.metal === "rose" && !p.roseCutAt && !!(p.rosePlan || p.roseProtected);
+  const setOf = p => p.sheetId ? Sets.ofRun(p.runId).find(set => set.committedAt && (set.sheetIds || []).includes(p.sheetId)) || null : null;
+  /** A sheet a day past its set's commit, saved and settled. The day counts from the first pass that finds the sheet's
+      set committed (plan), on the clock the orders' days use (finished): the set's own stamp is real time, and the
+      sandbox stream plays its days faster. */
+  function spent(p, t) {
+    if (!p.sheetId || p.recalled || roseKept(p) || p.dirty || p.persistedDone !== true || !["complete", "partial"].includes(p.status) || (p.workers || []).length) return false;
+    return !!p.committedSeenAt && t - p.committedSeenAt > GRACE;
+  }
+  /** The orders the run is done with (committed, or every line gone), each line archived as it is now, a day past done. */
+  function finished(r, t) {
+    const rows = new Map(); for (const row of Orders.rows()) { const k = String(row.order.receiptId); const l = rows.get(k); if (l) l.push(row); else rows.set(k, [row]); }
+    const ids = new Set((r.orders || []).map(String)), lines = {};
+    for (const row of Orders.rows()) if (ids.has(String(row.order.receiptId))) { const [k, v] = Orders.lineRecord(row); lines[k] = v; }
+    const done = r.archivedLines || {}, out = new Map();
+    const open = new Set(), openRows = new Set();
+    for (const it of B.review.items || []) { if (it.rid != null) open.add(String(it.rid)); for (const row of [it.row, ...(it.rows || [])]) if (row) openRows.add(row); }
+    // an engraving settled (backs written, nothing to engrave, or skipped) and not being worked on
+    const busy = new Set([...Engrave.items().values()].filter(j => j.editingBack || Engrave.isWorking(j) || !["written", "none", "skipped"].includes(j.state)).map(j => j.key));
+    const focus = Engrave.view?.().focus || null, win = OrderWin.isOpen() ? OrderWin.key() : null;
+    const closed = O.closedOrders(lines);
+    // an order open again (its set's commit undone) starts a new day when it is next finished
+    for (const [rid, list] of rows) if (!closed.has(rid)) for (const row of list) if (row.doneAt) delete row.doneAt;
+    for (const [rid, keys] of closed) {
+      const list = rows.get(rid) || []; if (!list.length) continue;
+      for (const row of list) if (!row.doneAt) row.doneAt = t;       // first seen finished: the day starts now
+      if (list.some(row => t - (+row.doneAt || t) <= GRACE)) continue;
+      if (!keys.every(k => done[k] && done[k] === O.textHash(JSON.stringify(lines[k])))) continue;
+      if (open.has(rid) || list.some(row => openRows.has(row) || busy.has(row.key) || row.key === focus || row.key === win)) continue;
+      out.set(rid, { rows: list, keys });
+    }
+    return out;
+  }
+  /** What may go now: sheets and orders, each only with the other (an order with every sheet its pieces are on, a sheet
+      with every order that has a piece on it). */
+  function plan(r, t) {
+    const orders = finished(r, t), pages = new Set();
+    for (const m of METALS) {
+      const prim = S.sheets[m.key], list = prim.pages, onCard = list[prim.active];
+      const committed = list.filter(p => setOf(p)), newest = new Set(committed.slice(-KEEP)), inSet = new Set(committed);
+      // each sheet's day starts when a pass first finds it committed (a commit undone starts it again)
+      for (const p of list) if (inSet.has(p)) { if (!p.committedSeenAt) p.committedSeenAt = t; } else if (p.committedSeenAt) delete p.committedSeenAt;
+      list.forEach((p, i) => { if (i > 0 && p !== onCard && !newest.has(p) && spent(p, t)) pages.add(p); });
+    }
+    const owner = new Map(); for (const row of Orders.rows()) for (const id of row.poolIds || []) owner.set(id, String(row.order.receiptId));
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const [rid, o] of orders) if ([...Pool.holding(o.rows.flatMap(row => row.poolIds || []))].some(p => !pages.has(p))) { orders.delete(rid); changed = true; }
+      for (const p of pages) if (p.charms.some(c => c.poolId && owner.has(c.poolId) && !orders.has(owner.get(c.poolId)))) { pages.delete(p); changed = true; }
+    }
+    return { orders, pages };
+  }
+  /** Master designs nothing uses any more, idle six hours (or the oldest of them past a hundred and fifty). */
+  function sweepSources(t) {
+    const keep = new Set(Object.keys(Session.poolSourcesInUse ? Session.poolSourcesInUse() : S.poolSources || {}));
+    const idle = Object.values(S.poolSources || {}).filter(src => !keep.has(src.id)).sort((a, b) => (+a.usedAt || 0) - (+b.usedAt || 0));
+    const over = Math.max(0, Object.keys(S.poolSources || {}).length - MAX_SOURCES);
+    let n = 0;
+    idle.forEach((src, i) => {
+      if (i >= over && t - (+src.usedAt || 0) <= IDLE_SOURCE) return;
+      delete S.poolSources[src.id];
+      for (const [k, v] of B.pool.sources) if (v === src) B.pool.sources.delete(k);
+      n++;
+    });
+    return n;
+  }
+  function apply(r, { orders, pages }, t) {
+    // the sheets: off their cards, the card's own page kept where it is
+    for (const m of METALS) {
+      const prim = S.sheets[m.key], onCard = prim.pages[prim.active], gone = prim.pages.filter(p => pages.has(p));
+      if (!gone.length) continue;
+      for (const p of gone) { p.el = null; window.Session?.dropBest?.(p.sheetId); }
+      prim.pages = prim.pages.filter(p => !pages.has(p));
+      prim.active = Math.max(0, prim.pages.indexOf(onCard));
+      if (prim.pages[prim.active] && !prim.pages[prim.active].el) window.CN?.showPage?.(m.key, prim.active); else if (window.CN?.renderCard) CN.renderCard(prim.pages[prim.active]);
+    }
+    // the orders: their rows, pool rows and engraving jobs, and the run's own lists, counted as outside the record
+    if (orders.size) {
+      const keys = new Set(), la = r.lineArchive || (r.lineArchive = {}), base = la.base || (la.base = {});
+      for (const [, o] of orders) for (const row of o.rows) {
+        keys.add(row.key); B.orders.byKey.delete(row.key); Engrave.items().delete(row.key);
+        for (const id of row.poolIds || []) B.pool.rows.delete(id);
+      }
+      B.orders.rows = B.orders.rows.filter(row => !keys.has(row.key));
+      const out = new Set(orders.keys()), lines = r.lines || {};
+      let n = 0; for (const k of Object.keys(lines)) if (keys.has(k)) { delete lines[k]; n++; }
+      for (const k of Object.keys(r.archivedLines || {})) if (keys.has(k)) delete r.archivedLines[k];
+      base.lines = (+base.lines || 0) + n;
+      if (Array.isArray(r.committed)) { const was = r.committed.length; r.committed = r.committed.filter(id => !out.has(String(id))); base.committed = (+base.committed || 0) + was - r.committed.length; }
+      if (r.holds && typeof r.holds === "object") for (const id of Object.keys(r.holds)) if (out.has(String(id))) { delete r.holds[id]; base.held = (+base.held || 0) + 1; }
+      if (Array.isArray(r.orders)) r.orders = r.orders.filter(id => !out.has(String(id)));
+    }
+    // sets whose sheets have all gone, a day past their commit; the newest committed set of each group stays, for the
+    // next set's number follows it (Sets.ensure)
+    const newest = new Map(); for (const set of Sets.ofRun(r.runId)) if (set.committedAt) { const g = set.group || ""; if (!newest.has(g) || +set.committedAt > +newest.get(g).committedAt) newest.set(g, set); }
+    const onPage = new Set(allSheets().map(p => p.sheetId).filter(Boolean));
+    let sets = 0;
+    for (const [k, set] of [...B.sets]) if (set.runId === r.runId && set.committedAt && newest.get(set.group || "") !== set && t - +set.committedAt > GRACE && !(set.sheetIds || []).some(id => onPage.has(id))) { B.sets.delete(k); sets++; }
+    return sets;
+  }
+  /** One pass. Returns what went, or null when nothing could be looked at (no open run, a recalled set, intake). */
+  async function sweep({ at = null } = {}) {
+    const r = B.run;
+    if (running || !r || ["complete", "abandoned"].includes(r.status) || window.Recall?.on?.() || r.arrivalBusy) return null;
+    const ops = window.CharmNestOperations;
+    running = true;
+    try {
+      const work = () => {
+        if (B.run !== r || r.arrivalBusy) return null;
+        const t = at || now(), p = plan(r, t), sets = apply(r, p, t);
+        return { pages: p.pages.size, orders: p.orders.size, sets, sources: sweepSources(at || Date.now()) };   // (a design's use is stamped in real time)
+      };
+      // under the run's own locks: nothing is taken in, cut, labelled, committed or saved while its pieces are put away
+      const res = ops ? await ops.run({ key: "upkeep:" + r.runId, resources: ["production:" + r.runId, "run-record:" + r.runId], priority: -10 }, work) : work();
+      last = Object.assign({ at: Date.now() }, res || {});
+      if (res && (res.pages || res.orders)) {
+        agent({ run: r.runId }, "ok", `Put away ${res.pages} sheet${res.pages === 1 ? "" : "s"} and ${res.orders} order${res.orders === 1 ? "" : "s"} committed over a day ago · the Library keeps them`);
+        Orders.render(); Engrave.render(); Review.render(); RunCtl.renderBanner(); Session.schedule();
+        RunCtl.save(r).catch(() => {});
+      } else if (res && res.sources) Session.schedule();
+      return res;
+    } finally { running = false; }
+  }
+  function start() { clearInterval(timer); timer = setInterval(() => { sweep().catch(e => console.warn("Upkeep", e)); }, EVERY); setTimeout(() => sweep().catch(() => {}), 90000); }
+  return { start, sweep, plan, last: () => last, GRACE, KEEP };
 })();
 
 /* ═══ 25 · boot ═══════════════════════════════════════════════════════════ */
@@ -6395,7 +6562,7 @@ async function bootBridge() {
   // Never overwrite a checkpoint with a partially restored workspace or start
   // an automatic run over it. Navigation and the saved Library remain usable.
   if (!recoveryFailed) {
-    Session.listen(); Arrivals.start(); ListMedia.start();
+    Session.listen(); Arrivals.start(); ListMedia.start(); Upkeep.start();
     // an approval whose back files a reload cut short is written now, not when the run next passes Engraving
     if (recovered) Engrave.resumeBacks();
     if(recovered)RunCtl.recoverReviewStop().catch(e=>RunCtl.stop(e.message,"Reconnect and Resume."));
