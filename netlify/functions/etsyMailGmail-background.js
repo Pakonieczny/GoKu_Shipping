@@ -455,6 +455,10 @@ async function upsertThreadFromGmail({
       aiDraftStatus       : "none",
       latestDraftId       : null,
       lastInboundAt       : gmailReceivedAt,
+      // Inbox layouts: a new conversation starts out waiting on us (only
+      // when the email time is known and recent; the snapshot takes over).
+      ...(gmailReceivedAt && Date.now() - Number(internalDateMs) < 30 * 86400000
+        ? { awaitingReplySince: gmailReceivedAt } : {}),
       lastOutboundAt      : null,
       lastSyncedAt        : null,
       lastScrapedDomHash  : null,

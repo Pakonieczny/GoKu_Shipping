@@ -501,6 +501,35 @@ exports.handler = async (event) => {
        *     index, SDK incompatibility), we fall back to the legacy
        *     full-scan path so the dashboard never breaks.
        */
+      // Inbox layouts: ?counts=1&keys=a,b,c returns only the requested
+      // counts. Single-field queries only (no composite index needed) and
+      // no full-scan fallback: a key that fails reports null. Used only by
+      // the new layouts' "Labels" section; plain ?counts=1 is unchanged.
+      if (qs.counts === "1" && qs.keys) {
+        const base = db.collection(THREADS_COLL);
+        // The folders keyed off a timestamp leave archived threads out, as
+        // their lists do. "status != archived" plus orderBy on the field
+        // needs a composite index this project lacks (the plain ?counts=1
+        // below falls back to a full scan for that reason), so read just
+        // the status of the few docs that carry the field and count here.
+        const notArchived = field => base.orderBy(field).select("status").limit(5000).get()
+          .then(s => { let n = 0; s.forEach(d => { if (d.get("status") !== "archived") n++; }); return n; });
+        const Q = {
+          _orderLinkOpen : () => notArchived("orderLinkOpenAt"),
+          _refundFlagged : () => notArchived("refundFlaggedAt"),
+          _completedSales: () => notArchived("salesCompletedAt"),
+          _awaitingReply : () => base.orderBy("awaitingReplySince").count().get().then(r => r.data().count),
+          _total         : () => base.count().get().then(r => r.data().count),
+        };
+        const out = {};
+        await Promise.all(String(qs.keys).split(",").slice(0, 20).map(async k => {
+          const run = Object.prototype.hasOwnProperty.call(Q, k) ? Q[k]
+            : (VALID_STATUSES.has(k) ? () => base.where("status", "==", k).count().get().then(r => r.data().count) : null);
+          if (!run) return;
+          try { out[k] = await run(); } catch (e) { out[k] = null; console.warn("[counts:keys]", k, e.message); }
+        }));
+        return ok({ counts: out, keys: true });
+      }
       if (qs.counts === "1") {
         try {
           const baseQ = db.collection(THREADS_COLL);
@@ -776,6 +805,9 @@ exports.handler = async (event) => {
           threadPatch.unread = true;
         } else {
           threadPatch.lastOutboundAt = now;
+          // Inbox layouts: our reply answers the customer, so the thread
+          // is no longer waiting on us. Deleting a missing field is a no-op.
+          try { threadPatch.awaitingReplySince = FV.delete(); } catch (_) {}
         }
         batch.set(tRef, threadPatch, { merge: true });
 
@@ -864,6 +896,17 @@ exports.handler = async (event) => {
           patch.manualMoveReason           = FV.delete();
           patch.manualMoveFromStatus       = FV.delete();
         }
+        // Inbox layouts: archiving means handled (records when, and clears
+        // the waiting state); moving out of archived removes archivedAt.
+        // Guarded so it can never stop the status write itself.
+        try {
+          if (status === "archived") {
+            patch.archivedAt         = FV.serverTimestamp();
+            patch.awaitingReplySince = FV.delete();
+          } else if (prev === "archived") {
+            patch.archivedAt         = FV.delete();
+          }
+        } catch (e) { console.warn("[setStatus] archivedAt fields skipped:", e.message); }
 
         await tRef.set(patch, { merge: true });
         await writeAudit({
@@ -994,6 +1037,18 @@ exports.handler = async (event) => {
               .get();
             if (snap.empty) break;
 
+            // Inbox layouts: same archivedAt / waiting-state bookkeeping as
+            // setStatus. Built once per batch, guarded so it can never stop
+            // the purge write itself.
+            let archiveFields = {};
+            try {
+              if (destinationStatus === "archived") {
+                archiveFields = { archivedAt: FV.serverTimestamp(), awaitingReplySince: FV.delete() };
+              } else if (status === "archived") {
+                archiveFields = { archivedAt: FV.delete() };
+              }
+            } catch (e) { archiveFields = {}; console.warn("[purgeFolder] archivedAt fields skipped:", e.message); }
+
             const batch = db.batch();
             for (const docSnap of snap.docs) {
               batch.update(docSnap.ref, {
@@ -1008,7 +1063,8 @@ exports.handler = async (event) => {
                 manualMoveActor         : FV.delete(),
                 manualMoveAt            : FV.delete(),
                 manualMoveReason        : FV.delete(),
-                manualMoveFromStatus    : FV.delete()
+                manualMoveFromStatus    : FV.delete(),
+                ...archiveFields
               });
               if (auditSampleIds.length < 20) auditSampleIds.push(docSnap.id);
             }
