@@ -3776,7 +3776,7 @@ async function finishNest(sh, { result, error }) {
       sh.seq = await nextSheetSeq(sh);
       if (sheetFileBase(sh) === was.fileBase) {
         sh.fileBase = was.fileBase; sh.outputs = was.outputs; sh.verification = was.verification;
-        sh.releaseFull = topupSettle(sh, result, sheetFull(sh, result, items));
+        sh.releaseFull = topupSettle(sh, result, sheetFull(sh, result, items)) || !!sh.keepRelease?.full;
         if (sh.releaseFull) sh._renderAreas = null;
         if (sh.intakePhase !== "fill") { sh.intakeOptimized = true; sh.intakeOptimizedCount = items.length; }
         delete sh.intakeForceFinal;
@@ -3828,7 +3828,8 @@ async function finishNest(sh, { result, error }) {
     sh.outputs = { ai: aiBytes, labelled: labelledBytes, report, previewPng: await previewPng(sh) };
     sh.progress = [4, 5]; sh.stage = "Saving to the cloud…"; renderProgress(sh);
     // Overflow after a complete search closes a sheet; merely placing a small queue does not.
-    sh.releaseFull = topupSettle(sh, result, sheetFull(sh, result, items));
+    // a sheet released to its set before charms were taken off or moved onto it in the sheet window stays released
+    sh.releaseFull = topupSettle(sh, result, sheetFull(sh, result, items)) || !!sh.keepRelease?.full;
     if (sh.releaseFull) sh._renderAreas = null;   // a released sheet takes no more charms: its kept layer areas (MBs) go
     if(sh.intakePhase!=='fill' && result.endedBy!=='stopped' && sh.verification.ok){sh.intakeOptimized=true;sh.intakeOptimizedCount=items.length;}
     delete sh.intakeForceFinal;
@@ -4222,7 +4223,7 @@ function renderCard(sh) {
   // queue thumbnails
   const placed = new Set(sh.placements.map(p => p.id)), rejected = new Set(sh.rejects);
   q("queue").innerHTML = sh.charms.slice().sort((a, b) => (b.arrivedAt || 0) - (a.arrivedAt || 0)).slice(0, 60).map(c => `<img crossorigin="anonymous" src="${cors(c.thumb)}" title="${esc(c.name || "#" + (c.index + 1))} · ${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}${c.qty > 1 ? " · ×" + c.qty : ""}${c.excluded ? " · EXCLUDED (open path)" : ""}" data-cid="${c.id}" data-rid="${esc(c.order || "")}" class="${placed.has(c.id) ? "placed" : rejected.has(c.id) ? "rejected" : ""}${c.pinned ? " pinned" : ""}" style="${c.excluded ? "opacity:.35;border-style:dashed" : ""}">`).join("") + (sh.charms.length > 60 ? `<span class="more">+${sh.charms.length - 60} more</span>` : "");
-  $$("img[data-cid]", q("queue")).forEach(img => img.onclick = () => openCharm(sh, byId.get(img.dataset.cid)));
+  $$("img[data-cid]", q("queue")).forEach(img => img.onclick = () => { const c = byId.get(img.dataset.cid); if (!inspectOnSheet(sh, c, img)) openCharm(sh, c); });
   // cloud row
   const cl = q("cloud");
   cl.innerHTML = sh.problem ? `<span class="bad">${esc(sh.problem)}</span>` : sh.outputs && !sh.cloud && !S.cloud.ok ? `<span class="bad">not saved — cloud offline</span>` : "";
@@ -4428,7 +4429,16 @@ function onPreviewClick(sh, e) {
   let best = null, bd = Infinity;
   for (const p of sh.placements) { const d = Math.hypot(p.cxPt - x, p.cyPt - y); if (d < bd && d < Math.max(p.wPt, p.hPt)) { bd = d; best = p; } }
   if (!best) return;
-  const c = sh.charms.find(c => c.id === best.id); sh.selected = c.id; drawPreview(sh); openCharm(sh, c, best);
+  const c = sh.charms.find(c => c.id === best.id); sh.selected = c.id; drawPreview(sh);
+  if (!inspectOnSheet(sh, c, cv)) openCharm(sh, c, best);
+}
+/* A charm clicked on a Nest card opens the same sheet window as the Library (Paul, 26 Sep): the live sheet, the order,
+   its back, messages, and taking it off, with the charm selected. A sheet not saved yet (its first nest still running)
+   and a charm not placed on it keep the charm inspector below. */
+function inspectOnSheet(sh, c, el) {
+  if (!c || !sh.sheetId || !window.SheetWin || !sh.placements.some(p => p.id === c.id)) return false;
+  SheetWin.open(sh.sheetId, { select: c.poolId || c.id, fromRect: el && el.getBoundingClientRect ? el.getBoundingClientRect() : null });
+  return true;
 }
 
 /* ═══ 13 · dialogs: charm inspector, report ═════════════════════════════ */
@@ -4937,8 +4947,8 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260926-customai"></script>
-<script src="charm-nest-sheetwin.js?v=20260926-sw8"></script>
+<script src="charm-nest-bridge.js?v=20260926-relabel"></script>
+<script src="charm-nest-sheetwin.js?v=20260926-sw9"></script>
 <script src="charm-nest-mail.js?v=20260926-audit3"></script>
 <script src="charm-nest-rose-ui.js?v=20260925-audit"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
