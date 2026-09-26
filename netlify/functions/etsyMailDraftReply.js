@@ -65,6 +65,7 @@
 
 const admin = require("./firebaseAdmin");
 const { CORS, requireExtensionAuth } = require("./_etsyMailAuth");
+const { applyDeterministicVetoes, unansweredInboundText } = require("./_etsyMailVetoes");
 // v3.7+ — callClaudeRaw added alongside runToolLoop. The translate ops
 // (op:"detectLanguage" and op:"translate") and the v4.0 summarize op
 // (op:"summarizeThread") all use callClaudeRaw for single-shot Haiku
@@ -355,6 +356,22 @@ const AI_MODEL     = process.env.ETSYMAIL_AI_MODEL    || "claude-sonnet-4-6";
 const AI_EFFORT    = process.env.ETSYMAIL_AI_EFFORT   || "high";
 const AI_MAX_TOKENS = parseInt(process.env.ETSYMAIL_AI_MAX_TOKENS || "12000", 10);
 
+// ─── Audit 2026-09 switches (unset = today's behaviour) ──────────────────
+// ETSYMAIL_AI_ADAPTIVE_THINKING
+//   "pipeline" → adaptive thinking for drafts the auto-pipeline requests
+//                in-process (background function, 15-minute limit)
+//   "all"      → every draft, including the inbox AI Draft button, which
+//                is still a synchronous (26 s) function: watch aiDurationMs
+// ETSYMAIL_AI_CACHE_TAIL=1   cache the conversation between tool-loop calls
+// ETSYMAIL_AI_SLIM_CONTEXT=1 slim receipts + message index in the raw block
+// ETSYMAIL_AI_TIMEOUT_MS     per-request Anthropic timeout for this drafter
+//                            only (e.g. 120000 once drafts run in-process in
+//                            the 15-minute pipeline); unset = no timeout
+const AI_ADAPTIVE_THINKING = String(process.env.ETSYMAIL_AI_ADAPTIVE_THINKING || "").trim().toLowerCase();
+const AI_CACHE_TAIL        = process.env.ETSYMAIL_AI_CACHE_TAIL === "1";
+const AI_SLIM_CONTEXT      = process.env.ETSYMAIL_AI_SLIM_CONTEXT === "1";
+const AI_TIMEOUT_MS        = parseInt(process.env.ETSYMAIL_AI_TIMEOUT_MS || "0", 10) || 0;
+
 // ─── Context-building caps ───────────────────────────────────────────────
 // How many of the most-recent messages to include in the conversation
 // history. 40 covers the vast majority of threads; older than that gets
@@ -392,6 +409,28 @@ async function loadThread(threadId) {
   return snap.exists ? { id: snap.id, ...snap.data() } : null;
 }
 
+// Optimistic "ghost" copies of sent replies (etsyMailOptimisticMessage.js,
+// localOptimistic:true) stand in until the scraper stores the real Etsy
+// message, and they are never deleted. Before commit 51b0778 (2026-09) a
+// re-insert re-stamped a ghost to "now", so the shop's OLD reply sorted AFTER
+// the customer's new question: the drafter saw staff as the last speaker,
+// took the "most recent message is from staff" branch, and followed up on
+// its own old reply instead of answering. Ghosts whose text already exists
+// as a real outbound message are dropped; a ghost with no real copy yet (a
+// reply sent seconds ago) is kept.
+function _ghostTextKey(s) {
+  return String(s || "").trim().toLowerCase()
+    .replace(/https?:\/\/(www\.)?/g, "").replace(/(^|\s)www\./g, "$1")
+    .replace(/\s+/g, " ").slice(0, 200);
+}
+function dropDuplicateGhosts(docs, isGhost = (m) => !!(m && m.localOptimistic === true)) {
+  const list = Array.isArray(docs) ? docs : [];
+  const realOutbound = new Set(list
+    .filter(m => m && m.direction === "outbound" && !isGhost(m))
+    .map(m => _ghostTextKey(m.text)).filter(Boolean));
+  return list.filter(m => !(m && isGhost(m) && realOutbound.has(_ghostTextKey(m.text))));
+}
+
 async function loadMessages(threadId, limit) {
   // Fetch the last N messages chronologically. We fetch +1 so we can
   // tell the model when older messages were elided.
@@ -400,10 +439,12 @@ async function loadMessages(threadId, limit) {
     .orderBy("timestamp", "desc")
     .limit(limit + 1)
     .get();
-  const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-  const hasMore = all.length > limit;
+  const all = dropDuplicateGhosts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+  const hasMore = snap.size > limit;
   const kept = all.slice(0, limit).reverse();  // → chronological
-  return { messages: kept, hasMore, elidedCount: hasMore ? (snap.size - limit) : 0 };
+  // Only "older messages exist" is known (limit+1 fetched); the old
+  // snap.size - limit was always 1. Kept as 1 for the audit field.
+  return { messages: kept, hasMore, elidedCount: hasMore ? 1 : 0 };
 }
 
 async function loadCustomer(buyerUserId) {
@@ -437,6 +478,14 @@ async function getShopEnrichment() {
   if (cached && ageMs < SHOP_ENRICHMENT_TTL_MS) {
     return cached;
   }
+
+  // At most one refresh attempt per 30 minutes, success or not. Without
+  // this, an Etsy outage or an exhausted daily quota cost 2 Etsy calls
+  // (getShop + getShopSections) on EVERY draft until a refresh succeeded.
+  const lastAttemptMs = cached && cached.refreshAttemptAt && cached.refreshAttemptAt.toMillis
+    ? cached.refreshAttemptAt.toMillis() : 0;
+  if (cached && Date.now() - lastAttemptMs < 30 * 60 * 1000) return cached;
+  await ref.set({ refreshAttemptAt: FV.serverTimestamp() }, { merge: true }).catch(() => {});
 
   // Cache is stale or missing — refresh synchronously if missing,
   // fire-and-forget if we have stale cache.
@@ -622,7 +671,7 @@ function tsToDateStr(ts) {
            : null;
   if (!ms) return "";
   const d = new Date(ms);
-  return d.toISOString().slice(0, 16).replace("T", " ");   // YYYY-MM-DD HH:MM
+  return d.toISOString().slice(0, 16).replace("T", " ") + " UTC";   // YYYY-MM-DD HH:MM UTC
 }
 
 // ─── Build the full messages array for the API call ──────────────────────
@@ -641,11 +690,23 @@ async function buildConversationMessages(messages, elidedCount, hasMore, include
   let currentRole = null;
   let currentContent = [];
 
+  // Spend the image budget on the NEWEST customer images first. The loop
+  // below walks oldest → newest, so a photo-heavy thread used to run out
+  // of budget before it reached the photos the customer just sent.
+  const _isStaffMsg = (m) => m.direction === "outbound" || m.senderRole === "staff" || m.senderRole === "shop_owner";
+  const imageAllowance = new Map();
+  let _imgLeft = MAX_IMAGES_TOTAL;
+  for (let i = messages.length - 1; i >= 0 && _imgLeft > 0; i--) {
+    const m = messages[i];
+    const n = (!_isStaffMsg(m) && Array.isArray(m.storageImagePaths)) ? m.storageImagePaths.length : 0;
+    if (n) { const take = Math.min(n, _imgLeft); imageAllowance.set(m, take); _imgLeft -= take; }
+  }
+
   // Preamble user turn — tells model about elided history if any
   if (hasMore && elidedCount > 0) {
     turns.push({
       role: "user",
-      content: [{ type: "text", text: `[CONVERSATION CONTEXT: ${elidedCount} older messages have been omitted. What follows are the ${messages.length} most recent messages in chronological order.]` }]
+      content: [{ type: "text", text: `[CONVERSATION CONTEXT: This thread has older messages that are not shown. What follows are the ${messages.length} most recent messages in chronological order.]` }]
     });
   }
 
@@ -670,7 +731,13 @@ async function buildConversationMessages(messages, elidedCount, hasMore, include
     }
     currentRole = role;
 
-    const msgContent = await messageToContent(m, imageBudget, includeImages, role);
+    const msgBudget = { remaining: imageAllowance.get(m) || 0, attached: 0 };
+    const msgContent = await messageToContent(m, msgBudget, includeImages, role);
+    imageBudget.attached += msgBudget.attached;
+    const _imgTotal = (role === "user" && includeImages && Array.isArray(m.storageImagePaths)) ? m.storageImagePaths.length : 0;
+    if (_imgTotal > msgBudget.attached) {
+      msgContent.push({ type: "text", text: `[${_imgTotal - msgBudget.attached} image(s) on this message not shown.]` });
+    }
     // Separator between merged messages of same role
     if (currentContent.length) {
       currentContent.push({ type: "text", text: "---" });
@@ -704,7 +771,7 @@ async function buildConversationMessages(messages, elidedCount, hasMore, include
   if (turns.length && turns[turns.length - 1].role !== "user") {
     turns.push({
       role: "user",
-      content: [{ type: "text", text: "[The most recent message in this thread is from CustomBrites staff. Compose the next outbound reply as the staff voice — assume there is a follow-up that would naturally come next, OR if no follow-up is needed, output a brief acknowledgment-style draft the operator can review. Either way, your output should be a fresh staff-side reply, not a continuation of the prior staff message.]" }]
+      content: [{ type: "text", text: "[The most recent message in this thread is from CustomBrites staff, so there is no new customer message to answer. Follow the DRAFT MODE and any OPERATOR INSTRUCTIONS given at the start: in FOLLOW-UP mode write the gentle re-engagement it describes. Otherwise do not invent a customer question or promise a follow-up; write a brief, neutral check-in the operator can review, and self-rate confidence at 0.3 or lower. Your output must be a fresh staff-side reply, not a continuation of the prior staff message.]" }]
     });
   }
 
@@ -802,9 +869,11 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
       - If tracking exists AND the order shipped, share it warmly
       - If order is paid but not shipped, acknowledge we're still
         making it, and give a realistic time range
-      - If no data comes back, DON'T fabricate — say "let me pull
-        up your tracking details and get back to you within a few
-        hours" (operator will handle from there)
+      - If no data comes back, DON'T fabricate. Say "Tracking isn't
+        showing on our side yet. We're looking into it now." and
+        self-rate confidence at 0.5 or lower so an operator reviews
+        it. (The old wording, "let me pull up your tracking details
+        and get back to you", is rejected by the promise checks.)
 
 4.5. HELP REQUESTS ON EXISTING ORDERS. Etsy has a "Help with order"
    feature that lets a buyer flag a thread as a help request linked
@@ -1525,13 +1594,17 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
    reach out, follow up, get back, or be in touch by name. Promise
    that the situation is being looked at on the shop's side.
 
-   Acceptable escalation replies:
-     - "Thanks for letting us know. We're going to take a closer look
-       at this on our end and circle back."
-     - "Got it, we want to look at this carefully before we say
-       anything specific. We'll be back to you soon."
-     - "Understood. We need to pull this one up on our end before we
-       can answer properly."
+   Acceptable escalation replies (these pass the system's promise
+   checks; reuse them as written):
+     - "Thanks for letting us know. We're taking a closer look at
+       this now."
+     - "Thanks for sending these. We want to check this carefully
+       before suggesting next steps."
+     - "Understood. We need to pull this one up before we can answer
+       properly."
+   Never write "we'll be back to you", "we'll be in touch", "we'll get
+   back to you" or "circle back with": the system rejects them even in
+   an escalation.
 
    NOT acceptable (the system will reject these):
      - "Someone will follow up with you directly today on next steps."
@@ -1547,19 +1620,25 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
 8. HARD CONTENT BANS — NEVER mention any of the following anywhere in
    a draft reply, under any circumstances, even if the customer asks
    about them directly:
-      - The word "Canada" or "Canadian" in ANY form
-      - Any reference to the country of origin, border, customs clearance,
-        international shipping, or handoff between countries
+      - Where our packages ship FROM: never say or imply that orders
+        are made in, ship from, or pass through Canada (or any other
+        country), and never mention a border crossing, origin
+        facility, or handoff between countries
       - "Chit Chats", "ChitChats", or any variant (it's our shipping
         partner — customers don't need to know)
       - Any shipping-partner facility, sorting hub, or intermediary
         logistics company
       - Anything suggesting the package traveled internationally before
         reaching USPS
+   The customer's DESTINATION is fine to name. If a customer asks "do
+   you ship to Canada?", answer yes and quote the Canada rate and
+   transit time from section 7 ("Yes, we ship to Canada! ...").
    If the customer specifically asks "where is it shipping from?" answer
    honestly that it's on its way via USPS and focus on when it'll arrive.
-   If they ask about customs, say the package is domestic USPS and has
-   no customs clearance needed.
+   Customs: for a US address, no customs apply. For an address outside
+   the US, never claim that no customs or duties apply: say "Any import
+   duties or taxes depend on your country's rules." and self-rate
+   confidence at 0.5 or lower so an operator reviews the reply.
    Our shipping narrative is simple: "we ship via USPS" — period.
 
    EXCEPTION: the return address in the RETURN REQUESTS template
@@ -1567,8 +1646,8 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
    physically go to a real address, and the operations team is in
    Mississauga. When using that template, output it verbatim with the
    Canadian address intact. Do not extend this exception to anything
-   else — never mention shipping origin, customs, or geography in any
-   other context.
+   else — never mention where our packages ship from in any other
+   context.
 
 9. TIME AWARENESS — YOU KNOW THE CURRENT DATE/TIME.
    The TEMPORAL CONTEXT at the top of this message tells you the real
@@ -1685,17 +1764,19 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
 
     Acceptable escalation language, when you ARE escalating (and ONLY
     when escalation is genuine, per section 7.5):
-      - "We're going to take a closer look at this on our end."
-      - "We need to look at this carefully before we say anything
-        specific. We'll be back to you soon."
-      - "Understood. We need to pull this one up on our end before
-        we can answer properly."
+      - "Thanks for letting us know. We're taking a closer look at
+        this now."
+      - "Thanks for sending these. We want to check this carefully
+        before suggesting next steps."
+      - "Understood. We need to pull this one up before we can answer
+        properly."
 
     GENERAL RULE: If the AI would need someone other than itself to do
     something for the promise to come true, the AI cannot make that
-    promise. The only exception is generic "we'll be back to you"
-    language during a real escalation, where "we" means the shop
-    generally and the timing is intentionally vague.
+    promise. There is no exception for escalations: "we'll be back to
+    you" and "we'll be in touch" are rejected by the system in every
+    case. Use the escalation language above and set
+    ready_for_human_approval:true instead.
 
 11. VERIFICATION BEFORE STATING FACTS.
     Don't state facts about the customer's order that haven't been
@@ -1731,12 +1812,11 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
     with a brief, neutral acknowledgment that doesn't promise a named
     person will follow up. Examples:
 
-      "Thanks for sending the photos. We want to look at this
-       carefully on our end before we say anything specific. We'll
-       be back to you soon."
+      "Thanks for sending the photos. We want to check this
+       carefully before suggesting next steps."
 
-      "Got it, thanks for the photos. We need to take a closer look
-       at this on our end before we can speak to next steps."
+      "Got it, thanks for the photos. We're taking a closer look at
+       this now."
 
     No agreement with the complaint. No proposed solution. No
     "definitely looks off" or "I can see what you mean". No "I'm
@@ -1792,7 +1872,7 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
 
 15. RUSH PRODUCTION OFFER ($15) — STRICT ELIGIBILITY.
     CustomBrites offers a $15 flat-fee rush production upgrade that
-    cuts production time from the standard 4-5 business days down to
+    cuts production time from the standard 4-6 business days down to
     2-3 business days. This applies ONLY at checkout, on orders that
     have NOT yet been placed. It cannot be added to existing/paid orders.
 
@@ -1870,7 +1950,7 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
     HOW TO OFFER (template — adjust tone to fit, but keep the facts):
       "We do offer a $15 rush production upgrade that gets your piece
       through production in 2-3 business days instead of the standard
-      4-5. If you'd like it, we'd send you a custom Etsy listing with
+      4-6. If you'd like it, we'd send you a custom Etsy listing with
       the rush fee included so you can check out through that. (Faster
       shipping speed is a separate option you'd choose at checkout on
       that listing.)"
@@ -2109,9 +2189,15 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
     if (shopLines.length) sys += "\n\n--- LIVE SHOP INFO FROM ETSY ---\n" + shopLines.join("\n\n");
   }
 
-  // Signature
-  const sigTemplate = (config && config.signatureTemplate) || "Best,\n{employeeName}\nCustomBrites";
-  const sig = sigTemplate.replace(/\{employeeName\}/g, employeeName || "CustomBrites");
+  // Signature. Section 19 of the prompt (MANDATORY SIGN-OFF) requires
+  // exactly "Many Thanks,\nCustomBrites" with no personal names. The old
+  // default here ("Best,\n{employeeName}\nCustomBrites") contradicted it,
+  // put the operator's name ("system:auto-pipeline") into the prompt, and
+  // gave every operator a different system prompt (a separate prompt-cache
+  // entry each).
+  // A Firestore signatureTemplate without {employeeName} is still honoured.
+  const cfgSig = (config && typeof config.signatureTemplate === "string") ? config.signatureTemplate.trim() : "";
+  const sig = (cfgSig && !/\{employeeName\}/.test(cfgSig)) ? cfgSig : "Many Thanks,\nCustomBrites";
   sys += `\n\n--- SIGNATURE TO USE ---\n${sig}`;
 
   // Tool-use instructions
@@ -2119,7 +2205,7 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
 
 --- TOOL USE ---
 
-You have six tools:
+You have seven tools:
   - lookup_order_tracking(receiptId) — returns tracking code, carrier,
     ship date, delivery status for a specific order. Use this whenever
     the customer asks about tracking/where their order is/has it shipped.
@@ -2133,6 +2219,10 @@ You have six tools:
     pass the correct tracking code. The carrier (USPS vs Chit Chats) is
     auto-detected. You will naturally reference the attached image in
     your reply (e.g., "I've pulled up the tracking for you below").
+  - lookup_listing_by_url(url) — returns the live title, price,
+    variants and state of an Etsy listing URL. Listings the customer
+    linked in their latest message are already provided under
+    PRE-FETCHED LISTING DATA; call this only for other URLs.
   - search_shop_listings(query) — searches the mirrored active Etsy
     listing catalog. Use it for pre-purchase availability questions like
     "do you sell X?", "do you have this in silver?", or "how much is Y?"
@@ -2285,9 +2375,10 @@ URL in your reply naturally:
 
 Sending the line sheet does NOT count as a soft promise or holding
 reply — you're providing the actual reference the customer asked for.
-Mention it briefly, don't over-explain it. The operator's typical
-phrasing is "please see the attached sheet" or "here's our charm
-sheet" — one sentence, not a paragraph of description.
+Mention it briefly, don't over-explain it. A line sheet is sent as a
+LINK in your text, not as an attachment, so say "here's our charm
+sheet: [URL]", never "please see the attached sheet" (nothing is
+attached, and the attachment check will hold the reply).
 
 If get_collateral returns no matches for the family, fall back to
 typing the answer in prose. Do NOT promise an attachment that
@@ -2302,7 +2393,7 @@ When the customer's question would be better answered with a visual reference, s
   - attach_fit_reference: true — customer asks about necklace fit on the body, chain length, how it sits
   - attach_bracelet_sizing: true — customer asks about wrist sizing, bracelet length, how to measure a wrist
 
-The decision is YOURS based on the MEANING of the customer's question. The question can be in any language — translate conceptually before deciding; English keywords are not the trigger, the customer's actual question is. Each flag you set must be tied to a specific reason named in your reply prose (e.g., "I've attached our metals comparison card so you can see the three side by side"). Do NOT embed any URL in your reply text — the images attach automatically as chips, and URLs in prose mean the customer sees raw URL characters with no image.
+The decision is YOURS based on the MEANING of the customer's question. The question can be in any language — translate conceptually before deciding; English keywords are not the trigger, the customer's actual question is. Each flag you set must be tied to a specific reason named in your reply prose (e.g., "I've attached our metals comparison card so you can see the three side by side"). Do NOT paste the URL of these four flagged images into your reply text — they attach automatically as chips, and a raw URL in prose shows the customer URL characters with no image. (Line sheets from get_collateral are different: they are sent as a link, see above.)
 
 POINTING TO EXISTING LISTINGS (use search_shop_listings):
 
@@ -2413,6 +2504,7 @@ function buildContextPreamble({ thread, customer, mode, currentDraft, instructio
 
   sections.push(`--- TEMPORAL CONTEXT (REAL-WORLD TIME AT DRAFT TIME) ---`);
   sections.push(`Current time: ${currentTimeStr}`);
+  sections.push(`Current time in UTC: ${now.toISOString().slice(0, 16).replace("T", " ")} UTC (the timestamps on the messages below are UTC).`);
 
   // Calculate age of the latest customer message
   // v3.32 — Message docs are written by etsyMailSnapshot.js with fields
@@ -2535,12 +2627,13 @@ function buildContextPreamble({ thread, customer, mode, currentDraft, instructio
 
   sections.push(`\n--- WHAT FOLLOWS ---
 The conversation history is delivered as alternating user (customer) and
-assistant (CustomBrites staff) turns. Staff-sent images/listings are
-visible alongside the customer's. Read the full history, identify the
+assistant (CustomBrites staff) turns. Customer photos are embedded
+(at most 15, the newest first); staff-sent images are NOT embedded,
+only noted in text. Read the full history, identify the
 active question per the rules in the system prompt, do any tracking or
 order lookups you need, and finish by calling compose_draft_reply.
 
-Operator signing the reply: ${employeeName || "(unspecified — use default signature)"}`);
+Sign-off: use exactly the SIGNATURE TO USE block from the system prompt. Never add an operator's name.`);
 
   return sections.join("\n");
 }
@@ -2564,7 +2657,9 @@ function slimReceiptForModel(receipt, receiptId) {
     buyerMessage : receipt.message_from_buyer || null,
     isPaid       : !!receipt.is_paid,
     isShipped    : !!receipt.is_shipped,
-    grandTotal   : receipt.grandtotal && (Number(receipt.grandtotal.amount) / Math.pow(10, receipt.grandtotal.divisor || 2)) || null,
+    // Etsy Money: divisor is the divisor itself (100), not an exponent.
+    // 10^100 turned $48.00 into 4.8e-97.
+    grandTotal   : receipt.grandtotal && (Number(receipt.grandtotal.amount) / Number(receipt.grandtotal.divisor || 100)) || null,
     currency     : receipt.grandtotal && receipt.grandtotal.currency_code || null,
     shippingAddress: {
       firstLine : receipt.first_line   || null,
@@ -2578,7 +2673,7 @@ function slimReceiptForModel(receipt, receiptId) {
       listingId      : t.listing_id,
       title          : t.title,
       quantity       : t.quantity,
-      price          : t.price && (Number(t.price.amount) / Math.pow(10, t.price.divisor || 2)) || null,
+      price          : t.price && (Number(t.price.amount) / Number(t.price.divisor || 100)) || null,
       personalization: t.personalization || t.transaction_personalization || null,
       variations     : Array.isArray(t.variations) ? t.variations.map(v => ({
         property: v.formatted_name  || v.property_value || null,
@@ -2689,6 +2784,18 @@ const TOOL_SPECS = [
     input_schema: {
       type: "object",
       properties: {
+        investigation: {
+          type: "object",
+          description: "Fill this FIRST, before text: your findings from the MANDATORY INVESTIGATION PROTOCOL in the system prompt, 1-3 short sentences per field. This is where the protocol's 'output JSON investigation field' goes.",
+          properties: {
+            order_history       : { type: "string" },
+            conversation_timing : { type: "string" },
+            temporal_correlation: { type: "string" },
+            reference_resolution: { type: "string" },
+            current_ask         : { type: "string", description: "What the customer is asking for RIGHT NOW, in one sentence." },
+            needs_human_review  : { type: "boolean", description: "True when an ambiguous reference could change what the right answer is." }
+          }
+        },
         text: {
           type: "string",
           description: "The reply text, including the signature. This is what the operator will see in the composer."
@@ -2743,6 +2850,10 @@ const TOOL_SPECS = [
           type: "boolean",
           description: "Set true ONLY when (a) this thread previously had rush production accepted AND (b) the customer's most recent inbound message clearly retracts it (e.g. 'actually never mind on rush', 'regular shipping is fine after all'). Default false. When in doubt, leave false."
         },
+        ready_for_human_approval: {
+          type: "boolean",
+          description: "Set true when a person must decide before this reply goes out (refund, replacement, damage or quality complaint, anything the rules say to escalate). The reply is then held for operator review whatever confidence you give. Default false."
+        },
         attach_metal_comparison: {
           type: "boolean",
           description: "Set true when the customer is asking about metal types/options — gold filled vs gold plated vs solid gold, gold purity, 'what kind of gold', 'is it real gold', what karat, hypoallergenic concerns, etc. Sets the metals comparison card as an attached image chip. The decision is about the MEANING of the question; the question can be in ANY language. Default false."
@@ -2760,32 +2871,144 @@ const TOOL_SPECS = [
           description: "Set true when the customer is asking about bracelet/wrist sizing — wrist measurement, bracelet length, 'will a 7-inch fit me', how to measure a wrist. Sets the bracelet sizing chart. Default false."
         }
       },
-      required: ["text", "reasoning", "referencedReceiptIds", "confidence", "difficulty"]
+      required: ["investigation", "text", "reasoning", "referencedReceiptIds", "confidence", "difficulty"]
     }
   }
 ];
 
+/** Shipments for a receipt from the receipts mirror (EtsyMail_Receipts,
+ *  refreshed every 7-10 min by etsyMailReceiptsMirrorCron): 1 Firestore
+ *  read, 0 Etsy calls. Only a SHIPPED receipt with a tracking code is
+ *  served from the mirror, because that state never reverts; anything else
+ *  returns null and the caller asks Etsy live. Same shape as
+ *  getShopReceiptShipments. */
+async function mirrorShipmentsFor(receiptId) {
+  try {
+    const snap = await db.collection("EtsyMail_Receipts").doc(String(receiptId)).get();
+    if (!snap.exists) return null;
+    const m = snap.data() || {};
+    const r = (m.raw && typeof m.raw === "object") ? m.raw : null;
+    if (!r || !r.is_shipped) return null;
+    const slim = (Array.isArray(r.shipments) ? r.shipments : []).map(s => ({
+      trackingCode: s.tracking_code || null,
+      carrier     : s.carrier_name  || null,
+      trackingUrl : s.tracking_url  || null,
+      shipDate    : s.shipment_notification_timestamp ? new Date(s.shipment_notification_timestamp * 1000).toISOString() : null,
+      note        : s.buyer_note || null
+    }));
+    if (!slim.some(s => s.trackingCode)) return null;
+    return {
+      receiptId  : String(receiptId),
+      isPaid     : !!r.is_paid,
+      isShipped  : true,
+      status     : "shipped",
+      shipments  : slim,
+      shippedAt  : slim[0].shipDate,
+      estimatedDelivery: { min: null, max: null },
+      currency   : (r.grandtotal && r.grandtotal.currency_code) || null,
+      grandTotal : (r.grandtotal && Number(r.grandtotal.divisor)) ? Number(r.grandtotal.amount) / Number(r.grandtotal.divisor) : null,
+      buyerName  : r.name || null,
+      buyerUserId: m.buyer_user_id != null ? String(m.buyer_user_id) : (r.buyer_user_id != null ? String(r.buyer_user_id) : null),
+      source     : "receipts_mirror"
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+/** Smaller raw-context payload for the drafter (ETSYMAIL_AI_SLIM_CONTEXT=1).
+ *  Receipts keep the fields a reply can use instead of the full Etsy JSON
+ *  (~4.4K chars each, up to 10 per repeat buyer). Messages become a one-line
+ *  index because the full text is already in the conversation turns. */
+function slimContextForDraft(ctx) {
+  if (!ctx || typeof ctx !== "object") return ctx;
+  const money = (v) => (v && typeof v === "object" && Number(v.divisor)) ? Math.round(Number(v.amount) / Number(v.divisor) * 100) / 100 : null;
+  // fetchClassificationContext already turns most *_timestamp fields into
+  // ISO strings (_ctxScrubTimestamps); numbers (e.g. expected_ship_date)
+  // are Unix seconds.
+  const iso = (v) => (typeof v === "string" && v) ? v
+                   : (typeof v === "number" && v > 0) ? new Date(v * 1000).toISOString() : null;
+  const text = (v, n) => (v == null || v === "") ? null
+                   : String(typeof v === "object" ? JSON.stringify(v) : v).slice(0, n);
+  const slimReceipt = (doc) => {
+    const r = (doc && doc.raw && typeof doc.raw === "object") ? doc.raw : (doc || {});
+    const tx = Array.isArray(r.transactions) ? r.transactions : [];
+    const sh = Array.isArray(r.shipments) ? r.shipments : [];
+    return {
+      receipt_id        : String(r.receipt_id || (doc && (doc.receipt_id || doc.id)) || ""),
+      ordered_at        : iso(r.created_timestamp || r.create_timestamp),
+      status            : r.status || null,
+      is_paid           : !!r.is_paid,
+      is_shipped        : !!r.is_shipped,
+      grand_total       : money(r.grandtotal),
+      currency          : (r.grandtotal && r.grandtotal.currency_code) || null,
+      country_iso       : r.country_iso || null,
+      is_gift           : !!r.is_gift,
+      message_from_buyer: r.message_from_buyer ? String(r.message_from_buyer).slice(0, 300) : null,
+      items: tx.map(t => ({
+        title             : t.title ? String(t.title).slice(0, 120) : null,
+        quantity          : t.quantity || 1,
+        listing_id        : t.listing_id || null,
+        expected_ship_date: iso(t.expected_ship_date),
+        variations        : Array.isArray(t.variations) ? t.variations.map(v => `${v.formatted_name}: ${v.formatted_value}`) : [],
+        personalization   : text(t.personalization || t.transaction_personalization || t.personalization_data, 300)
+      })),
+      shipments: sh.map(s => ({ carrier: s.carrier_name || null, tracking_code: s.tracking_code || null, shipped_at: iso(s.shipment_notification_timestamp) }))
+    };
+  };
+  const msgs = Array.isArray(ctx.messages) ? ctx.messages : [];
+  return {
+    ...ctx,
+    recentReceipts: (Array.isArray(ctx.recentReceipts) ? ctx.recentReceipts : []).map(slimReceipt),
+    messages: {
+      note : "Full message text is in the conversation turns that follow (timestamps UTC). This is an index of every message, oldest first.",
+      index: msgs.map(m => ({ direction: m.direction, timestamp: m.timestamp, preview: String(m.text || "").slice(0, 80), images: Array.isArray(m.imageUrls) ? m.imageUrls.length : 0 }))
+    }
+  };
+}
+
 function buildToolExecutors(ctx) {
+  // Audit 2026-09:
+  //  - per-draft memo: the pre-AI prefetch and the model often look up the
+  //    same receipt; one lookup is enough (was 2 Etsy calls)
+  //  - shipped receipts are read from the receipts mirror first (0 calls)
+  //  - the help-request order linked to the thread is always allowed
+  //  - with NO cached order history, a receipt is only shown when Etsy's
+  //    response says it belongs to this thread's buyer (was: any receipt
+  //    id, including another customer's name, address and personalization)
+  const shipmentsMemo = new Map();
+  const cachedIds = () => new Set(((ctx.customer && ctx.customer.recentReceipts) || []).map(r => String(r.receiptId)));
+  const linkedId  = () => (ctx.thread && /^\d+$/.test(String(ctx.thread.etsyOrderId || ""))) ? String(ctx.thread.etsyOrderId) : null;
+  const ownedByThreadBuyer = (buyerUserId) => {
+    const threadBuyer = (ctx.thread && ctx.thread.buyerUserId) ? String(ctx.thread.buyerUserId) : null;
+    return !!(threadBuyer && buyerUserId != null && String(buyerUserId) === threadBuyer);
+  };
+  const notVerified = (receiptId) => ({
+    error: "This order could not be verified as belonging to this customer, so its details are not shown. Ask the customer to confirm the order number, or leave it for the operator.",
+    receiptId
+  });
+  const notInHistory = (receiptId, recentIds) => ({
+    error: "receiptId does not match any receipt in the customer's cached order history",
+    receiptId,
+    availableReceiptIds: Array.from(recentIds)
+  });
   return {
     lookup_order_tracking: async (input) => {
       const receiptId = String(input.receiptId || "").trim();
       if (!receiptId || !/^\d+$/.test(receiptId)) {
         return { error: "receiptId must be a numeric string" };
       }
+      const recentIds = cachedIds();
+      const trusted = recentIds.has(receiptId) || receiptId === linkedId();
+      if (!trusted && recentIds.size) return notInHistory(receiptId, recentIds);
 
-      // Validate: receiptId should belong to this customer
-      const recentIds = new Set(
-        ((ctx.customer && ctx.customer.recentReceipts) || []).map(r => String(r.receiptId))
-      );
-      if (recentIds.size && !recentIds.has(receiptId)) {
-        return {
-          error: "receiptId does not match any receipt in the customer's cached order history",
-          receiptId,
-          availableReceiptIds: Array.from(recentIds)
-        };
+      if (!shipmentsMemo.has(receiptId)) {
+        shipmentsMemo.set(receiptId, (async () => (await mirrorShipmentsFor(receiptId)) || getShopReceiptShipments(receiptId))());
       }
-
-      const data = await getShopReceiptShipments(receiptId);
+      let data;
+      try { data = await shipmentsMemo.get(receiptId); }
+      catch (e) { shipmentsMemo.delete(receiptId); throw e; }
+      if (!trusted && !ownedByThreadBuyer(data && data.buyerUserId)) return notVerified(receiptId);
       return data;
     },
 
@@ -2794,18 +3017,12 @@ function buildToolExecutors(ctx) {
       if (!receiptId || !/^\d+$/.test(receiptId)) {
         return { error: "receiptId must be a numeric string" };
       }
-      const recentIds = new Set(
-        ((ctx.customer && ctx.customer.recentReceipts) || []).map(r => String(r.receiptId))
-      );
-      if (recentIds.size && !recentIds.has(receiptId)) {
-        return {
-          error: "receiptId does not match any receipt in the customer's cached order history",
-          receiptId,
-          availableReceiptIds: Array.from(recentIds)
-        };
-      }
+      const recentIds = cachedIds();
+      const trusted = recentIds.has(receiptId) || receiptId === linkedId();
+      if (!trusted && recentIds.size) return notInHistory(receiptId, recentIds);
 
       const receipt = await getShopReceiptFull(receiptId);
+      if (!trusted && !ownedByThreadBuyer(receipt && receipt.buyer_user_id)) return notVerified(receiptId);
       return slimReceiptForModel(receipt, receiptId);
     },
 
@@ -3656,10 +3873,14 @@ answering. Do not guess about the order's contents.`;
     const draftReplyInvestigationAddendum = [
       "═══ DRAFT-REPLY INVESTIGATION GROUNDING ═══════════════════════════════",
       "",
-      "After completing the mandatory investigation protocol, your output",
-      "JSON MUST include an `investigation` field at the top with the shape",
-      "described in the protocol. Your reply draft MUST be grounded in those",
-      "findings — not in the default reply template, not in surface-language",
+      "In this component your ONLY output is the compose_draft_reply tool",
+      "call. Wherever the protocol above says \"output JSON\", it means that",
+      "call: put your five findings in its `investigation` field (fill it",
+      "first), the customer-facing reply in `text`, and set",
+      "`investigation.needs_human_review` or `ready_for_human_approval` when",
+      "a person must decide. Do not write a separate JSON object and do not",
+      "use a `reply` field. Your reply MUST be grounded in those findings —",
+      "not in the default reply template, not in surface-language",
       "pattern-match.",
       "",
       "Concretely: if your investigation found that the customer's 'the",
@@ -3675,13 +3896,6 @@ answering. Do not guess about the order's contents.`;
       "brief and non-committal — the operator will resolve the ambiguity",
       "before sending. Do not draft a confident, specific reply on an",
       "ambiguous situation.",
-      "",
-      "Your output JSON shape:",
-      "  {",
-      '    "investigation": { ... per the protocol above ... },',
-      '    "reply": "<the operator-facing reply draft>",',
-      '    ... (rest of the fields the existing draft-reply schema requires) ...',
-      "  }",
     ].join("\n");
 
     const system = [
@@ -3694,6 +3908,10 @@ answering. Do not guess about the order's contents.`;
       draftReplyInvestigationAddendum,
     ].join("\n\n");
 
+    // Audit 2026-09: tracking codes known to belong to this customer (their
+    // mirrored receipts, this draft's lookups, numbers they sent us). The
+    // raw-digit auto-fix further down only renders an image for one of these.
+    const _knownTrackingCodes = new Set();
     // v5.0 — Fetch the raw-document context and prepend it to the
     // preamble. The model reads the actual Firestore documents alongside
     // the conversation turns. The investigation protocol in the system
@@ -3704,7 +3922,18 @@ answering. Do not guess about the order's contents.`;
         perMessageCap: 1000,
         receiptLimit : 10,
       });
-      const rawContextBlock = formatContextForPrompt(ctx);
+      // Same ghost rule as loadMessages (ids "optim_…"), so the raw
+      // document list and the conversation turns agree on who spoke last.
+      if (ctx && Array.isArray(ctx.messages)) {
+        ctx.messages = dropDuplicateGhosts(ctx.messages, m => /^optim_/.test(String((m && m.id) || "")));
+      }
+      for (const r of (ctx && Array.isArray(ctx.recentReceipts) ? ctx.recentReceipts : [])) {
+        const raw = (r && r.raw && typeof r.raw === "object") ? r.raw : (r || {});
+        for (const s of (Array.isArray(raw.shipments) ? raw.shipments : [])) {
+          if (s && s.tracking_code) _knownTrackingCodes.add(String(s.tracking_code).replace(/\s+/g, ""));
+        }
+      }
+      const rawContextBlock = formatContextForPrompt(AI_SLIM_CONTEXT ? slimContextForDraft(ctx) : ctx);
       // Inject at the START of the first user message's text content.
       // initialMessages[0] is { role: "user", content: [{type:"text", text: preambleText}] }
       if (initialMessages[0] && Array.isArray(initialMessages[0].content)
@@ -3768,23 +3997,39 @@ answering. Do not guess about the order's contents.`;
     // This is the same pattern as prefetchCareCollateral — preemptive,
     // not dependent on AI cooperation.
     const _latestInboundText = (latestCustomerMsg && latestCustomerMsg.text) || "";
-    const TRACKING_TOPIC_KEYWORDS = [
-      "tracking", "trackin",
-      "shipped", "shipping", "in transit",
-      "where is my", "where's my", "where is the", "where's the",
-      "hasn't arrived", "haven't received", "not arrived", "didn't arrive",
-      "any update", "any updates", "update on",
-      "when will it arrive", "when will it get here", "when does it arrive",
-      "lost package", "missing package", "package lost",
-      "out for delivery", "delivery status", "estimated delivery",
-      "usps", "ups", "fedex", "dhl", "chit chats", "chitchats"
+    // Audit 2026-09: whole-word, order-status phrasing only. The old
+    // substring list fired on "cups"/"upset" ("ups"), "free shipping?" and
+    // "update on the design proof". Reads every unanswered customer message,
+    // not just the last one ("where's my order?" + "also, love the colour").
+    const _unansweredText = unansweredInboundText(messages.slice().reverse()) || _latestInboundText;
+    const TRACKING_TOPIC_RX = [
+      /\btracking\b|\btrackin\b/i,
+      /\b(?:has|have|did|was|is)\s+(?:it|my|the|our)\b[^.?!]{0,40}\bship(?:ped)?\b/i,
+      /\bwhere(?:'s|’s|\s+is)\s+(?:my|the|our)\s+(?:order|package|parcel|necklace|charm|earrings?|bracelet|item|jewelry)\b/i,
+      /\b(?:hasn'?t|haven'?t|not|didn'?t|never)\s+(?:yet\s+)?(?:arrived|received|come|shown\s+up)\b/i,
+      /\b(?:any|an)\s+updates?\s+on\s+(?:my|the|our)\s+(?:order|package|parcel|shipment|delivery)\b/i,
+      /\bwhen\s+(?:will|does|do|is)\s+(?:it|my\s+(?:order|package|parcel)|the\s+order)\s+(?:arrive|get\s+here|be\s+delivered|ship|going\s+to\s+ship)\b/i,
+      /\b(?:lost|missing)\s+(?:package|parcel)\b|\bpackage\s+(?:lost|missing)\b/i,
+      /\b(?:out\s+for\s+delivery|delivery\s+status|estimated\s+delivery|in\s+transit)\b/i,
+      /\b(?:usps|ups|fedex|dhl|chit\s*chats)\b/i
     ];
-    const _trackingTopicDetected = _latestInboundText &&
-      TRACKING_TOPIC_KEYWORDS.some(kw => _latestInboundText.toLowerCase().includes(kw));
+    const _trackingTopicDetected = !!_unansweredText && TRACKING_TOPIC_RX.some(rx => rx.test(_unansweredText));
 
     if (_trackingTopicDetected) {
       console.log(`[draftReply ${threadId}] v3.28 pre-AI tracking prefetch — topic detected in inbound`);
-      const candidateReceipts = ((customer && customer.recentReceipts) || []).slice(0, 3);
+      // Only the order the customer is most likely asking about: the
+      // help-request order linked to the thread, else the NEWEST order if it
+      // has shipped and is under 45 days old. The old loop walked the 3
+      // newest orders and attached the first one WITH tracking, i.e. an
+      // older, delivered order whenever the newest was still in production
+      // (up to 3 Etsy calls, plus a wrong tracking image on the draft).
+      const _linkedOrderId = (thread.etsyOrderId && /^\d+$/.test(String(thread.etsyOrderId))) ? String(thread.etsyOrderId) : null;
+      const _newest = ((customer && customer.recentReceipts) || [])[0] || null;
+      const _newestMs = _newest && _newest.orderedAt
+        ? (typeof _newest.orderedAt.toMillis === "function" ? _newest.orderedAt.toMillis() : Date.parse(_newest.orderedAt) || 0) : 0;
+      const _newestRecent = !_newestMs || (Date.now() - _newestMs) < 45 * 86400000;
+      const candidateReceipts = _linkedOrderId ? [{ receiptId: _linkedOrderId }]
+        : (_newest && _newest.receiptId && _newest.isShipped !== false && _newestRecent) ? [_newest] : [];
       let prefetchedCode = null;
       let prefetchedReceiptId = null;
       let prefetchAttemptErrors = [];
@@ -3892,7 +4137,10 @@ answering. Do not guess about the order's contents.`;
           variantsText
         ].join("\n");
       }).join("\n\n");
-      systemWithListings = system + "\n\n=== PRE-FETCHED LISTING DATA (customer referenced these URLs) ===\n\n" + block + "\n\n=== END PRE-FETCHED LISTING DATA ===\n\nWhen answering questions about variants/options/metals/prices for these listings, USE THIS DATA — not guesses from the URL slug or general knowledge. If the customer asks about variants not in this data, those variants don't exist on the listing.";
+      // Audit 2026-09: sent in the first user message instead of appended
+      // to the system prompt, so the ~23K-token system block stays
+      // byte-identical and keeps its prompt-cache hit.
+      initialMessages[0].content.push({ type: "text", text: "=== PRE-FETCHED LISTING DATA (customer referenced these URLs) ===\n\n" + block + "\n\n=== END PRE-FETCHED LISTING DATA ===\n\nWhen answering questions about variants/options/metals/prices for these listings, USE THIS DATA — not guesses from the URL slug or general knowledge. If the customer asks about variants not in this data, those variants don't exist on the listing." });
     }
 
     let loopResult;
@@ -3907,7 +4155,11 @@ answering. Do not guess about the order's contents.`;
         toolContext,
         effort        : AI_EFFORT,
         useThinking   : true,
-        maxIterations : MAX_TOOL_ITERATIONS
+        maxIterations : MAX_TOOL_ITERATIONS,
+        adaptiveThinking: AI_ADAPTIVE_THINKING === "all"
+                       || (AI_ADAPTIVE_THINKING === "pipeline" && body.viaPipeline === true),
+        cacheTail     : AI_CACHE_TAIL,
+        timeoutMs     : AI_TIMEOUT_MS
       });
     } catch (e) {
       await db.collection(THREADS_COLL).doc(threadId).set({
@@ -4232,7 +4484,7 @@ answering. Do not guess about the order's contents.`;
           violations.push({
             type   : "always_forbidden_handoff",
             match  : m[0],
-            message: `Reply commits a specific operator action ("${m[0]}") that the system cannot guarantee. Forbidden regardless of escalation. Rephrase to reference the shop generally with vague timing ("we'll be back to you soon").`
+            message: `Reply commits a specific operator action ("${m[0]}") that the system cannot guarantee. Forbidden regardless of escalation. Rephrase without promising a follow-up, e.g. "We're taking a closer look at this now."`
           });
         }
       }
@@ -4300,6 +4552,11 @@ answering. Do not guess about the order's contents.`;
       // Replace em-dashes (—) and en-dashes (–) with commas. If the dash
       // was surrounded by spaces (a separator use), the comma + space
       // reads naturally. Collapse any resulting double-spaces.
+      // Ranges keep a plain hyphen: "4–6 business days" → "4-6", "$18–$55"
+      // → "$18-$55", "Monday–Friday" → "Monday-Friday". The old single rule
+      // produced "4, 6 business days" and "Monday, Friday, 9, 5 ET".
+      s = s.replace(/(\d)\s*[–—]\s*(?=\$?\d)/g, "$1-");
+      s = s.replace(/(\w)–(?=\w)/g, "$1-");
       s = s.replace(/\s*[—–]\s*/g, ", ");
 
       // Replace ASCII double-hyphens used as separators (" -- ") with
@@ -4322,10 +4579,14 @@ answering. Do not guess about the order's contents.`;
       const RETURN_TEMPLATE_SIGNAL = /450\s*Matheson\s*Blvd/i;
       if (!RETURN_TEMPLATE_SIGNAL.test(s)) {
         // Standard scrubs apply to all other replies
-        s = s.replace(/\bfrom\s+Canada\b/gi, "from our facility");
-        s = s.replace(/\bin\s+Canada\b/gi, "at our facility");
-        s = s.replace(/\bCanadian\b/gi, "");
-        s = s.replace(/\bCanada\b/gi, "");
+        // Origin phrasing only. The customer's DESTINATION must survive:
+        // deleting every "Canada" turned "Yes, we ship to Canada." into
+        // "Yes, we ship to." and "Canadian orders ship for $9" into
+        // " orders ship for $9". Any other "in/from Canada" wording is
+        // left for a person (aiCanadaMentionReview caps confidence).
+        s = s.replace(/\b(ships?|shipped|shipping|sent|mailed|comes?|coming)\s+(?:out\s+)?from\s+Canada\b/gi, "$1 from our facility");
+        s = s.replace(/\b(made|handmade|crafted|produced|based|located)\s+in\s+Canada\b/gi, "$1 in our studio");
+        s = s.replace(/\b(our|the)\s+(studio|workshop|facility|warehouse|team|office)\s+in\s+Canada\b/gi, "$1 $2");
       }
       // ELSE: leave Canada/Mississauga references intact for the return
       // address. Post-processing trusts that the only place the model
@@ -4369,7 +4630,13 @@ answering. Do not guess about the order's contents.`;
         attach_bracelet_sizing  : composeCall.input.attach_bracelet_sizing   === true,
         // Rush-flag pass-through (existing behavior preserved)
         customerAcceptedRush    : composeCall.input.customerAcceptedRush     === true,
-        customerRemovedRush     : composeCall.input.customerRemovedRush      === true
+        customerRemovedRush     : composeCall.input.customerRemovedRush      === true,
+        // The prompt tells the model to set these when a person must
+        // decide; until now neither existed in the schema, so the request
+        // was lost and a 0.9 self-rating still auto-sent.
+        readyForHumanApproval   : composeCall.input.ready_for_human_approval === true,
+        investigation           : (composeCall.input.investigation && typeof composeCall.input.investigation === "object")
+                                  ? composeCall.input.investigation : null
       };
       parsedOk = Boolean(parsed.text);
     }
@@ -4408,6 +4675,26 @@ answering. Do not guess about the order's contents.`;
       .filter(s => s.listingId && s.title)
       .slice(0, 5);
 
+    // ─── Audit 2026-09 — model-requested review + origin mentions ─────
+    if (parsed.readyForHumanApproval === true
+        || (parsed.investigation && parsed.investigation.needs_human_review === true)) {
+      parsed.aiEscalationRequested = true;
+      if (typeof parsed.confidence === "number" && parsed.confidence > 0.5) {
+        parsed.confidence = 0.5;
+        parsed.confidenceReasoning = (parsed.confidenceReasoning || "") +
+          " | Model asked for human review (ready_for_human_approval / needs_human_review); confidence capped at 0.5.";
+      }
+    }
+    if (parsed.text && !/450\s*Matheson\s*Blvd/i.test(parsed.text)
+        && /\b(?:from|in|via|through|across|out\s+of)\s+Canad(?:a|ian)\b|\bCanadian\s+(?:facility|warehouse|studio|workshop|team|border|customs)\b|\bCanada\s+Post\b/i.test(parsed.text)) {
+      parsed.aiCanadaMentionReview = true;
+      if (typeof parsed.confidence === "number" && parsed.confidence > 0.5) {
+        parsed.confidence = 0.5;
+        parsed.confidenceReasoning = (parsed.confidenceReasoning || "") +
+          " | Reply mentions Canada in an origin-like phrase; confidence capped at 0.5 for review.";
+      }
+    }
+
     // ─── v3.26 — Attachment-claim sanity check ─────────────────────
     //
     // The AI sometimes produces a reply whose prose claims an
@@ -4443,9 +4730,15 @@ answering. Do not guess about the order's contents.`;
       // attachment construction below. The AI's prose mentioning "I've
       // attached our care guide" (per the AUTO-ATTACHED COLLATERAL
       // prompt section) is legitimate when this is true.
-      (Array.isArray(prefetchedCareCollateral)   && prefetchedCareCollateral.length   > 0) ||
-      (Array.isArray(prefetchedSizingCollateral) && prefetchedSizingCollateral.length > 0);
-    const _attachmentClaimRx = /\b(?:i'?ve\s+attached|i\s+have\s+attached|see\s+attached|find\s+attached|attached\s+(?:below|here|to\s+this|the\s+tracking|are|is)|tracking\s+(?:details|image|timeline|info(?:rmation)?|snapshot)\s+(?:below|attached|here)|below\s+(?:you'?ll\s+find|you\s+can\s+(?:see|find)|please\s+(?:see|find)))\b/i;
+      // Audit 2026-09: the pools are prefetched on EVERY draft (v5.21), so
+      // "pool non-empty" was always true and this guard never fired.
+      // Collateral counts only when the model set a matching attach_* flag;
+      // the post-check after attachments are built confirms one attached.
+      ((parsed.attach_care_instructions === true || parsed.attach_metal_comparison === true)
+        && Array.isArray(prefetchedCareCollateral) && prefetchedCareCollateral.length > 0) ||
+      ((parsed.attach_fit_reference === true || parsed.attach_bracelet_sizing === true)
+        && Array.isArray(prefetchedSizingCollateral) && prefetchedSizingCollateral.length > 0);
+    const _attachmentClaimRx = /\b(?:i'?ve\s+attached|i\s+have\s+attached|(?:see|find)\s+(?:the\s+|our\s+)?attached|attached\s+(?:below|here|to\s+this|the\s+tracking|are|is|sheet|chart|guide|card|image|photo|picture|file|pdf)|tracking\s+(?:details|image|timeline|info(?:rmation)?|snapshot)\s+(?:below|attached|here)|pulled\s+(?:up\s+)?(?:the\s+)?(?:current\s+)?tracking(?:\s+for\s+you)?\s+below|below\s+(?:you'?ll\s+find|you\s+can\s+(?:see|find)|please\s+(?:see|find)))\b/i;
     const _claimsAttachment = parsed.text && _attachmentClaimRx.test(parsed.text);
     if (_claimsAttachment && !_hasRealAttachment) {
       console.warn(`[draftReply ${threadId}] AI reply claims attachment but no tracking image was generated — forcing to human review`);
@@ -4488,6 +4781,27 @@ answering. Do not guess about the order's contents.`;
     const _rawTrackingDigitRx = /\b\d{12,}\b/;
     const _rawDigitMatch = parsed.text && parsed.text.match(_rawTrackingDigitRx);
     if (_rawDigitMatch && !_hasRealTrackingImage) {
+      for (const tc of (loopResult.toolCalls || [])) {
+        const out = tc && tc.output;
+        for (const s of (out && Array.isArray(out.shipments) ? out.shipments : [])) {
+          if (s && s.trackingCode) _knownTrackingCodes.add(String(s.trackingCode).replace(/\s+/g, ""));
+        }
+      }
+      for (const m of (messages || [])) {
+        if (!m || m.direction !== "inbound") continue;
+        for (const d of (String(m.text || "").match(/\b\d{12,}\b/g) || [])) _knownTrackingCodes.add(d);
+      }
+    }
+    // Audit 2026-09: a number that is not one of this customer's tracking
+    // codes (a mistyped or invented one) used to get a branded tracking
+    // image generated for it, with no review.
+    if (_rawDigitMatch && !_hasRealTrackingImage && !_knownTrackingCodes.has(_rawDigitMatch[0])) {
+      parsed.aiRawTrackingDigitMismatch = true;
+      parsed.aiRawTrackingDigitAutoFixFailed = "number is not a tracking code on this customer's orders";
+      parsed.confidence = 0;
+      parsed.confidenceReasoning = (parsed.confidenceReasoning || "") +
+        ` | Reply contains the number ${_rawDigitMatch[0]}, which is not a tracking code on this customer's orders. No image generated; forced confidence=0 for operator review.`;
+    } else if (_rawDigitMatch && !_hasRealTrackingImage) {
       const trackingCode = _rawDigitMatch[0];
       console.warn(`[draftReply ${threadId}] AI pasted raw tracking digits ${trackingCode} without calling generate_tracking_image — auto-correcting`);
       try {
@@ -4664,6 +4978,36 @@ answering. Do not guess about the order's contents.`;
     // Final attachments list combines tracking-image attachments
     // (existing behavior) with collateral attachments (new).
     const attachments = trackingAttachments.concat(collateralAttachments);
+
+    // Audit 2026-09 — second half of the attachment-claim guard: the prose
+    // promises an attachment but nothing attached (e.g. a flag was set but
+    // no active collateral exists for that kind).
+    if (_claimsAttachment && attachments.length === 0 && !parsed.aiAttachmentClaimMismatch) {
+      parsed.aiAttachmentClaimMismatch = true;
+      parsed.confidence = 0;
+      parsed.confidenceReasoning = (parsed.confidenceReasoning || "") +
+        " | Reply mentions an attachment but none is attached to the draft. Forced confidence=0 for operator review.";
+    }
+
+    // Audit 2026-09 — the pipeline's deterministic vetoes, evaluated here as
+    // well so the inbox's manual "AI Draft" auto-send obeys the same bright
+    // lines (it used to enqueue on confidence alone). Pure regex plus thread
+    // fields already loaded: no extra reads, no Etsy calls.
+    let autoSendBlockers = [];
+    try {
+      const veto = applyDeterministicVetoes({
+        inboundText   : unansweredInboundText(messages.slice().reverse()),
+        draftText     : parsed.text,
+        draftToolCalls: toolCallLog
+      });
+      autoSendBlockers = veto.reasons.slice();
+      if ((Number(thread.orderLinkOpen) || 0) > 0 || thread.orderLinkTest === true) {
+        autoSendBlockers.push("production_question_open");
+      }
+      if (parsed.aiEscalationRequested) autoSendBlockers.push("model_requested_human_review");
+    } catch (e) {
+      autoSendBlockers = ["veto_check_failed: " + e.message];
+    }
     // ────────────────────────────────────────────────────────────
 
     const draftDoc = {
@@ -4689,6 +5033,11 @@ answering. Do not guess about the order's contents.`;
       // reply so the operator either removes the false claim or
       // attaches the image manually before sending.
       aiAttachmentClaimMismatch: !!parsed.aiAttachmentClaimMismatch,
+      // Audit 2026-09
+      aiEscalationRequested : !!parsed.aiEscalationRequested,
+      aiCanadaMentionReview : !!parsed.aiCanadaMentionReview,
+      aiInvestigation       : parsed.investigation || null,
+      aiAutoSendBlockers    : autoSendBlockers,
       attachments,
       // v0.9.18 parity — mirror attachments into draftAttachments so
       // the operator UI's hydrateComposerFromDraft sees the chips
@@ -4738,7 +5087,44 @@ answering. Do not guess about the order's contents.`;
       createdAt             : now,
       updatedAt             : now
     };
-    await draftRef.set(draftDoc, { merge: false });
+    // Audit 2026-09 — never overwrite a reply that is on its way out.
+    // EtsyMail_Drafts holds ONE doc per thread (draft_<threadId>); writing
+    // status "draft" over a "queued"/"sending" doc silently dropped that
+    // send. The last sent text is carried forward so etsyMailDraftSend's
+    // duplicate-auto-send guard can still compare against it (it only looked
+    // at prev.text of a SENT doc, which this write used to replace first).
+    const _SENT_STATUSES = new Set(["sent", "sent_unverified", "sent_text_only"]);
+    const _save = await db.runTransaction(async (tx) => {
+      const cur = await tx.get(draftRef);
+      const prev = cur.exists ? (cur.data() || {}) : null;
+      if (prev && (prev.status === "queued" || prev.status === "sending")) {
+        return { busy: true, status: prev.status };
+      }
+      if (prev && _SENT_STATUSES.has(prev.status) && prev.text) {
+        draftDoc.lastSentText   = String(prev.text);
+        draftDoc.lastSentStatus = prev.status;
+        draftDoc.lastSentAt     = prev.sentAt || prev.updatedAt || null;
+      } else if (prev && prev.lastSentText) {
+        draftDoc.lastSentText   = prev.lastSentText;
+        draftDoc.lastSentStatus = prev.lastSentStatus || null;
+        draftDoc.lastSentAt     = prev.lastSentAt || null;
+      }
+      tx.set(draftRef, draftDoc, { merge: false });
+      return { busy: false };
+    });
+    if (_save.busy) {
+      await writeAudit({
+        threadId, draftId, eventType: "ai_draft_not_saved_reply_in_flight",
+        payload: { currentStatus: _save.status, mode }
+      }).catch(() => {});
+      return json(409, {
+        error        : `A reply for this thread is still ${_save.status}. The new AI draft was not saved so it cannot replace it; try again after it sends.`,
+        errorCode    : "DRAFT_BUSY",
+        currentStatus: _save.status,
+        text         : parsed.text,
+        aiConfidence : parsed.confidence
+      });
+    }
 
     // ─── v3.24: Rush production flag handling ─────────────────────
     // The AI may have set customerAcceptedRush or customerRemovedRush
@@ -4916,6 +5302,9 @@ answering. Do not guess about the order's contents.`;
       // (legacy aliases — earlier UI used these names)
       confidence         : parsed.confidence,
       difficulty         : parsed.difficulty,
+      // Audit 2026-09: empty array = nothing blocks an auto-send
+      autoSendBlockers,
+      aiEscalationRequested: !!parsed.aiEscalationRequested,
       trackingImages,
       attachments,
       toolCalls          : toolCallLog,

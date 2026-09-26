@@ -50,9 +50,13 @@ const TOKEN_REFRESH_BUFFER_MS = 2 * 60 * 1000;
 
 const CORS = {
   "Access-Control-Allow-Origin" : "*",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Content-Type, X-EtsyMail-Secret, X-EtsyMail-Session",
   "Access-Control-Allow-Methods": "GET,OPTIONS"
 };
+// Audit 2026-09: this endpoint returns a buyer's name, address and order
+// contents and spends Etsy quota on every call, so it now requires the
+// same extension secret as every other inbox endpoint.
+const { requireExtensionAuth } = require("./_etsyMailAuth");
 
 function json(statusCode, body) {
   return {
@@ -75,6 +79,8 @@ exports.handler = meter.wrapHandler(async (event) => {
   if (event.httpMethod !== "GET") {
     return json(405, { error: "Method Not Allowed" });
   }
+  const auth = requireExtensionAuth(event);
+  if (!auth.ok) return { ...auth.response, headers: { ...CORS, "Content-Type": "application/json" } };
 
   const qs = event.queryStringParameters || {};
   const receiptId = qs.receiptId;

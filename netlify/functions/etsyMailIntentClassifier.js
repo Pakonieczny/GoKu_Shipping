@@ -100,7 +100,8 @@ const AUDIT_COLL   = "EtsyMail_Audit";
 // misroutes in the audit log on long threads, the right escalation
 // is Sonnet 4.6, not back to Opus.
 const INTENT_MODEL = process.env.ETSYMAIL_INTENT_MODEL || "claude-haiku-4-5-20251001";
-const INTENT_MAX_TOKENS = 1500;    // v5.0: bumped from 600 to accommodate
+const INTENT_MAX_TOKENS = 2500;    // audit 2026-09: 1500 could cut the JSON mid-investigation
+                                   // (parse fails → "unclear"). v5.0: bumped from 600 to accommodate
                                    // the investigation block (5 step
                                    // fields + the classifier verdict).
                                    // 600 was tight even before v5.0.
@@ -520,7 +521,7 @@ async function classifyThread(threadId, opts = {}) {
     "",
     "  {",
     '    "investigation": { ... as specified in the protocol above ... },',
-    '    "classification": "support" | "sales_lead" | "policy_question" | "promotion" | "spam" | "unclear",',
+    '    "classification": "support" | "sales_lead" | "post_purchase" | "spam" | "unclear",',
     '    "confidence": <number between 0 and 1>,',
     '    "signals": [ "<short label>", ... ],',
     '    "reasoning": "<one paragraph tying your classification to specific findings from the investigation>"',
@@ -561,7 +562,9 @@ async function classifyThread(threadId, opts = {}) {
   const textBlocks = (resp.content || []).filter(b => b && b.type === "text");
   const rawText = textBlocks.map(b => b.text || "").join("").trim();
   const parsed = tryParseJson(rawText);
-  const parseError = parsed ? null : "json_parse_failed";
+  const truncated = resp.stop_reason === "max_tokens";
+  if (truncated) console.warn(`[intentClassifier] output hit max_tokens (${INTENT_MAX_TOKENS}); JSON ${parsed ? "still parsed" : "unparseable"}`);
+  const parseError = parsed ? null : (truncated ? "json_truncated_max_tokens" : "json_parse_failed");
   const coerced = coerceClassification(parsed, parseError);
 
   // Surface the investigation findings in the return value so they're

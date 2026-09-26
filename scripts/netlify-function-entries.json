@@ -191,6 +191,7 @@
     "_etsyMailScheduled.js",
     "_etsyMailTracking.js",
     "_etsyMailTrackingRender.js",
+    "_etsyMailVetoes.js",
     "_etsyPricingScheme.js",
     "_googleApiKeys.js",
     "_googleConnections.js",

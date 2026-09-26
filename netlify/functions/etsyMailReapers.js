@@ -145,7 +145,10 @@ const TRACKING_JOBS_COLL = "EtsyMail_TrackingJobs";
 // A claim is "stale" once this much time has passed without a finalize.
 // 5 minutes is generous — the auto-pipeline typically completes in
 // 10-60 seconds; >2 minutes of in_progress almost always means death.
-const STALE_CLAIM_THRESHOLD_MS  = 5 * 60 * 1000;
+// Audit 2026-09: 8 min. The pipeline's own sales-agent poll waits up to
+// 5 min after the classifier, so a 5-min threshold could release the lock
+// of a run that was still working (and let a second run start).
+const STALE_CLAIM_THRESHOLD_MS  = 8 * 60 * 1000;
 const MAX_REAP_PER_RUN_PIPELINE = 200;
 
 // ─── Send-queue reaper config ──────────────────────────────────────────

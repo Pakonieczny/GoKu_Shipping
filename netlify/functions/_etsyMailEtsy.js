@@ -303,8 +303,12 @@ async function getShopReceiptShipments(receiptId) {
       max: receipt.max_expected_shipping_date || null
     },
     currency  : receipt.total_price && receipt.total_price.currency_code || null,
-    grandTotal: receipt.grandtotal && Number(receipt.grandtotal.amount) / Math.pow(10, receipt.grandtotal.divisor || 2) || null,
-    buyerName : receipt.name        || null
+    // Etsy Money: divisor is the divisor itself (100), not an exponent.
+    grandTotal: receipt.grandtotal && Number(receipt.grandtotal.amount) / Number(receipt.grandtotal.divisor || 100) || null,
+    buyerName : receipt.name        || null,
+    // Lets the drafter confirm a receipt belongs to the thread's buyer
+    // without a second Etsy call.
+    buyerUserId: receipt.buyer_user_id != null ? String(receipt.buyer_user_id) : null
   };
 }
 

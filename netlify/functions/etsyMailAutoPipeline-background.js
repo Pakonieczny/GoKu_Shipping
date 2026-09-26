@@ -92,6 +92,9 @@
 
 const admin = require("./firebaseAdmin");
 const { CORS, requireExtensionAuth } = require("./_etsyMailAuth");
+// Audit 2026-09: veto patterns live in one module shared with etsyMailDraftReply
+// (which reports them as autoSendBlockers for the inbox's manual AI Draft send).
+const { runVetoPatterns, applyDeterministicVetoes, unansweredInboundText } = require("./_etsyMailVetoes");
 
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
@@ -392,6 +395,31 @@ async function callFunction(name, body) {
   return data;
 }
 
+/** Audit 2026-09 — run etsyMailDraftReply inside this background
+ *  invocation instead of over HTTP. Over HTTP the drafter is a synchronous
+ *  function (Netlify's 26 s limit) while a Sonnet draft with tool calls
+ *  takes "10-60 seconds" (comment at step 2 below), so slow drafts were cut
+ *  off. In-process it shares this function's 15-minute limit, and it is the
+ *  only path that may use adaptive thinking (viaPipeline:true, see
+ *  ETSYMAIL_AI_ADAPTIVE_THINKING=pipeline). ETSYMAIL_DRAFT_INPROCESS=0
+ *  restores the HTTP call. Same request body, same response JSON. */
+async function callDraftReply(body) {
+  if (process.env.ETSYMAIL_DRAFT_INPROCESS === "0") return callFunction("etsyMailDraftReply", body);
+  const drafter = require("./etsyMailDraftReply");
+  const headers = { "content-type": "application/json" };
+  if (process.env.ETSYMAIL_EXTENSION_SECRET) headers["x-etsymail-secret"] = process.env.ETSYMAIL_EXTENSION_SECRET;
+  const res = await drafter.handler({ httpMethod: "POST", headers, body: JSON.stringify({ ...(body || {}), viaPipeline: true }) });
+  let data = {};
+  try { data = JSON.parse((res && res.body) || "{}"); } catch { data = { raw: res && res.body }; }
+  if (!res || !res.statusCode || res.statusCode >= 400) {
+    const err = new Error(data.error || `etsyMailDraftReply ${res && res.statusCode}`);
+    err.status = res && res.statusCode;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
 /** Fire a background Netlify function. Background functions return 202
  *  immediately and run for up to 15 minutes. We don't await the result —
  *  the function writes its own state to Firestore which the caller polls
@@ -652,72 +680,8 @@ async function finalizeThread(threadId, { newStatus, inboundMs, decision, draftI
 }
 
 // ─── v1.2: Deterministic veto rules ─────────────────────────────────────
-//
-// Self-rated AI confidence is not enough for high-stakes scenarios. Even
-// a model that scores its own draft at 0.95 should NOT auto-send if the
-// inbound mentions a refund, a chargeback, legal escalation, etc. These
-// rules are the bright-line safety net.
-//
-// Pattern matching is intentionally conservative — false positives push
-// to human review (cheap, just wastes one auto-send opportunity); false
-// negatives push to auto-send (expensive, can damage customer trust).
-// When in doubt, add the pattern.
-//
-// Patterns are case-insensitive and word-boundary anchored. Tested
-// against both the latest inbound text (highest signal) AND the AI's
-// outbound draft text (catches drafts that say "I'll process your
-// refund" even when the inbound was cagey).
-const DETERMINISTIC_VETO_PATTERNS = [
-  // ── Money-sensitive ──────────────────────────────────────────────
-  { id: "refund",      pattern: /\b(refund|chargeback|dispute|money\s*back|return\s+(this|the|my)\s+(item|order|product)|process\s+(?:a|the|my)\s+refund)\b/i,
-    reason: "refund/return language" },
-  { id: "cancel",      pattern: /\b(cancel\s+(?:my|the|this)\s+(?:order|purchase)|cancellation\s+(?:request|policy)|cancel\s+(?:and|&)\s+refund)\b/i,
-    reason: "cancellation request" },
-
-  // ── Legal / escalation ───────────────────────────────────────────
-  { id: "legal",       pattern: /\b(lawsuit|sue\s*you|small\s+claims|legal\s+action|attorney|consult\s+(?:my\s+)?lawyer|file\s+a\s+case)\b/i,
-    reason: "legal escalation" },
-  { id: "complaint",   pattern: /\b(BBB|Better\s+Business\s+Bureau|file\s+a\s+complaint|complaint\s+with\s+Etsy|report\s+(?:you|this\s+shop|seller))\b/i,
-    reason: "formal complaint" },
-  { id: "fraud",       pattern: /\b(scammer|scammed|fraudulent|fraud\s+(?:case|alert)|theft|stolen\s+(?:my|the))\b/i,
-    reason: "fraud accusation" },
-
-  // ── Order data integrity ─────────────────────────────────────────
-  { id: "address",     pattern: /\b(change\s+(?:my|the)\s+(?:shipping\s+)?address|wrong\s+address|different\s+address|update\s+(?:my\s+)?address|ship\s+to\s+(?:a\s+)?different)\b/i,
-    reason: "address change" },
-  { id: "personalize", pattern: /\b(change\s+(?:the\s+)?(?:name|spelling|engraving|personalization|customization|wording)|wrong\s+name|misspelled|spelled\s+wrong|spell(?:ing|ed)?\s+it\s+wrong)\b/i,
-    reason: "personalization correction" },
-
-  // ── Damage / replacement ─────────────────────────────────────────
-  { id: "damaged",     pattern: /\b(damaged|broken|defective|cracked|shattered|arrived\s+broken|wrong\s+item\s+received|received\s+the\s+wrong)\b/i,
-    reason: "damage/wrong-item claim" },
-  { id: "missing",     pattern: /\b(missing\s+(?:item|piece|part)|never\s+(?:received|arrived|came)|hasn't\s+(?:arrived|come)|never\s+got\s+(?:my|it|the))\b/i,
-    reason: "non-delivery claim" },
-  { id: "replace",     pattern: /\b(send\s+(?:me\s+)?(?:another|a\s+replacement|a\s+new\s+one)|replacement\s+(?:order|piece|item)|reship)\b/i,
-    reason: "replacement request" },
-
-  // ── Custom orders / deals ────────────────────────────────────────
-  { id: "custom",      pattern: /\b(custom\s+order|customize\b|customise\b|special\s+request|can\s+you\s+make\s+(?:me\s+)?a|bulk\s+order|wholesale\b|discount\s+code|coupon\s+code)\b/i,
-    reason: "custom-order or discount inquiry" }
-];
-
-/** Run all veto patterns against given text. Returns array of triggered
- *  veto IDs + reasons. Empty array = clean.
- *
- *  excludePatternIds: array of pattern IDs to skip. Used by the sales-
- *  agent auto-send path to skip the "custom" pattern, since sales mode
- *  exists specifically to handle custom-order inquiries — applying that
- *  veto to a sales-agent draft would block 100% of sales auto-sends. */
-function runVetoPatterns(text, excludePatternIds = []) {
-  if (!text || typeof text !== "string") return [];
-  const skipSet = new Set(excludePatternIds);
-  const hits = [];
-  for (const v of DETERMINISTIC_VETO_PATTERNS) {
-    if (skipSet.has(v.id)) continue;
-    if (v.pattern.test(text)) hits.push({ id: v.id, reason: v.reason });
-  }
-  return hits;
-}
+// Moved to ./_etsyMailVetoes.js (DETERMINISTIC_VETO_PATTERNS, runVetoPatterns),
+// unchanged, plus the audit 2026-09 additions.
 
 /** Fetch the recent INBOUND BURST from a thread — up to the 5 most
  *  recent inbound messages, concatenated chronologically. Used by:
@@ -782,6 +746,27 @@ async function loadCurrentInboundTextOnly(threadId) {
   } catch (e) {
     console.warn("loadCurrentInboundTextOnly failed:", e.message);
     return null;
+  }
+}
+
+/** Audit 2026-09 — every customer message the shop has not answered yet
+ *  (see unansweredInboundText). Replaces loadCurrentInboundTextOnly for the
+ *  veto checks: a burst like "it arrived broken" + "also, love the colour"
+ *  was judged on the last message only. Answered messages from earlier
+ *  rounds still don't count (the v4.3.7 Joanna case). Falls back to the
+ *  latest-inbound helper if the read fails. */
+async function loadUnansweredInboundText(threadId) {
+  try {
+    const snap = await db.collection(THREADS_COLL).doc(threadId)
+      .collection("messages")
+      .orderBy("timestamp", "desc")
+      .limit(50)
+      .get();
+    if (snap.empty) return null;
+    return unansweredInboundText(snap.docs.map(d => d.data()));
+  } catch (e) {
+    console.warn("loadUnansweredInboundText failed:", e.message);
+    return loadCurrentInboundTextOnly(threadId);
   }
 }
 
@@ -888,34 +873,8 @@ async function loadActiveSalesContextStage(threadId) {
   }
 }
 
-/** Apply all deterministic safety checks. Returns { vetoed, reasons }.
- *  Combines:
- *    - inbound message regex matches
- *    - outbound draft regex matches (catches AI drafts that promise
- *      things even when the inbound was cagey)
- *    - tool-call errors in the AI's draft (lookup failed → AI is
- *      working with incomplete data → don't auto-send)
- */
-function applyDeterministicVetoes({ inboundText, draftText, draftToolCalls, excludePatternIds = [] }) {
-  const reasons = [];
-
-  const inboundHits = runVetoPatterns(inboundText, excludePatternIds);
-  for (const h of inboundHits) reasons.push("inbound_" + h.id + ": " + h.reason);
-
-  const outboundHits = runVetoPatterns(draftText, excludePatternIds);
-  for (const h of outboundHits) reasons.push("outbound_" + h.id + ": " + h.reason);
-
-  // Tool-call errors: if the AI tried to look up an order or tracking
-  // number and the call errored, the AI is either working with stale
-  // info or flat-out hallucinating. Don't trust the draft.
-  const toolErrors = (Array.isArray(draftToolCalls) ? draftToolCalls : [])
-    .filter(tc => tc && tc.error && tc.name !== "compose_draft_reply");
-  if (toolErrors.length) {
-    reasons.push("tool_call_failed: " + toolErrors.map(tc => tc.name).join(","));
-  }
-
-  return { vetoed: reasons.length > 0, reasons };
-}
+// applyDeterministicVetoes: see ./_etsyMailVetoes.js (same contract; an order
+// tool that RETURNED an error now also counts as tool_call_failed).
 
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") {
@@ -1765,7 +1724,21 @@ exports.handler = async (event) => {
             }, { merge: true });
           }
 
-          if (autoCfg.salesAutoSendEnabled && safeToAutoSend) {
+          if (autoCfg.salesAutoSendEnabled && safeToAutoSend && dryRun) {
+            // Audit 2026-09: dryRun ("generate but don't act") was honoured
+            // only on the support path; a sales-routed thread still
+            // auto-sent during a dry run.
+            await writeAudit({
+              threadId, draftId,
+              eventType: "sales_auto_send_skipped",
+              payload  : { reason: "dry_run" }
+            });
+            await db.collection(THREADS_COLL).doc(threadId).set({
+              lastAutoDecision  : "sales_auto_send_human_review",
+              lastAutoDecisionAt: FV.serverTimestamp(),
+              updatedAt         : FV.serverTimestamp()
+            }, { merge: true });
+          } else if (autoCfg.salesAutoSendEnabled && safeToAutoSend) {
             try {
               const draftText = String(draftDoc.text || "").trim();
               const draftAttachments = Array.isArray(draftDoc.attachments) ? draftDoc.attachments : [];
@@ -1790,7 +1763,7 @@ exports.handler = async (event) => {
                 // auto-sends — Joanna's round-2 banana-charm draft was
                 // vetoed because a phrase from the original baseball-
                 // charm conversation hit the "missing" pattern.
-                const inboundForVeto = await loadCurrentInboundTextOnly(threadId);
+                const inboundForVeto = await loadUnansweredInboundText(threadId);
                 const veto = applyDeterministicVetoes({
                   inboundText      : inboundForVeto,
                   draftText,
@@ -1989,16 +1962,46 @@ exports.handler = async (event) => {
     // The slow step — typically 10-60 seconds with Sonnet 4.6 + tool calls.
     let draftResp;
     try {
-      draftResp = await callFunction("etsyMailDraftReply", {
+      draftResp = await callDraftReply({
         threadId,
         mode         : "initial",
         employeeName : employeeName || "system:auto-pipeline"
       });
     } catch (err) {
+      // Audit 2026-09 — ONE automatic retry per inbound for transient
+      // failures (Anthropic overload / 5xx, timeout, network, 409 DRAFT_BUSY
+      // while the previous reply is still sending). Re-uses the quiet-period
+      // deferral: the first etsyMailReapers run (every 5 min) after the
+      // 3-minute defer fires this thread again, i.e. 3-8 minutes later.
+      // A second failure for the same inbound falls through to the
+      // existing "failed" handling below.
+      const st = Number(err && err.status) || 0;
+      const transient = !st || st === 409 || st === 429 || st >= 500;
+      let retryScheduled = false;
+      if (transient && claim.inboundMs) {
+        try {
+          const cur = (await threadRef.get()).data() || {};
+          if (cur.autoPipelineDraftRetryForInboundMs !== claim.inboundMs) {
+            await threadRef.set({
+              lastAutoDecision                  : "deferred_quiet_period",
+              lastAutoDecisionAt                : FV.serverTimestamp(),
+              lastAutoProcessedInboundAt        : null,
+              autoPipelineDeferUntilMs          : Date.now() + 3 * 60_000,
+              autoPipelineDraftRetryForInboundMs: claim.inboundMs,
+              aiDraftStatus                     : "retry_scheduled",
+              updatedAt                         : FV.serverTimestamp()
+            }, { merge: true });
+            retryScheduled = true;
+          }
+        } catch (e) { console.warn("draft retry scheduling failed (non-fatal):", e.message); }
+      }
       await writeAudit({
         threadId, eventType: "auto_pipeline_failed",
-        payload: { stage: "draft_generation", error: err.message }
+        payload: { stage: "draft_generation", error: err.message, status: st || null, retryScheduled }
       });
+      if (retryScheduled) {
+        return json(503, { error: "Draft generation failed; one retry scheduled: " + err.message, threadId, retryScheduled: true });
+      }
       // Thread is already in pending_human_review (from the claim) —
       // just record the failure on the thread doc so the UI shows it.
       await db.collection(THREADS_COLL).doc(threadId).set({
@@ -2066,7 +2069,7 @@ exports.handler = async (event) => {
     // Multi-turn lookback was a real bug source: a "missing" phrase
     // in a customer's earlier (now-resolved) message would veto every
     // subsequent auto-send for the rest of the conversation.
-    const inboundText = await loadCurrentInboundTextOnly(threadId);
+    const inboundText = await loadUnansweredInboundText(threadId);
     const veto = applyDeterministicVetoes({
       inboundText,
       draftText      : text,
@@ -2138,6 +2141,7 @@ exports.handler = async (event) => {
       }
       // ━━━ end v3.18 gate ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+      let enqueueResp = null;
       try {
         // v1.5: atomic enqueue + thread finalize. Pass the finalize
         // patch as primitive fields; the enqueue op writes both the
@@ -2147,7 +2151,7 @@ exports.handler = async (event) => {
         // sends it) but the thread would still be at pending_human_
         // review from the claim. The final folder placement was
         // wrong even though the customer got the right reply.
-        await callFunction("etsyMailDraftSend", {
+        enqueueResp = await callFunction("etsyMailDraftSend", {
           op                  : "enqueue",
           threadId,
           etsyConversationUrl,
@@ -2205,6 +2209,32 @@ exports.handler = async (event) => {
           draftId,
           text,
           durationMs  : Date.now() - tStart
+        });
+      }
+
+      // Audit 2026-09 — etsyMailDraftSend answers 200 + duplicateBlocked when
+      // the text equals the previous sent reply, WITHOUT applying the
+      // finalize patch. Close the claim here; otherwise the thread sat at
+      // "in_progress" until the stale-claim reaper and was logged as sent.
+      if (enqueueResp && enqueueResp.duplicateBlocked) {
+        await finalizeThread(threadId, {
+          newStatus    : "pending_human_review",
+          inboundMs    : claim.inboundMs,
+          decision     : "human_review_duplicate_blocked",
+          draftId,
+          aiConfidence,
+          aiDifficulty
+        });
+        return ok({
+          threadId,
+          decision      : "human_review",
+          fallbackReason: "draft is identical to the previous sent reply",
+          aiConfidence,
+          aiDifficulty,
+          threshold,
+          draftId,
+          text,
+          durationMs    : Date.now() - tStart
         });
       }
 

@@ -25,6 +25,11 @@ const ANTHROPIC_URL     = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
 const ANTHROPIC_BETA    = "prompt-caching-2024-07-31";
 
+// Models that accept thinking: {type:"adaptive"}. Only used when a caller
+// opts in with adaptiveThinking:true (the default stays "no thinking" for
+// every model except Opus 4.7, exactly as before).
+const ADAPTIVE_THINKING_MODEL_RX = /^claude-(?:sonnet-4-6|opus-4-[678]|sonnet-5|opus-5|fable-5)/;
+
 // Retry constants — identical to claudeCodeProxy-background.js
 const CLAUDE_OVERLOAD_MAX_RETRIES  = 5;
 const CLAUDE_OVERLOAD_BASE_DELAY_MS = 1250;
@@ -109,7 +114,9 @@ async function callClaudeRaw({
   useThinking = true,
   budgetTokens,
   outputFormat,           // structured outputs: {type:"json_schema", schema} → output_config.format
-  thinkingDisplay         // "summarized" → thinking: {type:"adaptive", display} (models with adaptive thinking)
+  thinkingDisplay,        // "summarized" → thinking: {type:"adaptive", display} (models with adaptive thinking)
+  adaptiveThinking = false, // opt-in: adaptive thinking on non-4.7 models that support it
+  timeoutMs = 0           // opt-in: per-request timeout (node-fetch v2); 0 = none, as before
 }) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("Missing ANTHROPIC_API_KEY");
@@ -133,6 +140,11 @@ async function callClaudeRaw({
   } else {
     // Pre-4.7: legacy budget_tokens path
     if (budgetTokens) body.thinking = { type: "enabled", budget_tokens: budgetTokens };
+    // Opt-in adaptive thinking (Sonnet 4.6 and newer). Without this the
+    // support drafter's useThinking:true was silently ignored on Sonnet.
+    else if (adaptiveThinking && useThinking && ADAPTIVE_THINKING_MODEL_RX.test(String(model || ""))) {
+      body.thinking = { type: "adaptive" };
+    }
     if (effort)       body.output_config = { effort };
   }
 
@@ -153,7 +165,12 @@ async function callClaudeRaw({
       const res = await fetch(ANTHROPIC_URL, {
         method : "POST",
         headers,
-        body   : JSON.stringify(body)
+        body   : JSON.stringify(body),
+        // Audit 2026-09: only callers that pass timeoutMs get a timeout
+        // (the support drafter, when ETSYMAIL_AI_TIMEOUT_MS is set). A
+        // node-fetch timeout is not retried by isClaudeOverloadError, so
+        // it fails fast instead of multiplying by the retry count.
+        timeout: Number(timeoutMs) > 0 ? Number(timeoutMs) : 0
       });
 
       const rawText = await res.text();
@@ -208,6 +225,25 @@ async function callClaudeRaw({
   throw lastError || new Error("Claude request failed after retries");
 }
 
+/** Copy of `messages` with an ephemeral cache breakpoint on the last content
+ *  block of the last message, so the next loop iteration (or a regenerate
+ *  within 5 minutes) reads the conversation prefix from cache instead of
+ *  paying full price for it again. Never mutates the caller's array (the
+ *  loop keeps appending to it). With the system block this makes 2 of the
+ *  API's 4 allowed breakpoints. */
+function withTailCacheBreakpoint(messages) {
+  if (!Array.isArray(messages) || !messages.length) return messages;
+  const out = messages.slice();
+  const last = out[out.length - 1];
+  if (!last || !Array.isArray(last.content) || !last.content.length) return messages;
+  const content = last.content.slice();
+  const block = content[content.length - 1];
+  if (!block || typeof block !== "object" || block.type === "thinking" || block.type === "redacted_thinking") return messages;
+  content[content.length - 1] = { ...block, cache_control: { type: "ephemeral" } };
+  out[out.length - 1] = { ...last, content };
+  return out;
+}
+
 // ─── Tool-use loop ───────────────────────────────────────────────────────
 
 /** Run a multi-turn tool-use loop with Claude.
@@ -248,7 +284,10 @@ async function runToolLoop({
   toolContext = null,
   effort,
   useThinking = true,
-  maxIterations = 6
+  maxIterations = 6,
+  adaptiveThinking = false,  // passed through to callClaudeRaw
+  cacheTail = false,         // cache the growing conversation between loop iterations
+  timeoutMs = 0              // passed through to callClaudeRaw (per request)
 }) {
   const messages = [...initialMessages];
   const toolCalls = [];
@@ -262,8 +301,9 @@ async function runToolLoop({
 
   for (let iter = 1; iter <= maxIterations; iter++) {
     const response = await callClaudeRaw({
-      model, maxTokens, system, messages,
-      tools: toolSpecs, effort, useThinking
+      model, maxTokens, system,
+      messages: cacheTail ? withTailCacheBreakpoint(messages) : messages,
+      tools: toolSpecs, effort, useThinking, adaptiveThinking, timeoutMs
     });
 
     // Aggregate usage

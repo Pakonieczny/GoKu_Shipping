@@ -14659,7 +14659,15 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
           const threshold = typeof _autoCfg.threshold === "number" ? _autoCfg.threshold : 0.80;
           const aiConf = (typeof data.aiConfidence === "number" ? data.aiConfidence
                        : typeof data.confidence   === "number" ? data.confidence : 0);
-          if (aiConf >= threshold) {
+          // Audit 2026-09: the same deterministic vetoes the auto-pipeline
+          // applies (refund/cancel/damage/address wording, failed order
+          // lookups, open Charm Sorter question, model-requested review).
+          // A missing list (older backend) counts as blocked.
+          const blockers = Array.isArray(data.autoSendBlockers) ? data.autoSendBlockers : ["backend_did_not_report_vetoes"];
+          if (aiConf >= threshold && blockers.length) {
+            toast(`High confidence (${Math.round(aiConf*100)}%), held for review: ${blockers.map(b => String(b).split(":")[0]).join(", ")}`);
+          }
+          if (aiConf >= threshold && !blockers.length) {
             try {
               const t = state.threads.find(x => x.id === threadId)
                      || (await api("firestoreProxy", { query: { op: "get", coll: THREADS_COLL, id: threadId } })).doc;
@@ -17764,7 +17772,12 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
 
       // Fetch live order via etsyMailOrder endpoint (server-side, uses seeded token)
       try {
-        const resp = await fetch(FN("etsyMailOrder") + "?receiptId=" + encodeURIComponent(receiptId));
+        const resp = await fetch(FN("etsyMailOrder") + "?receiptId=" + encodeURIComponent(receiptId), {
+          headers: {
+            "X-EtsyMail-Secret"  : emResolveSecret() || "",
+            "X-EtsyMail-Session" : emReadSessionToken() || ""
+          }
+        });
         if (!resp.ok) {
           const err = await resp.json().catch(() => ({ error: "HTTP " + resp.status }));
           throw new Error(err.error || "Failed to fetch order");

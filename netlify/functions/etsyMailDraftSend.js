@@ -894,21 +894,28 @@ exports.handler = async (event) => {
         const TERMINAL_SENT_STATUSES = new Set([
           "sent", "sent_unverified", "sent_text_only"
         ]);
+        // Audit 2026-09: etsyMailDraftReply writes a fresh status:"draft" doc
+        // over the sent one BEFORE the pipeline enqueues, so on the real auto
+        // path prev.status was "draft" and this guard never matched. The
+        // drafter now carries the last sent reply in lastSentText/lastSentAt.
+        const prevIsSent   = !!(prev && TERMINAL_SENT_STATUSES.has(prev.status));
+        const prevSentText = prev ? String((prevIsSent ? prev.text : prev.lastSentText) || "").trim() : "";
         const isDuplicateAutoSend =
           resolvedSendOrigin === "auto" &&
           prev &&
-          TERMINAL_SENT_STATUSES.has(prev.status) &&
+          prevSentText.length > 0 &&
           cleanText.length > 0 &&
-          String(prev.text || "").trim() === cleanText;
+          prevSentText === cleanText;
 
         if (isDuplicateAutoSend) {
+          const prevSentAt = prevIsSent ? prev.sentAt : prev.lastSentAt;
           return {
             duplicateAutoSend: true,
-            prevStatus       : prev.status,
-            prevSentAtMs     : prev.sentAt && prev.sentAt.toMillis
-                               ? prev.sentAt.toMillis()
+            prevStatus       : prevIsSent ? prev.status : (prev.lastSentStatus || prev.status),
+            prevSentAtMs     : prevSentAt && prevSentAt.toMillis
+                               ? prevSentAt.toMillis()
                                : null,
-            prevTextLen      : (prev.text || "").length
+            prevTextLen      : prevSentText.length
           };
         }
         // ━━━ end v1.6 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

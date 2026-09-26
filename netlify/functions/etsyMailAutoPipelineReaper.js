@@ -71,7 +71,7 @@ const AUDIT_COLL   = "EtsyMail_Audit";
 // 10-60 seconds; >2 minutes of in_progress almost always means death.
 // We picked 5 to err on the side of NOT clobbering a slow-but-still-
 // running pipeline.
-const STALE_CLAIM_THRESHOLD_MS = 5 * 60 * 1000;
+const STALE_CLAIM_THRESHOLD_MS = 8 * 60 * 1000;   // audit 2026-09: keep equal to etsyMailReapers.js
 
 // Hard cap on how many threads to reap per run. If something is
 // catastrophically wrong (e.g., Anthropic outage causing every
