@@ -4,7 +4,8 @@
  *  against real Firestore data, but:
  *    - every Firestore write is captured instead of applied,
  *    - message reads of the thread stop at asOfMs (the conversation as it
- *      stood when the customer wrote),
+ *      stood when the customer wrote), and receipts-mirror orders show
+ *      their state at asOfMs (no later orders, shipments or completions),
  *    - outbound HTTP is blocked except to Anthropic and Google (auth,
  *      Firestore, Storage) and Etsy's image CDN: no Etsy API calls, no
  *      calls to our own functions, no mail.
@@ -48,6 +49,49 @@ function hostOf(arg) {
     if (arg && (arg.hostname || arg.host)) return String(arg.hostname || arg.host).split(":")[0];
   } catch (_) {}
   return "";
+}
+
+/** A receipts-mirror document as it stood at asOfMs: null if the order
+ *  did not exist yet; shipments, "shipped", "completed" and "canceled"
+ *  states that came later are taken back to "paid". */
+function receiptAsOf(data, asOfMs) {
+  if (!data) return { data, changed: false };
+  const raw = (data.raw && typeof data.raw === "object") ? data.raw : null;
+  const created = (Number(data.created_timestamp || (raw && raw.created_timestamp)) || 0) * 1000;
+  if (created && created > asOfMs) return null;
+  const out = { ...data };
+  let changed = false;
+  if (raw) {
+    const r = { ...raw };
+    const ships = Array.isArray(raw.shipments) ? raw.shipments : [];
+    const kept = ships.filter(x => !x || !x.shipment_notification_timestamp || x.shipment_notification_timestamp * 1000 <= asOfMs);
+    if (kept.length !== ships.length) { r.shipments = kept; changed = true; }
+    const updated = (Number(raw.updated_timestamp || raw.update_timestamp) || 0) * 1000;
+    const laterState = updated && updated > asOfMs;
+    if ((kept.length === 0 && raw.is_shipped) || (laterState && /completed|canceled|cancelled|fully refunded/i.test(String(raw.status || "")))) {
+      r.is_shipped = kept.length > 0;
+      if (!r.is_shipped) { r.status = "Paid"; r.refunds = []; }
+      changed = true;
+    }
+    if (changed) {
+      out.raw = r;
+      out.is_shipped = r.is_shipped;
+      out.status = r.status;
+    }
+  }
+  return { data: out, changed };
+}
+
+function wrapSnap(snap, data) {
+  return new Proxy(snap, {
+    get(t, p) {
+      if (p === "data") return () => data;
+      if (p === "exists") return data !== undefined && t.exists;
+      if (p === "get") return (f) => String(f).split(".").reduce((o, k) => (o == null ? o : o[k]), data);
+      const v = t[p];
+      return typeof v === "function" ? v.bind(t) : v;
+    }
+  });
 }
 
 let installed = false;
@@ -109,15 +153,33 @@ function install() {
     const snap = await origGet.apply(this, arguments);
     const s = current();
     if (!s || !s.asOfMs) return snap;
-    const docs = snap.docs.filter(d => {
-      if (!/^EtsyMail_Threads\/[^/]+\/messages\//.test(d.ref.path)) return true;
-      const data = d.data() || {};
-      const ms = toMs(data.timestamp) || toMs(data.createdAt);
-      return !ms || ms <= s.asOfMs;
-    });
-    if (docs.length === snap.docs.length) return snap;
+    let changed = false;
+    const docs = [];
+    for (const d of snap.docs) {
+      if (/^EtsyMail_Threads\/[^/]+\/messages\//.test(d.ref.path)) {
+        const data = d.data() || {};
+        const ms = toMs(data.timestamp) || toMs(data.createdAt);
+        if (ms && ms > s.asOfMs) { changed = true; continue; }
+        docs.push(d);
+      } else if (/^EtsyMail_Receipts\//.test(d.ref.path)) {
+        const v = receiptAsOf(d.data(), s.asOfMs);
+        if (v === null) { changed = true; continue; }
+        if (v.changed) { changed = true; docs.push(wrapSnap(d, v.data)); } else docs.push(d);
+      } else docs.push(d);
+    }
+    if (!changed) return snap;
     return { docs, empty: docs.length === 0, size: docs.length, forEach: fn => docs.forEach(fn),
              docChanges: () => [], query: snap.query, readTime: snap.readTime };
+  };
+
+  const origDocGet = DR.get;
+  DR.get = async function () {
+    const snap = await origDocGet.apply(this, arguments);
+    const s = current();
+    if (!s || !s.asOfMs || !snap.exists || !/^EtsyMail_Receipts\//.test(this.path)) return snap;
+    const v = receiptAsOf(snap.data(), s.asOfMs);
+    if (v === null) return wrapSnap(snap, undefined);
+    return v.changed ? wrapSnap(snap, v.data) : snap;
   };
 
   const guard = (mod, name) => {

@@ -3858,7 +3858,12 @@ ${validationResult.message}
     // The sign-off always sits on its own lines ("...? Many Thanks," ran on
     // the last sentence in replayed drafts).
     const customerFacingReply = (typeof parsed.reply === "string" && parsed.reply.trim())
-      ? parsed.reply.trim().replace(/[ \t]*\n*[ \t]*Many\s+Thanks,?[ \t]*\n?[ \t]*CustomBrites\s*$/i, "\n\nMany Thanks,\nCustomBrites")
+      ? parsed.reply.trim()
+          // No em or en dashes (the shop's #1 AI tell); ranges keep a hyphen.
+          .replace(/(\d)\s*[\u2013\u2014]\s*(?=\$?\d)/g, "$1-")
+          .replace(/(\w)\u2013(?=\w)/g, "$1-")
+          .replace(/\s*[\u2014\u2013]\s*/g, ", ")
+          .replace(/[ \t]*\n*[ \t]*Many\s+Thanks,?[ \t]*\n?[ \t]*CustomBrites\s*$/i, "\n\nMany Thanks,\nCustomBrites")
       : "";
 
     // Draft body: ALWAYS the customer-facing reply (or empty). The

@@ -981,6 +981,14 @@ async function runSimulation(body) {
     response: out.result && out.result.data,
     writePaths: out.writes.map(w => `${w.op} ${w.path}`),
     blocked: out.blocked,
+    // Which model each path would use (model names only, no secrets), so a
+    // replay can show an environment override.
+    models: {
+      button  : process.env.ETSYMAIL_AI_MODEL || null,
+      pipeline: process.env.ETSYMAIL_AI_PIPELINE_MODEL || null,
+      sales   : process.env.ETSYMAIL_SALES_MODEL || null,
+      inProcess: process.env.ETSYMAIL_DRAFT_INPROCESS || null
+    },
     finishedAt: FV.serverTimestamp()
   }), { merge: true });
   return json(200, { ok: true });

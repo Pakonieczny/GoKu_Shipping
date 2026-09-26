@@ -916,6 +916,11 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
       - Order dates in the data (ship dates, expected ship dates) are
         calendar days. Ignore their clock time, and never conclude
         something happened "this morning" from it.
+      - Greet the customer by their own name (how they sign, or the
+        Etsy buyer name). Names in a personalisation, gift note or
+        shipping address may belong to someone else; never greet the
+        customer with those, and never use a name or detail that
+        appears nowhere in the thread or the order.
 
 2.5. NAME WHAT THEY ASKED FOR. When the open request is something only
    a person on the team can provide (a commercial invoice or other
@@ -1426,6 +1431,21 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
       to message us then so we can start the lost-package process.
       Don't attribute the wait to USPS or the carrier, don't call it
       "not lost", and don't hint at a replacement before then.
+      Work out the threshold from the EDD and today's date yourself;
+      a package is past it only when today is later than EDD plus 7.
+
+   3.4 If the package went to the address on the order and comes back
+      (wrong or old address entered at checkout, returned to sender),
+      the shop reships it once it is back for a $5.50 reshipping fee,
+      paid through the shop's re-shipping fee listing
+      (search_shop_listings "re-shipping fee" for its link). Say that
+      plainly; the shop shipped where it was told to.
+
+   3.5 If tracking shows DELIVERED but the customer doesn't have it,
+      say where tracking shows it was left and when, suggest checking
+      mailbox, porch, neighbours and household for a day or two, and to
+      message us if it still doesn't turn up. Don't offer a reship or
+      refund in that reply: a delivered scan is not a lost package.
 
    4. If the customer has crossed the 7-days-past-EDD threshold,
       don't hold them off: say it qualifies and offer the choice of a
@@ -4844,16 +4864,21 @@ answering. Do not guess about the order's contents.`;
     }
     // A reply that offers a remedy only a person can grant (refund, remake,
     // reship, replacement, free item) always waits for that person, even if
-    // the model forgot to ask for review.
-    if (parsed.text && !parsed.aiEscalationRequested
-        && /\b(?:we['\u2019]?ll|we\s+will|we\s+can|happy\s+to|glad\s+to)\s+(?:\w+\s+){0,3}?(?:refund|remake|re-?make|reship|re-?send|replace|send\s+(?:you\s+)?a\s+(?:new|replacement))\b|\b(?:at\s+no\s+(?:extra\s+)?(?:cost|charge)|free\s+of\s+charge|full\s+refund|partial\s+refund)\b/i
-          .test(parsed.text.replace(/[^.!?\n]*\bonce\s+(?:they|it|the\s+\w+)\s+(?:arrives?|(?:is|are)\s+back)[^.!?\n]*refund[^.!?\n]*[.!?]?/gi, ""))) {
+    // the model forgot to ask for review. Checked per sentence: "we" plus a
+    // remedy word; the return template's "once they arrive ... refund" is
+    // the policy itself, not an offer.
+    const _remedySentence = (parsed.text || "")
+      .replace(/[^.!?\n]*\bonce\s+(?:they|it|the\s+\w+)\s+(?:arrives?|(?:is|are)\s+back)[^.!?\n]*refund[^.!?\n]*[.!?]?/gi, "")
+      .split(/(?<=[.!?])\s+|\n+/)
+      .find(t => /\b(?:we|we['\u2019](?:ll|d|re)|us)\b/i.test(t)
+        && /\b(?:refund(?:ed|ing)?|remake|re-?make|reship|re-?send|replacement|replace|free\s+of\s+charge|at\s+no\s+(?:extra\s+)?(?:cost|charge)|on\s+the\s+house|store\s+credit|discount)\b/i.test(t));
+    if (parsed.text && !parsed.aiEscalationRequested && _remedySentence) {
       parsed.aiEscalationRequested = true;
       parsed.aiRemedyOfferReview = true;
       if (typeof parsed.confidence === "number" && parsed.confidence > 0.5) {
         parsed.confidence = 0.5;
         parsed.confidenceReasoning = (parsed.confidenceReasoning || "") +
-          " | Reply offers a refund, remake or reship; confidence capped at 0.5 so a person approves it.";
+          " | Reply offers a refund, remake, reship or discount; confidence capped at 0.5 so a person approves it.";
       }
     }
     if (parsed.text && !/450\s*Matheson\s*Blvd/i.test(parsed.text)
