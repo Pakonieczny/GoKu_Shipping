@@ -867,11 +867,22 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     const back = (W.rec?.backPool || []).find(b => b.poolId === x.poolId) || null;
     if (job) {
       const s = job.state;
+      // Engrave keeps a job for every line, "none" for one with nothing to engrave: that is no back engraving (it read as
+      // "being prepared", so a whole sheet showed a back on every charm with a spinner that never ended)
+      if (s === "none") return { kind: "none", label: "none" };
       if (["approved", "written"].includes(s)) return { kind: "approved", label: "approved", job, back, by: job.approvedBy, at: job.approvedAt, text: job.text };
       if (s === "skipped") return { kind: "skipped", label: "cut plain", job, by: job.approvedBy };
       if (s === "review") return { kind: "approve", label: "to approve", job, text: job.text };
       if (s === "words" || s === "blocked") return { kind: "words", label: "words to confirm", job, text: job.text, reason: job.reason };
-      return { kind: "preparing", label: "being prepared", job, text: job.text };
+      if (["classify", "ready", "fitting"].includes(s)) {
+        // a spinner only while Engrave is actually reading or fitting it; otherwise what it waits for
+        const working = !!(Engrave.isWorking && Engrave.isWorking(job));
+        const note = working ? (s === "classify" ? "Reading the words…" : "Fitting the words on the back…")
+          : s === "classify" ? "Its words are not read yet: confirm them in Engrave"
+          : Engrave.canFit && !Engrave.canFit(job) ? "Waits for its sheet to be written, then it is fitted" : "Waits its turn in Engrave";
+        return { kind: "preparing", label: "being prepared", job, text: job.text, working, note };
+      }
+      return { kind: "none", label: "none" };
     }
     if (back) return { kind: "approved", label: "approved", back, by: back.approvedBy, at: back.approvedAt, text: back.text };
     if (saved && saved.needed) return saved.approved ? { kind: "approved", label: "approved", text: saved.text } : { kind: "words", label: "to settle", text: saved.text };
@@ -1067,7 +1078,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
       pv = `<div class="pv" data-r2="pv"><div class="swWait"><span class="owSpin"></span>Drawing the back…</div></div>`;
       acts = `<button class="btn sage sm" data-e="approve">${ICON.check}Approve</button><button class="btn ghost sm" data-e="engrave">Adjust in Engrave${ICON.go}</button>`;
     } else if (e.kind === "words") acts = `<button class="btn sm" data-e="engrave">Confirm the words in Engrave${ICON.go}</button>`;
-    else if (e.kind === "preparing") acts = `<span class="swWait"><span class="owSpin"></span>Fitting the words on the back…</span><button class="btn ghost sm" data-e="engrave">Open in Engrave${ICON.go}</button>`;
+    else if (e.kind === "preparing") acts = `<span class="swWait">${e.working ? '<span class="owSpin"></span>' : ""}${esc(e.note || "Being prepared")}</span><button class="btn ghost sm" data-e="engrave">Open in Engrave${ICON.go}</button>`;
     else if (e.kind === "approved") {
       const img = e.back && (e.back.outputs?.png?.url || e.back.png || e.back.preview);
       pv = img ? `<div class="pv"><img crossorigin="anonymous" src="${esc(/^https?:/.test(img) ? cors(img) : img)}" alt="The back engraving"></div>` : e.job && e.job.fit && e.job.view ? `<div class="pv" data-r2="pv"></div>` : "";
@@ -2175,7 +2186,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
   setInterval(() => {
     if (!W.dlg || !W.dlg.open || !W.rec || !W.geom) return;
     let changed = false;
-    for (const x of W.pieces) { const e = engOf(x); if (!x.eng || e.kind !== x.eng.kind) { x.eng = e; changed = true; } }
+    for (const x of W.pieces) { const e = engOf(x); if (!x.eng || e.kind !== x.eng.kind || e.note !== x.eng.note) { x.eng = e; changed = true; } }
     if (changed) { renderStrip(); if (W.view === "sheet") renderSheetPane(); else if (W.sel) renderEng(W.sel, true); paintFx(); }
   }, 1500);
 

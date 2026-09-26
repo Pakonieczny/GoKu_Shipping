@@ -2622,6 +2622,15 @@ const Engrave = window.Engrave = (() => {
       return done + await classifyAllOnce(run,owner);
     let plain = 0;
     for (const r of Orders.rows()) if (r.state === "pooled" && r.spec && !r.spec.engraveCandidate && !r.engrave) { r.engrave = { needed: false, state: "none", approved: true }; plain++; }
+    // a line that waited to be read and no longer has anything to read (a Team status stamp such as "QA1" or "DESIGNED :)"
+    // used to count as words to engrave) is plain now, and so is its waiting job
+    for (const r of Orders.rows()) {
+      if (!["pooled", "written"].includes(r.state) || !r.spec || r.spec.engraveCandidate || !r.engrave) continue;
+      if (!(["classify", "reclassify"].includes(r.engrave.state) || (r.engrave.state === "words" && !r.engrave.text))) continue;
+      const j = items().get(r.key);
+      if (j && ["classify", "words"].includes(j.state) && !j.decision) setNone(j, "no personalisation, message or note"); else if (!j) r.engrave = { needed: false, state: "none", approved: true };
+      plain++;
+    }
     // a pass with nothing to read changes nothing: the lists and the run record are left as they are
     if (!done && !plain) return 0;
     done += plain;

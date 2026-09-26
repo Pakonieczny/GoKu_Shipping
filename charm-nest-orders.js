@@ -180,7 +180,6 @@
     ["rework", /\bmodify\b|\bre-?make\b|\bre-?siz(?:e|ing)\b/, 2],
     ["custom", /\bcustom(?:i[sz]ed)?\s+(?:order|request|listing|commission)\b|\bbespoke\b|\bcommission(?:ed)?\s+(?:piece|work|order|charm|design)\b/, 0],
     ["custom", /\bcustom(?:i[sz]ed)?\s+(?:design|piece|work|made|charm|jewel(?:le)?ry|necklace|earrings?|huggies?|hoops?|bracelet)\b|\bmade\s+to\s+order\b|\bone\s+of\s+a\s+kind\b/, 2],
-    ["addOn", /\badd[\s-]?on\b/, 0],
     ["addOn", /\badditional\s+(?:item|charm|piece|pendant|letter|initial|birthstone|disc|name)s?\b|\bextra\s+(?:charm|item|piece|pendant|letter|initial|birthstone|disc)s?\b|\bgift\s*(?:wrap(?:ping)?|box|bag|pouch)\b|\brush\s+(?:order|processing|fee|service)\b|\b(?:express|expedited|priority)\s+(?:shipping|processing|delivery)\b|\bshipping\s+upgrade\b|\bupgrade\b/, 2],
     ["special", /\bspecial\s+order\b|\bprivate\s+listing\b|\breserved\s+(?:for|listing)\b|\bdeposit\b|\bbalance\s+(?:payment|due)\b|\bprice\s+difference\b|\bdifference\s+in\s+price\b|\bpayment\s+for\b/, 0]
   ];
@@ -200,10 +199,18 @@
     if (/\bcharms?\b|\bpendants?\b/.test(t)) return "customCharm";
     return "customOther";
   }
+  /* Claude's reading of a line (Charm Sorter › Custom Orders, charmNestLibrary customRead) and a person's decision name
+     one of these kinds; each is one of the special kinds above, or none ("regular"). */
+  const READ_KINDS = { custom: null, rework: "rework", addOnToOrder: "addOn", chainOnly: "chainOnly", other: "special", regular: null };
+  const READ_LABEL = { addOnToOrder: "Add-on to an order" };
   /**
    * Is this line a special (non-catalogue) purchase? → null, or
-   * { kind, label, group, notCut, why, signals[] }. opts: { sku (the resolved SKU), masterEntry?, optionMaps? }.
-   * A SKU with a design in a master file is a catalogue charm unless its own SKU or the buyer says otherwise.
+   * { kind, label, group, notCut, why, signals[], read? }. opts: { sku (the resolved SKU), masterEntry?, optionMaps?,
+   * read? (Claude's reading of the line), decided? (a person's decision) }.
+   * A SKU with a design in a master file is a catalogue charm unless its own SKU or the buyer says otherwise. A line with
+   * no design is read by Claude (the words "add on" in a title never decide it: Paul, 25 Sep, many regular charm-only
+   * listings say it); until it has been read, the shop's own SKU codes and the few unmistakable title phrases below stand.
+   * A person's decision always wins.
    */
   function specialOf(line, opts) {
     line = line || {}; opts = opts || {};
@@ -212,12 +219,28 @@
     const title = String(line.title || ""), lower = title.toLowerCase();
     const vars = (line.variations || []).map(v => ({ name: String(v.name != null ? v.name : v.formatted_name || ""), value: String(v.value != null ? v.value : v.formatted_value || "").replace(/&quot;/g, "\"").trim() })).filter(v => v.name && v.value);
     const make = (kind, why, signal) => Object.assign({ kind, why, signals: [signal] }, SPECIAL[kind]);
+    // a kind Claude or a person named, as the special kind it is (a custom piece takes its form from its SKU or title)
+    const asKind = k => k === "custom" ? customKind(sku || raw, title, vars) : READ_KINDS[k] || null;
+    // 0 · a person's decision stands
+    const dec = opts.decided;
+    if (dec && dec.kind && !known) {
+      const k = asKind(dec.kind); if (!k) return null;
+      return Object.assign(make(k, `decided by ${dec.by || "a person"}`, "person"), READ_LABEL[dec.kind] ? { label: READ_LABEL[dec.kind] } : {}, { decided: dec });
+    }
     // 1 · the buyer chose no charm (a stored map for that value is a person's decision and stands)
     for (const v of vars) {
       if (!CHAIN_ONLY_VALUE.test(v.value.trim())) continue;
       const hit = optionLookup(opts.optionMaps, line.listingId, v.name, v.value);
       if (hit && hit.source !== "default") continue;
       return make("chainOnly", `option “${v.name}: ${v.value}”`, "option");
+    }
+    // 2 · Claude's reading of everything the shop holds about the line. Chain only is never cut, so an unsure reading of
+    // it waits for a person as a special order instead.
+    const rd = opts.read;
+    if (rd && rd.kind && !known) {
+      let k = asKind(rd.kind); if (!k) return null;
+      if (k === "chainOnly" && !(rd.confidence >= 0.85)) k = "special";
+      return Object.assign(make(k, rd.summary || "read by Claude", "ai"), READ_LABEL[rd.kind] ? { label: READ_LABEL[rd.kind] } : {}, { read: rd });
     }
     // 2 · the SKU the shop gave the listing
     for (const s of [...new Set([raw, sku].filter(Boolean))]) {
@@ -239,6 +262,19 @@
     return null;
   }
 
+  /* The Team's workflow stamps ("DESIGNED :)", "QA1", "QA2", "PE", "am") are on nearly every order: they say where the
+     order is in the shop, never what to engrave. Counted as engraving evidence, they sent every line to the engraving
+     reader and every charm of a sheet showed a back engraving (Paul, 25 Sep: "Backs 69" on a sheet of 69 charms). A Team
+     message counts only when it says more than such a stamp. */
+  const STAMP_WORDS = new Set(("designed design done qa pe am pm ok okay printed print packed pack shipped ship cut lasered laser checked " +
+    "check ready sent fixed redo remade polished plated assembled labeled labelled sorted complete completed approved recut reprint " +
+    "sanded tumbled finished final verified good fine yes thanks thank you").split(" "));
+  function engravingNote(text) {
+    const words = String(text || "").toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean);
+    if (!words.length) return false;
+    return !(words.length <= 3 && words.every(w => STAMP_WORDS.has(w) || /^[a-z]{1,3}\d{0,2}$/.test(w) || /^\d{1,2}$/.test(w)));
+  }
+
   /* ═══ 4 · the line spec ════════════════════════════════════════════════ */
   /**
    * order: the bridge order (design §4.4); line: one of its lines
@@ -253,8 +289,9 @@
     const listed = isNoDesign(sku, ctx.noDesign) || (!sku && isNoDesign(line.title, ctx.noDesign));
     // a special purchase (custom, rework, chain only, add-on…): chain only is never cut, and a special line a person
     // finished by hand (its QR label printed from Custom Orders) is done; either reads as the no-design list does
-    const special = specialOf(line, { sku, masterEntry: ctx.masterEntry, optionMaps: ctx.optionMaps });
-    const done = (ctx.customDone && ctx.customDone[lineKey(order, line)]) || null;
+    const lk = lineKey(order, line);
+    const special = specialOf(line, { sku, masterEntry: ctx.masterEntry, optionMaps: ctx.optionMaps, read: ctx.customRead && ctx.customRead[lk], decided: ctx.customDecided && ctx.customDecided[lk] });
+    const done = (ctx.customDone && ctx.customDone[lk]) || null;
     const noDesign = listed || !!(special && special.notCut) || !!done;
     const metalKey = String(line.metalKey || "");
     const material = METAL_TO_CARD[metalKey] || null;
@@ -262,6 +299,10 @@
     const spec = { designSku: sku || null, skuSource, material, materialKey: metalKey || null, materialLabel: line.metalLabel || (material ? CARD_LABEL[material] : ""), form: null, size: null, chain: null, quantity: Math.max(1, Math.round(+line.quantity || 1)), personalization: (line.personalization || []).map(s => visible(s).trim()).filter(Boolean), buyerMessage: visible(line.buyerMessage || order.buyerMessage || ""), staffNote: String(line.staffNote || order.staffNote || ""), messages: (line.messages || order.messages || []).slice(-5), updateTs: +order.updateTs || 0, options: [], problems, noDesign, sources: { material: "station classifier (Metal/Colour option first)", sku: skuSource } };
     if (special) spec.special = special;
     if (done) spec.customDone = done;
+    // a line with no design of its own (not on the no-design list, not finished by hand) is one Claude reads to tell a
+    // custom order from a regular listing whose SKU is not indexed yet (Custom Orders)
+    const bought = special && special.signals[0] === "option";
+    spec.readable = !listed && !done && !bought && !(sku && ctx.masterEntry && ctx.masterEntry(sku)) && !!ctx.masterEntry;
     if (noDesign) spec.noDesignWhy = done ? "completed by hand (Custom Orders)" : listed ? "on the no-design list" : special.label.toLowerCase() + " · not laser cut";
     for (const v of line.variations || []) {
       const name = v.name || v.formatted_name, value = String(v.value != null ? v.value : v.formatted_value || "").replace(/&quot;/g, "\"").trim();
@@ -291,7 +332,7 @@
       else if (entry.blocked) problems.push({ kind: "blockedSku", reason: entry.blocked, sku });
       else if (entry.sizes && Object.keys(entry.sizes).length) { if (!spec.size || !entry.sizes[spec.size]) problems.push({ kind: "missingSize", sku, size: spec.size, available: Object.keys(entry.sizes) }); }
     }
-    spec.engraveCandidate = !noDesign && (spec.personalization.length > 0 || !!spec.buyerMessage.trim() || !!spec.staffNote.trim() || spec.messages.length > 0);
+    spec.engraveCandidate = !noDesign && (spec.personalization.length > 0 || !!spec.buyerMessage.trim() || !!spec.staffNote.trim() || spec.messages.some(m => engravingNote(m && m.text)));
     return spec;
   }
   const lineKey = (order, line) => `${order.receiptId}_${line.transactionId}`;
@@ -622,7 +663,7 @@
     if (solid && options.combineSolids) return {key:"solid-waiting", name:"14K / 10K Solid Waiting for Approval", setId:null, seq:null, standalone:true, working:true};
     return {key:(solid ? "standalone:"+sheet.metal+":" : "working:")+sheet.day+":"+scope, name:solid ? "Standalone "+(sheet.metal === "gold10k" ? "10K" : "14K") : "Incomplete Sheets: Waiting to be filled!", setId:null, seq:null, standalone:solid, working:true};
   }
-  return { SPECIAL, specialOf, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, interpretLine, lineKey, poolId,
+  return { SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, interpretLine, lineKey, poolId,
     orderPlacedAt, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });
