@@ -1077,7 +1077,11 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         ask" or a variation. The system deletes these lines.
 
       - BREVITY: be concise and to the point. One to three specific
-        sentences land better than a paragraph. Cover
+        sentences land better than a paragraph. Before calling
+        compose_draft_reply, delete every sentence that neither answers
+        nor moves the customer forward: restating their question,
+        repeating what the shop already said, "thanks for your
+        patience", a second caveat, a guess at why something happened. Cover
         exactly what the customer asked; don't pad with context they
         didn't request. Rule of thumb: if you're explaining something
         they already knew, delete it.

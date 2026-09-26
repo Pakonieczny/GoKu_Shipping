@@ -3330,7 +3330,7 @@ For custom-shape requests that need operator pricing but still have customer-sel
 
 Every reply answers what the customer asked in this turn, in its first sentence: a price, a yes or no, a shipping cost, a production time, the next step. Never write "I need to look at this carefully before I can speak to specifics", "we're taking a closer look", "let me check", "I don't know", or any holding line, including on escalate_to_human, where the reply still names the customer's exact request and gives everything the thread and policy already settle.
 
-Keep replies to two to four short sentences plus the sign-off. Answer every question in the customer's latest messages, not only the last one.
+Keep replies to two to four short sentences plus the sign-off, written as "we" (the shop), never "I". Answer every question in the customer's latest messages, not only the last one. Before finishing, delete every sentence that neither answers nor moves the customer forward. Attach a line sheet only when the customer still has to choose size, metal, chain or length; a yes/no question about a standard listing gets a yes/no answer.
 
 One customer can have several conversations in one thread. A sale that finished (order placed, custom listing bought, piece shipped) stays finished: don't re-quote it, re-send the line sheet or ask for specs the customer already gave. Ask only for choices that are still missing.
 
@@ -3667,7 +3667,12 @@ from your investigation, not from the default sales script.
       parsed.advance_stage            = null;
       parsed.ready_for_human_approval = true;
 
-      if (safeFallback && safeFallback.reply) {
+      // The template answers none of the customer's actual question (a
+      // replayed "can it be engraved on the front?" got a spec request), so
+      // with the hand-off on, the support drafter writes the turn instead:
+      // it has the line sheets too (get_collateral).
+      const handOffOn = process.env.ETSYMAIL_SALES_NON_SALES_HANDOFF !== "0";
+      if (safeFallback && safeFallback.reply && !handOffOn) {
         parsed.current_state        = "spec";
         parsed.next_action          = "attach_collateral";
         parsed.next_action_payload  = { category: safeFallback.family, kind: "line_sheet" };
@@ -3695,7 +3700,7 @@ from your investigation, not from the default sales script.
 ${validationResult.message}
 
 ` +
-        (safeFallback && safeFallback.reply
+        (safeFallback && safeFallback.reply && !handOffOn
           ? `Safe fallback reply was inserted into the composer because this is a recoverable line-sheet/spec gathering step.
 
 `
@@ -3770,6 +3775,22 @@ ${validationResult.message}
         lastSalesAgentBlockReason: quoteValidation.reason,
         lastTurnAt: FV.serverTimestamp()
       }, { merge: true });
+      // The bad price never reaches the customer, but the operator still
+      // gets a support draft answering the rest of the message instead of
+      // an empty composer (it self-rates for review; no custom price).
+      if (process.env.ETSYMAIL_SALES_NON_SALES_HANDOFF !== "0") {
+        const hdrs = { "content-type": "application/json" };
+        if (process.env.ETSYMAIL_EXTENSION_SECRET) hdrs["x-etsymail-secret"] = process.env.ETSYMAIL_EXTENSION_SECRET;
+        const drafted = await require("./etsyMailDraftReply").handler({
+          httpMethod: "POST", headers: hdrs,
+          body: JSON.stringify({ threadId, mode: "initial", employeeName, viaPipeline: true,
+                                 forceRegenerate: true, bypassExistingDraft: true, manualRunId: manualRunId || null,
+                                 instructions: "The custom price for this request could not be verified, so do not state any price or total for it; answer everything else and set ready_for_human_approval:true." })
+        }).catch(() => null);
+        if (drafted && drafted.statusCode && drafted.statusCode < 400) {
+          return { statusCode: drafted.statusCode, headers: CORS, body: drafted.body };
+        }
+      }
       return { statusCode: 422, headers: CORS,
                body: JSON.stringify({
                  error: "Quote validation failed — escalated to human review",
