@@ -682,3 +682,8 @@ exports.handler = meter.wrapHandler(async (event) => {
 // avoiding HTTP overhead and keeping search logic single-sourced.
 module.exports.searchListings = searchListings;
 module.exports.trimForAI      = trimForAI;
+// Also used by etsyMailListingLookup's catalogStatus / catalogSync ops: Netlify
+// refuses direct calls to this scheduled function on the live site, so the
+// inbox's Settings line and Sync now button reach the same code through it.
+module.exports.getSyncStatus  = getSyncStatus;
+module.exports.syncCatalog    = syncCatalog;

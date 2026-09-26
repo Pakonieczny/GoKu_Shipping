@@ -669,6 +669,30 @@ exports.handler = async (event) => {
     return json(200, result);
   }
 
+  // The listing copy (etsyMailListingsCatalog) runs on a schedule, and Netlify
+  // answers 403 to direct calls to a scheduled function on the live site, so
+  // the inbox's Settings status line and its Sync now button come here and
+  // run the same code (a manual sync keeps its 18 s budget).
+  if (op === "catalogStatus" || op === "catalogSync") {
+    try {
+      const catalog = require("./etsyMailListingsCatalog");
+      const result = op === "catalogStatus"
+        ? await catalog.getSyncStatus()
+        : await catalog.syncCatalog({ fullSync: body.fullSync !== false, triggeredBy: "manual" });
+      return json(200, result);
+    } catch (err) {
+      console.error("listingLookup " + op + " error:", err);
+      return json(500, { error: err.message || String(err), op });
+    } finally {
+      // Record the run's Etsy calls before the function is frozen, as the
+      // copy's own handler does through meter.wrapHandler.
+      if (op === "catalogSync") {
+        try { await require("./_etsyApiMeter").flushNow(); }
+        catch (e) { console.warn("[etsyApiMeter] flushNow() after catalogSync failed (non-fatal):", e.message); }
+      }
+    }
+  }
+
   return json(400, { error: `Unknown op '${op}'` });
 };
 

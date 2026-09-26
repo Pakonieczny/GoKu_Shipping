@@ -9793,9 +9793,11 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
      * ══════════════════════════════════════════════════════════════ */
 
     /* ── v2.0 Step 1: Catalog status + Sync-now plumbing ──────────────
-     * Reads EtsyMail_ListingsSync/global via the etsyMailListingsCatalog
-     * status op, formats the result for the inline status block in
-     * Settings, and wires the "Sync now" button to fire a manual sync.
+     * Reads EtsyMail_ListingsSync/global via etsyMailListingLookup's
+     * catalogStatus op, formats the result for the inline status block in
+     * Settings, and wires the "Sync now" button to fire a manual sync
+     * (catalogSync). etsyMailListingsCatalog itself runs on a schedule, and
+     * Netlify answers 403 to direct calls to a scheduled function.
      *
      * Step 2/3 forward-compat: the same status helpers will be reused
      * by the future Pricing Rules and Collateral tabs (which will share
@@ -9823,9 +9825,9 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       text.textContent = "Loading catalog status…";
 
       try {
-        const res = await api("etsyMailListingsCatalog", {
+        const res = await api("etsyMailListingLookup", {
           method: "POST",
-          body  : { op: "status" }
+          body  : { op: "catalogStatus" }
         });
         if (!res || !res.exists) {
           text.innerHTML = '<span style="color:#9a3f00;">Catalog has never synced</span>'
@@ -9892,9 +9894,9 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       if (text) text.textContent = "Syncing catalog from Etsy API…";
 
       try {
-        const res = await api("etsyMailListingsCatalog", {
+        const res = await api("etsyMailListingLookup", {
           method: "POST",
-          body  : { op: "sync", fullSync: true }
+          body  : { op: "catalogSync", fullSync: true }
         });
         if (res && res.skipped) {
           toast("Sync skipped: " + (res.reason || "unknown reason"));
@@ -10890,7 +10892,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
 
       // v2.0 Step 1: load catalog sync status into the inline status block.
       // Refreshed every time the modal opens. The "Sync now" button calls
-      // etsyMailListingsCatalog op:"sync" and re-loads the status when done.
+      // etsyMailListingLookup op:"catalogSync" and re-loads the status when done.
       loadCatalogStatusInModal();
 
       // ─── Gmail watcher: pull-from cursor picker ───────────────────────
