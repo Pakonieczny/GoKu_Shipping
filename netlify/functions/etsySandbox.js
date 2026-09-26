@@ -8,7 +8,7 @@
  *    ?fn=listOpenOrders&offset=N   → { results: [receipts…] }  one page of 100, like listOpenOrders
  *    ?fn=etsyOrderProxy&orderId=R  → { receipt, transactions }  like etsyOrderProxy
  *    ?fn=etsyImages&listingId=L    → [images…]                  the listing's real pictures
- *    ?fn=refreshEtsyToken          → { access_token, expires_in }
+ *    ?fn=refreshEtsyToken          → 409: the sandbox has and issues no Etsy tokens
  *    ?fn=status                    → { ok, count, at, path, stream }  what the snapshot holds
  *
  *  All reads are offline from Etsy, including listing photographs. Images reuse
@@ -241,10 +241,13 @@ async function serve(event) {
   const q = event.queryStringParameters || {};
   const fn = String(q.fn || "");
   try {
-    if (fn === "refreshEtsyToken") return json(200, { access_token: "sandbox-token", refresh_token: "sandbox-refresh", expires_in: 7200, sandbox: true });
+    // No tokens here: a station storing one would overwrite the real Etsy tokens its browser shares. A station that asks
+    // anyway (an older copy) reads this as a passing failure, never a sign-out, and keeps the tokens it has.
+    if (fn === "refreshEtsyToken") return json(409, { error: "the sandbox issues no Etsy tokens", sandbox: true });
     if (fn === "etsyImages") {
       const images=await listingImages(String(q.listingId || ""));
-      return {...json(200,images),headers:{...CORS,'Cache-Control':images.length?'public, max-age=86400':'public, max-age=300','X-Etsy-Calls':'0'}};
+      // behind the passcode: only this browser may keep a copy, never a shared cache
+      return {...json(200,images),headers:{...CORS,'Cache-Control':images.length?'private, max-age=86400':'private, max-age=300','X-Etsy-Calls':'0'}};
     }
     let { meta, receipts } = await loadSnapshot();
     const stream = fn === "listOpenOrders" || fn === "status" ? await loadStream() : null;
