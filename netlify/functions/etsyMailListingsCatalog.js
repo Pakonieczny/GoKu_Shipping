@@ -6,8 +6,8 @@
  *
  *  Mirrors active Etsy listings into Firestore so the AI can reference real
  *  shop products in replies. Source of truth is the Etsy API (NOT the
- *  Chrome extension scrape). The cron runs every 30 min; on-demand sync
- *  is also available from the UI.
+ *  Chrome extension scrape). The cron runs nightly at 04:00 UTC; on-demand
+ *  sync is also available from the UI.
  *
  *  ═══ THREE OPS ═══════════════════════════════════════════════════════════
  *
@@ -443,6 +443,96 @@ async function syncCatalog({ fullSync = true, triggeredBy = "cron" } = {}) {
 // This is what makes the v1.10 customer-service AI's `search_shop_listings`
 // tool work without an HTTP round-trip, AND what Step 2's sales agent
 // will use for the same purpose. Single source of truth.
+//
+// Substring match strategy:
+//   1. Score EVERY active listing. The search used to read only the first
+//      500 active listings by document id, about a tenth of this shop's
+//      catalog, so most listings could never be found (an "anklet" or
+//      "locket" search found nothing). The scoring fields of all active
+//      listings are read once per warm function instance, in pages, with
+//      select() so only title, tags, description and lastSyncedAt travel,
+//      and reused for SEARCH_INDEX_TTL_MS (the mirror changes nightly).
+//      Single-field filter plus document-id cursor: no composite index.
+//   2. Score each listing on three fields with descending weight:
+//         - title contains query     +3
+//         - tag exact-equals query   +2
+//         - description contains q   +1
+//   3. Multi-word queries: each whitespace-separated token contributes.
+//   4. Return top `limit` by score, descending. Ties broken by recency
+//      (lastSyncedAt). Score 0 → not returned. Only those matches are
+//      read in full.
+//
+// Firestore reads: one per active listing when an instance builds its copy,
+// then one per returned match. No Etsy calls.
+const SEARCH_INDEX_TTL_MS  = 30 * 60 * 1000;
+const SEARCH_INDEX_PAGE    = 1000;
+const SEARCH_INDEX_MAX     = 20000;
+// A search never waits longer than this for a copy that is still loading:
+// it scores the pages read so far and the load carries on for the next one.
+const SEARCH_INDEX_WAIT_MS = 5000;
+
+let _searchIndex        = null;   // last complete copy: { builtAt, entries }
+let _searchIndexPartial = null;   // the copy being read, filled page by page
+let _searchIndexLoad    = null;   // its promise, shared by concurrent searches
+
+function searchEntry(doc) {
+  const d = doc.data() || {};
+  return {
+    id      : doc.id,
+    title   : String(d.title || "").toLowerCase(),
+    tags    : (d.tags || []).map(t => String(t).toLowerCase()),
+    desc    : String(d.description || "").toLowerCase().slice(0, 500),
+    syncedMs: d.lastSyncedAt && d.lastSyncedAt.toMillis ? d.lastSyncedAt.toMillis() : 0
+  };
+}
+
+function loadSearchIndex() {
+  if (_searchIndexLoad) return _searchIndexLoad;
+  const partial = { builtAt: Date.now(), entries: [] };
+  const load = (async () => {
+    let last = null;
+    while (partial.entries.length < SEARCH_INDEX_MAX) {
+      let q = db.collection(LISTINGS_COLL)
+        .where("active", "==", true)
+        .select("title", "tags", "description", "lastSyncedAt")
+        .limit(SEARCH_INDEX_PAGE);
+      if (last) q = q.startAfter(last);
+      const snap = await q.get();
+      snap.forEach(doc => { partial.entries.push(searchEntry(doc)); });
+      if (snap.size < SEARCH_INDEX_PAGE) break;
+      last = snap.docs[snap.docs.length - 1];
+    }
+    partial.builtAt = Date.now();
+    return partial;
+  })();
+  _searchIndexPartial = partial;
+  _searchIndexLoad = load;
+  load.then(
+    ix  => { _searchIndex = ix; },
+    err => { console.warn("listingsCatalog: search copy load failed:", err && err.message); }
+  ).then(() => {
+    if (_searchIndexLoad === load) _searchIndexLoad = null;
+    if (_searchIndexPartial === partial) _searchIndexPartial = null;
+  });
+  return load;
+}
+
+async function getSearchIndex() {
+  if (_searchIndex && Date.now() - _searchIndex.builtAt < SEARCH_INDEX_TTL_MS) return _searchIndex;
+  const load = loadSearchIndex();
+  let timer = null;
+  const loaded = await Promise.race([
+    load.then(ix => ix, () => null),
+    new Promise(res => { timer = setTimeout(() => res(null), SEARCH_INDEX_WAIT_MS); })
+  ]);
+  clearTimeout(timer);
+  if (loaded) return loaded;
+  // Slow or failed: the previous complete copy, else the pages read so far,
+  // else wait for the load (a failure then throws, as the single read did).
+  if (_searchIndex) return _searchIndex;
+  if (_searchIndexPartial && _searchIndexPartial.entries.length) return _searchIndexPartial;
+  return load;
+}
 
 async function searchListings(query, limit = AI_RESULT_LIMIT) {
   const q = String(query || "").trim().toLowerCase();
@@ -453,57 +543,37 @@ async function searchListings(query, limit = AI_RESULT_LIMIT) {
     return { error: "Listings mirror is disabled", matches: [], count: 0 };
   }
 
-  // Substring match strategy:
-  //   1. Pull all active listings (cap at 500 — typical handmade shop is
-  //      well under this). Composite indexes aren't needed because we're
-  //      filtering on a single field (active==true).
-  //   2. Score each listing on three fields with descending weight:
-  //         - title contains query     +3
-  //         - tag exact-equals query   +2
-  //         - description contains q   +1
-  //   3. Multi-word queries: each whitespace-separated token contributes.
-  //   4. Return top `limit` by score, descending. Ties broken by recency
-  //      (lastSyncedAt). Score 0 → not returned.
-  //
-  // If we outgrow the in-memory scan, the migration target is Algolia or
-  // a Firestore full-text index. For a typical handmade shop's catalog
-  // size this is plenty fast.
-  const snap = await db.collection(LISTINGS_COLL)
-    .where("active", "==", true)
-    .limit(500)
-    .get();
-
   const tokens = q.split(/\s+/).filter(t => t.length >= 2);
   if (tokens.length === 0) return { matches: [], count: 0 };
 
-  const scored = [];
-  snap.forEach(doc => {
-    const d = doc.data() || {};
-    const title = String(d.title || "").toLowerCase();
-    const desc  = String(d.description || "").toLowerCase().slice(0, 500);
-    const tags  = (d.tags || []).map(t => String(t).toLowerCase());
+  const index = await getSearchIndex();
 
+  const scored = [];
+  for (const e of index.entries) {
     let score = 0;
     for (const t of tokens) {
-      if (title.includes(t)) score += 3;
-      if (tags.includes(t))  score += 2;
-      if (desc.includes(t))  score += 1;
+      if (e.title.includes(t)) score += 3;
+      if (e.tags.includes(t))  score += 2;
+      if (e.desc.includes(t))  score += 1;
     }
-    if (score > 0) {
-      scored.push({ score, doc: { listingId: doc.id, ...d } });
-    }
-  });
+    if (score > 0) scored.push({ score, e });
+  }
 
-  scored.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    // Tiebreaker: more recently synced first
-    const aMs = a.doc.lastSyncedAt && a.doc.lastSyncedAt.toMillis ? a.doc.lastSyncedAt.toMillis() : 0;
-    const bMs = b.doc.lastSyncedAt && b.doc.lastSyncedAt.toMillis ? b.doc.lastSyncedAt.toMillis() : 0;
-    return bMs - aMs;
-  });
+  // Tiebreaker: more recently synced first
+  scored.sort((a, b) => (b.score - a.score) || (b.e.syncedMs - a.e.syncedMs));
 
   const cap = Math.max(1, Math.min(parseInt(limit, 10) || AI_RESULT_LIMIT, 25));
-  const matches = scored.slice(0, cap).map(s => trimForAI(s.doc));
+  const top = scored.slice(0, cap);
+  const snaps = top.length
+    ? await db.getAll(...top.map(s => db.collection(LISTINGS_COLL).doc(s.e.id)))
+    : [];
+  const matches = [];
+  snaps.forEach(snap => {
+    if (!snap.exists) return;
+    const d = snap.data() || {};
+    if (d.active !== true) return;   // turned inactive since the copy was read
+    matches.push(trimForAI({ listingId: snap.id, ...d }));
+  });
 
   return { matches, count: matches.length, totalScored: scored.length };
 }
