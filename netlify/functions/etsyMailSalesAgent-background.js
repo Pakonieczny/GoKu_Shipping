@@ -1870,6 +1870,9 @@ function shouldForceLineSheetSpecStep(parsed, validationContext = {}) {
   const family = familyFromParsedAndContext(parsed, validationContext);
   if (!family) return { force: false };
   if (lineSheetFlagged(parsed)) return { force: false };
+  // The agent found a placed order: the specs were settled, nothing to pick.
+  const existingOrder = parsed && parsed.known_facts && parsed.known_facts.existingOrder;
+  if (existingOrder && (existingOrder.orderId || existingOrder.receiptId)) return { force: false };
   if (!inboundLooksLikeCustomSalesSpecRequest(validationContext.latestInboundText)) return { force: false };
 
   const selectableMissing = customerSelectableMissingItems(parsed);
@@ -2410,7 +2413,8 @@ exports.handler = async (event) => {
       if (tSnap.exists) {
         threadDocData = tSnap.data() || {};
         const ts = threadDocData.status;
-        const everCompleted = !!threadDocData.salesCompletedAt;
+        const everCompleted = !!threadDocData.salesCompletedAt
+          || threadDocData.customListingStatus === "created";
         if (TERMINAL_THREAD_STATUSES.has(ts) || everCompleted) {
           console.log(`[salesAgent] thread ${threadId} is terminal (status=${ts}, everCompleted=${everCompleted}), skipping`);
           return { statusCode: 200, headers: CORS,

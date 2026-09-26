@@ -1171,7 +1171,13 @@ exports.handler = async (event) => {
         && (autoCfg.salesPilotThreadIds.length === 0
             || autoCfg.salesPilotThreadIds.includes(threadId))) {
 
-      const activeSalesStage = await loadActiveSalesContextStage(threadId);
+      // A sale is over once its listing exists. The manual Custom Listing
+      // path never writes salesCompletedAt, so check the listing too;
+      // otherwise the SalesContext stays "active" and every later
+      // "thank you" goes back into the sales funnel.
+      const saleAlreadyDone = !!helpRequestData.salesCompletedAt
+        || helpRequestData.customListingStatus === "created";
+      const activeSalesStage = saleAlreadyDone ? null : await loadActiveSalesContextStage(threadId);
 
 
       const freshSalesLead =
@@ -1225,6 +1231,7 @@ exports.handler = async (event) => {
       const threadData = threadDoc.exists ? threadDoc.data() : {};
       const isPostTerminal =
            !!threadData.salesCompletedAt
+        || threadData.customListingStatus === "created"
         || threadData.status === "sales_abandoned";
       const shouldResetForRound2 = isPostTerminal && freshSalesLead;
 
@@ -1505,7 +1512,10 @@ exports.handler = async (event) => {
         // attachment arrays so fresh sales leads with photos reach the
         // sales agent's vision path.
         const inb = await loadLatestInbound(threadId);
-        let inboundText = latestText;
+        // Only the messages we have not answered yet: the classifier's
+        // five-message tail would show the agent old requests as new.
+        let inboundText = await loadUnansweredInboundText(threadId);
+        if (!inboundText) inboundText = latestText;
         if (inboundText === null) inboundText = inb.text;
         const inboundAttachments = inb.attachments;
         const threadReferenceAttachments = Array.isArray(inb.threadAttachments) && inb.threadAttachments.length
