@@ -27,6 +27,11 @@
  *  If the thread has no linked etsyOrderId (e.g. pre-purchase inquiry),
  *  this function returns ok:false with a clear reason — the toggle in
  *  the UI should be disabled in that case, but we double-check here.
+ *
+ *  v1.1 — A post named by the inbox (dispatchId) lands once: a retry
+ *  after a lost answer returns the earlier post. When the Haiku summary
+ *  fails or takes longer than 15 s, the reply is posted as written
+ *  instead of being dropped (summarized:false in the answer).
  */
 
 "use strict";
@@ -53,6 +58,17 @@ const RECENT_MESSAGES_FOR_CONTEXT = 20;
 const MAX_MESSAGE_CHARS = 1200;
 const MAX_DRAFT_CHARS   = 3000;
 const HAIKU_MAX_OUTPUT_TOKENS = 600;
+// The whole call has to finish inside the 26 s function limit, so a slow
+// or overloaded summary gives way to posting the reply as written.
+const HAIKU_TIME_LIMIT_MS = 15000;
+
+function withTimeLimit(promise, ms, label) {
+  let timer;
+  const limit = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} took longer than ${Math.round(ms / 1000)} s`)), ms);
+  });
+  return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
+}
 
 function ok(body)  { return { statusCode: 200, headers: { "Content-Type": "application/json", ...CORS }, body: JSON.stringify({ success: true, ...body }) }; }
 function bad(msg, code = 400) { return { statusCode: code, headers: { "Content-Type": "application/json", ...CORS }, body: JSON.stringify({ success: false, error: msg }) }; }
@@ -492,6 +508,9 @@ exports.handler = async (event) => {
   const threadId   = String(body.threadId   || "").trim();
   const draftText  = String(body.draftText  || "").trim();
   const senderName = String(body.employeeName || employeeName).trim();
+  // The inbox names each post, so a retry (a lost answer, a Retry press)
+  // lands once: the message doc is keyed by it and a repeat is a no-op.
+  const dispatchId = /^[A-Za-z0-9_-]{8,80}$/.test(String(body.dispatchId || "")) ? String(body.dispatchId) : null;
 
   if (!threadId)  return bad("Missing threadId");
   if (!draftText) return bad("Missing draftText");
@@ -617,6 +636,25 @@ exports.handler = async (event) => {
     || thread.customerName
     || "(unknown customer)";
 
+  // Already posted under this id (the inbox retried after a lost answer):
+  // report the earlier post instead of summarizing and posting again.
+  const textDocId = dispatchId ? "dsp_" + dispatchId : null;
+  if (textDocId) {
+    try {
+      const prior = await db.collection(BRITES_ORDERS_COLL).doc(orderId).collection("messages").doc(textDocId).get();
+      if (prior.exists) {
+        const pd = prior.data() || {};
+        return ok({
+          orderId, britesMessageId: textDocId, britesImageMessageId: null,
+          condensed: pd.text || "", customerName, acceptedImageUrl: null, acceptedImageReason: null,
+          hasDesignAction: pd.hasDesignAction !== false, summarized: pd.summarized !== false, duplicate: true,
+        });
+      }
+    } catch (e) {
+      console.warn(`[designDispatch] duplicate check for ${textDocId} failed (continuing): ${e.message}`);
+    }
+  }
+
   // ─── 2) Pull recent thread messages (both directions, with images) ─
   let threadMessages = [];
   try {
@@ -641,17 +679,26 @@ exports.handler = async (event) => {
   }
 
   // ─── 3) Condense via Haiku (arc-aware + image-aware) ─────────────
+  // The operator asked for this reply to reach the design team, so a
+  // failed summary never drops it: the reply itself is posted instead.
   let dispatch;
+  let summarized = true;
   try {
-    dispatch = await condenseForDesign({
+    dispatch = await withTimeLimit(condenseForDesign({
       operatorDraft : draftText,
       threadMessages,
       orderId,
       customerName,
-    });
+    }), HAIKU_TIME_LIMIT_MS, "The summary");
   } catch (e) {
-    console.error(`[designDispatch] Haiku failed for thread ${threadId}:`, e.message);
-    return bad(`Summarization failed: ${e.message}`, 502);
+    console.error(`[designDispatch] Haiku failed for thread ${threadId}; posting the reply as written:`, e.message);
+    summarized = false;
+    dispatch = {
+      summary            : "Operator dispatched: " + draftText.slice(0, 600),
+      hasDesignAction    : true,
+      acceptedImageUrl   : null,
+      acceptedImageReason: null,
+    };
   }
   const { summary: condensed, acceptedImageUrl, acceptedImageReason, hasDesignAction } = dispatch;
 
@@ -725,10 +772,23 @@ exports.handler = async (event) => {
       customerName       : customerName,
     }, { merge: true }));
 
+    // A named post is created under its own id; a repeat of the same
+    // post finds it already there and leaves it as it is.
+    const put = async (label, docId, data) => {
+      const coll = orderRef.collection("messages");
+      if (!docId) return withRetry(label, () => coll.add(data));
+      const ref = coll.doc(docId);
+      try {
+        await withRetry(label, () => ref.create(data));
+      } catch (e) {
+        const code = String((e && e.code) || "").toLowerCase();
+        if (!(code === "6" || code === "already-exists" || /already exists/i.test((e && e.message) || ""))) throw e;
+      }
+      return ref;
+    };
+
     // Text message — the condensed substance.
-    textWriteRef = await withRetry("messages.add (text)", () => orderRef
-      .collection("messages")
-      .add({
+    textWriteRef = await put("messages.add (text)", textDocId, {
         text       : condensed,
         senderName : senderName,
         senderRole : "staff",
@@ -737,14 +797,13 @@ exports.handler = async (event) => {
         sourceThreadId : threadId,
         sourceOriginalLength : draftText.length,
         hasDesignAction,
-      }));
+        summarized,
+      });
 
     // Image message — only when Haiku confidently identified an
     // accepted design proof in the current arc.
     if (acceptedImageUrl) {
-      imageWriteRef = await withRetry("messages.add (image)", () => orderRef
-        .collection("messages")
-        .add({
+      imageWriteRef = await put("messages.add (image)", textDocId ? textDocId + "_img" : null, {
           imageUrl   : acceptedImageUrl,
           text       : "Approved design proof",
           senderName : senderName,
@@ -753,7 +812,7 @@ exports.handler = async (event) => {
           source     : "etsymail_design_dispatch_image",
           sourceThreadId : threadId,
           acceptedImageReason : acceptedImageReason || null,
-        }));
+        });
     }
   } catch (e) {
     console.error(`[designDispatch] Firestore write failed for order ${orderId} after retries:`, e.message);
@@ -794,6 +853,8 @@ exports.handler = async (event) => {
         britesImageMessageId: imageWriteRef ? imageWriteRef.id : null,
         acceptedImageUrl   : acceptedImageUrl || null,
         hasDesignAction,
+        summarized,
+        dispatchId,
       },
       createdAt: FV.serverTimestamp(),
     });
@@ -808,5 +869,6 @@ exports.handler = async (event) => {
     acceptedImageUrl    : acceptedImageUrl || null,
     acceptedImageReason : acceptedImageReason || null,
     hasDesignAction,
+    summarized,
   });
 };

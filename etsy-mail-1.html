@@ -1000,6 +1000,66 @@
     button.em-send-to-design[aria-pressed="true"] > .material-icons {
       color: #2d1a5e !important;
     }
+    /* The switch also reports what became of the last reply's design
+       note: Posting… (spinner), Posted (green check), Retry (red; click
+       to post it again). Its word slides in only while there is news.
+       A conversation with no Etsy order has no design chat: the switch
+       rests dimmed there and a click says why. */
+    button.em-send-to-design > .em-send-to-design-label {
+      display: inline-block !important;
+      max-width: 0 !important;
+      margin-left: -6px !important;          /* cancels the flex gap while hidden */
+      opacity: 0 !important;
+      overflow: hidden !important;
+      white-space: nowrap !important;
+      font-size: 12px !important;
+      line-height: 1 !important;
+      transition: max-width .22s cubic-bezier(.2, 0, 0, 1), margin-left .22s cubic-bezier(.2, 0, 0, 1), opacity .16s ease !important;
+    }
+    button.em-send-to-design.has-label > .em-send-to-design-label {
+      max-width: 72px !important;
+      margin-left: 0 !important;
+      opacity: 1 !important;
+    }
+    .em-compose .em-compose-bar button.em-send-to-design.is-busy > .material-icons,
+    button.em-send-to-design.is-busy > .material-icons {
+      width: 14px !important;               /* the icon's own size: the pill keeps its width */
+      height: 14px !important;
+      font-size: 0 !important;
+      color: transparent !important;
+      box-sizing: border-box !important;
+      border: 2px solid rgba(102, 57, 186, .22) !important;
+      border-top-color: #6639ba !important;
+      border-radius: 50% !important;
+      animation: em-spin .7s linear infinite !important;
+    }
+    .em-compose .em-compose-bar button.em-send-to-design.is-busy > .em-send-to-design-label { color: #6639ba !important; }
+    .em-compose .em-compose-bar button.em-send-to-design.is-done,
+    .em-compose .em-compose-bar button.em-send-to-design.is-done[aria-pressed="true"] {
+      background: #eef9f1 !important;
+      border-color: #9fd8b0 !important;
+    }
+    .em-compose .em-compose-bar button.em-send-to-design.is-done > .material-icons,
+    .em-compose .em-compose-bar button.em-send-to-design.is-done > .em-send-to-design-label { color: #1a7f37 !important; }
+    .em-compose .em-compose-bar button.em-send-to-design.is-failed,
+    .em-compose .em-compose-bar button.em-send-to-design.is-failed[aria-pressed="true"] {
+      background: #fff5f5 !important;
+      border-color: #f1aeb5 !important;
+    }
+    .em-compose .em-compose-bar button.em-send-to-design.is-failed:hover { background: #ffebe9 !important; }
+    .em-compose .em-compose-bar button.em-send-to-design.is-failed > .material-icons,
+    .em-compose .em-compose-bar button.em-send-to-design.is-failed > .em-send-to-design-label { color: #cf222e !important; }
+    .em-compose .em-compose-bar button.em-send-to-design[aria-disabled="true"] {
+      opacity: .5 !important;
+      cursor: default !important;
+    }
+    .em-compose .em-compose-bar button.em-send-to-design[aria-disabled="true"]:hover {
+      background: #ffffff !important;
+      border-color: #d0d7de !important;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      button.em-send-to-design > .em-send-to-design-label { transition: none !important; }
+    }
     .em-compose button {
       border: 1px solid #d0d7de; background: #fff; border-radius: 4px;
       padding: 6px 12px; cursor: pointer; font-size: 12px;
@@ -3058,6 +3118,33 @@
     }
     .m-composer-action.send-to-design[aria-pressed="true"]:active {
       background: #a785dd;
+    }
+    /* Same news as the desktop switch: spinner while the design note is
+       posting, a green check once it is in the design chat, red Retry
+       when it failed (tap to post it again); dimmed when the
+       conversation has no Etsy order to post to. */
+    .m-composer-action.send-to-design { transition: background-color .18s ease, color .18s ease, opacity .18s ease; }
+    .m-composer-action.send-to-design[aria-disabled="true"] { opacity: .4; }
+    .m-composer-action.send-to-design.is-busy .material-icons { display: none; }
+    .m-composer-action.send-to-design.is-busy::before {
+      content: "";
+      display: inline-block;
+      width: 20px; height: 20px;
+      box-sizing: border-box;
+      border: 3px solid rgba(102, 57, 186, 0.22);
+      border-top-color: #6639ba;
+      border-radius: 50%;
+      animation: em-spin .75s linear infinite;
+    }
+    .m-composer-action.send-to-design.is-done,
+    .m-composer-action.send-to-design.is-done[aria-pressed="true"] { background: #e6f4ea; color: #1a7f37; }
+    .m-composer-action.send-to-design.is-failed,
+    .m-composer-action.send-to-design.is-failed[aria-pressed="true"] { background: #ffebe9; color: #cf222e; }
+    .m-composer-action.send-to-design.is-failed::after {
+      content: "";
+      position: absolute; top: 5px; right: 5px;
+      width: 7px; height: 7px; border-radius: 50%;
+      background: #cf222e; box-shadow: 0 0 0 2px var(--m-c-surface, #fff);
     }
     .m-composer-action.custom-listing.is-loading {
       position: relative;
@@ -5639,12 +5726,11 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
             <button class="m-composer-action translate" id="mActionTrans" title="Translate">
               <i class="material-icons">translate</i>
             </button>
-            <!-- v5.32.4 — Send to Design toggle for mobile. Mirrors the
-                 desktop button: tap to toggle, ON state turns the icon's
-                 button background purple, and the actual dispatch fires
-                 inside sendViaEtsy when either the desktop OR mobile
-                 toggle is aria-pressed="true". -->
-            <button class="m-composer-action send-to-design" id="mActionSendToDesign" type="button" aria-pressed="false" title="Send to Design — condense and post to Brites Messages">
+            <!-- Send to Design switch for the phone. Shares its state with
+                 the desktop pill (paintDesignSwitch): purple when the next
+                 reply also goes to the design chat, then a spinner, a
+                 green check or a red Retry for that reply's note. -->
+            <button class="m-composer-action send-to-design" id="mActionSendToDesign" type="button" aria-pressed="false" aria-label="Send to Design" title="Send to Design: also post a short note of your next reply to the design chat">
               <i class="material-icons">design_services</i>
             </button>
             <!-- v5.9 — Send button relocated here from inside the
@@ -8400,6 +8486,10 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
       translatingNow      : false,
       composerTranslation : null,
 
+      // Messages sent from this page, one per press of Send, by thread
+      // (see addLocalSend). They show until Etsy's own copy arrives.
+      localSends          : new Map(),
+
       // v4.1 — Auth state. Populated by bootstrapSession on page load
       // and by handleLoginSubmit. Cleared by handleLogout.
       //   currentUser : { username, displayName, role } | null
@@ -8691,8 +8781,10 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         for (const real of reals) {
           if (!real.id || usedReals.has(real.id)) continue;
           const realMs = _optimDedupMsFor(real);
-          // Real must arrive AT OR AFTER optim (within tolerance for skew)
-          if (realMs < optimMs - OPTIM_DEDUP_TOLERANCE_MS) continue;
+          // Real must arrive AT OR AFTER optim (within tolerance for skew).
+          // A local send carries extra slack while it still uses the
+          // browser's clock (see threadMessagesForRender).
+          if (realMs < optimMs - OPTIM_DEDUP_TOLERANCE_MS - (optim._dedupSlackMs || 0)) continue;
           if (!_optimDedupIsContentMatch(optim, real)) continue;
           // Pair found
           if (optim.id) hide.add(optim.id);
@@ -8703,6 +8795,197 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
       return hide;
     }
     window.computeHiddenOptimIds = computeHiddenOptimIds;
+
+    // ─── Local sends ────────────────────────────────────────────────────
+    // A reply appears in the thread the moment Send is pressed and stays
+    // until Etsy's own copy of it arrives. Every press gets its own local
+    // message. The server's optimistic doc (optim_draft_<threadId>) is ONE
+    // doc per thread, rewritten by every send, so it cannot tell two sends
+    // apart: that shared id is why a second reply used to vanish until the
+    // thread was reopened.
+    //
+    // Local messages live in state.localSends (threadId -> list), never in
+    // state.messages, so no full or delta fetch can drop or shadow them.
+    // threadMessagesForRender merges them in:
+    //   1. the server's optimistic copy of a send shown here is hidden
+    //      (same text, within a few minutes) and its server time adopted;
+    //   2. the usual 1:1 pairing hides a local message once the real
+    //      scraped outbound arrives, and the local message is dropped.
+    const LOCAL_SEND_CLAIM_MS = 3 * 60 * 1000;
+    let _localSendSeq = 0;
+    function localSendsFor(threadId) {
+      return (threadId && state.localSends.get(threadId)) || [];
+    }
+    function listingCardFromAttachment(a) {
+      const th = (a && a.thumbnail) || {};
+      return {
+        listingId   : String(a.listingId),
+        listingUrl  : a.listingUrl || ("https://www.etsy.com/listing/" + a.listingId),
+        title       : a.listingTitle || a.title || "Etsy listing",
+        thumbnailUrl: (typeof a.thumbnail === "string" ? a.thumbnail : "") ||
+                      th.url_170x135 || th.url_570xN || th.url_fullxfull || "",
+        priceText   : a.price ? String(a.price) : ""
+      };
+    }
+    function localSendMedia(attachments) {
+      const atts = Array.isArray(attachments) ? attachments : [];
+      const images = atts.filter(a => a && (a.type === "image" || a.type === "tracking_image") &&
+                                      (a.proxyUrl || a.imageUrl || a.thumbDataUrl));
+      const src = a => a.proxyUrl || a.imageUrl || a.thumbDataUrl;
+      return {
+        imageUrls        : images.map(src),
+        thumbnailUrls    : images.map(src),
+        storageImagePaths: images.map(a => a.storagePath || null),
+        listingCards     : atts.filter(a => a && a.type === "listing" && a.listingId).map(listingCardFromAttachment)
+      };
+    }
+    function addLocalSend(threadId, { text, attachments }) {
+      const atMs = Date.now();
+      const m = Object.assign({
+        id               : "local_" + atMs.toString(36) + "_" + (++_localSendSeq),
+        threadId,
+        direction        : "outbound",
+        senderRole       : "staff",
+        text             : String(text || ""),
+        timestamp        : { _ts: true, ms: atMs },
+        localOptimistic  : true,
+        optimisticTextKey: String(text || "").trim().toLowerCase().slice(0, 200),
+        _local           : true,
+        _state           : "sending",          // sending | waiting | queued
+        _atMs            : atMs,
+        _dedupSlackMs    : 90 * 1000
+      }, localSendMedia(attachments));
+      state.localSends.set(threadId, localSendsFor(threadId).concat(m));
+      return m;
+    }
+    function updateLocalSend(threadId, id, patch) {
+      const m = localSendsFor(threadId).find(x => x.id === id);
+      if (m) Object.assign(m, patch);
+      return m;
+    }
+    function removeLocalSend(threadId, id) {
+      const left = localSendsFor(threadId).filter(x => x.id !== id);
+      if (left.length) state.localSends.set(threadId, left); else state.localSends.delete(threadId);
+    }
+    /** The open thread's messages as they should be drawn: server docs plus
+     *  this page's local sends, each send shown once, oldest first. */
+    function threadMessagesForRender(threadId) {
+      const server = (state.messages || []).filter(Boolean);
+      const locals = localSendsFor(threadId);
+      let list = server;
+      if (locals.length) {
+        const claimed = new Set();
+        for (const o of server) {
+          if (!o.localOptimistic || !o.id) continue;
+          const key = _optimDedupNormalize(o.optimisticTextKey || o.text);
+          const oms = _optimDedupMsFor(o);
+          for (let i = locals.length - 1; i >= 0; i--) {
+            const l = locals[i];
+            if (_optimDedupNormalize(l.optimisticTextKey || l.text) !== key) continue;
+            if (Math.abs(oms - l._atMs) > LOCAL_SEND_CLAIM_MS) continue;
+            claimed.add(o.id);
+            // The server's clock anchors the pairing with Etsy's copy.
+            if (oms && !l._serverMs) {
+              l._serverMs = oms;
+              l.timestamp = { _ts: true, ms: oms };
+              l._dedupSlackMs = 0;
+            }
+            break;
+          }
+        }
+        list = server.filter(m => !claimed.has(m.id)).concat(locals);
+      }
+      const hide = computeHiddenOptimIds(list);
+      if (locals.length && hide.size) {
+        const left = locals.filter(l => !hide.has(l.id));
+        if (left.length !== locals.length) {
+          if (left.length) state.localSends.set(threadId, left); else state.localSends.delete(threadId);
+        }
+      }
+      const out = hide.size
+        ? list.filter(m => !(m.localOptimistic && m.id && hide.has(m.id)))
+        : list.slice();
+      out.sort((a, b) => _optimDedupMsFor(a) - _optimDedupMsFor(b));
+      return out;
+    }
+
+    /** Keyed update of a message list. Unchanged bubbles keep their nodes
+     *  (no image reloads, no lost selection, no scroll jumps); changed ones
+     *  are replaced, new ones inserted, stale ones removed. Each item is
+     *  { key, html } where html is one element carrying data-mid=key. */
+    function patchMessageList(container, items) {
+      for (const n of Array.from(container.childNodes)) {
+        if (n.nodeType !== 1 || !n.getAttribute("data-mid")) n.remove();
+      }
+      const byKey = new Map();
+      for (const el of Array.from(container.children)) {
+        const k = el.getAttribute("data-mid");
+        if (byKey.has(k)) el.remove(); else byKey.set(k, el);
+      }
+      const tpl = document.createElement("template");
+      const nodes = items.map(it => {
+        const el = byKey.get(it.key);
+        if (el && el._emHtml === it.html) { byKey.delete(it.key); return el; }
+        tpl.innerHTML = it.html;
+        const fresh = tpl.content.firstElementChild;
+        fresh._emHtml = it.html;
+        return fresh;
+      });
+      byKey.forEach(el => el.remove());
+      let cursor = container.firstElementChild;
+      for (const n of nodes) {
+        if (n === cursor) { cursor = cursor.nextElementSibling; continue; }
+        container.insertBefore(n, cursor);
+      }
+      while (cursor) { const next = cursor.nextElementSibling; cursor.remove(); cursor = next; }
+    }
+
+    /** Nearest ancestor that actually scrolls vertically, or null. */
+    function scrollParentOf(el) {
+      for (let p = el && el.parentElement; p && p !== document.body; p = p.parentElement) {
+        const oy = getComputedStyle(p).overflowY;
+        if ((oy === "auto" || oy === "scroll") && p.scrollHeight > p.clientHeight + 1) return p;
+      }
+      return null;
+    }
+
+    // ─── Unsent replies ─────────────────────────────────────────────────
+    // A send that fails after its text left the reply box puts the text
+    // back. When the operator has moved on (another thread, or new text in
+    // the box) it is kept here per thread and returns the next time that
+    // thread's reply box is empty.
+    const UNSENT_KEY = "em.unsent.";
+    function stashUnsentText(threadId, text) {
+      if (!threadId || !String(text || "").trim()) return;
+      try { localStorage.setItem(UNSENT_KEY + threadId, JSON.stringify({ text: String(text), atMs: Date.now() })); } catch (_) {}
+    }
+    function takeUnsentText(threadId) {
+      try {
+        const raw = localStorage.getItem(UNSENT_KEY + threadId);
+        if (!raw) return "";
+        localStorage.removeItem(UNSENT_KEY + threadId);
+        const v = JSON.parse(raw);
+        // A week-old failed send is no longer what the operator meant to say.
+        return v && v.text && Date.now() - (v.atMs || 0) < 7 * 86400000 ? String(v.text) : "";
+      } catch (_) { return ""; }
+    }
+    function restoreUnsentText(threadId) {
+      const deskTa = $("emDraftText");
+      const mobTa = document.getElementById("mComposerTextarea");
+      if (!deskTa && !mobTa) return false;
+      if ((deskTa && deskTa.value.trim()) || (mobTa && mobTa.value.trim())) return false;
+      const text = takeUnsentText(threadId);
+      if (!text) return false;
+      if (deskTa) { deskTa.value = text; autoSizeDraftTextarea(deskTa); }
+      if (mobTa) {
+        mobTa.value = text;
+        if (typeof mAutoGrow === "function") mAutoGrow(mobTa);
+        const mSend = document.getElementById("mComposerSend");
+        if (mSend) mSend.disabled = false;
+      }
+      toast("Your unsent reply is back in the box.", 4000);
+      return true;
+    }
 
     // ─── v5.30 — Starred-thread toggle (robust v5.30.3) ───────────────
     //
@@ -10426,7 +10709,11 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
             draftId,
             text         : draft.text || "",
             employeeName : draft.createdBy || getEmployeeName() || null,
-            attachments  : Array.isArray(draft.attachments) ? draft.attachments : []
+            attachments  : Array.isArray(draft.attachments) ? draft.attachments : [],
+            // For a draft that was already queued or sent, anchor the copy at
+            // the time it was queued: it then sorts where the reply went out
+            // and pairs with Etsy's copy instead of reappearing at "now".
+            atMs         : tsToMs(draft.queuedAt) || tsToMs(draft.sentAt) || null
           }
         });
       } catch (e) {
@@ -12456,25 +12743,9 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         try {
           const data = await api("etsyMailThreads", { query: { threadId } });
           thread = data.thread;
-          // v5.35 — Carry forward localOptimistic messages on this
-          // replace too. Same rationale as the fetchMessagesNow full-
-          // replace path: if the operator just sent something on this
-          // thread before this fetch returned, we don't want to wipe
-          // the local optim. Deterministic id (optim_<draftId>)
-          // prevents duplication when the backend version eventually
-          // shows up in a later fetch.
-          const incomingDocs = data.messages || [];
-          const incomingIds  = new Set(incomingDocs.map(d => d && d.id));
-          const carryForward = (state.messages || []).filter(
-            // v5.37 — Per-thread scope. Only carry forward optims that
-            // belong to this thread; without this clause, optims from
-            // any prior thread the operator had open would survive
-            // every wholesale-replace and pollute every other thread.
-            m => m && m.localOptimistic && m.id && m.threadId === threadId && !incomingIds.has(m.id)
-          );
-          state.messages = carryForward.length
-            ? incomingDocs.concat(carryForward)
-            : incomingDocs;
+          // This page's just-sent messages live in state.localSends, so the
+          // server's list can replace state.messages outright.
+          state.messages = data.messages || [];
           // v5.0 — Mobile re-render hook
           if (window.IS_MOBILE && typeof window.mNotifyMessagesChanged === "function") window.mNotifyMessagesChanged();
         } catch (e) {
@@ -12533,6 +12804,14 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
           || state.msgCursorMs == null
           || opts.forceFullFetch === true;
 
+        // The delta cursor is the newest WRITE time (createdAt, set by the
+        // server on every insert), not the message's Etsy timestamp. Etsy
+        // times are whole minutes and a scrape can land minutes after the
+        // message was written, so a timestamp cursor silently skipped a
+        // customer reply stamped in the same minute as the last message,
+        // or earlier than the operator's own just-sent copy. If the
+        // createdAt query is refused, fall back to the old timestamp one.
+        const deltaField = state.msgDeltaField || "createdAt";
         let docs;
         if (wantFull) {
           const data = await api("firestoreProxy", {
@@ -12543,16 +12822,24 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
           });
           docs = data.docs || [];
         } else {
-          const data = await api("firestoreProxy", {
+          const deltaQuery = (field) => api("firestoreProxy", {
             query: {
               op: "listSub", coll: THREADS_COLL, id: threadId, sub: "messages",
-              orderBy: "timestamp,asc",
+              orderBy: field + ",asc",
               since: String(state.msgCursorMs),
-              sinceField: "timestamp",
+              sinceField: field,
               limit: 200,
             }
           });
-          docs = data.docs || [];
+          try {
+            docs = (await deltaQuery(deltaField)).docs || [];
+          } catch (e) {
+            if (deltaField !== "createdAt" || !e || !e.status || e.status === 401) throw e;
+            console.warn("[messages] createdAt delta refused, using timestamp:", e.message);
+            state.msgDeltaField = "timestamp";
+            state.msgCursorThreadId = null;   // next poll re-reads in full
+            docs = [];
+          }
         }
 
         if (seq !== state.msgFetchSeq) return;  // stale, newer fetch in flight
@@ -12561,64 +12848,34 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         if (state.selectedId !== threadId) return;
 
         if (wantFull) {
-          // Replace in-memory state with the full result and reset the
-          // per-thread cursor.
-          //
-          // v5.35 — Carry forward localOptimistic messages whose id is
-          // NOT in the server response. Critical for the just-sent
-          // bubble: when sendViaEtsy fires a fetchMessagesNow while a
-          // prior in-flight fetch (e.g., from openThread) hasn't yet
-          // set state.msgCursorThreadId, the second fetch ALSO ends up
-          // wantFull, and this branch wholesale-replaces state.messages
-          // — including the local optim we just injected client-side.
-          // Symptom: bubble appears for ~1s after Send then vanishes,
-          // reappearing only after the operator clicks off and back
-          // (which forces another full fetch that by then can see the
-          // backend optim doc post-consistency-window).
-          //
-          // The local optim has a deterministic id (optim_<draftId>)
-          // matching whatever the backend would write. We keep any
-          // local optim whose id is NOT in the new docs — i.e. the
-          // backend optim hasn't propagated to query results yet. When
-          // it eventually does, the same id makes the next merge dedup
-          // cleanly. No duplication, no flicker.
-          const knownInDocs = new Set(docs.map(d => d && d.id));
-          const carryForward = (state.messages || []).filter(
-            // v5.37 — Per-thread scope; see openThread carry-forward for
-            // rationale. Without this guard, optims from any prior
-            // thread leaked into the wholesale-replace and stayed in
-            // state.messages on every subsequent thread switch.
-            m => m && m.localOptimistic && m.id && m.threadId === threadId && !knownInDocs.has(m.id)
-          );
-          state.messages = carryForward.length ? docs.concat(carryForward) : docs;
+          // Replace in-memory state with the full result. This page's own
+          // just-sent messages are not in state.messages (they live in
+          // state.localSends), so nothing needs carrying forward.
+          state.messages = docs;
           state.msgCursorThreadId = threadId;
         } else if (docs.length > 0) {
-          // Append delta. Messages are append-only by id, but we still
-          // dedupe defensively so a server retry that returns the same
-          // message twice can't double-render.
-          const known = new Set(state.messages.map(m => m.id));
+          // Upsert by id: a doc can come back REWRITTEN (the per-thread
+          // optimistic doc carries each new send's text under the same id),
+          // so a known id is replaced, not skipped.
+          const at = new Map(state.messages.map((m, i) => [m && m.id, i]));
           for (const m of docs) {
-            if (!known.has(m.id)) {
-              state.messages.push(m);
-              known.add(m.id);
-            }
+            if (!m || !m.id) continue;
+            if (at.has(m.id)) state.messages[at.get(m.id)] = m;
+            else { at.set(m.id, state.messages.length); state.messages.push(m); }
           }
-          // Keep order stable. Messages are queried orderBy timestamp asc;
-          // a sort by ms ensures any out-of-order arrival re-anchors.
-          state.messages.sort((a, b) => {
-            const am = (a.timestamp && a.timestamp.ms) || 0;
-            const bm = (b.timestamp && b.timestamp.ms) || 0;
-            return am - bm;
-          });
+          state.messages.sort((a, b) => _optimDedupMsFor(a) - _optimDedupMsFor(b));
+          // A full page means there may be more: read the thread in full next time.
+          if (docs.length >= 200) state.msgCursorThreadId = null;
         }
 
-        // Advance cursor to the newest timestamp we know about.
-        let maxMs = state.msgCursorMs || 0;
+        // Advance the cursor to the newest write time we hold.
+        const field = state.msgDeltaField || "createdAt";
+        let maxMs = 0;
         for (const m of state.messages) {
-          const ms = (m.timestamp && m.timestamp.ms) || 0;
+          const ms = tsToMs(m && m[field]);
           if (ms > maxMs) maxMs = ms;
         }
-        if (maxMs > 0) state.msgCursorMs = maxMs;
+        state.msgCursorMs = maxMs;
 
         renderThreadMessages();
         // v5.0 — Mobile conversation re-render hook
@@ -13288,9 +13545,11 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
                         id="emSendToDesignBtn"
                         class="em-send-to-design"
                         aria-pressed="false"
-                        title="Also condense this reply via Haiku and post to Brites Messages for the design team">
+                        aria-label="Send to Design"
+                        title="Send to Design: also post a short note of your next reply to the design chat">
                   <span class="em-send-to-design-track" aria-hidden="true"><span class="em-send-to-design-knob"></span></span>
                   <i class="material-icons" aria-hidden="true">design_services</i>
+                  <span class="em-send-to-design-label" aria-hidden="true"></span>
                 </button>
                 <button id="emSendEtsyBtn" class="send-etsy" title="Queue this draft for the browser extension to send via Etsy"><i class="material-icons">send</i>Send via Etsy</button>
               </div>
@@ -13417,29 +13676,10 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         });
       }
 
-      // v5.32.3 — Send to Design toggle initialization.
-      //
-      // Now a <button aria-pressed> instead of a checkbox+label
-      // (the checkbox version was being mauled by global input styles
-      // in the inbox). Always starts OFF on each thread render — the
-      // operator must opt in per reply.
-      const dToggleBtn = document.getElementById("emSendToDesignBtn");
-      if (dToggleBtn) {
-        dToggleBtn.setAttribute("aria-pressed", "false");
-        // Idempotent click binding — flag prevents duplicate listeners
-        // on re-renders.
-        if (!dToggleBtn.dataset.boundV5323) {
-          dToggleBtn.dataset.boundV5323 = "1";
-          dToggleBtn.addEventListener("click", function (e) {
-            e.preventDefault();
-            const pressed = dToggleBtn.getAttribute("aria-pressed") === "true";
-            dToggleBtn.setAttribute("aria-pressed", String(!pressed));
-            // Release focus so the focus ring doesn't linger after
-            // a mouse click — same pattern as the rail toggle.
-            try { dToggleBtn.blur(); } catch (_) {}
-          });
-        }
-      }
+      // Send to Design: this render drew a fresh pill; show the
+      // conversation's switch and note state on it (a redraw never
+      // turns the switch off).
+      paintDesignSwitch();
 
       // v2.0 Step 2: render sales context panel if this thread has one.
       // Fires async; mounts above the AI Draft card. Does nothing if
@@ -13747,6 +13987,10 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
 
       // ─── M5: composer send-flow wiring ────────────────────────────────
       setupComposerInteractions(t);
+
+      // A reply whose send failed after the operator had moved on comes
+      // back first; hydrateAiDraft then leaves the non-empty box alone.
+      restoreUnsentText(t.id);
 
       // Load the most recent draft for this thread (if any) so the operator
       // sees it immediately on reopening the thread, without having to
@@ -16066,55 +16310,10 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         });
       }
 
-      // Send button
+      // Send button. sendViaEtsy empties the box, shows the reply's bubble
+      // with its flight, and queues it in the background.
       if (send) {
-        send.addEventListener("click", () => {
-          // v0.9.39 — Play send animation immediately on click, before
-          // sendViaEtsy starts its backend work. The animation is
-          // self-contained and failure-safe — any error inside it is
-          // caught and won't prevent the actual send from proceeding.
-          const ta = document.getElementById("emDraftText");
-          const text = (ta && ta.value || "").trim();
-          try {
-            if (window.SendAnimation && typeof window.SendAnimation.play === 'function') {
-              const threadContainer = document.getElementById("emThreadBox");
-              if (text && ta && threadContainer) {
-                window.SendAnimation.play({
-                  text: text,
-                  sourceTextarea: ta,
-                  threadContainer: threadContainer,
-                  isMobile: false
-                });
-              }
-            }
-          } catch (e) { /* never block sendViaEtsy */ }
-          // sendViaEtsy reads ta.value SYNCHRONOUSLY at the top of its
-          // body (before any await). So calling sendViaEtsy first lets
-          // it capture the value, then we can safely clear the textarea
-          // immediately afterward for visual feedback. This is cleaner
-          // than the previous color:transparent approach which had
-          // browser-specific quirks.
-          sendViaEtsy(thread.id);
-          // v0.9.43 — Clear the textarea visually so the user doesn't
-          // see both the source text and the flying tiles. sendViaEtsy
-          // has already captured the value at this point.
-          //
-          // v0.9.44 — Defer the auto-resize. If we resize NOW, the
-          // textarea shrinks from its expanded height to min-height
-          // mid-animation, causing the whole thread container above
-          // to reflow upward — that's the "screen flicker" the user
-          // sees at the end of the animation. Wait until the animation
-          // is done (~800ms) so the resize happens AFTER the bubble
-          // has fully landed; the user perceives one smooth motion.
-          if (ta && text) {
-            ta.value = '';
-            setTimeout(() => {
-              if (typeof autoSizeDraftTextarea === 'function') {
-                try { autoSizeDraftTextarea(ta); } catch (e) {}
-              }
-            }, 800);
-          }
-        });
+        send.addEventListener("click", () => { sendViaEtsy(thread.id, { surface: "desktop" }); });
       }
 
       // Initial render of chips (in case hydrate already populated them)
@@ -16408,8 +16607,405 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
       if (el) { el.style.display = "none"; el.innerHTML = ""; }
     }
 
-    /** Operator clicked "Send via Etsy". Enqueue the draft for the extension. */
-    async function sendViaEtsy(threadId) {
+    // ─── Send ───────────────────────────────────────────────────────────
+    // One reply per press. The text leaves the reply box at once, flies
+    // into its own bubble (SendFlight) and is queued for the extension in
+    // the background, so the operator can go straight on. Replies on one
+    // thread go out in order: a second one waits for the first instead of
+    // replacing it in the thread's single draft slot. If a send fails, its
+    // bubble folds away and the text goes back into the reply box.
+    // Etsy API cost: none. Queueing and status checks are Firestore reads
+    // and writes; the extension delivers through the Etsy page itself.
+    const SEND_WAIT_MAX_MS = 4 * 60 * 1000;
+    const _sendChains = new Map();   // threadId -> the latest send's queue promise
+
+    function threadConversationUrl(threadId) {
+      const t = (state.threads || []).find(x => x && x.id === threadId);
+      if (t) {
+        return t.etsyConversationUrl ||
+          ("https://www.etsy.com/your/conversations/" + (t.etsyConversationId || String(threadId).replace("etsy_conv_", "")));
+      }
+      return state.currentThreadUrl ||
+        ("https://www.etsy.com/your/conversations/" + String(threadId).replace("etsy_conv_", ""));
+    }
+
+    /** Redraw the open thread now, on the surface the operator is using. */
+    function drawThreadNow() {
+      try { renderThreadMessages(); } catch (e) { console.warn("[send] desktop draw:", e); }
+      if (window.IS_MOBILE && typeof window.mRenderMessagesNow === "function") {
+        try { window.mRenderMessagesNow(); } catch (e) { console.warn("[send] mobile draw:", e); }
+      }
+    }
+
+    function setLocalSendState(threadId, local, st) {
+      if (!local || local._state === st) return;
+      local._state = st;
+      if (state.selectedId === threadId) drawThreadNow();
+    }
+
+    /** Wait until the thread's draft slot is free (the previous message was
+     *  delivered, failed or expired). One Firestore read every 3 s. */
+    async function waitForSendSlot(threadId, deadline) {
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 3000));
+        try {
+          const r = await api("etsyMailDraftSend", { query: { op: "status", draftId: "draft_" + threadId } });
+          const st = r && r.draft && r.draft.status;
+          if (st !== "queued" && st !== "sending") return;
+        } catch (e) {
+          if (e && e.status === 404) return;
+        }
+      }
+    }
+
+    /** After a network error the request may still have reached the server:
+     *  if the draft slot holds this very text, queued after the press, the
+     *  send went through. */
+    async function sendLandedAnyway(threadId, text, atMs) {
+      try {
+        const r = await api("etsyMailDraftSend", { query: { op: "status", draftId: "draft_" + threadId } });
+        const d = r && r.draft;
+        if (d && String(d.text || "").trim() === text && tsToMs(d.queuedAt) >= atMs - 120000) {
+          return { draftId: d.id || ("draft_" + threadId), attachments: Array.isArray(d.attachments) ? d.attachments : null, recovered: true };
+        }
+      } catch (_) {}
+      return null;
+    }
+
+    async function enqueueWithWait(threadId, local, body) {
+      setLocalSendState(threadId, local, "sending");
+      const deadline = Date.now() + SEND_WAIT_MAX_MS;
+      let force = false;
+      for (;;) {
+        try {
+          return await api("etsyMailDraftSend", { method: "POST", body: Object.assign({}, body, { force }) });
+        } catch (e) {
+          const code = e && e.data && e.data.errorCode;
+          if (code === "QUEUE_OWNER_CONFLICT" && !force) {
+            // v0.9.1 #6: another operator queued first — confirm overwrite
+            const owner = e.data.prevOperator || "another operator";
+            if (!confirm(`This thread is already queued by ${owner}. Overwrite their draft?`)) {
+              throw new Error("the other operator's queued reply was kept");
+            }
+            force = true;
+            continue;
+          }
+          if (code === "TRACKING_STILL_PENDING" && !force) {
+            // Compatibility fallback for older backend responses.
+            const codes = Array.isArray(e.data.pending) ? e.data.pending.join(", ") : "";
+            toast(`Tracking image still generating${codes ? " (" + codes + ")" : ""} — sending manually without the pending image.`);
+            force = true;
+            continue;
+          }
+          if (code === "PREVIOUS_SEND_PENDING" || code === "DRAFT_BUSY" || /currently sending/i.test((e && e.message) || "")) {
+            if (Date.now() >= deadline) throw new Error("your previous reply on this thread is still waiting for the Etsy tab");
+            setLocalSendState(threadId, local, "waiting");
+            await waitForSendSlot(threadId, deadline);
+            setLocalSendState(threadId, local, "sending");
+            continue;
+          }
+          if (e && !e.status) {
+            const landed = await sendLandedAnyway(threadId, body.text, local._atMs);
+            if (landed) return landed;
+          }
+          throw e;
+        }
+      }
+    }
+
+    /** Queue a send behind any earlier send on the same thread. */
+    function queueSend(threadId, local, body) {
+      const prev = _sendChains.get(threadId);
+      const run = (prev ? prev.catch(() => {}) : Promise.resolve()).then(() => enqueueWithWait(threadId, local, body));
+      _sendChains.set(threadId, run);
+      const done = () => { if (_sendChains.get(threadId) === run) _sendChains.delete(threadId); };
+      run.then(done, done);
+      return run;
+    }
+
+    /** Put a failed send's text (and attachments / translation) back. */
+    function restoreFailedSend(threadId, snap) {
+      const deskTa = $("emDraftText");
+      const mobTa = document.getElementById("mComposerTextarea");
+      const boxEmpty = (!deskTa || !deskTa.value.trim()) && (!mobTa || !mobTa.value.trim());
+      if (state.selectedId !== threadId || !boxEmpty || (!deskTa && !mobTa)) {
+        stashUnsentText(threadId, snap.typed);
+        return false;
+      }
+      if (deskTa) { deskTa.value = snap.typed; autoSizeDraftTextarea(deskTa); }
+      if (mobTa) {
+        mobTa.value = snap.typed;
+        if (typeof mAutoGrow === "function") mAutoGrow(mobTa);
+        const mSend = document.getElementById("mComposerSend");
+        if (mSend) mSend.disabled = false;
+      }
+      if (snap.attachments.length && !getComposerAttachments(threadId).length) {
+        setComposerAttachments(threadId, snap.attachments);
+        renderComposerChips();
+      }
+      if ((snap.translation || snap.englishPreview) && !state.composerTranslation && !state.composerEnglishPreview) {
+        state.composerTranslation = snap.translation;
+        state.composerEnglishPreview = snap.englishPreview;
+        renderComposerPreviewPane();
+        if (typeof window.mNotifyTranslationChanged === "function") window.mNotifyTranslationChanged();
+      }
+      const focusTa = window.IS_MOBILE ? (mobTa || deskTa) : (deskTa || mobTa);
+      if (focusTa && window.SendFlight) window.SendFlight.flash(focusTa);
+      return true;
+    }
+
+    // ─── Send to Design ──────────────────────────────────────────────
+    // One switch per conversation, shared by the desktop pill and the
+    // phone button. It keeps the operator's choice through redraws, polls
+    // and trips to other conversations; the next reply sent from that
+    // conversation takes it (the operator opts in per reply). After the
+    // reply is queued, a short note of it goes to the order's design chat
+    // (Brites Messages), and the switch shows what became of that note:
+    // Posting…, Posted, or Retry. A note that could not be posted is kept
+    // (also across a reload) until Retry gets it through. No Etsy calls.
+    const DESIGN_NO_ORDER = "This conversation has no Etsy order yet, so there is no design chat to post to";
+    const DESIGN_UNPOSTED_KEY = "etsymail_design_unposted_v1";
+    const designOn = new Set();          // conversations whose next reply also goes to design
+    const designNoOrder = new Map();     // conversation -> when the server found no order for it
+    const designNotes = [];              // { threadId, text, dispatchId, phase, orderId, why, at, queued }
+
+    function designThread(threadId) {
+      return (state.threads || []).find(x => x && x.id === threadId) || null;
+    }
+
+    function designThreadName(threadId) {
+      const t = designThread(threadId);
+      return (t && (t.customerName || t.buyerName || t.subject)) || "this conversation";
+    }
+
+    /** Can this conversation's replies reach a design chat? The server
+     *  posts to the thread's order, or else to the buyer's latest order. */
+    function designRoute(threadId) {
+      const t = designThread(threadId);
+      if (t && t.etsyOrderId) return { ok: true, orderId: String(t.etsyOrderId) };
+      // A buyer may order later: the server's "no order" is trusted for 10 minutes.
+      if (Date.now() - (designNoOrder.get(threadId) || 0) < 600000) return { ok: false, orderId: null };
+      return { ok: !t || !!t.buyerUserId, orderId: null };
+    }
+
+    function designState(threadId) {
+      const notes = designNotes.filter(n => n.threadId === threadId);
+      const failed = notes.find(n => n.phase === "failed");
+      if (failed) return { phase: "failed", note: failed };
+      const busy = notes.find(n => n.phase === "busy");
+      if (busy) return { phase: "busy", note: busy };
+      const done = notes.filter(n => n.phase === "done").pop();
+      return done ? { phase: "done", note: done } : { phase: "", note: null };
+    }
+
+    /** Draw the open conversation's switch on the desktop pill and the
+     *  phone button. Safe to call any time; writes only what changed. */
+    function paintDesignSwitch() {
+      const tid = state.selectedId || null;
+      const route = designRoute(tid);
+      const on = !!tid && route.ok && designOn.has(tid);
+      const { phase, note } = tid ? designState(tid) : { phase: "", note: null };
+      const order = (note && note.orderId) || route.orderId;
+      const forOrder = order ? " for order #" + order : "";
+      let label = "", icon = "design_services", tip;
+      if (phase === "failed") {
+        label = "Retry"; icon = "refresh";
+        tip = "The design note was not posted: " + note.why + ". Click to try again.";
+      } else if (phase === "busy") {
+        label = "Posting…";
+        tip = "Posting the design note" + forOrder + "…";
+      } else if (phase === "done") {
+        label = "Posted"; icon = "check";
+        tip = "Posted to the design chat" + forOrder;
+      } else if (!route.ok) {
+        tip = DESIGN_NO_ORDER;
+      } else if (on) {
+        tip = "On: your next reply also goes to the design chat" + forOrder + " as a short note. Click to turn off.";
+      } else {
+        tip = "Send to Design: also post a short note of your next reply to the design chat" + forOrder;
+      }
+      const set = (el, name, val) => { if (el.getAttribute(name) !== val) el.setAttribute(name, val); };
+      for (const id of ["emSendToDesignBtn", "mActionSendToDesign"]) {
+        const b = document.getElementById(id);
+        if (!b) continue;
+        set(b, "aria-pressed", String(on));
+        set(b, "aria-disabled", String(!route.ok && !phase));
+        set(b, "aria-label", "Send to Design" + (label ? ": " + label.replace("…", "") : on ? ": on" : ""));
+        set(b, "title", tip);
+        b.classList.toggle("is-busy", phase === "busy");
+        b.classList.toggle("is-done", phase === "done");
+        b.classList.toggle("is-failed", phase === "failed");
+        const i = b.querySelector(".material-icons");
+        if (i && i.textContent !== icon) i.textContent = icon;
+        const l = b.querySelector(".em-send-to-design-label");
+        if (l && l.textContent !== label) l.textContent = label;
+        b.classList.toggle("has-label", !!label && !!l && designLabelFits(b, l));
+      }
+    }
+
+    /** The word beside the pill may only use free room on its row: the
+     *  compose bar never grows a line for it (colour, icon and tooltip
+     *  still tell the story). */
+    function designLabelFits(b, l) {
+      if (b.classList.contains("has-label")) return true;
+      const need = l.scrollWidth + 6;
+      const r = b.getBoundingClientRect();
+      if (!r.width) return false;
+      let left = b.parentElement ? b.parentElement.getBoundingClientRect().left : r.left;
+      for (let el = b.previousElementSibling; el; el = el.previousElementSibling) {
+        const q = el.getBoundingClientRect();
+        if (!q.width) continue;
+        if (Math.abs(q.top - r.top) < r.height / 2) left = q.right + 6;
+        break;
+      }
+      return r.left - left >= need;
+    }
+
+    function saveUnpostedDesignNotes() {
+      try {
+        const keep = designNotes.filter(n => n.queued && n.phase !== "done").map(n => ({
+          threadId: n.threadId, text: n.text, dispatchId: n.dispatchId, orderId: n.orderId || null, why: n.why || "", at: n.at
+        }));
+        if (keep.length) localStorage.setItem(DESIGN_UNPOSTED_KEY, JSON.stringify(keep));
+        else localStorage.removeItem(DESIGN_UNPOSTED_KEY);
+      } catch (_) {}
+    }
+
+    function designFailReason(err, r) {
+      if (!err) return (r && r.error) || "the server did not confirm it";
+      if (err.status === 401) return "you were signed out";
+      if (!err.status) return "no connection";
+      return (err.data && err.data.error) || ("the server did not answer (" + err.status + ")");
+    }
+
+    /** Post one note to the design chat; the server lands a note once
+     *  per dispatchId, so a retry never doubles it. */
+    async function postDesignNote(note) {
+      note.phase = "busy";
+      note.why = "";
+      clearTimeout(note.timer);
+      saveUnpostedDesignNotes();
+      paintDesignSwitch();
+      let r = null, err = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          r = await api("etsyMailDesignDispatch", {
+            method: "POST",
+            body  : { threadId: note.threadId, draftText: note.text, dispatchId: note.dispatchId, employeeName: getEmployeeName() || "Operator" }
+          });
+          err = null;
+          break;
+        } catch (e) {
+          err = e;
+          // One quiet retry for a lost connection or a server hiccup; a
+          // refusal (no order, signed out) would only be refused again.
+          if (e && e.status && e.status < 500) break;
+          if (!attempt) await new Promise(res => setTimeout(res, 2000));
+        }
+      }
+      const name = designThreadName(note.threadId);
+      const open = state.selectedId === note.threadId;
+      if (!err && r && r.success) {
+        note.phase = "done";
+        if (r.orderId) note.orderId = String(r.orderId);
+        const where = note.orderId ? " for order #" + note.orderId : "";
+        toast((open ? "Posted to the design chat" + where : "Design note for " + name + " posted" + where) +
+              (r.summarized === false ? ", as written (the AI summary was not available)" : ""), 3500);
+        note.timer = setTimeout(() => {
+          const i = designNotes.indexOf(note);
+          if (i >= 0 && note.phase === "done") designNotes.splice(i, 1);
+          paintDesignSwitch();
+        }, 4000);
+      } else if (err && err.status === 422) {
+        const i = designNotes.indexOf(note);
+        if (i >= 0) designNotes.splice(i, 1);
+        designNoOrder.set(note.threadId, Date.now());
+        toast("No design note for " + name + ": " + DESIGN_NO_ORDER.charAt(0).toLowerCase() + DESIGN_NO_ORDER.slice(1) + ".", 7000);
+      } else {
+        note.phase = "failed";
+        note.why = designFailReason(err, r);
+        toast("Design note for " + name + " not posted: " + note.why + ". Click the Design switch to try again.", 8000);
+      }
+      saveUnpostedDesignNotes();
+      paintDesignSwitch();
+    }
+
+    /** The reply being sent takes the switch: returns its note (posted
+     *  once the reply is queued), or null when the switch is off. */
+    function takeDesignSwitch(threadId, text) {
+      const route = designRoute(threadId);
+      if (!text || !designOn.has(threadId) || !route.ok) return null;
+      designOn.delete(threadId);
+      const note = {
+        threadId, text, phase: "busy", orderId: route.orderId, why: "", at: Date.now(), queued: false, timer: 0,
+        dispatchId: "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10)
+      };
+      designNotes.push(note);
+      paintDesignSwitch();
+      return note;
+    }
+
+    /** The reply did not go out: its note is dropped and the switch is
+     *  back on, ready for the next try. */
+    function giveBackDesignSwitch(threadId, note) {
+      const i = designNotes.indexOf(note);
+      if (i >= 0) designNotes.splice(i, 1);
+      designOn.add(threadId);
+      paintDesignSwitch();
+    }
+
+    // One handler for both surfaces; the pill is redrawn with the detail
+    // pane, so it is found at click time.
+    document.addEventListener("click", (e) => {
+      const b = e.target && e.target.closest && e.target.closest("#emSendToDesignBtn, #mActionSendToDesign");
+      if (!b) return;
+      e.preventDefault();
+      const tid = state.selectedId;
+      if (!tid) return;
+      const { phase } = designState(tid);
+      if (phase === "failed") {
+        designNotes.filter(n => n.threadId === tid && n.phase === "failed").forEach(n => postDesignNote(n));
+        return;
+      }
+      if (phase === "done") {
+        for (let i = designNotes.length - 1; i >= 0; i--) {
+          const n = designNotes[i];
+          if (n.threadId === tid && n.phase === "done") { clearTimeout(n.timer); designNotes.splice(i, 1); }
+        }
+      }
+      if (!designRoute(tid).ok) {
+        toast(DESIGN_NO_ORDER + ".", 4500);
+        paintDesignSwitch();
+        return;
+      }
+      if (designOn.has(tid)) designOn.delete(tid); else designOn.add(tid);
+      paintDesignSwitch();
+    });
+    // Pressing the switch leaves the caret (and the phone's keyboard) in
+    // the reply box.
+    document.addEventListener("mousedown", (e) => {
+      const b = e.target && e.target.closest && e.target.closest("#emSendToDesignBtn, #mActionSendToDesign");
+      const a = document.activeElement;
+      if (b && a && (a.id === "emDraftText" || a.id === "mComposerTextarea")) e.preventDefault();
+    });
+    // Notes that were not posted before the last reload wait for Retry.
+    try {
+      const saved = JSON.parse(localStorage.getItem(DESIGN_UNPOSTED_KEY) || "[]");
+      for (const x of Array.isArray(saved) ? saved : []) {
+        if (!x || !x.threadId || !x.text || !x.dispatchId || !(Date.now() - (x.at || 0) < 3 * 86400e3)) continue;
+        designNotes.push({ threadId: x.threadId, text: x.text, dispatchId: x.dispatchId, orderId: x.orderId || null,
+          why: x.why || "the page was closed before it was confirmed", at: x.at, queued: true, phase: "failed", timer: 0 });
+      }
+      if (designNotes.length) {
+        setTimeout(() => {
+          const n = designNotes.filter(x => x.phase === "failed").length;
+          if (n) toast(n + (n === 1 ? " design note was" : " design notes were") + " not posted. Open the conversation and click its Design switch to try again.", 8000);
+        }, 4000);
+      }
+    } catch (_) {}
+
+    /** Operator clicked "Send via Etsy" (desktop, or the phone's send button). */
+    async function sendViaEtsy(threadId, opts = {}) {
       // ──── v3.32 — Manual send clears any active quiet-period defer ────
       // If the thread is parked in deferred_quiet_period, an operator
       // hitting Send via Etsy is the final word on this conversation
@@ -16443,27 +17039,13 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         }).catch((e) => console.warn("[autoTimer] manual-send defer clear failed:", e.message));
       }
 
-      const btn = $("emSendEtsyBtn");
-      let ta = $("emDraftText");
+      const surface = opts.surface === "mobile" || (!opts.surface && window.IS_MOBILE) ? "mobile" : "desktop";
+      const deskTa = $("emDraftText");
+      const mobTa = document.getElementById("mComposerTextarea");
       // v5.13 — Mobile fallback. The desktop textarea #emDraftText is
-      // created dynamically by renderDetail. If renderDetail somehow
-      // failed (or hasn't fully run yet) on mobile, fall back to
-      // reading directly from the mobile composer. Without this
-      // fallback, the function used to bail silently at the original
-      // `if (!ta) return;` and the operator had no idea why their
-      // send wasn't going through.
-      let tValue = "";
-      if (ta) {
-        tValue = ta.value || "";
-      } else if (window.IS_MOBILE) {
-        const mobileTa = document.getElementById("mComposerTextarea");
-        if (mobileTa) {
-          tValue = mobileTa.value || "";
-          // Synthesize a stand-in for ta so downstream code that does
-          // ta.value = "" / autoSizeDraftTextarea(ta) still works.
-          ta = mobileTa;
-        }
-      }
+      // created dynamically by renderDetail; if that failed on mobile,
+      // read the phone's own composer so the send still goes through.
+      const ta = surface === "mobile" ? (mobTa || deskTa) : (deskTa || (window.IS_MOBILE ? mobTa : null));
       if (!ta) {
         console.warn("[sendViaEtsy] No composer textarea found — neither #emDraftText nor #mComposerTextarea.");
         if (typeof toast === "function") toast("Send failed: composer not ready. Reopen the thread and try again.");
@@ -16471,55 +17053,18 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
       }
       // v3.7 — When the operator has activated the translation preview
       // pane (state.composerTranslation set), the OUTBOUND text is the
-      // translation, not the textarea's English. Operator can still tweak
-      // the translation in the contenteditable preview pane; their edits
-      // are mirrored into composerTranslation.translated by an oninput
-      // listener (see renderComposerPreviewPane).
-      //
-      // Falling back to the textarea is the no-translate path — this
-      // matches the original behavior exactly when there's no preview.
-      const englishText = (tValue || "").trim();
+      // translation, not the textarea's English.
+      const typed = ta.value || "";
+      const englishText = typed.trim();
       const usingTranslation = !!(state.composerTranslation && state.composerTranslation.translated && state.composerTranslation.translated.trim());
       const text = usingTranslation
         ? state.composerTranslation.translated.trim()
         : englishText;
-      // v3.32 — Manual Send must never be blocked by inferred tracking-image
-      // requirements. We still refresh draft.trackingImages and promote any
-      // ready image into visible composer chips before reading attachments,
-      // but pending/missing tracking images are warnings only. The operator's
-      // explicit Send via Etsy click remains authoritative.
-      const trackingCodesBeforePreflight = trackingImageCodesFromAttachments(getComposerAttachments(threadId));
-      let trackingPreflight = null;
-      if (typeof refreshTrackingImagesFromDraft === "function") {
-        trackingPreflight = await refreshTrackingImagesFromDraft(threadId, {
-          render: true,
-          autoPromoteToChips: true
-        });
-        if (trackingPreflight && trackingPreflight.pending && trackingPreflight.pending.length) {
-          const codes = trackingPreflight.pending.map(x => x.trackingCode).filter(Boolean).join(", ");
-          toast(`Tracking image still generating${codes ? " (" + codes + ")" : ""} — sending manually without the pending image.`);
-        }
-      }
+      // v3.32 — Manual Send is never blocked by tracking images. The
+      // backend merges any ready tracking image into this send and reports
+      // pending ones (skippedPendingTracking), so no extra read is needed
+      // here before the reply can leave.
       const atts = getComposerAttachments(threadId);
-      const trackingCodesAfterPreflight = trackingImageCodesFromAttachments(atts);
-      const newlyVisibleTracking = [...trackingCodesAfterPreflight].filter(code => !trackingCodesBeforePreflight.has(code));
-      if (newlyVisibleTracking.length) {
-        toast("Tracking image was attached to the composer and will be included in this send.");
-      }
-
-      // v5.13 — Defensive currentThreadUrl: the desktop's renderDetail
-      // → setupComposerInteractions sets state.currentThreadUrl from
-      // the thread's etsyConversationUrl. If that path didn't fully
-      // execute (mobile, race, error), the URL would be stale or null
-      // and the backend would reject the enqueue. Re-derive from the
-      // current thread doc if missing.
-      if (!state.currentThreadUrl && state.threads) {
-        const t = state.threads.find(x => x && x.id === threadId);
-        if (t) {
-          state.currentThreadUrl = t.etsyConversationUrl ||
-            ("https://www.etsy.com/your/conversations/" + (t.etsyConversationId || String(threadId).replace("etsy_conv_", "")));
-        }
-      }
 
       if (!text && !atts.length) {
         toast("Nothing to send — add some text or attachments first");
@@ -16575,301 +17120,135 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         );
       }
 
-      // v4.3.16 — Removed the confirm() dialog that asked "Queue this
-      // reply for sending via Etsy?". Clicking Send via Etsy is already
-      // a deliberate operator action; an extra confirmation adds
-      // friction without protective value. If the operator clicked it
-      // by mistake, the dashboard supports canceling while the draft
-      // is queued (before the extension claims it).
-
-      if (btn) { btn.disabled = true; }
+      // ── From here the reply is on its way. Nothing below waits: the text
+      // leaves the box, its bubble appears and the words fly into it; the
+      // queueing runs in the background. A failure puts everything back.
+      const snap = {
+        typed,
+        translation   : state.composerTranslation ? { ...state.composerTranslation } : null,
+        englishPreview: state.composerEnglishPreview ? { ...state.composerEnglishPreview } : null,
+        attachments   : atts.slice()
+      };
+      const source = usingTranslation
+        ? (surface === "mobile" ? document.getElementById("mTranslatePreviewBody") : $("emTranslatePreviewBody"))
+        : ta;
+      let flight = null;
       try {
-        const enqueueOnce = async (force) => api("etsyMailDraftSend", {
-          method: "POST",
-          body: {
-            op                  : "enqueue",
-            threadId,
-            etsyConversationUrl : state.currentThreadUrl,
-            text,
-            attachments         : usableAtts,
-            employeeName        : getEmployeeName(),
-            // v3.32 — Manual Send via Etsy is an explicit operator override.
-            // Backend should attach ready tracking images when available, but
-            // must not 409/block if a generated tracking image is still pending.
-            allowSendWithoutPendingTracking: true,
-            // v3.2 — Tag this enqueue as manual so the badge on the
-            // thread reads "Manually Sent" once the extension confirms
-            // delivery, not "auto-sent". This is the *only* path in the
-            // codebase that sets sendOrigin: "manual" — every other
-            // caller (auto-pipeline, sales-agent) goes through the
-            // background functions and either passes "auto" explicitly
-            // or omits the flag (which the backend resolves to "auto"
-            // because aiMeta.generatedByAI is set on those paths).
-            sendOrigin          : "manual",
-            force               : !!force
-          }
-        });
+        if (window.SendFlight) flight = window.SendFlight.prepare({ surface, source, textarea: ta, text });
+      } catch (e) { console.warn("[send] flight prepare:", e); }
 
-        let resp;
-        try {
-          resp = await enqueueOnce(false);
-        } catch (e) {
-          // v0.9.1 #6: another operator queued first — confirm overwrite
-          if (e.data && e.data.errorCode === "QUEUE_OWNER_CONFLICT") {
-            const owner = e.data.prevOperator || "another operator";
-            if (!confirm(`This thread is already queued by ${owner}. Overwrite their draft?`)) {
-              throw new Error("Cancelled — keeping the other operator's queued draft.");
-            }
-            resp = await enqueueOnce(true);
-          } else if (e.data && e.data.errorCode === "SEND_DISABLED") {
-            // v0.9.1 #8: kill switch is on
-            toast("Send pipeline is disabled. Re-enable it from the banner first.");
-            return false;
-          } else if (e.data && e.data.errorCode === "TRACKING_STILL_PENDING") {
-            // Compatibility fallback for older backend responses. Retry once
-            // with the explicit manual override so Send via Etsy is not blocked
-            // by a pending generated tracking image.
-            const codes = Array.isArray(e.data.pending) ? e.data.pending.join(", ") : "";
-            toast(`Tracking image still generating${codes ? " (" + codes + ")" : ""} — sending manually without the pending image.`);
-            resp = await enqueueOnce(true);
-          } else {
-            throw e;
-          }
-        }
-        const sentAtts = Array.isArray(resp && resp.attachments) ? resp.attachments : usableAtts;
-
-        // v0.9.7: No more polling, no more spinner, no more "verifying"
-        // anything. The operator clicked Send; the extension will deliver
-        // it on Etsy in the background. We optimistically insert the
-        // outbound message into the thread view immediately so the
-        // operator sees their reply land. If Etsy ever silently rejects
-        // (rare; rate-limit / ban / etc.), the operator notices on Etsy
-        // directly — that's an explicitly accepted tradeoff.
-        //
-        // v5.34 — CRITICAL FIX: the bubble was being driven by
-        // insertOptimisticMessage's BACKEND write followed by a delta
-        // fetch that was supposed to pull the just-written doc back
-        // down. Two problems with that path:
-        //
-        //   1. Firestore queries are eventually consistent (a few
-        //      hundred ms typically; can be longer under load). The
-        //      doc was committed by .set() but the query firing
-        //      immediately after could miss it because the index
-        //      hadn't been updated yet. Delta returns nothing, no
-        //      render happens for this thread, no bubble. Then when
-        //      the operator clicked off and back, a FULL fetch ran
-        //      (cursor mismatch), the doc was queryable by then, and
-        //      the bubble appeared. Exactly the reported symptom.
-        //
-        //   2. The post-send flow had no direct call to
-        //      renderThreadMessages — the bubble's appearance was
-        //      coupled to the fetchMessagesNow eventually returning
-        //      with data. If anything went sideways (consistency
-        //      window, in-flight stale guard, network hiccup), the
-        //      bubble simply never showed.
-        //
-        // The new approach: inject a synthetic optim doc into
-        // state.messages CLIENT-SIDE with the same id the backend
-        // would use (optim_<draftId>), then render IMMEDIATELY. The
-        // backend write still happens (no longer awaited) so the doc
-        // persists across reload / cross-device. When the next delta
-        // fetch later pulls the backend optim, the id-based dedup in
-        // fetchMessagesNow's merge silently skips it (same id is
-        // already known) — no duplicate bubble.
-        const optimDocId = "optim_" + resp.draftId;
-        const optimMs    = Date.now();
-        try {
-          const known = new Set((state.messages || []).map(m => m && m.id));
-          if (!known.has(optimDocId)) {
-            const synthOptim = {
-              id                  : optimDocId,
-              // v5.37 — Tag threadId on every optimistic message so the
-              // carry-forward filters in openThread / fetchMessagesNow
-              // can refuse to leak this message into other threads.
-              // Without this field, the carry-forward had no way to know
-              // which thread the optim belonged to, and the synthOptim
-              // would survive into any subsequent thread the operator
-              // opened — cross-thread pollution where optim messages
-              // from one conversation appeared in every other.
-              threadId            : threadId,
-              direction           : "outbound",
-              senderName          : getEmployeeName() || "Operator",
-              senderRole          : "staff",
-              text                : text,
-              timestamp           : { _ts: true, ms: optimMs },
-              createdAt           : { _ts: true, ms: optimMs },
-              localOptimistic     : true,
-              optimisticDraftId   : resp.draftId,
-              optimisticTextKey   : String(text || "").trim().toLowerCase().slice(0, 200),
-              imageUrls           : (sentAtts || []).map(a => a && (a.imageUrl || a.url)).filter(Boolean),
-              thumbnailUrls       : (sentAtts || []).map(a => a && (a.thumbnailUrl || a.imageUrl || a.url)).filter(Boolean),
-              storageImagePaths   : (sentAtts || []).map(a => a && (a.storagePath || "")).filter(Boolean),
-              listingCards        : [],
-              attachmentUrls      : []
-            };
-            state.messages = [...(state.messages || []), synthOptim];
-          }
-          // Immediate render — bubble appears in the same paint cycle
-          // as the toast, no network round-trip required.
-          if (typeof renderThreadMessages === "function") renderThreadMessages();
-          if (window.IS_MOBILE && typeof window.mNotifyMessagesChanged === "function") {
-            window.mNotifyMessagesChanged();
-          }
-        } catch (e) {
-          console.warn("local optimistic injection failed:", e.message);
-        }
-
-        // Backend write — for persistence across reload / cross-device
-        // sync. Fire-and-forget; we no longer await it because the UI
-        // bubble is already rendered from the local injection above.
-        // If this write fails the local bubble still stays, and the
-        // real scraped outbound will eventually arrive and the dedup
-        // hides the optim normally. No user-visible failure mode.
-        insertOptimisticMessage({
-          id          : resp.draftId,
-          draftId     : resp.draftId,
-          threadId,
-          text,
-          attachments : sentAtts,
-          createdBy   : getEmployeeName() || "operator"
-        }).catch(e => console.warn("optimistic backend insert failed:", e.message));
-        // Mark this draft as already-optimistic-inserted so showSendStatus
-        // doesn't insert a second time on the next render.
-        state._optimInsertedFor = state._optimInsertedFor || new Set();
-        state._optimInsertedFor.add(resp.draftId);
-
-        // ─── v5.32 — Send to Design dispatch ────────────────────────
-        // If the operator flipped the toggle on for this reply (on
-        // either desktop or mobile), fire the Haiku+Firebase pipeline
-        // in parallel. Fire-and-forget by design — a failure here must
-        // never affect the Etsy send, which is already queued and
-        // irrevocable at this point. We capture the English source
-        // text (NOT the translated text) since Haiku handles English
-        // best and the design team reads English.
-        //
-        // v5.32.3 — toggle is a <button aria-pressed>, not a checkbox.
-        // v5.32.4 — also check the mobile toggle button; both buttons
-        // share the same dispatch path through sendViaEtsy.
-        // v5.32.5 — surface failures clearly. The original code used
-        // `err.message` which can be undefined for some error shapes,
-        // producing "Design dispatch failed: undefined" — easy to
-        // miss during a busy sending session. Now we explicitly name
-        // the thread so the operator knows EXACTLY which dispatch
-        // failed, and the toast stays up longer for visibility.
-        try {
-          const dBtnDesktop = document.getElementById("emSendToDesignBtn");
-          const dBtnMobile  = document.getElementById("mActionSendToDesign");
-          const desktopOn = dBtnDesktop && dBtnDesktop.getAttribute("aria-pressed") === "true";
-          const mobileOn  = dBtnMobile  && dBtnMobile.getAttribute("aria-pressed")  === "true";
-          if (desktopOn || mobileOn) {
-            const designDraftText = (englishText || text || "").trim();
-            // Capture customer name for the failure toast so the
-            // operator can tell which dispatch missed even if they've
-            // already moved to another thread.
-            const failureLabel = (() => {
-              try {
-                const t = (state.threads || []).find(x => x && x.id === threadId);
-                return (t && (t.customerName || t.subject)) || threadId;
-              } catch { return threadId; }
-            })();
-            if (designDraftText) {
-              api("etsyMailDesignDispatch", {
-                method: "POST",
-                body  : {
-                  threadId,
-                  draftText    : designDraftText,
-                  employeeName : getEmployeeName() || "Operator"
-                }
-              })
-              .then(r => {
-                if (r && r.success) {
-                  toast(`Design message sent to order #${r.orderId}`);
-                  console.log("[designDispatch] success:", r);
-                } else {
-                  const why = (r && r.error) || "unknown error";
-                  toast(`⚠ Design dispatch FAILED for ${failureLabel}: ${why}`, 8000);
-                  console.warn("[designDispatch] response indicated failure:", r);
-                }
-              })
-              .catch(err => {
-                const why = (err && (err.message || err.data && err.data.error)) || "network error";
-                toast(`⚠ Design dispatch FAILED for ${failureLabel}: ${why}`, 8000);
-                console.warn("[designDispatch] threw:", err);
-              });
-              // Reset both toggles after dispatch — operator must opt
-              // back in for the next reply on this thread.
-              if (dBtnDesktop) dBtnDesktop.setAttribute("aria-pressed", "false");
-              if (dBtnMobile)  dBtnMobile.setAttribute("aria-pressed", "false");
-            }
-          }
-        } catch (e) {
-          console.warn("[designDispatch] guard threw:", e.message);
-        }
-        // ──────────────────────────────────────────────────────────────
-        // v5.30 — Optimistic thread-bump. Without this the operator's
-        // reply doesn't visibly push the thread to the top of the list
-        // until the next thread-list poll picks up the backend's
-        // lastOperatorReplyAt write.
-        //
-        // v5.33 — Two changes that fix the "rail takes 30-60s to
-        // update after send" complaint:
-        //
-        //   (a) Set a reply-at OVERRIDE in addition to mutating the
-        //       in-memory thread. Without the override, the very next
-        //       fetchThreadListNow delta merge clobbers our optimistic
-        //       timestamp because the server doc still has the old
-        //       lastOperatorReplyAt (only updatedAt bumps at enqueue
-        //       time; the canonical bump happens later when the
-        //       extension actually delivers the message).
-        //
-        //   (b) Trigger an IMMEDIATE renderThreadList + mRenderList
-        //       so the rail jumps the thread to the top within the
-        //       same paint cycle. The old comment promised this
-        //       happened "instantly" but actually waited for the
-        //       fetchThreadListNow round trip (200ms-2s).
-        try {
-          const nowMs = Date.now();
-          const targetThread = (state.threads || []).find(x => x && x.id === threadId);
-          if (targetThread) targetThread.lastOperatorReplyAt = new Date(nowMs);
-          if (typeof setReplyAtOverride === "function") setReplyAtOverride(threadId, nowMs);
-          if (typeof renderThreadList === "function") renderThreadList();
-          if (typeof mRenderList === "function") { try { mRenderList(); } catch {} }
-        } catch {}
-        // Clear the composer.
-        ta.value = "";
-        autoSizeDraftTextarea(ta);   // v0.9.17: RAF-deferred shrink
-        clearComposerAttachments();
-        renderComposerChips();
-        // v5.7.3 — Also clear the tracking image preview card below
-        // the textarea. Previously this lingered in the UI after send,
-        // wasting vertical space — the tracking image is already in
-        // the conversation thread above (as part of the sent message),
-        // so the preview no longer has any purpose. renderTrackingImages([])
-        // hides the box, clears its innerHTML, cancels active pollers,
-        // and removes any stale tracking chips.
-        if (typeof renderTrackingImages === "function") renderTrackingImages([]);
-        // v3.7 — Also clear the translation preview pane. The next reply
-        // starts fresh; reusing a translation across two different
-        // English drafts would be a recipe for sending the wrong thing.
-        if (state.composerTranslation) clearComposerTranslation();
-        // Refresh thread + rail so the new message and any auto_replied
-        // status update appears.
-        if (state.selectedId) fetchMessagesNow(state.selectedId);
-        fetchThreadListNow();
-        toast("Sent ✓");
-        return true;
-      } catch (e) {
-        if (e.message && /currently sending/.test(e.message)) {
-          toast("Already sending — wait for the current send to finish");
-        } else if (e.status === 401) {
-          // Modal already opened by api(); say nothing more
-        } else {
-          toast("Failed to queue: " + (e.message || "unknown"));
-        }
-        return false;
-      } finally {
-        if (btn) btn.disabled = false;
+      if (deskTa) deskTa.value = "";
+      if (mobTa) mobTa.value = "";
+      const mSendBtn = document.getElementById("mComposerSend");
+      if (mSendBtn) mSendBtn.disabled = true;
+      setComposerAttachments(threadId, []);
+      renderComposerChips();
+      if (state.composerTranslation || state.composerEnglishPreview) {
+        // v3.7 — the next reply starts fresh; a translation is never reused.
+        clearComposerTranslation();
+        if (typeof window.mNotifyTranslationChanged === "function") window.mNotifyTranslationChanged();
       }
+      // Send to Design: this reply takes the switch (the operator opts in
+      // per reply). Its note, in English (the design team reads English),
+      // is posted once Etsy's queue has the reply.
+      const designNote = takeDesignSwitch(threadId, englishText || text);
+
+      const local = addLocalSend(threadId, { text, attachments: usableAtts });
+      if (_sendChains.has(threadId)) local._state = "waiting";
+      drawThreadNow();
+      if (flight) {
+        try { window.SendFlight.launch(flight, local.id); }
+        catch (e) { console.warn("[send] flight:", e); }
+      } else {
+        // No flight (hidden tab, attachments only): fit the emptied box now.
+        if (deskTa) autoSizeDraftTextarea(deskTa);
+        if (mobTa && typeof mAutoGrow === "function") mAutoGrow(mobTa);
+      }
+      // A double click must not send the same reply twice.
+      const btn = $("emSendEtsyBtn");
+      if (btn) { btn.disabled = true; setTimeout(() => { btn.disabled = false; }, 450); }
+
+      const body = {
+        op                  : "enqueue",
+        threadId,
+        etsyConversationUrl : threadConversationUrl(threadId),
+        text,
+        attachments         : usableAtts,
+        employeeName        : getEmployeeName(),
+        // v3.32 — Manual Send via Etsy is an explicit operator override:
+        // ready tracking images attach, pending ones never block.
+        allowSendWithoutPendingTracking: true,
+        // v3.2 — Tag this enqueue as manual so the thread badge reads
+        // "Manually Sent" once the extension confirms delivery.
+        sendOrigin          : "manual"
+      };
+
+      let resp;
+      try {
+        resp = await queueSend(threadId, local, body);
+      } catch (e) {
+        const why = e && e.status === 401 ? "" :
+          (e && e.data && e.data.errorCode === "SEND_DISABLED") ? "sending is switched off (turn it back on from the banner)" :
+          ((e && e.message) || "unknown error");
+        const putBack = () => {
+          removeLocalSend(threadId, local.id);
+          if (state.selectedId === threadId) drawThreadNow();
+          if (designNote) giveBackDesignSwitch(threadId, designNote);
+          const back = restoreFailedSend(threadId, snap);
+          if (why) {
+            toast(back ? `Not sent: ${why}. Your reply is back in the box.`
+                       : `Not sent: ${why}. Your reply was kept for that thread's reply box.`, 7000);
+          }
+        };
+        if (window.SendFlight && state.selectedId === threadId) window.SendFlight.retract(local.id).then(putBack, putBack);
+        else putBack();
+        return false;
+      }
+
+      // Queued. The bubble now reads "syncing…" until Etsy's copy arrives.
+      const sentAtts = Array.isArray(resp && resp.attachments) ? resp.attachments : usableAtts;
+      const patch = { _state: "queued", optimisticDraftId: resp && resp.draftId };
+      const media = localSendMedia(sentAtts);
+      // The server may have added a ready tracking image to this send.
+      if (media.imageUrls.length > (local.imageUrls || []).length) Object.assign(patch, media);
+      updateLocalSend(threadId, local.id, patch);
+      if (state.selectedId === threadId) drawThreadNow();
+      // The enqueue wrote the optimistic doc server-side; showSendStatus
+      // must not write it again for this draft in this session.
+      state._optimInsertedFor = state._optimInsertedFor || new Set();
+      if (resp && resp.draftId) state._optimInsertedFor.add(resp.draftId);
+      const skipped = resp && Array.isArray(resp.skippedPendingTracking) ? resp.skippedPendingTracking : [];
+      if (skipped.length) toast("Tracking image still generating — the reply went without it.", 5000);
+
+      // Send to Design: the reply is queued, so its note goes to the
+      // design chat now. It runs on its own; the Etsy send never waits
+      // for it, and the switch shows how it went.
+      if (designNote) {
+        designNote.queued = true;
+        postDesignNote(designNote);
+      }
+      // v5.30 / v5.33 — Optimistic thread-bump: the thread jumps to the
+      // top of the list at once. The reply-at override stops the next list
+      // poll from clobbering it before the extension's delivery bumps
+      // lastOperatorReplyAt on the server.
+      try {
+        const nowMs = Date.now();
+        const targetThread = (state.threads || []).find(x => x && x.id === threadId);
+        if (targetThread) targetThread.lastOperatorReplyAt = new Date(nowMs);
+        if (typeof setReplyAtOverride === "function") setReplyAtOverride(threadId, nowMs);
+        if (typeof renderThreadList === "function") renderThreadList();
+        if (typeof mRenderList === "function") { try { mRenderList(); } catch {} }
+      } catch {}
+      // The reply box was emptied when Send was pressed: save that (or
+      // whatever the operator has attached since) to the draft doc, and
+      // clear the tracking preview card, whose image went with the reply.
+      persistComposerAttachments(threadId).catch(() => {});
+      if (state.selectedId === threadId && typeof renderTrackingImages === "function") renderTrackingImages([]);
+      // Refresh thread + rail so the server's copy and the thread's new
+      // status appear.
+      if (state.selectedId === threadId) fetchMessagesNow(threadId);
+      fetchThreadListNow();
+      return true;
     }
 
     // v4.3.17 — Custom listing reply visibility helper.
@@ -17549,52 +17928,48 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
     function renderThreadMessages() {
       const box = $("emThreadBox");
       if (!box) return;
-      if (!state.messages.length) {
+      // A send is flying into this list: draw after it lands, so the
+      // bubble the words aim at stays where it is.
+      if (window.SendFlight && window.SendFlight.holding()) {
+        window.SendFlight.afterFlight(renderThreadMessages);
+        return;
+      }
+      // v5.36 optimistic dedup (computeHiddenOptimIds) and this page's
+      // local sends are both applied by threadMessagesForRender.
+      const msgs = threadMessagesForRender(state.selectedId);
+      if (!msgs.length) {
         box.innerHTML = `<div class="em-muted" style="font-size:12px;">No messages yet. The extension will populate this after its first scrape.</div>`;
         return;
       }
-      // ── v5.36 — Optimistic dedup via shared chronological-pairing helper ─
-      //
-      // See computeHiddenOptimIds (defined near pickThreadInteractionMs)
-      // for the full reasoning. Replaces the prior inline dedup which:
-      //   • never hid attachment-only optims (empty text + empty text)
-      //   • could mis-pair multiple in-flight sends because every real
-      //     outbound within tolerance was a potential counterpart for
-      //     every still-pending optim — first match won, irrespective
-      //     of which send the real actually was the counterpart of.
-      //
-      // The helper returns a Set of optim doc IDs to hide, computed
-      // by chronological 1:1 pairing with content-aware matching that
-      // handles text-only, text+image, and image-only sends.
-      const renderableMessages = (() => {
-        if (typeof computeHiddenOptimIds !== "function") return state.messages;
-        const hideIds = computeHiddenOptimIds(state.messages);
-        if (!hideIds.size) return state.messages;
-        return state.messages.filter(m => !(m && m.localOptimistic && m.id && hideIds.has(m.id)));
-      })();
+      // The reply box stays still when messages arrive above it: new ones
+      // push the history up instead of pushing the reply box down. Not on
+      // the first fill after opening a thread, and not when the operator
+      // has scrolled up into the history (the reply box is off screen).
+      let anchor = null;
+      const card = $("emComposerCard");
+      if (card && box.querySelector("[data-mid]")) {
+        const scroller = scrollParentOf(box);
+        if (scroller) {
+          const r = card.getBoundingClientRect();
+          const sr = scroller.getBoundingClientRect();
+          if (r.bottom > sr.top && r.top < sr.bottom) anchor = { scroller, bottom: r.bottom };
+        }
+      }
+      patchMessageList(box, msgs.map(m => ({ key: String(m.id), html: desktopMessageHtml(m) })));
+      if (anchor) {
+        const d = card.getBoundingClientRect().bottom - anchor.bottom;
+        if (Math.abs(d) >= 1) anchor.scroller.scrollTop += d;
+      }
+    }
 
-      // v0.9.8: defensive client-side sort by ms, regardless of whether the
-      // doc's `timestamp` field is a Firestore Timestamp object (returned
-      // as {_ts:true, ms:N} by the proxy), a raw number, a Date, or an ISO
-      // string. The previous bug: optimistic messages were written with
-      // `timestamp` as a raw JS number, while M2-scraped messages stored
-      // it as Firestore Timestamps. Firestore's listSub orderBy sorts
-      // by type-then-value, putting all numbers before all Timestamps —
-      // which placed optim messages at the TOP of the thread regardless
-      // of their actual time. This local resort ensures chronological
-      // order from any data shape.
-      const _msToInt = (m) => {
-        const v = (m && (m.timestamp || m.createdAt)) || 0;
-        if (typeof v === "number") return v;
-        if (v && typeof v === "object" && v._ts && typeof v.ms === "number") return v.ms;
-        if (v instanceof Date) return v.getTime();
-        if (typeof v === "string") { const d = new Date(v); return isNaN(d.getTime()) ? 0 : d.getTime(); }
-        if (v && typeof v.toMillis === "function") return v.toMillis();
-        return 0;
-      };
-      renderableMessages.sort((a, b) => _msToInt(a) - _msToInt(b));
+    /** Tidy message text for display: no blank lines at the ends and at
+     *  most one blank line between paragraphs. */
+    function tidyMessageText(t) {
+      return String(t || "").replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    }
 
-      box.innerHTML = renderableMessages.map(m => {
+    /** One desktop bubble. */
+    function desktopMessageHtml(m) {
         const cls = m.source === "ai" ? "ai"
                   : m.direction === "outbound" ? "outbound"
                   : "inbound";
@@ -17613,17 +17988,14 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
           who = m.senderName || (m.senderRole || m.source || "unknown");
         }
         // v0.9.24 — Use fmtBubbleTimestamp (always shows date + time) so
-        // every bubble is self-anchored. The operator no longer needs to
-        // scan the thread for context to know what day a "11:27 AM"
-        // bubble actually came in. Critical for long conversations
-        // spanning multiple days where same-time-of-day collisions
-        // were previously confusing.
+        // every bubble is self-anchored.
         const when = fmtBubbleTimestamp(m.timestamp || m.createdAt);
-        // v0.9.3: subtle indicator on still-optimistic messages so the
-        // operator knows this rendering is local-pending (not yet
-        // confirmed against an Etsy scrape).
+        // Subtle state on messages Etsy has not confirmed yet: "sending…"
+        // while the request is out, "waiting…" behind an earlier message
+        // on this thread, then "syncing…" until the scraped copy arrives.
         const syncTag = m.localOptimistic
-          ? ' <span style="font-size:10px;color:#9aa3ad;font-style:italic;">· syncing…</span>'
+          ? ' <span class="em-msg-sync"' + (m._state === "waiting" ? ' title="Goes out right after your previous message"' : '') + '>· ' +
+            (m._state === "sending" ? "sending…" : m._state === "waiting" ? "waiting…" : "syncing…") + '</span>'
           : '';
 
         // Render any message that has imageUrls as inline thumbnails —
@@ -17640,7 +18012,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         const translatedText = state.translateView
           ? (state.translatedTexts.get(m.id) || state.translatedTexts.get(m.messageId))
           : null;
-        const displayText = translatedText || rawText;
+        const displayText = tidyMessageText(translatedText || rawText);
         const wasTranslated = !!translatedText && translatedText !== rawText;
 
         let body;
@@ -17678,10 +18050,10 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
               '</a>';
           }).join("");
           const linkedText = displayText ? linkifyEtsyUrls(esc(displayText)) : "";
-          const textPart = linkedText ? `<div style="margin-top:6px;">${linkedText}</div>` : "";
+          const textPart = linkedText ? `<div class="em-msg-text" style="margin-top:6px;">${linkedText}</div>` : "";
           body = `<div>${thumbsHtml}</div>${textPart}`;
         } else {
-          body = linkifyEtsyUrls(esc(displayText || ""));
+          body = `<div class="em-msg-text">${linkifyEtsyUrls(esc(displayText || ""))}</div>`;
         }
 
         // Append any Etsy listing cards associated with this message
@@ -17696,27 +18068,9 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         // the operator can tell at a glance that what they're reading is
         // a translation, not the literal customer text.
         const translatedClass = wasTranslated ? " em-translated" : "";
-        return `
-          <div class="em-msg ${cls}${translatedClass}">
-            <div class="em-meta">${esc(who)} · ${esc(when)}${syncTag}</div>
-            <div>${body}${cardsHtml}</div>
-          </div>`;
-      }).join("");
-      box.scrollTop = box.scrollHeight;
-      // v0.9.39 — Reconcile any send-animation preview bubbles that
-      // are still in the DOM against the real outbound messages we
-      // just rendered. If the real message has arrived, remove the
-      // preview (they would otherwise both render until the next
-      // full re-render replaced innerHTML).
-      // NOTE: setting box.innerHTML above already destroyed any
-      // previews that were children of box, so this is mostly a
-      // belt-and-suspenders check. Kept for the case where a
-      // preview's parent isn't box (defensive).
-      try {
-        if (window.SendAnimation && typeof window.SendAnimation.reconcileAgainstRealMessages === 'function') {
-          window.SendAnimation.reconcileAgainstRealMessages(state.messages);
-        }
-      } catch (e) {}
+        return `<div class="em-msg ${cls}${translatedClass}" data-mid="${esc(String(m.id))}">` +
+          `<div class="em-meta">${esc(who)} · ${esc(when)}${syncTag}</div>` +
+          `<div>${body}${cardsHtml}</div></div>`;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -21005,12 +21359,9 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
       if (isFreshMount) {
         mMountConv(t);
         body.dataset.threadId = tid;
-        // v5.32.4 — Reset Send to Design toggle to OFF on every fresh
-        // thread mount. Operator must opt in per reply, matching the
-        // desktop behavior in renderDetail.
-        const mSendToDesignBtn = document.getElementById("mActionSendToDesign");
-        if (mSendToDesignBtn) mSendToDesignBtn.setAttribute("aria-pressed", "false");
       }
+      // The phone's Design button shows this conversation's switch.
+      paintDesignSwitch();
       mRenderMessages(t);
       // Try to paint summary card from cache (no-op if cache miss; the
       // mStartSummaryWatch interval will catch a late arrival).
@@ -21186,6 +21537,11 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
     function mRenderMessages(t) {
       const list = document.getElementById("mMessagesList");
       if (!list) return;
+      // A send is flying into this list: draw after it lands.
+      if (window.SendFlight && window.SendFlight.holding()) {
+        window.SendFlight.afterFlight(mRenderMessagesNow);
+        return;
+      }
       const body = document.getElementById("mConvBody");
       const wasNearBottom = body
         ? (body.scrollHeight - body.scrollTop - body.clientHeight) < 80
@@ -21271,45 +21627,11 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         }
       } catch (e) { /* never throw out of render */ }
 
-      // Sort + dedup (same logic as v5.1)
-      const _msToInt = (m) => {
-        const v = (m && (m.timestamp || m.createdAt)) || 0;
-        if (typeof v === "number") return v;
-        if (v instanceof Date) return v.getTime();
-        if (v && typeof v === "object" && v._ts && typeof v.ms === "number") return v.ms;
-        if (v && typeof v.toMillis === "function") { try { return v.toMillis(); } catch { return 0; } }
-        if (typeof v === "string") { const d = new Date(v); return isNaN(d.getTime()) ? 0 : d.getTime(); }
-        return 0;
-      };
-      // v5.36 — Optimistic dedup via shared helper. Replaces the prior
-      // text-only matching that left attachment-only optims rendering
-      // as duplicates after the real scraped outbound arrived. See
-      // computeHiddenOptimIds for full reasoning.
-      const _allMsgs = state.messages || [];
-      let _renderable = _allMsgs;
-      if (typeof computeHiddenOptimIds === "function") {
-        const _hideIds = computeHiddenOptimIds(_allMsgs);
-        if (_hideIds.size) {
-          _renderable = _allMsgs.filter(m => !(m && m.localOptimistic && m.id && _hideIds.has(m.id)));
-        }
-      }
-      const _sortedMsgs = _renderable.slice().sort((a, b) => _msToInt(a) - _msToInt(b));
+      // Sort + dedup: server messages plus this page's local sends, each
+      // send shown once (threadMessagesForRender, shared with desktop).
+      const _sortedMsgs = threadMessagesForRender(state.selectedId);
 
-      // v5.4 — Cheap "did anything change" check. Compute a hash of
-      // (count + last-message-id + last-message-timestamp). Skip the
-      // innerHTML write if it matches what we last rendered. Eliminates
-      // even the brief paint pulse when nothing has actually changed.
-      // v5.21 — Include translateView in the signature so toggling
-      // auto-translate (which doesn't change message ids/timestamps,
-      // only what we render for each) actually triggers a re-render.
-      // Without this, switching translate ON/OFF would be a no-op
-      // visually until a new message arrived.
-      const lastMsg = _sortedMsgs[_sortedMsgs.length - 1] || {};
-      const sig = _sortedMsgs.length + "|" + (lastMsg.id || "") + "|" + _msToInt(lastMsg) + "|" + (state.translateView ? "tx" : "raw");
-      if (list.dataset.lastSig === sig) return;
-      list.dataset.lastSig = sig;
-
-      const messagesHtml = _sortedMsgs.map(m => {
+      const items = _sortedMsgs.map(m => {
         const dir = m.direction === "outbound" ? "outbound" : "inbound";
         const fromName = dir === "outbound" ? (m.employeeName || "You") : (t.customerName || t.etsyUsername || "Customer");
         const time = mFmtThreadTime(m.timestamp || m.createdAt);
@@ -21358,29 +21680,36 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
             m.listingCards.map(renderListingCard).join("") +
             '</div>';
         }
-        return `
-          <div class="m-msg-wrap ${dir}">
-            <div class="m-msg-meta ${dir}">${mEsc(fromName)} · ${mEsc(time)}</div>
-            <div class="m-msg-bubble ${dir}">${mEsc(text)}${imgRow}</div>
-            ${listingsHtml}
-          </div>`;
-      }).join("");
+        // Not yet confirmed by Etsy: the same small state as on desktop.
+        const syncTag = m.localOptimistic
+          ? " · " + (m._state === "sending" ? "sending…" : m._state === "waiting" ? "waiting…" : "syncing…")
+          : "";
+        return {
+          key : String(m.id),
+          html: `<div class="m-msg-wrap ${dir}" data-mid="${mEsc(String(m.id))}">` +
+            `<div class="m-msg-meta ${dir}">${mEsc(fromName)} · ${mEsc(time)}${syncTag}</div>` +
+            `<div class="m-msg-bubble ${dir}"><span class="m-msg-text">${mEsc(text)}</span>${imgRow}</div>` +
+            `${listingsHtml}</div>`
+        };
+      });
 
-      list.innerHTML = messagesHtml || `<div style="padding: 40px 16px; text-align: center; color: var(--m-c-text-muted);">No messages yet.</div>`;
+      if (!items.length) {
+        list.innerHTML = `<div style="padding: 40px 16px; text-align: center; color: var(--m-c-text-muted);">No messages yet.</div>`;
+        return;
+      }
+      patchMessageList(list, items);
 
       if (wasNearBottom && body) {
         requestAnimationFrame(() => { body.scrollTop = body.scrollHeight; });
       }
-      // v0.9.39 — Reconcile send-animation preview bubbles against
-      // real outbound messages. If a preview's text matches a real
-      // outbound now in state.messages, the floating overlay can
-      // be removed since the real bubble will paint in the same spot.
-      try {
-        if (window.SendAnimation && typeof window.SendAnimation.reconcileAgainstRealMessages === 'function') {
-          window.SendAnimation.reconcileAgainstRealMessages(state.messages);
-        }
-      } catch (e) {}
     }
+
+    /** Redraw the open conversation's messages now (not on the next frame). */
+    function mRenderMessagesNow() {
+      const t = (state.threads || []).find(x => x && x.id === state.selectedId);
+      if (t) mRenderMessages(t);
+    }
+    window.mRenderMessagesNow = mRenderMessagesNow;
 
     // ── Mobile-native AI draft card (v5.5) ──────────────────────
     // Earlier versions (v5.4) tried to mirror the desktop's
@@ -21955,6 +22284,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
       const next = Math.min(ta.scrollHeight, max);
       ta.style.height = next + "px";
     }
+    window.mAutoGrow = mAutoGrow;   // SendFlight eases the emptied box with it
 
     // ── Attachments management ───────────────────────────────────
     function mGetCurrentAttachments() {
@@ -22228,49 +22558,21 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         if (desktopTa) desktopTa.value = ta.value;
         send.disabled = !((ta.value || "").trim() || mGetCurrentAttachments().length > 0);
       });
+      // Keep the keyboard up when Send is tapped mid-typing: the tap must
+      // not take focus from the reply box. A closing keyboard resizes the
+      // screen under the flying words, and the next reply needs it anyway.
+      send.addEventListener("mousedown", (e) => {
+        if (document.activeElement === ta) e.preventDefault();
+      });
       send.addEventListener("click", async () => {
         const tid = state.selectedId;
         if (!tid) {
           if (typeof toast === "function") toast("No thread selected");
           return;
         }
-        const textForSend = (ta.value || "").trim();
-
-        // v0.9.39 — Play send animation immediately. Fires before any
-        // backend calls so it feels instantaneous. The animation is
-        // failure-safe: any internal error is caught and won't block
-        // the actual send.
-        try {
-          if (textForSend && window.SendAnimation && typeof window.SendAnimation.play === 'function') {
-            const messagesList = document.getElementById("mMessagesList");
-            const convBody = document.getElementById("mConvBody");
-            if (messagesList) {
-              window.SendAnimation.play({
-                text: textForSend,
-                sourceTextarea: ta,
-                threadContainer: messagesList,
-                // mConvBody is the actual scrollable parent on mobile
-                scrollContainer: convBody || messagesList,
-                isMobile: true
-              });
-            }
-          }
-        } catch (e) { /* never block sendViaEtsy */ }
-        // v3.31 — Do not pre-block mobile sends on the local attachment
-        // strip. sendViaEtsy now performs the authoritative empty check
-        // after refreshing draft.trackingImages and promoting any ready
-        // tracking image into the composer.
-        // v5.13 — Defensive setup before calling sendViaEtsy.
-        // sendViaEtsy reads from #emDraftText (which only exists if
-        // renderDetail has run and created it) and from
-        // state.currentThreadUrl (set by setupComposerInteractions
-        // from inside renderDetail). On mobile we can't trust either.
-        //
-        // (a) Pre-set currentThreadUrl from the thread doc directly.
-        // (b) Mirror the mobile textarea text into #emDraftText if
-        //     it exists; sendViaEtsy now also has its own mobile
-        //     fallback (v5.13) that reads #mComposerTextarea if the
-        //     desktop textarea is missing.
+        const hadFocus = document.activeElement === ta;
+        // v5.13 — sendViaEtsy reads #emDraftText when renderDetail built
+        // it; keep it in step with the phone's box.
         const t = (state.threads || []).find(x => x && x.id === tid);
         if (t) {
           state.currentThreadUrl = t.etsyConversationUrl ||
@@ -22278,72 +22580,31 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         }
         const desktopTa = document.getElementById("emDraftText");
         if (desktopTa) desktopTa.value = ta.value || "";
-
-        // Disable the send button immediately so a fast double-tap
-        // can't queue twice. Re-enabled by sendViaEtsy on failure
-        // and stays disabled on success (textarea cleared anyway).
-        send.disabled = true;
-        if (typeof sendViaEtsy === "function") {
-          try {
-            // v0.9.43 — Call sendViaEtsy without await first. sendViaEtsy
-            // executes synchronously up to its first await, capturing
-            // ta.value during that synchronous portion. Once it returns
-            // a pending promise, we can safely clear the textareas
-            // visually — sendViaEtsy has already captured the value.
-            // THEN we await the promise normally.
-            const sendPromise = sendViaEtsy(tid);
-            // Clear both textareas now that sendViaEtsy has captured the value.
-            // This gives instant visual feedback that the message is "gone."
-            //
-            // v0.9.44 — Defer the auto-resize. Resizing the textarea
-            // immediately causes the thread container above to reflow
-            // upward — the "screen flicker" at the end of animation.
-            // Wait until the animation has fully landed before shrinking.
-            if (textForSend) {
-              ta.value = '';
-              if (desktopTa) desktopTa.value = '';
-              setTimeout(() => {
-                if (typeof mAutoGrow === 'function') {
-                  try { mAutoGrow(ta); } catch (e) {}
-                }
-                if (desktopTa && typeof autoSizeDraftTextarea === 'function') {
-                  try { autoSizeDraftTextarea(desktopTa); } catch (e) {}
-                }
-              }, 800);
-            }
-            const queued = await sendPromise;
-            if (queued !== true) {
-              send.disabled = false;
-              return;
-            }
-          } catch (e) {
-            console.error("[mobile] send failed:", e);
-            // v5.13 — Visible error so the operator knows what
-            // happened. Mobile users can't open DevTools.
-            if (typeof toast === "function") toast("Send failed: " + (e.message || "unknown error"));
-            send.disabled = false;
-            return;
-          }
-        } else {
+        if (typeof sendViaEtsy !== "function") {
           if (typeof toast === "function") toast("Send unavailable — try refreshing");
-          send.disabled = false;
           return;
         }
-        // v5.14 — Post-send status verification. After ~8 seconds,
-        // poll the draft doc and toast its status — this tells the
-        // operator whether the extension on their desktop has
-        // actually claimed and delivered the draft, or whether it's
-        // sitting in the queue forever (extension down).
-        mVerifySendStatus(tid);
-        // Clear mobile composer optimistically — sendViaEtsy clears the
-        // desktop textarea on success, but mobile reads its own field.
-        ta.value = "";
-        mAutoGrow(ta);
-        document.getElementById("mTranslatePreview").classList.remove("visible");
-        document.getElementById("mActionTrans").classList.remove("active");
-        // v5.6 — Hide the AI indicator chip after a send. The chip was
-        // about a draft that no longer applies (we just sent something).
-        if (typeof mHideAiIndicator === "function") mHideAiIndicator();
+        const hadText = !!(ta.value || "").trim();
+        // sendViaEtsy empties both boxes, shows the reply's bubble with its
+        // flight at once, and queues it in the background; a failure puts
+        // the text back.
+        const sending = sendViaEtsy(tid, { surface: "mobile" });
+        if (hadFocus && document.activeElement !== ta) {
+          try { ta.focus({ preventScroll: true }); } catch (_) {}
+        }
+        // v5.6 — The AI indicator described the text that just left.
+        if (hadText && !(ta.value || "").trim() && typeof mHideAiIndicator === "function") mHideAiIndicator();
+        let queued = false;
+        try {
+          queued = await sending;
+        } catch (e) {
+          // v5.13 — Visible error so the operator knows what happened.
+          console.error("[mobile] send failed:", e);
+          if (typeof toast === "function") toast("Send failed: " + (e.message || "unknown error"));
+        }
+        // v5.14 — Post-send status check: after ~8 s, say whether the
+        // extension has picked the reply up.
+        if (queued === true) mVerifySendStatus(tid);
       });
 
       // v5.6 — Wire the AI indicator's × dismiss button. Hides the chip
@@ -22450,19 +22711,8 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         if (tgl) tgl.classList.toggle("on", !!state.translateView);
         mOpenSheet();
       });
-      // v5.32.4 — Mobile Send to Design toggle. Tap to flip aria-pressed;
-      // the CSS does the rest. The actual dispatch fires inside
-      // sendViaEtsy when either the desktop OR mobile button is pressed
-      // (sendViaEtsy is shared between both view layers).
-      const mSendToDesignBtn = document.getElementById("mActionSendToDesign");
-      if (mSendToDesignBtn) {
-        mSendToDesignBtn.addEventListener("click", function (e) {
-          e.preventDefault();
-          const pressed = mSendToDesignBtn.getAttribute("aria-pressed") === "true";
-          mSendToDesignBtn.setAttribute("aria-pressed", String(!pressed));
-          try { mSendToDesignBtn.blur(); } catch (_) {}
-        });
-      }
+      // The phone's Send to Design button is handled with the desktop
+      // pill (one click handler for both, see paintDesignSwitch).
       // v5.21 — Auto-translate-conversation toggle. Pre-v5.21 this only
       // flipped its own visual state and mirrored to a desktop checkbox
       // that has no behavioral side effect. The actual translation work
@@ -23443,485 +23693,513 @@ const EtsyMailAuth=(()=>{
   </script>
 
   <!-- ═══════════════════════════════════════════════════════════════
-       v0.9.39 — Send animation (words fly into the bubble)
+       Send flight: a sent reply's words travel from the reply box into
+       their places in the reply's own bubble.
        ═══════════════════════════════════════════════════════════════
-       Self-contained module. Adds CSS for the animation and a global
-       window.SendAnimation.play({...}) function. Failure-safe: if any
-       step throws or measurements are bad, falls through silently so
-       the send pipeline isn't blocked.
-
-       The module is in a separate <script> block (not the main IIFE
-       above) so it has its own error boundary — any bug in here can
-       never break the main inbox logic. -->
+       sendViaEtsy draws the reply's real bubble first and calls
+       SendFlight.launch. The bubble opens just above the reply box while
+       the history makes room (the reply box stays put on desktop; the
+       phone stays on the newest message). A copy of each word lifts from
+       exactly where it sat in the reply box and flies on a soft arc onto
+       the same word in the bubble, re-wrapping into the bubble's lines.
+       When the last word lands the bubble's own text takes over, the
+       copies fade and the reply box eases back to its resting height.
+       Words move with transforms; only their colour repaints.
+       Message renders wait while a flight runs (holding/afterFlight) so
+       the bubble the words aim at stays where it is. Every step is
+       guarded: if anything fails, the bubble simply shows. -->
   <style>
-    /* v0.9.39 — Register --chip-alpha as an animatable number so
-       Chromium-based browsers can interpolate smoothly between
-       waypoints. Browsers that don't support @property (older
-       Safari) will use discrete interpolation which is OK because
-       our 16-waypoint animation keeps the steps small (~6% per step). */
-    @property --chip-alpha {
-      syntax: '<number>';
-      inherits: false;
-      initial-value: 1;
+    .em-flight-layer {
+      position: fixed; left: 0; top: 0; right: 0; bottom: 0;
+      pointer-events: none; z-index: 950; overflow: hidden;
     }
-    /* Flying tile during the animation. Chip background uses a CSS
-       var so it can fade to transparent over the last 30% of flight
-       without changing the tile's outer size (which would cause
-       visible re-centering). Color matches the production outbound
-       bubble color (#0366d6 desktop, accent on mobile — we just use
-       #0366d6 as a close-enough match for both). */
-    .em-sa-flying {
-      position: fixed; pointer-events: none; z-index: 9999;
-      font-size: 13px; line-height: 1.4; color: #ffffff;
-      background-color: rgba(3, 102, 214, var(--chip-alpha, 1));
-      padding: 2px 6px;
-      border-radius: 6px;
-      font-weight: 500;
-      will-change: transform, opacity;
-      white-space: nowrap;
-      box-shadow: 0 2px 6px rgba(3, 102, 214, calc(0.3 * var(--chip-alpha, 1)));
+    .em-flight-x { position: absolute; left: 0; top: 0; will-change: transform; }
+    .em-flight-y {
+      display: block; white-space: pre; line-height: normal;
+      transform-origin: 0 0; will-change: transform, opacity;
     }
-    /* While the animation is playing, hide the textarea text via
-       transparent color so the user doesn't see both the source
-       text AND the flying tiles. The text itself remains in
-       ta.value — sendViaEtsy reads from there. The class is
-       removed automatically after a short safety timeout. */
-    .em-sa-hide-text {
+    .em-flight-text-hidden .em-msg-text,
+    .em-flight-text-hidden .em-msg-text *,
+    .em-flight-text-hidden .m-msg-text {
       color: transparent !important;
-      caret-color: transparent !important;
+      text-decoration-color: transparent !important;
     }
-    /* Sparks at ignition */
-    .em-sa-spark {
-      position: fixed; pointer-events: none;
-      width: 5px; height: 5px; border-radius: 50%;
-      background: radial-gradient(circle, #fff 0%, #79c0ff 60%, transparent 100%);
-      opacity: 0; z-index: 9998;
-      will-change: transform, opacity;
-    }
-    @keyframes em-sa-spark-fly {
-      0%   { transform: translate(0, 0) scale(0.5); opacity: 1; }
-      100% { transform: translate(var(--dx), var(--dy)) scale(0); opacity: 0; }
-    }
-    .em-sa-ripple {
-      position: fixed; pointer-events: none;
-      width: 20px; height: 20px; border-radius: 50%;
-      border: 2px solid #0366d6; opacity: 0;
-      z-index: 9997; will-change: transform, opacity;
-    }
-    @keyframes em-sa-ripple-out {
-      0%   { transform: scale(0.5); opacity: 0.8; }
-      100% { transform: scale(4);   opacity: 0;   }
-    }
-    .em-sa-preview-landed {
-      animation: em-sa-landed-pulse 700ms cubic-bezier(0.22, 1, 0.36, 1);
-    }
-    @keyframes em-sa-landed-pulse {
-      0%   { box-shadow: 0 0 0 0 rgba(3, 102, 214, 0.5); }
-      50%  { box-shadow: 0 0 0 12px rgba(3, 102, 214, 0); }
-      100% { box-shadow: 0 0 0 0 rgba(3, 102, 214, 0); }
-    }
-    /* Preview bubble. v0.9.39 — Positioned as a FIXED overlay
-       (not appended to the thread container) so it survives
-       innerHTML re-renders from renderThreadMessages/mRenderMessages
-       that wipe the thread container's contents. Coordinates are
-       computed at play() time to match where the bubble WOULD
-       appear if it were inside the thread.
-       During the animation phase, the inner word spans are hidden
-       (visibility) so they reserve layout but don't paint until the
-       flying tile delivers them. Each word is revealed individually
-       by adding .em-sa-word-typed.
-       Bubble's growth is via clip-path so its on-page size is correct
-       from frame 0. */
-    .em-sa-preview {
-      pointer-events: none;
-      z-index: 9996;
-      will-change: clip-path, opacity;
-      /* position: fixed is set inline by JS after measurement */
-    }
-    .em-sa-preview .em-sa-word {
-      visibility: hidden;
-    }
-    .em-sa-preview .em-sa-word.em-sa-word-typed {
-      visibility: visible;
-    }
-    /* On mobile, the .m-msg-wrap.outbound has text-align: right to
-       position the inline-block .m-msg-bubble on the right side of
-       the row. Text inside the bubble should still flow left-to-right
-       though. In production the bubble text isn't word-wrapped in
-       spans, so right-alignment doesn't matter visually. But our
-       preview wraps each word in a span, and those inline spans
-       inherit the wrap's text-align: right, putting them on the
-       wrong side. Override so words flow left-to-right inside the
-       inner bubble. */
-    .em-sa-preview .em-sa-bubble-inner {
-      text-align: left;
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .em-sa-flying, .em-sa-spark, .em-sa-ripple { display: none !important; }
-      .em-sa-preview { clip-path: none !important; }
-      .em-sa-preview .em-sa-word { visibility: visible !important; }
-      .em-sa-preview-landed { animation: none; }
-    }
+    /* The emptied reply box keeps its hint hidden while the words lift off it. */
+    .em-flight-quiet::placeholder { color: transparent !important; }
+    /* Desktop bubbles keep the reply's line breaks, as the phone does. */
+    .em-thread .em-msg .em-msg-text { white-space: pre-wrap; }
+    .em-thread .em-msg .em-msg-text:empty { display: none; }
+    .em-msg-sync { font-size: 10px; font-style: italic; opacity: .85; text-transform: none; letter-spacing: 0; }
   </style>
   <script>
   (function () {
     'use strict';
 
-    // ── Tunables ─────────────────────────────────────────
-    const TIMING = {
-      flightDuration:  400,
-      wordStagger:     8,
-      bubbleRevealDur: 480
-    };
-    // Mobile vs desktop. Detected at play-time, not module-init time,
-    // so it picks up viewport-width changes.
-    function isMobileViewport() {
-      try {
-        return window.IS_MOBILE === true ||
-               (window.matchMedia && window.matchMedia('(max-width: 600px)').matches);
-      } catch (e) {
-        return false;
+    const EASE_X    = 'cubic-bezier(.45,0,.2,1)';   // words drift sideways late…
+    const EASE_Y    = 'cubic-bezier(.22,.7,.25,1)'; // …after rising early: a soft arc
+    const MAX_WORDS = 140;
+
+    let active = null;              // the flight in progress
+    const deferred = new Set();     // renders waiting for it to land
+
+    function reducedMotion() {
+      try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (_) { return false; }
+    }
+    function sel(id) {
+      return '[data-mid="' + (window.CSS && CSS.escape ? CSS.escape(id) : String(id).replace(/"/g, '\\"')) + '"]';
+    }
+    function listFor(surface) {
+      return document.getElementById(surface === 'mobile' ? 'mMessagesList' : 'emThreadBox');
+    }
+    function scrollerFor(surface, list) {
+      if (surface === 'mobile') return document.getElementById('mConvBody');
+      for (let p = list && list.parentElement; p && p !== document.body; p = p.parentElement) {
+        const oy = getComputedStyle(p).overflowY;
+        if (oy === 'auto' || oy === 'scroll') return p;
       }
+      return null;
+    }
+    function anchorFor(surface) {
+      return surface === 'mobile' ? null : document.getElementById('emComposerCard');
+    }
+    /** Part of el actually on screen (inside every clipping ancestor). */
+    function visibleRect(el) {
+      const r = el.getBoundingClientRect();
+      let t = r.top, l = r.left, b = r.bottom, rt = r.right;
+      for (let p = el.parentElement; p && p !== document.documentElement; p = p.parentElement) {
+        const cs = getComputedStyle(p);
+        if (cs.overflowX !== 'visible' || cs.overflowY !== 'visible') {
+          const q = p.getBoundingClientRect();
+          t = Math.max(t, q.top); l = Math.max(l, q.left); b = Math.min(b, q.bottom); rt = Math.min(rt, q.right);
+        }
+      }
+      t = Math.max(t, 0); l = Math.max(l, 0);
+      b = Math.min(b, window.innerHeight); rt = Math.min(rt, window.innerWidth);
+      return b > t && rt > l ? { top: t, left: l, bottom: b, right: rt } : null;
     }
 
-    // ── Helpers ──────────────────────────────────────────
-    function splitWords(text) {
-      return String(text).trim().split(/\s+/).filter(Boolean);
-    }
-    function escapeHtml(s) {
-      return String(s)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-    }
-    function normalizeText(s) {
-      // Mirror the dedup normalization used by renderThreadMessages
-      return String(s || '')
-        .trim().toLowerCase()
-        .replace(/https?:\/\/(www\.)?/g, '')
-        .replace(/(^|\s)www\./g, '$1')
-        .replace(/\s+/g, ' ').slice(0, 200);
-    }
-
-    // Build a hidden measurement scaffold matching the textarea so
-    // we can read where each word will appear visually within it.
-    function measureSourceWordPositions(srcRect, words, ta) {
-      const cs = window.getComputedStyle(ta);
-      const wrap = document.createElement('div');
-      Object.assign(wrap.style, {
-        position: 'fixed',
-        left: srcRect.left + 'px', top: srcRect.top + 'px',
-        width: srcRect.width + 'px', height: srcRect.height + 'px',
-        padding: cs.padding, fontSize: cs.fontSize,
-        lineHeight: cs.lineHeight, fontFamily: cs.fontFamily,
-        boxSizing: 'border-box', visibility: 'hidden',
-        pointerEvents: 'none', zIndex: '-1', whiteSpace: 'normal'
+    /** Where each word of a textarea's value is drawn: a hidden mirror with
+     *  the same box, font and wrapping, offset by the textarea's scroll. */
+    function textareaWords(ta) {
+      const cs = getComputedStyle(ta);
+      const r = ta.getBoundingClientRect();
+      const m = document.createElement('div');
+      ['boxSizing', 'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant', 'letterSpacing',
+       'wordSpacing', 'lineHeight', 'textTransform', 'textIndent', 'tabSize', 'direction', 'wordBreak',
+       'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+       'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+       'borderTopStyle', 'borderRightStyle', 'borderBottomStyle', 'borderLeftStyle'
+      ].forEach(k => { m.style[k] = cs[k]; });
+      Object.assign(m.style, {
+        position: 'fixed', left: r.left + 'px', top: r.top + 'px', width: r.width + 'px',
+        height: 'auto', margin: '0', visibility: 'hidden', pointerEvents: 'none', zIndex: '-1',
+        whiteSpace: 'pre-wrap', overflowWrap: 'break-word', wordWrap: 'break-word',
+        overflow: 'hidden', borderColor: 'transparent'
       });
-      wrap.innerHTML = words.map(w =>
-        '<span class="em-sa-scaffold-word" style="display:inline-block;padding:2px 4px;margin-right:2px;">' +
-        escapeHtml(w) + '</span>'
-      ).join('');
-      document.body.appendChild(wrap);
-      const rects = Array.from(wrap.querySelectorAll('.em-sa-scaffold-word'))
-        .map(el => el.getBoundingClientRect());
-      wrap.remove();
-      return rects;
-    }
-
-    function fireSparks(x, y) {
-      const N = 8;
-      for (let i = 0; i < N; i++) {
-        const spark = document.createElement('div');
-        spark.className = 'em-sa-spark';
-        spark.style.left = (x - 3) + 'px';
-        spark.style.top  = (y - 3) + 'px';
-        const angle = (i / N) * Math.PI * 2 + Math.random() * 0.3;
-        const dist  = 35 + Math.random() * 30;
-        spark.style.setProperty('--dx', Math.cos(angle) * dist + 'px');
-        spark.style.setProperty('--dy', Math.sin(angle) * dist + 'px');
-        document.body.appendChild(spark);
-        spark.style.animation = 'em-sa-spark-fly ' + (320 + Math.random() * 200) + 'ms ease-out forwards';
-        setTimeout(() => spark.remove(), 700);
+      // A textarea's scrollbar narrows its text; the mirror has none.
+      const gutter = ta.offsetWidth - ta.clientWidth -
+        (parseFloat(cs.borderLeftWidth) || 0) - (parseFloat(cs.borderRightWidth) || 0);
+      if (gutter > 0) m.style.paddingRight = ((parseFloat(cs.paddingRight) || 0) + gutter) + 'px';
+      const text = ta.value;
+      const spans = [];
+      const re = /\S+/g;
+      let last = 0, mm;
+      while ((mm = re.exec(text))) {
+        if (mm.index > last) m.appendChild(document.createTextNode(text.slice(last, mm.index)));
+        const sp = document.createElement('span');
+        sp.textContent = mm[0];
+        m.appendChild(sp);
+        spans.push(sp);
+        last = mm.index + mm[0].length;
       }
+      if (last < text.length) m.appendChild(document.createTextNode(text.slice(last)));
+      document.body.appendChild(m);
+      const sx = ta.scrollLeft, sy = ta.scrollTop;
+      const out = spans.map(sp => {
+        const q = sp.getClientRects()[0] || sp.getBoundingClientRect();
+        return { text: sp.textContent, left: q.left - sx, top: q.top - sy, width: q.width, height: q.height };
+      });
+      m.remove();
+      return out;
     }
-    function fireRipple(x, y) {
-      const r = document.createElement('div');
-      r.className = 'em-sa-ripple';
-      r.style.left = (x - 10) + 'px';
-      r.style.top  = (y - 10) + 'px';
-      document.body.appendChild(r);
-      r.style.animation = 'em-sa-ripple-out 600ms cubic-bezier(0.16, 1, 0.3, 1) forwards';
-      setTimeout(() => r.remove(), 700);
-    }
 
-    // ── Main entry ───────────────────────────────────────
-    // opts:
-    //   text:            message text to animate
-    //   sourceTextarea:  the element to fly out of
-    //   threadContainer: the message-list element (where the bubble
-    //                    is appended for measurement)
-    //   scrollContainer: the actual scrollable parent (often the same
-    //                    as threadContainer; on mobile they differ:
-    //                    threadContainer is #mMessagesList but the
-    //                    scrollable parent is #mConvBody). Defaults
-    //                    to threadContainer if not provided.
-    //   isMobile:        explicit override (else auto-detected)
-    //
-    // Strategy:
-    //   1. Append the preview bubble to the thread container (inline)
-    //      so its natural flex-layout position can be measured. This
-    //      momentarily pushes existing messages up — desired UX.
-    //   2. Scroll the container to bottom so the bubble is visible.
-    //   3. Measure the bubble's bounding rect AND each word's
-    //      destination position.
-    //   4. DETACH the bubble and re-append it to document.body as a
-    //      position:fixed overlay at the measured coordinates. This
-    //      way the bubble survives renderThreadMessages re-renders
-    //      that wipe the thread container's innerHTML.
-    //   5. The thread container's natural layout now collapses (no
-    //      new bubble), but that's fine — when the real outbound
-    //      message arrives via the next poll/insert, it lands in
-    //      the exact same spot. Reconcile then removes the floating
-    //      preview.
-    function play(opts) {
-      try {
-        if (!opts || !opts.text || !opts.sourceTextarea || !opts.threadContainer) return;
-        const text = String(opts.text);
-        const ta = opts.sourceTextarea;
-        const container = opts.threadContainer;
-        const scrollContainer = opts.scrollContainer || container;
-        const mobile = (opts.isMobile === true) || (opts.isMobile === false ? false : isMobileViewport());
-
-        const words = splitWords(text);
-        if (!words.length) return;
-
-        // v0.9.39 — On mobile, if the soft keyboard is open the
-        // viewport is squashed and measurements would be off by
-        // the keyboard's height once it dismisses. Blur the
-        // textarea now so the keyboard begins dismissing
-        // BEFORE we measure. We can't wait for the dismissal
-        // animation to finish (would delay the visual feedback),
-        // but at least the visual viewport will be more stable.
-        // On desktop blur is a no-op since there's no keyboard.
-        if (mobile && typeof ta.blur === 'function') {
-          try { ta.blur(); } catch (e) {}
-        }
-
-        const srcRect = ta.getBoundingClientRect();
-        if (srcRect.width === 0 || srcRect.height === 0) return;
-
-        // Step 1: Build the preview bubble with appropriate classes
-        // matching what renderThreadMessages would produce.
-        const bubble = document.createElement('div');
-        const wordsHtml = words.map((w, i) =>
-          '<span class="em-sa-word" data-i="' + i + '">' + escapeHtml(w) + '</span>'
-        ).join(' ');
-        if (mobile) {
-          bubble.className = 'm-msg-wrap outbound em-sa-preview';
-          bubble.innerHTML =
-            '<div class="m-msg-meta outbound">CustomBrites · just now</div>' +
-            '<div class="m-msg-bubble outbound em-sa-bubble-inner">' + wordsHtml + '</div>';
-        } else {
-          bubble.className = 'em-msg outbound em-sa-preview';
-          bubble.innerHTML =
-            '<div class="em-meta">CustomBrites · just now</div>' +
-            '<div class="em-sa-bubble-inner">' + wordsHtml + '</div>';
-        }
-        bubble.setAttribute('data-em-sa-preview', normalizeText(text));
-        bubble.style.opacity = '0';
-
-        // Step 2: Append to thread container as a real flex child.
-        // v0.9.40 — Reverted to the v8 mockup approach: the bubble
-        // stays IN the thread the whole time. This means flex layout
-        // naturally pushes earlier messages up to make room (the
-        // entire reason we want growth), and the bubble can never
-        // overflow into the composer because it lives inside the
-        // thread's overflow-hidden region.
-        //
-        // The concern that motivated the earlier "detach to body"
-        // approach was that renderThreadMessages does innerHTML =
-        // and would wipe the bubble during a poll. But the animation
-        // only lasts ~600ms and polls are seconds apart — and the
-        // reconcile step (called after every renderThreadMessages)
-        // removes the preview anyway when the real outbound arrives.
-        // The risk window is small enough to ignore.
-        container.appendChild(bubble);
-
-        // Step 3: Scroll the bubble into view BEFORE measuring.
-        // Reading offsetTop forces a synchronous reflow so the
-        // scroll position is committed before we measure word
-        // destination positions.
-        scrollContainer.scrollTop = scrollContainer.scrollHeight;
-        // eslint-disable-next-line no-unused-expressions
-        bubble.offsetTop;
-        const destRect = bubble.getBoundingClientRect();
-        if (destRect.width === 0 || destRect.height === 0) {
-          bubble.remove();
-          return;
-        }
-        // For mobile, the visible bubble is the .m-msg-bubble INNER
-        // element (the .m-msg-wrap is a wider layout container for
-        // the meta line that sits above). Clip-path must target the
-        // inner element on mobile, the outer .em-msg on desktop.
-        const clipTarget = mobile ? bubble.querySelector('.em-sa-bubble-inner') : bubble;
-        const clipTargetRect = clipTarget.getBoundingClientRect();
-
-        // Read the bubble's computed border-radius so the clip-path's
-        // rounded corners match the bubble exactly.
-        let bubbleRadius = 8;
+    /** Where each whitespace-separated word inside an element is drawn
+     *  (words may span text nodes, e.g. around a link). */
+    function elementWords(el) {
+      const nodes = [];
+      let full = '';
+      const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      for (let n = w.nextNode(); n; n = w.nextNode()) { nodes.push({ n, at: full.length }); full += n.nodeValue; }
+      if (!nodes.length) return [];
+      const locate = pos => {
+        let hit = nodes[0];
+        for (const x of nodes) { if (x.at <= pos) hit = x; else break; }
+        return hit;
+      };
+      const out = [];
+      const range = document.createRange();
+      const re = /\S+/g;
+      let mm;
+      while ((mm = re.exec(full))) {
+        const a = locate(mm.index), b = locate(mm.index + mm[0].length - 1);
         try {
-          const cs = window.getComputedStyle(clipTarget);
-          const r = parseFloat(cs.borderTopLeftRadius);
-          if (!isNaN(r) && r > 0) bubbleRadius = r;
-        } catch (e) {}
-
-        // Measure each word's destination position
-        const destWordEls = Array.from(bubble.querySelectorAll('.em-sa-word'));
-        const destWordRects = destWordEls.map(el => el.getBoundingClientRect());
-
-        // Measure source word positions in the textarea
-        const originRects = measureSourceWordPositions(srcRect, words, ta);
-
-        // Initial clip-path: show only the top ~38px (a hint of pill)
-        // Applied to the clipTarget element (bubble itself on desktop,
-        // inner .m-msg-bubble on mobile).
-        const startClipHeight = Math.min(38, clipTargetRect.height);
-        clipTarget.style.clipPath = 'inset(0 0 ' + (clipTargetRect.height - startClipHeight) + 'px 0 round ' + bubbleRadius + 'px)';
-
-        // No delta — bubble stayed in thread, no detach
-        const deltaX = 0;
-        const deltaY = 0;
-
-        // v0.9.43 — Textarea clearing is now handled by the click
-        // handlers themselves (which clear the textarea immediately
-        // after sendViaEtsy synchronously captures ta.value, before
-        // its first await yields). We no longer need the CSS-hide
-        // approach (which had browser quirks on mobile).
-
-        // Build the flying tiles
-        const flyEls = words.map((word, i) => {
-          const el = document.createElement('div');
-          el.className = 'em-sa-flying';
-          el.textContent = word;
-          const o = originRects[i] || { left: srcRect.left + 10, top: srcRect.top + 10, width: 40, height: 20 };
-          el.style.left = o.left + 'px';
-          el.style.top  = o.top + 'px';
-          document.body.appendChild(el);
-          return { el, origin: o, destEl: destWordEls[i], destRect: destWordRects[i] };
-        });
-
-        // Fade the bubble shell in. Use rAF so the initial-opacity-0
-        // is committed before the transition starts.
-        requestAnimationFrame(() => {
-          bubble.style.transition = 'opacity 180ms ease-out';
-          bubble.style.opacity = '1';
-        });
-        fireSparks(srcRect.left + srcRect.width / 2, srcRect.top + 8);
-
-        // Animate clip-path open
-        const totalWordTime = TIMING.flightDuration + (flyEls.length - 1) * TIMING.wordStagger;
-        const revealDuration = Math.max(totalWordTime - 100, 400);
-        clipTarget.animate([
-          { clipPath: 'inset(0 0 ' + (clipTargetRect.height - startClipHeight) + 'px 0 round ' + bubbleRadius + 'px)' },
-          { clipPath: 'inset(0 0 0px 0 round ' + bubbleRadius + 'px)' }
-        ], {
-          duration: revealDuration,
-          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
-          fill: 'forwards'
-        });
-
-        // Launch each word's direct flight to its destination
-        const apexLiftFactor = mobile ? 0.18 : 0.25;
-        const apexLiftMax    = mobile ? 80  : 120;
-        const apexLiftBase   = mobile ? 28  : 40;
-
-        flyEls.forEach((fw, i) => {
-          const delay = i * TIMING.wordStagger;
-          const srcCx = fw.origin.left + fw.origin.width / 2;
-          const srcCy = fw.origin.top  + fw.origin.height / 2;
-          const dstCx = fw.destRect.left + fw.destRect.width / 2 + deltaX;
-          const dstCy = fw.destRect.top  + fw.destRect.height / 2 + deltaY;
-          const apexLift = Math.min(apexLiftMax, Math.abs(srcCy - dstCy) * apexLiftFactor + apexLiftBase);
-          const apexX = (srcCx + dstCx) / 2;
-          const apexY = Math.min(srcCy, dstCy) - apexLift;
-
-          const N = 16;
-          const waypoints = [];
-          for (let j = 0; j <= N; j++) {
-            const t = j / N;
-            const x = (1-t)*(1-t)*srcCx + 2*(1-t)*t*apexX + t*t*dstCx;
-            const y = (1-t)*(1-t)*srcCy + 2*(1-t)*t*apexY + t*t*dstCy;
-            const dx = x - srcCx;
-            const dy = y - srcCy;
-            const fadeT = t > 0.7 ? (t - 0.7) / 0.3 : 0;
-            const chipAlpha = 1 - fadeT;
-            waypoints.push({
-              transform: 'translate(' + dx + 'px, ' + dy + 'px)',
-              '--chip-alpha': chipAlpha,
-              opacity: 1
-            });
-          }
-          const anim = fw.el.animate(waypoints, {
-            duration: TIMING.flightDuration,
-            delay: delay,
-            easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
-            fill: 'forwards'
-          });
-          anim.onfinish = () => {
-            try {
-              fw.destEl.classList.add('em-sa-word-typed');
-              fw.el.style.display = 'none';
-            } catch (e) {}
-
-            if (i === flyEls.length - 1) {
-              clipTarget.style.clipPath = 'none';
-              bubble.classList.add('em-sa-preview-landed');
-              try {
-                fireRipple(fw.destRect.right, fw.destRect.top + fw.destRect.height / 2);
-              } catch (e) {}
-              setTimeout(() => {
-                flyEls.forEach(f => { try { f.el.remove(); } catch (e) {} });
-              }, 300);
-              // Safety net: remove preview after 60s if real message
-              // never arrived (backend send failed silently, etc.)
-              setTimeout(() => {
-                if (bubble && bubble.parentNode) bubble.remove();
-              }, 60000);
-            }
-          };
-        });
-      } catch (err) {
-        try { console.warn('[SendAnimation] play() error:', err); } catch (e) {}
+          range.setStart(a.n, mm.index - a.at);
+          range.setEnd(b.n, mm.index + mm[0].length - b.at);
+        } catch (_) { continue; }
+        const q = range.getClientRects()[0] || range.getBoundingClientRect();
+        out.push({ text: mm[0], left: q.left, top: q.top, width: q.width, height: q.height });
       }
+      return out;
     }
 
-    // Remove all preview bubbles AND their thread placeholders whose
-    // normalized text matches a real outbound message. Called by
-    // renderThreadMessages when real messages arrive in state.messages.
-    // Without this the floating preview + placeholder would persist
-    // until the 60s safety timeout, even though the real bubble is
-    // already in the thread.
-    function reconcileAgainstRealMessages(messages) {
-      try {
-        if (!Array.isArray(messages) || !messages.length) return;
-        const realOutboundKeys = new Set();
-        for (const m of messages) {
-          if (m && m.direction === 'outbound') {
-            const k = normalizeText(m.text);
-            if (k) realOutboundKeys.add(k);
-          }
-        }
-        if (!realOutboundKeys.size) return;
-        // Preview bubbles in the thread (or wherever they are)
-        const previews = document.querySelectorAll('[data-em-sa-preview]');
-        previews.forEach(p => {
-          const k = p.getAttribute('data-em-sa-preview');
-          if (k && realOutboundKeys.has(k)) p.remove();
+    /** Run onFrame(p) for p eased from 0 to 1 over ms, then keep() to hold
+     *  the view steady. Resolves when done. */
+    function tween(ms, onFrame, keep) {
+      return new Promise(resolve => {
+        const t0 = performance.now();
+        const ease = p => 1 - Math.pow(1 - p, 3);
+        const step = now => {
+          let p = Math.min(1, (now - t0) / ms);
+          try { onFrame(ease(p)); if (keep) keep(); } catch (_) { p = 1; }
+          if (p < 1) requestAnimationFrame(step); else resolve();
+        };
+        requestAnimationFrame(step);
+      });
+    }
+
+    function releaseHold() {
+      active = null;
+      const fns = Array.from(deferred);
+      deferred.clear();
+      fns.forEach(fn => { try { fn(); } catch (e) { console.warn('[SendFlight] deferred render:', e); } });
+    }
+
+    function clearGrowth(node) {
+      ['height', 'paddingTop', 'paddingBottom', 'marginBottom', 'overflow', 'opacity'].forEach(k => { node.style[k] = ''; });
+    }
+
+    function abort(f) {
+      if (!f || f.done) return;
+      f.done = true;
+      clearTimeout(f.safety);
+      try { if (f.layer) f.layer.remove(); } catch (_) {}
+      try { if (f.node) { f.node.classList.remove('em-flight-text-hidden'); clearGrowth(f.node); } } catch (_) {}
+      try { if (f.quiet) f.quiet.classList.remove('em-flight-quiet'); } catch (_) {}
+      try { if (f.scroller) f.scroller.style.overflowAnchor = f.oldAnchor || ''; } catch (_) {}
+      if (active === f) releaseHold();
+    }
+
+    /** Keep the view steady while the layout changes under it: the reply
+     *  box stays still on desktop, the phone stays on the newest message. */
+    function keeper(f) {
+      if (!f || !f.scroller) return () => {};
+      if (f.surface === 'mobile') {
+        return () => { f.scroller.scrollTop = f.scroller.scrollHeight; };
+      }
+      return () => {
+        if (!f.anchorEl || !f.anchorEl.isConnected || !f.scroller.isConnected) return;
+        const d = f.anchorEl.getBoundingClientRect().bottom - f.anchorBottom;
+        if (Math.abs(d) >= 0.5) f.scroller.scrollTop += d;
+      };
+    }
+
+    /** Measure what a flight needs from the reply box. Call before the box
+     *  is emptied. Returns null when nothing should fly. */
+    function prepare(o) {
+      if (!o || !o.text || document.hidden) return null;
+      const surface = o.surface === 'mobile' ? 'mobile' : 'desktop';
+      const list = listFor(surface);
+      if (!list || !list.isConnected) return null;
+      const scroller = scrollerFor(surface, list);
+      const anchorEl = anchorFor(surface);
+      const ta = o.textarea || null;
+      const prep = {
+        surface, list, scroller, anchorEl, textarea: ta,
+        anchorBottom: anchorEl ? anchorEl.getBoundingClientRect().bottom : 0,
+        reduced: reducedMotion(),
+        words: [], font: null, clip: null
+      };
+      if (prep.reduced) return prep;
+      const src = o.source && o.source.isConnected ? o.source : ta;
+      if (!src) return prep;
+      const clip = visibleRect(src);
+      if (!clip) return prep;
+      const cs = getComputedStyle(src);
+      prep.font = {
+        family: cs.fontFamily, size: cs.fontSize, weight: cs.fontWeight, style: cs.fontStyle,
+        spacing: cs.letterSpacing, color: cs.color
+      };
+      const words = src.tagName === 'TEXTAREA' ? textareaWords(src) : elementWords(src);
+      prep.words = words.map(w => Object.assign(w, {
+        visible: w.top + w.height > clip.top && w.top < clip.bottom && w.left < clip.right && w.left + w.width > clip.left
+      }));
+      prep.clip = clip;
+      return prep;
+    }
+
+    /** Copies of the reply box's words, lined up on them, each paired with
+     *  its place in the bubble. Returns { layer, pairs } or null. */
+    function buildWords(prep, dest, destSize, scroller) {
+      const n = Math.min(prep.words.length, dest.length, MAX_WORDS);
+      if (!prep.font || !n) return null;
+      // Clip to the conversation and the reply box, never over headers.
+      const areas = [prep.clip];
+      if (scroller) areas.push(scroller.getBoundingClientRect());
+      if (prep.surface === 'mobile') {
+        const comp = document.getElementById('mComposer');
+        if (comp) areas.push(comp.getBoundingClientRect());
+      }
+      const top = Math.min.apply(null, areas.map(a => a.top));
+      const left = Math.min.apply(null, areas.map(a => a.left));
+      const bottom = Math.max.apply(null, areas.map(a => a.bottom));
+      const right = Math.max.apply(null, areas.map(a => a.right));
+
+      const layer = document.createElement('div');
+      layer.className = 'em-flight-layer';
+      const pairs = [];
+      for (let i = 0; i < n; i++) {
+        const s = prep.words[i], d = dest[i];
+        if (!s.visible && !(d.top < bottom && d.top + d.height > top)) continue;
+        const x = document.createElement('span');
+        x.className = 'em-flight-x';
+        const y = document.createElement('span');
+        y.className = 'em-flight-y';
+        y.textContent = s.text;
+        Object.assign(y.style, {
+          fontFamily: prep.font.family, fontSize: prep.font.size, fontWeight: prep.font.weight,
+          fontStyle: prep.font.style, letterSpacing: prep.font.spacing, color: prep.font.color
         });
-      } catch (e) { /* never throw */ }
+        // Words scrolled out of the box start at its edge, unseen.
+        const sTop = s.visible ? s.top
+          : Math.max(prep.clip.top, Math.min(prep.clip.bottom - s.height, s.top));
+        x.style.transform = 'translate(' + s.left + 'px,' + sTop + 'px)';
+        x.appendChild(y);
+        layer.appendChild(x);
+        pairs.push({ s, d, x, y, sTop });
+      }
+      if (!pairs.length) return null;
+      document.body.appendChild(layer);
+      // The layer covers the layout viewport; clip it in its own terms.
+      const L = layer.getBoundingClientRect();
+      layer.style.clipPath = 'inset(' + Math.max(0, top - L.top) + 'px ' + Math.max(0, L.right - right) + 'px ' +
+                             Math.max(0, L.bottom - bottom) + 'px ' + Math.max(0, left - L.left) + 'px)';
+      // Line each copy's glyphs up exactly on the word it replaces.
+      const range = document.createRange();
+      const got = pairs.map(pr => { range.selectNodeContents(pr.y); return range.getBoundingClientRect(); });
+      const k = destSize > 0 && parseFloat(prep.font.size) > 0 ? destSize / parseFloat(prep.font.size) : 1;
+      pairs.forEach((pr, i) => {
+        const g = got[i];
+        const ox = g.left - pr.s.left, oy = g.top - pr.sTop;   // glyphs inside the copy's box
+        pr.baseL = pr.s.left - ox;
+        pr.baseT = pr.sTop - oy;
+        pr.k = k;
+        // The copy scales from its corner, so its glyph offset scales too.
+        pr.dx = (pr.d.left - pr.s.left) + ox * (1 - k);
+        pr.dy = (pr.d.top - pr.sTop) + oy * (1 - k);
+        pr.x.style.transform = 'translate(' + pr.baseL + 'px,' + pr.baseT + 'px)';
+      });
+      return { layer, pairs };
     }
 
-    window.SendAnimation = { play, reconcileAgainstRealMessages };
+    /** Fly prep's words into the bubble drawn for localId. */
+    function launch(prep, localId) {
+      if (!prep) return;
+      if (active) abort(active);
+      const node = prep.list && prep.list.isConnected && prep.list.querySelector(sel(localId));
+      if (!node || prep.reduced) { settleComposer(prep, null, true); return; }
+      const f = {
+        surface: prep.surface, node, scroller: prep.scroller && prep.scroller.isConnected ? prep.scroller : null,
+        anchorEl: prep.anchorEl, anchorBottom: prep.anchorBottom, done: false
+      };
+      const keep = keeper(f);
+      const scroller = f.scroller;
+      f.oldAnchor = scroller ? scroller.style.overflowAnchor : '';
+      if (scroller) scroller.style.overflowAnchor = 'none';
+
+      // 1. Final layout: where everything ends up once the bubble is in.
+      keep();
+      const bubble = prep.surface === 'mobile' ? (node.querySelector('.m-msg-bubble') || node) : node;
+      const textEl = node.querySelector(prep.surface === 'mobile' ? '.m-msg-text' : '.em-msg-text');
+      const dest = textEl && prep.words.length ? elementWords(textEl) : [];
+      const bubbleColor = getComputedStyle(bubble).backgroundColor;
+      const destColor = getComputedStyle(textEl || bubble).color;
+      const destSize = textEl ? parseFloat(getComputedStyle(textEl).fontSize) : 0;
+
+      // 2. The words, lined up on the reply box.
+      let built = null;
+      try { built = buildWords(prep, dest, destSize, scroller); } catch (e) { console.warn('[SendFlight] words:', e); }
+      if (built) {
+        f.layer = built.layer;
+        if (prep.textarea && prep.textarea.isConnected) {
+          f.quiet = prep.textarea;
+          f.quiet.classList.add('em-flight-quiet');
+        }
+      }
+
+      // 3. Collapse the bubble so the view looks as it did before Send;
+      //    the bubble then opens, pushing the history up, frame by frame.
+      const cs = getComputedStyle(node);
+      const H = node.offsetHeight;
+      const pt = parseFloat(cs.paddingTop) || 0, pb = parseFloat(cs.paddingBottom) || 0;
+      const mb = parseFloat(cs.marginBottom) || 0;
+      Object.assign(node.style, { height: '0px', paddingTop: '0px', paddingBottom: '0px', marginBottom: '0px', overflow: 'hidden', opacity: '0' });
+      if (built) node.classList.add('em-flight-text-hidden');
+      keep();
+
+      active = f;
+      f.safety = setTimeout(() => abort(f), 2600);
+
+      tween(300, p => {
+        if (f.done || !node.isConnected) return;
+        node.style.height = (H * p) + 'px';
+        node.style.paddingTop = (pt * p) + 'px';
+        node.style.paddingBottom = (pb * p) + 'px';
+        node.style.marginBottom = (mb * p) + 'px';
+        node.style.opacity = String(Math.min(1, p * 1.6));
+      }, () => { if (!f.done) keep(); }).then(() => {
+        if (f.done || !node.isConnected) return;
+        clearGrowth(node);
+        keep();
+      });
+
+      // 4. Flight: each word rises early and drifts sideways late (a soft
+      //    arc), takes the bubble's colour and size on the way.
+      let landAt = 0;
+      if (built) {
+        const pairs = built.pairs;
+        const spread = Math.min(170, pairs.length * 14);
+        const step = pairs.length > 1 ? spread / (pairs.length - 1) : 0;
+        pairs.forEach((pr, i) => {
+          const dist = Math.hypot(pr.dx, pr.dy);
+          const dur = Math.round(Math.max(440, Math.min(640, 400 + dist * 0.35)));
+          const delay = Math.round(i * step);
+          landAt = Math.max(landAt, delay + dur);
+          const base = 'translate(' + pr.baseL + 'px,' + pr.baseT + 'px)';
+          pr.x.animate([
+            { transform: base + ' translateX(0px)' },
+            { transform: base + ' translateX(' + pr.dx + 'px)' }
+          ], { duration: dur, delay, easing: EASE_X, fill: 'both' });
+          pr.y.animate([
+            { transform: 'translateY(0px) scale(1)', opacity: pr.s.visible ? 1 : 0 },
+            { transform: 'translateY(' + pr.dy + 'px) scale(' + pr.k + ')', opacity: 1 }
+          ], { duration: dur, delay, easing: EASE_Y, fill: 'both' });
+          // The word keeps its ink until it is nearly in place, then takes
+          // the bubble's colour quickly (a long blend reads as grey).
+          pr.y.animate([
+            { color: prep.font.color },
+            { color: prep.font.color, offset: 0.6 },
+            { color: destColor, offset: 0.85 },
+            { color: destColor }
+          ], { duration: dur, delay, easing: 'linear', fill: 'both' });
+        });
+      }
+
+      // 5. Landing: the bubble's own text takes over and the copies fade.
+      setTimeout(() => {
+        if (f.done) return;
+        if (!node.isConnected) { abort(f); return; }
+        f.done = true;
+        clearTimeout(f.safety);
+        node.classList.remove('em-flight-text-hidden');
+        if (f.quiet) f.quiet.classList.remove('em-flight-quiet');
+        clearGrowth(node);
+        if (scroller) scroller.style.overflowAnchor = f.oldAnchor || '';
+        if (f.layer) {
+          const layer = f.layer;
+          f.layer = null;
+          layer.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: 'ease-out', fill: 'forwards' })
+            .finished.then(() => layer.remove(), () => layer.remove());
+        }
+        // Renders held during the flight run now; they may swap the node.
+        if (active === f) releaseHold();
+        try {
+          const live = (prep.list && prep.list.querySelector(sel(localId))) || node;
+          const target = prep.surface === 'mobile' ? (live.querySelector('.m-msg-bubble') || live) : live;
+          const glow = String(bubbleColor || 'rgb(3,102,214)').replace(/^rgba?\(([^,]+),([^,]+),([^,)]+).*$/, 'rgba($1,$2,$3,');
+          target.animate([
+            { boxShadow: '0 0 0 0 ' + glow + '0.38)' },
+            { boxShadow: '0 0 0 7px ' + glow + '0)' }
+          ], { duration: 650, easing: 'ease-out' });
+        } catch (_) {}
+        settleComposer(prep, f, false);
+      }, Math.max(320, landAt));
+    }
+
+    /** Ease the emptied reply box back to its resting height. */
+    function settleComposer(prep, f, instant) {
+      const ta = prep && prep.textarea;
+      if (!ta || !ta.isConnected || ta.value) return;   // the operator is already typing
+      const mobile = prep.surface === 'mobile';
+      const fit = () => {
+        if (mobile && typeof window.mAutoGrow === 'function') window.mAutoGrow(ta);
+        else { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; }
+      };
+      const h0 = ta.getBoundingClientRect().height;
+      const old = ta.style.height;
+      fit();
+      const h1 = ta.getBoundingClientRect().height;
+      if (instant || Math.abs(h1 - h0) < 2 || reducedMotion() || document.hidden) return;
+      ta.style.height = old || (h0 + 'px');
+      const keep = keeper(f);
+      let typed = false;
+      const onInput = () => { typed = true; };
+      ta.addEventListener('input', onInput, { once: true });
+      tween(220, p => {
+        if (typed) return;
+        ta.style.height = (h0 + (h1 - h0) * p) + 'px';
+      }, () => { if (!typed) keep(); }).then(() => {
+        ta.removeEventListener('input', onInput);
+        if (!typed && !ta.value) fit();
+      });
+    }
+
+    /** A failed send's bubble folds away. Resolves when it is gone. */
+    function retract(localId) {
+      const nodes = Array.from(document.querySelectorAll(sel(localId)));
+      if (active && nodes.indexOf(active.node) >= 0) abort(active);
+      if (!nodes.length || reducedMotion() || document.hidden) return Promise.resolve();
+      return Promise.all(nodes.map(node => {
+        const surface = node.closest('#mMessagesList') ? 'mobile' : 'desktop';
+        const list = listFor(surface);
+        const f = { surface, scroller: scrollerFor(surface, list), anchorEl: anchorFor(surface) };
+        f.anchorBottom = f.anchorEl ? f.anchorEl.getBoundingClientRect().bottom : 0;
+        const keep = surface === 'mobile' ? () => {} : keeper(f);
+        const cs = getComputedStyle(node);
+        const H = node.offsetHeight, pt = parseFloat(cs.paddingTop) || 0, pb = parseFloat(cs.paddingBottom) || 0;
+        const mb = parseFloat(cs.marginBottom) || 0;
+        node.style.overflow = 'hidden';
+        return tween(260, p => {
+          const q = 1 - p;
+          node.style.height = (H * q) + 'px';
+          node.style.paddingTop = (pt * q) + 'px';
+          node.style.paddingBottom = (pb * q) + 'px';
+          node.style.marginBottom = (mb * q) + 'px';
+          node.style.opacity = String(Math.max(0, 1 - p * 1.5));
+        }, keep);
+      })).then(() => {});
+    }
+
+    /** Draw the eye to the reply box when a failed reply comes back. */
+    function flash(el) {
+      try {
+        if (!el || reducedMotion()) return;
+        el.animate([
+          { boxShadow: '0 0 0 3px rgba(207,34,46,.30)' },
+          { boxShadow: '0 0 0 3px rgba(207,34,46,.30)', offset: 0.4 },
+          { boxShadow: '0 0 0 0 rgba(207,34,46,0)' }
+        ], { duration: 1400, easing: 'ease-out' });
+      } catch (_) {}
+    }
+
+    window.SendFlight = {
+      prepare, launch, retract, flash,
+      holding() {
+        if (!active) return false;
+        if (!active.node.isConnected) { abort(active); return false; }
+        return true;
+      },
+      afterFlight(fn) { if (typeof fn === 'function') deferred.add(fn); }
+    };
   })();
   </script>
 </body>

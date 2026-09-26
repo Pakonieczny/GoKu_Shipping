@@ -19,7 +19,7 @@
  *   - Deterministic doc id (optim_<draftId>) so re-inserts overwrite
  *
  * Endpoint: POST /.netlify/functions/etsyMailOptimisticMessage
- *   { op: "insert", threadId, draftId, text, employeeName, attachments? }
+ *   { op: "insert", threadId, draftId, text, employeeName, attachments?, atMs? }
  *   { op: "delete", threadId, draftId }
  *
  * Auth: requireExtensionAuth (same secret as the other M5 endpoints).
@@ -41,7 +41,7 @@ function ok(payload) { return json(200, { success: true, ...payload }); }
 /** Build an outbound message doc that visually matches a real M2-scraped
  *  outbound. The renderer pivots on `direction === "outbound"` for bubble
  *  placement; everything else is for fidelity. */
-function buildOptimisticDoc({ draftId, text, employeeName, attachments }) {
+function buildOptimisticDoc({ draftId, text, employeeName, attachments, atMs }) {
   const atts = Array.isArray(attachments) ? attachments : [];
   const images   = atts.filter(a => a && (a.type === "image" || a.type === "tracking_image"));
   const listings = atts.filter(a => a && a.type === "listing");
@@ -63,7 +63,12 @@ function buildOptimisticDoc({ draftId, text, employeeName, attachments }) {
     price       : a.price        || null
   }));
 
-  const nowMs = Date.now();
+  // A re-insert for an older send (the inbox's backstop when it reopens a
+  // thread whose last draft is already sent) passes the send's own time, so
+  // the copy sorts where the message was sent instead of at "now".
+  const now = Date.now();
+  const at = Number(atMs);
+  const nowMs = Number.isFinite(at) && at > now - 30 * 86400000 && at < now + 300000 ? at : now;
   return {
     // What the renderer reads
     direction       : "outbound",
@@ -135,12 +140,18 @@ exports.handler = async (event) => {
 
   try {
     if (op === "insert") {
-      const { text, employeeName = null, attachments = [] } = body;
+      const { text, employeeName = null, attachments = [], atMs = null } = body;
       const doc = buildOptimisticDoc({
-        draftId, text, employeeName, attachments
+        draftId, text, employeeName, attachments, atMs
       });
-      // Deterministic ID + merge:false so a second insert overwrites
-      // (e.g. operator hits Send again on the same draftId).
+      // The doc already shows this send: leave it alone. Rewriting it moved
+      // its timestamp to "now", so reopening a thread brought back a stale
+      // "syncing…" copy of a reply that Etsy had delivered long ago.
+      const cur = await ref.get();
+      if (cur.exists && (cur.data() || {}).optimisticTextKey === doc.optimisticTextKey) {
+        return ok({ docId, threadId, inserted: false, unchanged: true });
+      }
+      // Deterministic ID + merge:false so a new send's text replaces it.
       await ref.set(doc, { merge: false });
       return ok({ docId, threadId, inserted: true });
     }
