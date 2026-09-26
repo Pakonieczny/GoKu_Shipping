@@ -2090,6 +2090,8 @@ const Gate = window.Gate = (() => {
     run.releasePolicy = 2; run.solidIncluded = {}; run.setIds = []; run.setId = null; run.seq = null; run.step = "nest";
     await RunCtl.save(run);
   }
+  // a sheet the sheet window is rewriting (charms taken off or moved onto it) keeps its set: see holdRelease there
+  const holding = p => !!p.keepRelease && Date.now() - (+p.keepRelease.at || 0) < 600000;
   let assemblyQueue = Promise.resolve();
   function assemble(run, context) {
     const ops = window.CharmNestOperations;
@@ -2109,7 +2111,8 @@ const Gate = window.Gate = (() => {
     if (!set && (regular.length || roses.length)) set = await Sets.ensure(run.runId, "dispatch", { roseOnly: !regular.length && choices.rose !== true });
     if (!set) { run.heldSheets = pages.length; return; }
     if (set.committedAt) return;
-    for (const sh of allSheets().filter(p => p.runId === run.runId && p.setId === set.setId && !release(p, set.seq).include)) {
+    // (a sheet being rewritten by hand in the sheet window keeps its place and gets its new label once it is written)
+    for (const sh of allSheets().filter(p => p.runId === run.runId && p.setId === set.setId && !holding(p) && !release(p, set.seq).include)) {
       const previous = {draft:sh.draft,setId:sh.setId,seq:sh.seq,sheetIndex:sh.sheetIndex,label:sh.label};
       sh.draft = true; sh.setId = null; sh.seq = null; sh.sheetIndex = null; sh.label = null;
       try {
@@ -2389,7 +2392,7 @@ const Gate = window.Gate = (() => {
     el2.className = cls; el2.classList.remove("hidden"); el2.innerHTML = html;
     const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
   }
-  return { solidSelected:m => selected()[m] === true, changeMembership, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, upgrade, selected, nestable, renderRelease, state: () => R };
+  return { solidSelected:m => selected()[m] === true, changeMembership, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, upgrade, selected, nestable, renderRelease, state: () => R };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
@@ -7413,7 +7416,7 @@ const LiveNest = window.LiveNest = (() => {
     return plan;
   }
   // the page's own marks first; the sets of its run are looked at only when none says so
-  const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || !!p.laserDoneAt || (!(p.metal==='rose'&&(p.rosePlan||p.roseProtected)) && (!!p.runHold || !!p.intakeFinalized)) ||
+  const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || !!Gate.holding(p) || !!p.laserDoneAt || (!(p.metal==='rose'&&(p.rosePlan||p.roseProtected)) && (!!p.runHold || !!p.intakeFinalized)) ||
     Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId));
   /* Gold and Silver arrivals go to the run's earliest open sheet first (the pool puts them on the same one). An order
      that misses its gaps moves on to the next sheet, and the earlier sheet stays first in line: once a newer page existed

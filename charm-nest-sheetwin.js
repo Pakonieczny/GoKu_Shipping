@@ -167,6 +167,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
 .swQr .cap b{font:600 12px var(--sans);color:var(--ink70)}
 .swQr .busy{display:none;position:absolute;left:0;top:0;width:72px;height:72px;border-radius:6px;background:rgba(255,254,251,.82);place-items:center}
 .swQr.remaking .busy{display:grid}
+.swQr [data-r2=release]{margin-left:auto;flex:none}
 .swNav{display:flex;align-items:center;gap:6px;padding:8px 10px;border-bottom:1px solid var(--line2)}
 .swNav .swBackBtn{display:inline-flex;align-items:center;gap:4px;border:0;background:transparent;border-radius:8px;padding:5px 8px 5px 4px;font:600 12.5px var(--sans);color:var(--ink70);cursor:pointer}
 .swNav .swBackBtn svg{width:15px;height:15px}
@@ -952,11 +953,39 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     const rec = W.rec, E = W.el, f = (rec.label?.files || [])[0];
     const n = (rec.label?.orders || rec.orders || []).length;
     const qr = f ? `<div class="swQr" data-r2="qr"><figure class="qrPart" style="margin:0"><div class="qrTile"><img data-big title="Sheet QR label" data-label-sheet="${esc(rec.id)}" data-label-path="${esc(f.path || "")}" data-label-part="${+f.part || 1}" crossorigin="anonymous"${f.url ? ` src="${esc(cors(f.url))}"` : ""} alt="Sheet QR code"></div></figure><span class="busy"><span class="owSpin"></span></span><span class="cap"><b>QR label${(rec.label.files || []).length > 1 ? ` · ${(rec.label.files || []).length} parts` : ""}</b><span data-r2="qrText">${n} order${n === 1 ? "" : "s"} · click to enlarge</span></span></div>`
-      : `<div class="swQr"><span class="qrWaiting" style="width:72px;height:72px">No QR yet</span><span class="cap"><b>QR label</b><span>Made when the sheet joins a set</span></span></div>`;
+      : `<div class="swQr" data-r2="qr"><span class="qrWaiting" style="width:72px;height:72px">No QR yet</span><span class="busy"><span class="owSpin"></span></span><span class="cap"><b>QR label</b><span data-r2="qrText">Made when the sheet joins a set</span></span>${canRelease() ? `<button type="button" class="btn sage xs" data-r2="release" title="Put this sheet in its set now and make its QR label for the orders on it, without waiting for it to fill again">Release now</button>` : ""}</div>`;
     const files = [["ai", ".ai", "Download the sheet with its back engravings"], ["dxf", ".dxf", "DXF · millimetres"]].map(([fmt2, label, title]) => `<button class="btn ghost xs" data-export-one="${esc(rec.id)}" data-format="${fmt2}" title="${title}">${label}</button>`).join("") +
       (rec.outputs?.labelled?.url ? `<a class="btn ghost xs" href="${esc(rec.outputs.labelled.url)}" target="_blank" rel="noopener" title="Every charm numbered, as a PDF">Proof</a>` : "") +
       (rec.outputs?.report?.url ? `<a class="btn ghost xs" href="${esc(rec.outputs.report.url)}" target="_blank" rel="noopener" title="The nest report (JSON)">Report</a>` : "");
     E.foot.innerHTML = `<div class="row">${qr}</div><div class="row"><span class="fLabel">Files</span><span class="swFiles">${files}</span></div>`;
+    const rb = E.foot.querySelector("[data-r2=release]"); if (rb) rb.onclick = () => releaseNow(rb);
+  }
+  /* A Gold or Silver sheet that charms were taken off before 26 Sep left its set and lost its QR label, and waited to
+     fill again before it got one (Paul: "The QR code never got correctly remade"). Changes made here keep a released
+     sheet in its set now (holdRelease); such a sheet, still filling with freed room marked on it, can be put back by hand. */
+  function canRelease() {
+    const sh = allSheets().find(p => p.sheetId === W.id), run = window.B && B.run;
+    return !!sh && !W.flow && ["gold", "silver"].includes(sh.metal) && sh.draft && !sh.releaseFull && FREED.has(W.id) &&
+      sh.placements.length > 0 && !!sh.verification?.ok && !!sh.persistedDone && !busy(sh) && !sh.roseCutAt && !sh.laserDoneAt && !sh.recalled &&
+      !!run && sh.runId === run.runId && !!window.Gate && Gate.modern(run.runId) && !["complete", "abandoned"].includes(run.status);
+  }
+  async function releaseNow(btn) {
+    const sh = allSheets().find(p => p.sheetId === W.id), run = B.run, id = W.id; if (!sh || !canRelease()) return;
+    const box = W.el.foot.querySelector("[data-r2=qr]"), text = box && box.querySelector("[data-r2=qrText]");
+    btn.disabled = true; if (box) box.classList.add("remaking"); if (text) text.textContent = "Making the QR label…";
+    const topup = sh.topup && !sh.topup.closedAt ? sh.topup : null;
+    sh.releaseFull = true; if (topup) topup.closedAt = Date.now();
+    try {
+      await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, releaseFull: true, topup: sh.topup || null } }, { quiet: true });
+      await Gate.assemble(run);
+      if (sh.draft) { const set = Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt); throw new Error(set ? Gate.policy(sh, set.seq).reason : "no open set to join"); }
+      agent({ metal: sh.metal, run: sh.runId }, "POOL", `${sheetName(sh)} released by hand at ${fmt.pct(sh.density || 0)} full, with a new QR label for its ${new Set(sh.charms.filter(c => sh.placements.some(p => p.id === c.id)).map(ridOf)).size} orders`);
+      if (window.Session) Session.schedule();
+    } catch (e) {
+      if (sh.draft) { sh.releaseFull = false; if (topup) delete topup.closedAt; api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, releaseFull: false, topup: sh.topup || null } }, { quiet: true }).catch(() => {}); }
+      toast("Not released: " + e.message, "bad", 8000);
+    }
+    if (W.id === id && W.dlg.open && !W.flow) open2(id);
   }
   function renderMenu() {
     const rec = W.rec, E = W.el, live = typeof openRunPage === "function" && openRunPage(rec.id);
@@ -1400,6 +1429,13 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
   // A sheet of a run under the set rules is a working sheet again once it is written, and the set takes it back with a
   // new label while it is still ready for the laser (Gate.assemble, as at every check); one that is no longer full
   // enough fills again first, and the label it had (the old orders) goes. An older run's sheet got its label as it saved.
+  // A sheet already released to its set stays there through a change made here: it is rewritten as it now stands and
+  // gets a new QR label for its new orders at once. It used to be written as "not full", leave its set and lose its label
+  // until it filled again (Paul, 26 Sep). The mark is read by the nest (it keeps releaseFull), by Gate.assemble (it does
+  // not take the sheet out of its set while it is rewritten) and by LiveNest.closed (no arrival goes onto it meanwhile).
+  const released = sh => !!sh.releaseFull || (!!sh.setId && !sh.draft);
+  function holdRelease(pages) { for (const sh of pages) if (released(sh) && !sh.roseCutAt && !sh.laserDoneAt && !sh.recalled) sh.keepRelease = { full: !!sh.releaseFull, at: Date.now() }; }
+  function letGo(pages) { for (const sh of pages) if (sh.keepRelease && !busy(sh)) delete sh.keepRelease; }
   async function remakeLabels(pages, st, paint) {
     st.state = "now"; paint();
     const run = window.B && B.run;
@@ -1481,6 +1517,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
         if (o.sh ? now.length !== 1 || now[0] !== o.sh : now.length) throw new Error("the sheets changed while this waited, so nothing was taken off; open the charm and try again");
       }
       changed = true;
+      holdRelease(pages);
       off.state = "now"; paint();
       // 1 · off the sheets this sorter holds (the rest of each sheet stays as placed: Orders.keepRest)
       for (const sh of pages) {
@@ -1524,6 +1561,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
       for (const r of rewrite) await rewritePage(r.sh, r.st, paint);
       if (pages.length) {
         await remakeLabels(pages, labels, paint);
+        letGo(pages);
         const ok = await verifySaved(rewrite.filter(r => r.st.state === "ok").map(r => ({ sh: r.sh, name: r.name, off: ids })), ids, p => p.state === "abandoned", check, paint);
         if (ok) await Pool.update([...ids], { removedVerifiedAt: Date.now() }).catch(() => {});
       }
@@ -1543,6 +1581,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
       if (W.id === sheetId && W.dlg.open) open2(sheetId);
     } catch (e) {
       for (const st of work.steps) doneStep(st);
+      letGo(pages);
       if (!changed) {   // nothing came off: the room it would have freed is not free
         for (const o of list) { const y = W.byPool.get(o.id); if (y) y.gone = false; }
         const mine = g => ids.has(g.x.poolId || (g.x.c && g.x.c.poolId));
@@ -2114,6 +2153,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
         if (!v || !g2.fits(v.fine.pm, x, y)) throw new Error("the room changed while the sheets saved; pick again from the new suggestions");
         g2.stamp(v.fine.bits, v.fine.w, v.fine.h, x, y);
       }
+      holdRelease(all);
       // 1 · off the filling sheets
       off.state = "now"; paint();
       for (const src of srcs) {
@@ -2145,6 +2185,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
       await Pool.update([...ids], { sheetId: target.sheetId, sheetName: target.fileBase || null, movedFrom: srcs.map(s => s.sheetId).filter(Boolean).join(",") || null, movedTo: target.sheetId, movedBy: who, movedAt: Date.now() }).catch(e => console.warn("sheet window: pool after move", e));
       // 4 · labels, then read back: on this sheet, off the others
       await remakeLabels(all, labels, paint);
+      letGo(all);
       const ok = await verifySaved([{ sh: target, name: tName, on: ids }, ...saves.map(r => ({ sh: r.sh, name: r.name, off: ids }))], ids, p => p.sheetId === target.sheetId && p.state !== "abandoned" && p.state !== "superseded", check, paint);
       if (ok) await Pool.update([...ids], { moveVerifiedAt: Date.now() }).catch(() => {});
       journal(rid, null);
@@ -2162,6 +2203,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
       return true;
     } catch (e) {
       for (const st of work.steps) doneStep(st);
+      letGo(all);
       let back = "";
       if (e.later) back = ` It finishes on its card in the Nest tab; the order is on ${tName}.`;
       else if (moved.length) { back = await putBack(moved, target, spots).then(() => ` Order ${rid} went back to ${srcs.map(sName).join(", ")}.`).catch(e2 => ` Putting it back stopped too (${e2.message}); the run places order ${rid} again.`); }
