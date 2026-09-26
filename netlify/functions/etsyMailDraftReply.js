@@ -356,21 +356,37 @@ const AI_MODEL     = process.env.ETSYMAIL_AI_MODEL    || "claude-sonnet-4-6";
 const AI_EFFORT    = process.env.ETSYMAIL_AI_EFFORT   || "high";
 const AI_MAX_TOKENS = parseInt(process.env.ETSYMAIL_AI_MAX_TOKENS || "12000", 10);
 
-// ─── Audit 2026-09 switches (unset = today's behaviour) ──────────────────
+// ─── Audit 2026-09 switches ──────────────────────────────────────────────
 // ETSYMAIL_AI_ADAPTIVE_THINKING
-//   "pipeline" → adaptive thinking for drafts the auto-pipeline requests
-//                in-process (background function, 15-minute limit)
+//   "pipeline" → (default) adaptive thinking for drafts the auto-pipeline
+//                requests in-process (background function, 15-minute limit)
 //   "all"      → every draft, including the inbox AI Draft button, which
 //                is still a synchronous (26 s) function: watch aiDurationMs
+//   "off"      → no thinking where it is optional (the behaviour before
+//                the audit); Sonnet 5 and newer reason by default, so pair
+//                it with ETSYMAIL_AI_PIPELINE_MODEL=claude-sonnet-4-6
+// ETSYMAIL_AI_PIPELINE_MODEL model for those in-process pipeline drafts;
+//                            default claude-sonnet-5 (trial D9). The AI Draft
+//                            button keeps ETSYMAIL_AI_MODEL.
+// ETSYMAIL_AI_SLIM_CONTEXT   on by default: slim receipts + message index in
+//                            the raw block; "0" sends the full documents
+// ETSYMAIL_AI_CACHE_TTL      "1h" (default) keeps the ~27K-token system prompt
+//                            cached between drafts minutes apart; "5m" = before
 // ETSYMAIL_AI_CACHE_TAIL=1   cache the conversation between tool-loop calls
-// ETSYMAIL_AI_SLIM_CONTEXT=1 slim receipts + message index in the raw block
+//                            (off: most drafts end in one call)
 // ETSYMAIL_AI_TIMEOUT_MS     per-request Anthropic timeout for this drafter
 //                            only (e.g. 120000 once drafts run in-process in
 //                            the 15-minute pipeline); unset = no timeout
-const AI_ADAPTIVE_THINKING = String(process.env.ETSYMAIL_AI_ADAPTIVE_THINKING || "").trim().toLowerCase();
+const AI_ADAPTIVE_THINKING = String(process.env.ETSYMAIL_AI_ADAPTIVE_THINKING || "pipeline").trim().toLowerCase();
+const AI_PIPELINE_MODEL    = process.env.ETSYMAIL_AI_PIPELINE_MODEL || "claude-sonnet-5";
 const AI_CACHE_TAIL        = process.env.ETSYMAIL_AI_CACHE_TAIL === "1";
-const AI_SLIM_CONTEXT      = process.env.ETSYMAIL_AI_SLIM_CONTEXT === "1";
+const AI_SLIM_CONTEXT      = process.env.ETSYMAIL_AI_SLIM_CONTEXT !== "0";
+const AI_CACHE_TTL         = process.env.ETSYMAIL_AI_CACHE_TTL === "5m" ? undefined : "1h";
 const AI_TIMEOUT_MS        = parseInt(process.env.ETSYMAIL_AI_TIMEOUT_MS || "0", 10) || 0;
+// Thinking tokens count toward max_tokens, so a thinking draft gets room.
+const AI_THINKING_MAX_TOKENS = Math.max(AI_MAX_TOKENS, 16000);
+// Models that run adaptive thinking when the request omits `thinking`.
+const THINKS_BY_DEFAULT_RX = /^claude-(?:sonnet-5|opus-5|fable-5)/;
 
 // ─── Context-building caps ───────────────────────────────────────────────
 // How many of the most-recent messages to include in the conversation
@@ -4148,11 +4164,20 @@ answering. Do not guess about the order's contents.`;
       initialMessages[0].content.push({ type: "text", text: "=== PRE-FETCHED LISTING DATA (customer referenced these URLs) ===\n\n" + block + "\n\n=== END PRE-FETCHED LISTING DATA ===\n\nWhen answering questions about variants/options/metals/prices for these listings, USE THIS DATA — not guesses from the URL slug or general knowledge. If the customer asks about variants not in this data, those variants don't exist on the listing." });
     }
 
+    // Audit 2026-09 (A9, D9): drafts the auto-pipeline runs in-process get
+    // a reasoning step and the newer model; the AI Draft button (26 s
+    // synchronous limit) keeps ETSYMAIL_AI_MODEL without thinking.
+    const viaPipelineDraft = body.viaPipeline === true;
+    const draftModel = viaPipelineDraft ? AI_PIPELINE_MODEL : AI_MODEL;
+    const draftThinking = AI_ADAPTIVE_THINKING === "all"
+                       || (AI_ADAPTIVE_THINKING === "pipeline" && viaPipelineDraft)
+                       || THINKS_BY_DEFAULT_RX.test(String(draftModel));
+
     let loopResult;
     try {
       loopResult = await runToolLoop({
-        model         : AI_MODEL,
-        maxTokens     : AI_MAX_TOKENS,
+        model         : draftModel,
+        maxTokens     : draftThinking ? AI_THINKING_MAX_TOKENS : AI_MAX_TOKENS,
         system        : systemWithListings,
         initialMessages,
         toolSpecs     : TOOL_SPECS,
@@ -4161,9 +4186,9 @@ answering. Do not guess about the order's contents.`;
         effort        : AI_EFFORT,
         useThinking   : true,
         maxIterations : MAX_TOOL_ITERATIONS,
-        adaptiveThinking: AI_ADAPTIVE_THINKING === "all"
-                       || (AI_ADAPTIVE_THINKING === "pipeline" && body.viaPipeline === true),
+        adaptiveThinking: draftThinking,
         cacheTail     : AI_CACHE_TAIL,
+        cacheTtl      : AI_CACHE_TTL,
         timeoutMs     : AI_TIMEOUT_MS
       });
     } catch (e) {
@@ -5075,7 +5100,10 @@ answering. Do not guess about the order's contents.`;
       },
       // ────────────────────────────────────────────────────────────
       generatedByAI         : true,
-      aiModel               : AI_MODEL,
+      aiModel               : draftModel,
+      aiThinking            : draftThinking,
+      aiSlimContext         : AI_SLIM_CONTEXT,
+      aiCacheTtl            : AI_CACHE_TTL || "5m",
       aiEffort              : AI_EFFORT,
       aiMode                : mode,
       aiInstructions        : instructions || null,
@@ -5261,7 +5289,8 @@ answering. Do not guess about the order's contents.`;
                 : "ai_draft_generated",
       actor    : employeeName ? `operator:${employeeName}` : "system:draftReply",
       payload  : {
-        model              : AI_MODEL,
+        model              : draftModel,
+        thinking           : draftThinking,
         effort             : AI_EFFORT,
         mode,
         parsedOk,
@@ -5320,7 +5349,8 @@ answering. Do not guess about the order's contents.`;
         cacheCreate : draftDoc.aiTokensCacheCreate,
         total       : draftDoc.aiTokensInput + draftDoc.aiTokensOutput
       },
-      model              : AI_MODEL,
+      model              : draftModel,
+      cacheTtl           : AI_CACHE_TTL || "5m",
       effort             : AI_EFFORT,
       parsedOk,
       mode,

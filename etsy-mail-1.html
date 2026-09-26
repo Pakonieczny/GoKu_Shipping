@@ -15131,7 +15131,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
       body.innerHTML = html;
 
       // Update token counter
-      updateTokenCounter(tokens, model);
+      updateTokenCounter(tokens, model, draft.cacheTtl || draft.aiCacheTtl || null);
 
       // Referenced receipts pills
       renderReferencedReceipts(draft.referencedReceiptIds || draft.aiToolCalls?.filter(tc => tc.input?.receiptId)?.map(tc => String(tc.input.receiptId)) || []);
@@ -15189,6 +15189,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
     const MODEL_PRICING = {
       // model prefix → { input $/M, output $/M, cacheRead $/M, cacheCreate $/M }
       "claude-opus-4-6"      : { input: 15,  output: 75,  cacheRead: 1.5,  cacheCreate: 18.75 },
+      "claude-sonnet-5"      : { input: 2,   output: 10,  cacheRead: 0.2,  cacheCreate: 2.5   },
       "claude-sonnet-4-6"    : { input: 3,   output: 15,  cacheRead: 0.3,  cacheCreate: 3.75  },
       "claude-sonnet-4-5"    : { input: 3,   output: 15,  cacheRead: 0.3,  cacheCreate: 3.75  },
       "claude-haiku-4-5"     : { input: 1,   output: 5,   cacheRead: 0.1,  cacheCreate: 1.25  }
@@ -15202,15 +15203,17 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
       return null;
     }
 
-    function computeCostUsd(tokens, model) {
+    function computeCostUsd(tokens, model, cacheTtl) {
       const p = pricingForModel(model);
       if (!p) return null;
       const mil = 1e6;
+      // A one-hour cache write costs 2x input instead of 1.25x.
+      const cacheCreate = cacheTtl === "1h" ? p.input * 2 : p.cacheCreate;
       return (
         (tokens.input       || 0) * p.input       / mil +
         (tokens.output      || 0) * p.output      / mil +
         (tokens.cacheRead   || 0) * p.cacheRead   / mil +
-        (tokens.cacheCreate || 0) * p.cacheCreate / mil
+        (tokens.cacheCreate || 0) * cacheCreate   / mil
       );
     }
 
@@ -15218,7 +15221,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
       return (n || 0).toLocaleString("en-US");
     }
 
-    function updateTokenCounter(tokens, model) {
+    function updateTokenCounter(tokens, model, cacheTtl) {
       const el = $("emTokenCounter");
       if (!el) return;
       const total = (tokens.input || 0) + (tokens.output || 0);
@@ -15228,7 +15231,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         return;
       }
 
-      const cost = computeCostUsd(tokens, model);
+      const cost = computeCostUsd(tokens, model, cacheTtl);
       const cacheBits = (tokens.cacheRead || tokens.cacheCreate)
         ? '<span class="em-tok-sep">·</span><span class="em-tok-cache" title="Cache reads save input cost">cache: ' +
           fmtNum(tokens.cacheRead) + ' read / ' + fmtNum(tokens.cacheCreate) + ' write</span>'

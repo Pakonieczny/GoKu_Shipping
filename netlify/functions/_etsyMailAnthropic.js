@@ -74,7 +74,7 @@ function isClaudeOverloadError(status, message = "") {
  *  block shape the Anthropic prompt-caching beta expects. If `system` is
  *  already an array of blocks, pass through unchanged. Matches the pattern
  *  from claudeCodeProxy-background.js::buildSystemBlocks. */
-function buildSystemBlocks(system) {
+function buildSystemBlocks(system, cacheTtl) {
   if (!system) return undefined;
   if (Array.isArray(system)) return system;
   if (typeof system === "string") {
@@ -82,7 +82,10 @@ function buildSystemBlocks(system) {
     // the system prompt is 2-5 KB of shop policies — big enough that cache
     // hits save meaningful input tokens on subsequent drafts in the same
     // thread. Opus 4.7 cache TTL is ~5 min by default.
-    return [{ type: "text", text: system, cache_control: { type: "ephemeral" } }];
+    // Audit 2026-09: callers whose requests are further apart than 5 minutes
+    // pass cacheTtl "1h" (a write costs 2x instead of 1.25x, a read 0.1x).
+    const cache_control = cacheTtl === "1h" ? { type: "ephemeral", ttl: "1h" } : { type: "ephemeral" };
+    return [{ type: "text", text: system, cache_control }];
   }
   return undefined;
 }
@@ -116,12 +119,13 @@ async function callClaudeRaw({
   outputFormat,           // structured outputs: {type:"json_schema", schema} → output_config.format
   thinkingDisplay,        // "summarized" → thinking: {type:"adaptive", display} (models with adaptive thinking)
   adaptiveThinking = false, // opt-in: adaptive thinking on non-4.7 models that support it
-  timeoutMs = 0           // opt-in: per-request timeout (node-fetch v2); 0 = none, as before
+  timeoutMs = 0,          // opt-in: per-request timeout (node-fetch v2); 0 = none, as before
+  cacheTtl                // opt-in: "1h" system-prompt cache (string system prompts only)
 }) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("Missing ANTHROPIC_API_KEY");
 
-  const systemBlocks = buildSystemBlocks(system);
+  const systemBlocks = buildSystemBlocks(system, cacheTtl);
 
   const body = {
     model,
@@ -287,7 +291,8 @@ async function runToolLoop({
   maxIterations = 6,
   adaptiveThinking = false,  // passed through to callClaudeRaw
   cacheTail = false,         // cache the growing conversation between loop iterations
-  timeoutMs = 0              // passed through to callClaudeRaw (per request)
+  timeoutMs = 0,             // passed through to callClaudeRaw (per request)
+  cacheTtl                   // passed through to callClaudeRaw ("1h" system-prompt cache)
 }) {
   const messages = [...initialMessages];
   const toolCalls = [];
@@ -303,7 +308,7 @@ async function runToolLoop({
     const response = await callClaudeRaw({
       model, maxTokens, system,
       messages: cacheTail ? withTailCacheBreakpoint(messages) : messages,
-      tools: toolSpecs, effort, useThinking, adaptiveThinking, timeoutMs
+      tools: toolSpecs, effort, useThinking, adaptiveThinking, timeoutMs, cacheTtl
     });
 
     // Aggregate usage
