@@ -467,8 +467,8 @@
     const f = focus(); if (!f || !f.res) return;
     const k = f.q + '|' + L.tab + '|' + S.library.kind + '|' + (S.library.metal || '');
     if (L.located === k) return;
-    const hits = [...root.querySelectorAll('.libCard[data-id], .ldItem[data-kind="sheet"]')].filter(c => f.ids.has(c.dataset.id)).map(c => c.classList.contains('ldItem') ? c.querySelector('.ldRow') : c);
-    for (const it of root.querySelectorAll('.ldItem[data-kind="set"]')) { const r = L.list && L.list.byKey.get('set:' + it.dataset.set); if (r && (r.sheets || []).some(s => f.ids.has(s.id))) hits.push(it.querySelector('.ldRow')); }
+    const hits = [...root.querySelectorAll('.libCard[data-id], .ldItem[data-kind="sheet"]')].filter(c => f.ids.has(c.dataset.id)).map(c => c.classList.contains('ldItem') ? c.querySelector('.ldLine') : c);
+    for (const it of root.querySelectorAll('.ldItem[data-kind="set"]')) { const r = L.list && L.list.byKey.get('set:' + it.dataset.set); if (r && (r.sheets || []).some(s => f.ids.has(s.id))) hits.push(it.querySelector('.ldLine')); }
     if (!hits.length) return;
     L.located = k;
     glow(hits);
@@ -599,7 +599,7 @@
     const what = st.kind === 'sets' ? 'set' : 'sheet';
     st.rowsEl.querySelectorAll(':scope > .skel').forEach(n => { if (st.rows.length || !st.loading) n.remove(); });
     if (st.loading && !st.rows.length) {
-      if (!st.rowsEl.querySelector('.skel')) st.rowsEl.insertAdjacentHTML('beforeend', Array.from({ length: 6 }, () => '<div class="ldItem skel" aria-hidden="true"><div class="ldRow"><i></i><i></i><i></i><i></i></div></div>').join(''));
+      if (!st.rowsEl.querySelector('.skel')) st.rowsEl.insertAdjacentHTML('beforeend', Array.from({ length: 6 }, () => '<div class="ldItem skel" aria-hidden="true"><div class="ldLine"><i></i><i></i><i></i><i></i></div></div>').join(''));
     } else if (st.loading) html = '<i class="spin" aria-hidden="true"></i> Loading older…';
     else if (st.error) html = `Could not load: ${esc(st.error.message)} <button type="button" class="btn ghost xs" data-ld-retry>Retry</button>`;
     else if (!st.rows.length && st.end) html = '';
@@ -635,7 +635,7 @@
     if (r.kind === 'set') {
       const sheets = r.sheets || [], per = new Map(); for (const s of sheets) per.set(s.metal, (per.get(s.metal) || 0) + 1);
       const mats = (r.materials && r.materials.length ? r.materials : [...per.keys()]).filter(Boolean);
-      return `<div class="ldItem" data-kind="set" data-set="${esc(r.setId)}"><div class="ldRow" role="button" tabindex="0" aria-expanded="false" aria-label="${esc(`Set ${r.seq || ''}, ${plural(sheets.length, 'sheet')}: open`)}">`
+      return `<div class="ldItem" data-kind="set" data-set="${esc(r.setId)}"><div class="ldLine" role="button" tabindex="0" aria-expanded="false" aria-label="${esc(`Set ${r.seq || ''}, ${plural(sheets.length, 'sheet')}: open`)}">`
         + `<span class="ldThumbs">${(sheets.length ? sheets.slice(0, 3) : [{}]).map(s => thumb(s.preview)).join('')}</span>`
         + `<span class="ldName"><b>Set ${esc(r.seq || '—')}</b><span class="sws">${mats.map(k => swatch(metalOf({ metal: k }), per.get(k) || 0)).join('')}</span><span class="ldDate" title="Set day">${esc(dayShort(r.day))}</span></span>`
         + `<span class="ldNums"><span><b>${sheets.length}</b> ${sheets.length === 1 ? 'sheet' : 'sheets'}</span><span><b>${+r.orders || 0}</b> orders</span><span><b>${+r.pieces || 0}</b> pcs</span><span><b>${pct(r.fill)}</b> full</span></span>`
@@ -643,7 +643,7 @@
         + '<div class="ldPanel"><div class="ldPanelIn"></div></div></div>';
     }
     const sn = !r.draft && r.setSeq ? r.setSeq : 0;
-    return `<div class="ldItem" data-kind="sheet" data-id="${esc(r.id)}"><div class="ldRow" role="button" tabindex="0" data-m="${esc(r.metal || '')}" title="${esc(r.fileBase || r.id)}" aria-label="${esc(`${CODE[r.metal] || ''} Sheet ${r.sheetIndex || 1}${sn ? ', Set ' + sn : ''}: open`)}">`
+    return `<div class="ldItem" data-kind="sheet" data-id="${esc(r.id)}"><div class="ldLine" role="button" tabindex="0" data-m="${esc(r.metal || '')}" title="${esc(r.fileBase || r.id)}" aria-label="${esc(`${CODE[r.metal] || ''} Sheet ${r.sheetIndex || 1}${sn ? ', Set ' + sn : ''}: open`)}">`
       + thumb(r.preview)
       + `<span class="ldName">${swatch(metalOf(r), 0)}<b>Sheet ${esc(r.sheetIndex || 1)}</b>${sn ? `<span class="ldSet">Set ${esc(sn)}</span>` : ''}<span class="ldDate" title="Sheet day">${esc(dayShort(r.day))}</span></span>`
       + `<span class="ldNums"><span><b>${+r.orders || 0}</b> ${r.orders === 1 ? 'order' : 'orders'}</span><span><b>${+r.pieces || 0}</b> pcs</span><span><b>${pct(r.fill)}</b> full</span></span>`
@@ -690,7 +690,7 @@
 
   /* ── Completed: a set opened in place ── */
   async function toggleSet(item) {
-    const open = !item.classList.contains('open'), row = item.querySelector('.ldRow'), inner = item.querySelector('.ldPanelIn');
+    const open = !item.classList.contains('open'), row = item.querySelector('.ldLine'), inner = item.querySelector('.ldPanelIn');
     item.classList.toggle('open', open); row.setAttribute('aria-expanded', open ? 'true' : 'false');
     if (!open || (inner.firstElementChild && !inner.querySelector('.ldWait'))) { if (open) LaserReview.changed(); return; }
     const r = L.list && L.list.byKey.get('set:' + item.dataset.set); if (!r) return;
@@ -739,11 +739,11 @@
       st.error = null; loadMore(st); return;
     }
     if (t.closest('[data-ld-more]')) { const st = L.list; if (st) { st.empties = 0; loadMore(st); } return; }
-    const row = t.closest('.ldRow'); if (!row || t.closest('a, button, details, input')) return;
+    const row = t.closest('.ldLine'); if (!row || t.closest('a, button, details, input')) return;
     openRow(row);
   }
   function onDoneKey(e) {
-    if ((e.key !== 'Enter' && e.key !== ' ') || !(e.target instanceof Element) || !e.target.classList.contains('ldRow')) return;
+    if ((e.key !== 'Enter' && e.key !== ' ') || !(e.target instanceof Element) || !e.target.classList.contains('ldLine')) return;
     e.preventDefault(); openRow(e.target);
   }
 

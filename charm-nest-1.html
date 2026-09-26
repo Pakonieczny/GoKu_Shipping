@@ -1715,7 +1715,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .ldFound .ldClear{flex:0 0 auto;width:22px;height:22px;border-radius:50%;border:0;background:transparent;color:var(--ink45);font-size:15px;line-height:1;cursor:pointer;display:grid;place-items:center}
 .ldFound .ldClear:hover{background:var(--paper2);color:var(--ink)}
 .ldFound .spin,.ldMore .spin,.ldPanelIn .spin{width:11px;height:11px;border:2px solid var(--line);border-top-color:var(--ink70);border-radius:50%;animation:spin .7s linear infinite;flex:0 0 11px}
-.libCard.ldHit,.setCard.ldHit,.ldRow.ldHit{box-shadow:0 0 0 2px var(--gold2),0 0 18px 4px rgba(202,168,97,.38);animation:ldHit 1.6s ease 2}
+.libCard.ldHit,.setCard.ldHit,.ldLine.ldHit{box-shadow:0 0 0 2px var(--gold2),0 0 18px 4px rgba(202,168,97,.38);animation:ldHit 1.6s ease 2}
 @keyframes ldHit{50%{box-shadow:0 0 0 2px var(--gold2),0 0 26px 8px rgba(202,168,97,.5)}}
 .ldIn{animation:ldIn .26s cubic-bezier(.2,.8,.2,1)}
 @keyframes ldIn{from{opacity:0;transform:translateY(6px) scale(.98)}}
@@ -1728,11 +1728,12 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .ldDayRows{display:flex;flex-direction:column;gap:5px;padding:2px 0 8px}
 .ldItem{content-visibility:auto;contain-intrinsic-size:auto 66px;border-radius:11px}
 .ldItem.open{content-visibility:visible}
-.ldRow{display:grid;grid-template-columns:64px minmax(170px,1fr) 178px minmax(110px,200px) auto 18px;align-items:center;gap:14px;min-height:62px;padding:5px 10px 5px 6px;background:var(--card2);border:1px solid var(--line);border-left:4px solid var(--accent,var(--ink25));border-radius:11px;cursor:pointer;transition:background-color .13s ease,border-color .13s ease,box-shadow .16s ease}
-.ldRow:hover,.ldRow:focus-visible{background:var(--card);border-color:var(--ink25);border-left-color:var(--accent,var(--ink45));box-shadow:var(--hoverLift);outline:none}
-.ldRow[data-m=gold]{--accent:var(--m-gold)}.ldRow[data-m=silver]{--accent:var(--m-silver)}.ldRow[data-m=rose]{--accent:var(--m-rose)}.ldRow[data-m=gold10k]{--accent:var(--m-gold10k)}.ldRow[data-m=gold14k]{--accent:var(--m-gold14k)}
-.ldItem[data-kind=set]>.ldRow{--accent:var(--ink45);grid-template-columns:64px minmax(170px,1fr) 256px minmax(110px,200px) auto 18px}
-.ldItem.open>.ldRow{background:var(--card);border-bottom-left-radius:0;border-bottom-right-radius:0;border-bottom-color:transparent}
+/* a Completed row is .ldLine: .ldRow is the rail's step list (the two once shared the name, and the Library's rows drew the steps as big white cards) */
+.ldLine{display:grid;grid-template-columns:64px minmax(170px,1fr) 178px minmax(110px,200px) auto 18px;align-items:center;gap:14px;min-height:62px;padding:5px 10px 5px 6px;background:var(--card2);border:1px solid var(--line);border-left:4px solid var(--accent,var(--ink25));border-radius:11px;cursor:pointer;transition:background-color .13s ease,border-color .13s ease,box-shadow .16s ease}
+.ldLine:hover,.ldLine:focus-visible{background:var(--card);border-color:var(--ink25);border-left-color:var(--accent,var(--ink45));box-shadow:var(--hoverLift);outline:none}
+.ldLine[data-m=gold]{--accent:var(--m-gold)}.ldLine[data-m=silver]{--accent:var(--m-silver)}.ldLine[data-m=rose]{--accent:var(--m-rose)}.ldLine[data-m=gold10k]{--accent:var(--m-gold10k)}.ldLine[data-m=gold14k]{--accent:var(--m-gold14k)}
+.ldItem[data-kind=set]>.ldLine{--accent:var(--ink45);grid-template-columns:64px minmax(170px,1fr) 256px minmax(110px,200px) auto 18px}
+.ldItem.open>.ldLine{background:var(--card);border-bottom-left-radius:0;border-bottom-right-radius:0;border-bottom-color:transparent}
 .ldThumb{position:relative;width:64px;height:52px;border-radius:7px;background:var(--paper2);border:1px solid var(--line2);overflow:hidden;display:block}
 .ldThumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#fff;opacity:0;transition:opacity .2s ease}
 .ldThumb img.on{opacity:1}
@@ -1750,7 +1751,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .ldWho svg{flex:0 0 13px;width:13px;height:13px;color:var(--sage)}
 .ldWho time{font:10.5px var(--mono);color:var(--ink45)}
 .ldBack{border:1px solid var(--line);background:transparent;border-radius:999px;padding:3px 10px;font:650 10.5px var(--sans);color:var(--ink70);cursor:pointer;white-space:nowrap;opacity:.72;transition:opacity .13s,background-color .13s,color .13s,border-color .13s}
-.ldRow:hover .ldBack,.ldBack:focus-visible{opacity:1}
+.ldLine:hover .ldBack,.ldBack:focus-visible{opacity:1}
 .ldBack:hover,.ldBack:focus-visible{background:var(--ink);border-color:var(--ink);color:var(--paper);outline:none}
 .ldBack.busy{pointer-events:none;opacity:1}
 .ldChev{width:18px;height:18px;color:var(--ink45);transition:transform .22s cubic-bezier(.2,.8,.2,1)}
@@ -1762,18 +1763,18 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .ldItem.open .ldPanelIn{border:1px solid var(--line);border-top:0;border-left:4px solid var(--ink45);border-radius:0 0 11px 11px;background:var(--card)}
 .ldPanelIn>.setCard{border:0;box-shadow:none;border-radius:0 0 11px 11px;background:transparent}
 .ldPanelIn>.ldWait{display:flex;gap:8px;align-items:center;justify-content:center;padding:18px;font-size:12px;color:var(--ink45)}
-.ldItem.skel .ldRow{cursor:default;box-shadow:none;border-left-color:var(--line)}
-.ldItem.skel .ldRow>i{display:block;height:10px;border-radius:5px;background:linear-gradient(90deg,var(--paper2) 25%,var(--card2) 50%,var(--paper2) 75%);background-size:200% 100%;animation:ldShine 1.1s linear infinite}
-.ldItem.skel .ldRow>i:first-child{height:52px;border-radius:7px}
+.ldItem.skel .ldLine{cursor:default;box-shadow:none;border-left-color:var(--line)}
+.ldItem.skel .ldLine>i{display:block;height:10px;border-radius:5px;background:linear-gradient(90deg,var(--paper2) 25%,var(--card2) 50%,var(--paper2) 75%);background-size:200% 100%;animation:ldShine 1.1s linear infinite}
+.ldItem.skel .ldLine>i:first-child{height:52px;border-radius:7px}
 @keyframes ldShine{to{background-position:-200% 0}}
 .ldMore{display:flex;gap:9px;align-items:center;justify-content:center;min-height:44px;padding:10px;font-size:12px;color:var(--ink45)}
 .ldMore .btn{font-size:11px}
-@container workspace (max-width:1100px){.ldRow,.ldItem[data-kind=set]>.ldRow{gap:12px}.ldItem[data-kind=set]>.ldRow{grid-template-columns:64px minmax(150px,1fr) 236px minmax(100px,170px) auto 18px}.ldItem[data-kind=set] .ldNums{gap:9px}}
-@container workspace (max-width:760px){.ldRow,.ldItem[data-kind=set]>.ldRow{grid-template-columns:56px minmax(0,1fr) minmax(80px,130px) auto 18px;gap:10px}.ldRow .ldNums{display:none}.ldThumb,.ldThumbs{width:56px}}
-@container workspace (max-width:520px){.ldRow,.ldItem[data-kind=set]>.ldRow{grid-template-columns:56px minmax(0,1fr) auto 18px}.ldRow .ldWho{display:none}}
+@container workspace (max-width:1100px){.ldLine,.ldItem[data-kind=set]>.ldLine{gap:12px}.ldItem[data-kind=set]>.ldLine{grid-template-columns:64px minmax(150px,1fr) 236px minmax(100px,170px) auto 18px}.ldItem[data-kind=set] .ldNums{gap:9px}}
+@container workspace (max-width:760px){.ldLine,.ldItem[data-kind=set]>.ldLine{grid-template-columns:56px minmax(0,1fr) minmax(80px,130px) auto 18px;gap:10px}.ldLine .ldNums{display:none}.ldThumb,.ldThumbs{width:56px}}
+@container workspace (max-width:520px){.ldLine,.ldItem[data-kind=set]>.ldLine{grid-template-columns:56px minmax(0,1fr) auto 18px}.ldLine .ldWho{display:none}}
 .toast .toastUndo{border:1px solid rgba(244,236,220,.35);background:transparent;color:#f4ecdc;border-radius:7px;padding:1px 9px;font:650 11.5px var(--sans);cursor:pointer;margin-left:2px;flex:0 0 auto;align-self:center}
 .toast .toastUndo:hover{background:#f4ecdc;color:var(--velvet)}
-@media (prefers-reduced-motion:reduce){.ldMark,.ldRow,.ldChev,.ldPanel,.ldThumb img,.libTabs button{transition:none}.ldIn,.ldHit,.ldFound,.libTabs .cnt.pulse,#libBody.ldSwap,#libDone.ldSwap{animation:none}}
+@media (prefers-reduced-motion:reduce){.ldMark,.ldLine,.ldChev,.ldPanel,.ldThumb img,.libTabs button{transition:none}.ldIn,.ldHit,.ldFound,.libTabs .cnt.pulse,#libBody.ldSwap,#libDone.ldSwap{animation:none}}
 /* the sheet cards: the same sheet with less around it */
 .sheets{gap:10px}
 .shHead{padding-top:6px;padding-bottom:3px}
@@ -4941,7 +4942,7 @@ boot();
 <script src="charm-nest-mail.js?v=20260926-audit3"></script>
 <script src="charm-nest-rose-ui.js?v=20260925-audit"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
-<script src="charm-nest-library.js?v=20260926-find-audit2"></script>
+<script src="charm-nest-library.js?v=20260926-ldline"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin" aria-labelledby="owTitle">
   <div class="owBox">

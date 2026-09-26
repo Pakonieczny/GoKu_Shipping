@@ -144,7 +144,7 @@ function seed(st, blobUrl) {
   b = await bar(); assert(b.h < 44 && b.over <= 0, 'the bar keeps its line in Completed: ' + JSON.stringify(b));
   await page.waitForTimeout(400);
   await shot('06-completed-sets-1500');
-  await page.click(`#libDone .ldItem[data-set="${setId}"] .ldRow`);
+  await page.click(`#libDone .ldItem[data-set="${setId}"] .ldLine`);
   await page.waitForSelector(`#libDone .ldItem[data-set="${setId}"].open .ldPanelIn .setCard .libCard[data-id]`, { timeout: 10000 });
   const inCard = await page.$$eval(`#libDone .ldItem[data-set="${setId}"] .ldPanelIn .libCard[data-id]`, cs => cs.map(c => c.dataset.id));
   assert.deepEqual(inCard.sort(), members.slice().sort(), 'the opened set shows every sheet as Current does');
@@ -184,7 +184,7 @@ function seed(st, blobUrl) {
 
   // Move back from Completed: the row leaves, the sheet is back in Current
   const back = members[0];
-  await page.hover(`#libDone .ldItem[data-id="${back}"] .ldRow`);
+  await page.hover(`#libDone .ldItem[data-id="${back}"] .ldLine`);
   await shot('09-completed-row-hover');
   await page.click(`#libDone .ldItem[data-id="${back}"] .ldBack`);
   await page.waitForFunction(id => !document.querySelector(`#libDone .ldItem[data-id="${id}"]`), back, { timeout: 5000 });
@@ -236,7 +236,7 @@ function seed(st, blobUrl) {
   await shot('13-completed-sheets-1280');
   await page.click('#libKind button[data-k=sets]');
   await page.waitForSelector('#libDone .ldItem[data-kind=set]', { timeout: 10000 });
-  await page.click('#libDone .ldItem[data-kind=set] .ldRow');
+  await page.click('#libDone .ldItem[data-kind=set] .ldLine');
   await page.waitForSelector('#libDone .ldItem.open .ldPanelIn .setCard', { timeout: 10000 });
   await shot('14-completed-set-open-1280');
   ok.push('1280 × 800: one line of bar in both tabs');
