@@ -113,14 +113,24 @@ function firstPositiveMoney(...vals) {
   return null;
 }
 
+// Audit fix F6 — a resolver result that still carries a Quote-row
+// escalation has a PARTIAL total (the quoted item is not priced). It must
+// never become the price of a live listing.
+function resolverTotalIfFinal(r) {
+  if (!r || r.success === false) return null;
+  if (Array.isArray(r.escalations) && r.escalations.length) return null;
+  return positiveMoney(r.total);
+}
+
 function extractMoneyFromText(text) {
   const s = String(text || "");
-  const matches = [...s.matchAll(/\$\s*([0-9]{1,5})(?:\.([0-9]{1,2}))?/g)];
+  // Audit fix F5 — accept "$1,250.00" (was read as $1).
+  const matches = [...s.matchAll(/\$\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,5})(?:\.([0-9]{1,2}))?/g)];
   if (!matches.length) return null;
   // Use the last quoted amount in the conversation. In sales threads, the
   // latest dollar amount is normally the current offer the customer accepted.
   const m = matches[matches.length - 1];
-  const dollars = Number(m[1]);
+  const dollars = Number(String(m[1]).replace(/,/g, ""));
   const cents = m[2] ? Number("0." + m[2].padEnd(2, "0")) : 0;
   const total = dollars + cents;
   return Number.isFinite(total) && total > 0 ? total : null;
@@ -194,10 +204,40 @@ function buildManualResolverResult({ family, priceUsd, sales, threadContext, inf
 
 // ─── 1a. Manual listing fallback loader ─────────────────────────────────────
 
-async function loadManualThreadData(threadId) {
+async function loadManualThreadData(threadId, opts = {}) {
   const threadRef = db.collection(THREADS_COLL).doc(threadId);
   const draftRef  = db.collection(DRAFTS_COLL).doc(`draft_${threadId}`);
   const salesRef  = db.collection(SALES_COLL).doc(threadId);
+
+  // Audit fix F5 — one listing run at a time per thread. A double tap, a
+  // second operator, or the automatic worker already in flight would
+  // otherwise publish two live listings. A refused run leaves the other
+  // run's state untouched (no markFailure).
+  const tsMs = v => (v && v.toMillis) ? v.toMillis() : 0;
+  let statusBeforeRun = null;
+  const claim = await db.runTransaction(async (tx) => {
+    const s = await tx.get(threadRef);
+    if (!s.exists) return "missing";
+    const d = s.data() || {};
+    statusBeforeRun = d.customListingStatus || null;
+    const nowMs = Date.now();
+    const manualFresh = nowMs - tsMs(d.customListingManualRequestedAt) < 15 * 60 * 1000;
+    const autoFresh   = nowMs - tsMs(d.customListingStartedAt)         < 20 * 60 * 1000;
+    if (d.customListingStatus === "creating" && (manualFresh || autoFresh)) return "busy";
+    tx.set(threadRef, {
+      customListingStatus           : "creating",
+      customListingManualMode       : true,
+      customListingManualRequestedAt: FV.serverTimestamp(),
+      updatedAt                     : FV.serverTimestamp()
+    }, { merge: true });
+    return "ok";
+  });
+  if (claim === "busy") {
+    const e = new Error("A custom listing is already being created for this thread — wait for it to finish");
+    e.skipMarkFailure = true;
+    e.httpStatus = 409;
+    throw e;
+  }
 
   const [threadSnap, draftSnap, salesSnap] = await Promise.all([
     threadRef.get(), draftRef.get(), salesRef.get()
@@ -225,17 +265,26 @@ async function loadManualThreadData(threadId) {
     inferFamilyFromConversation(contextText);
 
   const inferredTextPrice = extractMoneyFromText(contextText);
-  const priceUsd = firstPositiveMoney(
-    thread.acceptedQuoteUsd,
-    thread.lastResolverResult && thread.lastResolverResult.total,
-    sales.totalQuotedUsd,
-    sales.acceptedQuoteUsd,
-    sales.knownFacts && sales.knownFacts.acceptedPriceUsd,
-    sales.lastResolverResult && sales.lastResolverResult.total,
-    sales._lastResolverResult && sales._lastResolverResult.total,
-    inferredTextPrice,
-    MANUAL_LISTING_DEFAULT_PRICE_USD
-  );
+  // Audit fix F5 — same order as before, plus the operator's typed price
+  // first, and remember WHERE the price came from. Never publish a live
+  // listing at the silent placeholder price (anyone could buy it).
+  const priceCandidates = [
+    ["operator",          opts.priceUsd],
+    ["accepted_quote",    thread.acceptedQuoteUsd],
+    ["resolver",          resolverTotalIfFinal(thread.lastResolverResult)],
+    ["sales_context",     sales.totalQuotedUsd],
+    ["sales_context",     sales.acceptedQuoteUsd],
+    ["sales_context",     sales.knownFacts && sales.knownFacts.acceptedPriceUsd],
+    ["sales_context",     resolverTotalIfFinal(sales.lastResolverResult)],
+    ["sales_context",     resolverTotalIfFinal(sales._lastResolverResult)],
+    ["conversation_text", inferredTextPrice]
+  ];
+  const priceHit    = priceCandidates.find(([, v]) => positiveMoney(v) != null);
+  const priceSource = priceHit ? priceHit[0] : "default";
+  if (!priceHit) {
+    throw new Error("No price found for this conversation (invalid input): enter the price when creating the listing");
+  }
+  const priceUsd = positiveMoney(priceHit[1]);
 
   const lastResolverResult = thread.lastResolverResult ||
     buildManualResolverResult({ family, priceUsd, sales, threadContext, inferredPrice: inferredTextPrice != null });
@@ -246,14 +295,20 @@ async function loadManualThreadData(threadId) {
     acceptedQuoteUsd   : priceUsd,
     acceptedQuoteFamily: family,
     lastResolverResult,
-    manualListingMode  : true
+    manualListingMode  : true,
+    // The claim above already wrote "creating"; resume decisions need the
+    // status this thread had BEFORE this run.
+    customListingStatus: statusBeforeRun
   };
 
   if (!preparedThread.etsyConversationUrl && /^etsy_conv_\d+$/.test(threadId)) {
     preparedThread.etsyConversationUrl = `https://www.etsy.com/your/conversations/${threadId.replace(/^etsy_conv_/, "")}`;
   }
 
-  const referenceAttachments = await collectThreadImageAttachments(threadId, draft);
+  // Audit fix F7 — only this sales round's photos (salesRoundStartedAt is
+  // written by the round reset; absent = whole thread, as before).
+  const referenceAttachments = await collectThreadImageAttachments(threadId, draft,
+    thread.salesRoundStartedAt && thread.salesRoundStartedAt.toMillis ? thread.salesRoundStartedAt.toMillis() : 0);
 
   await threadRef.set({
     acceptedQuoteUsd      : priceUsd,
@@ -262,6 +317,7 @@ async function loadManualThreadData(threadId) {
     customListingStatus   : "creating",
     customListingManualMode: true,
     customListingManualRequestedAt: FV.serverTimestamp(),
+    customListingPriceSource: priceSource,
     updatedAt             : FV.serverTimestamp()
   }, { merge: true });
 
@@ -304,9 +360,7 @@ async function loadThreadData(threadId) {
   // this state; this salvage path recovers threads already stuck.
   if (!thread.acceptedQuoteUsd) {
     const lrr = thread.lastResolverResult;
-    const salvageTotal = (lrr && lrr.success && typeof lrr.total === "number" && lrr.total > 0)
-      ? lrr.total
-      : null;
+    const salvageTotal = resolverTotalIfFinal(lrr);   // audit fix F6: never a partial Quote-row total
     if (salvageTotal == null) {
       throw new Error(`No accepted quote on thread (invalid input): ${threadId}`);
     }
@@ -375,7 +429,8 @@ async function loadThreadData(threadId) {
   const imagesAlreadyUploaded = !!thread.customListingImagesAt;
   const referenceAttachments = imagesAlreadyUploaded
     ? []
-    : await collectThreadImageAttachments(threadId, draft);
+    : await collectThreadImageAttachments(threadId, draft,
+        thread.salesRoundStartedAt && thread.salesRoundStartedAt.toMillis ? thread.salesRoundStartedAt.toMillis() : 0);
 
   return { thread, draft, referenceAttachments, family };
 }
@@ -395,7 +450,7 @@ async function loadThreadData(threadId) {
  * Returns [] if no mirrored images found OR if Storage isn't configured.
  * Caller falls back to legacy / template image in that case.
  */
-async function collectThreadImageAttachments(threadId, draft) {
+async function collectThreadImageAttachments(threadId, draft, sinceMs = 0) {
   // v4.3.3 — Wait briefly for the Chrome-extension mirror flow to
   // finish before scanning. Etsy's DOM scrape returns image URLs to
   // the extension, which then calls etsyMailMirrorImage once per image.
@@ -415,7 +470,7 @@ async function collectThreadImageAttachments(threadId, draft) {
 
   let attempt = 0;
   while (attempt <= MAX_MIRROR_WAITS) {
-    const result = await scanMessagesForMirroredImages(threadId);
+    const result = await scanMessagesForMirroredImages(threadId, sinceMs);
 
     // If we found any mirrored images, return them — don't keep waiting
     // even if some messages are still pending (partial coverage is
@@ -456,7 +511,7 @@ async function collectThreadImageAttachments(threadId, draft) {
  * Used by collectThreadImageAttachments to decide whether to wait
  * and re-scan or to fall through to the legacy path.
  */
-async function scanMessagesForMirroredImages(threadId) {
+async function scanMessagesForMirroredImages(threadId, sinceMs = 0) {
   try {
     // Use the same composite-index avoidance pattern as autoPipeline:
     // pull recent messages by timestamp DESC (single-field auto-index)
@@ -484,6 +539,9 @@ async function scanMessagesForMirroredImages(threadId) {
       const m = msgDoc.data() || {};
       // Filter direction in JS — see comment above on index avoidance.
       if (m.direction !== "inbound") continue;
+      // Audit fix F7 — a returning customer's new listing uses this round's photos only.
+      const mTs = m.timestamp && m.timestamp.toMillis ? m.timestamp.toMillis() : 0;
+      if (sinceMs && mTs && mTs < sinceMs - 60 * 1000) continue;
 
       // Track pending state — used by the caller to decide whether to
       // wait and retry. Pending = the message had imageUrls (so a
@@ -914,7 +972,10 @@ async function setInventory(listingId, { priceUsd, readinessStateId, sku }) {
 
   const products = srcProducts.map(p => {
     const offerings = (Array.isArray(p.offerings) && p.offerings.length ? p.offerings : [{}]).map(o => {
-      const decimal = toDecimal(o.price);
+      // Audit fix F5 — the price chosen for THIS run wins. On a resume the
+      // listing can still carry the price of an earlier, failed attempt.
+      const wanted  = Number(priceUsd);
+      const decimal = (Number.isFinite(wanted) && wanted > 0) ? wanted : toDecimal(o.price);
       const offering = {
         price      : Number(decimal.toFixed(2)),
         quantity   : 1,
@@ -1205,7 +1266,15 @@ async function markManualSuccess({ threadId, listingId, listingUrl, generated, i
       needsOperatorReviewReason: null,
       updatedAt                : FV.serverTimestamp()
     }, { merge: true }),
-    db.collection(DRAFTS_COLL).doc(draftId).set({
+    // Audit fix F1 — do not replace a reply that is queued or being sent.
+    // The link text is also saved on the thread (customListingReplyText),
+    // and the inbox fills the reply box from there (see the UI fix in F5).
+    db.runTransaction(async (tx) => {
+      const draftRef = db.collection(DRAFTS_COLL).doc(draftId);
+      const cur = await tx.get(draftRef);
+      const curStatus = cur.exists ? (cur.data() || {}).status : null;
+      if (curStatus === "queued" || curStatus === "sending") return false;
+      tx.set(draftRef, {
       draftId,
       threadId,
       status                  : "draft",
@@ -1225,7 +1294,9 @@ async function markManualSuccess({ threadId, listingId, listingUrl, generated, i
       },
       updatedAt               : FV.serverTimestamp(),
       createdAt               : FV.serverTimestamp()
-    }, { merge: true })
+    }, { merge: true });
+      return true;
+    })
   ]);
 
   await db.collection(AUDIT_COLL).add({
@@ -1466,7 +1537,15 @@ async function loadFullThreadContext(threadId) {
 // ─── 10. Failure tracking ────────────────────────────────────────────────
 
 function isTerminalError(err) {
+  // Audit fix F3/F7 — etsyFetch puts the HTTP status on err.status and Etsy's
+  // own text in the message, so " 503" is usually NOT in the message.
+  const status = Number(err && err.status);
+  if ([408, 425, 429, 500, 502, 503, 504].includes(status)) return false;
   const msg = String((err && err.message) || err).toLowerCase();
+  // The inbox send slot was busy (409): the reply ahead of the link is sent or
+  // expires within 30 min, so try again later. 503 (sending paused by the
+  // kill switch) stays terminal: every retry would repeat 5 Etsy calls.
+  if (/^enqueue send failed \(409\)/.test(msg)) return false;
   // Retryable: transient network and rate-limit signals
   if (msg.includes("etimedout") || msg.includes("econnreset") || msg.includes("enotfound")) return false;
   if (msg.includes("rate limit") || msg.includes(" 429") || msg.includes("429:")) return false;
@@ -1479,9 +1558,11 @@ function isTerminalError(err) {
   return true;
 }
 
-async function markFailure({ threadId, err }) {
+async function markFailure({ threadId, err, forceTerminal = false }) {
   const errMsg = clampStr((err && err.message) || err, 500);
-  const terminal = isTerminalError(err);
+  // Audit fix F5 — a manual (button) run is never re-queued: the cron would
+  // retry it in AUTO mode and message the customer, or leave it queued forever.
+  const terminal = forceTerminal || isTerminalError(err);
   console.error(`[listingCreator] failed ${threadId}: ${errMsg}`, err && err.stack ? err.stack.split("\n").slice(0, 5).join("\n") : "");
 
   try {
@@ -1533,6 +1614,7 @@ async function markFailure({ threadId, err }) {
 exports.handler = meter.wrapHandler(async function (event) {
   const tStart = Date.now();
   let threadId = null;
+  let manualMode = false;
 
   // CORS preflight (consistency with the rest of the codebase — even
   // though browsers shouldn't be hitting this endpoint, the Chrome
@@ -1551,7 +1633,7 @@ exports.handler = meter.wrapHandler(async function (event) {
 
   try {
     const body = event && event.body ? JSON.parse(event.body) : {};
-    const manualMode = body.manual === true || body.manualCreate === true || body.mode === "manual";
+    manualMode = body.manual === true || body.manualCreate === true || body.mode === "manual";
     threadId = String(body.threadId || "").trim();
     const validThreadId = manualMode
       ? /^etsy_conv_[A-Za-z0-9_-]+$/.test(threadId)
@@ -1565,7 +1647,7 @@ exports.handler = meter.wrapHandler(async function (event) {
     // from the conversation/SalesContext so the operator can edit the live
     // listing afterward.
     const { thread, referenceAttachments, family } = manualMode
-      ? await loadManualThreadData(threadId)
+      ? await loadManualThreadData(threadId, { priceUsd: body.priceUsd })
       : await loadThreadData(threadId);
 
     const attempts = Number(thread.customListingAttempts || 0);
@@ -1611,8 +1693,12 @@ exports.handler = meter.wrapHandler(async function (event) {
     //    is no-op if already active, enqueue uses deterministic draftId
     //    with force=true). So we always run those — no resume sentinel
     //    needed for them.
-    const resumeListingId = thread.customListingId ? String(thread.customListingId) : null;
-    const resumeImagesAt  = thread.customListingImagesAt || null;
+    // Audit fix F5 — in manual mode a listing that already finished
+    // ("created") belongs to an earlier order: make a new one instead of
+    // re-stocking and re-publishing the old listing.
+    const resumeListingId = (thread.customListingId && !(manualMode && thread.customListingStatus === "created"))
+      ? String(thread.customListingId) : null;
+    const resumeImagesAt  = resumeListingId ? (thread.customListingImagesAt || null) : null;
     const isResume        = !!resumeListingId;
 
     if (isResume) {
@@ -1765,9 +1851,9 @@ exports.handler = meter.wrapHandler(async function (event) {
     };
 
   } catch (err) {
-    if (threadId) await markFailure({ threadId, err });
+    if (threadId && !err.skipMarkFailure) await markFailure({ threadId, err, forceTerminal: manualMode });
     return {
-      statusCode: 500,
+      statusCode: err.httpStatus || 500,
       headers   : CORS,
       body: JSON.stringify({ ok: false, error: clampStr(err.message, 500), threadId })
     };

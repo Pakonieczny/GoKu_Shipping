@@ -67,6 +67,10 @@ const RECOVERY_TIMEOUT_MS    = 20 * 60 * 1000;   // re-claim "creating" if older
 const MAX_PER_RUN            = 10;               // throttle: at most 10 listings per minute
 const QUEUED_FETCH_SIZE      = 25;               // queued candidates per tick
 const STUCK_FETCH_SIZE       = 10;               // stuck-recovery candidates per tick
+const MAX_RETRYABLE_ERRORS   = 8;                // audit fix F7: then a person decides
+const REPLY_CHECK_AFTER_MS   = 5 * 60 * 1000;    // audit fix F4: look at the link message after 5 min
+const REPLY_STUCK_AFTER_MS   = 45 * 60 * 1000;   // ... and call it undelivered after 45 min in the queue
+const REPLY_LEGACY_AFTER_MS  = 3 * 24 * 60 * 60 * 1000; // older records: mark once, quietly (no folder change)
 
 function functionsBase() {
   return process.env.URL
@@ -110,16 +114,20 @@ async function tryClaim(threadRef, opts = {}) {
     // after createDraftListing, so it's set mid-flow. The reliable
     // terminal signal is customListingStatus === "created" OR the
     // thread-level status === "sales_completed".
-    if (status === "created" || d.status === "sales_completed") {
-      // shouldn't happen — cron query filters on status="queued" — but
-      // defense in depth.
-      return false;
-    }
+    // Audit fix F19 — this cleanup used to sit AFTER the guard below, which
+    // returns first for every sales_completed thread, so it never ran: such
+    // a thread stayed "queued" for ever at the head of the FIFO query and
+    // took one of the MAX_PER_RUN slots on every tick.
     if (status === "queued" && d.status === "sales_completed") {
       tx.update(threadRef, {
         customListingStatus: "created",
         updatedAt          : FV.serverTimestamp()
       });
+      return false;
+    }
+    if (status === "created" || d.status === "sales_completed") {
+      // shouldn't happen — cron query filters on status="queued" — but
+      // defense in depth.
       return false;
     }
 
@@ -161,6 +169,24 @@ async function tryClaim(threadRef, opts = {}) {
       if (startedMs && (Date.now() - startedMs) < RECOVERY_TIMEOUT_MS) {
         return false;   // worker still in-flight — let it finish
       }
+      // Audit fix F7 — back off after retryable failures (1, 2, 4, 8,
+      // then every 15 min) and hand over to a person after 8, instead of
+      // re-running Etsy + Claude calls every minute.
+      const errCount = Number(d.customListingErrorCount || 0);
+      const errAtMs  = (d.customListingErrorAt && d.customListingErrorAt.toMillis) ? d.customListingErrorAt.toMillis() : 0;
+      if (errCount >= MAX_RETRYABLE_ERRORS) {
+        tx.update(threadRef, {
+          customListingStatus      : "failed",
+          needsOperatorReview      : true,
+          needsOperatorReviewReason: `listing_creation_failed: gave up after ${errCount} attempts — ${String(d.customListingError || "unknown error").slice(0, 200)}`,
+          updatedAt                : FV.serverTimestamp()
+        });
+        return false;
+      }
+      if (errCount > 0 && errAtMs) {
+        const waitMs = Math.min(15, Math.pow(2, errCount - 1)) * 60 * 1000;
+        if (Date.now() - errAtMs < waitMs) return false;   // still backing off
+      }
       // Fall through to claim (fresh queue OR retryable failure).
     } else if (status === "creating" && allowReclaimStuck) {
       // Stuck-flow recovery: only reclaim if the prior attempt has clearly
@@ -173,6 +199,13 @@ async function tryClaim(threadRef, opts = {}) {
       const startedMs = (startedAt && startedAt.toMillis) ? startedAt.toMillis() : 0;
       const ageMs     = Date.now() - startedMs;
       if (ageMs < RECOVERY_TIMEOUT_MS) return false;
+      // Audit fix F5 — a "Custom listing" button run also sets "creating"
+      // but stamps customListingManualRequestedAt, not customListingStartedAt.
+      // On a finished thread the OLD startedAt made it look stuck, and the
+      // automatic worker then marked it "created" mid-run.
+      const manualAt = d.customListingManualRequestedAt;
+      const manualMs = (manualAt && manualAt.toMillis) ? manualAt.toMillis() : 0;
+      if (manualMs && (Date.now() - manualMs) < RECOVERY_TIMEOUT_MS) return false;
       // else: stuck — fall through and reclaim. The worker's resume logic
       // (v4.3) will pick up where the prior attempt left off using the
       // mid-flow persistence markers (customListingId, customListingImagesAt).
@@ -241,6 +274,81 @@ async function fetchStuck() {
     .get();
 }
 
+/** Audit fix F4 — the listing-link message is enqueued by the worker and then
+ *  nobody records whether it reached the customer (customListingReplyStatus
+ *  stays "queued" forever). Settle it from the draft slot: sent -> "sent",
+ *  failed/replaced/stuck -> "failed" + Needs Review so a person re-sends the
+ *  link. Firestore only (one equality query + one draft read per thread);
+ *  never touches Etsy. */
+async function settleListingReplies() {
+  const out = { checked: 0, sent: 0, failed: 0 };
+  const snap = await db.collection(THREADS_COLL)
+    .where("customListingReplyStatus", "==", "queued")
+    .limit(20)
+    .get();
+  const tsMs = v => (v && v.toMillis) ? v.toMillis() : 0;
+  for (const doc of snap.docs) {
+    const t = doc.data() || {};
+    // Older records may lack customListingReplyQueuedAt; fall back to the
+    // other timestamps the worker writes, so no record can sit in this
+    // query forever and starve newer ones.
+    const queuedMs = tsMs(t.customListingReplyQueuedAt) || tsMs(t.customListingReplyEnqueuedAt) ||
+                     tsMs(t.customListingSentAt) || tsMs(t.customListingCreatedAt);
+    if (queuedMs && Date.now() - queuedMs < REPLY_CHECK_AFTER_MS) continue;
+    if (!queuedMs || Date.now() - queuedMs > REPLY_LEGACY_AFTER_MS) {
+      // Records from before this check existed: take them out of the query
+      // without moving the thread or bumping updatedAt (no rail re-sort).
+      await doc.ref.set({ customListingReplyStatus: "unverified_legacy" }, { merge: true });
+      continue;
+    }
+    out.checked++;
+    const url = String(t.customListingUrl || "");
+    const draftId = t.customListingReplyDraftId || ("draft_" + doc.id);
+    const ds = await db.collection("EtsyMail_Drafts").doc(draftId).get();
+    const d = ds.exists ? ds.data() : null;
+    const norm = s => String(s || "").replace(/\s+/g, " ").trim();
+    const ours = !!d && !!url && norm(d.text).includes(url);
+    let outcome = null, why = null;
+    if (ours && ["sent", "sent_text_only", "sent_unverified"].includes(d.status)) outcome = d.status === "sent_unverified" ? "sent_unverified" : "sent";
+    else if (ours && d.status === "failed") { outcome = "failed"; why = d.sendErrorCode || "SEND_FAILED"; }
+    else if (!ours) {
+      // The one-per-thread draft slot was reused (a later AI or operator
+      // reply). Before calling the link lost, look for it among the latest
+      // messages scraped from Etsy. Optimistic copies are written at
+      // enqueue time, so they prove nothing and are ignored.
+      let seen = false;
+      if (url) {
+        const ms = await db.collection(THREADS_COLL).doc(doc.id).collection("messages")
+          .orderBy("timestamp", "desc").limit(30).get();
+        seen = ms.docs.some(m => {
+          const x = m.data() || {};
+          return x.direction === "outbound" && !x.localOptimistic && String(x.text || "").includes(url);
+        });
+      }
+      if (seen) outcome = "sent";
+      else { outcome = "failed"; why = d ? "REPLACED_BEFORE_SEND" : "DRAFT_MISSING"; }
+    }
+    else if (Date.now() - queuedMs > REPLY_STUCK_AFTER_MS) { outcome = "failed"; why = "STILL_" + String(d.status || "unknown").toUpperCase(); }
+    if (!outcome) continue;
+    const patch = { customListingReplyStatus: outcome, customListingReplySettledAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp() };
+    if (outcome === "failed") {
+      Object.assign(patch, {
+        customListingReplyError  : why,
+        status                   : "pending_human_review",
+        needsOperatorReview      : true,
+        needsOperatorReviewReason: `listing_link_not_delivered: ${why} — check the conversation and re-send ${url || "the listing link"} if it is missing`
+      });
+      out.failed++;
+    } else out.sent++;
+    await doc.ref.set(patch, { merge: true });
+    await db.collection("EtsyMail_Audit").add({
+      threadId: doc.id, draftId, eventType: outcome === "failed" ? "custom_listing_link_not_delivered" : "custom_listing_link_delivered",
+      actor: "system:listingCreatorCron", payload: { outcome, why, draftStatus: d ? d.status : null }, createdAt: FV.serverTimestamp()
+    });
+  }
+  return out;
+}
+
 exports.handler = async function (event) {
   const tStart = Date.now();
   const isScheduled = isScheduledInvocation(event || {});
@@ -256,6 +364,13 @@ exports.handler = async function (event) {
         return { docs: [], size: 0, empty: true };
       })
     ]);
+
+    // Audit fix F4 — settle listing-link deliveries (Firestore only, non-fatal).
+    const replies = await settleListingReplies().catch(e => {
+      console.warn("[listingCreatorCron] reply settle failed:", e.message);
+      return null;
+    });
+    if (replies && (replies.sent || replies.failed)) console.log("[listingCreatorCron] listing links:", JSON.stringify(replies));
 
     const queuedDocs = queuedSnap.empty ? [] : queuedSnap.docs;
     const stuckDocs  = stuckSnap.empty  ? [] : stuckSnap.docs;

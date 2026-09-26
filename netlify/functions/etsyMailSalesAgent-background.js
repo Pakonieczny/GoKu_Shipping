@@ -4048,6 +4048,10 @@ ${validationResult.message}
         attach_bracelet_sizing  : parsed.attach_bracelet_sizing   === true
       },
       readyForHumanApproval : !!parsed.ready_for_human_approval,
+      // Audit fix F3 — the auto-pipeline reads this flag from the DRAFT
+      // (isAcceptanceSkip). It was only written on the thread, so the
+      // acceptance reply was auto-sent next to the listing-link message.
+      aiDraftStatus         : parsed.customer_accepted ? "skipped_acceptance" : "ready",
       // v4.1 — customer_accepted is the signal for the downstream
       // listing-creator automation. The agent sets it true ONLY on the
       // turn the customer explicitly accepts a previously-quoted price.
@@ -4300,10 +4304,13 @@ ${validationResult.message}
         const inMemLrr   = salesCtx._lastResolverResult;
         const persistedLrr = salesCtx.lastResolverResult;
         const fromCurrentTurn = (typeof quotedTotal === "number" && quotedTotal > 0) ? quotedTotal : null;
-        const fromInMemLrr    = (inMemLrr && inMemLrr.success && typeof inMemLrr.total === "number" && inMemLrr.total > 0)
-                                  ? inMemLrr.total : null;
-        const fromPersistedLrr = (persistedLrr && persistedLrr.success && typeof persistedLrr.total === "number" && persistedLrr.total > 0)
-                                  ? persistedLrr.total : null;
+        // Audit fix F6 — a resolver result that still has escalations
+        // (Quote rows) carries a PARTIAL total; it must never become the
+        // accepted price of a live listing.
+        const isFinalLrr = (l) => !!(l && l.success && typeof l.total === "number" && l.total > 0 &&
+                                     !(Array.isArray(l.escalations) && l.escalations.length));
+        const fromInMemLrr    = isFinalLrr(inMemLrr) ? inMemLrr.total : null;
+        const fromPersistedLrr = isFinalLrr(persistedLrr) ? persistedLrr.total : null;
         const fromTotalQuoted = (typeof salesCtx.totalQuotedUsd === "number" && salesCtx.totalQuotedUsd > 0)
                                   ? salesCtx.totalQuotedUsd : null;
         let fromHistory = null;
