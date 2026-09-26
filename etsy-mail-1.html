@@ -9517,7 +9517,11 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         html += " · last sync: <b>" + ago(lastMs) + "</b>";
         if (fullMs) html += " · last full sync: " + ago(fullMs);
         if (inFlight) html += ' <span style="color:#7d4e00;">· syncing now…</span>';
-        if (error) {
+        if (error && /^partial:/.test(String(error))) {
+          // A run that stopped at its time limit kept what it refreshed.
+          html += '<br><span style="color:#7d4e00;">Last run: '
+            + esc(String(error).replace(/^partial:\s*/, "").slice(0, 200)) + '</span>';
+        } else if (error) {
           html += '<br><span style="color:#a40e26;">Last error: '
             + esc(String(error).slice(0, 200)) + '</span>';
         }
@@ -9560,6 +9564,9 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         });
         if (res && res.skipped) {
           toast("Sync skipped: " + (res.reason || "unknown reason"));
+        } else if (res && res.partial) {
+          const of = res.expected != null ? ` of ${res.expected}` : "";
+          toast(`Refreshed ${res.totalListings}${of} listings; tonight's sync does the rest`);
         } else {
           const n = res && res.totalListings != null ? res.totalListings : "?";
           const inactive = res && res.inactivatedCount ? `, ${res.inactivatedCount} marked inactive` : "";

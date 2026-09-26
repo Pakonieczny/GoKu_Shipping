@@ -64,11 +64,20 @@ const SYNC_PAGE_SIZE      = 100;        // Etsy v3 max
 const SYNC_HARD_CAP       = 10000;      // safety cap on pagination
 const SYNC_MUTEX_TTL_MS   = 10 * 60 * 1000;  // stale-lock recovery
 // The scheduled run is stopped by the platform after about a minute, and a
-// page with images takes ~3 s, so pages are fetched a few at a time and the
+// page with images takes ~3 s, so a few pages are in flight at once and the
 // run stops paging (without the inactivation pass) before that limit.
-const SYNC_CONCURRENCY    = 8;
-const SYNC_TIME_BUDGET_MS = 38 * 1000;
-const SYNC_WRITE_CHUNK    = 400;        // Firestore allows 500 writes per batch
+// Page requests are spaced so this sync never sends more than 2.5 Etsy calls
+// a second: the key is shared, and Etsy answers 429 "Exceeded per second
+// rate limit" to bursts (eight parallel pages did on 2026-09-26).
+const SYNC_MAX_IN_FLIGHT        = 4;
+const SYNC_REQUEST_SPACING_MS   = 400;
+const SYNC_RATE_LIMIT_RETRIES   = 3;
+const SYNC_TIME_BUDGET_MS       = 38 * 1000;   // scheduled run
+const SYNC_MANUAL_TIME_BUDGET_MS = 18 * 1000;  // manual run (26 s synchronous limit)
+const SYNC_WRITE_CHUNK          = 400;         // Firestore allows 500 writes per batch
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const isEtsyRateLimited = (e) => !!e && (e.status === 429 || /rate limit/i.test(String(e.message || "")));
 
 // ─── AI-trim constants — what the model sees ───────────────────────────
 // Description and tags are CAPPED before going to the model, so a
@@ -248,12 +257,39 @@ async function syncCatalog({ fullSync = true, triggeredBy = "cron" } = {}) {
   const tStart = Date.now();
 
   try {
+    const timeBudgetMs = triggeredBy === "cron" ? SYNC_TIME_BUDGET_MS : SYNC_MANUAL_TIME_BUDGET_MS;
+    // One shared pacer: every request (retries included) takes the next
+    // start slot, so the whole run stays at or under 2.5 calls a second.
+    // A 429 means the key is busier than that allows (other apps share
+    // it), so the spacing doubles for the rest of the run (at most 2 s;
+    // once per burst of refusals, not once per refused page).
+    let nextStartAt = 0;
+    let spacingMs = SYNC_REQUEST_SPACING_MS;
+    let lastSlowdownAt = 0;
+    const takeStartSlot = async () => {
+      const now = Date.now();
+      const startAt = Math.max(now, nextStartAt);
+      nextStartAt = startAt + spacingMs;
+      if (startAt > now) await sleep(startAt - now);
+    };
     const fetchPage = async (offset) => {
-      meter.bumpSimple("catalog.activeListings");
-      const data = await etsyFetch(`/shops/${SHOP_ID}/listings/active`, {
-        query: { limit: SYNC_PAGE_SIZE, offset, includes: "Images" }
-      });
-      return data || {};
+      for (let attempt = 0; ; attempt++) {
+        await takeStartSlot();
+        meter.bumpSimple("catalog.activeListings");
+        try {
+          const data = await etsyFetch(`/shops/${SHOP_ID}/listings/active`, {
+            query: { limit: SYNC_PAGE_SIZE, offset, includes: "Images" }
+          });
+          return data || {};
+        } catch (e) {
+          if (!isEtsyRateLimited(e) || attempt >= SYNC_RATE_LIMIT_RETRIES) throw e;
+          if (Date.now() - lastSlowdownAt > 1500) {
+            spacingMs = Math.min(spacingMs * 2, 2000);
+            lastSlowdownAt = Date.now();
+          }
+          await sleep(1200 + Math.floor(Math.random() * 400));   // next per-second window
+        }
+      }
     };
     const writePage = async (results) => {
       const batch = db.batch();
@@ -273,30 +309,52 @@ async function syncCatalog({ fullSync = true, triggeredBy = "cron" } = {}) {
     // Audit follow-up — the one-page-at-a-time loop never finished inside
     // the scheduled run's time limit, so the mirror was only ever partly
     // refreshed and the inactivation pass never ran. The first page gives
-    // the listing count; the rest are fetched SYNC_CONCURRENCY at a time.
+    // the listing count; the planned pages are then fetched by a few
+    // workers sharing the pacer above, each page written as it arrives.
     // Same number of Etsy calls as before (one per page).
     const first = await fetchPage(0);
     const firstResults = resultsOf(first);
     await writePage(firstResults);
     const expected = Number.isFinite(Number(first.count)) ? Number(first.count) : null;
     let complete = firstResults.length < SYNC_PAGE_SIZE;
-    let offset = SYNC_PAGE_SIZE;
-    const lastPlanned = expected == null ? SYNC_HARD_CAP : Math.min(expected, SYNC_HARD_CAP);
-    while (!complete) {
-      if (Date.now() - tStart > SYNC_TIME_BUDGET_MS) break;
-      if (offset >= SYNC_HARD_CAP) break;
-      const offsets = [];
-      // Past the expected count, go one page at a time until a short page
-      // (listings added during the run), so no empty pages are fetched.
-      const width = offset < lastPlanned ? SYNC_CONCURRENCY : 1;
-      for (let k = 0; k < width && offset < SYNC_HARD_CAP; k++) {
-        if (offset >= lastPlanned && k > 0) break;
-        offsets.push(offset);
-        offset += SYNC_PAGE_SIZE;
+    let stopReason = null;
+    if (!complete) {
+      const lastPlanned = expected == null ? SYNC_HARD_CAP : Math.min(expected, SYNC_HARD_CAP);
+      const planned = [];
+      for (let off = SYNC_PAGE_SIZE; off < lastPlanned; off += SYNC_PAGE_SIZE) planned.push(off);
+      let next = 0, fetched = 0, sawShortPage = false;
+      const worker = async () => {
+        while (!stopReason && !sawShortPage && next < planned.length) {
+          if (Date.now() - tStart > timeBudgetMs) { stopReason = stopReason || "time limit"; break; }
+          const off = planned[next++];
+          try {
+            const results = resultsOf(await fetchPage(off));
+            await writePage(results);
+            fetched++;
+            if (results.length < SYNC_PAGE_SIZE) sawShortPage = true;
+          } catch (e) {
+            stopReason = stopReason || (e && e.message) || String(e);
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: SYNC_MAX_IN_FLIGHT }, worker));
+      // Every planned page read. Past the expected count, go one page at a
+      // time until a short page (listings added during the run).
+      complete = !stopReason && (sawShortPage || fetched === planned.length);
+      if (complete && !sawShortPage) {
+        complete = false;
+        for (let off = Math.max(lastPlanned, SYNC_PAGE_SIZE); off < SYNC_HARD_CAP; off += SYNC_PAGE_SIZE) {
+          if (Date.now() - tStart > timeBudgetMs) { stopReason = "time limit"; break; }
+          try {
+            const results = resultsOf(await fetchPage(off));
+            await writePage(results);
+            if (results.length < SYNC_PAGE_SIZE) { complete = true; break; }
+          } catch (e) {
+            stopReason = (e && e.message) || String(e);
+            break;
+          }
+        }
       }
-      const pages = await Promise.all(offsets.map(fetchPage));
-      await Promise.all(pages.map(p => writePage(resultsOf(p))));
-      if (pages.some(p => resultsOf(p).length < SYNC_PAGE_SIZE)) complete = true;
     }
 
     // Full-sync inactivation pass: anything previously stored that's NOT
@@ -327,13 +385,15 @@ async function syncCatalog({ fullSync = true, triggeredBy = "cron" } = {}) {
     }
 
     if (!complete) {
-      lastError = `partial: ${seenIds.size} of ${expected == null ? "?" : expected} listings refreshed before the run's time limit`;
-      await releaseSyncMutex({ totalListings: seenIds.size, fullSync, lastError });
+      lastError = `partial: ${seenIds.size} of ${expected == null ? "?" : expected} listings refreshed (stopped: ${stopReason || "time limit"})`;
+      // totalListings is Etsy's own count when known; a partial run never
+      // overwrites it with the number it happened to reach.
+      await releaseSyncMutex({ totalListings: expected == null ? undefined : expected, fullSync, lastError });
       await writeAudit({
         eventType: "catalog_sync_completed",
-        payload  : { outcome: "partial", triggeredBy, fullSync, totalWritten, totalListings: seenIds.size, expected }
+        payload  : { outcome: "partial", triggeredBy, fullSync, totalWritten, refreshed: seenIds.size, expected, stopReason: stopReason || "time limit" }
       });
-      return { ok: true, partial: true, totalWritten, totalListings: seenIds.size, expected, fullSync };
+      return { ok: true, partial: true, totalWritten, totalListings: seenIds.size, expected, fullSync, stopReason: stopReason || "time limit" };
     }
 
     await releaseSyncMutex({ totalListings: seenIds.size, fullSync, lastError: null });
@@ -360,7 +420,8 @@ async function syncCatalog({ fullSync = true, triggeredBy = "cron" } = {}) {
 
   } catch (err) {
     lastError = err.message || String(err);
-    await releaseSyncMutex({ totalListings: seenIds.size, fullSync, lastError });
+    // Keep the stored listing count: a failed run's count is not the shop's.
+    await releaseSyncMutex({ totalListings: undefined, fullSync, lastError });
     await writeAudit({
       eventType: "catalog_sync_failed",
       payload  : {
